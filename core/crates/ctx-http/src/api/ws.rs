@@ -14,10 +14,7 @@ use tokio::task::JoinSet;
 
 use ctx_core::ids::*;
 use ctx_core::models::*;
-use ctx_workspace_active_snapshot::{
-    is_transient_session_delta, SessionReplayCursor, WorkspaceSessionReplay,
-    WorkspaceSessionReplayItem,
-};
+use ctx_workspace_active_snapshot::{is_transient_session_delta, SessionReplayCursor};
 
 use crate::daemon::AppState;
 use crate::terminals::{TerminalClientMessage, TerminalServerMessage};
@@ -36,10 +33,9 @@ mod workspace_stream;
 use common::{
     accept_session_delta, accept_session_head, bump_latest_snapshot_rev, event_snapshot_rev,
     release_workspace_stream_session_pins, sync_workspace_stream_session_pins,
-    ResolvedWorkspaceActiveSessionReplay, ResolvedWorkspaceActiveSessionSubscription,
-    ResolvedWorkspaceActiveSubscriptions, SessionCursor, StreamSendControl,
-    WorkspaceActiveSubscriptionState, HEAD_BATCH_FLUSH_INTERVAL, HEAD_BATCH_SESSION_LIMIT,
-    SESSION_REPLAY_MAX_EVENTS, WORKSPACE_STREAM_QUEUE_LIMIT, WORKSPACE_STREAM_QUEUE_MAX_AGE,
+    ResolvedWorkspaceActiveSessionReplay, ResolvedWorkspaceActiveSubscriptions, SessionCursor,
+    StreamSendControl, WorkspaceActiveSubscriptionState, HEAD_BATCH_FLUSH_INTERVAL,
+    HEAD_BATCH_SESSION_LIMIT, WORKSPACE_STREAM_QUEUE_LIMIT, WORKSPACE_STREAM_QUEUE_MAX_AGE,
 };
 use queue::{
     filter_partial_delta_for_active_tasks, is_foreground_session, is_priority_control_event,

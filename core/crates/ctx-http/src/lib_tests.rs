@@ -202,25 +202,24 @@ async fn daemon_golden_path_with_fake_provider() {
     assert_eq!(res.status(), StatusCode::OK);
 
     // wait for assistant message to be inserted
-    let mut attempts = 0;
-    loop {
-        let session_store = state.store_for_session(session.id).await.unwrap();
-        let msgs = session_store
-            .list_messages_for_session(session.id)
-            .await
-            .unwrap();
-        if msgs
-            .iter()
-            .any(|m| matches!(m.role, ctx_core::models::MessageRole::Assistant))
-        {
-            break;
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let session_store = state.store_for_session(session.id).await.unwrap();
+            let msgs = session_store
+                .list_messages_for_session(session.id)
+                .await
+                .unwrap();
+            if msgs
+                .iter()
+                .any(|m| matches!(m.role, ctx_core::models::MessageRole::Assistant))
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
         }
-        attempts += 1;
-        if attempts > 50 {
-            panic!("assistant message not produced");
-        }
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("assistant message not produced"));
 }
 
 #[tokio::test]

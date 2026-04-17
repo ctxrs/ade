@@ -2,7 +2,7 @@ use super::*;
 use ctx_store::Store;
 
 impl ExecutionSetupCoordinator {
-    pub(crate) async fn run_startup_prewarm(&self, exec: ExecutionSettings) {
+    pub(crate) async fn run_startup_prewarm(self: &Arc<Self>, exec: ExecutionSettings) {
         let attempted_at = format_ts(Utc::now());
         let target = ctx_harness_runtime::runtime_prewarm_target(&exec.container);
         let (initial_machine_ready, initial_image_present) = self
@@ -64,6 +64,8 @@ impl ExecutionSetupCoordinator {
                 error: None,
             };
         }
+        let machine_ready_probe =
+            self.spawn_startup_machine_ready_probe(&exec, initial_machine_ready);
 
         let gate = match self
             .compute_prewarm_gate_with_runtime_state(
@@ -250,6 +252,47 @@ impl ExecutionSetupCoordinator {
                 self.set_startup_snapshot(snapshot).await;
             }
         }
+        if let Some(probe) = machine_ready_probe {
+            let _ = probe.await;
+        }
+    }
+
+    fn spawn_startup_machine_ready_probe(
+        self: &Arc<Self>,
+        exec: &ExecutionSettings,
+        initial_machine_ready: bool,
+    ) -> Option<tokio::task::JoinHandle<()>> {
+        if initial_machine_ready
+            || exec.container.runtime != crate::settings::ContainerRuntimeKind::NativeContainer
+        {
+            return None;
+        }
+        let coordinator = Arc::clone(self);
+        let settings = exec.container.clone();
+        Some(tokio::spawn(async move {
+            loop {
+                {
+                    let inner = coordinator.inner.lock().await;
+                    if inner.startup.state != StartupPrewarmState::Running
+                        || inner.startup.machine_ready
+                    {
+                        break;
+                    }
+                }
+
+                if let Ok((machine_ready, _)) = coordinator.startup_runtime_state(&settings).await {
+                    if machine_ready {
+                        let mut inner = coordinator.inner.lock().await;
+                        if inner.startup.state == StartupPrewarmState::Running {
+                            inner.startup.machine_ready = true;
+                        }
+                        break;
+                    }
+                }
+
+                tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+            }
+        }))
     }
 
     #[cfg_attr(not(test), allow(dead_code))]

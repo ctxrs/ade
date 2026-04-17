@@ -331,11 +331,15 @@ async fn handle_mobile_secure_ws(
                                 .await
                                 .map_err(|err| anyhow::anyhow!("workspace hydration failed: {err:?}"))?;
                             crate::merge_queue::activate_workspace_merge_queue(&state, workspace_id).await;
+                            let existing_replay_cursors = subscriptions
+                                .iter()
+                                .map(|(session_id, cursor)| (*session_id, cursor.last_sent))
+                                .collect::<HashMap<_, _>>();
                             let resolved = match resolve_workspace_active_snapshot_subscriptions(
                                 &state,
                                 workspace_id,
                                 message,
-                                &subscriptions,
+                                &existing_replay_cursors,
                             )
                             .await
                             {

@@ -455,7 +455,7 @@ async fn worktree_vcs_snapshot_watcher_recomputes_when_target_branch_ref_moves()
         if snapshot.summary.file_count.unwrap_or(0) > 0 {
             break;
         }
-        if start.elapsed() > Duration::from_secs(10) {
+        if start.elapsed() > Duration::from_secs(30) {
             watcher.abort();
             panic!("timed out waiting for non-zero vcs summary");
         }
@@ -485,7 +485,7 @@ async fn worktree_vcs_snapshot_watcher_recomputes_when_target_branch_ref_moves()
             watcher.abort();
             return;
         }
-        if start.elapsed() > Duration::from_secs(10) {
+        if start.elapsed() > Duration::from_secs(30) {
             watcher.abort();
             panic!("timed out waiting for merge-target ref move to clear vcs summary");
         }

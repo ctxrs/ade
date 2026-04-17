@@ -13,6 +13,7 @@ const {
   formatSpawnFailureMessage,
   parseArgs,
   parseBatchMode,
+  parsePositiveIntegerEnv,
   parseRemoteExecutionMode,
   resolveBazeliskCommand,
 } = require("./run_bazel_pilot.cjs");
@@ -51,6 +52,7 @@ test("bazel pilot invocation stays on the volatile cache layout", () => {
     argv: ["test"],
     env: {
       ...process.env,
+      CTX_BAZEL_REMOTE_EXECUTION: "off",
       CTX_VOLATILE_ROOT: "/tmp/ctx-bazel-pilot",
       CTX_SESSION_ID: "bazel-test-session",
     },
@@ -88,8 +90,12 @@ test("bazel pilot batch mode defaults on darwin and can be overridden explicitly
 });
 
 test("bazel pilot remote execution mode parsing supports off, all, linux, and darwin", () => {
-  assert.equal(parseRemoteExecutionMode(undefined), "off");
-  assert.equal(parseRemoteExecutionMode(""), "off");
+  const defaultMode =
+    process.platform === "darwin" ? "darwin" : process.platform === "linux" ? "linux" : "off";
+  assert.equal(parseRemoteExecutionMode(undefined), defaultMode);
+  assert.equal(parseRemoteExecutionMode(""), defaultMode);
+  assert.equal(parseRemoteExecutionMode("off"), "off");
+  assert.equal(parseRemoteExecutionMode("false"), "off");
   assert.equal(parseRemoteExecutionMode("1"), "all");
   assert.equal(parseRemoteExecutionMode("true"), "all");
   assert.equal(parseRemoteExecutionMode("linux"), "linux");
@@ -128,6 +134,7 @@ test("bazel pilot invocation enables full BuildBuddy remote execution when reque
   assert.equal(invocation.remoteExecutionMode, "all");
   assert.equal(invocation.phases.length, 1);
   assert.equal(invocation.phases[0].name, "remote");
+  assert.equal(invocation.phases[0].commandArgs.includes("--config=buildbuddy-cache"), true);
   assert.equal(invocation.phases[0].commandArgs.includes("--config=buildbuddy-rbe"), true);
   assert.equal(
     invocation.phases[0].commandArgs.includes("--remote_header=x-buildbuddy-api-key=buildbuddy-ci-key"),
@@ -135,6 +142,21 @@ test("bazel pilot invocation enables full BuildBuddy remote execution when reque
   );
 });
 
+test("bazel pilot forwards local test job caps for test invocations", () => {
+  const invocation = buildBazelPilotInvocation({
+    argv: ["test", "//core/crates/ctx-http:bin_tests"],
+    env: {
+      ...process.env,
+      CTX_BAZEL_REMOTE_EXECUTION: "off",
+      CTX_VOLATILE_ROOT: "/tmp/ctx-bazel-pilot-local-test-jobs",
+      CTX_SESSION_ID: "bazel-local-test-jobs-session",
+      CTX_BAZEL_LOCAL_TEST_JOBS: "3",
+    },
+  });
+
+  assert.equal(invocation.commandArgs.includes("--local_test_jobs=3"), true);
+  assert.equal(invocation.phases[0].commandArgs.includes("--local_test_jobs=3"), true);
+});
 test("bazel pilot linux remote execution keeps lib builds remote and host executables local", () => {
   const invocation = buildBazelPilotInvocation({
     argv: [
@@ -156,6 +178,7 @@ test("bazel pilot linux remote execution keeps lib builds remote and host execut
     invocation.phases.map((phase) => ({
       name: phase.name,
       targets: phase.targets,
+      hasBuildBuddyCache: phase.commandArgs.includes("--config=buildbuddy-cache"),
       hasLinuxConfig: phase.commandArgs.includes("--config=buildbuddy-linux-rbe"),
       hasBuildBuddyHeader: phase.commandArgs.includes(
         "--remote_header=x-buildbuddy-api-key=buildbuddy-linux-key",
@@ -165,12 +188,14 @@ test("bazel pilot linux remote execution keeps lib builds remote and host execut
       {
         name: "linux-rbe",
         targets: ["//core/crates/ctx-provider-accounts:lib"],
+        hasBuildBuddyCache: true,
         hasLinuxConfig: true,
         hasBuildBuddyHeader: true,
       },
       {
         name: "local",
         targets: ["//core/crates/ctx-lsp:ctx-lsp-test-server"],
+        hasBuildBuddyCache: true,
         hasLinuxConfig: false,
         hasBuildBuddyHeader: true,
       },
@@ -186,12 +211,14 @@ test("bazel pilot keeps run targets local even in linux remote execution mode", 
       CTX_VOLATILE_ROOT: "/tmp/ctx-bazel-pilot-linux-rbe-run",
       CTX_SESSION_ID: "bazel-linux-rbe-run-session",
       CTX_BAZEL_REMOTE_EXECUTION: "linux",
+      BUILD_BUDDY_API_KEY: "buildbuddy-linux-run-key",
     },
   });
 
   assert.equal(invocation.remoteExecutionMode, "linux");
   assert.equal(invocation.phases.length, 1);
   assert.equal(invocation.phases[0].name, "local");
+  assert.equal(invocation.phases[0].commandArgs.includes("--config=buildbuddy-cache"), true);
   assert.equal(
     invocation.phases[0].commandArgs.includes("--config=buildbuddy-linux-rbe"),
     false,
@@ -213,10 +240,57 @@ test("bazel pilot darwin remote execution uses the darwin BuildBuddy config dire
   assert.equal(invocation.remoteExecutionMode, "darwin");
   assert.equal(invocation.phases.length, 1);
   assert.equal(invocation.phases[0].name, "darwin-rbe");
+  assert.equal(invocation.phases[0].commandArgs.includes("--config=buildbuddy-cache"), true);
   assert.equal(invocation.phases[0].commandArgs.includes("--config=buildbuddy-darwin-rbe"), true);
   assert.equal(
     invocation.phases[0].commandArgs.includes("--remote_header=x-buildbuddy-api-key=buildbuddy-darwin-key"),
     true,
+  );
+});
+
+test("bazel pilot defaults to host-native BuildBuddy mode when not explicitly disabled", () => {
+  const expectedMode =
+    process.platform === "darwin" ? "darwin" : process.platform === "linux" ? "linux" : "off";
+  const invocation = buildBazelPilotInvocation({
+    argv: ["build", "//core/crates/ctx-core:lib"],
+    env: {
+      ...process.env,
+      CTX_VOLATILE_ROOT: "/tmp/ctx-bazel-pilot-default-rbe",
+      CTX_SESSION_ID: "bazel-default-rbe-session",
+      BUILD_BUDDY_API_KEY: "buildbuddy-default-key",
+    },
+  });
+
+  assert.equal(invocation.remoteExecutionMode, expectedMode);
+  if (expectedMode === "off") {
+    assert.equal(invocation.phases[0].name, "local");
+    return;
+  }
+  assert.equal(invocation.phases[0].commandArgs.includes("--config=buildbuddy-cache"), true);
+  assert.equal(
+    invocation.phases[0].commandArgs.includes(
+      expectedMode === "darwin" ? "--config=buildbuddy-darwin-rbe" : "--config=buildbuddy-linux-rbe",
+    ),
+    true,
+  );
+});
+
+test("bazel pilot fails with an actionable error when BuildBuddy is enabled but the API key is unavailable", () => {
+  assert.throws(
+    () =>
+      buildBazelPilotInvocation({
+        argv: ["build", "//core/crates/ctx-core:lib"],
+        env: {
+          ...process.env,
+          CTX_VOLATILE_ROOT: "/tmp/ctx-bazel-pilot-missing-key",
+          CTX_SESSION_ID: "bazel-missing-key-session",
+          CTX_BAZEL_REMOTE_EXECUTION: "darwin",
+        },
+        buildBuddyApiKeyResolver: () => {
+          throw new Error("infisical not logged in");
+        },
+      }),
+    /CTX_BAZEL_REMOTE_EXECUTION=off/,
   );
 });
 
@@ -282,6 +356,7 @@ test("bazel pilot uses the resolved Bazelisk command in the spawn contract", () 
     argv: ["run", "//core/apps/web:lint"],
     env: {
       ...process.env,
+      CTX_BAZEL_REMOTE_EXECUTION: "off",
       CTX_VOLATILE_ROOT: "/tmp/ctx-bazel-pilot-binary",
       CTX_SESSION_ID: "bazel-binary-session",
     },

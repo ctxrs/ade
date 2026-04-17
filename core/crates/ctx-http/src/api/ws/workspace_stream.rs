@@ -1,3 +1,4 @@
+use super::replay::primary_session_id_for_active_task;
 use super::*;
 
 pub(super) struct WorkspaceStreamRuntime {
