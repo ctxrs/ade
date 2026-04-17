@@ -798,6 +798,7 @@ const buildLinuxCtxMcpContainerArgs = ({
   hostOs = hostManifestOs,
 }) => {
   const preparedRuntimesDir = ensureContainerCacheDir(runtimesDir, hostOs);
+  ensureContainerCacheDir(path.join(preparedRuntimesDir, "runtimes"), hostOs);
   const runtimeRootRel = path.posix.join(
     "runtimes",
     CTX_MCP_RUNTIME_ID,

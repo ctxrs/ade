@@ -190,6 +190,9 @@ test("linux ctx-mcp output mount dirs on macOS are made world-writable for docke
   const runtimesDir = path.join(tempRoot, "runtimes");
   fs.mkdirSync(runtimesDir, { recursive: true });
   fs.chmodSync(runtimesDir, 0o755);
+  const runtimeBundleDir = path.join(runtimesDir, "runtimes");
+  fs.mkdirSync(runtimeBundleDir, { recursive: true });
+  fs.chmodSync(runtimeBundleDir, 0o755);
 
   __desktopSyncResourcesTestHooks.buildLinuxCtxMcpContainerArgs({
     runtime: "docker",
@@ -208,8 +211,10 @@ test("linux ctx-mcp output mount dirs on macOS are made world-writable for docke
     hostOs: "macos",
   });
 
-  const mode = fs.statSync(runtimesDir).mode & 0o777;
-  assert.equal(mode, 0o777);
+  const rootMode = fs.statSync(runtimesDir).mode & 0o777;
+  assert.equal(rootMode, 0o777);
+  const nestedMode = fs.statSync(runtimeBundleDir).mode & 0o777;
+  assert.equal(nestedMode, 0o777);
 
   fs.rmSync(tempRoot, { recursive: true, force: true });
 });
