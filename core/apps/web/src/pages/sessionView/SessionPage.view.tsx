@@ -43,6 +43,7 @@ import {
 import { buildOptimisticUserMessage } from "./SessionPage.optimisticMessage";
 import { useSessionTranscriptController } from "../useSessionTranscriptController";
 import { useWorkbenchThreadViewModelController } from "../useWorkbenchThreadViewModelController";
+import { buildWorkbenchThreadViewModelWarmKey } from "../workbenchThreadViewModelWarmCache";
 import { errorMessage } from "../../utils/errorMessage";
 import { hasSessionActiveTurn } from "../../utils/sessionActivity";
 import { defaultSessionVerbosityForProvider } from "../sessionVerbosity";
@@ -68,23 +69,7 @@ import {
   noteInterruptPendingVisible,
   noteSessionSwitchFirstPaint,
 } from "../../state/foregroundFreshnessTelemetry";
-
-const SCROLLBACK_INCREASE_VIEWPORT_BY_PX = 240;
-
-function buildModelsFromAcpMeta(models: unknown): Array<{ id: string; name?: string }> {
-  if (!models || typeof models !== "object") return [];
-  const list = "models" in models ? models.models : undefined;
-  if (!Array.isArray(list)) return [];
-  const parsed: Array<{ id: string; name?: string }> = [];
-  for (const item of list) {
-    if (!item || typeof item !== "object") continue;
-    const id = "id" in item && typeof item.id === "string" ? item.id : "";
-    if (!id) continue;
-    const name = "name" in item && typeof item.name === "string" ? item.name : undefined;
-    parsed.push(name ? { id, name } : { id });
-  }
-  return parsed;
-}
+import { buildModelsFromAcpMeta, formatMemoryMb, SCROLLBACK_INCREASE_VIEWPORT_BY_PX, setBooleanStateRef } from "./SessionPage.viewHelpers";
 
 export function SessionView({
   sessionId,
@@ -446,6 +431,41 @@ export function SessionView({
     askUserQuestionAnswers,
     enableDebugEvents: showDebug,
   });
+  const threadListSourceKey = useMemo(
+    () =>
+      buildWorkbenchThreadViewModelWarmKey({
+        sessionId: id,
+        projectionRev: threadProjection.projectionRev,
+        turnsStamp: threadProjection.turnsStamp,
+        messagesStamp: threadProjection.messagesStamp,
+        eventsStamp: threadProjection.eventsStamp,
+        verbosity,
+        turns: threadProjection.turns,
+        assistantStreamingByTurnId: threadProjection.assistantStreamingByTurnId,
+        messages: threadProjection.messages,
+        events: threadProjection.events,
+        toolsByTurnId: threadProjection.toolsByTurnId,
+        toolSummariesReady: threadProjection.toolSummariesReady,
+        askUserQuestionAnswers,
+        enableDebugEvents: showDebug,
+      }),
+    [
+      askUserQuestionAnswers,
+      id,
+      showDebug,
+      threadProjection.assistantStreamingByTurnId,
+      threadProjection.events,
+      threadProjection.eventsStamp,
+      threadProjection.messages,
+      threadProjection.messagesStamp,
+      threadProjection.projectionRev,
+      threadProjection.toolSummariesReady,
+      threadProjection.toolsByTurnId,
+      threadProjection.turns,
+      threadProjection.turnsStamp,
+      verbosity,
+    ],
+  );
 
   const debugEvents = workbenchThreadView.debugEvents;
   const wbListItems = threadListItems;
@@ -602,22 +622,6 @@ export function SessionView({
   }, [acpModelOptions, currentModelId, sharedProviderOptions]);
   const displayedModelId = optimisticModelId ?? currentModelId;
 
-  const setSendBusySafe = (next: boolean) => {
-    sendBusyRef.current = next;
-    setSendBusy(next);
-  };
-
-  const formatMemoryMb = (value?: number | null): string => {
-    if (!Number.isFinite(value)) return "—";
-    const mb = value as number;
-    const gb = mb / 1024;
-    if (gb >= 1) {
-      const precision = gb >= 10 ? 0 : 1;
-      return `${gb.toFixed(precision)} GB`;
-    }
-    return `${Math.round(mb)} MB`;
-  };
-
   const sendNow = async () => {
     if (!id) return;
     if (sendBusyRef.current) return;
@@ -625,17 +629,17 @@ export function SessionView({
       setSendError("A turn is already running. Stop it or wait for it to finish.");
       return;
     }
-    setSendBusySafe(true);
+    setBooleanStateRef(sendBusyRef, setSendBusy, true);
     let text = "";
     try {
       text = (dictationRecording ? await stopDictation({ awaitFinal: true }) : input).trim();
     } catch (e: unknown) {
       setSendError(errorMessage(e));
-      setSendBusySafe(false);
+      setBooleanStateRef(sendBusyRef, setSendBusy, false);
       return;
     }
     if (!text) {
-      setSendBusySafe(false);
+      setBooleanStateRef(sendBusyRef, setSendBusy, false);
       return;
     }
     const attachmentsToSend = draftAttachments.slice();
@@ -696,7 +700,7 @@ export function SessionView({
       setDraftAttachments(attachmentsToSend);
       setSendError(errorMessage(e));
     } finally {
-      setSendBusySafe(false);
+      setBooleanStateRef(sendBusyRef, setSendBusy, false);
     }
   };
 
@@ -779,7 +783,7 @@ export function SessionView({
       setQueueActionBusyId(null);
       return;
     }
-    setSendBusySafe(true);
+    setBooleanStateRef(sendBusyRef, setSendBusy, true);
 
     const messageId = randomUuid();
     const turnId = randomUuid();
@@ -815,7 +819,7 @@ export function SessionView({
       supervisor.removeOptimisticThreadMessage(id, messageId);
       setSendError(errorMessage(e));
     } finally {
-      setSendBusySafe(false);
+      setBooleanStateRef(sendBusyRef, setSendBusy, false);
       setQueueActionBusyId(null);
     }
   };
@@ -886,6 +890,7 @@ export function SessionView({
       dropActive={dropActive}
       dropScopeRef={dropScopeRef}
       listItems={listItems}
+      threadListSourceKey={threadListSourceKey}
       liveTailItems={[]}
       events={baseEvents}
       messages={baseMessages}

@@ -1188,4 +1188,292 @@ describe("useWorkbenchThreadViewModelController", () => {
 
     expect(expectGroup("turn-turn-2")).not.toBe(secondGroupBefore);
   });
+
+  it("prepends older history without rebuilding retained tail groups", async () => {
+    const askUserQuestionAnswers = new Map<string, AskUserQuestionAnswerState>();
+    const emptyToolsByTurnId: Record<string, SessionTurnTool[]> = {};
+    const loadedTurns = [
+      {
+        turn_id: "turn-1",
+        session_id: "session-1",
+        run_id: null,
+        user_message_id: "message-1",
+        status: "completed",
+        start_seq: 3,
+        end_seq: 4,
+        started_at: "2025-12-15T00:00:02.000Z",
+        updated_at: "2025-12-15T00:00:03.000Z",
+        assistant_partial: "",
+        thought_partial: "",
+        metrics_json: null,
+        tool_total: 0,
+        tool_pending: 0,
+        tool_running: 0,
+        tool_completed: 0,
+        tool_failed: 0,
+      },
+      {
+        turn_id: "turn-2",
+        session_id: "session-1",
+        run_id: null,
+        user_message_id: "message-2",
+        status: "completed",
+        start_seq: 5,
+        end_seq: 6,
+        started_at: "2025-12-15T00:00:04.000Z",
+        updated_at: "2025-12-15T00:00:05.000Z",
+        assistant_partial: "",
+        thought_partial: "",
+        metrics_json: null,
+        tool_total: 0,
+        tool_pending: 0,
+        tool_running: 0,
+        tool_completed: 0,
+        tool_failed: 0,
+      },
+    ] as SessionTurn[];
+    const loadedMessages = [
+      {
+        id: "message-1",
+        session_id: "session-1",
+        task_id: "task-1",
+        turn_id: "turn-1",
+        turn_sequence: 1,
+        role: "user",
+        content: "First loaded turn",
+        attachments: [],
+        delivery: "immediate",
+        created_at: "2025-12-15T00:00:02.000Z",
+        order_seq: 3,
+      },
+      {
+        id: "message-2",
+        session_id: "session-1",
+        task_id: "task-1",
+        turn_id: "turn-2",
+        turn_sequence: 2,
+        role: "user",
+        content: "Second loaded turn",
+        attachments: [],
+        delivery: "immediate",
+        created_at: "2025-12-15T00:00:04.000Z",
+        order_seq: 5,
+      },
+    ] as unknown as Message[];
+    const { rerender } = renderController({
+      turns: loadedTurns,
+      messages: loadedMessages,
+      events: [],
+      eventsStamp: "0:0",
+      turnsStamp: buildTurnsStamp(loadedTurns),
+      messagesStamp: buildMessagesStamp(loadedMessages),
+      toolsByTurnId: emptyToolsByTurnId,
+      askUserQuestionAnswers,
+    });
+
+    await waitFor(() => {
+      expect(latestResult?.view.groups.map((group) => group.key)).toEqual(["turn-turn-1", "turn-turn-2"]);
+    });
+
+    const firstRetainedGroup = expectGroup("turn-turn-1");
+    const secondRetainedGroup = expectGroup("turn-turn-2");
+    const firstRetainedItem = latestResult?.listItems[0];
+
+    const prependedTurns = [
+      {
+        turn_id: "turn-0",
+        session_id: "session-1",
+        run_id: null,
+        user_message_id: "message-0",
+        status: "completed",
+        start_seq: 1,
+        end_seq: 2,
+        started_at: "2025-12-15T00:00:00.000Z",
+        updated_at: "2025-12-15T00:00:01.000Z",
+        assistant_partial: "",
+        thought_partial: "",
+        metrics_json: null,
+        tool_total: 0,
+        tool_pending: 0,
+        tool_running: 0,
+        tool_completed: 0,
+        tool_failed: 0,
+      },
+      ...loadedTurns,
+    ] as SessionTurn[];
+    const prependedMessages = [
+      {
+        id: "message-0",
+        session_id: "session-1",
+        task_id: "task-1",
+        turn_id: "turn-0",
+        turn_sequence: 0,
+        role: "user",
+        content: "Older history turn",
+        attachments: [],
+        delivery: "immediate",
+        created_at: "2025-12-15T00:00:00.000Z",
+        order_seq: 1,
+      },
+      ...loadedMessages,
+    ] as unknown as Message[];
+
+    rerender(
+      <Harness
+        sessionId="session-1"
+        turnsStamp={buildTurnsStamp(prependedTurns, 1)}
+        messagesStamp={buildMessagesStamp(prependedMessages, 1)}
+        eventsStamp="0:0"
+        verbosity="default"
+        turns={prependedTurns}
+        messages={prependedMessages}
+        events={[]}
+        toolsByTurnId={emptyToolsByTurnId}
+        toolSummariesReady
+        askUserQuestionAnswers={askUserQuestionAnswers}
+        enableDebugEvents={false}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(latestResult?.view.groups.map((group) => group.key)).toEqual([
+        "turn-turn-0",
+        "turn-turn-1",
+        "turn-turn-2",
+      ]);
+    });
+
+    expect(latestResult?.lastOp.kind).toBe("prepend_history");
+    expect(expectGroup("turn-turn-1")).toBe(firstRetainedGroup);
+    expect(expectGroup("turn-turn-2")).toBe(secondRetainedGroup);
+    const prependedRange = latestResult?.groupRanges.get("turn-turn-0");
+    expect(prependedRange).toBeTruthy();
+    expect(latestResult?.listItems[prependedRange!.end]).toBe(firstRetainedItem);
+  });
+
+  it("falls back to reconcile when prepend history also mutates the retained tail", async () => {
+    const askUserQuestionAnswers = new Map<string, AskUserQuestionAnswerState>();
+    const emptyToolsByTurnId: Record<string, SessionTurnTool[]> = {};
+    const loadedTurns = [
+      {
+        turn_id: "turn-1",
+        session_id: "session-1",
+        run_id: null,
+        user_message_id: "message-1",
+        status: "completed",
+        start_seq: 3,
+        end_seq: 4,
+        started_at: "2025-12-15T00:00:02.000Z",
+        updated_at: "2025-12-15T00:00:03.000Z",
+        assistant_partial: "",
+        thought_partial: "",
+        metrics_json: null,
+        tool_total: 0,
+        tool_pending: 0,
+        tool_running: 0,
+        tool_completed: 0,
+        tool_failed: 0,
+      },
+    ] as SessionTurn[];
+    const loadedMessages = [
+      {
+        id: "message-1",
+        session_id: "session-1",
+        task_id: "task-1",
+        turn_id: "turn-1",
+        turn_sequence: 1,
+        role: "user",
+        content: "Loaded turn",
+        attachments: [],
+        delivery: "immediate",
+        created_at: "2025-12-15T00:00:02.000Z",
+        order_seq: 3,
+      },
+    ] as unknown as Message[];
+    const { rerender } = renderController({
+      turns: loadedTurns,
+      messages: loadedMessages,
+      events: [],
+      eventsStamp: "0:0",
+      turnsStamp: buildTurnsStamp(loadedTurns),
+      messagesStamp: buildMessagesStamp(loadedMessages),
+      toolsByTurnId: emptyToolsByTurnId,
+      askUserQuestionAnswers,
+    });
+
+    await waitFor(() => {
+      expect(latestResult?.view.groups.map((group) => group.key)).toEqual(["turn-turn-1"]);
+    });
+
+    const retainedGroupBefore = expectGroup("turn-turn-1");
+
+    const prependedTurns = [
+      {
+        turn_id: "turn-0",
+        session_id: "session-1",
+        run_id: null,
+        user_message_id: "message-0",
+        status: "completed",
+        start_seq: 1,
+        end_seq: 2,
+        started_at: "2025-12-15T00:00:00.000Z",
+        updated_at: "2025-12-15T00:00:01.000Z",
+        assistant_partial: "",
+        thought_partial: "",
+        metrics_json: null,
+        tool_total: 0,
+        tool_pending: 0,
+        tool_running: 0,
+        tool_completed: 0,
+        tool_failed: 0,
+      },
+      ...loadedTurns.map((turn) => ({ ...turn })),
+    ] as SessionTurn[];
+    const mutatedTailMessages = [
+      {
+        id: "message-0",
+        session_id: "session-1",
+        task_id: "task-1",
+        turn_id: "turn-0",
+        turn_sequence: 0,
+        role: "user",
+        content: "Older history turn",
+        attachments: [],
+        delivery: "immediate",
+        created_at: "2025-12-15T00:00:00.000Z",
+        order_seq: 1,
+      },
+      {
+        ...loadedMessages[0],
+        content: "Loaded turn changed",
+      },
+    ] as unknown as Message[];
+
+    rerender(
+      <Harness
+        sessionId="session-1"
+        turnsStamp={buildTurnsStamp(prependedTurns, 1)}
+        messagesStamp={buildMessagesStamp(mutatedTailMessages, 1)}
+        eventsStamp="0:0"
+        verbosity="default"
+        turns={prependedTurns}
+        messages={mutatedTailMessages}
+        events={[]}
+        toolsByTurnId={emptyToolsByTurnId}
+        toolSummariesReady
+        askUserQuestionAnswers={askUserQuestionAnswers}
+        enableDebugEvents={false}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(latestResult?.view.groups.map((group) => group.key)).toEqual([
+        "turn-turn-0",
+        "turn-turn-1",
+      ]);
+    });
+
+    expect(latestResult?.lastOp.kind).toBe("reconcile");
+    expect(expectGroup("turn-turn-1")).not.toBe(retainedGroupBefore);
+  });
 });

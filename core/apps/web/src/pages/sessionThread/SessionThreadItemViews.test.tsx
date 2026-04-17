@@ -86,11 +86,12 @@ describe("WorkbenchTurnHeaderView", () => {
     expect(header).toHaveAttribute("aria-expanded", "false");
   });
 
-  it("preserves multiline header structure when collapsed", () => {
+  it("preserves multiline header text without expanding it into per-line DOM nodes", () => {
     const { container } = render(<TestHeader plainText={"line 1\nline 2\nline 3"} />);
 
     const content = container.querySelector(".wb-turn-header-content");
-    expect(content?.querySelectorAll("br")).toHaveLength(2);
+    expect(content?.textContent).toBe("line 1\nline 2\nline 3");
+    expect(content?.querySelectorAll("br")).toHaveLength(0);
   });
 
   it("copies the message when the copy button is clicked without expanding the header", async () => {
@@ -188,6 +189,33 @@ describe("ThreadItemView", () => {
     );
 
     expect(screen.queryByRole("button", { name: "Show more" })).toBeNull();
+  });
+
+  it("renders giant expanded user messages as plain text instead of markdown", () => {
+    const hugeTranscript = ["# Reference", "", ...Array.from({ length: 2200 }, (_, index) => `reference line ${index + 1}`)].join(
+      "\n",
+    );
+
+    const { container } = render(
+      <ThreadItemView
+        item={{
+          kind: "message",
+          id: "message-huge",
+          role: "user",
+          content: hugeTranscript,
+          attachments: [],
+          created_at: "2025-01-01T00:00:00.000Z",
+        }}
+        worktreeId={null}
+        onFileOpenError={() => {}}
+        messageExpanded
+        onToggleMessageExpanded={() => {}}
+      />,
+    );
+
+    expect(container.querySelector(".wb-message-plain-text")?.textContent).toContain("reference line 2200");
+    expect(container.querySelector(".wb-md-unordered-list")).toBeNull();
+    expect(screen.getByRole("button", { name: "Show less" })).toBeInTheDocument();
   });
 });
 

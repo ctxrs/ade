@@ -1,8 +1,8 @@
 import type { WorkbenchListItem } from "./SessionPage.types";
 import { humanTurnStatus } from "./SessionPage.helpers";
+import { SESSION_TRANSCRIPT_LAYOUT_ENGINE_REVISION } from "./sessionThread/sessionMarkdownMeasurement";
 import {
   getWorkbenchMessageLayoutState,
-  getWorkbenchTurnHeaderDisplayPlainText,
   getWorkbenchTurnHeaderLayoutState,
   resolveWorkbenchMessageExpandedFromContent,
 } from "./sessionThread/transcriptRowLayoutModel";
@@ -61,11 +61,16 @@ function fingerprintUnknown(value: unknown): string {
   }
 }
 
+function withTranscriptLayoutEngineRevision(revision: string): string {
+  return `engine:${SESSION_TRANSCRIPT_LAYOUT_ENGINE_REVISION}:${revision}`;
+}
+
 export function getWorkbenchMessageListLayoutRevision(
   uiState: WorkbenchMessageListUiState,
   options?: { verbosity?: string },
 ): string {
   return JSON.stringify({
+    layoutEngineRevision: SESSION_TRANSCRIPT_LAYOUT_ENGINE_REVISION,
     verbosity: options?.verbosity ?? uiState.verbosity ?? null,
     turnHeaders: stableTrueKeys(uiState.expandedTurnHeaders),
     turnDetails: stableTrueKeys(uiState.expandedTurnDetailsById),
@@ -134,60 +139,72 @@ export function getWorkbenchListItemHeightRevision(
         const contentRevision = fingerprintString(layout.shownContent);
         const attachmentRevision = fingerprintAttachmentLayout(item.attachments);
         if (!layout.expandable) {
-          return `message:fixed:${contentRevision}:${attachmentRevision}`;
+          return withTranscriptLayoutEngineRevision(
+            `message:fixed:${layout.renderMode}:${contentRevision}:${attachmentRevision}`,
+          );
         }
-        return layout.expanded
-          ? `message:expanded:${contentRevision}:${attachmentRevision}`
-          : `message:collapsed:${contentRevision}:${attachmentRevision}`;
+        return withTranscriptLayoutEngineRevision(
+          layout.expanded
+            ? `message:expanded:${layout.renderMode}:${contentRevision}:${attachmentRevision}`
+            : `message:collapsed:${layout.renderMode}:${contentRevision}:${attachmentRevision}`,
+        );
       }
     case "turn_header":
       {
-        const displayPlainText = getWorkbenchTurnHeaderDisplayPlainText(item.header);
         const layout = getWorkbenchTurnHeaderLayoutState(item, uiState.expandedTurnHeaders);
-        const contentRevision = fingerprintString(displayPlainText);
         const attachmentRevision = fingerprintAttachmentLayout(item.header.attachments);
         if (!layout.expandable) {
-          return `turn-header:fixed:${contentRevision}:${attachmentRevision}`;
+          return withTranscriptLayoutEngineRevision(
+            `turn-header:fixed:${layout.contentRevision}:${attachmentRevision}`,
+          );
         }
-        return layout.expanded
-          ? `turn-header:expanded:${contentRevision}:${attachmentRevision}`
-          : `turn-header:collapsed:${contentRevision}:attachments:hidden`;
+        return withTranscriptLayoutEngineRevision(
+          layout.expanded
+            ? `turn-header:expanded:${layout.contentRevision}:${attachmentRevision}`
+            : `turn-header:collapsed:${layout.contentRevision}:attachments:hidden`,
+        );
       }
     case "tool":
-      return [
-        uiState.expandedToolById[item.id] ? "tool:expanded" : "tool:collapsed",
-        item.status,
-        fingerprintString(item.title),
-        fingerprintString(item.subtitle ?? ""),
-        fingerprintUnknown(item.locations),
-        fingerprintUnknown(item.input),
-        uiState.expandedToolById[item.id] && verbosity === "verbose"
-          ? fingerprintString(item.output_text)
-          : "output:hidden",
-      ].join(":");
+      return withTranscriptLayoutEngineRevision(
+        [
+          uiState.expandedToolById[item.id] ? "tool:expanded" : "tool:collapsed",
+          item.status,
+          fingerprintString(item.title),
+          fingerprintString(item.subtitle ?? ""),
+          fingerprintUnknown(item.locations),
+          fingerprintUnknown(item.input),
+          uiState.expandedToolById[item.id] && verbosity === "verbose"
+            ? fingerprintString(item.output_text)
+            : "output:hidden",
+        ].join(":"),
+      );
     case "tool_group": {
       const expanded = uiState.expandedTurnDetailsById[item.turn_id] ?? false;
-      if (!expanded) return "tool-group:collapsed";
+      if (!expanded) return withTranscriptLayoutEngineRevision("tool-group:collapsed");
       const loading =
         item.tools.length === 0 && uiState.turnToolsLoading.includes(item.turn_id) ? "loading" : "ready";
-      return `tool-group:expanded:${loading}:${fingerprintString(item.thought)}:${toolGroupChildExpansionKey(item, uiState.expandedToolById)}`;
+      return withTranscriptLayoutEngineRevision(
+        `tool-group:expanded:${loading}:${fingerprintString(item.thought)}:${toolGroupChildExpansionKey(item, uiState.expandedToolById)}`,
+      );
     }
     case "assistant":
-      return `assistant:fixed:${fingerprintString(item.content)}`;
+      return withTranscriptLayoutEngineRevision(`assistant:fixed:${fingerprintString(item.content)}`);
     case "thought":
-      return `thought:${fingerprintString(item.content)}`;
+      return withTranscriptLayoutEngineRevision(`thought:${fingerprintString(item.content)}`);
     case "turn_status":
-      return getTurnStatusHeightRevision(item);
+      return withTranscriptLayoutEngineRevision(getTurnStatusHeightRevision(item));
     case "ask_user_question":
-      return [
-        "ask-user-question",
-        item.answered ? "answered" : "pending",
-        item.outcome ?? "none",
-        fingerprintUnknown(item.input),
-        fingerprintUnknown(item.answers ?? null),
-      ].join(":");
+      return withTranscriptLayoutEngineRevision(
+        [
+          "ask-user-question",
+          item.answered ? "answered" : "pending",
+          item.outcome ?? "none",
+          fingerprintUnknown(item.input),
+          fingerprintUnknown(item.answers ?? null),
+        ].join(":"),
+      );
     default:
-      return "fixed";
+      return withTranscriptLayoutEngineRevision("fixed");
   }
 }
 

@@ -16,7 +16,8 @@ import {
 } from "../../utils/pretextPerfDiagnostics";
 import { getPretextVirtualizerRowLayout } from "./pretextVirtualizerRowLayout";
 
-export const SESSION_PRETEXT_OVERSCAN_PX = 2400;
+// Exact row heights let the session keep a tight render budget.
+export const SESSION_PRETEXT_OVERSCAN_PX = 640;
 export const SESSION_PRETEXT_BOTTOM_THRESHOLD_PX = 16;
 
 type PlannedLayoutGetter = (
@@ -268,13 +269,19 @@ export function noteSessionPretextRuntimeSnapshot(
   record: SessionPretextRuntimeRecord,
   snapshot: PretextVirtualizerSnapshot<WorkbenchListItem>,
   listItems: readonly WorkbenchListItem[],
+  preparedKeys?: {
+    sourceKey?: string | null;
+    layoutKey?: string | null;
+  },
 ): void {
   record.preparedSnapshot = snapshot;
   record.preparedItems = listItems;
-  record.preparedSourceKey = buildSessionPretextRuntimeSourceKey(listItems, record.uiState);
-  record.preparedLayoutKey = buildSessionPretextRuntimeLayoutKey({
-    uiState: record.uiState,
-  });
+  if (preparedKeys && "sourceKey" in preparedKeys) {
+    record.preparedSourceKey = preparedKeys.sourceKey ?? null;
+  }
+  if (preparedKeys && "layoutKey" in preparedKeys) {
+    record.preparedLayoutKey = preparedKeys.layoutKey ?? null;
+  }
 }
 
 export function primeSessionPretextRuntime(

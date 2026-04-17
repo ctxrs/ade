@@ -3,7 +3,6 @@ import type { PretextVirtualizerItemLocation } from "@pretext-virtualizer/interf
 import type { WorkbenchListItem } from "../SessionPage.types";
 import type { WorkbenchMessageListUiState } from "../sessionMessageListItemIdentity";
 import {
-  buildSessionPretextRuntimeSourceKey,
   primeSessionPretextRuntime,
   readSessionPretextRuntimePreparedState,
   type SessionPretextRuntimeRecord,
@@ -16,12 +15,12 @@ export function createInitialSessionThreadPretextSnapshot(params: {
   sessionId: string;
   listItems: readonly WorkbenchListItem[];
   uiState: WorkbenchMessageListUiState;
+  sourceKey: string;
   layoutKey: string;
 }): PretextVirtualizerSnapshot<WorkbenchListItem> {
   const preparedState = readSessionPretextRuntimePreparedState(params.runtime);
-  const sourceKey = buildSessionPretextRuntimeSourceKey(params.listItems, params.uiState);
   const preparedMatchesCurrentInputs =
-    preparedState.sourceKey === sourceKey && preparedState.layoutKey === params.layoutKey;
+    preparedState.sourceKey === params.sourceKey && preparedState.layoutKey === params.layoutKey;
   if (
     params.listItems.length === 0 ||
     (preparedState.snapshot.visibleItems.length > 0 && preparedMatchesCurrentInputs)
@@ -38,7 +37,7 @@ export function createInitialSessionThreadPretextSnapshot(params: {
     uiState: params.uiState,
     viewportWidth: warmState.viewportWidth,
     viewportHeight: warmState.viewportHeight,
-    sourceKey,
+    sourceKey: params.sourceKey,
     layoutKey: params.layoutKey,
   });
   return readSessionPretextRuntimePreparedState(primedRuntime).snapshot;

@@ -249,6 +249,36 @@ describe("SessionThreadPretextVirtualizerList", () => {
     expect(container.querySelectorAll("[data-pretext-virtualizer-row='1']").length).toBeGreaterThan(0);
   });
 
+  it("keeps normal runtime free of per-row mismatch observers and bounds the rendered window", () => {
+    const { container } = render(
+      <SessionThreadPretextVirtualizerList
+        style={{ height: 400 }}
+        sessionId="session-bounded-window"
+        isActive
+        listItems={makeItems(200)}
+        threadProjectionOp={noopProjectionOp}
+        itemContent={(_, item) => <div>{item.id}</div>}
+        itemKey={(item) => item.id}
+        context={context}
+      />,
+    );
+
+    expect(resizeObserverInstances).toHaveLength(1);
+
+    const scroller = container.querySelector<HTMLElement>("[data-pretext-virtualizer-list='1']");
+    expect(scroller).not.toBeNull();
+    defineScrollerMetrics(scroller!, { clientHeight: 400, clientWidth: 900, scrollHeight: 16000 });
+
+    act(() => {
+      resizeObserverInstances[0]?.callback([], {} as ResizeObserver);
+      scroller!.scrollTop = 6000;
+      fireEvent.scroll(scroller!);
+    });
+
+    expect(resizeObserverInstances).toHaveLength(1);
+    expect(getRenderedItemIds(container).length).toBeLessThan(40);
+  });
+
   it("hydrates the initial snapshot from the warm viewport when the prepared runtime is still empty", () => {
     const sessionId = "session-warm-open";
     const runtime = getOrCreateSessionPretextRuntime(sessionId);
@@ -1500,8 +1530,8 @@ describe("SessionThreadPretextVirtualizerList", () => {
       expandedRender.unmount();
 
       const runtime = getOrCreateSessionPretextRuntime(sessionId);
-      const patchItemsSpy = vi.spyOn(runtime.core, "patchItems");
-      patchItemsSpy.mockClear();
+      const syncItemsSpy = vi.spyOn(runtime.core, "syncItems");
+      syncItemsSpy.mockClear();
 
       const reopenedRender = render(
         <SessionThreadPretextVirtualizerList
@@ -1535,7 +1565,7 @@ describe("SessionThreadPretextVirtualizerList", () => {
       const freshCollapsedShells = freshCollapsedRender.container.querySelectorAll<HTMLElement>("[data-pretext-virtualizer-row-shell='1']");
       const freshCollapsedStatusTop = Number.parseFloat(freshCollapsedShells[1]?.style.top ?? "0");
 
-      expect(patchItemsSpy).toHaveBeenCalled();
+      expect(syncItemsSpy).toHaveBeenCalled();
       expect(expandedStatusTop).toBeGreaterThan(freshCollapsedStatusTop);
       expect(reopenedStatusTop).toBe(freshCollapsedStatusTop);
     } finally {
@@ -1625,8 +1655,8 @@ describe("SessionThreadPretextVirtualizerList", () => {
         preparedLayoutKey: string | null;
       };
       runtime.preparedLayoutKey = null;
-      const patchItemsSpy = vi.spyOn(runtime.core, "patchItems");
-      patchItemsSpy.mockClear();
+      const syncItemsSpy = vi.spyOn(runtime.core, "syncItems");
+      syncItemsSpy.mockClear();
 
       render(
         <SessionThreadPretextVirtualizerList
@@ -1641,7 +1671,7 @@ describe("SessionThreadPretextVirtualizerList", () => {
         />,
       );
 
-      expect(patchItemsSpy).toHaveBeenCalled();
+      expect(syncItemsSpy).toHaveBeenCalled();
     } finally {
       if (originalClientWidth) {
         Object.defineProperty(HTMLElement.prototype, "clientWidth", originalClientWidth);

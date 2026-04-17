@@ -1,10 +1,10 @@
 import type { Message, SessionEvent, SessionTurn, SessionTurnTool } from "../../api/client";
-import {
-  deriveAssistantStreamingKey,
-  deriveMessagesKey,
-  deriveTurnsKey,
-} from "../../pages/workbenchViewModel/messageKeys";
 import { deriveSessionThreadEventsStamp } from "./applyEvents";
+import {
+  buildAssistantStreamingStamp,
+  buildMessagesStamp,
+  buildTurnsStamp,
+} from "./stamps";
 import type { SessionThreadProjection } from "./types";
 import type { AssistantStreamingState } from "../assistantStreaming";
 
@@ -28,19 +28,20 @@ export function buildSessionThreadProjectionFromSnapshot(
 ): SessionThreadProjection {
   const turns = source.turns ?? [];
   const assistantStreamingByTurnId = source.assistantStreamingByTurnId ?? {};
-  const assistantStreamingStamp = `${source.assistantStreamingRev ?? 0}:${deriveAssistantStreamingKey(
+  const assistantStreamingStamp = buildAssistantStreamingStamp(
     assistantStreamingByTurnId,
-  )}`;
+    source.assistantStreamingRev,
+  );
   const messages = source.messages ?? [];
   const events = source.events ?? [];
   return {
     loaded: Boolean(source.stateLoaded),
     turns,
-    turnsStamp: `${source.turnsRev ?? 0}:${deriveTurnsKey(turns)}:${assistantStreamingStamp}`,
+    turnsStamp: buildTurnsStamp(turns, source.turnsRev, assistantStreamingStamp),
     assistantStreamingByTurnId,
     assistantStreamingStamp,
     messages,
-    messagesStamp: `${source.messagesRev ?? 0}:${deriveMessagesKey(messages)}`,
+    messagesStamp: buildMessagesStamp(messages, source.messagesRev),
     events,
     eventsStamp: deriveSessionThreadEventsStamp(events, source.eventsRev),
     toolsByTurnId: source.turnToolsByTurnId ?? {},

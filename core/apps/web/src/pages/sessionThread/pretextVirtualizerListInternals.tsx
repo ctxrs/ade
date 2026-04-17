@@ -14,30 +14,32 @@ import type { WorkbenchThreadProjectionOp } from "../sessionThreadProjection";
 
 const DEBUG_ROW_SIZE_DELTA_PX = 1;
 
+function isPretextVirtualizerDebugEnabled(): boolean {
+  try {
+    return new URLSearchParams(window.location.search).get("debug") === "1";
+  } catch {
+    return false;
+  }
+}
+
 export function AuditedPretextRow({
   id,
   itemKind,
   itemKey,
   plannedHeight,
-  onHeightMismatch,
   children,
 }: {
   id: string;
   itemKind: WorkbenchListItem["kind"];
   itemKey: string;
   plannedHeight: number;
-  onHeightMismatch?: (itemId: string) => void;
   children: ReactNode;
 }) {
+  const debugEnabled = isPretextVirtualizerDebugEnabled();
   const rowRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    let debugEnabled = false;
-    try {
-      debugEnabled = new URLSearchParams(window.location.search).get("debug") === "1";
-    } catch {
-      debugEnabled = false;
-    }
+    if (!debugEnabled) return;
     const rowEl = rowRef.current;
     if (!rowEl) return;
     const shellEl = rowEl.closest("[data-pretext-virtualizer-row-shell='1']") as HTMLElement | null;
@@ -54,8 +56,6 @@ export function AuditedPretextRow({
       const signature = `${reason}:${plannedHeight}:${Math.round(actualHeight)}:${Math.round(shellHeight)}`;
       if (signature === lastSignature) return;
       lastSignature = signature;
-      onHeightMismatch?.(id);
-      if (!debugEnabled) return;
       recordSessionMessageListRowSizeMismatch({
         id,
         itemKind,
@@ -93,7 +93,15 @@ export function AuditedPretextRow({
       cancelAnimationFrame(rafId);
       observer.disconnect();
     };
-  }, [id, itemKey, itemKind, onHeightMismatch, plannedHeight]);
+  }, [debugEnabled, id, itemKey, itemKind, plannedHeight]);
+
+  if (!debugEnabled) {
+    return (
+      <div role="listitem" data-thread-item-id={id}>
+        {children}
+      </div>
+    );
+  }
 
   return (
     <div ref={rowRef} role="listitem" data-thread-item-id={id}>
@@ -193,6 +201,22 @@ function nextItemsEndWithPreviousItems(
   return true;
 }
 
+function nextItemsEndWithStablePreviousItems(
+  previousItems: readonly WorkbenchListItem[],
+  nextItems: readonly WorkbenchListItem[],
+): boolean {
+  if (!nextItemsEndWithPreviousItems(previousItems, nextItems)) {
+    return false;
+  }
+  const prefixLen = nextItems.length - previousItems.length;
+  for (let index = 0; index < previousItems.length; index += 1) {
+    if (nextItems[prefixLen + index] !== previousItems[index]) {
+      return false;
+    }
+  }
+  return true;
+}
+
 function previousItemsEndWithNextItems(
   previousItems: readonly WorkbenchListItem[],
   nextItems: readonly WorkbenchListItem[],
@@ -259,10 +283,9 @@ export function syncSnapshotForProjectionOp({
       }
       return core.syncItems(items, anchorOverride);
     case "prepend_history":
-      if (nextItemsEndWithPreviousItems(previousItems, items)) {
+      if (nextItemsEndWithStablePreviousItems(previousItems, items)) {
         const prependCount = items.length - previousItems.length;
-        const prependedSnapshot = core.prependItems(items.slice(0, prependCount), anchorOverride);
-        return core.syncItems(items, prependedSnapshot.anchor);
+        return core.prependItems(items.slice(0, prependCount), anchorOverride);
       }
       return core.syncItems(items, anchorOverride);
     case "hydrate_tools":

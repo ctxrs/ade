@@ -3242,6 +3242,7 @@
   font-size: var(--wb-markdown-body-font-size);
   line-height: var(--wb-markdown-body-line-height);
   color: var(--text);
+  white-space: pre-wrap;
   overflow-wrap: break-word;
   word-break: normal;
   padding-right: var(--wb-turn-header-copy-gutter);
@@ -3546,10 +3547,17 @@
 .wb-turn-header-content,
 .wb-tool-markdown,
 .wb-assistant-body,
+.wb-message-plain-text,
 .msg :where(.wb-markdown-root) {
   font-family: var(--wb-markdown-body-font-family);
   font-size: var(--wb-markdown-body-font-size);
   line-height: var(--wb-markdown-body-line-height);
+}
+
+.wb-message-plain-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .wb-turn-header-content a,

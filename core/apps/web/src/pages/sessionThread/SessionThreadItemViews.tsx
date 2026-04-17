@@ -33,7 +33,7 @@ import {
   truncateMiddle,
 } from "../sessionView";
 import type { ThreadItem, WorkbenchTurnHeader } from "../sessionView";
-import { canCollapseMessageContent, getCollapsedMessageContent } from "./transcriptRowLayoutModel";
+import { getWorkbenchMessageCollapseState, getWorkbenchMessageLayoutState } from "./transcriptRowLayoutModel";
 
 const asRecord = (value: unknown): Record<string, unknown> => {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
@@ -113,7 +113,7 @@ export const ThreadItemView = memo(function ThreadItemView({
           attachments={item.attachments}
           worktreeId={worktreeId}
           onFileOpenError={onFileOpenError}
-          expanded={messageExpanded ?? !canCollapseMessageContent(item.content)}
+          expanded={messageExpanded ?? !getWorkbenchMessageCollapseState(item.content).canCollapse}
           onToggleExpanded={onToggleMessageExpanded}
         />
       );
@@ -212,14 +212,7 @@ export function WorkbenchTurnHeaderView({
             {copied ? <Check size={12} aria-hidden="true" /> : <Copy size={12} aria-hidden="true" />}
           </button>
         )}
-        <div className="wb-turn-header-content">
-          {plainText.split("\n").map((line, idx, list) => (
-            <span key={`${header.id}-${idx}`}>
-              {line}
-              {idx < list.length - 1 ? <br /> : null}
-            </span>
-          ))}
-        </div>
+        <div className="wb-turn-header-content">{plainText}</div>
         {expanded && header.attachments.length > 0 && (
           <div className="wb-turn-header-attachments" aria-label="Attachments">
             {header.attachments.map((a, idx) => {
@@ -254,21 +247,36 @@ function CollapsibleMessage({
   expanded: boolean;
   onToggleExpanded?: (expanded: boolean) => void;
 }) {
-  const canCollapse = canCollapseMessageContent(content);
+  const layoutState = getWorkbenchMessageLayoutState(
+    {
+      kind: "message",
+      id,
+      role,
+      content,
+      attachments,
+      created_at: "",
+    },
+    expanded ? { [id]: true } : {},
+  );
+  const canCollapse = layoutState.expandable;
   const canToggle = canCollapse && typeof onToggleExpanded === "function";
-  const shown = expanded || !canCollapse ? content : getCollapsedMessageContent(content);
+  const shown = layoutState.shownContent;
 
   return (
     <div className="wb-message-row">
       <div className={`msg ${role}`}>
         <div className="role">{role}</div>
         <div id={`msg-${id}`}>
-          <MemoMarkdown
-            content={shown}
-            linkifyFiles={role === "assistant"}
-            worktreeId={worktreeId}
-            onFileOpenError={onFileOpenError}
-          />
+          {layoutState.renderMode === "plain_text" ? (
+            <div className="wb-markdown-root wb-message-plain-text">{shown}</div>
+          ) : (
+            <MemoMarkdown
+              content={shown}
+              linkifyFiles={role === "assistant"}
+              worktreeId={worktreeId}
+              onFileOpenError={onFileOpenError}
+            />
+          )}
         </div>
         {attachments?.length > 0 && (
           <div className="attachments">

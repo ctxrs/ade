@@ -129,6 +129,31 @@ describe("classifyWorkbenchThreadProjectionOp", () => {
     expect(op.changedItemIds).toEqual(["tool-group-turn-1"]);
     expect(op.remeasureItemIds).toEqual(["tool-group-turn-1"]);
   });
+
+  it("classifies pure prefix growth as prepend history", () => {
+    const current = [
+      makeUserMessage(false),
+      makeTurnStatus(),
+    ];
+    const next = [
+      {
+        ...makeUserMessage(false),
+        id: "message-user-0",
+        created_at: "2026-03-18T23:59:59.000Z",
+      },
+      ...current,
+    ];
+
+    const op = classifyWorkbenchThreadProjectionOp({
+      current,
+      next,
+      projectionRevision: 5,
+    });
+
+    expect(op.kind).toBe("prepend_history");
+    expect(op.changedItemIds).toEqual(["message-user-0"]);
+    expect(op.remeasureItemIds).toEqual(["message-user-0", "message-user-1"]);
+  });
 });
 
 describe("createWorkbenchLayoutProjectionOp", () => {

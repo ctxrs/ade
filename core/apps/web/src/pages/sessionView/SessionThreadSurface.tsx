@@ -56,6 +56,7 @@ import { SessionQueuePanel } from "./SessionQueuePanel";
 
 export type SessionThreadSurfaceTranscriptProps = {
   listItems: WorkbenchListItem[];
+  sourceKey?: string;
   liveTailItems: WorkbenchListItem[];
   activeAskToolCallId: string | null;
   expandedTurnHeaders: Record<string, boolean>;
@@ -317,6 +318,7 @@ export function SessionThreadSurface({
         isActive={transcript.isActive}
         style={transcript.listStyle}
         initialData={transcript.initialData}
+        sourceKey={transcript.sourceKey}
         itemContent={workbenchItemContent}
         itemIdentity={transcript.itemIdentity}
         itemKey={transcript.itemKey}

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { WorkbenchListItem } from "./SessionPage.types";
+import { SESSION_TRANSCRIPT_LAYOUT_ENGINE_REVISION } from "./sessionThread/sessionMarkdownMeasurement";
 import { getWorkbenchTurnHeaderDisplayPlainText } from "./sessionThread/transcriptRowLayoutModel";
 import {
   getWorkbenchMessageListLayoutRevision,
@@ -31,14 +32,14 @@ describe("sessionMessageListItemIdentity", () => {
     };
 
     expect(resolveWorkbenchMessageExpanded(item, baseUiState.expandedMessageById)).toBe(false);
-    expect(getWorkbenchListItemKey(item, baseUiState)).toContain("message-1:message:collapsed:");
+    expect(getWorkbenchListItemKey(item, baseUiState)).toContain(":message:collapsed:");
 
     const expandedUiState: WorkbenchMessageListUiState = {
       ...baseUiState,
       expandedMessageById: { "message-1": true },
     };
     expect(resolveWorkbenchMessageExpanded(item, expandedUiState.expandedMessageById)).toBe(true);
-    expect(getWorkbenchListItemKey(item, expandedUiState)).toContain("message-1:message:expanded:");
+    expect(getWorkbenchListItemKey(item, expandedUiState)).toContain(":message:expanded:");
   });
 
   it("keeps short messages fixed", () => {
@@ -52,7 +53,7 @@ describe("sessionMessageListItemIdentity", () => {
     };
 
     expect(resolveWorkbenchMessageExpanded(item, baseUiState.expandedMessageById)).toBe(true);
-    expect(getWorkbenchListItemKey(item, baseUiState)).toContain("message-1:message:fixed:");
+    expect(getWorkbenchListItemKey(item, baseUiState)).toContain(":message:fixed:");
   });
 
   it("changes expandable message height keys when visible content or attachments change", () => {
@@ -117,7 +118,7 @@ describe("sessionMessageListItemIdentity", () => {
 
     expect(resolveWorkbenchMessageExpanded(item, baseUiState.expandedMessageById)).toBe(true);
     expect(resolveWorkbenchMessageExpanded(item, expandedUiState.expandedMessageById)).toBe(true);
-    expect(getWorkbenchListItemKey(item, baseUiState)).toContain("message-wrapped:message:fixed:");
+    expect(getWorkbenchListItemKey(item, baseUiState)).toContain(":message:fixed:");
     expect(getWorkbenchListItemKey(item, baseUiState)).toBe(getWorkbenchListItemKey(item, expandedUiState));
     expect(getWorkbenchListItemSizeCacheKey(item, baseUiState)).toBe(
       getWorkbenchListItemSizeCacheKey(item, expandedUiState),
@@ -138,14 +139,14 @@ describe("sessionMessageListItemIdentity", () => {
     };
 
     expect(resolveWorkbenchTurnHeaderExpanded(item, baseUiState.expandedTurnHeaders)).toBe(false);
-    expect(getWorkbenchListItemKey(item, baseUiState)).toContain("turn-header-1:turn-header:collapsed:");
+    expect(getWorkbenchListItemKey(item, baseUiState)).toContain(":turn-header:collapsed:");
 
     const expandedUiState: WorkbenchMessageListUiState = {
       ...baseUiState,
       expandedTurnHeaders: { "header-1": true },
     };
     expect(resolveWorkbenchTurnHeaderExpanded(item, expandedUiState.expandedTurnHeaders)).toBe(true);
-    expect(getWorkbenchListItemKey(item, expandedUiState)).toContain("turn-header-1:turn-header:expanded:");
+    expect(getWorkbenchListItemKey(item, expandedUiState)).toContain(":turn-header:expanded:");
   });
 
   it("normalizes markdown turn-header content into display plain text when plain_text is absent", () => {
@@ -160,7 +161,7 @@ describe("sessionMessageListItemIdentity", () => {
       },
     };
 
-    expect(getWorkbenchListItemKey(item, baseUiState)).toContain("turn-header-markdown:turn-header:collapsed:");
+    expect(getWorkbenchListItemKey(item, baseUiState)).toContain(":turn-header:collapsed:");
   });
 
   it("normalizes markdown-like explicit turn-header plain text into visible label text", () => {
@@ -214,14 +215,14 @@ describe("sessionMessageListItemIdentity", () => {
       ...baseUiState,
       expandedTurnDetailsById: { "turn-1": false },
     };
-    expect(getWorkbenchListItemKey(item, collapsedUiState)).toBe("tool-group-1:tool-group:collapsed");
+    expect(getWorkbenchListItemKey(item, collapsedUiState)).toContain(":tool-group:collapsed");
 
     const expandedUiState: WorkbenchMessageListUiState = {
       ...baseUiState,
       expandedTurnDetailsById: { "turn-1": true },
       expandedToolById: { "tool-1": true },
     };
-    expect(getWorkbenchListItemKey(item, expandedUiState)).toContain("tool-group-1:tool-group:expanded:ready:");
+    expect(getWorkbenchListItemKey(item, expandedUiState)).toContain(":tool-group:expanded:ready:");
     expect(getWorkbenchListItemKey(item, expandedUiState)).toContain("tool-1:open");
   });
 
@@ -250,6 +251,27 @@ describe("sessionMessageListItemIdentity", () => {
 
     expect(revisionA).toBe(revisionB);
     expect(revisionA).not.toBe(revisionC);
+  });
+
+  it("scopes layout and height identity to the transcript layout engine revision", () => {
+    const item: Extract<WorkbenchListItem, { kind: "message" }> = {
+      kind: "message",
+      id: "message-1",
+      role: "user",
+      content: "short",
+      attachments: [],
+      created_at: "2025-01-01T00:00:00.000Z",
+    };
+
+    expect(getWorkbenchMessageListLayoutRevision(baseUiState)).toContain(
+      SESSION_TRANSCRIPT_LAYOUT_ENGINE_REVISION,
+    );
+    expect(getWorkbenchListItemSizeCacheKey(item, baseUiState)).toContain(
+      SESSION_TRANSCRIPT_LAYOUT_ENGINE_REVISION,
+    );
+    expect(getWorkbenchListItemKey(item, baseUiState)).toContain(
+      SESSION_TRANSCRIPT_LAYOUT_ENGINE_REVISION,
+    );
   });
 
   it("changes assistant and thought keys when their content changes", () => {
@@ -288,7 +310,7 @@ describe("sessionMessageListItemIdentity", () => {
       is_complete: true,
     };
 
-    expect(getWorkbenchListItemKey(item, baseUiState)).toContain("assistant-1:assistant:fixed:");
+    expect(getWorkbenchListItemKey(item, baseUiState)).toContain(":assistant:fixed:");
   });
 
   it("keys pending assistant rows on the same content identity as completed rows", () => {
@@ -303,7 +325,7 @@ describe("sessionMessageListItemIdentity", () => {
       is_complete: false,
     };
 
-    expect(getWorkbenchListItemKey(item, baseUiState)).toContain("assistant-1:assistant:fixed:");
+    expect(getWorkbenchListItemKey(item, baseUiState)).toContain(":assistant:fixed:");
   });
 
   it("changes tool keys when visible collapsed or expanded content changes", () => {

@@ -211,6 +211,28 @@ export const createPretextVirtualizerCore = <Item,>({
   const clampScrollTop = (scrollTop: number, totalHeight: number): number =>
     clamp(Number.isFinite(scrollTop) ? scrollTop : 0, 0, getMaxScrollTop(totalHeight));
 
+  const findFirstIndexWithBottomAfter = (
+    layout: PretextVirtualizerComputedLayout<Item>,
+    offset: number,
+  ): number => {
+    const itemCount = layout.heights.length;
+    if (itemCount === 0) {
+      return 0;
+    }
+    let low = 0;
+    let high = itemCount;
+    while (low < high) {
+      const middle = (low + high) >> 1;
+      const bottom = (layout.offsets[middle] ?? 0) + (layout.heights[middle]?.height ?? 0);
+      if (bottom <= offset) {
+        low = middle + 1;
+      } else {
+        high = middle;
+      }
+    }
+    return clamp(low, 0, Math.max(0, itemCount - 1));
+  };
+
   const captureAnchor = (
     layout = computeLayout(),
     scrollTop = state.scrollTop,
@@ -223,7 +245,8 @@ export const createPretextVirtualizerCore = <Item,>({
     }
     const viewportBottom = normalizedScrollTop + state.viewportHeight;
     let fallbackAnchor: PretextVirtualizerLogicalAnchor | null = null;
-    for (let index = 0; index < layout.heights.length; index += 1) {
+    const startIndex = findFirstIndexWithBottomAfter(layout, normalizedScrollTop);
+    for (let index = startIndex; index < layout.heights.length; index += 1) {
       const entry = layout.heights[index]!;
       const top = layout.offsets[index]!;
       const bottom = top + entry.height;
@@ -252,7 +275,8 @@ export const createPretextVirtualizerCore = <Item,>({
     const visibleTop = Math.max(0, state.scrollTop - overscanPx);
     const visibleBottom = state.scrollTop + state.viewportHeight + overscanPx;
     const visibleItems: PretextVirtualizerVisibleItem<Item>[] = [];
-    for (let index = 0; index < layout.heights.length; index += 1) {
+    const startIndex = findFirstIndexWithBottomAfter(layout, visibleTop);
+    for (let index = startIndex; index < layout.heights.length; index += 1) {
       const entry = layout.heights[index]!;
       const top = layout.offsets[index]!;
       const bottom = top + entry.height;

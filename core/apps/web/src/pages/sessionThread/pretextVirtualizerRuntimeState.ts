@@ -19,8 +19,12 @@ export function commitSessionThreadRuntimeSnapshot(
   runtime: SessionPretextRuntimeRecord,
   snapshot: PretextVirtualizerSnapshot<WorkbenchListItem>,
   listItems: readonly WorkbenchListItem[],
+  preparedKeys?: {
+    sourceKey?: string | null;
+    layoutKey?: string | null;
+  },
 ): void {
-  noteSessionPretextRuntimeSnapshot(runtime, snapshot, listItems);
+  noteSessionPretextRuntimeSnapshot(runtime, snapshot, listItems, preparedKeys);
   noteSessionTranscriptWarmViewport({
     width: snapshot.viewportWidth,
     height: snapshot.viewportHeight,

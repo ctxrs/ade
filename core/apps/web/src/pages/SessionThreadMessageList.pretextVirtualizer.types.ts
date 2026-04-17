@@ -15,6 +15,7 @@ export type SessionThreadPretextVirtualizerListProps = {
   sessionId: string;
   isActive: boolean;
   listItems: WorkbenchListItem[];
+  sourceKey?: string;
   threadProjectionOp: WorkbenchThreadProjectionOp;
   initialLocation?: PretextVirtualizerItemLocation | null;
   itemContent: (index: number, item: WorkbenchListItem) => ReactNode;

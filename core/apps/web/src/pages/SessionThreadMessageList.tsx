@@ -15,6 +15,7 @@ export const SessionThreadMessageList = memo(function SessionThreadMessageList({
   isActive,
   style,
   initialData,
+  sourceKey,
   itemContent,
   itemKey,
   initialLocation,
@@ -32,6 +33,7 @@ export const SessionThreadMessageList = memo(function SessionThreadMessageList({
   isActive: boolean;
   style: CSSProperties;
   initialData: WorkbenchListItem[];
+  sourceKey?: string;
   itemContent: (index: number, item: WorkbenchListItem) => ReactNode;
   itemIdentity: (item: WorkbenchListItem) => unknown;
   itemKey: (item: WorkbenchListItem) => string;
@@ -51,6 +53,7 @@ export const SessionThreadMessageList = memo(function SessionThreadMessageList({
       sessionId={sessionId}
       isActive={isActive}
       listItems={initialData}
+      sourceKey={sourceKey}
       itemContent={itemContent}
       itemKey={itemKey}
       initialLocation={initialLocation}

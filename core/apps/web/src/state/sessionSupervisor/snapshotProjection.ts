@@ -7,10 +7,10 @@ import type {
 import { buildSessionThreadProjectionFromSnapshot } from "../sessionThreadProjection/applySnapshot";
 import { deriveSessionThreadEventsStamp } from "../sessionThreadProjection/applyEvents";
 import {
-  deriveAssistantStreamingKey,
-  deriveMessagesKey,
-  deriveTurnsKey,
-} from "../../pages/workbenchViewModel/messageKeys";
+  buildAssistantStreamingStamp,
+  buildMessagesStamp,
+  buildTurnsStamp,
+} from "../sessionThreadProjection/stamps";
 
 export type SessionSupervisorSnapshotProjectionHost = {
   maxCachedSessions: number;
@@ -85,17 +85,18 @@ function threadProjectionStillMatchesEntry(
   if (!projection) {
     return false;
   }
-  const assistantStreamingStamp = `${entry.assistantStreamingRev ?? 0}:${deriveAssistantStreamingKey(
+  const assistantStreamingStamp = buildAssistantStreamingStamp(
     entry.assistantStreamingByTurnId,
-  )}`;
+    entry.assistantStreamingRev,
+  );
   if (projection.assistantStreamingStamp !== assistantStreamingStamp) {
     return false;
   }
-  const turnsStamp = `${entry.turnsRev ?? 0}:${deriveTurnsKey(entry.turns)}:${assistantStreamingStamp}`;
+  const turnsStamp = buildTurnsStamp(entry.turns, entry.turnsRev, assistantStreamingStamp);
   if (projection.turnsStamp !== turnsStamp) {
     return false;
   }
-  const messagesStamp = `${entry.messagesRev ?? 0}:${deriveMessagesKey(entry.messages)}`;
+  const messagesStamp = buildMessagesStamp(entry.messages, entry.messagesRev);
   if (projection.messagesStamp !== messagesStamp) {
     return false;
   }

@@ -76,6 +76,7 @@ type SessionWorkbenchPaneProps = {
   dropActive: boolean;
   dropScopeRef: MutableRefObject<HTMLDivElement | null>;
   listItems: WorkbenchListItem[];
+  threadListSourceKey?: string;
   liveTailItems: WorkbenchListItem[];
   events: SessionEvent[];
   messages: Message[];
@@ -192,6 +193,7 @@ export function SessionWorkbenchPane({
   dropActive,
   dropScopeRef,
   listItems,
+  threadListSourceKey,
   liveTailItems,
   events,
   messages,
@@ -405,6 +407,7 @@ export function SessionWorkbenchPane({
           handleFileOpenError={handleFileOpenError}
           transcript={{
             listItems,
+            sourceKey: threadListSourceKey,
             liveTailItems,
             activeAskToolCallId,
             expandedTurnHeaders,

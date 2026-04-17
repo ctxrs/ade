@@ -136,7 +136,10 @@ describe("pretextSessionRuntimeCache", () => {
       uiState: expandedUiState,
     });
     const expandedSnapshot = runtime.core.replaceItems(listItems, { kind: "bottom" });
-    noteSessionPretextRuntimeSnapshot(runtime, expandedSnapshot, listItems);
+    noteSessionPretextRuntimeSnapshot(runtime, expandedSnapshot, listItems, {
+      sourceKey: buildSessionPretextRuntimeSourceKey(listItems, expandedUiState),
+      layoutKey: buildSessionPretextRuntimeLayoutKey({ uiState: expandedUiState }),
+    });
 
     expect(readSessionPretextRuntimePreparedState(runtime)).toMatchObject({
       sourceKey: buildSessionPretextRuntimeSourceKey(listItems, expandedUiState),
@@ -147,11 +150,40 @@ describe("pretextSessionRuntimeCache", () => {
       uiState: collapsedUiState,
     });
     const collapsedSnapshot = runtime.core.syncItems(updatedItems, { kind: "bottom" });
-    noteSessionPretextRuntimeSnapshot(runtime, collapsedSnapshot, updatedItems);
+    noteSessionPretextRuntimeSnapshot(runtime, collapsedSnapshot, updatedItems, {
+      sourceKey: buildSessionPretextRuntimeSourceKey(updatedItems, collapsedUiState),
+      layoutKey: buildSessionPretextRuntimeLayoutKey({ uiState: collapsedUiState }),
+    });
 
     expect(readSessionPretextRuntimePreparedState(runtime)).toMatchObject({
       sourceKey: buildSessionPretextRuntimeSourceKey(updatedItems, collapsedUiState),
       layoutKey: buildSessionPretextRuntimeLayoutKey({ uiState: collapsedUiState }),
+    });
+  });
+
+  it("preserves prepared keys when recording a scroll snapshot without content changes", () => {
+    const sessionId = "session-scroll-snapshot";
+    const listItems = makeItems(4);
+    const uiState = createDefaultSessionTranscriptUiState();
+    const runtime = primeSessionPretextRuntime({
+      sessionId,
+      listItems,
+      uiState,
+      viewportWidth: 900,
+      viewportHeight: 300,
+    });
+    const preparedBefore = readSessionPretextRuntimePreparedState(runtime);
+
+    const scrolledSnapshot = runtime.core.syncViewport({
+      width: 900,
+      height: 300,
+      scrollTop: 120,
+    });
+    noteSessionPretextRuntimeSnapshot(runtime, scrolledSnapshot, listItems);
+
+    expect(readSessionPretextRuntimePreparedState(runtime)).toMatchObject({
+      sourceKey: preparedBefore.sourceKey,
+      layoutKey: preparedBefore.layoutKey,
     });
   });
 

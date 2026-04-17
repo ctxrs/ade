@@ -110,6 +110,26 @@ describe("createPretextVirtualizerCore", () => {
     expect(snapshot.visibleItems.at(-1)?.id).toBe("item-4");
   });
 
+  it("selects the visible window from the first intersecting row instead of the list head", () => {
+    const core = createCore(new Array(20).fill(null).map((_, index) => ({
+      id: `item-${index + 1}`,
+      layoutRevision: 0,
+      plannedHeight: 40,
+    })));
+
+    const snapshot = core.syncViewport({
+      height: 100,
+      width: 320,
+      scrollTop: 410,
+    });
+
+    expect(snapshot.visibleItems.map((item) => item.id)).toEqual([
+      "item-11",
+      "item-12",
+      "item-13",
+    ]);
+  });
+
   it("measures only appended rows when growing the tail", () => {
     let measureCalls = 0;
     const core = createPretextVirtualizerCore<FixtureItem>({

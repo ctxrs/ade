@@ -95,6 +95,7 @@ export type WorkbenchTurnHeader = {
   id: string;
   content: string;
   plain_text?: string;
+  content_revision?: string;
   attachments: MessageAttachment[];
   created_at: string;
 };

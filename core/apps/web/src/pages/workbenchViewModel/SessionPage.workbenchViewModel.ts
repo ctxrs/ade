@@ -549,6 +549,7 @@ export function buildWorkbenchThreadViewModelFromTurns(
       ? {
         id: headerId,
         content: userMessage.content ?? "",
+        content_revision: userMessage.id,
         attachments: Array.isArray(userMessage.attachments)
           ? userMessage.attachments
           : [],

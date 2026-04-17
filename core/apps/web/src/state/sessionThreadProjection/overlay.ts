@@ -6,12 +6,12 @@ import {
   mergeMessagesForView,
   mergeQueuedMessagesForPanel,
 } from "../../pages/workbenchViewModel/messageMerge";
-import {
-  deriveAssistantStreamingKey,
-  deriveMessagesKey,
-  deriveTurnsKey,
-} from "../../pages/workbenchViewModel/messageKeys";
 import type { SessionCacheEntry } from "../sessionSupervisor/entryState";
+import {
+  buildAssistantStreamingStamp,
+  buildMessagesStamp,
+  buildTurnsStamp,
+} from "./stamps";
 import type { SessionThreadProjection } from "./types";
 
 type SessionThreadProjectionOverlaySource = Pick<
@@ -86,16 +86,21 @@ export function applySessionThreadProjectionOverlay(
   }
 
   const turnsForThread = filterTurnsForQueuedMessages(turnsWithPending, queuedMessageIdsForThread);
+  const assistantStreamingStamp =
+    baseProjection.assistantStreamingStamp ||
+    buildAssistantStreamingStamp(baseProjection.assistantStreamingByTurnId, 0);
   return {
     ...baseProjection,
     turns: turnsForThread,
-    turnsStamp: `${baseProjection.projectionRev + overlayRev}:${deriveTurnsKey(turnsForThread)}:${baseProjection.assistantStreamingStamp}`,
+    turnsStamp: buildTurnsStamp(
+      turnsForThread,
+      baseProjection.projectionRev + overlayRev,
+      assistantStreamingStamp,
+    ),
     assistantStreamingByTurnId: baseProjection.assistantStreamingByTurnId,
-    assistantStreamingStamp:
-      baseProjection.assistantStreamingStamp ||
-      `0:${deriveAssistantStreamingKey(baseProjection.assistantStreamingByTurnId)}`,
+    assistantStreamingStamp,
     messages: mergedMessages,
-    messagesStamp: `${baseProjection.projectionRev + overlayRev}:${deriveMessagesKey(mergedMessages)}`,
+    messagesStamp: buildMessagesStamp(mergedMessages, baseProjection.projectionRev + overlayRev),
     projectionRev: baseProjection.projectionRev + overlayRev,
   };
 }

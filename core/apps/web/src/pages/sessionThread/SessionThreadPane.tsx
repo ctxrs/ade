@@ -15,6 +15,7 @@ export function SessionThreadPane({
   isActive,
   style,
   initialData,
+  sourceKey,
   itemContent,
   itemIdentity,
   itemKey,
@@ -33,6 +34,7 @@ export function SessionThreadPane({
   isActive: boolean;
   style: CSSProperties;
   initialData: WorkbenchListItem[];
+  sourceKey?: string;
   itemContent: (index: number, item: WorkbenchListItem) => ReactNode;
   itemIdentity: (item: WorkbenchListItem) => unknown;
   itemKey: (item: WorkbenchListItem) => string;
@@ -58,6 +60,7 @@ export function SessionThreadPane({
           isActive={isActive}
           style={style}
           initialData={initialData}
+          sourceKey={sourceKey}
           itemContent={itemContent}
           itemIdentity={itemIdentity}
           itemKey={itemKey}

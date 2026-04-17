@@ -21,6 +21,7 @@ e2e/workbench-message-list-overscroll.spec.ts
 e2e/workbench-interrupt-transition-stability.spec.ts
 e2e/workbench-scrollback-jank-video.spec.ts
 e2e/workbench-scroll-stickiness.spec.ts
+e2e/workbench-reference-history-freeze.spec.ts
 e2e/workbench-session-history-scroll-anchor.spec.ts
 e2e/workbench-tool-summaries-stability.spec.ts
 e2e/workbench-turn-header-parity.spec.ts

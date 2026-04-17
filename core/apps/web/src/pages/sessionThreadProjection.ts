@@ -94,6 +94,15 @@ function endsWithIds(current: readonly WorkbenchListItem[], next: readonly Workb
   return true;
 }
 
+function endsWithSameItems(current: readonly WorkbenchListItem[], next: readonly WorkbenchListItem[]): boolean {
+  if (next.length < current.length) return false;
+  const offset = next.length - current.length;
+  for (let index = 0; index < current.length; index += 1) {
+    if (current[index] !== next[offset + index]) return false;
+  }
+  return true;
+}
+
 function hasSameIdSequence(current: readonly WorkbenchListItem[], next: readonly WorkbenchListItem[]): boolean {
   if (current.length !== next.length) return false;
   for (let index = 0; index < current.length; index += 1) {
@@ -180,7 +189,7 @@ export function classifyWorkbenchThreadProjectionOp(params: {
     );
   }
 
-  if (next.length > current.length && endsWithIds(current, next)) {
+  if (next.length > current.length && endsWithIds(current, next) && endsWithSameItems(current, next)) {
     const changedItemIds = next.slice(0, next.length - current.length).map((item) => item.id);
     return createWorkbenchThreadProjectionOp(
       "prepend_history",

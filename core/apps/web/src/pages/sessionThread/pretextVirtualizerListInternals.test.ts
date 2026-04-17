@@ -1,6 +1,6 @@
 import { createPretextVirtualizerCore } from "@pretext-virtualizer/core";
 import type { PretextVirtualizerLogicalAnchor, PretextVirtualizerSnapshot } from "@pretext-virtualizer/core";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { WorkbenchListItem } from "../SessionPage.types";
 import type { WorkbenchThreadProjectionOp } from "../sessionThreadProjection";
 import {
@@ -286,7 +286,35 @@ describe("syncSnapshotForProjectionOp", () => {
     });
   });
 
-  it("refreshes retained row payloads after prepend_history fast-path", () => {
+  it("uses prependItems without a full sync when the retained suffix is exact", () => {
+    const previousItems = [makeMessage("item-1"), makeMessage("item-2"), makeMessage("item-3")];
+    const nextItems = [makeMessage("older-1"), ...previousItems];
+    const core = createCore(previousItems, {
+      "older-1": 24,
+      "item-1": 40,
+      "item-2": 64,
+      "item-3": 72,
+    });
+    const prependSpy = vi.spyOn(core, "prependItems");
+    const syncSpy = vi.spyOn(core, "syncItems");
+
+    syncSnapshotForProjectionOp({
+      core,
+      items: nextItems,
+      projectionOp: {
+        kind: "prepend_history",
+        projectionRevision: 1,
+        changedItemIds: ["older-1"],
+        remeasureItemIds: ["older-1"],
+      },
+      previousItems,
+    });
+
+    expect(prependSpy).toHaveBeenCalledTimes(1);
+    expect(syncSpy).not.toHaveBeenCalled();
+  });
+
+  it("falls back to full sync when prepended history also mutates the retained suffix", () => {
     const previousItems = [
       makeMessage("item-1"),
       { ...makeMessage("item-2"), content: "old payload" },
@@ -306,6 +334,8 @@ describe("syncSnapshotForProjectionOp", () => {
       "item-2": 64,
       "item-3": 72,
     });
+    const prependSpy = vi.spyOn(core, "prependItems");
+    const syncSpy = vi.spyOn(core, "syncItems");
     core.syncViewport({
       height: 100,
       width: 320,
@@ -325,6 +355,8 @@ describe("syncSnapshotForProjectionOp", () => {
     });
 
     const refreshedItem = snapshot.visibleItems.find((item) => item.id === "item-2")?.item;
+    expect(prependSpy).not.toHaveBeenCalled();
+    expect(syncSpy).toHaveBeenCalledTimes(1);
     expect(refreshedItem && refreshedItem.kind === "message" ? refreshedItem.content : null).toBe("new payload");
   });
 

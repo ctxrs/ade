@@ -116,6 +116,81 @@ function collectChangedToolTurnIds(
   return changed;
 }
 
+function buildGroupSegment(
+  group: WorkbenchThreadView["groups"][number],
+  verbosity: SessionViewVerbosity,
+): WorkbenchListItem[] {
+  const segment: WorkbenchListItem[] = [];
+  if (group.header) {
+    segment.push({ kind: "turn_header", id: `turn-header-${group.header.id}`, header: group.header });
+  }
+  segment.push(...filterThreadItemsForVerbosity(group.items, verbosity));
+  return segment;
+}
+
+function flattenWorkbenchGroups(
+  groups: WorkbenchThreadView["groups"],
+  verbosity: SessionViewVerbosity,
+): {
+  listItems: WorkbenchListItem[];
+  groupRanges: Map<string, { start: number; end: number }>;
+} {
+  const listItems: WorkbenchListItem[] = [];
+  const groupRanges = new Map<string, { start: number; end: number }>();
+  for (const group of groups) {
+    const start = listItems.length;
+    listItems.push(...buildGroupSegment(group, verbosity));
+    groupRanges.set(String(group.key ?? getTurnGroupKey("")), {
+      start,
+      end: listItems.length,
+    });
+  }
+  return { listItems, groupRanges };
+}
+
+function hasExactStableSuffixById<T>(
+  previous: readonly T[],
+  next: readonly T[],
+  getId: (value: T) => string,
+): boolean {
+  if (next.length < previous.length) return false;
+  const offset = next.length - previous.length;
+  for (let index = 0; index < previous.length; index += 1) {
+    if (
+      previous[index] !== next[offset + index] ||
+      getId(previous[index]!) !== getId(next[offset + index]!)
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function buildSubsetToolMap(
+  turnIds: ReadonlySet<string>,
+  toolsByTurnId: Record<string, SessionTurnTool[]>,
+): Record<string, SessionTurnTool[]> {
+  const subset: Record<string, SessionTurnTool[]> = {};
+  for (const turnId of turnIds) {
+    subset[turnId] = toolsByTurnId[turnId] ?? [];
+  }
+  return subset;
+}
+
+function buildSubsetAssistantStreamingMap(
+  turnIds: ReadonlySet<string>,
+  assistantStreamingByTurnId: Record<string, AssistantStreamingState>,
+): Record<string, AssistantStreamingState> {
+  const subset: Record<string, AssistantStreamingState> = {};
+  for (const turnId of turnIds) {
+    const state = assistantStreamingByTurnId[turnId];
+    if (state) {
+      subset[turnId] = state;
+    }
+  }
+  return subset;
+}
+
 
 /**
  * Narrow sanctioned projector fast path:
@@ -259,6 +334,8 @@ export function useWorkbenchThreadViewModelController(
   const lastMessagesStampRef = useRef(messagesStamp);
   const lastEventsStampRef = useRef(eventsStamp);
   const lastEventsRef = useRef(events);
+  const lastTurnsRef = useRef(turns);
+  const lastMessagesRef = useRef(messages);
   const lastEnableDebugEventsRef = useRef(enableDebugEvents);
   const lastVerbosityRef = useRef(verbosity);
   const lastAskUserQuestionAnswersRef = useRef(askUserQuestionAnswers);
@@ -326,12 +403,136 @@ export function useWorkbenchThreadViewModelController(
       lastTurnsStampRef.current = turnsStamp;
       lastMessagesStampRef.current = messagesStamp;
       lastEventsStampRef.current = eventsStamp;
+      lastTurnsRef.current = turns;
+      lastMessagesRef.current = messages;
       lastEventsRef.current = events;
       lastEnableDebugEventsRef.current = enableDebugEvents;
       lastVerbosityRef.current = verbosity;
       lastAskUserQuestionAnswersRef.current = askUserQuestionAnswers;
       lastToolSummariesReadyRef.current = toolSummariesReady;
       lastToolsByTurnIdRef.current = toolsByTurnId;
+    };
+
+    const tryPrependHistory = (): boolean => {
+      const previousTurns = lastTurnsRef.current;
+      const previousMessages = lastMessagesRef.current;
+      if (eventsStampChanged || events.length !== state.eventsLen) {
+        return false;
+      }
+      if (turns.length <= previousTurns.length || messages.length < previousMessages.length) {
+        return false;
+      }
+      if (
+        !hasExactStableSuffixById(previousTurns, turns, (turn) => idToString(turn.turn_id)) ||
+        !hasExactStableSuffixById(previousMessages, messages, (message) => idToString(message.id))
+      ) {
+        return false;
+      }
+
+      const prependedTurns = turns.slice(0, turns.length - previousTurns.length);
+      if (prependedTurns.length === 0) {
+        return false;
+      }
+      const prependedMessages = messages.slice(0, messages.length - previousMessages.length);
+      const prependedTurnIds = prependedTurns
+        .map((turn) => idToString(turn.turn_id))
+        .filter((turnId) => turnId.length > 0);
+      if (prependedTurnIds.length !== prependedTurns.length) {
+        return false;
+      }
+      const prependedTurnIdSet = new Set(prependedTurnIds);
+      for (const message of prependedMessages) {
+        const turnId = idToString(message.turn_id);
+        if (!turnId || !prependedTurnIdSet.has(turnId)) {
+          return false;
+        }
+      }
+
+      const currentTurnGroupKeys = state.view.groups
+        .map((group) => String(group.key ?? ""))
+        .filter((groupKey) => groupKey.startsWith("turn-"));
+      if (currentTurnGroupKeys.length !== previousTurns.length) {
+        return false;
+      }
+      for (let index = 0; index < previousTurns.length; index += 1) {
+        const previousTurnId = idToString(previousTurns[index]?.turn_id);
+        if (!previousTurnId || currentTurnGroupKeys[index] !== getTurnGroupKey(previousTurnId)) {
+          return false;
+        }
+      }
+
+      const prependedEvents = events.filter((event) => {
+        const turnId = idToString(event.turn_id ?? "");
+        return turnId.length > 0 && prependedTurnIdSet.has(turnId);
+      });
+      const prependedView = buildWorkbenchThreadViewModelFromTurns(
+        prependedTurns,
+        prependedMessages,
+        toolSummariesReady ? buildSubsetToolMap(prependedTurnIdSet, toolsByTurnId) : {},
+        prependedEvents,
+        buildSubsetAssistantStreamingMap(prependedTurnIdSet, assistantStreamingByTurnId),
+        askUserQuestionAnswers,
+      );
+      const prependedFlattened = flattenWorkbenchGroups(prependedView.groups, verbosity);
+      const prependedItemCount = prependedFlattened.listItems.length;
+      if (prependedItemCount === 0) {
+        return false;
+      }
+
+      const nextList = [...prependedFlattened.listItems, ...state.listItems];
+      const nextRanges = new Map<string, { start: number; end: number }>(
+        prependedFlattened.groupRanges,
+      );
+      for (const [groupKey, range] of state.groupRanges.entries()) {
+        nextRanges.set(groupKey, {
+          start: range.start + prependedItemCount,
+          end: range.end + prependedItemCount,
+        });
+      }
+
+      const nextOp = classifyWorkbenchThreadProjectionOp({
+        current: state.listItems,
+        next: nextList,
+        projectionRevision: projectionRev,
+        fallbackKind: "prepend_history",
+      });
+      if (nextOp.kind !== "prepend_history") {
+        return false;
+      }
+
+      const nextMessagesByTurnId = new Map(perTurnCachesRef.current.messagesByTurnId);
+      const nextEventsByTurnId = new Map(perTurnCachesRef.current.eventsByTurnId);
+      for (const turnId of prependedTurnIdSet) {
+        nextMessagesByTurnId.set(
+          turnId,
+          prependedMessages.filter((message) => idToString(message.turn_id) === turnId),
+        );
+        if (!nextEventsByTurnId.has(turnId)) {
+          nextEventsByTurnId.set(turnId, []);
+        }
+      }
+      perTurnCachesRef.current = {
+        messagesByTurnId: nextMessagesByTurnId,
+        eventsByTurnId: nextEventsByTurnId,
+      };
+
+      syncInvalidationRefs();
+      commitNextState(state, {
+        view: {
+          groups: [...prependedView.groups, ...state.view.groups],
+          debugEvents: state.view.debugEvents,
+        },
+        listItems: nextList,
+        groupRanges: nextRanges,
+        projectionRevision: projectionRev,
+        lastOp: nextOp,
+        changedItemIds: nextOp.changedItemIds,
+        remeasureItemIds: nextOp.remeasureItemIds,
+        turnsLen: turns.length,
+        messagesLen: messages.length,
+        eventsLen: state.eventsLen,
+      });
+      return true;
     };
 
     const rebuildDirtyTurnGroups = (
@@ -408,13 +609,7 @@ export function useWorkbenchThreadViewModelController(
           return false;
         }
         updatedGroups.push(nextGroup);
-
-        const segment: WorkbenchListItem[] = [];
-        if (nextGroup.header) {
-          segment.push({ kind: "turn_header", id: `turn-header-${nextGroup.header.id}`, header: nextGroup.header });
-        }
-        segment.push(...filterThreadItemsForVerbosity(nextGroup.items, verbosity));
-        updatedSegments.set(key, segment);
+        updatedSegments.set(key, buildGroupSegment(nextGroup, verbosity));
       }
 
       let nextList = state.listItems;
@@ -545,6 +740,9 @@ export function useWorkbenchThreadViewModelController(
       messagesStamp !== lastMessagesStampRef.current || messages.length !== state.messagesLen;
     const eventsStampChanged = eventsStamp !== lastEventsStampRef.current;
     if (turnsStructural || messagesStructural) {
+      if (tryPrependHistory()) {
+        return;
+      }
       syncInvalidationRefs();
       fullRebuild.current("reconcile");
       return;

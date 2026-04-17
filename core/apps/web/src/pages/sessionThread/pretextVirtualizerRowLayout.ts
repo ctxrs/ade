@@ -129,12 +129,12 @@ function measureTurnHeaderHeight(
   viewportWidth: number,
   context: PretextVirtualizerRowLayoutContext,
 ): number {
-  const { displayPlainText, expanded } = getWorkbenchTurnHeaderLayoutState(
+  const { contentRevision, displayPlainText, expanded } = getWorkbenchTurnHeaderLayoutState(
     { kind: "turn_header", id: `turn-header-${header.id}`, header },
     context.expandedTurnHeaders ?? {},
   );
   const textHeight = measureSessionPlainTextBlockHeight({
-    cacheKey: `turn-header:${header.id}:${displayPlainText}`,
+    cacheKey: `turn-header:${contentRevision}:${expanded ? "expanded" : "collapsed"}`,
     text: displayPlainText,
     font: BODY_FONT,
     width: resolveSessionThreadTurnHeaderTextWidth(viewportWidth),
@@ -197,7 +197,18 @@ function measureMessageHeight(
   context: PretextVirtualizerRowLayoutContext,
 ): number {
   const layout = getWorkbenchMessageLayoutState(item, context.expandedMessageById ?? {});
-  const textHeight = measureSessionMarkdownDocument(layout.shownContent, resolveSessionThreadMessageTextWidth(viewportWidth));
+  const textWidth = resolveSessionThreadMessageTextWidth(viewportWidth);
+  const textHeight =
+    layout.renderMode === "plain_text"
+      ? measureTextHeight({
+          cacheKey: `message-plain:${item.id}:${layout.expanded ? "expanded" : "collapsed"}:${layout.shownContent.length}`,
+          text: layout.shownContent,
+          font: BODY_FONT,
+          width: textWidth,
+          lineHeight: BODY_LINE_HEIGHT_PX,
+          whiteSpace: "pre-wrap",
+        })
+      : measureSessionMarkdownDocument(layout.shownContent, textWidth);
   const attachmentsHeight = measureMessageAttachmentsHeight(item, viewportWidth);
   const toggleHeight = layout.expandable ? MESSAGE_TOGGLE_HEIGHT_PX : 0;
   return normalizeHeight(
