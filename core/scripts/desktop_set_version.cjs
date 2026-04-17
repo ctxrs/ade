@@ -1,5 +1,7 @@
-const fs = require("fs");
-const path = require("path");
+#!/usr/bin/env node
+
+const fs = require("node:fs");
+const path = require("node:path");
 
 const coreRoot = path.resolve(__dirname, "..");
 
@@ -8,13 +10,14 @@ const tauriConfPath = path.join(coreRoot, "apps", "desktop", "src-tauri", "tauri
 const tauriCargoTomlPath = path.join(coreRoot, "apps", "desktop", "src-tauri", "Cargo.toml");
 const daemonCargoTomlPath = path.join(coreRoot, "crates", "ctx-http", "Cargo.toml");
 
-const VERSION_RE = /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/;
+const VERSION_RE = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
 
-const readJson = (p) => JSON.parse(fs.readFileSync(p, "utf8"));
-const writeIfChanged = (p, nextText) => {
-  const prevText = fs.readFileSync(p, "utf8");
+const readJson = (filePath) => JSON.parse(fs.readFileSync(filePath, "utf8"));
+
+const writeIfChanged = (filePath, nextText) => {
+  const prevText = fs.readFileSync(filePath, "utf8");
   if (prevText !== nextText) {
-    fs.writeFileSync(p, nextText, "utf8");
+    fs.writeFileSync(filePath, nextText, "utf8");
   }
 };
 
@@ -22,6 +25,14 @@ const replaceFirst = (text, pattern, replacement) => {
   if (!pattern.test(text)) return text;
   pattern.lastIndex = 0;
   return text.replace(pattern, replacement);
+};
+
+const assertValidVersion = (nextVersion) => {
+  const normalized = String(nextVersion || "").trim();
+  if (!normalized || !VERSION_RE.test(normalized)) {
+    throw new Error(`invalid semver version '${nextVersion || ""}'`);
+  }
+  return normalized;
 };
 
 const updateJsonVersionField = (jsonPath, nextVersion) => {
@@ -63,8 +74,8 @@ const updateCargoPackageVersion = (cargoPath, nextVersion) => {
   let inPackage = false;
   let updated = false;
 
-  for (let i = 0; i < lines.length; i += 1) {
-    const line = lines[i].replace(/^\uFEFF/, "");
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index].replace(/^\uFEFF/, "");
     const section = line.match(/^\s*\[([^\]]+)\]\s*$/);
     if (section) {
       inPackage = section[1].trim() === "package";
@@ -73,7 +84,7 @@ const updateCargoPackageVersion = (cargoPath, nextVersion) => {
     if (!inPackage) continue;
     if (/^\s*version\s*=\s*"[^"]+"\s*(?:#.*)?$/.test(line)) {
       const indent = (line.match(/^\s*/) || [""])[0];
-      lines[i] = `${indent}version = "${nextVersion}"`;
+      lines[index] = `${indent}version = "${nextVersion}"`;
       updated = true;
       break;
     }
@@ -86,29 +97,51 @@ const updateCargoPackageVersion = (cargoPath, nextVersion) => {
   writeIfChanged(cargoPath, nextText);
 };
 
+const setDesktopVersion = (nextVersion, { root = coreRoot } = {}) => {
+  const normalizedVersion = assertValidVersion(nextVersion);
+  const resolvedDesktopPkgJsonPath = path.join(root, "apps", "desktop", "package.json");
+  const resolvedTauriConfPath = path.join(root, "apps", "desktop", "src-tauri", "tauri.conf.json");
+  const resolvedTauriCargoTomlPath = path.join(root, "apps", "desktop", "src-tauri", "Cargo.toml");
+  const resolvedDaemonCargoTomlPath = path.join(root, "crates", "ctx-http", "Cargo.toml");
+
+  const desktopPkg = readJson(resolvedDesktopPkgJsonPath);
+  if (desktopPkg.version !== normalizedVersion) {
+    desktopPkg.version = normalizedVersion;
+    writeIfChanged(resolvedDesktopPkgJsonPath, `${JSON.stringify(desktopPkg, null, 2)}\n`);
+  }
+
+  updateJsonVersionField(resolvedTauriConfPath, normalizedVersion);
+  updateTauriPackageVersionIfPresent(resolvedTauriConfPath, normalizedVersion);
+  updateCargoPackageVersion(resolvedTauriCargoTomlPath, normalizedVersion);
+  updateCargoPackageVersion(resolvedDaemonCargoTomlPath, normalizedVersion);
+
+  return {
+    root,
+    version: normalizedVersion,
+  };
+};
+
 const main = () => {
   const nextVersionRaw = process.argv[2];
-  const nextVersion = (nextVersionRaw || "").trim();
-  if (!nextVersion || !VERSION_RE.test(nextVersion)) {
-    console.error("usage: node core/scripts/desktop_set_version.cjs <semver>");
-    process.exit(2);
-  }
-
-  const desktopPkg = readJson(desktopPkgJsonPath);
-  if (desktopPkg.version !== nextVersion) {
-    desktopPkg.version = nextVersion;
-    writeIfChanged(desktopPkgJsonPath, `${JSON.stringify(desktopPkg, null, 2)}\n`);
-  }
-
-  updateJsonVersionField(tauriConfPath, nextVersion);
-  updateTauriPackageVersionIfPresent(tauriConfPath, nextVersion);
-
-  updateCargoPackageVersion(tauriCargoTomlPath, nextVersion);
-  updateCargoPackageVersion(daemonCargoTomlPath, nextVersion);
-
+  const nextVersion = assertValidVersion(nextVersionRaw);
+  const result = setDesktopVersion(nextVersion);
   console.log(
-    `desktop_set_version: updated desktop+daemon to ${nextVersion} (${desktopPkgJsonPath}, ${tauriConfPath}, ${tauriCargoTomlPath}, ${daemonCargoTomlPath})`,
+    `desktop_set_version: updated desktop+daemon to ${result.version} (${desktopPkgJsonPath}, ${tauriConfPath}, ${tauriCargoTomlPath}, ${daemonCargoTomlPath})`,
   );
 };
 
-main();
+if (require.main === module) {
+  try {
+    main();
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    console.error(`desktop_set_version failed: ${detail}`);
+    process.exit(1);
+  }
+}
+
+module.exports = {
+  VERSION_RE,
+  assertValidVersion,
+  setDesktopVersion,
+};

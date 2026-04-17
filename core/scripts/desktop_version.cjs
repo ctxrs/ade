@@ -18,7 +18,8 @@ const readDesktopVersion = (coreRoot = resolveCoreRoot()) => {
 
 if (require.main === module) {
   try {
-    process.stdout.write(readDesktopVersion());
+    const { resolveEffectiveReleaseVersion } = require("./release_version.cjs");
+    process.stdout.write(resolveEffectiveReleaseVersion());
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     console.error(`desktop_version failed: ${detail}`);
