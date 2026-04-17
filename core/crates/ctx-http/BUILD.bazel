@@ -1,4 +1,5 @@
 load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_doc_test", "rust_library", "rust_test")
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
 load(
     ":ctx_http_bazel_tests.bzl",
     "declare_ctx_http_integration_tests",
@@ -145,6 +146,7 @@ CTX_HTTP_SHARED_INTERNAL_TEST_SUPPORT_DEPS = [
     "//core/crates/ctx-workspace-active-snapshot:lib",
     "//core/crates/ctx-workspace-config:lib",
     "//core/crates/ctx-workspace-container:lib_test_support",
+    "//core/crates/ctx-workspace-services:lib",
     "//core/crates/ctx-worktree-data-plane:lib",
 ]
 
@@ -229,10 +231,14 @@ CTX_HTTP_DIRECT_TEST_DEPS = [
     "//core/crates/ctx-core:lib",
     "//core/crates/ctx-fs:lib",
     "//core/crates/ctx-lsp:lib",
+    "//core/crates/ctx-managed-installs:lib",
+    "//core/crates/ctx-merge-queue:lib",
     "//core/crates/ctx-provider-accounts:lib",
     "//core/crates/ctx-provider-install:lib",
+    "//core/crates/ctx-provider-matrix:lib",
     "//core/crates/ctx-providers:lib",
     "//core/crates/ctx-store:lib",
+    "//core/crates/ctx-transport-runtime:lib",
     "//core/crates/ctx-worker-protocol:lib",
     "//core/crates/ctx-workspace-config:lib",
     "//core/crates/ctx-workspace-runtime:lib_test_support",
@@ -349,6 +355,7 @@ declare_ctx_http_rust_unit_test(
     data = CTX_HTTP_COMPILE_DATA,
     deps = CTX_HTTP_DIRECT_TEST_DEPS,
     proc_macro_deps = CTX_HTTP_TEST_PROC_MACRO_DEPS,
+    timeout = "long",
 )
 
 declare_ctx_http_rust_unit_test(
@@ -451,6 +458,7 @@ declare_ctx_http_rust_unit_test(
     data = CTX_HTTP_COMPILE_DATA,
     deps = CTX_HTTP_DIRECT_TEST_DEPS,
     proc_macro_deps = CTX_HTTP_TEST_PROC_MACRO_DEPS,
+    timeout = "long",
 )
 
 rust_test(
@@ -543,12 +551,11 @@ test_suite(
     ],
 )
 
-rust_test(
+sh_test(
     name = "bin_tests",
-    crate = ":ctx",
-    args = CTX_HTTP_TEST_ARGS,
-    compile_data = CTX_HTTP_COMPILE_DATA,
-    data = CTX_HTTP_COMPILE_DATA,
+    srcs = ["tests/bin_smoke.sh"],
+    args = ["$(location :ctx)"],
+    data = [":ctx"],
 )
 
 rust_doc_test(

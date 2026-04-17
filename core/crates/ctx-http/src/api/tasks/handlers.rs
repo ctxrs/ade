@@ -229,8 +229,10 @@ pub(in crate::api) async fn unarchive_task(
                 .await
                 .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
         }
-        if let Err(e) = attachments::ensure_worktree_attachment_mounts_if_materialized(
-            &state, &workspace, worktree,
+        if let Err(e) = crate::daemon::workspaces::attachments::ensure_worktree_attachment_mounts_if_materialized(
+            &state,
+            &workspace,
+            worktree,
         )
         .await
         {

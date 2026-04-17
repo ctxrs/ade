@@ -14,7 +14,7 @@ use tokio::sync::{mpsc, Mutex as AsyncMutex};
 use url::Url;
 
 use ctx_core::models::SessionEventType;
-use ctx_http::installer::{
+use ctx_managed_installs::{
     load_agent_server_config, save_agent_server_config, AgentServerCommand, AgentServerConfigFile,
     ProviderLoginExecutable,
 };

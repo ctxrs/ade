@@ -117,296 +117,44 @@ pub(crate) async fn authenticate_session(
                 }),
             )
         })?;
-
-    let worktree = store
-        .get_worktree(session.worktree_id)
-        .await
-        .map_err(|_| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: "failed to load worktree".to_string(),
-                }),
-            )
-        })?
-        .ok_or_else(|| {
-            (
-                StatusCode::NOT_FOUND,
-                Json(ApiErrorResp {
-                    error: "worktree not found".to_string(),
-                }),
-            )
-        })?;
-    let workspace = state
-        .global_store()
-        .get_workspace(worktree.workspace_id)
-        .await
-        .map_err(|err| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: format!("failed to load workspace: {err:#}"),
-                }),
-            )
-        })?
-        .ok_or_else(|| {
-            (
-                StatusCode::NOT_FOUND,
-                Json(ApiErrorResp {
-                    error: "workspace not found".to_string(),
-                }),
-            )
-        })?;
-    let resolved_worktree = crate::api::tasks::resolve_existing_worktree_execution(
+    crate::daemon::sessions::auth::run_session_authentication(
         &state,
         &store,
-        &workspace,
-        worktree.id,
+        &session,
+        req.method_id,
     )
     .await
-    .map_err(|err| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiErrorResp {
-                error: format!("failed to resolve session worktree execution: {err:#}"),
-            }),
-        )
-    })?;
-    let execution_environment = resolved_worktree.execution_environment();
-    if session.execution_environment != execution_environment {
-        tracing::warn!(
-            session_id = %session.id.0,
-            stored = session.execution_environment.as_str(),
-            resolved = execution_environment.as_str(),
-            "session authenticate resolved a different execution_environment than persisted metadata"
-        );
-    }
-    let install_target = crate::execution_effective::effective_install_target_for_environment(
-        state.as_ref(),
-        worktree.workspace_id,
-        execution_environment,
-    )
-    .await
-    .map_err(|err| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiErrorResp {
-                error: format!("failed to load workspace execution settings: {err:#}"),
-            }),
-        )
-    })?;
-    let adapter = crate::daemon::ensure_provider_adapter_for_target(
-        state.as_ref(),
-        &session.provider_id,
-        install_target,
-    )
-    .await;
-    let probe_context = crate::provider_launch::probe::provider_auth_context_for_worktree_runtime(
-        state.as_ref(),
-        &resolved_worktree.worktree,
-        &session.provider_id,
-    )
-    .await
-    .map_err(|err| (StatusCode::BAD_REQUEST, Json(ApiErrorResp { error: err })))?;
-    let workdir = probe_context.cwd;
+    .map_err(map_session_auth_error)?;
+    Ok(StatusCode::OK)
+}
 
-    let mut provider_env = probe_context.env;
-    if let Some(provider_ref) = session.provider_session_ref.clone() {
-        provider_env.insert("CTX_PROVIDER_SESSION_REF".to_string(), provider_ref);
-    }
-    provider_env.insert("CTX_SESSION_ID".to_string(), session.id.0.to_string());
-    if let Ok(v) = std::env::var("CTX_MCP_COMMAND") {
-        provider_env.insert("CTX_MCP_COMMAND".to_string(), v);
-    }
-    if let Ok(v) = std::env::var("CTX_MCP_DISABLED") {
-        provider_env.insert("CTX_MCP_DISABLED".to_string(), v);
-    }
-    if session.provider_id == "codex" && !provider_env.contains_key("CODEX_HOME") {
-        if let Ok(extra) =
-            provider_accounts::codex_env_for_active_account(&state.core.data_root).await
-        {
-            for (key, value) in extra {
-                provider_env.insert(key, value);
-            }
-        }
-    }
-    let adapter_cfg = crate::installer::load_agent_server_config(&state.core.data_root)
-        .await
-        .unwrap_or_default();
-    crate::installer::ensure_codex_cli_command_env_for_target(
-        &mut provider_env,
-        &adapter_cfg,
-        &session.provider_id,
-        Some(install_target),
-    )
-    .map_err(|err| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
+fn map_session_auth_error(
+    error: crate::daemon::sessions::auth::SessionAuthError,
+) -> (StatusCode, Json<ApiErrorResp>) {
+    match error {
+        crate::daemon::sessions::auth::SessionAuthError::NotFound(entity) => (
+            StatusCode::NOT_FOUND,
             Json(ApiErrorResp {
-                error: format!("failed to resolve codex-cli runtime path: {err:#}"),
+                error: format!("{entity} not found"),
             }),
-        )
-    })?;
-    crate::mcp_command::configure_runtime_mcp_command(&mut provider_env, &state.core.data_root)
-        .map_err(|err| {
+        ),
+        crate::daemon::sessions::auth::SessionAuthError::BadRequest(error) => {
+            (StatusCode::BAD_REQUEST, Json(ApiErrorResp { error }))
+        }
+        crate::daemon::sessions::auth::SessionAuthError::Internal(error) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiErrorResp { error }),
+        ),
+        crate::daemon::sessions::auth::SessionAuthError::AuthenticationFailed {
+            redacted_message,
+        } => {
+            tracing::warn!("session authentication failed: {redacted_message}");
             (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: format!("failed to prepare sandbox MCP runtime: {err:#}"),
-                }),
-            )
-        })?;
-
-    let (ev_tx, mut ev_rx) = mpsc::channel::<NormalizedEvent>(128);
-    let state_for_events = state.clone();
-    let store_for_events = store.clone();
-    tokio::spawn(async move {
-        while let Some(ev) = ev_rx.recv().await {
-            let mut payload = ev.payload_json.clone();
-            if matches!(ev.event_type, SessionEventType::Init) {
-                if payload.get("crp_session_id").is_some() {
-                    state_for_events
-                        .emit_compat_payload_reject_counter(
-                            "sessions.auth_event_init",
-                            "crp_session_id",
-                            None,
-                        )
-                        .await;
-                }
-                if let Some(ps) = payload
-                    .get("provider_session_id")
-                    .and_then(serde_json::Value::as_str)
-                {
-                    let _ = store_for_events
-                        .update_session_provider_session_ref(session_id, Some(ps.to_string()))
-                        .await;
-                }
-            }
-            if payload.is_object() {
-                let should_attach = matches!(
-                    ev.event_type,
-                    SessionEventType::UserMessage
-                        | SessionEventType::AssistantChunk
-                        | SessionEventType::AssistantComplete
-                        | SessionEventType::AssistantMessageInserted
-                        | SessionEventType::ThoughtChunk
-                        | SessionEventType::ToolCall
-                        | SessionEventType::ToolCallUpdate
-                        | SessionEventType::ToolResult
-                ) || (matches!(ev.event_type, SessionEventType::Notice)
-                    && payload
-                        .get("kind")
-                        .and_then(serde_json::Value::as_str)
-                        .is_some_and(|kind| {
-                            kind == "reasoning_summary" || kind == "ask_user_question"
-                        }));
-                if should_attach {
-                    let order_seq_state = state_for_events
-                        .sessions
-                        .get_order_seq_state(&store_for_events, session_id)
-                        .await;
-                    let mut order_seq_state = order_seq_state.lock().await;
-                    attach_order_seq(&mut order_seq_state, &ev.event_type, &mut payload, None, 0);
-                }
-            }
-            let appended = store_for_events
-                .append_session_event(session_id, None, None, ev.event_type.clone(), payload)
-                .await;
-            if let Ok(event) = appended {
-                state_for_events.publish_event(event).await;
-            }
-        }
-    });
-
-    let started = store
-        .append_session_event(
-            session_id,
-            None,
-            None,
-            SessionEventType::Notice,
-            serde_json::json!({
-                "kind": "auth_started",
-                "provider": session.provider_id,
-                "method_id": req.method_id,
-            }),
-        )
-        .await
-        .map_err(|_| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: "failed to append auth event".to_string(),
-                }),
-            )
-        })?;
-    state.publish_event(started).await;
-
-    let session_key = session.id.0.to_string();
-    let result = adapter
-        .authenticate_session(
-            session_key,
-            workdir,
-            provider_env,
-            req.method_id.clone(),
-            ev_tx,
-        )
-        .await;
-
-    match result {
-        Ok(()) => {
-            let done = store
-                .append_session_event(
-                    session_id,
-                    None,
-                    None,
-                    SessionEventType::Notice,
-                    serde_json::json!({
-                        "kind": "auth_finished",
-                        "provider": session.provider_id,
-                    }),
-                )
-                .await
-                .map_err(|_| {
-                    (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        Json(ApiErrorResp {
-                            error: "failed to append auth event".to_string(),
-                        }),
-                    )
-                })?;
-            state.publish_event(done).await;
-            Ok(StatusCode::OK)
-        }
-        Err(e) => {
-            let msg = logs::redact_sensitive(&e.to_string());
-            let failed = store
-                .append_session_event(
-                    session_id,
-                    None,
-                    None,
-                    SessionEventType::Notice,
-                    serde_json::json!({
-                        "kind": "auth_failed",
-                        "provider": session.provider_id,
-                        "message": msg,
-                    }),
-                )
-                .await
-                .map_err(|_| {
-                    (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        Json(ApiErrorResp {
-                            error: "failed to append auth event".to_string(),
-                        }),
-                    )
-                })?;
-            state.publish_event(failed).await;
-            Err((
                 StatusCode::BAD_REQUEST,
                 Json(ApiErrorResp {
                     error: "authentication failed".to_string(),
                 }),
-            ))
+            )
         }
     }
 }

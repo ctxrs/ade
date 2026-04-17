@@ -7,8 +7,10 @@ use ctx_core::ids::{MergeQueueEntryId, SessionId, WorkspaceId, WorktreeId};
 use ctx_core::models::{MergeQueueEntry, SessionEventType, Workspace};
 use ctx_store::Store;
 
+pub use ctx_merge_queue::MergeQueueSubmitParams;
+#[cfg(test)]
+pub(crate) use ctx_merge_queue::WorkspaceDrainStop;
 use ctx_merge_queue::{MergeQueueHost, MergeQueueNotice, MergeQueueToolExecEvent};
-pub use ctx_merge_queue::{MergeQueueSubmitParams, WorkspaceDrainStop};
 
 use crate::daemon::AppState;
 use crate::ops_events::OpsEvent;

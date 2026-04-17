@@ -218,17 +218,14 @@ pub(super) fn managed_dependency_update_available(
     status: &ctx_providers::adapters::ProviderStatus,
 ) -> bool {
     let requested_target = install_target_from_status(status);
-    let command = crate::managed_provider_command_for_target(
-        cfg,
-        &status.provider_id,
-        requested_target,
-    )
-    .or_else(|| {
-        cfg.providers
-            .get(&status.provider_id)
-            .filter(|command| command.managed.is_none())
-            .cloned()
-    });
+    let command =
+        crate::managed_provider_command_for_target(cfg, &status.provider_id, requested_target)
+            .or_else(|| {
+                cfg.providers
+                    .get(&status.provider_id)
+                    .filter(|command| command.managed.is_none())
+                    .cloned()
+            });
     let Some(command) = command else {
         return false;
     };
@@ -267,10 +264,7 @@ pub(super) fn managed_dependency_update_available(
         };
         let dependency_target = meta.target.unwrap_or(InstallTarget::Host);
         let Some(expected_fingerprint) =
-            crate::expected_managed_dependency_artifact_fingerprint(
-                dependency,
-                dependency_target,
-            )
+            crate::expected_managed_dependency_artifact_fingerprint(dependency, dependency_target)
         else {
             return false;
         };
@@ -313,11 +307,8 @@ pub(super) async fn detect_managed_artifact_fingerprint_mismatch(
         Some(requested_target),
     )?;
     let version = detected_version.or(meta.version.as_deref())?;
-    let expected_fingerprint = crate::expected_managed_provider_artifact_fingerprint(
-        entry,
-        version,
-        requested_target,
-    )?;
+    let expected_fingerprint =
+        crate::expected_managed_provider_artifact_fingerprint(entry, version, requested_target)?;
     let detected_fingerprint = meta
         .artifact_fingerprint
         .as_deref()

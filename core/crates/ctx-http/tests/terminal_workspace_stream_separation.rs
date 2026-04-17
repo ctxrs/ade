@@ -9,7 +9,7 @@ use ctx_core::models::{
     WorkspaceActiveSnapshotEvent, WorkspaceActiveSnapshotStreamMessage,
 };
 use ctx_http::daemon::AppState;
-use ctx_http::terminals::TerminalServerMessage;
+use ctx_transport_runtime::TerminalServerMessage;
 
 mod common;
 
@@ -250,7 +250,16 @@ async fn terminal_disconnect_and_reconnect_do_not_poison_workspace_control_plane
                 .send()
                 .await
                 .unwrap();
-            assert!(response.status().is_success());
+            let status = response.status();
+            let body = tokio::time::timeout(Duration::from_secs(2), response.text())
+                .await
+                .ok()
+                .and_then(Result::ok)
+                .unwrap_or_else(|| "<body unavailable>".to_string());
+            assert!(
+                status.is_success(),
+                "message post failed with status {status}: {body}"
+            );
         }
     });
 

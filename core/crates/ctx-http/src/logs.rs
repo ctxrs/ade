@@ -15,10 +15,6 @@ pub fn logs_dir(data_root: &Path) -> PathBuf {
     data_root.join("logs")
 }
 
-pub fn daemon_log_path(data_root: &Path) -> PathBuf {
-    logs_dir(data_root).join("daemon.log")
-}
-
 pub fn desktop_log_path(data_root: &Path) -> PathBuf {
     logs_dir(data_root).join("desktop.log")
 }

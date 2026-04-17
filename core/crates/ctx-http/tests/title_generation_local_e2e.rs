@@ -1,11 +1,11 @@
 use std::path::PathBuf;
 
-use ctx_http::installer;
 use ctx_http::settings::{
     TitleGenerationLocalSettings, TitleGenerationMode, TitleGenerationSettings,
 };
 use ctx_http::title_generation;
-use ctx_http::title_generation_local;
+use ctx_managed_installs as installer;
+use ctx_managed_installs::title_generation_local;
 use ctx_store::StoreManager;
 
 mod common;

@@ -31,6 +31,7 @@ mod secure_mobile;
 mod terminal;
 mod web_session;
 mod workspace_active;
+mod workspace_stream;
 
 use common::{
     accept_session_delta, accept_session_head, bump_latest_snapshot_rev, event_snapshot_rev,

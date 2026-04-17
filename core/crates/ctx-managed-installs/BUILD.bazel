@@ -6,8 +6,9 @@ rust_library(
     name = "lib",
     crate_name = "ctx_managed_installs",
     crate_root = "src/lib.rs",
+    compile_data = ["src/lsp_catalog.json"],
     edition = "2021",
-    srcs = glob(["src/**/*.rs", "src/**/*.json"]),
+    srcs = glob(["src/**/*.rs"]),
     deps = [
         "//core/crates/ctx-bundled-assets:lib",
         "//core/crates/ctx-core:lib",

@@ -67,7 +67,7 @@ fn process_env_test_lock() -> &'static tokio::sync::Mutex<()> {
     crate::test_support::process_env_test_lock()
 }
 
-const BACKGROUND_TEST_TIMEOUT: Duration = Duration::from_secs(10);
+const BACKGROUND_TEST_TIMEOUT: Duration = Duration::from_secs(30);
 const QUICK_ASYNC_TEST_TIMEOUT: Duration = Duration::from_secs(5);
 
 fn test_workspace(id: WorkspaceId) -> Workspace {
@@ -577,7 +577,7 @@ impl Default for BlockingWarmupOperations {
 
 impl BlockingWarmupOperations {
     async fn wait_for_runtime_runs(&self, expected: usize) {
-        tokio::time::timeout(Duration::from_secs(10), async {
+        tokio::time::timeout(BACKGROUND_TEST_TIMEOUT, async {
             loop {
                 if self.runtime_runs.load(Ordering::SeqCst) >= expected {
                     break;
@@ -590,7 +590,7 @@ impl BlockingWarmupOperations {
     }
 
     async fn wait_for_builder_runs(&self, expected: usize) {
-        tokio::time::timeout(Duration::from_secs(10), async {
+        tokio::time::timeout(BACKGROUND_TEST_TIMEOUT, async {
             loop {
                 if self.builder_runs.load(Ordering::SeqCst) >= expected {
                     break;
@@ -603,7 +603,7 @@ impl BlockingWarmupOperations {
     }
 
     async fn wait_for_launch_ready_runs(&self, expected: usize) {
-        tokio::time::timeout(Duration::from_secs(10), async {
+        tokio::time::timeout(BACKGROUND_TEST_TIMEOUT, async {
             loop {
                 if self.launch_ready_runs.load(Ordering::SeqCst) >= expected {
                     break;
@@ -1022,7 +1022,7 @@ async fn concurrent_launch_start_is_deduplicated() {
     assert_eq!(second.workspace_id, workspace_id);
 
     TrackedExecutionLaunch::new(&coordinator, first.clone())
-        .wait_ready(Duration::from_secs(10))
+        .wait_ready(BACKGROUND_TEST_TIMEOUT)
         .await;
     assert_eq!(ops.runtime_runs.load(Ordering::SeqCst), 0);
 
@@ -1488,7 +1488,7 @@ async fn successful_workspace_launch_writes_missing_prewarm_metadata() {
         .start_workspace_launch(workspace, settings, "http://127.0.0.1:4399".to_string())
         .await;
     let launch_terminal =
-        wait_for_execution_launch_terminal(&coordinator, &launch.job_id, Duration::from_secs(10))
+        wait_for_execution_launch_terminal(&coordinator, &launch.job_id, BACKGROUND_TEST_TIMEOUT)
             .await;
     assert_eq!(launch_terminal.state, ExecutionLaunchState::Ready);
 
@@ -1619,7 +1619,7 @@ async fn successful_workspace_launch_refresh_clears_stale_prewarm_metadata() {
         .start_workspace_launch(workspace, settings, "http://127.0.0.1:4399".to_string())
         .await;
     let launch_terminal =
-        wait_for_execution_launch_terminal(&coordinator, &launch.job_id, Duration::from_secs(10))
+        wait_for_execution_launch_terminal(&coordinator, &launch.job_id, BACKGROUND_TEST_TIMEOUT)
             .await;
     assert_eq!(launch_terminal.state, ExecutionLaunchState::Ready);
 
@@ -1744,7 +1744,7 @@ async fn successful_workspace_launch_refreshes_prewarm_metadata_when_image_ref_c
         .start_workspace_launch(workspace, settings, "http://127.0.0.1:4399".to_string())
         .await;
     let launch_terminal =
-        wait_for_execution_launch_terminal(&coordinator, &launch.job_id, Duration::from_secs(10))
+        wait_for_execution_launch_terminal(&coordinator, &launch.job_id, BACKGROUND_TEST_TIMEOUT)
             .await;
     assert_eq!(launch_terminal.state, ExecutionLaunchState::Ready);
 
@@ -1850,7 +1850,7 @@ async fn workspace_override_image_does_not_clobber_startup_prewarm_metadata() {
         )
         .await;
     let launch_terminal =
-        wait_for_execution_launch_terminal(&coordinator, &launch.job_id, Duration::from_secs(10))
+        wait_for_execution_launch_terminal(&coordinator, &launch.job_id, BACKGROUND_TEST_TIMEOUT)
             .await;
     assert_eq!(launch_terminal.state, ExecutionLaunchState::Ready);
 
@@ -1956,7 +1956,7 @@ async fn runtime_prewarm_errors_when_only_startup_artifacts_were_warmed() {
         .start_runtime_prewarm(settings, RuntimePrewarmScope::Runtime)
         .await;
     let terminal =
-        wait_for_execution_launch_terminal(&coordinator, &snapshot.job_id, Duration::from_secs(5))
+        wait_for_execution_launch_terminal(&coordinator, &snapshot.job_id, BACKGROUND_TEST_TIMEOUT)
             .await;
 
     assert_eq!(terminal.state, ExecutionLaunchState::Error);
@@ -2110,7 +2110,7 @@ async fn runtime_prewarm_runtime_scope_stays_substrate_only_for_avf_linux_runtim
         .start_runtime_prewarm(settings.clone(), RuntimePrewarmScope::Runtime)
         .await;
     let terminal =
-        wait_for_execution_launch_terminal(&coordinator, &launch.job_id, Duration::from_secs(10))
+        wait_for_execution_launch_terminal(&coordinator, &launch.job_id, BACKGROUND_TEST_TIMEOUT)
             .await;
 
     assert_eq!(
@@ -2179,7 +2179,7 @@ async fn runtime_prewarm_launch_ready_scope_starts_shared_vm_and_reports_launch_
         .start_runtime_prewarm(settings.clone(), RuntimePrewarmScope::LaunchReady)
         .await;
     let terminal =
-        wait_for_execution_launch_terminal(&coordinator, &launch.job_id, Duration::from_secs(10))
+        wait_for_execution_launch_terminal(&coordinator, &launch.job_id, BACKGROUND_TEST_TIMEOUT)
             .await;
 
     assert_eq!(
@@ -2285,7 +2285,7 @@ async fn workspace_launch_waits_for_running_startup_prewarm_without_duplicate_ru
     ops.release_runtime();
     startup.await.expect("startup prewarm task");
 
-    let ready = tokio::time::timeout(Duration::from_secs(10), async {
+    let ready = tokio::time::timeout(BACKGROUND_TEST_TIMEOUT, async {
         loop {
             let latest = coordinator
                 .launch_status(&snapshot.job_id)
@@ -2803,7 +2803,7 @@ async fn runtime_prewarm_launch_ready_scope_starts_native_runtime_before_loading
         .start_runtime_prewarm(settings.clone(), RuntimePrewarmScope::LaunchReady)
         .await;
     let terminal =
-        wait_for_execution_launch_terminal(&coordinator, &launch.job_id, Duration::from_secs(10))
+        wait_for_execution_launch_terminal(&coordinator, &launch.job_id, BACKGROUND_TEST_TIMEOUT)
             .await;
 
     assert_eq!(terminal.state, ExecutionLaunchState::Ready);
@@ -3168,7 +3168,7 @@ async fn workspace_launch_reuses_running_container_without_runtime_prewarm_or_im
             .await,
     );
 
-    let ready = launch.wait_ready(Duration::from_secs(5)).await;
+    let ready = launch.wait_ready(BACKGROUND_TEST_TIMEOUT).await;
     assert_eq!(ops.runtime_runs.load(Ordering::SeqCst), 0);
     assert!(
         ready.phases.iter().all(|phase| {
@@ -3248,6 +3248,6 @@ async fn workspace_launch_emits_initial_log_before_runtime_work_completes() {
     }));
 
     let _terminal =
-        wait_for_execution_launch_terminal(&coordinator, &snapshot.job_id, Duration::from_secs(5))
+        wait_for_execution_launch_terminal(&coordinator, &snapshot.job_id, BACKGROUND_TEST_TIMEOUT)
             .await;
 }

@@ -5,7 +5,7 @@ pub(crate) use ctx_sandbox_contract::sandbox_execution_settings_from_binding;
 use ctx_sandbox_contract::SANDBOX_BINDING_EXECUTION_SETTINGS_SCHEMA_V1;
 use ctx_worktree_data_plane::apply_data_plane_to_execution_settings;
 
-pub(in crate::api) struct ResolvedExistingWorktreeExecution {
+pub(crate) struct ResolvedExistingWorktreeExecution {
     pub worktree: Worktree,
     pub effective: ExecutionSettings,
 }
@@ -16,7 +16,7 @@ impl ResolvedExistingWorktreeExecution {
     }
 }
 
-pub(in crate::api) async fn resolve_existing_worktree_execution(
+pub(crate) async fn resolve_existing_worktree_execution(
     state: &Arc<AppState>,
     store: &Store,
     workspace: &Workspace,

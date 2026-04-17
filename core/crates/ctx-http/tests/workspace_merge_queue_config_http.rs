@@ -69,7 +69,7 @@ async fn enabling_merge_queue_on_open_workspace_reschedules_queued_rows() {
     let app = common::router(state.clone());
     let workspace = common::create_workspace(&app, repo.path(), "ws").await;
 
-    ctx_http::merge_queue::spawn_merge_queue_runner(state.clone());
+    ctx_merge_queue::spawn_merge_queue_runner::<AppState>(state.clone());
 
     let store = state
         .core
@@ -130,7 +130,7 @@ async fn disabling_merge_queue_cancels_existing_queued_rows() {
     let app = common::router(state.clone());
     let workspace = common::create_workspace(&app, repo.path(), "ws").await;
 
-    ctx_http::merge_queue::spawn_merge_queue_runner(state.clone());
+    ctx_merge_queue::spawn_merge_queue_runner::<AppState>(state.clone());
 
     let (enable_status, _enable_resp): (StatusCode, Value) = common::json_request(
         &app,

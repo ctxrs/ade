@@ -2,12 +2,12 @@ use std::fmt;
 use std::path::Path;
 
 use crate::{self as installer, AgentServerConfigFile};
+use ctx_provider_install::install_state::InstallTarget;
 use ctx_provider_matrix as provider_matrix;
 use ctx_provider_matrix::{
     ProviderInstallDependencyRole, ProviderInstallDependencyTarget, ProviderMatrix,
     ProviderMatrixEntry,
 };
-use ctx_provider_install::install_state::InstallTarget;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProviderInstallViabilityIssue {
@@ -326,6 +326,10 @@ mod tests {
         }
     }
 
+    fn env_lock() -> &'static tokio::sync::Mutex<()> {
+        crate::test_support::process_env_test_lock()
+    }
+
     fn archive_entry(provider_id: &str, kind: ProviderMatrixEntryKind) -> ProviderMatrixEntry {
         let mut targets = HashMap::from([
             (
@@ -420,6 +424,7 @@ mod tests {
 
     #[test]
     fn acp_provider_requires_bridge_runtime() {
+        let _guard = env_lock().blocking_lock();
         let root = tempfile::tempdir().expect("tempdir");
         let cfg = AgentServerConfigFile::default();
         let err = resolve_provider_install_contract(
@@ -444,6 +449,7 @@ mod tests {
 
     #[test]
     fn acp_container_install_plans_bridge_prerequisite_when_bridge_is_installable() {
+        let _guard = env_lock().blocking_lock();
         let root = tempfile::tempdir().expect("tempdir");
         let cfg = AgentServerConfigFile::default();
         let contract = resolve_provider_install_contract(
@@ -471,6 +477,7 @@ mod tests {
 
     #[test]
     fn acp_host_install_plans_bridge_prerequisite_when_bridge_is_installable() {
+        let _guard = env_lock().blocking_lock();
         let root = tempfile::tempdir().expect("tempdir");
         let cfg = AgentServerConfigFile::default();
         let contract = resolve_provider_install_contract(
@@ -498,6 +505,7 @@ mod tests {
 
     #[test]
     fn native_provider_does_not_require_bridge_runtime() {
+        let _guard = env_lock().blocking_lock();
         let root = tempfile::tempdir().expect("tempdir");
         let cfg = AgentServerConfigFile::default();
         let contract = resolve_provider_install_contract(
@@ -520,6 +528,7 @@ mod tests {
 
     #[test]
     fn invalid_managed_bridge_runtime_stays_repairable() {
+        let _guard = env_lock().blocking_lock();
         let root = tempfile::tempdir().expect("tempdir");
         let mut cfg = AgentServerConfigFile::default();
         cfg.managed_provider_targets.insert(
@@ -558,6 +567,7 @@ mod tests {
 
     #[test]
     fn invalid_user_override_bridge_runtime_is_reported() {
+        let _guard = env_lock().blocking_lock();
         let root = tempfile::tempdir().expect("tempdir");
         let mut cfg = AgentServerConfigFile::default();
         cfg.providers.insert(
@@ -586,6 +596,7 @@ mod tests {
 
     #[test]
     fn claude_install_resolves_host_readiness_dependency() {
+        let _guard = env_lock().blocking_lock();
         let root = tempfile::tempdir().expect("tempdir");
         let cfg = AgentServerConfigFile::default();
         let mut claude = archive_entry("claude-crp", ProviderMatrixEntryKind::Harness);
@@ -623,6 +634,7 @@ mod tests {
 
     #[test]
     fn claude_readiness_dependency_is_marked_satisfied_when_configured() {
+        let _guard = env_lock().blocking_lock();
         let root = tempfile::tempdir().expect("tempdir");
         let script_path = root.path().join("claude");
         std::fs::write(&script_path, "#!/bin/sh\nexit 0\n").expect("write script");
@@ -680,6 +692,7 @@ mod tests {
 
     #[test]
     fn codex_install_resolves_same_target_prerequisite_dependency() {
+        let _guard = env_lock().blocking_lock();
         let root = tempfile::tempdir().expect("tempdir");
         let cfg = AgentServerConfigFile::default();
         let mut codex = archive_entry("codex", ProviderMatrixEntryKind::Harness);
@@ -713,6 +726,7 @@ mod tests {
 
     #[test]
     fn codex_prerequisite_dependency_is_marked_satisfied_when_configured() {
+        let _guard = env_lock().blocking_lock();
         let root = tempfile::tempdir().expect("tempdir");
         let script_path = root.path().join("codex");
         std::fs::write(&script_path, "#!/bin/sh\nexit 0\n").expect("write script");
@@ -766,6 +780,7 @@ mod tests {
 
     #[test]
     fn codex_container_prerequisite_dependency_is_marked_satisfied_when_configured() {
+        let _guard = env_lock().blocking_lock();
         let root = tempfile::tempdir().expect("tempdir");
         let script_path = root.path().join("codex-linux");
         std::fs::write(&script_path, "#!/bin/sh\nexit 0\n").expect("write script");

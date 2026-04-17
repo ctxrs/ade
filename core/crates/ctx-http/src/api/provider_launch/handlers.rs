@@ -97,9 +97,14 @@ pub(in crate::api) async fn get_provider_options(
         ))?;
     let preferred_model_id = load_workspace_preferred_model_id(&state, ws_id, &provider_id).await?;
 
-    let provider_status =
-        provider_status_for_target(state.as_ref(), &managed, &matrix, &provider_id, install_target)
-            .await;
+    let provider_status = provider_status_for_target(
+        state.as_ref(),
+        &managed,
+        &matrix,
+        &provider_id,
+        install_target,
+    )
+    .await;
     let has_active_auth = probe::provider_has_active_auth_for_workspace_runtime(
         state.as_ref(),
         &workspace,
@@ -513,9 +518,14 @@ pub(in crate::api) async fn verify_provider_for_workspace(
             })),
         ));
     }
-    let provider_status =
-        provider_status_for_target(state.as_ref(), &managed, &matrix, &provider_id, install_target)
-            .await;
+    let provider_status = provider_status_for_target(
+        state.as_ref(),
+        &managed,
+        &matrix,
+        &provider_id,
+        install_target,
+    )
+    .await;
 
     let checked_at = Utc::now().to_rfc3339();
     let mut status = "ok".to_string();
@@ -711,21 +721,20 @@ pub(in crate::api) async fn authenticate_provider_for_workspace(
             })),
         ))?;
 
-    let probe_context =
-        probe::provider_auth_context_for_workspace_runtime(
-            state.as_ref(),
-            &workspace,
-            &provider_id,
+    let probe_context = probe::provider_auth_context_for_workspace_runtime(
+        state.as_ref(),
+        &workspace,
+        &provider_id,
+    )
+    .await
+    .map_err(|err| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": err,
+            })),
         )
-            .await
-            .map_err(|err| {
-                (
-                    StatusCode::BAD_REQUEST,
-                    Json(serde_json::json!({
-                        "error": err,
-                    })),
-                )
-            })?;
+    })?;
     if probe_context.source.source_kind == HarnessSourceKind::Endpoint {
         return Err((
             StatusCode::BAD_REQUEST,

@@ -5,6 +5,11 @@ pub(super) struct SessionCursor {
     pub(super) last_sent: SessionReplayCursor,
 }
 
+pub(crate) use crate::daemon::workspaces::stream::{
+    ResolvedWorkspaceActiveSessionReplay, ResolvedWorkspaceActiveSubscriptions,
+    WorkspaceActiveSubscriptionState,
+};
+
 pub(super) fn accept_session_delta(cursor: &mut SessionCursor, delta: &SessionHeadDelta) -> bool {
     if is_transient_session_delta(delta) {
         return true;
@@ -23,35 +28,6 @@ fn accept_session_cursor(cursor: &mut SessionCursor, incoming: SessionReplayCurs
     }
     cursor.last_sent = incoming;
     true
-}
-
-#[derive(Clone, Copy)]
-pub(super) enum ResolvedWorkspaceActiveSessionReplay {
-    Reset,
-    Resume {
-        after_seq: i64,
-        after_projection_rev: i64,
-    },
-}
-
-pub(super) struct ResolvedWorkspaceActiveSessionSubscription {
-    pub(super) session_id: SessionId,
-    pub(super) replay: ResolvedWorkspaceActiveSessionReplay,
-}
-
-#[derive(Default)]
-pub(super) struct WorkspaceActiveSubscriptionState {
-    pub(super) active_scope: bool,
-    pub(super) explicit_sessions: HashSet<SessionId>,
-    pub(super) active_task_sessions: HashMap<TaskId, SessionId>,
-    pub(super) active_task_vcs_sessions: HashMap<TaskId, HashSet<SessionId>>,
-    pub(super) foreground_session_ids: Option<HashSet<SessionId>>,
-}
-
-pub(super) struct ResolvedWorkspaceActiveSubscriptions {
-    pub(super) sessions: Vec<ResolvedWorkspaceActiveSessionSubscription>,
-    pub(super) worktree_vcs_session_ids: Vec<SessionId>,
-    pub(super) state: WorkspaceActiveSubscriptionState,
 }
 
 pub(super) async fn send_secure_ws<S>(
@@ -135,7 +111,6 @@ where
     }
 }
 
-pub(super) const SESSION_REPLAY_MAX_EVENTS: usize = 2000;
 pub(super) const WORKSPACE_STREAM_QUEUE_LIMIT: usize = 256;
 pub(super) const WORKSPACE_STREAM_QUEUE_MAX_AGE: Duration = Duration::from_secs(10);
 pub(super) const HEAD_BATCH_FLUSH_INTERVAL: Duration = Duration::from_millis(25);

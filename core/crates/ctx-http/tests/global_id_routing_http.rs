@@ -18,6 +18,10 @@ struct SessionFixture {
     session_id: SessionId,
 }
 
+fn request_shutdown(state: &Arc<AppState>) {
+    let _ = state.core.shutdown_tx.send(());
+}
+
 async fn setup_state() -> (tempfile::TempDir, Arc<AppState>, common::TestServer) {
     let data_dir = tempfile::tempdir().unwrap();
     let stores = common::setup_store(data_dir.path()).await;
@@ -156,6 +160,7 @@ async fn artifact_route_is_session_scoped() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     assert_eq!(resp.bytes().await.unwrap().as_ref(), b"artifact-body");
+    request_shutdown(&state);
 }
 
 #[tokio::test]
@@ -190,6 +195,7 @@ async fn quicktime_artifact_upload_is_accepted() {
     let artifacts: serde_json::Value = resp.json().await.unwrap();
     assert_eq!(artifacts[0]["mime_type"].as_str(), Some("video/quicktime"));
     assert_eq!(artifacts[0]["name"].as_str(), Some("artifact.mov"));
+    request_shutdown(&state);
 }
 
 #[tokio::test]
@@ -241,6 +247,7 @@ async fn message_delete_route_is_session_scoped() {
     let body = resp.text().await.unwrap();
     assert_eq!(status, StatusCode::NO_CONTENT, "unexpected body: {body}");
     assert!(store.get_message(message_id).await.unwrap().is_none());
+    request_shutdown(&state);
 }
 
 #[tokio::test]
@@ -301,4 +308,5 @@ async fn subagent_invocation_route_is_session_scoped() {
     }
     let invocation: serde_json::Value = serde_json::from_str(&body).unwrap();
     assert_eq!(invocation["id"].as_str().unwrap(), invocation_id);
+    request_shutdown(&state);
 }

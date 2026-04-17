@@ -17,6 +17,7 @@ use ctx_store::StoreManager;
 
 use crate::api;
 use crate::daemon::AppState;
+use crate::storage_guard::{StorageGuardLevel, StorageGuardPathStatus, StorageGuardStatus};
 
 async fn run_git(root: &Path, args: &[&str]) {
     let output = Command::new("git")
@@ -363,12 +364,11 @@ async fn daemon_http_and_ws_streaming() {
                 match message {
                     ctx_core::models::WorkspaceActiveSnapshotStreamMessage::Event {
                         event, ..
-                    } => {
-                        if let ctx_core::models::WorkspaceActiveSnapshotEvent::SessionHeadDelta {
+                    } => match event.as_ref() {
+                        ctx_core::models::WorkspaceActiveSnapshotEvent::SessionHeadDelta {
                             delta,
                             ..
-                        } = event.as_ref()
-                        {
+                        } => {
                             let is_done = delta.session_id == session.id
                                 && delta
                                     .event
@@ -385,7 +385,24 @@ async fn daemon_http_and_ws_streaming() {
                                 break;
                             }
                         }
-                    }
+                        ctx_core::models::WorkspaceActiveSnapshotEvent::SessionHeadSeed {
+                            head,
+                            ..
+                        } => {
+                            let is_done = head.session.id == session.id
+                                && head.events.iter().any(|event| {
+                                    matches!(
+                                        event.event_type,
+                                        ctx_core::models::SessionEventType::Done
+                                    )
+                                });
+                            if is_done {
+                                seen_done = true;
+                                break;
+                            }
+                        }
+                        _ => {}
+                    },
                     ctx_core::models::WorkspaceActiveSnapshotStreamMessage::HeadsBatch {
                         deltas,
                         ..
@@ -730,7 +747,7 @@ async fn execution_launch_startup_prewarm_kind_supported() {
     }
     assert!(matches!(
         status_snapshot.state,
-        ExecutionLaunchState::Ready | ExecutionLaunchState::Error
+        ExecutionLaunchState::Running | ExecutionLaunchState::Ready | ExecutionLaunchState::Error
     ));
 }
 
@@ -920,4 +937,81 @@ async fn cors_preflight_allows_health_endpoint_for_tauri_localhost_origin() {
         .get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
         .and_then(|value| value.to_str().ok());
     assert_eq!(origin, Some("http://tauri.localhost"));
+}
+
+#[tokio::test]
+async fn health_and_diagnostics_include_storage_guard_state() {
+    let data_dir = tempfile::tempdir().unwrap();
+    let stores = StoreManager::open(data_dir.path()).await.unwrap();
+    let providers: HashMap<String, Arc<dyn ctx_providers::adapters::ProviderAdapter>> =
+        HashMap::new();
+    let state = Arc::new(AppState::new(
+        data_dir.path().to_path_buf(),
+        stores,
+        providers,
+        "http://127.0.0.1:4399".to_string(),
+        None,
+    ));
+    state.core.storage_guard.publish(StorageGuardStatus {
+        level: StorageGuardLevel::Warning,
+        reserve_file_active: true,
+        active: Some(StorageGuardPathStatus {
+            label: "CTX data root".to_string(),
+            path: data_dir.path().to_string_lossy().to_string(),
+            mount_point: "/".to_string(),
+            free_bytes: 1_800_000_000,
+            total_bytes: 10_000_000_000,
+        }),
+        ..StorageGuardStatus::default()
+    });
+
+    let app = api::router(state);
+
+    let req = Request::builder()
+        .method(Method::GET)
+        .uri("/api/health")
+        .body(Body::empty())
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let health: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(
+        health
+            .pointer("/storage/level")
+            .and_then(serde_json::Value::as_str),
+        Some("warning"),
+        "expected storage warning state in health payload: {health:#?}"
+    );
+    assert_eq!(
+        health
+            .pointer("/storage/active/label")
+            .and_then(serde_json::Value::as_str),
+        Some("CTX data root"),
+        "expected active storage path in health payload: {health:#?}"
+    );
+
+    let req = Request::builder()
+        .method(Method::GET)
+        .uri("/api/diagnostics")
+        .body(Body::empty())
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let diagnostics: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(
+        diagnostics
+            .pointer("/daemon/storage/level")
+            .and_then(serde_json::Value::as_str),
+        Some("warning"),
+        "expected storage warning state in diagnostics payload: {diagnostics:#?}"
+    );
+    assert_eq!(
+        diagnostics
+            .pointer("/daemon/storage/active/path")
+            .and_then(serde_json::Value::as_str),
+        Some(data_dir.path().to_string_lossy().as_ref()),
+        "expected active storage path in diagnostics payload: {diagnostics:#?}"
+    );
 }

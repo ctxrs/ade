@@ -11,6 +11,7 @@ use url::Url;
 use uuid::Uuid;
 
 use ctx_core::models::{WorkspaceActiveSnapshotEvent, WorkspaceActiveSnapshotStreamMessage};
+use ctx_transport_runtime::mobile_e2ee;
 
 #[derive(Debug, Deserialize)]
 struct EnableMobileAccessResp {
@@ -130,7 +131,7 @@ async fn run_e2e(
 
     let (base_url, pairing_token, daemon_public_key) = parse_qr_payload(&enable_resp.qr_payload)?;
 
-    let (device_public, device_secret) = ctx_http::mobile_e2ee::generate_keypair();
+    let (device_public, device_secret) = mobile_e2ee::generate_keypair();
     let device_id = Uuid::new_v4().to_string();
 
     let pair_env = client
@@ -150,10 +151,9 @@ async fn run_e2e(
         .json::<SecureEnvelope>()
         .await?;
 
-    let key =
-        ctx_http::mobile_e2ee::derive_client_key(&device_id, &device_secret, &daemon_public_key)?;
+    let key = mobile_e2ee::derive_client_key(&device_id, &device_secret, &daemon_public_key)?;
 
-    let pair_payload = ctx_http::mobile_e2ee::decrypt(
+    let pair_payload = mobile_e2ee::decrypt(
         &key,
         &device_id,
         pair_env.seq,
@@ -176,7 +176,7 @@ async fn run_e2e(
         .json::<SecureEnvelope>()
         .await?;
 
-    let secure_payload = ctx_http::mobile_e2ee::decrypt(
+    let secure_payload = mobile_e2ee::decrypt(
         &key,
         &device_id,
         secure_resp.seq,
@@ -207,7 +207,7 @@ async fn run_e2e(
         other => return Err(anyhow!("unexpected ws message: {other:?}")),
     };
     let ws_env: SecureEnvelope = serde_json::from_str(&text)?;
-    let ws_payload = ctx_http::mobile_e2ee::decrypt(
+    let ws_payload = mobile_e2ee::decrypt(
         &key,
         &device_id,
         ws_env.seq,
@@ -273,7 +273,7 @@ async fn create_workspace(
 }
 
 fn encrypt_secure_request(
-    key: &ctx_http::mobile_e2ee::E2eeKey,
+    key: &mobile_e2ee::E2eeKey,
     device_id: &str,
     seq: i64,
     path: &str,
@@ -286,7 +286,7 @@ fn encrypt_secure_request(
         body_b64: String::new(),
     };
     let payload_bytes = serde_json::to_vec(&req_payload)?;
-    let enc = ctx_http::mobile_e2ee::encrypt(key, device_id, seq, &payload_bytes)?;
+    let enc = mobile_e2ee::encrypt(key, device_id, seq, &payload_bytes)?;
     Ok(SecureEnvelope {
         device_id: enc.device_id,
         seq: enc.seq,

@@ -10,8 +10,10 @@ use axum::response::Response;
 use axum::Json;
 use serde::{Deserialize, Serialize};
 
+mod context;
 mod management;
 
+use context::*;
 pub(in crate::api) use management::*;
 
 use super::errors::ApiErrorResp;
@@ -576,18 +578,21 @@ pub(super) async fn sync_workspace_attachments(
         ))?;
 
     let refresh = req.refresh.unwrap_or(false);
-    let attachments =
-        attachments::sync_workspace_attachments(Arc::clone(&state), &workspace, refresh)
-            .await
-            .map_err(|e| {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ApiErrorResp {
-                        error: logs::redact_sensitive(&e.to_string()),
-                    }),
-                )
-            })?;
-    let _ = attachments::ensure_workspace_attachments_for_worktrees_with_attachments(
+    let attachments = crate::daemon::workspaces::attachments::sync_workspace_attachments(
+        Arc::clone(&state),
+        &workspace,
+        refresh,
+    )
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiErrorResp {
+                error: logs::redact_sensitive(&e.to_string()),
+            }),
+        )
+    })?;
+    let _ = crate::daemon::workspaces::attachments::ensure_workspace_attachments_for_worktrees_with_attachments(
         &state,
         &workspace,
         &attachments,

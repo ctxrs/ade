@@ -9,9 +9,11 @@ use ctx_core::ids::WorktreeId;
 use ctx_core::models::{Workspace, Worktree};
 use ctx_harness_runtime::sandbox_container_command;
 use ctx_workspace_container::workspace_container_name;
-pub use ctx_workspace_services::vcs_hooks::{
-    cleanup_workspace_hooks, get_git_config, set_git_config, worktree_hooks_dir,
-    CORE_HOOKS_PATH_KEY, CTX_PREV_HOOKS_PATH_KEY, CTX_TASK_ID_KEY,
+pub(crate) use ctx_workspace_services::vcs_hooks::cleanup_workspace_hooks;
+#[cfg(test)]
+pub(crate) use ctx_workspace_services::vcs_hooks::{
+    get_git_config, set_git_config, worktree_hooks_dir, CORE_HOOKS_PATH_KEY,
+    CTX_PREV_HOOKS_PATH_KEY, CTX_TASK_ID_KEY,
 };
 use ctx_workspace_services::vcs_hooks::{
     SandboxContainerRuntime, VcsHooksHost, WorktreeExecutionLocation, WorktreeHookExecution,
@@ -54,7 +56,8 @@ impl VcsHooksHost for AppState {
         worktree: &Worktree,
     ) -> Result<WorktreeHookExecution> {
         let data_plane = resolve_worktree_data_plane(self, worktree).await?;
-        let settings = execution_effective::effective_execution_settings(self, workspace.id).await?;
+        let settings =
+            execution_effective::effective_execution_settings(self, workspace.id).await?;
         let settings = apply_data_plane_to_execution_settings(&settings, &data_plane)?;
         if matches!(settings.mode, ExecutionMode::Host) {
             return Ok(WorktreeHookExecution {
@@ -81,7 +84,8 @@ impl VcsHooksHost for AppState {
         worktree: &Worktree,
     ) -> Result<()> {
         let data_plane = resolve_worktree_data_plane(self, worktree).await?;
-        let settings = execution_effective::effective_execution_settings(self, workspace.id).await?;
+        let settings =
+            execution_effective::effective_execution_settings(self, workspace.id).await?;
         let settings = apply_data_plane_to_execution_settings(&settings, &data_plane)?;
         self.execution
             .harness
@@ -224,17 +228,19 @@ fn sandbox_command(
             cmd.args(args);
             Ok(cmd)
         }
-        SandboxContainerRuntime::SharedVmContainer => ctx_avf_linux_runtime::build_guest_exec_command(
-            &state.core.data_root,
-            workspace.id,
-            worktree.id,
-            Path::new(live_worktree_root),
-            command,
-            args,
-            &HashMap::new(),
-            None,
-            false,
-        ),
+        SandboxContainerRuntime::SharedVmContainer => {
+            ctx_avf_linux_runtime::build_guest_exec_command(
+                &state.core.data_root,
+                workspace.id,
+                worktree.id,
+                Path::new(live_worktree_root),
+                command,
+                args,
+                &HashMap::new(),
+                None,
+                false,
+            )
+        }
     }
 }
 

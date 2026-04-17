@@ -119,25 +119,44 @@ function runBazelPhase({ coreRoot, env, crateNames }) {
   if (crateNames.length === 0) {
     return;
   }
-  const targets = getBazelTestTargetsForCrates(crateNames);
-  if (targets.length === 0) {
+  const targetBatches = buildBazelTargetBatches(crateNames);
+  if (targetBatches.length === 0) {
     return;
   }
-  const result = childProcess.spawnSync(
-    "node",
-    ["scripts/run_bazel_pilot.cjs", "test", ...targets],
-    {
-      cwd: coreRoot,
-      env,
-      stdio: "inherit",
-    },
-  );
-  if (result.error) {
-    throw result.error;
+  for (const targets of targetBatches) {
+    const result = childProcess.spawnSync(
+      "node",
+      ["scripts/run_bazel_pilot.cjs", "test", ...targets],
+      {
+        cwd: coreRoot,
+        env,
+        stdio: "inherit",
+      },
+    );
+    if (result.error) {
+      throw result.error;
+    }
+    if (result.status !== 0) {
+      process.exit(result.status ?? 1);
+    }
   }
-  if (result.status !== 0) {
-    process.exit(result.status ?? 1);
+}
+
+function buildBazelTargetBatches(crateNames) {
+  const targets = getBazelTestTargetsForCrates(crateNames);
+  if (targets.length === 0) {
+    return [];
   }
+  const ctxHttpTargets = targets.filter((target) => target.startsWith("//core/crates/ctx-http:"));
+  const otherTargets = targets.filter((target) => !target.startsWith("//core/crates/ctx-http:"));
+  const batches = [];
+  if (otherTargets.length > 0) {
+    batches.push(otherTargets);
+  }
+  for (const target of ctxHttpTargets) {
+    batches.push([target]);
+  }
+  return batches;
 }
 
 function applyDefaultRustGateEnv(env, { cargoTestCrates, nextestCrates }) {
@@ -149,6 +168,15 @@ function applyDefaultRustGateEnv(env, { cargoTestCrates, nextestCrates }) {
   }
   if (nextestCrates.length > 0 && !String(env.NEXTEST_TEST_THREADS ?? "").trim()) {
     env.NEXTEST_TEST_THREADS = "2";
+  }
+}
+
+function applyBazelTestEnv(env, { bazelTestCrates }) {
+  if (
+    bazelTestCrates.includes("ctx-http") &&
+    !String(env.CTX_BAZEL_LOCAL_TEST_JOBS ?? "").trim()
+  ) {
+    env.CTX_BAZEL_LOCAL_TEST_JOBS = "2";
   }
 }
 
@@ -174,6 +202,9 @@ function main() {
   applyDefaultRustGateEnv(env, {
     cargoTestCrates,
     nextestCrates,
+  });
+  applyBazelTestEnv(env, {
+    bazelTestCrates,
   });
 
   if (args.runClippy) {
@@ -223,7 +254,9 @@ if (require.main === module) {
 }
 
 module.exports = {
+  applyBazelTestEnv,
   applyDefaultRustGateEnv,
+  buildBazelTargetBatches,
   parseArgs,
   resolveCrates,
 };

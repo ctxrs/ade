@@ -1,7 +1,5 @@
 use super::*;
 use ctx_avf_linux_runtime::{SharedSubstrateLifecycleManager, SubstrateLifecycleRecord};
-use ctx_harness_setup::{observe_log, observe_phase};
-use ctx_linux_sandbox_runtime::linux_sandbox_runtime_status;
 use ctx_workspace_container::{
     container_data_root, container_user, daemon_port_from_url, rewrite_daemon_url_for_container,
     EnsureWorkspaceContainerRequest, WorkspaceContainerReadiness,
@@ -451,26 +449,7 @@ impl HarnessRuntimeManager {
                 .await?;
             return Ok(());
         }
-        observe_phase(
-            observer,
-            HarnessSetupPhase::MachineCheck,
-            "checking container runtime",
-        );
-        if sandbox_engine_ready(&self.data_root).await.unwrap_or(false) {
-            observe_log(
-                observer,
-                HarnessSetupPhase::MachineCheck,
-                HarnessSetupLogLevel::Info,
-                "local sandbox runtime is already reachable",
-            );
-            return Ok(());
-        }
-        if sandbox_cli_invocation(&self.data_root).is_err() {
-            let bootstrap = linux_sandbox_runtime_status(&self.data_root).await?;
-            anyhow::bail!("{}", bootstrap.message);
-        }
-        let bootstrap = linux_sandbox_runtime_status(&self.data_root).await?;
-        anyhow::bail!("{}", bootstrap.message)
+        self.ensure_native_container_machine_ready(observer).await
     }
 
     pub async fn workspace_container_exists(&self, workspace_id: WorkspaceId) -> Result<bool> {

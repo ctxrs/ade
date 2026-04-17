@@ -23,7 +23,7 @@ test("ctx-http suite assignments cover every integration test exactly once", () 
 
   assert.deepEqual(validation, {
     duplicates: [],
-    manualOnly: ["cloud_gateway_azure_e2e", "cloud_gateway_gcp_e2e"],
+    manualOnly: ["attachments_demo_react", "cloud_gateway_azure_e2e", "cloud_gateway_gcp_e2e"],
     missing: [],
     unknown: [],
   });
@@ -40,7 +40,9 @@ test("ctx-http suite names include the meta all task and stable suite task names
     "repo-vcs",
     "lsp",
     "turns-terminal",
-    "artifacts-updates",
+    "attachments-routing",
+    "subagents-control",
+    "updates-release",
     "sandbox-cloud",
     "all",
   ]);
@@ -72,7 +74,9 @@ test("ctx-http suite command builder expands base and meta suites predictably", 
     `${CTX_HTTP_BAZEL_PACKAGE}:repo-vcs`,
     `${CTX_HTTP_BAZEL_PACKAGE}:lsp`,
     `${CTX_HTTP_BAZEL_PACKAGE}:turns-terminal`,
-    `${CTX_HTTP_BAZEL_PACKAGE}:artifacts-updates`,
+    `${CTX_HTTP_BAZEL_PACKAGE}:attachments-routing`,
+    `${CTX_HTTP_BAZEL_PACKAGE}:subagents-control`,
+    `${CTX_HTTP_BAZEL_PACKAGE}:updates-release`,
     `${CTX_HTTP_BAZEL_PACKAGE}:sandbox-cloud`,
   ]);
   assert.deepEqual(CTX_HTTP_MANUAL_ONLY_BAZEL_TARGETS, [
@@ -95,6 +99,7 @@ test("ctx-http suite command builder expands base and meta suites predictably", 
 test("ctx-http integration suites declare source ownership and dependency crates", () => {
   assert.equal(CTX_HTTP_SHARED_SOURCE_GLOBS.includes("crates/ctx-http/src/daemon/**"), true);
   assert.deepEqual([...MANUAL_ONLY_CTX_HTTP_TEST_FILES].sort(), [
+    "attachments_demo_react",
     "cloud_gateway_azure_e2e",
     "cloud_gateway_gcp_e2e",
   ]);

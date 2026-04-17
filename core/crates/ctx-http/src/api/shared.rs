@@ -42,7 +42,7 @@ fn internal_api_error_message(err: &anyhow::Error) -> String {
     }
 }
 
-pub(super) fn map_internal_api_error(err: &anyhow::Error) -> (StatusCode, Json<ApiErrorResp>) {
+pub(crate) fn map_internal_api_error(err: &anyhow::Error) -> (StatusCode, Json<ApiErrorResp>) {
     (
         status_code_for_internal_error(err),
         Json(ApiErrorResp {

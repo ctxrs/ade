@@ -161,8 +161,8 @@ pub(crate) async fn get_provider(
             })),
         ));
     }
-    let mut status = provider_status_for_target(state.as_ref(), &managed, &matrix, &id, target)
-        .await;
+    let mut status =
+        provider_status_for_target(state.as_ref(), &managed, &matrix, &id, target).await;
     if let Some(bytes) =
         installer::managed_install_download_size_bytes(&matrix, &status.provider_id, target)
     {

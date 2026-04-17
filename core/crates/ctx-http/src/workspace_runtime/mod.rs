@@ -103,22 +103,20 @@ pub(crate) use ctx_harness_runtime::{
 #[cfg(test)]
 #[allow(unused_imports)]
 pub(crate) use ctx_sandbox_container_runtime::CTX_HARNESS_SANDBOX_CLI_PATH_ENV;
-pub use ctx_sandbox_container_runtime::{
-    bundled_default_container_image_tar, command_output_message, command_output_with_timeout,
-    default_container_image, is_default_container_image, sandbox_cli_env_for_data_root,
-    sandbox_cli_invocation, ContainerImageStatus, SHARED_VM_SANDBOX_CLI_GUEST_BIN,
+#[cfg(test)]
+pub(crate) use ctx_sandbox_container_runtime::{
+    command_output_message, command_output_with_timeout, default_container_image,
+    sandbox_cli_invocation,
 };
 #[cfg(test)]
 use ctx_sandbox_container_runtime::{
     ensure_managed_default_container_image_tar_with_source, managed_default_image_install_lock,
     sandbox_cli_binary_path,
 };
-pub use ctx_workspace_container::rewrite_daemon_url_for_avf_guest;
 #[cfg(test)]
 use ctx_workspace_container::sandbox_machine_required;
-pub use ctx_workspace_runtime::{
-    materialize_sandbox_worktree, HarnessRuntimeManager, SandboxWorktreeMaterialization,
-};
+#[cfg(test)]
+pub(crate) use ctx_workspace_runtime::HarnessRuntimeManager;
 
 #[cfg(test)]
 const SANDBOX_MACHINE_CACHE_DIR_ENV: &str = "CTX_SANDBOX_MACHINE_CACHE_DIR";

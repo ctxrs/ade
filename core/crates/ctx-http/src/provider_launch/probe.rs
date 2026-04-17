@@ -18,10 +18,10 @@ use crate::worktree_data_plane::resolve_worktree_data_plane;
 
 #[allow(unused_imports)]
 pub(crate) use ctx_provider_runtime::provider_launch::probe::{
-    provider_auth_context_for_worktree_runtime, provider_auth_context_for_workspace_runtime,
+    provider_auth_context_for_workspace_runtime, provider_auth_context_for_worktree_runtime,
     provider_has_active_auth_for_workspace_runtime, provider_probe_context_for_workspace_runtime,
-    provider_probe_env, provider_probe_env_for_workspace_runtime,
-    PreparedWorkspaceProbeRuntime, WorkspaceRuntimeProbeContext,
+    provider_probe_env, provider_probe_env_for_workspace_runtime, PreparedWorkspaceProbeRuntime,
+    WorkspaceRuntimeProbeContext,
 };
 
 #[async_trait]
@@ -93,8 +93,8 @@ impl ctx_provider_runtime::provider_launch::probe::ProviderProbeHost for AppStat
             })?;
         let sandbox_mode = ctx_harness_runtime::selected_sandbox_command_mode(&self.core.data_root)
             .map_err(|err| {
-            logs::redact_sensitive(&format!("sandbox command selection failed: {err:#}"))
-        })?;
+                logs::redact_sensitive(&format!("sandbox command selection failed: {err:#}"))
+            })?;
         ctx_sandbox_materialization::ensure_workspace_root_from_host_copy(
             &self.core.data_root,
             &sandbox_mode,
@@ -135,13 +135,14 @@ impl ctx_provider_runtime::provider_launch::probe::ProviderProbeHost for AppStat
             });
         }
 
-        let worktree_data_plane = resolve_worktree_data_plane(self, worktree)
-            .await
-            .map_err(|err| {
-                logs::redact_sensitive(&format!(
-                    "resolving session auth worktree data plane failed: {err:#}"
-                ))
-            })?;
+        let worktree_data_plane =
+            resolve_worktree_data_plane(self, worktree)
+                .await
+                .map_err(|err| {
+                    logs::redact_sensitive(&format!(
+                        "resolving session auth worktree data plane failed: {err:#}"
+                    ))
+                })?;
         let effective = apply_data_plane_to_execution_settings(&effective, &worktree_data_plane)
             .map_err(|err| {
                 logs::redact_sensitive(&format!(
@@ -160,9 +161,7 @@ impl ctx_provider_runtime::provider_launch::probe::ProviderProbeHost for AppStat
             .prepare(workspace, worktree, &effective, &self.core.daemon_url)
             .await
             .map_err(|err| {
-                logs::redact_sensitive(&format!(
-                    "session auth runtime preparation failed: {err:#}"
-                ))
+                logs::redact_sensitive(&format!("session auth runtime preparation failed: {err:#}"))
             })?;
         let runtime_data_root = runtime_plan
             .env_overrides

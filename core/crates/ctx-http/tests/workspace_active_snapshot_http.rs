@@ -22,6 +22,7 @@ use ctx_core::models::{
 };
 use ctx_http::daemon::AppState;
 use ctx_store::store::{MobileAccessConfig, MobileDeviceUpsert};
+use ctx_transport_runtime::mobile_e2ee;
 use tokio::process::Command;
 
 mod common;
@@ -245,9 +246,7 @@ async fn decode_json_response<T: DeserializeOwned>(response: reqwest::Response) 
     })
 }
 
-async fn configure_mobile_secure_access(
-    state: &Arc<AppState>,
-) -> (String, ctx_http::mobile_e2ee::E2eeKey) {
+async fn configure_mobile_secure_access(state: &Arc<AppState>) -> (String, mobile_e2ee::E2eeKey) {
     let profile_id = state
         .global_store()
         .create_mobile_connection_profile(
@@ -260,7 +259,7 @@ async fn configure_mobile_secure_access(
         .await
         .unwrap()
         .id;
-    let (daemon_public_key, daemon_private_key) = ctx_http::mobile_e2ee::generate_keypair();
+    let (daemon_public_key, daemon_private_key) = mobile_e2ee::generate_keypair();
     state
         .global_store()
         .upsert_mobile_access_config(MobileAccessConfig {
@@ -280,7 +279,7 @@ async fn configure_mobile_secure_access(
         .unwrap();
 
     let device_id = uuid::Uuid::new_v4();
-    let (device_public_key, device_secret_key) = ctx_http::mobile_e2ee::generate_keypair();
+    let (device_public_key, device_secret_key) = mobile_e2ee::generate_keypair();
     state
         .global_store()
         .upsert_mobile_device(
@@ -298,7 +297,7 @@ async fn configure_mobile_secure_access(
         .await
         .unwrap();
 
-    let key = ctx_http::mobile_e2ee::derive_client_key(
+    let key = mobile_e2ee::derive_client_key(
         &device_id.to_string(),
         &device_secret_key,
         &daemon_public_key,
@@ -332,7 +331,7 @@ fn build_mobile_secure_ws_url(
 
 async fn recv_secure_workspace_message(
     socket: &mut TestWsStream,
-    key: &ctx_http::mobile_e2ee::E2eeKey,
+    key: &mobile_e2ee::E2eeKey,
     device_id: &str,
     timeout: Duration,
 ) -> Option<WorkspaceActiveSnapshotStreamMessage> {
@@ -346,21 +345,20 @@ async fn recv_secure_workspace_message(
     };
     let frame: TestMobileSecureEnvelope = serde_json::from_str(&text).ok()?;
     let payload =
-        ctx_http::mobile_e2ee::decrypt(key, device_id, frame.seq, &frame.nonce, &frame.ciphertext)
-            .ok()?;
+        mobile_e2ee::decrypt(key, device_id, frame.seq, &frame.nonce, &frame.ciphertext).ok()?;
     serde_json::from_slice(&payload).ok()
 }
 
 async fn send_secure_workspace_subscribe(
     socket: &mut TestWsStream,
-    key: &ctx_http::mobile_e2ee::E2eeKey,
+    key: &mobile_e2ee::E2eeKey,
     device_id: &str,
     seq: i64,
     payload: Value,
 ) {
     let plaintext = serde_json::to_vec(&payload).expect("serialize secure subscribe payload");
-    let envelope = ctx_http::mobile_e2ee::encrypt(key, device_id, seq, &plaintext)
-        .expect("encrypt secure subscribe");
+    let envelope =
+        mobile_e2ee::encrypt(key, device_id, seq, &plaintext).expect("encrypt secure subscribe");
     let frame = TestMobileSecureEnvelope {
         device_id: envelope.device_id,
         seq: envelope.seq,

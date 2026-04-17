@@ -4,7 +4,7 @@ use ctx_http::settings::{
     TitleGenerationLocalSettings, TitleGenerationMode, TitleGenerationSettings,
 };
 use ctx_http::title_generation;
-use ctx_http::title_generation_local;
+use ctx_managed_installs::title_generation_local;
 
 #[tokio::test]
 async fn generate_title_local_uses_mock_llama_server() {

@@ -12,7 +12,9 @@ use ctx_providers::adapters::{ProviderAdapter, TurnInput};
 use ctx_providers::crp::Tier1CrpAdapter;
 use ctx_providers::events::NormalizedEvent;
 
-use ctx_http::installer::{load_agent_server_config, resolve_provider_command, AgentServerCommand};
+use ctx_managed_installs::{
+    load_agent_server_config, resolve_provider_command, AgentServerCommand,
+};
 
 const DEFAULT_OPENROUTER_MODEL: &str = "openai/gpt-4.1-mini";
 const DEFAULT_GEMINI_MODEL: &str = "google/gemini-3-flash-preview";
@@ -324,7 +326,7 @@ fn format_shell_command(command: &str, args: &[String]) -> String {
 }
 
 fn resolve_command(
-    cfg: &ctx_http::installer::AgentServerConfigFile,
+    cfg: &ctx_managed_installs::AgentServerConfigFile,
     provider_id: &str,
     fallback_cmd: &str,
     fallback_args: &[&str],
@@ -1233,7 +1235,7 @@ mod tests {
         unsafe {
             std::env::set_var("CTX_TOKENS_ACP_CRP_BRIDGE_BIN", "/tmp/local-acp-crp-bridge");
         }
-        let cfg = ctx_http::installer::AgentServerConfigFile::default();
+        let cfg = ctx_managed_installs::AgentServerConfigFile::default();
         let command = resolve_command(&cfg, "acp-crp-bridge", "acp-crp-bridge", &[]);
         assert_eq!(command.command, "/tmp/local-acp-crp-bridge");
         assert!(command.args.is_empty());

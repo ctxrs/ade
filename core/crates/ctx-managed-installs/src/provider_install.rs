@@ -135,7 +135,7 @@ pub(super) async fn install_provider_impl(
     let res: Result<()> = async {
         let matrix = provider_matrix::load_matrix_cached(
             state.data_root(),
-            &state.provider_matrix_cache(),
+            state.provider_matrix_cache(),
         )
         .await;
         let install_cfg = load_agent_server_config(state.data_root())
@@ -740,8 +740,7 @@ async fn refresh_provider_statuses_with_cfg(
     cfg: AgentServerConfigFile,
 ) -> Result<()> {
     let matrix =
-        provider_matrix::load_matrix_cached(state.data_root(), state.provider_matrix_cache())
-            .await;
+        provider_matrix::load_matrix_cached(state.data_root(), state.provider_matrix_cache()).await;
 
     let map = state.provider_adapters().lock().await;
     let mut statuses = HashMap::new();

@@ -25,15 +25,6 @@ struct SandboxBootstrapContext<'a> {
     live_worktree_root: &'a Path,
 }
 
-pub async fn run_worktree_bootstrap(
-    state: &AppState,
-    workspace: &Workspace,
-    worktree: &Worktree,
-) -> Result<()> {
-    ctx_workspace_services::worktree_bootstrap::run_worktree_bootstrap(state, workspace, worktree)
-        .await
-}
-
 pub async fn spawn_worktree_bootstrap(
     state: Arc<AppState>,
     workspace: Workspace,
@@ -239,12 +230,14 @@ async fn run_bootstrap_step(
     let stdout = stdout_task.await.unwrap_or_else(|_| Ok(Vec::new()))?;
     let stderr = stderr_task.await.unwrap_or_else(|_| Ok(Vec::new()))?;
 
-    Ok(ctx_workspace_services::worktree_bootstrap::BootstrapCommandResult {
-        exit_code: status.code(),
-        stdout: String::from_utf8_lossy(&stdout).to_string(),
-        stderr: String::from_utf8_lossy(&stderr).to_string(),
-        timed_out,
-    })
+    Ok(
+        ctx_workspace_services::worktree_bootstrap::BootstrapCommandResult {
+            exit_code: status.code(),
+            stdout: String::from_utf8_lossy(&stdout).to_string(),
+            stderr: String::from_utf8_lossy(&stderr).to_string(),
+            timed_out,
+        },
+    )
 }
 
 async fn run_bootstrap_step_in_container(
@@ -367,12 +360,14 @@ async fn run_bootstrap_step_in_container(
     let stdout = stdout_task.await.unwrap_or_else(|_| Ok(Vec::new()))?;
     let stderr = stderr_task.await.unwrap_or_else(|_| Ok(Vec::new()))?;
 
-    Ok(ctx_workspace_services::worktree_bootstrap::BootstrapCommandResult {
-        exit_code: status.code(),
-        stdout: String::from_utf8_lossy(&stdout).to_string(),
-        stderr: String::from_utf8_lossy(&stderr).to_string(),
-        timed_out,
-    })
+    Ok(
+        ctx_workspace_services::worktree_bootstrap::BootstrapCommandResult {
+            exit_code: status.code(),
+            stdout: String::from_utf8_lossy(&stdout).to_string(),
+            stderr: String::from_utf8_lossy(&stderr).to_string(),
+            timed_out,
+        },
+    )
 }
 
 fn command_for_shell(command: &str) -> Command {

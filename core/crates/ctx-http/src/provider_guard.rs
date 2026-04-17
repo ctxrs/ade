@@ -56,13 +56,15 @@ impl ctx_provider_runtime::provider_guard::ProviderGuardHost for AppState {
         };
         samples
             .into_iter()
-            .map(|sample| ctx_provider_runtime::provider_guard::ProviderMemorySample {
-                provider_id: sample.provider_id,
-                label: sample.label,
-                pid: sample.pid,
-                memory_bytes: sample.memory_bytes,
-                tool_memory_bytes: sample.tool_memory_bytes,
-            })
+            .map(
+                |sample| ctx_provider_runtime::provider_guard::ProviderMemorySample {
+                    provider_id: sample.provider_id,
+                    label: sample.label,
+                    pid: sample.pid,
+                    memory_bytes: sample.memory_bytes,
+                    tool_memory_bytes: sample.tool_memory_bytes,
+                },
+            )
             .collect()
     }
 
@@ -87,8 +89,8 @@ fn map_config(settings: &ProviderGuardSettings) -> ProviderGuardConfig {
         }),
         memory_high_mb: settings.memory_high_mb,
         memory_max_mb: settings.memory_max_mb,
-        interval_ms: settings.interval_ms.map(|v| v as u64),
-        grace_period_ms: settings.grace_period_ms.map(|v| v as u64),
+        interval_ms: settings.interval_ms,
+        grace_period_ms: settings.grace_period_ms,
     }
 }
 
@@ -275,4 +277,12 @@ async fn list_provider_processes(
 
 fn bytes_to_mb(value: u64) -> u64 {
     value / (1024 * 1024)
+}
+
+#[cfg(target_os = "linux")]
+fn unix_ms_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
 }

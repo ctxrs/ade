@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
@@ -10,7 +11,7 @@ use axum::http::{Method, Request, StatusCode};
 use ctx_core::models::{Session, Task, Workspace};
 use ctx_http::api;
 use ctx_http::daemon::AppState;
-use ctx_http::installer::{
+use ctx_managed_installs::{
     load_agent_server_config, save_agent_server_config, AgentServerCommand, AgentServerConfigFile,
     ManagedInstallMetadata,
 };
@@ -30,6 +31,11 @@ pub mod openai_responses_stub;
 pub mod updates_failure_safety;
 
 const JJ_MIN_VERSION: (u64, u64, u64) = (0, 25, 0);
+
+fn copied_test_binary_dir() -> &'static tempfile::TempDir {
+    static DIR: OnceLock<tempfile::TempDir> = OnceLock::new();
+    DIR.get_or_init(|| tempfile::tempdir().unwrap())
+}
 
 fn vcs_command_gate() -> &'static Semaphore {
     static GATE: OnceLock<Semaphore> = OnceLock::new();
@@ -76,8 +82,42 @@ fn resolve_test_path(raw_path: &Path, kind: &str) -> PathBuf {
     );
 }
 
+fn maybe_copy_test_binary(resolved: &Path) -> PathBuf {
+    if !cfg!(target_os = "macos") {
+        return resolved.to_path_buf();
+    }
+    let resolved_str = resolved.to_string_lossy();
+    if !resolved_str.contains("/bazel-out/") && !resolved_str.contains("/bazel-bin/") {
+        return resolved.to_path_buf();
+    }
+
+    let Some(file_name) = resolved.file_name().and_then(|name| name.to_str()) else {
+        return resolved.to_path_buf();
+    };
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    resolved.hash(&mut hasher);
+    let suffix = hasher.finish();
+    let copied = copied_test_binary_dir()
+        .path()
+        .join(format!("{suffix:016x}-{file_name}"));
+    if copied.exists() {
+        return copied;
+    }
+
+    std::fs::copy(resolved, &copied).unwrap_or_else(|err| {
+        panic!("failed to copy test binary {resolved:?} to {copied:?}: {err}")
+    });
+    let permissions = std::fs::metadata(resolved)
+        .unwrap_or_else(|err| panic!("failed to stat test binary {resolved:?}: {err}"))
+        .permissions();
+    std::fs::set_permissions(&copied, permissions).unwrap_or_else(|err| {
+        panic!("failed to set copied test binary permissions {copied:?}: {err}")
+    });
+    copied
+}
+
 pub fn resolve_cargo_bin_exe(raw_path: &str) -> PathBuf {
-    resolve_test_path(Path::new(raw_path), "test binary")
+    maybe_copy_test_binary(&resolve_test_path(Path::new(raw_path), "test binary"))
 }
 
 pub fn resolve_manifest_dir() -> PathBuf {
@@ -472,4 +512,35 @@ pub async fn run_jj(root: &Path, args: &[&str]) {
         args,
         String::from_utf8_lossy(&output.stderr)
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::maybe_copy_test_binary;
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn maybe_copy_test_binary_only_rehomes_bazel_paths_on_macos() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir
+            .path()
+            .join("bazel-out/darwin-fastbuild/bin/mock-binary");
+        std::fs::create_dir_all(source.parent().unwrap()).unwrap();
+        std::fs::write(&source, b"#!/bin/sh\nexit 0\n").unwrap();
+        let mut permissions = std::fs::metadata(&source).unwrap().permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&source, permissions).unwrap();
+
+        let resolved = maybe_copy_test_binary(&source);
+        if cfg!(target_os = "macos") {
+            assert_ne!(resolved, source);
+            assert_eq!(std::fs::read(&resolved).unwrap(), b"#!/bin/sh\nexit 0\n");
+            assert_eq!(
+                std::fs::metadata(&resolved).unwrap().permissions().mode() & 0o111,
+                0o111
+            );
+        } else {
+            assert_eq!(resolved, source);
+        }
+    }
 }

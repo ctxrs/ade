@@ -8,7 +8,7 @@ use serde_json::json;
 use tokio_tungstenite::{connect_async, tungstenite::Message as WsMessage};
 
 use ctx_core::models::{TerminalSession, TerminalStatus, Workspace};
-use ctx_http::terminals::TerminalServerMessage;
+use ctx_transport_runtime::TerminalServerMessage;
 
 mod common;
 

@@ -3,7 +3,13 @@ const test = require("node:test");
 
 const { AGENT_GATE_CRATES, ISOLATED_CARGO_TEST_CRATES } = require("./lib/rust_gate_plan.cjs");
 const { MANUAL_ONLY_RUST_CRATES } = require("./lib/rust_workspace_graph.cjs");
-const { applyDefaultRustGateEnv, parseArgs, resolveCrates } = require("./run_rust_gate.cjs");
+const {
+  applyBazelTestEnv,
+  applyDefaultRustGateEnv,
+  buildBazelTargetBatches,
+  parseArgs,
+  resolveCrates,
+} = require("./run_rust_gate.cjs");
 
 test("parseArgs accepts --agent-gate without additional selection flags", () => {
   assert.deepEqual(parseArgs(["--agent-gate", "--test-strategy", "mixed"]), {
@@ -178,4 +184,40 @@ test("applyDefaultRustGateEnv mirrors verify:quick env hygiene without overwriti
     NEXTEST_TEST_THREADS: "9",
     RUST_TEST_THREADS: "7",
   });
+});
+
+test("applyBazelTestEnv caps ctx-http local bazel fanout without overwriting explicit values", () => {
+  const env = {};
+  applyBazelTestEnv(env, {
+    bazelTestCrates: ["ctx-core", "ctx-http"],
+  });
+  assert.deepEqual(env, {
+    CTX_BAZEL_LOCAL_TEST_JOBS: "2",
+  });
+
+  const explicitEnv = {
+    CTX_BAZEL_LOCAL_TEST_JOBS: "2",
+  };
+  applyBazelTestEnv(explicitEnv, {
+    bazelTestCrates: ["ctx-http"],
+  });
+  assert.deepEqual(explicitEnv, {
+    CTX_BAZEL_LOCAL_TEST_JOBS: "2",
+  });
+});
+
+test("buildBazelTargetBatches isolates ctx-http suite aliases into sequential bazel phases", () => {
+  assert.deepEqual(buildBazelTargetBatches(["ctx-http"]), [
+    ["//core/crates/ctx-http:attachments-routing"],
+    ["//core/crates/ctx-http:base"],
+    ["//core/crates/ctx-http:lsp"],
+    ["//core/crates/ctx-http:provider-auth"],
+    ["//core/crates/ctx-http:provider-runtime"],
+    ["//core/crates/ctx-http:repo-vcs"],
+    ["//core/crates/ctx-http:sandbox-cloud"],
+    ["//core/crates/ctx-http:subagents-control"],
+    ["//core/crates/ctx-http:turns-terminal"],
+    ["//core/crates/ctx-http:updates-release"],
+    ["//core/crates/ctx-http:workspace-stream"],
+  ]);
 });

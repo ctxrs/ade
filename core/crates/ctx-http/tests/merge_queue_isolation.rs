@@ -7,7 +7,6 @@ use ctx_core::ids::MergeQueueEntryId;
 use ctx_core::models::{MergeQueueEntry, MergeQueueEntryStatus};
 use ctx_fs::git::git_status_porcelain;
 use ctx_http::daemon::AppState;
-use ctx_http::merge_queue;
 use serde_json::json;
 use tokio::process::Command;
 
@@ -111,9 +110,13 @@ async fn wait_for_entry(
 ) -> MergeQueueEntry {
     let deadline = Instant::now() + Duration::from_secs(15);
     loop {
-        let entry = merge_queue::get_workspace_merge_queue_entry(state, workspace_id, entry_id)
-            .await
-            .unwrap();
+        let entry = ctx_merge_queue::get_workspace_merge_queue_entry::<AppState>(
+            state,
+            workspace_id,
+            entry_id,
+        )
+        .await
+        .unwrap();
         match entry.status {
             MergeQueueEntryStatus::Queued | MergeQueueEntryStatus::Running => {
                 if Instant::now() > deadline {
@@ -155,7 +158,7 @@ async fn merge_queue_accepts_unrebased_changes() {
         "http://127.0.0.1:0",
     );
     let app = common::router(state.clone());
-    merge_queue::spawn_merge_queue_runner(state.clone());
+    ctx_merge_queue::spawn_merge_queue_runner::<AppState>(state.clone());
 
     let workspace = common::create_workspace(&app, repo.path(), "mq-unrebased").await;
     let store = state.store_for_workspace(workspace.id).await.unwrap();
@@ -233,7 +236,7 @@ async fn merge_queue_conflict_message_and_cleanup() {
         "http://127.0.0.1:0",
     );
     let app = common::router(state.clone());
-    merge_queue::spawn_merge_queue_runner(state.clone());
+    ctx_merge_queue::spawn_merge_queue_runner::<AppState>(state.clone());
 
     let workspace = common::create_workspace(&app, repo.path(), "mq-conflict").await;
     let store = state.store_for_workspace(workspace.id).await.unwrap();
@@ -341,7 +344,7 @@ async fn merge_queue_verify_failure_keeps_target_branch_and_records_commit() {
         "http://127.0.0.1:0",
     );
     let app = common::router(state.clone());
-    merge_queue::spawn_merge_queue_runner(state.clone());
+    ctx_merge_queue::spawn_merge_queue_runner::<AppState>(state.clone());
 
     let workspace = common::create_workspace(&app, repo.path(), "mq-verify-fail").await;
     let store = state.store_for_workspace(workspace.id).await.unwrap();
@@ -482,7 +485,7 @@ async fn merge_queue_push_failure_does_not_advance_target_branch() {
         "http://127.0.0.1:0",
     );
     let app = common::router(state.clone());
-    merge_queue::spawn_merge_queue_runner(state.clone());
+    ctx_merge_queue::spawn_merge_queue_runner::<AppState>(state.clone());
 
     let workspace = common::create_workspace(&app, repo.path(), "mq-push-fail").await;
     let store = state.store_for_workspace(workspace.id).await.unwrap();
@@ -602,7 +605,7 @@ async fn merge_queue_push_on_success_updates_remote_after_success() {
         "http://127.0.0.1:0",
     );
     let app = common::router(state.clone());
-    merge_queue::spawn_merge_queue_runner(state.clone());
+    ctx_merge_queue::spawn_merge_queue_runner::<AppState>(state.clone());
 
     let workspace = common::create_workspace(&app, repo.path(), "mq-push-success").await;
     let store = state.store_for_workspace(workspace.id).await.unwrap();
@@ -712,7 +715,7 @@ async fn merge_queue_push_on_success_does_not_push_if_target_branch_advanced() {
         "http://127.0.0.1:0",
     );
     let app = common::router(state.clone());
-    merge_queue::spawn_merge_queue_runner(state.clone());
+    ctx_merge_queue::spawn_merge_queue_runner::<AppState>(state.clone());
 
     let workspace = common::create_workspace(&app, repo.path(), "mq-push-branch-advanced").await;
     let store = state.store_for_workspace(workspace.id).await.unwrap();
@@ -819,7 +822,7 @@ async fn merge_queue_isolation_and_canonical_sync() {
         "http://127.0.0.1:0",
     );
     let app = common::router(state.clone());
-    merge_queue::spawn_merge_queue_runner(state.clone());
+    ctx_merge_queue::spawn_merge_queue_runner::<AppState>(state.clone());
 
     let workspace = common::create_workspace(&app, repo.path(), "mq-test").await;
     let store = state.store_for_workspace(workspace.id).await.unwrap();
@@ -1023,7 +1026,7 @@ async fn merge_queue_submit_uses_worktree_root() {
         "http://127.0.0.1:0",
     );
     let app = common::router(state.clone());
-    merge_queue::spawn_merge_queue_runner(state.clone());
+    ctx_merge_queue::spawn_merge_queue_runner::<AppState>(state.clone());
 
     let workspace = common::create_workspace(&app, repo.path(), "mq-root").await;
     let store = state.store_for_workspace(workspace.id).await.unwrap();

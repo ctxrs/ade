@@ -36,9 +36,9 @@ mod auth;
 mod edit_plans;
 mod lifecycle;
 mod provider_adapters;
-mod sessions;
+pub(crate) mod sessions;
 mod state;
-mod workspaces;
+pub(crate) mod workspaces;
 
 #[cfg(test)]
 pub(crate) use lifecycle::{collect_provider_adapters_for_shutdown, shutdown_provider_adapters};

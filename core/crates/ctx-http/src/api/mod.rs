@@ -3,7 +3,6 @@ use std::path::{Path as StdPath, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
-use anyhow::Context;
 use axum::body::{Body, Bytes};
 use axum::extract::{Extension, MatchedPath, Path, Query, State};
 use axum::http::header;
@@ -26,7 +25,7 @@ use url::Url;
 mod artifacts;
 mod auth;
 mod demo;
-mod errors;
+pub(crate) mod errors;
 mod execution;
 mod extractors;
 mod lsp;
@@ -35,11 +34,11 @@ mod mobile_access;
 mod provider_catalog;
 mod provider_launch;
 pub(crate) mod provider_probe_auth;
-mod providers;
+pub(crate) mod providers;
 mod repo;
 pub(crate) mod sessions;
 mod settings;
-mod shared;
+pub(crate) mod shared;
 pub(crate) mod tasks;
 mod telemetry;
 mod terminals;
@@ -92,8 +91,8 @@ use crate::perf_telemetry::{PerfMetric, PerfMetricKind};
 use crate::resource_utilization;
 use crate::title_generation_local;
 use crate::web_sessions::{
-    render_web_session_view, WebSessionCreateRequest, WebSessionInfo, WebSessionRunRequest,
-    WebSessionRunResponse, WebSessionViewport,
+    render_web_session_view, WebSessionInfo, WebSessionRunRequest, WebSessionRunResponse,
+    WebSessionViewport,
 };
 use ctx_provider_install::install_state::InstallId;
 use ctx_providers::adapters::ProviderStatus;

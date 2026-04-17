@@ -23,15 +23,11 @@ use crate::git_status::{load_git_status_snapshot, GitStatusEntry};
 use crate::installer;
 use crate::logs;
 use crate::oracle;
-use crate::order_seq::attach_order_seq;
 use crate::scheduler::SchedulerCommand;
 use crate::settings as user_settings;
 use ctx_core::ids::*;
 use ctx_core::models::*;
-use ctx_fs::vcs;
 use ctx_harness_runtime::sandbox_container_command;
-use ctx_provider_accounts as provider_accounts;
-use ctx_providers::events::NormalizedEvent;
 use ctx_providers::{
     ask_user_question::{AskUserQuestionAnswer, AskUserQuestionOutcome},
     crp::probe_crp_models,
@@ -39,16 +35,23 @@ use ctx_providers::{
 use ctx_sandbox_container_runtime::command_output_with_timeout;
 use ctx_store::is_unique_constraint_violation;
 use ctx_workspace_container::workspace_container_name;
-use tokio::sync::mpsc;
 
 mod subagents;
+pub(crate) use subagents::{
+    aggregate_subagent_status, build_subagent_result, build_subagent_result_for_session,
+    context_window_for_run, context_window_for_session, estimate_context_window_for_prompt,
+    estimate_context_window_for_prompt_len, worktree_path_for_child, AgentInitItem, AgentInitReq,
+    AgentInitResp, AgentInitResult, AgentReplyReq, AgentReplyResp, SubagentInterruptReq,
+    SubagentInterruptResp, SubagentListItem, SubagentWaitReq, SubagentWaitResp,
+};
 pub(super) use subagents::{
     get_session_subagent_invocation, list_session_subagent_invocations, list_session_subagents,
     mcp_agent_init, mcp_agent_reply, mcp_oracle, mcp_subagent_interrupt, mcp_subagent_list,
     mcp_subagent_wait,
 };
 mod diff_exec;
-use diff_exec::{diff_worktree_for_session, diff_worktree_summary_for_session};
+use diff_exec::diff_worktree_for_session;
+pub(crate) use diff_exec::diff_worktree_summary_for_session;
 mod control;
 pub(super) use control::{
     authenticate_session, cancel_session, interrupt_session, submit_ask_user_question,
@@ -62,6 +65,7 @@ mod models;
 pub(crate) use models::{
     compose_model_id, deserialize_optional_reasoning_effort,
     load_provider_model_catalog_for_execution_environment, normalize_effort_id, resolve_model_id,
+    ModelCatalog,
 };
 mod snapshot;
 pub(super) use snapshot::{
@@ -201,10 +205,6 @@ async fn store_for_existing_session_api_error_for_write(
 
 #[cfg(test)]
 mod tests {
-    use super::subagents::{
-        aggregate_subagent_status, legacy_context_window_metric_key, summarize_context_window,
-        AgentInitResult,
-    };
     use super::*;
     use crate::title_generation_local;
     use std::collections::HashMap;
@@ -475,79 +475,5 @@ mod tests {
             .stores
             .finish_workspace_delete(session.workspace_id)
             .await;
-    }
-
-    fn result_with_status(status: &str) -> AgentInitResult {
-        AgentInitResult {
-            label: "agent".to_string(),
-            status: status.to_string(),
-            content: None,
-            context_window: None,
-            worktree_path: None,
-        }
-    }
-
-    #[test]
-    fn aggregate_subagent_status_reports_unknown() {
-        let results = vec![
-            result_with_status("completed"),
-            result_with_status("unknown"),
-        ];
-        assert_eq!(aggregate_subagent_status(&results), "unknown");
-    }
-
-    #[test]
-    fn aggregate_subagent_status_prefers_running_over_unknown() {
-        let results = vec![result_with_status("running"), result_with_status("unknown")];
-        assert_eq!(aggregate_subagent_status(&results), "running");
-    }
-
-    #[test]
-    fn summarize_context_window_accepts_canonical_metrics() {
-        let metrics = serde_json::json!({
-            "context_tokens_estimate": 40,
-            "context_window_tokens": 100,
-            "remaining_tokens_estimate": 60,
-            "remaining_fraction": 0.6,
-        });
-
-        let summary =
-            summarize_context_window(&metrics).expect("expected canonical metrics to parse");
-        assert_eq!(summary.total, 100);
-        assert_eq!(summary.used, 40);
-        assert_eq!(summary.remaining, 60);
-        assert!((summary.utilization - 0.4).abs() < f64::EPSILON);
-    }
-
-    #[test]
-    fn summarize_context_window_rejects_legacy_alias_metrics() {
-        let legacy = serde_json::json!({
-            "context_window": 100,
-            "total_tokens": 40,
-            "remaining_tokens": 60,
-        });
-        assert!(summarize_context_window(&legacy).is_none());
-    }
-
-    #[test]
-    fn legacy_context_window_metric_key_detects_first_legacy_key() {
-        let legacy = serde_json::json!({
-            "context_window": 100,
-            "remaining_tokens": 60,
-        });
-        assert_eq!(
-            legacy_context_window_metric_key(&legacy),
-            Some("context_window")
-        );
-    }
-
-    #[test]
-    fn legacy_context_window_metric_key_returns_none_for_canonical_shape() {
-        let canonical = serde_json::json!({
-            "context_tokens_estimate": 40,
-            "context_window_tokens": 100,
-            "remaining_tokens_estimate": 60,
-        });
-        assert_eq!(legacy_context_window_metric_key(&canonical), None);
     }
 }

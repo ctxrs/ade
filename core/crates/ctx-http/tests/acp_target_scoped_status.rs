@@ -8,12 +8,12 @@ use std::sync::OnceLock;
 use std::time::Instant;
 
 use axum::http::StatusCode;
-use ctx_http::installer::{
+use ctx_managed_installs::{
     resolve_matrix_target_key, save_agent_server_config, AgentServerCommand, AgentServerConfigFile,
     ManagedInstallMetadata,
 };
-use ctx_http::provider_matrix::{builtin_matrix, get_entry, recommended_release, ProviderInstall};
 use ctx_provider_install::install_state::InstallTarget;
+use ctx_provider_matrix::{builtin_matrix, get_entry, recommended_release, ProviderInstall};
 use ctx_providers::adapters::{ProviderHealth, ProviderStatus};
 
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]

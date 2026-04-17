@@ -7,13 +7,15 @@ rust_library(
     crate_name = "ctx_worktree_data_plane",
     crate_root = "src/lib.rs",
     edition = "2021",
+    proc_macro_deps = [
+        "@crates//:async-trait",
+    ],
     srcs = glob(["src/**/*.rs"]),
     deps = [
         "//core/crates/ctx-core:lib",
         "//core/crates/ctx-sandbox-contract:lib",
         "//core/crates/ctx-store:lib",
         "@crates//:anyhow",
-        "@crates//:async-trait",
     ],
 )
 

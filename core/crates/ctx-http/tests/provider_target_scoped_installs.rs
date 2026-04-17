@@ -10,22 +10,22 @@ use std::time::Duration;
 use axum::http::StatusCode;
 use ctx_core::models::SessionEventType;
 use ctx_http::daemon::AppState;
-use ctx_http::installer::{
-    load_agent_server_config, refresh_provider_statuses, save_agent_server_config,
-    AgentServerCommand, AgentServerConfigFile, ManagedInstallMetadata,
-};
-use ctx_http::provider_matrix::{
-    matrix_cache_path, ProviderArchiveKind, ProviderArchiveTarget, ProviderInstall,
-    ProviderInstallDependency as MatrixProviderInstallDependency, ProviderInstallDependencyRole,
-    ProviderInstallDependencyTarget, ProviderMatrix, ProviderMatrixEntry, ProviderMatrixEntryKind,
-    ProviderRelease, ProviderReleaseStatus,
-};
 use ctx_http::settings::{
     save_settings, ContainerExecutionSettings, ContainerMountMode, ContainerNetworkMode,
     ExecutionMode, ExecutionSettings, Settings,
 };
+use ctx_managed_installs::{
+    load_agent_server_config, refresh_provider_statuses, save_agent_server_config,
+    AgentServerCommand, AgentServerConfigFile, ManagedInstallMetadata,
+};
 use ctx_provider_install::install_state::{
     InstallId, InstallInfo, InstallProgressEvent, InstallStateKind, InstallTarget,
+};
+use ctx_provider_matrix::{
+    matrix_cache_path, ProviderArchiveKind, ProviderArchiveTarget, ProviderInstall,
+    ProviderInstallDependency as MatrixProviderInstallDependency, ProviderInstallDependencyRole,
+    ProviderInstallDependencyTarget, ProviderMatrix, ProviderMatrixEntry, ProviderMatrixEntryKind,
+    ProviderRelease, ProviderReleaseStatus,
 };
 use ctx_providers::adapters::{ProviderAdapter, ProviderHealth, ProviderStatus};
 use ctx_providers::crp::Tier1CrpAdapter;
@@ -412,7 +412,7 @@ fn fixture_download_url(server: &common::TestServer, name: &str) -> String {
 }
 
 fn fixture_matrix_version() -> u32 {
-    ctx_http::provider_matrix::builtin_matrix().version
+    ctx_provider_matrix::builtin_matrix().version
 }
 
 fn local_archive_entry_with_bin_path(url: String, bin_path: &str) -> ProviderArchiveTarget {
@@ -457,7 +457,8 @@ fn archive_targets_with_bin_path(
             local_archive_entry_with_bin_path(url.clone(), bin_path),
         ),
     ]);
-    if let Ok(host_target_key) = ctx_http::installer::resolve_matrix_target_key(InstallTarget::Host)
+    if let Ok(host_target_key) =
+        ctx_managed_installs::resolve_matrix_target_key(InstallTarget::Host)
     {
         targets.insert(
             host_target_key.to_string(),

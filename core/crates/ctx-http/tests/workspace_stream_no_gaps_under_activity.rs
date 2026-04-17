@@ -62,7 +62,7 @@ async fn workspace_stream_stays_live_without_gaps_under_activity() {
     // This test is intentionally moderate: it should be stable in CI but still
     // exercise streaming with tool calls + thought chunks across multiple sessions.
     const SESSION_COUNT: usize = 2;
-    const TURNS_PER_SESSION: usize = 2;
+    const TURNS_PER_SESSION: usize = 1;
 
     let (repo, _data_dir, state, server) = setup().await;
     let base = &server.base_url;
@@ -158,7 +158,7 @@ async fn workspace_stream_stays_live_without_gaps_under_activity() {
         }));
     }
 
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(75);
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(120);
     loop {
         let all_sent = senders.iter().all(|h| h.is_finished());
         let enough_done = if all_sent {

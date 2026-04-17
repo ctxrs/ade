@@ -4,7 +4,6 @@ use std::process::Output;
 use std::sync::Arc;
 use std::sync::OnceLock;
 use std::time::Duration;
-use std::{fs, path::Path as StdPath};
 
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
@@ -31,6 +30,7 @@ pub mod lsp_catalog;
 mod provider_install;
 pub mod provider_install_contract;
 pub mod provider_status_matrix;
+mod runtime_commands;
 mod targets;
 pub mod title_generation;
 pub mod title_generation_local;
@@ -52,6 +52,7 @@ use self::provider_install::{
     classify_install_error, emit_install, emit_install_with_code, ensure_install_not_cancelled,
     install_provider_impl, repair_install_dir, run_tracked_provider_install,
 };
+use self::runtime_commands::{is_acp_provider_id, managed_provider_runtime_command};
 pub(crate) use ctx_bundled_assets as bundled_assets;
 
 pub use config::{
@@ -89,10 +90,11 @@ pub use title_generation::install_title_generation_local_with_progress;
 #[allow(unused_imports)]
 pub use toolchains::{
     archive_bin_requires_node_runtime, ensure_node_runtime, ensure_python_pip,
-    ensure_python_runtime_versioned, install_dir_for_provider, install_dir_rel, NodeRuntime,
+    ensure_python_runtime_versioned, install_dir_for_provider, install_dir_rel,
     node_runtime_dependency_id, node_runtime_dependency_metadata,
     node_runtime_dependency_targets_for_install_target, npm_dependency_matches, npm_install,
     npm_install_one, resolve_node_package_bin, sanitize_npm_package_for_path, venv_exe,
+    NodeRuntime,
 };
 
 const NODE_VERSION: &str = "24.14.0";
@@ -148,17 +150,9 @@ pub trait ManagedInstallHost: Send + Sync + 'static {
         mirror_install_id: InstallId,
     ) -> bool;
 
-    async fn set_install_progress_pct_override(
-        &self,
-        install_id: InstallId,
-        pct: Option<u8>,
-    );
+    async fn set_install_progress_pct_override(&self, install_id: InstallId, pct: Option<u8>);
 
-    async fn emit_install_event(
-        &self,
-        install_id: InstallId,
-        event: InstallProgressEvent,
-    );
+    async fn emit_install_event(&self, install_id: InstallId, event: InstallProgressEvent);
 
     async fn finish_install(
         &self,
@@ -371,283 +365,6 @@ async fn acquire_provider_install_lock(
 fn normalize_version_str(s: &str) -> Option<semver::Version> {
     let trimmed = s.trim().trim_start_matches('v');
     semver::Version::parse(trimmed).ok()
-}
-
-#[derive(Debug, Clone)]
-struct ExplicitGeminiCliPaths {
-    cli_entry_path: PathBuf,
-    core_entry_path: PathBuf,
-}
-
-fn file_stem_matches(path: &StdPath, name: &str) -> bool {
-    path.file_stem()
-        .and_then(|value| value.to_str())
-        .map(|value| value.eq_ignore_ascii_case(name))
-        .unwrap_or(false)
-}
-
-fn resolve_existing_absolute_path(raw: &str, label: &str) -> Result<PathBuf> {
-    let path = PathBuf::from(raw);
-    anyhow::ensure!(
-        path.is_absolute(),
-        "{label} must be an absolute path; got '{raw}'"
-    );
-    anyhow::ensure!(path.exists(), "{label} does not exist: {}", path.display());
-    Ok(path)
-}
-
-fn gemini_cli_root_from_entrypoint(path: &StdPath) -> Option<PathBuf> {
-    let file_name = path.file_name()?.to_str()?;
-    let dist_dir = path.parent()?;
-    let package_dir = dist_dir.parent()?;
-    let scope_dir = package_dir.parent()?;
-    let node_modules_dir = scope_dir.parent()?;
-    if file_name != "index.js"
-        || dist_dir.file_name()?.to_str()? != "dist"
-        || package_dir.file_name()?.to_str()? != "gemini-cli"
-        || scope_dir.file_name()?.to_str()? != "@google"
-        || node_modules_dir.file_name()?.to_str()? != "node_modules"
-    {
-        return None;
-    }
-    Some(package_dir.to_path_buf())
-}
-
-pub(crate) fn is_acp_provider_id(provider_id: &str) -> bool {
-    matches!(
-        provider_id,
-        "gemini"
-            | "qwen"
-            | "cursor"
-            | "pi"
-            | "opencode"
-            | "mistral"
-            | "goose"
-            | "kimi"
-            | "auggie"
-            | "amp"
-            | "droid"
-            | "copilot"
-            | "cline"
-            | "openhands"
-    )
-}
-
-fn resolve_explicit_gemini_cli_paths(
-    command: &str,
-    args: &[String],
-) -> Result<ExplicitGeminiCliPaths> {
-    let node_path = resolve_existing_absolute_path(command, "Gemini ACP runtime command")?;
-    anyhow::ensure!(
-        file_stem_matches(&node_path, "node"),
-        "Gemini ACP runtime must use an explicit absolute node executable plus @google/gemini-cli/dist/index.js; got command '{command}'"
-    );
-
-    let arg0 = args.first().ok_or_else(|| {
-        anyhow!(
-            "Gemini ACP runtime must pass an explicit absolute @google/gemini-cli/dist/index.js entrypoint as the first argument"
-        )
-    })?;
-    let cli_entry_path = resolve_existing_absolute_path(arg0, "Gemini ACP entrypoint")?;
-    let cli_root = gemini_cli_root_from_entrypoint(&cli_entry_path).ok_or_else(|| {
-        anyhow!(
-            "Gemini ACP entrypoint must point to @google/gemini-cli/dist/index.js; got '{}'",
-            cli_entry_path.display()
-        )
-    })?;
-    let node_modules_dir = cli_root.parent().and_then(|scope| scope.parent()).ok_or_else(|| {
-        anyhow!(
-            "Gemini ACP entrypoint must live under a node_modules/@google/gemini-cli install tree: {}",
-            cli_entry_path.display()
-        )
-    })?;
-    let core_entry_path = node_modules_dir
-        .join("@google")
-        .join("gemini-cli-core")
-        .join("dist")
-        .join("index.js");
-    anyhow::ensure!(
-        core_entry_path.exists(),
-        "Gemini ACP companion package is missing: {}",
-        core_entry_path.display()
-    );
-
-    Ok(ExplicitGeminiCliPaths {
-        cli_entry_path,
-        core_entry_path,
-    })
-}
-
-fn maybe_wrap_gemini_acp_command(
-    data_root: &Path,
-    mut cmd: AgentServerCommand,
-) -> Result<AgentServerCommand> {
-    let paths = resolve_explicit_gemini_cli_paths(&cmd.command, &cmd.args)?;
-
-    let wrapper_path = data_root
-        .join("providers")
-        .join("agent-servers")
-        .join("gemini-acp-wrapper.mjs");
-    if let Some(parent) = wrapper_path.parent() {
-        fs::create_dir_all(parent)
-            .with_context(|| format!("creating Gemini ACP wrapper dir {}", parent.display()))?;
-    }
-
-    let wrapper_contents = format!(
-        "import {{ coreEvents, CoreEvent, writeToStdout, writeToStderr }} from 'file://{}';\n\
-coreEvents.on(CoreEvent.Output, (payload) => {{\n\
-  if (payload.isStderr) {{\n\
-    writeToStderr(payload.chunk, payload.encoding);\n\
-  }} else {{\n\
-    writeToStdout(payload.chunk, payload.encoding);\n\
-  }}\n\
-}});\n\
-coreEvents.on(CoreEvent.ConsoleLog, (payload) => {{\n\
-  writeToStderr(String(payload?.content ?? '') + '\\n');\n\
-}});\n\
-const consentRaw = process.env.CTX_GEMINI_AUTO_OAUTH_CONSENT ?? '';\n\
-const consentDisabled = consentRaw === '0' || consentRaw.toLowerCase() === 'false';\n\
-if (!consentDisabled) {{\n\
-  coreEvents.on(CoreEvent.ConsentRequest, (payload) => {{\n\
-    if (typeof payload?.onConfirm === 'function') {{\n\
-      payload.onConfirm(true);\n\
-    }}\n\
-  }});\n\
-}}\n\
-process.env.GEMINI_CLI_NO_RELAUNCH ??= 'true';\n\
-await import('file://{}');\n",
-        paths.core_entry_path.to_string_lossy(),
-        paths.cli_entry_path.to_string_lossy(),
-    );
-
-    let write_wrapper = match fs::read_to_string(&wrapper_path) {
-        Ok(existing) => existing != wrapper_contents,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => true,
-        Err(err) => {
-            return Err(err)
-                .with_context(|| format!("reading Gemini ACP wrapper {}", wrapper_path.display()));
-        }
-    };
-    if write_wrapper {
-        fs::write(&wrapper_path, wrapper_contents)
-            .with_context(|| format!("writing Gemini ACP wrapper {}", wrapper_path.display()))?;
-    }
-
-    let wrapper_arg = wrapper_path.to_string_lossy().to_string();
-    let first = cmd.args.first_mut().ok_or_else(|| {
-        anyhow!(
-            "Gemini ACP runtime must pass an explicit absolute @google/gemini-cli/dist/index.js entrypoint as the first argument"
-        )
-    })?;
-    *first = wrapper_arg;
-    Ok(cmd)
-}
-
-fn maybe_set_qwen_openai_auth_type(mut cmd: AgentServerCommand) -> AgentServerCommand {
-    if cmd.args.iter().any(|arg| arg == "--auth-type") {
-        return cmd;
-    }
-    cmd.args.push("--auth-type".to_string());
-    cmd.args.push("openai".to_string());
-    cmd
-}
-
-fn maybe_set_bridge_env_override(mut cmd: AgentServerCommand) -> AgentServerCommand {
-    if cmd.args.iter().any(|arg| arg == "--override-with-envs") {
-        return cmd;
-    }
-    cmd.args.push("--override-with-envs".to_string());
-    cmd
-}
-
-fn goose_args_include_developer_builtin(args: &[String]) -> bool {
-    args.windows(2).any(|window| {
-        window[0] == "--with-builtin"
-            && window[1]
-                .split(',')
-                .any(|value| value.trim() == "developer")
-    })
-}
-
-fn maybe_set_goose_acp_subcommand(mut cmd: AgentServerCommand) -> AgentServerCommand {
-    if !cmd.args.iter().any(|arg| arg == "acp")
-        && file_stem_matches(StdPath::new(&cmd.command), "goose")
-    {
-        cmd.args.insert(0, "acp".to_string());
-    }
-    if !goose_args_include_developer_builtin(&cmd.args) {
-        cmd.args.push("--with-builtin".to_string());
-        cmd.args.push("developer".to_string());
-    }
-    cmd
-}
-
-fn normalize_acp_provider_command(
-    data_root: &Path,
-    provider_id: &str,
-    cmd: AgentServerCommand,
-) -> Result<AgentServerCommand> {
-    if !is_acp_provider_id(provider_id) {
-        return Ok(cmd);
-    }
-    let cmd = if provider_id == "gemini" {
-        maybe_wrap_gemini_acp_command(data_root, cmd)?
-    } else {
-        cmd
-    };
-    let cmd = if provider_id == "qwen" {
-        maybe_set_qwen_openai_auth_type(cmd)
-    } else {
-        cmd
-    };
-    let cmd = if provider_id == "goose" {
-        maybe_set_goose_acp_subcommand(cmd)
-    } else {
-        cmd
-    };
-    let cmd = if provider_id == "openhands" {
-        maybe_set_bridge_env_override(cmd)
-    } else {
-        cmd
-    };
-    Ok(cmd)
-}
-
-fn acp_bridge_command(
-    bridge_cmd: &AgentServerCommand,
-    acp_cmd: AgentServerCommand,
-) -> AgentServerCommand {
-    let mut parts = Vec::with_capacity(1 + acp_cmd.args.len());
-    parts.push(acp_cmd.command);
-    parts.extend(acp_cmd.args);
-    let mut args = bridge_cmd.args.clone();
-    args.push("--acp-command".to_string());
-    args.push(parts.join(" "));
-    AgentServerCommand {
-        command: bridge_cmd.command.clone(),
-        args,
-        dependencies: Vec::new(),
-        managed: None,
-    }
-}
-
-fn managed_provider_runtime_command(
-    data_root: &Path,
-    provider_id: &str,
-    managed_cmd: AgentServerCommand,
-    bridge_cmd: Option<&AgentServerCommand>,
-) -> Result<AgentServerCommand> {
-    if !is_acp_provider_id(provider_id) {
-        return Ok(managed_cmd);
-    }
-
-    let bridge_cmd = bridge_cmd.ok_or_else(|| {
-        anyhow::anyhow!(
-            "ACP bridge runtime is not configured or invalid for provider '{provider_id}'"
-        )
-    })?;
-    let acp_cmd = normalize_acp_provider_command(data_root, provider_id, managed_cmd)?;
-    Ok(acp_bridge_command(bridge_cmd, acp_cmd))
 }
 
 pub async fn install_provider(state: &AppState, provider_id: &str) -> Result<()> {

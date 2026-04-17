@@ -316,13 +316,6 @@ impl BufferStore {
     }
 }
 
-pub fn sha256_hex(text: &str) -> String {
-    let mut hasher = sha2::Sha256::new();
-    use sha2::Digest;
-    hasher.update(text.as_bytes());
-    hex::encode(hasher.finalize())
-}
-
 fn default_true() -> bool {
     true
 }

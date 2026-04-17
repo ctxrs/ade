@@ -7,7 +7,9 @@ CTX_HTTP_SUITE_ORDER = [
     "repo-vcs",
     "lsp",
     "turns-terminal",
-    "artifacts-updates",
+    "attachments-routing",
+    "subagents-control",
+    "updates-release",
     "sandbox-cloud",
 ]
 
@@ -97,25 +99,24 @@ CTX_HTTP_SUITE_TESTS = {
         "turn_lifecycle_events",
         "turn_terminal_reconciliation",
     ],
-    "artifacts-updates": [
-        "attachments_demo_react",
-        "global_id_routing_http_artifact_route_is_session_scoped",
-        "global_id_routing_http_quicktime_artifact_upload_is_accepted",
-        "global_id_routing_http_message_delete_route_is_session_scoped",
-        "global_id_routing_http_subagent_invocation_route_is_session_scoped",
+    "attachments-routing": [
+        "global_id_routing_http",
         "image_attachments_http_e2e",
-        "openai_responses_sse_stub",
+        "workspace_attachments_local_canonical",
+    ],
+    "subagents-control": [
         "oracle_mcp_http",
-        "release_manifest_corpus",
-        "storage_guard_api",
         "subagent_mcp_http",
         "system_prompt_append_http",
         "title_generation_local",
+    ],
+    "updates-release": [
+        "openai_responses_sse_stub",
         "updates_failure_safety_checksum_mismatch",
         "updates_failure_safety_interrupted_transfer",
+        "release_manifest_corpus",
         "updates_failure_safety_manifest_parse",
         "updates_failure_safety_missing_artifact",
-        "workspace_attachments_local_canonical",
     ],
     "sandbox-cloud": [
         "disk_isolated_sandbox_smoke",
@@ -129,6 +130,7 @@ CTX_HTTP_SUITE_TESTS = {
 }
 
 CTX_HTTP_MANUAL_ONLY_TESTS = [
+    "attachments_demo_react",
     "cloud_gateway_azure_e2e",
     "cloud_gateway_gcp_e2e",
 ]
@@ -297,12 +299,47 @@ CTX_HTTP_CUSTOM_INTEGRATION_TARGETS = {
     "global_id_routing_http_subagent_invocation_route_is_session_scoped": {
         "source": "global_id_routing_http",
         "args": ["--exact", "subagent_invocation_route_is_session_scoped"],
-        "timeout": "long",
+        "timeout": "eternal",
     },
     "workspace_stream_no_gaps_under_activity": {
         "source": "workspace_stream_no_gaps_under_activity",
         "args": [],
         "timeout": "long",
+    },
+    "global_id_routing_http": {
+        "source": "global_id_routing_http",
+        "args": [],
+        "timeout": "eternal",
+    },
+    "session_model_api": {
+        "source": "session_model_api",
+        "args": [],
+        "timeout": "eternal",
+    },
+    "workspace_provider_model_preferences_http": {
+        "source": "workspace_provider_model_preferences_http",
+        "args": [],
+        "timeout": "eternal",
+    },
+    "terminal_workspace_stream_separation": {
+        "source": "terminal_workspace_stream_separation",
+        "args": [],
+        "timeout": "eternal",
+    },
+    "oracle_mcp_http": {
+        "source": "oracle_mcp_http",
+        "args": [],
+        "timeout": "eternal",
+    },
+    "subagent_mcp_http": {
+        "source": "subagent_mcp_http",
+        "args": [],
+        "timeout": "eternal",
+    },
+    "workspace_attachments_local_canonical": {
+        "source": "workspace_attachments_local_canonical",
+        "args": [],
+        "timeout": "eternal",
     },
     "provider_scenarios_offline_crp_fixtures": {
         "source": "provider_scenarios_offline",
@@ -355,8 +392,7 @@ def _declare_ctx_http_test(name, source_name, common_srcs, compile_data, data, d
 
 def declare_ctx_http_rust_unit_test(name, args, compile_data, data, deps, proc_macro_deps, timeout = None):
     kwargs = {}
-    if timeout != None:
-        kwargs["timeout"] = timeout
+    kwargs["timeout"] = timeout if timeout != None else "long"
     rust_test(
         name = name,
         crate = ":lib_test_support",

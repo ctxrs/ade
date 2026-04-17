@@ -18,6 +18,7 @@ use url::Url;
 
 mod manager;
 mod manager_container;
+mod manager_native_machine;
 mod materialization;
 
 struct AvfDaemonGatewayProxy {

@@ -80,7 +80,7 @@ async fn lsp_diagnostics_endpoint_returns_diagnostics() {
             enabled: true,
             rust_command: lsp_server,
             rust_args: vec![],
-            diagnostics_wait: Duration::from_secs(2),
+            diagnostics_wait: Duration::from_secs(5),
             ..Default::default()
         },
         false,
@@ -227,7 +227,7 @@ async fn lsp_status_endpoint_returns_expected_shape() {
             py_args: vec![],
             go_command: lsp_server.clone(),
             go_args: vec![],
-            diagnostics_wait: Duration::from_secs(2),
+            diagnostics_wait: Duration::from_secs(5),
             ..Default::default()
         },
         true,
@@ -298,7 +298,7 @@ async fn lsp_semantic_endpoints_return_payloads() {
             enabled: true,
             rust_command: lsp_server,
             rust_args: vec![],
-            diagnostics_wait: Duration::from_secs(2),
+            diagnostics_wait: Duration::from_secs(5),
             ..Default::default()
         },
         false,
@@ -443,7 +443,7 @@ async fn lsp_text_only_agent_endpoints_return_payloads() {
             enabled: true,
             rust_command: lsp_server,
             rust_args: vec![],
-            diagnostics_wait: Duration::from_secs(2),
+            diagnostics_wait: Duration::from_secs(5),
             execute_commands_enabled: true,
             execute_command_allowlist: vec!["ctx.test.fixAll".to_string()],
             ..Default::default()

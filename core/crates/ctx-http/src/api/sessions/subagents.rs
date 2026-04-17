@@ -1,6 +1,4 @@
-use super::models::{normalize_effort_id, resolve_model_id, ModelCatalog};
 use super::*;
-use crate::vcs_hooks;
 
 mod handlers;
 mod init;
@@ -84,283 +82,108 @@ pub(crate) async fn get_session_subagent_invocation(
     Ok(Json(invocation))
 }
 
-const DEFAULT_MAX_SUBAGENTS_PER_CALL: usize = 10;
-
-fn resolve_max_subagents_per_call(settings: &user_settings::Settings) -> usize {
-    let configured = settings
-        .subagents
-        .as_ref()
-        .and_then(|s| s.max_per_call)
-        .filter(|value| *value > 0);
-    configured
-        .map(|value| value as usize)
-        .unwrap_or(DEFAULT_MAX_SUBAGENTS_PER_CALL)
-}
 #[derive(Debug, Deserialize)]
 pub(crate) struct AgentInitReq {
     #[serde(default)]
-    tool_call_id: Option<String>,
+    pub(crate) tool_call_id: Option<String>,
     #[serde(default)]
-    response_mode: Option<String>,
+    pub(crate) response_mode: Option<String>,
     #[serde(default)]
-    worktree: Option<String>,
-    agents: Vec<AgentInitItem>,
+    pub(crate) worktree: Option<String>,
+    pub(crate) agents: Vec<AgentInitItem>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
 pub(crate) struct AgentInitItem {
-    prompt: String,
+    pub(crate) prompt: String,
     #[serde(default)]
-    label: Option<String>,
+    pub(crate) label: Option<String>,
     #[serde(default)]
-    harness: Option<String>,
+    pub(crate) harness: Option<String>,
     #[serde(default)]
-    model: Option<String>,
+    pub(crate) model: Option<String>,
     #[serde(default)]
-    reasoning_effort: Option<String>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum SubagentWorktreeSelection {
-    Inherit,
-    New,
-}
-
-fn parse_subagent_worktree(value: Option<&str>) -> Result<SubagentWorktreeSelection, String> {
-    let trimmed = value.map(|raw| raw.trim()).filter(|raw| !raw.is_empty());
-    match trimmed {
-        Some("inherit") => Ok(SubagentWorktreeSelection::Inherit),
-        Some("new") => Ok(SubagentWorktreeSelection::New),
-        Some(_) => Err("worktree must be 'inherit' or 'new'".to_string()),
-        None => Err("worktree is required".to_string()),
-    }
-}
-
-fn build_subagent_request_json(agents: &[AgentInitItem]) -> serde_json::Value {
-    let mut items = Vec::with_capacity(agents.len());
-    for (idx, agent) in agents.iter().enumerate() {
-        let prompt = agent.prompt.trim();
-        let mut obj = serde_json::Map::new();
-        obj.insert(
-            "position".to_string(),
-            serde_json::Value::Number(serde_json::Number::from(idx as u64)),
-        );
-        let prompt_length = prompt.chars().count() as u64;
-        obj.insert(
-            "prompt_length".to_string(),
-            serde_json::Value::Number(serde_json::Number::from(prompt_length)),
-        );
-        if let Some(label) = agent
-            .label
-            .as_deref()
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-        {
-            obj.insert(
-                "label".to_string(),
-                serde_json::Value::String(label.to_string()),
-            );
-        }
-        if let Some(harness) = agent
-            .harness
-            .as_deref()
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-        {
-            obj.insert(
-                "harness".to_string(),
-                serde_json::Value::String(harness.to_string()),
-            );
-        }
-        if let Some(model) = agent
-            .model
-            .as_deref()
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-        {
-            obj.insert(
-                "model".to_string(),
-                serde_json::Value::String(model.to_string()),
-            );
-        }
-        if let Some(reasoning_effort) = agent
-            .reasoning_effort
-            .as_deref()
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-        {
-            let norm = normalize_effort_id(reasoning_effort);
-            if !norm.is_empty() {
-                obj.insert(
-                    "reasoning_effort".to_string(),
-                    serde_json::Value::String(norm),
-                );
-            }
-        }
-        items.push(serde_json::Value::Object(obj));
-    }
-
-    serde_json::json!({
-        "agents_total": agents.len(),
-        "agents": items,
-    })
+    pub(crate) reasoning_effort: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
 pub(crate) struct AgentInitResp {
-    status: String,
-    results: Vec<AgentInitResult>,
+    pub(crate) status: String,
+    pub(crate) results: Vec<AgentInitResult>,
 }
 
 #[derive(Debug, Serialize)]
 pub(crate) struct AgentInitResult {
-    pub(super) label: String,
-    pub(super) status: String,
+    pub(crate) label: String,
+    pub(crate) status: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(super) content: Option<String>,
+    pub(crate) content: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(super) context_window: Option<ContextWindowSummary>,
+    pub(crate) context_window: Option<ContextWindowSummary>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(super) worktree_path: Option<String>,
+    pub(crate) worktree_path: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
-pub(super) struct ContextWindowSummary {
-    pub(super) total: u64,
-    pub(super) used: u64,
-    pub(super) remaining: u64,
-    pub(super) utilization: f64,
+pub(crate) struct ContextWindowSummary {
+    pub(crate) total: u64,
+    pub(crate) used: u64,
+    pub(crate) remaining: u64,
+    pub(crate) utilization: f64,
 }
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct SubagentWaitReq {
     #[serde(default)]
-    label: Option<String>,
+    pub(crate) label: Option<String>,
     #[serde(default)]
-    labels: Option<Vec<String>>,
+    pub(crate) labels: Option<Vec<String>>,
 }
 
 #[derive(Debug, Serialize)]
 pub(crate) struct SubagentWaitResp {
-    status: String,
-    results: Vec<AgentInitResult>,
+    pub(crate) status: String,
+    pub(crate) results: Vec<AgentInitResult>,
 }
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct SubagentInterruptReq {
     #[serde(default)]
-    label: Option<String>,
+    pub(crate) label: Option<String>,
     #[serde(default)]
-    all: Option<bool>,
+    pub(crate) all: Option<bool>,
 }
 
 #[derive(Debug, Serialize)]
 pub(crate) struct SubagentInterruptResp {
-    status: String,
-    results: Vec<AgentInitResult>,
+    pub(crate) status: String,
+    pub(crate) results: Vec<AgentInitResult>,
 }
 
 #[derive(Debug, Serialize)]
 pub(crate) struct SubagentListItem {
-    label: String,
-    status: String,
+    pub(crate) label: String,
+    pub(crate) status: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    context_window: Option<ContextWindowSummary>,
+    pub(crate) context_window: Option<ContextWindowSummary>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    worktree_path: Option<String>,
+    pub(crate) worktree_path: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct AgentReplyReq {
-    label: String,
-    prompt: String,
+    pub(crate) label: String,
+    pub(crate) prompt: String,
 }
 
 #[derive(Debug, Serialize)]
 pub(crate) struct AgentReplyResp {
-    label: String,
-    status: String,
+    pub(crate) label: String,
+    pub(crate) status: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    context_window: Option<ContextWindowSummary>,
+    pub(crate) context_window: Option<ContextWindowSummary>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    worktree_path: Option<String>,
-}
-
-async fn wait_for_run_terminal_event(
-    state: &Arc<AppState>,
-    session_id: SessionId,
-    run_id: RunId,
-) -> Result<SessionEventType, String> {
-    let store = state
-        .store_for_session(session_id)
-        .await
-        .map_err(|e| logs::redact_sensitive(&e.to_string()))?;
-    if let Some(event) = store
-        .get_terminal_event_for_run(session_id, run_id)
-        .await
-        .map_err(|e| logs::redact_sensitive(&e.to_string()))?
-    {
-        return Ok(event.event_type);
-    }
-
-    let mut rx = state.get_broadcaster(session_id).await.subscribe();
-    loop {
-        match rx.recv().await {
-            Ok(event) => {
-                if event.run_id == Some(run_id)
-                    && matches!(
-                        event.event_type,
-                        SessionEventType::Done
-                            | SessionEventType::Error
-                            | SessionEventType::TurnInterrupted
-                            | SessionEventType::TurnFinished
-                    )
-                {
-                    return Ok(event.event_type);
-                }
-            }
-            Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
-                if let Some(event) = store
-                    .get_terminal_event_for_run(session_id, run_id)
-                    .await
-                    .map_err(|e| logs::redact_sensitive(&e.to_string()))?
-                {
-                    return Ok(event.event_type);
-                }
-            }
-            Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                return Err("session event stream closed".to_string());
-            }
-        }
-    }
-}
-
-async fn emit_subagent_invocation_notice(
-    state: &Arc<AppState>,
-    parent_session_id: SessionId,
-    parent_turn_id: Option<TurnId>,
-    payload: serde_json::Value,
-) -> Result<(), (StatusCode, Json<ApiErrorResp>)> {
-    let store = store_for_existing_session_api_error(state, parent_session_id).await?;
-    let event = store
-        .append_session_event(
-            parent_session_id,
-            None,
-            parent_turn_id,
-            SessionEventType::Notice,
-            payload,
-        )
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: logs::redact_sensitive(&e.to_string()),
-                }),
-            )
-        })?;
-    state.publish_event(event).await;
-    Ok(())
+    pub(crate) worktree_path: Option<String>,
 }
 
 fn parse_u64(value: &serde_json::Value) -> Option<u64> {
@@ -379,7 +202,7 @@ fn parse_f64(value: &serde_json::Value) -> Option<f64> {
     }
 }
 
-pub(super) fn summarize_context_window(
+pub(crate) fn summarize_context_window(
     metrics: &serde_json::Value,
 ) -> Option<ContextWindowSummary> {
     let obj = metrics.as_object()?;
@@ -419,7 +242,7 @@ pub(super) fn summarize_context_window(
     })
 }
 
-pub(super) fn legacy_context_window_metric_key(
+pub(crate) fn legacy_context_window_metric_key(
     metrics: &serde_json::Value,
 ) -> Option<&'static str> {
     let obj = metrics.as_object()?;
@@ -441,7 +264,7 @@ pub(super) fn legacy_context_window_metric_key(
     None
 }
 
-async fn context_window_for_run(
+pub(crate) async fn context_window_for_run(
     state: &Arc<AppState>,
     session_id: SessionId,
     run_id: RunId,
@@ -465,7 +288,7 @@ async fn context_window_for_run(
     summarize_context_window(metrics)
 }
 
-async fn context_window_for_session(
+pub(crate) async fn context_window_for_session(
     state: &Arc<AppState>,
     session_id: SessionId,
 ) -> Option<ContextWindowSummary> {
@@ -488,7 +311,7 @@ async fn context_window_for_session(
     summarize_context_window(metrics)
 }
 
-fn estimate_context_window_for_prompt_len(
+pub(crate) fn estimate_context_window_for_prompt_len(
     provider_id: &str,
     model_id: &str,
     prompt_len: i64,
@@ -510,7 +333,7 @@ fn estimate_context_window_for_prompt_len(
     })
 }
 
-fn estimate_context_window_for_prompt(
+pub(crate) fn estimate_context_window_for_prompt(
     provider_id: &str,
     model_id: &str,
     prompt: &str,
@@ -519,7 +342,7 @@ fn estimate_context_window_for_prompt(
     estimate_context_window_for_prompt_len(provider_id, model_id, prompt_len)
 }
 
-async fn worktree_path_for_child(
+pub(crate) async fn worktree_path_for_child(
     state: &Arc<AppState>,
     parent_worktree_id: WorktreeId,
     child_session_id: SessionId,
@@ -537,7 +360,7 @@ async fn worktree_path_for_child(
     Some(worktree.root_path)
 }
 
-async fn build_subagent_result(
+pub(crate) async fn build_subagent_result(
     state: &Arc<AppState>,
     parent_worktree_id: WorktreeId,
     child: &SubagentInvocationChild,
@@ -560,7 +383,7 @@ async fn build_subagent_result(
     })
 }
 
-async fn build_subagent_result_for_session(
+pub(crate) async fn build_subagent_result_for_session(
     state: &Arc<AppState>,
     parent_worktree_id: WorktreeId,
     session: &Session,
@@ -591,312 +414,7 @@ async fn build_subagent_result_for_session(
     })
 }
 
-async fn run_subagent_child(
-    state: &Arc<AppState>,
-    child: SubagentInvocationChild,
-    parent_worktree_id: WorktreeId,
-) -> Result<AgentInitResult, String> {
-    let run_id = child
-        .run_id
-        .ok_or_else(|| "subagent run_id missing".to_string())?;
-    let terminal = wait_for_run_terminal_event(state, child.child_session_id, run_id).await;
-    let status = match terminal {
-        Ok(SessionEventType::Done) | Ok(SessionEventType::TurnFinished) => "completed",
-        Ok(SessionEventType::TurnInterrupted) => "interrupted",
-        Ok(SessionEventType::Error) => "failed",
-        Ok(_) => "completed",
-        Err(_) => "unknown",
-    }
-    .to_string();
-
-    let child_updated_at = chrono::Utc::now();
-    let mut updated_child = child.clone();
-    updated_child.status = status.clone();
-    updated_child.updated_at = child_updated_at;
-    let store = state
-        .store_for_session(child.child_session_id)
-        .await
-        .map_err(|e| logs::redact_sensitive(&e.to_string()))?;
-    store
-        .upsert_subagent_invocation_child(updated_child)
-        .await
-        .map_err(|e| logs::redact_sensitive(&e.to_string()))?;
-
-    let content = store
-        .get_last_assistant_message_for_run(child.child_session_id, run_id)
-        .await
-        .ok()
-        .flatten()
-        .map(|m| m.content);
-
-    let context_window = context_window_for_run(state, child.child_session_id, run_id).await;
-    build_subagent_result(
-        state,
-        parent_worktree_id,
-        &child,
-        status,
-        content,
-        context_window,
-    )
-    .await
-}
-
-async fn finalize_subagent_invocation(
-    state: &Arc<AppState>,
-    invocation_id: &str,
-    tool_call_id: &str,
-    parent_session_id: SessionId,
-    parent_turn_id: Option<TurnId>,
-) -> Result<(), String> {
-    let store = state
-        .store_for_session(parent_session_id)
-        .await
-        .map_err(|e| logs::redact_sensitive(&e.to_string()))?;
-    let Some(invocation) = store
-        .get_subagent_invocation(invocation_id)
-        .await
-        .map_err(|e| logs::redact_sensitive(&e.to_string()))?
-    else {
-        return Ok(());
-    };
-
-    if invocation.children.is_empty() {
-        return Ok(());
-    }
-    if invocation
-        .children
-        .iter()
-        .any(|child| child.status == "running")
-    {
-        return Ok(());
-    }
-
-    let final_status = if invocation
-        .children
-        .iter()
-        .all(|child| child.status == "completed")
-    {
-        "completed"
-    } else {
-        "failed"
-    };
-    if invocation.status == final_status {
-        return Ok(());
-    }
-
-    let updated_at = chrono::Utc::now();
-    store
-        .update_subagent_invocation_status(invocation_id, final_status, updated_at)
-        .await
-        .map_err(|e| logs::redact_sensitive(&e.to_string()))?;
-    let child_session_ids = invocation
-        .children
-        .iter()
-        .map(|child| child.child_session_id.0.to_string())
-        .collect::<Vec<_>>();
-    let child_statuses = invocation
-        .children
-        .iter()
-        .map(|child| {
-            serde_json::json!({
-                "session_id": child.child_session_id.0.to_string(),
-                "status": child.status,
-            })
-        })
-        .collect::<Vec<_>>();
-    emit_subagent_invocation_notice(
-        state,
-        parent_session_id,
-        parent_turn_id,
-        serde_json::json!({
-            "kind": "subagent_invocation_updated",
-            "invocation_id": invocation_id,
-            "tool_call_id": tool_call_id,
-            "status": final_status,
-            "child_session_ids": child_session_ids,
-            "child_statuses": child_statuses,
-        }),
-    )
-    .await
-    .map_err(|(_, err)| err.0.error)?;
-
-    Ok(())
-}
-
-async fn create_subagent_worktree(
-    state: &Arc<AppState>,
-    store: &ctx_store::Store,
-    workspace: &Workspace,
-    task_id: TaskId,
-    base_commit_sha: &str,
-    vcs_kind: VcsKind,
-    effective: &crate::settings::ExecutionSettings,
-) -> Result<Worktree, (StatusCode, Json<ApiErrorResp>)> {
-    let worktree_id = WorktreeId::new();
-    let branch_name = format!("ctx/{}/{}", task_id.0, worktree_id.0);
-    let (wt_path, sandbox_binding) = crate::api::tasks::provision_worktree_for_execution(
-        state,
-        workspace,
-        worktree_id,
-        base_commit_sha,
-        &branch_name,
-        effective,
-    )
-    .await
-    .map_err(|e| crate::api::shared::map_internal_api_error(&e))?;
-
-    let worktree = Worktree {
-        id: worktree_id,
-        workspace_id: workspace.id,
-        root_path: wt_path.to_string_lossy().to_string(),
-        base_commit_sha: base_commit_sha.to_string(),
-        git_branch: (vcs_kind == VcsKind::Git).then(|| branch_name.clone()),
-        vcs_kind: Some(vcs_kind),
-        base_revision: Some(base_commit_sha.to_string()),
-        vcs_ref: Some(branch_name),
-        created_at: chrono::Utc::now(),
-        bootstrap_status: None,
-        bootstrap_started_at: None,
-        bootstrap_finished_at: None,
-        bootstrap_exit_code: None,
-        bootstrap_timeout_sec: None,
-        bootstrap_error: None,
-        bootstrap_log_path: None,
-        bootstrap_log_truncated: None,
-        bootstrap_command: None,
-        bootstrap_script_path: None,
-    };
-
-    let worktree = crate::api::tasks::persist_provisioned_worktree(
-        state,
-        store,
-        workspace,
-        worktree,
-        sandbox_binding,
-    )
-    .await
-    .map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiErrorResp {
-                error: logs::redact_sensitive(&e.to_string()),
-            }),
-        )
-    })?;
-    if let Err(err) = vcs_hooks::ensure_task_commit_hook(state, workspace, &worktree, task_id).await
-    {
-        tracing::warn!(
-            task_id = %task_id.0,
-            worktree_id = %worktree.id.0,
-            "failed to configure vcs hooks for subagent worktree: {err:#}"
-        );
-    }
-    Ok(worktree)
-}
-
-async fn enqueue_subagent_prompt(
-    state: &Arc<AppState>,
-    session: &Session,
-    prompt: String,
-) -> Result<(RunId, Message), (StatusCode, Json<ApiErrorResp>)> {
-    let store = state.store_for_session(session.id).await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiErrorResp {
-                error: logs::redact_sensitive(&e.to_string()),
-            }),
-        )
-    })?;
-    let run_id = RunId::new();
-    let turn_id = TurnId::new();
-    let message_id = MessageId::new();
-    let order_seq_state = state.sessions.get_order_seq_state(&store, session.id).await;
-    let order_seq = {
-        let mut order_seq_state = order_seq_state.lock().await;
-        order_seq_state.get_or_assign(format!("message:{}", message_id.0), None)
-    };
-    let msg = Message {
-        id: message_id,
-        session_id: session.id,
-        task_id: session.task_id,
-        run_id: Some(run_id),
-        turn_id: Some(turn_id),
-        turn_sequence: Some(0),
-        order_seq: Some(order_seq),
-        role: MessageRole::User,
-        content: prompt,
-        attachments: vec![],
-        delivery: MessageDelivery::Immediate,
-        delivered_at: None,
-        created_at: chrono::Utc::now(),
-    };
-    let saved = store.insert_message(msg).await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiErrorResp {
-                error: logs::redact_sensitive(&e.to_string()),
-            }),
-        )
-    })?;
-    let event = store
-        .append_session_event(
-            session.id,
-            Some(run_id),
-            Some(turn_id),
-            SessionEventType::UserMessage,
-            serde_json::json!({
-                "message_id": saved.id.0,
-                "content": saved.content.clone(),
-                "delivery": saved.delivery.clone(),
-                "attachments": saved.attachments,
-                "order_seq": order_seq,
-            }),
-        )
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: logs::redact_sensitive(&e.to_string()),
-                }),
-            )
-        })?;
-    let start_seq = event.seq;
-
-    let turn = SessionTurn {
-        turn_id,
-        session_id: session.id,
-        run_id: Some(run_id),
-        user_message_id: Some(saved.id),
-        status: SessionTurnStatus::Running,
-        start_seq: Some(start_seq),
-        end_seq: None,
-        started_at: saved.created_at,
-        updated_at: saved.created_at,
-        assistant_partial: None,
-        thought_partial: None,
-        metrics_json: None,
-        tool_total: 0,
-        tool_pending: 0,
-        tool_running: 0,
-        tool_completed: 0,
-        tool_failed: 0,
-    };
-    let _ = store.insert_session_turn(turn).await;
-    state.publish_event(event).await;
-
-    let tx = state.ensure_scheduler(session.clone()).await;
-    let queued = crate::scheduler::QueuedMessage {
-        message: saved.clone(),
-        enqueued_at: Instant::now(),
-        run_id: None,
-    };
-    let _ = tx.send(SchedulerCommand::Enqueue(queued)).await;
-
-    Ok((run_id, saved))
-}
-
-pub(super) fn aggregate_subagent_status(results: &[AgentInitResult]) -> &'static str {
+pub(crate) fn aggregate_subagent_status(results: &[AgentInitResult]) -> &'static str {
     if results.iter().any(|r| r.status == "failed") {
         "failed"
     } else if results.iter().any(|r| r.status == "interrupted") {
@@ -907,5 +425,84 @@ pub(super) fn aggregate_subagent_status(results: &[AgentInitResult]) -> &'static
         "unknown"
     } else {
         "completed"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn result_with_status(status: &str) -> AgentInitResult {
+        AgentInitResult {
+            label: "agent".to_string(),
+            status: status.to_string(),
+            content: None,
+            context_window: None,
+            worktree_path: None,
+        }
+    }
+
+    #[test]
+    fn aggregate_subagent_status_reports_unknown() {
+        let results = vec![
+            result_with_status("completed"),
+            result_with_status("unknown"),
+        ];
+        assert_eq!(aggregate_subagent_status(&results), "unknown");
+    }
+
+    #[test]
+    fn aggregate_subagent_status_prefers_running_over_unknown() {
+        let results = vec![result_with_status("running"), result_with_status("unknown")];
+        assert_eq!(aggregate_subagent_status(&results), "running");
+    }
+
+    #[test]
+    fn summarize_context_window_accepts_canonical_metrics() {
+        let metrics = serde_json::json!({
+            "context_tokens_estimate": 40,
+            "context_window_tokens": 100,
+            "remaining_tokens_estimate": 60,
+            "remaining_fraction": 0.6,
+        });
+
+        let summary =
+            summarize_context_window(&metrics).expect("expected canonical metrics to parse");
+        assert_eq!(summary.total, 100);
+        assert_eq!(summary.used, 40);
+        assert_eq!(summary.remaining, 60);
+        assert!((summary.utilization - 0.4).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn summarize_context_window_rejects_legacy_alias_metrics() {
+        let legacy = serde_json::json!({
+            "context_window": 100,
+            "total_tokens": 40,
+            "remaining_tokens": 60,
+        });
+        assert!(summarize_context_window(&legacy).is_none());
+    }
+
+    #[test]
+    fn legacy_context_window_metric_key_detects_first_legacy_key() {
+        let legacy = serde_json::json!({
+            "context_window": 100,
+            "remaining_tokens": 60,
+        });
+        assert_eq!(
+            legacy_context_window_metric_key(&legacy),
+            Some("context_window")
+        );
+    }
+
+    #[test]
+    fn legacy_context_window_metric_key_returns_none_for_canonical_shape() {
+        let canonical = serde_json::json!({
+            "context_tokens_estimate": 40,
+            "context_window_tokens": 100,
+            "remaining_tokens_estimate": 60,
+        });
+        assert_eq!(legacy_context_window_metric_key(&canonical), None);
     }
 }

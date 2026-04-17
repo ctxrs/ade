@@ -7,7 +7,7 @@ use std::sync::Arc;
 use axum::http::StatusCode;
 use ctx_http::api;
 use ctx_http::daemon::AppState;
-use ctx_http::installer::{
+use ctx_managed_installs::{
     load_agent_server_config, save_agent_server_config, AgentServerCommand, ManagedInstallMetadata,
 };
 use ctx_provider_accounts::{
@@ -399,7 +399,7 @@ exit 1
 "#,
     );
 
-    let mut cfg = ctx_http::installer::load_agent_server_config(data_root)
+    let mut cfg = ctx_managed_installs::load_agent_server_config(data_root)
         .await
         .unwrap_or_default();
     cfg.providers.insert(
@@ -1024,7 +1024,7 @@ async fn gemini_provider_options_use_live_acp_catalog_when_probe_succeeds() {
             ]
         }),
     );
-    let mut cfg = ctx_http::installer::load_agent_server_config(data_dir.path())
+    let mut cfg = ctx_managed_installs::load_agent_server_config(data_dir.path())
         .await
         .unwrap_or_default();
     cfg.providers.insert("gemini".to_string(), gemini_cmd);

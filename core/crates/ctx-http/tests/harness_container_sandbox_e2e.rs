@@ -15,11 +15,11 @@ use ctx_store::StoreManager;
 
 use ctx_http::api;
 use ctx_http::daemon::AppState;
-use ctx_http::installer::{save_agent_server_config, AgentServerCommand, AgentServerConfigFile};
 use ctx_http::settings::{
     load_settings, save_settings, ContainerExecutionSettings, ContainerMountMode,
     ContainerNetworkMode, ExecutionMode, ExecutionSettings, Settings,
 };
+use ctx_managed_installs::{save_agent_server_config, AgentServerCommand, AgentServerConfigFile};
 
 struct EnvGuard {
     key: &'static str,

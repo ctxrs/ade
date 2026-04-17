@@ -1,9 +1,11 @@
 use super::*;
 use std::process::Stdio;
 
+use crate::execution_effective;
 use crate::settings::ContainerRuntimeKind;
 use crate::worktree_data_plane::resolve_worktree_data_plane;
-use ctx_core::models::AttachmentUpdatePolicy;
+use chrono::Utc;
+use ctx_core::models::{AttachmentUpdatePolicy, WorktreeAttachmentStatus};
 use ctx_worktree_data_plane::apply_data_plane_to_execution_settings;
 use tokio::process::Command;
 
@@ -649,7 +651,7 @@ async fn container_remove_attachment_data_best_effort(
     Ok(())
 }
 
-pub(super) async fn ensure_attachment_mount(
+pub(crate) async fn ensure_attachment_mount(
     state: &AppState,
     workspace: &Workspace,
     worktree_id: WorktreeId,
@@ -758,7 +760,7 @@ pub(super) async fn ensure_attachment_mount(
     Ok(mount)
 }
 
-pub(super) async fn cleanup_removed_attachment(
+pub(crate) async fn cleanup_removed_attachment(
     state: &AppState,
     attachment: &WorkspaceAttachment,
 ) -> Result<()> {

@@ -11,7 +11,7 @@ use tower::ServiceExt;
 
 use ctx_core::models::SessionEventType;
 use ctx_http::daemon::AppState;
-use ctx_http::installer::{save_agent_server_config, AgentServerCommand, AgentServerConfigFile};
+use ctx_managed_installs::{save_agent_server_config, AgentServerCommand, AgentServerConfigFile};
 use ctx_providers::adapters::{ProviderAdapter, ProviderHealth, ProviderStatus};
 use ctx_providers::crp::Tier1CrpAdapter;
 use ctx_store::StoreManager;

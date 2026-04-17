@@ -1,4 +1,5 @@
 use super::*;
+use crate::web_session_launch::WebSessionLaunchRequest;
 
 #[derive(Debug, Deserialize)]
 pub(super) struct WebSessionCreatePayload {
@@ -23,77 +24,46 @@ pub(super) async fn create_web_session(
         ));
     }
 
-    let session_id = payload.session_id.clone();
-    let worktree_id = payload.worktree_id.clone();
-    let work_dir = resolve_web_session_work_dir(&state, session_id.clone(), worktree_id.clone())
-        .await
-        .map_err(|e| {
+    let session_id = payload
+        .session_id
+        .as_deref()
+        .map(uuid::Uuid::parse_str)
+        .transpose()
+        .map_err(|_| {
             (
                 StatusCode::BAD_REQUEST,
                 Json(ApiErrorResp {
-                    error: e.to_string(),
+                    error: "invalid session id".to_string(),
                 }),
             )
-        })?;
-
-    let node_runtime = crate::installer::ensure_node_runtime(
-        state.as_ref(),
-        None,
-        "web_session_worker",
-        &state.core.data_root,
-        ctx_provider_install::install_state::InstallTarget::Host,
-    )
-    .await
-    .map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiErrorResp {
-                error: format!("failed to prepare node runtime: {e}"),
-            }),
-        )
-    })?;
-
-    let worker_bundle = crate::web_sessions::ensure_worker_bundle_for_node_runtime(
-        &state.core.data_root,
-        &node_runtime,
-    )
-    .await
-    .map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiErrorResp {
-                error: format!("failed to prepare web session worker: {e}"),
-            }),
-        )
-    })?;
-
-    let req = WebSessionCreateRequest {
-        url: payload.url,
-        viewport: payload.viewport,
-        fps: payload.fps,
-        work_dir,
-        session_id,
-        worktree_id,
-        node_bin: node_runtime.node_bin,
-        worker_path: worker_bundle.worker_path,
-        node_modules_path: worker_bundle.node_modules_path,
-    };
-
-    let handle = state
-        .transport
-        .web_sessions
-        .create(req)
-        .await
-        .map_err(|e| {
+        })?
+        .map(SessionId);
+    let worktree_id = payload
+        .worktree_id
+        .as_deref()
+        .map(uuid::Uuid::parse_str)
+        .transpose()
+        .map_err(|_| {
             (
-                StatusCode::INTERNAL_SERVER_ERROR,
+                StatusCode::BAD_REQUEST,
                 Json(ApiErrorResp {
-                    error: format!("failed to create web session: {e}"),
+                    error: "invalid worktree id".to_string(),
                 }),
             )
-        })?;
+        })?
+        .map(WorktreeId);
 
-    let mut info = handle.snapshot().await;
+    let mut info = crate::web_session_launch::create_web_session(
+        &state,
+        WebSessionLaunchRequest {
+            session_id,
+            worktree_id,
+            url: payload.url,
+            viewport: payload.viewport,
+            fps: payload.fps,
+        },
+    )
+    .await?;
     let base_url = resolve_request_base_url(&headers, &state.core.daemon_url);
     info.stream_url = Some(format!("{}{}", base_url, info.stream_path));
     Ok(Json(info))
@@ -188,36 +158,4 @@ pub(super) async fn web_session_view(
     let info = handle.snapshot().await;
     let body = render_web_session_view(&info);
     Ok(([(header::CONTENT_TYPE, "text/html; charset=utf-8")], body).into_response())
-}
-
-pub(super) async fn resolve_web_session_work_dir(
-    state: &Arc<AppState>,
-    session_id: Option<String>,
-    worktree_id: Option<String>,
-) -> anyhow::Result<Option<PathBuf>> {
-    if let Some(worktree_id) = worktree_id {
-        let worktree_id =
-            WorktreeId(uuid::Uuid::parse_str(&worktree_id).context("invalid worktree id")?);
-        let store = state.store_for_worktree(worktree_id).await?;
-        let worktree = store
-            .get_worktree(worktree_id)
-            .await?
-            .context("worktree not found")?;
-        return Ok(Some(PathBuf::from(worktree.root_path)));
-    }
-    if let Some(session_id) = session_id {
-        let session_id =
-            SessionId(uuid::Uuid::parse_str(&session_id).context("invalid session id")?);
-        let store = state.store_for_session(session_id).await?;
-        let session = store
-            .get_session(session_id)
-            .await?
-            .context("session not found")?;
-        let worktree = store
-            .get_worktree(session.worktree_id)
-            .await?
-            .context("worktree not found")?;
-        return Ok(Some(PathBuf::from(worktree.root_path)));
-    }
-    Ok(None)
 }

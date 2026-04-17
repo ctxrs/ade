@@ -14,9 +14,8 @@ use crate::daemon::AppState;
 use crate::settings::{ProviderRestartSettings, ResourceGovernanceMode, Settings};
 
 pub use ctx_provider_runtime::provider_restart::{
-    compute_effective_limits, ProviderRestartConfig, ProviderRestartEvent,
-    ProviderRestartLimits, ProviderRestartRuntime,
-    ResourceGovernanceMode as RestartGovernanceMode,
+    compute_effective_limits, ProviderRestartConfig, ProviderRestartEvent, ProviderRestartLimits,
+    ProviderRestartRuntime, ResourceGovernanceMode as RestartGovernanceMode,
 };
 
 pub async fn apply_settings(state: &AppState, settings: &Settings) -> Result<()> {
@@ -59,13 +58,15 @@ impl ctx_provider_runtime::provider_restart::ProviderRestartHost for AppState {
         };
         samples
             .into_iter()
-            .map(|sample| ctx_provider_runtime::provider_guard::ProviderMemorySample {
-                provider_id: sample.provider_id,
-                label: sample.label,
-                pid: sample.pid,
-                memory_bytes: sample.memory_bytes,
-                tool_memory_bytes: sample.tool_memory_bytes,
-            })
+            .map(
+                |sample| ctx_provider_runtime::provider_guard::ProviderMemorySample {
+                    provider_id: sample.provider_id,
+                    label: sample.label,
+                    pid: sample.pid,
+                    memory_bytes: sample.memory_bytes,
+                    tool_memory_bytes: sample.tool_memory_bytes,
+                },
+            )
             .collect()
     }
 
@@ -84,11 +85,9 @@ impl ctx_provider_runtime::provider_restart::ProviderRestartHost for AppState {
                 .await
             {
                 Ok(()) => needs_kill = false,
-                Err(err) => tracing::warn!(
-                    provider_id,
-                    pid,
-                    "provider restart hook failed: {err:#}"
-                ),
+                Err(err) => {
+                    tracing::warn!(provider_id, pid, "provider restart hook failed: {err:#}")
+                }
             }
         } else {
             tracing::warn!(
@@ -101,11 +100,7 @@ impl ctx_provider_runtime::provider_restart::ProviderRestartHost for AppState {
         if needs_kill {
             let killed = signal_pids(&[pid], Signal::Kill);
             if killed == 0 {
-                tracing::warn!(
-                    provider_id,
-                    pid,
-                    "provider restart failed to kill process"
-                );
+                tracing::warn!(provider_id, pid, "provider restart failed to kill process");
             }
         }
     }
@@ -124,8 +119,8 @@ fn map_config(settings: &ProviderRestartSettings) -> ProviderRestartConfig {
         }),
         memory_high_mb: settings.memory_high_mb,
         memory_max_mb: settings.memory_max_mb,
-        interval_ms: settings.interval_ms.map(|value| value as u64),
-        grace_period_ms: settings.grace_period_ms.map(|value| value as u64),
+        interval_ms: settings.interval_ms,
+        grace_period_ms: settings.grace_period_ms,
     }
 }
 
