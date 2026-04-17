@@ -101,6 +101,7 @@ test("linux ctx-mcp container build command stages runtime into bundle tree", ()
     args.join(" "),
     /install -Dm0755 .* \/out\/runtimes\/ctx-mcp\/linux\/aarch64\/0\.1\.0\/ctx-mcp/,
   );
+  assert.match(args.join(" "), /chmod -R 0777 \/out\/runtimes\/ctx-mcp/);
   assert.doesNotMatch(args.join(" "), /\/usr\/local\/cargo\/registry/);
   assert.doesNotMatch(args.join(" "), /\/usr\/local\/cargo\/git/);
 

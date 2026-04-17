@@ -815,7 +815,8 @@ const buildLinuxCtxMcpContainerArgs = ({
     "rustup toolchain install stable --profile minimal --no-self-update >/dev/null 2>&1 || true; " +
     `rustup target add --toolchain stable ${target.rustTarget} >/dev/null 2>&1 || true; ` +
     `cargo +stable build --manifest-path /src/Cargo.toml -p ctx-mcp --release --target ${target.rustTarget}; ` +
-    `install -Dm0755 /target/${target.rustTarget}/release/ctx-mcp /out/${runtimeRootRel}/ctx-mcp`;
+    `install -Dm0755 /target/${target.rustTarget}/release/ctx-mcp /out/${runtimeRootRel}/ctx-mcp; ` +
+    `chmod -R 0777 /out/runtimes/${CTX_MCP_RUNTIME_ID}`;
   return [
     runtime,
     [
