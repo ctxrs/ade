@@ -42,6 +42,12 @@ test("run_workspace_task copies the workspace without requiring rsync", () => {
   const realWorkspace = path.join(tempRoot, "real-workspace");
 
   fs.mkdirSync(path.join(runfilesRepo, "core", "apps", "web"), { recursive: true });
+  fs.mkdirSync(path.join(runfilesRepo, "core", "apps", "desktop", "src-tauri", "bin"), { recursive: true });
+  fs.mkdirSync(path.join(runfilesRepo, "core", "apps", "desktop", "src-tauri", "bundles"), { recursive: true });
+  fs.mkdirSync(path.join(runfilesRepo, "core", "apps", "web", "playwright-report"), { recursive: true });
+  fs.mkdirSync(path.join(runfilesRepo, "core", "apps", "web", "test-results"), { recursive: true });
+  fs.mkdirSync(path.join(runfilesRepo, "core", "apps", "web", "e2e", "playwright-report"), { recursive: true });
+  fs.mkdirSync(path.join(runfilesRepo, "core", "apps", "web", "e2e", "test-results"), { recursive: true });
   fs.mkdirSync(path.join(runfilesRepo, ".git"), { recursive: true });
   fs.mkdirSync(path.join(runfilesRepo, "node_modules"), { recursive: true });
   fs.mkdirSync(path.join(runfilesRepo, "core", "target"), { recursive: true });
@@ -52,8 +58,14 @@ test("run_workspace_task copies the workspace without requiring rsync", () => {
   fs.writeFileSync(path.join(runfilesRepo, ".git", "HEAD"), "ref: refs/heads/main\n");
   fs.writeFileSync(path.join(runfilesRepo, "node_modules", "excluded.txt"), "exclude me\n");
   fs.writeFileSync(path.join(runfilesRepo, "core", "target", "excluded.txt"), "exclude me\n");
+  fs.writeFileSync(path.join(runfilesRepo, "core", "apps", "desktop", "src-tauri", "bin", "excluded.txt"), "exclude me\n");
+  fs.writeFileSync(path.join(runfilesRepo, "core", "apps", "desktop", "src-tauri", "bundles", "excluded.txt"), "exclude me\n");
   fs.writeFileSync(path.join(runfilesRepo, "core", "apps", "web", "web_keep.txt"), "web\n");
   fs.writeFileSync(path.join(runfilesRepo, "core", "apps", "web", "dist", "excluded.txt"), "exclude me\n");
+  fs.writeFileSync(path.join(runfilesRepo, "core", "apps", "web", "playwright-report", "excluded.txt"), "exclude me\n");
+  fs.writeFileSync(path.join(runfilesRepo, "core", "apps", "web", "test-results", "excluded.txt"), "exclude me\n");
+  fs.writeFileSync(path.join(runfilesRepo, "core", "apps", "web", "e2e", "playwright-report", "excluded.txt"), "exclude me\n");
+  fs.writeFileSync(path.join(runfilesRepo, "core", "apps", "web", "e2e", "test-results", "excluded.txt"), "exclude me\n");
 
   fs.mkdirSync(path.join(realWorkspace, "core", "node_modules"), { recursive: true });
   fs.mkdirSync(path.join(realWorkspace, "core", "apps", "web", "node_modules"), { recursive: true });
@@ -77,6 +89,12 @@ test("run_workspace_task copies the workspace without requiring rsync", () => {
     "test ! -e ../../../node_modules",
     "test ! -e ../../target",
     "test ! -e ./dist",
+    "test ! -e ../desktop/src-tauri/bin",
+    "test ! -e ../desktop/src-tauri/bundles",
+    "test ! -e ./playwright-report",
+    "test ! -e ./test-results",
+    "test ! -e ./e2e/playwright-report",
+    "test ! -e ./e2e/test-results",
     "test -L ../../node_modules",
     "test -L ./node_modules",
     'test "$(cat ../../node_modules/marker.txt)" = "root-node-modules"',
@@ -133,6 +151,59 @@ test("run_workspace_task falls back to the caller PWD when BUILD_WORKSPACE_DIREC
     cwd: realWorkspace,
     env: {
       ...process.env,
+      INIT_CWD: "",
+      PNPM_SCRIPT_SRC_DIR: "",
+      RUNFILES_DIR: runfilesDir,
+      PATH: binDir,
+      TMPDIR: tempRoot,
+    },
+    stdio: "pipe",
+  });
+});
+
+test("run_workspace_task prefers INIT_CWD when the sandbox PWD is not the real workspace", () => {
+  const tempRoot = makeVolatileTempDir("ctx-run-workspace-task-init-cwd-");
+  const runfilesDir = path.join(tempRoot, "runfiles");
+  const runfilesRepo = path.join(runfilesDir, "_main");
+  const realWorkspace = path.join(tempRoot, "real-workspace");
+  const fakeSandbox = path.join(tempRoot, "fake-sandbox");
+
+  fs.mkdirSync(path.join(runfilesRepo, "core", "apps", "web"), { recursive: true });
+  fs.writeFileSync(path.join(runfilesRepo, "core", "package.json"), "{}\n");
+  fs.writeFileSync(path.join(runfilesRepo, "core", "apps", "web", "web_keep.txt"), "web\n");
+
+  fs.mkdirSync(path.join(realWorkspace, "core", "node_modules"), { recursive: true });
+  fs.mkdirSync(path.join(realWorkspace, "core", "apps", "web", "node_modules"), { recursive: true });
+  fs.writeFileSync(path.join(realWorkspace, "core", "package.json"), "{}\n");
+  fs.writeFileSync(path.join(realWorkspace, "core", "node_modules", "marker.txt"), "root-node-modules\n");
+  fs.writeFileSync(
+    path.join(realWorkspace, "core", "apps", "web", "node_modules", "marker.txt"),
+    "web-node-modules\n",
+  );
+
+  fs.mkdirSync(path.join(fakeSandbox, "core", "apps", "web"), { recursive: true });
+  fs.writeFileSync(path.join(fakeSandbox, "core", "package.json"), "{}\n");
+  fs.writeFileSync(path.join(fakeSandbox, "core", "apps", "web", "web_keep.txt"), "sandbox-web\n");
+
+  const binDir = path.join(tempRoot, "bin");
+  fs.mkdirSync(binDir, { recursive: true });
+  for (const commandName of ["bash", "cat", "dirname", "ln", "mkdir", "mktemp", "rm", "tar", "which"]) {
+    symlinkBinary(binDir, commandName);
+  }
+
+  const checkScript = [
+    "test -f ./web_keep.txt",
+    "test -L ../../node_modules",
+    "test -L ./node_modules",
+    'test "$(cat ../../node_modules/marker.txt)" = "root-node-modules"',
+    'test "$(cat ./node_modules/marker.txt)" = "web-node-modules"',
+  ].join(" && ");
+
+  childProcess.execFileSync("bash", [scriptPath, "core/apps/web", "bash", "-lc", checkScript], {
+    cwd: fakeSandbox,
+    env: {
+      ...process.env,
+      INIT_CWD: path.join(realWorkspace, "core"),
       RUNFILES_DIR: runfilesDir,
       PATH: binDir,
       TMPDIR: tempRoot,
@@ -175,4 +246,18 @@ test("run_workspace_task resolves node from NODE when the sandbox PATH does not 
   assert.match(scriptText, /resolve_workspace_command\(\)/);
   assert.match(scriptText, /"\$\{NODE:-\}"/);
   assert.match(scriptText, /\.local\/node\/\*\/bin\/node/);
+});
+
+test("run_workspace_task disables macOS metadata propagation during workspace mirrors", () => {
+  assert.match(scriptText, /COPYFILE_DISABLE=1/);
+  assert.match(scriptText, /COPY_EXTENDED_ATTRIBUTES_DISABLE=1/);
+});
+
+test("run_workspace_task excludes generated desktop bundles and web test artifacts from mirrors", () => {
+  assert.match(scriptText, /core\/apps\/desktop\/src-tauri\/bin/);
+  assert.match(scriptText, /core\/apps\/desktop\/src-tauri\/bundles/);
+  assert.match(scriptText, /core\/apps\/web\/playwright-report/);
+  assert.match(scriptText, /core\/apps\/web\/test-results/);
+  assert.match(scriptText, /core\/apps\/web\/e2e\/playwright-report/);
+  assert.match(scriptText, /core\/apps\/web\/e2e\/test-results/);
 });

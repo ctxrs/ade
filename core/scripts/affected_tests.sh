@@ -20,7 +20,7 @@ resolve_fast_gate_script() {
     printf '%s\n' "$CTX_AFFECTED_TESTS_FAST_GATE"
     return 0
   fi
-  case "$(uname -s)" in
+  case "$(resolve_uname)" in
     Linux)
       printf '%s\n' 'test:agent:linux-rbe'
       ;;
@@ -28,6 +28,29 @@ resolve_fast_gate_script() {
       printf '%s\n' 'test:agent'
       ;;
   esac
+}
+
+resolve_uname() {
+  if [[ -n "${CTX_AFFECTED_TESTS_UNAME:-}" ]]; then
+    printf '%s\n' "${CTX_AFFECTED_TESTS_UNAME}"
+    return 0
+  fi
+  uname -s
+}
+
+resolve_changed_files() {
+  if [[ -n "${CTX_AFFECTED_TESTS_CHANGED_FILES:-}" ]]; then
+    printf '%s' "${CTX_AFFECTED_TESTS_CHANGED_FILES}"
+    return 0
+  fi
+
+  if [[ -n "${base_ref}" ]]; then
+    merge_base="$(git -C "${repo_root}" merge-base HEAD "${base_ref}")"
+    git -C "${repo_root}" diff --name-only "${merge_base}"...HEAD
+    return 0
+  fi
+
+  git -C "${repo_root}" diff --name-only HEAD
 }
 
 base_ref=""
@@ -57,14 +80,11 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 core_root="$(cd "${script_dir}/.." && pwd)"
 repo_root="$(cd "${core_root}/.." && pwd)"
 cd "${core_root}"
-eval "$(node scripts/print_ctx_cache_env.cjs --mode workspace --format shell --mkdir)"
-
-if [[ -n "${base_ref}" ]]; then
-  merge_base="$(git -C "${repo_root}" merge-base HEAD "${base_ref}")"
-  changed_files="$(git -C "${repo_root}" diff --name-only "${merge_base}"...HEAD)"
-else
-  changed_files="$(git -C "${repo_root}" diff --name-only HEAD)"
+if [[ "${CTX_AFFECTED_TESTS_SKIP_CACHE_ENV:-0}" != "1" ]]; then
+  eval "$(node scripts/print_ctx_cache_env.cjs --mode workspace --format shell --mkdir)"
 fi
+
+changed_files="$(resolve_changed_files)"
 
 if [[ -z "${changed_files}" ]]; then
   echo "no changed files detected; running default fast gate"
@@ -109,6 +129,10 @@ done <<< "${changed_files}"
 
 run() {
   echo "+ $*"
+  if [[ -n "${CTX_AFFECTED_TESTS_COMMAND_LOG:-}" ]]; then
+    printf '%s\n' "$*" >> "${CTX_AFFECTED_TESTS_COMMAND_LOG}"
+    return 0
+  fi
   "$@"
 }
 

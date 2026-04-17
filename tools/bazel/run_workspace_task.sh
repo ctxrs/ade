@@ -21,6 +21,48 @@ resolve_repo_root() {
   return 1
 }
 
+resolve_script_repo_root() {
+  local script_dir=""
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+  dirname "$(dirname "${script_dir}")"
+}
+
+normalize_workspace_root_candidate() {
+  local candidate="${1:-}"
+  local leaf=""
+  [[ -n "${candidate}" ]] || return 1
+  if [[ -f "${candidate}/core/package.json" ]]; then
+    printf '%s\n' "${candidate}"
+    return 0
+  fi
+  leaf="${candidate##*/}"
+  if [[ "${leaf}" == "core" && -f "${candidate}/package.json" ]]; then
+    dirname "${candidate}"
+    return 0
+  fi
+  return 1
+}
+
+resolve_real_workspace_root() {
+  local candidate=""
+  local normalized=""
+  for candidate in \
+    "${BUILD_WORKSPACE_DIRECTORY:-}" \
+    "${CTX_REAL_WORKSPACE_ROOT:-}" \
+    "${INIT_CWD:-}" \
+    "${PNPM_SCRIPT_SRC_DIR:-}" \
+    "${PWD:-}" \
+    "$(resolve_script_repo_root)"
+  do
+    normalized="$(normalize_workspace_root_candidate "${candidate}" || true)"
+    if [[ -n "${normalized}" ]]; then
+      printf '%s\n' "${normalized}"
+      return 0
+    fi
+  done
+  printf '%s\n' "${RUNFILES_REPO_ROOT}"
+}
+
 link_real_workspace_dir() {
   local real_root="$1"
   local temp_root="$2"
@@ -79,7 +121,7 @@ if [[ -z "${RUNFILES_REPO_ROOT}" ]]; then
   exit 1
 fi
 
-REAL_WORKSPACE_ROOT="${BUILD_WORKSPACE_DIRECTORY:-${PWD:-${RUNFILES_REPO_ROOT}}}"
+REAL_WORKSPACE_ROOT="$(resolve_real_workspace_root)"
 TMP_WORKSPACE="$(mktemp -d "${TMPDIR:-/tmp}/ctx-bazel-workspace.XXXXXX")"
 trap 'rm -rf "${TMP_WORKSPACE}"' EXIT
 
@@ -96,10 +138,25 @@ RSYNC_EXCLUDES=(
   "--exclude=core/target"
   "--exclude=core/.turbo"
   "--exclude=core/apps/web/dist"
+  "--exclude=core/apps/desktop/src-tauri/bin"
+  "--exclude=core/apps/desktop/src-tauri/bundles"
+  "--exclude=core/apps/web/playwright-report"
+  "--exclude=core/apps/web/test-results"
+  "--exclude=core/apps/web/e2e/playwright-report"
+  "--exclude=core/apps/web/e2e/test-results"
 )
 
 mkdir -p "${TMP_WORKSPACE}"
-tar -C "${RUNFILES_REPO_ROOT}" "${RSYNC_EXCLUDES[@]}" -cf - . | tar -C "${TMP_WORKSPACE}" -xf -
+if [[ "${OSTYPE:-}" == darwin* ]]; then
+  # AppleDouble and xattr propagation can stall large workspace mirrors on macOS.
+  COPYFILE_DISABLE=1 COPY_EXTENDED_ATTRIBUTES_DISABLE=1 \
+    tar -C "${RUNFILES_REPO_ROOT}" "${RSYNC_EXCLUDES[@]}" -cf - . |
+    COPYFILE_DISABLE=1 COPY_EXTENDED_ATTRIBUTES_DISABLE=1 \
+      tar -C "${TMP_WORKSPACE}" -xf -
+else
+  tar -C "${RUNFILES_REPO_ROOT}" "${RSYNC_EXCLUDES[@]}" -cf - . |
+    tar -C "${TMP_WORKSPACE}" -xf -
+fi
 link_real_workspace_dir "${REAL_WORKSPACE_ROOT}" "${TMP_WORKSPACE}" "core/node_modules"
 link_real_workspace_dir "${REAL_WORKSPACE_ROOT}" "${TMP_WORKSPACE}" "core/apps/web/node_modules"
 

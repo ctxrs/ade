@@ -17,6 +17,20 @@ const DEFAULT_BUILD_TARGETS = getBazelBuildTargetsForCrates(getBazelCoveredCrate
 const BAZELISK_SHIM = process.platform === "win32" ? "bazelisk.cmd" : "bazelisk";
 const BAZELISK_PACKAGE_DIR_PREFIX = "@bazel+bazelisk@";
 
+function parseBatchMode(value, { platform = process.platform } = {}) {
+  if (value == null || String(value).trim() === "") {
+    return platform === "darwin";
+  }
+  const normalized = String(value).trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(normalized)) {
+    return true;
+  }
+  if (["0", "false", "no", "off"].includes(normalized)) {
+    return false;
+  }
+  return platform === "darwin";
+}
+
 function commandExists(commandName, { env = process.env, cwd } = {}) {
   const result = childProcess.spawnSync(commandName, ["--version"], {
     cwd,
@@ -90,16 +104,36 @@ function parseRemoteExecutionMode(value) {
   return "off";
 }
 
+function parsePositiveInteger(value) {
+  const normalized = String(value ?? "").trim();
+  if (!normalized) {
+    return null;
+  }
+  if (!/^[0-9]+$/.test(normalized)) {
+    throw new Error(`expected a positive integer but received '${value}'`);
+  }
+  const parsed = Number.parseInt(normalized, 10);
+  return parsed > 0 ? parsed : null;
+}
+
 function parseArgs(argv) {
-  const [command = "test", ...targets] = argv;
+  const [command = "test", ...rawArgs] = argv;
   if (!["build", "run", "test"].includes(command)) {
     throw new Error(`unsupported Bazel pilot command: ${command}`);
+  }
+  if (command === "run") {
+    const separatorIndex = rawArgs.indexOf("--");
+    const targets = separatorIndex === -1 ? rawArgs : rawArgs.slice(0, separatorIndex);
+    const runArgs = separatorIndex === -1 ? [] : rawArgs.slice(separatorIndex + 1);
+    return runArgs.length > 0
+      ? { command, targets, runArgs }
+      : { command, targets };
   }
   return {
     command,
     targets:
-      targets.length > 0
-        ? targets
+      rawArgs.length > 0
+        ? rawArgs
         : command === "build"
           ? DEFAULT_BUILD_TARGETS
           : command === "run"
@@ -113,13 +147,16 @@ function ensureDir(dir) {
   return dir;
 }
 
-function buildPhaseCommandArgs({ command, layout, extraConfigArgs = [] }) {
+function buildPhaseCommandArgs({ command, layout, extraConfigArgs = [], bazelJobs = null }) {
   const commandArgs = [
     command,
     `--disk_cache=${layout.bazelDiskCacheDir}`,
     `--repository_cache=${layout.bazelRepositoryCacheDir}`,
     ...extraConfigArgs,
   ];
+  if (bazelJobs != null) {
+    commandArgs.push(`--jobs=${bazelJobs}`);
+  }
   if (command === "test") {
     commandArgs.push("--test_output=errors");
   }
@@ -134,7 +171,8 @@ function buildBuildBuddyAuthArgs(env) {
   return [`--remote_header=x-buildbuddy-api-key=${apiKey}`];
 }
 
-function buildInvocationPhases({ command, layout, remoteExecutionMode, targets }) {
+function buildInvocationPhases({ command, layout, remoteExecutionMode, targets, env }) {
+  const bazelJobs = parsePositiveInteger(env?.CTX_BAZEL_JOBS);
   if (targets.length === 0) {
     return [];
   }
@@ -142,7 +180,7 @@ function buildInvocationPhases({ command, layout, remoteExecutionMode, targets }
     return [
       {
         name: "local",
-        commandArgs: buildPhaseCommandArgs({ command, layout }),
+        commandArgs: buildPhaseCommandArgs({ command, layout, bazelJobs }),
         targets,
       },
     ];
@@ -155,6 +193,7 @@ function buildInvocationPhases({ command, layout, remoteExecutionMode, targets }
           command,
           layout,
           extraConfigArgs: ["--config=buildbuddy-rbe"],
+          bazelJobs,
         }),
         targets,
       },
@@ -168,6 +207,7 @@ function buildInvocationPhases({ command, layout, remoteExecutionMode, targets }
           command,
           layout,
           extraConfigArgs: ["--config=buildbuddy-darwin-rbe"],
+          bazelJobs,
         }),
         targets,
       },
@@ -182,6 +222,7 @@ function buildInvocationPhases({ command, layout, remoteExecutionMode, targets }
         command,
         layout,
         extraConfigArgs: ["--config=buildbuddy-linux-rbe"],
+        bazelJobs,
       }),
       targets: remoteTargets,
     });
@@ -189,7 +230,7 @@ function buildInvocationPhases({ command, layout, remoteExecutionMode, targets }
   if (localTargets.length > 0) {
     phases.push({
       name: "local",
-      commandArgs: buildPhaseCommandArgs({ command, layout }),
+      commandArgs: buildPhaseCommandArgs({ command, layout, bazelJobs }),
       targets: localTargets,
     });
   }
@@ -197,11 +238,16 @@ function buildInvocationPhases({ command, layout, remoteExecutionMode, targets }
 }
 
 function buildBazelPilotInvocation({ argv, env = process.env } = {}) {
-  const { command, targets } = parseArgs(argv || []);
+  const parsed = parseArgs(argv || []);
+  const { command, targets } = parsed;
   const coreRoot = path.resolve(__dirname, "..");
   const repoRoot = path.resolve(coreRoot, "..");
   const layout = resolveCtxCacheLayout({ cwd: coreRoot, env });
-  const startupArgs = [`--output_user_root=${layout.bazelOutputUserRoot}`];
+  const startupArgs = [];
+  if (parseBatchMode(env.CTX_BAZEL_BATCH)) {
+    startupArgs.push("--batch");
+  }
+  startupArgs.push(`--output_user_root=${layout.bazelOutputUserRoot}`);
   const remoteExecutionMode = parseRemoteExecutionMode(env.CTX_BAZEL_REMOTE_EXECUTION);
   const buildBuddyAuthArgs = buildBuildBuddyAuthArgs(env);
   const phases = buildInvocationPhases({
@@ -209,6 +255,7 @@ function buildBazelPilotInvocation({ argv, env = process.env } = {}) {
     layout,
     remoteExecutionMode,
     targets,
+    env,
   }).map((phase) => ({
     ...phase,
     commandArgs: [...phase.commandArgs, ...buildBuddyAuthArgs],
@@ -223,6 +270,7 @@ function buildBazelPilotInvocation({ argv, env = process.env } = {}) {
     phases,
     remoteExecutionMode,
     repoRoot,
+    runArgs: parsed.runArgs || [],
     startupArgs,
     targets: phaseTargets,
     env: {
@@ -267,14 +315,25 @@ function bazeliskBinaryPath({ repoRoot = path.resolve(__dirname, "..", ".."), en
 }
 
 function buildSpawnForPhase(invocation, phase) {
+  const args = [...invocation.startupArgs, ...phase.commandArgs];
+  let runScriptPath = "";
+  if (invocation.command === "run") {
+    runScriptPath = path.join(
+      invocation.layout.tmpDir,
+      `bazel-run-${process.pid}-${phase.name}.sh`,
+    );
+    args.push(`--script_path=${runScriptPath}`);
+  }
+  args.push(...phase.targets);
   return {
     command: bazeliskBinaryPath({ repoRoot: invocation.repoRoot, env: invocation.env }),
-    args: [...invocation.startupArgs, ...phase.commandArgs, ...phase.targets],
+    args,
     options: {
       cwd: invocation.repoRoot,
       env: invocation.env,
       stdio: "inherit",
     },
+    runScriptPath,
   };
 }
 
@@ -319,6 +378,24 @@ function main() {
       console.error(`error: Bazelisk terminated with signal ${result.signal}`);
       process.exit(1);
     }
+    if (invocation.command === "run") {
+      const runResult = childProcess.spawnSync(
+        spawn.runScriptPath,
+        invocation.runArgs,
+        spawn.options,
+      );
+      if (runResult.error) {
+        console.error(formatSpawnFailureMessage(spawn.runScriptPath, runResult.error));
+        process.exit(1);
+      }
+      if (typeof runResult.status === "number" && runResult.status !== 0) {
+        process.exit(runResult.status);
+      }
+      if (runResult.signal) {
+        console.error(`error: Bazel run script terminated with signal ${runResult.signal}`);
+        process.exit(1);
+      }
+    }
   }
 }
 
@@ -337,6 +414,7 @@ module.exports = {
   buildBuildBuddyAuthArgs,
   formatSpawnFailureMessage,
   parseArgs,
+  parseBatchMode,
   parseRemoteExecutionMode,
   resolveBazeliskCommand,
 };

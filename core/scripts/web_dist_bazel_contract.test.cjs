@@ -16,6 +16,10 @@ test("Bazel web dist sync tool requires an explicit workspace root and output di
   assert.match(scriptText, /usage: \$0 <output-dir>/);
   assert.match(scriptText, /BUILD_WORKSPACE_DIRECTORY is required/);
   assert.doesNotMatch(scriptText, /\brsync\b/);
+  assert.match(scriptText, /core\/apps\/desktop\/src-tauri\/bin/);
+  assert.match(scriptText, /core\/apps\/desktop\/src-tauri\/bundles/);
+  assert.match(scriptText, /core\/apps\/web\/playwright-report/);
+  assert.match(scriptText, /core\/apps\/web\/test-results/);
   assert.match(scriptText, /core\/apps\/web\/node_modules\/\.bin\/vite/);
   assert.match(scriptText, /"\$\{VITE_BIN\}" build/);
   assert.match(scriptText, /cp -R dist "\$\{OUTPUT_DIR\}"/);

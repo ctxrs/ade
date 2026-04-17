@@ -115,7 +115,19 @@ const BAZEL_BUILD_TARGETS_BY_CRATE = Object.freeze({
   "ctx-workspace-runtime": ["//core/crates/ctx-workspace-runtime:lib"],
 });
 
-const LINUX_RBE_SAFE_BAZEL_TEST_TARGETS = Object.freeze(flattenTargetMapping(BAZEL_TEST_TARGETS_BY_CRATE));
+const LINUX_RBE_UNSAFE_BAZEL_TEST_TARGETS = Object.freeze(
+  new Set([
+    // This target pulls a Darwin-hosted Rust toolchain helper, which cannot execute on the
+    // Linux BuildBuddy workers used by the linux-rbe pool.
+    "//core/crates/ctx-avf-linux-guest-agent:unit_tests",
+  ]),
+);
+
+const LINUX_RBE_SAFE_BAZEL_TEST_TARGETS = Object.freeze(
+  flattenTargetMapping(BAZEL_TEST_TARGETS_BY_CRATE).filter(
+    (target) => !LINUX_RBE_UNSAFE_BAZEL_TEST_TARGETS.has(target),
+  ),
+);
 
 // Keep Linux RBE build targets conservative on Mac hosts: libraries are safe to
 // compile remotely, but host executables should stay local unless we explicitly

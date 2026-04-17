@@ -63,6 +63,24 @@ function ensureCargoTargetScaffolding(env) {
   }
 }
 
+function resolveTaskCargoTargetDir({ env, crate, task }) {
+  const baseTargetDir = String(env.CARGO_TARGET_DIR || "").trim();
+  if (!baseTargetDir) {
+    return "";
+  }
+  if (task !== "clippy") {
+    return baseTargetDir;
+  }
+  return path.join(baseTargetDir, "clippy", crate);
+}
+
+function applyTaskScopedEnv({ env, crate, task }) {
+  const taskTargetDir = resolveTaskCargoTargetDir({ env, crate, task });
+  if (taskTargetDir) {
+    env.CARGO_TARGET_DIR = taskTargetDir;
+  }
+}
+
 function main() {
   const { crate, task } = parseArgs(process.argv.slice(2));
   const coreRoot = path.resolve(__dirname, "..");
@@ -72,6 +90,7 @@ function main() {
     mode: "workspace",
     mkdir: true,
   });
+  applyTaskScopedEnv({ env, crate, task });
   ensureCargoTargetScaffolding(env);
 
   if (task === "clippy") {
@@ -108,4 +127,11 @@ function main() {
   throw new Error(`unknown task: ${task}`);
 }
 
-main();
+if (require.main === module) {
+  main();
+}
+
+module.exports = {
+  applyTaskScopedEnv,
+  resolveTaskCargoTargetDir,
+};

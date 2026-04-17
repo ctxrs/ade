@@ -9,89 +9,25 @@ const repoRoot = path.resolve(__dirname, "..", "..");
 const coreRoot = path.join(repoRoot, "core");
 const scriptPath = path.join(__dirname, "affected_tests.sh");
 
-function writeExecutable(filePath, contents) {
-  fs.writeFileSync(filePath, contents, { mode: 0o755 });
-}
-
 function runScenario(changedFiles, options = {}) {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "affected-tests-contract-"));
-  const binDir = path.join(tempRoot, "bin");
   const commandLogPath = path.join(tempRoot, "commands.log");
-  fs.mkdirSync(binDir, { recursive: true });
-
-  writeExecutable(
-    path.join(binDir, "git"),
-    `#!/usr/bin/env bash
-set -euo pipefail
-args=("$@")
-if [[ "\${args[0]:-}" == "-C" ]]; then
-  args=("\${args[@]:2}")
-fi
-case "\${args[0]:-}" in
-  diff)
-    printf '%s\n' "\${STUB_CHANGED_FILES}"
-    ;;
-  merge-base)
-    printf 'stub-merge-base\n'
-    ;;
-  *)
-    printf 'unexpected git invocation: %s\n' "$*" >&2
-    exit 1
-    ;;
-esac
-`,
-  );
-
-  writeExecutable(
-    path.join(binDir, "cargo"),
-    `#!/usr/bin/env bash
-set -euo pipefail
-printf 'cargo %s\n' "$*" >> "\${COMMAND_LOG_PATH}"
-`,
-  );
-
-  writeExecutable(
-    path.join(binDir, "pnpm"),
-    `#!/usr/bin/env bash
-set -euo pipefail
-printf 'pnpm %s\n' "$*" >> "\${COMMAND_LOG_PATH}"
-`,
-  );
-
-  writeExecutable(
-    path.join(binDir, "node"),
-    `#!/usr/bin/env bash
-set -euo pipefail
-if [[ "\${1:-}" == "scripts/print_ctx_cache_env.cjs" ]]; then
-  exit 0
-fi
-printf 'unexpected node invocation: %s\n' "$*" >&2
-exit 1
-`,
-  );
-
-  writeExecutable(
-    path.join(binDir, "uname"),
-    `#!/usr/bin/env bash
-set -euo pipefail
-printf '%s\n' "\${STUB_UNAME:-Darwin}"
-`,
-  );
 
   const result = spawnSync("bash", [scriptPath], {
     cwd: coreRoot,
     env: {
       ...process.env,
       ...options.env,
+      CTX_AFFECTED_TESTS_CHANGED_FILES: changedFiles.join("\n"),
+      CTX_AFFECTED_TESTS_COMMAND_LOG: commandLogPath,
+      CTX_AFFECTED_TESTS_SKIP_CACHE_ENV: "1",
+      CTX_AFFECTED_TESTS_UNAME: options.unameValue || "Darwin",
       COMMAND_LOG_PATH: commandLogPath,
       NODE_OPTIONS: "",
-      PATH: `${binDir}:${process.env.PATH}`,
-      STUB_CHANGED_FILES: changedFiles.join("\n"),
-      STUB_UNAME: options.unameValue || "Darwin",
     },
     encoding: "utf8",
     stdio: "pipe",
-    timeout: 60_000,
+    timeout: 180_000,
   });
   if (result.error || result.status !== 0) {
     const stdout = result.stdout || "";

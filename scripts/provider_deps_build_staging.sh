@@ -88,8 +88,8 @@ cross_target_allowed() {
   esac
 }
 
-HOST_OS="$(detect_os)"
-HOST_ARCH="$(detect_arch)"
+HOST_OS="${CTX_PROVIDER_DEPS_BUILD_HOST_OS:-$(detect_os)}"
+HOST_ARCH="${CTX_PROVIDER_DEPS_BUILD_HOST_ARCH:-$(detect_arch)}"
 TARGET_OS="${OS_OVERRIDE:-$HOST_OS}"
 TARGET_ARCH="${ARCH_OVERRIDE:-$HOST_ARCH}"
 

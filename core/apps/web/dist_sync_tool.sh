@@ -61,10 +61,25 @@ TAR_EXCLUDES=(
   "--exclude=core/target"
   "--exclude=core/.turbo"
   "--exclude=core/apps/web/dist"
+  "--exclude=core/apps/desktop/src-tauri/bin"
+  "--exclude=core/apps/desktop/src-tauri/bundles"
+  "--exclude=core/apps/web/playwright-report"
+  "--exclude=core/apps/web/test-results"
+  "--exclude=core/apps/web/e2e/playwright-report"
+  "--exclude=core/apps/web/e2e/test-results"
 )
 
 mkdir -p "${TMP_WORKSPACE}"
-tar -C "${RUNFILES_REPO_ROOT}" "${TAR_EXCLUDES[@]}" -cf - . | tar -C "${TMP_WORKSPACE}" -xf -
+if [[ "${OSTYPE:-}" == darwin* ]]; then
+  # AppleDouble and xattr propagation can stall large workspace mirrors on macOS.
+  COPYFILE_DISABLE=1 COPY_EXTENDED_ATTRIBUTES_DISABLE=1 \
+    tar -C "${RUNFILES_REPO_ROOT}" "${TAR_EXCLUDES[@]}" -cf - . |
+    COPYFILE_DISABLE=1 COPY_EXTENDED_ATTRIBUTES_DISABLE=1 \
+      tar -C "${TMP_WORKSPACE}" -xf -
+else
+  tar -C "${RUNFILES_REPO_ROOT}" "${TAR_EXCLUDES[@]}" -cf - . |
+    tar -C "${TMP_WORKSPACE}" -xf -
+fi
 link_real_workspace_dir "${REAL_WORKSPACE_ROOT}" "${TMP_WORKSPACE}" "core/node_modules"
 link_real_workspace_dir "${REAL_WORKSPACE_ROOT}" "${TMP_WORKSPACE}" "core/apps/web/node_modules"
 

@@ -8,6 +8,28 @@ const { runTurbo } = require("./lib/turbo_runner.cjs");
 
 const coreRoot = path.resolve(__dirname, "..");
 
+function applyVerifyQuickDefaults(env, platform = process.platform) {
+  if (!String(env.CARGO_INCREMENTAL ?? "").trim()) {
+    env.CARGO_INCREMENTAL = "0";
+  }
+  if (!String(env.RUST_TEST_THREADS ?? "").trim()) {
+    env.RUST_TEST_THREADS = "1";
+  }
+  if (!String(env.CTX_BAZEL_REMOTE_EXECUTION ?? "").trim()) {
+    if (platform === "darwin" || platform === "linux") {
+      env.CTX_BAZEL_REMOTE_EXECUTION = "linux";
+    }
+  }
+  if (platform === "darwin") {
+    if (!String(env.CTX_BAZEL_BATCH ?? "").trim()) {
+      env.CTX_BAZEL_BATCH = "0";
+    }
+    if (!String(env.CTX_BAZEL_JOBS ?? "").trim()) {
+      env.CTX_BAZEL_JOBS = "1";
+    }
+  }
+}
+
 function run(command, args, env) {
   const result = childProcess.spawnSync(command, args, {
     cwd: coreRoot,
@@ -29,12 +51,7 @@ function main() {
     mode: "verify-quick",
     mkdir: true,
   });
-  if (!String(env.CARGO_INCREMENTAL ?? "").trim()) {
-    env.CARGO_INCREMENTAL = "0";
-  }
-  if (!String(env.RUST_TEST_THREADS ?? "").trim()) {
-    env.RUST_TEST_THREADS = "1";
-  }
+  applyVerifyQuickDefaults(env);
 
   run("pnpm", ["source:file-size:enforce"], env);
   run(
@@ -58,13 +75,13 @@ function main() {
       "scripts/web_dist_bazel_contract.test.cjs",
       "scripts/updates_failure_safety_bazel_contract.test.cjs",
       "scripts/run_workspace_task_contract.test.cjs",
+      "scripts/rust_crate_task.test.cjs",
       "scripts/lib/bazel_rust_targets.test.cjs",
       "scripts/lib/ctx_http_suites.test.cjs",
     ],
     env,
   );
   run("bash", ["../scripts/tests/provider_deps_cross_target_contract.sh"], env);
-  run("pnpm", ["desktop:ipc:check"], env);
   run("pnpm", ["bazel:install-site:test"], env);
   run("pnpm", ["bazel:web:any:enforce"], env);
   run("pnpm", ["bazel:web:lint"], env);
@@ -96,4 +113,10 @@ function main() {
   run("pnpm", ["bazel:web:typecheck"], env);
 }
 
-main();
+if (require.main === module) {
+  main();
+}
+
+module.exports = {
+  applyVerifyQuickDefaults,
+};

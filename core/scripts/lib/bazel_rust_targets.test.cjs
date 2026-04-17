@@ -5,6 +5,7 @@ const {
   getBazelBuildTargetsForCrates,
   getBazelCoveredCrates,
   getBazelTestTargetsForCrates,
+  partitionBazelTargetsForLinuxRbe,
 } = require("./bazel_rust_targets.cjs");
 
 test("Bazel-covered crates stay on the intended explicit Rust slice", () => {
@@ -198,5 +199,18 @@ test("Bazel build target mapping expands per-crate libraries deterministically",
       "//core/crates/ctx-worktree-data-plane:lib",
       "//core/tools/load-test:ctx-load-test",
     ],
+  );
+});
+
+test("linux RBE keeps Darwin-incompatible guest-agent tests local", () => {
+  assert.deepEqual(
+    partitionBazelTargetsForLinuxRbe("test", [
+      "//core/crates/ctx-avf-linux-guest-agent:unit_tests",
+      "//core/crates/ctx-store:unit_tests",
+    ]),
+    {
+      remoteTargets: ["//core/crates/ctx-store:unit_tests"],
+      localTargets: ["//core/crates/ctx-avf-linux-guest-agent:unit_tests"],
+    },
   );
 });

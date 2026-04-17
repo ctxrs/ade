@@ -12,6 +12,7 @@ const {
   buildBazelPilotInvocation,
   formatSpawnFailureMessage,
   parseArgs,
+  parseBatchMode,
   parseRemoteExecutionMode,
   resolveBazeliskCommand,
 } = require("./run_bazel_pilot.cjs");
@@ -34,6 +35,14 @@ test("bazel pilot run requires explicit targets", () => {
   assert.deepEqual(parseArgs(["run"]), {
     command: "run",
     targets: [],
+  });
+});
+
+test("bazel pilot run separates Bazel targets from post-run args", () => {
+  assert.deepEqual(parseArgs(["run", "//core/apps/web:lint", "--", "--fix"]), {
+    command: "run",
+    targets: ["//core/apps/web:lint"],
+    runArgs: ["--fix"],
   });
 });
 
@@ -69,6 +78,13 @@ test("bazel pilot invocation stays on the volatile cache layout", () => {
   assert.equal(invocation.env.TMPDIR, "/tmp/ctx-bazel-pilot/tmp");
   assert.equal(invocation.phases.length, 1);
   assert.equal(invocation.phases[0].name, "local");
+});
+
+test("bazel pilot batch mode defaults on darwin and can be overridden explicitly", () => {
+  assert.equal(parseBatchMode(undefined, { platform: "darwin" }), true);
+  assert.equal(parseBatchMode(undefined, { platform: "linux" }), false);
+  assert.equal(parseBatchMode("1", { platform: "linux" }), true);
+  assert.equal(parseBatchMode("0", { platform: "darwin" }), false);
 });
 
 test("bazel pilot remote execution mode parsing supports off, all, linux, and darwin", () => {
@@ -276,13 +292,16 @@ test("bazel pilot uses the resolved Bazelisk command in the spawn contract", () 
     bazeliskBinaryPath({ repoRoot: path.resolve(__dirname, "..", "..") }),
   );
   assert.deepEqual(spawn.args, [
+    ...(process.platform === "darwin" ? ["--batch"] : []),
     "--output_user_root=/tmp/ctx-bazel-pilot-binary/targets/bazel/bazel-binary-session",
     "run",
     "--disk_cache=/tmp/ctx-bazel-pilot-binary/cache/bazel-disk/ctx-monorepo",
     "--repository_cache=/tmp/ctx-bazel-pilot-binary/cache/bazel-repository/ctx-monorepo",
+    `--script_path=${spawn.runScriptPath}`,
     "//core/apps/web:lint",
   ]);
   assert.equal(spawn.options.env.BUILD_WORKSPACE_DIRECTORY, path.resolve(__dirname, "..", ".."));
+  assert.match(spawn.runScriptPath, /\/tmp\/ctx-bazel-pilot-binary\/tmp\/bazel-run-\d+-local\.sh$/);
 });
 
 test("bazel pilot missing shim failure tells the operator how to install it", () => {
