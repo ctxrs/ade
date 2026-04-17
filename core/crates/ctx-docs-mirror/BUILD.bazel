@@ -1,4 +1,4 @@
-load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_test")
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_test")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -18,18 +18,28 @@ CTX_DOCS_MIRROR_DEPS = [
     "@crates//:url",
 ]
 
-rust_binary(
-    name = "ctx-docs-mirror",
-    crate_root = "src/main.rs",
+rust_library(
+    name = "lib",
+    crate_name = "ctx_docs_mirror",
+    crate_root = "src/lib.rs",
     edition = "2021",
     srcs = glob(["src/**/*.rs"]),
     deps = CTX_DOCS_MIRROR_DEPS,
 )
 
-rust_test(
-    name = "unit_tests",
+rust_binary(
+    name = "ctx-docs-mirror",
     crate_root = "src/main.rs",
     edition = "2021",
-    srcs = glob(["src/**/*.rs"]),
-    deps = CTX_DOCS_MIRROR_DEPS,
+    srcs = ["src/main.rs"],
+    deps = [
+        ":lib",
+        "@crates//:anyhow",
+        "@crates//:tokio",
+    ],
+)
+
+rust_test(
+    name = "unit_tests",
+    crate = ":lib",
 )

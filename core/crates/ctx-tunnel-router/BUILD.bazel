@@ -13,9 +13,9 @@ CTX_TUNNEL_ROUTER_DEPS = [
     "@crates//:serde_json",
     "@crates//:sqlx",
     "@crates//:tokio",
-    "@crates//:tokio_tungstenite",
+    "@crates//:tokio-tungstenite",
     "@crates//:tracing",
-    "@crates//:tracing_subscriber",
+    "@crates//:tracing-subscriber",
     "@crates//:url",
 ]
 

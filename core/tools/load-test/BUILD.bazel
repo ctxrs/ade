@@ -13,7 +13,7 @@ CTX_LOAD_TEST_DEPS = [
     "@crates//:serde",
     "@crates//:serde_json",
     "@crates//:tokio",
-    "@crates//:tokio_tungstenite",
+    "@crates//:tokio-tungstenite",
     "@crates//:url",
     "@crates//:uuid",
 ]

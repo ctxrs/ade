@@ -9,17 +9,17 @@ CTX_WORKER_SHIM_DEPS = [
     "@crates//:base64",
     "@crates//:chrono",
     "@crates//:clap",
-    "@crates//:futures_util",
+    "@crates//:futures-util",
     "@crates//:notify",
-    "@crates//:portable_pty",
+    "@crates//:portable-pty",
     "@crates//:reqwest",
     "@crates//:rustls",
     "@crates//:serde",
     "@crates//:serde_json",
     "@crates//:tokio",
-    "@crates//:tokio_tungstenite",
+    "@crates//:tokio-tungstenite",
     "@crates//:tracing",
-    "@crates//:tracing_subscriber",
+    "@crates//:tracing-subscriber",
 ]
 
 rust_binary(

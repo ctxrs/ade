@@ -15,7 +15,7 @@ CTX_TUNNEL_RELAY_DEPS = [
     "@crates//:subtle",
     "@crates//:tokio",
     "@crates//:tracing",
-    "@crates//:tracing_subscriber",
+    "@crates//:tracing-subscriber",
     "@crates//:uuid",
 ]
 

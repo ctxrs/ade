@@ -22,7 +22,7 @@ CTX_TUNNEL_CONTROL_PLANE_DEPS = [
     "@crates//:sqlx",
     "@crates//:tokio",
     "@crates//:tracing",
-    "@crates//:tracing_subscriber",
+    "@crates//:tracing-subscriber",
     "@crates//:url",
     "@crates//:uuid",
 ]

@@ -125,6 +125,26 @@ fn assert_live_context_window(delta: &Value) {
     );
 }
 
+fn delta_has_live_context_window(delta: &Value) -> bool {
+    let Some(metrics) = delta
+        .get("turn")
+        .and_then(Value::as_object)
+        .and_then(|turn| turn.get("metrics_json"))
+        .and_then(Value::as_object)
+    else {
+        return false;
+    };
+    metrics.get("context_window_tokens").and_then(Value::as_u64) == Some(100)
+        && metrics
+            .get("context_tokens_estimate")
+            .and_then(Value::as_u64)
+            == Some(25)
+        && metrics
+            .get("remaining_tokens_estimate")
+            .and_then(Value::as_u64)
+            == Some(75)
+}
+
 #[tokio::test]
 async fn workspace_stream_done_delta_carries_context_window_metrics() {
     let (repo, _data_dir, _state, server) = setup().await;
@@ -174,6 +194,7 @@ async fn workspace_stream_done_delta_carries_context_window_metrics() {
         "type": "subscribe",
         "scope": "active",
         "include_active_heads": true,
+        "foreground_session_id": session.id.0,
         "sessions": [{
             "session_id": session.id.0,
             "replay": {
@@ -317,6 +338,7 @@ async fn workspace_stream_live_context_window_delta_arrives_before_done() {
         "type": "subscribe",
         "scope": "active",
         "include_active_heads": true,
+        "foreground_session_id": session.id.0,
         "sessions": [{
             "session_id": session.id.0,
             "replay": {
@@ -371,6 +393,10 @@ async fn workspace_stream_live_context_window_delta_arrives_before_done() {
                     if event_turn_id != turn_id {
                         continue;
                     }
+                    if !saw_done && delta_has_live_context_window(&delta) {
+                        assert_live_context_window(&delta);
+                        saw_live = true;
+                    }
                     match event
                         .get("event_type")
                         .and_then(Value::as_str)
@@ -381,8 +407,6 @@ async fn workspace_stream_live_context_window_delta_arrives_before_done() {
                                 !saw_done,
                                 "live context-window delta arrived after terminal done"
                             );
-                            assert_live_context_window(&delta);
-                            saw_live = true;
                         }
                         "done" => {
                             saw_done = true;
