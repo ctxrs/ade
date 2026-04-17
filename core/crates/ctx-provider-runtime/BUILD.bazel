@@ -1,0 +1,26 @@
+load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
+
+package(default_visibility = ["//visibility:public"])
+
+rust_library(
+    name = "lib",
+    crate_name = "ctx_provider_runtime",
+    crate_root = "src/lib.rs",
+    edition = "2021",
+    srcs = glob(["src/**/*.rs"]),
+    deps = [
+        "//core/crates/ctx-managed-installs:lib",
+        "//core/crates/ctx-provider-install:lib",
+        "//core/crates/ctx-provider-matrix:lib",
+        "//core/crates/ctx-providers:lib",
+        "@crates//:anyhow",
+        "@crates//:async-trait",
+        "@crates//:tempfile",
+        "@crates//:tokio",
+    ],
+)
+
+rust_test(
+    name = "unit_tests",
+    crate = ":lib",
+)

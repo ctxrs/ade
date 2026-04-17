@@ -98,7 +98,8 @@ pub(in crate::api) async fn get_provider_options(
     let preferred_model_id = load_workspace_preferred_model_id(&state, ws_id, &provider_id).await?;
 
     let provider_status =
-        provider_status_for_target(&state, &managed, &matrix, &provider_id, install_target).await;
+        provider_status_for_target(state.as_ref(), &managed, &matrix, &provider_id, install_target)
+            .await;
     let has_active_auth = probe::provider_has_active_auth_for_workspace_runtime(
         &state,
         &workspace,
@@ -513,7 +514,8 @@ pub(in crate::api) async fn verify_provider_for_workspace(
         ));
     }
     let provider_status =
-        provider_status_for_target(&state, &managed, &matrix, &provider_id, install_target).await;
+        provider_status_for_target(state.as_ref(), &managed, &matrix, &provider_id, install_target)
+            .await;
 
     let checked_at = Utc::now().to_rfc3339();
     let mut status = "ok".to_string();

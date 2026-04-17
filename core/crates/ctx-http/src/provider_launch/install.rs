@@ -328,7 +328,8 @@ async fn start_bulk_provider_install_if_needed(
         return Some(install_id);
     }
 
-    let status = provider_status_for_target(state, managed, matrix, provider_id, target).await;
+    let status =
+        provider_status_for_target(state.as_ref(), managed, matrix, provider_id, target).await;
     if should_skip_install_for_healthy_provider(&status) {
         return None;
     }

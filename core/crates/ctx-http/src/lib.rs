@@ -26,6 +26,7 @@ pub mod perf_telemetry;
 pub mod process_limits;
 pub mod provider_child_reclassifier;
 pub mod provider_guard;
+mod provider_runtime;
 pub(crate) mod provider_install_contract;
 pub mod provider_launch;
 pub mod provider_matrix;

@@ -36,6 +36,7 @@ members = [
   "crates/ctx-transport-runtime",
   "crates/ctx-managed-installs",
   "crates/ctx-provider-install",
+  "crates/ctx-provider-runtime",
   "crates/ctx-http",
   "crates/ctx-egress-proxy",
   "crates/ctx-avf-linux-guest-agent",

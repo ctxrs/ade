@@ -1589,6 +1589,7 @@ dependencies = [
  "ctx-provider-auth-import",
  "ctx-provider-install",
  "ctx-provider-matrix",
+ "ctx-provider-runtime",
  "ctx-providers",
  "ctx-runtime-assets",
  "ctx-sandbox-container-runtime",
@@ -1832,6 +1833,20 @@ dependencies = [
  "semver",
  "serde",
  "serde_json",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
+name = "ctx-provider-runtime"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "ctx-managed-installs",
+ "ctx-provider-install",
+ "ctx-provider-matrix",
+ "ctx-providers",
  "tempfile",
  "tokio",
 ]

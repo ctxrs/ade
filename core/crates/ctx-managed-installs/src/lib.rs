@@ -30,7 +30,7 @@ mod lsp;
 pub mod lsp_catalog;
 mod provider_install;
 pub mod provider_install_contract;
-mod provider_status_matrix;
+pub mod provider_status_matrix;
 mod targets;
 pub mod title_generation;
 pub mod title_generation_local;

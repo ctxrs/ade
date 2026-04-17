@@ -16,6 +16,7 @@ const AGENT_GATE_CRATES = [
   "ctx-managed-installs",
   "ctx-provider-accounts",
   "ctx-provider-install",
+  "ctx-provider-runtime",
   "ctx-provider-matrix",
   "ctx-provider-auth-import",
   "ctx-providers",
