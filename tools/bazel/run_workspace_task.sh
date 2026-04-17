@@ -49,6 +49,8 @@ resolve_workspace_command() {
     for candidate in \
       "${NODE:-}" \
       "$(command -v node 2>/dev/null || true)" \
+      "${HOME:-}"/.local/node/*/bin/node \
+      "/var/lib/buildkite-agent/.local/node"/*/bin/node \
       "/opt/homebrew/bin/node" \
       "/usr/local/bin/node" \
       "/usr/bin/node" \

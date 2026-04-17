@@ -174,4 +174,5 @@ test("run_workspace_task resolves node from NODE when the sandbox PATH does not 
 
   assert.match(scriptText, /resolve_workspace_command\(\)/);
   assert.match(scriptText, /"\$\{NODE:-\}"/);
+  assert.match(scriptText, /\.local\/node\/\*\/bin\/node/);
 });
