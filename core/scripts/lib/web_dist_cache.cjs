@@ -12,6 +12,7 @@ const { bazeliskBinaryPath, buildBuildBuddyAuthArgs } = require("../run_bazel_pi
 
 const ARTIFACT_VERSION = 1;
 const ARTIFACT_MARKER = ".ctx-web-dist-artifact.json";
+const BAZEL_VERSION_FILE = ".bazelversion";
 const WEB_DIST_SYNC_TARGET = "//core/apps/web:dist_sync";
 const IGNORED_DIR_NAMES = new Set([
   ".git",
@@ -180,6 +181,10 @@ function buildBazelCommandContext({ coreRoot, env = process.env } = {}) {
     BUILD_WORKSPACE_DIRECTORY: String(env.BUILD_WORKSPACE_DIRECTORY || repoRoot),
     TMPDIR: layout.tmpDir,
   };
+  const directRunBazelVersion = resolveDirectRunBazelVersion({ repoRoot, env: bazelEnv });
+  if (directRunBazelVersion) {
+    bazelEnv.USE_BAZEL_VERSION = directRunBazelVersion;
+  }
   return {
     bazelBinary: bazeliskBinaryPath({ repoRoot, env: bazelEnv }),
     bazelCommandArgs: [
@@ -190,6 +195,32 @@ function buildBazelCommandContext({ coreRoot, env = process.env } = {}) {
     repoRoot,
     startupArgs: [`--output_user_root=${layout.bazelOutputUserRoot}`],
   };
+}
+
+function resolveDirectRunBazelVersion({
+  repoRoot,
+  env = process.env,
+  fileExists = fs.existsSync,
+  readFile = fs.readFileSync,
+} = {}) {
+  if (trimValue(env.USE_BAZEL_VERSION)) {
+    return trimValue(env.USE_BAZEL_VERSION);
+  }
+  const bazelVersionPath = path.join(repoRoot, BAZEL_VERSION_FILE);
+  if (!fileExists(bazelVersionPath)) {
+    return "";
+  }
+  const versionLines = String(readFile(bazelVersionPath, "utf8") || "")
+    .split(/\r?\n/u)
+    .map((line) => trimValue(line))
+    .filter(Boolean);
+  if (versionLines.length < 2) {
+    return "";
+  }
+  if (!versionLines[0].startsWith("buildbuddy-io/")) {
+    return "";
+  }
+  return versionLines[1];
 }
 
 function runChecked(command, args, options, failureMessage, spawnSyncImpl = childProcess.spawnSync) {
@@ -353,6 +384,7 @@ module.exports = {
   computeWebDistCacheKey,
   ensureWebDistArtifact,
   hasReusableWebDistArtifact,
+  resolveDirectRunBazelVersion,
   resolveDesktopWebDistSource,
   resolveWebDistArtifactDir,
   resolveWebDistArtifactRoot,

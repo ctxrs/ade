@@ -37,4 +37,14 @@ test("ubuntu desktop deps installer includes libcap for codex sandbox builds", (
     /for cmd in xauth xvfb-run;/,
     "install_desktop_deps_linux_ubuntu.sh must sanity-check xauth and xvfb-run availability",
   );
+  assert.match(
+    script,
+    /CTX_BUILDKITE_APT_FORCE_IPV4/,
+    "install_desktop_deps_linux_ubuntu.sh must support forcing apt over IPv4 for IPv6-impaired hosts",
+  );
+  assert.match(
+    script,
+    /Acquire::ForceIPv4 "true";/,
+    "install_desktop_deps_linux_ubuntu.sh must write an apt IPv4 override when requested",
+  );
 });

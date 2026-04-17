@@ -18,6 +18,7 @@
     "release:buildbuddy:codex-crp:publish": "node scripts/run_buildbuddy_codex_crp_artifacts.cjs --publish",
     "buildkite:sync": "node scripts/sync_buildkite.cjs",
     "buildkite:trigger": "node scripts/trigger_buildkite_build.cjs",
+    "release:buildkite": "node scripts/trigger_buildkite_release.cjs",
     "release:buildkite:ci-gate": "RELEASE_SOURCE_COMMIT=${RELEASE_SOURCE_COMMIT:?set RELEASE_SOURCE_COMMIT} node scripts/run_buildkite_release_ci_gate.cjs",
     "bazel:pilot:test": "node scripts/run_bazel_pilot.cjs test",
     "bazel:pilot:test:linux-rbe": "CTX_BAZEL_REMOTE_EXECUTION=linux node scripts/run_bazel_pilot.cjs test",

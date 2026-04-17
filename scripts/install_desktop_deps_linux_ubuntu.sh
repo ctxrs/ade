@@ -50,6 +50,17 @@ apt_package_available() {
   apt-cache show "$pkg" >/dev/null 2>&1
 }
 
+configure_apt_network() {
+  if [[ "${CTX_BUILDKITE_APT_FORCE_IPV4:-0}" != "1" ]]; then
+    return 0
+  fi
+  local apt_conf_dir="${CTX_TEST_APT_CONF_DIR:-/etc/apt/apt.conf.d}"
+  "${SUDO[@]}" mkdir -p "$apt_conf_dir"
+  "${SUDO[@]}" tee "${apt_conf_dir}/99ctx-force-ipv4" >/dev/null <<'EOF'
+Acquire::ForceIPv4 "true";
+EOF
+}
+
 choose_first_available_pkg() {
   local pkg
   for pkg in "$@"; do
@@ -122,6 +133,7 @@ EOF
 
   echo "${BOLD}Installing desktop (Tauri v2) Linux build dependencies (Ubuntu/Debian)${RESET}"
 
+  configure_apt_network
   "${SUDO[@]}" apt-get update
 fi
 

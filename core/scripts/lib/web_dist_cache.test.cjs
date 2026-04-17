@@ -9,6 +9,7 @@ const {
   WEB_DIST_SYNC_TARGET,
   computeWebDistCacheKey,
   ensureWebDistArtifact,
+  resolveDirectRunBazelVersion,
   resolveDesktopWebDistSource,
   resolveWebDistArtifactDir,
   runWebDistBuild,
@@ -20,15 +21,17 @@ function writeFile(filePath, contents) {
 }
 
 function createFixtureCoreRoot() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-web-dist-cache-"));
-  writeFile(path.join(root, "package.json"), JSON.stringify({ private: true }, null, 2));
-  writeFile(path.join(root, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n");
-  writeFile(path.join(root, "pnpm-workspace.yaml"), "packages:\n  - apps/*\n  - packages/*\n");
-  writeFile(path.join(root, "apps", "web", "package.json"), JSON.stringify({ name: "ctx-web" }, null, 2));
-  writeFile(path.join(root, "apps", "web", "index.html"), "<!doctype html><html></html>\n");
-  writeFile(path.join(root, "apps", "web", "src", "main.tsx"), "console.log('web');\n");
-  writeFile(path.join(root, "packages", "ctx-design", "src", "index.ts"), "export const design = 1;\n");
-  return root;
+  const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-web-dist-cache-"));
+  const coreRoot = path.join(repoRoot, "core");
+  writeFile(path.join(repoRoot, ".bazelversion"), "buildbuddy-io/5.0.321\n9.0.1\n");
+  writeFile(path.join(coreRoot, "package.json"), JSON.stringify({ private: true }, null, 2));
+  writeFile(path.join(coreRoot, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n");
+  writeFile(path.join(coreRoot, "pnpm-workspace.yaml"), "packages:\n  - apps/*\n  - packages/*\n");
+  writeFile(path.join(coreRoot, "apps", "web", "package.json"), JSON.stringify({ name: "ctx-web" }, null, 2));
+  writeFile(path.join(coreRoot, "apps", "web", "index.html"), "<!doctype html><html></html>\n");
+  writeFile(path.join(coreRoot, "apps", "web", "src", "main.tsx"), "console.log('web');\n");
+  writeFile(path.join(coreRoot, "packages", "ctx-design", "src", "index.ts"), "export const design = 1;\n");
+  return coreRoot;
 }
 
 test("resolveWebDistArtifactDir uses the volatile artifacts root", () => {
@@ -122,6 +125,7 @@ test("runWebDistBuild uses bazel run and resolves the workspace dist directory",
   assert.equal(spawnCalls[0].args[5], WEB_DIST_SYNC_TARGET);
   assert.equal(spawnCalls[0].args[6], "--");
   assert.equal(spawnCalls[0].args[7], expectedDist);
+  assert.equal(spawnCalls[0].options.env.USE_BAZEL_VERSION, "9.0.1");
 });
 
 test("resolveDesktopWebDistSource prefers CTX_DESKTOP_WEB_DIST when provided", () => {
@@ -134,4 +138,28 @@ test("resolveDesktopWebDistSource prefers CTX_DESKTOP_WEB_DIST when provided", (
     resolveDesktopWebDistSource(coreRoot, {}),
     path.join(coreRoot, "apps", "web", "dist"),
   );
+});
+
+test("resolveDirectRunBazelVersion uses the second .bazelversion line for buildbuddy wrappers", () => {
+  const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-bazelversion-"));
+  writeFile(path.join(repoRoot, ".bazelversion"), "buildbuddy-io/5.0.321\n9.0.1\n");
+  assert.equal(resolveDirectRunBazelVersion({ repoRoot }), "9.0.1");
+});
+
+test("resolveDirectRunBazelVersion preserves an explicit USE_BAZEL_VERSION override", () => {
+  const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-bazelversion-explicit-"));
+  writeFile(path.join(repoRoot, ".bazelversion"), "buildbuddy-io/5.0.321\n9.0.1\n");
+  assert.equal(
+    resolveDirectRunBazelVersion({
+      repoRoot,
+      env: { USE_BAZEL_VERSION: "8.2.0" },
+    }),
+    "8.2.0",
+  );
+});
+
+test("resolveDirectRunBazelVersion ignores plain Bazel .bazelversion pins", () => {
+  const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-bazelversion-plain-"));
+  writeFile(path.join(repoRoot, ".bazelversion"), "9.0.1\n");
+  assert.equal(resolveDirectRunBazelVersion({ repoRoot }), "");
 });
