@@ -1027,6 +1027,7 @@ const syncBundles = () => {
     CTX_BUNDLE_DIR: destBundleDir,
     CTX_BUNDLE_DEPENDENCY_AWARE_RUNTIMES: "0",
   });
+  Object.assign(env, resolvePrimaryBundleTargetEnv({ env }));
   const requiredProviderIds = readRuntimeLockRequiredIds("provider");
   const requiredRuntimeIds = readRuntimeLockRequiredIds("runtime");
   const bundledRuntimeIds = resolveBundledRuntimeIds(requiredRuntimeIds);
@@ -1182,6 +1183,25 @@ function fallbackHostTarget({ platform = process.platform, arch = process.arch }
   return null;
 }
 
+function bundleTargetFromRustTriple(targetTriple) {
+  switch (String(targetTriple || "").trim()) {
+    case "aarch64-apple-darwin":
+      return { os: "macos", arch: "aarch64" };
+    case "x86_64-apple-darwin":
+      return { os: "macos", arch: "x86_64" };
+    case "aarch64-unknown-linux-gnu":
+      return { os: "linux", arch: "aarch64" };
+    case "x86_64-unknown-linux-gnu":
+      return { os: "linux", arch: "x86_64" };
+    case "aarch64-pc-windows-msvc":
+      return { os: "windows", arch: "aarch64" };
+    case "x86_64-pc-windows-msvc":
+      return { os: "windows", arch: "x86_64" };
+    default:
+      return null;
+  }
+}
+
 const resolveHostTarget = ({
   env = process.env,
   platform = process.platform,
@@ -1201,6 +1221,21 @@ const resolveHostTarget = ({
   }
   return fallbackHostTarget({ platform, arch });
 };
+
+function resolvePrimaryBundleTargetEnv({ env = process.env } = {}) {
+  const target = bundleTargetFromRustTriple(resolveHostTarget({ env }));
+  if (!target) {
+    return {};
+  }
+  const resolved = {};
+  if (!String(env.CTX_BUNDLE_OS || "").trim()) {
+    resolved.CTX_BUNDLE_OS = target.os;
+  }
+  if (!String(env.CTX_BUNDLE_ARCH || "").trim()) {
+    resolved.CTX_BUNDLE_ARCH = target.arch;
+  }
+  return resolved;
+}
 
 const copySidecarBinary = ({
   sourceDir,
@@ -1363,6 +1398,7 @@ if (require.main === module) {
   module.exports = {
     __desktopSyncResourcesTestHooks: {
       assertRuntimeTargetsAvailable,
+      bundleTargetFromRustTriple,
       buildLinuxCtxMcpContainerArgs,
       buildRemoteDaemonContainerArgs,
       fallbackHostTarget,
@@ -1370,6 +1406,7 @@ if (require.main === module) {
       readDefaultContainerImage,
       resetBundleDir,
       resolveHostTarget,
+      resolvePrimaryBundleTargetEnv,
       resolveBundleCacheRoot,
       shouldBundleLinuxCtxMcpRuntime,
       writePlaceholderBundleManifest,

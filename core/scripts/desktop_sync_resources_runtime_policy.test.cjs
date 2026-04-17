@@ -28,6 +28,21 @@ test("linux ctx-mcp runtime bundling stays enabled on desktop platforms with Lin
   assert.equal(__desktopSyncResourcesTestHooks.shouldBundleLinuxCtxMcpRuntime("win32"), false);
 });
 
+test("desktop sync resources maps explicit Rust target triples to bundle os/arch", () => {
+  assert.deepEqual(
+    __desktopSyncResourcesTestHooks.resolvePrimaryBundleTargetEnv({
+      env: { CARGO_BUILD_TARGET: "aarch64-apple-darwin" },
+    }),
+    { CTX_BUNDLE_OS: "macos", CTX_BUNDLE_ARCH: "aarch64" },
+  );
+  assert.deepEqual(
+    __desktopSyncResourcesTestHooks.resolvePrimaryBundleTargetEnv({
+      env: { CARGO_BUILD_TARGET: "x86_64-apple-darwin" },
+    }),
+    { CTX_BUNDLE_OS: "macos", CTX_BUNDLE_ARCH: "x86_64" },
+  );
+});
+
 test("desktop sync resources reads the default container image from the sandbox container runtime crate", () => {
   assert.equal(
     __desktopSyncResourcesTestHooks.readDefaultContainerImage(),

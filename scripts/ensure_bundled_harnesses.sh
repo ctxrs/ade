@@ -548,9 +548,23 @@ local_adapter_binary_path() {
   printf '%s' "$LOCAL_ADAPTERS_DIR/$dir/target/$rust_target/release/${bin}${BIN_EXT}"
 }
 
+should_prefer_native_cargo_layout() {
+  if [[ "${CTX_BUNDLE_BRIDGE_FORCE_TARGET:-0}" == "1" ]]; then
+    return 1
+  fi
+  if [[ "$host_os" != "$os" ]] || [[ "$host_arch" != "$arch" ]]; then
+    return 1
+  fi
+  local configured_target="${CARGO_BUILD_TARGET:-${TAURI_ENV_TARGET_TRIPLE:-}}"
+  if [[ -n "$configured_target" ]]; then
+    return 1
+  fi
+  return 0
+}
+
 local_bridge_binary_path() {
   local prefer_native="0"
-  if [[ "${CTX_BUNDLE_BRIDGE_FORCE_TARGET:-0}" != "1" ]] && [[ "$host_os" == "$os" ]] && [[ "$host_arch" == "$arch" ]]; then
+  if should_prefer_native_cargo_layout; then
     prefer_native="1"
   fi
 
