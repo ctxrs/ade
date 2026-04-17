@@ -8,10 +8,9 @@ usage: affected_tests.sh [--base <git_ref>]
 Run an affected-tests fast path for agent loops.
 
 Behavior:
-- If high-risk paths changed, falls back to full safety gate:
-  - pnpm test:agent
-  - pnpm verify:e2e
-- Otherwise runs a targeted subset based on changed files.
+- Uses the testing taxonomy registry to select the affected `agent-default`
+  execution plan for the changed files.
+- Falls back to the default fast gate only when the taxonomy plan resolves to no commands.
 EOF
 }
 
@@ -95,38 +94,6 @@ fi
 echo "changed files:"
 echo "${changed_files}" | sed 's/^/  - /'
 
-high_risk=0
-needs_premerge=0
-needs_web_unit=0
-needs_rust=0
-declare -a rust_changed_paths=()
-
-while IFS= read -r path; do
-  [[ -z "${path}" ]] && continue
-  case "${path}" in
-    core/apps/web/e2e/*|core/apps/web/e2e/suites/*|core/apps/web/playwright*.ts)
-      needs_premerge=1
-      ;;
-  esac
-  case "${path}" in
-    core/apps/web/src/*|core/apps/web/package.json|core/apps/web/scripts/*)
-      needs_web_unit=1
-      ;;
-  esac
-  case "${path}" in
-    core/Cargo.toml|core/Cargo.lock|core/rust-toolchain.toml|core/rustfmt.toml|core/clippy.toml|core/.cargo/config.toml|core/scripts/lib/cache_roots.cjs|core/scripts/lib/ctx_http_suites.cjs|core/scripts/lib/turbo_runner.cjs|core/scripts/lib/rust_workspace_graph.cjs|core/scripts/lib/rust_gate_plan.cjs|core/scripts/ctx_http_suite_task.cjs|core/scripts/rust_crate_task.cjs|core/scripts/run_rust_gate.cjs|core/scripts/run_rust_turbo.cjs|core/scripts/sync_rust_turbo_tasks.cjs|core/crates/*|core/tools/*)
-      needs_rust=1
-      rust_changed_paths+=("${path}")
-      ;;
-  esac
-
-  case "${path}" in
-    core/crates/ctx-http/*|core/crates/ctx-store/*|core/crates/ctx-mcp/*|core/crates/ctx-providers/*|core/apps/web/src/state/*|core/apps/web/src/api/*|core/apps/web/e2e/*)
-      high_risk=1
-      ;;
-  esac
-done <<< "${changed_files}"
-
 run() {
   echo "+ $*"
   if [[ -n "${CTX_AFFECTED_TESTS_COMMAND_LOG:-}" ]]; then
@@ -142,35 +109,27 @@ run_fast_gate() {
   run pnpm "$fast_gate"
 }
 
-if [[ "${high_risk}" -eq 1 ]]; then
-  echo "high-risk paths changed; using full safety fallback"
+declare -a taxonomy_args=(scripts/run_test_taxonomy_profile.cjs --profile agent-default --touched-only --list)
+while IFS= read -r path; do
+  [[ -z "${path}" ]] && continue
+  taxonomy_args+=(--changed-file "${path}")
+done <<< "${changed_files}"
+
+taxonomy_commands=()
+while IFS= read -r command; do
+  [[ -z "${command}" ]] && continue
+  taxonomy_commands+=("${command}")
+done < <(node "${taxonomy_args[@]}")
+
+if [[ "${#taxonomy_commands[@]}" -eq 0 ]]; then
+  echo "no targeted mapping hit; running default fast gate"
   run_fast_gate
-  run pnpm verify:e2e
   exit 0
 fi
 
-ran_any=0
-if [[ "${needs_rust}" -eq 1 ]]; then
-  run pnpm rust:turbo:check
-  rust_args=(exec node scripts/run_rust_gate.cjs --mode workspace --include-reverse-deps --clippy --test-strategy mixed)
-  for changed_path in "${rust_changed_paths[@]}"; do
-    rust_args+=(--changed-file "${changed_path}")
-  done
-  run pnpm "${rust_args[@]}"
-  ran_any=1
-fi
+echo "taxonomy-selected commands:"
+printf '%s\n' "${taxonomy_commands[@]}" | sed 's/^/  - /'
 
-if [[ "${needs_web_unit}" -eq 1 ]]; then
-  run pnpm -C apps/web test:quiet
-  ran_any=1
-fi
-
-if [[ "${needs_premerge}" -eq 1 ]]; then
-  run pnpm verify:e2e
-  ran_any=1
-fi
-
-if [[ "${ran_any}" -eq 0 ]]; then
-  echo "no targeted mapping hit; running default fast gate"
-  run_fast_gate
-fi
+for command in "${taxonomy_commands[@]}"; do
+  run bash -lc "${command}"
+done

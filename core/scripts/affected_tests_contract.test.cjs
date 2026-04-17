@@ -47,53 +47,47 @@ test("leaf Rust crate changes stay on the targeted fast path", () => {
   const commands = runScenario(["core/crates/ctx-provider-accounts/src/lib.rs"]);
 
   assert.deepEqual(commands, [
-    "pnpm rust:turbo:check",
-    "pnpm exec node scripts/run_rust_gate.cjs --mode workspace --include-reverse-deps --clippy --test-strategy mixed --changed-file core/crates/ctx-provider-accounts/src/lib.rs",
+    "bash -lc pnpm rust:turbo:check",
+    "bash -lc pnpm exec node scripts/run_rust_gate.cjs --mode workspace --include-reverse-deps --clippy --test-strategy mixed --changed-file core/crates/ctx-provider-accounts/src/lib.rs",
   ]);
 });
 
-test("ctx-http changes trigger the full safety fallback", () => {
+test("ctx-http changes fan out into suite-level commands", () => {
   const commands = runScenario(["core/crates/ctx-http/src/api/mod.rs"]);
 
-  assert.deepEqual(commands, ["pnpm test:agent", "pnpm verify:e2e"]);
+  assert.deepEqual(commands, [
+    "bash -lc node scripts/ctx_http_suite_task.cjs --suite attachments-routing",
+    "bash -lc node scripts/ctx_http_suite_task.cjs --suite lsp",
+    "bash -lc node scripts/ctx_http_suite_task.cjs --suite provider-auth",
+    "bash -lc node scripts/ctx_http_suite_task.cjs --suite repo-vcs",
+    "bash -lc node scripts/ctx_http_suite_task.cjs --suite subagents-control",
+    "bash -lc node scripts/ctx_http_suite_task.cjs --suite turns-terminal",
+    "bash -lc node scripts/ctx_http_suite_task.cjs --suite updates-release",
+    "bash -lc node scripts/ctx_http_suite_task.cjs --suite workspace-stream",
+  ]);
 });
 
-test("ctx-providers changes trigger the full safety fallback", () => {
+test("ctx-providers changes use the targeted Rust fallback", () => {
   const commands = runScenario(["core/crates/ctx-providers/src/lib.rs"]);
 
-  assert.deepEqual(commands, ["pnpm test:agent", "pnpm verify:e2e"]);
+  assert.deepEqual(commands, [
+    "bash -lc pnpm rust:turbo:check",
+    "bash -lc pnpm exec node scripts/run_rust_gate.cjs --mode workspace --include-reverse-deps --clippy --test-strategy mixed --changed-file core/crates/ctx-providers/src/lib.rs",
+  ]);
 });
 
 test("web high-risk changes still trigger the safety fallback", () => {
   const commands = runScenario(["core/apps/web/src/state/providerOnboardingCoordinator.ts"]);
 
-  assert.deepEqual(commands, ["pnpm test:agent", "pnpm verify:e2e"]);
-});
-
-test("linux fast-gate defaults to the linux-rbe agent gate", () => {
-  const commands = runScenario(["core/crates/ctx-http/src/api/mod.rs"], {
-    unameValue: "Linux",
-  });
-
-  assert.deepEqual(commands, ["pnpm test:agent:linux-rbe", "pnpm verify:e2e"]);
-});
-
-test("explicit fast-gate override forces the linux-rbe fallback", () => {
-  const commands = runScenario(["core/crates/ctx-http/src/api/mod.rs"], {
-    env: {
-      CTX_AFFECTED_TESTS_FAST_GATE: "test:agent:linux-rbe",
-    },
-  });
-
-  assert.deepEqual(commands, ["pnpm test:agent:linux-rbe", "pnpm verify:e2e"]);
+  assert.deepEqual(commands, ["bash -lc pnpm bazel:web:test", "bash -lc pnpm verify:e2e"]);
 });
 
 test("root-level Rust config changes still trigger the Rust gate", () => {
   const commands = runScenario(["core/Cargo.lock"]);
 
   assert.deepEqual(commands, [
-    "pnpm rust:turbo:check",
-    "pnpm exec node scripts/run_rust_gate.cjs --mode workspace --include-reverse-deps --clippy --test-strategy mixed --changed-file core/Cargo.lock",
+    "bash -lc pnpm rust:turbo:check",
+    "bash -lc pnpm exec node scripts/run_rust_gate.cjs --mode workspace --include-reverse-deps --clippy --test-strategy mixed --changed-file core/Cargo.lock",
   ]);
 });
 
@@ -101,8 +95,8 @@ test("root-level Rust toolchain change still triggers the Rust gate", () => {
   const commands = runScenario(["core/rust-toolchain.toml"]);
 
   assert.deepEqual(commands, [
-    "pnpm rust:turbo:check",
-    "pnpm exec node scripts/run_rust_gate.cjs --mode workspace --include-reverse-deps --clippy --test-strategy mixed --changed-file core/rust-toolchain.toml",
+    "bash -lc pnpm rust:turbo:check",
+    "bash -lc pnpm exec node scripts/run_rust_gate.cjs --mode workspace --include-reverse-deps --clippy --test-strategy mixed --changed-file core/rust-toolchain.toml",
   ]);
 });
 
@@ -113,7 +107,7 @@ test("combined root-level Rust and crate changes still pass both changed files t
   ]);
 
   assert.deepEqual(commands, [
-    "pnpm rust:turbo:check",
-    "pnpm exec node scripts/run_rust_gate.cjs --mode workspace --include-reverse-deps --clippy --test-strategy mixed --changed-file core/Cargo.toml --changed-file core/crates/ctx-provider-accounts/src/lib.rs",
+    "bash -lc pnpm rust:turbo:check",
+    "bash -lc pnpm exec node scripts/run_rust_gate.cjs --mode workspace --include-reverse-deps --clippy --test-strategy mixed --changed-file core/Cargo.toml --changed-file core/crates/ctx-provider-accounts/src/lib.rs",
   ]);
 });
