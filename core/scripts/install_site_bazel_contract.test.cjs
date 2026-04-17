@@ -22,7 +22,6 @@ test("install-site contract lane routes through Bazel-owned deterministic tests"
   assert.match(installSiteBuild, /name = "install_bootstrap_contract_tests"/);
   assert.match(installSiteBuild, /name = "install_contract_tests"/);
   assert.match(installSiteBuild, /srcs = \["\/\/tools\/bazel:run_workspace_task\.sh"\]/);
-  assert.match(installSiteBuild, /"PATH": "\/opt\/homebrew\/bin:\/opt\/homebrew\/sbin:\/usr\/local\/bin:\/usr\/local\/sbin:\/usr\/bin:\/usr\/sbin:\/bin:\/sbin"/);
   assert.match(installSiteBuild, /"src\/index\.test\.mjs"/);
   assert.match(installSiteBuild, /"src\/install-script\.test\.mjs"/);
   assert.match(installSiteBuild, /"src\/install-bootstrap-ci\.test\.mjs"/);

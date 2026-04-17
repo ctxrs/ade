@@ -8,9 +8,6 @@ INSTALL_SITE_SOURCES = glob([
     "package-lock.json",
     "wrangler.toml",
 ])
-INSTALL_SITE_TEST_ENV = {
-    "PATH": "/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin",
-}
 
 sh_test(
     name = "install_route_contract_tests",
@@ -22,7 +19,6 @@ sh_test(
         "src/index.test.mjs",
     ],
     data = INSTALL_SITE_SOURCES + ["//core:package.json"],
-    env = INSTALL_SITE_TEST_ENV,
 )
 
 sh_test(
@@ -36,7 +32,6 @@ sh_test(
         "src/uninstall-script.test.mjs",
     ],
     data = INSTALL_SITE_SOURCES + ["//core:package.json"],
-    env = INSTALL_SITE_TEST_ENV,
 )
 
 sh_test(
@@ -49,7 +44,6 @@ sh_test(
         "src/install-bootstrap-ci.test.mjs",
     ],
     data = INSTALL_SITE_SOURCES + ["//core:package.json"],
-    env = INSTALL_SITE_TEST_ENV,
 )
 
 test_suite(

@@ -140,3 +140,38 @@ test("run_workspace_task falls back to the caller PWD when BUILD_WORKSPACE_DIREC
     stdio: "pipe",
   });
 });
+
+test("run_workspace_task resolves node from NODE when the sandbox PATH does not provide it", () => {
+  const tempRoot = makeVolatileTempDir("ctx-run-workspace-task-node-");
+  const runfilesDir = path.join(tempRoot, "runfiles");
+  const runfilesRepo = path.join(runfilesDir, "_main");
+  const realWorkspace = path.join(tempRoot, "real-workspace");
+
+  fs.mkdirSync(path.join(runfilesRepo, "core", "apps", "web"), { recursive: true });
+  fs.writeFileSync(path.join(runfilesRepo, "core", "package.json"), "{}\n");
+  fs.writeFileSync(path.join(runfilesRepo, "core", "apps", "web", "marker.txt"), "web\n");
+  fs.mkdirSync(path.join(realWorkspace, "core", "apps", "web"), { recursive: true });
+  fs.writeFileSync(path.join(realWorkspace, "core", "package.json"), "{}\n");
+
+  const binDir = path.join(tempRoot, "bin");
+  fs.mkdirSync(binDir, { recursive: true });
+  for (const commandName of ["bash", "dirname", "ln", "mkdir", "mktemp", "rm", "tar", "which"]) {
+    symlinkBinary(binDir, commandName);
+  }
+
+  childProcess.execFileSync("bash", [scriptPath, "core/apps/web", "node", "--test", "marker.txt"], {
+    cwd: repoRoot,
+    env: {
+      ...process.env,
+      BUILD_WORKSPACE_DIRECTORY: realWorkspace,
+      NODE: childProcess.execFileSync("which", ["true"], { encoding: "utf8" }).trim(),
+      RUNFILES_DIR: runfilesDir,
+      PATH: binDir,
+      TMPDIR: tempRoot,
+    },
+    stdio: "pipe",
+  });
+
+  assert.match(scriptText, /resolve_workspace_command\(\)/);
+  assert.match(scriptText, /"\$\{NODE:-\}"/);
+});

@@ -32,6 +32,45 @@ link_real_workspace_dir() {
   ln -s "${real_root}/${rel_path}" "${temp_root}/${rel_path}"
 }
 
+resolve_workspace_command() {
+  local command_name="$1"
+  local candidate=""
+
+  if [[ "$command_name" == */* ]]; then
+    if [[ -x "$command_name" ]]; then
+      printf '%s\n' "$command_name"
+      return 0
+    fi
+    echo "failed to locate executable '${command_name}' for workspace task" >&2
+    return 127
+  fi
+
+  if [[ "$command_name" == "node" ]]; then
+    for candidate in \
+      "${NODE:-}" \
+      "$(command -v node 2>/dev/null || true)" \
+      "/opt/homebrew/bin/node" \
+      "/usr/local/bin/node" \
+      "/usr/bin/node" \
+      "/bin/node"
+    do
+      if [[ -n "$candidate" && -x "$candidate" ]]; then
+        printf '%s\n' "$candidate"
+        return 0
+      fi
+    done
+  fi
+
+  candidate="$(command -v "$command_name" 2>/dev/null || true)"
+  if [[ -n "$candidate" && -x "$candidate" ]]; then
+    printf '%s\n' "$candidate"
+    return 0
+  fi
+
+  echo "failed to locate executable '${command_name}' for workspace task" >&2
+  return 127
+}
+
 RUNFILES_REPO_ROOT="$(resolve_repo_root)"
 if [[ -z "${RUNFILES_REPO_ROOT}" ]]; then
   echo "failed to locate Bazel runfiles repo root" >&2
@@ -64,6 +103,9 @@ link_real_workspace_dir "${REAL_WORKSPACE_ROOT}" "${TMP_WORKSPACE}" "core/apps/w
 
 REL_DIR="$1"
 shift
+COMMAND_NAME="$1"
+shift
+RESOLVED_COMMAND="$(resolve_workspace_command "$COMMAND_NAME")"
 
 cd "${TMP_WORKSPACE}/${REL_DIR}"
-exec "$@"
+exec "$RESOLVED_COMMAND" "$@"
