@@ -1,5 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
 
 const {
@@ -39,8 +41,8 @@ test("remote daemon container build command creates /out before install", () => 
     coreDir: "/src-host",
     daemonsDir: "/out-host",
     targetCache: "/target-host",
-    cargoRegistryCache: "/registry-host",
-    cargoGitCache: "/git-host",
+    cargoHome: "/cargo-home-host",
+    rustupHome: "/rustup-home-host",
     target: {
       platform: "linux/amd64",
       rustTarget: "x86_64-unknown-linux-gnu",
@@ -50,7 +52,16 @@ test("remote daemon container build command creates /out before install", () => 
 
   assert.equal(spawnCmd, "docker");
   assert.match(args.join(" "), /mkdir -p \/out;/);
+  assert.match(args.join(" "), /rustup toolchain install stable --profile minimal --no-self-update/);
+  assert.match(args.join(" "), /rustup target add --toolchain stable x86_64-unknown-linux-gnu/);
+  assert.match(args.join(" "), /cargo \+stable build --manifest-path \/src\/Cargo\.toml -p ctx-http --release --target x86_64-unknown-linux-gnu/);
+  assert.match(args.join(" "), /-v \/cargo-home-host:\/cargo-home/);
+  assert.match(args.join(" "), /-v \/rustup-home-host:\/rustup-home/);
+  assert.match(args.join(" "), /-e CARGO_HOME=\/cargo-home/);
+  assert.match(args.join(" "), /-e RUSTUP_HOME=\/rustup-home/);
   assert.match(args.join(" "), /install -Dm0755 .* \/out\/ctx-daemon-linux-x86_64/);
+  assert.doesNotMatch(args.join(" "), /\/usr\/local\/cargo\/registry/);
+  assert.doesNotMatch(args.join(" "), /\/usr\/local\/cargo\/git/);
 });
 
 test("linux ctx-mcp container build command stages runtime into bundle tree", () => {
@@ -60,8 +71,8 @@ test("linux ctx-mcp container build command stages runtime into bundle tree", ()
     coreDir: "/src-host",
     runtimesDir: "/bundle-host",
     targetCache: "/target-host",
-    cargoRegistryCache: "/registry-host",
-    cargoGitCache: "/git-host",
+    cargoHome: "/cargo-home-host",
+    rustupHome: "/rustup-home-host",
     target: {
       arch: "aarch64",
       platform: "linux/arm64",
@@ -73,10 +84,19 @@ test("linux ctx-mcp container build command stages runtime into bundle tree", ()
   assert.equal(spawnCmd, "docker");
   assert.match(args.join(" "), /mkdir -p \/out;/);
   assert.match(args.join(" "), /-p ctx-mcp/);
+  assert.match(args.join(" "), /rustup toolchain install stable --profile minimal --no-self-update/);
+  assert.match(args.join(" "), /rustup target add --toolchain stable aarch64-unknown-linux-gnu/);
+  assert.match(args.join(" "), /cargo \+stable build --manifest-path \/src\/Cargo\.toml -p ctx-mcp --release --target aarch64-unknown-linux-gnu/);
+  assert.match(args.join(" "), /-v \/cargo-home-host:\/cargo-home/);
+  assert.match(args.join(" "), /-v \/rustup-home-host:\/rustup-home/);
+  assert.match(args.join(" "), /-e CARGO_HOME=\/cargo-home/);
+  assert.match(args.join(" "), /-e RUSTUP_HOME=\/rustup-home/);
   assert.match(
     args.join(" "),
     /install -Dm0755 .* \/out\/runtimes\/ctx-mcp\/linux\/aarch64\/0\.1\.0\/ctx-mcp/,
   );
+  assert.doesNotMatch(args.join(" "), /\/usr\/local\/cargo\/registry/);
+  assert.doesNotMatch(args.join(" "), /\/usr\/local\/cargo\/git/);
 });
 
 test("bundle cache root follows CARGO_TARGET_DIR before HOME cache fallbacks", () => {
@@ -114,4 +134,17 @@ test("bundle script env does not duplicate cargo bin on PATH", () => {
   });
 
   assert.equal(env.PATH, `${cargoBin}${path.delimiter}/usr/bin:/bin`);
+});
+
+test("container cache dirs on macOS are made world-writable for docker bind mounts", () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "desktop-sync-test-"));
+  const cacheDir = path.join(tempRoot, "cargo-home");
+  fs.rmSync(tempRoot, { recursive: true, force: true });
+
+  __desktopSyncResourcesTestHooks.ensureContainerCacheDir(cacheDir, "macos");
+
+  const mode = fs.statSync(cacheDir).mode & 0o777;
+  assert.equal(mode, 0o777);
+
+  fs.rmSync(tempRoot, { recursive: true, force: true });
 });

@@ -113,6 +113,17 @@ const resolveBundleCacheRoot = (cacheKey, env = process.env) => {
   );
 };
 
+const ensureContainerCacheDir = (dir, hostOs = hostManifestOs) => {
+  fs.mkdirSync(dir, { recursive: true });
+  if (hostOs !== "macos") {
+    return dir;
+  }
+  try {
+    fs.chmodSync(dir, 0o777);
+  } catch {}
+  return dir;
+};
+
 const parseAvfLinuxGuestRuntimeVersion = (raw) => {
   const text = String(raw || "");
   if (!text.trim()) return "";
@@ -706,16 +717,19 @@ const buildRemoteDaemonContainerArgs = ({
   coreDir,
   daemonsDir,
   targetCache,
-  cargoRegistryCache,
-  cargoGitCache,
+  cargoHome,
+  rustupHome,
   target,
 }) => {
   const buildCmd =
     "set -euo pipefail; " +
-    "export PATH=\"/usr/local/cargo/bin:$PATH\"; " +
+    "export CARGO_HOME=\"/cargo-home\"; " +
+    "export RUSTUP_HOME=\"/rustup-home\"; " +
+    "export PATH=\"$CARGO_HOME/bin:/usr/local/cargo/bin:$PATH\"; " +
     "mkdir -p /out; " +
-    `rustup target add ${target.rustTarget} >/dev/null 2>&1 || true; ` +
-    `cargo build --manifest-path /src/Cargo.toml -p ctx-http --release --target ${target.rustTarget}; ` +
+    "rustup toolchain install stable --profile minimal --no-self-update >/dev/null 2>&1 || true; " +
+    `rustup target add --toolchain stable ${target.rustTarget} >/dev/null 2>&1 || true; ` +
+    `cargo +stable build --manifest-path /src/Cargo.toml -p ctx-http --release --target ${target.rustTarget}; ` +
     `install -Dm0755 /target/${target.rustTarget}/release/ctx /out/${target.fileName}`;
   return [
     runtime,
@@ -731,13 +745,17 @@ const buildRemoteDaemonContainerArgs = ({
       "-v",
       `${targetCache}:/target`,
       "-v",
-      `${cargoRegistryCache}:/usr/local/cargo/registry`,
+      `${cargoHome}:/cargo-home`,
       "-v",
-      `${cargoGitCache}:/usr/local/cargo/git`,
+      `${rustupHome}:/rustup-home`,
       "-w",
       "/src",
       "-e",
       "CARGO_TARGET_DIR=/target",
+      "-e",
+      "CARGO_HOME=/cargo-home",
+      "-e",
+      "RUSTUP_HOME=/rustup-home",
       builderImage,
       "bash",
       "-lc",
@@ -771,8 +789,8 @@ const buildLinuxCtxMcpContainerArgs = ({
   coreDir,
   runtimesDir,
   targetCache,
-  cargoRegistryCache,
-  cargoGitCache,
+  cargoHome,
+  rustupHome,
   target,
   runtimeVersion,
 }) => {
@@ -785,10 +803,13 @@ const buildLinuxCtxMcpContainerArgs = ({
   );
   const buildCmd =
     "set -euo pipefail; " +
-    "export PATH=\"/usr/local/cargo/bin:$PATH\"; " +
+    "export CARGO_HOME=\"/cargo-home\"; " +
+    "export RUSTUP_HOME=\"/rustup-home\"; " +
+    "export PATH=\"$CARGO_HOME/bin:/usr/local/cargo/bin:$PATH\"; " +
     "mkdir -p /out; " +
-    `rustup target add ${target.rustTarget} >/dev/null 2>&1 || true; ` +
-    `cargo build --manifest-path /src/Cargo.toml -p ctx-mcp --release --target ${target.rustTarget}; ` +
+    "rustup toolchain install stable --profile minimal --no-self-update >/dev/null 2>&1 || true; " +
+    `rustup target add --toolchain stable ${target.rustTarget} >/dev/null 2>&1 || true; ` +
+    `cargo +stable build --manifest-path /src/Cargo.toml -p ctx-mcp --release --target ${target.rustTarget}; ` +
     `install -Dm0755 /target/${target.rustTarget}/release/ctx-mcp /out/${runtimeRootRel}/ctx-mcp`;
   return [
     runtime,
@@ -804,13 +825,17 @@ const buildLinuxCtxMcpContainerArgs = ({
       "-v",
       `${targetCache}:/target`,
       "-v",
-      `${cargoRegistryCache}:/usr/local/cargo/registry`,
+      `${cargoHome}:/cargo-home`,
       "-v",
-      `${cargoGitCache}:/usr/local/cargo/git`,
+      `${rustupHome}:/rustup-home`,
       "-w",
       "/src",
       "-e",
       "CARGO_TARGET_DIR=/target",
+      "-e",
+      "CARGO_HOME=/cargo-home",
+      "-e",
+      "RUSTUP_HOME=/rustup-home",
       builderImage,
       "bash",
       "-lc",
@@ -825,10 +850,8 @@ const bundleRemoteDaemons = (bundleDir) => {
   const daemonsDir = path.join(bundleDir, "daemons");
   fs.mkdirSync(daemonsDir, { recursive: true });
   const cacheRoot = resolveBundleCacheRoot("desktop-remote-daemons");
-  const cargoRegistryCache = path.join(cacheRoot, "registry");
-  const cargoGitCache = path.join(cacheRoot, "git");
-  fs.mkdirSync(cargoRegistryCache, { recursive: true });
-  fs.mkdirSync(cargoGitCache, { recursive: true });
+  const cargoHome = ensureContainerCacheDir(path.join(cacheRoot, "cargo-home"));
+  const rustupHome = ensureContainerCacheDir(path.join(cacheRoot, "rustup-home"));
 
   const targets = [
     {
@@ -847,8 +870,7 @@ const bundleRemoteDaemons = (bundleDir) => {
 
   const daemonEntries = [];
   for (const target of targets) {
-    const targetCache = path.join(cacheRoot, "target", target.rustTarget);
-    fs.mkdirSync(targetCache, { recursive: true });
+    const targetCache = ensureContainerCacheDir(path.join(cacheRoot, "target", target.rustTarget));
     const outPath = path.join(daemonsDir, target.fileName);
     const [spawnCmd, args] = buildRemoteDaemonContainerArgs({
       runtime,
@@ -856,8 +878,8 @@ const bundleRemoteDaemons = (bundleDir) => {
       coreDir: coreRoot,
       daemonsDir,
       targetCache,
-      cargoRegistryCache,
-      cargoGitCache,
+      cargoHome,
+      rustupHome,
       target,
     });
     const res = childProcess.spawnSync(spawnCmd, args, { stdio: "inherit" });
@@ -888,14 +910,11 @@ const bundleLinuxCtxMcpRuntime = (bundleDir) => {
   const cacheRoot = resolveBundleCacheRoot(
     path.join("desktop-bundled-runtimes", CTX_MCP_RUNTIME_ID),
   );
-  const cargoRegistryCache = path.join(cacheRoot, "registry");
-  const cargoGitCache = path.join(cacheRoot, "git");
-  fs.mkdirSync(cargoRegistryCache, { recursive: true });
-  fs.mkdirSync(cargoGitCache, { recursive: true });
+  const cargoHome = ensureContainerCacheDir(path.join(cacheRoot, "cargo-home"));
+  const rustupHome = ensureContainerCacheDir(path.join(cacheRoot, "rustup-home"));
 
   const target = linuxBundleTargetForArch(hostManifestArch);
-  const targetCache = path.join(cacheRoot, "target", target.rustTarget);
-  fs.mkdirSync(targetCache, { recursive: true });
+  const targetCache = ensureContainerCacheDir(path.join(cacheRoot, "target", target.rustTarget));
 
   const [spawnCmd, args] = buildLinuxCtxMcpContainerArgs({
     runtime,
@@ -903,8 +922,8 @@ const bundleLinuxCtxMcpRuntime = (bundleDir) => {
     coreDir: coreRoot,
     runtimesDir,
     targetCache,
-    cargoRegistryCache,
-    cargoGitCache,
+    cargoHome,
+    rustupHome,
     target,
     runtimeVersion,
   });
@@ -1412,6 +1431,7 @@ if (require.main === module) {
       writePlaceholderBundleManifest,
       writeEffectiveBundleManifest,
       ensureCargoBinOnPath,
+      ensureContainerCacheDir,
     },
     copySidecarBinary,
     parseAvfLinuxGuestRuntimeVersion,
