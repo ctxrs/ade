@@ -19,7 +19,6 @@ pub fn endpoint_selection_is_active(
         .any(|endpoint| endpoint.id == selected_endpoint_id)
 }
 
-#[cfg(test)]
 pub async fn provider_has_active_auth_config(
     data_root: &StdPath,
     provider_id: &str,

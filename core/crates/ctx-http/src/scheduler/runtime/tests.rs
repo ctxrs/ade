@@ -3,8 +3,8 @@ use super::provider_mode_id_for;
 use super::runtime_provider_id_for_session_provider;
 use crate::installer;
 use crate::installer::{
-    ensure_codex_cli_command_env_for_target, prepend_runtime_bin_dirs_to_provider_path,
-    AgentServerCommand, AgentServerConfigFile, ManagedInstallMetadata,
+    ensure_codex_cli_command_env_for_target, AgentServerCommand, AgentServerConfigFile,
+    ManagedInstallMetadata,
 };
 use crate::settings::ProviderControlMode;
 use chrono::Utc;
@@ -142,7 +142,13 @@ fn runtime_path_includes_command_parent_before_existing_path() {
 
     let mut provider_env = HashMap::new();
     provider_env.insert("PATH".to_string(), "/usr/bin".to_string());
-    prepend_runtime_bin_dirs_to_provider_path(&mut provider_env, &cfg, "test-provider", &data_root);
+    installer::prepend_runtime_bin_dirs_to_provider_path_for_target(
+        &mut provider_env,
+        &cfg,
+        "test-provider",
+        &data_root,
+        None,
+    );
 
     let path_value = provider_env.get("PATH").expect("path");
     let split: Vec<PathBuf> = std::env::split_paths(std::ffi::OsStr::new(path_value)).collect();
@@ -190,7 +196,13 @@ fn runtime_path_includes_dependency_bin_dirs() {
 
     let mut provider_env = HashMap::new();
     provider_env.insert("PATH".to_string(), "/usr/bin".to_string());
-    prepend_runtime_bin_dirs_to_provider_path(&mut provider_env, &cfg, "test-provider", &data_root);
+    installer::prepend_runtime_bin_dirs_to_provider_path_for_target(
+        &mut provider_env,
+        &cfg,
+        "test-provider",
+        &data_root,
+        None,
+    );
 
     let path_value = provider_env.get("PATH").expect("path");
     let split: Vec<PathBuf> = std::env::split_paths(std::ffi::OsStr::new(path_value)).collect();
