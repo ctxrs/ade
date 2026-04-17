@@ -2,12 +2,21 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { SessionHeadSnapshot } from "@ctx/types";
 import { SessionHeadBootstrapCache } from "../../state/sessionHeadBootstrapCache";
 import type { WorkspaceActiveSnapshotState } from "../../state/workspaceActiveSnapshotStore";
-import { collectSessionHeadsForSupervisor, primePersistedSessionHeads } from "./sessionHeadPrefetch";
+import {
+  collectSessionHeadsForSupervisor,
+  primeAuthoritativeSessionHeads,
+  primePersistedSessionHeads,
+} from "./sessionHeadPrefetch";
 
 const loadSessionHeadV1Mock = vi.fn();
+const getSessionHeadMock = vi.fn();
 
 vi.mock("../../state/uiStateStore", () => ({
   loadSessionHeadV1: (...args: unknown[]) => loadSessionHeadV1Mock(...args),
+}));
+
+vi.mock("../../api/clientSessions", () => ({
+  getSessionHead: (...args: unknown[]) => getSessionHeadMock(...args),
 }));
 
 const now = "2026-03-18T00:00:00.000Z";
@@ -67,7 +76,10 @@ const makeHead = (sessionId: string, opts?: { turnCount?: number; lastEventSeq?:
   };
 };
 
-const makeSnapshot = (sessionId: string): WorkspaceActiveSnapshotState => ({
+const makeSnapshot = (
+  sessionId: string,
+  opts?: { lastEventSeq?: number; projectionRev?: number; stateRev?: number },
+): WorkspaceActiveSnapshotState => ({
   workspaceId: "workspace-1",
   initialized: true,
   liveSnapshotApplied: true,
@@ -93,7 +105,9 @@ const makeSnapshot = (sessionId: string): WorkspaceActiveSnapshotState => ({
           session: makeHead(sessionId).session,
           last_message_at: now,
           last_message_preview: "preview",
-          last_event_seq: 1,
+          last_event_seq: opts?.lastEventSeq ?? 1,
+          projection_rev: opts?.projectionRev,
+          state_rev: opts?.stateRev,
           activity: { is_working: false, last_turn_status: null },
           unread: false,
         },
@@ -120,6 +134,8 @@ describe("sessionHeadPrefetch", () => {
   beforeEach(() => {
     loadSessionHeadV1Mock.mockReset();
     loadSessionHeadV1Mock.mockResolvedValue(null);
+    getSessionHeadMock.mockReset();
+    getSessionHeadMock.mockResolvedValue(null);
   });
 
   it("loads persisted heads into the bootstrap cache once for active primary sessions", async () => {
@@ -190,5 +206,41 @@ describe("sessionHeadPrefetch", () => {
 
     expect(Object.keys(heads)).toEqual([sessionId]);
     expect(heads[sessionId]?.turns).toHaveLength(2);
+  });
+
+  it("prefetches an authoritative head when the summary is newer than known heads", async () => {
+    const sessionId = "session-1";
+    const snapshot = makeSnapshot(sessionId, { lastEventSeq: 5 });
+    const authoritativeHead = makeHead(sessionId, { turnCount: 3, lastEventSeq: 5 });
+    getSessionHeadMock.mockResolvedValue(authoritativeHead);
+    const bootstrapCache = new SessionHeadBootstrapCache();
+    const store = {
+      getSessionHeadSnapshot: vi.fn(() => null),
+      getSessionHeadsSnapshot: vi.fn(() => ({})),
+    };
+
+    const firstChanged = await primeAuthoritativeSessionHeads(snapshot, store, bootstrapCache, [sessionId]);
+    const secondChanged = await primeAuthoritativeSessionHeads(snapshot, store, bootstrapCache, [sessionId]);
+
+    expect(firstChanged).toBe(true);
+    expect(secondChanged).toBe(false);
+    expect(getSessionHeadMock).toHaveBeenCalledTimes(1);
+    expect(bootstrapCache.snapshot()[sessionId]?.last_event_seq).toBe(5);
+  });
+
+  it("does not prefetch an authoritative head when the direct head already satisfies the summary", async () => {
+    const sessionId = "session-1";
+    const snapshot = makeSnapshot(sessionId, { lastEventSeq: 2 });
+    const directHead = makeHead(sessionId, { turnCount: 2, lastEventSeq: 2 });
+    const bootstrapCache = new SessionHeadBootstrapCache();
+    const store = {
+      getSessionHeadSnapshot: vi.fn(() => directHead),
+      getSessionHeadsSnapshot: vi.fn(() => ({ [sessionId]: directHead })),
+    };
+
+    const changed = await primeAuthoritativeSessionHeads(snapshot, store, bootstrapCache, [sessionId]);
+
+    expect(changed).toBe(false);
+    expect(getSessionHeadMock).not.toHaveBeenCalled();
   });
 });

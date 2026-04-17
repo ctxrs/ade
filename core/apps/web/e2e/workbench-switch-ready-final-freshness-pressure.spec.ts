@@ -22,6 +22,7 @@ const PRESSURE_SETTLE_MS = Number(
 );
 const FINAL_BODY_LINES = Number(process.env.CTX_SWITCH_FRESHNESS_PROMPT_BODY_LINES ?? "80");
 const MAX_SWITCH_TO_DOM_MS = Number(process.env.CTX_SWITCH_FRESHNESS_MAX_SWITCH_TO_DOM_MS ?? "0");
+const DEBUG_SAMPLES_ENABLED = process.env.CTX_SWITCH_FRESHNESS_DEBUG_SAMPLES === "1";
 
 type SessionHeadResponse = {
   turns?: Array<{
@@ -399,6 +400,24 @@ test("workbench: switching into a ready final stays fresh under pressure", async
 
     const switchStartedAtMs = Date.now();
     await focusTask(page, foregroundTaskId, foregroundSessionId);
+    const debugSamplesPromise = DEBUG_SAMPLES_ENABLED
+      ? (async () => {
+          const samples: Array<{ label: string; elapsedMs: number; state: unknown }> = [];
+          const checkpoints = [
+            { label: "250ms", waitMs: 250 },
+            { label: "1000ms", waitMs: 1000 },
+          ];
+          for (const checkpoint of checkpoints) {
+            await pageWait(checkpoint.waitMs);
+            samples.push({
+              label: checkpoint.label,
+              elapsedMs: Date.now() - switchStartedAtMs,
+              state: await captureSwitchDebugState(page, foregroundSessionId, marker),
+            });
+          }
+          return samples;
+        })()
+      : Promise.resolve([]);
     let domVisibleAtMs;
     try {
       domVisibleAtMs = await page.waitForFunction(
@@ -455,6 +474,14 @@ test("workbench: switching into a ready final stays fresh under pressure", async
       JSON.stringify(summary, null, 2),
       "utf8",
     );
+    const debugSamples = await debugSamplesPromise;
+    if (debugSamples.length > 0) {
+      await testInfo.attach("switch-ready-final-debug-samples.json", {
+        body: JSON.stringify(debugSamples, null, 2),
+        contentType: "application/json",
+      });
+      console.log(`switch freshness debug samples: ${JSON.stringify(debugSamples)}`);
+    }
 
     console.log(`switch freshness summary: ${JSON.stringify(summary)}`);
 

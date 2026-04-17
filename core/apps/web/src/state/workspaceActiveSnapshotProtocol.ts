@@ -1,11 +1,15 @@
 import type {
   SessionHeadSnapshot,
   Task,
+  WorktreeVcsSnapshot,
   WorkspaceActiveSnapshotEvent,
 } from "@ctx/types";
 import type { SessionSubscriptionCursor } from "./sessionSubscription";
 import type { PersistedWorkspaceActiveSnapshotV1 } from "./uiStateStore";
-import type { WorkspaceActiveSnapshotState } from "./workspaceActiveSnapshot/storeTypes";
+import type {
+  WorkspaceActiveSnapshotItem,
+  WorkspaceActiveSnapshotState,
+} from "./workspaceActiveSnapshot/storeTypes";
 
 export type WorkspaceActiveSnapshotCommand =
   | {
@@ -40,13 +44,37 @@ export type WorkspaceActiveSnapshotCommand =
   | { type: "e2e_set_drop_messages"; drop: boolean };
 
 export type WorkspaceActiveSnapshotPatch = {
-  snapshot: WorkspaceActiveSnapshotState;
-  sessionHeads: Record<string, SessionHeadSnapshot>;
-  worktreeRoots: Record<string, string>;
+  snapshot?: WorkspaceActiveSnapshotState;
+  shell?: Partial<
+    Pick<
+      WorkspaceActiveSnapshotState,
+      | "initialized"
+      | "liveSnapshotApplied"
+      | "connection"
+      | "activeIds"
+      | "archivedIds"
+      | "totalActive"
+      | "totalArchived"
+      | "archivedRev"
+      | "fetchState"
+      | "hasMoreActive"
+      | "hasMoreArchived"
+      | "archivedLoaded"
+    >
+  > & {
+    worktreeVcsById?: Record<string, WorktreeVcsSnapshot>;
+  };
+  taskUpserts?: Record<string, WorkspaceActiveSnapshotItem>;
+  taskDeletes?: string[];
+  sessionHeadUpserts?: Record<string, SessionHeadSnapshot>;
+  sessionHeadDeletes?: string[];
+  worktreeRootUpserts?: Record<string, string>;
+  worktreeRootDeletes?: string[];
   events: WorkspaceActiveSnapshotEvent[];
   snapshotRev: number;
   archivedRev: number;
   activeSessionIds: string[];
+  publishSnapshot?: boolean;
   persist: boolean;
   oldestEventReceivedAtMs?: number | null;
   oldestForegroundEventReceivedAtMs?: number | null;

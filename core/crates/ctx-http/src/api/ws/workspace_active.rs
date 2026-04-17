@@ -28,6 +28,7 @@ async fn handle_workspace_active_snapshot_ws(
     ));
     let foreground_head_buffer = Arc::new(HeadBatchBuffer::new());
     let background_head_buffer = Arc::new(HeadBatchBuffer::new());
+    let summary_buffer = Arc::new(SummaryBatchBuffer::new(HEAD_BATCH_TOTAL_LIMIT));
     let send_control = Arc::new(StreamSendControl::new());
     let mut rx = state
         .workspaces
@@ -69,6 +70,7 @@ async fn handle_workspace_active_snapshot_ws(
         let control = control.clone();
         let foreground_head_buffer = foreground_head_buffer.clone();
         let background_head_buffer = background_head_buffer.clone();
+        let summary_buffer = summary_buffer.clone();
         let send_control = send_control.clone();
         let latest_snapshot_rev = latest_snapshot_rev.clone();
         tokio::spawn(async move {
@@ -82,6 +84,7 @@ async fn handle_workspace_active_snapshot_ws(
                     &control,
                     &foreground_head_buffer,
                     &background_head_buffer,
+                    &summary_buffer,
                     send_control.is_hydrating(),
                 )
                 .await
@@ -162,6 +165,27 @@ async fn handle_workspace_active_snapshot_ws(
                                 break;
                             }
                         }
+                        NextWorkspaceStreamItem::SummaryBatch { events } => {
+                            let mut send_failed = false;
+                            for event in events {
+                                stream_seq += 1;
+                                let message = WorkspaceActiveSnapshotStreamMessage::Event {
+                                    rev: stream_seq,
+                                    event: Box::new(event),
+                                };
+                                let Ok(text) = serde_json::to_string(&message) else {
+                                    send_failed = true;
+                                    break;
+                                };
+                                if sender.send(WsMessage::Text(text)).await.is_err() {
+                                    send_failed = true;
+                                    break;
+                                }
+                            }
+                            if send_failed {
+                                break;
+                            }
+                        }
                     }
                     if send_control.should_disconnect_after_flush()
                         && workspace_stream_is_idle(
@@ -169,6 +193,7 @@ async fn handle_workspace_active_snapshot_ws(
                             &control,
                             &foreground_head_buffer,
                             &background_head_buffer,
+                            &summary_buffer,
                         )
                         .await
                     {
@@ -185,6 +210,7 @@ async fn handle_workspace_active_snapshot_ws(
                     _ = control.notify.notified() => {},
                     _ = foreground_head_buffer.notify.notified() => {},
                     _ = background_head_buffer.notify.notified() => {},
+                    _ = summary_buffer.notify.notified() => {},
                     _ = tick.tick() => {},
                 }
             }
@@ -204,6 +230,7 @@ async fn handle_workspace_active_snapshot_ws(
                                     control: &control,
                                     foreground_head_buffer: &foreground_head_buffer,
                                     background_head_buffer: &background_head_buffer,
+                                    summary_buffer: &summary_buffer,
                                     send_control: &send_control,
                                     subscriptions: &mut subscriptions,
                                     subscription_state: &mut subscription_state,
@@ -228,6 +255,7 @@ async fn handle_workspace_active_snapshot_ws(
                                         control: &control,
                                         foreground_head_buffer: &foreground_head_buffer,
                                         background_head_buffer: &background_head_buffer,
+                                        summary_buffer: &summary_buffer,
                                         send_control: &send_control,
                                         subscriptions: &mut subscriptions,
                                         subscription_state: &mut subscription_state,
@@ -266,6 +294,7 @@ async fn handle_workspace_active_snapshot_ws(
                             control.clear().await;
                             foreground_head_buffer.clear().await;
                             background_head_buffer.clear().await;
+                            summary_buffer.clear().await;
                             if queue_reset_required(&priority_control, &state, workspace_id)
                                 .await
                                 .is_err()
@@ -455,6 +484,14 @@ async fn handle_workspace_active_snapshot_ws(
                             delta,
                             ..
                         } => {
+                            if !should_stream_head_delta(
+                                &subscription_state.active_task_sessions,
+                                &subscription_state.explicit_sessions,
+                                subscription_state.foreground_session_ids.as_ref(),
+                                delta.session_id,
+                            ) {
+                                continue;
+                            }
                             let Some(delta) = filter_partial_delta_for_active_tasks(
                                 *delta,
                                 &subscription_state.active_task_sessions,
@@ -483,6 +520,28 @@ async fn handle_workspace_active_snapshot_ws(
                                 control.clear().await;
                                 foreground_head_buffer.clear().await;
                                 background_head_buffer.clear().await;
+                                summary_buffer.clear().await;
+                                if queue_reset_required(&priority_control, &state, workspace_id)
+                                    .await
+                                    .is_err()
+                                {
+                                    break;
+                                }
+                                reset_queued = true;
+                                send_control.set_disconnect_after_flush();
+                            }
+                        }
+                        other @ WorkspaceActiveSnapshotEvent::SessionSummaryDelta { .. } => {
+                            if let Err(err) = summary_buffer.push(other).await {
+                                log_summary_batch_push_error("event", workspace_id, &err);
+                                if reset_queued {
+                                    continue;
+                                }
+                                priority_control.clear().await;
+                                control.clear().await;
+                                foreground_head_buffer.clear().await;
+                                background_head_buffer.clear().await;
+                                summary_buffer.clear().await;
                                 if queue_reset_required(&priority_control, &state, workspace_id)
                                     .await
                                     .is_err()
@@ -522,6 +581,7 @@ async fn handle_workspace_active_snapshot_ws(
                                 control.clear().await;
                                 foreground_head_buffer.clear().await;
                                 background_head_buffer.clear().await;
+                                summary_buffer.clear().await;
                                 if queue_reset_required(&priority_control, &state, workspace_id)
                                     .await
                                     .is_err()
@@ -546,6 +606,7 @@ async fn handle_workspace_active_snapshot_ws(
     control.notify.notify_one();
     foreground_head_buffer.notify.notify_one();
     background_head_buffer.notify.notify_one();
+    summary_buffer.notify.notify_one();
     if let Some(send_task) = send_task {
         let _ = send_task.await;
     }
@@ -561,6 +622,7 @@ struct WorkspaceActiveSubscribeContext<'a> {
     control: &'a Arc<StreamQueue<WorkspaceActiveSnapshotStreamMessage>>,
     foreground_head_buffer: &'a Arc<HeadBatchBuffer>,
     background_head_buffer: &'a Arc<HeadBatchBuffer>,
+    summary_buffer: &'a Arc<SummaryBatchBuffer>,
     send_control: &'a Arc<StreamSendControl>,
     subscriptions: &'a mut HashMap<SessionId, SessionCursor>,
     subscription_state: &'a mut WorkspaceActiveSubscriptionState,
@@ -611,6 +673,7 @@ async fn handle_subscribe_message(
             ctx.control.clear().await;
             ctx.foreground_head_buffer.clear().await;
             ctx.background_head_buffer.clear().await;
+            ctx.summary_buffer.clear().await;
             if queue_reset_required(ctx.priority_control, state, workspace_id)
                 .await
                 .is_err()
@@ -632,6 +695,7 @@ async fn handle_subscribe_message(
     ctx.control.clear().await;
     ctx.foreground_head_buffer.clear().await;
     ctx.background_head_buffer.clear().await;
+    ctx.summary_buffer.clear().await;
     *ctx.reset_queued = false;
     ctx.send_control.clear_disconnect_after_flush();
     sync_active_worktrees(state, ctx.active_worktrees, &worktree_vcs_session_ids).await;
@@ -706,7 +770,9 @@ async fn handle_subscribe_message(
         let priority_control = ctx.priority_control.clone();
         let foreground_head_buffer = ctx.foreground_head_buffer.clone();
         let background_head_buffer = ctx.background_head_buffer.clone();
+        let summary_buffer = ctx.summary_buffer.clone();
         let active_task_sessions = next_state.active_task_sessions.clone();
+        let explicit_sessions = next_state.explicit_sessions.clone();
         let foreground_session_ids = next_state.foreground_session_ids.clone();
         let replay = replay_session_events(
             state,
@@ -723,7 +789,9 @@ async fn handle_subscribe_message(
                 let priority_control = priority_control.clone();
                 let foreground_head_buffer = foreground_head_buffer.clone();
                 let background_head_buffer = background_head_buffer.clone();
+                let summary_buffer = summary_buffer.clone();
                 let active_task_sessions = active_task_sessions.clone();
+                let explicit_sessions = explicit_sessions.clone();
                 let foreground_session_ids = foreground_session_ids.clone();
                 async move {
                     match event {
@@ -733,6 +801,14 @@ async fn handle_subscribe_message(
                                 delta,
                                 ..
                             } => {
+                                if !should_stream_head_delta(
+                                    &active_task_sessions,
+                                    &explicit_sessions,
+                                    foreground_session_ids.as_ref(),
+                                    delta.session_id,
+                                ) {
+                                    return Ok(());
+                                }
                                 let Some(delta) = filter_partial_delta_for_active_tasks(
                                     *delta,
                                     &active_task_sessions,
@@ -753,6 +829,11 @@ async fn handle_subscribe_message(
                                     return Err(());
                                 }
                                 Ok(())
+                            }
+                            other @ WorkspaceActiveSnapshotEvent::SessionSummaryDelta { .. } => {
+                                summary_buffer.push(other).await.map_err(|err| {
+                                    log_summary_batch_push_error("replay", workspace_id, &err);
+                                })
                             }
                             other => {
                                 let target = if is_priority_control_event(
@@ -814,6 +895,7 @@ async fn handle_subscribe_message(
         ctx.control.clear().await;
         ctx.foreground_head_buffer.clear().await;
         ctx.background_head_buffer.clear().await;
+        ctx.summary_buffer.clear().await;
         if queue_reset_required(ctx.priority_control, state, workspace_id)
             .await
             .is_err()

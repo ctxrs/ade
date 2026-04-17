@@ -88,6 +88,50 @@ const nowMs = (): number => {
   return Date.now();
 };
 
+const sameIdList = (left: readonly string[], right: readonly string[]): boolean => {
+  if (left === right) return true;
+  if (left.length !== right.length) return false;
+  for (let index = 0; index < left.length; index += 1) {
+    if (left[index] !== right[index]) return false;
+  }
+  return true;
+};
+
+const sameRecordRefs = <T,>(left: Record<string, T>, right: Record<string, T>): boolean => {
+  if (left === right) return true;
+  const leftKeys = Object.keys(left);
+  const rightKeys = Object.keys(right);
+  if (leftKeys.length !== rightKeys.length) return false;
+  for (const key of leftKeys) {
+    if (!(key in right) || left[key] !== right[key]) {
+      return false;
+    }
+  }
+  return true;
+};
+
+const diffRecordEntries = <T,>(
+  previous: Record<string, T>,
+  next: Record<string, T>,
+): { upserts?: Record<string, T>; deletes?: string[] } => {
+  const upserts: Record<string, T> = {};
+  const deletes: string[] = [];
+  for (const [key, value] of Object.entries(next)) {
+    if (!(key in previous) || previous[key] !== value) {
+      upserts[key] = value;
+    }
+  }
+  for (const key of Object.keys(previous)) {
+    if (!(key in next)) {
+      deletes.push(key);
+    }
+  }
+  return {
+    ...(Object.keys(upserts).length > 0 ? { upserts } : {}),
+    ...(deletes.length > 0 ? { deletes } : {}),
+  };
+};
+
 export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshotEventSource {
   private listeners = new Set<() => void>();
   eventListeners = new Set<(event: WorkspaceActiveSnapshotEvent) => void>();
@@ -111,6 +155,10 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
   private workerPatchOldestEventReceivedAtMs: number | null = null;
   private workerPatchOldestForegroundEventReceivedAtMs: number | null = null;
   private workerPatchFlushMs = WORKSPACE_PATCH_FLUSH_MS;
+  private lastWorkerPatchSnapshot: WorkspaceActiveSnapshotState | null = null;
+  private lastWorkerPatchSessionHeads: Record<string, SessionHeadSnapshot> = {};
+  private lastWorkerPatchWorktreeRoots: Record<string, string> = {};
+  private lastWorkerPatchSnapshotRev = -1;
   authTokenOverride: string | null = null;
   wsBaseUrlOverride: string | null = null;
   private configUnsubscribe: (() => void) | null = null;
@@ -400,7 +448,9 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
       });
     }
     this.state.applyWorkerPatch(patch);
-    this.publish();
+    if (patch.publishSnapshot !== false) {
+      this.publish();
+    }
     if (patch.persist) {
       this.schedulePersistCache();
     }
@@ -469,6 +519,10 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
     this.workerPatchDirty = false;
     this.workerPatchOldestEventReceivedAtMs = null;
     this.workerPatchOldestForegroundEventReceivedAtMs = null;
+    this.lastWorkerPatchSnapshot = null;
+    this.lastWorkerPatchSessionHeads = {};
+    this.lastWorkerPatchWorktreeRoots = {};
+    this.lastWorkerPatchSnapshotRev = -1;
     this.listeners.clear();
     this.eventListeners.clear();
   };
@@ -614,22 +668,109 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
     }
     const events = this.workerPatchPendingEvents.slice();
     this.workerPatchPendingEvents = [];
-    const patch: WorkspaceActiveSnapshotPatch = {
-      snapshot: this.getSnapshot(),
-      sessionHeads: this.getSessionHeadsSnapshot(),
-      worktreeRoots: this.getWorktreeRootsSnapshot(),
-      events,
-      snapshotRev: this.state.getSnapshotRev(),
-      archivedRev: this.state.getArchivedRev(),
-      activeSessionIds: this.state.getActiveSessionIds(),
-      persist: this.workerPatchPendingPersist,
-      oldestEventReceivedAtMs: this.workerPatchOldestEventReceivedAtMs,
-      oldestForegroundEventReceivedAtMs: this.workerPatchOldestForegroundEventReceivedAtMs,
-    };
+    const snapshot = this.getSnapshot();
+    const sessionHeads = this.getSessionHeadsSnapshot();
+    const worktreeRoots = this.getWorktreeRootsSnapshot();
+    const activeSessionIds = this.state.getActiveSessionIds();
+    const snapshotRev = this.state.getSnapshotRev();
+    const forceSnapshotReplace =
+      this.lastWorkerPatchSnapshot == null || snapshotRev < this.lastWorkerPatchSnapshotRev;
+
+    let patch: WorkspaceActiveSnapshotPatch;
+    if (forceSnapshotReplace) {
+      patch = {
+        snapshot,
+        sessionHeadUpserts: sessionHeads,
+        worktreeRootUpserts: worktreeRoots,
+        events,
+        snapshotRev,
+        archivedRev: this.state.getArchivedRev(),
+        activeSessionIds,
+        publishSnapshot: true,
+        persist: this.workerPatchPendingPersist,
+        oldestEventReceivedAtMs: this.workerPatchOldestEventReceivedAtMs,
+        oldestForegroundEventReceivedAtMs: this.workerPatchOldestForegroundEventReceivedAtMs,
+      };
+    } else {
+      const previousSnapshot = this.lastWorkerPatchSnapshot!;
+      const previousSessionHeads = this.lastWorkerPatchSessionHeads;
+      const previousWorktreeRoots = this.lastWorkerPatchWorktreeRoots;
+      const taskDiff = diffRecordEntries(previousSnapshot.tasksById, snapshot.tasksById);
+      const sessionHeadDiff = diffRecordEntries(previousSessionHeads, sessionHeads);
+      const worktreeRootDiff = diffRecordEntries(previousWorktreeRoots, worktreeRoots);
+      const shell: NonNullable<WorkspaceActiveSnapshotPatch["shell"]> = {};
+
+      if (snapshot.initialized !== previousSnapshot.initialized) {
+        shell.initialized = snapshot.initialized;
+      }
+      if (snapshot.liveSnapshotApplied !== previousSnapshot.liveSnapshotApplied) {
+        shell.liveSnapshotApplied = snapshot.liveSnapshotApplied;
+      }
+      if (snapshot.connection !== previousSnapshot.connection) {
+        shell.connection = snapshot.connection;
+      }
+      if (!sameIdList(snapshot.activeIds, previousSnapshot.activeIds)) {
+        shell.activeIds = snapshot.activeIds.slice();
+      }
+      if (!sameIdList(snapshot.archivedIds, previousSnapshot.archivedIds)) {
+        shell.archivedIds = snapshot.archivedIds.slice();
+      }
+      if (snapshot.totalActive !== previousSnapshot.totalActive) {
+        shell.totalActive = snapshot.totalActive;
+      }
+      if (snapshot.totalArchived !== previousSnapshot.totalArchived) {
+        shell.totalArchived = snapshot.totalArchived;
+      }
+      if (snapshot.archivedRev !== previousSnapshot.archivedRev) {
+        shell.archivedRev = snapshot.archivedRev;
+      }
+      if (
+        snapshot.fetchState.active !== previousSnapshot.fetchState.active ||
+        snapshot.fetchState.archived !== previousSnapshot.fetchState.archived
+      ) {
+        shell.fetchState = { ...snapshot.fetchState };
+      }
+      if (snapshot.hasMoreActive !== previousSnapshot.hasMoreActive) {
+        shell.hasMoreActive = snapshot.hasMoreActive;
+      }
+      if (snapshot.hasMoreArchived !== previousSnapshot.hasMoreArchived) {
+        shell.hasMoreArchived = snapshot.hasMoreArchived;
+      }
+      if (snapshot.archivedLoaded !== previousSnapshot.archivedLoaded) {
+        shell.archivedLoaded = snapshot.archivedLoaded;
+      }
+      if (!sameRecordRefs(snapshot.worktreeVcsById, previousSnapshot.worktreeVcsById)) {
+        shell.worktreeVcsById = snapshot.worktreeVcsById;
+      }
+
+      const shellChanged = Object.keys(shell).length > 0;
+      const taskChanged = Boolean(taskDiff.upserts) || Boolean(taskDiff.deletes);
+      patch = {
+        ...(shellChanged ? { shell } : {}),
+        ...(taskDiff.upserts ? { taskUpserts: taskDiff.upserts } : {}),
+        ...(taskDiff.deletes ? { taskDeletes: taskDiff.deletes } : {}),
+        ...(sessionHeadDiff.upserts ? { sessionHeadUpserts: sessionHeadDiff.upserts } : {}),
+        ...(sessionHeadDiff.deletes ? { sessionHeadDeletes: sessionHeadDiff.deletes } : {}),
+        ...(worktreeRootDiff.upserts ? { worktreeRootUpserts: worktreeRootDiff.upserts } : {}),
+        ...(worktreeRootDiff.deletes ? { worktreeRootDeletes: worktreeRootDiff.deletes } : {}),
+        events,
+        snapshotRev,
+        archivedRev: this.state.getArchivedRev(),
+        activeSessionIds,
+        publishSnapshot: this.workerPatchDirty || shellChanged || taskChanged,
+        persist: this.workerPatchPendingPersist,
+        oldestEventReceivedAtMs: this.workerPatchOldestEventReceivedAtMs,
+        oldestForegroundEventReceivedAtMs: this.workerPatchOldestForegroundEventReceivedAtMs,
+      };
+    }
     this.workerPatchDirty = false;
     this.workerPatchPendingPersist = false;
     this.workerPatchOldestEventReceivedAtMs = null;
     this.workerPatchOldestForegroundEventReceivedAtMs = null;
+    this.lastWorkerPatchSnapshot = snapshot;
+    this.lastWorkerPatchSessionHeads = sessionHeads;
+    this.lastWorkerPatchWorktreeRoots = worktreeRoots;
+    this.lastWorkerPatchSnapshotRev = snapshotRev;
     this.workerPatchEmitter(patch);
   }
 

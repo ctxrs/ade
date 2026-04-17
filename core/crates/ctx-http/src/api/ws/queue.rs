@@ -27,9 +27,20 @@ struct HeadBatchState {
     deltas: HashMap<SessionId, Vec<SessionHeadDelta>>,
 }
 
+struct SummaryBatchState {
+    total_len: usize,
+    events: HashMap<SessionId, WorkspaceActiveSnapshotEvent>,
+}
+
 pub(super) struct HeadBatchBuffer {
     state: Mutex<HeadBatchState>,
     pub(super) notify: Notify,
+}
+
+pub(super) struct SummaryBatchBuffer {
+    state: Mutex<SummaryBatchState>,
+    pub(super) notify: Notify,
+    limit: usize,
 }
 
 pub(super) enum NextWorkspaceStreamItem {
@@ -38,11 +49,19 @@ pub(super) enum NextWorkspaceStreamItem {
         snapshot_rev: i64,
         deltas: Vec<SessionHeadDelta>,
     },
+    SummaryBatch {
+        events: Vec<WorkspaceActiveSnapshotEvent>,
+    },
 }
 
 #[derive(Debug)]
 pub(super) enum HeadBatchPushError {
     SessionLimit { session_id: SessionId, limit: usize },
+    TotalLimit { limit: usize },
+}
+
+#[derive(Debug)]
+pub(super) enum SummaryBatchPushError {
     TotalLimit { limit: usize },
 }
 
@@ -53,15 +72,6 @@ fn is_partial_event(event: &SessionEvent) -> bool {
             | SessionEventType::ThoughtChunk
             | SessionEventType::ContextWindowUpdate
     )
-}
-
-fn allows_partial_for_active_primary_session(
-    active_task_sessions: &HashMap<TaskId, SessionId>,
-    session_id: SessionId,
-) -> bool {
-    active_task_sessions
-        .values()
-        .any(|active_session_id| *active_session_id == session_id)
 }
 
 fn allows_partial_for_foreground_session(
@@ -78,6 +88,16 @@ pub(super) fn is_foreground_session(
     session_id: SessionId,
 ) -> bool {
     allows_partial_for_foreground_session(foreground_session_ids, session_id)
+}
+
+pub(super) fn should_stream_head_delta(
+    _active_task_sessions: &HashMap<TaskId, SessionId>,
+    explicit_sessions: &HashSet<SessionId>,
+    foreground_session_ids: Option<&HashSet<SessionId>>,
+    session_id: SessionId,
+) -> bool {
+    explicit_sessions.contains(&session_id)
+        || allows_partial_for_foreground_session(foreground_session_ids, session_id)
 }
 
 pub(super) fn is_priority_control_event(
@@ -97,12 +117,11 @@ pub(super) fn is_priority_control_event(
 
 pub(super) fn filter_partial_delta_for_active_tasks(
     mut delta: SessionHeadDelta,
-    active_task_sessions: &HashMap<TaskId, SessionId>,
+    _active_task_sessions: &HashMap<TaskId, SessionId>,
     foreground_session_ids: Option<&HashSet<SessionId>>,
 ) -> Option<SessionHeadDelta> {
     if let Some(event) = delta.event.as_ref() {
         if is_partial_event(event)
-            && !allows_partial_for_active_primary_session(active_task_sessions, delta.session_id)
             && !allows_partial_for_foreground_session(foreground_session_ids, delta.session_id)
         {
             delta.event = None;
@@ -270,6 +289,68 @@ impl HeadBatchBuffer {
     }
 }
 
+impl SummaryBatchBuffer {
+    pub(super) fn new(limit: usize) -> Self {
+        Self {
+            state: Mutex::new(SummaryBatchState {
+                total_len: 0,
+                events: HashMap::new(),
+            }),
+            notify: Notify::new(),
+            limit,
+        }
+    }
+
+    pub(super) async fn push(
+        &self,
+        event: WorkspaceActiveSnapshotEvent,
+    ) -> Result<(), SummaryBatchPushError> {
+        let session_id = match &event {
+            WorkspaceActiveSnapshotEvent::SessionSummaryDelta { delta, .. } => delta.session_id,
+            _ => return Ok(()),
+        };
+        let mut state = self.state.lock().await;
+        if let std::collections::hash_map::Entry::Occupied(mut entry) =
+            state.events.entry(session_id)
+        {
+            entry.insert(event);
+            self.notify.notify_one();
+            return Ok(());
+        }
+        if state.total_len >= self.limit {
+            return Err(SummaryBatchPushError::TotalLimit { limit: self.limit });
+        }
+        state.events.insert(session_id, event);
+        state.total_len += 1;
+        self.notify.notify_one();
+        Ok(())
+    }
+
+    pub(super) async fn take(&self) -> Vec<WorkspaceActiveSnapshotEvent> {
+        let mut state = self.state.lock().await;
+        if state.events.is_empty() {
+            state.total_len = 0;
+            return Vec::new();
+        }
+        let mut events = Vec::with_capacity(state.total_len);
+        for (_, event) in state.events.drain() {
+            events.push(event);
+        }
+        state.total_len = 0;
+        events
+    }
+
+    pub(super) async fn clear(&self) {
+        let mut state = self.state.lock().await;
+        state.events.clear();
+        state.total_len = 0;
+    }
+
+    pub(super) async fn is_empty(&self) -> bool {
+        self.state.lock().await.events.is_empty()
+    }
+}
+
 impl<T> StreamQueue<T> {
     pub(super) fn new(limit: usize, max_age: Duration) -> Self {
         Self {
@@ -327,6 +408,7 @@ pub(super) async fn take_next_workspace_stream_item(
     control: &StreamQueue<WorkspaceActiveSnapshotStreamMessage>,
     foreground_head_buffer: &HeadBatchBuffer,
     background_head_buffer: &HeadBatchBuffer,
+    summary_buffer: &SummaryBatchBuffer,
     hydrating: bool,
 ) -> Option<NextWorkspaceStreamItem> {
     if hydrating {
@@ -355,6 +437,10 @@ pub(super) async fn take_next_workspace_stream_item(
             deltas,
         });
     }
+    let events = summary_buffer.take().await;
+    if !events.is_empty() {
+        return Some(NextWorkspaceStreamItem::SummaryBatch { events });
+    }
     None
 }
 
@@ -363,11 +449,13 @@ pub(super) async fn workspace_stream_is_idle(
     control: &StreamQueue<WorkspaceActiveSnapshotStreamMessage>,
     foreground_head_buffer: &HeadBatchBuffer,
     background_head_buffer: &HeadBatchBuffer,
+    summary_buffer: &SummaryBatchBuffer,
 ) -> bool {
     priority_control.is_empty().await
         && control.is_empty().await
         && foreground_head_buffer.is_empty().await
         && background_head_buffer.is_empty().await
+        && summary_buffer.is_empty().await
 }
 
 fn log_stream_queue_push_error(
@@ -421,6 +509,23 @@ pub(super) fn log_head_batch_push_error(
                 workspace_id = %workspace_id.0,
                 limit = *limit,
                 "workspace head batch total limit exceeded ({context})",
+            );
+        }
+    }
+}
+
+pub(super) fn log_summary_batch_push_error(
+    context: &'static str,
+    workspace_id: WorkspaceId,
+    err: &SummaryBatchPushError,
+) {
+    match err {
+        SummaryBatchPushError::TotalLimit { limit } => {
+            tracing::error!(
+                target: "ctx_http.ws_active_snapshot",
+                workspace_id = %workspace_id.0,
+                limit = *limit,
+                "workspace summary batch total limit exceeded ({context})",
             );
         }
     }
@@ -487,15 +592,15 @@ mod tests {
     }
 
     #[test]
-    fn filter_partial_delta_keeps_primary_partial_delta() {
+    fn filter_partial_delta_drops_primary_partial_delta_when_not_foreground() {
         let session_id = SessionId::new();
         let delta = partial_delta(session_id);
         let mut active_task_sessions = HashMap::new();
         active_task_sessions.insert(TaskId::new(), session_id);
 
-        let filtered = filter_partial_delta_for_active_tasks(delta, &active_task_sessions, None)
-            .expect("primary session partial delta should be preserved");
-        assert!(filtered.event.is_some());
+        assert!(
+            filter_partial_delta_for_active_tasks(delta, &active_task_sessions, None).is_none()
+        );
     }
 
     #[test]
@@ -513,6 +618,51 @@ mod tests {
         )
         .expect("foreground session partial delta should be preserved");
         assert!(filtered.event.is_some());
+    }
+
+    #[test]
+    fn should_stream_head_delta_keeps_explicit_session() {
+        let session_id = SessionId::new();
+        let active_task_sessions = HashMap::new();
+        let mut explicit_sessions = HashSet::new();
+        explicit_sessions.insert(session_id);
+
+        assert!(should_stream_head_delta(
+            &active_task_sessions,
+            &explicit_sessions,
+            None,
+            session_id,
+        ));
+    }
+
+    #[test]
+    fn should_stream_head_delta_keeps_foreground_session() {
+        let session_id = SessionId::new();
+        let active_task_sessions = HashMap::new();
+        let explicit_sessions = HashSet::new();
+        let mut foreground_session_ids = HashSet::new();
+        foreground_session_ids.insert(session_id);
+
+        assert!(should_stream_head_delta(
+            &active_task_sessions,
+            &explicit_sessions,
+            Some(&foreground_session_ids),
+            session_id,
+        ));
+    }
+
+    #[test]
+    fn should_stream_head_delta_drops_non_active_non_explicit_background_session() {
+        let session_id = SessionId::new();
+        let active_task_sessions = HashMap::new();
+        let explicit_sessions = HashSet::new();
+
+        assert!(!should_stream_head_delta(
+            &active_task_sessions,
+            &explicit_sessions,
+            None,
+            session_id,
+        ));
     }
 
     #[test]
@@ -554,6 +704,7 @@ mod tests {
         let control = StreamQueue::new(8, Duration::from_secs(1));
         let foreground_head_buffer = HeadBatchBuffer::new();
         let background_head_buffer = HeadBatchBuffer::new();
+        let summary_buffer = SummaryBatchBuffer::new(8);
         let workspace_id = WorkspaceId::new();
         let foreground_session_id = SessionId::new();
         let background_session_id = SessionId::new();
@@ -608,6 +759,7 @@ mod tests {
             &control,
             &foreground_head_buffer,
             &background_head_buffer,
+            &summary_buffer,
             false,
         )
         .await
@@ -630,6 +782,7 @@ mod tests {
                 &control,
                 &foreground_head_buffer,
                 &background_head_buffer,
+                &summary_buffer,
                 false,
             )
             .await
@@ -644,6 +797,7 @@ mod tests {
             &control,
             &foreground_head_buffer,
             &background_head_buffer,
+            &summary_buffer,
             false,
         )
         .await
@@ -666,6 +820,7 @@ mod tests {
                 &control,
                 &foreground_head_buffer,
                 &background_head_buffer,
+                &summary_buffer,
                 false,
             )
             .await
@@ -714,6 +869,7 @@ mod tests {
         let control = StreamQueue::new(8, Duration::from_secs(1));
         let foreground_head_buffer = HeadBatchBuffer::new();
         let background_head_buffer = HeadBatchBuffer::new();
+        let summary_buffer = SummaryBatchBuffer::new(8);
         let workspace_id = WorkspaceId::new();
         let foreground_session_id = SessionId::new();
 
@@ -763,6 +919,7 @@ mod tests {
             &control,
             &foreground_head_buffer,
             &background_head_buffer,
+            &summary_buffer,
             true,
         )
         .await
@@ -779,6 +936,7 @@ mod tests {
             &control,
             &foreground_head_buffer,
             &background_head_buffer,
+            &summary_buffer,
             false,
         )
         .await

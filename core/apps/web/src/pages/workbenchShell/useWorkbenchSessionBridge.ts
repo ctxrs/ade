@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { idToString, type SessionHeadSnapshot } from "../../api/client";
 import type { WorkspaceActiveSnapshotEvent } from "@ctx/types";
 import { SessionHeadBootstrapCache } from "../../state/sessionHeadBootstrapCache";
@@ -22,6 +22,7 @@ import {
 import type { OptimisticTaskSummary } from "./WorkbenchPage.types";
 import {
   collectSessionHeadsForSupervisor,
+  primeAuthoritativeSessionHeads,
   maybeCacheSessionHeadSeed,
   primePersistedSessionHeads,
 } from "./sessionHeadPrefetch";
@@ -51,6 +52,7 @@ type TaskBridgeArgs = {
     | "setSubscribedSessionIdsSink"
     | "setWorkspaceSnapshotState"
     | "setWorkspaceSessionHeads"
+    | "upsertWorkspaceSessionHead"
     | "handleWorkspaceEvent"
   >;
   workbenchStore: Pick<WorkbenchStore, "getActiveTab" | "setActiveSessionForActiveTask">;
@@ -96,40 +98,30 @@ export function useWorkbenchSessionBridge({
   );
 
   const sessionHeadBootstrapCache = useMemo(() => new SessionHeadBootstrapCache(), []);
+  const sessionHeadPrefetchCancelledRef = useRef(false);
+  const prefetchSessionIdsRef = useRef<Set<string>>(new Set());
   const activeTaskHeadSessionIds = useMemo(
     () => Array.from(new Set([...sessionIds, ...sessions.map((session) => idToString(session.id)).filter(Boolean)])),
     [sessionIds, sessions],
   );
-
-  useEffect(() => {
-    let cancelled = false;
-    const prefetchPersistedHeads = async () => {
-      if (!workspaceSnapshot.initialized) return;
-      const changed = await primePersistedSessionHeads(
+  const primeAuthoritativeHeadsForSessions = useCallback(
+    async (sessionIdsToPrime: readonly string[]) => {
+      if (sessionIdsToPrime.length === 0 || sessionHeadPrefetchCancelledRef.current) return;
+      await primeAuthoritativeSessionHeads(
         workspaceSnapshotStore.getSnapshot(),
         workspaceSnapshotStore,
         sessionHeadBootstrapCache,
-        activeTaskHeadSessionIds,
+        sessionIdsToPrime,
+        {
+          onHead: (sessionId, head) => {
+            if (sessionHeadPrefetchCancelledRef.current) return;
+            supervisor.upsertWorkspaceSessionHead(sessionId, head);
+          },
+        },
       );
-      if (!changed || cancelled) return;
-      const snapshot = workspaceSnapshotStore.getSnapshot();
-      supervisor.setWorkspaceSessionHeads(
-        readWorkspaceSessionHeads(snapshot, workspaceSnapshotStore, sessionHeadBootstrapCache, activeTaskHeadSessionIds),
-      );
-    };
-    void prefetchPersistedHeads();
-    return () => {
-      cancelled = true;
-    };
-  }, [
-    sessionHeadBootstrapCache,
-    supervisor,
-    workspaceSnapshot.activeIds,
-    workspaceSnapshot.initialized,
-    workspaceSnapshot.tasksById,
-    workspaceSnapshotStore,
-    activeTaskHeadSessionIds,
-  ]);
+    },
+    [sessionHeadBootstrapCache, supervisor, workspaceSnapshotStore],
+  );
 
   useEffect(() => {
     supervisor.setSubscribedSessionIdsSink((sessionIdsForSubscription) => {
@@ -145,7 +137,27 @@ export function useWorkbenchSessionBridge({
     };
     const handleWorkspaceEvent = (evt: WorkspaceActiveSnapshotEvent) => {
       const didCacheSeed = maybeCacheSessionHeadSeed(sessionHeadBootstrapCache, evt);
-      if (didCacheSeed) {
+      const sessionId =
+        evt.type === "session_head_delta"
+          ? idToString(evt.delta.session_id)
+          : evt.type === "session_head_seed"
+            ? idToString(evt.head.session.id)
+            : evt.type === "session_summary_delta"
+              ? idToString(evt.delta.session_id)
+              : evt.type === "session_summary"
+                ? idToString(evt.summary.session.id)
+            : "";
+      if (sessionId) {
+        const head = workspaceSnapshotStore.getSessionHeadSnapshot(sessionId);
+        if (head) {
+          supervisor.upsertWorkspaceSessionHead(sessionId, head);
+        } else if (
+          (evt.type === "session_summary_delta" || evt.type === "session_summary") &&
+          prefetchSessionIdsRef.current.has(sessionId)
+        ) {
+          void primeAuthoritativeHeadsForSessions([sessionId]);
+        }
+      } else if (didCacheSeed) {
         const snapshot = workspaceSnapshotStore.getSnapshot();
         supervisor.setWorkspaceSessionHeads(
           readWorkspaceSessionHeads(snapshot, workspaceSnapshotStore, sessionHeadBootstrapCache),
@@ -165,7 +177,13 @@ export function useWorkbenchSessionBridge({
       supervisor.setWorkspaceSnapshotState(null);
       lifecycleCoordinator.setWorkspaceSnapshotState(null);
     };
-  }, [lifecycleCoordinator, supervisor, sessionHeadBootstrapCache, workspaceSnapshotStore]);
+  }, [
+    lifecycleCoordinator,
+    primeAuthoritativeHeadsForSessions,
+    supervisor,
+    sessionHeadBootstrapCache,
+    workspaceSnapshotStore,
+  ]);
 
   const taskLiveInfo = useMemo(
     () =>
@@ -215,6 +233,18 @@ export function useWorkbenchSessionBridge({
       return;
     }
     if (activeTab?.kind === "task" && activeTab.ref.taskId === activeTaskId && nextSessionId !== previousSessionId) {
+      if (nextSessionId) {
+        const snapshot = workspaceSnapshotStore.getSnapshot();
+        const nextHead = readWorkspaceSessionHeads(
+          snapshot,
+          workspaceSnapshotStore,
+          sessionHeadBootstrapCache,
+          [nextSessionId],
+        )[nextSessionId];
+        if (nextHead) {
+          supervisor.upsertWorkspaceSessionHead(nextSessionId, nextHead);
+        }
+      }
       if (previousSessionId && sessionSnap.sessions[previousSessionId]) {
         noteSwitchStaleVisible(activeTaskId, previousSessionId, nextSessionId ?? "");
       }
@@ -227,10 +257,13 @@ export function useWorkbenchSessionBridge({
     primarySessionId,
     sessions,
     sessionSnap.sessions,
+    sessionHeadBootstrapCache,
+    supervisor,
     taskArchived,
     workbenchStore,
     workspaceSnapshot.fetchState.active,
     workspaceSnapshot.initialized,
+    workspaceSnapshotStore,
   ]);
 
   useEffect(() => {
@@ -299,23 +332,65 @@ export function useWorkbenchSessionBridge({
       }),
     [foregroundSessionIds, tasksById, workspaceSnapshot.activeIds],
   );
+  const prefetchSessionIds = useMemo(
+    () => Array.from(new Set([...activeTaskHeadSessionIds, ...warmSessionIds])),
+    [activeTaskHeadSessionIds, warmSessionIds],
+  );
+
+  useEffect(() => {
+    prefetchSessionIdsRef.current = new Set(prefetchSessionIds);
+  }, [prefetchSessionIds]);
+
+  useEffect(() => {
+    sessionHeadPrefetchCancelledRef.current = false;
+    const prefetchHeads = async () => {
+      if (!workspaceSnapshot.initialized) return;
+      const snapshot = workspaceSnapshotStore.getSnapshot();
+      const persistedChanged = await primePersistedSessionHeads(
+        snapshot,
+        workspaceSnapshotStore,
+        sessionHeadBootstrapCache,
+        prefetchSessionIds,
+      );
+      if (persistedChanged && !sessionHeadPrefetchCancelledRef.current) {
+        const nextSnapshot = workspaceSnapshotStore.getSnapshot();
+        supervisor.setWorkspaceSessionHeads(
+          readWorkspaceSessionHeads(nextSnapshot, workspaceSnapshotStore, sessionHeadBootstrapCache),
+        );
+      }
+      await primeAuthoritativeHeadsForSessions(prefetchSessionIds);
+    };
+    void prefetchHeads();
+    return () => {
+      sessionHeadPrefetchCancelledRef.current = true;
+    };
+  }, [
+    prefetchSessionIds,
+    primeAuthoritativeHeadsForSessions,
+    sessionHeadBootstrapCache,
+    supervisor,
+    workspaceSnapshot.activeIds,
+    workspaceSnapshot.initialized,
+    workspaceSnapshot.tasksById,
+    workspaceSnapshotStore,
+  ]);
 
   useLayoutEffect(() => {
-    if (activeTaskHeadSessionIds.length > 0) {
+    if (prefetchSessionIds.length > 0) {
       const snapshot = workspaceSnapshotStore.getSnapshot();
       supervisor.setWorkspaceSessionHeads(
         readWorkspaceSessionHeads(
           snapshot,
           workspaceSnapshotStore,
           sessionHeadBootstrapCache,
-          activeTaskHeadSessionIds,
+          prefetchSessionIds,
         ),
       );
     }
     supervisor.setActiveTaskSessionIds(foregroundSessionIds);
   }, [
-    activeTaskHeadSessionIds,
     foregroundSessionIds,
+    prefetchSessionIds,
     sessionHeadBootstrapCache,
     supervisor,
     workspaceSnapshotStore,

@@ -9,6 +9,8 @@ export type SessionHeadBootstrapRecord = Record<string, SessionHeadSnapshot>;
 export class SessionHeadBootstrapCache {
   private readonly entries = new Map<string, SessionHeadSnapshot>();
   private readonly persistedPrefetchSessionIds = new Set<string>();
+  private readonly authoritativePrefetchInFlight = new Map<string, string>();
+  private readonly authoritativePrefetchVersions = new Map<string, string>();
 
   upsert(head: SessionHeadSnapshot | null | undefined): boolean {
     const sessionId = idToString(head?.session?.id);
@@ -35,6 +37,12 @@ export class SessionHeadBootstrapCache {
     return Object.fromEntries(this.entries) as SessionHeadBootstrapRecord;
   }
 
+  get(sessionId: string | null | undefined): SessionHeadSnapshot | undefined {
+    const id = idToString(sessionId ?? "");
+    if (!id) return undefined;
+    return this.entries.get(id);
+  }
+
   beginPersistedPrefetch(sessionId: string | null | undefined): boolean {
     const id = String(sessionId ?? "").trim();
     if (!id || this.persistedPrefetchSessionIds.has(id)) return false;
@@ -42,8 +50,38 @@ export class SessionHeadBootstrapCache {
     return true;
   }
 
+  beginAuthoritativePrefetch(
+    sessionId: string | null | undefined,
+    versionKey: string | null | undefined,
+  ): boolean {
+    const id = String(sessionId ?? "").trim();
+    const normalizedVersionKey = String(versionKey ?? "").trim();
+    if (!id || !normalizedVersionKey) return false;
+    if (this.authoritativePrefetchInFlight.get(id) === normalizedVersionKey) return false;
+    if (this.authoritativePrefetchVersions.get(id) === normalizedVersionKey) return false;
+    this.authoritativePrefetchInFlight.set(id, normalizedVersionKey);
+    return true;
+  }
+
+  finishAuthoritativePrefetch(
+    sessionId: string | null | undefined,
+    versionKey: string | null | undefined,
+    success: boolean,
+  ): void {
+    const id = String(sessionId ?? "").trim();
+    const normalizedVersionKey = String(versionKey ?? "").trim();
+    if (!id || !normalizedVersionKey) return;
+    if (this.authoritativePrefetchInFlight.get(id) !== normalizedVersionKey) return;
+    this.authoritativePrefetchInFlight.delete(id);
+    if (success) {
+      this.authoritativePrefetchVersions.set(id, normalizedVersionKey);
+    }
+  }
+
   clear(): void {
     this.entries.clear();
     this.persistedPrefetchSessionIds.clear();
+    this.authoritativePrefetchInFlight.clear();
+    this.authoritativePrefetchVersions.clear();
   }
 }

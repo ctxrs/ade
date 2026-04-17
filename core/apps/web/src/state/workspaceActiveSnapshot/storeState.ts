@@ -200,22 +200,108 @@ export class WorkspaceActiveSnapshotStoreState {
   }
 
   applyWorkerPatch(patch: WorkspaceActiveSnapshotPatch) {
-    this.snapshot = patch.snapshot;
-    this.tasks = new Map(Object.entries(patch.snapshot.tasksById));
-    this.activeOrder = patch.snapshot.activeIds.slice();
-    this.archivedOrder = patch.snapshot.archivedIds.slice();
-    this.totalActive = patch.snapshot.totalActive;
-    this.totalArchived = patch.snapshot.totalArchived;
-    this.archivedRev = patch.snapshot.archivedRev;
-    this.hasMoreActive = patch.snapshot.hasMoreActive;
-    this.hasMoreArchived = patch.snapshot.hasMoreArchived;
-    this.archivedLoaded = patch.snapshot.archivedLoaded;
-    this.activeSessionIds = patch.activeSessionIds.slice();
-    this.sessionHeadsById = new Map(Object.entries(patch.sessionHeads));
-    this.worktreeRootsById = new Map(Object.entries(patch.worktreeRoots));
-    this.snapshotRev = patch.snapshotRev;
-    this.archivedRev = patch.archivedRev;
-    this.liveSnapshotApplied = Boolean(patch.snapshot.liveSnapshotApplied);
+    if (patch.snapshot) {
+      this.snapshot = patch.snapshot;
+      this.tasks = new Map(Object.entries(patch.snapshot.tasksById));
+      this.activeOrder = patch.snapshot.activeIds.slice();
+      this.archivedOrder = patch.snapshot.archivedIds.slice();
+      this.totalActive = patch.snapshot.totalActive;
+      this.totalArchived = patch.snapshot.totalArchived;
+      this.archivedRev = patch.snapshot.archivedRev;
+      this.hasMoreActive = patch.snapshot.hasMoreActive;
+      this.hasMoreArchived = patch.snapshot.hasMoreArchived;
+      this.archivedLoaded = patch.snapshot.archivedLoaded;
+      this.activeSessionIds = patch.activeSessionIds.slice();
+      this.sessionHeadsById = new Map(Object.entries(patch.sessionHeadUpserts ?? {}));
+      this.worktreeRootsById = new Map(Object.entries(patch.worktreeRootUpserts ?? {}));
+      this.snapshotRev = patch.snapshotRev;
+      this.archivedRev = patch.archivedRev;
+      this.liveSnapshotApplied = Boolean(patch.snapshot.liveSnapshotApplied);
+      return;
+    }
+
+    const shell = patch.shell;
+    let nextTasksById = this.snapshot.tasksById;
+    let nextWorktreeVcsById = this.snapshot.worktreeVcsById;
+
+    if ((patch.taskDeletes?.length ?? 0) > 0 || patch.taskUpserts) {
+      nextTasksById = { ...nextTasksById };
+    }
+    for (const taskId of patch.taskDeletes ?? []) {
+      this.tasks.delete(taskId);
+      delete nextTasksById[taskId];
+    }
+    for (const [taskId, item] of Object.entries(patch.taskUpserts ?? {})) {
+      this.tasks.set(taskId, item);
+      nextTasksById[taskId] = item;
+    }
+
+    for (const sessionId of patch.sessionHeadDeletes ?? []) {
+      this.sessionHeadsById.delete(sessionId);
+    }
+    for (const [sessionId, head] of Object.entries(patch.sessionHeadUpserts ?? {})) {
+      this.sessionHeadsById.set(sessionId, head);
+    }
+
+    for (const worktreeId of patch.worktreeRootDeletes ?? []) {
+      this.worktreeRootsById.delete(worktreeId);
+    }
+    for (const [worktreeId, root] of Object.entries(patch.worktreeRootUpserts ?? {})) {
+      this.worktreeRootsById.set(worktreeId, root);
+    }
+
+    if (shell?.worktreeVcsById) {
+      nextWorktreeVcsById = shell.worktreeVcsById;
+    }
+    if (shell?.activeIds) {
+      this.activeOrder = shell.activeIds.slice();
+    }
+    if (shell?.archivedIds) {
+      this.archivedOrder = shell.archivedIds.slice();
+    }
+    if (typeof shell?.totalActive === "number") {
+      this.totalActive = shell.totalActive;
+    }
+    if (typeof shell?.totalArchived === "number") {
+      this.totalArchived = shell.totalArchived;
+    }
+    if (typeof shell?.archivedRev === "number") {
+      this.archivedRev = shell.archivedRev;
+    }
+    if (typeof shell?.hasMoreActive === "boolean") {
+      this.hasMoreActive = shell.hasMoreActive;
+    }
+    if (typeof shell?.hasMoreArchived === "boolean") {
+      this.hasMoreArchived = shell.hasMoreArchived;
+    }
+    if (typeof shell?.archivedLoaded === "boolean") {
+      this.archivedLoaded = shell.archivedLoaded;
+    }
+    if (patch.activeSessionIds.length > 0 || this.activeSessionIds.length > 0) {
+      this.activeSessionIds = patch.activeSessionIds.slice();
+    }
+    if (typeof patch.snapshotRev === "number") {
+      this.snapshotRev = patch.snapshotRev;
+    }
+    if (typeof patch.archivedRev === "number") {
+      this.archivedRev = patch.archivedRev;
+    }
+
+    if (
+      shell ||
+      nextTasksById !== this.snapshot.tasksById ||
+      nextWorktreeVcsById !== this.snapshot.worktreeVcsById
+    ) {
+      this.snapshot = {
+        ...this.snapshot,
+        ...(shell ?? {}),
+        ...(nextTasksById !== this.snapshot.tasksById ? { tasksById: nextTasksById } : {}),
+        ...(nextWorktreeVcsById !== this.snapshot.worktreeVcsById
+          ? { worktreeVcsById: nextWorktreeVcsById }
+          : {}),
+      };
+      this.liveSnapshotApplied = Boolean(this.snapshot.liveSnapshotApplied);
+    }
   }
 
   buildPersistedSnapshot(): Omit<
@@ -605,14 +691,7 @@ export class WorkspaceActiveSnapshotStoreState {
     }
     if (!shouldReplaceSessionHead(existing, next)) return false;
     this.sessionHeadsById.set(sessionId, next);
-    changed = true;
-    if (projectPrimarySessionHeadOntoTasks(this.tasks, next)) {
-      changed = true;
-    }
-    if (changed) {
-      this.syncSnapshot();
-    }
-    return changed;
+    return true;
   }
 
   applySessionHeadSeed(head: SessionHeadSnapshot | null | undefined): boolean {
@@ -623,8 +702,6 @@ export class WorkspaceActiveSnapshotStoreState {
     const prev = this.sessionHeadsById.get(sessionId);
     if (!shouldReplaceSessionHead(prev, sanitized)) return false;
     this.sessionHeadsById.set(sessionId, sanitized);
-    projectPrimarySessionHeadOntoTasks(this.tasks, sanitized);
-    this.syncSnapshot();
     return true;
   }
 

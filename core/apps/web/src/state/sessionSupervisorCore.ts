@@ -137,6 +137,7 @@ import {
   setWorkspaceSessionHeads as setWorkspaceAuthoritySessionHeads,
   setWorkspaceSnapshotState as setWorkspaceAuthoritySnapshotState,
   syncActiveSnapshot as syncWorkspaceAuthorityActiveSnapshot,
+  upsertWorkspaceSessionHead as upsertWorkspaceAuthoritySessionHead,
 } from "./sessionSupervisor/workspaceAuthority";
 
 export type {
@@ -254,6 +255,10 @@ export class SessionSupervisor {
     setWorkspaceAuthoritySessionHeads(this.createWorkspaceAuthorityHost(), heads);
   };
 
+  upsertWorkspaceSessionHead = (sessionId: string, head: SessionHeadSnapshot) => {
+    upsertWorkspaceAuthoritySessionHead(this.createWorkspaceAuthorityHost(), sessionId, head);
+  };
+
   handleWorkspaceEvent = (evt: SessionSupervisorWorkspaceEvent) => {
     ingestWorkspaceAuthorityEvent(this.createWorkspaceAuthorityHost(), evt);
   };
@@ -330,7 +335,20 @@ export class SessionSupervisor {
     const next = dedupeIds(sessionIds);
     if (sameIdList(next, this.warmSessionIds)) return;
     this.warmSessionIds = next;
-    this.refreshSubscriptions();
+    for (const sessionId of next) {
+      const entry = this.ensureEntry(sessionId);
+      seedReplicaFromActiveSnapshot(
+        {
+          workspaceSnapshotState: this.workspaceSnapshotState,
+          workspaceSessionHeadsById: this.workspaceSessionHeadsById,
+          dispatchSeedHead: (cmd) => this.replicaDispatch(cmd),
+        },
+        sessionId,
+        entry,
+        { allowRecoveringRefresh: true, allowRepairReplace: true },
+      );
+    }
+    this.refreshSubscriptions({ emitIfUnchanged: true });
   };
   setSession = (session: Session) => {
     const sessionId = idToString(session.id);
@@ -670,6 +688,7 @@ export class SessionSupervisor {
   private createWorkspaceActiveSyncHost() {
     return {
       ensureEntry: (sessionId: string) => this.ensureEntry(sessionId),
+      getWorkspaceSessionHeadsById: () => this.workspaceSessionHeadsById,
       replicaDispatch: (cmd: SessionReplicaCommand) => this.replicaDispatch(cmd),
     };
   }

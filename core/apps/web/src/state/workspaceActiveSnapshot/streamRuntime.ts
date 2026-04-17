@@ -359,7 +359,6 @@ export const handleStreamMessage = async (
       });
     }
     if (changed) {
-      host.publish();
       host.schedulePersistCache();
     }
     return;
@@ -448,11 +447,13 @@ export const handleStreamMessage = async (
       break;
     case "session_head_delta":
       if (host.state.applySessionHeadDelta(evt.delta)) {
-        host.publish();
         host.schedulePersistCache();
       }
       break;
     case "session_head_seed":
+      if (host.state.applySessionHeadSeed(evt.head)) {
+        host.schedulePersistCache();
+      }
       break;
     case "session_gap":
       flushAfterNotifyReason = "session_gap";

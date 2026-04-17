@@ -84,6 +84,27 @@ export const setWorkspaceSessionHeads = (
   host.emitSubscribedSessions();
 };
 
+export const upsertWorkspaceSessionHead = (
+  host: SessionSupervisorWorkspaceAuthorityHost,
+  sessionId: string,
+  head: SessionHeadSnapshot,
+) => {
+  const normalizedSessionId = idToString(sessionId);
+  if (!normalizedSessionId) return;
+  const nextHeads = new Map(host.getWorkspaceSessionHeadsById());
+  nextHeads.set(normalizedSessionId, head);
+  host.setWorkspaceSessionHeadsById(nextHeads);
+  const entry = host.entries.get(normalizedSessionId);
+  if (entry) {
+    const recovering = entry.freshness === "recovering" || entry.loadState === "recovering";
+    const mode = classifyActiveSnapshotSeedMode(entry, head, { allowRecoveringRefresh: true });
+    if (mode && (mode === "bootstrap_seed" || recovering)) {
+      host.replicaDispatch({ type: "seed_head", sessionId: normalizedSessionId, head, mode });
+    }
+    host.syncSupportLoadsForOpenSession(entry);
+  }
+};
+
 export const ingestWorkspaceEvent = (
   host: SessionSupervisorWorkspaceAuthorityHost,
   evt: SessionSupervisorWorkspaceEvent,
@@ -150,16 +171,19 @@ export const ingestWorkspaceEvent = (
 export const syncActiveSnapshot = (
   host: Pick<
     SessionSupervisorWorkspaceAuthorityHost,
-    "ensureEntry" | "replicaDispatch"
+    "ensureEntry" | "getWorkspaceSessionHeadsById" | "replicaDispatch"
   >,
   state: WorkspaceActiveSnapshotState,
 ) => {
   for (const taskId of state.activeIds) {
     const item = state.tasksById[taskId];
-    const head = item?.primarySessionHead;
-    if (!head) continue;
-    const sessionId = idToString(head.session?.id);
+    const sessionId =
+      idToString(item?.primarySessionId ?? "") ||
+      idToString(item?.task.primary_session_id ?? "") ||
+      idToString(item?.primarySessionHead?.session?.id ?? "");
     if (!sessionId) continue;
+    const head = host.getWorkspaceSessionHeadsById().get(sessionId) ?? item?.primarySessionHead;
+    if (!head) continue;
     const entry = host.ensureEntry(sessionId);
     const mode = classifyActiveSnapshotSeedMode(entry, head, { allowRecoveringRefresh: true });
     const recovering = entry.freshness === "recovering" || entry.loadState === "recovering";

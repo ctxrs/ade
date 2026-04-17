@@ -1038,6 +1038,7 @@ const makeSupervisor = () => ({
   setSubscribedSessionIdsSink: vi.fn(),
   setWorkspaceSnapshotState: vi.fn(),
   setWorkspaceSessionHeads: vi.fn(),
+  upsertWorkspaceSessionHead: vi.fn(),
   handleWorkspaceEvent: vi.fn(),
 });
 
