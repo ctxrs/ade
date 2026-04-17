@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
-use tokio::sync::{broadcast, mpsc, watch, Mutex, Notify};
+use tokio::sync::{broadcast, mpsc, watch, Mutex};
 use tokio::task::JoinHandle;
 
 use crate::buffers::BufferStore;
@@ -50,8 +50,7 @@ mod types;
 
 use super::edit_plans;
 pub(crate) use types::{
-    ActiveTaskRefreshEntry, AttachmentMaterializationTask, MergeQueueScheduleState,
-    WorktreeBootstrapGate,
+    ActiveTaskRefreshEntry, AttachmentMaterializationTask, WorktreeBootstrapGate,
 };
 pub use types::{
     AppState, CacheSweepConfig, CacheSweepStats, CachedFileCompletions, CachedProviderOptions,
@@ -201,9 +200,6 @@ impl AppState {
         }
         let workspace_active_snapshot = Arc::new(WorkspaceActiveSnapshotHub::new());
         let web_sessions = Arc::new(WebSessionManager::new());
-        let merge_queue_notify = Arc::new(Notify::new());
-        let (merge_queue_schedule_tx, merge_queue_schedule_rx) = mpsc::unbounded_channel();
-
         Self {
             core: CoreState {
                 data_root,
@@ -279,10 +275,7 @@ impl AppState {
                 terminals,
                 mobile_tunnel: MobileTunnelManager::default(),
                 web_sessions,
-                merge_queue_notify,
-                merge_queue_schedule_tx,
-                merge_queue_schedule_rx: Mutex::new(Some(merge_queue_schedule_rx)),
-                merge_queue_state: Mutex::new(MergeQueueScheduleState::default()),
+                merge_queue: Arc::new(ctx_merge_queue::MergeQueueRuntime::new()),
                 lsp_diag_broadcaster,
                 lsp_diag_forwarders: Mutex::new(HashSet::new()),
             },
@@ -353,10 +346,7 @@ impl AppState {
                 active_workspaces.insert(workspace_id);
             }
         }
-        {
-            let merge_queue_state = self.transport.merge_queue_state.lock().await;
-            active_workspaces.extend(merge_queue_state.running.iter().copied());
-        }
+        active_workspaces.extend(self.transport.merge_queue.running_workspaces().await);
 
         active_workspaces
     }

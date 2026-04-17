@@ -4,25 +4,24 @@ package(default_visibility = ["//visibility:public"])
 
 rust_library(
     name = "lib",
-    crate_name = "ctx_worktree_data_plane",
+    crate_name = "ctx_merge_queue",
     crate_root = "src/lib.rs",
     edition = "2021",
     srcs = glob(["src/**/*.rs"]),
     deps = [
         "//core/crates/ctx-core:lib",
-        "//core/crates/ctx-sandbox-contract:lib",
+        "//core/crates/ctx-fs:lib",
         "//core/crates/ctx-store:lib",
+        "//core/crates/ctx-workspace-config:lib",
         "@crates//:anyhow",
         "@crates//:async-trait",
+        "@crates//:chrono",
+        "@crates//:tokio",
+        "@crates//:tracing",
     ],
 )
 
 rust_test(
     name = "unit_tests",
     crate = ":lib",
-    deps = [
-        "@crates//:chrono",
-        "@crates//:serde_json",
-        "@crates//:uuid",
-    ],
 )

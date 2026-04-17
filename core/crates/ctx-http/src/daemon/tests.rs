@@ -341,10 +341,13 @@ async fn sweeper_keeps_merge_queue_running_workspaces_resident() {
     let _ = state.store_for_workspace(workspace.id).await.unwrap();
     assert_eq!(stores.stats().await.workspace_store_count, 1);
 
-    {
-        let mut schedule_state = state.transport.merge_queue_state.lock().await;
-        schedule_state.running.insert(workspace.id);
-    }
+    assert!(
+        state
+            .transport
+            .merge_queue
+            .begin_workspace_drain(workspace.id)
+            .await
+    );
 
     let config = CacheSweepConfig {
         session_ttl: Duration::from_secs(0),
@@ -354,10 +357,11 @@ async fn sweeper_keeps_merge_queue_running_workspaces_resident() {
     let _ = state.sweep_idle_caches(Instant::now(), config).await;
     assert_eq!(stores.stats().await.workspace_store_count, 1);
 
-    {
-        let mut schedule_state = state.transport.merge_queue_state.lock().await;
-        schedule_state.running.remove(&workspace.id);
-    }
+    let _ = state
+        .transport
+        .merge_queue
+        .finish_workspace_drain(workspace.id)
+        .await;
 
     let _ = state.sweep_idle_caches(Instant::now(), config).await;
     assert_eq!(stores.stats().await.workspace_store_count, 0);

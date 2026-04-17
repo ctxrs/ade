@@ -6,18 +6,17 @@ use ctx_core::models::{MergeQueueEntry, VcsKind, Workspace};
 use ctx_fs::git::rev_parse_ref;
 use tokio::fs;
 
-use crate::daemon::AppState;
 use ctx_workspace_config::MergeQueueConfig;
 
 use super::context::jj_rev_parse_bookmark;
 use super::{
     maybe_update_worktree_base_commit_for_path, merge_queue_command, reset_worktree_to_commit,
-    write_log_line, QueueError,
+    write_log_line, MergeQueueHost, QueueError,
 };
 
 #[allow(clippy::too_many_arguments)]
-pub(super) async fn finalize_target_branch(
-    state: &AppState,
+pub(super) async fn finalize_target_branch<H: MergeQueueHost>(
+    state: &H,
     workspace: &Workspace,
     entry: &MergeQueueEntry,
     cfg: &MergeQueueConfig,
@@ -157,8 +156,8 @@ pub(super) async fn ensure_git_target_branch_head(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(super) async fn update_target_branch(
-    state: &AppState,
+pub(super) async fn update_target_branch<H: MergeQueueHost>(
+    state: &H,
     entry: &MergeQueueEntry,
     repo_root: &Path,
     workspace_root: &Path,
@@ -242,8 +241,8 @@ pub(super) async fn update_target_branch(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(super) async fn push_target_branch(
-    state: &AppState,
+pub(super) async fn push_target_branch<H: MergeQueueHost>(
+    state: &H,
     entry: &MergeQueueEntry,
     repo_root: &Path,
     workspace_root: &Path,

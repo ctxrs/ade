@@ -1,36 +1,34 @@
-use anyhow::{anyhow, Result};
+use anyhow::Result;
+use async_trait::async_trait;
 
+use ctx_core::ids::WorkspaceId;
 use ctx_core::models::Worktree;
-use ctx_worktree_data_plane::{resolved_worktree_data_plane, WorktreeDataPlane};
+use ctx_store::Store;
+use ctx_worktree_data_plane::{
+    resolve_worktree_data_plane_with_host, WorktreeDataPlane, WorktreeDataPlaneHost,
+};
 
 use crate::daemon::AppState;
+
+#[async_trait]
+impl WorktreeDataPlaneHost for AppState {
+    async fn get_workspace(
+        state: &Self,
+        workspace_id: WorkspaceId,
+    ) -> Result<Option<ctx_core::models::Workspace>> {
+        state.global_store().get_workspace(workspace_id).await
+    }
+
+    async fn workspace_store(state: &Self, workspace_id: WorkspaceId) -> Result<Store> {
+        state.store_for_workspace(workspace_id).await
+    }
+}
 
 pub(crate) async fn resolve_worktree_data_plane(
     state: &AppState,
     worktree: &Worktree,
 ) -> Result<WorktreeDataPlane> {
-    let workspace = state
-        .global_store()
-        .get_workspace(worktree.workspace_id)
-        .await?
-        .ok_or_else(|| anyhow!("workspace not found for worktree"))?;
-    let store = state.store_for_workspace(worktree.workspace_id).await?;
-    let binding = store.get_sandbox_binding(worktree.id).await?;
-    if binding.is_none() {
-        let sessions = store.list_sessions_for_worktree(worktree.id).await?;
-        if sessions.iter().any(|session| {
-            matches!(
-                session.execution_environment,
-                ctx_core::models::ExecutionEnvironment::Sandbox
-            )
-        }) {
-            return Err(anyhow!(
-                "sandbox binding is missing for sandbox worktree {}",
-                worktree.id.0
-            ));
-        }
-    }
-    resolved_worktree_data_plane(&workspace, worktree, binding)
+    resolve_worktree_data_plane_with_host(state, worktree).await
 }
 
 #[cfg(test)]

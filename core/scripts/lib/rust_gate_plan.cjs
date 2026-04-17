@@ -13,6 +13,7 @@ const AGENT_GATE_CRATES = [
   "ctx-lsp",
   "ctx-linux-sandbox-runtime",
   "ctx-mcp",
+  "ctx-managed-installs",
   "ctx-provider-accounts",
   "ctx-provider-install",
   "ctx-provider-matrix",

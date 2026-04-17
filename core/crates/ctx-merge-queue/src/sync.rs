@@ -40,8 +40,8 @@ pub(super) async fn ensure_jj_working_copy(
     Ok(())
 }
 
-pub(super) async fn ensure_merge_queue_repo(
-    state: &AppState,
+pub(super) async fn ensure_merge_queue_repo<H: MergeQueueHost>(
+    state: &H,
     entry: &MergeQueueEntry,
     workspace: &Workspace,
     cfg: &MergeQueueConfig,
@@ -142,8 +142,8 @@ pub(super) async fn ensure_merge_queue_repo(
     Ok(repo_root)
 }
 
-pub(super) async fn ensure_merge_queue_target_branch(
-    state: &AppState,
+pub(super) async fn ensure_merge_queue_target_branch<H: MergeQueueHost>(
+    state: &H,
     entry: &MergeQueueEntry,
     repo_root: &Path,
     target_branch: &str,
@@ -187,8 +187,8 @@ pub(super) async fn ensure_merge_queue_target_branch(
         .map_err(|e| QueueError::fail(e.to_string(), None, None))
 }
 
-pub(super) async fn merge_queue_branch_exists(
-    state: &AppState,
+pub(super) async fn merge_queue_branch_exists<H: MergeQueueHost>(
+    state: &H,
     entry: &MergeQueueEntry,
     repo_root: &Path,
     target_branch: &str,
@@ -230,8 +230,8 @@ pub(super) async fn merge_queue_branch_exists(
     ))
 }
 
-pub(super) async fn git_remote_get_url(
-    state: &AppState,
+pub(super) async fn git_remote_get_url<H: MergeQueueHost>(
+    state: &H,
     entry: &MergeQueueEntry,
     repo_root: &Path,
     remote: &str,
@@ -270,8 +270,8 @@ pub(super) async fn git_remote_get_url(
     ))
 }
 
-pub(super) async fn ensure_git_remote(
-    state: &AppState,
+pub(super) async fn ensure_git_remote<H: MergeQueueHost>(
+    state: &H,
     entry: &MergeQueueEntry,
     repo_root: &Path,
     remote: &str,
@@ -332,13 +332,13 @@ pub(super) async fn ensure_git_remote(
     Ok(())
 }
 
-pub(super) async fn maybe_update_worktree_base_commit_for_path(
-    state: &AppState,
+pub(super) async fn maybe_update_worktree_base_commit_for_path<H: MergeQueueHost>(
+    state: &H,
     workspace_id: WorkspaceId,
     worktree_path: &str,
     commit_sha: &str,
 ) -> Result<Option<Worktree>> {
-    let store = state.store_for_workspace(workspace_id).await?;
+    let store = H::protected_workspace_store(state, workspace_id).await?;
     let worktrees = store.list_worktrees(workspace_id).await?;
     let checkout_path = fs::canonicalize(worktree_path)
         .await
@@ -357,8 +357,8 @@ pub(super) async fn maybe_update_worktree_base_commit_for_path(
     Ok(None)
 }
 
-pub(super) async fn maybe_sync_canonical_worktree(
-    state: &Arc<AppState>,
+pub(super) async fn maybe_sync_canonical_worktree<H: MergeQueueHost>(
+    state: &Arc<H>,
     workspace: &Workspace,
     entry: &MergeQueueEntry,
     merge_queue_repo_root: &Path,
@@ -372,7 +372,7 @@ pub(super) async fn maybe_sync_canonical_worktree(
     }
 
     let target_checkout = find_checked_out_worktree_for_branch(
-        state,
+        state.as_ref(),
         entry,
         Path::new(&workspace.root_path),
         &entry.target_branch,
@@ -432,7 +432,7 @@ pub(super) async fn maybe_sync_canonical_worktree(
     )
     .await?;
     fetch_merge_queue_target_branch(
-        state,
+        state.as_ref(),
         entry,
         Path::new(&workspace.root_path),
         merge_queue_repo_root,
@@ -450,9 +450,10 @@ pub(super) async fn maybe_sync_canonical_worktree(
         ),
     )
     .await?;
-    reset_worktree_to_commit(state, entry, &path, commit_sha).await?;
+    reset_worktree_to_commit(state.as_ref(), entry, &path, commit_sha).await?;
     let worktree =
-        maybe_update_worktree_base_commit_for_path(state, workspace.id, &path, commit_sha).await?;
+        maybe_update_worktree_base_commit_for_path(state.as_ref(), workspace.id, &path, commit_sha)
+            .await?;
     if let Some(session_id) = entry.session_id {
         if let Some(worktree) = worktree {
             emit_merge_queue_sync_notice(
@@ -482,8 +483,8 @@ pub(super) async fn maybe_sync_canonical_worktree(
     Ok(())
 }
 
-pub(super) async fn fetch_merge_queue_target_branch(
-    state: &AppState,
+pub(super) async fn fetch_merge_queue_target_branch<H: MergeQueueHost>(
+    state: &H,
     entry: &MergeQueueEntry,
     canonical_root: &Path,
     merge_queue_repo_root: &Path,

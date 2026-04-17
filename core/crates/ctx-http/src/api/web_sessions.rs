@@ -53,17 +53,19 @@ pub(super) async fn create_web_session(
         )
     })?;
 
-    let worker_bundle =
-        crate::web_sessions::ensure_worker_bundle(&state.core.data_root, &node_runtime)
-            .await
-            .map_err(|e| {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ApiErrorResp {
-                        error: format!("failed to prepare web session worker: {e}"),
-                    }),
-                )
-            })?;
+    let worker_bundle = crate::web_sessions::ensure_worker_bundle_for_node_runtime(
+        &state.core.data_root,
+        &node_runtime,
+    )
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiErrorResp {
+                error: format!("failed to prepare web session worker: {e}"),
+            }),
+        )
+    })?;
 
     let req = WebSessionCreateRequest {
         url: payload.url,

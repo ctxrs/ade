@@ -1,7 +1,7 @@
 use std::io::BufRead;
 use std::path::Path;
 
-pub(crate) fn archive_bin_requires_node_runtime(bin_path: &str, installed_bin_path: &Path) -> bool {
+pub fn archive_bin_requires_node_runtime(bin_path: &str, installed_bin_path: &Path) -> bool {
     let ext = Path::new(bin_path)
         .extension()
         .and_then(|value| value.to_str())

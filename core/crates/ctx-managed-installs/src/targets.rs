@@ -71,7 +71,7 @@ pub(crate) fn prepend_bundled_seed_node_bin_dir(
     }
 }
 
-pub(crate) fn prepend_runtime_bin_dirs_to_provider_path_for_target(
+pub fn prepend_runtime_bin_dirs_to_provider_path_for_target(
     provider_env: &mut HashMap<String, String>,
     cfg: &AgentServerConfigFile,
     runtime_provider_id: &str,
@@ -173,7 +173,7 @@ fn normalize_explicit_command_path(env_name: &str, raw: &str) -> Result<String> 
         .to_string())
 }
 
-pub(crate) fn require_codex_cli_command_path_for_target(
+pub fn require_codex_cli_command_path_for_target(
     cfg: &AgentServerConfigFile,
     requested_target: Option<InstallTarget>,
 ) -> Result<String> {
@@ -185,7 +185,7 @@ pub(crate) fn require_codex_cli_command_path_for_target(
     })
 }
 
-pub(crate) fn ensure_codex_cli_command_env_for_target(
+pub fn ensure_codex_cli_command_env_for_target(
     provider_env: &mut HashMap<String, String>,
     cfg: &AgentServerConfigFile,
     runtime_provider_id: &str,
@@ -205,6 +205,7 @@ pub(crate) fn ensure_codex_cli_command_env_for_target(
 }
 
 #[cfg(test)]
+#[allow(dead_code)]
 pub(crate) fn prepend_runtime_bin_dirs_to_provider_path(
     provider_env: &mut HashMap<String, String>,
     cfg: &AgentServerConfigFile,
@@ -303,7 +304,7 @@ pub fn managed_install_download_size_bytes(
     }
 }
 
-pub(crate) fn apply_install_target_status(
+pub fn apply_install_target_status(
     status: &mut ctx_providers::adapters::ProviderStatus,
     target: InstallTarget,
 ) {

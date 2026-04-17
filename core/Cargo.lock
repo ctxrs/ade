@@ -1583,6 +1583,8 @@ dependencies = [
  "ctx-harness-sources",
  "ctx-linux-sandbox-runtime",
  "ctx-lsp",
+ "ctx-managed-installs",
+ "ctx-merge-queue",
  "ctx-provider-accounts",
  "ctx-provider-auth-import",
  "ctx-provider-install",
@@ -1595,6 +1597,7 @@ dependencies = [
  "ctx-session-tools",
  "ctx-storage-admission",
  "ctx-store",
+ "ctx-transport-runtime",
  "ctx-worker-protocol",
  "ctx-workspace-active-snapshot",
  "ctx-workspace-config",
@@ -1704,6 +1707,41 @@ dependencies = [
 ]
 
 [[package]]
+name = "ctx-managed-installs"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bzip2",
+ "chrono",
+ "ctx-bundled-assets",
+ "ctx-core",
+ "ctx-harness-runtime",
+ "ctx-lsp",
+ "ctx-provider-install",
+ "ctx-provider-matrix",
+ "ctx-providers",
+ "flate2",
+ "futures",
+ "hex",
+ "reqwest 0.12.28",
+ "semver",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tar",
+ "tempfile",
+ "tokio",
+ "toml",
+ "toml_edit",
+ "tracing",
+ "url",
+ "uuid",
+ "which",
+ "zip",
+]
+
+[[package]]
 name = "ctx-mcp"
 version = "0.1.0"
 dependencies = [
@@ -1724,6 +1762,21 @@ dependencies = [
  "tracing-subscriber",
  "urlencoding",
  "uuid",
+]
+
+[[package]]
+name = "ctx-merge-queue"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "ctx-core",
+ "ctx-fs",
+ "ctx-store",
+ "ctx-workspace-config",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -1909,6 +1962,36 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
+]
+
+[[package]]
+name = "ctx-transport-runtime"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "chacha20poly1305",
+ "chrono",
+ "ctx-core",
+ "ctx-sandbox-container-runtime",
+ "futures",
+ "hkdf",
+ "http 1.4.0",
+ "portable-pty",
+ "rand_core 0.6.4",
+ "reqwest 0.12.28",
+ "rustls 0.23.36",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tokio",
+ "tokio-tungstenite 0.26.2",
+ "tracing",
+ "url",
+ "urlencoding",
+ "uuid",
+ "which",
+ "x25519-dalek",
 ]
 
 [[package]]
@@ -2111,9 +2194,11 @@ name = "ctx-worktree-data-plane"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "chrono",
  "ctx-core",
  "ctx-sandbox-contract",
+ "ctx-store",
  "serde_json",
  "uuid",
 ]

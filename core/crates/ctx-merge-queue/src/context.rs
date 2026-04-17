@@ -8,7 +8,7 @@ use ctx_core::ids::{SessionId, WorktreeId};
 use ctx_core::models::{VcsKind, Workspace, Worktree};
 use ctx_fs::vcs::{self, VcsDriver};
 
-use crate::daemon::AppState;
+use crate::MergeQueueHost;
 
 pub(super) struct MergeQueueWorktreeContext {
     pub(super) workspace: Workspace,
@@ -17,21 +17,19 @@ pub(super) struct MergeQueueWorktreeContext {
     pub(super) vcs: Arc<dyn VcsDriver>,
 }
 
-pub(super) async fn resolve_merge_queue_context(
-    state: &Arc<AppState>,
+pub(super) async fn resolve_merge_queue_context<H: MergeQueueHost>(
+    state: &Arc<H>,
     session_id: Option<SessionId>,
     worktree_id: Option<WorktreeId>,
     worktree_root: Option<String>,
 ) -> Result<MergeQueueWorktreeContext> {
     if let Some(worktree_id) = worktree_id {
-        let store = state.store_for_worktree(worktree_id).await?;
+        let store = H::worktree_store(state.as_ref(), worktree_id).await?;
         let worktree = store
             .get_worktree(worktree_id)
             .await?
             .ok_or_else(|| anyhow::anyhow!("worktree not found"))?;
-        let workspace = state
-            .global_store()
-            .get_workspace(worktree.workspace_id)
+        let workspace = H::get_workspace(state.as_ref(), worktree.workspace_id)
             .await?
             .ok_or_else(|| anyhow::anyhow!("workspace not found"))?;
         let vcs = super::vcs_driver_for_worktree(&worktree);
@@ -45,14 +43,12 @@ pub(super) async fn resolve_merge_queue_context(
     }
 
     let session_id = session_id.ok_or_else(|| anyhow::anyhow!("session_id is required"))?;
-    let store = state.store_for_session(session_id).await?;
+    let store = H::session_store(state.as_ref(), session_id).await?;
     let session = store
         .get_session(session_id)
         .await?
         .ok_or_else(|| anyhow::anyhow!("session not found"))?;
-    let workspace = state
-        .global_store()
-        .get_workspace(session.workspace_id)
+    let workspace = H::get_workspace(state.as_ref(), session.workspace_id)
         .await?
         .ok_or_else(|| anyhow::anyhow!("workspace not found"))?;
 
@@ -141,8 +137,8 @@ pub(super) async fn jj_rev_parse_bookmark(root: &Path, bookmark: &str) -> Result
     Ok(revision.to_string())
 }
 
-pub(super) async fn find_checked_out_worktree_for_branch(
-    state: &AppState,
+pub(super) async fn find_checked_out_worktree_for_branch<H: MergeQueueHost>(
+    state: &H,
     entry: &ctx_core::models::MergeQueueEntry,
     workspace_root: &Path,
     target_branch: &str,

@@ -5,7 +5,7 @@ mod registry;
 use self::dependencies::{
     install_provider_blocking_dependencies, wait_for_provider_readiness_dependencies,
 };
-pub(in crate::installer) use self::registry::repair_install_dir;
+pub(crate) use self::registry::repair_install_dir;
 use self::registry::update_registry_last_error;
 
 fn apply_managed_provider_install_to_cfg(
@@ -86,7 +86,7 @@ pub(super) async fn run_tracked_provider_install(
     provider_id: &str,
     target: InstallTarget,
 ) -> Result<()> {
-    provider_matrix::invalidate_matrix_cache(&state.providers.matrix_cache).await;
+    provider_matrix::invalidate_matrix_cache(state.provider_matrix_cache()).await;
     let res = Box::pin(install_provider_impl(
         state,
         provider_id,
@@ -108,7 +108,7 @@ pub(super) async fn run_tracked_provider_install(
                 .await
         }
     }
-    provider_matrix::invalidate_matrix_cache(&state.providers.matrix_cache).await;
+    provider_matrix::invalidate_matrix_cache(state.provider_matrix_cache()).await;
     res
 }
 
@@ -134,15 +134,15 @@ pub(super) async fn install_provider_impl(
 
     let res: Result<()> = async {
         let matrix = provider_matrix::load_matrix_cached(
-            &state.core.data_root,
-            &state.providers.matrix_cache,
+            state.data_root(),
+            &state.provider_matrix_cache(),
         )
         .await;
-        let install_cfg = load_agent_server_config(&state.core.data_root)
+        let install_cfg = load_agent_server_config(state.data_root())
             .await
             .unwrap_or_default();
         let install_contract = provider_install_contract::resolve_provider_install_contract(
-            &state.core.data_root,
+            state.data_root(),
             &install_cfg,
             &matrix,
             &provider_id,
@@ -159,16 +159,17 @@ pub(super) async fn install_provider_impl(
 
         ensure_install_not_cancelled(state, install_id).await?;
         if let Some(install_id) = install_id {
-            let mut installs = state.providers.installs.lock().await;
-            if let Some(install) = installs.get_mut(&install_id) {
-                let _ = install.update_canonical_start_event(
+            state
+                .update_install_start_event(
+                    install_id,
                     &provider_id,
                     Some(target),
                     format!(
                         "Installing managed provider: {provider_id} (target: {requested_target_label}, resolved: {resolved_target_key})"
                     ),
-                );
-            }
+                    false,
+                )
+                .await;
         }
         install_provider_blocking_dependencies(
             state,
@@ -183,7 +184,7 @@ pub(super) async fn install_provider_impl(
         let Some(install) = entry.managed_install.as_ref() else {
             anyhow::bail!("provider has no managed install: {provider_id}");
         };
-        let context_version = updates::normalize_version_str(env!("CARGO_PKG_VERSION"));
+        let context_version = normalize_version_str(env!("CARGO_PKG_VERSION"));
         let release = provider_matrix::recommended_release(entry, context_version.as_ref())
             .ok_or_else(|| anyhow::anyhow!("no compatible release for provider: {provider_id}"))?;
 
@@ -266,7 +267,7 @@ pub(super) async fn install_provider_impl(
                     }
                 };
 
-                mutate_agent_server_config(&state.core.data_root, |cfg| {
+                mutate_agent_server_config(state.data_root(), |cfg| {
                     cfg.managed_installs
                         .insert(dep.id.clone(), managed.meta.clone());
                 })
@@ -396,7 +397,7 @@ pub(super) async fn install_provider_impl(
                             state,
                             install_id,
                             &provider_id,
-                            &state.core.data_root,
+                            state.data_root(),
                             dependency_target,
                         )
                         .await
@@ -408,7 +409,7 @@ pub(super) async fn install_provider_impl(
                         implicit_managed_dependencies.push((
                             dep_id,
                             node_runtime_dependency_metadata(
-                                &state.core.data_root,
+                                state.data_root(),
                                 &node,
                                 dependency_target,
                             ),
@@ -434,10 +435,10 @@ pub(super) async fn install_provider_impl(
         )
         .await;
 
-        let adapter_cfg = load_agent_server_config(&state.core.data_root)
+        let adapter_cfg = load_agent_server_config(state.data_root())
             .await
             .unwrap_or_default();
-        let bridge_cmd = if daemon::is_acp_provider_id(&provider_id) {
+        let bridge_cmd = if state.is_acp_provider_id(&provider_id) {
             resolve_runtime_provider_command_for_target(
                 &adapter_cfg,
                 "acp-crp-bridge",
@@ -453,7 +454,7 @@ pub(super) async fn install_provider_impl(
             None
         };
         let runtime_cmd = managed_provider_runtime_command(
-            &state.core.data_root,
+            state.data_root(),
             &provider_id,
             AgentServerCommand {
                 command: managed.command.clone(),
@@ -469,10 +470,10 @@ pub(super) async fn install_provider_impl(
 
         // Refresh the in-memory adapter so new Sessions use the managed install.
         if matches!(target, InstallTarget::Host) {
-            let mut map = state.providers.adapters.lock().await;
+            let mut map = state.provider_adapters().lock().await;
             map.insert(provider_id.clone(), adapter.clone());
         } else {
-            let mut map = state.providers.target_adapters.lock().await;
+            let mut map = state.target_provider_adapters().lock().await;
             map.insert(
                 format!("{provider_id}@{}", target.as_str()),
                 adapter.clone(),
@@ -481,7 +482,7 @@ pub(super) async fn install_provider_impl(
 
         stage = "refresh";
         ensure_install_not_cancelled(state, install_id).await?;
-        let mut status_cfg = load_agent_server_config(&state.core.data_root)
+        let mut status_cfg = load_agent_server_config(state.data_root())
             .await
             .unwrap_or_default();
         apply_managed_provider_install_to_cfg(
@@ -515,7 +516,7 @@ pub(super) async fn install_provider_impl(
         )
         .await;
 
-        mutate_agent_server_config(&state.core.data_root, |cfg| {
+        mutate_agent_server_config(state.data_root(), |cfg| {
             apply_managed_provider_install_to_cfg(
                 cfg,
                 &provider_id,
@@ -581,7 +582,7 @@ pub(super) async fn install_provider_impl(
         )
         .await;
         update_registry_last_error(
-            &state.core.data_root,
+            state.data_root(),
             &provider_id,
             stage,
             e,
@@ -728,7 +729,7 @@ pub(super) fn classify_install_error(stage: &str, err: &anyhow::Error) -> Instal
 }
 
 pub async fn refresh_provider_statuses(state: &AppState) -> Result<()> {
-    let cfg = load_agent_server_config(&state.core.data_root)
+    let cfg = load_agent_server_config(state.data_root())
         .await
         .unwrap_or_default();
     refresh_provider_statuses_with_cfg(state, cfg).await
@@ -739,18 +740,18 @@ async fn refresh_provider_statuses_with_cfg(
     cfg: AgentServerConfigFile,
 ) -> Result<()> {
     let matrix =
-        provider_matrix::load_matrix_cached(&state.core.data_root, &state.providers.matrix_cache)
+        provider_matrix::load_matrix_cached(state.data_root(), state.provider_matrix_cache())
             .await;
 
-    let map = state.providers.adapters.lock().await;
+    let map = state.provider_adapters().lock().await;
     let mut statuses = HashMap::new();
     for (id, adapter) in map.iter() {
         match adapter.inspect().await {
             Ok(mut status) => {
                 apply_managed_install_details(&mut status, &cfg);
                 if let Some(entry) = provider_matrix::get_entry(&matrix, id) {
-                    provider_matrix::apply_matrix_to_status(
-                        &state.core.data_root,
+                    crate::provider_status_matrix::apply_matrix_to_status(
+                        state.data_root(),
                         &cfg,
                         entry,
                         &mut status,
@@ -778,6 +779,6 @@ async fn refresh_provider_statuses_with_cfg(
         }
     }
     drop(map);
-    *state.providers.statuses.lock().await = statuses;
+    *state.provider_statuses().lock().await = statuses;
     Ok(())
 }

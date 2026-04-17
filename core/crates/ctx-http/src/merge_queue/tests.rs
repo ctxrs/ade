@@ -1,5 +1,14 @@
 use super::*;
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::time::Duration;
+
 use chrono::TimeDelta;
+use chrono::Utc;
+use ctx_core::ids::{MergeQueueEntryId, WorkspaceId};
+use ctx_core::models::{
+    MergeQueueEntry, MergeQueueEntryStatus, MergeQueuePatchSource, VcsKind, Workspace,
+};
 use ctx_providers::adapters::ProviderAdapter;
 use ctx_store::StoreManager;
 use ctx_workspace_config::{update_merge_queue_config, MergeQueueConfigUpdate};
@@ -233,10 +242,9 @@ async fn disabled_workspace_with_queued_rows_are_cancelled_after_activation() {
     );
     assert!(!state
         .transport
-        .merge_queue_state
-        .lock()
+        .merge_queue
+        .running_workspaces()
         .await
-        .running
         .contains(&workspace.id));
 }
 
@@ -439,18 +447,12 @@ async fn pending_wakeup_restarts_disabled_drain_after_reenable() {
 
     schedule_workspace_drain(&state, workspace.id).await;
     assert!(
-        state
-            .transport
-            .merge_queue_state
-            .lock()
-            .await
-            .pending
-            .contains(&workspace.id),
+        state.transport.merge_queue.is_pending(workspace.id).await,
         "wakeups that land during an in-flight drain should be preserved"
     );
 
     if finish_workspace_drain(state.as_ref(), workspace.id).await {
-        let _ = state.transport.merge_queue_schedule_tx.send(workspace.id);
+        state.transport.merge_queue.schedule(workspace.id);
     }
 
     let resumed = wait_for_entry_status(

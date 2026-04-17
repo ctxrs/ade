@@ -149,7 +149,7 @@ pub(crate) async fn install_agent_server_url_binary(
     target: InstallTarget,
     stage: &mut &'static str,
 ) -> Result<PathBuf> {
-    let data_root = &state.core.data_root;
+    let data_root = state.data_root();
     let install_dir = install_dir_for_provider(data_root, provider_id, version, target);
 
     let tmp_dir = data_root.join("providers").join("tmp");
@@ -308,7 +308,7 @@ pub(crate) async fn install_url_binary(
     archive: LspCatalogArchive,
     bin_path: &str,
 ) -> Result<PathBuf> {
-    let data_root = &state.core.data_root;
+    let data_root = state.data_root();
     let install_dir = data_root
         .join("lsp")
         .join("binaries")

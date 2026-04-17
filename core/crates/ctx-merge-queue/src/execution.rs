@@ -7,12 +7,11 @@ use tokio::fs;
 use tokio::io::AsyncWriteExt;
 
 use ctx_core::ids::{SessionId, WorktreeId};
-use ctx_core::models::{MergeQueueEntry, SessionEventType, VcsKind, Workspace, Worktree};
+use ctx_core::models::{MergeQueueEntry, VcsKind, Workspace, Worktree};
 use ctx_fs::git::delete_branch;
 use ctx_fs::vcs::{self, ApplyPatchTarget, VcsDriver};
 use ctx_fs::worktrees::{create_worktree, remove_worktree};
 
-use crate::daemon::AppState;
 use ctx_workspace_config::MergeQueueConfig;
 
 use super::context::{find_checked_out_worktree_for_branch, resolve_target_head};
@@ -23,12 +22,12 @@ use super::sync::{
 };
 use super::target::finalize_target_branch;
 use super::{
-    command_for_shell, merge_queue_command, vcs_driver_for_worktree, QueueError,
-    MERGE_QUEUE_CONFLICT_MESSAGE,
+    command_for_shell, merge_queue_command, vcs_driver_for_worktree, MergeQueueHost,
+    MergeQueueNotice, QueueError, MERGE_QUEUE_CONFLICT_MESSAGE,
 };
 
-pub(super) async fn run_entry_inner(
-    state: &Arc<AppState>,
+pub(super) async fn run_entry_inner<H: MergeQueueHost>(
+    state: &Arc<H>,
     workspace: &Workspace,
     entry: &MergeQueueEntry,
     cfg: &MergeQueueConfig,
@@ -49,10 +48,15 @@ pub(super) async fn run_entry_inner(
         format!("ctx-merge-queue/{}", entry.id.0)
     };
     let (repo_root, target_head) = if vcs.kind() == VcsKind::Git {
-        let repo_root = ensure_merge_queue_repo(state, entry, workspace, cfg, log_file).await?;
-        let target_head =
-            ensure_merge_queue_target_branch(state, entry, &repo_root, &entry.target_branch)
-                .await?;
+        let repo_root =
+            ensure_merge_queue_repo(state.as_ref(), entry, workspace, cfg, log_file).await?;
+        let target_head = ensure_merge_queue_target_branch(
+            state.as_ref(),
+            entry,
+            &repo_root,
+            &entry.target_branch,
+        )
+        .await?;
         let _ = remove_worktree(&repo_root, &worktree_path).await;
         let _ = delete_branch(&repo_root, &worktree_branch).await;
         create_worktree(&repo_root, &worktree_path, &target_head, &worktree_branch)
@@ -96,7 +100,7 @@ pub(super) async fn run_entry_inner(
             ApplyPatchTarget::Worktree
         };
         if let Err(err) = apply_patch(
-            state,
+            state.as_ref(),
             entry,
             vcs.as_ref(),
             git_repo_root,
@@ -119,7 +123,7 @@ pub(super) async fn run_entry_inner(
         }
 
         let has_changes = if vcs.kind() == VcsKind::Git {
-            has_staged_changes(state, entry, &worktree_path).await?
+            has_staged_changes(state.as_ref(), entry, &worktree_path).await?
         } else {
             has_worktree_changes(vcs.as_ref(), &worktree_path, &target_head).await?
         };
@@ -136,20 +140,41 @@ pub(super) async fn run_entry_inner(
             .as_deref()
             .filter(|m| !m.trim().is_empty())
             .unwrap_or("merge queue entry");
-        commit_changes(state, entry, &worktree_path, vcs.kind(), message, log_file).await?;
+        commit_changes(
+            state.as_ref(),
+            entry,
+            &worktree_path,
+            vcs.kind(),
+            message,
+            log_file,
+        )
+        .await?;
         let commit_sha = vcs
             .rev_parse_head(&worktree_path)
             .await
             .map_err(|e| QueueError::fail(e.to_string(), None, None))?;
 
         for cmd in &cfg.verify_commands {
-            run_verify_command(state, &worktree_path, entry, cmd, &commit_sha, log_file).await?;
+            run_verify_command(
+                state.as_ref(),
+                &worktree_path,
+                entry,
+                cmd,
+                &commit_sha,
+                log_file,
+            )
+            .await?;
         }
 
         let target_checkout = if vcs.kind() == VcsKind::Git {
-            find_checked_out_worktree_for_branch(state, entry, git_repo_root, &entry.target_branch)
-                .await
-                .map_err(|e| QueueError::fail(e.to_string(), None, Some(commit_sha.clone())))?
+            find_checked_out_worktree_for_branch(
+                state.as_ref(),
+                entry,
+                git_repo_root,
+                &entry.target_branch,
+            )
+            .await
+            .map_err(|e| QueueError::fail(e.to_string(), None, Some(commit_sha.clone())))?
         } else {
             None
         };
@@ -171,7 +196,7 @@ pub(super) async fn run_entry_inner(
         }
 
         finalize_target_branch(
-            state,
+            state.as_ref(),
             workspace,
             entry,
             cfg,
@@ -219,8 +244,8 @@ pub(super) async fn run_entry_inner(
     result
 }
 
-async fn apply_patch(
-    state: &AppState,
+async fn apply_patch<H: MergeQueueHost>(
+    state: &H,
     entry: &MergeQueueEntry,
     vcs: &dyn VcsDriver,
     repo_root: &Path,
@@ -318,8 +343,8 @@ async fn apply_patch(
     Ok(())
 }
 
-async fn run_git_apply(
-    state: &AppState,
+async fn run_git_apply<H: MergeQueueHost>(
+    state: &H,
     entry: &MergeQueueEntry,
     worktree_path: &Path,
     patch: &str,
@@ -359,8 +384,8 @@ async fn run_git_apply(
         .map_err(|e| QueueError::fail(e.to_string(), None, None))
 }
 
-async fn stage_worktree(
-    state: &AppState,
+async fn stage_worktree<H: MergeQueueHost>(
+    state: &H,
     entry: &MergeQueueEntry,
     worktree_path: &Path,
 ) -> std::result::Result<(), QueueError> {
@@ -386,8 +411,8 @@ async fn stage_worktree(
     Ok(())
 }
 
-async fn has_staged_changes(
-    state: &AppState,
+async fn has_staged_changes<H: MergeQueueHost>(
+    state: &H,
     entry: &MergeQueueEntry,
     worktree_path: &Path,
 ) -> std::result::Result<bool, QueueError> {
@@ -422,8 +447,8 @@ async fn has_worktree_changes(
     Ok(!diff.trim().is_empty())
 }
 
-async fn commit_changes(
-    state: &AppState,
+async fn commit_changes<H: MergeQueueHost>(
+    state: &H,
     entry: &MergeQueueEntry,
     worktree_path: &Path,
     vcs_kind: VcsKind,
@@ -503,8 +528,8 @@ async fn commit_changes(
     }
 }
 
-async fn run_verify_command(
-    state: &AppState,
+async fn run_verify_command<H: MergeQueueHost>(
+    state: &H,
     worktree_path: &Path,
     entry: &MergeQueueEntry,
     command: &str,
@@ -547,8 +572,8 @@ async fn run_verify_command(
     Ok(())
 }
 
-pub(super) async fn maybe_sync_originating_worktree(
-    state: &Arc<AppState>,
+pub(super) async fn maybe_sync_originating_worktree<H: MergeQueueHost>(
+    state: &Arc<H>,
     workspace: &Workspace,
     entry: &MergeQueueEntry,
     commit_sha: &str,
@@ -556,7 +581,7 @@ pub(super) async fn maybe_sync_originating_worktree(
     let Some(worktree_id) = entry.worktree_id else {
         return Ok(());
     };
-    let store = state.store_for_worktree(worktree_id).await?;
+    let store = H::worktree_store(state.as_ref(), worktree_id).await?;
     let Some(worktree) = store.get_worktree(worktree_id).await? else {
         return Ok(());
     };
@@ -591,7 +616,7 @@ pub(super) async fn maybe_sync_originating_worktree(
         }
     };
     if vcs.kind() == VcsKind::Git {
-        reset_worktree_to_commit(state, entry, &worktree.root_path, commit_sha).await?;
+        reset_worktree_to_commit(state.as_ref(), entry, &worktree.root_path, commit_sha).await?;
     } else {
         reset_worktree_to_revision(vcs.as_ref(), &worktree.root_path, commit_sha).await?;
     }
@@ -615,8 +640,8 @@ pub(super) async fn maybe_sync_originating_worktree(
     Ok(())
 }
 
-pub(super) async fn emit_merge_queue_sync_notice(
-    state: &Arc<AppState>,
+pub(super) async fn emit_merge_queue_sync_notice<H: MergeQueueHost>(
+    state: &Arc<H>,
     session_id: SessionId,
     worktree: &Worktree,
     target_branch: &str,
@@ -628,31 +653,22 @@ pub(super) async fn emit_merge_queue_sync_notice(
     let message = format!(
         "merge queue applied; reset worktree from {previous_short} to {target_branch} ({short_sha})"
     );
-    let store = state.store_for_session(session_id).await?;
-    let notice = store
-        .append_session_event(
+    H::publish_notice(
+        state,
+        MergeQueueNotice::Sync {
             session_id,
-            None,
-            None,
-            SessionEventType::Notice,
-            serde_json::json!({
-                "kind": "merge_queue_sync",
-                "message": message,
-                "worktree_id": worktree.id.0.to_string(),
-                "target_branch": target_branch,
-                "previous_commit_sha": previous_commit_sha,
-                "commit_sha": commit_sha,
-                "base_revision": commit_sha,
-                "base_commit_sha": commit_sha,
-            }),
-        )
-        .await?;
-    state.publish_event(notice).await;
-    Ok(())
+            worktree_id: worktree.id,
+            target_branch: target_branch.to_string(),
+            previous_commit_sha: previous_commit_sha.to_string(),
+            commit_sha: commit_sha.to_string(),
+            message,
+        },
+    )
+    .await
 }
 
-pub(super) async fn emit_merge_queue_canonical_sync_notice(
-    state: &Arc<AppState>,
+pub(super) async fn emit_merge_queue_canonical_sync_notice<H: MergeQueueHost>(
+    state: &Arc<H>,
     session_id: SessionId,
     worktree_id: Option<WorktreeId>,
     target_branch: &str,
@@ -660,25 +676,18 @@ pub(super) async fn emit_merge_queue_canonical_sync_notice(
     status: &str,
     message: &str,
 ) -> Result<()> {
-    let store = state.store_for_session(session_id).await?;
-    let notice = store
-        .append_session_event(
+    H::publish_notice(
+        state,
+        MergeQueueNotice::CanonicalSync {
             session_id,
-            None,
-            None,
-            SessionEventType::Notice,
-            serde_json::json!({
-                "kind": "merge_queue_canonical_sync",
-                "status": status,
-                "message": message,
-                "worktree_id": worktree_id.map(|id| id.0.to_string()),
-                "target_branch": target_branch,
-                "commit_sha": commit_sha,
-            }),
-        )
-        .await?;
-    state.publish_event(notice).await;
-    Ok(())
+            worktree_id,
+            target_branch: target_branch.to_string(),
+            commit_sha: commit_sha.to_string(),
+            status: status.to_string(),
+            message: message.to_string(),
+        },
+    )
+    .await
 }
 
 pub(super) async fn reset_worktree_to_revision(
@@ -692,8 +701,8 @@ pub(super) async fn reset_worktree_to_revision(
     Ok(())
 }
 
-pub(super) async fn reset_worktree_to_commit(
-    state: &AppState,
+pub(super) async fn reset_worktree_to_commit<H: MergeQueueHost>(
+    state: &H,
     entry: &MergeQueueEntry,
     worktree_path: &str,
     commit_sha: &str,

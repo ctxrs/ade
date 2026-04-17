@@ -1,765 +1,138 @@
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+use std::process::Output;
 use std::sync::Arc;
-use std::sync::OnceLock;
 use std::time::Duration;
 
-use anyhow::{anyhow, Context, Result};
-use chrono::Utc;
-use sha2::Digest;
-use tokio::process::Command;
+use anyhow::Result;
+use async_trait::async_trait;
 use tokio::sync::Mutex;
-use tokio::time::timeout;
+
+use ctx_provider_install::install_state::{
+    InstallErrorCode, InstallId, InstallInfo, InstallProgressEvent, InstallTarget,
+};
+use ctx_providers::adapters::{ProviderAdapter, ProviderStatus};
 
 use crate::container_builder;
-use crate::daemon::{self, AppState};
-use crate::lsp_catalog::{LspCatalogArchive, LspCatalogInstall};
-use crate::provider_install_contract;
-use crate::provider_matrix;
-use crate::title_generation_local;
-use crate::updates;
-use ctx_provider_install::install_state::{
-    truncate_for_storage, InstallErrorCode, InstallEventLevel, InstallId, InstallProgressEvent,
-    InstallStateKind, InstallTarget,
-};
-use ctx_providers::crp::Tier1CrpAdapter;
+use crate::daemon::{self, AppState as HttpAppState};
 
-mod artifacts;
-mod config;
-mod dependencies;
-mod lsp;
-mod provider_install;
-mod targets;
-mod title_generation;
-mod toolchains;
+pub use ctx_managed_installs::*;
 
-pub(crate) use self::artifacts::{
-    download_to_file, ensure_executable, extract_zip_to_dir, find_unique_path_ending_with,
-    install_agent_server_url_binary, install_url_binary, resolve_command_path,
-    run_command_with_timeout,
-};
-use self::dependencies::{
-    install_managed_archive_dependency, install_managed_npm_dependency, map_archive_kind,
-    resolve_install_args,
-};
-use self::provider_install::{
-    classify_install_error, emit_install, emit_install_with_code, ensure_install_not_cancelled,
-    install_provider_impl, repair_install_dir, run_tracked_provider_install,
-};
-pub(crate) use ctx_bundled_assets as bundled_assets;
-
-pub use config::{
-    agent_server_config_path, apply_managed_install_details,
-    apply_managed_install_details_for_target, apply_managed_lsp_server_config,
-    apply_user_lsp_server_config, load_agent_server_config, load_lsp_server_config,
-    load_user_lsp_config, managed_dependency_install_metadata_for_target,
-    managed_install_metadata_for_target, managed_provider_command_for_target,
-    managed_provider_install_metadata_for_target, mutate_agent_server_config,
-    resolve_provider_command, resolve_provider_login_command, resolve_runtime_provider_command,
-    resolve_runtime_provider_command_for_target,
-    resolve_runtime_provider_command_for_target_repairable_managed, save_agent_server_config,
-    save_lsp_server_config, AgentServerCommand, AgentServerConfigFile, LspServerConfigFile,
-    ManagedInstallError, ManagedInstallMetadata, ProviderLoginExecutable, ProviderRuntimeCommand,
-    ProviderRuntimeCommandSource, UserLspConfigFile, UserLspServerSpec,
-};
-pub use lsp::{install_lsp_catalog_server_with_progress, install_lsp_server_with_progress};
-pub use provider_install::refresh_provider_statuses;
-pub(crate) use targets::{
-    apply_install_target_status, ensure_codex_cli_command_env_for_target,
-    prepend_runtime_bin_dirs_to_provider_path_for_target,
-    require_codex_cli_command_path_for_target,
-};
-#[cfg(test)]
-pub(crate) use targets::{
-    dependency_target_compatible_with_context, prepend_bundled_seed_node_bin_dir,
-    prepend_runtime_bin_dirs_to_provider_path, provider_env_targets_linux_sandbox,
-    resolve_codex_cli_command_path_for_target,
-};
-pub use targets::{
-    is_supported_managed_provider_for_target, managed_install_download_size_bytes,
-    parse_install_target, resolve_matrix_target_key,
-};
-pub use title_generation::install_title_generation_local_with_progress;
-pub(crate) use toolchains::{
-    archive_bin_requires_node_runtime, ensure_node_runtime, ensure_python_pip,
-    ensure_python_runtime_versioned, install_dir_for_provider, install_dir_rel,
-    node_runtime_dependency_id, node_runtime_dependency_metadata,
-    node_runtime_dependency_targets_for_install_target, npm_dependency_matches, npm_install,
-    npm_install_one, resolve_node_package_bin, sanitize_npm_package_for_path, venv_exe,
-    NodeRuntime,
-};
-
-const NODE_VERSION: &str = "24.14.0";
-const PYTHON_VERSION: &str = "3.13.12";
-const PYTHON_BUILD_TAG: &str = "20260303";
-
-const TYPESCRIPT_LS_VERSION: &str = "5.1.3";
-const TYPESCRIPT_VERSION: &str = "5.9.3";
-const PYRIGHT_VERSION: &str = "1.1.407";
-const VSCODE_LANGSERVERS_EXTRACTED_VERSION: &str = "4.10.0";
-const YAML_LANGUAGE_SERVER_VERSION: &str = "1.19.2";
-const BASH_LANGUAGE_SERVER_VERSION: &str = "5.6.0";
-const DOCKERFILE_LANGUAGE_SERVER_VERSION: &str = "0.15.0";
-
-const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(15 * 60);
-const NPM_INSTALL_TIMEOUT: Duration = Duration::from_secs(12 * 60);
-const PIP_INSTALL_TIMEOUT: Duration = Duration::from_secs(12 * 60);
-const RETRY_COUNT: u32 = 2;
-const RETRY_BACKOFF_BASE_MS: u64 = 750;
-const LAST_ERROR_MAX_LEN: usize = 8000;
-const INSTALL_EVENT_ERROR_MAX_LEN: usize = 6000;
-const INSTALL_REGISTRY_POLL_INTERVAL: Duration = Duration::from_millis(100);
-
-static NODE_RUNTIME_INSTALL_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-static PYTHON_RUNTIME_INSTALL_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-static PROVIDER_INSTALL_LOCKS: OnceLock<Mutex<HashMap<String, Arc<Mutex<()>>>>> = OnceLock::new();
-const TITLE_GENERATION_LOCAL_INSTALL_KEY: &str = "title_generation_local";
-const MANAGED_PROVIDER_INSTALLS_ENABLED: bool = true;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct ManagedPythonRuntimeSpec {
-    version: String,
-    build_tag: String,
-}
-
-pub(crate) fn expected_managed_dependency_version(dependency_id: &str) -> Option<&'static str> {
-    let normalized = dependency_id.trim().to_ascii_lowercase();
-    if normalized.starts_with("runtime-node-") {
-        return Some(NODE_VERSION);
-    }
-    if normalized.starts_with("runtime-python-") {
-        return Some(PYTHON_VERSION);
-    }
-    None
-}
-
-fn trimmed_non_empty(value: Option<&str>) -> Option<String> {
-    value
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
-}
-
-fn npm_artifact_fingerprint(package: &str, version: &str) -> Option<String> {
-    let package = package.trim();
-    let version = version.trim();
-    if package.is_empty() || version.is_empty() {
-        return None;
-    }
-    Some(format!("npm:{package}@{version}"))
-}
-
-fn python_artifact_fingerprint(
-    package: &str,
-    version: &str,
-    python_version: Option<&str>,
-    python_build_tag: Option<&str>,
-) -> Option<String> {
-    let package = package.trim();
-    let version = version.trim();
-    if package.is_empty() || version.is_empty() {
-        return None;
-    }
-    let mut fingerprint = format!("python:{package}=={version}");
-    if let Some(python_version) = trimmed_non_empty(python_version) {
-        fingerprint.push_str(&format!("|python={python_version}"));
-    }
-    if let Some(python_build_tag) = trimmed_non_empty(python_build_tag) {
-        fingerprint.push_str(&format!("|build={python_build_tag}"));
-    }
-    Some(fingerprint)
-}
-
-pub(crate) fn expected_managed_provider_artifact_fingerprint(
-    entry: &provider_matrix::ProviderMatrixEntry,
-    version: &str,
-    target: InstallTarget,
-) -> Option<String> {
-    let install = entry.managed_install.as_ref()?;
-    match install {
-        provider_matrix::ProviderInstall::Npm { package, .. } => {
-            npm_artifact_fingerprint(package, version)
-        }
-        provider_matrix::ProviderInstall::Archive {
-            version: install_version,
-            targets,
-            ..
-        } => {
-            if provider_matrix::normalize_version(install_version)
-                != provider_matrix::normalize_version(version)
-            {
-                return None;
-            }
-            let target_key = resolve_matrix_target_key(target).ok()?;
-            trimmed_non_empty(targets.get(target_key)?.sha256.as_deref())
-        }
-        provider_matrix::ProviderInstall::Python {
-            package,
-            version: install_version,
-            python_version,
-            python_build_tag,
-            ..
-        } => {
-            if provider_matrix::normalize_version(install_version)
-                != provider_matrix::normalize_version(version)
-            {
-                return None;
-            }
-            python_artifact_fingerprint(
-                package,
-                install_version,
-                python_version.as_deref(),
-                python_build_tag.as_deref(),
-            )
-        }
-    }
-}
-
-pub(crate) fn expected_managed_dependency_artifact_fingerprint(
-    dependency: &provider_matrix::ProviderDependency,
-    target: InstallTarget,
-) -> Option<String> {
-    match &dependency.install {
-        provider_matrix::DependencyInstall::Npm { package, version } => {
-            npm_artifact_fingerprint(package, version)
-        }
-        provider_matrix::DependencyInstall::Archive {
-            version: _,
-            targets,
-        } => {
-            let target_key = resolve_matrix_target_key(target).ok()?;
-            trimmed_non_empty(targets.get(target_key)?.sha256.as_deref())
-        }
-    }
-}
-
-fn node_runtime_install_lock() -> &'static Mutex<()> {
-    NODE_RUNTIME_INSTALL_LOCK.get_or_init(|| Mutex::new(()))
-}
-
-fn python_runtime_install_lock() -> &'static Mutex<()> {
-    PYTHON_RUNTIME_INSTALL_LOCK.get_or_init(|| Mutex::new(()))
-}
-
-fn managed_python_runtime_spec(
-    python_version: Option<&str>,
-    python_build_tag: Option<&str>,
-) -> ManagedPythonRuntimeSpec {
-    let version = python_version
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or(PYTHON_VERSION)
-        .to_string();
-    let build_tag = python_build_tag
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or(PYTHON_BUILD_TAG)
-        .to_string();
-    ManagedPythonRuntimeSpec { version, build_tag }
-}
-
-fn provider_install_locks() -> &'static Mutex<HashMap<String, Arc<Mutex<()>>>> {
-    PROVIDER_INSTALL_LOCKS.get_or_init(|| Mutex::new(HashMap::new()))
-}
-
-async fn acquire_provider_install_lock(
-    provider_id: &str,
-    target: InstallTarget,
-) -> tokio::sync::OwnedMutexGuard<()> {
-    let key = format!("{provider_id}@{}", target.as_str());
-    let lock = {
-        let mut locks = provider_install_locks().lock().await;
-        locks
-            .entry(key)
-            .or_insert_with(|| Arc::new(Mutex::new(())))
-            .clone()
-    };
-    lock.lock_owned().await
-}
-
-fn managed_provider_runtime_command(
-    data_root: &Path,
-    provider_id: &str,
-    managed_cmd: AgentServerCommand,
-    bridge_cmd: Option<&AgentServerCommand>,
-) -> Result<AgentServerCommand> {
-    if !daemon::is_acp_provider_id(provider_id) {
-        return Ok(managed_cmd);
+#[async_trait]
+impl ctx_managed_installs::ManagedInstallHost for HttpAppState {
+    fn data_root(&self) -> &Path {
+        &self.core.data_root
     }
 
-    let bridge_cmd = bridge_cmd.ok_or_else(|| {
-        anyhow::anyhow!(
-            "ACP bridge runtime is not configured or invalid for provider '{provider_id}'"
-        )
-    })?;
-    let acp_cmd = daemon::normalize_acp_provider_command(data_root, provider_id, managed_cmd)?;
-    Ok(daemon::acp_bridge_command(bridge_cmd, acp_cmd))
-}
-
-pub async fn install_provider(state: &AppState, provider_id: &str) -> Result<()> {
-    install_provider_impl(state, provider_id, InstallTarget::Host, None).await
-}
-
-pub fn is_supported_managed_provider(
-    matrix: &provider_matrix::ProviderMatrix,
-    provider_id: &str,
-) -> bool {
-    if !MANAGED_PROVIDER_INSTALLS_ENABLED {
-        return false;
-    }
-    provider_matrix::is_managed_supported(matrix, provider_id)
-}
-
-fn validate_post_install_status(
-    status: &ctx_providers::adapters::ProviderStatus,
-    provider_id: &str,
-    target: InstallTarget,
-) -> Result<()> {
-    if let Some(managed_target) = status.details.get("managed_target") {
-        if managed_target != target.as_str() {
-            anyhow::bail!(
-                "install completed but provider '{}' resolved to managed target '{}' (expected '{}')",
-                provider_id,
-                managed_target,
-                target.as_str()
-            );
-        }
-    }
-    if !status.installed || !matches!(status.health, ctx_providers::adapters::ProviderHealth::Ok) {
-        anyhow::bail!(
-            "install completed but provider is not healthy: {}",
-            status.diagnostics.join("; ")
-        );
-    }
-    Ok(())
-}
-
-pub fn is_supported_managed_lsp_server(server_id: &str) -> bool {
-    matches!(
-        server_id,
-        "typescript" | "python" | "html" | "css" | "json" | "yaml" | "bash" | "dockerfile"
-    )
-}
-
-pub async fn install_provider_with_progress(
-    state: std::sync::Arc<AppState>,
-    install_id: InstallId,
-    provider_id: String,
-    target: InstallTarget,
-) -> Result<()> {
-    run_tracked_provider_install(state.as_ref(), install_id, &provider_id, target).await
-}
-
-fn catalog_target_key() -> &'static str {
-    match (std::env::consts::OS, std::env::consts::ARCH) {
-        ("linux", "x86_64") => "linux-x64",
-        ("linux", "aarch64") => "linux-arm64",
-        ("macos", "x86_64") => "darwin-x64",
-        ("macos", "aarch64") => "darwin-arm64",
-        _ => "unknown",
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-pub(crate) enum AgentServerArchive {
-    None,
-    TarGz,
-    TarBz2,
-    Zip,
-    Dmg,
-}
-
-fn host_target_key() -> Result<&'static str> {
-    let os = std::env::consts::OS;
-    let arch = std::env::consts::ARCH;
-    match (os, arch) {
-        ("linux", "x86_64") => Ok("linux-x86_64"),
-        ("linux", "aarch64") => Ok("linux-aarch64"),
-        ("macos", "x86_64") => Ok("darwin-x86_64"),
-        ("macos", "aarch64") => Ok("darwin-aarch64"),
-        ("windows", "x86_64") => Ok("windows-x86_64"),
-        ("windows", "aarch64") => Ok("windows-aarch64"),
-        _ => anyhow::bail!("unsupported platform: {os}/{arch}"),
-    }
-}
-
-fn container_target_key() -> Result<&'static str> {
-    match std::env::consts::ARCH {
-        "x86_64" => Ok("linux-x86_64"),
-        "aarch64" => Ok("linux-aarch64"),
-        other => anyhow::bail!("unsupported container architecture: {other}"),
-    }
-}
-
-struct ManagedProviderInstall {
-    command: String,
-    args: Vec<String>,
-    meta: ManagedInstallMetadata,
-}
-
-struct ManagedDependencyInstall {
-    meta: ManagedInstallMetadata,
-}
-
-#[allow(clippy::too_many_arguments)]
-async fn install_managed_npm_provider(
-    state: &AppState,
-    install_id: Option<InstallId>,
-    provider_id: &str,
-    package: &str,
-    version: &str,
-    script_rel: &str,
-    extra_args: Vec<String>,
-    target: InstallTarget,
-    stage: &mut &'static str,
-) -> Result<ManagedProviderInstall> {
-    let data_root = state.core.data_root.clone();
-    let install_dir = install_dir_for_provider(&data_root, provider_id, version, target);
-    let install_dir_rel = install_dir_rel(&data_root, &install_dir);
-
-    *stage = "node";
-    let node = ensure_node_runtime(state, install_id, provider_id, &data_root, target)
-        .await
-        .context("ensuring managed Node runtime")?;
-
-    *stage = "prepare";
-    repair_install_dir(install_id, state, provider_id, &install_dir, script_rel)
-        .await
-        .context("preparing install directory")?;
-
-    let package_spec = format!("{package}@{version}");
-    *stage = "npm_install";
-    npm_install(
-        state,
-        install_id,
-        provider_id,
-        &node,
-        &install_dir,
-        &package_spec,
-        target,
-    )
-    .await
-    .context("running package install")?;
-
-    *stage = "entrypoint";
-    let script_path = install_dir.join(script_rel);
-    if !script_path.exists() {
-        tokio::fs::remove_dir_all(&install_dir).await.ok();
-        anyhow::bail!(
-            "install completed but entrypoint missing: {}",
-            script_path.display()
-        );
+    fn provider_matrix_cache(&self) -> &Mutex<ctx_provider_matrix::ProviderMatrixCache> {
+        &self.providers.matrix_cache
     }
 
-    let mut args = vec![script_path.to_string_lossy().to_string()];
-    args.extend(extra_args);
-
-    let meta = ManagedInstallMetadata {
-        package: Some(package.to_string()),
-        version: Some(version.to_string()),
-        artifact_fingerprint: npm_artifact_fingerprint(package, version),
-        archive_sha256: None,
-        target: Some(target),
-        install_dir_rel: Some(install_dir_rel),
-        bin_dir_rel: None,
-        last_success_at: Some(Utc::now().to_rfc3339()),
-        last_error: None,
-    };
-
-    Ok(ManagedProviderInstall {
-        command: node.node_bin.to_string_lossy().to_string(),
-        args,
-        meta,
-    })
-}
-
-#[allow(clippy::too_many_arguments)]
-async fn install_managed_archive_provider(
-    state: &AppState,
-    install_id: Option<InstallId>,
-    provider_id: &str,
-    version: &str,
-    url: &str,
-    expected_sha256: Option<&str>,
-    archive: AgentServerArchive,
-    bin_path: &str,
-    args: Vec<String>,
-    target: InstallTarget,
-    stage: &mut &'static str,
-) -> Result<ManagedProviderInstall> {
-    let bin = install_agent_server_url_binary(
-        state,
-        install_id,
-        provider_id,
-        provider_id,
-        version,
-        url,
-        expected_sha256,
-        archive,
-        bin_path,
-        target,
-        stage,
-    )
-    .await
-    .context("installing agent server binary")?;
-
-    let install_dir = install_dir_for_provider(&state.core.data_root, provider_id, version, target);
-    let meta = ManagedInstallMetadata {
-        package: Some(url.to_string()),
-        version: Some(version.to_string()),
-        artifact_fingerprint: expected_sha256.map(str::to_string),
-        archive_sha256: expected_sha256.map(str::to_string),
-        target: Some(target),
-        install_dir_rel: Some(install_dir_rel(&state.core.data_root, &install_dir)),
-        bin_dir_rel: None,
-        last_success_at: Some(Utc::now().to_rfc3339()),
-        last_error: None,
-    };
-
-    Ok(ManagedProviderInstall {
-        command: bin.to_string_lossy().to_string(),
-        args,
-        meta,
-    })
-}
-
-#[allow(clippy::too_many_arguments)]
-async fn install_managed_python_provider(
-    state: &AppState,
-    install_id: Option<InstallId>,
-    provider_id: &str,
-    package: &str,
-    version: &str,
-    entrypoint: &str,
-    python_version: Option<&str>,
-    python_build_tag: Option<&str>,
-    args: Vec<String>,
-    target: InstallTarget,
-    stage: &mut &'static str,
-) -> Result<ManagedProviderInstall> {
-    *stage = "python";
-    let python_runtime = managed_python_runtime_spec(python_version, python_build_tag);
-    let python = ensure_python_runtime_versioned(
-        state,
-        install_id,
-        provider_id,
-        &state.core.data_root,
-        target,
-        &python_runtime.version,
-        &python_runtime.build_tag,
-    )
-    .await
-    .context("ensuring managed Python runtime")?
-    .python_bin;
-    let data_root = state.core.data_root.clone();
-    let install_dir = install_dir_for_provider(&data_root, provider_id, version, target);
-    let install_dir_rel = install_dir_rel(&data_root, &install_dir);
-    let venv_dir = install_dir.join("venv");
-
-    *stage = "prepare";
-    emit_install(
-        state,
-        install_id,
-        provider_id,
-        InstallEventLevel::Info,
-        "prepare",
-        format!("Preparing install dir: {}", install_dir.display()),
-        None,
-        None,
-        None,
-    )
-    .await;
-
-    if install_dir.exists() {
-        let expected = venv_exe(&venv_dir, entrypoint, target);
-        if !expected.exists() {
-            tokio::fs::remove_dir_all(&install_dir).await.ok();
-        }
+    fn provider_adapters(&self) -> &Mutex<HashMap<String, Arc<dyn ProviderAdapter>>> {
+        &self.providers.adapters
     }
-    tokio::fs::create_dir_all(&install_dir)
-        .await
-        .with_context(|| format!("creating install dir: {}", install_dir.display()))?;
 
-    *stage = "venv";
-    emit_install(
-        state,
-        install_id,
-        provider_id,
-        InstallEventLevel::Info,
-        "venv",
-        "Creating virtualenv…".to_string(),
-        None,
-        None,
-        None,
-    )
-    .await;
+    fn target_provider_adapters(&self) -> &Mutex<HashMap<String, Arc<dyn ProviderAdapter>>> {
+        &self.providers.target_adapters
+    }
 
-    if matches!(target, InstallTarget::Container) {
-        container_builder::ensure_builder_ready(&state.core.data_root)
+    fn provider_statuses(&self) -> &Mutex<HashMap<String, ProviderStatus>> {
+        &self.providers.statuses
+    }
+
+    async fn start_install(
+        &self,
+        provider_id: String,
+        target: Option<InstallTarget>,
+    ) -> (InstallId, bool) {
+        HttpAppState::start_install(self, provider_id, target).await
+    }
+
+    async fn get_install_info(&self, install_id: InstallId) -> Option<InstallInfo> {
+        HttpAppState::get_install_info(self, install_id).await
+    }
+
+    async fn register_install_progress_mirror(
+        &self,
+        source_install_id: InstallId,
+        mirror_install_id: InstallId,
+    ) -> bool {
+        HttpAppState::register_install_progress_mirror(self, source_install_id, mirror_install_id)
             .await
-            .context("ensuring container builder readiness")?;
-        let argv = vec![
-            python.to_string_lossy().to_string(),
-            "-m".to_string(),
-            "venv".to_string(),
-            venv_dir.to_string_lossy().to_string(),
-        ];
-        let out = container_builder::run_command(
-            &state.core.data_root,
-            &install_dir,
-            &[],
-            &argv,
-            Duration::from_secs(5 * 60),
-        )
-        .await
-        .context("creating virtualenv")?;
-        if !out.status.success() {
-            anyhow::bail!(
-                "creating virtualenv failed status={}\nstdout:\n{}\nstderr:\n{}",
-                out.status,
-                String::from_utf8_lossy(&out.stdout),
-                String::from_utf8_lossy(&out.stderr)
-            );
+    }
+
+    async fn set_install_progress_pct_override(&self, install_id: InstallId, pct: Option<u8>) {
+        HttpAppState::set_install_progress_pct_override(self, install_id, pct).await;
+    }
+
+    async fn emit_install_event(&self, install_id: InstallId, event: InstallProgressEvent) {
+        HttpAppState::emit_install_event(self, install_id, event).await;
+    }
+
+    async fn finish_install(
+        &self,
+        install_id: InstallId,
+        success: bool,
+        error: Option<String>,
+        error_code: Option<InstallErrorCode>,
+    ) {
+        HttpAppState::finish_install(self, install_id, success, error, error_code).await;
+    }
+
+    async fn is_install_cancelled(&self, install_id: InstallId) -> bool {
+        HttpAppState::is_install_cancelled(self, install_id).await
+    }
+
+    async fn update_install_start_event(
+        &self,
+        install_id: InstallId,
+        provider_id: &str,
+        target: Option<InstallTarget>,
+        message: String,
+        only_if_default: bool,
+    ) {
+        let mut installs = self.providers.installs.lock().await;
+        let Some(install) = installs.get_mut(&install_id) else {
+            return;
+        };
+        if only_if_default && !install.canonical_start_event_is_default() {
+            return;
         }
-    } else {
-        let mut venv_cmd = Command::new(&python);
-        venv_cmd
-            .arg("-m")
-            .arg("venv")
-            .arg(&venv_dir)
-            .kill_on_drop(true);
-        run_command_with_timeout(venv_cmd, Duration::from_secs(5 * 60))
-            .await
-            .context("creating virtualenv")?;
+        let _ = install.update_canonical_start_event(provider_id, target, message);
     }
 
-    let venv_python = venv_exe(&venv_dir, "python", target);
-
-    if matches!(target, InstallTarget::Container) {
-        let argv = vec![
-            venv_python.to_string_lossy().to_string(),
-            "-m".to_string(),
-            "ensurepip".to_string(),
-            "--upgrade".to_string(),
-        ];
-        let out = container_builder::run_command(
-            &state.core.data_root,
-            &install_dir,
-            &[],
-            &argv,
-            Duration::from_secs(5 * 60),
-        )
-        .await
-        .context("ensuring pip in virtualenv")?;
-        if !out.status.success() {
-            anyhow::bail!(
-                "ensurepip failed status={}\nstdout:\n{}\nstderr:\n{}",
-                out.status,
-                String::from_utf8_lossy(&out.stdout),
-                String::from_utf8_lossy(&out.stderr)
-            );
-        }
-    } else {
-        ensure_python_pip(&venv_python)
-            .await
-            .context("ensuring pip in virtualenv")?;
+    async fn ensure_builder_ready(&self) -> Result<()> {
+        container_builder::ensure_builder_ready(&self.core.data_root).await
     }
 
-    let package_spec = if package.starts_with("https://") || package.starts_with("http://") {
-        package.to_string()
-    } else {
-        format!("{package}=={version}")
-    };
-
-    *stage = "pip_install";
-    emit_install(
-        state,
-        install_id,
-        provider_id,
-        InstallEventLevel::Info,
-        "pip_install",
-        format!("Installing {package_spec}…"),
-        None,
-        None,
-        None,
-    )
-    .await;
-
-    let out = if matches!(target, InstallTarget::Container) {
-        let argv = vec![
-            venv_python.to_string_lossy().to_string(),
-            "-m".to_string(),
-            "pip".to_string(),
-            "install".to_string(),
-            "--disable-pip-version-check".to_string(),
-            "--no-input".to_string(),
-            package_spec.clone(),
-        ];
-        let env = vec![("PIP_DISABLE_PIP_VERSION_CHECK".to_string(), "1".to_string())];
-        container_builder::run_command(
-            &state.core.data_root,
-            &install_dir,
-            &env,
-            &argv,
-            PIP_INSTALL_TIMEOUT,
-        )
-        .await
-    } else {
-        let mut pip_cmd = Command::new(&venv_python);
-        pip_cmd
-            .arg("-m")
-            .arg("pip")
-            .arg("install")
-            .arg("--disable-pip-version-check")
-            .arg("--no-input")
-            .arg(&package_spec)
-            .env("PIP_DISABLE_PIP_VERSION_CHECK", "1")
-            .kill_on_drop(true);
-        run_command_with_timeout(pip_cmd, PIP_INSTALL_TIMEOUT).await
-    }
-    .context("running pip install")?;
-    if !out.status.success() {
-        anyhow::bail!(
-            "pip install failed ({}) status={}\nstdout:\n{}\nstderr:\n{}",
-            package_spec,
-            out.status,
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
+    async fn run_builder_command(
+        &self,
+        cwd: &Path,
+        env: &[(String, String)],
+        argv: &[String],
+        timeout_dur: Duration,
+    ) -> Result<Output> {
+        container_builder::run_command(&self.core.data_root, cwd, env, argv, timeout_dur).await
     }
 
-    let exe = venv_exe(&venv_dir, entrypoint, target);
-    if !exe.exists() {
-        tokio::fs::remove_dir_all(&install_dir).await.ok();
-        anyhow::bail!(
-            "pip install completed but entrypoint missing: {}",
-            exe.display()
-        );
+    fn is_acp_provider_id(&self, provider_id: &str) -> bool {
+        daemon::is_acp_provider_id(provider_id)
     }
 
-    let meta = ManagedInstallMetadata {
-        package: Some(package.to_string()),
-        version: Some(version.to_string()),
-        artifact_fingerprint: python_artifact_fingerprint(
-            package,
-            version,
-            python_version,
-            python_build_tag,
-        ),
-        archive_sha256: None,
-        target: Some(target),
-        install_dir_rel: Some(install_dir_rel),
-        bin_dir_rel: None,
-        last_success_at: Some(Utc::now().to_rfc3339()),
-        last_error: None,
-    };
+    fn normalize_acp_provider_command(
+        &self,
+        data_root: &Path,
+        provider_id: &str,
+        cmd: ctx_managed_installs::AgentServerCommand,
+    ) -> Result<ctx_managed_installs::AgentServerCommand> {
+        daemon::normalize_acp_provider_command(data_root, provider_id, cmd)
+    }
 
-    Ok(ManagedProviderInstall {
-        command: exe.to_string_lossy().to_string(),
-        args,
-        meta,
-    })
+    fn acp_bridge_command(
+        &self,
+        bridge_cmd: &ctx_managed_installs::AgentServerCommand,
+        acp_cmd: ctx_managed_installs::AgentServerCommand,
+    ) -> ctx_managed_installs::AgentServerCommand {
+        daemon::acp_bridge_command(bridge_cmd, acp_cmd)
+    }
 }
-
-#[cfg(test)]
-mod tests;

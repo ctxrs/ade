@@ -5,8 +5,10 @@ edition = "2021"
 
 [dependencies]
 anyhow.workspace = true
+async-trait.workspace = true
 ctx-core = { path = "../ctx-core" }
 ctx-sandbox-contract = { path = "../ctx-sandbox-contract" }
+ctx-store = { path = "../ctx-store" }
 
 [dev-dependencies]
 chrono.workspace = true

@@ -9,7 +9,7 @@ pub(super) async fn install_managed_npm_dependency(
     version: &str,
     stage: &mut &'static str,
 ) -> Result<ManagedDependencyInstall> {
-    let data_root = state.core.data_root.clone();
+    let data_root = state.data_root().to_path_buf();
     let install_dir = data_root
         .join("providers")
         .join("agent-servers")
@@ -119,7 +119,7 @@ pub(super) async fn install_managed_archive_dependency(
     target: InstallTarget,
     stage: &mut &'static str,
 ) -> Result<ManagedDependencyInstall> {
-    let data_root = state.core.data_root.clone();
+    let data_root = state.data_root().to_path_buf();
     let install_dir = install_dir_for_provider(&data_root, dependency_id, version, target);
 
     let existing = if install_dir.exists() {

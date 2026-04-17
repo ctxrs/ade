@@ -2,7 +2,7 @@ use super::*;
 
 mod node_entrypoints;
 
-pub(crate) use node_entrypoints::archive_bin_requires_node_runtime;
+pub use node_entrypoints::archive_bin_requires_node_runtime;
 
 pub(crate) fn target_uses_windows_layout(target: InstallTarget) -> bool {
     match target {
@@ -19,7 +19,7 @@ pub(crate) fn venv_bin_dir(venv_dir: &Path, target: InstallTarget) -> PathBuf {
     }
 }
 
-pub(crate) fn venv_exe(venv_dir: &Path, name: &str, target: InstallTarget) -> PathBuf {
+pub fn venv_exe(venv_dir: &Path, name: &str, target: InstallTarget) -> PathBuf {
     let bin = venv_bin_dir(venv_dir, target);
     if target_uses_windows_layout(target) {
         bin.join(format!("{name}.exe"))
@@ -47,7 +47,7 @@ pub struct PythonRuntime {
     pub python_bin: PathBuf,
 }
 
-pub(crate) fn install_dir_rel(data_root: &Path, install_dir: &Path) -> String {
+pub fn install_dir_rel(data_root: &Path, install_dir: &Path) -> String {
     install_dir
         .strip_prefix(data_root)
         .map(|p| p.to_string_lossy().to_string())
@@ -63,7 +63,7 @@ fn install_target_dir_component(target: InstallTarget) -> Option<&'static str> {
     }
 }
 
-pub(crate) fn install_dir_for_provider(
+pub fn install_dir_for_provider(
     data_root: &Path,
     provider_id: &str,
     version: &str,
@@ -80,7 +80,7 @@ pub(crate) fn install_dir_for_provider(
     out
 }
 
-pub(crate) async fn ensure_node_runtime(
+pub async fn ensure_node_runtime(
     state: &AppState,
     install_id: Option<InstallId>,
     provider_id: &str,
@@ -312,7 +312,7 @@ pub(crate) fn node_runtime_target_for_install_target(
     }
 }
 
-pub(crate) fn node_runtime_dependency_targets_for_install_target(
+pub fn node_runtime_dependency_targets_for_install_target(
     target: InstallTarget,
     host_os: &str,
 ) -> Vec<InstallTarget> {
@@ -355,11 +355,11 @@ fn node_runtime_target_for_os_arch(os: &str, arch: &str) -> Result<NodeRuntimeTa
     }
 }
 
-pub(crate) fn node_runtime_dependency_id(target: InstallTarget) -> String {
+pub fn node_runtime_dependency_id(target: InstallTarget) -> String {
     format!("runtime-node-{}", target.as_str())
 }
 
-pub(crate) fn node_runtime_dependency_metadata(
+pub fn node_runtime_dependency_metadata(
     data_root: &Path,
     node: &NodeRuntime,
     target: InstallTarget,
@@ -382,7 +382,7 @@ pub(crate) fn node_runtime_dependency_metadata(
     }
 }
 
-pub(crate) async fn ensure_python_runtime_versioned(
+pub async fn ensure_python_runtime_versioned(
     state: &AppState,
     install_id: Option<InstallId>,
     provider_id: &str,
@@ -616,7 +616,7 @@ pub(crate) fn resolve_python_bin(python_root: &Path, target: InstallTarget) -> P
     }
 }
 
-pub(crate) async fn ensure_python_pip(python: &Path) -> Result<()> {
+pub async fn ensure_python_pip(python: &Path) -> Result<()> {
     let mut pip_check = Command::new(python);
     pip_check
         .arg("-m")
@@ -650,7 +650,7 @@ pub(crate) async fn ensure_python_pip(python: &Path) -> Result<()> {
     Ok(())
 }
 
-pub(crate) async fn npm_install(
+pub async fn npm_install(
     state: &AppState,
     install_id: Option<InstallId>,
     provider_id: &str,
@@ -692,7 +692,8 @@ pub(crate) async fn npm_install(
         .await;
 
         let out = if matches!(target, InstallTarget::Container) {
-            container_builder::ensure_builder_ready(&state.core.data_root)
+            state
+                .ensure_builder_ready()
                 .await
                 .context("ensuring container builder readiness")?;
             let mut argv = Vec::with_capacity(16);
@@ -724,14 +725,9 @@ pub(crate) async fn npm_install(
                 ),
                 ("npm_config_ignore_scripts".to_string(), "true".to_string()),
             ];
-            container_builder::run_command(
-                &state.core.data_root,
-                install_dir,
-                &env,
-                &argv,
-                NPM_INSTALL_TIMEOUT,
-            )
-            .await
+            state
+                .run_builder_command(install_dir, &env, &argv, NPM_INSTALL_TIMEOUT)
+                .await
         } else {
             let mut cmd = if let Some(pnpm) = pnpm_bin.as_ref() {
                 let mut cmd = Command::new(pnpm);
@@ -838,13 +834,13 @@ pub(crate) async fn npm_install(
     );
 }
 
-pub(crate) fn sanitize_npm_package_for_path(pkg: &str) -> String {
+pub fn sanitize_npm_package_for_path(pkg: &str) -> String {
     pkg.trim()
         .trim_start_matches('@')
         .replace(['/', '\\'], "__")
 }
 
-pub(crate) async fn npm_install_one(
+pub async fn npm_install_one(
     state: &AppState,
     install_id: Option<InstallId>,
     provider_id: &str,
@@ -866,7 +862,7 @@ pub(crate) async fn npm_install_one(
     .await
 }
 
-pub(crate) async fn npm_dependency_matches(
+pub async fn npm_dependency_matches(
     install_dir: &Path,
     package: &str,
     version: &str,
@@ -886,7 +882,7 @@ pub(crate) async fn npm_dependency_matches(
         .unwrap_or(false))
 }
 
-pub(crate) async fn resolve_node_package_bin(
+pub async fn resolve_node_package_bin(
     install_dir: &Path,
     package: &str,
     preferred_bin_name: Option<&str>,

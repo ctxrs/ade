@@ -613,7 +613,7 @@ pub async fn serve(bind: Vec<String>, data_dir: Option<String>) -> Result<()> {
         });
     }
 
-    installer::refresh_provider_statuses(&state).await?;
+    installer::refresh_provider_statuses(state.as_ref()).await?;
     let app: Router = api::router(state.clone());
 
     let bound_addrs = listeners

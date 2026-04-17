@@ -19,7 +19,10 @@ ctx-bundled-assets = { path = "../ctx-bundled-assets" }
 ctx-harness-sources = { path = "../ctx-harness-sources" }
 ctx-harness-setup = { path = "../ctx-harness-setup" }
 ctx-harness-runtime = { path = "../ctx-harness-runtime" }
+ctx-managed-installs = { path = "../ctx-managed-installs" }
 ctx-linux-sandbox-runtime = { path = "../ctx-linux-sandbox-runtime" }
+ctx-merge-queue = { path = "../ctx-merge-queue" }
+ctx-transport-runtime = { path = "../ctx-transport-runtime" }
 ctx-sandbox-container-runtime = { path = "../ctx-sandbox-container-runtime" }
 ctx-runtime-assets = { path = "../ctx-runtime-assets" }
 ctx-provider-accounts = { path = "../ctx-provider-accounts" }

@@ -62,7 +62,7 @@ async fn install_lsp_catalog_server_impl(
     catalog_id: &str,
     install_id: Option<InstallId>,
 ) -> Result<()> {
-    let data_root = state.core.data_root.clone();
+    let data_root = state.data_root().to_path_buf();
     let provider_id = format!("lsp:{catalog_id}");
     let entry = crate::lsp_catalog::get_entry(&data_root, catalog_id).await?;
     let extra_id = entry.id.clone();
@@ -71,14 +71,15 @@ async fn install_lsp_catalog_server_impl(
     let extra_extensions = entry.extensions.clone();
     let extra_filenames = entry.filenames.clone();
     if let Some(install_id) = install_id {
-        let mut installs = state.providers.installs.lock().await;
-        if let Some(install) = installs.get_mut(&install_id) {
-            let _ = install.update_canonical_start_event(
+        state
+            .update_install_start_event(
+                install_id,
                 &provider_id,
                 None,
                 format!("Installing LSP server: {}", entry.title),
-            );
-        }
+                false,
+            )
+            .await;
     }
 
     match entry.install.clone() {
@@ -296,7 +297,7 @@ async fn install_lsp_server_impl(
     server_id: &str,
     install_id: Option<InstallId>,
 ) -> Result<()> {
-    let data_root = state.core.data_root.clone();
+    let data_root = state.data_root().to_path_buf();
     let provider_id = format!("lsp:{server_id}");
 
     if !is_supported_managed_lsp_server(server_id) {
@@ -307,16 +308,15 @@ async fn install_lsp_server_impl(
 
     let res: Result<()> = async {
         if let Some(install_id) = install_id {
-            let mut installs = state.providers.installs.lock().await;
-            if let Some(install) = installs.get_mut(&install_id) {
-                if install.canonical_start_event_is_default() {
-                    let _ = install.update_canonical_start_event(
-                        &provider_id,
-                        None,
-                        format!("Installing managed LSP server: {server_id}"),
-                    );
-                }
-            }
+            state
+                .update_install_start_event(
+                    install_id,
+                    &provider_id,
+                    None,
+                    format!("Installing managed LSP server: {server_id}"),
+                    true,
+                )
+                .await;
         }
 
         stage = "node";

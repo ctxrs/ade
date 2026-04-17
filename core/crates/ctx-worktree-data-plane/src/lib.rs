@@ -1,12 +1,15 @@
 use anyhow::{anyhow, Result};
+use async_trait::async_trait;
 use std::path::{Path, PathBuf};
 
+use ctx_core::ids::WorkspaceId;
 use ctx_core::models::{SandboxBinding, Workspace, Worktree};
 pub use ctx_sandbox_contract::{live_workspace_root_for_mode, live_worktree_root_for_mode};
 use ctx_sandbox_contract::{
     map_host_or_live_path_to_live_roots, sandbox_execution_settings_from_binding,
     ContainerMountMode, ExecutionMode, ExecutionSettings, UbuntuSandboxSubstrate,
 };
+use ctx_store::Store;
 
 #[derive(Debug, Clone)]
 pub struct WorktreeDataPlane {
@@ -15,6 +18,12 @@ pub struct WorktreeDataPlane {
     pub execution_mode: ExecutionMode,
     pub live_workspace_root: PathBuf,
     pub live_worktree_root: PathBuf,
+}
+
+#[async_trait]
+pub trait WorktreeDataPlaneHost: Send + Sync {
+    async fn get_workspace(state: &Self, workspace_id: WorkspaceId) -> Result<Option<Workspace>>;
+    async fn workspace_store(state: &Self, workspace_id: WorkspaceId) -> Result<Store>;
 }
 
 pub fn map_host_or_live_path_to_live_path(
@@ -60,6 +69,32 @@ pub fn resolved_worktree_data_plane(
         live_workspace_root,
         live_worktree_root,
     })
+}
+
+pub async fn resolve_worktree_data_plane_with_host<H: WorktreeDataPlaneHost>(
+    state: &H,
+    worktree: &Worktree,
+) -> Result<WorktreeDataPlane> {
+    let workspace = H::get_workspace(state, worktree.workspace_id)
+        .await?
+        .ok_or_else(|| anyhow!("workspace not found for worktree"))?;
+    let store = H::workspace_store(state, worktree.workspace_id).await?;
+    let binding = store.get_sandbox_binding(worktree.id).await?;
+    if binding.is_none() {
+        let sessions = store.list_sessions_for_worktree(worktree.id).await?;
+        if sessions.iter().any(|session| {
+            matches!(
+                session.execution_environment,
+                ctx_core::models::ExecutionEnvironment::Sandbox
+            )
+        }) {
+            return Err(anyhow!(
+                "sandbox binding is missing for sandbox worktree {}",
+                worktree.id.0
+            ));
+        }
+    }
+    resolved_worktree_data_plane(&workspace, worktree, binding)
 }
 
 pub fn workspace_data_plane(

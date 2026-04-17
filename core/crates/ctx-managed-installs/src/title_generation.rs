@@ -30,10 +30,10 @@ async fn install_title_generation_local_impl(
         anyhow::bail!("llama.cpp runtime not available for this platform");
     };
 
-    let runtime_dir = title_generation_local::runtime_dir(&state.core.data_root);
+    let runtime_dir = title_generation_local::runtime_dir(state.data_root());
     tokio::fs::create_dir_all(&runtime_dir).await.ok();
 
-    let runtime_bin = title_generation_local::find_runtime_binary(&state.core.data_root);
+    let runtime_bin = title_generation_local::find_runtime_binary(state.data_root());
     if runtime_bin.is_none() {
         emit_install(
             state,
@@ -112,15 +112,15 @@ async fn install_title_generation_local_impl(
             }
         }
 
-        let runtime_bin = title_generation_local::find_runtime_binary(&state.core.data_root)
+        let runtime_bin = title_generation_local::find_runtime_binary(state.data_root())
             .ok_or_else(|| anyhow::anyhow!("llama-server binary not found after extraction"))?;
         ensure_executable(&runtime_bin)?;
         tokio::fs::remove_file(&tmp).await.ok();
     }
 
-    let model_dir = title_generation_local::model_dir(&state.core.data_root);
+    let model_dir = title_generation_local::model_dir(state.data_root());
     tokio::fs::create_dir_all(&model_dir).await.ok();
-    let model_path = title_generation_local::model_path(&state.core.data_root);
+    let model_path = title_generation_local::model_path(state.data_root());
 
     let expected_sha = fetch_hf_etag_sha256(title_generation_local::LOCAL_MODEL_URL)
         .await
@@ -128,7 +128,7 @@ async fn install_title_generation_local_impl(
     let mut model_exists = model_path.exists();
     if model_exists {
         let digest = sha256_file(&model_path).await?;
-        let needs_metadata = title_generation_local::load_model_metadata(&state.core.data_root)
+        let needs_metadata = title_generation_local::load_model_metadata(state.data_root())
             .await
             .is_none();
         if let Some(expected) = expected_sha.as_ref() {
@@ -156,7 +156,7 @@ async fn install_title_generation_local_impl(
                     size,
                     installed_at: Utc::now(),
                 };
-                title_generation_local::write_model_metadata(&state.core.data_root, &meta).await?;
+                title_generation_local::write_model_metadata(state.data_root(), &meta).await?;
             }
         } else if needs_metadata {
             let size = tokio::fs::metadata(&model_path).await?.len();
@@ -167,7 +167,7 @@ async fn install_title_generation_local_impl(
                 size,
                 installed_at: Utc::now(),
             };
-            title_generation_local::write_model_metadata(&state.core.data_root, &meta).await?;
+            title_generation_local::write_model_metadata(state.data_root(), &meta).await?;
         }
     }
 
@@ -230,7 +230,7 @@ async fn install_title_generation_local_impl(
             size,
             installed_at: Utc::now(),
         };
-        title_generation_local::write_model_metadata(&state.core.data_root, &meta).await?;
+        title_generation_local::write_model_metadata(state.data_root(), &meta).await?;
     }
 
     Ok(())

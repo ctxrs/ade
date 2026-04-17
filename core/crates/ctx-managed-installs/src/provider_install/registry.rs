@@ -65,7 +65,7 @@ pub(super) async fn update_registry_last_error(
     .await;
 }
 
-pub(in crate::installer) async fn repair_install_dir(
+pub(crate) async fn repair_install_dir(
     install_id: Option<InstallId>,
     state: &AppState,
     provider_id: &str,

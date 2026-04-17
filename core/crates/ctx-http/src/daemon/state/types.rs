@@ -99,18 +99,9 @@ pub struct TransportRuntime {
     pub terminals: Arc<TerminalManager>,
     pub mobile_tunnel: MobileTunnelManager,
     pub web_sessions: Arc<WebSessionManager>,
-    pub merge_queue_notify: Arc<Notify>,
-    pub merge_queue_schedule_tx: mpsc::UnboundedSender<WorkspaceId>,
-    pub merge_queue_schedule_rx: Mutex<Option<mpsc::UnboundedReceiver<WorkspaceId>>>,
-    pub merge_queue_state: Mutex<MergeQueueScheduleState>,
+    pub merge_queue: Arc<ctx_merge_queue::MergeQueueRuntime>,
     pub lsp_diag_broadcaster: broadcast::Sender<serde_json::Value>,
     pub lsp_diag_forwarders: Mutex<HashSet<String>>,
-}
-
-#[derive(Default)]
-pub struct MergeQueueScheduleState {
-    pub running: HashSet<WorkspaceId>,
-    pub pending: HashSet<WorkspaceId>,
 }
 
 pub struct ExecutionRuntime {
