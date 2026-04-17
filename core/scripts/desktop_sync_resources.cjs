@@ -720,7 +720,9 @@ const buildRemoteDaemonContainerArgs = ({
   cargoHome,
   rustupHome,
   target,
+  hostOs = hostManifestOs,
 }) => {
+  const preparedDaemonsDir = ensureContainerCacheDir(daemonsDir, hostOs);
   const buildCmd =
     "set -euo pipefail; " +
     "export CARGO_HOME=\"/cargo-home\"; " +
@@ -741,7 +743,7 @@ const buildRemoteDaemonContainerArgs = ({
       "-v",
       `${coreDir}:/src`,
       "-v",
-      `${daemonsDir}:/out`,
+      `${preparedDaemonsDir}:/out`,
       "-v",
       `${targetCache}:/target`,
       "-v",
@@ -793,7 +795,9 @@ const buildLinuxCtxMcpContainerArgs = ({
   rustupHome,
   target,
   runtimeVersion,
+  hostOs = hostManifestOs,
 }) => {
+  const preparedRuntimesDir = ensureContainerCacheDir(runtimesDir, hostOs);
   const runtimeRootRel = path.posix.join(
     "runtimes",
     CTX_MCP_RUNTIME_ID,
@@ -821,7 +825,7 @@ const buildLinuxCtxMcpContainerArgs = ({
       "-v",
       `${coreDir}:/src`,
       "-v",
-      `${runtimesDir}:/out`,
+      `${preparedRuntimesDir}:/out`,
       "-v",
       `${targetCache}:/target`,
       "-v",

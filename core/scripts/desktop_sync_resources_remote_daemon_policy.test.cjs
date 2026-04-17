@@ -35,11 +35,13 @@ test("remote daemon bundling rejects invalid values", () => {
 });
 
 test("remote daemon container build command creates /out before install", () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "desktop-sync-test-"));
+  const daemonsDir = path.join(tempRoot, "daemons");
   const [spawnCmd, args] = __desktopSyncResourcesTestHooks.buildRemoteDaemonContainerArgs({
     runtime: "docker",
     builderImage: "rust:test",
     coreDir: "/src-host",
-    daemonsDir: "/out-host",
+    daemonsDir,
     targetCache: "/target-host",
     cargoHome: "/cargo-home-host",
     rustupHome: "/rustup-home-host",
@@ -62,14 +64,18 @@ test("remote daemon container build command creates /out before install", () => 
   assert.match(args.join(" "), /install -Dm0755 .* \/out\/ctx-daemon-linux-x86_64/);
   assert.doesNotMatch(args.join(" "), /\/usr\/local\/cargo\/registry/);
   assert.doesNotMatch(args.join(" "), /\/usr\/local\/cargo\/git/);
+
+  fs.rmSync(tempRoot, { recursive: true, force: true });
 });
 
 test("linux ctx-mcp container build command stages runtime into bundle tree", () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "desktop-sync-test-"));
+  const runtimesDir = path.join(tempRoot, "bundle");
   const [spawnCmd, args] = __desktopSyncResourcesTestHooks.buildLinuxCtxMcpContainerArgs({
     runtime: "docker",
     builderImage: "rust:test",
     coreDir: "/src-host",
-    runtimesDir: "/bundle-host",
+    runtimesDir,
     targetCache: "/target-host",
     cargoHome: "/cargo-home-host",
     rustupHome: "/rustup-home-host",
@@ -97,6 +103,8 @@ test("linux ctx-mcp container build command stages runtime into bundle tree", ()
   );
   assert.doesNotMatch(args.join(" "), /\/usr\/local\/cargo\/registry/);
   assert.doesNotMatch(args.join(" "), /\/usr\/local\/cargo\/git/);
+
+  fs.rmSync(tempRoot, { recursive: true, force: true });
 });
 
 test("bundle cache root follows CARGO_TARGET_DIR before HOME cache fallbacks", () => {
@@ -144,6 +152,63 @@ test("container cache dirs on macOS are made world-writable for docker bind moun
   __desktopSyncResourcesTestHooks.ensureContainerCacheDir(cacheDir, "macos");
 
   const mode = fs.statSync(cacheDir).mode & 0o777;
+  assert.equal(mode, 0o777);
+
+  fs.rmSync(tempRoot, { recursive: true, force: true });
+});
+
+test("remote daemon output mount dirs on macOS are made world-writable for docker bind mounts", () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "desktop-sync-test-"));
+  const daemonsDir = path.join(tempRoot, "daemons");
+  fs.mkdirSync(daemonsDir, { recursive: true });
+  fs.chmodSync(daemonsDir, 0o755);
+
+  __desktopSyncResourcesTestHooks.buildRemoteDaemonContainerArgs({
+    runtime: "docker",
+    builderImage: "rust:test",
+    coreDir: "/src-host",
+    daemonsDir,
+    targetCache: "/target-host",
+    cargoHome: "/cargo-home-host",
+    rustupHome: "/rustup-home-host",
+    target: {
+      platform: "linux/amd64",
+      rustTarget: "x86_64-unknown-linux-gnu",
+      fileName: "ctx-daemon-linux-x86_64",
+    },
+    hostOs: "macos",
+  });
+
+  const mode = fs.statSync(daemonsDir).mode & 0o777;
+  assert.equal(mode, 0o777);
+
+  fs.rmSync(tempRoot, { recursive: true, force: true });
+});
+
+test("linux ctx-mcp output mount dirs on macOS are made world-writable for docker bind mounts", () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "desktop-sync-test-"));
+  const runtimesDir = path.join(tempRoot, "runtimes");
+  fs.mkdirSync(runtimesDir, { recursive: true });
+  fs.chmodSync(runtimesDir, 0o755);
+
+  __desktopSyncResourcesTestHooks.buildLinuxCtxMcpContainerArgs({
+    runtime: "docker",
+    builderImage: "rust:test",
+    coreDir: "/src-host",
+    runtimesDir,
+    targetCache: "/target-host",
+    cargoHome: "/cargo-home-host",
+    rustupHome: "/rustup-home-host",
+    target: {
+      arch: "aarch64",
+      platform: "linux/arm64",
+      rustTarget: "aarch64-unknown-linux-gnu",
+    },
+    runtimeVersion: "0.1.0",
+    hostOs: "macos",
+  });
+
+  const mode = fs.statSync(runtimesDir).mode & 0o777;
   assert.equal(mode, 0o777);
 
   fs.rmSync(tempRoot, { recursive: true, force: true });
