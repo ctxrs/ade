@@ -1,10 +1,10 @@
-use std::collections::{BTreeSet, HashMap};
 use ctx_providers::adapters::ProviderStatus;
+use std::collections::{BTreeSet, HashMap};
 
-use crate::ProviderRuntimeHost;
 use crate::provider_usability::{
     apply_install_viability_details, apply_provider_usability_details,
 };
+use crate::ProviderRuntimeHost;
 use ctx_managed_installs as installer;
 use ctx_provider_install::install_state::InstallTarget;
 use ctx_provider_matrix as provider_matrix;
@@ -135,40 +135,36 @@ pub async fn provider_status_for_target(
     provider_id: &str,
     target: InstallTarget,
 ) -> ProviderStatus {
-    let mut status =
-        if let Some(status) = synthesize_target_mismatch_status(managed, provider_id, target) {
-            status
-        } else if matches!(target, InstallTarget::Host) {
-            state
-                .provider_statuses()
-                .lock()
-                .await
-                .get(provider_id)
-                .cloned()
-                .unwrap_or_else(|| ProviderStatus {
-                    provider_id: provider_id.to_string(),
-                    installed: false,
-                    detected_path: None,
-                    version: None,
-                    capabilities: None,
-                    health: ctx_providers::adapters::ProviderHealth::Missing,
-                    diagnostics: vec![format!("provider not available: {provider_id}")],
-                    details: HashMap::new(),
-                    usability: ctx_providers::adapters::ProviderUsability::default(),
-                })
-        } else {
-            let adapter = ensure_provider_adapter_for_target_with_cfg(
-                state,
-                managed,
-                provider_id,
-                target,
-            )
-            .await;
-            match adapter.inspect().await {
-                Ok(status) => status,
-                Err(err) => inspect_error_status(provider_id, err),
-            }
-        };
+    let mut status = if let Some(status) =
+        synthesize_target_mismatch_status(managed, provider_id, target)
+    {
+        status
+    } else if matches!(target, InstallTarget::Host) {
+        state
+            .provider_statuses()
+            .lock()
+            .await
+            .get(provider_id)
+            .cloned()
+            .unwrap_or_else(|| ProviderStatus {
+                provider_id: provider_id.to_string(),
+                installed: false,
+                detected_path: None,
+                version: None,
+                capabilities: None,
+                health: ctx_providers::adapters::ProviderHealth::Missing,
+                diagnostics: vec![format!("provider not available: {provider_id}")],
+                details: HashMap::new(),
+                usability: ctx_providers::adapters::ProviderUsability::default(),
+            })
+    } else {
+        let adapter =
+            ensure_provider_adapter_for_target_with_cfg(state, managed, provider_id, target).await;
+        match adapter.inspect().await {
+            Ok(status) => status,
+            Err(err) => inspect_error_status(provider_id, err),
+        }
+    };
     status
         .details
         .insert("install_target".into(), target.as_str().to_string());

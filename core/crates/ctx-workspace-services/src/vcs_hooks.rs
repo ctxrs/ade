@@ -349,23 +349,13 @@ where
                 )
                 .await?;
             } else {
-                host.sandbox_git_config_unset(
-                    workspace,
-                    worktree,
-                    execution,
-                    CORE_HOOKS_PATH_KEY,
-                )
-                .await?;
+                host.sandbox_git_config_unset(workspace, worktree, execution, CORE_HOOKS_PATH_KEY)
+                    .await?;
             }
             host.sandbox_git_config_unset(workspace, worktree, execution, CTX_TASK_ID_KEY)
                 .await?;
-            host.sandbox_git_config_unset(
-                workspace,
-                worktree,
-                execution,
-                CTX_PREV_HOOKS_PATH_KEY,
-            )
-            .await?;
+            host.sandbox_git_config_unset(workspace, worktree, execution, CTX_PREV_HOOKS_PATH_KEY)
+                .await?;
         }
     }
     Ok(())

@@ -5,13 +5,14 @@ use std::sync::Arc;
 use ctx_providers::adapters::{ProviderAdapter, ProviderStatus};
 use tokio::sync::Mutex;
 
-pub mod provider_launch;
 pub mod provider_adapters;
 pub mod provider_auth;
+pub mod provider_child_reclassifier;
 pub mod provider_guard;
+pub mod provider_launch;
 pub mod provider_restart;
-pub mod provider_usage;
 pub mod provider_usability;
+pub mod provider_usage;
 pub mod resource_governance;
 
 pub trait ProviderRuntimeHost: Send + Sync + 'static {

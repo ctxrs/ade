@@ -1,28 +1,23 @@
-use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use chrono::Utc;
-use serde::{Deserialize, Serialize};
-use tempfile::NamedTempFile;
-use tokio::process::Command;
-use toml::Value as TomlValue;
 
 mod container_mounts;
 
 use self::container_mounts::{
-    cleanup_removed_attachment, container_ensure_git_exclude, ensure_attachment_mount,
+    cleanup_removed_attachment as cleanup_removed_attachment_mounts, container_ensure_git_exclude,
+    ensure_attachment_mount,
 };
 
 use ctx_core::ids::{WorkspaceAttachmentId, WorkspaceId, WorktreeId};
 use ctx_core::models::{
-    AttachmentMode, AttachmentUpdatePolicy, Workspace, WorkspaceAttachment,
-    WorkspaceAttachmentKind, WorkspaceAttachmentStatus, Worktree, WorktreeAttachmentMount,
-    WorktreeAttachmentStatus,
+    Workspace, WorkspaceAttachment, WorkspaceAttachmentKind, WorkspaceAttachmentStatus, Worktree,
+    WorktreeAttachmentMount, WorktreeAttachmentStatus,
 };
+use ctx_workspace_services::workspace_attachments::{self, MaterializationResult};
 
 use crate::daemon::{AppState, AttachmentMaterializationTask};
 use crate::execution_effective;
@@ -34,74 +29,17 @@ use ctx_worktree_data_plane::apply_data_plane_to_execution_settings;
 
 const CONTAINER_ATTACHMENTS_SUBDIR: &str = "attachments";
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AttachmentConfig {
-    pub kind: WorkspaceAttachmentKind,
-    pub name: String,
-    pub source: String,
-    #[serde(default)]
-    pub revision: Option<String>,
-    #[serde(default)]
-    pub subpath: Option<String>,
-    #[serde(default)]
-    pub mount_relpath: Option<String>,
-    #[serde(default)]
-    pub mode: Option<AttachmentMode>,
-    #[serde(default)]
-    pub update_policy: Option<AttachmentUpdatePolicy>,
-}
-
-#[derive(Debug, Clone)]
-struct MaterializationResult {
-    path: PathBuf,
-    materialized_id: String,
-}
-
-#[derive(Debug, Clone)]
-struct AttachmentSyncPlan {
-    id: WorkspaceAttachmentId,
-    refresh: bool,
-}
+pub use ctx_workspace_services::workspace_attachments::AttachmentConfig;
 
 pub async fn sync_workspace_attachments(
     state: Arc<AppState>,
     workspace: &Workspace,
     refresh: bool,
 ) -> Result<Vec<WorkspaceAttachment>> {
-    let store = state.store_for_workspace(workspace.id).await?;
-    let existing = store.list_workspace_attachments(workspace.id).await?;
-
-    let mut out = Vec::with_capacity(existing.len());
-    let mut sync_plans = Vec::new();
-    for mut attachment in existing {
-        let now = Utc::now();
-        let should_refresh = refresh || attachment.update_policy != AttachmentUpdatePolicy::Manual;
-        let materialized_exists =
-            materialized_path_for_attachment(state.as_ref(), &attachment).exists();
-        let should_materialize = should_refresh || !materialized_exists;
-        if should_materialize && attachment.status != WorkspaceAttachmentStatus::Syncing {
-            attachment.status = WorkspaceAttachmentStatus::Pending;
-            attachment.error_message = None;
-            attachment.updated_at = now;
-            sync_plans.push(AttachmentSyncPlan {
-                id: attachment.id,
-                refresh: should_refresh,
-            });
-        } else if !should_materialize && attachment.status != WorkspaceAttachmentStatus::Ready {
-            // Heal stale pending/error states when the materialized content already exists
-            // and no refresh is required (e.g. manual-policy attachments after daemon restarts).
-            attachment.status = WorkspaceAttachmentStatus::Ready;
-            attachment.error_message = None;
-            if attachment.last_sync_at.is_none() {
-                attachment.last_sync_at = Some(now);
-            }
-            attachment.updated_at = now;
-        }
-        store.upsert_workspace_attachment(&attachment).await?;
-        out.push(attachment);
-    }
-
-    for plan in sync_plans {
+    let result =
+        workspace_attachments::sync_workspace_attachments(state.as_ref(), workspace, refresh)
+            .await?;
+    for plan in result.plans {
         spawn_attachment_materialization(
             Arc::clone(&state),
             workspace.clone(),
@@ -110,8 +48,7 @@ pub async fn sync_workspace_attachments(
         )
         .await;
     }
-
-    Ok(out)
+    Ok(result.attachments)
 }
 
 pub async fn upsert_workspace_attachment(
@@ -119,14 +56,7 @@ pub async fn upsert_workspace_attachment(
     workspace_id: WorkspaceId,
     cfg: AttachmentConfig,
 ) -> Result<WorkspaceAttachment> {
-    let store = state.store_for_workspace(workspace_id).await?;
-    let existing = store.list_workspace_attachments(workspace_id).await?;
-    let existing = existing.into_iter().find(|attachment| {
-        attachment.kind == cfg.kind && attachment.name.trim() == cfg.name.trim()
-    });
-    let attachment = normalize_attachment_config(workspace_id, cfg, existing);
-    store.upsert_workspace_attachment(&attachment).await?;
-    Ok(attachment)
+    workspace_attachments::upsert_workspace_attachment(state, workspace_id, cfg).await
 }
 
 pub async fn delete_workspace_attachment(
@@ -135,17 +65,13 @@ pub async fn delete_workspace_attachment(
     kind: WorkspaceAttachmentKind,
     name: &str,
 ) -> Result<bool> {
-    let store = state.store_for_workspace(workspace_id).await?;
-    let existing = store.list_workspace_attachments(workspace_id).await?;
-    let Some(target) = existing
-        .into_iter()
-        .find(|attachment| attachment.kind == kind && attachment.name.trim() == name.trim())
+    let Some(target) =
+        workspace_attachments::find_workspace_attachment(state, workspace_id, kind, name).await?
     else {
         return Ok(false);
     };
     cancel_attachment_materialization(state, target.id).await;
-    cleanup_removed_attachment(state, &target).await?;
-    store.delete_workspace_attachment(target.id).await?;
+    workspace_attachments::delete_workspace_attachment(state, &target).await?;
     Ok(true)
 }
 
@@ -205,74 +131,93 @@ async fn run_attachment_materialization(
     attachment_id: WorkspaceAttachmentId,
     refresh: bool,
 ) {
-    let store = match state.store_for_workspace(workspace.id).await {
-        Ok(store) => store,
-        Err(err) => {
-            tracing::warn!("attachment sync store load failed: {err:#}");
-            return;
-        }
-    };
-    let attachment = match store.get_workspace_attachment(attachment_id).await {
-        Ok(Some(attachment)) => attachment,
-        Ok(None) => return,
-        Err(err) => {
-            tracing::warn!("attachment sync lookup failed: {err:#}");
-            return;
-        }
-    };
-
-    let now = Utc::now();
-    if let Err(err) = store
-        .update_workspace_attachment_status(
-            attachment_id,
-            WorkspaceAttachmentStatus::Syncing,
-            None,
-            None,
-            now,
-        )
-        .await
+    if let Err(err) = workspace_attachments::run_attachment_materialization(
+        state.as_ref(),
+        &workspace,
+        attachment_id,
+        refresh,
+    )
+    .await
     {
-        tracing::warn!("attachment sync status update failed: {err:#}");
-        return;
+        tracing::warn!("attachment sync failed: {err:#}");
+    }
+}
+
+#[async_trait::async_trait]
+impl workspace_attachments::WorkspaceAttachmentsHost for AppState {
+    fn data_root(&self) -> &Path {
+        &self.core.data_root
     }
 
-    match materialize_attachment(&state, &workspace, &attachment, refresh).await {
-        Ok(_) => {
-            let now = Utc::now();
-            if let Err(err) = store
-                .update_workspace_attachment_status(
-                    attachment_id,
-                    WorkspaceAttachmentStatus::Ready,
-                    Some(now),
-                    None,
-                    now,
-                )
-                .await
-            {
-                tracing::warn!("attachment sync status update failed: {err:#}");
-                return;
-            }
-            let _ = ensure_workspace_attachments_for_worktrees_with_attachments(
-                &state,
-                &workspace,
-                &[attachment],
-                false,
-                false,
+    async fn list_workspace_attachments(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> Result<Vec<WorkspaceAttachment>> {
+        let store = self.store_for_workspace(workspace_id).await?;
+        store.list_workspace_attachments(workspace_id).await
+    }
+
+    async fn get_workspace_attachment(
+        &self,
+        workspace_id: WorkspaceId,
+        attachment_id: WorkspaceAttachmentId,
+    ) -> Result<Option<WorkspaceAttachment>> {
+        let store = self.store_for_workspace(workspace_id).await?;
+        store.get_workspace_attachment(attachment_id).await
+    }
+
+    async fn upsert_workspace_attachment(&self, attachment: &WorkspaceAttachment) -> Result<()> {
+        let store = self.store_for_workspace(attachment.workspace_id).await?;
+        store.upsert_workspace_attachment(attachment).await
+    }
+
+    async fn update_workspace_attachment_status(
+        &self,
+        workspace_id: WorkspaceId,
+        attachment_id: WorkspaceAttachmentId,
+        status: WorkspaceAttachmentStatus,
+        last_sync_at: Option<chrono::DateTime<Utc>>,
+        error_message: Option<String>,
+        updated_at: chrono::DateTime<Utc>,
+    ) -> Result<()> {
+        let store = self.store_for_workspace(workspace_id).await?;
+        store
+            .update_workspace_attachment_status(
+                attachment_id,
+                status,
+                last_sync_at,
+                error_message,
+                updated_at,
             )
-            .await;
-        }
-        Err(err) => {
-            let now = Utc::now();
-            let _ = store
-                .update_workspace_attachment_status(
-                    attachment_id,
-                    WorkspaceAttachmentStatus::Error,
-                    None,
-                    Some(err.to_string()),
-                    now,
-                )
-                .await;
-        }
+            .await
+    }
+
+    async fn delete_workspace_attachment_record(
+        &self,
+        workspace_id: WorkspaceId,
+        attachment_id: WorkspaceAttachmentId,
+    ) -> Result<()> {
+        let store = self.store_for_workspace(workspace_id).await?;
+        store.delete_workspace_attachment(attachment_id).await
+    }
+
+    async fn attachment_became_ready(
+        &self,
+        workspace: &Workspace,
+        attachment: &WorkspaceAttachment,
+    ) -> Result<()> {
+        ensure_workspace_attachments_for_worktrees_with_attachments(
+            self,
+            workspace,
+            std::slice::from_ref(attachment),
+            false,
+            false,
+        )
+        .await
+    }
+
+    async fn cleanup_removed_attachment(&self, attachment: &WorkspaceAttachment) -> Result<()> {
+        cleanup_removed_attachment_mounts(self, attachment).await
     }
 }
 
@@ -412,271 +357,19 @@ pub async fn ensure_workspace_attachments_for_worktrees_with_attachments(
     Ok(())
 }
 
-fn normalize_attachment_config(
-    workspace_id: WorkspaceId,
-    cfg: AttachmentConfig,
-    existing: Option<WorkspaceAttachment>,
-) -> WorkspaceAttachment {
-    let name = cfg.name.trim().to_string();
-    let now = Utc::now();
-    let (id, created_at, status, last_sync_at, error_message) = match existing {
-        Some(existing) => (
-            existing.id,
-            existing.created_at,
-            existing.status,
-            existing.last_sync_at,
-            existing.error_message,
-        ),
-        None => (
-            WorkspaceAttachmentId::new(),
-            now,
-            WorkspaceAttachmentStatus::Pending,
-            None,
-            None,
-        ),
-    };
-
-    let mount_relpath = cfg
-        .mount_relpath
-        .clone()
-        .unwrap_or_else(|| default_mount_relpath(&cfg.kind, &name));
-
-    WorkspaceAttachment {
-        id,
-        workspace_id,
-        kind: cfg.kind,
-        name,
-        source: cfg.source.trim().to_string(),
-        revision: cfg
-            .revision
-            .map(|v| v.trim().to_string())
-            .filter(|v| !v.is_empty()),
-        subpath: cfg
-            .subpath
-            .map(|v| v.trim().to_string())
-            .filter(|v| !v.is_empty()),
-        mount_relpath,
-        mode: cfg.mode.unwrap_or(AttachmentMode::Ro),
-        update_policy: cfg.update_policy.unwrap_or(AttachmentUpdatePolicy::Manual),
-        status,
-        last_sync_at,
-        error_message,
-        created_at,
-        updated_at: now,
-    }
-}
-
 async fn materialize_attachment(
     state: &AppState,
     workspace: &Workspace,
     attachment: &WorkspaceAttachment,
     refresh: bool,
 ) -> Result<MaterializationResult> {
-    match attachment.kind {
-        WorkspaceAttachmentKind::ReferenceRepo => {
-            materialize_reference_repo(state, attachment, refresh).await
-        }
-        WorkspaceAttachmentKind::DocMirror => {
-            materialize_doc_mirror(state, workspace, attachment, refresh).await
-        }
-    }
-}
-
-async fn materialize_reference_repo(
-    state: &AppState,
-    attachment: &WorkspaceAttachment,
-    refresh: bool,
-) -> Result<MaterializationResult> {
-    let revision = revision_key(attachment);
-    let dest = materialized_path_for_attachment(state, attachment);
-    let should_update = refresh || !dest.exists();
-    if should_update {
-        if dest.exists() {
-            tokio::fs::remove_dir_all(&dest).await?;
-        }
-        if let Some(parent) = dest.parent() {
-            tokio::fs::create_dir_all(parent).await?;
-        }
-        clone_reference_repo(&attachment.source, attachment.revision.as_deref(), &dest).await?;
-    }
-    Ok(MaterializationResult {
-        path: dest,
-        materialized_id: revision,
-    })
-}
-
-async fn clone_reference_repo(source: &str, revision: Option<&str>, dest: &Path) -> Result<()> {
-    let mut cmd = Command::new("git");
-    cmd.arg("clone")
-        .arg("--depth")
-        .arg("1")
-        .arg("--no-tags")
-        .kill_on_drop(true);
-    if let Some(rev) = revision {
-        if !looks_like_sha(rev) {
-            cmd.arg("--branch").arg(rev);
-        }
-    }
-    cmd.arg(source).arg(dest);
-    let output = cmd.output().await.context("running git clone")?;
-    if !output.status.success() {
-        anyhow::bail!(
-            "git clone failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
-
-    if let Some(rev) = revision {
-        if looks_like_sha(rev) {
-            let mut fetch_cmd = Command::new("git");
-            fetch_cmd
-                .arg("-C")
-                .arg(dest)
-                .arg("fetch")
-                .arg("--depth")
-                .arg("1")
-                .arg("origin")
-                .arg(rev)
-                .kill_on_drop(true);
-            let fetch = fetch_cmd.output().await.context("running git fetch")?;
-            if !fetch.status.success() {
-                anyhow::bail!(
-                    "git fetch failed: {}",
-                    String::from_utf8_lossy(&fetch.stderr)
-                );
-            }
-            let mut checkout_cmd = Command::new("git");
-            checkout_cmd
-                .arg("-C")
-                .arg(dest)
-                .arg("checkout")
-                .arg(rev)
-                .kill_on_drop(true);
-            let checkout = checkout_cmd
-                .output()
-                .await
-                .context("running git checkout")?;
-            if !checkout.status.success() {
-                anyhow::bail!(
-                    "git checkout failed: {}",
-                    String::from_utf8_lossy(&checkout.stderr)
-                );
-            }
-        }
-    }
-    Ok(())
-}
-
-async fn materialize_doc_mirror(
-    state: &AppState,
-    workspace: &Workspace,
-    attachment: &WorkspaceAttachment,
-    refresh: bool,
-) -> Result<MaterializationResult> {
-    let revision = revision_key(attachment);
-    let dest = materialized_path_for_attachment(state, attachment);
-    let should_update = refresh || !dest.exists();
-    if should_update {
-        if dest.exists() {
-            tokio::fs::remove_dir_all(&dest).await?;
-        }
-        tokio::fs::create_dir_all(&dest).await?;
-        run_doc_mirror_script(workspace, attachment, &dest).await?;
-    }
-    Ok(MaterializationResult {
-        path: dest,
-        materialized_id: revision,
-    })
-}
-
-async fn run_doc_mirror_script(
-    workspace: &Workspace,
-    attachment: &WorkspaceAttachment,
-    dest: &Path,
-) -> Result<()> {
-    if looks_like_url(&attachment.source) {
-        return run_doc_mirror_cli(workspace, attachment, dest).await;
-    }
-    let script_path = resolve_workspace_path(&workspace.root_path, &attachment.source);
-    if !script_path.exists() {
-        anyhow::bail!("doc mirror script not found: {}", script_path.display());
-    }
-
-    let mut cmd = if script_path.extension().and_then(|s| s.to_str()) == Some("py") {
-        let mut cmd = Command::new("python3");
-        cmd.arg(&script_path);
-        cmd
-    } else if script_path.extension().and_then(|s| s.to_str()) == Some("sh") {
-        let mut cmd = Command::new("bash");
-        cmd.arg(&script_path);
-        cmd
-    } else {
-        Command::new(&script_path)
-    };
-
-    cmd.arg(dest)
-        .current_dir(&workspace.root_path)
-        .env("CTX_DOCS_OUTPUT_DIR", dest)
-        .env("CTX_DOCS_OUTPUT_DIR", dest)
-        .kill_on_drop(true);
-    let output = cmd.output().await.context("running doc mirror script")?;
-    if !output.status.success() {
-        anyhow::bail!(
-            "doc mirror script failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
-    Ok(())
-}
-
-fn docs_mirror_bin() -> PathBuf {
-    std::env::var_os("CTX_DOCS_MIRROR_BIN")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("ctx-docs-mirror"))
-}
-
-fn looks_like_url(value: &str) -> bool {
-    value.starts_with("http://") || value.starts_with("https://")
-}
-
-async fn run_doc_mirror_cli(
-    workspace: &Workspace,
-    attachment: &WorkspaceAttachment,
-    dest: &Path,
-) -> Result<()> {
-    let mut table = toml::value::Table::new();
-    table.insert(
-        "source".to_string(),
-        TomlValue::String(attachment.source.clone()),
-    );
-    table.insert(
-        "docs_url".to_string(),
-        TomlValue::String(attachment.source.clone()),
-    );
-    let cfg = TomlValue::Table(table);
-    let cfg_text = toml::to_string_pretty(&cfg).context("serializing docs mirror config")?;
-    let mut temp = NamedTempFile::new().context("creating docs mirror config file")?;
-    temp.write_all(cfg_text.as_bytes())
-        .context("writing docs mirror config")?;
-    temp.flush().context("flushing docs mirror config")?;
-
-    let bin = docs_mirror_bin();
-    let mut cmd = Command::new(&bin);
-    cmd.arg("mirror")
-        .arg("--config")
-        .arg(temp.path())
-        .arg("--out")
-        .arg(dest)
-        .current_dir(&workspace.root_path)
-        .kill_on_drop(true);
-    let output = cmd.output().await.context("running ctx-docs-mirror")?;
-    if !output.status.success() {
-        anyhow::bail!(
-            "ctx-docs-mirror failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
-    Ok(())
+    workspace_attachments::materialize_attachment(
+        &state.core.data_root,
+        workspace,
+        attachment,
+        refresh,
+    )
+    .await
 }
 
 async fn ensure_git_exclude(
@@ -845,101 +538,20 @@ fn copy_dir_recursive(source: &Path, target: &Path) -> Result<()> {
     Ok(())
 }
 
-fn attachment_store_root(data_root: &Path) -> PathBuf {
-    data_root.join("attachments")
-}
-
 fn materialized_root_for_attachment(state: &AppState, attachment: &WorkspaceAttachment) -> PathBuf {
-    match attachment.kind {
-        WorkspaceAttachmentKind::ReferenceRepo => attachment_store_root(&state.core.data_root)
-            .join("reference-repos")
-            .join("checkouts")
-            .join(attachment.id.0.to_string()),
-        WorkspaceAttachmentKind::DocMirror => attachment_store_root(&state.core.data_root)
-            .join("doc-mirrors")
-            .join(attachment.id.0.to_string()),
-    }
+    workspace_attachments::materialized_root_for_attachment(&state.core.data_root, attachment)
 }
 
 fn materialized_path_for_attachment(state: &AppState, attachment: &WorkspaceAttachment) -> PathBuf {
-    let revision = revision_key(attachment);
-    match attachment.kind {
-        WorkspaceAttachmentKind::ReferenceRepo => attachment_store_root(&state.core.data_root)
-            .join("reference-repos")
-            .join("checkouts")
-            .join(attachment.id.0.to_string())
-            .join(revision),
-        WorkspaceAttachmentKind::DocMirror => attachment_store_root(&state.core.data_root)
-            .join("doc-mirrors")
-            .join(attachment.id.0.to_string())
-            .join(revision),
-    }
-}
-
-fn resolve_workspace_path(workspace_root: &str, raw: &str) -> PathBuf {
-    let path = PathBuf::from(raw);
-    if path.is_absolute() {
-        path
-    } else {
-        Path::new(workspace_root).join(path)
-    }
+    workspace_attachments::materialized_path_for_attachment(&state.core.data_root, attachment)
 }
 
 fn sanitize_mount_relpath(value: &str) -> Result<PathBuf> {
-    if value.trim().is_empty() {
-        anyhow::bail!("mount_relpath must not be empty");
-    }
-    let path = PathBuf::from(value);
-    if path.is_absolute() {
-        anyhow::bail!("mount_relpath must be relative: {value}");
-    }
-    for part in path.components() {
-        if matches!(part, std::path::Component::ParentDir) {
-            anyhow::bail!("mount_relpath must not contain '..': {value}");
-        }
-    }
-    Ok(path)
-}
-
-fn default_mount_relpath(kind: &WorkspaceAttachmentKind, name: &str) -> String {
-    let safe_name = sanitize_name(name);
-    match kind {
-        WorkspaceAttachmentKind::ReferenceRepo => format!(".ctx/attachments/refs/{safe_name}"),
-        WorkspaceAttachmentKind::DocMirror => format!(".ctx/attachments/docs/{safe_name}"),
-    }
-}
-
-fn sanitize_name(name: &str) -> String {
-    let mut out = String::new();
-    let mut last_dash = false;
-    for ch in name.chars() {
-        if ch.is_ascii_alphanumeric() {
-            out.push(ch.to_ascii_lowercase());
-            last_dash = false;
-        } else if !last_dash {
-            out.push('-');
-            last_dash = true;
-        }
-    }
-    let trimmed = out.trim_matches('-');
-    if trimmed.is_empty() {
-        "attachment".to_string()
-    } else {
-        trimmed.to_string()
-    }
+    workspace_attachments::sanitize_mount_relpath(value)
 }
 
 fn revision_key(attachment: &WorkspaceAttachment) -> String {
-    let base = attachment.revision.as_deref().unwrap_or("default");
-    sanitize_name(base)
-}
-
-fn looks_like_sha(value: &str) -> bool {
-    let len = value.len();
-    if !(7..=40).contains(&len) {
-        return false;
-    }
-    value.chars().all(|c| c.is_ascii_hexdigit())
+    workspace_attachments::revision_key(attachment)
 }
 
 #[cfg(test)]

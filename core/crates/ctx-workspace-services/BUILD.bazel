@@ -12,7 +12,10 @@ rust_library(
         "//core/crates/ctx-core:lib",
         "@crates//:anyhow",
         "@crates//:chrono",
+        "@crates//:serde",
+        "@crates//:tempfile",
         "@crates//:tokio",
+        "@crates//:toml",
         "@crates//:tracing",
     ],
     proc_macro_deps = [

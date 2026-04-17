@@ -99,11 +99,11 @@ where
         state.provider_matrix_cache(),
     )
     .await;
-    let managed = installer::load_agent_server_config(
-        installer::ManagedInstallHost::data_root(state.as_ref()),
-    )
-        .await
-        .unwrap_or_default();
+    let managed = installer::load_agent_server_config(installer::ManagedInstallHost::data_root(
+        state.as_ref(),
+    ))
+    .await
+    .unwrap_or_default();
     if !installer::is_supported_managed_provider_for_target(&matrix, provider_id, target) {
         return Err(StartProviderInstallError {
             message: format!(
@@ -126,7 +126,9 @@ where
         });
     }
 
-    let (install_id, started_new) = state.start_install(provider_id.to_string(), Some(target)).await;
+    let (install_id, started_new) = state
+        .start_install(provider_id.to_string(), Some(target))
+        .await;
     if started_new {
         seed_running_prerequisite_progress(
             state,
@@ -178,11 +180,11 @@ where
         state.provider_matrix_cache(),
     )
     .await;
-    let managed = installer::load_agent_server_config(
-        installer::ManagedInstallHost::data_root(state.as_ref()),
-    )
-        .await
-        .unwrap_or_default();
+    let managed = installer::load_agent_server_config(installer::ManagedInstallHost::data_root(
+        state.as_ref(),
+    ))
+    .await
+    .unwrap_or_default();
     let mut deferred_acp_repairs = Vec::new();
     for entry in &matrix.providers {
         if entry.kind != provider_matrix::ProviderMatrixEntryKind::Harness {
@@ -241,8 +243,8 @@ where
     let refreshed_managed = installer::load_agent_server_config(
         installer::ManagedInstallHost::data_root(state.as_ref()),
     )
-        .await
-        .unwrap_or_default();
+    .await
+    .unwrap_or_default();
     let mut deferred_queue = Vec::new();
     for provider_id in deferred_acp_repairs {
         let issue = provider_install_contract::provider_install_viability_issue(
@@ -363,7 +365,9 @@ where
         return None;
     }
 
-    let (install_id, started_new) = state.start_install(provider_id.to_string(), Some(target)).await;
+    let (install_id, started_new) = state
+        .start_install(provider_id.to_string(), Some(target))
+        .await;
     if started_new {
         seed_running_prerequisite_progress(state, managed, matrix, provider_id, target, install_id)
             .await;
@@ -444,7 +448,9 @@ async fn queue_deferred_bulk_provider_install<H>(
 where
     H: ProviderInstallHost,
 {
-    let (install_id, started_new) = state.start_install(provider_id.to_string(), Some(target)).await;
+    let (install_id, started_new) = state
+        .start_install(provider_id.to_string(), Some(target))
+        .await;
     if started_new {
         if let Some(bridge_install_id) = bridge_install_id {
             let _ = state

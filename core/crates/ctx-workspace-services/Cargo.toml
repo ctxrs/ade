@@ -8,5 +8,8 @@ anyhow.workspace = true
 async-trait.workspace = true
 chrono.workspace = true
 ctx-core = { path = "../ctx-core" }
+serde.workspace = true
+tempfile = "3"
 tokio.workspace = true
+toml = "0.8"
 tracing.workspace = true

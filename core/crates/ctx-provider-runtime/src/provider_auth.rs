@@ -4,9 +4,7 @@ use ctx_harness_sources as harness_sources;
 use ctx_harness_sources::HarnessSourceKind;
 use ctx_provider_accounts as provider_accounts;
 
-pub fn endpoint_selection_is_active(
-    config: &harness_sources::HarnessProviderSourceConfig,
-) -> bool {
+pub fn endpoint_selection_is_active(config: &harness_sources::HarnessProviderSourceConfig) -> bool {
     if config.selected_source_kind != HarnessSourceKind::Endpoint {
         return false;
     }

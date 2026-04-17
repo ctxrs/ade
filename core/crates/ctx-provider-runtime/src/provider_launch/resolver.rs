@@ -784,7 +784,8 @@ pub async fn ensure_provider_adapter_for_target_with_cfg(
         {
             return adapter;
         }
-        let adapter = build_provider_adapter_for_target(state.data_root(), cfg, provider_id, target);
+        let adapter =
+            build_provider_adapter_for_target(state.data_root(), cfg, provider_id, target);
         state
             .target_provider_adapters()
             .lock()

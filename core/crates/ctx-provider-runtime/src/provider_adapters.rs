@@ -140,10 +140,7 @@ pub fn runtime_command_missing_adapter(provider_id: &str) -> Arc<dyn ProviderAda
     )
 }
 
-pub fn runtime_command_invalid_adapter(
-    provider_id: &str,
-    err: String,
-) -> Arc<dyn ProviderAdapter> {
+pub fn runtime_command_invalid_adapter(provider_id: &str, err: String) -> Arc<dyn ProviderAdapter> {
     static_status_adapter(
         provider_id,
         false,

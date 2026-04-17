@@ -1,7 +1,11 @@
 use super::*;
+use std::process::Stdio;
+
 use crate::settings::ContainerRuntimeKind;
 use crate::worktree_data_plane::resolve_worktree_data_plane;
+use ctx_core::models::AttachmentUpdatePolicy;
 use ctx_worktree_data_plane::apply_data_plane_to_execution_settings;
+use tokio::process::Command;
 
 #[derive(Debug, Clone)]
 enum AttachmentRuntime {

@@ -44,10 +44,8 @@ pub struct BootstrapReport {
 
 #[async_trait]
 pub trait WorktreeBootstrapHost: Send + Sync + 'static {
-    async fn load_bootstrap_config(
-        &self,
-        workspace: &Workspace,
-    ) -> Result<Option<BootstrapConfig>>;
+    async fn load_bootstrap_config(&self, workspace: &Workspace)
+        -> Result<Option<BootstrapConfig>>;
 
     async fn execute_bootstrap_step(
         &self,

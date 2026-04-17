@@ -40,7 +40,6 @@ pub struct ProviderGuardRuntime {
     pub last_message: Option<String>,
 }
 
-
 #[derive(Debug, Clone)]
 pub struct ProviderGuardEvent {
     pub sample: ProviderMemorySample,
