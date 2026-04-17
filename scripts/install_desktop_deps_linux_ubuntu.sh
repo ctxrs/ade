@@ -61,6 +61,40 @@ Acquire::ForceIPv4 "true";
 EOF
 }
 
+apt_log_indicates_lock_contention() {
+  local log_path="$1"
+  grep -Eiq \
+    'Could not get lock|Unable to acquire the dpkg frontend lock|Unable to lock directory /var/lib/apt/lists/|Waiting for cache lock' \
+    "$log_path"
+}
+
+run_apt_get_with_lock_retry() {
+  local attempt=1
+  local log_path=""
+
+  while true; do
+    log_path="$(mktemp "${TMPDIR:-/tmp}/ctx-apt-get.XXXXXX")"
+    if "${SUDO[@]}" env DEBIAN_FRONTEND=noninteractive apt-get "$@" >"$log_path" 2>&1; then
+      cat "$log_path"
+      rm -f "$log_path"
+      return 0
+    fi
+
+    if apt_log_indicates_lock_contention "$log_path" && (( attempt < APT_LOCK_RETRY_ATTEMPTS )); then
+      cat "$log_path" >&2
+      echo "warn: apt/dpkg lock is busy (attempt ${attempt}/${APT_LOCK_RETRY_ATTEMPTS}); retrying in ${APT_LOCK_RETRY_SLEEP_SECONDS}s..." >&2
+      rm -f "$log_path"
+      sleep "$APT_LOCK_RETRY_SLEEP_SECONDS"
+      attempt=$((attempt + 1))
+      continue
+    fi
+
+    cat "$log_path" >&2
+    rm -f "$log_path"
+    return 1
+  done
+}
+
 choose_first_available_pkg() {
   local pkg
   for pkg in "$@"; do
@@ -81,9 +115,12 @@ else
 fi
 
 readonly DOCKER_BUILDX_VERSION="${DOCKER_BUILDX_VERSION:-v0.30.1}"
+readonly APT_LOCK_RETRY_ATTEMPTS="${CTX_APT_LOCK_RETRY_ATTEMPTS:-30}"
+readonly APT_LOCK_RETRY_SLEEP_SECONDS="${CTX_APT_LOCK_RETRY_SLEEP_SECONDS:-5}"
 
 packages=(
   build-essential
+  binutils
   pkg-config
   curl
   sshpass
@@ -102,9 +139,11 @@ packages=(
   librsvg2-dev
   libssl-dev
   libcap-dev
+  liblzma-dev
   musl
   libc++1
   tk
+  unzip
 )
 
 SUDO=()
@@ -134,7 +173,7 @@ EOF
   echo "${BOLD}Installing desktop (Tauri v2) Linux build dependencies (Ubuntu/Debian)${RESET}"
 
   configure_apt_network
-  "${SUDO[@]}" apt-get update
+  run_apt_get_with_lock_retry update
 fi
 
 webkit_pkg="$(choose_first_available_pkg libwebkit2gtk-4.1-dev)" || {
@@ -176,7 +215,7 @@ if [[ "$print_selected_packages" == "1" ]]; then
   exit 0
 fi
 
-"${SUDO[@]}" env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+run_apt_get_with_lock_retry install -y --no-install-recommends \
   "${selected_packages[@]}"
 
 install_docker_buildx_plugin() {

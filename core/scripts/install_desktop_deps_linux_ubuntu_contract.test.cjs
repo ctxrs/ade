@@ -9,6 +9,11 @@ const script = fs.readFileSync(scriptPath, "utf8");
 test("ubuntu desktop deps installer includes libcap for codex sandbox builds", () => {
   assert.match(
     script,
+    /\n\s*binutils\n[\s\S]*\n\s*liblzma-dev\n[\s\S]*\n\s*unzip\n/,
+    "install_desktop_deps_linux_ubuntu.sh must include the Linux release packaging utilities in the shared desktop deps set",
+  );
+  assert.match(
+    script,
     /\n\s*libcap-dev\n/,
     "install_desktop_deps_linux_ubuntu.sh must install libcap-dev for codex-linux-sandbox",
   );
@@ -46,5 +51,15 @@ test("ubuntu desktop deps installer includes libcap for codex sandbox builds", (
     script,
     /Acquire::ForceIPv4 "true";/,
     "install_desktop_deps_linux_ubuntu.sh must write an apt IPv4 override when requested",
+  );
+  assert.match(
+    script,
+    /run_apt_get_with_lock_retry\(\)/,
+    "install_desktop_deps_linux_ubuntu.sh must centralize apt invocations behind a lock-aware retry helper",
+  );
+  assert.match(
+    script,
+    /Could not get lock\|Unable to acquire the dpkg frontend lock/,
+    "install_desktop_deps_linux_ubuntu.sh must recognize transient apt\/dpkg lock contention",
   );
 });
