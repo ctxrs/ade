@@ -8,6 +8,7 @@ import path from "node:path";
 import { renderInstallScript } from "./install-script.js";
 
 const makeTempDir = (prefix) => mkdtempSync(path.join(tmpdir(), prefix));
+const NODE_BIN = JSON.stringify(process.execPath);
 const escapeRegExp = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const createFakeAppImage = () => `#!/bin/sh
 set -eu
@@ -28,7 +29,7 @@ const createExtractorScript = (stubDir) => {
   const extractorPath = path.join(stubDir, "extract-json.mjs");
   writeExecutable(
     extractorPath,
-    `#!/usr/bin/env node
+    `#!${process.execPath}
 import fs from "node:fs";
 
 const manifestPath = process.argv[2];
@@ -122,7 +123,7 @@ esac
     path.join(stubDir, "python3"),
     `#!/bin/sh
 set -eu
-exec node "${extractorPath}" "$2" "$3"
+exec ${NODE_BIN} "${extractorPath}" "$2" "$3"
 `,
   );
   writeExecutable(
@@ -159,7 +160,7 @@ while [ "$#" -gt 0 ]; do
       ;;
   esac
 done
-exec node "${extractorPath}" "$manifest" "$key"
+exec ${NODE_BIN} "${extractorPath}" "$manifest" "$key"
 `,
   );
   for (const name of ["hdiutil", "ditto", "open", "xdg-open", "update-desktop-database"]) {
