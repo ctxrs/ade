@@ -10,11 +10,15 @@ const {
 const { getBazelTestTargetsForCrates } = require("./lib/bazel_rust_targets.cjs");
 
 const coreRoot = path.resolve(__dirname, "..");
+const desktopVersion = JSON.parse(
+  fs.readFileSync(path.join(coreRoot, "apps", "desktop", "package.json"), "utf8"),
+).version;
 const ctxHttpBuild = fs.readFileSync(path.join(coreRoot, "crates", "ctx-http", "BUILD.bazel"), "utf8");
 const ctxHttpBazelTests = fs.readFileSync(
   path.join(coreRoot, "crates", "ctx-http", "ctx_http_bazel_tests.bzl"),
   "utf8",
 );
+const escapeRegExp = (value) => String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 test("ctx-http BUILD exposes Bazel-native base test targets", () => {
   assert.match(ctxHttpBuild, /rust_doc_test/);
@@ -95,7 +99,7 @@ test("ctx-http BUILD exposes Bazel-native base test targets", () => {
     /CTX_HTTP_INTEGRATION_TEST_DATA = CTX_HTTP_COMPILE_DATA \+ CTX_HTTP_TEST_CORPUS_DATA \+ CTX_HTTP_TEST_FIXTURE_DATA/,
   );
   assert.match(ctxHttpBuild, /declare_ctx_http_integration_tests/);
-  assert.match(ctxHttpBuild, /CARGO_PKG_VERSION": "0\.58\.0"/);
+  assert.match(ctxHttpBuild, new RegExp(`CARGO_PKG_VERSION": "${escapeRegExp(desktopVersion)}"`));
 });
 
 test("ctx-http Bazel helper keeps quick-path and manual-only suites explicit", () => {
