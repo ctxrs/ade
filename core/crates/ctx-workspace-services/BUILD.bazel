@@ -11,10 +11,12 @@ rust_library(
     deps = [
         "//core/crates/ctx-core:lib",
         "@crates//:anyhow",
-        "@crates//:async-trait",
         "@crates//:chrono",
         "@crates//:tokio",
         "@crates//:tracing",
+    ],
+    proc_macro_deps = [
+        "@crates//:async-trait",
     ],
 )
 

@@ -17,16 +17,19 @@ rust_library(
         "//core/crates/ctx-provider-matrix:lib",
         "//core/crates/ctx-providers:lib",
         "@crates//:anyhow",
-        "@crates//:async-trait",
         "@crates//:chrono",
         "@crates//:directories",
         "@crates//:reqwest",
         "@crates//:serde",
         "@crates//:serde_json",
+        "@crates//:sysinfo",
         "@crates//:tempfile",
         "@crates//:tokio",
         "@crates//:toml",
         "@crates//:tracing",
+    ],
+    proc_macro_deps = [
+        "@crates//:async-trait",
     ],
 )
 

@@ -17,7 +17,6 @@ rust_library(
         "//core/crates/ctx-provider-matrix:lib",
         "//core/crates/ctx-providers:lib",
         "@crates//:anyhow",
-        "@crates//:async-trait",
         "@crates//:bzip2",
         "@crates//:chrono",
         "@crates//:flate2",
@@ -38,6 +37,9 @@ rust_library(
         "@crates//:uuid",
         "@crates//:which",
         "@crates//:zip",
+    ],
+    proc_macro_deps = [
+        "@crates//:async-trait",
     ],
 )
 

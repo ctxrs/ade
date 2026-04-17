@@ -14,10 +14,12 @@ rust_library(
         "//core/crates/ctx-store:lib",
         "//core/crates/ctx-workspace-config:lib",
         "@crates//:anyhow",
-        "@crates//:async-trait",
         "@crates//:chrono",
         "@crates//:tokio",
         "@crates//:tracing",
+    ],
+    proc_macro_deps = [
+        "@crates//:async-trait",
     ],
 )
 

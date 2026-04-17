@@ -7,8 +7,11 @@ use tokio::sync::Mutex;
 
 pub mod provider_launch;
 pub mod provider_auth;
+pub mod provider_guard;
+pub mod provider_restart;
 pub mod provider_usage;
 pub mod provider_usability;
+pub mod resource_governance;
 
 pub trait ProviderRuntimeHost: Send + Sync + 'static {
     fn data_root(&self) -> &Path;
