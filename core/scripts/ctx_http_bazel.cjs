@@ -4,7 +4,10 @@ const childProcess = require("node:child_process");
 const path = require("node:path");
 
 const { readDesktopVersion } = require("./desktop_version.cjs");
-const { ensureWebDistArtifact } = require("./lib/web_dist_cache.cjs");
+const {
+  ensureWebDistArtifact,
+  resolveDirectRunBazelVersion,
+} = require("./lib/web_dist_cache.cjs");
 const { resolveCtxCacheLayout } = require("./lib/cache_roots.cjs");
 const { bazeliskBinaryPath, buildBuildBuddyAuthArgs } = require("./run_bazel_pilot.cjs");
 
@@ -77,12 +80,17 @@ function parseArgs(argv) {
 function buildBazelCommandContext(env = process.env) {
   const { coreRoot, repoRoot } = repoRoots();
   const layout = resolveCtxCacheLayout({ cwd: coreRoot, env });
+  const bazelEnv = {
+    ...env,
+    TMPDIR: layout.tmpDir,
+  };
+  const directRunBazelVersion = resolveDirectRunBazelVersion({ repoRoot, env: bazelEnv });
+  if (directRunBazelVersion) {
+    bazelEnv.USE_BAZEL_VERSION = directRunBazelVersion;
+  }
   return {
-    bazelBinary: bazeliskBinaryPath(),
-    env: {
-      ...env,
-      TMPDIR: layout.tmpDir,
-    },
+    bazelBinary: bazeliskBinaryPath({ repoRoot, env: bazelEnv }),
+    env: bazelEnv,
     repoRoot,
     startupArgs: [`--output_user_root=${layout.bazelOutputUserRoot}`],
   };

@@ -11,6 +11,7 @@ const {
   PRINT_DESKTOP_SIDECAR_ENV_COMMAND,
   TARGET_SPECS,
   buildBazelPlatformArgs,
+  buildBazelCommandContext,
   buildDesktopSyncEnv,
   parseBazelOutputPaths,
   parseArgs,
@@ -79,6 +80,16 @@ test("ctx_http_bazel maps explicit target keys to Bazel platform labels", () => 
   assert.deepEqual(buildBazelPlatformArgs("linux-aarch64"), ["--platforms=//tools/bazel/platforms:linux_arm64"]);
   assert.deepEqual(buildBazelPlatformArgs("linux-x86_64"), ["--platforms=//tools/bazel/platforms:linux_x86_64"]);
   assert.throws(() => buildBazelPlatformArgs("bogus"), /unsupported ctx-http Bazel target/);
+});
+
+test("ctx_http_bazel uses plain Bazel for direct builds when the repo pins the BuildBuddy wrapper", () => {
+  const context = buildBazelCommandContext({});
+  assert.equal(context.env.USE_BAZEL_VERSION, "9.0.1");
+});
+
+test("ctx_http_bazel preserves an explicit USE_BAZEL_VERSION override", () => {
+  const context = buildBazelCommandContext({ USE_BAZEL_VERSION: "8.2.0" });
+  assert.equal(context.env.USE_BAZEL_VERSION, "8.2.0");
 });
 
 test("ctx_http_bazel resolves multiple Bazel output paths from a single cquery payload", () => {
