@@ -1,4 +1,4 @@
-use super::is_session_gap_notice;
+use super::head_projection::is_session_gap_notice;
 use chrono::Utc;
 use ctx_core::ids::{SessionEventId, SessionId};
 use ctx_core::models::{SessionEvent, SessionEventType};

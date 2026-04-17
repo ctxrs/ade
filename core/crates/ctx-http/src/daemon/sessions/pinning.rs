@@ -3,9 +3,7 @@ use std::sync::Arc;
 
 use ctx_core::ids::SessionId;
 
-use crate::daemon::state::SessionPinState;
-
-use super::{AppState, SessionRuntime};
+use crate::daemon::state::{AppState, SessionPinState, SessionRuntime};
 
 impl SessionRuntime {
     async fn update_pin_state<F>(&self, session_id: SessionId, update: F) -> Option<bool>

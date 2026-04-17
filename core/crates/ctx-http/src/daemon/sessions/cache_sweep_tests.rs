@@ -1,4 +1,4 @@
-use super::{
+use super::head_projection::{
     build_session_summary_delta, derive_summary_activity, resolve_projection_rev_for_stream_delta,
 };
 use chrono::Utc;
