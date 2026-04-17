@@ -3,14 +3,14 @@ const assert = require("node:assert/strict");
 
 const { applyVerifyQuickDefaults } = require("./verify_quick.cjs");
 
-test("applyVerifyQuickDefaults enables linux RBE defaults on darwin", () => {
+test("applyVerifyQuickDefaults enables BuildBuddy cache-only defaults on darwin", () => {
   const env = {};
   applyVerifyQuickDefaults(env, "darwin");
 
   assert.deepEqual(env, {
     CARGO_INCREMENTAL: "0",
     RUST_TEST_THREADS: "1",
-    CTX_BAZEL_REMOTE_EXECUTION: "linux",
+    CTX_BAZEL_REMOTE_EXECUTION: "cache",
     CTX_BAZEL_BATCH: "0",
     CTX_BAZEL_JOBS: "1",
   });

@@ -16,7 +16,9 @@ function applyVerifyQuickDefaults(env, platform = process.platform) {
     env.RUST_TEST_THREADS = "1";
   }
   if (!String(env.CTX_BAZEL_REMOTE_EXECUTION ?? "").trim()) {
-    if (platform === "darwin" || platform === "linux") {
+    if (platform === "darwin") {
+      env.CTX_BAZEL_REMOTE_EXECUTION = "cache";
+    } else if (platform === "linux") {
       env.CTX_BAZEL_REMOTE_EXECUTION = "linux";
     }
   }

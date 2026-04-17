@@ -98,7 +98,7 @@ function parseRemoteExecutionMode(value) {
   const normalized = String(value ?? "").trim().toLowerCase();
   if (!normalized) {
     if (process.platform === "darwin") {
-      return "darwin";
+      return "cache";
     }
     if (process.platform === "linux") {
       return "linux";
@@ -107,6 +107,9 @@ function parseRemoteExecutionMode(value) {
   }
   if (["0", "false", "no", "off"].includes(normalized)) {
     return "off";
+  }
+  if (normalized === "cache") {
+    return "cache";
   }
   if (["1", "true", "yes", "on", "all"].includes(normalized)) {
     return "all";
@@ -293,7 +296,7 @@ function buildInvocationPhases({
   if (targets.length === 0) {
     return [];
   }
-  if (command === "run" || remoteExecutionMode === "off") {
+  if (command === "run" || remoteExecutionMode === "off" || remoteExecutionMode === "cache") {
     return [
       {
         name: "local",

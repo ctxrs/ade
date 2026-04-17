@@ -89,11 +89,12 @@ test("bazel pilot batch mode defaults on darwin and can be overridden explicitly
   assert.equal(parseBatchMode("0", { platform: "darwin" }), false);
 });
 
-test("bazel pilot remote execution mode parsing supports off, all, linux, and darwin", () => {
+test("bazel pilot remote execution mode parsing supports cache, off, all, linux, and darwin", () => {
   const defaultMode =
-    process.platform === "darwin" ? "darwin" : process.platform === "linux" ? "linux" : "off";
+    process.platform === "darwin" ? "cache" : process.platform === "linux" ? "linux" : "off";
   assert.equal(parseRemoteExecutionMode(undefined), defaultMode);
   assert.equal(parseRemoteExecutionMode(""), defaultMode);
+  assert.equal(parseRemoteExecutionMode("cache"), "cache");
   assert.equal(parseRemoteExecutionMode("off"), "off");
   assert.equal(parseRemoteExecutionMode("false"), "off");
   assert.equal(parseRemoteExecutionMode("1"), "all");
@@ -248,9 +249,9 @@ test("bazel pilot darwin remote execution uses the darwin BuildBuddy config dire
   );
 });
 
-test("bazel pilot defaults to host-native BuildBuddy mode when not explicitly disabled", () => {
+test("bazel pilot defaults to cache-only on darwin and linux RBE on linux", () => {
   const expectedMode =
-    process.platform === "darwin" ? "darwin" : process.platform === "linux" ? "linux" : "off";
+    process.platform === "darwin" ? "cache" : process.platform === "linux" ? "linux" : "off";
   const invocation = buildBazelPilotInvocation({
     argv: ["build", "//core/crates/ctx-core:lib"],
     env: {
@@ -267,10 +268,35 @@ test("bazel pilot defaults to host-native BuildBuddy mode when not explicitly di
     return;
   }
   assert.equal(invocation.phases[0].commandArgs.includes("--config=buildbuddy-cache"), true);
+  if (expectedMode === "cache") {
+    assert.equal(invocation.phases[0].name, "local");
+    assert.equal(invocation.phases[0].commandArgs.includes("--config=buildbuddy-darwin-rbe"), false);
+    assert.equal(invocation.phases[0].commandArgs.includes("--config=buildbuddy-linux-rbe"), false);
+    return;
+  }
+  assert.equal(invocation.phases[0].commandArgs.includes("--config=buildbuddy-linux-rbe"), true);
+});
+
+test("bazel pilot cache mode keeps execution local while preserving BuildBuddy cache auth", () => {
+  const invocation = buildBazelPilotInvocation({
+    argv: ["build", "//core/crates/ctx-core:lib"],
+    env: {
+      ...process.env,
+      CTX_VOLATILE_ROOT: "/tmp/ctx-bazel-pilot-cache-mode",
+      CTX_SESSION_ID: "bazel-cache-mode-session",
+      CTX_BAZEL_REMOTE_EXECUTION: "cache",
+      BUILD_BUDDY_API_KEY: "buildbuddy-cache-key",
+    },
+  });
+
+  assert.equal(invocation.remoteExecutionMode, "cache");
+  assert.equal(invocation.phases.length, 1);
+  assert.equal(invocation.phases[0].name, "local");
+  assert.equal(invocation.phases[0].commandArgs.includes("--config=buildbuddy-cache"), true);
+  assert.equal(invocation.phases[0].commandArgs.includes("--config=buildbuddy-darwin-rbe"), false);
+  assert.equal(invocation.phases[0].commandArgs.includes("--config=buildbuddy-linux-rbe"), false);
   assert.equal(
-    invocation.phases[0].commandArgs.includes(
-      expectedMode === "darwin" ? "--config=buildbuddy-darwin-rbe" : "--config=buildbuddy-linux-rbe",
-    ),
+    invocation.phases[0].commandArgs.includes("--remote_header=x-buildbuddy-api-key=buildbuddy-cache-key"),
     true,
   );
 });
