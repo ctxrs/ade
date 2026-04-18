@@ -35,6 +35,14 @@ test("deterministic Linux contract gates route through Bazel-owned workspace-tas
     packageJson.scripts["bazel:bundles:codex-provenance"],
     "node scripts/run_bazel_pilot.cjs run //tools/bazel:codex_provenance_policy",
   );
+  assert.equal(
+    packageJson.scripts["bazel:linux:bundle:gate"],
+    "node scripts/run_bazel_pilot.cjs run //tools/bazel:linux_bundle_contracts -- --platform linux-x64 --bundles-dir core/apps/desktop/src-tauri/bundles",
+  );
+  assert.equal(
+    packageJson.scripts["bazel:web:e2e:release:retry"],
+    "bash -lc '../scripts/ci_retry.sh pnpm bazel:web:e2e:release'",
+  );
 
   for (const filegroup of [
     'name = "buildkite_pipeline_sources"',

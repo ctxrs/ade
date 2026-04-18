@@ -214,7 +214,7 @@ const PROFILES = [
       includeWorlds: ["local-packaged-artifact"],
       includeCosts: ["medium"],
       includeStabilities: ["stable"],
-      includeExecutions: ["script-local"],
+      includeExecutions: ["script-local", "bazel-addressable"],
       excludeRequirements: ["mac", "single-mac"],
     },
     currentCommands: [

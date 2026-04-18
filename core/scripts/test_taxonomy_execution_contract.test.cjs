@@ -116,7 +116,7 @@ test("direct pipeline helper profiles resolve to explicit package-script command
   assert.deepEqual(
     buildExecutionPlan({ profileId: "release-updater-web-e2e", touchedOnly: false, changedFiles: [] }).commands,
     [
-      "pnpm release:e2e:web:release:retry",
+      "pnpm bazel:web:e2e:release:retry",
     ],
   );
   assert.deepEqual(

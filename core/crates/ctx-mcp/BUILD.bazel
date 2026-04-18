@@ -7,24 +7,26 @@ CTX_MCP_RUSTC_ENV = {
     "CARGO_PKG_VERSION": "0.1.0",
 }
 
+CTX_MCP_DEPS = [
+    "//core/crates/ctx-core:lib",
+    "@crates//:anyhow",
+    "@crates//:clap",
+    "@crates//:reqwest",
+    "@crates//:serde_json",
+    "@crates//:tokio",
+    "@crates//:tracing",
+    "@crates//:tracing-subscriber",
+    "@crates//:urlencoding",
+    "@crates//:uuid",
+]
+
 rust_binary(
     name = "ctx-mcp",
     crate_root = "src/main.rs",
     edition = "2021",
     srcs = glob(["src/**/*.rs"]),
     rustc_env = CTX_MCP_RUSTC_ENV,
-    deps = [
-        "//core/crates/ctx-core:lib",
-        "@crates//:anyhow",
-        "@crates//:clap",
-        "@crates//:reqwest",
-        "@crates//:serde_json",
-        "@crates//:tokio",
-        "@crates//:tracing",
-        "@crates//:tracing-subscriber",
-        "@crates//:urlencoding",
-        "@crates//:uuid",
-    ],
+    deps = CTX_MCP_DEPS,
 )
 
 CTX_MCP_TEST_RUSTC_ENV = {
@@ -77,4 +79,16 @@ rust_test(
     data = [":ctx-mcp"],
     rustc_env = CTX_MCP_TEST_RUSTC_ENV,
     deps = CTX_MCP_TEST_DEPS,
+)
+
+rust_test(
+    name = "fuzz_tests",
+    crate_root = "src/main.rs",
+    crate_features = ["fuzz_tests"],
+    edition = "2021",
+    srcs = glob(["src/**/*.rs"]),
+    rustc_env = CTX_MCP_RUSTC_ENV,
+    deps = CTX_MCP_DEPS + [
+        "@crates//:rand",
+    ],
 )
