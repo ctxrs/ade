@@ -116,7 +116,7 @@ pub fn build_guest_exec_command(
         .arg(cwd)
         .arg(format!("ctx-harness-{}", workspace_id.0));
     let mut env_pairs = env.iter().collect::<Vec<_>>();
-    env_pairs.sort_by(|(left, _), (right, _)| left.cmp(right));
+    env_pairs.sort_by_key(|(left, _)| *left);
     for (key, value) in env_pairs {
         child.arg("--env").arg(format!("{key}={value}"));
     }

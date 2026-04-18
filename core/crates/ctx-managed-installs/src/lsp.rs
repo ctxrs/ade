@@ -357,7 +357,7 @@ async fn install_lsp_server_impl(
                 AgentServerCommand {
                     command: node.node_bin.to_string_lossy().to_string(),
                     args: std::iter::once(entry.to_string_lossy().to_string())
-                        .chain(args.into_iter())
+                        .chain(args)
                         .collect(),
                     dependencies: Vec::new(),
                     managed: Some(meta),
