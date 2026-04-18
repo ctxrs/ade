@@ -8,6 +8,8 @@ load(
 
 package(default_visibility = ["//visibility:public"])
 
+exports_files(["Cargo.toml"])
+
 CTX_HTTP_RUSTC_ENV = {
     "CARGO_MANIFEST_DIR": "core/crates/ctx-http",
     "CARGO_PKG_VERSION": "0.58.11",

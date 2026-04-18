@@ -4,7 +4,7 @@ exports_files([
     "package.json",
     "pnpm-lock.yaml",
     "pnpm-workspace.yaml",
-)
+])
 
 filegroup(
     name = "desktop_automation_files",
@@ -24,13 +24,13 @@ filegroup(
         "apps/desktop/package.json",
         "apps/desktop/src-tauri/Cargo.toml",
         "apps/desktop/src-tauri/tauri.conf.json",
-        "crates/ctx-http/Cargo.toml",
+        "//core/crates/ctx-http:Cargo.toml",
     ],
     visibility = ["//visibility:public"],
 )
 
 filegroup(
     name = "provider_matrix_sources",
-    srcs = ["crates/ctx-provider-accounts/src/provider_matrix.json"],
+    srcs = ["//core/crates/ctx-provider-accounts:src/provider_matrix.json"],
     visibility = ["//visibility:public"],
 )

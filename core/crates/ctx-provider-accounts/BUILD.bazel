@@ -3,6 +3,8 @@ load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
 
 package(default_visibility = ["//visibility:public"])
 
+exports_files(["src/provider_matrix.json"])
+
 rust_library(
     name = "lib",
     crate_name = "ctx_provider_accounts",

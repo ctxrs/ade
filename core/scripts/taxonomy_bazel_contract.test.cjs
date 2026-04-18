@@ -8,6 +8,11 @@ const repoRoot = path.resolve(coreRoot, "..");
 const packageJson = JSON.parse(fs.readFileSync(path.join(coreRoot, "package.json"), "utf8"));
 const rootBuild = fs.readFileSync(path.join(repoRoot, "BUILD.bazel"), "utf8");
 const coreBuild = fs.readFileSync(path.join(coreRoot, "BUILD.bazel"), "utf8");
+const ctxHttpBuild = fs.readFileSync(path.join(coreRoot, "crates", "ctx-http", "BUILD.bazel"), "utf8");
+const ctxProviderAccountsBuild = fs.readFileSync(
+  path.join(coreRoot, "crates", "ctx-provider-accounts", "BUILD.bazel"),
+  "utf8",
+);
 const scriptsBuild = fs.readFileSync(path.join(coreRoot, "scripts", "BUILD.bazel"), "utf8");
 
 test("deterministic Linux contract gates route through Bazel-owned workspace-task wrappers", () => {
@@ -100,6 +105,11 @@ test("deterministic Linux contract gates route through Bazel-owned workspace-tas
   ]) {
     assert.match(coreBuild, new RegExp(filegroup.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")));
   }
+  assert.match(coreBuild, /exports_files\(\[\s*"Cargo\.lock",\s*"Cargo\.toml",\s*"package\.json",\s*"pnpm-lock\.yaml",\s*"pnpm-workspace\.yaml",\s*\]\)/s);
+  assert.match(coreBuild, /"\/\/core\/crates\/ctx-http:Cargo\.toml"/);
+  assert.match(coreBuild, /"\/\/core\/crates\/ctx-provider-accounts:src\/provider_matrix\.json"/);
+  assert.match(ctxHttpBuild, /exports_files\(\["Cargo\.toml"\]\)/);
+  assert.match(ctxProviderAccountsBuild, /exports_files\(\["src\/provider_matrix\.json"\]\)/);
 
   for (const target of [
     'name = "provider_auth_validate"',
