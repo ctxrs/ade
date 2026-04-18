@@ -511,8 +511,8 @@ const PROFILES = [
     },
     currentCommands: [
       "pnpm -C core verify:nightly",
-      "pnpm -C core verify:anomaly",
-      "pnpm -C core verify:fuzz:regression",
+      "pnpm -C core testing:profile:run --profile nightly-linux-anomaly",
+      "pnpm -C core testing:profile:run --profile nightly-linux-fuzz",
     ],
     pipelines: ["ctx-nightly"],
     remoteStrategy: "Nightly can spend more time on broader matrices, but hermetic compile/integration pieces should still prefer Bazel and RBE where possible.",
