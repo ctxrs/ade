@@ -29,6 +29,7 @@ const PROFILES = [
     title: "Agent Default",
     purpose: "Standard agent confidence loop for normal changes before pushing.",
     selector: {
+      forceIncludeEntryIds: ["web-workbench.web-premerge-required"],
       includeSurfaces: ["contract", "compile", "unit", "integration"],
       includeWorlds: ["hermetic", "simulated", "fake-provider"],
       includeCosts: ["tiny", "fast"],
@@ -97,6 +98,57 @@ const PROFILES = [
     ],
   },
   {
+    id: "install-bootstrap-contracts",
+    title: "Install Bootstrap Contracts",
+    purpose: "Direct install/bootstrap contract execution for the ctx-main linux and mac bootstrap lanes.",
+    selector: {
+      includeEntryIds: [
+        "distribution-install.install-bootstrap-contracts",
+      ],
+      includeSurfaces: ["contract"],
+      includeWorlds: ["hermetic"],
+      includeCosts: ["fast"],
+      includeStabilities: ["stable"],
+      includeExecutions: ["bazel-addressable"],
+    },
+    currentCommands: [
+      "Buildkite step: Install bootstrap contracts",
+      "pnpm -C core testing:profile:run --profile install-bootstrap-contracts",
+    ],
+    pipelines: ["ctx-main"],
+    remoteStrategy: "Keep install/bootstrap validation tiny and Bazel-addressable so it can run cheaply on either linux or mac workers.",
+    currentExecution: "Runs the install-site contract test bundle directly instead of a BuildBuddy-era wrapper.",
+    expansionRules: [
+      "Only install/bootstrap contract coverage belongs here; do not add unrelated release or provider checks.",
+    ],
+  },
+  {
+    id: "provider-auth-validate",
+    title: "Provider Auth Validate",
+    purpose: "Validate provider auth matrix and desktop secret-contract metadata on ctx-main.",
+    selector: {
+      includeEntryIds: [
+        "provider-auth.provider-auth-validate",
+      ],
+      includeSurfaces: ["contract"],
+      includeWorlds: ["hermetic"],
+      includeCosts: ["tiny"],
+      includeStabilities: ["stable"],
+      includeExecutions: ["script-local"],
+      excludeRequirements: ["mac", "single-mac"],
+    },
+    currentCommands: [
+      "Buildkite step: Provider auth matrix (validate)",
+      "pnpm -C core testing:profile:run --profile provider-auth-validate",
+    ],
+    pipelines: ["ctx-main"],
+    remoteStrategy: "Run the deterministic metadata gate on Linux; Mac and single-Mac requirements are excluded.",
+    currentExecution: "Runs the matrix-report and secret-contract checks directly instead of routing through the old provider-auth wrapper mode.",
+    expansionRules: [
+      "This profile is only for validation, not the required or nightly execution lanes.",
+    ],
+  },
+  {
     id: "releasetest",
     title: "Release Test",
     purpose: "Prove a pinned SHA is publishable using artifact-first staging and validation.",
@@ -148,6 +200,58 @@ const PROFILES = [
     currentExecution: "Runs the exact desktop version, runtime lock, and bundle contract gates that current release preflight depends on.",
     expansionRules: [
       "This profile stays source-tree-only and must not grow stage/publish side effects.",
+    ],
+  },
+  {
+    id: "release-updater-web-e2e",
+    title: "Release Updater Web E2E",
+    purpose: "Run the release web/updater browser suite with developer-provided browser prerequisites.",
+    selector: {
+      includeEntryIds: [
+        "updates-release.updater-web-e2e",
+      ],
+      includeSurfaces: ["system"],
+      includeWorlds: ["local-packaged-artifact"],
+      includeCosts: ["medium"],
+      includeStabilities: ["stable"],
+      includeExecutions: ["script-local"],
+      excludeRequirements: ["mac", "single-mac"],
+    },
+    currentCommands: [
+      "Buildkite step: Release updater web e2e",
+      "pnpm -C core testing:profile:run --profile release-updater-web-e2e",
+    ],
+    pipelines: ["ctx-release"],
+    remoteStrategy: "Run the browser suite on Linux with the required browser dependencies installed.",
+    currentExecution: "Runs the retry-wrapped Bazel release browser suite.",
+    expansionRules: [
+      "Keep release-specific updater browser coverage in this profile.",
+    ],
+  },
+  {
+    id: "release-updater-smoke",
+    title: "Release Updater Smoke",
+    purpose: "Run updater and native smoke validation against prepared release artifacts.",
+    selector: {
+      includeEntryIds: [
+        "updates-release.updater-native-smoke",
+      ],
+      includeSurfaces: ["artifact"],
+      includeWorlds: ["local-packaged-artifact"],
+      includeCosts: ["medium"],
+      includeStabilities: ["stable"],
+      includeExecutions: ["artifact-tail"],
+      excludeRequirements: ["mac", "single-mac"],
+    },
+    currentCommands: [
+      "Buildkite step: Release updater smoke",
+      "pnpm -C core testing:profile:run --profile release-updater-smoke",
+    ],
+    pipelines: ["ctx-release"],
+    remoteStrategy: "Run the updater checks on Linux with the required packaged artifacts available.",
+    currentExecution: "Runs the product updater and native smoke checks through taxonomy execution.",
+    expansionRules: [
+      "Provide the required release artifacts before running the updater checks.",
     ],
   },
   {
@@ -228,10 +332,13 @@ function getProfiles(familiesById) {
 
 function profileMatchesEntry(profile, entry) {
   const selector = profile.selector || {};
-  if (selector.includeEntryIds.length > 0 && !selector.includeEntryIds.includes(entry.id)) {
+  if (selector.excludeEntryIds.includes(entry.id)) {
     return false;
   }
-  if (selector.excludeEntryIds.includes(entry.id)) {
+  if (selector.forceIncludeEntryIds.includes(entry.id)) {
+    return true;
+  }
+  if (selector.includeEntryIds.length > 0 && !selector.includeEntryIds.includes(entry.id)) {
     return false;
   }
   if (selector.families.length > 0 && !selector.families.includes(entry.family)) {

@@ -145,6 +145,7 @@ function validateProfile(profile, familiesById) {
   selector.includeExecutions = normalizeSelectorArray(selector.includeExecutions);
   selector.excludeRequirements = normalizeSelectorArray(selector.excludeRequirements);
   selector.includeEntryIds = normalizeSelectorArray(selector.includeEntryIds);
+  selector.forceIncludeEntryIds = normalizeSelectorArray(selector.forceIncludeEntryIds);
   selector.excludeEntryIds = normalizeSelectorArray(selector.excludeEntryIds);
 
   for (const family of selector.families) {

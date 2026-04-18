@@ -121,7 +121,7 @@ function buildCommandForEntry(entry) {
   throw new Error(`unsupported entrypoint type for command mapping: ${entry.entrypointType}`);
 }
 
-function getCompatibilityFallbackCommands({ changedFiles, profileId }) {
+function getCompatibilityFallbackCommands({ changedFiles }) {
   const commands = [];
   const changed = [...new Set(changedFiles.map(normalizeRepoRelativePath).filter(Boolean))];
   const graph = buildWorkspaceGraph(coreRoot);
@@ -159,29 +159,28 @@ function getCompatibilityFallbackCommands({ changedFiles, profileId }) {
     commands.push(shellJoin("pnpm", rustArgs));
   }
 
-  if (profileId === "agent-default" || profileId === "agent-broader") {
-    if (changed.some((changedFile) =>
-      changedFile.startsWith("core/apps/web/src/") ||
-      changedFile.startsWith("core/apps/web/scripts/") ||
-      changedFile === "core/apps/web/package.json"
-    )) {
-      commands.push(shellJoin("pnpm", ["bazel:web:test"]));
-    }
-    if (changed.some((changedFile) =>
-      changedFile.startsWith("core/apps/web/src/state/") ||
-      changedFile.startsWith("core/apps/web/src/api/") ||
-      changedFile.startsWith("core/apps/web/e2e/") ||
-      changedFile === "core/apps/web/e2e/suites/premerge_required.txt"
-    )) {
-      commands.push(shellJoin("pnpm", ["verify:e2e"]));
-    }
-  }
-
   return commands;
 }
 
+function commandPriority(command) {
+  if (command === "pnpm bazel:web:test") {
+    return 100;
+  }
+  if (command === "pnpm verify:e2e") {
+    return 200;
+  }
+  return 1000;
+}
+
 function dedupeCommands(commands) {
-  return [...new Set(commands.filter(Boolean))];
+  return [...new Set(commands.filter(Boolean))]
+    .map((command, index) => ({
+      command,
+      index,
+      priority: commandPriority(command),
+    }))
+    .sort((left, right) => left.priority - right.priority || left.index - right.index)
+    .map((entry) => entry.command);
 }
 
 function buildExecutionPlan({ profileId, changedFiles = [], touchedOnly = false }) {
@@ -198,7 +197,7 @@ function buildExecutionPlan({ profileId, changedFiles = [], touchedOnly = false 
 
   const entryCommands = selectedEntries.map(buildCommandForEntry);
   const compatibilityCommands = touchedOnly
-    ? getCompatibilityFallbackCommands({ changedFiles, profileId })
+    ? getCompatibilityFallbackCommands({ changedFiles })
     : [];
   const commands = dedupeCommands([...entryCommands, ...compatibilityCommands]);
 

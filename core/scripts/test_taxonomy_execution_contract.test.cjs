@@ -79,3 +79,22 @@ test("nightly-breadth splits provider auth live coverage by nightly slice", () =
   assert.match(plan.commands.join("\n"), /pnpm verify:desktop:provider-auth-matrix:oauth-subscription/);
   assert.doesNotMatch(plan.commands.join("\n"), /pnpm verify:desktop:provider-auth-matrix:nightly/);
 });
+
+test("direct pipeline helper profiles resolve to explicit package-script commands", () => {
+  assert.deepEqual(
+    buildExecutionPlan({ profileId: "install-bootstrap-contracts", touchedOnly: false, changedFiles: [] }).commands,
+    ["pnpm install:bootstrap:contracts"],
+  );
+  assert.deepEqual(
+    buildExecutionPlan({ profileId: "provider-auth-validate", touchedOnly: false, changedFiles: [] }).commands,
+    ["pnpm provider-auth:validate"],
+  );
+  assert.deepEqual(
+    buildExecutionPlan({ profileId: "release-updater-web-e2e", touchedOnly: false, changedFiles: [] }).commands,
+    ["pnpm release:e2e:web:release:retry"],
+  );
+  assert.deepEqual(
+    buildExecutionPlan({ profileId: "release-updater-smoke", touchedOnly: false, changedFiles: [] }).commands,
+    ["pnpm verify:e2e:updater:smoke:native"],
+  );
+});
