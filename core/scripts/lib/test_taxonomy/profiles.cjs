@@ -208,7 +208,7 @@ const PROFILES = [
     purpose: "Run the release web/updater browser suite with developer-provided browser prerequisites.",
     selector: {
       includeEntryIds: [
-        "updates-release.updater-web-e2e",
+        "updates-release.updater-web-e2e-suite",
       ],
       includeSurfaces: ["system"],
       includeWorlds: ["local-packaged-artifact"],
@@ -240,7 +240,7 @@ const PROFILES = [
       includeWorlds: ["local-packaged-artifact"],
       includeCosts: ["medium"],
       includeStabilities: ["stable"],
-      includeExecutions: ["artifact-tail"],
+      includeExecutions: ["script-local", "artifact-tail"],
       excludeRequirements: ["mac", "single-mac"],
     },
     currentCommands: [

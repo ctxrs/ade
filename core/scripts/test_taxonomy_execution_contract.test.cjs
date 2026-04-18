@@ -115,10 +115,14 @@ test("direct pipeline helper profiles resolve to explicit package-script command
   );
   assert.deepEqual(
     buildExecutionPlan({ profileId: "release-updater-web-e2e", touchedOnly: false, changedFiles: [] }).commands,
-    ["pnpm release:e2e:web:release:retry"],
+    [
+      "pnpm release:e2e:web:release:retry",
+    ],
   );
   assert.deepEqual(
     buildExecutionPlan({ profileId: "release-updater-smoke", touchedOnly: false, changedFiles: [] }).commands,
-    ["pnpm verify:e2e:updater:smoke:native"],
+    [
+      "pnpm verify:e2e:updater:smoke:native",
+    ],
   );
 });

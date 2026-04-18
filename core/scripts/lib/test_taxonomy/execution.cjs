@@ -220,6 +220,25 @@ function dedupeCommands(commands) {
     .map((entry) => entry.command);
 }
 
+function orderSelectedEntries(entries, profile) {
+  const explicitOrder = [
+    ...(profile.selector?.forceIncludeEntryIds || []),
+    ...(profile.selector?.includeEntryIds || []),
+  ];
+  if (explicitOrder.length === 0) {
+    return entries;
+  }
+  const orderById = new Map(explicitOrder.map((id, index) => [id, index]));
+  return [...entries]
+    .map((entry, index) => ({
+      entry,
+      index,
+      explicitIndex: orderById.has(entry.id) ? orderById.get(entry.id) : Number.POSITIVE_INFINITY,
+    }))
+    .sort((left, right) => left.explicitIndex - right.explicitIndex || left.index - right.index)
+    .map(({ entry }) => entry);
+}
+
 function buildExecutionPlan({ profileId, changedFiles = [], touchedOnly = false }) {
   const registry = buildTaxonomyRegistry();
   const profile = getProfileById(profileId);
@@ -232,6 +251,7 @@ function buildExecutionPlan({ profileId, changedFiles = [], touchedOnly = false 
       isAlwaysOnEntry(entry, profileId) || entryMatchesChangedFiles(entry, changedContext),
     );
   }
+  selectedEntries = orderSelectedEntries(selectedEntries, profile);
 
   const commands = dedupeCommands(buildCommandsForEntries({
     selectedEntries,

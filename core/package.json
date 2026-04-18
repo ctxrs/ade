@@ -21,7 +21,7 @@
     "release:buildkite": "node scripts/trigger_buildkite_release.cjs",
     "release:buildkite:ci-gate": "RELEASE_SOURCE_COMMIT=${RELEASE_SOURCE_COMMIT:?set RELEASE_SOURCE_COMMIT} node scripts/run_buildkite_release_ci_gate.cjs",
     "release:bundle:contracts:linux-x86_64": "node scripts/run_bazel_pilot.cjs run //tools/bazel:release_bundle_contracts -- --codex-target linux-x86_64",
-    "release:e2e:web:release:retry": "bash -lc 'cd .. && CI=1 USE_BAZEL_VERSION=${USE_BAZEL_VERSION:-9.0.1} ./scripts/ci_retry.sh pnpm -C core test:e2e:release'",
+    "release:e2e:web:release:retry": "bash -lc 'cd .. && ./scripts/ci_retry.sh pnpm -C core test:e2e:release'",
     "bazel:pilot:test": "node scripts/run_bazel_pilot.cjs test",
     "bazel:pilot:test:linux-rbe": "CTX_BAZEL_REMOTE_EXECUTION=linux node scripts/run_bazel_pilot.cjs test",
     "bazel:pilot:build": "node scripts/run_bazel_pilot.cjs build",

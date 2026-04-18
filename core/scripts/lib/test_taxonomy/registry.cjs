@@ -944,8 +944,8 @@ function buildStaticEntries() {
       exception: "",
     },
     {
-      id: "updates-release.updater-web-e2e",
-      title: "Release updater web e2e",
+      id: "updates-release.updater-web-e2e-suite",
+      title: "Release updater web e2e suite",
       family: "updates-release",
       entrypointType: "core-package-script",
       entrypoint: "release:e2e:web:release:retry",
@@ -965,7 +965,7 @@ function buildStaticEntries() {
         ...RELEASE_RELEVANT_GLOBS,
       ],
       dependencyCrates: [],
-      notes: "Release updater web/browser truth with release-specific Linux setup.",
+      notes: "Retry-wrapped release-required browser suite once Linux webkit prerequisites are present.",
       exception: "",
     },
     {
