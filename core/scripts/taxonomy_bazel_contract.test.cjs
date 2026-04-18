@@ -43,11 +43,52 @@ test("deterministic Linux contract gates route through Bazel-owned workspace-tas
     packageJson.scripts["bazel:web:e2e:release:retry"],
     "bash -lc '../scripts/ci_retry.sh pnpm bazel:web:e2e:release'",
   );
+  assert.equal(
+    packageJson.scripts["bazel:desktop:provider-matrix:contracts"],
+    "node scripts/run_bazel_pilot.cjs run //core/scripts:desktop_provider_matrix_archive_contracts",
+  );
+  assert.equal(
+    packageJson.scripts["bazel:desktop:launch-mode:contracts"],
+    "node scripts/run_bazel_pilot.cjs run //core/scripts:desktop_launch_mode_contracts",
+  );
+  assert.equal(
+    packageJson.scripts["bazel:desktop:bundle:contracts"],
+    "node scripts/run_bazel_pilot.cjs run //core/scripts:desktop_bundle_contracts",
+  );
+  assert.equal(
+    packageJson.scripts["bazel:bundled-harness:dependency:contracts"],
+    "node scripts/run_bazel_pilot.cjs run //core/scripts:bundled_harness_dependency_contracts",
+  );
+  assert.equal(
+    packageJson.scripts["bazel:desktop:e2e:preflight:contracts"],
+    "node scripts/run_bazel_pilot.cjs run //core/scripts:desktop_e2e_preflight_contracts",
+  );
+  assert.equal(
+    packageJson.scripts["bazel:desktop:sync-resources:contracts"],
+    "node scripts/run_bazel_pilot.cjs run //core/scripts:desktop_sync_resources_contracts",
+  );
+  assert.equal(
+    packageJson.scripts["bazel:providers:e2e:bundle:contracts"],
+    "node scripts/run_bazel_pilot.cjs run //core/scripts:providers_e2e_bundle_contracts",
+  );
+  assert.equal(
+    packageJson.scripts["bazel:providers:linux-arm:contracts"],
+    "node scripts/run_bazel_pilot.cjs run //core/scripts:linux_arm_provider_contracts",
+  );
+  assert.equal(
+    packageJson.scripts["bazel:tauri:tools:lock:contracts"],
+    "node scripts/run_bazel_pilot.cjs run //core/scripts:tauri_tools_lock_contracts",
+  );
+  assert.equal(
+    packageJson.scripts["bazel:desktop:deps:contracts"],
+    "node scripts/run_bazel_pilot.cjs run //core/scripts:install_desktop_deps_contracts",
+  );
 
   for (const filegroup of [
     'name = "buildkite_pipeline_sources"',
     'name = "buildkite_script_sources"',
     'name = "ci_script_sources"',
+    'name = "repo_script_sources"',
   ]) {
     assert.match(rootBuild, new RegExp(filegroup.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")));
   }
@@ -65,6 +106,16 @@ test("deterministic Linux contract gates route through Bazel-owned workspace-tas
     'name = "desktop_version_check"',
     'name = "desktop_runtime_lock_check_matrix"',
     'name = "desktop_runtime_lock_validate"',
+    'name = "desktop_provider_matrix_archive_contracts"',
+    'name = "desktop_launch_mode_contracts"',
+    'name = "desktop_bundle_contracts"',
+    'name = "bundled_harness_dependency_contracts"',
+    'name = "desktop_e2e_preflight_contracts"',
+    'name = "desktop_sync_resources_contracts"',
+    'name = "providers_e2e_bundle_contracts"',
+    'name = "linux_arm_provider_contracts"',
+    'name = "tauri_tools_lock_contracts"',
+    'name = "install_desktop_deps_contracts"',
   ]) {
     assert.match(scriptsBuild, new RegExp(target.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")));
   }

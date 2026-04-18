@@ -114,6 +114,24 @@ test("direct pipeline helper profiles resolve to explicit package-script command
     ["pnpm bazel:provider-auth:validate"],
   );
   assert.deepEqual(
+    buildExecutionPlan({ profileId: "desktop-system-parity-contracts", touchedOnly: false, changedFiles: [] }).commands,
+    [
+      "pnpm bazel:desktop:runtime:lock:check-matrix",
+      "pnpm bazel:desktop:check:versions",
+      "pnpm bazel:desktop:provider-matrix:contracts",
+      "pnpm bazel:desktop:launch-mode:contracts",
+      "pnpm bazel:desktop:bundle:contracts",
+      "pnpm bazel:bundled-harness:dependency:contracts",
+      "pnpm bazel:provider-auth:validate",
+      "pnpm bazel:desktop:e2e:preflight:contracts",
+      "pnpm bazel:desktop:sync-resources:contracts",
+      "pnpm bazel:providers:e2e:bundle:contracts",
+      "pnpm bazel:providers:linux-arm:contracts",
+      "pnpm bazel:tauri:tools:lock:contracts",
+      "pnpm bazel:desktop:deps:contracts",
+    ],
+  );
+  assert.deepEqual(
     buildExecutionPlan({ profileId: "release-updater-web-e2e", touchedOnly: false, changedFiles: [] }).commands,
     [
       "pnpm bazel:web:e2e:release:retry",

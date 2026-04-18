@@ -128,6 +128,13 @@ function normalizeSelectorArray(values) {
   return [...new Set(values.map((value) => String(value).trim()).filter(Boolean))].sort();
 }
 
+function normalizeOrderedSelectorArray(values) {
+  if (!Array.isArray(values) || values.length === 0) {
+    return [];
+  }
+  return [...new Set(values.map((value) => String(value).trim()).filter(Boolean))];
+}
+
 function validateProfile(profile, familiesById) {
   assertString("id", profile.id, "<profile>");
   assertString("title", profile.title, profile.id);
@@ -146,9 +153,9 @@ function validateProfile(profile, familiesById) {
   selector.includeStabilities = normalizeSelectorArray(selector.includeStabilities);
   selector.includeExecutions = normalizeSelectorArray(selector.includeExecutions);
   selector.excludeRequirements = normalizeSelectorArray(selector.excludeRequirements);
-  selector.includeEntryIds = normalizeSelectorArray(selector.includeEntryIds);
-  selector.forceIncludeEntryIds = normalizeSelectorArray(selector.forceIncludeEntryIds);
-  selector.excludeEntryIds = normalizeSelectorArray(selector.excludeEntryIds);
+  selector.includeEntryIds = normalizeOrderedSelectorArray(selector.includeEntryIds);
+  selector.forceIncludeEntryIds = normalizeOrderedSelectorArray(selector.forceIncludeEntryIds);
+  selector.excludeEntryIds = normalizeOrderedSelectorArray(selector.excludeEntryIds);
 
   for (const family of selector.families) {
     if (!familiesById.has(family)) {

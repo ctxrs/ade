@@ -34,3 +34,16 @@ filegroup(
     ),
     visibility = ["//visibility:public"],
 )
+
+filegroup(
+    name = "repo_script_sources",
+    srcs = glob(
+        [
+            "scripts/*.sh",
+            "scripts/lib/**",
+            "scripts/tests/**",
+        ],
+        allow_empty = True,
+    ),
+    visibility = ["//visibility:public"],
+)
