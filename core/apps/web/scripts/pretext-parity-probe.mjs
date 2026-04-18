@@ -1,10 +1,11 @@
 import fs from "node:fs";
 import process from "node:process";
-import { chromium } from "playwright";
+import { chromium, webkit } from "playwright";
 
 function parseArgs(argv) {
   const options = {
     kind: "assistant",
+    browser: "chromium",
     width: 788,
     complete: true,
     baseUrl: process.env.CTX_WEBAPP_URL ?? "http://127.0.0.1:5177",
@@ -12,6 +13,8 @@ function parseArgs(argv) {
     token: process.env.CTX_AUTH_TOKEN ?? "",
     content: "",
     contentFile: "",
+    debug: false,
+    debugTarget: "*",
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -22,7 +25,12 @@ function parseArgs(argv) {
       continue;
     }
     if (arg === "--width") {
-      options.width = Number.parseInt(argv[index + 1] ?? String(options.width), 10);
+      options.width = Number.parseFloat(argv[index + 1] ?? String(options.width));
+      index += 1;
+      continue;
+    }
+    if (arg === "--browser") {
+      options.browser = argv[index + 1] ?? options.browser;
       index += 1;
       continue;
     }
@@ -55,6 +63,15 @@ function parseArgs(argv) {
       options.complete = false;
       continue;
     }
+    if (arg === "--debug") {
+      options.debug = true;
+      continue;
+    }
+    if (arg === "--debug-target") {
+      options.debugTarget = argv[index + 1] ?? options.debugTarget;
+      index += 1;
+      continue;
+    }
     if (arg === "--help") {
       options.help = true;
     }
@@ -68,6 +85,7 @@ function printHelp() {
 
 Options:
   --kind assistant|markdown   Probe assistant row parity or raw markdown parity.
+  --browser chromium|webkit   Browser engine to use. Default: chromium.
   --width <px>                Viewport/text width to measure. Default: 788.
   --base-url <url>            Dev webapp URL. Default: CTX_WEBAPP_URL or http://127.0.0.1:5177.
   --workspace-id <id>         Workspace to open in the dev webapp.
@@ -75,6 +93,8 @@ Options:
   --content <text>            Inline content to measure.
   --content-file <path>       Read content from a file instead of stdin.
   --incomplete                Measure assistant content as streaming/incomplete.
+  --debug                     Return planner debug for markdown probes.
+  --debug-target <text>       Limit inline-code debug to a matching code run. Default: *.
 
 Examples:
   pnpm pretext:probe --workspace-id <id> --token <token> --kind assistant --content-file /tmp/message.md
@@ -116,24 +136,26 @@ async function main() {
     workspaceUrl.searchParams.set("token", options.token);
   }
 
-  const browser = await chromium.launch({ headless: true });
+  const browserType = options.browser === "webkit" ? webkit : chromium;
+  const browser = await browserType.launch({ headless: true });
   try {
     const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
     await page.goto(workspaceUrl.toString(), { waitUntil: "domcontentloaded", timeout: 30000 });
     await page.waitForFunction(() => Boolean(window.__ctxE2E), { timeout: 30000 });
 
     const result = await page.evaluate(
-      async ({ kind, width, content, complete }) => {
+      async ({ kind, width, content, complete, debug, debugTarget }) => {
         if (kind === "markdown") {
-          const measurements = await window.__ctxE2E.measureMarkdownParity?.(
-            [{ name: "probe", markdown: content }],
-            width,
-          );
+          const measurement = debug
+            ? await window.__ctxE2E.measureMarkdownParityDebug?.(content, width, debugTarget)
+            : (await window.__ctxE2E.measureMarkdownParity?.([{ name: "probe", markdown: content }], width))?.[0] ??
+              null;
           return {
             kind,
+            browser: navigator.userAgent,
             width,
             content,
-            measurement: measurements?.[0] ?? null,
+            measurement,
           };
         }
 
@@ -144,6 +166,7 @@ async function main() {
         });
         return {
           kind,
+          browser: navigator.userAgent,
           width,
           content,
           measurement,
@@ -154,6 +177,8 @@ async function main() {
         width: options.width,
         content,
         complete: options.complete,
+        debug: options.debug,
+        debugTarget: options.debugTarget,
       },
     );
 

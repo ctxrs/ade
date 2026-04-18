@@ -1,6 +1,10 @@
 import { layoutNextLine, type LayoutCursor, type LayoutLine } from "@chenglou/pretext";
 import type { SessionMarkdownInlineRun } from "./sessionMarkdownContract";
-import { createInlineCodeFitPlanner, resolveInlineCodeWrapChromeWidth } from "./sessionMarkdownInlineCodeFit";
+import {
+  browserAllowsInlineCodeLeadingHang,
+  createInlineCodeFitPlanner,
+  resolveInlineCodeWrapChromeWidth,
+} from "./sessionMarkdownInlineCodeFit";
 import { prepareInlineLayoutItems } from "./sessionMarkdownInlineLayout";
 import {
   LINE_START_CURSOR,
@@ -14,8 +18,9 @@ import {
 const INLINE_CODE_FRAGMENT_FIT_SLACK_PX = 0;
 const INLINE_CODE_CONTINUATION_FIT_SLACK_PX = 5;
 const INLINE_CODE_WHOLE_GROUP_FIT_SLACK_PX = 0;
-const INLINE_CODE_CURRENT_LINE_START_RATIO_THRESHOLD = 0.2;
+const INLINE_CODE_CURRENT_LINE_START_RATIO_THRESHOLD = 0.35;
 const INLINE_CODE_WHITESPACE_CONTINUATION_GUARD_PX = 1;
+const INLINE_CODE_HYPHEN_CONTINUATION_GUARD_PX = 2;
 
 export function measureInlineRunsHeight(params: {
   runs: readonly SessionMarkdownInlineRun[];
@@ -48,6 +53,12 @@ export function measureInlineRunsHeight(params: {
     dottedPathClusterWidth: number;
     wholeCodeGroupWidth: number;
     remainingWidth: number;
+    currentLineConsumedWidth: number;
+    currentLineStartFitRatio: number;
+    currentLineCodeStartFitIsReadable: boolean;
+    currentLineCodeStartFitIsStrong: boolean;
+    shouldBreakForStyledTailCodeStart: boolean;
+    shouldBreakForAttachedTrailingPlainStart: boolean;
     shouldBreak: boolean;
     text: string;
   }> = [];
@@ -55,6 +66,7 @@ export function measureInlineRunsHeight(params: {
     codeGroupFitEndsAtFriendlyBoundary,
     dottedPathCodeGroupStartClusterWidths,
     measureAttachedTrailingPlainWidth,
+    measureCodeGroupTrailingPlainWidth,
     measureCodeGroupFitWithinWidth,
     preferredCodeGroupStartWidths,
     shouldPreserveSealedInlineCodeBoundary,
@@ -125,12 +137,22 @@ export function measureInlineRunsHeight(params: {
         chargedCodeGroups.has(codeGroupId)
           ? INLINE_CODE_WHOLE_GROUP_FIT_SLACK_PX
           : 0;
+      const shouldDisableContinuationSlackForEngine =
+        item.isPathTailFragment ||
+        (!browserAllowsInlineCodeLeadingHang() &&
+          (item.codeGroupHasDottedPath ||
+            item.isSealedInlineCodeFragment ||
+            item.text.includes("/") ||
+            item.text.includes("\\")));
       const currentLineCodeContinuationSlackPx =
         lineHasContent &&
         cursor === null &&
         codeGroupId != null &&
         lastAcceptedCodeGroupId === codeGroupId &&
-        !item.startsAfterCodeWhitespace
+        !item.startsAfterCodeWhitespace &&
+        !lineLastCodeFragmentEndedWithHyphen &&
+        !lineLastCodeFragmentEndedWithPathDelimiter &&
+        !shouldDisableContinuationSlackForEngine
           ? INLINE_CODE_CONTINUATION_FIT_SLACK_PX
           : 0;
       const currentLineFitSlackPx = Math.max(
@@ -138,15 +160,22 @@ export function measureInlineRunsHeight(params: {
         currentLineWhitespaceContinuationSlackPx,
         currentLineCodeContinuationSlackPx,
       );
-      const currentLineWhitespaceContinuationGuardPx =
-        lineHasContent && cursor === null && codeGroupId != null && item.startsAfterCodeWhitespace
+      const currentLineWhitespaceContinuationGuardPx: number =
+        lineHasContent &&
+        cursor === null &&
+        codeGroupId != null &&
+        item.startsAfterCodeWhitespace &&
+        item.codeGroupStartsAfterText
           ? INLINE_CODE_WHITESPACE_CONTINUATION_GUARD_PX
           : 0;
+      const canDropLeadingCollapsedSpaceAtWrap: boolean =
+        codeGroupId == null && lineHasContent && cursor === null && pendingSpaceWidth > 0;
       const startCursor: LayoutCursor = cursor ?? LINE_START_CURSOR;
 
       const preferredStartWidth = preferredCodeGroupStartWidths.get(itemIndex) ?? 0;
       const dottedPathClusterWidth = dottedPathCodeGroupStartClusterWidths.get(itemIndex) ?? 0;
       const wholeCodeGroupWidth = wholeCodeGroupInlineWidths.get(itemIndex) ?? 0;
+      const trailingPlainWidthAfterCodeGroupStart = measureCodeGroupTrailingPlainWidth(itemIndex);
       const currentLineCodeFit =
         lineHasContent && cursor === null && codeGroupId != null && item.isFirstCodeGroupFragment
           ? measureCodeGroupFitWithinWidth(
@@ -163,28 +192,46 @@ export function measureInlineRunsHeight(params: {
           : null;
       const freshLineFitEndsAtFriendlyBoundary =
         freshLineCodeFit != null && codeGroupFitEndsAtFriendlyBoundary(freshLineCodeFit);
+      const prefersFreshLineStart =
+        item.prefersFreshLineStart ||
+        (item.prefersFreshLineStartWithoutLeadingHang && !browserAllowsInlineCodeLeadingHang());
       const currentLineStartFitRatio =
         currentLineCodeFit != null && freshLineCodeFit != null && freshLineCodeFit.consumedWidth > 0
           ? currentLineCodeFit.consumedWidth / freshLineCodeFit.consumedWidth
           : 1;
-      const shouldBreakForPreferredStart =
+      const currentLineCodeStartFitIsReadable =
+        currentLineCodeFit != null && currentLineCodeFit.consumedWidth + 0.01 >= item.minStartTextWidth;
+      const currentLineCodeStartFitIsStrong =
+        currentLineCodeFit != null &&
+        currentLineStartFitRatio >= 0.45 &&
+        (codeFitEndsAtFriendlyBoundary || freshLineFitEndsAtFriendlyBoundary);
+      const shouldBreakForPreferredStart = false;
+      const shouldBreakForStyledTailCodeStart =
         lineHasContent &&
         cursor === null &&
         codeGroupId != null &&
         item.isFirstCodeGroupFragment &&
-        item.prefersFreshLineStart &&
-        currentLineCodeFit != null &&
-        freshLineCodeFit != null &&
-        freshLineCodeFit.consumedWidth > 0 &&
-        (!codeFitEndsAtFriendlyBoundary ||
-          currentLineStartFitRatio < INLINE_CODE_CURRENT_LINE_START_RATIO_THRESHOLD);
+        item.codeGroupStartsAfterStyledTextSeam &&
+        preferredStartWidth > remainingWidth + 0.01 &&
+        preferredStartWidth <= maxWidth + 0.01 &&
+        !currentLineCodeStartFitIsReadable &&
+        !currentLineCodeStartFitIsStrong;
+      const shouldBreakForAttachedTrailingPlainStart =
+        lineHasContent &&
+        cursor === null &&
+        codeGroupId != null &&
+        item.isFirstCodeGroupFragment &&
+        trailingPlainWidthAfterCodeGroupStart > 0 &&
+        preferredStartWidth + trailingPlainWidthAfterCodeGroupStart > remainingWidth + 0.01 &&
+        preferredStartWidth + trailingPlainWidthAfterCodeGroupStart <= maxWidth + 0.01 &&
+        !currentLineCodeStartFitIsStrong;
       if (
         debugInlineCode &&
         lineHasContent &&
         cursor === null &&
         codeGroupId != null &&
         item.isFirstCodeGroupFragment &&
-        item.prefersFreshLineStart
+        prefersFreshLineStart
       ) {
         debugStartDecisions.push({
           pendingSpaceWidth,
@@ -192,11 +239,24 @@ export function measureInlineRunsHeight(params: {
           dottedPathClusterWidth,
           wholeCodeGroupWidth,
           remainingWidth,
-          shouldBreak: shouldBreakForPreferredStart,
+          currentLineConsumedWidth: currentLineCodeFit?.consumedWidth ?? 0,
+          currentLineStartFitRatio,
+          currentLineCodeStartFitIsReadable,
+          currentLineCodeStartFitIsStrong,
+          shouldBreakForStyledTailCodeStart,
+          shouldBreakForAttachedTrailingPlainStart,
+          shouldBreak:
+            shouldBreakForPreferredStart ||
+            shouldBreakForStyledTailCodeStart ||
+            shouldBreakForAttachedTrailingPlainStart,
           text: item.text,
         });
       }
-      if (shouldBreakForPreferredStart) {
+      if (
+        shouldBreakForPreferredStart ||
+        shouldBreakForStyledTailCodeStart ||
+        shouldBreakForAttachedTrailingPlainStart
+      ) {
         cursor = null;
         break;
       }
@@ -205,8 +265,9 @@ export function measureInlineRunsHeight(params: {
         const fullWidth = reservedWidth + item.fullWidth;
         if (
           fullWidth > remainingWidth + 0.01 &&
-          (item.prefersFreshLineStart || item.codeGroupHasDottedPath) &&
-          remainingWidth < reservedWidth + item.minStartTextWidth - 0.01
+          (prefersFreshLineStart || item.codeGroupHasDottedPath) &&
+          remainingWidth < reservedWidth + item.minStartTextWidth - 0.01 &&
+          !currentLineCodeStartFitIsStrong
         ) {
           cursor = null;
           break;
@@ -224,7 +285,12 @@ export function measureInlineRunsHeight(params: {
           shouldPreserveSealedInlineCodeBoundary({
             sealedBoundary: lineLastCodeFragmentEndedWithHyphen || lineLastCodeFragmentEndedWithPathDelimiter,
             reservedWidth,
-            remainingWidth: remainingWidth + currentLineFitSlackPx,
+            remainingWidth:
+              remainingWidth +
+              currentLineFitSlackPx -
+              (!browserAllowsInlineCodeLeadingHang() && lineLastCodeFragmentEndedWithHyphen
+                ? INLINE_CODE_HYPHEN_CONTINUATION_GUARD_PX
+                : 0),
             item,
           })
         ) {
@@ -241,7 +307,7 @@ export function measureInlineRunsHeight(params: {
         }
         if (item.isSealedInlineCodeFragment) {
           if (lineHasContent && fullWidth > guardedRemainingWidth + 0.01) {
-            const sealedContinuationLine =
+            const sealedContinuationLine: LayoutLine | null =
               codeGroupId != null && chargedCodeGroups.has(codeGroupId)
                 ? layoutNextLine(
                     item.prepared,
@@ -253,9 +319,18 @@ export function measureInlineRunsHeight(params: {
               sealedContinuationLine != null && item.fullWidth > 0
                 ? sealedContinuationLine.width / item.fullWidth
                 : 0;
+            const sealedContinuationWouldOverflowCurrentLine =
+              sealedContinuationLine != null &&
+              !cursorsMatch(LINE_START_CURSOR, sealedContinuationLine.end) &&
+              reservedWidth + sealedContinuationLine.width > guardedRemainingWidth + 0.01;
+            const shouldBreakForEngineSealedOverflow =
+              sealedContinuationWouldOverflowCurrentLine &&
+              !browserAllowsInlineCodeLeadingHang() &&
+              (item.text.includes("/") || item.text.includes("\\") || item.isPathTailFragment);
             if (
               sealedContinuationLine != null &&
               !cursorsMatch(LINE_START_CURSOR, sealedContinuationLine.end) &&
+              !shouldBreakForEngineSealedOverflow &&
               sealedContinuationFitRatio >= INLINE_CODE_CURRENT_LINE_START_RATIO_THRESHOLD
             ) {
               remainingWidth = Math.max(0, remainingWidth - reservedWidth - sealedContinuationLine.width);
@@ -345,7 +420,7 @@ export function measureInlineRunsHeight(params: {
         }
       }
 
-      if (lineHasContent && remainingWidth < reservedWidth - 0.01) {
+      if (lineHasContent && remainingWidth < reservedWidth - 0.01 && !canDropLeadingCollapsedSpaceAtWrap) {
         cursor = null;
         break;
       }
@@ -354,6 +429,9 @@ export function measureInlineRunsHeight(params: {
         1,
         remainingWidth - reservedWidth - currentLineWhitespaceContinuationGuardPx,
       );
+      const availableWidthWithoutLeadingSpace: number = canDropLeadingCollapsedSpaceAtWrap
+        ? Math.max(1, remainingWidth - currentLineWhitespaceContinuationGuardPx)
+        : availableWidth;
       const styledStartLine: LayoutLine | null =
         codeGroupId == null &&
         lineHasContent &&
@@ -362,6 +440,17 @@ export function measureInlineRunsHeight(params: {
         item.fullWidth > availableWidth + 0.01
           ? layoutNextLine(item.prepared, startCursor, availableWidth)
           : null;
+      if (
+        codeGroupId == null &&
+        lineHasContent &&
+        cursor === null &&
+        item.startsAfterStyledTextSeam &&
+        item.minStartTextWidth > availableWidth + 0.01 &&
+        item.minStartTextWidth <= maxWidth + 0.01
+      ) {
+        cursor = null;
+        break;
+      }
       if (
         codeGroupId == null &&
         lineHasContent &&
@@ -405,8 +494,19 @@ export function measureInlineRunsHeight(params: {
         itemIndex += 1;
         continue;
       }
-      const line: LayoutLine | null =
+      const lineWithReservedSpace: LayoutLine | null =
         styledStartLine ?? layoutNextLine(item.prepared, startCursor, availableWidth);
+      const lineWithoutLeadingSpace: LayoutLine | null =
+        canDropLeadingCollapsedSpaceAtWrap && availableWidthWithoutLeadingSpace > availableWidth + 0.01
+          ? layoutNextLine(item.prepared, startCursor, availableWidthWithoutLeadingSpace)
+          : null;
+      const useLineWithoutLeadingSpace: boolean =
+        lineWithoutLeadingSpace != null &&
+        !cursorsMatch(startCursor, lineWithoutLeadingSpace.end) &&
+        (lineWithReservedSpace == null ||
+          cursorsMatch(startCursor, lineWithReservedSpace.end) ||
+          lineWithoutLeadingSpace.width > lineWithReservedSpace.width + 0.01);
+      const line: LayoutLine | null = useLineWithoutLeadingSpace ? lineWithoutLeadingSpace : lineWithReservedSpace;
       if (line == null || cursorsMatch(startCursor, line.end)) {
         if (!lineHasContent) {
           itemIndex += 1;
@@ -415,7 +515,8 @@ export function measureInlineRunsHeight(params: {
         break;
       }
 
-      remainingWidth = Math.max(0, remainingWidth - reservedWidth - line.width);
+      const consumedReservedWidth = useLineWithoutLeadingSpace ? 0 : reservedWidth;
+      remainingWidth = Math.max(0, remainingWidth - consumedReservedWidth - line.width);
       if (!lineHasContent) {
         lineOnlyCodeGroupId = codeGroupId;
         lineLastCodeFragmentEndedWithHyphen =
@@ -481,6 +582,14 @@ export function measureInlineRunsHeight(params: {
             chromeWidth: item.chromeWidth,
             fullWidth: item.fullWidth,
             minStartTextWidth: item.minStartTextWidth,
+            codeGroupHasTrailingText: item.codeGroupHasTrailingText,
+            codeGroupStartsAfterText: item.codeGroupStartsAfterText,
+            codeGroupStartsAfterStyledTextSeam: item.codeGroupStartsAfterStyledTextSeam,
+            startsAfterCodeWhitespace: item.startsAfterCodeWhitespace,
+            startsAfterStyledTextSeam: item.startsAfterStyledTextSeam,
+            startsStyledTextAfterBodySeam: item.startsStyledTextAfterBodySeam,
+            startsStyledTextAfterInlineCodeSeam: item.startsStyledTextAfterInlineCodeSeam,
+            hasTrailingInlineCode: item.hasTrailingInlineCode,
           };
         }
         if (item.kind === "space") {

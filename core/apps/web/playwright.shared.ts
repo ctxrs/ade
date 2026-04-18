@@ -13,7 +13,6 @@ const require = createRequire(import.meta.url);
 const {
   buildCtxCacheEnv,
   resolveCtxCacheLayout,
-  resolveConfiguredPath: resolveConfiguredCachePath,
 } = require("../../scripts/lib/cache_roots.cjs");
 
 const HOST = "127.0.0.1";
@@ -78,7 +77,7 @@ export const applyProcessEnvDefaultIfPresent = (
 export const resolvePlaywrightCargoTargetDir = (env: NodeJS.ProcessEnv) => {
   const configured = String(env.CTX_E2E_CARGO_TARGET_DIR ?? env.CARGO_TARGET_DIR ?? "").trim();
   if (configured) {
-    return resolveConfiguredCachePath(configured, { cwd: path.resolve(__dirname, "../..") });
+    return resolveConfiguredPath(configured);
   }
   const cacheLayout = resolveCacheLayout(env);
   return path.join(
@@ -123,6 +122,15 @@ export type E2ESuiteProfile =
 
 type PlaywrightBrowserName = "chromium" | "firefox" | "webkit";
 
+type CtxPlaywrightServerMode = "managed" | "external";
+
+type CtxPlaywrightConfigOptions = {
+  serverMode?: CtxPlaywrightServerMode;
+  baseURL?: string;
+  authToken?: string;
+  ignoreHTTPSErrors?: boolean;
+};
+
 const resolvePlaywrightBrowserName = (): PlaywrightBrowserName => {
   const raw = String(process.env.CTX_E2E_BROWSER ?? "").trim().toLowerCase();
   if (!raw) return "webkit";
@@ -134,8 +142,25 @@ const resolvePlaywrightBrowserName = (): PlaywrightBrowserName => {
   );
 };
 
+const resolveExternalBaseURL = (configuredBaseURL?: string): string => {
+  const configured = String(configuredBaseURL ?? process.env.CTX_E2E_BASE_URL ?? "").trim();
+  if (configured) {
+    return configured;
+  }
+  const portText = String(process.env.CTX_E2E_PORT ?? "").trim();
+  const port = Number(portText);
+  const resolvedPort = Number.isFinite(port) && port > 0 ? port : DEFAULT_PORT;
+  return `http://${HOST}:${resolvedPort}`;
+};
+
 export async function createCtxPlaywrightConfig(
   profile: E2ESuiteProfile,
+  {
+    serverMode = "managed",
+    baseURL: configuredBaseURL,
+    authToken: configuredAuthToken,
+    ignoreHTTPSErrors,
+  }: CtxPlaywrightConfigOptions = {},
 ): Promise<PlaywrightTestConfig> {
   const profileSlug = profile.replace(/[^a-z0-9_-]/gi, "-").toLowerCase();
   const reuseRequested = parseBool(process.env.CTX_E2E_REUSE_SERVER);
@@ -147,10 +172,15 @@ export async function createCtxPlaywrightConfig(
         ? false
         : reuseRequested;
   const skipWebBuild = parseBool(process.env.CTX_E2E_SKIP_WEB_BUILD);
-
-  const PORT = await resolvePort(reuseExistingServer);
-  process.env.CTX_E2E_PORT = String(PORT);
-  const baseURL = `http://${HOST}:${PORT}`;
+  const AUTH_TOKEN = configuredAuthToken ?? process.env.CTX_E2E_AUTH_TOKEN ?? "ctx-e2e-auth-token";
+  const managedPort = serverMode === "managed" ? await resolvePort(reuseExistingServer) : null;
+  if (managedPort != null) {
+    process.env.CTX_E2E_PORT = String(managedPort);
+  }
+  const baseURL =
+    serverMode === "managed"
+      ? `http://${HOST}:${managedPort}`
+      : resolveExternalBaseURL(configuredBaseURL);
   const readinessURL = `${baseURL}/api/health`;
 
   const { env: cacheEnv, layout: cacheLayout } = buildCtxCacheEnv({
@@ -166,7 +196,6 @@ export async function createCtxPlaywrightConfig(
   const defaultDataDir = path.join(volatileTmpRoot, `ctx-e2e-${profileSlug}-data-${process.pid}`);
   const tmpDir = process.env.CTX_E2E_TMPDIR ?? defaultTmpDir;
   const dataDir = process.env.CTX_E2E_DATA_DIR ?? defaultDataDir;
-  const AUTH_TOKEN = process.env.CTX_E2E_AUTH_TOKEN ?? "ctx-e2e-auth-token";
   applyProcessEnvDefaultIfPresent(process.env, "CARGO_HOME", cacheEnv.CARGO_HOME);
   applyProcessEnvDefaultIfPresent(process.env, "SCCACHE_DIR", cacheEnv.SCCACHE_DIR);
   applyProcessEnvDefaultIfPresent(process.env, "SCCACHE_PATH", cacheEnv.SCCACHE_PATH);
@@ -226,30 +255,32 @@ export async function createCtxPlaywrightConfig(
       },
     ]);
   }
-  const webServerEnv = {
-    ...buildWebServerBaseEnv(process.env),
-    CTX_E2E_DATA_DIR: dataDir,
-    CTX_E2E_TMPDIR: tmpDir,
-    CTX_VOLATILE_TMPDIR: volatileTmpRoot,
-    CTX_E2E_AUTH_TOKEN: AUTH_TOKEN,
-    CTX_E2E_SKIP_WEB_BUILD: skipWebBuild ? "1" : "0",
-    CTX_E2E_HOST: HOST,
-    CTX_E2E_PORT: String(PORT),
-    CTX_DOCS_MIRROR_BIN: docsMirrorBin,
-    CTX_E2E_CARGO_TARGET_DIR: cargoTargetDir,
-    CARGO_TARGET_DIR: cargoTargetDir,
-    CARGO_INCREMENTAL: cargoIncremental,
-    TMPDIR: tmpDir,
-    TMP: tmpDir,
-    TEMP: tmpDir,
-    CTX_EXECUTION_MODE: "host",
-    CTX_SHOW_FAKE_PROVIDER: "1",
-    CTX_DEV_MODE: "1",
-    CTX_STORAGE_BACKEND: "sqlite",
-    CTX_WEB_DIST: "",
-    ...(process.platform === "win32" ? {} : { SHELL: "/bin/sh" }),
-  };
-  if (resolvedBundleDir) {
+  const webServerEnv = serverMode === "managed"
+    ? {
+      ...buildWebServerBaseEnv(process.env),
+      CTX_E2E_DATA_DIR: dataDir,
+      CTX_E2E_TMPDIR: tmpDir,
+      CTX_VOLATILE_TMPDIR: volatileTmpRoot,
+      CTX_E2E_AUTH_TOKEN: AUTH_TOKEN,
+      CTX_E2E_SKIP_WEB_BUILD: skipWebBuild ? "1" : "0",
+      CTX_E2E_HOST: HOST,
+      CTX_E2E_PORT: String(managedPort),
+      CTX_DOCS_MIRROR_BIN: docsMirrorBin,
+      CTX_E2E_CARGO_TARGET_DIR: cargoTargetDir,
+      CARGO_TARGET_DIR: cargoTargetDir,
+      CARGO_INCREMENTAL: cargoIncremental,
+      TMPDIR: tmpDir,
+      TMP: tmpDir,
+      TEMP: tmpDir,
+      CTX_EXECUTION_MODE: "host",
+      CTX_SHOW_FAKE_PROVIDER: "1",
+      CTX_DEV_MODE: "1",
+      CTX_STORAGE_BACKEND: "sqlite",
+      CTX_WEB_DIST: "",
+      ...(process.platform === "win32" ? {} : { SHELL: "/bin/sh" }),
+    }
+    : null;
+  if (resolvedBundleDir && webServerEnv) {
     webServerEnv.CTX_BUNDLE_DIR = resolvedBundleDir;
     webServerEnv.CTX_E2E_BUNDLED_ONLY ??= "1";
   }
@@ -267,18 +298,21 @@ export async function createCtxPlaywrightConfig(
         authorization: `Bearer ${AUTH_TOKEN}`,
       },
       headless: true,
+      ignoreHTTPSErrors: ignoreHTTPSErrors ?? baseURL.startsWith("https://"),
       screenshot: "only-on-failure",
       trace: "retain-on-failure",
       video: "retain-on-failure",
     },
-    webServer: {
-      url: readinessURL,
-      command: "node apps/web/scripts/start-e2e-server.mjs",
-      cwd: "../..",
-      env: webServerEnv,
-      reuseExistingServer,
-      timeout: 1_200_000,
-      ...resolveWebServerStdio(),
-    },
+    webServer: webServerEnv == null
+      ? undefined
+      : {
+        url: readinessURL,
+        command: "node apps/web/scripts/start-e2e-server.mjs",
+        cwd: "../..",
+        env: webServerEnv,
+        reuseExistingServer,
+        timeout: 1_200_000,
+        ...resolveWebServerStdio(),
+      },
   });
 }

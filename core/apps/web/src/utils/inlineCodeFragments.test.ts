@@ -27,14 +27,14 @@ describe("splitInlineCodeFragments", () => {
     ]);
   });
 
-  it("keeps short hyphenated path prefixes split across slash-coalesced fragments", () => {
+  it("keeps short hyphenated path prefixes atomic with the following path fragment", () => {
     expect(
       splitInlineCodeFragments(
         "turn-header/fixtures/sessionMarkdownMeasurement.ts/src/blockquote/pretextVirtualizerRowLayout.ts/core",
       ),
     ).toEqual([
-      "turn-",
-      "header/fixtures/",
+      "turn-header/",
+      "fixtures/",
       "sessionMarkdownMeasurement.",
       "ts/src/blockquote/",
       "pretextVirtualizerRowLayout.",
@@ -44,8 +44,8 @@ describe("splitInlineCodeFragments", () => {
       "pages/apps/",
       "inline-",
       "code/blockquote/",
-      "turn-",
-      "header/fixtures/",
+      "turn-header/",
+      "fixtures/",
       "web",
     ]);
   });
@@ -57,6 +57,13 @@ describe("splitInlineCodeFragments", () => {
       "web/",
       "pretextVirtualizerRowLayout.",
       "ts",
+    ]);
+  });
+
+  it("merges short hyphenated path tails that would otherwise diverge across browsers", () => {
+    expect(splitInlineCodeFragments("pages/apps/turn-header")).toEqual([
+      "pages/apps/",
+      "turn-header",
     ]);
   });
 });

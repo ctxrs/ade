@@ -8,9 +8,11 @@ import {
 } from "./workbenchE2EMeasurements";
 import {
   installWorkbenchMarkdownScrollProbe,
+  measureWorkbenchMarkdownParityDebug,
   measureWorkbenchMarkdownParity,
   measureWorkbenchMarkdownSelectionText,
   removeWorkbenchMarkdownScrollProbe,
+  type WorkbenchMarkdownParityDebugMeasurement,
   type WorkbenchMarkdownParityMeasurement,
   type WorkbenchMarkdownParitySample,
 } from "./workbenchE2EMarkdown";
@@ -163,6 +165,11 @@ type WorkbenchE2EWindow = Window & {
       samples: readonly WorkbenchMarkdownParitySample[],
       width: number,
     ) => Promise<WorkbenchMarkdownParityMeasurement[]>;
+    measureMarkdownParityDebug?: (
+      markdown: string,
+      width: number,
+      target?: string,
+    ) => Promise<WorkbenchMarkdownParityDebugMeasurement>;
     measureMessageParity?: (params: WorkbenchMessageParityParams) => Promise<WorkbenchRowParityMeasurement>;
     measureAssistantParity?: (params: WorkbenchAssistantParityParams) => Promise<WorkbenchRowParityMeasurement>;
     measureAssistantStreamingParity?: (
@@ -268,6 +275,8 @@ export function useWorkbenchE2EBridge({
       samples: readonly WorkbenchMarkdownParitySample[],
       width: number,
     ) => measureWorkbenchMarkdownParity(samples, width);
+    win.__ctxE2E.measureMarkdownParityDebug = (markdown: string, width: number, target?: string) =>
+      measureWorkbenchMarkdownParityDebug(markdown, width, target);
     win.__ctxE2E.measureMessageParity = (params: WorkbenchMessageParityParams) => measureWorkbenchMessageParity(params);
     win.__ctxE2E.measureAssistantParity = (params: WorkbenchAssistantParityParams) =>
       measureWorkbenchAssistantParity(params);
@@ -297,6 +306,7 @@ export function useWorkbenchE2EBridge({
       delete win.__ctxE2E.measureHarnessOption;
       delete win.__ctxE2E.measureDiffFile;
       delete win.__ctxE2E.measureMarkdownParity;
+      delete win.__ctxE2E.measureMarkdownParityDebug;
       delete win.__ctxE2E.measureMessageParity;
       delete win.__ctxE2E.measureAssistantParity;
       delete win.__ctxE2E.measureAssistantStreamingParity;

@@ -80,6 +80,16 @@ const MARKDOWN_CORPUS: MarkdownSample[] = [
     name: "emoji-cjk-inline-code",
     markdown: "Status check 🙂 with `inline-token-path/segment` and mixed CJK text 你好 世界 to stress shaping.",
   },
+  {
+    name: "emoji-cjk-inline-code-threshold",
+    markdown:
+      "summary 🙂 測試 佈局 `core/e2e/pretextVirtualizerRowLayout.ts/sessionThreadDomMeasurement.tsx/apps/turn-header`.",
+  },
+  {
+    name: "blockquote-link-code-tail",
+    markdown:
+      "> [summary message summary](https://example.com/inline-code/parity/webkit/parity?ref=781) `cargo test -p ctx-store`:",
+  },
 ];
 
 const USER_MESSAGE_CORPUS = [
@@ -235,6 +245,16 @@ const TURN_HEADER_CORPUS = [
       ].join("\n"),
     },
   },
+  {
+    name: "url-command-path-threshold",
+    params: {
+      content: [
+        "Message summary context https://example.com/assistant/streaming-tail/streaming-tail?ref=656 e2e/fixtures/src/web/pages/turn-header.",
+        "Summary layout thread pnpm -C core/apps/web test:e2e:pretext:parity:chromium workbenchShell/pretextVirtualizerRowLayout.ts/inline-code/e2e.",
+        "Marker stream entry summary session 測試 佈局 🙂.",
+      ].join("\n"),
+    },
+  },
 ];
 
 type MarkdownSummaryEntry = {
@@ -365,6 +385,28 @@ test("workbench: pretext threshold seam parity sweep", async ({ page }) => {
   ).toEqual([]);
 });
 
+test("workbench: pretext markdown quote-link-code seam parity", async ({ page }) => {
+  test.setTimeout(120000);
+  await openWorkbenchShell(page);
+
+  const [measurement] = await measureMarkdownParity(
+    page,
+    [
+      {
+        name: "blockquote-link-code-tail",
+        markdown:
+          "> [summary message summary](https://example.com/inline-code/parity/webkit/parity?ref=781) `cargo test -p ctx-store`:",
+      },
+    ],
+    382.48,
+  );
+
+  expect(
+    Math.abs(measurement?.delta ?? Number.POSITIVE_INFINITY),
+    `markdown drifted by ${measurement?.delta ?? "unknown"}px (planned ${measurement?.planned ?? "?"}, actual ${measurement?.actual ?? "?"})`,
+  ).toBeLessThanOrEqual(MARKDOWN_THRESHOLD_PX);
+});
+
 test("workbench: pretext sealed inline path threshold parity", async ({ page }) => {
   test.setTimeout(120000);
   await openWorkbenchShell(page);
@@ -433,6 +475,15 @@ test("workbench: pretext mixed inline path continuation parity", async ({ page }
         {
           name: "narrow-continuation-full-chrome",
           markdown: "`table/src/blockquote/workbenchShell`",
+        },
+      ],
+    },
+    {
+      width: 181.3333333333,
+      samples: [
+        {
+          name: "webkit-sealed-path-cell-width",
+          markdown: "`apps/e2e/e2e/core/web/pretextVirtualizerRowLayout.ts`",
         },
       ],
     },

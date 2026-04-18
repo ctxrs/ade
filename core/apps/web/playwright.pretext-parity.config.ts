@@ -7,14 +7,13 @@ const base = await createCtxPlaywrightConfig("premerge_required");
 export default defineConfig({
   ...base,
   testDir: "./e2e",
-  testMatch:
-    /workbench-pretext-virtualizer-(acceptance|switch-collapse|bottom-rehit|short-thread)\.spec\.ts/,
+  testMatch: /workbench-(pretext-parity-(corpus|fuzz)|markdown-parity|message-row-parity|turn-header-parity)\.spec\.ts/,
   timeout: 180_000,
   workers: 1,
-  outputDir: path.resolve("e2e/test-results/pretext-virtualizer-acceptance"),
+  outputDir: path.resolve("e2e/test-results/pretext-parity"),
   reporter: [
     ["dot"],
-    ["html", { outputFolder: path.resolve("e2e/playwright-report/pretext-virtualizer-acceptance"), open: "never" }],
+    ["html", { outputFolder: path.resolve("e2e/playwright-report/pretext-parity"), open: "never" }],
   ],
   use: {
     ...base.use,

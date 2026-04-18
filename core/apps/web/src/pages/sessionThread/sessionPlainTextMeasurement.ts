@@ -207,6 +207,40 @@ function measurePlainTextDelimitedTokenFit(params: {
   };
 }
 
+function snapDelimitedUrlContinuationFit(params: {
+  cacheKeyPrefix: string;
+  word: string;
+  fit: {
+    consumedText: string;
+    consumedWidth: number;
+    remainder: string;
+  };
+  font: string;
+}): {
+  consumedText: string;
+  consumedWidth: number;
+  remainder: string;
+} {
+  if (!params.word.includes("://") || params.fit.remainder.length === 0) {
+    return params.fit;
+  }
+
+  const snappedPrefix = snapUrlContinuationPrefix(params.fit.consumedText);
+  if (snappedPrefix.length === 0 || snappedPrefix.length === params.fit.consumedText.length) {
+    return params.fit;
+  }
+
+  return {
+    consumedText: snappedPrefix,
+    consumedWidth: measureSingleLineTextWidth({
+      cacheKey: buildPreparedContentKey(`${params.cacheKeyPrefix}:snapped`, snappedPrefix),
+      text: snappedPrefix,
+      font: params.font,
+    }),
+    remainder: params.word.slice(snappedPrefix.length),
+  };
+}
+
 function resolvePlainTextDelimitedStartRatioThreshold(text: string): number {
   return text.includes("://") ? 0.35 : 0.55;
 }
@@ -222,6 +256,33 @@ function snapUrlContinuationPrefix(prefix: string): string {
     }
   }
   return prefix;
+}
+
+function lineEndsWithUrlQueryPair(text: string): boolean {
+  const normalized = text.trim();
+  if (normalized.length === 0) {
+    return false;
+  }
+  return /(?:^|[/?&])[^/\s?&=]+=\S+$/.test(normalized);
+}
+
+function isPathLikeDelimitedWord(text: string): boolean {
+  return !text.includes("://") && /[./\\]/.test(text);
+}
+
+function acceptsUrlContinuationOnCurrentLine(params: {
+  word: string;
+  consumedText: string;
+  currentFitRatio: number;
+}): boolean {
+  if (params.consumedText.length === 0) {
+    return false;
+  }
+  if (params.consumedText.includes("?")) {
+    return true;
+  }
+  const threshold = Math.max(0.45, resolvePlainTextDelimitedStartRatioThreshold(params.word));
+  return params.currentFitRatio >= threshold && params.consumedText.includes("-");
 }
 
 function measureCollapsedPlainTextLineHeight(params: {
@@ -245,22 +306,18 @@ function measureCollapsedPlainTextLineHeight(params: {
     (plainTextDebugWindow?.__ctxPlainTextDebugWidth == null ||
       plainTextDebugWindow.__ctxPlainTextDebugWidth === params.width);
   const debugLines: string[] = [];
-  let debugLine = "";
-  const appendDebugText = (text: string, prefixSpace: boolean) => {
-    if (!debugPlainText) {
-      return;
+  let currentLineText = "";
+  const appendLineText = (text: string, prefixSpace: boolean) => {
+    if (prefixSpace && currentLineText.length > 0) {
+      currentLineText += " ";
     }
-    if (prefixSpace && debugLine.length > 0) {
-      debugLine += " ";
-    }
-    debugLine += text;
+    currentLineText += text;
   };
-  const flushDebugLine = () => {
-    if (!debugPlainText || debugLine.length === 0) {
-      return;
+  const flushLine = () => {
+    if (debugPlainText && currentLineText.length > 0) {
+      debugLines.push(currentLineText);
     }
-    debugLines.push(debugLine);
-    debugLine = "";
+    currentLineText = "";
   };
 
   const maxWidth = Math.max(1, params.width);
@@ -285,7 +342,7 @@ function measureCollapsedPlainTextLineHeight(params: {
 
     if (lineHasContent && reservedWidth + wordWidth <= remainingWidth + 0.01) {
       remainingWidth = Math.max(0, remainingWidth - reservedWidth - wordWidth);
-      appendDebugText(word, true);
+      appendLineText(word, true);
       remainder = null;
       remainderFragments = null;
       wordIndex += 1;
@@ -293,70 +350,24 @@ function measureCollapsedPlainTextLineHeight(params: {
     }
 
     if (lineHasContent) {
-      const isUrlLikeWord = word.includes("://");
       const availableWidth = Math.max(0, remainingWidth - reservedWidth);
-      if (isUrlLikeWord && availableWidth > 0.01) {
-        const currentPrefix = findLargestCollapsedPlainTextPrefixThatFits({
-          cacheKeyPrefix: `${params.cacheKey}:word:${wordIndex}:continued-url`,
-          text: word,
-          font: params.font,
-          width: availableWidth,
-        });
-        const freshPrefix = findLargestCollapsedPlainTextPrefixThatFits({
-          cacheKeyPrefix: `${params.cacheKey}:word:${wordIndex}:fresh-url`,
-          text: word,
-          font: params.font,
-          width: maxWidth,
-        });
-        const rawPrefixText = word.slice(0, word.length - currentPrefix.remainder.length);
-        const snappedPrefixText = snapUrlContinuationPrefix(rawPrefixText);
-        const snappedPrefixWidth =
-          snappedPrefixText.length === rawPrefixText.length
-            ? currentPrefix.prefixWidth
-            : measureSingleLineTextWidth({
-                cacheKey: buildPreparedContentKey(
-                  `${params.cacheKey}:word:${wordIndex}:continued-url-snapped`,
-                  snappedPrefixText,
-                ),
-                text: snappedPrefixText,
-                font: params.font,
-              });
-        const continuationFitRatio =
-          freshPrefix.prefixWidth > 0 ? snappedPrefixWidth / freshPrefix.prefixWidth : 1;
-        if (
-          snappedPrefixWidth > 0 &&
-          continuationFitRatio >= resolvePlainTextDelimitedStartRatioThreshold(word)
-        ) {
-          remainingWidth = Math.max(0, availableWidth - snappedPrefixWidth);
-          lineHasContent = true;
-          appendDebugText(snappedPrefixText, true);
-          const nextRemainder = word.slice(snappedPrefixText.length);
-          remainder = nextRemainder.length > 0 ? nextRemainder : null;
-          remainderFragments =
-            remainder != null ? splitPlainTextWrapFragments(remainder) : null;
-          if (remainder == null) {
-            wordIndex += 1;
-          }
-          if (wordIndex < words.length || remainder != null) {
-            flushDebugLine();
-            lineCount += 1;
-            lineHasContent = false;
-            remainingWidth = maxWidth;
-          }
-          continue;
-        }
-      }
+      const wordFitsFreshLine = wordWidth <= maxWidth + 0.01;
+      const isUrlLikeWord = word.includes("://");
       if (usesDelimitedWrapping) {
-        if (availableWidth > 0.01) {
-          const allowPartialDelimitedContinuation = !isUrlLikeWord;
-          const currentFit = measurePlainTextDelimitedTokenFit({
+        if ((isUrlLikeWord || !wordFitsFreshLine) && availableWidth > 0.01) {
+          const currentFit = snapDelimitedUrlContinuationFit({
             cacheKeyPrefix: `${params.cacheKey}:word:${wordIndex}:continued`,
-            text: word,
-            fragments: wordFragments,
+            word,
             font: params.font,
-            width: availableWidth,
-            allowPartialFragment: allowPartialDelimitedContinuation,
-            allowPartialAfterConsumedText: allowPartialDelimitedContinuation,
+            fit: measurePlainTextDelimitedTokenFit({
+              cacheKeyPrefix: `${params.cacheKey}:word:${wordIndex}:continued`,
+              text: word,
+              fragments: wordFragments,
+              font: params.font,
+              width: availableWidth,
+              allowPartialFragment: true,
+              allowPartialAfterConsumedText: true,
+            }),
           });
           const freshFit = measurePlainTextDelimitedTokenFit({
             cacheKeyPrefix: `${params.cacheKey}:word:${wordIndex}:fresh`,
@@ -370,17 +381,31 @@ function measureCollapsedPlainTextLineHeight(params: {
           const currentFitRatio =
             freshFit.consumedWidth > 0 ? currentFit.consumedWidth / freshFit.consumedWidth : 1;
           const startRatioThreshold = resolvePlainTextDelimitedStartRatioThreshold(word);
-          if (currentFit.consumedText.length > 0 && currentFitRatio >= startRatioThreshold) {
+          const blocksPathContinuationAfterQueryTail =
+            lineEndsWithUrlQueryPair(currentLineText) && isPathLikeDelimitedWord(word);
+          const acceptsCurrentDelimitedContinuation = blocksPathContinuationAfterQueryTail
+            ? false
+            : isUrlLikeWord
+              ? acceptsUrlContinuationOnCurrentLine({
+                  word,
+                  consumedText: currentFit.consumedText,
+                  currentFitRatio,
+                })
+              : currentFitRatio >= startRatioThreshold;
+          if (
+            currentFit.consumedText.length > 0 &&
+            acceptsCurrentDelimitedContinuation
+          ) {
             remainingWidth = Math.max(0, availableWidth - currentFit.consumedWidth);
             lineHasContent = true;
-            appendDebugText(currentFit.consumedText, true);
+            appendLineText(currentFit.consumedText, true);
             remainder = currentFit.remainder.length > 0 ? currentFit.remainder : null;
             remainderFragments = remainder != null ? splitPlainTextWrapFragments(remainder) : null;
             if (remainder == null) {
               wordIndex += 1;
             }
             if (wordIndex < words.length || remainder != null) {
-              flushDebugLine();
+              flushLine();
               lineCount += 1;
               lineHasContent = false;
               remainingWidth = maxWidth;
@@ -389,7 +414,12 @@ function measureCollapsedPlainTextLineHeight(params: {
           }
         }
       }
-      if (!usesDelimitedWrapping && wordWidth > availableWidth + 0.01 && availableWidth > 0.01) {
+      if (
+        !usesDelimitedWrapping &&
+        !wordFitsFreshLine &&
+        wordWidth > availableWidth + 0.01 &&
+        availableWidth > 0.01
+      ) {
         const fittingPrefix = findLargestCollapsedPlainTextPrefixThatFits({
           cacheKeyPrefix: `${params.cacheKey}:word:${wordIndex}:continued`,
           text: word,
@@ -399,14 +429,14 @@ function measureCollapsedPlainTextLineHeight(params: {
         if (fittingPrefix.prefixWidth > 0) {
           remainingWidth = Math.max(0, availableWidth - fittingPrefix.prefixWidth);
           lineHasContent = true;
-          appendDebugText(word.slice(0, word.length - fittingPrefix.remainder.length), true);
+          appendLineText(word.slice(0, word.length - fittingPrefix.remainder.length), true);
           remainder = fittingPrefix.remainder.length > 0 ? fittingPrefix.remainder : null;
           remainderFragments = null;
           if (remainder == null) {
             wordIndex += 1;
           }
           if (wordIndex < words.length || remainder != null) {
-            flushDebugLine();
+            flushLine();
             lineCount += 1;
             lineHasContent = false;
             remainingWidth = maxWidth;
@@ -414,7 +444,7 @@ function measureCollapsedPlainTextLineHeight(params: {
           continue;
         }
       }
-      flushDebugLine();
+      flushLine();
       lineCount += 1;
       lineHasContent = false;
       remainingWidth = maxWidth;
@@ -432,15 +462,25 @@ function measureCollapsedPlainTextLineHeight(params: {
       });
       remainingWidth = Math.max(0, remainingWidth - fittingPrefix.consumedWidth);
       lineHasContent = true;
-      appendDebugText(fittingPrefix.consumedText, false);
+      appendLineText(fittingPrefix.consumedText, false);
       remainder = fittingPrefix.remainder.length > 0 ? fittingPrefix.remainder : null;
       remainderFragments = remainder != null ? splitPlainTextWrapFragments(remainder) : null;
       if (remainder == null) {
         wordIndex += 1;
       }
 
-      if (wordIndex < words.length || remainder != null) {
-        flushDebugLine();
+      const nextWord = remainder == null ? words[wordIndex] ?? null : null;
+      const nextWordWidth =
+        nextWord != null
+          ? measureSingleLineTextWidth({
+              cacheKey: buildPreparedContentKey(`${params.cacheKey}:word:${wordIndex}`, nextWord),
+              text: nextWord,
+              font: params.font,
+            })
+          : 0;
+
+      if (remainder != null) {
+        flushLine();
         lineCount += 1;
         lineHasContent = false;
         remainingWidth = maxWidth;
@@ -451,7 +491,7 @@ function measureCollapsedPlainTextLineHeight(params: {
     if (wordWidth <= remainingWidth + 0.01) {
       remainingWidth = Math.max(0, remainingWidth - wordWidth);
       lineHasContent = true;
-      appendDebugText(word, false);
+      appendLineText(word, false);
       remainder = null;
       remainderFragments = null;
       wordIndex += 1;
@@ -467,7 +507,7 @@ function measureCollapsedPlainTextLineHeight(params: {
 
     remainingWidth = Math.max(0, remainingWidth - fittingPrefix.prefixWidth);
     lineHasContent = true;
-    appendDebugText(word.slice(0, word.length - fittingPrefix.remainder.length), false);
+    appendLineText(word.slice(0, word.length - fittingPrefix.remainder.length), false);
     remainder = fittingPrefix.remainder.length > 0 ? fittingPrefix.remainder : null;
     remainderFragments = null;
     if (remainder == null) {
@@ -475,14 +515,14 @@ function measureCollapsedPlainTextLineHeight(params: {
     }
 
     if (wordIndex < words.length || remainder != null) {
-      flushDebugLine();
+      flushLine();
       lineCount += 1;
       lineHasContent = false;
       remainingWidth = maxWidth;
     }
   }
 
-  flushDebugLine();
+  flushLine();
   if (debugPlainText && plainTextDebugWindow) {
     plainTextDebugWindow.__ctxPlainTextDebug = {
       lineCount,

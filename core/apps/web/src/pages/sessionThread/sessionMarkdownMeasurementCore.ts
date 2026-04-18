@@ -72,6 +72,12 @@ export type SessionMarkdownDebugWindow = Window & {
       dottedPathClusterWidth: number;
       wholeCodeGroupWidth: number;
       remainingWidth: number;
+      currentLineConsumedWidth: number;
+      currentLineStartFitRatio: number;
+      currentLineCodeStartFitIsReadable: boolean;
+      currentLineCodeStartFitIsStrong: boolean;
+      shouldBreakForStyledTailCodeStart: boolean;
+      shouldBreakForAttachedTrailingPlainStart: boolean;
       shouldBreak: boolean;
       text: string;
     }>;

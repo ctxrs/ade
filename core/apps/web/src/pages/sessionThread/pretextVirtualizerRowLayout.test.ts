@@ -403,6 +403,15 @@ describe("getPretextVirtualizerRowLayout", () => {
     expect(height).toBe(Math.round(2 * SESSION_THREAD_MARKDOWN_BODY_LINE_HEIGHT_PX * 16) / 16);
   });
 
+  it("allows a styled-seam path-like code group to keep its first readable slice on the current line", () => {
+    const height = measureSessionMarkdownDocument(
+      "Session padding probe *render session padding* `workbenchShell/sessionThread/e2e/workbenchShell/turn-header/web` ~~fragment~~ `cargo test -p ctx-store` deterministic summary parity ~~session virtualizer~~.",
+      518.64,
+    );
+
+    expect(height).toBe(Math.round(3 * SESSION_THREAD_MARKDOWN_BODY_LINE_HEIGHT_PX * 16) / 16);
+  });
+
   it("treats soft newlines inside mixed inline paragraphs like collapsed spaces", () => {
     const withSoftNewline = measureSessionMarkdownDocument(
       "before mixed prose\nand `inline-code-token/with/path` after the wrap",
@@ -494,6 +503,54 @@ describe("getPretextVirtualizerRowLayout", () => {
     });
 
     expect(height).toBe(SESSION_THREAD_MARKDOWN_BODY_LINE_HEIGHT_PX * 2);
+  });
+
+  it("continues a turn-header URL token on the current line after prose when break-word is required", () => {
+    const height = measureSessionPlainTextBlockHeight({
+      cacheKey: "turn-header-url-after-prose-continuation",
+      text: "Message summary context https://example.com/assistant/streaming-tail/streaming-tail?ref=656 e2e/fixtures/src/web/pages/turn-header.",
+      font: `${SESSION_THREAD_MARKDOWN_BODY_FONT_SIZE_PX}px ${SESSION_THREAD_MARKDOWN_BODY_FONT_FAMILY}`,
+      width: 550,
+      lineHeight: SESSION_THREAD_MARKDOWN_BODY_LINE_HEIGHT_PX,
+    });
+
+    expect(height).toBe(SESSION_THREAD_MARKDOWN_BODY_LINE_HEIGHT_PX * 2);
+  });
+
+  it("keeps a meaningful URL prefix on the current line after prose at the WebKit seam width", () => {
+    const height = measureSessionPlainTextBlockHeight({
+      cacheKey: "turn-header-url-after-prose-webkit-seam",
+      text: "Message summary context https://example.com/assistant/streaming-tail/streaming-tail?ref=656 e2e/fixtures/src/web/pages/turn-header.",
+      font: `${SESSION_THREAD_MARKDOWN_BODY_FONT_SIZE_PX}px ${SESSION_THREAD_MARKDOWN_BODY_FONT_FAMILY}`,
+      width: 470,
+      lineHeight: SESSION_THREAD_MARKDOWN_BODY_LINE_HEIGHT_PX,
+    });
+
+    expect(height).toBe(SESSION_THREAD_MARKDOWN_BODY_LINE_HEIGHT_PX * 2);
+  });
+
+  it("pushes insufficient URL continuations after prose onto a fresh line in turn headers", () => {
+    const height = measureSessionPlainTextBlockHeight({
+      cacheKey: "turn-header-url-after-prose-fresh-line-threshold",
+      text: "Composer turn header pretext session https://example.com/transcript/transcript/docs/streaming-tail?ref=972 fixtures/web/fixtures/web.",
+      font: `${SESSION_THREAD_MARKDOWN_BODY_FONT_SIZE_PX}px ${SESSION_THREAD_MARKDOWN_BODY_FONT_FAMILY}`,
+      width: 550,
+      lineHeight: SESSION_THREAD_MARKDOWN_BODY_LINE_HEIGHT_PX,
+    });
+
+    expect(height).toBe(SESSION_THREAD_MARKDOWN_BODY_LINE_HEIGHT_PX * 3);
+  });
+
+  it("starts a path token on a fresh line after a wrapped URL query tail", () => {
+    const height = measureSessionPlainTextBlockHeight({
+      cacheKey: "turn-header-url-query-tail-path-wrap",
+      text: "Entry buffer layout https://example.com/chromium/docs/parity?ref=734 sessionMarkdownMeasurement.ts/pretextVirtualizerRowLayout.ts/pages/table.",
+      font: `${SESSION_THREAD_MARKDOWN_BODY_FONT_SIZE_PX}px ${SESSION_THREAD_MARKDOWN_BODY_FONT_FAMILY}`,
+      width: 402,
+      lineHeight: SESSION_THREAD_MARKDOWN_BODY_LINE_HEIGHT_PX,
+    });
+
+    expect(height).toBe(SESSION_THREAD_MARKDOWN_BODY_LINE_HEIGHT_PX * 4);
   });
 
   it("includes fenced code block border chrome in deterministic markdown height", () => {

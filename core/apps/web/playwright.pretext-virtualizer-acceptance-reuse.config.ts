@@ -2,7 +2,10 @@ import path from "path";
 import { defineConfig } from "playwright/test";
 import { createCtxPlaywrightConfig } from "./playwright.shared";
 
-const base = await createCtxPlaywrightConfig("premerge_required");
+const base = await createCtxPlaywrightConfig("soak", {
+  serverMode: "external",
+  baseURL: process.env.CTX_E2E_BASE_URL ?? "http://127.0.0.1:4417",
+});
 
 export default defineConfig({
   ...base,
@@ -11,10 +14,10 @@ export default defineConfig({
     /workbench-pretext-virtualizer-(acceptance|switch-collapse|bottom-rehit|short-thread)\.spec\.ts/,
   timeout: 180_000,
   workers: 1,
-  outputDir: path.resolve("e2e/test-results/pretext-virtualizer-acceptance"),
+  outputDir: path.resolve("e2e/test-results/pretext-virtualizer-acceptance-reuse"),
   reporter: [
     ["dot"],
-    ["html", { outputFolder: path.resolve("e2e/playwright-report/pretext-virtualizer-acceptance"), open: "never" }],
+    ["html", { outputFolder: path.resolve("e2e/playwright-report/pretext-virtualizer-acceptance-reuse"), open: "never" }],
   ],
   use: {
     ...base.use,
@@ -23,4 +26,5 @@ export default defineConfig({
     trace: "retain-on-failure",
     video: "retain-on-failure",
   },
+  webServer: undefined,
 });

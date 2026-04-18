@@ -2,7 +2,10 @@ import React from "react";
 import ReactDOMClient from "react-dom/client";
 import { flushSync } from "react-dom";
 import { MemoMarkdown } from "../sessionView";
-import { measureSessionMarkdownDocument } from "../sessionThread/sessionMarkdownMeasurement";
+import {
+  clearSessionMarkdownMeasurementCaches,
+  measureSessionMarkdownDocument,
+} from "../sessionThread/sessionMarkdownMeasurement";
 import { SESSION_THREAD_LAYOUT_STYLE } from "../sessionThread/sessionThreadLayoutTokens";
 
 export type WorkbenchMarkdownParitySample = {
@@ -17,9 +20,79 @@ export type WorkbenchMarkdownParityMeasurement = {
   delta: number;
 };
 
+export type WorkbenchMarkdownPlannerDebug = {
+  lines: string[];
+  startDecisions: Array<{
+    pendingSpaceWidth: number;
+    preferredStartWidth: number;
+    dottedPathClusterWidth: number;
+    wholeCodeGroupWidth: number;
+    remainingWidth: number;
+    currentLineConsumedWidth: number;
+    currentLineStartFitRatio: number;
+    currentLineCodeStartFitIsReadable: boolean;
+    currentLineCodeStartFitIsStrong: boolean;
+    shouldBreakForStyledTailCodeStart: boolean;
+    shouldBreakForAttachedTrailingPlainStart: boolean;
+    shouldBreak: boolean;
+    text: string;
+  }>;
+  items: Array<{
+    kind: string;
+    text: string;
+    chromeWidth?: number;
+    fullWidth?: number;
+    minStartTextWidth?: number;
+  }>;
+  width: number;
+};
+
+export type WorkbenchMarkdownParityDebugMeasurement = WorkbenchMarkdownParityMeasurement & {
+  debug: WorkbenchMarkdownPlannerDebug | null;
+  actualTextRects: Array<{
+    text: string;
+    rects: Array<{ x: number; y: number; width: number; height: number }>;
+  }>;
+};
+
+type WorkbenchMarkdownDebugWindow = Window & {
+  __ctxForceInlineCodeDebug?: boolean;
+  __ctxInlineCodeDebugTarget?: string;
+  __ctxInlineCodeDebugWidth?: number;
+  __ctxInlineCodeDebug?: WorkbenchMarkdownPlannerDebug;
+};
+
 let markdownScrollProbeRoot: ReactDOMClient.Root | null = null;
 let markdownScrollProbeHost: HTMLElement | null = null;
 let markdownScrollProbeContainer: HTMLElement | null = null;
+
+function collectTextNodeRects(root: Element | null) {
+  if (!root) return [];
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  const nodes: Array<{
+    text: string;
+    rects: Array<{ x: number; y: number; width: number; height: number }>;
+  }> = [];
+  let current = walker.nextNode();
+  while (current) {
+    if (current.nodeType === Node.TEXT_NODE) {
+      const text = current.textContent ?? "";
+      if (text.trim().length > 0) {
+        const range = document.createRange();
+        range.selectNodeContents(current);
+        const rects = Array.from(range.getClientRects()).map((rect) => ({
+          x: rect.x,
+          y: rect.y,
+          width: rect.width,
+          height: rect.height,
+        }));
+        nodes.push({ text, rects });
+      }
+    }
+    current = walker.nextNode();
+  }
+  return nodes;
+}
 
 function applyMarkdownLayoutStyle(host: HTMLElement, width: number) {
   host.className = "wb-assistant-body";
@@ -57,6 +130,52 @@ export async function measureWorkbenchMarkdownParity(
     host.remove();
   }
   return out;
+}
+
+export async function measureWorkbenchMarkdownParityDebug(
+  markdown: string,
+  width: number,
+  target = "*",
+): Promise<WorkbenchMarkdownParityDebugMeasurement> {
+  clearSessionMarkdownMeasurementCaches();
+  const debugWindow = window as WorkbenchMarkdownDebugWindow;
+  debugWindow.__ctxForceInlineCodeDebug = true;
+  debugWindow.__ctxInlineCodeDebugTarget = target;
+  debugWindow.__ctxInlineCodeDebugWidth = width;
+  debugWindow.__ctxInlineCodeDebug = undefined;
+
+  try {
+    const planned = measureSessionMarkdownDocument(markdown, width);
+    const host = document.createElement("div");
+    host.style.position = "fixed";
+    host.style.left = "-10000px";
+    host.style.top = "0";
+    applyMarkdownLayoutStyle(host, width);
+    document.body.appendChild(host);
+    const root = ReactDOMClient.createRoot(host);
+    flushSync(() => {
+      root.render(React.createElement(MemoMarkdown, { content: markdown }));
+    });
+    const markdownRoot = host.querySelector(".wb-markdown-root");
+    const actual = markdownRoot?.getBoundingClientRect().height ?? 0;
+    const actualTextRects = collectTextNodeRects(markdownRoot);
+    root.unmount();
+    host.remove();
+    return {
+      name: "debug",
+      planned,
+      actual,
+      delta: planned - actual,
+      debug: debugWindow.__ctxInlineCodeDebug ?? null,
+      actualTextRects,
+    };
+  } finally {
+    debugWindow.__ctxForceInlineCodeDebug = false;
+    debugWindow.__ctxInlineCodeDebugTarget = undefined;
+    debugWindow.__ctxInlineCodeDebugWidth = undefined;
+    debugWindow.__ctxInlineCodeDebug = undefined;
+    clearSessionMarkdownMeasurementCaches();
+  }
 }
 
 export async function measureWorkbenchMarkdownSelectionText(markdown: string, width: number): Promise<string> {

@@ -14,6 +14,23 @@ const TURN_HEADER_COMMAND_FIXTURE = [
   "Session entry entry layout pnpm -C core/apps/web test:e2e:pretext:guardrail inline-code/inline-code/sessionThread/src/sessionThreadDomMeasurement.tsx.",
 ].join("\n");
 
+const TURN_HEADER_URL_THRESHOLD_FIXTURE = [
+  "Composer turn header pretext session https://example.com/transcript/transcript/docs/streaming-tail?ref=972 fixtures/web/fixtures/web.",
+  "Command buffer summary ctx serve core/e2e/sessionThread/workbenchShell/inline-code.",
+].join("\n");
+
+const TURN_HEADER_URL_AFTER_PROSE_FIXTURE = [
+  "Message summary context https://example.com/assistant/streaming-tail/streaming-tail?ref=656 e2e/fixtures/src/web/pages/turn-header.",
+  "Summary layout thread pnpm -C core/apps/web test:e2e:pretext:parity:chromium workbenchShell/pretextVirtualizerRowLayout.ts/inline-code/e2e.",
+  "Marker stream entry summary session 測試 佈局 🙂.",
+].join("\n");
+
+const TURN_HEADER_QUERY_TAIL_FIXTURE = [
+  "Entry buffer layout https://example.com/chromium/docs/parity?ref=734 sessionMarkdownMeasurement.ts/pretextVirtualizerRowLayout.ts/pages/table.",
+  "Turn parity deterministic padding git status git status.",
+  "Turn session entry 你好 世界 🧪.",
+].join("\n");
+
 test("workbench: expanded turn-header planner matches rendered height for URL-heavy transcript text", async ({
   page,
 }) => {
@@ -35,6 +52,57 @@ test("workbench: expanded turn-header planner matches rendered height for path a
   await openWorkbenchShell(page);
 
   const measurement = await measureTurnHeaderParity(page, { content: TURN_HEADER_COMMAND_FIXTURE });
+
+  expect(
+    Math.abs(measurement.delta),
+    `turn_header drifted by ${measurement.delta}px (planned ${measurement.planned}, actual ${measurement.actual})`,
+  ).toBeLessThanOrEqual(1);
+});
+
+test("workbench: expanded turn-header planner matches rendered height for url threshold seams", async ({
+  page,
+}) => {
+  test.setTimeout(120000);
+  await openWorkbenchShell(page);
+
+  const measurement = await measureTurnHeaderParity(page, {
+    content: TURN_HEADER_URL_THRESHOLD_FIXTURE,
+    viewportWidth: 620,
+  });
+
+  expect(
+    Math.abs(measurement.delta),
+    `turn_header drifted by ${measurement.delta}px (planned ${measurement.planned}, actual ${measurement.actual})`,
+  ).toBeLessThanOrEqual(1);
+});
+
+test("workbench: expanded turn-header planner matches rendered height for url continuation after prose", async ({
+  page,
+}) => {
+  test.setTimeout(120000);
+  await openWorkbenchShell(page);
+
+  const measurement = await measureTurnHeaderParity(page, {
+    content: TURN_HEADER_URL_AFTER_PROSE_FIXTURE,
+    viewportWidth: 540,
+  });
+
+  expect(
+    Math.abs(measurement.delta),
+    `turn_header drifted by ${measurement.delta}px (planned ${measurement.planned}, actual ${measurement.actual})`,
+  ).toBeLessThanOrEqual(1);
+});
+
+test("workbench: expanded turn-header planner matches rendered height for wrapped query-tail path seams", async ({
+  page,
+}) => {
+  test.setTimeout(120000);
+  await openWorkbenchShell(page);
+
+  const measurement = await measureTurnHeaderParity(page, {
+    content: TURN_HEADER_QUERY_TAIL_FIXTURE,
+    viewportWidth: 472,
+  });
 
   expect(
     Math.abs(measurement.delta),

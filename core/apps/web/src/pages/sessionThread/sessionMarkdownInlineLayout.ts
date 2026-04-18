@@ -34,6 +34,7 @@ export type PreparedInlineLayoutItem =
       codeGroupHasTrailingText: boolean;
       codeGroupIsOnlyInlineCodeInSegment: boolean;
       codeGroupStartsAfterText: boolean;
+      codeGroupStartsAfterStyledTextSeam: boolean;
       codePartStartsAfterWhitespace: boolean;
       chromeWidth: number;
       endCursor: { segmentIndex: number; graphemeIndex: number };
@@ -45,6 +46,7 @@ export type PreparedInlineLayoutItem =
       isSealedInlineCodeFragment: boolean;
       minStartTextWidth: number;
       prefersFreshLineStart: boolean;
+      prefersFreshLineStartWithoutLeadingHang: boolean;
       startsStyledTextAfterInlineCodeSeam: boolean;
       startsAfterStyledTextSeam: boolean;
       startsStyledTextAfterBodySeam: boolean;
@@ -68,6 +70,21 @@ function measureInlineCodeMinStartTextWidth(text: string, font: string): number 
     sample,
     font,
     "pre-wrap",
+  );
+  const wholeLine = measureSingleLineLayout(prepared);
+  return wholeLine?.width ?? 0;
+}
+
+function measureTextMinStartTextWidth(text: string, font: string): number {
+  const firstWord = text.match(/^\S+/)?.[0] ?? "";
+  if (firstWord.length === 0) {
+    return 0;
+  }
+  const prepared = getPreparedTextWithSegments(
+    buildPreparedContentKey(`inline-text-min-start:${font}`, firstWord),
+    firstWord,
+    font,
+    "normal",
   );
   const wholeLine = measureSingleLineLayout(prepared);
   return wholeLine?.width ?? 0;
@@ -122,6 +139,7 @@ function pushTextRunItems(
         codeGroupHasTrailingText: false,
         codeGroupIsOnlyInlineCodeInSegment: false,
         codeGroupStartsAfterText: false,
+        codeGroupStartsAfterStyledTextSeam: false,
         codePartStartsAfterWhitespace: false,
         chromeWidth: 0,
         endCursor: wholeLine.end,
@@ -131,8 +149,9 @@ function pushTextRunItems(
         isFirstPathFragmentAfterHyphenRun: false,
         isPathTailFragment: false,
         isSealedInlineCodeFragment: false,
-        minStartTextWidth: 0,
+        minStartTextWidth: measureTextMinStartTextWidth(core, params.font),
         prefersFreshLineStart: false,
+        prefersFreshLineStartWithoutLeadingHang: false,
         startsStyledTextAfterInlineCodeSeam: params.startsStyledTextAfterInlineCodeSeam,
         startsAfterStyledTextSeam: params.startsAfterStyledTextSeam,
         startsStyledTextAfterBodySeam: params.startsStyledTextAfterBodySeam,
@@ -290,6 +309,22 @@ export function prepareInlineLayoutItems(params: {
     }
     return false;
   };
+  const codeGroupStartsAfterStyledTextSeam = (runIndex: number): boolean => {
+    for (let candidateIndex = runIndex - 1; candidateIndex >= 0; candidateIndex -= 1) {
+      const candidate = params.runs[candidateIndex]!;
+      if (candidate.kind === "hardBreak") {
+        return false;
+      }
+      if (candidate.kind === "inlineCode") {
+        return false;
+      }
+      if (!runHasRenderableText(candidate)) {
+        continue;
+      }
+      return candidate.style !== "body";
+    }
+    return false;
+  };
   const codeGroupHasTrailingText = (runIndex: number): boolean => {
     for (let candidateIndex = runIndex + 1; candidateIndex < params.runs.length; candidateIndex += 1) {
       const candidate = params.runs[candidateIndex]!;
@@ -340,6 +375,7 @@ export function prepareInlineLayoutItems(params: {
         (run.text.includes("/") || run.text.includes("\\")) && run.text.includes(".");
       const codeGroupHasWhitespace = run.parts.some((part) => /\s/.test(part));
       const startsAfterText = codeGroupStartsAfterText(index);
+      const startsAfterStyledTextSeam = codeGroupStartsAfterStyledTextSeam(index);
       const hasTrailingText = codeGroupHasTrailingText(index);
       const isOnlyInlineCodeInSegment = codeGroupIsOnlyInlineCodeInSegment(index);
       let firstCodeGroupFragment = true;
@@ -387,6 +423,7 @@ export function prepareInlineLayoutItems(params: {
             codeGroupHasTrailingText: hasTrailingText,
             codeGroupIsOnlyInlineCodeInSegment: isOnlyInlineCodeInSegment,
             codeGroupStartsAfterText: startsAfterText,
+            codeGroupStartsAfterStyledTextSeam: startsAfterStyledTextSeam,
             codePartStartsAfterWhitespace: startsAfterCodeWhitespace,
             chromeWidth: SESSION_THREAD_MARKDOWN_INLINE_CODE_FRAGMENT_CHROME_WIDTH_PX,
             endCursor: wholeLine.end,
@@ -403,6 +440,8 @@ export function prepareInlineLayoutItems(params: {
             minStartTextWidth:
               firstCodeGroupFragment ? measureInlineCodeMinStartTextWidth(part, inlineCodeFont) : 0,
             prefersFreshLineStart: fragment.includes("/") || fragment.includes("\\") || fragment.endsWith("."),
+            prefersFreshLineStartWithoutLeadingHang:
+              firstCodeGroupFragment && startsAfterText && codeGroupHasWhitespace,
             startsStyledTextAfterInlineCodeSeam: false,
             startsAfterStyledTextSeam: false,
             startsStyledTextAfterBodySeam: false,

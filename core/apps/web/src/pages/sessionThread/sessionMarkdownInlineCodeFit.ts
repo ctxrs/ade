@@ -14,6 +14,16 @@ export type InlineCodeBoundaryFit = {
   nextStartsAfterCodeWhitespace: boolean;
 };
 
+export const browserAllowsInlineCodeLeadingHang = (): boolean => {
+  if (typeof navigator === "undefined") {
+    return true;
+  }
+  const userAgent = navigator.userAgent;
+  return /HeadlessChrome|Chrome\/|Chromium\/|Edg\//.test(userAgent) || /jsdom/i.test(userAgent);
+};
+
+const INLINE_CODE_ENGINE_PROSE_START_FOLLOWING_FRAGMENT_SLACK_PX = 16;
+
 export function resolveInlineCodeWrapChromeWidth(params: {
   chromeWidth: number;
   codeGroupHasWhitespace: boolean;
@@ -33,6 +43,7 @@ export function resolveInlineCodeWrapChromeWidth(params: {
   // path code chips, and inline code with internal whitespace still consume
   // full chrome.
   if (
+    browserAllowsInlineCodeLeadingHang() &&
     params.codeGroupStartsAfterText &&
     params.isFirstCodeGroupFragment &&
     params.prefersFreshLineStart &&
@@ -62,6 +73,31 @@ export function createInlineCodeFitPlanner(params: {
       !/\s/.test(nextItem.text)
       ? nextItem.fullWidth
       : 0;
+  };
+
+  const measureCodeGroupTrailingPlainWidth = (startIndex: number): number => {
+    const firstItem = items[startIndex];
+    if (firstItem?.kind !== "segment" || firstItem.codeGroupId == null) {
+      return 0;
+    }
+    const codeGroupId = firstItem.codeGroupId;
+    for (let index = startIndex + 1; index < items.length; index += 1) {
+      const item = items[index]!;
+      if (item.kind === "hardBreak") {
+        return 0;
+      }
+      if (item.kind === "space") {
+        if (item.codeGroupId === codeGroupId) {
+          continue;
+        }
+        return 0;
+      }
+      if (item.codeGroupId === codeGroupId) {
+        continue;
+      }
+      return item.codeGroupId == null && !/\s/.test(item.text) ? item.fullWidth : 0;
+    }
+    return 0;
   };
 
   const shouldPreserveSealedInlineCodeBoundary = (params: {
@@ -339,6 +375,26 @@ export function createInlineCodeFitPlanner(params: {
         });
       if (
         lineHasContent &&
+        !startsAtLineStart &&
+        !browserAllowsInlineCodeLeadingHang() &&
+        !firstItem.codeGroupHasWhitespace &&
+        firstItem.isFirstCodeGroupFragment &&
+        firstItem.codeGroupStartsAfterText &&
+        isPathLikeContinuationItem(item) &&
+        Math.max(0, remainingWidth - reservedWidth - item.fullWidth) <
+          INLINE_CODE_ENGINE_PROSE_START_FOLLOWING_FRAGMENT_SLACK_PX
+      ) {
+        return {
+          consumedWidth,
+          endedAtGroupEnd: false,
+          endedInsideFragment: false,
+          lastFragmentText,
+          nextFragmentText: item.text,
+          nextStartsAfterCodeWhitespace: item.startsAfterCodeWhitespace,
+        };
+      }
+      if (
+        lineHasContent &&
         shouldPreserveSealedInlineCodeBoundary({
           sealedBoundary: lastFragmentText != null && isSealedInlineCodeFragment(lastFragmentText),
           reservedWidth,
@@ -440,6 +496,7 @@ export function createInlineCodeFitPlanner(params: {
     codeGroupFitEndsAtFriendlyBoundary,
     dottedPathCodeGroupStartClusterWidths,
     measureAttachedTrailingPlainWidth,
+    measureCodeGroupTrailingPlainWidth,
     measureCodeGroupFitWithinWidth,
     preferredCodeGroupStartWidths,
     shouldPreserveSealedInlineCodeBoundary,
