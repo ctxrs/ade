@@ -108,7 +108,7 @@ const main = async () => {
     try {
       const state = JSON.parse(fs.readFileSync(runtimeStatePath, "utf8"));
       console.log(
-        `desktop_mode_start: channel=${mode.channel} profile=${mode.profile} surface=${mode.surface} lock_sha=${state?.runtime_lock?.sha256 || "missing"} manifest_sha=${state?.effective_manifest?.sha256 || "missing"}`,
+        `desktop_mode_start: channel=${mode.channel} profile=${mode.profile} surface=${mode.surface} reused=${state?.prepare?.reused ? "1" : "0"} lock_sha=${state?.runtime_lock?.sha256 || "missing"} manifest_sha=${state?.effective_manifest?.sha256 || "missing"}`,
       );
     } catch (error) {
       console.warn(
