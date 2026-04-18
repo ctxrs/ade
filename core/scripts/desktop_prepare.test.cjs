@@ -3,7 +3,8 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
-const { createPrepSteps, parseArgs, resolveDesktopWebDist } = require("./desktop_prepare.cjs");
+const { DESKTOP_PREPARE_BUDGET_KEY, HOST_HEAVY_BUDGET_KEY } = require("./lib/host_job_budget.cjs");
+const { createPrepSteps, main, parseArgs, resolveDesktopWebDist } = require("./desktop_prepare.cjs");
 
 test("desktop_prepare rejects invalid modes", () => {
   const exit = process.exit;
@@ -74,6 +75,7 @@ test("desktop_prepare dev mode skips web build and version checks", () => {
 
   assert.equal(steps.length, 1);
   assert.deepEqual(steps[0].args, ["scripts/desktop_sync_resources.cjs", "--profile", "debug"]);
+  assert.equal(steps[0].budgetKey, HOST_HEAVY_BUDGET_KEY);
   assert.equal(steps[0].env.CTX_DESKTOP_SYNC_BUNDLES, "1");
 });
 
@@ -252,4 +254,56 @@ test("desktop_prepare skips AVF tool bootstrap in dev mode", () => {
     steps.some((step) => step.args.includes("../scripts/ensure_macos_avf_build_tools.sh")),
     false,
   );
+});
+
+test("desktop_prepare marks expensive materialization steps with host-heavy budget", () => {
+  const steps = createPrepSteps({
+    mode: "release-build",
+    cargoTargetDir: "/tmp/cargo-target",
+    desktopWebDist: "/tmp/web-dist",
+    desktopVersion: "0.22.0",
+    platform: "darwin",
+    arch: "arm64",
+    prepEnv: {
+      CTX_DESKTOP_CTX_BIN: "/tmp/bazel-out/ctx",
+      CTX_DESKTOP_CTX_MCP_BIN: "/tmp/bazel-out/ctx-mcp",
+      CTX_DESKTOP_AVF_LINUX_HELPER_BIN: "/tmp/bazel-out/ctx-avf-linux-helper",
+    },
+  });
+
+  assert.equal(steps[0].budgetKey, undefined);
+  assert.equal(steps[1].budgetKey, HOST_HEAVY_BUDGET_KEY);
+  assert.equal(steps[2].budgetKey, HOST_HEAVY_BUDGET_KEY);
+  assert.equal(steps[3].budgetKey, HOST_HEAVY_BUDGET_KEY);
+});
+
+test("desktop_prepare serializes the overall prep loop and nests host-heavy materialization", () => {
+  const budgetCalls = [];
+  const spawnCalls = [];
+
+  main(["node", "desktop_prepare", "--mode", "dev"], {
+    buildCtxCacheEnvImpl: () => ({
+      cargoTargetDir: "/tmp/cargo-target",
+      env: {
+        CTX_DESKTOP_CTX_BIN: "/tmp/bazel-out/ctx",
+        CTX_DESKTOP_CTX_MCP_BIN: "/tmp/bazel-out/ctx-mcp",
+        CTX_DESKTOP_AVF_LINUX_HELPER_BIN: "/tmp/bazel-out/ctx-avf-linux-helper",
+      },
+    }),
+    readDesktopVersionImpl: () => "0.22.0",
+    spawnSyncImpl: (command, args) => {
+      spawnCalls.push([command, args]);
+      return { status: 0 };
+    },
+    withHostJobBudgetImpl: (options, fn) => {
+      budgetCalls.push(options);
+      return fn();
+    },
+  });
+
+  assert.deepEqual(
+    budgetCalls.map((call) => call.budgetKey),
+    [DESKTOP_PREPARE_BUDGET_KEY, HOST_HEAVY_BUDGET_KEY],
+  );
+  assert.equal(spawnCalls.length, 1);
 });

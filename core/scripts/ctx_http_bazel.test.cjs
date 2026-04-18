@@ -18,6 +18,7 @@ const {
   parseArgs,
   renderDesktopSidecarEnv,
   resolveBazelOutputPaths,
+  syncDesktopResources,
   shouldResolveAvfLinuxHelper,
 } = require("./ctx_http_bazel.cjs");
 const { HOST_HEAVY_BUDGET_KEY } = require("./lib/host_job_budget.cjs");
@@ -196,4 +197,30 @@ test("ctx_http_bazel budgets direct Bazel cquery lookups under host-heavy", () =
     outputs.get("//core/crates/ctx-http:ctx"),
     `${repoRoot}/bazel-out/k8-fastbuild/bin/core/crates/ctx-http/ctx`,
   );
+});
+
+test("ctx_http_bazel budgets desktop resource sync under host-heavy", () => {
+  const budgetCalls = [];
+  const runCalls = [];
+
+  syncDesktopResources({
+    env: {
+      CTX_DESKTOP_WEB_DIST: "/tmp/web-dist",
+    },
+    profile: "release",
+    ctxBinPath: "/tmp/bazel-bin/ctx",
+    ctxMcpBinPath: "/tmp/bazel-bin/ctx-mcp",
+    runCheckedImpl: (...args) => {
+      runCalls.push(args);
+      return { status: 0 };
+    },
+    withHostJobBudgetImpl: (options, fn) => {
+      budgetCalls.push(options);
+      return fn();
+    },
+  });
+
+  assert.equal(budgetCalls.length, 1);
+  assert.equal(budgetCalls[0].budgetKey, HOST_HEAVY_BUDGET_KEY);
+  assert.equal(runCalls.length, 1);
 });

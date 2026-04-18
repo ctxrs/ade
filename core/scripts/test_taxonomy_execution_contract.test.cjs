@@ -104,6 +104,27 @@ test("nightly-breadth splits provider auth live coverage by nightly slice", () =
   assert.doesNotMatch(plan.commands.join("\n"), /pnpm verify:desktop:provider-auth-matrix:nightly/);
 });
 
+test("nightly helper profiles keep the scheduled nightly slices Linux-only and bounded", () => {
+  assert.deepEqual(
+    buildExecutionPlan({ profileId: "nightly-linux-anomaly", touchedOnly: false, changedFiles: [] }).commands,
+    [
+      "pnpm bazel:anomaly:ctx-http:fault-matrix",
+      "pnpm bazel:anomaly:ctx-http:hot-endpoints-no-db",
+      "pnpm bazel:anomaly:ctx-store:fault-injection",
+    ],
+  );
+  assert.deepEqual(
+    buildExecutionPlan({ profileId: "nightly-linux-fuzz", touchedOnly: false, changedFiles: [] }).commands,
+    [
+      "pnpm bazel:fuzz:providers",
+      "pnpm bazel:fuzz:mcp",
+      "pnpm bazel:fuzz:workspace-payloads",
+      "pnpm bazel:fuzz:release-manifests",
+      "pnpm bazel:fuzz:desktop-ipc",
+    ],
+  );
+});
+
 test("direct pipeline helper profiles resolve to explicit package-script commands", () => {
   assert.deepEqual(
     buildExecutionPlan({ profileId: "install-bootstrap-contracts", touchedOnly: false, changedFiles: [] }).commands,

@@ -4,6 +4,11 @@ const childProcess = require("node:child_process");
 const path = require("node:path");
 
 const { buildCtxCacheEnv } = require("./lib/cache_roots.cjs");
+const {
+  DESKTOP_PREPARE_BUDGET_KEY,
+  HOST_HEAVY_BUDGET_KEY,
+  withHostJobBudget,
+} = require("./lib/host_job_budget.cjs");
 const { readDesktopVersion } = require("./desktop_version.cjs");
 const { resolveCargoTargetDir } = require("./lib/cargo_target_dir.cjs");
 const { ensureWebDistArtifact, resolveDesktopWebDistSource } = require("./lib/web_dist_cache.cjs");
@@ -105,6 +110,7 @@ function createPrepSteps({
     steps.push({
       command: "bash",
       args: ["../scripts/ensure_macos_avf_build_tools.sh"],
+      budgetKey: HOST_HEAVY_BUDGET_KEY,
       env: baseEnv,
     });
   }
@@ -131,6 +137,7 @@ function createPrepSteps({
         "arm64",
         "--force",
       ],
+      budgetKey: HOST_HEAVY_BUDGET_KEY,
       env: baseEnv,
     });
   }
@@ -138,6 +145,7 @@ function createPrepSteps({
   steps.push({
     command: "node",
     args: ["scripts/desktop_sync_resources.cjs", "--profile", config.syncProfile],
+    budgetKey: HOST_HEAVY_BUDGET_KEY,
     env: {
       ...baseEnv,
       CTX_DESKTOP_SYNC_BUNDLES: syncBundles,
@@ -154,26 +162,59 @@ function createPrepSteps({
   return steps;
 }
 
-function runStep(step) {
-  const result = childProcess.spawnSync(step.command, step.args, {
+function runStep(
+  step,
+  {
+    spawnSyncImpl = childProcess.spawnSync,
+    withHostJobBudgetImpl = withHostJobBudget,
+  } = {},
+) {
+  const invoke = () => {
+    const result = spawnSyncImpl(step.command, step.args, {
+      cwd: coreRoot,
+      stdio: "inherit",
+      env: step.env,
+    });
+    if (result.status !== 0) {
+      process.exit(result.status ?? 1);
+    }
+  };
+  if (!step.budgetKey) {
+    invoke();
+    return;
+  }
+  withHostJobBudgetImpl({
+    budgetKey: step.budgetKey,
+    command: `${step.command} ${step.args.join(" ")}`.trim(),
     cwd: coreRoot,
-    stdio: "inherit",
     env: step.env,
-  });
-  if (result.status !== 0) {
-    process.exit(result.status ?? 1);
+  }, invoke);
+}
+
+function executePrepSteps(steps, options = {}) {
+  for (const step of steps) {
+    runStep(step, options);
   }
 }
 
-function main(argv = process.argv) {
+function main(
+  argv = process.argv,
+  {
+    buildCtxCacheEnvImpl = buildCtxCacheEnv,
+    readDesktopVersionImpl = readDesktopVersion,
+    resolveDesktopSidecarPathsImpl = resolveDesktopSidecarPaths,
+    spawnSyncImpl = childProcess.spawnSync,
+    withHostJobBudgetImpl = withHostJobBudget,
+  } = {},
+) {
   const { mode } = parseArgs(argv);
-  const { env: prepEnv, cargoTargetDir } = buildCtxCacheEnv({
+  const { env: prepEnv, cargoTargetDir } = buildCtxCacheEnvImpl({
     cwd: coreRoot,
     env: process.env,
     mode: "workspace",
     mkdir: true,
   });
-  const desktopVersion = readDesktopVersion(coreRoot);
+  const desktopVersion = readDesktopVersionImpl(coreRoot);
   const desktopWebDist = resolveDesktopWebDist({
     mode,
     coreRoot,
@@ -191,7 +232,7 @@ function main(argv = process.argv) {
       ctxMcpBinPath: explicitSidecars.CTX_DESKTOP_CTX_MCP_BIN,
       avfLinuxHelperBinPath: explicitSidecars.CTX_DESKTOP_AVF_LINUX_HELPER_BIN,
     }
-    : resolveDesktopSidecarPaths({ env: prepEnv, targetKey: prepEnv.CTX_HTTP_BAZEL_TARGET_KEY });
+    : resolveDesktopSidecarPathsImpl({ env: prepEnv, targetKey: prepEnv.CTX_HTTP_BAZEL_TARGET_KEY });
   const steps = createPrepSteps({
     mode,
     prepEnv: {
@@ -207,9 +248,14 @@ function main(argv = process.argv) {
     desktopVersion,
     arch: process.arch,
   });
-  for (const step of steps) {
-    runStep(step);
-  }
+  withHostJobBudgetImpl({
+    budgetKey: DESKTOP_PREPARE_BUDGET_KEY,
+    command: `desktop_prepare ${mode}`.trim(),
+    cwd: coreRoot,
+    env: prepEnv,
+  }, () => {
+    executePrepSteps(steps, { spawnSyncImpl, withHostJobBudgetImpl });
+  });
 }
 
 function trimDesktopWebDist(value) {
@@ -249,9 +295,11 @@ if (require.main === module) {
 module.exports = {
   PREP_MODES,
   createPrepSteps,
+  executePrepSteps,
   main,
   parseArgs,
   resolveDesktopWebDist,
+  runStep,
   trimDesktopWebDist,
   trimDesktopBinaryPath,
 };

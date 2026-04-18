@@ -3,6 +3,8 @@
 const childProcess = require("node:child_process");
 const path = require("node:path");
 
+const { HOST_HEAVY_BUDGET_KEY, withHostJobBudget } = require("./lib/host_job_budget.cjs");
+
 const coreRoot = path.resolve(__dirname, "..");
 const desktopAppRoot = path.join(coreRoot, "apps", "desktop");
 const localTauriBin = path.join(desktopAppRoot, "node_modules", ".bin", "tauri");
@@ -36,6 +38,10 @@ function shouldSkipPrep(env = process.env) {
   return String(env.CTX_DESKTOP_SKIP_PREP || "").trim() === "1";
 }
 
+function resolveTauriBudgetKey(command) {
+  return String(command || "").trim() === "build" ? HOST_HEAVY_BUDGET_KEY : "";
+}
+
 function createInvocation(argv = process.argv, env = process.env) {
   const parsed = parseArgs(argv);
   const skipPrep = shouldSkipPrep(env);
@@ -45,6 +51,7 @@ function createInvocation(argv = process.argv, env = process.env) {
     prepCommand: skipPrep ? "" : "node",
     prepArgs: skipPrep ? [] : ["scripts/desktop_prepare.cjs", "--mode", resolvePrepMode(parsed)],
     skipPrep,
+    tauriBudgetKey: resolveTauriBudgetKey(parsed.command),
     tauriCommand: resolveTauriCommand(),
     tauriExecArgs: [parsed.command, ...parsed.tauriArgs],
   };
@@ -65,24 +72,57 @@ function normalizeTauriCliEnv(env = process.env) {
   return normalizedEnv;
 }
 
-function run(command, args, { env = process.env } = {}) {
-  const result = childProcess.spawnSync(command, args, {
-    cwd: command === "node" ? coreRoot : desktopAppRoot,
-    stdio: "inherit",
-    env,
-  });
-  if (result.status !== 0) {
-    process.exit(result.status ?? 1);
+function run(
+  command,
+  args,
+  {
+    budgetKey = "",
+    env = process.env,
+    spawnSyncImpl = childProcess.spawnSync,
+    withHostJobBudgetImpl = withHostJobBudget,
+  } = {},
+) {
+  const invoke = () => {
+    const result = spawnSyncImpl(command, args, {
+      cwd: command === "node" ? coreRoot : desktopAppRoot,
+      stdio: "inherit",
+      env,
+    });
+    if (result.status !== 0) {
+      process.exit(result.status ?? 1);
+    }
+  };
+  if (!budgetKey) {
+    invoke();
+    return;
   }
+  withHostJobBudgetImpl({
+    budgetKey,
+    command: `${command} ${args.join(" ")}`.trim(),
+    cwd: command === "node" ? coreRoot : desktopAppRoot,
+    env,
+  }, invoke);
 }
 
-function main(argv = process.argv) {
+function main(
+  argv = process.argv,
+  {
+    spawnSyncImpl = childProcess.spawnSync,
+    withHostJobBudgetImpl = withHostJobBudget,
+  } = {},
+) {
   const invocation = createInvocation(argv);
   if (!invocation.skipPrep) {
-    run(invocation.prepCommand, invocation.prepArgs);
+    run(invocation.prepCommand, invocation.prepArgs, {
+      spawnSyncImpl,
+      withHostJobBudgetImpl,
+    });
   }
   run(invocation.tauriCommand, invocation.tauriExecArgs, {
     env: normalizeTauriCliEnv(process.env),
+    budgetKey: invocation.tauriBudgetKey,
+    spawnSyncImpl,
+    withHostJobBudgetImpl,
   });
 }
 
@@ -96,5 +136,6 @@ module.exports = {
   normalizeTauriCliEnv,
   parseArgs,
   resolvePrepMode,
+  resolveTauriBudgetKey,
   shouldSkipPrep,
 };

@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := help
 
-.PHONY: help dev verify-quick verify-merge-local verify-merge-ci verify-nightly verify-release testing-taxonomy-generate testing-taxonomy-check sdlc-cache-report sdlc-cache-purge sdlc-host-budget-benchmark desktop-profile-build desktop-profile-launch desktop-profile-dev
+.PHONY: help dev verify-quick verify-merge-local verify-merge-ci verify-nightly verify-release testing-taxonomy-generate testing-taxonomy-check sdlc-cache-report sdlc-cache-purge sdlc-host-budget-benchmark sdlc-agent-loop-benchmark desktop-profile-build desktop-profile-launch desktop-profile-dev
 
 PNPM ?= pnpm
 PROFILE ?= dev
@@ -31,6 +31,7 @@ help:
 	@echo "  sdlc-cache-report      Report shared volatile cache usage"
 	@echo "  sdlc-cache-purge       Purge the selected shared volatile cache root"
 	@echo "  sdlc-host-budget-benchmark  Run the checked-in host-budget benchmark"
+	@echo "  sdlc-agent-loop-benchmark   Run the checked-in real workload benchmark plan"
 	@echo "  desktop-profile-build   Build named desktop profile (PROFILE=<name>)"
 	@echo "  desktop-profile-launch  Build + launch named desktop profile (PROFILE=<name>)"
 	@echo "  desktop-profile-dev     Run profile-scoped tauri+web hot-reload loop (PROFILE=<name>)"
@@ -67,6 +68,9 @@ sdlc-cache-purge:
 
 sdlc-host-budget-benchmark:
 	$(PNPM) -C core sdlc:host-budget:benchmark
+
+sdlc-agent-loop-benchmark:
+	$(PNPM) -C core sdlc:agent-loop:benchmark
 
 desktop-profile-build:
 	@set -euo pipefail; \

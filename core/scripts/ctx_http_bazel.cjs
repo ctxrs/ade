@@ -324,26 +324,36 @@ function syncDesktopResources({
   ctxBinPath,
   ctxMcpBinPath,
   avfLinuxHelperBinPath = "",
+  runCheckedImpl = runChecked,
+  withHostJobBudgetImpl = withHostJobBudget,
 }) {
   const { repoRoot } = repoRoots();
   const desktopWebDist = resolveDesktopWebDist({ env, profile });
-  runChecked(
-    "node",
-    ["core/scripts/desktop_sync_resources.cjs", "--profile", profile],
-    {
-      cwd: repoRoot,
-      env: buildDesktopSyncEnv({
-        env,
-        ctxBinPath,
-        ctxMcpBinPath,
-        avfLinuxHelperBinPath,
-        desktopWebDist,
-        profile,
-      }),
-      stdio: "inherit",
-    },
-    "desktop sidecar sync failed",
-  );
+  const syncEnv = buildDesktopSyncEnv({
+    env,
+    ctxBinPath,
+    ctxMcpBinPath,
+    avfLinuxHelperBinPath,
+    desktopWebDist,
+    profile,
+  });
+  withHostJobBudgetImpl({
+    budgetKey: HOST_HEAVY_BUDGET_KEY,
+    command: `node core/scripts/desktop_sync_resources.cjs --profile ${profile}`.trim(),
+    cwd: repoRoot,
+    env: syncEnv,
+  }, () => {
+    runCheckedImpl(
+      "node",
+      ["core/scripts/desktop_sync_resources.cjs", "--profile", profile],
+      {
+        cwd: repoRoot,
+        env: syncEnv,
+        stdio: "inherit",
+      },
+      "desktop sidecar sync failed",
+    );
+  });
 }
 
 function prepareDesktopSidecars({ env = process.env, profile = DEFAULT_PROFILE } = {}) {
@@ -420,4 +430,5 @@ module.exports = {
   resolveDesktopSidecarPaths,
   repoRoots,
   shouldResolveAvfLinuxHelper,
+  syncDesktopResources,
 };

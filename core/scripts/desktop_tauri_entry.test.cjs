@@ -7,13 +7,16 @@ const {
   createInvocation,
   normalizeTauriCliEnv,
   resolvePrepMode,
+  resolveTauriBudgetKey,
   shouldSkipPrep,
 } = require("./desktop_tauri_entry.cjs");
+const { HOST_HEAVY_BUDGET_KEY } = require("./lib/host_job_budget.cjs");
 
 test("desktop_tauri_entry uses release prep for normal builds", () => {
   const invocation = createInvocation(["node", "desktop_tauri_entry", "build", "--bundles", "app"]);
   assert.equal(invocation.prepMode, "release-build");
   assert.deepEqual(invocation.prepArgs, ["scripts/desktop_prepare.cjs", "--mode", "release-build"]);
+  assert.equal(invocation.tauriBudgetKey, HOST_HEAVY_BUDGET_KEY);
   assert.match(invocation.tauriCommand, /core\/apps\/desktop\/node_modules\/\.bin\/tauri$/);
   assert.deepEqual(invocation.tauriExecArgs, ["build", "--bundles", "app"]);
 });
@@ -45,6 +48,7 @@ test("desktop_tauri_entry uses debug prep for debug builds", () => {
 test("desktop_tauri_entry uses dev prep for tauri dev", () => {
   const invocation = createInvocation(["node", "desktop_tauri_entry", "dev", "--no-watch"]);
   assert.equal(invocation.prepMode, "dev");
+  assert.equal(invocation.tauriBudgetKey, "");
   assert.deepEqual(invocation.tauriExecArgs, ["dev", "--no-watch"]);
 });
 
@@ -66,4 +70,9 @@ test("desktop_tauri_entry normalizes CI=1 for the tauri CLI", () => {
   });
   assert.equal(normalized.CI, "true");
   assert.equal(normalized.OTHER, "value");
+});
+
+test("desktop_tauri_entry only budgets build commands", () => {
+  assert.equal(resolveTauriBudgetKey("build"), HOST_HEAVY_BUDGET_KEY);
+  assert.equal(resolveTauriBudgetKey("dev"), "");
 });
