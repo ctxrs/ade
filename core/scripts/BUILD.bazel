@@ -1,0 +1,61 @@
+load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
+
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "sources",
+    srcs = glob(["**"]),
+)
+
+COMMON_CORE_DATA = [
+    "//core:package.json",
+    "//core:pnpm-lock.yaml",
+    "//core:pnpm-workspace.yaml",
+    "//core/scripts:sources",
+]
+
+BUILDKITE_CONTRACT_DATA = COMMON_CORE_DATA + [
+    "//:buildkite_pipeline_sources",
+    "//:buildkite_script_sources",
+    "//:ci_script_sources",
+]
+
+DESKTOP_RELEASE_CONTRACT_DATA = COMMON_CORE_DATA + [
+    "//core:desktop_bundle_files",
+    "//core:desktop_release_metadata_files",
+    "//core:provider_matrix_sources",
+]
+
+PROVIDER_AUTH_CONTRACT_DATA = COMMON_CORE_DATA + [
+    "//core:desktop_automation_files",
+    "//core:provider_matrix_sources",
+]
+
+
+sh_binary(
+    name = "provider_auth_validate",
+    srcs = ["//tools/bazel:run_workspace_task.sh"],
+    args = ["core", "pnpm", "provider-auth:validate"],
+    data = PROVIDER_AUTH_CONTRACT_DATA,
+)
+
+sh_binary(
+    name = "desktop_version_check",
+    srcs = ["//tools/bazel:run_workspace_task.sh"],
+    args = ["core", "pnpm", "desktop:check:versions"],
+    data = DESKTOP_RELEASE_CONTRACT_DATA,
+)
+
+sh_binary(
+    name = "desktop_runtime_lock_check_matrix",
+    srcs = ["//tools/bazel:run_workspace_task.sh"],
+    args = ["core", "pnpm", "desktop:runtime:lock:check-matrix"],
+    data = DESKTOP_RELEASE_CONTRACT_DATA,
+)
+
+sh_binary(
+    name = "desktop_runtime_lock_validate",
+    srcs = ["//tools/bazel:run_workspace_task.sh"],
+    args = ["core", "node", "scripts/runtime_lock_validate.cjs", "--profile", "parity"],
+    data = DESKTOP_RELEASE_CONTRACT_DATA,
+)

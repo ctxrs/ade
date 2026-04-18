@@ -134,7 +134,7 @@ const PROFILES = [
       includeWorlds: ["hermetic"],
       includeCosts: ["tiny"],
       includeStabilities: ["stable"],
-      includeExecutions: ["script-local"],
+      includeExecutions: ["bazel-addressable"],
       excludeRequirements: ["mac", "single-mac"],
     },
     currentCommands: [
@@ -188,7 +188,7 @@ const PROFILES = [
       includeWorlds: ["hermetic"],
       includeCosts: ["tiny", "fast"],
       includeStabilities: ["stable"],
-      includeExecutions: ["bazel-addressable", "script-local"],
+      includeExecutions: ["bazel-addressable"],
       excludeRequirements: ["browser", "mac", "single-mac", "long-running"],
     },
     currentCommands: [

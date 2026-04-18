@@ -24,7 +24,7 @@ COMMON_DATA = WEB_SOURCES + [
     "//core:pnpm-lock.yaml",
     "//core:pnpm-workspace.yaml",
     "//core:desktop_bundle_files",
-    "//core:scripts_sources",
+    "//core/scripts:sources",
     "//core/packages:sources",
 ]
 

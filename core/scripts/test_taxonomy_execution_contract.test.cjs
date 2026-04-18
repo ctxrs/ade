@@ -85,9 +85,9 @@ test("release-contracts touched-only selection owns legacy release script change
 
   assert.deepEqual(plan.commands, [
     "pnpm release:bundle:contracts:linux-x86_64",
-    "pnpm desktop:runtime:lock:check-matrix",
-    "pnpm desktop:runtime:lock:validate",
-    "pnpm desktop:check:versions",
+    "pnpm bazel:desktop:runtime:lock:check-matrix",
+    "pnpm bazel:desktop:runtime:lock:validate",
+    "pnpm bazel:desktop:check:versions",
   ]);
 });
 
@@ -111,7 +111,7 @@ test("direct pipeline helper profiles resolve to explicit package-script command
   );
   assert.deepEqual(
     buildExecutionPlan({ profileId: "provider-auth-validate", touchedOnly: false, changedFiles: [] }).commands,
-    ["pnpm provider-auth:validate"],
+    ["pnpm bazel:provider-auth:validate"],
   );
   assert.deepEqual(
     buildExecutionPlan({ profileId: "release-updater-web-e2e", touchedOnly: false, changedFiles: [] }).commands,

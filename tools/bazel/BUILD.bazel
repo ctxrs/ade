@@ -2,6 +2,8 @@ load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
 
 exports_files([
     "bundled_harnesses_docker_contracts.sh",
+    "codex_archive_artifact_gate.sh",
+    "codex_provenance_policy.sh",
     "linux_bundle_contracts.sh",
     "provider_managed_install_archive.sh",
     "provider_claude_crp_archive.sh",
@@ -19,6 +21,18 @@ sh_binary(
 sh_binary(
     name = "linux_bundle_contracts",
     srcs = ["linux_bundle_contracts.sh"],
+    visibility = ["//visibility:public"],
+)
+
+sh_binary(
+    name = "codex_archive_artifact_gate",
+    srcs = ["codex_archive_artifact_gate.sh"],
+    visibility = ["//visibility:public"],
+)
+
+sh_binary(
+    name = "codex_provenance_policy",
+    srcs = ["codex_provenance_policy.sh"],
     visibility = ["//visibility:public"],
 )
 

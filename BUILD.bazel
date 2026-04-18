@@ -1,3 +1,36 @@
 exports_files([
     "MODULE.bazel",
 ])
+
+filegroup(
+    name = "buildkite_pipeline_sources",
+    srcs = glob(
+        [
+            ".buildkite/**",
+        ],
+        allow_empty = True,
+    ),
+    visibility = ["//visibility:public"],
+)
+
+filegroup(
+    name = "buildkite_script_sources",
+    srcs = glob(
+        [
+            "scripts/buildkite/**",
+        ],
+        allow_empty = True,
+    ),
+    visibility = ["//visibility:public"],
+)
+
+filegroup(
+    name = "ci_script_sources",
+    srcs = glob(
+        [
+            "scripts/ci/**",
+        ],
+        allow_empty = True,
+    ),
+    visibility = ["//visibility:public"],
+)
