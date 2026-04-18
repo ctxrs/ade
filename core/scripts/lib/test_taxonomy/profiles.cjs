@@ -122,6 +122,35 @@ const PROFILES = [
     ],
   },
   {
+    id: "release-contracts",
+    title: "Release Contracts",
+    purpose: "Exact release-preflight contract checks before artifact staging begins.",
+    selector: {
+      includeEntryIds: [
+        "build-graph.release-bundle-contracts-linux-x86_64",
+        "distribution-install.desktop-runtime-lock-matrix",
+        "distribution-install.desktop-runtime-lock-validate",
+        "distribution-install.desktop-version-check",
+      ],
+      includeSurfaces: ["contract"],
+      includeWorlds: ["hermetic"],
+      includeCosts: ["tiny", "fast"],
+      includeStabilities: ["stable"],
+      includeExecutions: ["bazel-addressable", "script-local"],
+      excludeRequirements: ["browser", "mac", "single-mac", "long-running"],
+    },
+    currentCommands: [
+      "Buildkite step: Release contracts",
+      "pnpm -C core testing:profile:run --profile release-contracts",
+    ],
+    pipelines: ["ctx-main", "ctx-release"],
+    remoteStrategy: "Keep release contract truth Linux-first and deterministic; use direct profile execution instead of a compatibility wrapper.",
+    currentExecution: "Runs the exact desktop version, runtime lock, and bundle contract gates that current release preflight depends on.",
+    expansionRules: [
+      "This profile stays source-tree-only and must not grow stage/publish side effects.",
+    ],
+  },
+  {
     id: "canary-proof",
     title: "Canary Proof",
     purpose: "Validate published canary artifacts against live-but-safe release state.",

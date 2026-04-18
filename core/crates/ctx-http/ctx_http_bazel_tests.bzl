@@ -3,14 +3,19 @@ load("@rules_rust//rust:defs.bzl", "rust_test")
 CTX_HTTP_SUITE_ORDER = [
     "workspace-stream",
     "provider-auth",
-    "provider-runtime",
+    "provider-runtime-simulated",
+    "provider-runtime-live",
     "repo-vcs",
     "lsp",
     "turns-terminal",
     "attachments-routing",
     "subagents-control",
+    "subagents-local-runtime",
     "updates-release",
-    "sandbox-cloud",
+    "sandbox-runtime-simulated",
+    "sandbox-runtime-container-e2e",
+    "sandbox-runtime-resource-governance",
+    "sandbox-runtime-memory-leak",
 ]
 
 CTX_HTTP_SUITE_TESTS = {
@@ -58,10 +63,7 @@ CTX_HTTP_SUITE_TESTS = {
         "provider_target_scoped_installs",
         "subscription_accounts_api",
     ],
-    "provider-runtime": [
-        "acp_crp_bridge_tokens_e2e",
-        "gemini_live_model_catalog",
-        "live_provider_canary",
+    "provider-runtime-simulated": [
         "provider_probe_runtime_env",
         "provider_worker_reaping_offline",
         "provider_scenarios_offline_crp_fixtures",
@@ -69,6 +71,11 @@ CTX_HTTP_SUITE_TESTS = {
         "provider_scenarios_offline_crp_fixtures_persist_context_window_metrics",
         "session_model_api",
         "workspace_provider_model_preferences_http",
+    ],
+    "provider-runtime-live": [
+        "acp_crp_bridge_tokens_e2e",
+        "gemini_live_model_catalog",
+        "live_provider_canary",
     ],
     "repo-vcs": [
         "jj_merge_queue_basics",
@@ -110,6 +117,9 @@ CTX_HTTP_SUITE_TESTS = {
         "system_prompt_append_http",
         "title_generation_local",
     ],
+    "subagents-local-runtime": [
+        "title_generation_local_e2e",
+    ],
     "updates-release": [
         "openai_responses_sse_stub",
         "updates_failure_safety_checksum_mismatch",
@@ -118,14 +128,19 @@ CTX_HTTP_SUITE_TESTS = {
         "updates_failure_safety_manifest_parse",
         "updates_failure_safety_missing_artifact",
     ],
-    "sandbox-cloud": [
+    "sandbox-runtime-simulated": [
+        "workspace_runtime_crash_recovery",
+    ],
+    "sandbox-runtime-container-e2e": [
         "disk_isolated_sandbox_smoke",
         "disk_isolated_vcs_integrity",
         "harness_container_sandbox_e2e",
-        "memory_leak_e2e",
+    ],
+    "sandbox-runtime-resource-governance": [
         "resource_governance_systemd_e2e",
-        "title_generation_local_e2e",
-        "workspace_runtime_crash_recovery",
+    ],
+    "sandbox-runtime-memory-leak": [
+        "memory_leak_e2e",
     ],
 }
 

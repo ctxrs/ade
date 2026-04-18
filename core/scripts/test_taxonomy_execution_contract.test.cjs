@@ -16,7 +16,9 @@ test("agent-default fans out ctx-http shared changes into suite-level commands",
     "node scripts/ctx_http_suite_task.cjs --suite attachments-routing",
     "node scripts/ctx_http_suite_task.cjs --suite lsp",
     "node scripts/ctx_http_suite_task.cjs --suite provider-auth",
+    "node scripts/ctx_http_suite_task.cjs --suite provider-runtime-simulated",
     "node scripts/ctx_http_suite_task.cjs --suite repo-vcs",
+    "node scripts/ctx_http_suite_task.cjs --suite sandbox-runtime-simulated",
     "node scripts/ctx_http_suite_task.cjs --suite subagents-control",
     "node scripts/ctx_http_suite_task.cjs --suite turns-terminal",
     "node scripts/ctx_http_suite_task.cjs --suite updates-release",
@@ -50,16 +52,30 @@ test("agent-default escalates high-risk web state changes to browser truth", () 
   ]);
 });
 
-test("releasetest touched-only selection owns legacy release script changes", () => {
+test("release-contracts touched-only selection owns legacy release script changes", () => {
   const plan = buildExecutionPlan({
-    profileId: "releasetest",
+    profileId: "release-contracts",
     changedFiles: ["scripts/buildbuddy/run_release_contracts.sh"],
     touchedOnly: true,
   });
 
   assert.deepEqual(plan.commands, [
-    "pnpm test:bundles:codex-archive-artifacts",
-    "pnpm test:bundles:codex-provenance",
-    "pnpm verify:e2e:updater:smoke:native",
+    "pnpm release:bundle:contracts:linux-x86_64",
+    "pnpm desktop:runtime:lock:check-matrix",
+    "pnpm desktop:runtime:lock:validate",
+    "pnpm desktop:check:versions",
   ]);
+});
+
+test("nightly-breadth splits provider auth live coverage by nightly slice", () => {
+  const plan = buildExecutionPlan({
+    profileId: "nightly-breadth",
+    touchedOnly: false,
+    changedFiles: [],
+  });
+
+  assert.match(plan.commands.join("\n"), /pnpm verify:desktop:provider-auth-matrix:auth-import/);
+  assert.match(plan.commands.join("\n"), /pnpm verify:desktop:provider-auth-matrix:endpoint-write/);
+  assert.match(plan.commands.join("\n"), /pnpm verify:desktop:provider-auth-matrix:oauth-subscription/);
+  assert.doesNotMatch(plan.commands.join("\n"), /pnpm verify:desktop:provider-auth-matrix:nightly/);
 });

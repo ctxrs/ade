@@ -59,7 +59,9 @@ test("ctx-http changes fan out into suite-level commands", () => {
     "bash -lc node scripts/ctx_http_suite_task.cjs --suite attachments-routing",
     "bash -lc node scripts/ctx_http_suite_task.cjs --suite lsp",
     "bash -lc node scripts/ctx_http_suite_task.cjs --suite provider-auth",
+    "bash -lc node scripts/ctx_http_suite_task.cjs --suite provider-runtime-simulated",
     "bash -lc node scripts/ctx_http_suite_task.cjs --suite repo-vcs",
+    "bash -lc node scripts/ctx_http_suite_task.cjs --suite sandbox-runtime-simulated",
     "bash -lc node scripts/ctx_http_suite_task.cjs --suite subagents-control",
     "bash -lc node scripts/ctx_http_suite_task.cjs --suite turns-terminal",
     "bash -lc node scripts/ctx_http_suite_task.cjs --suite updates-release",
@@ -109,5 +111,13 @@ test("combined root-level Rust and crate changes still pass both changed files t
   assert.deepEqual(commands, [
     "bash -lc pnpm rust:turbo:check",
     "bash -lc pnpm exec node scripts/run_rust_gate.cjs --mode workspace --include-reverse-deps --clippy --test-strategy mixed --changed-file core/Cargo.toml --changed-file core/crates/ctx-provider-accounts/src/lib.rs",
+  ]);
+});
+
+test("no-change path uses the platform-aware fast gate", () => {
+  const commands = runScenario([], { unameValue: "Linux" });
+
+  assert.deepEqual(commands, [
+    "pnpm test:agent:linux-rbe",
   ]);
 });

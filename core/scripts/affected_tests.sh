@@ -38,7 +38,7 @@ resolve_uname() {
 }
 
 resolve_changed_files() {
-  if [[ -n "${CTX_AFFECTED_TESTS_CHANGED_FILES:-}" ]]; then
+  if [[ "${CTX_AFFECTED_TESTS_CHANGED_FILES+x}" == "x" ]]; then
     printf '%s' "${CTX_AFFECTED_TESTS_CHANGED_FILES}"
     return 0
   fi
@@ -85,15 +85,6 @@ fi
 
 changed_files="$(resolve_changed_files)"
 
-if [[ -z "${changed_files}" ]]; then
-  echo "no changed files detected; running default fast gate"
-  pnpm test:agent
-  exit 0
-fi
-
-echo "changed files:"
-echo "${changed_files}" | sed 's/^/  - /'
-
 run() {
   echo "+ $*"
   if [[ -n "${CTX_AFFECTED_TESTS_COMMAND_LOG:-}" ]]; then
@@ -108,6 +99,15 @@ run_fast_gate() {
   fast_gate="$(resolve_fast_gate_script)"
   run pnpm "$fast_gate"
 }
+
+if [[ -z "${changed_files}" ]]; then
+  echo "no changed files detected; running default fast gate"
+  run_fast_gate
+  exit 0
+fi
+
+echo "changed files:"
+echo "${changed_files}" | sed 's/^/  - /'
 
 declare -a taxonomy_args=(scripts/run_test_taxonomy_profile.cjs --profile agent-default --touched-only --list)
 while IFS= read -r path; do
