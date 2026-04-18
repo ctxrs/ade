@@ -11,7 +11,7 @@ const {
 const ACTIVE_BUDGETS_ENV = "CTX_HOST_JOB_ACTIVE_BUDGETS";
 const LEASE_ID_ENV = "CTX_HOST_JOB_LEASE_ID";
 const DISABLE_BUDGETS_ENV = "CTX_HOST_JOB_BUDGETS_DISABLED";
-const DEFAULT_BUDGET_POLL_MS = 1_000;
+const DEFAULT_BUDGET_POLL_MS = 100;
 const DEFAULT_BUDGET_TIMEOUT_MS = 20 * 60 * 1000;
 const DEFAULT_BUDGET_STALE_MS = 6 * 60 * 60 * 1000;
 const HOST_HEAVY_BUDGET_KEY = "host-heavy";
@@ -72,9 +72,9 @@ function resolveHostBudgetConfig(budgetKey, {
   return {
     budgetKey: normalizedBudgetKey,
     slots: slotsOverride ?? defaults[normalizedBudgetKey] ?? 1,
-    pollMs: DEFAULT_BUDGET_POLL_MS,
-    staleMs: DEFAULT_BUDGET_STALE_MS,
-    timeoutMs: DEFAULT_BUDGET_TIMEOUT_MS,
+    pollMs: parsePositiveInteger(env.CTX_HOST_JOB_BUDGET_POLL_MS) ?? DEFAULT_BUDGET_POLL_MS,
+    staleMs: parsePositiveInteger(env.CTX_HOST_JOB_BUDGET_STALE_MS) ?? DEFAULT_BUDGET_STALE_MS,
+    timeoutMs: parsePositiveInteger(env.CTX_HOST_JOB_BUDGET_TIMEOUT_MS) ?? DEFAULT_BUDGET_TIMEOUT_MS,
   };
 }
 

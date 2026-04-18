@@ -228,6 +228,7 @@
     "sdlc:cache:report": "node scripts/sdlc_cache_report.cjs",
     "sdlc:cache:purge": "node scripts/sdlc_cache_purge.cjs",
     "sdlc:cache:purge:external": "node scripts/sdlc_cache_purge.cjs --root external",
+    "sdlc:host-budget:benchmark": "node scripts/sdlc_host_budget_benchmark.cjs",
     "rust:turbo:sync": "node scripts/sync_rust_turbo_tasks.cjs",
     "rust:turbo:check": "node scripts/sync_rust_turbo_tasks.cjs --check",
     "rust:crate:clippy:codex-crp": "node scripts/rust_crate_task.cjs --crate codex-crp --task clippy",

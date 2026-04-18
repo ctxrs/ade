@@ -10,6 +10,7 @@ const {
   LEASE_ID_ENV,
   computeDefaultHeavyBudgetSlots,
   resolveBudgetEnvKey,
+  resolveHostBudgetConfig,
   withHostJobBudget,
 } = require("./host_job_budget.cjs");
 
@@ -101,4 +102,18 @@ test("withHostJobBudget honors explicit slot env overrides", () => {
   }, () => {
     assert.equal(fs.existsSync(path.join(budgetRoot, HOST_HEAVY_BUDGET_KEY, "slot-0.lock")), true);
   });
+});
+
+test("resolveHostBudgetConfig honors global poll and timeout overrides", () => {
+  const config = resolveHostBudgetConfig(HOST_HEAVY_BUDGET_KEY, {
+    env: {
+      CTX_HOST_JOB_BUDGET_POLL_MS: "25",
+      CTX_HOST_JOB_BUDGET_TIMEOUT_MS: "600",
+      CTX_HOST_JOB_BUDGET_STALE_MS: "900",
+    },
+  });
+
+  assert.equal(config.pollMs, 25);
+  assert.equal(config.timeoutMs, 600);
+  assert.equal(config.staleMs, 900);
 });

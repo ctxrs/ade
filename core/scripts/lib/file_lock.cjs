@@ -1,7 +1,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 
-const DEFAULT_LOCK_POLL_MS = 1_000;
+const DEFAULT_LOCK_POLL_MS = 100;
 const DEFAULT_LOCK_STALE_MS = 60 * 60 * 1000;
 
 function parsePid(value) {

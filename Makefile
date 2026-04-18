@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := help
 
-.PHONY: help dev verify-quick verify-merge-local verify-merge-ci verify-nightly verify-release testing-taxonomy-generate testing-taxonomy-check desktop-profile-build desktop-profile-launch desktop-profile-dev
+.PHONY: help dev verify-quick verify-merge-local verify-merge-ci verify-nightly verify-release testing-taxonomy-generate testing-taxonomy-check sdlc-cache-report sdlc-cache-purge sdlc-host-budget-benchmark desktop-profile-build desktop-profile-launch desktop-profile-dev
 
 PNPM ?= pnpm
 PROFILE ?= dev
@@ -28,6 +28,9 @@ help:
 	@echo "  verify-release          Run release verification (pnpm -C core verify:release)"
 	@echo "  testing-taxonomy-generate  Regenerate testing taxonomy docs"
 	@echo "  testing-taxonomy-check     Check testing taxonomy docs are current"
+	@echo "  sdlc-cache-report      Report shared volatile cache usage"
+	@echo "  sdlc-cache-purge       Purge the selected shared volatile cache root"
+	@echo "  sdlc-host-budget-benchmark  Run the checked-in host-budget benchmark"
 	@echo "  desktop-profile-build   Build named desktop profile (PROFILE=<name>)"
 	@echo "  desktop-profile-launch  Build + launch named desktop profile (PROFILE=<name>)"
 	@echo "  desktop-profile-dev     Run profile-scoped tauri+web hot-reload loop (PROFILE=<name>)"
@@ -55,6 +58,15 @@ testing-taxonomy-generate:
 
 testing-taxonomy-check:
 	$(PNPM) -C core testing:taxonomy:check
+
+sdlc-cache-report:
+	$(PNPM) -C core sdlc:cache:report
+
+sdlc-cache-purge:
+	$(PNPM) -C core sdlc:cache:purge
+
+sdlc-host-budget-benchmark:
+	$(PNPM) -C core sdlc:host-budget:benchmark
 
 desktop-profile-build:
 	@set -euo pipefail; \
