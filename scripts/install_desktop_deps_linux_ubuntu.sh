@@ -2,38 +2,72 @@
 set -euo pipefail
 
 print_selected_packages=0
-case "${1:-}" in
+check_only=0
+json_output=0
+while [[ "$#" -gt 0 ]]; do
+  case "${1:-}" in
   -h|--help)
-  cat <<'EOF'
+    cat <<'EOF'
 Usage: scripts/install_desktop_deps_linux_ubuntu.sh
 
 Installs system packages required to build the Tauri v2 desktop app on Ubuntu/Debian.
 
 Options:
   --print-selected-packages  Resolve the package set and print it without running apt-get.
+  --check                    Probe the current runner and fail if requirements are missing.
+  --json                     Emit machine-readable JSON (supported with --check or --print-selected-packages).
 
 This script intentionally does NOT install:
   - Rust toolchain (rustup/cargo)
   - Node.js / pnpm
 
 EOF
-  exit 0
-  ;;
-  --print-selected-packages)
-    print_selected_packages=1
+    exit 0
     ;;
-  "")
-    ;;
-  *)
-    echo "error: unknown argument: ${1}" >&2
-    exit 2
-    ;;
-esac
+    --check)
+      check_only=1
+      ;;
+    --json)
+      json_output=1
+      ;;
+    --print-selected-packages)
+      print_selected_packages=1
+      ;;
+    *)
+      echo "error: unknown argument: ${1}" >&2
+      exit 2
+      ;;
+  esac
+  shift
+done
 
-if [[ "$print_selected_packages" != "1" ]] && ! command -v apt-get >/dev/null 2>&1; then
+if [[ "$print_selected_packages" == "1" && "$check_only" == "1" ]]; then
+  echo "error: --print-selected-packages and --check are mutually exclusive" >&2
+  exit 2
+fi
+
+if [[ "$json_output" == "1" && "$print_selected_packages" != "1" && "$check_only" != "1" ]]; then
+  echo "error: --json requires --check or --print-selected-packages" >&2
+  exit 2
+fi
+
+if [[ "$print_selected_packages" != "1" && "$check_only" != "1" ]] && ! command -v apt-get >/dev/null 2>&1; then
   echo "error: apt-get not found; this script targets Ubuntu/Debian." >&2
   exit 1
 fi
+
+MISSING_REQUIREMENTS=()
+
+record_missing_requirement() {
+  local requirement_id="$1"
+  local message="$2"
+  if [[ "$check_only" == "1" ]]; then
+    MISSING_REQUIREMENTS+=("${requirement_id}|${message}")
+    return 0
+  fi
+  echo "$message" >&2
+  exit 2
+}
 
 apt_package_available() {
   local pkg="$1"
@@ -147,7 +181,7 @@ packages=(
 )
 
 SUDO=()
-if [[ "$print_selected_packages" != "1" ]]; then
+if [[ "$print_selected_packages" != "1" && "$check_only" != "1" ]]; then
   if [[ "$(id -u)" -ne 0 ]]; then
     if ! command -v sudo >/dev/null 2>&1; then
       echo "error: sudo not found and not running as root." >&2
@@ -177,28 +211,28 @@ EOF
 fi
 
 webkit_pkg="$(choose_first_available_pkg libwebkit2gtk-4.1-dev)" || {
-  echo "error: could not find libwebkit2gtk-4.1-dev (required by current Tauri Linux stack)." >&2
-  exit 3
+  webkit_pkg="libwebkit2gtk-4.1-dev"
+  record_missing_requirement "apt-package:${webkit_pkg}" "error: could not find libwebkit2gtk-4.1-dev (required by current Tauri Linux stack)."
 }
 
 libsoup_pkg="$(choose_first_available_pkg libsoup-3.0-dev)" || {
-  echo "error: could not find libsoup-3.0-dev (required by current Tauri Linux stack)." >&2
-  exit 3
+  libsoup_pkg="libsoup-3.0-dev"
+  record_missing_requirement "apt-package:${libsoup_pkg}" "error: could not find libsoup-3.0-dev (required by current Tauri Linux stack)."
 }
 
 webkit_driver_pkg="$(choose_first_available_pkg webkit2gtk-driver)" || {
-  echo "error: could not find webkit2gtk-driver (required to provide WebKitWebDriver for tauri-driver Linux automation)." >&2
-  exit 3
+  webkit_driver_pkg="webkit2gtk-driver"
+  record_missing_requirement "apt-package:${webkit_driver_pkg}" "error: could not find webkit2gtk-driver (required to provide WebKitWebDriver for tauri-driver Linux automation)."
 }
 
 appindicator_pkg="$(choose_first_available_pkg libayatana-appindicator3-dev libappindicator3-dev)" || {
-  echo "error: could not find an appindicator dev package (tried libayatana-appindicator3-dev, libappindicator3-dev)." >&2
-  exit 3
+  appindicator_pkg="libayatana-appindicator3-dev"
+  record_missing_requirement "apt-package:appindicator" "error: could not find an appindicator dev package (tried libayatana-appindicator3-dev, libappindicator3-dev)."
 }
 
 fuse_runtime_pkg="$(choose_first_available_pkg libfuse2t64 libfuse2)" || {
-  echo "error: could not find an AppImage FUSE runtime package (tried libfuse2t64, libfuse2)." >&2
-  exit 3
+  fuse_runtime_pkg="libfuse2"
+  record_missing_requirement "apt-package:libfuse2" "error: could not find an AppImage FUSE runtime package (tried libfuse2t64, libfuse2)."
 }
 
 selected_packages=(
@@ -210,13 +244,51 @@ selected_packages=(
   "$fuse_runtime_pkg"
 )
 
+emit_json_summary() {
+  local mode="$1"
+  SELECTED_PACKAGES="$(printf '%s\n' "${selected_packages[@]}")" \
+  MISSING_REQUIREMENTS_TEXT="$(printf '%s\n' "${MISSING_REQUIREMENTS[@]}")" \
+  SUMMARY_MODE="$mode" \
+  python3 <<'PY'
+import json
+import os
+
+selected_packages = [
+    line for line in os.environ.get("SELECTED_PACKAGES", "").splitlines()
+    if line.strip()
+]
+missing_requirements = []
+for entry in os.environ.get("MISSING_REQUIREMENTS_TEXT", "").splitlines():
+    if not entry.strip():
+        continue
+    requirement_id, _, message = entry.partition("|")
+    missing_requirements.append({
+        "id": requirement_id,
+        "message": message,
+    })
+payload = {
+    "mode": os.environ.get("SUMMARY_MODE", ""),
+    "selected_packages": selected_packages,
+    "missing_requirements": missing_requirements,
+    "status": "missing" if missing_requirements else "ok",
+}
+print(json.dumps(payload, indent=2))
+PY
+}
+
 if [[ "$print_selected_packages" == "1" ]]; then
+  if [[ "$json_output" == "1" ]]; then
+    emit_json_summary "print-selected-packages"
+    exit 0
+  fi
   printf '%s\n' "${selected_packages[@]}"
   exit 0
 fi
 
-run_apt_get_with_lock_retry install -y --no-install-recommends \
-  "${selected_packages[@]}"
+if [[ "$check_only" != "1" ]]; then
+  run_apt_get_with_lock_retry install -y --no-install-recommends \
+    "${selected_packages[@]}"
+fi
 
 install_docker_buildx_plugin() {
   local arch=""
@@ -250,7 +322,14 @@ install_docker_buildx_plugin() {
   "${SUDO[@]}" chmod 0755 "$plugin_path"
 }
 
-install_docker_buildx_plugin
+if [[ "$check_only" != "1" ]]; then
+  install_docker_buildx_plugin
+fi
+
+if [[ "$check_only" == "1" && "$json_output" == "1" ]]; then
+  exec 3>&1
+  exec 1>&2
+fi
 
 echo
 echo "${BOLD}Sanity check (pkg-config)${RESET}"
@@ -258,24 +337,21 @@ for pc in glib-2.0 gtk+-3.0 libsoup-3.0 javascriptcoregtk-4.1 webkit2gtk-4.1 lib
   if pkg-config --exists "${pc}"; then
     echo "- ${pc}: OK"
   else
-    echo "- ${pc}: MISSING (check packages and pkg-config search path)" >&2
-    exit 2
+    record_missing_requirement "pkg-config:${pc}" "- ${pc}: MISSING (check packages and pkg-config search path)"
   fi
 done
 
 if command -v xdg-mime >/dev/null 2>&1; then
   echo "- xdg-mime: OK ($(command -v xdg-mime))"
 else
-  echo "- xdg-mime: MISSING (install xdg-utils)" >&2
-  exit 2
+  record_missing_requirement "command:xdg-mime" "- xdg-mime: MISSING (install xdg-utils)"
 fi
 
 for cmd in xauth xvfb-run; do
   if command -v "$cmd" >/dev/null 2>&1; then
     echo "- $cmd: OK ($(command -v "$cmd"))"
   else
-    echo "- $cmd: MISSING (install xauth/xvfb for Linux desktop automation)" >&2
-    exit 2
+    record_missing_requirement "command:${cmd}" "- $cmd: MISSING (install xauth/xvfb for Linux desktop automation)"
   fi
 done
 
@@ -283,23 +359,20 @@ for cmd in desktop-file-validate mksquashfs zsyncmake patchelf appstreamcli gtk-
   if command -v "$cmd" >/dev/null 2>&1; then
     echo "- $cmd: OK ($(command -v "$cmd"))"
   else
-    echo "- $cmd: MISSING (install corresponding AppImage packaging deps)" >&2
-    exit 2
+    record_missing_requirement "command:${cmd}" "- $cmd: MISSING (install corresponding AppImage packaging deps)"
   fi
 done
 
 if docker buildx version >/dev/null 2>&1; then
   echo "- docker buildx: OK"
 else
-  echo "- docker buildx: MISSING (install pinned Docker buildx CLI plugin)" >&2
-  exit 2
+  record_missing_requirement "docker:buildx" "- docker buildx: MISSING (install pinned Docker buildx CLI plugin)"
 fi
 
 if command -v WebKitWebDriver >/dev/null 2>&1; then
   echo "- WebKitWebDriver: OK ($(command -v WebKitWebDriver))"
 else
-  echo "- WebKitWebDriver: MISSING (install webkit2gtk-driver)" >&2
-  exit 2
+  record_missing_requirement "command:WebKitWebDriver" "- WebKitWebDriver: MISSING (install webkit2gtk-driver)"
 fi
 
 if command -v ldconfig >/dev/null 2>&1; then
@@ -311,8 +384,18 @@ fi
 if [[ "$ldconfig_output" == *"libfuse.so.2"* ]]; then
   echo "- libfuse.so.2: OK"
 else
-  echo "- libfuse.so.2: MISSING (install ${fuse_runtime_pkg})" >&2
-  exit 2
+  record_missing_requirement "library:libfuse.so.2" "- libfuse.so.2: MISSING (install ${fuse_runtime_pkg})"
+fi
+
+if [[ "$check_only" == "1" ]]; then
+  if [[ "$json_output" == "1" ]]; then
+    exec 1>&3
+    emit_json_summary "check"
+  fi
+  if [[ "${#MISSING_REQUIREMENTS[@]}" -gt 0 ]]; then
+    exit 1
+  fi
+  exit 0
 fi
 
 if [[ -t 1 && -z "${CI:-}" && -z "${BUILDKITE:-}" ]]; then

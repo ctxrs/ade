@@ -59,6 +59,21 @@ test("ubuntu desktop deps installer includes libcap for codex sandbox builds", (
   );
   assert.match(
     script,
+    /--check\s+Probe the current runner and fail if requirements are missing\./,
+    "install_desktop_deps_linux_ubuntu.sh must expose a probe-only mode for release runner drift checks",
+  );
+  assert.match(
+    script,
+    /--json\s+Emit machine-readable JSON/,
+    "install_desktop_deps_linux_ubuntu.sh must expose machine-readable probe output",
+  );
+  assert.match(
+    script,
+    /record_missing_requirement\(\)/,
+    "install_desktop_deps_linux_ubuntu.sh must accumulate missing requirements in check mode",
+  );
+  assert.match(
+    script,
     /Could not get lock\|Unable to acquire the dpkg frontend lock/,
     "install_desktop_deps_linux_ubuntu.sh must recognize transient apt\/dpkg lock contention",
   );

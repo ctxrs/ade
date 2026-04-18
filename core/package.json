@@ -230,6 +230,7 @@
     "sdlc:cache:purge:external": "node scripts/sdlc_cache_purge.cjs --root external",
     "sdlc:agent-loop:benchmark": "node scripts/sdlc_agent_loop_benchmark.cjs",
     "sdlc:agent-loop:benchmark:agent-mix": "node scripts/sdlc_agent_loop_benchmark.cjs --preset agent-mix --mixed",
+    "sdlc:agent-loop:benchmark:main-band": "node scripts/sdlc_agent_loop_benchmark.cjs --preset main-band --mixed",
     "sdlc:agent-loop:benchmark:release-prep-mix": "node scripts/sdlc_agent_loop_benchmark.cjs --preset release-prep-mix --mixed",
     "sdlc:host-budget:benchmark": "node scripts/sdlc_host_budget_benchmark.cjs",
     "rust:turbo:sync": "node scripts/sync_rust_turbo_tasks.cjs",

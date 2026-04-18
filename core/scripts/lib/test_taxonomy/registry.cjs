@@ -1157,7 +1157,7 @@ function buildStaticEntries() {
       ],
       dependencyCrates: [],
       notes: "Release/updater native smoke and manifest integrity checks.",
-      exception: "",
+      exception: "Intentional artifact-tail boundary for updater-manifest and local packaged-artifact truth; keep outside Bazel because it validates staged release state and publish-path side effects.",
     },
     {
       id: "updates-release.updater-web-e2e-suite",
@@ -1254,7 +1254,7 @@ function buildStaticEntries() {
       ],
       dependencyCrates: [],
       notes: "Buildkite-owned Linux x64 release stage and stage-archive upload boundary.",
-      exception: "",
+      exception: "Intentional script-local Linux packaging stage; it assembles staged release artifacts, touches host packaging toolchains, and should stay explicit instead of hiding mutable packaging state behind a coarse Bazel shell.",
     },
     {
       id: "updates-release.release-stage-linux-arm64",
@@ -1278,7 +1278,7 @@ function buildStaticEntries() {
       ],
       dependencyCrates: [],
       notes: "Buildkite-owned Linux arm64 release stage and stage-archive upload boundary.",
-      exception: "",
+      exception: "Intentional script-local Linux packaging stage for arm64 artifact truth; keep explicit because the remaining cost is packaging and archive assembly on the real release host, not hermetic compile work.",
     },
     {
       id: "updates-release.release-stage-macos",
@@ -1302,7 +1302,7 @@ function buildStaticEntries() {
       ],
       dependencyCrates: [],
       notes: "Buildkite-owned combined macOS stage boundary for the shared Mac queue.",
-      exception: "",
+      exception: "Intentional script-local shared-Mac stage; this lane owns scarce Mac packaging, signing prerequisites, and real host cleanup, so it should remain an explicit single-Mac boundary rather than a hidden Bazel wrapper.",
     },
     {
       id: "updates-release.release-finalize-macos",
@@ -1327,7 +1327,7 @@ function buildStaticEntries() {
       ],
       dependencyCrates: [],
       notes: "Buildkite-owned macOS finalize/notary boundary that consumes staged mac artifacts.",
-      exception: "",
+      exception: "Intentional artifact-tail boundary for notarization and stapling on the shared Mac; Apple service calls and retryable signed-artifact handling are the real work here, not hermetic build graph execution.",
     },
     {
       id: "updates-release.release-finalize",
@@ -1352,7 +1352,7 @@ function buildStaticEntries() {
       ],
       dependencyCrates: [],
       notes: "Buildkite-owned release finalize boundary that consumes staged platform archives, publishes versioned release state, verifies it, promotes latest, and emits release evidence.",
-      exception: "",
+      exception: "Intentional artifact-tail publish boundary; it must consume already-staged artifacts and talk to external release services without rebuilding from source.",
     },
     {
       id: "updates-release.release-e2e-publish",
@@ -1375,7 +1375,7 @@ function buildStaticEntries() {
       ],
       dependencyCrates: [],
       notes: "Live publish path for release E2E.",
-      exception: "",
+      exception: "Intentional published-artifact tail that exercises live release publication and install/update truth; keep explicit and out of Bazel because the value is external-service verification, not compile reuse.",
     },
     {
       id: "updates-release.release-e2e-verify",
@@ -1398,7 +1398,7 @@ function buildStaticEntries() {
       ],
       dependencyCrates: [],
       notes: "Published artifact verification path.",
-      exception: "",
+      exception: "Intentional published-artifact verification tail for already-published release state; it should stay explicit because it validates real remote artifacts and updater behavior.",
     },
     {
       id: "resilience-performance.anomaly.ctx-http-fault-matrix",

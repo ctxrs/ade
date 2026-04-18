@@ -151,3 +151,98 @@ bash ${shellQuote(scriptPath)}
   assert.match(installArgs, /\bliblzma-dev\b/);
   assert.match(installArgs, /\bunzip\b/);
 });
+
+test("install_desktop_deps_linux_ubuntu check mode emits json without invoking apt", () => {
+  const fixture = createFixture();
+
+  const bashCommand = `
+set -euo pipefail
+apt-get() {
+  echo "unexpected apt-get invocation in --check mode" >&2
+  exit 99
+}
+pkg-config() { return 0; }
+xdg-mime() { return 0; }
+xauth() { return 0; }
+xvfb-run() { return 0; }
+desktop-file-validate() { return 0; }
+mksquashfs() { return 0; }
+zsyncmake() { return 0; }
+patchelf() { return 0; }
+appstreamcli() { return 0; }
+gtk-update-icon-cache() { return 0; }
+WebKitWebDriver() { return 0; }
+ldconfig() {
+  if [[ "\${1:-}" == "-p" ]]; then
+    printf 'libfuse.so.2 (libc6,x86-64) => /usr/lib/libfuse.so.2\\n'
+  fi
+}
+docker() {
+  if [[ "\${1:-}" == "buildx" && "\${2:-}" == "version" ]]; then
+    printf 'github.com/docker/buildx v0.30.1\\n'
+    return 0
+  fi
+  return 0
+}
+export -f apt-get pkg-config xdg-mime xauth xvfb-run desktop-file-validate mksquashfs zsyncmake patchelf appstreamcli gtk-update-icon-cache WebKitWebDriver ldconfig docker
+bash ${shellQuote(scriptPath)} --check --json > ${shellQuote(path.join(fixture.stateDir, "summary.json"))}
+`;
+
+  const result = spawnSync("bash", ["-lc", bashCommand], {
+    cwd: repoRoot,
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      CI: "1",
+      CTX_TEST_APT_CACHE_AVAILABLE_PACKAGES: [
+        "libwebkit2gtk-4.1-dev",
+        "libsoup-3.0-dev",
+        "webkit2gtk-driver",
+        "libayatana-appindicator3-dev",
+        "libfuse2t64",
+      ].join(" "),
+    },
+  });
+
+  assert.equal(result.status, 0, `stdout:\n${result.stdout}\n\nstderr:\n${result.stderr}`);
+  assert.deepEqual(
+    JSON.parse(fs.readFileSync(path.join(fixture.stateDir, "summary.json"), "utf8")),
+    {
+      mode: "check",
+      missing_requirements: [],
+      selected_packages: [
+        "build-essential",
+        "binutils",
+        "pkg-config",
+        "curl",
+        "sshpass",
+        "file",
+        "xdg-utils",
+        "xauth",
+        "xvfb",
+        "desktop-file-utils",
+        "squashfs-tools",
+        "zsync",
+        "patchelf",
+        "appstream",
+        "libgtk-3-bin",
+        "libglib2.0-dev",
+        "libgtk-3-dev",
+        "librsvg2-dev",
+        "libssl-dev",
+        "libcap-dev",
+        "liblzma-dev",
+        "musl",
+        "libc++1",
+        "tk",
+        "unzip",
+        "libwebkit2gtk-4.1-dev",
+        "webkit2gtk-driver",
+        "libsoup-3.0-dev",
+        "libayatana-appindicator3-dev",
+        "libfuse2t64",
+      ],
+      status: "ok",
+    },
+  );
+});
