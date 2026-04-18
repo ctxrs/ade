@@ -74,8 +74,27 @@ const URL_SEGMENTS = [
 
 const EMOJI = ["🙂", "⚙️", "🧪", "📏"] as const;
 const CJK = ["你好 世界", "測試 佈局", "段落 換行"] as const;
+const SHORT_CODE_TOKENS = [
+  "7",
+  "main",
+  "origin/main",
+  "ctx serve",
+  "ctx task list",
+  "agent loop",
+  "Test Taxonomy",
+  "stable lane",
+  "release gate",
+] as const;
+const THRESHOLD_TAILS = [
+  "before replying",
+  "for the stable lane",
+  "in one wrap-sensitive line",
+  "after the transcript reload",
+  "without changing the planner",
+] as const;
 
 const WIDTHS = [472, 540, 620, 788] as const;
+const THRESHOLD_WIDTHS = [472, 768, 788] as const;
 
 export type GeneratedMessageSample = {
   name: string;
@@ -98,6 +117,13 @@ export type GeneratedTurnHeaderSample = {
   params: TurnHeaderParityParams;
 };
 
+export type GeneratedThresholdParityFuzzCorpus = {
+  widths: readonly number[];
+  markdownSamples: readonly MarkdownSample[];
+  messageSamples: readonly GeneratedMessageSample[];
+  assistantSamples: readonly GeneratedAssistantSample[];
+};
+
 export type GeneratedPretextParityFuzzCorpus = {
   seed: number;
   widths: readonly number[];
@@ -106,6 +132,7 @@ export type GeneratedPretextParityFuzzCorpus = {
   assistantSamples: readonly GeneratedAssistantSample[];
   assistantStreamingSamples: readonly GeneratedAssistantStreamingSample[];
   turnHeaderSamples: readonly GeneratedTurnHeaderSample[];
+  threshold: GeneratedThresholdParityFuzzCorpus;
 };
 
 type GeneratedBlock = {
@@ -179,6 +206,25 @@ function generateUrl(rng: SeededRandom): string {
   return `https://example.com/${repeatJoin(rng.int(2, 4), () => rng.pick(URL_SEGMENTS), "/")}?ref=${rng.int(100, 999)}`;
 }
 
+function generateShortCodeToken(rng: SeededRandom): string {
+  return rng.pick(SHORT_CODE_TOKENS);
+}
+
+function wrapCodeToken(token: string): string {
+  return `\`${token}\``;
+}
+
+function renderCodeList(tokens: readonly string[]): string {
+  const coded = tokens.map((token) => wrapCodeToken(token));
+  if (coded.length <= 1) {
+    return coded[0] ?? "";
+  }
+  if (coded.length === 2) {
+    return `${coded[0]} and ${coded[1]}`;
+  }
+  return `${coded.slice(0, -1).join(", ")}, and ${coded[coded.length - 1]}`;
+}
+
 function generateInlineCode(rng: SeededRandom): string {
   return `\`${rng.bool(0.5) ? generatePathToken(rng) : generateCommandToken(rng)}\``;
 }
@@ -208,13 +254,48 @@ function generateInlineFragment(rng: SeededRandom): string {
   }
 }
 
-function generateSentence(rng: SeededRandom, minFragments = 5, maxFragments = 9): string {
+function generateThresholdInlineCodeSentence(rng: SeededRandom): string {
+  const lead = capitalize(generateWords(rng, 2, 4));
+  const middle = generateWords(rng, 2, 4);
+  const tail = rng.pick(THRESHOLD_TAILS);
+  const firstToken = generateShortCodeToken(rng);
+  const secondToken = generateShortCodeToken(rng);
+  const punctuation = rng.pick([",", ":", "."] as const);
+  if (punctuation === ".") {
+    return `${lead} ${wrapCodeToken(firstToken)} ${middle} ${wrapCodeToken(secondToken)}. ${capitalize(tail)}.`;
+  }
+  return `${lead} ${wrapCodeToken(firstToken)} ${middle} ${wrapCodeToken(secondToken)}${punctuation} ${tail}.`;
+}
+
+function generatePunctuatedCodeTailSentence(rng: SeededRandom): string {
+  const lead = capitalize(generateWords(rng, 2, 4));
+  const token = generateShortCodeToken(rng);
+  const punctuation = rng.pick([",", ":", "."] as const);
+  const tail = rng.pick(THRESHOLD_TAILS);
+  if (punctuation === ".") {
+    return `${lead} ${wrapCodeToken(token)}. ${capitalize(tail)}.`;
+  }
+  return `${lead} ${wrapCodeToken(token)}${punctuation} ${tail}.`;
+}
+
+function generateMultiChipSentence(rng: SeededRandom): string {
+  const lead = capitalize(generateWords(rng, 2, 4));
+  const chipCount = rng.int(3, 4);
+  const chips = Array.from({ length: chipCount }, () => generateShortCodeToken(rng));
+  return `${lead} ${renderCodeList(chips)} ${rng.pick(THRESHOLD_TAILS)}.`;
+}
+
+function generateGenericSentence(rng: SeededRandom, minFragments = 5, maxFragments = 9): string {
   const fragments = [capitalize(generateWords(rng, 2, 4))];
   const fragmentCount = rng.int(minFragments, maxFragments);
   for (let index = 1; index < fragmentCount; index += 1) {
     fragments.push(generateInlineFragment(rng));
   }
   return `${fragments.join(" ")}${rng.pick([".", ".", ".", ";", ":"] as const)}`;
+}
+
+function generateSentence(rng: SeededRandom, minFragments = 5, maxFragments = 9): string {
+  return generateGenericSentence(rng, minFragments, maxFragments);
 }
 
 function prefixLines(prefix: string, text: string): string {
@@ -320,6 +401,23 @@ function generateMarkdownDocument(rng: SeededRandom): GeneratedBlock[] {
   return blocks;
 }
 
+function generateThresholdMarkdownSample(rng: SeededRandom, index: number): MarkdownSample {
+  const blocks = [
+    {
+      label: "threshold-paragraph",
+      text: generateThresholdInlineCodeSentence(rng),
+    },
+    {
+      label: "threshold-list",
+      text: `- ${generatePunctuatedCodeTailSentence(rng)}\n- ${generateMultiChipSentence(rng)}`,
+    },
+  ];
+  return {
+    name: `generated-md-${index}-${blocks.map((block) => block.label).join("-")}`,
+    markdown: blocks.map((block) => block.text).join("\n\n"),
+  };
+}
+
 function generateMarkdownSample(rng: SeededRandom, index: number): MarkdownSample {
   const blocks = generateMarkdownDocument(rng);
   return {
@@ -352,6 +450,9 @@ function selectStreamingCutPoints(content: string): number[] {
     addCandidate((match.index ?? 0) + match[0].length);
   }
   for (const match of content.matchAll(/`+/g)) {
+    addCandidate((match.index ?? 0) + match[0].length);
+  }
+  for (const match of content.matchAll(/`[,:.]/g)) {
     addCandidate((match.index ?? 0) + match[0].length);
   }
   for (const match of content.matchAll(/\|/g)) {
@@ -481,6 +582,26 @@ function generateTurnHeaderSample(rng: SeededRandom, index: number): GeneratedTu
   };
 }
 
+function generateThresholdMessageSample(rng: SeededRandom, index: number): GeneratedMessageSample {
+  return {
+    name: `generated-message-threshold-${index}`,
+    params: {
+      content: [generatePunctuatedCodeTailSentence(rng), generateMultiChipSentence(rng)].join("\n\n"),
+      expanded: true,
+    },
+  };
+}
+
+function generateThresholdAssistantSample(rng: SeededRandom, index: number): GeneratedAssistantSample {
+  return {
+    name: `generated-assistant-threshold-${index}`,
+    params: {
+      content: [generateThresholdInlineCodeSentence(rng), generatePunctuatedCodeTailSentence(rng)].join("\n\n"),
+      isComplete: true,
+    },
+  };
+}
+
 export function generatePretextParityFuzzCorpus(options?: {
   seed?: number;
   markdownCount?: number;
@@ -494,6 +615,9 @@ export function generatePretextParityFuzzCorpus(options?: {
   const messageCount = options?.messageCount ?? 12;
   const assistantCount = options?.assistantCount ?? 12;
   const turnHeaderCount = options?.turnHeaderCount ?? 8;
+  const thresholdMarkdownCount = Math.max(4, Math.ceil(markdownCount / 4));
+  const thresholdMessageCount = Math.max(3, Math.ceil(messageCount / 4));
+  const thresholdAssistantCount = Math.max(3, Math.ceil(assistantCount / 4));
 
   return {
     seed,
@@ -505,5 +629,17 @@ export function generatePretextParityFuzzCorpus(options?: {
       generateAssistantStreamingSample(rng, index + 1),
     ),
     turnHeaderSamples: Array.from({ length: turnHeaderCount }, (_, index) => generateTurnHeaderSample(rng, index + 1)),
+    threshold: {
+      widths: THRESHOLD_WIDTHS,
+      markdownSamples: Array.from({ length: thresholdMarkdownCount }, (_, index) =>
+        generateThresholdMarkdownSample(rng, index + 1),
+      ),
+      messageSamples: Array.from({ length: thresholdMessageCount }, (_, index) =>
+        generateThresholdMessageSample(rng, index + 1),
+      ),
+      assistantSamples: Array.from({ length: thresholdAssistantCount }, (_, index) =>
+        generateThresholdAssistantSample(rng, index + 1),
+      ),
+    },
   };
 }

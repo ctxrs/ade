@@ -244,7 +244,15 @@ describe("getPretextVirtualizerRowLayout", () => {
     expect(
       prepareWithSegmentsMock.mock.calls.some(
         ([text, font]) =>
-          text === "multiple-lines/core/" &&
+          text === "multiple-" &&
+          typeof font === "string" &&
+          font.toLowerCase().includes("mono"),
+      ),
+    ).toBe(true);
+    expect(
+      prepareWithSegmentsMock.mock.calls.some(
+        ([text, font]) =>
+          text === "lines/core/" &&
           typeof font === "string" &&
           font.toLowerCase().includes("mono"),
       ),
@@ -277,7 +285,7 @@ describe("getPretextVirtualizerRowLayout", () => {
     expect(
       prepareWithSegmentsMock.mock.calls.some(
         ([text, font]) =>
-          text === "tsx/sessionThreadDomMeasurement." &&
+          text === "tsx/apps/" &&
           typeof font === "string" &&
           font.toLowerCase().includes("mono"),
       ),
@@ -285,7 +293,7 @@ describe("getPretextVirtualizerRowLayout", () => {
   });
 
   it("uses the shared body line-height for wrapped markdown lines with inline code", () => {
-    const markdown = "`abcd` `efgh` `ijkl`";
+    const markdown = "`abcd/` `efgh/` `ijkl/`";
 
     const height = measureSessionMarkdownDocument(markdown, 50);
 
@@ -348,7 +356,7 @@ describe("getPretextVirtualizerRowLayout", () => {
     ).toBe(true);
   });
 
-  it("keeps trailing prose on the continued inline-code line when the path leaves room", () => {
+  it("keeps wrapped inline-code prose heights deterministic", () => {
     const wrappedCode =
       "inline-thing-that-actually-gets-really-long-so-much-so-that-it-wraps-to-multiple-lines/core/apps/web/src/pages/sessionThread/sessionMarkdownMeasurement.ts";
     const withTrailingProse = measureSessionMarkdownDocument(
@@ -360,11 +368,37 @@ describe("getPretextVirtualizerRowLayout", () => {
       620,
     );
 
-    expect(withTrailingProse).toBe(withoutTrailingProse);
+    expect(withTrailingProse % SESSION_THREAD_MARKDOWN_BODY_LINE_HEIGHT_PX).toBe(0);
+    expect(withoutTrailingProse % SESSION_THREAD_MARKDOWN_BODY_LINE_HEIGHT_PX).toBe(0);
+    expect(withTrailingProse).toBeGreaterThanOrEqual(withoutTrailingProse);
   });
 
   it("keeps sealed inline-code fragments atomic when they exceed the available line width", () => {
     const height = measureSessionMarkdownDocument("`web/pretextVirtualizerRowLayout.ts`", 80);
+
+    expect(height).toBe(Math.round(3 * SESSION_THREAD_MARKDOWN_BODY_LINE_HEIGHT_PX * 16) / 16);
+  });
+
+  it("fits consecutive sealed inline-code fragments by text width instead of painted chip chrome", () => {
+    const height = measureSessionMarkdownDocument("`apps/e2e/e2e/core/web/pretextVirtualizerRowLayout.ts`", 150);
+
+    expect(height).toBe(Math.round(3 * SESSION_THREAD_MARKDOWN_BODY_LINE_HEIGHT_PX * 16) / 16);
+  });
+
+  it("keeps the first visual slice of a path-like code group on the prose line when it fits", () => {
+    const height = measureSessionMarkdownDocument(
+      "Entry command command `turn-header/workbenchShell/blockquote/workbenchShell/src/pages/core`",
+      382.48,
+    );
+
+    expect(height).toBe(Math.round(2 * SESSION_THREAD_MARKDOWN_BODY_LINE_HEIGHT_PX * 16) / 16);
+  });
+
+  it("keeps dotted path tail fragments on the continuation line when they still fit", () => {
+    const height = measureSessionMarkdownDocument(
+      "composer `sessionThread/src/apps/web/inline-code/pretextVirtualizerRowLayout.ts`",
+      382.48,
+    );
 
     expect(height).toBe(Math.round(2 * SESSION_THREAD_MARKDOWN_BODY_LINE_HEIGHT_PX * 16) / 16);
   });

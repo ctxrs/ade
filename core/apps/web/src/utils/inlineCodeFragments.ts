@@ -1,6 +1,5 @@
 const INLINE_CODE_SLASH_COALESCE_MAX_GRAPHEMES = 8;
-const INLINE_CODE_HYPHEN_PATH_COALESCE_MAX_GRAPHEMES = 21;
-
+const INLINE_CODE_SLASH_FOLLOWING_COALESCE_MAX_GRAPHEMES = 12;
 function countGraphemes(text: string): number {
   return Array.from(text).length;
 }
@@ -29,7 +28,8 @@ export function splitInlineCodeFragments(text: string): string[] {
     const shouldCoalesceWithPrevious =
       previous != null &&
       /[\\/]$/.test(previous) &&
-      countGraphemes(previous) <= INLINE_CODE_SLASH_COALESCE_MAX_GRAPHEMES;
+      countGraphemes(previous) <= INLINE_CODE_SLASH_COALESCE_MAX_GRAPHEMES &&
+      countGraphemes(fragment) <= INLINE_CODE_SLASH_FOLLOWING_COALESCE_MAX_GRAPHEMES;
     if (shouldCoalesceWithPrevious) {
       fragments[fragments.length - 1] = `${previous}${fragment}`;
       continue;
@@ -37,22 +37,7 @@ export function splitInlineCodeFragments(text: string): string[] {
     fragments.push(fragment);
   }
 
-  const mergedFragments: string[] = [];
-  for (const fragment of fragments) {
-    const previous = mergedFragments[mergedFragments.length - 1] ?? null;
-    const shouldMergeHyphenPathCluster =
-      previous != null &&
-      previous.endsWith("-") &&
-      (/[\\/]/.test(previous) || /[\\/]/.test(fragment)) &&
-      countGraphemes(previous) <= INLINE_CODE_HYPHEN_PATH_COALESCE_MAX_GRAPHEMES;
-    if (shouldMergeHyphenPathCluster) {
-      mergedFragments[mergedFragments.length - 1] = `${previous}${fragment}`;
-      continue;
-    }
-    mergedFragments.push(fragment);
-  }
-
-  return mergedFragments;
+  return fragments;
 }
 
 export function isSealedInlineCodeFragment(fragment: string): boolean {

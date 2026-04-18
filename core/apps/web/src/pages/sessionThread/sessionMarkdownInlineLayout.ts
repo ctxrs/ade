@@ -30,6 +30,7 @@ export type PreparedInlineLayoutItem =
       kind: "segment";
       codeGroupId: number | null;
       codeGroupHasDottedPath: boolean;
+      codeGroupHasWhitespace: boolean;
       codeGroupHasTrailingText: boolean;
       codeGroupIsOnlyInlineCodeInSegment: boolean;
       codeGroupStartsAfterText: boolean;
@@ -117,6 +118,7 @@ function pushTextRunItems(
         kind: "segment",
         codeGroupId: null,
         codeGroupHasDottedPath: false,
+        codeGroupHasWhitespace: false,
         codeGroupHasTrailingText: false,
         codeGroupIsOnlyInlineCodeInSegment: false,
         codeGroupStartsAfterText: false,
@@ -336,6 +338,7 @@ export function prepareInlineLayoutItems(params: {
       const codeGroupId = index;
       const codeGroupHasDottedPath =
         (run.text.includes("/") || run.text.includes("\\")) && run.text.includes(".");
+      const codeGroupHasWhitespace = run.parts.some((part) => /\s/.test(part));
       const startsAfterText = codeGroupStartsAfterText(index);
       const hasTrailingText = codeGroupHasTrailingText(index);
       const isOnlyInlineCodeInSegment = codeGroupIsOnlyInlineCodeInSegment(index);
@@ -380,6 +383,7 @@ export function prepareInlineLayoutItems(params: {
             kind: "segment",
             codeGroupId,
             codeGroupHasDottedPath,
+            codeGroupHasWhitespace,
             codeGroupHasTrailingText: hasTrailingText,
             codeGroupIsOnlyInlineCodeInSegment: isOnlyInlineCodeInSegment,
             codeGroupStartsAfterText: startsAfterText,

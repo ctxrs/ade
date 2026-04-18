@@ -146,6 +146,110 @@ test("workbench: pretext generated markdown fuzz parity", async ({ page }, testI
   ).toEqual([]);
 });
 
+test("workbench: pretext generated threshold seam fuzz parity", async ({ page }, testInfo) => {
+  test.setTimeout(240000);
+  test.slow();
+  await openWorkbenchShell(page);
+
+  const corpus = generatePretextParityFuzzCorpus({
+    seed: readEnvInt("CTX_PRETEXT_FUZZ_SEED", DEFAULT_SEED),
+    markdownCount: readEnvInt("CTX_PRETEXT_FUZZ_MARKDOWN_CASES", DEFAULT_MARKDOWN_CASES),
+    messageCount: readEnvInt("CTX_PRETEXT_FUZZ_MESSAGE_CASES", DEFAULT_MESSAGE_CASES),
+    assistantCount: readEnvInt("CTX_PRETEXT_FUZZ_ASSISTANT_CASES", DEFAULT_ASSISTANT_CASES),
+    turnHeaderCount: readEnvInt("CTX_PRETEXT_FUZZ_TURN_HEADER_CASES", DEFAULT_TURN_HEADER_CASES),
+  });
+
+  const markdownSummary: MarkdownSummaryEntry[] = [];
+  for (const width of corpus.threshold.widths) {
+    const measurements = await measureMarkdownParity(page, corpus.threshold.markdownSamples, width);
+    markdownSummary.push(
+      ...measurements.map((measurement, index) => ({
+        width,
+        markdown: corpus.threshold.markdownSamples[index]!.markdown,
+        ...measurement,
+      })),
+    );
+  }
+
+  const rowSummary: RowSummaryEntry[] = [];
+  for (const width of corpus.threshold.widths) {
+    for (const sample of corpus.threshold.messageSamples) {
+      const measurement = await measureMessageParity(page, {
+        ...sample.params,
+        viewportWidth: width,
+      });
+      rowSummary.push({
+        kind: "message",
+        width,
+        name: sample.name,
+        content: sample.params.content,
+        expanded: sample.params.expanded,
+        attachmentCount: sample.params.attachments?.length ?? 0,
+        ...measurement,
+      });
+    }
+
+    for (const sample of corpus.threshold.assistantSamples) {
+      const measurement = await measureAssistantParity(page, {
+        ...sample.params,
+        viewportWidth: width,
+      });
+      rowSummary.push({
+        kind: "assistant",
+        width,
+        name: sample.name,
+        content: sample.params.content,
+        isComplete: sample.params.isComplete ?? true,
+        ...measurement,
+      });
+    }
+  }
+
+  const report = {
+    enforce: ENFORCE,
+    seed: corpus.seed,
+    thresholdPx: ROW_THRESHOLD_PX,
+    widths: corpus.threshold.widths,
+    counts: {
+      markdown: corpus.threshold.markdownSamples.length,
+      message: corpus.threshold.messageSamples.length,
+      assistant: corpus.threshold.assistantSamples.length,
+    },
+    markdownSamples: markdownSummary,
+    rowSamples: rowSummary,
+  };
+  const reportPath = testInfo.outputPath("pretext-threshold-seam-fuzz-parity.json");
+  await fs.writeFile(reportPath, JSON.stringify(report, null, 2), "utf8");
+  await testInfo.attach("pretext-threshold-seam-fuzz-parity.json", {
+    path: reportPath,
+    contentType: "application/json",
+  });
+
+  if (!ENFORCE) return;
+
+  const failures = [
+    ...markdownSummary
+      .filter((entry) => Math.abs(entry.delta) > MARKDOWN_THRESHOLD_PX)
+      .map((entry) => ({
+        name: `markdown:${entry.name}`,
+        width: entry.width,
+        delta: entry.delta,
+        planned: entry.planned,
+        actual: entry.actual,
+      })),
+    ...rowSummary
+      .filter((entry) => Math.abs(entry.delta) > ROW_THRESHOLD_PX)
+      .map((entry) => ({
+        name: `${entry.kind}:${entry.name}`,
+        width: entry.width,
+        delta: entry.delta,
+        planned: entry.planned,
+        actual: entry.actual,
+      })),
+  ];
+  expect(failures, formatFailures("threshold seam", failures)).toEqual([]);
+});
+
 test("workbench: pretext generated transcript row fuzz parity", async ({ page }, testInfo) => {
   test.setTimeout(240000);
   test.slow();

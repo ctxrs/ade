@@ -27,17 +27,34 @@ async function openEmptyWorkspace(page: Page) {
     turnsPerSession: 0,
   });
   await page.goto(`/workspaces/${seed.workspaceId}?ctxE2E=1`, { waitUntil: "domcontentloaded" });
+  await page.waitForFunction(() => {
+    const api = (window as E2EWindow).__ctxE2E;
+    return (
+      typeof api?.measureMarkdownParity === "function" &&
+      typeof api?.measureMarkdownSelectionText === "function" &&
+      typeof api?.installMarkdownScrollProbe === "function" &&
+      typeof api?.removeMarkdownScrollProbe === "function"
+    );
+  });
 }
 
 async function measureMarkdownParity(page: Page, samples: readonly MarkdownSample[], width: number) {
   return page.evaluate(({ samples, width }) => {
-    return (window as E2EWindow).__ctxE2E?.measureMarkdownParity?.(samples, width) ?? Promise.resolve([]);
+    const api = (window as E2EWindow).__ctxE2E?.measureMarkdownParity;
+    if (typeof api !== "function") {
+      throw new Error("ctxE2E.measureMarkdownParity is unavailable");
+    }
+    return api(samples, width);
   }, { samples, width });
 }
 
 async function measureMarkdownSelectionText(page: Page, markdown: string, width: number) {
   return page.evaluate(({ markdown, width }) => {
-    return (window as E2EWindow).__ctxE2E?.measureMarkdownSelectionText?.(markdown, width) ?? Promise.resolve("");
+    const api = (window as E2EWindow).__ctxE2E?.measureMarkdownSelectionText;
+    if (typeof api !== "function") {
+      throw new Error("ctxE2E.measureMarkdownSelectionText is unavailable");
+    }
+    return api(markdown, width);
   }, { markdown, width });
 }
 

@@ -11,6 +11,7 @@ import {
 
 const ENFORCE = process.env.CTX_PRETEXT_PARITY_ENFORCE === "1";
 const WIDTHS = [540, 620, 788];
+const THRESHOLD_WIDTHS = [472, 768, 788];
 const MARKDOWN_THRESHOLD_PX = 1;
 const ROW_THRESHOLD_PX = 1;
 
@@ -27,6 +28,23 @@ const MARKDOWN_CORPUS: MarkdownSample[] = [
     name: "adjacent-inline-code",
     markdown:
       "Paragraph with `alpha-beta-gamma-delta/ctx/path/one` `second-inline-token/with/path/two` beside prose and punctuation.",
+  },
+  {
+    name: "code-comma-tail",
+    markdown: "Reopen `origin/main`, then inspect the queue again.",
+  },
+  {
+    name: "three-chip-prose",
+    markdown: "Compare `origin/main`, `Test Taxonomy`, and `ctx serve` before replying.",
+  },
+  {
+    name: "period-after-code-tail",
+    markdown: "We shipped `ctx serve`. Then we reopened `origin/main` again.",
+  },
+  {
+    name: "whitespace-code-comma-tail-long-prose",
+    markdown:
+      "The current fixture is concrete and repeatable: `sample-layout-runner` uses a helper with Python `shutil.copytree(..., dirs_exist_ok=True)`, which keeps the long inline-code tail beside ordinary prose. The width sample stays useful while the browser comparison remains deterministic.",
   },
   {
     name: "inline-code-link-prose",
@@ -77,6 +95,16 @@ const USER_MESSAGE_CORPUS = [
     },
   },
   {
+    name: "threshold-user-tail",
+    params: {
+      content: [
+        "Keep `7` active tasks, including `Test Taxonomy`, aligned before replying.",
+        "Compare `origin/main`, `ctx serve`, and `stable lane` again after the transcript reload.",
+      ].join("\n\n"),
+      expanded: true,
+    },
+  },
+  {
     name: "collapsed-user",
     params: {
       content: Array.from(
@@ -122,6 +150,31 @@ const ASSISTANT_CORPUS = [
     },
   },
   {
+    name: "code-comma-tail",
+    params: {
+      content: "Reopen `origin/main`, then inspect the queue again.",
+    },
+  },
+  {
+    name: "three-chip-prose",
+    params: {
+      content: "Compare `origin/main`, `Test Taxonomy`, and `ctx serve` before replying.",
+    },
+  },
+  {
+    name: "period-after-code-tail",
+    params: {
+      content: "We shipped `ctx serve`. Then we reopened `origin/main` again.",
+    },
+  },
+  {
+    name: "whitespace-code-comma-tail-long-prose",
+    params: {
+      content:
+        "The current fixture is concrete and repeatable: `sample-layout-runner` uses a helper with Python `shutil.copytree(..., dirs_exist_ok=True)`, which keeps the long inline-code tail beside ordinary prose. The width sample stays useful while the browser comparison remains deterministic.",
+    },
+  },
+  {
     name: "inline-code-link-mix",
     params: {
       content:
@@ -148,6 +201,20 @@ const ASSISTANT_CORPUS = [
     },
   },
 ];
+
+const THRESHOLD_MARKDOWN_SAMPLE_NAMES = new Set([
+  "two-chip-threshold-wrap",
+  "code-comma-tail",
+  "three-chip-prose",
+  "period-after-code-tail",
+]);
+const THRESHOLD_USER_SAMPLE_NAMES = new Set(["threshold-user-tail"]);
+const THRESHOLD_ASSISTANT_SAMPLE_NAMES = new Set([
+  "two-chip-threshold-wrap",
+  "code-comma-tail",
+  "three-chip-prose",
+  "period-after-code-tail",
+]);
 
 const TURN_HEADER_CORPUS = [
   {
@@ -229,6 +296,176 @@ test("workbench: pretext markdown corpus parity sweep", async ({ page }, testInf
       planned: failure.planned,
       actual: failure.actual,
     }))),
+  ).toEqual([]);
+});
+
+test("workbench: pretext threshold seam parity sweep", async ({ page }) => {
+  test.setTimeout(180000);
+  test.slow();
+  await openWorkbenchShell(page);
+
+  const markdownSamples = MARKDOWN_CORPUS.filter((sample) => THRESHOLD_MARKDOWN_SAMPLE_NAMES.has(sample.name));
+  const userSamples = USER_MESSAGE_CORPUS.filter((sample) => THRESHOLD_USER_SAMPLE_NAMES.has(sample.name));
+  const assistantSamples = ASSISTANT_CORPUS.filter((sample) => THRESHOLD_ASSISTANT_SAMPLE_NAMES.has(sample.name));
+
+  const markdownSummary: MarkdownSummaryEntry[] = [];
+  const rowSummary: RowSummaryEntry[] = [];
+
+  for (const width of THRESHOLD_WIDTHS) {
+    const markdownMeasurements = await measureMarkdownParity(page, markdownSamples, width);
+    markdownSummary.push(...markdownMeasurements.map((measurement) => ({ width, ...measurement })));
+
+    for (const sample of userSamples) {
+      const measurement = await measureMessageParity(page, {
+        ...sample.params,
+        viewportWidth: width,
+      });
+      rowSummary.push({ kind: "message", width, name: sample.name, ...measurement });
+    }
+
+    for (const sample of assistantSamples) {
+      const measurement = await measureAssistantParity(page, {
+        ...sample.params,
+        viewportWidth: width,
+      });
+      rowSummary.push({ kind: "assistant", width, name: sample.name, ...measurement });
+    }
+  }
+
+  if (!ENFORCE) return;
+
+  const markdownFailures = markdownSummary.filter((entry) => Math.abs(entry.delta) > MARKDOWN_THRESHOLD_PX);
+  expect(
+    markdownFailures,
+    formatFailures(
+      "threshold markdown",
+      markdownFailures.map((failure) => ({
+        name: failure.name,
+        width: failure.width,
+        delta: failure.delta,
+        planned: failure.planned,
+        actual: failure.actual,
+      })),
+    ),
+  ).toEqual([]);
+
+  const rowFailures = rowSummary.filter((entry) => Math.abs(entry.delta) > ROW_THRESHOLD_PX);
+  expect(
+    rowFailures,
+    formatFailures(
+      "threshold rows",
+      rowFailures.map((failure) => ({
+        name: `${failure.kind}:${failure.name}`,
+        width: failure.width,
+        delta: failure.delta,
+        planned: failure.planned,
+        actual: failure.actual,
+      })),
+    ),
+  ).toEqual([]);
+});
+
+test("workbench: pretext sealed inline path threshold parity", async ({ page }) => {
+  test.setTimeout(120000);
+  await openWorkbenchShell(page);
+
+  const measurements = await measureMarkdownParity(
+    page,
+    [
+      {
+        name: "sealed-inline-path-threshold",
+        markdown: "`apps/e2e/e2e/core/web/pretextVirtualizerRowLayout.ts`",
+      },
+    ],
+    150,
+  );
+
+  if (!ENFORCE) return;
+
+  const failures = measurements.filter((entry) => Math.abs(entry.delta) > MARKDOWN_THRESHOLD_PX);
+  expect(
+    failures,
+    formatFailures(
+      "sealed inline path threshold markdown",
+      failures.map((failure) => ({
+        name: failure.name,
+        width: 150,
+        delta: failure.delta,
+        planned: failure.planned,
+        actual: failure.actual,
+      })),
+    ),
+  ).toEqual([]);
+});
+
+test("workbench: pretext mixed inline path continuation parity", async ({ page }) => {
+  test.setTimeout(120000);
+  await openWorkbenchShell(page);
+
+  const cases = [
+    {
+      width: 440,
+      samples: [
+        {
+          name: "path-after-prose-first-slice",
+          markdown:
+            "Agent header entry marker *header* stream summary layout entry summary 🙂 測試 佈局 `core/e2e/pretextVirtualizerRowLayout.ts/sessionThreadDomMeasurement.tsx/apps/turn-header` cargo test -p ctx-http.",
+        },
+      ],
+    },
+    {
+      width: 382.48,
+      samples: [
+        {
+          name: "path-after-short-prose",
+          markdown:
+            "Entry command command `turn-header/workbenchShell/blockquote/workbenchShell/src/pages/core`",
+        },
+        {
+          name: "path-tail-continuation",
+          markdown: "composer `sessionThread/src/apps/web/inline-code/pretextVirtualizerRowLayout.ts`",
+        },
+      ],
+    },
+    {
+      width: 121.3333333333,
+      samples: [
+        {
+          name: "narrow-continuation-full-chrome",
+          markdown: "`table/src/blockquote/workbenchShell`",
+        },
+      ],
+    },
+  ] as const;
+
+  const failures: Array<{
+    actual: number;
+    delta: number;
+    name: string;
+    planned: number;
+    width: number;
+  }> = [];
+
+  for (const entry of cases) {
+    const measurements = await measureMarkdownParity(page, entry.samples, entry.width);
+    failures.push(
+      ...measurements
+        .filter((sample) => Math.abs(sample.delta) > MARKDOWN_THRESHOLD_PX)
+        .map((sample) => ({
+          name: sample.name,
+          width: entry.width,
+          delta: sample.delta,
+          planned: sample.planned,
+          actual: sample.actual,
+        })),
+    );
+  }
+
+  if (!ENFORCE) return;
+
+  expect(
+    failures,
+    formatFailures("mixed inline path continuation markdown", failures),
   ).toEqual([]);
 });
 
