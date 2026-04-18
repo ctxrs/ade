@@ -75,6 +75,13 @@ sh_binary(
 )
 
 sh_binary(
+    name = "desktop_ipc_corpus",
+    srcs = ["//tools/bazel:run_workspace_task.sh"],
+    args = ["core/apps/web", "pnpm", "exec", "vitest", "run", "src/utils/desktop.corpus.test.ts", "--silent", "--reporter=dot"],
+    data = COMMON_DATA,
+)
+
+sh_binary(
     name = "e2e_premerge",
     srcs = ["//tools/bazel:run_workspace_task.sh"],
     args = ["core/apps/web", "pnpm", "test:e2e:premerge"],
