@@ -423,7 +423,7 @@ function buildProviderMatrixEntries() {
       ],
       dependencyCrates: [],
       notes: `${requiredCount} supported required cells currently live in the matrix.`,
-      exception: "",
+      exception: "Intentional fake-provider desktop matrix truth on the shared Mac/browser host; orchestration remains script-local by design.",
     },
     {
       id: "provider-auth-matrix.nightly.endpoint-write",
@@ -445,7 +445,7 @@ function buildProviderMatrixEntries() {
       ],
       dependencyCrates: [],
       notes: `${nightlyAuthModeCount("endpoint_api_key")} supported nightly endpoint-write cells currently live in the matrix.`,
-      exception: "",
+      exception: "Intentional live-provider nightly matrix slice on the shared Mac/browser host; keep script-local and quarantined.",
     },
     {
       id: "provider-auth-matrix.nightly.subscription-oauth",
@@ -467,7 +467,7 @@ function buildProviderMatrixEntries() {
       ],
       dependencyCrates: [],
       notes: `${nightlyAuthModeCount("subscription_oauth")} supported nightly subscription-oauth cells currently live in the matrix.`,
-      exception: "",
+      exception: "Intentional live-provider nightly matrix slice on the shared Mac/browser host; keep script-local and quarantined.",
     },
     {
       id: "provider-auth-matrix.nightly.auth-import",
@@ -489,7 +489,7 @@ function buildProviderMatrixEntries() {
       ],
       dependencyCrates: [],
       notes: `${nightlyAuthModeCount("auth_import")} supported nightly auth-import cells currently live in the matrix.`,
-      exception: "",
+      exception: "Intentional live-provider nightly matrix slice on the shared Mac/browser host; keep script-local and quarantined.",
     },
   ];
 }
@@ -515,7 +515,7 @@ function buildRustEntries() {
       sourceGlobs: RUST_ROOT_SOURCE_GLOBS,
       dependencyCrates: rustGateCrates,
       notes: "Shared Rust compile/task preflight for non-ctx-http workspace crates.",
-      exception: "",
+      exception: "Intentional host-local Rust workspace preflight until a measured wall-clock bottleneck justifies deeper Bazel decomposition.",
     },
   ];
 
@@ -1062,7 +1062,7 @@ function buildStaticEntries() {
       ],
       dependencyCrates: [],
       notes: "Desktop image paste automation flow.",
-      exception: "",
+      exception: "Intentional single-Mac desktop automation truth; scarce UI/device coverage is the floor here, not Bazel addressability.",
     },
     {
       id: "desktop-shell.image-drag-drop",
@@ -1086,7 +1086,7 @@ function buildStaticEntries() {
       ],
       dependencyCrates: [],
       notes: "Desktop image drag/drop automation flow.",
-      exception: "",
+      exception: "Intentional single-Mac desktop automation truth; scarce UI/device coverage is the floor here, not Bazel addressability.",
     },
     {
       id: "distribution-install.desktop-smoke-local",
@@ -1108,7 +1108,7 @@ function buildStaticEntries() {
       ],
       dependencyCrates: [],
       notes: "Desktop/local install smoke path.",
-      exception: "",
+      exception: "Intentional local-packaged-artifact install truth on the shared Mac; keep script-local unless local smoke becomes a measured bottleneck.",
     },
     {
       id: "distribution-install.desktop-remote-contracts",
@@ -1131,7 +1131,7 @@ function buildStaticEntries() {
       ],
       dependencyCrates: [],
       notes: "Desktop remote-contract Docker validation paired with local smoke.",
-      exception: "",
+      exception: "Intentional local-packaged-artifact and Docker truth on the shared Mac; keep script-local unless this lane becomes a measured bottleneck.",
     },
     {
       id: "updates-release.updater-native-smoke",
