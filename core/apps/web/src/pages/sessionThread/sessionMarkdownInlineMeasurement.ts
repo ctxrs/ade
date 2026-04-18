@@ -14,6 +14,7 @@ import {
 const INLINE_CODE_FRAGMENT_FIT_SLACK_PX = 0;
 const INLINE_CODE_WHOLE_GROUP_FIT_SLACK_PX = 0;
 const INLINE_CODE_CURRENT_LINE_START_RATIO_THRESHOLD = 0.2;
+const INLINE_CODE_WHITESPACE_CONTINUATION_GUARD_PX = 1;
 
 export function measureInlineRunsHeight(params: {
   runs: readonly SessionMarkdownInlineRun[];
@@ -55,6 +56,10 @@ export function measureInlineRunsHeight(params: {
   const isPathLikeContinuationItem = (
     item: PreparedInlineLayoutItem & { kind: "segment" },
   ): boolean => item.text.includes("/") || item.text.includes("\\") || item.isPathTailFragment;
+  const measureAttachedTrailingPlainWidth = (startIndex: number): number => {
+    const nextItem = items[startIndex + 1];
+    return nextItem?.kind === "segment" && nextItem.codeGroupId == null ? nextItem.fullWidth : 0;
+  };
   const measurePreferredCodeGroupStartWidth = (startIndex: number): number => {
     const firstItem = items[startIndex];
     if (firstItem?.kind !== "segment" || firstItem.codeGroupId == null) {
@@ -451,6 +456,10 @@ export function measureInlineRunsHeight(params: {
           ? INLINE_CODE_WHOLE_GROUP_FIT_SLACK_PX
           : 0;
       const currentLineFitSlackPx = Math.max(currentLineStartSlackPx, currentLineWhitespaceContinuationSlackPx);
+      const currentLineWhitespaceContinuationGuardPx =
+        lineHasContent && cursor === null && codeGroupId != null && item.startsAfterCodeWhitespace
+          ? INLINE_CODE_WHITESPACE_CONTINUATION_GUARD_PX
+          : 0;
       const startCursor: LayoutCursor = cursor ?? LINE_START_CURSOR;
 
       const preferredStartWidth = preferredCodeGroupStartWidths.get(itemIndex) ?? 0;
@@ -523,6 +532,9 @@ export function measureInlineRunsHeight(params: {
 
       if (cursor === null && codeGroupId != null) {
         const fullWidth = reservedWidth + item.fullWidth;
+        const guardedRemainingWidth =
+          remainingWidth - currentLineWhitespaceContinuationGuardPx + currentLineFitSlackPx;
+        const attachedTrailingPlainWidth = measureAttachedTrailingPlainWidth(itemIndex);
         if (
           lineHasContent &&
           lastAcceptedCodeGroupId === codeGroupId &&
@@ -532,6 +544,14 @@ export function measureInlineRunsHeight(params: {
             remainingWidth: remainingWidth + currentLineFitSlackPx,
             item,
           })
+        ) {
+          cursor = null;
+          break;
+        }
+        if (
+          lineHasContent &&
+          item.startsAfterCodeWhitespace &&
+          fullWidth + attachedTrailingPlainWidth > guardedRemainingWidth + 0.01
         ) {
           cursor = null;
           break;
@@ -559,11 +579,11 @@ export function measureInlineRunsHeight(params: {
           }
         }
         if (item.isSealedInlineCodeFragment) {
-          if (lineHasContent && fullWidth > remainingWidth + currentLineFitSlackPx + 0.01) {
+          if (lineHasContent && fullWidth > guardedRemainingWidth + 0.01) {
             cursor = null;
             break;
           }
-          const overflowed = fullWidth > remainingWidth + currentLineFitSlackPx + 0.01;
+          const overflowed = fullWidth > guardedRemainingWidth + 0.01;
           remainingWidth = overflowed ? 0 : Math.max(0, remainingWidth - fullWidth);
           if (!lineHasContent) {
             lineOnlyCodeGroupId = codeGroupId;
@@ -589,7 +609,7 @@ export function measureInlineRunsHeight(params: {
           }
           continue;
         }
-        if (fullWidth <= remainingWidth + currentLineFitSlackPx) {
+        if (fullWidth <= guardedRemainingWidth) {
           remainingWidth = Math.max(0, remainingWidth - fullWidth);
           if (!lineHasContent) {
             lineOnlyCodeGroupId = codeGroupId;
@@ -629,7 +649,10 @@ export function measureInlineRunsHeight(params: {
         break;
       }
 
-      const availableWidth = Math.max(1, remainingWidth - reservedWidth);
+      const availableWidth = Math.max(
+        1,
+        remainingWidth - reservedWidth - currentLineWhitespaceContinuationGuardPx,
+      );
       const styledStartLine: LayoutLine | null =
         codeGroupId == null &&
         lineHasContent &&

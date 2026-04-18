@@ -19,6 +19,11 @@ const IMAGE_DATA_BASE64 =
 
 const MARKDOWN_CORPUS: MarkdownSample[] = [
   {
+    name: "two-chip-threshold-wrap",
+    markdown:
+      "The fixture document contains `7` active rows, including `Example Taxonomy`, so the threshold sample has stable code chips.",
+  },
+  {
     name: "adjacent-inline-code",
     markdown:
       "Paragraph with `alpha-beta-gamma-delta/ctx/path/one` `second-inline-token/with/path/two` beside prose and punctuation.",
@@ -95,6 +100,13 @@ const USER_MESSAGE_CORPUS = [
 ];
 
 const ASSISTANT_CORPUS = [
+  {
+    name: "two-chip-threshold-wrap",
+    params: {
+      content:
+        "The fixture document contains `7` active rows, including `Example Taxonomy`, so the threshold sample has stable code chips.",
+    },
+  },
   {
     name: "wrapped-inline-code",
     params: {
