@@ -126,6 +126,9 @@ function buildCommandForEntry(entry) {
   if (entry.entrypointType === "core-package-script") {
     return shellJoin("pnpm", [entry.entrypoint]);
   }
+  if (entry.entrypointType === "repo-shell-script") {
+    return shellJoin("bash", [path.relative(coreRoot, path.join(repoRoot, entry.entrypoint)).replace(/\\/gu, "/")]);
+  }
   if (entry.entrypointType === "file") {
     return shellJoin("node", ["--test", path.relative(coreRoot, path.join(repoRoot, entry.entrypoint)).replace(/\\/gu, "/")]);
   }

@@ -1126,6 +1126,13 @@ function validateEntrypoint(entry) {
       }
       return;
     }
+    case "repo-shell-script": {
+      const abs = path.join(repoRoot, entry.entrypoint);
+      if (!fs.existsSync(abs)) {
+        throw new Error(`missing repo shell script entrypoint for ${entry.id}: ${entry.entrypoint}`);
+      }
+      return;
+    }
     case "ctx-http-suite": {
       if (!CTX_HTTP_SUITES.some((suite) => suite.name === entry.entrypoint)) {
         throw new Error(`missing ctx-http suite for ${entry.id}: ${entry.entrypoint}`);

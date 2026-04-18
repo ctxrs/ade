@@ -1,6 +1,7 @@
 const ENTRYPOINT_TYPES = [
   "file",
   "core-package-script",
+  "repo-shell-script",
   "ctx-http-suite",
   "rust-crate-gate",
   "provider-matrix-lane",
