@@ -139,7 +139,6 @@ RSYNC_EXCLUDES=(
   "--exclude=core/.turbo"
   "--exclude=core/apps/web/dist"
   "--exclude=core/apps/desktop/src-tauri/bin"
-  "--exclude=core/apps/desktop/src-tauri/bundles"
   "--exclude=core/apps/web/playwright-report"
   "--exclude=core/apps/web/test-results"
   "--exclude=core/apps/web/e2e/playwright-report"

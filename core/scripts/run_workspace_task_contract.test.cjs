@@ -59,7 +59,7 @@ test("run_workspace_task copies the workspace without requiring rsync", () => {
   fs.writeFileSync(path.join(runfilesRepo, "node_modules", "excluded.txt"), "exclude me\n");
   fs.writeFileSync(path.join(runfilesRepo, "core", "target", "excluded.txt"), "exclude me\n");
   fs.writeFileSync(path.join(runfilesRepo, "core", "apps", "desktop", "src-tauri", "bin", "excluded.txt"), "exclude me\n");
-  fs.writeFileSync(path.join(runfilesRepo, "core", "apps", "desktop", "src-tauri", "bundles", "excluded.txt"), "exclude me\n");
+  fs.writeFileSync(path.join(runfilesRepo, "core", "apps", "desktop", "src-tauri", "bundles", "bundle_keep.txt"), "bundle data\n");
   fs.writeFileSync(path.join(runfilesRepo, "core", "apps", "web", "web_keep.txt"), "web\n");
   fs.writeFileSync(path.join(runfilesRepo, "core", "apps", "web", "dist", "excluded.txt"), "exclude me\n");
   fs.writeFileSync(path.join(runfilesRepo, "core", "apps", "web", "playwright-report", "excluded.txt"), "exclude me\n");
@@ -90,7 +90,7 @@ test("run_workspace_task copies the workspace without requiring rsync", () => {
     "test ! -e ../../target",
     "test ! -e ./dist",
     "test ! -e ../desktop/src-tauri/bin",
-    "test ! -e ../desktop/src-tauri/bundles",
+    "test -f ../desktop/src-tauri/bundles/bundle_keep.txt",
     "test ! -e ./playwright-report",
     "test ! -e ./test-results",
     "test ! -e ./e2e/playwright-report",
@@ -253,9 +253,9 @@ test("run_workspace_task disables macOS metadata propagation during workspace mi
   assert.match(scriptText, /COPY_EXTENDED_ATTRIBUTES_DISABLE=1/);
 });
 
-test("run_workspace_task excludes generated desktop bundles and web test artifacts from mirrors", () => {
+test("run_workspace_task excludes generated desktop bin and web test artifacts but preserves declared bundle data", () => {
   assert.match(scriptText, /core\/apps\/desktop\/src-tauri\/bin/);
-  assert.match(scriptText, /core\/apps\/desktop\/src-tauri\/bundles/);
+  assert.doesNotMatch(scriptText, /core\/apps\/desktop\/src-tauri\/bundles/);
   assert.match(scriptText, /core\/apps\/web\/playwright-report/);
   assert.match(scriptText, /core\/apps\/web\/test-results/);
   assert.match(scriptText, /core\/apps\/web\/e2e\/playwright-report/);
