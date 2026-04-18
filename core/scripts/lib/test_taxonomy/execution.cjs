@@ -12,6 +12,7 @@ const {
 
 const coreRoot = path.resolve(__dirname, "..", "..", "..");
 const repoRoot = path.resolve(coreRoot, "..");
+const workspaceGraph = buildWorkspaceGraph(coreRoot);
 
 function normalizeRepoRelativePath(value) {
   return String(value || "")
@@ -60,17 +61,40 @@ function matchesGlob(filePath, glob) {
   return regex.test(normalizedPath);
 }
 
-function entryMatchesChangedFiles(entry, changedFiles) {
+function buildChangedContext(changedFiles) {
   const normalizedChangedFiles = [...new Set(changedFiles.map(normalizeRepoRelativePath).filter(Boolean))];
-  if (normalizedChangedFiles.length === 0) {
+  const changedCrates = collectChangedCrates(workspaceGraph, normalizedChangedFiles);
+  const workspaceLevelRustChange = normalizedChangedFiles.some((changedFile) => {
+    const normalized = changedFile.replace(/^core\//u, "");
+    return ROOT_RUST_INPUTS.includes(normalized);
+  });
+  return {
+    normalizedChangedFiles,
+    changedCrates,
+    workspaceLevelRustChange,
+  };
+}
+
+function entryMatchesChangedFiles(entry, changedFilesOrContext) {
+  const changedContext = Array.isArray(changedFilesOrContext)
+    ? buildChangedContext(changedFilesOrContext)
+    : changedFilesOrContext;
+  if (!changedContext || changedContext.normalizedChangedFiles.length === 0) {
     return false;
   }
-  for (const changedFile of normalizedChangedFiles) {
+  for (const changedFile of changedContext.normalizedChangedFiles) {
     for (const glob of entry.sourceGlobs || []) {
       if (matchesGlob(changedFile, glob)) {
         return true;
       }
     }
+  }
+  if (entry.entrypointType === "rust-crate-gate" && changedContext.workspaceLevelRustChange) {
+    return true;
+  }
+  const supportsCrateMatching = entry.entrypointType === "rust-crate-gate" || entry.id === "build-graph.rust-turbo-check";
+  if (supportsCrateMatching && (entry.dependencyCrates || []).some((crateName) => changedContext.changedCrates.includes(crateName))) {
+    return true;
   }
   return false;
 }
@@ -121,42 +145,55 @@ function buildCommandForEntry(entry) {
   throw new Error(`unsupported entrypoint type for command mapping: ${entry.entrypointType}`);
 }
 
-function getCompatibilityFallbackCommands({ changedFiles }) {
-  const commands = [];
-  const changed = [...new Set(changedFiles.map(normalizeRepoRelativePath).filter(Boolean))];
-  const graph = buildWorkspaceGraph(coreRoot);
-  const workspaceLevelRustChange = changed.some((changedFile) => {
-    const normalized = changedFile.replace(/^core\//u, "");
-    return ROOT_RUST_INPUTS.includes(normalized);
-  });
-  const changedCrates = collectChangedCrates(graph, changed);
-  const nonCtxHttpCrates = changedCrates.filter((crateName) => crateName !== "ctx-http");
+function buildRustGateCommand({ rustGateEntries, changedContext, touchedOnly }) {
+  const args = [
+    "exec",
+    "node",
+    "scripts/run_rust_gate.cjs",
+    "--mode",
+    "workspace",
+    "--include-reverse-deps",
+    "--clippy",
+    "--test-strategy",
+    "mixed",
+  ];
 
-  if (workspaceLevelRustChange || nonCtxHttpCrates.length > 0) {
-    commands.push(shellJoin("pnpm", ["rust:turbo:check"]));
-    const rustArgs = [
-      "exec",
-      "node",
-      "scripts/run_rust_gate.cjs",
-      "--mode",
-      "workspace",
-      "--include-reverse-deps",
-      "--clippy",
-      "--test-strategy",
-      "mixed",
-    ];
-    for (const changedFile of changed) {
+  if (touchedOnly) {
+    for (const changedFile of changedContext.normalizedChangedFiles) {
       if (
-        workspaceLevelRustChange ||
+        changedContext.workspaceLevelRustChange ||
         changedFile.startsWith("core/crates/") ||
         changedFile.startsWith("core/tools/") ||
         changedFile === "core/Cargo.toml" ||
         changedFile === "core/Cargo.lock"
       ) {
-        rustArgs.push("--changed-file", changedFile);
+        args.push("--changed-file", changedFile);
       }
     }
-    commands.push(shellJoin("pnpm", rustArgs));
+  } else {
+    const crateNames = [...new Set(rustGateEntries.map((entry) => entry.entrypoint))].sort();
+    for (const crateName of crateNames) {
+      args.push("--crate", crateName);
+    }
+  }
+
+  return shellJoin("pnpm", args);
+}
+
+function buildCommandsForEntries({ selectedEntries, changedContext, touchedOnly }) {
+  const commands = [];
+  const rustGateEntries = [];
+
+  for (const entry of selectedEntries) {
+    if (entry.entrypointType === "rust-crate-gate") {
+      rustGateEntries.push(entry);
+      continue;
+    }
+    commands.push(buildCommandForEntry(entry));
+  }
+
+  if (rustGateEntries.length > 0) {
+    commands.push(buildRustGateCommand({ rustGateEntries, changedContext, touchedOnly }));
   }
 
   return commands;
@@ -187,19 +224,20 @@ function buildExecutionPlan({ profileId, changedFiles = [], touchedOnly = false 
   const registry = buildTaxonomyRegistry();
   const profile = getProfileById(profileId);
   const matchingEntries = registry.filter((entry) => profileMatchesEntry(profile, entry));
+  const changedContext = buildChangedContext(changedFiles);
 
   let selectedEntries = matchingEntries;
   if (touchedOnly) {
     selectedEntries = matchingEntries.filter((entry) =>
-      isAlwaysOnEntry(entry, profileId) || entryMatchesChangedFiles(entry, changedFiles),
+      isAlwaysOnEntry(entry, profileId) || entryMatchesChangedFiles(entry, changedContext),
     );
   }
 
-  const entryCommands = selectedEntries.map(buildCommandForEntry);
-  const compatibilityCommands = touchedOnly
-    ? getCompatibilityFallbackCommands({ changedFiles })
-    : [];
-  const commands = dedupeCommands([...entryCommands, ...compatibilityCommands]);
+  const commands = dedupeCommands(buildCommandsForEntries({
+    selectedEntries,
+    changedContext,
+    touchedOnly,
+  }));
 
   return {
     profile,
@@ -225,8 +263,8 @@ function resolveChangedFilesFromGit(baseRef) {
 module.exports = {
   buildExecutionPlan,
   buildCommandForEntry,
+  buildChangedContext,
   entryMatchesChangedFiles,
-  getCompatibilityFallbackCommands,
   normalizeRepoRelativePath,
   resolveChangedFilesFromGit,
   shellJoin,

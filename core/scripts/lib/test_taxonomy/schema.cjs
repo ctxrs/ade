@@ -2,6 +2,7 @@ const ENTRYPOINT_TYPES = [
   "file",
   "core-package-script",
   "ctx-http-suite",
+  "rust-crate-gate",
   "provider-matrix-lane",
   "web-e2e-spec",
 ];

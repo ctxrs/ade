@@ -6,11 +6,21 @@ const {
   CTX_HTTP_SUITES,
   validateCtxHttpSuites,
 } = require("../ctx_http_suites.cjs");
+const {
+  ROOT_RUST_INPUTS,
+  buildWorkspaceGraph,
+  getGateManagedCrates,
+} = require("../rust_workspace_graph.cjs");
+const {
+  BAZEL_TEST_CRATES,
+  SERIAL_CARGO_TEST_CRATES,
+} = require("../rust_gate_plan.cjs");
 const { FAMILIES, getFamiliesById } = require("./families.cjs");
 const { sortEntries, validateEntry } = require("./schema.cjs");
 
 const repoRoot = path.resolve(__dirname, "..", "..", "..", "..");
 const coreRoot = path.join(repoRoot, "core");
+const rustWorkspaceGraph = buildWorkspaceGraph(coreRoot);
 const packageJsonPath = path.join(coreRoot, "package.json");
 const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"));
 const providerMatrixPath = path.join(coreRoot, "apps", "desktop", "automation", "fixtures", "provider_auth_matrix.json");
@@ -63,6 +73,55 @@ const INSTALL_BOOTSTRAP_GLOBS = [
   "install-site/**",
   "scripts/buildbuddy/run_install_bootstrap_contracts.sh",
 ];
+const RUST_ROOT_SOURCE_GLOBS = ROOT_RUST_INPUTS.map((input) => `core/${input}`);
+const RUST_FAMILY_BY_CRATE = {
+  "codex-crp": "artifacts-provenance",
+  "ctx-avf-linux-guest-agent": "sandbox-runtime",
+  "ctx-avf-linux-runtime": "sandbox-runtime",
+  "ctx-bundled-assets": "artifacts-provenance",
+  "ctx-client": "web-workbench",
+  "ctx-core": "build-graph",
+  "ctx-desktop-ipc": "desktop-shell",
+  "ctx-docs-mirror": "attachments-artifacts",
+  "ctx-egress-proxy": "sandbox-runtime",
+  "ctx-events": "workspace-stream",
+  "ctx-execution-runtime": "sandbox-runtime",
+  "ctx-fs": "repo-vcs",
+  "ctx-harness-runtime": "sandbox-runtime",
+  "ctx-harness-setup": "toolchain-bootstrap",
+  "ctx-harness-sources": "toolchain-bootstrap",
+  "ctx-linux-sandbox-runtime": "sandbox-runtime",
+  "ctx-load-test": "resilience-performance",
+  "ctx-lsp": "lsp-editing",
+  "ctx-managed-installs": "distribution-install",
+  "ctx-mcp": "subagents-orchestration",
+  "ctx-merge-queue": "repo-vcs",
+  "ctx-provider-accounts": "provider-auth",
+  "ctx-provider-auth-import": "provider-auth",
+  "ctx-provider-install": "provider-auth",
+  "ctx-provider-matrix": "provider-auth",
+  "ctx-provider-runtime": "provider-runtime",
+  "ctx-providers": "provider-runtime",
+  "ctx-runtime-assets": "distribution-install",
+  "ctx-sandbox-container-runtime": "sandbox-runtime",
+  "ctx-sandbox-contract": "sandbox-runtime",
+  "ctx-sandbox-materialization": "sandbox-runtime",
+  "ctx-session-tools": "turns-terminal",
+  "ctx-storage-admission": "workspace-stream",
+  "ctx-store": "workspace-stream",
+  "ctx-transport-runtime": "subagents-orchestration",
+  "ctx-tunnel-control-plane": "subagents-orchestration",
+  "ctx-tunnel-relay": "subagents-orchestration",
+  "ctx-tunnel-router": "subagents-orchestration",
+  "ctx-worker-protocol": "subagents-orchestration",
+  "ctx-worker-shim": "subagents-orchestration",
+  "ctx-workspace-active-snapshot": "workspace-stream",
+  "ctx-workspace-config": "settings-config",
+  "ctx-workspace-container": "workspace-stream",
+  "ctx-workspace-runtime": "workspace-stream",
+  "ctx-workspace-services": "workspace-stream",
+  "ctx-worktree-data-plane": "repo-vcs",
+};
 
 function toPosix(value) {
   return value.split(path.sep).join("/");
@@ -435,6 +494,68 @@ function buildProviderMatrixEntries() {
   ];
 }
 
+function buildRustEntries() {
+  const crates = getGateManagedCrates(rustWorkspaceGraph).filter((crate) => crate.crateName !== "ctx-http");
+  const rustGateCrates = crates.map((crate) => crate.crateName);
+  const entries = [
+    {
+      id: "build-graph.rust-turbo-check",
+      title: "Rust turbo check",
+      family: "build-graph",
+      entrypointType: "core-package-script",
+      entrypoint: "rust:turbo:check",
+      surface: "compile",
+      oracle: "compiler",
+      world: "hermetic",
+      cost: "fast",
+      requirements: ["linux"],
+      stability: "stable",
+      execution: "script-local",
+      owner: "rust-workspace",
+      sourceGlobs: RUST_ROOT_SOURCE_GLOBS,
+      dependencyCrates: rustGateCrates,
+      notes: "Shared Rust compile/task preflight for non-ctx-http workspace crates.",
+      exception: "",
+    },
+  ];
+
+  for (const crate of crates) {
+    const family = RUST_FAMILY_BY_CRATE[crate.crateName];
+    if (!family) {
+      throw new Error(`missing taxonomy family mapping for Rust crate: ${crate.crateName}`);
+    }
+    const strategyNotes = [];
+    if (BAZEL_TEST_CRATES.has(crate.crateName)) {
+      strategyNotes.push("Bazel-covered Rust gate");
+    } else if (SERIAL_CARGO_TEST_CRATES.has(crate.crateName)) {
+      strategyNotes.push("Serial cargo-test Rust gate");
+    } else {
+      strategyNotes.push("Nextest-backed Rust gate");
+    }
+    entries.push({
+      id: `${family}.rust-gate.${crate.crateName}`,
+      title: `Rust gate: ${crate.crateName}`,
+      family,
+      entrypointType: "rust-crate-gate",
+      entrypoint: crate.crateName,
+      surface: "integration",
+      oracle: "direct-assertion",
+      world: "hermetic",
+      cost: "fast",
+      requirements: ["linux"],
+      stability: "stable",
+      execution: BAZEL_TEST_CRATES.has(crate.crateName) ? "bazel-rbe-preferred" : "script-local",
+      owner: "rust-workspace",
+      sourceGlobs: [`core/${crate.relDir}/**`],
+      dependencyCrates: [crate.crateName],
+      notes: strategyNotes.join(". "),
+      exception: "",
+    });
+  }
+
+  return entries;
+}
+
 function buildStaticEntries() {
   return [
     {
@@ -704,11 +825,11 @@ function buildStaticEntries() {
       exception: "",
     },
     {
-      id: "desktop-shell.image-automation",
-      title: "Desktop image automation",
+      id: "desktop-shell.image-paste",
+      title: "Desktop image paste automation",
       family: "desktop-shell",
       entrypointType: "core-package-script",
-      entrypoint: "verify:desktop:images",
+      entrypoint: "verify:desktop:image-paste",
       surface: "system",
       oracle: "golden-flow",
       world: "simulated",
@@ -719,18 +840,44 @@ function buildStaticEntries() {
       owner: "desktop",
       sourceGlobs: [
         "core/package.json",
-        "core/apps/desktop/automation/**",
+        "core/apps/desktop/package.json",
+        "core/apps/desktop/automation/specs/workbench-image-paste.spec.cjs",
+        "scripts/desktop_smoke_with_infisical.sh",
       ],
       dependencyCrates: [],
-      notes: "Current desktop image automation gate.",
+      notes: "Desktop image paste automation flow.",
       exception: "",
     },
     {
-      id: "distribution-install.desktop-smoke",
-      title: "Desktop smoke",
+      id: "desktop-shell.image-drag-drop",
+      title: "Desktop image drag/drop automation",
+      family: "desktop-shell",
+      entrypointType: "core-package-script",
+      entrypoint: "verify:desktop:image-drag-drop",
+      surface: "system",
+      oracle: "golden-flow",
+      world: "simulated",
+      cost: "medium",
+      requirements: ["mac", "single-mac"],
+      stability: "stable",
+      execution: "script-local",
+      owner: "desktop",
+      sourceGlobs: [
+        "core/package.json",
+        "core/apps/desktop/package.json",
+        "core/apps/desktop/automation/specs/workbench-image-drag-drop.spec.cjs",
+        "scripts/desktop_smoke_with_infisical.sh",
+      ],
+      dependencyCrates: [],
+      notes: "Desktop image drag/drop automation flow.",
+      exception: "",
+    },
+    {
+      id: "distribution-install.desktop-smoke-local",
+      title: "Desktop smoke local install",
       family: "distribution-install",
       entrypointType: "core-package-script",
-      entrypoint: "verify:desktop-smoke",
+      entrypoint: "verify:desktop:smoke:local",
       surface: "system",
       oracle: "golden-flow",
       world: "local-packaged-artifact",
@@ -745,6 +892,29 @@ function buildStaticEntries() {
       ],
       dependencyCrates: [],
       notes: "Desktop/local install smoke path.",
+      exception: "",
+    },
+    {
+      id: "distribution-install.desktop-remote-contracts",
+      title: "Desktop remote docker contracts",
+      family: "distribution-install",
+      entrypointType: "core-package-script",
+      entrypoint: "verify:desktop:remote-contracts",
+      surface: "system",
+      oracle: "golden-flow",
+      world: "local-packaged-artifact",
+      cost: "medium",
+      requirements: ["mac", "docker", "network", "single-mac"],
+      stability: "stable",
+      execution: "script-local",
+      owner: "desktop",
+      sourceGlobs: [
+        "core/package.json",
+        "core/apps/desktop/package.json",
+        "core/apps/desktop/scripts/test_remote_docker_contracts.sh",
+      ],
+      dependencyCrates: [],
+      notes: "Desktop remote-contract Docker validation paired with local smoke.",
       exception: "",
     },
     {
@@ -962,6 +1132,15 @@ function validateEntrypoint(entry) {
       }
       return;
     }
+    case "rust-crate-gate": {
+      if (entry.entrypoint === "ctx-http") {
+        throw new Error(`ctx-http must stay taxonomy-addressed via suite entries, not rust-crate-gate: ${entry.id}`);
+      }
+      if (!rustWorkspaceGraph.cratesByName.has(entry.entrypoint)) {
+        throw new Error(`missing Rust crate gate for ${entry.id}: ${entry.entrypoint}`);
+      }
+      return;
+    }
     case "provider-matrix-lane": {
       const [, lane] = entry.entrypoint.split("#");
       if (!lane || !providerMatrix.cells.some((cell) => cell.lane === lane)) {
@@ -986,6 +1165,7 @@ function buildTaxonomyRegistry() {
   const entries = sortEntries([
     ...buildStaticEntries(),
     ...buildCtxHttpEntries(),
+    ...buildRustEntries(),
     ...buildProviderMatrixEntries(),
     ...buildWebE2EEntries(),
   ].map((entry) => validateEntry(entry, familiesById)));

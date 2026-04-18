@@ -43,7 +43,7 @@ function runScenario(changedFiles, options = {}) {
   return commandLog.trim().split("\n").filter(Boolean);
 }
 
-test("leaf Rust crate changes stay on the targeted fast path", () => {
+test("leaf Rust crate changes stay on the targeted taxonomy fast path", () => {
   const commands = runScenario(["core/crates/ctx-provider-accounts/src/lib.rs"]);
 
   assert.deepEqual(commands, [
@@ -69,7 +69,7 @@ test("ctx-http changes fan out into suite-level commands", () => {
   ]);
 });
 
-test("ctx-providers changes use the targeted Rust fallback", () => {
+test("ctx-providers changes use the targeted taxonomy Rust gate", () => {
   const commands = runScenario(["core/crates/ctx-providers/src/lib.rs"]);
 
   assert.deepEqual(commands, [
