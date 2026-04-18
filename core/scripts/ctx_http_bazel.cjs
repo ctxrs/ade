@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 const childProcess = require("node:child_process");
+const fs = require("node:fs");
 const path = require("node:path");
 
 const { readDesktopVersion } = require("./desktop_version.cjs");
@@ -9,6 +10,7 @@ const {
   resolveDirectRunBazelVersion,
 } = require("./lib/web_dist_cache.cjs");
 const { resolveCtxCacheLayout } = require("./lib/cache_roots.cjs");
+const { HOST_HEAVY_BUDGET_KEY, withHostJobBudget } = require("./lib/host_job_budget.cjs");
 const { bazeliskBinaryPath, buildBuildBuddyAuthArgs } = require("./run_bazel_pilot.cjs");
 
 const DEFAULT_PROFILE = "release";
@@ -80,6 +82,10 @@ function parseArgs(argv) {
 function buildBazelCommandContext(env = process.env) {
   const { coreRoot, repoRoot } = repoRoots();
   const layout = resolveCtxCacheLayout({ cwd: coreRoot, env });
+  fs.mkdirSync(layout.tmpDir, { recursive: true });
+  fs.mkdirSync(layout.bazelOutputUserRoot, { recursive: true });
+  fs.mkdirSync(layout.bazelDiskCacheDir, { recursive: true });
+  fs.mkdirSync(layout.bazelRepositoryCacheDir, { recursive: true });
   const bazelEnv = {
     ...env,
     TMPDIR: layout.tmpDir,
@@ -90,14 +96,18 @@ function buildBazelCommandContext(env = process.env) {
   }
   return {
     bazelBinary: bazeliskBinaryPath({ repoRoot, env: bazelEnv }),
+    bazelCommandArgs: [
+      `--disk_cache=${layout.bazelDiskCacheDir}`,
+      `--repository_cache=${layout.bazelRepositoryCacheDir}`,
+    ],
     env: bazelEnv,
     repoRoot,
     startupArgs: [`--output_user_root=${layout.bazelOutputUserRoot}`],
   };
 }
 
-function runChecked(command, args, options, failureMessage) {
-  const result = childProcess.spawnSync(command, args, options);
+function runChecked(command, args, options, failureMessage, spawnSyncImpl = childProcess.spawnSync) {
+  const result = spawnSyncImpl(command, args, options);
   if (result.error) {
     throw result.error;
   }
@@ -130,24 +140,48 @@ function shouldResolveAvfLinuxHelper(targetKey = "", platform = process.platform
   return platform === "darwin";
 }
 
-function buildTargetsViaBazel(targets, { env = process.env, targetKey = "", quietStdout = false } = {}) {
-  const { bazelBinary, env: bazelEnv, repoRoot, startupArgs } = buildBazelCommandContext(env);
-  runChecked(
+function buildTargetsViaBazel(
+  targets,
+  {
+    env = process.env,
+    targetKey = "",
+    quietStdout = false,
+    spawnSyncImpl = childProcess.spawnSync,
+    withHostJobBudgetImpl = withHostJobBudget,
+  } = {},
+) {
+  const {
     bazelBinary,
-    [
-      ...startupArgs,
-      "build",
-      ...buildBazelPlatformArgs(targetKey),
-      ...buildBuildBuddyAuthArgs(bazelEnv),
-      ...targets,
-    ],
-    {
-      cwd: repoRoot,
-      env: bazelEnv,
-      stdio: quietStdout ? ["ignore", "ignore", "inherit"] : "inherit",
-    },
-    `bazel build ${targets.join(" ")} failed`,
-  );
+    bazelCommandArgs,
+    env: bazelEnv,
+    repoRoot,
+    startupArgs,
+  } = buildBazelCommandContext(env);
+  withHostJobBudgetImpl({
+    budgetKey: HOST_HEAVY_BUDGET_KEY,
+    command: `bazel build ${targets.join(" ")}`,
+    cwd: repoRoot,
+    env: bazelEnv,
+  }, () => {
+    runChecked(
+      bazelBinary,
+      [
+        ...startupArgs,
+        "build",
+        ...bazelCommandArgs,
+        ...buildBazelPlatformArgs(targetKey),
+        ...buildBuildBuddyAuthArgs(bazelEnv),
+        ...targets,
+      ],
+      {
+        cwd: repoRoot,
+        env: bazelEnv,
+        stdio: quietStdout ? ["ignore", "ignore", "inherit"] : "inherit",
+      },
+      `bazel build ${targets.join(" ")} failed`,
+      spawnSyncImpl,
+    );
+  });
 }
 
 function parseBazelOutputPaths(stdout, { repoRoot, targets }) {
@@ -182,28 +216,52 @@ function parseBazelOutputPaths(stdout, { repoRoot, targets }) {
   return resolved;
 }
 
-function resolveBazelOutputPaths(targets, { env = process.env, targetKey = "" } = {}) {
-  const { bazelBinary, env: bazelEnv, repoRoot, startupArgs } = buildBazelCommandContext(env);
-  const queryExpression = `set(${targets.join(" ")})`;
-  const result = runChecked(
+function resolveBazelOutputPaths(
+  targets,
+  {
+    env = process.env,
+    targetKey = "",
+    spawnSyncImpl = childProcess.spawnSync,
+    withHostJobBudgetImpl = withHostJobBudget,
+  } = {},
+) {
+  const {
     bazelBinary,
-    [
-      ...startupArgs,
-      "cquery",
-      ...buildBazelPlatformArgs(targetKey),
-      "--output=starlark",
-      "--starlark:expr=str(target.label) + \"|\" + \"\\n\".join([f.path for f in target.files.to_list()])",
-      ...buildBuildBuddyAuthArgs(bazelEnv),
-      queryExpression,
-    ],
-    {
-      cwd: repoRoot,
-      env: bazelEnv,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"],
-    },
-    `bazel cquery ${targets.join(" ")} failed`,
-  );
+    bazelCommandArgs,
+    env: bazelEnv,
+    repoRoot,
+    startupArgs,
+  } = buildBazelCommandContext(env);
+  const queryExpression = `set(${targets.join(" ")})`;
+  let result = null;
+  withHostJobBudgetImpl({
+    budgetKey: HOST_HEAVY_BUDGET_KEY,
+    command: `bazel cquery ${targets.join(" ")}`,
+    cwd: repoRoot,
+    env: bazelEnv,
+  }, () => {
+    result = runChecked(
+      bazelBinary,
+      [
+        ...startupArgs,
+        "cquery",
+        ...bazelCommandArgs,
+        ...buildBazelPlatformArgs(targetKey),
+        "--output=starlark",
+        "--starlark:expr=str(target.label) + \"|\" + \"\\n\".join([f.path for f in target.files.to_list()])",
+        ...buildBuildBuddyAuthArgs(bazelEnv),
+        queryExpression,
+      ],
+      {
+        cwd: repoRoot,
+        env: bazelEnv,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+      `bazel cquery ${targets.join(" ")} failed`,
+      spawnSyncImpl,
+    );
+  });
   return parseBazelOutputPaths(result.stdout, { repoRoot, targets });
 }
 

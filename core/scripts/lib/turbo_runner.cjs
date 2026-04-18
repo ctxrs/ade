@@ -2,6 +2,8 @@ const childProcess = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
 
+const { HOST_HEAVY_BUDGET_KEY, withHostJobBudget } = require("./host_job_budget.cjs");
+
 function resolveTurboBinary(coreRoot) {
   const binDir = childProcess
     .execFileSync("pnpm", ["bin"], {
@@ -35,28 +37,44 @@ function buildTurboRunArgs({ env, taskNames, extraArgs = [], concurrencyOverride
   ];
 }
 
-function runTurbo({ coreRoot, env, taskNames, extraArgs = [], concurrencyOverride = null }) {
-  const turboBinary = resolveTurboBinary(coreRoot);
-  const result = childProcess.spawnSync(
-    turboBinary,
-    buildTurboRunArgs({
-      env,
-      taskNames,
-      extraArgs,
-      concurrencyOverride,
-    }),
-    {
-      cwd: coreRoot,
-      env,
-      stdio: "inherit",
-    },
-  );
-  if (result.error) {
-    throw result.error;
-  }
-  if (result.status !== 0) {
-    process.exit(result.status ?? 1);
-  }
+function runTurbo({
+  coreRoot,
+  env,
+  taskNames,
+  extraArgs = [],
+  concurrencyOverride = null,
+  resolveTurboBinaryImpl = resolveTurboBinary,
+  spawnSyncImpl = childProcess.spawnSync,
+  withHostJobBudgetImpl = withHostJobBudget,
+}) {
+  const turboBinary = resolveTurboBinaryImpl(coreRoot);
+  return withHostJobBudgetImpl({
+    budgetKey: HOST_HEAVY_BUDGET_KEY,
+    command: `turbo ${taskNames.join(" ")}`,
+    cwd: coreRoot,
+    env,
+  }, () => {
+    const result = spawnSyncImpl(
+      turboBinary,
+      buildTurboRunArgs({
+        env,
+        taskNames,
+        extraArgs,
+        concurrencyOverride,
+      }),
+      {
+        cwd: coreRoot,
+        env,
+        stdio: "inherit",
+      },
+    );
+    if (result.error) {
+      throw result.error;
+    }
+    if (result.status !== 0) {
+      process.exit(result.status ?? 1);
+    }
+  });
 }
 
 module.exports = {

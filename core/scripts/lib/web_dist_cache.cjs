@@ -8,6 +8,7 @@ const {
   resolveConfiguredPath,
   resolveCtxCacheLayout,
 } = require("./cache_roots.cjs");
+const { HOST_HEAVY_BUDGET_KEY, withHostJobBudget } = require("./host_job_budget.cjs");
 const { bazeliskBinaryPath, buildBuildBuddyAuthArgs } = require("../run_bazel_pilot.cjs");
 
 const ARTIFACT_VERSION = 1;
@@ -243,6 +244,7 @@ function runWebDistBuild({
   destinationDir,
   targetLabel = WEB_DIST_SYNC_TARGET,
   spawnSyncImpl = childProcess.spawnSync,
+  withHostJobBudgetImpl = withHostJobBudget,
 } = {}) {
   const resolvedCoreRoot = path.resolve(coreRoot);
   const resolvedDestinationDir = path.resolve(destinationDir || path.join(resolvedCoreRoot, "apps", "web", "dist"));
@@ -251,25 +253,32 @@ function runWebDistBuild({
     env,
   });
 
-  runChecked(
-    bazelBinary,
-    [
-      ...startupArgs,
-      "run",
-      ...bazelCommandArgs,
-      ...buildBuildBuddyAuthArgs(bazelEnv),
-      targetLabel,
-      "--",
-      resolvedDestinationDir,
-    ],
-    {
-      cwd: repoRoot,
-      env: bazelEnv,
-      stdio: "inherit",
-    },
-    `bazel run ${targetLabel} for web dist failed`,
-    spawnSyncImpl,
-  );
+  withHostJobBudgetImpl({
+    budgetKey: HOST_HEAVY_BUDGET_KEY,
+    command: `bazel run ${targetLabel}`,
+    cwd: repoRoot,
+    env: bazelEnv,
+  }, () => {
+    runChecked(
+      bazelBinary,
+      [
+        ...startupArgs,
+        "run",
+        ...bazelCommandArgs,
+        ...buildBuildBuddyAuthArgs(bazelEnv),
+        targetLabel,
+        "--",
+        resolvedDestinationDir,
+      ],
+      {
+        cwd: repoRoot,
+        env: bazelEnv,
+        stdio: "inherit",
+      },
+      `bazel run ${targetLabel} for web dist failed`,
+      spawnSyncImpl,
+    );
+  });
 
   if (!fs.existsSync(resolvedDestinationDir)) {
     throw new Error(`Bazel web dist target did not materialize ${resolvedDestinationDir}`);

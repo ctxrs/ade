@@ -19,6 +19,7 @@ const {
   filterGateManagedCrateNames,
   getTurboTaskNamesForCrates,
 } = require("./lib/rust_workspace_graph.cjs");
+const { HOST_HEAVY_BUDGET_KEY, withHostJobBudget } = require("./lib/host_job_budget.cjs");
 const { runTurbo } = require("./lib/turbo_runner.cjs");
 
 function parseArgs(argv) {
@@ -207,46 +208,53 @@ function main() {
     bazelTestCrates,
   });
 
-  if (args.runClippy) {
-    runTaskPhase({
+  withHostJobBudget({
+    budgetKey: HOST_HEAVY_BUDGET_KEY,
+    command: `run_rust_gate ${crateNames.join(" ")}`,
+    cwd: coreRoot,
+    env,
+  }, () => {
+    if (args.runClippy) {
+      runTaskPhase({
+        coreRoot,
+        env,
+        crateNames,
+        taskKind: "clippy",
+      });
+    }
+    runBazelPhase({
       coreRoot,
       env,
-      crateNames,
-      taskKind: "clippy",
+      crateNames: bazelTestCrates,
     });
-  }
-  runBazelPhase({
-    coreRoot,
-    env,
-    crateNames: bazelTestCrates,
-  });
-  runTaskPhase({
-    coreRoot,
-    env,
-    crateNames: nextestCrates,
-    taskKind: "nextest",
-  });
-  const parallelCargoTestCrates = cargoTestCrates.filter(
-    (crateName) => !ISOLATED_CARGO_TEST_CRATES.has(crateName),
-  );
-  const isolatedCargoTestCrates = cargoTestCrates.filter((crateName) =>
-    ISOLATED_CARGO_TEST_CRATES.has(crateName),
-  );
-  runTaskPhase({
-    coreRoot,
-    env,
-    crateNames: parallelCargoTestCrates,
-    taskKind: "test",
-  });
-  for (const crateName of isolatedCargoTestCrates) {
     runTaskPhase({
       coreRoot,
       env,
-      crateNames: [crateName],
+      crateNames: nextestCrates,
+      taskKind: "nextest",
+    });
+    const parallelCargoTestCrates = cargoTestCrates.filter(
+      (crateName) => !ISOLATED_CARGO_TEST_CRATES.has(crateName),
+    );
+    const isolatedCargoTestCrates = cargoTestCrates.filter((crateName) =>
+      ISOLATED_CARGO_TEST_CRATES.has(crateName),
+    );
+    runTaskPhase({
+      coreRoot,
+      env,
+      crateNames: parallelCargoTestCrates,
       taskKind: "test",
-      turboConcurrency: 1,
     });
-  }
+    for (const crateName of isolatedCargoTestCrates) {
+      runTaskPhase({
+        coreRoot,
+        env,
+        crateNames: [crateName],
+        taskKind: "test",
+        turboConcurrency: 1,
+      });
+    }
+  });
 }
 
 if (require.main === module) {

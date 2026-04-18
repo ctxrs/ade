@@ -15,8 +15,11 @@ const {
   parseBatchMode,
   parsePositiveIntegerEnv,
   parseRemoteExecutionMode,
+  resolvePhaseBudgetKey,
   resolveBazeliskCommand,
+  runBazelPilotInvocationPhases,
 } = require("./run_bazel_pilot.cjs");
+const { HOST_HEAVY_BUDGET_KEY } = require("./lib/host_job_budget.cjs");
 
 test("bazel pilot defaults to the expanded Rust slice test targets", () => {
   assert.deepEqual(parseArgs([]), {
@@ -157,6 +160,55 @@ test("bazel pilot forwards local test job caps for test invocations", () => {
 
   assert.equal(invocation.commandArgs.includes("--local_test_jobs=3"), true);
   assert.equal(invocation.phases[0].commandArgs.includes("--local_test_jobs=3"), true);
+});
+
+test("bazel pilot marks only local phases as host-budgeted work", () => {
+  const invocation = buildBazelPilotInvocation({
+    argv: [
+      "build",
+      "//core/crates/ctx-provider-accounts:lib",
+      "//core/crates/ctx-lsp:ctx-lsp-test-server",
+    ],
+    env: {
+      ...process.env,
+      CTX_VOLATILE_ROOT: "/tmp/ctx-bazel-pilot-budgeted",
+      CTX_SESSION_ID: "bazel-budget-session",
+      CTX_BAZEL_REMOTE_EXECUTION: "linux",
+      BUILD_BUDDY_API_KEY: "buildbuddy-linux-key",
+    },
+  });
+
+  assert.equal(resolvePhaseBudgetKey(invocation.phases[0]), null);
+  assert.equal(resolvePhaseBudgetKey(invocation.phases[1]), HOST_HEAVY_BUDGET_KEY);
+});
+
+test("bazel pilot invocation runner applies the host-heavy budget to local phases", () => {
+  const invocation = buildBazelPilotInvocation({
+    argv: ["test", "//core/crates/ctx-http:provider-auth"],
+    env: {
+      ...process.env,
+      CTX_VOLATILE_ROOT: "/tmp/ctx-bazel-pilot-runner-budget",
+      CTX_SESSION_ID: "bazel-runner-budget-session",
+      CTX_BAZEL_REMOTE_EXECUTION: "off",
+    },
+  });
+  const budgetCalls = [];
+  const spawnCalls = [];
+
+  runBazelPilotInvocationPhases(invocation, {
+    spawnSyncImpl: (command, args, options) => {
+      spawnCalls.push({ command, args, options });
+      return { status: 0 };
+    },
+    withHostJobBudgetImpl: (options, fn) => {
+      budgetCalls.push(options);
+      return fn();
+    },
+  });
+
+  assert.equal(budgetCalls.length, 1);
+  assert.equal(budgetCalls[0].budgetKey, HOST_HEAVY_BUDGET_KEY);
+  assert.equal(spawnCalls.length, 1);
 });
 test("bazel pilot linux remote execution keeps lib builds remote and host executables local", () => {
   const invocation = buildBazelPilotInvocation({

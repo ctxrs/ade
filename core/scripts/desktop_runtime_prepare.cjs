@@ -6,6 +6,12 @@ const path = require("node:path");
 
 const childProcess = require("node:child_process");
 const { buildCtxCacheEnv } = require("./lib/cache_roots.cjs");
+const { withFileLockSync } = require("./lib/file_lock.cjs");
+const {
+  DESKTOP_PREPARE_BUDGET_KEY,
+  HOST_HEAVY_BUDGET_KEY,
+  withHostJobBudget,
+} = require("./lib/host_job_budget.cjs");
 const { computeWebDistCacheKey, ensureWebDistArtifact } = require("./lib/web_dist_cache.cjs");
 const { readDesktopVersion } = require("./desktop_version.cjs");
 const { resolveDefaultLockPath, validateRuntimeLock } = require("./runtime_lock_validate.cjs");
@@ -290,6 +296,11 @@ function resolvePrepareRequiredOutputs({
   return requiredOutputs;
 }
 
+function resolveDesktopPrepareLockPath(layout) {
+  const lockKey = crypto.createHash("sha1").update(path.resolve(bundlesDir)).digest("hex").slice(0, 12);
+  return path.join(layout.cacheDir, "locks", "desktop-runtime-prepare", `${lockKey}.lock`);
+}
+
 function canReusePreparedParity({
   profile,
   state,
@@ -381,93 +392,135 @@ const writeRuntimeState = ({
 
 const main = () => {
   const profile = resolveProfile();
-  const { env: prepEnv, cargoTargetDir } = buildCtxCacheEnv({
+  const { env: prepEnv, cargoTargetDir, layout } = buildCtxCacheEnv({
     cwd: coreRoot,
     env: process.env,
     mode: "workspace",
     mkdir: true,
   });
-  const desktopVersion = readDesktopVersion(coreRoot);
-  const lockPath = resolveDefaultLockPath();
-  const effectiveOverridesPath = process.env.CTX_RUNTIME_OVERRIDES_PATH || overridesPath;
-  const prepMode = profile === "source-all" ? "source-all" : "parity-with-existing-bundles";
-  const requiredOutputs = resolvePrepareRequiredOutputs();
-  let prepareFingerprint = null;
-  let trackedEntries = [];
-  let webDistDescriptor = null;
-  let reusedPrep = false;
+  const desktopPrepareLockPath = resolveDesktopPrepareLockPath(layout);
 
-  if (profile === "source-all") {
-    run("pnpm", ["desktop:prep"], { env: prepEnv });
-  } else {
-    const fingerprintInfo = buildPrepareFingerprint({
-      coreRoot,
-      env: prepEnv,
-      profile,
-      desktopVersion,
-      lockPath,
-      overridesPath: effectiveOverridesPath,
-      cargoTargetDir,
-    });
-    prepareFingerprint = fingerprintInfo.fingerprint;
-    trackedEntries = fingerprintInfo.trackedEntries;
-    webDistDescriptor = fingerprintInfo.webDistDescriptor;
-    reusedPrep = canReusePreparedParity({
-      profile,
-      state: readRuntimeState(),
-      fingerprint: prepareFingerprint,
-      requiredOutputs,
-    });
+  withFileLockSync(desktopPrepareLockPath, {
+    metadata: {
+      command: `desktop_runtime_prepare ${profile}`,
+      cwd: coreRoot,
+      leaseId: prepEnv.CTX_HOST_JOB_LEASE_ID || "",
+      sessionId: prepEnv.CTX_SESSION_ID || "",
+      threadId: prepEnv.CODEX_THREAD_ID || "",
+    },
+    staleMs: 20 * 60 * 1000,
+    timeoutMs: 20 * 60 * 1000,
+  }, () => {
+    const desktopVersion = readDesktopVersion(coreRoot);
+    const lockPath = resolveDefaultLockPath();
+    const effectiveOverridesPath = process.env.CTX_RUNTIME_OVERRIDES_PATH || overridesPath;
+    const prepMode = profile === "source-all" ? "source-all" : "parity-with-existing-bundles";
+    const requiredOutputs = resolvePrepareRequiredOutputs();
+    let prepareFingerprint = null;
+    let trackedEntries = [];
+    let webDistDescriptor = null;
+    let reusedPrep = false;
 
-    if (reusedPrep) {
-      console.log(
-        `desktop_runtime_prepare: reusing parity prep fingerprint=${prepareFingerprint.slice(0, 12)} profile=${profile}`,
-      );
+    if (profile === "source-all") {
+      withHostJobBudget({
+        budgetKey: DESKTOP_PREPARE_BUDGET_KEY,
+        command: "desktop_runtime_prepare source-all",
+        cwd: coreRoot,
+        env: prepEnv,
+      }, () => {
+        withHostJobBudget({
+          budgetKey: HOST_HEAVY_BUDGET_KEY,
+          command: "pnpm desktop:prep",
+          cwd: coreRoot,
+          env: prepEnv,
+        }, () => {
+          run("pnpm", ["desktop:prep"], { env: prepEnv });
+        });
+      });
     } else {
-      ensureParityPrep({ prepEnv, desktopVersion });
-    }
-  }
+      const fingerprintInfo = buildPrepareFingerprint({
+        coreRoot,
+        env: prepEnv,
+        profile,
+        desktopVersion,
+        lockPath,
+        overridesPath: effectiveOverridesPath,
+        cargoTargetDir,
+      });
+      prepareFingerprint = fingerprintInfo.fingerprint;
+      trackedEntries = fingerprintInfo.trackedEntries;
+      webDistDescriptor = fingerprintInfo.webDistDescriptor;
+      reusedPrep = canReusePreparedParity({
+        profile,
+        state: readRuntimeState(),
+        fingerprint: prepareFingerprint,
+        requiredOutputs,
+      });
 
-  const validation = validateRuntimeLock({
-    lockPath,
-    manifestPath,
-    profile,
-    overridesPath: effectiveOverridesPath,
+      if (reusedPrep) {
+        console.log(
+          `desktop_runtime_prepare: reusing parity prep fingerprint=${prepareFingerprint.slice(0, 12)} profile=${profile}`,
+        );
+      } else {
+        withHostJobBudget({
+          budgetKey: DESKTOP_PREPARE_BUDGET_KEY,
+          command: `desktop_runtime_prepare ${profile}`,
+          cwd: coreRoot,
+          env: prepEnv,
+        }, () => {
+          withHostJobBudget({
+            budgetKey: HOST_HEAVY_BUDGET_KEY,
+            command: `desktop_runtime_prepare materialize ${profile}`,
+            cwd: coreRoot,
+            env: prepEnv,
+          }, () => {
+            ensureParityPrep({ prepEnv, desktopVersion });
+          });
+        });
+      }
+    }
+
+    const validation = validateRuntimeLock({
+      lockPath,
+      manifestPath,
+      profile,
+      overridesPath: effectiveOverridesPath,
+    });
+
+    if (!validation.ok) {
+      for (const error of validation.errors) {
+        console.error(`error: ${error}`);
+      }
+      if (profile !== "source-all") {
+        console.error(
+          "hint: run with CTX_RUNTIME_PROFILE=source-all once to materialize full local bundles if parity assets are missing",
+        );
+      }
+      process.exit(1);
+    }
+
+    fs.writeFileSync(effectiveManifestPath, `${JSON.stringify(validation.effectiveManifest, null, 2)}\n`, "utf8");
+
+    const state = writeRuntimeState({
+      cargoTargetDir,
+      profile,
+      prepMode,
+      lockPath,
+      lockVersion: validation.lockVersion,
+      manifestPathValue: manifestPath,
+      effectiveManifestPathValue: effectiveManifestPath,
+      overridesApplied: validation.appliedOverrides,
+      prepareFingerprint,
+      requiredOutputs,
+      reusedPrep,
+      trackedEntries,
+      webDistDescriptor,
+    });
+
+    console.log(
+      `desktop_runtime_prepare: profile=${profile} reused=${reusedPrep ? "1" : "0"} lock=v${validation.lockVersion} lock_sha=${state.runtime_lock.sha256 ?? "missing"} effective_manifest_sha=${state.effective_manifest.sha256 ?? "missing"}`,
+    );
   });
-
-  if (!validation.ok) {
-    for (const error of validation.errors) {
-      console.error(`error: ${error}`);
-    }
-    if (profile !== "source-all") {
-      console.error(
-        "hint: run with CTX_RUNTIME_PROFILE=source-all once to materialize full local bundles if parity assets are missing",
-      );
-    }
-    process.exit(1);
-  }
-
-  fs.writeFileSync(effectiveManifestPath, `${JSON.stringify(validation.effectiveManifest, null, 2)}\n`, "utf8");
-
-  const state = writeRuntimeState({
-    cargoTargetDir,
-    profile,
-    prepMode,
-    lockPath,
-    lockVersion: validation.lockVersion,
-    manifestPathValue: manifestPath,
-    effectiveManifestPathValue: effectiveManifestPath,
-    overridesApplied: validation.appliedOverrides,
-    prepareFingerprint,
-    requiredOutputs,
-    reusedPrep,
-    trackedEntries,
-    webDistDescriptor,
-  });
-
-  console.log(
-    `desktop_runtime_prepare: profile=${profile} reused=${reusedPrep ? "1" : "0"} lock=v${validation.lockVersion} lock_sha=${state.runtime_lock.sha256 ?? "missing"} effective_manifest_sha=${state.effective_manifest.sha256 ?? "missing"}`,
-  );
 };
 
 if (require.main === module) {
@@ -479,6 +532,7 @@ module.exports = {
   buildPrepareFingerprint,
   canReusePreparedParity,
   readRuntimeState,
+  resolveDesktopPrepareLockPath,
   resolvePrepareRequiredOutputs,
   resolveProviderMatrixPath,
   resolveWebDistDescriptor,

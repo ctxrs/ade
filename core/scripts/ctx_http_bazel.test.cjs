@@ -12,12 +12,15 @@ const {
   TARGET_SPECS,
   buildBazelPlatformArgs,
   buildBazelCommandContext,
+  buildTargetsViaBazel,
   buildDesktopSyncEnv,
   parseBazelOutputPaths,
   parseArgs,
   renderDesktopSidecarEnv,
+  resolveBazelOutputPaths,
   shouldResolveAvfLinuxHelper,
 } = require("./ctx_http_bazel.cjs");
+const { HOST_HEAVY_BUDGET_KEY } = require("./lib/host_job_budget.cjs");
 
 test("ctx_http_bazel parses the desktop sidecar command with a release default", () => {
   assert.deepEqual(parseArgs([]), {
@@ -85,6 +88,8 @@ test("ctx_http_bazel maps explicit target keys to Bazel platform labels", () => 
 test("ctx_http_bazel uses plain Bazel for direct builds when the repo pins the BuildBuddy wrapper", () => {
   const context = buildBazelCommandContext({});
   assert.equal(context.env.USE_BAZEL_VERSION, "9.0.1");
+  assert.equal(context.bazelCommandArgs[0].startsWith("--disk_cache="), true);
+  assert.equal(context.bazelCommandArgs[1].startsWith("--repository_cache="), true);
 });
 
 test("ctx_http_bazel preserves an explicit USE_BAZEL_VERSION override", () => {
@@ -145,4 +150,50 @@ test("ctx_http_bazel only resolves the AVF helper on darwin targets", () => {
 
 test("ctx_http_bazel keeps the Bazel pilot script path repo-root relative", () => {
   assert.equal(BAZEL_PILOT_SCRIPT_PATH, "core/scripts/run_bazel_pilot.cjs");
+});
+
+test("ctx_http_bazel budgets direct Bazel builds under host-heavy", () => {
+  const budgetCalls = [];
+  const spawnCalls = [];
+
+  buildTargetsViaBazel(["//core/crates/ctx-http:ctx"], {
+    env: process.env,
+    quietStdout: true,
+    spawnSyncImpl: (command, args, options) => {
+      spawnCalls.push({ command, args, options });
+      return { status: 0 };
+    },
+    withHostJobBudgetImpl: (options, fn) => {
+      budgetCalls.push(options);
+      return fn();
+    },
+  });
+
+  assert.equal(budgetCalls.length, 1);
+  assert.equal(budgetCalls[0].budgetKey, HOST_HEAVY_BUDGET_KEY);
+  assert.equal(spawnCalls.length, 1);
+});
+
+test("ctx_http_bazel budgets direct Bazel cquery lookups under host-heavy", () => {
+  const budgetCalls = [];
+  const repoRoot = require("node:path").resolve(__dirname, "..", "..");
+
+  const outputs = resolveBazelOutputPaths(["//core/crates/ctx-http:ctx"], {
+    env: process.env,
+    spawnSyncImpl: () => ({
+      status: 0,
+      stdout: "@@//core/crates/ctx-http:ctx|bazel-out/k8-fastbuild/bin/core/crates/ctx-http/ctx\n",
+    }),
+    withHostJobBudgetImpl: (options, fn) => {
+      budgetCalls.push(options);
+      return fn();
+    },
+  });
+
+  assert.equal(budgetCalls.length, 1);
+  assert.equal(budgetCalls[0].budgetKey, HOST_HEAVY_BUDGET_KEY);
+  assert.equal(
+    outputs.get("//core/crates/ctx-http:ctx"),
+    `${repoRoot}/bazel-out/k8-fastbuild/bin/core/crates/ctx-http/ctx`,
+  );
 });

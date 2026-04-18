@@ -14,6 +14,7 @@ const {
   resolveWebDistArtifactDir,
   runWebDistBuild,
 } = require("./web_dist_cache.cjs");
+const { HOST_HEAVY_BUDGET_KEY } = require("./host_job_budget.cjs");
 
 function writeFile(filePath, contents) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -106,6 +107,7 @@ test("runWebDistBuild uses bazel run and resolves the workspace dist directory",
   const expectedDist = path.join(coreRoot, "apps", "web", "dist");
   fs.mkdirSync(expectedDist, { recursive: true });
   const spawnCalls = [];
+  const budgetCalls = [];
 
   const distDir = runWebDistBuild({
     coreRoot,
@@ -114,9 +116,15 @@ test("runWebDistBuild uses bazel run and resolves the workspace dist directory",
       spawnCalls.push({ command, args, options });
       return { status: 0 };
     },
+    withHostJobBudgetImpl: (options, fn) => {
+      budgetCalls.push(options);
+      return fn();
+    },
   });
 
   assert.equal(distDir, expectedDist);
+  assert.equal(budgetCalls.length, 1);
+  assert.equal(budgetCalls[0].budgetKey, HOST_HEAVY_BUDGET_KEY);
   assert.equal(spawnCalls.length, 1);
   assert.equal(spawnCalls[0].args[1], "run");
   assert.match(spawnCalls[0].args[2], /^--disk_cache=/);

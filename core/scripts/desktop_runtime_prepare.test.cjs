@@ -10,6 +10,7 @@ const {
   buildPrepareEnvSnapshot,
   buildPrepareFingerprint,
   canReusePreparedParity,
+  resolveDesktopPrepareLockPath,
 } = require("./desktop_runtime_prepare.cjs");
 
 function writeFixtureFile(rootDir, relativePath, contents = "") {
@@ -156,4 +157,11 @@ test("desktop runtime prepare env snapshot keeps only runtime-relevant keys", ()
       CTX_RUNTIME_PROFILE: "parity",
     },
   );
+});
+
+test("desktop runtime prepare lock path lives under the shared volatile cache root", () => {
+  const lockPath = resolveDesktopPrepareLockPath({
+    cacheDir: "/tmp/ctx-volatile/cache",
+  });
+  assert.equal(lockPath.startsWith("/tmp/ctx-volatile/cache/locks/desktop-runtime-prepare/"), true);
 });

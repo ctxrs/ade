@@ -1,7 +1,8 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
 
-const { buildTurboRunArgs } = require("./turbo_runner.cjs");
+const { HOST_HEAVY_BUDGET_KEY } = require("./host_job_budget.cjs");
+const { buildTurboRunArgs, runTurbo } = require("./turbo_runner.cjs");
 
 test("buildTurboRunArgs keeps task ordering and includes cache settings", () => {
   const args = buildTurboRunArgs({
@@ -39,4 +40,30 @@ test("buildTurboRunArgs lets an explicit concurrency override serialize a task b
   });
 
   assert.ok(args.includes("--concurrency=1"));
+});
+
+test("runTurbo executes under the shared host-heavy budget", () => {
+  const budgetCalls = [];
+  const spawnCalls = [];
+
+  runTurbo({
+    coreRoot: "/repo/core",
+    env: {
+      TURBO_CACHE_DIR: "/tmp/ctx-turbo-cache",
+    },
+    taskNames: ["rust:crate:test:ctx-http"],
+    resolveTurboBinaryImpl: () => "/repo/core/node_modules/.bin/turbo",
+    spawnSyncImpl: (command, args, options) => {
+      spawnCalls.push({ command, args, options });
+      return { status: 0 };
+    },
+    withHostJobBudgetImpl: (options, fn) => {
+      budgetCalls.push(options);
+      return fn();
+    },
+  });
+
+  assert.equal(budgetCalls.length, 1);
+  assert.equal(budgetCalls[0].budgetKey, HOST_HEAVY_BUDGET_KEY);
+  assert.equal(spawnCalls.length, 1);
 });

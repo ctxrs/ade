@@ -15,6 +15,7 @@ const {
   getBazelTestTargetsForCrates,
   partitionBazelTargetsForLinuxRbe,
 } = require("./lib/bazel_rust_targets.cjs");
+const { HOST_HEAVY_BUDGET_KEY, withHostJobBudget } = require("./lib/host_job_budget.cjs");
 
 const DEFAULT_TEST_TARGETS = getBazelTestTargetsForCrates(getBazelCoveredCrates());
 const DEFAULT_BUILD_TARGETS = getBazelBuildTargetsForCrates(getBazelCoveredCrates());
@@ -367,6 +368,10 @@ function buildInvocationPhases({
   return phases;
 }
 
+function resolvePhaseBudgetKey(phase) {
+  return phase?.name === "local" ? HOST_HEAVY_BUDGET_KEY : null;
+}
+
 function buildBazelPilotInvocation({
   argv,
   buildBuddyApiKeyResolver = resolveBuildBuddyApiKey,
@@ -399,6 +404,7 @@ function buildBazelPilotInvocation({
     env,
   }).map((phase) => ({
     ...phase,
+    budgetKey: resolvePhaseBudgetKey(phase),
     commandArgs: [
       ...phase.commandArgs,
       ...(command === "test" && localTestJobs !== null
@@ -505,6 +511,64 @@ function formatSpawnFailureMessage(command, error) {
   return `error: failed to start Bazelisk at ${command}: ${details}`;
 }
 
+function runBazelPilotInvocationPhases(invocation, {
+  exitImpl = process.exit,
+  logErrorImpl = console.error,
+  spawnSyncImpl = childProcess.spawnSync,
+  withHostJobBudgetImpl = withHostJobBudget,
+} = {}) {
+  for (const phase of invocation.phases) {
+    const runPhase = () => {
+      const spawn = buildSpawnForPhase(invocation, phase);
+      const result = spawnSyncImpl(spawn.command, spawn.args, spawn.options);
+      if (result.error) {
+        logErrorImpl(formatSpawnFailureMessage(spawn.command, result.error));
+        exitImpl(1);
+        return;
+      }
+      if (typeof result.status === "number" && result.status !== 0) {
+        exitImpl(result.status);
+        return;
+      }
+      if (result.signal) {
+        logErrorImpl(`error: Bazelisk terminated with signal ${result.signal}`);
+        exitImpl(1);
+        return;
+      }
+      if (invocation.command === "run") {
+        const runResult = spawnSyncImpl(
+          spawn.runScriptPath,
+          invocation.runArgs,
+          spawn.options,
+        );
+        if (runResult.error) {
+          logErrorImpl(formatSpawnFailureMessage(spawn.runScriptPath, runResult.error));
+          exitImpl(1);
+          return;
+        }
+        if (typeof runResult.status === "number" && runResult.status !== 0) {
+          exitImpl(runResult.status);
+          return;
+        }
+        if (runResult.signal) {
+          logErrorImpl(`error: Bazel run script terminated with signal ${runResult.signal}`);
+          exitImpl(1);
+        }
+      }
+    };
+    if (phase.budgetKey) {
+      withHostJobBudgetImpl({
+        budgetKey: phase.budgetKey,
+        command: `bazel ${invocation.command} ${phase.targets.join(" ")}`,
+        cwd: invocation.repoRoot,
+        env: invocation.env,
+      }, runPhase);
+    } else {
+      runPhase();
+    }
+  }
+}
+
 function main() {
   let invocation;
   try {
@@ -517,39 +581,7 @@ function main() {
   ensureDir(invocation.layout.bazelOutputUserRoot);
   ensureDir(invocation.layout.bazelDiskCacheDir);
   ensureDir(invocation.layout.bazelRepositoryCacheDir);
-  for (const phase of invocation.phases) {
-    const spawn = buildSpawnForPhase(invocation, phase);
-    const result = childProcess.spawnSync(spawn.command, spawn.args, spawn.options);
-    if (result.error) {
-      console.error(formatSpawnFailureMessage(spawn.command, result.error));
-      process.exit(1);
-    }
-    if (typeof result.status === "number" && result.status !== 0) {
-      process.exit(result.status);
-    }
-    if (result.signal) {
-      console.error(`error: Bazelisk terminated with signal ${result.signal}`);
-      process.exit(1);
-    }
-    if (invocation.command === "run") {
-      const runResult = childProcess.spawnSync(
-        spawn.runScriptPath,
-        invocation.runArgs,
-        spawn.options,
-      );
-      if (runResult.error) {
-        console.error(formatSpawnFailureMessage(spawn.runScriptPath, runResult.error));
-        process.exit(1);
-      }
-      if (typeof runResult.status === "number" && runResult.status !== 0) {
-        process.exit(runResult.status);
-      }
-      if (runResult.signal) {
-        console.error(`error: Bazel run script terminated with signal ${runResult.signal}`);
-        process.exit(1);
-      }
-    }
-  }
+  runBazelPilotInvocationPhases(invocation);
 }
 
 if (require.main === module) {
@@ -564,11 +596,15 @@ module.exports = {
   buildBazelPilotSpawn,
   buildBazelPilotSpawns,
   buildBazelPilotInvocation,
+  buildInvocationPhases,
   buildBuildBuddyAuthArgs,
+  buildPhaseCommandArgs,
   formatSpawnFailureMessage,
   parseArgs,
   parsePositiveIntegerEnv,
   parseBatchMode,
   parseRemoteExecutionMode,
+  resolvePhaseBudgetKey,
   resolveBazeliskCommand,
+  runBazelPilotInvocationPhases,
 };
