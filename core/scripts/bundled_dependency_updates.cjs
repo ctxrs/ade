@@ -10,7 +10,7 @@ const repoRoot = path.resolve(coreRoot, "..");
 
 const providerMatrixPath = path.join(coreRoot, "crates", "ctx-provider-accounts", "src", "provider_matrix.json");
 const runtimeLockPath = path.join(coreRoot, "apps", "desktop", "src-tauri", "bundles", "runtime_lock.v2.json");
-const installerRsPath = path.join(coreRoot, "crates", "ctx-http", "src", "installer.rs");
+const managedInstallsLibRsPath = path.join(coreRoot, "crates", "ctx-managed-installs", "src", "lib.rs");
 
 const modeArg = (process.argv[2] || "check").trim().toLowerCase();
 if (!["check", "apply", "policy"].includes(modeArg)) {
@@ -655,9 +655,9 @@ const main = async () => {
     });
   }
 
-  const currentNode = readRustConst(installerRsPath, "NODE_VERSION");
-  const currentPython = readRustConst(installerRsPath, "PYTHON_VERSION");
-  const currentPythonTag = readRustConst(installerRsPath, "PYTHON_BUILD_TAG");
+  const currentNode = readRustConst(managedInstallsLibRsPath, "NODE_VERSION");
+  const currentPython = readRustConst(managedInstallsLibRsPath, "PYTHON_VERSION");
+  const currentPythonTag = readRustConst(managedInstallsLibRsPath, "PYTHON_BUILD_TAG");
   const latestNode = policyMode ? currentNode : await fetchNodeLatestLts();
   const latestPython = policyMode
     ? { version: currentPython, buildTag: currentPythonTag }
@@ -815,13 +815,13 @@ const main = async () => {
   }
 
   if (currentNode !== latestNode) {
-    updateRustConst(installerRsPath, "NODE_VERSION", latestNode);
+    updateRustConst(managedInstallsLibRsPath, "NODE_VERSION", latestNode);
   }
   if (currentPython !== latestPython.version) {
-    updateRustConst(installerRsPath, "PYTHON_VERSION", latestPython.version);
+    updateRustConst(managedInstallsLibRsPath, "PYTHON_VERSION", latestPython.version);
   }
   if (currentPythonTag !== latestPython.buildTag) {
-    updateRustConst(installerRsPath, "PYTHON_BUILD_TAG", latestPython.buildTag);
+    updateRustConst(managedInstallsLibRsPath, "PYTHON_BUILD_TAG", latestPython.buildTag);
   }
 
   writeJson(providerMatrixPath, matrix);
