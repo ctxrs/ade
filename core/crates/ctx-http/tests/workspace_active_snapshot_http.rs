@@ -1510,10 +1510,8 @@ async fn workspace_stream_under_load_no_gap_or_reset() {
                             ctx_core::models::WorkspaceActiveSnapshotEvent::SessionHeadDelta {
                                 delta,
                                 ..
-                            } => {
-                                if delta.session_id == session.id {
-                                    last_seen_seq = last_seen_seq.max(delta.last_event_seq);
-                                }
+                            } if delta.session_id == session.id => {
+                                last_seen_seq = last_seen_seq.max(delta.last_event_seq);
                             }
                             _ => {}
                         },

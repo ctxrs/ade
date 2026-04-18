@@ -125,6 +125,17 @@ test("nightly helper profiles keep the scheduled nightly slices Linux-only and b
   );
 });
 
+test("release publish-mode profiles stay on the artifact-only finalize boundary", () => {
+  assert.deepEqual(
+    buildExecutionPlan({ profileId: "canary-proof", touchedOnly: false, changedFiles: [] }).commands,
+    ["bash ../scripts/buildkite/run_release_finalize.sh"],
+  );
+  assert.deepEqual(
+    buildExecutionPlan({ profileId: "stable-promotion", touchedOnly: false, changedFiles: [] }).commands,
+    ["bash ../scripts/buildkite/run_release_finalize.sh"],
+  );
+});
+
 test("direct pipeline helper profiles resolve to explicit package-script commands", () => {
   assert.deepEqual(
     buildExecutionPlan({ profileId: "install-bootstrap-contracts", touchedOnly: false, changedFiles: [] }).commands,

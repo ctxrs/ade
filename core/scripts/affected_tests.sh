@@ -4,12 +4,14 @@ set -euo pipefail
 usage() {
   cat <<'EOF'
 usage: affected_tests.sh [--base <git_ref>]
+                         [--profile <taxonomy_profile>]
 
 Run an affected-tests fast path for agent loops.
 
 Behavior:
-- Uses the testing taxonomy registry to select the affected `agent-default`
-  execution plan for the changed files.
+- Uses the testing taxonomy registry to select the affected execution plan for
+  the changed files. Defaults to `agent-default`; set `--profile` or
+  `CTX_AFFECTED_TESTS_PROFILE` to override.
 - Falls back to the default fast gate only when the taxonomy plan resolves to no commands.
 EOF
 }
@@ -53,6 +55,7 @@ resolve_changed_files() {
 }
 
 base_ref=""
+taxonomy_profile="${CTX_AFFECTED_TESTS_PROFILE:-agent-default}"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --base)
@@ -61,6 +64,14 @@ while [[ $# -gt 0 ]]; do
         exit 2
       fi
       base_ref="$2"
+      shift 2
+      ;;
+    --profile)
+      if [[ $# -lt 2 ]]; then
+        echo "error: --profile requires a taxonomy profile id" >&2
+        exit 2
+      fi
+      taxonomy_profile="$2"
       shift 2
       ;;
     -h|--help)
@@ -108,8 +119,9 @@ fi
 
 echo "changed files:"
 echo "${changed_files}" | sed 's/^/  - /'
+echo "taxonomy profile: ${taxonomy_profile}"
 
-declare -a taxonomy_args=(scripts/run_test_taxonomy_profile.cjs --profile agent-default --touched-only --list)
+declare -a taxonomy_args=(scripts/run_test_taxonomy_profile.cjs --profile "${taxonomy_profile}" --touched-only --list)
 while IFS= read -r path; do
   [[ -z "${path}" ]] && continue
   taxonomy_args+=(--changed-file "${path}")

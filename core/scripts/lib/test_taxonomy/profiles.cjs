@@ -14,12 +14,11 @@ const PROFILES = [
       excludeRequirements: ["browser", "mac", "network", "single-mac", "long-running"],
     },
     currentCommands: [
-      "pnpm -C core verify:agent:fast",
-      "pnpm -C core verify:agent:fast:linux-rbe",
+      "node core/scripts/run_test_taxonomy_profile.cjs --profile agent-minimal --touched-only --run --changed-file <repo-relative-path>",
     ],
     pipelines: ["local-agent-loop"],
     remoteStrategy: "Prefer Linux RBE-backed Bazel and crate-level tasks; this profile excludes Mac and live-service requirements.",
-    currentExecution: "Current entrypoint is the affected-tests fast gate, with RBE preferred on Linux hosts.",
+    currentExecution: "No dedicated compatibility wrapper is checked in yet; invoke the taxonomy runner directly when you want the narrower compile-and-contract-only loop.",
     expansionRules: [
       "Path-gated tiny browser or fake-provider checks may be added on top when change risk justifies them.",
     ],
@@ -199,6 +198,9 @@ const PROFILES = [
     title: "Release Test",
     purpose: "Prove a pinned SHA is publishable using artifact-first staging and validation.",
     selector: {
+      forceIncludeEntryIds: [
+        "updates-release.release-finalize",
+      ],
       includeEntryIds: [
         "build-graph.release-bundle-contracts-linux-x86_64",
         "distribution-install.desktop-runtime-lock-matrix",
@@ -423,13 +425,13 @@ const PROFILES = [
   {
     id: "release-finalize",
     title: "Release Finalize",
-    purpose: "Merge the staged platform artifacts into the final release evidence boundary.",
+    purpose: "Consume the staged platform artifacts, publish the versioned release state, and emit final evidence without rebuilding.",
     selector: {
-      includeEntryIds: [
+      forceIncludeEntryIds: [
         "updates-release.release-finalize",
       ],
-      includeSurfaces: ["artifact"],
-      includeWorlds: ["local-packaged-artifact"],
+      includeSurfaces: ["promotion"],
+      includeWorlds: ["external-service"],
       includeCosts: ["medium"],
       includeStabilities: ["stable"],
       includeExecutions: ["artifact-tail"],
@@ -440,31 +442,33 @@ const PROFILES = [
       "pnpm -C core testing:profile:run --profile release-finalize",
     ],
     pipelines: ["ctx-release"],
-    remoteStrategy: "Finalize should consume stage artifacts only and emit release evidence on Linux without rebuilding.",
-    currentExecution: "Uses a dedicated Buildkite wrapper script that downloads the platform stage artifacts and runs the finalize/evidence step.",
+    remoteStrategy: "Finalize should consume stage artifacts only, publish versioned state, verify it, and emit release evidence on Linux without rebuilding.",
+    currentExecution: "Uses a dedicated Buildkite wrapper script that downloads the platform stage artifacts and runs the publish/verify/promotion tail.",
     expansionRules: [
-      "This profile owns only the final dry-run merge/evidence boundary and must not absorb publish promotion.",
+      "This profile owns only the final publish/verify boundary and must not absorb any source rebuild work.",
     ],
   },
   {
     id: "canary-proof",
     title: "Canary Proof",
-    purpose: "Validate published canary artifacts against live-but-safe release state.",
+    purpose: "Publish staged artifacts into an isolated release channel and verify the published result without rebuilding.",
     selector: {
-      includeSurfaces: ["artifact", "promotion"],
-      includeWorlds: ["published-artifact", "external-service"],
+      forceIncludeEntryIds: [
+        "updates-release.release-finalize",
+      ],
+      includeSurfaces: ["promotion"],
+      includeWorlds: ["external-service"],
       includeCosts: ["medium", "slow"],
       includeStabilities: ["stable"],
-      includeExecutions: ["artifact-tail", "script-local"],
+      includeExecutions: ["artifact-tail"],
     },
     currentCommands: [
-      "Buildkite pipeline: ctx-release (canary mode)",
-      "pnpm -C core release:e2e:publish",
-      "pnpm -C core release:e2e:verify",
+      "Buildkite step: Release finalize (non-stable-publish modes)",
+      "pnpm -C core testing:profile:run --profile canary-proof",
     ],
     pipelines: ["ctx-release"],
-    remoteStrategy: "Consume the exact staged artifacts; keep live publish checks as a thin post-build tail instead of re-running compile work.",
-    currentExecution: "Current canary execution is manual or agent-triggered and should remain artifact-only.",
+    remoteStrategy: "Consume the exact staged artifacts; keep publish and latest-manifest verification as the thin post-stage tail instead of re-running compile work.",
+    currentExecution: "The checked-in ctx-release finalize step now dispatches this profile for canary, canary2, e2e, and stable dry-run modes.",
     expansionRules: [
       "Canary should never rebuild what releasetest already proved.",
     ],
@@ -472,22 +476,24 @@ const PROFILES = [
   {
     id: "stable-promotion",
     title: "Stable Promotion",
-    purpose: "Promote exact canary-proven artifacts without rebuilding.",
+    purpose: "Promote exact staged artifacts into stable without rebuilding.",
     selector: {
+      forceIncludeEntryIds: [
+        "updates-release.release-finalize",
+      ],
       includeSurfaces: ["promotion"],
-      includeWorlds: ["published-artifact", "external-service"],
+      includeWorlds: ["external-service"],
       includeCosts: ["fast", "medium"],
       includeStabilities: ["stable"],
       includeExecutions: ["artifact-tail"],
     },
     currentCommands: [
-      "Buildkite pipeline: ctx-release (stable mode)",
-      "pnpm -C core release:e2e:publish",
-      "pnpm -C core release:e2e:verify",
+      "Buildkite step: Release finalize (stable publish mode)",
+      "pnpm -C core testing:profile:run --profile stable-promotion",
     ],
     pipelines: ["ctx-release"],
-    remoteStrategy: "Promotion should be metadata and channel movement only; all expensive build work must already be proven.",
-    currentExecution: "Current stable logic still rides through the release pipeline mode switch and should keep reusing canary-proven artifacts.",
+    remoteStrategy: "Promotion should stay on the exact staged artifacts and latest-manifest movement only; all expensive build work must already be proven.",
+    currentExecution: "The checked-in ctx-release finalize step now dispatches this profile only when RELEASE_CHANNEL=stable and RELEASE_ALLOW_STABLE_PUBLISH=1.",
     expansionRules: [
       "This profile selects promotion entries; nightly-breadth is a separate profile.",
     ],

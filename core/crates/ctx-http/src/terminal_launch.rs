@@ -198,7 +198,7 @@ async fn prepare_terminal_container_launch(
     worktree: Option<&Worktree>,
     effective: &crate::settings::ExecutionSettings,
     workspace_id: WorkspaceId,
-    cwd: &PathBuf,
+    cwd: &FsPath,
 ) -> Result<
     (
         Option<NativeContainerTerminalSpec>,

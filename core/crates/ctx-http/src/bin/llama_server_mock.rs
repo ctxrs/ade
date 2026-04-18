@@ -27,10 +27,10 @@ fn parse_args(args: &[String]) -> (String, u16) {
                     i += 1;
                 }
             }
-            "--model" | "--json-schema-file" | "--json-schema" | "--grammar" | "--grammar-file" => {
-                if args.get(i + 1).is_some() {
-                    i += 1;
-                }
+            "--model" | "--json-schema-file" | "--json-schema" | "--grammar" | "--grammar-file"
+                if args.get(i + 1).is_some() =>
+            {
+                i += 1;
             }
             _ => {}
         }

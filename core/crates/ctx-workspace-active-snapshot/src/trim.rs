@@ -143,7 +143,7 @@ pub(super) fn upsert_event(events: &mut Vec<SessionEvent>, next: &SessionEvent) 
     } else {
         events.push(next.clone());
     }
-    events.sort_by(|a, b| a.seq.cmp(&b.seq));
+    events.sort_by_key(|event| event.seq);
 }
 
 fn head_window_bytes(
@@ -210,7 +210,7 @@ pub(super) fn compact_active_head_snapshot(head: &SessionHeadSnapshot) -> Sessio
 
         if out.tool_summaries.len() > ACTIVE_HEAD_TOOL_SUMMARY_LIMIT {
             out.tool_summaries
-                .sort_by(|a, b| a.updated_at.cmp(&b.updated_at));
+                .sort_by_key(|summary| summary.updated_at);
             out.tool_summaries = out
                 .tool_summaries
                 .split_off(out.tool_summaries.len() - ACTIVE_HEAD_TOOL_SUMMARY_LIMIT);

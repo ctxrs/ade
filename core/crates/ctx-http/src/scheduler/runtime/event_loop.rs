@@ -428,42 +428,38 @@ async fn run_turn_event_loop(ctx: TurnEventLoop) {
                     }
                 }
             }
-            SessionEventType::ThoughtChunk => {
-                if should_track_thought_chunk(&raw_payload) {
-                    if let Some(fragment) =
-                        raw_payload.get("content_fragment").and_then(Value::as_str)
-                    {
-                        thought_partial.push_str(fragment);
-                        let _ = store
-                            .update_session_turn_partial(
-                                session_id,
-                                turn_id,
-                                None,
-                                Some(&thought_partial),
-                                event.created_at,
-                            )
-                            .await;
-                    }
+            SessionEventType::ThoughtChunk if should_track_thought_chunk(&raw_payload) => {
+                if let Some(fragment) = raw_payload.get("content_fragment").and_then(Value::as_str)
+                {
+                    thought_partial.push_str(fragment);
+                    let _ = store
+                        .update_session_turn_partial(
+                            session_id,
+                            turn_id,
+                            None,
+                            Some(&thought_partial),
+                            event.created_at,
+                        )
+                        .await;
                 }
             }
-            SessionEventType::Notice => {
+            SessionEventType::Notice
                 if event
                     .payload_json
                     .get("kind")
                     .and_then(Value::as_str)
-                    .is_some_and(|kind| kind == "session_gap")
-                {
-                    let reason = event
-                        .payload_json
-                        .get("reason")
-                        .and_then(Value::as_str)
-                        .map(|value| value.to_string());
-                    state
-                        .workspaces
-                        .workspace_active_snapshot
-                        .publish_session_gap(workspace_id, session_id, event.seq, reason)
-                        .await;
-                }
+                    .is_some_and(|kind| kind == "session_gap") =>
+            {
+                let reason = event
+                    .payload_json
+                    .get("reason")
+                    .and_then(Value::as_str)
+                    .map(|value| value.to_string());
+                state
+                    .workspaces
+                    .workspace_active_snapshot
+                    .publish_session_gap(workspace_id, session_id, event.seq, reason)
+                    .await;
             }
             SessionEventType::ToolCall
             | SessionEventType::ToolCallUpdate

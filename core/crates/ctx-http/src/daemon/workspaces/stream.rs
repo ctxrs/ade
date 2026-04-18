@@ -273,7 +273,7 @@ pub(crate) async fn resolve_workspace_active_snapshot_subscriptions(
                 let replay = resolve_session_replay(replay, existing_last_sent, current_tail);
                 next.push(ResolvedWorkspaceActiveSessionSubscription { session_id, replay });
             }
-            next.sort_by(|a, b| a.session_id.0.cmp(&b.session_id.0));
+            next.sort_by_key(|subscription| subscription.session_id.0);
             let state = WorkspaceActiveSubscriptionState {
                 active_scope,
                 explicit_sessions,

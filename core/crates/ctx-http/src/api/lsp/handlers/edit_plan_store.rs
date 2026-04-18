@@ -11,7 +11,7 @@ pub(in crate::api) async fn list_edit_plans_for_worktree(
         .filter(|p| p.worktree_id == worktree_id)
         .map(|p| p.to_summary())
         .collect::<Vec<_>>();
-    out.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    out.sort_by_key(|summary| std::cmp::Reverse(summary.created_at));
     Ok(Json(out))
 }
 

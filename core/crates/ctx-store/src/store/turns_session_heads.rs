@@ -596,7 +596,7 @@ impl Store {
             let mut events = self
                 .list_session_events_tail_by_seq(session.id, limits.event_limit as u32, false)
                 .await?;
-            events.sort_by(|a, b| a.seq.cmp(&b.seq));
+            events.sort_by_key(|event| event.seq);
             events
         } else {
             Vec::new()
