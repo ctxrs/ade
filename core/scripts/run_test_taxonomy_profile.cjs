@@ -7,6 +7,8 @@ const {
   normalizeRepoRelativePath,
   resolveChangedFilesFromGit,
 } = require("./lib/test_taxonomy/execution.cjs");
+const { getFamiliesById } = require("./lib/test_taxonomy/families.cjs");
+const { getProfiles } = require("./lib/test_taxonomy/profiles.cjs");
 
 function parseArgs(argv) {
   const args = {
@@ -15,6 +17,7 @@ function parseArgs(argv) {
     checkNonEmpty: false,
     json: false,
     list: false,
+    listProfiles: false,
     profile: "",
     run: false,
     touchedOnly: false,
@@ -41,12 +44,14 @@ function parseArgs(argv) {
       args.run = true;
     } else if (arg === "--list") {
       args.list = true;
+    } else if (arg === "--list-profiles") {
+      args.listProfiles = true;
     } else {
       throw new Error(`unknown arg: ${arg}`);
     }
   }
 
-  if (!args.profile) {
+  if (!args.profile && !args.listProfiles) {
     throw new Error("--profile is required");
   }
   return args;
@@ -78,6 +83,15 @@ function runCommands(commands) {
 
 function main() {
   const args = parseArgs(process.argv.slice(2));
+  if (args.listProfiles) {
+    const profiles = getProfiles(getFamiliesById())
+      .map((profile) => profile.id)
+      .sort();
+    for (const profileId of profiles) {
+      process.stdout.write(`${profileId}\n`);
+    }
+    return;
+  }
   const changedFiles = resolveChangedFiles(args);
   const plan = buildExecutionPlan({
     profileId: args.profile,

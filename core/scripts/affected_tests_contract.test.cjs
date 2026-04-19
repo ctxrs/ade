@@ -118,6 +118,14 @@ test("no-change path uses the platform-aware fast gate", () => {
   const commands = runScenario([], { unameValue: "Linux" });
 
   assert.deepEqual(commands, [
-    "pnpm test:agent:linux-rbe",
+    "pnpm test:agent:minimal:linux-rbe",
+  ]);
+});
+
+test("docs-only changes fall back to the minimal taxonomy gate", () => {
+  const commands = runScenario(["docs/testing-tiers.md"], { unameValue: "Darwin" });
+
+  assert.deepEqual(commands, [
+    "pnpm test:agent:minimal",
   ]);
 });

@@ -91,17 +91,23 @@ test("release-contracts touched-only selection owns legacy release script change
   ]);
 });
 
-test("nightly-breadth splits provider auth live coverage by nightly slice", () => {
+test("nightly-breadth is the explicit scheduled anomaly and fuzz union", () => {
   const plan = buildExecutionPlan({
     profileId: "nightly-breadth",
     touchedOnly: false,
     changedFiles: [],
   });
 
-  assert.match(plan.commands.join("\n"), /pnpm verify:desktop:provider-auth-matrix:auth-import/);
-  assert.match(plan.commands.join("\n"), /pnpm verify:desktop:provider-auth-matrix:endpoint-write/);
-  assert.match(plan.commands.join("\n"), /pnpm verify:desktop:provider-auth-matrix:oauth-subscription/);
-  assert.doesNotMatch(plan.commands.join("\n"), /pnpm verify:desktop:provider-auth-matrix:nightly/);
+  assert.deepEqual(plan.commands, [
+    "pnpm bazel:anomaly:ctx-http:fault-matrix",
+    "pnpm bazel:anomaly:ctx-http:hot-endpoints-no-db",
+    "pnpm bazel:anomaly:ctx-store:fault-injection",
+    "pnpm bazel:fuzz:providers",
+    "pnpm bazel:fuzz:mcp",
+    "pnpm bazel:fuzz:workspace-payloads",
+    "pnpm bazel:fuzz:release-manifests",
+    "pnpm bazel:fuzz:desktop-ipc",
+  ]);
 });
 
 test("nightly helper profiles keep the scheduled nightly slices Linux-only and bounded", () => {
@@ -133,6 +139,13 @@ test("release publish-mode profiles stay on the artifact-only finalize boundary"
   assert.deepEqual(
     buildExecutionPlan({ profileId: "stable-promotion", touchedOnly: false, changedFiles: [] }).commands,
     ["bash ../scripts/buildkite/run_release_finalize.sh"],
+  );
+});
+
+test("nightly benchmark evidence stays on the dedicated wrapper entrypoint", () => {
+  assert.deepEqual(
+    buildExecutionPlan({ profileId: "nightly-benchmark-evidence", touchedOnly: false, changedFiles: [] }).commands,
+    ["bash ../scripts/buildkite/run_nightly_benchmark_evidence.sh"],
   );
 });
 

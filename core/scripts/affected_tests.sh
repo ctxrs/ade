@@ -12,7 +12,7 @@ Behavior:
 - Uses the testing taxonomy registry to select the affected execution plan for
   the changed files. Defaults to `agent-default`; set `--profile` or
   `CTX_AFFECTED_TESTS_PROFILE` to override.
-- Falls back to the default fast gate only when the taxonomy plan resolves to no commands.
+- Falls back to the minimal taxonomy gate only when the taxonomy plan resolves to no commands.
 EOF
 }
 
@@ -23,10 +23,10 @@ resolve_fast_gate_script() {
   fi
   case "$(resolve_uname)" in
     Linux)
-      printf '%s\n' 'test:agent:linux-rbe'
+      printf '%s\n' 'test:agent:minimal:linux-rbe'
       ;;
     *)
-      printf '%s\n' 'test:agent'
+      printf '%s\n' 'test:agent:minimal'
       ;;
   esac
 }
@@ -112,7 +112,7 @@ run_fast_gate() {
 }
 
 if [[ -z "${changed_files}" ]]; then
-  echo "no changed files detected; running default fast gate"
+  echo "no changed files detected; running minimal taxonomy gate"
   run_fast_gate
   exit 0
 fi
@@ -134,7 +134,7 @@ while IFS= read -r command; do
 done < <(node "${taxonomy_args[@]}")
 
 if [[ "${#taxonomy_commands[@]}" -eq 0 ]]; then
-  echo "no targeted mapping hit; running default fast gate"
+  echo "no targeted mapping hit; running minimal taxonomy gate"
   run_fast_gate
   exit 0
 fi
