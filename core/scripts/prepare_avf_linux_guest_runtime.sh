@@ -58,6 +58,10 @@ cleanup() {
 }
 trap cleanup EXIT
 
+preferred_tmp_root() {
+  printf '%s' "${CTX_VOLATILE_TMPDIR:-${TMPDIR:-/tmp}}"
+}
+
 need_cmd() {
   local cmd="$1"
   command -v "$cmd" >/dev/null 2>&1 || die "missing required command: $cmd"
@@ -288,7 +292,7 @@ fi
 target_root="${CTX_AVF_GUEST_HELPER_TARGET_ROOT:-}"
 if [[ -z "$target_root" ]]; then
   if [[ "$needs_guest_helper_build" -eq 1 ]]; then
-    helper_build_tmp_root="$(mktemp -d "${TMPDIR:-/tmp}/ctx-avf-guest-helper-target.XXXXXX")"
+    helper_build_tmp_root="$(mktemp -d "$(preferred_tmp_root)/ctx-avf-guest-helper-target.XXXXXX")"
     target_root="$helper_build_tmp_root"
   else
     target_root="${CARGO_TARGET_DIR:-${repo_root}/target}"
@@ -391,7 +395,7 @@ if ! qemu_img_bin="$(resolve_qemu_img)"; then
   die "missing qemu-img; install qemu via Homebrew"
 fi
 
-tmp_root="$(mktemp -d "${TMPDIR:-/tmp}/ctx-avf-linux-guest-runtime.XXXXXX")"
+tmp_root="$(mktemp -d "$(preferred_tmp_root)/ctx-avf-linux-guest-runtime.XXXXXX")"
 
 rootfs_qcow="$tmp_root/$rootfs_name"
 kernel_path="$tmp_root/$kernel_name"

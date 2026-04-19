@@ -6,10 +6,18 @@ const path = require("path");
 const { execFileSync } = require("child_process");
 
 const scriptPath = path.join(__dirname, "prepare_avf_linux_guest_runtime.sh");
+const scriptText = fs.readFileSync(scriptPath, "utf8");
 
 function escapeRegex(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
+
+test("prepare_avf_linux_guest_runtime.sh prefers the volatile tmp root for scratch space", () => {
+  assert.match(scriptText, /preferred_tmp_root\(\) \{/);
+  assert.match(scriptText, /CTX_VOLATILE_TMPDIR:-\$\{TMPDIR:-\/tmp\}/);
+  assert.match(scriptText, /mktemp -d "\$\(preferred_tmp_root\)\/ctx-avf-guest-helper-target\.XXXXXX"/);
+  assert.match(scriptText, /mktemp -d "\$\(preferred_tmp_root\)\/ctx-avf-linux-guest-runtime\.XXXXXX"/);
+});
 
 test("prepare_avf_linux_guest_runtime.sh resolves official Ubuntu inputs in dry-run mode", () => {
   const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-avf-runtime-"));
