@@ -1021,7 +1021,7 @@ function buildStaticEntries() {
       title: "Web premerge required suite",
       family: "web-workbench",
       entrypointType: "core-package-script",
-      entrypoint: "verify:e2e",
+      entrypoint: "test:e2e:premerge",
       surface: "system",
       oracle: "golden-flow",
       world: "simulated",
@@ -1037,7 +1037,7 @@ function buildStaticEntries() {
         "core/apps/web/e2e/suites/premerge_required.txt",
       ],
       dependencyCrates: [],
-      notes: "Current premerge-required browser suite.",
+      notes: "Canonical premerge-required browser suite.",
       exception: "",
     },
     {

@@ -206,7 +206,7 @@ function commandPriority(command) {
   if (command === "pnpm bazel:web:test") {
     return 100;
   }
-  if (command === "pnpm verify:e2e") {
+  if (command === "pnpm test:e2e:premerge") {
     return 200;
   }
   return 1000;

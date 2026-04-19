@@ -560,7 +560,7 @@ test("workbench: endpoint harness OpenRouter matrix first pass", async ({ page, 
   page.setDefaultNavigationTimeout(20_000);
 
   if ((process.env.CTX_E2E_TIER ?? "") !== "endpoint-ui") {
-    test.skip(true, "set CTX_E2E_TIER=endpoint-ui to run endpoint harness matrix test");
+    test.skip(true, "set the legacy selector CTX_E2E_TIER=endpoint-ui to run endpoint harness matrix test");
   }
 
   const apiKey = (process.env.OPENROUTER_API_KEY ?? "").trim();

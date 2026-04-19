@@ -63,7 +63,7 @@ test("agent-default workspace-level Rust inputs select the taxonomy-backed Rust 
   ]);
 });
 
-test("agent-default escalates high-risk web state changes to browser truth", () => {
+test("agent-default escalates high-risk web state changes to the canonical premerge browser suite", () => {
   const plan = buildExecutionPlan({
     profileId: "agent-default",
     changedFiles: ["core/apps/web/src/state/providerOnboardingCoordinator.ts"],
@@ -72,7 +72,7 @@ test("agent-default escalates high-risk web state changes to browser truth", () 
 
   assert.deepEqual(plan.commands, [
     "pnpm bazel:web:test",
-    "pnpm verify:e2e",
+    "pnpm test:e2e:premerge",
   ]);
 });
 

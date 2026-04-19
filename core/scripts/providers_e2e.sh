@@ -443,6 +443,7 @@ run_linux_arm_runtime_install_lane() {
   export CTX_BUNDLE_BUILD_CODEX_CRP="${CTX_BUNDLE_BUILD_CODEX_CRP:-0}"
   ensure_endpoint_ui_bundles
 
+  # Legacy selector name retained for the provider browser suite runner.
   export CTX_E2E_TIER="endpoint-ui"
   export CTX_E2E_INSTALL_SMOKE_PROVIDERS="${provider_csv}"
   export CTX_E2E_INSTALL_SMOKE_ENVIRONMENT="${CTX_E2E_INSTALL_SMOKE_ENVIRONMENT:-${expected_environment:-host}}"

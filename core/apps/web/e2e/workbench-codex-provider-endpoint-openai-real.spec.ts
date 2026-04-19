@@ -103,7 +103,7 @@ test("workbench: codex OpenAI endpoint auth can run a real task", async ({ page,
   test.setTimeout(10 * 60_000);
 
   if ((process.env.CTX_E2E_TIER ?? "") !== "provider-api-auth") {
-    test.skip(true, "set CTX_E2E_TIER=provider-api-auth to run codex OpenAI provider-endpoint e2e");
+    test.skip(true, "set the legacy selector CTX_E2E_TIER=provider-api-auth to run codex OpenAI provider-endpoint e2e");
   }
 
   const openAiApiKey = (process.env.OPENAI_API_KEY ?? "").trim();

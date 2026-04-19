@@ -78,10 +78,10 @@ test("ctx-providers changes use the targeted taxonomy Rust gate", () => {
   ]);
 });
 
-test("web high-risk changes still trigger the safety fallback", () => {
+test("web high-risk changes escalate to the canonical premerge browser suite", () => {
   const commands = runScenario(["core/apps/web/src/state/providerOnboardingCoordinator.ts"]);
 
-  assert.deepEqual(commands, ["bash -lc pnpm bazel:web:test", "bash -lc pnpm verify:e2e"]);
+  assert.deepEqual(commands, ["bash -lc pnpm bazel:web:test", "bash -lc pnpm test:e2e:premerge"]);
 });
 
 test("root-level Rust config changes still trigger the Rust gate", () => {
