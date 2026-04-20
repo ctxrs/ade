@@ -22,7 +22,7 @@ test("desktop_tauri_entry uses release prep for normal builds", () => {
   assert.equal(invocation.tauriExecArgs[1], "--config");
   assert.match(invocation.tauriExecArgs[2], /tauri\.identity\.json$/);
   assert.deepEqual(invocation.tauriExecArgs.slice(3), ["--bundles", "app"]);
-  assert.equal(invocation.tauriEnv.CTX_RELEASE_EFFECTIVE_VERSION, "0.58.11");
+  assert.equal(invocation.tauriEnv.CTX_RELEASE_EFFECTIVE_VERSION, "0.59.0");
 });
 
 test("desktop_tauri_entry strips only the outer pnpm separator", () => {
@@ -87,7 +87,7 @@ test("desktop_tauri_entry derives release identity for canary builds", () => {
   );
   assert.equal(
     invocation.tauriEnv.CTX_RELEASE_EFFECTIVE_VERSION,
-    "0.58.11-canary.deadbeefcafe",
+    "0.59.0-canary.deadbeefcafe",
   );
   assert.equal(invocation.tauriEnv.CTX_BUILD_ID, "deadbeefcafe");
   assert.equal(

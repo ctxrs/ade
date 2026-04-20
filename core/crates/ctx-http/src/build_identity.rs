@@ -115,19 +115,19 @@ mod tests {
             &path,
             r#"{
   "schemaVersion": 1,
-  "exactVersion": "0.58.11-canary.deadbeefcafe",
+  "exactVersion": "0.59.0-canary.deadbeefcafe",
   "buildId": "deadbeefcafe",
   "compatibilityToken": "artifact-deadbeefcafebabefeedface1234567890abcdef",
   "channel": "canary",
   "sourceCommit": "deadbeefcafebabefeedface1234567890abcdef",
   "mode": "release",
-  "checkedInVersion": "0.58.11"
+  "checkedInVersion": "0.59.0"
 }
 "#,
         )
         .expect("write identity");
         let identity = parse_build_identity(&path).expect("parse identity");
-        assert_eq!(identity.exact_version, "0.58.11-canary.deadbeefcafe");
+        assert_eq!(identity.exact_version, "0.59.0-canary.deadbeefcafe");
         assert_eq!(identity.build_id, "deadbeefcafe");
         assert_eq!(
             identity.compatibility_token,
@@ -143,7 +143,7 @@ mod tests {
             &path,
             r#"{
   "schemaVersion": 1,
-  "exactVersion": "0.58.11",
+  "exactVersion": "0.59.0",
   "buildId": "",
   "compatibilityToken": "artifact-localpkg123"
 }
