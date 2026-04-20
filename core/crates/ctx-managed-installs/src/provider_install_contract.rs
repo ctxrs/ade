@@ -596,7 +596,7 @@ mod tests {
         let cfg = AgentServerConfigFile::default();
         let mut codex = archive_entry("codex", ProviderMatrixEntryKind::Harness);
         codex.releases = vec![ProviderRelease {
-            version: "0.114.0-ctx.4".to_string(),
+            version: "0.114.0-ctx.5".to_string(),
             status: ProviderReleaseStatus::Supported,
             upstream_version: Some("0.114.0".to_string()),
             provenance: None,

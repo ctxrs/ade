@@ -284,7 +284,7 @@ async fn host_provider_status_surfaces_stale_installs_for_current_ctx_build() {
                     "codex",
                     "@openai/codex",
                     "0.114.0-ctx.3",
-                    "0.114.0-ctx.4",
+                    "0.114.0-ctx.5",
                     "0.59.0",
                 ),
                 managed_npm_status_entry(
@@ -387,7 +387,7 @@ async fn host_provider_status_surfaces_stale_installs_for_current_ctx_build() {
             .unwrap_or_else(|| panic!("missing provider {provider_id} in {body:#?}"))
     };
 
-    for (provider_id, expected_version) in [("codex", "0.114.0-ctx.4"), ("gemini", "0.38.2")] {
+    for (provider_id, expected_version) in [("codex", "0.114.0-ctx.5"), ("gemini", "0.38.2")] {
         let provider = find_provider(provider_id);
         assert_eq!(
             provider

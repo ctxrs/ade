@@ -66,7 +66,7 @@ describe("WorkbenchProviderWarningBanner", () => {
             details: {
               install_supported: "true",
               matrix_update_available: "true",
-              matrix_recommended_version: "0.114.0-ctx.4",
+              matrix_recommended_version: "0.114.0-ctx.5",
             },
           }),
           gemini: providerStatus("gemini", {

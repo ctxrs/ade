@@ -1085,9 +1085,9 @@ async fn apply_matrix_to_status_marks_stale_installed_provider_as_updateable_for
 
     let sha_old = sha256_hex(b"old-archive");
     let sha_new = sha256_hex(b"new-archive");
-    let mut entry = codex_archive_test_entry("0.114.0-ctx.4", &sha_new);
+    let mut entry = codex_archive_test_entry("0.114.0-ctx.5", &sha_new);
     entry.releases = vec![ProviderRelease {
-        version: "0.114.0-ctx.4".to_string(),
+        version: "0.114.0-ctx.5".to_string(),
         status: ProviderReleaseStatus::Supported,
         upstream_version: Some("0.114.0".to_string()),
         context_min: Some("0.59.0".to_string()),
@@ -1118,7 +1118,7 @@ async fn apply_matrix_to_status_marks_stale_installed_provider_as_updateable_for
             .details
             .get("matrix_recommended_version")
             .map(String::as_str),
-        Some("0.114.0-ctx.4")
+        Some("0.114.0-ctx.5")
     );
     assert_eq!(
         status

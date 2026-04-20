@@ -4,7 +4,7 @@ package(default_visibility = ["//visibility:public"])
 
 CODEX_CRP_RUSTC_ENV = {
     "CARGO_MANIFEST_DIR": "core/crates/codex-crp",
-    "CARGO_PKG_VERSION": "0.114.0-ctx.4",
+    "CARGO_PKG_VERSION": "0.114.0-ctx.5",
 }
 
 CODEX_CRP_DEPS = [
