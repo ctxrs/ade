@@ -91,6 +91,18 @@ test("release-contracts touched-only selection owns legacy release script change
   ]);
 });
 
+test("mac-preview touched-only selection resolves to the dedicated Apple Silicon preview wrapper", () => {
+  const plan = buildExecutionPlan({
+    profileId: "mac-preview",
+    changedFiles: ["core/apps/desktop/src-tauri/src/main.rs"],
+    touchedOnly: true,
+  });
+
+  assert.deepEqual(plan.commands, [
+    "bash ../scripts/buildkite/run_mac_preview_build.sh",
+  ]);
+});
+
 test("nightly-breadth is the explicit scheduled anomaly and fuzz union", () => {
   const plan = buildExecutionPlan({
     profileId: "nightly-breadth",

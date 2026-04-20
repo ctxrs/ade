@@ -107,6 +107,31 @@ const PROFILES = [
     ],
   },
   {
+    id: "mac-preview",
+    title: "Mac Preview",
+    purpose: "Build a fast signed Apple Silicon preview app on push to main without DMG, notarization, or publish work.",
+    selector: {
+      includeEntryIds: [
+        "updates-release.mac-preview-macos-arm64",
+      ],
+      includeSurfaces: ["artifact"],
+      includeWorlds: ["local-packaged-artifact"],
+      includeCosts: ["medium", "slow"],
+      includeStabilities: ["stable"],
+      includeExecutions: ["script-local"],
+    },
+    currentCommands: [
+      "Buildkite pipeline: ctx-mac-preview",
+      "pnpm -C core testing:profile:run --profile mac-preview",
+    ],
+    pipelines: ["ctx-mac-preview"],
+    remoteStrategy: "Path-gate on Linux before building and validating the signed arm64 app on macOS.",
+    currentExecution: "The pipeline uploads the Mac build step after a touched-files gate and produces a signed .app artifact.",
+    expansionRules: [
+      "Do not add DMG creation, notarization, updater packaging, or publish/promote work to this profile.",
+    ],
+  },
+  {
     id: "install-bootstrap-contracts",
     title: "Install Bootstrap Contracts",
     purpose: "Direct install/bootstrap contract execution for the ctx-main linux and mac bootstrap lanes.",
