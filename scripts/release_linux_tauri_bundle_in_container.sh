@@ -26,15 +26,35 @@ for cmd in pnpm patchelf file readelf ldd appstreamcli xdg-mime desktop-file-val
   fi
 done
 
+linker_cache_has_entry() {
+  local linker_cache="$1"
+  local soname="$2"
+  awk -v soname="$soname" '
+    {
+      line = $0
+      sub(/^[[:space:]]+/, "", line)
+      if (index(line, soname " (") == 1) {
+        found = 1
+        exit 0
+      }
+    }
+    END {
+      exit found ? 0 : 1
+    }
+  ' <<<"$linker_cache"
+}
+
 scripts/linux_bundle_gate.sh --platform "$platform" --mode both
 
-if ! ldconfig -p | grep -Fq "libc++.so.9.0"; then
+linker_cache="$(ldconfig -p 2>/dev/null || true)"
+
+if ! linker_cache_has_entry "$linker_cache" "libc++.so.9.0"; then
   echo "error: required libc++ soname is not registered in linker cache: libc++.so.9.0" >&2
   echo "       release lane tool deps must register it before invoking this script." >&2
   exit 1
 fi
 
-if ! ldconfig -p | grep -Fq "$musl_soname"; then
+if ! linker_cache_has_entry "$linker_cache" "$musl_soname"; then
   echo "error: required musl soname is not registered in linker cache: $musl_soname" >&2
   echo "       release lane tool deps must register it before invoking this script." >&2
   exit 1
