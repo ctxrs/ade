@@ -85,37 +85,37 @@
             "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/amp/0.1.2/macos/aarch64/amp-0.1.2-macos-aarch64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "dist/bin/amp-acp.js",
-            "sha256": "b51f71afc745a7f090c302c8c51a41192e4535ea6dfee886bb3903a5a250c521"
+            "sha256": "5f0d90b8cda1e6cf24963f296666640c88e0e8f5ecde9e86f2bedca85d4d907e"
           },
           "darwin-x86_64": {
             "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/amp/0.1.2/macos/x86_64/amp-0.1.2-macos-x86_64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "dist/bin/amp-acp.js",
-            "sha256": "5f6608fd3316490c4fc864ef0de2b735781ccba59217f0275bb83f6738b8eb9a"
+            "sha256": "5f0d90b8cda1e6cf24963f296666640c88e0e8f5ecde9e86f2bedca85d4d907e"
           },
           "linux-aarch64": {
             "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/amp/0.1.2/linux/aarch64/amp-0.1.2-linux-aarch64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "dist/bin/amp-acp.js",
-            "sha256": "967bf772de64039d0a37d0818f3a39842c4f45d5e0e19ab550a95340904910b5"
+            "sha256": "c8d2b6cfe21514798fb6ca127f62a4c64bf094c7c57ffc54760a6533d4690782"
           },
           "linux-x86_64": {
             "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/amp/0.1.2/linux/x86_64/amp-0.1.2-linux-x86_64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "dist/bin/amp-acp.js",
-            "sha256": "8d80993bfb3d9f011af69a3854599b3d1b5ae38685fbd6623cc0951ef437f388"
+            "sha256": "c8d2b6cfe21514798fb6ca127f62a4c64bf094c7c57ffc54760a6533d4690782"
           },
           "macos-aarch64": {
             "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/amp/0.1.2/macos/aarch64/amp-0.1.2-macos-aarch64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "dist/bin/amp-acp.js",
-            "sha256": "b51f71afc745a7f090c302c8c51a41192e4535ea6dfee886bb3903a5a250c521"
+            "sha256": "5f0d90b8cda1e6cf24963f296666640c88e0e8f5ecde9e86f2bedca85d4d907e"
           },
           "macos-x86_64": {
             "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/amp/0.1.2/macos/x86_64/amp-0.1.2-macos-x86_64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "dist/bin/amp-acp.js",
-            "sha256": "5f6608fd3316490c4fc864ef0de2b735781ccba59217f0275bb83f6738b8eb9a"
+            "sha256": "5f0d90b8cda1e6cf24963f296666640c88e0e8f5ecde9e86f2bedca85d4d907e"
           }
         }
       },
@@ -208,40 +208,40 @@
         "args": [],
         "targets": {
           "darwin-aarch64": {
-            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/stable/claude-crp/0.2.7-ctx.4/darwin/aarch64/claude-crp-0.2.7-ctx.4-darwin-aarch64.tar.gz",
+            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/claude-crp/0.2.7-ctx.4/macos/aarch64/claude-crp-0.2.7-ctx.4-macos-aarch64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "bin/claude-crp",
-            "sha256": "f419cc3fbff5c45d09ee0e5fc3a510ece37d283479a637ed489070680335cea0"
+            "sha256": "66b2d11d01d08326a6ac63d7502cfe54c92b81397c8ddb0f65318f7adca44094"
           },
           "darwin-x86_64": {
-            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/stable/claude-crp/0.2.7-ctx.4/darwin/x86_64/claude-crp-0.2.7-ctx.4-darwin-x86_64.tar.gz",
+            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/claude-crp/0.2.7-ctx.4/macos/x86_64/claude-crp-0.2.7-ctx.4-macos-x86_64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "bin/claude-crp",
-            "sha256": "b03d6a0431e03e540673007f9f10e0b200d52abcab4daf3af7e21ec53e14a27c"
+            "sha256": "66b2d11d01d08326a6ac63d7502cfe54c92b81397c8ddb0f65318f7adca44094"
           },
           "linux-aarch64": {
-            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/stable/claude-crp/0.2.7-ctx.4/linux/aarch64/claude-crp-0.2.7-ctx.4-linux-aarch64.tar.gz",
+            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/claude-crp/0.2.7-ctx.4/linux/aarch64/claude-crp-0.2.7-ctx.4-linux-aarch64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "bin/claude-crp",
-            "sha256": "42d8ba61a556de19752ab86b59ab1165894927b6f69fd73e254aec27d550affd"
+            "sha256": "78539fddb80ccb3fca388aa76f0c33cdfb37cce22a8a0d65be7eb3416453e67c"
           },
           "linux-x86_64": {
-            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/stable/claude-crp/0.2.7-ctx.4/linux/x86_64/claude-crp-0.2.7-ctx.4-linux-x86_64.tar.gz",
+            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/claude-crp/0.2.7-ctx.4/linux/x86_64/claude-crp-0.2.7-ctx.4-linux-x86_64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "bin/claude-crp",
-            "sha256": "e5a69de99b571e74842a9d282cc7091b2c3736c556804278a5868920ceb2af3f"
+            "sha256": "bd7c2a3e6e19ad0ba645d3737a10c3f2fddd118284f4c6bac0fc49f04503f682"
           },
           "macos-aarch64": {
-            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/stable/claude-crp/0.2.7-ctx.4/darwin/aarch64/claude-crp-0.2.7-ctx.4-darwin-aarch64.tar.gz",
+            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/claude-crp/0.2.7-ctx.4/macos/aarch64/claude-crp-0.2.7-ctx.4-macos-aarch64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "bin/claude-crp",
-            "sha256": "f419cc3fbff5c45d09ee0e5fc3a510ece37d283479a637ed489070680335cea0"
+            "sha256": "66b2d11d01d08326a6ac63d7502cfe54c92b81397c8ddb0f65318f7adca44094"
           },
           "macos-x86_64": {
-            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/stable/claude-crp/0.2.7-ctx.4/darwin/x86_64/claude-crp-0.2.7-ctx.4-darwin-x86_64.tar.gz",
+            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/claude-crp/0.2.7-ctx.4/macos/x86_64/claude-crp-0.2.7-ctx.4-macos-x86_64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "bin/claude-crp",
-            "sha256": "b03d6a0431e03e540673007f9f10e0b200d52abcab4daf3af7e21ec53e14a27c"
+            "sha256": "66b2d11d01d08326a6ac63d7502cfe54c92b81397c8ddb0f65318f7adca44094"
           }
         }
       },
@@ -940,37 +940,37 @@
             "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/pi/0.1.1/macos/aarch64/pi-0.1.1-macos-aarch64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "dist/bin/pi-acp.js",
-            "sha256": "971b02674a846366e2ff4cbb2441676ab2253672799b1d35e6c488f85d19b957"
+            "sha256": "964310282deefd70fba8470aaf6a5855857772cfafbd9be1c8c5bf7f66e1e2db"
           },
           "darwin-x86_64": {
             "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/pi/0.1.1/macos/x86_64/pi-0.1.1-macos-x86_64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "dist/bin/pi-acp.js",
-            "sha256": "ee746bfc881503f0916b64383c0e1273a470736bc9862522ec79b8e8c2f3c3b6"
+            "sha256": "964310282deefd70fba8470aaf6a5855857772cfafbd9be1c8c5bf7f66e1e2db"
           },
           "linux-aarch64": {
             "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/pi/0.1.1/linux/aarch64/pi-0.1.1-linux-aarch64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "dist/bin/pi-acp.js",
-            "sha256": "d5e2f99df2a9be4bbab3974594c3aea593fa12047fe0e7f01701b3e496549d59"
+            "sha256": "1eaae84dce80a18d57e71e0fd6a9777227a8baf1a32ea6343142cab2e5cfb7c8"
           },
           "linux-x86_64": {
             "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/pi/0.1.1/linux/x86_64/pi-0.1.1-linux-x86_64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "dist/bin/pi-acp.js",
-            "sha256": "e1f3a60f961b6b5fdb235ff166d9729cc6a13db76c0e1802045c82e3e3ef96d4"
+            "sha256": "52e0774ba802cfd3f0bd87ff480f3218a2add713856c1d6441d5b8938d633076"
           },
           "macos-aarch64": {
             "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/pi/0.1.1/macos/aarch64/pi-0.1.1-macos-aarch64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "dist/bin/pi-acp.js",
-            "sha256": "971b02674a846366e2ff4cbb2441676ab2253672799b1d35e6c488f85d19b957"
+            "sha256": "964310282deefd70fba8470aaf6a5855857772cfafbd9be1c8c5bf7f66e1e2db"
           },
           "macos-x86_64": {
             "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/pi/0.1.1/macos/x86_64/pi-0.1.1-macos-x86_64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "dist/bin/pi-acp.js",
-            "sha256": "ee746bfc881503f0916b64383c0e1273a470736bc9862522ec79b8e8c2f3c3b6"
+            "sha256": "964310282deefd70fba8470aaf6a5855857772cfafbd9be1c8c5bf7f66e1e2db"
           }
         }
       },
