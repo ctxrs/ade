@@ -3,6 +3,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const childProcess = require("node:child_process");
 
 const {
   ARTIFACT_MARKER,
@@ -146,6 +147,64 @@ test("resolveDesktopWebDistSource prefers CTX_DESKTOP_WEB_DIST when provided", (
     resolveDesktopWebDistSource(coreRoot, {}),
     path.join(coreRoot, "apps", "web", "dist"),
   );
+});
+
+test("dist_sync_tool builds from a minimal temp workspace without writing dist into the real checkout", () => {
+  const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-web-dist-sync-"));
+  const coreRoot = path.join(repoRoot, "core");
+  const webRoot = path.join(coreRoot, "apps", "web");
+  const outputDir = path.join(repoRoot, "out", "dist");
+  const tmpRoot = path.join(repoRoot, "tmp");
+  const viteBin = path.join(webRoot, "node_modules", ".bin", "vite");
+  const scriptPath = path.resolve(__dirname, "..", "..", "apps", "web", "dist_sync_tool.sh");
+
+  writeFile(path.join(coreRoot, "package.json"), JSON.stringify({ private: true }, null, 2));
+  writeFile(path.join(coreRoot, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n");
+  writeFile(path.join(coreRoot, "pnpm-workspace.yaml"), "packages:\n  - apps/*\n  - packages/*\n");
+  writeFile(path.join(webRoot, "package.json"), JSON.stringify({ name: "ctx-web" }, null, 2));
+  writeFile(path.join(webRoot, "vite.config.ts"), "export default {};\n");
+  writeFile(path.join(webRoot, "tsconfig.json"), JSON.stringify({ compilerOptions: {} }, null, 2));
+  writeFile(path.join(webRoot, "index.html"), "<!doctype html><html></html>\n");
+  writeFile(path.join(webRoot, "postcss.config.cjs"), "module.exports = {};\n");
+  writeFile(path.join(webRoot, "tailwind.config.cjs"), "module.exports = { content: [] };\n");
+  writeFile(path.join(webRoot, "src", "main.tsx"), "console.log('web');\n");
+  writeFile(path.join(webRoot, "public", "favicon.ico"), "icon\n");
+  writeFile(path.join(coreRoot, "packages", "ctx-design", "src", "index.ts"), "export const design = 1;\n");
+  writeFile(path.join(coreRoot, "node_modules", ".keep"), "");
+  fs.mkdirSync(tmpRoot, { recursive: true });
+  fs.mkdirSync(path.dirname(viteBin), { recursive: true });
+  fs.writeFileSync(
+    viteBin,
+    [
+      "#!/usr/bin/env bash",
+      "set -euo pipefail",
+      "test -f package.json",
+      "test -f ../../package.json",
+      "test -L src",
+      "test -L public",
+      "test -L ../../packages",
+      "test -d ../../node_modules",
+      "test \"$PWD\" != \"$BUILD_WORKSPACE_DIRECTORY/core/apps/web\"",
+      "mkdir -p dist",
+      "printf '<html>ok</html>\\n' > dist/index.html",
+    ].join("\n"),
+    { mode: 0o755 },
+  );
+
+  const result = childProcess.spawnSync(scriptPath, [outputDir], {
+    env: {
+      ...process.env,
+      BUILD_WORKSPACE_DIRECTORY: repoRoot,
+      RUNFILES_DIR: "",
+      TEST_WORKSPACE: "",
+      TMPDIR: tmpRoot,
+    },
+    encoding: "utf8",
+  });
+
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.equal(fs.existsSync(path.join(outputDir, "index.html")), true);
+  assert.equal(fs.existsSync(path.join(webRoot, "dist")), false);
 });
 
 test("resolveDirectRunBazelVersion uses the second .bazelversion line for buildbuddy wrappers", () => {

@@ -38,6 +38,58 @@ link_real_workspace_dir() {
   ln -s "${real_root}/${rel_path}" "${temp_root}/${rel_path}"
 }
 
+copy_runfiles_file() {
+  local runfiles_root="$1"
+  local temp_root="$2"
+  local rel_path="$3"
+  if [[ ! -f "${runfiles_root}/${rel_path}" ]]; then
+    return 0
+  fi
+  mkdir -p "$(dirname "${temp_root}/${rel_path}")"
+  cp "${runfiles_root}/${rel_path}" "${temp_root}/${rel_path}"
+}
+
+link_runfiles_path() {
+  local runfiles_root="$1"
+  local temp_root="$2"
+  local rel_path="$3"
+  if [[ ! -e "${runfiles_root}/${rel_path}" ]]; then
+    return 0
+  fi
+  mkdir -p "$(dirname "${temp_root}/${rel_path}")"
+  ln -s "${runfiles_root}/${rel_path}" "${temp_root}/${rel_path}"
+}
+
+prepare_minimal_workspace() {
+  local runfiles_root="$1"
+  local real_root="$2"
+  local temp_root="$3"
+
+  mkdir -p "${temp_root}/core/apps/web"
+  copy_runfiles_file "${runfiles_root}" "${temp_root}" "core/package.json"
+  copy_runfiles_file "${runfiles_root}" "${temp_root}" "core/pnpm-lock.yaml"
+  copy_runfiles_file "${runfiles_root}" "${temp_root}" "core/pnpm-workspace.yaml"
+  link_runfiles_path "${runfiles_root}" "${temp_root}" "core/packages"
+
+  while IFS= read -r entry; do
+    local name
+    name="$(basename "${entry}")"
+    case "${name}" in
+      dist|node_modules|coverage|playwright-report|test-results)
+        continue
+        ;;
+    esac
+    if [[ -d "${entry}" ]]; then
+      link_runfiles_path "${runfiles_root}" "${temp_root}" "core/apps/web/${name}"
+    elif [[ -f "${entry}" ]]; then
+      copy_runfiles_file "${runfiles_root}" "${temp_root}" "core/apps/web/${name}"
+    fi
+  done < <(find "${runfiles_root}/core/apps/web" -mindepth 1 -maxdepth 1 | sort)
+
+  link_real_workspace_dir "${real_root}" "${temp_root}" "core/node_modules"
+  link_real_workspace_dir "${real_root}" "${temp_root}" "core/apps/web/node_modules"
+}
+
 RUNFILES_REPO_ROOT="$(resolve_repo_root)"
 if [[ -z "${RUNFILES_REPO_ROOT}" ]]; then
   echo "failed to locate Bazel runfiles repo root" >&2
@@ -48,40 +100,8 @@ REAL_WORKSPACE_ROOT="${BUILD_WORKSPACE_DIRECTORY}"
 TMP_WORKSPACE="$(mktemp -d "${TMPDIR:-/tmp}/ctx-bazel-web-dist.XXXXXX")"
 trap 'rm -rf "${TMP_WORKSPACE}"' EXIT
 
-TAR_EXCLUDES=(
-  "--exclude=.git"
-  "--exclude=.ctx"
-  "--exclude=node_modules"
-  "--exclude=.turbo"
-  "--exclude=bazel-bin"
-  "--exclude=bazel-out"
-  "--exclude=bazel-testlogs"
-  "--exclude=core/node_modules"
-  "--exclude=core/apps/web/node_modules"
-  "--exclude=core/target"
-  "--exclude=core/.turbo"
-  "--exclude=core/apps/web/dist"
-  "--exclude=core/apps/desktop/src-tauri/bin"
-  "--exclude=core/apps/desktop/src-tauri/bundles"
-  "--exclude=core/apps/web/playwright-report"
-  "--exclude=core/apps/web/test-results"
-  "--exclude=core/apps/web/e2e/playwright-report"
-  "--exclude=core/apps/web/e2e/test-results"
-)
-
 mkdir -p "${TMP_WORKSPACE}"
-if [[ "${OSTYPE:-}" == darwin* ]]; then
-  # AppleDouble and xattr propagation can stall large workspace mirrors on macOS.
-  COPYFILE_DISABLE=1 COPY_EXTENDED_ATTRIBUTES_DISABLE=1 \
-    tar -C "${RUNFILES_REPO_ROOT}" "${TAR_EXCLUDES[@]}" -cf - . |
-    COPYFILE_DISABLE=1 COPY_EXTENDED_ATTRIBUTES_DISABLE=1 \
-      tar -C "${TMP_WORKSPACE}" -xf -
-else
-  tar -C "${RUNFILES_REPO_ROOT}" "${TAR_EXCLUDES[@]}" -cf - . |
-    tar -C "${TMP_WORKSPACE}" -xf -
-fi
-link_real_workspace_dir "${REAL_WORKSPACE_ROOT}" "${TMP_WORKSPACE}" "core/node_modules"
-link_real_workspace_dir "${REAL_WORKSPACE_ROOT}" "${TMP_WORKSPACE}" "core/apps/web/node_modules"
+prepare_minimal_workspace "${RUNFILES_REPO_ROOT}" "${REAL_WORKSPACE_ROOT}" "${TMP_WORKSPACE}"
 
 VITE_BIN="${TMP_WORKSPACE}/core/apps/web/node_modules/.bin/vite"
 if [[ ! -x "${VITE_BIN}" ]]; then
