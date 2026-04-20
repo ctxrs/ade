@@ -615,6 +615,12 @@ stage_codex_archive_from_binary() {
   tmp_dir="$(mktemp -d "$OUT_DIR/.pkg-codex.XXXXXX")"
   cp "$binary_path" "$tmp_dir/codex-crp"
   chmod +x "$tmp_dir/codex-crp" || true
+  if [[ "$TARGET_OS" == "macos" ]]; then
+    require_cmd strip
+    chmod u+w "$tmp_dir/codex-crp" || true
+    strip -S -x "$tmp_dir/codex-crp"
+    chmod +x "$tmp_dir/codex-crp" || true
+  fi
   local archive_path="$stage_dir/codex-crp-$version-$RUST_TARGET.tar.gz"
   create_deterministic_tar_gz "$archive_path" "$tmp_dir" "codex-crp"
   rm -rf "$tmp_dir"

@@ -84,6 +84,7 @@ function main() {
     env,
   );
   run("bash", ["../scripts/tests/provider_deps_cross_target_contract.sh"], env);
+  run("bash", ["../scripts/tests/provider_deps_codex_deterministic_contract.sh"], env);
   run("pnpm", ["bazel:install-site:test"], env);
   run("pnpm", ["bazel:web:any:enforce"], env);
   run("pnpm", ["bazel:web:lint"], env);
