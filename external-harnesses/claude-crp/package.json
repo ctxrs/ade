@@ -1,6 +1,6 @@
 {
   "name": "claude-crp",
-  "version": "0.2.7-ctx.4",
+  "version": "0.2.7-ctx.5",
   "private": true,
   "type": "module",
   "scripts": {
@@ -16,7 +16,7 @@
     "claude-crp": "bin/claude-crp"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "0.2.70"
+    "@anthropic-ai/claude-agent-sdk": "0.2.114"
   },
   "devDependencies": {
     "@types/node": "22.13.1",

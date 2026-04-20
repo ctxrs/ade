@@ -201,7 +201,7 @@ fn builtin_matrix_uses_goose_upstream_acp_archive() {
             args,
             targets,
         } => {
-            assert_eq!(version, "1.27.2");
+            assert_eq!(version, "1.31.0");
             assert_eq!(args, &vec!["acp".to_string()]);
 
             let darwin = targets
@@ -211,19 +211,19 @@ fn builtin_matrix_uses_goose_upstream_acp_archive() {
             assert_eq!(darwin.bin_path, "goose");
             assert_eq!(
                 darwin.url,
-                "https://github.com/block/goose/releases/download/v1.27.2/goose-aarch64-apple-darwin.tar.bz2"
+                "https://github.com/block/goose/releases/download/v1.31.0/goose-aarch64-apple-darwin.tar.bz2"
             );
             assert_eq!(
                 darwin.sha256.as_deref(),
-                Some("9e66353e19169f550a32054498ca60a2a2cb20238eb91aee38780a4347322ee9")
+                Some("8726bc55d240e242ea9c8b071bd13bc3fb904299bcc4d9ce880964288e8e3859")
             );
         }
         other => panic!("expected goose archive managed install, got {other:?}"),
     }
 
     let release = goose.releases.first().expect("goose release");
-    assert_eq!(release.version, "1.27.2");
-    assert!(release.upstream_version.is_none());
+    assert_eq!(release.version, "1.31.0");
+    assert_eq!(release.upstream_version.as_deref(), Some("1.31.0"));
 }
 
 #[test]
@@ -243,7 +243,7 @@ fn builtin_matrix_tracks_target_specific_codex_cli_archive_binaries() {
         ProviderInstall::Archive {
             version, targets, ..
         } => {
-            assert_eq!(version, "0.114.0");
+            assert_eq!(version, "rust-v0.121.0");
             assert_eq!(
                 targets
                     .get("darwin-aarch64")
@@ -326,7 +326,7 @@ fn builtin_matrix_uses_upstream_openhands_python_acp_runtime() {
             python_build_tag,
         } => {
             assert_eq!(package, "openhands");
-            assert_eq!(version, "1.13.1");
+            assert_eq!(version, "1.14.0");
             assert_eq!(entrypoint, "openhands");
             assert_eq!(args, &vec!["acp".to_string()]);
             assert_eq!(python_version.as_deref(), Some("3.12.13"));

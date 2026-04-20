@@ -131,7 +131,7 @@
           "status": "supported",
           "context_min": "0.1.0",
           "notes": "Pinned workspace adapter source (harness-adapters/example-acp/package.json)",
-          "upstream_version": "0.1.0-20260312163036-g664c3e0"
+          "upstream_version": "0.1.0-20260420051109-g3810ed7"
         }
       ]
     },
@@ -159,7 +159,7 @@
       },
       "releases": [
         {
-          "version": "0.18.1",
+          "version": "0.24.0",
           "status": "supported",
           "context_min": "0.1.0",
           "notes": "Pinned Auggie CLI ACP bundle release"
@@ -187,7 +187,7 @@
       },
       "releases": [
         {
-          "version": "2.1.80",
+          "version": "2.1.114",
           "status": "supported",
           "context_min": "0.1.0",
           "notes": "Pinned Anthropic Claude Code CLI bundle release"
@@ -264,7 +264,7 @@
           "status": "supported",
           "context_min": "0.1.0",
           "notes": "Pinned workspace adapter source (external-harnesses/claude-crp/package.json)",
-          "upstream_version": "0.2.70"
+          "upstream_version": "0.2.114"
         }
       ]
     },
@@ -292,7 +292,7 @@
       },
       "releases": [
         {
-          "version": "2.6.1",
+          "version": "2.15.0",
           "status": "supported",
           "context_min": "0.1.0",
           "notes": "Pinned Cline CLI ACP bundle release"
@@ -310,30 +310,30 @@
       },
       "managed_install": {
         "kind": "archive",
-        "version": "0.114.0",
+        "version": "rust-v0.121.0",
         "args": [],
         "targets": {
           "darwin-aarch64": {
-            "url": "https://github.com/openai/codex/releases/download/rust-v0.114.0/codex-aarch64-apple-darwin.tar.gz",
-            "sha256": "c98eb550695f99eaec27df9971a1b76a83acb15eb55522383fa31b0497297c54",
+            "url": "https://github.com/openai/codex/releases/download/rust-v0.121.0/codex-aarch64-apple-darwin.tar.gz",
+            "sha256": "60f7039e63a7de8ae474136ac6f593ec1a913e1ddca0df59ade1f6d6eb5f7fd0",
             "archive": "tar_gz",
             "bin_path": "codex-aarch64-apple-darwin"
           },
           "darwin-x86_64": {
-            "url": "https://github.com/openai/codex/releases/download/rust-v0.114.0/codex-x86_64-apple-darwin.tar.gz",
-            "sha256": "b0c7ce9f6e3693ecc150bc0cb95b4a1766d7b849747090e5077de8d4d2cac974",
+            "url": "https://github.com/openai/codex/releases/download/rust-v0.121.0/codex-x86_64-apple-darwin.tar.gz",
+            "sha256": "94e6ba8a552d4625beee857f513fb12bc20e560b9427c4a93733dbd86619f415",
             "archive": "tar_gz",
             "bin_path": "codex-x86_64-apple-darwin"
           },
           "linux-aarch64": {
-            "url": "https://github.com/openai/codex/releases/download/rust-v0.114.0/codex-aarch64-unknown-linux-gnu.tar.gz",
-            "sha256": "c923ffd32c50b8d8f4c5f39e8623c8afab90ee984c65f3c73709b82cf63150bb",
+            "url": "https://github.com/openai/codex/releases/download/rust-v0.121.0/codex-aarch64-unknown-linux-gnu.tar.gz",
+            "sha256": "9ce5edd5524898ad2e95b59f278977e312726e0587957d1f10ee389070fe5034",
             "archive": "tar_gz",
             "bin_path": "codex-aarch64-unknown-linux-gnu"
           },
           "linux-x86_64": {
-            "url": "https://github.com/openai/codex/releases/download/rust-v0.114.0/codex-x86_64-unknown-linux-gnu.tar.gz",
-            "sha256": "f18294d4da6756e9e5ad4dc62b3030b7a75a94e5e5022f3bfa4a21a7d3c52ae0",
+            "url": "https://github.com/openai/codex/releases/download/rust-v0.121.0/codex-x86_64-unknown-linux-gnu.tar.gz",
+            "sha256": "f053ac81e9c6769920f9ee3566abad47ab0856eb7ee792428681664ece113430",
             "archive": "tar_gz",
             "bin_path": "codex-x86_64-unknown-linux-gnu"
           }
@@ -347,11 +347,11 @@
       },
       "releases": [
         {
-          "version": "0.114.0",
+          "version": "rust-v0.121.0",
           "status": "supported",
           "context_min": "0.1.0",
           "notes": "Pinned stock Codex CLI release",
-          "upstream_version": "0.114.0"
+          "upstream_version": "0.121.0"
         }
       ]
     },
@@ -465,7 +465,7 @@
       },
       "releases": [
         {
-          "version": "1.0.0",
+          "version": "1.0.32",
           "status": "supported",
           "context_min": "0.1.0",
           "notes": "Pinned GitHub Copilot CLI ACP bundle release"
@@ -687,7 +687,7 @@
       },
       "releases": [
         {
-          "version": "0.33.1",
+          "version": "0.38.2",
           "status": "supported",
           "context_min": "0.1.0",
           "notes": "Pinned Gemini CLI ACP bundle release (bundle-only in ctx runtime)"
@@ -706,46 +706,46 @@
       },
       "managed_install": {
         "kind": "archive",
-        "version": "1.27.2",
+        "version": "1.31.0",
         "args": [
           "acp"
         ],
         "targets": {
           "darwin-aarch64": {
-            "url": "https://github.com/block/goose/releases/download/v1.27.2/goose-aarch64-apple-darwin.tar.bz2",
+            "url": "https://github.com/block/goose/releases/download/v1.31.0/goose-aarch64-apple-darwin.tar.bz2",
             "archive": "tar_bz2",
             "bin_path": "goose",
-            "sha256": "9e66353e19169f550a32054498ca60a2a2cb20238eb91aee38780a4347322ee9"
+            "sha256": "8726bc55d240e242ea9c8b071bd13bc3fb904299bcc4d9ce880964288e8e3859"
           },
           "darwin-x86_64": {
-            "url": "https://github.com/block/goose/releases/download/v1.27.2/goose-x86_64-apple-darwin.tar.bz2",
+            "url": "https://github.com/block/goose/releases/download/v1.31.0/goose-x86_64-apple-darwin.tar.bz2",
             "archive": "tar_bz2",
             "bin_path": "goose",
-            "sha256": "04c66f8944795c996cdeb2f27a9a3fb6f6ea418320dacf2ec9a61af726fb5249"
+            "sha256": "7f05714b6e2f5825772fe17c5547f1cc7a40b629ff8504d9e4dbf44be97c3ed4"
           },
           "linux-aarch64": {
-            "url": "https://github.com/block/goose/releases/download/v1.27.2/goose-aarch64-unknown-linux-gnu.tar.bz2",
+            "url": "https://github.com/block/goose/releases/download/v1.31.0/goose-aarch64-unknown-linux-gnu.tar.bz2",
             "archive": "tar_bz2",
             "bin_path": "goose",
-            "sha256": "37f84a491e78793b8132a9dcc614d24bc4ac0b0fde7547fb40ed27bcb8480520"
+            "sha256": "5ea842fba072e41e9883a46d8e9eba864e4d0de2ca87bb4b1cb25165549a6e02"
           },
           "linux-x86_64": {
-            "url": "https://github.com/block/goose/releases/download/v1.27.2/goose-x86_64-unknown-linux-gnu.tar.bz2",
+            "url": "https://github.com/block/goose/releases/download/v1.31.0/goose-x86_64-unknown-linux-gnu.tar.bz2",
             "archive": "tar_bz2",
             "bin_path": "goose",
-            "sha256": "735e74578a25045e048e6b98fbb7fba342eeea0052b38f67a17ecd3cd3036067"
+            "sha256": "a1156a0fc16ece8fb7165eafb585ca4c23341fc2f443d606171f698e9370eea3"
           },
           "macos-aarch64": {
-            "url": "https://github.com/block/goose/releases/download/v1.27.2/goose-aarch64-apple-darwin.tar.bz2",
+            "url": "https://github.com/block/goose/releases/download/v1.31.0/goose-aarch64-apple-darwin.tar.bz2",
             "archive": "tar_bz2",
             "bin_path": "goose",
-            "sha256": "9e66353e19169f550a32054498ca60a2a2cb20238eb91aee38780a4347322ee9"
+            "sha256": "8726bc55d240e242ea9c8b071bd13bc3fb904299bcc4d9ce880964288e8e3859"
           },
           "macos-x86_64": {
-            "url": "https://github.com/block/goose/releases/download/v1.27.2/goose-x86_64-apple-darwin.tar.bz2",
+            "url": "https://github.com/block/goose/releases/download/v1.31.0/goose-x86_64-apple-darwin.tar.bz2",
             "archive": "tar_bz2",
             "bin_path": "goose",
-            "sha256": "04c66f8944795c996cdeb2f27a9a3fb6f6ea418320dacf2ec9a61af726fb5249"
+            "sha256": "7f05714b6e2f5825772fe17c5547f1cc7a40b629ff8504d9e4dbf44be97c3ed4"
           }
         }
       },
@@ -757,10 +757,11 @@
       },
       "releases": [
         {
-          "version": "1.27.2",
+          "version": "1.31.0",
           "status": "supported",
           "context_min": "0.1.0",
-          "notes": "Pinned upstream Goose CLI ACP release"
+          "notes": "Pinned upstream Goose CLI ACP release",
+          "upstream_version": "1.31.0"
         }
       ]
     },
@@ -777,7 +778,7 @@
       "managed_install": {
         "kind": "python",
         "package": "kimi-cli",
-        "version": "1.17.0",
+        "version": "1.36.0",
         "entrypoint": "kimi",
         "args": [
           "acp"
@@ -791,7 +792,7 @@
       },
       "releases": [
         {
-          "version": "1.17.0",
+          "version": "1.36.0",
           "status": "supported",
           "context_min": "0.1.0",
           "notes": "Pinned Kimi CLI ACP bundle release"
@@ -809,7 +810,7 @@
       "managed_install": {
         "kind": "python",
         "package": "mistral-vibe",
-        "version": "2.3.0",
+        "version": "2.7.6",
         "entrypoint": "vibe-acp",
         "args": []
       },
@@ -821,7 +822,7 @@
       },
       "releases": [
         {
-          "version": "2.3.0",
+          "version": "2.7.6",
           "status": "supported",
           "context_min": "0.1.0",
           "notes": "Pinned Mistral Vibe ACP bundle release"
@@ -840,31 +841,31 @@
       },
       "managed_install": {
         "kind": "archive",
-        "version": "1.2.20",
+        "version": "1.14.18",
         "args": [
           "acp"
         ],
         "targets": {
           "darwin-aarch64": {
-            "url": "https://github.com/anomalyco/opencode/releases/download/v1.2.20/opencode-darwin-arm64.zip",
+            "url": "https://github.com/anomalyco/opencode/releases/download/v1.14.18/opencode-darwin-arm64.zip",
             "sha256": "20386056bffdc4ec52155fb107fb470d47297f86dc405f993992596dc3eb4a81",
             "archive": "zip",
             "bin_path": "opencode"
           },
           "darwin-x86_64": {
-            "url": "https://github.com/anomalyco/opencode/releases/download/v1.2.20/opencode-darwin-x64.zip",
+            "url": "https://github.com/anomalyco/opencode/releases/download/v1.14.18/opencode-darwin-x64.zip",
             "sha256": "51b1ddcb01dc1441217a6cf6730e09635ecbc38865a8fd2abf721ddf7d3b0dc0",
             "archive": "zip",
             "bin_path": "opencode"
           },
           "linux-aarch64": {
-            "url": "https://github.com/anomalyco/opencode/releases/download/v1.2.20/opencode-linux-arm64.tar.gz",
+            "url": "https://github.com/anomalyco/opencode/releases/download/v1.14.18/opencode-linux-arm64.tar.gz",
             "sha256": "a0813a706c8865cf61b2ec152f116af09519bff703c774ab16b4a667b154d683",
             "archive": "tar_gz",
             "bin_path": "opencode"
           },
           "linux-x86_64": {
-            "url": "https://github.com/anomalyco/opencode/releases/download/v1.2.20/opencode-linux-x64-baseline.tar.gz",
+            "url": "https://github.com/anomalyco/opencode/releases/download/v1.14.18/opencode-linux-x64-baseline.tar.gz",
             "sha256": "fc14d43f33555f5c648b0649c4248d4e74eae1d5d0e784f8dec83b97313e4c35",
             "archive": "tar_gz",
             "bin_path": "opencode"
@@ -879,7 +880,7 @@
       },
       "releases": [
         {
-          "version": "1.2.20",
+          "version": "1.14.18",
           "status": "supported",
           "context_min": "0.1.0",
           "notes": "Pinned OpenCode CLI ACP bundle release"
@@ -899,7 +900,7 @@
       "managed_install": {
         "kind": "python",
         "package": "openhands",
-        "version": "1.13.1",
+        "version": "1.14.0",
         "entrypoint": "openhands",
         "args": [
           "acp"
@@ -915,7 +916,7 @@
       },
       "releases": [
         {
-          "version": "1.13.1",
+          "version": "1.14.0",
           "status": "supported",
           "context_min": "0.1.0",
           "notes": "Pinned upstream OpenHands ACP CLI release"
@@ -985,7 +986,7 @@
           "status": "supported",
           "context_min": "0.1.0",
           "notes": "Pinned workspace adapter source (harness-adapters/pi-acp/package.json)",
-          "upstream_version": "0.56.3"
+          "upstream_version": "0.67.68"
         }
       ]
     },
@@ -1013,7 +1014,7 @@
       },
       "releases": [
         {
-          "version": "0.11.1",
+          "version": "0.14.5",
           "status": "supported",
           "context_min": "0.1.0",
           "notes": "Pinned Qwen Code CLI ACP bundle release"
