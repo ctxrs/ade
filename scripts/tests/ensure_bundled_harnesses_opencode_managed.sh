@@ -49,8 +49,8 @@ if entry.get("id") != "opencode":
     print(f"expected opencode provider entry, got {entry.get('id')!r}", file=sys.stderr)
     raise SystemExit(1)
 
-if str(entry.get("version", "")) != "1.2.14":
-    print(f"expected pinned opencode version 1.2.14, got {entry.get('version')!r}", file=sys.stderr)
+if str(entry.get("version", "")) != "1.14.19":
+    print(f"expected pinned opencode version 1.14.19, got {entry.get('version')!r}", file=sys.stderr)
     raise SystemExit(1)
 
 command_rel = str(entry.get("command", ""))

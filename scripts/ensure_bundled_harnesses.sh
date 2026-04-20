@@ -237,7 +237,7 @@ ensure_docker_ready_for_builds() {
   return 1
 }
 
-INSTALLER_RS="$ROOT/core/crates/ctx-http/src/installer.rs"
+MANAGED_INSTALLS_LIB_RS="$ROOT/core/crates/ctx-managed-installs/src/lib.rs"
 DEFAULT_MATRIX_JSON="$ROOT/core/crates/ctx-provider-accounts/src/provider_matrix.json"
 CACHED_MATRIX_JSON="${HOME:-}/.ctx/providers/provider_matrix.json"
 if [[ -n "${CTX_BUNDLE_MATRIX_JSON:-}" ]]; then
@@ -260,9 +260,9 @@ read_const() {
   printf '%s' "$value"
 }
 
-NODE_VERSION="$(read_const NODE_VERSION "$INSTALLER_RS")"
-PYTHON_VERSION="$(read_const PYTHON_VERSION "$INSTALLER_RS")"
-PYTHON_BUILD_TAG="$(read_const PYTHON_BUILD_TAG "$INSTALLER_RS")"
+NODE_VERSION="$(read_const NODE_VERSION "$MANAGED_INSTALLS_LIB_RS")"
+PYTHON_VERSION="$(read_const PYTHON_VERSION "$MANAGED_INSTALLS_LIB_RS")"
+PYTHON_BUILD_TAG="$(read_const PYTHON_BUILD_TAG "$MANAGED_INSTALLS_LIB_RS")"
 DOCKER_HEALTH_TIMEOUT_SECS="${CTX_BUNDLE_DOCKER_HEALTH_TIMEOUT_SECS:-8}"
 DOCKER_HEALTH_WAIT_SECS="${CTX_BUNDLE_DOCKER_HEALTH_WAIT_SECS:-60}"
 

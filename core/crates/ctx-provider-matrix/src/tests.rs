@@ -201,7 +201,7 @@ fn builtin_matrix_uses_goose_upstream_acp_archive() {
             args,
             targets,
         } => {
-            assert_eq!(version, "1.31.0");
+            assert_eq!(version, "1.31.1");
             assert_eq!(args, &vec!["acp".to_string()]);
 
             let darwin = targets
@@ -211,19 +211,19 @@ fn builtin_matrix_uses_goose_upstream_acp_archive() {
             assert_eq!(darwin.bin_path, "goose");
             assert_eq!(
                 darwin.url,
-                "https://github.com/block/goose/releases/download/v1.31.0/goose-aarch64-apple-darwin.tar.bz2"
+                "https://github.com/aaif-goose/goose/releases/download/v1.31.1/goose-aarch64-apple-darwin.tar.bz2"
             );
             assert_eq!(
                 darwin.sha256.as_deref(),
-                Some("8726bc55d240e242ea9c8b071bd13bc3fb904299bcc4d9ce880964288e8e3859")
+                Some("fd7cad6b0405fbea267d6ae3a7e5b17a096a28d33a8019779c242a290ec1e16e")
             );
         }
         other => panic!("expected goose archive managed install, got {other:?}"),
     }
 
     let release = goose.releases.first().expect("goose release");
-    assert_eq!(release.version, "1.31.0");
-    assert_eq!(release.upstream_version.as_deref(), Some("1.31.0"));
+    assert_eq!(release.version, "1.31.1");
+    assert_eq!(release.upstream_version.as_deref(), Some("1.31.1"));
 }
 
 #[test]

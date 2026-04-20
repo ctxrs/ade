@@ -69,7 +69,7 @@ print(h.hexdigest())
 PY
 )"
 
-node_version="$(python3 - "$ROOT/core/crates/ctx-http/src/installer.rs" <<'PY'
+node_version="$(python3 - "$ROOT/core/crates/ctx-managed-installs/src/lib.rs" <<'PY'
 import re
 import sys
 src = open(sys.argv[1], "r", encoding="utf-8").read()
