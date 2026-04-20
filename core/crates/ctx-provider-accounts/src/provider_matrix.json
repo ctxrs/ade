@@ -372,13 +372,13 @@
             "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/codex/0.114.0-ctx.3/macos/aarch64/codex-crp-0.114.0-ctx.3-aarch64-apple-darwin.tar.gz",
             "archive": "tar_gz",
             "bin_path": "codex-crp",
-            "sha256": "0b33abd49d6174aed154ea461c0c288d7c5c9e594b932bf172299d174b6fcc7b"
+            "sha256": "8c31cf8e5420c8aeddf3d4afcdf46612c8b3e63f2703879f75ad3cb73860cfcd"
           },
           "darwin-x86_64": {
             "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/codex/0.114.0-ctx.3/macos/x86_64/codex-crp-0.114.0-ctx.3-x86_64-apple-darwin.tar.gz",
             "archive": "tar_gz",
             "bin_path": "codex-crp",
-            "sha256": "56c19ff6398d760877054ca1a51b84c640c35d3ca2a62290da886501d8a0fd6e"
+            "sha256": "857b97177389b5a2f58d8b9c04c43da8107472b4b4249afcdd39a7cd9cf46511"
           },
           "linux-aarch64": {
             "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/codex/0.114.0-ctx.3/linux/aarch64/codex-crp-0.114.0-ctx.3-aarch64-unknown-linux-gnu.tar.gz",
@@ -396,13 +396,13 @@
             "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/codex/0.114.0-ctx.3/macos/aarch64/codex-crp-0.114.0-ctx.3-aarch64-apple-darwin.tar.gz",
             "archive": "tar_gz",
             "bin_path": "codex-crp",
-            "sha256": "0b33abd49d6174aed154ea461c0c288d7c5c9e594b932bf172299d174b6fcc7b"
+            "sha256": "8c31cf8e5420c8aeddf3d4afcdf46612c8b3e63f2703879f75ad3cb73860cfcd"
           },
           "macos-x86_64": {
             "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/codex/0.114.0-ctx.3/macos/x86_64/codex-crp-0.114.0-ctx.3-x86_64-apple-darwin.tar.gz",
             "archive": "tar_gz",
             "bin_path": "codex-crp",
-            "sha256": "56c19ff6398d760877054ca1a51b84c640c35d3ca2a62290da886501d8a0fd6e"
+            "sha256": "857b97177389b5a2f58d8b9c04c43da8107472b4b4249afcdd39a7cd9cf46511"
           }
         }
       },
