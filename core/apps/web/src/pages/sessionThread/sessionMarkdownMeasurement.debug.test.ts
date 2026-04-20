@@ -151,5 +151,6 @@ describe("sessionMarkdownMeasurement debug", () => {
         2,
       ),
     );
+
   });
 });

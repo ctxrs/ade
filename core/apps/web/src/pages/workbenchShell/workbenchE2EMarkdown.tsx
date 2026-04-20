@@ -32,9 +32,57 @@ export type WorkbenchMarkdownPlannerDebug = {
     currentLineStartFitRatio: number;
     currentLineCodeStartFitIsReadable: boolean;
     currentLineCodeStartFitIsStrong: boolean;
+    shouldBreakForSoftBreakProseCodeStart?: boolean;
     shouldBreakForStyledTailCodeStart: boolean;
+    shouldLimitCurrentCodeGroupToFirstFragment?: boolean;
     shouldBreakForAttachedTrailingPlainStart: boolean;
     shouldBreak: boolean;
+    text: string;
+  }>;
+  whitespaceDecisions?: Array<{
+    lineHasContent: boolean;
+    reservedWidth: number;
+    remainingWidth: number;
+    guardedRemainingWidth: number;
+    fragmentWidth: number;
+    slackPx?: number;
+    shouldBreak: boolean;
+    text: string;
+  }>;
+  continuationDecisions?: Array<{
+    text: string;
+    reservedWidth: number;
+    remainingWidth: number;
+    guardedRemainingWidth: number;
+    availableLineWidth?: number;
+    lineWidth?: number;
+    fullWidth: number;
+    currentLineFitSlackPx: number;
+    lineLastCodeFragmentText: string | null;
+    lineLastCodeFragmentEndedWithPathDelimiter: boolean;
+    lineLastCodeFragmentEndedWithHyphen: boolean;
+    acceptedWholeFragment?: boolean;
+    brokeBeforeFragment?: boolean;
+  }>;
+  segmentSeamAdjustments?: Array<{
+    type: "no-progress-advance" | "no-progress-drop" | "whitespace-only-break" | "whitespace-only-advance";
+    lineHasContent: boolean;
+    text: string;
+  }>;
+  sealedContinuationDecisions?: Array<{
+    canRelaxChromiumDottedPathBoundary: boolean;
+    currentCodeGroupStartFragmentText: string | null;
+    fullWidth: number;
+    guardedRemainingWidth: number;
+    remainingWidth?: number;
+    continuationSlackPx?: number;
+    lastFragmentIsShortExtensionPath: boolean;
+    lastFragmentText: string | null;
+    sameCodeGroupContinuation: boolean;
+    sealedBoundaryOverflow: boolean;
+    acceptedFragment?: boolean;
+    overflowedAcceptedFragment?: boolean;
+    shouldBreakBeforePartialSealedDottedPathFragment: boolean;
     text: string;
   }>;
   items: Array<{

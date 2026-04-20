@@ -67,6 +67,11 @@ const MARKDOWN_CORPUS: MarkdownSample[] = [
       "| Env | Command | Note |\n|---|---|---|\n| dev | `pnpm dev` | wraps with prose and punctuation |\n| test | `pnpm -C core/apps/web test:e2e:pretext:parity:chromium` | very long note that should keep wrapping |",
   },
   {
+    name: "table-inline-command-threshold",
+    markdown:
+      "| Left | Token | Note |\n| --- | --- | --- |\n| fragment session | `pnpm -C core/apps/web test:e2e:pretext:parity:webkit` | entry header fragment virtualizer summary fragment thread composer |",
+  },
+  {
     name: "hard-break-inline-code",
     markdown:
       "First line with `ctx run --mode strict`\nsecond line with `very-long-inline-token/that/should/wrap` and more prose after it.",
@@ -89,6 +94,107 @@ const MARKDOWN_CORPUS: MarkdownSample[] = [
     name: "blockquote-link-code-tail",
     markdown:
       "> [summary message summary](https://example.com/inline-code/parity/webkit/parity?ref=781) `cargo test -p ctx-store`:",
+  },
+];
+
+type SoftBreakMarkdownSample = MarkdownSample & {
+  width: number;
+  browsers?: Array<"chromium" | "webkit">;
+};
+
+const SOFT_BREAK_MARKDOWN_REGRESSIONS: SoftBreakMarkdownSample[] = [
+  {
+    name: "soft-break-path-start-later-fragment",
+    width: 518.64,
+    markdown: [
+      "Buffer session summary ~~turn~~ ⚙️ 你好 世界 `core/blockquote/sessionThreadDomMeasurement.tsx/sessionThreadDomMeasurement.tsx` ~~command~~ ~~command command~~ **context**: `workbenchShell/fixtures/turn-header/table`",
+      "Stream browser agent ⚙️ 測試 佈局 header deterministic thread summary buffer entry context ⚙️ 你好 世界 `web/fixtures/core/fixtures`. `pnpm -C core/apps/web test:e2e:pretext:corpus:webkit`",
+    ].join("\n"),
+  },
+  {
+    name: "soft-break-mixed-inline-seams",
+    width: 445.04,
+    markdown: [
+      "Fragment fragment command [thread deterministic](https://example.com/webkit/docs/chromium/transcript?ref=917) `pnpm -C core/apps/web test:e2e:pretext:guardrail` **render** 🧪 段落 換行; `sessionMarkdownMeasurement.ts/pretextVirtualizerRowLayout.ts/src/core`",
+      "Command message composer buffer *session parity* 🙂 測試 佈局 *virtualizer buffer*; `git status`",
+      "Thread inline `sessionMarkdownMeasurement.ts/e2e/e2e/web/turn-header/turn-header` *stream entry browser* `pnpm -C core/apps/web test:e2e:pretext:parity:chromium` 📏 你好 世界. `turn-header/pages/sessionThreadDomMeasurement.tsx/pages/table/e2e`",
+      "Parity render probe fragment *layout* `git rev-parse HEAD` **context** buffer stream `e2e/pretextVirtualizerRowLayout.ts/apps/table/table/src`. `pnpm -C core/apps/web test:e2e:pretext:parity:chromium`",
+    ].join("\n"),
+  },
+  {
+    name: "soft-break-fresh-line-path-full-chrome",
+    width: 516,
+    markdown: [
+      "Fragment fragment command [thread deterministic](https://example.com/webkit/docs/chromium/transcript?ref=917) `pnpm -C core/apps/web test:e2e:pretext:guardrail` **render** 🧪 段落 換行; `sessionMarkdownMeasurement.ts/pretextVirtualizerRowLayout.ts/src/core`",
+      "Command message composer buffer *session parity* 🙂 測試 佈局 *virtualizer buffer*; `git status`",
+      "Thread inline `sessionMarkdownMeasurement.ts/e2e/e2e/web/turn-header/turn-header` *stream entry browser* `pnpm -C core/apps/web test:e2e:pretext:parity:chromium` 📏 你好 世界. `turn-header/pages/sessionThreadDomMeasurement.tsx/pages/table/e2e`",
+    ].join("\n"),
+  },
+  {
+    name: "soft-break-friendly-boundary-prose-tail",
+    width: 445.04,
+    markdown: [
+      "Delta agent browser entry `sessionThread/src/sessionThread/e2e/sessionThread/table` `table/sessionThread/apps/workbenchShell/fixtures/turn-header` inline pretext parity. `table/web/fixtures/table`",
+      "Message deterministic virtualizer `apps/workbenchShell/src/src/sessionMarkdownMeasurement.ts/e2e` *pretext summary turn* padding fragment thread turn context pretext turn buffer summary [stream pretext](https://example.com/transcript/webkit?ref=266). `cargo test -p ctx-http`",
+    ].join("\n"),
+  },
+  {
+    name: "soft-break-attached-trailing-plain-path-start",
+    width: 445.04,
+    markdown: [
+      "Render deterministic [command session deterministic](https://example.com/docs/inline-code/measurement?ref=150) *token virtualizer* ~~agent shell~~ session parity shell inline fragment; `e2e/turn-header/workbenchShell/table`",
+      "Virtualizer probe render 🙂 段落 換行 *composer browser render* session browser header layout command session layout parity command: `sessionThread/table/web/workbenchShell/apps/blockquote`",
+      "Stream token stream buffer entry fragment marker 📏 段落 換行 ~~token token~~ [buffer](https://example.com/parity/streaming-tail?ref=574) 🧪 段落 換行 ~~fragment~~. `ctx run start --mode sandbox`",
+    ].join("\n"),
+  },
+  {
+    name: "soft-break-wide-glyph-friendly-boundary",
+    width: 445.04,
+    browsers: ["webkit"],
+    markdown: [
+      "Layout composer fragment padding `sessionMarkdownMeasurement.ts/src/sessionThreadDomMeasurement.tsx/web/blockquote/workbenchShell/workbenchShell` **command inline** `cargo test -p ctx-store` ⚙️ 測試 佈局 [agent fragment](https://example.com/transcript/chromium?ref=812) *summary fragment*. `apps/fixtures/src/src/sessionMarkdownMeasurement.ts/pages`",
+      "Virtualizer probe render 🙂 段落 換行 *composer browser render* session browser header layout command session layout parity command: `sessionThread/table/web/workbenchShell/apps/blockquote`",
+    ].join("\n"),
+  },
+  {
+    name: "soft-break-command-option-hyphen-tail",
+    width: 382.48,
+    markdown: [
+      "Parity render probe fragment *layout* `git rev-parse HEAD` **context** buffer stream `e2e/pretextVirtualizerRowLayout.ts/apps/table/table/src`. `pnpm -C core/apps/web test:e2e:pretext:parity:chromium`",
+      "Entry shell agent command buffer agent command inline browser token deterministic padding [agent](https://example.com/streaming-tail/transcript/streaming-tail/transcript?ref=527) [agent composer render](https://example.com/measurement/webkit?ref=119): `pnpm -C core/apps/web test:e2e:pretext:parity:webkit`",
+    ].join("\n"),
+  },
+  {
+    name: "soft-break-command-leading-hang",
+    width: 382.48,
+    markdown: [
+      "Layout composer fragment padding `sessionMarkdownMeasurement.ts/src/sessionThreadDomMeasurement.tsx/web/blockquote/workbenchShell/workbenchShell` command inline `cargo test -p ctx-store` agent fragment summary fragment. `apps/fixtures/src/src/sessionMarkdownMeasurement.ts/pages`",
+      "Inline stream browser context thread layout padding fragment header probe session summary token inline; `git rev-parse HEAD`",
+      "Render deterministic command session deterministic token virtualizer agent shell session parity shell inline fragment; `e2e/turn-header/workbenchShell/table`",
+    ].join("\n"),
+  },
+  {
+    name: "list-inline-code-prose-tail",
+    width: 588,
+    markdown:
+      "- Command fragment [stream layout](https://example.com/docs/parity/webkit?ref=298) *agent virtualizer* ~~inline~~ `pages/fixtures/sessionMarkdownMeasurement.ts/sessionMarkdownMeasurement.ts/blockquote/inline-code/e2e` render parity composer probe render header render summary;",
+  },
+  {
+    name: "path-inline-code-prose-tail",
+    width: 564,
+    markdown:
+      "Command fragment [stream layout](https://example.com/docs/parity/webkit?ref=298) *agent virtualizer* ~~inline~~ `pages/fixtures/sessionMarkdownMeasurement.ts/sessionMarkdownMeasurement.ts/blockquote/inline-code/e2e` render parity composer probe render header render summary;",
+  },
+  {
+    name: "longer-path-prefix-code-only",
+    width: 382.48,
+    markdown: "- Delta parity `table/fixtures/sessionThreadDomMeasurement.tsx/workbenchShell`",
+  },
+  {
+    name: "decorated-tail-after-path-code",
+    width: 620,
+    markdown:
+      "- Agent token marker `src/src/pretextVirtualizerRowLayout.ts/core/blockquote` *padding entry* **marker stream**:",
   },
 ];
 
@@ -385,6 +491,37 @@ test("workbench: pretext threshold seam parity sweep", async ({ page }) => {
   ).toEqual([]);
 });
 
+test("workbench: pretext soft-break markdown regressions", async ({ page, browserName }) => {
+  test.setTimeout(180000);
+  test.slow();
+  await openWorkbenchShell(page);
+
+  const summary: MarkdownSummaryEntry[] = [];
+  for (const sample of SOFT_BREAK_MARKDOWN_REGRESSIONS.filter((candidate) => {
+    return candidate.browsers == null || candidate.browsers.includes(browserName as "chromium" | "webkit");
+  })) {
+    const [measurement] = await measureMarkdownParity(page, [sample], sample.width);
+    summary.push({ width: sample.width, ...measurement });
+  }
+
+  if (!ENFORCE) return;
+
+  const failures = summary.filter((entry) => Math.abs(entry.delta) > MARKDOWN_THRESHOLD_PX);
+  expect(
+    failures,
+    formatFailures(
+      "soft-break markdown",
+      failures.map((failure) => ({
+        name: failure.name,
+        width: failure.width,
+        delta: failure.delta,
+        planned: failure.planned,
+        actual: failure.actual,
+      })),
+    ),
+  ).toEqual([]);
+});
+
 test("workbench: pretext markdown quote-link-code seam parity", async ({ page }) => {
   test.setTimeout(120000);
   await openWorkbenchShell(page);
@@ -456,8 +593,23 @@ test("workbench: pretext mixed inline path continuation parity", async ({ page }
       ],
     },
     {
+      width: 416,
+      samples: [
+        {
+          name: "path-tail-final-fragment-after-decorated-prose",
+          markdown:
+            "Probe layout browser `turn-header/sessionMarkdownMeasurement.ts/pages/inline-code/turn-header` context command virtualizer fragment 🧪 測試 佈局 ~~virtualizer~~. `blockquote/fixtures/sessionThread/e2e`",
+        },
+      ],
+    },
+    {
       width: 382.48,
       samples: [
+        {
+          name: "punctuation-seam-command-continuation",
+          markdown:
+            "Buffer session summary ~~turn~~ ⚙️ 你好 世界 `core/blockquote/sessionThreadDomMeasurement.tsx/sessionThreadDomMeasurement.tsx` ~~command~~ ~~command command~~ **context**: `workbenchShell/fixtures/turn-header/table` Stream browser agent ⚙️ 測試 佈局 header deterministic thread summary buffer entry context ⚙️ 你好 世界 `web/fixtures/core/fixtures`. `pnpm -C core/apps/web test:e2e:pretext:corpus:webkit`",
+        },
         {
           name: "path-after-short-prose",
           markdown:
@@ -481,6 +633,10 @@ test("workbench: pretext mixed inline path continuation parity", async ({ page }
     {
       width: 181.3333333333,
       samples: [
+        {
+          name: "table-cell-terminal-path-tail-wrap",
+          markdown: "`table/e2e/workbenchShell/apps/web/sessionThread`",
+        },
         {
           name: "webkit-sealed-path-cell-width",
           markdown: "`apps/e2e/e2e/core/web/pretextVirtualizerRowLayout.ts`",

@@ -176,7 +176,7 @@ test("workbench: long multi-paragraph assistant status message matches mounted r
 
   expect(
     Math.abs(measurement.delta),
-    `assistant long-message drifted by ${measurement.delta}px (planned ${measurement.planned}, actual ${measurement.actual}, hidden ${measurement.hiddenMeasured ?? "n/a"}, viewportWidth ${measurement.viewportWidth ?? "n/a"}, rowWidth ${measurement.rowWidth ?? "n/a"})`,
+    `assistant long-message drifted by ${measurement.delta}px (planned ${measurement.planned}, actual ${measurement.actual}, debugDom ${measurement.debugDomMeasured ?? "n/a"}, viewportWidth ${measurement.viewportWidth ?? "n/a"}, rowWidth ${measurement.rowWidth ?? "n/a"})`,
   ).toBeLessThanOrEqual(1);
 });
 

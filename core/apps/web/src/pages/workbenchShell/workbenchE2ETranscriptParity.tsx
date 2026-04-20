@@ -11,9 +11,9 @@ import {
 } from "../sessionThread/SessionThreadItemViews";
 import { SessionThreadMeasurementFrame } from "../sessionThread/SessionThreadMeasurementFrame";
 import {
-  clearSessionThreadDomMeasurementFallbacks,
-  clearSessionThreadDomMeasurementCaches,
-  measureRenderedSessionAssistantHeight,
+  clearSessionThreadDebugDomAuditFallbacks,
+  clearSessionThreadDebugDomAuditCaches,
+  measureDebugRenderedSessionAssistantHeight,
 } from "../sessionThread/sessionThreadDomMeasurement";
 import {
   resetSessionPretextRuntimeCache,
@@ -32,8 +32,8 @@ export type WorkbenchRowParityMeasurement = {
   delta: number;
   viewportWidth?: number;
   rowWidth?: number;
-  hiddenMeasured?: number;
-  hiddenDelta?: number;
+  debugDomMeasured?: number;
+  debugDomDelta?: number;
 };
 
 export type WorkbenchMessageParityParams = {
@@ -173,8 +173,8 @@ async function measureMountedTranscriptRowSnapshot<Item extends WorkbenchListIte
   const root = ReactDOMClient.createRoot(host);
   const sessionId = `e2e-row-probe-${transcriptProbeCounter += 1}`;
   clearPretextVirtualizerRowLayoutCache();
-  clearSessionThreadDomMeasurementFallbacks();
-  clearSessionThreadDomMeasurementCaches();
+  clearSessionThreadDebugDomAuditFallbacks();
+  clearSessionThreadDebugDomAuditCaches();
   resetSessionPretextRuntimeCache();
 
   try {
@@ -229,8 +229,8 @@ async function measureMountedTranscriptRowSnapshot<Item extends WorkbenchListIte
   } finally {
     root.unmount();
     host.remove();
-    clearSessionThreadDomMeasurementFallbacks();
-    clearSessionThreadDomMeasurementCaches();
+    clearSessionThreadDebugDomAuditFallbacks();
+    clearSessionThreadDebugDomAuditCaches();
     resetSessionPretextRuntimeCache();
     clearPretextVirtualizerRowLayoutCache();
   }
@@ -301,14 +301,14 @@ export async function measureWorkbenchAssistantParity(
         }),
       ),
   });
-  const hiddenMeasured = measureRenderedSessionAssistantHeight(
+  const debugDomMeasured = measureDebugRenderedSessionAssistantHeight(
     item,
     snapshot.measurement.viewportWidth ?? viewportWidth,
   );
   return {
     ...snapshot.measurement,
-    hiddenMeasured: hiddenMeasured ?? undefined,
-    hiddenDelta: hiddenMeasured != null ? hiddenMeasured - snapshot.measurement.actual : undefined,
+    debugDomMeasured: debugDomMeasured ?? undefined,
+    debugDomDelta: debugDomMeasured != null ? debugDomMeasured - snapshot.measurement.actual : undefined,
   };
 }
 

@@ -1,9 +1,20 @@
 import { layoutNextLine } from "@chenglou/pretext";
 import { isSealedInlineCodeFragment } from "../../utils/inlineCodeFragments";
+import { browserAllowsInlineCodeLeadingHang } from "./sessionMarkdownBrowserProfile";
 import type { PreparedInlineLayoutItem } from "./sessionMarkdownInlineLayout";
 import { LINE_START_CURSOR, cursorsMatch } from "./sessionMarkdownMeasurementCore";
 
 type InlineSegmentItem = Extract<PreparedInlineLayoutItem, { kind: "segment" }>;
+type InlineContinuationSlackItem = Pick<
+  InlineSegmentItem,
+  | "codeGroupHasDottedPath"
+  | "codeGroupHasTrailingText"
+  | "codeGroupStartsAfterText"
+  | "codeGroupStartsAfterStyledTextSeam"
+  | "isPathTailFragment"
+  | "isSealedInlineCodeFragment"
+  | "text"
+>;
 
 export type InlineCodeBoundaryFit = {
   consumedWidth: number;
@@ -14,17 +25,165 @@ export type InlineCodeBoundaryFit = {
   nextStartsAfterCodeWhitespace: boolean;
 };
 
-export const browserAllowsInlineCodeLeadingHang = (): boolean => {
-  if (typeof navigator === "undefined") {
-    return true;
-  }
-  const userAgent = navigator.userAgent;
-  return /HeadlessChrome|Chrome\/|Chromium\/|Edg\//.test(userAgent) || /jsdom/i.test(userAgent);
+export type InlineCodeTrailingPlainInfo = {
+  width: number;
+  text: string;
+  hasFollowingInlineCode: boolean;
+  isDecoratedText: boolean;
+  startsAfterCollapsedSoftBreak: boolean;
 };
 
+export function isShortExtensionPathLikeFragment(text: string | null | undefined): boolean {
+  if (typeof text !== "string") {
+    return false;
+  }
+  if (!/[\\/]$/.test(text) || text.includes(".") || /\s/.test(text)) {
+    return false;
+  }
+  return Array.from(text).length <= 16;
+}
+
 const INLINE_CODE_ENGINE_PROSE_START_FOLLOWING_FRAGMENT_SLACK_PX = 16;
+const INLINE_CODE_CONTINUATION_FIT_SLACK_PX = 5;
+const INLINE_CODE_PATH_TAIL_CONTINUATION_FIT_SLACK_PX = 1;
+const INLINE_CODE_COLON_COMMAND_FRAGMENT_SLACK_PX = 1;
+const INLINE_CODE_PROSE_START_SEAM_GUARD_PX = 4;
+const INLINE_CODE_STANDALONE_HYPHEN_FRAGMENT_SLACK_PX = 2;
+
+export function shouldApplyInlineCodeSoftBreakTextStartGuard(params: {
+  text: string;
+  startsAfterCollapsedSoftBreak: boolean;
+  startsAfterPathLikeInlineCodeSeam: boolean;
+  startsAfterInlineCodeSeam: boolean;
+  startsStyledTextAfterInlineCodeSeam: boolean;
+  lastFragmentEndedWithPathDelimiter: boolean;
+  lastFragmentEndedWithHyphen: boolean;
+}): boolean {
+  const startsAtSoftBreakPathSeam =
+    params.startsAfterCollapsedSoftBreak &&
+    params.startsAfterPathLikeInlineCodeSeam &&
+    (params.startsAfterInlineCodeSeam || params.startsStyledTextAfterInlineCodeSeam);
+  if (!startsAtSoftBreakPathSeam) {
+    return false;
+  }
+  return params.lastFragmentEndedWithPathDelimiter || params.lastFragmentEndedWithHyphen;
+}
+
+export function shouldBreakBeforeWhitespaceSeparatedInlineCodeFragment(params: {
+  lineHasContent: boolean;
+  startsAfterCodeWhitespace: boolean;
+  reservedWidth: number;
+  remainingWidth: number;
+  fragmentWidth: number;
+  slackPx?: number;
+}): boolean {
+  return (
+    params.lineHasContent &&
+    params.startsAfterCodeWhitespace &&
+    params.reservedWidth + params.fragmentWidth > params.remainingWidth + (params.slackPx ?? 0) + 0.01
+  );
+}
+
+export function resolveInlineCodeWhitespaceSeparatedFragmentSlackPx(params: {
+  lineHasContent: boolean;
+  startsAfterCodeWhitespace: boolean;
+  fragmentText: string;
+}): number {
+  if (
+    !browserAllowsInlineCodeLeadingHang() &&
+    params.lineHasContent &&
+    params.startsAfterCodeWhitespace &&
+    params.fragmentText.includes(":") &&
+    !params.fragmentText.includes("/") &&
+    !/\s/.test(params.fragmentText)
+  ) {
+    return INLINE_CODE_COLON_COMMAND_FRAGMENT_SLACK_PX;
+  }
+  return browserAllowsInlineCodeLeadingHang() &&
+    params.lineHasContent &&
+    params.startsAfterCodeWhitespace &&
+    params.fragmentText === "-"
+    ? INLINE_CODE_STANDALONE_HYPHEN_FRAGMENT_SLACK_PX
+    : 0;
+}
+
+export function resolveInlineCodeContinuationFitSlackPx(params: {
+  lineHasContent: boolean;
+  atLineBreakBoundary: boolean;
+  sameCodeGroupContinuation: boolean;
+  startsAfterCodeWhitespace: boolean;
+  lastFragmentEndedWithHyphen: boolean;
+  lastFragmentEndedWithPathDelimiter: boolean;
+  item: InlineContinuationSlackItem;
+}): number {
+  const isPathLikeItem =
+    params.item.text.includes("/") || params.item.text.includes("\\") || params.item.isPathTailFragment;
+  const allowChromiumHyphenPathContinuation =
+    browserAllowsInlineCodeLeadingHang() && params.lastFragmentEndedWithHyphen && isPathLikeItem;
+  const shouldDisableChromiumNonDelimitedPathTailSlack =
+    browserAllowsInlineCodeLeadingHang() &&
+    params.item.isPathTailFragment &&
+    !params.lastFragmentEndedWithPathDelimiter;
+  const shouldDisableForEngine =
+    shouldDisableChromiumNonDelimitedPathTailSlack ||
+    !browserAllowsInlineCodeLeadingHang() &&
+    (params.item.isPathTailFragment ||
+      params.item.codeGroupHasDottedPath ||
+      params.item.isSealedInlineCodeFragment ||
+      params.item.text.includes("/") ||
+      params.item.text.includes("\\"));
+  if (
+    !params.lineHasContent ||
+    !params.atLineBreakBoundary ||
+    !params.sameCodeGroupContinuation ||
+    params.startsAfterCodeWhitespace ||
+    (params.lastFragmentEndedWithHyphen && !allowChromiumHyphenPathContinuation) ||
+    (params.lastFragmentEndedWithPathDelimiter && params.item.codeGroupStartsAfterStyledTextSeam) ||
+    (params.lastFragmentEndedWithPathDelimiter &&
+      params.item.codeGroupStartsAfterText &&
+      params.item.codeGroupHasTrailingText) ||
+    (params.lastFragmentEndedWithPathDelimiter && !browserAllowsInlineCodeLeadingHang()) ||
+    shouldDisableForEngine
+  ) {
+    return 0;
+  }
+  const chromiumPathTailSlackPx =
+    browserAllowsInlineCodeLeadingHang() &&
+    params.lastFragmentEndedWithPathDelimiter &&
+    !params.item.isSealedInlineCodeFragment
+      ? INLINE_CODE_PATH_TAIL_CONTINUATION_FIT_SLACK_PX
+      : 0;
+  // Chromium sometimes keeps a short terminal path tail on the current line
+  // after a slash boundary, but that tolerance is much smaller than the
+  // generic same-group continuation slack.
+  if (
+    chromiumPathTailSlackPx > 0 &&
+    !params.item.isSealedInlineCodeFragment
+  ) {
+    return chromiumPathTailSlackPx;
+  }
+  return INLINE_CODE_CONTINUATION_FIT_SLACK_PX + chromiumPathTailSlackPx;
+}
+
+export function resolveInlineCodeProseStartSeamGuardPx(params: {
+  startsAtLineStart: boolean;
+  item: InlineContinuationSlackItem & Pick<InlineSegmentItem, "codeGroupHasWhitespace" | "codeGroupStartsAfterText" | "isFirstCodeGroupFragment" | "prefersFreshLineStart">;
+}): number {
+  if (
+    params.startsAtLineStart ||
+    !browserAllowsInlineCodeLeadingHang() ||
+    !params.item.isFirstCodeGroupFragment ||
+    !params.item.codeGroupStartsAfterText ||
+    !params.item.prefersFreshLineStart ||
+    params.item.codeGroupHasWhitespace
+  ) {
+    return 0;
+  }
+  return INLINE_CODE_PROSE_START_SEAM_GUARD_PX;
+}
 
 export function resolveInlineCodeWrapChromeWidth(params: {
+  allowLeadingHang?: boolean;
   chromeWidth: number;
   codeGroupHasWhitespace: boolean;
   codeGroupStartsAfterText: boolean;
@@ -39,19 +198,61 @@ export function resolveInlineCodeWrapChromeWidth(params: {
   }
   // Chromium lets one edge of the outer <code> chip hang on the first visual
   // slice of a continuous path-like code group when that slice starts after
-  // prose on the same line. Continuation lines, standalone path tokens, non-
-  // path code chips, and inline code with internal whitespace still consume
-  // full chrome.
+  // prose on the same line. We only opt into that discount from the current-
+  // line fit path when the full code group does not fit inline; preferred-start
+  // and whole-group widths still charge full chrome so near-threshold prose
+  // math stays conservative.
   if (
+    (params.allowLeadingHang ?? false) &&
     browserAllowsInlineCodeLeadingHang() &&
+    !params.startsAtLineStart &&
     params.codeGroupStartsAfterText &&
     params.isFirstCodeGroupFragment &&
-    params.prefersFreshLineStart &&
-    !params.codeGroupHasWhitespace
+    (params.prefersFreshLineStart || params.codeGroupHasWhitespace)
   ) {
     return params.chromeWidth / 2;
   }
   return params.chromeWidth;
+}
+
+export function shouldBreakBeforePartialSealedDottedPathContinuation(params: {
+  currentCodeGroupStartFragmentText: string | null;
+  fullWidth: number;
+  guardedRemainingWidth: number;
+  item: Pick<InlineSegmentItem, "codeGroupHasDottedPath" | "codeGroupStartsAfterText" | "isPathTailFragment" | "text">;
+  lastFragmentText: string | null;
+  sameCodeGroupContinuation: boolean;
+}): boolean {
+  return (
+    params.sameCodeGroupContinuation &&
+    params.currentCodeGroupStartFragmentText != null &&
+    params.currentCodeGroupStartFragmentText === params.lastFragmentText &&
+    isShortExtensionPathLikeFragment(params.lastFragmentText) &&
+    params.item.codeGroupStartsAfterText &&
+    params.item.codeGroupHasDottedPath &&
+    !params.item.text.includes("/") &&
+    !params.item.text.includes("\\") &&
+    (params.item.text.includes(".") || params.item.isPathTailFragment) &&
+    params.fullWidth > params.guardedRemainingWidth + 0.01
+  );
+}
+
+export function shouldBreakBeforePartialDottedStemPathTailContinuation(params: {
+  fullWidth: number;
+  guardedRemainingWidth: number;
+  item: Pick<InlineSegmentItem, "codeGroupHasDottedPath" | "codeGroupStartsAfterText" | "text">;
+  lastFragmentText: string | null;
+  sameCodeGroupContinuation: boolean;
+}): boolean {
+  return (
+    !browserAllowsInlineCodeLeadingHang() &&
+    params.sameCodeGroupContinuation &&
+    params.item.codeGroupStartsAfterText &&
+    params.item.codeGroupHasDottedPath &&
+    /[\\/]/.test(params.item.text) &&
+    /\.$/.test(params.lastFragmentText ?? "") &&
+    params.fullWidth > params.guardedRemainingWidth + 0.01
+  );
 }
 
 export function createInlineCodeFitPlanner(params: {
@@ -66,38 +267,91 @@ export function createInlineCodeFitPlanner(params: {
   const isPathLikeContinuationItem = (item: InlineSegmentItem): boolean =>
     item.text.includes("/") || item.text.includes("\\") || item.isPathTailFragment;
 
-  const measureAttachedTrailingPlainWidth = (startIndex: number): number => {
-    const nextItem = items[startIndex + 1];
-    return nextItem?.kind === "segment" &&
-      nextItem.codeGroupId == null &&
-      !/\s/.test(nextItem.text)
-      ? nextItem.fullWidth
-      : 0;
-  };
-
-  const measureCodeGroupTrailingPlainWidth = (startIndex: number): number => {
+  const findTrailingPlainSegmentInfo = (startIndex: number): InlineCodeTrailingPlainInfo => {
     const firstItem = items[startIndex];
     if (firstItem?.kind !== "segment" || firstItem.codeGroupId == null) {
-      return 0;
+      return {
+        width: 0,
+        text: "",
+        hasFollowingInlineCode: false,
+        isDecoratedText: false,
+        startsAfterCollapsedSoftBreak: false,
+      };
     }
     const codeGroupId = firstItem.codeGroupId;
     for (let index = startIndex + 1; index < items.length; index += 1) {
       const item = items[index]!;
       if (item.kind === "hardBreak") {
-        return 0;
+        return {
+          width: 0,
+          text: "",
+          hasFollowingInlineCode: false,
+          isDecoratedText: false,
+          startsAfterCollapsedSoftBreak: false,
+        };
       }
       if (item.kind === "space") {
-        if (item.codeGroupId === codeGroupId) {
-          continue;
-        }
-        return 0;
+        continue;
       }
       if (item.codeGroupId === codeGroupId) {
         continue;
       }
-      return item.codeGroupId == null && !/\s/.test(item.text) ? item.fullWidth : 0;
+      if (item.codeGroupId != null) {
+        return {
+          width: 0,
+          text: "",
+          hasFollowingInlineCode: false,
+          isDecoratedText: false,
+          startsAfterCollapsedSoftBreak: false,
+        };
+      }
+      if (item.text.trim().length === 0) {
+        continue;
+      }
+      let hasFollowingInlineCode = false;
+      for (let nextIndex = index + 1; nextIndex < items.length; nextIndex += 1) {
+        const nextItem = items[nextIndex]!;
+        if (nextItem.kind === "hardBreak") {
+          break;
+        }
+        if (nextItem.kind === "space") {
+          continue;
+        }
+        if (nextItem.startsAfterCollapsedSoftBreak) {
+          break;
+        }
+        if (nextItem.codeGroupId != null) {
+          hasFollowingInlineCode = true;
+          break;
+        }
+      }
+      return {
+        width: item.fullWidth,
+        text: item.text,
+        hasFollowingInlineCode,
+        isDecoratedText: item.isDecoratedText,
+        startsAfterCollapsedSoftBreak: item.startsAfterCollapsedSoftBreak,
+      };
     }
-    return 0;
+    return {
+      width: 0,
+      text: "",
+      hasFollowingInlineCode: false,
+      isDecoratedText: false,
+      startsAfterCollapsedSoftBreak: false,
+    };
+  };
+
+  const measureAttachedTrailingPlainWidth = (startIndex: number): number => {
+    return findTrailingPlainSegmentInfo(startIndex).width;
+  };
+
+  const measureCodeGroupTrailingPlainWidth = (startIndex: number): number => {
+    return measureCodeGroupTrailingPlainInfo(startIndex).width;
+  };
+
+  const measureCodeGroupTrailingPlainInfo = (startIndex: number): InlineCodeTrailingPlainInfo => {
+    return findTrailingPlainSegmentInfo(startIndex);
   };
 
   const shouldPreserveSealedInlineCodeBoundary = (params: {
@@ -105,9 +359,21 @@ export function createInlineCodeFitPlanner(params: {
     reservedWidth: number;
     remainingWidth: number;
     item: InlineSegmentItem;
-  }): boolean =>
-    params.sealedBoundary &&
-    params.reservedWidth + params.item.fullWidth > params.remainingWidth + 0.01;
+    lastFragmentText?: string | null;
+  }): boolean => {
+    const lastFragmentIsShortExtensionPath = isShortExtensionPathLikeFragment(params.lastFragmentText);
+    const allowChromiumDottedPathBoundaryContinuation =
+      browserAllowsInlineCodeLeadingHang() &&
+      params.item.codeGroupStartsAfterText &&
+      !lastFragmentIsShortExtensionPath &&
+      params.item.codeGroupHasDottedPath &&
+      (params.item.text.includes(".") || params.item.isPathTailFragment);
+    return (
+      params.sealedBoundary &&
+      !allowChromiumDottedPathBoundaryContinuation &&
+      params.reservedWidth + params.item.fullWidth > params.remainingWidth + 0.01
+    );
+  };
 
   const measurePreferredCodeGroupStartWidth = (startIndex: number): number => {
     const firstItem = items[startIndex];
@@ -117,9 +383,10 @@ export function createInlineCodeFitPlanner(params: {
     const codeGroupId = firstItem.codeGroupId;
     let lineWidth = 0;
     let remainingWidth = maxWidth;
-    let lineHasContent = false;
+    let lineHasContent = firstItem.codeGroupStartsAfterText;
     let pendingSpaceWidth = 0;
     let chargedChrome = false;
+    let lastFragmentText: string | null = null;
 
     for (let index = startIndex; index < items.length; index += 1) {
       const item = items[index]!;
@@ -149,12 +416,32 @@ export function createInlineCodeFitPlanner(params: {
           isFirstCodeGroupFragment: item.isFirstCodeGroupFragment,
           prefersFreshLineStart: item.prefersFreshLineStart,
           lineHasContent,
-          startsAtLineStart: true,
+          startsAtLineStart: !lineHasContent,
         });
+      const continuationSlackPx = resolveInlineCodeContinuationFitSlackPx({
+        lineHasContent,
+        atLineBreakBoundary: true,
+        sameCodeGroupContinuation: lineHasContent,
+        startsAfterCodeWhitespace: item.startsAfterCodeWhitespace,
+        lastFragmentEndedWithHyphen: lastFragmentText?.endsWith("-") ?? false,
+        lastFragmentEndedWithPathDelimiter: /[\\/]+$/.test(lastFragmentText ?? ""),
+        item,
+      });
+      if (
+        shouldBreakBeforeWhitespaceSeparatedInlineCodeFragment({
+          lineHasContent,
+          startsAfterCodeWhitespace: item.startsAfterCodeWhitespace,
+          reservedWidth,
+          remainingWidth,
+          fragmentWidth: item.fullWidth,
+        })
+      ) {
+        break;
+      }
       const availableWidth = Math.max(1, remainingWidth - reservedWidth);
       if (item.isSealedInlineCodeFragment) {
         const fullWidth = reservedWidth + item.fullWidth;
-        if (lineHasContent && fullWidth > remainingWidth + 0.01) {
+        if (lineHasContent && fullWidth > remainingWidth + continuationSlackPx + 0.01) {
           break;
         }
         const overflowed = fullWidth > remainingWidth + 0.01;
@@ -163,6 +450,7 @@ export function createInlineCodeFitPlanner(params: {
         chargedChrome = true;
         lineHasContent = true;
         pendingSpaceWidth = 0;
+        lastFragmentText = item.text;
         if (overflowed) {
           break;
         }
@@ -179,6 +467,7 @@ export function createInlineCodeFitPlanner(params: {
       chargedChrome = true;
       lineHasContent = true;
       pendingSpaceWidth = 0;
+      lastFragmentText = item.text;
       if (!cursorsMatch(line.end, item.endCursor)) {
         break;
       }
@@ -195,7 +484,7 @@ export function createInlineCodeFitPlanner(params: {
 
     let lineWidth = 0;
     let pendingSpaceWidth = 0;
-    let lineHasContent = false;
+    let lineHasContent = firstItem.codeGroupStartsAfterText;
     let chargedChrome = false;
     let sawPathLikeFragment = false;
     let sawDottedStem = false;
@@ -216,7 +505,7 @@ export function createInlineCodeFitPlanner(params: {
           isFirstCodeGroupFragment: item.isFirstCodeGroupFragment,
           prefersFreshLineStart: item.prefersFreshLineStart,
           lineHasContent,
-          startsAtLineStart: true,
+          startsAtLineStart: !lineHasContent,
         }) +
         item.fullWidth;
       lineHasContent = true;
@@ -237,7 +526,7 @@ export function createInlineCodeFitPlanner(params: {
     const codeGroupId = firstItem.codeGroupId;
     let lineWidth = 0;
     let pendingSpaceWidth = 0;
-    let lineHasContent = false;
+    let lineHasContent = firstItem.codeGroupStartsAfterText;
     let chargedChrome = false;
 
     for (let index = startIndex; index < items.length; index += 1) {
@@ -268,7 +557,7 @@ export function createInlineCodeFitPlanner(params: {
           isFirstCodeGroupFragment: item.isFirstCodeGroupFragment,
           prefersFreshLineStart: item.prefersFreshLineStart,
           lineHasContent,
-          startsAtLineStart: true,
+          startsAtLineStart: !lineHasContent,
         }) +
         item.fullWidth;
       lineHasContent = true;
@@ -283,6 +572,7 @@ export function createInlineCodeFitPlanner(params: {
     startIndex: number,
     availableWidth: number,
     startsAtLineStart: boolean,
+    allowLeadingHang = true,
   ): InlineCodeBoundaryFit => {
     const firstItem = items[startIndex];
     if (firstItem?.kind !== "segment" || firstItem.codeGroupId == null) {
@@ -296,12 +586,28 @@ export function createInlineCodeFitPlanner(params: {
       };
     }
     const codeGroupId = firstItem.codeGroupId;
-    let remainingWidth = Math.max(1, availableWidth);
-    let lineHasContent = false;
+    const wholeCodeGroupWidth = wholeCodeGroupInlineWidths.get(startIndex) ?? 0;
+    const allowCurrentLineLeadingHang =
+      allowLeadingHang &&
+      browserAllowsInlineCodeLeadingHang() &&
+      !startsAtLineStart &&
+      firstItem.isFirstCodeGroupFragment &&
+      firstItem.codeGroupStartsAfterText &&
+      wholeCodeGroupWidth > availableWidth + 0.01;
+    let remainingWidth = Math.max(
+      1,
+      availableWidth -
+        resolveInlineCodeProseStartSeamGuardPx({
+          startsAtLineStart,
+          item: firstItem,
+        }),
+    );
+    let lineHasContent = !startsAtLineStart;
     let pendingSpaceWidth = 0;
     let chargedChrome = false;
     let lastFragmentText: string | null = null;
     let consumedWidth = 0;
+    let usedChromiumDottedPathBoundaryContinuation = false;
 
     for (let index = startIndex; index < items.length; index += 1) {
       const item = items[index]!;
@@ -348,7 +654,7 @@ export function createInlineCodeFitPlanner(params: {
         lastFragmentText?.endsWith("-") &&
         isPathLikeContinuationItem(item)
       ) {
-        const continuationFit = measureCodeGroupFitWithinWidth(index, remainingWidth, false);
+        const continuationFit = measureCodeGroupFitWithinWidth(index, remainingWidth, false, allowLeadingHang);
         if (!codeGroupFitEndsAtFriendlyBoundary(continuationFit)) {
           return {
             consumedWidth,
@@ -360,10 +666,10 @@ export function createInlineCodeFitPlanner(params: {
           };
         }
       }
-
       const reservedWidth =
         (lineHasContent ? pendingSpaceWidth : 0) +
         resolveInlineCodeWrapChromeWidth({
+          allowLeadingHang: allowCurrentLineLeadingHang,
           chromeWidth: item.chromeWidth,
           codeGroupHasWhitespace: item.codeGroupHasWhitespace,
           codeGroupStartsAfterText: item.codeGroupStartsAfterText,
@@ -373,6 +679,69 @@ export function createInlineCodeFitPlanner(params: {
           lineHasContent,
           startsAtLineStart,
         });
+      const continuationSlackPx = resolveInlineCodeContinuationFitSlackPx({
+        lineHasContent,
+        atLineBreakBoundary: true,
+        sameCodeGroupContinuation: lineHasContent,
+        startsAfterCodeWhitespace: item.startsAfterCodeWhitespace,
+        lastFragmentEndedWithHyphen: lastFragmentText?.endsWith("-") ?? false,
+        lastFragmentEndedWithPathDelimiter: /[\\/]+$/.test(lastFragmentText ?? ""),
+        item,
+      });
+      const shouldAcceptChromiumPathTailContinuation =
+        browserAllowsInlineCodeLeadingHang() &&
+        lineHasContent &&
+        /[\\/]+$/.test(lastFragmentText ?? "") &&
+        !item.isSealedInlineCodeFragment &&
+        !item.startsAfterCodeWhitespace &&
+        reservedWidth + item.fullWidth <= remainingWidth + continuationSlackPx + 0.01;
+      const nextSameCodeGroupItem = items[index + 1];
+      const splitDottedStemTailWouldOverflowCurrentLine =
+        availableWidth > maxWidth * 0.85 &&
+        lineHasContent &&
+        firstItem.codeGroupStartsAfterText &&
+        firstItem.codeGroupHasTrailingText &&
+        lastFragmentText?.endsWith("/") === true &&
+        !firstItem.text.includes(".") &&
+        item.text.endsWith(".") &&
+        nextSameCodeGroupItem?.kind === "segment" &&
+        nextSameCodeGroupItem.codeGroupId === codeGroupId &&
+        isPathLikeContinuationItem(nextSameCodeGroupItem) &&
+        reservedWidth + item.fullWidth + nextSameCodeGroupItem.fullWidth >
+          remainingWidth + continuationSlackPx + 0.01;
+      if (splitDottedStemTailWouldOverflowCurrentLine) {
+        return {
+          consumedWidth,
+          endedAtGroupEnd: false,
+          endedInsideFragment: false,
+          lastFragmentText,
+          nextFragmentText: item.text,
+          nextStartsAfterCodeWhitespace: item.startsAfterCodeWhitespace,
+        };
+      }
+      if (
+        shouldBreakBeforeWhitespaceSeparatedInlineCodeFragment({
+          lineHasContent,
+          startsAfterCodeWhitespace: item.startsAfterCodeWhitespace,
+          reservedWidth,
+          remainingWidth,
+          fragmentWidth: item.fullWidth,
+          slackPx: resolveInlineCodeWhitespaceSeparatedFragmentSlackPx({
+            lineHasContent,
+            startsAfterCodeWhitespace: item.startsAfterCodeWhitespace,
+            fragmentText: item.text,
+          }),
+        })
+      ) {
+        return {
+          consumedWidth,
+          endedAtGroupEnd: false,
+          endedInsideFragment: false,
+          lastFragmentText,
+          nextFragmentText: item.text,
+          nextStartsAfterCodeWhitespace: item.startsAfterCodeWhitespace,
+        };
+      }
       if (
         lineHasContent &&
         !startsAtLineStart &&
@@ -380,6 +749,7 @@ export function createInlineCodeFitPlanner(params: {
         !firstItem.codeGroupHasWhitespace &&
         firstItem.isFirstCodeGroupFragment &&
         firstItem.codeGroupStartsAfterText &&
+        !firstItem.codeGroupStartsAfterStyledTextSeam &&
         isPathLikeContinuationItem(item) &&
         Math.max(0, remainingWidth - reservedWidth - item.fullWidth) <
           INLINE_CODE_ENGINE_PROSE_START_FOLLOWING_FRAGMENT_SLACK_PX
@@ -393,15 +763,26 @@ export function createInlineCodeFitPlanner(params: {
           nextStartsAfterCodeWhitespace: item.startsAfterCodeWhitespace,
         };
       }
-      if (
-        lineHasContent &&
-        shouldPreserveSealedInlineCodeBoundary({
-          sealedBoundary: lastFragmentText != null && isSealedInlineCodeFragment(lastFragmentText),
-          reservedWidth,
-          remainingWidth,
-          item,
-        })
-      ) {
+      const sealedBoundary =
+        lineHasContent && lastFragmentText != null && isSealedInlineCodeFragment(lastFragmentText);
+      const boundaryRemainingWidth = remainingWidth + continuationSlackPx;
+      const sealedBoundaryOverflow =
+        sealedBoundary &&
+        !shouldAcceptChromiumPathTailContinuation &&
+        reservedWidth + item.fullWidth > boundaryRemainingWidth + 0.01;
+      const lastFragmentIsShortExtensionPath = isShortExtensionPathLikeFragment(lastFragmentText);
+      const canRelaxChromiumDottedPathBoundary =
+        sealedBoundaryOverflow &&
+        !usedChromiumDottedPathBoundaryContinuation &&
+        browserAllowsInlineCodeLeadingHang() &&
+        firstItem.codeGroupStartsAfterText &&
+        !firstItem.text.includes(".") &&
+        !lastFragmentIsShortExtensionPath &&
+        item.codeGroupHasDottedPath &&
+        !item.text.includes("/") &&
+        !item.text.includes("\\") &&
+        (item.text.includes(".") || item.isPathTailFragment);
+      if (sealedBoundaryOverflow && !canRelaxChromiumDottedPathBoundary) {
         return {
           consumedWidth,
           endedAtGroupEnd: false,
@@ -411,10 +792,22 @@ export function createInlineCodeFitPlanner(params: {
           nextStartsAfterCodeWhitespace: item.startsAfterCodeWhitespace,
         };
       }
+      if (canRelaxChromiumDottedPathBoundary) {
+        usedChromiumDottedPathBoundaryContinuation = true;
+      }
+      if (shouldAcceptChromiumPathTailContinuation) {
+        remainingWidth = Math.max(0, remainingWidth - reservedWidth - item.fullWidth);
+        consumedWidth += reservedWidth + item.fullWidth;
+        lineHasContent = true;
+        chargedChrome = true;
+        pendingSpaceWidth = 0;
+        lastFragmentText = item.text;
+        continue;
+      }
 
       if (item.isSealedInlineCodeFragment) {
         const fullWidth = reservedWidth + item.fullWidth;
-        if (fullWidth > remainingWidth + 0.01) {
+        if (fullWidth > remainingWidth + continuationSlackPx + 0.01) {
           return {
             consumedWidth,
             endedAtGroupEnd: false,
@@ -497,6 +890,7 @@ export function createInlineCodeFitPlanner(params: {
     dottedPathCodeGroupStartClusterWidths,
     measureAttachedTrailingPlainWidth,
     measureCodeGroupTrailingPlainWidth,
+    measureCodeGroupTrailingPlainInfo,
     measureCodeGroupFitWithinWidth,
     preferredCodeGroupStartWidths,
     shouldPreserveSealedInlineCodeBoundary,

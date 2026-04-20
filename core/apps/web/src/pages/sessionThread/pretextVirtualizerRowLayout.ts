@@ -7,11 +7,6 @@ import {
 } from "../../utils/pretextPerfDiagnostics";
 import type { WorkbenchListItem, WorkbenchTurnHeader } from "../sessionView";
 import {
-  clearSessionMarkdownMeasurementCaches,
-  measureSessionMarkdownDocument,
-} from "./sessionMarkdownMeasurement";
-import { measureSessionPlainTextBlockHeight } from "./sessionPlainTextMeasurement";
-import {
   SESSION_THREAD_INDENT_LEFT_PX,
   SESSION_THREAD_MESSAGE_ATTACHMENT_GAP_PX,
   SESSION_THREAD_MESSAGE_ATTACHMENT_HEIGHT_PX,
@@ -24,9 +19,6 @@ import {
   SESSION_THREAD_MESSAGE_ROW_PADDING_BLOCK_PX,
   SESSION_THREAD_MESSAGE_TOGGLE_LINE_HEIGHT_PX,
   SESSION_THREAD_MESSAGE_TOGGLE_MARGIN_TOP_PX,
-  SESSION_THREAD_MARKDOWN_BODY_FONT_FAMILY,
-  SESSION_THREAD_MARKDOWN_BODY_FONT_SIZE_PX,
-  SESSION_THREAD_MARKDOWN_BODY_LINE_HEIGHT_PX,
   SESSION_THREAD_MARKDOWN_CODE_BLOCK_FONT_SIZE_PX,
   SESSION_THREAD_MARKDOWN_CODE_BLOCK_LINE_HEIGHT_PX,
   SESSION_THREAD_MARKDOWN_INLINE_CODE_FONT_FAMILY,
@@ -40,6 +32,12 @@ import {
   resolveSessionThreadMessageTextWidth,
   resolveSessionThreadTurnHeaderTextWidth,
 } from "./sessionThreadLayoutTokens";
+import {
+  clearSessionTranscriptTextMeasurementCaches,
+  measureAssistantMarkdownTextHeight,
+  measureMessageLayoutTextHeight,
+  measureTurnHeaderPreviewTextHeight,
+} from "./sessionTranscriptTextMeasurement";
 import { measureSessionTextHeight } from "./sessionTextMeasurement";
 import {
   getWorkbenchMessageLayoutState,
@@ -54,8 +52,6 @@ export type PretextVirtualizerRowLayoutContext = {
   turnToolsLoading?: readonly string[];
 };
 
-const BODY_FONT = `${SESSION_THREAD_MARKDOWN_BODY_FONT_SIZE_PX}px ${SESSION_THREAD_MARKDOWN_BODY_FONT_FAMILY}`;
-const BODY_LINE_HEIGHT_PX = SESSION_THREAD_MARKDOWN_BODY_LINE_HEIGHT_PX;
 const SMALL_LINE_HEIGHT_PX = 16;
 const MONO_FONT = `${SESSION_THREAD_MARKDOWN_CODE_BLOCK_FONT_SIZE_PX}px ${SESSION_THREAD_MARKDOWN_INLINE_CODE_FONT_FAMILY}`;
 const MONO_LINE_HEIGHT_PX = SESSION_THREAD_MARKDOWN_CODE_BLOCK_LINE_HEIGHT_PX;
@@ -133,16 +129,13 @@ function measureTurnHeaderHeight(
     { kind: "turn_header", id: `turn-header-${header.id}`, header },
     context.expandedTurnHeaders ?? {},
   );
-  const textHeight = measureSessionPlainTextBlockHeight({
+  const collapsedTextHeight = measureTurnHeaderPreviewTextHeight({
     cacheKey: `turn-header:${contentRevision}:${expanded ? "expanded" : "collapsed"}`,
     text: displayPlainText,
-    font: BODY_FONT,
     width: resolveSessionThreadTurnHeaderTextWidth(viewportWidth),
-    lineHeight: BODY_LINE_HEIGHT_PX,
+    collapsedMaxHeightPx: SESSION_THREAD_TURN_HEADER_COLLAPSED_MAX_HEIGHT_PX,
+    expanded,
   });
-  const collapsedTextHeight = expanded
-    ? textHeight
-    : Math.min(textHeight, SESSION_THREAD_TURN_HEADER_COLLAPSED_MAX_HEIGHT_PX);
   const imageCount = expanded ? countImageAttachments(header.attachments) : 0;
   const perRow = Math.max(
     1,
@@ -198,17 +191,12 @@ function measureMessageHeight(
 ): number {
   const layout = getWorkbenchMessageLayoutState(item, context.expandedMessageById ?? {});
   const textWidth = resolveSessionThreadMessageTextWidth(viewportWidth);
-  const textHeight =
-    layout.renderMode === "plain_text"
-      ? measureTextHeight({
-          cacheKey: `message-plain:${item.id}:${layout.expanded ? "expanded" : "collapsed"}:${layout.shownContent.length}`,
-          text: layout.shownContent,
-          font: BODY_FONT,
-          width: textWidth,
-          lineHeight: BODY_LINE_HEIGHT_PX,
-          whiteSpace: "pre-wrap",
-        })
-      : measureSessionMarkdownDocument(layout.shownContent, textWidth);
+  const textHeight = measureMessageLayoutTextHeight({
+    cacheKey: "message-layout",
+    itemId: item.id,
+    layout,
+    width: textWidth,
+  });
   const attachmentsHeight = measureMessageAttachmentsHeight(item, viewportWidth);
   const toggleHeight = layout.expandable ? MESSAGE_TOGGLE_HEIGHT_PX : 0;
   return normalizeHeight(
@@ -229,7 +217,7 @@ function measureAssistantHeight(
     return SPACER_HEIGHT_PX;
   }
   const textWidth = resolveSessionThreadAssistantTextWidth(viewportWidth);
-  const textHeight = measureSessionMarkdownDocument(item.content, textWidth);
+  const textHeight = measureAssistantMarkdownTextHeight({ content: item.content, width: textWidth });
   return normalizeHeight(ASSISTANT_VERTICAL_PADDING_PX + textHeight);
 }
 
@@ -278,7 +266,7 @@ function measureAskUserQuestionHeight(item: Extract<WorkbenchListItem, { kind: "
 }
 
 export const clearPretextVirtualizerRowLayoutCache = (): void => {
-  clearSessionMarkdownMeasurementCaches();
+  clearSessionTranscriptTextMeasurementCaches();
 };
 
 export const getPretextVirtualizerRowLayout = (

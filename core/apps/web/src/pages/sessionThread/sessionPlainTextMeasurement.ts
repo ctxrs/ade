@@ -354,7 +354,7 @@ function measureCollapsedPlainTextLineHeight(params: {
       const wordFitsFreshLine = wordWidth <= maxWidth + 0.01;
       const isUrlLikeWord = word.includes("://");
       if (usesDelimitedWrapping) {
-        if ((isUrlLikeWord || !wordFitsFreshLine) && availableWidth > 0.01) {
+        if ((isUrlLikeWord || isPathLikeDelimitedWord(word) || !wordFitsFreshLine) && availableWidth > 0.01) {
           const currentFit = snapDelimitedUrlContinuationFit({
             cacheKeyPrefix: `${params.cacheKey}:word:${wordIndex}:continued`,
             word,

@@ -22,7 +22,7 @@ export type SessionMarkdownInlineNode =
 
 export type SessionMarkdownInlineRun =
   | { kind: "hardBreak" }
-  | { kind: "text"; text: string; style: SessionMarkdownTextRunStyle }
+  | { kind: "text"; text: string; style: SessionMarkdownTextRunStyle; deleted: boolean }
   | { kind: "inlineCode"; text: string; parts: readonly string[] };
 
 export type SessionMarkdownTextRunStyle = "body" | "strong" | "emphasis" | "strongEmphasis";
@@ -229,14 +229,19 @@ function normalizeInlineNodes(nodes: readonly SessionMarkdownNode[]): SessionMar
   return normalized;
 }
 
-function appendTextRun(runs: SessionMarkdownInlineRun[], text: string, style: SessionMarkdownTextRunStyle) {
+function appendTextRun(
+  runs: SessionMarkdownInlineRun[],
+  text: string,
+  style: SessionMarkdownTextRunStyle,
+  deleted: boolean,
+) {
   if (text.length === 0) return;
   const last = runs[runs.length - 1];
-  if (last?.kind === "text" && last.style === style) {
+  if (last?.kind === "text" && last.style === style && last.deleted === deleted) {
     last.text += text;
     return;
   }
-  runs.push({ kind: "text", text, style });
+  runs.push({ kind: "text", text, style, deleted });
 }
 
 function resolveTextRunStyle(state: { strong: boolean; emphasis: boolean }): SessionMarkdownTextRunStyle {
@@ -253,15 +258,18 @@ function buildTextContent(inlines: readonly SessionMarkdownInlineNode[]): Sessio
   let hasHardBreak = false;
   let hasStyledText = false;
 
-  const walk = (nodes: readonly SessionMarkdownInlineNode[], state: { strong: boolean; emphasis: boolean }) => {
+  const walk = (
+    nodes: readonly SessionMarkdownInlineNode[],
+    state: { strong: boolean; emphasis: boolean; deleted: boolean },
+  ) => {
     for (const node of nodes) {
       switch (node.kind) {
         case "text": {
           const text = node.text.replace(/\u00a0/g, " ");
           const style = resolveTextRunStyle(state);
           plainTextParts.push(text);
-          appendTextRun(runs, text, style);
-          if (style !== "body") hasStyledText = true;
+          appendTextRun(runs, text, style, state.deleted);
+          if (style !== "body" || state.deleted) hasStyledText = true;
           break;
         }
         case "inlineCode":
@@ -278,8 +286,8 @@ function buildTextContent(inlines: readonly SessionMarkdownInlineNode[]): Sessio
           const alt = node.alt.trim();
           const style = resolveTextRunStyle(state);
           plainTextParts.push(alt);
-          appendTextRun(runs, alt, style);
-          if (style !== "body" && alt.length > 0) hasStyledText = true;
+          appendTextRun(runs, alt, style, state.deleted);
+          if ((style !== "body" || state.deleted) && alt.length > 0) hasStyledText = true;
           break;
         }
         case "strong":
@@ -288,6 +296,9 @@ function buildTextContent(inlines: readonly SessionMarkdownInlineNode[]): Sessio
         case "emphasis":
           walk(node.children, { ...state, emphasis: true });
           break;
+        case "delete":
+          walk(node.children, { ...state, deleted: true });
+          break;
         default:
           walk(node.children, state);
           break;
@@ -295,7 +306,7 @@ function buildTextContent(inlines: readonly SessionMarkdownInlineNode[]): Sessio
     }
   };
 
-  walk(inlines, { strong: false, emphasis: false });
+  walk(inlines, { strong: false, emphasis: false, deleted: false });
   return {
     plainText: plainTextParts.join(""),
     runs,

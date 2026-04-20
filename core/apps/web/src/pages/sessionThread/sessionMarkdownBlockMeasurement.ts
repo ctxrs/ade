@@ -24,19 +24,9 @@ import {
   parseMarkdown,
   type TextBlockTypography,
 } from "./sessionMarkdownMeasurementCore";
-import {
-  SESSION_THREAD_MARKDOWN_BLOCKQUOTE_INSET_PX,
-  SESSION_THREAD_MARKDOWN_CODE_BLOCK_BORDER_WIDTH_PX,
-  SESSION_THREAD_MARKDOWN_IMAGE_HEIGHT_PX,
-  SESSION_THREAD_MARKDOWN_LIST_GAP_PX,
-  SESSION_THREAD_MARKDOWN_LIST_MARKER_GAP_PX,
-  SESSION_THREAD_MARKDOWN_TABLE_BORDER_WIDTH_PX,
-  SESSION_THREAD_MARKDOWN_TABLE_CELL_PADDING_BLOCK_PX,
-  SESSION_THREAD_MARKDOWN_TABLE_CELL_PADDING_INLINE_PX,
-} from "./sessionThreadLayoutTokens";
+import { SESSION_MARKDOWN_MEASUREMENT_CONTRACT } from "./sessionThreadMeasurementContract";
 
 const CHECKBOX_GUTTER_PX = 18;
-const LIST_ITEM_BODY_WIDTH_FIT_BIAS_PX = 0;
 
 function measureTextBlock(params: {
   text: {
@@ -115,7 +105,7 @@ function measureCodeBlock(block: Extract<SessionMarkdownBlock, { kind: "code" }>
   return (
     CODE_BLOCK_VERTICAL_PADDING_PX +
     textHeight +
-    SESSION_THREAD_MARKDOWN_CODE_BLOCK_BORDER_WIDTH_PX * 2
+    SESSION_MARKDOWN_MEASUREMENT_CONTRACT.codeBlock.borderWidthPx * 2
   );
 }
 
@@ -124,7 +114,7 @@ function measureListItem(
   width: number,
   bulletInsetPx: number,
 ): number {
-  const bodyInsetPx = item.checked != null ? bulletInsetPx : bulletInsetPx + LIST_ITEM_BODY_WIDTH_FIT_BIAS_PX;
+  const bodyInsetPx = bulletInsetPx;
   const childWidth = Math.max(1, width - bodyInsetPx);
   if (item.blocks.length === 0) {
     return clampHeight(BODY_LINE_HEIGHT_PX);
@@ -139,9 +129,9 @@ function measureList(block: Extract<SessionMarkdownBlock, { kind: "list" }>, wid
     const markerInsetPx =
       item.checked != null
         ? CHECKBOX_GUTTER_PX
-        : block.markerColumnWidthPx + SESSION_THREAD_MARKDOWN_LIST_MARKER_GAP_PX;
+        : block.markerColumnWidthPx + SESSION_MARKDOWN_MEASUREMENT_CONTRACT.list.markerGapPx;
     total += measureListItem(item, width, markerInsetPx);
-    if (index < block.items.length - 1) total += SESSION_THREAD_MARKDOWN_LIST_GAP_PX;
+    if (index < block.items.length - 1) total += SESSION_MARKDOWN_MEASUREMENT_CONTRACT.list.gapPx;
   }
   return total;
 }
@@ -149,7 +139,7 @@ function measureList(block: Extract<SessionMarkdownBlock, { kind: "list" }>, wid
 function measureBlockQuote(block: Extract<SessionMarkdownBlock, { kind: "blockquote" }>, width: number): number {
   return measureBlockChildren(
     block.blocks,
-    Math.max(1, width - SESSION_THREAD_MARKDOWN_BLOCKQUOTE_INSET_PX),
+    Math.max(1, width - SESSION_MARKDOWN_MEASUREMENT_CONTRACT.blockquote.insetPx),
     "root",
   );
 }
@@ -184,7 +174,7 @@ function measureTableCellHeight(
         blockHeight = measureHeading(block, width);
         break;
       case "image":
-        blockHeight = SESSION_THREAD_MARKDOWN_IMAGE_HEIGHT_PX;
+        blockHeight = SESSION_MARKDOWN_MEASUREMENT_CONTRACT.image.heightPx;
         break;
       case "code":
         blockHeight = measureCodeBlock(block);
@@ -200,6 +190,14 @@ function measureTableCellHeight(
   }, 0);
 }
 
+function estimateTableColumnContentWidths(
+  availableContentWidth: number,
+  columnCount: number,
+): number[] {
+  const equalWidth = Math.max(1, availableContentWidth / Math.max(1, columnCount));
+  return Array.from({ length: columnCount }, () => equalWidth);
+}
+
 function measureTable(block: Extract<SessionMarkdownBlock, { kind: "table" }>, width: number): number {
   if (block.rows.length === 0) {
     return 0;
@@ -208,18 +206,16 @@ function measureTable(block: Extract<SessionMarkdownBlock, { kind: "table" }>, w
   if (columnCount <= 0) {
     return 0;
   }
-  const borderWidthPx = SESSION_THREAD_MARKDOWN_TABLE_BORDER_WIDTH_PX;
-  const cellPaddingInlinePx = SESSION_THREAD_MARKDOWN_TABLE_CELL_PADDING_INLINE_PX;
-  const cellPaddingBlockPx = SESSION_THREAD_MARKDOWN_TABLE_CELL_PADDING_BLOCK_PX;
+  const borderWidthPx = SESSION_MARKDOWN_MEASUREMENT_CONTRACT.table.borderWidthPx;
+  const cellPaddingInlinePx = SESSION_MARKDOWN_MEASUREMENT_CONTRACT.table.cellPaddingInlinePx;
+  const cellPaddingBlockPx = SESSION_MARKDOWN_MEASUREMENT_CONTRACT.table.cellPaddingBlockPx;
   const totalBorderWidth = borderWidthPx * (columnCount + 1);
   const totalCellPaddingInlineWidth = columnCount * cellPaddingInlinePx * 2;
   const availableContentWidth = Math.max(
     1,
     Math.max(1, width) - totalBorderWidth - totalCellPaddingInlineWidth,
   );
-  const columnContentWidths = Array.from({ length: columnCount }, () =>
-    Math.max(1, availableContentWidth / columnCount),
-  );
+  const columnContentWidths = estimateTableColumnContentWidths(availableContentWidth, columnCount);
 
   let height = borderWidthPx;
   for (let rowIndex = 0; rowIndex < block.rows.length; rowIndex += 1) {
@@ -255,7 +251,7 @@ function measureBlock(block: SessionMarkdownBlock, width: number): number {
     case "thematicBreak":
       return measureThematicBreak();
     case "image":
-      return SESSION_THREAD_MARKDOWN_IMAGE_HEIGHT_PX;
+      return SESSION_MARKDOWN_MEASUREMENT_CONTRACT.image.heightPx;
     case "paragraph":
     default:
       return measureParagraph(block, width);

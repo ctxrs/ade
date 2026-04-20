@@ -87,6 +87,10 @@ import {
   clearSessionMarkdownMeasurementCaches,
   measureSessionMarkdownDocument,
 } from "./sessionMarkdownMeasurement";
+import {
+  resolveInlineCodeWrapChromeWidth,
+  shouldApplyInlineCodeSoftBreakTextStartGuard,
+} from "./sessionMarkdownInlineCodeFit";
 import { measureSessionPlainTextBlockHeight } from "./sessionPlainTextMeasurement";
 import {
   SESSION_THREAD_MARKDOWN_BODY_FONT_FAMILY,
@@ -412,6 +416,60 @@ describe("getPretextVirtualizerRowLayout", () => {
     expect(height).toBe(Math.round(3 * SESSION_THREAD_MARKDOWN_BODY_LINE_HEIGHT_PX * 16) / 16);
   });
 
+  it("starts a near-fitting path-like code group on a fresh line after prose pressure", () => {
+    const height = measureSessionMarkdownDocument(
+      [
+        "Layout composer fragment padding `sessionMarkdownMeasurement.ts/src/sessionThreadDomMeasurement.tsx/web/blockquote/workbenchShell/workbenchShell` **command inline** `cargo test -p ctx-store` ⚙️ 測試 佈局 [agent fragment](https://example.com/transcript/chromium?ref=812) *summary fragment*. `apps/fixtures/src/src/sessionMarkdownMeasurement.ts/pages`",
+        "Inline stream browser context **thread layout padding** 🙂 段落 換行 fragment header probe session summary token ~~inline~~; `git rev-parse HEAD`",
+        "Render deterministic [command session deterministic](https://example.com/docs/inline-code/measurement?ref=150) *token virtualizer* ~~agent shell~~ session parity shell inline fragment; `e2e/turn-header/workbenchShell/table`",
+        "Virtualizer probe render 🙂 段落 換行 *composer browser render* session browser header layout command session layout parity command: `sessionThread/table/web/workbenchShell/apps/blockquote`",
+      ].join("\n"),
+      518.64,
+    );
+
+    expect(height).toBe(Math.round(11 * SESSION_THREAD_MARKDOWN_BODY_LINE_HEIGHT_PX * 16) / 16);
+  });
+
+  it("does not apply the leading-hang chrome discount to fresh-line path-like code groups", () => {
+    expect(
+      resolveInlineCodeWrapChromeWidth({
+        chromeWidth: 14,
+        codeGroupHasWhitespace: false,
+        codeGroupStartsAfterText: true,
+        chargedChrome: false,
+        isFirstCodeGroupFragment: true,
+        prefersFreshLineStart: true,
+        lineHasContent: false,
+        startsAtLineStart: true,
+      }),
+    ).toBe(14);
+  });
+
+  it("applies the leading-hang chrome discount to whitespace-bearing command chips after prose", () => {
+    expect(
+      resolveInlineCodeWrapChromeWidth({
+        allowLeadingHang: true,
+        chromeWidth: 14,
+        codeGroupHasWhitespace: true,
+        codeGroupStartsAfterText: true,
+        chargedChrome: false,
+        isFirstCodeGroupFragment: true,
+        prefersFreshLineStart: false,
+        lineHasContent: true,
+        startsAtLineStart: false,
+      }),
+    ).toBe(7);
+  });
+
+  it("keeps a trailing styled list-item segment on the prose line at the WebKit seam", () => {
+    const height = measureSessionMarkdownDocument(
+      "- Browser agent **deterministic session shell** header marker pretext probe *fragment fragment*.",
+      588,
+    );
+
+    expect(height).toBe(SESSION_THREAD_MARKDOWN_BODY_LINE_HEIGHT_PX);
+  });
+
   it("treats soft newlines inside mixed inline paragraphs like collapsed spaces", () => {
     const withSoftNewline = measureSessionMarkdownDocument(
       "before mixed prose\nand `inline-code-token/with/path` after the wrap",
@@ -423,6 +481,108 @@ describe("getPretextVirtualizerRowLayout", () => {
     );
 
     expect(withSoftNewline).toBe(withSpace);
+  });
+
+  it("skips the collapsed soft-break prose guard after a friendly path-like inline-code boundary", () => {
+    expect(
+      shouldApplyInlineCodeSoftBreakTextStartGuard({
+        text: "friendly prose",
+        startsAfterCollapsedSoftBreak: true,
+        startsAfterPathLikeInlineCodeSeam: true,
+        startsAfterInlineCodeSeam: true,
+        startsStyledTextAfterInlineCodeSeam: false,
+        lastFragmentEndedWithPathDelimiter: false,
+        lastFragmentEndedWithHyphen: false,
+      }),
+    ).toBe(false);
+    expect(
+      shouldApplyInlineCodeSoftBreakTextStartGuard({
+        text: "friendly prose",
+        startsAfterCollapsedSoftBreak: true,
+        startsAfterPathLikeInlineCodeSeam: true,
+        startsAfterInlineCodeSeam: true,
+        startsStyledTextAfterInlineCodeSeam: false,
+        lastFragmentEndedWithPathDelimiter: true,
+        lastFragmentEndedWithHyphen: false,
+      }),
+    ).toBe(true);
+    expect(
+      shouldApplyInlineCodeSoftBreakTextStartGuard({
+        text: "friendly prose",
+        startsAfterCollapsedSoftBreak: true,
+        startsAfterPathLikeInlineCodeSeam: true,
+        startsAfterInlineCodeSeam: false,
+        startsStyledTextAfterInlineCodeSeam: true,
+        lastFragmentEndedWithPathDelimiter: false,
+        lastFragmentEndedWithHyphen: false,
+      }),
+    ).toBe(false);
+  });
+
+  it("does not add a phantom line when collapsed soft-break prose follows a wrapped inline-code path", () => {
+    const height = measureSessionMarkdownDocument(
+      [
+        "Marker summary layout `cargo test -p codex-crp` browser shell agent header summary 🙂 段落 換行 ~~summary~~ *thread buffer thread*. `table/web/table/workbenchShell/fixtures/fixtures/pretextVirtualizerRowLayout.ts`",
+        "Pretext summary agent fragment fragment thread entry probe deterministic `git diff --stat`; `core/pages/inline-code/pages/inline-code/apps`",
+      ].join("\n"),
+      445.04,
+    );
+
+    expect(height).toBe(Math.round(6 * SESSION_THREAD_MARKDOWN_BODY_LINE_HEIGHT_PX * 16) / 16);
+  });
+
+  it("keeps punctuation-only tails attached to a wrapped path-like code group without requiring another inline code chip", () => {
+    const height = measureSessionMarkdownDocument(
+      "Delta header virtualizer browser layout virtualizer delta turn deterministic buffer **context parity** `table/sessionMarkdownMeasurement.ts/blockquote/table/blockquote/fixtures/inline-code`:",
+      673.2,
+    );
+
+    expect(height).toBe(Math.round(2 * SESSION_THREAD_MARKDOWN_BODY_LINE_HEIGHT_PX * 16) / 16);
+  });
+
+  it("does not force a fresh-line code start for decorated trailing prose after a path-like code group", () => {
+    const height = measureSessionMarkdownDocument(
+      "- Agent token marker `src/src/pretextVirtualizerRowLayout.ts/core/blockquote` *padding entry* **marker stream**:",
+      620,
+    );
+
+    expect(height).toBe(Math.round(2 * SESSION_THREAD_MARKDOWN_BODY_LINE_HEIGHT_PX * 16) / 16);
+  });
+
+  it("moves an overflowing sealed path fragment to the next line inside list items", () => {
+    const height = measureSessionMarkdownDocument(
+      "- Command fragment [stream layout](https://example.com/docs/parity/webkit?ref=298) *agent virtualizer* ~~inline~~ `pages/fixtures/sessionMarkdownMeasurement.ts/sessionMarkdownMeasurement.ts/blockquote/inline-code/e2e` render parity composer probe render header render summary;",
+      588,
+    );
+
+    expect(height).toBe(Math.round(4 * SESSION_THREAD_MARKDOWN_BODY_LINE_HEIGHT_PX * 16) / 16);
+  });
+
+  it("moves an overflowing sealed path fragment before trailing prose in plain paragraphs", () => {
+    const height = measureSessionMarkdownDocument(
+      "Command fragment [stream layout](https://example.com/docs/parity/webkit?ref=298) *agent virtualizer* ~~inline~~ `pages/fixtures/sessionMarkdownMeasurement.ts/sessionMarkdownMeasurement.ts/blockquote/inline-code/e2e` render parity composer probe render header render summary;",
+      564,
+    );
+
+    expect(height).toBe(Math.round(4 * SESSION_THREAD_MARKDOWN_BODY_LINE_HEIGHT_PX * 16) / 16);
+  });
+
+  it("keeps a path-tail final inline fragment on the decorated prose line in chromium-style wraps", () => {
+    const height = measureSessionMarkdownDocument(
+      "Probe layout browser `turn-header/sessionMarkdownMeasurement.ts/pages/inline-code/turn-header` context command virtualizer fragment 🧪 測試 佈局 ~~virtualizer~~. `blockquote/fixtures/sessionThread/e2e`",
+      416,
+    );
+
+    expect(height).toBe(Math.round(4 * SESSION_THREAD_MARKDOWN_BODY_LINE_HEIGHT_PX * 16) / 16);
+  });
+
+  it("keeps a whitespace-bearing command chip on the punctuation seam line when chromium does", () => {
+    const height = measureSessionMarkdownDocument(
+      "Buffer session summary ~~turn~~ ⚙️ 你好 世界 `core/blockquote/sessionThreadDomMeasurement.tsx/sessionThreadDomMeasurement.tsx` ~~command~~ ~~command command~~ **context**: `workbenchShell/fixtures/turn-header/table` Stream browser agent ⚙️ 測試 佈局 header deterministic thread summary buffer entry context ⚙️ 你好 世界 `web/fixtures/core/fixtures`. `pnpm -C core/apps/web test:e2e:pretext:corpus:webkit`",
+      382.48,
+    );
+
+    expect(height).toBe(Math.round(8 * SESSION_THREAD_MARKDOWN_BODY_LINE_HEIGHT_PX * 16) / 16);
   });
 
   it("packs URL-heavy plain text lines as whitespace-separated turn-header tokens", () => {
@@ -551,6 +711,27 @@ describe("getPretextVirtualizerRowLayout", () => {
     });
 
     expect(height).toBe(SESSION_THREAD_MARKDOWN_BODY_LINE_HEIGHT_PX * 4);
+  });
+
+  it("keeps a readable path prefix on the current line after prose in turn headers", () => {
+    const height = measureSessionPlainTextBlockHeight({
+      cacheKey: "turn-header-path-after-prose-webkit-seam",
+      text: "Follow-up line with /Users/example-user/.ctx/worktrees/00000000-0000-4000-8000-000000000001 path pressure.",
+      font: `${SESSION_THREAD_MARKDOWN_BODY_FONT_SIZE_PX}px ${SESSION_THREAD_MARKDOWN_BODY_FONT_FAMILY}`,
+      width: 470,
+      lineHeight: SESSION_THREAD_MARKDOWN_BODY_LINE_HEIGHT_PX,
+    });
+
+    expect(height).toBe(SESSION_THREAD_MARKDOWN_BODY_LINE_HEIGHT_PX * 2);
+  });
+
+  it("wraps trailing plain text after styled seams at the WebKit threshold", () => {
+    const markdown =
+      "Turn summary layout summary [command fragment](https://example.com/parity/inline-code/virtualizer/virtualizer?ref=774) *stream marker marker* **layout** ~~context layout~~ browser layout session delta.";
+
+    const height = measureSessionMarkdownDocument(markdown, 756);
+
+    expect(height).toBe(SESSION_THREAD_MARKDOWN_BODY_LINE_HEIGHT_PX * 2);
   });
 
   it("includes fenced code block border chrome in deterministic markdown height", () => {

@@ -19,32 +19,22 @@ import {
   segmentGraphemes,
   type TextWhiteSpace,
 } from "./sessionTextMeasurement";
-import {
-  SESSION_THREAD_MARKDOWN_BODY_FONT_FAMILY,
-  SESSION_THREAD_MARKDOWN_BODY_FONT_SIZE_PX,
-  SESSION_THREAD_MARKDOWN_BODY_LINE_HEIGHT_PX,
-  SESSION_THREAD_MARKDOWN_CODE_BLOCK_FONT_SIZE_PX,
-  SESSION_THREAD_MARKDOWN_CODE_BLOCK_LINE_HEIGHT_PX,
-  SESSION_THREAD_MARKDOWN_CODE_BLOCK_PADDING_BOTTOM_PX,
-  SESSION_THREAD_MARKDOWN_CODE_BLOCK_PADDING_TOP_PX,
-  SESSION_THREAD_MARKDOWN_HEADING_LINE_HEIGHT_PX_BY_DEPTH,
-  SESSION_THREAD_MARKDOWN_INLINE_CODE_FONT_FAMILY,
-} from "./sessionThreadLayoutTokens";
+import { SESSION_MARKDOWN_MEASUREMENT_CONTRACT } from "./sessionThreadMeasurementContract";
 
 const AST_CACHE_LIMIT = 1000;
 
-export const BODY_LINE_HEIGHT_PX = SESSION_THREAD_MARKDOWN_BODY_LINE_HEIGHT_PX;
+export const BODY_LINE_HEIGHT_PX = SESSION_MARKDOWN_MEASUREMENT_CONTRACT.typography.bodyLineHeightPx;
 const HEADING_FONT_SIZE_BY_DEPTH = {
   1: 18,
   2: 16,
   3: 14,
   4: 13,
 } as const;
-export const MONO_FONT = `${SESSION_THREAD_MARKDOWN_CODE_BLOCK_FONT_SIZE_PX}px ${SESSION_THREAD_MARKDOWN_INLINE_CODE_FONT_FAMILY}`;
-export const MONO_LINE_HEIGHT_PX = SESSION_THREAD_MARKDOWN_CODE_BLOCK_LINE_HEIGHT_PX;
+export const MONO_FONT = `${SESSION_MARKDOWN_MEASUREMENT_CONTRACT.typography.codeBlockFontSizePx}px ${SESSION_MARKDOWN_MEASUREMENT_CONTRACT.typography.inlineCodeFontFamily}`;
+export const MONO_LINE_HEIGHT_PX = SESSION_MARKDOWN_MEASUREMENT_CONTRACT.typography.codeBlockLineHeightPx;
 export const CODE_BLOCK_VERTICAL_PADDING_PX =
-  SESSION_THREAD_MARKDOWN_CODE_BLOCK_PADDING_TOP_PX +
-  SESSION_THREAD_MARKDOWN_CODE_BLOCK_PADDING_BOTTOM_PX;
+  SESSION_MARKDOWN_MEASUREMENT_CONTRACT.codeBlock.paddingTopPx +
+  SESSION_MARKDOWN_MEASUREMENT_CONTRACT.codeBlock.paddingBottomPx;
 export const LINE_START_CURSOR: LayoutCursor = { segmentIndex: 0, graphemeIndex: 0 };
 const BODY_STRONG_FONT_WEIGHT = 700;
 const HEADING_FONT_WEIGHT = 600;
@@ -76,9 +66,58 @@ export type SessionMarkdownDebugWindow = Window & {
       currentLineStartFitRatio: number;
       currentLineCodeStartFitIsReadable: boolean;
       currentLineCodeStartFitIsStrong: boolean;
+      shouldBreakForSoftBreakProseCodeStart: boolean;
+      shouldBreakForInlineTailPunctuationCodeStart: boolean;
       shouldBreakForStyledTailCodeStart: boolean;
+      shouldLimitCurrentCodeGroupToFirstFragment: boolean;
       shouldBreakForAttachedTrailingPlainStart: boolean;
       shouldBreak: boolean;
+      text: string;
+    }>;
+    whitespaceDecisions?: Array<{
+      lineHasContent: boolean;
+      reservedWidth: number;
+      remainingWidth: number;
+      guardedRemainingWidth: number;
+      fragmentWidth: number;
+      slackPx?: number;
+      shouldBreak: boolean;
+      text: string;
+    }>;
+    continuationDecisions?: Array<{
+      text: string;
+      reservedWidth: number;
+      remainingWidth: number;
+      guardedRemainingWidth: number;
+      availableLineWidth?: number;
+      lineWidth?: number;
+      fullWidth: number;
+      currentLineFitSlackPx: number;
+      lineLastCodeFragmentText: string | null;
+      lineLastCodeFragmentEndedWithPathDelimiter: boolean;
+      lineLastCodeFragmentEndedWithHyphen: boolean;
+      acceptedWholeFragment?: boolean;
+      brokeBeforeFragment?: boolean;
+    }>;
+    segmentSeamAdjustments?: Array<{
+      type: "no-progress-advance" | "no-progress-drop" | "whitespace-only-break" | "whitespace-only-advance";
+      lineHasContent: boolean;
+      text: string;
+    }>;
+    sealedContinuationDecisions?: Array<{
+      canRelaxChromiumDottedPathBoundary: boolean;
+      currentCodeGroupStartFragmentText: string | null;
+      fullWidth: number;
+      guardedRemainingWidth: number;
+      remainingWidth?: number;
+      continuationSlackPx?: number;
+      lastFragmentIsShortExtensionPath: boolean;
+      lastFragmentText: string | null;
+      sameCodeGroupContinuation: boolean;
+      sealedBoundaryOverflow: boolean;
+      acceptedFragment?: boolean;
+      overflowedAcceptedFragment?: boolean;
+      shouldBreakBeforePartialSealedDottedPathFragment: boolean;
       text: string;
     }>;
     items: Array<{
@@ -104,14 +143,14 @@ export type SessionMarkdownDebugWindow = Window & {
 const markdownDocumentCache = new Map<string, SessionMarkdownDocument>();
 
 const buildBodyFont = (weight: number, italic = false): string =>
-  `${italic ? "italic " : ""}${weight} ${SESSION_THREAD_MARKDOWN_BODY_FONT_SIZE_PX}px ${SESSION_THREAD_MARKDOWN_BODY_FONT_FAMILY}`;
+  `${italic ? "italic " : ""}${weight} ${SESSION_MARKDOWN_MEASUREMENT_CONTRACT.typography.bodyFontSizePx}px ${SESSION_MARKDOWN_MEASUREMENT_CONTRACT.typography.bodyFontFamily}`;
 
 const buildHeadingFont = (
   depth: keyof typeof HEADING_FONT_SIZE_BY_DEPTH,
   weight: number,
   italic = false,
 ): string =>
-  `${italic ? "italic " : ""}${weight} ${HEADING_FONT_SIZE_BY_DEPTH[depth]}px ${SESSION_THREAD_MARKDOWN_BODY_FONT_FAMILY}`;
+  `${italic ? "italic " : ""}${weight} ${HEADING_FONT_SIZE_BY_DEPTH[depth]}px ${SESSION_MARKDOWN_MEASUREMENT_CONTRACT.typography.bodyFontFamily}`;
 
 export const BODY_TYPOGRAPHY: TextBlockTypography = {
   body: buildBodyFont(400),
@@ -138,8 +177,8 @@ export function buildHeadingTypography(depth: number): TextBlockTypography {
     emphasis: buildHeadingFont(normalizedKey, HEADING_FONT_WEIGHT, true),
     strongEmphasis: buildHeadingFont(normalizedKey, HEADING_STRONG_FONT_WEIGHT, true),
     lineHeight:
-      SESSION_THREAD_MARKDOWN_HEADING_LINE_HEIGHT_PX_BY_DEPTH[
-        normalizedDepth as keyof typeof SESSION_THREAD_MARKDOWN_HEADING_LINE_HEIGHT_PX_BY_DEPTH
+      SESSION_MARKDOWN_MEASUREMENT_CONTRACT.typography.headingLineHeightPxByDepth[
+        normalizedDepth as keyof typeof SESSION_MARKDOWN_MEASUREMENT_CONTRACT.typography.headingLineHeightPxByDepth
       ],
   };
 }

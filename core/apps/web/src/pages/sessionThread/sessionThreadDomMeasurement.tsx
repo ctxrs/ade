@@ -1,3 +1,5 @@
+// Debug/test-only DOM parity audit helpers. Production transcript geometry must
+// not depend on this module.
 import React, { type ReactNode } from "react";
 import ReactDOMClient from "react-dom/client";
 import { flushSync } from "react-dom";
@@ -220,7 +222,7 @@ function readCachedMeasurement(
   return measured;
 }
 
-export function clearSessionThreadDomMeasurementCaches(): void {
+export function clearSessionThreadDebugDomAuditCaches(): void {
   markdownHeightCache.clear();
   rowHeightCache.clear();
   if (measurementSurface) {
@@ -232,11 +234,11 @@ export function clearSessionThreadDomMeasurementCaches(): void {
   }
 }
 
-export function clearSessionThreadDomMeasurementFallbacks(): void {
+export function clearSessionThreadDebugDomAuditFallbacks(): void {
   pendingDomMeasurementFallbackItemIds.clear();
 }
 
-export function consumeSessionThreadDomMeasurementFallbackItemIds(
+export function consumeSessionThreadDebugDomAuditItemIds(
   candidateItemIds?: readonly string[],
 ): string[] {
   if (!candidateItemIds) {
@@ -252,7 +254,7 @@ export function consumeSessionThreadDomMeasurementFallbackItemIds(
   return pending;
 }
 
-export function measureRenderedSessionMarkdownHeight(markdown: string, width: number): number | null {
+export function measureDebugRenderedSessionMarkdownHeight(markdown: string, width: number): number | null {
   const normalizedWidth = Math.max(1, Math.round(width));
   const cacheKey = `markdown:${normalizedWidth}:${fingerprintString(markdown)}`;
   return readCachedMeasurement(markdownHeightCache, cacheKey, () =>
@@ -302,7 +304,7 @@ export function measureRenderedSessionMessageHeight(
   });
 }
 
-export function measureRenderedSessionAssistantHeight(
+export function measureDebugRenderedSessionAssistantHeight(
   item: Extract<WorkbenchListItem, { kind: "assistant" }>,
   viewportWidth: number,
 ): number | null {

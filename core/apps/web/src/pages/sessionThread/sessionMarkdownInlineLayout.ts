@@ -22,6 +22,7 @@ import {
 } from "./sessionThreadLayoutTokens";
 
 const INLINE_CODE_MIN_START_GRAPHEMES = 4;
+const INLINE_CODE_PATH_MIN_START_GRAPHEMES = 3;
 
 export type PreparedInlineLayoutItem =
   | { kind: "hardBreak" }
@@ -47,10 +48,15 @@ export type PreparedInlineLayoutItem =
       minStartTextWidth: number;
       prefersFreshLineStart: boolean;
       prefersFreshLineStartWithoutLeadingHang: boolean;
+      startsAfterInlineCodeSeam: boolean;
+      startsAfterCollapsedSoftBreak: boolean;
+      startsAfterPathLikeInlineCodeSeam: boolean;
       startsStyledTextAfterInlineCodeSeam: boolean;
       startsAfterStyledTextSeam: boolean;
       startsStyledTextAfterBodySeam: boolean;
+      hasTrailingStyledText: boolean;
       hasTrailingInlineCode: boolean;
+      isDecoratedText: boolean;
       prepared: PreparedTextWithSegments;
       text: string;
     };
@@ -60,8 +66,12 @@ const resolveInlineCodeFont = (textFont: string): string => {
   return `${SESSION_THREAD_MARKDOWN_INLINE_CODE_FONT_SIZE_PX}px ${SESSION_THREAD_MARKDOWN_INLINE_CODE_FONT_FAMILY}`;
 };
 
-function measureInlineCodeMinStartTextWidth(text: string, font: string): number {
-  const sample = segmentGraphemes(text).slice(0, INLINE_CODE_MIN_START_GRAPHEMES).join("");
+function measureInlineCodeMinStartTextWidth(
+  text: string,
+  font: string,
+  minStartGraphemes: number = INLINE_CODE_MIN_START_GRAPHEMES,
+): number {
+  const sample = segmentGraphemes(text).slice(0, minStartGraphemes).join("");
   if (sample.length === 0) {
     return 0;
   }
@@ -97,10 +107,15 @@ function pushTextRunItems(
     font: string;
     cacheKeyPrefix: string;
     collapsedSpaceWidth: number;
+    startsAfterInlineCodeSeam: boolean;
+    startsAfterCollapsedSoftBreak: boolean;
+    startsAfterPathLikeInlineCodeSeam: boolean;
     startsStyledTextAfterInlineCodeSeam: boolean;
     startsAfterStyledTextSeam: boolean;
     startsStyledTextAfterBodySeam: boolean;
+    hasTrailingStyledText: boolean;
     hasTrailingInlineCode: boolean;
+    isDecoratedText: boolean;
   },
 ): void {
   const pushCollapsedSpace = () => {
@@ -110,10 +125,14 @@ function pushTextRunItems(
     }
     items.push({ kind: "space", width: params.collapsedSpaceWidth, codeGroupId: null, text: " " });
   };
-  const normalized = params.text.replace(/\u00a0/g, " ").replace(/\r\n?/g, "\n").replace(/\n/g, " ");
+  const normalizedSource = params.text.replace(/\u00a0/g, " ").replace(/\r\n?/g, "\n");
+  const normalized = normalizedSource.replace(/\n/g, " ");
   if (normalized.length === 0) {
     return;
   }
+  const startsAfterCollapsedSoftBreak =
+    params.startsAfterCollapsedSoftBreak ||
+    (normalizedSource.match(/^\s+/)?.[0] ?? "").includes("\n");
   const leadingWhitespace = normalized.match(/^\s+/)?.[0] ?? "";
   const trailingWhitespace = normalized.match(/\s+$/)?.[0] ?? "";
   const core = normalized.slice(leadingWhitespace.length, normalized.length - trailingWhitespace.length);
@@ -152,10 +171,15 @@ function pushTextRunItems(
         minStartTextWidth: measureTextMinStartTextWidth(core, params.font),
         prefersFreshLineStart: false,
         prefersFreshLineStartWithoutLeadingHang: false,
+        startsAfterInlineCodeSeam: params.startsAfterInlineCodeSeam,
+        startsAfterCollapsedSoftBreak,
+        startsAfterPathLikeInlineCodeSeam: params.startsAfterPathLikeInlineCodeSeam,
         startsStyledTextAfterInlineCodeSeam: params.startsStyledTextAfterInlineCodeSeam,
         startsAfterStyledTextSeam: params.startsAfterStyledTextSeam,
         startsStyledTextAfterBodySeam: params.startsStyledTextAfterBodySeam,
+        hasTrailingStyledText: params.hasTrailingStyledText,
         hasTrailingInlineCode: params.hasTrailingInlineCode,
+        isDecoratedText: params.isDecoratedText,
         prepared,
         text: core,
       });
@@ -220,11 +244,14 @@ export function prepareInlineLayoutItems(params: {
   const inlineCodeFont = resolveInlineCodeFont(params.typography.body);
   const runHasRenderableText = (run: SessionMarkdownInlineRun): boolean =>
     run.kind === "text" && /\S/.test(run.text);
+  const runUsesStyledSeam = (
+    run: Extract<SessionMarkdownInlineRun, { kind: "text" }>,
+  ): boolean => run.style !== "body" || run.deleted;
   const textRunStartsAfterStyledTextSeam = (
     runIndex: number,
     run: Extract<SessionMarkdownInlineRun, { kind: "text" }>,
   ): boolean => {
-    if (run.style !== "body" || !runHasRenderableText(run)) {
+    if (runUsesStyledSeam(run) || !runHasRenderableText(run)) {
       return false;
     }
     for (let candidateIndex = runIndex - 1; candidateIndex >= 0; candidateIndex -= 1) {
@@ -238,7 +265,7 @@ export function prepareInlineLayoutItems(params: {
       if (!runHasRenderableText(candidate)) {
         continue;
       }
-      return candidate.style !== "body";
+      return runUsesStyledSeam(candidate);
     }
     return false;
   };
@@ -246,7 +273,7 @@ export function prepareInlineLayoutItems(params: {
     runIndex: number,
     run: Extract<SessionMarkdownInlineRun, { kind: "text" }>,
   ): boolean => {
-    if (run.style === "body" || !runHasRenderableText(run)) {
+    if (!runUsesStyledSeam(run) || !runHasRenderableText(run)) {
       return false;
     }
     for (let candidateIndex = runIndex - 1; candidateIndex >= 0; candidateIndex -= 1) {
@@ -260,7 +287,7 @@ export function prepareInlineLayoutItems(params: {
       if (!runHasRenderableText(candidate)) {
         continue;
       }
-      return candidate.style === "body";
+      return !runUsesStyledSeam(candidate);
     }
     return false;
   };
@@ -268,7 +295,7 @@ export function prepareInlineLayoutItems(params: {
     runIndex: number,
     run: Extract<SessionMarkdownInlineRun, { kind: "text" }>,
   ): boolean => {
-    if (run.style === "body" || !runHasRenderableText(run)) {
+    if (!runUsesStyledSeam(run) || !runHasRenderableText(run)) {
       return false;
     }
     for (let candidateIndex = runIndex - 1; candidateIndex >= 0; candidateIndex -= 1) {
@@ -285,6 +312,48 @@ export function prepareInlineLayoutItems(params: {
     }
     return false;
   };
+  const textRunStartsAfterInlineCodeSeam = (
+    runIndex: number,
+    run: Extract<SessionMarkdownInlineRun, { kind: "text" }>,
+  ): boolean => {
+    if (run.style !== "body" || !runHasRenderableText(run)) {
+      return false;
+    }
+    for (let candidateIndex = runIndex - 1; candidateIndex >= 0; candidateIndex -= 1) {
+      const candidate = params.runs[candidateIndex]!;
+      if (candidate.kind === "hardBreak") {
+        break;
+      }
+      if (candidate.kind === "inlineCode") {
+        return true;
+      }
+      if (runHasRenderableText(candidate)) {
+        return false;
+      }
+    }
+    return false;
+  };
+  const textRunStartsAfterPathLikeInlineCodeSeam = (
+    runIndex: number,
+    run: Extract<SessionMarkdownInlineRun, { kind: "text" }>,
+  ): boolean => {
+    if (!runHasRenderableText(run)) {
+      return false;
+    }
+    for (let candidateIndex = runIndex - 1; candidateIndex >= 0; candidateIndex -= 1) {
+      const candidate = params.runs[candidateIndex]!;
+      if (candidate.kind === "hardBreak") {
+        break;
+      }
+      if (candidate.kind === "inlineCode") {
+        return candidate.text.includes("/") || candidate.text.includes("\\") || candidate.text.includes(".");
+      }
+      if (runHasRenderableText(candidate)) {
+        return false;
+      }
+    }
+    return false;
+  };
   const textRunHasTrailingInlineCode = (runIndex: number): boolean => {
     for (let candidateIndex = runIndex + 1; candidateIndex < params.runs.length; candidateIndex += 1) {
       const candidate = params.runs[candidateIndex]!;
@@ -294,6 +363,19 @@ export function prepareInlineLayoutItems(params: {
       if (candidate.kind === "inlineCode") {
         return true;
       }
+    }
+    return false;
+  };
+  const textRunHasTrailingStyledText = (runIndex: number): boolean => {
+    for (let candidateIndex = runIndex + 1; candidateIndex < params.runs.length; candidateIndex += 1) {
+      const candidate = params.runs[candidateIndex]!;
+      if (candidate.kind === "hardBreak" || candidate.kind === "inlineCode") {
+        return false;
+      }
+      if (!runHasRenderableText(candidate)) {
+        continue;
+      }
+      return runUsesStyledSeam(candidate);
     }
     return false;
   };
@@ -321,7 +403,7 @@ export function prepareInlineLayoutItems(params: {
       if (!runHasRenderableText(candidate)) {
         continue;
       }
-      return candidate.style !== "body";
+      return runUsesStyledSeam(candidate);
     }
     return false;
   };
@@ -438,14 +520,27 @@ export function prepareInlineLayoutItems(params: {
               !fragment.endsWith("-"),
             isSealedInlineCodeFragment: isSealedInlineCodeFragment(fragment),
             minStartTextWidth:
-              firstCodeGroupFragment ? measureInlineCodeMinStartTextWidth(part, inlineCodeFont) : 0,
+              firstCodeGroupFragment
+                ? measureInlineCodeMinStartTextWidth(
+                    part,
+                    inlineCodeFont,
+                    part.includes("/") || part.includes("\\") || part.includes(".")
+                      ? INLINE_CODE_PATH_MIN_START_GRAPHEMES
+                      : INLINE_CODE_MIN_START_GRAPHEMES,
+                  )
+                : 0,
             prefersFreshLineStart: fragment.includes("/") || fragment.includes("\\") || fragment.endsWith("."),
             prefersFreshLineStartWithoutLeadingHang:
               firstCodeGroupFragment && startsAfterText && codeGroupHasWhitespace,
+            startsAfterInlineCodeSeam: false,
+            startsAfterCollapsedSoftBreak: false,
+            startsAfterPathLikeInlineCodeSeam: false,
             startsStyledTextAfterInlineCodeSeam: false,
             startsAfterStyledTextSeam: false,
             startsStyledTextAfterBodySeam: false,
+            hasTrailingStyledText: false,
             hasTrailingInlineCode: false,
+            isDecoratedText: false,
             prepared,
             text: fragment,
           });
@@ -464,10 +559,15 @@ export function prepareInlineLayoutItems(params: {
       font,
       cacheKeyPrefix: `${params.cacheKeyPrefix}:${run.kind}:${index}`,
       collapsedSpaceWidth,
+      startsAfterInlineCodeSeam: textRunStartsAfterInlineCodeSeam(index, run),
+      startsAfterCollapsedSoftBreak: false,
+      startsAfterPathLikeInlineCodeSeam: textRunStartsAfterPathLikeInlineCodeSeam(index, run),
       startsStyledTextAfterInlineCodeSeam: textRunStartsStyledTextAfterInlineCodeSeam(index, run),
       startsAfterStyledTextSeam: textRunStartsAfterStyledTextSeam(index, run),
       startsStyledTextAfterBodySeam: textRunStartsStyledTextAfterBodySeam(index, run),
+      hasTrailingStyledText: textRunHasTrailingStyledText(index),
       hasTrailingInlineCode: textRunHasTrailingInlineCode(index),
+      isDecoratedText: runUsesStyledSeam(run),
     });
   }
 
