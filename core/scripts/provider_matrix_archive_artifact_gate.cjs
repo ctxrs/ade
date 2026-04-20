@@ -161,6 +161,24 @@ function isRetryableFetchError(error) {
   );
 }
 
+function isMissingArtifactHttpError(error, url = "") {
+  if (!(error instanceof HttpRequestError)) {
+    return false;
+  }
+  if (error.status === 404) {
+    return true;
+  }
+  if (error.status !== 400) {
+    return false;
+  }
+  try {
+    const parsed = new URL(String(url || ""));
+    return /\/storage\/v1\/object\/public\//.test(parsed.pathname);
+  } catch {
+    return false;
+  }
+}
+
 async function sleep(ms) {
   if (ms <= 0) {
     return;
@@ -273,17 +291,12 @@ async function verifyManagedArchiveTargetsDetailed(
       });
     } catch (error) {
       const errorMessage = error?.message ?? String(error);
+      const missingArtifact = isMissingArtifactHttpError(error, target.url);
       results.push({
         providerId: target.providerId,
         targetKey: target.targetKey,
-        status:
-          error instanceof HttpRequestError && error.status === 404
-            ? "missing"
-            : "error",
-        errorKind:
-          error instanceof HttpRequestError && error.status === 404
-            ? "missing"
-            : "fetch",
+        status: missingArtifact ? "missing" : "error",
+        errorKind: missingArtifact ? "missing" : "fetch",
         message: `provider=${target.providerId} target=${target.targetKey}: ${errorMessage}`,
       });
     }
@@ -329,6 +342,7 @@ module.exports = {
   defaultMatrixPath,
   fetchDigest,
   HttpRequestError,
+  isMissingArtifactHttpError,
   isRetryableFetchError,
   parseArgs,
   pathToFileURL,
