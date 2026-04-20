@@ -53,6 +53,46 @@ describe("WorkbenchProviderWarningBanner", () => {
     expect(container.firstChild).toBeNull();
   });
 
+  it("surfaces all stale installed providers while omitting current installs from update actions", () => {
+    const onUpdateProviders = vi.fn(() => Promise.resolve());
+
+    render(
+      <WorkbenchProviderWarningBanner
+        acknowledgementScopeId="scope-ws-1"
+        providersById={{
+          codex: providerStatus("codex", {
+            version: "0.114.0-ctx.3",
+            health: "unsupported_version",
+            details: {
+              install_supported: "true",
+              matrix_update_available: "true",
+              matrix_recommended_version: "0.114.0-ctx.4",
+            },
+          }),
+          gemini: providerStatus("gemini", {
+            version: "0.33.1",
+            health: "unsupported_version",
+            details: {
+              install_supported: "true",
+              matrix_update_available: "true",
+              matrix_recommended_version: "0.38.2",
+            },
+          }),
+          cursor: providerStatus("cursor", {
+            version: "0.7.1",
+          }),
+        }}
+        onUpdateProviders={onUpdateProviders}
+        onOpenSettings={() => {}}
+      />,
+    );
+
+    expect(screen.getByText("2 provider runtimes need an update.")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Update All" }));
+    expect(onUpdateProviders).toHaveBeenCalledWith(["codex", "gemini"]);
+  });
+
   it("acknowledges the current provider set on update all and keeps the notice hidden until that set fully clears", async () => {
     const update = deferred();
     const onUpdateProviders = vi.fn(() => update.promise);

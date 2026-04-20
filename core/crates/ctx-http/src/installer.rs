@@ -24,6 +24,16 @@ impl ctx_managed_installs::ManagedInstallHost for HttpAppState {
         &self.core.data_root
     }
 
+    fn current_ctx_version(&self) -> Option<String> {
+        match crate::build_identity::current_build_identity() {
+            Ok(identity) => Some(identity.exact_version.clone()),
+            Err(err) => {
+                tracing::error!("failed to load ctx build identity for managed installs: {err:#}");
+                None
+            }
+        }
+    }
+
     fn provider_matrix_cache(&self) -> &Mutex<ctx_provider_matrix::ProviderMatrixCache> {
         &self.providers.matrix_cache
     }

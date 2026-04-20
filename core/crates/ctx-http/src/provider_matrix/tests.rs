@@ -4,6 +4,8 @@ use ctx_provider_install::install_state::InstallTarget;
 use sha2::{Digest, Sha256};
 use tempfile::tempdir;
 
+const CURRENT_CTX_VERSION: Option<&str> = Some("0.59.0-canary.deadbeefcafe");
+
 #[test]
 fn parse_version_loose_accepts_two_part_versions() {
     let v = parse_version_loose("0.62").expect("expected version");
@@ -785,7 +787,7 @@ async fn apply_matrix_to_status_uses_target_scoped_dependency_metadata() {
         usability: ctx_providers::adapters::ProviderUsability::default(),
     };
 
-    apply_matrix_to_status(temp.path(), &cfg, &entry, &mut status).await;
+    apply_matrix_to_status(temp.path(), &cfg, &entry, &mut status, CURRENT_CTX_VERSION).await;
 
     assert!(!status
         .details
@@ -938,7 +940,7 @@ async fn apply_matrix_to_status_flags_managed_archive_checksum_mismatch() {
         usability: ctx_providers::adapters::ProviderUsability::default(),
     };
 
-    apply_matrix_to_status(temp.path(), &cfg, &entry, &mut status).await;
+    apply_matrix_to_status(temp.path(), &cfg, &entry, &mut status, CURRENT_CTX_VERSION).await;
 
     assert!(!status.installed);
     assert!(status.capabilities.is_none());
@@ -997,7 +999,7 @@ async fn apply_matrix_to_status_accepts_matching_managed_archive_checksum() {
         usability: ctx_providers::adapters::ProviderUsability::default(),
     };
 
-    apply_matrix_to_status(temp.path(), &cfg, &entry, &mut status).await;
+    apply_matrix_to_status(temp.path(), &cfg, &entry, &mut status, CURRENT_CTX_VERSION).await;
 
     assert!(status.installed);
     assert!(!status.details.contains_key("managed_checksum_mismatch"));
@@ -1055,7 +1057,7 @@ async fn apply_matrix_to_status_clears_stale_matrix_update_flags_when_runtime_is
         usability: ctx_providers::adapters::ProviderUsability::default(),
     };
 
-    apply_matrix_to_status(temp.path(), &cfg, &entry, &mut status).await;
+    apply_matrix_to_status(temp.path(), &cfg, &entry, &mut status, CURRENT_CTX_VERSION).await;
 
     assert_eq!(status.version.as_deref(), Some("0.114.0-ctx.2"));
     assert_eq!(
@@ -1073,6 +1075,111 @@ async fn apply_matrix_to_status_clears_stale_matrix_update_flags_when_runtime_is
     assert!(!status
         .details
         .contains_key("matrix_update_requires_context"));
+}
+
+#[tokio::test]
+async fn apply_matrix_to_status_marks_stale_installed_provider_as_updateable_for_current_ctx() {
+    let temp = tempdir().expect("tempdir");
+    let runtime = temp.path().join("codex-crp");
+    std::fs::write(&runtime, b"matching-runtime").expect("write runtime");
+
+    let sha_old = sha256_hex(b"old-archive");
+    let sha_new = sha256_hex(b"new-archive");
+    let mut entry = codex_archive_test_entry("0.114.0-ctx.4", &sha_new);
+    entry.releases = vec![ProviderRelease {
+        version: "0.114.0-ctx.4".to_string(),
+        status: ProviderReleaseStatus::Supported,
+        upstream_version: Some("0.114.0".to_string()),
+        context_min: Some("0.59.0".to_string()),
+        context_max: None,
+        notes: None,
+        provenance: None,
+    }];
+    let cfg = managed_archive_cfg(&runtime, "0.114.0-ctx.3", &sha_old);
+    let mut status = ctx_providers::adapters::ProviderStatus {
+        provider_id: "codex".to_string(),
+        installed: true,
+        detected_path: Some(runtime.to_string_lossy().to_string()),
+        version: None,
+        capabilities: None,
+        health: ctx_providers::adapters::ProviderHealth::Ok,
+        diagnostics: Vec::new(),
+        details: HashMap::from([(
+            "install_target".to_string(),
+            InstallTarget::LinuxX8664.as_str().to_string(),
+        )]),
+        usability: ctx_providers::adapters::ProviderUsability::default(),
+    };
+
+    apply_matrix_to_status(temp.path(), &cfg, &entry, &mut status, CURRENT_CTX_VERSION).await;
+
+    assert_eq!(
+        status
+            .details
+            .get("matrix_recommended_version")
+            .map(String::as_str),
+        Some("0.114.0-ctx.4")
+    );
+    assert_eq!(
+        status
+            .details
+            .get("matrix_update_available")
+            .map(String::as_str),
+        Some("true")
+    );
+    assert_eq!(
+        status.health,
+        ctx_providers::adapters::ProviderHealth::UnsupportedVersion
+    );
+}
+
+#[tokio::test]
+async fn apply_matrix_to_status_marks_out_of_matrix_runtime_as_unsupported() {
+    let temp = tempdir().expect("tempdir");
+    let runtime = temp.path().join("gemini");
+    std::fs::write(&runtime, b"runtime").expect("write runtime");
+
+    let entry = codex_npm_test_entry("1.2.3");
+    let mut cfg = AgentServerConfigFile::default();
+    cfg.managed_install_targets.insert(
+        "codex".to_string(),
+        HashMap::from([(
+            "host".to_string(),
+            ManagedInstallMetadata {
+                package: Some("@openai/codex".to_string()),
+                version: Some("0.9.0".to_string()),
+                artifact_fingerprint: Some("npm:@openai/codex@0.9.0".to_string()),
+                archive_sha256: None,
+                target: Some(InstallTarget::Host),
+                install_dir_rel: Some("providers/agent-servers/codex/0.9.0".to_string()),
+                bin_dir_rel: Some("providers/agent-servers/codex/0.9.0/bin".to_string()),
+                last_success_at: None,
+                last_error: None,
+            },
+        )]),
+    );
+    let mut status = ctx_providers::adapters::ProviderStatus {
+        provider_id: "codex".to_string(),
+        installed: true,
+        detected_path: Some(runtime.to_string_lossy().to_string()),
+        version: None,
+        capabilities: None,
+        health: ctx_providers::adapters::ProviderHealth::Ok,
+        diagnostics: Vec::new(),
+        details: HashMap::from([("install_target".to_string(), "host".to_string())]),
+        usability: ctx_providers::adapters::ProviderUsability::default(),
+    };
+
+    apply_matrix_to_status(temp.path(), &cfg, &entry, &mut status, CURRENT_CTX_VERSION).await;
+
+    assert_eq!(
+        status.health,
+        ctx_providers::adapters::ProviderHealth::UnsupportedVersion
+    );
+    assert!(status
+        .diagnostics
+        .iter()
+        .any(|msg| msg.contains("not in the support matrix")));
 }
 
 #[tokio::test]
@@ -1122,7 +1229,14 @@ async fn apply_matrix_to_status_flags_missing_npm_artifact_fingerprint() {
         usability: ctx_providers::adapters::ProviderUsability::default(),
     };
 
-    apply_matrix_to_status(Path::new("/tmp"), &cfg, &entry, &mut status).await;
+    apply_matrix_to_status(
+        Path::new("/tmp"),
+        &cfg,
+        &entry,
+        &mut status,
+        CURRENT_CTX_VERSION,
+    )
+    .await;
 
     assert!(!status.installed);
     assert_eq!(

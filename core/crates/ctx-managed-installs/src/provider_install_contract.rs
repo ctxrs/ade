@@ -126,6 +126,7 @@ fn resolve_dependency_viability(
     dependency_id: &str,
     dependency_target: InstallTarget,
     dependency_role: ProviderInstallDependencyRoleKind,
+    current_ctx_version: Option<&str>,
     codes: DependencyResolutionCodes,
 ) -> Result<ProviderInstallDependency, ProviderInstallViabilityIssue> {
     match installer::resolve_runtime_provider_command_for_target_repairable_managed(
@@ -144,6 +145,11 @@ fn resolve_dependency_viability(
                 matrix,
                 dependency_id,
                 dependency_target,
+            ) && installer::is_compatible_managed_provider_for_target(
+                matrix,
+                dependency_id,
+                dependency_target,
+                current_ctx_version,
             ) {
                 return Ok(ProviderInstallDependency {
                     provider_id: dependency_id.to_string(),
@@ -179,6 +185,7 @@ fn resolve_acp_bridge_dependencies(
     matrix: &ProviderMatrix,
     provider_id: &str,
     target: InstallTarget,
+    current_ctx_version: Option<&str>,
 ) -> Result<Vec<ProviderInstallDependency>, ProviderInstallViabilityIssue> {
     match resolve_dependency_viability(
         cfg,
@@ -187,6 +194,7 @@ fn resolve_acp_bridge_dependencies(
         "acp-crp-bridge",
         target,
         ProviderInstallDependencyRoleKind::Prerequisite,
+        current_ctx_version,
         DependencyResolutionCodes {
             missing: "acp_bridge_missing",
             invalid: "acp_bridge_invalid",
@@ -211,6 +219,7 @@ fn resolve_matrix_provider_dependencies(
     matrix: &ProviderMatrix,
     entry: &ProviderMatrixEntry,
     provider_target: InstallTarget,
+    current_ctx_version: Option<&str>,
 ) -> Result<Vec<ProviderInstallDependency>, ProviderInstallViabilityIssue> {
     entry
         .provider_dependencies
@@ -232,6 +241,7 @@ fn resolve_matrix_provider_dependencies(
                 &dependency.id,
                 dependency_target,
                 dependency_role,
+                current_ctx_version,
                 DependencyResolutionCodes {
                     missing: "dependency_missing",
                     invalid: "dependency_invalid",
@@ -247,6 +257,7 @@ pub fn resolve_provider_install_contract(
     matrix: &ProviderMatrix,
     provider_id: &str,
     target: InstallTarget,
+    current_ctx_version: Option<&str>,
 ) -> Result<ProviderInstallContract, ProviderInstallViabilityIssue> {
     if !installer::is_supported_managed_provider_for_target(matrix, provider_id, target) {
         return Err(ProviderInstallViabilityIssue {
@@ -254,6 +265,41 @@ pub fn resolve_provider_install_contract(
             message: format!(
                 "provider '{}' does not support managed install target '{}'",
                 provider_id,
+                target.as_str()
+            ),
+        });
+    }
+
+    let parsed_current_ctx_version = match current_ctx_version {
+        Some(raw) => provider_matrix::parse_version_loose(raw).ok_or_else(|| {
+            ProviderInstallViabilityIssue {
+                code: "ctx_version_invalid",
+                message: format!(
+                    "current ctx build version '{raw}' is not valid semver for provider install resolution"
+                ),
+            }
+        })?,
+        None => {
+            return Err(ProviderInstallViabilityIssue {
+                code: "ctx_version_unavailable",
+                message:
+                    "current ctx build version is unavailable for provider install resolution"
+                        .to_string(),
+            })
+        }
+    };
+
+    if !provider_matrix::is_managed_supported_for_context(
+        matrix,
+        provider_id,
+        Some(&parsed_current_ctx_version),
+    ) {
+        return Err(ProviderInstallViabilityIssue {
+            code: "ctx_version_unsupported",
+            message: format!(
+                "provider '{}' is not compatible with ctx build '{}' for managed install target '{}'",
+                provider_id,
+                parsed_current_ctx_version,
                 target.as_str()
             ),
         });
@@ -281,13 +327,15 @@ pub fn resolve_provider_install_contract(
         }
     })?;
 
-    let mut dependencies = resolve_matrix_provider_dependencies(cfg, matrix, entry, target)?;
+    let mut dependencies =
+        resolve_matrix_provider_dependencies(cfg, matrix, entry, target, current_ctx_version)?;
     if crate::is_acp_provider_id(provider_id) {
         dependencies.extend(resolve_acp_bridge_dependencies(
             cfg,
             matrix,
             provider_id,
             target,
+            current_ctx_version,
         )?);
     }
 
@@ -303,8 +351,17 @@ pub fn provider_install_viability_issue(
     matrix: &ProviderMatrix,
     provider_id: &str,
     target: InstallTarget,
+    current_ctx_version: Option<&str>,
 ) -> Option<ProviderInstallViabilityIssue> {
-    resolve_provider_install_contract(data_root, cfg, matrix, provider_id, target).err()
+    resolve_provider_install_contract(
+        data_root,
+        cfg,
+        matrix,
+        provider_id,
+        target,
+        current_ctx_version,
+    )
+    .err()
 }
 
 #[cfg(test)]
@@ -317,6 +374,8 @@ mod tests {
         ProviderArchiveKind, ProviderArchiveTarget, ProviderInstall, ProviderMatrixEntry,
         ProviderMatrixEntryKind, ProviderRelease, ProviderReleaseStatus,
     };
+
+    const TEST_CTX_VERSION: Option<&str> = Some("0.59.0");
 
     fn matrix_with_entries(entries: Vec<ProviderMatrixEntry>) -> ProviderMatrix {
         ProviderMatrix {
@@ -436,6 +495,7 @@ mod tests {
             )]),
             "kimi",
             InstallTarget::Container,
+            TEST_CTX_VERSION,
         )
         .expect_err("missing bridge should block ACP install");
         assert_eq!(
@@ -461,6 +521,7 @@ mod tests {
             ]),
             "kimi",
             InstallTarget::Container,
+            TEST_CTX_VERSION,
         )
         .expect("missing installable bridge should become a prerequisite");
 
@@ -489,6 +550,7 @@ mod tests {
             ]),
             "kimi",
             InstallTarget::Host,
+            TEST_CTX_VERSION,
         )
         .expect("missing installable host bridge should become a prerequisite");
 
@@ -517,6 +579,7 @@ mod tests {
             )]),
             "codex",
             InstallTarget::Container,
+            TEST_CTX_VERSION,
         )
         .expect("native provider should be viable without ACP bridge");
         assert!(contract.dependencies.is_empty());
@@ -524,6 +587,57 @@ mod tests {
             contract.resolved_target_key,
             "linux-x86_64" | "linux-aarch64"
         ));
+    }
+
+    #[test]
+    fn provider_install_contract_respects_current_ctx_version() {
+        let _guard = env_lock().blocking_lock();
+        let root = tempfile::tempdir().expect("tempdir");
+        let cfg = AgentServerConfigFile::default();
+        let mut codex = archive_entry("codex", ProviderMatrixEntryKind::Harness);
+        codex.releases = vec![ProviderRelease {
+            version: "0.114.0-ctx.4".to_string(),
+            status: ProviderReleaseStatus::Supported,
+            upstream_version: Some("0.114.0".to_string()),
+            provenance: None,
+            context_min: Some("0.59.0".to_string()),
+            context_max: None,
+            notes: None,
+        }];
+
+        let err = resolve_provider_install_contract(
+            root.path(),
+            &cfg,
+            &matrix_with_entries(vec![codex]),
+            "codex",
+            InstallTarget::Host,
+            Some("0.58.9"),
+        )
+        .expect_err("older ctx builds must not treat newer managed releases as installable");
+
+        assert_eq!(err.code, "ctx_version_unsupported");
+    }
+
+    #[test]
+    fn provider_install_contract_requires_current_ctx_version() {
+        let _guard = env_lock().blocking_lock();
+        let root = tempfile::tempdir().expect("tempdir");
+        let cfg = AgentServerConfigFile::default();
+
+        let err = resolve_provider_install_contract(
+            root.path(),
+            &cfg,
+            &matrix_with_entries(vec![archive_entry(
+                "codex",
+                ProviderMatrixEntryKind::Harness,
+            )]),
+            "codex",
+            InstallTarget::Host,
+            None,
+        )
+        .expect_err("provider install resolution must fail closed without build identity");
+
+        assert_eq!(err.code, "ctx_version_unavailable");
     }
 
     #[test]
@@ -552,6 +666,7 @@ mod tests {
             ]),
             "kimi",
             InstallTarget::Container,
+            TEST_CTX_VERSION,
         )
         .expect("stale managed bridge should stay repairable");
         assert_eq!(
@@ -588,6 +703,7 @@ mod tests {
             ]),
             "kimi",
             InstallTarget::Container,
+            TEST_CTX_VERSION,
         )
         .expect("invalid user bridge override should still be reported");
         assert_eq!(issue.code, "acp_bridge_invalid");
@@ -618,6 +734,7 @@ mod tests {
             ]),
             "claude-crp",
             InstallTarget::Container,
+            TEST_CTX_VERSION,
         )
         .expect("claude should plan host claude-cli readiness dependency");
 
@@ -676,6 +793,7 @@ mod tests {
             ]),
             "claude-crp",
             InstallTarget::Host,
+            TEST_CTX_VERSION,
         )
         .expect("configured claude-cli should satisfy readiness dependency");
 
@@ -710,6 +828,7 @@ mod tests {
             ]),
             "codex",
             InstallTarget::Container,
+            TEST_CTX_VERSION,
         )
         .expect("codex should plan container codex-cli prerequisite dependency");
 
@@ -764,6 +883,7 @@ mod tests {
             ]),
             "codex",
             InstallTarget::Host,
+            TEST_CTX_VERSION,
         )
         .expect("configured codex-cli should satisfy prerequisite dependency");
 
@@ -821,6 +941,7 @@ mod tests {
             ]),
             "codex",
             InstallTarget::Container,
+            TEST_CTX_VERSION,
         )
         .expect("configured container codex-cli should satisfy prerequisite dependency");
 

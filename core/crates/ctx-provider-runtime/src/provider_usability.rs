@@ -101,6 +101,7 @@ pub fn apply_install_viability_details(
     managed: &installer::AgentServerConfigFile,
     matrix: &ProviderMatrix,
     target: InstallTarget,
+    current_ctx_version: Option<&str>,
 ) {
     let install_viability = provider_install_contract::provider_install_viability_issue(
         data_root,
@@ -108,11 +109,16 @@ pub fn apply_install_viability_details(
         matrix,
         &status.provider_id,
         target,
+        current_ctx_version,
     );
     status.details.insert(
         "install_supported".into(),
-        if installer::is_supported_managed_provider_for_target(matrix, &status.provider_id, target)
-            && install_viability.is_none()
+        if installer::is_compatible_managed_provider_for_target(
+            matrix,
+            &status.provider_id,
+            target,
+            current_ctx_version,
+        ) && install_viability.is_none()
         {
             "true".into()
         } else {
@@ -149,6 +155,7 @@ pub fn apply_provider_usability_details(
     managed: &installer::AgentServerConfigFile,
     matrix: &ProviderMatrix,
     target: InstallTarget,
+    current_ctx_version: Option<&str>,
 ) {
     let install_supported = status.detail_flag("install_supported").unwrap_or(false);
     let base_ready = status.installed && matches!(status.health, ProviderHealth::Ok);
@@ -175,6 +182,7 @@ pub fn apply_provider_usability_details(
         matrix,
         &status.provider_id,
         target,
+        current_ctx_version,
     );
     let contract = match contract {
         Ok(contract) => contract,
