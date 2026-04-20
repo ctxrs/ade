@@ -8,6 +8,7 @@ import {
   readMarkdownStart,
   type SessionMarkdownNode,
 } from "./sessionMarkdownShared";
+import { SESSION_MARKDOWN_MEASUREMENT_CONTRACT } from "./sessionThreadMeasurementContract";
 import { resolveSessionMarkdownListMarkerColumnWidthPx } from "./sessionThreadLayoutTokens";
 
 export type SessionMarkdownInlineNode =
@@ -130,40 +131,6 @@ export type SessionMarkdownBlock =
 export type SessionMarkdownDocument = {
   source: string;
   blocks: SessionMarkdownBlock[];
-};
-
-const ROOT_BLOCK_BEFORE_PX: Record<SessionMarkdownBlockKind, number> = {
-  paragraph: 0,
-  image: 0,
-  heading: 16,
-  list: 0,
-  blockquote: 0,
-  code: 10,
-  table: 0,
-  thematicBreak: 0,
-};
-
-const ROOT_BLOCK_AFTER_PX: Record<SessionMarkdownBlockKind, number> = {
-  paragraph: 12,
-  image: 12,
-  heading: 8,
-  list: 12,
-  blockquote: 12,
-  code: 10,
-  table: 12,
-  thematicBreak: 12,
-};
-
-const LIST_ITEM_BLOCK_BEFORE_PX: Record<SessionMarkdownBlockKind, number> = {
-  ...ROOT_BLOCK_BEFORE_PX,
-  paragraph: 0,
-  image: 0,
-};
-
-const LIST_ITEM_BLOCK_AFTER_PX: Record<SessionMarkdownBlockKind, number> = {
-  ...ROOT_BLOCK_AFTER_PX,
-  paragraph: 0,
-  image: 0,
 };
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -461,11 +428,11 @@ export function createSessionMarkdownDocument(content: string): SessionMarkdownD
 }
 
 function resolveBlockBeforePx(kind: SessionMarkdownBlockKind, context: SessionMarkdownBlockContext): number {
-  return context === "listItem" ? LIST_ITEM_BLOCK_BEFORE_PX[kind] : ROOT_BLOCK_BEFORE_PX[kind];
+  return SESSION_MARKDOWN_MEASUREMENT_CONTRACT.blockSpacing.entryGapPxByContext[context][kind];
 }
 
 function resolveBlockAfterPx(kind: SessionMarkdownBlockKind, context: SessionMarkdownBlockContext): number {
-  return context === "listItem" ? LIST_ITEM_BLOCK_AFTER_PX[kind] : ROOT_BLOCK_AFTER_PX[kind];
+  return SESSION_MARKDOWN_MEASUREMENT_CONTRACT.blockSpacing.exitGapPxByContext[context][kind];
 }
 
 export function resolveSessionMarkdownBlockEntryGapPx(

@@ -18,11 +18,11 @@ import {
   readSessionPretextRuntimePreparedState,
   resetSessionPretextRuntimeCache,
 } from "./sessionThread/pretextSessionRuntimeCache";
-import * as rowLayoutModule from "./sessionThread/pretextVirtualizerRowLayout";
 import {
   noteSessionTranscriptWarmViewport,
   resetSessionTranscriptWarmStateForTests,
 } from "./sessionThread/sessionTranscriptWarmState";
+import { defaultTranscriptLayoutPlanner } from "./sessionThread/transcriptLayoutPlanner";
 import { getWorkbenchTurnHeaderLayoutState } from "./sessionThread/transcriptRowLayoutModel";
 
 const resizeObserverInstances: Array<{ callback: ResizeObserverCallback }> = [];
@@ -2009,7 +2009,7 @@ describe("SessionThreadPretextVirtualizerList", () => {
       ...initialItems.slice(1),
     ];
 
-    const rowLayoutSpy = vi.spyOn(rowLayoutModule, "getPretextVirtualizerRowLayout");
+    const rowLayoutSpy = vi.spyOn(defaultTranscriptLayoutPlanner, "planRow");
 
     const { container, rerender } = render(
       <SessionThreadPretextVirtualizerList
@@ -2085,7 +2085,7 @@ describe("SessionThreadPretextVirtualizerList", () => {
     ];
 
     const sessionId = "session-noop-layout";
-    const rowLayoutSpy = vi.spyOn(rowLayoutModule, "getPretextVirtualizerRowLayout");
+    const rowLayoutSpy = vi.spyOn(defaultTranscriptLayoutPlanner, "planRow");
     const { container, rerender } = render(
       <SessionThreadPretextVirtualizerList
         style={{ height: 400 }}

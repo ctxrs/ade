@@ -24,23 +24,15 @@ import { SESSION_MARKDOWN_MEASUREMENT_CONTRACT } from "./sessionThreadMeasuremen
 const AST_CACHE_LIMIT = 1000;
 
 export const BODY_LINE_HEIGHT_PX = SESSION_MARKDOWN_MEASUREMENT_CONTRACT.typography.bodyLineHeightPx;
-const HEADING_FONT_SIZE_BY_DEPTH = {
-  1: 18,
-  2: 16,
-  3: 14,
-  4: 13,
-} as const;
+const HEADING_FONT_SIZE_BY_DEPTH = SESSION_MARKDOWN_MEASUREMENT_CONTRACT.typography.headingFontSizePxByDepth;
 export const MONO_FONT = `${SESSION_MARKDOWN_MEASUREMENT_CONTRACT.typography.codeBlockFontSizePx}px ${SESSION_MARKDOWN_MEASUREMENT_CONTRACT.typography.inlineCodeFontFamily}`;
 export const MONO_LINE_HEIGHT_PX = SESSION_MARKDOWN_MEASUREMENT_CONTRACT.typography.codeBlockLineHeightPx;
 export const CODE_BLOCK_VERTICAL_PADDING_PX =
   SESSION_MARKDOWN_MEASUREMENT_CONTRACT.codeBlock.paddingTopPx +
   SESSION_MARKDOWN_MEASUREMENT_CONTRACT.codeBlock.paddingBottomPx;
 export const LINE_START_CURSOR: LayoutCursor = { segmentIndex: 0, graphemeIndex: 0 };
-const BODY_STRONG_FONT_WEIGHT = 700;
-const HEADING_FONT_WEIGHT = 600;
-const HEADING_STRONG_FONT_WEIGHT = 700;
-const TABLE_HEADER_FONT_WEIGHT = 600;
-const TABLE_HEADER_STRONG_FONT_WEIGHT = 700;
+const { bodyStrong, heading, headingStrong, tableHeader, tableHeaderStrong } =
+  SESSION_MARKDOWN_MEASUREMENT_CONTRACT.typography.fontWeight;
 
 export type TextBlockTypography = {
   body: string;
@@ -154,17 +146,17 @@ const buildHeadingFont = (
 
 export const BODY_TYPOGRAPHY: TextBlockTypography = {
   body: buildBodyFont(400),
-  strong: buildBodyFont(BODY_STRONG_FONT_WEIGHT),
+  strong: buildBodyFont(bodyStrong),
   emphasis: buildBodyFont(400, true),
-  strongEmphasis: buildBodyFont(BODY_STRONG_FONT_WEIGHT, true),
+  strongEmphasis: buildBodyFont(bodyStrong, true),
   lineHeight: BODY_LINE_HEIGHT_PX,
 };
 
 export const TABLE_HEADER_TYPOGRAPHY: TextBlockTypography = {
-  body: buildBodyFont(TABLE_HEADER_FONT_WEIGHT),
-  strong: buildBodyFont(TABLE_HEADER_STRONG_FONT_WEIGHT),
-  emphasis: buildBodyFont(TABLE_HEADER_FONT_WEIGHT, true),
-  strongEmphasis: buildBodyFont(TABLE_HEADER_STRONG_FONT_WEIGHT, true),
+  body: buildBodyFont(tableHeader),
+  strong: buildBodyFont(tableHeaderStrong),
+  emphasis: buildBodyFont(tableHeader, true),
+  strongEmphasis: buildBodyFont(tableHeaderStrong, true),
   lineHeight: BODY_LINE_HEIGHT_PX,
 };
 
@@ -172,10 +164,10 @@ export function buildHeadingTypography(depth: number): TextBlockTypography {
   const normalizedDepth = Math.max(1, Math.min(4, depth));
   const normalizedKey = normalizedDepth as keyof typeof HEADING_FONT_SIZE_BY_DEPTH;
   return {
-    body: buildHeadingFont(normalizedKey, HEADING_FONT_WEIGHT),
-    strong: buildHeadingFont(normalizedKey, HEADING_STRONG_FONT_WEIGHT),
-    emphasis: buildHeadingFont(normalizedKey, HEADING_FONT_WEIGHT, true),
-    strongEmphasis: buildHeadingFont(normalizedKey, HEADING_STRONG_FONT_WEIGHT, true),
+    body: buildHeadingFont(normalizedKey, heading),
+    strong: buildHeadingFont(normalizedKey, headingStrong),
+    emphasis: buildHeadingFont(normalizedKey, heading, true),
+    strongEmphasis: buildHeadingFont(normalizedKey, headingStrong, true),
     lineHeight:
       SESSION_MARKDOWN_MEASUREMENT_CONTRACT.typography.headingLineHeightPxByDepth[
         normalizedDepth as keyof typeof SESSION_MARKDOWN_MEASUREMENT_CONTRACT.typography.headingLineHeightPxByDepth

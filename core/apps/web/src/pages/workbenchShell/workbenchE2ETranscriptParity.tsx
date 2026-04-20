@@ -18,8 +18,7 @@ import {
 import {
   resetSessionPretextRuntimeCache,
 } from "../sessionThread/pretextSessionRuntimeCache";
-import { clearPretextVirtualizerRowLayoutCache } from "../sessionThread/pretextVirtualizerRowLayout";
-import { getPretextVirtualizerRowLayout } from "../sessionThread/pretextVirtualizerRowLayout";
+import { clearTranscriptLayoutPlannerCaches } from "../sessionThread/transcriptLayoutPlanner";
 import { getWorkbenchTurnHeaderLayoutState } from "../sessionThread/transcriptRowLayoutModel";
 import {
   SESSION_THREAD_LAYOUT_STYLE,
@@ -172,7 +171,7 @@ async function measureMountedTranscriptRowSnapshot<Item extends WorkbenchListIte
   document.body.appendChild(host);
   const root = ReactDOMClient.createRoot(host);
   const sessionId = `e2e-row-probe-${transcriptProbeCounter += 1}`;
-  clearPretextVirtualizerRowLayoutCache();
+  clearTranscriptLayoutPlannerCaches();
   clearSessionThreadDebugDomAuditFallbacks();
   clearSessionThreadDebugDomAuditCaches();
   resetSessionPretextRuntimeCache();
@@ -232,7 +231,7 @@ async function measureMountedTranscriptRowSnapshot<Item extends WorkbenchListIte
     clearSessionThreadDebugDomAuditFallbacks();
     clearSessionThreadDebugDomAuditCaches();
     resetSessionPretextRuntimeCache();
-    clearPretextVirtualizerRowLayoutCache();
+    clearTranscriptLayoutPlannerCaches();
   }
 }
 

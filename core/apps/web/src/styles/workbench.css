@@ -3604,7 +3604,7 @@
 .wb-tool-markdown :where(h1, h2, h3, h4),
 .wb-assistant-body :where(h1, h2, h3, h4),
 .msg :where(h1, h2, h3, h4) {
-  font-weight: 600;
+  font-weight: var(--wb-markdown-heading-font-weight);
   color: var(--text);
 }
 
@@ -3612,7 +3612,7 @@
 .wb-tool-markdown :where(h1),
 .wb-assistant-body :where(h1),
 .msg :where(h1) {
-  font-size: 18px;
+  font-size: var(--wb-markdown-heading-1-font-size);
   line-height: var(--wb-markdown-heading-1-line-height);
 }
 
@@ -3620,7 +3620,7 @@
 .wb-tool-markdown :where(h2),
 .wb-assistant-body :where(h2),
 .msg :where(h2) {
-  font-size: 16px;
+  font-size: var(--wb-markdown-heading-2-font-size);
   line-height: var(--wb-markdown-heading-2-line-height);
 }
 
@@ -3628,7 +3628,7 @@
 .wb-tool-markdown :where(h3),
 .wb-assistant-body :where(h3),
 .msg :where(h3) {
-  font-size: 14px;
+  font-size: var(--wb-markdown-heading-3-font-size);
   line-height: var(--wb-markdown-heading-3-line-height);
 }
 
@@ -3636,7 +3636,7 @@
 .wb-tool-markdown :where(h4),
 .wb-assistant-body :where(h4),
 .msg :where(h4) {
-  font-size: 13px;
+  font-size: var(--wb-markdown-heading-4-font-size);
   line-height: var(--wb-markdown-heading-4-line-height);
 }
 
@@ -3791,7 +3791,7 @@
 .wb-tool-markdown :where(.wb-md-table-cell-head),
 .wb-assistant-body :where(.wb-md-table-cell-head),
 .msg :where(.wb-md-table-cell-head) {
-  font-weight: 600;
+  font-weight: var(--wb-markdown-table-header-font-weight);
   color: var(--text);
 }
 

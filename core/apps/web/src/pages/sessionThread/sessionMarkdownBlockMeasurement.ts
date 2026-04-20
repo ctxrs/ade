@@ -26,8 +26,6 @@ import {
 } from "./sessionMarkdownMeasurementCore";
 import { SESSION_MARKDOWN_MEASUREMENT_CONTRACT } from "./sessionThreadMeasurementContract";
 
-const CHECKBOX_GUTTER_PX = 18;
-
 function measureTextBlock(params: {
   text: {
     plainText: string;
@@ -128,7 +126,7 @@ function measureList(block: Extract<SessionMarkdownBlock, { kind: "list" }>, wid
     const item = block.items[index]!;
     const markerInsetPx =
       item.checked != null
-        ? CHECKBOX_GUTTER_PX
+        ? SESSION_MARKDOWN_MEASUREMENT_CONTRACT.list.checkboxGutterPx
         : block.markerColumnWidthPx + SESSION_MARKDOWN_MEASUREMENT_CONTRACT.list.markerGapPx;
     total += measureListItem(item, width, markerInsetPx);
     if (index < block.items.length - 1) total += SESSION_MARKDOWN_MEASUREMENT_CONTRACT.list.gapPx;

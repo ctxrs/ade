@@ -14,7 +14,7 @@ import {
   incrementPretextPerfCounter,
   recordPretextPerfEvent,
 } from "../../utils/pretextPerfDiagnostics";
-import { getPretextVirtualizerRowLayout } from "./pretextVirtualizerRowLayout";
+import { defaultTranscriptLayoutPlanner } from "./transcriptLayoutPlanner";
 
 // Exact row heights let the session keep a tight render budget.
 export const SESSION_PRETEXT_OVERSCAN_PX = 640;
@@ -203,12 +203,12 @@ function bindRuntime(record: SessionPretextRuntimeRecord, bindings: RuntimeBindi
     });
   record.callbacks.getLayoutRevision = getLayoutRevision;
   record.callbacks.getPlannedLayout = (item, viewport) =>
-    getPretextVirtualizerRowLayout(item, viewport.width, {
+    defaultTranscriptLayoutPlanner.planRow(item, viewport.width, {
       expandedTurnHeaders: bindings.uiState.expandedTurnHeaders,
       expandedTurnDetailsById: bindings.uiState.expandedTurnDetailsById,
       expandedMessageById: bindings.uiState.expandedMessageById,
       turnToolsLoading: bindings.uiState.turnToolsLoading,
-    });
+    }).plannedLayout;
   record.callbacks.onDiagnosticEvent = bindings.onDiagnosticEvent ?? null;
 }
 
