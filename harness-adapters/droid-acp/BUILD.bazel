@@ -10,7 +10,6 @@ DROID_ACP_RUSTC_ENV = {
 DROID_ACP_DEPS = [
     "@crates//:agent-client-protocol",
     "@crates//:anyhow",
-    "@crates//:async-trait",
     "@crates//:serde",
     "@crates//:serde_json",
     "@crates//:tokio",
@@ -19,11 +18,16 @@ DROID_ACP_DEPS = [
     "@crates//:tracing-subscriber",
 ]
 
+DROID_ACP_PROC_MACRO_DEPS = [
+    "@crates//:async-trait",
+]
+
 rust_library(
     name = "lib",
     crate_name = "droid_acp",
     crate_root = "src/lib.rs",
     edition = "2021",
+    proc_macro_deps = DROID_ACP_PROC_MACRO_DEPS,
     srcs = glob(["src/**/*.rs"]),
     rustc_env = DROID_ACP_RUSTC_ENV,
     deps = DROID_ACP_DEPS,

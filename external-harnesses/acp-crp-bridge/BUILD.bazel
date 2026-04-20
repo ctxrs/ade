@@ -10,7 +10,6 @@ ACP_CRP_BRIDGE_RUSTC_ENV = {
 ACP_CRP_BRIDGE_DEPS = [
     "@crates//:agent-client-protocol",
     "@crates//:anyhow",
-    "@crates//:async-trait",
     "@crates//:base64",
     "@crates//:clap",
     "@crates//:serde",
@@ -23,11 +22,16 @@ ACP_CRP_BRIDGE_DEPS = [
     "@crates//:uuid",
 ]
 
+ACP_CRP_BRIDGE_PROC_MACRO_DEPS = [
+    "@crates//:async-trait",
+]
+
 rust_library(
     name = "lib",
     crate_name = "acp_crp_bridge",
     crate_root = "src/lib.rs",
     edition = "2021",
+    proc_macro_deps = ACP_CRP_BRIDGE_PROC_MACRO_DEPS,
     srcs = glob(["src/**/*.rs"]),
     rustc_env = ACP_CRP_BRIDGE_RUSTC_ENV,
     deps = ACP_CRP_BRIDGE_DEPS,
