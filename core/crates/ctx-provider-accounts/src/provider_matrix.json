@@ -365,41 +365,41 @@
       },
       "managed_install": {
         "kind": "archive",
-        "version": "0.114.0-ctx.3",
+        "version": "0.114.0-ctx.4",
         "args": [],
         "targets": {
           "darwin-aarch64": {
-            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/codex/0.114.0-ctx.3/macos/aarch64/codex-crp-0.114.0-ctx.3-aarch64-apple-darwin.tar.gz",
+            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/codex/0.114.0-ctx.4/macos/aarch64/codex-crp-0.114.0-ctx.4-aarch64-apple-darwin.tar.gz",
             "archive": "tar_gz",
             "bin_path": "codex-crp",
             "sha256": "8c31cf8e5420c8aeddf3d4afcdf46612c8b3e63f2703879f75ad3cb73860cfcd"
           },
           "darwin-x86_64": {
-            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/codex/0.114.0-ctx.3/macos/x86_64/codex-crp-0.114.0-ctx.3-x86_64-apple-darwin.tar.gz",
+            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/codex/0.114.0-ctx.4/macos/x86_64/codex-crp-0.114.0-ctx.4-x86_64-apple-darwin.tar.gz",
             "archive": "tar_gz",
             "bin_path": "codex-crp",
             "sha256": "857b97177389b5a2f58d8b9c04c43da8107472b4b4249afcdd39a7cd9cf46511"
           },
           "linux-aarch64": {
-            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/codex/0.114.0-ctx.3/linux/aarch64/codex-crp-0.114.0-ctx.3-aarch64-unknown-linux-gnu.tar.gz",
+            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/codex/0.114.0-ctx.4/linux/aarch64/codex-crp-0.114.0-ctx.4-aarch64-unknown-linux-gnu.tar.gz",
             "archive": "tar_gz",
             "bin_path": "codex-crp",
             "sha256": "74e0e5d6e84533996f8c99672977e017190bd71e8ad1641452c458bc4255380e"
           },
           "linux-x86_64": {
-            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/codex/0.114.0-ctx.3/linux/x86_64/codex-crp-0.114.0-ctx.3-x86_64-unknown-linux-gnu.tar.gz",
+            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/codex/0.114.0-ctx.4/linux/x86_64/codex-crp-0.114.0-ctx.4-x86_64-unknown-linux-gnu.tar.gz",
             "archive": "tar_gz",
             "bin_path": "codex-crp",
             "sha256": "4a0f50059b703c76d1e6374f995662b96d65c2aa7f033dc9e17896091880d9cd"
           },
           "macos-aarch64": {
-            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/codex/0.114.0-ctx.3/macos/aarch64/codex-crp-0.114.0-ctx.3-aarch64-apple-darwin.tar.gz",
+            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/codex/0.114.0-ctx.4/macos/aarch64/codex-crp-0.114.0-ctx.4-aarch64-apple-darwin.tar.gz",
             "archive": "tar_gz",
             "bin_path": "codex-crp",
             "sha256": "8c31cf8e5420c8aeddf3d4afcdf46612c8b3e63f2703879f75ad3cb73860cfcd"
           },
           "macos-x86_64": {
-            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/codex/0.114.0-ctx.3/macos/x86_64/codex-crp-0.114.0-ctx.3-x86_64-apple-darwin.tar.gz",
+            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/codex/0.114.0-ctx.4/macos/x86_64/codex-crp-0.114.0-ctx.4-x86_64-apple-darwin.tar.gz",
             "archive": "tar_gz",
             "bin_path": "codex-crp",
             "sha256": "857b97177389b5a2f58d8b9c04c43da8107472b4b4249afcdd39a7cd9cf46511"
@@ -421,14 +421,14 @@
       },
       "releases": [
         {
-          "version": "0.114.0-ctx.3",
+          "version": "0.114.0-ctx.4",
           "upstream_version": "0.114.0",
           "provenance": {
             "upstream_repo": "openai/codex",
             "upstream_release_tag": "rust-v0.114.0",
             "upstream_commit_sha": "b9904c0ae4ecb773549efd6ea3fb05229402fdb9",
             "ctx_repo": "ctxorgrs/codex-crp",
-            "ctx_release_tag": "v0.114.0-ctx.3"
+            "ctx_release_tag": "v0.114.0-ctx.4"
           },
           "status": "supported",
           "context_min": "0.1.0",
