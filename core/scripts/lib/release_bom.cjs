@@ -37,6 +37,20 @@ function buildResolvedProviderManifestPublicUrl({
   return `${normalizedUrl}/storage/v1/object/public/${normalizedBucket}/providers/${normalizedChannel}/commits/${normalizedCommit}.json`;
 }
 
+function buildResolvedProviderManifestDigestUrl({
+  supabaseUrl,
+  storageBucket,
+  digestSha256,
+} = {}) {
+  const normalizedUrl = trimValue(supabaseUrl).replace(/\/+$/, "");
+  const normalizedBucket = trimValue(storageBucket);
+  const normalizedDigest = trimValue(digestSha256);
+  if (!normalizedUrl || !normalizedBucket || !normalizedDigest) {
+    throw new Error("supabaseUrl, storageBucket, and digestSha256 are required");
+  }
+  return `${normalizedUrl}/storage/v1/object/public/${normalizedBucket}/providers/manifests/sha256/${normalizedDigest}.json`;
+}
+
 function buildReleaseBom({
   channel = "",
   intent = {},
@@ -85,6 +99,7 @@ function writeReleaseBom(filePath, payload) {
 
 module.exports = {
   buildReleaseBom,
+  buildResolvedProviderManifestDigestUrl,
   buildResolvedProviderManifestPublicUrl,
   writeReleaseBom,
 };
