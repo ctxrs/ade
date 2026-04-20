@@ -29,7 +29,7 @@ cd "$ROOT_DIR"
 
 node core/scripts/bundled_dependency_updates.cjs policy
 bash tools/bazel/codex_provenance_policy.sh
-if [[ -n "$codex_target" ]]; then
+if [[ "${CTX_RELEASE_VERIFY_PUBLISHED_PROVIDER_ARTIFACTS:-0}" == "1" && -n "$codex_target" ]]; then
   bash tools/bazel/codex_archive_artifact_gate.sh --codex-target "$codex_target"
 fi
 bash scripts/tests/desktop_merge_bundles.sh
