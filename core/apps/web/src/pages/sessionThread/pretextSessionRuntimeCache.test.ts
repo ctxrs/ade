@@ -99,12 +99,12 @@ describe("pretextSessionRuntimeCache", () => {
       viewportWidth: 900,
       viewportHeight: 300,
       sourceKey: "warm-key-1",
-      layoutKey: buildSessionPretextRuntimeLayoutKey({ uiState }),
+      layoutKey: buildSessionPretextRuntimeLayoutKey({ uiState, listItems }),
     });
 
     expect(readSessionPretextRuntimePreparedState(runtime)).toMatchObject({
       sourceKey: "warm-key-1",
-      layoutKey: buildSessionPretextRuntimeLayoutKey({ uiState }),
+      layoutKey: buildSessionPretextRuntimeLayoutKey({ uiState, listItems }),
     });
 
     const updatedItems = [...listItems, makeItems(4)[3]!];
@@ -115,12 +115,12 @@ describe("pretextSessionRuntimeCache", () => {
       viewportWidth: 900,
       viewportHeight: 300,
       sourceKey: buildSessionPretextRuntimeSourceKey(updatedItems, uiState),
-      layoutKey: buildSessionPretextRuntimeLayoutKey({ uiState }),
+      layoutKey: buildSessionPretextRuntimeLayoutKey({ uiState, listItems: updatedItems }),
     });
 
     expect(readSessionPretextRuntimePreparedState(runtime)).toMatchObject({
       sourceKey: buildSessionPretextRuntimeSourceKey(updatedItems, uiState),
-      layoutKey: buildSessionPretextRuntimeLayoutKey({ uiState }),
+      layoutKey: buildSessionPretextRuntimeLayoutKey({ uiState, listItems: updatedItems }),
     });
   });
 
@@ -138,12 +138,12 @@ describe("pretextSessionRuntimeCache", () => {
     const expandedSnapshot = runtime.core.replaceItems(listItems, { kind: "bottom" });
     noteSessionPretextRuntimeSnapshot(runtime, expandedSnapshot, listItems, {
       sourceKey: buildSessionPretextRuntimeSourceKey(listItems, expandedUiState),
-      layoutKey: buildSessionPretextRuntimeLayoutKey({ uiState: expandedUiState }),
+      layoutKey: buildSessionPretextRuntimeLayoutKey({ uiState: expandedUiState, listItems }),
     });
 
     expect(readSessionPretextRuntimePreparedState(runtime)).toMatchObject({
       sourceKey: buildSessionPretextRuntimeSourceKey(listItems, expandedUiState),
-      layoutKey: buildSessionPretextRuntimeLayoutKey({ uiState: expandedUiState }),
+      layoutKey: buildSessionPretextRuntimeLayoutKey({ uiState: expandedUiState, listItems }),
     });
 
     getOrCreateSessionPretextRuntime(sessionId, {
@@ -152,12 +152,12 @@ describe("pretextSessionRuntimeCache", () => {
     const collapsedSnapshot = runtime.core.syncItems(updatedItems, { kind: "bottom" });
     noteSessionPretextRuntimeSnapshot(runtime, collapsedSnapshot, updatedItems, {
       sourceKey: buildSessionPretextRuntimeSourceKey(updatedItems, collapsedUiState),
-      layoutKey: buildSessionPretextRuntimeLayoutKey({ uiState: collapsedUiState }),
+      layoutKey: buildSessionPretextRuntimeLayoutKey({ uiState: collapsedUiState, listItems: updatedItems }),
     });
 
     expect(readSessionPretextRuntimePreparedState(runtime)).toMatchObject({
       sourceKey: buildSessionPretextRuntimeSourceKey(updatedItems, collapsedUiState),
-      layoutKey: buildSessionPretextRuntimeLayoutKey({ uiState: collapsedUiState }),
+      layoutKey: buildSessionPretextRuntimeLayoutKey({ uiState: collapsedUiState, listItems: updatedItems }),
     });
   });
 

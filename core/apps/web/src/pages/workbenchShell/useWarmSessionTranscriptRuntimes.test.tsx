@@ -236,6 +236,7 @@ describe("useWarmSessionTranscriptRuntimes", () => {
     expect(warmedPreparedState.layoutKey).toBe(
       buildSessionPretextRuntimeLayoutKey({
         uiState: warmedRuntime.uiState,
+        listItems: [toolGroupItem],
       }),
     );
     expect(warmedPreparedState.snapshot.totalHeight).toBeGreaterThan(initialHeight);

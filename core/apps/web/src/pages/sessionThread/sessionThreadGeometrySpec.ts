@@ -8,6 +8,14 @@ export type SessionThreadMarkdownBlockKind =
   | "code"
   | "table"
   | "thematicBreak";
+export type SessionThreadFontStyle = "normal" | "italic";
+export type SessionThreadTypographySpec = {
+  fontFamily: string;
+  fontSizePx: number;
+  lineHeightPx: number;
+  fontStyle?: SessionThreadFontStyle;
+  fontWeight?: number;
+};
 
 export type SessionThreadGeometrySpec = {
   viewport: {
@@ -127,16 +135,36 @@ export type SessionThreadGeometrySpec = {
       hintHeightPx: number;
     };
     thought: {
-      horizontalPaddingPx: number;
-      verticalPaddingPx: number;
+      paddingInlinePx: number;
+      paddingBlockPx: number;
+      typography: SessionThreadTypographySpec & {
+        fontStyle: SessionThreadFontStyle;
+      };
     };
     tools: {
-      rowHeightPx: number;
       itemGapPx: number;
       groupGapPx: number;
-      loadingLineHeightPx: number;
-      thoughtTitleHeightPx: number;
-      thoughtPrePaddingPx: number;
+      summary: {
+        paddingInlinePx: number;
+        paddingBlockPx: number;
+        typography: SessionThreadTypographySpec & {
+          fontWeight: number;
+        };
+        separatorPaddingInlinePx: number;
+        statusDotPaddingInlinePx: number;
+      };
+      loading: {
+        typography: SessionThreadTypographySpec;
+      };
+      thoughtTitle: {
+        typography: SessionThreadTypographySpec;
+        marginBottomPx: number;
+      };
+      thoughtBody: {
+        paddingPx: number;
+        borderWidthPx: number;
+        typography: SessionThreadTypographySpec;
+      };
     };
     fixed: {
       spacerHeightPx: number;
@@ -311,16 +339,54 @@ export const SESSION_THREAD_GEOMETRY_SPEC: SessionThreadGeometrySpec = {
       hintHeightPx: 14,
     },
     thought: {
-      horizontalPaddingPx: 8,
-      verticalPaddingPx: 16,
+      paddingInlinePx: 4,
+      paddingBlockPx: 8,
+      typography: {
+        fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+        fontSizePx: 12,
+        lineHeightPx: 17,
+        fontStyle: "italic",
+      },
     },
     tools: {
-      rowHeightPx: 18,
       itemGapPx: 4,
       groupGapPx: 6,
-      loadingLineHeightPx: 16,
-      thoughtTitleHeightPx: 18,
-      thoughtPrePaddingPx: 18,
+      summary: {
+        paddingInlinePx: 2,
+        paddingBlockPx: 1,
+        typography: {
+          fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+          fontSizePx: 12,
+          lineHeightPx: 16,
+          fontWeight: 400,
+        },
+        separatorPaddingInlinePx: 4,
+        statusDotPaddingInlinePx: 6,
+      },
+      loading: {
+        typography: {
+          fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+          fontSizePx: 12,
+          lineHeightPx: 16,
+        },
+      },
+      thoughtTitle: {
+        typography: {
+          fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+          fontSizePx: 11,
+          lineHeightPx: 12,
+        },
+        marginBottomPx: 6,
+      },
+      thoughtBody: {
+        paddingPx: 8,
+        borderWidthPx: 1,
+        typography: {
+          fontFamily: '"SF Mono", Menlo, Monaco, Consolas, "Courier New", monospace',
+          fontSizePx: 12,
+          lineHeightPx: 17,
+        },
+      },
     },
     fixed: {
       spacerHeightPx: 1,
@@ -397,4 +463,40 @@ export function resolveSessionThreadAskUserShellHeightPx(
     spec.rows.askUser.cardGapPx +
     spec.rows.askUser.hintHeightPx
   );
+}
+
+export function resolveSessionThreadThoughtHorizontalChromePx(
+  spec: SessionThreadGeometrySpec = SESSION_THREAD_GEOMETRY_SPEC,
+): number {
+  return spec.rows.thought.paddingInlinePx * 2;
+}
+
+export function resolveSessionThreadThoughtVerticalChromePx(
+  spec: SessionThreadGeometrySpec = SESSION_THREAD_GEOMETRY_SPEC,
+): number {
+  return spec.rows.thought.paddingBlockPx * 2;
+}
+
+export function resolveSessionThreadToolSummaryRowHeightPx(
+  spec: SessionThreadGeometrySpec = SESSION_THREAD_GEOMETRY_SPEC,
+): number {
+  return spec.rows.tools.summary.paddingBlockPx * 2 + spec.rows.tools.summary.typography.lineHeightPx;
+}
+
+export function resolveSessionThreadToolThoughtTitleHeightPx(
+  spec: SessionThreadGeometrySpec = SESSION_THREAD_GEOMETRY_SPEC,
+): number {
+  return spec.rows.tools.thoughtTitle.typography.lineHeightPx + spec.rows.tools.thoughtTitle.marginBottomPx;
+}
+
+export function resolveSessionThreadToolThoughtBodyChromeWidthPx(
+  spec: SessionThreadGeometrySpec = SESSION_THREAD_GEOMETRY_SPEC,
+): number {
+  return (spec.rows.tools.thoughtBody.paddingPx + spec.rows.tools.thoughtBody.borderWidthPx) * 2;
+}
+
+export function resolveSessionThreadToolThoughtBodyChromeHeightPx(
+  spec: SessionThreadGeometrySpec = SESSION_THREAD_GEOMETRY_SPEC,
+): number {
+  return (spec.rows.tools.thoughtBody.paddingPx + spec.rows.tools.thoughtBody.borderWidthPx) * 2;
 }

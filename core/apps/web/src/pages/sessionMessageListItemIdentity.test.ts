@@ -3,6 +3,7 @@ import type { WorkbenchListItem } from "./SessionPage.types";
 import { SESSION_TRANSCRIPT_LAYOUT_ENGINE_REVISION } from "./sessionThread/sessionMarkdownMeasurement";
 import { getWorkbenchTurnHeaderDisplayPlainText } from "./sessionThread/transcriptRowLayoutModel";
 import {
+  collectWorkbenchToolGroupExpansionIds,
   getWorkbenchMessageListLayoutRevision,
   getWorkbenchListItemKey,
   getWorkbenchListItemSizeCacheKey,
@@ -226,6 +227,47 @@ describe("sessionMessageListItemIdentity", () => {
     expect(getWorkbenchListItemKey(item, expandedUiState)).toContain("tool-1:open");
   });
 
+  it("keeps standalone tool height identity tied to the summary row only", () => {
+    const tool: Extract<WorkbenchListItem, { kind: "tool" }> = {
+      kind: "tool",
+      id: "tool-1",
+      created_at: "2025-01-01T00:00:00.000Z",
+      updated_at: "2025-01-01T00:00:01.000Z",
+      tool_call_id: "tool-call-1",
+      tool_kind: "execute",
+      title: "Ran",
+      subtitle: "pwd",
+      status: "completed",
+      locations: [],
+      input: { command: "pwd" },
+      output_text: "first output",
+      raw: null,
+      updates_seen: 1,
+      has_details: true,
+    };
+    const expandedUiState: WorkbenchMessageListUiState = {
+      ...baseUiState,
+      expandedToolById: { "tool-1": true },
+    };
+    const nextOutput = {
+      ...tool,
+      output_text: "second output\nwith more lines",
+    };
+
+    expect(getWorkbenchListItemKey(tool, baseUiState)).toBe(
+      getWorkbenchListItemKey(tool, expandedUiState, { verbosity: "verbose" }),
+    );
+    expect(getWorkbenchListItemSizeCacheKey(tool, baseUiState)).toBe(
+      getWorkbenchListItemSizeCacheKey(tool, expandedUiState, { verbosity: "verbose" }),
+    );
+    expect(getWorkbenchListItemKey(tool, baseUiState)).toBe(
+      getWorkbenchListItemKey(nextOutput, baseUiState, { verbosity: "verbose" }),
+    );
+    expect(getWorkbenchListItemSizeCacheKey(tool, baseUiState)).toBe(
+      getWorkbenchListItemSizeCacheKey(nextOutput, baseUiState, { verbosity: "verbose" }),
+    );
+  });
+
   it("builds a stable layout revision from layout-affecting UI state and verbosity", () => {
     const revisionA = getWorkbenchMessageListLayoutRevision(
       {
@@ -251,6 +293,61 @@ describe("sessionMessageListItemIdentity", () => {
 
     expect(revisionA).toBe(revisionB);
     expect(revisionA).not.toBe(revisionC);
+  });
+
+  it("filters global tool expansion revision churn to tool-group children", () => {
+    const uiState: WorkbenchMessageListUiState = {
+      ...baseUiState,
+      expandedToolById: { "tool-group-child": true, "standalone-tool": true },
+    };
+    const toolGroupItems: WorkbenchListItem[] = [
+      {
+        kind: "tool_group",
+        id: "tool-group-1",
+        turn_id: "turn-1",
+        created_at: "2025-01-01T00:00:00.000Z",
+        updated_at: "2025-01-01T00:00:00.000Z",
+        tool_total: 1,
+        tool_pending: 0,
+        tool_running: 0,
+        tool_completed: 1,
+        tool_failed: 0,
+        thought: "",
+        tools: [
+          {
+            kind: "tool",
+            id: "tool-group-child",
+            created_at: "2025-01-01T00:00:00.000Z",
+            updated_at: "2025-01-01T00:00:00.000Z",
+            tool_call_id: "tool-call-1",
+            tool_kind: "execute",
+            title: "Run",
+            status: "completed",
+            locations: [],
+            input: null,
+            output_text: "",
+            raw: null,
+            updates_seen: 1,
+          },
+        ],
+      },
+    ];
+
+    expect(collectWorkbenchToolGroupExpansionIds(toolGroupItems)).toEqual(["tool-group-child"]);
+    expect(
+      getWorkbenchMessageListLayoutRevision(uiState, {
+        toolExpansionIds: [],
+      }),
+    ).toBe(getWorkbenchMessageListLayoutRevision(baseUiState, { toolExpansionIds: [] }));
+    expect(
+      getWorkbenchMessageListLayoutRevision(uiState, {
+        toolExpansionIds: collectWorkbenchToolGroupExpansionIds(toolGroupItems),
+      }),
+    ).not.toBe(
+      getWorkbenchMessageListLayoutRevision(baseUiState, {
+        toolExpansionIds: collectWorkbenchToolGroupExpansionIds(toolGroupItems),
+      }),
+    );
   });
 
   it("scopes layout and height identity to the transcript layout engine revision", () => {
@@ -328,7 +425,7 @@ describe("sessionMessageListItemIdentity", () => {
     expect(getWorkbenchListItemKey(item, baseUiState)).toContain(":assistant:fixed:");
   });
 
-  it("changes tool keys when visible collapsed or expanded content changes", () => {
+  it("changes standalone tool keys only when the visible summary changes", () => {
     const item: Extract<WorkbenchListItem, { kind: "tool" }> = {
       kind: "tool",
       id: "tool-1",
@@ -360,7 +457,7 @@ describe("sessionMessageListItemIdentity", () => {
     });
 
     expect(collapsedA).not.toBe(collapsedB);
-    expect(expandedA).not.toBe(expandedB);
+    expect(expandedA).toBe(expandedB);
   });
 
   it("tracks size-cache keys only for stable rows and includes terminal turn status layout", () => {

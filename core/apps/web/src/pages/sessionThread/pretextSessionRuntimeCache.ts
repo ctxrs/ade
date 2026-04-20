@@ -5,8 +5,6 @@ import {
 } from "@pretext-virtualizer/core";
 import type { WorkbenchListItem } from "../sessionView";
 import {
-  getWorkbenchMessageListLayoutRevision,
-  getWorkbenchListItemHeightRevision,
   type WorkbenchMessageListUiState,
 } from "../sessionMessageListItemIdentity";
 import {
@@ -14,7 +12,17 @@ import {
   incrementPretextPerfCounter,
   recordPretextPerfEvent,
 } from "../../utils/pretextPerfDiagnostics";
-import { defaultTranscriptLayoutPlanner } from "./transcriptLayoutPlanner";
+import {
+  bindSessionPretextRuntime,
+  type SessionPretextRuntimeBindings,
+} from "./pretextSessionRuntimeBindings";
+import {
+  buildSessionPretextRuntimeLayoutKey,
+  buildSessionPretextRuntimeSourceKey,
+  createDefaultSessionTranscriptUiState,
+  getSessionTranscriptUiStateRevision,
+  normalizeViewportDimension,
+} from "./pretextSessionRuntimeInputs";
 
 // Exact row heights let the session keep a tight render budget.
 export const SESSION_PRETEXT_OVERSCAN_PX = 640;
@@ -60,12 +68,6 @@ type SessionTranscriptCacheRecord = {
   runtime: SessionPretextRuntimeRecord | null;
 };
 
-type RuntimeBindings = {
-  uiState: WorkbenchMessageListUiState;
-  uiStateRevision?: string;
-  onDiagnosticEvent?: ((event: PretextVirtualizerDiagnosticEvent<WorkbenchListItem>) => void) | null;
-};
-
 type PrimeSessionPretextRuntimeParams = {
   sessionId: string;
   listItems: readonly WorkbenchListItem[];
@@ -77,26 +79,6 @@ type PrimeSessionPretextRuntimeParams = {
 };
 
 const sessionTranscriptCache = new Map<string, SessionTranscriptCacheRecord>();
-
-function getSessionTranscriptUiStateRevision(uiState: WorkbenchMessageListUiState): string {
-  return getWorkbenchMessageListLayoutRevision(uiState, {
-    verbosity: uiState.verbosity,
-  });
-}
-
-function fingerprintString(value: string): string {
-  const normalized = String(value ?? "");
-  let hash = 2166136261;
-  for (let index = 0; index < normalized.length; index += 1) {
-    hash ^= normalized.charCodeAt(index);
-    hash = Math.imul(hash, 16777619);
-  }
-  return `${normalized.length}:${(hash >>> 0).toString(36)}`;
-}
-
-function normalizeViewportDimension(value: number | undefined): number {
-  return Number.isFinite(value) && (value ?? 0) > 0 ? Math.round(value ?? 0) : 0;
-}
 
 function createSessionTranscriptCacheRecord(sessionId: string): SessionTranscriptCacheRecord {
   return {
@@ -160,57 +142,11 @@ export function resetSessionTranscriptWarmEntries(): void {
   }
 }
 
-export function createDefaultSessionTranscriptUiState(
-  verbosity?: string,
-  turnToolsLoading: readonly string[] = [],
-): WorkbenchMessageListUiState {
-  return {
-    expandedTurnHeaders: {},
-    expandedTurnDetailsById: {},
-    expandedToolById: {},
-    expandedMessageById: {},
-    turnToolsLoading,
-    verbosity,
-  };
-}
-
-export function buildSessionPretextRuntimeSourceKey(
-  listItems: readonly WorkbenchListItem[],
-  uiState: WorkbenchMessageListUiState,
-): string {
-  const itemRevision = listItems
-    .map((item) =>
-      `${item.id}:${getWorkbenchListItemHeightRevision(item, uiState, {
-        verbosity: uiState.verbosity,
-      })}`,
-    )
-    .join("|");
-  return `items:${fingerprintString(itemRevision)}`;
-}
-
-export function buildSessionPretextRuntimeLayoutKey(
-  params: { uiState: WorkbenchMessageListUiState },
-): string {
-  return `ui:${fingerprintString(getSessionTranscriptUiStateRevision(params.uiState))}`;
-}
-
-function bindRuntime(record: SessionPretextRuntimeRecord, bindings: RuntimeBindings): void {
-  record.uiState = bindings.uiState;
-  record.uiStateRevision = bindings.uiStateRevision ?? getSessionTranscriptUiStateRevision(bindings.uiState);
-  const getLayoutRevision = (item: WorkbenchListItem) =>
-    getWorkbenchListItemHeightRevision(item, bindings.uiState, {
-      verbosity: bindings.uiState.verbosity,
-    });
-  record.callbacks.getLayoutRevision = getLayoutRevision;
-  record.callbacks.getPlannedLayout = (item, viewport) =>
-    defaultTranscriptLayoutPlanner.planRow(item, viewport.width, {
-      expandedTurnHeaders: bindings.uiState.expandedTurnHeaders,
-      expandedTurnDetailsById: bindings.uiState.expandedTurnDetailsById,
-      expandedMessageById: bindings.uiState.expandedMessageById,
-      turnToolsLoading: bindings.uiState.turnToolsLoading,
-    }).plannedLayout;
-  record.callbacks.onDiagnosticEvent = bindings.onDiagnosticEvent ?? null;
-}
+export {
+  buildSessionPretextRuntimeLayoutKey,
+  buildSessionPretextRuntimeSourceKey,
+  createDefaultSessionTranscriptUiState,
+};
 
 function createSessionPretextRuntime(sessionId: string): SessionPretextRuntimeRecord {
   const uiState = createDefaultSessionTranscriptUiState();
@@ -242,8 +178,9 @@ function createSessionPretextRuntime(sessionId: string): SessionPretextRuntimeRe
     preparedSnapshot: core.getSnapshot(),
     preparedItems: [],
   };
-  bindRuntime(record, {
+  bindSessionPretextRuntime(record, {
     uiState: record.uiState,
+    listItems: record.preparedItems,
     uiStateRevision: record.uiStateRevision,
   });
   return record;
@@ -251,7 +188,7 @@ function createSessionPretextRuntime(sessionId: string): SessionPretextRuntimeRe
 
 export function getOrCreateSessionPretextRuntime(
   sessionId: string,
-  bindings?: RuntimeBindings,
+  bindings?: SessionPretextRuntimeBindings,
 ): SessionPretextRuntimeRecord {
   const cacheRecord = getOrCreateSessionTranscriptCacheRecord(sessionId);
   let record = cacheRecord.runtime;
@@ -260,7 +197,7 @@ export function getOrCreateSessionPretextRuntime(
     cacheRecord.runtime = record;
   }
   if (bindings) {
-    bindRuntime(record, bindings);
+    bindSessionPretextRuntime(record, bindings);
   }
   return record;
 }
@@ -289,20 +226,22 @@ export function primeSessionPretextRuntime(
 ): SessionPretextRuntimeRecord {
   const record = getOrCreateSessionPretextRuntime(params.sessionId);
   incrementPretextPerfCounter("pretext_runtime_prime_calls");
-  const nextUiStateRevision = getSessionTranscriptUiStateRevision(params.uiState);
+  const nextUiStateRevision = getSessionTranscriptUiStateRevision(params.uiState, params.listItems);
   const nextSourceKey = params.sourceKey ?? buildSessionPretextRuntimeSourceKey(params.listItems, params.uiState);
   const nextLayoutKey =
     params.layoutKey ??
     buildSessionPretextRuntimeLayoutKey({
       uiState: params.uiState,
+      listItems: params.listItems,
     });
   const uiStateChanged = record.uiStateRevision !== nextUiStateRevision;
   const itemsChanged =
     record.preparedItems !== params.listItems || record.preparedSourceKey !== nextSourceKey;
   const layoutChanged = record.preparedLayoutKey !== nextLayoutKey;
   if (uiStateChanged) {
-    bindRuntime(record, {
+    bindSessionPretextRuntime(record, {
       uiState: params.uiState,
+      listItems: params.listItems,
       uiStateRevision: nextUiStateRevision,
     });
   }

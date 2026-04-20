@@ -87,6 +87,7 @@ import {
   clearSessionMarkdownMeasurementCaches,
   measureSessionMarkdownDocument,
 } from "./sessionMarkdownMeasurement";
+import { SESSION_THREAD_ROW_MEASUREMENT_CONTRACT } from "./sessionThreadMeasurementContract";
 import {
   resolveInlineCodeWrapChromeWidth,
   shouldApplyInlineCodeSoftBreakTextStartGuard,
@@ -133,6 +134,10 @@ describe("getPretextVirtualizerRowLayout", () => {
 
     expect(first.height).toBeGreaterThan(0);
     expect(second.height).toBeGreaterThan(0);
+    expect(first.height).toBe(
+      SESSION_THREAD_ROW_MEASUREMENT_CONTRACT.thought.verticalChromePx +
+        SESSION_THREAD_ROW_MEASUREMENT_CONTRACT.thought.typography.lineHeightPx,
+    );
     expect(prepareMock).toHaveBeenCalledTimes(1);
     expect(layoutMock).toHaveBeenCalledTimes(2);
   });
@@ -851,6 +856,19 @@ describe("getPretextVirtualizerRowLayout", () => {
       expandedTurnDetailsById: { "turn-1": true },
     });
 
+    const expectedThoughtHeight =
+      SESSION_THREAD_ROW_MEASUREMENT_CONTRACT.tools.thoughtTitle.heightPx +
+      SESSION_THREAD_ROW_MEASUREMENT_CONTRACT.tools.thoughtBody.chromeHeightPx +
+      SESSION_THREAD_ROW_MEASUREMENT_CONTRACT.tools.thoughtBody.typography.lineHeightPx;
+    const expectedExpandedHeight =
+      SESSION_THREAD_ROW_MEASUREMENT_CONTRACT.tools.summary.rowHeightPx +
+      SESSION_THREAD_ROW_MEASUREMENT_CONTRACT.tools.groupGapPx +
+      (SESSION_THREAD_ROW_MEASUREMENT_CONTRACT.tools.summary.rowHeightPx +
+        SESSION_THREAD_ROW_MEASUREMENT_CONTRACT.tools.groupGapPx +
+        expectedThoughtHeight);
+
+    expect(collapsed.height).toBe(SESSION_THREAD_ROW_MEASUREMENT_CONTRACT.tools.summary.rowHeightPx);
+    expect(expanded.height).toBe(expectedExpandedHeight);
     expect(expanded.height).toBeGreaterThan(collapsed.height);
   });
 

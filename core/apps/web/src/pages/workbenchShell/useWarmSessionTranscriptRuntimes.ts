@@ -180,6 +180,7 @@ export function useWarmSessionTranscriptRuntimes({
           sourceKey: warmedViewModel.warmKey,
           layoutKey: buildSessionPretextRuntimeLayoutKey({
             uiState: runtimeUiState,
+            listItems: warmedViewModel.listItems,
           }),
         });
         incrementPretextPerfCounter("pretext_warm_runtime_primes");

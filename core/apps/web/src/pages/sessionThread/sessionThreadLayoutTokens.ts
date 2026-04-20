@@ -1,180 +1,152 @@
-import type { CSSProperties } from "react";
-import {
-  SESSION_THREAD_GEOMETRY_SPEC,
-  resolveSessionThreadAskUserShellHeightPx,
-  resolveSessionThreadContentMaxWidthPx,
-  resolveSessionThreadMarkdownBlockquoteInsetPx,
-  resolveSessionThreadMarkdownInlineCodeEdgeBlockPx,
-  resolveSessionThreadMarkdownInlineCodeEdgeInlinePx,
-  resolveSessionThreadMarkdownInlineCodeFragmentChromeHeightPx,
-  resolveSessionThreadMarkdownInlineCodeFragmentChromeWidthPx,
-} from "./sessionThreadGeometrySpec";
+import { SESSION_THREAD_GEOMETRY_VIEWS } from "./sessionThreadGeometryViews";
 
-const spec = SESSION_THREAD_GEOMETRY_SPEC;
+const layout = SESSION_THREAD_GEOMETRY_VIEWS.layout;
 
-export const SESSION_THREAD_ROW_MAX_WIDTH_PX = spec.viewport.rowMaxWidthPx;
-export const SESSION_THREAD_HORIZONTAL_INSET_PX = spec.viewport.horizontalInsetPx;
-export const SESSION_THREAD_INDENT_LEFT_PX = spec.viewport.indentLeftPx;
-export const SESSION_THREAD_CONTENT_MAX_WIDTH_PX = resolveSessionThreadContentMaxWidthPx(spec);
-export const SESSION_THREAD_MARKDOWN_BODY_FONT_SIZE_PX = spec.markdown.typography.bodyFontSizePx;
-export const SESSION_THREAD_MARKDOWN_BODY_LINE_HEIGHT_PX = spec.markdown.typography.bodyLineHeightPx;
-export const SESSION_THREAD_MARKDOWN_BODY_FONT_FAMILY = spec.markdown.typography.bodyFontFamily;
+export const SESSION_THREAD_ROW_MAX_WIDTH_PX = layout.rowMaxWidthPx;
+export const SESSION_THREAD_HORIZONTAL_INSET_PX = layout.horizontalInsetPx;
+export const SESSION_THREAD_INDENT_LEFT_PX = layout.indentLeftPx;
+export const SESSION_THREAD_CONTENT_MAX_WIDTH_PX = layout.contentMaxWidthPx;
+export const SESSION_THREAD_MARKDOWN_BODY_FONT_SIZE_PX = layout.markdownBodyFontSizePx;
+export const SESSION_THREAD_MARKDOWN_BODY_LINE_HEIGHT_PX = layout.markdownBodyLineHeightPx;
+export const SESSION_THREAD_MARKDOWN_BODY_FONT_FAMILY = layout.markdownBodyFontFamily;
 export const SESSION_THREAD_MARKDOWN_HEADING_FONT_SIZE_PX_BY_DEPTH =
-  spec.markdown.typography.headingFontSizePxByDepth;
+  layout.markdownHeadingFontSizePxByDepth;
 export const SESSION_THREAD_MARKDOWN_HEADING_LINE_HEIGHT_PX_BY_DEPTH =
-  spec.markdown.typography.headingLineHeightPxByDepth;
-export const SESSION_THREAD_MARKDOWN_FONT_WEIGHT = spec.markdown.typography.fontWeight;
-export const SESSION_THREAD_MARKDOWN_BLOCK_MARGIN_BOTTOM_PX = spec.markdown.blockSpacing.blockMarginBottomPx;
-export const SESSION_THREAD_MARKDOWN_HEADING_MARGIN_TOP_PX = spec.markdown.blockSpacing.headingMarginTopPx;
+  layout.markdownHeadingLineHeightPxByDepth;
+export const SESSION_THREAD_MARKDOWN_FONT_WEIGHT = layout.markdownFontWeight;
+export const SESSION_THREAD_MARKDOWN_BLOCK_MARGIN_BOTTOM_PX = layout.markdownBlockMarginBottomPx;
+export const SESSION_THREAD_MARKDOWN_HEADING_MARGIN_TOP_PX = layout.markdownHeadingMarginTopPx;
 export const SESSION_THREAD_MARKDOWN_HEADING_MARGIN_BOTTOM_PX =
-  spec.markdown.blockSpacing.headingMarginBottomPx;
-export const SESSION_THREAD_MARKDOWN_LIST_INDENT_PX = spec.markdown.list.indentPx;
-export const SESSION_THREAD_MARKDOWN_LIST_GAP_PX = spec.markdown.list.gapPx;
-export const SESSION_THREAD_MARKDOWN_LIST_MARKER_MIN_WIDTH_PX = spec.markdown.list.markerMinWidthPx;
-export const SESSION_THREAD_MARKDOWN_LIST_MARKER_GAP_PX = spec.markdown.list.markerGapPx;
-export const SESSION_THREAD_MARKDOWN_LIST_MARKER_ADVANCE_PX = spec.markdown.list.markerAdvancePx;
-export const SESSION_THREAD_MARKDOWN_INLINE_CODE_PADDING_BLOCK_PX = spec.markdown.inlineCode.paddingBlockPx;
-export const SESSION_THREAD_MARKDOWN_INLINE_CODE_PADDING_INLINE_PX = spec.markdown.inlineCode.paddingInlinePx;
-export const SESSION_THREAD_MARKDOWN_INLINE_CODE_BORDER_WIDTH_PX = spec.markdown.inlineCode.borderWidthPx;
-export const SESSION_THREAD_MARKDOWN_INLINE_CODE_BORDER_RADIUS_PX = spec.markdown.inlineCode.borderRadiusPx;
+  layout.markdownHeadingMarginBottomPx;
+export const SESSION_THREAD_MARKDOWN_LIST_INDENT_PX = layout.markdownListIndentPx;
+export const SESSION_THREAD_MARKDOWN_LIST_GAP_PX = layout.markdownListGapPx;
+export const SESSION_THREAD_MARKDOWN_LIST_MARKER_MIN_WIDTH_PX =
+  layout.markdownListMarkerMinWidthPx;
+export const SESSION_THREAD_MARKDOWN_LIST_MARKER_GAP_PX = layout.markdownListMarkerGapPx;
+export const SESSION_THREAD_MARKDOWN_LIST_MARKER_ADVANCE_PX =
+  layout.markdownListMarkerAdvancePx;
+export const SESSION_THREAD_MARKDOWN_INLINE_CODE_PADDING_BLOCK_PX =
+  layout.markdownInlineCodePaddingBlockPx;
+export const SESSION_THREAD_MARKDOWN_INLINE_CODE_PADDING_INLINE_PX =
+  layout.markdownInlineCodePaddingInlinePx;
+export const SESSION_THREAD_MARKDOWN_INLINE_CODE_BORDER_WIDTH_PX =
+  layout.markdownInlineCodeBorderWidthPx;
+export const SESSION_THREAD_MARKDOWN_INLINE_CODE_BORDER_RADIUS_PX =
+  layout.markdownInlineCodeBorderRadiusPx;
 export const SESSION_THREAD_MARKDOWN_INLINE_CODE_FONT_SIZE_PX =
-  spec.markdown.typography.inlineCodeFontSizePx;
+  layout.markdownInlineCodeFontSizePx;
 export const SESSION_THREAD_MARKDOWN_INLINE_CODE_FONT_FAMILY =
-  spec.markdown.typography.inlineCodeFontFamily;
+  layout.markdownInlineCodeFontFamily;
 export const SESSION_THREAD_MARKDOWN_INLINE_CODE_EDGE_BLOCK_PX =
-  resolveSessionThreadMarkdownInlineCodeEdgeBlockPx(spec);
-export const SESSION_THREAD_MARKDOWN_INLINE_CODE_EDGE_PX =
-  resolveSessionThreadMarkdownInlineCodeEdgeInlinePx(spec);
+  layout.markdownInlineCodeEdgeBlockPx;
+export const SESSION_THREAD_MARKDOWN_INLINE_CODE_EDGE_PX = layout.markdownInlineCodeEdgePx;
 export const SESSION_THREAD_MARKDOWN_INLINE_CODE_FRAGMENT_CHROME_HEIGHT_PX =
-  resolveSessionThreadMarkdownInlineCodeFragmentChromeHeightPx(spec);
+  layout.markdownInlineCodeFragmentChromeHeightPx;
 export const SESSION_THREAD_MARKDOWN_INLINE_CODE_FRAGMENT_CHROME_WIDTH_PX =
-  resolveSessionThreadMarkdownInlineCodeFragmentChromeWidthPx(spec);
+  layout.markdownInlineCodeFragmentChromeWidthPx;
 export const SESSION_THREAD_MARKDOWN_CODE_BLOCK_FONT_SIZE_PX =
-  spec.markdown.typography.codeBlockFontSizePx;
+  layout.markdownCodeBlockFontSizePx;
 export const SESSION_THREAD_MARKDOWN_CODE_BLOCK_LINE_HEIGHT_PX =
-  spec.markdown.typography.codeBlockLineHeightPx;
-export const SESSION_THREAD_MARKDOWN_BLOCKQUOTE_BORDER_WIDTH_PX = spec.markdown.blockquote.borderWidthPx;
+  layout.markdownCodeBlockLineHeightPx;
+export const SESSION_THREAD_MARKDOWN_BLOCKQUOTE_BORDER_WIDTH_PX =
+  layout.markdownBlockquoteBorderWidthPx;
 export const SESSION_THREAD_MARKDOWN_BLOCKQUOTE_PADDING_INLINE_START_PX =
-  spec.markdown.blockquote.paddingInlineStartPx;
-export const SESSION_THREAD_MARKDOWN_BLOCKQUOTE_INSET_PX =
-  resolveSessionThreadMarkdownBlockquoteInsetPx(spec);
-export const SESSION_THREAD_MARKDOWN_IMAGE_WIDTH_PX = spec.markdown.image.widthPx;
-export const SESSION_THREAD_MARKDOWN_IMAGE_HEIGHT_PX = spec.markdown.image.heightPx;
-export const SESSION_THREAD_MARKDOWN_CODE_BLOCK_BORDER_WIDTH_PX = spec.markdown.codeBlock.borderWidthPx;
-export const SESSION_THREAD_MARKDOWN_CODE_BLOCK_PADDING_TOP_PX = spec.markdown.codeBlock.paddingTopPx;
+  layout.markdownBlockquotePaddingInlineStartPx;
+export const SESSION_THREAD_MARKDOWN_BLOCKQUOTE_INSET_PX = layout.markdownBlockquoteInsetPx;
+export const SESSION_THREAD_MARKDOWN_IMAGE_WIDTH_PX = layout.markdownImageWidthPx;
+export const SESSION_THREAD_MARKDOWN_IMAGE_HEIGHT_PX = layout.markdownImageHeightPx;
+export const SESSION_THREAD_MARKDOWN_CODE_BLOCK_BORDER_WIDTH_PX =
+  layout.markdownCodeBlockBorderWidthPx;
+export const SESSION_THREAD_MARKDOWN_CODE_BLOCK_PADDING_TOP_PX =
+  layout.markdownCodeBlockPaddingTopPx;
 export const SESSION_THREAD_MARKDOWN_CODE_BLOCK_PADDING_BOTTOM_PX =
-  spec.markdown.codeBlock.paddingBottomPx;
-export const SESSION_THREAD_MARKDOWN_TABLE_BORDER_WIDTH_PX = spec.markdown.table.borderWidthPx;
+  layout.markdownCodeBlockPaddingBottomPx;
+export const SESSION_THREAD_MARKDOWN_TABLE_BORDER_WIDTH_PX =
+  layout.markdownTableBorderWidthPx;
 export const SESSION_THREAD_MARKDOWN_TABLE_CELL_PADDING_BLOCK_PX =
-  spec.markdown.table.cellPaddingBlockPx;
+  layout.markdownTableCellPaddingBlockPx;
 export const SESSION_THREAD_MARKDOWN_TABLE_CELL_PADDING_INLINE_PX =
-  spec.markdown.table.cellPaddingInlinePx;
-export const SESSION_THREAD_MESSAGE_ROW_PADDING_BLOCK_PX = spec.rows.message.rowPaddingBlockPx;
-export const SESSION_THREAD_MESSAGE_BUBBLE_PADDING_BLOCK_PX = spec.rows.message.bubblePaddingBlockPx;
+  layout.markdownTableCellPaddingInlinePx;
+export const SESSION_THREAD_MESSAGE_ROW_PADDING_BLOCK_PX = layout.messageRowPaddingBlockPx;
+export const SESSION_THREAD_MESSAGE_BUBBLE_PADDING_BLOCK_PX =
+  layout.messageBubblePaddingBlockPx;
 export const SESSION_THREAD_MESSAGE_BUBBLE_PADDING_INLINE_PX =
-  spec.rows.message.bubblePaddingInlinePx;
+  layout.messageBubblePaddingInlinePx;
 export const SESSION_THREAD_MESSAGE_BUBBLE_BORDER_WIDTH_PX =
-  spec.rows.message.bubbleBorderWidthPx;
-export const SESSION_THREAD_MESSAGE_MAX_WIDTH_RATIO = spec.rows.message.maxWidthRatio;
-export const SESSION_THREAD_MESSAGE_ROLE_FONT_SIZE_PX = spec.rows.message.roleFontSizePx;
-export const SESSION_THREAD_MESSAGE_ROLE_LINE_HEIGHT_PX = spec.rows.message.roleLineHeightPx;
-export const SESSION_THREAD_MESSAGE_TOGGLE_MARGIN_TOP_PX = spec.rows.message.toggleMarginTopPx;
-export const SESSION_THREAD_MESSAGE_TOGGLE_FONT_SIZE_PX = spec.rows.message.toggleFontSizePx;
-export const SESSION_THREAD_MESSAGE_TOGGLE_LINE_HEIGHT_PX = spec.rows.message.toggleLineHeightPx;
-export const SESSION_THREAD_MESSAGE_ATTACHMENT_WIDTH_PX = spec.rows.message.attachments.widthPx;
-export const SESSION_THREAD_MESSAGE_ATTACHMENT_HEIGHT_PX = spec.rows.message.attachments.heightPx;
-export const SESSION_THREAD_MESSAGE_ATTACHMENT_GAP_PX = spec.rows.message.attachments.gapPx;
+  layout.messageBubbleBorderWidthPx;
+export const SESSION_THREAD_MESSAGE_MAX_WIDTH_RATIO = layout.messageMaxWidthRatio;
+export const SESSION_THREAD_MESSAGE_ROLE_FONT_SIZE_PX = layout.messageRoleFontSizePx;
+export const SESSION_THREAD_MESSAGE_ROLE_LINE_HEIGHT_PX = layout.messageRoleLineHeightPx;
+export const SESSION_THREAD_MESSAGE_TOGGLE_MARGIN_TOP_PX = layout.messageToggleMarginTopPx;
+export const SESSION_THREAD_MESSAGE_TOGGLE_FONT_SIZE_PX = layout.messageToggleFontSizePx;
+export const SESSION_THREAD_MESSAGE_TOGGLE_LINE_HEIGHT_PX = layout.messageToggleLineHeightPx;
+export const SESSION_THREAD_MESSAGE_ATTACHMENT_WIDTH_PX = layout.messageAttachmentWidthPx;
+export const SESSION_THREAD_MESSAGE_ATTACHMENT_HEIGHT_PX = layout.messageAttachmentHeightPx;
+export const SESSION_THREAD_MESSAGE_ATTACHMENT_GAP_PX = layout.messageAttachmentGapPx;
 export const SESSION_THREAD_MESSAGE_ATTACHMENT_MARGIN_TOP_PX =
-  spec.rows.message.attachments.marginTopPx;
+  layout.messageAttachmentMarginTopPx;
 export const SESSION_THREAD_ASSISTANT_ENTRY_PADDING_INLINE_PX =
-  spec.rows.assistant.entryPaddingInlinePx;
+  layout.assistantEntryPaddingInlinePx;
 export const SESSION_THREAD_TURN_HEADER_BUBBLE_PADDING_BLOCK_PX =
-  spec.rows.turnHeader.bubblePaddingBlockPx;
+  layout.turnHeaderBubblePaddingBlockPx;
 export const SESSION_THREAD_TURN_HEADER_BUBBLE_PADDING_INLINE_PX =
-  spec.rows.turnHeader.bubblePaddingInlinePx;
+  layout.turnHeaderBubblePaddingInlinePx;
 export const SESSION_THREAD_TURN_HEADER_BUBBLE_BORDER_WIDTH_PX =
-  spec.rows.turnHeader.bubbleBorderWidthPx;
-export const SESSION_THREAD_TURN_HEADER_COPY_GUTTER_PX = spec.rows.turnHeader.copyGutterPx;
+  layout.turnHeaderBubbleBorderWidthPx;
+export const SESSION_THREAD_TURN_HEADER_COPY_GUTTER_PX = layout.turnHeaderCopyGutterPx;
 export const SESSION_THREAD_TURN_HEADER_COLLAPSED_MAX_HEIGHT_PX =
-  spec.rows.turnHeader.collapsedMaxHeightPx;
-export const SESSION_THREAD_ASK_USER_MARGIN_VERTICAL_PX = spec.rows.askUser.marginVerticalPx;
-export const SESSION_THREAD_ASK_USER_CARD_MAX_WIDTH_PX = spec.rows.askUser.cardMaxWidthPx;
-export const SESSION_THREAD_ASK_USER_CARD_MIN_WIDTH_PX = spec.rows.askUser.cardMinWidthPx;
-export const SESSION_THREAD_ASK_USER_CARD_PADDING_PX = spec.rows.askUser.cardPaddingPx;
-export const SESSION_THREAD_ASK_USER_CARD_GAP_PX = spec.rows.askUser.cardGapPx;
-export const SESSION_THREAD_ASK_USER_TABS_HEIGHT_PX = spec.rows.askUser.tabsHeightPx;
-export const SESSION_THREAD_ASK_USER_PANEL_HEIGHT_PX = spec.rows.askUser.panelHeightPx;
-export const SESSION_THREAD_ASK_USER_STATUS_HEIGHT_PX = spec.rows.askUser.statusHeightPx;
-export const SESSION_THREAD_ASK_USER_ACTIONS_HEIGHT_PX = spec.rows.askUser.actionsHeightPx;
-export const SESSION_THREAD_ASK_USER_HINT_HEIGHT_PX = spec.rows.askUser.hintHeightPx;
-export const SESSION_THREAD_ASK_USER_SHELL_HEIGHT_PX = resolveSessionThreadAskUserShellHeightPx(spec);
+  layout.turnHeaderCollapsedMaxHeightPx;
+export const SESSION_THREAD_ASK_USER_MARGIN_VERTICAL_PX = layout.askUserMarginVerticalPx;
+export const SESSION_THREAD_ASK_USER_CARD_MAX_WIDTH_PX = layout.askUserCardMaxWidthPx;
+export const SESSION_THREAD_ASK_USER_CARD_MIN_WIDTH_PX = layout.askUserCardMinWidthPx;
+export const SESSION_THREAD_ASK_USER_CARD_PADDING_PX = layout.askUserCardPaddingPx;
+export const SESSION_THREAD_ASK_USER_CARD_GAP_PX = layout.askUserCardGapPx;
+export const SESSION_THREAD_ASK_USER_TABS_HEIGHT_PX = layout.askUserTabsHeightPx;
+export const SESSION_THREAD_ASK_USER_PANEL_HEIGHT_PX = layout.askUserPanelHeightPx;
+export const SESSION_THREAD_ASK_USER_STATUS_HEIGHT_PX = layout.askUserStatusHeightPx;
+export const SESSION_THREAD_ASK_USER_ACTIONS_HEIGHT_PX = layout.askUserActionsHeightPx;
+export const SESSION_THREAD_ASK_USER_HINT_HEIGHT_PX = layout.askUserHintHeightPx;
+export const SESSION_THREAD_ASK_USER_SHELL_HEIGHT_PX = layout.askUserShellHeightPx;
+export const SESSION_THREAD_THOUGHT_PADDING_INLINE_PX = layout.thoughtPaddingInlinePx;
+export const SESSION_THREAD_THOUGHT_PADDING_BLOCK_PX = layout.thoughtPaddingBlockPx;
+export const SESSION_THREAD_THOUGHT_FONT_FAMILY = layout.thoughtFontFamily;
+export const SESSION_THREAD_THOUGHT_FONT_SIZE_PX = layout.thoughtFontSizePx;
+export const SESSION_THREAD_THOUGHT_LINE_HEIGHT_PX = layout.thoughtLineHeightPx;
+export const SESSION_THREAD_TOOL_SUMMARY_PADDING_INLINE_PX =
+  layout.toolSummaryPaddingInlinePx;
+export const SESSION_THREAD_TOOL_SUMMARY_PADDING_BLOCK_PX =
+  layout.toolSummaryPaddingBlockPx;
+export const SESSION_THREAD_TOOL_SUMMARY_FONT_FAMILY = layout.toolSummaryFontFamily;
+export const SESSION_THREAD_TOOL_SUMMARY_FONT_SIZE_PX = layout.toolSummaryFontSizePx;
+export const SESSION_THREAD_TOOL_SUMMARY_LINE_HEIGHT_PX = layout.toolSummaryLineHeightPx;
+export const SESSION_THREAD_TOOL_SEPARATOR_PADDING_INLINE_PX =
+  layout.toolSeparatorPaddingInlinePx;
+export const SESSION_THREAD_TOOL_STATUS_DOT_PADDING_INLINE_PX =
+  layout.toolStatusDotPaddingInlinePx;
+export const SESSION_THREAD_TOOL_LOADING_FONT_FAMILY = layout.toolLoadingFontFamily;
+export const SESSION_THREAD_TOOL_LOADING_FONT_SIZE_PX = layout.toolLoadingFontSizePx;
+export const SESSION_THREAD_TOOL_LOADING_LINE_HEIGHT_PX = layout.toolLoadingLineHeightPx;
+export const SESSION_THREAD_TOOL_ITEM_GAP_PX = layout.toolItemGapPx;
+export const SESSION_THREAD_TOOL_GROUP_GAP_PX = layout.toolGroupGapPx;
+export const SESSION_THREAD_TOOL_THOUGHT_TITLE_FONT_FAMILY =
+  layout.toolThoughtTitleFontFamily;
+export const SESSION_THREAD_TOOL_THOUGHT_TITLE_FONT_SIZE_PX =
+  layout.toolThoughtTitleFontSizePx;
+export const SESSION_THREAD_TOOL_THOUGHT_TITLE_LINE_HEIGHT_PX =
+  layout.toolThoughtTitleLineHeightPx;
+export const SESSION_THREAD_TOOL_THOUGHT_TITLE_MARGIN_BOTTOM_PX =
+  layout.toolThoughtTitleMarginBottomPx;
+export const SESSION_THREAD_TOOL_THOUGHT_BODY_PADDING_PX = layout.toolThoughtBodyPaddingPx;
+export const SESSION_THREAD_TOOL_THOUGHT_BODY_BORDER_WIDTH_PX =
+  layout.toolThoughtBodyBorderWidthPx;
+export const SESSION_THREAD_TOOL_THOUGHT_BODY_FONT_FAMILY =
+  layout.toolThoughtBodyFontFamily;
+export const SESSION_THREAD_TOOL_THOUGHT_BODY_FONT_SIZE_PX =
+  layout.toolThoughtBodyFontSizePx;
+export const SESSION_THREAD_TOOL_THOUGHT_BODY_LINE_HEIGHT_PX =
+  layout.toolThoughtBodyLineHeightPx;
 
-export const SESSION_THREAD_LAYOUT_STYLE = {
-  "--wb-thread-max-width": `${SESSION_THREAD_ROW_MAX_WIDTH_PX}px`,
-  "--wb-session-padding-inline": `${SESSION_THREAD_HORIZONTAL_INSET_PX}px`,
-  "--wb-transcript-max-width": `${SESSION_THREAD_ROW_MAX_WIDTH_PX}px`,
-  "--wb-markdown-body-font-size": `${SESSION_THREAD_MARKDOWN_BODY_FONT_SIZE_PX}px`,
-  "--wb-markdown-body-line-height": `${SESSION_THREAD_MARKDOWN_BODY_LINE_HEIGHT_PX}px`,
-  "--wb-markdown-body-font-family": SESSION_THREAD_MARKDOWN_BODY_FONT_FAMILY,
-  "--wb-markdown-heading-1-font-size": `${SESSION_THREAD_MARKDOWN_HEADING_FONT_SIZE_PX_BY_DEPTH[1]}px`,
-  "--wb-markdown-heading-2-font-size": `${SESSION_THREAD_MARKDOWN_HEADING_FONT_SIZE_PX_BY_DEPTH[2]}px`,
-  "--wb-markdown-heading-3-font-size": `${SESSION_THREAD_MARKDOWN_HEADING_FONT_SIZE_PX_BY_DEPTH[3]}px`,
-  "--wb-markdown-heading-4-font-size": `${SESSION_THREAD_MARKDOWN_HEADING_FONT_SIZE_PX_BY_DEPTH[4]}px`,
-  "--wb-markdown-heading-1-line-height": `${SESSION_THREAD_MARKDOWN_HEADING_LINE_HEIGHT_PX_BY_DEPTH[1]}px`,
-  "--wb-markdown-heading-2-line-height": `${SESSION_THREAD_MARKDOWN_HEADING_LINE_HEIGHT_PX_BY_DEPTH[2]}px`,
-  "--wb-markdown-heading-3-line-height": `${SESSION_THREAD_MARKDOWN_HEADING_LINE_HEIGHT_PX_BY_DEPTH[3]}px`,
-  "--wb-markdown-heading-4-line-height": `${SESSION_THREAD_MARKDOWN_HEADING_LINE_HEIGHT_PX_BY_DEPTH[4]}px`,
-  "--wb-markdown-heading-font-weight": String(SESSION_THREAD_MARKDOWN_FONT_WEIGHT.heading),
-  "--wb-markdown-table-header-font-weight": String(SESSION_THREAD_MARKDOWN_FONT_WEIGHT.tableHeader),
-  "--wb-markdown-block-margin-bottom": `${SESSION_THREAD_MARKDOWN_BLOCK_MARGIN_BOTTOM_PX}px`,
-  "--wb-markdown-heading-margin-top": `${SESSION_THREAD_MARKDOWN_HEADING_MARGIN_TOP_PX}px`,
-  "--wb-markdown-heading-margin-bottom": `${SESSION_THREAD_MARKDOWN_HEADING_MARGIN_BOTTOM_PX}px`,
-  "--wb-markdown-list-indent": `${SESSION_THREAD_MARKDOWN_LIST_INDENT_PX}px`,
-  "--wb-markdown-list-gap": `${SESSION_THREAD_MARKDOWN_LIST_GAP_PX}px`,
-  "--wb-markdown-list-marker-min-width": `${SESSION_THREAD_MARKDOWN_LIST_MARKER_MIN_WIDTH_PX}px`,
-  "--wb-markdown-list-marker-gap": `${SESSION_THREAD_MARKDOWN_LIST_MARKER_GAP_PX}px`,
-  "--wb-markdown-inline-code-padding-block": `${SESSION_THREAD_MARKDOWN_INLINE_CODE_PADDING_BLOCK_PX}px`,
-  "--wb-markdown-inline-code-padding-inline": `${SESSION_THREAD_MARKDOWN_INLINE_CODE_PADDING_INLINE_PX}px`,
-  "--wb-markdown-inline-code-border-width": `${SESSION_THREAD_MARKDOWN_INLINE_CODE_BORDER_WIDTH_PX}px`,
-  "--wb-markdown-inline-code-border-radius": `${SESSION_THREAD_MARKDOWN_INLINE_CODE_BORDER_RADIUS_PX}px`,
-  "--wb-markdown-inline-code-font-size": `${SESSION_THREAD_MARKDOWN_INLINE_CODE_FONT_SIZE_PX}px`,
-  "--wb-markdown-inline-code-font-family": SESSION_THREAD_MARKDOWN_INLINE_CODE_FONT_FAMILY,
-  "--wb-markdown-code-block-font-size": `${SESSION_THREAD_MARKDOWN_CODE_BLOCK_FONT_SIZE_PX}px`,
-  "--wb-markdown-code-block-line-height": `${SESSION_THREAD_MARKDOWN_CODE_BLOCK_LINE_HEIGHT_PX}px`,
-  "--wb-markdown-blockquote-border-width": `${SESSION_THREAD_MARKDOWN_BLOCKQUOTE_BORDER_WIDTH_PX}px`,
-  "--wb-markdown-blockquote-padding-inline-start": `${SESSION_THREAD_MARKDOWN_BLOCKQUOTE_PADDING_INLINE_START_PX}px`,
-  "--wb-markdown-image-width": `${SESSION_THREAD_MARKDOWN_IMAGE_WIDTH_PX}px`,
-  "--wb-markdown-image-height": `${SESSION_THREAD_MARKDOWN_IMAGE_HEIGHT_PX}px`,
-  "--wb-markdown-table-border-width": `${SESSION_THREAD_MARKDOWN_TABLE_BORDER_WIDTH_PX}px`,
-  "--wb-markdown-table-cell-padding-block": `${SESSION_THREAD_MARKDOWN_TABLE_CELL_PADDING_BLOCK_PX}px`,
-  "--wb-markdown-table-cell-padding-inline": `${SESSION_THREAD_MARKDOWN_TABLE_CELL_PADDING_INLINE_PX}px`,
-  "--wb-message-row-padding-block": `${SESSION_THREAD_MESSAGE_ROW_PADDING_BLOCK_PX}px`,
-  "--wb-message-bubble-padding-block": `${SESSION_THREAD_MESSAGE_BUBBLE_PADDING_BLOCK_PX}px`,
-  "--wb-message-bubble-padding-inline": `${SESSION_THREAD_MESSAGE_BUBBLE_PADDING_INLINE_PX}px`,
-  "--wb-message-bubble-border-width": `${SESSION_THREAD_MESSAGE_BUBBLE_BORDER_WIDTH_PX}px`,
-  "--wb-message-max-width": `${SESSION_THREAD_MESSAGE_MAX_WIDTH_RATIO * 100}%`,
-  "--wb-message-role-font-size": `${SESSION_THREAD_MESSAGE_ROLE_FONT_SIZE_PX}px`,
-  "--wb-message-role-line-height": `${SESSION_THREAD_MESSAGE_ROLE_LINE_HEIGHT_PX}px`,
-  "--wb-message-toggle-margin-top": `${SESSION_THREAD_MESSAGE_TOGGLE_MARGIN_TOP_PX}px`,
-  "--wb-message-toggle-font-size": `${SESSION_THREAD_MESSAGE_TOGGLE_FONT_SIZE_PX}px`,
-  "--wb-message-toggle-line-height": `${SESSION_THREAD_MESSAGE_TOGGLE_LINE_HEIGHT_PX}px`,
-  "--wb-message-attachment-width": `${SESSION_THREAD_MESSAGE_ATTACHMENT_WIDTH_PX}px`,
-  "--wb-message-attachment-height": `${SESSION_THREAD_MESSAGE_ATTACHMENT_HEIGHT_PX}px`,
-  "--wb-message-attachment-gap": `${SESSION_THREAD_MESSAGE_ATTACHMENT_GAP_PX}px`,
-  "--wb-message-attachment-margin-top": `${SESSION_THREAD_MESSAGE_ATTACHMENT_MARGIN_TOP_PX}px`,
-  "--wb-turn-header-bubble-padding-block": `${SESSION_THREAD_TURN_HEADER_BUBBLE_PADDING_BLOCK_PX}px`,
-  "--wb-turn-header-bubble-padding-inline": `${SESSION_THREAD_TURN_HEADER_BUBBLE_PADDING_INLINE_PX}px`,
-  "--wb-turn-header-bubble-border-width": `${SESSION_THREAD_TURN_HEADER_BUBBLE_BORDER_WIDTH_PX}px`,
-  "--wb-turn-header-copy-gutter": `${SESSION_THREAD_TURN_HEADER_COPY_GUTTER_PX}px`,
-  "--wb-turn-header-collapsed-max-height": `${SESSION_THREAD_TURN_HEADER_COLLAPSED_MAX_HEIGHT_PX}px`,
-  "--wb-askq-shell-height": `${SESSION_THREAD_ASK_USER_SHELL_HEIGHT_PX}px`,
-  "--wb-askq-card-gap": `${SESSION_THREAD_ASK_USER_CARD_GAP_PX}px`,
-  "--wb-askq-tabs-height": `${SESSION_THREAD_ASK_USER_TABS_HEIGHT_PX}px`,
-  "--wb-askq-panel-height": `${SESSION_THREAD_ASK_USER_PANEL_HEIGHT_PX}px`,
-  "--wb-askq-status-height": `${SESSION_THREAD_ASK_USER_STATUS_HEIGHT_PX}px`,
-  "--wb-askq-actions-height": `${SESSION_THREAD_ASK_USER_ACTIONS_HEIGHT_PX}px`,
-  "--wb-askq-hint-height": `${SESSION_THREAD_ASK_USER_HINT_HEIGHT_PX}px`,
-} as CSSProperties;
+export const SESSION_THREAD_LAYOUT_STYLE = SESSION_THREAD_GEOMETRY_VIEWS.layoutStyle;
 
 export function resolveSessionThreadRowWidth(viewportWidth: number): number {
   return Math.max(1, Math.min(SESSION_THREAD_ROW_MAX_WIDTH_PX, Math.floor(viewportWidth)));

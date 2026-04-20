@@ -3182,7 +3182,7 @@
 }
 
 .wb-thread-indent {
-  padding-left: 4px;
+  padding-left: var(--wb-thread-indent-left);
   box-sizing: border-box;
 }
 
@@ -3279,15 +3279,16 @@
   width: 100%;
   border: none;
   background: transparent;
-  padding: 1px 2px;
+  padding: var(--wb-tool-summary-padding-block) var(--wb-tool-summary-padding-inline);
   display: flex;
   align-items: center;
   gap: 8px;
   text-align: left;
   cursor: default;
   color: var(--muted);
-  font-size: 12px;
-  font-family: inherit;
+  font-size: var(--wb-tool-summary-font-size);
+  line-height: var(--wb-tool-summary-line-height);
+  font-family: var(--wb-tool-summary-font-family);
   min-width: 0;
   max-width: 100%;
 }
@@ -3369,31 +3370,33 @@
 
 .wb-tool-group {
   display: grid;
-  gap: 6px;
+  gap: var(--wb-tool-group-gap);
   min-width: 0;
   max-width: 100%;
 }
 
 .wb-tool-group-body {
   display: grid;
-  gap: 6px;
+  gap: var(--wb-tool-group-gap);
   min-width: 0;
   max-width: 100%;
 }
 
 .wb-tool-loading {
-  font-size: 12px;
+  font-family: var(--wb-tool-loading-font-family);
+  font-size: var(--wb-tool-loading-font-size);
+  line-height: var(--wb-tool-loading-line-height);
   color: var(--muted);
 }
 
 .wb-tool-thought {
   display: grid;
-  gap: 6px;
+  gap: var(--wb-tool-group-gap);
 }
 
 .wb-tool-row {
   display: grid;
-  gap: 4px;
+  gap: var(--wb-tool-item-gap);
   min-width: 0;
   max-width: 100%;
 }
@@ -3415,13 +3418,13 @@
 .wb-tool-sep {
   color: inherit;
   opacity: 0.65;
-  padding: 0 4px;
+  padding: 0 var(--wb-tool-separator-padding-inline);
 }
 
 .tool-status-dot {
   color: var(--muted);
   opacity: 0.65;
-  padding: 0 6px;
+  padding: 0 var(--wb-tool-status-dot-padding-inline);
 }
 
 .wb-tool-details {
@@ -3434,22 +3437,25 @@
 }
 
 .wb-tool-section-title {
-  font-size: 11px;
+  font-family: var(--wb-tool-thought-title-font-family);
+  font-size: var(--wb-tool-thought-title-font-size);
+  line-height: var(--wb-tool-thought-title-line-height);
   color: var(--muted);
-  margin-bottom: 6px;
+  margin-bottom: var(--wb-tool-thought-title-margin-bottom);
   text-transform: uppercase;
   letter-spacing: 0.02em;
 }
 
 .wb-tool-pre {
   margin: 0;
-  padding: 8px;
+  padding: var(--wb-tool-thought-body-padding);
   border-radius: 8px;
-  border: 1px solid var(--border);
+  border: var(--wb-tool-thought-body-border-width) solid var(--border);
   background: rgba(0, 0, 0, 0.2);
   overflow: auto;
-  font-family: var(--mono);
-  font-size: 12px;
+  font-family: var(--wb-tool-thought-body-font-family);
+  font-size: var(--wb-tool-thought-body-font-size);
+  line-height: var(--wb-tool-thought-body-line-height);
   color: var(--text);
   white-space: pre-wrap;
 }
@@ -3459,8 +3465,10 @@
 }
 
 .wb-thought-row {
-  padding: 8px 4px;
-  font-size: 12px;
+  padding: var(--wb-thought-row-padding-block) var(--wb-thought-row-padding-inline);
+  font-family: var(--wb-thought-row-font-family);
+  font-size: var(--wb-thought-row-font-size);
+  line-height: var(--wb-thought-row-line-height);
   color: var(--wb-thought-row-color);
   font-style: italic;
   white-space: pre-wrap;

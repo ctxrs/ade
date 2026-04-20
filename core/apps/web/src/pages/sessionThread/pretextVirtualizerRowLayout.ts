@@ -38,19 +38,22 @@ export type PretextVirtualizerRowLayoutContext = {
 const ROW_CONTRACT = SESSION_THREAD_ROW_MEASUREMENT_CONTRACT;
 const MARKDOWN_CONTRACT = SESSION_MARKDOWN_MEASUREMENT_CONTRACT;
 
-const SMALL_LINE_HEIGHT_PX = ROW_CONTRACT.tools.loadingLineHeightPx;
-const MONO_FONT = `${MARKDOWN_CONTRACT.typography.codeBlockFontSizePx}px ${MARKDOWN_CONTRACT.typography.inlineCodeFontFamily}`;
-const MONO_LINE_HEIGHT_PX = MARKDOWN_CONTRACT.typography.codeBlockLineHeightPx;
+const SMALL_LINE_HEIGHT_PX = ROW_CONTRACT.tools.loading.typography.lineHeightPx;
+const THOUGHT_FONT = `${ROW_CONTRACT.thought.typography.fontStyle ?? "normal"} ${ROW_CONTRACT.thought.typography.fontSizePx}px ${ROW_CONTRACT.thought.typography.fontFamily}`;
+const THOUGHT_LINE_HEIGHT_PX = ROW_CONTRACT.thought.typography.lineHeightPx;
+const TOOL_THOUGHT_BODY_FONT = `${ROW_CONTRACT.tools.thoughtBody.typography.fontSizePx}px ${ROW_CONTRACT.tools.thoughtBody.typography.fontFamily}`;
+const TOOL_THOUGHT_BODY_LINE_HEIGHT_PX = ROW_CONTRACT.tools.thoughtBody.typography.lineHeightPx;
 
 const SPACER_HEIGHT_PX = ROW_CONTRACT.fixed.spacerHeightPx;
 const TURN_STATUS_HEIGHT_PX = ROW_CONTRACT.fixed.turnStatusHeightPx;
-const TOOL_ROW_HEIGHT_PX = ROW_CONTRACT.tools.rowHeightPx;
+const TOOL_ROW_HEIGHT_PX = ROW_CONTRACT.tools.summary.rowHeightPx;
 const TOOL_GROUP_GAP_PX = ROW_CONTRACT.tools.groupGapPx;
-const TOOL_THOUGHT_TITLE_HEIGHT_PX = ROW_CONTRACT.tools.thoughtTitleHeightPx;
-const TOOL_THOUGHT_PRE_PADDING_PX = ROW_CONTRACT.tools.thoughtPrePaddingPx;
+const TOOL_THOUGHT_TITLE_HEIGHT_PX = ROW_CONTRACT.tools.thoughtTitle.heightPx;
+const TOOL_THOUGHT_BODY_CHROME_WIDTH_PX = ROW_CONTRACT.tools.thoughtBody.chromeWidthPx;
+const TOOL_THOUGHT_BODY_CHROME_HEIGHT_PX = ROW_CONTRACT.tools.thoughtBody.chromeHeightPx;
 
-const THOUGHT_HORIZONTAL_PADDING_PX = ROW_CONTRACT.thought.horizontalPaddingPx;
-const THOUGHT_VERTICAL_PADDING_PX = ROW_CONTRACT.thought.verticalPaddingPx;
+const THOUGHT_HORIZONTAL_CHROME_PX = ROW_CONTRACT.thought.horizontalChromePx;
+const THOUGHT_VERTICAL_CHROME_PX = ROW_CONTRACT.thought.verticalChromePx;
 
 const TURN_HEADER_OUTER_VERTICAL_PX = ROW_CONTRACT.turnHeader.outerVerticalPx;
 const TURN_HEADER_BUBBLE_VERTICAL_PX =
@@ -73,7 +76,7 @@ const normalizeHeight = (value: number): number =>
   Number.isFinite(value) && value > 0 ? Math.max(1, Math.round(value * 16) / 16) : 1;
 
 const resolveThoughtTextWidth = (viewportWidth: number): number =>
-  Math.max(1, resolveSessionThreadIndentedContentWidth(viewportWidth) - THOUGHT_HORIZONTAL_PADDING_PX);
+  Math.max(1, resolveSessionThreadIndentedContentWidth(viewportWidth) - THOUGHT_HORIZONTAL_CHROME_PX);
 
 function measureTextHeight(params: {
   cacheKey: string;
@@ -142,13 +145,13 @@ function measureTurnHeaderHeight(
 
 function measureThoughtHeight(item: Extract<WorkbenchListItem, { kind: "thought" }>, viewportWidth: number): number {
   return normalizeHeight(
-    THOUGHT_VERTICAL_PADDING_PX +
+    THOUGHT_VERTICAL_CHROME_PX +
       measureTextHeight({
         cacheKey: `thought:${item.id}:${item.content}`,
         text: item.content ?? "",
-        font: MONO_FONT,
+        font: THOUGHT_FONT,
         width: resolveThoughtTextWidth(viewportWidth),
-        lineHeight: MONO_LINE_HEIGHT_PX,
+        lineHeight: THOUGHT_LINE_HEIGHT_PX,
         whiteSpace: "pre-wrap",
       }),
   );
@@ -207,12 +210,12 @@ function measureToolThoughtHeight(thought: string, width: number): number {
   const thoughtTextHeight = measureTextHeight({
     cacheKey: `tool-thought:${thought}`,
     text: thought,
-    font: MONO_FONT,
-    width: Math.max(1, width - TOOL_THOUGHT_PRE_PADDING_PX),
-    lineHeight: MONO_LINE_HEIGHT_PX,
+    font: TOOL_THOUGHT_BODY_FONT,
+    width: Math.max(1, width - TOOL_THOUGHT_BODY_CHROME_WIDTH_PX),
+    lineHeight: TOOL_THOUGHT_BODY_LINE_HEIGHT_PX,
     whiteSpace: "pre-wrap",
   });
-  return TOOL_THOUGHT_TITLE_HEIGHT_PX + TOOL_THOUGHT_PRE_PADDING_PX + thoughtTextHeight;
+  return TOOL_THOUGHT_TITLE_HEIGHT_PX + TOOL_THOUGHT_BODY_CHROME_HEIGHT_PX + thoughtTextHeight;
 }
 
 function measureToolGroupHeight(

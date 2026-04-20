@@ -2,6 +2,10 @@ import React from "react";
 import ReactDOMClient from "react-dom/client";
 import { flushSync } from "react-dom";
 import { MemoMarkdown } from "../sessionView";
+import type {
+  SessionMarkdownDebugWindow,
+  SessionMarkdownInlineCodeDebugPayload,
+} from "../sessionThread/sessionMarkdownInlineMeasurementDebug";
 import {
   clearSessionMarkdownMeasurementCaches,
   measureSessionMarkdownDocument,
@@ -20,80 +24,7 @@ export type WorkbenchMarkdownParityMeasurement = {
   delta: number;
 };
 
-export type WorkbenchMarkdownPlannerDebug = {
-  lines: string[];
-  startDecisions: Array<{
-    pendingSpaceWidth: number;
-    preferredStartWidth: number;
-    dottedPathClusterWidth: number;
-    wholeCodeGroupWidth: number;
-    remainingWidth: number;
-    currentLineConsumedWidth: number;
-    currentLineStartFitRatio: number;
-    currentLineCodeStartFitIsReadable: boolean;
-    currentLineCodeStartFitIsStrong: boolean;
-    shouldBreakForSoftBreakProseCodeStart?: boolean;
-    shouldBreakForStyledTailCodeStart: boolean;
-    shouldLimitCurrentCodeGroupToFirstFragment?: boolean;
-    shouldBreakForAttachedTrailingPlainStart: boolean;
-    shouldBreak: boolean;
-    text: string;
-  }>;
-  whitespaceDecisions?: Array<{
-    lineHasContent: boolean;
-    reservedWidth: number;
-    remainingWidth: number;
-    guardedRemainingWidth: number;
-    fragmentWidth: number;
-    slackPx?: number;
-    shouldBreak: boolean;
-    text: string;
-  }>;
-  continuationDecisions?: Array<{
-    text: string;
-    reservedWidth: number;
-    remainingWidth: number;
-    guardedRemainingWidth: number;
-    availableLineWidth?: number;
-    lineWidth?: number;
-    fullWidth: number;
-    currentLineFitSlackPx: number;
-    lineLastCodeFragmentText: string | null;
-    lineLastCodeFragmentEndedWithPathDelimiter: boolean;
-    lineLastCodeFragmentEndedWithHyphen: boolean;
-    acceptedWholeFragment?: boolean;
-    brokeBeforeFragment?: boolean;
-  }>;
-  segmentSeamAdjustments?: Array<{
-    type: "no-progress-advance" | "no-progress-drop" | "whitespace-only-break" | "whitespace-only-advance";
-    lineHasContent: boolean;
-    text: string;
-  }>;
-  sealedContinuationDecisions?: Array<{
-    canRelaxChromiumDottedPathBoundary: boolean;
-    currentCodeGroupStartFragmentText: string | null;
-    fullWidth: number;
-    guardedRemainingWidth: number;
-    remainingWidth?: number;
-    continuationSlackPx?: number;
-    lastFragmentIsShortExtensionPath: boolean;
-    lastFragmentText: string | null;
-    sameCodeGroupContinuation: boolean;
-    sealedBoundaryOverflow: boolean;
-    acceptedFragment?: boolean;
-    overflowedAcceptedFragment?: boolean;
-    shouldBreakBeforePartialSealedDottedPathFragment: boolean;
-    text: string;
-  }>;
-  items: Array<{
-    kind: string;
-    text: string;
-    chromeWidth?: number;
-    fullWidth?: number;
-    minStartTextWidth?: number;
-  }>;
-  width: number;
-};
+export type WorkbenchMarkdownPlannerDebug = SessionMarkdownInlineCodeDebugPayload;
 
 export type WorkbenchMarkdownParityDebugMeasurement = WorkbenchMarkdownParityMeasurement & {
   debug: WorkbenchMarkdownPlannerDebug | null;
@@ -103,10 +34,7 @@ export type WorkbenchMarkdownParityDebugMeasurement = WorkbenchMarkdownParityMea
   }>;
 };
 
-type WorkbenchMarkdownDebugWindow = Window & {
-  __ctxForceInlineCodeDebug?: boolean;
-  __ctxInlineCodeDebugTarget?: string;
-  __ctxInlineCodeDebugWidth?: number;
+type WorkbenchMarkdownDebugWindow = SessionMarkdownDebugWindow & {
   __ctxInlineCodeDebug?: WorkbenchMarkdownPlannerDebug;
 };
 
@@ -245,29 +173,29 @@ export async function measureWorkbenchMarkdownSelectionText(markdown: string, wi
   applyMarkdownLayoutStyle(host, width);
   probe.appendChild(host);
   const root = ReactDOMClient.createRoot(host);
-  flushSync(() => {
-    root.render(React.createElement(MemoMarkdown, { content: markdown }));
-  });
+  try {
+    flushSync(() => {
+      root.render(React.createElement(MemoMarkdown, { content: markdown }));
+    });
 
-  const markdownRoot = host.querySelector(".wb-markdown-root");
-  if (!markdownRoot) {
+    const markdownRoot = host.querySelector(".wb-markdown-root");
+    if (!markdownRoot) {
+      return "";
+    }
+
+    const selection = window.getSelection();
+    const range = document.createRange();
+    range.selectNodeContents(markdownRoot);
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+    await new Promise((resolve) => window.requestAnimationFrame(() => resolve(undefined)));
+    const text = selection?.toString() ?? "";
+    selection?.removeAllRanges();
+    return text;
+  } finally {
     root.unmount();
-    host.remove();
-    return "";
+    probe.remove();
   }
-
-  const selection = window.getSelection();
-  const range = document.createRange();
-  range.selectNodeContents(markdownRoot);
-  selection?.removeAllRanges();
-  selection?.addRange(range);
-  await new Promise((resolve) => window.requestAnimationFrame(() => resolve(undefined)));
-  const text = selection?.toString() ?? "";
-  selection?.removeAllRanges();
-
-  root.unmount();
-  probe.remove();
-  return text;
 }
 
 export async function installWorkbenchMarkdownScrollProbe(markdown: string, width = 788): Promise<boolean> {

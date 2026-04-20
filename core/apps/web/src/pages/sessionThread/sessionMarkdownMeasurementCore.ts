@@ -5,6 +5,7 @@ import {
   type SessionMarkdownDocument,
   type SessionMarkdownInlineRun,
 } from "./sessionMarkdownContract";
+import type { SessionMarkdownDebugWindow as SessionMarkdownInlineCodeDebugWindow } from "./sessionMarkdownInlineMeasurementDebug";
 import {
   buildPreparedContentKey,
   clampHeight,
@@ -42,85 +43,7 @@ export type TextBlockTypography = {
   lineHeight: number;
 };
 
-export type SessionMarkdownDebugWindow = Window & {
-  __ctxForceInlineCodeDebug?: boolean;
-  __ctxInlineCodeDebugTarget?: string;
-  __ctxInlineCodeDebugWidth?: number;
-  __ctxInlineCodeDebug?: {
-    lines: string[];
-    startDecisions?: Array<{
-      pendingSpaceWidth: number;
-      preferredStartWidth: number;
-      dottedPathClusterWidth: number;
-      wholeCodeGroupWidth: number;
-      remainingWidth: number;
-      currentLineConsumedWidth: number;
-      currentLineStartFitRatio: number;
-      currentLineCodeStartFitIsReadable: boolean;
-      currentLineCodeStartFitIsStrong: boolean;
-      shouldBreakForSoftBreakProseCodeStart: boolean;
-      shouldBreakForInlineTailPunctuationCodeStart: boolean;
-      shouldBreakForStyledTailCodeStart: boolean;
-      shouldLimitCurrentCodeGroupToFirstFragment: boolean;
-      shouldBreakForAttachedTrailingPlainStart: boolean;
-      shouldBreak: boolean;
-      text: string;
-    }>;
-    whitespaceDecisions?: Array<{
-      lineHasContent: boolean;
-      reservedWidth: number;
-      remainingWidth: number;
-      guardedRemainingWidth: number;
-      fragmentWidth: number;
-      slackPx?: number;
-      shouldBreak: boolean;
-      text: string;
-    }>;
-    continuationDecisions?: Array<{
-      text: string;
-      reservedWidth: number;
-      remainingWidth: number;
-      guardedRemainingWidth: number;
-      availableLineWidth?: number;
-      lineWidth?: number;
-      fullWidth: number;
-      currentLineFitSlackPx: number;
-      lineLastCodeFragmentText: string | null;
-      lineLastCodeFragmentEndedWithPathDelimiter: boolean;
-      lineLastCodeFragmentEndedWithHyphen: boolean;
-      acceptedWholeFragment?: boolean;
-      brokeBeforeFragment?: boolean;
-    }>;
-    segmentSeamAdjustments?: Array<{
-      type: "no-progress-advance" | "no-progress-drop" | "whitespace-only-break" | "whitespace-only-advance";
-      lineHasContent: boolean;
-      text: string;
-    }>;
-    sealedContinuationDecisions?: Array<{
-      canRelaxChromiumDottedPathBoundary: boolean;
-      currentCodeGroupStartFragmentText: string | null;
-      fullWidth: number;
-      guardedRemainingWidth: number;
-      remainingWidth?: number;
-      continuationSlackPx?: number;
-      lastFragmentIsShortExtensionPath: boolean;
-      lastFragmentText: string | null;
-      sameCodeGroupContinuation: boolean;
-      sealedBoundaryOverflow: boolean;
-      acceptedFragment?: boolean;
-      overflowedAcceptedFragment?: boolean;
-      shouldBreakBeforePartialSealedDottedPathFragment: boolean;
-      text: string;
-    }>;
-    items: Array<{
-      kind: "hardBreak" | "space" | "segment";
-      text: string;
-      chromeWidth?: number;
-      fullWidth?: number;
-      minStartTextWidth?: number;
-    }>;
-    width: number;
-  };
+export type SessionMarkdownDebugWindow = SessionMarkdownInlineCodeDebugWindow & {
   __ctxForcePlainTextDebug?: boolean;
   __ctxPlainTextDebugTarget?: string;
   __ctxPlainTextDebugWidth?: number;

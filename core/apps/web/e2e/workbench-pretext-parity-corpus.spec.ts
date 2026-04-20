@@ -42,6 +42,11 @@ const MARKDOWN_CORPUS: MarkdownSample[] = [
     markdown: "We shipped `ctx serve`. Then we reopened `origin/main` again.",
   },
   {
+    name: "colon-command-chip-after-prose",
+    markdown:
+      "This sample keeps the inline measurement path, viewport controller, and `verify:quick` label in one long paragraph. The extra prose gives the browser enough ordinary text to exercise a code-chip seam without relying on a recorded work log.",
+  },
+  {
     name: "whitespace-code-comma-tail-long-prose",
     markdown:
       "The current fixture is concrete and repeatable: `sample-layout-runner` uses a helper with Python `shutil.copytree(..., dirs_exist_ok=True)`, which keeps the long inline-code tail beside ordinary prose. The width sample stays useful while the browser comparison remains deterministic.",
@@ -284,6 +289,13 @@ const ASSISTANT_CORPUS = [
     },
   },
   {
+    name: "colon-command-chip-after-prose",
+    params: {
+      content:
+        "This sample keeps the inline measurement path, viewport controller, and `verify:quick` label in one long paragraph. The extra prose gives the browser enough ordinary text to exercise a code-chip seam without relying on a recorded work log.",
+    },
+  },
+  {
     name: "whitespace-code-comma-tail-long-prose",
     params: {
       content:
@@ -323,6 +335,7 @@ const THRESHOLD_MARKDOWN_SAMPLE_NAMES = new Set([
   "code-comma-tail",
   "three-chip-prose",
   "period-after-code-tail",
+  "colon-command-chip-after-prose",
 ]);
 const THRESHOLD_USER_SAMPLE_NAMES = new Set(["threshold-user-tail"]);
 const THRESHOLD_ASSISTANT_SAMPLE_NAMES = new Set([
@@ -330,6 +343,7 @@ const THRESHOLD_ASSISTANT_SAMPLE_NAMES = new Set([
   "code-comma-tail",
   "three-chip-prose",
   "period-after-code-tail",
+  "colon-command-chip-after-prose",
 ]);
 
 const TURN_HEADER_CORPUS = [

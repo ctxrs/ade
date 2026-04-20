@@ -20,6 +20,11 @@ type HeightRevisionOptions = {
   verbosity?: string;
 };
 
+type LayoutRevisionOptions = {
+  verbosity?: string;
+  toolExpansionIds?: readonly string[];
+};
+
 function fingerprintAttachmentLayout(
   attachments: ReadonlyArray<{
     kind?: string;
@@ -67,17 +72,31 @@ function withTranscriptLayoutEngineRevision(revision: string): string {
 
 export function getWorkbenchMessageListLayoutRevision(
   uiState: WorkbenchMessageListUiState,
-  options?: { verbosity?: string },
+  options?: LayoutRevisionOptions,
 ): string {
+  const relevantExpandedTools =
+    options?.toolExpansionIds == null
+      ? stableTrueKeys(uiState.expandedToolById)
+      : stableTrueKeys(uiState.expandedToolById).filter((toolId) =>
+          options.toolExpansionIds?.includes(toolId),
+        );
   return JSON.stringify({
     layoutEngineRevision: SESSION_TRANSCRIPT_LAYOUT_ENGINE_REVISION,
     verbosity: options?.verbosity ?? uiState.verbosity ?? null,
     turnHeaders: stableTrueKeys(uiState.expandedTurnHeaders),
     turnDetails: stableTrueKeys(uiState.expandedTurnDetailsById),
-    tools: stableTrueKeys(uiState.expandedToolById),
+    tools: relevantExpandedTools,
     messages: stableTrueKeys(uiState.expandedMessageById),
     turnToolsLoading: [...uiState.turnToolsLoading].sort(),
   });
+}
+
+export function collectWorkbenchToolGroupExpansionIds(
+  listItems: readonly WorkbenchListItem[],
+): string[] {
+  return listItems
+    .flatMap((item) => (item.kind === "tool_group" ? item.tools.map((tool) => tool.id) : []))
+    .sort();
 }
 
 export function resolveWorkbenchMessageExpanded(
@@ -131,7 +150,7 @@ export function getWorkbenchListItemHeightRevision(
   uiState: WorkbenchMessageListUiState,
   options?: HeightRevisionOptions,
 ): string {
-  const verbosity = options?.verbosity ?? uiState.verbosity;
+  void options;
   switch (item.kind) {
     case "message":
       {
@@ -167,15 +186,12 @@ export function getWorkbenchListItemHeightRevision(
     case "tool":
       return withTranscriptLayoutEngineRevision(
         [
-          uiState.expandedToolById[item.id] ? "tool:expanded" : "tool:collapsed",
+          "tool:summary",
           item.status,
           fingerprintString(item.title),
           fingerprintString(item.subtitle ?? ""),
           fingerprintUnknown(item.locations),
           fingerprintUnknown(item.input),
-          uiState.expandedToolById[item.id] && verbosity === "verbose"
-            ? fingerprintString(item.output_text)
-            : "output:hidden",
         ].join(":"),
       );
     case "tool_group": {

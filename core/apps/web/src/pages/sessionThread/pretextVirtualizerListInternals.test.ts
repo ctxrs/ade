@@ -8,7 +8,7 @@ import {
   resolveLocalizedAnchorOverride,
   syncSnapshotForProjectionOp,
   resolveViewportTopAnchorOverride,
-} from "./pretextVirtualizerListInternals";
+} from "./pretextVirtualizerProjectionHelpers";
 
 function makeMessage(id: string): Extract<WorkbenchListItem, { kind: "message" }> {
   return {

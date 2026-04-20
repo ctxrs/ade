@@ -42,4 +42,26 @@ describe("sessionThreadMeasurementContract", () => {
     expect(SESSION_MARKDOWN_MEASUREMENT_CONTRACT.blockSpacing.entryGapPxByContext.root.heading).toBe(16);
     expect(SESSION_MARKDOWN_MEASUREMENT_CONTRACT.blockSpacing.exitGapPxByContext.listItem.paragraph).toBe(0);
   });
+
+  it("captures thought and tool row typography through the shared row contract", () => {
+    expect(SESSION_THREAD_ROW_MEASUREMENT_CONTRACT.thought.horizontalChromePx).toBe(
+      SESSION_THREAD_ROW_MEASUREMENT_CONTRACT.thought.paddingInlinePx * 2,
+    );
+    expect(SESSION_THREAD_ROW_MEASUREMENT_CONTRACT.thought.verticalChromePx).toBe(
+      SESSION_THREAD_ROW_MEASUREMENT_CONTRACT.thought.paddingBlockPx * 2,
+    );
+    expect(SESSION_THREAD_ROW_MEASUREMENT_CONTRACT.tools.summary.rowHeightPx).toBe(
+      SESSION_THREAD_ROW_MEASUREMENT_CONTRACT.tools.summary.paddingBlockPx * 2 +
+        SESSION_THREAD_ROW_MEASUREMENT_CONTRACT.tools.summary.typography.lineHeightPx,
+    );
+    expect(SESSION_THREAD_ROW_MEASUREMENT_CONTRACT.tools.thoughtTitle.heightPx).toBe(
+      SESSION_THREAD_ROW_MEASUREMENT_CONTRACT.tools.thoughtTitle.typography.lineHeightPx +
+        SESSION_THREAD_ROW_MEASUREMENT_CONTRACT.tools.thoughtTitle.marginBottomPx,
+    );
+    expect(SESSION_THREAD_ROW_MEASUREMENT_CONTRACT.tools.thoughtBody.chromeWidthPx).toBe(
+      (SESSION_THREAD_ROW_MEASUREMENT_CONTRACT.tools.thoughtBody.paddingPx +
+        SESSION_THREAD_ROW_MEASUREMENT_CONTRACT.tools.thoughtBody.borderWidthPx) *
+        2,
+    );
+  });
 });
