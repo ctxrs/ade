@@ -4,11 +4,41 @@ pub fn matrix_cache_path(data_root: &Path) -> PathBuf {
     data_root.join("providers").join(MATRIX_CACHE_FILENAME)
 }
 
+fn explicit_matrix_path_from_env() -> Option<PathBuf> {
+    if let Ok(raw) = std::env::var("CTX_BUNDLE_MATRIX_JSON") {
+        let trimmed = raw.trim();
+        if !trimmed.is_empty() {
+            return Some(PathBuf::from(trimmed));
+        }
+    }
+    if let Ok(raw) = std::env::var("CTX_BUNDLE_DIR") {
+        let trimmed = raw.trim();
+        if !trimmed.is_empty() {
+            return Some(PathBuf::from(trimmed).join(MATRIX_CACHE_FILENAME));
+        }
+    }
+    None
+}
+
+fn load_matrix_from_path(path: &Path) -> Option<ProviderMatrix> {
+    let txt = std::fs::read_to_string(path).ok()?;
+    let parsed: ProviderMatrix = serde_json::from_str(&txt).ok()?;
+    if parsed.version != MATRIX_SCHEMA_VERSION {
+        return None;
+    }
+    Some(parsed)
+}
+
 pub fn builtin_matrix() -> ProviderMatrix {
     ProviderMatrix::default()
 }
 
 pub async fn load_matrix(data_root: &Path) -> ProviderMatrix {
+    if let Some(explicit_path) = explicit_matrix_path_from_env() {
+        if let Some(matrix) = load_matrix_from_path(&explicit_path) {
+            return matrix;
+        }
+    }
     if let Some(matrix) = load_cached_matrix(data_root) {
         return matrix;
     }
@@ -51,12 +81,7 @@ pub async fn invalidate_matrix_cache(cache: &tokio::sync::Mutex<ProviderMatrixCa
 
 pub(crate) fn load_cached_matrix(data_root: &Path) -> Option<ProviderMatrix> {
     let path = matrix_cache_path(data_root);
-    let txt = std::fs::read_to_string(&path).ok()?;
-    let parsed: ProviderMatrix = serde_json::from_str(&txt).ok()?;
-    if parsed.version != MATRIX_SCHEMA_VERSION {
-        return None;
-    }
-    Some(parsed)
+    load_matrix_from_path(&path)
 }
 
 pub async fn save_cached_matrix(data_root: &Path, matrix: &ProviderMatrix) -> anyhow::Result<()> {

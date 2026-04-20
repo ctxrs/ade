@@ -17,6 +17,13 @@ struct DesktopBundledAssetsManifest {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+struct DesktopBundledProviderManifest {
+    version: u32,
+    #[serde(default)]
+    providers: Vec<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 struct DesktopBundledProvider {
     id: String,
     os: String,
@@ -453,6 +460,10 @@ fn bundled_artifact_identity_path(bundle_dir: &Path) -> PathBuf {
     bundle_dir.join("artifact_identity.json")
 }
 
+fn bundled_provider_manifest_path(bundle_dir: &Path) -> PathBuf {
+    bundle_dir.join("provider_matrix.json")
+}
+
 pub(super) fn enforce_desktop_parity_bundle_preflight(bundle_dir: Option<&Path>) -> Result<()> {
     if !parity_profile_enabled() {
         return Ok(());
@@ -488,6 +499,24 @@ pub(super) fn enforce_desktop_parity_bundle_preflight(bundle_dir: Option<&Path>)
         anyhow::bail!(
             "artifact identity must contain exactVersion, buildId, and compatibilityToken: {}",
             artifact_identity_path.display()
+        );
+    }
+    let bundled_provider_manifest_path = bundled_provider_manifest_path(bundle_dir);
+    let bundled_provider_manifest_raw = std::fs::read_to_string(&bundled_provider_manifest_path)
+        .with_context(|| format!("reading {}", bundled_provider_manifest_path.display()))?;
+    let bundled_provider_manifest: DesktopBundledProviderManifest =
+        serde_json::from_str(&bundled_provider_manifest_raw)
+            .with_context(|| format!("parsing {}", bundled_provider_manifest_path.display()))?;
+    if bundled_provider_manifest.version == 0 {
+        anyhow::bail!(
+            "bundled provider manifest must declare a non-zero schema version: {}",
+            bundled_provider_manifest_path.display()
+        );
+    }
+    if bundled_provider_manifest.providers.is_empty() {
+        anyhow::bail!(
+            "bundled provider manifest must contain at least one provider entry: {}",
+            bundled_provider_manifest_path.display()
         );
     }
     let manifest_path = bundle_manifest_path(bundle_dir);

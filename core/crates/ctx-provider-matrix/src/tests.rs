@@ -95,6 +95,69 @@ async fn load_matrix_returns_builtin_when_cache_missing() {
     assert_eq!(loaded.providers.len(), builtin.providers.len());
 }
 
+#[tokio::test]
+async fn load_matrix_prefers_explicit_bundle_manifest_over_cache() {
+    let dir = tempdir().expect("tempdir");
+    let bundle_dir = tempdir().expect("bundle tempdir");
+    let bundle_matrix = ProviderMatrix {
+        version: MATRIX_SCHEMA_VERSION,
+        generated_at: Some("2026-04-20T00:00:00Z".to_string()),
+        providers: vec![ProviderMatrixEntry {
+            id: "bundled-provider".to_string(),
+            kind: ProviderMatrixEntryKind::Harness,
+            display_name: None,
+            tier: None,
+            command: None,
+            managed_install: None,
+            provider_dependencies: vec![],
+            dependencies: vec![],
+            version_probe: None,
+            releases: vec![],
+        }],
+    };
+    let cached = ProviderMatrix {
+        version: MATRIX_SCHEMA_VERSION,
+        generated_at: Some("2026-04-19T00:00:00Z".to_string()),
+        providers: vec![ProviderMatrixEntry {
+            id: "cached-provider".to_string(),
+            kind: ProviderMatrixEntryKind::Harness,
+            display_name: None,
+            tier: None,
+            command: None,
+            managed_install: None,
+            provider_dependencies: vec![],
+            dependencies: vec![],
+            version_probe: None,
+            releases: vec![],
+        }],
+    };
+    save_cached_matrix(dir.path(), &cached)
+        .await
+        .expect("save cached matrix");
+    std::fs::write(
+        bundle_dir.path().join(MATRIX_CACHE_FILENAME),
+        serde_json::to_string_pretty(&bundle_matrix).expect("serialize bundle matrix"),
+    )
+    .expect("write bundle matrix");
+
+    let previous_bundle_dir = std::env::var("CTX_BUNDLE_DIR").ok();
+    unsafe {
+        std::env::set_var("CTX_BUNDLE_DIR", bundle_dir.path());
+    }
+    let loaded = load_matrix(dir.path()).await;
+    match previous_bundle_dir {
+        Some(value) => unsafe {
+            std::env::set_var("CTX_BUNDLE_DIR", value);
+        },
+        None => unsafe {
+            std::env::remove_var("CTX_BUNDLE_DIR");
+        },
+    }
+
+    assert_eq!(loaded.providers.len(), 1);
+    assert_eq!(loaded.providers[0].id, "bundled-provider");
+}
+
 #[test]
 fn provider_matrix_entry_kind_defaults_to_harness_when_missing_from_json() {
     let entry: ProviderMatrixEntry = serde_json::from_str(

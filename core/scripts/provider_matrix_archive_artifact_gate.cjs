@@ -26,7 +26,9 @@ function fail(message) {
 
 function parseArgs(argv) {
   const out = {
-    matrixPath: defaultMatrixPath,
+    matrixPath: String(process.env.CTX_BUNDLE_MATRIX_JSON || "").trim()
+      ? path.resolve(process.env.CTX_BUNDLE_MATRIX_JSON)
+      : defaultMatrixPath,
     providers: [],
     targets: [],
     timeoutMs: DEFAULT_TIMEOUT_MS,

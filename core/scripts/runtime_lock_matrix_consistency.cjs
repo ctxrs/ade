@@ -13,6 +13,7 @@ const defaultMatrixPath = path.join(
   'src',
   'provider_matrix.json',
 );
+const envMatrixPath = String(process.env.CTX_BUNDLE_MATRIX_JSON || '').trim();
 
 const normalizeOs = (value) => {
   if (value === 'darwin') return 'macos';
@@ -36,7 +37,7 @@ const normalizeToken = (value, hostValue) => {
 const parseArgs = (argv) => {
   const options = {
     lockPath: defaultLockPath,
-    matrixPath: defaultMatrixPath,
+    matrixPath: envMatrixPath ? path.resolve(envMatrixPath) : defaultMatrixPath,
     hostOs: normalizeOs(process.platform),
     hostArch: normalizeArch(process.arch),
   };

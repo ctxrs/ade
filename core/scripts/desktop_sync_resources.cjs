@@ -64,6 +64,7 @@ const AVF_LINUX_CONTAINER_STACK_REL = path.join("helpers", "container-stack.tar.
 const MANIFEST_FILENAME = "manifest.json";
 const EFFECTIVE_MANIFEST_FILENAME = "runtime_manifest.effective.json";
 const ARTIFACT_IDENTITY_FILENAME = "artifact_identity.json";
+const PROVIDER_MATRIX_FILENAME = "provider_matrix.json";
 const RUNTIME_LOCK_V2_FILENAME = "runtime_lock.v2.json";
 const RUNTIME_LOCK_V1_FILENAME = "runtime_lock.v1.json";
 const defaultRuntimeOverridesPath = path.join(coreRoot, "..", ".ctx", "local", "runtime_overrides.json");
@@ -1062,6 +1063,24 @@ const writeArtifactIdentity = (bundleDir = destBundleDir, env = process.env) => 
   };
 };
 
+const resolveBundleProviderMatrixSource = (env = process.env) => {
+  const explicitPath = String(env.CTX_BUNDLE_MATRIX_JSON || "").trim();
+  if (explicitPath) {
+    return path.resolve(explicitPath);
+  }
+  return path.join(coreRoot, "crates", "ctx-provider-accounts", "src", "provider_matrix.json");
+};
+
+const writeBundledProviderManifest = (bundleDir = destBundleDir, env = process.env) => {
+  const sourcePath = resolveBundleProviderMatrixSource(env);
+  if (!fs.existsSync(sourcePath)) {
+    throw new Error(`missing provider manifest for bundle sync: ${sourcePath}`);
+  }
+  const targetPath = path.join(bundleDir, PROVIDER_MATRIX_FILENAME);
+  fs.copyFileSync(sourcePath, targetPath);
+  return targetPath;
+};
+
 const ensureCargoBinOnPath = (env) => {
   const resolvedEnv = { ...env };
   const cargoHome = String(resolvedEnv.CARGO_HOME || "").trim();
@@ -1205,8 +1224,10 @@ const syncBundles = () => {
 
   const effectiveManifestPath = writeEffectiveBundleManifest(destBundleDir);
   const artifactIdentity = writeArtifactIdentity(destBundleDir);
+  const bundledProviderManifestPath = writeBundledProviderManifest(destBundleDir, process.env);
 
   return {
+    bundledProviderManifestPath,
     bundleDir: destBundleDir,
     stagedAvfGuestRuntime,
     effectiveManifestPath,
@@ -1224,6 +1245,7 @@ const verifyExistingBundles = () => {
   readBundleManifest(destBundleDir);
   writeEffectiveBundleManifest(destBundleDir);
   writeArtifactIdentity(destBundleDir);
+  writeBundledProviderManifest(destBundleDir, process.env);
   return destBundleDir;
 };
 
@@ -1476,6 +1498,7 @@ if (require.main === module) {
       resolveBundleCacheRoot,
       resolveArtifactIdentityMode,
       shouldBundleLinuxCtxMcpRuntime,
+      writeBundledProviderManifest,
       writePlaceholderBundleManifest,
       writeEffectiveBundleManifest,
       writeArtifactIdentity,
