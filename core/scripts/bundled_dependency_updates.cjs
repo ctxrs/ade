@@ -519,6 +519,7 @@ const providerPolicyIssues = ({
   const primaryRelease = Array.isArray(entry?.releases) ? entry.releases[0] : null;
   const releaseStatus = String(primaryRelease?.status || "supported").trim();
   const releaseNotes = String(primaryRelease?.notes || "").trim().toLowerCase();
+  const codexIssues = providerId === "codex" ? codexPolicyIssues(entry) : [];
 
   if (releaseStatus !== "supported") {
     issues.push(`release status '${releaseStatus}' (expected supported)`);
@@ -539,13 +540,11 @@ const providerPolicyIssues = ({
     }
   }
 
-  if (latestInfo.resolver === "archive_unresolved") {
+  if (latestInfo.resolver === "archive_unresolved" && !(providerId === "codex" && codexIssues.length === 0)) {
     issues.push("archive source resolver is unresolved");
   }
 
-  if (providerId === "codex") {
-    issues.push(...codexPolicyIssues(entry));
-  }
+  issues.push(...codexIssues);
 
   if (
     workspaceProviderVersionSources[providerId] &&
@@ -828,7 +827,14 @@ const main = async () => {
   writeJson(runtimeLockPath, runtimeLock);
 };
 
-main().catch((error) => {
-  console.error(`error: ${error?.message || error}`);
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch((error) => {
+    console.error(`error: ${error?.message || error}`);
+    process.exit(1);
+  });
+}
+
+module.exports = {
+  codexPolicyIssues,
+  providerPolicyIssues,
+};
