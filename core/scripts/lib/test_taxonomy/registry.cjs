@@ -1296,7 +1296,6 @@ function buildStaticEntries() {
       owner: "ci-release",
       sourceGlobs: [
         ".buildkite/pipelines/mac-preview.yml",
-        "scripts/buildkite/run_mac_preview_gate.sh",
         "scripts/buildkite/run_mac_preview_build.sh",
         "scripts/buildbuddy/check_macos_publish_prereqs.sh",
         "scripts/buildbuddy/run_release_macos.sh",
