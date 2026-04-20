@@ -5,6 +5,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 
+const { buildTargetBinary: buildCodexTargetBinary } = require("./codex_crp_bazel.cjs");
 const { resolveCtxCacheLayout } = require("./lib/cache_roots.cjs");
 const { bazeliskBinaryPath, buildBuildBuddyAuthArgs } = require("./run_bazel_pilot.cjs");
 
@@ -22,6 +23,10 @@ const PROVIDER_SPECS = Object.freeze({
     artifactKind: "archive",
     passTargetKeyToRun: true,
     targetLabel: "//external-harnesses/claude-crp:provider-stage-archive",
+  }),
+  codex: Object.freeze({
+    artifactKind: "binary",
+    resolver: "codex-crp-bazel",
   }),
   droid: Object.freeze({
     artifactKind: "binary",
@@ -171,6 +176,9 @@ function runArchiveTarget({ env = process.env, providerSpec, targetKey = "" } = 
 
 function buildTargetArtifact({ env = process.env, providerId, targetKey } = {}) {
   const providerSpec = PROVIDER_SPECS[providerId];
+  if (providerSpec.resolver === "codex-crp-bazel") {
+    return buildCodexTargetBinary({ env, targetKey });
+  }
   if (providerSpec.artifactKind === "archive") {
     return runArchiveTarget({ env, providerSpec, targetKey });
   }

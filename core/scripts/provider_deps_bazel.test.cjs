@@ -12,6 +12,7 @@ test("provider-deps Bazel helper keeps the explicit provider and cross-target ma
     "acp-crp-bridge",
     "amp",
     "claude-crp",
+    "codex",
     "droid",
     "goose",
     "openhands",
@@ -23,6 +24,8 @@ test("provider-deps Bazel helper keeps the explicit provider and cross-target ma
   assert.equal(PROVIDER_SPECS["claude-crp"].artifactKind, "archive");
   assert.equal(PROVIDER_SPECS["claude-crp"].targetLabel, "//external-harnesses/claude-crp:provider-stage-archive");
   assert.equal(PROVIDER_SPECS["claude-crp"].passTargetKeyToRun, true);
+  assert.equal(PROVIDER_SPECS.codex.artifactKind, "binary");
+  assert.equal(PROVIDER_SPECS.codex.resolver, "codex-crp-bazel");
   assert.equal(PROVIDER_SPECS.droid.binaryName, "droid-acp");
   assert.equal(PROVIDER_SPECS.goose.artifactKind, "archive");
   assert.equal(PROVIDER_SPECS.goose.targetLabel, "//core/crates/ctx-provider-accounts:goose-provider-stage-archive");

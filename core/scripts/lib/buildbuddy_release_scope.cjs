@@ -20,6 +20,7 @@ const DEFAULT_PROVIDER_DEPS_PROVIDER_IDS = Object.freeze([
   "acp-crp-bridge",
   "amp",
   "claude-crp",
+  "codex",
   "droid",
   "goose",
   "opencode",
