@@ -2,11 +2,10 @@
 
 const childProcess = require("node:child_process");
 const fs = require("node:fs");
-const os = require("node:os");
 const path = require("node:path");
 
 const { buildTargetBinary: buildCodexTargetBinary } = require("./codex_crp_bazel.cjs");
-const { resolveCtxCacheLayout } = require("./lib/cache_roots.cjs");
+const { ensureCacheLayout, resolveCtxCacheLayout } = require("./lib/cache_roots.cjs");
 const { bazeliskBinaryPath, buildBuildBuddyAuthArgs } = require("./run_bazel_pilot.cjs");
 
 const PROVIDER_SPECS = Object.freeze({
@@ -111,12 +110,16 @@ function parseArgs(argv) {
 function buildBazelCommandContext(env = process.env) {
   const { coreRoot, repoRoot } = repoRoots();
   const layout = resolveCtxCacheLayout({ cwd: coreRoot, env });
+  ensureCacheLayout(layout, { includeTargets: false });
   return {
     bazelBinary: bazeliskBinaryPath(),
     env: {
       ...env,
       TMPDIR: layout.tmpDir,
+      TMP: layout.tmpDir,
+      TEMP: layout.tmpDir,
     },
+    layout,
     repoRoot,
     startupArgs: [`--output_user_root=${layout.bazelOutputUserRoot}`],
   };
@@ -137,8 +140,8 @@ function runChecked(command, args, options, failureMessage) {
 }
 
 function runArchiveTarget({ env = process.env, providerSpec, targetKey = "" } = {}) {
-  const { bazelBinary, env: bazelEnv, repoRoot, startupArgs } = buildBazelCommandContext(env);
-  const archiveOutDir = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-provider-deps-bazel-archive-"));
+  const { bazelBinary, env: bazelEnv, layout, repoRoot, startupArgs } = buildBazelCommandContext(env);
+  const archiveOutDir = fs.mkdtempSync(path.join(layout.artifactsDir, "provider-deps-bazel-archive-"));
   const result = runChecked(
     bazelBinary,
     [

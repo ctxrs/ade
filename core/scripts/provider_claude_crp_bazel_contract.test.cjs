@@ -7,6 +7,7 @@ const repoRoot = path.resolve(__dirname, "..", "..");
 const toolsBuild = fs.readFileSync(path.join(repoRoot, "tools", "bazel", "BUILD.bazel"), "utf8");
 const helperScript = fs.readFileSync(path.join(repoRoot, "tools", "bazel", "provider_claude_crp_archive.sh"), "utf8");
 const claudeBuild = fs.readFileSync(path.join(repoRoot, "external-harnesses", "claude-crp", "BUILD.bazel"), "utf8");
+const stageScript = fs.readFileSync(path.join(repoRoot, "scripts", "claude_crp_stage_archives.sh"), "utf8");
 
 test("claude-crp provider archive helper is exported for Bazel-run staging", () => {
   assert.match(toolsBuild, /"provider_claude_crp_archive\.sh"/);
@@ -18,4 +19,8 @@ test("claude-crp provider archive helper is exported for Bazel-run staging", () 
 test("claude-crp exposes a Bazel-run provider archive target", () => {
   assert.match(claudeBuild, /name = "provider-stage-archive"/);
   assert.match(claudeBuild, /"\/\/tools\/bazel:provider_claude_crp_archive\.sh"/);
+});
+
+test("claude-crp archive staging uses TMPDIR-aware temp roots", () => {
+  assert.match(stageScript, /mktemp -d "\$\{TMPDIR:-\/tmp\}\/ctx-claude-crp-stage\.XXXXXX"/);
 });

@@ -4,6 +4,7 @@ const assert = require("node:assert/strict");
 const {
   PROVIDER_SPECS,
   TARGET_SPECS,
+  buildBazelCommandContext,
   parseArgs,
 } = require("./provider_deps_bazel.cjs");
 
@@ -63,4 +64,15 @@ test("provider-deps Bazel helper requires an explicit supported provider and tar
   );
   assert.throws(() => parseArgs(["--provider-id", "droid"]), /--target-key is required/);
   assert.throws(() => parseArgs(["--provider-id", "droid", "--target-key", "windows-x86_64"]), /unsupported provider-deps Bazel target/);
+});
+
+test("provider-deps Bazel helper routes temp and archive outputs through the shared volatile layout", () => {
+  const context = buildBazelCommandContext({
+    CTX_VOLATILE_ROOT: "/tmp/ctx-provider-bazel",
+  });
+  assert.equal(context.env.TMPDIR, "/tmp/ctx-provider-bazel/tmp");
+  assert.equal(context.env.TMP, "/tmp/ctx-provider-bazel/tmp");
+  assert.equal(context.env.TEMP, "/tmp/ctx-provider-bazel/tmp");
+  assert.equal(context.layout.artifactsDir, "/tmp/ctx-provider-bazel/artifacts");
+  assert.match(context.startupArgs[0], /--output_user_root=\/tmp\/ctx-provider-bazel\/targets\/bazel\//);
 });

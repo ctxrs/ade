@@ -472,7 +472,7 @@ ensure_python_runtime() {
   local asset="cpython-${python_version}+${python_build_tag}-${PYTHON_TARGET}-install_only.tar.gz"
   local url="https://github.com/indygreg/python-build-standalone/releases/download/${python_build_tag}/${asset}"
   local archive_tmp
-  archive_tmp="$(mktemp "$OUT_DIR/.python-runtime.XXXXXX.tar.gz")"
+  archive_tmp="$(mktemp "$OUT_DIR/.python-runtime.XXXXXX")"
   curl --fail --location --silent --show-error "$url" --output "$archive_tmp"
 
   local extract_dir
@@ -690,8 +690,8 @@ resolve_rust_target_root() {
 provider_override_env_var_name() {
   local provider_id="$1"
   local suffix="$2"
-  local normalized="${provider_id^^}"
-  normalized="${normalized//-/_}"
+  local normalized
+  normalized="$(printf '%s' "$provider_id" | tr '[:lower:]' '[:upper:]' | tr '-' '_')"
   printf 'CTX_PROVIDER_DEPS_%s_%s' "$normalized" "$suffix"
 }
 
