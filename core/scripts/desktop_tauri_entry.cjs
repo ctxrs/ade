@@ -1,9 +1,12 @@
 #!/usr/bin/env node
 
 const childProcess = require("node:child_process");
+const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
 
 const { HOST_HEAVY_BUDGET_KEY, withHostJobBudget } = require("./lib/host_job_budget.cjs");
+const { resolveDesktopBuildIdentity } = require("./lib/desktop_build_identity.cjs");
 
 const coreRoot = path.resolve(__dirname, "..");
 const desktopAppRoot = path.join(coreRoot, "apps", "desktop");
@@ -42,18 +45,62 @@ function resolveTauriBudgetKey(command) {
   return String(command || "").trim() === "build" ? HOST_HEAVY_BUDGET_KEY : "";
 }
 
+function createTauriIdentityOverride({ command, prepMode, env = process.env }) {
+  if (command !== "build") {
+    return null;
+  }
+  const requestedMode = prepMode === "release-build"
+    ? ""
+    : prepMode === "debug-build"
+      ? "packaged"
+      : "dev";
+  const identity = resolveDesktopBuildIdentity({
+    coreRoot,
+    env,
+    mode: requestedMode,
+  });
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-tauri-identity-"));
+  const configPath = path.join(tempDir, "tauri.identity.json");
+  fs.writeFileSync(configPath, `${JSON.stringify({ version: identity.exactVersion }, null, 2)}\n`, "utf8");
+  return {
+    configPath,
+    tempDir,
+    identity,
+  };
+}
+
 function createInvocation(argv = process.argv, env = process.env) {
   const parsed = parseArgs(argv);
   const skipPrep = shouldSkipPrep(env);
+  const prepMode = resolvePrepMode(parsed);
+  const tauriIdentityOverride = createTauriIdentityOverride({
+    command: parsed.command,
+    prepMode,
+    env,
+  });
   return {
     ...parsed,
-    prepMode: resolvePrepMode(parsed),
+    prepMode,
     prepCommand: skipPrep ? "" : "node",
-    prepArgs: skipPrep ? [] : ["scripts/desktop_prepare.cjs", "--mode", resolvePrepMode(parsed)],
+    prepArgs: skipPrep ? [] : ["scripts/desktop_prepare.cjs", "--mode", prepMode],
     skipPrep,
     tauriBudgetKey: resolveTauriBudgetKey(parsed.command),
     tauriCommand: resolveTauriCommand(),
-    tauriExecArgs: [parsed.command, ...parsed.tauriArgs],
+    tauriExecArgs: tauriIdentityOverride
+      ? [parsed.command, "--config", tauriIdentityOverride.configPath, ...parsed.tauriArgs]
+      : [parsed.command, ...parsed.tauriArgs],
+    tauriEnv: {
+      ...normalizeTauriCliEnv(env),
+      ...(tauriIdentityOverride?.identity
+        ? {
+          CTX_RELEASE_EFFECTIVE_VERSION: tauriIdentityOverride.identity.exactVersion,
+          CTX_BUILD_ID: tauriIdentityOverride.identity.buildId,
+          CTX_COMPATIBILITY_TOKEN: tauriIdentityOverride.identity.compatibilityToken,
+          CTX_DEV_INSTANCE_ID: tauriIdentityOverride.identity.compatibilityToken,
+        }
+        : {}),
+    },
+    tauriIdentityOverride,
   };
 }
 
@@ -118,12 +165,18 @@ function main(
       withHostJobBudgetImpl,
     });
   }
-  run(invocation.tauriCommand, invocation.tauriExecArgs, {
-    env: normalizeTauriCliEnv(process.env),
-    budgetKey: invocation.tauriBudgetKey,
-    spawnSyncImpl,
-    withHostJobBudgetImpl,
-  });
+  try {
+    run(invocation.tauriCommand, invocation.tauriExecArgs, {
+      env: invocation.tauriEnv,
+      budgetKey: invocation.tauriBudgetKey,
+      spawnSyncImpl,
+      withHostJobBudgetImpl,
+    });
+  } finally {
+    if (invocation.tauriIdentityOverride?.tempDir) {
+      fs.rmSync(invocation.tauriIdentityOverride.tempDir, { recursive: true, force: true });
+    }
+  }
 }
 
 if (require.main === module) {

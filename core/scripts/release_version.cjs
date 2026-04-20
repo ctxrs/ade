@@ -3,73 +3,28 @@
 const path = require("node:path");
 
 const { readDesktopVersion } = require("./desktop_version.cjs");
-const { assertValidVersion, setDesktopVersion } = require("./desktop_set_version.cjs");
-
-const DEFAULT_CHANNEL = "stable";
-const RELEASE_CHANNELS = new Set(["stable", "canary", "canary2", "e2e"]);
-
-const normalizeReleaseChannel = (value) => {
-  const normalized = String(value || "").trim() || DEFAULT_CHANNEL;
-  if (!RELEASE_CHANNELS.has(normalized)) {
-    throw new Error(`unsupported release channel '${normalized}'`);
-  }
-  return normalized;
-};
-
-const normalizeReleaseCommit = (value) => {
-  const normalized = String(value || "").trim().toLowerCase();
-  if (!normalized) {
-    return "";
-  }
-  if (!/^[0-9a-f]{7,64}$/.test(normalized)) {
-    throw new Error(`invalid release source commit '${value}'`);
-  }
-  return normalized;
-};
-
-const stripPreReleaseAndBuild = (version) => String(version || "").trim().replace(/[-+].*$/, "");
-
-const deriveCiReleaseVersion = ({ baseVersion, channel, sourceCommit }) => {
-  const normalizedBaseVersion = assertValidVersion(baseVersion);
-  const normalizedChannel = normalizeReleaseChannel(channel);
-  if (normalizedChannel === "stable") {
-    return normalizedBaseVersion;
-  }
-  const normalizedSourceCommit = normalizeReleaseCommit(sourceCommit);
-  if (!normalizedSourceCommit) {
-    throw new Error(`release source commit is required for ${normalizedChannel} versions`);
-  }
-  const stableBaseVersion = stripPreReleaseAndBuild(normalizedBaseVersion);
-  return `${stableBaseVersion}-${normalizedChannel}.${normalizedSourceCommit.slice(0, 12)}`;
-};
-
-const resolveEffectiveReleaseVersion = ({ coreRoot = path.resolve(__dirname, ".."), env = process.env } = {}) => {
-  const explicitVersion = String(env.CTX_RELEASE_EFFECTIVE_VERSION || env.RELEASE_VERSION || "").trim();
-  if (explicitVersion) {
-    return assertValidVersion(explicitVersion);
-  }
-  const checkedInVersion = readDesktopVersion(coreRoot);
-  const channel = normalizeReleaseChannel(env.RELEASE_CHANNEL);
-  if (channel === "stable") {
-    return checkedInVersion;
-  }
-  return deriveCiReleaseVersion({
-    baseVersion: checkedInVersion,
-    channel,
-    sourceCommit: env.RELEASE_SOURCE_COMMIT,
-  });
-};
+const {
+  DEFAULT_CHANNEL,
+  deriveCiReleaseVersion,
+  normalizeReleaseChannel,
+  normalizeReleaseCommit,
+  resolveDesktopBuildIdentity,
+  resolveEffectiveReleaseVersion,
+  stripPreReleaseAndBuild,
+} = require("./lib/desktop_build_identity.cjs");
 
 const stampEffectiveReleaseVersion = ({ coreRoot = path.resolve(__dirname, ".."), env = process.env } = {}) => {
   const checkedInVersion = readDesktopVersion(coreRoot);
   const effectiveVersion = resolveEffectiveReleaseVersion({ coreRoot, env });
-  if (checkedInVersion !== effectiveVersion) {
-    setDesktopVersion(effectiveVersion, { root: coreRoot });
-  }
   return {
     checkedInVersion,
     effectiveVersion,
-    changed: checkedInVersion !== effectiveVersion,
+    changed: false,
+    identity: resolveDesktopBuildIdentity({
+      coreRoot,
+      env,
+      mode: normalizeReleaseChannel(env.RELEASE_CHANNEL) === "stable" ? "release" : "",
+    }),
   };
 };
 
@@ -100,7 +55,7 @@ const printUsage = () => {
   console.log(`usage: node core/scripts/release_version.cjs [--stamp] [--json]
 
 options:
-  --stamp   Update checked-out desktop version files to the effective release version
+  --stamp   Compatibility no-op; report the effective release version without mutating source files
   --json    Print JSON instead of a bare version string
 `);
 };
@@ -142,6 +97,7 @@ module.exports = {
   normalizeReleaseChannel,
   normalizeReleaseCommit,
   resolveEffectiveReleaseVersion,
+  resolveDesktopBuildIdentity,
   stampEffectiveReleaseVersion,
   stripPreReleaseAndBuild,
 };

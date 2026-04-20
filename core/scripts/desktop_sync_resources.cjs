@@ -3,6 +3,7 @@ const path = require("path");
 const childProcess = require("child_process");
 const crypto = require("crypto");
 const { shouldBundleRemoteDaemons } = require("./desktop_sync_resources_remote_daemon_policy.cjs");
+const { resolveBuildMode, resolveDesktopBuildIdentity } = require("./lib/desktop_build_identity.cjs");
 const { parseBoolish, resolveBoolishFlag } = require("./lib/boolish.cjs");
 const { resolveCargoTargetDir } = require("./lib/cargo_target_dir.cjs");
 const { resolveDesktopWebDistSource } = require("./lib/web_dist_cache.cjs");
@@ -62,6 +63,7 @@ const AVF_LINUX_EGRESS_PROXY_REL = path.join("helpers", "egress-proxy");
 const AVF_LINUX_CONTAINER_STACK_REL = path.join("helpers", "container-stack.tar.gz");
 const MANIFEST_FILENAME = "manifest.json";
 const EFFECTIVE_MANIFEST_FILENAME = "runtime_manifest.effective.json";
+const ARTIFACT_IDENTITY_FILENAME = "artifact_identity.json";
 const RUNTIME_LOCK_V2_FILENAME = "runtime_lock.v2.json";
 const RUNTIME_LOCK_V1_FILENAME = "runtime_lock.v1.json";
 const defaultRuntimeOverridesPath = path.join(coreRoot, "..", ".ctx", "local", "runtime_overrides.json");
@@ -1024,6 +1026,42 @@ const writePlaceholderBundleManifest = (bundleDir = destBundleDir) => {
   fs.rmSync(effectiveManifestPath, { force: true });
 };
 
+const resolveArtifactIdentityMode = (env = process.env) => {
+  const explicitMode = String(env.CTX_DESKTOP_BUILD_MODE || "").trim();
+  if (explicitMode) {
+    return resolveBuildMode({ env, requestedMode: explicitMode });
+  }
+  if (profile === "debug") {
+    return "packaged";
+  }
+  if (String(env.RELEASE_CHANNEL || "").trim() === "e2e") {
+    return "e2e";
+  }
+  if (
+    String(env.RELEASE_CHANNEL || "").trim()
+    || String(env.RELEASE_SOURCE_COMMIT || "").trim()
+    || String(env.RELEASE_VERSION || "").trim()
+    || String(env.CTX_RELEASE_EFFECTIVE_VERSION || "").trim()
+  ) {
+    return "release";
+  }
+  return "packaged";
+};
+
+const writeArtifactIdentity = (bundleDir = destBundleDir, env = process.env) => {
+  const identity = resolveDesktopBuildIdentity({
+    coreRoot,
+    env,
+    mode: resolveArtifactIdentityMode(env),
+  });
+  const artifactIdentityPath = path.join(bundleDir, ARTIFACT_IDENTITY_FILENAME);
+  fs.writeFileSync(artifactIdentityPath, `${JSON.stringify(identity, null, 2)}\n`, "utf8");
+  return {
+    artifactIdentityPath,
+    identity,
+  };
+};
+
 const ensureCargoBinOnPath = (env) => {
   const resolvedEnv = { ...env };
   const cargoHome = String(resolvedEnv.CARGO_HOME || "").trim();
@@ -1166,11 +1204,13 @@ const syncBundles = () => {
   }
 
   const effectiveManifestPath = writeEffectiveBundleManifest(destBundleDir);
+  const artifactIdentity = writeArtifactIdentity(destBundleDir);
 
   return {
     bundleDir: destBundleDir,
     stagedAvfGuestRuntime,
     effectiveManifestPath,
+    artifactIdentity,
   };
 };
 
@@ -1183,6 +1223,7 @@ const verifyExistingBundles = () => {
   }
   readBundleManifest(destBundleDir);
   writeEffectiveBundleManifest(destBundleDir);
+  writeArtifactIdentity(destBundleDir);
   return destBundleDir;
 };
 
@@ -1433,9 +1474,11 @@ if (require.main === module) {
       resolveHostTarget,
       resolvePrimaryBundleTargetEnv,
       resolveBundleCacheRoot,
+      resolveArtifactIdentityMode,
       shouldBundleLinuxCtxMcpRuntime,
       writePlaceholderBundleManifest,
       writeEffectiveBundleManifest,
+      writeArtifactIdentity,
       ensureCargoBinOnPath,
       ensureContainerCacheDir,
     },

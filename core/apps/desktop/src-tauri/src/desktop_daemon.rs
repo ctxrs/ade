@@ -40,6 +40,7 @@ pub(super) use health::{
 };
 pub(super) use launch::{spawn_and_validate_local_daemon, try_kill_child, SpawnedLocalDaemonReady};
 pub(super) use login_relay::desktop_start_codex_login_relay;
+pub(crate) use resources::desktop_bundle_dir;
 pub(super) use resources::daemon_data_dir;
 pub(super) use systemd::{stop_systemd_scope, systemd_scope_for_local_daemon_url};
 

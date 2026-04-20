@@ -218,7 +218,7 @@ pub(super) fn select_bundle_dir_path(
     configured.or(bundled).or(dev)
 }
 
-pub(super) fn desktop_bundle_dir(app: &tauri::AppHandle) -> Option<PathBuf> {
+pub(crate) fn desktop_bundle_dir(app: &tauri::AppHandle) -> Option<PathBuf> {
     let bundled = app
         .path()
         .resource_dir()

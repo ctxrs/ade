@@ -413,15 +413,9 @@ pub(crate) async fn desktop_ensure_local_linux_sandbox_ready(
                 }
                 let state = app.state::<ConnectionManager>();
                 let manager: &ConnectionManager = state.inner();
-                let desktop_version = app.package_info().version.to_string();
-                let desktop_dev_instance_id = desktop_dev_instance_id();
+                let desktop_identity = load_desktop_build_identity(&app).map_err(to_err)?;
                 restart_local_with_spawn(manager, || {
-                    spawn_and_validate_local_daemon(
-                        &app,
-                        &data_dir,
-                        &desktop_version,
-                        desktop_dev_instance_id,
-                    )
+                    spawn_and_validate_local_daemon(&app, &data_dir, &desktop_identity)
                 })
                 .map_err(to_err)?;
                 Ok(DesktopLinuxSandboxEnsureResp { ready: true })

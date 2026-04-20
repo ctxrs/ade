@@ -86,17 +86,11 @@ pub(in super::super) fn resolve_existing_local_daemon(
     let Some(url) = auth.daemon_url.as_deref() else {
         return Ok(None);
     };
-    let desktop_version = app.package_info().version.to_string();
-    let desktop_dev_instance_id = desktop_dev_instance_id();
+    let desktop_identity = load_desktop_build_identity(app)?;
     let Ok(health) = daemon_health(url) else {
         return Ok(None);
     };
-    if local_daemon_health_matches_expected(
-        &health,
-        data_dir,
-        &desktop_version,
-        desktop_dev_instance_id,
-    ) {
+    if local_daemon_health_matches_expected(&health, data_dir, &desktop_identity) {
         return Ok(Some((
             url.to_string(),
             auth.token,

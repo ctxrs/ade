@@ -34,6 +34,7 @@
       "bin/*",
       "web/dist/**/*",
       "bundles/manifest.json",
+      "bundles/artifact_identity.json",
       "bundles/runtime_lock.v1.json",
       "bundles/runtime_lock.v2.json",
       "bundles/lucide-settings.svg"

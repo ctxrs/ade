@@ -1,4 +1,5 @@
 use anyhow::{anyhow, Context, Result};
+use crate::desktop_runtime::DesktopBuildIdentity;
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -448,6 +449,10 @@ fn bundle_manifest_path(bundle_dir: &Path) -> PathBuf {
     bundle_dir.join("manifest.json")
 }
 
+fn bundled_artifact_identity_path(bundle_dir: &Path) -> PathBuf {
+    bundle_dir.join("artifact_identity.json")
+}
+
 pub(super) fn enforce_desktop_parity_bundle_preflight(bundle_dir: Option<&Path>) -> Result<()> {
     if !parity_profile_enabled() {
         return Ok(());
@@ -464,6 +469,27 @@ pub(super) fn enforce_desktop_parity_bundle_preflight(bundle_dir: Option<&Path>)
         .unwrap_or_else(|| "desktop".to_string());
 
     let bundle_dir = bundle_dir.ok_or_else(|| anyhow!("bundle dir not found"))?;
+    let artifact_identity_path = bundled_artifact_identity_path(bundle_dir);
+    let artifact_identity_raw = std::fs::read_to_string(&artifact_identity_path)
+        .with_context(|| format!("reading {}", artifact_identity_path.display()))?;
+    let artifact_identity: DesktopBuildIdentity = serde_json::from_str(&artifact_identity_raw)
+        .with_context(|| format!("parsing {}", artifact_identity_path.display()))?;
+    if artifact_identity.schema_version != 1 {
+        anyhow::bail!(
+            "unsupported artifact identity schema {} at {}",
+            artifact_identity.schema_version,
+            artifact_identity_path.display()
+        );
+    }
+    if artifact_identity.exact_version.trim().is_empty()
+        || artifact_identity.build_id.trim().is_empty()
+        || artifact_identity.compatibility_token.trim().is_empty()
+    {
+        anyhow::bail!(
+            "artifact identity must contain exactVersion, buildId, and compatibilityToken: {}",
+            artifact_identity_path.display()
+        );
+    }
     let manifest_path = bundle_manifest_path(bundle_dir);
     let manifest_parent = manifest_path
         .parent()

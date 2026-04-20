@@ -18,6 +18,8 @@ pub(crate) struct DaemonHealthCompatibility {
     #[serde(default)]
     pub(super) desktop_exact_version: String,
     #[serde(default)]
+    pub(super) desktop_build_id: String,
+    #[serde(default)]
     pub(super) desktop_dev_instance_id: String,
 }
 
@@ -365,8 +367,7 @@ fn normalize_path_for_compare(path: &Path) -> PathBuf {
 pub(crate) fn local_daemon_health_matches_expected(
     health: &DaemonHealthSummary,
     expected_data_dir: &Path,
-    expected_desktop_version: &str,
-    expected_desktop_dev_instance_id: &str,
+    expected_identity: &DesktopBuildIdentity,
 ) -> bool {
     let daemon_data_root = health.data_root.trim();
     if daemon_data_root.is_empty() {
@@ -377,21 +378,26 @@ pub(crate) fn local_daemon_health_matches_expected(
     if daemon_root != expected_root {
         return false;
     }
-    let expected_version = expected_desktop_version.trim();
+    let expected_version = expected_identity.exact_version.trim();
     if expected_version.is_empty() {
         return false;
     }
     if health.compatibility.desktop_exact_version.trim() != expected_version {
         return false;
     }
-    if cfg!(debug_assertions) {
-        let expected_dev_instance_id = expected_desktop_dev_instance_id.trim();
-        if expected_dev_instance_id.is_empty() {
-            return false;
-        }
-        if health.compatibility.desktop_dev_instance_id.trim() != expected_dev_instance_id {
-            return false;
-        }
+    let expected_build_id = expected_identity.build_id.trim();
+    if expected_build_id.is_empty() {
+        return false;
+    }
+    if health.compatibility.desktop_build_id.trim() != expected_build_id {
+        return false;
+    }
+    let expected_compatibility_token = expected_identity.compatibility_token.trim();
+    if expected_compatibility_token.is_empty() {
+        return false;
+    }
+    if health.compatibility.desktop_dev_instance_id.trim() != expected_compatibility_token {
+        return false;
     }
     true
 }
@@ -408,15 +414,16 @@ fn display_nonempty(value: &str) -> String {
 pub(crate) fn spawned_local_daemon_incompatibility_message(
     base_url: &str,
     expected_data_dir: &Path,
-    expected_desktop_version: &str,
-    expected_desktop_dev_instance_id: &str,
+    expected_identity: &DesktopBuildIdentity,
     health: &DaemonHealthSummary,
 ) -> String {
     format!(
-        "spawned local daemon is incompatible (expected_version={}, daemon_version={}, expected_dev_instance_id={}, daemon_dev_instance_id={}, expected_data_dir={}, daemon_data_root={}, daemon_pid={}, url={})",
-        display_nonempty(expected_desktop_version),
+        "spawned local daemon is incompatible (expected_version={}, daemon_version={}, expected_build_id={}, daemon_build_id={}, expected_dev_instance_id={}, daemon_dev_instance_id={}, expected_data_dir={}, daemon_data_root={}, daemon_pid={}, url={})",
+        display_nonempty(&expected_identity.exact_version),
         display_nonempty(&health.compatibility.desktop_exact_version),
-        display_nonempty(expected_desktop_dev_instance_id),
+        display_nonempty(&expected_identity.build_id),
+        display_nonempty(&health.compatibility.desktop_build_id),
+        display_nonempty(&expected_identity.compatibility_token),
         display_nonempty(&health.compatibility.desktop_dev_instance_id),
         expected_data_dir.display(),
         display_nonempty(&health.data_root),
@@ -428,31 +435,22 @@ pub(crate) fn spawned_local_daemon_incompatibility_message(
 pub(crate) fn existing_local_daemon_matches(
     base_url: &str,
     expected_data_dir: &Path,
-    expected_desktop_version: &str,
-    expected_desktop_dev_instance_id: &str,
+    expected_identity: &DesktopBuildIdentity,
 ) -> Result<bool> {
     let health = daemon_health(base_url)?;
     Ok(local_daemon_health_matches_expected(
         &health,
         expected_data_dir,
-        expected_desktop_version,
-        expected_desktop_dev_instance_id,
+        expected_identity,
     ))
 }
 
 pub(crate) fn existing_local_daemon_matches_or_absent(
     base_url: &str,
     expected_data_dir: &Path,
-    expected_desktop_version: &str,
-    expected_desktop_dev_instance_id: &str,
+    expected_identity: &DesktopBuildIdentity,
 ) -> bool {
-    existing_local_daemon_matches(
-        base_url,
-        expected_data_dir,
-        expected_desktop_version,
-        expected_desktop_dev_instance_id,
-    )
-    .unwrap_or(false)
+    existing_local_daemon_matches(base_url, expected_data_dir, expected_identity).unwrap_or(false)
 }
 
 pub(crate) fn probe_daemon_health(base_url: &str) -> Result<()> {
@@ -514,6 +512,23 @@ pub(crate) fn probe_daemon_health_with_retry(
 mod tests {
     use super::*;
 
+    fn expected_identity(
+        exact_version: &str,
+        build_id: &str,
+        compatibility_token: &str,
+    ) -> DesktopBuildIdentity {
+        DesktopBuildIdentity {
+            schema_version: 1,
+            exact_version: exact_version.to_string(),
+            build_id: build_id.to_string(),
+            compatibility_token: compatibility_token.to_string(),
+            channel: "stable".to_string(),
+            source_commit: None,
+            mode: "dev".to_string(),
+            checked_in_version: exact_version.to_string(),
+        }
+    }
+
     #[test]
     fn local_daemon_health_match_requires_expected_data_root_and_mode_specific_identity() {
         let expected_dir =
@@ -527,43 +542,44 @@ mod tests {
             data_root: expected_dir.to_string_lossy().to_string(),
             compatibility: DaemonHealthCompatibility {
                 desktop_exact_version: "1.2.3".to_string(),
+                desktop_build_id: "build-a".to_string(),
                 desktop_dev_instance_id: "dev-wt-a".to_string(),
             },
         };
         assert!(local_daemon_health_matches_expected(
             &matching,
             &expected_dir,
-            "1.2.3",
-            "dev-wt-a",
+            &expected_identity("1.2.3", "build-a", "dev-wt-a"),
         ));
-        if cfg!(debug_assertions) {
-            assert!(!local_daemon_health_matches_expected(
-                &matching,
-                &expected_dir,
-                "9.9.9",
-                "dev-wt-a",
-            ));
-            assert!(!local_daemon_health_matches_expected(
-                &matching,
-                &expected_dir,
-                "1.2.3",
-                "dev-wt-b",
-            ));
-        }
+        assert!(!local_daemon_health_matches_expected(
+            &matching,
+            &expected_dir,
+            &expected_identity("9.9.9", "build-a", "dev-wt-a"),
+        ));
+        assert!(!local_daemon_health_matches_expected(
+            &matching,
+            &expected_dir,
+            &expected_identity("1.2.3", "build-b", "dev-wt-a"),
+        ));
+        assert!(!local_daemon_health_matches_expected(
+            &matching,
+            &expected_dir,
+            &expected_identity("1.2.3", "build-a", "dev-wt-b"),
+        ));
 
         let wrong_root = DaemonHealthSummary {
             pid: 42,
             data_root: other_dir.to_string_lossy().to_string(),
             compatibility: DaemonHealthCompatibility {
                 desktop_exact_version: "1.2.3".to_string(),
+                desktop_build_id: "build-a".to_string(),
                 desktop_dev_instance_id: "dev-wt-a".to_string(),
             },
         };
         assert!(!local_daemon_health_matches_expected(
             &wrong_root,
             &expected_dir,
-            "1.2.3",
-            "dev-wt-a",
+            &expected_identity("1.2.3", "build-a", "dev-wt-a"),
         ));
 
         std::fs::remove_dir_all(&expected_dir).ok();
@@ -580,8 +596,7 @@ mod tests {
         assert!(!existing_local_daemon_matches_or_absent(
             "not-a-url",
             &expected_dir,
-            "1.2.3",
-            "dev-wt-a",
+            &expected_identity("1.2.3", "build-a", "dev-wt-a"),
         ));
 
         std::fs::remove_dir_all(&expected_dir).ok();
@@ -598,6 +613,7 @@ mod tests {
             data_root: "/tmp/ctx-daemon-other".to_string(),
             compatibility: DaemonHealthCompatibility {
                 desktop_exact_version: "0.1.1".to_string(),
+                desktop_build_id: "build-other".to_string(),
                 desktop_dev_instance_id: "dev-other".to_string(),
             },
         };
@@ -605,13 +621,14 @@ mod tests {
         let msg = spawned_local_daemon_incompatibility_message(
             "http://127.0.0.1:4123",
             &expected_dir,
-            "0.2.20",
-            "dev-main",
+            &expected_identity("0.2.20", "build-main", "dev-main"),
             &health,
         );
 
         assert!(msg.contains("expected_version=0.2.20"));
         assert!(msg.contains("daemon_version=0.1.1"));
+        assert!(msg.contains("expected_build_id=build-main"));
+        assert!(msg.contains("daemon_build_id=build-other"));
         assert!(msg.contains("expected_dev_instance_id=dev-main"));
         assert!(msg.contains("daemon_dev_instance_id=dev-other"));
         assert!(msg.contains("daemon_data_root=/tmp/ctx-daemon-other"));
@@ -626,7 +643,7 @@ mod tests {
         let addr = listener.local_addr().expect("listener addr");
         let server = std::thread::spawn(move || {
             let body =
-                "{\"pid\":1,\"data_root\":\"/tmp/test\",\"compatibility\":{\"desktop_exact_version\":\"1.0.0\",\"desktop_dev_instance_id\":\"dev\"}}";
+                "{\"pid\":1,\"data_root\":\"/tmp/test\",\"compatibility\":{\"desktop_exact_version\":\"1.0.0\",\"desktop_build_id\":\"build-a\",\"desktop_dev_instance_id\":\"dev\"}}";
             for _ in 0..2 {
                 let (mut stream, _) = listener.accept().expect("accept request");
                 let mut buf = [0_u8; 1024];

@@ -28,6 +28,13 @@ test("linux ctx-mcp runtime bundling stays enabled on desktop platforms with Lin
   assert.equal(__desktopSyncResourcesTestHooks.shouldBundleLinuxCtxMcpRuntime("win32"), false);
 });
 
+test("desktop sync resources treats debug packaging as packaged artifact identity", () => {
+  assert.equal(
+    __desktopSyncResourcesTestHooks.resolveArtifactIdentityMode({}),
+    "packaged",
+  );
+});
+
 test("desktop sync resources maps explicit Rust target triples to bundle os/arch", () => {
   assert.deepEqual(
     __desktopSyncResourcesTestHooks.resolvePrimaryBundleTargetEnv({

@@ -58,13 +58,9 @@ pub(in crate::api) struct RegisterMobileDeviceReq {
 pub(in crate::api) async fn health(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<HealthResp>, StatusCode> {
-    let version = env!("CARGO_PKG_VERSION").to_string();
-    let build_id = option_env!("CTX_BUILD_ID")
-        .unwrap_or(env!("CARGO_PKG_VERSION"))
-        .to_string();
-    let dev_instance_id = option_env!("CTX_DEV_INSTANCE_ID")
-        .unwrap_or("unknown")
-        .to_string();
+    let identity =
+        crate::build_identity::current_build_identity().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let version = identity.exact_version.clone();
     Ok(Json(HealthResp {
         version: version.clone(),
         daemon_version: version.clone(),
@@ -76,8 +72,8 @@ pub(in crate::api) async fn health(
         storage: state.storage_guard_snapshot(),
         compatibility: HealthCompatibility {
             desktop_exact_version: version,
-            desktop_build_id: build_id,
-            desktop_dev_instance_id: dev_instance_id,
+            desktop_build_id: identity.build_id.clone(),
+            desktop_dev_instance_id: identity.compatibility_token.clone(),
             mobile_api_min: MOBILE_API_MIN_VERSION,
             mobile_api_max: MOBILE_API_MAX_VERSION,
         },
@@ -188,13 +184,9 @@ pub(in crate::api) async fn diagnostics(
         .unwrap_or_else(|e| serde_json::json!({"error": logs::redact_sensitive(&e.to_string())}));
     let managed_installs = redact_json_value(managed_installs);
 
-    let version = env!("CARGO_PKG_VERSION").to_string();
-    let build_id = option_env!("CTX_BUILD_ID")
-        .unwrap_or(env!("CARGO_PKG_VERSION"))
-        .to_string();
-    let dev_instance_id = option_env!("CTX_DEV_INSTANCE_ID")
-        .unwrap_or("unknown")
-        .to_string();
+    let identity =
+        crate::build_identity::current_build_identity().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let version = identity.exact_version.clone();
     Ok(Json(DiagnosticsResp {
         daemon: HealthResp {
             version: version.clone(),
@@ -207,8 +199,8 @@ pub(in crate::api) async fn diagnostics(
             storage: state.storage_guard_snapshot(),
             compatibility: HealthCompatibility {
                 desktop_exact_version: version,
-                desktop_build_id: build_id,
-                desktop_dev_instance_id: dev_instance_id,
+                desktop_build_id: identity.build_id.clone(),
+                desktop_dev_instance_id: identity.compatibility_token.clone(),
                 mobile_api_min: MOBILE_API_MIN_VERSION,
                 mobile_api_max: MOBILE_API_MAX_VERSION,
             },

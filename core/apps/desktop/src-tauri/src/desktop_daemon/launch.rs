@@ -332,8 +332,7 @@ impl Drop for PendingSpawnedLocalDaemon {
 pub(in super::super) fn spawn_and_validate_local_daemon(
     app: &tauri::AppHandle,
     data_dir: &Path,
-    desktop_version: &str,
-    desktop_dev_instance_id: &str,
+    desktop_identity: &DesktopBuildIdentity,
 ) -> Result<SpawnedLocalDaemonReady> {
     let (url, child, systemd_scope) = spawn_daemon(app, data_dir, true)?;
     let pending = PendingSpawnedLocalDaemon::new(url, child, systemd_scope);
@@ -342,8 +341,7 @@ pub(in super::super) fn spawn_and_validate_local_daemon(
     let compatible = local_daemon_health_matches_expected(
         &health,
         data_dir,
-        desktop_version,
-        desktop_dev_instance_id,
+        desktop_identity,
     );
     if !compatible {
         anyhow::bail!(
@@ -351,8 +349,7 @@ pub(in super::super) fn spawn_and_validate_local_daemon(
             spawned_local_daemon_incompatibility_message(
                 pending.url(),
                 data_dir,
-                desktop_version,
-                desktop_dev_instance_id,
+                desktop_identity,
                 &health
             )
         );

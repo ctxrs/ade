@@ -27,29 +27,20 @@ pub(super) async fn desktop_connect_local(
         let _guard = lock_local_connect_gate().map_err(to_err)?;
         let state = app.state::<ConnectionManager>();
         let data_dir = daemon_data_dir(&app).map_err(to_err)?;
-        let desktop_version = app.package_info().version.to_string();
-        let desktop_dev_instance_id = desktop_dev_instance_id();
+        let desktop_identity = load_desktop_build_identity(&app).map_err(to_err)?;
         let result = connect_local_with_sources(
             state.inner(),
             |url| {
                 existing_local_daemon_matches_or_absent(
                     url,
                     &data_dir,
-                    &desktop_version,
-                    desktop_dev_instance_id,
+                    &desktop_identity,
                 )
             },
             || resolve_env_local_daemon(&app),
             probe_daemon_health,
             || resolve_existing_local_daemon(&app, &data_dir),
-            || {
-                spawn_and_validate_local_daemon(
-                    &app,
-                    &data_dir,
-                    &desktop_version,
-                    desktop_dev_instance_id,
-                )
-            },
+            || spawn_and_validate_local_daemon(&app, &data_dir, &desktop_identity),
         );
         if let Err(err) = &result {
             log_desktop_startup_error(&format!(
@@ -189,16 +180,8 @@ pub(super) async fn desktop_restart_local_daemon(
         let state = app.state::<ConnectionManager>();
         let manager: &ConnectionManager = state.inner();
         let data_dir = daemon_data_dir(&app).map_err(to_err)?;
-        let desktop_version = app.package_info().version.to_string();
-        let desktop_dev_instance_id = desktop_dev_instance_id();
-        restart_local_with_spawn(manager, || {
-            spawn_and_validate_local_daemon(
-                &app,
-                &data_dir,
-                &desktop_version,
-                desktop_dev_instance_id,
-            )
-        })
+        let desktop_identity = load_desktop_build_identity(&app).map_err(to_err)?;
+        restart_local_with_spawn(manager, || spawn_and_validate_local_daemon(&app, &data_dir, &desktop_identity))
         .map_err(to_err)
     })
     .await
@@ -221,8 +204,7 @@ pub(super) fn ensure_local_connection(
             return Ok(());
         }
         let data_dir = daemon_data_dir(app)?;
-        let desktop_version = app.package_info().version.to_string();
-        let desktop_dev_instance_id = desktop_dev_instance_id();
+        let desktop_identity = load_desktop_build_identity(app)?;
         if let Some((url, token)) = resolve_env_local_daemon(app)? {
             probe_daemon_health(&url)?;
             state.set_local_attached(url, token, None, LocalConnectionSource::EnvOverride);
@@ -237,12 +219,7 @@ pub(super) fn ensure_local_connection(
             );
             return Ok(());
         }
-        let spawned = match spawn_and_validate_local_daemon(
-            app,
-            &data_dir,
-            &desktop_version,
-            desktop_dev_instance_id,
-        ) {
+        let spawned = match spawn_and_validate_local_daemon(app, &data_dir, &desktop_identity) {
             Ok(value) => value,
             Err(err) => {
                 // This can happen if another thread already started the daemon but we raced before
@@ -258,8 +235,7 @@ pub(super) fn ensure_local_connection(
                 let compatible = existing_local_daemon_matches(
                     url,
                     &data_dir,
-                    &desktop_version,
-                    desktop_dev_instance_id,
+                    &desktop_identity,
                 )
                 .with_context(|| {
                     format!(

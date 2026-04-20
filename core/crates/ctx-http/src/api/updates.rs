@@ -31,7 +31,16 @@ pub(super) async fn check_updates(
     let channel = q.channel.unwrap_or_else(|| "stable".to_string());
     let base_url = crate::updates::default_download_base_url();
     let platform = crate::updates::platform_key().map(|s| s.to_string());
-    let current_version = env!("CARGO_PKG_VERSION").to_string();
+    let current_version = crate::build_identity::current_build_identity()
+        .map(|identity| identity.exact_version.clone())
+        .map_err(|err| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&err.to_string()),
+                }),
+            )
+        })?;
 
     let query = platform.as_ref().map(|p| {
         vec![
