@@ -14,6 +14,15 @@ const setDocumentForeground = ({
   vi.spyOn(document, "hasFocus").mockReturnValue(focused);
 };
 
+const dispatchStorageChange = (key: string, newValue: string | null) => {
+  window.dispatchEvent(
+    new StorageEvent("storage", {
+      key,
+      newValue,
+    }),
+  );
+};
+
 describe("windowFocus", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
@@ -108,5 +117,85 @@ describe("windowFocus", () => {
       String(window.localStorage.getItem(APP_FOREGROUND_STORAGE_KEY)),
     ) as { updatedAtMs: number };
     expect(refreshedMarker.updatedAtMs).toBeGreaterThan(initialMarker.updatedAtMs);
+  });
+
+  it("notifies subscribers when this window loses and regains foreground", async () => {
+    const { getAppForegroundSnapshot, subscribeAppForeground } = await import("./windowFocus");
+    const listener = vi.fn();
+    const unsubscribe = subscribeAppForeground(listener);
+
+    expect(getAppForegroundSnapshot()).toBe(true);
+    expect(listener).not.toHaveBeenCalled();
+
+    setDocumentForeground({ focused: false, visibility: "hidden" });
+    window.dispatchEvent(new Event("blur"));
+
+    expect(getAppForegroundSnapshot()).toBe(false);
+    expect(listener).toHaveBeenCalledTimes(1);
+
+    setDocumentForeground({ focused: true, visibility: "visible" });
+    window.dispatchEvent(new Event("focus"));
+
+    expect(getAppForegroundSnapshot()).toBe(true);
+    expect(listener).toHaveBeenCalledTimes(2);
+    unsubscribe();
+  });
+
+  it("notifies subscribers when another ctx window becomes foreground via storage", async () => {
+    setDocumentForeground({ focused: false, visibility: "hidden" });
+    const {
+      APP_FOREGROUND_STORAGE_KEY,
+      getAppForegroundSnapshot,
+      subscribeAppForeground,
+    } = await import("./windowFocus");
+    const listener = vi.fn();
+    const unsubscribe = subscribeAppForeground(listener);
+    const marker = JSON.stringify({
+      windowId: "other-window",
+      updatedAtMs: Date.now(),
+    });
+
+    expect(getAppForegroundSnapshot()).toBe(false);
+
+    window.localStorage.setItem(APP_FOREGROUND_STORAGE_KEY, marker);
+    dispatchStorageChange(APP_FOREGROUND_STORAGE_KEY, marker);
+
+    expect(getAppForegroundSnapshot()).toBe(true);
+    expect(listener).toHaveBeenCalledTimes(1);
+
+    window.localStorage.removeItem(APP_FOREGROUND_STORAGE_KEY);
+    dispatchStorageChange(APP_FOREGROUND_STORAGE_KEY, null);
+
+    expect(getAppForegroundSnapshot()).toBe(false);
+    expect(listener).toHaveBeenCalledTimes(2);
+    unsubscribe();
+  });
+
+  it("notifies subscribers when a shared foreground marker expires", async () => {
+    vi.useFakeTimers();
+    setDocumentForeground({ focused: false, visibility: "hidden" });
+    const {
+      APP_FOREGROUND_STORAGE_KEY,
+      getAppForegroundSnapshot,
+      subscribeAppForeground,
+    } = await import("./windowFocus");
+    const listener = vi.fn();
+    window.localStorage.setItem(
+      APP_FOREGROUND_STORAGE_KEY,
+      JSON.stringify({
+        windowId: "other-window",
+        updatedAtMs: Date.now(),
+      }),
+    );
+    const unsubscribe = subscribeAppForeground(listener);
+
+    expect(getAppForegroundSnapshot()).toBe(true);
+    expect(listener).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(20_000);
+
+    expect(getAppForegroundSnapshot()).toBe(false);
+    expect(listener).toHaveBeenCalledTimes(1);
+    unsubscribe();
   });
 });

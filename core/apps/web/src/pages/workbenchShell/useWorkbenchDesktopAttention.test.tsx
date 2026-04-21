@@ -183,6 +183,45 @@ describe("useWorkbenchDesktopAttention", () => {
     expect(desktopClearWindowAttention).not.toHaveBeenCalled();
   });
 
+  it("does not sync badge attention for unread tasks that are still working", async () => {
+    clientSettingsState = {
+      loaded: true,
+      settings: {
+        v: 2,
+        desktopNotifications: {
+          turnCompleted: true,
+          turnFailed: true,
+          badgeUnreadCount: true,
+        },
+      },
+    };
+
+    renderHook(() =>
+      useWorkbenchDesktopAttention({
+        workspaceId: "workspace-1",
+        activeTaskIds: ["task-1"],
+        tasksById: {
+          "task-1": makeTaskSummary(),
+        },
+        taskLiveInfo: makeTaskLiveInfo({
+          workingByTask: new Set(["task-1"]),
+          errorByTask: new Set(["task-1"]),
+          lastAssistantMsByTask: {
+            "task-1": Date.parse("2026-03-10T00:01:00.000Z"),
+          },
+        }),
+      }),
+    );
+
+    await waitFor(() => {
+      expect(desktopSyncWorkspaceAttention).toHaveBeenCalledWith({
+        workspace_id: "workspace-1",
+        unread_primary_task_count: 0,
+        has_unread_error: false,
+      });
+    });
+  });
+
   it("syncs zero attention when badge notifications are disabled and clears on unmount", async () => {
     clientSettingsState = {
       loaded: true,

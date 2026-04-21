@@ -1,11 +1,12 @@
 import React from "react";
-import { cleanup, render, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { act, cleanup, render, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Session, SessionHeadSnapshot, SessionSnapshotSummary, SessionTurn } from "../../api/client";
 import { SessionSupervisorProvider, type SessionCacheEntry, type SessionSupervisorSnapshot } from "../../state/sessionSupervisor";
 import type { WorkspaceActiveSnapshotItem, WorkspaceActiveSnapshotState } from "../../state/workspaceActiveSnapshotStore";
 import { WORKBENCH_TASK_IDLE_EVENT, type WorkbenchTaskIdleDetail } from "../../utils/updaterEvents";
 import type { OptimisticTaskSummary } from "./WorkbenchPage.types";
+import { deriveWorkspaceAttentionState } from "./workbenchTaskActivity";
 import {
   canRenderWorkbenchActiveSession,
   deriveProviderIdsByTaskFromSessions,
@@ -178,6 +179,20 @@ const makeSessionSnapshot = (sessions: Record<string, SessionCacheEntry>): Sessi
   sessions,
 });
 
+const setDocumentForeground = ({
+  focused,
+  visibility,
+}: {
+  focused: boolean;
+  visibility: DocumentVisibilityState;
+}) => {
+  Object.defineProperty(document, "visibilityState", {
+    configurable: true,
+    value: visibility,
+  });
+  vi.spyOn(document, "hasFocus").mockReturnValue(focused);
+};
+
 const makeWorkspaceSnapshot = (
   tasksById: Record<string, WorkspaceActiveSnapshotItem>,
   activeIds: string[],
@@ -214,8 +229,15 @@ function renderHarness(props: HarnessProps) {
   );
 }
 
+beforeEach(() => {
+  window.localStorage.clear();
+  setDocumentForeground({ focused: true, visibility: "visible" });
+});
+
 afterEach(() => {
   cleanup();
+  window.localStorage.clear();
+  vi.restoreAllMocks();
   vi.clearAllMocks();
 });
 
@@ -292,6 +314,54 @@ describe("useWorkbenchTaskActivity helpers", () => {
     expect(taskLiveInfo.errorByTask.size).toBe(0);
     expect(taskLiveInfo.lastAssistantMsByTask["task-1"]).toBe(Date.parse("2026-03-09T00:00:06.000Z"));
     expect(isWorkbenchTaskUnread({ taskId: "task-1", tasksById, taskLiveInfo })).toBe(true);
+  });
+
+  it("does not derive workspace attention from subagent-only unread or errors", () => {
+    const primarySession = makeSession("session-1", "task-1", "completed");
+    const subagentSession = {
+      ...makeSession("session-subagent", "task-1", "failed", "claude-crp"),
+      parent_session_id: "session-1",
+      relationship: "sub_agent",
+    } as Session;
+    const tasksById = {
+      "task-1": makeTaskSummary({
+        taskId: "task-1",
+        primarySessionId: "session-1",
+        sessions: [
+          makeSessionSummary(primarySession, {
+            last_message_at: "2026-03-09T00:00:05.000Z",
+          }),
+        ],
+        assistantSeenAt: "2026-03-09T00:00:06.000Z",
+        lastAssistantMessageAt: "2026-03-09T00:00:05.000Z",
+      }),
+    };
+    const taskLiveInfo = deriveTaskLiveInfo({
+      tasksById,
+      optimisticTasks: [],
+      sessions: {
+        "session-1": makeSessionEntry({
+          session: primarySession,
+          messageCreatedAt: "2026-03-09T00:00:05.000Z",
+        }),
+        "session-subagent": makeSessionEntry({
+          session: subagentSession,
+          messageCreatedAt: "2026-03-09T00:00:07.000Z",
+          updatedAtMs: Date.parse("2026-03-09T00:00:07.000Z"),
+        }),
+      },
+    });
+
+    expect(
+      deriveWorkspaceAttentionState({
+        activeTaskIds: ["task-1"],
+        tasksById,
+        taskLiveInfo,
+      }),
+    ).toEqual({
+      unreadPrimaryTaskCount: 0,
+      hasUnreadError: false,
+    });
   });
 
   it("preserves the primary_session fallback when task.primary_session_id is absent", () => {
@@ -1309,6 +1379,107 @@ describe("useWorkbenchTaskActivity", () => {
     expect(supervisor.setActiveTaskSessionIds).toHaveBeenCalledWith(["session-1"]);
     expect(workbenchStore.setActiveSessionForActiveTask).toHaveBeenCalledWith("session-1", { source: "system" });
     expect(workspaceSnapshotStore.setForegroundSessionId).toHaveBeenCalledWith("session-1");
+  });
+
+  it("does not mark the active task read while ctx is backgrounded", async () => {
+    setDocumentForeground({ focused: false, visibility: "hidden" });
+    const session = makeSession("session-1", "task-1", "completed");
+    const markTaskRead = vi.fn(async () => {});
+    const taskSummary = makeTaskSummary({
+      taskId: "task-1",
+      primarySessionId: "session-1",
+      sessions: [
+        makeSessionSummary(session, {
+          last_message_at: "2026-03-09T00:00:05.000Z",
+        }),
+      ],
+      assistantSeenAt: "2026-03-09T00:00:01.000Z",
+      lastAssistantMessageAt: "2026-03-09T00:00:05.000Z",
+    });
+    const workspaceSnapshot = makeWorkspaceSnapshot({ "task-1": taskSummary }, ["task-1"]);
+    const supervisor = makeSupervisor();
+    const workspaceSnapshotStore = makeWorkspaceSnapshotStore(workspaceSnapshot);
+    const workbenchStore = makeWorkbenchStore("task-1");
+
+    renderHarness({
+      activeTaskId: "task-1",
+      activeSessionIdFromTab: null,
+      activeTaskSummary: taskSummary,
+      tasksById: { "task-1": taskSummary },
+      workspaceSnapshot,
+      sessionSnap: makeSessionSnapshot({
+        "session-1": makeSessionEntry({
+          session,
+          messageCreatedAt: "2026-03-09T00:00:06.000Z",
+        }),
+      }),
+      optimisticTasks: [] satisfies OptimisticTaskSummary[],
+      optimisticTasksById: {},
+      supervisor,
+      workbenchStore,
+      workspaceSnapshotStore,
+      markTaskRead,
+    });
+
+    await waitFor(() => {
+      expect(supervisor.setActiveTaskSessionIds).toHaveBeenCalledWith(["session-1"]);
+    });
+    expect(markTaskRead).not.toHaveBeenCalled();
+  });
+
+  it("marks the active task read when ctx regains foreground without any task-state change", async () => {
+    setDocumentForeground({ focused: false, visibility: "hidden" });
+    const session = makeSession("session-1", "task-1", "completed");
+    const markTaskRead = vi.fn(async () => {});
+    const taskSummary = makeTaskSummary({
+      taskId: "task-1",
+      primarySessionId: "session-1",
+      sessions: [
+        makeSessionSummary(session, {
+          last_message_at: "2026-03-09T00:00:05.000Z",
+        }),
+      ],
+      assistantSeenAt: "2026-03-09T00:00:01.000Z",
+      lastAssistantMessageAt: "2026-03-09T00:00:05.000Z",
+    });
+    const workspaceSnapshot = makeWorkspaceSnapshot({ "task-1": taskSummary }, ["task-1"]);
+    const supervisor = makeSupervisor();
+    const workspaceSnapshotStore = makeWorkspaceSnapshotStore(workspaceSnapshot);
+    const workbenchStore = makeWorkbenchStore("task-1");
+
+    renderHarness({
+      activeTaskId: "task-1",
+      activeSessionIdFromTab: null,
+      activeTaskSummary: taskSummary,
+      tasksById: { "task-1": taskSummary },
+      workspaceSnapshot,
+      sessionSnap: makeSessionSnapshot({
+        "session-1": makeSessionEntry({
+          session,
+          messageCreatedAt: "2026-03-09T00:00:06.000Z",
+        }),
+      }),
+      optimisticTasks: [] satisfies OptimisticTaskSummary[],
+      optimisticTasksById: {},
+      supervisor,
+      workbenchStore,
+      workspaceSnapshotStore,
+      markTaskRead,
+    });
+
+    await waitFor(() => {
+      expect(supervisor.setActiveTaskSessionIds).toHaveBeenCalledWith(["session-1"]);
+    });
+    expect(markTaskRead).not.toHaveBeenCalled();
+
+    act(() => {
+      setDocumentForeground({ focused: true, visibility: "visible" });
+      window.dispatchEvent(new Event("focus"));
+    });
+
+    await waitFor(() => {
+      expect(markTaskRead).toHaveBeenCalledWith("task-1");
+    });
   });
 
   it("does not mark optimistic tasks read", async () => {

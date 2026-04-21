@@ -112,9 +112,16 @@ const resolvePrimaryServerLastAssistantMs = (
   const primarySessionSummary = primarySessionId
     ? summary?.sessions.find((sessionSummary) => idToString(sessionSummary.session.id) === primarySessionId)
     : undefined;
+  const taskMs = parseMs(summary?.task.last_assistant_message_at ?? null);
   const summaryMs = parseMs(primarySessionSummary?.last_message_at ?? null);
   const headMs = summary?.primarySessionHead ? lastAssistantMessageMs(summary.primarySessionHead.messages) : null;
-  return headMs ?? summaryMs;
+  if (primarySessionSummary?.unread === false) {
+    return headMs;
+  }
+  if (primarySessionSummary?.unread === true) {
+    return headMs ?? taskMs ?? summaryMs;
+  }
+  return headMs ?? summaryMs ?? taskMs;
 };
 
 export const isPrimarySessionRunning = ({
@@ -458,6 +465,22 @@ export type WorkbenchWorkspaceAttentionState = {
   unreadPrimaryTaskCount: number;
 };
 
+export type WorkbenchTaskAttentionKind = "none" | "unread_completed" | "unread_error";
+
+export const deriveWorkbenchTaskAttentionKind = ({
+  taskId,
+  tasksById,
+  taskLiveInfo,
+}: {
+  taskId: string;
+  tasksById: Record<string, WorkspaceActiveSnapshotItem>;
+  taskLiveInfo: WorkbenchTaskLiveInfo;
+}): WorkbenchTaskAttentionKind => {
+  if (taskLiveInfo.workingByTask.has(taskId)) return "none";
+  if (!isWorkbenchTaskUnread({ taskId, tasksById, taskLiveInfo })) return "none";
+  return taskLiveInfo.errorByTask.has(taskId) ? "unread_error" : "unread_completed";
+};
+
 export const deriveWorkspaceAttentionState = ({
   activeTaskIds,
   tasksById,
@@ -471,11 +494,10 @@ export const deriveWorkspaceAttentionState = ({
   let hasUnreadError = false;
 
   for (const taskId of activeTaskIds) {
-    if (!isWorkbenchTaskUnread({ taskId, tasksById, taskLiveInfo })) continue;
+    const attentionKind = deriveWorkbenchTaskAttentionKind({ taskId, tasksById, taskLiveInfo });
+    if (attentionKind === "none") continue;
     unreadPrimaryTaskCount += 1;
-    if (taskLiveInfo.errorByTask.has(taskId)) {
-      hasUnreadError = true;
-    }
+    if (attentionKind === "unread_error") hasUnreadError = true;
   }
 
   return {

@@ -8,6 +8,8 @@ const foregroundWindowId =
     : `ctx-window-${Math.random().toString(36).slice(2)}`;
 
 let foregroundListenersInstalled = false;
+const foregroundSubscribers = new Set<() => void>();
+let lastKnownAppForeground = true;
 
 type ForegroundMarker = {
   updatedAtMs: number;
@@ -70,6 +72,22 @@ const writeForegroundMarker = (foreground: boolean): void => {
 
 const syncForegroundMarkerFromDocument = (): void => {
   writeForegroundMarker(currentWindowInForeground());
+  notifyForegroundSubscribersIfChanged();
+};
+
+const readAppForegroundSnapshot = (): boolean => {
+  if (typeof document === "undefined") return true;
+  if (currentWindowInForeground()) return true;
+  return readForegroundMarker() !== null;
+};
+
+const notifyForegroundSubscribersIfChanged = (): void => {
+  const next = readAppForegroundSnapshot();
+  if (next === lastKnownAppForeground) return;
+  lastKnownAppForeground = next;
+  for (const subscriber of foregroundSubscribers) {
+    subscriber();
+  }
 };
 
 const installForegroundListeners = (): void => {
@@ -78,10 +96,16 @@ const installForegroundListeners = (): void => {
   window.addEventListener("focus", syncForegroundMarkerFromDocument);
   window.addEventListener("blur", syncForegroundMarkerFromDocument);
   document.addEventListener("visibilitychange", syncForegroundMarkerFromDocument);
+  window.addEventListener("storage", (event) => {
+    if (event.key !== null && event.key !== APP_FOREGROUND_STORAGE_KEY) return;
+    notifyForegroundSubscribersIfChanged();
+  });
   window.addEventListener("beforeunload", () => {
     writeForegroundMarker(false);
+    notifyForegroundSubscribersIfChanged();
   });
   window.setInterval(() => {
+    notifyForegroundSubscribersIfChanged();
     if (!currentWindowInForeground()) return;
     writeForegroundMarker(true);
   }, APP_FOREGROUND_MARKER_REFRESH_MS);
@@ -93,12 +117,22 @@ export function initializeAppForegroundTracking(): void {
   installForegroundListeners();
 }
 
-export function isAppInForeground(): boolean {
+export function subscribeAppForeground(listener: () => void): () => void {
+  if (typeof document === "undefined") return () => {};
+  initializeAppForegroundTracking();
+  lastKnownAppForeground = readAppForegroundSnapshot();
+  foregroundSubscribers.add(listener);
+  return () => {
+    foregroundSubscribers.delete(listener);
+  };
+}
+
+export function getAppForegroundSnapshot(): boolean {
   if (typeof document === "undefined") return true;
   initializeAppForegroundTracking();
-  if (currentWindowInForeground()) {
-    writeForegroundMarker(true);
-    return true;
-  }
-  return readForegroundMarker() !== null;
+  return readAppForegroundSnapshot();
+}
+
+export function isAppInForeground(): boolean {
+  return getAppForegroundSnapshot();
 }

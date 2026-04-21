@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSyncExternalStore } from "react";
 import { idToString, type SessionHeadSnapshot } from "../../api/client";
 import type { WorkspaceActiveSnapshotEvent } from "@ctx/types";
 import { SessionHeadBootstrapCache } from "../../state/sessionHeadBootstrapCache";
@@ -13,6 +13,7 @@ import type {
   WorkspaceActiveSnapshotState,
 } from "../../state/workspaceActiveSnapshotStore";
 import { WORKBENCH_TASK_IDLE_EVENT, type WorkbenchTaskIdleDetail } from "../../utils/updaterEvents";
+import { getAppForegroundSnapshot, subscribeAppForeground } from "../../utils/windowFocus";
 import { hasSessionActiveTurn } from "../../utils/sessionActivity";
 import type { WorkbenchStore } from "../../workbench/store";
 import {
@@ -286,6 +287,11 @@ export function useWorkbenchSessionBridge({
     (taskId: string) => isWorkbenchTaskUnread({ taskId, tasksById, taskLiveInfo }),
     [taskLiveInfo, tasksById],
   );
+  const appInForeground = useSyncExternalStore(
+    subscribeAppForeground,
+    getAppForegroundSnapshot,
+    getAppForegroundSnapshot,
+  );
 
   useEffect(() => {
     if (!activeTaskId) return;
@@ -294,8 +300,9 @@ export function useWorkbenchSessionBridge({
     if (optimisticTasksById[activeTaskId]) return;
     if (taskLiveInfo.workingByTask.has(activeTaskId)) return;
     if (!isTaskUnread(activeTaskId)) return;
+    if (!appInForeground) return;
     void markTaskRead(activeTaskId);
-  }, [activeTaskId, isTaskUnread, markTaskRead, optimisticTasksById, taskLiveInfo.workingByTask, tasksById]);
+  }, [activeTaskId, appInForeground, isTaskUnread, markTaskRead, optimisticTasksById, taskLiveInfo.workingByTask, tasksById]);
 
   const activeSessionId = useMemo(
     () =>
