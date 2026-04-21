@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { X } from "lucide-react";
 import {
   MessageAttachment,
@@ -41,6 +41,7 @@ import { WorkbenchProviderWarningBanner } from "./WorkbenchProviderWarningBanner
 import { useWorkbenchChromeIntegration } from "./useWorkbenchChromeIntegration";
 import { useWorkbenchShellLayout } from "./useWorkbenchShellLayout";
 import { useWorkbenchSessionBridge } from "./useWorkbenchSessionBridge";
+import { useWorkbenchDesktopAttention } from "./useWorkbenchDesktopAttention";
 import { useWorkbenchTaskCreation } from "./useWorkbenchTaskCreation";
 import { useWorkbenchTaskListController } from "./useWorkbenchTaskListController";
 import { useWorkbenchActiveTaskController } from "./useWorkbenchActiveTaskController";
@@ -48,10 +49,15 @@ import { useWorkbenchComposerHarnessAuth } from "./useWorkbenchComposerHarnessAu
 import { useWorkbenchShellIntegrations } from "./useWorkbenchShellIntegrations";
 import type { OptimisticFocus } from "./WorkbenchPage.types";
 import { appendSegment } from "./WorkbenchPage.utils";
+import {
+  readWorkbenchNavigationTarget,
+  stripWorkbenchNavigationTarget,
+} from "./workbenchNavigationQuery";
 import { resolveWorkspaceBootstrapGateState } from "../workspaceBootstrapGate";
 import { getProviderOwnerScopeKeyOrNull } from "../../state/providerScopeAdapters";
 
 export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
+  const location = useLocation();
   const navigate = useNavigate();
   const supervisor = useSessionSupervisor();
   const sessionSnap = useSessionCacheSnapshot();
@@ -137,6 +143,26 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     },
     [workbenchStore],
   );
+
+  useEffect(() => {
+    const target = readWorkbenchNavigationTarget(location.search);
+    if (!target) return;
+    const navToken = workbenchStore.getNavToken();
+    const didFocus = workbenchStore.focusTask(target.taskId, target.sessionId, {
+      navToken,
+      source: "system",
+    });
+    if (!didFocus) return;
+    const nextSearch = stripWorkbenchNavigationTarget(location.search);
+    navigate(
+      {
+        pathname: location.pathname,
+        search: nextSearch ? `?${nextSearch}` : "",
+        hash: location.hash,
+      },
+      { replace: true },
+    );
+  }, [location.hash, location.pathname, location.search, navigate, workbenchStore]);
 
   const {
     optimisticTasks,
@@ -399,6 +425,13 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     markTaskRead,
   });
 
+  useWorkbenchDesktopAttention({
+    workspaceId,
+    activeTaskIds: workspaceSnapshot.activeIds,
+    tasksById,
+    taskLiveInfo,
+  });
+
   const taskListController = useWorkbenchTaskListController({
     workspaceId,
     activeTaskId,
@@ -437,6 +470,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   useWorkbenchShellIntegrations({
     workspaceSnapshot,
     sessionSnap,
+    activeTaskId,
     activeSessionId,
     focusNewTask,
     clearDraftHarness,

@@ -1,8 +1,8 @@
 import { blobUrl, type MessageAttachment, type SessionTurn, type SubagentInvocationChild } from "../../api/client";
 import { stripCitationMarkers } from "../../utils/citationMarkers";
+import { markdownToPlainText } from "../../utils/markdownPlainText";
 
-const PLAIN_TEXT_CACHE_LIMIT = 500;
-const plainTextCache = new Map<string, string>();
+export { markdownToPlainText };
 
 const asRecord = (value: unknown): Record<string, unknown> => {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
@@ -73,30 +73,6 @@ export function appendFragment(base: string, fragment: string): string {
   if (f.startsWith(b)) return f;
   if (b.endsWith(f)) return b;
   return `${b}${f}`;
-}
-
-export function markdownToPlainText(input: string): string {
-  if (!input) return "";
-  const cached = plainTextCache.get(input);
-  if (cached != null) return cached;
-  let text = stripCitationMarkers(input).replace(/\r/g, "");
-  text = text.replace(/```[a-zA-Z0-9_-]*\n/g, "");
-  text = text.replace(/```/g, "");
-  text = text.replace(/`([^`]*)`/g, "$1");
-  text = text.replace(/!\[([^\]]*)\]\([^)]+\)/g, "$1");
-  text = text.replace(/\[([^\]]+)\]\([^)]+\)/g, "$1");
-  text = text
-    .split("\n")
-    .map((line) => line.replace(/^\s*(?:[#>*+-]|\d+\.)\s+/, ""))
-    .join("\n");
-  text = text.replace(/\n{3,}/g, "\n\n");
-  const trimmed = text.trim();
-  if (plainTextCache.size >= PLAIN_TEXT_CACHE_LIMIT) {
-    const oldest = plainTextCache.keys().next().value as string | undefined;
-    if (oldest) plainTextCache.delete(oldest);
-  }
-  plainTextCache.set(input, trimmed);
-  return trimmed;
 }
 
 export function normalizeTurnHeaderPlainText(input: string): string {

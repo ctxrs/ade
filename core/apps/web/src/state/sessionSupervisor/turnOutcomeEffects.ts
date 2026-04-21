@@ -8,16 +8,22 @@ import {
 } from "../../utils/analytics";
 import { markTurnOutcomeTracked } from "../../utils/analytics/turnOutcomeDedup";
 import type { AnalyticsSessionKind } from "../../utils/analytics/types";
-import { getClientSettings } from "../clientSettings";
+import { getClientSettingsState } from "../clientSettings";
 import type { ExecutionEnvironment } from "@ctx/types";
 
 type TerminalTurnStatus = Extract<SessionTurn["status"], "completed" | "failed" | "interrupted">;
+type NotifiableTurnStatus = Extract<SessionTurn["status"], "completed" | "failed">;
 
 const isTerminalTurnStatus = (status: SessionTurn["status"] | undefined): status is TerminalTurnStatus =>
   status === "completed" || status === "failed" || status === "interrupted";
 
+const isNotifiableTurnStatus = (status: SessionTurn["status"] | undefined): status is NotifiableTurnStatus =>
+  status === "completed" || status === "failed";
+
 type TurnOutcomeEffectInput = {
   sessionId: string;
+  taskId?: string;
+  workspaceId?: string;
   turnId?: string;
   providerId?: string;
   modelId?: string;
@@ -28,6 +34,8 @@ type TurnOutcomeEffectInput = {
   completedAt?: string;
   metrics?: unknown;
   title?: string;
+  notificationBody?: string;
+  notificationTitle?: string;
   previousStatus?: SessionTurn["status"];
   nextStatus?: SessionTurn["status"];
   notify: boolean;
@@ -35,6 +43,8 @@ type TurnOutcomeEffectInput = {
 
 type ReplayTurnOutcomeEffectsInput = {
   sessionId: string;
+  taskId?: string;
+  workspaceId?: string;
   providerId?: string;
   modelId?: string;
   reasoningEffort?: string;
@@ -58,13 +68,32 @@ export const shouldTrackTurnOutcome = (
   return nextStatus !== previousStatus;
 };
 
-export const shouldNotifyTurnCompleted = (
+export const shouldNotifyTurnOutcome = (
   previousStatus: SessionTurn["status"] | undefined,
   nextStatus: SessionTurn["status"] | undefined,
-): boolean => previousStatus !== "completed" && nextStatus === "completed";
+): nextStatus is NotifiableTurnStatus => {
+  if (!isNotifiableTurnStatus(nextStatus)) return false;
+  return nextStatus !== previousStatus;
+};
+
+const isNotificationEnabledForStatus = (status: NotifiableTurnStatus): boolean => {
+  const state = getClientSettingsState();
+  if (!state.loaded) return false;
+  const settings = state.settings.desktopNotifications;
+  if (status === "completed") return settings.turnCompleted;
+  return settings.turnFailed;
+};
+
+const notificationTitleForStatus = (status: NotifiableTurnStatus): string =>
+  status === "completed" ? "Turn completed" : "Turn failed";
+
+const notificationKindForStatus = (status: NotifiableTurnStatus): "turn_completed" | "turn_failed" =>
+  status === "completed" ? "turn_completed" : "turn_failed";
 
 export const applyTurnOutcomeEffects = ({
   sessionId,
+  taskId,
+  workspaceId,
   turnId,
   providerId,
   modelId,
@@ -74,7 +103,8 @@ export const applyTurnOutcomeEffects = ({
   startedAt,
   completedAt,
   metrics,
-  title,
+  notificationBody,
+  notificationTitle,
   previousStatus,
   nextStatus,
   notify,
@@ -113,17 +143,28 @@ export const applyTurnOutcomeEffects = ({
     });
   }
   if (!notify) return;
-  if (!shouldNotifyTurnCompleted(previousStatus, nextStatus)) return;
+  if (sessionKind !== "primary") return;
+  if (!shouldNotifyTurnOutcome(previousStatus, nextStatus)) return;
   if (isAppInForeground()) return;
-  if (!getClientSettings().desktopNotifications.turnCompleted) return;
+  if (!workspaceId || !taskId) return;
+  if (!isNotificationEnabledForStatus(nextStatus)) return;
+  const resolvedNotificationTitle =
+    String(notificationTitle ?? "").trim() || notificationTitleForStatus(nextStatus);
+  const resolvedNotificationBody = String(notificationBody ?? "").trim() || undefined;
   void sendDesktopNotification({
-    title: "Turn completed",
-    body: title || undefined,
+    kind: notificationKindForStatus(nextStatus),
+    title: resolvedNotificationTitle,
+    body: resolvedNotificationBody,
+    workspaceId,
+    taskId,
+    sessionId: idToString(sessionId),
   });
 };
 
 export const replayTurnOutcomeEffectsFromTurns = ({
   sessionId,
+  taskId,
+  workspaceId,
   providerId,
   modelId,
   reasoningEffort,
@@ -148,6 +189,8 @@ export const replayTurnOutcomeEffectsFromTurns = ({
     applyTurnOutcomeEffects({
       notify: false,
       sessionId: normalizedSessionId,
+      taskId,
+      workspaceId,
       turnId,
       providerId,
       modelId,

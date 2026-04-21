@@ -5,6 +5,7 @@ pub(super) enum DeepLinkAction {
     Open(DeepLinkOpen),
     Reveal(DeepLinkReveal),
     Workspace(DeepLinkWorkspace),
+    Task(DeepLinkTask),
     Focus,
 }
 
@@ -28,6 +29,13 @@ pub(super) struct DeepLinkReveal {
 pub(super) struct DeepLinkWorkspace {
     workspace_id: Option<String>,
     path: Option<String>,
+}
+
+#[derive(Debug)]
+pub(super) struct DeepLinkTask {
+    session_id: Option<String>,
+    task_id: String,
+    workspace_id: String,
 }
 
 #[derive(Debug)]
@@ -79,6 +87,7 @@ pub(super) fn handle_deep_link_inner(app: &tauri::AppHandle, url: &Url) -> Resul
         DeepLinkAction::Open(req) => handle_open(app, &state, &tokens, &registry, req),
         DeepLinkAction::Reveal(req) => handle_reveal(app, &state, &tokens, &registry, req),
         DeepLinkAction::Workspace(req) => handle_workspace(app, &state, &registry, req),
+        DeepLinkAction::Task(req) => handle_task(app, &state, &registry, req),
         DeepLinkAction::Focus => {
             focus_app_window(app);
             Ok(())
@@ -110,6 +119,7 @@ pub(super) fn parse_deep_link(url: &Url) -> Result<DeepLinkAction> {
         "open" => parse_open(&params).map(DeepLinkAction::Open),
         "reveal" => parse_reveal(&params).map(DeepLinkAction::Reveal),
         "workspace" => parse_workspace(&params).map(DeepLinkAction::Workspace),
+        "task" => parse_task(&params).map(DeepLinkAction::Task),
         "focus" => Ok(DeepLinkAction::Focus),
         _ => anyhow::bail!("unknown action: {action}"),
     }
@@ -148,6 +158,34 @@ pub(super) fn parse_workspace(params: &HashMap<String, String>) -> Result<DeepLi
         anyhow::bail!("workspaceId or path is required");
     }
     Ok(DeepLinkWorkspace { workspace_id, path })
+}
+
+pub(super) fn parse_task(params: &HashMap<String, String>) -> Result<DeepLinkTask> {
+    let workspace_id = params
+        .get("workspaceId")
+        .map(String::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| anyhow!("workspaceId is required"))?
+        .to_string();
+    let task_id = params
+        .get("taskId")
+        .map(String::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| anyhow!("taskId is required"))?
+        .to_string();
+    let session_id = params
+        .get("sessionId")
+        .map(String::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    Ok(DeepLinkTask {
+        workspace_id,
+        task_id,
+        session_id,
+    })
 }
 
 pub(super) fn parse_target(params: &HashMap<String, String>) -> Result<DeepLinkTarget> {
@@ -342,6 +380,25 @@ pub(super) fn handle_workspace(
         anyhow::bail!("workspaceId or path is required");
     };
     open_workspace_window(app, registry, &workspace_id)
+}
+
+pub(super) fn handle_task(
+    app: &tauri::AppHandle,
+    state: &ConnectionManager,
+    registry: &WorkspaceWindowRegistry,
+    req: DeepLinkTask,
+) -> Result<()> {
+    if matches!(state.info().kind, DesktopConnectionKind::None) {
+        ensure_local_connection(app, state)?;
+    }
+
+    focus_or_open_workspace_target(
+        app,
+        registry,
+        &req.workspace_id,
+        Some(&req.task_id),
+        req.session_id.as_deref(),
+    )
 }
 
 pub(super) fn open_in_ctx(
@@ -684,6 +741,32 @@ mod deep_link_parse_tests {
         let err = parse_deep_link(&url).expect_err("workspace should fail without params");
         assert!(
             err.to_string().contains("workspaceId or path is required"),
+            "unexpected error: {err:#}"
+        );
+    }
+
+    #[test]
+    fn parse_deep_link_task_with_optional_session() {
+        let url =
+            Url::parse("ctx://task?workspaceId=workspace-1&taskId=task-1&sessionId=session-1")
+                .expect("valid url");
+        let action = parse_deep_link(&url).expect("task should parse");
+        match action {
+            DeepLinkAction::Task(req) => {
+                assert_eq!(req.workspace_id, "workspace-1");
+                assert_eq!(req.task_id, "task-1");
+                assert_eq!(req.session_id.as_deref(), Some("session-1"));
+            }
+            other => panic!("expected task action, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_deep_link_task_requires_workspace_and_task() {
+        let url = Url::parse("ctx://task?workspaceId=workspace-1").expect("valid url");
+        let err = parse_deep_link(&url).expect_err("task should fail without taskId");
+        assert!(
+            err.to_string().contains("taskId is required"),
             "unexpected error: {err:#}"
         );
     }

@@ -23,7 +23,11 @@ import {
   type DesktopEditorSettings,
   isDesktopApp,
 } from "../../utils/desktop";
-import { ensureDesktopNotificationPermission } from "../../utils/desktopNotifications";
+import {
+  getDesktopNotificationPermission,
+  requestDesktopNotificationPermission,
+  type DesktopNotificationPermission,
+} from "../../utils/desktopNotifications";
 import { errorMessage } from "../../utils/errorMessage";
 import {
   trackCheckoutStarted,
@@ -180,6 +184,9 @@ export default function SettingsPage() {
   );
   const [clientSettingsSaving, setClientSettingsSaving] = useState(false);
   const [clientSettingsError, setClientSettingsError] = useState<string | null>(null);
+  const [desktopNotificationPermission, setDesktopNotificationPermission] =
+    useState<DesktopNotificationPermission>("unsupported");
+  const [desktopNotificationPermissionBusy, setDesktopNotificationPermissionBusy] = useState(false);
 
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [workspaceId, setWorkspaceId] = useState<string | null>(null);
@@ -423,6 +430,25 @@ export default function SettingsPage() {
       setClientSettingsError(err?.message ?? String(err));
     });
   }, [clientSettingsState.loaded]);
+
+  const refreshDesktopNotificationPermission = useCallback(async () => {
+    if (!isDesktopApp()) {
+      setDesktopNotificationPermission("unsupported");
+      return;
+    }
+    setDesktopNotificationPermissionBusy(true);
+    try {
+      setDesktopNotificationPermission(await getDesktopNotificationPermission());
+    } catch (err: unknown) {
+      setClientSettingsError(errorMessage(err));
+    } finally {
+      setDesktopNotificationPermissionBusy(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshDesktopNotificationPermission();
+  }, [refreshDesktopNotificationPermission]);
 
   const savePatch = async (patch: UpdateSettingsRequest) => {
     setSaveError(null);
@@ -719,30 +745,44 @@ export default function SettingsPage() {
     "antigravity",
   ];
   const showRemoteAuthority = vscodeRemoteTargets.includes(editorSettings.target);
-  const desktopTurnNotifications = clientSettingsState.settings.desktopNotifications.turnCompleted;
+  const completedNotifications = clientSettingsState.settings.desktopNotifications.turnCompleted;
+  const failedNotifications = clientSettingsState.settings.desktopNotifications.turnFailed;
+  const badgeUnreadCount = clientSettingsState.settings.desktopNotifications.badgeUnreadCount;
 
-  const handleToggleTurnNotifications = useCallback(
-    async (next: boolean) => {
+  const handleUpdateDesktopNotifications = useCallback(
+    async (
+      patch: Partial<typeof clientSettingsState.settings.desktopNotifications>,
+    ) => {
       if (clientSettingsSaving) return;
       setClientSettingsSaving(true);
       setClientSettingsError(null);
       try {
-        if (next && isDesktopApp()) {
-          const granted = await ensureDesktopNotificationPermission();
-          if (!granted) {
-            setClientSettingsError("Notification permission denied.");
-            return;
-          }
-        }
-        await updateClientSettings({ desktopNotifications: { turnCompleted: next } });
+        await updateClientSettings({ desktopNotifications: patch });
       } catch (err: unknown) {
         setClientSettingsError(errorMessage(err));
       } finally {
         setClientSettingsSaving(false);
       }
     },
-    [clientSettingsSaving],
+    [clientSettingsSaving, clientSettingsState.settings.desktopNotifications],
   );
+
+  const handleRequestDesktopNotificationPermission = useCallback(async () => {
+    if (!isDesktopApp()) return;
+    setClientSettingsError(null);
+    setDesktopNotificationPermissionBusy(true);
+    try {
+      const permission = await requestDesktopNotificationPermission();
+      setDesktopNotificationPermission(permission);
+      if (permission === "denied") {
+        setClientSettingsError("Notification permission denied. Re-enable it in System Settings if the OS does not re-prompt.");
+      }
+    } catch (err: unknown) {
+      setClientSettingsError(errorMessage(err));
+    } finally {
+      setDesktopNotificationPermissionBusy(false);
+    }
+  }, []);
   const onThemeChange = useCallback((next: ThemeMode) => {
     setTheme(next);
     applyTheme(next);
@@ -875,10 +915,23 @@ export default function SettingsPage() {
         clientSettingsError={clientSettingsError}
         showRemoteAuthority={showRemoteAuthority}
         isDesktopApp={isDesktopApp}
-        desktopTurnNotifications={desktopTurnNotifications}
+        completedNotifications={completedNotifications}
+        failedNotifications={failedNotifications}
+        badgeUnreadCount={badgeUnreadCount}
+        desktopNotificationPermission={desktopNotificationPermission}
+        desktopNotificationPermissionBusy={desktopNotificationPermissionBusy}
         clientSettingsState={clientSettingsState}
         clientSettingsSaving={clientSettingsSaving}
-        onToggleTurnNotifications={handleToggleTurnNotifications}
+        onToggleCompletedNotifications={async (next) => {
+          await handleUpdateDesktopNotifications({ turnCompleted: next });
+        }}
+        onToggleFailedNotifications={async (next) => {
+          await handleUpdateDesktopNotifications({ turnFailed: next });
+        }}
+        onToggleBadgeUnreadCount={async (next) => {
+          await handleUpdateDesktopNotifications({ badgeUnreadCount: next });
+        }}
+        onRequestDesktopNotificationPermission={handleRequestDesktopNotificationPermission}
         telemetryEnabled={telemetryEnabled}
         setTelemetryEnabled={setTelemetryEnabled}
         workspaceId={workspaceId}

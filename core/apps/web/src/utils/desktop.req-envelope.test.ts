@@ -33,6 +33,19 @@ describe("desktop request envelopes", () => {
     await desktop.desktopSetTitlebarColor({ r: 1, g: 2, b: 3 });
     await desktop.desktopSetMenuState([{ id: "task.new", enabled: true }]);
     await desktop.desktopSetWindowTitle("ctx");
+    await desktop.desktopShowSystemNotification({
+      kind: "turn_completed",
+      title: "Turn completed",
+      body: "Demo task",
+      workspace_id: "ws-1",
+      task_id: "task-1",
+      session_id: "session-1",
+    });
+    await desktop.desktopSyncWorkspaceAttention({
+      workspace_id: "ws-1",
+      unread_primary_task_count: 3,
+      has_unread_error: true,
+    });
     await desktop.desktopUpdateEditorSettings({ target: "cursor" });
 
     expect(invokeMock.mock.calls).toEqual([
@@ -47,6 +60,29 @@ describe("desktop request envelopes", () => {
       ["desktop_set_titlebar_color", { req: { r: 1, g: 2, b: 3 } }],
       ["desktop_set_menu_state", { req: { items: [{ id: "task.new", enabled: true }] } }],
       ["desktop_set_window_title", { req: { title: "ctx" } }],
+      [
+        "desktop_show_system_notification",
+        {
+          req: {
+            kind: "turn_completed",
+            title: "Turn completed",
+            body: "Demo task",
+            workspace_id: "ws-1",
+            task_id: "task-1",
+            session_id: "session-1",
+          },
+        },
+      ],
+      [
+        "desktop_sync_workspace_attention",
+        {
+          req: {
+            workspace_id: "ws-1",
+            unread_primary_task_count: 3,
+            has_unread_error: true,
+          },
+        },
+      ],
       ["desktop_update_editor_settings", { req: { target: "cursor" } }],
     ]);
   });

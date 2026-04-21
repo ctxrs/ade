@@ -29,23 +29,74 @@ fn log_navigation_start(window_label: &str, path: &str, reason: &str) {
     ));
 }
 
+fn build_workspace_url(
+    workspace_id: &str,
+    task_id: Option<&str>,
+    session_id: Option<&str>,
+) -> String {
+    let mut url = format!("/workspaces/{workspace_id}");
+    let mut params = url::form_urlencoded::Serializer::new(String::new());
+    let mut has_params = false;
+    if let Some(task_id) = task_id.map(str::trim).filter(|value| !value.is_empty()) {
+        params.append_pair("task", task_id);
+        has_params = true;
+    }
+    if let Some(session_id) = session_id.map(str::trim).filter(|value| !value.is_empty()) {
+        params.append_pair("session", session_id);
+        has_params = true;
+    }
+    if has_params {
+        url.push('?');
+        url.push_str(&params.finish());
+    }
+    url
+}
+
+fn navigate_window_to_workspace(
+    window: &tauri::WebviewWindow,
+    window_label: &str,
+    workspace_id: &str,
+    task_id: Option<&str>,
+    session_id: Option<&str>,
+    reason: &str,
+) {
+    let url = build_workspace_url(workspace_id, task_id, session_id);
+    log_navigation_start(window_label, &url, reason);
+    let js = format!(
+        "window.location.href = {};",
+        serde_json::to_string(&url).unwrap_or_else(|_| "\"/\"".to_string())
+    );
+    let _ = window.eval(&js);
+    let _ = window.emit("workspace:open", workspace_id.to_string());
+}
+
 pub(super) fn open_workspace_window(
     app: &tauri::AppHandle,
     registry: &WorkspaceWindowRegistry,
     workspace_id: &str,
 ) -> Result<()> {
+    open_workspace_target(app, registry, workspace_id, None, None)
+}
+
+pub(super) fn open_workspace_target(
+    app: &tauri::AppHandle,
+    registry: &WorkspaceWindowRegistry,
+    workspace_id: &str,
+    task_id: Option<&str>,
+    session_id: Option<&str>,
+) -> Result<()> {
     if let Some(window_label) = registry.window_for_workspace(workspace_id) {
         if let Some(window) = app.get_webview_window(&window_label) {
             let _ = window.show();
             let _ = window.set_focus();
-            let url = format!("/workspaces/{workspace_id}");
-            log_navigation_start(&window_label, &url, "reuse_window");
-            let js = format!(
-                "window.location.href = {};",
-                serde_json::to_string(&url).unwrap_or_else(|_| "\"/\"".to_string())
+            navigate_window_to_workspace(
+                &window,
+                &window_label,
+                workspace_id,
+                task_id,
+                session_id,
+                "reuse_window",
             );
-            let _ = window.eval(&js);
-            let _ = window.emit("workspace:open", workspace_id.to_string());
             registry.register(&window_label, workspace_id);
             registry.record_recent_workspace(workspace_id, None);
             return Ok(());
@@ -60,14 +111,14 @@ pub(super) fn open_workspace_window(
     let _ = window.show();
     let _ = window.set_focus();
 
-    let url = format!("/workspaces/{workspace_id}");
-    log_navigation_start("main", &url, "reuse_main_window");
-    let js = format!(
-        "window.location.href = {};",
-        serde_json::to_string(&url).unwrap_or_else(|_| "\"/\"".to_string())
+    navigate_window_to_workspace(
+        &window,
+        "main",
+        workspace_id,
+        task_id,
+        session_id,
+        "reuse_main_window",
     );
-    let _ = window.eval(&js);
-    let _ = window.emit("workspace:open", workspace_id.to_string());
     registry.register("main", workspace_id);
     registry.record_recent_workspace(workspace_id, None);
     Ok(())
@@ -78,13 +129,23 @@ pub(super) fn open_workspace_in_new_window(
     registry: &WorkspaceWindowRegistry,
     workspace_id: &str,
 ) -> Result<()> {
+    open_workspace_target_in_new_window(app, registry, workspace_id, None, None)
+}
+
+pub(super) fn open_workspace_target_in_new_window(
+    app: &tauri::AppHandle,
+    registry: &WorkspaceWindowRegistry,
+    workspace_id: &str,
+    task_id: Option<&str>,
+    session_id: Option<&str>,
+) -> Result<()> {
     let workspace_id = workspace_id.trim();
     if workspace_id.is_empty() {
         anyhow::bail!("workspace_id is required");
     }
 
     let label = format!("workbench:{}", uuid::Uuid::new_v4());
-    let url = format!("/workspaces/{workspace_id}");
+    let url = build_workspace_url(workspace_id, task_id, session_id);
     let init_script = desktop_startup_initialization_script(&label, &url);
     let builder = tauri::WebviewWindowBuilder::new(app, &label, tauri::WebviewUrl::App(url.into()))
         .title("")
@@ -93,8 +154,9 @@ pub(super) fn open_workspace_in_new_window(
     let window = apply_workbench_titlebar(builder)
         .build()
         .context("creating window failed")?;
-    log_window_created(&label, &format!("/workspaces/{workspace_id}"));
-    log_navigation_start(&label, &format!("/workspaces/{workspace_id}"), "new_window");
+    let path = build_workspace_url(workspace_id, task_id, session_id);
+    log_window_created(&label, &path);
+    log_navigation_start(&label, &path, "new_window");
     #[cfg(target_os = "macos")]
     {
         let _ = install_macos_settings_button(app, &window);
@@ -111,6 +173,16 @@ pub(super) fn focus_or_open_workspace_window(
     registry: &WorkspaceWindowRegistry,
     workspace_id: &str,
 ) -> Result<()> {
+    focus_or_open_workspace_target(app, registry, workspace_id, None, None)
+}
+
+pub(super) fn focus_or_open_workspace_target(
+    app: &tauri::AppHandle,
+    registry: &WorkspaceWindowRegistry,
+    workspace_id: &str,
+    task_id: Option<&str>,
+    session_id: Option<&str>,
+) -> Result<()> {
     let workspace_id = workspace_id.trim();
     if workspace_id.is_empty() {
         anyhow::bail!("workspace_id is required");
@@ -119,21 +191,21 @@ pub(super) fn focus_or_open_workspace_window(
         if let Some(window) = app.get_webview_window(&window_label) {
             let _ = window.show();
             let _ = window.set_focus();
-            let url = format!("/workspaces/{workspace_id}");
-            log_navigation_start(&window_label, &url, "focus_existing_window");
-            let js = format!(
-                "window.location.href = {};",
-                serde_json::to_string(&url).unwrap_or_else(|_| "\"/\"".to_string())
+            navigate_window_to_workspace(
+                &window,
+                &window_label,
+                workspace_id,
+                task_id,
+                session_id,
+                "focus_existing_window",
             );
-            let _ = window.eval(&js);
-            let _ = window.emit("workspace:open", workspace_id.to_string());
             registry.register(&window_label, workspace_id);
             registry.record_recent_workspace(workspace_id, None);
             return Ok(());
         }
         registry.unregister_window(&window_label);
     }
-    open_workspace_in_new_window(app, registry, workspace_id)
+    open_workspace_target_in_new_window(app, registry, workspace_id, task_id, session_id)
 }
 
 pub(super) fn open_launcher_window(app: &tauri::AppHandle) -> Result<()> {
@@ -407,10 +479,13 @@ pub(super) fn open_main_window(app: &tauri::AppHandle) -> Result<()> {
         _ => "/".to_string(),
     };
     let init_script = desktop_startup_initialization_script("main", &start_path);
-    let mut builder =
-        tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::App(start_path.clone().into()))
-        .title("")
-        .initialization_script(&init_script);
+    let mut builder = tauri::WebviewWindowBuilder::new(
+        app,
+        "main",
+        tauri::WebviewUrl::App(start_path.clone().into()),
+    )
+    .title("")
+    .initialization_script(&init_script);
     if let Ok(Some(monitor)) = app.primary_monitor() {
         let size = monitor.size();
         let width = (size.width as f64 * 0.9).round().max(1200.0);
@@ -435,6 +510,18 @@ pub(super) fn open_main_window(app: &tauri::AppHandle) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn build_workspace_url_includes_optional_task_and_session() {
+        assert_eq!(
+            build_workspace_url("ws-1", Some("task-1"), Some("session-1")),
+            "/workspaces/ws-1?task=task-1&session=session-1"
+        );
+        assert_eq!(
+            build_workspace_url("ws-1", Some(" task-2 "), Some("  ")),
+            "/workspaces/ws-1?task=task-2"
+        );
+    }
 
     #[test]
     fn desktop_startup_initialization_script_includes_window_label_and_start_path() {

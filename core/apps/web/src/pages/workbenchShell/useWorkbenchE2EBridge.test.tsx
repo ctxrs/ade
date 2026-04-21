@@ -24,6 +24,7 @@ type E2EWindow = Window & {
     focusNewTask?: () => boolean;
     clearDraftHarness?: () => boolean;
     focusTask?: (taskId: string, sessionId?: string | null) => boolean;
+    getActiveTask?: () => { taskId: string | null; sessionId: string | null };
     toggleDiffPane?: () => boolean;
     toggleArtifactsPane?: () => boolean;
     pasteImageIntoComposer?: (
@@ -56,6 +57,7 @@ function TestBridge(props: {
   focusNewTask: () => void;
   clearDraftHarness: () => void;
   focusTask: (taskId: string, sessionId?: string | null) => boolean;
+  getActiveTask: () => { taskId: string | null; sessionId: string | null };
   toggleDiffPane: () => void;
   toggleArtifactsPane: () => void;
 }) {
@@ -78,6 +80,7 @@ describe("useWorkbenchE2EBridge", () => {
     const focusNewTask = vi.fn();
     const clearDraftHarness = vi.fn();
     const focusTask = vi.fn(() => true);
+    const getActiveTask = vi.fn(() => ({ taskId: "task-live", sessionId: "session-live" }));
     const toggleDiffPane = vi.fn();
     const toggleArtifactsPane = vi.fn();
     const e2eWindow = window as E2EWindow;
@@ -87,6 +90,7 @@ describe("useWorkbenchE2EBridge", () => {
         focusNewTask={focusNewTask}
         clearDraftHarness={clearDraftHarness}
         focusTask={focusTask}
+        getActiveTask={getActiveTask}
         toggleDiffPane={toggleDiffPane}
         toggleArtifactsPane={toggleArtifactsPane}
       />,
@@ -95,6 +99,7 @@ describe("useWorkbenchE2EBridge", () => {
     expect(typeof e2eWindow.__ctxE2E?.focusNewTask).toBe("function");
     expect(typeof e2eWindow.__ctxE2E?.clearDraftHarness).toBe("function");
     expect(typeof e2eWindow.__ctxE2E?.focusTask).toBe("function");
+    expect(typeof e2eWindow.__ctxE2E?.getActiveTask).toBe("function");
     expect(typeof e2eWindow.__ctxE2E?.toggleDiffPane).toBe("function");
     expect(typeof e2eWindow.__ctxE2E?.toggleArtifactsPane).toBe("function");
     expect(typeof e2eWindow.__ctxE2E?.pasteImageIntoComposer).toBe("function");
@@ -112,11 +117,13 @@ describe("useWorkbenchE2EBridge", () => {
     expect(e2eWindow.__ctxE2E?.focusNewTask?.()).toBe(true);
     expect(e2eWindow.__ctxE2E?.clearDraftHarness?.()).toBe(true);
     expect(e2eWindow.__ctxE2E?.focusTask?.("task-1", "session-1")).toBe(true);
+    expect(e2eWindow.__ctxE2E?.getActiveTask?.()).toEqual({ taskId: "task-live", sessionId: "session-live" });
     expect(e2eWindow.__ctxE2E?.toggleDiffPane?.()).toBe(true);
     expect(e2eWindow.__ctxE2E?.toggleArtifactsPane?.()).toBe(true);
     expect(focusNewTask).toHaveBeenCalledTimes(1);
     expect(clearDraftHarness).toHaveBeenCalledTimes(1);
     expect(focusTask).toHaveBeenCalledWith("task-1", "session-1");
+    expect(getActiveTask).toHaveBeenCalledTimes(1);
     expect(toggleDiffPane).toHaveBeenCalledTimes(1);
     expect(toggleArtifactsPane).toHaveBeenCalledTimes(1);
 
@@ -124,6 +131,7 @@ describe("useWorkbenchE2EBridge", () => {
     expect(e2eWindow.__ctxE2E?.focusNewTask).toBeUndefined();
     expect(e2eWindow.__ctxE2E?.clearDraftHarness).toBeUndefined();
     expect(e2eWindow.__ctxE2E?.focusTask).toBeUndefined();
+    expect(e2eWindow.__ctxE2E?.getActiveTask).toBeUndefined();
     expect(e2eWindow.__ctxE2E?.toggleDiffPane).toBeUndefined();
     expect(e2eWindow.__ctxE2E?.toggleArtifactsPane).toBeUndefined();
     expect(e2eWindow.__ctxE2E?.pasteImageIntoComposer).toBeUndefined();
@@ -150,6 +158,7 @@ describe("useWorkbenchE2EBridge", () => {
         focusNewTask={() => {}}
         clearDraftHarness={() => {}}
         focusTask={() => true}
+        getActiveTask={() => ({ taskId: null, sessionId: null })}
         toggleDiffPane={() => {}}
         toggleArtifactsPane={() => {}}
       />,

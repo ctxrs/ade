@@ -204,6 +204,7 @@
     "verify:e2e:soak": "pnpm test:e2e:soak && bash -lc 'scripts/run-rust-suite.sh soak'",
     "verify:e2e:load": "pnpm test:e2e:load && bash -lc 'scripts/run-rust-suite.sh load'",
     "verify:desktop:smoke:local": "bash -lc '../scripts/desktop_smoke_with_infisical.sh'",
+    "verify:desktop:notifications-contracts": "CTX_USE_VOLATILE_CARGO_HOME=1 node scripts/run_with_ctx_cache_env.cjs --mode workspace -- pnpm -C apps/desktop test:notifications:contracts",
     "verify:desktop:remote-contracts": "pnpm -C apps/desktop test:automation:remote-contracts:docker",
     "verify:desktop-smoke": "pnpm verify:desktop:smoke:local && pnpm verify:desktop:remote-contracts",
     "verify:desktop:image-paste": "pnpm -C apps/desktop test:automation:image-paste",

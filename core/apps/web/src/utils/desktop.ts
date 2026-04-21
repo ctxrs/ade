@@ -20,6 +20,8 @@ import type {
   DesktopLinuxSandboxEnsureResp,
   DesktopLocalLinuxSandboxEnsureReq,
   DesktopMenuItemStateUpdate,
+  DesktopNotificationKind,
+  DesktopNotificationPermission,
   DesktopOpenFileReq,
   DesktopOpenPathReq,
   DesktopOpenWorkspaceInNewWindowReq,
@@ -46,8 +48,10 @@ import type {
   DesktopStorageBatchReq,
   DesktopStorageGetReq,
   DesktopStorageNotice,
+  DesktopSyncWorkspaceAttentionReq,
   DesktopTitlebarColor,
   DesktopUploadBlobReq,
+  DesktopShowSystemNotificationReq,
   SshConnectReq,
 } from "../generated/desktop-ipc";
 
@@ -69,6 +73,8 @@ export type {
   DesktopHttpResponse,
   DesktopLinuxSandboxEnsureResp,
   DesktopMenuItemStateUpdate,
+  DesktopNotificationKind,
+  DesktopNotificationPermission,
   DesktopOpenFileReq,
   DesktopOpenPathReq,
   DesktopReadBinaryFileResp,
@@ -575,3 +581,28 @@ export const desktopSetWindowTitle = async (title: string): Promise<void> => {
   const req: DesktopSetWindowTitleReq = { title };
   await invokeDesktopReq<DesktopSetWindowTitleReq, void>("desktop_set_window_title", req);
 };
+
+export const desktopGetNotificationPermission = async (): Promise<DesktopNotificationPermission> =>
+  invoke<DesktopNotificationPermission>("desktop_get_notification_permission");
+
+export const desktopRequestNotificationPermission = async (): Promise<DesktopNotificationPermission> =>
+  invoke<DesktopNotificationPermission>("desktop_request_notification_permission");
+
+export const desktopShowSystemNotification = async (
+  req: DesktopShowSystemNotificationReq,
+): Promise<void> =>
+  invokeDesktopReq<DesktopShowSystemNotificationReq, void>(
+    "desktop_show_system_notification",
+    req,
+  );
+
+export const desktopSyncWorkspaceAttention = async (
+  req: DesktopSyncWorkspaceAttentionReq,
+): Promise<void> =>
+  invokeDesktopReq<DesktopSyncWorkspaceAttentionReq, void>(
+    "desktop_sync_workspace_attention",
+    req,
+  );
+
+export const desktopClearWindowAttention = async (): Promise<void> =>
+  invoke<void>("desktop_clear_window_attention");

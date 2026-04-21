@@ -148,6 +148,7 @@ type WorkbenchE2EWindow = Window & {
     focusNewTask?: () => boolean;
     clearDraftHarness?: () => boolean;
     focusTask?: (taskId: string, sessionId?: string | null) => boolean;
+    getActiveTask?: () => { taskId: string | null; sessionId: string | null };
     toggleDiffPane?: () => boolean;
     toggleArtifactsPane?: () => boolean;
     pasteImageIntoComposer?: (
@@ -186,6 +187,7 @@ type WorkbenchE2EBridgeOptions = {
   focusNewTask: () => void;
   clearDraftHarness: () => void;
   focusTask: (taskId: string, sessionId?: string | null) => boolean;
+  getActiveTask: () => { taskId: string | null; sessionId: string | null };
   toggleDiffPane: () => void;
   toggleArtifactsPane: () => void;
 };
@@ -194,6 +196,7 @@ export function useWorkbenchE2EBridge({
   focusNewTask,
   clearDraftHarness,
   focusTask,
+  getActiveTask,
   toggleDiffPane,
   toggleArtifactsPane,
 }: WorkbenchE2EBridgeOptions) {
@@ -213,6 +216,7 @@ export function useWorkbenchE2EBridge({
       return true;
     };
     win.__ctxE2E.focusTask = (taskId: string, sessionId?: string | null) => focusTask(taskId, sessionId);
+    win.__ctxE2E.getActiveTask = () => getActiveTask();
     win.__ctxE2E.toggleDiffPane = () => {
       toggleDiffPane();
       return true;
@@ -298,6 +302,7 @@ export function useWorkbenchE2EBridge({
       delete win.__ctxE2E.focusNewTask;
       delete win.__ctxE2E.clearDraftHarness;
       delete win.__ctxE2E.focusTask;
+      delete win.__ctxE2E.getActiveTask;
       delete win.__ctxE2E.toggleDiffPane;
       delete win.__ctxE2E.toggleArtifactsPane;
       delete win.__ctxE2E.pasteImageIntoComposer;
@@ -315,5 +320,5 @@ export function useWorkbenchE2EBridge({
       delete win.__ctxE2E.installMarkdownScrollProbe;
       delete win.__ctxE2E.removeMarkdownScrollProbe;
     };
-  }, [clearDraftHarness, focusNewTask, focusTask, toggleArtifactsPane, toggleDiffPane]);
+  }, [clearDraftHarness, focusNewTask, focusTask, getActiveTask, toggleArtifactsPane, toggleDiffPane]);
 }

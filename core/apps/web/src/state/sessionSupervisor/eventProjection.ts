@@ -37,8 +37,13 @@ import {
   toolStatusBucket,
 } from "./toolStateProjection";
 import { resolveTurnAnalyticsMetadata } from "./turnAnalyticsMetadata";
+import {
+  resolveTurnOutcomeNotificationBody,
+  resolveTurnOutcomeNotificationTitle,
+} from "./turnOutcomeNotificationContent";
 import { applyTurnStartEffects } from "./turnStartEffects";
 import { applyTurnOutcomeEffects } from "./turnOutcomeEffects";
+import type { SessionSupervisorWorkspaceSnapshotState } from "./workspaceInputs";
 
 type SessionSupportLoadErrorKey = "state" | "subagentInvocations";
 
@@ -52,6 +57,7 @@ export type SessionSupervisorEventProjectionEntry = InternalEntry;
 
 export type SessionSupervisorEventProjectionHost = {
   eventBufferLimit: number;
+  workspaceSnapshotState: SessionSupervisorWorkspaceSnapshotState;
   subagentInvocationsCacheBySessionId: Map<
     string,
     { invocations: SubagentInvocation[]; stateRev: number }
@@ -433,6 +439,16 @@ export function applyEventToTurns(
   entry.turns[turnIndex] = { ...turn };
   this.bumpTurnsRev(entry);
   const analytics = resolveTurnAnalyticsMetadata(entry.session, turn.session_id ?? entry.sessionId);
+  const notificationTitle = resolveTurnOutcomeNotificationTitle({
+    session: entry.session,
+    workspaceSnapshotState: this.workspaceSnapshotState,
+  });
+  const notificationBody = resolveTurnOutcomeNotificationBody({
+    events: entry.events,
+    turnId,
+    messages: entry.messages,
+    status: turn.status,
+  });
   applyTurnStartEffects({
     ...analytics,
     turnId,
@@ -446,6 +462,8 @@ export function applyEventToTurns(
     startedAt: turn.started_at,
     completedAt: turn.updated_at,
     metrics: turn.metrics_json,
+    notificationBody,
+    notificationTitle,
     previousStatus,
     nextStatus: turn.status,
   });

@@ -105,6 +105,18 @@ const resolvePrimarySessionId = (
   idToString(summary?.primarySessionId ?? "") ||
   idToString(summary?.primarySessionHead?.session?.id ?? "");
 
+const resolvePrimaryServerLastAssistantMs = (
+  summary: WorkspaceActiveSnapshotItem | OptimisticTaskSummary | null | undefined,
+): number | null => {
+  const primarySessionId = resolvePrimarySessionId(summary);
+  const primarySessionSummary = primarySessionId
+    ? summary?.sessions.find((sessionSummary) => idToString(sessionSummary.session.id) === primarySessionId)
+    : undefined;
+  const summaryMs = parseMs(primarySessionSummary?.last_message_at ?? null);
+  const headMs = summary?.primarySessionHead ? lastAssistantMessageMs(summary.primarySessionHead.messages) : null;
+  return headMs ?? summaryMs;
+};
+
 export const isPrimarySessionRunning = ({
   primarySessionSummary,
 }: {
@@ -430,7 +442,7 @@ export const isWorkbenchTaskUnread = ({
   const summary = tasksById[taskId];
   const task = summary?.task;
   if (!task) return false;
-  const serverLastAssistantMs = parseMs(task.last_assistant_message_at ?? null);
+  const serverLastAssistantMs = resolvePrimaryServerLastAssistantMs(summary);
   const liveLastAssistantMs = taskLiveInfo.lastAssistantMsByTask[taskId] ?? null;
   const lastAssistantMs =
     liveLastAssistantMs !== null && serverLastAssistantMs !== null
@@ -439,4 +451,35 @@ export const isWorkbenchTaskUnread = ({
   if (lastAssistantMs === null) return false;
   const seenMs = parseMs(task.assistant_seen_at ?? null);
   return seenMs === null || lastAssistantMs > seenMs;
+};
+
+export type WorkbenchWorkspaceAttentionState = {
+  hasUnreadError: boolean;
+  unreadPrimaryTaskCount: number;
+};
+
+export const deriveWorkspaceAttentionState = ({
+  activeTaskIds,
+  tasksById,
+  taskLiveInfo,
+}: {
+  activeTaskIds: string[];
+  tasksById: Record<string, WorkspaceActiveSnapshotItem>;
+  taskLiveInfo: WorkbenchTaskLiveInfo;
+}): WorkbenchWorkspaceAttentionState => {
+  let unreadPrimaryTaskCount = 0;
+  let hasUnreadError = false;
+
+  for (const taskId of activeTaskIds) {
+    if (!isWorkbenchTaskUnread({ taskId, tasksById, taskLiveInfo })) continue;
+    unreadPrimaryTaskCount += 1;
+    if (taskLiveInfo.errorByTask.has(taskId)) {
+      hasUnreadError = true;
+    }
+  }
+
+  return {
+    unreadPrimaryTaskCount,
+    hasUnreadError,
+  };
 };

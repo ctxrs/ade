@@ -1,9 +1,18 @@
-import { uiStateGet, uiStateSet } from "./uiStateStore";
+import { uiStateDelete, uiStateGet, uiStateSet } from "./uiStateStore";
 
-export type ClientSettings = {
+export type ClientSettingsV1 = {
   v: 1;
   desktopNotifications: {
     turnCompleted: boolean;
+  };
+};
+
+export type ClientSettings = {
+  v: 2;
+  desktopNotifications: {
+    turnCompleted: boolean;
+    turnFailed: boolean;
+    badgeUnreadCount: boolean;
   };
 };
 
@@ -12,12 +21,15 @@ export type ClientSettingsState = {
   settings: ClientSettings;
 };
 
-const CLIENT_SETTINGS_KEY = "client.settings.v1";
+const CLIENT_SETTINGS_KEY_V1 = "client.settings.v1";
+const CLIENT_SETTINGS_KEY = "client.settings.v2";
 
 const DEFAULT_SETTINGS: ClientSettings = {
-  v: 1,
+  v: 2,
   desktopNotifications: {
-    turnCompleted: false,
+    turnCompleted: true,
+    turnFailed: true,
+    badgeUnreadCount: true,
   },
 };
 
@@ -35,19 +47,55 @@ const emit = () => {
   }
 };
 
-const normalizeSettings = (raw: unknown): ClientSettings => {
-  if (!raw || typeof raw !== "object") return DEFAULT_SETTINGS;
-  const rec = raw as Partial<ClientSettings>;
-  if (rec.v !== 1) return DEFAULT_SETTINGS;
-  const desktopNotifications = (rec.desktopNotifications ?? {}) as Partial<ClientSettings["desktopNotifications"]>;
+const normalizeV1 = (raw: unknown): ClientSettingsV1 | null => {
+  if (!raw || typeof raw !== "object") return null;
+  const rec = raw as Partial<ClientSettingsV1>;
+  if (rec.v !== 1) return null;
+  const desktopNotifications = (rec.desktopNotifications ?? {}) as Partial<ClientSettingsV1["desktopNotifications"]>;
   const turnCompleted =
     typeof desktopNotifications.turnCompleted === "boolean"
       ? desktopNotifications.turnCompleted
-      : DEFAULT_SETTINGS.desktopNotifications.turnCompleted;
+      : false;
   return {
     v: 1,
     desktopNotifications: {
       turnCompleted,
+    },
+  };
+};
+
+const normalizeV2 = (raw: unknown): ClientSettings | null => {
+  if (!raw || typeof raw !== "object") return null;
+  const rec = raw as Partial<ClientSettings>;
+  if (rec.v !== 2) return null;
+  const desktopNotifications = (rec.desktopNotifications ?? {}) as Partial<ClientSettings["desktopNotifications"]>;
+  return {
+    v: 2,
+    desktopNotifications: {
+      turnCompleted:
+        typeof desktopNotifications.turnCompleted === "boolean"
+          ? desktopNotifications.turnCompleted
+          : DEFAULT_SETTINGS.desktopNotifications.turnCompleted,
+      turnFailed:
+        typeof desktopNotifications.turnFailed === "boolean"
+          ? desktopNotifications.turnFailed
+          : DEFAULT_SETTINGS.desktopNotifications.turnFailed,
+      badgeUnreadCount:
+        typeof desktopNotifications.badgeUnreadCount === "boolean"
+          ? desktopNotifications.badgeUnreadCount
+          : DEFAULT_SETTINGS.desktopNotifications.badgeUnreadCount,
+    },
+  };
+};
+
+const migrateV1ToV2 = (legacy: ClientSettingsV1): ClientSettings => {
+  const turnCompleted = legacy.desktopNotifications.turnCompleted;
+  return {
+    v: 2,
+    desktopNotifications: {
+      turnCompleted,
+      turnFailed: turnCompleted,
+      badgeUnreadCount: turnCompleted,
     },
   };
 };
@@ -71,8 +119,19 @@ export async function loadClientSettings(): Promise<ClientSettingsState> {
   loadPromise = (async () => {
     let next = DEFAULT_SETTINGS;
     try {
-      const raw = await uiStateGet(CLIENT_SETTINGS_KEY);
-      next = normalizeSettings(raw);
+      const rawV2 = await uiStateGet(CLIENT_SETTINGS_KEY);
+      const normalizedV2 = normalizeV2(rawV2);
+      if (normalizedV2) {
+        next = normalizedV2;
+      } else {
+        const rawV1 = await uiStateGet(CLIENT_SETTINGS_KEY_V1);
+        const legacy = normalizeV1(rawV1);
+        if (legacy) {
+          next = migrateV1ToV2(legacy);
+          await uiStateSet(CLIENT_SETTINGS_KEY, next);
+          await uiStateDelete(CLIENT_SETTINGS_KEY_V1);
+        }
+      }
     } catch (err) {
       console.warn("client settings load failed, using defaults", err);
     }
@@ -84,11 +143,14 @@ export async function loadClientSettings(): Promise<ClientSettingsState> {
 }
 
 export async function updateClientSettings(
-  patch: Partial<ClientSettings> & { desktopNotifications?: Partial<ClientSettings["desktopNotifications"]> },
+  patch: Omit<Partial<ClientSettings>, "desktopNotifications"> & {
+    desktopNotifications?: Partial<ClientSettings["desktopNotifications"]>;
+  },
 ): Promise<ClientSettingsState> {
   const next: ClientSettings = {
     ...state.settings,
     ...patch,
+    v: 2,
     desktopNotifications: {
       ...state.settings.desktopNotifications,
       ...patch.desktopNotifications,

@@ -1,10 +1,11 @@
 import { SECTIONS } from "./SettingsPage.constants";
 
 describe("Settings sections", () => {
-  it("keeps notifications disabled in settings navigation", () => {
+  it("keeps notifications visible in settings navigation", () => {
     const notifications = SECTIONS.find((section) => section.id === "notifications");
 
-    expect(notifications).toBeUndefined();
+    expect(notifications).toBeDefined();
+    expect(notifications?.navHidden).not.toBe(true);
   });
 
   it("keeps dictation hidden from the sidebar navigation", () => {

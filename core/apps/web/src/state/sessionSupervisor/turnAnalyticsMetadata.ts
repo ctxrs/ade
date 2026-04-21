@@ -5,6 +5,8 @@ import { composeModelId } from "../../utils/modelEffort";
 
 export type TurnAnalyticsMetadata = {
   sessionId: string;
+  taskId?: string;
+  workspaceId?: string;
   providerId?: string;
   modelId?: string;
   reasoningEffort?: string;
@@ -23,6 +25,8 @@ export const resolveTurnAnalyticsMetadata = (
     composeModelId(baseModelId, reasoningEffort || null) || baseModelId || undefined;
   return {
     sessionId: idToString(session?.id ?? fallbackSessionId),
+    taskId: idToString(session?.task_id ?? "") || undefined,
+    workspaceId: idToString(session?.workspace_id ?? "") || undefined,
     providerId: String(session?.provider_id ?? "").trim() || undefined,
     modelId,
     reasoningEffort: reasoningEffort || undefined,

@@ -36,7 +36,7 @@ serde_json = "1"
 sha2 = "0.10"
 shell-words = "1.1.1"
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite"] }
-tauri = { version = "2.9.5", features = [] }
+tauri = { version = "2.9.5", features = ["image-png"] }
 tauri-plugin-automation = "0.1.1"
 tauri-plugin-deep-link = "2.4.5"
 tauri-plugin-dialog = "2.4.2"
@@ -48,6 +48,7 @@ tauri-plugin-stt = { version = "0.1", optional = true }
 tauri-plugin-updater = "2.10.0"
 tokio = { version = "1", features = ["sync", "rt", "macros"] }
 portable-pty = "0.9.0"
+notify-rust = "4.16.0"
 url = "2"
 urlencoding = "2"
 uuid = { version = "1", features = ["v4"] }
@@ -73,6 +74,17 @@ objc2-app-kit = { version = "0.3.2", features = [
 ] }
 objc2-core-foundation = "0.3.2"
 objc2-foundation = { version = "0.3.2", features = ["NSArray", "NSError", "NSString", "NSURL"] }
+objc2-user-notifications = { version = "0.3.2", features = [
+    "std",
+    "block2",
+    "UNNotification",
+    "UNNotificationContent",
+    "UNNotificationRequest",
+    "UNNotificationResponse",
+    "UNNotificationSettings",
+    "UNUserNotificationCenter",
+    "UNNotificationSound",
+] }
 objc2-virtualization = { version = "0.3.2", default-features = false, features = [
     "block2",
     "dispatch2",
@@ -112,6 +124,7 @@ objc2-virtualization = { version = "0.3.2", default-features = false, features =
     "VZVirtualMachine",
     "VZVirtualMachineConfiguration",
 ] }
+mac-notification-sys = "0.6.12"
 
 [features]
 default = ["custom-protocol"]

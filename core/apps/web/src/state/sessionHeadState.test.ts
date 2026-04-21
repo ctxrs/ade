@@ -223,4 +223,37 @@ describe("sessionHeadState", () => {
     expect(mergedTurns[0]?.assistant_partial).toBeNull();
     expect(mergedMessages.map((message) => message.id)).toEqual(["message-1", "message-2"]);
   });
+
+  it("orders messages by order_seq before created_at when both are present", () => {
+    const mergedMessages = mergeSessionMessages(
+      [
+        {
+          id: "message-2",
+          session_id: "session-1",
+          task_id: "task-1",
+          role: "assistant",
+          content: "second",
+          delivery: "immediate",
+          created_at: "2026-03-09T00:00:02.000Z",
+          turn_sequence: 2,
+          order_seq: 2,
+        },
+      ],
+      [
+        {
+          id: "message-1",
+          session_id: "session-1",
+          task_id: "task-1",
+          role: "assistant",
+          content: "first",
+          delivery: "immediate",
+          created_at: "2026-03-09T00:00:03.000Z",
+          turn_sequence: 2,
+          order_seq: 1,
+        },
+      ],
+    );
+
+    expect(mergedMessages.map((message) => message.id)).toEqual(["message-1", "message-2"]);
+  });
 });

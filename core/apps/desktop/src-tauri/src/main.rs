@@ -43,6 +43,7 @@ use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use tokio::sync::OnceCell;
 use url::Url;
 
+mod desktop_attention;
 mod desktop_connection;
 mod desktop_daemon;
 mod desktop_deeplink;
@@ -52,6 +53,7 @@ mod desktop_env;
 mod desktop_local_daemon;
 mod desktop_logs;
 mod desktop_menu;
+mod desktop_notifications;
 mod desktop_paths;
 mod desktop_runtime;
 mod desktop_ssh;
@@ -59,6 +61,7 @@ mod desktop_storage;
 mod desktop_updater;
 mod desktop_windows;
 mod linux_sandbox;
+use desktop_attention::*;
 use desktop_connection::*;
 use desktop_daemon::*;
 use desktop_deeplink::*;
@@ -68,6 +71,7 @@ use desktop_env::*;
 use desktop_local_daemon::*;
 use desktop_logs::*;
 use desktop_menu::*;
+use desktop_notifications::*;
 use desktop_paths::*;
 use desktop_runtime::*;
 use desktop_ssh::*;
@@ -86,6 +90,8 @@ fn main() {
         .manage(ConnectionManager::default())
         .manage(DeepLinkTokenStore::default())
         .manage(WorkspaceWindowRegistry::default())
+        .manage(DesktopAttentionRegistry::default())
+        .manage(DesktopNotificationAutomationState::default())
         .manage(DesktopMenuStateCache::default())
         .manage(DesktopStorage::default());
 
@@ -146,6 +152,15 @@ fn main() {
             desktop_set_titlebar_color,
             desktop_set_menu_state,
             desktop_set_window_title,
+            desktop_get_notification_permission,
+            desktop_request_notification_permission,
+            desktop_show_system_notification,
+            desktop_get_notification_automation_snapshot,
+            desktop_clear_notification_automation_snapshot,
+            desktop_simulate_last_notification_click,
+            desktop_sync_workspace_attention,
+            desktop_clear_window_attention,
+            desktop_get_attention_automation_snapshot,
             desktop_trigger_menu_command,
             desktop_get_menu_item_state,
             desktop_record_workspace_visit,
@@ -196,6 +211,15 @@ fn main() {
                 clear_cached_menu_state_for_window(&app_handle, window.label());
                 let registry = window.state::<WorkspaceWindowRegistry>();
                 registry.unregister_window(window.label());
+                let attention = window.state::<DesktopAttentionRegistry>();
+                attention.clear_window_attention(window.label());
+                if let Err(err) = attention.apply_to_app(&app_handle) {
+                    eprintln!(
+                        "failed to clear desktop attention for window '{}': {}",
+                        window.label(),
+                        err
+                    );
+                }
             }
         });
 

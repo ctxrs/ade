@@ -63,6 +63,13 @@ export const mergeSessionMessages = (prev: Message[], incoming: Message[]): Mess
     byId.set(id, message);
   }
   return Array.from(byId.values()).sort((a, b) => {
+    const aOrderSeq = Number(a.order_seq ?? Number.NaN);
+    const bOrderSeq = Number(b.order_seq ?? Number.NaN);
+    if (Number.isFinite(aOrderSeq) && Number.isFinite(bOrderSeq) && aOrderSeq !== bOrderSeq) {
+      return aOrderSeq - bOrderSeq;
+    }
+    if (Number.isFinite(aOrderSeq) && !Number.isFinite(bOrderSeq)) return -1;
+    if (!Number.isFinite(aOrderSeq) && Number.isFinite(bOrderSeq)) return 1;
     const createdAtOrder = String(a.created_at).localeCompare(String(b.created_at));
     if (createdAtOrder !== 0) return createdAtOrder;
     const aTurnSequence = Number(a.turn_sequence ?? Number.NaN);

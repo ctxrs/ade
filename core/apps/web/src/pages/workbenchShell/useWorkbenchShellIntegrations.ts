@@ -6,6 +6,7 @@ import { useWorkbenchE2EBridge } from "./useWorkbenchE2EBridge";
 export function useWorkbenchShellIntegrations({
   workspaceSnapshot,
   sessionSnap,
+  activeTaskId,
   activeSessionId,
   focusNewTask,
   clearDraftHarness,
@@ -15,6 +16,7 @@ export function useWorkbenchShellIntegrations({
 }: {
   workspaceSnapshot: WorkspaceActiveSnapshotState;
   sessionSnap: SessionSupervisorSnapshot;
+  activeTaskId: string | null;
   activeSessionId: string | null;
   focusNewTask: () => void;
   clearDraftHarness: () => void;
@@ -32,6 +34,7 @@ export function useWorkbenchShellIntegrations({
     focusNewTask,
     clearDraftHarness,
     focusTask,
+    getActiveTask: () => ({ taskId: activeTaskId, sessionId: activeSessionId }),
     toggleDiffPane,
     toggleArtifactsPane,
   });

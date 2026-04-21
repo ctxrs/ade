@@ -108,3 +108,11 @@ export type DesktopTitlebarColor = { a?: number | null, b: number, g: number, r:
 
 export type DesktopSetWindowTitleReq = { title: string, };
 
+export type DesktopNotificationPermission = "default" | "granted" | "denied" | "unsupported";
+
+export type DesktopNotificationKind = "turn_completed" | "turn_failed";
+
+export type DesktopShowSystemNotificationReq = { kind: DesktopNotificationKind, body?: string | null, session_id?: string | null, task_id: string, title: string, workspace_id: string, };
+
+export type DesktopSyncWorkspaceAttentionReq = { has_unread_error: boolean, unread_primary_task_count: number, workspace_id: string, };
+

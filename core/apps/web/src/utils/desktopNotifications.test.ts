@@ -1,54 +1,81 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { ensureDesktopNotificationPermission, sendDesktopNotification } from "./desktopNotifications";
+import {
+  ensureDesktopNotificationPermission,
+  getDesktopNotificationPermission,
+  requestDesktopNotificationPermission,
+  sendDesktopNotification,
+} from "./desktopNotifications";
 
 const isDesktopApp = vi.hoisted(() => vi.fn());
-const isPermissionGranted = vi.hoisted(() => vi.fn());
-const requestPermission = vi.hoisted(() => vi.fn());
-const sendNotification = vi.hoisted(() => vi.fn());
+const desktopGetNotificationPermission = vi.hoisted(() => vi.fn());
+const desktopRequestNotificationPermission = vi.hoisted(() => vi.fn());
+const desktopShowSystemNotification = vi.hoisted(() => vi.fn());
 
 vi.mock("./desktop", () => ({
   isDesktopApp,
-}));
-
-vi.mock("@tauri-apps/plugin-notification", () => ({
-  isPermissionGranted,
-  requestPermission,
-  sendNotification,
+  desktopGetNotificationPermission,
+  desktopRequestNotificationPermission,
+  desktopShowSystemNotification,
 }));
 
 describe("desktopNotifications", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     isDesktopApp.mockReturnValue(true);
-    isPermissionGranted.mockResolvedValue(true);
-    requestPermission.mockResolvedValue("denied");
+    desktopGetNotificationPermission.mockResolvedValue("granted");
+    desktopRequestNotificationPermission.mockResolvedValue("granted");
+    desktopShowSystemNotification.mockResolvedValue(undefined);
   });
 
-  it("returns false when not running in the desktop app", async () => {
+  it("returns unsupported when not running in the desktop app", async () => {
     isDesktopApp.mockReturnValue(false);
-    await expect(ensureDesktopNotificationPermission()).resolves.toBe(false);
-    expect(isPermissionGranted).not.toHaveBeenCalled();
+
+    await expect(getDesktopNotificationPermission()).resolves.toBe("unsupported");
+    await expect(requestDesktopNotificationPermission()).resolves.toBe("unsupported");
   });
 
-  it("requests permission when needed", async () => {
-    isPermissionGranted.mockResolvedValue(false);
-    requestPermission.mockResolvedValue("granted");
+  it("requests permission only when the current status is default", async () => {
+    desktopGetNotificationPermission.mockResolvedValue("default");
+    desktopRequestNotificationPermission.mockResolvedValue("granted");
 
     await expect(ensureDesktopNotificationPermission()).resolves.toBe(true);
-    expect(requestPermission).toHaveBeenCalledTimes(1);
+    expect(desktopRequestNotificationPermission).toHaveBeenCalledTimes(1);
   });
 
   it("does not send notifications when permission is denied", async () => {
-    isPermissionGranted.mockResolvedValue(false);
+    desktopGetNotificationPermission.mockResolvedValue("denied");
 
-    await sendDesktopNotification({ title: "Turn completed" });
-    expect(sendNotification).not.toHaveBeenCalled();
+    await expect(
+      sendDesktopNotification({
+        kind: "turn_completed",
+        title: "Turn completed",
+        workspaceId: "ws-1",
+        taskId: "task-1",
+      }),
+    ).resolves.toBe(false);
+    expect(desktopShowSystemNotification).not.toHaveBeenCalled();
   });
 
   it("sends notifications when permission is granted", async () => {
-    isPermissionGranted.mockResolvedValue(true);
+    desktopGetNotificationPermission.mockResolvedValue("granted");
 
-    await sendDesktopNotification({ title: "Turn completed", body: "Session title" });
-    expect(sendNotification).toHaveBeenCalledWith({ title: "Turn completed", body: "Session title" });
+    await expect(
+      sendDesktopNotification({
+        kind: "turn_failed",
+        title: "Turn failed",
+        body: "Session title",
+        workspaceId: "ws-1",
+        taskId: "task-1",
+        sessionId: "session-1",
+      }),
+    ).resolves.toBe(true);
+    expect(desktopShowSystemNotification).toHaveBeenCalledWith({
+      kind: "turn_failed",
+      title: "Turn failed",
+      body: "Session title",
+      workspace_id: "ws-1",
+      task_id: "task-1",
+      session_id: "session-1",
+    });
   });
 });

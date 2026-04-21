@@ -13,6 +13,7 @@ import type {
 } from "../../api/client";
 import type { User } from "@supabase/supabase-js";
 import type { ClientSettingsState } from "../../state/clientSettings";
+import type { DesktopNotificationPermission } from "../../utils/desktopNotifications";
 import { GeneralSettingsSection } from "./sections/GeneralSettingsSection";
 import { NotificationsSettingsSection } from "./sections/NotificationsSettingsSection";
 import { AnalyticsSettingsSection } from "./sections/AnalyticsSettingsSection";
@@ -46,10 +47,17 @@ export function SettingsContentRouter(props: {
   clientSettingsError: string | null;
   showRemoteAuthority: boolean;
   isDesktopApp: () => boolean;
-  desktopTurnNotifications: boolean;
+  completedNotifications: boolean;
+  failedNotifications: boolean;
+  badgeUnreadCount: boolean;
+  desktopNotificationPermission: DesktopNotificationPermission;
+  desktopNotificationPermissionBusy: boolean;
   clientSettingsState: ClientSettingsState;
   clientSettingsSaving: boolean;
-  onToggleTurnNotifications: (next: boolean) => void | Promise<void>;
+  onToggleCompletedNotifications: (next: boolean) => void | Promise<void>;
+  onToggleFailedNotifications: (next: boolean) => void | Promise<void>;
+  onToggleBadgeUnreadCount: (next: boolean) => void | Promise<void>;
+  onRequestDesktopNotificationPermission: () => void | Promise<void>;
   telemetryEnabled: boolean;
   setTelemetryEnabled: (next: boolean) => void;
   workspaceId: string | null;
@@ -142,10 +150,17 @@ export function SettingsContentRouter(props: {
     clientSettingsError,
     showRemoteAuthority,
     isDesktopApp,
-    desktopTurnNotifications,
+    completedNotifications,
+    failedNotifications,
+    badgeUnreadCount,
+    desktopNotificationPermission,
+    desktopNotificationPermissionBusy,
     clientSettingsState,
     clientSettingsSaving,
-    onToggleTurnNotifications,
+    onToggleCompletedNotifications,
+    onToggleFailedNotifications,
+    onToggleBadgeUnreadCount,
+    onRequestDesktopNotificationPermission,
     telemetryEnabled,
     setTelemetryEnabled,
     workspaceId,
@@ -190,12 +205,25 @@ export function SettingsContentRouter(props: {
     return (
       <NotificationsSettingsSection
         isDesktopApp={isDesktopApp}
-        desktopTurnNotifications={desktopTurnNotifications}
+        completedNotifications={completedNotifications}
+        failedNotifications={failedNotifications}
+        badgeUnreadCount={badgeUnreadCount}
+        desktopNotificationPermission={desktopNotificationPermission}
+        desktopNotificationPermissionBusy={desktopNotificationPermissionBusy}
         clientSettingsState={clientSettingsState}
         clientSettingsSaving={clientSettingsSaving}
         clientSettingsError={clientSettingsError}
-        onToggleTurnNotifications={async (next) => {
-          await onToggleTurnNotifications(next);
+        onToggleCompletedNotifications={async (next) => {
+          await onToggleCompletedNotifications(next);
+        }}
+        onToggleFailedNotifications={async (next) => {
+          await onToggleFailedNotifications(next);
+        }}
+        onToggleBadgeUnreadCount={async (next) => {
+          await onToggleBadgeUnreadCount(next);
+        }}
+        onRequestDesktopNotificationPermission={async () => {
+          await onRequestDesktopNotificationPermission();
         }}
       />
     );

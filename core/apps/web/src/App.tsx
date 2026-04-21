@@ -15,6 +15,7 @@ import SettingsPage from "./pages/SettingsPage";
 import WorkspaceSetupPage from "./pages/WorkspaceSetupPage";
 import { SessionSupervisorProvider } from "./state/sessionSupervisor";
 import { SettingsStoreProvider, useSettingsSnapshot } from "./state/settingsStore";
+import { loadClientSettings } from "./state/clientSettings";
 import { setUiDiagnosticPersistenceSink, type UiDiagnosticEvent } from "./state/diagnosticsChannel";
 import { loadLauncherRecents } from "./state/launcherRecentsStore";
 import { preloadHarnessLogos } from "./utils/harnessCatalog";
@@ -30,6 +31,7 @@ import {
   isDesktopApp,
   openExternalLink,
 } from "./utils/desktop";
+import { initializeAppForegroundTracking } from "./utils/windowFocus";
 import {
   consumePendingDownloadAttributionId,
   getPendingDownloadAttributionId,
@@ -176,6 +178,24 @@ function DesktopSettingsListener() {
       window.removeEventListener("ctx:open-settings", handler as EventListener);
     };
   }, [navigate]);
+
+  return null;
+}
+
+function ClientSettingsBootstrap() {
+  useEffect(() => {
+    loadClientSettings().catch((err) => {
+      console.warn("client settings bootstrap failed", err);
+    });
+  }, []);
+
+  return null;
+}
+
+function AppForegroundBootstrap() {
+  useEffect(() => {
+    initializeAppForegroundTracking();
+  }, []);
 
   return null;
 }
@@ -586,6 +606,8 @@ export default function App() {
     <SessionSupervisorProvider>
       <SettingsStoreProvider>
         <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+          <AppForegroundBootstrap />
+          <ClientSettingsBootstrap />
           <AnalyticsSettingsBridge />
           <DesktopSettingsListener />
           <DesktopMenuBridge />

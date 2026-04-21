@@ -35,13 +35,11 @@ import {
   parseMs,
 } from "./WorkbenchPage.utils";
 import { useWorkbenchTaskScrollbar } from "./useWorkbenchTaskScrollbar";
-import { deriveWorkbenchTaskStatusKind } from "./workbenchTaskActivity";
-
-type TaskLiveInfo = {
-  workingByTask: Set<string>;
-  errorByTask: Set<string>;
-  lastAssistantMsByTask: Record<string, number | null | undefined>;
-};
+import {
+  deriveWorkbenchTaskStatusKind,
+  isWorkbenchTaskUnread,
+  type WorkbenchTaskLiveInfo,
+} from "./workbenchTaskActivity";
 
 type WorkspaceSnapshotStore = {
   ensureArchivedLoaded: () => void;
@@ -64,7 +62,7 @@ type TaskListControllerArgs = {
   optimisticTasks: OptimisticTaskSummary[];
   setOptimisticTasks: React.Dispatch<React.SetStateAction<OptimisticTaskSummary[]>>;
   optimisticTasksById: Record<string, OptimisticTaskSummary>;
-  taskLiveInfo: TaskLiveInfo;
+  taskLiveInfo: WorkbenchTaskLiveInfo;
   providerIdsByTaskFromSessions: Record<string, string[]>;
   isTaskUnread: (taskId: string) => boolean;
   focusTask: (taskId: string, sessionId?: string | null) => void;
@@ -441,14 +439,7 @@ export function useWorkbenchTaskListController({
         idToString(summary.primarySessionHead?.session?.id ?? "");
       const working = taskLiveInfo.workingByTask.has(taskId);
       const hasError = taskLiveInfo.errorByTask.has(taskId);
-      const serverLastAssistantMs = parseMs(task.last_assistant_message_at ?? null);
-      const liveLastAssistantMs = taskLiveInfo.lastAssistantMsByTask[taskId] ?? null;
-      const lastAssistantMs =
-        liveLastAssistantMs !== null && serverLastAssistantMs !== null
-          ? Math.max(liveLastAssistantMs, serverLastAssistantMs)
-          : liveLastAssistantMs ?? serverLastAssistantMs;
-      const seenMs = parseMs(task.assistant_seen_at ?? null);
-      const unread = !working && lastAssistantMs !== null && (seenMs === null || lastAssistantMs > seenMs);
+      const unread = !working && isWorkbenchTaskUnread({ taskId, tasksById, taskLiveInfo });
       // Deliberately show recency in the nav ("last activity"), not run duration.
       // The thread view owns precise per-turn elapsed timing.
       const ageIso = task.last_activity_at ?? task.updated_at ?? task.created_at;
