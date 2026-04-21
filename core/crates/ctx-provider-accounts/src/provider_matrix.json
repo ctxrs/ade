@@ -204,7 +204,7 @@
       },
       "managed_install": {
         "kind": "archive",
-        "version": "0.2.7-ctx.5",
+        "version": "0.2.7-ctx.6",
         "args": [],
         "targets": {
           "darwin-aarch64": {
@@ -260,7 +260,7 @@
       },
       "releases": [
         {
-          "version": "0.2.7-ctx.5",
+          "version": "0.2.7-ctx.6",
           "status": "supported",
           "context_min": "0.1.0",
           "notes": "Pinned workspace adapter source (external-harnesses/claude-crp/package.json)",
