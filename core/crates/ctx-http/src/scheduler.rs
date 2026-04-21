@@ -1,10 +1,11 @@
 use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use serde_json::json;
 use tokio::sync::mpsc;
+use tokio::time::Instant as TokioInstant;
 
 use ctx_core::ids::MessageId;
 use ctx_core::models::{Message, MessageDelivery, Session, SessionEventType};
@@ -17,11 +18,12 @@ mod lifecycle;
 mod persistence;
 mod reconcile;
 mod runtime;
+mod terminal;
 
 pub(crate) use interrupt_telemetry::{latency_bucket, metric_labels, InterruptTelemetryContext};
 use lifecycle::{
-    finalize_start_failure_if_needed, handle_provider_exit, stop_running_turn, RunningTurn,
-    StopReason,
+    finalize_start_failure_if_needed, handle_provider_exit, handle_provider_stall,
+    stop_running_turn, RunningTurn, StopReason,
 };
 use persistence::emit_event;
 use runtime::start_turn;
@@ -68,7 +70,10 @@ pub async fn session_worker(
         }
     }
     let mut running: Option<RunningTurn> = None;
+    let mut running_inactivity_timeout: Option<Duration> = None;
+    let mut running_inactivity_deadline: Option<TokioInstant> = None;
     let mut suspend_queue = false;
+    let mut event_head_rx = state.subscribe_session_event_head(session.id).await;
 
     let worktree = match store.get_worktree(session.worktree_id).await {
         Ok(Some(wt)) => wt,
@@ -135,6 +140,9 @@ pub async fn session_worker(
                 {
                     Ok(turn) => {
                         state.set_running(session.id, true).await;
+                        let timeout = state.provider_inactivity_timeout().await;
+                        running_inactivity_timeout = Some(timeout);
+                        running_inactivity_deadline = Some(TokioInstant::now() + timeout);
                         running = Some(turn);
                     }
                     Err(err) => {
@@ -230,6 +238,24 @@ pub async fn session_worker(
             }, if running.is_some() => {
                 if let Some(turn) = running.take() {
                     handle_provider_exit(&state, session.id, turn).await;
+                }
+                state.set_running(session.id, false).await;
+            }
+            changed = event_head_rx.changed(), if running.is_some() => {
+                if changed.is_err() {
+                    event_head_rx = state.subscribe_session_event_head(session.id).await;
+                }
+                if let Some(timeout) = running_inactivity_timeout {
+                    running_inactivity_deadline = Some(TokioInstant::now() + timeout);
+                }
+            }
+            _ = async {
+                if let Some(deadline) = running_inactivity_deadline {
+                    tokio::time::sleep_until(deadline).await;
+                }
+            }, if running.is_some() && running_inactivity_deadline.is_some() => {
+                if let Some(turn) = running.take() {
+                    handle_provider_stall(&state, session.id, turn).await;
                 }
                 state.set_running(session.id, false).await;
             }

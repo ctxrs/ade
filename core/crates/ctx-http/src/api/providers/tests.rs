@@ -820,7 +820,7 @@ impl ProviderAdapter for RestartTrackingAdapter {
         anyhow::bail!("run not used in this test")
     }
 
-    async fn cancel(&self, _handle: RunHandle) -> anyhow::Result<()> {
+    async fn cancel(&self, _handle: &mut RunHandle) -> anyhow::Result<()> {
         Ok(())
     }
 

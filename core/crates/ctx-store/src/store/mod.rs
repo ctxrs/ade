@@ -889,6 +889,122 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn raw_provider_terminal_events_do_not_complete_turn_until_turn_finished_persists() {
+        let (_dir, store) = setup_store().await;
+        let cases = [
+            (
+                SessionEventType::Done,
+                json!({"context_window": {"total_tokens": 7}}),
+                json!({"status": "completed"}),
+                SessionTurnStatus::Completed,
+                Some(json!({"total_tokens": 7})),
+            ),
+            (
+                SessionEventType::Error,
+                json!({"message": "provider error"}),
+                json!({"status": "failed", "message": "provider error"}),
+                SessionTurnStatus::Failed,
+                None,
+            ),
+            (
+                SessionEventType::TurnInterrupted,
+                json!({"reason": "cancelled", "provider_cancelled": true}),
+                json!({"status": "interrupted", "reason": "cancelled", "provider_cancelled": true}),
+                SessionTurnStatus::Interrupted,
+                None,
+            ),
+        ];
+
+        for (event_type, event_payload, finished_payload, expected_status, expected_metrics) in
+            cases
+        {
+            let (session, turn_id) = create_session_with_turn(&store, None).await;
+
+            let terminal = store
+                .append_session_event(session.id, None, Some(turn_id), event_type, event_payload)
+                .await
+                .unwrap();
+            store.flush_session_event_log().await.unwrap();
+
+            let running_turn = store
+                .get_session_turn(session.id, turn_id)
+                .await
+                .unwrap()
+                .expect("turn exists");
+            assert_eq!(running_turn.status, SessionTurnStatus::Running);
+            assert_eq!(running_turn.end_seq, None);
+
+            let persisted = store
+                .persist_turn_terminal_events(
+                    session.id,
+                    None,
+                    turn_id,
+                    vec![(SessionEventType::TurnFinished, finished_payload)],
+                )
+                .await
+                .unwrap();
+
+            assert_eq!(persisted.len(), 1);
+            assert!(persisted[0].seq > terminal.seq);
+
+            let completed_turn = store
+                .get_session_turn(session.id, turn_id)
+                .await
+                .unwrap()
+                .expect("completed turn");
+            assert_eq!(completed_turn.status, expected_status);
+            assert_eq!(completed_turn.end_seq, Some(persisted[0].seq));
+            assert_eq!(completed_turn.metrics_json, expected_metrics);
+        }
+    }
+
+    #[tokio::test]
+    async fn get_terminal_event_for_run_flushes_buffered_events_before_reading() {
+        let (_dir, store) = setup_store().await;
+        let (session, turn_id) = create_session_with_turn(&store, None).await;
+        let run_id = RunId::new();
+        let write_guard = store.write_gate.lock().await;
+        let queued_event = SessionEvent {
+            seq: store.event_log.next_seq(),
+            id: SessionEventId::new(),
+            session_id: session.id,
+            run_id: Some(run_id),
+            turn_id: Some(turn_id),
+            event_type: SessionEventType::TurnFinished,
+            payload_json: json!({ "status": "completed" }),
+            transient: false,
+            created_at: Utc::now(),
+        };
+        store
+            .event_log
+            .enqueue(queued_event.clone())
+            .await
+            .expect("buffer terminal event");
+
+        let store_for_read = store.clone();
+        let read_task = tokio::spawn(async move {
+            store_for_read
+                .get_terminal_event_for_run(session.id, run_id)
+                .await
+        });
+
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(
+            !read_task.is_finished(),
+            "terminal-event read should wait for buffered event-log persistence"
+        );
+
+        drop(write_guard);
+
+        let terminal = read_task
+            .await
+            .expect("join read task")
+            .expect("read terminal event")
+            .expect("terminal event exists");
+        assert_eq!(terminal.id, queued_event.id);
+    }
+
+    #[tokio::test]
     async fn subagent_label_is_unique_per_task() {
         let (_dir, store) = setup_store().await;
         let ws = store

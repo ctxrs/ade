@@ -36,22 +36,13 @@ pub fn turn_status_from_event(event: &SessionEvent) -> Option<SessionTurnStatus>
     match event.event_type {
         SessionEventType::TurnQueued => Some(SessionTurnStatus::Queued),
         SessionEventType::TurnStarted => Some(SessionTurnStatus::Running),
-        SessionEventType::Done => Some(SessionTurnStatus::Completed),
-        SessionEventType::Error => Some(SessionTurnStatus::Failed),
-        SessionEventType::TurnInterrupted => Some(SessionTurnStatus::Interrupted),
         SessionEventType::TurnFinished => turn_status_from_finished_payload(&event.payload_json),
         _ => None,
     }
 }
 
 fn is_terminal_event(event_type: &SessionEventType) -> bool {
-    matches!(
-        event_type,
-        SessionEventType::Done
-            | SessionEventType::Error
-            | SessionEventType::TurnInterrupted
-            | SessionEventType::TurnFinished
-    )
+    matches!(event_type, SessionEventType::TurnFinished)
 }
 
 fn latest_done_metrics(events: &[SessionEvent]) -> Option<Value> {
@@ -70,33 +61,8 @@ pub fn resolve_turn_terminal_state(events: &[SessionEvent]) -> Option<TurnTermin
     let event = &events[terminal_index];
 
     match event.event_type {
-        SessionEventType::Done => Some(TurnTerminalState {
-            status: SessionTurnStatus::Completed,
-            end_seq: Some(event.seq),
-            metrics: event.payload_json.get("context_window").cloned(),
-            updated_at: event.created_at,
-        }),
-        SessionEventType::Error => Some(TurnTerminalState {
-            status: SessionTurnStatus::Failed,
-            end_seq: None,
-            metrics: None,
-            updated_at: event.created_at,
-        }),
-        SessionEventType::TurnInterrupted => Some(TurnTerminalState {
-            status: SessionTurnStatus::Interrupted,
-            end_seq: Some(event.seq),
-            metrics: None,
-            updated_at: event.created_at,
-        }),
         SessionEventType::TurnFinished => {
-            let status =
-                turn_status_from_finished_payload(&event.payload_json).unwrap_or_else(|| {
-                    events[..terminal_index]
-                        .iter()
-                        .rev()
-                        .find_map(turn_status_from_event)
-                        .unwrap_or(SessionTurnStatus::Completed)
-                });
+            let status = turn_status_from_finished_payload(&event.payload_json)?;
             let metrics = if status == SessionTurnStatus::Completed {
                 latest_done_metrics(&events[..=terminal_index])
             } else {
@@ -180,5 +146,24 @@ mod tests {
         assert_eq!(terminal.status, SessionTurnStatus::Completed);
         assert_eq!(terminal.end_seq, Some(3));
         assert_eq!(terminal.metrics, Some(json!({ "total_tokens": 42 })));
+    }
+
+    #[test]
+    fn raw_provider_terminal_event_without_turn_finished_is_not_terminal() {
+        let turn_id = TurnId::new();
+        let events = vec![
+            event(1, turn_id, SessionEventType::TurnStarted, json!({})),
+            event(2, turn_id, SessionEventType::Done, json!({})),
+        ];
+
+        assert!(resolve_turn_terminal_state(&events).is_none());
+    }
+
+    #[test]
+    fn turn_finished_without_status_is_not_terminal() {
+        let turn_id = TurnId::new();
+        let events = vec![event(1, turn_id, SessionEventType::TurnFinished, json!({}))];
+
+        assert!(resolve_turn_terminal_state(&events).is_none());
     }
 }

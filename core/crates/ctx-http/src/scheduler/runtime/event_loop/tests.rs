@@ -199,6 +199,15 @@ async fn run_done_event_loop(
 
     events_done_rx.await.expect("event loop completion");
     loop_task.await.expect("event loop join");
+    crate::scheduler::terminal::finalize_completed_turn(
+        &fixture.state,
+        fixture.session_id,
+        Some(fixture.run_id),
+        fixture.turn_id,
+        fixture.message_id,
+    )
+    .await
+    .expect("finalize completed turn");
 
     let turn = fixture
         .store

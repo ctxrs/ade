@@ -44,7 +44,7 @@ impl ProviderAdapter for StartFailProvider {
         anyhow::bail!("synthetic start failure");
     }
 
-    async fn cancel(&self, _handle: RunHandle) -> Result<()> {
+    async fn cancel(&self, _handle: &mut RunHandle) -> Result<()> {
         Ok(())
     }
 }

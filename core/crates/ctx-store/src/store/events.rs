@@ -1,13 +1,7 @@
 use super::*;
 
 fn is_terminal_session_event(event_type: &SessionEventType) -> bool {
-    matches!(
-        event_type,
-        SessionEventType::Done
-            | SessionEventType::Error
-            | SessionEventType::TurnInterrupted
-            | SessionEventType::TurnFinished
-    )
+    matches!(event_type, SessionEventType::TurnFinished)
 }
 
 impl Store {
@@ -95,6 +89,131 @@ impl Store {
 
     pub async fn flush_session_event_log(&self) -> Result<()> {
         self.event_log.flush().await
+    }
+
+    pub async fn persist_turn_terminal_events(
+        &self,
+        session_id: SessionId,
+        run_id: Option<RunId>,
+        turn_id: TurnId,
+        events: Vec<(SessionEventType, Value)>,
+    ) -> Result<Vec<SessionEvent>> {
+        if events.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        self.flush_event_log_for_reads().await;
+
+        let mut persisted = Vec::with_capacity(events.len());
+        for (event_type, payload_json) in events {
+            persisted.push(SessionEvent {
+                seq: self.event_log.next_seq(),
+                id: SessionEventId::new(),
+                session_id,
+                run_id,
+                turn_id: Some(turn_id),
+                event_type,
+                payload_json,
+                transient: false,
+                created_at: Utc::now(),
+            });
+        }
+
+        let max_seq = persisted
+            .iter()
+            .map(|event| event.seq)
+            .max()
+            .unwrap_or_default();
+
+        {
+            let _write_guard = self.write_gate.lock().await;
+            let mut tx = self.pool.begin().await?;
+
+            let status_row = sqlx::query(
+                r#"SELECT status
+                   FROM session_turns
+                   WHERE session_id = ? AND turn_id = ?"#,
+            )
+            .bind(session_id.0.to_string())
+            .bind(turn_id.0.to_string())
+            .fetch_optional(&mut *tx)
+            .await?;
+
+            let Some(status_row) = status_row else {
+                tx.rollback().await?;
+                return Ok(Vec::new());
+            };
+
+            let current_status: String = status_row.try_get("status")?;
+            if matches!(
+                parse_session_turn_status(&current_status),
+                SessionTurnStatus::Completed
+                    | SessionTurnStatus::Failed
+                    | SessionTurnStatus::Interrupted
+            ) {
+                tx.rollback().await?;
+                return Ok(Vec::new());
+            }
+
+            let mut builder = sqlx::QueryBuilder::<Sqlite>::new(
+                "INSERT INTO session_events (seq, id, session_id, run_id, turn_id, event_type, payload_json, transient, created_at) ",
+            );
+            builder.push_values(persisted.iter(), |mut b, event| {
+                b.push_bind(event.seq)
+                    .push_bind(event.id.0.to_string())
+                    .push_bind(event.session_id.0.to_string())
+                    .push_bind(event.run_id.map(|id| id.0.to_string()))
+                    .push_bind(event.turn_id.map(|id| id.0.to_string()))
+                    .push_bind(session_event_type_to_str(&event.event_type))
+                    .push_bind(event.payload_json.to_string())
+                    .push_bind(if event.transient { 1 } else { 0 })
+                    .push_bind(event.created_at.to_rfc3339());
+            });
+            builder.build().execute(&mut *tx).await?;
+
+            self.update_session_snapshot_last_event_seq_tx(&mut tx, session_id, max_seq)
+                .await?;
+            let _ = self
+                .repair_session_turn_projection_from_events_tx(&mut tx, session_id, turn_id)
+                .await?;
+            self.refresh_session_turn_summary_tx(&mut tx, session_id)
+                .await?;
+            tx.commit().await?;
+        }
+
+        for event in &persisted {
+            let write_bytes = bytes_str(&event.id.0.to_string())
+                + bytes_str(&event.session_id.0.to_string())
+                + bytes_opt_str(event.run_id.map(|id| id.0.to_string()).as_deref())
+                + bytes_opt_str(event.turn_id.map(|id| id.0.to_string()).as_deref())
+                + bytes_str(session_event_type_to_str(&event.event_type))
+                + bytes_str(&event.payload_json.to_string())
+                + bytes_str(&event.created_at.to_rfc3339())
+                + BOOL_BYTES;
+            record_write(WriteMetricTable::SessionEvents, 1, write_bytes);
+        }
+
+        if let Err(err) = self
+            .update_active_snapshot_head_last_event_seq(session_id, max_seq)
+            .await
+        {
+            tracing::warn!(
+                "failed to update active snapshot head last_event_seq for {}: {err:#}",
+                session_id.0
+            );
+        }
+
+        if let Err(err) = self
+            .schedule_active_snapshot_head_refresh(session_id, Some(max_seq))
+            .await
+        {
+            tracing::warn!(
+                "failed to refresh active snapshot head for {}: {err:#}",
+                session_id.0
+            );
+        }
+
+        Ok(persisted)
     }
 
     pub(super) async fn persist_session_events_batch(&self, events: &[SessionEvent]) -> Result<()> {
@@ -424,6 +543,7 @@ impl Store {
         session_id: SessionId,
         run_id: RunId,
     ) -> Result<Option<SessionEvent>> {
+        self.flush_event_log_for_reads().await;
         let row = self.query(
             r#"SELECT seq, id, session_id, run_id, turn_id, event_type, payload_json, transient, created_at
                FROM session_events

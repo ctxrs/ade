@@ -41,7 +41,7 @@ impl ProviderAdapter for StaticStatusAdapter {
         anyhow::bail!("{msg}");
     }
 
-    async fn cancel(&self, _handle: ctx_providers::adapters::RunHandle) -> Result<()> {
+    async fn cancel(&self, _handle: &mut ctx_providers::adapters::RunHandle) -> Result<()> {
         Ok(())
     }
 }
@@ -240,7 +240,7 @@ impl ProviderAdapter for OpenHandsRuntimeContractAdapter {
         self.inner.run(input, workdir, env, event_sink).await
     }
 
-    async fn cancel(&self, handle: RunHandle) -> Result<()> {
+    async fn cancel(&self, handle: &mut RunHandle) -> Result<()> {
         self.inner.cancel(handle).await
     }
 

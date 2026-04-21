@@ -2,7 +2,7 @@ use super::helpers::{
     read_codex_context_window_metrics, should_track_thought_chunk, strip_emitted_prefix,
 };
 use super::*;
-use crate::scheduler::persistence::flush_session_events;
+use crate::scheduler::terminal::finalize_failed_turn;
 use crate::scheduler::{latency_bucket, metric_labels};
 use crate::storage_guard;
 
@@ -40,14 +40,12 @@ pub(super) fn spawn_turn_event_loop(ctx: TurnEventLoop) {
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn fail_turn(
+async fn record_failed_turn_telemetry(
     state: &Arc<AppState>,
-    store: &ctx_store::Store,
     session_id: ctx_core::ids::SessionId,
     worktree_id: ctx_core::ids::WorktreeId,
     run_id: RunId,
     turn_id: TurnId,
-    message_id: MessageId,
     provider_id: &str,
     model_id: &str,
     execution_environment_label: &str,
@@ -56,11 +54,9 @@ async fn fail_turn(
     run_started_at: Instant,
     perf_run_id: Option<&String>,
     telemetry_emitted: &mut bool,
-    terminal_status: &mut Option<SessionTurnStatus>,
     error_message: String,
     details: Option<Value>,
     kind: Option<Value>,
-    emit_error_event: bool,
 ) {
     if !*telemetry_emitted {
         *telemetry_emitted = true;
@@ -132,55 +128,62 @@ async fn fail_turn(
         "kind": kind.clone(),
     }));
     state.telemetry.ops_events.emit(fail_event);
+}
 
-    if emit_error_event {
-        let mut payload = json!({
-            "message": error_message,
-        });
-        if let Some(obj) = payload.as_object_mut() {
-            if let Some(details) = details {
-                obj.insert("details".to_string(), details);
-            }
-            if let Some(kind) = kind {
-                obj.insert("kind".to_string(), kind);
-            }
-        }
-        let _ = emit_event(
-            state,
-            session_id,
-            Some(run_id),
-            Some(turn_id),
-            SessionEventType::Error,
-            payload,
-        )
-        .await;
-    }
-
+async fn fail_turn(
+    state: &Arc<AppState>,
+    session_id: ctx_core::ids::SessionId,
+    worktree_id: ctx_core::ids::WorktreeId,
+    run_id: RunId,
+    turn_id: TurnId,
+    message_id: MessageId,
+    provider_id: &str,
+    model_id: &str,
+    execution_environment_label: &str,
+    session_root_kind: &str,
+    workdir_str: &str,
+    run_started_at: Instant,
+    perf_run_id: Option<&String>,
+    telemetry_emitted: &mut bool,
+    terminal_status: &mut Option<SessionTurnStatus>,
+    error_message: String,
+    details: Option<Value>,
+    kind: Option<Value>,
+    emit_error_event: bool,
+) {
+    record_failed_turn_telemetry(
+        state,
+        session_id,
+        worktree_id,
+        run_id,
+        turn_id,
+        provider_id,
+        model_id,
+        execution_environment_label,
+        session_root_kind,
+        workdir_str,
+        run_started_at,
+        perf_run_id,
+        telemetry_emitted,
+        error_message.clone(),
+        details.clone(),
+        kind.clone(),
+    )
+    .await;
     *terminal_status = Some(SessionTurnStatus::Failed);
-    let _ = store
-        .delete_session_events_for_turn_types(
-            session_id,
-            turn_id,
-            &[
-                SessionEventType::AssistantChunk,
-                SessionEventType::ThoughtChunk,
-                SessionEventType::ContextWindowUpdate,
-            ],
-        )
-        .await;
-    let _ = emit_event(
+    let _ = finalize_failed_turn(
         state,
         session_id,
         Some(run_id),
-        Some(turn_id),
-        SessionEventType::TurnFinished,
-        json!({
-            "message_id": message_id.0,
-            "status": "failed",
-        }),
+        turn_id,
+        message_id,
+        &error_message,
+        None,
+        details,
+        kind,
+        emit_error_event,
     )
     .await;
-    flush_session_events(store, session_id, "fail_turn").await;
 }
 
 async fn run_turn_event_loop(ctx: TurnEventLoop) {
@@ -634,7 +637,6 @@ async fn run_turn_event_loop(ctx: TurnEventLoop) {
                                 let storage_status = state.storage_guard_snapshot();
                                 fail_turn(
                                     &state,
-                                    &store,
                                     session_id,
                                     worktree_id,
                                     run_id,
@@ -748,21 +750,12 @@ async fn run_turn_event_loop(ctx: TurnEventLoop) {
                         ],
                     )
                     .await;
-                let _ = emit_event(
-                    &state,
-                    session_id,
-                    Some(run_id),
-                    Some(turn_id),
-                    SessionEventType::TurnFinished,
-                    json!({
-                        "message_id": message_id.0,
-                        "status": "completed",
-                    }),
-                )
-                .await;
-                flush_session_events(&store, session_id, "done").await;
+                terminal_status = Some(SessionTurnStatus::Completed);
             }
             SessionEventType::TurnInterrupted => {
+                if terminal_status.is_some() {
+                    continue;
+                }
                 if !telemetry_emitted {
                     telemetry_emitted = true;
                     let duration_ms = run_started_at.elapsed().as_millis() as u64;
@@ -873,24 +866,9 @@ async fn run_turn_event_loop(ctx: TurnEventLoop) {
                         ],
                     )
                     .await;
-                let _ = emit_event(
-                    &state,
-                    session_id,
-                    Some(run_id),
-                    Some(turn_id),
-                    SessionEventType::TurnFinished,
-                    json!({
-                        "message_id": message_id.0,
-                        "status": "interrupted",
-                        "reason": event.payload_json.get("reason").cloned(),
-                        "provider_cancelled": event.payload_json.get("provider_cancelled").cloned(),
-                    }),
-                )
-                .await;
-                flush_session_events(&store, session_id, "turn_interrupted").await;
             }
             SessionEventType::Error => {
-                if matches!(terminal_status, Some(SessionTurnStatus::Interrupted)) {
+                if terminal_status.is_some() {
                     continue;
                 }
                 let error_message = event
@@ -899,14 +877,12 @@ async fn run_turn_event_loop(ctx: TurnEventLoop) {
                     .and_then(|value| value.as_str())
                     .unwrap_or("provider runtime error")
                     .to_string();
-                fail_turn(
+                record_failed_turn_telemetry(
                     &state,
-                    &store,
                     session_id,
                     worktree_id,
                     run_id,
                     turn_id,
-                    message_id,
                     &provider_id,
                     &model_id,
                     &execution_environment_label,
@@ -915,13 +891,23 @@ async fn run_turn_event_loop(ctx: TurnEventLoop) {
                     run_started_at,
                     perf_run_id.as_ref(),
                     &mut telemetry_emitted,
-                    &mut terminal_status,
                     error_message,
                     event.payload_json.get("details").cloned(),
                     event.payload_json.get("kind").cloned(),
-                    false,
                 )
                 .await;
+                terminal_status = Some(SessionTurnStatus::Failed);
+                let _ = store
+                    .delete_session_events_for_turn_types(
+                        session_id,
+                        turn_id,
+                        &[
+                            SessionEventType::AssistantChunk,
+                            SessionEventType::ThoughtChunk,
+                            SessionEventType::ContextWindowUpdate,
+                        ],
+                    )
+                    .await;
             }
             _ => {}
         }

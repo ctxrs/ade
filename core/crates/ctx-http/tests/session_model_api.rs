@@ -170,7 +170,7 @@ impl ProviderAdapter for RecordingSetModelAdapter {
         anyhow::bail!("test adapter does not implement run");
     }
 
-    async fn cancel(&self, _handle: RunHandle) -> anyhow::Result<()> {
+    async fn cancel(&self, _handle: &mut RunHandle) -> anyhow::Result<()> {
         Ok(())
     }
 

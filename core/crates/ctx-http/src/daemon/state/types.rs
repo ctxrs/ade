@@ -21,6 +21,7 @@ pub struct SessionRuntime {
     pub session_head_cache:
         Mutex<HashMap<SessionId, TimedEntry<HashMap<SessionHeadCacheKey, SessionHeadSnapshot>>>>,
     pub schedulers: Mutex<HashMap<SessionId, TimedEntry<mpsc::Sender<SchedulerCommand>>>>,
+    pub provider_inactivity_timeout: Mutex<Duration>,
     pub broadcasters: Mutex<HashMap<SessionId, TimedEntry<broadcast::Sender<SessionEvent>>>>,
     pub session_event_heads: Mutex<HashMap<SessionId, TimedEntry<watch::Sender<i64>>>>,
     pub order_seq_states: Mutex<HashMap<SessionId, TimedEntry<Arc<Mutex<OrderSeqState>>>>>,
@@ -188,6 +189,16 @@ pub(crate) struct ActiveTaskRefreshEntry {
 const DEFAULT_SESSION_CACHE_TTL_HOURS: u64 = 24;
 const DEFAULT_WORKSPACE_CACHE_TTL_DAYS: u64 = 1;
 const DEFAULT_CACHE_SWEEP_INTERVAL_SECS: u64 = 5 * 60;
+const DEFAULT_PROVIDER_INACTIVITY_TIMEOUT_SECS: u64 = 30 * 60;
+
+pub(crate) fn provider_inactivity_timeout_from_env() -> Duration {
+    std::env::var("CTX_PROVIDER_TURN_INACTIVITY_TIMEOUT_MS")
+        .ok()
+        .and_then(|raw| raw.trim().parse::<u64>().ok())
+        .filter(|millis| *millis > 0)
+        .map(Duration::from_millis)
+        .unwrap_or_else(|| Duration::from_secs(DEFAULT_PROVIDER_INACTIVITY_TIMEOUT_SECS))
+}
 
 #[derive(Clone, Copy, Debug)]
 pub struct CacheSweepConfig {

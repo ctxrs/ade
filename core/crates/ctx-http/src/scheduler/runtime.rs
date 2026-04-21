@@ -52,9 +52,8 @@ use self::helpers::{
 };
 use self::tool_runtime::{cwd_outside_worktree, maybe_spool_tool_output};
 use super::lifecycle::RunningTurn;
-use super::persistence::{
-    append_session_event_with_retry, emit_event, flush_session_events, persist_assistant_message,
-};
+use super::persistence::{append_session_event_with_retry, emit_event, persist_assistant_message};
+use super::terminal::finalize_failed_turn;
 use super::QueuedMessage;
 
 fn provider_mode_id_for(
@@ -167,39 +166,25 @@ pub(crate) async fn start_turn(
 
     async fn emit_turn_start_failed(
         state: &Arc<AppState>,
-        store: &ctx_store::Store,
         session: &Session,
         run_id: RunId,
         turn_id: TurnId,
         message_id: MessageId,
         err: &anyhow::Error,
     ) {
-        let _ = emit_event(
+        let _ = finalize_failed_turn(
             state,
             session.id,
             Some(run_id),
-            Some(turn_id),
-            SessionEventType::Error,
-            json!({
-                "message_id": message_id.0,
-                "error": err.to_string(),
-                "status": "failed",
-            }),
+            turn_id,
+            message_id,
+            &err.to_string(),
+            Some("start_failed"),
+            None,
+            Some(json!("start_failed")),
+            true,
         )
         .await;
-        let _ = emit_event(
-            state,
-            session.id,
-            Some(run_id),
-            Some(turn_id),
-            SessionEventType::TurnFinished,
-            json!({
-                "message_id": message_id.0,
-                "status": "failed",
-            }),
-        )
-        .await;
-        flush_session_events(store, session.id, "emit_turn_start_failed").await;
     }
 
     let prompt = message.content.clone();
@@ -252,11 +237,11 @@ pub(crate) async fn start_turn(
         Ok(Some(workspace)) => workspace,
         Ok(None) => {
             let err = anyhow!("workspace not found: {}", session.workspace_id.0);
-            emit_turn_start_failed(state, &store, session, run_id, turn_id, message_id, &err).await;
+            emit_turn_start_failed(state, session, run_id, turn_id, message_id, &err).await;
             return Err(err);
         }
         Err(err) => {
-            emit_turn_start_failed(state, &store, session, run_id, turn_id, message_id, &err).await;
+            emit_turn_start_failed(state, session, run_id, turn_id, message_id, &err).await;
             return Err(err);
         }
     };
@@ -264,11 +249,11 @@ pub(crate) async fn start_turn(
         Ok(Some(worktree)) => worktree,
         Ok(None) => {
             let err = anyhow!("worktree not found: {}", session.worktree_id.0);
-            emit_turn_start_failed(state, &store, session, run_id, turn_id, message_id, &err).await;
+            emit_turn_start_failed(state, session, run_id, turn_id, message_id, &err).await;
             return Err(err);
         }
         Err(err) => {
-            emit_turn_start_failed(state, &store, session, run_id, turn_id, message_id, &err).await;
+            emit_turn_start_failed(state, session, run_id, turn_id, message_id, &err).await;
             return Err(err);
         }
     };
@@ -282,8 +267,7 @@ pub(crate) async fn start_turn(
         {
             Ok(settings) => settings,
             Err(err) => {
-                emit_turn_start_failed(state, &store, session, run_id, turn_id, message_id, &err)
-                    .await;
+                emit_turn_start_failed(state, session, run_id, turn_id, message_id, &err).await;
                 return Err(err);
             }
         };
@@ -292,16 +276,13 @@ pub(crate) async fn start_turn(
             match apply_data_plane_to_execution_settings(&execution_settings, &data_plane) {
                 Ok(settings) => settings,
                 Err(err) => {
-                    emit_turn_start_failed(
-                        state, &store, session, run_id, turn_id, message_id, &err,
-                    )
-                    .await;
+                    emit_turn_start_failed(state, session, run_id, turn_id, message_id, &err).await;
                     return Err(err);
                 }
             }
         }
         Err(err) => {
-            emit_turn_start_failed(state, &store, session, run_id, turn_id, message_id, &err).await;
+            emit_turn_start_failed(state, session, run_id, turn_id, message_id, &err).await;
             return Err(err);
         }
     };
@@ -318,7 +299,7 @@ pub(crate) async fn start_turn(
     {
         Ok(plan) => plan,
         Err(err) => {
-            emit_turn_start_failed(state, &store, session, run_id, turn_id, message_id, &err).await;
+            emit_turn_start_failed(state, session, run_id, turn_id, message_id, &err).await;
             return Err(err);
         }
     };
@@ -329,7 +310,7 @@ pub(crate) async fn start_turn(
     if let Err(err) =
         crate::mcp_command::configure_runtime_mcp_command(&mut provider_env, &state.core.data_root)
     {
-        emit_turn_start_failed(state, &store, session, run_id, turn_id, message_id, &err).await;
+        emit_turn_start_failed(state, session, run_id, turn_id, message_id, &err).await;
         return Err(err);
     }
     let runtime_data_root = runtime_plan.runtime_data_root();
@@ -348,8 +329,7 @@ pub(crate) async fn start_turn(
                     session.provider_id,
                     err
                 );
-                emit_turn_start_failed(state, &store, session, run_id, turn_id, message_id, &err)
-                    .await;
+                emit_turn_start_failed(state, session, run_id, turn_id, message_id, &err).await;
                 return Err(err);
             }
         };
@@ -659,32 +639,19 @@ pub(crate) async fn start_turn(
                 "error": err.to_string(),
             }));
             state.telemetry.ops_events.emit(fail_event);
-            let _ = emit_event(
+            let _ = finalize_failed_turn(
                 state,
                 session.id,
                 Some(run_id),
-                Some(turn_id),
-                SessionEventType::Error,
-                json!({
-                    "message_id": message_id.0,
-                    "error": err.to_string(),
-                    "status": "failed",
-                }),
+                turn_id,
+                message_id,
+                &err.to_string(),
+                Some("provider_start_failed"),
+                None,
+                Some(json!("provider_start_failed")),
+                true,
             )
             .await;
-            let _ = emit_event(
-                state,
-                session.id,
-                Some(run_id),
-                Some(turn_id),
-                SessionEventType::TurnFinished,
-                json!({
-                    "message_id": message_id.0,
-                    "status": "failed",
-                }),
-            )
-            .await;
-            flush_session_events(&store, session.id, "runtime_provider_start_failed").await;
             return Err(err);
         }
     };
@@ -721,6 +688,7 @@ pub(crate) async fn start_turn(
         handle,
         run_id,
         turn_id,
+        message_id,
         provider_id: session.provider_id.clone(),
         model_id: full_model_id.clone(),
         execution_environment_label: execution_environment.as_str().to_string(),

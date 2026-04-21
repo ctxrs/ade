@@ -10,7 +10,7 @@ use uuid::Uuid;
 
 use ctx_core::models::SessionEventType;
 
-use crate::adapters::{ProviderAdapter, ProviderStatus, RunHandle, TurnInput};
+use crate::adapters::{ProviderAdapter, ProviderStatus, ProviderTurnOutcome, RunHandle, TurnInput};
 use crate::events::NormalizedEvent;
 
 #[derive(Debug, Clone)]
@@ -154,6 +154,7 @@ impl ProviderAdapter for FakeProviderAdapter {
     ) -> Result<RunHandle> {
         let (cancel_tx, mut cancel_rx) = oneshot::channel::<()>();
         let (done_tx, done_rx) = oneshot::channel::<()>();
+        let (outcome_tx, outcome_rx) = oneshot::channel::<ProviderTurnOutcome>();
         let join = tokio::spawn(async move {
             let sink = event_sink;
             let fixture_tools = parse_fixture_tools(&input.content);
@@ -184,9 +185,16 @@ impl ProviderAdapter for FakeProviderAdapter {
                 vec![assistant_output.clone()]
             };
             let assistant_order_seq = 2_i64;
+            let omit_terminal_event = input.content.contains("omit-terminal-event");
 
-            tokio::select! {
-                _ = async {
+            let done_payload = if let Some(context_window) = live_context_window.clone() {
+                json!({"context_window": context_window})
+            } else {
+                json!({})
+            };
+
+            let outcome = tokio::select! {
+                outcome = async {
                     for fragment in assistant_fragments {
                         send(
                             SessionEventType::AssistantChunk,
@@ -252,17 +260,35 @@ impl ProviderAdapter for FakeProviderAdapter {
                     )
                     .await;
                     sleep(delay).await;
-                    let done_payload = if let Some(context_window) = live_context_window {
-                        json!({"context_window": context_window})
+                    if omit_terminal_event {
+                        ProviderTurnOutcome::protocol_violation(
+                            "provider_protocol_violation_no_terminal_outcome",
+                            "fake provider ended without emitting a terminal event",
+                        )
                     } else {
-                        json!({})
-                    };
-                    send(SessionEventType::Done, done_payload).await;
-                } => {}
+                        send(SessionEventType::Done, done_payload.clone()).await;
+                        ProviderTurnOutcome::completed()
+                    }
+                } => outcome,
                 _ = &mut cancel_rx => {
-                    send(SessionEventType::Error, json!({"message":"cancelled"})).await;
+                    if input.content.contains("complete-on-cancel") {
+                        send(SessionEventType::Done, done_payload).await;
+                        ProviderTurnOutcome::completed()
+                    } else {
+                        send(
+                            SessionEventType::TurnInterrupted,
+                            json!({
+                                "reason": "cancelled",
+                                "provider_cancelled": true,
+                                "status": "interrupted",
+                            }),
+                        )
+                        .await;
+                        ProviderTurnOutcome::interrupted("cancelled", true)
+                    }
                 }
-            }
+            };
+            let _ = outcome_tx.send(outcome);
         });
         let abort = join.abort_handle();
         drop(tokio::spawn(async move {
@@ -272,12 +298,13 @@ impl ProviderAdapter for FakeProviderAdapter {
 
         Ok(RunHandle {
             done: done_rx,
+            outcome: outcome_rx,
             cancel: Some(cancel_tx),
             abort: Some(abort),
         })
     }
 
-    async fn cancel(&self, mut handle: RunHandle) -> Result<()> {
+    async fn cancel(&self, handle: &mut RunHandle) -> Result<()> {
         if let Some(cancel) = handle.cancel.take() {
             let _ = cancel.send(());
         }
@@ -288,5 +315,121 @@ impl ProviderAdapter for FakeProviderAdapter {
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn fake_provider_reports_protocol_violation_when_terminal_event_is_missing() {
+        let adapter = FakeProviderAdapter::new();
+        let (event_tx, _event_rx) = mpsc::channel(8);
+        let handle = adapter
+            .run(
+                TurnInput {
+                    content: "omit-terminal-event".to_string(),
+                    attachments: Vec::new(),
+                    context_blocks: Vec::new(),
+                    model_id: None,
+                },
+                PathBuf::from("."),
+                HashMap::new(),
+                event_tx,
+            )
+            .await
+            .expect("run handle");
+
+        let outcome = tokio::time::timeout(std::time::Duration::from_secs(2), handle.outcome)
+            .await
+            .expect("outcome timeout")
+            .expect("outcome");
+        assert_eq!(outcome.status, crate::adapters::ProviderTurnStatus::Failed);
+        assert_eq!(
+            outcome.reason.as_deref(),
+            Some("provider_protocol_violation_no_terminal_outcome")
+        );
+        assert!(!outcome.terminal_event_emitted);
+    }
+
+    #[tokio::test]
+    async fn fake_provider_cancel_reports_interrupted_outcome() {
+        let adapter = FakeProviderAdapter::new();
+        let (event_tx, _event_rx) = mpsc::channel(8);
+        let mut handle = adapter
+            .run(
+                TurnInput {
+                    content: "slow-diff-test".to_string(),
+                    attachments: Vec::new(),
+                    context_blocks: Vec::new(),
+                    model_id: None,
+                },
+                PathBuf::from("."),
+                HashMap::new(),
+                event_tx,
+            )
+            .await
+            .expect("run handle");
+
+        handle
+            .cancel
+            .take()
+            .expect("cancel sender")
+            .send(())
+            .expect("cancel turn");
+
+        let outcome = tokio::time::timeout(std::time::Duration::from_secs(2), handle.outcome)
+            .await
+            .expect("outcome timeout")
+            .expect("outcome");
+        assert_eq!(
+            outcome.status,
+            crate::adapters::ProviderTurnStatus::Interrupted
+        );
+        assert_eq!(outcome.reason.as_deref(), Some("cancelled"));
+        assert_eq!(outcome.provider_cancelled, Some(true));
+    }
+
+    #[tokio::test]
+    async fn fake_provider_can_complete_after_cancel_when_marker_is_set() {
+        let adapter = FakeProviderAdapter::new();
+        let (event_tx, mut event_rx) = mpsc::channel(8);
+        let mut handle = adapter
+            .run(
+                TurnInput {
+                    content: "slow-diff-test complete-on-cancel".to_string(),
+                    attachments: Vec::new(),
+                    context_blocks: Vec::new(),
+                    model_id: None,
+                },
+                PathBuf::from("."),
+                HashMap::new(),
+                event_tx,
+            )
+            .await
+            .expect("run handle");
+
+        handle
+            .cancel
+            .take()
+            .expect("cancel sender")
+            .send(())
+            .expect("cancel turn");
+
+        let outcome = tokio::time::timeout(std::time::Duration::from_secs(2), handle.outcome)
+            .await
+            .expect("outcome timeout")
+            .expect("outcome");
+        assert_eq!(
+            outcome.status,
+            crate::adapters::ProviderTurnStatus::Completed
+        );
+
+        let event = tokio::time::timeout(std::time::Duration::from_secs(2), event_rx.recv())
+            .await
+            .expect("event timeout")
+            .expect("done event");
+        assert!(matches!(event.event_type, SessionEventType::Done));
     }
 }

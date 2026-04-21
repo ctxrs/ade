@@ -51,7 +51,8 @@ mod types;
 
 use super::edit_plans;
 pub(crate) use types::{
-    ActiveTaskRefreshEntry, AttachmentMaterializationTask, WorktreeBootstrapGate,
+    provider_inactivity_timeout_from_env, ActiveTaskRefreshEntry, AttachmentMaterializationTask,
+    WorktreeBootstrapGate,
 };
 pub use types::{
     AppState, CacheSweepConfig, CacheSweepStats, CachedFileCompletions, CachedProviderOptions,

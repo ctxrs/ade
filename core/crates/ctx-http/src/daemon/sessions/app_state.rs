@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use tokio::sync::{broadcast, mpsc, watch};
 
@@ -42,6 +43,12 @@ impl AppState {
         self.sessions.subscribe_session_event_head(session_id).await
     }
 
+    pub async fn publish_session_event_head(&self, session_id: SessionId, seq: i64) {
+        self.sessions
+            .publish_session_event_head(session_id, seq)
+            .await;
+    }
+
     pub async fn publish_event(self: &Arc<Self>, event: SessionEvent) {
         self.sessions.publish_event(self, event).await;
     }
@@ -68,6 +75,14 @@ impl AppState {
         session_id: SessionId,
     ) -> Option<mpsc::Sender<crate::scheduler::SchedulerCommand>> {
         self.sessions.scheduler_sender(session_id).await
+    }
+
+    pub async fn provider_inactivity_timeout(&self) -> Duration {
+        *self.sessions.provider_inactivity_timeout.lock().await
+    }
+
+    pub async fn set_provider_inactivity_timeout(&self, timeout: Duration) {
+        *self.sessions.provider_inactivity_timeout.lock().await = timeout;
     }
 
     pub async fn is_running(&self, session_id: SessionId) -> bool {

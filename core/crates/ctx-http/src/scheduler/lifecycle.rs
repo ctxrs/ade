@@ -5,15 +5,16 @@ use tokio::sync::{mpsc, oneshot};
 
 use ctx_core::ids::{MessageId, RunId, SessionId, TurnId};
 use ctx_core::models::{SessionEventType, SessionTurnStatus};
-use ctx_providers::adapters::{ProviderAdapter, RunHandle};
+use ctx_providers::adapters::{ProviderAdapter, ProviderTurnOutcome, RunHandle};
 use ctx_providers::events::NormalizedEvent;
 
 use crate::daemon::AppState;
 use crate::perf_telemetry::{PerfMetric, PerfMetricKind};
 
 use super::interrupt_telemetry::{metric_labels, payload_fields};
-use super::persistence::{emit_event, flush_session_events};
-use super::reconcile::{reconcile_turn_failed_on_provider_exit, reconcile_turn_terminal_state};
+use super::persistence::emit_event;
+use super::reconcile::reconcile_turn_terminal_state;
+use super::terminal::{finalize_failed_turn, finalize_provider_outcome};
 use super::InterruptTelemetryContext;
 
 pub(crate) struct RunningTurn {
@@ -21,6 +22,7 @@ pub(crate) struct RunningTurn {
     pub(crate) handle: RunHandle,
     pub(crate) run_id: RunId,
     pub(crate) turn_id: TurnId,
+    pub(crate) message_id: MessageId,
     pub(crate) provider_id: String,
     pub(crate) model_id: String,
     pub(crate) execution_environment_label: String,
@@ -28,6 +30,9 @@ pub(crate) struct RunningTurn {
     pub(crate) event_tx: mpsc::Sender<NormalizedEvent>,
     pub(crate) events_done: Option<oneshot::Receiver<()>>,
 }
+
+const PROVIDER_OUTCOME_WAIT_TIMEOUT: Duration = Duration::from_secs(2);
+const TURN_EVENT_LOOP_DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[derive(Clone, Copy)]
 pub(crate) enum StopReason {
@@ -37,50 +42,29 @@ pub(crate) enum StopReason {
 }
 
 impl StopReason {
-    fn fallback_reason(self) -> &'static str {
+    fn should_emit_interrupt_requested(self) -> bool {
+        matches!(self, Self::Interrupt)
+    }
+
+    fn missing_outcome_reason(self) -> &'static str {
         match self {
-            Self::Cancel => "user_cancel",
-            Self::Interrupt => "user_interrupt",
-            Self::StorageEmergency => "storage_exhausted",
+            Self::Cancel => "user_cancel_missing_outcome",
+            Self::Interrupt => "user_interrupt_missing_outcome",
+            Self::StorageEmergency => "storage_exhausted_missing_outcome",
         }
     }
 
-    fn should_emit_interrupt_requested(self) -> bool {
-        matches!(self, Self::Interrupt)
+    fn outcome_timeout_reason(self) -> &'static str {
+        match self {
+            Self::Cancel => "user_cancel_outcome_timeout",
+            Self::Interrupt => "user_interrupt_outcome_timeout",
+            Self::StorageEmergency => "storage_exhausted_outcome_timeout",
+        }
     }
 
     pub(crate) fn suspend_queue(self) -> bool {
         matches!(self, Self::Interrupt)
     }
-}
-
-async fn send_turn_interrupted(
-    event_tx: &mpsc::Sender<NormalizedEvent>,
-    reason: &str,
-    provider_cancelled: bool,
-    interrupt: Option<&InterruptTelemetryContext>,
-) -> bool {
-    let mut payload = json!({
-        "reason": reason,
-        "provider_cancelled": provider_cancelled,
-        "status": "interrupted",
-    });
-    if let Some(ctx) = interrupt {
-        if let Some(obj) = payload.as_object_mut() {
-            obj.insert("interrupt_id".to_string(), json!(ctx.interrupt_id));
-            obj.insert(
-                "requested_at_ms".to_string(),
-                json!(ctx.requested_at_unix_ms()),
-            );
-        }
-    }
-    event_tx
-        .send(NormalizedEvent {
-            event_type: SessionEventType::TurnInterrupted,
-            payload_json: payload,
-        })
-        .await
-        .is_ok()
 }
 
 async fn record_interrupt_metric(
@@ -109,8 +93,59 @@ async fn record_interrupt_metric(
         .await;
 }
 
-async fn wait_for_turn_event_loop(events_done: oneshot::Receiver<()>) {
-    let _ = events_done.await;
+async fn wait_for_turn_event_loop(
+    session_id: SessionId,
+    run_id: RunId,
+    turn_id: TurnId,
+    events_done: oneshot::Receiver<()>,
+) {
+    if tokio::time::timeout(TURN_EVENT_LOOP_DRAIN_TIMEOUT, events_done)
+        .await
+        .is_err()
+    {
+        tracing::warn!(
+            session_id = %session_id.0,
+            run_id = %run_id.0,
+            turn_id = %turn_id.0,
+            drain_timeout_ms = TURN_EVENT_LOOP_DRAIN_TIMEOUT.as_millis(),
+            "turn event loop did not drain before terminal fallback; finalizing from scheduler outcome"
+        );
+    }
+}
+
+fn abort_provider(handle: &mut RunHandle) {
+    if let Some(abort) = handle.abort.take() {
+        abort.abort();
+    }
+}
+
+fn provider_protocol_violation(reason: &str, message: &str) -> ProviderTurnOutcome {
+    ProviderTurnOutcome::protocol_violation(reason, message)
+}
+
+async fn wait_for_provider_outcome(
+    handle: &mut RunHandle,
+    closed_fallback: ProviderTurnOutcome,
+    timeout_fallback: ProviderTurnOutcome,
+) -> ProviderTurnOutcome {
+    match tokio::time::timeout(PROVIDER_OUTCOME_WAIT_TIMEOUT, &mut handle.outcome).await {
+        Ok(Ok(outcome)) => outcome,
+        Ok(Err(_)) => {
+            abort_provider(handle);
+            closed_fallback
+        }
+        Err(_) => {
+            abort_provider(handle);
+            timeout_fallback
+        }
+    }
+}
+
+fn interrupted_fallback_outcome(reason: &str, provider_cancelled: bool) -> ProviderTurnOutcome {
+    ProviderTurnOutcome {
+        terminal_event_emitted: false,
+        ..ProviderTurnOutcome::interrupted(reason, provider_cancelled)
+    }
 }
 
 pub(crate) async fn stop_running_turn(
@@ -169,23 +204,6 @@ pub(crate) async fn stop_running_turn(
         )
         .await;
     }
-    let event_send_started = std::time::Instant::now();
-    let sent = send_turn_interrupted(
-        &turn.event_tx,
-        reason.fallback_reason(),
-        true,
-        interrupt.as_ref(),
-    )
-    .await;
-    if interrupt.is_some() {
-        record_interrupt_metric(
-            state,
-            &turn,
-            "event_send",
-            event_send_started.elapsed().as_millis() as u64,
-        )
-        .await;
-    }
     let run_id = turn.run_id;
     let turn_id = turn.turn_id;
     let provider_id = turn.provider_id.clone();
@@ -193,7 +211,7 @@ pub(crate) async fn stop_running_turn(
     let execution_environment_label = turn.execution_environment_label.clone();
     let session_root_kind = turn.session_root_kind.clone();
     let cancel_started = std::time::Instant::now();
-    let _ = turn.adapter.cancel(turn.handle).await;
+    let _ = turn.adapter.cancel(&mut turn.handle).await;
     if let Some(interrupt) = interrupt.as_ref() {
         let cancel_ms = cancel_started.elapsed().as_millis() as u64;
         let metric = PerfMetric {
@@ -224,24 +242,32 @@ pub(crate) async fn stop_running_turn(
             "session interrupt provider cancel finished"
         );
     }
+    let outcome = wait_for_provider_outcome(
+        &mut turn.handle,
+        interrupted_fallback_outcome(reason.missing_outcome_reason(), false),
+        interrupted_fallback_outcome(reason.outcome_timeout_reason(), false),
+    )
+    .await;
     drop(turn.event_tx);
     if let Some(events_done) = turn.events_done.take() {
-        wait_for_turn_event_loop(events_done).await;
-        let _ = reconcile_turn_terminal_state(
+        wait_for_turn_event_loop(session_id, run_id, turn_id, events_done).await;
+        let _ = finalize_provider_outcome(
             state,
             session_id,
             Some(run_id),
             turn_id,
-            reason.fallback_reason(),
+            turn.message_id,
+            outcome,
         )
         .await;
-    } else if !sent {
-        let _ = reconcile_turn_terminal_state(
+    } else {
+        let _ = finalize_provider_outcome(
             state,
             session_id,
             Some(run_id),
             turn_id,
-            reason.fallback_reason(),
+            turn.message_id,
+            outcome,
         )
         .await;
     }
@@ -256,54 +282,78 @@ pub(crate) async fn handle_provider_exit(
 ) {
     let run_id = turn.run_id;
     let turn_id = turn.turn_id;
+    let message_id = turn.message_id;
+    let outcome = wait_for_provider_outcome(
+        &mut turn.handle,
+        provider_protocol_violation(
+            "provider_protocol_violation_missing_outcome",
+            "provider exited without reporting a terminal outcome",
+        ),
+        provider_protocol_violation(
+            "provider_protocol_violation_outcome_timeout",
+            "provider exited without reporting a terminal outcome before timeout",
+        ),
+    )
+    .await;
     drop(turn.event_tx);
-    if let Some(mut events_done) = turn.events_done.take() {
-        let state_for_reconcile = Arc::clone(state);
-        let events_flushed = tokio::select! {
-            _ = &mut events_done => true,
-            _ = tokio::time::sleep(Duration::from_secs(2)) => false,
-        };
-        if events_flushed {
-            let _ = reconcile_turn_failed_on_provider_exit(
-                &state_for_reconcile,
-                session_id,
-                Some(run_id),
-                turn_id,
-                "provider_exit",
-            )
-            .await;
-        } else {
-            tracing::debug!(
-                session_id = %session_id.0,
-                run_id = %run_id.0,
-                turn_id = %turn_id.0,
-                "event loop still draining after provider exit; deferring reconciliation"
-            );
-            tokio::spawn(async move {
-                tokio::select! {
-                    _ = &mut events_done => (),
-                    _ = tokio::time::sleep(Duration::from_secs(15)) => (),
-                };
-                let _ = reconcile_turn_failed_on_provider_exit(
-                    &state_for_reconcile,
-                    session_id,
-                    Some(run_id),
-                    turn_id,
-                    "provider_exit",
-                )
-                .await;
-            });
-        }
-    } else {
-        let _ = reconcile_turn_failed_on_provider_exit(
+    if let Some(events_done) = turn.events_done.take() {
+        wait_for_turn_event_loop(session_id, run_id, turn_id, events_done).await;
+        let _ = finalize_provider_outcome(
             state,
             session_id,
             Some(run_id),
             turn_id,
-            "provider_exit",
+            message_id,
+            outcome,
+        )
+        .await;
+    } else {
+        let _ = finalize_provider_outcome(
+            state,
+            session_id,
+            Some(run_id),
+            turn_id,
+            message_id,
+            outcome,
         )
         .await;
     }
+}
+
+pub(crate) async fn handle_provider_stall(
+    state: &Arc<AppState>,
+    session_id: SessionId,
+    mut turn: RunningTurn,
+) {
+    let run_id = turn.run_id;
+    let turn_id = turn.turn_id;
+    let message_id = turn.message_id;
+    abort_provider(&mut turn.handle);
+    let outcome = wait_for_provider_outcome(
+        &mut turn.handle,
+        provider_protocol_violation(
+            "provider_protocol_violation_inactivity_timeout",
+            "provider stalled without reporting a terminal outcome",
+        ),
+        provider_protocol_violation(
+            "provider_protocol_violation_inactivity_timeout",
+            "provider stalled without reporting a terminal outcome before timeout",
+        ),
+    )
+    .await;
+    drop(turn.event_tx);
+    if let Some(events_done) = turn.events_done.take() {
+        wait_for_turn_event_loop(session_id, run_id, turn_id, events_done).await;
+    }
+    let _ = finalize_provider_outcome(
+        state,
+        session_id,
+        Some(run_id),
+        turn_id,
+        message_id,
+        outcome,
+    )
+    .await;
 }
 
 fn has_terminal_event(event_type: &SessionEventType) -> bool {
@@ -358,30 +408,17 @@ pub(crate) async fn finalize_start_failure_if_needed(
         }
     }
 
-    let _ = emit_event(
+    let _ = finalize_failed_turn(
         state,
         session_id,
         run_id,
-        Some(turn_id),
-        SessionEventType::Error,
-        json!({
-            "kind": "start_failed",
-            "message": error_message,
-        }),
+        turn_id,
+        message_id,
+        error_message,
+        Some("start_failed"),
+        None,
+        Some(json!("start_failed")),
+        true,
     )
     .await;
-    let _ = emit_event(
-        state,
-        session_id,
-        run_id,
-        Some(turn_id),
-        SessionEventType::TurnFinished,
-        json!({
-            "message_id": message_id.0,
-            "status": "failed",
-            "reason": "start_failed",
-        }),
-    )
-    .await;
-    flush_session_events(&store, session_id, "handle_turn_start_failed").await;
 }

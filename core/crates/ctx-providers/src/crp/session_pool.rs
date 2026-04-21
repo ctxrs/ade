@@ -12,7 +12,9 @@ use tokio::sync::{broadcast, mpsc, oneshot, Mutex};
 
 use ctx_core::models::SessionEventType;
 
-use crate::adapters::{ProviderProcessInfo, ProviderSessionSweepConfig, ProviderSessionSweepStats};
+use crate::adapters::{
+    ProviderProcessInfo, ProviderSessionSweepConfig, ProviderSessionSweepStats, ProviderTurnOutcome,
+};
 use crate::container_exec::translate_thread_cwd_for_container;
 use crate::events::NormalizedEvent;
 
@@ -62,6 +64,78 @@ pub(super) fn session_shutdown_reason(session: &CrpSession) -> Option<String> {
 
 fn session_is_live(session: &CrpSession) -> bool {
     !session.draining.load(Ordering::SeqCst) && session_shutdown_reason(session).is_none()
+}
+
+fn outcome_from_terminal_events(events: &[NormalizedEvent]) -> Option<ProviderTurnOutcome> {
+    events.iter().find_map(|event| match event.event_type {
+        SessionEventType::Done => Some(ProviderTurnOutcome::completed()),
+        SessionEventType::Error => {
+            let message = event
+                .payload_json
+                .get("message")
+                .or_else(|| event.payload_json.get("error"))
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("crp_turn_error")
+                .to_string();
+            Some(ProviderTurnOutcome::failed_with_context(
+                message,
+                event
+                    .payload_json
+                    .get("reason")
+                    .and_then(serde_json::Value::as_str)
+                    .map(ToOwned::to_owned),
+                event.payload_json.get("details").cloned(),
+                event.payload_json.get("kind").cloned(),
+                true,
+            ))
+        }
+        SessionEventType::TurnInterrupted => Some(ProviderTurnOutcome {
+            status: crate::adapters::ProviderTurnStatus::Interrupted,
+            message: None,
+            reason: event
+                .payload_json
+                .get("reason")
+                .and_then(serde_json::Value::as_str)
+                .map(ToOwned::to_owned),
+            details: None,
+            kind: None,
+            provider_cancelled: event
+                .payload_json
+                .get("provider_cancelled")
+                .and_then(serde_json::Value::as_bool),
+            terminal_event_emitted: true,
+        }),
+        _ => None,
+    })
+}
+
+fn update_terminal_outcome(
+    outcome: &mut Option<ProviderTurnOutcome>,
+    events: &[NormalizedEvent],
+    done: bool,
+) {
+    if outcome.is_some() {
+        return;
+    }
+
+    if let Some(terminal) = outcome_from_terminal_events(events) {
+        *outcome = Some(terminal);
+    } else if done {
+        *outcome = Some(ProviderTurnOutcome::protocol_violation(
+            "provider_protocol_violation_no_terminal_outcome",
+            "CRP turn ended without a mapped terminal event",
+        ));
+    }
+}
+
+fn interrupted_outcome_without_event(
+    reason: &str,
+    provider_cancelled: bool,
+) -> ProviderTurnOutcome {
+    ProviderTurnOutcome {
+        terminal_event_emitted: false,
+        ..ProviderTurnOutcome::interrupted(reason, provider_cancelled)
+    }
 }
 
 impl CrpSessionPool {
@@ -277,7 +351,7 @@ impl CrpSessionPool {
         }
     }
 
-    pub(super) async fn prompt(&self, req: CrpPromptRequest) -> Result<()> {
+    pub(super) async fn prompt(&self, req: CrpPromptRequest) -> Result<ProviderTurnOutcome> {
         let _guard = ActivePromptGuard::new(
             Arc::clone(&self.active_prompts),
             Arc::clone(&self.busy_sessions),
@@ -305,10 +379,10 @@ impl CrpSessionPool {
                 .await;
             self.drain_session_if_needed(&req.session_key, &session)
                 .await;
-            return Ok(());
+            return Ok(ProviderTurnOutcome::interrupted(reason, true));
         }
 
-        let result: Result<()> = async {
+        let result: Result<ProviderTurnOutcome> = async {
             if !session.opened.load(Ordering::SeqCst) && !session.opening.load(Ordering::SeqCst) {
                 let config = build_crp_session_config(&req.env, &req.workdir)?;
                 let provider_session_id = req
@@ -403,6 +477,7 @@ impl CrpSessionPool {
             let mut cancel_rx = req.cancel_rx;
             let mut cancel_requested = false;
             let mut cancel_deadline: Option<tokio::time::Instant> = None;
+            let mut outcome: Option<ProviderTurnOutcome> = None;
             loop {
                 tokio::select! {
                     _ = &mut cancel_rx, if !cancel_requested => {
@@ -418,6 +493,7 @@ impl CrpSessionPool {
                             tokio::time::sleep_until(deadline).await;
                         }
                     }, if cancel_requested && cancel_deadline.is_some() => {
+                        outcome = Some(interrupted_outcome_without_event("cancelled", true));
                         break;
                     }
                     shutdown = shutdown_rx.changed() => {
@@ -438,6 +514,7 @@ impl CrpSessionPool {
                                 }),
                             })
                             .await;
+                        outcome = Some(ProviderTurnOutcome::interrupted(reason, true));
                         break;
                     }
                     stderr = stderr_rx.recv() => {
@@ -504,6 +581,7 @@ impl CrpSessionPool {
                                     &mut tool_output_cache,
                                     &mut tool_input_cache,
                                 );
+                                update_terminal_outcome(&mut outcome, &mapped.events, mapped.done);
                                 for event in mapped.events {
                                     if let Some(f) = dump_norm_file.as_mut() {
                                         let _ = writeln!(
@@ -530,6 +608,16 @@ impl CrpSessionPool {
                                             }),
                                         })
                                         .await;
+                                    update_terminal_outcome(
+                                        &mut outcome,
+                                        &[NormalizedEvent {
+                                            event_type: SessionEventType::TurnInterrupted,
+                                            payload_json: json!({
+                                                "reason": "auth_required",
+                                            }),
+                                        }],
+                                        false,
+                                    );
                                     break;
                                 }
                                 if mapped.done {
@@ -549,12 +637,23 @@ impl CrpSessionPool {
                                     })
                                     .await;
                             }
-                            Err(broadcast::error::RecvError::Closed) => break,
+                            Err(broadcast::error::RecvError::Closed) => {
+                                outcome = Some(ProviderTurnOutcome::protocol_violation(
+                                    "provider_protocol_violation_event_stream_closed",
+                                    "CRP event stream closed before the turn reported an outcome",
+                                ));
+                                break;
+                            }
                         }
                     }
                 }
             }
-            Ok(())
+            Ok(outcome.unwrap_or_else(|| {
+                ProviderTurnOutcome::protocol_violation(
+                    "provider_protocol_violation_no_terminal_outcome",
+                    "CRP prompt ended without a terminal outcome",
+                )
+            }))
         }
         .await;
 
@@ -891,4 +990,104 @@ pub(super) struct CrpPromptRequest {
     pub(super) env: HashMap<String, String>,
     pub(super) event_sink: mpsc::Sender<NormalizedEvent>,
     pub(super) cancel_rx: oneshot::Receiver<()>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn event(event_type: SessionEventType, payload_json: serde_json::Value) -> NormalizedEvent {
+        NormalizedEvent {
+            event_type,
+            payload_json,
+        }
+    }
+
+    #[test]
+    fn outcome_from_terminal_events_prefers_first_terminal_event() {
+        let outcome = outcome_from_terminal_events(&[
+            event(
+                SessionEventType::TurnInterrupted,
+                json!({"reason": "cancelled", "provider_cancelled": true}),
+            ),
+            event(SessionEventType::Done, json!({})),
+        ])
+        .expect("terminal outcome");
+
+        assert!(matches!(
+            outcome.status,
+            crate::adapters::ProviderTurnStatus::Interrupted
+        ));
+        assert_eq!(outcome.reason.as_deref(), Some("cancelled"));
+        assert_eq!(outcome.provider_cancelled, Some(true));
+    }
+
+    #[test]
+    fn outcome_from_terminal_events_prefers_first_error_terminal_event() {
+        let outcome = outcome_from_terminal_events(&[
+            event(
+                SessionEventType::Error,
+                json!({
+                    "message": "boom",
+                    "reason": "crp_error",
+                    "details": {"code": 42},
+                    "kind": "provider_error",
+                }),
+            ),
+            event(
+                SessionEventType::TurnInterrupted,
+                json!({"reason": "cancelled", "provider_cancelled": true}),
+            ),
+        ])
+        .expect("terminal outcome");
+
+        assert!(matches!(
+            outcome.status,
+            crate::adapters::ProviderTurnStatus::Failed
+        ));
+        assert_eq!(outcome.message.as_deref(), Some("boom"));
+        assert_eq!(outcome.reason.as_deref(), Some("crp_error"));
+        assert_eq!(outcome.details, Some(json!({"code": 42})));
+        assert_eq!(outcome.kind, Some(json!("provider_error")));
+    }
+
+    #[test]
+    fn update_terminal_outcome_does_not_override_existing_terminal_outcome() {
+        let mut outcome = Some(ProviderTurnOutcome {
+            status: crate::adapters::ProviderTurnStatus::Interrupted,
+            message: None,
+            reason: Some("auth_required".to_string()),
+            details: None,
+            kind: None,
+            provider_cancelled: None,
+            terminal_event_emitted: true,
+        });
+
+        update_terminal_outcome(
+            &mut outcome,
+            &[event(SessionEventType::Done, json!({}))],
+            true,
+        );
+
+        let outcome = outcome.expect("terminal outcome");
+        assert!(matches!(
+            outcome.status,
+            crate::adapters::ProviderTurnStatus::Interrupted
+        ));
+        assert_eq!(outcome.reason.as_deref(), Some("auth_required"));
+    }
+
+    #[test]
+    fn interrupted_outcome_without_event_requires_scheduler_terminal_event() {
+        let outcome = interrupted_outcome_without_event("cancelled", true);
+
+        assert!(matches!(
+            outcome.status,
+            crate::adapters::ProviderTurnStatus::Interrupted
+        ));
+        assert_eq!(outcome.reason.as_deref(), Some("cancelled"));
+        assert_eq!(outcome.provider_cancelled, Some(true));
+        assert!(!outcome.terminal_event_emitted);
+    }
 }

@@ -112,16 +112,21 @@ impl SessionRuntime {
         rx
     }
 
-    pub async fn publish_event(&self, state: &Arc<AppState>, event: SessionEvent) {
-        let tx = self.get_broadcaster(event.session_id).await;
-        let _ = tx.send(event.clone());
+    pub async fn publish_session_event_head(&self, session_id: SessionId, seq: i64) {
         let mut map = self.session_event_heads.lock().await;
-        let sender = map.entry(event.session_id).or_insert_with(|| {
+        let sender = map.entry(session_id).or_insert_with(|| {
             let (tx, _rx) = watch::channel::<i64>(0);
             TimedEntry::new(tx)
         });
         sender.touch();
-        let _ = sender.value.send(event.seq);
+        let _ = sender.value.send(seq);
+    }
+
+    pub async fn publish_event(&self, state: &Arc<AppState>, event: SessionEvent) {
+        let tx = self.get_broadcaster(event.session_id).await;
+        let _ = tx.send(event.clone());
+        self.publish_session_event_head(event.session_id, event.seq)
+            .await;
         self.update_workspace_active_snapshot_for_event(state, &event)
             .await;
     }
@@ -274,8 +279,8 @@ impl SessionRuntime {
         .await;
         let state_rev = last_event_seq;
 
-        let activity = derive_summary_activity(&event.event_type)
-            .or_else(|| turn.as_ref().map(activity_from_turn));
+        let activity =
+            derive_summary_activity(event).or_else(|| turn.as_ref().map(activity_from_turn));
 
         let mut last_message_at = None;
         let mut last_message_preview = None;

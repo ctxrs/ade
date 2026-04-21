@@ -5,7 +5,7 @@ use std::time::Duration;
 use anyhow::Result;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{json, Value};
 use tokio::sync::oneshot;
 use tokio::task::AbortHandle;
 
@@ -140,9 +140,103 @@ pub struct TurnInput {
     pub model_id: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderTurnStatus {
+    Completed,
+    Failed,
+    Interrupted,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProviderTurnOutcome {
+    pub status: ProviderTurnStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub details: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_cancelled: Option<bool>,
+    #[serde(default)]
+    pub terminal_event_emitted: bool,
+}
+
+impl ProviderTurnOutcome {
+    pub fn completed() -> Self {
+        Self {
+            status: ProviderTurnStatus::Completed,
+            message: None,
+            reason: None,
+            details: None,
+            kind: None,
+            provider_cancelled: None,
+            terminal_event_emitted: true,
+        }
+    }
+
+    pub fn failed(message: impl Into<String>) -> Self {
+        Self {
+            status: ProviderTurnStatus::Failed,
+            message: Some(message.into()),
+            reason: None,
+            details: None,
+            kind: None,
+            provider_cancelled: None,
+            terminal_event_emitted: true,
+        }
+    }
+
+    pub fn failed_with_context(
+        message: impl Into<String>,
+        reason: Option<String>,
+        details: Option<Value>,
+        kind: Option<Value>,
+        terminal_event_emitted: bool,
+    ) -> Self {
+        Self {
+            status: ProviderTurnStatus::Failed,
+            message: Some(message.into()),
+            reason,
+            details,
+            kind,
+            provider_cancelled: None,
+            terminal_event_emitted,
+        }
+    }
+
+    pub fn interrupted(reason: impl Into<String>, provider_cancelled: bool) -> Self {
+        Self {
+            status: ProviderTurnStatus::Interrupted,
+            message: None,
+            reason: Some(reason.into()),
+            details: None,
+            kind: None,
+            provider_cancelled: Some(provider_cancelled),
+            terminal_event_emitted: true,
+        }
+    }
+
+    pub fn protocol_violation(reason: impl Into<String>, message: impl Into<String>) -> Self {
+        Self {
+            status: ProviderTurnStatus::Failed,
+            message: Some(message.into()),
+            reason: Some(reason.into()),
+            details: None,
+            kind: Some(json!("provider_protocol_violation")),
+            provider_cancelled: None,
+            terminal_event_emitted: false,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct RunHandle {
     pub done: oneshot::Receiver<()>,
+    pub outcome: oneshot::Receiver<ProviderTurnOutcome>,
     pub cancel: Option<oneshot::Sender<()>>,
     pub abort: Option<AbortHandle>,
 }
@@ -208,7 +302,7 @@ pub trait ProviderAdapter: Send + Sync {
         event_sink: tokio::sync::mpsc::Sender<NormalizedEvent>,
     ) -> Result<RunHandle>;
 
-    async fn cancel(&self, handle: RunHandle) -> Result<()>;
+    async fn cancel(&self, handle: &mut RunHandle) -> Result<()>;
 
     /// Best-effort provider process discovery (used for resource utilization).
     async fn list_processes(&self) -> Vec<ProviderProcessInfo> {

@@ -160,6 +160,7 @@ impl AppState {
             sessions: SessionRuntime {
                 session_head_cache: Mutex::new(HashMap::new()),
                 schedulers: Mutex::new(HashMap::new()),
+                provider_inactivity_timeout: Mutex::new(provider_inactivity_timeout_from_env()),
                 broadcasters: Mutex::new(HashMap::new()),
                 session_event_heads: Mutex::new(HashMap::new()),
                 order_seq_states: Mutex::new(HashMap::new()),

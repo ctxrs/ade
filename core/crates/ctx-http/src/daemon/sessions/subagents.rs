@@ -23,10 +23,14 @@ use crate::scheduler::{InterruptTelemetryContext, QueuedMessage, SchedulerComman
 use crate::settings as user_settings;
 use crate::vcs_hooks;
 use ctx_core::ids::{MessageId, RunId, SessionId, TaskId, TurnId, WorktreeId};
+#[cfg(test)]
+use ctx_core::models::SessionEvent;
 use ctx_core::models::{
     Message, MessageDelivery, MessageRole, Session, SessionEventType, SessionStatus, SessionTurn,
     SessionTurnStatus, SubagentInvocation, SubagentInvocationChild, VcsKind, Workspace, Worktree,
 };
+#[cfg(test)]
+use ctx_core::session_projection::turn_status_from_finished_payload;
 use ctx_fs::vcs;
 
 const DEFAULT_MAX_SUBAGENTS_PER_CALL: usize = 10;
@@ -173,50 +177,80 @@ fn default_catalog_model_id(catalog: Option<&ModelCatalog>) -> Option<&str> {
     catalog.and_then(ModelCatalog::default_model_id)
 }
 
-async fn wait_for_run_terminal_event(
+fn subagent_status_from_turn_status(status: SessionTurnStatus) -> &'static str {
+    match status {
+        SessionTurnStatus::Completed => "completed",
+        SessionTurnStatus::Interrupted => "interrupted",
+        SessionTurnStatus::Failed => "failed",
+        SessionTurnStatus::Running | SessionTurnStatus::Queued => "running",
+    }
+}
+
+fn subagent_terminal_status_from_turn_status(status: SessionTurnStatus) -> Option<&'static str> {
+    match status {
+        SessionTurnStatus::Completed => Some("completed"),
+        SessionTurnStatus::Interrupted => Some("interrupted"),
+        SessionTurnStatus::Failed => Some("failed"),
+        SessionTurnStatus::Running | SessionTurnStatus::Queued => None,
+    }
+}
+
+#[cfg(test)]
+fn subagent_terminal_status_from_event(event: &SessionEvent) -> Option<&'static str> {
+    match event.event_type {
+        SessionEventType::Done => Some("completed"),
+        SessionEventType::Error => Some("failed"),
+        SessionEventType::TurnInterrupted => Some("interrupted"),
+        SessionEventType::TurnFinished => turn_status_from_finished_payload(&event.payload_json)
+            .and_then(subagent_terminal_status_from_turn_status),
+        _ => None,
+    }
+}
+
+async fn latest_terminal_turn_for_run(
+    store: &ctx_store::Store,
+    session_id: SessionId,
+    run_id: RunId,
+) -> Result<Option<SessionTurn>, String> {
+    let turn = store
+        .get_latest_turn_for_run(session_id, run_id)
+        .await
+        .map_err(|e| logs::redact_sensitive(&e.to_string()))?;
+    Ok(turn.and_then(|turn| {
+        subagent_terminal_status_from_turn_status(turn.status.clone()).map(|_| turn)
+    }))
+}
+
+async fn wait_for_run_terminal_turn(
     state: &Arc<AppState>,
     session_id: SessionId,
     run_id: RunId,
-) -> Result<SessionEventType, String> {
+) -> Result<SessionTurn, String> {
     let store = state
         .store_for_session(session_id)
         .await
         .map_err(|e| logs::redact_sensitive(&e.to_string()))?;
-    if let Some(event) = store
-        .get_terminal_event_for_run(session_id, run_id)
-        .await
-        .map_err(|e| logs::redact_sensitive(&e.to_string()))?
-    {
-        return Ok(event.event_type);
+    let mut rx = state.subscribe_session_event_head(session_id).await;
+    if let Some(turn) = latest_terminal_turn_for_run(&store, session_id, run_id).await? {
+        return Ok(turn);
     }
 
-    let mut rx = state.get_broadcaster(session_id).await.subscribe();
     loop {
-        match rx.recv().await {
-            Ok(event) => {
-                if event.run_id == Some(run_id)
-                    && matches!(
-                        event.event_type,
-                        SessionEventType::Done
-                            | SessionEventType::Error
-                            | SessionEventType::TurnInterrupted
-                            | SessionEventType::TurnFinished
-                    )
+        tokio::select! {
+            changed = rx.changed() => {
+                if changed.is_err() {
+                    rx = state.subscribe_session_event_head(session_id).await;
+                }
+                if let Some(turn) = latest_terminal_turn_for_run(&store, session_id, run_id).await?
                 {
-                    return Ok(event.event_type);
+                    return Ok(turn);
                 }
             }
-            Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
-                if let Some(event) = store
-                    .get_terminal_event_for_run(session_id, run_id)
-                    .await
-                    .map_err(|e| logs::redact_sensitive(&e.to_string()))?
+            _ = tokio::time::sleep(std::time::Duration::from_millis(250)) => {
+                if let Some(turn) = latest_terminal_turn_for_run(&store, session_id, run_id).await?
                 {
-                    return Ok(event.event_type);
+                    return Ok(turn);
                 }
-            }
-            Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                return Err("session event stream closed".to_string());
             }
         }
     }
@@ -251,24 +285,19 @@ async fn run_subagent_child(
     let run_id = child
         .run_id
         .ok_or_else(|| "subagent run_id missing".to_string())?;
-    let terminal = wait_for_run_terminal_event(state, child.child_session_id, run_id).await;
-    let status = match terminal {
-        Ok(SessionEventType::Done) | Ok(SessionEventType::TurnFinished) => "completed",
-        Ok(SessionEventType::TurnInterrupted) => "interrupted",
-        Ok(SessionEventType::Error) => "failed",
-        Ok(_) => "completed",
-        Err(_) => "unknown",
-    }
-    .to_string();
+    let store = state
+        .store_for_session(child.child_session_id)
+        .await
+        .map_err(|e| logs::redact_sensitive(&e.to_string()))?;
+    let status = match wait_for_run_terminal_turn(state, child.child_session_id, run_id).await {
+        Ok(turn) => subagent_status_from_turn_status(turn.status).to_string(),
+        Err(_) => "unknown".to_string(),
+    };
 
     let child_updated_at = chrono::Utc::now();
     let mut updated_child = child.clone();
     updated_child.status = status.clone();
     updated_child.updated_at = child_updated_at;
-    let store = state
-        .store_for_session(child.child_session_id)
-        .await
-        .map_err(|e| logs::redact_sensitive(&e.to_string()))?;
     store
         .upsert_subagent_invocation_child(updated_child)
         .await
@@ -1329,28 +1358,17 @@ pub(crate) async fn wait_for_subagents(
                     "subagent run_id missing; cannot wait",
                 )
             })?;
-            let terminal = wait_for_run_terminal_event(&state, child.id, run_id).await;
-            let status = match terminal {
-                Ok(SessionEventType::Done) | Ok(SessionEventType::TurnFinished) => "completed",
-                Ok(SessionEventType::TurnInterrupted) => "interrupted",
-                Ok(SessionEventType::Error) => "failed",
-                Ok(_) => "completed",
-                Err(_) => "unknown",
-            }
-            .to_string();
+            let status = match wait_for_run_terminal_turn(&state, child.id, run_id).await {
+                Ok(turn) => subagent_status_from_turn_status(turn.status).to_string(),
+                Err(_) => "unknown".to_string(),
+            };
             (status, Some(run_id))
         } else if let Some(turn) = store
             .get_latest_turn_for_session(child.id)
             .await
             .map_err(internal_api_error)?
         {
-            let status = match turn.status {
-                SessionTurnStatus::Completed => "completed",
-                SessionTurnStatus::Interrupted => "interrupted",
-                SessionTurnStatus::Failed => "failed",
-                SessionTurnStatus::Running | SessionTurnStatus::Queued => "running",
-            }
-            .to_string();
+            let status = subagent_status_from_turn_status(turn.status).to_string();
             (status, turn.run_id)
         } else {
             return Err(api_error(
@@ -1392,4 +1410,44 @@ pub(crate) async fn wait_for_subagents(
         status: crate::api::sessions::aggregate_subagent_status(&results).to_string(),
         results,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use chrono::Utc;
+    use serde_json::json;
+
+    use ctx_core::ids::{SessionEventId, TurnId};
+
+    fn terminal_event(status: &str) -> SessionEvent {
+        SessionEvent {
+            seq: 1,
+            id: SessionEventId::new(),
+            session_id: SessionId::new(),
+            run_id: Some(RunId::new()),
+            turn_id: Some(TurnId::new()),
+            event_type: SessionEventType::TurnFinished,
+            payload_json: json!({ "status": status }),
+            transient: false,
+            created_at: Utc::now(),
+        }
+    }
+
+    #[test]
+    fn subagent_terminal_status_uses_turn_finished_failed_payload() {
+        assert_eq!(
+            subagent_terminal_status_from_event(&terminal_event("failed")),
+            Some("failed")
+        );
+    }
+
+    #[test]
+    fn subagent_terminal_status_uses_turn_finished_interrupted_payload() {
+        assert_eq!(
+            subagent_terminal_status_from_event(&terminal_event("interrupted")),
+            Some("interrupted")
+        );
+    }
 }

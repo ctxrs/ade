@@ -108,20 +108,8 @@ pub(super) fn patch_turn_from_event(turn: &mut SessionTurn, event: &SessionEvent
         SessionEventType::TurnStarted => {
             turn.status = SessionTurnStatus::Running;
         }
-        SessionEventType::Done => {
-            turn.status = SessionTurnStatus::Completed;
-            turn.end_seq = Some(event.seq);
-        }
         SessionEventType::TurnFinished => {
             turn.status = turn_status_from_finished_event(event);
-            turn.end_seq = Some(event.seq);
-        }
-        SessionEventType::TurnInterrupted => {
-            turn.status = SessionTurnStatus::Interrupted;
-            turn.end_seq = Some(event.seq);
-        }
-        SessionEventType::Error => {
-            turn.status = SessionTurnStatus::Failed;
             turn.end_seq = Some(event.seq);
         }
         _ => {}
@@ -132,10 +120,8 @@ pub(super) fn patch_turn_from_event(turn: &mut SessionTurn, event: &SessionEvent
     turn.updated_at = event.created_at;
 }
 
-pub(super) fn derive_summary_activity(
-    event_type: &SessionEventType,
-) -> Option<SessionActivityState> {
-    match event_type {
+pub(super) fn derive_summary_activity(event: &SessionEvent) -> Option<SessionActivityState> {
+    match event.event_type {
         SessionEventType::TurnQueued => Some(SessionActivityState {
             is_working: false,
             last_turn_status: Some(SessionTurnStatus::Queued),
@@ -144,17 +130,9 @@ pub(super) fn derive_summary_activity(
             is_working: true,
             last_turn_status: Some(SessionTurnStatus::Running),
         }),
-        SessionEventType::TurnFinished | SessionEventType::Done => Some(SessionActivityState {
+        SessionEventType::TurnFinished => Some(SessionActivityState {
             is_working: false,
-            last_turn_status: Some(SessionTurnStatus::Completed),
-        }),
-        SessionEventType::TurnInterrupted => Some(SessionActivityState {
-            is_working: false,
-            last_turn_status: Some(SessionTurnStatus::Interrupted),
-        }),
-        SessionEventType::Error => Some(SessionActivityState {
-            is_working: false,
-            last_turn_status: Some(SessionTurnStatus::Failed),
+            last_turn_status: Some(turn_status_from_finished_event(event)),
         }),
         _ => None,
     }

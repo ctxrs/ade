@@ -206,15 +206,13 @@ mod tests {
     }
 
     #[test]
-    fn turn_finished_falls_back_to_prior_terminal_status() {
+    fn turn_finished_without_status_does_not_resolve_terminal_state() {
         let events = vec![
             event(3, SessionEventType::Error, json!({"status": "failed"})),
             event(4, SessionEventType::TurnFinished, json!({})),
         ];
 
-        let resolved = resolve_turn_terminal_state(&events).expect("resolved state");
-        assert_eq!(resolved.status, SessionTurnStatus::Failed);
-        assert_eq!(resolved.end_seq, Some(4));
+        assert!(resolve_turn_terminal_state(&events).is_none());
     }
 
     #[test]

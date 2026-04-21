@@ -15,7 +15,7 @@ use ctx_core::models::SessionEventType;
 use crate::adapters::{
     ProviderAdapter, ProviderCapabilities, ProviderHealth, ProviderProcessInfo,
     ProviderRestartMode, ProviderSessionSweepConfig, ProviderSessionSweepStats, ProviderStatus,
-    RunHandle, TurnInput,
+    ProviderTurnOutcome, RunHandle, TurnInput,
 };
 use crate::events::NormalizedEvent;
 
@@ -158,6 +158,7 @@ impl ProviderAdapter for Tier1CrpAdapter {
         }
         let (cancel_tx, cancel_rx) = oneshot::channel::<()>();
         let (done_tx, done_rx) = oneshot::channel::<()>();
+        let (outcome_tx, outcome_rx) = oneshot::channel::<ProviderTurnOutcome>();
         let pool = Arc::clone(&self.pool);
         let error_sink = event_sink.clone();
         let join = tokio::spawn(async move {
@@ -173,14 +174,26 @@ impl ProviderAdapter for Tier1CrpAdapter {
                 event_sink,
                 cancel_rx,
             };
-            if let Err(err) = pool.prompt(request).await {
-                let _ = error_sink
-                    .send(NormalizedEvent {
-                        event_type: SessionEventType::Error,
-                        payload_json: json!({ "message": err.to_string() }),
-                    })
-                    .await;
-            }
+            let outcome = match pool.prompt(request).await {
+                Ok(outcome) => outcome,
+                Err(err) => {
+                    let emitted = error_sink
+                        .send(NormalizedEvent {
+                            event_type: SessionEventType::Error,
+                            payload_json: json!({ "message": err.to_string() }),
+                        })
+                        .await
+                        .is_ok();
+                    ProviderTurnOutcome::failed_with_context(
+                        err.to_string(),
+                        None,
+                        None,
+                        None,
+                        emitted,
+                    )
+                }
+            };
+            let _ = outcome_tx.send(outcome);
             pool.trigger_background_reap();
             let _ = done_tx.send(());
         });
@@ -188,12 +201,13 @@ impl ProviderAdapter for Tier1CrpAdapter {
 
         Ok(RunHandle {
             done: done_rx,
+            outcome: outcome_rx,
             cancel: Some(cancel_tx),
             abort: Some(abort),
         })
     }
 
-    async fn cancel(&self, mut handle: RunHandle) -> Result<()> {
+    async fn cancel(&self, handle: &mut RunHandle) -> Result<()> {
         if let Some(cancel) = handle.cancel.take() {
             let _ = cancel.send(());
         }

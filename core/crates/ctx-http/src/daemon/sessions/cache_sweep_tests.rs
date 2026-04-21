@@ -2,11 +2,12 @@ use super::head_projection::{
     build_session_summary_delta, derive_summary_activity, resolve_projection_rev_for_stream_delta,
 };
 use chrono::Utc;
-use ctx_core::ids::{SessionId, TaskId, WorkspaceId, WorktreeId};
+use ctx_core::ids::{SessionEventId, SessionId, TaskId, WorkspaceId, WorktreeId};
 use ctx_core::models::{
-    ExecutionEnvironment, Session, SessionActivityState, SessionEventType, SessionStatus,
-    SessionTurnStatus,
+    ExecutionEnvironment, Session, SessionActivityState, SessionEvent, SessionEventType,
+    SessionStatus, SessionTurnStatus,
 };
+use serde_json::json;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
@@ -31,17 +32,61 @@ fn test_session() -> Session {
     }
 }
 
+fn test_event(event_type: SessionEventType, payload_json: serde_json::Value) -> SessionEvent {
+    SessionEvent {
+        seq: 1,
+        id: SessionEventId::new(),
+        session_id: SessionId::new(),
+        run_id: None,
+        turn_id: None,
+        event_type,
+        payload_json,
+        transient: false,
+        created_at: Utc::now(),
+    }
+}
+
 #[test]
 fn queued_turns_do_not_publish_working_activity() {
-    let queued = derive_summary_activity(&SessionEventType::TurnQueued)
+    let queued = derive_summary_activity(&test_event(SessionEventType::TurnQueued, json!({})))
         .expect("queued turns should publish summary activity");
     assert!(!queued.is_working);
     assert_eq!(queued.last_turn_status, Some(SessionTurnStatus::Queued));
 
-    let running = derive_summary_activity(&SessionEventType::TurnStarted)
+    let running = derive_summary_activity(&test_event(SessionEventType::TurnStarted, json!({})))
         .expect("running turns should publish summary activity");
     assert!(running.is_working);
     assert_eq!(running.last_turn_status, Some(SessionTurnStatus::Running));
+}
+
+#[test]
+fn turn_finished_summary_activity_uses_embedded_status() {
+    let interrupted = derive_summary_activity(&test_event(
+        SessionEventType::TurnFinished,
+        json!({"status": "interrupted"}),
+    ))
+    .expect("interrupt finish should publish summary activity");
+    assert_eq!(
+        interrupted.last_turn_status,
+        Some(SessionTurnStatus::Interrupted)
+    );
+
+    let failed = derive_summary_activity(&test_event(
+        SessionEventType::TurnFinished,
+        json!({"status": "failed"}),
+    ))
+    .expect("failed finish should publish summary activity");
+    assert_eq!(failed.last_turn_status, Some(SessionTurnStatus::Failed));
+}
+
+#[test]
+fn raw_terminal_events_do_not_publish_terminal_summary_activity() {
+    assert!(derive_summary_activity(&test_event(SessionEventType::Done, json!({}))).is_none());
+    assert!(derive_summary_activity(&test_event(SessionEventType::Error, json!({}))).is_none());
+    assert!(
+        derive_summary_activity(&test_event(SessionEventType::TurnInterrupted, json!({})))
+            .is_none()
+    );
 }
 
 #[test]

@@ -37,7 +37,7 @@ impl ProviderAdapter for StaticStatusAdapter {
         anyhow::bail!("{msg}");
     }
 
-    async fn cancel(&self, _handle: RunHandle) -> Result<()> {
+    async fn cancel(&self, _handle: &mut RunHandle) -> Result<()> {
         Ok(())
     }
 }

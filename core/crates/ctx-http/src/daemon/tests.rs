@@ -96,7 +96,7 @@ impl ProviderAdapter for RecordingProviderAdapter {
         anyhow::bail!("not used in test");
     }
 
-    async fn cancel(&self, _handle: RunHandle) -> Result<()> {
+    async fn cancel(&self, _handle: &mut RunHandle) -> Result<()> {
         Ok(())
     }
 

@@ -213,7 +213,7 @@ impl ProviderAdapter for GeminiLoginTestAdapter {
         Err(anyhow!("run is not used in this test adapter"))
     }
 
-    async fn cancel(&self, _handle: RunHandle) -> Result<()> {
+    async fn cancel(&self, _handle: &mut RunHandle) -> Result<()> {
         Ok(())
     }
 
@@ -335,7 +335,7 @@ impl ProviderAdapter for QwenLoginTestAdapter {
         Err(anyhow!("run is not used in this test adapter"))
     }
 
-    async fn cancel(&self, _handle: RunHandle) -> Result<()> {
+    async fn cancel(&self, _handle: &mut RunHandle) -> Result<()> {
         Ok(())
     }
 
@@ -426,7 +426,7 @@ impl ProviderAdapter for MistralLoginTestAdapter {
         Err(anyhow!("run is not used in this test adapter"))
     }
 
-    async fn cancel(&self, _handle: RunHandle) -> Result<()> {
+    async fn cancel(&self, _handle: &mut RunHandle) -> Result<()> {
         Ok(())
     }
 
@@ -516,7 +516,7 @@ impl ProviderAdapter for AmpLoginTestAdapter {
         Err(anyhow!("run is not used in this test adapter"))
     }
 
-    async fn cancel(&self, _handle: RunHandle) -> Result<()> {
+    async fn cancel(&self, _handle: &mut RunHandle) -> Result<()> {
         Ok(())
     }
 
