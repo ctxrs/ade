@@ -153,11 +153,15 @@ async function fetchDigest(url, timeoutMs) {
 }
 
 function isRetryableFetchError(error) {
+  const message = String(error?.message || "");
   return (
     error &&
     typeof error === "object" &&
-    Number.isInteger(error.status) &&
-    RETRYABLE_HTTP_STATUSES.has(error.status)
+    ((Number.isInteger(error.status) &&
+      RETRYABLE_HTTP_STATUSES.has(error.status)) ||
+      error.name === "AbortError" ||
+      error.name === "TimeoutError" ||
+      /\b(fetch failed|ECONNRESET|ETIMEDOUT|EAI_AGAIN|ENOTFOUND)\b/i.test(message))
   );
 }
 

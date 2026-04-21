@@ -369,40 +369,40 @@
         "args": [],
         "targets": {
           "darwin-aarch64": {
-            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/codex/0.114.0-ctx.5/macos/aarch64/codex-crp-0.114.0-ctx.5-aarch64-apple-darwin.tar.gz",
+            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/codex/0.114.0-ctx.5/macos/aarch64/sha256/6dedd8fd374c9f2d20cdc4ca97c0c9333d9975beb688346bf4554805bf7714e1/codex-crp-0.114.0-ctx.5-aarch64-apple-darwin.tar.gz",
             "archive": "tar_gz",
             "bin_path": "codex-crp",
-            "sha256": "8c31cf8e5420c8aeddf3d4afcdf46612c8b3e63f2703879f75ad3cb73860cfcd"
+            "sha256": "6dedd8fd374c9f2d20cdc4ca97c0c9333d9975beb688346bf4554805bf7714e1"
           },
           "darwin-x86_64": {
-            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/codex/0.114.0-ctx.5/macos/x86_64/codex-crp-0.114.0-ctx.5-x86_64-apple-darwin.tar.gz",
+            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/codex/0.114.0-ctx.5/macos/x86_64/sha256/935f43f4eb5b9ac3b485e4f97588902b2cd0049626a554e6aec6448311c70c90/codex-crp-0.114.0-ctx.5-x86_64-apple-darwin.tar.gz",
             "archive": "tar_gz",
             "bin_path": "codex-crp",
-            "sha256": "857b97177389b5a2f58d8b9c04c43da8107472b4b4249afcdd39a7cd9cf46511"
+            "sha256": "935f43f4eb5b9ac3b485e4f97588902b2cd0049626a554e6aec6448311c70c90"
           },
           "linux-aarch64": {
-            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/codex/0.114.0-ctx.5/linux/aarch64/codex-crp-0.114.0-ctx.5-aarch64-unknown-linux-gnu.tar.gz",
+            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/codex/0.114.0-ctx.5/linux/aarch64/sha256/01215d15a4ce56f6395f88c25d36e5129383e12728fea05bd0615f90c9998831/codex-crp-0.114.0-ctx.5-aarch64-unknown-linux-gnu.tar.gz",
             "archive": "tar_gz",
             "bin_path": "codex-crp",
-            "sha256": "74e0e5d6e84533996f8c99672977e017190bd71e8ad1641452c458bc4255380e"
+            "sha256": "01215d15a4ce56f6395f88c25d36e5129383e12728fea05bd0615f90c9998831"
           },
           "linux-x86_64": {
-            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/codex/0.114.0-ctx.5/linux/x86_64/codex-crp-0.114.0-ctx.5-x86_64-unknown-linux-gnu.tar.gz",
+            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/codex/0.114.0-ctx.5/linux/x86_64/sha256/d9712b699d1c201fad9dec6bc702408322eafa85412f97ffca7e7ffcd878e932/codex-crp-0.114.0-ctx.5-x86_64-unknown-linux-gnu.tar.gz",
             "archive": "tar_gz",
             "bin_path": "codex-crp",
-            "sha256": "4a0f50059b703c76d1e6374f995662b96d65c2aa7f033dc9e17896091880d9cd"
+            "sha256": "d9712b699d1c201fad9dec6bc702408322eafa85412f97ffca7e7ffcd878e932"
           },
           "macos-aarch64": {
-            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/codex/0.114.0-ctx.5/macos/aarch64/codex-crp-0.114.0-ctx.5-aarch64-apple-darwin.tar.gz",
+            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/codex/0.114.0-ctx.5/macos/aarch64/sha256/6dedd8fd374c9f2d20cdc4ca97c0c9333d9975beb688346bf4554805bf7714e1/codex-crp-0.114.0-ctx.5-aarch64-apple-darwin.tar.gz",
             "archive": "tar_gz",
             "bin_path": "codex-crp",
-            "sha256": "8c31cf8e5420c8aeddf3d4afcdf46612c8b3e63f2703879f75ad3cb73860cfcd"
+            "sha256": "6dedd8fd374c9f2d20cdc4ca97c0c9333d9975beb688346bf4554805bf7714e1"
           },
           "macos-x86_64": {
-            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/codex/0.114.0-ctx.5/macos/x86_64/codex-crp-0.114.0-ctx.5-x86_64-apple-darwin.tar.gz",
+            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/codex/0.114.0-ctx.5/macos/x86_64/sha256/935f43f4eb5b9ac3b485e4f97588902b2cd0049626a554e6aec6448311c70c90/codex-crp-0.114.0-ctx.5-x86_64-apple-darwin.tar.gz",
             "archive": "tar_gz",
             "bin_path": "codex-crp",
-            "sha256": "857b97177389b5a2f58d8b9c04c43da8107472b4b4249afcdd39a7cd9cf46511"
+            "sha256": "935f43f4eb5b9ac3b485e4f97588902b2cd0049626a554e6aec6448311c70c90"
           }
         }
       },
@@ -860,25 +860,25 @@
         "targets": {
           "darwin-aarch64": {
             "url": "https://github.com/anomalyco/opencode/releases/download/v1.14.19/opencode-darwin-arm64.zip",
-            "sha256": "20386056bffdc4ec52155fb107fb470d47297f86dc405f993992596dc3eb4a81",
+            "sha256": "554a2019225514f669e1b014482a2e27c7e729c3337020301510f32be7162290",
             "archive": "zip",
             "bin_path": "opencode"
           },
           "darwin-x86_64": {
             "url": "https://github.com/anomalyco/opencode/releases/download/v1.14.19/opencode-darwin-x64.zip",
-            "sha256": "51b1ddcb01dc1441217a6cf6730e09635ecbc38865a8fd2abf721ddf7d3b0dc0",
+            "sha256": "f78a1e19410ed3387518a9d875c56c3635383513dbdf34192dcbb9f2f13b15a0",
             "archive": "zip",
             "bin_path": "opencode"
           },
           "linux-aarch64": {
             "url": "https://github.com/anomalyco/opencode/releases/download/v1.14.19/opencode-linux-arm64.tar.gz",
-            "sha256": "a0813a706c8865cf61b2ec152f116af09519bff703c774ab16b4a667b154d683",
+            "sha256": "f3d957a9c8000fab2f00e5d80f4ff60877df728e5625f0fdd96126d9ebec9952",
             "archive": "tar_gz",
             "bin_path": "opencode"
           },
           "linux-x86_64": {
             "url": "https://github.com/anomalyco/opencode/releases/download/v1.14.19/opencode-linux-x64-baseline.tar.gz",
-            "sha256": "fc14d43f33555f5c648b0649c4248d4e74eae1d5d0e784f8dec83b97313e4c35",
+            "sha256": "3750f51dfe347be97eaa76ac9c5257eb85a66fe6dd4b27844b461c4252898e03",
             "archive": "tar_gz",
             "bin_path": "opencode"
           }

@@ -92,7 +92,13 @@ const targetKeys = ({ os, arch }) => {
 const normalizeUrl = ({ entry, artifactBaseUrl, indexDir }) => {
   if (artifactBaseUrl) {
     const prefix = artifactBaseUrl.endsWith("/") ? artifactBaseUrl.slice(0, -1) : artifactBaseUrl;
-    return `${prefix}/${entry.provider_id}/${entry.version}/${entry.os}/${entry.arch}/${entry.filename}`;
+    const sha256 = String(entry.sha256 || "").trim().toLowerCase();
+    if (!sha256) {
+      throw new Error(
+        `provider ${String(entry.provider_id || "<unknown>")} target ${String(entry.os || "<unknown>")}/${String(entry.arch || "<unknown>")} missing sha256`,
+      );
+    }
+    return `${prefix}/${entry.provider_id}/${entry.version}/${entry.os}/${entry.arch}/sha256/${sha256}/${entry.filename}`;
   }
   const artifactPath = String(entry.artifact_path || "").trim();
   const artifactRelPath = String(entry.artifact_rel_path || "").trim();
