@@ -3,6 +3,8 @@
 const fs = require("node:fs");
 const path = require("node:path");
 
+const { DEFAULT_PROVIDER_DEPS_PROVIDER_IDS } = require("./lib/buildbuddy_release_scope.cjs");
+
 const coreRoot = path.resolve(__dirname, "..");
 const defaultLockPath = path.join(coreRoot, "apps", "desktop", "src-tauri", "bundles", "runtime_lock.v2.json");
 const defaultMatrixPath = path.join(coreRoot, "crates", "ctx-provider-accounts", "src", "provider_matrix.json");
@@ -118,18 +120,20 @@ const normalizeTargetMap = (targets) => {
 };
 
 const requiredProviderIdsFromMatrixFallback = (providerById) => {
-  const providerIds = [];
+  const providerIds = DEFAULT_PROVIDER_DEPS_PROVIDER_IDS.filter((providerId) => providerById.has(providerId));
+  if (providerIds.length > 0) {
+    return providerIds;
+  }
+
+  const managedProviderIds = [];
   for (const [providerId, entry] of providerById.entries()) {
     const managedInstall =
       entry?.managed_install && typeof entry.managed_install === "object" ? entry.managed_install : null;
     if (!managedInstall) continue;
-    const kind = String(managedInstall.kind || "").trim().toLowerCase();
-    if (kind === "archive") {
-      providerIds.push(providerId);
-    }
+    managedProviderIds.push(providerId);
   }
-  providerIds.sort();
-  return providerIds;
+  managedProviderIds.sort();
+  return managedProviderIds;
 };
 
 const printHelp = () => {

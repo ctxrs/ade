@@ -122,6 +122,7 @@ fn managed_npm_status_entry(
         command: None,
         managed_install: Some(ProviderInstall::Npm {
             package: package.to_string(),
+            version: latest_version.to_string(),
             entrypoint: format!("node_modules/{package}/bin.js"),
             args: Vec::new(),
             targets: std::collections::HashMap::new(),
@@ -266,6 +267,85 @@ async fn wait_for_install_completion(
         );
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
+}
+
+#[tokio::test]
+async fn container_provider_status_fails_closed_when_hybrid_artifact_is_missing() {
+    let _env_lock = env_lock().await;
+    ensure_test_build_identity();
+
+    let data_dir = tempfile::tempdir().expect("tempdir");
+    let matrix_path = matrix_cache_path(data_dir.path());
+    save_matrix_fixture(
+        data_dir.path(),
+        &ProviderMatrix {
+            version: fixture_matrix_version(),
+            generated_at: None,
+            providers: vec![managed_npm_status_entry(
+                "gemini",
+                "@google/gemini-cli",
+                "0.33.1",
+                "0.38.2",
+                "0.59.0",
+            )],
+        },
+    )
+    .await;
+    let _matrix_path_guard = EnvVarGuard::set(
+        "CTX_BUNDLE_MATRIX_JSON",
+        matrix_path.to_str().expect("matrix path utf-8"),
+    );
+
+    let stores = common::setup_store(data_dir.path()).await;
+    let state = common::build_state(
+        data_dir.path().to_path_buf(),
+        stores,
+        HashMap::new(),
+        "http://127.0.0.1:0",
+    );
+    let app = common::router(state.clone());
+
+    state.providers.statuses.lock().await.insert(
+        "gemini".to_string(),
+        ProviderStatus {
+            provider_id: "gemini".to_string(),
+            installed: false,
+            detected_path: None,
+            version: None,
+            capabilities: None,
+            health: ProviderHealth::Missing,
+            diagnostics: Vec::new(),
+            details: HashMap::new(),
+            usability: ctx_providers::adapters::ProviderUsability::default(),
+        },
+    );
+
+    let (status, body): (StatusCode, serde_json::Value) = common::json_request(
+        &app,
+        axum::http::Method::GET,
+        "/api/providers/gemini?target=container",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "provider route failed: {body:#?}");
+    assert_eq!(
+        body.pointer("/details/install_supported")
+            .and_then(serde_json::Value::as_str),
+        Some("false"),
+        "container installs must fail closed when no staged artifact is published: {body:#?}"
+    );
+    assert_eq!(
+        body.pointer("/details/install_blocked_code")
+            .and_then(serde_json::Value::as_str),
+        Some("container_artifact_missing"),
+        "expected explicit container artifact failure instead of registry fallback: {body:#?}"
+    );
+    assert!(
+        body.pointer("/details/install_blocked_reason")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|reason| reason.contains("published managed artifact")),
+        "expected actionable missing-artifact detail: {body:#?}"
+    );
 }
 
 #[tokio::test]

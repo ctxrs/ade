@@ -69,6 +69,10 @@ fn codex_archive_entry(
 }
 
 fn codex_npm_entry(releases: Vec<ProviderRelease>) -> ProviderMatrixEntry {
+    let managed_version = releases
+        .last()
+        .map(|release| release.version.clone())
+        .unwrap_or_else(|| "1.0.0".to_string());
     ProviderMatrixEntry {
         id: "codex".to_string(),
         kind: ProviderMatrixEntryKind::Harness,
@@ -77,6 +81,7 @@ fn codex_npm_entry(releases: Vec<ProviderRelease>) -> ProviderMatrixEntry {
         command: None,
         managed_install: Some(ProviderInstall::Npm {
             package: "@openai/codex".to_string(),
+            version: managed_version,
             entrypoint: "node_modules/@openai/codex/bin.js".to_string(),
             args: Vec::new(),
             targets: std::collections::HashMap::new(),
@@ -117,6 +122,40 @@ fn managed_archive_cfg(
             target_key,
             AgentServerCommand {
                 command: command_path.to_string_lossy().to_string(),
+                args: Vec::new(),
+                dependencies: Vec::new(),
+                managed: Some(meta),
+            },
+        )]),
+    );
+    cfg
+}
+
+fn managed_hybrid_npm_container_cfg(version: &str, installed_sha256: &str) -> AgentServerConfigFile {
+    let target = InstallTarget::Container;
+    let target_key = target.as_str().to_string();
+    let meta = ManagedInstallMetadata {
+        package: Some("@openai/codex".to_string()),
+        version: Some(version.to_string()),
+        artifact_fingerprint: Some(installed_sha256.to_string()),
+        archive_sha256: Some(installed_sha256.to_string()),
+        target: Some(target),
+        install_dir_rel: Some(format!("providers/agent-servers/codex/{version}")),
+        bin_dir_rel: Some(format!("providers/agent-servers/codex/{version}/bin")),
+        last_success_at: None,
+        last_error: None,
+    };
+    let mut cfg = AgentServerConfigFile::default();
+    cfg.managed_install_targets.insert(
+        "codex".to_string(),
+        HashMap::from([(target_key.clone(), meta.clone())]),
+    );
+    cfg.managed_provider_targets.insert(
+        "codex".to_string(),
+        HashMap::from([(
+            target_key,
+            AgentServerCommand {
+                command: "/tmp/codex-container".to_string(),
                 args: Vec::new(),
                 dependencies: Vec::new(),
                 managed: Some(meta),
@@ -245,6 +284,50 @@ async fn provider_status_matrix_marks_missing_runtime_dependency_updateable() {
             .get("managed_dependency_update_available")
             .map(String::as_str),
         Some("true")
+    );
+    assert_eq!(
+        status
+            .details
+            .get("matrix_update_available")
+            .map(String::as_str),
+        Some("true")
+    );
+}
+
+#[tokio::test]
+async fn provider_status_matrix_marks_hybrid_container_archive_updates_available() {
+    let old_sha = sha256_hex(b"old-container-archive");
+    let new_sha = sha256_hex(b"new-container-archive");
+    let mut entry = codex_npm_entry(vec![
+        release("1.0.0", ProviderReleaseStatus::Supported, None),
+        release("1.0.1", ProviderReleaseStatus::Supported, None),
+    ]);
+    if let Some(ProviderInstall::Npm { targets, .. }) = entry.managed_install.as_mut() {
+        targets.insert(
+            "linux-x86_64".to_string(),
+            ProviderArchiveTarget {
+                url: "https://example.invalid/codex-container.tar.gz".to_string(),
+                sha256: Some(new_sha.clone()),
+                size_bytes: None,
+                archive: ProviderArchiveKind::TarGz,
+                bin_path: "codex-crp".to_string(),
+            },
+        );
+    }
+    let cfg = managed_hybrid_npm_container_cfg("1.0.0", &old_sha);
+    let mut status = installed_status("codex", InstallTarget::Container);
+
+    apply_matrix_to_status(Path::new("/tmp"), &cfg, &entry, &mut status, CURRENT_CTX_VERSION)
+        .await;
+
+    assert_eq!(status.version.as_deref(), Some("1.0.0"));
+    assert!(matches!(status.health, ProviderHealth::Ok));
+    assert_eq!(
+        status
+            .details
+            .get("matrix_recommended_version")
+            .map(String::as_str),
+        Some("1.0.1")
     );
     assert_eq!(
         status

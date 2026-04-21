@@ -489,6 +489,7 @@ mod tests {
             command: None,
             managed_install: Some(ProviderInstall::Npm {
                 package: package.to_string(),
+                version: "1.0.0".to_string(),
                 entrypoint: "cli.js".to_string(),
                 args: Vec::new(),
                 targets: std::collections::HashMap::new(),
@@ -665,6 +666,79 @@ mod tests {
         .expect_err("provider install resolution must fail closed without build identity");
 
         assert_eq!(err.code, "ctx_version_unavailable");
+    }
+
+    #[test]
+    fn hybrid_provider_without_container_artifact_fails_closed() {
+        let _guard = env_lock().blocking_lock();
+        let root = tempfile::tempdir().expect("tempdir");
+        let cfg = AgentServerConfigFile::default();
+
+        let issue = provider_install_viability_issue(
+            root.path(),
+            &cfg,
+            &matrix_with_entries(vec![npm_entry(
+                "gemini",
+                ProviderMatrixEntryKind::Harness,
+                "@google/gemini-cli",
+            )]),
+            "gemini",
+            InstallTarget::Container,
+            TEST_CTX_VERSION,
+        )
+        .expect("container installs without staged artifacts must fail closed");
+
+        assert_eq!(issue.code, "container_artifact_missing");
+        assert!(issue.message.contains("published managed artifact"));
+    }
+
+    #[test]
+    fn hybrid_provider_with_container_artifact_stays_installable() {
+        let _guard = env_lock().blocking_lock();
+        let root = tempfile::tempdir().expect("tempdir");
+        let cfg = AgentServerConfigFile::default();
+        let mut gemini = npm_entry(
+            "gemini",
+            ProviderMatrixEntryKind::Harness,
+            "@google/gemini-cli",
+        );
+        if let Some(ProviderInstall::Npm { targets, .. }) = gemini.managed_install.as_mut() {
+            targets.insert(
+                installer::resolve_matrix_target_key(InstallTarget::Container)
+                    .expect("container target key")
+                    .to_string(),
+                ProviderArchiveTarget {
+                    url: "https://example.invalid/gemini-container.tar.gz".to_string(),
+                    sha256: Some("a".repeat(64)),
+                    size_bytes: None,
+                    archive: ProviderArchiveKind::TarGz,
+                    bin_path: "gemini".to_string(),
+                },
+            );
+        }
+
+        let contract = resolve_provider_install_contract(
+            root.path(),
+            &cfg,
+            &matrix_with_entries(vec![
+                gemini,
+                archive_entry("acp-crp-bridge", ProviderMatrixEntryKind::Dependency),
+            ]),
+            "gemini",
+            InstallTarget::Container,
+            TEST_CTX_VERSION,
+        )
+        .expect("staged hybrid providers should remain installable for container targets");
+
+        assert_eq!(
+            contract.dependencies_for_role(ProviderInstallDependencyRoleKind::Prerequisite),
+            vec![ProviderInstallDependency {
+                provider_id: "acp-crp-bridge".to_string(),
+                role: ProviderInstallDependencyRoleKind::Prerequisite,
+                target: InstallTarget::Container,
+                satisfied: false,
+            }]
+        );
     }
 
     #[test]

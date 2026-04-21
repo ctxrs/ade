@@ -857,6 +857,7 @@ fn codex_npm_test_entry(version: &str) -> ProviderMatrixEntry {
         command: None,
         managed_install: Some(ProviderInstall::Npm {
             package: "@openai/codex".to_string(),
+            version: version.to_string(),
             entrypoint: "node_modules/@openai/codex/bin.js".to_string(),
             args: Vec::new(),
             targets: std::collections::HashMap::new(),

@@ -24,6 +24,13 @@ const fullArchiveTargets = (binPath = "bin/provider") => ({
   "linux-x86_64": { url: "https://example/linux-x86_64", archive: "tar_gz", bin_path: binPath, sha256: "d".repeat(64) },
 });
 
+const fullHybridTargets = (binPath = "provider") => ({
+  "darwin-aarch64": { url: "https://example/hybrid-darwin-aarch64", archive: "tar_gz", bin_path: binPath, sha256: "1".repeat(64) },
+  "darwin-x86_64": { url: "https://example/hybrid-darwin-x86_64", archive: "tar_gz", bin_path: binPath, sha256: "2".repeat(64) },
+  "linux-aarch64": { url: "https://example/hybrid-linux-aarch64", archive: "tar_gz", bin_path: binPath, sha256: "3".repeat(64) },
+  "linux-x86_64": { url: "https://example/hybrid-linux-x86_64", archive: "tar_gz", bin_path: binPath, sha256: "4".repeat(64) },
+});
+
 const writeFixture = (dir, matrixProviders, lockProviderIds = []) => {
   const matrixPath = path.join(dir, "provider_matrix.json");
   const lockPath = path.join(dir, "runtime_lock.v2.json");
@@ -32,7 +39,7 @@ const writeFixture = (dir, matrixProviders, lockProviderIds = []) => {
   return { matrixPath, lockPath };
 };
 
-test("required targets gate uses archive fallback when lock provider_ids is empty", () => {
+test("required targets gate uses release planner fallback when lock provider_ids is empty", () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-target-gate-fallback-"));
   const { matrixPath, lockPath } = writeFixture(tmp, [
     {
@@ -48,7 +55,9 @@ test("required targets gate uses archive fallback when lock provider_ids is empt
       managed_install: {
         kind: "npm",
         package: "@example/cursor",
+        version: "1.0.0",
         entrypoint: "cursor",
+        targets: fullHybridTargets("cursor"),
       },
     },
   ]);
@@ -59,13 +68,11 @@ test("required targets gate uses archive fallback when lock provider_ids is empt
     "--matrix",
     matrixPath,
     "--include-kinds",
-    "archive",
-    "--include-providers",
-    "amp",
+    "archive,npm",
   ]);
 
   assert.equal(result.status, 0, `stdout=${result.stdout}\nstderr=${result.stderr}`);
-  assert.match(result.stdout, /1 providers checked/i);
+  assert.match(result.stdout, /2 providers checked/i);
 });
 
 test("required targets gate fails on missing target even with empty lock provider_ids", () => {
@@ -90,31 +97,21 @@ test("required targets gate fails on missing target even with empty lock provide
     matrixPath,
     "--include-kinds",
     "archive",
-    "--include-providers",
-    "codex",
   ]);
 
   assert.notEqual(result.status, 0, `stdout=${result.stdout}\nstderr=${result.stderr}`);
   assert.match(result.stderr, /provider codex .*missing target/i, `stdout=${result.stdout}\nstderr=${result.stderr}`);
 });
 
-test("required targets gate defaults to archive providers when include list is not set", () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-target-gate-archive-only-"));
+test("required targets gate falls back to managed providers when release planner defaults are absent", () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-target-gate-managed-fallback-"));
   const { matrixPath, lockPath } = writeFixture(tmp, [
     {
-      id: "amp",
+      id: "custom-provider",
       managed_install: {
         kind: "archive",
         version: "1.0.0",
-        targets: fullArchiveTargets("dist/bin/amp-acp.js"),
-      },
-    },
-    {
-      id: "cursor",
-      managed_install: {
-        kind: "npm",
-        package: "@example/cursor",
-        entrypoint: "cursor",
+        targets: fullArchiveTargets("bin/custom-provider"),
       },
     },
   ]);
