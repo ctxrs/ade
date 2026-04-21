@@ -1,12 +1,11 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use anyhow::Result;
 use async_trait::async_trait;
 use serde_json::json;
-use tokio::sync::{broadcast, mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot};
 use tokio::time::Duration;
 use uuid::Uuid;
 
@@ -31,10 +30,6 @@ mod session_pool;
 mod tests;
 mod unknown_event;
 
-use self::config::build_crp_session_config;
-use self::normalize::{event_matches_session, map_crp_event, CachedToolInput};
-use self::policy::{extract_auth_error_from_stderr_line, extract_auth_url_from_stderr_line};
-use self::protocol::{CrpCommand, CrpEvent};
 use self::runtime::{resolve_explicit_command_path, CrpAgentConfig};
 #[cfg(test)]
 use self::session_pool::session_shutdown_reason;
@@ -48,8 +43,6 @@ const CRP_MODEL_PROBE_TIMEOUT: Duration = Duration::from_secs(10);
 const CRP_MODEL_PROBE_TIMEOUT_CONTAINER: Duration = Duration::from_secs(45);
 const CRP_RUNTIME_LAUNCH_PROBE_TIMEOUT: Duration = Duration::from_secs(2);
 const CRP_RUNTIME_LAUNCH_PROBE_TIMEOUT_CONTAINER: Duration = Duration::from_secs(5);
-const CRP_AUTH_EVENT_FORWARD_TIMEOUT: Duration = Duration::from_secs(60 * 10);
-const CRP_SESSION_MODEL_UPDATE_TIMEOUT: Duration = Duration::from_secs(5);
 pub(super) const CRP_CANCEL_DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
 const CODEX_CRP_DUMP_CODEX_EVENTS_ENV: &str = "CODEX_CRP_DUMP_CODEX_EVENTS_PATH";
 const CODEX_CRP_DUMP_CRP_EVENTS_ENV: &str = "CODEX_CRP_DUMP_CRP_EVENTS_PATH";
@@ -249,77 +242,7 @@ impl ProviderAdapter for Tier1CrpAdapter {
     }
 
     async fn set_session_model(&self, session_key: String, model_id: String) -> Result<()> {
-        let busy_guard = self.pool.session_busy_guard(session_key.clone());
-        let session = self.pool.require_open_session(&session_key).await?;
-        session.touch();
-        let mut rx = session.process.events.subscribe();
-        let mut shutdown_rx = session.process.shutdown.subscribe();
-        if let Err(err) = session
-            .process
-            .send(CrpCommand::SessionSetModel {
-                session_id: Some(session_key.clone()),
-                model_id: Some(model_id.clone()),
-            })
-            .await
-        {
-            drop(busy_guard);
-            self.pool
-                .drain_session_if_needed(&session_key, &session)
-                .await;
-            self.pool.trigger_background_reap();
-            return Err(err);
-        }
-
-        let result = tokio::time::timeout(CRP_SESSION_MODEL_UPDATE_TIMEOUT, async {
-            loop {
-                tokio::select! {
-                    _ = shutdown_rx.changed() => {
-                        let reason = shutdown_rx.borrow().clone().unwrap_or_else(|| "crp_shutdown".to_string());
-                        anyhow::bail!("CRP runtime shut down while setting model: {reason}");
-                    }
-                    recv = rx.recv() => {
-                        match recv {
-                            Ok(env) => {
-                                if !event_matches_session(&env.event, &session_key) {
-                                    continue;
-                                }
-                                if let CrpEvent::SessionNotice { code, message, details, .. } = env.event {
-                                    if code == "session_model_updated" {
-                                        let selected = details
-                                            .as_ref()
-                                            .and_then(|value| value.get("model_id"))
-                                            .and_then(|value| value.as_str())
-                                            .unwrap_or(model_id.as_str());
-                                        if selected == model_id {
-                                            return Ok(());
-                                        }
-                                    }
-                                    if code == "session_model_update_failed" {
-                                        let detail = message.unwrap_or_else(|| {
-                                            format!("provider rejected session model '{model_id}'")
-                                        });
-                                        anyhow::bail!("{detail}");
-                                    }
-                                }
-                            }
-                            Err(broadcast::error::RecvError::Lagged(_)) => {}
-                            Err(broadcast::error::RecvError::Closed) => {
-                                anyhow::bail!("CRP runtime closed while waiting for session model update");
-                            }
-                        }
-                    }
-                }
-            }
-        })
-        .await
-        .map_err(|_| anyhow::anyhow!("timed out waiting for session model update"));
-        drop(busy_guard);
-        self.pool
-            .drain_session_if_needed(&session_key, &session)
-            .await;
-        self.pool.trigger_background_reap();
-        result??;
-        Ok(())
+        self.pool.set_session_model(session_key, model_id).await
     }
 
     async fn authenticate_session(
@@ -330,204 +253,9 @@ impl ProviderAdapter for Tier1CrpAdapter {
         method_id: Option<String>,
         event_sink: mpsc::Sender<NormalizedEvent>,
     ) -> Result<()> {
-        let busy_guard = self.pool.session_busy_guard(session_key.clone());
-        let session = self
-            .pool
-            .get_or_create_session(&session_key, &workdir, &env)
-            .await?;
-        let mut rx = session.process.events.subscribe();
-        let mut stderr_rx = session.process.stderr_lines.subscribe();
-        let mut shutdown_rx = session.process.shutdown.subscribe();
-        let auth_session_key = session_key.clone();
-        if !session.opened.load(Ordering::SeqCst) && !session.opening.load(Ordering::SeqCst) {
-            let config = build_crp_session_config(&env, &workdir)?;
-            let provider_session_id = env
-                .get("CTX_PROVIDER_SESSION_REF")
-                .map(|value| value.trim().to_string())
-                .filter(|value| !value.is_empty());
-            session.opening.store(true, Ordering::SeqCst);
-            if let Err(err) = session
-                .process
-                .send(CrpCommand::SessionOpen {
-                    session_id: Some(session_key.clone()),
-                    provider_session_id,
-                    config: Some(config),
-                })
-                .await
-            {
-                session.opening.store(false, Ordering::SeqCst);
-                drop(busy_guard);
-                self.pool
-                    .drain_session_if_needed(&auth_session_key, &session)
-                    .await;
-                self.pool.trigger_background_reap();
-                return Err(err);
-            }
-        }
-        if let Err(err) = session
-            .process
-            .send(CrpCommand::SessionAuthenticate {
-                session_id: Some(session_key),
-                method_id,
-            })
+        self.pool
+            .authenticate_session(session_key, workdir, env, method_id, event_sink)
             .await
-        {
-            if !session.opened.load(Ordering::SeqCst) {
-                session.opening.store(false, Ordering::SeqCst);
-            }
-            drop(busy_guard);
-            self.pool
-                .drain_session_if_needed(&auth_session_key, &session)
-                .await;
-            self.pool.trigger_background_reap();
-            return Err(err);
-        }
-        let session_for_events = Arc::clone(&session);
-        let pool_for_reap = Arc::clone(&self.pool);
-        tokio::spawn(async move {
-            let _busy_guard = busy_guard;
-            let deadline = tokio::time::Instant::now() + CRP_AUTH_EVENT_FORWARD_TIMEOUT;
-            let mut last_seq = 0u64;
-            let mut tool_output_cache: HashMap<String, String> = HashMap::new();
-            let mut tool_input_cache: HashMap<String, CachedToolInput> = HashMap::new();
-            'auth_forward: loop {
-                let now = tokio::time::Instant::now();
-                if now >= deadline {
-                    break;
-                }
-                let timeout_remaining = deadline.saturating_duration_since(now);
-                tokio::select! {
-                    _ = shutdown_rx.changed() => {
-                        break;
-                    }
-                    _ = tokio::time::sleep(timeout_remaining) => {
-                        break;
-                    }
-                    recv = rx.recv() => {
-                        match recv {
-                            Ok(env) => {
-                                if !event_matches_session(&env.event, &auth_session_key) {
-                                    continue;
-                                }
-                                if env.seq <= last_seq {
-                                    continue;
-                                }
-                                last_seq = env.seq;
-                                if matches!(
-                                    &env.event,
-                                    CrpEvent::SessionNotice { code, .. }
-                                        if code == "session_status" || code == "session_status_failed"
-                                ) {
-                                    continue;
-                                }
-                                if let CrpEvent::SessionOpened {
-                                    supports_session_status,
-                                    ..
-                                } = &env.event
-                                {
-                                    session_for_events.opened.store(true, Ordering::SeqCst);
-                                    session_for_events.opening.store(false, Ordering::SeqCst);
-                                    let default_support = session_for_events
-                                        .status_supported
-                                        .load(Ordering::SeqCst);
-                                    session_for_events.status_supported.store(
-                                        supports_session_status.unwrap_or(default_support),
-                                        Ordering::SeqCst,
-                                    );
-                                }
-                                let auth_terminal_event = matches!(
-                                    &env.event,
-                                    CrpEvent::SessionNotice { code, .. }
-                                    if code == "auth_complete"
-                                        || code == "auth_completed"
-                                        || code == "auth_success"
-                                        || code == "authenticated"
-                                        || code == "auth_failed"
-                                        || code == "auth_error"
-                                );
-                                if auth_terminal_event {
-                                    session_for_events.opening.store(false, Ordering::SeqCst);
-                                }
-                                let mapped = map_crp_event(
-                                    env.event,
-                                    env.channel,
-                                    env.seq,
-                                    &mut tool_output_cache,
-                                    &mut tool_input_cache,
-                                );
-                                for event in mapped.events {
-                                    if event_sink.send(event).await.is_err() {
-                                        break 'auth_forward;
-                                    }
-                                }
-                                if auth_terminal_event {
-                                    break;
-                                }
-                            }
-                            Err(broadcast::error::RecvError::Lagged(_)) => {
-                                let _ = event_sink
-                                    .send(NormalizedEvent {
-                                        event_type: SessionEventType::Notice,
-                                        payload_json: json!({
-                                            "kind": "session_gap",
-                                            "reason": "crp_receiver_lagged",
-                                        }),
-                                    })
-                                    .await;
-                            }
-                            Err(broadcast::error::RecvError::Closed) => {
-                                break;
-                            }
-                        }
-                    }
-                    stderr = stderr_rx.recv() => {
-                        match stderr {
-                            Ok(line) => {
-                                if let Some(auth_url) = extract_auth_url_from_stderr_line(&line) {
-                                    if event_sink
-                                        .send(NormalizedEvent {
-                                            event_type: SessionEventType::Notice,
-                                            payload_json: auth_required_notice_payload_from_stderr(
-                                                &auth_url,
-                                            ),
-                                        })
-                                        .await
-                                        .is_err()
-                                    {
-                                        break 'auth_forward;
-                                    }
-                                }
-                                if let Some(message) = extract_auth_error_from_stderr_line(&line) {
-                                    let _ = event_sink
-                                        .send(NormalizedEvent {
-                                            event_type: SessionEventType::Error,
-                                            payload_json: json!({
-                                                "message": message,
-                                                "source": "crp_stderr",
-                                            }),
-                                        })
-                                        .await;
-                                    break;
-                                }
-                            }
-                            Err(broadcast::error::RecvError::Lagged(_)) => {}
-                            Err(broadcast::error::RecvError::Closed) => {
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
-            if !session_for_events.opened.load(Ordering::SeqCst) {
-                session_for_events.opening.store(false, Ordering::SeqCst);
-            }
-            drop(_busy_guard);
-            pool_for_reap
-                .drain_session_if_needed(&auth_session_key, &session_for_events)
-                .await;
-            pool_for_reap.trigger_background_reap();
-        });
-        Ok(())
     }
 
     async fn reap_idle_sessions(

@@ -1,19 +1,3 @@
-import type { Dispatch, SetStateAction } from "react";
-import type { DesktopEditorSettings } from "../../utils/desktop";
-import type {
-  DevRestartProvidersResult,
-  EnableMobileAccessResponse,
-  MobileAccessStatus,
-  ResourceGovernanceLimits,
-  ResourceGovernanceSettings,
-  ResourceGovernanceStatus,
-  ResourceUtilization,
-  SandboxingSettings,
-  Workspace,
-} from "../../api/client";
-import type { User } from "@supabase/supabase-js";
-import type { ClientSettingsState } from "../../state/clientSettings";
-import type { DesktopNotificationPermission } from "../../utils/desktopNotifications";
 import { GeneralSettingsSection } from "./sections/GeneralSettingsSection";
 import { NotificationsSettingsSection } from "./sections/NotificationsSettingsSection";
 import { AnalyticsSettingsSection } from "./sections/AnalyticsSettingsSection";
@@ -32,171 +16,63 @@ import { HarnessAuthenticationSection } from "./sections/HarnessAuthenticationSe
 import { CodexAccountsSection } from "./sections/CodexAccountsSection";
 import { DevToolsSection } from "./sections/DevToolsSection";
 import { SandboxingSection } from "./sections/SandboxingSection";
+import type { SettingsAccountController } from "./hooks/useSettingsAccountController";
+import type { SettingsDaemonDocumentController } from "./hooks/useSettingsDaemonDocumentController";
+import type { SettingsDevToolsController } from "./hooks/useSettingsDevToolsController";
+import type {
+  SettingsGeneralPreferencesController,
+  SettingsNotificationPreferencesController,
+} from "./hooks/useSettingsLocalPreferencesController";
+import type { SettingsResourceUtilizationController } from "./hooks/useSettingsResourceUtilizationController";
 import type { SectionId } from "./SettingsPage.types";
 
 export function SettingsContentRouter(props: {
   active: SectionId;
-  loaded: boolean;
-  loadError: string | null;
-  theme: "system" | "light" | "dark";
-  onThemeChange: (next: "system" | "light" | "dark") => void;
-  editorSettings: DesktopEditorSettings;
-  setEditorSettings: Dispatch<SetStateAction<DesktopEditorSettings>>;
-  editorLoaded: boolean;
-  editorError: string | null;
-  clientSettingsError: string | null;
-  showRemoteAuthority: boolean;
-  isDesktopApp: () => boolean;
-  completedNotifications: boolean;
-  failedNotifications: boolean;
-  badgeUnreadCount: boolean;
-  desktopNotificationPermission: DesktopNotificationPermission;
-  desktopNotificationPermissionBusy: boolean;
-  clientSettingsState: ClientSettingsState;
-  clientSettingsSaving: boolean;
-  onToggleCompletedNotifications: (next: boolean) => void | Promise<void>;
-  onToggleFailedNotifications: (next: boolean) => void | Promise<void>;
-  onToggleBadgeUnreadCount: (next: boolean) => void | Promise<void>;
-  onRequestDesktopNotificationPermission: () => void | Promise<void>;
-  telemetryEnabled: boolean;
-  setTelemetryEnabled: (next: boolean) => void;
   workspaceId: string | null;
+  general: SettingsGeneralPreferencesController;
+  notifications: SettingsNotificationPreferencesController;
+  daemonSettings: SettingsDaemonDocumentController;
   themeVariant: "light" | "dark";
-  resourceGovernance: {
-    enabled: boolean;
-    setEnabled: (value: boolean) => void;
-    mode: ResourceGovernanceSettings["mode"];
-    setMode: (value: ResourceGovernanceSettings["mode"]) => void;
-    cpuQuotaPct: string;
-    setCpuQuotaPct: (value: string) => void;
-    memoryHighGb: string;
-    setMemoryHighGb: (value: string) => void;
-    memoryMaxGb: string;
-    setMemoryMaxGb: (value: string) => void;
-    effective: ResourceGovernanceLimits | null;
-    status: ResourceGovernanceStatus | null;
-    canSave: boolean;
-    payload: ResourceGovernanceSettings;
-    onApplyNow: (payload: ResourceGovernanceSettings) => void | Promise<void>;
-  };
-  saving: boolean;
-  supabaseConfigured: boolean;
-  billing: {
-    checkoutStatus: string | null;
-    billingUser: User | null;
-    billingEmail: string;
-    setBillingEmail: (value: string) => void;
-    billingPassword: string;
-    setBillingPassword: (value: string) => void;
-    billingBusy: boolean;
-    billingError: string | null;
-    entitlementsBusy: boolean;
-    plan: "free_local" | "pro" | "team" | "enterprise";
-    proEnabled: boolean;
-    onSignIn: () => void | Promise<void>;
-    onSignUp: () => void | Promise<void>;
-    onSignOut: () => void | Promise<void>;
-    onStartCheckout: (interval: "month" | "year") => void | Promise<void>;
-    onOpenPortal: () => void | Promise<void>;
-  };
-  mobileAccess: {
-    billingUser: User | null;
-    entitlementsBusy: boolean;
-    proEnabled: boolean;
-    mobileStatus: MobileAccessStatus | null;
-    mobileStatusBusy: boolean;
-    mobileStatusError: string | null;
-    mobileEnableBusy: boolean;
-    mobileEnableError: string | null;
-    mobileQr: EnableMobileAccessResponse | null;
-    qrFgColor: string;
-    onEnable: () => void | Promise<void>;
-    onDisable: () => void | Promise<void>;
-  };
-  resourceUtilization: {
-    workspaces: Workspace[];
-    snapshot: ResourceUtilization | null;
-    loading: boolean;
-    error: string | null;
-    expandedProcessPids: Record<number, boolean>;
-    onToggleExpanded: (pid: number) => void;
-  };
-  providerControlMode: SandboxingSettings["provider_control_mode"];
-  setProviderControlMode: (value: SandboxingSettings["provider_control_mode"]) => void;
-  machineResolvedMemoryMb: number | null;
-  machineIdleShutdownSeconds: string;
-  setMachineIdleShutdownSeconds: (value: string) => void;
-  machineHostPressureSwapThresholdMb: string;
-  setMachineHostPressureSwapThresholdMb: (value: string) => void;
-  sandboxMachineCanSave: boolean;
-  devTools: {
-    enabled: boolean;
-    restartBusy: boolean;
-    restartError: string | null;
-    restartResults: DevRestartProvidersResult[] | null;
-    onRestart: (mode: "drain" | "immediate") => void | Promise<void>;
-  };
+  account: SettingsAccountController;
+  mobileQrFgColor: string;
+  resourceUtilization: SettingsResourceUtilizationController;
+  devTools: SettingsDevToolsController;
 }) {
   const {
     active,
-    loaded,
-    loadError,
-    theme,
-    onThemeChange,
-    editorSettings,
-    setEditorSettings,
-    editorLoaded,
-    editorError,
-    clientSettingsError,
-    showRemoteAuthority,
-    isDesktopApp,
-    completedNotifications,
-    failedNotifications,
-    badgeUnreadCount,
-    desktopNotificationPermission,
-    desktopNotificationPermissionBusy,
-    clientSettingsState,
-    clientSettingsSaving,
-    onToggleCompletedNotifications,
-    onToggleFailedNotifications,
-    onToggleBadgeUnreadCount,
-    onRequestDesktopNotificationPermission,
-    telemetryEnabled,
-    setTelemetryEnabled,
     workspaceId,
+    general,
+    notifications,
+    daemonSettings,
     themeVariant,
-    resourceGovernance,
-    saving,
-    supabaseConfigured,
-    billing,
-    mobileAccess,
+    account,
+    mobileQrFgColor,
     resourceUtilization,
-    providerControlMode,
-    setProviderControlMode,
-    machineResolvedMemoryMb,
-    machineIdleShutdownSeconds,
-    setMachineIdleShutdownSeconds,
-    machineHostPressureSwapThresholdMb,
-    setMachineHostPressureSwapThresholdMb,
-    sandboxMachineCanSave,
     devTools,
   } = props;
 
-  if (!loaded) return <div className="settings-empty">Loading…</div>;
-  if (loadError) return <div className="settings-empty settings-empty-error">{loadError}</div>;
+  const renderDaemonDocumentState = () => {
+    if (!daemonSettings.loaded) {
+      return <div className="settings-empty">Loading…</div>;
+    }
+    if (daemonSettings.loadError) {
+      return <div className="settings-empty settings-empty-error">{daemonSettings.loadError}</div>;
+    }
+    return null;
+  };
 
   if (active === "general") {
     return (
       <GeneralSettingsSection
-        theme={theme}
-        onThemeChange={onThemeChange}
-        editorSettings={editorSettings}
-        setEditorSettings={setEditorSettings}
-        editorLoaded={editorLoaded}
-        editorError={editorError}
-        clientSettingsError={clientSettingsError}
-        showRemoteAuthority={showRemoteAuthority}
-        isDesktopApp={isDesktopApp}
+        theme={general.theme}
+        onThemeChange={general.onThemeChange}
+        editorSettings={general.editorSettings}
+        setEditorSettings={general.setEditorSettings}
+        editorLoaded={general.editorLoaded}
+        editorError={general.editorError}
+        clientSettingsError={notifications.clientSettingsError}
+        showRemoteAuthority={general.showRemoteAuthority}
+        isDesktopApp={general.isDesktopApp}
       />
     );
   }
@@ -204,37 +80,31 @@ export function SettingsContentRouter(props: {
   if (active === "notifications") {
     return (
       <NotificationsSettingsSection
-        isDesktopApp={isDesktopApp}
-        completedNotifications={completedNotifications}
-        failedNotifications={failedNotifications}
-        badgeUnreadCount={badgeUnreadCount}
-        desktopNotificationPermission={desktopNotificationPermission}
-        desktopNotificationPermissionBusy={desktopNotificationPermissionBusy}
-        clientSettingsState={clientSettingsState}
-        clientSettingsSaving={clientSettingsSaving}
-        clientSettingsError={clientSettingsError}
-        onToggleCompletedNotifications={async (next) => {
-          await onToggleCompletedNotifications(next);
-        }}
-        onToggleFailedNotifications={async (next) => {
-          await onToggleFailedNotifications(next);
-        }}
-        onToggleBadgeUnreadCount={async (next) => {
-          await onToggleBadgeUnreadCount(next);
-        }}
-        onRequestDesktopNotificationPermission={async () => {
-          await onRequestDesktopNotificationPermission();
-        }}
+        isDesktopApp={notifications.isDesktopApp}
+        completedNotifications={notifications.completedNotifications}
+        failedNotifications={notifications.failedNotifications}
+        badgeUnreadCount={notifications.badgeUnreadCount}
+        desktopNotificationPermission={notifications.desktopNotificationPermission}
+        desktopNotificationPermissionBusy={notifications.desktopNotificationPermissionBusy}
+        clientSettingsState={notifications.clientSettingsState}
+        clientSettingsSaving={notifications.clientSettingsSaving}
+        clientSettingsError={notifications.clientSettingsError}
+        onToggleCompletedNotifications={notifications.onToggleCompletedNotifications}
+        onToggleFailedNotifications={notifications.onToggleFailedNotifications}
+        onToggleBadgeUnreadCount={notifications.onToggleBadgeUnreadCount}
+        onRequestDesktopNotificationPermission={notifications.onRequestDesktopNotificationPermission}
       />
     );
   }
 
   if (active === "analytics") {
+    const status = renderDaemonDocumentState();
+    if (status) return status;
     return (
       <AnalyticsSettingsSection
-        telemetryEnabled={telemetryEnabled}
-        loaded={loaded}
-        setTelemetryEnabled={setTelemetryEnabled}
+        telemetryEnabled={daemonSettings.telemetry.enabled}
+        loaded={daemonSettings.loaded}
+        setTelemetryEnabled={daemonSettings.telemetry.setEnabled}
       />
     );
   }
@@ -260,25 +130,27 @@ export function SettingsContentRouter(props: {
   }
 
   if (active === "resource_governance") {
+    const status = renderDaemonDocumentState();
+    if (status) return status;
     return (
       <ResourceGovernanceSection
-        loaded={loaded}
-        enabled={resourceGovernance.enabled}
-        onEnabledChange={resourceGovernance.setEnabled}
-        mode={resourceGovernance.mode}
-        onModeChange={resourceGovernance.setMode}
-        cpuQuotaPct={resourceGovernance.cpuQuotaPct}
-        onCpuQuotaPctChange={resourceGovernance.setCpuQuotaPct}
-        memoryHighGb={resourceGovernance.memoryHighGb}
-        onMemoryHighGbChange={resourceGovernance.setMemoryHighGb}
-        memoryMaxGb={resourceGovernance.memoryMaxGb}
-        onMemoryMaxGbChange={resourceGovernance.setMemoryMaxGb}
-        effective={resourceGovernance.effective}
-        status={resourceGovernance.status}
-        saving={saving}
-        canSave={resourceGovernance.canSave}
-        payload={resourceGovernance.payload}
-        onApplyNow={resourceGovernance.onApplyNow}
+        loaded={daemonSettings.loaded}
+        enabled={daemonSettings.resourceGovernance.enabled}
+        onEnabledChange={daemonSettings.resourceGovernance.setEnabled}
+        mode={daemonSettings.resourceGovernance.mode}
+        onModeChange={daemonSettings.resourceGovernance.setMode}
+        cpuQuotaPct={daemonSettings.resourceGovernance.cpuQuotaPct}
+        onCpuQuotaPctChange={daemonSettings.resourceGovernance.setCpuQuotaPct}
+        memoryHighGb={daemonSettings.resourceGovernance.memoryHighGb}
+        onMemoryHighGbChange={daemonSettings.resourceGovernance.setMemoryHighGb}
+        memoryMaxGb={daemonSettings.resourceGovernance.memoryMaxGb}
+        onMemoryMaxGbChange={daemonSettings.resourceGovernance.setMemoryMaxGb}
+        effective={daemonSettings.resourceGovernance.effective}
+        status={daemonSettings.resourceGovernance.status}
+        saving={daemonSettings.saving}
+        canSave={daemonSettings.resourceGovernance.canSave}
+        payload={daemonSettings.resourceGovernance.payload}
+        onApplyNow={daemonSettings.resourceGovernance.onApplyNow}
       />
     );
   }
@@ -286,19 +158,19 @@ export function SettingsContentRouter(props: {
   if (active === "mobile_access") {
     return (
       <MobileAccessSection
-        supabaseConfigured={supabaseConfigured}
-        billingUser={mobileAccess.billingUser}
-        entitlementsBusy={mobileAccess.entitlementsBusy}
-        proEnabled={mobileAccess.proEnabled}
-        mobileStatus={mobileAccess.mobileStatus}
-        mobileStatusBusy={mobileAccess.mobileStatusBusy}
-        mobileStatusError={mobileAccess.mobileStatusError}
-        mobileEnableBusy={mobileAccess.mobileEnableBusy}
-        mobileEnableError={mobileAccess.mobileEnableError}
-        mobileQr={mobileAccess.mobileQr}
-        qrFgColor={mobileAccess.qrFgColor}
-        onEnable={mobileAccess.onEnable}
-        onDisable={mobileAccess.onDisable}
+        supabaseConfigured={account.supabaseConfigured}
+        billingUser={account.mobileAccess.billingUser}
+        entitlementsBusy={account.mobileAccess.entitlementsBusy}
+        proEnabled={account.mobileAccess.proEnabled}
+        mobileStatus={account.mobileAccess.mobileStatus}
+        mobileStatusBusy={account.mobileAccess.mobileStatusBusy}
+        mobileStatusError={account.mobileAccess.mobileStatusError}
+        mobileEnableBusy={account.mobileAccess.mobileEnableBusy}
+        mobileEnableError={account.mobileAccess.mobileEnableError}
+        mobileQr={account.mobileAccess.mobileQr}
+        qrFgColor={mobileQrFgColor}
+        onEnable={account.mobileAccess.onEnable}
+        onDisable={account.mobileAccess.onDisable}
       />
     );
   }
@@ -323,23 +195,23 @@ export function SettingsContentRouter(props: {
   if (active === "billing") {
     return (
       <BillingSection
-        supabaseConfigured={supabaseConfigured}
-        checkoutStatus={billing.checkoutStatus}
-        billingUser={billing.billingUser}
-        billingEmail={billing.billingEmail}
-        onBillingEmailChange={billing.setBillingEmail}
-        billingPassword={billing.billingPassword}
-        onBillingPasswordChange={billing.setBillingPassword}
-        billingBusy={billing.billingBusy}
-        billingError={billing.billingError}
-        entitlementsBusy={billing.entitlementsBusy}
-        plan={billing.plan}
-        proEnabled={billing.proEnabled}
-        onSignIn={billing.onSignIn}
-        onSignUp={billing.onSignUp}
-        onSignOut={billing.onSignOut}
-        onStartCheckout={billing.onStartCheckout}
-        onOpenPortal={billing.onOpenPortal}
+        supabaseConfigured={account.supabaseConfigured}
+        checkoutStatus={account.billing.checkoutStatus}
+        billingUser={account.billing.billingUser}
+        billingEmail={account.billing.billingEmail}
+        onBillingEmailChange={account.billing.setBillingEmail}
+        billingPassword={account.billing.billingPassword}
+        onBillingPasswordChange={account.billing.setBillingPassword}
+        billingBusy={account.billing.billingBusy}
+        billingError={account.billing.billingError}
+        entitlementsBusy={account.billing.entitlementsBusy}
+        plan={account.billing.plan}
+        proEnabled={account.billing.proEnabled}
+        onSignIn={account.billing.onSignIn}
+        onSignUp={account.billing.onSignUp}
+        onSignOut={account.billing.onSignOut}
+        onStartCheckout={account.billing.onStartCheckout}
+        onOpenPortal={account.billing.onOpenPortal}
       />
     );
   }
@@ -365,17 +237,19 @@ export function SettingsContentRouter(props: {
   }
 
   if (active === "sandboxing") {
+    const status = renderDaemonDocumentState();
+    if (status) return status;
     return (
       <SandboxingSection
-        loaded={loaded}
-        providerControlMode={providerControlMode}
-        onProviderControlModeChange={setProviderControlMode}
-        resolvedMachineMemoryMb={machineResolvedMemoryMb}
-        idleShutdownSeconds={machineIdleShutdownSeconds}
-        onIdleShutdownSecondsChange={setMachineIdleShutdownSeconds}
-        hostPressureSwapThresholdMb={machineHostPressureSwapThresholdMb}
-        onHostPressureSwapThresholdMbChange={setMachineHostPressureSwapThresholdMb}
-        canSaveMachineSettings={sandboxMachineCanSave}
+        loaded={daemonSettings.loaded}
+        providerControlMode={daemonSettings.sandboxing.providerControlMode}
+        onProviderControlModeChange={daemonSettings.sandboxing.setProviderControlMode}
+        resolvedMachineMemoryMb={daemonSettings.sandboxing.machineResolvedMemoryMb}
+        idleShutdownSeconds={daemonSettings.sandboxing.machineIdleShutdownSeconds}
+        onIdleShutdownSecondsChange={daemonSettings.sandboxing.setMachineIdleShutdownSeconds}
+        hostPressureSwapThresholdMb={daemonSettings.sandboxing.machineHostPressureSwapThresholdMb}
+        onHostPressureSwapThresholdMbChange={daemonSettings.sandboxing.setMachineHostPressureSwapThresholdMb}
+        canSaveMachineSettings={daemonSettings.sandboxing.sandboxMachineCanSave}
       />
     );
   }

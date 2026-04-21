@@ -5,45 +5,46 @@ import {
   type MessageAttachment,
   postMessage,
   type Session,
-  type SessionTurn,
   idToString,
   interruptSession,
 } from "../api/client";
+import type { SessionSupervisor } from "../state/sessionSupervisor";
 import { randomUuid } from "../utils/randomUuid";
 import { errorMessage } from "../utils/errorMessage";
-import {
-  filterQueuedMessagesForPanel,
-  mergeMessagesForView,
-  mergeQueuedMessagesForPanel,
-} from "./SessionPage.workbenchViewModel";
-import { buildOptimisticUserMessage } from "./SessionPage.optimisticMessage";
+import { buildOptimisticUserMessage } from "./sessionView/SessionPage.optimisticMessage";
 import { getQueuedAttachments } from "./sessionView/SessionQueuePanel";
-import { composeModelId } from "../utils/modelEffort";
+import {
+  clearInterruptPendingMetric,
+  noteInterruptClicked,
+  noteInterruptPendingVisible,
+} from "../state/foregroundFreshnessTelemetry";
 
-export type PendingMessageEntry = {
-  clientId: string;
-  message: Message;
-};
-
-export const shouldDropPendingMessage = (pending: Message, realIds: Set<string>): boolean => {
-  const pendingId = idToString(pending.id);
-  return Boolean(pendingId && realIds.has(pendingId));
-};
+type OptimisticOverlaySupervisor = Pick<
+  SessionSupervisor,
+  | "addOptimisticQueueRemovalId"
+  | "removeOptimisticQueueRemovalId"
+  | "removeOptimisticQueuedMessage"
+  | "removeOptimisticThreadMessage"
+  | "upsertOptimisticQueuedMessage"
+  | "upsertOptimisticThreadMessage"
+>;
 
 type Params = {
   sessionId: string;
   session: Session | null;
+  supervisor: OptimisticOverlaySupervisor;
   input: string;
   setInput: (next: string) => void;
   draftAttachments: MessageAttachment[];
-  setDraftAttachments: (next: SetStateAction<MessageAttachment[]>) => void;
-  messages: Message[];
-  messagesKey: string;
-  queue: Message[];
-  turns: SessionTurn[];
-  turnsKey: string;
+  setDraftAttachments: Dispatch<SetStateAction<MessageAttachment[]>>;
+  optimisticThreadMessages: Message[];
+  optimisticQueuedMessages: Message[];
+  messageCount: number;
+  turnCount: number;
   hasActiveTurn: boolean;
   queuedMessagesEnabled: boolean;
+  currentModelId: string;
+  interruptSessionId: string;
   resolveSendText: () => Promise<string>;
   setAtBottom: Dispatch<SetStateAction<boolean>>;
   onDraftPersistNow?: (() => void | Promise<void>) | null;
@@ -52,15 +53,15 @@ type Params = {
 type Result = {
   sendBusy: boolean;
   sendError: string | null;
+  setSendError: (next: string | null) => void;
   queueActionBusy: boolean;
-  queueForPanel: Message[];
-  displayMessages: Message[];
+  interruptPending: boolean;
   pendingQueueMessageIdSet: Set<string>;
-  queuedMessageIdsForThread: Set<string>;
   sendNow: () => Promise<void>;
   onRemoveQueued: (messageId: string) => Promise<void>;
   onEditQueued: (message: Message) => Promise<void>;
   onSendQueuedNow: (message: Message) => Promise<void>;
+  onInterruptSession: (() => Promise<void>) | null;
 };
 
 type PendingSessionHandoff = {
@@ -73,102 +74,76 @@ const shouldKeepQueueRemovalOnError = (error: unknown) => {
   return msg.startsWith("400") || msg.startsWith("404");
 };
 
-const isTurnAlreadyRunningSendError = (value: unknown): boolean => {
-  const message = errorMessage(value).trim().toLowerCase();
-  if (!message) return false;
-  return (
-    message.includes("a turn is already running")
-    || message.includes("turn is already running")
-    || message.includes("stop it or wait for it to finish")
-  );
-};
-
-export function shouldCarryPendingMessagesAcrossSessionChange({
+function shouldCarryPendingMessagesAcrossSessionChange({
   previousSessionId,
   nextSessionId,
   handoff,
-  pendingMessages,
+  optimisticThreadMessages,
   messageCount,
   turnCount,
 }: {
   previousSessionId: string;
   nextSessionId: string;
   handoff: PendingSessionHandoff | null;
-  pendingMessages: PendingMessageEntry[];
+  optimisticThreadMessages: Message[];
   messageCount: number;
   turnCount: number;
 }): boolean {
   if (!previousSessionId || previousSessionId === nextSessionId) return false;
   if (!handoff || handoff.fromSessionId !== previousSessionId) return false;
   if (messageCount > 0 || turnCount > 0) return false;
-  const pendingIds = new Set(pendingMessages.map((entry) => entry.clientId));
-  return handoff.messageIds.some((messageId) => pendingIds.has(messageId));
-}
-
-export function reassignPendingMessagesToSession(
-  pendingMessages: PendingMessageEntry[],
-  nextSessionId: string,
-  handoff: PendingSessionHandoff,
-): PendingMessageEntry[] {
-  const handoffIds = new Set(handoff.messageIds);
-  return pendingMessages
-    .filter((entry) => handoffIds.has(entry.clientId))
-    .map((entry) => ({
-      ...entry,
-      message: {
-        ...entry.message,
-        session_id: nextSessionId,
-      },
-    }));
+  const optimisticIds = new Set(
+    optimisticThreadMessages
+      .map((message) => idToString(message.id))
+      .filter((messageId): messageId is string => messageId.length > 0),
+  );
+  return handoff.messageIds.some((messageId) => optimisticIds.has(messageId));
 }
 
 export function useSessionComposerQueueController(params: Params): Result {
   const {
     sessionId,
     session,
+    supervisor,
     input,
     setInput,
     draftAttachments,
     setDraftAttachments,
-    messages,
-    messagesKey,
-    queue,
-    turns,
-    turnsKey,
+    optimisticThreadMessages,
+    optimisticQueuedMessages,
+    messageCount,
+    turnCount,
     hasActiveTurn,
     queuedMessagesEnabled,
+    currentModelId,
+    interruptSessionId,
     resolveSendText,
     setAtBottom,
     onDraftPersistNow,
   } = params;
-  const currentModelId = useMemo(
-    () => composeModelId(String(session?.model_id ?? ""), session?.reasoning_effort ?? null),
-    [session?.model_id, session?.reasoning_effort],
-  );
   const [sendBusy, setSendBusy] = useState(false);
   const sendBusyRef = useRef(false);
-  const [sendError, setSendError] = useState<string | null>(null);
+  const [sendError, setSendErrorState] = useState<string | null>(null);
   const [queueActionBusyId, setQueueActionBusyId] = useState<string | null>(null);
-  const [pendingMessages, setPendingMessages] = useState<PendingMessageEntry[]>([]);
-  const [pendingQueueMessages, setPendingQueueMessages] = useState<PendingMessageEntry[]>([]);
-  const [optimisticQueueRemovalIds, setOptimisticQueueRemovalIds] = useState<string[]>([]);
+  const [interruptPending, setInterruptPending] = useState(false);
   const previousSessionIdRef = useRef(sessionId);
+  const supervisorRef = useRef(supervisor);
+  const optimisticThreadMessagesRef = useRef(optimisticThreadMessages);
+  const messageCountRef = useRef(messageCount);
+  const turnCountRef = useRef(turnCount);
   const pendingSessionHandoffRef = useRef<PendingSessionHandoff | null>(null);
-  const pendingMessagesRef = useRef(pendingMessages);
-  const messageCountRef = useRef(messages.length);
-  const turnCountRef = useRef(turns.length);
 
   useEffect(() => {
-    pendingMessagesRef.current = pendingMessages;
-  }, [pendingMessages]);
+    supervisorRef.current = supervisor;
+  }, [supervisor]);
 
   useEffect(() => {
-    messageCountRef.current = messages.length;
-  }, [messages.length]);
+    messageCountRef.current = messageCount;
+  }, [messageCount]);
 
   useEffect(() => {
-    turnCountRef.current = turns.length;
-  }, [turns.length]);
+    turnCountRef.current = turnCount;
+  }, [turnCount]);
 
   useEffect(() => {
     const previousSessionId = previousSessionIdRef.current;
@@ -178,158 +153,131 @@ export function useSessionComposerQueueController(params: Params): Result {
       previousSessionId,
       nextSessionId: sessionId,
       handoff,
-      pendingMessages: pendingMessagesRef.current,
+      optimisticThreadMessages: optimisticThreadMessagesRef.current,
       messageCount: messageCountRef.current,
       turnCount: turnCountRef.current,
     });
     if (shouldCarryPendingMessages && handoff) {
-      setPendingMessages((prev) => reassignPendingMessagesToSession(prev, sessionId, handoff));
+      const handoffIds = new Set(handoff.messageIds);
+      const carriedMessages: Message[] = [];
+      for (const message of optimisticThreadMessagesRef.current) {
+        const messageId = idToString(message.id);
+        if (!messageId || !handoffIds.has(messageId)) continue;
+        const carriedMessage = {
+          ...message,
+          session_id: sessionId,
+        };
+        supervisorRef.current.removeOptimisticThreadMessage(previousSessionId, messageId);
+        supervisorRef.current.upsertOptimisticThreadMessage(sessionId, carriedMessage);
+        carriedMessages.push(carriedMessage);
+      }
+      optimisticThreadMessagesRef.current = carriedMessages;
       pendingSessionHandoffRef.current = {
         fromSessionId: sessionId,
         messageIds: handoff.messageIds,
       };
     } else {
-      setPendingMessages([]);
+      optimisticThreadMessagesRef.current = optimisticThreadMessages;
       pendingSessionHandoffRef.current = null;
     }
-    setPendingQueueMessages([]);
-    setOptimisticQueueRemovalIds([]);
     setSendBusy(false);
     sendBusyRef.current = false;
-    setSendError(null);
+    setSendErrorState(null);
     setQueueActionBusyId(null);
+    setInterruptPending(false);
   }, [sessionId]);
+
+  useEffect(() => {
+    optimisticThreadMessagesRef.current = optimisticThreadMessages;
+  }, [optimisticThreadMessages]);
+
+  useEffect(() => {
+    const handoff = pendingSessionHandoffRef.current;
+    if (!handoff || handoff.fromSessionId !== sessionId) return;
+    const optimisticIds = new Set(
+      optimisticThreadMessages
+        .map((message) => idToString(message.id))
+        .filter((messageId): messageId is string => messageId.length > 0),
+    );
+    if (handoff.messageIds.some((messageId) => optimisticIds.has(messageId))) return;
+    pendingSessionHandoffRef.current = null;
+  }, [optimisticThreadMessages, sessionId]);
+
+  useEffect(() => {
+    if (!hasActiveTurn) {
+      setInterruptPending(false);
+    }
+  }, [hasActiveTurn]);
+
+  useEffect(() => {
+    if (interruptPending && interruptSessionId) {
+      noteInterruptPendingVisible(interruptSessionId);
+      return;
+    }
+    if (interruptSessionId) {
+      clearInterruptPendingMetric(interruptSessionId);
+    }
+  }, [interruptPending, interruptSessionId]);
+
+  const pendingQueueMessageIdSet = useMemo(() => {
+    return new Set(
+      optimisticQueuedMessages
+        .map((message) => idToString(message.id))
+        .filter((messageId): messageId is string => messageId.length > 0),
+    );
+  }, [optimisticQueuedMessages]);
 
   const setSendBusySafe = (next: boolean) => {
     sendBusyRef.current = next;
     setSendBusy(next);
   };
-
-  const optimisticQueueRemovalSet = useMemo(
-    () => new Set(optimisticQueueRemovalIds),
-    [optimisticQueueRemovalIds],
-  );
+  const setSendError = (next: string | null) => {
+    setSendErrorState(next);
+  };
+  const queueActionBusy = queueActionBusyId !== null;
+  const upsertOptimisticThreadMessageRef = (message: Message) => {
+    const nextMessageId = idToString(message.id);
+    if (!nextMessageId) {
+      optimisticThreadMessagesRef.current = [...optimisticThreadMessagesRef.current, message];
+      return;
+    }
+    const nextMessages = optimisticThreadMessagesRef.current.slice();
+    const existingIndex = nextMessages.findIndex((entry) => idToString(entry.id) === nextMessageId);
+    if (existingIndex >= 0) {
+      nextMessages[existingIndex] = message;
+    } else {
+      nextMessages.push(message);
+    }
+    optimisticThreadMessagesRef.current = nextMessages;
+  };
+  const removeOptimisticThreadMessageRef = (messageId: string) => {
+    if (!messageId) return;
+    optimisticThreadMessagesRef.current = optimisticThreadMessagesRef.current.filter(
+      (entry) => idToString(entry.id) !== messageId,
+    );
+  };
   const markQueueOptimisticallyRemoved = (messageId: string) => {
     if (!messageId) return;
-    setOptimisticQueueRemovalIds((prev) => (prev.includes(messageId) ? prev : [...prev, messageId]));
+    supervisor.addOptimisticQueueRemovalId(sessionId, messageId);
   };
   const rollbackOptimisticQueueRemoval = (messageId: string) => {
     if (!messageId) return;
-    setOptimisticQueueRemovalIds((prev) => prev.filter((id) => id !== messageId));
+    supervisor.removeOptimisticQueueRemovalId(sessionId, messageId);
   };
-  const mergedQueueForPanel = useMemo(
-    () => mergeQueuedMessagesForPanel(queue, pendingQueueMessages.map((entry) => entry.message)),
-    [queue, pendingQueueMessages],
-  );
-  const queueForPanel = useMemo(() => {
-    const filtered = filterQueuedMessagesForPanel(mergedQueueForPanel, turns);
-    if (optimisticQueueRemovalIds.length === 0) return filtered;
-    return filtered.filter((message) => {
-      const mid = idToString(message.id);
-      return !mid || !optimisticQueueRemovalSet.has(mid);
-    });
-  }, [mergedQueueForPanel, optimisticQueueRemovalIds.length, optimisticQueueRemovalSet, turns, turnsKey]);
-  const pendingQueueMessageIdSet = useMemo(() => {
-    return new Set(
-      pendingQueueMessages
-        .map((entry) => idToString(entry.message.id))
-        .filter((messageId): messageId is string => !!messageId),
-    );
-  }, [pendingQueueMessages]);
-  const queuedMessageIdsForThread = useMemo(() => {
-    const ids = new Set<string>();
-    for (const message of queueForPanel) {
-      const mid = idToString(message.id);
-      if (mid) ids.add(mid);
-    }
-    if (optimisticQueueRemovalIds.length > 0) {
-      for (const mid of optimisticQueueRemovalIds) {
-        ids.add(mid);
-      }
-    }
-    return ids;
-  }, [optimisticQueueRemovalIds, queueForPanel]);
-  const turnStatusByUserMessageId = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const turn of turns) {
-      const mid = turn.user_message_id ? idToString(turn.user_message_id) : "";
-      if (!mid) continue;
-      map.set(mid, String(turn.status));
-    }
-    return map;
-  }, [turns, turnsKey]);
-  const queuedMessageIdsToShow = useMemo(() => {
-    const ids = new Set<string>();
-    for (const message of messages) {
-      if (message.delivery !== "queued") continue;
-      const mid = idToString(message.id);
-      if (!mid) continue;
-      const status = turnStatusByUserMessageId.get(mid);
-      if (status && status !== "queued") {
-        ids.add(mid);
-      }
-    }
-    return ids;
-  }, [messages, messagesKey, turnStatusByUserMessageId]);
-  const displayMessages = useMemo(
-    () => mergeMessagesForView(messages, pendingMessages.map((entry) => entry.message), queuedMessageIdsToShow),
-    [messages, messagesKey, pendingMessages, queuedMessageIdsToShow],
-  );
-
-  useEffect(() => {
-    if (optimisticQueueRemovalIds.length === 0) return;
-    const liveIds = new Set(
-      mergedQueueForPanel.map((message) => idToString(message.id)).filter((id): id is string => !!id),
-    );
-    setOptimisticQueueRemovalIds((prev) => {
-      const next = prev.filter((id) => liveIds.has(id));
-      return next.length === prev.length ? prev : next;
-    });
-  }, [mergedQueueForPanel, optimisticQueueRemovalIds.length]);
-
-  useEffect(() => {
-    if (pendingMessages.length === 0) return;
-    const realIds = new Set(messages.map((message) => idToString(message.id)));
-    setPendingMessages((prev) => {
-      if (prev.length === 0) return prev;
-      const next = prev.filter((entry) => !shouldDropPendingMessage(entry.message, realIds));
-      return next.length === prev.length ? prev : next;
-    });
-  }, [messages, messagesKey, pendingMessages.length]);
-
-  useEffect(() => {
-    const handoff = pendingSessionHandoffRef.current;
-    if (!handoff) return;
-    const pendingIds = new Set(pendingMessages.map((entry) => entry.clientId));
-    if (handoff.messageIds.some((messageId) => pendingIds.has(messageId))) return;
-    pendingSessionHandoffRef.current = null;
-  }, [pendingMessages]);
-
-  useEffect(() => {
-    if (pendingQueueMessages.length === 0) return;
-    const realIds = new Set(queue.map((message) => idToString(message.id)));
-    setPendingQueueMessages((prev) => {
-      if (prev.length === 0) return prev;
-      const next = prev.filter((entry) => !shouldDropPendingMessage(entry.message, realIds));
-      return next.length === prev.length ? prev : next;
-    });
-  }, [pendingQueueMessages.length, queue]);
-
-  const queueActionBusy = queueActionBusyId !== null;
 
   const sendNow = async () => {
     if (!sessionId) return;
     if (sendBusyRef.current) return;
     if (hasActiveTurn && !queuedMessagesEnabled) {
-      setSendError("A turn is already running. Stop it or wait for it to finish.");
+      setSendErrorState("A turn is already running. Stop it or wait for it to finish.");
       return;
     }
     setSendBusySafe(true);
     let text = "";
     try {
-      text = await resolveSendText();
+      text = (await resolveSendText()).trim();
     } catch (error: unknown) {
-      setSendError(errorMessage(error));
+      setSendErrorState(errorMessage(error));
       setSendBusySafe(false);
       return;
     }
@@ -351,14 +299,15 @@ export function useSessionComposerQueueController(params: Params): Result {
       attachments: attachmentsToSend,
       delivery: shouldQueue ? "queued" : "immediate",
     });
-    setSendError(null);
+    setSendErrorState(null);
     if (shouldQueue) {
-      setPendingQueueMessages((prev) => [...prev, { clientId: messageId, message: optimisticMessage }]);
+      supervisor.upsertOptimisticQueuedMessage(sessionId, optimisticMessage);
       pendingSessionHandoffRef.current = null;
     } else {
-      setPendingMessages((prev) => [...prev, { clientId: messageId, message: optimisticMessage }]);
+      upsertOptimisticThreadMessageRef(optimisticMessage);
+      supervisor.upsertOptimisticThreadMessage(sessionId, optimisticMessage);
       pendingSessionHandoffRef.current =
-        messages.length === 0 && turns.length === 0
+        messageCount === 0 && turnCount === 0
           ? {
               fromSessionId: sessionId,
               messageIds: [messageId],
@@ -384,13 +333,10 @@ export function useSessionComposerQueueController(params: Params): Result {
         },
       });
       if (shouldQueue) {
-        setPendingQueueMessages((prev) =>
-          prev.map((entry) => (entry.clientId === messageId ? { ...entry, message: posted } : entry)),
-        );
+        supervisor.upsertOptimisticQueuedMessage(sessionId, posted);
       } else {
-        setPendingMessages((prev) =>
-          prev.map((entry) => (entry.clientId === messageId ? { ...entry, message: posted } : entry)),
-        );
+        upsertOptimisticThreadMessageRef(posted);
+        supervisor.upsertOptimisticThreadMessage(sessionId, posted);
       }
       try {
         await onDraftPersistNow?.();
@@ -399,50 +345,43 @@ export function useSessionComposerQueueController(params: Params): Result {
       }
     } catch (error: unknown) {
       if (shouldQueue) {
-        setPendingQueueMessages((prev) => prev.filter((entry) => entry.clientId !== messageId));
+        supervisor.removeOptimisticQueuedMessage(sessionId, messageId);
       } else {
-        setPendingMessages((prev) => prev.filter((entry) => entry.clientId !== messageId));
+        removeOptimisticThreadMessageRef(messageId);
+        supervisor.removeOptimisticThreadMessage(sessionId, messageId);
         const handoff = pendingSessionHandoffRef.current;
         if (handoff?.messageIds.includes(messageId)) {
           pendingSessionHandoffRef.current = null;
         }
       }
-      if (isTurnAlreadyRunningSendError(error)) {
-        return;
-      }
       setInput(text);
       setDraftAttachments(attachmentsToSend);
-      setSendError(errorMessage(error));
+      setSendErrorState(errorMessage(error));
     } finally {
       setSendBusySafe(false);
     }
   };
 
   const onRemoveQueued = async (messageId: string) => {
-    if (!sessionId) return;
-    if (!messageId) return;
-    if (queueActionBusy) return;
+    if (!sessionId || !messageId || queueActionBusy) return;
     markQueueOptimisticallyRemoved(messageId);
     setQueueActionBusyId(messageId);
-    setSendError(null);
+    setSendErrorState(null);
     try {
       await deleteMessage(sessionId, messageId);
-      setPendingQueueMessages((prev) =>
-        prev.filter((entry) => idToString(entry.message.id) !== messageId),
-      );
+      supervisor.removeOptimisticQueuedMessage(sessionId, messageId);
     } catch (error: unknown) {
       if (!shouldKeepQueueRemovalOnError(error)) {
         rollbackOptimisticQueueRemoval(messageId);
       }
-      setSendError(errorMessage(error));
+      setSendErrorState(errorMessage(error));
     } finally {
       setQueueActionBusyId(null);
     }
   };
 
   const onEditQueued = async (message: Message) => {
-    if (!sessionId) return;
-    if (queueActionBusy) return;
+    if (!sessionId || queueActionBusy) return;
     const messageId = idToString(message.id);
     if (!messageId) return;
     const attachments = getQueuedAttachments(message);
@@ -450,51 +389,53 @@ export function useSessionComposerQueueController(params: Params): Result {
     setDraftAttachments(attachments);
     markQueueOptimisticallyRemoved(messageId);
     setQueueActionBusyId(messageId);
-    setSendError(null);
+    setSendErrorState(null);
     try {
       await deleteMessage(sessionId, messageId);
-      setPendingQueueMessages((prev) =>
-        prev.filter((entry) => idToString(entry.message.id) !== messageId),
-      );
+      supervisor.removeOptimisticQueuedMessage(sessionId, messageId);
     } catch (error: unknown) {
       if (!shouldKeepQueueRemovalOnError(error)) {
         rollbackOptimisticQueueRemoval(messageId);
       }
-      setSendError(errorMessage(error));
+      setSendErrorState(errorMessage(error));
     } finally {
       setQueueActionBusyId(null);
     }
   };
 
   const onSendQueuedNow = async (message: Message) => {
-    if (!sessionId) return;
-    if (queueActionBusy || sendBusyRef.current) return;
+    if (!sessionId || queueActionBusy || sendBusyRef.current) return;
     const messageId = idToString(message.id);
     if (!messageId) return;
+    const targetSessionId = interruptSessionId || sessionId;
     const attachments = getQueuedAttachments(message);
     const content = message.content ?? "";
     markQueueOptimisticallyRemoved(messageId);
     setQueueActionBusyId(messageId);
-    setSendError(null);
+    setSendErrorState(null);
     pendingSessionHandoffRef.current = null;
     try {
-      await interruptSession(sessionId);
+      noteInterruptClicked(targetSessionId, "queued_action");
+      setInterruptPending(true);
+      await interruptSession(targetSessionId);
     } catch (error: unknown) {
+      clearInterruptPendingMetric(targetSessionId);
+      setInterruptPending(false);
       rollbackOptimisticQueueRemoval(messageId);
-      setSendError(errorMessage(error));
+      setSendErrorState(errorMessage(error));
       setQueueActionBusyId(null);
       return;
     }
     try {
       await deleteMessage(sessionId, messageId);
-      setPendingQueueMessages((prev) =>
-        prev.filter((entry) => idToString(entry.message.id) !== messageId),
-      );
+      supervisor.removeOptimisticQueuedMessage(sessionId, messageId);
     } catch (error: unknown) {
+      clearInterruptPendingMetric(targetSessionId);
+      setInterruptPending(false);
       if (!shouldKeepQueueRemovalOnError(error)) {
         rollbackOptimisticQueueRemoval(messageId);
       }
-      setSendError(errorMessage(error));
+      setSendErrorState(errorMessage(error));
       setQueueActionBusyId(null);
       return;
     }
@@ -511,7 +452,8 @@ export function useSessionComposerQueueController(params: Params): Result {
       attachments,
       delivery: "immediate",
     });
-    setPendingMessages((prev) => [...prev, { clientId: optimisticMessageId, message: optimisticMessage }]);
+    upsertOptimisticThreadMessageRef(optimisticMessage);
+    supervisor.upsertOptimisticThreadMessage(sessionId, optimisticMessage);
     setAtBottom(true);
 
     try {
@@ -529,29 +471,43 @@ export function useSessionComposerQueueController(params: Params): Result {
               : "primary",
         },
       });
-      setPendingMessages((prev) =>
-        prev.map((entry) => (entry.clientId === optimisticMessageId ? { ...entry, message: posted } : entry)),
-      );
+      upsertOptimisticThreadMessageRef(posted);
+      supervisor.upsertOptimisticThreadMessage(sessionId, posted);
     } catch (error: unknown) {
-      setPendingMessages((prev) => prev.filter((entry) => entry.clientId !== optimisticMessageId));
-      setSendError(errorMessage(error));
+      removeOptimisticThreadMessageRef(optimisticMessageId);
+      supervisor.removeOptimisticThreadMessage(sessionId, optimisticMessageId);
+      setSendErrorState(errorMessage(error));
     } finally {
       setSendBusySafe(false);
       setQueueActionBusyId(null);
     }
   };
 
+  const onInterruptSession = interruptSessionId
+    ? async () => {
+        noteInterruptClicked(interruptSessionId, "thread_header");
+        setInterruptPending(true);
+        try {
+          await interruptSession(interruptSessionId);
+        } catch (error: unknown) {
+          clearInterruptPendingMetric(interruptSessionId);
+          setInterruptPending(false);
+          setSendErrorState(errorMessage(error));
+        }
+      }
+    : null;
+
   return {
     sendBusy,
     sendError,
+    setSendError,
     queueActionBusy,
-    queueForPanel,
-    displayMessages,
+    interruptPending,
     pendingQueueMessageIdSet,
-    queuedMessageIdsForThread,
     sendNow,
     onRemoveQueued,
     onEditQueued,
     onSendQueuedNow,
+    onInterruptSession,
   };
 }

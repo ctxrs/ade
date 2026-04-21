@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -10,6 +11,8 @@ use serde_json::json;
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::Duration;
 
+use super::normalize::{map_crp_event, CachedToolInput};
+use super::protocol::CrpEvent;
 use super::*;
 
 static ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
@@ -1999,6 +2002,134 @@ done
 
     let session = adapter.pool.require_open_session(session_key).await?;
     session.process.shutdown("test complete").await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn authenticate_session_filters_sweep_only_status_notices() -> Result<()> {
+    let tempdir = tempfile::tempdir()?;
+    let workdir = tempdir.path().to_path_buf();
+    let script_path = workdir.join("auth-status-filter.sh");
+
+    fs::write(
+        &script_path,
+        r#"#!/bin/sh
+session_id=""
+while IFS= read -r line; do
+  case "$line" in
+    *'"type":"session.open"'*)
+      session_id=$(printf '%s' "$line" | sed -n 's/.*"session_id":"\([^"]*\)".*/\1/p')
+      printf '{"v":1,"seq":1,"channel":"control","type":"session.opened","session_id":"%s","supports_session_status":true}\n' "$session_id"
+      ;;
+    *'"type":"session.authenticate"'*)
+      session_id=$(printf '%s' "$line" | sed -n 's/.*"session_id":"\([^"]*\)".*/\1/p')
+      printf '{"v":1,"seq":2,"channel":"control","type":"session.notice","session_id":"%s","code":"session_status","severity":"info","message":"status","details":{"quiescent":true}}\n' "$session_id"
+      printf '{"v":1,"seq":3,"channel":"control","type":"session.notice","session_id":"%s","code":"authenticated","severity":"info","message":"authenticated"}\n' "$session_id"
+      ;;
+  esac
+done
+"#,
+    )?;
+    let mut permissions = fs::metadata(&script_path)?.permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&script_path, permissions)?;
+
+    let adapter = Tier1CrpAdapter::from_raw(
+        "fake-crp",
+        "/bin/sh".to_string(),
+        vec![script_path.to_string_lossy().to_string()],
+    );
+    let session_key = "auth-status-filter";
+    let (event_tx, mut event_rx) = mpsc::channel(16);
+
+    adapter
+        .authenticate_session(
+            session_key.to_string(),
+            workdir.clone(),
+            HashMap::new(),
+            None,
+            event_tx,
+        )
+        .await?;
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut events = Vec::new();
+    let mut saw_terminal = false;
+    while Instant::now() < deadline {
+        let recv = tokio::time::timeout(Duration::from_millis(250), event_rx.recv()).await;
+        let Some(event) = (match recv {
+            Ok(event) => event,
+            Err(_) => continue,
+        }) else {
+            continue;
+        };
+        saw_terminal = event.payload_json.get("code") == Some(&json!("authenticated"));
+        events.push(event);
+        if saw_terminal {
+            break;
+        }
+    }
+
+    assert!(saw_terminal, "timed out waiting for auth terminal event");
+    assert!(
+        events
+            .iter()
+            .all(|event| event.payload_json.get("code") != Some(&json!("session_status"))),
+        "sweep-only session_status notices must not leak into auth streams"
+    );
+
+    let session = adapter.pool.require_open_session(session_key).await?;
+    session.process.shutdown("test complete").await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn authenticate_session_runtime_exit_clears_unopened_session() -> Result<()> {
+    let tempdir = tempfile::tempdir()?;
+    let workdir = tempdir.path().to_path_buf();
+    let script_path = workdir.join("auth-open-send-failure.sh");
+
+    fs::write(&script_path, "#!/bin/sh\nexit 0\n")?;
+    let mut permissions = fs::metadata(&script_path)?.permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&script_path, permissions)?;
+
+    let adapter = Tier1CrpAdapter::from_raw(
+        "fake-crp",
+        "/bin/sh".to_string(),
+        vec![script_path.to_string_lossy().to_string()],
+    );
+    let session_key = "auth-open-send-failure";
+    let (event_tx, _event_rx) = mpsc::channel(8);
+
+    let auth_result = tokio::time::timeout(
+        Duration::from_secs(5),
+        adapter.authenticate_session(
+            session_key.to_string(),
+            workdir.clone(),
+            HashMap::new(),
+            None,
+            event_tx,
+        ),
+    )
+    .await
+    .context("timed out waiting for authenticate_session cleanup path")?;
+    if let Err(err) = auth_result {
+        assert!(
+            !err.to_string().trim().is_empty(),
+            "authenticate_session should surface a useful error when auth startup fails early"
+        );
+    }
+
+    let started = Instant::now();
+    while adapter.pool.session_count_for_test().await != 0 {
+        if started.elapsed() > Duration::from_secs(5) {
+            anyhow::bail!("timed out waiting for early-exit auth session to leave the pool");
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+
+    assert!(!adapter.has_live_session(session_key).await);
     Ok(())
 }
 

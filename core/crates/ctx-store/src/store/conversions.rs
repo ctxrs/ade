@@ -4,6 +4,35 @@ use ctx_core::models::{
     SandboxIsolationKind, SandboxProfile, SandboxSubstrate,
 };
 
+pub(super) fn parse_optional_session_id(raw: Option<String>) -> Option<SessionId> {
+    raw.and_then(|value| uuid::Uuid::parse_str(&value).ok())
+        .map(SessionId)
+}
+
+pub(super) fn vcs_kind_to_str(kind: &VcsKind) -> &'static str {
+    match kind {
+        VcsKind::Git => "git",
+        VcsKind::Jj => "jj",
+        VcsKind::Hg => "hg",
+        VcsKind::Svn => "svn",
+        VcsKind::P4 => "p4",
+        VcsKind::Other => "other",
+    }
+}
+
+pub(super) fn parse_vcs_kind(raw: Option<String>) -> Option<VcsKind> {
+    match raw.as_deref() {
+        Some("git") => Some(VcsKind::Git),
+        Some("jj") => Some(VcsKind::Jj),
+        Some("hg") => Some(VcsKind::Hg),
+        Some("svn") => Some(VcsKind::Svn),
+        Some("p4") => Some(VcsKind::P4),
+        Some("other") => Some(VcsKind::Other),
+        Some(_) => Some(VcsKind::Other),
+        None => None,
+    }
+}
+
 pub(super) fn build_mobile_connection_profile_from_row(
     row: SqliteRow,
 ) -> Result<MobileConnectionProfile> {

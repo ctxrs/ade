@@ -1,14 +1,13 @@
 import { useCallback, useState } from "react";
-import type { SupabaseClient } from "@supabase/supabase-js";
 import type { EnableMobileAccessResponse, MobileAccessStatus } from "../../../api/client";
 import { disableMobileAccess, enableMobileAccess, getMobileAccessStatus } from "../../../api/client";
 import { errorMessage } from "../../../utils/errorMessage";
 
 type Params = {
-  supabase: SupabaseClient | null;
+  getAuthToken: (() => Promise<string>) | null;
 };
 
-export function useMobileAccessController({ supabase }: Params) {
+export function useMobileAccessController({ getAuthToken }: Params) {
   const [mobileStatus, setMobileStatus] = useState<MobileAccessStatus | null>(null);
   const [mobileStatusBusy, setMobileStatusBusy] = useState(false);
   const [mobileStatusError, setMobileStatusError] = useState<string | null>(null);
@@ -29,24 +28,18 @@ export function useMobileAccessController({ supabase }: Params) {
     }
   }, []);
 
-  const getSupabaseToken = useCallback(async (): Promise<string> => {
-    if (!supabase) {
+  const resolveAuthToken = useCallback(async (): Promise<string> => {
+    if (!getAuthToken) {
       throw new Error("Supabase is not configured.");
     }
-    const { data, error } = await supabase.auth.getSession();
-    if (error) throw error;
-    const token = data.session?.access_token;
-    if (!token) {
-      throw new Error("Sign in required to manage mobile access.");
-    }
-    return token;
-  }, [supabase]);
+    return getAuthToken();
+  }, [getAuthToken]);
 
   const handleEnableMobile = useCallback(async () => {
     setMobileEnableBusy(true);
     setMobileEnableError(null);
     try {
-      const token = await getSupabaseToken();
+      const token = await resolveAuthToken();
       const resp = await enableMobileAccess(token);
       setMobileQr(resp);
       setMobileStatus(resp.status);
@@ -55,13 +48,13 @@ export function useMobileAccessController({ supabase }: Params) {
     } finally {
       setMobileEnableBusy(false);
     }
-  }, [getSupabaseToken]);
+  }, [resolveAuthToken]);
 
   const handleDisableMobile = useCallback(async () => {
     setMobileEnableBusy(true);
     setMobileEnableError(null);
     try {
-      const token = await getSupabaseToken();
+      const token = await resolveAuthToken();
       await disableMobileAccess(token);
       setMobileQr(null);
       await refreshMobileAccess();
@@ -70,7 +63,7 @@ export function useMobileAccessController({ supabase }: Params) {
     } finally {
       setMobileEnableBusy(false);
     }
-  }, [getSupabaseToken, refreshMobileAccess]);
+  }, [refreshMobileAccess, resolveAuthToken]);
 
   return {
     mobileStatus,

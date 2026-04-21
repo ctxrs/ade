@@ -1,5 +1,36 @@
 use super::*;
 
+pub struct WorktreeBootstrapResultUpdate {
+    pub worktree_id: WorktreeId,
+    pub status: WorktreeBootstrapStatus,
+    pub started_at: DateTime<Utc>,
+    pub finished_at: DateTime<Utc>,
+    pub exit_code: Option<i64>,
+    pub timeout_sec: Option<i64>,
+    pub error: Option<String>,
+    pub log_path: Option<String>,
+    pub log_truncated: Option<bool>,
+    pub command: Option<String>,
+    pub script_path: Option<String>,
+}
+
+fn serialize_bootstrap_status(status: &WorktreeBootstrapStatus) -> &'static str {
+    match status {
+        WorktreeBootstrapStatus::Success => "success",
+        WorktreeBootstrapStatus::Failed => "failed",
+        WorktreeBootstrapStatus::Timeout => "timeout",
+    }
+}
+
+fn parse_bootstrap_status(raw: Option<String>) -> Option<WorktreeBootstrapStatus> {
+    match raw.as_deref() {
+        Some("success") => Some(WorktreeBootstrapStatus::Success),
+        Some("failed") => Some(WorktreeBootstrapStatus::Failed),
+        Some("timeout") => Some(WorktreeBootstrapStatus::Timeout),
+        _ => None,
+    }
+}
+
 impl Store {
     // Worktree APIs
     pub async fn insert_worktree(&self, worktree: Worktree) -> Result<Worktree> {

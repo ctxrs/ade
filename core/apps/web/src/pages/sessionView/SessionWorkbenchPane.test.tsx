@@ -5,10 +5,7 @@ import { VirtuosoMessageListTestingContext } from "@virtuoso.dev/message-list";
 import type { Session } from "../../api/client";
 import type { MessageAttachment } from "../../api/client";
 import type { WorkbenchMessageListContext } from "../sessionThread";
-import type {
-  AskUserQuestionAnswerState,
-  WorkbenchListItem,
-} from "./SessionPage.types";
+import type { WorkbenchListItem } from "./SessionPage.types";
 import { SessionWorkbenchPane } from "./SessionWorkbenchPane";
 
 const { copyTextToClipboardMock } = vi.hoisted(() => ({
@@ -71,7 +68,6 @@ function TestPane({
   const [expandedTurnDetailsById, setExpandedTurnDetailsById] = useState<Record<string, boolean>>({});
   const [expandedToolById, setExpandedToolById] = useState<Record<string, boolean>>({});
   const [expandedMessageById, setExpandedMessageById] = useState<Record<string, boolean>>({});
-  const [, setOptimisticAskAnswers] = useState<Record<string, AskUserQuestionAnswerState>>({});
   const [draftAttachments, setDraftAttachments] = useState<MessageAttachment[]>([]);
   const methodsRef = useRef(null);
   const dropScopeRef = useRef<HTMLDivElement | null>(null);
@@ -105,7 +101,8 @@ function TestPane({
         setExpandedMessageById={setExpandedMessageById}
         turnToolsLoading={[]}
         verbosity="default"
-        setOptimisticAskAnswers={setOptimisticAskAnswers}
+        onCancelAskUserQuestion={async () => {}}
+        onSubmitAskUserQuestion={async () => {}}
         onRequestTurnTools={() => {}}
         showDebug={false}
         debugEvents={[]}
@@ -207,7 +204,6 @@ function TestMessagePane() {
   const [expandedTurnDetailsById, setExpandedTurnDetailsById] = useState<Record<string, boolean>>({});
   const [expandedToolById, setExpandedToolById] = useState<Record<string, boolean>>({});
   const [expandedMessageById, setExpandedMessageById] = useState<Record<string, boolean>>({});
-  const [, setOptimisticAskAnswers] = useState<Record<string, AskUserQuestionAnswerState>>({});
   const [draftAttachments, setDraftAttachments] = useState<MessageAttachment[]>([]);
   const methodsRef = useRef(null);
   const dropScopeRef = useRef<HTMLDivElement | null>(null);
@@ -241,7 +237,8 @@ function TestMessagePane() {
         setExpandedMessageById={setExpandedMessageById}
         turnToolsLoading={[]}
         verbosity="default"
-        setOptimisticAskAnswers={setOptimisticAskAnswers}
+        onCancelAskUserQuestion={async () => {}}
+        onSubmitAskUserQuestion={async () => {}}
         onRequestTurnTools={() => {}}
         showDebug={false}
         debugEvents={[]}
@@ -344,7 +341,6 @@ function TestAssistantPane() {
   const [expandedTurnDetailsById, setExpandedTurnDetailsById] = useState<Record<string, boolean>>({});
   const [expandedToolById, setExpandedToolById] = useState<Record<string, boolean>>({});
   const [expandedMessageById, setExpandedMessageById] = useState<Record<string, boolean>>({});
-  const [, setOptimisticAskAnswers] = useState<Record<string, AskUserQuestionAnswerState>>({});
   const [draftAttachments, setDraftAttachments] = useState<MessageAttachment[]>([]);
   const methodsRef = useRef(null);
   const dropScopeRef = useRef<HTMLDivElement | null>(null);
@@ -378,7 +374,8 @@ function TestAssistantPane() {
         setExpandedMessageById={setExpandedMessageById}
         turnToolsLoading={[]}
         verbosity="default"
-        setOptimisticAskAnswers={setOptimisticAskAnswers}
+        onCancelAskUserQuestion={async () => {}}
+        onSubmitAskUserQuestion={async () => {}}
         onRequestTurnTools={() => {}}
         showDebug={false}
         debugEvents={[]}

@@ -1,5 +1,13 @@
 use super::*;
 
+pub struct SessionTurnToolCountDeltas {
+    pub total: i64,
+    pub pending: i64,
+    pub running: i64,
+    pub completed: i64,
+    pub failed: i64,
+}
+
 impl Store {
     // Session Turn APIs
     pub async fn insert_session_turn(&self, turn: SessionTurn) -> Result<SessionTurn> {

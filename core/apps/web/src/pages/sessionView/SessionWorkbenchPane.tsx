@@ -28,10 +28,7 @@ import type {
 import type { SlashCommandDescriptor } from "../../state/useComposerAutocomplete";
 import type { SessionViewVerbosity } from "../../state/uiStateStore";
 import type { WorkbenchMessageListContext } from "../sessionThread";
-import type {
-  AskUserQuestionAnswerState,
-  WorkbenchListItem,
-} from "./SessionPage.types";
+import type { WorkbenchListItem } from "./SessionPage.types";
 import { SESSION_THREAD_LAYOUT_STYLE } from "../sessionThread/sessionThreadLayoutTokens";
 import type { WorkbenchThreadProjectionOp } from "../sessionThreadProjection";
 import { ProviderGuardBanner } from "./ProviderGuardBanner";
@@ -93,9 +90,11 @@ type SessionWorkbenchPaneProps = {
   setExpandedMessageById: Dispatch<SetStateAction<Record<string, boolean>>>;
   turnToolsLoading: string[];
   verbosity: SessionViewVerbosity;
-  setOptimisticAskAnswers: Dispatch<
-    SetStateAction<Record<string, AskUserQuestionAnswerState>>
-  >;
+  onCancelAskUserQuestion: (toolCallId: string) => Promise<void>;
+  onSubmitAskUserQuestion: (
+    toolCallId: string,
+    answers: Record<string, string>,
+  ) => Promise<void>;
   onRequestTurnTools: (turnId: string) => void;
   showDebug: boolean;
   debugEvents: SessionEvent[];
@@ -211,7 +210,8 @@ export function SessionWorkbenchPane({
   setExpandedMessageById,
   turnToolsLoading,
   verbosity,
-  setOptimisticAskAnswers,
+  onCancelAskUserQuestion,
+  onSubmitAskUserQuestion,
   onRequestTurnTools,
   showDebug,
   debugEvents,
@@ -422,7 +422,8 @@ export function SessionWorkbenchPane({
             setExpandedMessageById,
             turnToolsLoading,
             verbosity,
-            setOptimisticAskAnswers,
+            onCancelAskUserQuestion,
+            onSubmitAskUserQuestion,
             onRequestTurnTools,
             isActive,
             listStyle: style,

@@ -14,7 +14,6 @@ import type {
 import {
   Message,
   Session,
-  submitAskUserQuestion,
   type MessageAttachment,
 } from "../../api/client";
 import { AskUserQuestionCard } from "../../components/AskUserQuestionCard";
@@ -33,7 +32,6 @@ import type { SlashCommandDescriptor } from "../../state/useComposerAutocomplete
 import type { SessionViewVerbosity } from "../../state/uiStateStore";
 import type { WorkbenchMessageListContext } from "../sessionThread";
 import type {
-  AskUserQuestionAnswerState,
   ThreadItem,
   WorkbenchListItem,
 } from "./SessionPage.types";
@@ -69,7 +67,11 @@ export type SessionThreadSurfaceTranscriptProps = {
   setExpandedMessageById: Dispatch<SetStateAction<Record<string, boolean>>>;
   turnToolsLoading: string[];
   verbosity: SessionViewVerbosity;
-  setOptimisticAskAnswers: Dispatch<SetStateAction<Record<string, AskUserQuestionAnswerState>>>;
+  onCancelAskUserQuestion: (toolCallId: string) => Promise<void>;
+  onSubmitAskUserQuestion: (
+    toolCallId: string,
+    answers: Record<string, string>,
+  ) => Promise<void>;
   onRequestTurnTools: (turnId: string) => void;
   isActive: boolean;
   listStyle: CSSProperties;
@@ -240,24 +242,12 @@ export function SessionThreadSurface({
           onCancel={
             item.answered
               ? undefined
-              : async () => {
-                  await submitAskUserQuestion(sessionId, item.tool_call_id, "cancelled", {});
-                  transcript.setOptimisticAskAnswers((prev) => ({
-                    ...prev,
-                    [item.tool_call_id]: { outcome: "cancelled", answers: {} },
-                  }));
-                }
+              : async () => transcript.onCancelAskUserQuestion(item.tool_call_id)
           }
           onSubmit={
             item.answered
               ? undefined
-              : async (answers) => {
-                  await submitAskUserQuestion(sessionId, item.tool_call_id, "submitted", answers);
-                  transcript.setOptimisticAskAnswers((prev) => ({
-                    ...prev,
-                    [item.tool_call_id]: { outcome: "submitted", answers },
-                  }));
-                }
+              : async (answers) => transcript.onSubmitAskUserQuestion(item.tool_call_id, answers)
           }
         />
       );
