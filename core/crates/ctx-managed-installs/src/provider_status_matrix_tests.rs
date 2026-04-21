@@ -198,7 +198,7 @@ async fn provider_status_matrix_marks_supported_stale_runtime_updateable_without
     apply_matrix_to_status(temp.path(), &cfg, &entry, &mut status, CURRENT_CTX_VERSION).await;
 
     assert_eq!(status.version.as_deref(), Some("1.0.0"));
-    assert_eq!(status.health, ProviderHealth::Ok);
+    assert!(matches!(status.health, ProviderHealth::Ok));
     assert_eq!(
         status
             .details
@@ -237,7 +237,7 @@ async fn provider_status_matrix_marks_missing_runtime_dependency_updateable() {
 
     apply_matrix_to_status(temp.path(), &cfg, &entry, &mut status, CURRENT_CTX_VERSION).await;
 
-    assert_eq!(status.health, ProviderHealth::Ok);
+    assert!(matches!(status.health, ProviderHealth::Ok));
     assert_eq!(
         status
             .details
@@ -274,7 +274,7 @@ async fn provider_status_matrix_marks_latest_ctx_incompatible_release_as_require
     .await;
 
     assert_eq!(status.version.as_deref(), Some("1.2.2"));
-    assert_eq!(status.health, ProviderHealth::Ok);
+    assert!(matches!(status.health, ProviderHealth::Ok));
     assert_eq!(
         status
             .details
@@ -318,7 +318,7 @@ async fn provider_status_matrix_marks_blocked_installed_release_unsupported() {
     .await;
 
     assert_eq!(status.version.as_deref(), Some("1.2.2"));
-    assert_eq!(status.health, ProviderHealth::UnsupportedVersion);
+    assert!(matches!(status.health, ProviderHealth::UnsupportedVersion));
     assert_eq!(
         status
             .details
