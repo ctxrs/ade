@@ -100,6 +100,7 @@ export type ActiveSessionProps = SharedProps & {
 
   availableModels: Array<{ id: string; name?: string }>;
   currentModelId: string;
+  currentModelDisplayLabel?: string;
   onSetModelId: (next: string) => void;
 
   contextWindow?: ContextWindowInfo | null;

@@ -96,3 +96,48 @@ test("buildSessionOpenedMetadataEnvelope preserves supported command metadata", 
   });
   assert.equal(envelope.fast_mode_state, "off");
 });
+
+test("buildSessionOpenedMetadataEnvelope maps modern Claude SDK model metadata to versioned labels", async () => {
+  const { buildSessionOpenedMetadataEnvelope } = await loadRuntimeModule();
+
+  const envelope = buildSessionOpenedMetadataEnvelope({
+    sessionId: "session-2",
+    initializationResult: {
+      commands: [],
+      agents: [],
+      output_style: "default",
+      available_output_styles: ["default"],
+      models: [
+        {
+          value: "opus",
+          displayName: "Opus",
+          description: "Opus 4.7 · Most capable for complex work · ~2× usage vs Sonnet",
+          supportsEffort: true,
+          supportedEffortLevels: ["low", "medium", "high", "xhigh", "max"],
+        },
+        {
+          value: "default",
+          displayName: "Default (recommended)",
+          description: "Sonnet 4.6 · Best for everyday tasks",
+          supportsEffort: true,
+          supportedEffortLevels: ["low", "medium", "high", "max"],
+        },
+      ],
+      account: {},
+    },
+    systemInit: null,
+  });
+
+  assert.deepEqual(envelope.models, [
+    {
+      id: "opus",
+      name: "Opus 4.7",
+      description: "Opus 4.7 · Most capable for complex work · ~2× usage vs Sonnet",
+    },
+    {
+      id: "default",
+      name: "Default (Sonnet 4.6)",
+      description: "Sonnet 4.6 · Best for everyday tasks",
+    },
+  ]);
+});

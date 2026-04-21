@@ -15,14 +15,21 @@ import {
   type AccountInfo,
   type PermissionMode
 } from "@anthropic-ai/claude-agent-sdk";
+import {
+  buildClaudeModelsListEnvelope,
+  mapClaudeModelInfo,
+  normalizeClaudeEffortId,
+} from "./models.js";
 import { translateClaudeEventsToCrp } from "./translate.js";
+export {
+  buildClaudeModelsListEnvelope,
+  deriveClaudeModelDisplayName,
+  humanizeClaudeModelId,
+  mapClaudeModelInfo,
+  normalizeClaudeEffortId,
+} from "./models.js";
 
 const MAX_TOOL_INPUT_BYTES = 64 * 1024;
-const CLAUDE_SUBSCRIPTION_MODELS: Array<{ id: string; name: string }> = [
-  { id: "default", name: "Default" },
-  { id: "sonnet", name: "Sonnet" },
-  { id: "opus", name: "Opus" }
-];
 
 type CrpCommand = {
   type?: string;
@@ -38,6 +45,7 @@ type SessionState = {
   sessionId: string;
   providerSessionId: string;
   defaultModel?: string;
+  defaultReasoningEffort?: string;
   defaultCwd?: string;
   permissionMode: PermissionMode;
   allowDangerouslySkipPermissions: boolean;
@@ -50,6 +58,7 @@ type TurnState = {
   turnId: string;
   runId: string;
   requestedModel?: string;
+  requestedReasoningEffort?: string;
   cwd: string;
   permissionMode: PermissionMode;
   allowDangerouslySkipPermissions: boolean;
@@ -144,15 +153,6 @@ function mapSlashCommand(command: SlashCommand): Record<string, unknown> {
   return out;
 }
 
-function mapModelInfo(model: ModelInfo): Record<string, unknown> {
-  const out: Record<string, unknown> = { id: model.id };
-  const name = asNonEmptyTrimmedString(model.name);
-  const description = asNonEmptyTrimmedString(model.description);
-  if (name) out.name = name;
-  if (description) out.description = description;
-  return out;
-}
-
 function mapAgentInfo(agent: AgentInfo): Record<string, unknown> {
   const out: Record<string, unknown> = { name: agent.name };
   const description = asNonEmptyTrimmedString(agent.description);
@@ -198,7 +198,7 @@ export function buildSessionOpenedMetadataEnvelope(params: {
       envelope.commands = initializationResult.commands.map((command) => mapSlashCommand(command));
     }
     if (Array.isArray(initializationResult.models) && initializationResult.models.length > 0) {
-      envelope.models = initializationResult.models.map((model) => mapModelInfo(model));
+      envelope.models = initializationResult.models.map((model) => mapClaudeModelInfo(model));
     }
     if (Array.isArray(initializationResult.agents) && initializationResult.agents.length > 0) {
       envelope.agents = initializationResult.agents.map((agent) => mapAgentInfo(agent));
@@ -625,6 +625,9 @@ async function openSession(command: CrpCommand, state: { session: SessionState |
 
   const defaultModel =
     typeof config.model === "string" && config.model ? config.model : undefined;
+  const defaultReasoningEffort =
+    normalizeClaudeEffortId(config.reasoning_effort) ??
+    normalizeClaudeEffortId(config.reasoningEffort);
   const defaultCwd =
     typeof config.cwd === "string" && config.cwd ? config.cwd : process.cwd();
 
@@ -632,6 +635,7 @@ async function openSession(command: CrpCommand, state: { session: SessionState |
     sessionId,
     providerSessionId,
     defaultModel,
+    defaultReasoningEffort,
     defaultCwd,
     permissionMode: permissionSettings.permissionMode,
     allowDangerouslySkipPermissions: permissionSettings.allowDangerouslySkipPermissions,
@@ -685,50 +689,87 @@ export function buildQueryOptions(turn: TurnState) {
   if (turn.requestedModel) {
     options.model = turn.requestedModel;
   }
+  if (turn.requestedReasoningEffort) {
+    options.effort = turn.requestedReasoningEffort;
+  }
 
   return options;
 }
 
-function extractModelsListConfig(command: CrpCommand): { model?: string; cwd?: string } {
-  const config =
-    command.config && typeof command.config === "object"
-      ? (command.config as Record<string, unknown>)
-      : {};
+function extractCommandConfig(command: CrpCommand): Record<string, unknown> {
+  return command.config && typeof command.config === "object"
+    ? (command.config as Record<string, unknown>)
+    : {};
+}
+
+function extractModelsListConfig(command: CrpCommand): {
+  model?: string;
+  reasoningEffort?: string;
+  cwd?: string;
+} {
+  const config = extractCommandConfig(command);
   const model =
     typeof config.model === "string" && config.model ? config.model : undefined;
   const cwd = typeof config.cwd === "string" && config.cwd ? config.cwd : undefined;
-  return { model, cwd };
+  const reasoningEffort =
+    normalizeClaudeEffortId(config.reasoning_effort) ??
+    normalizeClaudeEffortId(config.reasoningEffort);
+  return { model, reasoningEffort, cwd };
 }
 
-function appendUniqueModel(
-  models: Array<{ id: string; name?: string }>,
-  modelId: string,
-  modelName?: string
-): void {
-  const nextId = modelId.trim();
-  if (!nextId) return;
-  if (models.some((entry) => entry.id === nextId)) return;
-  models.push({ id: nextId, name: modelName?.trim() || undefined });
+async function fetchClaudeSupportedModels(options: {
+  cwd: string;
+  permissionMode: PermissionMode;
+  allowDangerouslySkipPermissions: boolean;
+}): Promise<ModelInfo[]> {
+  const q = query({
+    prompt: ".",
+    options: {
+      cwd: resolveCwd(options.cwd),
+      settingSources: ["user", "project", "local"],
+      tools: { type: "preset", preset: "claude_code" },
+      env: buildClaudeProcessEnv(),
+      ...buildPermissionControlOptions(
+        options.permissionMode,
+        options.allowDangerouslySkipPermissions,
+      ),
+    },
+  });
+
+  try {
+    return await q.supportedModels();
+  } finally {
+    q.close();
+  }
 }
 
 async function listModels(command: CrpCommand, state: { session: SessionState | null }) {
-  const { model } = extractModelsListConfig(command);
+  const { model, reasoningEffort, cwd } = extractModelsListConfig(command);
   const session = state.session;
-  const resolvedModel = model ?? session?.defaultModel;
-
-  const models: Array<{ id: string; name?: string }> = CLAUDE_SUBSCRIPTION_MODELS.map(
-    (entry) => ({ ...entry })
-  );
-
-  if (resolvedModel) appendUniqueModel(models, resolvedModel, resolvedModel);
-
-  const currentModelId = resolvedModel ?? models[0]?.id;
+  const config = extractCommandConfig(command);
+  const permissionSettings = session
+    ? {
+        permissionMode: session.permissionMode,
+        allowDangerouslySkipPermissions: session.allowDangerouslySkipPermissions,
+      }
+    : resolvePermissionSettings({ config });
+  const supportedModels = await fetchClaudeSupportedModels({
+    cwd: cwd ?? session?.defaultCwd ?? process.cwd(),
+    permissionMode: permissionSettings.permissionMode,
+    allowDangerouslySkipPermissions: permissionSettings.allowDangerouslySkipPermissions,
+  });
+  const envelope = buildClaudeModelsListEnvelope({
+    supportedModels,
+    requestedModel: model ?? session?.defaultModel,
+    requestedReasoningEffort: reasoningEffort ?? session?.defaultReasoningEffort,
+  });
 
   await writeEnvelope({
     channel: "control",
     type: "models.list",
-    models,
-    current_model_id: currentModelId
+    models: envelope.models,
+    current_model_id: envelope.currentModelId,
+    catalog_source: "live_remote",
   });
 }
 
@@ -1016,6 +1057,8 @@ async function startTurn(command: CrpCommand, state: { session: SessionState | n
     typeof command.model === "string" && command.model
       ? command.model
       : session.defaultModel;
+  const requestedReasoningEffort =
+    normalizeClaudeEffortId(command.reasoning_effort) ?? session.defaultReasoningEffort;
   const cwd =
     typeof command.cwd === "string" && command.cwd
       ? command.cwd
@@ -1027,6 +1070,7 @@ async function startTurn(command: CrpCommand, state: { session: SessionState | n
     turnId,
     runId,
     requestedModel,
+    requestedReasoningEffort,
     cwd,
     permissionMode: session.permissionMode,
     allowDangerouslySkipPermissions: session.allowDangerouslySkipPermissions,

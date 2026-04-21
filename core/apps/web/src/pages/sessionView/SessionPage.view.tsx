@@ -69,7 +69,13 @@ import {
   noteInterruptPendingVisible,
   noteSessionSwitchFirstPaint,
 } from "../../state/foregroundFreshnessTelemetry";
-import { buildModelsFromAcpMeta, formatMemoryMb, SCROLLBACK_INCREASE_VIEWPORT_BY_PX, setBooleanStateRef } from "./SessionPage.viewHelpers";
+import {
+  buildModelsFromAcpMeta,
+  formatMemoryMb,
+  resolveModelDisplayLabel,
+  SCROLLBACK_INCREASE_VIEWPORT_BY_PX,
+  setBooleanStateRef,
+} from "./SessionPage.viewHelpers";
 
 export function SessionView({
   sessionId,
@@ -621,6 +627,13 @@ export function SessionView({
     return currentModelId ? [{ id: currentModelId, name: currentModelId }] : [];
   }, [acpModelOptions, currentModelId, sharedProviderOptions]);
   const displayedModelId = optimisticModelId ?? currentModelId;
+  const currentModelDisplayLabel = useMemo(() => {
+    return resolveModelDisplayLabel(modelOptions, [
+      optimisticModelId,
+      entry?.acpCurrentModelId,
+      currentModelId,
+    ]);
+  }, [currentModelId, entry?.acpCurrentModelId, modelOptions, optimisticModelId]);
 
   const sendNow = async () => {
     if (!id) return;
@@ -988,6 +1001,7 @@ export function SessionView({
       formatMemoryMb={formatMemoryMb}
       availableModels={modelOptions}
       currentModelId={displayedModelId}
+      currentModelDisplayLabel={currentModelDisplayLabel}
       onSetModelId={handleSetModelId}
       modelSwitchError={modelSwitchError}
       interruptSessionId={interruptSessionId}

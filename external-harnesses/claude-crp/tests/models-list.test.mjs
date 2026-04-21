@@ -1,74 +1,63 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
-import * as os from "node:os";
 import * as path from "node:path";
+import { pathToFileURL } from "node:url";
 
 const rootDir = path.resolve(import.meta.dirname, "..");
-const runtimeBin = path.join(rootDir, "bin", "claude-crp");
 
-function runModelsListProbe() {
-  return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [runtimeBin], {
-      cwd: rootDir,
-      env: {
-        ...process.env,
-        CLAUDE_CODE_OAUTH_TOKEN: "test-oauth-token",
-        CLAUDE_CONFIG_DIR: os.tmpdir()
-      },
-      stdio: ["pipe", "pipe", "pipe"]
-    });
-
-    let stdout = "";
-    let stderr = "";
-    child.stdout.setEncoding("utf8");
-    child.stderr.setEncoding("utf8");
-    child.stdout.on("data", (chunk) => {
-      stdout += chunk;
-    });
-    child.stderr.on("data", (chunk) => {
-      stderr += chunk;
-    });
-    child.on("error", reject);
-    child.on("close", (code) => {
-      if (code !== 0) {
-        reject(new Error(`claude-crp exited ${code}: ${stderr.trim() || "no stderr"}`));
-        return;
-      }
-      resolve({ stdout, stderr });
-    });
-
-    const line = JSON.stringify({
-      v: 1,
-      command: {
-        type: "models.list",
-        config: {
-          model: "default",
-          cwd: rootDir
-        }
-      }
-    });
-    child.stdin.write(`${line}\n`);
-    child.stdin.end();
-  });
+async function loadRuntimeModule() {
+  return import(pathToFileURL(path.join(rootDir, "dist", "runtime.js")).href);
 }
 
-test("models.list emits default OAuth model catalog", async () => {
-  const { stdout } = await runModelsListProbe();
-  const lines = stdout
-    .split("\n")
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0);
-  assert.ok(lines.length > 0, "expected at least one JSONL output line");
+const supportedModels = [
+  {
+    value: "default",
+    displayName: "Default (recommended)",
+    description: "Sonnet 4.6 · Best for everyday tasks",
+    supportsEffort: true,
+    supportedEffortLevels: ["low", "medium", "high", "max"],
+  },
+  {
+    value: "opus",
+    displayName: "Opus",
+    description: "Opus 4.7 · Most capable for complex work · ~2× usage vs Sonnet",
+    supportsEffort: true,
+    supportedEffortLevels: ["low", "medium", "high", "xhigh", "max"],
+  },
+  {
+    value: "haiku",
+    displayName: "Haiku",
+    description: "Haiku 4.5 · Fastest for quick answers",
+  },
+];
 
-  const payload = JSON.parse(lines[0]);
-  assert.equal(payload.type, "models.list");
+test("buildClaudeModelsListEnvelope expands Claude models into versioned labels and efforts", async () => {
+  const { buildClaudeModelsListEnvelope } = await loadRuntimeModule();
 
-  const modelIds = Array.isArray(payload.models)
-    ? payload.models.map((entry) => String(entry?.id ?? ""))
-    : [];
-  assert.ok(modelIds.includes("default"), "expected default model");
-  assert.ok(modelIds.includes("sonnet"), "expected sonnet model");
-  assert.ok(modelIds.includes("opus"), "expected opus model");
-  assert.equal(payload.current_model_id, "default");
+  const payload = buildClaudeModelsListEnvelope({ supportedModels });
+  const entriesById = new Map(payload.models.map((entry) => [entry.id, entry.name]));
+
+  assert.equal(payload.currentModelId, "default/high");
+  assert.equal(entriesById.get("default/high"), "Default (Sonnet 4.6) (High)");
+  assert.equal(entriesById.get("opus/xhigh"), "Opus 4.7 (XHigh)");
+  assert.equal(entriesById.get("haiku"), "Haiku 4.5");
+  assert.ok(entriesById.has("default/max"), "expected default/max effort variant");
+  assert.ok(entriesById.has("opus/max"), "expected opus/max effort variant");
+});
+
+test("buildClaudeModelsListEnvelope preserves an explicitly selected concrete Claude slug", async () => {
+  const { buildClaudeModelsListEnvelope } = await loadRuntimeModule();
+
+  const payload = buildClaudeModelsListEnvelope({
+    supportedModels,
+    requestedModel: "claude-opus-4-7",
+    requestedReasoningEffort: "xhigh",
+  });
+  const selected = payload.models.find((entry) => entry.id === "claude-opus-4-7/xhigh");
+
+  assert.equal(payload.currentModelId, "claude-opus-4-7/xhigh");
+  assert.deepEqual(selected, {
+    id: "claude-opus-4-7/xhigh",
+    name: "Opus 4.7 (XHigh)",
+  });
 });

@@ -58,15 +58,6 @@ function runSessionSetModelProbe() {
         }
       })}\n`
     );
-    child.stdin.write(
-      `${JSON.stringify({
-        v: 1,
-        command: {
-          type: "models.list",
-          config: { cwd: rootDir }
-        }
-      })}\n`
-    );
     child.stdin.end();
   });
 }
@@ -78,15 +69,11 @@ test("session.set_model updates the active session default model", async () => {
     .map((line) => line.trim())
     .filter((line) => line.length > 0);
 
-  assert.ok(lines.length >= 3, "expected session.opened, session.notice, and models.list");
+  assert.ok(lines.length >= 2, "expected session.opened and session.notice");
   const payloads = lines.map((line) => JSON.parse(line));
 
   const notice = payloads.find((payload) => payload.type === "session.notice");
   assert.ok(notice, "expected session.notice payload");
   assert.equal(notice.code, "session_model_updated");
   assert.equal(notice.details?.model_id, "sonnet");
-
-  const modelsList = payloads.find((payload) => payload.type === "models.list");
-  assert.ok(modelsList, "expected models.list payload");
-  assert.equal(modelsList.current_model_id, "sonnet");
 });

@@ -570,6 +570,16 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
   const currentBase = activeModelData.parsed.base || activeModelData.catalog.baseIds[0] || "";
   const currentEffort = activeModelData.parsed.effort;
   const effortOptions = activeModelData.catalog.effortsByBase[currentBase] ?? [];
+  const currentModelLabel = useMemo(() => {
+    if (variant === "activeSession") {
+      const displayLabel = (props as ActiveSessionProps).currentModelDisplayLabel?.trim();
+      if (displayLabel) return displayLabel;
+    }
+    if (currentBase) {
+      return activeModelData.catalog.displayNameByBase[currentBase] ?? currentBase;
+    }
+    return "Model";
+  }, [activeModelData.catalog.displayNameByBase, currentBase, props, variant]);
 
   const setActiveModelId = useCallback(
     (nextFullId: string) => {
@@ -857,9 +867,7 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
                 aria-expanded={openMenu === "model"}
                 title="Model"
               >
-                <span className="wb-switcher-label">
-                  {(currentBase && (activeModelData.catalog.displayNameByBase[currentBase] ?? currentBase)) || "Model"}
-                </span>
+                <span className="wb-switcher-label">{currentModelLabel}</span>
                 <ChevronDown size={14} />
               </button>
               {openMenu === "model" && modelMenu}

@@ -115,7 +115,7 @@ vi.mock("./sessionView/useSessionProviderGuard", () => ({
 }));
 
 vi.mock("./sessionView/useStableAskUserQuestionAnswers", () => ({
-  useStableAskUserQuestionAnswers: () => ({}),
+  useStableAskUserQuestionAnswers: () => new Map(),
 }));
 
 vi.mock("./sessionView/useSharedSessionProviderOptions", () => ({

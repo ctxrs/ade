@@ -178,6 +178,7 @@ type SessionWorkbenchPaneProps = {
   formatMemoryMb: (value?: number | null) => string;
   availableModels: Array<{ id: string; name?: string }>;
   currentModelId: string;
+  currentModelDisplayLabel?: string;
   onSetModelId: (next: string) => Promise<void>;
   modelSwitchError: string | null;
   interruptSessionId: string;
@@ -289,6 +290,7 @@ export function SessionWorkbenchPane({
   formatMemoryMb,
   availableModels,
   currentModelId,
+  currentModelDisplayLabel,
   onSetModelId,
   modelSwitchError,
   interruptSessionId,
@@ -479,6 +481,7 @@ export function SessionWorkbenchPane({
             submitDictationOnboardingLocal,
             availableModels,
             currentModelId,
+            currentModelDisplayLabel,
             onSetModelId,
           }}
           atBottom={atBottom}

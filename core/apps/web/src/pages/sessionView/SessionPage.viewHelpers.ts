@@ -1,3 +1,5 @@
+import { buildModelCatalog, parseModelId } from "../../utils/modelEffort";
+
 export const SCROLLBACK_INCREASE_VIEWPORT_BY_PX = 240;
 
 export function buildModelsFromAcpMeta(models: unknown): Array<{ id: string; name?: string }> {
@@ -13,6 +15,39 @@ export function buildModelsFromAcpMeta(models: unknown): Array<{ id: string; nam
     parsed.push(name ? { id, name } : { id });
   }
   return parsed;
+}
+
+function humanizeConcreteClaudeModelBase(baseModelId: string): string | undefined {
+  const trimmed = String(baseModelId || "").trim();
+  if (!trimmed) return undefined;
+  if (trimmed === "default") return "Default";
+  const aliasMatch = trimmed.match(/^(opus|sonnet|haiku)$/i);
+  if (aliasMatch) {
+    const family = aliasMatch[1].toLowerCase();
+    return family.charAt(0).toUpperCase() + family.slice(1);
+  }
+  const slugMatch = trimmed.match(/(?:^|\/)claude-(opus|sonnet|haiku)-(\d+)-(\d+)(?:[-@]\d+)?$/i);
+  if (!slugMatch) return undefined;
+  const family = slugMatch[1].toLowerCase();
+  return `${family.charAt(0).toUpperCase() + family.slice(1)} ${slugMatch[2]}.${slugMatch[3]}`;
+}
+
+export function resolveModelDisplayLabel(
+  models: Array<{ id: string; name?: string }>,
+  candidates: Array<string | null | undefined>,
+): string {
+  const catalog = buildModelCatalog(models);
+  for (const candidate of candidates) {
+    const raw = String(candidate ?? "").trim();
+    if (!raw) continue;
+    const parsed = parseModelId(raw, catalog);
+    const fromCatalog = catalog.displayNameByBase[parsed.base];
+    if (fromCatalog) return fromCatalog;
+    const humanized = humanizeConcreteClaudeModelBase(parsed.base || raw);
+    if (humanized) return humanized;
+    return parsed.base || raw;
+  }
+  return "";
 }
 
 export function formatMemoryMb(value?: number | null): string {

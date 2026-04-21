@@ -134,6 +134,7 @@ export type SessionThreadSurfaceComposerProps = {
   submitDictationOnboardingLocal: () => Promise<void>;
   availableModels: Array<{ id: string; name?: string }>;
   currentModelId: string;
+  currentModelDisplayLabel?: string;
   onSetModelId: (next: string) => Promise<void>;
 };
 
@@ -387,6 +388,7 @@ export function SessionThreadSurface({
           harnessLogoInvertInLight={harness?.invertInLight}
           availableModels={composer.availableModels}
           currentModelId={composer.currentModelId}
+          currentModelDisplayLabel={composer.currentModelDisplayLabel}
           onSetModelId={composer.onSetModelId}
         />
         {composer.sendError ? <div className="wb-banner">{composer.sendError}</div> : null}

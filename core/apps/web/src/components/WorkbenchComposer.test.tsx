@@ -382,6 +382,46 @@ describe("WorkbenchComposer textarea sizing", () => {
     expect(collapsed).toBe(false);
   });
 
+  it("prefers the resolved active-session model slug when provided", () => {
+    const ActiveHarness = () => {
+      const [value, setValue] = useState("");
+      const [attachments, setAttachments] = useState<MessageAttachment[]>([]);
+      const [modeId, setModeId] = useState<WorkbenchModeId>("default");
+
+      return (
+        <WorkbenchComposer
+          variant="activeSession"
+          value={value}
+          setValue={setValue}
+          placeholder="Ask follow-ups"
+          inputDisabled={false}
+          sessionIdForAutocomplete={null}
+          workspaceIdForAutocomplete={null}
+          slashCommands={[]}
+          attachments={attachments}
+          setAttachments={setAttachments}
+          onSend={vi.fn()}
+          sendDisabled={false}
+          sendDisabledReason={null}
+          onInterrupt={null}
+          modeId={modeId}
+          setModeId={setModeId}
+          recording={false}
+          harnessLabel="Claude"
+          availableModels={[{ id: "opus/high", name: "Opus 4.7 (High)" }]}
+          currentModelId="opus/high"
+          currentModelDisplayLabel="Opus 4.7"
+          onSetModelId={vi.fn()}
+        />
+      );
+    };
+
+    render(<ActiveHarness />);
+
+    expect(screen.getByRole("button", { name: /opus 4.7/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^opus$/i })).not.toBeInTheDocument();
+  });
+
   it("resets to the minimum height after clearing content", async () => {
     const NewTaskHarness = () => {
       const [value, setValue] = useState("");

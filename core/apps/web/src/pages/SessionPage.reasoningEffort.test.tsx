@@ -157,7 +157,7 @@ vi.mock("./sessionView/useSessionProviderGuard", () => ({
 }));
 
 vi.mock("./sessionView/useStableAskUserQuestionAnswers", () => ({
-  useStableAskUserQuestionAnswers: () => ({}),
+  useStableAskUserQuestionAnswers: () => new Map(),
 }));
 
 vi.mock("./sessionView/useSharedSessionProviderOptions", () => ({
@@ -301,6 +301,123 @@ describe("SessionPage reasoning effort", () => {
       "gpt-5.4/medium",
       "gpt-5.4/xhigh",
     ]);
+  });
+
+  it("prefers a versioned Claude label for active-session display", async () => {
+    sharedProviderOptionsState.value = {
+      provider_id: "claude",
+      workspace_id: "ws-1",
+      supports_load: false,
+      auth_required: false,
+      has_active_auth: true,
+      auth_mode: "subscription",
+      probed_at: "2026-03-10T00:00:00.000Z",
+      models: {
+        current_model_id: "opus/high",
+        models: [
+          { id: "opus/high", name: "Opus 4.7 (High)" },
+          { id: "opus/medium", name: "Opus 4.7 (Medium)" },
+        ],
+      },
+    };
+    sessionEntries.map[sessionId] = {
+      ...(sessionEntries.map[sessionId] ?? {}),
+      session: {
+        id: sessionId,
+        task_id: "task-1",
+        workspace_id: "ws-1",
+        worktree_id: "wt-1",
+        provider_id: "claude",
+        model_id: "opus",
+        reasoning_effort: "high",
+        title: "Session 1",
+        agent_role: "assistant",
+        status: "active",
+        execution_environment: "host",
+        created_at: "2026-03-10T00:00:00.000Z",
+        updated_at: "2026-03-10T00:00:00.000Z",
+      },
+      acpModels: {
+        current_model_id: "claude-opus-4-7/high",
+        models: [
+          { id: "opus/high", name: "Opus 4.7 (High)" },
+          { id: "opus/medium", name: "Opus 4.7 (Medium)" },
+          { id: "claude-opus-4-7/high" },
+        ],
+      },
+      acpCurrentModelId: "claude-opus-4-7/high",
+    };
+
+    render(<SessionView sessionId={sessionId} />);
+
+    await waitFor(() => {
+      expect(paneSpy).toHaveBeenCalled();
+    });
+
+    const lastCall = paneSpy.mock.calls.at(-1)?.[0] as {
+      currentModelId?: string;
+      currentModelDisplayLabel?: string;
+    } | undefined;
+    expect(lastCall?.currentModelId).toBe("opus/high");
+    expect(lastCall?.currentModelDisplayLabel).toBe("Opus 4.7");
+  });
+
+  it("prefers the resolved Claude runtime model over the default alias label", async () => {
+    sharedProviderOptionsState.value = {
+      provider_id: "claude",
+      workspace_id: "ws-1",
+      supports_load: false,
+      auth_required: false,
+      has_active_auth: true,
+      auth_mode: "subscription",
+      probed_at: "2026-03-10T00:00:00.000Z",
+      models: {
+        current_model_id: "default/high",
+        models: [
+          { id: "default/high", name: "Default (Sonnet 4.6) (High)" },
+          { id: "default/medium", name: "Default (Sonnet 4.6) (Medium)" },
+        ],
+      },
+    };
+    sessionEntries.map[sessionId] = {
+      ...(sessionEntries.map[sessionId] ?? {}),
+      session: {
+        id: sessionId,
+        task_id: "task-1",
+        workspace_id: "ws-1",
+        worktree_id: "wt-1",
+        provider_id: "claude",
+        model_id: "default",
+        reasoning_effort: "high",
+        title: "Session 1",
+        agent_role: "assistant",
+        status: "active",
+        execution_environment: "host",
+        created_at: "2026-03-10T00:00:00.000Z",
+        updated_at: "2026-03-10T00:00:00.000Z",
+      },
+      acpModels: {
+        current_model_id: "claude-sonnet-4-6/high",
+        models: [
+          { id: "default/high", name: "Default (Sonnet 4.6) (High)" },
+          { id: "claude-sonnet-4-6/high" },
+        ],
+      },
+      acpCurrentModelId: "claude-sonnet-4-6/high",
+    };
+
+    render(<SessionView sessionId={sessionId} />);
+
+    await waitFor(() => {
+      expect(paneSpy).toHaveBeenCalled();
+    });
+
+    const lastCall = paneSpy.mock.calls.at(-1)?.[0] as {
+      currentModelId?: string;
+      currentModelDisplayLabel?: string;
+    } | undefined;
+    expect(lastCall?.currentModelId).toBe("default/high");
+    expect(lastCall?.currentModelDisplayLabel).toBe("Sonnet 4.6");
   });
 
   it("prefers the shared provider catalog over cached ACP model metadata for available options", async () => {
