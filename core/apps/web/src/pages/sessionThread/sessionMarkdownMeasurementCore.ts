@@ -21,6 +21,7 @@ import {
   type TextWhiteSpace,
 } from "./sessionTextMeasurement";
 import { SESSION_MARKDOWN_MEASUREMENT_CONTRACT } from "./sessionThreadMeasurementContract";
+import { clearSessionPlainTextMeasurementCaches } from "./sessionPlainTextMeasurement";
 
 const AST_CACHE_LIMIT = 1000;
 
@@ -158,5 +159,6 @@ export function measureInlineSpaceWidth(
 
 export function clearSessionMarkdownMeasurementCaches(): void {
   clearSessionTextMeasurementCaches();
+  clearSessionPlainTextMeasurementCaches();
   markdownDocumentCache.clear();
 }

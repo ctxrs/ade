@@ -52,6 +52,26 @@ const MARKDOWN_CORPUS: MarkdownSample[] = [
       "The current fixture is concrete and repeatable: `sample-layout-runner` uses a helper with Python `shutil.copytree(..., dirs_exist_ok=True)`, which keeps the long inline-code tail beside ordinary prose. The width sample stays useful while the browser comparison remains deterministic.",
   },
   {
+    name: "whitespace-inline-code-prose-tail",
+    markdown:
+      "The `inline sample web e2e` case keeps a long code chip beside ordinary prose and punctuation. The invented fixture is deliberately repetitive so the width comparison remains stable.",
+  },
+  {
+    name: "list-whitespace-inline-code-prose-tail",
+    markdown:
+      "- The `inline sample web e2e` case keeps a long code chip beside ordinary prose and punctuation. The invented fixture is deliberately repetitive so the width comparison remains stable.",
+  },
+  {
+    name: "dotted-call-inline-code-prose-tail",
+    markdown:
+      "A dotted call such as `observer.disconnect()` should move as one inline chip before the trailing prose explains the expected line break. This invented paragraph keeps the continuation long enough to exercise the seam.",
+  },
+  {
+    name: "short-dotted-call-inline-code-prose-tail",
+    markdown:
+      "The observer stays healthy when `observer.disconnect()` moves as one chip before the trailing prose explains why the restart no longer interrupts the session unexpectedly.",
+  },
+  {
     name: "inline-code-link-prose",
     markdown:
       "Use [`ctx docs`](https://example.com/docs) with `pnpm -C core/apps/web test:e2e:pretext:parity:webkit` and more prose to wrap near the edge.",
@@ -75,6 +95,16 @@ const MARKDOWN_CORPUS: MarkdownSample[] = [
     name: "table-inline-command-threshold",
     markdown:
       "| Left | Token | Note |\n| --- | --- | --- |\n| fragment session | `pnpm -C core/apps/web test:e2e:pretext:parity:webkit` | entry header fragment virtualizer summary fragment thread composer |",
+  },
+  {
+    name: "table-inline-code-prose-tail",
+    markdown:
+      "| Synthetic example | Column one | Column two |\n|---|---:|---:|\n| First sample with a long label | `sample-one`: 123 units plus a trailing note | `THREE`: 456 units |\n| Second sample with a long label | `sample-two`: 789 units with a longer optional tail for wrapping | `FOUR5`: 234 units in a shared sample, or `THREE`: 456 units in another sample |",
+  },
+  {
+    name: "list-slash-delimited-prose-token",
+    markdown:
+      "- **Sample boundaries**: This fixture includes Ubuntu/Debian, a fast `gp3` or local NVMe marker, containerd/BuildKit/nerdctl text, strict VPC/security group wording, and one host/workspace isolation model as needed.",
   },
   {
     name: "hard-break-inline-code",

@@ -295,7 +295,22 @@ function normalizeTableRows(node: SessionMarkdownNode): SessionMarkdownTableRow[
     .map((row) => ({
       cells: nodeChildren(row)
         .filter((cell) => cell.type === "tableCell")
-        .map((cell) => ({ blocks: normalizeSessionMarkdownBlocks(nodeChildren(cell)) })),
+        .map((cell) => {
+          const inlines = normalizeInlineNodes(nodeChildren(cell));
+          return {
+            blocks:
+              inlines.length === 0
+                ? []
+                : [
+                    {
+                      kind: "paragraph",
+                      node: cell,
+                      inlines,
+                      text: buildTextContent(inlines),
+                    },
+                  ],
+          };
+        }),
     }));
 }
 

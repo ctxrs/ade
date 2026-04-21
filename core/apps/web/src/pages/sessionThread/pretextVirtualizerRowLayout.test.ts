@@ -89,7 +89,9 @@ import {
 } from "./sessionMarkdownMeasurement";
 import { SESSION_THREAD_ROW_MEASUREMENT_CONTRACT } from "./sessionThreadMeasurementContract";
 import {
+  resolveInlineCodeContinuationFitSlackPx,
   resolveInlineCodeWrapChromeWidth,
+  shouldBreakBeforePartialDottedCallContinuation,
   shouldApplyInlineCodeSoftBreakTextStartGuard,
 } from "./sessionMarkdownInlineCodeFit";
 import { measureSessionPlainTextBlockHeight } from "./sessionPlainTextMeasurement";
@@ -180,7 +182,7 @@ describe("getPretextVirtualizerRowLayout", () => {
 
     expect(partial.height).toBeGreaterThan(0);
     expect(closed.height).toBe(partial.height);
-    expect(prepareMock).toHaveBeenCalled();
+    expect(prepareMock.mock.calls.length + prepareWithSegmentsMock.mock.calls.length).toBeGreaterThan(0);
   });
 
   it("measures markdown tables with deterministic width-sensitive heights", () => {
@@ -307,6 +309,47 @@ describe("getPretextVirtualizerRowLayout", () => {
     const height = measureSessionMarkdownDocument(markdown, 50);
 
     expect(height).toBe(Math.round(3 * SESSION_THREAD_MARKDOWN_BODY_LINE_HEIGHT_PX * 16) / 16);
+  });
+
+  it("does not grant generic continuation slack after a sealed dotted fragment", () => {
+    const slack = resolveInlineCodeContinuationFitSlackPx({
+      lineHasContent: true,
+      atLineBreakBoundary: true,
+      sameCodeGroupContinuation: true,
+      startsAfterCodeWhitespace: false,
+      lastFragmentEndedWithDot: true,
+      lastFragmentEndedWithHyphen: false,
+      lastFragmentEndedWithPathDelimiter: false,
+      item: {
+        codeGroupHasDottedPath: false,
+        codeGroupHasTrailingText: true,
+        codeGroupStartsAfterText: true,
+        codeGroupStartsAfterStyledTextSeam: false,
+        isPathTailFragment: false,
+        isSealedInlineCodeFragment: false,
+        text: "disconnect()",
+      },
+    });
+
+    expect(slack).toBe(0);
+  });
+
+  it("breaks before partially fitting a dotted call continuation after a sealed dotted fragment", () => {
+    const shouldBreak = shouldBreakBeforePartialDottedCallContinuation({
+      fragmentWidth: 93.92,
+      fullWidth: 93.92,
+      guardedRemainingWidth: 88.96,
+      item: {
+        isPathTailFragment: false,
+        isSealedInlineCodeFragment: false,
+        text: "disconnect()",
+      },
+      lastFragmentText: "ConnectionManager.",
+      maxWidth: 472,
+      sameCodeGroupContinuation: true,
+    });
+
+    expect(shouldBreak).toBe(true);
   });
 
   it("treats markdown hard breaks as forced line breaks in wide paragraphs", () => {

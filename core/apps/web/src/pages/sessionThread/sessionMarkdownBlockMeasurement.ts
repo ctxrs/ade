@@ -17,6 +17,7 @@ import {
   CODE_BLOCK_VERTICAL_PADDING_PX,
   MONO_LINE_HEIGHT_PX,
   TABLE_HEADER_TYPOGRAPHY,
+  buildPreparedContentKey,
   buildHeadingTypography,
   clampHeight,
   measureTextHeight,
@@ -24,6 +25,7 @@ import {
   parseMarkdown,
   type TextBlockTypography,
 } from "./sessionMarkdownMeasurementCore";
+import { measureSessionPlainTextBlockHeight } from "./sessionPlainTextMeasurement";
 import { SESSION_MARKDOWN_MEASUREMENT_CONTRACT } from "./sessionThreadMeasurementContract";
 
 function measureTextBlock(params: {
@@ -42,6 +44,14 @@ function measureTextBlock(params: {
   if (!text) {
     return 0;
   }
+  const plainTextHeight = () =>
+    measureSessionPlainTextBlockHeight({
+      cacheKey: buildPreparedContentKey(params.cacheKeyPrefix, text),
+      text,
+      font: params.typography.body,
+      width: params.width,
+      lineHeight: params.typography.lineHeight,
+    });
   if (params.text.hasHardBreak && !params.text.hasInlineCode && !params.text.hasStyledText) {
     return normalizeHeight(
       params.text.plainText
@@ -63,20 +73,20 @@ function measureTextBlock(params: {
     );
   }
   if (!params.text.hasInlineCode && !params.text.hasHardBreak && !params.text.hasStyledText) {
-    return measureTextHeight({
-      cacheKey: `${params.cacheKeyPrefix}:${text}`,
-      text,
-      font: params.typography.body,
-      width: params.width,
-      lineHeight: params.typography.lineHeight,
-    });
+    return plainTextHeight();
   }
-  return measureInlineRunsHeight({
+  const inlineRunsHeight = measureInlineRunsHeight({
     runs: params.text.runs,
     width: params.width,
     typography: params.typography,
     cacheKeyPrefix: params.cacheKeyPrefix,
   });
+  const hasDelimitedProseRun = params.text.runs.some(
+    (run) => run.kind === "text" && /[\/\\?&=]/.test(run.text),
+  );
+  return !params.text.hasHardBreak && hasDelimitedProseRun
+    ? Math.max(inlineRunsHeight, plainTextHeight())
+    : inlineRunsHeight;
 }
 
 function measureParagraph(block: Extract<SessionMarkdownBlock, { kind: "paragraph" }>, width: number): number {

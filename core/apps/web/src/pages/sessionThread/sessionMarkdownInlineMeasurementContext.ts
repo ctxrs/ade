@@ -154,6 +154,7 @@ export function resolveInlineMeasurementDerivedContext(params: {
   lineWeakProseStartCodeGroupId: number | null;
   lineDecoratedTextSegmentCount: number;
   lastAcceptedCodeGroupId: number | null;
+  lineLastCodeFragmentText: string | null;
   lineLastCodeFragmentEndedWithHyphen: boolean;
   lineLastCodeFragmentEndedWithPathDelimiter: boolean;
   remainingWidth: number;
@@ -191,6 +192,8 @@ export function resolveInlineMeasurementDerivedContext(params: {
     sameCodeGroupContinuation:
       params.codeGroupId != null && params.lastAcceptedCodeGroupId === params.codeGroupId,
     startsAfterCodeWhitespace: params.item.startsAfterCodeWhitespace,
+    lastFragmentEndedWithDot:
+      params.lineLastCodeFragmentText?.endsWith(".") ?? false,
     lastFragmentEndedWithHyphen: params.lineLastCodeFragmentEndedWithHyphen,
     lastFragmentEndedWithPathDelimiter: params.lineLastCodeFragmentEndedWithPathDelimiter,
     item: params.item,
@@ -260,10 +263,11 @@ export function resolveInlineMeasurementDerivedContext(params: {
     params.cursor === null &&
     params.codeGroupId == null &&
     params.item.startsAfterInlineCodeSeam &&
-    !params.item.startsAfterCollapsedSoftBreak
-      ? !browserAllowsInlineCodeLeadingHang() && params.item.startsAfterPathLikeInlineCodeSeam
-        ? 0
-        : INLINE_CODE_TAIL_TEXT_SEAM_GUARD_PX
+    !params.item.startsAfterCollapsedSoftBreak &&
+    params.item.startsAfterPathLikeInlineCodeSeam
+      ? browserAllowsInlineCodeLeadingHang()
+        ? INLINE_CODE_TAIL_TEXT_SEAM_GUARD_PX
+        : 0
       : 0;
   const currentLineInlineCodeSoftBreakTextStartGuardPx =
     params.lineHasContent &&

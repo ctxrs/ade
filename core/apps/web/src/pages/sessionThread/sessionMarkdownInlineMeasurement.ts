@@ -156,6 +156,7 @@ export function measureInlineRunsHeight(params: {
         lineWeakProseStartCodeGroupId: lineState.lineWeakProseStartCodeGroupId,
         lineDecoratedTextSegmentCount: lineState.lineDecoratedTextSegmentCount,
         lastAcceptedCodeGroupId: lineState.lastAcceptedCodeGroupId,
+        lineLastCodeFragmentText: lineState.lineLastCodeFragmentText,
         lineLastCodeFragmentEndedWithHyphen: lineState.lineLastCodeFragmentEndedWithHyphen,
         lineLastCodeFragmentEndedWithPathDelimiter:
           lineState.lineLastCodeFragmentEndedWithPathDelimiter,
