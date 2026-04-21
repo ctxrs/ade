@@ -690,7 +690,22 @@ export function ArtifactsPane({
   error?: string | null;
   onRetry?: () => void;
 }) {
-  const [viewerArtifact, setViewerArtifact] = useState<Artifact | null>(null);
+  const [viewerState, setViewerState] = useState<{ sessionId: string; artifact: Artifact } | null>(null);
+  const viewerArtifact = useMemo(() => {
+    if (!viewerState || viewerState.sessionId !== sessionId) return null;
+    const openArtifactId = idToString(viewerState.artifact.id);
+    if (openArtifactId) {
+      return artifacts.find((artifact) => idToString(artifact.id) === openArtifactId) ?? null;
+    }
+    return artifacts.find((artifact) => artifact.absolute_path === viewerState.artifact.absolute_path) ?? null;
+  }, [artifacts, sessionId, viewerState]);
+
+  useEffect(() => {
+    if (viewerState && (!viewerArtifact || viewerState.sessionId !== sessionId)) {
+      setViewerState(null);
+    }
+  }, [sessionId, viewerArtifact, viewerState]);
+
   const rows = useMemo(() => {
     return artifacts.map((artifact) => {
       const artifactId = idToString(artifact.id);
@@ -700,7 +715,7 @@ export function ArtifactsPane({
           key={key}
           sessionId={sessionId}
           artifact={artifact}
-          onOpen={setViewerArtifact}
+          onOpen={(nextArtifact) => setViewerState({ sessionId, artifact: nextArtifact })}
         />
       );
     });
@@ -736,7 +751,7 @@ export function ArtifactsPane({
         <ArtifactViewer
           sessionId={sessionId}
           artifact={viewerArtifact}
-          onClose={() => setViewerArtifact(null)}
+          onClose={() => setViewerState(null)}
         />
       ) : null}
     </div>

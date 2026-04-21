@@ -16,6 +16,19 @@ const worktreeId = "worktree-1";
 type WorkbenchBootstrapState = "idle" | "loading" | "ready" | "error";
 
 const baseIso = "2024-01-01T00:00:00.000Z";
+const buildSessionArtifact = (overrides: Partial<SessionSupervisorSnapshot["sessions"][string]["artifacts"][number]> = {}) => ({
+  id: "artifact-1",
+  session_id: sessionId,
+  task_id: taskId,
+  workspace_id: workspaceId,
+  worktree_id: worktreeId,
+  name: "session-log.bin",
+  absolute_path: "/tmp/session-log.bin",
+  mime_type: "application/octet-stream",
+  bytes: 32,
+  created_at: baseIso,
+  ...overrides,
+});
 
 const buildSessionSnap = (): SessionSupervisorSnapshot => ({
   connection: "connected",
@@ -151,7 +164,6 @@ const sessionSupervisorMock = {
   handleWorkspaceEvent: vi.fn(),
   setDiff: vi.fn(),
   loadSessionState: vi.fn(),
-  loadArtifacts: vi.fn(),
   loadSubagentInvocations: vi.fn(),
 };
 const workspaceSnapshotStoreMock = {
@@ -203,6 +215,7 @@ const emptyProviderAccounts = {
 
 vi.mock("../api/client", () => ({
   archiveTask: vi.fn(async () => ({})),
+  artifactUrl: (sessionId: string, artifactId: string) => `/api/sessions/${sessionId}/artifacts/${artifactId}`,
   createSession: vi.fn(async () => ({})),
   createTask: vi.fn(async () => ({})),
   deleteAmpAccount: vi.fn(async () => emptyProviderAccounts),
@@ -479,7 +492,6 @@ beforeEach(() => {
   sessionSupervisorMock.handleWorkspaceEvent.mockReset();
   sessionSupervisorMock.setDiff.mockReset();
   sessionSupervisorMock.loadSessionState.mockReset();
-  sessionSupervisorMock.loadArtifacts.mockReset();
   sessionSupervisorMock.loadSubagentInvocations.mockReset();
   useOpenSessionMock.mockReset();
   workspaceSnapshotStoreMock.ensureArchivedLoaded.mockReset();
@@ -1178,6 +1190,148 @@ describe("WorkbenchPage session support load issues", () => {
 
     expect(sessionSupervisorMock.loadSessionState).toHaveBeenCalledWith(sessionId, { force: true });
     expect(sessionSupervisorMock.loadSubagentInvocations).toHaveBeenCalledWith(sessionId, { force: true });
+  });
+
+  it("keeps last-known-good artifacts visible when a later state refresh fails", async () => {
+    sessionSnap = {
+      ...sessionSnap,
+      sessions: {
+        ...sessionSnap.sessions,
+        [sessionId]: {
+          ...sessionSnap.sessions[sessionId],
+          artifacts: [buildSessionArtifact()],
+          loadErrors: {
+            state: "Failed to load session state: daemon offline",
+          },
+        },
+      },
+    };
+
+    renderWorkbenchPage();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Toggle artifacts" }));
+
+    const artifactsPane = document.querySelector(".wb-artifacts");
+    if (!(artifactsPane instanceof HTMLElement)) {
+      throw new Error("Expected artifacts pane to render");
+    }
+
+    expect(within(artifactsPane).getAllByText("session-log.bin").length).toBeGreaterThan(0);
+    expect(within(artifactsPane).queryByRole("alert")).toBeNull();
+    expect(screen.getByTestId("workbench-session-load-issues")).toBeInTheDocument();
+  });
+
+  it("keeps cached artifacts visible when a warm reopen refresh fails", async () => {
+    sessionSnap = {
+      ...sessionSnap,
+      sessions: {
+        ...sessionSnap.sessions,
+        [sessionId]: {
+          ...sessionSnap.sessions[sessionId],
+          stateLoaded: false,
+          artifacts: [buildSessionArtifact()],
+          loadErrors: {
+            state: "Failed to load session state: daemon offline",
+          },
+        },
+      },
+    };
+
+    renderWorkbenchPage();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Toggle artifacts" }));
+
+    const artifactsPane = document.querySelector(".wb-artifacts");
+    if (!(artifactsPane instanceof HTMLElement)) {
+      throw new Error("Expected artifacts pane to render");
+    }
+
+    expect(within(artifactsPane).getAllByText("session-log.bin").length).toBeGreaterThan(0);
+    expect(within(artifactsPane).queryByRole("alert")).toBeNull();
+    expect(screen.getByTestId("workbench-session-load-issues")).toBeInTheDocument();
+  });
+
+  it("shows the artifacts pane error when state has not loaded yet", async () => {
+    sessionSnap = {
+      ...sessionSnap,
+      sessions: {
+        ...sessionSnap.sessions,
+        [sessionId]: {
+          ...sessionSnap.sessions[sessionId],
+          stateLoaded: false,
+          artifacts: [],
+          loadErrors: {
+            state: "Failed to load session state: daemon offline",
+          },
+        },
+      },
+    };
+
+    renderWorkbenchPage();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Toggle artifacts" }));
+
+    const artifactsPane = document.querySelector(".wb-artifacts");
+    if (!(artifactsPane instanceof HTMLElement)) {
+      throw new Error("Expected artifacts pane to render");
+    }
+
+    expect(within(artifactsPane).getByRole("alert")).toHaveTextContent(
+      "Failed to load session state: daemon offline",
+    );
+  });
+
+  it("updates a mounted artifacts pane when session state later gains artifacts", async () => {
+    sessionSnap = {
+      ...sessionSnap,
+      sessions: {
+        ...sessionSnap.sessions,
+        [sessionId]: {
+          ...sessionSnap.sessions[sessionId],
+          artifacts: [],
+          stateLoaded: true,
+          stateRev: 1,
+          loadErrors: {},
+        },
+      },
+    };
+
+    const rendered = renderWorkbenchPage();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Toggle artifacts" }));
+
+    const artifactsPane = document.querySelector(".wb-artifacts");
+    if (!(artifactsPane instanceof HTMLElement)) {
+      throw new Error("Expected artifacts pane to render");
+    }
+
+    expect(within(artifactsPane).getByText("No artifacts yet.")).toBeInTheDocument();
+
+    sessionSnap = {
+      ...sessionSnap,
+      sessions: {
+        ...sessionSnap.sessions,
+        [sessionId]: {
+          ...sessionSnap.sessions[sessionId],
+          artifacts: [buildSessionArtifact()],
+          stateRev: 2,
+        },
+      },
+    };
+
+    rendered.rerender(
+      <VirtuosoMockContext.Provider value={{ itemHeight: 40, viewportHeight: 400 }}>
+        <MemoryRouter initialEntries={[`/workspaces/${workspaceId}`]}>
+          <Routes>
+            <Route path="/workspaces/:id" element={<WorkbenchPage />} />
+          </Routes>
+        </MemoryRouter>
+      </VirtuosoMockContext.Provider>,
+    );
+
+    await waitFor(() => {
+      expect(within(artifactsPane).getAllByText("session-log.bin").length).toBeGreaterThan(0);
+    });
   });
 
   it("keeps shell support loading passive when the active session state revision changes", async () => {

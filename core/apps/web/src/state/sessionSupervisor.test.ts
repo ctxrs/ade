@@ -52,7 +52,6 @@ vi.mock("../api/client", () => {
     getSessionSnapshot: vi.fn(),
     getSessionState: vi.fn(async () => ({ artifacts: [], git_status: null })),
     getSessionHistory: vi.fn(),
-    listSessionArtifacts: vi.fn(async () => []),
     listSessionSubagentInvocations: vi.fn(async () => []),
     listTurnTools: vi.fn(async () => []),
     recordClientCounterMetric: vi.fn(),
@@ -80,7 +79,6 @@ import {
   getSessionHead,
   getSessionSnapshot,
   getSessionState,
-  listSessionArtifacts,
   listSessionSubagentInvocations,
 } from "../api/client";
 
@@ -154,9 +152,12 @@ type TestInternalEntry = {
   loadState: "pending_hydration" | "live" | "recovering" | "fatal";
   support: {
     stateLoaded?: boolean;
+    stateLoading?: boolean;
     stateRev?: number;
     stateAppliedRev?: number;
+    artifacts?: Array<{ absolute_path?: string }>;
     subagentInvocationsLoaded?: boolean;
+    subagentInvocationsLoading?: boolean;
     subagentInvocationsAppliedRev?: number;
   };
 };
@@ -174,13 +175,19 @@ const getSessionHistoryMock = vi.mocked(getSessionHistory);
 const getSessionHeadMock = vi.mocked(getSessionHead);
 const getSessionSnapshotMock = vi.mocked(getSessionSnapshot);
 const getSessionStateMock = vi.mocked(getSessionState);
-const listSessionArtifactsMock = vi.mocked(listSessionArtifacts);
 const listSessionSubagentInvocationsMock = vi.mocked(listSessionSubagentInvocations);
 const loadSessionHeadV1Mock = vi.mocked(loadSessionHeadV1);
 const loadSessionHistoryPageV1Mock = vi.mocked(loadSessionHistoryPageV1);
 const saveSessionHistoryPageV1Mock = vi.mocked(saveSessionHistoryPageV1);
 const loadTaskThoughtsV1Mock = vi.mocked(loadTaskThoughtsV1);
 const saveTaskThoughtsV1Mock = vi.mocked(saveTaskThoughtsV1);
+const SUPPORT_RACE_WAIT_TIMEOUT_MS = 5_000;
+const SUPPORT_RACE_TEST_TIMEOUT_MS = 30_000;
+
+const flushSupportRace = async () => {
+  await Promise.resolve();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+};
 
 beforeEach(() => {
   getSessionHeadMock.mockReset();
@@ -194,8 +201,6 @@ beforeEach(() => {
   getSessionStateMock.mockReset();
   getSessionStateMock.mockResolvedValue({ artifacts: [], git_status: null });
   getSessionHistoryMock.mockReset();
-  listSessionArtifactsMock.mockReset();
-  listSessionArtifactsMock.mockResolvedValue([]);
   listSessionSubagentInvocationsMock.mockReset();
   listSessionSubagentInvocationsMock.mockResolvedValue([]);
   loadSessionHeadV1Mock.mockReset();
@@ -3649,10 +3654,13 @@ describe("SessionSupervisor", () => {
     expect(entry?.turns.map((turn) => turn.turn_id)).toEqual(fullHead.turns.map((turn) => turn.turn_id));
   });
 
-  it("auto-loads support for open sessions once an authoritative head revision is known", async () => {
+  it(
+    "auto-loads support for open sessions once an authoritative head revision is known",
+    async () => {
     const { SessionSupervisor } = await import("./sessionSupervisor");
 
     const sessionId = "session-support-race";
+    const createdAt = new Date().toISOString();
     const head: SessionHeadSnapshot = {
       session: mkSession(sessionId),
       turns: [] as SessionTurn[],
@@ -3674,54 +3682,22 @@ describe("SessionSupervisor", () => {
         sessionIds: [sessionId],
       }),
     };
+    let workspaceHead: SessionHeadSnapshot | null = null;
 
     const store: WorkspaceActiveSnapshotEventSource & {
       getSessionHeadsSnapshot: () => Record<string, SessionHeadSnapshot>;
     } = {
       subscribe: () => () => {},
       subscribeEvents: (_listener: (evt: WorkspaceActiveSnapshotEvent) => void) => () => {},
-      getSessionHeadSnapshot: (id: string) => (id === sessionId ? head : null),
-      getSessionHeadsSnapshot: () => ({ [sessionId]: head }),
+      getSessionHeadSnapshot: (id: string) => (id === sessionId ? workspaceHead : null),
+      getSessionHeadsSnapshot: () =>
+        workspaceHead ? { [sessionId]: workspaceHead } : ({} as Record<string, SessionHeadSnapshot>),
       getWorktreeRoot: () => null,
       getWorktreeVcsSnapshot: () => null,
       setSubscribedSessions: () => {},
       getSnapshot: () => activeState,
     };
 
-    const sup = new SessionSupervisor();
-    attachWorkspaceStore(sup, store);
-    const internals = asSupervisorInternals(sup);
-    let resolveHead!: (value: SessionHeadSnapshot) => void;
-    const headPromise = new Promise<SessionHeadSnapshot>((resolve) => {
-      resolveHead = resolve;
-    });
-    getSessionHeadMock.mockImplementationOnce(() => headPromise);
-    sup.openSession(sessionId);
-
-    await waitForCondition(() => getSessionHeadMock.mock.calls.length === 1);
-    expect(getSessionState).toHaveBeenCalledTimes(1);
-    expect(listSessionSubagentInvocations).toHaveBeenCalledTimes(1);
-
-    resolveHead(head);
-    await waitForCondition(() => {
-      const entry = internals.entries.get(sessionId);
-      return entry?.stateRev === 7
-        && entry?.support.stateAppliedRev === 7
-        && entry?.support.subagentInvocationsAppliedRev === 7
-        && entry?.support.stateLoaded === true
-        && entry?.support.subagentInvocationsLoaded === true;
-    });
-
-    expect(getSessionState).toHaveBeenCalledTimes(1);
-    expect(listSessionSubagentInvocations).toHaveBeenCalledTimes(1);
-    expect(getSessionHead).toHaveBeenCalledTimes(1);
-  });
-
-  it("reloads support after reopen only after an authoritative revision is re-established", async () => {
-    const { SessionSupervisor } = await import("./sessionSupervisor");
-
-    const sessionId = "session-support-unknown-revision-reopen";
-    const createdAt = new Date().toISOString();
     getSessionStateMock
       .mockResolvedValueOnce({
         artifacts: [
@@ -3758,7 +3734,109 @@ describe("SessionSupervisor", () => {
       .mockResolvedValueOnce([{ id: "subagent-b" }] as never);
 
     const sup = new SessionSupervisor();
+    attachWorkspaceStore(sup, store);
     const internals = asSupervisorInternals(sup);
+    let resolveHead!: (value: SessionHeadSnapshot) => void;
+    const headPromise = new Promise<SessionHeadSnapshot>((resolve) => {
+      resolveHead = resolve;
+    });
+    getSessionHeadMock.mockImplementationOnce(() => headPromise);
+    sup.openSession(sessionId);
+
+    await waitForCondition(() => getSessionHeadMock.mock.calls.length === 1, SUPPORT_RACE_WAIT_TIMEOUT_MS);
+    expect(getSessionState).toHaveBeenCalledTimes(1);
+    expect(listSessionSubagentInvocations).toHaveBeenCalledTimes(1);
+
+    await waitForCondition(() => {
+      const entry = internals.entries.get(sessionId);
+      return entry?.support.stateLoaded === true
+        && entry?.support.stateAppliedRev === undefined
+        && entry?.support.subagentInvocationsLoaded === true
+        && entry?.support.subagentInvocationsAppliedRev === undefined
+        && sup.getSnapshot().sessions[sessionId]?.artifacts[0]?.absolute_path === "/tmp/a"
+        && sup.getSnapshot().sessions[sessionId]?.subagentInvocations[0]?.id === "subagent-a";
+    }, SUPPORT_RACE_WAIT_TIMEOUT_MS);
+
+    workspaceHead = head;
+    sup.setWorkspaceSessionHeads({ [sessionId]: head });
+    resolveHead(head);
+    await flushSupportRace();
+    await waitForCondition(() => {
+      const entry = internals.entries.get(sessionId);
+      return entry?.stateRev === 7
+        && entry?.support.stateAppliedRev === 7
+        && entry?.support.subagentInvocationsAppliedRev === 7
+        && entry?.support.stateLoaded === true
+        && entry?.support.subagentInvocationsLoaded === true
+        && sup.getSnapshot().sessions[sessionId]?.artifacts[0]?.absolute_path === "/tmp/b"
+        && sup.getSnapshot().sessions[sessionId]?.subagentInvocations[0]?.id === "subagent-b"
+        && getSessionStateMock.mock.calls.length === 2
+        && listSessionSubagentInvocationsMock.mock.calls.length === 2;
+    }, SUPPORT_RACE_WAIT_TIMEOUT_MS);
+
+    expect(getSessionState).toHaveBeenCalledTimes(2);
+    expect(listSessionSubagentInvocations).toHaveBeenCalledTimes(2);
+    expect(getSessionHead).toHaveBeenCalledTimes(1);
+    },
+    SUPPORT_RACE_TEST_TIMEOUT_MS,
+  );
+
+  it(
+    "reloads support after reopen only after an authoritative revision is re-established",
+    async () => {
+    const { SessionSupervisor } = await import("./sessionSupervisor");
+
+    const sessionId = "session-support-unknown-revision-reopen";
+    const createdAt = new Date().toISOString();
+    let resolveSecondState!: (value: { artifacts: Array<Record<string, unknown>>; git_status: null }) => void;
+    let resolveSecondInvocations!: (value: Array<{ id: string }>) => void;
+    const secondState = new Promise<{ artifacts: Array<Record<string, unknown>>; git_status: null }>((resolve) => {
+      resolveSecondState = resolve;
+    });
+    const secondInvocations = new Promise<Array<{ id: string }>>((resolve) => {
+      resolveSecondInvocations = resolve;
+    });
+    getSessionStateMock
+      .mockResolvedValueOnce({
+        artifacts: [
+          {
+            id: "artifact-a",
+            session_id: sessionId,
+            task_id: "task-1",
+            worktree_id: "wt-1",
+            absolute_path: "/tmp/a",
+            mime_type: "text/plain",
+            bytes: 1,
+            created_at: createdAt,
+          },
+        ],
+        git_status: null,
+      } as never)
+      .mockImplementationOnce(() => secondState as never)
+      .mockResolvedValueOnce({
+        artifacts: [
+          {
+            id: "artifact-c",
+            session_id: sessionId,
+            task_id: "task-1",
+            worktree_id: "wt-1",
+            absolute_path: "/tmp/c",
+            mime_type: "text/plain",
+            bytes: 1,
+            created_at: createdAt,
+          },
+        ],
+        git_status: null,
+      } as never);
+    listSessionSubagentInvocationsMock
+      .mockReset()
+      .mockResolvedValueOnce([{ id: "subagent-a" }] as never)
+      .mockImplementationOnce(() => secondInvocations as never)
+      .mockResolvedValueOnce([{ id: "subagent-c" }] as never);
+
+    const sup = new SessionSupervisor();
+    const internals = asSupervisorInternals(sup);
+    internals.ensureEntry(sessionId).freshness = "authoritative";
 
     sup.openSession(sessionId, { mode: "active" });
     sup.loadSessionState(sessionId);
@@ -3772,7 +3850,7 @@ describe("SessionSupervisor", () => {
           && sup.getSnapshot().sessions[sessionId]?.artifacts[0]?.absolute_path === "/tmp/a"
           && sup.getSnapshot().sessions[sessionId]?.subagentInvocations[0]?.id === "subagent-a",
       );
-    });
+    }, SUPPORT_RACE_WAIT_TIMEOUT_MS);
 
     sup.closeSession(sessionId);
     sup.openSession(sessionId, { mode: "active" });
@@ -3781,8 +3859,6 @@ describe("SessionSupervisor", () => {
     expect(reopened?.stateRev).toBeUndefined();
     expect(reopened?.support.stateLoaded).toBe(false);
     expect(reopened?.support.subagentInvocationsLoaded).toBe(false);
-    expect(getSessionState).toHaveBeenCalledTimes(2);
-    expect(listSessionSubagentInvocations).toHaveBeenCalledTimes(2);
 
     internals.handleReplicaPatches([
       {
@@ -3795,17 +3871,433 @@ describe("SessionSupervisor", () => {
       },
     ]);
 
+    resolveSecondState({
+      artifacts: [
+        {
+          id: "artifact-b",
+          session_id: sessionId,
+          task_id: "task-1",
+          worktree_id: "wt-1",
+          absolute_path: "/tmp/b",
+          mime_type: "text/plain",
+          bytes: 1,
+          created_at: createdAt,
+        },
+      ],
+      git_status: null,
+    });
+    resolveSecondInvocations([{ id: "subagent-b" }]);
+    await flushSupportRace();
+
     await waitForCondition(() => {
       const entry = sup.getSnapshot().sessions[sessionId];
       return entry?.stateLoaded === true
         && entry?.subagentInvocationsLoaded === true
-        && entry?.artifacts[0]?.absolute_path === "/tmp/b"
-        && entry?.subagentInvocations[0]?.id === "subagent-b";
-    });
+        && entry?.artifacts[0]?.absolute_path === "/tmp/c"
+        && entry?.subagentInvocations[0]?.id === "subagent-c";
+    }, SUPPORT_RACE_WAIT_TIMEOUT_MS);
 
-    expect(getSessionState).toHaveBeenCalledTimes(2);
-    expect(listSessionSubagentInvocations).toHaveBeenCalledTimes(2);
-  });
+    expect(getSessionState).toHaveBeenCalledTimes(3);
+    expect(listSessionSubagentInvocations).toHaveBeenCalledTimes(3);
+    },
+    SUPPORT_RACE_TEST_TIMEOUT_MS,
+  );
+
+  it(
+    "does not let pre-close support requests populate a reopened session without authority",
+    async () => {
+      const { SessionSupervisor } = await import("./sessionSupervisor");
+
+      const sessionId = "session-support-reopen-invalidates-inflight";
+      const createdAt = new Date().toISOString();
+      let resolveFirstState!: (value: { artifacts: Array<Record<string, unknown>>; git_status: null }) => void;
+      let resolveFirstInvocations!: (value: Array<{ id: string }>) => void;
+      const firstState = new Promise<{ artifacts: Array<Record<string, unknown>>; git_status: null }>((resolve) => {
+        resolveFirstState = resolve;
+      });
+      const firstInvocations = new Promise<Array<{ id: string }>>((resolve) => {
+        resolveFirstInvocations = resolve;
+      });
+      getSessionStateMock
+        .mockImplementationOnce(() => firstState as never)
+        .mockResolvedValueOnce({
+          artifacts: [
+            {
+              id: "artifact-b",
+              session_id: sessionId,
+              task_id: "task-1",
+              worktree_id: "wt-1",
+              absolute_path: "/tmp/b",
+              mime_type: "text/plain",
+              bytes: 1,
+              created_at: createdAt,
+            },
+          ],
+          git_status: null,
+        } as never);
+      listSessionSubagentInvocationsMock
+        .mockImplementationOnce(() => firstInvocations as never)
+        .mockResolvedValueOnce([{ id: "subagent-b" }] as never);
+
+      const sup = new SessionSupervisor();
+      const internals = asSupervisorInternals(sup);
+      internals.ensureEntry(sessionId).freshness = "authoritative";
+
+      sup.openSession(sessionId, { mode: "active" });
+
+      await waitForCondition(() => {
+        const current = internals.entries.get(sessionId);
+        return current?.support.stateLoading === true
+          && current?.support.subagentInvocationsLoading === true
+          && getSessionStateMock.mock.calls.length === 1
+          && listSessionSubagentInvocationsMock.mock.calls.length === 1;
+      }, SUPPORT_RACE_WAIT_TIMEOUT_MS);
+
+      sup.closeSession(sessionId);
+      sup.openSession(sessionId, { mode: "active" });
+
+      await waitForCondition(() => {
+        return getSessionStateMock.mock.calls.length === 2
+          && listSessionSubagentInvocationsMock.mock.calls.length === 2;
+      }, SUPPORT_RACE_WAIT_TIMEOUT_MS);
+
+      await waitForCondition(() => {
+        const current = internals.entries.get(sessionId);
+        return current?.support.stateLoaded === true
+          && current?.support.subagentInvocationsLoaded === true
+          && sup.getSnapshot().sessions[sessionId]?.artifacts[0]?.absolute_path === "/tmp/b"
+          && sup.getSnapshot().sessions[sessionId]?.subagentInvocations[0]?.id === "subagent-b";
+      }, SUPPORT_RACE_WAIT_TIMEOUT_MS);
+
+      resolveFirstState({
+        artifacts: [
+          {
+            id: "artifact-a",
+            session_id: sessionId,
+            task_id: "task-1",
+            worktree_id: "wt-1",
+            absolute_path: "/tmp/a",
+            mime_type: "text/plain",
+            bytes: 1,
+            created_at: createdAt,
+          },
+        ],
+        git_status: null,
+      });
+      resolveFirstInvocations([{ id: "subagent-a" }]);
+      await flushSupportRace();
+
+      const snapshot = sup.getSnapshot().sessions[sessionId];
+      expect(snapshot?.artifacts[0]?.absolute_path).toBe("/tmp/b");
+      expect(snapshot?.subagentInvocations[0]?.id).toBe("subagent-b");
+      expect(snapshot?.loadErrors?.state).toBeUndefined();
+      expect(snapshot?.loadErrors?.subagentInvocations).toBeUndefined();
+    },
+    SUPPORT_RACE_TEST_TIMEOUT_MS,
+  );
+
+  it(
+    "ignores stale support load errors after stateRev changes mid-flight",
+    async () => {
+      const { SessionSupervisor } = await import("./sessionSupervisor");
+
+      const sessionId = "session-support-stale-errors-ignored";
+      const createdAt = new Date().toISOString();
+      let rejectFirstState!: (reason?: unknown) => void;
+      let rejectFirstInvocations!: (reason?: unknown) => void;
+      const firstState = new Promise<{ artifacts: Array<Record<string, unknown>>; git_status: null }>(
+        (_resolve, reject) => {
+          rejectFirstState = reject;
+        },
+      );
+      const firstInvocations = new Promise<Array<{ id: string }>>((_resolve, reject) => {
+        rejectFirstInvocations = reject;
+      });
+      getSessionStateMock
+        .mockImplementationOnce(() => firstState as never)
+        .mockResolvedValueOnce({
+          artifacts: [
+            {
+              id: "artifact-b",
+              session_id: sessionId,
+              task_id: "task-1",
+              worktree_id: "wt-1",
+              absolute_path: "/tmp/b",
+              mime_type: "text/plain",
+              bytes: 1,
+              created_at: createdAt,
+            },
+          ],
+          git_status: null,
+        } as never);
+      listSessionSubagentInvocationsMock
+        .mockImplementationOnce(() => firstInvocations as never)
+        .mockResolvedValueOnce([{ id: "subagent-b" }] as never);
+
+      const sup = new SessionSupervisor();
+      const internals = asSupervisorInternals(sup);
+      const entry = internals.ensureEntry(sessionId);
+      entry.freshness = "authoritative";
+
+      sup.openSession(sessionId, { mode: "active" });
+
+      await waitForCondition(() => {
+        const current = internals.entries.get(sessionId);
+        return current?.support.stateLoading === true
+          && current?.support.subagentInvocationsLoading === true
+          && getSessionStateMock.mock.calls.length === 1
+          && listSessionSubagentInvocationsMock.mock.calls.length === 1;
+      }, SUPPORT_RACE_WAIT_TIMEOUT_MS);
+
+      internals.handleReplicaPatches([
+        {
+          op: "append",
+          sessionId,
+          data: {
+            lastEventSeq: 9,
+            stateRev: 9,
+          },
+        },
+      ]);
+
+      rejectFirstState(new Error("stale state failure"));
+      rejectFirstInvocations(new Error("stale subagent failure"));
+      await flushSupportRace();
+
+      await waitForCondition(() => {
+        const current = internals.entries.get(sessionId);
+        return current?.support.stateAppliedRev === 9
+          && current?.support.subagentInvocationsAppliedRev === 9
+          && sup.getSnapshot().sessions[sessionId]?.artifacts[0]?.absolute_path === "/tmp/b"
+          && sup.getSnapshot().sessions[sessionId]?.subagentInvocations[0]?.id === "subagent-b";
+      }, SUPPORT_RACE_WAIT_TIMEOUT_MS);
+
+      const snapshot = sup.getSnapshot().sessions[sessionId];
+      expect(snapshot?.loadErrors?.state).toBeUndefined();
+      expect(snapshot?.loadErrors?.subagentInvocations).toBeUndefined();
+    },
+    SUPPORT_RACE_TEST_TIMEOUT_MS,
+  );
+
+  it(
+    "refetches support when stateRev becomes known after a revisionless support load",
+    async () => {
+    const { SessionSupervisor } = await import("./sessionSupervisor");
+
+    const sessionId = "session-support-rev-adopt-after-load";
+    const createdAt = new Date().toISOString();
+    let resolveSecondState!: (value: { artifacts: Array<Record<string, unknown>>; git_status: null }) => void;
+    let resolveSecondInvocations!: (value: Array<{ id: string }>) => void;
+    const secondState = new Promise<{ artifacts: Array<Record<string, unknown>>; git_status: null }>((resolve) => {
+      resolveSecondState = resolve;
+    });
+    const secondInvocations = new Promise<Array<{ id: string }>>((resolve) => {
+      resolveSecondInvocations = resolve;
+    });
+    getSessionStateMock
+      .mockResolvedValueOnce({
+        artifacts: [
+          {
+            id: "artifact-a",
+            session_id: sessionId,
+            task_id: "task-1",
+            worktree_id: "wt-1",
+            absolute_path: "/tmp/a",
+            mime_type: "text/plain",
+            bytes: 1,
+            created_at: createdAt,
+          },
+        ],
+        git_status: null,
+      } as never)
+      .mockImplementationOnce(() => secondState as never);
+    listSessionSubagentInvocationsMock
+      .mockResolvedValueOnce([{ id: "subagent-a" }] as never)
+      .mockImplementationOnce(() => secondInvocations as never);
+
+    const sup = new SessionSupervisor();
+    const internals = asSupervisorInternals(sup);
+    const entry = internals.ensureEntry(sessionId);
+    entry.freshness = "authoritative";
+
+    sup.openSession(sessionId, { mode: "active" });
+
+    await waitForCondition(() => {
+      const current = internals.entries.get(sessionId);
+      return current?.support.stateLoaded === true
+        && current?.support.stateAppliedRev === undefined
+        && current?.support.subagentInvocationsLoaded === true
+        && current?.support.subagentInvocationsAppliedRev === undefined
+        && sup.getSnapshot().sessions[sessionId]?.artifacts[0]?.absolute_path === "/tmp/a"
+        && sup.getSnapshot().sessions[sessionId]?.subagentInvocations[0]?.id === "subagent-a";
+    }, SUPPORT_RACE_WAIT_TIMEOUT_MS);
+
+    internals.handleReplicaPatches([
+      {
+        op: "append",
+        sessionId,
+        data: {
+          lastEventSeq: 9,
+          stateRev: 9,
+        },
+      },
+    ]);
+
+    await waitForCondition(() => {
+      const current = internals.entries.get(sessionId);
+      return current?.stateRev === 9
+        && current?.support.stateAppliedRev === undefined
+        && current?.support.subagentInvocationsAppliedRev === undefined
+        && current?.support.stateLoading === true
+        && current?.support.subagentInvocationsLoading === true
+        && getSessionStateMock.mock.calls.length === 2
+        && listSessionSubagentInvocationsMock.mock.calls.length === 2;
+    }, SUPPORT_RACE_WAIT_TIMEOUT_MS);
+
+    resolveSecondState({
+      artifacts: [
+        {
+          id: "artifact-b",
+          session_id: sessionId,
+          task_id: "task-1",
+          worktree_id: "wt-1",
+          absolute_path: "/tmp/b",
+          mime_type: "text/plain",
+          bytes: 1,
+          created_at: createdAt,
+        },
+      ],
+      git_status: null,
+    });
+    resolveSecondInvocations([{ id: "subagent-b" }]);
+    await flushSupportRace();
+
+    await waitForCondition(() => {
+      const current = internals.entries.get(sessionId);
+      return current?.support.stateAppliedRev === 9
+        && current?.support.subagentInvocationsAppliedRev === 9
+        && sup.getSnapshot().sessions[sessionId]?.artifacts[0]?.absolute_path === "/tmp/b"
+        && sup.getSnapshot().sessions[sessionId]?.subagentInvocations[0]?.id === "subagent-b";
+    }, SUPPORT_RACE_WAIT_TIMEOUT_MS);
+    },
+    SUPPORT_RACE_TEST_TIMEOUT_MS,
+  );
+
+  it(
+    "refetches revisionless support when workspace heads reveal stateRev mid-flight",
+    async () => {
+    const { SessionSupervisor } = await import("./sessionSupervisor");
+
+    const sessionId = "session-support-workspace-head-rev-race";
+    const createdAt = new Date().toISOString();
+    let resolveFirstState!: (value: { artifacts: Array<Record<string, unknown>>; git_status: null }) => void;
+    let resolveFirstInvocations!: (value: Array<{ id: string }>) => void;
+    let resolveSecondState!: (value: { artifacts: Array<Record<string, unknown>>; git_status: null }) => void;
+    let resolveSecondInvocations!: (value: Array<{ id: string }>) => void;
+    const firstState = new Promise<{ artifacts: Array<Record<string, unknown>>; git_status: null }>((resolve) => {
+      resolveFirstState = resolve;
+    });
+    const firstInvocations = new Promise<Array<{ id: string }>>((resolve) => {
+      resolveFirstInvocations = resolve;
+    });
+    const secondState = new Promise<{ artifacts: Array<Record<string, unknown>>; git_status: null }>((resolve) => {
+      resolveSecondState = resolve;
+    });
+    const secondInvocations = new Promise<Array<{ id: string }>>((resolve) => {
+      resolveSecondInvocations = resolve;
+    });
+    getSessionStateMock
+      .mockImplementationOnce(() => firstState as never)
+      .mockImplementationOnce(() => secondState as never);
+    listSessionSubagentInvocationsMock
+      .mockImplementationOnce(() => firstInvocations as never)
+      .mockImplementationOnce(() => secondInvocations as never);
+
+    const sup = new SessionSupervisor();
+    const internals = asSupervisorInternals(sup);
+    const entry = internals.ensureEntry(sessionId);
+    entry.freshness = "authoritative";
+
+    sup.openSession(sessionId, { mode: "active" });
+
+    await waitForCondition(() => {
+      const current = internals.entries.get(sessionId);
+      return current?.support.stateLoading === true
+        && current?.support.subagentInvocationsLoading === true
+        && getSessionStateMock.mock.calls.length === 1
+        && listSessionSubagentInvocationsMock.mock.calls.length === 1;
+    }, SUPPORT_RACE_WAIT_TIMEOUT_MS);
+
+    const head: SessionHeadSnapshot = {
+      session: mkSession(sessionId),
+      turns: [] as SessionTurn[],
+      events: [] as SessionEvent[],
+      messages: [] as Message[],
+      last_event_seq: 9,
+      state_rev: 9,
+      has_more_turns: false,
+      has_more_history: false,
+      history_cursor: null,
+    };
+    sup.setWorkspaceSessionHeads({ [sessionId]: head });
+
+    resolveFirstState({
+      artifacts: [
+        {
+          id: "artifact-a",
+          session_id: sessionId,
+          task_id: "task-1",
+          worktree_id: "wt-1",
+          absolute_path: "/tmp/a",
+          mime_type: "text/plain",
+          bytes: 1,
+          created_at: createdAt,
+        },
+      ],
+      git_status: null,
+    });
+    resolveFirstInvocations([{ id: "subagent-a" }]);
+    await flushSupportRace();
+
+    await waitForCondition(() => {
+      const current = internals.entries.get(sessionId);
+      return current?.support.stateAppliedRev === undefined
+        && current?.support.subagentInvocationsAppliedRev === undefined
+        && current?.support.stateLoading === true
+        && current?.support.subagentInvocationsLoading === true
+        && getSessionStateMock.mock.calls.length === 2
+        && listSessionSubagentInvocationsMock.mock.calls.length === 2
+        && sup.getSnapshot().sessions[sessionId]?.artifacts.length === 0;
+    }, SUPPORT_RACE_WAIT_TIMEOUT_MS);
+
+    resolveSecondState({
+      artifacts: [
+        {
+          id: "artifact-b",
+          session_id: sessionId,
+          task_id: "task-1",
+          worktree_id: "wt-1",
+          absolute_path: "/tmp/b",
+          mime_type: "text/plain",
+          bytes: 1,
+          created_at: createdAt,
+        },
+      ],
+      git_status: null,
+    });
+    resolveSecondInvocations([{ id: "subagent-b" }]);
+    await flushSupportRace();
+
+    await waitForCondition(() => {
+      const current = internals.entries.get(sessionId);
+      return current?.support.stateAppliedRev === 9
+        && current?.support.subagentInvocationsAppliedRev === 9
+        && sup.getSnapshot().sessions[sessionId]?.artifacts[0]?.absolute_path === "/tmp/b"
+        && sup.getSnapshot().sessions[sessionId]?.subagentInvocations[0]?.id === "subagent-b";
+    }, SUPPORT_RACE_WAIT_TIMEOUT_MS);
+    },
+    SUPPORT_RACE_TEST_TIMEOUT_MS,
+  );
 
   it("retries failed support auto-loads after reopen when the revision is unchanged", async () => {
     const { SessionSupervisor } = await import("./sessionSupervisor");
@@ -4483,7 +4975,7 @@ describe("SessionSupervisor", () => {
     await waitForCondition(() => {
       const entry = internals.entries.get(sessionId);
       return entry?.support.stateLoaded === true
-        && sup.getSnapshot().sessions[sessionId]?.artifacts[0]?.absolute_path === "/tmp/b";
+        && entry.support.artifacts?.[0]?.absolute_path === "/tmp/b";
     });
 
     expect(getSessionState).toHaveBeenCalledTimes(2);
@@ -4537,8 +5029,200 @@ describe("SessionSupervisor", () => {
       return entry?.support.stateAppliedRev === 9;
     });
 
-    expect(getSessionState).toHaveBeenCalledTimes(2);
+    expect(getSessionState).toHaveBeenCalledTimes(3);
   });
+
+  it(
+    "retries a closed warm session state load when stateRev changes mid-flight",
+    async () => {
+      const { SessionSupervisor } = await import("./sessionSupervisor");
+
+      const sessionId = "session-state-warm-manual-race";
+      const createdAt = new Date().toISOString();
+      let resolveFirstState!: (value: { artifacts: Array<Record<string, unknown>>; git_status: null }) => void;
+      const firstState = new Promise<{ artifacts: Array<Record<string, unknown>>; git_status: null }>((resolve) => {
+        resolveFirstState = resolve;
+      });
+      getSessionStateMock
+        .mockImplementationOnce(() => firstState as never)
+        .mockResolvedValueOnce({
+          artifacts: [
+            {
+              id: "artifact-b",
+              session_id: sessionId,
+              task_id: "task-1",
+              worktree_id: "wt-1",
+              absolute_path: "/tmp/b",
+              mime_type: "text/plain",
+              bytes: 1,
+              created_at: createdAt,
+            },
+          ],
+          git_status: null,
+        } as never);
+
+      const sup = new SessionSupervisor();
+      const internals = asSupervisorInternals(sup);
+      const entry = internals.ensureEntry(sessionId);
+      entry.freshness = "bootstrap";
+      entry.stateRev = 7;
+
+      sup.loadSessionState(sessionId);
+
+      await waitForCondition(() => {
+        const current = internals.entries.get(sessionId);
+        return current?.support.stateLoading === true && getSessionStateMock.mock.calls.length === 1;
+      }, SUPPORT_RACE_WAIT_TIMEOUT_MS);
+
+      internals.handleReplicaPatches([
+        {
+          op: "append",
+          sessionId,
+          data: {
+            lastEventSeq: 9,
+            stateRev: 9,
+          },
+        },
+      ]);
+
+      await waitForCondition(() => internals.entries.get(sessionId)?.stateRev === 9, SUPPORT_RACE_WAIT_TIMEOUT_MS);
+
+      resolveFirstState({
+        artifacts: [
+          {
+            id: "artifact-a",
+            session_id: sessionId,
+            task_id: "task-1",
+            worktree_id: "wt-1",
+            absolute_path: "/tmp/a",
+            mime_type: "text/plain",
+            bytes: 1,
+            created_at: createdAt,
+          },
+        ],
+        git_status: null,
+      });
+      await flushSupportRace();
+
+      await waitForCondition(() => {
+        const current = internals.entries.get(sessionId);
+        return current?.support.stateAppliedRev === 9
+          && getSessionStateMock.mock.calls.length === 2
+          && sup.getSnapshot().sessions[sessionId]?.artifacts[0]?.absolute_path === "/tmp/b";
+      }, SUPPORT_RACE_WAIT_TIMEOUT_MS);
+    },
+    SUPPORT_RACE_TEST_TIMEOUT_MS,
+  );
+
+  it(
+    "does not reuse a revisionless /state cache as authoritative when stateRev returns",
+    async () => {
+      const { SessionSupervisor } = await import("./sessionSupervisor");
+
+      const sessionId = "session-state-revisionless-cache-authority-return";
+      const createdAt = new Date().toISOString();
+      getSessionStateMock
+        .mockResolvedValueOnce({
+          artifacts: [
+            {
+              id: "artifact-a",
+              session_id: sessionId,
+              task_id: "task-1",
+              worktree_id: "wt-1",
+              absolute_path: "/tmp/a",
+              mime_type: "text/plain",
+              bytes: 1,
+              created_at: createdAt,
+            },
+          ],
+          git_status: null,
+        } as never)
+        .mockResolvedValueOnce({
+          artifacts: [
+            {
+              id: "artifact-b",
+              session_id: sessionId,
+              task_id: "task-1",
+              worktree_id: "wt-1",
+              absolute_path: "/tmp/b",
+              mime_type: "text/plain",
+              bytes: 1,
+              created_at: createdAt,
+            },
+          ],
+          git_status: null,
+        } as never)
+        .mockResolvedValueOnce({
+          artifacts: [
+            {
+              id: "artifact-c",
+              session_id: sessionId,
+              task_id: "task-1",
+              worktree_id: "wt-1",
+              absolute_path: "/tmp/c",
+              mime_type: "text/plain",
+              bytes: 1,
+              created_at: createdAt,
+            },
+          ],
+          git_status: null,
+        } as never);
+
+      const sup = new SessionSupervisor();
+      const internals = asSupervisorInternals(sup);
+      const entry = internals.ensureEntry(sessionId);
+      entry.freshness = "authoritative";
+      entry.stateRev = 7;
+
+      sup.openSession(sessionId, { mode: "active" });
+
+      await waitForCondition(() => {
+        const current = internals.entries.get(sessionId);
+        return current?.support.stateAppliedRev === 7
+          && sup.getSnapshot().sessions[sessionId]?.artifacts[0]?.absolute_path === "/tmp/a";
+      }, SUPPORT_RACE_WAIT_TIMEOUT_MS);
+
+      sup.closeSession(sessionId);
+
+      const warmEntry = internals.entries.get(sessionId);
+      expect(warmEntry).toBeDefined();
+      if (!warmEntry) return;
+      warmEntry.freshness = "bootstrap";
+      warmEntry.stateRev = undefined;
+
+      sup.loadSessionState(sessionId, { force: true });
+
+      await waitForCondition(() => {
+        const current = internals.entries.get(sessionId);
+        return current?.support.stateLoaded === true
+          && current.support.stateAppliedRev === undefined
+          && sup.getSnapshot().sessions[sessionId]?.artifacts[0]?.absolute_path === "/tmp/b";
+      }, SUPPORT_RACE_WAIT_TIMEOUT_MS);
+
+      warmEntry.freshness = "authoritative";
+      internals.handleReplicaPatches([
+        {
+          op: "append",
+          sessionId,
+          data: {
+            lastEventSeq: 7,
+            stateRev: 7,
+          },
+        },
+      ]);
+
+      sup.loadSessionState(sessionId);
+
+      await waitForCondition(() => {
+        const current = internals.entries.get(sessionId);
+        return current?.support.stateAppliedRev === 7
+          && sup.getSnapshot().sessions[sessionId]?.artifacts[0]?.absolute_path === "/tmp/c";
+      }, SUPPORT_RACE_WAIT_TIMEOUT_MS);
+
+      expect(getSessionStateMock).toHaveBeenCalledTimes(3);
+    },
+    SUPPORT_RACE_TEST_TIMEOUT_MS,
+  );
 
   it("auto-refreshes open-session support when streamed state revisions advance", async () => {
     const { SessionSupervisor } = await import("./sessionSupervisor");
@@ -4617,6 +5301,241 @@ describe("SessionSupervisor", () => {
 
     expect(getSessionState).toHaveBeenCalledTimes(2);
     expect(listSessionSubagentInvocations).toHaveBeenCalledTimes(2);
+  });
+
+  it("drops a revisionless /state response when stateRev changes in flight and refetches", async () => {
+    const { SessionSupervisor } = await import("./sessionSupervisor");
+
+    const sessionId = "session-state-race-revisionless-response";
+    const createdAt = new Date().toISOString();
+    let resolveFirstState!: (value: { artifacts: Array<Record<string, unknown>>; git_status: null }) => void;
+    let resolveSecondState!: (value: { artifacts: Array<Record<string, unknown>>; git_status: null }) => void;
+    const firstState = new Promise<{ artifacts: Array<Record<string, unknown>>; git_status: null }>((resolve) => {
+      resolveFirstState = resolve;
+    });
+    const secondState = new Promise<{ artifacts: Array<Record<string, unknown>>; git_status: null }>((resolve) => {
+      resolveSecondState = resolve;
+    });
+    getSessionStateMock
+      .mockImplementationOnce(() => firstState as never)
+      .mockImplementationOnce(() => secondState as never);
+
+    const sup = new SessionSupervisor();
+    const internals = asSupervisorInternals(sup);
+    const entry = internals.ensureEntry(sessionId);
+    entry.freshness = "authoritative";
+
+    sup.openSession(sessionId, { mode: "active" });
+
+    await waitForCondition(() => {
+      const current = internals.entries.get(sessionId);
+      return current?.support.stateLoading === true && getSessionStateMock.mock.calls.length === 1;
+    });
+
+    internals.handleReplicaPatches([
+      {
+        op: "append",
+        sessionId,
+        data: {
+          lastEventSeq: 9,
+          stateRev: 9,
+        },
+      },
+    ]);
+
+    await waitForCondition(() => internals.entries.get(sessionId)?.stateRev === 9);
+
+    resolveFirstState({
+      artifacts: [
+        {
+          id: "artifact-a",
+          session_id: sessionId,
+          task_id: "task-1",
+          worktree_id: "wt-1",
+          absolute_path: "/tmp/a",
+          mime_type: "text/plain",
+          bytes: 1,
+          created_at: createdAt,
+        },
+      ],
+      git_status: null,
+    });
+    await flushSupportRace();
+
+    await waitForCondition(() => {
+      const current = internals.entries.get(sessionId);
+      return current != null
+        && current.support.stateAppliedRev === undefined
+        && current.support.stateLoading === true
+        && getSessionStateMock.mock.calls.length === 2
+        && sup.getSnapshot().sessions[sessionId]?.artifacts.length === 0;
+    });
+
+    resolveSecondState({
+      artifacts: [
+        {
+          id: "artifact-b",
+          session_id: sessionId,
+          task_id: "task-1",
+          worktree_id: "wt-1",
+          absolute_path: "/tmp/b",
+          mime_type: "text/plain",
+          bytes: 1,
+          created_at: createdAt,
+        },
+      ],
+      git_status: null,
+    });
+
+    await waitForCondition(() => {
+      const current = internals.entries.get(sessionId);
+      return current?.support.stateAppliedRev === 9
+        && sup.getSnapshot().sessions[sessionId]?.artifacts[0]?.absolute_path === "/tmp/b";
+    });
+
+    expect(getSessionStateMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps artifactsLoading false during background /state refreshes once artifacts are loaded", async () => {
+    const { SessionSupervisor } = await import("./sessionSupervisor");
+
+    const sessionId = "session-artifacts-background-refresh";
+    const createdAt = new Date().toISOString();
+    let resolveSecondState!: (value: { artifacts: Array<Record<string, unknown>>; git_status: null }) => void;
+    const secondState = new Promise<{ artifacts: Array<Record<string, unknown>>; git_status: null }>(
+      (resolve) => {
+        resolveSecondState = resolve;
+      },
+    );
+    getSessionStateMock
+      .mockResolvedValueOnce({
+        artifacts: [
+          {
+            id: "artifact-a",
+            session_id: sessionId,
+            task_id: "task-1",
+            worktree_id: "wt-1",
+            absolute_path: "/tmp/a",
+            mime_type: "text/plain",
+            bytes: 1,
+            created_at: createdAt,
+          },
+        ],
+        git_status: null,
+      } as never)
+      .mockImplementationOnce(() => secondState as never);
+
+    const sup = new SessionSupervisor();
+    const internals = asSupervisorInternals(sup);
+    const entry = internals.ensureEntry(sessionId);
+    entry.freshness = "authoritative";
+    entry.stateRev = 7;
+
+    sup.openSession(sessionId, { mode: "active" });
+
+    await waitForCondition(() => {
+      const current = internals.entries.get(sessionId);
+      return current?.support.stateAppliedRev === 7
+        && sup.getSnapshot().sessions[sessionId]?.artifacts[0]?.absolute_path === "/tmp/a";
+    });
+
+    internals.handleReplicaPatches([
+      {
+        op: "append",
+        sessionId,
+        data: {
+          lastEventSeq: 9,
+          stateRev: 9,
+        },
+      },
+    ]);
+
+    await waitForCondition(() => internals.entries.get(sessionId)?.support.stateLoading === true);
+
+    const refreshingSnapshot = sup.getSnapshot().sessions[sessionId];
+    expect(refreshingSnapshot?.stateLoading).toBe(true);
+    expect(refreshingSnapshot?.artifactsLoading).toBe(false);
+
+    resolveSecondState({
+      artifacts: [
+        {
+          id: "artifact-b",
+          session_id: sessionId,
+          task_id: "task-1",
+          worktree_id: "wt-1",
+          absolute_path: "/tmp/b",
+          mime_type: "text/plain",
+          bytes: 1,
+          created_at: createdAt,
+        },
+      ],
+      git_status: null,
+    });
+
+    await waitForCondition(() => {
+      const current = internals.entries.get(sessionId);
+      return current?.support.stateAppliedRev === 9
+        && sup.getSnapshot().sessions[sessionId]?.artifacts[0]?.absolute_path === "/tmp/b";
+    });
+  });
+
+  it("refreshes artifacts from /state after the artifacts pane has already loaded empty", async () => {
+    const { SessionSupervisor } = await import("./sessionSupervisor");
+
+    const sessionId = "session-artifacts-state-refresh";
+    const createdAt = new Date().toISOString();
+    getSessionStateMock
+      .mockResolvedValueOnce({ artifacts: [], git_status: null } as never)
+      .mockResolvedValueOnce({
+        artifacts: [
+          {
+            id: "artifact-1",
+            session_id: sessionId,
+            task_id: "task-1",
+            worktree_id: "wt-1",
+            absolute_path: "/tmp/chart.png",
+            mime_type: "image/png",
+            bytes: 128,
+            created_at: createdAt,
+          },
+        ],
+        git_status: null,
+      } as never);
+
+    const sup = new SessionSupervisor();
+    const internals = asSupervisorInternals(sup);
+    const entry = internals.ensureEntry(sessionId);
+    entry.freshness = "authoritative";
+    entry.stateRev = 0;
+
+    sup.openSession(sessionId, { mode: "active" });
+
+    await waitForCondition(() => {
+      const current = internals.entries.get(sessionId);
+      return current?.support.stateAppliedRev === 0
+        && current.support.stateLoaded === true
+        && sup.getSnapshot().sessions[sessionId]?.artifacts.length === 0;
+    });
+
+    internals.handleReplicaPatches([
+      {
+        op: "append",
+        sessionId,
+        data: {
+          eventsRev: 1,
+          lastEventSeq: 1,
+          stateRev: 1,
+        },
+      },
+    ]);
+
+    await waitForCondition(() => {
+      const current = internals.entries.get(sessionId);
+      return current?.support.stateAppliedRev === 1
+        && sup.getSnapshot().sessions[sessionId]?.artifacts[0]?.absolute_path === "/tmp/chart.png";
+    });
+
+    expect(getSessionStateMock).toHaveBeenCalledTimes(2);
   });
 
   it("skips /head hydrate for active sessions when snapshot store is bound", async () => {
@@ -4827,9 +5746,6 @@ describe("SessionSupervisor", () => {
     getSessionStateMock
       .mockRejectedValueOnce(new Error("daemon offline"))
       .mockResolvedValueOnce({ artifacts: [], git_status: null });
-    listSessionArtifactsMock
-      .mockRejectedValueOnce(new Error("artifacts endpoint unavailable"))
-      .mockResolvedValueOnce([]);
     listSessionSubagentInvocationsMock
       .mockRejectedValueOnce(new Error("subagent query failed"))
       .mockResolvedValueOnce([]);
@@ -4838,12 +5754,11 @@ describe("SessionSupervisor", () => {
     sup.openSession(sessionId, { mode: "active" });
 
     sup.loadSessionState(sessionId);
-    sup.loadArtifacts(sessionId);
     sup.loadSubagentInvocations(sessionId);
 
     await waitForCondition(() => {
       const loadErrors = sup.getSnapshot().sessions[sessionId]?.loadErrors;
-      return Boolean(loadErrors?.state && loadErrors?.artifacts && loadErrors?.subagentInvocations);
+      return Boolean(loadErrors?.state && loadErrors?.subagentInvocations);
     });
 
     const failedEntry = sup.getSnapshot().sessions[sessionId];
@@ -4851,15 +5766,11 @@ describe("SessionSupervisor", () => {
     expect(failedEntry?.artifactsLoading).toBe(false);
     expect(failedEntry?.subagentInvocationsLoading).toBe(false);
     expect(failedEntry?.loadErrors?.state).toBe("Failed to load session state: daemon offline");
-    expect(failedEntry?.loadErrors?.artifacts).toBe(
-      "Failed to load artifacts: artifacts endpoint unavailable",
-    );
     expect(failedEntry?.loadErrors?.subagentInvocations).toBe(
       "Failed to load subagent invocations: subagent query failed",
     );
 
     sup.loadSessionState(sessionId, { force: true });
-    sup.loadArtifacts(sessionId, { force: true });
     sup.loadSubagentInvocations(sessionId, { force: true });
 
     await waitForCondition(() => {
@@ -4868,7 +5779,6 @@ describe("SessionSupervisor", () => {
         Boolean(entry?.stateLoaded) &&
         Boolean(entry?.loadErrors) &&
         !entry?.loadErrors?.state &&
-        !entry?.loadErrors?.artifacts &&
         !entry?.loadErrors?.subagentInvocations &&
         entry?.artifactsLoading === false &&
         entry?.subagentInvocationsLoading === false

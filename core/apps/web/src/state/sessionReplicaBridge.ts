@@ -2,7 +2,6 @@ import {
   getSessionHead,
   getSessionSnapshot,
   getSessionState,
-  listSessionArtifacts,
   getDaemonClientConfig,
   subscribeDaemonConfig,
 } from "../api/client";
@@ -44,7 +43,6 @@ export class SessionReplicaBridge {
           getSessionHead,
           getSessionSnapshot,
           getSessionState,
-          listSessionArtifacts,
         },
         emit: this.onPatches,
       });

@@ -235,9 +235,6 @@ export type ArtifactInput = {
   mime_type?: string | null;
 };
 
-export const listSessionArtifacts = (sessionId: string) =>
-  apiAny<Artifact[]>(`/api/sessions/${sessionId}/artifacts`);
-
 export const setSessionArtifacts = (sessionId: string, artifacts: ArtifactInput[]) =>
   apiAny<Artifact[]>(`/api/sessions/${sessionId}/artifacts`, {
     method: "POST",

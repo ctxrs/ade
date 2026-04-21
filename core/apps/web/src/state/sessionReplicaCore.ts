@@ -1,5 +1,4 @@
 import type {
-  Artifact,
   Message,
   Session,
   SessionActivityState,
@@ -63,7 +62,6 @@ export type SessionReplicaApi = {
   getSessionHead: (sessionId: string, limit?: number, includeEvents?: boolean) => Promise<SessionHeadSnapshot | null>;
   getSessionState?: (sessionId: string) => Promise<SessionState | null>;
   getSessionSnapshot?: (sessionId: string, limit?: number, includeEvents?: boolean) => Promise<SessionSnapshot | null>;
-  listSessionArtifacts?: (sessionId: string) => Promise<Artifact[]>;
   setAuth?: (baseUrl?: string | null, authToken?: string | null, runId?: string | null) => void;
 };
 

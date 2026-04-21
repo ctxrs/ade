@@ -43,7 +43,7 @@ export type SessionSupervisorReplicaPatchHost = {
   applyAcpMetaFromEvents(entry: InternalEntry, events: SessionEvent[]): boolean;
   applyGitStatusSnapshotFromEvents(entry: InternalEntry, events: SessionEvent[]): boolean;
   syncStateCache(entry: InternalEntry): void;
-  clearSupportLoadError(entry: InternalEntry, key: "state" | "artifacts" | "subagentInvocations"): void;
+  clearSupportLoadError(entry: InternalEntry, key: "state" | "subagentInvocations"): void;
   adoptLoadedSubagentInvocationsRevision(entry: InternalEntry, stateRev: number): void;
   ensureProviderOptions(entry: InternalEntry): Promise<void>;
   ensureSubagentInvocations(entry: InternalEntry, opts?: { force?: boolean }): Promise<void>;
@@ -614,21 +614,6 @@ export const applyReplicaPatches = (
         entryChanged = true;
       }
       host.syncStateCache(entry);
-    }
-    if (data.artifacts) {
-      entry.support.artifacts = data.artifacts;
-      entry.support.artifactsFetchedAtMs = Date.now();
-      entry.support.artifactsLoaded = true;
-      entry.support.artifactsLoading = false;
-      host.clearSupportLoadError(entry, "artifacts");
-      host.syncStateCache(entry);
-    }
-    if (data.artifactsLoaded !== undefined) {
-      entry.support.artifactsLoaded = data.artifactsLoaded;
-      if (data.artifactsLoaded) {
-        entry.support.artifactsLoading = false;
-        host.clearSupportLoadError(entry, "artifacts");
-      }
     }
     if (data.stateLoaded !== undefined) {
       entry.support.stateLoaded = data.stateLoaded;

@@ -2,9 +2,7 @@ import {
   getProviderOptions,
   getSessionState,
   idToString,
-  listSessionArtifacts,
   listSessionSubagentInvocations,
-  type Artifact,
   type GitStatusSummary,
   type ProviderOptions,
   type Session,
@@ -32,7 +30,7 @@ import { updateProvidersBootstrap } from "../providersBootstrapStore";
 import type { SessionSupervisorWorkspaceSnapshotState } from "./workspaceInputs";
 import type { InternalEntry } from "./entryState";
 
-type SessionSupportLoadErrorKey = "state" | "artifacts" | "subagentInvocations";
+type SessionSupportLoadErrorKey = "state" | "subagentInvocations";
 
 export type SessionSupervisorHydrationEntry = InternalEntry;
 
@@ -64,6 +62,11 @@ export type SessionSupervisorHydrationHost = {
     key: SessionSupportLoadErrorKey,
     value: unknown,
   ): void;
+  ensureState(entry: SessionSupervisorHydrationEntry, opts?: SupportLoadOpts): Promise<void>;
+  ensureSubagentInvocations(
+    entry: SessionSupervisorHydrationEntry,
+    opts?: SupportLoadOpts,
+  ): Promise<void>;
   resolveRequestedStateRev(entry: SessionSupervisorHydrationEntry): number | undefined;
   syncSupportLoadsForOpenSession(entry: SessionSupervisorHydrationEntry): void;
 };
@@ -238,6 +241,14 @@ export function resolveRequestedStateRev(
   this: SessionSupervisorHydrationHost,
   entry: SessionSupervisorHydrationEntry,
 ): number | undefined {
+  const workspaceConnection = this.workspaceSnapshotState?.connection;
+  if (
+    workspaceConnection &&
+    workspaceConnection !== "connected" &&
+    (entry.freshness === "authoritative" || entry.freshness === "replica")
+  ) {
+    return undefined;
+  }
   if (entry.freshness !== "authoritative" && entry.freshness !== "replica") return undefined;
   if (typeof entry.stateRev === "number") return entry.stateRev;
   const head = findWorkspaceSessionHead(
@@ -251,13 +262,52 @@ export function resolveRequestedStateRev(
   return typeof headStateRev === "number" ? headStateRev : undefined;
 }
 
+type SupportLoadOpts = {
+  force?: boolean;
+  allowEntryStateRevFallback?: boolean;
+};
+
+function resolveSupportRequestedStateRev(
+  host: SessionSupervisorHydrationHost,
+  entry: SessionSupervisorHydrationEntry,
+  opts?: SupportLoadOpts,
+): number | undefined {
+  const authoritativeRequestedStateRev = host.resolveRequestedStateRev(entry);
+  if (typeof authoritativeRequestedStateRev === "number") {
+    return authoritativeRequestedStateRev;
+  }
+  const workspaceConnection = host.workspaceSnapshotState?.connection;
+  const canUseEntryStateRevFallback =
+    opts?.allowEntryStateRevFallback &&
+    typeof entry.stateRev === "number" &&
+    workspaceConnection !== "disconnected" &&
+    workspaceConnection !== "connecting";
+  if (canUseEntryStateRevFallback) {
+    return entry.stateRev;
+  }
+  return undefined;
+}
+
+function isRequestedStateRevStale(
+  requestRev: number | undefined,
+  liveRequestedStateRev: number | undefined,
+): boolean {
+  if (typeof requestRev === "number" && typeof liveRequestedStateRev === "number") {
+    return liveRequestedStateRev !== requestRev;
+  }
+  if (typeof requestRev !== "number" && typeof liveRequestedStateRev === "number") {
+    return true;
+  }
+  return false;
+}
+
 export async function ensureState(
   this: SessionSupervisorHydrationHost,
   entry: SessionSupervisorHydrationEntry,
-  opts?: { force?: boolean },
+  opts?: SupportLoadOpts,
 ) {
   const cached = this.stateCacheBySessionId.get(entry.sessionId);
-  const requestedStateRev = this.resolveRequestedStateRev(entry);
+  const requestedStateRev = resolveSupportRequestedStateRev(this, entry, opts);
   const cachedOrAppliedRev =
     typeof cached?.stateRev === "number" ? cached.stateRev : entry.support.stateAppliedRev;
   const cacheMatchesRequestedRev =
@@ -276,7 +326,7 @@ export async function ensureState(
     this.publish();
     return;
   }
-  if (!shouldFetchSessionState({ ...entry.support, stateRev: entry.stateRev }, opts)) return;
+  if (!shouldFetchSessionState({ ...entry.support, stateRev: requestedStateRev }, opts)) return;
   entry.support.stateLoading = true;
   this.clearSupportLoadError(entry, "state");
   const requestRev = requestedStateRev;
@@ -284,76 +334,58 @@ export async function ensureState(
   const fetchToken = entry.support.stateFetchToken;
   entry.updatedAtMs = Date.now();
   this.publish();
+  let requestRef: Promise<void> | undefined;
+  let needsRetry = false;
   const request = (async () => {
     try {
       const state = await getSessionState(entry.sessionId);
       const liveEntry = this.entries.get(entry.sessionId);
       if (!liveEntry || liveEntry.support.stateFetchToken !== fetchToken) return;
-      if (
-        typeof requestRev === "number" &&
-        typeof liveEntry.stateRev === "number" &&
-        liveEntry.stateRev !== requestRev
-      ) {
+      const liveRequestedStateRev = resolveSupportRequestedStateRev(this, liveEntry, opts);
+      if (isRequestedStateRevStale(requestRev, liveRequestedStateRev)) {
+        needsRetry = true;
         return;
       }
       this.stateCacheBySessionId.set(entry.sessionId, {
         state,
-        stateRev: requestRev ?? liveEntry.stateRev,
+        stateRev: requestRev,
       });
-      this.applyState(liveEntry, state, requestRev ?? liveEntry.stateRev);
+      this.applyState(liveEntry, state, requestRev);
     } catch (err) {
       const liveEntry = this.entries.get(entry.sessionId);
       if (!liveEntry || liveEntry.support.stateFetchToken !== fetchToken) return;
+      const liveRequestedStateRev = resolveSupportRequestedStateRev(this, liveEntry, opts);
+      if (isRequestedStateRevStale(requestRev, liveRequestedStateRev)) {
+        needsRetry = true;
+        return;
+      }
       this.setSupportLoadError(liveEntry, "state", err);
     } finally {
+      if (requestRef && this.stateRequestsInFlight.get(entry.sessionId) === requestRef) {
+        this.stateRequestsInFlight.delete(entry.sessionId);
+      }
       const liveEntry = this.entries.get(entry.sessionId);
       if (liveEntry && liveEntry.support.stateFetchToken === fetchToken) {
         liveEntry.support.stateLoading = false;
         this.syncSupportLoadsForOpenSession(liveEntry);
         liveEntry.updatedAtMs = Date.now();
         this.publish();
+        if (needsRetry && liveEntry.refCount <= 0 && opts?.allowEntryStateRevFallback) {
+          void this.ensureState(liveEntry, opts);
+        }
       }
     }
-  })().finally(() => {
-    if (this.stateRequestsInFlight.get(entry.sessionId) === request) {
-      this.stateRequestsInFlight.delete(entry.sessionId);
-    }
-  });
+  })();
+  requestRef = request;
   this.stateRequestsInFlight.set(entry.sessionId, request);
-}
-
-export async function ensureArtifacts(
-  this: SessionSupervisorHydrationHost,
-  entry: SessionSupervisorHydrationEntry,
-  opts?: { force?: boolean },
-) {
-  if (entry.support.artifactsLoading) return;
-  if (entry.support.artifactsLoaded && !opts?.force) return;
-  entry.support.artifactsLoading = true;
-  this.clearSupportLoadError(entry, "artifacts");
-  entry.updatedAtMs = Date.now();
-  this.publish();
-  try {
-    const artifacts = await listSessionArtifacts(entry.sessionId);
-    entry.support.artifacts = artifacts;
-    entry.support.artifactsLoaded = true;
-    entry.support.artifactsFetchedAtMs = Date.now();
-    this.clearSupportLoadError(entry, "artifacts");
-  } catch (err) {
-    this.setSupportLoadError(entry, "artifacts", err);
-  } finally {
-    entry.support.artifactsLoading = false;
-    entry.updatedAtMs = Date.now();
-    this.publish();
-  }
 }
 
 export async function ensureSubagentInvocations(
   this: SessionSupervisorHydrationHost,
   entry: SessionSupervisorHydrationEntry,
-  opts?: { force?: boolean },
+  opts?: SupportLoadOpts,
 ) {
-  const requestedStateRev = this.resolveRequestedStateRev(entry);
+  const requestedStateRev = resolveSupportRequestedStateRev(this, entry, opts);
   const cached = this.subagentInvocationsCacheBySessionId.get(entry.sessionId);
   const cacheMatchesRequestedRev =
     typeof requestedStateRev === "number" &&
@@ -379,23 +411,23 @@ export async function ensureSubagentInvocations(
   if (!shouldFetchSubagentInvocations(entry.support, requestedStateRev, opts)) return;
   entry.support.subagentInvocationsLoading = true;
   this.clearSupportLoadError(entry, "subagentInvocations");
+  entry.support.subagentInvocationsFetchToken += 1;
+  const fetchToken = entry.support.subagentInvocationsFetchToken;
   entry.updatedAtMs = Date.now();
   this.publish();
+  let requestRef: Promise<void> | undefined;
+  let needsRetry = false;
   const request = (async () => {
     try {
       const invocations = await listSessionSubagentInvocations(entry.sessionId);
       const liveEntry = this.entries.get(entry.sessionId);
-      if (!liveEntry) return;
-      const liveRequestedStateRev = this.resolveRequestedStateRev(liveEntry);
-      if (
-        typeof requestedStateRev === "number" &&
-        typeof liveRequestedStateRev === "number" &&
-        liveRequestedStateRev !== requestedStateRev
-      ) {
+      if (!liveEntry || liveEntry.support.subagentInvocationsFetchToken !== fetchToken) return;
+      const liveRequestedStateRev = resolveSupportRequestedStateRev(this, liveEntry, opts);
+      if (isRequestedStateRevStale(requestedStateRev, liveRequestedStateRev)) {
+        needsRetry = true;
         return;
       }
-      const appliedStateRev =
-        typeof requestedStateRev === "number" ? requestedStateRev : liveRequestedStateRev;
+      const appliedStateRev = requestedStateRev;
       liveEntry.support.subagentInvocations = invocations;
       liveEntry.support.subagentInvocationsLoaded = true;
       liveEntry.support.subagentInvocationsAppliedRev =
@@ -412,21 +444,32 @@ export async function ensureSubagentInvocations(
       this.clearSupportLoadError(liveEntry, "subagentInvocations");
     } catch (err) {
       const liveEntry = this.entries.get(entry.sessionId);
-      if (!liveEntry) return;
+      if (!liveEntry || liveEntry.support.subagentInvocationsFetchToken !== fetchToken) return;
+      const liveRequestedStateRev = resolveSupportRequestedStateRev(this, liveEntry, opts);
+      if (isRequestedStateRevStale(requestedStateRev, liveRequestedStateRev)) {
+        needsRetry = true;
+        return;
+      }
       this.setSupportLoadError(liveEntry, "subagentInvocations", err);
     } finally {
+      if (
+        requestRef &&
+        this.subagentInvocationsRequestsInFlight.get(entry.sessionId) === requestRef
+      ) {
+        this.subagentInvocationsRequestsInFlight.delete(entry.sessionId);
+      }
       const liveEntry = this.entries.get(entry.sessionId);
-      if (liveEntry) {
+      if (liveEntry && liveEntry.support.subagentInvocationsFetchToken === fetchToken) {
         liveEntry.support.subagentInvocationsLoading = false;
         this.syncSupportLoadsForOpenSession(liveEntry);
         liveEntry.updatedAtMs = Date.now();
         this.publish();
+        if (needsRetry && liveEntry.refCount <= 0 && opts?.allowEntryStateRevFallback) {
+          void this.ensureSubagentInvocations(liveEntry, opts);
+        }
       }
     }
-  })().finally(() => {
-    if (this.subagentInvocationsRequestsInFlight.get(entry.sessionId) === request) {
-      this.subagentInvocationsRequestsInFlight.delete(entry.sessionId);
-    }
-  });
+  })();
+  requestRef = request;
   this.subagentInvocationsRequestsInFlight.set(entry.sessionId, request);
 }

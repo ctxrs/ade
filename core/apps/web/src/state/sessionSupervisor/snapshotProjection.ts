@@ -177,7 +177,7 @@ const cloneSessionEntry = (entry: InternalEntry, previous?: SessionCacheEntry): 
     assistantStreamingByTurnId: entry.assistantStreamingByTurnId,
     assistantStreamingRev: entry.assistantStreamingRev,
     artifacts: support.artifacts,
-    artifactsLoading: support.artifactsLoading,
+    artifactsLoading: support.stateLoading && !support.stateLoaded && support.artifacts.length === 0,
     subagentInvocations: support.subagentInvocations,
     subagentInvocationsLoaded: support.subagentInvocationsLoaded,
     subagentInvocationsLoading: support.subagentInvocationsLoading,

@@ -5,7 +5,6 @@ import type { InternalEntry, SessionSupportLoadErrorKey } from "./entryState";
 
 const SUPPORT_LOAD_ERROR_LABELS: Record<SessionSupportLoadErrorKey, string> = {
   state: "session state",
-  artifacts: "artifacts",
   subagentInvocations: "subagent invocations",
 };
 
@@ -90,11 +89,12 @@ export function deriveSupportFreshnessKey(
 export function adoptLoadedStateRevision(
   stateLoaded: boolean,
   currentAppliedRev: number | undefined,
-  nextKnownRev: number | undefined,
+  _nextKnownRev: number | undefined,
 ): number | undefined {
-  if (!stateLoaded || typeof nextKnownRev !== "number") return currentAppliedRev;
-  if (typeof currentAppliedRev === "number") return currentAppliedRev;
-  return nextKnownRev;
+  // Revisionless support must refetch once a revision becomes known instead of
+  // being retroactively stamped as current.
+  if (!stateLoaded) return currentAppliedRev;
+  return currentAppliedRev;
 }
 
 type SupportLoadSyncDeps = {
@@ -113,7 +113,7 @@ export function syncSupportLoadsForOpenSession(
   const freshnessKey = deriveSupportFreshnessKey(requestedStateRev, support.supportFreshnessEpoch);
   if (
     support.stateAutoLoadKey !== freshnessKey &&
-    shouldFetchSessionState({ ...support, stateRev: entry.stateRev })
+    shouldFetchSessionState({ ...support, stateRev: requestedStateRev })
   ) {
     support.stateAutoLoadKey = freshnessKey;
     void deps.ensureState(entry);
@@ -133,6 +133,8 @@ type SupportLoadInvalidationDeps = {
     string,
     { invocations: SubagentInvocation[]; stateRev: number }
   >;
+  invalidateStateRequest(entry: InternalEntry): void;
+  invalidateSubagentInvocationsRequest(entry: InternalEntry): void;
 };
 
 export function invalidateSupportLoadsWithoutAuthoritativeRevision(
@@ -142,33 +144,24 @@ export function invalidateSupportLoadsWithoutAuthoritativeRevision(
   if (typeof deps.resolveRequestedStateRev(entry) === "number") return;
   const support = entry.support;
   support.supportFreshnessEpoch += 1;
-  if (!support.stateLoading) {
-    support.stateLoaded = false;
-    support.stateAppliedRev = undefined;
-  }
-  if (!support.subagentInvocationsLoading) {
-    support.subagentInvocationsLoaded = false;
-    support.subagentInvocationsAppliedRev = undefined;
-  }
+  support.stateLoaded = false;
+  support.stateAppliedRev = undefined;
+  support.subagentInvocationsLoaded = false;
+  support.subagentInvocationsAppliedRev = undefined;
+  deps.invalidateStateRequest(entry);
+  deps.invalidateSubagentInvocationsRequest(entry);
   deps.subagentInvocationsCacheBySessionId.delete(entry.sessionId);
 }
 
 export function adoptLoadedSubagentInvocationsRevision(
   entry: InternalEntry,
-  stateRev: number,
-  subagentInvocationsCacheBySessionId: Map<
+  _stateRev: number,
+  _subagentInvocationsCacheBySessionId: Map<
     string,
     { invocations: SubagentInvocation[]; stateRev: number }
   >,
 ): void {
-  const support = entry.support;
-  if (!support.subagentInvocationsLoaded) return;
-  if (typeof support.subagentInvocationsAppliedRev === "number") return;
-  support.subagentInvocationsAppliedRev = stateRev;
-  subagentInvocationsCacheBySessionId.set(entry.sessionId, {
-    invocations: support.subagentInvocations.slice(),
-    stateRev,
-  });
+  if (!entry.support.subagentInvocationsLoaded) return;
 }
 
 export function clearSupportLoadError(

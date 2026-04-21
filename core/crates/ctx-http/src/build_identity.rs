@@ -53,7 +53,9 @@ fn configured_identity_path() -> Result<Option<PathBuf>> {
     if trimmed.is_empty() {
         anyhow::bail!("{BUNDLE_DIR_ENV} must not be empty when set");
     }
-    Ok(Some(PathBuf::from(trimmed).join(ARTIFACT_IDENTITY_FILENAME)))
+    Ok(Some(
+        PathBuf::from(trimmed).join(ARTIFACT_IDENTITY_FILENAME),
+    ))
 }
 
 fn parse_build_identity(path: &Path) -> Result<BuildIdentity> {
@@ -75,7 +77,10 @@ fn parse_build_identity(path: &Path) -> Result<BuildIdentity> {
         anyhow::bail!("build identity missing buildId in {}", path.display());
     }
     if identity.compatibility_token.trim().is_empty() {
-        anyhow::bail!("build identity missing compatibilityToken in {}", path.display());
+        anyhow::bail!(
+            "build identity missing compatibilityToken in {}",
+            path.display()
+        );
     }
     Ok(identity)
 }

@@ -62,7 +62,6 @@ type WorkbenchActiveTaskControllerArgs = {
   supervisor: Pick<
     SessionSupervisor,
     | "getSnapshot"
-    | "loadArtifacts"
     | "loadMoreTurns"
     | "loadSessionState"
     | "loadSubagentInvocations"
@@ -563,14 +562,13 @@ export function useWorkbenchActiveTaskController({
   const showArtifactsPane = artifactsOpen;
   const showSessionsPane = webSessionsEnabled && sessionsOpen;
   const rightPaneOpen = showReviewPane || showArtifactsPane || showSessionsPane;
+  const activeSessionCacheEntry = activeSessionId ? sessionCache.sessions[activeSessionId] : undefined;
   const artifacts = useMemo(() => {
-    if (!activeSessionId) return [];
-    return sessionCache.sessions[activeSessionId]?.artifacts ?? [];
-  }, [activeSessionId, sessionCache.sessions]);
-  const artifactsLoading = activeSessionId
-    ? sessionCache.sessions[activeSessionId]?.artifactsLoading ?? false
-    : false;
-  const artifactsError = activeLoadErrors?.artifacts ?? null;
+    return activeSessionCacheEntry?.artifacts ?? [];
+  }, [activeSessionCacheEntry]);
+  const artifactsLoading = activeSessionCacheEntry?.artifactsLoading ?? false;
+  const artifactsError =
+    activeSessionCacheEntry?.stateLoaded || artifacts.length > 0 ? null : (activeLoadErrors?.state ?? null);
   const sessionLoadIssues = useMemo(() => {
     const issues: Array<{ key: "state" | "subagentInvocations"; message: string }> = [];
     if (activeLoadErrors?.state) {
@@ -587,7 +585,7 @@ export function useWorkbenchActiveTaskController({
 
   useEffect(() => {
     if (!artifactsOpen || !activeSessionId) return;
-    supervisor.loadArtifacts(activeSessionId);
+    supervisor.loadSessionState(activeSessionId);
   }, [activeSessionId, artifactsOpen, supervisor]);
 
   useEffect(() => {
@@ -602,7 +600,7 @@ export function useWorkbenchActiveTaskController({
 
   const retryArtifactsLoad = useCallback(() => {
     if (!activeSessionId) return;
-    supervisor.loadArtifacts(activeSessionId, { force: true });
+    supervisor.loadSessionState(activeSessionId, { force: true });
   }, [activeSessionId, supervisor]);
 
   const diffContentInFlightRef = useRef<Map<string, Promise<void>>>(new Map());

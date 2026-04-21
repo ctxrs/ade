@@ -1,5 +1,4 @@
 import type {
-  Artifact,
   Message,
   Session,
   SessionActivityState,
@@ -89,14 +88,12 @@ export type SessionReplicaData = {
   projectionRev?: number;
   hasMoreTurns?: boolean;
   stateRev?: number;
-  artifacts?: Artifact[];
   gitStatusSummary?: GitStatusSummary | null;
   loading?: boolean;
   error?: string | null;
   turnsHydrated?: boolean;
   stateLoaded?: boolean;
   stateLoading?: boolean;
-  artifactsLoaded?: boolean;
   subagentNotice?: boolean;
   replaceMode?: SessionReplicaReplaceMode;
 };

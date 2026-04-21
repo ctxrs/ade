@@ -223,4 +223,38 @@ describe("sessionSupervisor snapshotProjection", () => {
     publish.call(host);
     expect(notifications).toBe(1);
   });
+
+  it("keeps artifactsLoading false while cached artifacts refresh in the background", () => {
+    const entry = createInternalEntry("session-1", { transientSeqStart: 1, warmTtlMs: 60_000 });
+    entry.support.stateLoaded = false;
+    entry.support.stateLoading = true;
+    entry.support.artifacts = [{
+      id: "artifact-1",
+      session_id: "session-1",
+      task_id: "task-1",
+      workspace_id: "workspace-1",
+      worktree_id: "worktree-1",
+      name: "artifact.txt",
+      mime_type: "text/plain",
+      bytes: 12,
+      absolute_path: "/tmp/artifact.txt",
+      missing: false,
+      created_at: "2026-04-08T12:00:00.000Z",
+    }];
+
+    const host = {
+      maxCachedSessions: 10,
+      listeners: new Set<() => void>(),
+      snapshot: { connection: "idle", sessions: {} } as SessionSupervisorSnapshot,
+      entries: new Map([[entry.sessionId, entry]]),
+    };
+
+    publish.call(host);
+
+    const projected = host.snapshot.sessions["session-1"];
+    expect(projected?.artifacts).toHaveLength(1);
+    expect(projected?.artifactsLoading).toBe(false);
+    expect(projected?.stateLoading).toBe(true);
+    expect(projected?.stateLoaded).toBe(false);
+  });
 });

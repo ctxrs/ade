@@ -1,8 +1,8 @@
 pub mod api;
 mod async_util;
 pub mod attachments;
-mod build_identity;
 mod buffers;
+mod build_identity;
 mod completions;
 mod container_builder;
 mod container_fs;
