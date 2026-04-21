@@ -37,6 +37,8 @@ pub mod title_generation_local;
 mod toolchains;
 
 #[cfg(test)]
+mod provider_status_matrix_tests;
+#[cfg(test)]
 mod test_support;
 
 pub(crate) use self::artifacts::{
