@@ -44,11 +44,6 @@ const baseIso = "2024-01-01T00:00:00.000Z";
 type SessionSupervisorInternals = {
   ensureEntry: (sessionId: string) => SessionCacheEntry;
   ensureTurnFromEvent: (entry: SessionCacheEntry, event: SessionEvent) => boolean;
-  applyEventToTurns: (
-    entry: SessionCacheEntry,
-    event: SessionEvent,
-    opts?: { notify?: boolean; previousStatusOverride?: SessionTurn["status"] },
-  ) => boolean;
 };
 
 const asSupervisorInternals = (supervisor: SessionSupervisor): SessionSupervisorInternals =>
@@ -62,6 +57,20 @@ const asReplicaPatchHost = (supervisor: SessionSupervisor): SessionSupervisorRep
 
 const asInternalEntry = (entry: SessionCacheEntry): InternalEntry =>
   entry as unknown as InternalEntry;
+
+const applyStreamDeltaPatch = (
+  supervisor: SessionSupervisor,
+  data: SessionReplicaPatch["data"],
+) => {
+  applyReplicaPatches(asReplicaPatchHost(supervisor), [{
+    op: "append",
+    sessionId: "session-1",
+    data: {
+      appendMode: "stream_delta",
+      ...data,
+    },
+  }]);
+};
 
 const setupSupervisorWithSession = () => {
   const supervisor = new SessionSupervisor();
@@ -149,23 +158,17 @@ describe("SessionSupervisor analytics tracking", () => {
     resetTurnStartTrackingForTests();
   });
 
-  it("emits start analytics for a live turn_started transition", () => {
-    const { supervisor, entry, turnId } = setupEntry();
-    const startEvent: SessionEvent = {
-      seq: 1,
-      id: "ev-1",
-      session_id: "session-1",
-      turn_id: turnId,
-      event_type: "turn_started",
-      payload_json: {},
-      created_at: baseIso,
-    };
-
-    const changed = asSupervisorInternals(supervisor).applyEventToTurns(entry, startEvent, {
-      notify: false,
-      previousStatusOverride: undefined,
+  it("emits start analytics for a live stream_delta running turn", () => {
+    const { supervisor } = setupSupervisorWithSession();
+    applyStreamDeltaPatch(supervisor, {
+      turns: [buildRunningTurn("turn-1")],
+      events: [],
+      messages: [],
+      turnsRev: 1,
+      eventsRev: 1,
+      messagesRev: 1,
     });
-    expect(changed).toBe(true);
+
     expect(trackTurnStarted).toHaveBeenCalledTimes(1);
     expect(trackTurnStarted).toHaveBeenCalledWith(expect.objectContaining({
       providerId: "codex",
@@ -174,28 +177,24 @@ describe("SessionSupervisor analytics tracking", () => {
     }));
   });
 
-  it("emits terminal analytics during replay when the terminal turn has not been tracked yet", () => {
-    const { supervisor, entry, turnId } = setupEntry();
-    const finishEvent: SessionEvent = {
-      seq: 2,
-      id: "ev-2",
-      session_id: "session-1",
-      turn_id: turnId,
-      event_type: "turn_finished",
-      payload_json: {
-        context_window: {
+  it("emits terminal analytics for a live stream_delta completed turn", () => {
+    const { supervisor } = setupSupervisorWithSession();
+    applyStreamDeltaPatch(supervisor, {
+      turns: [{
+        ...buildCompletedTurn("turn-1"),
+        metrics_json: {
           context_tokens_estimate: 120,
           total_input_tokens: 80,
           total_output_tokens: 40,
         },
-      },
-      created_at: baseIso,
-    };
-
-    const changed = asSupervisorInternals(supervisor).applyEventToTurns(entry, finishEvent, {
-      notify: false,
+      }],
+      events: [],
+      messages: [],
+      turnsRev: 1,
+      eventsRev: 1,
+      messagesRev: 1,
     });
-    expect(changed).toBe(true);
+
     expect(trackProviderRunCompleted).toHaveBeenCalledTimes(1);
     expect(trackFirstTurnCompleted).toHaveBeenCalledTimes(1);
     expect(trackTurnCompleted).toHaveBeenCalledTimes(1);
@@ -214,47 +213,61 @@ describe("SessionSupervisor analytics tracking", () => {
     }));
   });
 
-  it("emits terminal analytics for live transitions (notify=true)", () => {
-    const { supervisor, entry, turnId } = setupEntry();
-    const finishEvent: SessionEvent = {
-      seq: 2,
-      id: "ev-2",
-      session_id: "session-1",
-      turn_id: turnId,
-      event_type: "turn_finished",
-      payload_json: {},
-      created_at: baseIso,
-    };
+  it("does not emit analytics for metadata-only append patches", () => {
+    const { supervisor } = setupSupervisorWithSession();
+    applyReplicaPatches(asReplicaPatchHost(supervisor), [{
+      op: "append",
+      sessionId: "session-1",
+      data: {
+        appendMode: "metadata_update",
+        loading: true,
+      },
+    }]);
 
-    const changed = asSupervisorInternals(supervisor).applyEventToTurns(entry, finishEvent, {
-      notify: true,
-    });
-    expect(changed).toBe(true);
-    expect(trackTurnCompleted).toHaveBeenCalledTimes(1);
-    expect(trackProviderRunCompleted).toHaveBeenCalledTimes(1);
-    expect(trackFirstTurnCompleted).toHaveBeenCalledTimes(1);
+    expect(trackTurnStarted).not.toHaveBeenCalled();
+    expect(trackTurnCompleted).not.toHaveBeenCalled();
+    expect(trackProviderRunCompleted).not.toHaveBeenCalled();
+    expect(trackFirstTurnCompleted).not.toHaveBeenCalled();
+  });
+
+  it("does not emit analytics for head_refresh append patches", () => {
+    const { supervisor } = setupSupervisorWithSession();
+    applyReplicaPatches(asReplicaPatchHost(supervisor), [{
+      op: "append",
+      sessionId: "session-1",
+      data: {
+        appendMode: "head_refresh",
+        turns: [buildCompletedTurn("turn-1")],
+        events: [],
+        messages: [],
+        turnsRev: 1,
+        eventsRev: 1,
+        messagesRev: 1,
+      },
+    }]);
+
+    expect(trackTurnStarted).not.toHaveBeenCalled();
+    expect(trackTurnCompleted).not.toHaveBeenCalled();
+    expect(trackProviderRunCompleted).not.toHaveBeenCalled();
+    expect(trackFirstTurnCompleted).not.toHaveBeenCalled();
   });
 
   it("marks nested sessions as subagent runs in analytics", () => {
-    const { supervisor, entry, turnId } = setupEntry();
+    const { supervisor, entry } = setupSupervisorWithSession();
     entry.session = {
       ...(entry.session as Session),
       parent_session_id: "session-root",
       relationship: "sub_agent",
     };
-    const finishEvent: SessionEvent = {
-      seq: 2,
-      id: "ev-2",
-      session_id: "session-1",
-      turn_id: turnId,
-      event_type: "turn_finished",
-      payload_json: {},
-      created_at: baseIso,
-    };
+    applyStreamDeltaPatch(supervisor, {
+      turns: [buildCompletedTurn("turn-1")],
+      events: [],
+      messages: [],
+      turnsRev: 1,
+      eventsRev: 1,
+      messagesRev: 1,
+    });
 
-    expect(asSupervisorInternals(supervisor).applyEventToTurns(entry, finishEvent, {
-      notify: false,
-    })).toBe(true);
     expect(trackTurnCompleted).toHaveBeenCalledWith(expect.objectContaining({
       sessionKind: "subagent",
     }));
@@ -266,21 +279,20 @@ describe("SessionSupervisor analytics tracking", () => {
     }));
   });
 
-  it("does not double count the same terminal turn after replay has already tracked it", () => {
-    const { supervisor, entry, turnId } = setupEntry();
-    const finishEvent: SessionEvent = {
-      seq: 2,
-      id: "ev-2",
-      session_id: "session-1",
-      turn_id: turnId,
-      event_type: "turn_finished",
-      payload_json: {},
-      created_at: baseIso,
+  it("does not double count the same terminal turn across repeated stream_delta patches", () => {
+    const { supervisor } = setupSupervisorWithSession();
+    const patch: SessionReplicaPatch["data"] = {
+      turns: [buildCompletedTurn("turn-1")],
+      events: [],
+      messages: [],
+      turnsRev: 1,
+      eventsRev: 1,
+      messagesRev: 1,
     };
 
-    const internals = asSupervisorInternals(supervisor);
-    expect(internals.applyEventToTurns(entry, finishEvent, { notify: false })).toBe(true);
-    expect(internals.applyEventToTurns(entry, finishEvent, { notify: true })).toBe(true);
+    applyStreamDeltaPatch(supervisor, patch);
+    applyStreamDeltaPatch(supervisor, patch);
+
     expect(trackTurnCompleted).toHaveBeenCalledTimes(1);
     expect(trackProviderRunCompleted).toHaveBeenCalledTimes(1);
     expect(trackFirstTurnCompleted).toHaveBeenCalledTimes(1);
@@ -354,6 +366,7 @@ describe("SessionSupervisor analytics tracking", () => {
       op: "append",
       sessionId: "session-1",
       data: {
+        appendMode: "stream_delta",
         turns: [buildCompletedTurn("turn-1")],
         events: [],
         messages: [],

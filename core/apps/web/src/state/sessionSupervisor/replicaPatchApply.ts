@@ -29,8 +29,10 @@ import type { InternalEntry } from "./entryState";
 import type { SessionReplicaPatch } from "../sessionReplicaProtocol";
 import { shouldPreserveExistingTranscriptWindow } from "../sessionHeadRepair";
 import { adoptLoadedStateRevision } from "./supportLoads";
+import type { SessionSupervisorWorkspaceSnapshotState } from "./workspaceInputs";
 
 export type SessionSupervisorReplicaPatchHost = {
+  workspaceSnapshotState: SessionSupervisorWorkspaceSnapshotState;
   ensureEntry(sessionId: string): InternalEntry;
   resolveSessionMode(
     sessionId: string,
@@ -548,19 +550,28 @@ const applyCanonicalTranscriptPatch = (
       changed = true;
     }
   }
-  // Only emit analytics for live incoming deltas (append). Historical replaces
-  // are for hydration/backfill and must not count toward current-day analytics.
-  if (nextTurnsForAnalytics && patch.op === "append") {
+  const liveTurnsForSideEffects =
+    patch.op === "append" && patch.data.appendMode === "stream_delta"
+      ? nextTurnsForAnalytics
+      : null;
+  // Only emit analytics/notifications for live incoming stream deltas.
+  // Hydration/backfill/refresh paths must stay silent.
+  if (liveTurnsForSideEffects) {
     const analytics = resolveTurnAnalyticsMetadata(entry.session, entry.sessionId);
     replayTurnStartEffectsFromTurns({
       ...analytics,
       previousTurns,
-      nextTurns: nextTurnsForAnalytics,
+      nextTurns: liveTurnsForSideEffects,
     });
     replayTurnOutcomeEffectsFromTurns({
       ...analytics,
+      notify: true,
+      session: entry.session,
+      workspaceSnapshotState: host.workspaceSnapshotState,
+      events: entry.events,
+      messages: entry.messages,
       previousTurns,
-      nextTurns: nextTurnsForAnalytics,
+      nextTurns: liveTurnsForSideEffects,
     });
   }
   return changed;

@@ -20,9 +20,6 @@ import {
   stripTurnPartials,
 } from "./cachePolicy";
 import { asRecord, hasModelList } from "./eventHydration";
-import { resolveTurnAnalyticsMetadata } from "./turnAnalyticsMetadata";
-import { replayTurnStartEffectsFromTurns } from "./turnStartEffects";
-import { replayTurnOutcomeEffectsFromTurns } from "./turnOutcomeEffects";
 import {
   type InternalEntry,
   type SessionLoadState,
@@ -46,7 +43,7 @@ export type SessionSupervisorHeadProjectionHost = {
   stateCacheBySessionId: Map<string, { state: SessionState; stateRev?: number }>;
   publish(): void;
   mergeTurns(entry: InternalEntry, turns: SessionTurn[]): void;
-  mergeEvents(entry: InternalEntry, events: SessionEvent[], opts?: { notify?: boolean }): void;
+  mergeEvents(entry: InternalEntry, events: SessionEvent[]): void;
   mergeMessages(entry: InternalEntry, messages: Message[]): void;
   applyAcpMeta(
     entry: InternalEntry,
@@ -216,7 +213,7 @@ export function applyHead(
   if (isBoundedSessionHead(head)) {
     pruneOmittedNonTerminalTurns.call(this, entry, head.turns ?? []);
   }
-  this.mergeEvents(entry, head.events ?? [], { notify: false });
+  this.mergeEvents(entry, head.events ?? []);
   this.mergeMessages(entry, head.messages ?? []);
   this.applyAcpMetaFromEvents(entry, head.events ?? []);
   this.applyGitStatusSnapshotFromEvents(entry, head.events ?? []);

@@ -18,12 +18,12 @@ import { compareSessionTurnOrder, mergeSessionMessages } from "./sessionHeadStat
 import { asRecord, messageFromEvent, readPayloadObject } from "./sessionSupervisor/eventHydration";
 import { appendFragment, mergeTurn } from "./sessionSupervisor/cachePolicy";
 import { readPayloadString } from "./sessionSupervisor/eventNormalization";
+import { resolveTurnStatusFromLifecycleEvent } from "./sessionSupervisor/turnLifecycleProjection";
 import {
   applyToolBucketDelta,
   deriveTurnStatusFromEvent,
   extractToolCallId,
   extractToolStatus,
-  readTurnStatusFromPayload,
   shouldRenderAssistantChunk,
   shouldRenderThoughtChunk,
   toolStatusBucket,
@@ -46,25 +46,6 @@ export type SessionReplicaTranscriptEntry = {
   startedTurnIds: Set<string>;
   toolStatusByKey: Map<string, string>;
   toolIdsByTurn: Map<string, Set<string>>;
-};
-
-const isTerminalTurnStatus = (
-  status: SessionTurn["status"] | null | undefined,
-): status is Extract<SessionTurn["status"], "completed" | "failed" | "interrupted"> =>
-  status === "completed" || status === "failed" || status === "interrupted";
-
-const mergeOrderedTurnStatus = (
-  previous: SessionTurn["status"] | null | undefined,
-  next: SessionTurn["status"] | null | undefined,
-): SessionTurn["status"] => {
-  if (previous === "failed" && next === "interrupted") {
-    return "interrupted";
-  }
-  if (isTerminalTurnStatus(previous)) {
-    return previous;
-  }
-  if (!previous) return next ?? "queued";
-  return next ?? previous;
 };
 
 const mergeTurns = (base: SessionTurn[], incoming: SessionTurn[]): SessionTurn[] => {
@@ -266,33 +247,15 @@ const applyEventToTurns = (
       break;
     }
     case "turn_queued":
-      turn.status = mergeOrderedTurnStatus(turn.status, "queued");
-      changed = true;
-      break;
     case "turn_started":
-      turn.status = mergeOrderedTurnStatus(turn.status, "running");
-      changed = true;
-      break;
-    case "turn_finished": {
-      const payloadStatus = readTurnStatusFromPayload(event);
-      if (payloadStatus) {
-        turn.status = mergeOrderedTurnStatus(turn.status, payloadStatus);
-      } else if (turn.status !== "interrupted" && turn.status !== "failed") {
-        turn.status = mergeOrderedTurnStatus(turn.status, "completed");
-      }
-      changed = true;
-      break;
-    }
+    case "turn_finished":
     case "turn_interrupted":
-      turn.status = mergeOrderedTurnStatus(turn.status, "interrupted");
-      changed = true;
-      break;
     case "error":
-      turn.status = mergeOrderedTurnStatus(turn.status, "failed");
-      changed = true;
-      break;
     case "done": {
-      turn.status = mergeOrderedTurnStatus(turn.status, "completed");
+      const nextStatus = resolveTurnStatusFromLifecycleEvent(turn.status, event);
+      if (nextStatus) {
+        turn.status = nextStatus;
+      }
       const contextWindow = readPayloadObject(event.payload_json, "context_window");
       if (contextWindow) {
         turn.metrics_json = contextWindow;

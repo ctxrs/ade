@@ -48,6 +48,7 @@ import {
   noteProjectionOrSeqRegression,
 } from "./foregroundFreshnessTelemetry";
 import type {
+  SessionReplicaAppendMode,
   SessionReplicaCommand,
   SessionReplicaConfig,
   SessionReplicaData,
@@ -96,62 +97,38 @@ type SessionReplicaEntry = {
   toolIdsByTurn: Map<string, Set<string>>;
 };
 
-const normalizeId = (value: unknown): string => {
-  if (typeof value === "string") return value.trim();
-  return "";
-};
+const normalizeId = (value: unknown): string => (typeof value === "string" ? value.trim() : "");
 
 const SHOULD_EMIT_DEV_DIAGNOSTICS = import.meta.env.DEV && import.meta.env.MODE !== "test";
 
 const isFinalThoughtEvent = (event: SessionEvent | null | undefined): boolean => {
-  if (!event) return false;
-  if (String(event.event_type ?? "") !== "thought_chunk") return false;
+  if (!event || String(event.event_type ?? "") !== "thought_chunk") return false;
   const payload = event.payload_json ?? {};
-  return (
-    payload?.is_final === true ||
-    payload?.isFinal === true ||
-    typeof payload?.full_content === "string" ||
-    typeof payload?.fullContent === "string"
-  );
+  return payload?.is_final === true
+    || payload?.isFinal === true
+    || typeof payload?.full_content === "string"
+    || typeof payload?.fullContent === "string";
 };
 
-const PARTIAL_EVENT_TYPES = new Set<string>([
-  "assistant_chunk",
-  "assistant_complete",
-  "context_window_update",
-]);
-
-const FINAL_DELTA_EVENT_TYPES = new Set<string>(["assistant_complete", "assistant_message_inserted"]);
+const PARTIAL_EVENT_TYPES = new Set(["assistant_chunk", "assistant_complete", "context_window_update"]);
+const FINAL_DELTA_EVENT_TYPES = new Set(["assistant_complete", "assistant_message_inserted"]);
 
 const isPartialEvent = (event: SessionEvent | null | undefined): boolean => {
   if (!event) return false;
   const type = String(event.event_type ?? "");
-  if (PARTIAL_EVENT_TYPES.has(type)) return true;
-  if (type === "thought_chunk") return !isFinalThoughtEvent(event);
-  return false;
+  return PARTIAL_EVENT_TYPES.has(type) || (type === "thought_chunk" && !isFinalThoughtEvent(event));
 };
 
 const resolveFinalDeltaTurnId = (delta: SessionHeadDelta): string => {
   const messageTurnId =
     delta.message?.role === "assistant" ? normalizeId(delta.message.turn_id ?? "") : "";
   const eventType = String(delta.event?.event_type ?? "");
-  if (FINAL_DELTA_EVENT_TYPES.has(eventType)) {
-    return normalizeId(delta.event?.turn_id ?? messageTurnId);
-  }
-  if (messageTurnId) {
-    return messageTurnId;
-  }
-  return "";
+  if (FINAL_DELTA_EVENT_TYPES.has(eventType)) return normalizeId(delta.event?.turn_id ?? messageTurnId);
+  return messageTurnId;
 };
 
 const stripTurnPartials = (turns: SessionTurn[]): SessionTurn[] =>
-  turns.map((turn) => {
-    return {
-      ...turn,
-      assistant_partial: null,
-      thought_partial: null,
-    };
-  });
+  turns.map((turn) => ({ ...turn, assistant_partial: null, thought_partial: null }));
 
 const stripPartialEvents = (events: SessionEvent[]): SessionEvent[] =>
   events.filter((event) => !isPartialEvent(event));
@@ -163,16 +140,12 @@ const sanitizeHeadForCache = (head: SessionHead): SessionHead => ({
 });
 
 const mergeToolSummaries = (
-  prev: SessionTurnToolSummary[],
+  previous: SessionTurnToolSummary[],
   next: SessionTurnToolSummary[],
 ): SessionTurnToolSummary[] => {
   const byId = new Map<string, SessionTurnToolSummary>();
-  for (const summary of prev) {
-    byId.set(String(summary.tool_call_id), summary);
-  }
-  for (const summary of next) {
-    byId.set(String(summary.tool_call_id), summary);
-  }
+  for (const summary of previous) byId.set(String(summary.tool_call_id), summary);
+  for (const summary of next) byId.set(String(summary.tool_call_id), summary);
   return Array.from(byId.values());
 };
 
@@ -182,76 +155,59 @@ const isOlderVersion = (
   existingLastEventSeq: number | null,
   existingProjectionRev: number | null,
 ): boolean => {
-  if (incomingLastEventSeq !== null && existingLastEventSeq !== null) {
-    return incomingLastEventSeq < existingLastEventSeq;
-  }
-  if (existingLastEventSeq !== null && incomingLastEventSeq === null) {
-    return true;
-  }
-  if (incomingLastEventSeq !== null && existingLastEventSeq === null) {
-    return false;
-  }
-  if (
-    incomingProjectionRev !== null &&
-    existingProjectionRev !== null &&
-    incomingProjectionRev < existingProjectionRev
-  ) {
-    return true;
-  }
-  return false;
+  if (incomingLastEventSeq !== null && existingLastEventSeq !== null) return incomingLastEventSeq < existingLastEventSeq;
+  if (existingLastEventSeq !== null && incomingLastEventSeq === null) return true;
+  if (incomingLastEventSeq !== null && existingLastEventSeq === null) return false;
+  return incomingProjectionRev !== null
+    && existingProjectionRev !== null
+    && incomingProjectionRev < existingProjectionRev;
 };
 
-const mergePartial = (p: string, n: string): string => {
-  if (!p) return n;
-  if (!n) return p;
-  if (n.startsWith(p)) return n;
-  if (p.startsWith(n)) return p;
-  return n.length >= p.length ? n : p;
+const mergePartial = (previous: string, next: string): string => {
+  if (!previous) return next;
+  if (!next) return previous;
+  if (next.startsWith(previous)) return next;
+  if (previous.startsWith(next)) return previous;
+  return next.length >= previous.length ? next : previous;
 };
 
-const mergeTurn = (prev: SessionTurn, next: SessionTurn): SessionTurn => {
-  const thought_partial = mergePartial(prev.thought_partial ?? "", next.thought_partial ?? "");
-  return {
-    ...prev,
-    ...next,
-    status: mergeTurnStatus(prev.status, next.status),
-    assistant_partial: null,
-    thought_partial,
-    end_seq: next.end_seq ?? prev.end_seq,
-    updated_at:
-      String(next.updated_at ?? "").localeCompare(String(prev.updated_at ?? "")) >= 0
-        ? next.updated_at
-        : prev.updated_at,
-    tool_total: Math.max(prev.tool_total ?? 0, next.tool_total ?? 0),
-    tool_pending: Math.max(prev.tool_pending ?? 0, next.tool_pending ?? 0),
-    tool_running: Math.max(prev.tool_running ?? 0, next.tool_running ?? 0),
-    tool_completed: Math.max(prev.tool_completed ?? 0, next.tool_completed ?? 0),
-    tool_failed: Math.max(prev.tool_failed ?? 0, next.tool_failed ?? 0),
-    metrics_json: next.metrics_json ?? prev.metrics_json,
-  };
-};
+const mergeTurn = (previous: SessionTurn, next: SessionTurn): SessionTurn => ({
+  ...previous,
+  ...next,
+  status: mergeTurnStatus(previous.status, next.status),
+  assistant_partial: null,
+  thought_partial: mergePartial(previous.thought_partial ?? "", next.thought_partial ?? ""),
+  end_seq: next.end_seq ?? previous.end_seq,
+  updated_at:
+    String(next.updated_at ?? "").localeCompare(String(previous.updated_at ?? "")) >= 0
+      ? next.updated_at
+      : previous.updated_at,
+  tool_total: Math.max(previous.tool_total ?? 0, next.tool_total ?? 0),
+  tool_pending: Math.max(previous.tool_pending ?? 0, next.tool_pending ?? 0),
+  tool_running: Math.max(previous.tool_running ?? 0, next.tool_running ?? 0),
+  tool_completed: Math.max(previous.tool_completed ?? 0, next.tool_completed ?? 0),
+  tool_failed: Math.max(previous.tool_failed ?? 0, next.tool_failed ?? 0),
+  metrics_json: next.metrics_json ?? previous.metrics_json,
+});
 
-const compareTurnOrder = (a: SessionTurn, b: SessionTurn): number => {
-  const sa = Number(a.start_seq ?? Number.NaN);
-  const sb = Number(b.start_seq ?? Number.NaN);
-  if (Number.isFinite(sa) && Number.isFinite(sb) && sa !== sb) {
-    return sa - sb;
-  }
-  return String(a.started_at).localeCompare(String(b.started_at));
+const compareTurnOrder = (left: SessionTurn, right: SessionTurn): number => {
+  const leftSeq = Number(left.start_seq ?? Number.NaN);
+  const rightSeq = Number(right.start_seq ?? Number.NaN);
+  if (Number.isFinite(leftSeq) && Number.isFinite(rightSeq) && leftSeq !== rightSeq) return leftSeq - rightSeq;
+  return String(left.started_at).localeCompare(String(right.started_at));
 };
 
 const mergeTurns = (base: SessionTurn[], incoming: SessionTurn[]): SessionTurn[] => {
   if (incoming.length === 0) return base;
   const byId = new Map<string, SessionTurn>();
-  for (const t of base) {
-    const id = normalizeId(t.turn_id);
-    if (id) byId.set(id, t);
+  for (const turn of base) {
+    const id = normalizeId(turn.turn_id);
+    if (id) byId.set(id, turn);
   }
-  for (const t of incoming) {
-    const id = normalizeId(t.turn_id);
+  for (const turn of incoming) {
+    const id = normalizeId(turn.turn_id);
     if (!id) continue;
-    const prev = byId.get(id);
-    byId.set(id, prev ? mergeTurn(prev, t) : t);
+    byId.set(id, byId.has(id) ? mergeTurn(byId.get(id)!, turn) : turn);
   }
   return Array.from(byId.values()).sort(compareTurnOrder);
 };
@@ -259,41 +215,38 @@ const mergeTurns = (base: SessionTurn[], incoming: SessionTurn[]): SessionTurn[]
 const mergeMessages = (base: Message[], incoming: Message[]): Message[] => {
   if (incoming.length === 0) return base;
   const byId = new Map<string, Message>();
-  for (const m of base) {
-    const id = normalizeId(m.id);
-    if (id) byId.set(id, m);
+  for (const message of base) {
+    const id = normalizeId(message.id);
+    if (id) byId.set(id, message);
   }
-  for (const m of incoming) {
-    const id = normalizeId(m.id);
-    if (!id) continue;
-    byId.set(id, m);
+  for (const message of incoming) {
+    const id = normalizeId(message.id);
+    if (id) byId.set(id, message);
   }
-  return Array.from(byId.values()).sort((a, b) => {
-    const c = String(a.created_at).localeCompare(String(b.created_at));
-    if (c !== 0) return c;
-    const sa = Number(a.turn_sequence ?? Number.NaN);
-    const sb = Number(b.turn_sequence ?? Number.NaN);
-    if (Number.isFinite(sa) && Number.isFinite(sb) && sa !== sb) return sa - sb;
-    if (Number.isFinite(sa) && !Number.isFinite(sb)) return -1;
-    if (!Number.isFinite(sa) && Number.isFinite(sb)) return 1;
-    return String(normalizeId(a.id)).localeCompare(String(normalizeId(b.id)));
+  return Array.from(byId.values()).sort((left, right) => {
+    const createdAt = String(left.created_at).localeCompare(String(right.created_at));
+    if (createdAt !== 0) return createdAt;
+    const leftSeq = Number(left.turn_sequence ?? Number.NaN);
+    const rightSeq = Number(right.turn_sequence ?? Number.NaN);
+    if (Number.isFinite(leftSeq) && Number.isFinite(rightSeq) && leftSeq !== rightSeq) return leftSeq - rightSeq;
+    if (Number.isFinite(leftSeq) && !Number.isFinite(rightSeq)) return -1;
+    if (!Number.isFinite(leftSeq) && Number.isFinite(rightSeq)) return 1;
+    return String(normalizeId(left.id)).localeCompare(String(normalizeId(right.id)));
   });
 };
 
 const mergeEvents = (base: SessionEvent[], incoming: SessionEvent[]): SessionEvent[] => {
   if (incoming.length === 0) return base;
   const bySeq = new Map<number, SessionEvent>();
-  for (const ev of base) {
-    if (typeof ev.seq === "number") bySeq.set(ev.seq, ev);
+  for (const event of base) {
+    if (typeof event.seq === "number") bySeq.set(event.seq, event);
   }
-  for (const ev of incoming) {
-    if (typeof ev.seq === "number") bySeq.set(ev.seq, ev);
+  for (const event of incoming) {
+    if (typeof event.seq === "number") bySeq.set(event.seq, event);
   }
-  return Array.from(bySeq.values()).sort((a, b) => Number(a.seq ?? 0) - Number(b.seq ?? 0));
+  return Array.from(bySeq.values()).sort((left, right) => Number(left.seq ?? 0) - Number(right.seq ?? 0));
 };
 
-// The daemon serializes transient events with `seq: null`; keep them in a JS-safe negative range
-// so sorting never scrambles streaming partials and they never look durable (seq >= 0).
 const TRANSIENT_SEQ_START = -4503599627370496; // -(2 ** 52)
 
 const headToData = (head: SessionHead | SessionHeadSnapshot): SessionReplicaData => {
@@ -309,9 +262,7 @@ const headToData = (head: SessionHead | SessionHeadSnapshot): SessionReplicaData
   if ("activity" in head) data.activity = head.activity ?? null;
   if ("summary_checkpoint" in head) data.summaryCheckpoint = head.summary_checkpoint ?? null;
   if ("head_window" in head) data.headWindow = head.head_window ?? null;
-  if ("projection_rev" in head && typeof head.projection_rev === "number") {
-    data.projectionRev = head.projection_rev;
-  }
+  if ("projection_rev" in head && typeof head.projection_rev === "number") data.projectionRev = head.projection_rev;
   if ("state_rev" in head && typeof head.state_rev === "number") data.stateRev = head.state_rev;
   return data;
 };
@@ -390,7 +341,12 @@ export class SessionReplicaCore {
   };
 
   private emitPatches(patches: SessionReplicaPatch[]) { if (patches.length) this.deps.emit(patches); }
-  private emitPatch(op: "append" | "replace", sessionId: string, data: SessionReplicaData): void;
+  private emitPatch(
+    op: "append",
+    sessionId: string,
+    data: SessionReplicaData & { appendMode: SessionReplicaAppendMode },
+  ): void;
+  private emitPatch(op: "replace", sessionId: string, data: SessionReplicaData): void;
   private emitPatch(op: "evict", sessionId: string, data: { eventsBeforeSeq?: number }): void;
   private emitPatch(
     op: SessionReplicaPatch["op"],
@@ -454,14 +410,31 @@ export class SessionReplicaCore {
     if (!sessionId) return;
     const entry = this.ensureEntry(sessionId);
     entry.session = session;
-    this.emitPatch("append", sessionId, { session });
+    this.emitPatch("append", sessionId, { session, appendMode: "metadata_update" });
   }
 
   private buildCanonicalPatch(
     entry: SessionReplicaEntry,
-    opts?: { replaceMode?: SessionReplicaReplaceMode },
+    opts: {
+      appendMode: SessionReplicaAppendMode;
+      replaceMode?: SessionReplicaReplaceMode;
+    },
+  ): SessionReplicaData & { appendMode: SessionReplicaAppendMode };
+  private buildCanonicalPatch(
+    entry: SessionReplicaEntry,
+    opts?: {
+      replaceMode?: SessionReplicaReplaceMode;
+      appendMode?: undefined;
+    },
+  ): SessionReplicaData;
+  private buildCanonicalPatch(
+    entry: SessionReplicaEntry,
+    opts?: {
+      replaceMode?: SessionReplicaReplaceMode;
+      appendMode?: SessionReplicaAppendMode;
+    },
   ): SessionReplicaData {
-    const patch: SessionReplicaData = {
+    const patch: SessionReplicaData & { appendMode?: SessionReplicaAppendMode } = {
       session: entry.session,
       activity: entry.activity ?? null,
       freshness: entry.freshness,
@@ -487,6 +460,9 @@ export class SessionReplicaCore {
     if (opts?.replaceMode) {
       patch.replaceMode = opts.replaceMode;
     }
+    if (opts?.appendMode) {
+      patch.appendMode = opts.appendMode;
+    }
     return patch;
   }
 
@@ -510,6 +486,7 @@ export class SessionReplicaCore {
     head: SessionHead | SessionHeadSnapshot,
     emitOp: "append" | "replace" = "replace",
     opts?: {
+      appendMode?: SessionReplicaAppendMode;
       replaceMode?: SessionReplicaReplaceMode;
       freshness?: SessionReplicaFreshnessState;
     },
@@ -622,7 +599,16 @@ export class SessionReplicaCore {
     entry.hasMoreTurns = data.hasMoreTurns ?? entry.hasMoreTurns;
     entry.hydrated = true;
     rebuildReplicaTranscriptAuxState(entry);
-    this.emitPatch(emitOp, entry.sessionId, this.buildCanonicalPatch(entry, opts));
+    if (emitOp === "append") {
+      this.emitPatch("append", entry.sessionId, this.buildCanonicalPatch(entry, {
+        ...opts,
+        appendMode: opts?.appendMode ?? "head_refresh",
+      }));
+      return;
+    }
+    this.emitPatch("replace", entry.sessionId, this.buildCanonicalPatch(entry, {
+      replaceMode: opts?.replaceMode,
+    }));
   }
 
   private async openSession(
@@ -649,7 +635,11 @@ export class SessionReplicaCore {
     if (!opts?.force && entry.hydrated) {
       const entrySeq = typeof entry.lastEventSeq === "number" ? entry.lastEventSeq : -1;
       if ((minSeq === undefined || entrySeq >= minSeq) && !shouldHydrate) {
-        if (!opts?.silent) this.emitPatch("append", id, { loading: false, error: null });
+        if (!opts?.silent) this.emitPatch("append", id, {
+          loading: false,
+          error: null,
+          appendMode: "metadata_update",
+        });
         return;
       }
     }
@@ -662,6 +652,7 @@ export class SessionReplicaCore {
           opts?.skipBoundedBootstrapCache && isBoundedSessionHead(cached.head);
         if (!shouldSkipBoundedBootstrapCache) {
           this.applyHead(entry, cached.head, opts?.emitOp, {
+            appendMode: opts?.emitOp === "append" ? "head_refresh" : undefined,
             replaceMode: opts?.emitOp === "append" ? undefined : "bootstrap_seed",
             freshness: "bootstrap",
           });
@@ -671,16 +662,28 @@ export class SessionReplicaCore {
     if (!opts?.force && entry.hydrated) {
       const entrySeq = typeof entry.lastEventSeq === "number" ? entry.lastEventSeq : -1;
       if ((minSeq === undefined || entrySeq >= minSeq) && !shouldHydrate) {
-        if (!opts?.silent) this.emitPatch("append", id, { loading: false, error: null });
+        if (!opts?.silent) this.emitPatch("append", id, {
+          loading: false,
+          error: null,
+          appendMode: "metadata_update",
+        });
         return;
       }
     }
 
     entry.loading = true;
-    if (!opts?.silent) this.emitPatch("append", id, { loading: true, error: null });
+    if (!opts?.silent) this.emitPatch("append", id, {
+      loading: true,
+      error: null,
+      appendMode: "metadata_update",
+    });
     if (!shouldHydrate) {
       entry.loading = false;
-      if (!opts?.silent) this.emitPatch("append", id, { loading: false, error: null });
+      if (!opts?.silent) this.emitPatch("append", id, {
+        loading: false,
+        error: null,
+        appendMode: "metadata_update",
+      });
       return;
     }
     try {
@@ -689,17 +692,26 @@ export class SessionReplicaCore {
       if (head) {
         const persisted = snapshotToHead(head);
         this.applyHead(entry, persisted, opts?.emitOp, {
+          appendMode: opts?.emitOp === "append" ? "head_refresh" : undefined,
           replaceMode: opts?.emitOp === "replace" ? "authoritative_replace" : undefined,
           freshness: "authoritative",
         });
         await this.persistHead(entry);
       }
       entry.loading = false;
-      if (!opts?.silent) this.emitPatch("append", id, { loading: false, error: null });
+      if (!opts?.silent) this.emitPatch("append", id, {
+        loading: false,
+        error: null,
+        appendMode: "metadata_update",
+      });
     } catch (err) {
       entry.loading = false;
       const message = err instanceof Error && err.message ? err.message : typeof err === "string" ? err : "request failed";
-      if (!opts?.silent) this.emitPatch("append", id, { loading: false, error: message });
+      if (!opts?.silent) this.emitPatch("append", id, {
+        loading: false,
+        error: message,
+        appendMode: "metadata_update",
+      });
     }
   }
 
@@ -718,7 +730,11 @@ export class SessionReplicaCore {
     if (!opts?.force && entry.hydrated) return;
     const token = ++entry.requestToken;
     entry.loading = true;
-    if (!opts?.silent) this.emitPatch("append", id, { loading: true, error: null });
+    if (!opts?.silent) this.emitPatch("append", id, {
+      loading: true,
+      error: null,
+      appendMode: "metadata_update",
+    });
 
     try {
       const head = await this.deps.api.getSessionHead(id, this.config.headLimit, true);
@@ -726,17 +742,25 @@ export class SessionReplicaCore {
       if (head) {
         const persisted = snapshotToHead(head);
         this.applyHead(entry, persisted, opts?.emitOp, {
+          appendMode: opts?.emitOp === "append" ? "head_refresh" : undefined,
           replaceMode: opts?.emitOp === "replace" ? "authoritative_replace" : undefined,
           freshness: "authoritative",
         });
         await this.persistHead(entry);
       }
       entry.loading = false;
-      if (!opts?.silent) this.emitPatch("append", id, { loading: false });
+      if (!opts?.silent) this.emitPatch("append", id, {
+        loading: false,
+        appendMode: "metadata_update",
+      });
     } catch (err) {
       entry.loading = false;
       const message = err instanceof Error && err.message ? err.message : typeof err === "string" ? err : "request failed";
-      if (!opts?.silent) this.emitPatch("append", id, { loading: false, error: message });
+      if (!opts?.silent) this.emitPatch("append", id, {
+        loading: false,
+        error: message,
+        appendMode: "metadata_update",
+      });
     }
   }
 
@@ -827,7 +851,11 @@ export class SessionReplicaCore {
       if (!entry) return;
       entry.hydrated = false;
       entry.freshness = "recovering";
-      this.emitPatch("append", sessionId, { freshness: "recovering", error: null });
+      this.emitPatch("append", sessionId, {
+        freshness: "recovering",
+        error: null,
+        appendMode: "metadata_update",
+      });
       this.hydrateSessionHead(sessionId, {
         force: true,
         emitOp: "replace",
@@ -922,7 +950,9 @@ export class SessionReplicaCore {
     }
     entry.activity = reconcileActivityInterruptedFromTurns(entry.activity, entry.turns);
     entry.hydrated = true;
-    this.emitPatch("append", sessionId, this.buildCanonicalPatch(entry));
+    this.emitPatch("append", sessionId, this.buildCanonicalPatch(entry, {
+      appendMode: "stream_delta",
+    }));
     void this.persistHead(entry);
   }
 

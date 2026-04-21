@@ -1,4 +1,4 @@
-import { idToString, type SessionTurn } from "../../api/client";
+import { idToString, type Message, type Session, type SessionEvent, type SessionTurn } from "../../api/client";
 import { sendDesktopNotification } from "../../utils/desktopNotifications";
 import { isAppInForeground } from "../../utils/windowFocus";
 import {
@@ -10,12 +10,12 @@ import { markTurnOutcomeTracked } from "../../utils/analytics/turnOutcomeDedup";
 import type { AnalyticsSessionKind } from "../../utils/analytics/types";
 import { getClientSettingsState } from "../clientSettings";
 import type { ExecutionEnvironment } from "@ctx/types";
+import { resolveTurnOutcomeNotificationBody, resolveTurnOutcomeNotificationTitle } from "./turnOutcomeNotificationContent";
+import type { SessionSupervisorWorkspaceSnapshotState } from "./workspaceInputs";
+import { isTerminalTurnStatus } from "./turnLifecycleProjection";
 
 type TerminalTurnStatus = Extract<SessionTurn["status"], "completed" | "failed" | "interrupted">;
 type NotifiableTurnStatus = Extract<SessionTurn["status"], "completed" | "failed">;
-
-const isTerminalTurnStatus = (status: SessionTurn["status"] | undefined): status is TerminalTurnStatus =>
-  status === "completed" || status === "failed" || status === "interrupted";
 
 const isNotifiableTurnStatus = (status: SessionTurn["status"] | undefined): status is NotifiableTurnStatus =>
   status === "completed" || status === "failed";
@@ -50,6 +50,11 @@ type ReplayTurnOutcomeEffectsInput = {
   reasoningEffort?: string;
   executionEnvironment?: ExecutionEnvironment;
   sessionKind?: AnalyticsSessionKind;
+  notify: boolean;
+  session?: Session | null;
+  workspaceSnapshotState: SessionSupervisorWorkspaceSnapshotState;
+  events: readonly SessionEvent[];
+  messages: readonly Message[];
   previousTurns: SessionTurn[];
   nextTurns: SessionTurn[];
 };
@@ -170,6 +175,11 @@ export const replayTurnOutcomeEffectsFromTurns = ({
   reasoningEffort,
   executionEnvironment,
   sessionKind,
+  notify,
+  session,
+  workspaceSnapshotState,
+  events,
+  messages,
   previousTurns,
   nextTurns,
 }: ReplayTurnOutcomeEffectsInput): void => {
@@ -186,8 +196,18 @@ export const replayTurnOutcomeEffectsFromTurns = ({
   for (const turn of nextTurns) {
     const turnId = idToString(turn.turn_id);
     if (!turnId) continue;
+    const notificationTitle = resolveTurnOutcomeNotificationTitle({
+      session,
+      workspaceSnapshotState,
+    });
+    const notificationBody = resolveTurnOutcomeNotificationBody({
+      events,
+      messages,
+      status: turn.status,
+      turnId,
+    });
     applyTurnOutcomeEffects({
-      notify: false,
+      notify,
       sessionId: normalizedSessionId,
       taskId,
       workspaceId,
@@ -200,6 +220,8 @@ export const replayTurnOutcomeEffectsFromTurns = ({
       startedAt: turn.started_at,
       completedAt: turn.updated_at,
       metrics: turn.metrics_json,
+      notificationBody,
+      notificationTitle,
       previousStatus: previousStatusesByTurnId.get(turnId),
       nextStatus: turn.status,
     });

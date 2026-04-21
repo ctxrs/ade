@@ -26,23 +26,16 @@ import {
   normalizeFinalThoughtPayload,
   readThoughtFullContent,
 } from "./thoughtProjection";
+import { resolveTurnStatusFromLifecycleEvent } from "./turnLifecycleProjection";
 import {
   applyToolBucketDelta,
   deriveTurnStatusFromEvent,
   extractToolCallId,
   extractToolStatus,
-  readTurnStatusFromPayload,
   shouldRenderAssistantChunk,
   shouldRenderThoughtChunk,
   toolStatusBucket,
 } from "./toolStateProjection";
-import { resolveTurnAnalyticsMetadata } from "./turnAnalyticsMetadata";
-import {
-  resolveTurnOutcomeNotificationBody,
-  resolveTurnOutcomeNotificationTitle,
-} from "./turnOutcomeNotificationContent";
-import { applyTurnStartEffects } from "./turnStartEffects";
-import { applyTurnOutcomeEffects } from "./turnOutcomeEffects";
 import type { SessionSupervisorWorkspaceSnapshotState } from "./workspaceInputs";
 
 type SessionSupportLoadErrorKey = "state" | "subagentInvocations";
@@ -88,25 +81,6 @@ export type SessionSupervisorEventProjectionHost = {
 type TurnProjectionState = SessionTurn & {
   thought_partial_provider_item_id?: string | null;
 };
-
-function isTerminalTurnStatus(
-  status: SessionTurn["status"] | null | undefined,
-): status is Extract<SessionTurn["status"], "completed" | "failed" | "interrupted"> {
-  return status === "completed" || status === "failed" || status === "interrupted";
-}
-
-function mergeOrderedTurnStatus(
-  previous: SessionTurn["status"] | null | undefined,
-  next: SessionTurn["status"] | null | undefined,
-): SessionTurn["status"] {
-  if (previous === "failed" && next === "interrupted") {
-    return "interrupted";
-  }
-  if (isTerminalTurnStatus(previous)) {
-    return previous;
-  }
-  return mergeTurnStatus(previous, next);
-}
 
 export function mergeTurns(
   this: SessionSupervisorEventProjectionHost,
@@ -167,10 +141,8 @@ export function mergeEvents(
   this: SessionSupervisorEventProjectionHost,
   entry: SessionSupervisorEventProjectionEntry,
   incoming: SessionEvent[],
-  opts?: { notify?: boolean },
 ) {
   if (incoming.length === 0) return;
-  const shouldNotify = opts?.notify ?? true;
   const existingSeqs = entry.seqSet;
   const normalizedExisting = entry.events.map((event) => ensureEventSeq.call(this, entry, event));
   const normalizedIncoming = incoming.map((event) => ensureEventSeq.call(this, entry, event));
@@ -230,14 +202,8 @@ export function mergeEvents(
       mergeMessages.call(this, entry, [message]);
       changed = true;
     }
-    const previousTurnStatus = turnId
-      ? entry.turns.find((turn) => idToString(turn.turn_id) === turnId)?.status
-      : undefined;
     ensureTurnFromEvent.call(this, entry, event);
-    if (applyEventToTurns.call(this, entry, event, {
-      notify: shouldNotify,
-      previousStatusOverride: previousTurnStatus,
-    })) {
+    if (applyEventToTurns.call(this, entry, event)) {
       changed = true;
     }
     if (applyQueueEvent.call(this, entry, event)) {
@@ -327,7 +293,6 @@ export function applyEventToTurns(
   this: SessionSupervisorEventProjectionHost,
   entry: SessionSupervisorEventProjectionEntry,
   event: SessionEvent,
-  opts?: { notify?: boolean; previousStatusOverride?: SessionTurn["status"] },
 ): boolean {
   const turnId = idToString(event.turn_id);
   if (!turnId) return false;
@@ -335,7 +300,6 @@ export function applyEventToTurns(
   if (turnIndex < 0) return false;
 
   const turn = entry.turns[turnIndex] as TurnProjectionState;
-  const previousStatus = opts?.previousStatusOverride ?? turn.status;
   let changed = false;
   switch (String(event.event_type)) {
     case "assistant_chunk": {
@@ -377,38 +341,16 @@ export function applyEventToTurns(
         ) || changed;
       break;
     }
-    case "turn_queued": {
-      turn.status = mergeOrderedTurnStatus(turn.status, "queued");
-      changed = true;
-      break;
-    }
-    case "turn_started": {
-      turn.status = mergeOrderedTurnStatus(turn.status, "running");
-      changed = true;
-      break;
-    }
-    case "turn_finished": {
-      const payloadStatus = readTurnStatusFromPayload(event);
-      if (payloadStatus) {
-        turn.status = mergeOrderedTurnStatus(turn.status, payloadStatus);
-      } else if (turn.status !== "interrupted" && turn.status !== "failed") {
-        turn.status = mergeOrderedTurnStatus(turn.status, "completed");
-      }
-      changed = true;
-      break;
-    }
-    case "turn_interrupted": {
-      turn.status = mergeOrderedTurnStatus(turn.status, "interrupted");
-      changed = true;
-      break;
-    }
-    case "error": {
-      turn.status = mergeOrderedTurnStatus(turn.status, "failed");
-      changed = true;
-      break;
-    }
+    case "turn_queued":
+    case "turn_started":
+    case "turn_finished":
+    case "turn_interrupted":
+    case "error":
     case "done": {
-      turn.status = mergeOrderedTurnStatus(turn.status, "completed");
+      const nextStatus = resolveTurnStatusFromLifecycleEvent(turn.status, event);
+      if (nextStatus) {
+        turn.status = nextStatus;
+      }
       const contextWindow = readPayloadObject(event.payload_json, "context_window");
       if (contextWindow) {
         turn.metrics_json = contextWindow;
@@ -438,35 +380,6 @@ export function applyEventToTurns(
   turn.updated_at = event.created_at ?? turn.updated_at;
   entry.turns[turnIndex] = { ...turn };
   this.bumpTurnsRev(entry);
-  const analytics = resolveTurnAnalyticsMetadata(entry.session, turn.session_id ?? entry.sessionId);
-  const notificationTitle = resolveTurnOutcomeNotificationTitle({
-    session: entry.session,
-    workspaceSnapshotState: this.workspaceSnapshotState,
-  });
-  const notificationBody = resolveTurnOutcomeNotificationBody({
-    events: entry.events,
-    turnId,
-    messages: entry.messages,
-    status: turn.status,
-  });
-  applyTurnStartEffects({
-    ...analytics,
-    turnId,
-    previousStatus,
-    nextStatus: turn.status,
-  });
-  applyTurnOutcomeEffects({
-    notify: opts?.notify ?? true,
-    ...analytics,
-    turnId,
-    startedAt: turn.started_at,
-    completedAt: turn.updated_at,
-    metrics: turn.metrics_json,
-    notificationBody,
-    notificationTitle,
-    previousStatus,
-    nextStatus: turn.status,
-  });
   return true;
 }
 

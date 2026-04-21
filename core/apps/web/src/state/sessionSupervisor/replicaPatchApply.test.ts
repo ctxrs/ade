@@ -7,6 +7,7 @@ import type { SessionSupervisorHeadProjectionHost } from "./headProjection";
 
 function createReplicaHost(entry: ReturnType<typeof createInternalEntry>): SessionSupervisorReplicaPatchHost {
   return {
+    workspaceSnapshotState: null,
     ensureEntry: () => entry,
     resolveSessionMode: () => entry.mode ?? null,
     resetEntryProjectionForReplace: () => undefined,
@@ -67,6 +68,7 @@ describe("replicaPatchApply", () => {
       sessionId: "session-1",
       op: "append",
       data: {
+        appendMode: "metadata_update",
         turns: entry.turns,
         messages: entry.messages,
         events: entry.events,

@@ -26,6 +26,11 @@ export type SessionReplicaReplaceMode =
   | SessionReplicaHeadSeedMode
   | "authoritative_replace";
 
+export type SessionReplicaAppendMode =
+  | "stream_delta"
+  | "head_refresh"
+  | "metadata_update";
+
 export const isAuthoritativeSessionReplicaReplace = (
   mode: SessionReplicaReplaceMode | null | undefined,
 ): boolean => mode === "authoritative_replace" || mode === "repair_replace";
@@ -96,10 +101,11 @@ export type SessionReplicaData = {
   stateLoading?: boolean;
   subagentNotice?: boolean;
   replaceMode?: SessionReplicaReplaceMode;
+  appendMode?: SessionReplicaAppendMode;
 };
 
 export type SessionReplicaPatch =
-  | { op: "append"; sessionId: string; data: SessionReplicaData }
+  | { op: "append"; sessionId: string; data: SessionReplicaData & { appendMode: SessionReplicaAppendMode } }
   | { op: "replace"; sessionId: string; data: SessionReplicaData }
   | { op: "evict"; sessionId: string; data: { eventsBeforeSeq?: number } };
 

@@ -378,6 +378,7 @@ describe("SessionSupervisor", () => {
         op: "append",
         sessionId,
         data: {
+          appendMode: "metadata_update",
           messages: [
             {
               ...entry.messages[0],
@@ -444,6 +445,7 @@ describe("SessionSupervisor", () => {
         op: "append",
         sessionId,
         data: {
+          appendMode: "metadata_update",
           turns: [
             {
               ...entry.turns[0],
@@ -3865,6 +3867,7 @@ describe("SessionSupervisor", () => {
         op: "append",
         sessionId,
         data: {
+          appendMode: "metadata_update",
           freshness: "authoritative",
           stateRev: 5,
         },
@@ -4054,6 +4057,7 @@ describe("SessionSupervisor", () => {
           op: "append",
           sessionId,
           data: {
+            appendMode: "metadata_update",
             lastEventSeq: 9,
             stateRev: 9,
           },
@@ -4137,6 +4141,7 @@ describe("SessionSupervisor", () => {
         op: "append",
         sessionId,
         data: {
+          appendMode: "metadata_update",
           lastEventSeq: 9,
           stateRev: 9,
         },
@@ -4734,6 +4739,7 @@ describe("SessionSupervisor", () => {
         op: "append",
         sessionId,
         data: {
+          appendMode: "metadata_update",
           turns: [mkTurn({ sessionId, turnId: "turn-1", status: "interrupted", startSeq: 1 })],
           turnsRev: 2,
           events: [
@@ -4807,6 +4813,7 @@ describe("SessionSupervisor", () => {
         op: "append",
         sessionId,
         data: {
+          appendMode: "metadata_update",
           turns: [mkTurn({ sessionId, turnId: "turn-1", status: "interrupted", startSeq: 1 })],
           turnsRev: 2,
           events: [
@@ -4858,6 +4865,7 @@ describe("SessionSupervisor", () => {
         op: "append",
         sessionId,
         data: {
+          appendMode: "metadata_update",
           turns: [mkTurn({ sessionId, turnId: "turn-1", status: "interrupted", startSeq: 1 })],
           turnsRev: 2,
         },
@@ -4886,6 +4894,7 @@ describe("SessionSupervisor", () => {
         op: "append",
         sessionId,
         data: {
+          appendMode: "metadata_update",
           activity: { is_working: false, last_turn_status: "interrupted" },
           lastEventSeq: 2,
           projectionRev: 2,
@@ -4916,6 +4925,7 @@ describe("SessionSupervisor", () => {
         op: "append",
         sessionId,
         data: {
+          appendMode: "metadata_update",
           activity: { is_working: false, last_turn_status: "failed" },
           lastEventSeq: 3,
           projectionRev: 3,
@@ -4997,6 +5007,7 @@ describe("SessionSupervisor", () => {
         op: "append",
         sessionId,
         data: {
+          appendMode: "metadata_update",
           lastEventSeq: 7,
           stateRev: 7,
         },
@@ -5013,6 +5024,7 @@ describe("SessionSupervisor", () => {
         op: "append",
         sessionId,
         data: {
+          appendMode: "metadata_update",
           lastEventSeq: 9,
           stateRev: 9,
         },
@@ -5079,6 +5091,7 @@ describe("SessionSupervisor", () => {
           op: "append",
           sessionId,
           data: {
+            appendMode: "metadata_update",
             lastEventSeq: 9,
             stateRev: 9,
           },
@@ -5205,6 +5218,7 @@ describe("SessionSupervisor", () => {
           op: "append",
           sessionId,
           data: {
+            appendMode: "metadata_update",
             lastEventSeq: 7,
             stateRev: 7,
           },
@@ -5285,6 +5299,7 @@ describe("SessionSupervisor", () => {
         op: "append",
         sessionId,
         data: {
+          appendMode: "metadata_update",
           lastEventSeq: 9,
           stateRev: 9,
         },
@@ -5337,6 +5352,7 @@ describe("SessionSupervisor", () => {
         op: "append",
         sessionId,
         data: {
+          appendMode: "metadata_update",
           lastEventSeq: 9,
           stateRev: 9,
         },
@@ -5444,6 +5460,7 @@ describe("SessionSupervisor", () => {
         op: "append",
         sessionId,
         data: {
+          appendMode: "metadata_update",
           lastEventSeq: 9,
           stateRev: 9,
         },
@@ -5522,6 +5539,7 @@ describe("SessionSupervisor", () => {
         op: "append",
         sessionId,
         data: {
+          appendMode: "metadata_update",
           eventsRev: 1,
           lastEventSeq: 1,
           stateRev: 1,
@@ -5907,6 +5925,7 @@ describe("SessionSupervisor", () => {
         op: "append",
         sessionId,
         data: {
+          appendMode: "metadata_update",
           session: mkSession(sessionId),
           events: [
             {
