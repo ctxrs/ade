@@ -7,6 +7,7 @@ import {
   normalizeHeight,
   pruneCache,
   segmentGraphemes,
+  segmentWords,
 } from "./sessionTextMeasurement";
 
 type SessionPlainTextDebugWindow = Window & {
@@ -16,15 +17,29 @@ type SessionPlainTextDebugWindow = Window & {
   __ctxPlainTextDebug?: {
     lineCount: number;
     lines: string[];
+    lineWidths: number[];
     text: string;
     width: number;
   };
 };
 
 const plainTextBlockHeightCache = new Map<string, number>();
+const SOFT_HYPHEN = "\u00ad";
+const VISIBLE_HYPHEN = "-";
+const SOFT_HYPHEN_CURRENT_LINE_FIT_GUARD_PX = 1;
+const ZERO_WIDTH_SPACE = "\u200b";
+const IMPLICIT_WORD_BREAK_SCRIPT_PATTERN = /[\p{Script=Thai}\p{Script=Lao}\p{Script=Khmer}\p{Script=Myanmar}]/u;
 
 function normalizeCollapsedPlainTextLineText(text: string): string {
   return text.replace(/\u00a0/g, " ").replace(/\r\n?/g, "\n").replace(/\n/g, " ");
+}
+
+function stripSoftHyphens(text: string): string {
+  return text.replaceAll(SOFT_HYPHEN, "");
+}
+
+function stripDiscretionaryBreakMarkers(text: string): string {
+  return stripSoftHyphens(text).replaceAll(ZERO_WIDTH_SPACE, "");
 }
 
 function measureSingleLineTextWidth(params: {
@@ -80,6 +95,128 @@ function findLargestCollapsedPlainTextPrefixThatFits(params: {
     prefixWidth: bestWidth,
     remainder: graphemes.slice(bestCount).join(""),
   };
+}
+
+function measureExplicitBreakFit(params: {
+  cacheKeyPrefix: string;
+  text: string;
+  marker: string;
+  visibleSuffix: string;
+  font: string;
+  width: number;
+}): {
+  consumedText: string;
+  consumedWidth: number;
+  remainder: string;
+} | null {
+  const fragments = params.text.split(params.marker);
+  if (fragments.length <= 1) {
+    return null;
+  }
+
+  let bestFit: {
+    consumedText: string;
+    consumedWidth: number;
+    remainder: string;
+  } | null = null;
+
+  for (let breakIndex = 1; breakIndex < fragments.length; breakIndex += 1) {
+    const consumedText = `${fragments.slice(0, breakIndex).join("")}${params.visibleSuffix}`;
+    const consumedWidth = measureSingleLineTextWidth({
+      cacheKey: buildPreparedContentKey(`${params.cacheKeyPrefix}:explicit-break:${breakIndex}`, consumedText),
+      text: consumedText,
+      font: params.font,
+    });
+    if (consumedWidth > params.width + 0.01) {
+      break;
+    }
+    bestFit = {
+      consumedText,
+      consumedWidth,
+      remainder: fragments.slice(breakIndex).join(params.marker),
+    };
+  }
+
+  return bestFit;
+}
+
+function measureSoftHyphenBreakFit(params: {
+  cacheKeyPrefix: string;
+  text: string;
+  font: string;
+  width: number;
+}) {
+  return measureExplicitBreakFit({
+    ...params,
+    marker: SOFT_HYPHEN,
+    visibleSuffix: VISIBLE_HYPHEN,
+  });
+}
+
+function measureZeroWidthSpaceBreakFit(params: {
+  cacheKeyPrefix: string;
+  text: string;
+  font: string;
+  width: number;
+}) {
+  return measureExplicitBreakFit({
+    ...params,
+    marker: ZERO_WIDTH_SPACE,
+    visibleSuffix: "",
+  });
+}
+
+function segmentImplicitWordBreaks(text: string): string[] {
+  if (!IMPLICIT_WORD_BREAK_SCRIPT_PATTERN.test(text)) {
+    return [text];
+  }
+
+  const segments = segmentWords(text).filter((segment) => segment.length > 0);
+  if (segments.length <= 1 || segments.join("") !== text) {
+    return [text];
+  }
+
+  return segments;
+}
+
+function measureImplicitWordBreakFit(params: {
+  cacheKeyPrefix: string;
+  segments: readonly string[];
+  font: string;
+  width: number;
+}): {
+  consumedText: string;
+  consumedWidth: number;
+  remainder: string;
+} | null {
+  if (params.segments.length <= 1) {
+    return null;
+  }
+
+  let bestFit: {
+    consumedText: string;
+    consumedWidth: number;
+    remainder: string;
+  } | null = null;
+
+  for (let breakIndex = 1; breakIndex < params.segments.length; breakIndex += 1) {
+    const consumedText = params.segments.slice(0, breakIndex).join("");
+    const consumedWidth = measureSingleLineTextWidth({
+      cacheKey: buildPreparedContentKey(`${params.cacheKeyPrefix}:implicit-break:${breakIndex}`, consumedText),
+      text: consumedText,
+      font: params.font,
+    });
+    if (consumedWidth > params.width + 0.01) {
+      break;
+    }
+    bestFit = {
+      consumedText,
+      consumedWidth,
+      remainder: params.segments.slice(breakIndex).join(""),
+    };
+  }
+
+  return bestFit;
 }
 
 function isPlainTextDelimitedWrapCandidate(text: string): boolean {
@@ -314,6 +451,7 @@ function measureCollapsedPlainTextLineHeight(params: {
     (plainTextDebugWindow?.__ctxPlainTextDebugWidth == null ||
       plainTextDebugWindow.__ctxPlainTextDebugWidth === params.width);
   const debugLines: string[] = [];
+  const debugLineWidths: number[] = [];
   let currentLineText = "";
   const appendLineText = (text: string, prefixSpace: boolean) => {
     if (prefixSpace && currentLineText.length > 0) {
@@ -324,6 +462,13 @@ function measureCollapsedPlainTextLineHeight(params: {
   const flushLine = () => {
     if (debugPlainText && currentLineText.length > 0) {
       debugLines.push(currentLineText);
+      debugLineWidths.push(
+        measureSingleLineTextWidth({
+          cacheKey: buildPreparedContentKey(`${params.cacheKey}:debug-line:${debugLines.length}`, currentLineText),
+          text: currentLineText,
+          font: params.font,
+        }),
+      );
     }
     currentLineText = "";
   };
@@ -339,18 +484,26 @@ function measureCollapsedPlainTextLineHeight(params: {
 
   while (wordIndex < words.length || remainder != null) {
     const word: string = remainder ?? words[wordIndex]!;
+    const displayWord = stripDiscretionaryBreakMarkers(word);
+    const wordContainsSoftHyphen = word.includes(SOFT_HYPHEN);
+    const wordContainsZeroWidthBreak = word.includes(ZERO_WIDTH_SPACE);
     const wordFragments = remainderFragments ?? splitPlainTextWrapFragments(word);
     const usesDelimitedWrapping = wordFragments.length > 1;
+    const implicitWordBreakSegments =
+      !usesDelimitedWrapping && !wordContainsSoftHyphen && !wordContainsZeroWidthBreak
+        ? segmentImplicitWordBreaks(displayWord)
+        : [displayWord];
+    const usesImplicitWordBreaking = implicitWordBreakSegments.length > 1;
     const wordWidth = measureSingleLineTextWidth({
-      cacheKey: buildPreparedContentKey(`${params.cacheKey}:word:${wordIndex}`, word),
-      text: word,
+      cacheKey: buildPreparedContentKey(`${params.cacheKey}:word:${wordIndex}`, displayWord),
+      text: displayWord,
       font: params.font,
     });
     const reservedWidth = lineHasContent ? collapsedSpaceWidth : 0;
 
     if (lineHasContent && reservedWidth + wordWidth <= remainingWidth + 0.01) {
       remainingWidth = Math.max(0, remainingWidth - reservedWidth - wordWidth);
-      appendLineText(word, true);
+      appendLineText(displayWord, true);
       remainder = null;
       remainderFragments = null;
       wordIndex += 1;
@@ -427,21 +580,23 @@ function measureCollapsedPlainTextLineHeight(params: {
       }
       if (
         !usesDelimitedWrapping &&
-        !wordFitsFreshLine &&
         wordWidth > availableWidth + 0.01 &&
         availableWidth > 0.01
       ) {
-        const fittingPrefix = findLargestCollapsedPlainTextPrefixThatFits({
-          cacheKeyPrefix: `${params.cacheKey}:word:${wordIndex}:continued`,
-          text: word,
-          font: params.font,
-          width: availableWidth,
-        });
-        if (fittingPrefix.prefixWidth > 0) {
-          remainingWidth = Math.max(0, availableWidth - fittingPrefix.prefixWidth);
+        const softHyphenFit =
+          wordContainsSoftHyphen
+            ? measureSoftHyphenBreakFit({
+                cacheKeyPrefix: `${params.cacheKey}:word:${wordIndex}:continued`,
+                text: word,
+                font: params.font,
+                width: Math.max(1, availableWidth - SOFT_HYPHEN_CURRENT_LINE_FIT_GUARD_PX),
+              })
+            : null;
+        if (softHyphenFit != null) {
+          remainingWidth = Math.max(0, availableWidth - softHyphenFit.consumedWidth);
           lineHasContent = true;
-          appendLineText(word.slice(0, word.length - fittingPrefix.remainder.length), true);
-          remainder = fittingPrefix.remainder.length > 0 ? fittingPrefix.remainder : null;
+          appendLineText(softHyphenFit.consumedText, true);
+          remainder = softHyphenFit.remainder.length > 0 ? softHyphenFit.remainder : null;
           remainderFragments = null;
           if (remainder == null) {
             wordIndex += 1;
@@ -453,6 +608,86 @@ function measureCollapsedPlainTextLineHeight(params: {
             remainingWidth = maxWidth;
           }
           continue;
+        }
+        const zeroWidthBreakFit =
+          wordContainsZeroWidthBreak
+            ? measureZeroWidthSpaceBreakFit({
+                cacheKeyPrefix: `${params.cacheKey}:word:${wordIndex}:continued`,
+                text: word,
+                font: params.font,
+                width: availableWidth,
+              })
+            : null;
+        if (zeroWidthBreakFit != null) {
+          remainingWidth = Math.max(0, availableWidth - zeroWidthBreakFit.consumedWidth);
+          lineHasContent = true;
+          appendLineText(zeroWidthBreakFit.consumedText, true);
+          remainder = zeroWidthBreakFit.remainder.length > 0 ? zeroWidthBreakFit.remainder : null;
+          remainderFragments = null;
+          if (remainder == null) {
+            wordIndex += 1;
+          }
+          if (wordIndex < words.length || remainder != null) {
+            flushLine();
+            lineCount += 1;
+            lineHasContent = false;
+            remainingWidth = maxWidth;
+          }
+          continue;
+        }
+        if (!wordFitsFreshLine) {
+          const implicitWordBreakFit =
+            usesImplicitWordBreaking
+              ? measureImplicitWordBreakFit({
+                  cacheKeyPrefix: `${params.cacheKey}:word:${wordIndex}:continued`,
+                  segments: implicitWordBreakSegments,
+                  font: params.font,
+                  width: availableWidth,
+                })
+              : null;
+          if (implicitWordBreakFit != null) {
+            remainingWidth = Math.max(0, availableWidth - implicitWordBreakFit.consumedWidth);
+            lineHasContent = true;
+            appendLineText(implicitWordBreakFit.consumedText, true);
+            remainder = implicitWordBreakFit.remainder.length > 0 ? implicitWordBreakFit.remainder : null;
+            remainderFragments = null;
+            if (remainder == null) {
+              wordIndex += 1;
+            }
+            if (wordIndex < words.length || remainder != null) {
+              flushLine();
+              lineCount += 1;
+              lineHasContent = false;
+              remainingWidth = maxWidth;
+            }
+            continue;
+          }
+          const fittingPrefix = findLargestCollapsedPlainTextPrefixThatFits({
+            cacheKeyPrefix: `${params.cacheKey}:word:${wordIndex}:continued`,
+            text: displayWord,
+            font: params.font,
+            width: availableWidth,
+          });
+          if (fittingPrefix.prefixWidth > 0) {
+            remainingWidth = Math.max(0, availableWidth - fittingPrefix.prefixWidth);
+            lineHasContent = true;
+            appendLineText(
+              displayWord.slice(0, displayWord.length - fittingPrefix.remainder.length),
+              true,
+            );
+            remainder = fittingPrefix.remainder.length > 0 ? fittingPrefix.remainder : null;
+            remainderFragments = null;
+            if (remainder == null) {
+              wordIndex += 1;
+            }
+            if (wordIndex < words.length || remainder != null) {
+              flushLine();
+              lineCount += 1;
+              lineHasContent = false;
+              remainingWidth = maxWidth;
+            }
+            continue;
+          }
         }
       }
       flushLine();
@@ -502,23 +737,108 @@ function measureCollapsedPlainTextLineHeight(params: {
     if (wordWidth <= remainingWidth + 0.01) {
       remainingWidth = Math.max(0, remainingWidth - wordWidth);
       lineHasContent = true;
-      appendLineText(word, false);
+      appendLineText(displayWord, false);
       remainder = null;
       remainderFragments = null;
       wordIndex += 1;
       continue;
     }
 
+    const softHyphenFreshFit =
+      wordContainsSoftHyphen
+        ? measureSoftHyphenBreakFit({
+            cacheKeyPrefix: `${params.cacheKey}:word:${wordIndex}:fresh`,
+            text: word,
+            font: params.font,
+            width: remainingWidth,
+          })
+        : null;
+    if (softHyphenFreshFit != null) {
+      remainingWidth = Math.max(0, remainingWidth - softHyphenFreshFit.consumedWidth);
+      lineHasContent = true;
+      appendLineText(softHyphenFreshFit.consumedText, false);
+      remainder = softHyphenFreshFit.remainder.length > 0 ? softHyphenFreshFit.remainder : null;
+      remainderFragments = null;
+      if (remainder == null) {
+        wordIndex += 1;
+      }
+
+      if (wordIndex < words.length || remainder != null) {
+        flushLine();
+        lineCount += 1;
+        lineHasContent = false;
+        remainingWidth = maxWidth;
+      }
+      continue;
+    }
+    const zeroWidthFreshFit =
+      wordContainsZeroWidthBreak
+        ? measureZeroWidthSpaceBreakFit({
+            cacheKeyPrefix: `${params.cacheKey}:word:${wordIndex}:fresh`,
+            text: word,
+            font: params.font,
+            width: remainingWidth,
+          })
+        : null;
+    if (zeroWidthFreshFit != null) {
+      remainingWidth = Math.max(0, remainingWidth - zeroWidthFreshFit.consumedWidth);
+      lineHasContent = true;
+      appendLineText(zeroWidthFreshFit.consumedText, false);
+      remainder = zeroWidthFreshFit.remainder.length > 0 ? zeroWidthFreshFit.remainder : null;
+      remainderFragments = null;
+      if (remainder == null) {
+        wordIndex += 1;
+      }
+
+      if (wordIndex < words.length || remainder != null) {
+        flushLine();
+        lineCount += 1;
+        lineHasContent = false;
+        remainingWidth = maxWidth;
+      }
+      continue;
+    }
+    const implicitWordFreshFit =
+      usesImplicitWordBreaking
+        ? measureImplicitWordBreakFit({
+            cacheKeyPrefix: `${params.cacheKey}:word:${wordIndex}:fresh`,
+            segments: implicitWordBreakSegments,
+            font: params.font,
+            width: remainingWidth,
+          })
+        : null;
+    if (implicitWordFreshFit != null) {
+      remainingWidth = Math.max(0, remainingWidth - implicitWordFreshFit.consumedWidth);
+      lineHasContent = true;
+      appendLineText(implicitWordFreshFit.consumedText, false);
+      remainder = implicitWordFreshFit.remainder.length > 0 ? implicitWordFreshFit.remainder : null;
+      remainderFragments = null;
+      if (remainder == null) {
+        wordIndex += 1;
+      }
+
+      if (wordIndex < words.length || remainder != null) {
+        flushLine();
+        lineCount += 1;
+        lineHasContent = false;
+        remainingWidth = maxWidth;
+      }
+      continue;
+    }
+
     const fittingPrefix = findLargestCollapsedPlainTextPrefixThatFits({
       cacheKeyPrefix: `${params.cacheKey}:word:${wordIndex}`,
-      text: word,
+      text: displayWord,
       font: params.font,
       width: remainingWidth,
     });
 
     remainingWidth = Math.max(0, remainingWidth - fittingPrefix.prefixWidth);
     lineHasContent = true;
-    appendLineText(word.slice(0, word.length - fittingPrefix.remainder.length), false);
+    appendLineText(
+      displayWord.slice(0, displayWord.length - fittingPrefix.remainder.length),
+      false,
+    );
     remainder = fittingPrefix.remainder.length > 0 ? fittingPrefix.remainder : null;
     remainderFragments = null;
     if (remainder == null) {
@@ -538,6 +858,7 @@ function measureCollapsedPlainTextLineHeight(params: {
     plainTextDebugWindow.__ctxPlainTextDebug = {
       lineCount,
       lines: debugLines,
+      lineWidths: debugLineWidths,
       text: normalizedText,
       width: maxWidth,
     };

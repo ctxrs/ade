@@ -757,6 +757,18 @@ describe("getPretextVirtualizerRowLayout", () => {
     expect(height).toBe(SESSION_THREAD_MARKDOWN_BODY_LINE_HEIGHT_PX * 2);
   });
 
+  it("prefers implicit Thai word breaks over grapheme slicing for no-space scripts", () => {
+    const height = measureSessionPlainTextBlockHeight({
+      cacheKey: "turn-header-thai-implicit-word-breaks",
+      text: "กรุงเทพคือสวยงามและต้อง",
+      font: `${SESSION_THREAD_MARKDOWN_BODY_FONT_SIZE_PX}px ${SESSION_THREAD_MARKDOWN_BODY_FONT_FAMILY}`,
+      width: 48,
+      lineHeight: SESSION_THREAD_MARKDOWN_BODY_LINE_HEIGHT_PX,
+    });
+
+    expect(height).toBe(SESSION_THREAD_MARKDOWN_BODY_LINE_HEIGHT_PX * 4);
+  });
+
   it("continues delimited turn-header path tokens on the current line when break-word is required", () => {
     const height = measureSessionPlainTextBlockHeight({
       cacheKey: "turn-header-delimited-break-word-continuation",
@@ -837,6 +849,7 @@ describe("getPretextVirtualizerRowLayout", () => {
 
     expect(height).toBe(SESSION_THREAD_MARKDOWN_BODY_LINE_HEIGHT_PX * 2);
   });
+
 
   it("includes fenced code block border chrome in deterministic markdown height", () => {
     const markdown = "```ts\nconst value = 1;\n```";

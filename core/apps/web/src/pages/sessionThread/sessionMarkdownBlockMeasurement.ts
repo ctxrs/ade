@@ -53,24 +53,13 @@ function measureTextBlock(params: {
       lineHeight: params.typography.lineHeight,
     });
   if (params.text.hasHardBreak && !params.text.hasInlineCode && !params.text.hasStyledText) {
-    return normalizeHeight(
-      params.text.plainText
-        .split("\n")
-        .reduce(
-          (sum, line) =>
-            sum +
-            (line.length === 0
-              ? params.typography.lineHeight
-              : measureTextHeight({
-                  cacheKey: `${params.cacheKeyPrefix}:line:${line}`,
-                  text: line,
-                  font: params.typography.body,
-                  width: params.width,
-                  lineHeight: params.typography.lineHeight,
-                })),
-          0,
-        ),
-    );
+    return measureSessionPlainTextBlockHeight({
+      cacheKey: `${params.cacheKeyPrefix}:plain-hardbreak`,
+      text: params.text.plainText,
+      font: params.typography.body,
+      width: params.width,
+      lineHeight: params.typography.lineHeight,
+    });
   }
   if (!params.text.hasInlineCode && !params.text.hasHardBreak && !params.text.hasStyledText) {
     return plainTextHeight();

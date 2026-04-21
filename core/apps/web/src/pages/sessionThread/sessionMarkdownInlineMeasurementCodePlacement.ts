@@ -230,7 +230,8 @@ export function placeInlineCodeSegment(params: {
     state.lineHasContent &&
     state.lineCurrentCodeGroupLimitToFirstFragment &&
     state.lastAcceptedCodeGroupId === codeGroupId &&
-    state.lineLastCodeFragmentEndedWithPathDelimiter
+    state.lineCurrentCodeGroupStartFragmentText != null &&
+    state.lineCurrentCodeGroupStartFragmentText === state.lineLastCodeFragmentText
   ) {
     state.cursor = null;
     return {

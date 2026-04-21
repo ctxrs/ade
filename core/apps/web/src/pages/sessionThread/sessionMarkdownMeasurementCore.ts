@@ -51,6 +51,7 @@ export type SessionMarkdownDebugWindow = SessionMarkdownInlineCodeDebugWindow & 
   __ctxPlainTextDebug?: {
     lineCount: number;
     lines: string[];
+    lineWidths: number[];
     text: string;
     width: number;
   };

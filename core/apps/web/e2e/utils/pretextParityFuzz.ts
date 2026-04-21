@@ -80,6 +80,24 @@ const SLASH_PROSE_TOKENS = [
 ] as const;
 const EMOJI = ["🙂", "⚙️", "🧪", "📏"] as const;
 const CJK = ["你好 世界", "測試 佈局", "段落 換行"] as const;
+const CJK_NO_SPACE = ["無空格中文測試", "狹窄寬度換行", "日本語行分割"] as const;
+const RTL = ["בדיקת עיטוף", "טקסט עברי", "هذا اختبار", "للالتفاف"] as const;
+const IMPLICIT_WORD_BREAK_SCRIPTS = [
+  "กรุงเทพคือสวยงาม",
+  "ทดสอบการตัดคำ",
+  "ភាសាខ្មែរគ្មានដកឃ្លា",
+  "ພາສາລາວບໍ່ມີຊ່ອງວ່າງ",
+] as const;
+const NO_BREAK_GLUE = ["A\u00a0B", "prix\u202f:", "C\u2060D"] as const;
+const SOFT_HYPHEN_WORDS = [
+  "Deoxy\u00adribo\u00adnucleic",
+  "micro\u00adarchitecture",
+  "co\u00adauthoring",
+] as const;
+const ZERO_WIDTH_SPACE_WORDS = [
+  "alpha\u200bbeta\u200bgamma",
+  "delta\u200bepsilon\u200bzeta",
+] as const;
 const SHORT_CODE_TOKENS = [
   "7",
   "main",
@@ -246,7 +264,7 @@ function generateLink(rng: SeededRandom): string {
 }
 
 function generateInlineFragment(rng: SeededRandom): string {
-  switch (rng.int(0, 8)) {
+  switch (rng.int(0, 13)) {
     case 0:
       return generateWords(rng, 2, 5);
     case 1:
@@ -263,6 +281,18 @@ function generateInlineFragment(rng: SeededRandom): string {
       return `${rng.pick(EMOJI)} ${rng.pick(CJK)}`;
     case 7:
       return generateSlashProseToken(rng);
+    case 8:
+      return `${rng.pick(RTL)} ${rng.pick(["around the width threshold", "near the seam", "with code pressure"] as const)}`;
+    case 9:
+      return `${generateWords(rng, 1, 2)} ${rng.pick(SOFT_HYPHEN_WORDS)} ${generateWords(rng, 1, 2)}`;
+    case 10:
+      return `${generateWords(rng, 1, 2)} ${rng.pick(NO_BREAK_GLUE)} ${generateWords(rng, 1, 2)}`;
+    case 11:
+      return `${rng.pick(CJK_NO_SPACE)} ${rng.pick(CJK)}`;
+    case 12:
+      return `${rng.pick(IMPLICIT_WORD_BREAK_SCRIPTS)} ${generateWords(rng, 1, 2)}`;
+    case 13:
+      return `${generateWords(rng, 1, 2)} ${rng.pick(ZERO_WIDTH_SPACE_WORDS)} ${generateWords(rng, 1, 2)}`;
     default:
       return generateWords(rng, 3, 6);
   }

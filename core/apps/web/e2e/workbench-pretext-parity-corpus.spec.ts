@@ -274,6 +274,38 @@ const SOFT_BREAK_MARKDOWN_REGRESSIONS: SoftBreakMarkdownSample[] = [
     ].join("\n"),
   },
   {
+    name: "unicode-soft-hyphen-pre-threshold",
+    width: 220,
+    markdown:
+      "Manual hyphenation sample: Deoxy\u00adribo\u00adnucleic acid remains readable near the wrap threshold when the soft hyphen becomes active.",
+  },
+  {
+    name: "unicode-soft-hyphen-threshold",
+    width: 222,
+    markdown:
+      "Manual hyphenation sample: Deoxy\u00adribo\u00adnucleic acid remains readable near the wrap threshold when the soft hyphen becomes active.",
+  },
+  {
+    name: "unicode-arabic-styled-seam",
+    width: 144,
+    markdown: "هذا **اختبار** للالتفاف around the width threshold",
+  },
+  {
+    name: "unicode-rtl-inline-code",
+    width: 258,
+    markdown: "RTL sample: בדיקת עיטוף `observer.disconnect()` ליד טקסט עברי בקצה הרוחב.",
+  },
+  {
+    name: "unicode-zero-width-space",
+    width: 180,
+    markdown: "ZWSP sample: alpha\u200bbeta\u200bgamma should break only at the discretionary boundaries.",
+  },
+  {
+    name: "unicode-thai-implicit-word-break",
+    width: 144,
+    markdown: "กรุงเทพคือสวยงามและต้องทดสอบการตัดคำในย่อหน้าที่ไม่มีเว้นวรรคมากนัก",
+  },
+  {
     name: "list-inline-code-prose-tail",
     width: 588,
     markdown:

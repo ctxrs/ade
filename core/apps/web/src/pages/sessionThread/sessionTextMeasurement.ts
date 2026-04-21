@@ -27,6 +27,10 @@ const graphemeSegmenter =
   typeof Intl !== "undefined" && typeof Intl.Segmenter === "function"
     ? new Intl.Segmenter(undefined, { granularity: "grapheme" })
     : null;
+const wordSegmenter =
+  typeof Intl !== "undefined" && typeof Intl.Segmenter === "function"
+    ? new Intl.Segmenter(undefined, { granularity: "word" })
+    : null;
 
 export function pruneCache<T>(cache: Map<string, T>, limit: number) {
   while (cache.size > limit) {
@@ -128,6 +132,12 @@ export function segmentGraphemes(text: string): string[] {
   if (!text) return [];
   if (!graphemeSegmenter) return Array.from(text);
   return Array.from(graphemeSegmenter.segment(text), (segment) => segment.segment);
+}
+
+export function segmentWords(text: string): string[] {
+  if (!text) return [];
+  if (!wordSegmenter) return [text];
+  return Array.from(wordSegmenter.segment(text), (segment) => segment.segment);
 }
 
 export function clearSessionTextMeasurementCaches(): void {
