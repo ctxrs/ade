@@ -19,13 +19,22 @@ const DEFAULT_PROVIDER_MATRIX_RELATIVE_PATH = path.join(
 const DEFAULT_PROVIDER_DEPS_PROVIDER_IDS = Object.freeze([
   "acp-crp-bridge",
   "amp",
+  "auggie",
+  "claude-cli",
   "claude-crp",
+  "cline",
+  "copilot",
   "codex",
+  "cursor",
   "droid",
+  "gemini",
   "goose",
+  "kimi",
+  "mistral",
   "opencode",
   "openhands",
   "pi",
+  "qwen",
 ]);
 const DEFAULT_CODEX_PROVIDER_IDS = Object.freeze(["codex"]);
 

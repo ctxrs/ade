@@ -85,7 +85,29 @@ async fn load_matrix_returns_cached_when_present() {
         .await
         .expect("save cached matrix");
 
+    let previous_bundle_dir = std::env::var("CTX_BUNDLE_DIR").ok();
+    let previous_bundle_matrix = std::env::var("CTX_BUNDLE_MATRIX_JSON").ok();
+    unsafe {
+        std::env::remove_var("CTX_BUNDLE_DIR");
+        std::env::remove_var("CTX_BUNDLE_MATRIX_JSON");
+    }
     let loaded = load_matrix(data_root).await;
+    match previous_bundle_dir {
+        Some(value) => unsafe {
+            std::env::set_var("CTX_BUNDLE_DIR", value);
+        },
+        None => unsafe {
+            std::env::remove_var("CTX_BUNDLE_DIR");
+        },
+    }
+    match previous_bundle_matrix {
+        Some(value) => unsafe {
+            std::env::set_var("CTX_BUNDLE_MATRIX_JSON", value);
+        },
+        None => unsafe {
+            std::env::remove_var("CTX_BUNDLE_MATRIX_JSON");
+        },
+    }
     assert_eq!(loaded.version, MATRIX_SCHEMA_VERSION);
     assert_eq!(loaded.providers.len(), 1);
     assert_eq!(loaded.providers[0].id, "cached-provider");
@@ -133,37 +155,26 @@ fn create_gemini_probe_layout(root: &Path) -> (PathBuf, PathBuf, PathBuf) {
         .join("node_modules")
         .join("@google")
         .join("gemini-cli")
-        .join("dist")
-        .join("index.js");
-    let core_entry = root
         .join("bundle")
-        .join("providers")
-        .join("gemini")
-        .join("node_modules")
-        .join("@google")
-        .join("gemini-cli-core")
-        .join("dist")
-        .join("index.js");
+        .join("gemini.js");
     let cli_pkg = cli_entry
         .parent()
-        .expect("cli dist")
+        .expect("cli bundle")
         .parent()
         .expect("cli root")
         .join("package.json");
 
     std::fs::create_dir_all(node_bin.parent().expect("node parent")).expect("mkdir node");
     std::fs::create_dir_all(cli_entry.parent().expect("cli parent")).expect("mkdir cli");
-    std::fs::create_dir_all(core_entry.parent().expect("core parent")).expect("mkdir core");
     std::fs::write(&node_bin, b"node").expect("write node");
     std::fs::write(&cli_entry, b"cli").expect("write cli");
-    std::fs::write(&core_entry, b"core").expect("write core");
     std::fs::write(
         &cli_pkg,
-        r#"{"name":"@google/gemini-cli","version":"0.33.1"}"#,
+        r#"{"name":"@google/gemini-cli","version":"0.38.2"}"#,
     )
     .expect("write cli package");
 
-    (node_bin, cli_entry, core_entry)
+    (node_bin, cli_entry, cli_pkg)
 }
 
 #[test]
@@ -177,7 +188,7 @@ fn probe_node_package_version_uses_explicit_gemini_entrypoint() {
 
     let version = probe_node_package_version(&command, "@google/gemini-cli", temp.path());
 
-    assert_eq!(version.as_deref(), Some("0.33.1"));
+    assert_eq!(version.as_deref(), Some("0.38.2"));
 }
 
 #[test]
@@ -199,7 +210,7 @@ fn probe_node_package_version_rejects_relative_gemini_entrypoint() {
     let (node_bin, _, _) = create_gemini_probe_layout(temp.path());
     let command = ProviderCommand {
         command: node_bin.to_string_lossy().to_string(),
-        args: vec!["node_modules/@google/gemini-cli/dist/index.js".to_string()],
+        args: vec!["node_modules/@google/gemini-cli/bundle/gemini.js".to_string()],
     };
 
     let version = probe_node_package_version(&command, "@google/gemini-cli", temp.path());
@@ -262,6 +273,7 @@ fn builtin_matrix_uses_raw_upstream_cline_acp_runtime() {
             package,
             entrypoint,
             args,
+            ..
         } => {
             assert_eq!(package, "cline");
             assert_eq!(entrypoint, "node_modules/cline/dist/cli.mjs");
@@ -336,7 +348,7 @@ fn builtin_matrix_tracks_target_specific_codex_cli_archive_binaries() {
         ProviderInstall::Archive {
             version, targets, ..
         } => {
-            assert_eq!(version, "0.114.0");
+            assert_eq!(version, "rust-v0.121.0");
             assert_eq!(
                 targets
                     .get("darwin-aarch64")
@@ -417,9 +429,10 @@ fn builtin_matrix_uses_upstream_openhands_python_acp_runtime() {
             args,
             python_version,
             python_build_tag,
+            ..
         } => {
             assert_eq!(package, "openhands");
-            assert_eq!(version, "1.13.1");
+            assert_eq!(version, "1.14.0");
             assert_eq!(entrypoint, "openhands");
             assert_eq!(args, &vec!["acp".to_string()]);
             assert_eq!(python_version.as_deref(), Some("3.12.13"));
@@ -846,6 +859,7 @@ fn codex_npm_test_entry(version: &str) -> ProviderMatrixEntry {
             package: "@openai/codex".to_string(),
             entrypoint: "node_modules/@openai/codex/bin.js".to_string(),
             args: Vec::new(),
+            targets: std::collections::HashMap::new(),
         }),
         provider_dependencies: Vec::new(),
         dependencies: Vec::new(),

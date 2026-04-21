@@ -266,9 +266,16 @@ pub fn expected_managed_provider_artifact_fingerprint(
 ) -> Option<String> {
     let install = entry.managed_install.as_ref()?;
     match install {
-        provider_matrix::ProviderInstall::Npm { package, .. } => {
-            npm_artifact_fingerprint(package, version)
-        }
+        provider_matrix::ProviderInstall::Npm { package, targets, .. } => targets
+            .get(resolve_matrix_target_key(target).ok()?)
+            .and_then(|target_entry| trimmed_non_empty(target_entry.sha256.as_deref()))
+            .or_else(|| {
+                if matches!(target, InstallTarget::Host) {
+                    npm_artifact_fingerprint(package, version)
+                } else {
+                    None
+                }
+            }),
         provider_matrix::ProviderInstall::Archive {
             version: install_version,
             targets,
@@ -285,6 +292,7 @@ pub fn expected_managed_provider_artifact_fingerprint(
         provider_matrix::ProviderInstall::Python {
             package,
             version: install_version,
+            targets,
             python_version,
             python_build_tag,
             ..
@@ -294,12 +302,21 @@ pub fn expected_managed_provider_artifact_fingerprint(
             {
                 return None;
             }
-            python_artifact_fingerprint(
-                package,
-                install_version,
-                python_version.as_deref(),
-                python_build_tag.as_deref(),
-            )
+            targets
+                .get(resolve_matrix_target_key(target).ok()?)
+                .and_then(|target_entry| trimmed_non_empty(target_entry.sha256.as_deref()))
+                .or_else(|| {
+                    if matches!(target, InstallTarget::Host) {
+                        python_artifact_fingerprint(
+                            package,
+                            install_version,
+                            python_version.as_deref(),
+                            python_build_tag.as_deref(),
+                        )
+                    } else {
+                        None
+                    }
+                })
         }
     }
 }

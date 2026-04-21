@@ -88,7 +88,8 @@ function collectManagedArchiveTargets(matrix, providerFilter = [], targetFilter 
     }
     matchedProviders.add(entry.id);
     const install = entry.managed_install;
-    if (!install || install.kind !== "archive") {
+    const kind = String(install?.kind || "").trim().toLowerCase();
+    if (!install || (kind !== "archive" && kind !== "npm" && kind !== "python")) {
       continue;
     }
     const targetMap = install.targets || {};

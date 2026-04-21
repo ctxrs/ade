@@ -249,16 +249,15 @@ pub fn is_supported_managed_provider_for_target(
         Err(_) => return false,
     };
 
-    // Archive installs are target-specific. npm/python installs are currently
-    // supported for host and container targets.
     match install {
-        provider_matrix::ProviderInstall::Archive { targets, .. } => {
-            targets.contains_key(target_key)
-        }
-        provider_matrix::ProviderInstall::Npm { .. }
-        | provider_matrix::ProviderInstall::Python { .. } => {
-            matches!(target, InstallTarget::Host | InstallTarget::Container)
-        }
+        provider_matrix::ProviderInstall::Archive { targets, .. } => targets.contains_key(target_key),
+        provider_matrix::ProviderInstall::Npm { targets, .. }
+        | provider_matrix::ProviderInstall::Python { targets, .. } => match target {
+            InstallTarget::Host => true,
+            InstallTarget::Container | InstallTarget::LinuxAarch64 | InstallTarget::LinuxX8664 => {
+                targets.contains_key(target_key)
+            }
+        },
     }
 }
 
@@ -301,8 +300,14 @@ pub fn managed_install_download_size_bytes(
             total = total.saturating_add(size);
             any = true;
         }
-        provider_matrix::ProviderInstall::Npm { .. }
-        | provider_matrix::ProviderInstall::Python { .. } => {}
+        provider_matrix::ProviderInstall::Npm { targets, .. }
+        | provider_matrix::ProviderInstall::Python { targets, .. } => {
+            if let Some(target_entry) = targets.get(target_key) {
+                let size = target_entry.size_bytes?;
+                total = total.saturating_add(size);
+                any = true;
+            }
+        }
     }
 
     for dependency in &entry.dependencies {

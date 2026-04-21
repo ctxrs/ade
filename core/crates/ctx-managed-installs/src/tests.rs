@@ -549,31 +549,24 @@ fn managed_provider_target_support_matches_install_kind() {
         "openhands",
     ];
     let mut archive_count = 0usize;
+    let mut expected_container_supported = 0usize;
     assert_eq!(
         harness_provider_ids.len(),
         16,
         "curated harness list changed; update coverage expectation"
     );
-    for target in [InstallTarget::Host, InstallTarget::Container] {
-        let supported = harness_provider_ids
-            .iter()
-            .filter(|provider_id| {
-                is_supported_managed_provider_for_target(&matrix, provider_id, target)
-            })
-            .count();
-        let target_label = match target {
-            InstallTarget::Host => "host",
-            InstallTarget::Container => "container",
-            InstallTarget::LinuxAarch64 => "linux-aarch64",
-            InstallTarget::LinuxX8664 => "linux-x86_64",
-        };
-        assert_eq!(
-            supported,
-            harness_provider_ids.len(),
-            "expected full harness support for {target_label}: {supported}/{}",
-            harness_provider_ids.len()
-        );
-    }
+    let host_supported = harness_provider_ids
+        .iter()
+        .filter(|provider_id| {
+            is_supported_managed_provider_for_target(&matrix, provider_id, InstallTarget::Host)
+        })
+        .count();
+    assert_eq!(
+        host_supported,
+        harness_provider_ids.len(),
+        "expected full harness support for host: {host_supported}/{}",
+        harness_provider_ids.len()
+    );
     for provider_id in harness_provider_ids {
         let entry = provider_matrix::get_entry(&matrix, provider_id)
             .unwrap_or_else(|| panic!("missing provider matrix entry for {provider_id}"));
@@ -584,6 +577,7 @@ fn managed_provider_target_support_matches_install_kind() {
         match install {
             provider_matrix::ProviderInstall::Archive { .. } => {
                 archive_count += 1;
+                expected_container_supported += 1;
                 assert!(
                     is_supported_managed_provider_for_target(
                         &matrix,
@@ -611,31 +605,43 @@ fn managed_provider_target_support_matches_install_kind() {
                     ),
                     "managed provider {provider_id} must support host installs"
                 );
-                assert!(
-                    is_supported_managed_provider_for_target(
-                        &matrix,
-                        provider_id,
-                        InstallTarget::Container
-                    ),
-                    "managed provider {provider_id} must support container installs"
-                );
+                if install.archive_target("container").is_some() {
+                    expected_container_supported += 1;
+                    assert!(
+                        is_supported_managed_provider_for_target(
+                            &matrix,
+                            provider_id,
+                            InstallTarget::Container
+                        ),
+                        "hybrid provider {provider_id} missing container support"
+                    );
+                } else {
+                    assert!(
+                        !is_supported_managed_provider_for_target(
+                            &matrix,
+                            provider_id,
+                            InstallTarget::Container
+                        ),
+                        "provider {provider_id} unexpectedly supports container without a staged target"
+                    );
+                }
             }
         }
     }
+    let actual_container_supported = harness_provider_ids
+        .iter()
+        .filter(|provider_id| {
+            is_supported_managed_provider_for_target(&matrix, provider_id, InstallTarget::Container)
+        })
+        .count();
+    assert_eq!(
+        actual_container_supported, expected_container_supported,
+        "container support should track archive providers plus hybrid providers with staged container targets"
+    );
     assert_eq!(
         archive_count, 7,
         "curated harness archive set changed; verify linux target coverage expectations"
     );
-    assert!(is_supported_managed_provider_for_target(
-        &matrix,
-        "codex",
-        InstallTarget::Container
-    ));
-    assert!(is_supported_managed_provider_for_target(
-        &matrix,
-        "auggie",
-        InstallTarget::Container
-    ));
 }
 
 #[test]

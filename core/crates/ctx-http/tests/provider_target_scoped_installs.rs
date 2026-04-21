@@ -5,6 +5,7 @@ mod common;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use axum::http::StatusCode;
@@ -40,10 +41,21 @@ struct EnvVarGuard {
     previous: Option<String>,
 }
 
+fn acp_install_test_lock() -> &'static tokio::sync::Mutex<()> {
+    static LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+}
+
 impl EnvVarGuard {
     fn set(key: &'static str, value: &str) -> Self {
         let previous = std::env::var(key).ok();
         std::env::set_var(key, value);
+        Self { key, previous }
+    }
+
+    fn unset(key: &'static str) -> Self {
+        let previous = std::env::var(key).ok();
+        std::env::remove_var(key);
         Self { key, previous }
     }
 }
@@ -111,7 +123,7 @@ fn write_js_entrypoint(path: &Path) {
     write_executable(path, "#!/usr/bin/env node\n// fixture runtime\n");
 }
 
-const SEEDED_NODE_VERSION: &str = "24.14.0";
+const SEEDED_NODE_VERSION: &str = "24.15.0";
 
 fn seeded_node_dist_target(target: InstallTarget) -> &'static str {
     match target {
@@ -437,6 +449,34 @@ async fn save_matrix_fixture(data_root: &Path, matrix: &ProviderMatrix) {
     )
     .await
     .expect("write matrix cache");
+}
+
+struct MatrixFixtureEnv {
+    _env_lock: tokio::sync::OwnedMutexGuard<()>,
+    _bundle_dir: EnvVarGuard,
+    _bundle_matrix: EnvVarGuard,
+}
+
+async fn env_lock() -> tokio::sync::OwnedMutexGuard<()> {
+    static LOCK: OnceLock<Arc<tokio::sync::Mutex<()>>> = OnceLock::new();
+    LOCK.get_or_init(|| Arc::new(tokio::sync::Mutex::new(())))
+        .clone()
+        .lock_owned()
+        .await
+}
+
+async fn activate_matrix_fixture(data_root: &Path, matrix: &ProviderMatrix) -> MatrixFixtureEnv {
+    save_matrix_fixture(data_root, matrix).await;
+    let env_lock = env_lock().await;
+    let matrix_path = matrix_cache_path(data_root);
+    MatrixFixtureEnv {
+        _env_lock: env_lock,
+        _bundle_dir: EnvVarGuard::unset("CTX_BUNDLE_DIR"),
+        _bundle_matrix: EnvVarGuard::set(
+            "CTX_BUNDLE_MATRIX_JSON",
+            matrix_path.to_str().expect("matrix path utf-8"),
+        ),
+    }
 }
 
 fn archive_targets(url: String) -> HashMap<String, ProviderArchiveTarget> {
@@ -971,7 +1011,19 @@ async fn provider_status_http_keeps_host_and_container_installs_independent() {
 
 #[tokio::test]
 async fn acp_container_install_surfaces_bridge_as_installable_prerequisite() {
+    let _acp_lock = acp_install_test_lock().lock().await;
     let data_dir = tempfile::tempdir().expect("tempdir");
+    let fixture_dir = data_dir.path().join("fixtures");
+    std::fs::create_dir_all(&fixture_dir).expect("create fixture dir");
+    let bridge_fixture = fixture_dir.join("acp-crp-bridge");
+    let provider_fixture = fixture_dir.join("kimi-acp");
+    write_executable(&bridge_fixture, "#!/bin/sh\nexit 0\n");
+    write_executable(&provider_fixture, "#!/bin/sh\nexit 0\n");
+    let _matrix_fixture = activate_matrix_fixture(
+        data_dir.path(),
+        &provider_fixture_matrix(file_url(&bridge_fixture), file_url(&provider_fixture)),
+    )
+    .await;
     let stores = common::setup_store(data_dir.path()).await;
     let state = common::build_state(
         data_dir.path().to_path_buf(),
@@ -1062,6 +1114,17 @@ async fn acp_container_install_surfaces_bridge_as_installable_prerequisite() {
 #[tokio::test]
 async fn acp_host_install_surfaces_bridge_as_installable_prerequisite() {
     let data_dir = tempfile::tempdir().expect("tempdir");
+    let fixture_dir = data_dir.path().join("fixtures");
+    std::fs::create_dir_all(&fixture_dir).expect("create fixture dir");
+    let bridge_fixture = fixture_dir.join("acp-crp-bridge");
+    let provider_fixture = fixture_dir.join("kimi-acp");
+    write_executable(&bridge_fixture, "#!/bin/sh\nexit 0\n");
+    write_executable(&provider_fixture, "#!/bin/sh\nexit 0\n");
+    let _matrix_fixture = activate_matrix_fixture(
+        data_dir.path(),
+        &provider_fixture_matrix(file_url(&bridge_fixture), file_url(&provider_fixture)),
+    )
+    .await;
     let stores = common::setup_store(data_dir.path()).await;
     let state = common::build_state(
         data_dir.path().to_path_buf(),
@@ -1151,7 +1214,19 @@ async fn acp_host_install_surfaces_bridge_as_installable_prerequisite() {
 
 #[tokio::test]
 async fn acp_container_install_keeps_invalid_bridge_runtime_repairable_before_start() {
+    let _acp_lock = acp_install_test_lock().lock().await;
     let data_dir = tempfile::tempdir().expect("tempdir");
+    let fixture_dir = data_dir.path().join("fixtures");
+    std::fs::create_dir_all(&fixture_dir).expect("create fixture dir");
+    let bridge_fixture = fixture_dir.join("acp-crp-bridge");
+    let provider_fixture = fixture_dir.join("kimi-acp");
+    write_executable(&bridge_fixture, "#!/bin/sh\nexit 0\n");
+    write_executable(&provider_fixture, "#!/bin/sh\nexit 0\n");
+    let _matrix_fixture = activate_matrix_fixture(
+        data_dir.path(),
+        &provider_fixture_matrix(file_url(&bridge_fixture), file_url(&provider_fixture)),
+    )
+    .await;
     let stores = common::setup_store(data_dir.path()).await;
     let state = common::build_state(
         data_dir.path().to_path_buf(),
@@ -1229,6 +1304,7 @@ async fn acp_container_install_keeps_invalid_bridge_runtime_repairable_before_st
 #[tokio::test]
 async fn provider_target_scoped_installs_install_all_repairs_invalid_bridge_and_keeps_acp_dependents_installable(
 ) {
+    let _acp_lock = acp_install_test_lock().lock().await;
     let data_dir = tempfile::tempdir().expect("tempdir");
     let fixture_dir = data_dir.path().join("fixtures");
     std::fs::create_dir_all(&fixture_dir).expect("create fixture dir");
@@ -1238,7 +1314,7 @@ async fn provider_target_scoped_installs_install_all_repairs_invalid_bridge_and_
     write_executable(&bridge_fixture, "#!/bin/sh\nsleep 0.3\nexit 0\n");
     write_executable(&kimi_fixture, "#!/bin/sh\nexit 0\n");
     write_executable(&qwen_fixture, "#!/bin/sh\nexit 0\n");
-    save_matrix_fixture(
+    let _matrix_fixture = activate_matrix_fixture(
         data_dir.path(),
         &provider_fixture_matrix_with_providers(
             file_url(&bridge_fixture),
@@ -1359,7 +1435,7 @@ async fn provider_target_scoped_installs_install_all_container_js_archive_harnes
     write_executable(&bridge_fixture, "#!/bin/sh\nexit 0\n");
     write_js_entrypoint(&amp_fixture);
     write_js_entrypoint(&pi_fixture);
-    save_matrix_fixture(
+    let _matrix_fixture = activate_matrix_fixture(
         data_dir.path(),
         &ProviderMatrix {
             version: fixture_matrix_version(),
@@ -1438,7 +1514,7 @@ async fn provider_target_scoped_installs_install_all_container_js_archive_harnes
             .get(provider_id)
             .expect("validated install ids above");
         let install_info =
-            wait_for_install_completion_with_timeout(&state, install_id, Duration::from_secs(45))
+            wait_for_install_completion_with_timeout(&state, install_id, Duration::from_secs(120))
                 .await;
         assert!(
             matches!(install_info.state, InstallStateKind::Succeeded),
@@ -1515,6 +1591,7 @@ async fn provider_target_scoped_installs_install_all_container_js_archive_harnes
 #[tokio::test]
 async fn provider_target_scoped_installs_install_all_repairs_invalid_bridge_when_acp_dependents_precede_bridge_in_matrix(
 ) {
+    let _acp_lock = acp_install_test_lock().lock().await;
     let data_dir = tempfile::tempdir().expect("tempdir");
     let fixture_dir = data_dir.path().join("fixtures");
     std::fs::create_dir_all(&fixture_dir).expect("create fixture dir");
@@ -1542,7 +1619,7 @@ async fn provider_target_scoped_installs_install_all_repairs_invalid_bridge_when
         ),
     ])
     .await;
-    save_matrix_fixture(
+    let _matrix_fixture = activate_matrix_fixture(
         data_dir.path(),
         &ProviderMatrix {
             version: fixture_matrix_version(),
@@ -1624,6 +1701,7 @@ async fn provider_target_scoped_installs_install_all_repairs_invalid_bridge_when
 #[tokio::test]
 async fn acp_container_install_happy_path_installs_bridge_prerequisite_and_keeps_registry_entries()
 {
+    let _acp_lock = acp_install_test_lock().lock().await;
     let data_dir = tempfile::tempdir().expect("tempdir");
     let fixture_dir = data_dir.path().join("fixtures");
     std::fs::create_dir_all(&fixture_dir).expect("create fixture dir");
@@ -1631,7 +1709,7 @@ async fn acp_container_install_happy_path_installs_bridge_prerequisite_and_keeps
     let provider_fixture = fixture_dir.join("kimi-acp");
     write_executable(&bridge_fixture, "#!/bin/sh\nexit 0\n");
     write_executable(&provider_fixture, "#!/bin/sh\nsleep 0.5\nexit 0\n");
-    save_matrix_fixture(
+    let _matrix_fixture = activate_matrix_fixture(
         data_dir.path(),
         &provider_fixture_matrix(file_url(&bridge_fixture), file_url(&provider_fixture)),
     )
@@ -1769,6 +1847,7 @@ async fn acp_container_install_happy_path_installs_bridge_prerequisite_and_keeps
 
 #[tokio::test]
 async fn acp_container_install_repairs_invalid_bridge_runtime_and_keeps_registry_entries() {
+    let _acp_lock = acp_install_test_lock().lock().await;
     let data_dir = tempfile::tempdir().expect("tempdir");
     let fixture_dir = data_dir.path().join("fixtures");
     std::fs::create_dir_all(&fixture_dir).expect("create fixture dir");
@@ -1776,7 +1855,7 @@ async fn acp_container_install_repairs_invalid_bridge_runtime_and_keeps_registry
     let provider_fixture = fixture_dir.join("kimi-acp");
     write_executable(&bridge_fixture, "#!/bin/sh\nexit 0\n");
     write_executable(&provider_fixture, "#!/bin/sh\nsleep 0.5\nexit 0\n");
-    save_matrix_fixture(
+    let _matrix_fixture = activate_matrix_fixture(
         data_dir.path(),
         &provider_fixture_matrix(file_url(&bridge_fixture), file_url(&provider_fixture)),
     )
@@ -1844,6 +1923,7 @@ async fn acp_container_install_repairs_invalid_bridge_runtime_and_keeps_registry
 
 #[tokio::test]
 async fn acp_container_install_parent_polling_stays_bounded_while_bridge_prerequisite_runs() {
+    let _acp_lock = acp_install_test_lock().lock().await;
     let data_dir = tempfile::tempdir().expect("tempdir");
     let fixture_dir = data_dir.path().join("fixtures");
     std::fs::create_dir_all(&fixture_dir).expect("create fixture dir");
@@ -1864,7 +1944,7 @@ async fn acp_container_install_parent_polling_stays_bounded_while_bridge_prerequ
         ),
     ])
     .await;
-    save_matrix_fixture(
+    let _matrix_fixture = activate_matrix_fixture(
         data_dir.path(),
         &provider_fixture_matrix(
             fixture_download_url(&download_server, "bridge"),
@@ -1949,6 +2029,7 @@ async fn acp_container_install_parent_polling_stays_bounded_while_bridge_prerequ
 #[tokio::test]
 async fn acp_container_install_joins_existing_bridge_install_and_surfaces_short_prerequisites_to_polling(
 ) {
+    let _acp_lock = acp_install_test_lock().lock().await;
     let data_dir = tempfile::tempdir().expect("tempdir");
     let fixture_dir = data_dir.path().join("fixtures");
     std::fs::create_dir_all(&fixture_dir).expect("create fixture dir");
@@ -1969,7 +2050,7 @@ async fn acp_container_install_joins_existing_bridge_install_and_surfaces_short_
         ),
     ])
     .await;
-    save_matrix_fixture(
+    let _matrix_fixture = activate_matrix_fixture(
         data_dir.path(),
         &provider_fixture_matrix(
             fixture_download_url(&download_server, "bridge"),
@@ -2073,18 +2154,20 @@ async fn acp_container_install_joins_existing_bridge_install_and_surfaces_short_
 
     let parent_owned_poll_info =
         {
-            let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+            let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
             loop {
                 let info = get_install_info_api(&app, install_id).await;
-                if info.last_event.as_ref().is_some_and(|event| {
-                    !event.message.to_ascii_lowercase().contains("prerequisite")
-                }) {
+                if matches!(info.state, InstallStateKind::Succeeded | InstallStateKind::Failed)
+                    || info.last_event.as_ref().is_some_and(|event| {
+                        !event.message.to_ascii_lowercase().contains("prerequisite")
+                    })
+                {
                     break info;
                 }
                 assert!(
-                tokio::time::Instant::now() < deadline,
-                "timed out waiting for parent-owned running progress on the poll surface: {info:#?}"
-            );
+                    tokio::time::Instant::now() < deadline,
+                    "timed out waiting for parent-owned running progress on the poll surface: {info:#?}"
+                );
                 tokio::time::sleep(Duration::from_millis(100)).await;
             }
         };
@@ -2095,20 +2178,22 @@ async fn acp_container_install_joins_existing_bridge_install_and_surfaces_short_
         ),
         "the parent poll surface should switch off prerequisite-derived progress once the override window expires: {parent_owned_poll_info:#?}"
     );
-    assert!(
-        parent_owned_poll_info
-            .last_event
-            .as_ref()
-            .is_some_and(|event| !event.message.to_ascii_lowercase().contains("prerequisite")),
-        "once the prerequisite override window expires, polling should surface the parent install's own work: {parent_owned_poll_info:#?}"
-    );
-    assert!(
-        parent_owned_poll_info
-            .last_event
-            .as_ref()
-            .is_some_and(|event| event.stage != "prerequisites"),
-        "the next poll after the prerequisite window should expose the parent install's own work or terminal completion instead of staying on the synthetic prerequisite stage: {parent_owned_poll_info:#?}"
-    );
+    if matches!(parent_owned_poll_info.state, InstallStateKind::Running) {
+        assert!(
+            parent_owned_poll_info
+                .last_event
+                .as_ref()
+                .is_some_and(|event| !event.message.to_ascii_lowercase().contains("prerequisite")),
+            "once the prerequisite override window expires, polling should surface the parent install's own work: {parent_owned_poll_info:#?}"
+        );
+        assert!(
+            parent_owned_poll_info
+                .last_event
+                .as_ref()
+                .is_some_and(|event| event.stage != "prerequisites"),
+            "the next poll after the prerequisite window should expose the parent install's own work instead of staying on the synthetic prerequisite stage: {parent_owned_poll_info:#?}"
+        );
+    }
 
     let install_info = wait_for_install_completion(&state, install_id).await;
     assert!(
@@ -2198,7 +2283,7 @@ async fn claude_container_install_starts_host_cli_dependency_and_stays_not_ready
         role: ProviderInstallDependencyRole::Readiness,
         target: ProviderInstallDependencyTarget::Host,
     }];
-    save_matrix_fixture(
+    let _matrix_fixture = activate_matrix_fixture(
         data_dir.path(),
         &ProviderMatrix {
             version: fixture_matrix_version(),

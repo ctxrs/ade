@@ -100,6 +100,8 @@ pub enum ProviderInstall {
         entrypoint: String,
         #[serde(default)]
         args: Vec<String>,
+        #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+        targets: HashMap<String, ProviderArchiveTarget>,
     },
     Archive {
         version: String,
@@ -113,11 +115,35 @@ pub enum ProviderInstall {
         entrypoint: String,
         #[serde(default)]
         args: Vec<String>,
+        #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+        targets: HashMap<String, ProviderArchiveTarget>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         python_version: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         python_build_tag: Option<String>,
     },
+}
+
+impl ProviderInstall {
+    pub fn archive_targets(&self) -> Option<&HashMap<String, ProviderArchiveTarget>> {
+        match self {
+            Self::Npm { targets, .. } | Self::Python { targets, .. } => {
+                (!targets.is_empty()).then_some(targets)
+            }
+            Self::Archive { targets, .. } => Some(targets),
+        }
+    }
+
+    pub fn archive_targets_mut(&mut self) -> Option<&mut HashMap<String, ProviderArchiveTarget>> {
+        match self {
+            Self::Npm { targets, .. } | Self::Python { targets, .. } => Some(targets),
+            Self::Archive { targets, .. } => Some(targets),
+        }
+    }
+
+    pub fn archive_target(&self, target_key: &str) -> Option<&ProviderArchiveTarget> {
+        self.archive_targets()?.get(target_key)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

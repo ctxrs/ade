@@ -291,6 +291,7 @@ pub(super) async fn install_provider_impl(
                 package,
                 entrypoint,
                 args,
+                targets,
             } => {
                 if !matches!(target, InstallTarget::Host | InstallTarget::Container) {
                     anyhow::bail!(
@@ -302,24 +303,88 @@ pub(super) async fn install_provider_impl(
                 error_version = Some(version.clone());
                 error_install_dir_rel =
                     Some(format!("providers/agent-servers/{provider_id}/{version}"));
-                install_managed_npm_provider(
-                    state,
-                    install_id,
-                    &provider_id,
-                    package,
-                    &version,
-                    entrypoint,
-                    resolve_install_args(args),
-                    target,
-                    &mut stage,
-                )
-                .await?
+                if matches!(target, InstallTarget::Host) || !targets.contains_key(resolved_target_key)
+                {
+                    install_managed_npm_provider(
+                        state,
+                        install_id,
+                        &provider_id,
+                        package,
+                        &version,
+                        entrypoint,
+                        resolve_install_args(args),
+                        target,
+                        &mut stage,
+                    )
+                    .await?
+                } else {
+                    let target_entry = targets.get(resolved_target_key).ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "unsupported provider target {provider_id}: {resolved_target_key}"
+                        )
+                    })?;
+                    let mut managed = install_managed_archive_provider(
+                        state,
+                        install_id,
+                        &provider_id,
+                        &version,
+                        &target_entry.url,
+                        target_entry.sha256.as_deref(),
+                        map_archive_kind(target_entry.archive),
+                        &target_entry.bin_path,
+                        resolve_install_args(args),
+                        target,
+                        &mut stage,
+                    )
+                    .await?;
+                    if archive_bin_requires_node_runtime(
+                        &target_entry.bin_path,
+                        Path::new(&managed.command),
+                    ) {
+                        stage = "node";
+                        for dependency_target in node_runtime_dependency_targets_for_install_target(
+                            target,
+                            std::env::consts::OS,
+                        ) {
+                            let node = ensure_node_runtime(
+                                state,
+                                install_id,
+                                &provider_id,
+                                state.data_root(),
+                                dependency_target,
+                            )
+                            .await
+                            .context(
+                                "ensuring managed Node runtime for archive-backed npm provider",
+                            )?;
+                            let dep_id = node_runtime_dependency_id(dependency_target);
+                            if !dependency_ids.contains(&dep_id) {
+                                dependency_ids.push(dep_id.clone());
+                            }
+                            implicit_managed_dependencies.push((
+                                dep_id,
+                                node_runtime_dependency_metadata(
+                                    state.data_root(),
+                                    &node,
+                                    dependency_target,
+                                ),
+                            ));
+                            if provider_id == "gemini" && dependency_target == target {
+                                let entrypoint_path = managed.command.clone();
+                                managed.command = node.node_bin.to_string_lossy().to_string();
+                                managed.args.insert(0, entrypoint_path);
+                            }
+                        }
+                    }
+                    managed
+                }
             }
             provider_matrix::ProviderInstall::Python {
                 package,
                 version,
                 entrypoint,
                 args,
+                targets,
                 python_version,
                 python_build_tag,
             } => {
@@ -341,20 +406,43 @@ pub(super) async fn install_provider_impl(
                 error_install_dir_rel = Some(format!(
                     "providers/agent-servers/{provider_id}/{version}",
                 ));
-                install_managed_python_provider(
-                    state,
-                    install_id,
-                    &provider_id,
-                    package,
-                    version,
-                    entrypoint,
-                    python_version.as_deref(),
-                    python_build_tag.as_deref(),
-                    resolve_install_args(args),
-                    target,
-                    &mut stage,
-                )
-                .await?
+                if matches!(target, InstallTarget::Host) || !targets.contains_key(resolved_target_key)
+                {
+                    install_managed_python_provider(
+                        state,
+                        install_id,
+                        &provider_id,
+                        package,
+                        version,
+                        entrypoint,
+                        python_version.as_deref(),
+                        python_build_tag.as_deref(),
+                        resolve_install_args(args),
+                        target,
+                        &mut stage,
+                    )
+                    .await?
+                } else {
+                    let target_entry = targets.get(resolved_target_key).ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "unsupported provider target {provider_id}: {resolved_target_key}"
+                        )
+                    })?;
+                    install_managed_archive_provider(
+                        state,
+                        install_id,
+                        &provider_id,
+                        version,
+                        &target_entry.url,
+                        target_entry.sha256.as_deref(),
+                        map_archive_kind(target_entry.archive),
+                        &target_entry.bin_path,
+                        resolve_install_args(args),
+                        target,
+                        &mut stage,
+                    )
+                    .await?
+                }
             }
             provider_matrix::ProviderInstall::Archive {
                 version,

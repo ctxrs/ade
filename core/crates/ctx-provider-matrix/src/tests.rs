@@ -95,7 +95,29 @@ async fn load_matrix_returns_cached_when_present() {
         .await
         .expect("save cached matrix");
 
+    let previous_bundle_dir = std::env::var("CTX_BUNDLE_DIR").ok();
+    let previous_bundle_matrix = std::env::var("CTX_BUNDLE_MATRIX_JSON").ok();
+    unsafe {
+        std::env::remove_var("CTX_BUNDLE_DIR");
+        std::env::remove_var("CTX_BUNDLE_MATRIX_JSON");
+    }
     let loaded = load_matrix(data_root).await;
+    match previous_bundle_dir {
+        Some(value) => unsafe {
+            std::env::set_var("CTX_BUNDLE_DIR", value);
+        },
+        None => unsafe {
+            std::env::remove_var("CTX_BUNDLE_DIR");
+        },
+    }
+    match previous_bundle_matrix {
+        Some(value) => unsafe {
+            std::env::set_var("CTX_BUNDLE_MATRIX_JSON", value);
+        },
+        None => unsafe {
+            std::env::remove_var("CTX_BUNDLE_MATRIX_JSON");
+        },
+    }
     assert_eq!(loaded.version, MATRIX_SCHEMA_VERSION);
     assert_eq!(loaded.providers.len(), 1);
     assert_eq!(loaded.providers[0].id, "cached-provider");
@@ -247,6 +269,7 @@ fn builtin_matrix_uses_raw_upstream_cline_acp_runtime() {
             package,
             entrypoint,
             args,
+            ..
         } => {
             assert_eq!(package, "cline");
             assert_eq!(entrypoint, "node_modules/cline/dist/cli.mjs");
@@ -402,6 +425,7 @@ fn builtin_matrix_uses_upstream_openhands_python_acp_runtime() {
             args,
             python_version,
             python_build_tag,
+            ..
         } => {
             assert_eq!(package, "openhands");
             assert_eq!(version, "1.14.0");

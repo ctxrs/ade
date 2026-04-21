@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::{fs, path::Path as StdPath};
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use ctx_providers::adapters::{
     ProviderAdapter, ProviderHealth, ProviderProcessInfo, ProviderRestartMode,
     ProviderSessionSweepConfig, ProviderSessionSweepStats, ProviderStatus, RunHandle, TurnInput,
@@ -424,7 +424,6 @@ pub fn acp_bridge_adapter(
 #[derive(Debug, Clone)]
 pub struct ExplicitGeminiCliPaths {
     pub cli_entry_path: PathBuf,
-    pub core_entry_path: PathBuf,
 }
 
 fn file_stem_matches(path: &StdPath, name: &str) -> bool {
@@ -446,14 +445,14 @@ fn resolve_existing_absolute_path(raw: &str, label: &str) -> Result<PathBuf> {
 }
 
 fn gemini_cli_root_from_entrypoint(path: &StdPath) -> Option<PathBuf> {
-    if path.file_name().and_then(|s| s.to_str()) != Some("index.js") {
+    if path.file_name().and_then(|s| s.to_str()) != Some("gemini.js") {
         return None;
     }
     if path
         .parent()
         .and_then(|parent| parent.file_name())
         .and_then(|s| s.to_str())
-        != Some("dist")
+        != Some("bundle")
     {
         return None;
     }
@@ -480,106 +479,38 @@ pub fn resolve_explicit_gemini_cli_paths(
     let node_path = resolve_existing_absolute_path(command, "Gemini ACP runtime command")?;
     anyhow::ensure!(
         file_stem_matches(&node_path, "node"),
-        "Gemini ACP runtime must use an explicit absolute node executable plus @google/gemini-cli/dist/index.js; got command '{command}'"
+        "Gemini ACP runtime must use an explicit absolute node executable plus @google/gemini-cli/bundle/gemini.js; got command '{command}'"
     );
 
     let arg0 = args.first().ok_or_else(|| {
         anyhow::anyhow!(
-            "Gemini ACP runtime must pass an explicit absolute @google/gemini-cli/dist/index.js entrypoint as the first argument"
+            "Gemini ACP runtime must pass an explicit absolute @google/gemini-cli/bundle/gemini.js entrypoint as the first argument"
         )
     })?;
     let cli_entry_path = resolve_existing_absolute_path(arg0, "Gemini ACP entrypoint")?;
     let cli_root = gemini_cli_root_from_entrypoint(&cli_entry_path).ok_or_else(|| {
         anyhow::anyhow!(
-            "Gemini ACP entrypoint must point to @google/gemini-cli/dist/index.js; got '{}'",
+            "Gemini ACP entrypoint must point to @google/gemini-cli/bundle/gemini.js; got '{}'",
             cli_entry_path.display()
         )
     })?;
-    let node_modules_dir = cli_root.parent().and_then(|scope| scope.parent()).ok_or_else(|| {
-        anyhow::anyhow!(
-            "Gemini ACP entrypoint must live under a node_modules/@google/gemini-cli install tree: {}",
-            cli_entry_path.display()
-        )
-    })?;
-    let core_entry_path = node_modules_dir
-        .join("@google")
-        .join("gemini-cli-core")
-        .join("dist")
-        .join("index.js");
     anyhow::ensure!(
-        core_entry_path.exists(),
-        "Gemini ACP companion package is missing: {}",
-        core_entry_path.display()
+        cli_root.join("package.json").exists(),
+        "Gemini ACP entrypoint must live under a node_modules/@google/gemini-cli install tree: {}",
+        cli_entry_path.display()
     );
 
     Ok(ExplicitGeminiCliPaths {
         cli_entry_path,
-        core_entry_path,
     })
 }
 
 fn maybe_wrap_gemini_acp_command(
     data_root: &Path,
-    mut cmd: installer::AgentServerCommand,
+    cmd: installer::AgentServerCommand,
 ) -> Result<installer::AgentServerCommand> {
-    let paths = resolve_explicit_gemini_cli_paths(&cmd.command, &cmd.args)?;
-
-    let wrapper_path = data_root
-        .join("providers")
-        .join("agent-servers")
-        .join("gemini-acp-wrapper.mjs");
-    if let Some(parent) = wrapper_path.parent() {
-        fs::create_dir_all(parent)
-            .with_context(|| format!("creating Gemini ACP wrapper dir {}", parent.display()))?;
-    }
-
-    let wrapper_contents = format!(
-        "import {{ coreEvents, CoreEvent, writeToStdout, writeToStderr }} from 'file://{}';\n\
-coreEvents.on(CoreEvent.Output, (payload) => {{\n\
-  if (payload.isStderr) {{\n\
-    writeToStderr(payload.chunk, payload.encoding);\n\
-  }} else {{\n\
-    writeToStdout(payload.chunk, payload.encoding);\n\
-  }}\n\
-}});\n\
-coreEvents.on(CoreEvent.ConsoleLog, (payload) => {{\n\
-  writeToStderr(String(payload?.content ?? '') + '\\n');\n\
-}});\n\
-const consentRaw = process.env.CTX_GEMINI_AUTO_OAUTH_CONSENT ?? '';\n\
-const consentDisabled = consentRaw === '0' || consentRaw.toLowerCase() === 'false';\n\
-if (!consentDisabled) {{\n\
-  coreEvents.on(CoreEvent.ConsentRequest, (payload) => {{\n\
-    if (typeof payload?.onConfirm === 'function') {{\n\
-      payload.onConfirm(true);\n\
-    }}\n\
-  }});\n\
-}}\n\
-process.env.GEMINI_CLI_NO_RELAUNCH ??= 'true';\n\
-await import('file://{}');\n",
-        paths.core_entry_path.to_string_lossy(),
-        paths.cli_entry_path.to_string_lossy(),
-    );
-
-    let write_wrapper = match fs::read_to_string(&wrapper_path) {
-        Ok(existing) => existing != wrapper_contents,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => true,
-        Err(err) => {
-            return Err(err)
-                .with_context(|| format!("reading Gemini ACP wrapper {}", wrapper_path.display()));
-        }
-    };
-    if write_wrapper {
-        fs::write(&wrapper_path, wrapper_contents)
-            .with_context(|| format!("writing Gemini ACP wrapper {}", wrapper_path.display()))?;
-    }
-
-    let wrapper_arg = wrapper_path.to_string_lossy().to_string();
-    let first = cmd.args.first_mut().ok_or_else(|| {
-        anyhow::anyhow!(
-            "Gemini ACP runtime must pass an explicit absolute @google/gemini-cli/dist/index.js entrypoint as the first argument"
-        )
-    })?;
-    *first = wrapper_arg;
+    let _ = data_root;
+    let _ = resolve_explicit_gemini_cli_paths(&cmd.command, &cmd.args)?;
     Ok(cmd)
 }
 

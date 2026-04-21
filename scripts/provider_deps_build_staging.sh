@@ -6,7 +6,7 @@ MATRIX_JSON="${PROVIDER_MATRIX_JSON:-$ROOT/core/crates/ctx-provider-accounts/src
 OUT_DIR=""
 OS_OVERRIDE=""
 ARCH_OVERRIDE=""
-PROVIDERS_RAW="${CTX_PROVIDER_DEPS_BUILD_PROVIDERS:-acp-crp-bridge,amp,codex,droid,goose,openhands,pi,claude-crp}"
+PROVIDERS_RAW="${CTX_PROVIDER_DEPS_BUILD_PROVIDERS:-acp-crp-bridge,amp,auggie,claude-cli,claude-crp,cline,codex,copilot,cursor,droid,gemini,goose,kimi,mistral,opencode,openhands,pi,qwen}"
 
 usage() {
   cat <<'USAGE'
@@ -451,6 +451,31 @@ process.stdout.write(`${out.join("\t")}\n`);
 NODE
 }
 
+get_npm_provider_metadata() {
+  local provider_id="$1"
+  node - "$MATRIX_JSON" "$provider_id" <<'NODE'
+const fs = require("node:fs");
+const [matrixPath, providerId] = process.argv.slice(2);
+const matrix = JSON.parse(fs.readFileSync(matrixPath, "utf8"));
+const provider = (matrix.providers || []).find((entry) => entry?.id === providerId);
+if (!provider) {
+  process.exit(1);
+}
+const managed = provider.managed_install || {};
+if (managed.kind !== "npm") {
+  process.exit(2);
+}
+const out = [
+  String(managed.package || "").trim(),
+  String(managed.entrypoint || "").trim(),
+];
+if (!out[0] || !out[1]) {
+  process.exit(3);
+}
+process.stdout.write(`${out.join("\t")}\n`);
+NODE
+}
+
 ensure_python_runtime() {
   local python_version="$1"
   local python_build_tag="$2"
@@ -572,8 +597,26 @@ python_bin="$script_dir/../python/bin/python3"
 if [[ ! -x "$python_bin" ]]; then
   python_bin="$script_dir/../python/bin/python"
 fi
-exec "$python_bin" -c 'from openhands_cli.entrypoint import main; raise SystemExit(main())' "$@"
+entrypoint_name="__CTX_ENTRYPOINT_NAME__"
+exec "$python_bin" - "$entrypoint_name" "$@" <<'PY'
+import importlib.metadata
+import sys
+
+entrypoint_name = sys.argv[1]
+argv = [entrypoint_name, *sys.argv[2:]]
+matches = [
+    entry
+    for entry in importlib.metadata.entry_points(group="console_scripts")
+    if entry.name == entrypoint_name
+]
+if not matches:
+    raise SystemExit(f"missing console script entrypoint: {entrypoint_name}")
+
+sys.argv = argv
+raise SystemExit(matches[0].load()())
+PY
 SH
+  perl -0pi -e "s/__CTX_ENTRYPOINT_NAME__/${entrypoint//\//\\/}/g" "$entrypoint_path"
   chmod +x "$entrypoint_path"
 
   local stage_dir="$OUT_DIR/providers/$provider_id/$version/$TARGET_OS/$TARGET_ARCH"
@@ -587,6 +630,63 @@ SH
   write_entry "$provider_id" "$version" "tar_gz" "$entrypoint_rel" "$archive_path" "$sha" "$size_bytes"
 
   rm -rf "$provider_root"
+}
+
+stage_matrix_npm_provider() {
+  local provider_id="$1"
+  local version="$2"
+  local metadata
+  metadata="$(get_npm_provider_metadata "$provider_id")"
+  local package entrypoint
+  IFS=$'\t' read -r package entrypoint <<< "$metadata"
+
+  local prebuilt_archive
+  prebuilt_archive="$(resolve_prebuilt_provider_archive "$provider_id" || true)"
+  if [[ -n "$prebuilt_archive" ]]; then
+    local staged_archive
+    staged_archive="$(stage_archive_from_prebuilt_archive \
+      "$provider_id" \
+      "$version" \
+      "$prebuilt_archive" \
+      "${provider_id}-${version}-${TARGET_OS}-${TARGET_ARCH}.tar.gz")"
+    local sha
+    sha="$(sha256_file "$staged_archive")"
+    local size_bytes
+    size_bytes="$(file_size_bytes "$staged_archive")"
+    write_entry "$provider_id" "$version" "tar_gz" "$entrypoint" "$staged_archive" "$sha" "$size_bytes"
+    return 0
+  fi
+  if [[ "${CTX_PROVIDER_DEPS_REQUIRE_PREBUILT:-0}" == "1" ]]; then
+    require_prebuilt_provider_archive "$provider_id"
+  fi
+
+  require_cmd pnpm
+  local workspace_dir
+  workspace_dir="$(mktemp -d "$OUT_DIR/.npm-provider-${provider_id}.XXXXXX")"
+  cat > "$workspace_dir/package.json" <<JSON
+{
+  "name": "ctx-provider-deps-${provider_id}",
+  "private": true,
+  "version": "0.0.0"
+}
+JSON
+  (
+    cd "$workspace_dir"
+    pnpm add --ignore-scripts "${package}@${version}"
+  ) >&2
+  rm -f "$workspace_dir/node_modules/.pnpm-workspace-state-v1.json" || true
+  rm -f "$workspace_dir/node_modules/.modules.yaml" || true
+  find "$workspace_dir/node_modules" -type d -name .bin -prune -exec rm -rf {} + 2>/dev/null || true
+
+  local archive_path
+  archive_path="$(stage_archive_from_node_project "$provider_id" "$version" "$workspace_dir" "$entrypoint")"
+  local sha
+  sha="$(sha256_file "$archive_path")"
+  local size_bytes
+  size_bytes="$(file_size_bytes "$archive_path")"
+  write_entry "$provider_id" "$version" "tar_gz" "$entrypoint" "$archive_path" "$sha" "$size_bytes"
+
+  rm -rf "$workspace_dir"
 }
 
 stage_archive_from_binary() {
@@ -640,9 +740,15 @@ stage_archive_from_node_project() {
     exit 1
   fi
 
-  local root_entries=(package.json dist node_modules)
+  local root_entries=()
+  local candidate
+  for candidate in package.json dist node_modules; do
+    if [[ -e "$workspace_dir/$candidate" ]]; then
+      root_entries+=("$candidate")
+    fi
+  done
   local entry_dir="${entrypoint_rel%%/*}"
-  if [[ "$entry_dir" != "dist" && "$entry_dir" != "node_modules" && "$entry_dir" != "package.json" ]]; then
+  if [[ "$entry_dir" != "dist" && "$entry_dir" != "node_modules" && "$entry_dir" != "package.json" && -e "$workspace_dir/$entry_dir" ]]; then
     root_entries+=("$entry_dir")
   fi
 
@@ -968,10 +1074,13 @@ if [[ -n "${providers[*]-}" ]]; then
       amp)
         build_node_project_provider "$provider" "$ROOT/harness-adapters/example-acp" "dist/bin/amp-acp.js" "$version"
         ;;
+      auggie|claude-cli|cline|copilot|cursor|gemini|qwen)
+        stage_matrix_npm_provider "$provider" "$version"
+        ;;
       pi)
         build_node_project_provider "$provider" "$ROOT/harness-adapters/pi-acp" "dist/bin/pi-acp.js" "$version"
         ;;
-      openhands)
+      kimi|mistral|openhands)
         stage_matrix_python_provider "$provider"
         ;;
       goose)

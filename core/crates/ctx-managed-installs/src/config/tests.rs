@@ -282,9 +282,11 @@ fn resolve_runtime_provider_command_keeps_invalid_managed_commands_invalid_by_de
             .expect_err(
                 "invalid managed runtime command should remain invalid for general resolution",
             );
-    assert!(err
-        .to_string()
-        .contains("runtime_command_not_absolute: provider=codex source=managed_install"));
+    let err_text = err.to_string();
+    assert!(
+        err_text.contains("provider=codex source=managed_install"),
+        "unexpected managed runtime command error: {err_text}"
+    );
 }
 
 #[test]

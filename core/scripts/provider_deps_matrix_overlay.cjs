@@ -134,6 +134,11 @@ const upsertRelease = ({ provider, version }) => {
   ];
 };
 
+const managedInstallSupportsStagedTargets = (managedInstall) => {
+  const kind = String(managedInstall?.kind || "").trim().toLowerCase();
+  return kind === "archive" || kind === "npm" || kind === "python";
+};
+
 const applyIndexOverlay = ({ matrix, index, indexDir, artifactBaseUrl }) => {
   const providers = Array.isArray(matrix.providers) ? matrix.providers : [];
   const byId = new Map(
@@ -157,15 +162,19 @@ const applyIndexOverlay = ({ matrix, index, indexDir, artifactBaseUrl }) => {
       provider.managed_install && typeof provider.managed_install === "object"
         ? provider.managed_install
         : null;
-    if (!managedInstall || String(managedInstall.kind || "").trim() !== "archive") {
-      errors.push(`provider ${providerId} must be managed_install.kind=archive to apply staged target`);
+    if (!managedInstall || !managedInstallSupportsStagedTargets(managedInstall)) {
+      errors.push(
+        `provider ${providerId} must be managed_install.kind=archive|npm|python to apply staged target`,
+      );
       continue;
     }
 
     if (!managedInstall.targets || typeof managedInstall.targets !== "object") {
       managedInstall.targets = {};
     }
-    managedInstall.version = version;
+    if (String(managedInstall.kind || "").trim().toLowerCase() !== "npm") {
+      managedInstall.version = version;
+    }
 
     const keys = targetKeys({ os: entry.os, arch: entry.arch });
     let url;

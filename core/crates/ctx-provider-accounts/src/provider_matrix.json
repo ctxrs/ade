@@ -688,7 +688,7 @@
       "managed_install": {
         "kind": "npm",
         "package": "@google/gemini-cli",
-        "entrypoint": "node_modules/@google/gemini-cli/dist/index.js",
+        "entrypoint": "node_modules/@google/gemini-cli/bundle/gemini.js",
         "args": [
           "--experimental-acp"
         ]
@@ -794,7 +794,9 @@
         "entrypoint": "kimi",
         "args": [
           "acp"
-        ]
+        ],
+        "python_version": "3.12.13",
+        "python_build_tag": "20260303"
       },
       "version_probe": {
         "kind": "command",
@@ -824,7 +826,9 @@
         "package": "mistral-vibe",
         "version": "2.7.6",
         "entrypoint": "vibe-acp",
-        "args": []
+        "args": [],
+        "python_version": "3.12.13",
+        "python_build_tag": "20260303"
       },
       "version_probe": {
         "kind": "command",

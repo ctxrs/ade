@@ -124,6 +124,7 @@ fn managed_npm_status_entry(
             package: package.to_string(),
             entrypoint: format!("node_modules/{package}/bin.js"),
             args: Vec::new(),
+            targets: std::collections::HashMap::new(),
         }),
         provider_dependencies: Vec::new(),
         dependencies: Vec::new(),

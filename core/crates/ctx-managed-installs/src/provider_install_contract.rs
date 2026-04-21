@@ -259,17 +259,6 @@ pub fn resolve_provider_install_contract(
     target: InstallTarget,
     current_ctx_version: Option<&str>,
 ) -> Result<ProviderInstallContract, ProviderInstallViabilityIssue> {
-    if !installer::is_supported_managed_provider_for_target(matrix, provider_id, target) {
-        return Err(ProviderInstallViabilityIssue {
-            code: "install_target_unsupported",
-            message: format!(
-                "provider '{}' does not support managed install target '{}'",
-                provider_id,
-                target.as_str()
-            ),
-        });
-    }
-
     let parsed_current_ctx_version = match current_ctx_version {
         Some(raw) => provider_matrix::parse_version_loose(raw).ok_or_else(|| {
             ProviderInstallViabilityIssue {
@@ -326,6 +315,43 @@ pub fn resolve_provider_install_contract(
             ),
         }
     })?;
+    let install = entry.managed_install.as_ref().ok_or_else(|| ProviderInstallViabilityIssue {
+        code: "install_target_unsupported",
+        message: format!(
+            "provider '{}' does not support managed install target '{}'",
+            provider_id,
+            target.as_str()
+        ),
+    })?;
+
+    if matches!(target, InstallTarget::Container | InstallTarget::LinuxAarch64 | InstallTarget::LinuxX8664)
+        && matches!(
+            install,
+            provider_matrix::ProviderInstall::Npm { targets, .. }
+                | provider_matrix::ProviderInstall::Python { targets, .. }
+                if !targets.contains_key(resolved_target_key)
+        )
+    {
+        return Err(ProviderInstallViabilityIssue {
+            code: "container_artifact_missing",
+            message: format!(
+                "provider '{}' does not have a published managed artifact for target '{}'",
+                provider_id,
+                target.as_str()
+            ),
+        });
+    }
+
+    if !installer::is_supported_managed_provider_for_target(matrix, provider_id, target) {
+        return Err(ProviderInstallViabilityIssue {
+            code: "install_target_unsupported",
+            message: format!(
+                "provider '{}' does not support managed install target '{}'",
+                provider_id,
+                target.as_str()
+            ),
+        });
+    }
 
     let mut dependencies =
         resolve_matrix_provider_dependencies(cfg, matrix, entry, target, current_ctx_version)?;
@@ -465,6 +491,7 @@ mod tests {
                 package: package.to_string(),
                 entrypoint: "cli.js".to_string(),
                 args: Vec::new(),
+                targets: std::collections::HashMap::new(),
             }),
             provider_dependencies: Vec::new(),
             dependencies: Vec::new(),

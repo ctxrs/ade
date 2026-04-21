@@ -73,10 +73,17 @@ pub async fn apply_matrix_to_status(
     }
 
     let mut diagnostics = Vec::new();
-    let is_archive_install = matches!(
-        entry.managed_install.as_ref(),
-        Some(ProviderInstall::Archive { .. })
-    );
+    let is_archive_install = install_target_from_status(status)
+        .and_then(|target| {
+            entry.managed_install
+                .as_ref()
+                .and_then(|install| install.archive_target(crate::installer::resolve_matrix_target_key(target).ok()?))
+                .map(|_| true)
+        })
+        .unwrap_or(matches!(
+            entry.managed_install.as_ref(),
+            Some(ProviderInstall::Archive { .. })
+        ));
     if let Some((expected_fingerprint, detected_fingerprint)) =
         detect_managed_artifact_fingerprint_mismatch(
             cfg,
@@ -337,13 +344,16 @@ pub(super) async fn detect_managed_artifact_fingerprint_mismatch(
         .or(meta.archive_sha256.as_deref())
         .map(str::trim)
         .filter(|value| !value.is_empty());
+    let archive_target_present = entry
+        .managed_install
+        .as_ref()
+        .and_then(|install| {
+            install.archive_target(crate::installer::resolve_matrix_target_key(requested_target).ok()?)
+        })
+        .is_some();
     match detected_fingerprint {
         Some(detected)
-            if expected_fingerprint.eq_ignore_ascii_case(detected)
-                && matches!(
-                    entry.managed_install.as_ref(),
-                    Some(ProviderInstall::Archive { .. })
-                ) =>
+            if expected_fingerprint.eq_ignore_ascii_case(detected) && archive_target_present =>
         {
             None
         }

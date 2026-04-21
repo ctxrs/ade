@@ -79,6 +79,7 @@ fn codex_npm_entry(releases: Vec<ProviderRelease>) -> ProviderMatrixEntry {
             package: "@openai/codex".to_string(),
             entrypoint: "node_modules/@openai/codex/bin.js".to_string(),
             args: Vec::new(),
+            targets: std::collections::HashMap::new(),
         }),
         provider_dependencies: Vec::new(),
         dependencies: Vec::new(),
