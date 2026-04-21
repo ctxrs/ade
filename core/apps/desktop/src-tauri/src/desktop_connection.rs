@@ -1,5 +1,7 @@
 use super::*;
-pub(super) use ctx_desktop_ipc::{DesktopConnectionInfo, DesktopConnectionKind};
+pub(super) use ctx_desktop_ipc::{
+    DesktopConnectionInfo, DesktopConnectionIntent, DesktopConnectionKind,
+};
 
 #[cfg(test)]
 use std::cell::Cell;
@@ -95,14 +97,66 @@ pub(super) fn desktop_set_demo_connection(
 #[derive(Default)]
 pub(super) struct ConnectionManager(std::sync::Mutex<ConnectionState>);
 
-#[derive(Default)]
 struct ConnectionState {
     active: Option<ActiveConnection>,
+    intent: ConnectionIntent,
+}
+
+impl Default for ConnectionState {
+    fn default() -> Self {
+        Self {
+            active: None,
+            intent: ConnectionIntent::AutoLocalBootstrap,
+        }
+    }
+}
+
+impl ConnectionState {
+    fn local_auto_bootstrap_allowed(&self) -> bool {
+        self.intent.allows_local_auto_bootstrap()
+            && !matches!(self.active, Some(ActiveConnection::Ssh(_)))
+    }
+
+    fn auto_local_install_intent(&self) -> Option<ConnectionIntent> {
+        if !self.local_auto_bootstrap_allowed() || self.active.is_some() {
+            return None;
+        }
+        Some(match self.intent {
+            ConnectionIntent::ExplicitLocal => ConnectionIntent::ExplicitLocal,
+            _ => ConnectionIntent::AutoLocalBootstrap,
+        })
+    }
 }
 
 enum ActiveConnection {
     Local(LocalConnection),
     Ssh(SshConnection),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ConnectionIntent {
+    AutoLocalBootstrap,
+    ExplicitLocal,
+    ExplicitRemote,
+    ExplicitDisconnected,
+}
+
+impl ConnectionIntent {
+    fn as_ipc(self) -> DesktopConnectionIntent {
+        match self {
+            ConnectionIntent::AutoLocalBootstrap => DesktopConnectionIntent::AutoLocalBootstrap,
+            ConnectionIntent::ExplicitLocal => DesktopConnectionIntent::ExplicitLocal,
+            ConnectionIntent::ExplicitRemote => DesktopConnectionIntent::ExplicitRemote,
+            ConnectionIntent::ExplicitDisconnected => DesktopConnectionIntent::ExplicitDisconnected,
+        }
+    }
+
+    fn allows_local_auto_bootstrap(self) -> bool {
+        matches!(
+            self,
+            ConnectionIntent::AutoLocalBootstrap | ConnectionIntent::ExplicitLocal
+        )
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -123,7 +177,6 @@ struct LocalConnection {
 
 enum LocalConnectionOwnership {
     OwnedChild { child: Child, systemd_scope: bool },
-    OwnedPid { pid: u32 },
     UnownedExternal,
 }
 
@@ -203,37 +256,6 @@ fn get_connection_http_client(
         .context("connection http client missing after initialization")
 }
 
-fn stop_owned_local_daemon_pid(base_url: &str, pid: u32) -> Result<()> {
-    stop_systemd_scope("ctx-daemon");
-    if let Some(scope) = systemd_scope_for_local_daemon_url(base_url) {
-        stop_systemd_scope(&scope);
-    }
-    let graceful_err = terminate_pid(pid, false).err();
-    if wait_for_daemon_reclaim(base_url, pid, Duration::from_secs(3)).is_ok() {
-        return Ok(());
-    }
-
-    let force_err = terminate_pid(pid, true).err();
-    if wait_for_daemon_reclaim(base_url, pid, Duration::from_secs(2)).is_ok() {
-        return Ok(());
-    }
-
-    let mut details = Vec::new();
-    if let Some(err) = graceful_err {
-        details.push(format!("graceful terminate failed: {err:#}"));
-    }
-    if let Some(err) = force_err {
-        details.push(format!("force terminate failed: {err:#}"));
-    }
-    if details.is_empty() {
-        anyhow::bail!("local daemon pid {pid} did not exit");
-    }
-    anyhow::bail!(
-        "local daemon pid {pid} did not exit ({})",
-        details.join("; ")
-    );
-}
-
 fn stop_owned_local_daemon_child(
     base_url: &str,
     mut child: Child,
@@ -266,9 +288,6 @@ fn cleanup_active_connection_result(active: ActiveConnection) -> Result<()> {
                 child,
                 systemd_scope,
             } => stop_owned_local_daemon_child(&c.base_url, child, systemd_scope),
-            LocalConnectionOwnership::OwnedPid { pid } => {
-                stop_owned_local_daemon_pid(&c.base_url, pid)
-            }
             LocalConnectionOwnership::UnownedExternal => Ok(()),
         },
         ActiveConnection::Ssh(c) => try_kill_child(c.tunnel),
@@ -323,6 +342,8 @@ impl ConnectionManager {
             return DesktopConnectionInfo {
                 kind: DesktopConnectionKind::None,
                 base_url: None,
+                intent: ConnectionIntent::ExplicitDisconnected.as_ipc(),
+                local_auto_bootstrap_allowed: false,
                 token: None,
                 host: None,
                 user: None,
@@ -330,10 +351,14 @@ impl ConnectionManager {
                 remote_data_dir: None,
             };
         };
+        let intent = guard.intent.as_ipc();
+        let local_auto_bootstrap_allowed = guard.local_auto_bootstrap_allowed();
         match &guard.active {
             None => DesktopConnectionInfo {
                 kind: DesktopConnectionKind::None,
                 base_url: None,
+                intent,
+                local_auto_bootstrap_allowed,
                 token: None,
                 host: None,
                 user: None,
@@ -343,6 +368,8 @@ impl ConnectionManager {
             Some(ActiveConnection::Local(c)) => DesktopConnectionInfo {
                 kind: DesktopConnectionKind::Local,
                 base_url: Some(c.base_url.clone()),
+                intent,
+                local_auto_bootstrap_allowed,
                 token: Some(c.token.clone()),
                 host: None,
                 user: None,
@@ -352,6 +379,8 @@ impl ConnectionManager {
             Some(ActiveConnection::Ssh(c)) => DesktopConnectionInfo {
                 kind: DesktopConnectionKind::Ssh,
                 base_url: Some(c.base_url.clone()),
+                intent,
+                local_auto_bootstrap_allowed,
                 token: c.token.clone(),
                 host: Some(c.host.clone()),
                 user: c.user.clone(),
@@ -369,12 +398,39 @@ impl ConnectionManager {
         )
     }
 
+    pub(super) fn local_auto_bootstrap_allowed(&self) -> bool {
+        let guard = match self.0.lock() {
+            Ok(g) => g,
+            Err(_) => return false,
+        };
+        guard.local_auto_bootstrap_allowed()
+    }
+
+    pub(super) fn mark_explicit_local_intent_if_local(&self) {
+        let mut guard = match self.0.lock() {
+            Ok(g) => g,
+            Err(_) => return,
+        };
+        if matches!(guard.active, Some(ActiveConnection::Local(_))) {
+            guard.intent = ConnectionIntent::ExplicitLocal;
+        }
+    }
+
+    pub(super) fn mark_explicit_remote_intent(&self) {
+        let mut guard = match self.0.lock() {
+            Ok(g) => g,
+            Err(_) => return,
+        };
+        guard.intent = ConnectionIntent::ExplicitRemote;
+    }
+
     pub(super) fn disconnect(&self) {
         let active = {
             let mut guard = match self.0.lock() {
                 Ok(g) => g,
                 Err(_) => return,
             };
+            guard.intent = ConnectionIntent::ExplicitDisconnected;
             guard.active.take()
         };
         if let Some(active) = active {
@@ -404,8 +460,7 @@ impl ConnectionManager {
         matches!(
             guard.active.as_ref(),
             Some(ActiveConnection::Local(LocalConnection {
-                ownership: LocalConnectionOwnership::OwnedChild { .. }
-                    | LocalConnectionOwnership::OwnedPid { .. },
+                ownership: LocalConnectionOwnership::OwnedChild { .. },
                 ..
             }))
         )
@@ -418,6 +473,72 @@ impl ConnectionManager {
         child: Child,
         systemd_scope: bool,
     ) {
+        self.set_local_with_intent(
+            base_url,
+            token,
+            child,
+            systemd_scope,
+            ConnectionIntent::ExplicitLocal,
+        );
+    }
+
+    pub(super) fn set_local_auto_bootstrap(
+        &self,
+        base_url: String,
+        token: String,
+        child: Child,
+        systemd_scope: bool,
+    ) -> bool {
+        self.set_local_with_auto_bootstrap_gate(base_url, token, child, systemd_scope)
+    }
+
+    fn set_local_with_auto_bootstrap_gate(
+        &self,
+        base_url: String,
+        token: String,
+        child: Child,
+        systemd_scope: bool,
+    ) -> bool {
+        let daemon_pid = Some(child.id());
+        let next = ActiveConnection::Local(LocalConnection {
+            base_url,
+            token,
+            daemon_pid,
+            source: LocalConnectionSource::SpawnedByDesktop,
+            ownership: LocalConnectionOwnership::OwnedChild {
+                child,
+                systemd_scope,
+            },
+            http_client: std::sync::OnceLock::new(),
+        });
+        {
+            let mut guard = match self.0.lock() {
+                Ok(g) => g,
+                Err(_) => {
+                    cleanup_active_connection(next);
+                    return false;
+                }
+            };
+            let Some(intent) = guard.auto_local_install_intent() else {
+                drop(guard);
+                cleanup_active_connection(next);
+                return false;
+            };
+            guard.intent = intent;
+            guard.active = Some(next);
+        }
+        log_local_connection_established(LocalConnectionSource::SpawnedByDesktop, daemon_pid);
+        true
+    }
+
+    fn set_local_with_intent(
+        &self,
+        base_url: String,
+        token: String,
+        child: Child,
+        systemd_scope: bool,
+        intent: ConnectionIntent,
+    ) {
         let daemon_pid = Some(child.id());
         let previous = {
             let mut guard = match self.0.lock() {
@@ -427,6 +548,7 @@ impl ConnectionManager {
                     return;
                 }
             };
+            guard.intent = intent;
             guard
                 .active
                 .replace(ActiveConnection::Local(LocalConnection {
@@ -454,18 +576,68 @@ impl ConnectionManager {
         daemon_pid: Option<u32>,
         source: LocalConnectionSource,
     ) {
+        self.set_local_attached_with_intent(
+            base_url,
+            token,
+            daemon_pid,
+            source,
+            ConnectionIntent::ExplicitLocal,
+        );
+    }
+
+    pub(super) fn set_local_attached_auto_bootstrap(
+        &self,
+        base_url: String,
+        token: String,
+        daemon_pid: Option<u32>,
+        source: LocalConnectionSource,
+    ) -> bool {
+        self.set_local_attached_with_auto_bootstrap_gate(base_url, token, daemon_pid, source)
+    }
+
+    fn set_local_attached_with_auto_bootstrap_gate(
+        &self,
+        base_url: String,
+        token: String,
+        daemon_pid: Option<u32>,
+        source: LocalConnectionSource,
+    ) -> bool {
+        let mut guard = match self.0.lock() {
+            Ok(g) => g,
+            Err(_) => return false,
+        };
+        let Some(intent) = guard.auto_local_install_intent() else {
+            return false;
+        };
+        guard.intent = intent;
+        guard.active = Some(ActiveConnection::Local(LocalConnection {
+            base_url,
+            token,
+            daemon_pid,
+            source,
+            ownership: LocalConnectionOwnership::UnownedExternal,
+            http_client: std::sync::OnceLock::new(),
+        }));
+        drop(guard);
+        log_local_connection_established(source, daemon_pid);
+        true
+    }
+
+    fn set_local_attached_with_intent(
+        &self,
+        base_url: String,
+        token: String,
+        daemon_pid: Option<u32>,
+        source: LocalConnectionSource,
+        intent: ConnectionIntent,
+    ) {
         let previous = {
             let mut next = LocalConnection {
                 base_url,
                 token,
                 daemon_pid,
                 source,
-                ownership: match (source, daemon_pid) {
-                    (LocalConnectionSource::ExistingCompatibleDaemon, Some(pid)) => {
-                        LocalConnectionOwnership::OwnedPid { pid }
-                    }
-                    _ => LocalConnectionOwnership::UnownedExternal,
-                },
+                ownership: LocalConnectionOwnership::UnownedExternal,
                 http_client: std::sync::OnceLock::new(),
             };
             let mut guard = match self.0.lock() {
@@ -487,10 +659,12 @@ impl ConnectionManager {
                     next.ownership = c.ownership;
                     next.source = c.source;
                     next.http_client = c.http_client;
+                    guard.intent = intent;
                     None
                 }
                 other => other,
             };
+            guard.intent = intent;
             guard.active = Some(ActiveConnection::Local(next));
             previous
         };
@@ -593,6 +767,7 @@ impl ConnectionManager {
                 return None;
             }
         };
+        guard.intent = ConnectionIntent::ExplicitRemote;
         guard.active.replace(next)
     }
 

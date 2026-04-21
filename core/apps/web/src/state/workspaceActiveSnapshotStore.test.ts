@@ -2093,6 +2093,8 @@ describe("WorkspaceActiveSnapshotStore", () => {
       };
       info: {
         kind: "none" | "local" | "ssh";
+        intent: "auto_local_bootstrap" | "explicit_local" | "explicit_remote" | "explicit_disconnected";
+        local_auto_bootstrap_allowed: boolean;
         base_url: string | null;
         token: string | null;
       } | null;
@@ -2114,6 +2116,8 @@ describe("WorkspaceActiveSnapshotStore", () => {
       },
       info: {
         kind: "local",
+        intent: "explicit_local",
+        local_auto_bootstrap_allowed: true,
         base_url: "http://daemon.local",
         token: "bridge-token",
       },

@@ -11,9 +11,8 @@ pub(in super::super) async fn desktop_daemon_request(
     tauri::async_runtime::spawn_blocking(move || -> Result<DesktopHttpResponse, String> {
         let state = app.state::<ConnectionManager>();
         let manager: &ConnectionManager = state.inner();
-        // Many UI paths (including initial app load to a workbench route) can issue daemon requests
-        // before explicitly calling `desktop_connect_local`. Auto-connect here to avoid spurious
-        // "daemon unavailable" overlays on cold start.
+        // Many UI paths can issue daemon requests before explicitly calling `desktop_connect_local`.
+        // The connection manager gates this auto-bootstrap after explicit disconnect/remote intent.
         ensure_local_connection(&app, manager).map_err(|err| format!("{err:#}"))?;
         manager
             .daemon_request(req)

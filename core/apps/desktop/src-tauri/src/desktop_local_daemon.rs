@@ -30,13 +30,7 @@ pub(super) async fn desktop_connect_local(
         let desktop_identity = load_desktop_build_identity(&app).map_err(to_err)?;
         let result = connect_local_with_sources(
             state.inner(),
-            |url| {
-                existing_local_daemon_matches_or_absent(
-                    url,
-                    &data_dir,
-                    &desktop_identity,
-                )
-            },
+            |url| existing_local_daemon_matches_or_absent(url, &data_dir, &desktop_identity),
             || resolve_env_local_daemon(&app),
             probe_daemon_health,
             || resolve_existing_local_daemon(&app, &data_dir),
@@ -83,7 +77,8 @@ where
     if matches!(info.kind, DesktopConnectionKind::Local) {
         if let Some(url) = info.base_url.as_deref() {
             if current_local_matches_or_absent(url) {
-                return Ok(info);
+                state.mark_explicit_local_intent_if_local();
+                return Ok(state.info());
             }
         }
     }
@@ -167,6 +162,76 @@ where
     Ok(state.info())
 }
 
+#[derive(Debug, Clone, Copy)]
+enum EnsureLocalConnectionMode {
+    AutoBootstrap,
+    ExplicitLocal,
+}
+
+fn ensure_mode_allows_connect(mode: EnsureLocalConnectionMode, state: &ConnectionManager) -> bool {
+    match mode {
+        EnsureLocalConnectionMode::AutoBootstrap => state.local_auto_bootstrap_allowed(),
+        EnsureLocalConnectionMode::ExplicitLocal => true,
+    }
+}
+
+fn ensure_mode_needs_connect(
+    mode: EnsureLocalConnectionMode,
+    info: &DesktopConnectionInfo,
+) -> bool {
+    match mode {
+        EnsureLocalConnectionMode::AutoBootstrap => {
+            matches!(info.kind, DesktopConnectionKind::None)
+        }
+        EnsureLocalConnectionMode::ExplicitLocal => {
+            !matches!(info.kind, DesktopConnectionKind::Local)
+        }
+    }
+}
+
+fn set_attached_local_for_ensure_mode(
+    state: &ConnectionManager,
+    mode: EnsureLocalConnectionMode,
+    url: String,
+    token: String,
+    daemon_pid: Option<u32>,
+    source: LocalConnectionSource,
+) {
+    match mode {
+        EnsureLocalConnectionMode::AutoBootstrap => {
+            state.set_local_attached_auto_bootstrap(url, token, daemon_pid, source);
+        }
+        EnsureLocalConnectionMode::ExplicitLocal => {
+            state.set_local_attached(url, token, daemon_pid, source);
+        }
+    }
+}
+
+fn set_spawned_local_for_ensure_mode(
+    state: &ConnectionManager,
+    mode: EnsureLocalConnectionMode,
+    spawned: SpawnedLocalDaemonReady,
+) {
+    match mode {
+        EnsureLocalConnectionMode::AutoBootstrap => {
+            state.set_local_auto_bootstrap(
+                spawned.url,
+                spawned.token,
+                spawned.child,
+                spawned.systemd_scope,
+            );
+        }
+        EnsureLocalConnectionMode::ExplicitLocal => {
+            state.set_local(
+                spawned.url,
+                spawned.token,
+                spawned.child,
+                spawned.systemd_scope,
+            );
+        }
+    }
+}
+
 #[tauri::command]
 pub(super) async fn desktop_restart_local_daemon(
     app: tauri::AppHandle,
@@ -181,7 +246,9 @@ pub(super) async fn desktop_restart_local_daemon(
         let manager: &ConnectionManager = state.inner();
         let data_dir = daemon_data_dir(&app).map_err(to_err)?;
         let desktop_identity = load_desktop_build_identity(&app).map_err(to_err)?;
-        restart_local_with_spawn(manager, || spawn_and_validate_local_daemon(&app, &data_dir, &desktop_identity))
+        restart_local_with_spawn(manager, || {
+            spawn_and_validate_local_daemon(&app, &data_dir, &desktop_identity)
+        })
         .map_err(to_err)
     })
     .await
@@ -192,26 +259,56 @@ pub(super) fn ensure_local_connection(
     app: &tauri::AppHandle,
     state: &ConnectionManager,
 ) -> Result<()> {
+    ensure_local_connection_with_mode(app, state, EnsureLocalConnectionMode::AutoBootstrap)
+}
+
+pub(super) fn ensure_local_connection_for_user_action(
+    app: &tauri::AppHandle,
+    state: &ConnectionManager,
+) -> Result<()> {
+    ensure_local_connection_with_mode(app, state, EnsureLocalConnectionMode::ExplicitLocal)
+}
+
+fn ensure_local_connection_with_mode(
+    app: &tauri::AppHandle,
+    state: &ConnectionManager,
+    mode: EnsureLocalConnectionMode,
+) -> Result<()> {
     let result = (|| -> Result<()> {
-        if !matches!(state.info().kind, DesktopConnectionKind::None) {
+        if !ensure_mode_needs_connect(mode, &state.info()) {
+            return Ok(());
+        }
+        if !ensure_mode_allows_connect(mode, state) {
             return Ok(());
         }
         // Multiple webview requests can race on cold start (overlay pollers, initial data loads, etc.).
         // Serialize the "connect local" path so we don't concurrently spawn the daemon and trip the
         // daemon's lockfile, which can surface as spurious "daemon unavailable" errors in the UI.
         let _guard = lock_local_connect_gate()?;
-        if !matches!(state.info().kind, DesktopConnectionKind::None) {
+        if !ensure_mode_needs_connect(mode, &state.info()) {
+            return Ok(());
+        }
+        if !ensure_mode_allows_connect(mode, state) {
             return Ok(());
         }
         let data_dir = daemon_data_dir(app)?;
         let desktop_identity = load_desktop_build_identity(app)?;
         if let Some((url, token)) = resolve_env_local_daemon(app)? {
             probe_daemon_health(&url)?;
-            state.set_local_attached(url, token, None, LocalConnectionSource::EnvOverride);
+            set_attached_local_for_ensure_mode(
+                state,
+                mode,
+                url,
+                token,
+                None,
+                LocalConnectionSource::EnvOverride,
+            );
             return Ok(());
         }
         if let Some((url, token, daemon_pid)) = resolve_existing_local_daemon(app, &data_dir)? {
-            state.set_local_attached(
+            set_attached_local_for_ensure_mode(
+                state,
+                mode,
                 url,
                 token,
                 daemon_pid,
@@ -250,7 +347,9 @@ pub(super) fn ensure_local_connection(
                 let daemon_pid = daemon_health(url)
                     .ok()
                     .and_then(|health| normalize_daemon_pid(health.pid));
-                state.set_local_attached(
+                set_attached_local_for_ensure_mode(
+                    state,
+                    mode,
                     url.to_string(),
                     auth.token,
                     daemon_pid,
@@ -259,12 +358,7 @@ pub(super) fn ensure_local_connection(
                 return Ok(());
             }
         };
-        state.set_local(
-            spawned.url,
-            spawned.token,
-            spawned.child,
-            spawned.systemd_scope,
-        );
+        set_spawned_local_for_ensure_mode(state, mode, spawned);
         Ok(())
     })();
     if let Err(err) = &result {
@@ -279,6 +373,52 @@ pub(super) fn ensure_local_connection(
 #[cfg(test)]
 mod desktop_local_daemon_tests {
     use super::*;
+
+    fn connection_info_with_kind(kind: DesktopConnectionKind) -> DesktopConnectionInfo {
+        DesktopConnectionInfo {
+            base_url: None,
+            intent: DesktopConnectionIntent::AutoLocalBootstrap,
+            kind,
+            local_auto_bootstrap_allowed: true,
+            host: None,
+            remote_data_dir: None,
+            remote_port: None,
+            token: None,
+            user: None,
+        }
+    }
+
+    #[test]
+    fn explicit_local_ensure_replaces_remote_but_not_existing_local() {
+        assert!(ensure_mode_needs_connect(
+            EnsureLocalConnectionMode::ExplicitLocal,
+            &connection_info_with_kind(DesktopConnectionKind::None)
+        ));
+        assert!(ensure_mode_needs_connect(
+            EnsureLocalConnectionMode::ExplicitLocal,
+            &connection_info_with_kind(DesktopConnectionKind::Ssh)
+        ));
+        assert!(!ensure_mode_needs_connect(
+            EnsureLocalConnectionMode::ExplicitLocal,
+            &connection_info_with_kind(DesktopConnectionKind::Local)
+        ));
+    }
+
+    #[test]
+    fn auto_bootstrap_ensure_only_runs_when_transport_is_missing() {
+        assert!(ensure_mode_needs_connect(
+            EnsureLocalConnectionMode::AutoBootstrap,
+            &connection_info_with_kind(DesktopConnectionKind::None)
+        ));
+        assert!(!ensure_mode_needs_connect(
+            EnsureLocalConnectionMode::AutoBootstrap,
+            &connection_info_with_kind(DesktopConnectionKind::Local)
+        ));
+        assert!(!ensure_mode_needs_connect(
+            EnsureLocalConnectionMode::AutoBootstrap,
+            &connection_info_with_kind(DesktopConnectionKind::Ssh)
+        ));
+    }
 
     #[cfg(unix)]
     fn spawn_detached_sleep_pid() -> u32 {
@@ -369,7 +509,7 @@ mod desktop_local_daemon_tests {
 
     #[test]
     #[cfg(unix)]
-    fn desktop_restart_local_daemon_restarts_reattached_compatible_daemon() {
+    fn desktop_restart_local_daemon_does_not_stop_attached_compatible_daemon() {
         let state = ConnectionManager::default();
         let previous_pid = spawn_detached_sleep_pid();
         assert!(
@@ -391,11 +531,10 @@ mod desktop_local_daemon_tests {
         );
 
         let info = restart_local_with_spawn(&state, || {
-            if pid_is_alive(previous_pid) {
-                anyhow::bail!(
-                    "reattached compatible daemon pid {previous_pid} was still alive when replacement spawn began"
-                );
-            }
+            assert!(
+                pid_is_alive(previous_pid),
+                "attached compatible daemon pid {previous_pid} must remain alive when replacement spawn begins"
+            );
             Ok(SpawnedLocalDaemonReady {
                 url: "http://127.0.0.1:4317".to_string(),
                 token: "replacement-token".to_string(),
@@ -412,11 +551,23 @@ mod desktop_local_daemon_tests {
             pid_is_alive(replacement_pid),
             "replacement child {replacement_pid} should remain active after restart"
         );
+        assert!(
+            pid_is_alive(previous_pid),
+            "attached compatible daemon pid {previous_pid} must remain external after restart"
+        );
 
         state.disconnect();
         assert!(
             wait_for_pid_exit(replacement_pid, Duration::from_secs(3)),
             "replacement child {replacement_pid} should terminate on disconnect"
         );
+        assert!(
+            pid_is_alive(previous_pid),
+            "external attached compatible daemon pid {previous_pid} must not terminate on disconnect"
+        );
+        let _ = Command::new("kill")
+            .arg("-KILL")
+            .arg(previous_pid.to_string())
+            .output();
     }
 }

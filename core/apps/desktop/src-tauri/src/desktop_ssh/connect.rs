@@ -217,6 +217,10 @@ async fn desktop_connect_ssh_inner(
     // connection to `none` up front invites background local auto-connect paths to race the SSH
     // bootstrap and can strand the wizard on Create against the wrong daemon.
     let target = normalize_connect_target(req)?;
+    {
+        let state = app.state::<ConnectionManager>();
+        state.mark_explicit_remote_intent();
+    }
     let channel = normalize_update_channel(std::env::var("CTX_DESKTOP_CHANNEL").ok().as_deref())?;
     let prepared = tauri::async_runtime::spawn_blocking({
         let target = target.clone();
@@ -287,6 +291,11 @@ pub(crate) fn desktop_connect_ssh_begin(
     app: tauri::AppHandle,
     req: SshConnectReq,
 ) -> Result<String, String> {
+    let _ = normalize_connect_target(req.clone())?;
+    {
+        let state = app.state::<ConnectionManager>();
+        state.mark_explicit_remote_intent();
+    }
     let job_id = begin_connect_job()?;
     let app_for_job = app.clone();
     let job_id_for_task = job_id.clone();

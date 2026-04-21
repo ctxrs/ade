@@ -522,10 +522,6 @@ mod tests {
             exact_version: exact_version.to_string(),
             build_id: build_id.to_string(),
             compatibility_token: compatibility_token.to_string(),
-            channel: "stable".to_string(),
-            source_commit: None,
-            mode: "dev".to_string(),
-            checked_in_version: exact_version.to_string(),
         }
     }
 

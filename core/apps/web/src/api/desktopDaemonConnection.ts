@@ -40,7 +40,7 @@ const shouldConnectLocalWhenMissing = (
   connectLocalWhenMissing: boolean,
 ): boolean => {
   if (!connectLocalWhenMissing) return false;
-  if (!info) return true;
+  if (!info?.local_auto_bootstrap_allowed) return false;
   if (info.kind === "ssh") return false;
   return !info.base_url;
 };

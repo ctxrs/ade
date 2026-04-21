@@ -30,9 +30,15 @@ describe("clientBase desktop connection sync", () => {
   });
 
   it("bootstraps a missing local desktop connection via desktopConnectLocal", async () => {
-    desktopGetConnectionMock.mockResolvedValueOnce({ kind: "none" });
+    desktopGetConnectionMock.mockResolvedValueOnce({
+      kind: "none",
+      intent: "auto_local_bootstrap",
+      local_auto_bootstrap_allowed: true,
+    });
     desktopConnectLocalMock.mockResolvedValue({
       kind: "local",
+      intent: "explicit_local",
+      local_auto_bootstrap_allowed: true,
       base_url: "http://127.0.0.1:4399",
       token: "abc",
     });
@@ -52,9 +58,31 @@ describe("clientBase desktop connection sync", () => {
     expect(result.config.authToken).toBe("abc");
   });
 
+  it("does not auto-connect local after an explicit desktop disconnect", async () => {
+    desktopGetConnectionMock.mockResolvedValueOnce({
+      kind: "none",
+      intent: "explicit_disconnected",
+      local_auto_bootstrap_allowed: false,
+    });
+
+    const mod = await import("./clientBase");
+    const result = await mod.syncDesktopDaemonConnectionFromBridge({
+      force: true,
+      probeHealth: true,
+      reason: "test_explicit_disconnect",
+    });
+
+    expect(desktopGetConnectionMock).toHaveBeenCalledTimes(1);
+    expect(desktopConnectLocalMock).not.toHaveBeenCalled();
+    expect(result.config.baseUrl).toBeNull();
+    expect(result.config.authToken).toBeNull();
+  });
+
   it("republishes canonical desktop state when a bridge read clears a stale connection", async () => {
     desktopGetConnectionMock.mockResolvedValue({
       kind: "none",
+      intent: "explicit_disconnected",
+      local_auto_bootstrap_allowed: false,
       base_url: null,
       token: null,
     });
