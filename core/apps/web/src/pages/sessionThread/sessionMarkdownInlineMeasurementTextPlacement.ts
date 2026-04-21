@@ -25,6 +25,8 @@ type InlineTextPlacementDebug = {
   appendLineText: (text: string) => void;
 };
 
+const INLINE_CODE_TAIL_WHOLE_SEGMENT_FIT_TOLERANCE_PX = 1;
+
 export type InlineTextPlacementResult = {
   action: "continue" | "break";
   state: InlineMeasurementLineState;
@@ -85,6 +87,12 @@ export function placeInlineTextSegment(params: {
           params.currentLineInlineCodeSoftBreakTextStartGuardPx,
       )
     : availableWidth;
+  const wholeSegmentAvailableWidth = Math.max(
+    1,
+    availableWidth + params.currentLineInlineCodeTailTextSeamGuardPx,
+  );
+  const wholeSegmentFitsCurrentLine =
+    item.fullWidth <= wholeSegmentAvailableWidth + INLINE_CODE_TAIL_WHOLE_SEGMENT_FIT_TOLERANCE_PX + 0.01;
   const codeSegmentAvailableWidth =
     codeGroupId != null && !item.isSealedInlineCodeFragment
       ? Math.max(1, availableWidth + params.currentLineFitSlackPx + params.currentLineNearFitLeadingHangPx)
@@ -186,9 +194,34 @@ export function placeInlineTextSegment(params: {
     codeGroupId == null &&
     state.cursor === null &&
     !item.startsAfterStyledTextSeam &&
-    !item.startsAfterInlineCodeSeam;
+    (!item.startsAfterInlineCodeSeam ||
+      (!state.lineStartedWithContinuedCode &&
+        !item.startsAfterCollapsedSoftBreak &&
+        !item.startsStyledTextAfterInlineCodeSeam &&
+        wholeSegmentFitsCurrentLine));
 
-  if (allowWholeSegmentFastPath && item.fullWidth <= availableWidth + 0.01) {
+  if (
+    params.debug.enabled &&
+    codeGroupId == null &&
+    state.cursor === null &&
+    item.startsAfterInlineCodeSeam
+  ) {
+    params.debug.segmentSeamAdjustments.push({
+      type: "inline-code-whole-fit",
+      lineHasContent: state.lineHasContent,
+      text: item.text,
+      reservedWidth: params.reservedWidth,
+      availableWidth,
+      wholeSegmentAvailableWidth,
+      fullWidth: item.fullWidth,
+      lineStartedWithContinuedCode: state.lineStartedWithContinuedCode,
+      startsAfterCollapsedSoftBreak: item.startsAfterCollapsedSoftBreak,
+      startsStyledTextAfterInlineCodeSeam: item.startsStyledTextAfterInlineCodeSeam,
+      allowed: allowWholeSegmentFastPath,
+    });
+  }
+
+  if (allowWholeSegmentFastPath && wholeSegmentFitsCurrentLine) {
     const lineWasEmpty = !state.lineHasContent;
     state.remainingWidth = Math.max(0, state.remainingWidth - params.reservedWidth - item.fullWidth);
     state.lineOnlyCodeGroupId = null;

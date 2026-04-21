@@ -334,6 +334,29 @@ describe("getPretextVirtualizerRowLayout", () => {
     expect(slack).toBe(0);
   });
 
+  it("does not grant continuation slack after a hyphen-ended path fragment", () => {
+    const slack = resolveInlineCodeContinuationFitSlackPx({
+      lineHasContent: true,
+      atLineBreakBoundary: true,
+      sameCodeGroupContinuation: true,
+      startsAfterCodeWhitespace: false,
+      lastFragmentEndedWithDot: false,
+      lastFragmentEndedWithHyphen: true,
+      lastFragmentEndedWithPathDelimiter: false,
+      item: {
+        codeGroupHasDottedPath: true,
+        codeGroupHasTrailingText: false,
+        codeGroupStartsAfterText: true,
+        codeGroupStartsAfterStyledTextSeam: false,
+        isPathTailFragment: false,
+        isSealedInlineCodeFragment: false,
+        text: "code/e2e",
+      },
+    });
+
+    expect(slack).toBe(0);
+  });
+
   it("breaks before partially fitting a dotted call continuation after a sealed dotted fragment", () => {
     const shouldBreak = shouldBreakBeforePartialDottedCallContinuation({
       fragmentWidth: 93.92,
@@ -493,6 +516,21 @@ describe("getPretextVirtualizerRowLayout", () => {
     ).toBe(14);
   });
 
+  it("uses half chrome for a path-like continuation line start in chromium-style wraps", () => {
+    expect(
+      resolveInlineCodeWrapChromeWidth({
+        chromeWidth: 14,
+        codeGroupHasWhitespace: false,
+        codeGroupStartsAfterText: true,
+        chargedChrome: false,
+        isFirstCodeGroupFragment: false,
+        prefersFreshLineStart: false,
+        lineHasContent: false,
+        startsAtLineStart: true,
+      }),
+    ).toBe(7);
+  });
+
   it("applies the leading-hang chrome discount to whitespace-bearing command chips after prose", () => {
     expect(
       resolveInlineCodeWrapChromeWidth({
@@ -597,13 +635,22 @@ describe("getPretextVirtualizerRowLayout", () => {
     expect(height).toBe(Math.round(2 * SESSION_THREAD_MARKDOWN_BODY_LINE_HEIGHT_PX * 16) / 16);
   });
 
+  it("keeps trailing prose on the same line when it fully fits after a long path-like code group", () => {
+    const height = measureSessionMarkdownDocument(
+      "Paragraph with `alpha-beta-gamma-delta/ctx/path/one/with/a/very/long/suffix` and prose after the wrap threshold.",
+      788,
+    );
+
+    expect(height).toBe(Math.round(1 * SESSION_THREAD_MARKDOWN_BODY_LINE_HEIGHT_PX * 16) / 16);
+  });
+
   it("moves an overflowing sealed path fragment to the next line inside list items", () => {
     const height = measureSessionMarkdownDocument(
       "- Command fragment [stream layout](https://example.com/docs/parity/webkit?ref=298) *agent virtualizer* ~~inline~~ `pages/fixtures/sessionMarkdownMeasurement.ts/sessionMarkdownMeasurement.ts/blockquote/inline-code/e2e` render parity composer probe render header render summary;",
       588,
     );
 
-    expect(height).toBe(Math.round(4 * SESSION_THREAD_MARKDOWN_BODY_LINE_HEIGHT_PX * 16) / 16);
+    expect(height).toBe(Math.round(3 * SESSION_THREAD_MARKDOWN_BODY_LINE_HEIGHT_PX * 16) / 16);
   });
 
   it("moves an overflowing sealed path fragment before trailing prose in plain paragraphs", () => {
@@ -612,7 +659,16 @@ describe("getPretextVirtualizerRowLayout", () => {
       564,
     );
 
-    expect(height).toBe(Math.round(4 * SESSION_THREAD_MARKDOWN_BODY_LINE_HEIGHT_PX * 16) / 16);
+    expect(height).toBe(Math.round(3 * SESSION_THREAD_MARKDOWN_BODY_LINE_HEIGHT_PX * 16) / 16);
+  });
+
+  it("breaks before a dotted path tail fragment that would only partially fit on the prose line", () => {
+    const height = measureSessionMarkdownDocument(
+      "threshold render deterministic context `src/src/pretextVirtualizerRowLayout.ts/core/blockquote` layout browser layout line delta context before the final browser-width pass lands.",
+      620,
+    );
+
+    expect(height).toBe(Math.round(3 * SESSION_THREAD_MARKDOWN_BODY_LINE_HEIGHT_PX * 16) / 16);
   });
 
   it("keeps a path-tail final inline fragment on the decorated prose line in chromium-style wraps", () => {

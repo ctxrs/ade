@@ -117,10 +117,6 @@ export function resolveInlineCodeContinuationFitSlackPx(params: {
   lastFragmentEndedWithPathDelimiter: boolean;
   item: InlineContinuationSlackItem;
 }): number {
-  const isPathLikeItem =
-    params.item.text.includes("/") || params.item.text.includes("\\") || params.item.isPathTailFragment;
-  const allowChromiumHyphenPathContinuation =
-    browserAllowsInlineCodeLeadingHang() && params.lastFragmentEndedWithHyphen && isPathLikeItem;
   const shouldDisableChromiumNonDelimitedPathTailSlack =
     browserAllowsInlineCodeLeadingHang() &&
     params.item.isPathTailFragment &&
@@ -143,7 +139,7 @@ export function resolveInlineCodeContinuationFitSlackPx(params: {
       !params.item.text.includes("/") &&
       !params.item.text.includes("\\") &&
       !params.item.isPathTailFragment) ||
-    (params.lastFragmentEndedWithHyphen && !allowChromiumHyphenPathContinuation) ||
+    params.lastFragmentEndedWithHyphen ||
     (params.lastFragmentEndedWithPathDelimiter && params.item.codeGroupStartsAfterStyledTextSeam) ||
     (params.lastFragmentEndedWithPathDelimiter &&
       params.item.codeGroupStartsAfterText &&
@@ -202,6 +198,19 @@ export function resolveInlineCodeWrapChromeWidth(params: {
   if (params.chargedChrome) {
     return 0;
   }
+  // Chromium continuation lines of path-like inline code still keep a visible
+  // chip edge, but they do not consume the full leading chrome width of a
+  // brand-new chip. Charging half the edge matches the wrapped DOM more
+  // closely than treating every continuation line like a fresh code start.
+  if (
+    browserAllowsInlineCodeLeadingHang() &&
+    params.startsAtLineStart &&
+    !params.isFirstCodeGroupFragment &&
+    params.codeGroupStartsAfterText &&
+    !params.codeGroupHasWhitespace
+  ) {
+    return params.chromeWidth / 2;
+  }
   // Chromium lets one edge of the outer <code> chip hang on the first visual
   // slice of a continuous path-like code group when that slice starts after
   // prose on the same line. We only opt into that discount from the current-
@@ -251,7 +260,6 @@ export function shouldBreakBeforePartialDottedStemPathTailContinuation(params: {
   sameCodeGroupContinuation: boolean;
 }): boolean {
   return (
-    !browserAllowsInlineCodeLeadingHang() &&
     params.sameCodeGroupContinuation &&
     params.item.codeGroupStartsAfterText &&
     params.item.codeGroupHasDottedPath &&

@@ -65,9 +65,22 @@ export type SessionMarkdownInlineCodeContinuationDecision = {
 };
 
 export type SessionMarkdownInlineCodeSegmentSeamAdjustment = {
-  type: "no-progress-advance" | "no-progress-drop" | "whitespace-only-break" | "whitespace-only-advance";
+  type:
+    | "no-progress-advance"
+    | "no-progress-drop"
+    | "whitespace-only-break"
+    | "whitespace-only-advance"
+    | "inline-code-whole-fit";
   lineHasContent: boolean;
   text: string;
+  reservedWidth?: number;
+  availableWidth?: number;
+  wholeSegmentAvailableWidth?: number;
+  fullWidth?: number;
+  lineStartedWithContinuedCode?: boolean;
+  startsAfterCollapsedSoftBreak?: boolean;
+  startsStyledTextAfterInlineCodeSeam?: boolean;
+  allowed?: boolean;
 };
 
 export type SessionMarkdownInlineCodeDebugItem =
