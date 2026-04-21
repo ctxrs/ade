@@ -80,6 +80,7 @@ function collectManagedArchiveTargets(matrix, providerFilter = [], targetFilter 
   const requested = new Set(providerFilter);
   const requestedTargets = new Set(targetFilter);
   const matchedProviders = new Set();
+  const providersWithTargets = new Set();
   const targets = [];
 
   for (const entry of matrix.providers || []) {
@@ -97,6 +98,7 @@ function collectManagedArchiveTargets(matrix, providerFilter = [], targetFilter 
       if (requestedTargets.size > 0 && !requestedTargets.has(targetKey)) {
         continue;
       }
+      providersWithTargets.add(entry.id);
       targets.push({
         providerId: entry.id,
         targetKey,
@@ -108,7 +110,8 @@ function collectManagedArchiveTargets(matrix, providerFilter = [], targetFilter 
   }
 
   const missing = [...requested].filter((id) => !matchedProviders.has(id));
-  return { missing, targets };
+  const emptyTargets = [...requested].filter((id) => matchedProviders.has(id) && !providersWithTargets.has(id));
+  return { missing, emptyTargets, targets };
 }
 
 class HttpRequestError extends Error {

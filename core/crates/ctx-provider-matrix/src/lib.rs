@@ -97,6 +97,7 @@ pub struct ProviderCommand {
 pub enum ProviderInstall {
     Npm {
         package: String,
+        version: String,
         entrypoint: String,
         #[serde(default)]
         args: Vec<String>,

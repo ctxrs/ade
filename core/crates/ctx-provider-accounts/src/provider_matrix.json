@@ -148,6 +148,7 @@
       "managed_install": {
         "kind": "npm",
         "package": "@augmentcode/auggie",
+        "version": "0.24.0",
         "entrypoint": "node_modules/@augmentcode/auggie/augment.mjs",
         "args": [
           "--acp"
@@ -178,6 +179,7 @@
       "managed_install": {
         "kind": "npm",
         "package": "@anthropic-ai/claude-code",
+        "version": "2.1.114",
         "entrypoint": "node_modules/@anthropic-ai/claude-code/cli.js",
         "args": []
       },
@@ -281,6 +283,7 @@
       "managed_install": {
         "kind": "npm",
         "package": "cline",
+        "version": "2.15.0",
         "entrypoint": "node_modules/cline/dist/cli.mjs",
         "args": [
           "--acp"
@@ -465,6 +468,7 @@
       "managed_install": {
         "kind": "npm",
         "package": "@github/copilot",
+        "version": "1.0.32",
         "entrypoint": "node_modules/@github/copilot/npm-loader.js",
         "args": [
           "--acp",
@@ -495,6 +499,7 @@
       "managed_install": {
         "kind": "npm",
         "package": "@blowmage/cursor-agent-acp",
+        "version": "0.7.1",
         "entrypoint": "node_modules/@blowmage/cursor-agent-acp/dist/bin/cursor-agent-acp.js",
         "args": []
       },
@@ -688,6 +693,7 @@
       "managed_install": {
         "kind": "npm",
         "package": "@google/gemini-cli",
+        "version": "0.38.2",
         "entrypoint": "node_modules/@google/gemini-cli/bundle/gemini.js",
         "args": [
           "--experimental-acp"
@@ -1019,6 +1025,7 @@
       "managed_install": {
         "kind": "npm",
         "package": "@qwen-code/qwen-code",
+        "version": "0.14.5",
         "entrypoint": "node_modules/@qwen-code/qwen-code/cli.js",
         "args": [
           "--experimental-acp"

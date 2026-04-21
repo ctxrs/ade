@@ -161,31 +161,30 @@ fn create_gemini_runtime_layout(root: &Path) -> (PathBuf, PathBuf, PathBuf) {
         .join("node_modules")
         .join("@google")
         .join("gemini-cli")
-        .join("dist")
-        .join("index.js");
-    let core_entry = root
         .join("bundle")
-        .join("providers")
-        .join("gemini")
-        .join("node_modules")
-        .join("@google")
-        .join("gemini-cli-core")
-        .join("dist")
-        .join("index.js");
+        .join("gemini.js");
+    let package_json = cli_entry
+        .parent()
+        .and_then(|parent| parent.parent())
+        .expect("gemini cli root")
+        .join("package.json");
     std::fs::create_dir_all(node_bin.parent().unwrap()).unwrap();
     std::fs::create_dir_all(cli_entry.parent().unwrap()).unwrap();
-    std::fs::create_dir_all(core_entry.parent().unwrap()).unwrap();
     std::fs::write(&node_bin, b"node").unwrap();
     std::fs::write(&cli_entry, b"cli").unwrap();
-    std::fs::write(&core_entry, b"core").unwrap();
-    (node_bin, cli_entry, core_entry)
+    std::fs::write(
+        &package_json,
+        r#"{"name":"@google/gemini-cli","version":"0.38.2"}"#,
+    )
+    .unwrap();
+    (node_bin, cli_entry, package_json)
 }
 
 #[test]
-fn wraps_explicit_gemini_node_entrypoint_for_acp() {
+fn accepts_explicit_gemini_node_entrypoint_for_acp() {
     let temp = tempdir().unwrap();
     let data_root = temp.path().join("data");
-    let (node_bin, cli_entry, core_entry) = create_gemini_runtime_layout(temp.path());
+    let (node_bin, cli_entry, _) = create_gemini_runtime_layout(temp.path());
 
     let input = installer::AgentServerCommand {
         command: node_bin.to_string_lossy().to_string(),
@@ -201,17 +200,12 @@ fn wraps_explicit_gemini_node_entrypoint_for_acp() {
 
     assert_eq!(wrapped.command, node_bin.to_string_lossy().to_string());
     assert_eq!(
-        wrapped.args.get(1).map(String::as_str),
-        Some("--experimental-acp")
+        wrapped.args,
+        vec![
+            cli_entry.to_string_lossy().to_string(),
+            "--experimental-acp".to_string(),
+        ]
     );
-    let wrapper_arg = wrapped.args.first().expect("wrapper arg");
-    assert!(wrapper_arg.ends_with("gemini-acp-wrapper.mjs"));
-    let wrapper_path = PathBuf::from(wrapper_arg);
-    assert!(wrapper_path.exists());
-    let wrapper_body = std::fs::read_to_string(wrapper_path).unwrap();
-    assert!(wrapper_body.contains("GEMINI_CLI_NO_RELAUNCH"));
-    assert!(wrapper_body.contains(cli_entry.to_string_lossy().as_ref()));
-    assert!(wrapper_body.contains(core_entry.to_string_lossy().as_ref()));
 }
 
 #[test]
@@ -244,7 +238,7 @@ fn rejects_relative_gemini_entrypoint() {
     let input = installer::AgentServerCommand {
         command: node_bin.to_string_lossy().to_string(),
         args: vec![
-            "node_modules/@google/gemini-cli/dist/index.js".to_string(),
+            "node_modules/@google/gemini-cli/bundle/gemini.js".to_string(),
             "--experimental-acp".to_string(),
         ],
         dependencies: Vec::new(),
@@ -258,11 +252,11 @@ fn rejects_relative_gemini_entrypoint() {
 }
 
 #[test]
-fn rejects_gemini_runtime_when_core_package_is_missing() {
+fn rejects_gemini_runtime_when_package_json_is_missing() {
     let temp = tempdir().unwrap();
     let data_root = temp.path().join("data");
-    let (node_bin, cli_entry, core_entry) = create_gemini_runtime_layout(temp.path());
-    std::fs::remove_file(core_entry).unwrap();
+    let (node_bin, cli_entry, package_json) = create_gemini_runtime_layout(temp.path());
+    std::fs::remove_file(package_json).unwrap();
 
     let input = installer::AgentServerCommand {
         command: node_bin.to_string_lossy().to_string(),
@@ -277,7 +271,7 @@ fn rejects_gemini_runtime_when_core_package_is_missing() {
 
     assert!(err
         .to_string()
-        .contains("Gemini ACP companion package is missing"));
+        .contains("Gemini ACP entrypoint must live under a node_modules/@google/gemini-cli install tree"));
 }
 
 #[test]

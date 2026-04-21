@@ -189,27 +189,17 @@ fn setup_explicit_gemini_runtime_command_with_probe_response(
         .join("node_modules")
         .join("@google")
         .join("gemini-cli")
-        .join("dist")
-        .join("index.js");
-    let core_entry = data_root
         .join("bundle")
-        .join("providers")
-        .join("gemini")
-        .join("node_modules")
-        .join("@google")
-        .join("gemini-cli-core")
-        .join("dist")
-        .join("index.js");
+        .join("gemini.js");
     let cli_pkg = cli_entry
         .parent()
-        .expect("cli dist")
+        .expect("cli bundle")
         .parent()
         .expect("cli root")
         .join("package.json");
 
     std::fs::create_dir_all(node_bin.parent().expect("node parent")).expect("mkdir node");
     std::fs::create_dir_all(cli_entry.parent().expect("cli parent")).expect("mkdir cli");
-    std::fs::create_dir_all(core_entry.parent().expect("core parent")).expect("mkdir core");
     write_executable(
         &node_bin,
         &format!(
@@ -228,10 +218,9 @@ exit 1
         ),
     );
     std::fs::write(&cli_entry, b"cli").expect("write cli entry");
-    std::fs::write(&core_entry, b"core").expect("write core entry");
     std::fs::write(
         &cli_pkg,
-        r#"{"name":"@google/gemini-cli","version":"0.33.1"}"#,
+        r#"{"name":"@google/gemini-cli","version":"0.38.2"}"#,
     )
     .expect("write cli package");
 

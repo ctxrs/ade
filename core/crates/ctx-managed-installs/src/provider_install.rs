@@ -289,13 +289,28 @@ pub(super) async fn install_provider_impl(
         let managed = match install {
             provider_matrix::ProviderInstall::Npm {
                 package,
+                version,
                 entrypoint,
                 args,
                 targets,
             } => {
-                if !matches!(target, InstallTarget::Host | InstallTarget::Container) {
+                if !matches!(
+                    target,
+                    InstallTarget::Host
+                        | InstallTarget::Container
+                        | InstallTarget::LinuxAarch64
+                        | InstallTarget::LinuxX8664
+                ) {
                     anyhow::bail!(
-                        "target '{requested_target_label}' is not supported for npm provider '{provider_id}' installs; use target host or container"
+                        "target '{requested_target_label}' is not supported for npm provider '{provider_id}' installs; use target host, container, linux-aarch64, or linux-x86_64"
+                    );
+                }
+                if provider_matrix::normalize_version(version)
+                    != provider_matrix::normalize_version(&release.version)
+                {
+                    anyhow::bail!(
+                        "provider matrix version mismatch for {provider_id}: release={release_version} install={version}",
+                        release_version = release.version,
                     );
                 }
                 let version = release.version.clone();
@@ -303,8 +318,7 @@ pub(super) async fn install_provider_impl(
                 error_version = Some(version.clone());
                 error_install_dir_rel =
                     Some(format!("providers/agent-servers/{provider_id}/{version}"));
-                if matches!(target, InstallTarget::Host) || !targets.contains_key(resolved_target_key)
-                {
+                if matches!(target, InstallTarget::Host) {
                     install_managed_npm_provider(
                         state,
                         install_id,
@@ -388,9 +402,15 @@ pub(super) async fn install_provider_impl(
                 python_version,
                 python_build_tag,
             } => {
-                if !matches!(target, InstallTarget::Host | InstallTarget::Container) {
+                if !matches!(
+                    target,
+                    InstallTarget::Host
+                        | InstallTarget::Container
+                        | InstallTarget::LinuxAarch64
+                        | InstallTarget::LinuxX8664
+                ) {
                     anyhow::bail!(
-                        "target '{requested_target_label}' is not supported for python provider '{provider_id}' installs; use target host or container",
+                        "target '{requested_target_label}' is not supported for python provider '{provider_id}' installs; use target host, container, linux-aarch64, or linux-x86_64",
                     );
                 }
                 if provider_matrix::normalize_version(version)
@@ -406,8 +426,7 @@ pub(super) async fn install_provider_impl(
                 error_install_dir_rel = Some(format!(
                     "providers/agent-servers/{provider_id}/{version}",
                 ));
-                if matches!(target, InstallTarget::Host) || !targets.contains_key(resolved_target_key)
-                {
+                if matches!(target, InstallTarget::Host) {
                     install_managed_python_provider(
                         state,
                         install_id,

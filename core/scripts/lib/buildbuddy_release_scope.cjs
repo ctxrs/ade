@@ -93,16 +93,24 @@ async function inspectManagedArchiveTargets({
     matrixRelativePath,
     repoRoot,
   });
-  const { missing, targets } = collectManagedArchiveTargets(matrix, providerIds, []);
+  const { missing, emptyTargets, targets } = collectManagedArchiveTargets(matrix, providerIds, []);
   if (missing.length > 0) {
     throw new Error(`requested provider ids not present in matrix: ${missing.join(", ")}`);
   }
-  if (targets.length === 0) {
+  if (targets.length === 0 && emptyTargets.length === 0) {
     throw new Error("no managed archive targets matched the selected provider set");
   }
   const results = await verifyManagedArchiveTargetsDetailed(targets, {
     timeoutMs,
   });
+  for (const providerId of emptyTargets) {
+    results.push({
+      providerId,
+      targetKey: "<none>",
+      status: "missing",
+      message: `provider ${providerId} has no managed archive targets`,
+    });
+  }
   return {
     matrix,
     results,

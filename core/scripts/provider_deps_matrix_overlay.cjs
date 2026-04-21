@@ -172,9 +172,7 @@ const applyIndexOverlay = ({ matrix, index, indexDir, artifactBaseUrl }) => {
     if (!managedInstall.targets || typeof managedInstall.targets !== "object") {
       managedInstall.targets = {};
     }
-    if (String(managedInstall.kind || "").trim().toLowerCase() !== "npm") {
-      managedInstall.version = version;
-    }
+    managedInstall.version = version;
 
     const keys = targetKeys({ os: entry.os, arch: entry.arch });
     let url;

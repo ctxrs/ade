@@ -266,16 +266,28 @@ pub fn expected_managed_provider_artifact_fingerprint(
 ) -> Option<String> {
     let install = entry.managed_install.as_ref()?;
     match install {
-        provider_matrix::ProviderInstall::Npm { package, targets, .. } => targets
-            .get(resolve_matrix_target_key(target).ok()?)
-            .and_then(|target_entry| trimmed_non_empty(target_entry.sha256.as_deref()))
-            .or_else(|| {
-                if matches!(target, InstallTarget::Host) {
-                    npm_artifact_fingerprint(package, version)
-                } else {
-                    None
-                }
-            }),
+        provider_matrix::ProviderInstall::Npm {
+            package,
+            version: install_version,
+            targets,
+            ..
+        } => {
+            if provider_matrix::normalize_version(install_version)
+                != provider_matrix::normalize_version(version)
+            {
+                return None;
+            }
+            targets
+                .get(resolve_matrix_target_key(target).ok()?)
+                .and_then(|target_entry| trimmed_non_empty(target_entry.sha256.as_deref()))
+                .or_else(|| {
+                    if matches!(target, InstallTarget::Host) {
+                        npm_artifact_fingerprint(package, install_version)
+                    } else {
+                        None
+                    }
+                })
+        }
         provider_matrix::ProviderInstall::Archive {
             version: install_version,
             targets,
