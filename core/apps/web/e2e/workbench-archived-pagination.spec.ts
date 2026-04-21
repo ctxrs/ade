@@ -2,6 +2,19 @@ import { test, expect } from "./fixtures";
 import { seedDummyWorkspace } from "./utils/seedDummyWorkspace";
 
 test("workbench: archived pagination uses workspace task listing", async ({ page, request }) => {
+  await page.route("**/api/updates/check**", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        channel: "stable",
+        current_version: "1.0.0",
+        latest_version: "1.0.0",
+        update_available: false,
+      }),
+    });
+  });
+
   const seed = await seedDummyWorkspace(request, {
     tasks: 52,
     sessionsPerTask: 0,

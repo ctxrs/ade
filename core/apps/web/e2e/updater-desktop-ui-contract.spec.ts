@@ -5,6 +5,8 @@ import path from "path";
 import { execSync } from "child_process";
 import type { Page } from "playwright/test";
 
+const E2E_AUTH_TOKEN = process.env.CTX_E2E_AUTH_TOKEN ?? "ctx-e2e-auth-token";
+
 const AUTO_APPLY_ON_LAUNCH_STORAGE_KEY = "ctx_update_auto_apply_on_launch_v1";
 const PROMPT_SNOOZE_STORAGE_KEY = "ctx_update_prompt_next_allowed_at_v1";
 const IDLE_UPDATE_VERSION_STORAGE_KEY = "ctx_update_prompt_idle_versions_v1";
@@ -32,6 +34,7 @@ type DesktopApplyResponse = {
 };
 
 type HarnessConfig = {
+  authToken: string;
   updateState: DesktopUpdateState;
   applyResponse: DesktopApplyResponse;
 };
@@ -156,7 +159,7 @@ const installDesktopHarness = async (page: Page, config: HarnessConfig) => {
         return {
           kind: "local",
           base_url: currentDaemonBaseUrl(),
-          token: "local-token",
+          token: initial.authToken,
         };
       }
       if (name === "desktop_get_app_update_state") {
@@ -222,7 +225,7 @@ const installDesktopHarness = async (page: Page, config: HarnessConfig) => {
           }
         }
         if (!fetchHeaders.authorization) {
-          fetchHeaders.authorization = "Bearer ctx-e2e-auth-token";
+          fetchHeaders.authorization = `Bearer ${initial.authToken}`;
         }
         if (!fetchHeaders["content-type"] && body) {
           fetchHeaders["content-type"] = "application/json";
@@ -371,6 +374,7 @@ test("desktop updater remains silent while staging", async ({ page }) => {
     sessionStorage.removeItem(restartKey);
   }, AUTO_APPLY_ON_LAUNCH_STORAGE_KEY, PROMPT_SNOOZE_STORAGE_KEY, IDLE_UPDATE_VERSION_STORAGE_KEY, RESTART_REQUIRED_VERSION_STORAGE_KEY);
   await installDesktopHarness(page, {
+    authToken: E2E_AUTH_TOKEN,
     updateState: {
       configured: true,
       available: false,
@@ -439,6 +443,7 @@ test("desktop Update Now requests restart in restart-required state", async ({ p
     sessionStorage.removeItem(restartKey);
   }, AUTO_APPLY_ON_LAUNCH_STORAGE_KEY, PROMPT_SNOOZE_STORAGE_KEY, IDLE_UPDATE_VERSION_STORAGE_KEY, RESTART_REQUIRED_VERSION_STORAGE_KEY);
   await installDesktopHarness(page, {
+    authToken: E2E_AUTH_TOKEN,
     updateState: {
       configured: true,
       available: false,
@@ -478,6 +483,7 @@ test("desktop Help menu requests restart when update is ready", async ({ page })
     sessionStorage.removeItem(restartKey);
   }, AUTO_APPLY_ON_LAUNCH_STORAGE_KEY, PROMPT_SNOOZE_STORAGE_KEY, IDLE_UPDATE_VERSION_STORAGE_KEY, RESTART_REQUIRED_VERSION_STORAGE_KEY);
   await installDesktopHarness(page, {
+    authToken: E2E_AUTH_TOKEN,
     updateState: {
       configured: true,
       available: false,
@@ -524,6 +530,7 @@ test("desktop Update on Next Idle schedules restart when restart is ready", asyn
     sessionStorage.removeItem(restartKey);
   }, AUTO_APPLY_ON_LAUNCH_STORAGE_KEY, PROMPT_SNOOZE_STORAGE_KEY, IDLE_UPDATE_VERSION_STORAGE_KEY, RESTART_REQUIRED_VERSION_STORAGE_KEY);
   await installDesktopHarness(page, {
+    authToken: E2E_AUTH_TOKEN,
     updateState: {
       configured: true,
       available: false,
@@ -563,6 +570,7 @@ test("desktop auto-applies when a staged update is ready", async ({ page }) => {
     sessionStorage.removeItem(restartKey);
   }, AUTO_APPLY_ON_LAUNCH_STORAGE_KEY, PROMPT_SNOOZE_STORAGE_KEY, IDLE_UPDATE_VERSION_STORAGE_KEY, RESTART_REQUIRED_VERSION_STORAGE_KEY);
   await installDesktopHarness(page, {
+    authToken: E2E_AUTH_TOKEN,
     updateState: {
       configured: true,
       available: true,

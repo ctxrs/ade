@@ -6,6 +6,8 @@ import { execSync } from "child_process";
 import type { Page } from "playwright/test";
 import { createWorkspaceAndOpenWorkbench } from "./utils/workbench";
 
+const E2E_AUTH_TOKEN = process.env.CTX_E2E_AUTH_TOKEN ?? "ctx-e2e-auth-token";
+
 // Contract reference:
 // core/apps/web/e2e/contracts/updater_global_semantics_contract.md
 const AUTO_APPLY_ON_LAUNCH_STORAGE_KEY = "ctx_update_auto_apply_on_launch_v1";
@@ -57,6 +59,7 @@ type HarnessWindowState = {
 };
 
 type DesktopHarnessConfig = {
+  authToken: string;
   sharedStorageKey: string;
   sharedState: SharedHarnessState;
 };
@@ -195,7 +198,7 @@ const installDesktopHarness = async (page: Page, config: DesktopHarnessConfig): 
         return {
           kind: "local",
           base_url: target.base_url,
-          token: "local-token",
+          token: initial.authToken,
         };
       }
       if (name === "desktop_check_app_update") {
@@ -273,7 +276,7 @@ const installDesktopHarness = async (page: Page, config: DesktopHarnessConfig): 
           if (typeof value === "string") fetchHeaders[key] = value;
         }
         if (!fetchHeaders.authorization) {
-          fetchHeaders.authorization = "Bearer ctx-e2e-auth-token";
+          fetchHeaders.authorization = `Bearer ${initial.authToken}`;
         }
         if (!fetchHeaders["content-type"] && body) {
           fetchHeaders["content-type"] = "application/json";
@@ -433,6 +436,7 @@ test("global updater checks stay app-scoped across launcher, wizard, and workben
   const sharedStorageKey = `ctx_updater_global_semantics_${Date.now()}`;
   await clearUpdateStorageKeys(page);
   await installDesktopHarness(page, {
+    authToken: E2E_AUTH_TOKEN,
     sharedStorageKey,
     sharedState: {
       updateState: {
@@ -523,6 +527,7 @@ test("restart-required state converges across windows and idle scheduling stays 
   const sharedStorageKey = `ctx_updater_multi_window_${Date.now()}`;
   await clearUpdateStorageKeys(page);
   await installDesktopHarness(page, {
+    authToken: E2E_AUTH_TOKEN,
     sharedStorageKey,
     sharedState: {
       updateState: {
@@ -562,6 +567,7 @@ test("restart-required state converges across windows and idle scheduling stays 
   const page2 = await page.context().newPage();
   await clearUpdateStorageKeys(page2);
   await installDesktopHarness(page2, {
+    authToken: E2E_AUTH_TOKEN,
     sharedStorageKey,
     sharedState: {
       updateState: {
@@ -658,6 +664,7 @@ test("Update on Next Idle waits while active and can recover from restart failur
   const sharedStorageKey = `ctx_updater_idle_recovery_${Date.now()}`;
   await clearUpdateStorageKeys(page);
   await installDesktopHarness(page, {
+    authToken: E2E_AUTH_TOKEN,
     sharedStorageKey,
     sharedState: {
       updateState: {

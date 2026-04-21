@@ -1,9 +1,12 @@
 import { test, expect } from "./fixtures";
 import type { Page } from "playwright/test";
 
+const E2E_AUTH_TOKEN = process.env.CTX_E2E_AUTH_TOKEN ?? "ctx-e2e-auth-token";
+
 type ConnectionKind = "local" | "ssh";
 
 type HarnessConfig = {
+  authToken: string;
   connectionKind: ConnectionKind;
   desktopVersion: string;
   daemonVersion: string;
@@ -34,6 +37,7 @@ const installDesktopHarness = async (page: Page, config: HarnessConfig) => {
     const w = window as TauriWindow;
     const state: HarnessState = {
       config: {
+        authToken: initial.authToken,
         connectionKind: initial.connectionKind,
         desktopVersion: initial.desktopVersion,
         daemonVersion: initial.daemonVersion,
@@ -82,7 +86,7 @@ const installDesktopHarness = async (page: Page, config: HarnessConfig) => {
           return {
             kind: "ssh",
             base_url: target.base_url,
-            token: "ssh-token",
+            token: state.config.authToken,
             host: "example.test",
             user: "devbox",
             remote_port: target.port,
@@ -92,7 +96,7 @@ const installDesktopHarness = async (page: Page, config: HarnessConfig) => {
         return {
           kind: "local",
           base_url: target.base_url,
-          token: "local-token",
+          token: state.config.authToken,
         };
       }
       if (name === "desktop_restart_local_daemon") {
@@ -100,7 +104,7 @@ const installDesktopHarness = async (page: Page, config: HarnessConfig) => {
         return {
           kind: "local",
           base_url: target.base_url,
-          token: "local-token",
+          token: state.config.authToken,
         };
       }
       if (name === "desktop_update_remote_daemon") {
@@ -189,6 +193,21 @@ const installDesktopHarness = async (page: Page, config: HarnessConfig) => {
   }, config);
 };
 
+const installNoUpdateRoute = async (page: Page) => {
+  await page.route("**/api/updates/check**", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        channel: "stable",
+        current_version: "1.0.0",
+        latest_version: "1.0.0",
+        update_available: false,
+      }),
+    });
+  });
+};
+
 const setConfirmResult = async (page: Page, confirmResult: boolean) => {
   await page.evaluate((next: boolean) => {
     const w = window as Window & { __ctxUpdaterE2E?: HarnessState };
@@ -206,7 +225,9 @@ const commandCallCount = async (page: Page, command: string): Promise<number> =>
 };
 
 test("local mismatch requires confirm before restart action", async ({ page }) => {
+  await installNoUpdateRoute(page);
   await installDesktopHarness(page, {
+    authToken: E2E_AUTH_TOKEN,
     connectionKind: "local",
     desktopVersion: "2.0.0",
     daemonVersion: "1.0.0",
@@ -230,7 +251,9 @@ test("local mismatch requires confirm before restart action", async ({ page }) =
 });
 
 test("remote mismatch updates immediately when no active tasks are detected", async ({ page }) => {
+  await installNoUpdateRoute(page);
   await installDesktopHarness(page, {
+    authToken: E2E_AUTH_TOKEN,
     connectionKind: "ssh",
     desktopVersion: "2.0.0",
     daemonVersion: "1.0.0",
