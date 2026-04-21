@@ -37,6 +37,8 @@ pub mod title_generation_local;
 mod toolchains;
 
 #[cfg(test)]
+mod provider_status_matrix_tests;
+#[cfg(test)]
 mod test_support;
 
 pub(crate) use self::artifacts::{
@@ -83,8 +85,8 @@ pub(crate) use targets::{
     provider_env_targets_linux_sandbox, resolve_codex_cli_command_path_for_target,
 };
 pub use targets::{
-    is_supported_managed_provider_for_target, managed_install_download_size_bytes,
-    parse_install_target, resolve_matrix_target_key,
+    is_compatible_managed_provider_for_target, is_supported_managed_provider_for_target,
+    managed_install_download_size_bytes, parse_install_target, resolve_matrix_target_key,
 };
 pub use title_generation::install_title_generation_local_with_progress;
 #[allow(unused_imports)]
@@ -127,6 +129,8 @@ const MANAGED_PROVIDER_INSTALLS_ENABLED: bool = true;
 #[async_trait]
 pub trait ManagedInstallHost: Send + Sync + 'static {
     fn data_root(&self) -> &Path;
+
+    fn current_ctx_version(&self) -> Option<String>;
 
     fn provider_matrix_cache(&self) -> &Mutex<provider_matrix::ProviderMatrixCache>;
 
@@ -360,11 +364,6 @@ async fn acquire_provider_install_lock(
             .clone()
     };
     lock.lock_owned().await
-}
-
-fn normalize_version_str(s: &str) -> Option<semver::Version> {
-    let trimmed = s.trim().trim_start_matches('v');
-    semver::Version::parse(trimmed).ok()
 }
 
 pub async fn install_provider(state: &AppState, provider_id: &str) -> Result<()> {

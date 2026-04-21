@@ -15,7 +15,7 @@ cat >"$MATRIX_JSON" <<'JSON'
     {
       "id": "codex",
       "managed_install": {
-        "version": "0.114.0-ctx.4"
+        "version": "0.114.0-ctx.5"
       }
     }
   ]

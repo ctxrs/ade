@@ -43,12 +43,14 @@ async fn start_contract_readiness_dependencies<H>(
 ) where
     H: ProviderInstallHost,
 {
+    let current_ctx_version = installer::ManagedInstallHost::current_ctx_version(state.as_ref());
     let Ok(contract) = provider_install_contract::resolve_provider_install_contract(
         installer::ManagedInstallHost::data_root(state.as_ref()),
         managed,
         matrix,
         provider_id,
         target,
+        current_ctx_version.as_deref(),
     ) else {
         return;
     };
@@ -99,6 +101,7 @@ where
         state.provider_matrix_cache(),
     )
     .await;
+    let current_ctx_version = installer::ManagedInstallHost::current_ctx_version(state.as_ref());
     let managed = installer::load_agent_server_config(installer::ManagedInstallHost::data_root(
         state.as_ref(),
     ))
@@ -119,6 +122,7 @@ where
         &matrix,
         provider_id,
         target,
+        current_ctx_version.as_deref(),
     ) {
         return Err(StartProviderInstallError {
             message: issue.message,
@@ -180,6 +184,7 @@ where
         state.provider_matrix_cache(),
     )
     .await;
+    let current_ctx_version = installer::ManagedInstallHost::current_ctx_version(state.as_ref());
     let managed = installer::load_agent_server_config(installer::ManagedInstallHost::data_root(
         state.as_ref(),
     ))
@@ -194,7 +199,13 @@ where
             continue;
         }
         let id = entry.id.as_str();
-        if should_defer_acp_provider_until_stale_bridge_repair(&managed, &matrix, id, target) {
+        if should_defer_acp_provider_until_stale_bridge_repair(
+            &managed,
+            &matrix,
+            id,
+            target,
+            current_ctx_version.as_deref(),
+        ) {
             deferred_acp_repairs.push(id.to_string());
             continue;
         }
@@ -204,9 +215,16 @@ where
             &matrix,
             id,
             target,
+            current_ctx_version.as_deref(),
         );
         if let Some(issue) = issue {
-            if should_defer_acp_provider_until_bridge_repair(&matrix, id, target, &issue) {
+            if should_defer_acp_provider_until_bridge_repair(
+                &matrix,
+                id,
+                target,
+                current_ctx_version.as_deref(),
+                &issue,
+            ) {
                 deferred_acp_repairs.push(id.to_string());
             }
             continue;
@@ -253,6 +271,7 @@ where
             &matrix,
             &provider_id,
             target,
+            current_ctx_version.as_deref(),
         );
         let should_queue_after_repair = match issue {
             None => true,
@@ -261,6 +280,7 @@ where
                     &matrix,
                     &provider_id,
                     target,
+                    current_ctx_version.as_deref(),
                     issue,
                 ) =>
             {
@@ -301,12 +321,14 @@ async fn seed_running_prerequisite_progress<H>(
 ) where
     H: ProviderInstallHost,
 {
+    let current_ctx_version = installer::ManagedInstallHost::current_ctx_version(state.as_ref());
     let Ok(contract) = provider_install_contract::resolve_provider_install_contract(
         installer::ManagedInstallHost::data_root(state.as_ref()),
         managed,
         matrix,
         provider_id,
         target,
+        current_ctx_version.as_deref(),
     ) else {
         return;
     };
@@ -403,11 +425,17 @@ fn should_defer_acp_provider_until_bridge_repair(
     matrix: &provider_matrix::ProviderMatrix,
     provider_id: &str,
     target: InstallTarget,
+    current_ctx_version: Option<&str>,
     issue: &provider_install_contract::ProviderInstallViabilityIssue,
 ) -> bool {
     issue.code == "acp_bridge_invalid"
         && is_acp_provider_id(provider_id)
-        && installer::is_supported_managed_provider_for_target(matrix, "acp-crp-bridge", target)
+        && installer::is_compatible_managed_provider_for_target(
+            matrix,
+            "acp-crp-bridge",
+            target,
+            current_ctx_version,
+        )
 }
 
 fn should_defer_acp_provider_until_stale_bridge_repair(
@@ -415,9 +443,15 @@ fn should_defer_acp_provider_until_stale_bridge_repair(
     matrix: &provider_matrix::ProviderMatrix,
     provider_id: &str,
     target: InstallTarget,
+    current_ctx_version: Option<&str>,
 ) -> bool {
     if !is_acp_provider_id(provider_id)
-        || !installer::is_supported_managed_provider_for_target(matrix, "acp-crp-bridge", target)
+        || !installer::is_compatible_managed_provider_for_target(
+            matrix,
+            "acp-crp-bridge",
+            target,
+            current_ctx_version,
+        )
     {
         return false;
     }

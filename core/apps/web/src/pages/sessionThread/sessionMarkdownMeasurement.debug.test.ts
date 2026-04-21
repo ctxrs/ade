@@ -74,4 +74,75 @@ describe("sessionMarkdownMeasurement debug", () => {
       ),
     ).toBe(false);
   });
+
+  it("does not invent an extra prose wrap after ordinary whitespace inline code", () => {
+    clearSessionMarkdownMeasurementCaches();
+    const debugWindow = window as SessionMarkdownDebugWindow;
+    debugWindow.__ctxForceInlineCodeDebug = true;
+    debugWindow.__ctxInlineCodeDebugTarget = "release updater web e2e";
+    debugWindow.__ctxInlineCodeDebugWidth = 764;
+
+    const height = measureSessionMarkdownDocument(
+      "The `release updater web e2e` lane was recently hanging because the desktop harness fixtures were returning fake auth tokens and letting real update-check behavior leak through. I fixed the immediate bug, but that exposed test-fixture fragility.",
+      764,
+    );
+
+    expect(height).toBeGreaterThan(0);
+    expect(debugWindow.__ctxInlineCodeDebug).toBeDefined();
+    expect(
+      debugWindow.__ctxInlineCodeDebug?.lines.some((line) => line.includes("fake auth")),
+    ).toBe(true);
+    expect(debugWindow.__ctxInlineCodeDebug?.lines.some((line) => line.endsWith("fake "))).toBe(
+      false,
+    );
+  });
+
+  it("keeps a dotted call continuation whole when a sealed dotted fragment reaches the margin", () => {
+    clearSessionMarkdownMeasurementCaches();
+    const debugWindow = window as SessionMarkdownDebugWindow;
+    debugWindow.__ctxForceInlineCodeDebug = true;
+    debugWindow.__ctxInlineCodeDebugTarget = "ConnectionManager.disconnect()";
+    debugWindow.__ctxInlineCodeDebugWidth = 788;
+
+    const height = measureSessionMarkdownDocument(
+      "The root cause was in main.rs: every `CloseRequested` event called the single app-wide `ConnectionManager.disconnect()`. That tore down the shared local daemon or SSH tunnel for all windows, so the remaining window recovered against a restarted/disconnected daemon and active turns got reconciled as interrupted, which is why conversations looked “paused”.",
+      788,
+    );
+
+    expect(height).toBeGreaterThan(0);
+    expect(debugWindow.__ctxInlineCodeDebug).toBeDefined();
+    expect(
+      debugWindow.__ctxInlineCodeDebug?.lines.some((line) => line.includes("disconnect()")),
+    ).toBe(true);
+    expect(
+      debugWindow.__ctxInlineCodeDebug?.lines.some(
+        (line, index, lines) =>
+          line.endsWith("ConnectionManager.") && lines[index + 1]?.startsWith("disconnect()"),
+      ),
+    ).toBe(false);
+  });
+
+  it("keeps shorter dotted call siblings whole under the same continuation rule", () => {
+    clearSessionMarkdownMeasurementCaches();
+    const debugWindow = window as SessionMarkdownDebugWindow;
+    debugWindow.__ctxForceInlineCodeDebug = true;
+    debugWindow.__ctxInlineCodeDebugTarget = "observer.disconnect()";
+    debugWindow.__ctxInlineCodeDebugWidth = 620;
+
+    const height = measureSessionMarkdownDocument(
+      "The observer stays healthy when `observer.disconnect()` moves as one chip before the trailing prose explains why the restart no longer interrupts the session unexpectedly.",
+      620,
+    );
+
+    expect(height).toBeGreaterThan(0);
+    expect(debugWindow.__ctxInlineCodeDebug).toBeDefined();
+    expect(
+      debugWindow.__ctxInlineCodeDebug?.lines.some((line) => line.includes("disconnect()")),
+    ).toBe(true);
+    expect(
+      debugWindow.__ctxInlineCodeDebug?.lines.some(
+        (line, index, lines) => line.endsWith("observer.") && lines[index + 1]?.startsWith("disconnect()"),
+      ),
+    ).toBe(false);
+  });
 });

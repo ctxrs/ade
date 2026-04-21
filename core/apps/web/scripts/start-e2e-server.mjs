@@ -129,6 +129,57 @@ export const resolveServeWebDistDir = (repoRoot, env, skipWebBuild = false) => {
 export const shouldUseConfiguredCtxMcpCommand = (env) =>
   String(env.CTX_E2E_ALLOW_CONFIGURED_MCP_COMMAND ?? "").trim() === "1";
 
+export const resolveE2ERuntimeSource = (env) => {
+  const source = String(env.CTX_E2E_RUNTIME_SOURCE ?? "").trim();
+  if (!source) return "local-build";
+  if (source === "bazel-runfiles") return source;
+  throw new Error(`Unsupported CTX_E2E_RUNTIME_SOURCE: ${source}`);
+};
+
+export const resolveE2ERuntimeProfile = (env) => {
+  const profile = String(env.CTX_E2E_RUNTIME_PROFILE ?? "").trim() || "workbench-lite";
+  if (["workbench-lite", "agent-full", "web-artifact"].includes(profile)) return profile;
+  throw new Error(`Unsupported CTX_E2E_RUNTIME_PROFILE: ${profile}`);
+};
+
+const requireExecutableFile = (key, env) => {
+  const value = String(env[key] ?? "").trim();
+  if (!value) {
+    throw new Error(`Missing required environment variable: ${key}`);
+  }
+  const resolved = path.resolve(value);
+  if (!fs.existsSync(resolved) || !fs.statSync(resolved).isFile()) {
+    throw new Error(`${key} does not point to a file: ${resolved}`);
+  }
+  return resolved;
+};
+
+const requireDirectory = (key, env) => {
+  const value = String(env[key] ?? "").trim();
+  if (!value) {
+    throw new Error(`Missing required environment variable: ${key}`);
+  }
+  const resolved = path.resolve(value);
+  if (!fs.existsSync(resolved) || !fs.statSync(resolved).isDirectory()) {
+    throw new Error(`${key} does not point to a directory: ${resolved}`);
+  }
+  return resolved;
+};
+
+export const resolveBazelRunfilesRuntime = (env) => {
+  const runtimeProfile = resolveE2ERuntimeProfile(env);
+  const runtime = {
+    ctxHttpBin: requireExecutableFile("CTX_E2E_CTX_HTTP_BIN", env),
+    ctxMcpBin: "",
+    runtimeProfile,
+    webDistDir: requireDirectory("CTX_E2E_WEB_DIST", env),
+  };
+  if (runtimeProfile === "agent-full") {
+    runtime.ctxMcpBin = requireExecutableFile("CTX_E2E_CTX_MCP_BIN", env);
+  }
+  return runtime;
+};
+
 const ensureCtxMcpCommand = (repoRoot, env) => {
   const configured = String(env.CTX_MCP_COMMAND ?? "").trim();
   if (configured && shouldUseConfiguredCtxMcpCommand(env)) {
@@ -162,6 +213,7 @@ const main = () => {
   );
   const authToken = requireEnv("CTX_E2E_AUTH_TOKEN");
   const skipWebBuild = parseBool(process.env.CTX_E2E_SKIP_WEB_BUILD);
+  const runtimeSource = resolveE2ERuntimeSource(process.env);
   const { env } = buildCtxCacheEnv({
     cwd: repoRoot,
     env: process.env,
@@ -171,11 +223,23 @@ const main = () => {
   env.TMPDIR = tmpDir;
   env.TMP = tmpDir;
   env.TEMP = tmpDir;
-  env.CTX_MCP_COMMAND = ensureCtxMcpCommand(repoRoot, env);
-  const configuredWebDistDir = resolveServeWebDistDir(repoRoot, env, skipWebBuild);
+  const bazelRuntime = runtimeSource === "bazel-runfiles" ? resolveBazelRunfilesRuntime(env) : null;
+  if (bazelRuntime) {
+    if (bazelRuntime.runtimeProfile === "agent-full") {
+      env.CTX_MCP_COMMAND = bazelRuntime.ctxMcpBin;
+      delete env.CTX_MCP_DISABLED;
+    } else {
+      env.CTX_MCP_DISABLED = "1";
+      delete env.CTX_MCP_COMMAND;
+    }
+  } else {
+    env.CTX_MCP_COMMAND = ensureCtxMcpCommand(repoRoot, env);
+  }
+  const configuredWebDistDir = bazelRuntime?.webDistDir ?? resolveServeWebDistDir(repoRoot, env, skipWebBuild);
   const webRoot = path.join(repoRoot, "apps", "web");
   const shouldBuildCachedWebDist =
-    !skipWebBuild
+    !bazelRuntime
+    && !skipWebBuild
     && !String(env.CTX_E2E_WEB_DIST ?? "").trim()
     && !(String(env.CTX_WEB_DIST ?? "").trim() && shouldUseConfiguredWebDist(env));
   const webDistDir = shouldBuildCachedWebDist
@@ -186,7 +250,7 @@ const main = () => {
     }).distDir
     : configuredWebDistDir;
 
-  if (!skipWebBuild && !shouldBuildCachedWebDist) {
+  if (!bazelRuntime && !skipWebBuild && !shouldBuildCachedWebDist) {
     const viteBin = requireLocalNodeBin(webRoot, "vite");
     fs.rmSync(webDistDir, { recursive: true, force: true });
     runSync(viteBin, resolveWebBuildArgs(webDistDir), webRoot, env);
@@ -195,9 +259,13 @@ const main = () => {
   fs.writeFileSync(path.join(dataDir, "settings.json"), JSON.stringify({ execution: { mode: "host" } }, null, 2));
 
   const cargoCmd = process.platform === "win32" ? "cargo.exe" : "cargo";
+  const daemonCommand = bazelRuntime?.ctxHttpBin ?? cargoCmd;
+  const daemonArgs = bazelRuntime
+    ? ["serve", "--bind", `${host}:${port}`, "--data-dir", dataDir]
+    : ["run", "-p", "ctx-http", "--bin", "ctx", "--", "serve", "--bind", `${host}:${port}`, "--data-dir", dataDir];
   const child = spawn(
-    cargoCmd,
-    ["run", "-p", "ctx-http", "--bin", "ctx", "--", "serve", "--bind", `${host}:${port}`, "--data-dir", dataDir],
+    daemonCommand,
+    daemonArgs,
     {
       cwd: repoRoot,
       env: {

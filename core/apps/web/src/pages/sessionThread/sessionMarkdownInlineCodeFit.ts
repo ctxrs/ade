@@ -112,6 +112,7 @@ export function resolveInlineCodeContinuationFitSlackPx(params: {
   atLineBreakBoundary: boolean;
   sameCodeGroupContinuation: boolean;
   startsAfterCodeWhitespace: boolean;
+  lastFragmentEndedWithDot: boolean;
   lastFragmentEndedWithHyphen: boolean;
   lastFragmentEndedWithPathDelimiter: boolean;
   item: InlineContinuationSlackItem;
@@ -137,6 +138,11 @@ export function resolveInlineCodeContinuationFitSlackPx(params: {
     !params.atLineBreakBoundary ||
     !params.sameCodeGroupContinuation ||
     params.startsAfterCodeWhitespace ||
+    (params.lastFragmentEndedWithDot &&
+      !params.item.text.includes(".") &&
+      !params.item.text.includes("/") &&
+      !params.item.text.includes("\\") &&
+      !params.item.isPathTailFragment) ||
     (params.lastFragmentEndedWithHyphen && !allowChromiumHyphenPathContinuation) ||
     (params.lastFragmentEndedWithPathDelimiter && params.item.codeGroupStartsAfterStyledTextSeam) ||
     (params.lastFragmentEndedWithPathDelimiter &&
@@ -252,6 +258,28 @@ export function shouldBreakBeforePartialDottedStemPathTailContinuation(params: {
     /[\\/]/.test(params.item.text) &&
     /\.$/.test(params.lastFragmentText ?? "") &&
     params.fullWidth > params.guardedRemainingWidth + 0.01
+  );
+}
+
+export function shouldBreakBeforePartialDottedCallContinuation(params: {
+  fragmentWidth: number;
+  fullWidth: number;
+  guardedRemainingWidth: number;
+  item: Pick<InlineSegmentItem, "isPathTailFragment" | "isSealedInlineCodeFragment" | "text">;
+  lastFragmentText: string | null;
+  maxWidth: number;
+  sameCodeGroupContinuation: boolean;
+}): boolean {
+  return (
+    params.sameCodeGroupContinuation &&
+    /\.$/.test(params.lastFragmentText ?? "") &&
+    !params.item.isSealedInlineCodeFragment &&
+    !params.item.isPathTailFragment &&
+    !params.item.text.includes(".") &&
+    !params.item.text.includes("/") &&
+    !params.item.text.includes("\\") &&
+    params.fullWidth > params.guardedRemainingWidth + 0.01 &&
+    params.fragmentWidth <= params.maxWidth + 0.01
   );
 }
 
@@ -423,6 +451,7 @@ export function createInlineCodeFitPlanner(params: {
         atLineBreakBoundary: true,
         sameCodeGroupContinuation: lineHasContent,
         startsAfterCodeWhitespace: item.startsAfterCodeWhitespace,
+        lastFragmentEndedWithDot: lastFragmentText?.endsWith(".") ?? false,
         lastFragmentEndedWithHyphen: lastFragmentText?.endsWith("-") ?? false,
         lastFragmentEndedWithPathDelimiter: /[\\/]+$/.test(lastFragmentText ?? ""),
         item,
@@ -684,6 +713,7 @@ export function createInlineCodeFitPlanner(params: {
         atLineBreakBoundary: true,
         sameCodeGroupContinuation: lineHasContent,
         startsAfterCodeWhitespace: item.startsAfterCodeWhitespace,
+        lastFragmentEndedWithDot: lastFragmentText?.endsWith(".") ?? false,
         lastFragmentEndedWithHyphen: lastFragmentText?.endsWith("-") ?? false,
         lastFragmentEndedWithPathDelimiter: /[\\/]+$/.test(lastFragmentText ?? ""),
         item,

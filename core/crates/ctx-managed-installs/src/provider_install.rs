@@ -138,6 +138,15 @@ pub(super) async fn install_provider_impl(
             state.provider_matrix_cache(),
         )
         .await;
+        let current_ctx_version_raw = state
+            .current_ctx_version()
+            .ok_or_else(|| anyhow::anyhow!("current ctx build version unavailable"))?;
+        let current_ctx_version = provider_matrix::parse_version_loose(&current_ctx_version_raw)
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "current ctx build version is not valid semver: {current_ctx_version_raw}"
+                )
+            })?;
         let install_cfg = load_agent_server_config(state.data_root())
             .await
             .unwrap_or_default();
@@ -147,6 +156,7 @@ pub(super) async fn install_provider_impl(
             &matrix,
             &provider_id,
             target,
+            Some(current_ctx_version_raw.as_str()),
         )
         .map_err(anyhow::Error::new)?;
         let resolved_target_key = install_contract.resolved_target_key;
@@ -184,8 +194,7 @@ pub(super) async fn install_provider_impl(
         let Some(install) = entry.managed_install.as_ref() else {
             anyhow::bail!("provider has no managed install: {provider_id}");
         };
-        let context_version = normalize_version_str(env!("CARGO_PKG_VERSION"));
-        let release = provider_matrix::recommended_release(entry, context_version.as_ref())
+        let release = provider_matrix::recommended_release(entry, Some(&current_ctx_version))
             .ok_or_else(|| anyhow::anyhow!("no compatible release for provider: {provider_id}"))?;
 
         let mut dependency_ids: Vec<String> = install_contract
@@ -741,6 +750,7 @@ async fn refresh_provider_statuses_with_cfg(
 ) -> Result<()> {
     let matrix =
         provider_matrix::load_matrix_cached(state.data_root(), state.provider_matrix_cache()).await;
+    let current_ctx_version = state.current_ctx_version();
 
     let map = state.provider_adapters().lock().await;
     let mut statuses = HashMap::new();
@@ -754,6 +764,7 @@ async fn refresh_provider_statuses_with_cfg(
                         &cfg,
                         entry,
                         &mut status,
+                        current_ctx_version.as_deref(),
                     )
                     .await;
                 }

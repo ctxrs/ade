@@ -51,8 +51,9 @@ impl AppState {
         lsp_cfg: LspManagerConfig,
         lsp_edit_plans_enabled: bool,
     ) -> Self {
-        // Internal/experimental only: tool output disk spooling is not a supported
-        // v1 product surface and must not be treated as a stable client contract.
+        // Internal spool-path mechanics remain experimental, but once output is
+        // promoted into the session artifact list it follows the normal
+        // SessionState/artifact client contract.
         let tool_output_spool_enabled = std::env::var("CTX_TOOL_OUTPUT_DISK_SPOOL")
             .ok()
             .as_deref()

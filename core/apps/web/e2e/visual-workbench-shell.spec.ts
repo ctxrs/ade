@@ -221,18 +221,54 @@ test.describe.serial("visual: workbench shell", () => {
     });
 
     test(`artifacts pane ${theme}`, async ({ page }) => {
-      await page.route(`**/api/sessions/${activeSessionId}/artifacts`, async (route) => {
+      let legacyArtifactListRequests = 0;
+      let stateRequests = 0;
+      const stateRequestSessionIds = new Set<string>();
+      await page.route(/\/api\/sessions\/[^/]+\/artifacts$/, async (route) => {
+        legacyArtifactListRequests += 1;
+        await route.fulfill({
+          status: 500,
+          contentType: "application/json",
+          body: JSON.stringify({ error: "legacy artifact list route should not be used" }),
+        });
+      });
+      await page.route(/\/api\/sessions\/[^/]+\/state$/, async (route) => {
+        stateRequests += 1;
+        const requestUrl = new URL(route.request().url());
+        const requestMatch = requestUrl.pathname.match(/\/api\/sessions\/([^/]+)\/state$/);
+        if (requestMatch) {
+          stateRequestSessionIds.add(requestMatch[1] ?? "");
+        }
         await route.fulfill({
           status: 200,
           contentType: "application/json",
-          body: JSON.stringify([]),
+          body: JSON.stringify({
+            artifacts: [
+              {
+                id: "artifact-1",
+                session_id: activeSessionId,
+                task_id: "task-1",
+                workspace_id: activeWorkspaceId,
+                worktree_id: "worktree-1",
+                name: "state-artifact.bin",
+                absolute_path: "/tmp/state-artifact.bin",
+                mime_type: "application/octet-stream",
+                bytes: 32,
+                created_at: "2024-01-01T00:00:00.000Z",
+              },
+            ],
+            git_status: null,
+          }),
         });
       });
       await openWorkbenchVisualPage(page, activeWorkspaceId, { theme, viewport: "desktop-tight" });
       await seedActiveSession(page);
       await page.getByRole("button", { name: "Toggle artifacts" }).click();
       const artifactsPane = page.locator(".wb-artifacts");
-      await expect(artifactsPane).toContainText("No artifacts yet.", { timeout: 20_000 });
+      await expect(artifactsPane).toContainText("state-artifact.bin", { timeout: 20_000 });
+      expect(legacyArtifactListRequests).toBe(0);
+      expect(stateRequests).toBeGreaterThan(0);
+      expect(stateRequestSessionIds.has(activeSessionId)).toBe(true);
       await captureVisual(
         page,
         buildVisualName(["workbench-shell", "artifacts-pane-open", theme, visualViewportLabel("desktop-tight")]),

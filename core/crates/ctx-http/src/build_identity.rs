@@ -20,14 +20,17 @@ pub(crate) struct BuildIdentity {
 }
 
 fn compile_time_build_identity() -> BuildIdentity {
-    let version = env!("CARGO_PKG_VERSION").to_string();
+    let version = option_env!("CTX_RELEASE_EFFECTIVE_VERSION")
+        .unwrap_or(env!("CARGO_PKG_VERSION"))
+        .to_string();
     BuildIdentity {
         schema_version: 1,
         exact_version: version.clone(),
         build_id: option_env!("CTX_BUILD_ID")
             .unwrap_or(env!("CARGO_PKG_VERSION"))
             .to_string(),
-        compatibility_token: option_env!("CTX_DEV_INSTANCE_ID")
+        compatibility_token: option_env!("CTX_COMPATIBILITY_TOKEN")
+            .or(option_env!("CTX_DEV_INSTANCE_ID"))
             .unwrap_or("unknown")
             .to_string(),
     }
@@ -50,7 +53,9 @@ fn configured_identity_path() -> Result<Option<PathBuf>> {
     if trimmed.is_empty() {
         anyhow::bail!("{BUNDLE_DIR_ENV} must not be empty when set");
     }
-    Ok(Some(PathBuf::from(trimmed).join(ARTIFACT_IDENTITY_FILENAME)))
+    Ok(Some(
+        PathBuf::from(trimmed).join(ARTIFACT_IDENTITY_FILENAME),
+    ))
 }
 
 fn parse_build_identity(path: &Path) -> Result<BuildIdentity> {
@@ -72,7 +77,10 @@ fn parse_build_identity(path: &Path) -> Result<BuildIdentity> {
         anyhow::bail!("build identity missing buildId in {}", path.display());
     }
     if identity.compatibility_token.trim().is_empty() {
-        anyhow::bail!("build identity missing compatibilityToken in {}", path.display());
+        anyhow::bail!(
+            "build identity missing compatibilityToken in {}",
+            path.display()
+        );
     }
     Ok(identity)
 }

@@ -176,10 +176,6 @@ fn main() {
             Ok(())
         })
         .on_window_event(|window, event| {
-            if matches!(event, tauri::WindowEvent::CloseRequested { .. }) {
-                let manager = window.state::<ConnectionManager>();
-                manager.disconnect();
-            }
             if let tauri::WindowEvent::Focused(is_focused) = event {
                 if *is_focused {
                     let app_handle = window.app_handle();

@@ -34,6 +34,7 @@ const restoreEnv = () => {
   delete process.env.CTX_E2E_FORCE_REUSE_SERVER;
   delete process.env.PLAYWRIGHT_BROWSERS_PATH;
   delete process.env.CARGO_INCREMENTAL;
+  delete process.env.TEST_UNDECLARED_OUTPUTS_DIR;
 };
 
 const getReporterTuples = (reporter: unknown): ReporterTuple[] => {
@@ -67,6 +68,27 @@ describe("createCtxPlaywrightConfig", () => {
     const htmlReporter = reporters.find((entry) => entry[0] === "html");
     expect(htmlReporter?.[1]).toMatchObject({
       outputFolder: path.resolve(__dirname, "e2e/playwright-report/all"),
+      open: "never",
+    });
+  });
+
+  it("writes reports under Bazel undeclared outputs when present", async () => {
+    restoreEnv();
+    process.env.TEST_UNDECLARED_OUTPUTS_DIR = "/tmp/ctx-bazel-outputs";
+
+    const config = await createCtxPlaywrightConfig("premerge_required");
+    expect(config.outputDir).toBe(path.resolve(
+      "/tmp/ctx-bazel-outputs",
+      "playwright/premerge_required/test-results",
+    ));
+
+    const reporters = getReporterTuples(config.reporter);
+    const htmlReporter = reporters.find((entry) => entry[0] === "html");
+    expect(htmlReporter?.[1]).toMatchObject({
+      outputFolder: path.resolve(
+        "/tmp/ctx-bazel-outputs",
+        "playwright/premerge_required/playwright-report",
+      ),
       open: "never",
     });
   });

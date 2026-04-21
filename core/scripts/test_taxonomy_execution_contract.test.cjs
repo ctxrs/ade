@@ -72,7 +72,94 @@ test("agent-default escalates high-risk web state changes to the canonical preme
 
   assert.deepEqual(plan.commands, [
     "pnpm bazel:web:test",
-    "pnpm test:e2e:premerge",
+    "pnpm bazel:web:e2e:premerge",
+  ]);
+});
+
+test("agent-default selects a narrow web E2E Bazel label for touched browser specs", () => {
+  const plan = buildExecutionPlan({
+    profileId: "agent-default",
+    changedFiles: ["core/apps/web/e2e/workbench-unarchive-visible.spec.ts"],
+    touchedOnly: true,
+  });
+
+  assert.deepEqual(plan.commands, [
+    "node scripts/run_bazel_pilot.cjs test //core/apps/web/e2e:workbench_unarchive_visible",
+  ]);
+});
+
+test("agent-default escalates direct agent-full web E2E specs to their suite label", () => {
+  const plan = buildExecutionPlan({
+    profileId: "agent-default",
+    changedFiles: ["core/apps/web/e2e/workbench-providers-bootstrap.spec.ts"],
+    touchedOnly: true,
+  });
+
+  assert.deepEqual(plan.commands, [
+    "node scripts/run_bazel_pilot.cjs test //core/apps/web/e2e:premerge_required",
+  ]);
+});
+
+test("agent-default routes shared web E2E Bazel macro changes to the canonical premerge suite", () => {
+  const plan = buildExecutionPlan({
+    profileId: "agent-default",
+    changedFiles: ["core/apps/web/e2e/web_e2e_test.bzl"],
+    touchedOnly: true,
+  });
+
+  assert.deepEqual(plan.commands, [
+    "pnpm bazel:web:e2e:premerge",
+  ]);
+});
+
+test("agent-default routes shared web E2E runtime changes without fanning out to every suite", () => {
+  const plan = buildExecutionPlan({
+    profileId: "agent-default",
+    changedFiles: ["core/apps/web/scripts/run-e2e-bazel-runtime.mjs"],
+    touchedOnly: true,
+  });
+
+  assert.deepEqual(plan.commands, [
+    "pnpm bazel:web:test",
+    "pnpm bazel:web:e2e:premerge",
+  ]);
+});
+
+test("agent-default routes shared web E2E server changes through unit and premerge gates", () => {
+  const plan = buildExecutionPlan({
+    profileId: "agent-default",
+    changedFiles: ["core/apps/web/scripts/start-e2e-server.mjs"],
+    touchedOnly: true,
+  });
+
+  assert.deepEqual(plan.commands, [
+    "pnpm bazel:web:test",
+    "pnpm bazel:web:e2e:premerge",
+  ]);
+});
+
+test("agent-default routes shared Playwright config changes through unit and premerge gates", () => {
+  const plan = buildExecutionPlan({
+    profileId: "agent-default",
+    changedFiles: ["core/apps/web/playwright.shared.ts"],
+    touchedOnly: true,
+  });
+
+  assert.deepEqual(plan.commands, [
+    "pnpm bazel:web:test",
+    "pnpm bazel:web:e2e:premerge",
+  ]);
+});
+
+test("agent-default routes shared Playwright config tests to web unit tests", () => {
+  const plan = buildExecutionPlan({
+    profileId: "agent-default",
+    changedFiles: ["core/apps/web/playwright.shared.test.ts"],
+    touchedOnly: true,
+  });
+
+  assert.deepEqual(plan.commands, [
+    "pnpm bazel:web:test",
   ]);
 });
 

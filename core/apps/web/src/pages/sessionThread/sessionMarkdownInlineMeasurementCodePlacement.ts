@@ -2,6 +2,7 @@ import { layoutNextLine, type LayoutLine } from "@chenglou/pretext";
 import { browserAllowsInlineCodeLeadingHang } from "./sessionMarkdownBrowserProfile";
 import {
   isShortExtensionPathLikeFragment,
+  shouldBreakBeforePartialDottedCallContinuation,
   resolveInlineCodeWhitespaceSeparatedFragmentSlackPx,
   shouldBreakBeforePartialDottedStemPathTailContinuation,
   shouldBreakBeforePartialSealedDottedPathContinuation,
@@ -313,6 +314,16 @@ export function placeInlineCodeSegment(params: {
       lastFragmentText: state.lineLastCodeFragmentText,
       sameCodeGroupContinuation: state.lineHasContent && state.lastAcceptedCodeGroupId === codeGroupId,
     });
+  const shouldBreakBeforePartialDottedCallFragment =
+    shouldBreakBeforePartialDottedCallContinuation({
+      fragmentWidth: item.fullWidth,
+      fullWidth,
+      guardedRemainingWidth,
+      item,
+      lastFragmentText: state.lineLastCodeFragmentText,
+      maxWidth: params.maxWidth,
+      sameCodeGroupContinuation: state.lineHasContent && state.lastAcceptedCodeGroupId === codeGroupId,
+    });
   const lastFragmentIsShortExtensionPath = isShortExtensionPathLikeFragment(state.lineLastCodeFragmentText);
   const canRelaxChromiumDottedPathBoundary =
     sealedBoundaryOverflow &&
@@ -330,6 +341,14 @@ export function placeInlineCodeSegment(params: {
     sealedBoundaryOverflow && !shouldAcceptChromiumPathTailContinuation;
 
   if (shouldBreakBeforePartialDottedStemPathTailFragment) {
+    state.cursor = null;
+    return {
+      action: "break",
+      state,
+      forcedFreshWholeCodeGroupIndex: params.forcedFreshWholeCodeGroupIndex,
+    };
+  }
+  if (shouldBreakBeforePartialDottedCallFragment) {
     state.cursor = null;
     return {
       action: "break",

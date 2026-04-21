@@ -40,7 +40,7 @@ pub struct ProviderCapabilities {
     pub notes: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ProviderHealth {
     Ok,

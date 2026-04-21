@@ -1,0 +1,69 @@
+load(":web_e2e_test.bzl", "web_e2e_test")
+
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "e2e_sources",
+    srcs = glob(
+        ["**"],
+        exclude = [
+            "playwright-report/**",
+            "test-results/**",
+        ],
+    ),
+)
+
+web_e2e_test(
+    name = "workbench_unarchive_visible",
+    config = "playwright.premerge.config.ts",
+    runtime_profile = "workbench-lite",
+    specs = ["e2e/workbench-unarchive-visible.spec.ts"],
+)
+
+web_e2e_test(
+    name = "premerge_required",
+    config = "playwright.premerge.config.ts",
+    runtime_profile = "agent-full",
+    suite = "premerge_required",
+    timeout = "eternal",
+)
+
+web_e2e_test(
+    name = "release_required",
+    config = "playwright.release.config.ts",
+    runtime_profile = "web-artifact",
+    suite = "release_required",
+    timeout = "eternal",
+)
+
+web_e2e_test(
+    name = "cross_platform",
+    config = "playwright.cross-platform.config.ts",
+    runtime_profile = "agent-full",
+    suite = "cross_platform",
+    timeout = "eternal",
+)
+
+web_e2e_test(
+    name = "visual",
+    config = "playwright.visual.config.ts",
+    runtime_profile = "agent-full",
+    suite = "visual",
+    timeout = "eternal",
+)
+
+web_e2e_test(
+    name = "soak",
+    config = "playwright.soak.config.ts",
+    runtime_profile = "agent-full",
+    suite = "soak",
+    timeout = "eternal",
+)
+
+web_e2e_test(
+    name = "load",
+    config = "playwright.load.config.ts",
+    runtime_profile = "agent-full",
+    suite = "load",
+    timeout = "eternal",
+)

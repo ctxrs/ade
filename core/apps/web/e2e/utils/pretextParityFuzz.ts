@@ -72,6 +72,12 @@ const URL_SEGMENTS = [
   "streaming-tail",
 ] as const;
 
+const SLASH_PROSE_TOKENS = [
+  "containerd/BuildKit/nerdctl",
+  "Ubuntu/Debian",
+  "one host/workspace",
+  "VPC/security group",
+] as const;
 const EMOJI = ["🙂", "⚙️", "🧪", "📏"] as const;
 const CJK = ["你好 世界", "測試 佈局", "段落 換行"] as const;
 const SHORT_CODE_TOKENS = [
@@ -84,6 +90,8 @@ const SHORT_CODE_TOKENS = [
   "Test Taxonomy",
   "stable lane",
   "release gate",
+  "observer.disconnect()",
+  "ConnectionManager.disconnect()",
 ] as const;
 const THRESHOLD_TAILS = [
   "before replying",
@@ -206,6 +214,10 @@ function generateUrl(rng: SeededRandom): string {
   return `https://example.com/${repeatJoin(rng.int(2, 4), () => rng.pick(URL_SEGMENTS), "/")}?ref=${rng.int(100, 999)}`;
 }
 
+function generateSlashProseToken(rng: SeededRandom): string {
+  return rng.pick(SLASH_PROSE_TOKENS);
+}
+
 function generateShortCodeToken(rng: SeededRandom): string {
   return rng.pick(SHORT_CODE_TOKENS);
 }
@@ -234,7 +246,7 @@ function generateLink(rng: SeededRandom): string {
 }
 
 function generateInlineFragment(rng: SeededRandom): string {
-  switch (rng.int(0, 7)) {
+  switch (rng.int(0, 8)) {
     case 0:
       return generateWords(rng, 2, 5);
     case 1:
@@ -249,6 +261,8 @@ function generateInlineFragment(rng: SeededRandom): string {
       return `~~${generateWords(rng, 1, 2)}~~`;
     case 6:
       return `${rng.pick(EMOJI)} ${rng.pick(CJK)}`;
+    case 7:
+      return generateSlashProseToken(rng);
     default:
       return generateWords(rng, 3, 6);
   }
@@ -362,7 +376,9 @@ function generateFenceBlock(rng: SeededRandom): GeneratedBlock {
 function generateTableBlock(rng: SeededRandom): GeneratedBlock {
   const rows = Array.from({ length: rng.int(2, 3) }, () => [
     generateWords(rng, 1, 2),
-    generateInlineCode(rng),
+    rng.bool(0.55)
+      ? `${generateInlineCode(rng)}: ${generateWords(rng, 3, 5)} ${generateSlashProseToken(rng)}`
+      : generateInlineCode(rng),
     generateWords(rng, 4, 8),
   ]);
   return {

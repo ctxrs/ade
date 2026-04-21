@@ -50,6 +50,21 @@ fn release_matches_context_min() {
 }
 
 #[test]
+fn release_matches_context_min_for_same_base_canary_builds() {
+    let release = ProviderRelease {
+        version: "1.0.0".to_string(),
+        status: ProviderReleaseStatus::Supported,
+        upstream_version: None,
+        context_min: Some("0.59.0".to_string()),
+        context_max: None,
+        notes: None,
+        provenance: None,
+    };
+    let ctx = Version::parse("0.59.0-canary.deadbeef").ok();
+    assert!(release_matches_context(&release, ctx.as_ref()));
+}
+
+#[test]
 fn version_matches_suffix_release() {
     assert!(version_matches("1.0.1-cli", "1.0.1"));
     assert!(version_matches("1.0.1", "1.0.1-cli"));

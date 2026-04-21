@@ -262,6 +262,26 @@ pub fn is_supported_managed_provider_for_target(
     }
 }
 
+pub fn is_compatible_managed_provider_for_target(
+    matrix: &provider_matrix::ProviderMatrix,
+    provider_id: &str,
+    target: InstallTarget,
+    current_ctx_version: Option<&str>,
+) -> bool {
+    let Some(context_version) = current_ctx_version.and_then(provider_matrix::parse_version_loose)
+    else {
+        return false;
+    };
+    if !provider_matrix::is_managed_supported_for_context(
+        matrix,
+        provider_id,
+        Some(&context_version),
+    ) {
+        return false;
+    }
+    is_supported_managed_provider_for_target(matrix, provider_id, target)
+}
+
 pub fn managed_install_download_size_bytes(
     matrix: &provider_matrix::ProviderMatrix,
     provider_id: &str,

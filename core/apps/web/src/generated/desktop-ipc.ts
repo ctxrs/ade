@@ -4,7 +4,9 @@ export type BlobUploadResp = { blob_id: string, sha256: string, bytes: number, m
 
 export type DesktopConnectionKind = "none" | "local" | "ssh";
 
-export type DesktopConnectionInfo = { base_url?: string | null, kind: DesktopConnectionKind, host?: string | null, remote_data_dir?: string | null, remote_port?: number | null, token?: string | null, user?: string | null, };
+export type DesktopConnectionIntent = "auto_local_bootstrap" | "explicit_local" | "explicit_remote" | "explicit_disconnected";
+
+export type DesktopConnectionInfo = { base_url?: string | null, intent?: DesktopConnectionIntent, kind: DesktopConnectionKind, local_auto_bootstrap_allowed?: boolean, host?: string | null, remote_data_dir?: string | null, remote_port?: number | null, token?: string | null, user?: string | null, };
 
 export type SshConnectReq = { host: string, password_once?: string | null, remote_data_dir?: string | null, remote_port?: number | null, start_remote: boolean, user?: string | null, };
 

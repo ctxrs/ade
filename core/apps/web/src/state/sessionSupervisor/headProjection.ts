@@ -372,12 +372,10 @@ export function applyState(
   if (typeof stateRev === "number") {
     entry.stateRev = stateRev;
     support.stateAppliedRev = stateRev;
+  } else {
+    support.stateAppliedRev = undefined;
   }
   support.artifacts = Array.isArray(state.artifacts) ? state.artifacts : [];
-  support.artifactsLoaded = true;
-  support.artifactsLoading = false;
-  support.artifactsFetchedAtMs = Date.now();
-  this.clearSupportLoadError(entry, "artifacts");
   support.gitStatusSummary = state.git_status ?? null;
   syncStateCache.call(this, entry, stateRev);
 }
@@ -387,13 +385,12 @@ export function syncStateCache(
   entry: InternalEntry,
   stateRev?: number,
 ) {
-  const cached = this.stateCacheBySessionId.get(entry.sessionId);
   this.stateCacheBySessionId.set(entry.sessionId, {
     state: {
       artifacts: entry.support.artifacts.slice(),
       git_status: buildStateGitStatusSummary(this, entry),
     },
-    stateRev: typeof stateRev === "number" ? stateRev : cached?.stateRev,
+    stateRev: typeof stateRev === "number" ? stateRev : entry.support.stateAppliedRev,
   });
 }
 

@@ -23,7 +23,7 @@ export type SessionLoadState = "pending_hydration" | "live" | "recovering" | "fa
 
 export type SessionFreshnessState = "bootstrap" | "authoritative" | "replica" | "recovering";
 
-export type SessionSupportLoadErrorKey = "state" | "artifacts" | "subagentInvocations";
+export type SessionSupportLoadErrorKey = "state" | "subagentInvocations";
 
 export type SessionSupportLoadErrors = Partial<Record<SessionSupportLoadErrorKey, string>>;
 
@@ -45,12 +45,10 @@ export type SessionSupportState = {
   turnToolsHydratedByTurnId: Record<string, boolean>;
   toolSummariesReady: boolean;
   artifacts: Artifact[];
-  artifactsLoading: boolean;
-  artifactsLoaded: boolean;
-  artifactsFetchedAtMs?: number;
   subagentInvocations: SubagentInvocation[];
   subagentInvocationsLoaded: boolean;
   subagentInvocationsLoading: boolean;
+  subagentInvocationsFetchToken: number;
   subagentInvocationsFetchedAtMs?: number;
   subagentInvocationsAppliedRev?: number;
   stateLoaded: boolean;
@@ -260,12 +258,10 @@ export function createInternalEntry(
       turnToolsHydratedByTurnId: {},
       toolSummariesReady: false,
       artifacts: [],
-      artifactsLoading: false,
-      artifactsLoaded: false,
-      artifactsFetchedAtMs: undefined,
       subagentInvocations: [],
       subagentInvocationsLoaded: false,
       subagentInvocationsLoading: false,
+      subagentInvocationsFetchToken: 0,
       subagentInvocationsFetchedAtMs: undefined,
       subagentInvocationsAppliedRev: undefined,
       stateLoaded: false,

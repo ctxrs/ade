@@ -56,7 +56,6 @@ import {
   applyAcpMeta,
   applyAcpMetaFromEvents,
   applyGitStatusSnapshotFromEvents,
-  ensureArtifacts,
   ensureProviderOptions,
   ensureState,
   ensureSubagentInvocations,
@@ -185,7 +184,6 @@ export class SessionSupervisor {
   ensureProviderOptions = ensureProviderOptions;
   ensureState = ensureState;
   resolveRequestedStateRev = resolveRequestedStateRev;
-  ensureArtifacts = ensureArtifacts;
   ensureSubagentInvocations = ensureSubagentInvocations;
   resolveWorkspaceOwnerScope = resolveWorkspaceOwnerScope;
   resolveEntryWorkspaceOwnerScope = resolveEntryWorkspaceOwnerScope;
@@ -218,6 +216,16 @@ export class SessionSupervisor {
     invalidateSupportLoadsWithoutAuthoritativeRevision(entry, {
       resolveRequestedStateRev: (nextEntry) => this.resolveRequestedStateRev(nextEntry),
       subagentInvocationsCacheBySessionId: this.subagentInvocationsCacheBySessionId,
+      invalidateStateRequest: (nextEntry) => {
+        nextEntry.support.stateFetchToken += 1;
+        nextEntry.support.stateLoading = false;
+        this.stateRequestsInFlight.delete(nextEntry.sessionId);
+      },
+      invalidateSubagentInvocationsRequest: (nextEntry) => {
+        nextEntry.support.subagentInvocationsFetchToken += 1;
+        nextEntry.support.subagentInvocationsLoading = false;
+        this.subagentInvocationsRequestsInFlight.delete(nextEntry.sessionId);
+      },
     });
   adoptLoadedSubagentInvocationsRevision = (entry: InternalEntry, stateRev: number) =>
     adoptLoadedSubagentInvocationsRevision(
@@ -287,19 +295,19 @@ export class SessionSupervisor {
     const id = String(sessionId || "").trim();
     if (!id) return;
     const entry = this.ensureEntry(id);
-    void this.ensureState(entry, opts);
-  };
-  loadArtifacts = (sessionId: string, opts?: { force?: boolean }) => {
-    const id = String(sessionId || "").trim();
-    if (!id) return;
-    const entry = this.ensureEntry(id);
-    void this.ensureArtifacts(entry, opts);
+    void this.ensureState(entry, {
+      ...opts,
+      allowEntryStateRevFallback: entry.refCount <= 0,
+    });
   };
   loadSubagentInvocations = (sessionId: string, opts?: { force?: boolean }) => {
     const id = String(sessionId || "").trim();
     if (!id) return;
     const entry = this.ensureEntry(id);
-    void this.ensureSubagentInvocations(entry, opts);
+    void this.ensureSubagentInvocations(entry, {
+      ...opts,
+      allowEntryStateRevFallback: entry.refCount <= 0,
+    });
   };
   refreshQueue = (sessionId: string) => {
     this.replica.dispatch({ type: "refresh_session", sessionId });

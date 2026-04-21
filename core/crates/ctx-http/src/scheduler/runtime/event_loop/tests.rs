@@ -805,6 +805,13 @@ async fn large_tool_result_spills_to_artifact_and_keeps_preview_bounded() {
             .count(),
         10
     );
+
+    let session_state = store
+        .get_session_state(session.id)
+        .await
+        .expect("load session state");
+    assert_eq!(session_state.artifacts.len(), 1);
+    assert_eq!(session_state.artifacts[0].id, artifact.id);
 }
 
 #[tokio::test]

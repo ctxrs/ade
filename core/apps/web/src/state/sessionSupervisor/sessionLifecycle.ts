@@ -59,7 +59,7 @@ const beginSessionOpenEntry = (
   if (reopeningSession) {
     host.invalidateSupportLoadsWithoutAuthoritativeRevision(entry);
     const requestedStateRev = host.resolveRequestedStateRev(entry);
-    if (shouldFetchSessionState({ ...entry.support, stateRev: entry.stateRev })) {
+    if (shouldFetchSessionState({ ...entry.support, stateRev: requestedStateRev })) {
       entry.support.stateAutoLoadKey = undefined;
     }
     if (shouldFetchSubagentInvocations(entry.support, requestedStateRev)) {

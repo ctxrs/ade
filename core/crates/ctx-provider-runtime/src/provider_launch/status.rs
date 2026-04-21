@@ -135,6 +135,7 @@ pub async fn provider_status_for_target(
     provider_id: &str,
     target: InstallTarget,
 ) -> ProviderStatus {
+    let current_ctx_version = state.current_ctx_version();
     let mut status = if let Some(status) =
         synthesize_target_mismatch_status(managed, provider_id, target)
     {
@@ -175,10 +176,25 @@ pub async fn provider_status_for_target(
             managed,
             entry,
             &mut status,
+            current_ctx_version.as_deref(),
         )
         .await;
     }
-    apply_install_viability_details(&mut status, state.data_root(), managed, matrix, target);
-    apply_provider_usability_details(&mut status, state.data_root(), managed, matrix, target);
+    apply_install_viability_details(
+        &mut status,
+        state.data_root(),
+        managed,
+        matrix,
+        target,
+        current_ctx_version.as_deref(),
+    );
+    apply_provider_usability_details(
+        &mut status,
+        state.data_root(),
+        managed,
+        matrix,
+        target,
+        current_ctx_version.as_deref(),
+    );
     status
 }

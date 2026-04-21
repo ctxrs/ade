@@ -12,6 +12,16 @@ impl ctx_provider_runtime::ProviderRuntimeHost for AppState {
         &self.core.data_root
     }
 
+    fn current_ctx_version(&self) -> Option<String> {
+        match crate::build_identity::current_build_identity() {
+            Ok(identity) => Some(identity.exact_version.clone()),
+            Err(err) => {
+                tracing::error!("failed to load ctx build identity for provider runtime: {err:#}");
+                None
+            }
+        }
+    }
+
     fn provider_adapters(&self) -> &Mutex<HashMap<String, Arc<dyn ProviderAdapter>>> {
         &self.providers.adapters
     }

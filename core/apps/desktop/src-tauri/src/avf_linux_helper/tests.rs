@@ -333,7 +333,7 @@ fn runtime_with_guest_agent_can_enable_real_vm_path() {
 
 #[test]
 fn build_probe_reports_host_level_save_restore_scope() {
-    let probe = build_probe();
+    let probe = build_probe().expect("build probe");
     let expected_scope = if probe.save_restore_supported {
         AvfLinuxSaveRestoreCapabilityScope::HostPrerequisitesOnly
     } else {
@@ -344,7 +344,7 @@ fn build_probe_reports_host_level_save_restore_scope() {
 
 #[test]
 fn probe_scopes_save_restore_as_host_prerequisites_or_unsupported() {
-    let probe = build_probe();
+    let probe = build_probe().expect("build probe");
     if probe.save_restore_supported {
         assert!(matches!(
             probe.save_restore_capability_scope,

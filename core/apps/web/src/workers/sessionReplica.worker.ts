@@ -1,4 +1,4 @@
-import type { Artifact, SessionHeadSnapshot, SessionSnapshot, SessionState } from "@ctx/types";
+import type { SessionHeadSnapshot, SessionSnapshot, SessionState } from "@ctx/types";
 import { workerFetchJson, setWorkerClientConfig } from "../api/workerClient";
 import { SessionReplicaCore } from "../state/sessionReplicaCore";
 import type { SessionReplicaCommand, SessionReplicaWorkerMessage } from "../state/sessionReplicaProtocol";
@@ -22,8 +22,6 @@ const api = {
     const suffix = qs.toString() ? `?${qs.toString()}` : "";
     return workerFetchJson<SessionHeadSnapshot>(`/api/sessions/${sessionId}/head${suffix}`);
   },
-  listSessionArtifacts: (sessionId: string): Promise<Artifact[]> =>
-    workerFetchJson<Artifact[]>(`/api/sessions/${sessionId}/artifacts`),
   getSessionState: (sessionId: string): Promise<SessionState> =>
     workerFetchJson<SessionState>(`/api/sessions/${sessionId}/state`),
   setAuth,

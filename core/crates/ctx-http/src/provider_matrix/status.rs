@@ -32,6 +32,7 @@ pub async fn apply_matrix_to_status(
     cfg: &AgentServerConfigFile,
     entry: &ProviderMatrixEntry,
     status: &mut ctx_providers::adapters::ProviderStatus,
+    current_ctx_version: Option<&str>,
 ) {
     for key in MATRIX_STATUS_DETAIL_KEYS {
         status.details.remove(*key);
@@ -39,7 +40,7 @@ pub async fn apply_matrix_to_status(
     status
         .details
         .insert("provider_kind".to_string(), entry.kind.as_str().to_string());
-    let context_version = updates::normalize_version_str(env!("CARGO_PKG_VERSION"));
+    let context_version = current_ctx_version.and_then(updates::normalize_version_str);
     let context_version = context_version.as_ref();
 
     let detected_version = detect_provider_version(data_root, cfg, entry, status).await;
@@ -129,6 +130,7 @@ pub async fn apply_matrix_to_status(
         }
     }
 
+    let mut unsupported_version = false;
     if status.installed {
         if let Some(version) = detected_version.as_deref() {
             match release_for_version(entry, version) {
@@ -140,11 +142,13 @@ pub async fn apply_matrix_to_status(
                         );
                     }
                     if release.status != ProviderReleaseStatus::Supported {
+                        unsupported_version = true;
                         diagnostics.push(format!(
                             "Provider version {} is blocked by the support matrix",
                             release.version
                         ));
                     } else if !release_matches_context(release, context_version) {
+                        unsupported_version = true;
                         let mut msg = "Provider version requires a newer ctx build".to_string();
                         if let Some(min) = release.context_min.as_ref() {
                             msg = format!("Provider version requires ctx >= {min}");
@@ -153,6 +157,7 @@ pub async fn apply_matrix_to_status(
                     }
                 }
                 None => {
+                    unsupported_version = true;
                     diagnostics.push(format!(
                         "Provider version {version} is not in the support matrix"
                     ));
@@ -165,6 +170,18 @@ pub async fn apply_matrix_to_status(
 
     if !diagnostics.is_empty() {
         status.diagnostics.extend(diagnostics);
+    }
+
+    if matches!(
+        status.health,
+        ctx_providers::adapters::ProviderHealth::Ok
+            | ctx_providers::adapters::ProviderHealth::UnsupportedVersion
+    ) {
+        status.health = if unsupported_version {
+            ctx_providers::adapters::ProviderHealth::UnsupportedVersion
+        } else {
+            ctx_providers::adapters::ProviderHealth::Ok
+        };
     }
 
     let release_update_available = match (

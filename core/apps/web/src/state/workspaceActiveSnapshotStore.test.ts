@@ -959,6 +959,145 @@ describe("WorkspaceActiveSnapshotStore", () => {
     expect(snapshot.totalArchived).toBe(0);
   });
 
+  it("keeps an unarchived task visible after archived_task_delete arrives", async () => {
+    const { WorkspaceActiveSnapshotStoreImpl } = await import("./workspaceActiveSnapshotStoreCore");
+
+    const now = "2024-01-01T00:00:00.000Z";
+    const archivedAt = "2024-01-02T00:00:00.000Z";
+
+    const task = mkTask("task-1", "ws-1", now);
+    const session = mkSession("session-1", "task-1", "ws-1", now);
+    const summary = mkSummary(session, now);
+    const head = mkHead(session);
+
+    const activeSnapshot: WorkspaceActiveSnapshot = {
+      workspace_id: "ws-1",
+      snapshot_rev: 1,
+      archived_rev: 0,
+      active: {
+        total_count: 1,
+        tasks: [mkActiveSummary(task, summary, head, now)],
+      },
+    };
+
+    const store = new WorkspaceActiveSnapshotStoreImpl("ws-1", { disableWorker: true });
+    await asStoreInternals(store).handleStreamMessage(
+      JSON.stringify({
+        type: "snapshot",
+        rev: 1,
+        active_snapshot: activeSnapshot,
+      }),
+    );
+
+    await waitForCondition(() => store.getSnapshot().initialized);
+
+    const archivedTask = {
+      ...task,
+      archived_at: archivedAt,
+      updated_at: archivedAt,
+    };
+
+    await asStoreInternals(store).handleStreamMessage(
+      JSON.stringify({
+        type: "event",
+        rev: 2,
+        event: {
+          type: "task_delta",
+          workspace_id: "ws-1",
+          snapshot_rev: 2,
+          delta: {
+            kind: "archived",
+            task: archivedTask,
+          },
+        },
+      }),
+    );
+
+    await asStoreInternals(store).handleStreamMessage(
+      JSON.stringify({
+        type: "event",
+        rev: 3,
+        event: {
+          type: "archived_task_upsert",
+          workspace_id: "ws-1",
+          archived_rev: 1,
+          task: {
+            task: archivedTask,
+            sessions: [session],
+            sort_at: archivedAt,
+          },
+        },
+      }),
+    );
+
+    await asStoreInternals(store).handleStreamMessage(
+      JSON.stringify({
+        type: "event",
+        rev: 4,
+        event: {
+          type: "task_delta",
+          workspace_id: "ws-1",
+          snapshot_rev: 3,
+          delta: {
+            kind: "unarchived",
+            task,
+          },
+        },
+      }),
+    );
+
+    const afterStreamOnlyUnarchive = store.getSnapshot();
+    expect(afterStreamOnlyUnarchive.activeIds).toEqual([task.id]);
+    expect(afterStreamOnlyUnarchive.archivedIds).toEqual([]);
+    expect(afterStreamOnlyUnarchive.totalActive).toBe(1);
+    expect(afterStreamOnlyUnarchive.totalArchived).toBe(0);
+
+    await asStoreInternals(store).handleStreamMessage(
+      JSON.stringify({
+        type: "event",
+        rev: 5,
+        event: {
+          type: "active_task_upsert",
+          workspace_id: "ws-1",
+          snapshot_rev: 4,
+          task: mkActiveSummary(task, summary, head, now),
+        },
+      }),
+    );
+
+    const publishedSnapshots: Array<{ archivedRev: number; totalArchived: number }> = [];
+    const unsubscribe = store.subscribe(() => {
+      const snapshot = store.getSnapshot();
+      publishedSnapshots.push({
+        archivedRev: snapshot.archivedRev,
+        totalArchived: snapshot.totalArchived,
+      });
+    });
+
+    await asStoreInternals(store).handleStreamMessage(
+      JSON.stringify({
+        type: "event",
+        rev: 6,
+        event: {
+          type: "archived_task_delete",
+          workspace_id: "ws-1",
+          archived_rev: 2,
+          task_id: task.id,
+        },
+      }),
+    );
+    unsubscribe();
+
+    const snapshot = store.getSnapshot();
+    expect(snapshot.activeIds).toEqual([task.id]);
+    expect(snapshot.archivedIds).toEqual([]);
+    expect(snapshot.tasksById[task.id]?.task.archived_at ?? null).toBeNull();
+    expect(snapshot.totalActive).toBe(1);
+    expect(snapshot.totalArchived).toBe(0);
+    expect(snapshot.archivedRev).toBe(2);
+    expect(publishedSnapshots).toEqual([{ archivedRev: 2, totalArchived: 0 }]);
+  });
+
   it("merges tool_summaries from session_head_delta events", async () => {
     const { WorkspaceActiveSnapshotStoreImpl } = await import("./workspaceActiveSnapshotStoreCore");
 
@@ -2093,6 +2232,8 @@ describe("WorkspaceActiveSnapshotStore", () => {
       };
       info: {
         kind: "none" | "local" | "ssh";
+        intent: "auto_local_bootstrap" | "explicit_local" | "explicit_remote" | "explicit_disconnected";
+        local_auto_bootstrap_allowed: boolean;
         base_url: string | null;
         token: string | null;
       } | null;
@@ -2114,6 +2255,8 @@ describe("WorkspaceActiveSnapshotStore", () => {
       },
       info: {
         kind: "local",
+        intent: "explicit_local",
+        local_auto_bootstrap_allowed: true,
         base_url: "http://daemon.local",
         token: "bridge-token",
       },

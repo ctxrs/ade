@@ -32,16 +32,27 @@ fn main() {
 
 fn emit_build_identity() {
     println!("cargo:rerun-if-env-changed=CTX_BUILD_ID");
+    println!("cargo:rerun-if-env-changed=CTX_COMPATIBILITY_TOKEN");
     println!("cargo:rerun-if-env-changed=CTX_DEV_INSTANCE_ID");
     println!("cargo:rerun-if-env-changed=CTX_DEV_INSTANCE_ROOT");
+    println!("cargo:rerun-if-env-changed=CTX_RELEASE_EFFECTIVE_VERSION");
+    println!("cargo:rerun-if-env-changed=RELEASE_VERSION");
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=Cargo.toml");
     println!("cargo:rerun-if-changed=src");
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
     emit_git_rerun_hints(&manifest_dir);
 
-    let dev_instance_id = dev_instance_identity::resolve_dev_instance_id(&manifest_dir);
-    println!("cargo:rustc-env=CTX_DEV_INSTANCE_ID={dev_instance_id}");
+    let exact_version = explicit_env_value("CTX_RELEASE_EFFECTIVE_VERSION")
+        .or_else(|| explicit_env_value("RELEASE_VERSION"))
+        .unwrap_or_else(|| env::var("CARGO_PKG_VERSION").unwrap_or_else(|_| "unknown".to_string()));
+    println!("cargo:rustc-env=CTX_RELEASE_EFFECTIVE_VERSION={exact_version}");
+
+    let compatibility_token = explicit_env_value("CTX_COMPATIBILITY_TOKEN")
+        .or_else(|| explicit_env_value("CTX_DEV_INSTANCE_ID"))
+        .unwrap_or_else(|| dev_instance_identity::resolve_dev_instance_id(&manifest_dir));
+    println!("cargo:rustc-env=CTX_COMPATIBILITY_TOKEN={compatibility_token}");
+    println!("cargo:rustc-env=CTX_DEV_INSTANCE_ID={compatibility_token}");
 
     if let Ok(explicit) = env::var("CTX_BUILD_ID") {
         let trimmed = explicit.trim();
@@ -53,6 +64,13 @@ fn emit_build_identity() {
     let build_id = git_head_build_id(&manifest_dir)
         .unwrap_or_else(|| env::var("CARGO_PKG_VERSION").unwrap_or_else(|_| "unknown".to_string()));
     println!("cargo:rustc-env=CTX_BUILD_ID={build_id}");
+}
+
+fn explicit_env_value(name: &str) -> Option<String> {
+    env::var(name)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
 }
 
 fn emit_embedded_updater_pubkey() {

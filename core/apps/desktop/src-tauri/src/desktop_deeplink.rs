@@ -238,7 +238,7 @@ pub(super) fn handle_open(
     if matches!(req.target, DeepLinkTarget::WorktreeFile { .. })
         && matches!(state.info().kind, DesktopConnectionKind::None)
     {
-        ensure_local_connection(app, state)?;
+        ensure_local_connection_for_user_action(app, state)?;
     }
 
     if matches!(req.target, DeepLinkTarget::WorktreeFile { .. })
@@ -301,7 +301,7 @@ pub(super) fn handle_reveal(
     if matches!(req.target, DeepLinkTarget::WorktreeFile { .. })
         && matches!(state.info().kind, DesktopConnectionKind::None)
     {
-        ensure_local_connection(app, state)?;
+        ensure_local_connection_for_user_action(app, state)?;
     }
 
     if matches!(req.target, DeepLinkTarget::WorktreeFile { .. }) && state.is_remote() {
@@ -331,7 +331,7 @@ pub(super) fn handle_workspace(
     req: DeepLinkWorkspace,
 ) -> Result<()> {
     if matches!(state.info().kind, DesktopConnectionKind::None) {
-        ensure_local_connection(app, state)?;
+        ensure_local_connection_for_user_action(app, state)?;
     }
 
     let workspace_id = if let Some(id) = req.workspace_id {

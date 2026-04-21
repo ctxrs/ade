@@ -30,7 +30,6 @@ const PROFILES = [
     title: "Agent Default",
     purpose: "Standard agent confidence loop for normal changes before pushing.",
     selector: {
-      forceIncludeEntryIds: ["web-workbench.web-premerge-required"],
       includeSurfaces: ["contract", "compile", "unit", "integration"],
       includeWorlds: ["hermetic", "simulated", "fake-provider"],
       includeCosts: ["tiny", "fast"],

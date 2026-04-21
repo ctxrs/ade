@@ -59,6 +59,12 @@ pub struct AvfLinuxHelperProbe {
     pub protocol_version: u32,
     pub protocol_schema: String,
     pub helper_version: String,
+    #[serde(default)]
+    pub exact_version: String,
+    #[serde(default)]
+    pub build_id: String,
+    #[serde(default)]
+    pub compatibility_token: String,
     pub host_os: String,
     pub host_arch: String,
     pub supported: bool,

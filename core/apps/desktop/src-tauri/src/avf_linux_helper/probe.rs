@@ -1,6 +1,7 @@
 use super::*;
 
-pub(super) fn build_probe() -> AvfLinuxHelperProbe {
+pub(super) fn build_probe() -> Result<AvfLinuxHelperProbe> {
+    let identity = current_build_identity()?;
     let mut notes = Vec::new();
     let save_restore_supported = shared_vm_save_restore_supported();
     if cfg!(target_os = "macos") {
@@ -27,10 +28,13 @@ pub(super) fn build_probe() -> AvfLinuxHelperProbe {
         );
     }
 
-    AvfLinuxHelperProbe {
+    Ok(AvfLinuxHelperProbe {
         protocol_version: HELPER_PROTOCOL_VERSION,
         protocol_schema: HELPER_PROTOCOL_SCHEMA,
-        helper_version: env!("CARGO_PKG_VERSION"),
+        helper_version: identity.exact_version.clone(),
+        exact_version: identity.exact_version,
+        build_id: identity.build_id,
+        compatibility_token: identity.compatibility_token,
         host_os: std::env::consts::OS,
         host_arch: std::env::consts::ARCH,
         supported: cfg!(target_os = "macos"),
@@ -42,7 +46,7 @@ pub(super) fn build_probe() -> AvfLinuxHelperProbe {
         },
         rosetta_supported: cfg!(all(target_os = "macos", target_arch = "aarch64")),
         notes,
-    }
+    })
 }
 
 pub(super) fn shared_vm_save_restore_supported() -> bool {

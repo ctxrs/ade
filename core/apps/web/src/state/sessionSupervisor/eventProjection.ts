@@ -7,7 +7,6 @@ import {
 } from "../assistantStreaming";
 import {
   idToString,
-  type Artifact,
   type GitStatusSummary,
   type Message,
   type Session,
@@ -41,7 +40,7 @@ import { resolveTurnAnalyticsMetadata } from "./turnAnalyticsMetadata";
 import { applyTurnStartEffects } from "./turnStartEffects";
 import { applyTurnOutcomeEffects } from "./turnOutcomeEffects";
 
-type SessionSupportLoadErrorKey = "state" | "artifacts" | "subagentInvocations";
+type SessionSupportLoadErrorKey = "state" | "subagentInvocations";
 
 type SessionSupervisorThoughtCacheRecord = {
   key: string;
@@ -236,9 +235,6 @@ export function mergeEvents(
       changed = true;
     }
     if (applyQueueEvent.call(this, entry, event)) {
-      changed = true;
-    }
-    if (applyArtifactsEvent.call(this, entry, event)) {
       changed = true;
     }
     if (applyGitStatusSnapshotNotice.call(this, entry, event)) {
@@ -515,24 +511,6 @@ export function applyQueueEvent(
     default:
       return false;
   }
-}
-
-export function applyArtifactsEvent(
-  this: SessionSupervisorEventProjectionHost,
-  entry: SessionSupervisorEventProjectionEntry,
-  event: SessionEvent,
-): boolean {
-  if (String(event.event_type) !== "artifacts_set") return false;
-  const artifacts = Array.isArray(event.payload_json?.artifacts)
-    ? (event.payload_json.artifacts as Artifact[])
-    : [];
-  entry.support.artifacts = artifacts;
-  entry.support.artifactsLoaded = true;
-  entry.support.artifactsLoading = false;
-  entry.support.artifactsFetchedAtMs = Date.now();
-  this.clearSupportLoadError(entry, "artifacts");
-  this.syncStateCache(entry);
-  return true;
 }
 
 export function applyGitStatusSnapshotNotice(

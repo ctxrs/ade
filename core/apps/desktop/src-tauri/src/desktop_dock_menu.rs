@@ -75,7 +75,7 @@ extern "C" fn dock_open_recent_workspace(_this: &AnyObject, _cmd: Sel, sender: *
         }
         DockRecentWorkspaceTarget::LocalRootPath { root_path } => {
             let manager = app.state::<ConnectionManager>();
-            if let Err(err) = ensure_local_connection(app, &manager) {
+            if let Err(err) = ensure_local_connection_for_user_action(app, &manager) {
                 eprintln!(
                     "dock menu ensure local daemon failed for '{}': {err:#}",
                     root_path

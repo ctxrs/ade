@@ -58,8 +58,8 @@ pub(in crate::api) struct RegisterMobileDeviceReq {
 pub(in crate::api) async fn health(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<HealthResp>, StatusCode> {
-    let identity =
-        crate::build_identity::current_build_identity().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let identity = crate::build_identity::current_build_identity()
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let version = identity.exact_version.clone();
     Ok(Json(HealthResp {
         version: version.clone(),
@@ -184,8 +184,8 @@ pub(in crate::api) async fn diagnostics(
         .unwrap_or_else(|e| serde_json::json!({"error": logs::redact_sensitive(&e.to_string())}));
     let managed_installs = redact_json_value(managed_installs);
 
-    let identity =
-        crate::build_identity::current_build_identity().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let identity = crate::build_identity::current_build_identity()
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let version = identity.exact_version.clone();
     Ok(Json(DiagnosticsResp {
         daemon: HealthResp {

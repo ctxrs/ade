@@ -81,7 +81,19 @@ test("ctx-providers changes use the targeted taxonomy Rust gate", () => {
 test("web high-risk changes escalate to the canonical premerge browser suite", () => {
   const commands = runScenario(["core/apps/web/src/state/providerOnboardingCoordinator.ts"]);
 
-  assert.deepEqual(commands, ["bash -lc pnpm bazel:web:test", "bash -lc pnpm test:e2e:premerge"]);
+  assert.deepEqual(commands, ["bash -lc pnpm bazel:web:test", "bash -lc pnpm bazel:web:e2e:premerge"]);
+});
+
+test("shared web E2E Bazel macro changes stay on the canonical premerge browser suite", () => {
+  const commands = runScenario(["core/apps/web/e2e/web_e2e_test.bzl"]);
+
+  assert.deepEqual(commands, ["bash -lc pnpm bazel:web:e2e:premerge"]);
+});
+
+test("shared Playwright runtime changes run web unit and canonical premerge browser gates", () => {
+  const commands = runScenario(["core/apps/web/playwright.shared.ts"]);
+
+  assert.deepEqual(commands, ["bash -lc pnpm bazel:web:test", "bash -lc pnpm bazel:web:e2e:premerge"]);
 });
 
 test("root-level Rust config changes still trigger the Rust gate", () => {

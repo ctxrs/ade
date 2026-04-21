@@ -1,4 +1,7 @@
 
+#[path = "../build_identity.rs"]
+mod build_identity;
+
 use anyhow::{bail, Context, Result};
 use clap::Parser;
 use serde_json::{json, Value};

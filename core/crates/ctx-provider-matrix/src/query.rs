@@ -1,5 +1,11 @@
 use super::*;
 
+fn comparable_context_version(raw: &Version) -> Version {
+    let mut normalized = raw.clone();
+    normalized.pre = semver::Prerelease::EMPTY;
+    normalized
+}
+
 pub fn get_entry<'a>(
     matrix: &'a ProviderMatrix,
     provider_id: &str,
@@ -67,16 +73,17 @@ pub fn release_matches_context(
     let Some(ctx) = context_version else {
         return true;
     };
+    let comparable_ctx = comparable_context_version(ctx);
     if let Some(min) = release.context_min.as_deref() {
         if let Some(min_v) = parse_version_loose(min) {
-            if ctx < &min_v {
+            if comparable_ctx < comparable_context_version(&min_v) {
                 return false;
             }
         }
     }
     if let Some(max) = release.context_max.as_deref() {
         if let Some(max_v) = parse_version_loose(max) {
-            if ctx > &max_v {
+            if comparable_ctx > comparable_context_version(&max_v) {
                 return false;
             }
         }

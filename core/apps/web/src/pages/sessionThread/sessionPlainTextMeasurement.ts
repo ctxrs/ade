@@ -270,6 +270,14 @@ function isPathLikeDelimitedWord(text: string): boolean {
   return !text.includes("://") && /[./\\]/.test(text);
 }
 
+function isAbsolutePathLikeDelimitedWord(text: string): boolean {
+  return !text.includes("://") && /^[/\\]/.test(text);
+}
+
+function acceptsAbsolutePathContinuationOnCurrentLine(consumedText: string): boolean {
+  return consumedText.replace(/^[/\\]+/, "").length >= 4;
+}
+
 function acceptsUrlContinuationOnCurrentLine(params: {
   word: string;
   consumedText: string;
@@ -353,8 +361,9 @@ function measureCollapsedPlainTextLineHeight(params: {
       const availableWidth = Math.max(0, remainingWidth - reservedWidth);
       const wordFitsFreshLine = wordWidth <= maxWidth + 0.01;
       const isUrlLikeWord = word.includes("://");
+      const isAbsolutePathLikeWord = isAbsolutePathLikeDelimitedWord(word);
       if (usesDelimitedWrapping) {
-        if ((isUrlLikeWord || isPathLikeDelimitedWord(word) || !wordFitsFreshLine) && availableWidth > 0.01) {
+        if ((isUrlLikeWord || isAbsolutePathLikeWord || !wordFitsFreshLine) && availableWidth > 0.01) {
           const currentFit = snapDelimitedUrlContinuationFit({
             cacheKeyPrefix: `${params.cacheKey}:word:${wordIndex}:continued`,
             word,
@@ -391,7 +400,9 @@ function measureCollapsedPlainTextLineHeight(params: {
                   consumedText: currentFit.consumedText,
                   currentFitRatio,
                 })
-              : currentFitRatio >= startRatioThreshold;
+              : isAbsolutePathLikeWord
+                ? acceptsAbsolutePathContinuationOnCurrentLine(currentFit.consumedText)
+                : currentFitRatio >= startRatioThreshold;
           if (
             currentFit.consumedText.length > 0 &&
             acceptsCurrentDelimitedContinuation

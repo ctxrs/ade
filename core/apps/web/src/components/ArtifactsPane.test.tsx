@@ -139,6 +139,78 @@ describe("ArtifactsPane", () => {
     expect(screen.getByRole("button", { name: "Close" })).toBeInTheDocument();
   });
 
+  it("closes the viewer when the session changes", () => {
+    const { rerender } = render(
+      <ArtifactsPane
+        sessionId="session-1"
+        artifacts={[
+          makeArtifact({
+            name: "chart.png",
+            mime_type: "image/png",
+            absolute_path: "/tmp/chart.png",
+          }),
+        ]}
+      />,
+    );
+
+    fireEvent.click(screen.getByTitle("/tmp/chart.png"));
+    expect(screen.getByRole("button", { name: "Close" })).toBeInTheDocument();
+
+    rerender(
+      <ArtifactsPane
+        sessionId="session-2"
+        artifacts={[
+          makeArtifact({
+            id: "artifact-2",
+            session_id: "session-2",
+            name: "other.png",
+            mime_type: "image/png",
+            absolute_path: "/tmp/other.png",
+          }),
+        ]}
+      />,
+    );
+
+    expect(screen.queryByRole("button", { name: "Close" })).not.toBeInTheDocument();
+  });
+
+  it("closes the viewer when a same-session refresh removes the open artifact", () => {
+    const { rerender } = render(
+      <ArtifactsPane
+        sessionId="session-1"
+        artifacts={[
+          makeArtifact({
+            id: "artifact-1",
+            session_id: "session-1",
+            name: "chart.png",
+            mime_type: "image/png",
+            absolute_path: "/tmp/chart.png",
+          }),
+        ]}
+      />,
+    );
+
+    fireEvent.click(screen.getByTitle("/tmp/chart.png"));
+    expect(screen.getByRole("button", { name: "Close" })).toBeInTheDocument();
+
+    rerender(
+      <ArtifactsPane
+        sessionId="session-1"
+        artifacts={[
+          makeArtifact({
+            id: "artifact-2",
+            session_id: "session-1",
+            name: "other.png",
+            mime_type: "image/png",
+            absolute_path: "/tmp/other.png",
+          }),
+        ]}
+      />,
+    );
+
+    expect(screen.queryByRole("button", { name: "Close" })).not.toBeInTheDocument();
+  });
+
   it("does not open the viewer for unsupported artifacts", () => {
     render(
       <ArtifactsPane
