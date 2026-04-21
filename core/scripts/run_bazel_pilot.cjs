@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 const childProcess = require("node:child_process");
+const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 
@@ -8,6 +9,10 @@ const {
   DEFAULT_INFISICAL_ENV,
   resolveBuildBuddyApiKey,
 } = require("./lib/buildbuddy_operator_env.cjs");
+const {
+  DEFAULT_BUILDBUDDY_API_BASE_URL,
+  buildInvocationUrl,
+} = require("./lib/buildbuddy_client.cjs");
 const { resolveCtxCacheLayout } = require("./lib/cache_roots.cjs");
 const {
   getBazelBuildTargetsForCrates,
@@ -16,6 +21,11 @@ const {
   partitionBazelTargetsForLinuxRbe,
 } = require("./lib/bazel_rust_targets.cjs");
 const { HOST_HEAVY_BUDGET_KEY, withHostJobBudget } = require("./lib/host_job_budget.cjs");
+const { appendHostSample } = require("./lib/verification_host_sampler.cjs");
+const {
+  createRunArtifacts,
+  finalizeRunArtifacts,
+} = require("./lib/verification_run_store.cjs");
 
 const DEFAULT_TEST_TARGETS = getBazelTestTargetsForCrates(getBazelCoveredCrates());
 const DEFAULT_BUILD_TARGETS = getBazelBuildTargetsForCrates(getBazelCoveredCrates());
@@ -195,6 +205,26 @@ function buildPhaseCommandArgs({ command, layout, extraConfigArgs = [], bazelJob
   return commandArgs;
 }
 
+function redactCommandArgs(args) {
+  return args.map((arg) => (
+    String(arg).startsWith("--remote_header=x-buildbuddy-api-key=")
+      ? "--remote_header=x-buildbuddy-api-key=<redacted>"
+      : arg
+  ));
+}
+
+function telemetryDisabled(env = process.env) {
+  return ["1", "true", "yes", "on"].includes(String(env.CTX_DISABLE_VERIFICATION_TELEMETRY || "").trim().toLowerCase());
+}
+
+function resolveBuildBuddyApiBaseUrl(env = process.env) {
+  return String(
+    env.BUILDBUDDY_API_BASE_URL
+    || env.BUILD_BUDDY_API_BASE_URL
+    || DEFAULT_BUILDBUDDY_API_BASE_URL,
+  ).trim() || DEFAULT_BUILDBUDDY_API_BASE_URL;
+}
+
 function buildBuildBuddyAuthArgs(env) {
   const apiKey = String(env?.BUILD_BUDDY_API_KEY || env?.BUILDBUDDY_API_KEY || "").trim();
   if (!apiKey) {
@@ -372,6 +402,17 @@ function resolvePhaseBudgetKey(phase) {
   return phase?.name === "local" ? HOST_HEAVY_BUDGET_KEY : null;
 }
 
+function createBuildBuddyPhaseMetadata({ enabled, apiBaseUrl }) {
+  if (!enabled) {
+    return null;
+  }
+  const invocationId = crypto.randomUUID();
+  return {
+    invocationId,
+    invocationUrl: buildInvocationUrl(invocationId, apiBaseUrl),
+  };
+}
+
 function buildBazelPilotInvocation({
   argv,
   buildBuddyApiKeyResolver = resolveBuildBuddyApiKey,
@@ -393,8 +434,26 @@ function buildBazelPilotInvocation({
     env,
     remoteExecutionMode,
   });
+  let telemetry = null;
+  if (!telemetryDisabled(env)) {
+    try {
+      telemetry = createRunArtifacts({
+        cwd: coreRoot,
+        env: resolvedEnv,
+        entrypoint: "run_bazel_pilot",
+        kind: "bazel",
+        layout,
+      });
+      ensureDir(telemetry.runDir);
+    } catch (error) {
+      console.error(`warning: failed to initialize Bazel telemetry: ${String(error?.message || error)}`);
+      telemetry = null;
+    }
+  }
   const localTestJobs = parsePositiveIntegerEnv(env.CTX_BAZEL_LOCAL_TEST_JOBS);
   const buildBuddyAuthArgs = buildBuildBuddyAuthArgs(resolvedEnv);
+  const buildBuddyEnabled = remoteExecutionMode !== "off";
+  const buildBuddyApiBaseUrl = resolveBuildBuddyApiBaseUrl(resolvedEnv);
   const phases = buildInvocationPhases({
     buildBuddyConfigArgs: remoteExecutionMode === "off" ? [] : ["--config=buildbuddy-cache"],
     command,
@@ -402,17 +461,25 @@ function buildBazelPilotInvocation({
     remoteExecutionMode,
     targets,
     env,
-  }).map((phase) => ({
-    ...phase,
-    budgetKey: resolvePhaseBudgetKey(phase),
-    commandArgs: [
-      ...phase.commandArgs,
-      ...(command === "test" && localTestJobs !== null
-        ? [`--local_test_jobs=${localTestJobs}`]
-        : []),
-      ...buildBuddyAuthArgs,
-    ],
-  }));
+  }).map((phase) => {
+    const buildBuddy = createBuildBuddyPhaseMetadata({
+      enabled: buildBuddyEnabled,
+      apiBaseUrl: buildBuddyApiBaseUrl,
+    });
+    return {
+      ...phase,
+      budgetKey: resolvePhaseBudgetKey(phase),
+      buildBuddy,
+      commandArgs: [
+        ...phase.commandArgs,
+        ...(command === "test" && localTestJobs !== null
+          ? [`--local_test_jobs=${localTestJobs}`]
+          : []),
+        ...(buildBuddy == null ? [] : [`--invocation_id=${buildBuddy.invocationId}`]),
+        ...buildBuddyAuthArgs,
+      ],
+    };
+  });
   const commandArgs = phases[0]?.commandArgs || [];
   const phaseTargets = phases[0]?.targets || [];
 
@@ -421,10 +488,13 @@ function buildBazelPilotInvocation({
     commandArgs,
     layout,
     phases,
+    buildBuddyApiBaseUrl,
+    buildBuddyEnabled,
     remoteExecutionMode,
     repoRoot,
     runArgs: parsed.runArgs || [],
     startupArgs,
+    telemetry,
     targets: phaseTargets,
     env: {
       ...resolvedEnv,
@@ -511,61 +581,197 @@ function formatSpawnFailureMessage(command, error) {
   return `error: failed to start Bazelisk at ${command}: ${details}`;
 }
 
+function createPhaseFailureResult({ command = "", error, invocation, phase, startedAt, startedMs }) {
+  return {
+    command,
+    commandArgs: [],
+    durationMs: Math.max(0, Date.now() - startedMs),
+    error: String(error?.message || error || "unknown phase failure"),
+    name: phase.name,
+    runArgs: invocation.command === "run" ? invocation.runArgs : [],
+    startedAt,
+    status: 1,
+    signal: "",
+    targets: phase.targets,
+  };
+}
+
 function runBazelPilotInvocationPhases(invocation, {
   exitImpl = process.exit,
   logErrorImpl = console.error,
   spawnSyncImpl = childProcess.spawnSync,
   withHostJobBudgetImpl = withHostJobBudget,
 } = {}) {
-  for (const phase of invocation.phases) {
-    const runPhase = () => {
-      const spawn = buildSpawnForPhase(invocation, phase);
-      const result = spawnSyncImpl(spawn.command, spawn.args, spawn.options);
-      if (result.error) {
-        logErrorImpl(formatSpawnFailureMessage(spawn.command, result.error));
-        exitImpl(1);
-        return;
-      }
-      if (typeof result.status === "number" && result.status !== 0) {
-        exitImpl(result.status);
-        return;
-      }
-      if (result.signal) {
-        logErrorImpl(`error: Bazelisk terminated with signal ${result.signal}`);
-        exitImpl(1);
-        return;
-      }
-      if (invocation.command === "run") {
-        const runResult = spawnSyncImpl(
-          spawn.runScriptPath,
-          invocation.runArgs,
-          spawn.options,
-        );
-        if (runResult.error) {
-          logErrorImpl(formatSpawnFailureMessage(spawn.runScriptPath, runResult.error));
-          exitImpl(1);
-          return;
-        }
-        if (typeof runResult.status === "number" && runResult.status !== 0) {
-          exitImpl(runResult.status);
-          return;
-        }
-        if (runResult.signal) {
-          logErrorImpl(`error: Bazel run script terminated with signal ${runResult.signal}`);
-          exitImpl(1);
-        }
-      }
-    };
-    if (phase.budgetKey) {
-      withHostJobBudgetImpl({
-        budgetKey: phase.budgetKey,
-        command: `bazel ${invocation.command} ${phase.targets.join(" ")}`,
-        cwd: invocation.repoRoot,
-        env: invocation.env,
-      }, runPhase);
-    } else {
-      runPhase();
+  const phaseResults = [];
+  const startedAt = new Date().toISOString();
+  let exitCode = 0;
+  const finalizeTelemetry = () => {
+    if (invocation.telemetry == null) {
+      return;
     }
+    try {
+      finalizeRunArtifacts(invocation.telemetry, {
+        startedAt,
+        completedAt: new Date().toISOString(),
+        durationMs: phaseResults.reduce((total, phase) => total + Number(phase.durationMs || 0), 0),
+        success: exitCode === 0,
+        bazelCommand: invocation.command,
+        buildBuddyApiBaseUrl: invocation.buildBuddyApiBaseUrl,
+        buildBuddyEnabled: invocation.buildBuddyEnabled,
+        buildBuddyInvocations: phaseResults
+          .filter((phase) => String(phase.buildBuddyInvocationId || "").trim())
+          .map((phase) => ({
+            phaseName: phase.name,
+            invocationId: phase.buildBuddyInvocationId,
+            invocationUrl: phase.buildBuddyInvocationUrl,
+          })),
+        parentEntrypoint: String(invocation.env.CTX_VERIFY_PARENT_ENTRYPOINT || "").trim(),
+        parentRunId: String(invocation.env.CTX_VERIFY_PARENT_RUN_ID || "").trim(),
+        remoteExecutionMode: invocation.remoteExecutionMode,
+        phaseCount: invocation.phases.length,
+        targets: invocation.phases.flatMap((phase) => phase.targets),
+        phases: phaseResults,
+      }, { env: invocation.env });
+    } catch (error) {
+      logErrorImpl(`warning: failed to record Bazel telemetry: ${String(error?.message || error)}`);
+    }
+  };
+
+  try {
+    for (const phase of invocation.phases) {
+      if (exitCode !== 0) {
+        break;
+      }
+      const phaseStartedAt = new Date().toISOString();
+      const phaseStartedMs = Date.now();
+      const runPhase = () => {
+        if (invocation.telemetry != null) {
+          appendHostSample(invocation.telemetry.hostSamplesPath, `phase:start:${phase.name}`);
+        }
+        const spawn = buildSpawnForPhase(invocation, phase);
+        const result = spawnSyncImpl(spawn.command, spawn.args, spawn.options);
+        const phaseResult = {
+          command: spawn.command,
+          commandArgs: redactCommandArgs(spawn.args),
+          durationMs: Date.now() - phaseStartedMs,
+          name: phase.name,
+          runArgs: invocation.command === "run" ? invocation.runArgs : [],
+          startedAt: phaseStartedAt,
+          targets: phase.targets,
+          signal: result.signal || "",
+          status: typeof result.status === "number" ? result.status : result.error ? 1 : 0,
+        };
+        if (result.error) {
+          phaseResult.error = String(result.error.message || result.error);
+          phaseResults.push(phaseResult);
+          if (invocation.telemetry != null) {
+            appendHostSample(invocation.telemetry.hostSamplesPath, `phase:end:${phase.name}`);
+          }
+          logErrorImpl(formatSpawnFailureMessage(spawn.command, result.error));
+          exitCode = 1;
+          return;
+        }
+        if (phase.buildBuddy != null) {
+          phaseResult.buildBuddyInvocationId = phase.buildBuddy.invocationId;
+          phaseResult.buildBuddyInvocationUrl = phase.buildBuddy.invocationUrl;
+        }
+        if (typeof result.status === "number" && result.status !== 0) {
+          phaseResults.push(phaseResult);
+          if (invocation.telemetry != null) {
+            appendHostSample(invocation.telemetry.hostSamplesPath, `phase:end:${phase.name}`);
+          }
+          exitCode = result.status;
+          return;
+        }
+        if (result.signal) {
+          phaseResults.push(phaseResult);
+          if (invocation.telemetry != null) {
+            appendHostSample(invocation.telemetry.hostSamplesPath, `phase:end:${phase.name}`);
+          }
+          logErrorImpl(`error: Bazelisk terminated with signal ${result.signal}`);
+          exitCode = 1;
+          return;
+        }
+        if (invocation.command === "run") {
+          if (invocation.telemetry != null) {
+            appendHostSample(invocation.telemetry.hostSamplesPath, `phase:run-script:start:${phase.name}`);
+          }
+          const runStartedMs = Date.now();
+          const runResult = spawnSyncImpl(
+            spawn.runScriptPath,
+            invocation.runArgs,
+            spawn.options,
+          );
+          phaseResult.runScriptDurationMs = Date.now() - runStartedMs;
+          phaseResult.durationMs += phaseResult.runScriptDurationMs;
+          if (runResult.error) {
+            phaseResult.runScriptError = String(runResult.error.message || runResult.error);
+            phaseResults.push(phaseResult);
+            if (invocation.telemetry != null) {
+              appendHostSample(invocation.telemetry.hostSamplesPath, `phase:end:${phase.name}`);
+            }
+            logErrorImpl(formatSpawnFailureMessage(spawn.runScriptPath, runResult.error));
+            exitCode = 1;
+            return;
+          }
+          if (typeof runResult.status === "number" && runResult.status !== 0) {
+            phaseResult.runScriptStatus = runResult.status;
+            phaseResults.push(phaseResult);
+            if (invocation.telemetry != null) {
+              appendHostSample(invocation.telemetry.hostSamplesPath, `phase:end:${phase.name}`);
+            }
+            exitCode = runResult.status;
+            return;
+          }
+          if (runResult.signal) {
+            phaseResult.runScriptSignal = runResult.signal;
+            phaseResults.push(phaseResult);
+            if (invocation.telemetry != null) {
+              appendHostSample(invocation.telemetry.hostSamplesPath, `phase:end:${phase.name}`);
+            }
+            logErrorImpl(`error: Bazel run script terminated with signal ${runResult.signal}`);
+            exitCode = 1;
+            return;
+          }
+        }
+        phaseResults.push(phaseResult);
+        if (invocation.telemetry != null) {
+          appendHostSample(invocation.telemetry.hostSamplesPath, `phase:end:${phase.name}`);
+        }
+      };
+      try {
+        if (phase.budgetKey) {
+          withHostJobBudgetImpl({
+            budgetKey: phase.budgetKey,
+            command: `bazel ${invocation.command} ${phase.targets.join(" ")}`,
+            cwd: invocation.repoRoot,
+            env: invocation.env,
+          }, runPhase);
+        } else {
+          runPhase();
+        }
+      } catch (error) {
+        if (invocation.telemetry != null) {
+          appendHostSample(invocation.telemetry.hostSamplesPath, `phase:end:${phase.name}`);
+        }
+        const phaseResult = createPhaseFailureResult({
+          command: phase.budgetKey ? `budget:${phase.budgetKey}` : "",
+          error,
+          invocation,
+          phase,
+          startedAt: phaseStartedAt,
+          startedMs: phaseStartedMs,
+        });
+        phaseResults.push(phaseResult);
+        logErrorImpl(`error: failed to run Bazel phase ${phase.name}: ${String(error?.message || error)}`);
+        exitCode = 1;
+      }
+    }
+  } finally {
+    finalizeTelemetry();
+  }
+  if (exitCode !== 0) {
+    exitImpl(exitCode);
   }
 }
 
@@ -605,6 +811,7 @@ module.exports = {
   parseBatchMode,
   parseRemoteExecutionMode,
   resolvePhaseBudgetKey,
+  resolveBuildBuddyApiBaseUrl,
   resolveBazeliskCommand,
   runBazelPilotInvocationPhases,
 };

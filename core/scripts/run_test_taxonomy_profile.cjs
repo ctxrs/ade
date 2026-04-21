@@ -5,10 +5,13 @@ const childProcess = require("node:child_process");
 const {
   buildExecutionPlan,
   normalizeRepoRelativePath,
-  resolveChangedFilesFromGit,
 } = require("./lib/test_taxonomy/execution.cjs");
 const { getFamiliesById } = require("./lib/test_taxonomy/families.cjs");
 const { getProfiles } = require("./lib/test_taxonomy/profiles.cjs");
+const {
+  resolveMergeBaseFiles,
+  resolveWorkingTreeFiles,
+} = require("./lib/verification_git_changes.cjs");
 
 function parseArgs(argv) {
   const args = {
@@ -62,7 +65,10 @@ function resolveChangedFiles(args) {
     return args.changedFiles.map(normalizeRepoRelativePath).filter(Boolean);
   }
   if (args.base) {
-    return resolveChangedFilesFromGit(args.base);
+    return resolveMergeBaseFiles(args.base).changedFiles;
+  }
+  if (args.touchedOnly) {
+    return resolveWorkingTreeFiles();
   }
   return [];
 }

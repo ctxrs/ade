@@ -1,9 +1,12 @@
-const childProcess = require("node:child_process");
 const path = require("node:path");
 
 const { buildTaxonomyRegistry } = require("./registry.cjs");
 const { getFamiliesById } = require("./families.cjs");
 const { getProfiles, profileMatchesEntry } = require("./profiles.cjs");
+const {
+  resolveMergeBaseFiles,
+  resolveWorkingTreeFiles,
+} = require("../verification_git_changes.cjs");
 const {
   ROOT_RUST_INPUTS,
   buildWorkspaceGraph,
@@ -271,17 +274,10 @@ function buildExecutionPlan({ profileId, changedFiles = [], touchedOnly = false 
 }
 
 function resolveChangedFilesFromGit(baseRef) {
-  const args = ["diff", "--name-only"];
   if (baseRef) {
-    args.push(`${baseRef}...HEAD`);
-  } else {
-    args.push("HEAD");
+    return resolveMergeBaseFiles(baseRef, { cwd: repoRoot }).changedFiles;
   }
-  const output = childProcess.execFileSync("git", args, {
-    cwd: repoRoot,
-    encoding: "utf8",
-  });
-  return output.split(/\r?\n/u).map(normalizeRepoRelativePath).filter(Boolean);
+  return resolveWorkingTreeFiles({ cwd: repoRoot });
 }
 
 module.exports = {

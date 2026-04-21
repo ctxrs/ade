@@ -1,4 +1,6 @@
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
 
@@ -83,6 +85,9 @@ test("bazel pilot invocation stays on the volatile cache layout", () => {
   assert.equal(invocation.env.TMPDIR, "/tmp/ctx-bazel-pilot/tmp");
   assert.equal(invocation.phases.length, 1);
   assert.equal(invocation.phases[0].name, "local");
+  assert.equal(invocation.phases[0].commandArgs.some((entry) => entry.startsWith("--profile=")), false);
+  assert.equal(invocation.phases[0].commandArgs.some((entry) => entry.startsWith("--build_event_json_file=")), false);
+  assert.equal(invocation.phases[0].commandArgs.some((entry) => entry.startsWith("--invocation_id=")), false);
 });
 
 test("bazel pilot batch mode defaults on darwin and can be overridden explicitly", () => {
@@ -136,6 +141,7 @@ test("bazel pilot invocation enables full BuildBuddy remote execution when reque
   });
 
   assert.equal(invocation.remoteExecutionMode, "all");
+  assert.equal(invocation.buildBuddyEnabled, true);
   assert.equal(invocation.phases.length, 1);
   assert.equal(invocation.phases[0].name, "remote");
   assert.equal(invocation.phases[0].commandArgs.includes("--config=buildbuddy-cache"), true);
@@ -144,6 +150,11 @@ test("bazel pilot invocation enables full BuildBuddy remote execution when reque
     invocation.phases[0].commandArgs.includes("--remote_header=x-buildbuddy-api-key=buildbuddy-ci-key"),
     true,
   );
+  assert.equal(
+    invocation.phases[0].commandArgs.some((entry) => entry.startsWith("--invocation_id=")),
+    true,
+  );
+  assert.equal(typeof invocation.phases[0].buildBuddy?.invocationUrl, "string");
 });
 
 test("bazel pilot forwards local test job caps for test invocations", () => {
@@ -209,6 +220,158 @@ test("bazel pilot invocation runner applies the host-heavy budget to local phase
   assert.equal(budgetCalls.length, 1);
   assert.equal(budgetCalls[0].budgetKey, HOST_HEAVY_BUDGET_KEY);
   assert.equal(spawnCalls.length, 1);
+});
+
+test("bazel pilot runner writes telemetry summaries and redacts BuildBuddy headers", () => {
+  const volatileRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-bazel-pilot-telemetry-"));
+  const invocation = buildBazelPilotInvocation({
+    argv: ["test", "//core/crates/ctx-http:provider-auth"],
+    env: {
+      ...process.env,
+      CTX_VOLATILE_ROOT: volatileRoot,
+      CTX_SESSION_ID: "bazel-telemetry-session",
+      CTX_BAZEL_REMOTE_EXECUTION: "1",
+      BUILD_BUDDY_API_KEY: "buildbuddy-redact-me",
+      CTX_VERIFY_PARENT_ENTRYPOINT: "verify:affected",
+      CTX_VERIFY_PARENT_RUN_ID: "router-run-1",
+    },
+  });
+
+  runBazelPilotInvocationPhases(invocation, {
+    spawnSyncImpl: () => ({ status: 0 }),
+    withHostJobBudgetImpl: (_options, fn) => fn(),
+  });
+
+  const summary = JSON.parse(fs.readFileSync(invocation.telemetry.summaryPath, "utf8"));
+  assert.equal(summary.kind, "bazel");
+  assert.equal(summary.success, true);
+  assert.equal(summary.remoteExecutionMode, "all");
+  assert.equal(summary.buildBuddyEnabled, true);
+  assert.equal(summary.parentEntrypoint, "verify:affected");
+  assert.equal(summary.parentRunId, "router-run-1");
+  assert.equal(summary.phases.length, 1);
+  assert.equal(summary.buildBuddyInvocations.length, 1);
+  assert.equal(summary.buildBuddyInvocations[0].phaseName, "remote");
+  assert.match(summary.buildBuddyInvocations[0].invocationUrl, /https:\/\/app\.buildbuddy\.io\/invocation\//u);
+  assert.equal(
+    summary.phases[0].commandArgs.includes("--remote_header=x-buildbuddy-api-key=<redacted>"),
+    true,
+  );
+  assert.match(summary.phases[0].buildBuddyInvocationUrl, /https:\/\/app\.buildbuddy\.io\/invocation\//u);
+  assert.equal(fs.existsSync(invocation.telemetry.hostSamplesPath), true);
+});
+
+test("bazel pilot does not record dead BuildBuddy links when Bazel never starts", () => {
+  const volatileRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-bazel-pilot-spawn-failure-"));
+  const invocation = buildBazelPilotInvocation({
+    argv: ["test", "//core/crates/ctx-http:provider-auth"],
+    env: {
+      ...process.env,
+      CTX_VOLATILE_ROOT: volatileRoot,
+      CTX_SESSION_ID: "bazel-spawn-failure-session",
+      CTX_BAZEL_REMOTE_EXECUTION: "1",
+      BUILD_BUDDY_API_KEY: "buildbuddy-key",
+    },
+  });
+  const enoent = new Error("spawnSync bazelisk ENOENT");
+  enoent.code = "ENOENT";
+
+  runBazelPilotInvocationPhases(invocation, {
+    exitImpl: () => {},
+    logErrorImpl: () => {},
+    spawnSyncImpl: () => ({ error: enoent }),
+    withHostJobBudgetImpl: (_options, fn) => fn(),
+  });
+
+  const summary = JSON.parse(fs.readFileSync(invocation.telemetry.summaryPath, "utf8"));
+  assert.deepEqual(summary.buildBuddyInvocations, []);
+  assert.equal("buildBuddyInvocationUrl" in summary.phases[0], false);
+});
+
+test("bazel pilot includes generated run-script time in recorded phase durations", () => {
+  const invocation = buildBazelPilotInvocation({
+    argv: ["run", "//core/apps/web:lint", "--", "--fix"],
+    env: {
+      ...process.env,
+      CTX_VOLATILE_ROOT: fs.mkdtempSync(path.join(os.tmpdir(), "ctx-bazel-pilot-run-duration-")),
+      CTX_SESSION_ID: "bazel-run-duration-session",
+      CTX_BAZEL_REMOTE_EXECUTION: "off",
+    },
+  });
+
+  const durations = [0, 500, 1000, 1750];
+  const originalNow = Date.now;
+  Date.now = () => durations.shift();
+
+  try {
+    runBazelPilotInvocationPhases(invocation, {
+      spawnSyncImpl: (_command, args) => {
+        if (args.some((entry) => String(entry).startsWith("--script_path="))) {
+          return { status: 0 };
+        }
+        return { status: 0 };
+      },
+      withHostJobBudgetImpl: (_options, fn) => fn(),
+    });
+  } finally {
+    Date.now = originalNow;
+  }
+
+  const summary = JSON.parse(fs.readFileSync(invocation.telemetry.summaryPath, "utf8"));
+  assert.equal(summary.phases.length, 1);
+  assert.equal(summary.phases[0].runScriptDurationMs, 750);
+  assert.equal(summary.phases[0].durationMs, 1250);
+});
+
+test("bazel pilot duration includes host-budget queue time for local phases", () => {
+  const invocation = buildBazelPilotInvocation({
+    argv: ["test", "//core/crates/ctx-http:provider-auth"],
+    env: {
+      ...process.env,
+      CTX_VOLATILE_ROOT: fs.mkdtempSync(path.join(os.tmpdir(), "ctx-bazel-pilot-budget-wait-")),
+      CTX_SESSION_ID: "bazel-budget-wait-session",
+      CTX_BAZEL_REMOTE_EXECUTION: "off",
+    },
+  });
+
+  runBazelPilotInvocationPhases(invocation, {
+    spawnSyncImpl: () => ({ status: 0 }),
+    withHostJobBudgetImpl: (_options, fn) => {
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
+      return fn();
+    },
+  });
+
+  const summary = JSON.parse(fs.readFileSync(invocation.telemetry.summaryPath, "utf8"));
+  assert.equal(summary.phases.length, 1);
+  assert.ok(summary.phases[0].durationMs >= 50);
+});
+
+test("bazel pilot still writes a thin summary when host-budget acquisition throws", () => {
+  const invocation = buildBazelPilotInvocation({
+    argv: ["test", "//core/crates/ctx-http:provider-auth"],
+    env: {
+      ...process.env,
+      CTX_VOLATILE_ROOT: fs.mkdtempSync(path.join(os.tmpdir(), "ctx-bazel-pilot-budget-throw-")),
+      CTX_SESSION_ID: "bazel-budget-throw-session",
+      CTX_BAZEL_REMOTE_EXECUTION: "off",
+    },
+  });
+
+  runBazelPilotInvocationPhases(invocation, {
+    exitImpl: () => {},
+    logErrorImpl: () => {},
+    withHostJobBudgetImpl: () => {
+      throw new Error("budget unavailable");
+    },
+  });
+
+  const summary = JSON.parse(fs.readFileSync(invocation.telemetry.summaryPath, "utf8"));
+  assert.equal(summary.success, false);
+  assert.equal(summary.phases.length, 1);
+  assert.equal(summary.phases[0].command, "budget:host-heavy");
+  assert.equal(summary.phases[0].status, 1);
+  assert.match(summary.phases[0].error, /budget unavailable/u);
 });
 test("bazel pilot linux remote execution keeps lib builds remote and host executables local", () => {
   const invocation = buildBazelPilotInvocation({
@@ -444,15 +607,19 @@ test("bazel pilot uses the resolved Bazelisk command in the spawn contract", () 
     spawn.command,
     bazeliskBinaryPath({ repoRoot: path.resolve(__dirname, "..", "..") }),
   );
-  assert.deepEqual(spawn.args, [
-    ...(process.platform === "darwin" ? ["--batch"] : []),
-    "--output_user_root=/tmp/ctx-bazel-pilot-binary/targets/bazel/bazel-binary-session",
-    "run",
-    "--disk_cache=/tmp/ctx-bazel-pilot-binary/cache/bazel-disk/ctx-monorepo",
-    "--repository_cache=/tmp/ctx-bazel-pilot-binary/cache/bazel-repository/ctx-monorepo",
-    `--script_path=${spawn.runScriptPath}`,
-    "//core/apps/web:lint",
-  ]);
+  assert.deepEqual(
+    spawn.args.filter((entry) => !entry.startsWith("--invocation_id=")),
+    [
+      ...(process.platform === "darwin" ? ["--batch"] : []),
+      "--output_user_root=/tmp/ctx-bazel-pilot-binary/targets/bazel/bazel-binary-session",
+      "run",
+      "--disk_cache=/tmp/ctx-bazel-pilot-binary/cache/bazel-disk/ctx-monorepo",
+      "--repository_cache=/tmp/ctx-bazel-pilot-binary/cache/bazel-repository/ctx-monorepo",
+      `--script_path=${spawn.runScriptPath}`,
+      "//core/apps/web:lint",
+    ],
+  );
+  assert.equal(spawn.args.some((entry) => entry.startsWith("--invocation_id=")), false);
   assert.equal(spawn.options.env.BUILD_WORKSPACE_DIRECTORY, path.resolve(__dirname, "..", ".."));
   assert.match(spawn.runScriptPath, /\/tmp\/ctx-bazel-pilot-binary\/tmp\/bazel-run-\d+-local\.sh$/);
 });
