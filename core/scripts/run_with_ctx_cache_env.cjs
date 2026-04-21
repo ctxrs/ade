@@ -5,9 +5,28 @@ const path = require("node:path");
 
 const { buildCtxCacheEnv } = require("./lib/cache_roots.cjs");
 
+function parseEnabledFlag(value) {
+  return !["0", "false", "no", "off"].includes(String(value ?? "").trim().toLowerCase());
+}
+
 function usage() {
   console.error(
     "usage: run_with_ctx_cache_env.cjs [--mode workspace|verify-quick] [--cwd <dir>] -- <command> [args...]",
+  );
+}
+
+function logCacheSummary(env) {
+  if (!parseEnabledFlag(env.CTX_RUST_CACHE_LOG ?? "1")) {
+    return;
+  }
+  console.error(
+    "[ctx-cache] source=%s mode=%s scope=%s target=%s sccache=%s volatile_root_mode=%s",
+    env.CTX_RUST_CACHE_SOURCE || "run_with_ctx_cache_env",
+    env.CTX_RUST_CACHE_MODE || "workspace",
+    env.CTX_RUST_CACHE_SCOPE_KEY || "unknown",
+    env.CARGO_TARGET_DIR || env.CTX_RUST_CACHE_TARGET_DIR || "unset",
+    env.CTX_RUST_CACHE_SCCACHE || "unconfigured",
+    env.CTX_RUST_CACHE_VOLATILE_ROOT_MODE || env.CTX_VOLATILE_ROOT_MODE || "unset",
   );
 }
 
@@ -57,6 +76,9 @@ function main() {
     mode,
     mkdir: true,
   });
+  env.CTX_RUST_CACHE_SOURCE = "run_with_ctx_cache_env";
+  env.CTX_RUST_CACHE_WRAPPED = "1";
+  logCacheSummary(env);
 
   const result = childProcess.spawnSync(command, commandArgs, {
     cwd,

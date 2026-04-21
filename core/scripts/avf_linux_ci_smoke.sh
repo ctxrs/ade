@@ -576,6 +576,9 @@ need_cmd cargo-zigbuild
 need_cmd codesign
 need_cmd curl
 
+export CTX_SESSION_ID="${CTX_SESSION_ID:-avf-linux-ci-smoke-${runtime_arch:-auto}-${$}}"
+eval "$(node "${repo_root}/scripts/print_ctx_cache_env.cjs" --mode workspace --cwd "${repo_root}" --format shell --mkdir)"
+
 helper_manifest="${repo_root}/apps/desktop/src-tauri/Cargo.toml"
 helper_entitlements="${repo_root}/apps/desktop/src-tauri/ctx-avf-linux-helper.entitlements"
 helper_target_root="${CARGO_TARGET_DIR:-$(cargo_target_dir "$helper_manifest")}"
@@ -663,14 +666,14 @@ trap cleanup EXIT
 echo "==> Building ctx-avf-linux-helper"
 # `apps/desktop/src-tauri` is an intentionally standalone Cargo package and does not keep its own
 # checked-in Cargo.lock. Match the normal `desktop:prep` path instead of forcing `--locked` here.
-CTX_DESKTOP_SKIP_TAURI_BUILD=1 cargo build --manifest-path "$helper_manifest" --bin ctx-avf-linux-helper
+CTX_DESKTOP_SKIP_TAURI_BUILD=1 node "${repo_root}/scripts/run_with_ctx_cache_env.cjs" --mode workspace --cwd "${repo_root}" -- cargo build --manifest-path "$helper_manifest" --bin ctx-avf-linux-helper
 /usr/bin/codesign --force --sign - --entitlements "$helper_entitlements" "$helper_bin"
 
 echo "==> Probing helper"
 "$helper_bin" probe | tee "$probe_json"
 
 echo "==> Building ctx daemon"
-cargo build --locked --manifest-path "${repo_root}/Cargo.toml" -p ctx-http --bin ctx
+node "${repo_root}/scripts/run_with_ctx_cache_env.cjs" --mode workspace --cwd "${repo_root}" -- cargo build --locked --manifest-path "${repo_root}/Cargo.toml" -p ctx-http --bin ctx
 [[ -x "$ctx_bin" ]] || die "ctx binary missing at $ctx_bin"
 
 if [[ -n "$prepared_runtime_dir" ]]; then

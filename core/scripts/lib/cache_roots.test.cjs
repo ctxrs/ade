@@ -92,7 +92,15 @@ test("buildCtxCacheEnv sets shared cache defaults and keeps verify quick on the 
 
   assert.equal(env.CARGO_TARGET_DIR, path.join(volatileRoot, "targets", "ctx-monorepo", scopeKey));
   assert.equal(env.CTX_VERIFY_CARGO_TARGET_DIR, env.CARGO_TARGET_DIR);
+  assert.equal(env.CARGO_INCREMENTAL, "0");
   assert.equal(env.CARGO_HOME, undefined);
+  assert.equal(env.CTX_RUST_CACHE_MODE, "workspace");
+  assert.equal(env.CTX_RUST_CACHE_SCOPE_KEY, scopeKey);
+  assert.equal(env.CTX_RUST_CACHE_REPO_SLUG, "ctx-monorepo");
+  assert.equal(env.CTX_RUST_CACHE_TARGET_DIR, env.CARGO_TARGET_DIR);
+  assert.equal(env.CTX_RUST_CACHE_VERIFY_TARGET_DIR, env.CTX_VERIFY_CARGO_TARGET_DIR);
+  assert.equal(env.CTX_RUST_CACHE_VOLATILE_ROOT_MODE, "explicit");
+  assert.equal(env.CTX_RUST_CACHE_SCCACHE, "unconfigured");
   assert.equal(env.TURBO_CACHE_DIR, path.join(volatileRoot, "cache", "turbo", "ctx-monorepo"));
   assert.equal(env.CTX_BAZEL_DISK_CACHE_DIR, path.join(volatileRoot, "cache", "bazel-disk", "ctx-monorepo"));
   assert.equal(
@@ -398,7 +406,8 @@ test("buildCtxCacheEnv does not apply sccache env when RUSTC_WRAPPER is a non-sc
   });
 
   assert.equal(env.RUSTC_WRAPPER, "/usr/bin/custom-wrapper");
-  assert.equal(env.CARGO_INCREMENTAL, undefined);
+  assert.equal(env.CARGO_INCREMENTAL, "0");
+  assert.equal(env.CTX_RUST_CACHE_SCCACHE, "unconfigured");
   assert.equal(env.SCCACHE_NO_DAEMON, undefined);
   assert.equal(env.SCCACHE_BASEDIRS, undefined);
   assert.equal(env.SCCACHE_SERVER_UDS, undefined);

@@ -114,6 +114,9 @@ case "${TARGET_OS}/${TARGET_ARCH}" in
     ;;
 esac
 
+export CTX_SESSION_ID="${CTX_SESSION_ID:-provider-deps-staging-${TARGET_OS}-${TARGET_ARCH}-${$}}"
+eval "$(node "$ROOT/core/scripts/print_ctx_cache_env.cjs" --mode workspace --cwd "$ROOT/core" --format shell --mkdir)"
+
 mkdir -p "$OUT_DIR"
 OUT_DIR="$(cd "$OUT_DIR" && pwd)"
 entries_ndjson="$OUT_DIR/provider_deps_entries.ndjson"
@@ -891,7 +894,7 @@ build_rust_provider() {
       CARGO_PROFILE_RELEASE_DEBUG=0 \
       CARGO_PROFILE_RELEASE_SPLIT_DEBUGINFO=off \
       RUSTFLAGS="$rustflags" \
-      cargo build --release --target "$RUST_TARGET" --package "$package_name" --bin "$binary_name"
+      node "$ROOT/core/scripts/run_with_ctx_cache_env.cjs" --mode workspace --cwd "$project_dir" -- cargo build --release --target "$RUST_TARGET" --package "$package_name" --bin "$binary_name"
     ) >&2
 
     local target_root
@@ -1035,7 +1038,7 @@ build_codex_crp_provider() {
       CARGO_PROFILE_RELEASE_DEBUG=0 \
       CARGO_PROFILE_RELEASE_SPLIT_DEBUGINFO=off \
       RUSTFLAGS="$rustflags" \
-      cargo build --release --target "$RUST_TARGET" --package "codex-crp" --bin "codex-crp"
+      node "$ROOT/core/scripts/run_with_ctx_cache_env.cjs" --mode workspace --cwd "$ROOT/core" -- cargo build --release --target "$RUST_TARGET" --package "codex-crp" --bin "codex-crp"
     ) >&2
     local target_root
     target_root="$(resolve_rust_target_root "$ROOT/core")"

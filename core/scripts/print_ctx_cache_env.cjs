@@ -8,13 +8,16 @@ const {
 } = require("./lib/cache_roots.cjs");
 
 function usage() {
-  console.error("usage: print_ctx_cache_env.cjs [--mode workspace|verify-quick] [--format shell|json] [--mkdir]");
+  console.error(
+    "usage: print_ctx_cache_env.cjs [--mode workspace|verify-quick] [--format shell|json] [--cwd <dir>] [--mkdir]",
+  );
 }
 
 function main() {
   const args = process.argv.slice(2);
   let mode = "workspace";
   let format = "shell";
+  let cwd = path.resolve(__dirname, "..");
   let mkdir = false;
 
   for (let index = 0; index < args.length; index += 1) {
@@ -26,6 +29,10 @@ function main() {
         break;
       case "--format":
         format = args[index + 1] || "";
+        index += 1;
+        break;
+      case "--cwd":
+        cwd = path.resolve(args[index + 1] || "");
         index += 1;
         break;
       case "--mkdir":
@@ -52,13 +59,13 @@ function main() {
     process.exit(2);
   }
 
-  const cwd = path.resolve(__dirname, "..");
   const { env, layout, cargoTargetDir } = buildCtxCacheEnv({
     cwd,
     env: process.env,
     mode,
     mkdir,
   });
+  env.CTX_RUST_CACHE_SOURCE = "print_ctx_cache_env";
   const payload = {
     CTX_EXTERNAL_CACHE_ROOT: env.CTX_EXTERNAL_CACHE_ROOT,
     CTX_INTERNAL_VOLATILE_ROOT: env.CTX_INTERNAL_VOLATILE_ROOT,
@@ -71,6 +78,14 @@ function main() {
     CTX_VOLATILE_CACHE_DIR: env.CTX_VOLATILE_CACHE_DIR,
     CARGO_TARGET_DIR: cargoTargetDir,
     CTX_VERIFY_CARGO_TARGET_DIR: env.CTX_VERIFY_CARGO_TARGET_DIR,
+    CTX_RUST_CACHE_SOURCE: env.CTX_RUST_CACHE_SOURCE,
+    CTX_RUST_CACHE_MODE: env.CTX_RUST_CACHE_MODE,
+    CTX_RUST_CACHE_SCOPE_KEY: env.CTX_RUST_CACHE_SCOPE_KEY,
+    CTX_RUST_CACHE_REPO_SLUG: env.CTX_RUST_CACHE_REPO_SLUG,
+    CTX_RUST_CACHE_TARGET_DIR: env.CTX_RUST_CACHE_TARGET_DIR,
+    CTX_RUST_CACHE_VERIFY_TARGET_DIR: env.CTX_RUST_CACHE_VERIFY_TARGET_DIR,
+    CTX_RUST_CACHE_VOLATILE_ROOT_MODE: env.CTX_RUST_CACHE_VOLATILE_ROOT_MODE,
+    CTX_RUST_CACHE_SCCACHE: env.CTX_RUST_CACHE_SCCACHE,
     TURBO_CACHE_DIR: env.TURBO_CACHE_DIR,
     CTX_BAZEL_DISK_CACHE_DIR: env.CTX_BAZEL_DISK_CACHE_DIR,
     CTX_BAZEL_REPOSITORY_CACHE_DIR: env.CTX_BAZEL_REPOSITORY_CACHE_DIR,

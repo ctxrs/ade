@@ -575,6 +575,29 @@ function buildCtxCacheEnv({
       effectiveWrapper &&
       (effectiveWrapper === sccachePath ||
         path.basename(effectiveWrapper).toLowerCase().includes("sccache"));
+    const sccacheState = disableSccache
+      ? "disabled"
+      : wrapperIsSccache
+        ? "enabled"
+        : sccachePath
+          ? "configured"
+          : "unconfigured";
+    setDefaultEnvValue(resolvedEnv, "CARGO_INCREMENTAL", "0");
+    setDefaultEnvValue(resolvedEnv, "CTX_RUST_CACHE_MODE", mode);
+    setDefaultEnvValue(resolvedEnv, "CTX_RUST_CACHE_SCOPE_KEY", layout.scopeKey);
+    setDefaultEnvValue(resolvedEnv, "CTX_RUST_CACHE_REPO_SLUG", layout.repoCacheSlug);
+    setDefaultEnvValue(resolvedEnv, "CTX_RUST_CACHE_TARGET_DIR", cargoTargetDir);
+    setDefaultEnvValue(
+      resolvedEnv,
+      "CTX_RUST_CACHE_VERIFY_TARGET_DIR",
+      layout.verifyCargoTargetDir,
+    );
+    setDefaultEnvValue(
+      resolvedEnv,
+      "CTX_RUST_CACHE_VOLATILE_ROOT_MODE",
+      layout.volatileRootMode,
+    );
+    setDefaultEnvValue(resolvedEnv, "CTX_RUST_CACHE_SCCACHE", sccacheState);
     if (wrapperIsSccache) {
       setDefaultEnvValue(resolvedEnv, "SCCACHE_NO_DAEMON", "1");
       if (process.platform !== "win32" && !trimValue(resolvedEnv.SCCACHE_SERVER_UDS)) {
@@ -584,7 +607,6 @@ function buildCtxCacheEnv({
         path.resolve(cwd),
         path.resolve(cargoTargetDir),
       ]);
-      setDefaultEnvValue(resolvedEnv, "CARGO_INCREMENTAL", "0");
       appendSpaceSeparatedFlags(resolvedEnv, "RUSTFLAGS", [
         `--remap-path-prefix=${path.resolve(cwd)}=/ctx-workspace`,
         `--remap-path-prefix=${path.resolve(layout.volatileRoot)}=/ctx-volatile`,

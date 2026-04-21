@@ -36,6 +36,11 @@ export CTX_E2E_TMPDIR="${default_e2e_tmp_dir}"
 export TMPDIR="${default_e2e_tmp_dir}"
 export TMP="${default_e2e_tmp_dir}"
 export TEMP="${default_e2e_tmp_dir}"
+export CTX_SESSION_ID="${CTX_SESSION_ID:-providers-e2e-${suite}-${$}}"
+
+run_cargo() {
+  node "${repo_root}/scripts/run_with_ctx_cache_env.cjs" --mode workspace --cwd "${repo_root}" -- cargo "$@"
+}
 
 run_preflight() {
   local suite_id="$1"
@@ -494,7 +499,7 @@ case "${suite}" in
     fi
     local_bridge_manifest="${repo_root}/../external-harnesses/acp-crp-bridge/Cargo.toml"
     export CTX_TOKENS_ACP_CRP_BRIDGE_BIN="${CTX_TOKENS_ACP_CRP_BRIDGE_BIN:-${CTX_E2E_CARGO_TARGET_DIR}/debug/acp-crp-bridge}"
-    cargo build --manifest-path "${local_bridge_manifest}" --bin acp-crp-bridge >/dev/null
+    run_cargo build --manifest-path "${local_bridge_manifest}" --bin acp-crp-bridge >/dev/null
     if [[ ! -x "${CTX_TOKENS_ACP_CRP_BRIDGE_BIN}" ]]; then
       echo "missing local acp-crp-bridge binary after build: ${CTX_TOKENS_ACP_CRP_BRIDGE_BIN}" >&2
       exit 1
@@ -690,5 +695,5 @@ for entry in "${tests[@]}"; do
   crate="${entry%%:*}"
   test_name="${entry##*:}"
   echo "running ${suite} provider test: ${test_name}"
-  cargo test -p "${crate}" --test "${test_name}" -- --ignored --nocapture --test-threads=1
+  run_cargo test -p "${crate}" --test "${test_name}" -- --ignored --nocapture --test-threads=1
 done

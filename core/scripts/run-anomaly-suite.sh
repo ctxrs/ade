@@ -11,6 +11,11 @@ run() {
   "$@"
 }
 
+run_rust() {
+  echo "+ cargo $*"
+  node "${script_dir}/run_with_ctx_cache_env.cjs" --mode workspace --cwd "${core_root}" -- cargo "$@"
+}
+
 usage() {
   echo "usage: $0 {all|ctx-http-fault-matrix|ctx-http-hot-endpoints-no-db|ctx-store-fault-injection}" >&2
 }
@@ -23,18 +28,18 @@ fi
 
 case "$lane" in
   all)
-    run cargo test -p ctx-http --features fault_injection --test fault_matrix
-    run cargo test -p ctx-http --features fault_injection --test hot_endpoints_no_db
-    run cargo test -p ctx-store --features fault_injection
+    run_rust test -p ctx-http --features fault_injection --test fault_matrix
+    run_rust test -p ctx-http --features fault_injection --test hot_endpoints_no_db
+    run_rust test -p ctx-store --features fault_injection
     ;;
   ctx-http-fault-matrix)
-    run cargo test -p ctx-http --features fault_injection --test fault_matrix
+    run_rust test -p ctx-http --features fault_injection --test fault_matrix
     ;;
   ctx-http-hot-endpoints-no-db)
-    run cargo test -p ctx-http --features fault_injection --test hot_endpoints_no_db
+    run_rust test -p ctx-http --features fault_injection --test hot_endpoints_no_db
     ;;
   ctx-store-fault-injection)
-    run cargo test -p ctx-store --features fault_injection
+    run_rust test -p ctx-store --features fault_injection
     ;;
   *)
     usage

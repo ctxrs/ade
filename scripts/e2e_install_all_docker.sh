@@ -2,11 +2,13 @@
 set -euo pipefail
 
 ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-BIN_PATH="$ROOT_DIR/core/target/debug/ctx"
+export CTX_SESSION_ID="${CTX_SESSION_ID:-e2e-install-all-docker-$$}"
+eval "$(node "$ROOT_DIR/core/scripts/print_ctx_cache_env.cjs" --mode workspace --cwd "$ROOT_DIR/core" --format shell --mkdir)"
+BIN_PATH="${CARGO_TARGET_DIR}/debug/ctx"
 
 if [[ ! -x "$BIN_PATH" ]]; then
   echo "[e2e] building ctx daemon (debug)"
-  (cd "$ROOT_DIR/core" && cargo build -p ctx-http --bin ctx)
+  node "$ROOT_DIR/core/scripts/run_with_ctx_cache_env.cjs" --mode workspace --cwd "$ROOT_DIR/core" -- cargo build -p ctx-http --bin ctx
 fi
 
 if ! command -v docker >/dev/null 2>&1; then

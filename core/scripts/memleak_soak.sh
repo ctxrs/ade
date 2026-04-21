@@ -46,7 +46,7 @@ git -C "${REPO_DIR}" commit -m "seed" -q
   CTX_SHOW_FAKE_PROVIDER=1 \
   CTX_MEMLEAK_DEBUG=1 \
   CTX_MEMLEAK_DEBUG_INTERVAL_MS=5000 \
-  cargo run -p ctx-http --bin ctx -- serve --bind "127.0.0.1:${PORT}" --data-dir "${DATA_DIR}" \
+  node "${ROOT_DIR}/scripts/run_with_ctx_cache_env.cjs" --mode workspace --cwd "${ROOT_DIR}" -- cargo run -p ctx-http --bin ctx -- serve --bind "127.0.0.1:${PORT}" --data-dir "${DATA_DIR}" \
     >"${DAEMON_LOG}" 2>&1 &
   DAEMON_PID=$!
   echo "${DAEMON_PID}" > "${DATA_DIR}/daemon.pid"

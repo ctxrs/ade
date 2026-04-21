@@ -11,6 +11,11 @@ run() {
   "$@"
 }
 
+run_rust() {
+  echo "+ cargo $*"
+  node "${script_dir}/run_with_ctx_cache_env.cjs" --mode workspace --cwd "${core_root}" -- cargo "$@"
+}
+
 providers_corpus="crates/ctx-providers/tests/corpus/acp"
 mcp_corpus="crates/ctx-mcp/tests/corpus/tools"
 workspace_corpus="crates/ctx-core/tests/corpus/workspace_payloads"
@@ -37,19 +42,19 @@ run_suite() {
   case "$lane" in
     providers)
       report_corpus "providers" "${providers_corpus}" /tmp/ctx-fuzz-regression-providers-files.txt
-      run cargo test -p ctx-providers --features fuzz_tests
+      run_rust test -p ctx-providers --features fuzz_tests
       ;;
     mcp)
       report_corpus "mcp" "${mcp_corpus}" /tmp/ctx-fuzz-regression-mcp-files.txt
-      run cargo test -p ctx-mcp --features fuzz_tests
+      run_rust test -p ctx-mcp --features fuzz_tests
       ;;
     workspace-payloads)
       report_corpus "workspace" "${workspace_corpus}" /tmp/ctx-fuzz-regression-workspace-files.txt
-      run cargo test -p ctx-core --test workspace_payload_corpus
+      run_rust test -p ctx-core --test workspace_payload_corpus
       ;;
     release-manifests)
       report_corpus "updates" "${updates_corpus}" /tmp/ctx-fuzz-regression-updates-files.txt
-      run cargo test -p ctx-http --test release_manifest_corpus
+      run_rust test -p ctx-http --test release_manifest_corpus
       ;;
     desktop-ipc)
       report_corpus "desktop ipc" "${desktop_ipc_corpus}" /tmp/ctx-fuzz-regression-desktop-ipc-files.txt

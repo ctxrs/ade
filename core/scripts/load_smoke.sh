@@ -61,7 +61,7 @@ echo "load smoke" > "${REPO_DIR}/README.md"
 git -C "${REPO_DIR}" add . >/dev/null
 git -C "${REPO_DIR}" commit -m init >/dev/null
 
-CTX_SHOW_FAKE_PROVIDER=1 cargo run -p ctx-http --bin ctx -- serve \
+CTX_SHOW_FAKE_PROVIDER=1 node "${script_dir}/run_with_ctx_cache_env.cjs" --mode workspace --cwd "${core_root}" -- cargo run -p ctx-http --bin ctx -- serve \
   --bind "127.0.0.1:${PORT}" --data-dir "${DATA_DIR}" \
   >"${LOG_PATH}" 2>&1 &
 DAEMON_PID="$!"
@@ -120,7 +120,7 @@ fi
 run_out_dir="${OUT_DIR}/load"
 mkdir -p "${run_out_dir}"
 
-cargo run -p ctx-load-test -- \
+node "${script_dir}/run_with_ctx_cache_env.cjs" --mode workspace --cwd "${core_root}" -- cargo run -p ctx-load-test -- \
   --scenario tools/load-test/examples/baseline.json \
   --base-url "http://127.0.0.1:${PORT}" \
   --auth-token "${AUTH_TOKEN}" \
