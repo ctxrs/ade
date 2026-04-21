@@ -8,12 +8,32 @@ const path = require("node:path");
 const childProcess = require("node:child_process");
 
 const ARTIFACT_IDENTITY_FILENAME = "artifact_identity.json";
-const HEALTH_TIMEOUT_MS = 45_000;
+const HEALTH_TIMEOUT_MS = parsePositiveIntegerEnv("CTX_DESKTOP_IDENTITY_GATE_HEALTH_TIMEOUT_MS", 45_000);
 const HEALTH_RETRY_MS = 250;
+const BUNDLED_COMMAND_TIMEOUT_MS = parsePositiveIntegerEnv(
+  "CTX_DESKTOP_IDENTITY_GATE_COMMAND_TIMEOUT_MS",
+  10_000,
+);
+const DAEMON_SHUTDOWN_TIMEOUT_MS = parsePositiveIntegerEnv(
+  "CTX_DESKTOP_IDENTITY_GATE_DAEMON_SHUTDOWN_TIMEOUT_MS",
+  5_000,
+);
 
 function fail(message) {
   console.error(`error: ${message}`);
   process.exit(1);
+}
+
+function parsePositiveIntegerEnv(name, fallback) {
+  const raw = process.env[name];
+  if (raw === undefined || raw.trim() === "") {
+    return fallback;
+  }
+  const value = Number.parseInt(raw, 10);
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    fail(`${name} must be a positive integer when set`);
+  }
+  return value;
 }
 
 function parseArgs(argv) {
@@ -92,7 +112,10 @@ function readArtifactIdentity(bundleDir) {
   return identity;
 }
 
-function formatExecFailure(result, label) {
+function formatExecFailure(result, label, timeoutMs) {
+  if (result?.error?.code === "ETIMEDOUT") {
+    return `${label} timed out after ${timeoutMs}ms`;
+  }
   const stderr = String(result?.stderr || "").trim();
   const stdout = String(result?.stdout || "").trim();
   if (stderr) {
@@ -143,9 +166,10 @@ function runBundledJsonCommand(binaryPath, args, { env, label, input = "" }) {
     },
     input,
     encoding: "utf8",
+    timeout: BUNDLED_COMMAND_TIMEOUT_MS,
   });
   if (result.status !== 0) {
-    fail(formatExecFailure(result, label));
+    fail(formatExecFailure(result, label, BUNDLED_COMMAND_TIMEOUT_MS));
   }
   return parseLastJsonLine(result.stdout, label);
 }
@@ -260,6 +284,23 @@ async function waitForHealth(url, child, logPath) {
   throw new Error(`daemon did not become healthy in time: ${lastError ? lastError.message : "unknown"}${logs ? `; logs: ${logs}` : ""}`);
 }
 
+async function terminateDaemon(child) {
+  if (child.exitCode !== null || child.signalCode !== null) {
+    return;
+  }
+  child.kill("SIGTERM");
+  const exited = new Promise((resolve) => child.once("exit", resolve));
+  const timeout = new Promise((resolve) => {
+    setTimeout(() => {
+      if (child.exitCode === null && child.signalCode === null) {
+        child.kill("SIGKILL");
+      }
+      resolve();
+    }, DAEMON_SHUTDOWN_TIMEOUT_MS);
+  });
+  await Promise.race([exited, timeout]);
+}
+
 async function main() {
   const args = parseArgs(process.argv);
   const appPath = path.resolve(args.app);
@@ -299,8 +340,7 @@ async function main() {
   try {
     health = await waitForHealth(`http://${bindAddr}/api/health`, child, logPath);
   } finally {
-    child.kill("SIGTERM");
-    await new Promise((resolve) => child.once("exit", resolve));
+    await terminateDaemon(child);
     logStream.end();
     fs.rmSync(tempRoot, { recursive: true, force: true });
   }
