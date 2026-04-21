@@ -236,8 +236,13 @@ export async function createCtxPlaywrightConfig(
   const cargoTargetDir = resolvePlaywrightCargoTargetDir(process.env);
   const cargoIncremental = String(process.env.CARGO_INCREMENTAL ?? "").trim() || "0";
 
-  const outputDir = path.resolve(__dirname, `e2e/test-results/${profileSlug}`);
-  const reportDir = path.resolve(__dirname, `e2e/playwright-report/${profileSlug}`);
+  const bazelOutputRoot = String(process.env.TEST_UNDECLARED_OUTPUTS_DIR ?? "").trim();
+  const outputDir = bazelOutputRoot
+    ? path.resolve(bazelOutputRoot, "playwright", profileSlug, "test-results")
+    : path.resolve(__dirname, `e2e/test-results/${profileSlug}`);
+  const reportDir = bazelOutputRoot
+    ? path.resolve(bazelOutputRoot, "playwright", profileSlug, "playwright-report")
+    : path.resolve(__dirname, `e2e/playwright-report/${profileSlug}`);
   const primaryReporter = process.env.CTX_E2E_REPORTER ?? "dot";
   const browserName = resolvePlaywrightBrowserName();
   const argosEnabled =

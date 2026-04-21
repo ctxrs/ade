@@ -2,6 +2,11 @@ load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
 
 package(default_visibility = ["//visibility:public"])
 
+exports_files([
+    "scripts/run-e2e-bazel-runtime.mjs",
+    "scripts/run-e2e-bazel-runtime.sh",
+])
+
 WEB_SOURCES = glob(
     [
         "src/**/*",
@@ -23,6 +28,7 @@ COMMON_DATA = WEB_SOURCES + [
     "//core:package.json",
     "//core:pnpm-lock.yaml",
     "//core:pnpm-workspace.yaml",
+    "//core/apps/web/e2e:e2e_sources",
     "//core:desktop_bundle_files",
     "//core/scripts:sources",
     "//core/packages:sources",
@@ -31,6 +37,11 @@ COMMON_DATA = WEB_SOURCES + [
 filegroup(
     name = "desktop_ipc_generated_typescript",
     srcs = ["src/generated/desktop-ipc.ts"],
+)
+
+filegroup(
+    name = "e2e_runtime_data",
+    srcs = COMMON_DATA,
 )
 
 sh_binary(

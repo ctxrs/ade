@@ -75,6 +75,12 @@ const EXECUTIONS = [
   "artifact-tail",
 ];
 
+const WEB_E2E_RUNTIME_PROFILES = [
+  "workbench-lite",
+  "agent-full",
+  "web-artifact",
+];
+
 function assertAllowed(field, allowed, value, entryId) {
   if (!allowed.includes(value)) {
     throw new Error(`invalid ${field} '${value}' on ${entryId}; expected one of ${allowed.join(", ")}`);
@@ -89,6 +95,55 @@ function assertString(field, value, entryId) {
 
 function normalizeStringArray(values) {
   return [...new Set((values || []).map((value) => String(value).trim()).filter(Boolean))].sort();
+}
+
+function validateBazelLabel(label, entryId) {
+  if (!/^\/\/[A-Za-z0-9_./-]+:[A-Za-z0-9_.-]+$/u.test(label)) {
+    throw new Error(`invalid Bazel label '${label}' on ${entryId}`);
+  }
+}
+
+function normalizeExecutionTargets(entry) {
+  const targets = entry.executionTargets;
+  if (targets == null) {
+    entry.executionTargets = {};
+    return entry;
+  }
+  if (typeof targets !== "object" || Array.isArray(targets)) {
+    throw new Error(`invalid executionTargets on ${entry.id}; expected object`);
+  }
+  const webE2E = targets.webE2E;
+  if (webE2E == null) {
+    entry.executionTargets = {};
+    return entry;
+  }
+  if (entry.entrypointType !== "web-e2e-spec") {
+    throw new Error(`executionTargets.webE2E is only valid on web-e2e-spec entries: ${entry.id}`);
+  }
+  if (typeof webE2E !== "object" || Array.isArray(webE2E)) {
+    throw new Error(`invalid executionTargets.webE2E on ${entry.id}; expected object`);
+  }
+  const runtimeProfile = String(webE2E.runtimeProfile || "").trim();
+  assertAllowed("web E2E runtime profile", WEB_E2E_RUNTIME_PROFILES, runtimeProfile, entry.id);
+  const bazelLabels = normalizeStringArray(webE2E.bazelLabels);
+  if (bazelLabels.length === 0) {
+    throw new Error(`missing executionTargets.webE2E.bazelLabels on ${entry.id}`);
+  }
+  for (const label of bazelLabels) {
+    validateBazelLabel(label, entry.id);
+  }
+  const impactGroups = normalizeStringArray(webE2E.impactGroups);
+  if (impactGroups.length === 0) {
+    throw new Error(`missing executionTargets.webE2E.impactGroups on ${entry.id}`);
+  }
+  entry.executionTargets = {
+    webE2E: {
+      bazelLabels,
+      impactGroups,
+      runtimeProfile,
+    },
+  };
+  return entry;
 }
 
 function validateEntry(entry, familiesById) {
@@ -117,6 +172,7 @@ function validateEntry(entry, familiesById) {
   entry.dependencyCrates = normalizeStringArray(entry.dependencyCrates);
   entry.notes = typeof entry.notes === "string" ? entry.notes.trim() : "";
   entry.exception = typeof entry.exception === "string" ? entry.exception.trim() : "";
+  normalizeExecutionTargets(entry);
 
   return entry;
 }
@@ -197,6 +253,7 @@ module.exports = {
   REQUIREMENTS,
   STABILITIES,
   SURFACES,
+  WEB_E2E_RUNTIME_PROFILES,
   WORLDS,
   sortEntries,
   validateEntry,

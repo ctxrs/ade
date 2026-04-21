@@ -7,7 +7,10 @@ import {
   ensureCargoTargetDir,
   ensureE2ETempDir,
   prepareE2EServerDirs,
+  resolveBazelRunfilesRuntime,
   resolveCargoTargetDir,
+  resolveE2ERuntimeProfile,
+  resolveE2ERuntimeSource,
   resolveE2EWebDistDir,
   resolveServeWebDistDir,
   resolveWebBuildArgs,
@@ -91,6 +94,55 @@ describe("start-e2e-server", () => {
         CTX_E2E_ALLOW_CONFIGURED_MCP_COMMAND: "1",
       }),
     ).toBe(true);
+  });
+
+  it("recognizes only the explicit Bazel-runfiles runtime source", () => {
+    expect(resolveE2ERuntimeSource({})).toBe("local-build");
+    expect(resolveE2ERuntimeSource({ CTX_E2E_RUNTIME_SOURCE: "bazel-runfiles" })).toBe("bazel-runfiles");
+    expect(() => resolveE2ERuntimeSource({ CTX_E2E_RUNTIME_SOURCE: "fallback" })).toThrow(
+      /Unsupported CTX_E2E_RUNTIME_SOURCE/,
+    );
+  });
+
+  it("validates runtime profiles", () => {
+    expect(resolveE2ERuntimeProfile({})).toBe("workbench-lite");
+    expect(resolveE2ERuntimeProfile({ CTX_E2E_RUNTIME_PROFILE: "agent-full" })).toBe("agent-full");
+    expect(() => resolveE2ERuntimeProfile({ CTX_E2E_RUNTIME_PROFILE: "custom" })).toThrow(
+      /Unsupported CTX_E2E_RUNTIME_PROFILE/,
+    );
+  });
+
+  it("requires declared Bazel-runfiles inputs for workbench-lite", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-start-e2e-bazel-"));
+    const ctxBin = path.join(root, "ctx");
+    const webDist = path.join(root, "dist");
+    fs.writeFileSync(ctxBin, "#!/bin/sh\n");
+    fs.mkdirSync(webDist);
+
+    expect(resolveBazelRunfilesRuntime({
+      CTX_E2E_CTX_HTTP_BIN: ctxBin,
+      CTX_E2E_RUNTIME_PROFILE: "workbench-lite",
+      CTX_E2E_WEB_DIST: webDist,
+    })).toEqual({
+      ctxHttpBin: ctxBin,
+      ctxMcpBin: "",
+      runtimeProfile: "workbench-lite",
+      webDistDir: webDist,
+    });
+  });
+
+  it("requires ctx-mcp only for agent-full Bazel-runfiles runtime", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-start-e2e-agent-"));
+    const ctxBin = path.join(root, "ctx");
+    const webDist = path.join(root, "dist");
+    fs.writeFileSync(ctxBin, "#!/bin/sh\n");
+    fs.mkdirSync(webDist);
+
+    expect(() => resolveBazelRunfilesRuntime({
+      CTX_E2E_CTX_HTTP_BIN: ctxBin,
+      CTX_E2E_RUNTIME_PROFILE: "agent-full",
+      CTX_E2E_WEB_DIST: webDist,
+    })).toThrow(/CTX_E2E_CTX_MCP_BIN/);
   });
 
   it("resolves a relative cargo target dir against the repo root", () => {

@@ -394,55 +394,62 @@ export const handleStreamMessage = async (
       host.state.updateSnapshotRev(evt.snapshot_rev);
     }
   }
-  if ("archived_rev" in evt && typeof evt.archived_rev === "number") {
-    host.state.updateArchivedRev(evt.archived_rev);
-  }
+  const archivedStateChanged =
+    "archived_rev" in evt && typeof evt.archived_rev === "number"
+      ? host.state.updateArchivedRev(evt.archived_rev)
+      : false;
 
+  let published = false;
+  const publish = () => {
+    if (published) return;
+    published = true;
+    host.publish();
+  };
   let flushAfterNotifyReason: string | null = null;
   switch (evt.type) {
     case "ready":
       if (host.state.setConnection("connected")) {
-        host.publish();
+        publish();
       }
       break;
     case "task_delta":
       if (applyTaskDelta(host, evt)) {
-        host.publish();
+        publish();
       }
       break;
     case "active_task_upsert":
       if (host.state.upsertActiveSummary(evt.task)) {
-        host.publish();
+        publish();
         host.schedulePersistCache();
       }
       break;
     case "active_task_delete":
       if (host.state.removeTask(idToString(evt.task_id), { adjustCounts: true })) {
-        host.publish();
+        publish();
         host.schedulePersistCache();
       }
       break;
     case "archived_task_upsert": {
       const item = host.state.buildArchivedItem(evt.task, null);
       if (item && host.state.upsertArchivedItem(item)) {
-        host.publish();
+        publish();
       }
       break;
     }
     case "archived_task_delete":
-      if (host.state.removeTask(idToString(evt.task_id), { adjustCounts: true })) {
-        host.publish();
+      if (host.state.removeArchivedTask(idToString(evt.task_id), { adjustCounts: true })) {
+        publish();
       }
       break;
     case "session_summary":
       if (host.state.applySessionSummary(evt.summary)) {
-        host.publish();
+        publish();
         host.schedulePersistCache();
       }
       break;
     case "session_summary_delta":
       if (applySessionSummaryDelta(host, evt)) {
-        host.publish();
+        publish();
       }
       break;
     case "session_head_delta":
@@ -465,17 +472,21 @@ export const handleStreamMessage = async (
           String(evt.notice.worktree_root ?? ""),
         )
       ) {
-        host.publish();
+        publish();
       }
       break;
     case "worktree_vcs_snapshot":
       if (host.state.applyWorktreeVcsSnapshot(evt.snapshot)) {
-        host.publish();
+        publish();
         host.schedulePersistCache();
       }
       break;
     default:
       break;
+  }
+
+  if (archivedStateChanged) {
+    publish();
   }
 
   host.notifyEventListeners(evt);

@@ -1,9 +1,7 @@
 import type {
-  Session,
   SessionHeadDelta,
   SessionHeadSnapshot,
   SessionSnapshotSummary,
-  SessionSummary,
   Task,
   WorktreeVcsSnapshot,
   WorkspaceActiveSnapshot,
@@ -16,14 +14,7 @@ import type {
 } from "@ctx/types";
 import { idToString } from "../../api/client";
 import type { WorkspaceActiveSnapshotPatch } from "../workspaceActiveSnapshotProtocol";
-import {
-  emptySessionHeadWindow,
-  mergeSessionEvents,
-  mergeSessionMessages,
-  mergeSessionToolSummaries,
-  mergeSessionTurns,
-  sanitizeSessionHeadSnapshot,
-} from "../sessionHeadState";
+import { sanitizeSessionHeadSnapshot } from "../sessionHeadState";
 import type {
   PersistedWorkspaceActiveSnapshotV1,
   PersistedWorkspaceActiveTaskSummaryV1,
@@ -35,24 +26,25 @@ import type {
 import { findWorkspaceActiveSnapshotInsertIndex } from "./storeOrdering";
 import {
   collectWorkspaceActivePrimarySessionIds,
-  hasOwnProperty,
   mapWorktreeVcsSnapshots,
   projectPrimarySessionHeadOntoTasks,
   resolvePrimarySessionId,
-  sortSessionSummaries,
 } from "./projection";
 import {
   isSessionHeadCompatibleWithSummary,
-  mergeSessionSummaryDelta,
-  normalizeSessionSummary,
-  pickArchivedSessionId,
-  pickArchivedSessionIdFromSummaries,
-  readPrimarySessionHead,
-  readPrimarySessionId,
-  sessionToSummary,
   shouldReplaceSessionHead,
   taskSortAt,
 } from "./summaryHelpers";
+import {
+  buildArchivedSnapshotItem,
+  buildPersistedActiveSnapshotSummary,
+  normalizeActiveSnapshotSummary,
+} from "./itemBuilders";
+import { applySessionHeadDeltaToSnapshot } from "./sessionHeadDeltaApply";
+import {
+  applySessionSummaryDeltaToTasks,
+  applySessionSummaryToTasks,
+} from "./sessionSummaryApply";
 
 export class WorkspaceActiveSnapshotStoreState {
   private snapshot: WorkspaceActiveSnapshotState;
@@ -501,6 +493,14 @@ export class WorkspaceActiveSnapshotStoreState {
     return true;
   }
 
+  removeArchivedTask(taskId: string | undefined, opts?: { adjustCounts?: boolean; sync?: boolean }): boolean {
+    const deleteId = idToString(taskId ?? "");
+    if (!deleteId) return false;
+    const existing = this.tasks.get(deleteId);
+    if (!existing?.task.archived_at) return false;
+    return this.removeTask(deleteId, opts);
+  }
+
   upsertActiveSummary(summary: WorkspaceActiveTaskSummary): boolean {
     const existing = this.tasks.get(idToString(summary.task.id));
     const normalized = this.normalizeActiveSummary(summary, existing);
@@ -551,9 +551,12 @@ export class WorkspaceActiveSnapshotStoreState {
       return this.removeTask(taskId, { adjustCounts: true });
     }
 
+    const deltaTask = delta.kind === "unarchived"
+      ? { ...delta.task, archived_at: null }
+      : delta.task;
     const nextTask = {
       ...existing.task,
-      ...delta.task,
+      ...deltaTask,
       id: existing.task.id,
       workspace_id: existing.task.workspace_id,
     };
@@ -574,44 +577,22 @@ export class WorkspaceActiveSnapshotStoreState {
       sortAtMs,
       sort_at: sortAt || null,
     };
+    const prevArchived = Boolean(existing.task.archived_at);
+    const nextArchived = Boolean(nextItem.task.archived_at);
+    if (prevArchived !== nextArchived) {
+      this.archivedLoaded = false;
+      this.archivedCursor = null;
+      this.hasMoreArchived = true;
+    }
     this.tasks.set(taskId, nextItem);
+    this.updateCountsForMove(existing, nextItem);
     this.placeInOrders(nextItem);
     this.syncSnapshot();
     return true;
   }
 
   applySessionSummaryDelta(evt: WorkspaceActiveSnapshotSessionSummaryDeltaEvent): boolean {
-    const delta = evt.delta;
-    const sessionId = idToString(delta.session_id ?? "");
-    if (!sessionId) return false;
-    const taskIdHint = idToString(delta.task_id ?? "");
-
-    const tryUpdate = (taskId: string): boolean => {
-      const task = this.tasks.get(taskId);
-      if (!task) return false;
-      const nextSessions = task.sessions.slice();
-      const sessionIdx = nextSessions.findIndex((s) => idToString(s.session.id) === sessionId);
-      if (sessionIdx < 0) return false;
-      const current = nextSessions[sessionIdx];
-      const nextSummary = mergeSessionSummaryDelta(current, delta);
-      if (!nextSummary) return false;
-      nextSessions[sessionIdx] = nextSummary;
-      this.tasks.set(taskId, { ...task, sessions: sortSessionSummaries(nextSessions) });
-      return true;
-    };
-
-    let changed = false;
-    if (taskIdHint && tryUpdate(taskIdHint)) {
-      changed = true;
-    } else {
-      for (const taskId of this.tasks.keys()) {
-        if (taskIdHint && taskId === taskIdHint) continue;
-        if (tryUpdate(taskId)) {
-          changed = true;
-          break;
-        }
-      }
-    }
+    const changed = applySessionSummaryDeltaToTasks({ delta: evt.delta, tasks: this.tasks });
     if (changed) {
       this.syncSnapshot();
     }
@@ -619,79 +600,18 @@ export class WorkspaceActiveSnapshotStoreState {
   }
 
   applySessionSummary(summary: SessionSnapshotSummary): boolean {
-    const taskId = idToString(summary.session.task_id);
-    if (!taskId) return false;
-    const task = this.tasks.get(taskId);
-    if (!task) return false;
-    const nextSessions = task.sessions.slice();
-    const sessionId = idToString(summary.session.id);
-    const sessionIdx = nextSessions.findIndex((s) => idToString(s.session.id) === sessionId);
-    const normalized = normalizeSessionSummary(summary);
-    if (sessionIdx >= 0) {
-      nextSessions[sessionIdx] = normalized;
-    } else {
-      nextSessions.push(normalized);
-    }
-    this.tasks.set(taskId, { ...task, sessions: sortSessionSummaries(nextSessions) });
+    const changed = applySessionSummaryToTasks({ summary, tasks: this.tasks });
+    if (!changed) return false;
     this.syncSnapshot();
     return true;
   }
 
   applySessionHeadDelta(delta: SessionHeadDelta): boolean {
-    const sessionId = idToString(delta?.session_id ?? "");
-    if (!sessionId) return false;
-    let existing = this.sessionHeadsById.get(sessionId);
-    if (!existing) {
-      const seeded = this.seedHeadSnapshot(sessionId);
-      if (!seeded) return false;
-      existing = seeded;
-      this.sessionHeadsById.set(sessionId, seeded);
-    }
-    let changed = false;
-    let turns = existing.turns ?? [];
-    let toolSummaries = Array.isArray(existing.tool_summaries) ? existing.tool_summaries : [];
-    let messages = existing.messages ?? [];
-    let events = existing.events ?? [];
-    if (delta.turn) {
-      turns = mergeSessionTurns(turns, [delta.turn]);
-      changed = true;
-    }
-    if (delta.message) {
-      messages = mergeSessionMessages(messages, [delta.message]);
-      changed = true;
-    }
-    if (delta.event) {
-      events = mergeSessionEvents(events, [delta.event]);
-      changed = true;
-    }
-    const incomingToolSummaries = Array.isArray(delta.tool_summaries) ? delta.tool_summaries : [];
-    if (incomingToolSummaries.length > 0) {
-      toolSummaries = mergeSessionToolSummaries(toolSummaries, incomingToolSummaries, turns);
-      changed = true;
-    }
-    const next: SessionHeadSnapshot = sanitizeSessionHeadSnapshot({
-      ...existing,
-      turns,
-      tool_summaries: toolSummaries,
-      messages,
-      events,
-      ...(delta.session ? { session: delta.session } : {}),
-      ...("activity" in delta ? { activity: delta.activity ?? undefined } : {}),
-      ...(typeof delta.last_event_seq === "number" ? { last_event_seq: delta.last_event_seq } : {}),
-      ...(typeof delta.projection_rev === "number" ? { projection_rev: delta.projection_rev } : {}),
-      ...(typeof delta.state_rev === "number" ? { state_rev: delta.state_rev } : {}),
+    return applySessionHeadDeltaToSnapshot({
+      delta,
+      tasks: this.tasks,
+      sessionHeadsById: this.sessionHeadsById,
     });
-
-    if (
-      !changed &&
-      next.last_event_seq === existing.last_event_seq &&
-      (next.projection_rev ?? 0) === (existing.projection_rev ?? 0)
-    ) {
-      return false;
-    }
-    if (!shouldReplaceSessionHead(existing, next)) return false;
-    this.sessionHeadsById.set(sessionId, next);
-    return true;
   }
 
   applySessionHeadSeed(head: SessionHeadSnapshot | null | undefined): boolean {
@@ -710,40 +630,12 @@ export class WorkspaceActiveSnapshotStoreState {
     primaryHead?: SessionHeadSnapshot | null,
   ): WorkspaceActiveSnapshotItem | null {
     void primaryHead;
-    const task = summary.task;
-    const id = idToString(task.id);
-    if (!id) return null;
-    const existing = this.tasks.get(id);
-    const providerIds = (summary.provider_ids ?? []).filter(Boolean);
-    const summaries = existing?.sessions ?? [];
-    const sessionList = summaries.map((item) => item.session).filter(Boolean);
-    const summarySessions = Array.isArray(summary.sessions) ? summary.sessions : [];
-    if (existing?.primarySessionHead) {
-      this.rememberSessionHead(existing.primarySessionHead);
-    }
-    const summaryPrimaryId = readPrimarySessionId(summary);
-    const primarySessionId =
-      summaryPrimaryId ||
-      pickArchivedSessionIdFromSummaries(task, summarySessions) ||
-      pickArchivedSessionId(task, sessionList);
-    let primarySessionHead = null;
-    if (!primarySessionHead && primarySessionId) {
-      primarySessionHead = this.sessionHeadsById.get(primarySessionId) ?? null;
-    }
-    if (!primarySessionHead && existing?.primarySessionHead) {
-      primarySessionHead = existing.primarySessionHead;
-    }
-    const sortAt = taskSortAt(task);
-    return {
-      id,
-      task: { ...task },
-      sessions: sortSessionSummaries(summaries),
-      providerIds: providerIds.length ? providerIds : existing?.providerIds,
-      primarySessionId: primarySessionId || null,
-      primarySessionHead: primarySessionHead ?? null,
-      sortAtMs: Date.parse(sortAt) || Date.now(),
-      sort_at: sortAt || null,
-    };
+    return buildArchivedSnapshotItem({
+      summary,
+      existing: this.tasks.get(idToString(summary.task.id)),
+      sessionHeadsById: this.sessionHeadsById,
+      rememberSessionHead: (head) => this.rememberSessionHead(head),
+    });
   }
 
   private syncSnapshot() {
@@ -799,29 +691,7 @@ export class WorkspaceActiveSnapshotStoreState {
   private buildPersistedSummary(
     item: WorkspaceActiveSnapshotItem,
   ): PersistedWorkspaceActiveTaskSummaryV1 | null {
-    if (!item.task) return null;
-    const sessions = Array.isArray(item.sessions) ? item.sessions : [];
-    const primaryId = resolvePrimarySessionId(item);
-    let primary = primaryId
-      ? sessions.find((summary) => idToString(summary.session.id) === primaryId) ?? null
-      : null;
-    if (!primary && sessions.length > 0) {
-      primary = sessions[0] ?? null;
-    }
-    if (!primary && item.primarySessionHead?.session) {
-      primary = sessionToSummary(item.primarySessionHead.session);
-    }
-    const head =
-      item.primarySessionHead ||
-      (primaryId ? this.sessionHeadsById.get(primaryId) ?? null : null);
-    const sortAt = taskSortAt(item.task, item.sort_at);
-    return {
-      task: item.task,
-      primary_session: primary ?? null,
-      primary_session_head: head ? sanitizeSessionHeadSnapshot(head) : null,
-      sessions,
-      sort_at: sortAt,
-    };
+    return buildPersistedActiveSnapshotSummary({ item, sessionHeadsById: this.sessionHeadsById });
   }
 
   private updateCountsForMove(prev: WorkspaceActiveSnapshotItem, next: WorkspaceActiveSnapshotItem) {
@@ -835,32 +705,6 @@ export class WorkspaceActiveSnapshotStoreState {
       this.totalActive = Math.max(0, this.totalActive - 1);
       this.totalArchived += 1;
     }
-  }
-
-  private seedHeadSnapshot(sessionId: string): SessionHeadSnapshot | null {
-    for (const item of this.tasks.values()) {
-      for (const summary of item.sessions) {
-        const candidateId = idToString(summary.session.id);
-        if (candidateId !== sessionId) continue;
-        return {
-          session: summary.session,
-          turns: [],
-          tool_summaries: [],
-          events: [],
-          messages: [],
-          last_event_seq: summary.last_event_seq ?? 0,
-          projection_rev: summary.projection_rev ?? 0,
-          state_rev: summary.state_rev ?? 0,
-          activity: undefined,
-          has_more_turns: false,
-          history_cursor: null,
-          has_more_history: false,
-          summary_checkpoint: undefined,
-          head_window: emptySessionHeadWindow(),
-        };
-      }
-    }
-    return null;
   }
 
   private rememberSessionHead(head: SessionHeadSnapshot | null) {
@@ -902,73 +746,12 @@ export class WorkspaceActiveSnapshotStoreState {
     summary: WorkspaceActiveTaskSummary | PersistedWorkspaceActiveTaskSummaryV1,
     existing?: WorkspaceActiveSnapshotItem,
   ): WorkspaceActiveSnapshotItem {
-    const id = idToString(summary.task.id);
-    const summaryHasPrimary = hasOwnProperty(summary, "primary_session") || hasOwnProperty(summary, "primarySession");
-    const summaryHasSessions = hasOwnProperty(summary, "sessions");
-    const summaryHasHead =
-      hasOwnProperty(summary, "primary_session_head") || hasOwnProperty(summary, "primarySessionHead");
-    const summaryHasSortAt = hasOwnProperty(summary, "sort_at") || hasOwnProperty(summary, "sortAt");
-
-    const fallbackSortAt = summaryHasSortAt
-      ? (summary as PersistedWorkspaceActiveTaskSummaryV1).sort_at ?? null
-      : existing?.sort_at ?? null;
-    const sortAt = taskSortAt(summary.task, fallbackSortAt);
-    const sortAtMs = Date.parse(sortAt) || existing?.sortAtMs || Date.now();
-    const existingPrimarySessionId = resolvePrimarySessionId(existing);
-    const primarySessionId =
-      readPrimarySessionId(summary) ||
-      idToString(summary.task.primary_session_id ?? "") ||
-      existingPrimarySessionId ||
-      idToString((summary as PersistedWorkspaceActiveTaskSummaryV1).primary_session?.session?.id ?? "");
-
-    const existingSessions = existing?.sessions ?? [];
-    const primaryFromSummary = summaryHasPrimary
-      ? (summary as PersistedWorkspaceActiveTaskSummaryV1).primary_session
-      : null;
-    let primarySummary = primaryFromSummary ? normalizeSessionSummary(primaryFromSummary) : null;
-    if (!primarySummary && primarySessionId) {
-      primarySummary =
-        existingSessions.find((item) => idToString(item.session.id) === primarySessionId) ?? null;
-    }
-
-    let primaryHead = summaryHasHead ? readPrimarySessionHead(summary) : existing?.primarySessionHead ?? null;
-    if (!primaryHead && primarySessionId) {
-      primaryHead = this.sessionHeadsById.get(primarySessionId) ?? null;
-    }
-    if (primaryHead && !isSessionHeadCompatibleWithSummary(primarySummary, primaryHead)) {
-      primaryHead = null;
-    }
-    this.rememberSessionHead(primaryHead);
-
-    const sessionsRaw = summaryHasSessions
-      ? Array.isArray((summary as PersistedWorkspaceActiveTaskSummaryV1).sessions)
-        ? (summary as PersistedWorkspaceActiveTaskSummaryV1).sessions
-        : []
-      : existingSessions;
-    const sessions = sessionsRaw.map((item) => normalizeSessionSummary(item));
-
-    const merged: SessionSnapshotSummary[] = [];
-    const seen = new Set<string>();
-    const addSummary = (item: SessionSnapshotSummary) => {
-      const sid = idToString(item.session.id);
-      if (!sid || seen.has(sid)) return;
-      seen.add(sid);
-      merged.push(item);
-    };
-    if (primarySummary) {
-      addSummary(primarySummary);
-    }
-    sessions.forEach(addSummary);
-
-    return {
-      id,
-      task: { ...summary.task },
-      sessions: sortSessionSummaries(merged),
-      primarySessionHead: primaryHead ?? null,
-      primarySessionId: primarySessionId || null,
-      sortAtMs,
-      sort_at: sortAt || null,
-    };
+    return normalizeActiveSnapshotSummary({
+      summary,
+      existing,
+      sessionHeadsById: this.sessionHeadsById,
+      rememberSessionHead: (head) => this.rememberSessionHead(head),
+    });
   }
 
   private placeInOrders(item: WorkspaceActiveSnapshotItem) {

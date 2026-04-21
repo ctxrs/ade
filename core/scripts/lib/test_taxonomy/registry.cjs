@@ -17,6 +17,7 @@ const {
 } = require("../rust_gate_plan.cjs");
 const { FAMILIES, getFamiliesById } = require("./families.cjs");
 const { sortEntries, validateEntry } = require("./schema.cjs");
+const { buildWebE2EExecutionTarget } = require("./web_e2e_runtime_profiles.cjs");
 
 const repoRoot = path.resolve(__dirname, "..", "..", "..", "..");
 const coreRoot = path.join(repoRoot, "core");
@@ -367,10 +368,11 @@ function buildWebE2EEntries() {
   for (const [suite, specs] of suiteMap.entries()) {
     for (const spec of specs) {
       const meta = suiteMetadata[suite];
+      const family = classifyWebSpecFamily(spec);
       entries.push({
         id: `web-e2e.${spec.replace(/^e2e\//u, "").replace(/\.spec\.ts$/u, "").replace(/[/.]/gu, "-")}`,
         title: `web-e2e: ${path.basename(spec)}`,
-        family: classifyWebSpecFamily(spec),
+        family,
         entrypointType: "web-e2e-spec",
         entrypoint: `core/apps/web/${spec}`,
         suite,
@@ -382,12 +384,11 @@ function buildWebE2EEntries() {
         stability: meta.stability,
         execution: meta.execution,
         owner: "web-workbench",
-        sourceGlobs: [
-          `core/apps/web/${spec}`,
-          `core/apps/web/e2e/suites/${suite}.txt`,
-          "core/apps/web/scripts/run-e2e-suite.mjs",
-        ],
+        sourceGlobs: [`core/apps/web/${spec}`],
         dependencyCrates: [],
+        executionTargets: {
+          webE2E: buildWebE2EExecutionTarget({ spec, family, suite }),
+        },
         notes: `Primary suite: ${suite}`,
         exception: "",
       });
@@ -1009,6 +1010,8 @@ function buildStaticEntries() {
       sourceGlobs: [
         "core/apps/web/src/**",
         "core/apps/web/package.json",
+        "core/apps/web/playwright.shared.ts",
+        "core/apps/web/playwright.shared.test.ts",
         "core/apps/web/scripts/**",
       ],
       dependencyCrates: [],
@@ -1021,7 +1024,7 @@ function buildStaticEntries() {
       title: "Web premerge required suite",
       family: "web-workbench",
       entrypointType: "core-package-script",
-      entrypoint: "test:e2e:premerge",
+      entrypoint: "bazel:web:e2e:premerge",
       surface: "system",
       oracle: "golden-flow",
       world: "simulated",
@@ -1031,10 +1034,21 @@ function buildStaticEntries() {
       execution: "bazel-addressable",
       owner: "web-workbench",
       sourceGlobs: [
+        "core/package.json",
+        "core/apps/web/package.json",
+        "core/apps/web/BUILD.bazel",
+        "core/apps/web/e2e/BUILD.bazel",
+        "core/apps/web/e2e/web_e2e_test.bzl",
+        "core/apps/web/playwright*.config.ts",
+        "core/apps/web/playwright.shared.ts",
         "core/apps/web/src/state/**",
         "core/apps/web/src/api/**",
-        "core/apps/web/e2e/**",
+        "core/apps/web/e2e/fixtures/**",
+        "core/apps/web/e2e/utils/**",
         "core/apps/web/e2e/suites/premerge_required.txt",
+        "core/apps/web/scripts/start-e2e-server.mjs",
+        "core/apps/web/scripts/run-e2e-bazel-runtime.mjs",
+        "core/apps/web/scripts/run-e2e-bazel-runtime.sh",
       ],
       dependencyCrates: [],
       notes: "Canonical premerge-required browser suite.",

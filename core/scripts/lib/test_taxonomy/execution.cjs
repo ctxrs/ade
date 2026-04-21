@@ -103,26 +103,24 @@ function isAlwaysOnEntry(entry, profileId) {
   return Array.isArray(entry.alwaysOnProfiles) && entry.alwaysOnProfiles.includes(profileId);
 }
 
-function resolveWebSuiteScriptName(suite) {
-  switch (suite) {
-    case "premerge_required":
-      return "test:e2e:premerge";
-    case "release_required":
-      return "test:e2e:release";
-    case "cross_platform":
-      return "test:e2e:cross-platform";
-    case "visual":
-      return "test:e2e:visual";
-    case "soak":
-      return "test:e2e:soak";
-    case "load":
-      return "test:e2e:load";
-    default:
-      throw new Error(`unsupported web e2e suite for command mapping: ${suite}`);
+function profileMatchesTouchedOnlyEscalation(profile, entry) {
+  if (profile.id !== "agent-default") {
+    return false;
   }
+  if (entry.id === "web-workbench.web-premerge-required") {
+    return true;
+  }
+  return entry.entrypointType === "web-e2e-spec";
 }
 
 function buildCommandForEntry(entry) {
+  if (entry.entrypointType === "web-e2e-spec") {
+    const bazelLabels = entry.executionTargets?.webE2E?.bazelLabels ?? [];
+    if (bazelLabels.length === 0) {
+      throw new Error(`web E2E entry is missing Bazel labels: ${entry.id}`);
+    }
+    return shellJoin("node", ["scripts/run_bazel_pilot.cjs", "test", ...bazelLabels]);
+  }
   if (entry.entrypointType === "core-package-script") {
     return shellJoin("pnpm", [entry.entrypoint]);
   }
@@ -141,9 +139,6 @@ function buildCommandForEntry(entry) {
       throw new Error(`missing provider matrix lane on ${entry.id}`);
     }
     return shellJoin("pnpm", [`verify:desktop:provider-auth-matrix:${lane}`]);
-  }
-  if (entry.entrypointType === "web-e2e-spec") {
-    return shellJoin("pnpm", [resolveWebSuiteScriptName(entry.suite)]);
   }
   throw new Error(`unsupported entrypoint type for command mapping: ${entry.entrypointType}`);
 }
@@ -206,7 +201,10 @@ function commandPriority(command) {
   if (command === "pnpm bazel:web:test") {
     return 100;
   }
-  if (command === "pnpm test:e2e:premerge") {
+  if (command === "pnpm bazel:web:e2e:premerge") {
+    return 200;
+  }
+  if (command.startsWith("node scripts/run_bazel_pilot.cjs test //core/apps/web/e2e:")) {
     return 200;
   }
   return 1000;
@@ -245,7 +243,10 @@ function orderSelectedEntries(entries, profile) {
 function buildExecutionPlan({ profileId, changedFiles = [], touchedOnly = false }) {
   const registry = buildTaxonomyRegistry();
   const profile = getProfileById(profileId);
-  const matchingEntries = registry.filter((entry) => profileMatchesEntry(profile, entry));
+  const matchingEntries = registry.filter((entry) =>
+    profileMatchesEntry(profile, entry)
+    || (touchedOnly && profileMatchesTouchedOnlyEscalation(profile, entry)),
+  );
   const changedContext = buildChangedContext(changedFiles);
 
   let selectedEntries = matchingEntries;
