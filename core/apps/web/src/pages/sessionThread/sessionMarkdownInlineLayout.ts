@@ -1,4 +1,5 @@
 import type { PreparedTextWithSegments } from "@chenglou/pretext";
+import { isAbsolutePath, splitWhitespaceTokens } from "../../utils/codeTokenLinks";
 import {
   isSealedInlineCodeFragment,
   splitInlineCodeFragments,
@@ -100,6 +101,54 @@ function measureTextMinStartTextWidth(text: string, font: string): number {
   return wholeLine?.width ?? 0;
 }
 
+function isSlashDelimitedTextToken(text: string): boolean {
+  const trimmed = text.trim();
+  if (trimmed.length === 0) {
+    return false;
+  }
+  if (!trimmed.includes("/")) {
+    return false;
+  }
+  if (trimmed.includes("://")) {
+    return false;
+  }
+  if (isAbsolutePath(trimmed)) {
+    return false;
+  }
+  if (trimmed.startsWith("./") || trimmed.startsWith("../") || trimmed.startsWith("~/")) {
+    return false;
+  }
+  return /\S\/\S/.test(trimmed);
+}
+
+function splitTextRunChunks(text: string): string[] {
+  const parts = splitWhitespaceTokens(text);
+  if (parts.length === 0) {
+    return [];
+  }
+
+  const chunks: string[] = [];
+  let current = "";
+  const flushCurrent = () => {
+    if (current.length === 0) {
+      return;
+    }
+    chunks.push(current);
+    current = "";
+  };
+
+  for (const part of parts) {
+    if (!/\s+/.test(part) && isSlashDelimitedTextToken(part)) {
+      flushCurrent();
+      chunks.push(part);
+      continue;
+    }
+    current += part;
+  }
+  flushCurrent();
+  return chunks;
+}
+
 function pushTextRunItems(
   items: PreparedInlineLayoutItem[],
   params: {
@@ -125,6 +174,77 @@ function pushTextRunItems(
     }
     items.push({ kind: "space", width: params.collapsedSpaceWidth, codeGroupId: null, text: " " });
   };
+  const pushTextChunk = (text: string, options: {
+    startsAfterInlineCodeSeam: boolean;
+    startsAfterCollapsedSoftBreak: boolean;
+    startsAfterPathLikeInlineCodeSeam: boolean;
+    startsStyledTextAfterInlineCodeSeam: boolean;
+    startsAfterStyledTextSeam: boolean;
+    startsStyledTextAfterBodySeam: boolean;
+    hasTrailingStyledText: boolean;
+    hasTrailingInlineCode: boolean;
+  }) => {
+    if (text.length === 0) {
+      return;
+    }
+    const leadingWhitespace = text.match(/^\s+/)?.[0] ?? "";
+    const trailingWhitespace = text.match(/\s+$/)?.[0] ?? "";
+    const core = text.slice(leadingWhitespace.length, text.length - trailingWhitespace.length);
+
+    if (leadingWhitespace.length > 0) {
+      pushCollapsedSpace();
+    }
+
+    if (core.length > 0) {
+      const prepared = getPreparedTextWithSegments(
+        buildPreparedContentKey(params.cacheKeyPrefix, core),
+        core,
+        params.font,
+        "normal",
+      );
+      const wholeLine = measureSingleLineLayout(prepared);
+      if (wholeLine != null) {
+        items.push({
+          kind: "segment",
+          codeGroupId: null,
+          codeGroupHasDottedPath: false,
+          codeGroupHasWhitespace: false,
+          codeGroupHasTrailingText: false,
+          codeGroupIsOnlyInlineCodeInSegment: false,
+          codeGroupStartsAfterText: false,
+          codeGroupStartsAfterStyledTextSeam: false,
+          codePartStartsAfterWhitespace: false,
+          chromeWidth: 0,
+          endCursor: wholeLine.end,
+          fullWidth: wholeLine.width,
+          isFirstCodeGroupFragment: false,
+          startsAfterCodeWhitespace: false,
+          isFirstPathFragmentAfterHyphenRun: false,
+          isPathTailFragment: false,
+          isSealedInlineCodeFragment: false,
+          minStartTextWidth: measureTextMinStartTextWidth(core, params.font),
+          prefersFreshLineStart: false,
+          prefersFreshLineStartWithoutLeadingHang: false,
+          startsAfterInlineCodeSeam: options.startsAfterInlineCodeSeam,
+          startsAfterCollapsedSoftBreak: options.startsAfterCollapsedSoftBreak,
+          startsAfterPathLikeInlineCodeSeam: options.startsAfterPathLikeInlineCodeSeam,
+          startsStyledTextAfterInlineCodeSeam: options.startsStyledTextAfterInlineCodeSeam,
+          startsAfterStyledTextSeam: options.startsAfterStyledTextSeam,
+          startsStyledTextAfterBodySeam: options.startsStyledTextAfterBodySeam,
+          hasTrailingStyledText: options.hasTrailingStyledText,
+          hasTrailingInlineCode: options.hasTrailingInlineCode,
+          isDecoratedText: params.isDecoratedText,
+          prepared,
+          text: core,
+        });
+      }
+    }
+
+    if (trailingWhitespace.length > 0) {
+      pushCollapsedSpace();
+    }
+  };
+
   const normalizedSource = params.text.replace(/\u00a0/g, " ").replace(/\r\n?/g, "\n");
   const normalized = normalizedSource.replace(/\n/g, " ");
   if (normalized.length === 0) {
@@ -133,62 +253,21 @@ function pushTextRunItems(
   const startsAfterCollapsedSoftBreak =
     params.startsAfterCollapsedSoftBreak ||
     (normalizedSource.match(/^\s+/)?.[0] ?? "").includes("\n");
-  const leadingWhitespace = normalized.match(/^\s+/)?.[0] ?? "";
-  const trailingWhitespace = normalized.match(/\s+$/)?.[0] ?? "";
-  const core = normalized.slice(leadingWhitespace.length, normalized.length - trailingWhitespace.length);
 
-  if (leadingWhitespace.length > 0) {
-    pushCollapsedSpace();
-  }
-
-  if (core.length > 0) {
-    const prepared = getPreparedTextWithSegments(
-      buildPreparedContentKey(params.cacheKeyPrefix, core),
-      core,
-      params.font,
-      "normal",
-    );
-    const wholeLine = measureSingleLineLayout(prepared);
-    if (wholeLine != null) {
-      items.push({
-        kind: "segment",
-        codeGroupId: null,
-        codeGroupHasDottedPath: false,
-        codeGroupHasWhitespace: false,
-        codeGroupHasTrailingText: false,
-        codeGroupIsOnlyInlineCodeInSegment: false,
-        codeGroupStartsAfterText: false,
-        codeGroupStartsAfterStyledTextSeam: false,
-        codePartStartsAfterWhitespace: false,
-        chromeWidth: 0,
-        endCursor: wholeLine.end,
-        fullWidth: wholeLine.width,
-        isFirstCodeGroupFragment: false,
-        startsAfterCodeWhitespace: false,
-        isFirstPathFragmentAfterHyphenRun: false,
-        isPathTailFragment: false,
-        isSealedInlineCodeFragment: false,
-        minStartTextWidth: measureTextMinStartTextWidth(core, params.font),
-        prefersFreshLineStart: false,
-        prefersFreshLineStartWithoutLeadingHang: false,
-        startsAfterInlineCodeSeam: params.startsAfterInlineCodeSeam,
-        startsAfterCollapsedSoftBreak,
-        startsAfterPathLikeInlineCodeSeam: params.startsAfterPathLikeInlineCodeSeam,
-        startsStyledTextAfterInlineCodeSeam: params.startsStyledTextAfterInlineCodeSeam,
-        startsAfterStyledTextSeam: params.startsAfterStyledTextSeam,
-        startsStyledTextAfterBodySeam: params.startsStyledTextAfterBodySeam,
-        hasTrailingStyledText: params.hasTrailingStyledText,
-        hasTrailingInlineCode: params.hasTrailingInlineCode,
-        isDecoratedText: params.isDecoratedText,
-        prepared,
-        text: core,
-      });
-    }
-  }
-
-  if (trailingWhitespace.length > 0) {
-    pushCollapsedSpace();
-  }
+  const chunks = splitTextRunChunks(normalized);
+  chunks.forEach((chunk, index) => {
+    const firstChunk = index === 0;
+    pushTextChunk(chunk, {
+      startsAfterInlineCodeSeam: firstChunk ? params.startsAfterInlineCodeSeam : false,
+      startsAfterCollapsedSoftBreak: firstChunk ? startsAfterCollapsedSoftBreak : false,
+      startsAfterPathLikeInlineCodeSeam: firstChunk ? params.startsAfterPathLikeInlineCodeSeam : false,
+      startsStyledTextAfterInlineCodeSeam: firstChunk ? params.startsStyledTextAfterInlineCodeSeam : false,
+      startsAfterStyledTextSeam: firstChunk ? params.startsAfterStyledTextSeam : false,
+      startsStyledTextAfterBodySeam: firstChunk ? params.startsStyledTextAfterBodySeam : false,
+      hasTrailingStyledText: firstChunk ? params.hasTrailingStyledText : false,
+      hasTrailingInlineCode: firstChunk ? params.hasTrailingInlineCode : false,
+    });
+  });
 }
 
 function pushInlineCodeWhitespaceItems(

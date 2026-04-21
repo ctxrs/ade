@@ -23,6 +23,25 @@ export const STYLED_TEXT_BODY_START_GUARD_PX = 4;
 export const STYLED_TEXT_BODY_START_CURRENT_LINE_RATIO_THRESHOLD = 0.2;
 export const STYLED_TEXT_AFTER_INLINE_CODE_CLUSTER_GUARD_PX = 2;
 
+export function shouldDropLeadingCollapsedSpaceAtWrap(params: {
+  item: Extract<PreparedInlineLayoutItem, { kind: "segment" }>;
+  codeGroupId: number | null;
+  lineHasContent: boolean;
+  cursor: LayoutCursor | null;
+  pendingSpaceWidth: number;
+}): boolean {
+  return (
+    params.codeGroupId == null &&
+    params.lineHasContent &&
+    params.cursor === null &&
+    params.pendingSpaceWidth > 0 &&
+    !params.item.startsAfterInlineCodeSeam &&
+    !params.item.startsAfterStyledTextSeam &&
+    !params.item.startsStyledTextAfterInlineCodeSeam &&
+    !params.item.startsStyledTextAfterBodySeam
+  );
+}
+
 export function isPunctuationOnlySeamText(text: string): boolean {
   const trimmed = text.trim();
   return trimmed.length > 0 && /^[\p{P}\p{S}]+$/u.test(trimmed);
@@ -292,12 +311,13 @@ export function resolveInlineMeasurementDerivedContext(params: {
     params.item.startsStyledTextAfterBodySeam
       ? STYLED_TEXT_BODY_START_GUARD_PX
       : 0;
-  const canDropLeadingCollapsedSpaceAtWrap =
-    params.codeGroupId == null &&
-    params.lineHasContent &&
-    params.cursor === null &&
-    params.pendingSpaceWidth > 0 &&
-    !params.item.startsAfterInlineCodeSeam;
+  const canDropLeadingCollapsedSpaceAtWrap = shouldDropLeadingCollapsedSpaceAtWrap({
+    item: params.item,
+    codeGroupId: params.codeGroupId,
+    lineHasContent: params.lineHasContent,
+    cursor: params.cursor,
+    pendingSpaceWidth: params.pendingSpaceWidth,
+  });
   const startCursor = params.cursor ?? ({ segmentIndex: 0, graphemeIndex: 0 } satisfies LayoutCursor);
   const trailingPlainWidthAfterCodeGroupStart = params.measureCodeGroupTrailingPlainWidth(params.itemIndex);
   const trailingPlainAfterCodeGroupStart = params.measureCodeGroupTrailingPlainInfo(params.itemIndex);
