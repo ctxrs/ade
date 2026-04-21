@@ -92,6 +92,112 @@ function readArtifactIdentity(bundleDir) {
   return identity;
 }
 
+function formatExecFailure(result, label) {
+  const stderr = String(result?.stderr || "").trim();
+  const stdout = String(result?.stdout || "").trim();
+  if (stderr) {
+    return `${label} failed: ${stderr}`;
+  }
+  if (stdout) {
+    return `${label} failed: ${stdout}`;
+  }
+  if (result?.signal) {
+    return `${label} terminated with signal ${result.signal}`;
+  }
+  return `${label} failed`;
+}
+
+function parseLastJsonLine(stdout, label) {
+  const lines = String(stdout || "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (lines.length === 0) {
+    fail(`${label} produced no JSON output`);
+  }
+  try {
+    return JSON.parse(lines[lines.length - 1]);
+  } catch (error) {
+    fail(`${label} returned invalid JSON: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+function isShebangScript(filePath) {
+  const stat = fs.statSync(filePath);
+  if (!stat.isFile() || stat.size < 2) {
+    return false;
+  }
+  const header = fs.readFileSync(filePath, { encoding: null, flag: "r" }).subarray(0, 2);
+  return header[0] === 0x23 && header[1] === 0x21;
+}
+
+function runBundledJsonCommand(binaryPath, args, { env, label, input = "" }) {
+  if (!fs.existsSync(binaryPath)) {
+    fail(`missing bundled binary for ${label}: ${binaryPath}`);
+  }
+  const command = isShebangScript(binaryPath) ? "/bin/sh" : binaryPath;
+  const commandArgs = command === binaryPath ? args : [binaryPath, ...args];
+  const result = childProcess.spawnSync(command, commandArgs, {
+    env: {
+      ...env,
+    },
+    input,
+    encoding: "utf8",
+  });
+  if (result.status !== 0) {
+    fail(formatExecFailure(result, label));
+  }
+  return parseLastJsonLine(result.stdout, label);
+}
+
+function spawnBundledCommand(binaryPath, args, options) {
+  if (!fs.existsSync(binaryPath)) {
+    fail(`missing bundled binary: ${binaryPath}`);
+  }
+  const command = isShebangScript(binaryPath) ? "/bin/sh" : binaryPath;
+  const commandArgs = command === binaryPath ? args : [binaryPath, ...args];
+  return childProcess.spawn(command, commandArgs, options);
+}
+
+function probeBundledHelper(helperPath, bundleDir) {
+  return runBundledJsonCommand(helperPath, ["probe"], {
+    env: {
+      ...process.env,
+      CTX_BUNDLE_DIR: bundleDir,
+    },
+    label: "bundled helper probe",
+  });
+}
+
+function initializeBundledMcp(mcpBin, bundleDir) {
+  const request = {
+    jsonrpc: "2.0",
+    id: "identity-gate",
+    method: "initialize",
+    params: {
+      protocolVersion: "2025-11-25",
+      capabilities: {},
+      clientInfo: {
+        name: "release_desktop_identity_gate",
+        version: "1",
+      },
+    },
+  };
+  const response = runBundledJsonCommand(mcpBin, ["--stdio"], {
+    env: {
+      ...process.env,
+      CTX_BUNDLE_DIR: bundleDir,
+    },
+    label: "bundled MCP initialize",
+    input: `${JSON.stringify(request)}\n`,
+  });
+  const version = String(response?.result?.serverInfo?.version || "").trim();
+  if (!version) {
+    fail("bundled MCP initialize response missing serverInfo.version");
+  }
+  return version;
+}
+
 function pickUnusedPort() {
   return new Promise((resolve, reject) => {
     const server = net.createServer();
@@ -168,6 +274,8 @@ async function main() {
     fail(`missing bundled daemon binary: ${daemonBin}`);
   }
   const identity = readArtifactIdentity(bundleDir);
+  const helperProbe = probeBundledHelper(avfLinuxHelper, bundleDir);
+  const mcpVersion = initializeBundledMcp(mcpBin, bundleDir);
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-desktop-identity-gate-"));
   const dataDir = path.join(tempRoot, "data");
   const logPath = path.join(tempRoot, "daemon.log");
@@ -181,14 +289,10 @@ async function main() {
     ...(fs.existsSync(avfLinuxHelper) ? { CTX_AVF_LINUX_HELPER_PATH: avfLinuxHelper } : {}),
   };
   const logStream = fs.createWriteStream(logPath, { flags: "a" });
-  const child = childProcess.spawn(
-    daemonBin,
-    ["serve", "--bind", bindAddr, "--data-dir", dataDir],
-    {
-      env: daemonEnv,
-      stdio: ["ignore", "ignore", "pipe"],
-    },
-  );
+  const child = spawnBundledCommand(daemonBin, ["serve", "--bind", bindAddr, "--data-dir", dataDir], {
+    env: daemonEnv,
+    stdio: ["ignore", "ignore", "pipe"],
+  });
   child.stderr.pipe(logStream);
 
   let health;
@@ -212,11 +316,26 @@ async function main() {
   if (String(compatibility.desktop_dev_instance_id || "").trim() !== identity.compatibilityToken) {
     mismatches.push(`compatibility_token expected=${identity.compatibilityToken} actual=${compatibility.desktop_dev_instance_id || "<empty>"}`);
   }
+  if (String(helperProbe.helper_version || "").trim() !== identity.exactVersion) {
+    mismatches.push(`helper_version expected=${identity.exactVersion} actual=${helperProbe.helper_version || "<empty>"}`);
+  }
+  if (String(helperProbe.exact_version || "").trim() !== identity.exactVersion) {
+    mismatches.push(`helper_exact_version expected=${identity.exactVersion} actual=${helperProbe.exact_version || "<empty>"}`);
+  }
+  if (String(helperProbe.build_id || "").trim() !== identity.buildId) {
+    mismatches.push(`helper_build_id expected=${identity.buildId} actual=${helperProbe.build_id || "<empty>"}`);
+  }
+  if (String(helperProbe.compatibility_token || "").trim() !== identity.compatibilityToken) {
+    mismatches.push(`helper_compatibility_token expected=${identity.compatibilityToken} actual=${helperProbe.compatibility_token || "<empty>"}`);
+  }
+  if (mcpVersion !== identity.exactVersion) {
+    mismatches.push(`mcp_version expected=${identity.exactVersion} actual=${mcpVersion || "<empty>"}`);
+  }
   if (mismatches.length > 0) {
-    fail(`bundled daemon identity mismatch (${mismatches.join("; ")})`);
+    fail(`bundled artifact identity mismatch (${mismatches.join("; ")})`);
   }
   console.log(
-    `release_desktop_identity_gate: OK (version=${identity.exactVersion} build_id=${identity.buildId} compatibility_token=${identity.compatibilityToken})`,
+    `release_desktop_identity_gate: OK (version=${identity.exactVersion} build_id=${identity.buildId} compatibility_token=${identity.compatibilityToken} helper_version=${helperProbe.helper_version} mcp_version=${mcpVersion})`,
   );
 }
 

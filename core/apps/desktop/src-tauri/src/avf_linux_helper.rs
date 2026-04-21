@@ -1,4 +1,6 @@
 mod avf_linux_exec_protocol;
+#[path = "avf_linux_helper/build_identity.rs"]
+mod build_identity;
 #[path = "avf_linux_helper/cloud_init.rs"]
 mod cloud_init;
 #[path = "avf_linux_helper/control.rs"]
@@ -77,6 +79,7 @@ use self::avf_linux_exec_protocol::{
     read_exec_frame, write_exec_frame, AvfLinuxExecError, AvfLinuxExecExit, AvfLinuxExecFrame,
     AvfLinuxExecRequest, AvfLinuxExecResize,
 };
+use self::build_identity::*;
 use self::cloud_init::*;
 use self::control::*;
 use self::guest_exec::*;
@@ -236,7 +239,10 @@ const REQUIRED_SHARED_VM_KERNEL_CMDLINE_BASE_TOKENS: &[&str] =
 struct AvfLinuxHelperProbe {
     protocol_version: u32,
     protocol_schema: &'static str,
-    helper_version: &'static str,
+    helper_version: String,
+    exact_version: String,
+    build_id: String,
+    compatibility_token: String,
     host_os: &'static str,
     host_arch: &'static str,
     supported: bool,
@@ -522,7 +528,7 @@ fn main() {
 fn run() -> Result<()> {
     let mut args = std::env::args().skip(1);
     match args.next().as_deref() {
-        Some("probe") if args.next().is_none() => write_json(&build_probe()),
+        Some("probe") if args.next().is_none() => write_json(&build_probe()?),
         Some("prepare-runtime-layout") => {
             let data_root = required_path_arg(args.next(), "data_root")?;
             ensure_no_extra_args(args)?;

@@ -13,6 +13,8 @@ async fn main() -> Result<()> {
     if !cli.stdio {
         anyhow::bail!("only --stdio transport is implemented");
     }
+    let server_version = build_identity::current_build_version()
+        .context("loading ctx-mcp build identity")?;
 
     let daemon_url = ctx_env("DAEMON_URL").unwrap_or_else(|_| "http://127.0.0.1:4399".to_string());
     let client = reqwest::Client::new();
@@ -56,7 +58,7 @@ async fn main() -> Result<()> {
                         "serverInfo": {
                             "name": "ctx-mcp",
                             "title": "ctx MCP",
-                            "version": env!("CARGO_PKG_VERSION"),
+                            "version": server_version.clone(),
                             "description": "ctx daemon tools (bridge)"
                         }
                     }),
