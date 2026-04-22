@@ -82,6 +82,7 @@ const RUST_FAMILY_BY_CRATE = {
   "ctx-bundled-assets": "artifacts-provenance",
   "ctx-client": "web-workbench",
   "ctx-core": "build-graph",
+  "ctx-crp-protocol": "provider-runtime",
   "ctx-desktop-ipc": "desktop-shell",
   "ctx-docs-mirror": "attachments-artifacts",
   "ctx-egress-proxy": "sandbox-runtime",
