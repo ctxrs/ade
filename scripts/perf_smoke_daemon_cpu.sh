@@ -12,7 +12,9 @@ MAX_CPU_PCT=${CTX_PERF_MAX_CPU_PCT:-50}
 MAX_RSS_MB=${CTX_PERF_MAX_RSS_MB:-}
 NO_BUILD=${CTX_PERF_NO_BUILD:-0}
 
-CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-$HOME/.cache/cargo/ctx-monorepo}
+eval "$(node "$ROOT_DIR/core/scripts/print_ctx_cache_env.cjs" --mode workspace --cwd "$ROOT_DIR/core" --format shell --mkdir)"
+CARGO_TARGET_DIR=${CTX_PERF_CARGO_TARGET_DIR:-${CARGO_TARGET_DIR}/perf-smoke}
+mkdir -p "$CARGO_TARGET_DIR"
 CTX_BIN="$CARGO_TARGET_DIR/debug/ctx"
 
 if command -v lsof >/dev/null 2>&1; then
@@ -30,7 +32,9 @@ elif command -v ss >/dev/null 2>&1; then
 fi
 
 if [ "$NO_BUILD" != "1" ]; then
-  (cd "$ROOT_DIR/core" && CARGO_TARGET_DIR="$CARGO_TARGET_DIR" cargo build -p ctx-http --bin ctx)
+  CARGO_TARGET_DIR="$CARGO_TARGET_DIR" \
+    node "$ROOT_DIR/core/scripts/run_with_ctx_cache_env.cjs" --mode workspace --cwd "$ROOT_DIR/core" -- \
+    cargo build -p ctx-http --bin ctx
 fi
 
 if [ ! -x "$CTX_BIN" ]; then

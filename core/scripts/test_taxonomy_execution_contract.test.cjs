@@ -237,7 +237,7 @@ test("release publish-mode profiles stay on the artifact-only finalize boundary"
   );
   assert.deepEqual(
     buildExecutionPlan({ profileId: "stable-promotion", touchedOnly: false, changedFiles: [] }).commands,
-    ["bash ../scripts/buildkite/run_release_finalize.sh"],
+    ["bash ../scripts/buildkite/run_release_stable_promote.sh"],
   );
 });
 

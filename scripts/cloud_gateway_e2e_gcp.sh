@@ -77,9 +77,18 @@ if ! command -v zig >/dev/null 2>&1; then
   exit 1
 fi
 
-CARGO_TARGET_DIR=target/zigbuild cargo zigbuild -p ctx-worker-gateway -p ctx-worker-shim --target x86_64-unknown-linux-musl
+eval "$(node scripts/print_ctx_cache_env.cjs --mode workspace --cwd "$core_dir" --format shell --mkdir)"
+gateway_target_dir="$CARGO_TARGET_DIR/cloud-gateway/zigbuild"
+test_target_dir="$CARGO_TARGET_DIR/cloud-gateway/test"
+mkdir -p "$gateway_target_dir" "$test_target_dir"
 
-export CTX_WORKER_GATEWAY_BIN="$core_dir/target/zigbuild/x86_64-unknown-linux-musl/debug/ctx-worker-gateway"
-export CTX_WORKER_SHIM_BIN="$core_dir/target/zigbuild/x86_64-unknown-linux-musl/debug/ctx-worker-shim"
+CARGO_TARGET_DIR="$gateway_target_dir" \
+  node scripts/run_with_ctx_cache_env.cjs --mode workspace --cwd "$core_dir" -- \
+  cargo zigbuild -p ctx-worker-gateway -p ctx-worker-shim --target x86_64-unknown-linux-musl
 
-CARGO_TARGET_DIR=target cargo test -p ctx-http --test cloud_gateway_gcp_e2e -- --ignored --nocapture --test-threads=1
+export CTX_WORKER_GATEWAY_BIN="$gateway_target_dir/x86_64-unknown-linux-musl/debug/ctx-worker-gateway"
+export CTX_WORKER_SHIM_BIN="$gateway_target_dir/x86_64-unknown-linux-musl/debug/ctx-worker-shim"
+
+CARGO_TARGET_DIR="$test_target_dir" \
+  node scripts/run_with_ctx_cache_env.cjs --mode workspace --cwd "$core_dir" -- \
+  cargo test -p ctx-http --test cloud_gateway_gcp_e2e -- --ignored --nocapture --test-threads=1

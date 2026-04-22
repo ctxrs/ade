@@ -17,7 +17,9 @@ export CARGO_BUILD_JOBS="${BUILD_JOBS}"
 mkdir -p "${TARGET_DIR}"
 
 if [[ "${PROFILE}" == "release" ]]; then
-  cargo test -q --manifest-path "${WORKSPACE_MANIFEST}" --release -p codex-crp
+  node "${ROOT_DIR}/core/scripts/run_with_ctx_cache_env.cjs" --mode workspace --cwd "${ROOT_DIR}/core" -- \
+    cargo test -q --manifest-path "${WORKSPACE_MANIFEST}" --release -p codex-crp
 else
-  cargo test -q --manifest-path "${WORKSPACE_MANIFEST}" -p codex-crp
+  node "${ROOT_DIR}/core/scripts/run_with_ctx_cache_env.cjs" --mode workspace --cwd "${ROOT_DIR}/core" -- \
+    cargo test -q --manifest-path "${WORKSPACE_MANIFEST}" -p codex-crp
 fi

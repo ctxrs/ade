@@ -27,6 +27,7 @@ fi
 
 mkdir -p "${TARGET_DIR}"
 CARGO_TARGET_DIR="${TARGET_DIR}" CARGO_BUILD_JOBS="${BUILD_JOBS}" \
+  node "${ROOT_DIR}/core/scripts/run_with_ctx_cache_env.cjs" --mode workspace --cwd "${ROOT_DIR}/core" -- \
   cargo build --manifest-path "${WORKSPACE_MANIFEST}" -p codex-crp "${profile_args[@]}"
 
 if [[ ! -f "${TARGET_DIR}/${PROFILE}/codex-crp" ]]; then

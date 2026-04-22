@@ -21,6 +21,10 @@ if [[ -z "${LLVM_COV:-}" || -z "${LLVM_PROFDATA:-}" ]]; then
 fi
 
 mkdir -p coverage
+eval "$(node "${script_dir}/print_ctx_cache_env.cjs" --mode workspace --cwd "${core_root}" --format shell --mkdir)"
+coverage_target_dir="${CARGO_TARGET_DIR_COVERAGE:-${CARGO_TARGET_DIR}/coverage/llvm-cov}"
+mkdir -p "${coverage_target_dir}"
 CARGO_INCREMENTAL=0 \
-CARGO_TARGET_DIR="${CARGO_TARGET_DIR_COVERAGE:-$PWD/target/llvm-cov}" \
+CARGO_TARGET_DIR="${coverage_target_dir}" \
+  node "${script_dir}/run_with_ctx_cache_env.cjs" --mode workspace --cwd "${core_root}" -- \
   cargo llvm-cov --workspace --lcov --output-path coverage/daemon.lcov

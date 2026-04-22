@@ -46,6 +46,7 @@ function buildResolvedReleasePlan({
   intent = {},
   inventory = {},
   preview = {},
+  promotion = {},
   providerManifest = {},
   release = {},
   releaseScope = "",
@@ -91,6 +92,7 @@ function buildResolvedReleasePlan({
     },
     prerequisites,
     preview,
+    promotion,
     release,
     intent,
   });

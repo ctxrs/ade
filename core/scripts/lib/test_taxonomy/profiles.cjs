@@ -224,6 +224,9 @@ const PROFILES = [
     title: "Release Test",
     purpose: "Prove a pinned SHA is publishable using artifact-first staging and validation.",
     selector: {
+      excludeEntryIds: [
+        "updates-release.stable-promotion",
+      ],
       forceIncludeEntryIds: [
         "updates-release.release-finalize",
       ],
@@ -453,6 +456,9 @@ const PROFILES = [
     title: "Release Finalize",
     purpose: "Consume the staged platform artifacts, publish the versioned release state, and emit final evidence without rebuilding.",
     selector: {
+      excludeEntryIds: [
+        "updates-release.stable-promotion",
+      ],
       forceIncludeEntryIds: [
         "updates-release.release-finalize",
       ],
@@ -479,6 +485,9 @@ const PROFILES = [
     title: "Canary Proof",
     purpose: "Publish staged artifacts into an isolated release channel and verify the published result without rebuilding.",
     selector: {
+      excludeEntryIds: [
+        "updates-release.stable-promotion",
+      ],
       forceIncludeEntryIds: [
         "updates-release.release-finalize",
       ],
@@ -502,10 +511,13 @@ const PROFILES = [
   {
     id: "stable-promotion",
     title: "Stable Promotion",
-    purpose: "Promote exact staged artifacts into stable without rebuilding.",
+    purpose: "Promote exact canary-proven artifacts into stable without rebuilding.",
     selector: {
-      forceIncludeEntryIds: [
+      excludeEntryIds: [
         "updates-release.release-finalize",
+      ],
+      forceIncludeEntryIds: [
+        "updates-release.stable-promotion",
       ],
       includeSurfaces: ["promotion"],
       includeWorlds: ["external-service"],
@@ -514,14 +526,15 @@ const PROFILES = [
       includeExecutions: ["artifact-tail"],
     },
     currentCommands: [
-      "Buildkite step: Release finalize (stable publish mode)",
+      "Buildkite step: Stable artifact promotion",
       "pnpm -C core testing:profile:run --profile stable-promotion",
     ],
     pipelines: ["ctx-release"],
-    remoteStrategy: "Promotion should stay on the exact staged artifacts and latest-manifest movement only; all expensive build work must already be proven.",
-    currentExecution: "The checked-in ctx-release finalize step now dispatches this profile only when RELEASE_CHANNEL=stable and RELEASE_ALLOW_STABLE_PUBLISH=1.",
+    remoteStrategy: "Promotion must verify the canary versioned manifests for the same source SHA, copy the exact artifact objects into stable storage, rewrite stable manifests, and move latest only.",
+    currentExecution: "The checked-in ctx-release stable publish path skips staging/finalize jobs and runs only the stable artifact promotion wrapper.",
     expansionRules: [
       "This profile selects promotion entries; nightly-breadth is a separate profile.",
+      "Stable must not rebuild desktop artifacts or recompute provider state; rerun canary if canary artifacts are not already proven.",
     ],
   },
   {
