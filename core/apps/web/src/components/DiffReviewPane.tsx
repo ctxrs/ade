@@ -162,9 +162,7 @@ const DiffReviewPane = memo(function DiffReviewPane({
         )}
         {!inventory.unavailableLabel && hasInventory && inventory.largeChangeSet && (
           <div className="cursor-diff">
-            <div className="muted" style={{ padding: 12 }}>
-              {inventory.largeChangeSetLabel ?? "This change set is too large for file-by-file review here."}
-            </div>
+            <div className="muted" style={{ padding: 12 }}>{inventory.largeChangeSetLabel}</div>
           </div>
         )}
         {!inventory.unavailableLabel && hasInventory && !inventory.largeChangeSet && (
