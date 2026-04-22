@@ -173,10 +173,14 @@ pub(crate) async fn install_agent_server_url_binary(
 ) -> Result<PathBuf> {
     let data_root = state.data_root();
     let install_dir = install_dir_for_provider(data_root, provider_id, version, target);
-    let expected_sha256 = expected_sha256
+    let Some(expected_sha256) = expected_sha256
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .map(str::to_ascii_lowercase);
+        .map(str::to_ascii_lowercase)
+    else {
+        anyhow::bail!("provider matrix archive target is missing required sha256");
+    };
+    validate_expected_sha256(&expected_sha256)?;
 
     let tmp_dir = data_root.join("providers").join("tmp");
     tokio::fs::create_dir_all(&tmp_dir).await.ok();
@@ -185,47 +189,31 @@ pub(crate) async fn install_agent_server_url_binary(
         version,
         target,
         url,
-        expected_sha256.as_deref(),
+        Some(&expected_sha256),
     ));
     let staging_dir = prepare_atomic_install_dir(&install_dir).await?;
 
     *stage = "download";
     download_to_file(state, install_id, event_provider_id, "download", url, &tmp).await?;
 
-    if let Some(expected_sha256) = expected_sha256.as_deref() {
-        *stage = "verify";
-        emit_install(
-            state,
-            install_id,
-            event_provider_id,
-            InstallEventLevel::Info,
-            "verify",
-            "Verifying archive checksum".to_string(),
-            None,
-            None,
-            None,
-        )
-        .await;
+    *stage = "verify";
+    emit_install(
+        state,
+        install_id,
+        event_provider_id,
+        InstallEventLevel::Info,
+        "verify",
+        "Verifying archive checksum".to_string(),
+        None,
+        None,
+        None,
+    )
+    .await;
 
-        let digest = sha256_file(&tmp).await?;
-        if let Err(error) = validate_sha256_digest(expected_sha256, &digest) {
-            tokio::fs::remove_file(&tmp).await.ok();
-            return Err(error);
-        }
-    } else {
-        emit_install(
-            state,
-            install_id,
-            event_provider_id,
-            InstallEventLevel::Warning,
-            "verify",
-            "Archive checksum missing in provider matrix; proceeding without verification"
-                .to_string(),
-            None,
-            None,
-            None,
-        )
-        .await;
+    let digest = sha256_file(&tmp).await?;
+    if let Err(error) = validate_sha256_digest(&expected_sha256, &digest) {
+        tokio::fs::remove_file(&tmp).await.ok();
+        return Err(error);
     }
 
     *stage = "extract";
@@ -613,6 +601,14 @@ pub(crate) fn validate_sha256_digest(expected_sha256: &str, digest: &str) -> Res
         return Ok(());
     }
     anyhow::bail!("archive checksum mismatch: expected {expected_sha256}, got {digest}");
+}
+
+pub(crate) fn validate_expected_sha256(expected_sha256: &str) -> Result<()> {
+    let expected_sha256 = expected_sha256.trim();
+    if expected_sha256.len() == 64 && expected_sha256.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Ok(());
+    }
+    anyhow::bail!("provider matrix archive target has invalid sha256");
 }
 
 pub(crate) async fn sha256_file(path: &Path) -> Result<String> {

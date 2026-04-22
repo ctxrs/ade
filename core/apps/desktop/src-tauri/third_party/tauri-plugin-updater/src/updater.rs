@@ -1449,7 +1449,7 @@ where
 }
 
 // Validate signature
-fn verify_signature(data: &[u8], release_signature: &str, pub_key: &str) -> Result<bool> {
+pub fn verify_signature(data: &[u8], release_signature: &str, pub_key: &str) -> Result<bool> {
     // we need to convert the pub key
     let pub_key_decoded = base64_to_string(pub_key)?;
     let public_key = PublicKey::decode(&pub_key_decoded)?;

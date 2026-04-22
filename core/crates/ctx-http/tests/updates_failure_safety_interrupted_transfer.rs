@@ -27,7 +27,7 @@ async fn download_update_handles_interrupted_transfer_and_api_stays_healthy() {
     let manifest = Arc::new(release_manifest_for(
         platform,
         "/download/stable/9.9.9/interrupted.AppImage",
-        "abc123",
+        "1111111111111111111111111111111111111111111111111111111111111111",
     ));
 
     let fake_release_server = common::spawn_http_server(
@@ -64,6 +64,12 @@ async fn download_update_handles_interrupted_transfer_and_api_stays_healthy() {
     let _download_base = EnvGuard::set("CTX_DOWNLOAD_BASE_URL", &fake_release_server.base_url);
 
     let data_dir = tempfile::tempdir().unwrap();
+    let target_path = data_dir.path().join("ctx.AppImage");
+    tokio::fs::write(&target_path, b"old-appimage")
+        .await
+        .unwrap();
+    let target_path_string = target_path.to_string_lossy().to_string();
+    let _appimage = EnvGuard::set("CTX_APPIMAGE_PATH", &target_path_string);
     let app = test_app_router(data_dir.path()).await;
 
     let (status, body): (StatusCode, Value) = common::json_request(
@@ -85,11 +91,15 @@ async fn download_update_handles_interrupted_transfer_and_api_stays_healthy() {
         "unexpected error payload: {body}"
     );
 
-    let downloaded_path = data_dir.path().join("updates").join("ctx.AppImage.new");
+    let downloaded_path = ctx_http::updates::appimage_candidate_path(data_dir.path());
     assert!(
         !downloaded_path.exists(),
-        "interrupted transfer should not leave a completed file at {}",
+        "interrupted transfer should not leave an applyable candidate at {}",
         downloaded_path.display()
+    );
+    assert!(
+        !ctx_http::updates::appimage_candidate_meta_path(data_dir.path()).exists(),
+        "interrupted transfer should not leave verified candidate metadata"
     );
 
     let (health_status, _health): (StatusCode, Value) =

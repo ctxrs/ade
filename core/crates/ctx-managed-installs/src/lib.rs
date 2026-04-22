@@ -44,7 +44,7 @@ mod test_support;
 pub(crate) use self::artifacts::{
     download_to_file, ensure_executable, extract_zip_to_dir, find_unique_path_ending_with,
     install_agent_server_url_binary, install_url_binary, resolve_command_path,
-    run_command_with_timeout,
+    run_command_with_timeout, validate_expected_sha256,
 };
 use self::dependencies::{
     install_managed_archive_dependency, install_managed_npm_dependency, map_archive_kind,

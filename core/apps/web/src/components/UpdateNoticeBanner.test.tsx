@@ -13,6 +13,7 @@ import {
 } from "../utils/desktop";
 import {
   DESKTOP_UPDATE_MENU_STATE_EVENT,
+  REQUEST_UPDATE_CHECK_EVENT,
   REQUEST_UPDATE_RESTART_EVENT,
 } from "../utils/desktopMenuCommands";
 import { readCachedUpdateCheck, refreshUpdateCheck, writeCachedUpdateCheck } from "../utils/updateNotice";
@@ -220,7 +221,7 @@ describe("UpdateNoticeBanner", () => {
     expect(vi.mocked(downloadAppImageUpdate)).not.toHaveBeenCalled();
     expect(vi.mocked(applyAppImageUpdate)).not.toHaveBeenCalled();
     expect(screen.getByTestId("update-available-snackbar")).toBeInTheDocument();
-    const restartButton = screen.getByRole("button", { name: "Update Now" });
+    const restartButton = screen.getByRole("button", { name: "Relaunch" });
     expect(restartButton).toBeEnabled();
     fireEvent.click(restartButton);
     await waitFor(() => {
@@ -328,7 +329,7 @@ describe("UpdateNoticeBanner", () => {
       expect(vi.mocked(desktopApplyAppUpdate)).toHaveBeenCalledTimes(1);
     });
     expect(screen.getByTestId("update-available-snackbar")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Update Now" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Relaunch" })).toBeEnabled();
   });
 
   it("auto-applies staged desktop updates even without the old launch preference flag", async () => {
@@ -378,7 +379,7 @@ describe("UpdateNoticeBanner", () => {
     expect(screen.queryByText("native updater probe failed")).not.toBeInTheDocument();
   });
 
-  it("remains hidden when native updater recovers to no-update state", async () => {
+  it("shows up-to-date feedback when a manual desktop check finds no update", async () => {
     window.localStorage.setItem(AUTO_APPLY_ON_LAUNCH_STORAGE_KEY, "0");
     vi.mocked(isDesktopApp).mockReturnValue(true);
     vi.mocked(readCachedUpdateCheck).mockReturnValue(null);
@@ -393,13 +394,165 @@ describe("UpdateNoticeBanner", () => {
       );
 
     renderBanner({ allTasksIdle: false });
-    window.dispatchEvent(new Event("ctx:request-update-check"));
+    act(() => {
+      window.dispatchEvent(new Event(REQUEST_UPDATE_CHECK_EVENT));
+    });
     await waitFor(() => {
       expect(vi.mocked(desktopGetAppUpdateState)).toHaveBeenCalledTimes(2);
     });
+    expect(screen.getByTestId("update-available-snackbar")).toBeInTheDocument();
+    expect(screen.getAllByText("You're up to date.").length).toBeGreaterThan(0);
+  });
+
+  it("shows checking feedback while a manual desktop update check is in flight", async () => {
+    window.localStorage.setItem(AUTO_APPLY_ON_LAUNCH_STORAGE_KEY, "0");
+    vi.mocked(isDesktopApp).mockReturnValue(true);
+    vi.mocked(readCachedUpdateCheck).mockReturnValue(null);
+    vi.mocked(refreshUpdateCheck).mockResolvedValue(null);
+    let resolveSecondCheck: (value: DesktopAppUpdateStateResp) => void = () => {};
+    vi.mocked(desktopGetAppUpdateState)
+      .mockResolvedValueOnce(makeDesktopUpdateState())
+      .mockImplementationOnce(
+        () =>
+          new Promise<DesktopAppUpdateStateResp>((resolve) => {
+            resolveSecondCheck = resolve;
+          }),
+      );
+
+    renderBanner({ allTasksIdle: false });
     await waitFor(() => {
-      expect(screen.queryByTestId("update-available-snackbar")).not.toBeInTheDocument();
+      expect(vi.mocked(desktopGetAppUpdateState)).toHaveBeenCalledTimes(1);
     });
+
+    act(() => {
+      window.dispatchEvent(new Event(REQUEST_UPDATE_CHECK_EVENT));
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("update-available-snackbar")).toBeInTheDocument();
+      expect(screen.getAllByText("Checking for updates...").length).toBeGreaterThan(0);
+    });
+    await act(async () => {
+      resolveSecondCheck(makeDesktopUpdateState());
+    });
+  });
+
+  it("shows background-install feedback when a manual desktop check finds an update", async () => {
+    window.localStorage.setItem(AUTO_APPLY_ON_LAUNCH_STORAGE_KEY, "0");
+    vi.mocked(isDesktopApp).mockReturnValue(true);
+    vi.mocked(readCachedUpdateCheck).mockReturnValue(null);
+    vi.mocked(refreshUpdateCheck).mockResolvedValue(null);
+    vi.mocked(desktopGetAppUpdateState)
+      .mockResolvedValueOnce(makeDesktopUpdateState())
+      .mockResolvedValueOnce(
+        makeDesktopUpdateState({
+          available: true,
+          phase: "staging",
+          current_version: "1.0.0",
+          latest_version: "1.1.0",
+        }),
+      );
+
+    renderBanner({ allTasksIdle: false });
+    await waitFor(() => {
+      expect(vi.mocked(desktopGetAppUpdateState)).toHaveBeenCalledTimes(1);
+    });
+
+    act(() => {
+      window.dispatchEvent(new Event(REQUEST_UPDATE_CHECK_EVENT));
+    });
+
+    await waitFor(() => {
+      expect(screen.getAllByText("Update found. Installing in background...").length).toBeGreaterThan(0);
+    });
+    expect(screen.queryByRole("button", { name: "Relaunch" })).not.toBeInTheDocument();
+  });
+
+  it("manual desktop checks converge to the standard ready-to-relaunch prompt", async () => {
+    window.localStorage.setItem(AUTO_APPLY_ON_LAUNCH_STORAGE_KEY, "0");
+    vi.mocked(isDesktopApp).mockReturnValue(true);
+    vi.mocked(readCachedUpdateCheck).mockReturnValue(null);
+    vi.mocked(refreshUpdateCheck).mockResolvedValue(null);
+    vi.mocked(desktopGetAppUpdateState)
+      .mockResolvedValueOnce(makeDesktopUpdateState())
+      .mockResolvedValueOnce(
+        makeDesktopUpdateState({
+          available: true,
+          restart_required: true,
+          staged: true,
+          phase: "staged_ready",
+          current_version: "1.0.0",
+          latest_version: "1.1.0",
+        }),
+      );
+
+    renderBanner({ allTasksIdle: false });
+    await waitFor(() => {
+      expect(vi.mocked(desktopGetAppUpdateState)).toHaveBeenCalledTimes(1);
+    });
+
+    act(() => {
+      window.dispatchEvent(new Event(REQUEST_UPDATE_CHECK_EVENT));
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText(/Ready to relaunch:\s*1.1.0/)).toBeInTheDocument();
+    });
+    expect(screen.getByRole("button", { name: "Relaunch" })).toBeEnabled();
+    expect(screen.getByText(/Update takes ~1 second and preserves data/i)).toBeInTheDocument();
+  });
+
+  it("shows failure feedback when a manual desktop update check fails", async () => {
+    window.localStorage.setItem(AUTO_APPLY_ON_LAUNCH_STORAGE_KEY, "0");
+    vi.mocked(isDesktopApp).mockReturnValue(true);
+    vi.mocked(readCachedUpdateCheck).mockReturnValue(null);
+    vi.mocked(refreshUpdateCheck).mockResolvedValue(null);
+    vi.mocked(desktopGetAppUpdateState)
+      .mockResolvedValueOnce(makeDesktopUpdateState())
+      .mockRejectedValueOnce(new Error("native updater unavailable"));
+
+    renderBanner({ allTasksIdle: false });
+    await waitFor(() => {
+      expect(vi.mocked(desktopGetAppUpdateState)).toHaveBeenCalledTimes(1);
+    });
+
+    act(() => {
+      window.dispatchEvent(new Event(REQUEST_UPDATE_CHECK_EVENT));
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("Update check failed.")).toBeInTheDocument();
+    });
+    expect(screen.getByText("native updater unavailable")).toBeInTheDocument();
+  });
+
+  it("shows failure feedback when a manual desktop update check finds an unconfigured native updater", async () => {
+    window.localStorage.setItem(AUTO_APPLY_ON_LAUNCH_STORAGE_KEY, "0");
+    vi.mocked(isDesktopApp).mockReturnValue(true);
+    vi.mocked(readCachedUpdateCheck).mockReturnValue(null);
+    vi.mocked(refreshUpdateCheck).mockResolvedValue(null);
+    vi.mocked(desktopGetAppUpdateState)
+      .mockResolvedValueOnce(makeDesktopUpdateState())
+      .mockResolvedValueOnce(
+        makeDesktopUpdateState({
+          configured: false,
+          message: "Native updater is not configured.",
+        }),
+      );
+
+    renderBanner({ allTasksIdle: false });
+    await waitFor(() => {
+      expect(vi.mocked(desktopGetAppUpdateState)).toHaveBeenCalledTimes(1);
+    });
+
+    act(() => {
+      window.dispatchEvent(new Event(REQUEST_UPDATE_CHECK_EVENT));
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("Update check failed.")).toBeInTheDocument();
+    });
+    expect(screen.getByText("Native updater is not configured.")).toBeInTheDocument();
   });
 
   it("keeps banner hidden when desktop updater reports failed phase without restart-required state", async () => {
@@ -488,7 +641,7 @@ describe("UpdateNoticeBanner", () => {
       });
       expect(vi.mocked(desktopGetAppUpdateState)).toHaveBeenCalledTimes(2);
       expect(vi.mocked(desktopApplyAppUpdate)).toHaveBeenCalledTimes(1);
-      expect(screen.getByRole("button", { name: "Update Now" })).toBeEnabled();
+      expect(screen.getByRole("button", { name: "Relaunch" })).toBeEnabled();
     } finally {
       vi.useRealTimers();
     }
@@ -519,7 +672,7 @@ describe("UpdateNoticeBanner", () => {
 
     const firstRender = renderBanner({ allTasksIdle: false });
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Update Now" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Relaunch" })).toBeInTheDocument();
     });
     expect(screen.getByText(/Update takes ~1 second and preserves data\. Active agents will be paused\./i)).toBeInTheDocument();
     expect(window.sessionStorage.getItem(RESTART_REQUIRED_VERSION_STORAGE_KEY)).toBe("2.4.0");
@@ -532,7 +685,7 @@ describe("UpdateNoticeBanner", () => {
       await Promise.resolve();
     });
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Update Now" })).toBeEnabled();
+      expect(screen.getByRole("button", { name: "Relaunch" })).toBeEnabled();
     });
     expect(vi.mocked(desktopApplyAppUpdate)).not.toHaveBeenCalled();
   });
@@ -581,10 +734,10 @@ describe("UpdateNoticeBanner", () => {
 
     renderBanner({ allTasksIdle: false });
     await waitFor(() => {
-      expect(vi.mocked(desktopGetAppUpdateState)).toHaveBeenCalledWith("stable");
+      expect(vi.mocked(desktopGetAppUpdateState)).toHaveBeenCalledWith();
     });
     expect(vi.mocked(desktopApplyAppUpdate)).not.toHaveBeenCalled();
-    expect(screen.getByRole("button", { name: "Update Now" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Relaunch" })).toBeEnabled();
   });
 
   it("clears pending restart on later refresh after initial forced check failure", async () => {
@@ -612,7 +765,7 @@ describe("UpdateNoticeBanner", () => {
         await Promise.resolve();
       });
       expect(vi.mocked(refreshUpdateCheck)).toHaveBeenCalledWith({ force: true });
-      expect(screen.getByRole("button", { name: "Update Now" })).toBeDisabled();
+      expect(screen.getByRole("button", { name: "Relaunch" })).toBeDisabled();
       await act(async () => {
         await vi.advanceTimersByTimeAsync(60 * 60 * 1000);
         await Promise.resolve();
@@ -620,7 +773,7 @@ describe("UpdateNoticeBanner", () => {
       });
       expect(vi.mocked(refreshUpdateCheck)).toHaveBeenCalledTimes(2);
       expect(window.sessionStorage.getItem(RESTART_REQUIRED_VERSION_STORAGE_KEY)).toBeNull();
-      expect(screen.queryByRole("button", { name: "Update Now" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Relaunch" })).not.toBeInTheDocument();
     } finally {
       vi.useRealTimers();
     }
@@ -776,7 +929,7 @@ describe("UpdateNoticeBanner", () => {
     });
   });
 
-  it("treats prerelease current version as below stable min supported version", () => {
+  it("treats prerelease current version as below stable min supported version", async () => {
     vi.mocked(readCachedUpdateCheck).mockReturnValue({
       ...baseUpdate,
       current_version: "1.2.3-beta.1",
@@ -791,7 +944,9 @@ describe("UpdateNoticeBanner", () => {
     });
 
     renderBanner();
-    expect(screen.getByRole("dialog", { name: "Update required" })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByRole("dialog", { name: "Update required" })).toBeInTheDocument();
+    });
   });
 
   it("keeps required-update blocker visible on desktop when restart is still required", async () => {
@@ -833,7 +988,7 @@ describe("UpdateNoticeBanner", () => {
       expect(vi.mocked(desktopApplyAppUpdate)).toHaveBeenCalledTimes(1);
     });
     expect(screen.getByRole("dialog", { name: "Update required" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Update Now" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Relaunch" })).toBeEnabled();
   });
 
   it("keeps required-update blocker visible on desktop when restart is required even if apply reports false", async () => {
@@ -876,7 +1031,7 @@ describe("UpdateNoticeBanner", () => {
       expect(vi.mocked(desktopApplyAppUpdate)).toHaveBeenCalledTimes(1);
     });
     expect(screen.getByRole("dialog", { name: "Update required" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Update Now" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Relaunch" })).toBeEnabled();
   });
 
   it("keeps required-update blocker visible on appimage when relaunch is still required", async () => {
@@ -899,10 +1054,10 @@ describe("UpdateNoticeBanner", () => {
       );
     });
     expect(screen.getByRole("dialog", { name: "Update required" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Update Now" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Relaunch" })).toBeDisabled();
   });
 
-  it("restarts app when Update Now is clicked in restart-required desktop state", async () => {
+  it("restarts app when Relaunch is clicked in restart-required desktop state", async () => {
     window.localStorage.setItem(AUTO_APPLY_ON_LAUNCH_STORAGE_KEY, "0");
     vi.mocked(isDesktopApp).mockReturnValue(true);
     vi.mocked(readCachedUpdateCheck).mockReturnValue({
@@ -924,9 +1079,9 @@ describe("UpdateNoticeBanner", () => {
 
     renderBanner();
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Update Now" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Relaunch" })).toBeInTheDocument();
     });
-    fireEvent.click(screen.getByRole("button", { name: "Update Now" }));
+    fireEvent.click(screen.getByRole("button", { name: "Relaunch" }));
     await waitFor(() => {
       expect(vi.mocked(desktopRestartApp)).toHaveBeenCalledTimes(1);
     });
@@ -957,10 +1112,10 @@ describe("UpdateNoticeBanner", () => {
 
     renderBanner({ allTasksIdle: false });
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Update Now" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Relaunch" })).toBeInTheDocument();
     });
     expect(screen.getByTestId("update-available-snackbar")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Update Now" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Relaunch" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Update on Next Idle" })).toBeEnabled();
     expect(screen.getByText(/Update takes ~1 second and preserves data\. Active agents will be paused\./i)).toBeInTheDocument();
     expect(vi.mocked(desktopApplyAppUpdate)).not.toHaveBeenCalled();
@@ -1031,7 +1186,7 @@ describe("UpdateNoticeBanner", () => {
       expect(vi.mocked(applyAppImageUpdate)).toHaveBeenCalledTimes(1);
     });
     expect(screen.getByTestId("update-available-snackbar")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Update Now" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Relaunch" })).toBeDisabled();
     expect(vi.mocked(writeCachedUpdateCheck)).not.toHaveBeenCalled();
     expect(window.sessionStorage.getItem(RESTART_REQUIRED_VERSION_STORAGE_KEY)).toBe("2.3.0");
   });
@@ -1108,9 +1263,9 @@ describe("UpdateNoticeBanner", () => {
 
     renderBanner({ allTasksIdle: false });
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Update Now" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Relaunch" })).toBeInTheDocument();
     });
-    fireEvent.click(screen.getByRole("button", { name: "Update Now" }));
+    fireEvent.click(screen.getByRole("button", { name: "Relaunch" }));
 
     await waitFor(() => {
       expect(screen.getByText(/Failed to restart app: Permission denied/i)).toBeInTheDocument();
@@ -1146,11 +1301,11 @@ describe("UpdateNoticeBanner", () => {
 
     renderBanner({ allTasksIdle: false });
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Update Now" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Relaunch" })).toBeInTheDocument();
     });
-    fireEvent.click(screen.getByRole("button", { name: "Update Now" }));
+    fireEvent.click(screen.getByRole("button", { name: "Relaunch" }));
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Update Now" })).toBeDisabled();
+      expect(screen.getByRole("button", { name: "Relaunch" })).toBeDisabled();
     });
     expect(vi.mocked(desktopApplyAppUpdate)).not.toHaveBeenCalled();
   });

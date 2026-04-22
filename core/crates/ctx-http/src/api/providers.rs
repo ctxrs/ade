@@ -386,6 +386,10 @@ pub(super) struct LspInstallStartResponse {
 pub(super) struct MatrixRefreshResponse {
     provider_count: usize,
     generated_at: Option<String>,
+    source: String,
+    degraded: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    last_error: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

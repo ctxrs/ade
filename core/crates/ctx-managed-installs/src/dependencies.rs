@@ -121,17 +121,25 @@ pub(super) async fn install_managed_archive_dependency(
 ) -> Result<ManagedDependencyInstall> {
     let data_root = state.data_root().to_path_buf();
     let install_dir = install_dir_for_provider(&data_root, dependency_id, version, target);
-
-    let existing = if install_dir.exists() {
-        let direct = install_dir.join(bin_path);
-        if direct.exists() {
-            Some(direct)
-        } else {
-            find_unique_path_ending_with(&install_dir, bin_path).ok()
-        }
-    } else {
-        None
+    let Some(expected_sha256) = expected_sha256
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        anyhow::bail!("provider matrix archive dependency is missing required sha256");
     };
+    validate_expected_sha256(expected_sha256)?;
+    let cfg = load_agent_server_config(&data_root)
+        .await
+        .context("loading managed install registry for archive dependency")?;
+    let existing = existing_archive_dependency_binary_if_current(
+        &data_root,
+        &cfg,
+        dependency_id,
+        version,
+        bin_path,
+        target,
+        expected_sha256,
+    )?;
 
     let bin = if let Some(bin) = existing {
         ensure_executable(&bin)?;
@@ -144,7 +152,7 @@ pub(super) async fn install_managed_archive_dependency(
             provider_id,
             version,
             url,
-            expected_sha256,
+            Some(expected_sha256),
             archive,
             bin_path,
             target,
@@ -158,8 +166,8 @@ pub(super) async fn install_managed_archive_dependency(
     let meta = ManagedInstallMetadata {
         package: Some(url.to_string()),
         version: Some(version.to_string()),
-        artifact_fingerprint: expected_sha256.map(str::to_string),
-        archive_sha256: expected_sha256.map(str::to_string),
+        artifact_fingerprint: Some(expected_sha256.to_string()),
+        archive_sha256: Some(expected_sha256.to_string()),
         target: Some(target),
         install_dir_rel: Some(install_dir_rel(&data_root, &install_dir)),
         bin_dir_rel: Some(install_dir_rel(&data_root, &bin_dir)),
@@ -168,6 +176,49 @@ pub(super) async fn install_managed_archive_dependency(
     };
 
     Ok(ManagedDependencyInstall { meta })
+}
+
+fn existing_archive_dependency_binary_if_current(
+    data_root: &Path,
+    cfg: &AgentServerConfigFile,
+    dependency_id: &str,
+    version: &str,
+    bin_path: &str,
+    target: InstallTarget,
+    expected_sha256: &str,
+) -> Result<Option<PathBuf>> {
+    let Some(meta) =
+        managed_dependency_install_metadata_for_target(cfg, dependency_id, Some(target))
+    else {
+        return Ok(None);
+    };
+    if !managed_archive_metadata_matches_expected_sha256(meta, version, expected_sha256) {
+        return Ok(None);
+    }
+    let install_dir = install_dir_for_provider(data_root, dependency_id, version, target);
+    if !install_dir.exists() {
+        return Ok(None);
+    }
+    let direct = install_dir.join(bin_path);
+    if direct.exists() {
+        return Ok(Some(direct));
+    }
+    Ok(find_unique_path_ending_with(&install_dir, bin_path).ok())
+}
+
+fn managed_archive_metadata_matches_expected_sha256(
+    meta: &ManagedInstallMetadata,
+    version: &str,
+    expected_sha256: &str,
+) -> bool {
+    if meta.version.as_deref() != Some(version) {
+        return false;
+    }
+    meta.archive_sha256
+        .as_deref()
+        .or(meta.artifact_fingerprint.as_deref())
+        .map(str::trim)
+        .is_some_and(|detected| detected.eq_ignore_ascii_case(expected_sha256.trim()))
 }
 
 pub(super) fn resolve_install_args(args: &[String]) -> Vec<String> {
@@ -181,5 +232,52 @@ pub(super) fn map_archive_kind(kind: provider_matrix::ProviderArchiveKind) -> Ag
         provider_matrix::ProviderArchiveKind::TarBz2 => AgentServerArchive::TarBz2,
         provider_matrix::ProviderArchiveKind::Zip => AgentServerArchive::Zip,
         provider_matrix::ProviderArchiveKind::Dmg => AgentServerArchive::Dmg,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn metadata(version: &str, archive_sha256: Option<&str>) -> ManagedInstallMetadata {
+        ManagedInstallMetadata {
+            package: Some("https://example.com/dependency.tar.gz".to_string()),
+            version: Some(version.to_string()),
+            artifact_fingerprint: None,
+            archive_sha256: archive_sha256.map(ToOwned::to_owned),
+            target: Some(InstallTarget::Host),
+            install_dir_rel: None,
+            bin_dir_rel: None,
+            last_success_at: None,
+            last_error: None,
+        }
+    }
+
+    #[test]
+    fn archive_dependency_metadata_reuse_requires_matching_sha_and_version() {
+        let expected = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        assert!(managed_archive_metadata_matches_expected_sha256(
+            &metadata("1.2.3", Some(expected)),
+            "1.2.3",
+            expected,
+        ));
+        assert!(!managed_archive_metadata_matches_expected_sha256(
+            &metadata("1.2.2", Some(expected)),
+            "1.2.3",
+            expected,
+        ));
+        assert!(!managed_archive_metadata_matches_expected_sha256(
+            &metadata("1.2.3", None),
+            "1.2.3",
+            expected,
+        ));
+        assert!(!managed_archive_metadata_matches_expected_sha256(
+            &metadata(
+                "1.2.3",
+                Some("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
+            ),
+            "1.2.3",
+            expected,
+        ));
     }
 }

@@ -126,7 +126,7 @@ type ParsedSemVer = {
 
 type UpdateApplySource = "manual" | "desktop_auto" | "idle" | "forced";
 
-type NoticePhase = "ready" | "applying" | "restart_required";
+type NoticePhase = "ready" | "checking" | "manual_installing" | "up_to_date" | "manual_failed" | "applying" | "restart_required";
 
 type NoticeUiState = {
   phase: NoticePhase;
@@ -140,6 +140,10 @@ type NoticeUiAction =
   | { type: "apply_failed"; message: string }
   | { type: "restart_failed"; message: string }
   | { type: "apply_completed" }
+  | { type: "manual_check_started" }
+  | { type: "manual_installing"; message: string }
+  | { type: "manual_up_to_date"; message: string }
+  | { type: "manual_failed"; message: string }
   | { type: "check_failed"; message: string }
   | { type: "check_recovered" }
   | { type: "restart_required"; message: string }
@@ -168,6 +172,14 @@ const noticeUiReducer = (state: NoticeUiState, action: NoticeUiAction): NoticeUi
       };
     case "apply_completed":
       return { ...state, phase: "ready", error: null, status: null };
+    case "manual_check_started":
+      return { ...state, phase: "checking", error: null, status: "Checking for updates..." };
+    case "manual_installing":
+      return { ...state, phase: "manual_installing", error: null, status: action.message };
+    case "manual_up_to_date":
+      return { ...state, phase: "up_to_date", error: null, status: action.message };
+    case "manual_failed":
+      return { ...state, phase: "manual_failed", error: action.message, status: null };
     case "check_failed":
       if (state.phase === "restart_required") return state;
       return { ...state, phase: "ready", error: action.message, status: null };
@@ -352,12 +364,18 @@ export default function UpdateNoticeBanner({ allTasksIdle = true }: UpdateNotice
   const [restartingApp, setRestartingApp] = useState(false);
   const [desktopRefreshGeneration, setDesktopRefreshGeneration] = useState(0);
   const applyInFlightRef = useRef(false);
+  const manualCheckInFlightRef = useRef(false);
   const updateInfoRef = useRef<UpdateCheck | null>(updateInfo);
+  const desktopNativeStateRef = useRef<DesktopAppUpdateStateResp | null>(desktopNativeState);
   const nativeStateSignatureRef = useRef<string>("");
 
   useEffect(() => {
     updateInfoRef.current = updateInfo;
   }, [updateInfo]);
+
+  useEffect(() => {
+    desktopNativeStateRef.current = desktopNativeState;
+  }, [desktopNativeState]);
 
   const latest = (updateInfo?.latest_version ?? "").trim() || "unknown";
   const latestKnownVersion = (updateInfo?.latest_version ?? "").trim();
@@ -370,11 +388,15 @@ export default function UpdateNoticeBanner({ allTasksIdle = true }: UpdateNotice
     || desktopPhase === "staged_ready"
   );
   const desktopStaging = isDesktop && desktopPhase === "staging";
+  const manualTransient = uiState.phase === "checking"
+    || uiState.phase === "manual_installing"
+    || uiState.phase === "up_to_date"
+    || uiState.phase === "manual_failed";
   const inPlaceCapability = getInPlaceCapability(updateInfo);
   const canApplyFromCurrentClient = isDesktop || inPlaceCapability.supported;
   const forcedUpdateNeedsManualInstall = isForcedUpdate(updateInfo) && !canApplyFromCurrentClient;
   const shouldShow = isDesktop
-    ? uiState.phase === "restart_required"
+    ? uiState.phase === "restart_required" || manualTransient
     : Boolean(updateInfo?.update_available) && nowMs >= nextPromptAtMs;
   const forcedUpdate = isForcedUpdate(updateInfo) && canApplyFromCurrentClient;
   const applyingUpdate = uiState.phase === "applying";
@@ -390,7 +412,7 @@ export default function UpdateNoticeBanner({ allTasksIdle = true }: UpdateNotice
       : null);
   const desktopUpdateMenuState: DesktopUpdateMenuState = restartRequired
     ? "restart"
-    : desktopStaging || (isDesktop && applyingUpdate)
+    : desktopStaging || (isDesktop && (applyingUpdate || uiState.phase === "checking" || uiState.phase === "manual_installing"))
       ? "downloading"
       : "check";
 
@@ -469,7 +491,8 @@ export default function UpdateNoticeBanner({ allTasksIdle = true }: UpdateNotice
           daemonPolicy = null;
         }
         try {
-          const native = await desktopGetAppUpdateState("stable");
+          const native = await desktopGetAppUpdateState();
+          desktopNativeStateRef.current = native;
           setDesktopNativeState(native);
           setDesktopRefreshGeneration((prev) => prev + 1);
           const latestVersion = normalizeOptionalString(native.latest_version) || null;
@@ -486,7 +509,7 @@ export default function UpdateNoticeBanner({ allTasksIdle = true }: UpdateNotice
             writeUpdaterRefreshBroadcast("native-state-change");
           }
           info = {
-            channel: "stable",
+            channel: normalizeOptionalString(daemonPolicy?.channel) || "stable",
             base_url: deriveBaseUrlFromEndpoint(native.endpoint),
             platform:
               normalizeOptionalString(native.target)
@@ -499,7 +522,11 @@ export default function UpdateNoticeBanner({ allTasksIdle = true }: UpdateNotice
             in_place_update_reason: native.configured
               ? normalizeOptionalString(native.last_error) || null
               : normalizeOptionalString(native.message) || "Native updater is not configured.",
-            update_available: Boolean(native.available),
+            update_available: Boolean(
+              native.available
+              || normalizeOptionalString(native.phase).toLowerCase() === "staging"
+              || normalizeOptionalString(native.phase).toLowerCase() === "staged_ready",
+            ),
           };
           if (native.restart_required) {
             if (latestVersion) {
@@ -528,6 +555,7 @@ export default function UpdateNoticeBanner({ allTasksIdle = true }: UpdateNotice
             }
           }
         } catch (err) {
+          desktopNativeStateRef.current = null;
           setDesktopNativeState(null);
           const reason = messageFromUnknownError(err, "Desktop updater check failed.");
           const previous = updateInfoRef.current;
@@ -538,7 +566,7 @@ export default function UpdateNoticeBanner({ allTasksIdle = true }: UpdateNotice
               in_place_update_reason: reason,
             }
             : {
-              channel: "stable",
+              channel: normalizeOptionalString(daemonPolicy?.channel) || "stable",
               base_url: normalizeOptionalString(daemonPolicy?.base_url),
               platform:
                 normalizeOptionalString(daemonPolicy?.platform)
@@ -592,7 +620,7 @@ export default function UpdateNoticeBanner({ allTasksIdle = true }: UpdateNotice
       dispatchUi({ type: "apply_started" });
       try {
         if (isDesktop) {
-          const resp = await desktopApplyAppUpdate("stable");
+          const resp = await desktopApplyAppUpdate();
           if (resp.needs_restart) {
             markRestartRequired(resp.message);
             return true;
@@ -620,7 +648,8 @@ export default function UpdateNoticeBanner({ allTasksIdle = true }: UpdateNotice
             recoverIdleFailure();
             return false;
           }
-          const downloadResp = await downloadAppImageUpdate("stable");
+          const updateChannel = normalizeOptionalString(updateInfoRef.current?.channel) || undefined;
+          const downloadResp = await downloadAppImageUpdate(updateChannel);
           if (!downloadResp.can_apply_in_place) {
             dispatchUi({
               type: "apply_failed",
@@ -629,7 +658,7 @@ export default function UpdateNoticeBanner({ allTasksIdle = true }: UpdateNotice
             recoverIdleFailure();
             return false;
           }
-          const resp = await applyAppImageUpdate();
+          const resp = await applyAppImageUpdate(updateChannel);
           if (!resp.applied) {
             dispatchUi({ type: "apply_failed", message: resp.message || "Update did not apply." });
             recoverIdleFailure();
@@ -685,13 +714,70 @@ export default function UpdateNoticeBanner({ allTasksIdle = true }: UpdateNotice
 
   useEffect(() => {
     const onRequestUpdateCheck = () => {
-      void refresh(true);
+      if (manualCheckInFlightRef.current) return;
+      manualCheckInFlightRef.current = true;
+      dispatchUi({ type: "manual_check_started" });
+      void (async () => {
+        try {
+          const info = await refresh(true);
+          const native = desktopNativeStateRef.current;
+          if (native?.restart_required) return;
+          const nativePhase = normalizeOptionalString(native?.phase).toLowerCase();
+          const nativeError = normalizeOptionalString(native?.last_error || native?.message);
+          if (native && !native.configured) {
+            dispatchUi({
+              type: "manual_failed",
+              message: nativeError || "Native updater is not configured.",
+            });
+            return;
+          }
+          const refreshError = !native && !info?.update_available
+            ? normalizeOptionalString(info?.in_place_update_reason)
+            : "";
+          if (refreshError) {
+            dispatchUi({ type: "manual_failed", message: refreshError });
+            return;
+          }
+          if (nativeError && nativePhase === "failed") {
+            dispatchUi({ type: "manual_failed", message: nativeError });
+            return;
+          }
+          if (nativePhase === "staging" || nativePhase === "staged_ready" || info?.update_available) {
+            dispatchUi({
+              type: "manual_installing",
+              message: "Update found. Installing in background...",
+            });
+            return;
+          }
+          dispatchUi({
+            type: "manual_up_to_date",
+            message: "You're up to date.",
+          });
+        } catch (err: unknown) {
+          dispatchUi({
+            type: "manual_failed",
+            message: messageFromUnknownError(err, "Update check failed."),
+          });
+        } finally {
+          manualCheckInFlightRef.current = false;
+        }
+      })();
     };
     window.addEventListener(REQUEST_UPDATE_CHECK_EVENT, onRequestUpdateCheck as EventListener);
     return () => {
       window.removeEventListener(REQUEST_UPDATE_CHECK_EVENT, onRequestUpdateCheck as EventListener);
     };
   }, [refresh]);
+
+  useEffect(() => {
+    if (uiState.phase !== "up_to_date" && uiState.phase !== "manual_failed") return;
+    const timer = window.setTimeout(() => {
+      dispatchUi({ type: "apply_completed" });
+    }, 5000);
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [uiState.phase]);
 
   useEffect(() => {
     if (!isDesktop) return;
@@ -849,7 +935,19 @@ export default function UpdateNoticeBanner({ allTasksIdle = true }: UpdateNotice
   if (!forcedUpdate && !shouldRenderBanner && !showInfoModal) return null;
   const restartActionEnabled = restartRequired && isDesktop;
   const updateActionDisabled = applyingUpdate || (restartRequired && (!restartActionEnabled || restartingApp));
-  const updateActionLabel = applyingUpdate ? "Updating..." : "Update Now";
+  const updateActionLabel = restartRequired ? "Relaunch" : applyingUpdate ? "Updating..." : "Update Now";
+  const snackbarTitle = restartRequired
+    ? `Ready to relaunch: ${latest}.`
+    : uiState.phase === "checking"
+      ? "Checking for updates..."
+      : uiState.phase === "manual_installing"
+        ? "Update found. Installing in background..."
+        : uiState.phase === "up_to_date"
+          ? "You're up to date."
+          : uiState.phase === "manual_failed"
+            ? "Update check failed."
+            : `Update available: ${latest}.`;
+  const showUpdateActions = restartRequired || (!isDesktop && Boolean(updateInfo?.update_available));
 
   return (
     <>
@@ -889,29 +987,31 @@ export default function UpdateNoticeBanner({ allTasksIdle = true }: UpdateNotice
         <div className="wb-snackbar wb-update-snackbar" role="status" aria-live="polite" data-testid="update-available-snackbar">
           <div className="wb-snackbar-body wb-update-snackbar-body">
             <div className="wb-snackbar-title wb-update-snackbar-title-row">
-              <span>{`Update available: ${latest}.`}</span>
-              <button
-                type="button"
-                className="wb-update-snackbar-info-btn"
-                aria-label="Learn about update timing"
-                title="Learn about update timing"
-                onClick={() => dispatchUi({ type: "info_opened" })}
-              >
-                <Info size={14} aria-hidden="true" />
-              </button>
+              <span>{snackbarTitle}</span>
+              {showUpdateActions ? (
+                <button
+                  type="button"
+                  className="wb-update-snackbar-info-btn"
+                  aria-label="Learn about update timing"
+                  title="Learn about update timing"
+                  onClick={() => dispatchUi({ type: "info_opened" })}
+                >
+                  <Info size={14} aria-hidden="true" />
+                </button>
+              ) : null}
             </div>
-            <div className="wb-snackbar-subtitle">
+            {latestKnownVersion ? <div className="wb-snackbar-subtitle">
               <ExternalLink
                 href={releaseNotesUrl}
                 className="wb-update-release-notes-link"
               >
                 View release notes
               </ExternalLink>
-            </div>
+            </div> : null}
             {updateStatus ? <div className="wb-snackbar-subtitle">{updateStatus}</div> : null}
             {effectiveError ? <div className="wb-snackbar-error">{effectiveError}</div> : null}
           </div>
-          <div className="wb-snackbar-actions wb-update-snackbar-actions">
+          {showUpdateActions ? <div className="wb-snackbar-actions wb-update-snackbar-actions">
             <button
               type="button"
               className="wb-snackbar-btn"
@@ -928,7 +1028,7 @@ export default function UpdateNoticeBanner({ allTasksIdle = true }: UpdateNotice
             >
               Update on Next Idle
             </button>
-          </div>
+          </div> : null}
           <button
             type="button"
             className="wb-snackbar-close"

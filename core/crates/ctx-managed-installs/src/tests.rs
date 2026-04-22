@@ -1,6 +1,6 @@
 use super::artifacts::{
     agent_server_download_tmp_name, commit_atomic_install_dir, prepare_atomic_install_dir,
-    resolve_download_resume, validate_sha256_digest,
+    resolve_download_resume, validate_expected_sha256, validate_sha256_digest,
 };
 use super::toolchains::{
     node_runtime_target_for_install_target, python_target_can_use_bundled_runtime,
@@ -121,6 +121,18 @@ fn archive_bin_requires_node_runtime_ignores_non_node_shebang() {
         "bin/provider",
         &launcher
     ));
+}
+
+#[test]
+fn provider_archive_sha256_validation_requires_full_hex_digest() {
+    validate_expected_sha256("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+        .expect("valid sha256");
+    assert!(validate_expected_sha256("").is_err());
+    assert!(validate_expected_sha256("abc123").is_err());
+    assert!(validate_expected_sha256(
+        "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz",
+    )
+    .is_err());
 }
 
 #[test]

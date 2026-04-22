@@ -21,7 +21,6 @@ import { loadLauncherRecents } from "./state/launcherRecentsStore";
 import { preloadHarnessLogos } from "./utils/harnessCatalog";
 import { refreshUpdateCheck } from "./utils/updateNotice";
 import {
-  desktopCheckAppUpdate,
   desktopListen,
   desktopOpenLauncherInNewWindow,
   desktopOpenWorkspaceSetupInNewWindow,
@@ -373,8 +372,6 @@ function DesktopMenuBridge() {
           }
           window.dispatchEvent(new Event(REQUEST_UPDATE_CHECK_EVENT));
           writeUpdaterRefreshBroadcast("menu-check-for-updates");
-          void refreshUpdateCheck({ force: true }).catch(() => {});
-          void desktopCheckAppUpdate("stable").catch(() => {});
           emitMenuTrace({
             commandId,
             layer: "app",

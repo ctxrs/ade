@@ -4,7 +4,6 @@ import { beforeEach, test, vi } from "vitest";
 import App from "./App";
 import { appendDesktopLog } from "./api/client";
 import {
-  desktopCheckAppUpdate,
   desktopRestartApp,
   desktopListen,
   desktopOpenLauncherInNewWindow,
@@ -632,7 +631,7 @@ test("desktop menu report issue opens external tracker link", async () => {
   });
 });
 
-test("desktop menu check-for-updates triggers silent native check without route navigation", async () => {
+test("desktop menu check-for-updates requests global update check without route navigation", async () => {
   vi.mocked(isDesktopApp).mockReturnValue(true);
   window.history.pushState({}, "", "/workspaces/ws-654");
 
@@ -649,6 +648,7 @@ test("desktop menu check-for-updates triggers silent native check without route 
 
   const checkEvent = vi.fn();
   window.addEventListener(REQUEST_UPDATE_CHECK_EVENT, checkEvent as EventListener);
+  vi.mocked(refreshUpdateCheck).mockClear();
 
   act(() => {
     handler({ commandId: "help.check-for-updates" });
@@ -656,9 +656,8 @@ test("desktop menu check-for-updates triggers silent native check without route 
 
   await waitFor(() => {
     expect(checkEvent).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(refreshUpdateCheck)).toHaveBeenCalledWith({ force: true });
-    expect(vi.mocked(desktopCheckAppUpdate)).toHaveBeenCalledWith("stable");
   });
+  expect(vi.mocked(refreshUpdateCheck)).not.toHaveBeenCalled();
   expect(window.location.pathname).toBe("/workspaces/ws-654");
   window.removeEventListener(REQUEST_UPDATE_CHECK_EVENT, checkEvent as EventListener);
 });
@@ -729,7 +728,6 @@ test("desktop menu check-for-updates requests restart when update is ready", asy
     );
   });
   vi.mocked(refreshUpdateCheck).mockClear();
-  vi.mocked(desktopCheckAppUpdate).mockClear();
 
   act(() => {
     handler({ commandId: "help.check-for-updates" });
@@ -739,6 +737,5 @@ test("desktop menu check-for-updates requests restart when update is ready", asy
     expect(restartEvent).toHaveBeenCalledTimes(1);
   });
   expect(vi.mocked(refreshUpdateCheck)).not.toHaveBeenCalled();
-  expect(vi.mocked(desktopCheckAppUpdate)).not.toHaveBeenCalled();
   window.removeEventListener(REQUEST_UPDATE_RESTART_EVENT, restartEvent as EventListener);
 });

@@ -351,8 +351,8 @@ export const downloadAppImageUpdate = (channel?: string) =>
     body: JSON.stringify(channel ? { channel } : {}),
   });
 
-export const applyAppImageUpdate = () =>
+export const applyAppImageUpdate = (channel?: string) =>
   apiAny<ApplyAppImageUpdateResp>(`/api/updates/appimage/apply`, {
     method: "POST",
-    body: JSON.stringify({ confirm: true }),
+    body: JSON.stringify({ confirm: true, ...(channel ? { channel } : {}) }),
   });

@@ -1,10 +1,92 @@
 use super::*;
 use crate::installer::{AgentServerCommand, AgentServerConfigFile, ManagedInstallMetadata};
+use axum::http::StatusCode;
+use axum::routing::get;
+use axum::Json;
 use ctx_provider_install::install_state::InstallTarget;
 use sha2::{Digest, Sha256};
+use std::sync::Mutex;
 use tempfile::tempdir;
 
 const CURRENT_CTX_VERSION: Option<&str> = Some("0.59.0-canary.deadbeefcafe");
+static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+struct EnvGuard {
+    key: &'static str,
+    previous: Option<String>,
+}
+
+impl EnvGuard {
+    fn set(key: &'static str, value: &str) -> Self {
+        let previous = std::env::var(key).ok();
+        unsafe {
+            std::env::set_var(key, value);
+        }
+        Self { key, previous }
+    }
+
+    fn remove(key: &'static str) -> Self {
+        let previous = std::env::var(key).ok();
+        unsafe {
+            std::env::remove_var(key);
+        }
+        Self { key, previous }
+    }
+}
+
+impl Drop for EnvGuard {
+    fn drop(&mut self) {
+        match self.previous.take() {
+            Some(value) => unsafe {
+                std::env::set_var(self.key, value);
+            },
+            None => unsafe {
+                std::env::remove_var(self.key);
+            },
+        }
+    }
+}
+
+fn clear_provider_matrix_env() -> Vec<EnvGuard> {
+    vec![
+        EnvGuard::remove("CTX_PROVIDER_MATRIX_BASE_URL"),
+        EnvGuard::remove("CTX_PROVIDER_MATRIX_CHANNEL"),
+        EnvGuard::remove("CTX_DOWNLOAD_BASE_URL"),
+        EnvGuard::remove("CTX_DESKTOP_CHANNEL"),
+        EnvGuard::remove("CTX_BUNDLE_MATRIX_JSON"),
+        EnvGuard::remove("CTX_BUNDLE_DIR"),
+    ]
+}
+
+fn test_matrix(provider_id: &str) -> ProviderMatrix {
+    ProviderMatrix {
+        version: builtin_matrix().version,
+        generated_at: Some("2026-04-22T00:00:00Z".to_string()),
+        providers: vec![ProviderMatrixEntry {
+            id: provider_id.to_string(),
+            kind: ProviderMatrixEntryKind::Harness,
+            display_name: Some(provider_id.to_string()),
+            tier: None,
+            command: None,
+            managed_install: None,
+            provider_dependencies: Vec::new(),
+            dependencies: Vec::new(),
+            version_probe: None,
+            releases: Vec::new(),
+        }],
+    }
+}
+
+async fn spawn_matrix_server(router: axum::Router) -> String {
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .expect("bind matrix test server");
+    let addr = listener.local_addr().expect("matrix server addr");
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, router).await;
+    });
+    format!("http://{addr}")
+}
 
 #[test]
 fn parse_version_loose_accepts_two_part_versions() {
@@ -120,6 +202,226 @@ async fn load_matrix_returns_builtin_when_cache_missing() {
     let builtin = builtin_matrix();
     assert_eq!(loaded.version, builtin.version);
     assert_eq!(loaded.providers.len(), builtin.providers.len());
+}
+
+#[tokio::test]
+async fn refresh_matrix_fetches_remote_and_writes_cache() {
+    let _env_lock = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+    let _env = clear_provider_matrix_env();
+    let remote = test_matrix("remote-provider");
+    let base_url = spawn_matrix_server(axum::Router::new().route(
+        "/provider-matrix/stable/latest.json",
+        get({
+            let remote = remote.clone();
+            move || {
+                let remote = remote.clone();
+                async move { Json(remote) }
+            }
+        }),
+    ))
+    .await;
+    let _base = EnvGuard::set("CTX_PROVIDER_MATRIX_BASE_URL", &base_url);
+    let dir = tempdir().expect("tempdir");
+    let cache = tokio::sync::Mutex::new(ProviderMatrixCache::default());
+
+    let outcome = refresh_matrix_from_remote_or_fallback(dir.path(), &cache).await;
+
+    assert_eq!(outcome.source, MatrixRefreshSource::Remote);
+    assert!(!outcome.degraded);
+    assert!(outcome.last_error.is_none());
+    assert_eq!(outcome.matrix.providers[0].id, "remote-provider");
+    let cached = ctx_provider_matrix::load_matrix(dir.path()).await;
+    assert_eq!(cached.providers[0].id, "remote-provider");
+}
+
+#[tokio::test]
+async fn refresh_matrix_uses_cached_matrix_as_visible_degraded_fallback() {
+    let _env_lock = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+    let _env = clear_provider_matrix_env();
+    let base_url = spawn_matrix_server(axum::Router::new().route(
+        "/provider-matrix/stable/latest.json",
+        get(|| async { StatusCode::INTERNAL_SERVER_ERROR }),
+    ))
+    .await;
+    let _base = EnvGuard::set("CTX_PROVIDER_MATRIX_BASE_URL", &base_url);
+    let dir = tempdir().expect("tempdir");
+    ctx_provider_matrix::save_cached_matrix(dir.path(), &test_matrix("cached-provider"))
+        .await
+        .expect("save cached matrix");
+    let cache = tokio::sync::Mutex::new(ProviderMatrixCache::default());
+
+    let outcome = refresh_matrix_from_remote_or_fallback(dir.path(), &cache).await;
+
+    assert_eq!(outcome.source, MatrixRefreshSource::Cached);
+    assert!(outcome.degraded);
+    assert!(outcome.last_error.is_some());
+    assert_eq!(outcome.matrix.providers[0].id, "cached-provider");
+}
+
+#[tokio::test]
+async fn refresh_matrix_uses_builtin_as_visible_degraded_fallback_without_cache() {
+    let _env_lock = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+    let _env = clear_provider_matrix_env();
+    let base_url = spawn_matrix_server(axum::Router::new().route(
+        "/provider-matrix/stable/latest.json",
+        get(|| async { StatusCode::NOT_FOUND }),
+    ))
+    .await;
+    let _base = EnvGuard::set("CTX_PROVIDER_MATRIX_BASE_URL", &base_url);
+    let dir = tempdir().expect("tempdir");
+    let cache = tokio::sync::Mutex::new(ProviderMatrixCache::default());
+
+    let outcome = refresh_matrix_from_remote_or_fallback(dir.path(), &cache).await;
+
+    assert_eq!(outcome.source, MatrixRefreshSource::Builtin);
+    assert!(outcome.degraded);
+    assert!(outcome.last_error.is_some());
+    assert_eq!(
+        outcome.matrix.providers.len(),
+        builtin_matrix().providers.len()
+    );
+}
+
+#[tokio::test]
+async fn refresh_matrix_explicit_bundle_matrix_suppresses_remote_fetch() {
+    let _env_lock = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+    let _env = clear_provider_matrix_env();
+    let base_url = spawn_matrix_server(axum::Router::new().route(
+        "/provider-matrix/stable/latest.json",
+        get(|| async { Json(test_matrix("remote-provider")) }),
+    ))
+    .await;
+    let _base = EnvGuard::set("CTX_PROVIDER_MATRIX_BASE_URL", &base_url);
+    let dir = tempdir().expect("tempdir");
+    let explicit_path = dir.path().join("explicit-provider-matrix.json");
+    std::fs::write(
+        &explicit_path,
+        serde_json::to_vec(&test_matrix("explicit-provider")).expect("serialize matrix"),
+    )
+    .expect("write explicit matrix");
+    let explicit_path_string = explicit_path.to_string_lossy().to_string();
+    let _explicit = EnvGuard::set("CTX_BUNDLE_MATRIX_JSON", &explicit_path_string);
+    let cache = tokio::sync::Mutex::new(ProviderMatrixCache::default());
+
+    let outcome = refresh_matrix_from_remote_or_fallback(dir.path(), &cache).await;
+
+    assert_eq!(outcome.source, MatrixRefreshSource::Explicit);
+    assert!(!outcome.degraded);
+    assert_eq!(outcome.matrix.providers[0].id, "explicit-provider");
+}
+
+#[tokio::test]
+async fn refresh_matrix_with_bundle_dir_still_prefers_remote() {
+    let _env_lock = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+    let _env = clear_provider_matrix_env();
+    let remote = test_matrix("remote-provider");
+    let base_url = spawn_matrix_server(axum::Router::new().route(
+        "/provider-matrix/stable/latest.json",
+        get({
+            let remote = remote.clone();
+            move || {
+                let remote = remote.clone();
+                async move { Json(remote) }
+            }
+        }),
+    ))
+    .await;
+    let _base = EnvGuard::set("CTX_PROVIDER_MATRIX_BASE_URL", &base_url);
+    let dir = tempdir().expect("tempdir");
+    let bundle_dir = dir.path().join("bundle");
+    std::fs::create_dir_all(&bundle_dir).expect("bundle dir");
+    std::fs::write(
+        bundle_dir.join("provider_matrix.json"),
+        serde_json::to_vec(&test_matrix("bundle-provider")).expect("serialize matrix"),
+    )
+    .expect("write bundle matrix");
+    let bundle_dir_string = bundle_dir.to_string_lossy().to_string();
+    let _bundle = EnvGuard::set("CTX_BUNDLE_DIR", &bundle_dir_string);
+    let cache = tokio::sync::Mutex::new(ProviderMatrixCache::default());
+
+    let outcome = refresh_matrix_from_remote_or_fallback(dir.path(), &cache).await;
+
+    assert_eq!(outcome.source, MatrixRefreshSource::Remote);
+    assert!(!outcome.degraded);
+    assert_eq!(outcome.matrix.providers[0].id, "remote-provider");
+}
+
+#[tokio::test]
+async fn refresh_matrix_bad_remote_json_does_not_overwrite_valid_cache() {
+    let _env_lock = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+    let _env = clear_provider_matrix_env();
+    let base_url = spawn_matrix_server(axum::Router::new().route(
+        "/provider-matrix/stable/latest.json",
+        get(|| async { (StatusCode::OK, "{not-json") }),
+    ))
+    .await;
+    let _base = EnvGuard::set("CTX_PROVIDER_MATRIX_BASE_URL", &base_url);
+    let dir = tempdir().expect("tempdir");
+    ctx_provider_matrix::save_cached_matrix(dir.path(), &test_matrix("cached-provider"))
+        .await
+        .expect("save cached matrix");
+    let cache = tokio::sync::Mutex::new(ProviderMatrixCache::default());
+
+    let outcome = refresh_matrix_from_remote_or_fallback(dir.path(), &cache).await;
+
+    assert_eq!(outcome.source, MatrixRefreshSource::Cached);
+    assert!(outcome.degraded);
+    assert_eq!(outcome.matrix.providers[0].id, "cached-provider");
+    let cached = ctx_provider_matrix::load_matrix(dir.path()).await;
+    assert_eq!(cached.providers[0].id, "cached-provider");
+}
+
+#[tokio::test]
+async fn refresh_matrix_with_bundle_dir_falls_back_to_newer_cache_before_bundle() {
+    let _env_lock = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+    let _env = clear_provider_matrix_env();
+    let base_url = spawn_matrix_server(axum::Router::new().route(
+        "/provider-matrix/stable/latest.json",
+        get(|| async { StatusCode::INTERNAL_SERVER_ERROR }),
+    ))
+    .await;
+    let _base = EnvGuard::set("CTX_PROVIDER_MATRIX_BASE_URL", &base_url);
+    let dir = tempdir().expect("tempdir");
+    let bundle_dir = dir.path().join("bundle");
+    std::fs::create_dir_all(&bundle_dir).expect("bundle dir");
+    std::fs::write(
+        bundle_dir.join("provider_matrix.json"),
+        serde_json::to_vec(&test_matrix("bundle-provider")).expect("serialize matrix"),
+    )
+    .expect("write bundle matrix");
+    let bundle_dir_string = bundle_dir.to_string_lossy().to_string();
+    let _bundle = EnvGuard::set("CTX_BUNDLE_DIR", &bundle_dir_string);
+    ctx_provider_matrix::save_cached_matrix(dir.path(), &test_matrix("cached-provider"))
+        .await
+        .expect("save cached matrix");
+    let cache = tokio::sync::Mutex::new(ProviderMatrixCache::default());
+
+    let outcome = refresh_matrix_from_remote_or_fallback(dir.path(), &cache).await;
+
+    assert_eq!(outcome.source, MatrixRefreshSource::Cached);
+    assert!(outcome.degraded);
+    assert_eq!(outcome.matrix.providers[0].id, "cached-provider");
+}
+
+#[tokio::test]
+async fn refresh_matrix_invalid_explicit_override_reports_degraded_fallback() {
+    let _env_lock = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+    let _env = clear_provider_matrix_env();
+    let dir = tempdir().expect("tempdir");
+    ctx_provider_matrix::save_cached_matrix(dir.path(), &test_matrix("cached-provider"))
+        .await
+        .expect("save cached matrix");
+    let explicit_path = dir.path().join("missing-provider-matrix.json");
+    let explicit_path_string = explicit_path.to_string_lossy().to_string();
+    let _explicit = EnvGuard::set("CTX_BUNDLE_MATRIX_JSON", &explicit_path_string);
+    let cache = tokio::sync::Mutex::new(ProviderMatrixCache::default());
+
+    let outcome = refresh_matrix_from_remote_or_fallback(dir.path(), &cache).await;
+
+    assert_eq!(outcome.source, MatrixRefreshSource::Cached);
+    assert!(outcome.degraded);
+    assert!(outcome.last_error.is_some());
+    assert_eq!(outcome.matrix.providers[0].id, "cached-provider");
 }
 
 #[test]

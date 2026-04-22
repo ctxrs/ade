@@ -32,9 +32,16 @@ fn staged_meta(version: &str) -> DesktopStagedUpdateMeta {
         target: "macos-arm64".to_string(),
         endpoint: "https://example.test/releases/stable/latest-tauri.json".to_string(),
         channel: "stable".to_string(),
+        download_url: "https://example.test/download/stable/1.2.4/ctx.app.tar.gz".to_string(),
+        signature: "sig".to_string(),
+        sha256: String::new(),
         downloaded_at_ms: 1,
         size_bytes: 7,
     }
+}
+
+fn staged_download_url() -> &'static str {
+    "https://example.test/download/stable/1.2.4/ctx.app.tar.gz"
 }
 
 fn staged_config() -> DesktopNativeUpdaterConfig {
@@ -65,14 +72,20 @@ fn linux_installer_target_suffix_prefers_appimage_env() {
 #[test]
 fn linux_installer_target_suffix_uses_appimage_extension_when_env_missing() {
     assert_eq!(
-        support::linux_installer_target_suffix(None, Some(PathBuf::from("/tmp/ctx.AppImage").as_path())),
+        support::linux_installer_target_suffix(
+            None,
+            Some(PathBuf::from("/tmp/ctx.AppImage").as_path())
+        ),
         "appimage"
     );
 }
 
 #[test]
 fn linux_installer_target_suffix_defaults_to_appimage_without_extra_signal() {
-    assert_eq!(support::linux_installer_target_suffix(None, None), "appimage");
+    assert_eq!(
+        support::linux_installer_target_suffix(None, None),
+        "appimage"
+    );
 }
 
 #[test]
@@ -177,26 +190,36 @@ fn resolve_updater_pubkey_returns_none_when_both_sources_empty() {
 
 #[test]
 fn remote_bootstrap_insecure_loopback_override_allows_only_explicit_local_http() {
-    assert!(support::should_allow_remote_bootstrap_insecure_loopback_updater(
-        true,
-        "http://127.0.0.1:43123/releases/stable/latest-tauri.json"
-    ));
-    assert!(support::should_allow_remote_bootstrap_insecure_loopback_updater(
-        true,
-        "http://localhost:43123/releases/stable/latest-tauri.json"
-    ));
-    assert!(!support::should_allow_remote_bootstrap_insecure_loopback_updater(
-        false,
-        "http://127.0.0.1:43123/releases/stable/latest-tauri.json"
-    ));
-    assert!(!support::should_allow_remote_bootstrap_insecure_loopback_updater(
-        true,
-        "https://127.0.0.1:43123/releases/stable/latest-tauri.json"
-    ));
-    assert!(!support::should_allow_remote_bootstrap_insecure_loopback_updater(
-        true,
-        "http://example.test/releases/stable/latest-tauri.json"
-    ));
+    assert!(
+        support::should_allow_remote_bootstrap_insecure_loopback_updater(
+            true,
+            "http://127.0.0.1:43123/releases/stable/latest-tauri.json"
+        )
+    );
+    assert!(
+        support::should_allow_remote_bootstrap_insecure_loopback_updater(
+            true,
+            "http://localhost:43123/releases/stable/latest-tauri.json"
+        )
+    );
+    assert!(
+        !support::should_allow_remote_bootstrap_insecure_loopback_updater(
+            false,
+            "http://127.0.0.1:43123/releases/stable/latest-tauri.json"
+        )
+    );
+    assert!(
+        !support::should_allow_remote_bootstrap_insecure_loopback_updater(
+            true,
+            "https://127.0.0.1:43123/releases/stable/latest-tauri.json"
+        )
+    );
+    assert!(
+        !support::should_allow_remote_bootstrap_insecure_loopback_updater(
+            true,
+            "http://example.test/releases/stable/latest-tauri.json"
+        )
+    );
 }
 
 struct EnvVarGuard {
@@ -247,19 +270,14 @@ fn remote_bootstrap_insecure_loopback_override_defaults_to_automation_builds() {
 
 #[test]
 fn remote_bootstrap_insecure_loopback_override_honors_explicit_env() {
-    let _guard = EnvVarGuard::set(
-        support::REMOTE_BOOTSTRAP_INSECURE_LOOPBACK_UPDATER_ENV,
-        "1",
-    );
+    let _guard = EnvVarGuard::set(support::REMOTE_BOOTSTRAP_INSECURE_LOOPBACK_UPDATER_ENV, "1");
     assert!(support::remote_bootstrap_insecure_loopback_override_enabled());
 }
 
 #[test]
 fn remote_bootstrap_freshness_check_bypasses_loopback_release_fixture_before_native_updater() {
-    let _override_guard = EnvVarGuard::set(
-        support::REMOTE_BOOTSTRAP_INSECURE_LOOPBACK_UPDATER_ENV,
-        "1",
-    );
+    let _override_guard =
+        EnvVarGuard::set(support::REMOTE_BOOTSTRAP_INSECURE_LOOPBACK_UPDATER_ENV, "1");
     let _endpoint_guard = EnvVarGuard::set(
         "CTX_DESKTOP_UPDATER_ENDPOINT",
         "http://127.0.0.1:43123/releases/{channel}/latest-tauri.json",
@@ -444,6 +462,8 @@ fn has_matching_staged_update_clears_orphaned_metadata_when_bytes_are_missing() 
         "stable",
         "1.2.4",
         &staged_config(),
+        "sig",
+        staged_download_url(),
     )
     .expect("check staged update");
 
@@ -474,6 +494,8 @@ fn has_matching_staged_update_clears_stale_mismatched_version() {
         "stable",
         "1.2.4",
         &staged_config(),
+        "sig",
+        staged_download_url(),
     )
     .expect("check staged update");
 
@@ -489,18 +511,119 @@ fn has_matching_staged_update_clears_stale_mismatched_version() {
 }
 
 #[test]
+fn has_matching_staged_update_clears_mismatched_signature() {
+    let (meta_path, bytes_path) = staged_paths("signature-mismatch");
+    let meta = staged_meta("1.2.4");
+    staged::write_staged_update_files(&meta_path, &bytes_path, &meta, b"payload")
+        .expect("write staged update");
+
+    let has_match = staged::has_matching_staged_update_paths(
+        &meta_path,
+        &bytes_path,
+        "stable",
+        "1.2.4",
+        &staged_config(),
+        "other-signature",
+        staged_download_url(),
+    )
+    .expect("check staged update");
+
+    assert!(
+        !has_match,
+        "staged payload must be tied to the current manifest signature"
+    );
+    assert!(
+        !meta_path.exists(),
+        "signature mismatch should clear staged metadata"
+    );
+    assert!(
+        !bytes_path.exists(),
+        "signature mismatch should clear staged bytes"
+    );
+}
+
+#[test]
+fn has_matching_staged_update_clears_mismatched_download_url() {
+    let (meta_path, bytes_path) = staged_paths("download-url-mismatch");
+    let meta = staged_meta("1.2.4");
+    staged::write_staged_update_files(&meta_path, &bytes_path, &meta, b"payload")
+        .expect("write staged update");
+
+    let has_match = staged::has_matching_staged_update_paths(
+        &meta_path,
+        &bytes_path,
+        "stable",
+        "1.2.4",
+        &staged_config(),
+        "sig",
+        "https://example.test/download/stable/1.2.4/other.tar.gz",
+    )
+    .expect("check staged update");
+
+    assert!(
+        !has_match,
+        "staged payload must be tied to the current manifest download URL"
+    );
+    assert!(
+        !meta_path.exists(),
+        "download URL mismatch should clear staged metadata"
+    );
+    assert!(
+        !bytes_path.exists(),
+        "download URL mismatch should clear staged bytes"
+    );
+}
+
+#[test]
+fn read_staged_update_bytes_if_matching_clears_hash_mismatch() {
+    let (meta_path, bytes_path) = staged_paths("hash-mismatch");
+    let meta = staged_meta("1.2.4");
+    staged::write_staged_update_files(&meta_path, &bytes_path, &meta, b"payload")
+        .expect("write staged update");
+    std::fs::write(&bytes_path, b"tampered").expect("tamper staged bytes");
+
+    let bytes = staged::read_verified_staged_update_bytes_if_matching_paths(
+        &meta_path,
+        &bytes_path,
+        "stable",
+        "1.2.4",
+        &staged_config(),
+        "sig",
+        staged_download_url(),
+        None,
+    )
+    .expect("read staged update bytes");
+
+    assert!(
+        bytes.is_none(),
+        "tampered staged payload must not be accepted"
+    );
+    assert!(
+        !meta_path.exists(),
+        "hash mismatch should clear staged metadata"
+    );
+    assert!(
+        !bytes_path.exists(),
+        "hash mismatch should clear staged bytes"
+    );
+}
+
+#[test]
 fn read_staged_update_bytes_if_matching_clears_empty_payload() {
     let (meta_path, bytes_path) = staged_paths("empty-stage");
     let meta = staged_meta("1.2.4");
     staged::write_staged_update_files(&meta_path, &bytes_path, &meta, &[])
         .expect("write empty staged update");
 
-    let bytes = staged::read_staged_update_bytes_if_matching_paths(
+    let bytes = staged::read_verified_staged_update_bytes_if_matching_paths(
         &meta_path,
         &bytes_path,
         "stable",
         "1.2.4",
         &staged_config(),
+        "sig",
+        staged_download_url(),
+        None,
     )
     .expect("read staged update bytes");
 
@@ -628,6 +751,23 @@ fn transaction_phase_helpers_keep_restart_and_staging_contracts_consistent() {
         Some("Downloading update in background.")
     );
     assert_eq!(staging.last_error.as_deref(), Some("download failed"));
+
+    let failed = transaction::failed_state(
+        &config,
+        "1.2.3".to_string(),
+        "1.2.4".to_string(),
+        Some("attempt-3".to_string()),
+        Some("download failed".to_string()),
+    );
+    assert!(!failed.restart_required);
+    assert!(failed.available);
+    assert!(!failed.staged);
+    assert_eq!(failed.phase, DesktopAppUpdatePhase::Failed.as_str());
+    assert_eq!(
+        failed.message.as_deref(),
+        Some("Desktop update failed while installing in background.")
+    );
+    assert_eq!(failed.last_error.as_deref(), Some("download failed"));
 }
 
 #[test]

@@ -34,6 +34,13 @@ const REMOTE_BOOTSTRAP_FRESHNESS_UNVERIFIED_PREFIX: &str =
 static STAGING_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
 static APPLY_IN_PROGRESS: OnceLock<AsyncMutex<()>> = OnceLock::new();
 
+fn resolve_app_update_channel(requested: Option<&str>) -> Result<String, String> {
+    let channel = requested
+        .map(str::to_string)
+        .or_else(|| std::env::var("CTX_DESKTOP_CHANNEL").ok());
+    desktop_ssh::normalize_update_channel(channel.as_deref())
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 enum DesktopAppUpdatePhase {
@@ -62,6 +69,9 @@ struct DesktopStagedUpdateMeta {
     target: String,
     endpoint: String,
     channel: String,
+    download_url: String,
+    signature: String,
+    sha256: String,
     downloaded_at_ms: u64,
     size_bytes: usize,
 }
@@ -176,7 +186,7 @@ pub(super) async fn desktop_get_app_update_state(
     app: tauri::AppHandle,
     req: DesktopAppUpdateCheckReq,
 ) -> Result<DesktopAppUpdateStateResp, String> {
-    let channel = desktop_ssh::normalize_update_channel(req.channel.as_deref())?;
+    let channel = resolve_app_update_channel(req.channel.as_deref())?;
     recovery::resolve_desktop_update_state(&app, &channel).await
 }
 

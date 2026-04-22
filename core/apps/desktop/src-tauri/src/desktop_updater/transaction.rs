@@ -140,6 +140,28 @@ pub(super) fn staging_state(
     )
 }
 
+pub(super) fn failed_state(
+    config: &DesktopNativeUpdaterConfig,
+    current_version: String,
+    latest_version: String,
+    last_attempt_id: Option<String>,
+    last_error: Option<String>,
+) -> DesktopAppUpdateStateResp {
+    build_state_response(
+        config,
+        current_version,
+        true,
+        true,
+        false,
+        DesktopAppUpdatePhase::Failed,
+        false,
+        Some(latest_version),
+        Some("Desktop update failed while installing in background.".to_string()),
+        last_attempt_id,
+        last_error,
+    )
+}
+
 pub(super) fn short_circuit_apply(
     pre_state: &DesktopAppUpdateStateResp,
 ) -> Result<Option<DesktopAppUpdateApplyResp>, String> {

@@ -1,5 +1,7 @@
 use super::*;
 
+const STAGING_FAILURE_RETRY_DELAY_MS: u64 = 15 * 60 * 1000;
+
 use tauri_plugin_updater::UpdaterExt;
 
 pub(super) fn should_bypass_remote_bootstrap_freshness_check(channel: &str) -> bool {
@@ -115,6 +117,18 @@ pub(super) async fn resolve_desktop_update_state(
         ));
     }
 
+    #[cfg(target_os = "windows")]
+    {
+        return Ok(transaction::unconfigured_state(
+            &config,
+            current_version,
+            pending_restart_version,
+            Some("Desktop background update apply is not supported on Windows yet.".to_string()),
+            last_attempt_id,
+            last_error,
+        ));
+    }
+
     let Some(pubkey) = config.pubkey.as_deref() else {
         return Ok(transaction::unconfigured_state(
             &config,
@@ -162,7 +176,17 @@ pub(super) async fn resolve_desktop_update_state(
     }
 
     let latest = latest.unwrap_or_default();
-    let staged_ready = staged::has_matching_staged_update(app, channel, &latest, &config)?;
+    let staged_ready = match update.as_ref() {
+        Some(update) => staged::has_matching_staged_update(
+            app,
+            channel,
+            &latest,
+            &config,
+            &update.signature,
+            update.download_url.as_str(),
+        )?,
+        None => false,
+    };
     if staged_ready {
         return Ok(transaction::staged_ready_state(
             &config,
@@ -171,6 +195,28 @@ pub(super) async fn resolve_desktop_update_state(
             last_attempt_id,
             None,
         ));
+    }
+
+    if let Some(attempt) = &last_attempt {
+        if attempt.result == DesktopUpdateAttemptResult::Failed
+            && attempt.target_version.as_deref() == Some(latest.as_str())
+            && attempt
+                .finished_at_ms
+                .map(|finished_at| {
+                    now_ms().saturating_sub(finished_at) < STAGING_FAILURE_RETRY_DELAY_MS
+                })
+                .unwrap_or(true)
+        {
+            last_error =
+                attempts::last_failed_stage_message(attempt).map(|value| value.to_string());
+            return Ok(transaction::failed_state(
+                &config,
+                current_version,
+                latest,
+                last_attempt_id,
+                last_error,
+            ));
+        }
     }
 
     if !STAGING_IN_PROGRESS.swap(true, Ordering::SeqCst) {

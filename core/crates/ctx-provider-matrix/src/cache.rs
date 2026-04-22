@@ -1,16 +1,24 @@
 use super::*;
+use anyhow::Context;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static MATRIX_CACHE_TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 pub fn matrix_cache_path(data_root: &Path) -> PathBuf {
     data_root.join("providers").join(MATRIX_CACHE_FILENAME)
 }
 
-fn explicit_matrix_path_from_env() -> Option<PathBuf> {
+fn explicit_bundle_matrix_path_from_env() -> Option<PathBuf> {
     if let Ok(raw) = std::env::var("CTX_BUNDLE_MATRIX_JSON") {
         let trimmed = raw.trim();
         if !trimmed.is_empty() {
             return Some(PathBuf::from(trimmed));
         }
     }
+    None
+}
+
+fn bundled_matrix_path_from_env() -> Option<PathBuf> {
     if let Ok(raw) = std::env::var("CTX_BUNDLE_DIR") {
         let trimmed = raw.trim();
         if !trimmed.is_empty() {
@@ -20,13 +28,35 @@ fn explicit_matrix_path_from_env() -> Option<PathBuf> {
     None
 }
 
-fn load_matrix_from_path(path: &Path) -> Option<ProviderMatrix> {
-    let txt = std::fs::read_to_string(path).ok()?;
-    let parsed: ProviderMatrix = serde_json::from_str(&txt).ok()?;
+fn parse_matrix_from_path(path: &Path) -> anyhow::Result<ProviderMatrix> {
+    let txt =
+        std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+    let parsed: ProviderMatrix =
+        serde_json::from_str(&txt).with_context(|| format!("parsing {}", path.display()))?;
     if parsed.version != MATRIX_SCHEMA_VERSION {
-        return None;
+        anyhow::bail!(
+            "provider matrix schema mismatch in {}: expected {}, got {}",
+            path.display(),
+            MATRIX_SCHEMA_VERSION,
+            parsed.version
+        );
     }
-    Some(parsed)
+    Ok(parsed)
+}
+
+fn load_matrix_from_path(path: &Path) -> Option<ProviderMatrix> {
+    parse_matrix_from_path(path).ok()
+}
+
+pub fn load_explicit_matrix_from_env() -> anyhow::Result<Option<ProviderMatrix>> {
+    let Some(path) = explicit_bundle_matrix_path_from_env() else {
+        return Ok(None);
+    };
+    parse_matrix_from_path(&path).map(Some)
+}
+
+pub fn load_bundled_matrix_from_env() -> Option<ProviderMatrix> {
+    bundled_matrix_path_from_env().and_then(|path| load_matrix_from_path(&path))
 }
 
 pub fn builtin_matrix() -> ProviderMatrix {
@@ -34,10 +64,11 @@ pub fn builtin_matrix() -> ProviderMatrix {
 }
 
 pub async fn load_matrix(data_root: &Path) -> ProviderMatrix {
-    if let Some(explicit_path) = explicit_matrix_path_from_env() {
-        if let Some(matrix) = load_matrix_from_path(&explicit_path) {
-            return matrix;
-        }
+    if let Ok(Some(matrix)) = load_explicit_matrix_from_env() {
+        return matrix;
+    }
+    if let Some(matrix) = load_bundled_matrix_from_env() {
+        return matrix;
     }
     if let Some(matrix) = load_cached_matrix(data_root) {
         return matrix;
@@ -79,14 +110,21 @@ pub async fn invalidate_matrix_cache(cache: &tokio::sync::Mutex<ProviderMatrixCa
     guard.matrix = None;
 }
 
-pub(crate) fn load_cached_matrix(data_root: &Path) -> Option<ProviderMatrix> {
+pub async fn replace_matrix_cache(
+    cache: &tokio::sync::Mutex<ProviderMatrixCache>,
+    matrix: ProviderMatrix,
+) {
+    let mut guard = cache.lock().await;
+    guard.cached_at = Some(Instant::now());
+    guard.matrix = Some(matrix);
+}
+
+pub fn load_cached_matrix(data_root: &Path) -> Option<ProviderMatrix> {
     let path = matrix_cache_path(data_root);
     load_matrix_from_path(&path)
 }
 
 pub async fn save_cached_matrix(data_root: &Path, matrix: &ProviderMatrix) -> anyhow::Result<()> {
-    use anyhow::Context;
-
     let path = matrix_cache_path(data_root);
     if let Some(parent) = path.parent() {
         tokio::fs::create_dir_all(parent)
@@ -94,8 +132,13 @@ pub async fn save_cached_matrix(data_root: &Path, matrix: &ProviderMatrix) -> an
             .with_context(|| format!("creating {}", parent.display()))?;
     }
     let txt = serde_json::to_string_pretty(matrix).context("serializing provider matrix")?;
-    tokio::fs::write(&path, txt)
+    let sequence = MATRIX_CACHE_TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let tmp = path.with_extension(format!("tmp-{}-{sequence}", std::process::id()));
+    tokio::fs::write(&tmp, txt)
         .await
-        .with_context(|| format!("writing {}", path.display()))?;
+        .with_context(|| format!("writing {}", tmp.display()))?;
+    tokio::fs::rename(&tmp, &path)
+        .await
+        .with_context(|| format!("committing {} -> {}", tmp.display(), path.display()))?;
     Ok(())
 }

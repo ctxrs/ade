@@ -13,7 +13,11 @@ pub(super) async fn apply_app_update(
     if !req.confirm {
         return Err("confirm required".to_string());
     }
-    let channel = desktop_ssh::normalize_update_channel(req.channel.as_deref())?;
+    #[cfg(target_os = "windows")]
+    {
+        return Err("Desktop background update apply is not supported on Windows yet.".to_string());
+    }
+    let channel = resolve_app_update_channel(req.channel.as_deref())?;
     let download_id = support::normalize_download_id(req.download_id.as_deref());
     let pre_state = recovery::resolve_desktop_update_state(&app, &channel).await?;
 
@@ -76,9 +80,15 @@ pub(super) async fn apply_app_update(
     attempts::complete_attempt_stage(&mut attempt, verify_stage);
 
     let download_stage = attempts::begin_attempt_stage(&mut attempt, "download");
-    let bytes = if let Some(staged_bytes) =
-        staged::read_staged_update_bytes_if_matching(&app, &channel, &latest_version, &config)?
-    {
+    let bytes = if let Some(staged_bytes) = staged::read_verified_staged_update_bytes_if_matching(
+        &app,
+        &channel,
+        &latest_version,
+        &config,
+        &update.signature,
+        update.download_url.as_str(),
+        pubkey,
+    )? {
         attempts::complete_attempt_stage(&mut attempt, download_stage);
         staged_bytes
     } else {

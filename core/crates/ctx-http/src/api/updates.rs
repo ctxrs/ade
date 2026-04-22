@@ -142,31 +142,63 @@ pub(super) async fn download_appimage_update(
         )
     })?;
 
-    let url = crate::updates::join_url(&base_url, &appimage.url_path);
-    let dest = crate::updates::updates_dir(&state.core.data_root).join("ctx.AppImage.new");
-    crate::updates::download_and_verify(&url, &appimage.sha256, &dest)
-        .await
-        .map_err(|e| {
+    let target_path = crate::updates::appimage_path_env().ok_or_else(|| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "CTX_APPIMAGE_PATH not set; cannot apply in place".to_string(),
+            }),
+        )
+    })?;
+    let current_version = crate::build_identity::current_build_identity()
+        .map(|identity| identity.exact_version.clone())
+        .map_err(|err| {
             (
-                StatusCode::BAD_GATEWAY,
+                StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ApiErrorResp {
-                    error: logs::redact_sensitive(&e.to_string()),
+                    error: logs::redact_sensitive(&err.to_string()),
                 }),
             )
         })?;
+    let url = crate::updates::join_url(&base_url, &appimage.url_path);
+    let manifest_url = crate::updates::release_manifest_url(&base_url, &channel);
+    let meta = crate::updates::download_verified_appimage_candidate(
+        crate::updates::AppImageCandidateRequest {
+            data_root: &state.core.data_root,
+            target_path: &target_path,
+            channel: &channel,
+            platform,
+            target_version: &manifest.latest_version,
+            current_version: &current_version,
+            artifact_url: &url,
+            artifact_url_path: &appimage.url_path,
+            manifest_url: &manifest_url,
+            base_url: &base_url,
+            sha256: &appimage.sha256,
+        },
+    )
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::BAD_GATEWAY,
+            Json(ApiErrorResp {
+                error: logs::redact_sensitive(&e.to_string()),
+            }),
+        )
+    })?;
 
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        if let Ok(md) = tokio::fs::metadata(&dest).await {
+        if let Ok(md) = tokio::fs::metadata(&meta.candidate_path).await {
             let mut p = md.permissions();
             p.set_mode(0o755);
-            let _ = tokio::fs::set_permissions(&dest, p).await;
+            let _ = tokio::fs::set_permissions(&meta.candidate_path, p).await;
         }
     }
 
     Ok(Json(DownloadAppImageResp {
-        downloaded_path: dest.to_string_lossy().to_string(),
+        downloaded_path: meta.candidate_path.to_string_lossy().to_string(),
         can_apply_in_place: crate::updates::appimage_path_env().is_some(),
     }))
 }
@@ -174,6 +206,8 @@ pub(super) async fn download_appimage_update(
 #[derive(Debug, Deserialize)]
 pub(super) struct ApplyAppImageReq {
     confirm: bool,
+    #[serde(default)]
+    channel: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -196,6 +230,16 @@ pub(super) async fn apply_appimage_update(
         ));
     }
 
+    let channel = req.channel.unwrap_or_else(|| "stable".to_string());
+    let base_url = crate::updates::default_download_base_url();
+    let platform = crate::updates::platform_key().ok_or_else(|| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "unsupported platform".to_string(),
+            }),
+        )
+    })?;
     let Some(target) = crate::updates::appimage_path_env() else {
         return Err((
             StatusCode::BAD_REQUEST,
@@ -204,15 +248,22 @@ pub(super) async fn apply_appimage_update(
             }),
         ));
     };
-    let downloaded = crate::updates::updates_dir(&state.core.data_root).join("ctx.AppImage.new");
-    if !downloaded.exists() {
-        return Err((
+    let (downloaded, _meta) = crate::updates::validate_verified_appimage_candidate(
+        &state.core.data_root,
+        &target,
+        &channel,
+        platform,
+        &base_url,
+    )
+    .await
+    .map_err(|e| {
+        (
             StatusCode::BAD_REQUEST,
             Json(ApiErrorResp {
-                error: "no downloaded update found; call download first".to_string(),
+                error: logs::redact_sensitive(&e.to_string()),
             }),
-        ));
-    }
+        )
+    })?;
 
     crate::updates::atomic_replace_file(&target, &downloaded)
         .await
@@ -224,6 +275,7 @@ pub(super) async fn apply_appimage_update(
                 }),
             )
         })?;
+    crate::updates::clear_appimage_candidate(&state.core.data_root).await;
 
     Ok(Json(ApplyAppImageResp {
         applied: true,

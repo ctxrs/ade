@@ -36,7 +36,7 @@ pub(crate) async fn refresh_provider_matrix(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<MatrixRefreshResponse>, (StatusCode, Json<ApiErrorResp>)> {
     crate::provider_matrix::invalidate_matrix_cache(&state.providers.matrix_cache).await;
-    let matrix = crate::provider_matrix::load_matrix_cached(
+    let outcome = crate::provider_matrix::refresh_matrix_from_remote_or_fallback(
         &state.core.data_root,
         &state.providers.matrix_cache,
     )
@@ -52,8 +52,13 @@ pub(crate) async fn refresh_provider_matrix(
             )
         })?;
     Ok(Json(MatrixRefreshResponse {
-        provider_count: matrix.providers.len(),
-        generated_at: matrix.generated_at,
+        provider_count: outcome.matrix.providers.len(),
+        generated_at: outcome.matrix.generated_at,
+        source: outcome.source.as_str().to_string(),
+        degraded: outcome.degraded,
+        last_error: outcome
+            .last_error
+            .map(|value| logs::redact_sensitive(&value)),
     }))
 }
 

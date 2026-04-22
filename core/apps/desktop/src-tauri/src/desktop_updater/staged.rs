@@ -1,7 +1,13 @@
 use super::*;
 
-use std::path::Path;
-use tauri_plugin_updater::UpdaterExt;
+use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+use sha2::{Digest, Sha256};
+use tauri_plugin_updater::{verify_signature, UpdaterExt};
+
+static STAGED_TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 pub(super) fn clear_staged_update_files(meta_path: &Path, bytes_path: &Path) -> Result<(), String> {
     if meta_path.exists() {
@@ -28,6 +34,69 @@ fn staged_update_meta_is_valid(meta: &DesktopStagedUpdateMeta) -> bool {
         && !meta.target.trim().is_empty()
         && !meta.endpoint.trim().is_empty()
         && !meta.channel.trim().is_empty()
+        && !meta.download_url.trim().is_empty()
+        && !meta.signature.trim().is_empty()
+        && is_valid_sha256(&meta.sha256)
+        && meta.size_bytes > 0
+}
+
+fn is_valid_sha256(value: &str) -> bool {
+    let trimmed = value.trim();
+    trimmed.len() == 64 && trimmed.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(bytes))
+}
+
+fn temp_path_for(path: &Path, suffix: &str) -> PathBuf {
+    let mut file_name = path
+        .file_name()
+        .map(|value| value.to_os_string())
+        .unwrap_or_else(|| "desktop_update_staged".into());
+    let sequence = STAGED_TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
+    file_name.push(format!(".tmp-{}-{sequence}-{suffix}", std::process::id()));
+    path.with_file_name(file_name)
+}
+
+fn write_file_atomically(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| {
+            format!(
+                "creating staged update directory '{}': {e}",
+                parent.display()
+            )
+        })?;
+    }
+    let tmp_path = temp_path_for(path, "write");
+    {
+        let mut file = std::fs::File::create(&tmp_path).map_err(|e| {
+            format!(
+                "creating staged update temp file '{}': {e}",
+                tmp_path.display()
+            )
+        })?;
+        file.write_all(bytes).map_err(|e| {
+            format!(
+                "writing staged update temp file '{}': {e}",
+                tmp_path.display()
+            )
+        })?;
+        file.sync_all().map_err(|e| {
+            format!(
+                "syncing staged update temp file '{}': {e}",
+                tmp_path.display()
+            )
+        })?;
+    }
+    std::fs::rename(&tmp_path, path).map_err(|e| {
+        let _ = std::fs::remove_file(&tmp_path);
+        format!(
+            "committing staged update file '{}' -> '{}': {e}",
+            tmp_path.display(),
+            path.display()
+        )
+    })
 }
 
 pub(super) fn read_staged_update_meta(
@@ -72,20 +141,13 @@ pub(super) fn write_staged_update_files(
     meta: &DesktopStagedUpdateMeta,
     bytes: &[u8],
 ) -> Result<(), String> {
-    std::fs::write(bytes_path, bytes).map_err(|e| {
-        format!(
-            "writing staged update bytes '{}': {e}",
-            bytes_path.display()
-        )
-    })?;
-    let encoded = serde_json::to_string_pretty(meta)
+    let mut meta = meta.clone();
+    meta.size_bytes = bytes.len();
+    meta.sha256 = sha256_hex(bytes);
+    write_file_atomically(bytes_path, bytes)?;
+    let encoded = serde_json::to_string_pretty(&meta)
         .map_err(|e| format!("encoding staged update metadata: {e}"))?;
-    std::fs::write(meta_path, format!("{encoded}\n")).map_err(|e| {
-        format!(
-            "writing staged update metadata '{}': {e}",
-            meta_path.display()
-        )
-    })
+    write_file_atomically(meta_path, format!("{encoded}\n").as_bytes())
 }
 
 pub(super) fn read_staged_update_meta_for_app(
@@ -130,10 +192,20 @@ pub(super) fn has_matching_staged_update(
     channel: &str,
     expected_version: &str,
     config: &DesktopNativeUpdaterConfig,
+    expected_signature: &str,
+    expected_download_url: &str,
 ) -> Result<bool, String> {
     let meta_path = staged_meta_path_for_app(app)?;
     let bytes_path = staged_bytes_path_for_app(app)?;
-    has_matching_staged_update_paths(&meta_path, &bytes_path, channel, expected_version, config)
+    has_matching_staged_update_paths(
+        &meta_path,
+        &bytes_path,
+        channel,
+        expected_version,
+        config,
+        expected_signature,
+        expected_download_url,
+    )
 }
 
 pub(super) fn has_matching_staged_update_paths(
@@ -142,51 +214,70 @@ pub(super) fn has_matching_staged_update_paths(
     channel: &str,
     expected_version: &str,
     config: &DesktopNativeUpdaterConfig,
+    expected_signature: &str,
+    expected_download_url: &str,
 ) -> Result<bool, String> {
-    let Some(meta) = read_staged_update_meta(meta_path, bytes_path)? else {
-        return Ok(false);
-    };
-    let matches_expected = meta.version.trim() == expected_version.trim()
-        && meta.target.trim() == config.target.trim()
-        && meta.endpoint.trim() == config.endpoint.trim()
-        && meta.channel.trim() == channel.trim();
-    if !matches_expected {
-        clear_staged_update_files(meta_path, bytes_path)?;
-        return Ok(false);
-    }
-    let exists = bytes_path.exists();
-    if !exists {
-        clear_staged_update_files(meta_path, bytes_path)?;
-    }
-    Ok(exists)
+    read_verified_staged_update_bytes_if_matching_paths(
+        meta_path,
+        bytes_path,
+        channel,
+        expected_version,
+        config,
+        expected_signature,
+        expected_download_url,
+        None,
+    )
+    .map(|bytes| bytes.is_some())
 }
 
-pub(super) fn read_staged_update_bytes_if_matching(
+pub(super) fn read_verified_staged_update_bytes_if_matching(
     app: &tauri::AppHandle,
     channel: &str,
     expected_version: &str,
     config: &DesktopNativeUpdaterConfig,
+    expected_signature: &str,
+    expected_download_url: &str,
+    pubkey: &str,
 ) -> Result<Option<Vec<u8>>, String> {
     let meta_path = staged_meta_path_for_app(app)?;
     let bytes_path = staged_bytes_path_for_app(app)?;
-    read_staged_update_bytes_if_matching_paths(
+    read_verified_staged_update_bytes_if_matching_paths(
         &meta_path,
         &bytes_path,
         channel,
         expected_version,
         config,
+        expected_signature,
+        expected_download_url,
+        Some(pubkey),
     )
 }
 
-pub(super) fn read_staged_update_bytes_if_matching_paths(
+pub(super) fn read_verified_staged_update_bytes_if_matching_paths(
     meta_path: &Path,
     bytes_path: &Path,
     channel: &str,
     expected_version: &str,
     config: &DesktopNativeUpdaterConfig,
+    expected_signature: &str,
+    expected_download_url: &str,
+    pubkey: Option<&str>,
 ) -> Result<Option<Vec<u8>>, String> {
-    if !has_matching_staged_update_paths(meta_path, bytes_path, channel, expected_version, config)?
-    {
+    let Some(meta) = read_staged_update_meta(meta_path, bytes_path)? else {
+        return Ok(None);
+    };
+    let matches_expected = meta.version.trim() == expected_version.trim()
+        && meta.target.trim() == config.target.trim()
+        && meta.endpoint.trim() == config.endpoint.trim()
+        && meta.channel.trim() == channel.trim()
+        && meta.signature.trim() == expected_signature.trim()
+        && meta.download_url.trim() == expected_download_url.trim();
+    if !matches_expected {
+        clear_staged_update_files(meta_path, bytes_path)?;
+        return Ok(None);
+    }
+    if !bytes_path.exists() {
+        clear_staged_update_files(meta_path, bytes_path)?;
         return Ok(None);
     }
     let bytes = std::fs::read(bytes_path).map_err(|e| {
@@ -195,9 +286,23 @@ pub(super) fn read_staged_update_bytes_if_matching_paths(
             bytes_path.display()
         )
     })?;
-    if bytes.is_empty() {
+    if bytes.is_empty() || bytes.len() != meta.size_bytes {
         clear_staged_update_files(meta_path, bytes_path)?;
         return Ok(None);
+    }
+    let digest = sha256_hex(&bytes);
+    if !digest.eq_ignore_ascii_case(meta.sha256.trim()) {
+        clear_staged_update_files(meta_path, bytes_path)?;
+        return Ok(None);
+    }
+    if let Some(pubkey) = pubkey {
+        if let Err(err) = verify_signature(&bytes, &meta.signature, pubkey) {
+            clear_staged_update_files(meta_path, bytes_path)?;
+            return Err(format!(
+                "staged update signature verification failed for '{}': {err}",
+                bytes_path.display()
+            ));
+        }
     }
     Ok(Some(bytes))
 }
@@ -273,6 +378,9 @@ pub(super) async fn stage_update_in_background(
         version: latest_version,
         target: config.target,
         endpoint: config.endpoint,
+        download_url: update.download_url.to_string(),
+        signature: update.signature.clone(),
+        sha256: String::new(),
         channel: channel.to_string(),
         downloaded_at_ms: now_ms(),
         size_bytes: bytes.len(),
