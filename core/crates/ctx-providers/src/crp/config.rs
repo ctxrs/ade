@@ -67,6 +67,13 @@ pub(super) fn build_crp_session_config(
                 command: Some(mcp_command),
                 args: Some(vec!["--stdio".to_string()]),
                 env: Some(mcp_env),
+                env_vars: None,
+                cwd: None,
+                url: None,
+                http_headers: None,
+                env_http_headers: None,
+                enabled_tools: None,
+                disabled_tools: None,
                 tool_timeout_sec: Some(tool_timeout_sec as f64),
             },
         );

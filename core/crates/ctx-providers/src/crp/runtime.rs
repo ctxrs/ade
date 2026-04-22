@@ -399,7 +399,7 @@ impl CrpProcess {
 
     pub(super) async fn send(&self, command: CrpCommand) -> Result<()> {
         let envelope = CrpCommandEnvelope {
-            v: super::CRP_VERSION,
+            v: Some(super::CRP_VERSION),
             command,
         };
         let line = serde_json::to_string(&envelope)?;

@@ -24,7 +24,7 @@ use super::super::policy::{
     extract_runtime_fatal_error_from_stderr_line, parse_native_crp_slash_command_for_provider,
     validate_provider_slash_command_support, CrpSlashCommand,
 };
-use super::super::protocol::{CrpCommand, CrpEvent, CrpSessionConfig};
+use super::super::protocol::{CrpCommand, CrpEvent, CrpSessionConfig, KnownCrpEvent};
 use super::super::{auth_required_notice_payload_from_stderr, CRP_CANCEL_DRAIN_TIMEOUT};
 use super::{registry::ActivePromptGuard, CrpPromptRequest, CrpSession, CrpSessionPool};
 use crate::adapters::{ProviderTurnOutcome, ProviderTurnStatus};
@@ -35,16 +35,16 @@ const CRP_SESSION_MODEL_UPDATE_TIMEOUT: std::time::Duration = std::time::Duratio
 fn is_sweep_only_status_notice(event: &CrpEvent) -> bool {
     matches!(
         event,
-        CrpEvent::SessionNotice { code, .. }
+        CrpEvent::Known(KnownCrpEvent::SessionNotice { code, .. })
             if code == "session_status" || code == "session_status_failed"
     )
 }
 
 fn apply_session_opened_state(session: &CrpSession, event: &CrpEvent) {
-    if let CrpEvent::SessionOpened {
+    if let CrpEvent::Known(KnownCrpEvent::SessionOpened {
         supports_session_status,
         ..
-    } = event
+    }) = event
     {
         session.opened.store(true, Ordering::SeqCst);
         session.opening.store(false, Ordering::SeqCst);
@@ -356,7 +356,8 @@ impl CrpSessionPool {
                                 apply_session_opened_state(&session, &env.event);
                                 let auth_required = matches!(
                                     &env.event,
-                                    CrpEvent::SessionNotice { code, .. } if code == "auth_required"
+                                    CrpEvent::Known(KnownCrpEvent::SessionNotice { code, .. })
+                                        if code == "auth_required"
                                 );
                                 if auth_required {
                                     session.opening.store(false, Ordering::SeqCst);
@@ -490,7 +491,7 @@ impl CrpSessionPool {
                                 if !event_matches_session(&env.event, &session_key) {
                                     continue;
                                 }
-                                if let CrpEvent::SessionNotice { code, message, details, .. } = env.event {
+                                if let CrpEvent::Known(KnownCrpEvent::SessionNotice { code, message, details, .. }) = env.event {
                                     if code == "session_model_updated" {
                                         let selected = details
                                             .as_ref()
@@ -615,13 +616,13 @@ impl CrpSessionPool {
                                 apply_session_opened_state(&session_for_events, &env.event);
                                 let auth_terminal_event = matches!(
                                     &env.event,
-                                    CrpEvent::SessionNotice { code, .. }
-                                    if code == "auth_complete"
-                                        || code == "auth_completed"
-                                        || code == "auth_success"
-                                        || code == "authenticated"
-                                        || code == "auth_failed"
-                                        || code == "auth_error"
+                                    CrpEvent::Known(KnownCrpEvent::SessionNotice { code, .. })
+                                        if code == "auth_complete"
+                                            || code == "auth_completed"
+                                            || code == "auth_success"
+                                            || code == "authenticated"
+                                            || code == "auth_failed"
+                                            || code == "auth_error"
                                 );
                                 if auth_terminal_event {
                                     session_for_events.opening.store(false, Ordering::SeqCst);

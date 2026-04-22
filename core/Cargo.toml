@@ -1,6 +1,7 @@
 [workspace]
 members = [
   "crates/ctx-docs-mirror",
+  "crates/ctx-crp-protocol",
   "crates/ctx-core",
   "crates/ctx-client",
   "crates/ctx-avf-linux-runtime",

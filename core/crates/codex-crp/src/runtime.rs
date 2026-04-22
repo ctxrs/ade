@@ -172,6 +172,13 @@ struct AppServerSessionState {
     command_execution_seen: bool,
 }
 
+fn current_model_id(model: &str, effort: Option<&str>) -> String {
+    match effort.map(str::trim).filter(|value| !value.is_empty()) {
+        Some(effort) => format!("{model}/{effort}"),
+        None => model.to_string(),
+    }
+}
+
 enum RuntimeInput {
     Command(Box<RuntimeCommand>),
     AppServer(AppServerInbound),
@@ -291,13 +298,29 @@ async fn handle_parsed_command(
             let provider_session_id = state.thread_id.clone();
             let session_id = session_id.unwrap_or_else(|| provider_session_id.clone());
             state.tracker.session_id = session_id.clone();
+            let commands = serde_json::to_value(&state.opened_commands)?;
 
             let _ = router.send_control(CrpEvent::SessionOpened {
                 session_id,
                 provider_session_id: Some(provider_session_id),
                 supports_session_status: Some(true),
-                commands: Some(state.opened_commands.clone()),
+                commands: Some(commands),
                 slash_commands: Some(state.opened_slash_commands.clone()),
+                models: None,
+                current_model_id: Some(current_model_id(
+                    &state.default_model,
+                    state.default_effort.as_deref(),
+                )),
+                agents: None,
+                output_style: None,
+                available_output_styles: None,
+                skills: None,
+                plugins: None,
+                tools: None,
+                permission_mode: None,
+                mcp_servers: None,
+                account: None,
+                fast_mode_state: None,
             });
 
             *session = Some(state);
@@ -336,11 +359,7 @@ async fn handle_parsed_command(
 
             let cwd = cwd.unwrap_or_else(|| state.default_cwd.clone());
             let requested_model = model.unwrap_or_else(|| {
-                if let Some(effort) = state.default_effort.as_deref() {
-                    format!("{}/{}", state.default_model, effort)
-                } else {
-                    state.default_model.clone()
-                }
+                current_model_id(&state.default_model, state.default_effort.as_deref())
             });
             let (model, effort_override) = split_model_and_effort(&requested_model);
             let effort = effort_override.or(reasoning_effort);
@@ -602,6 +621,41 @@ async fn handle_parsed_command(
                     },
                 ),
             }
+        }
+        CrpCommand::SessionAuthenticate {
+            session_id,
+            method_id,
+        } => {
+            let notice_session_id = session_id
+                .or_else(|| {
+                    session
+                        .as_ref()
+                        .map(|state| state.tracker.session_id.clone())
+                })
+                .unwrap_or_else(|| "unknown".to_string());
+            warn!(
+                session_id = %notice_session_id,
+                ?method_id,
+                "session.authenticate unsupported: app-server-backed runtime does not support CRP auth commands"
+            );
+            dispatch_event(
+                router,
+                CrpChannel::Control,
+                CrpEvent::SessionNotice {
+                    session_id: notice_session_id,
+                    turn_id: None,
+                    code: "auth_error".to_string(),
+                    severity: Some("error".to_string()),
+                    message: Some(
+                        "session.authenticate is not supported by this runtime".to_string(),
+                    ),
+                    details: Some(json!({
+                        "provider": "codex-crp",
+                        "reason": "unsupported_command",
+                    })),
+                    transient: Some(false),
+                },
+            );
         }
         CrpCommand::SessionStatus { session_id } => {
             let Some(state) = session.as_mut() else {

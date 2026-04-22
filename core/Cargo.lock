@@ -1163,6 +1163,7 @@ dependencies = [
  "anyhow",
  "base64 0.22.1",
  "clap",
+ "ctx-crp-protocol",
  "directories",
  "pretty_assertions",
  "serde",
@@ -1423,6 +1424,14 @@ dependencies = [
  "serde",
  "serde_json",
  "uuid",
+]
+
+[[package]]
+name = "ctx-crp-protocol"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -1872,6 +1881,7 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "ctx-core",
+ "ctx-crp-protocol",
  "libc",
  "rand 0.8.5",
  "serde",

@@ -11,6 +11,7 @@ path = "src/main.rs"
 anyhow.workspace = true
 base64.workspace = true
 clap.workspace = true
+ctx-crp-protocol = { path = "../ctx-crp-protocol" }
 directories.workspace = true
 serde.workspace = true
 serde_json.workspace = true

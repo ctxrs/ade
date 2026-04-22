@@ -13,7 +13,9 @@ use crate::container_exec::{build_container_exec_command, container_exec_spec};
 use super::config::{
     build_crp_model_probe_config, probe_timeout_for_env, synthetic_models_probe_for_provider,
 };
-use super::protocol::{CrpCommand, CrpCommandEnvelope, CrpEvent, CrpEventEnvelope, CrpModelsProbe};
+use super::protocol::{
+    CrpCommand, CrpCommandEnvelope, CrpEvent, CrpEventEnvelope, CrpModelsProbe, KnownCrpEvent,
+};
 use super::runtime::{apply_outer_process_env, rewrite_container_command_for_linux};
 
 pub(super) struct CrpModelsProbeRequest {
@@ -85,7 +87,7 @@ pub async fn probe_crp_models(request: CrpModelsProbeRequest) -> Result<CrpModel
     let mut stdout_reader = BufReader::new(stdout).lines();
     let config = build_crp_model_probe_config(&env, &workdir)?;
     let envelope = CrpCommandEnvelope {
-        v: crp_version,
+        v: Some(crp_version),
         command: CrpCommand::ModelsList {
             config: Some(config),
         },
@@ -108,11 +110,11 @@ pub async fn probe_crp_models(request: CrpModelsProbeRequest) -> Result<CrpModel
                 Ok(env) => env,
                 Err(_) => continue,
             };
-            if let CrpEvent::ModelsList {
+            if let CrpEvent::Known(KnownCrpEvent::ModelsList {
                 models,
                 current_model_id,
                 catalog_source,
-            } = env.event
+            }) = env.event
             {
                 return Ok(CrpModelsProbe {
                     models,

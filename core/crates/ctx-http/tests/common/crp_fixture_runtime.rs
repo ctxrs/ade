@@ -91,6 +91,12 @@ def send(msg, channel="control"):
     sys.stdout.write("\n")
     sys.stdout.flush()
 
+def tool_output_delta_type():
+    # codex-crp currently emits the underscored tag in production logs.
+    if PROVIDER_ID == "codex-crp":
+        return "tool.output_delta"
+    return "tool.output.delta"
+
 def send_tool(session_id, turn_id, tool):
     tool_call_id = str(uuid.uuid4())
     tool_name = tool.get("tool_name") or "exec_command"
@@ -138,7 +144,7 @@ def send_tool(session_id, turn_id, tool):
             if not chunk:
                 break
             send({
-                "type": "tool.output.delta",
+                "type": tool_output_delta_type(),
                 "session_id": session_id,
                 "turn_id": turn_id,
                 "tool_call_id": tool_call_id,
@@ -148,7 +154,7 @@ def send_tool(session_id, turn_id, tool):
             emitted_chunks += 1
     else:
         send({
-            "type": "tool.output.delta",
+            "type": tool_output_delta_type(),
             "session_id": session_id,
             "turn_id": turn_id,
             "tool_call_id": tool_call_id,
