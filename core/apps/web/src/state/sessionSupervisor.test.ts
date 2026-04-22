@@ -2733,7 +2733,7 @@ describe("SessionSupervisor", () => {
     expect(entry?.stateRev).toBe(10);
   });
 
-  it("does not seed freshly opened active sessions from bounded active heads before /head hydrate", async () => {
+  it("seeds freshly opened active sessions from compatible bounded active heads while /head hydrate is pending", async () => {
     const { SessionSupervisor } = await import("./sessionSupervisor");
 
     const sessionId = "session-bounded-active-open";
@@ -2830,13 +2830,23 @@ describe("SessionSupervisor", () => {
     await waitForCondition(() => getSessionHeadMock.mock.calls.length === 1);
     await waitForCondition(() => {
       const entry = sup.getSnapshot().sessions[sessionId];
-      return entry?.loadState === "pending_hydration" && entry.messages.length === 0 && entry.turns.length === 0;
+      return (
+        entry?.freshness === "bootstrap" &&
+        entry.loadState === "pending_hydration" &&
+        entry.messages.map((message) => message.id).join(",") === "m-2" &&
+        entry.turns.map((turn) => turn.turn_id).join(",") === "turn-2"
+      );
     });
 
     resolveHead(fullHead);
-    await waitForCondition(() => sup.getSnapshot().sessions[sessionId]?.freshness === "replica");
-    expect(sup.getSnapshot().sessions[sessionId]?.messages).toHaveLength(2);
-    expect(sup.getSnapshot().sessions[sessionId]?.turns).toHaveLength(2);
+    await waitForCondition(() => {
+      const entry = sup.getSnapshot().sessions[sessionId];
+      return (
+        entry?.freshness === "replica" &&
+        entry.messages.length === 2 &&
+        entry.turns.length === 2
+      );
+    });
   });
 
   it("does not reseed recovering active sessions from bounded active heads before /head hydrate", async () => {
@@ -2942,7 +2952,11 @@ describe("SessionSupervisor", () => {
     await waitForCondition(() => getSessionHeadMock.mock.calls.length === 1);
     await waitForCondition(() => {
       const entry = sup.getSnapshot().sessions[sessionId];
-      return entry?.loadState === "pending_hydration" && entry.messages.length === 0;
+      return (
+        entry?.freshness === "bootstrap" &&
+        entry.loadState === "pending_hydration" &&
+        entry.messages.map((message) => message.id).join(",") === "m-2"
+      );
     });
 
     sup.setWorkspaceSnapshotState({ ...activeState, connection: "disconnected" });
@@ -2953,14 +2967,21 @@ describe("SessionSupervisor", () => {
 
     sup.setWorkspaceSnapshotState(activeState);
     await waitForCondition(() => getSessionHeadMock.mock.calls.length === 2);
-    expect(sup.getSnapshot().sessions[sessionId]?.messages).toHaveLength(0);
-    expect(sup.getSnapshot().sessions[sessionId]?.turns).toHaveLength(0);
+    expect(sup.getSnapshot().sessions[sessionId]?.freshness).toBe("recovering");
+    expect(sup.getSnapshot().sessions[sessionId]?.loadState).toBe("recovering");
+    expect(sup.getSnapshot().sessions[sessionId]?.messages.map((message) => message.id)).toEqual(["m-2"]);
+    expect(sup.getSnapshot().sessions[sessionId]?.turns.map((turn) => turn.turn_id)).toEqual(["turn-2"]);
 
     resolveReconnectHead(fullHead);
     resolveHead(fullHead);
-    await waitForCondition(() => sup.getSnapshot().sessions[sessionId]?.freshness === "replica");
-    expect(sup.getSnapshot().sessions[sessionId]?.messages).toHaveLength(2);
-    expect(sup.getSnapshot().sessions[sessionId]?.turns).toHaveLength(2);
+    await waitForCondition(() => {
+      const entry = sup.getSnapshot().sessions[sessionId];
+      return (
+        entry?.freshness === "replica" &&
+        entry.messages.length === 2 &&
+        entry.turns.length === 2
+      );
+    });
   });
 
   it("clears recovering open sessions from reconnecting active-head hydration without dropping history", async () => {

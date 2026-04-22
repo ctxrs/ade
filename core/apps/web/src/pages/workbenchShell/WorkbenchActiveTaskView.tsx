@@ -159,8 +159,10 @@ export function WorkbenchActiveTaskView({
             />
           ) : null}
           {activeSessionId && !showSessionSlot ? (
-            <div className="wb-session-slot wb-session-slot--hydrating" aria-hidden="true">
-              <div className="wb-session-slot-body" />
+            <div className="wb-session-slot wb-session-slot--hydrating">
+              <div className="wb-session-slot-body wb-muted" style={{ padding: 16 }}>
+                Loading conversation...
+              </div>
             </div>
           ) : null}
           {!activeSessionId ? (

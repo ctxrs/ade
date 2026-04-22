@@ -4,8 +4,11 @@ import { SessionHeadBootstrapCache } from "../../state/sessionHeadBootstrapCache
 import type { WorkspaceActiveSnapshotState } from "../../state/workspaceActiveSnapshotStore";
 import {
   collectSessionHeadsForSupervisor,
+  planSessionHeadPrefetchTargets,
   primeAuthoritativeSessionHeads,
   primePersistedSessionHeads,
+  SESSION_HEAD_PREFETCH_CONCURRENCY,
+  SESSION_HEAD_PREFETCH_TARGET_LIMIT,
 } from "./sessionHeadPrefetch";
 
 const loadSessionHeadV1Mock = vi.fn();
@@ -130,6 +133,31 @@ const makeSnapshot = (
   archivedLoaded: false,
 });
 
+const makeSnapshotWithSessions = (
+  sessionIds: readonly string[],
+  opts?: { lastEventSeq?: number; projectionRev?: number; stateRev?: number },
+): WorkspaceActiveSnapshotState => {
+  const primarySessionId = sessionIds[0] ?? "session-1";
+  return {
+    ...makeSnapshot(primarySessionId, opts),
+    tasksById: {
+      "task-1": {
+        ...makeSnapshot(primarySessionId, opts).tasksById["task-1"],
+        sessions: sessionIds.map((sessionId) => ({
+          session: makeHead(sessionId).session,
+          last_message_at: now,
+          last_message_preview: "preview",
+          last_event_seq: opts?.lastEventSeq ?? 1,
+          projection_rev: opts?.projectionRev,
+          state_rev: opts?.stateRev,
+          activity: { is_working: false, last_turn_status: null },
+          unread: false,
+        })),
+      },
+    },
+  };
+};
+
 describe("sessionHeadPrefetch", () => {
   beforeEach(() => {
     loadSessionHeadV1Mock.mockReset();
@@ -242,5 +270,89 @@ describe("sessionHeadPrefetch", () => {
 
     expect(changed).toBe(false);
     expect(getSessionHeadMock).not.toHaveBeenCalled();
+  });
+
+  it("plans foreground targets before bounded warm targets", () => {
+    const plan = planSessionHeadPrefetchTargets({
+      foregroundSessionIds: ["foreground", "warm-1"],
+      warmSessionIds: ["warm-1", "warm-2", "warm-3"],
+      maxTargets: 3,
+    });
+
+    expect(plan.targetSessionIds).toEqual(["foreground", "warm-1", "warm-2"]);
+    expect(plan.foregroundSessionIds).toEqual(["foreground", "warm-1"]);
+    expect(plan.warmSessionIds).toEqual(["warm-2"]);
+  });
+
+  it("caps authoritative head prefetch when no explicit target list is provided", async () => {
+    const sessionIds = Array.from({ length: SESSION_HEAD_PREFETCH_TARGET_LIMIT + 25 }, (_, index) => `session-${index + 1}`);
+    const snapshot = makeSnapshotWithSessions(sessionIds, { lastEventSeq: 5 });
+    getSessionHeadMock.mockImplementation(async (sessionId: string) =>
+      makeHead(sessionId, { turnCount: 3, lastEventSeq: 5 }),
+    );
+    const bootstrapCache = new SessionHeadBootstrapCache();
+    const store = {
+      getSessionHeadSnapshot: vi.fn(() => null),
+      getSessionHeadsSnapshot: vi.fn(() => ({})),
+    };
+
+    await primeAuthoritativeSessionHeads(snapshot, store, bootstrapCache);
+
+    expect(getSessionHeadMock).toHaveBeenCalledTimes(SESSION_HEAD_PREFETCH_TARGET_LIMIT);
+    expect(getSessionHeadMock).toHaveBeenCalledWith("session-1", expect.any(Number), true);
+    expect(getSessionHeadMock).not.toHaveBeenCalledWith(
+      `session-${SESSION_HEAD_PREFETCH_TARGET_LIMIT + 1}`,
+      expect.any(Number),
+      true,
+    );
+  });
+
+  it("caps persisted bootstrap head priming with the same target budget", async () => {
+    const sessionIds = Array.from({ length: 20 }, (_, index) => `session-${index + 1}`);
+    const snapshot = makeSnapshotWithSessions(sessionIds);
+    loadSessionHeadV1Mock.mockImplementation(async (sessionId: string) => ({
+      v: 1,
+      sessionId,
+      head: makeHead(sessionId),
+      updatedAtMs: Date.now(),
+    }));
+    const bootstrapCache = new SessionHeadBootstrapCache();
+    const store = {
+      getSessionHeadSnapshot: vi.fn(() => null),
+      getSessionHeadsSnapshot: vi.fn(() => ({})),
+    };
+
+    await primePersistedSessionHeads(snapshot, store, bootstrapCache, undefined, { maxTargets: 5 });
+
+    expect(loadSessionHeadV1Mock).toHaveBeenCalledTimes(5);
+    expect(loadSessionHeadV1Mock).toHaveBeenCalledWith("session-1");
+    expect(loadSessionHeadV1Mock).not.toHaveBeenCalledWith("session-6");
+  });
+
+  it("limits concurrent authoritative head requests", async () => {
+    const sessionIds = Array.from({ length: 6 }, (_, index) => `session-${index + 1}`);
+    const snapshot = makeSnapshotWithSessions(sessionIds, { lastEventSeq: 5 });
+    let inFlight = 0;
+    let maxInFlight = 0;
+    getSessionHeadMock.mockImplementation(async (sessionId: string) => {
+      inFlight += 1;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      inFlight -= 1;
+      return makeHead(sessionId, { turnCount: 3, lastEventSeq: 5 });
+    });
+    const bootstrapCache = new SessionHeadBootstrapCache();
+    const store = {
+      getSessionHeadSnapshot: vi.fn(() => null),
+      getSessionHeadsSnapshot: vi.fn(() => ({})),
+    };
+
+    await primeAuthoritativeSessionHeads(snapshot, store, bootstrapCache, sessionIds, {
+      concurrency: SESSION_HEAD_PREFETCH_CONCURRENCY,
+      maxTargets: sessionIds.length,
+    });
+
+    expect(maxInFlight).toBeLessThanOrEqual(SESSION_HEAD_PREFETCH_CONCURRENCY);
+    expect(getSessionHeadMock).toHaveBeenCalledTimes(sessionIds.length);
   });
 });

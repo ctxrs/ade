@@ -36,12 +36,19 @@ export const shouldSkipBoundedActiveSnapshotSeed = (
   entry: InternalEntry,
   head: SessionHeadSnapshot,
 ): boolean => {
+  if (!isBoundedSessionHead(head)) return false;
   const freshBootstrapOpen =
     entry.freshness === "bootstrap" &&
     !entry.turnsHydrated &&
     entry.turns.length === 0 &&
     entry.messages.length === 0 &&
     entry.events.length === 0;
-  const recoveringOpenSession = entry.freshness === "recovering";
-  return isBoundedSessionHead(head) && (freshBootstrapOpen || recoveringOpenSession);
+  const recoveringOpenSession = entry.freshness === "recovering" || entry.loadState === "recovering";
+  if (recoveringOpenSession) return true;
+  if (!freshBootstrapOpen) return false;
+  const hasVisibleHeadData =
+    (Array.isArray(head.turns) && head.turns.length > 0) ||
+    (Array.isArray(head.messages) && head.messages.length > 0) ||
+    (Array.isArray(head.events) && head.events.length > 0);
+  return !hasVisibleHeadData;
 };

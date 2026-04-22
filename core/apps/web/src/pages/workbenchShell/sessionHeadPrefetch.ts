@@ -7,7 +7,7 @@ import type {
 import { idToString } from "../../api/client";
 import { getSessionHead } from "../../api/clientSessions";
 import { SessionHeadBootstrapCache } from "../../state/sessionHeadBootstrapCache";
-import { HEAD_LIMIT } from "../../state/sessionSupervisor/config";
+import { HEAD_LIMIT, WARM_SESSION_BUDGET } from "../../state/sessionSupervisor/config";
 import { loadSessionHeadV1 } from "../../state/uiStateStore";
 import {
   isSessionHeadCompatibleWithSummary,
@@ -20,6 +20,80 @@ import {
 
 type SessionHeadStoreReader = Pick<WorkspaceActiveSnapshotEventSource, "getSessionHeadSnapshot"> & {
   getSessionHeadsSnapshot?: () => Record<string, SessionHeadSnapshot>;
+};
+
+export const SESSION_HEAD_PREFETCH_TARGET_LIMIT = Math.max(1, Math.min(WARM_SESSION_BUDGET, 8));
+export const SESSION_HEAD_PREFETCH_CONCURRENCY = 2;
+
+type PrefetchControlOptions = {
+  maxTargets?: number;
+  concurrency?: number;
+  shouldContinue?: () => boolean;
+};
+
+export type SessionHeadPrefetchTargetPlan = {
+  targetSessionIds: string[];
+  foregroundSessionIds: string[];
+  warmSessionIds: string[];
+};
+
+const uniqueSessionIds = (sessionIds: readonly string[]): string[] => {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const candidate of sessionIds) {
+    const sessionId = idToString(candidate);
+    if (!sessionId || seen.has(sessionId)) continue;
+    seen.add(sessionId);
+    out.push(sessionId);
+  }
+  return out;
+};
+
+export const planSessionHeadPrefetchTargets = ({
+  foregroundSessionIds = [],
+  warmSessionIds = [],
+  maxTargets = SESSION_HEAD_PREFETCH_TARGET_LIMIT,
+}: {
+  foregroundSessionIds?: readonly string[];
+  warmSessionIds?: readonly string[];
+  maxTargets?: number;
+}): SessionHeadPrefetchTargetPlan => {
+  const limit = Math.max(1, Math.floor(maxTargets));
+  const foreground = uniqueSessionIds(foregroundSessionIds);
+  const warm = uniqueSessionIds(warmSessionIds).filter((sessionId) => !foreground.includes(sessionId));
+  const targetSessionIds = [...foreground, ...warm].slice(0, limit);
+  return {
+    targetSessionIds,
+    foregroundSessionIds: foreground.filter((sessionId) => targetSessionIds.includes(sessionId)),
+    warmSessionIds: warm.filter((sessionId) => targetSessionIds.includes(sessionId)),
+  };
+};
+
+const collectPrefetchTargetSessionIds = (
+  snapshot: WorkspaceActiveSnapshotState,
+  sessionIds?: readonly string[],
+  maxTargets = SESSION_HEAD_PREFETCH_TARGET_LIMIT,
+): string[] => {
+  const candidates = sessionIds ?? collectWorkspaceSessionHeadIds(snapshot);
+  return planSessionHeadPrefetchTargets({ warmSessionIds: candidates, maxTargets }).targetSessionIds;
+};
+
+const runWithConcurrencyLimit = async <T>(
+  items: readonly T[],
+  concurrency: number,
+  worker: (item: T) => Promise<void>,
+): Promise<void> => {
+  const workerCount = Math.max(1, Math.min(Math.floor(concurrency), items.length));
+  let nextIndex = 0;
+  await Promise.all(
+    Array.from({ length: workerCount }, async () => {
+      while (nextIndex < items.length) {
+        const item = items[nextIndex];
+        nextIndex += 1;
+        await worker(item);
+      }
+    }),
+  );
 };
 
 const getPrimarySessionIdForTask = (
@@ -144,15 +218,20 @@ export const primePersistedSessionHeads = async (
   store: SessionHeadStoreReader,
   bootstrapCache: SessionHeadBootstrapCache,
   sessionIds?: readonly string[],
+  opts?: PrefetchControlOptions,
 ): Promise<boolean> => {
   const batchHeads = store.getSessionHeadsSnapshot?.() ?? {};
   let changed = false;
-  const targetSessionIds = collectTargetSessionIds(snapshot, sessionIds);
+  const targetSessionIds = collectPrefetchTargetSessionIds(snapshot, sessionIds, opts?.maxTargets);
 
-  await Promise.all(
-    targetSessionIds.map(async (sessionId) => {
+  await runWithConcurrencyLimit(
+    targetSessionIds,
+    opts?.concurrency ?? SESSION_HEAD_PREFETCH_CONCURRENCY,
+    async (sessionId) => {
+      if (opts?.shouldContinue && !opts.shouldContinue()) return;
       if (!bootstrapCache.beginPersistedPrefetch(sessionId)) return;
       const persisted = await loadSessionHeadV1(sessionId).catch(() => null);
+      if (opts?.shouldContinue && !opts.shouldContinue()) return;
       if (!persisted?.head) return;
       const persistedHead = persistedHeadToSnapshot(persisted.head);
       const directHead = batchHeads[sessionId] ?? store.getSessionHeadSnapshot(sessionId);
@@ -162,7 +241,7 @@ export const primePersistedSessionHeads = async (
       if (bootstrapCache.upsert(persistedHead)) {
         changed = true;
       }
-    }),
+    },
   );
 
   return changed;
@@ -173,16 +252,19 @@ export const primeAuthoritativeSessionHeads = async (
   store: SessionHeadStoreReader,
   bootstrapCache: SessionHeadBootstrapCache,
   sessionIds?: readonly string[],
-  opts?: {
+  opts?: PrefetchControlOptions & {
     onHead?: (sessionId: string, head: SessionHeadSnapshot) => void;
   },
 ): Promise<boolean> => {
   const batchHeads = store.getSessionHeadsSnapshot?.() ?? {};
   let changed = false;
-  const targetSessionIds = collectTargetSessionIds(snapshot, sessionIds);
+  const targetSessionIds = collectPrefetchTargetSessionIds(snapshot, sessionIds, opts?.maxTargets);
 
-  await Promise.all(
-    targetSessionIds.map(async (sessionId) => {
+  await runWithConcurrencyLimit(
+    targetSessionIds,
+    opts?.concurrency ?? SESSION_HEAD_PREFETCH_CONCURRENCY,
+    async (sessionId) => {
+      if (opts?.shouldContinue && !opts.shouldContinue()) return;
       const summary = findSessionSummary(snapshot, sessionId);
       const directHead = batchHeads[sessionId] ?? store.getSessionHeadSnapshot(sessionId);
       if (isSessionHeadCompatibleWithSummary(summary, directHead)) {
@@ -199,6 +281,7 @@ export const primeAuthoritativeSessionHeads = async (
       let fetchSucceeded = false;
       try {
         const head = await getSessionHead(sessionId, HEAD_LIMIT, true).catch(() => null);
+        if (opts?.shouldContinue && !opts.shouldContinue()) return;
         if (!head) return;
         fetchSucceeded = isSessionHeadCompatibleWithSummary(summary, head);
         const didChange = bootstrapCache.upsert(head);
@@ -209,7 +292,7 @@ export const primeAuthoritativeSessionHeads = async (
       } finally {
         bootstrapCache.finishAuthoritativePrefetch(sessionId, versionKey, fetchSucceeded);
       }
-    }),
+    },
   );
 
   return changed;

@@ -98,7 +98,7 @@ const makeProps = () => ({
 });
 
 describe("WorkbenchActiveTaskView", () => {
-  it("renders a blank hydration slot while the session is not yet renderable", () => {
+  it("renders an explicit loading state while the session is not yet renderable", () => {
     render(
       <WorkbenchActiveTaskView
         {...makeProps()}
@@ -110,7 +110,7 @@ describe("WorkbenchActiveTaskView", () => {
     expect(screen.queryByTestId("session-slot")).not.toBeInTheDocument();
     const hydratingSlot = document.querySelector(".wb-session-slot--hydrating");
     expect(hydratingSlot).not.toBeNull();
-    expect(screen.queryByText("Loading conversation...")).not.toBeInTheDocument();
+    expect(screen.getByText("Loading conversation...")).toBeInTheDocument();
   });
 
   it("renders the session slot once the session is renderable", () => {

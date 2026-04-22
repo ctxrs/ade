@@ -693,7 +693,7 @@ export class SessionReplicaCore {
         const persisted = snapshotToHead(head);
         this.applyHead(entry, persisted, opts?.emitOp, {
           appendMode: opts?.emitOp === "append" ? "head_refresh" : undefined,
-          replaceMode: opts?.emitOp === "replace" ? "authoritative_replace" : undefined,
+          replaceMode: opts?.emitOp === "append" ? undefined : "authoritative_replace",
           freshness: "authoritative",
         });
         await this.persistHead(entry);
@@ -743,7 +743,7 @@ export class SessionReplicaCore {
         const persisted = snapshotToHead(head);
         this.applyHead(entry, persisted, opts?.emitOp, {
           appendMode: opts?.emitOp === "append" ? "head_refresh" : undefined,
-          replaceMode: opts?.emitOp === "replace" ? "authoritative_replace" : undefined,
+          replaceMode: opts?.emitOp === "append" ? undefined : "authoritative_replace",
           freshness: "authoritative",
         });
         await this.persistHead(entry);
