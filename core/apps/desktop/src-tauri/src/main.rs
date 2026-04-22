@@ -119,7 +119,6 @@ fn main() {
         .on_menu_event(handle_app_menu_event)
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -193,6 +192,7 @@ fn main() {
             setup_webview_recovery(&app.handle());
             open_main_window(&app.handle())?;
             install_macos_dock_menu_bridge(app.handle().clone());
+            install_macos_notification_delegate(app.handle().clone());
             schedule_local_daemon_prewarm(app.handle().clone());
             schedule_local_linux_sandbox_prefetch(app.handle().clone());
             schedule_force_launcher(app.handle().clone());

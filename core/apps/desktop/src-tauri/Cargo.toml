@@ -40,7 +40,6 @@ tauri = { version = "2.9.5", features = ["image-png"] }
 tauri-plugin-automation = "0.1.1"
 tauri-plugin-deep-link = "2.4.5"
 tauri-plugin-dialog = "2.4.2"
-tauri-plugin-notification = "2.3.3"
 tauri-plugin-os = "2.3.2"
 tauri-plugin-shell = "2.3.2"
 tauri-plugin-single-instance = { version = "2.3.6", features = ["deep-link"] }
@@ -48,10 +47,15 @@ tauri-plugin-stt = { version = "0.1", optional = true }
 tauri-plugin-updater = "2.10.0"
 tokio = { version = "1", features = ["sync", "rt", "macros"] }
 portable-pty = "0.9.0"
-notify-rust = "4.16.0"
 url = "2"
 urlencoding = "2"
 uuid = { version = "1", features = ["v4"] }
+
+[target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
+notify-rust = "4.16.0"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+notify-rust = "4.16.0"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 block2 = "0.6.2"
@@ -73,7 +77,7 @@ objc2-app-kit = { version = "0.3.2", features = [
     "NSWindow",
 ] }
 objc2-core-foundation = "0.3.2"
-objc2-foundation = { version = "0.3.2", features = ["NSArray", "NSError", "NSString", "NSURL"] }
+objc2-foundation = { version = "0.3.2", features = ["NSArray", "NSDictionary", "NSError", "NSObject", "NSString", "NSURL"] }
 objc2-user-notifications = { version = "0.3.2", features = [
     "std",
     "block2",
@@ -82,6 +86,7 @@ objc2-user-notifications = { version = "0.3.2", features = [
     "UNNotificationRequest",
     "UNNotificationResponse",
     "UNNotificationSettings",
+    "UNNotificationTrigger",
     "UNUserNotificationCenter",
     "UNNotificationSound",
 ] }
@@ -124,7 +129,6 @@ objc2-virtualization = { version = "0.3.2", default-features = false, features =
     "VZVirtualMachine",
     "VZVirtualMachineConfiguration",
 ] }
-mac-notification-sys = "0.6.12"
 
 [features]
 default = ["custom-protocol"]

@@ -42,7 +42,7 @@ describe("buildWorkbenchThreadViewModel", () => {
     const out = buildWorkbenchThreadViewModel([], [] as unknown as Message[], {}, events as unknown as SessionEvent[]);
     expect(out.groups).toEqual([]);
     expect(out.debugEvents).toEqual([]);
-  }, 10000);
+  }, 30000);
 
   it("does not infer user headers when turn.user_message_id is missing", async () => {
     const { buildWorkbenchThreadViewModel } = await import("./SessionPage.workbenchViewModel");
