@@ -1,6 +1,9 @@
 load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
+load("//tools/bazel:rust_deps.generated.bzl", "RUST_BAZEL_DEPS")
 
 package(default_visibility = ["//visibility:public"])
+
+_CTX_CORE_DEPS = RUST_BAZEL_DEPS["ctx-core"]
 
 rust_library(
     name = "lib",
@@ -8,12 +11,7 @@ rust_library(
     crate_root = "src/lib.rs",
     edition = "2021",
     srcs = glob(["src/**/*.rs"]),
-    deps = [
-        "@crates//:chrono",
-        "@crates//:serde",
-        "@crates//:serde_json",
-        "@crates//:uuid",
-    ],
+    deps = _CTX_CORE_DEPS.deps,
 )
 
 rust_test(
@@ -30,9 +28,5 @@ rust_test(
     rustc_env = {
         "CARGO_MANIFEST_DIR": "core/crates/ctx-core",
     },
-    deps = [
-        ":lib",
-        "@crates//:serde",
-        "@crates//:serde_json",
-    ],
+    deps = [":lib"] + _CTX_CORE_DEPS.deps,
 )

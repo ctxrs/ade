@@ -1,6 +1,9 @@
 load("@rules_rust//rust:defs.bzl", "rust_library")
+load("//tools/bazel:rust_deps.generated.bzl", "RUST_BAZEL_DEPS")
 
 package(default_visibility = ["//visibility:public"])
+
+_CTX_CRP_PROTOCOL_DEPS = RUST_BAZEL_DEPS["ctx-crp-protocol"]
 
 rust_library(
     name = "lib",
@@ -8,8 +11,5 @@ rust_library(
     crate_root = "src/lib.rs",
     edition = "2021",
     srcs = glob(["src/**/*.rs"]),
-    deps = [
-        "@crates//:serde",
-        "@crates//:serde_json",
-    ],
+    deps = _CTX_CRP_PROTOCOL_DEPS.deps,
 )

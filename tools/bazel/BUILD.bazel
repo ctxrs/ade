@@ -9,6 +9,7 @@ exports_files([
     "provider_claude_crp_archive.sh",
     "provider_node_archive.sh",
     "release_bundle_contracts.sh",
+    "rust_deps.generated.bzl",
     "run_workspace_task.sh",
 ])
 

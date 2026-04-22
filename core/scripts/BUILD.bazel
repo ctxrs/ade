@@ -139,3 +139,8 @@ sh_binary(
     args = [".", "bash", "scripts/tests/install_desktop_deps_linux_ubuntu_contract.sh"],
     data = DESKTOP_PARITY_CONTRACT_DATA,
 )
+
+sh_binary(
+    name = "rust_bazel_deps_contracts",
+    srcs = ["rust_bazel_deps_contract.sh"],
+)

@@ -172,6 +172,8 @@
     "dev:web": "pnpm -C apps/web dev",
     "dev:daemon:web": "CTX_DESKTOP_CHANNEL=dev CTX_RUNTIME_PROFILE=parity CTX_LAUNCH_SURFACE=daemon-web node scripts/dev_daemon_web.cjs",
     "rust:fmt": "cargo fmt --all -- --check",
+    "rust:bazel-deps:write": "node scripts/sync_rust_bazel_deps.cjs",
+    "rust:bazel-deps:check": "node scripts/sync_rust_bazel_deps.cjs --check",
     "rust:panic-traps": "node scripts/check_rust_runtime_panic_traps.mjs --enforce",
     "rust:panic-traps:report": "node scripts/check_rust_runtime_panic_traps.mjs",
     "rust:clippy": "node scripts/run_with_ctx_cache_env.cjs --mode workspace -- cargo clippy --workspace --all-targets --all-features -- -D warnings",

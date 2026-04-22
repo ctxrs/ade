@@ -1,6 +1,9 @@
 load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
+load("//tools/bazel:rust_deps.generated.bzl", "RUST_BAZEL_DEPS")
 
 package(default_visibility = ["//visibility:public"])
+
+_CTX_HARNESS_SETUP_DEPS = RUST_BAZEL_DEPS["ctx-harness-setup"]
 
 rust_library(
     name = "lib",
@@ -8,9 +11,7 @@ rust_library(
     crate_root = "src/lib.rs",
     edition = "2021",
     srcs = glob(["src/**/*.rs"]),
-    deps = [
-        "@crates//:serde",
-    ],
+    deps = _CTX_HARNESS_SETUP_DEPS.deps,
 )
 
 rust_test(
