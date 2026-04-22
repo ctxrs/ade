@@ -141,6 +141,13 @@ pub struct DroidAcpAgent {
 }
 
 impl DroidAcpAgent {
+    fn meta(entries: impl IntoIterator<Item = (impl Into<String>, Value)>) -> serde_json::Map<String, Value> {
+        entries
+            .into_iter()
+            .map(|(key, value)| (key.into(), value))
+            .collect()
+    }
+
     fn should_drop_text_block_for_droid(text: &str) -> bool {
         text.contains("The commands below were executed at the start of all sessions")
             || text.contains("TodoWrite was not called yet")
@@ -181,26 +188,21 @@ impl DroidAcpAgent {
     }
 
     fn agent_info() -> acp::Implementation {
-        acp::Implementation {
-            name: "droid-acp".to_string(),
-            title: Some("Droid ACP Adapter".to_string()),
-            version: env!("CARGO_PKG_VERSION").to_string(),
-        }
+        acp::Implementation::new("droid-acp", env!("CARGO_PKG_VERSION"))
+            .title("Droid ACP Adapter")
     }
 
     fn next_session_id(&self) -> acp::SessionId {
         let id = self.next_session_id.fetch_add(1, Ordering::Relaxed);
-        acp::SessionId(format!("droid-session-{id}").into())
+        acp::SessionId::new(format!("droid-session-{id}"))
     }
 
     fn mode_state(current: &SessionMode) -> acp::SessionModeState {
         let available_modes = MODES
             .iter()
-            .map(|spec| acp::SessionMode {
-                id: acp::SessionModeId(spec.id.into()),
-                name: spec.name.to_string(),
-                description: Some(spec.description.to_string()),
-                meta: None,
+            .map(|spec| {
+                acp::SessionMode::new(acp::SessionModeId::new(spec.id), spec.name)
+                    .description(spec.description)
             })
             .collect::<Vec<_>>();
 
@@ -210,11 +212,7 @@ impl DroidAcpAgent {
             .map(|spec| spec.id)
             .unwrap_or("read_only");
 
-        acp::SessionModeState {
-            current_mode_id: acp::SessionModeId(current_id.into()),
-            available_modes,
-            meta: None,
-        }
+        acp::SessionModeState::new(acp::SessionModeId::new(current_id), available_modes)
     }
 
     async fn send_update(
@@ -225,11 +223,7 @@ impl DroidAcpAgent {
         let (tx, rx) = oneshot::channel();
         self.session_update_tx
             .send((
-                acp::SessionNotification {
-                    session_id: session_id.clone(),
-                    update,
-                    meta: None,
-                },
+                acp::SessionNotification::new(session_id.clone(), update),
                 tx,
             ))
             .map_err(|_| acp::Error::internal_error())?;
@@ -270,12 +264,22 @@ impl DroidAcpAgent {
                     acp::EmbeddedResourceResource::BlobResourceContents(blob_resource) => {
                         parts.push(format!("[resource: {}]", blob_resource.uri));
                     }
+                    _ => {}
                 },
+                _ => {}
             }
         }
 
         parts.push(Self::droid_path_guidance().to_string());
         parts.join("\n\n")
+    }
+
+    fn acp_text_block(text: impl Into<String>) -> acp::ContentBlock {
+        acp::ContentBlock::Text(acp::TextContent::new(text))
+    }
+
+    fn acp_text_chunk(text: impl Into<String>) -> acp::ContentChunk {
+        acp::ContentChunk::new(Self::acp_text_block(text))
     }
 
     fn build_command(&self, prompt: &str, state: &SessionSnapshot) -> Command {
@@ -338,17 +342,14 @@ impl DroidAcpAgent {
             .map(|location| vec![location])
             .unwrap_or_default();
 
-        let tool_call = acp::ToolCall {
-            id: acp::ToolCallId(id.into()),
-            title: tool_title(tool_name.as_deref(), tool_id.as_deref()),
-            kind,
-            status: acp::ToolCallStatus::InProgress,
-            content: Vec::new(),
-            locations,
-            raw_input: parameters,
-            raw_output: None,
-            meta: None,
-        };
+        let tool_call = acp::ToolCall::new(
+            acp::ToolCallId::new(id),
+            tool_title(tool_name.as_deref(), tool_id.as_deref()),
+        )
+        .kind(kind)
+        .status(acp::ToolCallStatus::InProgress)
+        .locations(locations)
+        .raw_input(parameters);
 
         self.send_update(session_id, acp::SessionUpdate::ToolCall(tool_call))
             .await
@@ -379,19 +380,13 @@ impl DroidAcpAgent {
             .as_ref()
             .map(|output| vec![text_content(raw_value_text(output))]);
 
-        let update = acp::ToolCallUpdate {
-            id: acp::ToolCallId(id.into()),
-            meta: None,
-            fields: acp::ToolCallUpdateFields {
-                kind: None,
-                status: Some(status),
-                title: None,
-                content,
-                locations: None,
-                raw_input: None,
-                raw_output: value,
-            },
-        };
+        let update = acp::ToolCallUpdate::new(
+            acp::ToolCallId::new(id),
+            acp::ToolCallUpdateFields::new()
+                .status(status)
+                .content(content)
+                .raw_output(value),
+        );
 
         self.send_update(session_id, acp::SessionUpdate::ToolCallUpdate(update))
             .await
@@ -407,7 +402,7 @@ impl DroidAcpAgent {
         let mut cmd = self.build_command(&prompt, &state_snapshot);
         let mut child = cmd
             .spawn()
-            .map_err(|err| acp::Error::internal_error().with_data(err.to_string()))?;
+            .map_err(|err| acp::Error::internal_error().data(err.to_string()))?;
 
         let stdout = child.stdout.take().ok_or_else(acp::Error::internal_error)?;
         let stderr = child.stderr.take().ok_or_else(acp::Error::internal_error)?;
@@ -465,14 +460,9 @@ impl DroidAcpAgent {
                                     if role == "assistant" {
                                         self.send_update(
                                             session_id,
-                                            acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk {
-                                                content: acp::ContentBlock::Text(acp::TextContent {
-                                                    text,
-                                                    annotations: None,
-                                                    meta: None,
-                                                }),
-                                                meta: None,
-                                            }),
+                                            acp::SessionUpdate::AgentMessageChunk(
+                                                Self::acp_text_chunk(text),
+                                            ),
                                         ).await?;
                                     }
                                 }
@@ -486,14 +476,9 @@ impl DroidAcpAgent {
                                     if let Some(text) = text {
                                         self.send_update(
                                             session_id,
-                                            acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk {
-                                                content: acp::ContentBlock::Text(acp::TextContent {
-                                                    text,
-                                                    annotations: None,
-                                                    meta: None,
-                                                }),
-                                                meta: None,
-                                            }),
+                                            acp::SessionUpdate::AgentMessageChunk(
+                                                Self::acp_text_chunk(text),
+                                            ),
                                         ).await?;
                                     }
                                     if sid.is_some() {
@@ -504,14 +489,9 @@ impl DroidAcpAgent {
                                     if let Some(message) = message {
                                         self.send_update(
                                             session_id,
-                                            acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk {
-                                                content: acp::ContentBlock::Text(acp::TextContent {
-                                                    text: format!("Droid error: {message}"),
-                                                    annotations: None,
-                                                    meta: None,
-                                                }),
-                                                meta: None,
-                                            }),
+                                            acp::SessionUpdate::AgentMessageChunk(
+                                                Self::acp_text_chunk(format!("Droid error: {message}")),
+                                            ),
                                         ).await?;
                                     }
                                 }
@@ -536,14 +516,7 @@ impl DroidAcpAgent {
                 let message = format!("Droid exec exited with status {status}");
                 self.send_update(
                     session_id,
-                    acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk {
-                        content: acp::ContentBlock::Text(acp::TextContent {
-                            text: message,
-                            annotations: None,
-                            meta: None,
-                        }),
-                        meta: None,
-                    }),
+                    acp::SessionUpdate::AgentMessageChunk(Self::acp_text_chunk(message)),
                 )
                 .await?;
             }
@@ -560,13 +533,15 @@ impl DroidAcpAgent {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use agent_client_protocol::Agent as _;
 
     fn text_block(text: &str) -> acp::ContentBlock {
-        acp::ContentBlock::Text(acp::TextContent {
-            text: text.to_string(),
-            annotations: None,
-            meta: None,
-        })
+        DroidAcpAgent::acp_text_block(text)
+    }
+
+    fn test_agent() -> DroidAcpAgent {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        DroidAcpAgent::new("droid".to_string(), None, tx)
     }
 
     #[test]
@@ -625,6 +600,64 @@ mod tests {
         assert!(rendered.ends_with(DroidAcpAgent::droid_path_guidance()));
         assert!(rendered.contains("Do not synthesize or prepend absolute paths"));
     }
+
+    #[test]
+    fn initialize_advertises_session_modes_meta() {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("tokio runtime should build")
+            .block_on(async {
+                let agent = test_agent();
+
+                let response = agent
+                    .initialize(acp::InitializeRequest::new(acp::ProtocolVersion::V1))
+                    .await
+                    .expect("initialize should succeed");
+
+                assert_eq!(response.protocol_version, acp::ProtocolVersion::V1);
+                assert_eq!(
+                    response
+                        .agent_capabilities
+                        .meta
+                        .as_ref()
+                        .and_then(|meta| meta.get("modes"))
+                        .cloned(),
+                    Some(json!({"supportsSessionModes": true}))
+                );
+            });
+    }
+
+    #[test]
+    fn set_session_model_returns_model_metadata() {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("tokio runtime should build")
+            .block_on(async {
+                let agent = test_agent();
+                let new_session = agent
+                    .new_session(acp::NewSessionRequest::new("/tmp"))
+                    .await
+                    .expect("new_session should succeed");
+
+                let response = agent
+                    .set_session_model(acp::SetSessionModelRequest::new(
+                        new_session.session_id,
+                        acp::ModelId::new("gpt-5.4"),
+                    ))
+                    .await
+                    .expect("set_session_model should succeed");
+
+                assert_eq!(
+                    response.meta.as_ref().and_then(|meta| meta.get("model")).cloned(),
+                    Some(json!({
+                        "id": "gpt-5.4",
+                        "display_name": "gpt-5.4",
+                    }))
+                );
+            });
+    }
 }
 
 #[async_trait(?Send)]
@@ -633,34 +666,31 @@ impl acp::Agent for DroidAcpAgent {
         &self,
         _arguments: acp::InitializeRequest,
     ) -> Result<acp::InitializeResponse, acp::Error> {
-        Ok(acp::InitializeResponse {
-            protocol_version: acp::V1,
-            agent_capabilities: acp::AgentCapabilities {
-                load_session: false,
-                mcp_capabilities: acp::McpCapabilities {
-                    http: false,
-                    sse: false,
-                    meta: None,
-                },
-                prompt_capabilities: acp::PromptCapabilities {
-                    image: false,
-                    audio: false,
-                    embedded_context: true,
-                    meta: None,
-                },
-                meta: Some(json!({"modes": {"supportsSessionModes": true}})),
-            },
-            auth_methods: Vec::new(),
-            agent_info: Some(Self::agent_info()),
-            meta: None,
-        })
+        Ok(acp::InitializeResponse::new(acp::ProtocolVersion::V1)
+            .agent_capabilities(
+                acp::AgentCapabilities::new()
+                    .load_session(false)
+                    .mcp_capabilities(acp::McpCapabilities::new().http(false).sse(false))
+                    .prompt_capabilities(
+                        acp::PromptCapabilities::new()
+                            .image(false)
+                            .audio(false)
+                            .embedded_context(true),
+                    )
+                    .meta(Self::meta([(
+                        "modes",
+                        json!({"supportsSessionModes": true}),
+                    )])),
+            )
+            .auth_methods(Vec::new())
+            .agent_info(Self::agent_info()))
     }
 
     async fn authenticate(
         &self,
         _arguments: acp::AuthenticateRequest,
     ) -> Result<acp::AuthenticateResponse, acp::Error> {
-        Ok(acp::AuthenticateResponse { meta: None })
+        Ok(acp::AuthenticateResponse::new())
     }
 
     async fn new_session(
@@ -675,12 +705,7 @@ impl acp::Agent for DroidAcpAgent {
         let mut sessions = self.sessions.lock().await;
         sessions.insert(session_id.0.to_string(), state);
 
-        Ok(acp::NewSessionResponse {
-            session_id,
-            modes: Some(mode_state),
-            models: None,
-            meta: None,
-        })
+        Ok(acp::NewSessionResponse::new(session_id).modes(mode_state))
     }
 
     async fn load_session(
@@ -738,10 +763,7 @@ impl acp::Agent for DroidAcpAgent {
 
         let (stop_reason, _) = result?;
 
-        Ok(acp::PromptResponse {
-            stop_reason,
-            meta: None,
-        })
+        Ok(acp::PromptResponse::new(stop_reason))
     }
 
     async fn cancel(&self, args: acp::CancelNotification) -> Result<(), acp::Error> {
@@ -772,14 +794,13 @@ impl acp::Agent for DroidAcpAgent {
 
         self.send_update(
             &args.session_id,
-            acp::SessionUpdate::CurrentModeUpdate(acp::CurrentModeUpdate {
-                current_mode_id: args.mode_id.clone(),
-                meta: None,
-            }),
+            acp::SessionUpdate::CurrentModeUpdate(acp::CurrentModeUpdate::new(
+                args.mode_id.clone(),
+            )),
         )
         .await?;
 
-        Ok(acp::SetSessionModeResponse { meta: None })
+        Ok(acp::SetSessionModeResponse::new())
     }
 
     async fn set_session_model(
@@ -794,21 +815,20 @@ impl acp::Agent for DroidAcpAgent {
         let model_id = args.model_id.to_string();
         state.model = Some(model_id.clone());
 
-        Ok(acp::SetSessionModelResponse {
-            meta: Some(json!({
-                "model": {
-                    "id": model_id,
-                    "display_name": model_id,
-                }
-            })),
-        })
+        Ok(acp::SetSessionModelResponse::new().meta(Self::meta([(
+            "model",
+            json!({
+                "id": model_id,
+                "display_name": model_id,
+            }),
+        )])))
     }
 
     async fn ext_method(&self, args: acp::ExtRequest) -> Result<acp::ExtResponse, acp::Error> {
         tracing::debug!("Ignoring ext method {}", args.method);
         let raw = serde_json::value::to_raw_value(&json!({}))
-            .map_err(|err| acp::Error::internal_error().with_data(err.to_string()))?;
-        Ok(raw.into())
+            .map_err(|err| acp::Error::internal_error().data(err.to_string()))?;
+        Ok(acp::ExtResponse::new(raw.into()))
     }
 
     async fn ext_notification(&self, args: acp::ExtNotification) -> Result<(), acp::Error> {

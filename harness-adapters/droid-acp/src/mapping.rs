@@ -45,13 +45,9 @@ pub fn raw_value_text(value: &Value) -> String {
 }
 
 pub fn text_content(text: String) -> acp::ToolCallContent {
-    acp::ToolCallContent::Content {
-        content: acp::ContentBlock::Text(acp::TextContent {
-            text,
-            annotations: None,
-            meta: None,
-        }),
-    }
+    acp::ToolCallContent::Content(acp::Content::new(acp::ContentBlock::Text(
+        acp::TextContent::new(text),
+    )))
 }
 
 pub fn resolve_path(path: &str, cwd: Option<&Path>) -> PathBuf {
@@ -79,11 +75,7 @@ pub fn extract_location(parameters: &Value, cwd: Option<&Path>) -> Option<acp::T
         .and_then(|value| value.as_u64())
         .map(|value| value as u32);
 
-    Some(acp::ToolCallLocation {
-        path: resolve_path(path_value, cwd),
-        line,
-        meta: None,
-    })
+    Some(acp::ToolCallLocation::new(resolve_path(path_value, cwd)).line(line))
 }
 
 #[cfg(test)]
@@ -103,5 +95,17 @@ mod tests {
         let cwd = Path::new("/tmp/project");
         let resolved = resolve_path("src/main.rs", Some(cwd));
         assert_eq!(resolved, PathBuf::from("/tmp/project/src/main.rs"));
+    }
+
+    #[test]
+    fn wraps_text_as_standard_tool_content() {
+        let content = text_content("hello".to_string());
+        let acp::ToolCallContent::Content(content) = content else {
+            panic!("expected standard content");
+        };
+        let acp::ContentBlock::Text(text) = content.content else {
+            panic!("expected text content");
+        };
+        assert_eq!(text.text, "hello");
     }
 }
