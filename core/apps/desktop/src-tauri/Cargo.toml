@@ -133,6 +133,9 @@ automation = []
 stt = ["tauri-plugin-stt"]
 
 [patch.crates-io]
+tauri = { path = "third_party/tauri" }
+tauri-runtime = { path = "third_party/tauri-runtime" }
+tauri-runtime-wry = { path = "third_party/tauri-runtime-wry" }
 tauri-plugin-automation = { path = "third_party/tauri-plugin-automation" }
 tauri-plugin-updater = { path = "third_party/tauri-plugin-updater" }
 

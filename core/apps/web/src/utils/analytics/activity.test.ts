@@ -11,6 +11,7 @@ vi.mock("./client", () => ({
 }));
 
 import {
+  trackDesktopWebviewRecoveryObserved,
   trackTaskCreated,
   trackTurnCompleted,
   trackTurnStarted,
@@ -145,6 +146,28 @@ describe("usage analytics activity helpers", () => {
         window_ms: 5_000,
       },
       { source: "session_replica_ingest" },
+    );
+  });
+
+  it("captures metadata-only desktop webview recovery events", () => {
+    trackDesktopWebviewRecoveryObserved({
+      trigger: "heartbeat_timeout",
+      action: "recreate",
+      surface: "workbench",
+      daemonHealth: "ok",
+      suppressionReason: "window_not_focused",
+    });
+
+    expect(captureProductEventMock).toHaveBeenCalledWith(
+      "desktop_webview_recovery_observed",
+      1,
+      {
+        trigger: "heartbeat_timeout",
+        action: "recreate",
+        surface: "workbench",
+        daemon_health: "ok",
+        suppression_reason: "window_not_focused",
+      },
     );
   });
 });

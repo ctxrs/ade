@@ -72,6 +72,7 @@ import {
   noteDesktopRendererTimeout,
   noteDesktopWindowCreated,
 } from "./state/foregroundFreshnessTelemetry";
+import { DesktopWebviewRecoveryBridge } from "./state/desktopWebviewRecoveryBridge";
 
 function settingsTargetForPath(pathname: string): string {
   if (pathname.startsWith("/workspaces/")) {
@@ -615,6 +616,7 @@ export default function App() {
           <AnalyticsSettingsBridge />
           <DesktopSettingsListener />
           <DesktopMenuBridge />
+          <DesktopWebviewRecoveryBridge />
           <GlobalUpdateNotice />
           <Routes>
             <Route path="/" element={<LauncherPage />} />

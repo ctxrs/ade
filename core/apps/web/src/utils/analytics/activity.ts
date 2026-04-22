@@ -532,6 +532,36 @@ export const trackApiErrorObserved = (props: {
   });
 };
 
+export const trackDesktopWebviewRecoveryObserved = (props: {
+  action: "noop" | "reload" | "recreate" | "prompt_restart";
+  daemonHealth: "unknown" | "ok" | "down" | "mismatch";
+  surface:
+    | "main"
+    | "workbench"
+    | "launcher"
+    | "settings"
+    | "file_preview"
+    | "workspace_setup"
+    | "unknown";
+  trigger: "native_process_termination" | "heartbeat_timeout";
+  suppressionReason?:
+    | "recovery_in_progress"
+    | "window_not_visible"
+    | "window_not_focused"
+    | "startup_grace"
+    | "no_heartbeat_yet"
+    | "daemon_down"
+    | "daemon_mismatch";
+}): void => {
+  capture("desktop_webview_recovery_observed", {
+    trigger: props.trigger,
+    action: props.action,
+    surface: props.surface,
+    daemon_health: props.daemonHealth,
+    ...(props.suppressionReason ? { suppression_reason: props.suppressionReason } : {}),
+  });
+};
+
 export const trackForegroundFreshnessSlaMissed = (props: {
   metric: string;
   surface:

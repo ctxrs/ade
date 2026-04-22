@@ -409,11 +409,24 @@ pub(super) fn open_in_ctx(
 ) -> Result<()> {
     let url = build_file_preview_url(target, line, col);
     let label = format!("file:{}", uuid::Uuid::new_v4());
-    tauri::WebviewWindowBuilder::new(app, label, tauri::WebviewUrl::App(url.into()))
+    open_file_preview_window_with_label(app, &label, &url)
+}
+
+pub(super) fn open_file_preview_window_with_label(
+    app: &tauri::AppHandle,
+    label: &str,
+    route: &str,
+) -> Result<()> {
+    let init_script = desktop_startup_initialization_script(label, route);
+    tauri::WebviewWindowBuilder::new(app, label, tauri::WebviewUrl::App(route.into()))
         .title("ctx")
         .inner_size(1000.0, 780.0)
+        .initialization_script(&init_script)
         .build()
         .context("creating file preview window")?;
+    log_window_created(label, route);
+    log_navigation_start(label, route, "file_preview_window");
+    register_window_for_recovery(app, label, route);
     Ok(())
 }
 
@@ -478,17 +491,30 @@ pub(super) fn offer_editor_settings(app: &tauri::AppHandle) {
 }
 
 pub(super) fn open_settings_window(app: &tauri::AppHandle) -> Result<()> {
-    let label = "settings";
+    open_settings_window_at_route(app, "settings", "/settings")
+}
+
+pub(super) fn open_settings_window_at_route(
+    app: &tauri::AppHandle,
+    label: &str,
+    route: &str,
+) -> Result<()> {
     if let Some(window) = app.get_webview_window(label) {
         let _ = window.show();
         let _ = window.set_focus();
+        record_window_route(app, label, route);
         return Ok(());
     }
-    tauri::WebviewWindowBuilder::new(app, label, tauri::WebviewUrl::App("/settings".into()))
+    let init_script = desktop_startup_initialization_script(label, route);
+    tauri::WebviewWindowBuilder::new(app, label, tauri::WebviewUrl::App(route.into()))
         .title("Settings")
         .inner_size(1000.0, 780.0)
+        .initialization_script(&init_script)
         .build()
         .context("creating settings window")?;
+    log_window_created(label, route);
+    log_navigation_start(label, route, "settings_window");
+    register_window_for_recovery(app, label, route);
     Ok(())
 }
 

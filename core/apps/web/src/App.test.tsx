@@ -5,11 +5,14 @@ import App from "./App";
 import { appendDesktopLog } from "./api/client";
 import {
   desktopCheckAppUpdate,
+  desktopRestartApp,
   desktopListen,
   desktopOpenLauncherInNewWindow,
   desktopOpenWorkspaceSetupInNewWindow,
   desktopSetDockRecentLocalWorkspaces,
   desktopSetMenuState,
+  desktopWebviewRecoveryConsumeIncidents,
+  desktopWebviewRecoveryHeartbeat,
   isDesktopApp,
   openExternalLink,
 } from "./utils/desktop";
@@ -140,6 +143,7 @@ vi.mock("./utils/analytics", () => ({
   initAnalytics: vi.fn(() => {}),
   setAnalyticsEnabled: vi.fn(() => {}),
   trackAppOpened: vi.fn(() => {}),
+  trackDesktopWebviewRecoveryObserved: vi.fn(() => {}),
   getPendingDownloadAttributionId: vi.fn(async () => null),
   consumePendingDownloadAttributionId: vi.fn(async () => null),
 }));
@@ -174,6 +178,9 @@ vi.mock("./utils/desktop", () => ({
   })),
   desktopOpenLauncherInNewWindow: vi.fn(async () => {}),
   desktopOpenWorkspaceSetupInNewWindow: vi.fn(async () => {}),
+  desktopWebviewRecoveryHeartbeat: vi.fn(async () => {}),
+  desktopWebviewRecoveryConsumeIncidents: vi.fn(async () => []),
+  desktopRestartApp: vi.fn(async () => ({ requested: true, message: "restart requested" })),
   openExternalLink: vi.fn(async () => true),
 }));
 
@@ -182,6 +189,8 @@ vi.mock("./state/launcherRecentsStore", () => ({
 }));
 
 vi.mock("./state/uiStateStore", () => ({
+  uiStateGet: vi.fn(async () => null),
+  uiStateBatch: vi.fn(async () => {}),
   loadSettingsV2: vi.fn(async () => null),
   saveSettingsV2: vi.fn(async () => {}),
 }));
@@ -197,6 +206,9 @@ beforeEach(() => {
   clientSettingsStore.loadClientSettings.mockResolvedValue(clientSettingsStore.state);
   vi.mocked(isDesktopApp).mockReturnValue(false);
   vi.mocked(desktopSetDockRecentLocalWorkspaces).mockResolvedValue();
+  vi.mocked(desktopWebviewRecoveryConsumeIncidents).mockResolvedValue([]);
+  vi.mocked(desktopWebviewRecoveryHeartbeat).mockResolvedValue();
+  vi.mocked(desktopRestartApp).mockResolvedValue({ requested: true, message: "restart requested" });
   vi.mocked(getPendingDownloadAttributionId).mockResolvedValue(null);
   vi.mocked(consumePendingDownloadAttributionId).mockResolvedValue(null);
   window.history.pushState({}, "", "/");
@@ -261,6 +273,85 @@ test("routes geometry harness path to the standalone harness page", async () => 
   window.history.pushState({}, "", "/__geometry_harness");
   render(<App />);
   expect(await screen.findByText("Geometry Harness Screen")).toBeInTheDocument();
+});
+
+test("desktop recovery bridge sends renderer heartbeats", async () => {
+  vi.mocked(isDesktopApp).mockReturnValue(true);
+
+  render(<App />);
+
+  await waitFor(() => {
+    expect(desktopWebviewRecoveryConsumeIncidents).toHaveBeenCalledTimes(1);
+    expect(desktopWebviewRecoveryHeartbeat).toHaveBeenCalledWith(expect.objectContaining({
+      route: "/",
+      document_visible: true,
+    }));
+  });
+});
+
+test("desktop recovery bridge surfaces persisted recovery incidents", async () => {
+  vi.mocked(isDesktopApp).mockReturnValue(true);
+  vi.mocked(desktopWebviewRecoveryConsumeIncidents).mockResolvedValue([
+    {
+      incident_id: "inc-1",
+      window_label: "main",
+      window_surface: "main",
+      route: "/",
+      trigger_kind: "native_process_termination",
+      action: "prompt_restart",
+      daemon_health: "unknown",
+      suppression_reason: null,
+      created_at_ms: 42,
+    },
+  ]);
+
+  render(<App />);
+
+  expect(
+    await screen.findByText("ctx stopped auto-recovering this main window."),
+  ).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Restart App" })).toBeInTheDocument();
+});
+
+test("desktop recovery bridge polls for incidents that do not reload the renderer", async () => {
+  vi.useFakeTimers();
+  try {
+    vi.mocked(isDesktopApp).mockReturnValue(true);
+    vi.mocked(desktopWebviewRecoveryConsumeIncidents)
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        {
+          incident_id: "inc-2",
+          window_label: "main",
+          window_surface: "main",
+          route: "/",
+          trigger_kind: "heartbeat_timeout",
+          action: "noop",
+          daemon_health: "down",
+          suppression_reason: "daemon_down",
+          created_at_ms: 84,
+        },
+      ]);
+
+    render(<App />);
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(desktopWebviewRecoveryConsumeIncidents).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      vi.advanceTimersByTime(4_000);
+      await Promise.resolve();
+    });
+
+    expect(
+      screen.getByText("ctx detected a failed main window but skipped recovery."),
+    ).toBeInTheDocument();
+    expect(desktopWebviewRecoveryConsumeIncidents).toHaveBeenCalledTimes(2);
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 test("persists runtime diagnostics to desktop log", async () => {

@@ -54,6 +54,28 @@ export type DesktopStorageGetReq = { key: string, };
 
 export type DesktopStorageBatchReq = { ops: Array<DesktopStorageBatchOp>, };
 
+export type DesktopWebviewSurface = "main" | "workbench" | "launcher" | "settings" | "file_preview" | "workspace_setup" | "unknown";
+
+export type DesktopWebviewRecoveryTriggerKind = "native_process_termination" | "heartbeat_timeout";
+
+export type DesktopWebviewRecoveryAction = "noop" | "reload" | "recreate" | "prompt_restart";
+
+export type DesktopWebviewRecoveryDaemonHealth = "unknown" | "ok" | "down" | "mismatch";
+
+export type DesktopWebviewRecoverySuppressionReason = "recovery_in_progress" | "window_not_visible" | "window_not_focused" | "startup_grace" | "no_heartbeat_yet" | "daemon_down" | "daemon_mismatch";
+
+export type DesktopWebviewRecoveryIncident = { incident_id: string, window_label: string, window_surface: DesktopWebviewSurface, route: string, trigger_kind: DesktopWebviewRecoveryTriggerKind, action: DesktopWebviewRecoveryAction, daemon_health: DesktopWebviewRecoveryDaemonHealth, suppression_reason?: DesktopWebviewRecoverySuppressionReason | null, created_at_ms: number, };
+
+export type DesktopWebviewRecoveryHeartbeatReq = { route: string, document_visible: boolean, window_focused: boolean, startup_ready: boolean, };
+
+export type DesktopWebviewRecoveryFaultKind = "native_process_termination" | "heartbeat_timeout";
+
+export type DesktopWebviewRecoveryFaultReq = { window_label?: string | null, kind: DesktopWebviewRecoveryFaultKind, };
+
+export type DesktopWebviewRecoveryWindowAutomationSnapshot = { window_label: string, window_surface: DesktopWebviewSurface, route: string, last_heartbeat_at_ms?: number, startup_completed_at_ms?: number, recovery_in_progress: boolean, consecutive_recovery_count: number, pending_heartbeat_timeout: boolean, daemon_health: DesktopWebviewRecoveryDaemonHealth, recent_incident_count: number, };
+
+export type DesktopWebviewRecoveryAutomationSnapshot = { windows: Array<DesktopWebviewRecoveryWindowAutomationSnapshot>, pending_incident_count: number, };
+
 export type DesktopDeepLinkToken = { expires_at_ms: number, token: string, };
 
 export type DesktopSshHost = { host: string, host_name?: string | null, port?: number | null, user?: string | null, };

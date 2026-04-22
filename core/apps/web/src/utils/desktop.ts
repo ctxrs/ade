@@ -48,6 +48,10 @@ import type {
   DesktopStorageBatchReq,
   DesktopStorageGetReq,
   DesktopStorageNotice,
+  DesktopWebviewRecoveryAutomationSnapshot,
+  DesktopWebviewRecoveryFaultReq,
+  DesktopWebviewRecoveryHeartbeatReq,
+  DesktopWebviewRecoveryIncident,
   DesktopSyncWorkspaceAttentionReq,
   DesktopTitlebarColor,
   DesktopUploadBlobReq,
@@ -80,6 +84,8 @@ export type {
   DesktopReadBinaryFileResp,
   DesktopStorageBatchOp,
   DesktopStorageNotice,
+  DesktopWebviewRecoveryAutomationSnapshot,
+  DesktopWebviewRecoveryIncident,
   DesktopSshHost,
   DesktopSshPathEntry,
   DesktopTitlebarColor,
@@ -529,6 +535,30 @@ export const desktopStorageBatch = async (ops: DesktopStorageBatchOp[]): Promise
 
 export const desktopStorageConsumeNotice = async (): Promise<DesktopStorageNotice | null> =>
   invoke<DesktopStorageNotice | null>("desktop_storage_consume_notice");
+
+export const desktopWebviewRecoveryHeartbeat = async (
+  req: DesktopWebviewRecoveryHeartbeatReq,
+): Promise<void> =>
+  invokeDesktopReq<DesktopWebviewRecoveryHeartbeatReq, void>(
+    "desktop_webview_recovery_heartbeat",
+    req,
+  );
+
+export const desktopWebviewRecoveryConsumeIncidents = async (): Promise<DesktopWebviewRecoveryIncident[]> =>
+  invoke<DesktopWebviewRecoveryIncident[]>("desktop_webview_recovery_consume_incidents");
+
+export const desktopTriggerWebviewRecoveryFault = async (
+  req: DesktopWebviewRecoveryFaultReq,
+): Promise<void> =>
+  invokeDesktopReq<DesktopWebviewRecoveryFaultReq, void>(
+    "desktop_trigger_webview_recovery_fault",
+    req,
+  );
+
+export const desktopGetWebviewRecoveryAutomationSnapshot = async (): Promise<DesktopWebviewRecoveryAutomationSnapshot> =>
+  invoke<DesktopWebviewRecoveryAutomationSnapshot>(
+    "desktop_get_webview_recovery_automation_snapshot",
+  );
 
 export const desktopUploadBlob = async (args: DesktopUploadBlobReq): Promise<BlobUploadResp> =>
   invokeDesktopReq<DesktopUploadBlobReq, BlobUploadResp>("desktop_upload_blob", args);

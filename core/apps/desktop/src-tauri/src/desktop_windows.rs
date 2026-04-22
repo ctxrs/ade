@@ -1,6 +1,9 @@
 use super::*;
 
-fn desktop_startup_initialization_script(window_label: &str, start_path: &str) -> String {
+pub(super) fn desktop_startup_initialization_script(
+    window_label: &str,
+    start_path: &str,
+) -> String {
     let window_created_at_ms = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
@@ -12,7 +15,7 @@ fn desktop_startup_initialization_script(window_label: &str, start_path: &str) -
     )
 }
 
-fn log_window_created(window_label: &str, path: &str) {
+pub(super) fn log_window_created(window_label: &str, path: &str) {
     log_desktop_startup(&format!(
         "desktop_startup: window_created label={} path={}",
         serde_json::to_string(window_label).unwrap_or_else(|_| "\"unknown\"".to_string()),
@@ -20,7 +23,7 @@ fn log_window_created(window_label: &str, path: &str) {
     ));
 }
 
-fn log_navigation_start(window_label: &str, path: &str, reason: &str) {
+pub(super) fn log_navigation_start(window_label: &str, path: &str, reason: &str) {
     log_desktop_startup(&format!(
         "desktop_startup: navigation_start label={} path={} reason={}",
         serde_json::to_string(window_label).unwrap_or_else(|_| "\"unknown\"".to_string()),
@@ -52,6 +55,55 @@ fn build_workspace_url(
     url
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct WorkspaceRouteTarget {
+    pub(super) workspace_id: String,
+    pub(super) task_id: Option<String>,
+    pub(super) session_id: Option<String>,
+}
+
+pub(super) fn workspace_registry_parse_target_route(route: &str) -> Result<WorkspaceRouteTarget> {
+    let parsed = Url::parse(&format!("https://ctx.invalid{}", route.trim()))
+        .with_context(|| format!("parsing workbench recovery route '{route}'"))?;
+    let mut segments = parsed
+        .path_segments()
+        .ok_or_else(|| anyhow!("missing path segments"))?;
+    let Some(root) = segments.next() else {
+        anyhow::bail!("missing workbench route root");
+    };
+    if root != "workspaces" {
+        anyhow::bail!("unsupported workbench route root '{root}'");
+    }
+    let Some(workspace_id) = segments
+        .next()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        anyhow::bail!("missing workspace id");
+    };
+    let mut task_id = None;
+    let mut session_id = None;
+    for (key, value) in parsed.query_pairs() {
+        match key.as_ref() {
+            "task" if !value.trim().is_empty() => task_id = Some(value.to_string()),
+            "session" if !value.trim().is_empty() => session_id = Some(value.to_string()),
+            _ => {}
+        }
+    }
+    Ok(WorkspaceRouteTarget {
+        workspace_id: workspace_id.to_string(),
+        task_id,
+        session_id,
+    })
+}
+
+fn workspace_target_for_main_route(route: &str) -> Result<Option<WorkspaceRouteTarget>> {
+    if !route.trim().starts_with("/workspaces/") {
+        return Ok(None);
+    }
+    workspace_registry_parse_target_route(route).map(Some)
+}
+
 fn navigate_window_to_workspace(
     window: &tauri::WebviewWindow,
     window_label: &str,
@@ -62,6 +114,7 @@ fn navigate_window_to_workspace(
 ) {
     let url = build_workspace_url(workspace_id, task_id, session_id);
     log_navigation_start(window_label, &url, reason);
+    record_window_route(&window.app_handle(), window_label, &url);
     let js = format!(
         "window.location.href = {};",
         serde_json::to_string(&url).unwrap_or_else(|_| "\"/\"".to_string())
@@ -139,15 +192,32 @@ pub(super) fn open_workspace_target_in_new_window(
     task_id: Option<&str>,
     session_id: Option<&str>,
 ) -> Result<()> {
+    let label = format!("workbench:{}", uuid::Uuid::new_v4());
+    open_workspace_target_in_window_with_label(
+        app,
+        registry,
+        &label,
+        workspace_id,
+        task_id,
+        session_id,
+    )
+}
+
+pub(super) fn open_workspace_target_in_window_with_label(
+    app: &tauri::AppHandle,
+    registry: &WorkspaceWindowRegistry,
+    label: &str,
+    workspace_id: &str,
+    task_id: Option<&str>,
+    session_id: Option<&str>,
+) -> Result<()> {
     let workspace_id = workspace_id.trim();
     if workspace_id.is_empty() {
         anyhow::bail!("workspace_id is required");
     }
-
-    let label = format!("workbench:{}", uuid::Uuid::new_v4());
     let url = build_workspace_url(workspace_id, task_id, session_id);
     let init_script = desktop_startup_initialization_script(&label, &url);
-    let builder = tauri::WebviewWindowBuilder::new(app, &label, tauri::WebviewUrl::App(url.into()))
+    let builder = tauri::WebviewWindowBuilder::new(app, label, tauri::WebviewUrl::App(url.into()))
         .title("")
         .inner_size(1200.0, 900.0)
         .initialization_script(&init_script);
@@ -157,6 +227,7 @@ pub(super) fn open_workspace_target_in_new_window(
     let path = build_workspace_url(workspace_id, task_id, session_id);
     log_window_created(&label, &path);
     log_navigation_start(&label, &path, "new_window");
+    register_window_for_recovery(app, &label, &path);
     #[cfg(target_os = "macos")]
     {
         let _ = install_macos_settings_button(app, &window);
@@ -210,16 +281,26 @@ pub(super) fn focus_or_open_workspace_target(
 
 pub(super) fn open_launcher_window(app: &tauri::AppHandle) -> Result<()> {
     let label = format!("launcher:{}", uuid::Uuid::new_v4());
-    let init_script = desktop_startup_initialization_script(&label, "/");
-    let builder = tauri::WebviewWindowBuilder::new(app, &label, tauri::WebviewUrl::App("/".into()))
-        .title("")
-        .inner_size(1200.0, 900.0)
-        .initialization_script(&init_script);
+    open_launcher_window_with_label(app, &label, "/")
+}
+
+pub(super) fn open_launcher_window_with_label(
+    app: &tauri::AppHandle,
+    label: &str,
+    start_path: &str,
+) -> Result<()> {
+    let init_script = desktop_startup_initialization_script(label, start_path);
+    let builder =
+        tauri::WebviewWindowBuilder::new(app, label, tauri::WebviewUrl::App(start_path.into()))
+            .title("")
+            .inner_size(1200.0, 900.0)
+            .initialization_script(&init_script);
     let window = apply_workbench_titlebar(builder)
         .build()
         .context("creating launcher window failed")?;
-    log_window_created(&label, "/");
-    log_navigation_start(&label, "/", "launcher_window");
+    log_window_created(label, start_path);
+    log_navigation_start(label, start_path, "launcher_window");
+    register_window_for_recovery(app, label, start_path);
     #[cfg(target_os = "macos")]
     {
         let _ = install_macos_settings_button(app, &window);
@@ -471,18 +552,23 @@ pub(super) fn apply_workbench_titlebar<'a, R: tauri::Runtime, M: tauri::Manager<
 }
 
 pub(super) fn open_main_window(app: &tauri::AppHandle) -> Result<()> {
-    if app.get_webview_window("main").is_some() {
-        return Ok(());
-    }
     let start_path = match std::env::var("CTX_DESKTOP_START_PATH") {
         Ok(v) if v.trim().starts_with('/') => v.trim().to_string(),
         _ => "/".to_string(),
     };
-    let init_script = desktop_startup_initialization_script("main", &start_path);
+    open_main_window_at_route(app, &start_path)
+}
+
+pub(super) fn open_main_window_at_route(app: &tauri::AppHandle, start_path: &str) -> Result<()> {
+    if app.get_webview_window("main").is_some() {
+        return Ok(());
+    }
+    let main_workspace_target = workspace_target_for_main_route(start_path)?;
+    let init_script = desktop_startup_initialization_script("main", start_path);
     let mut builder = tauri::WebviewWindowBuilder::new(
         app,
         "main",
-        tauri::WebviewUrl::App(start_path.clone().into()),
+        tauri::WebviewUrl::App(start_path.to_string().into()),
     )
     .title("")
     .initialization_script(&init_script);
@@ -496,8 +582,14 @@ pub(super) fn open_main_window(app: &tauri::AppHandle) -> Result<()> {
     }
     let builder = apply_workbench_titlebar(builder);
     let window = builder.build().context("creating window")?;
-    log_window_created("main", &start_path);
-    log_navigation_start("main", &start_path, "main_window");
+    log_window_created("main", start_path);
+    log_navigation_start("main", start_path, "main_window");
+    register_window_for_recovery(app, "main", start_path);
+    if let Some(target) = main_workspace_target {
+        let registry = app.state::<WorkspaceWindowRegistry>();
+        registry.register("main", &target.workspace_id);
+        registry.record_recent_workspace(&target.workspace_id, None);
+    }
     #[cfg(target_os = "macos")]
     {
         let _ = install_macos_settings_button(app, &window);
@@ -530,5 +622,24 @@ mod tests {
         assert!(script.contains("\"/workspaces/ws-1\""));
         assert!(script.contains("windowLabel"));
         assert!(script.contains("startPath"));
+    }
+
+    #[test]
+    fn workspace_target_for_main_route_extracts_workspace_routes() {
+        let target =
+            workspace_target_for_main_route("/workspaces/ws-1?task=task-1&session=session-1")
+                .expect("workspace target")
+                .expect("workspace route");
+        assert_eq!(target.workspace_id, "ws-1");
+        assert_eq!(target.task_id.as_deref(), Some("task-1"));
+        assert_eq!(target.session_id.as_deref(), Some("session-1"));
+    }
+
+    #[test]
+    fn workspace_target_for_main_route_ignores_non_workspace_routes() {
+        assert_eq!(
+            workspace_target_for_main_route("/settings").expect("non-workspace route"),
+            None
+        );
     }
 }

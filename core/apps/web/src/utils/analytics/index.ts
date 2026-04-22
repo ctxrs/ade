@@ -42,6 +42,7 @@ export {
   trackRuntimeErrorObserved,
   trackSessionLoadFatalObserved,
   trackApiErrorObserved,
+  trackDesktopWebviewRecoveryObserved,
   trackForegroundFreshnessSlaMissed,
   trackForegroundBacklogObserved,
   trackForegroundGapRecoveryObserved,

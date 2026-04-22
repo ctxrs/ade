@@ -16,7 +16,7 @@ const UI_META_CREATE_SQL: &str =
 const UI_STATE_RESET_NOTICE_KEY: &str = "ui_state_reset_notice";
 
 impl DesktopStorage {
-    async fn pool(&self, app: &tauri::AppHandle) -> Result<&SqlitePool> {
+    pub(super) async fn pool(&self, app: &tauri::AppHandle) -> Result<&SqlitePool> {
         self.pool
             .get_or_try_init(|| async {
                 let path = desktop_storage_path(app)?;

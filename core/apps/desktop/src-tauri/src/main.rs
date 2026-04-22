@@ -59,6 +59,7 @@ mod desktop_runtime;
 mod desktop_ssh;
 mod desktop_storage;
 mod desktop_updater;
+mod desktop_webview_recovery;
 mod desktop_windows;
 mod linux_sandbox;
 use desktop_attention::*;
@@ -77,6 +78,7 @@ use desktop_runtime::*;
 use desktop_ssh::*;
 use desktop_storage::*;
 use desktop_updater::*;
+use desktop_webview_recovery::*;
 use desktop_windows::*;
 use linux_sandbox::*;
 
@@ -93,7 +95,8 @@ fn main() {
         .manage(DesktopAttentionRegistry::default())
         .manage(DesktopNotificationAutomationState::default())
         .manage(DesktopMenuStateCache::default())
-        .manage(DesktopStorage::default());
+        .manage(DesktopStorage::default())
+        .manage(DesktopWebviewRecoveryController::default());
 
     // EXCEPTION: ship the minimal automation runtime in the real desktop binary so
     // release CI can drive the exact app users install. Broader automation-only
@@ -171,6 +174,10 @@ fn main() {
             desktop_storage_get,
             desktop_storage_batch,
             desktop_storage_consume_notice,
+            desktop_webview_recovery_heartbeat,
+            desktop_webview_recovery_consume_incidents,
+            desktop_trigger_webview_recovery_fault,
+            desktop_get_webview_recovery_automation_snapshot,
             desktop_daemon_request,
             desktop_start_codex_login_relay,
             desktop_get_app_update_state,
@@ -181,6 +188,7 @@ fn main() {
         ])
         .setup(|app| {
             enforce_desktop_parity_bundle_preflight(&app.handle())?;
+            setup_webview_recovery(&app.handle());
             open_main_window(&app.handle())?;
             install_macos_dock_menu_bridge(app.handle().clone());
             schedule_local_daemon_prewarm(app.handle().clone());
@@ -194,6 +202,8 @@ fn main() {
             if let tauri::WindowEvent::Focused(is_focused) = event {
                 if *is_focused {
                     let app_handle = window.app_handle();
+                    let recovery = app_handle.state::<DesktopWebviewRecoveryController>();
+                    recovery.rearm_heartbeat_detection(window.label());
                     mark_menu_state_window_focused(&app_handle, window.label());
                     if let Err(err) =
                         apply_cached_menu_state_for_window(&app_handle, window.label())
@@ -208,6 +218,7 @@ fn main() {
             }
             if matches!(event, tauri::WindowEvent::Destroyed) {
                 let app_handle = window.app_handle();
+                note_window_destroyed(&app_handle, window.label());
                 clear_cached_menu_state_for_window(&app_handle, window.label());
                 let registry = window.state::<WorkspaceWindowRegistry>();
                 registry.unregister_window(window.label());
@@ -222,6 +233,15 @@ fn main() {
                 }
             }
         });
+    builder = builder.on_webview_event(|webview, event| {
+        if matches!(event, tauri::WebviewEvent::WebContentProcessTerminated) {
+            let app_handle = webview.app_handle().clone();
+            let window_label = webview.label().to_string();
+            tauri::async_runtime::spawn(async move {
+                let _ = handle_native_process_termination(&app_handle, &window_label).await;
+            });
+        }
+    });
 
     #[cfg(feature = "stt")]
     {
@@ -767,19 +787,29 @@ fn desktop_open_launcher_in_new_window(app: tauri::AppHandle) -> Result<(), Stri
 #[tauri::command]
 fn desktop_open_workspace_setup_in_new_window(app: tauri::AppHandle) -> Result<(), String> {
     let label = format!("workspace-setup:{}", uuid::Uuid::new_v4());
-    let builder = tauri::WebviewWindowBuilder::new(
-        &app,
-        &label,
-        tauri::WebviewUrl::App("/workspace-setup".into()),
-    )
-    .title("ctx")
-    .inner_size(1200.0, 900.0);
+    open_workspace_setup_window_with_label(&app, &label, "/workspace-setup").map_err(to_err)
+}
+
+pub(crate) fn open_workspace_setup_window_with_label(
+    app: &tauri::AppHandle,
+    label: &str,
+    route: &str,
+) -> Result<()> {
+    let init_script = desktop_startup_initialization_script(label, route);
+    let builder =
+        tauri::WebviewWindowBuilder::new(app, label, tauri::WebviewUrl::App(route.into()))
+            .title("ctx")
+            .inner_size(1200.0, 900.0)
+            .initialization_script(&init_script);
     let window = apply_workbench_titlebar(builder)
         .build()
-        .map_err(|e| format!("creating window failed: {e}"))?;
+        .context("creating workspace setup window failed")?;
+    log_window_created(label, route);
+    log_navigation_start(label, route, "workspace_setup_window");
+    register_window_for_recovery(app, label, route);
     #[cfg(target_os = "macos")]
     {
-        let _ = install_macos_settings_button(&app, &window);
+        let _ = install_macos_settings_button(app, &window);
     }
     let _ = window.show();
     let _ = window.set_focus();
