@@ -6,7 +6,7 @@ MATRIX_JSON="${PROVIDER_MATRIX_JSON:-$ROOT/core/crates/ctx-provider-accounts/src
 OUT_DIR=""
 OS_OVERRIDE=""
 ARCH_OVERRIDE=""
-PROVIDERS_RAW="${CTX_PROVIDER_DEPS_BUILD_PROVIDERS:-acp-crp-bridge,amp,auggie,claude-cli,claude-crp,cline,codex,copilot,cursor,droid,gemini,goose,kimi,mistral,opencode,openhands,pi,qwen}"
+PROVIDERS_RAW="${CTX_PROVIDER_DEPS_BUILD_PROVIDERS:-acp-crp-bridge,amp,auggie,claude-cli,claude-crp,cline,codex-cli,codex,copilot,cursor,droid,gemini,goose,kimi,mistral,opencode,openhands,pi,qwen}"
 
 usage() {
   cat <<'USAGE'
@@ -1086,7 +1086,7 @@ if [[ -n "${providers[*]-}" ]]; then
       kimi|mistral|openhands)
         stage_matrix_python_provider "$provider"
         ;;
-      goose|opencode)
+      codex-cli|goose|opencode)
         stage_matrix_archive_provider "$provider" "$version"
         ;;
       codex)
