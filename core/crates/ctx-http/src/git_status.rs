@@ -167,9 +167,34 @@ async fn load_diff_file_count(
     worktree: &Worktree,
     base_commit_sha: &str,
 ) -> Result<i64> {
-    Ok(load_diff_path_states(state, worktree, base_commit_sha)
-        .await?
-        .len() as i64)
+    let (entries, untracked) = load_diff_path_inputs(state, worktree, base_commit_sha).await?;
+    count_diff_paths(entries, untracked)
+}
+
+fn count_diff_paths(
+    entries: Vec<(String, String, Option<String>)>,
+    untracked: Vec<String>,
+) -> Result<i64> {
+    let mut seen = HashSet::new();
+    for (status, path, _) in entries {
+        let path = path.trim();
+        if path.is_empty() {
+            continue;
+        }
+        if !seen.insert(path.to_string()) {
+            continue;
+        }
+        if status.chars().next().is_none() {
+            anyhow::bail!("vcs diff returned an empty status for {path}");
+        }
+    }
+    for path in untracked {
+        let path = path.trim();
+        if !path.is_empty() {
+            seen.insert(path.to_string());
+        }
+    }
+    Ok(seen.len() as i64)
 }
 
 fn build_diff_path_states(
@@ -205,11 +230,11 @@ fn build_diff_path_states(
     Ok(out)
 }
 
-async fn load_diff_path_states(
+async fn load_diff_path_inputs(
     state: &Arc<AppState>,
     worktree: &Worktree,
     base_commit_sha: &str,
-) -> Result<Vec<(String, Option<String>, String)>> {
+) -> Result<(Vec<(String, String, Option<String>)>, Vec<String>)> {
     let data_plane = resolve_worktree_data_plane(state, worktree).await?;
     let root = data_plane.live_worktree_root.as_path();
     let entries: Vec<(String, String, Option<String>)> =
@@ -230,6 +255,15 @@ async fn load_diff_path_states(
         let driver = vcs_driver_for_worktree(worktree);
         driver.list_untracked(root).await?
     };
+    Ok((entries, untracked))
+}
+
+async fn load_diff_path_states(
+    state: &Arc<AppState>,
+    worktree: &Worktree,
+    base_commit_sha: &str,
+) -> Result<Vec<(String, Option<String>, String)>> {
+    let (entries, untracked) = load_diff_path_inputs(state, worktree, base_commit_sha).await?;
     build_diff_path_states(entries, untracked)
 }
 
@@ -980,7 +1014,7 @@ pub async fn run_git_status_watcher(state: Arc<AppState>, worktree: Worktree) ->
 
 #[cfg(test)]
 mod tests {
-    use super::build_diff_path_states;
+    use super::{build_diff_path_states, count_diff_paths};
     use anyhow::Result;
 
     #[test]
@@ -994,6 +1028,17 @@ mod tests {
             out,
             vec![("src/example.rs".to_string(), None, "D".to_string())]
         );
+        Ok(())
+    }
+
+    #[test]
+    fn count_diff_paths_deduplicates_untracked_paths_already_in_diff() -> Result<()> {
+        let count = count_diff_paths(
+            vec![("D".to_string(), "src/example.rs".to_string(), None)],
+            vec!["src/example.rs".to_string()],
+        )?;
+
+        assert_eq!(count, 1);
         Ok(())
     }
 }
