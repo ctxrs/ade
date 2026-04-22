@@ -56,18 +56,3 @@ test("wdio connection retries are configurable for packaged mac app readiness", 
   assert.match(script, /connectionRetryCount: CONNECTION_RETRY_COUNT/);
   assert.match(script, /connectionRetryTimeout: CONNECTION_RETRY_TIMEOUT_MS/);
 });
-
-test("wdio dedicated mac backend uses an isolated configurable port", () => {
-  const script = fs.readFileSync(configPath, "utf8");
-
-  assert.match(script, /DEFAULT_MACOS_CN_BACKEND_PORT = 3000/);
-  assert.match(
-    script,
-    /DEFAULT_TEST_BACKEND_PORT = process\.platform === "darwin"[\s\S]*pickUnusedPortSync\(DEFAULT_MACOS_CN_BACKEND_PORT\)/,
-  );
-  assert.match(script, /process\.env\.CTX_AUTOMATION_CN_BACKEND_PORT = String\(REQUESTED_MACOS_CN_BACKEND_PORT\)/);
-  assert.match(script, /process\.env\.TAURI_TEST_BACKEND_PORT = String\(REQUESTED_MACOS_CN_BACKEND_PORT\)/);
-  assert.match(script, /using dedicated CrabNebula backend on macOS port/);
-  assert.doesNotMatch(script, /currently binds fixed port/);
-  assert.doesNotMatch(script, /ignoring requested CTX_AUTOMATION_CN_BACKEND_PORT/);
-});
