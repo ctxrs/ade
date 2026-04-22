@@ -125,6 +125,23 @@ test("buildCtxCacheEnv sets shared cache defaults and keeps verify quick on the 
   assert.equal(env.SCCACHE_PATH, undefined);
 });
 
+test("buildCtxCacheEnv derives a per-shell session scope when none is provided", () => {
+  const cwd = path.resolve(__dirname, "..", "..");
+  const volatileRoot = path.join(os.tmpdir(), "ctx-cache-roots-derived-session");
+  const { env } = buildCtxCacheEnv({
+    cwd,
+    env: {
+      CTX_VOLATILE_ROOT: volatileRoot,
+    },
+  });
+
+  assert.match(String(env.CTX_RUST_CACHE_SCOPE_KEY), /^ppid-\d+$/);
+  assert.equal(
+    env.CARGO_TARGET_DIR,
+    path.join(volatileRoot, "targets", "ctx-monorepo", env.CTX_RUST_CACHE_SCOPE_KEY),
+  );
+});
+
 test("buildCtxCacheEnv normalizes sccache inputs when sccache is active", () => {
   const cwd = path.resolve(__dirname, "..", "..");
   const volatileRoot = path.join(os.tmpdir(), "ctx-cache-roots-sccache");

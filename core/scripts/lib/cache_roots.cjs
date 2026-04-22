@@ -394,16 +394,24 @@ function buildCtxCacheEnv({
   mode = "workspace",
   mkdir = false,
 } = {}) {
-  const useVolatileCargoHome = parseEnabledFlag(env.CTX_USE_VOLATILE_CARGO_HOME);
+  const baseEnv = { ...env };
+  if (
+    !trimValue(baseEnv.CTX_CACHE_SCOPE_KEY)
+    && !trimValue(baseEnv.CTX_SESSION_ID)
+    && !trimValue(baseEnv.CODEX_THREAD_ID)
+  ) {
+    baseEnv.CTX_SESSION_ID = `ppid-${process.ppid}`;
+  }
+  const useVolatileCargoHome = parseEnabledFlag(baseEnv.CTX_USE_VOLATILE_CARGO_HOME);
 
   function buildForLayout(layout) {
-    const resolvedEnv = { ...env };
+    const resolvedEnv = { ...baseEnv };
     const cargoTargetDir =
       mode === "verify-quick" ? layout.verifyCargoTargetDir : layout.workspaceCargoTargetDir;
-    const explicitVolatileRoot = trimValue(env.CTX_VOLATILE_ROOT)
+    const explicitVolatileRoot = trimValue(baseEnv.CTX_VOLATILE_ROOT)
       ? layout.volatileRoot
       : "";
-    const disableSccache = parseEnabledFlag(env.CTX_DISABLE_SCCACHE);
+    const disableSccache = parseEnabledFlag(baseEnv.CTX_DISABLE_SCCACHE);
 
     setDefaultEnvValue(resolvedEnv, "CTX_EXTERNAL_CACHE_ROOT", layout.externalCacheRoot);
     setDefaultEnvValue(resolvedEnv, "CTX_INTERNAL_VOLATILE_ROOT", layout.internalVolatileRoot);
@@ -494,40 +502,40 @@ function buildCtxCacheEnv({
       });
     }
 
-    const turboApi = trimValue(env.TURBO_API);
-    const turboToken = trimValue(env.TURBO_TOKEN);
-    const turboTeam = trimValue(env.TURBO_TEAM);
+    const turboApi = trimValue(baseEnv.TURBO_API);
+    const turboToken = trimValue(baseEnv.TURBO_TOKEN);
+    const turboTeam = trimValue(baseEnv.TURBO_TEAM);
     if (!trimValue(resolvedEnv.TURBO_CACHE_MODE) && turboApi && turboToken && turboTeam) {
       resolvedEnv.TURBO_CACHE_MODE = "local:rw,remote:rw";
     }
 
     const remoteSccacheBucket =
-      trimValue(env.CTX_SCCACHE_R2_BUCKET) || trimValue(env.SCCACHE_BUCKET);
-    const remoteSccacheAccountId = trimValue(env.CTX_SCCACHE_R2_ACCOUNT_ID);
+      trimValue(baseEnv.CTX_SCCACHE_R2_BUCKET) || trimValue(baseEnv.SCCACHE_BUCKET);
+    const remoteSccacheAccountId = trimValue(baseEnv.CTX_SCCACHE_R2_ACCOUNT_ID);
     const remoteSccacheEndpoint =
-      trimValue(env.CTX_SCCACHE_R2_ENDPOINT)
-      || trimValue(env.SCCACHE_ENDPOINT)
-      || buildR2Endpoint(remoteSccacheAccountId, env.CTX_SCCACHE_R2_JURISDICTION);
+      trimValue(baseEnv.CTX_SCCACHE_R2_ENDPOINT)
+      || trimValue(baseEnv.SCCACHE_ENDPOINT)
+      || buildR2Endpoint(remoteSccacheAccountId, baseEnv.CTX_SCCACHE_R2_JURISDICTION);
     const remoteSccacheKeyPrefix =
-      trimValue(env.CTX_SCCACHE_R2_KEY_PREFIX)
-      || trimValue(env.SCCACHE_S3_KEY_PREFIX)
+      trimValue(baseEnv.CTX_SCCACHE_R2_KEY_PREFIX)
+      || trimValue(baseEnv.SCCACHE_S3_KEY_PREFIX)
       || `sccache/${layout.repoCacheSlug}`;
-    const remoteSccacheAccessKeyId = trimValue(env.CTX_SCCACHE_R2_ACCESS_KEY_ID);
-    const remoteSccacheSecretAccessKey = trimValue(env.CTX_SCCACHE_R2_SECRET_ACCESS_KEY);
-    const remoteSccacheSessionToken = trimValue(env.CTX_SCCACHE_R2_SESSION_TOKEN);
+    const remoteSccacheAccessKeyId = trimValue(baseEnv.CTX_SCCACHE_R2_ACCESS_KEY_ID);
+    const remoteSccacheSecretAccessKey = trimValue(baseEnv.CTX_SCCACHE_R2_SECRET_ACCESS_KEY);
+    const remoteSccacheSessionToken = trimValue(baseEnv.CTX_SCCACHE_R2_SESSION_TOKEN);
     if (remoteSccacheBucket) {
       setDefaultEnvValueIfPresent(resolvedEnv, "SCCACHE_BUCKET", remoteSccacheBucket);
       setDefaultEnvValueIfPresent(
         resolvedEnv,
         "SCCACHE_REGION",
-        trimValue(env.CTX_SCCACHE_R2_REGION) || trimValue(env.SCCACHE_REGION) || "auto",
+        trimValue(baseEnv.CTX_SCCACHE_R2_REGION) || trimValue(baseEnv.SCCACHE_REGION) || "auto",
       );
       setDefaultEnvValueIfPresent(resolvedEnv, "SCCACHE_ENDPOINT", remoteSccacheEndpoint);
       setDefaultEnvValueIfPresent(resolvedEnv, "SCCACHE_S3_KEY_PREFIX", remoteSccacheKeyPrefix);
       setDefaultEnvValueIfPresent(
         resolvedEnv,
         "SCCACHE_S3_USE_SSL",
-        trimValue(env.SCCACHE_S3_USE_SSL) || "true",
+        trimValue(baseEnv.SCCACHE_S3_USE_SSL) || "true",
       );
       if (remoteSccacheAccessKeyId) {
         resolvedEnv.AWS_ACCESS_KEY_ID = remoteSccacheAccessKeyId;
@@ -535,7 +543,7 @@ function buildCtxCacheEnv({
         setDefaultEnvValueIfPresent(
           resolvedEnv,
           "AWS_ACCESS_KEY_ID",
-          trimValue(env.AWS_ACCESS_KEY_ID),
+          trimValue(baseEnv.AWS_ACCESS_KEY_ID),
         );
       }
       if (remoteSccacheSecretAccessKey) {
@@ -544,7 +552,7 @@ function buildCtxCacheEnv({
         setDefaultEnvValueIfPresent(
           resolvedEnv,
           "AWS_SECRET_ACCESS_KEY",
-          trimValue(env.AWS_SECRET_ACCESS_KEY),
+          trimValue(baseEnv.AWS_SECRET_ACCESS_KEY),
         );
       }
       if (remoteSccacheSessionToken) {
@@ -553,7 +561,7 @@ function buildCtxCacheEnv({
         setDefaultEnvValueIfPresent(
           resolvedEnv,
           "AWS_SESSION_TOKEN",
-          trimValue(env.AWS_SESSION_TOKEN),
+          trimValue(baseEnv.AWS_SESSION_TOKEN),
         );
       }
     }
@@ -620,7 +628,7 @@ function buildCtxCacheEnv({
     };
   }
 
-  const initialLayout = resolveCtxCacheLayout({ cwd, env });
+  const initialLayout = resolveCtxCacheLayout({ cwd, env: baseEnv });
   let result = buildForLayout(initialLayout);
 
   if (mkdir) {
@@ -628,7 +636,7 @@ function buildCtxCacheEnv({
       ensureCacheLayout(result.layout);
       fs.mkdirSync(result.env.CARGO_TARGET_DIR, { recursive: true });
     } catch (error) {
-      const hasExplicitVolatileRoot = Boolean(trimValue(env.CTX_VOLATILE_ROOT));
+      const hasExplicitVolatileRoot = Boolean(trimValue(baseEnv.CTX_VOLATILE_ROOT));
       const shouldFallback =
         !hasExplicitVolatileRoot && result.layout.volatileRootMode === "preferred-external";
       if (!shouldFallback) {
@@ -638,7 +646,7 @@ function buildCtxCacheEnv({
         ...resolveCtxCacheLayout({
           cwd,
           env: {
-            ...env,
+            ...baseEnv,
             CTX_VOLATILE_ROOT: result.layout.internalVolatileRoot,
           },
         }),

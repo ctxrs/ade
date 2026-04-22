@@ -693,7 +693,7 @@ local_codex_crp_binary_path() {
 	  require_cmd cargo
 	  (
 	    cd "$CODEX_CRP_WORKSPACE"
-	    env CARGO_TARGET_DIR="$target_dir" "${cargo_profile_env[@]}" cargo build --manifest-path "$CODEX_CRP_WORKSPACE/Cargo.toml" -p codex-crp --target "$rust_target" "${profile_args[@]}"
+	    env CARGO_TARGET_DIR="$target_dir" "${cargo_profile_env[@]}" node "$ROOT/core/scripts/run_with_ctx_cache_env.cjs" --mode workspace --cwd "$CODEX_CRP_WORKSPACE" -- cargo build --manifest-path "$CODEX_CRP_WORKSPACE/Cargo.toml" -p codex-crp --target "$rust_target" "${profile_args[@]}"
 	  )
 	fi
 
@@ -832,7 +832,7 @@ if ! is_falsy "$LOCAL_ADAPTER_MODE"; then
       dir="$(local_adapter_dir "$id")"
       if [[ -n "$dir" && -d "$LOCAL_ADAPTERS_DIR/$dir" ]]; then
         require_cmd cargo
-        (cd "$LOCAL_ADAPTERS_DIR/$dir" && cargo build --release --target "$rust_target")
+        node "$ROOT/core/scripts/run_with_ctx_cache_env.cjs" --mode workspace --cwd "$LOCAL_ADAPTERS_DIR/$dir" -- cargo build --release --target "$rust_target"
         src="$(local_adapter_binary_path "$id" || true)"
       fi
     fi

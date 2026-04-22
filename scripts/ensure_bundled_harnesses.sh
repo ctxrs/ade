@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+export CTX_SESSION_ID="${CTX_SESSION_ID:-bundled-harnesses-${$}}"
 
 log() {
   printf '%s\n' "$*" >&2
@@ -639,9 +640,9 @@ require_bridge_binary() {
       else
         require_cmd cargo
         if [[ "${CTX_BUNDLE_BRIDGE_FORCE_TARGET:-0}" != "1" ]] && [[ "$host_os" == "$os" ]] && [[ "$host_arch" == "$arch" ]]; then
-          (cd "$BRIDGE_DIR" && cargo build --release)
+          node "$ROOT/core/scripts/run_with_ctx_cache_env.cjs" --mode workspace --cwd "$BRIDGE_DIR" -- cargo build --release
         else
-          (cd "$BRIDGE_DIR" && cargo build --release --target "$rust_target")
+          node "$ROOT/core/scripts/run_with_ctx_cache_env.cjs" --mode workspace --cwd "$BRIDGE_DIR" -- cargo build --release --target "$rust_target"
         fi
       fi
     fi
@@ -919,7 +920,7 @@ build_local_adapters() {
       continue
     fi
     require_cmd cargo
-    (cd "$LOCAL_ADAPTERS_DIR/$dir" && cargo build --release --target "$rust_target")
+    node "$ROOT/core/scripts/run_with_ctx_cache_env.cjs" --mode workspace --cwd "$LOCAL_ADAPTERS_DIR/$dir" -- cargo build --release --target "$rust_target"
   done
 
 }

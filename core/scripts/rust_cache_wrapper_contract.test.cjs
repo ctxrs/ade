@@ -528,6 +528,22 @@ test("repo-owned automation rust callers use ctx cache wrappers instead of naked
   }
 });
 
+test("bundled harness helper scripts wrap host-side rust builds and leave container builds explicit", () => {
+  const bundleScript = read("scripts/ensure_bundled_harnesses.sh");
+  const providerHelper = read("scripts/lib/bundled_harnesses_providers.sh");
+
+  assert.match(bundleScript, /CTX_SESSION_ID:-bundled-harnesses-/);
+  assert.match(bundleScript, /run_with_ctx_cache_env\.cjs/);
+  assert.doesNotMatch(bundleScript, /\(cd "\$BRIDGE_DIR" && cargo build --release(?: --target "\$rust_target")?\)/);
+  assert.doesNotMatch(bundleScript, /\(cd "\$LOCAL_ADAPTERS_DIR\/\$dir" && cargo build --release --target "\$rust_target"\)/);
+  assert.match(bundleScript, /cargo \+stable build --release --target '\$rust_target'/);
+
+  assert.match(providerHelper, /run_with_ctx_cache_env\.cjs/);
+  assert.doesNotMatch(providerHelper, /env CARGO_TARGET_DIR="\$target_dir" "\$\{cargo_profile_env\[@\]\}" cargo build/);
+  assert.doesNotMatch(providerHelper, /\(cd "\$LOCAL_ADAPTERS_DIR\/\$dir" && cargo build --release --target "\$rust_target"\)/);
+  assert.match(providerHelper, /\$\{cargo_profile_env\[\*\]\} cargo \+stable build/);
+});
+
 test("live automation and agent-facing docs do not introduce unsafe raw Cargo build paths", () => {
   assert.deepEqual(unsafeCargoFindings(), []);
 });
