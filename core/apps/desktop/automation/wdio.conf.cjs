@@ -97,14 +97,38 @@ const DEFAULT_DRIVER_PORT = process.platform === "darwin"
   ? pickUnusedPortSync(4444)
   : 4444;
 const TAURI_DRIVER_PORT = parsePort(process.env.TAURI_DRIVER_PORT, DEFAULT_DRIVER_PORT);
-const TEST_BACKEND_PORT = parsePort(process.env.TAURI_TEST_BACKEND_PORT, 3000);
-const FIXED_MACOS_CN_BACKEND_PORT = 3000;
-const REQUESTED_MACOS_CN_BACKEND_PORT = parsePort(
-  process.env.CTX_AUTOMATION_CN_BACKEND_PORT,
-  FIXED_MACOS_CN_BACKEND_PORT,
-);
+const SHARED_CN_BACKEND = resolveBoolishFlag(
+  process.env.CTX_AUTOMATION_CN_SHARED_BACKEND,
+  true,
+  "CTX_AUTOMATION_CN_SHARED_BACKEND",
+) && process.platform === "darwin";
+const DEFAULT_MACOS_CN_BACKEND_PORT = 3000;
+const HAS_EXPLICIT_TEST_BACKEND_PORT =
+  String(process.env.TAURI_TEST_BACKEND_PORT || "").trim().length > 0;
 const HAS_EXPLICIT_MACOS_CN_BACKEND_PORT =
   String(process.env.CTX_AUTOMATION_CN_BACKEND_PORT || "").trim().length > 0;
+const DEFAULT_TEST_BACKEND_PORT = process.platform === "darwin"
+  && !SHARED_CN_BACKEND
+  && !HAS_EXPLICIT_TEST_BACKEND_PORT
+  && !HAS_EXPLICIT_MACOS_CN_BACKEND_PORT
+  ? pickUnusedPortSync(DEFAULT_MACOS_CN_BACKEND_PORT)
+  : DEFAULT_MACOS_CN_BACKEND_PORT;
+const TEST_BACKEND_PORT = parsePort(
+  process.env.TAURI_TEST_BACKEND_PORT,
+  DEFAULT_TEST_BACKEND_PORT,
+);
+const REQUESTED_MACOS_CN_BACKEND_PORT = parsePort(
+  process.env.CTX_AUTOMATION_CN_BACKEND_PORT,
+  TEST_BACKEND_PORT,
+);
+if (process.platform === "darwin" && !SHARED_CN_BACKEND) {
+  if (!HAS_EXPLICIT_MACOS_CN_BACKEND_PORT) {
+    process.env.CTX_AUTOMATION_CN_BACKEND_PORT = String(REQUESTED_MACOS_CN_BACKEND_PORT);
+  }
+  if (!HAS_EXPLICIT_TEST_BACKEND_PORT) {
+    process.env.TAURI_TEST_BACKEND_PORT = String(REQUESTED_MACOS_CN_BACKEND_PORT);
+  }
+}
 if (!String(process.env.TAURI_DRIVER_PORT || "").trim()) {
   // WDIO forks workers that reload this config; pin the chosen dynamic port for all children.
   process.env.TAURI_DRIVER_PORT = String(TAURI_DRIVER_PORT);
@@ -247,11 +271,6 @@ const ALLOW_CN_PORT_REUSE = resolveBoolishFlag(
   false,
   "CTX_AUTOMATION_CN_ALLOW_PORT_REUSE",
 );
-const SHARED_CN_BACKEND = resolveBoolishFlag(
-  process.env.CTX_AUTOMATION_CN_SHARED_BACKEND,
-  true,
-  "CTX_AUTOMATION_CN_SHARED_BACKEND",
-) && process.platform === "darwin";
 const STOP_SHARED_CN_BACKEND_WHEN_IDLE = resolveBoolishFlag(
   process.env.CTX_AUTOMATION_CN_STOP_SHARED_BACKEND_WHEN_IDLE,
   false,
@@ -1750,8 +1769,14 @@ exports.config = {
     );
     console.error(`[wdio] app path=${APP_PATH}`);
     activeTauriDriverPort = TAURI_DRIVER_PORT;
+    const requestedMacosBackendPort = HAS_EXPLICIT_MACOS_CN_BACKEND_PORT
+      ? REQUESTED_MACOS_CN_BACKEND_PORT
+      : TEST_BACKEND_PORT;
+    const backendRequestedPort = isDarwin
+      ? requestedMacosBackendPort
+      : TEST_BACKEND_PORT;
     console.error(
-      `[wdio] ports driver(requested)=${String(TAURI_DRIVER_PORT)} driver(effective)=${String(activeTauriDriverPort)} backend(requested)=${isDarwin ? String(HAS_EXPLICIT_MACOS_CN_BACKEND_PORT ? REQUESTED_MACOS_CN_BACKEND_PORT : FIXED_MACOS_CN_BACKEND_PORT) : String(TEST_BACKEND_PORT)} backend(effective)=${isDarwin ? String(FIXED_MACOS_CN_BACKEND_PORT) : String(TEST_BACKEND_PORT)}`,
+      `[wdio] ports driver(requested)=${String(TAURI_DRIVER_PORT)} driver(effective)=${String(activeTauriDriverPort)} backend(requested)=${String(backendRequestedPort)} backend(effective)=${String(backendRequestedPort)}`,
     );
     if (isDarwin && !process.env.CN_API_KEY) {
       throw new Error(
@@ -1918,23 +1943,22 @@ exports.config = {
     ensureAppExecutable();
 
     if (isDarwin) {
-      activeTestBackendPort = FIXED_MACOS_CN_BACKEND_PORT;
-      if (TEST_BACKEND_PORT !== FIXED_MACOS_CN_BACKEND_PORT) {
-        console.error(
-          `[wdio] macOS backend currently binds ${FIXED_MACOS_CN_BACKEND_PORT}; ignoring requested TAURI_TEST_BACKEND_PORT=${TEST_BACKEND_PORT}`,
-        );
-      }
+      activeTestBackendPort = requestedMacosBackendPort;
       if (
-        HAS_EXPLICIT_MACOS_CN_BACKEND_PORT
-        && REQUESTED_MACOS_CN_BACKEND_PORT !== FIXED_MACOS_CN_BACKEND_PORT
+        HAS_EXPLICIT_TEST_BACKEND_PORT
+        && HAS_EXPLICIT_MACOS_CN_BACKEND_PORT
+        && TEST_BACKEND_PORT !== activeTestBackendPort
       ) {
         console.error(
-          `[wdio] CrabNebula backend currently binds fixed port ${FIXED_MACOS_CN_BACKEND_PORT} on macOS; ignoring requested CTX_AUTOMATION_CN_BACKEND_PORT=${REQUESTED_MACOS_CN_BACKEND_PORT}`,
+          `[wdio] CTX_AUTOMATION_CN_BACKEND_PORT=${activeTestBackendPort} overrides TAURI_TEST_BACKEND_PORT=${TEST_BACKEND_PORT} for the macOS CrabNebula backend`,
         );
       }
+      process.env.CTX_AUTOMATION_CN_BACKEND_PORT = String(activeTestBackendPort);
+      process.env.TAURI_TEST_BACKEND_PORT = String(activeTestBackendPort);
+      process.env.TEST_RUNNER_BACKEND_PORT = String(activeTestBackendPort);
       if (!SHARED_CN_BACKEND) {
         console.error(
-          `[wdio] using dedicated CrabNebula backend on fixed macOS port ${activeTestBackendPort} for non-shared automation`,
+          `[wdio] using dedicated CrabNebula backend on macOS port ${activeTestBackendPort} for non-shared automation`,
         );
       }
       const backendHost = "127.0.0.1";
