@@ -70,8 +70,15 @@ function buildResolvedReleasePlan({
     release_scope: trimValue(releaseScope),
     provider_manifest: {
       artifact: trimValue(providerManifest.artifact),
+      build_number: Number.isFinite(providerManifest.buildNumber || providerManifest.build_number)
+        ? Number(providerManifest.buildNumber || providerManifest.build_number)
+        : undefined,
+      build_url: trimValue(providerManifest.buildUrl || providerManifest.build_url),
       digest_sha256: trimValue(providerManifest.digestSha256 || providerManifest.digest_sha256),
       id: trimValue(providerManifest.id),
+      required_provider_ids: normalizeStringArray(
+        providerManifest.requiredProviderIds || providerManifest.required_provider_ids,
+      ),
       source: trimValue(providerManifest.source),
       source_commit: trimValue(providerManifest.sourceCommit || providerManifest.source_commit),
       url: trimValue(providerManifest.url),
