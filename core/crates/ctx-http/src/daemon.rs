@@ -52,10 +52,11 @@ use provider_adapters::{
     runtime_command_missing_adapter, target_adapter_cache_key,
 };
 pub(crate) use state::AttachmentMaterializationTask;
+pub(crate) use state::WorktreeVcsDirtyBits;
 pub use state::{
-    AppState, CacheSweepConfig, CacheSweepStats, CachedFileCompletions, CachedProviderOptions,
-    CachedProviderVerify, GitStatusSnapshotCacheEntry, SessionHeadCacheKey, StoreLookup,
-    TimedEntry, WorkspaceActiveHeadCacheEntry, WorkspaceActiveSnapshotCacheEntry,
+    AppRuntimeFlags, AppState, CacheSweepConfig, CacheSweepStats, CachedFileCompletions,
+    CachedProviderOptions, CachedProviderVerify, GitStatusSnapshotCacheEntry, SessionHeadCacheKey,
+    StoreLookup, TimedEntry, WorkspaceActiveHeadCacheEntry, WorkspaceActiveSnapshotCacheEntry,
     WorktreeVcsSnapshotCacheEntry,
 };
 

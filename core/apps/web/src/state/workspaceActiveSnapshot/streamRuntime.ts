@@ -458,9 +458,6 @@ export const handleStreamMessage = async (
       }
       break;
     case "session_head_seed":
-      if (host.state.applySessionHeadSeed(evt.head)) {
-        host.schedulePersistCache();
-      }
       break;
     case "session_gap":
       flushAfterNotifyReason = "session_gap";

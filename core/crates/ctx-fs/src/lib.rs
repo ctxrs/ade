@@ -1,4 +1,5 @@
 pub mod git;
+mod git_counts;
 pub mod patch;
 pub mod paths;
 pub mod vcs;

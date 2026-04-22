@@ -212,7 +212,7 @@ const mkWorktreeVcsSnapshot = (
   },
   freshness: "fresh",
   available: true,
-  schema_version: 1,
+  schema_version: 2,
 });
 
 const openWsState = (globalThis.WebSocket as unknown as { OPEN?: number } | undefined)?.OPEN ?? 1;
@@ -454,6 +454,21 @@ describe("WorkspaceActiveSnapshotStore", () => {
     expect(ws.send).toHaveBeenCalledTimes(1);
     const payload = JSON.parse(String(ws.send.mock.calls[0]?.[0] ?? "{}"));
     expect(payload.foreground_session_id).toBe("session-foreground");
+    store.destroy();
+  });
+
+  it("includes vcs open session demand in subscribe messages", async () => {
+    const { WorkspaceActiveSnapshotStoreImpl } = await import("./workspaceActiveSnapshotStoreCore");
+
+    const store = new WorkspaceActiveSnapshotStoreImpl("ws-1", { disableWorker: true });
+    const ws = mkOpenWs();
+    asStoreInternals(store).ws = ws;
+
+    store.setVcsOpenSessionIds?.(["session-2", "session-1"]);
+
+    expect(ws.send).toHaveBeenCalledTimes(1);
+    const payload = JSON.parse(String(ws.send.mock.calls[0]?.[0] ?? "{}"));
+    expect(payload.vcs_open_session_ids).toEqual(["session-1", "session-2"]);
     store.destroy();
   });
 

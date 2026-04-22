@@ -215,7 +215,8 @@ export function isSessionHeadCompatibleWithSummary(
   summary: SessionSnapshotSummary | null | undefined,
   head: SessionHeadSnapshot | null | undefined,
 ): boolean {
-  if (!summary || !head) return true;
+  if (!summary) return true;
+  if (!head) return false;
 
   const summarySessionId = idToString(summary.session?.id ?? "");
   const headSessionId = idToString(head.session?.id ?? "");

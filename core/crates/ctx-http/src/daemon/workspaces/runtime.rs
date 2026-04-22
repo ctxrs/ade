@@ -70,10 +70,33 @@ impl WorkspaceRuntime {
         );
     }
 
+    pub async fn cache_worktree_vcs_snapshot(&self, snapshot: WorktreeVcsSnapshot) {
+        if !self.worktree_vcs_enabled {
+            return;
+        }
+        let worktree_id = snapshot.worktree_id;
+        let now = std::time::Instant::now();
+        let fingerprint = serde_json::to_string(&snapshot).unwrap_or_default();
+        let mut cache = self.worktree_vcs_snapshots.lock().await;
+        cache.insert(
+            worktree_id,
+            TimedEntry::new(crate::daemon::WorktreeVcsSnapshotCacheEntry {
+                snapshot,
+                fingerprint,
+                emitted_at: now,
+                last_change_at: now,
+                last_summary_at: Some(now),
+            }),
+        );
+    }
+
     pub async fn get_worktree_vcs_snapshot(
         &self,
         worktree_id: WorktreeId,
     ) -> Option<WorktreeVcsSnapshot> {
+        if !self.worktree_vcs_enabled {
+            return None;
+        }
         let mut cache = self.worktree_vcs_snapshots.lock().await;
         cache.get_mut(&worktree_id).map(|entry| {
             entry.touch();
@@ -86,6 +109,9 @@ impl WorkspaceRuntime {
         previous: &HashSet<WorktreeId>,
         next: &HashSet<WorktreeId>,
     ) {
+        if !self.worktree_vcs_enabled {
+            return;
+        }
         if previous == next {
             return;
         }
@@ -120,15 +146,59 @@ impl WorkspaceRuntime {
                     gens.remove(worktree_id);
                 }
             }
+            {
+                let mut runtime = self.worktree_vcs_runtime.lock().await;
+                for worktree_id in &evicted {
+                    runtime.remove(worktree_id);
+                }
+            }
             self.workspace_active_snapshot
                 .drop_worktree_vcs_snapshots(&evicted)
                 .await;
         }
     }
 
+    pub async fn update_worktree_vcs_open_panes(
+        &self,
+        previous: &HashSet<WorktreeId>,
+        next: &HashSet<WorktreeId>,
+    ) {
+        if !self.worktree_vcs_enabled {
+            return;
+        }
+        if previous == next {
+            return;
+        }
+        let mut open = self.worktree_vcs_open_panes.lock().await;
+        for worktree_id in previous.difference(next) {
+            if let Some(count) = open.get_mut(worktree_id) {
+                if *count <= 1 {
+                    open.remove(worktree_id);
+                } else {
+                    *count -= 1;
+                }
+            }
+        }
+        for worktree_id in next.difference(previous) {
+            let entry = open.entry(*worktree_id).or_insert(0);
+            *entry += 1;
+        }
+    }
+
     pub async fn is_worktree_vcs_active(&self, worktree_id: WorktreeId) -> bool {
+        if !self.worktree_vcs_enabled {
+            return false;
+        }
         let active = self.worktree_vcs_active.lock().await;
         active.get(&worktree_id).copied().unwrap_or(0) > 0
+    }
+
+    pub async fn is_worktree_vcs_pane_open(&self, worktree_id: WorktreeId) -> bool {
+        if !self.worktree_vcs_enabled {
+            return false;
+        }
+        let open = self.worktree_vcs_open_panes.lock().await;
+        open.get(&worktree_id).copied().unwrap_or(0) > 0
     }
 
     pub async fn register_worktree_bootstrap(
@@ -320,6 +390,9 @@ impl WorkspaceRuntime {
     }
 
     pub async fn ensure_git_status_watcher(&self, state: &Arc<AppState>, worktree: Worktree) {
+        if !self.worktree_vcs_enabled {
+            return;
+        }
         let mut watchers = self.git_status_watchers.lock().await;
         if !watchers.insert(worktree.id) {
             return;

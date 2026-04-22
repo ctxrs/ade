@@ -444,6 +444,8 @@ pub enum WorkspaceActiveSnapshotClientMessage {
         task_ids: Vec<TaskId>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         foreground_session_id: Option<SessionId>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        vcs_open_session_ids: Vec<SessionId>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         scope: Option<WorkspaceActiveSnapshotSubscribeScope>,
         #[serde(default, skip_serializing_if = "is_false")]

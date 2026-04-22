@@ -4,6 +4,8 @@ use std::process::Stdio;
 use anyhow::{bail, Context, Result};
 use tokio::process::Command;
 
+use crate::vcs::{VcsStatusBranchInfo, VcsStatusEntry, VcsStructuredStatus};
+
 #[derive(Debug, Clone, Copy)]
 pub enum ApplyPatchTarget {
     Worktree,
@@ -11,9 +13,23 @@ pub enum ApplyPatchTarget {
 }
 
 pub async fn assert_git_repo(root_path: impl AsRef<Path>) -> Result<()> {
-    let root = root_path.as_ref();
-    if !root.join(".git").exists() {
-        bail!("workspace at {} is not a git repo", root.display());
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root_path.as_ref())
+        .args(["rev-parse", "--is-inside-work-tree"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .await
+        .context("running git rev-parse --is-inside-work-tree")?;
+    if !output.status.success() {
+        bail!(
+            "not a git repository: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    if String::from_utf8_lossy(&output.stdout).trim() != "true" {
+        bail!("not a git repository");
     }
     Ok(())
 }
@@ -346,44 +362,14 @@ pub async fn git_diff_name_status(
             String::from_utf8_lossy(&output.stderr)
         );
     }
-    let mut out = Vec::new();
-    let mut parts = output
-        .stdout
-        .split(|b| *b == 0)
-        .filter(|part| !part.is_empty())
-        .peekable();
-    while let Some(part) = parts.next() {
-        let Some(tab_idx) = part.iter().position(|b| *b == b'\t') else {
-            continue;
-        };
-        let status = String::from_utf8_lossy(&part[..tab_idx]).to_string();
-        let path = String::from_utf8_lossy(&part[tab_idx + 1..]).to_string();
-        if status.is_empty() || path.trim().is_empty() {
-            continue;
-        }
-        let status_char = status.chars().next().unwrap_or('M');
-        if status_char == 'R' || status_char == 'C' {
-            let Some(next_path) = parts.next() else {
-                continue;
-            };
-            let new_path = String::from_utf8_lossy(next_path).to_string();
-            if new_path.trim().is_empty() {
-                continue;
-            }
-            out.push(GitNameStatusEntry {
-                status,
-                path: new_path,
-                orig_path: Some(path),
-            });
-        } else {
-            out.push(GitNameStatusEntry {
-                status,
-                path,
-                orig_path: None,
-            });
-        }
-    }
-    Ok(out)
+    Ok(parse_git_diff_name_status_bytes(&output.stdout)
+        .into_iter()
+        .map(|(status, path, orig_path)| GitNameStatusEntry {
+            status,
+            path,
+            orig_path,
+        })
+        .collect())
 }
 
 pub async fn git_diff_numstat_unstaged(
@@ -500,6 +486,245 @@ pub async fn git_status_porcelain(root_path: impl AsRef<Path>) -> Result<Vec<Str
         out.push(String::from_utf8_lossy(entry).to_string());
     }
     Ok(out)
+}
+
+pub async fn git_status_structured(
+    root_path: impl AsRef<Path>,
+    include_untracked_files: bool,
+) -> Result<VcsStructuredStatus> {
+    let untracked_mode = if include_untracked_files {
+        "--untracked-files=all"
+    } else {
+        "--untracked-files=normal"
+    };
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root_path.as_ref())
+        .arg("status")
+        .arg("--porcelain")
+        .arg("-z")
+        .arg("--branch")
+        .arg(untracked_mode)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .await
+        .context("running git status --porcelain -z --branch")?;
+    if !output.status.success() {
+        bail!(
+            "git status failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    Ok(git_status_structured_from_bytes(&output.stdout))
+}
+
+pub fn git_status_structured_from_bytes(bytes: &[u8]) -> VcsStructuredStatus {
+    parse_git_status_structured_bytes(bytes)
+}
+
+pub async fn git_diff_name_status_paths(
+    root_path: impl AsRef<Path>,
+    base_revision: &str,
+    paths: &[String],
+) -> Result<Vec<(String, String, Option<String>)>> {
+    if paths.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut cmd = Command::new("git");
+    cmd.arg("-C")
+        .arg(root_path.as_ref())
+        .arg("diff")
+        .arg("--name-status")
+        .arg("-z")
+        .arg(base_revision)
+        .arg("--");
+    for path in paths {
+        cmd.arg(path);
+    }
+    let output = cmd
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .await
+        .context("running git diff --name-status -z -- <paths>")?;
+    if !output.status.success() {
+        bail!(
+            "git diff --name-status failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    Ok(parse_git_diff_name_status_bytes(&output.stdout))
+}
+
+fn parse_git_status_structured_bytes(bytes: &[u8]) -> VcsStructuredStatus {
+    let entries = bytes
+        .split(|b| *b == 0)
+        .filter(|part| !part.is_empty())
+        .map(|part| String::from_utf8_lossy(part).to_string())
+        .collect::<Vec<_>>();
+    let mut branch = VcsStatusBranchInfo::default();
+    let mut parsed_entries = Vec::new();
+    let mut staged = 0;
+    let mut unstaged = 0;
+    let mut untracked = 0;
+    let mut total_count = 0;
+    let mut start_index = 0usize;
+    if let Some(first) = entries.first() {
+        if first.starts_with("## ") {
+            branch = parse_git_status_branch_info(first);
+            start_index = 1;
+        }
+    }
+    let mut index = start_index;
+    while index < entries.len() {
+        let raw = entries[index].trim_end();
+        if raw.len() < 3 {
+            index += 1;
+            continue;
+        }
+        let bytes = raw.as_bytes();
+        if bytes[2] != b' ' {
+            index += 1;
+            continue;
+        }
+        let index_status = raw.chars().next().unwrap_or(' ');
+        let worktree_status = raw.chars().nth(1).unwrap_or(' ');
+        let path = raw[3..].trim().to_string();
+        if path.is_empty() {
+            index += 1;
+            continue;
+        }
+        let mut orig_path = None;
+        if (index_status == 'R' || index_status == 'C') && index + 1 < entries.len() {
+            let next = entries[index + 1].trim_end();
+            if !looks_like_porcelain_status(next) && !next.is_empty() {
+                orig_path = Some(next.to_string());
+                index += 1;
+            }
+        }
+        total_count += 1;
+        if index_status == '?' && worktree_status == '?' {
+            untracked += 1;
+        } else {
+            if index_status != ' ' {
+                staged += 1;
+            }
+            if worktree_status != ' ' {
+                unstaged += 1;
+            }
+        }
+        parsed_entries.push(VcsStatusEntry {
+            path,
+            orig_path,
+            index_status: index_status.to_string(),
+            worktree_status: worktree_status.to_string(),
+        });
+        index += 1;
+    }
+    VcsStructuredStatus {
+        raw: String::from_utf8_lossy(bytes).to_string(),
+        branch,
+        entries: parsed_entries,
+        staged,
+        unstaged,
+        untracked,
+        total_count,
+        truncated: false,
+    }
+}
+
+fn parse_git_status_branch_info(line: &str) -> VcsStatusBranchInfo {
+    let mut info = VcsStatusBranchInfo {
+        summary_line: line.trim().to_string(),
+        branch: None,
+        upstream: None,
+        ahead: 0,
+        behind: 0,
+        detached: false,
+    };
+    let Some(mut line) = line.trim().strip_prefix("## ") else {
+        return info;
+    };
+    let mut counts_part = None;
+    if let Some(idx) = line.find(" [") {
+        counts_part = Some(line[idx + 2..].trim());
+        line = line[..idx].trim();
+    }
+    if line.starts_with("HEAD") {
+        info.detached = true;
+    }
+    if let Some((local, upstream)) = line.split_once("...") {
+        if !local.trim().is_empty() {
+            info.branch = Some(local.trim().to_string());
+        }
+        if !upstream.trim().is_empty() {
+            info.upstream = Some(upstream.trim().to_string());
+        }
+    } else if !line.trim().is_empty() && !info.detached {
+        info.branch = Some(line.trim().to_string());
+    }
+    if let Some(mut counts) = counts_part {
+        if counts.ends_with(']') {
+            counts = &counts[..counts.len() - 1];
+        }
+        for part in counts.split(',') {
+            let mut iter = part.split_whitespace();
+            let Some(kind) = iter.next() else {
+                continue;
+            };
+            let Some(value) = iter.next() else {
+                continue;
+            };
+            let count = value.parse::<i64>().unwrap_or(0);
+            match kind {
+                "ahead" => info.ahead = count,
+                "behind" => info.behind = count,
+                _ => {}
+            }
+        }
+    }
+    info
+}
+
+fn looks_like_porcelain_status(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    bytes.len() >= 3 && bytes[2] == b' '
+}
+
+fn parse_git_diff_name_status_bytes(bytes: &[u8]) -> Vec<(String, String, Option<String>)> {
+    let mut out = Vec::new();
+    let mut parts = bytes
+        .split(|b| *b == 0)
+        .filter(|part| !part.is_empty())
+        .map(|part| String::from_utf8_lossy(part).to_string())
+        .peekable();
+    while let Some(part) = parts.next() {
+        let status = part.trim().to_string();
+        if status.is_empty() {
+            continue;
+        }
+        let Some(path) = parts.next() else {
+            continue;
+        };
+        if status.is_empty() || path.trim().is_empty() {
+            continue;
+        }
+        let status_char = status.chars().next().unwrap_or('M');
+        if status_char == 'R' || status_char == 'C' {
+            let Some(next_path) = parts.next() else {
+                continue;
+            };
+            let new_path = next_path;
+            if new_path.trim().is_empty() {
+                continue;
+            }
+            out.push((status, new_path, Some(path)));
+        } else {
+            out.push((status, path, None));
+        }
+    }
+    out
 }
 
 pub(crate) async fn branch_exists(
@@ -663,5 +888,45 @@ pub async fn git_apply_patch_allow_noop(
             }
             Err(e)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{git_status_structured_from_bytes, parse_git_diff_name_status_bytes};
+
+    #[test]
+    fn parse_git_diff_name_status_handles_regular_entries() {
+        let parsed = parse_git_diff_name_status_bytes(b"M\0file.txt\0A\0new.txt\0");
+        assert_eq!(
+            parsed,
+            vec![
+                ("M".to_string(), "file.txt".to_string(), None),
+                ("A".to_string(), "new.txt".to_string(), None),
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_git_diff_name_status_handles_rename_entries() {
+        let parsed = parse_git_diff_name_status_bytes(b"R100\0old.txt\0new.txt\0");
+        assert_eq!(
+            parsed,
+            vec![(
+                "R100".to_string(),
+                "new.txt".to_string(),
+                Some("old.txt".to_string()),
+            )]
+        );
+    }
+
+    #[test]
+    fn parse_git_status_structured_handles_rename_entries() {
+        let parsed = git_status_structured_from_bytes(b"## main\0R  new.txt\0old.txt\0");
+        assert_eq!(parsed.entries.len(), 1);
+        assert_eq!(parsed.entries[0].path, "new.txt");
+        assert_eq!(parsed.entries[0].orig_path.as_deref(), Some("old.txt"));
+        assert_eq!(parsed.staged, 1);
+        assert_eq!(parsed.unstaged, 0);
     }
 }

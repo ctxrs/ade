@@ -12,6 +12,7 @@ pub(super) struct WorkspaceStreamRuntime {
     pub(super) subscriptions: HashMap<SessionId, SessionCursor>,
     pub(super) subscription_state: WorkspaceActiveSubscriptionState,
     pub(super) active_worktrees: HashSet<WorktreeId>,
+    pub(super) open_worktrees: HashSet<WorktreeId>,
     pub(super) reset_queued: bool,
     pub(super) latest_snapshot_rev: Arc<AtomicI64>,
 }
@@ -101,6 +102,7 @@ pub(super) async fn initialize_workspace_stream(
             subscriptions: HashMap::new(),
             subscription_state: WorkspaceActiveSubscriptionState::default(),
             active_worktrees: HashSet::new(),
+            open_worktrees: HashSet::new(),
             reset_queued: false,
             latest_snapshot_rev: Arc::new(AtomicI64::new(snapshot_rev)),
         },
@@ -160,7 +162,8 @@ pub(super) async fn handle_workspace_stream_subscription(
     };
     let ResolvedWorkspaceActiveSubscriptions {
         sessions: resolved_sessions,
-        worktree_vcs_session_ids,
+        worktree_vcs_summary_session_ids,
+        worktree_vcs_open_session_ids,
         state: next_state,
     } = resolved;
 
@@ -170,7 +173,9 @@ pub(super) async fn handle_workspace_stream_subscription(
     sync_active_worktrees(
         state,
         &mut runtime.active_worktrees,
-        &worktree_vcs_session_ids,
+        &mut runtime.open_worktrees,
+        &worktree_vcs_summary_session_ids,
+        &worktree_vcs_open_session_ids,
     )
     .await;
     let active_head_cursors = if include_initial_snapshot {
@@ -179,7 +184,8 @@ pub(super) async fn handle_workspace_stream_subscription(
             &runtime.control,
             state,
             workspace_id,
-            &worktree_vcs_session_ids,
+            &worktree_vcs_summary_session_ids,
+            &worktree_vcs_open_session_ids,
         )
         .await
         .is_err()
@@ -393,7 +399,7 @@ pub(super) async fn handle_workspace_stream_subscription(
         &runtime.control,
         state,
         workspace_id,
-        &worktree_vcs_session_ids,
+        &worktree_vcs_summary_session_ids,
         if include_initial_snapshot {
             WorktreeVcsSeedMode::IncludedInSnapshot
         } else {
@@ -405,7 +411,11 @@ pub(super) async fn handle_workspace_stream_subscription(
     {
         return Err(());
     }
-    spawn_worktree_vcs_refresh_for_sessions(state.clone(), worktree_vcs_session_ids);
+    spawn_worktree_vcs_refresh_for_sessions(
+        state.clone(),
+        worktree_vcs_summary_session_ids,
+        worktree_vcs_open_session_ids,
+    );
     Ok(())
 }
 
@@ -458,16 +468,15 @@ pub(super) async fn handle_workspace_stream_event(
     if runtime.subscription_state.active_scope {
         match &event {
             WorkspaceActiveSnapshotEvent::ActiveTaskUpsert { task, .. } => {
-                let task_session_ids = session_ids_for_active_task_summary(task);
                 let session_id = primary_session_id_for_active_task(task);
                 runtime
                     .subscription_state
                     .active_task_sessions
                     .insert(task.task.id, session_id);
-                runtime
-                    .subscription_state
-                    .active_task_vcs_sessions
-                    .insert(task.task.id, task_session_ids);
+                runtime.subscription_state.active_task_vcs_sessions.insert(
+                    task.task.id,
+                    primary_session_ids_for_active_task_summary(task),
+                );
                 refresh_active_worktrees = true;
                 if let std::collections::hash_map::Entry::Vacant(entry) =
                     runtime.subscriptions.entry(session_id)
@@ -540,49 +549,24 @@ pub(super) async fn handle_workspace_stream_event(
                     refresh_active_worktrees = true;
                 }
             }
-            WorkspaceActiveSnapshotEvent::SessionSummary { summary, .. } => {
-                if let Some(ids) = runtime
-                    .subscription_state
-                    .active_task_vcs_sessions
-                    .get_mut(&summary.session.task_id)
-                {
-                    if ids.insert(summary.session.id) {
-                        refresh_active_worktrees = true;
-                    }
-                }
-            }
-            WorkspaceActiveSnapshotEvent::SessionSummaryDelta { delta, .. } => {
-                if let Some(ids) = runtime
-                    .subscription_state
-                    .active_task_vcs_sessions
-                    .get_mut(&delta.task_id)
-                {
-                    if ids.insert(delta.session_id) {
-                        refresh_active_worktrees = true;
-                    }
-                }
-            }
-            WorkspaceActiveSnapshotEvent::SessionHeadSeed { head, .. } => {
-                if let Some(ids) = runtime
-                    .subscription_state
-                    .active_task_vcs_sessions
-                    .get_mut(&head.session.task_id)
-                {
-                    if ids.insert(head.session.id) {
-                        refresh_active_worktrees = true;
-                    }
-                }
-            }
             _ => {}
         }
     }
     if refresh_active_worktrees {
-        let session_ids = resolve_worktree_vcs_interest_session_ids(
+        let summary_session_ids = resolve_worktree_vcs_summary_session_ids(
             runtime.subscriptions.keys().copied(),
             &runtime.subscription_state,
         );
-        sync_active_worktrees(state, &mut runtime.active_worktrees, &session_ids).await;
-        refresh_worktree_vcs_for_sessions(state, &session_ids).await;
+        let open_session_ids = resolve_worktree_vcs_open_session_ids(&runtime.subscription_state);
+        sync_active_worktrees(
+            state,
+            &mut runtime.active_worktrees,
+            &mut runtime.open_worktrees,
+            &summary_session_ids,
+            &open_session_ids,
+        )
+        .await;
+        refresh_worktree_vcs_for_sessions(state, &summary_session_ids, &open_session_ids).await;
     }
 
     match &event {
@@ -708,6 +692,9 @@ pub(super) async fn release_workspace_stream(
     release_workspace_stream_session_pins(state, runtime.subscriptions.keys().copied()).await;
     state
         .update_worktree_vcs_activity(&runtime.active_worktrees, &HashSet::new())
+        .await;
+    state
+        .update_worktree_vcs_open_panes(&runtime.open_worktrees, &HashSet::new())
         .await;
 }
 

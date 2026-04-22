@@ -51,6 +51,31 @@ impl AppState {
         lsp_cfg: LspManagerConfig,
         lsp_edit_plans_enabled: bool,
     ) -> Self {
+        Self::new_with_lsp_config_and_runtime_flags(
+            data_root,
+            stores,
+            providers,
+            daemon_url,
+            auth_token,
+            lsp_cfg,
+            AppRuntimeFlags {
+                lsp_edit_plans_enabled,
+                worktree_vcs_enabled: worktree_vcs_enabled_from_env(),
+            },
+        )
+    }
+
+    pub fn new_with_lsp_config_and_runtime_flags(
+        data_root: PathBuf,
+        stores: StoreManager,
+        providers: HashMap<String, Arc<dyn ProviderAdapter>>,
+        daemon_url: String,
+        auth_token: Option<String>,
+        lsp_cfg: LspManagerConfig,
+        runtime_flags: AppRuntimeFlags,
+    ) -> Self {
+        let lsp_edit_plans_enabled = runtime_flags.lsp_edit_plans_enabled;
+        let worktree_vcs_enabled = runtime_flags.worktree_vcs_enabled;
         // Internal spool-path mechanics remain experimental, but once output is
         // promoted into the session artifact list it follows the normal
         // SessionState/artifact client contract.
@@ -170,12 +195,22 @@ impl AppState {
                 session_meta_cache: Mutex::new(HashMap::new()),
             },
             workspaces: WorkspaceRuntime {
+                worktree_vcs_enabled,
                 file_completions_cache: Mutex::new(HashMap::new()),
                 workspace_file_completions_cache: Mutex::new(HashMap::new()),
                 git_status_snapshots: Mutex::new(HashMap::new()),
                 worktree_vcs_snapshots: Mutex::new(HashMap::new()),
                 worktree_vcs_active: Mutex::new(HashMap::new()),
+                worktree_vcs_open_panes: Mutex::new(HashMap::new()),
                 worktree_vcs_summary_gen: Mutex::new(HashMap::new()),
+                worktree_vcs_runtime: Mutex::new(HashMap::new()),
+                worktree_vcs_scheduler: WorktreeVcsSchedulerRuntime {
+                    started: AtomicBool::new(false),
+                    notify: Arc::new(Notify::new()),
+                    permits: Arc::new(
+                        Semaphore::new(worktree_vcs_scheduler_concurrency_from_env()),
+                    ),
+                },
                 git_status_watchers: Mutex::new(HashSet::new()),
                 workspace_active_snapshot,
                 workspace_active_snapshot_cache: Mutex::new(HashMap::new()),

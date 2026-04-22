@@ -2,10 +2,11 @@ use super::*;
 
 pub(super) use crate::daemon::workspaces::stream::{
     load_worktree_vcs_snapshots_for_sessions, merge_worktree_vcs_snapshots,
-    primary_session_id_for_active_task, refresh_worktree_vcs_for_sessions, replay_session_events,
-    resolve_workspace_active_snapshot_subscriptions, resolve_worktree_vcs_interest_session_ids,
-    session_ids_for_active_task_summary, spawn_worktree_vcs_refresh_for_sessions,
-    sync_active_worktrees, ReplayOutcome,
+    primary_session_id_for_active_task, primary_session_ids_for_active_task_summary,
+    refresh_worktree_vcs_for_sessions, replay_session_events,
+    resolve_workspace_active_snapshot_subscriptions, resolve_worktree_vcs_open_session_ids,
+    resolve_worktree_vcs_publish_worktree_ids, resolve_worktree_vcs_summary_session_ids,
+    spawn_worktree_vcs_refresh_for_sessions, sync_active_worktrees, ReplayOutcome,
 };
 
 pub(super) fn with_stream_rev(
@@ -69,7 +70,8 @@ pub(super) async fn queue_snapshot_payload(
     pending: &StreamQueue<WorkspaceActiveSnapshotStreamMessage>,
     state: &Arc<AppState>,
     workspace_id: WorkspaceId,
-    worktree_vcs_session_ids: &[SessionId],
+    worktree_vcs_summary_session_ids: &[SessionId],
+    worktree_vcs_open_session_ids: &[SessionId],
 ) -> Result<(), ()> {
     let build_start = Instant::now();
     state
@@ -88,8 +90,21 @@ pub(super) async fn queue_snapshot_payload(
         .workspace_active_snapshot
         .active_snapshot(workspace_id, i64::MAX)
         .await;
-    let extra_worktree_vcs_snapshots =
-        load_worktree_vcs_snapshots_for_sessions(state, worktree_vcs_session_ids).await;
+    let publish_worktree_ids = resolve_worktree_vcs_publish_worktree_ids(
+        state,
+        worktree_vcs_summary_session_ids,
+        worktree_vcs_open_session_ids,
+    )
+    .await;
+    active_snapshot
+        .worktree_vcs_snapshots
+        .retain(|snapshot| publish_worktree_ids.contains(&snapshot.worktree_id));
+    let mut extra_worktree_vcs_snapshots =
+        load_worktree_vcs_snapshots_for_sessions(state, worktree_vcs_summary_session_ids).await;
+    let open_worktree_vcs_snapshots =
+        load_worktree_vcs_snapshots_for_sessions(state, worktree_vcs_open_session_ids).await;
+    extra_worktree_vcs_snapshots =
+        merge_worktree_vcs_snapshots(extra_worktree_vcs_snapshots, open_worktree_vcs_snapshots);
     active_snapshot.worktree_vcs_snapshots = merge_worktree_vcs_snapshots(
         active_snapshot.worktree_vcs_snapshots,
         extra_worktree_vcs_snapshots,

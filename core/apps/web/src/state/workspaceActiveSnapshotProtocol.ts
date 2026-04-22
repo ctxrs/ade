@@ -37,6 +37,7 @@ export type WorkspaceActiveSnapshotCommand =
       snapshot: PersistedWorkspaceActiveSnapshotV1;
     }
   | { type: "set_subscribed_sessions"; sessions: SessionSubscriptionCursor[] }
+  | { type: "set_vcs_open_session_ids"; sessionIds: string[] }
   | { type: "set_foreground_session_id"; sessionId: string | null }
   | { type: "ensure_archived_loaded" }
   | { type: "load_more_archived" }

@@ -123,20 +123,20 @@ export const buildGitPaneModel = (snapshot: WorktreeVcsSnapshot | null): GitPane
   const unavailableLabel = available ? null : unavailableLabelForReason(unavailableReason);
   const computeError = available && snapshot.compute_state === "error" ? "Failed to compute diff summary." : null;
   const files = available ? mergeInventoryEntries(snapshot) : [];
+  const touchedFilesState = snapshot.touched_files_state ?? "not_loaded";
   const summaryStats = getDiffSummaryStats(snapshot.summary as Record<string, unknown>);
-  const fallbackCount =
-    summaryStats.fileCount ??
-    snapshot.touched_files.total_count ??
-    snapshot.git_status.staged + snapshot.git_status.unstaged + snapshot.git_status.untracked;
-  const totalCount = available ? Math.max(files.length, Math.max(0, Number(fallbackCount || 0))) : 0;
-  const badgeCount = totalCount;
-  const loading =
-    available &&
-    snapshot.compute_state !== "error" &&
-    snapshot.compute_state !== "ready" &&
-    totalCount === 0 &&
-    files.length === 0;
-  const listReady = files.length > 0 || totalCount === 0 || !available;
+  const badgeCount = available
+    ? Math.max(0, Number((summaryStats.fileCount ?? snapshot.touched_files.total_count ?? 0) || 0))
+    : 0;
+  const totalCount = available ? Math.max(files.length, badgeCount) : 0;
+  const loading = available && touchedFilesState === "loading";
+  const listReady =
+    files.length > 0 ||
+    totalCount === 0 ||
+    !available ||
+    touchedFilesState === "ready" ||
+    touchedFilesState === "stale" ||
+    touchedFilesState === "error";
 
   const sections = SECTION_ORDER.map((key) => {
     const sectionFiles = files.filter((file) => file.section === key);

@@ -72,6 +72,7 @@ type PaneMode = "diff" | "artifacts" | "sessions" | null;
 
 type WorkspaceSnapshotStore = {
   getWorktreeRoot: (worktreeId: string) => string | null | undefined;
+  setVcsOpenSessionIds?: (sessionIds: string[]) => void;
 };
 
 type WorkbenchActiveTaskControllerArgs = {
@@ -375,6 +376,9 @@ export function useWorkbenchActiveTaskController({
       optimisticStartingSessionId === activeSessionIdValue);
   const openSessionId = activeSessionId && !isOptimisticSessionId ? activeSessionId : "";
   useOpenSession(openSessionId, { watchDiff: diffOpen });
+  useEffect(() => {
+    workspaceSnapshotStore.setVcsOpenSessionIds?.(diffOpen && openSessionId ? [openSessionId] : []);
+  }, [diffOpen, openSessionId, workspaceSnapshotStore]);
 
   const activeDiffContentError = activeSessionId ? diffContentErrorBySessionId[activeSessionId] ?? null : null;
   const activeWorktreeId = activeEntry?.session ? idToString(activeEntry.session.worktree_id) : "";

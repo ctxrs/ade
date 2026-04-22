@@ -304,6 +304,17 @@ pub struct WorktreeVcsTouchedFiles {
     pub total_count: Option<i64>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum WorktreeVcsTouchedFilesState {
+    #[default]
+    NotLoaded,
+    Loading,
+    Ready,
+    Stale,
+    Error,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct WorktreeVcsGitStatusSummary {
     #[serde(default, skip_serializing_if = "String::is_empty")]
@@ -344,6 +355,8 @@ pub struct WorktreeVcsSnapshot {
     pub git_status: WorktreeVcsGitStatusSummary,
     #[serde(default)]
     pub touched_files: WorktreeVcsTouchedFiles,
+    #[serde(default)]
+    pub touched_files_state: WorktreeVcsTouchedFilesState,
     #[serde(default)]
     pub freshness: WorktreeVcsFreshness,
     #[serde(default = "default_true", skip_serializing_if = "is_true")]

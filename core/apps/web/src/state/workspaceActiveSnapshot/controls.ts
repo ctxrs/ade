@@ -24,6 +24,7 @@ export type WorkspaceActiveSnapshotControlHost = {
   authTokenOverride: string | null;
   workspaceId: string;
   subscribedSessions: SessionSubscriptionCursor[];
+  vcsOpenSessionIds: string[];
   foregroundSessionId: string | null;
   eventListeners: Set<(event: WorkspaceActiveSnapshotEvent) => void>;
   workerPatchEmitter: ((patch: WorkspaceActiveSnapshotPatch) => void) | null;
@@ -214,6 +215,31 @@ export function setSubscribedSessions(
   flushSubscriptions(host, idsChanged ? "session_ids" : "session_cursors");
 }
 
+export function setVcsOpenSessionIds(
+  host: WorkspaceActiveSnapshotControlHost,
+  sessionIds: string[],
+) {
+  const next = Array.from(
+    new Set(
+      sessionIds
+        .map((value) => (typeof value === "string" ? value.trim() : ""))
+        .filter((value) => value.length > 0),
+    ),
+  ).sort();
+  if (
+    next.length === host.vcsOpenSessionIds.length &&
+    next.every((sessionId, index) => sessionId === host.vcsOpenSessionIds[index])
+  ) {
+    return;
+  }
+  host.vcsOpenSessionIds = next;
+  if (host.worker) {
+    host.postWorkerCommand({ type: "set_vcs_open_session_ids", sessionIds: next });
+    return;
+  }
+  flushSubscriptions(host, "vcs_open_session_ids");
+}
+
 export function setForegroundSessionId(
   host: WorkspaceActiveSnapshotControlHost,
   sessionId: string | null,
@@ -239,6 +265,7 @@ export function flushSubscriptions(
     reason,
     host.foregroundSessionId,
     host.subscribedSessions,
+    host.vcsOpenSessionIds,
   );
   if (requestSnapshot) {
     host.scheduleSnapshotWarning(reason);

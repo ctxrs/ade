@@ -16,6 +16,10 @@ use crate::daemon::state::AppState;
 use super::WorkspaceHydrationError;
 
 impl AppState {
+    pub fn worktree_vcs_enabled(&self) -> bool {
+        self.workspaces.worktree_vcs_enabled
+    }
+
     pub async fn cached_workspace_active_snapshot_state(
         &self,
         workspace_id: WorkspaceId,
@@ -57,7 +61,37 @@ impl AppState {
         &self,
         worktree_id: WorktreeId,
     ) -> Option<WorktreeVcsSnapshot> {
-        self.workspaces.get_worktree_vcs_snapshot(worktree_id).await
+        if !self.worktree_vcs_enabled() {
+            return None;
+        }
+        if let Some(snapshot) = self.workspaces.get_worktree_vcs_snapshot(worktree_id).await {
+            return Some(snapshot);
+        }
+        if !self.is_worktree_vcs_active(worktree_id).await {
+            return None;
+        }
+        let store = self.store_for_worktree(worktree_id).await.ok()?;
+        let mut snapshot = store
+            .get_worktree_vcs_snapshot_cache(worktree_id)
+            .await
+            .ok()
+            .flatten()?;
+        snapshot.compute_state = if snapshot.summary.file_count.is_some() {
+            ctx_core::models::WorktreeVcsComputeState::Ready
+        } else {
+            ctx_core::models::WorktreeVcsComputeState::Computing
+        };
+        snapshot.freshness = if snapshot.summary.file_count.is_some() {
+            ctx_core::models::WorktreeVcsFreshness::Stale
+        } else {
+            ctx_core::models::WorktreeVcsFreshness::Refreshing
+        };
+        snapshot.touched_files = ctx_core::models::WorktreeVcsTouchedFiles::default();
+        snapshot.touched_files_state = ctx_core::models::WorktreeVcsTouchedFilesState::NotLoaded;
+        self.workspaces
+            .cache_worktree_vcs_snapshot(snapshot.clone())
+            .await;
+        Some(snapshot)
     }
 
     pub async fn update_worktree_vcs_activity(
@@ -70,8 +104,22 @@ impl AppState {
             .await;
     }
 
+    pub async fn update_worktree_vcs_open_panes(
+        &self,
+        previous: &HashSet<WorktreeId>,
+        next: &HashSet<WorktreeId>,
+    ) {
+        self.workspaces
+            .update_worktree_vcs_open_panes(previous, next)
+            .await;
+    }
+
     pub async fn is_worktree_vcs_active(&self, worktree_id: WorktreeId) -> bool {
         self.workspaces.is_worktree_vcs_active(worktree_id).await
+    }
+
+    pub async fn is_worktree_vcs_pane_open(&self, worktree_id: WorktreeId) -> bool {
+        self.workspaces.is_worktree_vcs_pane_open(worktree_id).await
     }
 
     pub async fn ensure_workspace_active_snapshot_hydrated(

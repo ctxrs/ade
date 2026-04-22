@@ -45,11 +45,12 @@ use queue::{
     HEAD_BATCH_TOTAL_LIMIT,
 };
 use replay::{
-    queue_reset_required, queue_snapshot_payload, refresh_worktree_vcs_for_sessions,
-    replay_session_events, resolve_workspace_active_snapshot_subscriptions,
-    resolve_worktree_vcs_interest_session_ids, seed_worktree_vcs_for_subscribe,
-    session_ids_for_active_task_summary, spawn_worktree_vcs_refresh_for_sessions,
-    sync_active_worktrees, with_stream_rev, ReplayOutcome, WorktreeVcsSeedMode,
+    primary_session_ids_for_active_task_summary, queue_reset_required, queue_snapshot_payload,
+    refresh_worktree_vcs_for_sessions, replay_session_events,
+    resolve_workspace_active_snapshot_subscriptions, resolve_worktree_vcs_open_session_ids,
+    resolve_worktree_vcs_summary_session_ids, seed_worktree_vcs_for_subscribe,
+    spawn_worktree_vcs_refresh_for_sessions, sync_active_worktrees, with_stream_rev, ReplayOutcome,
+    WorktreeVcsSeedMode,
 };
 
 pub(super) use secure_mobile::mobile_secure_workspace_stream_ws;

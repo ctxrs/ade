@@ -53,6 +53,7 @@ mod turns;
 mod turns_session_heads;
 mod workspace;
 mod worktrees;
+mod worktree_vcs;
 
 pub use kernel::{is_unique_constraint_violation, SessionRetentionPruneStats, Store, StoreStats};
 pub use mobile::{MobileAccessConfig, MobileDeviceUpsert, RuntimeSettingsDocument};

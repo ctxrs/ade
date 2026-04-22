@@ -358,7 +358,7 @@ pub(crate) async fn get_session_git_status(
                 }),
             )
         })?;
-    let snapshot = load_git_status_snapshot(&state, &worktree)
+    let snapshot = load_git_status_snapshot(&state, &worktree, true)
         .await
         .map_err(|e| {
             (

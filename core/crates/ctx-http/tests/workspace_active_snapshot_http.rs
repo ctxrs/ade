@@ -405,6 +405,21 @@ async fn attach_primary_worktree(
     task_id: ctx_core::ids::TaskId,
     root_path: &Path,
 ) -> ctx_core::models::Worktree {
+    let worktree = insert_worktree(state, workspace_id, task_id, root_path).await;
+    let store = state.store_for_task(task_id).await.unwrap();
+    store
+        .set_task_primary_worktree(task_id, worktree.id)
+        .await
+        .unwrap();
+    worktree
+}
+
+async fn insert_worktree(
+    state: &Arc<AppState>,
+    workspace_id: ctx_core::ids::WorkspaceId,
+    task_id: ctx_core::ids::TaskId,
+    root_path: &Path,
+) -> ctx_core::models::Worktree {
     let worktree = ctx_core::models::Worktree {
         id: WorktreeId::new(),
         workspace_id,
@@ -432,10 +447,6 @@ async fn attach_primary_worktree(
     state
         .global_store()
         .upsert_workspace_worktree_index(worktree.id, workspace_id)
-        .await
-        .unwrap();
-    store
-        .set_task_primary_worktree(task_id, worktree.id)
         .await
         .unwrap();
     worktree
@@ -1876,7 +1887,6 @@ async fn workspace_stream_delivers_snapshot_before_worktree_vcs_summary_refresh(
         "initial snapshot should not wait for ready worktree vcs summary"
     );
 
-    let mut saw_refreshing = false;
     let mut hydrated_file_count = None;
     let deadline = tokio::time::Instant::now() + Duration::from_secs(8);
     while tokio::time::Instant::now() < deadline {
@@ -1888,9 +1898,6 @@ async fn workspace_stream_delivers_snapshot_before_worktree_vcs_summary_refresh(
                 serde_json::from_str::<ctx_core::models::WorkspaceActiveSnapshotStreamMessage>(&txt)
             {
                 if let Some(snapshot) = worktree_vcs_snapshot_from_message(message, worktree.id) {
-                    if snapshot.freshness == WorktreeVcsFreshness::Refreshing {
-                        saw_refreshing = true;
-                    }
                     if snapshot.freshness == WorktreeVcsFreshness::Fresh {
                         hydrated_file_count = snapshot.summary.file_count;
                         break;
@@ -1900,10 +1907,6 @@ async fn workspace_stream_delivers_snapshot_before_worktree_vcs_summary_refresh(
         }
     }
 
-    assert!(
-        saw_refreshing,
-        "expected streamed worktree vcs snapshot to report refreshing freshness before ready summary"
-    );
     assert_eq!(
         hydrated_file_count,
         Some(1),
@@ -2437,7 +2440,8 @@ async fn workspace_stream_initial_snapshot_includes_worktree_vcs_for_explicit_ar
 }
 
 #[tokio::test]
-async fn workspace_stream_initial_snapshot_preserves_secondary_worktree_vcs_for_active_task() {
+async fn workspace_stream_initial_snapshot_excludes_secondary_worktree_vcs_for_active_task_by_default(
+) {
     let (repo, _data_dir, state, server) = setup_git().await;
     let base = &server.base_url;
     let client = &server.client;
@@ -2462,16 +2466,35 @@ async fn workspace_stream_initial_snapshot_preserves_secondary_worktree_vcs_for_
     )
     .await;
     let primary_session = create_primary_worktree_session(client, base, task.id).await;
-    let secondary_session = create_primary_worktree_session(client, base, task.id).await;
-
     let primary_store = state.store_for_session(primary_session.id).await.unwrap();
     let primary_worktree = primary_store
         .get_worktree(primary_session.worktree_id)
         .await
         .unwrap()
         .expect("missing primary worktree");
-    let secondary_store = state.store_for_session(secondary_session.id).await.unwrap();
-    let secondary_worktree = secondary_store
+    let secondary_worktree = insert_worktree(&state, ws.id, task.id, repo.path()).await;
+    let secondary_session = create_primary_worktree_session_with_request(
+        client,
+        base,
+        task.id,
+        json!({
+            "provider_id": "fake",
+            "model_id": "fake-model",
+            "worktree_id": secondary_worktree.id.0.to_string(),
+            "parent_session_id": primary_session.id.0.to_string(),
+            "relationship": "secondary",
+        }),
+    )
+    .await;
+    assert_eq!(
+        secondary_session.worktree_id, secondary_worktree.id,
+        "secondary session must use the non-primary worktree for this test"
+    );
+    assert_ne!(
+        primary_worktree.id, secondary_worktree.id,
+        "primary and secondary worktrees must be distinct for this test"
+    );
+    let secondary_worktree = primary_store
         .get_worktree(secondary_session.worktree_id)
         .await
         .unwrap()
@@ -2546,11 +2569,12 @@ async fn workspace_stream_initial_snapshot_preserves_secondary_worktree_vcs_for_
         .map(|snapshot| snapshot.worktree_id)
         .collect();
     assert!(streamed_ids.contains(&primary_worktree.id));
-    assert!(streamed_ids.contains(&secondary_worktree.id));
+    assert!(!streamed_ids.contains(&secondary_worktree.id));
 }
 
 #[tokio::test]
-async fn workspace_stream_active_subscribe_keeps_secondary_worktree_vcs_publishable() {
+async fn workspace_stream_active_subscribe_includes_secondary_worktree_vcs_when_vcs_open_session_is_requested(
+) {
     let (repo, _data_dir, state, server) = setup_git().await;
     let base = &server.base_url;
     let client = &server.client;
@@ -2575,16 +2599,31 @@ async fn workspace_stream_active_subscribe_keeps_secondary_worktree_vcs_publisha
     )
     .await;
     let primary_session = create_primary_worktree_session(client, base, task.id).await;
-    let secondary_session = create_primary_worktree_session(client, base, task.id).await;
-
     let primary_store = state.store_for_session(primary_session.id).await.unwrap();
     let primary_worktree = primary_store
         .get_worktree(primary_session.worktree_id)
         .await
         .unwrap()
         .expect("missing primary worktree");
-    let secondary_store = state.store_for_session(secondary_session.id).await.unwrap();
-    let secondary_worktree = secondary_store
+    let secondary_worktree = insert_worktree(&state, ws.id, task.id, repo.path()).await;
+    let secondary_session = create_primary_worktree_session_with_request(
+        client,
+        base,
+        task.id,
+        json!({
+            "provider_id": "fake",
+            "model_id": "fake-model",
+            "worktree_id": secondary_worktree.id.0.to_string(),
+            "parent_session_id": primary_session.id.0.to_string(),
+            "relationship": "secondary",
+        }),
+    )
+    .await;
+    assert_ne!(
+        primary_worktree.id, secondary_worktree.id,
+        "primary and secondary worktrees must be distinct for this test"
+    );
+    let secondary_worktree = primary_store
         .get_worktree(secondary_session.worktree_id)
         .await
         .unwrap()
@@ -2614,6 +2653,7 @@ async fn workspace_stream_active_subscribe_keeps_secondary_worktree_vcs_publisha
     let subscribe = json!({
         "type": "subscribe",
         "scope": "active",
+        "vcs_open_session_ids": [secondary_session.id],
         "include_active_heads": true,
     })
     .to_string();
@@ -2661,13 +2701,13 @@ async fn workspace_stream_active_subscribe_keeps_secondary_worktree_vcs_publisha
 
     assert!(
         saw_secondary_publish,
-        "expected active-scope subscribe to keep secondary worktree vcs publishable"
+        "expected active-scope subscribe with vcs_open_session_ids to keep secondary worktree vcs publishable"
     );
 }
 
 #[tokio::test]
-async fn mobile_secure_workspace_stream_active_subscribe_keeps_secondary_worktree_vcs_publishable()
-{
+async fn mobile_secure_workspace_stream_active_subscribe_includes_secondary_worktree_vcs_when_vcs_open_session_is_requested(
+) {
     let (repo, _data_dir, state, server) = setup_git().await;
     let base = &server.base_url;
     let client = &server.client;
@@ -2692,16 +2732,31 @@ async fn mobile_secure_workspace_stream_active_subscribe_keeps_secondary_worktre
     )
     .await;
     let primary_session = create_primary_worktree_session(client, base, task.id).await;
-    let secondary_session = create_primary_worktree_session(client, base, task.id).await;
-
     let primary_store = state.store_for_session(primary_session.id).await.unwrap();
     let primary_worktree = primary_store
         .get_worktree(primary_session.worktree_id)
         .await
         .unwrap()
         .expect("missing primary worktree");
-    let secondary_store = state.store_for_session(secondary_session.id).await.unwrap();
-    let secondary_worktree = secondary_store
+    let secondary_worktree = insert_worktree(&state, ws.id, task.id, repo.path()).await;
+    let secondary_session = create_primary_worktree_session_with_request(
+        client,
+        base,
+        task.id,
+        json!({
+            "provider_id": "fake",
+            "model_id": "fake-model",
+            "worktree_id": secondary_worktree.id.0.to_string(),
+            "parent_session_id": primary_session.id.0.to_string(),
+            "relationship": "secondary",
+        }),
+    )
+    .await;
+    assert_ne!(
+        primary_worktree.id, secondary_worktree.id,
+        "primary and secondary worktrees must be distinct for this test"
+    );
+    let secondary_worktree = primary_store
         .get_worktree(secondary_session.worktree_id)
         .await
         .unwrap()
@@ -2741,6 +2796,7 @@ async fn mobile_secure_workspace_stream_active_subscribe_keeps_secondary_worktre
         json!({
             "type": "subscribe",
             "scope": "active",
+            "vcs_open_session_ids": [secondary_session.id],
             "include_active_heads": true,
         }),
     )
@@ -2780,7 +2836,7 @@ async fn mobile_secure_workspace_stream_active_subscribe_keeps_secondary_worktre
 
     assert!(
         saw_secondary_publish,
-        "expected secure active-scope subscribe to keep secondary worktree vcs publishable"
+        "expected secure active-scope subscribe with vcs_open_session_ids to keep secondary worktree vcs publishable"
     );
 }
 

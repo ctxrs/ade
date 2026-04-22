@@ -7,6 +7,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use tokio::fs;
 
+use super::jj_status::{
+    collect_jj_untracked_files, count_jj_untracked_files, parse_jj_status_output,
+};
+
 pub struct JjVcs;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -294,6 +298,14 @@ impl VcsDriver for JjVcs {
         })
     }
 
+    fn diff_file_count<'a>(
+        &'a self,
+        worktree_path: &'a Path,
+        base_revision: &'a str,
+    ) -> VcsFuture<'a, i64> {
+        Box::pin(async move { jj_diff_name_count(worktree_path, base_revision).await })
+    }
+
     fn diff_name_status<'a>(
         &'a self,
         worktree_path: &'a Path,
@@ -312,12 +324,40 @@ impl VcsDriver for JjVcs {
         })
     }
 
+    fn diff_name_status_paths<'a>(
+        &'a self,
+        worktree_path: &'a Path,
+        base_revision: &'a str,
+        paths: &'a [String],
+    ) -> VcsFuture<'a, Vec<VcsNameStatusEntry>> {
+        Box::pin(async move {
+            let paths = jj_diff_name_only_paths(worktree_path, base_revision, paths).await?;
+            Ok(paths
+                .into_iter()
+                .map(|path| VcsNameStatusEntry {
+                    status: "M".to_string(),
+                    path,
+                    orig_path: None,
+                })
+                .collect())
+        })
+    }
+
     fn list_untracked<'a>(&'a self, worktree_path: &'a Path) -> VcsFuture<'a, Vec<String>> {
         Box::pin(async move {
             ensure_jj_usable().await?;
             let output = run_jj(worktree_path, &["status"]).await?;
             let parsed = parse_jj_status_output(&String::from_utf8_lossy(&output.stdout));
             collect_jj_untracked_files(worktree_path, &parsed.untracked).await
+        })
+    }
+
+    fn untracked_file_count<'a>(&'a self, worktree_path: &'a Path) -> VcsFuture<'a, i64> {
+        Box::pin(async move {
+            ensure_jj_usable().await?;
+            let output = run_jj(worktree_path, &["status"]).await?;
+            let parsed = parse_jj_status_output(&String::from_utf8_lossy(&output.stdout));
+            count_jj_untracked_files(worktree_path, &parsed.untracked).await
         })
     }
 
@@ -359,6 +399,63 @@ impl VcsDriver for JjVcs {
                 entries.push(format!("?? {path}"));
             }
             Ok(entries)
+        })
+    }
+
+    fn status_structured<'a>(
+        &'a self,
+        root: &'a Path,
+        include_untracked_files: bool,
+    ) -> VcsFuture<'a, VcsStructuredStatus> {
+        Box::pin(async move {
+            ensure_jj_usable().await?;
+            let output = run_jj(root, &["status"]).await?;
+            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+            let parsed = parse_jj_status_output(&stdout);
+            let mut entries = Vec::new();
+            let staged = 0;
+            let unstaged = parsed.entries.len() as i64;
+            for entry in parsed.entries {
+                entries.push(VcsStatusEntry {
+                    path: entry.path,
+                    orig_path: None,
+                    index_status: " ".to_string(),
+                    worktree_status: entry.status.to_string(),
+                });
+            }
+            let untracked = if include_untracked_files {
+                let untracked_files = collect_jj_untracked_files(root, &parsed.untracked).await?;
+                let untracked = untracked_files.len() as i64;
+                for path in untracked_files {
+                    entries.push(VcsStatusEntry {
+                        path,
+                        orig_path: None,
+                        index_status: "?".to_string(),
+                        worktree_status: "?".to_string(),
+                    });
+                }
+                untracked
+            } else {
+                parsed.untracked.len() as i64
+            };
+            let total_count = staged + unstaged + untracked;
+            Ok(VcsStructuredStatus {
+                raw: stdout,
+                branch: VcsStatusBranchInfo {
+                    summary_line: "jj status".to_string(),
+                    branch: None,
+                    upstream: None,
+                    ahead: 0,
+                    behind: 0,
+                    detached: false,
+                },
+                entries,
+                staged,
+                unstaged,
+                untracked,
+                total_count,
+                truncated: false,
+            })
         })
     }
 
@@ -734,6 +831,79 @@ async fn jj_diff_name_only(root: &Path, base_revision: &str) -> Result<Vec<Strin
     Ok(out)
 }
 
+async fn jj_diff_name_count(root: &Path, base_revision: &str) -> Result<i64> {
+    let output = run_jj(
+        root,
+        &["diff", "--name-only", "--from", base_revision, "--to", "@"],
+    )
+    .await?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut total = 0;
+    let mut seen = HashSet::new();
+    for line in stdout.lines() {
+        let path = line.trim();
+        if path.is_empty() {
+            continue;
+        }
+        if patch::should_ignore_path(Path::new(path)) {
+            continue;
+        }
+        if seen.insert(path.to_string()) {
+            total += 1;
+        }
+    }
+    Ok(total)
+}
+
+async fn jj_diff_name_only_paths(
+    root: &Path,
+    base_revision: &str,
+    paths: &[String],
+) -> Result<Vec<String>> {
+    if paths.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut cmd = jj_command(root);
+    cmd.arg("diff")
+        .arg("--name-only")
+        .arg("--from")
+        .arg(base_revision)
+        .arg("--to")
+        .arg("@")
+        .arg("--");
+    for path in paths {
+        cmd.arg(path);
+    }
+    let output = cmd
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .await
+        .context("running jj diff --name-only -- <paths>")?;
+    if !output.status.success() {
+        bail!(
+            "jj diff --name-only failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut out = Vec::new();
+    let mut seen = HashSet::new();
+    for line in stdout.lines() {
+        let path = line.trim();
+        if path.is_empty() {
+            continue;
+        }
+        if patch::should_ignore_path(Path::new(path)) {
+            continue;
+        }
+        if seen.insert(path.to_string()) {
+            out.push(path.to_string());
+        }
+    }
+    Ok(out)
+}
+
 async fn count_file_lines(path: &Path) -> Result<i64> {
     let bytes = fs::read(path).await?;
     if bytes.contains(&0) {
@@ -767,113 +937,4 @@ fn diff_summary_from_git(diff: &str) -> (i64, i64, i64) {
         }
     }
     (files, additions, deletions)
-}
-
-#[derive(Debug)]
-pub(super) struct JjStatusEntry {
-    pub(super) status: char,
-    pub(super) path: String,
-}
-
-#[derive(Debug)]
-pub(super) struct JjUntrackedEntry {
-    pub(super) path: String,
-    pub(super) is_dir: bool,
-}
-
-#[derive(Debug)]
-pub(super) struct JjStatusParsed {
-    pub(super) entries: Vec<JjStatusEntry>,
-    pub(super) untracked: Vec<JjUntrackedEntry>,
-}
-
-pub(super) fn parse_jj_status_output(output: &str) -> JjStatusParsed {
-    let mut entries = Vec::new();
-    let mut untracked = Vec::new();
-    for line in output.lines() {
-        let line = line.trim_end();
-        if line.len() < 3 {
-            continue;
-        }
-        let mut chars = line.chars();
-        let status = chars.next().unwrap_or(' ');
-        if chars.next() != Some(' ') {
-            continue;
-        }
-        let mut path = chars.as_str().trim().to_string();
-        if path.is_empty() {
-            continue;
-        }
-        match status {
-            '?' => {
-                let mut is_dir = false;
-                if path.ends_with('/') || path.ends_with('\\') {
-                    is_dir = true;
-                    path = path.trim_end_matches(&['/', '\\'][..]).to_string();
-                }
-                if !path.is_empty() {
-                    untracked.push(JjUntrackedEntry { path, is_dir });
-                }
-            }
-            'M' | 'A' | 'D' | 'R' | 'C' => {
-                entries.push(JjStatusEntry { status, path });
-            }
-            _ => {}
-        }
-    }
-    JjStatusParsed { entries, untracked }
-}
-
-async fn collect_jj_untracked_files(
-    root: &Path,
-    entries: &[JjUntrackedEntry],
-) -> Result<Vec<String>> {
-    let mut out = Vec::new();
-    let mut seen = HashSet::new();
-    for entry in entries {
-        if entry.is_dir {
-            collect_jj_untracked_dir(root, &entry.path, &mut out, &mut seen).await?;
-        } else if !patch::should_ignore_path(Path::new(&entry.path))
-            && seen.insert(entry.path.clone())
-        {
-            out.push(entry.path.clone());
-        }
-    }
-    out.sort();
-    Ok(out)
-}
-
-async fn collect_jj_untracked_dir(
-    root: &Path,
-    rel_dir: &str,
-    out: &mut Vec<String>,
-    seen: &mut HashSet<String>,
-) -> Result<()> {
-    let mut stack = vec![root.join(rel_dir)];
-    while let Some(dir) = stack.pop() {
-        let mut dir_entries = match tokio::fs::read_dir(&dir).await {
-            Ok(entries) => entries,
-            Err(_) => continue,
-        };
-        while let Some(entry) = dir_entries.next_entry().await? {
-            let path = entry.path();
-            let rel = match path.strip_prefix(root) {
-                Ok(rel) => rel,
-                Err(_) => continue,
-            };
-            if patch::should_ignore_path(rel) {
-                continue;
-            }
-            let file_type = entry.file_type().await?;
-            if file_type.is_dir() {
-                stack.push(path);
-            } else {
-                let rel_str = rel.to_string_lossy().to_string();
-                if seen.insert(rel_str.clone()) {
-                    out.push(rel_str);
-                }
-            }
-        }
-    }
-    Ok(())
 }

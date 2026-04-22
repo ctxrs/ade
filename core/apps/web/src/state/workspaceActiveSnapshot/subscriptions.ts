@@ -28,6 +28,7 @@ export function buildWorkspaceActiveSubscribeMessage(
   reason: string,
   foregroundSessionId: string | null,
   subscribedSessions: SessionSubscriptionCursor[],
+  vcsOpenSessionIds: string[],
 ): {
   message: WorkspaceActiveSnapshotClientMessage;
   requestSnapshot: boolean;
@@ -47,6 +48,9 @@ export function buildWorkspaceActiveSubscribeMessage(
       session_id: session.sessionId,
       replay: toWorkspaceReplay(session.replay),
     }));
+  }
+  if (vcsOpenSessionIds.length > 0) {
+    message.vcs_open_session_ids = vcsOpenSessionIds;
   }
   return { message, requestSnapshot };
 }

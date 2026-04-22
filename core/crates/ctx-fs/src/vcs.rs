@@ -15,12 +15,43 @@ use crate::patch::{self, WorktreePatch};
 pub use crate::git::ApplyPatchTarget;
 
 mod jj;
+mod jj_status;
 
 use jj::{ensure_jj_usable, JjVcs};
 
 pub use jj::jj_command_output;
 
 pub type VcsFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T>> + Send + 'a>>;
+
+#[derive(Debug, Clone, Default)]
+pub struct VcsStatusBranchInfo {
+    pub summary_line: String,
+    pub branch: Option<String>,
+    pub upstream: Option<String>,
+    pub ahead: i64,
+    pub behind: i64,
+    pub detached: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct VcsStatusEntry {
+    pub path: String,
+    pub orig_path: Option<String>,
+    pub index_status: String,
+    pub worktree_status: String,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct VcsStructuredStatus {
+    pub raw: String,
+    pub branch: VcsStatusBranchInfo,
+    pub entries: Vec<VcsStatusEntry>,
+    pub staged: i64,
+    pub unstaged: i64,
+    pub untracked: i64,
+    pub total_count: i64,
+    pub truncated: bool,
+}
 
 pub trait VcsDriver: Send + Sync {
     fn kind(&self) -> VcsKind;
@@ -56,12 +87,24 @@ pub trait VcsDriver: Send + Sync {
         worktree_path: &'a Path,
         base_revision: &'a str,
     ) -> VcsFuture<'a, (i64, i64, i64)>;
+    fn diff_file_count<'a>(
+        &'a self,
+        worktree_path: &'a Path,
+        base_revision: &'a str,
+    ) -> VcsFuture<'a, i64>;
     fn diff_name_status<'a>(
         &'a self,
         worktree_path: &'a Path,
         base_revision: &'a str,
     ) -> VcsFuture<'a, Vec<VcsNameStatusEntry>>;
+    fn diff_name_status_paths<'a>(
+        &'a self,
+        worktree_path: &'a Path,
+        base_revision: &'a str,
+        paths: &'a [String],
+    ) -> VcsFuture<'a, Vec<VcsNameStatusEntry>>;
     fn list_untracked<'a>(&'a self, worktree_path: &'a Path) -> VcsFuture<'a, Vec<String>>;
+    fn untracked_file_count<'a>(&'a self, worktree_path: &'a Path) -> VcsFuture<'a, i64>;
     fn diff_untracked_file<'a>(
         &'a self,
         worktree_path: &'a Path,
@@ -69,6 +112,11 @@ pub trait VcsDriver: Send + Sync {
     ) -> VcsFuture<'a, String>;
     fn status_short<'a>(&'a self, root: &'a Path) -> VcsFuture<'a, String>;
     fn status_porcelain<'a>(&'a self, root: &'a Path) -> VcsFuture<'a, Vec<String>>;
+    fn status_structured<'a>(
+        &'a self,
+        root: &'a Path,
+        include_untracked_files: bool,
+    ) -> VcsFuture<'a, VcsStructuredStatus>;
     fn build_worktree_patch<'a>(
         &'a self,
         worktree_path: &'a Path,
@@ -250,6 +298,16 @@ impl VcsDriver for GitVcs {
         })
     }
 
+    fn diff_file_count<'a>(
+        &'a self,
+        worktree_path: &'a Path,
+        base_revision: &'a str,
+    ) -> VcsFuture<'a, i64> {
+        Box::pin(async move {
+            crate::git_counts::diff_name_status_count(worktree_path, base_revision).await
+        })
+    }
+
     fn diff_name_status<'a>(
         &'a self,
         worktree_path: &'a Path,
@@ -268,8 +326,32 @@ impl VcsDriver for GitVcs {
         })
     }
 
+    fn diff_name_status_paths<'a>(
+        &'a self,
+        worktree_path: &'a Path,
+        base_revision: &'a str,
+        paths: &'a [String],
+    ) -> VcsFuture<'a, Vec<VcsNameStatusEntry>> {
+        Box::pin(async move {
+            let entries =
+                git::git_diff_name_status_paths(worktree_path, base_revision, paths).await?;
+            Ok(entries
+                .into_iter()
+                .map(|(status, path, orig_path)| VcsNameStatusEntry {
+                    status,
+                    path,
+                    orig_path,
+                })
+                .collect())
+        })
+    }
+
     fn list_untracked<'a>(&'a self, worktree_path: &'a Path) -> VcsFuture<'a, Vec<String>> {
         Box::pin(async move { git::list_untracked_files(worktree_path).await })
+    }
+
+    fn untracked_file_count<'a>(&'a self, worktree_path: &'a Path) -> VcsFuture<'a, i64> {
+        Box::pin(async move { crate::git_counts::untracked_count(worktree_path).await })
     }
 
     fn diff_untracked_file<'a>(
@@ -286,6 +368,14 @@ impl VcsDriver for GitVcs {
 
     fn status_porcelain<'a>(&'a self, root: &'a Path) -> VcsFuture<'a, Vec<String>> {
         Box::pin(async move { git::git_status_porcelain(root).await })
+    }
+
+    fn status_structured<'a>(
+        &'a self,
+        root: &'a Path,
+        include_untracked_files: bool,
+    ) -> VcsFuture<'a, VcsStructuredStatus> {
+        Box::pin(async move { git::git_status_structured(root, include_untracked_files).await })
     }
 
     fn build_worktree_patch<'a>(
@@ -366,7 +456,7 @@ pub fn driver_for_kind(kind: Option<VcsKind>) -> Arc<dyn VcsDriver> {
 
 #[cfg(test)]
 mod tests {
-    use super::jj::parse_jj_status_output;
+    use super::jj_status::parse_jj_status_output;
 
     #[test]
     fn parse_jj_status_output_handles_untracked_dirs() {

@@ -7,6 +7,7 @@ use anyhow::{Context, Result};
 
 use ctx_core::models::Worktree;
 use ctx_fs::vcs;
+use ctx_fs::vcs::VcsStructuredStatus;
 use ctx_workspace_container::workspace_container_name;
 
 use crate::daemon::AppState;
@@ -124,28 +125,23 @@ pub(super) async fn container_git_stdout(
     }
 }
 
-pub(crate) async fn container_git_status_short(
+pub(crate) async fn container_git_status_structured(
     state: &Arc<AppState>,
     worktree: &Worktree,
-) -> Result<String> {
-    let bytes =
-        container_git_stdout(state, worktree, &["status", "-sb", "--untracked-files=all"]).await?;
-    Ok(String::from_utf8_lossy(&bytes).to_string())
-}
-
-pub(crate) async fn container_git_status_porcelain(
-    state: &Arc<AppState>,
-    worktree: &Worktree,
-) -> Result<Vec<String>> {
-    let bytes = container_git_stdout(state, worktree, &["status", "--porcelain", "-z"]).await?;
-    let mut out = Vec::new();
-    for entry in bytes.split(|b| *b == 0) {
-        if entry.is_empty() {
-            continue;
-        }
-        out.push(String::from_utf8_lossy(entry).to_string());
-    }
-    Ok(out)
+    include_untracked_files: bool,
+) -> Result<VcsStructuredStatus> {
+    let untracked_mode = if include_untracked_files {
+        "--untracked-files=all"
+    } else {
+        "--untracked-files=normal"
+    };
+    let bytes = container_git_stdout(
+        state,
+        worktree,
+        &["status", "--porcelain", "-z", "--branch", untracked_mode],
+    )
+    .await?;
+    Ok(ctx_fs::git::git_status_structured_from_bytes(&bytes))
 }
 
 pub(crate) async fn container_git_list_untracked(
@@ -168,6 +164,22 @@ pub(crate) async fn container_git_list_untracked(
     Ok(out)
 }
 
+pub(crate) async fn container_git_count_untracked(
+    state: &Arc<AppState>,
+    worktree: &Worktree,
+) -> Result<i64> {
+    let bytes = container_git_stdout(
+        state,
+        worktree,
+        &["ls-files", "--others", "--exclude-standard", "-z"],
+    )
+    .await?;
+    Ok(bytes
+        .split(|byte| *byte == 0)
+        .filter(|part| !part.is_empty())
+        .count() as i64)
+}
+
 pub(crate) async fn container_git_diff_name_status(
     state: &Arc<AppState>,
     worktree: &Worktree,
@@ -183,13 +195,16 @@ pub(crate) async fn container_git_diff_name_status(
     let mut parts = bytes
         .split(|b| *b == 0)
         .filter(|part| !part.is_empty())
+        .map(|part| String::from_utf8_lossy(part).to_string())
         .peekable();
     while let Some(part) = parts.next() {
-        let Some(tab_idx) = part.iter().position(|b| *b == b'\t') else {
+        let status = part.trim().to_string();
+        if status.is_empty() {
+            continue;
+        }
+        let Some(path) = parts.next() else {
             continue;
         };
-        let status = String::from_utf8_lossy(&part[..tab_idx]).to_string();
-        let path = String::from_utf8_lossy(&part[tab_idx + 1..]).to_string();
         if status.is_empty() || path.trim().is_empty() {
             continue;
         }
@@ -198,7 +213,7 @@ pub(crate) async fn container_git_diff_name_status(
             let Some(next_path) = parts.next() else {
                 continue;
             };
-            let new_path = String::from_utf8_lossy(next_path).to_string();
+            let new_path = next_path;
             if new_path.trim().is_empty() {
                 continue;
             }
@@ -208,6 +223,51 @@ pub(crate) async fn container_git_diff_name_status(
         }
     }
     Ok(out)
+}
+
+pub(crate) async fn container_git_diff_name_status_count(
+    state: &Arc<AppState>,
+    worktree: &Worktree,
+    base_commit_sha: &str,
+) -> Result<i64> {
+    let bytes = container_git_stdout(
+        state,
+        worktree,
+        &["diff", "--name-status", "-z", base_commit_sha],
+    )
+    .await?;
+    Ok(count_name_status_entries(&bytes))
+}
+
+fn count_name_status_entries(bytes: &[u8]) -> i64 {
+    let mut total = 0;
+    let mut parts = bytes
+        .split(|byte| *byte == 0)
+        .filter(|part| !part.is_empty());
+    while let Some(status_bytes) = parts.next() {
+        let status = String::from_utf8_lossy(status_bytes);
+        let status = status.trim();
+        if status.is_empty() {
+            continue;
+        }
+        let Some(path) = parts.next() else {
+            continue;
+        };
+        if String::from_utf8_lossy(path).trim().is_empty() {
+            continue;
+        }
+        let status_char = status.chars().next().unwrap_or('M');
+        if status_char == 'R' || status_char == 'C' {
+            let Some(next_path) = parts.next() else {
+                continue;
+            };
+            if String::from_utf8_lossy(next_path).trim().is_empty() {
+                continue;
+            }
+        }
+        total += 1;
+    }
+    total
 }
 
 pub(crate) async fn container_git_rev_parse(
@@ -254,118 +314,4 @@ pub(crate) async fn worktree_merge_base(
     let root = data_plane.live_worktree_root.as_path();
     let driver = vcs::driver_for_path(root).await?;
     driver.merge_base(root, target_branch, "HEAD").await
-}
-
-async fn container_untracked_summary(
-    state: &Arc<AppState>,
-    worktree: &Worktree,
-) -> Result<(i64, i64)> {
-    // Match host semantics in `ctx_fs::worktrees::diff_worktree_summary`:
-    // - count untracked files as changed files
-    // - include a best-effort line count for "small" untracked files
-    let script = r#"
-set -e
-max_bytes=$((512 * 1024))
-count=0
-adds=0
-while IFS= read -r f; do
-  [ -z "$f" ] && continue
-  count=$((count+1))
-  # Skip huge files.
-  size="$(stat -c %s -- "$f" 2>/dev/null || echo 0)"
-  case "$size" in
-    ''|*[!0-9]*) size=0 ;;
-  esac
-  if [ "$size" -gt "$max_bytes" ]; then
-    continue
-  fi
-  # awk counts a final non-newline-terminated line as 1.
-  lines="$(awk 'END{print NR}' -- "$f" 2>/dev/null || echo 0)"
-  case "$lines" in
-    ''|*[!0-9]*) lines=0 ;;
-  esac
-  adds=$((adds+lines))
-done < <(git ls-files --others --exclude-standard)
-printf '%s %s\n' "$count" "$adds"
-"#;
-    let target = ensure_container_for_worktree(state, worktree).await?;
-    let out = match target.target {
-        SandboxGitTarget::NativeContainer { container_name } => {
-            let mut cmd = sandbox_container_command(&state.core.data_root)?;
-            cmd.arg("exec")
-                .arg("--interactive")
-                .arg("--workdir")
-                .arg(&target.live_worktree_root)
-                .arg(&container_name)
-                .arg("bash")
-                .arg("-lc")
-                .arg(script);
-            tokio::time::timeout(Duration::from_secs(30), cmd.output())
-                .await
-                .context("sandbox exec timed out")??
-        }
-        SandboxGitTarget::SharedVmContainer => tokio::time::timeout(
-            Duration::from_secs(30),
-            ctx_avf_linux_runtime::run_guest_exec_capture(
-                &state.core.data_root,
-                worktree.workspace_id,
-                worktree.id,
-                &target.live_worktree_root,
-                "bash",
-                &["-lc".to_string(), script.to_string()],
-                &HashMap::new(),
-                None,
-                false,
-            ),
-        )
-        .await
-        .context("AVF guest exec timed out")??,
-    };
-    if !out.status.success() {
-        anyhow::bail!(
-            "untracked summary failed (status {}): {}",
-            out.status,
-            String::from_utf8_lossy(&out.stderr).trim()
-        );
-    }
-    let txt = String::from_utf8_lossy(&out.stdout);
-    let mut parts = txt.split_whitespace();
-    let count = parts.next().unwrap_or("0").parse::<i64>().unwrap_or(0);
-    let adds = parts.next().unwrap_or("0").parse::<i64>().unwrap_or(0);
-    Ok((count, adds))
-}
-
-pub(crate) async fn container_diff_worktree_summary(
-    state: &Arc<AppState>,
-    worktree: &Worktree,
-    base_commit_sha: &str,
-) -> Result<(i64, i64, i64)> {
-    let bytes =
-        container_git_stdout(state, worktree, &["diff", "--numstat", base_commit_sha]).await?;
-    let stdout = String::from_utf8_lossy(&bytes);
-    let mut file_count = 0i64;
-    let mut additions = 0i64;
-    let mut deletions = 0i64;
-    for line in stdout.lines() {
-        let mut parts = line.split('\t');
-        let add = parts.next().unwrap_or("0");
-        let del = parts.next().unwrap_or("0");
-        let path = parts.next().unwrap_or("").trim();
-        if path.is_empty() {
-            continue;
-        }
-        file_count += 1;
-        if add != "-" {
-            additions += add.parse::<i64>().unwrap_or(0);
-        }
-        if del != "-" {
-            deletions += del.parse::<i64>().unwrap_or(0);
-        }
-    }
-    let (untracked_count, untracked_additions) = container_untracked_summary(state, worktree)
-        .await
-        .unwrap_or((0, 0));
-    file_count += untracked_count;
-    additions += untracked_additions;
-    Ok((file_count, additions, deletions))
 }

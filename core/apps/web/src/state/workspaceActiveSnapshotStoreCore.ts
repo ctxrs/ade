@@ -51,6 +51,7 @@ import {
   setE2EEnabled,
   setForegroundSessionId,
   setSubscribedSessions,
+  setVcsOpenSessionIds,
   unwrapEvent,
   type WorkspaceActiveSnapshotControlHost,
 } from "./workspaceActiveSnapshot/controls";
@@ -201,6 +202,7 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
   private configUnsubscribe: (() => void) | null = null;
   private listWorkspaceArchivedTaskSummariesFn: typeof listWorkspaceArchivedTaskSummaries;
   subscribedSessions: SessionSubscriptionCursor[] = [];
+  vcsOpenSessionIds: string[] = [];
   foregroundSessionId: string | null = null;
   ws: WebSocket | null = null;
   private connecting = false;
@@ -286,6 +288,9 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
   setSubscribedSessions = (sessions: SessionSubscriptionCursor[]) =>
     setSubscribedSessions(this, sessions);
 
+  setVcsOpenSessionIds = (sessionIds: string[]) =>
+    setVcsOpenSessionIds(this, sessionIds);
+
   setForegroundSessionId = (sessionId: string | null) =>
     setForegroundSessionId(this, sessionId);
 
@@ -369,6 +374,12 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
         this.postWorkerCommand({
           type: "set_subscribed_sessions",
           sessions: this.subscribedSessions.slice(),
+        });
+      }
+      if (this.vcsOpenSessionIds.length > 0) {
+        this.postWorkerCommand({
+          type: "set_vcs_open_session_ids",
+          sessionIds: this.vcsOpenSessionIds.slice(),
         });
       }
       if (this.foregroundSessionId) {

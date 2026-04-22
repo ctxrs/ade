@@ -29,10 +29,11 @@ const makeSnapshot = (overrides?: Partial<WorktreeVcsSnapshot>): WorktreeVcsSnap
     truncated: false,
     total_count: 0,
   },
+  touched_files_state: "not_loaded",
   freshness: "fresh",
   available: true,
   unavailable_reason: null,
-  schema_version: 1,
+  schema_version: 2,
   ...overrides,
 });
 
@@ -57,6 +58,7 @@ describe("buildGitPaneModel", () => {
           truncated: false,
           total_count: 1,
         },
+        touched_files_state: "ready",
       }),
     );
 
@@ -70,16 +72,16 @@ describe("buildGitPaneModel", () => {
   it("falls back to summary count without claiming the pane is empty when inventory is not ready yet", () => {
     const model = buildGitPaneModel(
       makeSnapshot({
-        compute_state: "computing",
         summary: { file_count: 2, line_additions: 4, line_deletions: 0, line_count: 4 },
         touched_files: { items: [], truncated: false, total_count: 2 },
+        touched_files_state: "loading",
       }),
     );
 
     expect(model.badgeCount).toBe(2);
     expect(model.totalCount).toBe(2);
     expect(model.listReady).toBe(false);
-    expect(model.loading).toBe(false);
+    expect(model.loading).toBe(true);
   });
 
   it("groups staged, unstaged, and untracked files deterministically", () => {
@@ -106,6 +108,7 @@ describe("buildGitPaneModel", () => {
           truncated: false,
           total_count: 3,
         },
+        touched_files_state: "ready",
       }),
     );
 
@@ -115,6 +118,38 @@ describe("buildGitPaneModel", () => {
       "unstaged.txt",
       "new.txt",
     ]);
+  });
+
+  it("does not use working-tree status counts as the merge-base badge fallback", () => {
+    const model = buildGitPaneModel(
+      makeSnapshot({
+        summary: {},
+        git_status: {
+          branch: "main",
+          upstream: "origin/main",
+          ahead: 0,
+          behind: 0,
+          detached: false,
+          staged: 1,
+          unstaged: 1,
+          untracked: 1,
+          entries: [
+            { path: "staged.txt", index_status: "M", worktree_status: " ", orig_path: null },
+            { path: "unstaged.txt", index_status: " ", worktree_status: "M", orig_path: null },
+            { path: "new.txt", index_status: "?", worktree_status: null, orig_path: null },
+          ],
+        },
+        touched_files: {
+          items: [],
+          truncated: false,
+          total_count: null,
+        },
+        touched_files_state: "not_loaded",
+      }),
+    );
+
+    expect(model.badgeCount).toBe(0);
+    expect(model.totalCount).toBe(3);
   });
 
   it("reports unavailable no-repo worktrees as unavailable instead of empty", () => {

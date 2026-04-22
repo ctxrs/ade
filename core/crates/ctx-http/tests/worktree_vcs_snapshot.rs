@@ -7,10 +7,14 @@ use std::time::{Duration, Instant};
 
 use axum::http::{Method, StatusCode};
 use ctx_core::models::{DiffUnavailableReason, WorktreeVcsFreshness};
+use ctx_http::daemon::{AppRuntimeFlags, AppState};
 use ctx_http::git_status::{
-    emit_worktree_vcs_snapshot_for_worktree, refresh_worktree_vcs_summary, run_git_status_watcher,
+    emit_worktree_vcs_snapshot_for_worktree, refresh_worktree_vcs_summary,
+    request_worktree_vcs_refresh, run_git_status_watcher,
 };
+use ctx_lsp::LspManagerConfig;
 use serde_json::Value;
+use std::sync::Arc;
 use tokio::process::Command;
 
 async fn run_git(root: &Path, args: &[&str]) {
@@ -60,6 +64,76 @@ fn worktree_vcs_snapshot_test_lock() -> &'static tokio::sync::Mutex<()> {
     LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
 }
 
+fn build_vcs_disabled_state(data_dir: &Path, stores: ctx_store::StoreManager) -> Arc<AppState> {
+    Arc::new(AppState::new_with_lsp_config_and_runtime_flags(
+        data_dir.to_path_buf(),
+        stores,
+        common::fake_providers(),
+        "http://127.0.0.1:0".to_string(),
+        None,
+        LspManagerConfig::default(),
+        AppRuntimeFlags {
+            lsp_edit_plans_enabled: false,
+            worktree_vcs_enabled: false,
+        },
+    ))
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn worktree_vcs_disabled_mode_suppresses_projection_work() {
+    let _guard = worktree_vcs_snapshot_test_lock().lock().await;
+    let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
+    let data_dir = tempfile::tempdir().unwrap();
+    let stores = common::setup_store(data_dir.path()).await;
+    let state = build_vcs_disabled_state(data_dir.path(), stores);
+    let app = common::router(state.clone());
+
+    let ws = common::create_workspace(&app, repo.path(), "ws").await;
+    let task = common::create_task(&app, ws.id.0, "vcs-disabled").await;
+    let session = common::create_session(&app, task.id.0, "fake", "fake-model").await;
+    let worktree = state
+        .store_for_worktree(session.worktree_id)
+        .await
+        .expect("store for worktree")
+        .get_worktree(session.worktree_id)
+        .await
+        .expect("load worktree")
+        .expect("worktree should exist");
+
+    let mut next_active = HashSet::new();
+    next_active.insert(worktree.id);
+    state
+        .workspaces
+        .update_worktree_vcs_activity(&HashSet::new(), &next_active)
+        .await;
+
+    assert!(!state.worktree_vcs_enabled());
+    assert!(!state.is_worktree_vcs_active(worktree.id).await);
+    emit_worktree_vcs_snapshot_for_worktree(&state, &worktree, true)
+        .await
+        .expect("disabled VCS emission should be a no-op");
+    request_worktree_vcs_refresh(&state, &worktree, true, true)
+        .await
+        .expect("disabled VCS refresh should be a no-op");
+    run_git_status_watcher(state.clone(), worktree.clone())
+        .await
+        .expect("disabled VCS watcher should be a no-op");
+
+    assert!(
+        state.get_worktree_vcs_snapshot(worktree.id).await.is_none(),
+        "disabled VCS mode must not compute or cache worktree VCS snapshots"
+    );
+    let active_snapshot = state
+        .workspaces
+        .workspace_active_snapshot
+        .active_snapshot(ws.id, 10)
+        .await;
+    assert!(
+        active_snapshot.worktree_vcs_snapshots.is_empty(),
+        "disabled VCS mode must not publish worktree VCS snapshots"
+    );
+}
+
 #[tokio::test(flavor = "current_thread")]
 async fn worktree_vcs_snapshot_clears_stale_counts_when_repo_becomes_unavailable() {
     let _guard = worktree_vcs_snapshot_test_lock().lock().await;
@@ -104,9 +178,7 @@ async fn worktree_vcs_snapshot_clears_stale_counts_when_repo_becomes_unavailable
     loop {
         let snapshot = state.get_worktree_vcs_snapshot(worktree.id).await;
         if let Some(snapshot) = snapshot {
-            if snapshot.summary.file_count.unwrap_or(0) > 0
-                || snapshot.summary.line_count.unwrap_or(0) > 0
-            {
+            if snapshot.summary.file_count.unwrap_or(0) > 0 {
                 break;
             }
         }
@@ -137,6 +209,10 @@ async fn worktree_vcs_snapshot_clears_stale_counts_when_repo_becomes_unavailable
     assert_eq!(snapshot.summary.line_additions, None);
     assert_eq!(snapshot.summary.line_deletions, None);
     assert!(snapshot.touched_files.items.is_empty());
+    assert_eq!(
+        snapshot.touched_files_state,
+        ctx_core::models::WorktreeVcsTouchedFilesState::NotLoaded
+    );
 
     let active_snapshot = state
         .workspaces
@@ -155,6 +231,10 @@ async fn worktree_vcs_snapshot_clears_stale_counts_when_repo_becomes_unavailable
     );
     assert_eq!(published.summary.file_count, None);
     assert!(published.touched_files.items.is_empty());
+    assert_eq!(
+        published.touched_files_state,
+        ctx_core::models::WorktreeVcsTouchedFilesState::NotLoaded
+    );
 }
 
 #[tokio::test(flavor = "current_thread")]

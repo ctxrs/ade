@@ -34,12 +34,14 @@ pub(crate) struct WorkspaceActiveSubscriptionState {
     pub(crate) explicit_sessions: HashSet<SessionId>,
     pub(crate) active_task_sessions: HashMap<TaskId, SessionId>,
     pub(crate) active_task_vcs_sessions: HashMap<TaskId, HashSet<SessionId>>,
+    pub(crate) vcs_open_sessions: HashSet<SessionId>,
     pub(crate) foreground_session_ids: Option<HashSet<SessionId>>,
 }
 
 pub(crate) struct ResolvedWorkspaceActiveSubscriptions {
     pub(crate) sessions: Vec<ResolvedWorkspaceActiveSessionSubscription>,
-    pub(crate) worktree_vcs_session_ids: Vec<SessionId>,
+    pub(crate) worktree_vcs_summary_session_ids: Vec<SessionId>,
+    pub(crate) worktree_vcs_open_session_ids: Vec<SessionId>,
     pub(crate) state: WorkspaceActiveSubscriptionState,
 }
 
@@ -56,18 +58,15 @@ pub(crate) fn primary_session_id_for_active_task(task: &WorkspaceActiveTaskSumma
         .unwrap_or(task.primary_session.session.id)
 }
 
-pub(crate) fn session_ids_for_active_task_summary(
+pub(crate) fn primary_session_ids_for_active_task_summary(
     task: &WorkspaceActiveTaskSummary,
 ) -> HashSet<SessionId> {
     let mut sessions = HashSet::new();
-    sessions.insert(task.primary_session.session.id);
-    for summary in &task.sessions {
-        sessions.insert(summary.session.id);
-    }
+    sessions.insert(primary_session_id_for_active_task(task));
     sessions
 }
 
-pub(crate) fn resolve_worktree_vcs_interest_session_ids<I>(
+pub(crate) fn resolve_worktree_vcs_summary_session_ids<I>(
     session_ids: I,
     subscription_state: &WorkspaceActiveSubscriptionState,
 ) -> Vec<SessionId>
@@ -79,6 +78,18 @@ where
         ids.extend(task_session_ids.iter().copied());
     }
     let mut ordered: Vec<_> = ids.into_iter().collect();
+    ordered.sort_by_key(|session_id| session_id.0);
+    ordered
+}
+
+pub(crate) fn resolve_worktree_vcs_open_session_ids(
+    subscription_state: &WorkspaceActiveSubscriptionState,
+) -> Vec<SessionId> {
+    let mut ordered: Vec<_> = subscription_state
+        .vcs_open_sessions
+        .iter()
+        .copied()
+        .collect();
     ordered.sort_by_key(|session_id| session_id.0);
     ordered
 }
@@ -194,6 +205,7 @@ pub(crate) async fn resolve_workspace_active_snapshot_subscriptions(
             task_ids,
             foreground_session_id,
             scope,
+            vcs_open_session_ids,
             ..
         } => {
             let mut resolved = HashSet::new();
@@ -202,6 +214,7 @@ pub(crate) async fn resolve_workspace_active_snapshot_subscriptions(
             let mut explicit_sessions = HashSet::new();
             let mut active_task_sessions = HashMap::new();
             let mut active_task_vcs_sessions = HashMap::new();
+            let mut open_vcs_sessions = HashSet::new();
             let mut active_scope = false;
             let mut foreground_session_ids = None;
             for sub in sessions {
@@ -221,11 +234,13 @@ pub(crate) async fn resolve_workspace_active_snapshot_subscriptions(
                     .active_snapshot(workspace_id, i64::MAX)
                     .await;
                 for task in snapshot.active.tasks {
-                    let task_session_ids = session_ids_for_active_task_summary(&task);
                     let session_id = primary_session_id_for_active_task(&task);
                     resolved.insert(session_id);
                     active_task_sessions.insert(task.task.id, session_id);
-                    active_task_vcs_sessions.insert(task.task.id, task_session_ids);
+                    active_task_vcs_sessions.insert(
+                        task.task.id,
+                        primary_session_ids_for_active_task_summary(&task),
+                    );
                 }
             }
             if !task_ids.is_empty() {
@@ -246,6 +261,10 @@ pub(crate) async fn resolve_workspace_active_snapshot_subscriptions(
                         explicit_sessions.insert(primary_session_id);
                     }
                 }
+            }
+            for session_id in vcs_open_session_ids {
+                open_vcs_sessions.insert(session_id);
+                resolved.insert(session_id);
             }
             if let Some(session_id) = foreground_session_id {
                 let mut sessions = HashSet::new();
@@ -274,21 +293,34 @@ pub(crate) async fn resolve_workspace_active_snapshot_subscriptions(
                 next.push(ResolvedWorkspaceActiveSessionSubscription { session_id, replay });
             }
             next.sort_by_key(|subscription| subscription.session_id.0);
-            let state = WorkspaceActiveSubscriptionState {
+            let subscription_state = WorkspaceActiveSubscriptionState {
                 active_scope,
                 explicit_sessions,
                 active_task_sessions,
                 active_task_vcs_sessions,
+                vcs_open_sessions: open_vcs_sessions,
                 foreground_session_ids,
             };
-            let worktree_vcs_session_ids = resolve_worktree_vcs_interest_session_ids(
+            let worktree_vcs_summary_session_ids = resolve_worktree_vcs_summary_session_ids(
                 next.iter().map(|sub| sub.session_id),
-                &state,
+                &subscription_state,
             );
+            let worktree_vcs_open_session_ids =
+                resolve_worktree_vcs_open_session_ids(&subscription_state);
+            let (worktree_vcs_summary_session_ids, worktree_vcs_open_session_ids) =
+                if state.worktree_vcs_enabled() {
+                    (
+                        worktree_vcs_summary_session_ids,
+                        worktree_vcs_open_session_ids,
+                    )
+                } else {
+                    (Vec::new(), Vec::new())
+                };
             Ok(ResolvedWorkspaceActiveSubscriptions {
                 sessions: next,
-                worktree_vcs_session_ids,
-                state,
+                worktree_vcs_summary_session_ids,
+                worktree_vcs_open_session_ids,
+                state: subscription_state,
             })
         }
     }
@@ -296,13 +328,17 @@ pub(crate) async fn resolve_workspace_active_snapshot_subscriptions(
 
 pub(crate) async fn refresh_worktree_vcs_for_sessions(
     state: &Arc<AppState>,
-    session_ids: &[SessionId],
+    summary_session_ids: &[SessionId],
+    open_session_ids: &[SessionId],
 ) {
-    if session_ids.is_empty() {
+    if !state.worktree_vcs_enabled() {
         return;
     }
-    let mut worktrees: HashMap<WorktreeId, Worktree> = HashMap::new();
-    for session_id in session_ids {
+    if summary_session_ids.is_empty() && open_session_ids.is_empty() {
+        return;
+    }
+    let mut worktrees: HashMap<WorktreeId, (Worktree, bool)> = HashMap::new();
+    for session_id in summary_session_ids {
         let store = match state.store_for_session(*session_id).await {
             Ok(store) => store,
             Err(_) => continue,
@@ -315,17 +351,41 @@ pub(crate) async fn refresh_worktree_vcs_for_sessions(
             Ok(Some(worktree)) => worktree,
             _ => continue,
         };
-        worktrees.entry(worktree.id).or_insert(worktree);
+        worktrees.entry(worktree.id).or_insert((worktree, false));
+    }
+    for session_id in open_session_ids {
+        let store = match state.store_for_session(*session_id).await {
+            Ok(store) => store,
+            Err(_) => continue,
+        };
+        let session = match store.get_session(*session_id).await {
+            Ok(Some(session)) => session,
+            _ => continue,
+        };
+        let worktree = match store.get_worktree(session.worktree_id).await {
+            Ok(Some(worktree)) => worktree,
+            _ => continue,
+        };
+        worktrees
+            .entry(worktree.id)
+            .and_modify(|(_, open)| *open = true)
+            .or_insert((worktree, true));
     }
 
-    for (worktree_id, worktree) in worktrees {
+    for (worktree_id, (worktree, open_pane)) in worktrees {
         state.ensure_git_status_watcher(worktree.clone()).await;
         match state.get_worktree_vcs_snapshot(worktree.id).await {
             Some(snapshot)
-                if snapshot.freshness == WorktreeVcsFreshness::Fresh && snapshot.available => {}
+                if snapshot.freshness == WorktreeVcsFreshness::Fresh
+                    && snapshot.available
+                    && (!open_pane
+                        || matches!(
+                            snapshot.touched_files_state,
+                            ctx_core::models::WorktreeVcsTouchedFilesState::Ready
+                        )) => {}
             Some(_) => {
-                if let Err(err) = crate::git_status::emit_worktree_vcs_snapshot_for_worktree(
-                    state, &worktree, true,
+                if let Err(err) = crate::git_status::request_worktree_vcs_refresh(
+                    state, &worktree, true, open_pane,
                 )
                 .await
                 {
@@ -336,8 +396,8 @@ pub(crate) async fn refresh_worktree_vcs_for_sessions(
                 }
             }
             None => {
-                if let Err(err) = crate::git_status::emit_worktree_vcs_snapshot_for_worktree(
-                    state, &worktree, true,
+                if let Err(err) = crate::git_status::request_worktree_vcs_refresh(
+                    state, &worktree, true, open_pane,
                 )
                 .await
                 {
@@ -353,13 +413,14 @@ pub(crate) async fn refresh_worktree_vcs_for_sessions(
 
 pub(crate) fn spawn_worktree_vcs_refresh_for_sessions(
     state: Arc<AppState>,
-    session_ids: Vec<SessionId>,
+    summary_session_ids: Vec<SessionId>,
+    open_session_ids: Vec<SessionId>,
 ) {
-    if session_ids.is_empty() {
+    if summary_session_ids.is_empty() && open_session_ids.is_empty() {
         return;
     }
     tokio::spawn(async move {
-        refresh_worktree_vcs_for_sessions(&state, &session_ids).await;
+        refresh_worktree_vcs_for_sessions(&state, &summary_session_ids, &open_session_ids).await;
     });
 }
 
@@ -367,6 +428,9 @@ pub(crate) async fn load_worktree_vcs_snapshots_for_sessions(
     state: &Arc<AppState>,
     session_ids: &[SessionId],
 ) -> Vec<WorktreeVcsSnapshot> {
+    if !state.worktree_vcs_enabled() {
+        return Vec::new();
+    }
     let worktree_ids = resolve_worktree_ids_for_sessions(state, session_ids).await;
     let mut ordered_worktree_ids: Vec<_> = worktree_ids.into_iter().collect();
     ordered_worktree_ids.sort_by_key(|worktree_id| worktree_id.0);
@@ -379,16 +443,52 @@ pub(crate) async fn load_worktree_vcs_snapshots_for_sessions(
     snapshots
 }
 
+pub(crate) async fn resolve_worktree_vcs_publish_worktree_ids(
+    state: &Arc<AppState>,
+    summary_session_ids: &[SessionId],
+    open_session_ids: &[SessionId],
+) -> HashSet<WorktreeId> {
+    if !state.worktree_vcs_enabled() {
+        return HashSet::new();
+    }
+    let mut worktree_ids = resolve_worktree_ids_for_sessions(state, summary_session_ids).await;
+    worktree_ids.extend(
+        resolve_worktree_ids_for_sessions(state, open_session_ids)
+            .await
+            .into_iter(),
+    );
+    worktree_ids
+}
+
 pub(crate) async fn sync_active_worktrees(
     state: &Arc<AppState>,
     active_worktrees: &mut HashSet<WorktreeId>,
-    session_ids: &[SessionId],
+    open_worktrees: &mut HashSet<WorktreeId>,
+    summary_session_ids: &[SessionId],
+    open_session_ids: &[SessionId],
 ) {
-    let next = resolve_worktree_ids_for_sessions(state, session_ids).await;
+    if !state.worktree_vcs_enabled() {
+        state
+            .update_worktree_vcs_activity(active_worktrees, &HashSet::new())
+            .await;
+        state
+            .update_worktree_vcs_open_panes(open_worktrees, &HashSet::new())
+            .await;
+        active_worktrees.clear();
+        open_worktrees.clear();
+        return;
+    }
+    let mut next = resolve_worktree_ids_for_sessions(state, summary_session_ids).await;
+    let next_open = resolve_worktree_ids_for_sessions(state, open_session_ids).await;
+    next.extend(next_open.iter().copied());
     state
         .update_worktree_vcs_activity(active_worktrees, &next)
         .await;
+    state
+        .update_worktree_vcs_open_panes(open_worktrees, &next_open)
+        .await;
     *active_worktrees = next;
+    *open_worktrees = next_open;
 }
 
 pub(crate) fn merge_worktree_vcs_snapshots(

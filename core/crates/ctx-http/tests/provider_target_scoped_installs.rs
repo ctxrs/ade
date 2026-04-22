@@ -131,6 +131,14 @@ fn write_js_entrypoint(path: &Path) {
 }
 
 const SEEDED_NODE_VERSION: &str = "24.15.0";
+const SEEDED_NODE_DIST_TARGETS: &[(&str, &str)] = &[
+    ("darwin-arm64", "host"),
+    ("darwin-x64", "host"),
+    ("linux-arm64", "container"),
+    ("linux-x64", "container"),
+    ("win-arm64", "container"),
+    ("win-x64", "container"),
+];
 
 fn seeded_node_dist_target(target: InstallTarget) -> &'static str {
     match target {
@@ -153,7 +161,35 @@ fn seeded_node_dist_target(target: InstallTarget) -> &'static str {
     }
 }
 
+fn seed_node_runtime_folder(data_root: &Path, folder: &str, tag: &str) {
+    let node_root = data_root.join("runtimes").join("node").join(folder);
+    let node_bin_dir = node_root.join("bin");
+    let npm_cli = node_root
+        .join("lib")
+        .join("node_modules")
+        .join("npm")
+        .join("bin")
+        .join("npm-cli.js");
+    std::fs::create_dir_all(&node_bin_dir).expect("create node bin dir");
+    std::fs::create_dir_all(
+        npm_cli
+            .parent()
+            .expect("seeded npm cli should have a parent directory"),
+    )
+    .expect("create npm cli dir");
+    write_fake_node_runtime(&node_bin_dir.join("node"), tag);
+    write_js_entrypoint(&npm_cli);
+}
+
 fn seed_managed_node_runtime_metadata(cfg: &mut AgentServerConfigFile, data_root: &Path) {
+    for (dist_target, tag) in SEEDED_NODE_DIST_TARGETS {
+        seed_node_runtime_folder(
+            data_root,
+            &format!("node-v{SEEDED_NODE_VERSION}-{dist_target}"),
+            tag,
+        );
+    }
+
     for (dependency_id, target, tag) in [
         ("runtime-node-host", InstallTarget::Host, "host"),
         (
@@ -168,23 +204,7 @@ fn seed_managed_node_runtime_metadata(cfg: &mut AgentServerConfigFile, data_root
         );
         let node_root_rel = format!("runtimes/node/{folder}");
         let node_bin_rel = format!("{node_root_rel}/bin");
-        let node_root = data_root.join(&node_root_rel);
-        let node_bin_dir = data_root.join(&node_bin_rel);
-        let npm_cli = node_root
-            .join("lib")
-            .join("node_modules")
-            .join("npm")
-            .join("bin")
-            .join("npm-cli.js");
-        std::fs::create_dir_all(&node_bin_dir).expect("create node bin dir");
-        std::fs::create_dir_all(
-            npm_cli
-                .parent()
-                .expect("seeded npm cli should have a parent directory"),
-        )
-        .expect("create npm cli dir");
-        write_fake_node_runtime(&node_bin_dir.join("node"), tag);
-        write_js_entrypoint(&npm_cli);
+        seed_node_runtime_folder(data_root, &folder, tag);
 
         cfg.managed_installs.insert(
             dependency_id.to_string(),

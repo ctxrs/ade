@@ -341,6 +341,13 @@ export type WorktreeVcsTouchedFiles = {
   total_count?: number | null;
 };
 
+export type WorktreeVcsTouchedFilesState =
+  | "not_loaded"
+  | "loading"
+  | "ready"
+  | "stale"
+  | "error";
+
 export type WorktreeVcsGitStatusSummary = {
   raw?: string;
   summary_line?: string;
@@ -368,6 +375,7 @@ export type WorktreeVcsSnapshot = {
   summary: WorktreeVcsSummary;
   git_status: WorktreeVcsGitStatusSummary;
   touched_files: WorktreeVcsTouchedFiles;
+  touched_files_state?: WorktreeVcsTouchedFilesState;
   freshness: WorktreeVcsFreshness;
   available?: boolean;
   unavailable_reason?: DiffUnavailableReason | null;
@@ -615,6 +623,7 @@ export type WorkspaceActiveSnapshotClientMessage =
       type: "subscribe";
       session_ids?: (string)[];
       sessions?: WorkspaceActiveSnapshotSessionSubscription[];
+      vcs_open_session_ids?: (string)[];
       task_ids?: (string)[];
       foreground_session_id?: string;
       scope?: WorkspaceActiveSnapshotSubscribeScope | null;

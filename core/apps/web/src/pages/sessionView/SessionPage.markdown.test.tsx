@@ -59,7 +59,8 @@ describe("MemoMarkdown", () => {
     );
 
     expect(screen.getByText("really-")).toHaveClass("code-token-fragment-sealed");
-    expect(screen.getByText("multiple-lines/core/")).toHaveClass("code-token-fragment-sealed");
+    expect(screen.getByText("multiple-")).toHaveClass("code-token-fragment-sealed");
+    expect(screen.getByText("lines/core/")).toHaveClass("code-token-fragment-sealed");
     expect(screen.getByText("sessionMarkdownMeasurement.")).toHaveClass("code-token-fragment-sealed");
     expect(container.querySelectorAll(".code-token").length).toBeGreaterThan(3);
   });
@@ -76,7 +77,10 @@ describe("MemoMarkdown", () => {
     const pathToken = document.querySelector(".code-token-path");
     expect(pathToken).not.toBeNull();
     expect(screen.getAllByText("sessionThreadDomMeasurement.").length).toBeGreaterThan(0);
-    expect(screen.getByText("tsx/sessionThreadDomMeasurement.")).toHaveClass("code-token-fragment-sealed");
+    expect(screen.getAllByText("tsx/").length).toBeGreaterThan(0);
+    for (const fragment of screen.getAllByText("tsx/")) {
+      expect(fragment).toHaveClass("code-token-fragment-sealed");
+    }
   });
 
   it("requires a modifier click before opening desktop external links", () => {
