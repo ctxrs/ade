@@ -16,7 +16,14 @@ import {
   resolveInlineCodeSoftBreakTextStartGuardPx,
   slicePreparedTextBetweenCursors,
 } from "./sessionMarkdownInlineMeasurementContext";
-import { LINE_START_CURSOR, cursorsMatch } from "./sessionMarkdownMeasurementCore";
+import {
+  LINE_START_CURSOR,
+  buildPreparedContentKey,
+  cursorsMatch,
+  getPreparedTextWithSegments,
+  measureSingleLineLayout,
+  segmentGraphemes,
+} from "./sessionMarkdownMeasurementCore";
 
 type InlineTextPlacementDebug = {
   enabled: boolean;
@@ -27,10 +34,165 @@ type InlineTextPlacementDebug = {
 
 const INLINE_CODE_TAIL_WHOLE_SEGMENT_FIT_TOLERANCE_PX = 1;
 
+function measureBreakWordLine(params: {
+  item: Extract<PreparedInlineLayoutItem, { kind: "segment" }>;
+  startCursor: LayoutCursor;
+  availableWidth: number;
+}): LayoutLine | null {
+  let cursor: LayoutCursor | null = params.startCursor;
+  const candidateCursors: LayoutCursor[] = [];
+
+  while (cursor != null) {
+    cursor = advancePreparedCursorOneGrapheme(params.item.prepared, cursor);
+    if (cursor != null) {
+      candidateCursors.push(cursor);
+    }
+  }
+
+  if (candidateCursors.length === 0) {
+    return null;
+  }
+
+  const measureCandidate = (end: LayoutCursor): LayoutLine | null => {
+    const slice = slicePreparedTextBetweenCursors(params.item.prepared, params.startCursor, end);
+    if (slice.length === 0) {
+      return null;
+    }
+    const prepared = getPreparedTextWithSegments(
+      buildPreparedContentKey(`inline-break-word:${params.item.font}`, slice),
+      slice,
+      params.item.font,
+      "normal",
+    );
+    const line = measureSingleLineLayout(prepared);
+    return line == null ? null : { ...line, end };
+  };
+
+  let low = 0;
+  let high = candidateCursors.length - 1;
+  let bestFit: LayoutLine | null = null;
+
+  while (low <= high) {
+    const mid = Math.floor((low + high) / 2);
+    const measured = measureCandidate(candidateCursors[mid]!);
+    if (measured != null && measured.width <= params.availableWidth + 0.01) {
+      bestFit = measured;
+      low = mid + 1;
+      continue;
+    }
+    high = mid - 1;
+  }
+
+  return bestFit ?? measureCandidate(candidateCursors[0]!);
+}
+
+function backtrackBreakWordTokenContinuation(params: {
+  item: Extract<PreparedInlineLayoutItem, { kind: "segment" }>;
+  startCursor: LayoutCursor;
+  line: LayoutLine;
+  lineHasContent: boolean;
+  lineTailAfterInlineCodeIsPunctuationOnly: boolean;
+}): LayoutLine {
+  const { item, startCursor, line } = params;
+  if (!item.allowsBreakWord) {
+    return line;
+  }
+  if (
+    !params.lineHasContent ||
+    (!item.startsAfterInlineCodeSeam && !params.lineTailAfterInlineCodeIsPunctuationOnly)
+  ) {
+    return line;
+  }
+
+  const nextCursor = advancePreparedCursorOneGrapheme(item.prepared, line.end);
+  if (nextCursor == null) {
+    return line;
+  }
+  const nextText = slicePreparedTextBetweenCursors(item.prepared, line.end, nextCursor);
+  if (/^\s+$/u.test(nextText)) {
+    return line;
+  }
+
+  const lineText = slicePreparedTextBetweenCursors(item.prepared, startCursor, line.end);
+  const withoutTrailingWhitespace = lineText.replace(/\s+$/u, "");
+  const remainingText = slicePreparedTextBetweenCursors(item.prepared, line.end, item.endCursor);
+  const match = /^(.*\s+)(\S+)$/su.exec(withoutTrailingWhitespace);
+  if (match == null) {
+    return line;
+  }
+
+  const [, prefixWithSpace, trailingFragment] = match;
+  const shouldBacktrackTrailingFragment =
+    isAtomicNonCodeTextSegment(trailingFragment) &&
+    /[\\/]/.test(trailingFragment);
+  const shouldBacktrackPrecedingWordForUpcomingSlashToken =
+    isAtomicNonCodeTextSegment(trailingFragment) &&
+    !/[\\/]/.test(trailingFragment) &&
+    /\S*[\\/]\S*[\\/]\S*/u.test(remainingText) &&
+    /^[\p{P}\p{S}\s]+$/u.test(prefixWithSpace) &&
+    /[\p{P}\p{S}]/u.test(prefixWithSpace);
+
+  if (!shouldBacktrackTrailingFragment && !shouldBacktrackPrecedingWordForUpcomingSlashToken) {
+    return line;
+  }
+
+  let adjustedEnd = startCursor;
+  for (const _grapheme of segmentGraphemes(prefixWithSpace)) {
+    const next = advancePreparedCursorOneGrapheme(item.prepared, adjustedEnd);
+    if (next == null) {
+      return line;
+    }
+    adjustedEnd = next;
+  }
+  if (cursorsMatch(adjustedEnd, startCursor) || cursorsMatch(adjustedEnd, line.end)) {
+    return line;
+  }
+
+  const visiblePrefix = prefixWithSpace.replace(/\s+$/u, "");
+  const prepared = getPreparedTextWithSegments(
+    buildPreparedContentKey(`inline-break-word-prefix:${item.font}`, visiblePrefix),
+    visiblePrefix,
+    item.font,
+    "normal",
+  );
+  const measured = measureSingleLineLayout(prepared);
+  if (measured == null) {
+    return line;
+  }
+
+  return {
+    ...line,
+    width: measured.width,
+    end: adjustedEnd,
+  };
+}
+
 export type InlineTextPlacementResult = {
   action: "continue" | "break";
   state: InlineMeasurementLineState;
 };
+
+export function shouldBreakBeforePunctuationOnlyContinuationTail(params: {
+  codeGroupId: number | null;
+  allowsBreakWord: boolean;
+  startsAfterPathLikeInlineCodeSeam: boolean;
+  lineHasContent: boolean;
+  atItemStart: boolean;
+  lineStartedWithContinuedCode: boolean;
+  lineEndsAtItemEnd: boolean;
+  lineSegmentText: string;
+}): boolean {
+  return (
+    params.codeGroupId == null &&
+    params.allowsBreakWord &&
+    params.startsAfterPathLikeInlineCodeSeam &&
+    params.lineHasContent &&
+    params.atItemStart &&
+    params.lineStartedWithContinuedCode &&
+    !params.lineEndsAtItemEnd &&
+    isPunctuationOnlySeamText(params.lineSegmentText)
+  );
+}
 
 export function placeInlineTextSegment(params: {
   item: Extract<PreparedInlineLayoutItem, { kind: "segment" }>;
@@ -133,6 +295,7 @@ export function placeInlineTextSegment(params: {
     codeGroupId == null &&
     state.lineHasContent &&
     state.cursor === null &&
+    !item.allowsBreakWord &&
     item.startsAfterInlineCodeSeam &&
     !state.lineStartedWithContinuedCode &&
     item.minStartTextWidth > availableWidth + 0.01 &&
@@ -145,6 +308,7 @@ export function placeInlineTextSegment(params: {
     codeGroupId == null &&
     state.lineHasContent &&
     state.cursor === null &&
+    !item.allowsBreakWord &&
     item.startsAfterStyledTextSeam &&
     item.minStartTextWidth > availableWidth + 0.01 &&
     item.minStartTextWidth <= params.maxWidth + 0.01
@@ -157,6 +321,7 @@ export function placeInlineTextSegment(params: {
     state.lineHasContent &&
     state.cursor === null &&
     state.pendingSpaceWidth > 0 &&
+    !item.allowsBreakWord &&
     item.minStartTextWidth > availableWidthWithoutLeadingSpace + 0.01 &&
     item.minStartTextWidth <= params.maxWidth + 0.01
   ) {
@@ -167,6 +332,7 @@ export function placeInlineTextSegment(params: {
     codeGroupId == null &&
     state.lineHasContent &&
     state.cursor === null &&
+    !item.allowsBreakWord &&
     item.startsStyledTextAfterInlineCodeSeam &&
     item.hasTrailingInlineCode &&
     item.minStartTextWidth > availableWidth + 0.01 &&
@@ -277,19 +443,51 @@ export function placeInlineTextSegment(params: {
     return { action: "continue", state };
   }
 
-  const lineWithReservedSpace: LayoutLine | null =
+  const regularLineWithReservedSpace: LayoutLine | null =
     styledStartLine ?? layoutNextLine(item.prepared, params.startCursor, codeSegmentAvailableWidth);
-  const lineWithoutLeadingSpace: LayoutLine | null =
+  const regularLineWithoutLeadingSpace: LayoutLine | null =
     params.canDropLeadingCollapsedSpaceAtWrap && availableWidthWithoutLeadingSpace > availableWidth + 0.01
       ? layoutNextLine(item.prepared, params.startCursor, availableWidthWithoutLeadingSpace)
       : null;
+  const lineWithReservedSpace: LayoutLine | null =
+    item.allowsBreakWord &&
+    (regularLineWithReservedSpace == null ||
+      cursorsMatch(params.startCursor, regularLineWithReservedSpace.end))
+      ? measureBreakWordLine({
+          item,
+          startCursor: params.startCursor,
+          availableWidth: codeSegmentAvailableWidth,
+        })
+      : regularLineWithReservedSpace;
+  const lineWithoutLeadingSpace: LayoutLine | null =
+    item.allowsBreakWord &&
+    params.canDropLeadingCollapsedSpaceAtWrap &&
+    availableWidthWithoutLeadingSpace > availableWidth + 0.01 &&
+    (regularLineWithoutLeadingSpace == null ||
+      cursorsMatch(params.startCursor, regularLineWithoutLeadingSpace.end))
+      ? measureBreakWordLine({
+          item,
+          startCursor: params.startCursor,
+          availableWidth: availableWidthWithoutLeadingSpace,
+        })
+      : regularLineWithoutLeadingSpace;
   const useLineWithoutLeadingSpace =
     lineWithoutLeadingSpace != null &&
     !cursorsMatch(params.startCursor, lineWithoutLeadingSpace.end) &&
     (lineWithReservedSpace == null ||
       cursorsMatch(params.startCursor, lineWithReservedSpace.end) ||
       lineWithoutLeadingSpace.width > lineWithReservedSpace.width + 0.01);
-  const line: LayoutLine | null = useLineWithoutLeadingSpace ? lineWithoutLeadingSpace : lineWithReservedSpace;
+  const rawLine: LayoutLine | null = useLineWithoutLeadingSpace ? lineWithoutLeadingSpace : lineWithReservedSpace;
+  const line: LayoutLine | null =
+    rawLine == null || cursorsMatch(params.startCursor, rawLine.end)
+      ? rawLine
+      : backtrackBreakWordTokenContinuation({
+          item,
+          startCursor: params.startCursor,
+          line: rawLine,
+          lineHasContent: state.lineHasContent,
+          lineTailAfterInlineCodeIsPunctuationOnly: state.lineTailAfterInlineCodeIsPunctuationOnly,
+        });
 
   if (
     params.debug.enabled &&
@@ -347,6 +545,21 @@ export function placeInlineTextSegment(params: {
 
   const lineSegmentText = slicePreparedTextBetweenCursors(item.prepared, params.startCursor, line.end);
   if (
+    shouldBreakBeforePunctuationOnlyContinuationTail({
+      codeGroupId,
+      allowsBreakWord: item.allowsBreakWord,
+      startsAfterPathLikeInlineCodeSeam: item.startsAfterPathLikeInlineCodeSeam,
+      lineHasContent: state.lineHasContent,
+      atItemStart: state.cursor === null,
+      lineStartedWithContinuedCode: state.lineStartedWithContinuedCode,
+      lineEndsAtItemEnd: cursorsMatch(line.end, item.endCursor),
+      lineSegmentText,
+    })
+  ) {
+    state.cursor = null;
+    return { action: "break", state };
+  }
+  if (
     codeGroupId == null &&
     item.startsAfterCollapsedSoftBreak &&
     state.lineHasContent &&
@@ -386,7 +599,10 @@ export function placeInlineTextSegment(params: {
     state.cursor === null &&
     !cursorsMatch(line.end, item.endCursor) &&
     isAtomicNonCodeTextSegment(item.text) &&
-    item.fullWidth <= params.maxWidth + 0.01
+    (item.fullWidth <= params.maxWidth + 0.01 ||
+      (item.allowsBreakWord &&
+        state.lineTailAfterInlineCodeIsPunctuationOnly &&
+        state.pendingSpaceWidth > 0))
   ) {
     state.cursor = null;
     return { action: "break", state };

@@ -34,6 +34,7 @@ export type SessionMarkdownTextContent = {
   hasInlineCode: boolean;
   hasHardBreak: boolean;
   hasStyledText: boolean;
+  hasLink: boolean;
 };
 
 export type SessionMarkdownBlockContext = "root" | "listItem";
@@ -224,6 +225,7 @@ function buildTextContent(inlines: readonly SessionMarkdownInlineNode[]): Sessio
   let hasInlineCode = false;
   let hasHardBreak = false;
   let hasStyledText = false;
+  let hasLink = false;
 
   const walk = (
     nodes: readonly SessionMarkdownInlineNode[],
@@ -266,7 +268,8 @@ function buildTextContent(inlines: readonly SessionMarkdownInlineNode[]): Sessio
         case "delete":
           walk(node.children, { ...state, deleted: true });
           break;
-        default:
+        case "link":
+          hasLink = true;
           walk(node.children, state);
           break;
       }
@@ -280,6 +283,7 @@ function buildTextContent(inlines: readonly SessionMarkdownInlineNode[]): Sessio
     hasInlineCode,
     hasHardBreak,
     hasStyledText,
+    hasLink,
   };
 }
 

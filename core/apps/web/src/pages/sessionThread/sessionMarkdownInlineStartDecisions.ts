@@ -81,6 +81,10 @@ export function resolveInlineCodeStartDecision(params: {
     params.trailingPlainAfterCodeGroupStart.startsAfterCollapsedSoftBreak
       ? false
       : params.trailingPlainAfterCodeGroupStart.hasFollowingInlineCode;
+  const trailingPlainIsOrdinaryProse =
+    effectiveTrailingPlainWidthAfterCodeGroupStart > 0 &&
+    !effectiveTrailingPlainHasFollowingInlineCode &&
+    !isPunctuationOnlySeamText(params.trailingPlainAfterCodeGroupStart.text);
   const trailingPlainHasStrongRtlText = containsStrongRtlText(
     params.trailingPlainAfterCodeGroupStart.text,
   );
@@ -165,6 +169,7 @@ export function resolveInlineCodeStartDecision(params: {
         params.item.text.includes("/") ||
         params.item.text.includes("\\") ||
         params.item.isPathTailFragment) &&
+      !trailingPlainIsOrdinaryProse &&
       !params.item.codeGroupHasWhitespace &&
       params.item.fullWidth >= INLINE_CODE_FIRST_SLICE_ONLY_MIN_WIDTH_PX &&
       params.currentLineCodeFit != null &&
@@ -178,6 +183,7 @@ export function resolveInlineCodeStartDecision(params: {
       params.item.isFirstCodeGroupFragment &&
       params.item.codeGroupStartsAfterText &&
       params.item.codeGroupHasTrailingText &&
+      !trailingPlainIsOrdinaryProse &&
       !params.item.codeGroupHasWhitespace &&
       !effectiveTrailingPlainHasFollowingInlineCode &&
       trailingPlainHasStrongRtlText &&

@@ -14,6 +14,7 @@ import {
   measureSingleLineLayout,
   resolveTextRunFont,
   segmentGraphemes,
+  segmentImplicitWordBreaks,
   type TextBlockTypography,
 } from "./sessionMarkdownMeasurementCore";
 import {
@@ -25,11 +26,14 @@ import {
 const INLINE_CODE_MIN_START_GRAPHEMES = 4;
 const INLINE_CODE_PATH_MIN_START_GRAPHEMES = 3;
 
+export type InlineWrapMode = "normal" | "break-word";
+
 export type PreparedInlineLayoutItem =
   | { kind: "hardBreak" }
   | { kind: "space"; width: number; codeGroupId: number | null; text: string }
   | {
       kind: "segment";
+      allowsBreakWord: boolean;
       codeGroupId: number | null;
       codeGroupHasDottedPath: boolean;
       codeGroupHasWhitespace: boolean;
@@ -55,6 +59,7 @@ export type PreparedInlineLayoutItem =
       startsStyledTextAfterInlineCodeSeam: boolean;
       startsAfterStyledTextSeam: boolean;
       startsStyledTextAfterBodySeam: boolean;
+      font: string;
       hasTrailingStyledText: boolean;
       hasTrailingInlineCode: boolean;
       isDecoratedText: boolean;
@@ -87,13 +92,14 @@ function measureInlineCodeMinStartTextWidth(
 }
 
 function measureTextMinStartTextWidth(text: string, font: string): number {
-  const firstWord = text.match(/^\S+/)?.[0] ?? "";
-  if (firstWord.length === 0) {
+  const firstToken = text.match(/^\S+/)?.[0] ?? "";
+  if (firstToken.length === 0) {
     return 0;
   }
+  const minStartSample = segmentImplicitWordBreaks(firstToken)[0] ?? firstToken;
   const prepared = getPreparedTextWithSegments(
-    buildPreparedContentKey(`inline-text-min-start:${font}`, firstWord),
-    firstWord,
+    buildPreparedContentKey(`inline-text-min-start:${font}`, minStartSample),
+    minStartSample,
     font,
     "normal",
   );
@@ -121,7 +127,7 @@ function isSlashDelimitedTextToken(text: string): boolean {
   return /\S\/\S/.test(trimmed);
 }
 
-function splitTextRunChunks(text: string): string[] {
+function splitTextRunChunks(text: string, preserveSlashDelimitedTokens: boolean): string[] {
   const parts = splitWhitespaceTokens(text);
   if (parts.length === 0) {
     return [];
@@ -138,7 +144,7 @@ function splitTextRunChunks(text: string): string[] {
   };
 
   for (const part of parts) {
-    if (!/\s+/.test(part) && isSlashDelimitedTextToken(part)) {
+    if (preserveSlashDelimitedTokens && !/\s+/.test(part) && isSlashDelimitedTextToken(part)) {
       flushCurrent();
       chunks.push(part);
       continue;
@@ -149,6 +155,25 @@ function splitTextRunChunks(text: string): string[] {
   return chunks;
 }
 
+function splitTrailingPlainPathTailFragment(fragment: string): string[] {
+  if (!fragment.includes("-")) {
+    return [fragment];
+  }
+  const parts: string[] = [];
+  let current = "";
+  for (const char of fragment) {
+    current += char;
+    if (char === "-") {
+      parts.push(current);
+      current = "";
+    }
+  }
+  if (current.length > 0) {
+    parts.push(current);
+  }
+  return parts.length > 1 ? parts : [fragment];
+}
+
 function pushTextRunItems(
   items: PreparedInlineLayoutItem[],
   params: {
@@ -156,6 +181,7 @@ function pushTextRunItems(
     font: string;
     cacheKeyPrefix: string;
     collapsedSpaceWidth: number;
+    wrapMode: InlineWrapMode;
     startsAfterInlineCodeSeam: boolean;
     startsAfterCollapsedSoftBreak: boolean;
     startsAfterPathLikeInlineCodeSeam: boolean;
@@ -196,6 +222,7 @@ function pushTextRunItems(
     }
 
     if (core.length > 0) {
+      const allowsBreakWord = params.wrapMode === "break-word";
       const prepared = getPreparedTextWithSegments(
         buildPreparedContentKey(params.cacheKeyPrefix, core),
         core,
@@ -206,6 +233,7 @@ function pushTextRunItems(
       if (wholeLine != null) {
         items.push({
           kind: "segment",
+          allowsBreakWord,
           codeGroupId: null,
           codeGroupHasDottedPath: false,
           codeGroupHasWhitespace: false,
@@ -222,7 +250,7 @@ function pushTextRunItems(
           isFirstPathFragmentAfterHyphenRun: false,
           isPathTailFragment: false,
           isSealedInlineCodeFragment: false,
-          minStartTextWidth: measureTextMinStartTextWidth(core, params.font),
+          minStartTextWidth: allowsBreakWord ? 0 : measureTextMinStartTextWidth(core, params.font),
           prefersFreshLineStart: false,
           prefersFreshLineStartWithoutLeadingHang: false,
           startsAfterInlineCodeSeam: options.startsAfterInlineCodeSeam,
@@ -231,6 +259,7 @@ function pushTextRunItems(
           startsStyledTextAfterInlineCodeSeam: options.startsStyledTextAfterInlineCodeSeam,
           startsAfterStyledTextSeam: options.startsAfterStyledTextSeam,
           startsStyledTextAfterBodySeam: options.startsStyledTextAfterBodySeam,
+          font: params.font,
           hasTrailingStyledText: options.hasTrailingStyledText,
           hasTrailingInlineCode: options.hasTrailingInlineCode,
           isDecoratedText: params.isDecoratedText,
@@ -254,7 +283,7 @@ function pushTextRunItems(
     params.startsAfterCollapsedSoftBreak ||
     (normalizedSource.match(/^\s+/)?.[0] ?? "").includes("\n");
 
-  const chunks = splitTextRunChunks(normalized);
+  const chunks = splitTextRunChunks(normalized, (params.wrapMode ?? "normal") !== "break-word");
   chunks.forEach((chunk, index) => {
     const firstChunk = index === 0;
     pushTextChunk(chunk, {
@@ -318,6 +347,7 @@ export function prepareInlineLayoutItems(params: {
   runs: readonly SessionMarkdownInlineRun[];
   typography: TextBlockTypography;
   cacheKeyPrefix: string;
+  wrapMode?: InlineWrapMode;
 }): PreparedInlineLayoutItem[] {
   const items: PreparedInlineLayoutItem[] = [];
   const inlineCodeFont = resolveInlineCodeFont(params.typography.body);
@@ -555,11 +585,26 @@ export function prepareInlineLayoutItems(params: {
           continue;
         }
         const fragments = splitInlineCodeFragments(part);
+        const expandedFragments = fragments.flatMap((fragment, fragmentIndex) => {
+          const previous = fragments[fragmentIndex - 1] ?? null;
+          const shouldSplitTrailingPlainPathTail =
+            hasTrailingText &&
+            fragmentIndex === fragments.length - 1 &&
+            previous != null &&
+            /[\\/]$/.test(previous) &&
+            fragment.includes("-") &&
+            !fragment.endsWith("-") &&
+            !fragment.includes("/") &&
+            !fragment.includes("\\");
+          return shouldSplitTrailingPlainPathTail
+            ? splitTrailingPlainPathTailFragment(fragment)
+            : [fragment];
+        });
         const startsAfterCodeWhitespace = partIndex > 0 && /^\s+$/.test(run.parts[partIndex - 1] ?? "");
         let sawHyphenFragment = false;
         let sawPathFragment = false;
-        for (let fragmentIndex = 0; fragmentIndex < fragments.length; fragmentIndex += 1) {
-          const fragment = fragments[fragmentIndex]!;
+        for (let fragmentIndex = 0; fragmentIndex < expandedFragments.length; fragmentIndex += 1) {
+          const fragment = expandedFragments[fragmentIndex]!;
           const isPathFragment = fragment.includes("/") || fragment.includes("\\");
           const isFirstPathFragmentAfterHyphenRun =
             isPathFragment && sawHyphenFragment && !sawPathFragment;
@@ -578,6 +623,7 @@ export function prepareInlineLayoutItems(params: {
           }
           items.push({
             kind: "segment",
+            allowsBreakWord: false,
             codeGroupId,
             codeGroupHasDottedPath,
             codeGroupHasWhitespace,
@@ -617,6 +663,7 @@ export function prepareInlineLayoutItems(params: {
             startsStyledTextAfterInlineCodeSeam: false,
             startsAfterStyledTextSeam: false,
             startsStyledTextAfterBodySeam: false,
+            font: inlineCodeFont,
             hasTrailingStyledText: false,
             hasTrailingInlineCode: false,
             isDecoratedText: false,
@@ -638,6 +685,7 @@ export function prepareInlineLayoutItems(params: {
       font,
       cacheKeyPrefix: `${params.cacheKeyPrefix}:${run.kind}:${index}`,
       collapsedSpaceWidth,
+      wrapMode: params.wrapMode ?? "normal",
       startsAfterInlineCodeSeam: textRunStartsAfterInlineCodeSeam(index, run),
       startsAfterCollapsedSoftBreak: false,
       startsAfterPathLikeInlineCodeSeam: textRunStartsAfterPathLikeInlineCodeSeam(index, run),

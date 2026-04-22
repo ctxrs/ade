@@ -31,6 +31,7 @@ const wordSegmenter =
   typeof Intl !== "undefined" && typeof Intl.Segmenter === "function"
     ? new Intl.Segmenter(undefined, { granularity: "word" })
     : null;
+const IMPLICIT_WORD_BREAK_SCRIPT_PATTERN = /[\p{Script=Thai}\p{Script=Lao}\p{Script=Khmer}\p{Script=Myanmar}]/u;
 
 export function pruneCache<T>(cache: Map<string, T>, limit: number) {
   while (cache.size > limit) {
@@ -138,6 +139,19 @@ export function segmentWords(text: string): string[] {
   if (!text) return [];
   if (!wordSegmenter) return [text];
   return Array.from(wordSegmenter.segment(text), (segment) => segment.segment);
+}
+
+export function segmentImplicitWordBreaks(text: string): string[] {
+  if (!text || !IMPLICIT_WORD_BREAK_SCRIPT_PATTERN.test(text)) {
+    return [text];
+  }
+
+  const segments = segmentWords(text).filter((segment) => segment.length > 0);
+  if (segments.length <= 1 || segments.join("") !== text) {
+    return [text];
+  }
+
+  return segments;
 }
 
 export function clearSessionTextMeasurementCaches(): void {

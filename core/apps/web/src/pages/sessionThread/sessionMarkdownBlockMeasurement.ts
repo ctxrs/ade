@@ -11,6 +11,7 @@ import {
   type SessionMarkdownInlineRun,
 } from "./sessionMarkdownContract";
 import { measureInlineRunsHeight } from "./sessionMarkdownInlineMeasurement";
+import type { InlineWrapMode } from "./sessionMarkdownInlineLayout";
 import {
   BODY_LINE_HEIGHT_PX,
   BODY_TYPOGRAPHY,
@@ -35,12 +36,15 @@ function measureTextBlock(params: {
     hasInlineCode: boolean;
     hasHardBreak: boolean;
     hasStyledText: boolean;
+    hasLink: boolean;
   };
   width: number;
   typography: TextBlockTypography;
   cacheKeyPrefix: string;
+  wrapMode?: InlineWrapMode;
 }): number {
   const text = params.text.plainText.trim();
+  const useBreakWordInlineLayout = params.wrapMode === "break-word";
   if (!text) {
     return 0;
   }
@@ -52,7 +56,13 @@ function measureTextBlock(params: {
       width: params.width,
       lineHeight: params.typography.lineHeight,
     });
-  if (params.text.hasHardBreak && !params.text.hasInlineCode && !params.text.hasStyledText) {
+  if (
+    !useBreakWordInlineLayout &&
+    params.text.hasHardBreak &&
+    !params.text.hasInlineCode &&
+    !params.text.hasStyledText &&
+    !params.text.hasLink
+  ) {
     return measureSessionPlainTextBlockHeight({
       cacheKey: `${params.cacheKeyPrefix}:plain-hardbreak`,
       text: params.text.plainText,
@@ -61,7 +71,13 @@ function measureTextBlock(params: {
       lineHeight: params.typography.lineHeight,
     });
   }
-  if (!params.text.hasInlineCode && !params.text.hasHardBreak && !params.text.hasStyledText) {
+  if (
+    !useBreakWordInlineLayout &&
+    !params.text.hasInlineCode &&
+    !params.text.hasHardBreak &&
+    !params.text.hasStyledText &&
+    !params.text.hasLink
+  ) {
     return plainTextHeight();
   }
   const inlineRunsHeight = measureInlineRunsHeight({
@@ -69,13 +85,9 @@ function measureTextBlock(params: {
     width: params.width,
     typography: params.typography,
     cacheKeyPrefix: params.cacheKeyPrefix,
+    wrapMode: params.wrapMode,
   });
-  const hasDelimitedProseRun = params.text.runs.some(
-    (run) => run.kind === "text" && /[\/\\?&=]/.test(run.text),
-  );
-  return !params.text.hasHardBreak && hasDelimitedProseRun
-    ? Math.max(inlineRunsHeight, plainTextHeight())
-    : inlineRunsHeight;
+  return inlineRunsHeight;
 }
 
 function measureParagraph(block: Extract<SessionMarkdownBlock, { kind: "paragraph" }>, width: number): number {
@@ -165,6 +177,7 @@ function measureTableCellHeight(
           width,
           typography: isHeader ? TABLE_HEADER_TYPOGRAPHY : BODY_TYPOGRAPHY,
           cacheKeyPrefix: isHeader ? "table-header-inline" : "table-cell-inline",
+          wrapMode: "break-word",
         });
         break;
       case "heading":

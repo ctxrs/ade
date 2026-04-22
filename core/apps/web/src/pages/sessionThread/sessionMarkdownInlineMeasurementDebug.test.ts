@@ -53,6 +53,7 @@ describe("sessionMarkdownInlineMeasurementDebug", () => {
     const items: PreparedInlineLayoutItem[] = [
       {
         kind: "segment",
+        allowsBreakWord: false,
         codeGroupId: 1,
         codeGroupHasDottedPath: true,
         codeGroupHasWhitespace: false,
@@ -78,6 +79,7 @@ describe("sessionMarkdownInlineMeasurementDebug", () => {
         startsStyledTextAfterInlineCodeSeam: false,
         startsAfterStyledTextSeam: false,
         startsStyledTextAfterBodySeam: false,
+        font: "12px sans-serif",
         hasTrailingStyledText: false,
         hasTrailingInlineCode: true,
         isDecoratedText: false,
