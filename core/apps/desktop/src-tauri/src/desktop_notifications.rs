@@ -334,7 +334,7 @@ fn schedule_macos_notification(request: &UNNotificationRequest) -> Result<()> {
         .map_err(anyhow::Error::msg)
 }
 
-#[cfg(any(target_os = "macos", test))]
+#[cfg(any(all(target_os = "macos", feature = "automation"), test))]
 fn normalize_delivered_notification_identifiers(identifiers: &[String]) -> Result<Vec<String>> {
     let mut normalized = Vec::new();
     for identifier in identifiers {
@@ -633,13 +633,15 @@ pub(super) fn desktop_clear_delivered_notification_automation_snapshot(
 
     #[cfg(all(feature = "automation", not(target_os = "macos")))]
     {
-        let _ = req;
+        let DesktopClearDeliveredNotificationsReq { identifiers } = req;
+        let _ = identifiers;
         Err("desktop_clear_delivered_notification_automation_snapshot is macOS-only".to_string())
     }
 
     #[cfg(not(feature = "automation"))]
     {
-        let _ = req;
+        let DesktopClearDeliveredNotificationsReq { identifiers } = req;
+        let _ = identifiers;
         Err(
             "desktop_clear_delivered_notification_automation_snapshot is automation-only"
                 .to_string(),
