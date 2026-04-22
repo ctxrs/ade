@@ -53,7 +53,7 @@ function findParagraphBlock(markdown: string, text: string): Extract<SessionMark
 function prepareParagraphItems(
   markdown: string,
   text: string,
-  wrapMode?: "normal" | "break-word",
+  wrapMode?: "normal" | "break-word" | "anywhere",
 ): PreparedInlineLayoutItem[] {
   const paragraph = findParagraphBlock(markdown, text);
   return prepareInlineLayoutItems({
@@ -144,11 +144,11 @@ describe("sessionMarkdownInlineLayout", () => {
     expect(target?.text).toBe("ทดสอบการตัดคำ");
   });
 
-  it("disables prose min-start guards for break-word table-cell text", () => {
+  it("disables prose min-start guards for anywhere table-cell text", () => {
     const items = prepareParagraphItems(
       "| Kind | Note |\n|---|---|\n| summary | browser context containerd/BuildKit/nerdctl padding stream. |",
       "browser context containerd/BuildKit/nerdctl padding stream.",
-      "break-word",
+      "anywhere",
     );
 
     const target = items.find(
@@ -163,11 +163,11 @@ describe("sessionMarkdownInlineLayout", () => {
     expect(target?.minStartTextWidth).toBe(0);
   });
 
-  it("keeps surrounding prose attached to slash tokens in break-word table-cell text", () => {
+  it("keeps surrounding prose attached to slash tokens in anywhere table-cell text", () => {
     const items = prepareParagraphItems(
       "| Kind | Note |\n|---|---|\n| summary | browser context containerd/BuildKit/nerdctl padding stream. |",
       "browser context containerd/BuildKit/nerdctl padding stream.",
-      "break-word",
+      "anywhere",
     );
 
     const textSegments = items

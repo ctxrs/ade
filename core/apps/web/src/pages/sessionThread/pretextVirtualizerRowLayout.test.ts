@@ -90,9 +90,11 @@ import {
 import { SESSION_THREAD_ROW_MEASUREMENT_CONTRACT } from "./sessionThreadMeasurementContract";
 import {
   resolveInlineCodeContinuationFitSlackPx,
+  resolveInlineCodeWhitespaceSeparatedFragmentSlackPx,
   resolveInlineCodeWrapChromeWidth,
   shouldBreakBeforePartialDottedCallContinuation,
   shouldApplyInlineCodeSoftBreakTextStartGuard,
+  shouldBreakBeforePathDelimiterNearFitContinuation,
 } from "./sessionMarkdownInlineCodeFit";
 import { measureSessionPlainTextBlockHeight } from "./sessionPlainTextMeasurement";
 import {
@@ -355,6 +357,46 @@ describe("getPretextVirtualizerRowLayout", () => {
     });
 
     expect(slack).toBe(0);
+  });
+
+  it("breaks path delimiter continuations that only fit by a subpixel margin", () => {
+    expect(
+      shouldBreakBeforePathDelimiterNearFitContinuation({
+        lineHasContent: true,
+        sameCodeGroupContinuation: true,
+        lastFragmentEndedWithPathDelimiter: true,
+        startsAfterCodeWhitespace: false,
+        isSealedInlineCodeFragment: false,
+        reservedWidth: 0,
+        remainingWidth: 24.080078125,
+        fragmentWidth: 23.47998046875,
+      }),
+    ).toBe(true);
+  });
+
+  it("keeps path delimiter continuations when they have enough spare width", () => {
+    expect(
+      shouldBreakBeforePathDelimiterNearFitContinuation({
+        lineHasContent: true,
+        sameCodeGroupContinuation: true,
+        lastFragmentEndedWithPathDelimiter: true,
+        startsAfterCodeWhitespace: false,
+        isSealedInlineCodeFragment: false,
+        reservedWidth: 0,
+        remainingWidth: 25,
+        fragmentWidth: 23.47998046875,
+      }),
+    ).toBe(false);
+  });
+
+  it("grants Chromium command-fragment slack for hyphen-ended package fragments after whitespace", () => {
+    expect(
+      resolveInlineCodeWhitespaceSeparatedFragmentSlackPx({
+        lineHasContent: true,
+        startsAfterCodeWhitespace: true,
+        fragmentText: "ctx-",
+      }),
+    ).toBe(5);
   });
 
   it("breaks before partially fitting a dotted call continuation after a sealed dotted fragment", () => {

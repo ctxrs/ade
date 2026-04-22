@@ -24,6 +24,7 @@ export type InlineMeasurementLineState = {
   lineWeakProseStartCodeGroupId: number | null;
   lineUsedChromiumDottedPathBoundaryContinuation: boolean;
   lineDecoratedTextSegmentCount: number;
+  lineHasSoftHyphenText: boolean;
   lineSawInlineCode: boolean;
   lineTailAfterInlineCodeIsPunctuationOnly: boolean;
   chargedCodeGroups: Set<number>;
@@ -58,6 +59,7 @@ export function createInlineMeasurementLineState(params: {
     lineWeakProseStartCodeGroupId: null,
     lineUsedChromiumDottedPathBoundaryContinuation: false,
     lineDecoratedTextSegmentCount: 0,
+    lineHasSoftHyphenText: false,
     lineSawInlineCode: false,
     lineTailAfterInlineCodeIsPunctuationOnly: false,
     chargedCodeGroups: new Set<number>(),

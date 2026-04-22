@@ -26,7 +26,7 @@ import {
 const INLINE_CODE_MIN_START_GRAPHEMES = 4;
 const INLINE_CODE_PATH_MIN_START_GRAPHEMES = 3;
 
-export type InlineWrapMode = "normal" | "break-word";
+export type InlineWrapMode = "normal" | "break-word" | "anywhere";
 
 export type PreparedInlineLayoutItem =
   | { kind: "hardBreak" }
@@ -228,7 +228,8 @@ function pushTextRunItems(
     }
 
     if (core.length > 0) {
-      const allowsBreakWord = params.wrapMode === "break-word";
+      const allowsBreakWord =
+        params.wrapMode === "break-word" || params.wrapMode === "anywhere";
       const prepared = getPreparedTextWithSegments(
         buildPreparedContentKey(params.cacheKeyPrefix, core),
         core,
@@ -289,7 +290,7 @@ function pushTextRunItems(
     params.startsAfterCollapsedSoftBreak ||
     (normalizedSource.match(/^\s+/)?.[0] ?? "").includes("\n");
 
-  const chunks = splitTextRunChunks(normalized, (params.wrapMode ?? "normal") !== "break-word");
+  const chunks = splitTextRunChunks(normalized, (params.wrapMode ?? "normal") === "normal");
   chunks.forEach((chunk, index) => {
     const firstChunk = index === 0;
     pushTextChunk(chunk, {

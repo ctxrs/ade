@@ -2,10 +2,12 @@ import { layoutNextLine, type LayoutLine } from "@chenglou/pretext";
 import { browserAllowsInlineCodeLeadingHang } from "./sessionMarkdownBrowserProfile";
 import {
   isShortExtensionPathLikeFragment,
+  INLINE_CODE_PATH_DELIMITER_CONTINUATION_MIN_SPARE_PX,
   shouldBreakBeforePartialDottedCallContinuation,
   resolveInlineCodeWhitespaceSeparatedFragmentSlackPx,
   shouldBreakBeforePartialDottedStemPathTailContinuation,
   shouldBreakBeforePartialSealedDottedPathContinuation,
+  shouldBreakBeforePathDelimiterNearFitContinuation,
   shouldBreakBeforeWhitespaceSeparatedInlineCodeFragment,
 } from "./sessionMarkdownInlineCodeFit";
 import type { PreparedInlineLayoutItem } from "./sessionMarkdownInlineLayout";
@@ -117,6 +119,14 @@ export function placeInlineCodeSegment(params: {
 }): InlineCodePlacementResult {
   const state = { ...params.state };
   const { item, codeGroupId } = params;
+  const shouldLimitCurrentCodeGroupToFirstFragment =
+    params.shouldLimitCurrentCodeGroupToFirstFragment ||
+    (browserAllowsInlineCodeLeadingHang() &&
+      state.lineHasContent &&
+      state.lineHasSoftHyphenText &&
+      state.remainingWidth < params.maxWidth * 0.85 &&
+      item.codeGroupStartsAfterText &&
+      item.codeGroupHasDottedPath);
 
   if (
     params.forcedFreshWholeCodeGroupIndex === state.itemIndex &&
@@ -160,7 +170,7 @@ export function placeInlineCodeSegment(params: {
       lastFragmentText: lastCodeFragmentText,
       lastFragmentEndedWithHyphen: lastCodeFragmentText.endsWith("-"),
       lastFragmentEndedWithPathDelimiter: /[\\/]+$/.test(lastCodeFragmentText),
-      shouldLimitCurrentCodeGroupToFirstFragment: params.shouldLimitCurrentCodeGroupToFirstFragment,
+      shouldLimitCurrentCodeGroupToFirstFragment,
       shouldTrackWeakProseStartCodeGroup: false,
       shouldForceSoftBreakWeakProseContinuationWrap: false,
       maxWidth: params.maxWidth,
@@ -237,6 +247,25 @@ export function placeInlineCodeSegment(params: {
     };
   }
   if (
+    shouldBreakBeforePathDelimiterNearFitContinuation({
+      lineHasContent: state.lineHasContent,
+      sameCodeGroupContinuation: state.lineHasContent && state.lastAcceptedCodeGroupId === codeGroupId,
+      lastFragmentEndedWithPathDelimiter: state.lineLastCodeFragmentEndedWithPathDelimiter,
+      startsAfterCodeWhitespace: item.startsAfterCodeWhitespace,
+      isSealedInlineCodeFragment: item.isSealedInlineCodeFragment,
+      reservedWidth: params.reservedWidth,
+      remainingWidth: state.remainingWidth,
+      fragmentWidth: item.fullWidth,
+    })
+  ) {
+    state.cursor = null;
+    return {
+      action: "break",
+      state,
+      forcedFreshWholeCodeGroupIndex: params.forcedFreshWholeCodeGroupIndex,
+    };
+  }
+  if (
     state.lineHasContent &&
     state.lineCurrentCodeGroupLimitToFirstFragment &&
     state.lastAcceptedCodeGroupId === codeGroupId &&
@@ -279,7 +308,8 @@ export function placeInlineCodeSegment(params: {
     state.lineLastCodeFragmentEndedWithPathDelimiter &&
     !item.isSealedInlineCodeFragment &&
     !item.startsAfterCodeWhitespace &&
-    params.reservedWidth + item.fullWidth <= boundaryRemainingWidth + 0.01;
+    params.reservedWidth + item.fullWidth + INLINE_CODE_PATH_DELIMITER_CONTINUATION_MIN_SPARE_PX <=
+      boundaryRemainingWidth + 0.01;
   const nextSameCodeGroupItem = params.items[state.itemIndex + 1];
   const splitDottedStemTailWouldOverflowCurrentLine =
     state.lineCurrentCodeGroupStartedNearFresh &&
@@ -418,7 +448,7 @@ export function placeInlineCodeSegment(params: {
       lastFragmentText: item.text,
       lastFragmentEndedWithHyphen: item.text.endsWith("-"),
       lastFragmentEndedWithPathDelimiter: /[\\/]+$/.test(item.text),
-      shouldLimitCurrentCodeGroupToFirstFragment: params.shouldLimitCurrentCodeGroupToFirstFragment,
+      shouldLimitCurrentCodeGroupToFirstFragment,
       shouldTrackWeakProseStartCodeGroup: params.shouldTrackWeakProseStartCodeGroup,
       shouldForceSoftBreakWeakProseContinuationWrap: params.shouldForceSoftBreakWeakProseContinuationWrap,
       maxWidth: params.maxWidth,
@@ -503,7 +533,7 @@ export function placeInlineCodeSegment(params: {
           lastFragmentText: item.text,
           lastFragmentEndedWithHyphen: false,
           lastFragmentEndedWithPathDelimiter: false,
-          shouldLimitCurrentCodeGroupToFirstFragment: params.shouldLimitCurrentCodeGroupToFirstFragment,
+          shouldLimitCurrentCodeGroupToFirstFragment,
           shouldTrackWeakProseStartCodeGroup: params.shouldTrackWeakProseStartCodeGroup,
           shouldForceSoftBreakWeakProseContinuationWrap: params.shouldForceSoftBreakWeakProseContinuationWrap,
           maxWidth: params.maxWidth,
@@ -568,7 +598,7 @@ export function placeInlineCodeSegment(params: {
       lastFragmentText: item.text,
       lastFragmentEndedWithHyphen: item.text.endsWith("-"),
       lastFragmentEndedWithPathDelimiter: /[\\/]+$/.test(item.text),
-      shouldLimitCurrentCodeGroupToFirstFragment: params.shouldLimitCurrentCodeGroupToFirstFragment,
+      shouldLimitCurrentCodeGroupToFirstFragment,
       shouldTrackWeakProseStartCodeGroup: params.shouldTrackWeakProseStartCodeGroup,
       shouldForceSoftBreakWeakProseContinuationWrap: params.shouldForceSoftBreakWeakProseContinuationWrap,
       maxWidth: params.maxWidth,
@@ -634,7 +664,7 @@ export function placeInlineCodeSegment(params: {
       lastFragmentText: item.text,
       lastFragmentEndedWithHyphen: item.text.endsWith("-"),
       lastFragmentEndedWithPathDelimiter: /[\\/]+$/.test(item.text),
-      shouldLimitCurrentCodeGroupToFirstFragment: params.shouldLimitCurrentCodeGroupToFirstFragment,
+      shouldLimitCurrentCodeGroupToFirstFragment,
       shouldTrackWeakProseStartCodeGroup: params.shouldTrackWeakProseStartCodeGroup,
       shouldForceSoftBreakWeakProseContinuationWrap: params.shouldForceSoftBreakWeakProseContinuationWrap,
       maxWidth: params.maxWidth,

@@ -196,6 +196,37 @@ export const PRETEXT_WRAP_RULE_CATALOG: readonly PretextWrapRuleEntry[] = [
     regressionTaskIds: ["abf3e350-5e27-4ad3-aa55-4c9c7e4f69c6"],
   },
   {
+    id: "continued-inline-code-tail-chrome",
+    title: "Continued inline-code line keeps continuation chrome before prose",
+    category: "inline_seam",
+    family: "inline_code_tail",
+    evidence: "browser_agree",
+    summary:
+      "When a wrapped inline-code group continues at the start of a new line, the following prose tail should not reclaim the same-line tail seam allowance. The continuation still occupies visible chip chrome before prose flow resumes.",
+    markdown:
+      "- Turn parity `blockquote/sessionMarkdownMeasurement.ts/sessionMarkdownMeasurement.ts/workbenchShell/table` 🙂 測試 佈局 probe delta​epsilon​zeta summary deterministic A B turn [virtualizer probe](https://example.com/inline-code/chromium/transcript?ref=993) בדיקת עיטוף with code pressure.",
+    markdownWidths: [788],
+    assistantViewportWidths: [1380],
+    browsers: ["chromium"],
+    planners: ["sessionMarkdownInlineMeasurementTextPlacement.ts", "sessionMarkdownInlineCodeFit.ts"],
+    unitCoverage: ["sessionMarkdownInlineMeasurementTextPlacement.test.ts"],
+    e2eCoverage: ["workbench-pretext-wrap-rules.spec.ts", "workbench-pretext-parity-corpus.spec.ts"],
+    fuzzCoverage: ["pretextWrapRuleFuzz.ts", "pretextParityFuzz.ts"],
+    sources: [
+      {
+        label: "CSS Inline 3 line boxes",
+        url: "https://drafts.csswg.org/css-inline-3/#line-box",
+        localPath: "/tmp/pretext-wrap-rules/specs/css-inline-3.html",
+      },
+      {
+        label: "WPT css-inline model",
+        url: "https://github.com/web-platform-tests/wpt/tree/master/css/css-inline/model",
+        localPath: "/tmp/pretext-wrap-rules/wpt/css/css-inline/model",
+      },
+    ],
+    regressionTaskIds: ["366fdd5f-6dca-4dba-b1a7-c63f530e156d"],
+  },
+  {
     id: "inline-code-dotted-call-continuation",
     title: "Dotted call continuation stays whole at the wrap seam",
     category: "inline_seam",

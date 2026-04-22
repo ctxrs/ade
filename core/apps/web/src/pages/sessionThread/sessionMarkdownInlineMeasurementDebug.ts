@@ -76,6 +76,7 @@ export type SessionMarkdownInlineCodeSegmentSeamAdjustment = {
   reservedWidth?: number;
   availableWidth?: number;
   wholeSegmentAvailableWidth?: number;
+  inlineCodeTailWholeSegmentFitAllowancePx?: number;
   fullWidth?: number;
   lineStartedWithContinuedCode?: boolean;
   startsAfterCollapsedSoftBreak?: boolean;

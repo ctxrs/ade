@@ -249,11 +249,35 @@ const SOFT_BREAK_MARKDOWN_REGRESSIONS: SoftBreakMarkdownSample[] = [
     ].join("\n"),
   },
   {
+    name: "soft-break-table-inline-code-strict-path-tail",
+    width: 472,
+    browsers: ["webkit"],
+    markdown: [
+      "| Kind | Token | Note |",
+      "| --- | --- | --- |",
+      "| thread | `table/core/core/sessionMarkdownMeasurement.ts/turn-header/turn-header/web`: layout virtualizer virtualizer stream buffer Ubuntu/Debian | padding layout summary probe browser layout command |",
+    ].join("\n"),
+  },
+  {
     name: "soft-break-list-slash-token-tail",
     width: 788,
     browsers: ["webkit"],
     markdown:
       "- **Sample boundaries**: This fixture includes Ubuntu/Debian, a fast `gp3` or local NVMe marker, containerd/BuildKit/nerdctl text, strict VPC/security group wording, and one host/workspace isolation model as needed.",
+  },
+  {
+    name: "soft-break-list-code-continuation-bidi-tail",
+    width: 788,
+    browsers: ["chromium"],
+    markdown:
+      "- Turn parity `blockquote/sessionMarkdownMeasurement.ts/sessionMarkdownMeasurement.ts/workbenchShell/table` 🙂 測試 佈局 probe delta​epsilon​zeta summary deterministic A B turn [virtualizer probe](https://example.com/inline-code/chromium/transcript?ref=993) בדיקת עיטוף with code pressure.",
+  },
+  {
+    name: "soft-break-inline-code-overwide-slash-tail",
+    width: 148,
+    browsers: ["webkit"],
+    markdown:
+      "`ctx run start --mode sandbox`: agent render turn agent padding containerd/BuildKit/nerdctl",
   },
   {
     name: "soft-break-styled-seam-collapse-space",

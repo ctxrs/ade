@@ -44,7 +44,8 @@ function measureTextBlock(params: {
   wrapMode?: InlineWrapMode;
 }): number {
   const text = params.text.plainText.trim();
-  const useBreakWordInlineLayout = params.wrapMode === "break-word";
+  const useBreakWordInlineLayout =
+    params.wrapMode === "break-word" || params.wrapMode === "anywhere";
   const hasSoftNewlines = text.includes("\n");
   if (!text) {
     return 0;
@@ -179,7 +180,7 @@ function measureTableCellHeight(
           width,
           typography: isHeader ? TABLE_HEADER_TYPOGRAPHY : BODY_TYPOGRAPHY,
           cacheKeyPrefix: isHeader ? "table-header-inline" : "table-cell-inline",
-          wrapMode: "break-word",
+          wrapMode: "normal",
         });
         break;
       case "heading":

@@ -46,6 +46,7 @@ export function isShortExtensionPathLikeFragment(text: string | null | undefined
 const INLINE_CODE_ENGINE_PROSE_START_FOLLOWING_FRAGMENT_SLACK_PX = 16;
 const INLINE_CODE_CONTINUATION_FIT_SLACK_PX = 5;
 const INLINE_CODE_PATH_TAIL_CONTINUATION_FIT_SLACK_PX = 1;
+export const INLINE_CODE_PATH_DELIMITER_CONTINUATION_MIN_SPARE_PX = 1;
 const INLINE_CODE_COLON_COMMAND_FRAGMENT_SLACK_PX = 1;
 const INLINE_CODE_PROSE_START_SEAM_GUARD_PX = 4;
 const INLINE_CODE_STANDALONE_HYPHEN_FRAGMENT_SLACK_PX = 2;
@@ -84,11 +85,45 @@ export function shouldBreakBeforeWhitespaceSeparatedInlineCodeFragment(params: {
   );
 }
 
+export function shouldBreakBeforePathDelimiterNearFitContinuation(params: {
+  lineHasContent: boolean;
+  sameCodeGroupContinuation: boolean;
+  lastFragmentEndedWithPathDelimiter: boolean;
+  startsAfterCodeWhitespace: boolean;
+  isSealedInlineCodeFragment: boolean;
+  reservedWidth: number;
+  remainingWidth: number;
+  fragmentWidth: number;
+  slackPx?: number;
+}): boolean {
+  return (
+    params.lineHasContent &&
+    params.sameCodeGroupContinuation &&
+    params.lastFragmentEndedWithPathDelimiter &&
+    !params.startsAfterCodeWhitespace &&
+    !params.isSealedInlineCodeFragment &&
+    params.reservedWidth + params.fragmentWidth + INLINE_CODE_PATH_DELIMITER_CONTINUATION_MIN_SPARE_PX >
+      params.remainingWidth + (params.slackPx ?? 0) + 0.01
+  );
+}
+
 export function resolveInlineCodeWhitespaceSeparatedFragmentSlackPx(params: {
   lineHasContent: boolean;
   startsAfterCodeWhitespace: boolean;
   fragmentText: string;
 }): number {
+  if (
+    browserAllowsInlineCodeLeadingHang() &&
+    params.lineHasContent &&
+    params.startsAfterCodeWhitespace &&
+    params.fragmentText !== "-" &&
+    params.fragmentText.endsWith("-") &&
+    !params.fragmentText.includes("/") &&
+    !params.fragmentText.includes("\\") &&
+    !/\s/.test(params.fragmentText)
+  ) {
+    return INLINE_CODE_CONTINUATION_FIT_SLACK_PX;
+  }
   if (
     !browserAllowsInlineCodeLeadingHang() &&
     params.lineHasContent &&
@@ -471,6 +506,11 @@ export function createInlineCodeFitPlanner(params: {
           reservedWidth,
           remainingWidth,
           fragmentWidth: item.fullWidth,
+          slackPx: resolveInlineCodeWhitespaceSeparatedFragmentSlackPx({
+            lineHasContent,
+            startsAfterCodeWhitespace: item.startsAfterCodeWhitespace,
+            fragmentText: item.text,
+          }),
         })
       ) {
         break;
@@ -732,7 +772,8 @@ export function createInlineCodeFitPlanner(params: {
         /[\\/]+$/.test(lastFragmentText ?? "") &&
         !item.isSealedInlineCodeFragment &&
         !item.startsAfterCodeWhitespace &&
-        reservedWidth + item.fullWidth <= remainingWidth + continuationSlackPx + 0.01;
+        reservedWidth + item.fullWidth + INLINE_CODE_PATH_DELIMITER_CONTINUATION_MIN_SPARE_PX <=
+          remainingWidth + continuationSlackPx + 0.01;
       const nextSameCodeGroupItem = items[index + 1];
       const splitDottedStemTailWouldOverflowCurrentLine =
         availableWidth > maxWidth * 0.85 &&
@@ -769,6 +810,27 @@ export function createInlineCodeFitPlanner(params: {
             startsAfterCodeWhitespace: item.startsAfterCodeWhitespace,
             fragmentText: item.text,
           }),
+        })
+      ) {
+        return {
+          consumedWidth,
+          endedAtGroupEnd: false,
+          endedInsideFragment: false,
+          lastFragmentText,
+          nextFragmentText: item.text,
+          nextStartsAfterCodeWhitespace: item.startsAfterCodeWhitespace,
+        };
+      }
+      if (
+        shouldBreakBeforePathDelimiterNearFitContinuation({
+          lineHasContent,
+          sameCodeGroupContinuation: lineHasContent,
+          lastFragmentEndedWithPathDelimiter: /[\\/]+$/.test(lastFragmentText ?? ""),
+          startsAfterCodeWhitespace: item.startsAfterCodeWhitespace,
+          isSealedInlineCodeFragment: item.isSealedInlineCodeFragment,
+          reservedWidth,
+          remainingWidth,
+          fragmentWidth: item.fullWidth,
         })
       ) {
         return {

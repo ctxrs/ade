@@ -191,7 +191,7 @@ describe("sessionMarkdownBlockMeasurement", () => {
     expect(measureSessionPlainTextBlockHeightMock).not.toHaveBeenCalled();
   });
 
-  it("measures table-cell paragraphs with break-word inline wrapping", () => {
+  it("measures table-cell paragraphs with normal inline token wrapping", () => {
     parseMarkdownMock.mockReturnValue({
       source: "probe",
       blocks: [
@@ -212,12 +212,23 @@ describe("sessionMarkdownBlockMeasurement", () => {
                         runs: [
                           {
                             kind: "text",
-                            text: "browser context containerd/BuildKit/nerdctl padding stream.",
+                            text: "browser context ",
+                            style: "body",
+                            deleted: false,
+                          },
+                          {
+                            kind: "inlineCode",
+                            text: "containerd/BuildKit/nerdctl",
+                            parts: ["containerd/BuildKit/nerdctl"],
+                          },
+                          {
+                            kind: "text",
+                            text: " padding stream.",
                             style: "body",
                             deleted: false,
                           },
                         ],
-                        hasInlineCode: false,
+                        hasInlineCode: true,
                         hasHardBreak: false,
                         hasStyledText: false,
                         hasLink: false,
@@ -238,7 +249,7 @@ describe("sessionMarkdownBlockMeasurement", () => {
     expect(measureInlineRunsHeightMock).toHaveBeenCalledWith(
       expect.objectContaining({
         cacheKeyPrefix: "table-header-inline",
-        wrapMode: "break-word",
+        wrapMode: "normal",
       }),
     );
   });
