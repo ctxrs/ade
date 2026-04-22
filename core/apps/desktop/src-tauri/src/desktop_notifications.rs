@@ -4,13 +4,15 @@ use anyhow::Result;
 use ctx_desktop_ipc::{
     DesktopNotificationKind, DesktopNotificationPermission, DesktopShowSystemNotificationReq,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
 use tauri::Manager;
 use url::Url;
 
 #[cfg(target_os = "macos")]
 const NOTIFICATION_DEEP_LINK_USER_INFO_KEY: &str = "deep_link";
+#[cfg(any(target_os = "macos", test))]
+const NOTIFICATION_IDENTIFIER_PREFIX: &str = "ctx-task-notification-";
 
 #[cfg(target_os = "macos")]
 use std::ptr::NonNull;
@@ -27,6 +29,9 @@ use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, Bool, ProtocolObject};
 #[cfg(target_os = "macos")]
 use objc2::{define_class, msg_send, AnyThread};
+#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", feature = "automation"))]
+use objc2_foundation::NSArray;
 #[cfg(target_os = "macos")]
 use objc2_foundation::{NSDictionary, NSError, NSObject, NSObjectProtocol, NSString};
 #[cfg(target_os = "macos")]
@@ -55,6 +60,29 @@ pub(super) struct DesktopNotificationAutomationSnapshot {
     title: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     workspace_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct DesktopDeliveredNotificationSnapshot {
+    delivered: Vec<DesktopDeliveredNotificationEntry>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct DesktopDeliveredNotificationEntry {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    body: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    deep_link: Option<String>,
+    identifier: String,
+    title: String,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct DesktopClearDeliveredNotificationsReq {
+    identifiers: Vec<String>,
 }
 
 #[derive(Debug, Default)]
@@ -306,6 +334,80 @@ fn schedule_macos_notification(request: &UNNotificationRequest) -> Result<()> {
         .map_err(anyhow::Error::msg)
 }
 
+#[cfg(any(target_os = "macos", test))]
+fn normalize_delivered_notification_identifiers(identifiers: &[String]) -> Result<Vec<String>> {
+    let mut normalized = Vec::new();
+    for identifier in identifiers {
+        let trimmed = identifier.trim();
+        if trimmed.is_empty() {
+            anyhow::bail!("delivered notification identifier must not be empty");
+        }
+        if !trimmed.starts_with(NOTIFICATION_IDENTIFIER_PREFIX) {
+            anyhow::bail!("delivered notification identifier is not owned by ctx: {trimmed}");
+        }
+        normalized.push(trimmed.to_string());
+    }
+    if normalized.is_empty() {
+        anyhow::bail!("at least one delivered notification identifier is required");
+    }
+    normalized.sort();
+    normalized.dedup();
+    Ok(normalized)
+}
+
+#[cfg(all(target_os = "macos", feature = "automation"))]
+fn macos_delivered_notification_entry(
+    notification: &UNNotification,
+) -> DesktopDeliveredNotificationEntry {
+    let request = notification.request();
+    let identifier = request.identifier().to_string();
+    let content = request.content();
+    let title = content.title().to_string();
+    let body = content.body().to_string();
+    let user_info = content.userInfo();
+    DesktopDeliveredNotificationEntry {
+        body: if body.trim().is_empty() {
+            None
+        } else {
+            Some(body)
+        },
+        deep_link: macos_notification_deep_link(&user_info),
+        identifier,
+        title,
+    }
+}
+
+#[cfg(all(target_os = "macos", feature = "automation"))]
+fn macos_delivered_notification_entries() -> Result<Vec<DesktopDeliveredNotificationEntry>> {
+    let center = UNUserNotificationCenter::currentNotificationCenter();
+    let (tx, rx) = mpsc::sync_channel(1);
+    let completion = RcBlock::new(move |notifications: NonNull<NSArray<UNNotification>>| {
+        let notifications = unsafe { notifications.as_ref() };
+        let entries = notifications
+            .to_vec()
+            .iter()
+            .map(|notification| macos_delivered_notification_entry(notification))
+            .collect::<Vec<_>>();
+        let _ = tx.send(entries);
+    });
+    center.getDeliveredNotificationsWithCompletionHandler(&completion);
+    rx.recv_timeout(Duration::from_secs(2))
+        .context("timed out reading delivered macOS notifications")
+}
+
+#[cfg(all(target_os = "macos", feature = "automation"))]
+fn macos_clear_delivered_notifications(req: DesktopClearDeliveredNotificationsReq) -> Result<()> {
+    let identifiers = normalize_delivered_notification_identifiers(&req.identifiers)?;
+    let ns_identifiers = identifiers
+        .iter()
+        .map(|identifier| NSString::from_str(identifier))
+        .collect::<Vec<_>>();
+    let identifier_array = NSArray::from_retained_slice(&ns_identifiers);
+    let center = UNUserNotificationCenter::currentNotificationCenter();
+    center.removeDeliveredNotificationsWithIdentifiers(&identifier_array);
+    Ok(())
+}
+
 #[cfg(target_os = "macos")]
 fn show_macos_notification(
     app: &tauri::AppHandle,
@@ -328,7 +430,11 @@ fn show_macos_notification(
         NSDictionary::from_slices(&[&*deep_link_key], &[&*deep_link_value]);
     unsafe { content.setUserInfo(user_info.cast_unchecked::<AnyObject, AnyObject>()) };
 
-    let identifier = NSString::from_str(&format!("ctx-task-notification-{}", uuid::Uuid::new_v4()));
+    let identifier = NSString::from_str(&format!(
+        "{}{}",
+        NOTIFICATION_IDENTIFIER_PREFIX,
+        uuid::Uuid::new_v4()
+    ));
     let request =
         UNNotificationRequest::requestWithIdentifier_content_trigger(&identifier, &content, None);
     schedule_macos_notification(&request)
@@ -496,6 +602,52 @@ pub(super) fn desktop_clear_notification_automation_snapshot(
 }
 
 #[tauri::command]
+pub(super) fn desktop_get_delivered_notification_automation_snapshot(
+) -> Result<DesktopDeliveredNotificationSnapshot, String> {
+    #[cfg(all(feature = "automation", target_os = "macos"))]
+    {
+        return macos_delivered_notification_entries()
+            .map(|delivered| DesktopDeliveredNotificationSnapshot { delivered })
+            .map_err(super::to_err);
+    }
+
+    #[cfg(all(feature = "automation", not(target_os = "macos")))]
+    {
+        Err("desktop_get_delivered_notification_automation_snapshot is macOS-only".to_string())
+    }
+
+    #[cfg(not(feature = "automation"))]
+    {
+        Err("desktop_get_delivered_notification_automation_snapshot is automation-only".to_string())
+    }
+}
+
+#[tauri::command]
+pub(super) fn desktop_clear_delivered_notification_automation_snapshot(
+    req: DesktopClearDeliveredNotificationsReq,
+) -> Result<(), String> {
+    #[cfg(all(feature = "automation", target_os = "macos"))]
+    {
+        return macos_clear_delivered_notifications(req).map_err(super::to_err);
+    }
+
+    #[cfg(all(feature = "automation", not(target_os = "macos")))]
+    {
+        let _ = req;
+        Err("desktop_clear_delivered_notification_automation_snapshot is macOS-only".to_string())
+    }
+
+    #[cfg(not(feature = "automation"))]
+    {
+        let _ = req;
+        Err(
+            "desktop_clear_delivered_notification_automation_snapshot is automation-only"
+                .to_string(),
+        )
+    }
+}
+
+#[tauri::command]
 pub(super) fn desktop_simulate_last_notification_click(
     app: tauri::AppHandle,
     state: tauri::State<DesktopNotificationAutomationState>,
@@ -594,6 +746,63 @@ mod tests {
         assert_eq!(
             notification_deep_link_from_payload_value(Some("not a url")),
             None
+        );
+    }
+
+    #[test]
+    fn delivered_notification_clear_requires_ctx_owned_identifiers() {
+        let req = DesktopClearDeliveredNotificationsReq {
+            identifiers: vec!["ctx-task-notification-from-req".to_string()],
+        };
+        assert_eq!(
+            normalize_delivered_notification_identifiers(&req.identifiers)
+                .expect("req identifiers"),
+            vec!["ctx-task-notification-from-req".to_string()]
+        );
+
+        assert_eq!(
+            normalize_delivered_notification_identifiers(&[
+                " ctx-task-notification-b ".to_string(),
+                "ctx-task-notification-a".to_string(),
+                "ctx-task-notification-a".to_string(),
+            ])
+            .expect("identifiers"),
+            vec![
+                "ctx-task-notification-a".to_string(),
+                "ctx-task-notification-b".to_string(),
+            ]
+        );
+
+        assert!(normalize_delivered_notification_identifiers(&[]).is_err());
+        assert!(normalize_delivered_notification_identifiers(&[" ".to_string()]).is_err());
+        assert!(
+            normalize_delivered_notification_identifiers(&["other-notification".to_string(),])
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn delivered_notification_snapshot_serializes_camel_case() {
+        let snapshot = DesktopDeliveredNotificationSnapshot {
+            delivered: vec![DesktopDeliveredNotificationEntry {
+                body: Some("Body".to_string()),
+                deep_link: Some("ctx://task?v=1&workspaceId=workspace-1&taskId=task-1".to_string()),
+                identifier: "ctx-task-notification-1".to_string(),
+                title: "Title".to_string(),
+            }],
+        };
+
+        let value = serde_json::to_value(snapshot).expect("snapshot json");
+        assert_eq!(
+            value,
+            serde_json::json!({
+                "delivered": [{
+                    "body": "Body",
+                    "deepLink": "ctx://task?v=1&workspaceId=workspace-1&taskId=task-1",
+                    "identifier": "ctx-task-notification-1",
+                    "title": "Title",
+                }],
+            })
         );
     }
 

@@ -161,6 +161,8 @@ fn main() {
             desktop_show_system_notification,
             desktop_get_notification_automation_snapshot,
             desktop_clear_notification_automation_snapshot,
+            desktop_get_delivered_notification_automation_snapshot,
+            desktop_clear_delivered_notification_automation_snapshot,
             desktop_simulate_last_notification_click,
             desktop_sync_workspace_attention,
             desktop_clear_window_attention,
