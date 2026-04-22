@@ -119,136 +119,132 @@ struct DependencyResolutionCodes {
     invalid: &'static str,
 }
 
-fn resolve_dependency_viability(
-    cfg: &AgentServerConfigFile,
-    matrix: &ProviderMatrix,
-    provider_id: &str,
-    dependency_id: &str,
-    dependency_target: InstallTarget,
-    dependency_role: ProviderInstallDependencyRoleKind,
-    current_ctx_version: Option<&str>,
-    codes: DependencyResolutionCodes,
-) -> Result<ProviderInstallDependency, ProviderInstallViabilityIssue> {
-    match installer::resolve_runtime_provider_command_for_target_repairable_managed(
-        cfg,
-        dependency_id,
-        Some(dependency_target),
-    ) {
-        Ok(Some(_)) => Ok(ProviderInstallDependency {
-            provider_id: dependency_id.to_string(),
-            role: dependency_role,
-            target: dependency_target,
-            satisfied: true,
-        }),
-        Ok(None) => {
-            if installer::is_supported_managed_provider_for_target(
-                matrix,
-                dependency_id,
-                dependency_target,
-            ) && installer::is_compatible_managed_provider_for_target(
-                matrix,
-                dependency_id,
-                dependency_target,
-                current_ctx_version,
-            ) {
-                return Ok(ProviderInstallDependency {
-                    provider_id: dependency_id.to_string(),
-                    role: dependency_role,
-                    target: dependency_target,
-                    satisfied: false,
-                });
+struct DependencyViabilityResolver<'a> {
+    cfg: &'a AgentServerConfigFile,
+    matrix: &'a ProviderMatrix,
+    current_ctx_version: &'a str,
+}
+
+impl<'a> DependencyViabilityResolver<'a> {
+    fn resolve_dependency_viability(
+        &self,
+        provider_id: &str,
+        dependency_id: &str,
+        dependency_target: InstallTarget,
+        dependency_role: ProviderInstallDependencyRoleKind,
+        codes: DependencyResolutionCodes,
+    ) -> Result<ProviderInstallDependency, ProviderInstallViabilityIssue> {
+        match installer::resolve_runtime_provider_command_for_target_repairable_managed(
+            self.cfg,
+            dependency_id,
+            Some(dependency_target),
+        ) {
+            Ok(Some(_)) => Ok(ProviderInstallDependency {
+                provider_id: dependency_id.to_string(),
+                role: dependency_role,
+                target: dependency_target,
+                satisfied: true,
+            }),
+            Ok(None) => {
+                if installer::is_supported_managed_provider_for_target(
+                    self.matrix,
+                    dependency_id,
+                    dependency_target,
+                ) && installer::is_compatible_managed_provider_for_target(
+                    self.matrix,
+                    dependency_id,
+                    dependency_target,
+                    Some(self.current_ctx_version),
+                ) {
+                    return Ok(ProviderInstallDependency {
+                        provider_id: dependency_id.to_string(),
+                        role: dependency_role,
+                        target: dependency_target,
+                        satisfied: false,
+                    });
+                }
+                Err(dependency_resolution_issue(
+                    provider_id,
+                    dependency_id,
+                    dependency_target,
+                    dependency_role,
+                    codes.missing,
+                    format!(
+                        "runtime command is not configured for provider '{dependency_id}' and ctx cannot managed-install it for that target"
+                    ),
+                ))
             }
-            Err(dependency_resolution_issue(
+            Err(err) => Err(dependency_resolution_issue(
                 provider_id,
                 dependency_id,
                 dependency_target,
                 dependency_role,
-                codes.missing,
-                format!(
-                    "runtime command is not configured for provider '{dependency_id}' and ctx cannot managed-install it for that target"
-                ),
-            ))
+                codes.invalid,
+                err.to_string(),
+            )),
         }
-        Err(err) => Err(dependency_resolution_issue(
+    }
+
+    fn resolve_acp_bridge_dependencies(
+        &self,
+        provider_id: &str,
+        target: InstallTarget,
+    ) -> Result<Vec<ProviderInstallDependency>, ProviderInstallViabilityIssue> {
+        match self.resolve_dependency_viability(
             provider_id,
-            dependency_id,
-            dependency_target,
-            dependency_role,
-            codes.invalid,
-            err.to_string(),
-        )),
-    }
-}
-
-fn resolve_acp_bridge_dependencies(
-    cfg: &AgentServerConfigFile,
-    matrix: &ProviderMatrix,
-    provider_id: &str,
-    target: InstallTarget,
-    current_ctx_version: Option<&str>,
-) -> Result<Vec<ProviderInstallDependency>, ProviderInstallViabilityIssue> {
-    match resolve_dependency_viability(
-        cfg,
-        matrix,
-        provider_id,
-        "acp-crp-bridge",
-        target,
-        ProviderInstallDependencyRoleKind::Prerequisite,
-        current_ctx_version,
-        DependencyResolutionCodes {
-            missing: "acp_bridge_missing",
-            invalid: "acp_bridge_invalid",
-        },
-    ) {
-        Ok(dependency) => {
-            if dependency.satisfied {
-                Ok(Vec::new())
-            } else {
-                Ok(vec![dependency])
+            "acp-crp-bridge",
+            target,
+            ProviderInstallDependencyRoleKind::Prerequisite,
+            DependencyResolutionCodes {
+                missing: "acp_bridge_missing",
+                invalid: "acp_bridge_invalid",
+            },
+        ) {
+            Ok(dependency) => {
+                if dependency.satisfied {
+                    Ok(Vec::new())
+                } else {
+                    Ok(vec![dependency])
+                }
             }
+            Err(err) if err.code == "acp_bridge_missing" => {
+                Err(acp_bridge_missing_issue(provider_id, target))
+            }
+            Err(err) => Err(err),
         }
-        Err(err) if err.code == "acp_bridge_missing" => {
-            Err(acp_bridge_missing_issue(provider_id, target))
-        }
-        Err(err) => Err(err),
     }
-}
 
-fn resolve_matrix_provider_dependencies(
-    cfg: &AgentServerConfigFile,
-    matrix: &ProviderMatrix,
-    entry: &ProviderMatrixEntry,
-    provider_target: InstallTarget,
-    current_ctx_version: Option<&str>,
-) -> Result<Vec<ProviderInstallDependency>, ProviderInstallViabilityIssue> {
-    entry
-        .provider_dependencies
-        .iter()
-        .map(|dependency| {
-            let dependency_target = dependency_target(dependency.target, provider_target);
-            let dependency_role = match dependency.role {
-                ProviderInstallDependencyRole::Prerequisite => {
-                    ProviderInstallDependencyRoleKind::Prerequisite
-                }
-                ProviderInstallDependencyRole::Readiness => {
-                    ProviderInstallDependencyRoleKind::Readiness
-                }
-            };
-            resolve_dependency_viability(
-                cfg,
-                matrix,
-                &entry.id,
-                &dependency.id,
-                dependency_target,
-                dependency_role,
-                current_ctx_version,
-                DependencyResolutionCodes {
-                    missing: "dependency_missing",
-                    invalid: "dependency_invalid",
-                },
-            )
-        })
-        .collect()
+    fn resolve_matrix_provider_dependencies(
+        &self,
+        entry: &ProviderMatrixEntry,
+        provider_target: InstallTarget,
+    ) -> Result<Vec<ProviderInstallDependency>, ProviderInstallViabilityIssue> {
+        entry
+            .provider_dependencies
+            .iter()
+            .map(|dependency| {
+                let dependency_target = dependency_target(dependency.target, provider_target);
+                let dependency_role = match dependency.role {
+                    ProviderInstallDependencyRole::Prerequisite => {
+                        ProviderInstallDependencyRoleKind::Prerequisite
+                    }
+                    ProviderInstallDependencyRole::Readiness => {
+                        ProviderInstallDependencyRoleKind::Readiness
+                    }
+                };
+                self.resolve_dependency_viability(
+                    &entry.id,
+                    &dependency.id,
+                    dependency_target,
+                    dependency_role,
+                    DependencyResolutionCodes {
+                        missing: "dependency_missing",
+                        invalid: "dependency_invalid",
+                    },
+                )
+            })
+            .collect()
+    }
 }
 
 pub fn resolve_provider_install_contract(
@@ -259,24 +255,26 @@ pub fn resolve_provider_install_contract(
     target: InstallTarget,
     current_ctx_version: Option<&str>,
 ) -> Result<ProviderInstallContract, ProviderInstallViabilityIssue> {
-    let parsed_current_ctx_version = match current_ctx_version {
-        Some(raw) => provider_matrix::parse_version_loose(raw).ok_or_else(|| {
-            ProviderInstallViabilityIssue {
-                code: "ctx_version_invalid",
-                message: format!(
-                    "current ctx build version '{raw}' is not valid semver for provider install resolution"
-                ),
-            }
-        })?,
+    let current_ctx_version = match current_ctx_version {
+        Some(raw) => raw,
         None => {
             return Err(ProviderInstallViabilityIssue {
                 code: "ctx_version_unavailable",
-                message:
-                    "current ctx build version is unavailable for provider install resolution"
-                        .to_string(),
+                message: "current ctx build version is unavailable for provider install resolution"
+                    .to_string(),
             })
         }
     };
+
+    let parsed_current_ctx_version =
+        provider_matrix::parse_version_loose(current_ctx_version).ok_or_else(|| {
+            ProviderInstallViabilityIssue {
+                code: "ctx_version_invalid",
+                message: format!(
+                    "current ctx build version '{current_ctx_version}' is not valid semver for provider install resolution"
+                ),
+            }
+        })?;
 
     if !provider_matrix::is_managed_supported_for_context(
         matrix,
@@ -353,16 +351,15 @@ pub fn resolve_provider_install_contract(
         });
     }
 
-    let mut dependencies =
-        resolve_matrix_provider_dependencies(cfg, matrix, entry, target, current_ctx_version)?;
+    let resolver = DependencyViabilityResolver {
+        cfg,
+        matrix,
+        current_ctx_version,
+    };
+
+    let mut dependencies = resolver.resolve_matrix_provider_dependencies(entry, target)?;
     if crate::is_acp_provider_id(provider_id) {
-        dependencies.extend(resolve_acp_bridge_dependencies(
-            cfg,
-            matrix,
-            provider_id,
-            target,
-            current_ctx_version,
-        )?);
+        dependencies.extend(resolver.resolve_acp_bridge_dependencies(provider_id, target)?);
     }
 
     Ok(ProviderInstallContract {

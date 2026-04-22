@@ -215,6 +215,47 @@ const SOFT_BREAK_MARKDOWN_REGRESSIONS: SoftBreakMarkdownSample[] = [
       "A second boundary sample keeps `inline-token 9` beside ordinary prose in a containerized/sandboxed path. The browser should keep that slash-delimited token whole while the surrounding sentence wraps naturally.",
   },
   {
+    name: "soft-break-styled-slash-mixed-paragraph",
+    width: 472,
+    markdown: [
+      "Context render للالتفاف around the width threshold ทดสอบการตัดคำ pretext context 📏 測試 佈局 ทดสอบการตัดคำ browser:",
+      "Pretext header ភាសាខ្មែរគ្មានដកឃ្លា probe stream [deterministic marker](https://example.com/virtualizer/webkit/inline-code/webkit?ref=349) **command marker deterministic** VPC/security group delta padding prix : browser summary.",
+    ].join("\n"),
+  },
+  {
+    name: "soft-break-link-slash-paragraph",
+    width: 788,
+    markdown: [
+      "Shell virtualizer buffer C⁠D context marker browser context A B command containerd/BuildKit/nerdctl 📏 測試 佈局 layout A B summary command thread delta​epsilon​zeta message thread:",
+      "Parity turn message ⚙️ 你好 世界 日本語行分割 段落 換行 בדיקת עיטוף near the seam [header token session](https://example.com/chromium/assistant/chromium?ref=447) browser padding stream.",
+    ].join("\n"),
+  },
+  {
+    name: "soft-break-table-inline-code-slash-tail",
+    width: 472,
+    markdown: [
+      "| kind | content | note |",
+      "| --- | --- | --- |",
+      "| command | `sessionThreadDomMeasurement.tsx/table/blockquote/sessionThread/core/inline-code`: containerd/BuildKit/nerdctl | short |",
+    ].join("\n"),
+  },
+  {
+    name: "soft-break-table-inline-code-punctuation-tail",
+    width: 472,
+    markdown: [
+      "| Kind | Token | Note |",
+      "| --- | --- | --- |",
+      "| deterministic | `pnpm -C core/apps/web test:e2e:pretext:parity:webkit`: thread delta message | short |",
+    ].join("\n"),
+  },
+  {
+    name: "soft-break-list-slash-token-tail",
+    width: 788,
+    browsers: ["webkit"],
+    markdown:
+      "- **Sample boundaries**: This fixture includes Ubuntu/Debian, a fast `gp3` or local NVMe marker, containerd/BuildKit/nerdctl text, strict VPC/security group wording, and one host/workspace isolation model as needed.",
+  },
+  {
     name: "soft-break-styled-seam-collapse-space",
     width: 788,
     markdown: [

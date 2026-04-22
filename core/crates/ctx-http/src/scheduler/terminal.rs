@@ -56,6 +56,20 @@ async fn persist_terminal_events(
     Ok(())
 }
 
+pub(crate) struct InterruptedTurnTerminalization<'a> {
+    pub(crate) reason: &'a str,
+    pub(crate) provider_cancelled: bool,
+    pub(crate) emit_interrupt_event: bool,
+}
+
+pub(crate) struct FailedTurnTerminalization<'a> {
+    pub(crate) message: &'a str,
+    pub(crate) reason: Option<&'a str>,
+    pub(crate) details: Option<Value>,
+    pub(crate) kind: Option<Value>,
+    pub(crate) emit_error_event: bool,
+}
+
 pub(crate) async fn finalize_completed_turn(
     state: &Arc<AppState>,
     session_id: SessionId,
@@ -89,17 +103,15 @@ pub(crate) async fn finalize_interrupted_turn(
     run_id: Option<RunId>,
     turn_id: TurnId,
     message_id: MessageId,
-    reason: &str,
-    provider_cancelled: bool,
-    emit_interrupt_event: bool,
+    interruption: InterruptedTurnTerminalization<'_>,
 ) -> Result<()> {
     let mut events = Vec::new();
-    if emit_interrupt_event {
+    if interruption.emit_interrupt_event {
         events.push((
             SessionEventType::TurnInterrupted,
             json!({
-                "reason": reason,
-                "provider_cancelled": provider_cancelled,
+                "reason": interruption.reason,
+                "provider_cancelled": interruption.provider_cancelled,
                 "status": "interrupted",
             }),
         ));
@@ -109,8 +121,8 @@ pub(crate) async fn finalize_interrupted_turn(
         json!({
             "message_id": message_id.0,
             "status": "interrupted",
-            "reason": reason,
-            "provider_cancelled": provider_cancelled,
+            "reason": interruption.reason,
+            "provider_cancelled": interruption.provider_cancelled,
         }),
     ));
 
@@ -135,28 +147,24 @@ pub(crate) async fn finalize_failed_turn(
     run_id: Option<RunId>,
     turn_id: TurnId,
     message_id: MessageId,
-    message: &str,
-    reason: Option<&str>,
-    details: Option<Value>,
-    kind: Option<Value>,
-    emit_error_event: bool,
+    failure: FailedTurnTerminalization<'_>,
 ) -> Result<()> {
     let mut events = Vec::new();
-    if emit_error_event {
+    if failure.emit_error_event {
         let mut payload = json!({
             "message_id": message_id.0,
-            "message": message,
-            "error": message,
+            "message": failure.message,
+            "error": failure.message,
             "status": "failed",
         });
         if let Some(obj) = payload.as_object_mut() {
-            if let Some(reason) = reason {
+            if let Some(reason) = failure.reason {
                 obj.insert("reason".to_string(), json!(reason));
             }
-            if let Some(details) = details.clone() {
+            if let Some(details) = failure.details.clone() {
                 obj.insert("details".to_string(), details);
             }
-            if let Some(kind) = kind.clone() {
+            if let Some(kind) = failure.kind.clone() {
                 obj.insert("kind".to_string(), kind);
             }
         }
@@ -168,14 +176,14 @@ pub(crate) async fn finalize_failed_turn(
         "status": "failed",
     });
     if let Some(obj) = finished.as_object_mut() {
-        if let Some(reason) = reason {
+        if let Some(reason) = failure.reason {
             obj.insert("reason".to_string(), json!(reason));
         }
-        obj.insert("message".to_string(), json!(message));
-        if let Some(details) = details {
+        obj.insert("message".to_string(), json!(failure.message));
+        if let Some(details) = failure.details {
             obj.insert("details".to_string(), details);
         }
-        if let Some(kind) = kind {
+        if let Some(kind) = failure.kind {
             obj.insert("kind".to_string(), kind);
         }
     }
@@ -215,9 +223,11 @@ pub(crate) async fn finalize_provider_outcome(
                 run_id,
                 turn_id,
                 message_id,
-                outcome.reason.as_deref().unwrap_or("interrupted"),
-                outcome.provider_cancelled.unwrap_or(false),
-                !outcome.terminal_event_emitted,
+                InterruptedTurnTerminalization {
+                    reason: outcome.reason.as_deref().unwrap_or("interrupted"),
+                    provider_cancelled: outcome.provider_cancelled.unwrap_or(false),
+                    emit_interrupt_event: !outcome.terminal_event_emitted,
+                },
             )
             .await
         }
@@ -228,11 +238,13 @@ pub(crate) async fn finalize_provider_outcome(
                 run_id,
                 turn_id,
                 message_id,
-                outcome.message.as_deref().unwrap_or("provider turn failed"),
-                outcome.reason.as_deref(),
-                outcome.details,
-                outcome.kind,
-                !outcome.terminal_event_emitted,
+                FailedTurnTerminalization {
+                    message: outcome.message.as_deref().unwrap_or("provider turn failed"),
+                    reason: outcome.reason.as_deref(),
+                    details: outcome.details,
+                    kind: outcome.kind,
+                    emit_error_event: !outcome.terminal_event_emitted,
+                },
             )
             .await
         }

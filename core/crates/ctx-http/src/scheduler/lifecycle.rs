@@ -14,7 +14,7 @@ use crate::perf_telemetry::{PerfMetric, PerfMetricKind};
 use super::interrupt_telemetry::{metric_labels, payload_fields};
 use super::persistence::emit_event;
 use super::reconcile::reconcile_turn_terminal_state;
-use super::terminal::{finalize_failed_turn, finalize_provider_outcome};
+use super::terminal::{finalize_failed_turn, finalize_provider_outcome, FailedTurnTerminalization};
 use super::InterruptTelemetryContext;
 
 pub(crate) struct RunningTurn {
@@ -414,11 +414,13 @@ pub(crate) async fn finalize_start_failure_if_needed(
         run_id,
         turn_id,
         message_id,
-        error_message,
-        Some("start_failed"),
-        None,
-        Some(json!("start_failed")),
-        true,
+        FailedTurnTerminalization {
+            message: error_message,
+            reason: Some("start_failed"),
+            details: None,
+            kind: Some(json!("start_failed")),
+            emit_error_event: true,
+        },
     )
     .await;
 }

@@ -26,7 +26,7 @@ impl CrpWriter {
 
     async fn send(&mut self, channel: CrpChannel, event: CrpEvent) -> Result<()> {
         let envelope = CrpEventEnvelope {
-            v: CRP_VERSION,
+            v: Some(CRP_VERSION),
             seq: self.next_seq(),
             channel,
             event,
@@ -89,6 +89,7 @@ pub(super) fn dispatch_event(router: &CrpEventRouter, channel: CrpChannel, event
             if let Err(Some(session_id)) = router.send_data(event) {
                 let _ = router.send_control(CrpEvent::SessionGap {
                     session_id,
+                    turn_id: None,
                     reason: Some("data_plane_overflow".to_string()),
                 });
             }

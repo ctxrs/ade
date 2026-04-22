@@ -69,6 +69,7 @@ function main() {
       "scripts/buildbuddy_macos_publish_prereqs.test.cjs",
       "scripts/affected_tests_contract.test.cjs",
       "scripts/bundled_harnesses_docker_contracts_bazel_contract.test.cjs",
+      "scripts/check_rust_runtime_panic_traps.test.mjs",
       "scripts/ctx_http_bazel_contract.test.cjs",
       "scripts/desktop_ipc_bazel_contract.test.cjs",
       "scripts/ctx_harness_dockerfile_contract.test.cjs",

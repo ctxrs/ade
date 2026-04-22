@@ -245,6 +245,17 @@ async fn noisy_tool_output_stays_bounded_end_to_end() {
         }),
         "unexpected session_gap persisted in noisy scenario: {events:#?}"
     );
+    assert!(
+        !events.iter().any(|event| {
+            matches!(event.event_type, SessionEventType::Notice)
+                && event
+                    .payload_json
+                    .get("kind")
+                    .and_then(|value| value.as_str())
+                    == Some("crp_unknown_event")
+        }),
+        "tool output deltas must not degrade into unknown notices: {events:#?}"
+    );
 
     let tool_result = events
         .iter()

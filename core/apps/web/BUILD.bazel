@@ -34,6 +34,11 @@ COMMON_DATA = WEB_SOURCES + [
     "//core/packages:sources",
 ]
 
+ANY_ENFORCE_DATA = WEB_SOURCES + [
+    "//:MODULE.bazel",
+    "//core:package.json",
+]
+
 filegroup(
     name = "desktop_ipc_generated_typescript",
     srcs = ["src/generated/desktop-ipc.ts"],
@@ -73,9 +78,8 @@ sh_binary(
 
 sh_binary(
     name = "any_enforce",
-    srcs = ["//tools/bazel:run_workspace_task.sh"],
-    args = ["core/apps/web", "pnpm", "any:enforce"],
-    data = COMMON_DATA,
+    srcs = ["any_enforce_tool.sh"],
+    data = ANY_ENFORCE_DATA,
 )
 
 sh_binary(

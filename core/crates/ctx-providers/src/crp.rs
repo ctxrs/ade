@@ -10,6 +10,8 @@ use tokio::time::Duration;
 use uuid::Uuid;
 
 use ctx_core::models::SessionEventType;
+pub use ctx_crp_protocol::CrpModelInfo;
+pub(crate) use ctx_crp_protocol::CRP_VERSION;
 
 use crate::adapters::{
     ProviderAdapter, ProviderCapabilities, ProviderHealth, ProviderProcessInfo,
@@ -35,10 +37,8 @@ use self::runtime::{resolve_explicit_command_path, CrpAgentConfig};
 use self::session_pool::session_shutdown_reason;
 use self::session_pool::{CrpPromptRequest, CrpSessionPool};
 
-pub use self::protocol::{CrpModelInfo, CrpModelsProbe};
+pub use self::protocol::CrpModelsProbe;
 pub(crate) use self::runtime::rewrite_bundled_path_for_linux;
-
-const CRP_VERSION: u32 = 1;
 const CRP_MODEL_PROBE_TIMEOUT: Duration = Duration::from_secs(10);
 const CRP_MODEL_PROBE_TIMEOUT_CONTAINER: Duration = Duration::from_secs(45);
 const CRP_RUNTIME_LAUNCH_PROBE_TIMEOUT: Duration = Duration::from_secs(2);

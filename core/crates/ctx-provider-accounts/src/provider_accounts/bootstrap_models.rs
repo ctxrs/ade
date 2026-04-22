@@ -77,6 +77,7 @@ const CLAUDE_PINNED_SUBSCRIPTION_MODELS: [PinnedReasoningModel; 3] = [
 ];
 
 const GEMINI_CATALOG_VERSION_0_33_1: &str = "0.33.1";
+const GEMINI_CATALOG_VERSION_0_38_2: &str = "0.38.2";
 
 const GEMINI_PINNED_SUBSCRIPTION_MODELS_0_33_1: [PinnedFlatModel; 7] = [
     PinnedFlatModel {
@@ -145,7 +146,7 @@ fn pinned_reasoning_models_value(
 
 fn pinned_flat_models_value(
     catalog_source: &'static str,
-    catalog_version: &'static str,
+    catalog_version: &str,
     current_model_id: &'static str,
     models: &[PinnedFlatModel],
 ) -> serde_json::Value {
@@ -175,13 +176,16 @@ fn normalize_cli_version(version: &str) -> Option<String> {
 }
 
 fn gemini_models_value_for_version(version: &str) -> Option<serde_json::Value> {
-    match normalize_cli_version(version)?.as_str() {
-        GEMINI_CATALOG_VERSION_0_33_1 => Some(pinned_flat_models_value(
-            "gemini_cli_version_pinned",
-            GEMINI_CATALOG_VERSION_0_33_1,
-            GEMINI_PINNED_SUBSCRIPTION_MODELS_0_33_1[0].id,
-            &GEMINI_PINNED_SUBSCRIPTION_MODELS_0_33_1,
-        )),
+    let normalized_version = normalize_cli_version(version)?;
+    match normalized_version.as_str() {
+        GEMINI_CATALOG_VERSION_0_33_1 | GEMINI_CATALOG_VERSION_0_38_2 => {
+            Some(pinned_flat_models_value(
+                "gemini_cli_version_pinned",
+                normalized_version.as_str(),
+                GEMINI_PINNED_SUBSCRIPTION_MODELS_0_33_1[0].id,
+                &GEMINI_PINNED_SUBSCRIPTION_MODELS_0_33_1,
+            ))
+        }
         _ => None,
     }
 }

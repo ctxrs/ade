@@ -10,6 +10,7 @@ import {
   createSessionMarkdownInlineMeasurementDebugProbe,
   type SessionMarkdownDebugWindow,
 } from "./sessionMarkdownInlineMeasurementDebug";
+import type { InlineWrapMode } from "./sessionMarkdownInlineLayout";
 import { resolveInlineMeasurementDerivedContext } from "./sessionMarkdownInlineMeasurementContext";
 import { createInlineMeasurementLineState } from "./sessionMarkdownInlineMeasurementState";
 import { placeInlineTextSegment } from "./sessionMarkdownInlineMeasurementTextPlacement";
@@ -20,6 +21,7 @@ export function measureInlineRunsHeight(params: {
   width: number;
   typography: TextBlockTypography;
   cacheKeyPrefix: string;
+  wrapMode?: InlineWrapMode;
 }): number {
   const maxWidth = Math.max(1, params.width);
   const items = prepareInlineLayoutItems(params);

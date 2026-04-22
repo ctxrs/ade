@@ -209,8 +209,7 @@ pub(super) fn compact_active_head_snapshot(head: &SessionHeadSnapshot) -> Sessio
         out.events.clear();
 
         if out.tool_summaries.len() > ACTIVE_HEAD_TOOL_SUMMARY_LIMIT {
-            out.tool_summaries
-                .sort_by_key(|summary| summary.updated_at);
+            out.tool_summaries.sort_by_key(|summary| summary.updated_at);
             out.tool_summaries = out
                 .tool_summaries
                 .split_off(out.tool_summaries.len() - ACTIVE_HEAD_TOOL_SUMMARY_LIMIT);

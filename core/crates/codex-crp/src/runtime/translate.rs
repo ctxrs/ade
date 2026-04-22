@@ -519,6 +519,7 @@ fn translate_item_lifecycle(
                 CrpChannel::Control,
                 CrpEvent::SessionGap {
                     session_id: session_id.clone(),
+                    turn_id: Some(crp_turn_id.clone()),
                     reason: Some("context_compacted".to_string()),
                 },
             ),

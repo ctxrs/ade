@@ -7,7 +7,7 @@ import {
   normalizeHeight,
   pruneCache,
   segmentGraphemes,
-  segmentWords,
+  segmentImplicitWordBreaks,
 } from "./sessionTextMeasurement";
 
 type SessionPlainTextDebugWindow = Window & {
@@ -28,7 +28,6 @@ const SOFT_HYPHEN = "\u00ad";
 const VISIBLE_HYPHEN = "-";
 const SOFT_HYPHEN_CURRENT_LINE_FIT_GUARD_PX = 1;
 const ZERO_WIDTH_SPACE = "\u200b";
-const IMPLICIT_WORD_BREAK_SCRIPT_PATTERN = /[\p{Script=Thai}\p{Script=Lao}\p{Script=Khmer}\p{Script=Myanmar}]/u;
 
 function normalizeCollapsedPlainTextLineText(text: string): string {
   return text.replace(/\u00a0/g, " ").replace(/\r\n?/g, "\n").replace(/\n/g, " ");
@@ -164,19 +163,6 @@ function measureZeroWidthSpaceBreakFit(params: {
     marker: ZERO_WIDTH_SPACE,
     visibleSuffix: "",
   });
-}
-
-function segmentImplicitWordBreaks(text: string): string[] {
-  if (!IMPLICIT_WORD_BREAK_SCRIPT_PATTERN.test(text)) {
-    return [text];
-  }
-
-  const segments = segmentWords(text).filter((segment) => segment.length > 0);
-  if (segments.length <= 1 || segments.join("") !== text) {
-    return [text];
-  }
-
-  return segments;
 }
 
 function measureImplicitWordBreakFit(params: {

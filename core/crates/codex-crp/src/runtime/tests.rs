@@ -130,6 +130,13 @@ fn assert_snapshot(input: &str, expected: &str) {
 }
 
 #[test]
+fn current_model_id_preserves_reasoning_effort_suffix() {
+    assert_eq!(current_model_id("gpt-5.4", Some("xhigh")), "gpt-5.4/xhigh");
+    assert_eq!(current_model_id("gpt-5.4", None), "gpt-5.4");
+    assert_eq!(current_model_id("gpt-5.4", Some("  ")), "gpt-5.4");
+}
+
+#[test]
 fn basic_message_snapshot_matches() {
     assert_snapshot(
         "app_server_basic_message.input.jsonl",
@@ -276,6 +283,65 @@ fn session_status_details_report_resumed_provider_session_without_blocking_quies
     assert_eq!(details["quiescent"], json!(true));
     assert_eq!(details["resumed_from_provider_session"], json!(true));
     assert_eq!(details["busy_reasons"], json!([]));
+}
+
+#[tokio::test]
+async fn session_authenticate_emits_explicit_unsupported_notice() {
+    let (control_tx, mut control_rx) = mpsc::unbounded_channel();
+    let (data_tx, _data_rx) = mpsc::channel(1);
+    let router = CrpEventRouter::new(control_tx, data_tx);
+    let mut session = Some(AppServerSessionState {
+        tracker: TurnTracker::new("fixture-session".to_string()),
+        client: AppServerClient::test_stub(),
+        thread_id: "thr_fixture".to_string(),
+        default_cwd: PathBuf::from("/tmp"),
+        default_model: "gpt-5.4".to_string(),
+        default_effort: Some("medium".to_string()),
+        opened_commands: Vec::new(),
+        opened_slash_commands: Vec::new(),
+        turn_aliases: TurnAliasState::new(),
+        resumed_from_provider_session: false,
+        command_execution_seen: false,
+    });
+
+    handle_command(
+        RuntimeCommand::Parsed(Box::new(CrpCommand::SessionAuthenticate {
+            session_id: Some("fixture-session".to_string()),
+            method_id: Some("oauth".to_string()),
+        })),
+        &mut session,
+        &router,
+        &RuntimeOptions::default(),
+    )
+    .await
+    .expect("session.authenticate handling should not fail");
+
+    match control_rx.try_recv().expect("expected control event") {
+        CrpEvent::SessionNotice {
+            session_id,
+            code,
+            severity,
+            message,
+            details,
+            ..
+        } => {
+            assert_eq!(session_id, "fixture-session");
+            assert_eq!(code, "auth_error");
+            assert_eq!(severity.as_deref(), Some("error"));
+            assert_eq!(
+                message.as_deref(),
+                Some("session.authenticate is not supported by this runtime")
+            );
+            assert_eq!(
+                details,
+                Some(json!({
+                    "provider": "codex-crp",
+                    "reason": "unsupported_command",
+                }))
+            );
+        }
+        other => panic!("expected session notice, got {other:?}"),
+    }
 }
 
 #[tokio::test]

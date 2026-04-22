@@ -190,6 +190,16 @@ export function placeInlineCodeSegment(params: {
     !item.isPathTailFragment
       ? INLINE_CODE_HYPHEN_CONTINUATION_GUARD_PX
       : 0;
+  const shouldBreakBeforeHyphenTailContinuationWithTrailingPlain =
+    !browserAllowsInlineCodeLeadingHang() &&
+    state.lineHasContent &&
+    state.lastAcceptedCodeGroupId === codeGroupId &&
+    state.lineLastCodeFragmentEndedWithHyphen &&
+    item.codeGroupHasTrailingText &&
+    !item.text.includes("-") &&
+    !item.text.includes("/") &&
+    !item.text.includes("\\") &&
+    !item.isPathTailFragment;
   const whitespaceSlackPx = resolveInlineCodeWhitespaceSeparatedFragmentSlackPx({
     lineHasContent: state.lineHasContent,
     startsAfterCodeWhitespace: item.startsAfterCodeWhitespace,
@@ -674,6 +684,7 @@ export function placeInlineCodeSegment(params: {
     });
   }
   if (
+    shouldBreakBeforeHyphenTailContinuationWithTrailingPlain ||
     state.lineHasContent &&
     ((!item.codePartStartsAfterWhitespace && item.text.endsWith("-")) ||
       (!item.codePartStartsAfterWhitespace &&

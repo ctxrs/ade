@@ -8,7 +8,7 @@ use tokio::sync::broadcast;
 use crate::adapters::ProviderSessionSweepStats;
 
 use super::super::normalize::event_matches_session;
-use super::super::protocol::{CrpCommand, CrpEvent};
+use super::super::protocol::{CrpCommand, CrpEvent, KnownCrpEvent};
 use super::state::{CrpSessionStatusDetails, SessionSnapshot};
 use super::{CrpSession, CrpSessionPool};
 
@@ -191,12 +191,12 @@ impl CrpSessionPool {
                                     continue;
                                 }
                                 match env.event {
-                                    CrpEvent::SessionNotice { code, details, .. } if code == "session_status" => {
+                                    CrpEvent::Known(KnownCrpEvent::SessionNotice { code, details, .. }) if code == "session_status" => {
                                         let details = details.ok_or_else(|| anyhow::anyhow!("session_status notice missing details"))?;
                                         return serde_json::from_value::<CrpSessionStatusDetails>(details)
                                             .context("parsing session status details");
                                     }
-                                    CrpEvent::SessionNotice { code, message, .. } if code == "session_status_failed" => {
+                                    CrpEvent::Known(KnownCrpEvent::SessionNotice { code, message, .. }) if code == "session_status_failed" => {
                                         anyhow::bail!(message.unwrap_or_else(|| "session status query failed".to_string()));
                                     }
                                     _ => {}

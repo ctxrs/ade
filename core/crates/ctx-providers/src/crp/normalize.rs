@@ -7,7 +7,7 @@ use ctx_core::models::SessionEventType;
 use crate::events::NormalizedEvent;
 
 use super::normalize_tool_payload::{build_tool_completed_payload, build_tool_started_payload};
-use super::protocol::{CrpChannel, CrpEvent, CrpTurnStatus};
+use super::protocol::{CrpChannel, CrpEvent, CrpTurnStatus, KnownCrpEvent};
 use super::unknown_event::{
     bound_unknown_crp_payload, extract_unknown_crp_tool_name, extract_unknown_crp_tool_preview,
     summarize_unknown_crp_event,
@@ -106,442 +106,444 @@ pub(super) fn map_crp_event(
         CrpChannel::Control => None,
     };
     match event {
-        CrpEvent::SessionOpened {
-            session_id,
-            provider_session_id,
-            supports_session_status,
-            commands,
-            slash_commands,
-            models,
-            current_model_id,
-            agents,
-            output_style,
-            available_output_styles,
-            skills,
-            plugins,
-            tools,
-            permission_mode,
-            mcp_servers,
-            account,
-            fast_mode_state,
-        } => {
-            let mut payload = serde_json::Map::new();
-            payload.insert("session_id".to_string(), json!(session_id));
-            if let Some(provider_session_id) = provider_session_id {
-                payload.insert(
-                    "provider_session_id".to_string(),
-                    json!(provider_session_id),
-                );
+        CrpEvent::Known(event) => match event {
+            KnownCrpEvent::SessionOpened {
+                session_id,
+                provider_session_id,
+                supports_session_status,
+                commands,
+                slash_commands,
+                models,
+                current_model_id,
+                agents,
+                output_style,
+                available_output_styles,
+                skills,
+                plugins,
+                tools,
+                permission_mode,
+                mcp_servers,
+                account,
+                fast_mode_state,
+            } => {
+                let mut payload = serde_json::Map::new();
+                payload.insert("session_id".to_string(), json!(session_id));
+                if let Some(provider_session_id) = provider_session_id {
+                    payload.insert(
+                        "provider_session_id".to_string(),
+                        json!(provider_session_id),
+                    );
+                }
+                if let Some(supports_session_status) = supports_session_status {
+                    payload.insert(
+                        "supports_session_status".to_string(),
+                        json!(supports_session_status),
+                    );
+                }
+                if let Some(commands) = commands {
+                    payload.insert("commands".to_string(), commands);
+                }
+                if let Some(slash_commands) = slash_commands {
+                    payload.insert("slash_commands".to_string(), json!(slash_commands));
+                }
+                if let Some(models) = models {
+                    payload.insert("models".to_string(), models);
+                }
+                if let Some(current_model_id) = current_model_id {
+                    payload.insert("current_model_id".to_string(), json!(current_model_id));
+                }
+                if let Some(agents) = agents {
+                    payload.insert("agents".to_string(), agents);
+                }
+                if let Some(output_style) = output_style {
+                    payload.insert("output_style".to_string(), json!(output_style));
+                }
+                if let Some(available_output_styles) = available_output_styles {
+                    payload.insert(
+                        "available_output_styles".to_string(),
+                        json!(available_output_styles),
+                    );
+                }
+                if let Some(skills) = skills {
+                    payload.insert("skills".to_string(), json!(skills));
+                }
+                if let Some(plugins) = plugins {
+                    payload.insert("plugins".to_string(), plugins);
+                }
+                if let Some(tools) = tools {
+                    payload.insert("tools".to_string(), json!(tools));
+                }
+                if let Some(permission_mode) = permission_mode {
+                    payload.insert("permission_mode".to_string(), json!(permission_mode));
+                }
+                if let Some(mcp_servers) = mcp_servers {
+                    payload.insert("mcp_servers".to_string(), mcp_servers);
+                }
+                if let Some(account) = account {
+                    payload.insert("account".to_string(), account);
+                }
+                if let Some(fast_mode_state) = fast_mode_state {
+                    payload.insert("fast_mode_state".to_string(), json!(fast_mode_state));
+                }
+                MappedCrpEvent {
+                    events: vec![NormalizedEvent {
+                        event_type: SessionEventType::Init,
+                        payload_json: Value::Object(payload),
+                    }],
+                    done: false,
+                }
             }
-            if let Some(supports_session_status) = supports_session_status {
-                payload.insert(
-                    "supports_session_status".to_string(),
-                    json!(supports_session_status),
-                );
-            }
-            if let Some(commands) = commands {
-                payload.insert("commands".to_string(), commands);
-            }
-            if let Some(slash_commands) = slash_commands {
-                payload.insert("slash_commands".to_string(), json!(slash_commands));
-            }
-            if let Some(models) = models {
-                payload.insert("models".to_string(), models);
-            }
-            if let Some(current_model_id) = current_model_id {
-                payload.insert("current_model_id".to_string(), json!(current_model_id));
-            }
-            if let Some(agents) = agents {
-                payload.insert("agents".to_string(), agents);
-            }
-            if let Some(output_style) = output_style {
-                payload.insert("output_style".to_string(), json!(output_style));
-            }
-            if let Some(available_output_styles) = available_output_styles {
-                payload.insert(
-                    "available_output_styles".to_string(),
-                    json!(available_output_styles),
-                );
-            }
-            if let Some(skills) = skills {
-                payload.insert("skills".to_string(), json!(skills));
-            }
-            if let Some(plugins) = plugins {
-                payload.insert("plugins".to_string(), plugins);
-            }
-            if let Some(tools) = tools {
-                payload.insert("tools".to_string(), json!(tools));
-            }
-            if let Some(permission_mode) = permission_mode {
-                payload.insert("permission_mode".to_string(), json!(permission_mode));
-            }
-            if let Some(mcp_servers) = mcp_servers {
-                payload.insert("mcp_servers".to_string(), mcp_servers);
-            }
-            if let Some(account) = account {
-                payload.insert("account".to_string(), account);
-            }
-            if let Some(fast_mode_state) = fast_mode_state {
-                payload.insert("fast_mode_state".to_string(), json!(fast_mode_state));
-            }
-            MappedCrpEvent {
+            // The scheduler already emits the canonical turn lifecycle events. Treat harness-emitted
+            // `turn.started` as internal signal only to avoid duplicating `turn_started` rows with a
+            // mismatched payload shape.
+            KnownCrpEvent::TurnStarted { .. } => MappedCrpEvent {
+                events: Vec::new(),
+                done: false,
+            },
+            KnownCrpEvent::MessageDelta {
+                delta, message_id, ..
+            } => MappedCrpEvent {
                 events: vec![NormalizedEvent {
-                    event_type: SessionEventType::Init,
-                    payload_json: Value::Object(payload),
+                    event_type: SessionEventType::AssistantChunk,
+                    payload_json: json!({
+                        "content_fragment": delta,
+                        "message_id": message_id,
+                        "crp_seq": seq,
+                        "crp_channel": crp_channel,
+                    }),
                 }],
                 done: false,
-            }
-        }
-        // The scheduler already emits the canonical turn lifecycle events. Treat harness-emitted
-        // `turn.started` as internal signal only to avoid duplicating `turn_started` rows with a
-        // mismatched payload shape.
-        CrpEvent::TurnStarted { .. } => MappedCrpEvent {
-            events: Vec::new(),
-            done: false,
-        },
-        CrpEvent::MessageDelta {
-            delta, message_id, ..
-        } => MappedCrpEvent {
-            events: vec![NormalizedEvent {
-                event_type: SessionEventType::AssistantChunk,
-                payload_json: json!({
-                    "content_fragment": delta,
-                    "message_id": message_id,
-                    "crp_seq": seq,
-                    "crp_channel": crp_channel,
-                }),
-            }],
-            done: false,
-        },
-        CrpEvent::MessageFinal {
-            content,
-            message_id,
-            ..
-        } => MappedCrpEvent {
-            events: vec![NormalizedEvent {
-                event_type: SessionEventType::AssistantComplete,
-                payload_json: json!({
-                    "full_content": content,
-                    "message_id": message_id,
-                    "crp_seq": seq,
-                }),
-            }],
-            done: false,
-        },
-        CrpEvent::ReasoningSummary {
-            text,
-            item_id,
-            summary_index,
-            ..
-        } => MappedCrpEvent {
-            events: vec![NormalizedEvent {
-                event_type: SessionEventType::Notice,
-                payload_json: json!({
-                    "kind": "reasoning_summary",
+            },
+            KnownCrpEvent::MessageFinal {
+                content,
+                message_id,
+                ..
+            } => MappedCrpEvent {
+                events: vec![NormalizedEvent {
+                    event_type: SessionEventType::AssistantComplete,
+                    payload_json: json!({
+                        "full_content": content,
+                        "message_id": message_id,
+                        "crp_seq": seq,
+                    }),
+                }],
+                done: false,
+            },
+            KnownCrpEvent::ReasoningSummary {
+                text,
+                item_id,
+                summary_index,
+                ..
+            } => MappedCrpEvent {
+                events: vec![NormalizedEvent {
+                    event_type: SessionEventType::Notice,
+                    payload_json: json!({
+                        "kind": "reasoning_summary",
+                        "summary_index": summary_index,
+                        "text": text,
+                        "item_id": item_id,
+                        "crp_seq": seq,
+                    }),
+                }],
+                done: false,
+            },
+            KnownCrpEvent::ReasoningTrace {
+                chunk,
+                encoding,
+                summary_index,
+                item_id,
+                ..
+            } => {
+                let mut payload = json!({
+                    "content_fragment": chunk,
+                    "encoding": encoding,
                     "summary_index": summary_index,
-                    "text": text,
                     "item_id": item_id,
                     "crp_seq": seq,
-                }),
-            }],
-            done: false,
-        },
-        CrpEvent::ReasoningTrace {
-            chunk,
-            encoding,
-            summary_index,
-            item_id,
-            ..
-        } => {
-            let mut payload = json!({
-                "content_fragment": chunk,
-                "encoding": encoding,
-                "summary_index": summary_index,
-                "item_id": item_id,
-                "crp_seq": seq,
-            });
-            if let Some(channel) = crp_channel {
-                if let Some(obj) = payload.as_object_mut() {
-                    obj.insert("crp_channel".to_string(), json!(channel));
+                });
+                if let Some(channel) = crp_channel {
+                    if let Some(obj) = payload.as_object_mut() {
+                        obj.insert("crp_channel".to_string(), json!(channel));
+                    }
+                }
+                MappedCrpEvent {
+                    events: vec![NormalizedEvent {
+                        event_type: SessionEventType::ThoughtChunk,
+                        payload_json: payload,
+                    }],
+                    done: false,
                 }
             }
-            MappedCrpEvent {
-                events: vec![NormalizedEvent {
-                    event_type: SessionEventType::ThoughtChunk,
-                    payload_json: payload,
-                }],
-                done: false,
-            }
-        }
-        CrpEvent::ReasoningTraceFinal {
-            content,
-            encoding,
-            summary_index,
-            item_id,
-            ..
-        } => {
-            let mut payload = json!({
-                "content_fragment": "",
-                "full_content": content,
-                "is_final": true,
-                "encoding": encoding,
-                "summary_index": summary_index,
-                "item_id": item_id,
-                "crp_seq": seq,
-            });
-            // item_id enables deterministic thought chunk grouping/deduping in clients.
-            if let Some(item_id) = item_id {
-                if let Some(obj) = payload.as_object_mut() {
-                    obj.insert("item_id".to_string(), json!(item_id));
-                }
-            }
-            if let Some(channel) = crp_channel {
-                if let Some(obj) = payload.as_object_mut() {
-                    obj.insert("crp_channel".to_string(), json!(channel));
-                }
-            }
-            MappedCrpEvent {
-                events: vec![NormalizedEvent {
-                    event_type: SessionEventType::ThoughtChunk,
-                    payload_json: payload,
-                }],
-                done: false,
-            }
-        }
-        CrpEvent::TurnContextWindowUpdated { context_window, .. } => MappedCrpEvent {
-            events: vec![NormalizedEvent {
-                event_type: SessionEventType::ContextWindowUpdate,
-                payload_json: json!({
-                    "context_window": context_window,
+            KnownCrpEvent::ReasoningTraceFinal {
+                content,
+                encoding,
+                summary_index,
+                item_id,
+                ..
+            } => {
+                let mut payload = json!({
+                    "content_fragment": "",
+                    "full_content": content,
+                    "is_final": true,
+                    "encoding": encoding,
+                    "summary_index": summary_index,
+                    "item_id": item_id,
                     "crp_seq": seq,
-                }),
-            }],
-            done: false,
-        },
-        CrpEvent::ToolStarted {
-            tool_call_id,
-            tool_name,
-            tool_label,
-            input,
-            input_preview,
-            ..
-        } => {
-            if input.is_some() || input_preview.is_some() {
-                tool_input_cache.insert(
-                    tool_call_id.clone(),
-                    CachedToolInput {
-                        input: input.clone(),
-                        input_preview: input_preview.clone(),
-                    },
-                );
+                });
+                // item_id enables deterministic thought chunk grouping/deduping in clients.
+                if let Some(item_id) = item_id {
+                    if let Some(obj) = payload.as_object_mut() {
+                        obj.insert("item_id".to_string(), json!(item_id));
+                    }
+                }
+                if let Some(channel) = crp_channel {
+                    if let Some(obj) = payload.as_object_mut() {
+                        obj.insert("crp_channel".to_string(), json!(channel));
+                    }
+                }
+                MappedCrpEvent {
+                    events: vec![NormalizedEvent {
+                        event_type: SessionEventType::ThoughtChunk,
+                        payload_json: payload,
+                    }],
+                    done: false,
+                }
             }
-            let payload = build_tool_started_payload(
+            KnownCrpEvent::TurnContextWindowUpdated { context_window, .. } => MappedCrpEvent {
+                events: vec![NormalizedEvent {
+                    event_type: SessionEventType::ContextWindowUpdate,
+                    payload_json: json!({
+                        "context_window": context_window,
+                        "crp_seq": seq,
+                    }),
+                }],
+                done: false,
+            },
+            KnownCrpEvent::ToolStarted {
                 tool_call_id,
                 tool_name,
                 tool_label,
                 input,
                 input_preview,
-                seq,
-            );
-            MappedCrpEvent {
-                events: vec![NormalizedEvent {
-                    event_type: SessionEventType::ToolCall,
-                    payload_json: payload,
-                }],
-                done: false,
-            }
-        }
-        CrpEvent::ToolOutputDelta {
-            tool_call_id,
-            chunk,
-            ..
-        } => {
-            let output_text = {
-                let entry = tool_output_cache.entry(tool_call_id.clone()).or_default();
-                entry.push_str(&chunk);
-                entry.clone()
-            };
-            let mut payload = json!({
-                "tool_call_id": tool_call_id,
-                "outputText": output_text,
-                "status": "running",
-                "crp_seq": seq,
-            });
-            if let Some(channel) = crp_channel {
-                if let Some(obj) = payload.as_object_mut() {
-                    obj.insert("crp_channel".to_string(), json!(channel));
+                ..
+            } => {
+                if input.is_some() || input_preview.is_some() {
+                    tool_input_cache.insert(
+                        tool_call_id.clone(),
+                        CachedToolInput {
+                            input: input.clone(),
+                            input_preview: input_preview.clone(),
+                        },
+                    );
+                }
+                let payload = build_tool_started_payload(
+                    tool_call_id,
+                    tool_name,
+                    tool_label,
+                    input,
+                    input_preview,
+                    seq,
+                );
+                MappedCrpEvent {
+                    events: vec![NormalizedEvent {
+                        event_type: SessionEventType::ToolCall,
+                        payload_json: payload,
+                    }],
+                    done: false,
                 }
             }
-            MappedCrpEvent {
-                events: vec![NormalizedEvent {
-                    event_type: SessionEventType::ToolCallUpdate,
-                    payload_json: payload,
-                }],
-                done: false,
+            KnownCrpEvent::ToolOutputDelta {
+                tool_call_id,
+                chunk,
+                ..
+            } => {
+                let output_text = {
+                    let entry = tool_output_cache.entry(tool_call_id.clone()).or_default();
+                    entry.push_str(&chunk);
+                    entry.clone()
+                };
+                let mut payload = json!({
+                    "tool_call_id": tool_call_id,
+                    "outputText": output_text,
+                    "status": "running",
+                    "crp_seq": seq,
+                });
+                if let Some(channel) = crp_channel {
+                    if let Some(obj) = payload.as_object_mut() {
+                        obj.insert("crp_channel".to_string(), json!(channel));
+                    }
+                }
+                MappedCrpEvent {
+                    events: vec![NormalizedEvent {
+                        event_type: SessionEventType::ToolCallUpdate,
+                        payload_json: payload,
+                    }],
+                    done: false,
+                }
             }
-        }
-        CrpEvent::ToolCompleted {
-            tool_call_id,
-            tool_name,
-            tool_label,
-            status,
-            output,
-            error,
-            input_preview,
-            ..
-        } => {
-            let tool_call_id_for_cache = tool_call_id.clone();
-            let cached = tool_input_cache.remove(&tool_call_id_for_cache);
-            let (input, cached_preview) = cached
-                .map(|c| (c.input, c.input_preview))
-                .unwrap_or((None, None));
-            let input_preview = input_preview.or(cached_preview);
-            let payload = build_tool_completed_payload(
+            KnownCrpEvent::ToolCompleted {
                 tool_call_id,
                 tool_name,
                 tool_label,
                 status,
                 output,
                 error,
-                input,
                 input_preview,
-                seq,
-            );
-            tool_output_cache.remove(&tool_call_id_for_cache);
-            MappedCrpEvent {
-                events: vec![NormalizedEvent {
-                    event_type: SessionEventType::ToolResult,
-                    payload_json: payload,
-                }],
-                done: false,
-            }
-        }
-        CrpEvent::TurnCompleted {
-            status,
-            context_window,
-            error,
-            ..
-        } => {
-            let (event_type, payload) = match status {
-                CrpTurnStatus::Success => {
-                    let mut payload = serde_json::Map::new();
-                    payload.insert("status".to_string(), json!("completed"));
-                    payload.insert("crp_seq".to_string(), json!(seq));
-                    if let Some(context_window) = context_window {
-                        payload.insert("context_window".to_string(), context_window);
-                    }
-                    (SessionEventType::Done, Value::Object(payload))
+                ..
+            } => {
+                let tool_call_id_for_cache = tool_call_id.clone();
+                let cached = tool_input_cache.remove(&tool_call_id_for_cache);
+                let (input, cached_preview) = cached
+                    .map(|c| (c.input, c.input_preview))
+                    .unwrap_or((None, None));
+                let input_preview = input_preview.or(cached_preview);
+                let payload = build_tool_completed_payload(
+                    tool_call_id,
+                    tool_name,
+                    tool_label,
+                    status,
+                    output,
+                    error,
+                    input,
+                    input_preview,
+                    seq,
+                );
+                tool_output_cache.remove(&tool_call_id_for_cache);
+                MappedCrpEvent {
+                    events: vec![NormalizedEvent {
+                        event_type: SessionEventType::ToolResult,
+                        payload_json: payload,
+                    }],
+                    done: false,
                 }
-                CrpTurnStatus::Error => {
-                    let message = error
-                        .as_ref()
-                        .map(|err| err.message.clone())
-                        .unwrap_or_else(|| "crp_turn_error".to_string());
-                    let kind = error.as_ref().and_then(|err| err.kind.clone());
-                    let details = error.as_ref().and_then(|err| err.details.clone());
-                    let mut payload = serde_json::Map::new();
-                    payload.insert("message".to_string(), json!(message));
-                    if let Some(kind) = kind {
-                        payload.insert("kind".to_string(), json!(kind));
+            }
+            KnownCrpEvent::TurnCompleted {
+                status,
+                context_window,
+                error,
+                ..
+            } => {
+                let (event_type, payload) = match status {
+                    CrpTurnStatus::Success => {
+                        let mut payload = serde_json::Map::new();
+                        payload.insert("status".to_string(), json!("completed"));
+                        payload.insert("crp_seq".to_string(), json!(seq));
+                        if let Some(context_window) = context_window {
+                            payload.insert("context_window".to_string(), context_window);
+                        }
+                        (SessionEventType::Done, Value::Object(payload))
+                    }
+                    CrpTurnStatus::Error => {
+                        let message = error
+                            .as_ref()
+                            .map(|err| err.message.clone())
+                            .unwrap_or_else(|| "crp_turn_error".to_string());
+                        let kind = error.as_ref().and_then(|err| err.kind.clone());
+                        let details = error.as_ref().and_then(|err| err.details.clone());
+                        let mut payload = serde_json::Map::new();
+                        payload.insert("message".to_string(), json!(message));
+                        if let Some(kind) = kind {
+                            payload.insert("kind".to_string(), json!(kind));
+                        }
+                        if let Some(details) = details {
+                            payload.insert("details".to_string(), json!(details));
+                        }
+                        payload.insert("crp_seq".to_string(), json!(seq));
+                        (SessionEventType::Error, Value::Object(payload))
+                    }
+                    CrpTurnStatus::Canceled | CrpTurnStatus::Interrupted => (
+                        SessionEventType::TurnInterrupted,
+                        json!({"reason": "crp_turn_interrupted", "crp_seq": seq}),
+                    ),
+                };
+                MappedCrpEvent {
+                    events: vec![NormalizedEvent {
+                        event_type,
+                        payload_json: payload,
+                    }],
+                    done: true,
+                }
+            }
+            KnownCrpEvent::ModelsList { .. } => MappedCrpEvent {
+                events: Vec::new(),
+                done: false,
+            },
+            KnownCrpEvent::SessionNotice {
+                code,
+                severity,
+                message,
+                details,
+                transient,
+                ..
+            } => {
+                let mut payload = serde_json::Map::new();
+                payload.insert("kind".to_string(), json!(code.clone()));
+                payload.insert("code".to_string(), json!(code));
+                if let Some(severity) = severity {
+                    payload.insert("severity".to_string(), json!(severity));
+                }
+                if is_auth_notice_code(&code) {
+                    if let Some(message) = safe_auth_notice_message(&code, message.as_deref()) {
+                        payload.insert("message".to_string(), json!(message));
+                    }
+                    if let Some(Value::Object(map)) = details.as_ref() {
+                        if let Some(auth_methods) = map
+                            .get("auth_methods")
+                            .or_else(|| map.get("authMethods"))
+                            .and_then(safe_auth_methods_value)
+                        {
+                            payload.insert("auth_methods".to_string(), auth_methods);
+                        }
+                        if let Some(provider) = map
+                            .get("provider")
+                            .and_then(Value::as_str)
+                            .map(str::trim)
+                            .filter(|value| !value.is_empty())
+                        {
+                            payload.insert("provider".to_string(), json!(provider));
+                        }
+                    }
+                } else {
+                    if let Some(message) = message {
+                        payload.insert("message".to_string(), json!(message));
                     }
                     if let Some(details) = details {
-                        payload.insert("details".to_string(), json!(details));
-                    }
-                    payload.insert("crp_seq".to_string(), json!(seq));
-                    (SessionEventType::Error, Value::Object(payload))
-                }
-                CrpTurnStatus::Canceled | CrpTurnStatus::Interrupted => (
-                    SessionEventType::TurnInterrupted,
-                    json!({"reason": "crp_turn_interrupted", "crp_seq": seq}),
-                ),
-            };
-            MappedCrpEvent {
-                events: vec![NormalizedEvent {
-                    event_type,
-                    payload_json: payload,
-                }],
-                done: true,
-            }
-        }
-        CrpEvent::ModelsList { .. } => MappedCrpEvent {
-            events: Vec::new(),
-            done: false,
-        },
-        CrpEvent::SessionNotice {
-            code,
-            severity,
-            message,
-            details,
-            transient,
-            ..
-        } => {
-            let mut payload = serde_json::Map::new();
-            payload.insert("kind".to_string(), json!(code.clone()));
-            payload.insert("code".to_string(), json!(code));
-            if let Some(severity) = severity {
-                payload.insert("severity".to_string(), json!(severity));
-            }
-            if is_auth_notice_code(&code) {
-                if let Some(message) = safe_auth_notice_message(&code, message.as_deref()) {
-                    payload.insert("message".to_string(), json!(message));
-                }
-                if let Some(Value::Object(map)) = details.as_ref() {
-                    if let Some(auth_methods) = map
-                        .get("auth_methods")
-                        .or_else(|| map.get("authMethods"))
-                        .and_then(safe_auth_methods_value)
-                    {
-                        payload.insert("auth_methods".to_string(), auth_methods);
-                    }
-                    if let Some(provider) = map
-                        .get("provider")
-                        .and_then(Value::as_str)
-                        .map(str::trim)
-                        .filter(|value| !value.is_empty())
-                    {
-                        payload.insert("provider".to_string(), json!(provider));
-                    }
-                }
-            } else {
-                if let Some(message) = message {
-                    payload.insert("message".to_string(), json!(message));
-                }
-                if let Some(details) = details {
-                    if let Value::Object(map) = &details {
-                        if let Some(auth_methods) =
-                            map.get("auth_methods").or_else(|| map.get("authMethods"))
-                        {
-                            payload.insert("auth_methods".to_string(), auth_methods.clone());
+                        if let Value::Object(map) = &details {
+                            if let Some(auth_methods) =
+                                map.get("auth_methods").or_else(|| map.get("authMethods"))
+                            {
+                                payload.insert("auth_methods".to_string(), auth_methods.clone());
+                            }
+                            if let Some(provider) = map.get("provider") {
+                                payload.insert("provider".to_string(), provider.clone());
+                            }
                         }
-                        if let Some(provider) = map.get("provider") {
-                            payload.insert("provider".to_string(), provider.clone());
-                        }
+                        payload.insert("details".to_string(), details);
                     }
-                    payload.insert("details".to_string(), details);
+                }
+                if let Some(transient) = transient {
+                    payload.insert("transient".to_string(), json!(transient));
+                }
+                payload.insert("crp_seq".to_string(), json!(seq));
+                MappedCrpEvent {
+                    events: vec![NormalizedEvent {
+                        event_type: SessionEventType::Notice,
+                        payload_json: Value::Object(payload),
+                    }],
+                    done: false,
                 }
             }
-            if let Some(transient) = transient {
-                payload.insert("transient".to_string(), json!(transient));
-            }
-            payload.insert("crp_seq".to_string(), json!(seq));
-            MappedCrpEvent {
+            KnownCrpEvent::SessionGap { reason, .. } => MappedCrpEvent {
                 events: vec![NormalizedEvent {
                     event_type: SessionEventType::Notice,
-                    payload_json: Value::Object(payload),
+                    payload_json: json!({
+                        "kind": "session_gap",
+                        "reason": reason,
+                        "crp_seq": seq,
+                    }),
                 }],
                 done: false,
-            }
-        }
-        CrpEvent::SessionGap { reason, .. } => MappedCrpEvent {
-            events: vec![NormalizedEvent {
-                event_type: SessionEventType::Notice,
-                payload_json: json!({
-                    "kind": "session_gap",
-                    "reason": reason,
-                    "crp_seq": seq,
-                }),
-            }],
-            done: false,
+            },
         },
         CrpEvent::Unknown {
             event_type,
@@ -587,42 +589,54 @@ pub(super) fn map_crp_event(
 
 pub(super) fn event_turn_id(event: &CrpEvent) -> Option<&str> {
     match event {
-        CrpEvent::SessionGap { turn_id, .. } => turn_id.as_deref(),
-        CrpEvent::SessionNotice { turn_id, .. } => turn_id.as_deref(),
+        CrpEvent::Known(event) => known_event_turn_id(event),
         CrpEvent::Unknown { turn_id, .. } => turn_id.as_deref(),
-        CrpEvent::TurnStarted { turn_id, .. }
-        | CrpEvent::MessageDelta { turn_id, .. }
-        | CrpEvent::MessageFinal { turn_id, .. }
-        | CrpEvent::ReasoningSummary { turn_id, .. }
-        | CrpEvent::ReasoningTrace { turn_id, .. }
-        | CrpEvent::ReasoningTraceFinal { turn_id, .. }
-        | CrpEvent::TurnContextWindowUpdated { turn_id, .. }
-        | CrpEvent::ToolStarted { turn_id, .. }
-        | CrpEvent::ToolOutputDelta { turn_id, .. }
-        | CrpEvent::ToolCompleted { turn_id, .. }
-        | CrpEvent::TurnCompleted { turn_id, .. } => Some(turn_id.as_str()),
-        CrpEvent::SessionOpened { .. } | CrpEvent::ModelsList { .. } => None,
     }
 }
 
 pub(super) fn event_matches_session(event: &CrpEvent, session_id: &str) -> bool {
     match event {
-        CrpEvent::SessionOpened { session_id: id, .. }
-        | CrpEvent::TurnStarted { session_id: id, .. }
-        | CrpEvent::MessageDelta { session_id: id, .. }
-        | CrpEvent::MessageFinal { session_id: id, .. }
-        | CrpEvent::ReasoningSummary { session_id: id, .. }
-        | CrpEvent::ReasoningTrace { session_id: id, .. }
-        | CrpEvent::ReasoningTraceFinal { session_id: id, .. }
-        | CrpEvent::TurnContextWindowUpdated { session_id: id, .. }
-        | CrpEvent::ToolStarted { session_id: id, .. }
-        | CrpEvent::ToolOutputDelta { session_id: id, .. }
-        | CrpEvent::ToolCompleted { session_id: id, .. }
-        | CrpEvent::TurnCompleted { session_id: id, .. }
-        | CrpEvent::SessionGap { session_id: id, .. }
-        | CrpEvent::SessionNotice { session_id: id, .. } => id == session_id,
+        CrpEvent::Known(event) => known_event_session_id(event) == Some(session_id),
         CrpEvent::Unknown { session_id: id, .. } => id.as_deref() == Some(session_id),
-        CrpEvent::ModelsList { .. } => false,
+    }
+}
+
+fn known_event_turn_id(event: &KnownCrpEvent) -> Option<&str> {
+    match event {
+        KnownCrpEvent::SessionGap { turn_id, .. }
+        | KnownCrpEvent::SessionNotice { turn_id, .. } => turn_id.as_deref(),
+        KnownCrpEvent::TurnStarted { turn_id, .. }
+        | KnownCrpEvent::MessageDelta { turn_id, .. }
+        | KnownCrpEvent::MessageFinal { turn_id, .. }
+        | KnownCrpEvent::ReasoningSummary { turn_id, .. }
+        | KnownCrpEvent::ReasoningTrace { turn_id, .. }
+        | KnownCrpEvent::ReasoningTraceFinal { turn_id, .. }
+        | KnownCrpEvent::TurnContextWindowUpdated { turn_id, .. }
+        | KnownCrpEvent::ToolStarted { turn_id, .. }
+        | KnownCrpEvent::ToolOutputDelta { turn_id, .. }
+        | KnownCrpEvent::ToolCompleted { turn_id, .. }
+        | KnownCrpEvent::TurnCompleted { turn_id, .. } => Some(turn_id.as_str()),
+        KnownCrpEvent::SessionOpened { .. } | KnownCrpEvent::ModelsList { .. } => None,
+    }
+}
+
+fn known_event_session_id(event: &KnownCrpEvent) -> Option<&str> {
+    match event {
+        KnownCrpEvent::SessionOpened { session_id, .. }
+        | KnownCrpEvent::TurnStarted { session_id, .. }
+        | KnownCrpEvent::MessageDelta { session_id, .. }
+        | KnownCrpEvent::MessageFinal { session_id, .. }
+        | KnownCrpEvent::ReasoningSummary { session_id, .. }
+        | KnownCrpEvent::ReasoningTrace { session_id, .. }
+        | KnownCrpEvent::ReasoningTraceFinal { session_id, .. }
+        | KnownCrpEvent::TurnContextWindowUpdated { session_id, .. }
+        | KnownCrpEvent::ToolStarted { session_id, .. }
+        | KnownCrpEvent::ToolOutputDelta { session_id, .. }
+        | KnownCrpEvent::ToolCompleted { session_id, .. }
+        | KnownCrpEvent::TurnCompleted { session_id, .. }
+        | KnownCrpEvent::SessionGap { session_id, .. }
+        | KnownCrpEvent::SessionNotice { session_id, .. } => Some(session_id.as_str()),
+        KnownCrpEvent::ModelsList { .. } => None,
     }
 }
 
@@ -631,6 +645,10 @@ mod tests {
     use super::*;
     use crate::crp::protocol::CrpToolStatus;
 
+    fn known(event: KnownCrpEvent) -> CrpEvent {
+        CrpEvent::Known(event)
+    }
+
     #[test]
     fn tool_completed_retains_started_preview_when_completed_omits_it() {
         let mut tool_output_cache: HashMap<String, String> = HashMap::new();
@@ -638,7 +656,7 @@ mod tests {
 
         let started_preview = json!({"summary":"Read: foo.txt"});
         let started = map_crp_event(
-            CrpEvent::ToolStarted {
+            known(KnownCrpEvent::ToolStarted {
                 session_id: "s".to_string(),
                 turn_id: "t".to_string(),
                 tool_call_id: "call1".to_string(),
@@ -646,7 +664,7 @@ mod tests {
                 tool_label: None,
                 input: None,
                 input_preview: Some(started_preview.clone()),
-            },
+            }),
             CrpChannel::Control,
             1,
             &mut tool_output_cache,
@@ -659,7 +677,7 @@ mod tests {
         ));
 
         let completed = map_crp_event(
-            CrpEvent::ToolCompleted {
+            known(KnownCrpEvent::ToolCompleted {
                 session_id: "s".to_string(),
                 turn_id: "t".to_string(),
                 tool_call_id: "call1".to_string(),
@@ -669,7 +687,7 @@ mod tests {
                 output: None,
                 error: None,
                 input_preview: None,
-            },
+            }),
             CrpChannel::Control,
             2,
             &mut tool_output_cache,
@@ -692,7 +710,7 @@ mod tests {
         let mut tool_input_cache: HashMap<String, CachedToolInput> = HashMap::new();
 
         let mapped = map_crp_event(
-            CrpEvent::SessionOpened {
+            known(KnownCrpEvent::SessionOpened {
                 session_id: "session-1".to_string(),
                 provider_session_id: Some("provider-session-1".to_string()),
                 supports_session_status: Some(true),
@@ -731,7 +749,7 @@ mod tests {
                 mcp_servers: Some(json!([{ "name": "github", "status": "connected" }])),
                 account: Some(json!({ "email": "dev@example.com" })),
                 fast_mode_state: Some("off".to_string()),
-            },
+            }),
             CrpChannel::Control,
             1,
             &mut tool_output_cache,
@@ -776,7 +794,7 @@ mod tests {
         let mut tool_input_cache: HashMap<String, CachedToolInput> = HashMap::new();
 
         let mapped = map_crp_event(
-            CrpEvent::SessionNotice {
+            known(KnownCrpEvent::SessionNotice {
                 session_id: "session-1".to_string(),
                 turn_id: Some("turn-1".to_string()),
                 code: "auth_required".to_string(),
@@ -798,7 +816,7 @@ mod tests {
                     "message": "raw provider payload"
                 })),
                 transient: Some(false),
-            },
+            }),
             CrpChannel::Control,
             7,
             &mut tool_output_cache,
@@ -841,7 +859,7 @@ mod tests {
         let mut tool_input_cache: HashMap<String, CachedToolInput> = HashMap::new();
 
         let mapped = map_crp_event(
-            CrpEvent::SessionNotice {
+            known(KnownCrpEvent::SessionNotice {
                 session_id: "session-1".to_string(),
                 turn_id: None,
                 code: "provider_guard_warning".to_string(),
@@ -852,7 +870,7 @@ mod tests {
                     "memory_mb": 1024
                 })),
                 transient: Some(false),
-            },
+            }),
             CrpChannel::Control,
             8,
             &mut tool_output_cache,
@@ -885,11 +903,11 @@ mod tests {
             "remaining_fraction": 0.9671875,
         });
         let mapped = map_crp_event(
-            CrpEvent::TurnContextWindowUpdated {
+            known(KnownCrpEvent::TurnContextWindowUpdated {
                 session_id: "session-1".to_string(),
                 turn_id: "turn-1".to_string(),
                 context_window: metrics.clone(),
-            },
+            }),
             CrpChannel::Control,
             9,
             &mut tool_output_cache,

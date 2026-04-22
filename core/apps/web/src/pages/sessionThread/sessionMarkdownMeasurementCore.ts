@@ -18,6 +18,7 @@ import {
   normalizeHeight,
   pruneCache,
   segmentGraphemes,
+  segmentImplicitWordBreaks,
   type TextWhiteSpace,
 } from "./sessionTextMeasurement";
 import { SESSION_MARKDOWN_MEASUREMENT_CONTRACT } from "./sessionThreadMeasurementContract";
@@ -111,6 +112,7 @@ export {
   normalizeHeight,
   pruneCache,
   segmentGraphemes,
+  segmentImplicitWordBreaks,
 };
 export type { TextWhiteSpace };
 
