@@ -158,7 +158,7 @@ const DiffReviewPane = memo(function DiffReviewPane({
           <div className="muted">Loading changes...</div>
         )}
         {!inventory.unavailableLabel && !inventory.loading && !hasInventory && (
-          <div className="muted">{inventory.computeError ?? labels?.empty ?? "No changes on this worktree."}</div>
+          <div className="muted">{inventory.computeError ?? labels?.empty ?? "No changed files."}</div>
         )}
         {!inventory.unavailableLabel && hasInventory && inventory.largeChangeSet && (
           <div className="cursor-diff">
@@ -259,7 +259,7 @@ const DiffReviewPane = memo(function DiffReviewPane({
 
   return (
     <div className="diff-pane">
-      {!hasChanges && <div className="muted">{labels?.empty ?? "No changes."}</div>}
+      {!hasChanges && <div className="muted">{labels?.empty ?? "No changed files."}</div>}
 
       {hasChanges && parsing && <div className="muted">Parsing diff...</div>}
 

@@ -74,8 +74,8 @@ export const classifyGitPaneEntry = (
 };
 
 const unavailableLabelForReason = (reason: DiffUnavailableReason | null): string | null => {
-  if (reason === "no_repo") return "No git repo detected for this workspace yet.";
-  if (reason === "no_target_branch") return "Primary branch is not configured for this workspace.";
+  if (reason === "no_repo") return "No Git repository detected for this task yet.";
+  if (reason === "no_target_branch") return "Set a primary branch to compare changes.";
   return null;
 };
 
@@ -164,8 +164,8 @@ export const buildGitPaneModel = (snapshot: WorktreeVcsSnapshot | null): GitPane
     available && hasAuthoritativeCount && badgeCount > 0 && !largeChangeSet;
   const largeChangeSetLabel = largeChangeSet
     ? [
-        `This worktree has ${formatCount(badgeCount)} changed files.`,
-        "File-by-file review is disabled here; split the change or inspect it in your editor.",
+        `This change set has ${formatCount(badgeCount)} changed files.`,
+        "File-by-file review is disabled to keep the app responsive. Split the change or inspect it in your editor.",
       ].join(" ")
     : null;
   const fileListTruncated =

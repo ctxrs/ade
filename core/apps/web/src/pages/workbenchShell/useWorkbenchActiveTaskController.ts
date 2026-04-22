@@ -570,7 +570,7 @@ export function useWorkbenchActiveTaskController({
     !gitPaneModel.listReady ||
     gitPaneModel.totalCount > 0 ||
     !!diffUnavailableLabel;
-  const diffEmptyLabel = diffUnavailableLabel ?? (diffLoading || !diffSummaryReady ? "Loading changes..." : "No changes on this worktree.");
+  const diffEmptyLabel = diffUnavailableLabel ?? (diffLoading || !diffSummaryReady ? "Loading changes..." : "No changed files.");
   const diffBadgeCount = useMemo(() => {
     return gitPaneModel.badgeCount;
   }, [gitPaneModel.badgeCount]);

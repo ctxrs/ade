@@ -120,6 +120,7 @@ describe("buildGitPaneModel", () => {
     expect(model.listReady).toBe(true);
     expect(model.sections).toEqual([]);
     expect(model.largeChangeSetLabel).toContain("301 changed files");
+    expect(model.largeChangeSetLabel).toContain("keep the app responsive");
   });
 
   it("reports capped file inventory without suppressing reviewable change sets", () => {
@@ -219,7 +220,19 @@ describe("buildGitPaneModel", () => {
 
     expect(model.badgeCount).toBe(0);
     expect(model.totalCount).toBe(0);
-    expect(model.unavailableLabel).toBe("No git repo detected for this workspace yet.");
+    expect(model.unavailableLabel).toBe("No Git repository detected for this task yet.");
+    expect(model.listReady).toBe(true);
+  });
+
+  it("reports unavailable missing primary branch with action-oriented copy", () => {
+    const model = buildGitPaneModel(
+      makeSnapshot({
+        available: false,
+        unavailable_reason: "no_target_branch",
+      }),
+    );
+
+    expect(model.unavailableLabel).toBe("Set a primary branch to compare changes.");
     expect(model.listReady).toBe(true);
   });
 });
