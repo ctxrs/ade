@@ -268,7 +268,7 @@ impl Telemetry {
     pub async fn emit(&self, event: TelemetryEvent) {
         match timeout(
             TELEMETRY_CHANNEL_SEND_TIMEOUT,
-            self.tx.send(TelemetryCommand::Event(event)),
+            self.tx.send(TelemetryCommand::Event(Box::new(event))),
         )
         .await
         {
@@ -331,7 +331,7 @@ impl Telemetry {
 
 #[derive(Debug)]
 enum TelemetryCommand {
-    Event(TelemetryEvent),
+    Event(Box<TelemetryEvent>),
     Events(Vec<TelemetryEvent>),
     UpdateConfig(TelemetryConfig),
     Flush(oneshot::Sender<()>),
@@ -551,7 +551,7 @@ async fn telemetry_worker(data_root: PathBuf, mut rx: mpsc::Receiver<TelemetryCo
                 let Some(cmd) = cmd else { break };
                 match cmd {
                     TelemetryCommand::Event(event) => {
-                        process_event(&mut runtime, &data_root, event).await;
+                        process_event(&mut runtime, &data_root, *event).await;
                     }
                     TelemetryCommand::Events(events) => {
                         for event in events {

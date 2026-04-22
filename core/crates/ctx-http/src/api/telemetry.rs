@@ -180,7 +180,7 @@ fn sanitize_semantic_value(value: Value) -> Option<Value> {
                 value
                     .as_f64()
                     .filter(|value| value.is_finite())
-                    .map(|value| Value::from(value))
+                    .map(Value::from)
             } else {
                 Some(Value::Number(value))
             }

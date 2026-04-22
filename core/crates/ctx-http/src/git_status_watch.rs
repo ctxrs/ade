@@ -203,7 +203,7 @@ async fn resolve_metadata_roots(worktree: &Worktree, worktree_root: &Path) -> Re
             let git_dir = resolve_git_dir(worktree_root).await?;
             let common_git_dir = resolve_common_git_dir(&git_dir).await?;
             let mut roots = vec![git_dir];
-            if !roots.iter().any(|root| *root == common_git_dir) {
+            if !roots.contains(&common_git_dir) {
                 roots.push(common_git_dir);
             }
             Ok(roots)

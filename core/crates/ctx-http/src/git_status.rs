@@ -748,9 +748,9 @@ async fn run_worktree_vcs_job(
                 .await
             }
             Ok(None) => Ok(()),
-            Err(err) => Err(err.into()),
+            Err(err) => Err(err),
         },
-        Err(err) => Err(err.into()),
+        Err(err) => Err(err),
     };
 
     if let Err(err) = result {
