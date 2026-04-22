@@ -6,6 +6,7 @@ use ctx_sandbox_contract::ContainerNetworkMode;
 pub const LLM_ALLOWLIST: &[&str] = &[
     "api.anthropic.com",
     "chatgpt.com",
+    "auth.openai.com",
     "api.openai.com",
     "api.mistral.ai",
     "api.groq.com",
@@ -84,6 +85,11 @@ mod tests {
     fn allowlist_enforces_llm_only() {
         assert!(allowed_host(
             "api.openai.com",
+            ContainerNetworkMode::LlmOnly,
+            &[]
+        ));
+        assert!(allowed_host(
+            "auth.openai.com",
             ContainerNetworkMode::LlmOnly,
             &[]
         ));

@@ -1,6 +1,6 @@
 use super::artifacts::{
-    commit_atomic_install_dir, prepare_atomic_install_dir, resolve_download_resume,
-    validate_sha256_digest,
+    agent_server_download_tmp_name, commit_atomic_install_dir, prepare_atomic_install_dir,
+    resolve_download_resume, validate_sha256_digest,
 };
 use super::toolchains::{
     node_runtime_target_for_install_target, python_target_can_use_bundled_runtime,
@@ -1006,6 +1006,32 @@ fn validate_sha256_digest_rejects_mismatch() {
     let err =
         validate_sha256_digest("abcd1234", "ffff1234").expect_err("mismatched digest should fail");
     assert!(err.to_string().contains("archive checksum mismatch"));
+}
+
+#[test]
+fn agent_server_download_tmp_name_is_content_scoped() {
+    let first = agent_server_download_tmp_name(
+        "codex",
+        "0.114.0-ctx.5",
+        InstallTarget::Host,
+        "https://example.invalid/codex-a.tar.gz",
+        Some("A".repeat(64).as_str()),
+    );
+    let second = agent_server_download_tmp_name(
+        "codex",
+        "0.114.0-ctx.5",
+        InstallTarget::Host,
+        "https://example.invalid/codex-b.tar.gz",
+        Some("B".repeat(64).as_str()),
+    );
+    assert_ne!(
+        first, second,
+        "downloads for the same provider/version/target but different content must not share tmp files"
+    );
+    assert!(
+        first.contains("sha256-aaaaaaaa"),
+        "expected digest should be visible in tmp identity: {first}"
+    );
 }
 
 #[test]

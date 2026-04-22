@@ -135,6 +135,28 @@ pub(crate) async fn commit_atomic_install_dir(
     Ok(())
 }
 
+pub(crate) fn agent_server_download_tmp_name(
+    provider_id: &str,
+    version: &str,
+    target: InstallTarget,
+    url: &str,
+    expected_sha256: Option<&str>,
+) -> String {
+    let identity = expected_sha256
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| format!("sha256-{}", value.to_ascii_lowercase()))
+        .unwrap_or_else(|| {
+            let mut hasher = sha2::Sha256::new();
+            hasher.update(url.as_bytes());
+            format!("url-{:x}", hasher.finalize())
+        });
+    format!(
+        "{provider_id}-{version}-{target}-{identity}.download",
+        target = target.as_str()
+    )
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn install_agent_server_url_binary(
     state: &AppState,
@@ -151,22 +173,26 @@ pub(crate) async fn install_agent_server_url_binary(
 ) -> Result<PathBuf> {
     let data_root = state.data_root();
     let install_dir = install_dir_for_provider(data_root, provider_id, version, target);
+    let expected_sha256 = expected_sha256
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_ascii_lowercase);
 
     let tmp_dir = data_root.join("providers").join("tmp");
     tokio::fs::create_dir_all(&tmp_dir).await.ok();
-    let tmp = tmp_dir.join(format!(
-        "{provider_id}-{version}-{}.download",
-        target.as_str()
+    let tmp = tmp_dir.join(agent_server_download_tmp_name(
+        provider_id,
+        version,
+        target,
+        url,
+        expected_sha256.as_deref(),
     ));
     let staging_dir = prepare_atomic_install_dir(&install_dir).await?;
 
     *stage = "download";
     download_to_file(state, install_id, event_provider_id, "download", url, &tmp).await?;
 
-    let expected_sha256 = expected_sha256
-        .map(str::trim)
-        .filter(|value| !value.is_empty());
-    if let Some(expected_sha256) = expected_sha256 {
+    if let Some(expected_sha256) = expected_sha256.as_deref() {
         *stage = "verify";
         emit_install(
             state,
@@ -182,7 +208,10 @@ pub(crate) async fn install_agent_server_url_binary(
         .await;
 
         let digest = sha256_file(&tmp).await?;
-        validate_sha256_digest(expected_sha256, &digest)?;
+        if let Err(error) = validate_sha256_digest(expected_sha256, &digest) {
+            tokio::fs::remove_file(&tmp).await.ok();
+            return Err(error);
+        }
     } else {
         emit_install(
             state,
@@ -263,6 +292,7 @@ pub(crate) async fn install_agent_server_url_binary(
     };
     ensure_executable(&resolved_in_staging)?;
 
+    let should_remove_tmp = !matches!(archive, AgentServerArchive::None);
     let relative_bin = resolved_in_staging
         .strip_prefix(&staging_dir)
         .ok()
@@ -293,6 +323,9 @@ pub(crate) async fn install_agent_server_url_binary(
             find_unique_path_ending_with(&install_dir, bin_path)?
         }
     };
+    if should_remove_tmp {
+        tokio::fs::remove_file(&tmp).await.ok();
+    }
     ensure_executable(&resolved)?;
     Ok(resolved)
 }

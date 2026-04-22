@@ -22,6 +22,7 @@ const READ_TIMEOUT: Duration = Duration::from_secs(5);
 const LLM_ALLOWLIST: &[&str] = &[
     "api.anthropic.com",
     "chatgpt.com",
+    "auth.openai.com",
     "api.openai.com",
     "api.mistral.ai",
     "api.groq.com",
@@ -393,6 +394,11 @@ mod tests {
     #[test]
     fn llm_only_allows_openrouter_api_subdomain() {
         assert!(allowed_host("api.openrouter.ai", ProxyMode::LlmOnly, &[]));
+    }
+
+    #[test]
+    fn llm_only_allows_openai_auth_host() {
+        assert!(allowed_host("auth.openai.com", ProxyMode::LlmOnly, &[]));
     }
 
     #[test]

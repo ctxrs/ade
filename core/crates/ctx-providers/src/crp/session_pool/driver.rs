@@ -9,7 +9,7 @@ use tokio::sync::broadcast;
 
 use ctx_core::models::SessionEventType;
 
-use crate::container_exec::translate_thread_cwd_for_container;
+use crate::container_exec::{container_exec_spec, translate_thread_cwd_for_container};
 use crate::events::NormalizedEvent;
 
 use super::super::config::{
@@ -31,6 +31,9 @@ use crate::adapters::{ProviderTurnOutcome, ProviderTurnStatus};
 
 const CRP_AUTH_EVENT_FORWARD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60 * 10);
 const CRP_SESSION_MODEL_UPDATE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+const CRP_FIRST_EVENT_TIMEOUT_HOST: std::time::Duration = std::time::Duration::from_secs(15);
+const CRP_FIRST_EVENT_TIMEOUT_CONTAINER: std::time::Duration = std::time::Duration::from_secs(45);
+const CRP_FIRST_EVENT_TIMEOUT_ENV: &str = "CTX_CRP_FIRST_EVENT_TIMEOUT_MS";
 
 fn is_sweep_only_status_notice(event: &CrpEvent) -> bool {
     matches!(
@@ -135,6 +138,35 @@ fn interrupted_outcome_without_event(
     }
 }
 
+fn crp_first_event_timeout(env: &HashMap<String, String>) -> std::time::Duration {
+    let default = if container_exec_spec(env).is_some() {
+        CRP_FIRST_EVENT_TIMEOUT_CONTAINER
+    } else {
+        CRP_FIRST_EVENT_TIMEOUT_HOST
+    };
+    let configured = env
+        .get(CRP_FIRST_EVENT_TIMEOUT_ENV)
+        .cloned()
+        .or_else(|| std::env::var(CRP_FIRST_EVENT_TIMEOUT_ENV).ok());
+    configured
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .map(std::time::Duration::from_millis)
+        .unwrap_or(default)
+}
+
+fn crp_runtime_label(env: &HashMap<String, String>) -> &'static str {
+    if container_exec_spec(env).is_some() {
+        "container"
+    } else {
+        "host"
+    }
+}
+
+fn duration_millis_u64(duration: std::time::Duration) -> u64 {
+    duration.as_millis().min(u128::from(u64::MAX)) as u64
+}
+
 impl CrpSessionPool {
     async fn send_session_open(
         &self,
@@ -194,7 +226,9 @@ impl CrpSessionPool {
         }
 
         let result: Result<ProviderTurnOutcome> = async {
-            if !session.opened.load(Ordering::SeqCst) && !session.opening.load(Ordering::SeqCst) {
+            let needs_session_open =
+                !session.opened.load(Ordering::SeqCst) && !session.opening.load(Ordering::SeqCst);
+            if needs_session_open {
                 let config = build_crp_session_config(&req.env, &req.workdir)?;
                 let provider_session_id = req
                     .env
@@ -204,6 +238,9 @@ impl CrpSessionPool {
                 self.send_session_open(&session, &req.session_key, provider_session_id, config)
                     .await?;
             }
+            let first_event_timeout = crp_first_event_timeout(&req.env);
+            let first_event_deadline =
+                needs_session_open.then(|| tokio::time::Instant::now() + first_event_timeout);
 
             validate_provider_slash_command_support(&self.agent.provider_id, &req.input.content)?;
             match parse_native_crp_slash_command_for_provider(
@@ -305,6 +342,47 @@ impl CrpSessionPool {
                         }
                     }, if cancel_requested && cancel_deadline.is_some() => {
                         outcome = Some(interrupted_outcome_without_event("cancelled", true));
+                        break;
+                    }
+                    _ = async {
+                        if let Some(deadline) = first_event_deadline {
+                            tokio::time::sleep_until(deadline).await;
+                        }
+                    }, if first_event_deadline.is_some() && last_seq == 0 => {
+                        let timeout_ms = duration_millis_u64(first_event_timeout);
+                        let runtime = crp_runtime_label(&req.env);
+                        let message = format!(
+                            "CRP runtime did not emit any events within {timeout_ms}ms after launching {runtime} provider session",
+                        );
+                        session.opening.store(false, Ordering::SeqCst);
+                        let _ = req
+                            .event_sink
+                            .send(NormalizedEvent {
+                                event_type: SessionEventType::Error,
+                                payload_json: json!({
+                                    "kind": "provider_startup_timeout",
+                                    "reason": "provider_startup_timeout",
+                                    "message": message,
+                                    "details": {
+                                        "timeout_ms": timeout_ms,
+                                        "runtime": runtime,
+                                        "provider_id": self.agent.provider_id,
+                                    },
+                                }),
+                            })
+                            .await;
+                        session.process.shutdown("crp_first_event_timeout").await;
+                        outcome = Some(ProviderTurnOutcome::failed_with_context(
+                            message,
+                            Some("provider_startup_timeout".to_string()),
+                            Some(json!({
+                                "timeout_ms": timeout_ms,
+                                "runtime": runtime,
+                                "provider_id": self.agent.provider_id,
+                            })),
+                            Some(json!("provider_startup_timeout")),
+                            true,
+                        ));
                         break;
                     }
                     shutdown = shutdown_rx.changed() => {

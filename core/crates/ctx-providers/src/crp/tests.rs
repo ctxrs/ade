@@ -14,6 +14,7 @@ use tokio::time::Duration;
 use super::normalize::{map_crp_event, CachedToolInput};
 use super::protocol::CrpEvent;
 use super::*;
+use crate::adapters::ProviderTurnStatus;
 
 static ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
@@ -1349,6 +1350,86 @@ done
         stats,
         ProviderSessionSweepStats {
             reaped: 1,
+            ..ProviderSessionSweepStats::default()
+        }
+    );
+    assert!(!adapter.has_live_session(session_key).await);
+    Ok(())
+}
+
+#[tokio::test]
+async fn prompt_times_out_when_runtime_never_emits_first_event() -> Result<()> {
+    let tempdir = tempfile::tempdir()?;
+    let workdir = tempdir.path().to_path_buf();
+    let script_path = workdir.join("silent-runtime.sh");
+    let log_path = workdir.join("silent-runtime.log");
+
+    fs::write(
+        &script_path,
+        r#"#!/bin/sh
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$LOG_FILE"
+done
+"#,
+    )?;
+    let mut permissions = fs::metadata(&script_path)?.permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&script_path, permissions)?;
+
+    let adapter = Tier1CrpAdapter::from_raw(
+        "fake-crp",
+        "/bin/sh".to_string(),
+        vec![script_path.to_string_lossy().to_string()],
+    );
+    let session_key = "silent-runtime";
+    let mut env = HashMap::new();
+    env.insert(
+        "LOG_FILE".to_string(),
+        log_path.to_string_lossy().to_string(),
+    );
+    env.insert("CTX_CRP_FIRST_EVENT_TIMEOUT_MS".to_string(), "50".to_string());
+
+    let (event_tx, mut event_rx) = mpsc::channel(8);
+    let (_cancel_tx, cancel_rx) = oneshot::channel();
+    let request = CrpPromptRequest {
+        session_key: session_key.to_string(),
+        input: TurnInput {
+            content: "work".to_string(),
+            attachments: Vec::new(),
+            context_blocks: Vec::new(),
+            model_id: None,
+        },
+        workdir: workdir.clone(),
+        env,
+        event_sink: event_tx,
+        cancel_rx,
+    };
+
+    let outcome = tokio::time::timeout(Duration::from_secs(5), adapter.pool.prompt(request))
+        .await
+        .context("timed out waiting for first-event timeout")??;
+    assert_eq!(outcome.status, ProviderTurnStatus::Failed);
+    assert_eq!(outcome.reason.as_deref(), Some("provider_startup_timeout"));
+    assert_eq!(outcome.kind, Some(json!("provider_startup_timeout")));
+
+    let event = event_rx
+        .recv()
+        .await
+        .context("missing startup timeout error event")?;
+    assert!(matches!(event.event_type, SessionEventType::Error));
+    assert_eq!(
+        event.payload_json.get("reason"),
+        Some(&json!("provider_startup_timeout"))
+    );
+
+    let stats = adapter
+        .pool
+        .reap_idle_sessions(immediate_sweep_config())
+        .await;
+    assert_eq!(
+        stats,
+        ProviderSessionSweepStats {
+            dead_removed: 1,
             ..ProviderSessionSweepStats::default()
         }
     );

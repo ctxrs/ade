@@ -675,6 +675,40 @@ fn archive_js_harness_fixture_entry(
     }
 }
 
+fn npm_harness_with_archive_targets_fixture_entry(
+    provider_id: &str,
+    version: &str,
+    provider_url: String,
+    bin_path: &str,
+) -> ProviderMatrixEntry {
+    ProviderMatrixEntry {
+        id: provider_id.to_string(),
+        kind: ProviderMatrixEntryKind::Harness,
+        display_name: Some(provider_id.to_string()),
+        tier: Some("tier2".to_string()),
+        command: None,
+        managed_install: Some(ProviderInstall::Npm {
+            package: format!("@ctx-fixture/{provider_id}"),
+            version: version.to_string(),
+            entrypoint: "node_modules/@ctx-fixture/provider/bin.js".to_string(),
+            args: Vec::new(),
+            targets: archive_targets_with_bin_path(provider_url, bin_path),
+        }),
+        provider_dependencies: Vec::new(),
+        dependencies: Vec::new(),
+        version_probe: None,
+        releases: vec![ProviderRelease {
+            version: version.to_string(),
+            status: ProviderReleaseStatus::Supported,
+            upstream_version: Some(version.to_string()),
+            provenance: None,
+            context_min: None,
+            context_max: None,
+            notes: None,
+        }],
+    }
+}
+
 async fn wait_for_install_completion(
     state: &Arc<AppState>,
     install_id: InstallId,
@@ -1057,6 +1091,98 @@ async fn provider_status_http_keeps_host_and_container_installs_independent() {
             .pointer("/details/managed_version")
             .and_then(serde_json::Value::as_str),
         Some("1.0.0-container")
+    );
+}
+
+#[tokio::test]
+async fn host_hybrid_npm_provider_uses_published_archive_target_when_available() {
+    let _install_lock = provider_install_test_lock().lock().await;
+    let _bundle_env = clear_bundle_matrix_env();
+    let data_dir = tempfile::tempdir().expect("tempdir");
+    let fixture_dir = data_dir.path().join("fixtures");
+    std::fs::create_dir_all(&fixture_dir).expect("create fixture dir");
+    let bridge_fixture = fixture_dir.join("acp-crp-bridge");
+    let provider_fixture = fixture_dir.join("fixture-npm-acp");
+    write_executable(&bridge_fixture, "#!/bin/sh\nexit 0\n");
+    write_executable(&provider_fixture, "#!/bin/sh\nexit 0\n");
+    let provider_url = file_url(&provider_fixture);
+    let _matrix_fixture = activate_matrix_fixture(
+        data_dir.path(),
+        &ProviderMatrix {
+            version: fixture_matrix_version(),
+            generated_at: None,
+            providers: vec![
+                npm_harness_with_archive_targets_fixture_entry(
+                    "fixture-npm",
+                    "0.38.2",
+                    provider_url.clone(),
+                    "fixture-npm-acp",
+                ),
+                bridge_fixture_entry(file_url(&bridge_fixture)),
+            ],
+        },
+    )
+    .await;
+
+    let stores = common::setup_store(data_dir.path()).await;
+    let state = common::build_state(
+        data_dir.path().to_path_buf(),
+        stores,
+        HashMap::new(),
+        "http://127.0.0.1:0",
+    );
+    let app = common::router(state.clone());
+
+    let (install_status, install_body): (StatusCode, serde_json::Value) = common::json_request(
+        &app,
+        axum::http::Method::POST,
+        "/api/providers/fixture-npm/install?target=host",
+        None,
+    )
+    .await;
+    assert_eq!(
+        install_status,
+        StatusCode::OK,
+        "host install should start successfully: {install_body:#?}"
+    );
+    let install_id = install_body
+        .get("install_id")
+        .and_then(serde_json::Value::as_str)
+        .and_then(|raw| raw.parse::<InstallId>().ok())
+        .expect("install id");
+
+    let install_info = wait_for_install_completion(&state, install_id).await;
+    assert!(
+        matches!(install_info.state, InstallStateKind::Succeeded),
+        "host npm provider should install from its archive target without invoking live npm: {install_info:#?}"
+    );
+
+    let cfg = load_agent_server_config(data_dir.path())
+        .await
+        .expect("load agent server config");
+    let host_meta = cfg
+        .managed_install_targets
+        .get("fixture-npm")
+        .and_then(|targets| targets.get("host"))
+        .expect("fixture-npm host install metadata should be recorded");
+    assert_eq!(
+        host_meta.package.as_deref(),
+        Some(provider_url.as_str()),
+        "host npm provider should record the archive URL, not the npm package name"
+    );
+    assert_eq!(
+        host_meta.target,
+        Some(InstallTarget::Host),
+        "host install metadata should remain target-scoped"
+    );
+    let host_command = cfg
+        .managed_provider_targets
+        .get("fixture-npm")
+        .and_then(|targets| targets.get("host"))
+        .expect("fixture-npm host runtime command should be recorded");
+    assert!(
+        host_command.command.ends_with("fixture-npm-acp"),
+        "archive-backed host runtime should point at the extracted provider binary: {host_command:#?}"
     );
 }
 

@@ -8,12 +8,17 @@ Usage:
     --daemon-bin <path-to-ctx-daemon-binary> \
     --app <path-to-ctx.app> \
     [--provider <provider-id>] \
+    [--all-providers] \
+    [--complete] \
     [--target <install-target>] \
-    [--bind <host:port>]
+    [--bind <host:port>] \
+    [--timeout-seconds <seconds>]
 
 Notes:
   - Starts daemon with a fresh data dir and staged bundle resources.
-  - Verifies runtime install endpoint can start an install and accept cancel.
+  - Verifies runtime install endpoint can start an install and accept cancel by default.
+  - With --complete, waits for the selected provider install to complete successfully.
+  - With --all-providers, waits for every install-supported provider to complete successfully.
   - Fails hard on invalid/unsupported/matrix-mismatch target errors.
 USAGE
 }
@@ -23,6 +28,9 @@ app_path=""
 provider_id="codex"
 install_target="host"
 bind_addr=""
+all_providers="0"
+complete_install="0"
+timeout_seconds="600"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -38,12 +46,25 @@ while [[ $# -gt 0 ]]; do
       provider_id="${2:-}"
       shift 2
       ;;
+    --all-providers)
+      all_providers="1"
+      complete_install="1"
+      shift
+      ;;
+    --complete)
+      complete_install="1"
+      shift
+      ;;
     --target)
       install_target="${2:-}"
       shift 2
       ;;
     --bind)
       bind_addr="${2:-}"
+      shift 2
+      ;;
+    --timeout-seconds)
+      timeout_seconds="${2:-}"
       shift 2
       ;;
     -h|--help)
@@ -61,6 +82,11 @@ done
 if [[ -z "$daemon_bin" || -z "$app_path" ]]; then
   echo "error: --daemon-bin and --app are required" >&2
   usage
+  exit 1
+fi
+
+if ! [[ "$timeout_seconds" =~ ^[0-9]+$ ]] || [[ "$timeout_seconds" -le 0 ]]; then
+  echo "error: --timeout-seconds must be a positive integer" >&2
   exit 1
 fi
 
@@ -139,54 +165,92 @@ auth_header=( -H "Authorization: Bearer $auth_token" )
 providers_url="http://$bind_addr/api/providers?target=$install_target"
 providers_json="$(curl -fsS "${auth_header[@]}" "$providers_url")"
 
-if ! jq -e --arg id "$provider_id" '.[] | select(.provider_id == $id)' <<<"$providers_json" >/dev/null; then
-  provider_id="$(jq -r '.[] | select(.details.install_supported == "true") | .provider_id' <<<"$providers_json" | head -n 1)"
+provider_ids=()
+if [[ "$all_providers" == "1" ]]; then
+  while IFS= read -r id; do
+    [[ -z "$id" ]] && continue
+    provider_ids+=("$id")
+  done < <(jq -r '.[] | select(.details.install_supported == "true") | .provider_id' <<<"$providers_json" | sort -u)
+else
+  if ! jq -e --arg id "$provider_id" '.[] | select(.provider_id == $id)' <<<"$providers_json" >/dev/null; then
+    provider_id="$(jq -r '.[] | select(.details.install_supported == "true") | .provider_id' <<<"$providers_json" | head -n 1)"
+  fi
+  [[ -n "$provider_id" ]] && provider_ids+=("$provider_id")
 fi
-if [[ -z "$provider_id" ]]; then
+
+if [[ "${#provider_ids[@]}" -eq 0 ]]; then
   echo "error: no install-supported provider found for target=$install_target" >&2
   exit 1
 fi
 
-supported="$(jq -r --arg id "$provider_id" '.[] | select(.provider_id == $id) | .details.install_supported // "false"' <<<"$providers_json")"
-if [[ "$supported" != "true" ]]; then
-  echo "error: provider '$provider_id' is not install-supported for target=$install_target" >&2
-  exit 1
-fi
-
-start_url="http://$bind_addr/api/providers/$provider_id/install?target=$install_target"
-start_json="$(curl -fsS "${auth_header[@]}" -X POST "$start_url")"
-install_id="$(jq -r '.install_id // empty' <<<"$start_json")"
-if [[ -z "$install_id" || "$install_id" == "null" ]]; then
-  echo "error: failed to start provider install for $provider_id: $start_json" >&2
-  exit 1
-fi
-
-cancel_url="http://$bind_addr/api/providers/install/$install_id/cancel"
-curl -fsS "${auth_header[@]}" -X POST "$cancel_url" >/dev/null
-
-info_url="http://$bind_addr/api/providers/install/$install_id"
-state=""
-error_code=""
-for _ in {1..30}; do
-  info_json="$(curl -fsS "${auth_header[@]}" "$info_url")"
-  state="$(jq -r '.state // ""' <<<"$info_json")"
-  error_code="$(jq -r '.error_code // ""' <<<"$info_json")"
-  if [[ "$state" != "running" ]]; then
-    break
+for current_provider_id in "${provider_ids[@]}"; do
+  supported="$(jq -r --arg id "$current_provider_id" '.[] | select(.provider_id == $id) | .details.install_supported // "false"' <<<"$providers_json")"
+  if [[ "$supported" != "true" ]]; then
+    echo "error: provider '$current_provider_id' is not install-supported for target=$install_target" >&2
+    exit 1
   fi
-  sleep 0.3
+
+  start_url="http://$bind_addr/api/providers/$current_provider_id/install?target=$install_target"
+  start_json="$(curl -fsS "${auth_header[@]}" -X POST "$start_url")"
+  install_id="$(jq -r '.install_id // empty' <<<"$start_json")"
+  if [[ -z "$install_id" || "$install_id" == "null" ]]; then
+    echo "error: failed to start provider install for $current_provider_id: $start_json" >&2
+    exit 1
+  fi
+
+  info_url="http://$bind_addr/api/providers/install/$install_id"
+  state=""
+  error_code=""
+  info_json="{}"
+
+  if [[ "$complete_install" == "1" ]]; then
+    deadline=$((SECONDS + timeout_seconds))
+    while true; do
+      info_json="$(curl -fsS "${auth_header[@]}" "$info_url")"
+      state="$(jq -r '.state // ""' <<<"$info_json")"
+      error_code="$(jq -r '.error_code // ""' <<<"$info_json")"
+      if [[ "$state" == "succeeded" || "$state" == "failed" || "$state" == "cancelled" ]]; then
+        break
+      fi
+      if (( SECONDS >= deadline )); then
+        echo "error: provider install timed out after ${timeout_seconds}s (provider=$current_provider_id target=$install_target state=${state:-unknown})" >&2
+        echo "$info_json" >&2
+        exit 1
+      fi
+      sleep 1
+    done
+
+    if [[ "$state" != "succeeded" ]]; then
+      echo "error: provider install did not succeed (provider=$current_provider_id target=$install_target state=$state error_code=${error_code:-none})" >&2
+      echo "$info_json" >&2
+      exit 1
+    fi
+  else
+    cancel_url="http://$bind_addr/api/providers/install/$install_id/cancel"
+    curl -fsS "${auth_header[@]}" -X POST "$cancel_url" >/dev/null
+
+    for _ in {1..30}; do
+      info_json="$(curl -fsS "${auth_header[@]}" "$info_url")"
+      state="$(jq -r '.state // ""' <<<"$info_json")"
+      error_code="$(jq -r '.error_code // ""' <<<"$info_json")"
+      if [[ "$state" != "running" ]]; then
+        break
+      fi
+      sleep 0.3
+    done
+
+    if [[ "$state" == "failed" && ( "$error_code" == "invalid_target" || "$error_code" == "unsupported_target" || "$error_code" == "matrix_mismatch" ) ]]; then
+      echo "error: runtime install smoke failed with actionable regression code '$error_code' (provider=$current_provider_id target=$install_target)" >&2
+      echo "$info_json" >&2
+      exit 1
+    fi
+
+    if [[ "$state" != "cancelled" && "$state" != "succeeded" && "$state" != "failed" ]]; then
+      echo "error: unexpected install state after cancel smoke: '$state'" >&2
+      echo "$info_json" >&2
+      exit 1
+    fi
+  fi
+
+  echo "ok: runtime install smoke passed (provider=$current_provider_id target=$install_target state=$state error_code=${error_code:-none})"
 done
-
-if [[ "$state" == "failed" && ( "$error_code" == "invalid_target" || "$error_code" == "unsupported_target" || "$error_code" == "matrix_mismatch" ) ]]; then
-  echo "error: runtime install smoke failed with actionable regression code '$error_code' (provider=$provider_id target=$install_target)" >&2
-  echo "$info_json" >&2
-  exit 1
-fi
-
-if [[ "$state" != "cancelled" && "$state" != "succeeded" && "$state" != "failed" ]]; then
-  echo "error: unexpected install state after cancel smoke: '$state'" >&2
-  echo "$info_json" >&2
-  exit 1
-fi
-
-echo "ok: runtime install smoke passed (provider=$provider_id target=$install_target state=$state error_code=${error_code:-none})"

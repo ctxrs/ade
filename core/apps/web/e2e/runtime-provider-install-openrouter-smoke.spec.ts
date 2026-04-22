@@ -20,6 +20,10 @@ type ProviderStatus = {
   details: Record<string, string>;
 };
 
+type ProviderListRow = ProviderStatus & {
+  provider_id: string;
+};
+
 type TerminalState = {
   done: boolean;
   terminalStatus: string | null;
@@ -87,6 +91,11 @@ const normalizeErrorMessage = (raw: string): string => raw.replace(/\s+/g, " ").
 const providerStatusPath = (providerId: string, target: InstallTarget): string => {
   const resolvedTarget = target === "container" ? "container" : "host";
   return `/api/providers/${encodeURIComponent(providerId)}?target=${resolvedTarget}`;
+};
+
+const providersListPath = (target: InstallTarget): string => {
+  const resolvedTarget = target === "container" ? "container" : "host";
+  return `/api/providers?target=${resolvedTarget}`;
 };
 
 const readStringMap = (value: unknown): Record<string, string> => {
@@ -173,6 +182,35 @@ async function getProviderStatus(
     details: readStringMap(row.details),
   };
 }
+
+async function listProviderStatuses(
+  request: APIRequestContext,
+  target: InstallTarget,
+): Promise<ProviderListRow[]> {
+  const pathForTarget = providersListPath(target);
+  const response = await request.get(pathForTarget);
+  expect(response.ok(), `failed to list providers (${response.status()})`).toBeTruthy();
+  return asArray(await response.json())
+    .map((entry) => {
+      const row = asRecord(entry);
+      const providerId = firstText(row.provider_id);
+      if (!providerId) return null;
+      return {
+        provider_id: providerId,
+        installed: row.installed === true,
+        health: firstText(row.health, "unknown"),
+        diagnostics: asArray(row.diagnostics).map((item) => readString(item)).filter(Boolean),
+        details: readStringMap(row.details),
+      };
+    })
+    .filter((row): row is ProviderListRow => row !== null);
+}
+
+const installSupportedProviderIds = (providers: ProviderListRow[]): string[] =>
+  providers
+    .filter((row) => row.details.install_supported === "true")
+    .map((row) => row.provider_id)
+    .sort();
 
 async function installProviderAndWait(
   request: APIRequestContext,
@@ -584,6 +622,7 @@ async function runProvider(
   apiKey: string,
   modelOverride: string,
   terminalTimeoutMs: number,
+  installOnly: boolean,
 ): Promise<ProviderResult> {
   const started = Date.now();
   let stage = "status_before_install";
@@ -614,6 +653,27 @@ async function runProvider(
     if (!providerAfter.installed || providerAfter.health !== "ok") {
       const detail = normalizeErrorMessage(firstText(providerAfter.diagnostics[0], `installed=${providerAfter.installed} health=${providerAfter.health}`));
       throw createStageError(stage, `provider unhealthy after install: ${detail}`);
+    }
+
+    if (installOnly) {
+      return {
+        provider_id: providerId,
+        install_target: installTarget,
+        environment,
+        network_mode: networkMode,
+        model_override: modelOverride,
+        install_id: installId,
+        session_id: null,
+        model_id: null,
+        terminal_status: null,
+        assistant_messages: 0,
+        stage,
+        error_code: null,
+        category: null,
+        reason: "provider installed and reported healthy",
+        result: "pass",
+        elapsed_ms: Date.now() - started,
+      };
     }
 
     stage = "endpoint_config";
@@ -732,15 +792,13 @@ test("runtime install smoke: provider matrix install/probe/first-turn via OpenRo
   }
 
   const apiKey = (process.env.OPENROUTER_API_KEY ?? "").trim();
-  if (!apiKey) {
+  const installOnly = envTruthy(process.env.CTX_E2E_INSTALL_SMOKE_INSTALL_ONLY);
+  if (!installOnly && !apiKey) {
     test.skip(true, "missing OPENROUTER_API_KEY");
   }
 
   const singleProvider = (process.env.CTX_E2E_INSTALL_SMOKE_PROVIDER ?? DEFAULT_PROVIDER_ID).trim() || DEFAULT_PROVIDER_ID;
-  const providerIds = parseCsv(process.env.CTX_E2E_INSTALL_SMOKE_PROVIDERS);
-  if (providerIds.length === 0) {
-    providerIds.push(singleProvider);
-  }
+  let providerIds = parseCsv(process.env.CTX_E2E_INSTALL_SMOKE_PROVIDERS);
 
   const defaultModelOverride =
     (process.env.CTX_E2E_INSTALL_SMOKE_MODEL_OVERRIDE ?? "").trim();
@@ -769,6 +827,17 @@ test("runtime install smoke: provider matrix install/probe/first-turn via OpenRo
   await configureWorkspaceExecution(request, workspaceId, executionEnvironment, networkMode, allowlist);
   await ensureWorkspaceExecutionLaunched(request, workspaceId, executionEnvironment);
 
+  if (providerIds.length === 0) {
+    providerIds = [singleProvider];
+  }
+  if (providerIds.includes("all")) {
+    if (providerIds.length !== 1) {
+      throw new Error("CTX_E2E_INSTALL_SMOKE_PROVIDERS=all must not be combined with explicit provider ids");
+    }
+    providerIds = installSupportedProviderIds(await listProviderStatuses(request, installTarget));
+  }
+  expect(providerIds, `no install-supported providers found for target=${installTarget}`).not.toEqual([]);
+
   const results: ProviderResult[] = [];
   for (const providerId of providerIds) {
     const perProviderModelOverride =
@@ -786,6 +855,7 @@ test("runtime install smoke: provider matrix install/probe/first-turn via OpenRo
       apiKey,
       perProviderModelOverride,
       terminalTimeoutMs,
+      installOnly,
     );
     results.push(result);
     console.log(
@@ -801,6 +871,7 @@ test("runtime install smoke: provider matrix install/probe/first-turn via OpenRo
     execution_environment: executionEnvironment,
     network_mode: networkMode,
     allow_failures: allowFailures,
+    install_only: installOnly,
     terminal_timeout_ms: terminalTimeoutMs,
     distribution: summarizeDistribution(results),
     failure_categories: summarizeFailureCategories(results),

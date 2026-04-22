@@ -3,7 +3,7 @@ set -euo pipefail
 
 suite="${1:-}"
 if [[ -z "${suite}" ]]; then
-  echo "usage: $0 {e2e|runner|tokens|endpoint-ui|provider-api-auth|provider-browser-auth|write-file|linux-arm-critical|linux-arm-nightly}" >&2
+  echo "usage: $0 {e2e|runner|tokens|endpoint-ui|provider-install-all|provider-api-auth|provider-browser-auth|write-file|linux-arm-critical|linux-arm-nightly}" >&2
   exit 2
 fi
 
@@ -554,6 +554,22 @@ case "${suite}" in
       --workers=1
     exit 0
     ;;
+  provider-install-all)
+    run_preflight "providers-install-all"
+    export CTX_E2E_TIER="endpoint-ui"
+    export CTX_E2E_INSTALL_SMOKE_INSTALL_ONLY="${CTX_E2E_INSTALL_SMOKE_INSTALL_ONLY:-1}"
+    export CTX_E2E_INSTALL_SMOKE_PROVIDERS="${CTX_E2E_INSTALL_SMOKE_PROVIDERS:-all}"
+    export CTX_E2E_INSTALL_SMOKE_ENVIRONMENT="${CTX_E2E_INSTALL_SMOKE_ENVIRONMENT:-host}"
+    export CTX_E2E_INSTALL_SMOKE_NETWORK_MODE="${CTX_E2E_INSTALL_SMOKE_NETWORK_MODE:-llm_only}"
+    export CTX_E2E_ENDPOINT_BUNDLE_HARNESS_IMAGE="${CTX_E2E_ENDPOINT_BUNDLE_HARNESS_IMAGE:-0}"
+    export CTX_E2E_ENDPOINT_APPEND_LINUX_TARGETS="${CTX_E2E_ENDPOINT_APPEND_LINUX_TARGETS:-0}"
+    ensure_endpoint_ui_bundles
+
+    run_web_playwright_suite \
+      e2e/runtime-provider-install-openrouter-smoke.spec.ts \
+      --workers=1
+    exit 0
+    ;;
   provider-api-auth)
     run_preflight "providers-provider-api-auth"
     export CTX_E2E_TIER="provider-api-auth"
@@ -681,7 +697,7 @@ case "${suite}" in
     exit 0
     ;;
   *)
-    echo "usage: $0 {e2e|runner|tokens|endpoint-ui|provider-api-auth|provider-browser-auth|write-file|linux-arm-critical|linux-arm-nightly}" >&2
+    echo "usage: $0 {e2e|runner|tokens|endpoint-ui|provider-install-all|provider-api-auth|provider-browser-auth|write-file|linux-arm-critical|linux-arm-nightly}" >&2
     exit 2
     ;;
 esac

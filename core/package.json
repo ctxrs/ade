@@ -85,6 +85,7 @@
     "test:providers:e2e:runner": "bash -lc 'scripts/providers_e2e.sh runner'",
     "test:providers:tokens": "bash -lc 'scripts/providers_e2e.sh tokens'",
     "test:providers:endpoint-ui": "bash -lc 'scripts/providers_e2e.sh endpoint-ui'",
+    "test:providers:install-all": "bash -lc 'scripts/providers_e2e.sh provider-install-all'",
     "test:providers:provider-api-auth": "bash -lc 'scripts/providers_e2e.sh provider-api-auth'",
     "test:providers:browser-auth": "bash -lc 'scripts/providers_e2e.sh provider-browser-auth'",
     "test:providers:write-file": "bash -lc 'scripts/providers_e2e.sh write-file'",

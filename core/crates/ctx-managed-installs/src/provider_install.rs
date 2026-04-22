@@ -318,7 +318,9 @@ pub(super) async fn install_provider_impl(
                 error_version = Some(version.clone());
                 error_install_dir_rel =
                     Some(format!("providers/agent-servers/{provider_id}/{version}"));
-                if matches!(target, InstallTarget::Host) {
+                if matches!(target, InstallTarget::Host)
+                    && !targets.contains_key(resolved_target_key)
+                {
                     install_managed_npm_provider(
                         state,
                         install_id,
@@ -426,7 +428,9 @@ pub(super) async fn install_provider_impl(
                 error_install_dir_rel = Some(format!(
                     "providers/agent-servers/{provider_id}/{version}",
                 ));
-                if matches!(target, InstallTarget::Host) {
+                if matches!(target, InstallTarget::Host)
+                    && !targets.contains_key(resolved_target_key)
+                {
                     install_managed_python_provider(
                         state,
                         install_id,

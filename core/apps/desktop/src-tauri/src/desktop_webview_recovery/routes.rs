@@ -11,6 +11,21 @@ use super::super::{
 
 pub(super) fn surface_for_window(window_label: &str, route: &str) -> DesktopWebviewSurface {
     let label = window_label.trim();
+    if route.starts_with("/workspaces/") {
+        return DesktopWebviewSurface::Workbench;
+    }
+    if route.starts_with("/workspace-setup") {
+        return DesktopWebviewSurface::WorkspaceSetup;
+    }
+    if route.starts_with("/settings") {
+        return DesktopWebviewSurface::Settings;
+    }
+    if route.starts_with("/file") {
+        return DesktopWebviewSurface::FilePreview;
+    }
+    if route == "/" {
+        return DesktopWebviewSurface::Launcher;
+    }
     if label == "main" {
         return DesktopWebviewSurface::Main;
     }
@@ -29,22 +44,23 @@ pub(super) fn surface_for_window(window_label: &str, route: &str) -> DesktopWebv
     if label.starts_with("workspace-setup:") {
         return DesktopWebviewSurface::WorkspaceSetup;
     }
-    if route.starts_with("/workspaces/") {
-        return DesktopWebviewSurface::Workbench;
-    }
-    if route.starts_with("/settings") {
-        return DesktopWebviewSurface::Settings;
-    }
-    if route.starts_with("/workspace-setup") {
-        return DesktopWebviewSurface::WorkspaceSetup;
-    }
-    if route.starts_with("/file") {
-        return DesktopWebviewSurface::FilePreview;
-    }
-    if route == "/" {
-        return DesktopWebviewSurface::Launcher;
-    }
     DesktopWebviewSurface::Unknown
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn workspace_route_overrides_setup_window_label_after_launch() {
+        assert_eq!(
+            surface_for_window(
+                "workspace-setup:ccde4a9c-9881-4b09-8001-764bf28d9a4a",
+                "/workspaces/4c8db9d3-2290-474d-a3ed-7b1856693669"
+            ),
+            DesktopWebviewSurface::Workbench
+        );
+    }
 }
 
 pub(super) fn reopen_window(
