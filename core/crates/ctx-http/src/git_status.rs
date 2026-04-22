@@ -29,6 +29,9 @@ pub(crate) use sandbox::{worktree_merge_base, worktree_rev_parse_head};
 const GIT_STATUS_DEBOUNCE_MS: u64 = 500;
 const GIT_STATUS_MAX_INTERVAL_MS: u64 = 2000;
 const WORKTREE_VCS_TOUCHED_FILES_CAP: usize = 200;
+// Above this count, the product surfaces an exact summary but does not compute
+// or stream file-by-file review inventory.
+const WORKTREE_VCS_REVIEWABLE_FILE_LIMIT: i64 = 300;
 const WORKTREE_VCS_SNAPSHOT_SCHEMA_VERSION: i64 = 2;
 
 fn vcs_driver_for_worktree(worktree: &Worktree) -> Arc<dyn VcsDriver> {
@@ -92,6 +95,14 @@ fn build_touched_files(entries: &[WorktreeVcsTouchedFile]) -> WorktreeVcsTouched
         items,
         truncated,
         total_count: Some(total_count),
+    }
+}
+
+fn build_large_change_set_touched_files(file_count: i64) -> WorktreeVcsTouchedFiles {
+    WorktreeVcsTouchedFiles {
+        items: Vec::new(),
+        truncated: true,
+        total_count: Some(file_count),
     }
 }
 
@@ -500,30 +511,6 @@ async fn refresh_worktree_vcs_projection(
         return publish_unavailable_snapshot(state, worktree, resolution, force_emit, reason).await;
     }
 
-    let git_snapshot = match load_git_status_snapshot(
-        state,
-        worktree,
-        refresh_touched_files,
-        refresh_touched_files,
-    )
-    .await
-    {
-        Ok(snapshot) => snapshot,
-        Err(err) if crate::api::sessions::is_no_vcs_repo_error(&err) => {
-            return publish_no_repo_snapshot(state, worktree, resolution, force_emit).await;
-        }
-        Err(err) => return Err(err),
-    };
-
-    let git_status = build_git_status_summary(
-        &git_snapshot,
-        if refresh_touched_files {
-            build_git_status_entries(&git_snapshot.entries)
-        } else {
-            Vec::new()
-        },
-    );
-
     let (summary, compute_state, summary_at, available, unavailable_reason) =
         if refresh_summary || !summary_has_counts(&cached_summary) {
             match load_diff_file_count(state, worktree, &resolution.base_commit_sha).await {
@@ -565,7 +552,41 @@ async fn refresh_worktree_vcs_projection(
             )
         };
 
-    let (touched_files, touched_files_state) = if refresh_touched_files {
+    let large_change_set_file_count = summary
+        .file_count
+        .filter(|count| *count > WORKTREE_VCS_REVIEWABLE_FILE_LIMIT);
+    let include_status_inventory = refresh_touched_files && large_change_set_file_count.is_none();
+    let git_snapshot = match load_git_status_snapshot(
+        state,
+        worktree,
+        include_status_inventory,
+        include_status_inventory,
+    )
+    .await
+    {
+        Ok(snapshot) => snapshot,
+        Err(err) if crate::api::sessions::is_no_vcs_repo_error(&err) => {
+            return publish_no_repo_snapshot(state, worktree, resolution, force_emit).await;
+        }
+        Err(err) => return Err(err),
+    };
+
+    let git_status = build_git_status_summary(
+        &git_snapshot,
+        if include_status_inventory {
+            build_git_status_entries(&git_snapshot.entries)
+        } else {
+            Vec::new()
+        },
+    );
+
+    let (touched_files, touched_files_state) = if let Some(file_count) = large_change_set_file_count
+    {
+        (
+            build_large_change_set_touched_files(file_count),
+            WorktreeVcsTouchedFilesState::Ready,
+        )
+    } else if refresh_touched_files {
         match load_diff_touched_entries(state, worktree, &resolution.base_commit_sha).await {
             Ok(entries) => (
                 build_touched_files(&entries),

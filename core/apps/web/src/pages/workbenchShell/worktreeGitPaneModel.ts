@@ -22,14 +22,24 @@ export type GitPaneSection = {
 export type GitPaneModel = {
   badgeCount: number;
   totalCount: number;
+  visibleFileCount: number;
   available: boolean;
   unavailableReason: DiffUnavailableReason | null;
   unavailableLabel: string | null;
   loading: boolean;
   computeError: string | null;
   listReady: boolean;
+  inventoryDemandAllowed: boolean;
+  largeChangeSet: boolean;
+  largeChangeSetLabel: string | null;
+  fileListTruncated: boolean;
+  fileListTruncatedLabel: string | null;
   sections: GitPaneSection[];
 };
+
+// Mirrors GitHub's documented classic single-diff file cap and keeps ctx from
+// treating generated-scale changes as normal file-by-file review work.
+export const GIT_PANE_REVIEWABLE_FILE_LIMIT = 300;
 
 const SECTION_ORDER: GitPaneSectionKey[] = ["staged", "unstaged", "untracked", "changed"];
 
@@ -68,6 +78,8 @@ const unavailableLabelForReason = (reason: DiffUnavailableReason | null): string
   if (reason === "no_target_branch") return "Primary branch is not configured for this workspace.";
   return null;
 };
+
+const formatCount = (value: number): string => new Intl.NumberFormat("en-US").format(value);
 
 const mergeInventoryEntries = (snapshot: WorktreeVcsSnapshot): GitPaneFileEntry[] => {
   const byPath = new Map<string, GitPaneFileEntry>();
@@ -108,12 +120,18 @@ export const buildGitPaneModel = (snapshot: WorktreeVcsSnapshot | null): GitPane
     return {
       badgeCount: 0,
       totalCount: 0,
+      visibleFileCount: 0,
       available: true,
       unavailableReason: null,
       unavailableLabel: null,
       loading: true,
       computeError: null,
       listReady: false,
+      inventoryDemandAllowed: false,
+      largeChangeSet: false,
+      largeChangeSetLabel: null,
+      fileListTruncated: false,
+      fileListTruncatedLabel: null,
       sections: [],
     };
   }
@@ -122,21 +140,43 @@ export const buildGitPaneModel = (snapshot: WorktreeVcsSnapshot | null): GitPane
   const unavailableReason = snapshot.unavailable_reason ?? null;
   const unavailableLabel = available ? null : unavailableLabelForReason(unavailableReason);
   const computeError = available && snapshot.compute_state === "error" ? "Failed to compute diff summary." : null;
-  const files = available ? mergeInventoryEntries(snapshot) : [];
   const touchedFilesState = snapshot.touched_files_state ?? "not_loaded";
   const summaryStats = getDiffSummaryStats(snapshot.summary as Record<string, unknown>);
+  const hasAuthoritativeCount =
+    summaryStats.fileCount !== null || typeof snapshot.touched_files.total_count === "number";
   const badgeCount = available
     ? Math.max(0, Number((summaryStats.fileCount ?? snapshot.touched_files.total_count ?? 0) || 0))
     : 0;
+  const largeChangeSet = available && badgeCount > GIT_PANE_REVIEWABLE_FILE_LIMIT;
+  const files = available && !largeChangeSet ? mergeInventoryEntries(snapshot) : [];
   const totalCount = available ? Math.max(files.length, badgeCount) : 0;
-  const loading = available && touchedFilesState === "loading";
+  const visibleFileCount = files.length;
+  const loading = available && !largeChangeSet && touchedFilesState === "loading";
   const listReady =
+    largeChangeSet ||
     files.length > 0 ||
     totalCount === 0 ||
     !available ||
     touchedFilesState === "ready" ||
     touchedFilesState === "stale" ||
     touchedFilesState === "error";
+  const inventoryDemandAllowed =
+    available && hasAuthoritativeCount && badgeCount > 0 && !largeChangeSet;
+  const largeChangeSetLabel = largeChangeSet
+    ? [
+        `This worktree has ${formatCount(badgeCount)} changed files.`,
+        "File-by-file review is disabled here; split the change or inspect it in your editor.",
+      ].join(" ")
+    : null;
+  const fileListTruncated =
+    !largeChangeSet &&
+    Boolean(snapshot.touched_files.truncated) &&
+    totalCount > 0 &&
+    visibleFileCount > 0 &&
+    totalCount > visibleFileCount;
+  const fileListTruncatedLabel = fileListTruncated
+    ? `Showing ${formatCount(visibleFileCount)} of ${formatCount(totalCount)} changed files.`
+    : null;
 
   const sections = SECTION_ORDER.map((key) => {
     const sectionFiles = files.filter((file) => file.section === key);
@@ -151,12 +191,18 @@ export const buildGitPaneModel = (snapshot: WorktreeVcsSnapshot | null): GitPane
   return {
     badgeCount,
     totalCount,
+    visibleFileCount,
     available,
     unavailableReason,
     unavailableLabel,
     loading,
     computeError,
     listReady,
+    inventoryDemandAllowed,
+    largeChangeSet,
+    largeChangeSetLabel,
+    fileListTruncated,
+    fileListTruncatedLabel,
     sections,
   };
 };

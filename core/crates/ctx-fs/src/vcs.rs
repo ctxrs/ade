@@ -97,6 +97,13 @@ pub trait VcsDriver: Send + Sync {
         worktree_path: &'a Path,
         base_revision: &'a str,
     ) -> VcsFuture<'a, Vec<VcsNameStatusEntry>>;
+    fn diff_name_status_for_summary<'a>(
+        &'a self,
+        worktree_path: &'a Path,
+        base_revision: &'a str,
+    ) -> VcsFuture<'a, Vec<VcsNameStatusEntry>> {
+        self.diff_name_status(worktree_path, base_revision)
+    }
     fn diff_name_status_paths<'a>(
         &'a self,
         worktree_path: &'a Path,
@@ -316,6 +323,25 @@ impl VcsDriver for GitVcs {
     ) -> VcsFuture<'a, Vec<VcsNameStatusEntry>> {
         Box::pin(async move {
             let entries = git::git_diff_name_status(worktree_path, base_revision).await?;
+            Ok(entries
+                .into_iter()
+                .map(|entry| VcsNameStatusEntry {
+                    status: entry.status,
+                    path: entry.path,
+                    orig_path: entry.orig_path,
+                })
+                .collect())
+        })
+    }
+
+    fn diff_name_status_for_summary<'a>(
+        &'a self,
+        worktree_path: &'a Path,
+        base_revision: &'a str,
+    ) -> VcsFuture<'a, Vec<VcsNameStatusEntry>> {
+        Box::pin(async move {
+            let entries =
+                git::git_diff_name_status_no_renames(worktree_path, base_revision).await?;
             Ok(entries
                 .into_iter()
                 .map(|entry| VcsNameStatusEntry {

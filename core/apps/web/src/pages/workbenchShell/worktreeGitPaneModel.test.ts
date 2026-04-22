@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { WorktreeVcsSnapshot } from "@ctx/types";
 
-import { buildGitPaneModel } from "./worktreeGitPaneModel";
+import { buildGitPaneModel, GIT_PANE_REVIEWABLE_FILE_LIMIT } from "./worktreeGitPaneModel";
 
 const makeSnapshot = (overrides?: Partial<WorktreeVcsSnapshot>): WorktreeVcsSnapshot => ({
   worktree_id: "wt-1",
@@ -82,6 +82,63 @@ describe("buildGitPaneModel", () => {
     expect(model.totalCount).toBe(2);
     expect(model.listReady).toBe(false);
     expect(model.loading).toBe(true);
+    expect(model.inventoryDemandAllowed).toBe(true);
+  });
+
+  it("disables file-by-file inventory demand for large change sets", () => {
+    const model = buildGitPaneModel(
+      makeSnapshot({
+        summary: {
+          file_count: GIT_PANE_REVIEWABLE_FILE_LIMIT + 1,
+          line_additions: 4,
+          line_deletions: 0,
+          line_count: 4,
+        },
+        git_status: {
+          branch: "main",
+          upstream: "origin/main",
+          ahead: 0,
+          behind: 0,
+          detached: false,
+          staged: 0,
+          unstaged: 1,
+          untracked: 0,
+          entries: [{ path: "file.txt", index_status: " ", worktree_status: "M", orig_path: null }],
+        },
+        touched_files: {
+          items: [{ path: "file.txt", index_status: " ", worktree_status: "M", orig_path: null }],
+          truncated: true,
+          total_count: GIT_PANE_REVIEWABLE_FILE_LIMIT + 1,
+        },
+        touched_files_state: "ready",
+      }),
+    );
+
+    expect(model.badgeCount).toBe(GIT_PANE_REVIEWABLE_FILE_LIMIT + 1);
+    expect(model.largeChangeSet).toBe(true);
+    expect(model.inventoryDemandAllowed).toBe(false);
+    expect(model.listReady).toBe(true);
+    expect(model.sections).toEqual([]);
+    expect(model.largeChangeSetLabel).toContain("301 changed files");
+  });
+
+  it("reports capped file inventory without suppressing reviewable change sets", () => {
+    const model = buildGitPaneModel(
+      makeSnapshot({
+        summary: { file_count: 250, line_additions: 4, line_deletions: 0, line_count: 4 },
+        touched_files: {
+          items: [{ path: "file.txt", index_status: "M", worktree_status: null, orig_path: null }],
+          truncated: true,
+          total_count: 250,
+        },
+        touched_files_state: "ready",
+      }),
+    );
+
+    expect(model.largeChangeSet).toBe(false);
+    expect(model.fileListTruncated).toBe(true);
+    expect(model.fileListTruncatedLabel).toBe("Showing 1 of 250 changed files.");
+    expect(model.inventoryDemandAllowed).toBe(true);
   });
 
   it("groups staged, unstaged, and untracked files deterministically", () => {

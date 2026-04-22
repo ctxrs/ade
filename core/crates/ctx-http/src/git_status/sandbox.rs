@@ -173,12 +173,29 @@ pub(crate) async fn container_git_diff_name_status(
     worktree: &Worktree,
     base_commit_sha: &str,
 ) -> Result<Vec<(String, String, Option<String>)>> {
-    let bytes = container_git_stdout(
-        state,
-        worktree,
-        &["diff", "--name-status", "-z", base_commit_sha],
-    )
-    .await?;
+    container_git_diff_name_status_inner(state, worktree, base_commit_sha, false).await
+}
+
+pub(crate) async fn container_git_diff_name_status_no_renames(
+    state: &Arc<AppState>,
+    worktree: &Worktree,
+    base_commit_sha: &str,
+) -> Result<Vec<(String, String, Option<String>)>> {
+    container_git_diff_name_status_inner(state, worktree, base_commit_sha, true).await
+}
+
+async fn container_git_diff_name_status_inner(
+    state: &Arc<AppState>,
+    worktree: &Worktree,
+    base_commit_sha: &str,
+    no_renames: bool,
+) -> Result<Vec<(String, String, Option<String>)>> {
+    let mut args = vec!["diff"];
+    if no_renames {
+        args.push("--no-renames");
+    }
+    args.extend(["--name-status", "-z", base_commit_sha]);
+    let bytes = container_git_stdout(state, worktree, &args).await?;
     let mut out = Vec::new();
     let mut parts = bytes
         .split(|b| *b == 0)

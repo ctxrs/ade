@@ -160,7 +160,14 @@ const DiffReviewPane = memo(function DiffReviewPane({
         {!inventory.unavailableLabel && !inventory.loading && !hasInventory && (
           <div className="muted">{inventory.computeError ?? labels?.empty ?? "No changes on this worktree."}</div>
         )}
-        {!inventory.unavailableLabel && hasInventory && (
+        {!inventory.unavailableLabel && hasInventory && inventory.largeChangeSet && (
+          <div className="cursor-diff">
+            <div className="muted" style={{ padding: 12 }}>
+              {inventory.largeChangeSetLabel ?? "This change set is too large for file-by-file review here."}
+            </div>
+          </div>
+        )}
+        {!inventory.unavailableLabel && hasInventory && !inventory.largeChangeSet && (
           <div className="cursor-diff">
             <div className="cursor-diff-toolbar">
               <button
@@ -175,6 +182,11 @@ const DiffReviewPane = memo(function DiffReviewPane({
             </div>
             {detail?.error ? <div className="muted">{detail.error}</div> : null}
             {!inventory.listReady ? <div className="muted">Loading changed files...</div> : null}
+            {inventory.fileListTruncatedLabel ? (
+              <div className="muted" style={{ padding: "8px 12px" }}>
+                {inventory.fileListTruncatedLabel}
+              </div>
+            ) : null}
             <div className="cursor-diff-list">
               {inventory.sections.map((section) => (
                 <div key={section.key} className="cursor-diff-section">

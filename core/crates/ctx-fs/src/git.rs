@@ -344,10 +344,27 @@ pub async fn git_diff_name_status(
     root_path: impl AsRef<Path>,
     base_commit_sha: &str,
 ) -> Result<Vec<GitNameStatusEntry>> {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(root_path.as_ref())
-        .arg("diff")
+    git_diff_name_status_inner(root_path, base_commit_sha, false).await
+}
+
+pub async fn git_diff_name_status_no_renames(
+    root_path: impl AsRef<Path>,
+    base_commit_sha: &str,
+) -> Result<Vec<GitNameStatusEntry>> {
+    git_diff_name_status_inner(root_path, base_commit_sha, true).await
+}
+
+async fn git_diff_name_status_inner(
+    root_path: impl AsRef<Path>,
+    base_commit_sha: &str,
+    no_renames: bool,
+) -> Result<Vec<GitNameStatusEntry>> {
+    let mut cmd = Command::new("git");
+    cmd.arg("-C").arg(root_path.as_ref()).arg("diff");
+    if no_renames {
+        cmd.arg("--no-renames");
+    }
+    let output = cmd
         .arg("--name-status")
         .arg("-z")
         .arg(base_commit_sha)

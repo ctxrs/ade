@@ -376,9 +376,6 @@ export function useWorkbenchActiveTaskController({
       optimisticStartingSessionId === activeSessionIdValue);
   const openSessionId = activeSessionId && !isOptimisticSessionId ? activeSessionId : "";
   useOpenSession(openSessionId, { watchDiff: diffOpen });
-  useEffect(() => {
-    workspaceSnapshotStore.setVcsOpenSessionIds?.(diffOpen && openSessionId ? [openSessionId] : []);
-  }, [diffOpen, openSessionId, workspaceSnapshotStore]);
 
   const activeDiffContentError = activeSessionId ? diffContentErrorBySessionId[activeSessionId] ?? null : null;
   const activeWorktreeId = activeEntry?.session ? idToString(activeEntry.session.worktree_id) : "";
@@ -392,6 +389,9 @@ export function useWorkbenchActiveTaskController({
   const activeWorktreeVcsComputeState = activeWorktreeVcsSnapshot?.compute_state ?? null;
   const activeWorktreeDiffAvailable = activeWorktreeVcsSnapshot?.available !== false;
   const gitPaneModel = useMemo(() => buildGitPaneModel(activeWorktreeVcsSnapshot), [activeWorktreeVcsSnapshot]);
+  useEffect(() => {
+    workspaceSnapshotStore.setVcsOpenSessionIds?.(diffOpen && openSessionId && gitPaneModel.inventoryDemandAllowed ? [openSessionId] : []);
+  }, [diffOpen, gitPaneModel.inventoryDemandAllowed, openSessionId, workspaceSnapshotStore]);
   const snapshotSummaryStats = useMemo(
     () => getDiffSummaryStats(activeWorktreeVcsSummary),
     [activeWorktreeVcsSummary],
