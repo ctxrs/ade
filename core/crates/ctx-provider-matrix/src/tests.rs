@@ -226,6 +226,24 @@ fn builtin_matrix_marks_dependencies_and_omits_cagent() {
 }
 
 #[test]
+fn builtin_matrix_uses_claude_cli_wrapper_entrypoint() {
+    let matrix = builtin_matrix();
+    let claude_cli = get_entry(&matrix, "claude-cli").expect("claude-cli entry");
+    let ProviderInstall::Npm { entrypoint, .. } = claude_cli
+        .managed_install
+        .as_ref()
+        .expect("claude-cli managed install")
+    else {
+        panic!("claude-cli should use npm managed install");
+    };
+
+    assert_eq!(
+        entrypoint,
+        "node_modules/@anthropic-ai/claude-code/cli-wrapper.cjs"
+    );
+}
+
+#[test]
 fn builtin_matrix_uses_kimi_acp_subcommand() {
     let matrix = builtin_matrix();
     let kimi = matrix

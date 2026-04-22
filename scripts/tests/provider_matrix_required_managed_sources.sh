@@ -106,6 +106,16 @@ for provider_id in required:
             if not re.match(r"^[0-9a-f]{64}$", sha):
                 errors.append(f"provider claude-crp target {target_key} missing/invalid sha256")
 
+    if provider_id == "claude-cli":
+        if kind != "npm":
+            errors.append("provider claude-cli must remain managed_install.kind=npm")
+        if str(managed.get("package", "")).strip() != "@anthropic-ai/claude-code":
+            errors.append("provider claude-cli package must be @anthropic-ai/claude-code")
+        if str(managed.get("entrypoint", "")).strip() != "node_modules/@anthropic-ai/claude-code/cli-wrapper.cjs":
+            errors.append(
+                "provider claude-cli entrypoint must be node_modules/@anthropic-ai/claude-code/cli-wrapper.cjs"
+            )
+
     if provider_id == "codex":
         releases = [r for r in releases if isinstance(r, dict)]
         release = releases[0] if releases else {}

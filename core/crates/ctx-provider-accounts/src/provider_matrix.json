@@ -180,7 +180,7 @@
         "kind": "npm",
         "package": "@anthropic-ai/claude-code",
         "version": "2.1.114",
-        "entrypoint": "node_modules/@anthropic-ai/claude-code/cli.js",
+        "entrypoint": "node_modules/@anthropic-ai/claude-code/cli-wrapper.cjs",
         "args": []
       },
       "version_probe": {
