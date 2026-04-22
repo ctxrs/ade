@@ -106,7 +106,7 @@ pub(super) fn map_crp_event(
         CrpChannel::Control => None,
     };
     match event {
-        CrpEvent::Known(event) => match event {
+        CrpEvent::Known(event) => match *event {
             KnownCrpEvent::SessionOpened {
                 session_id,
                 provider_session_id,
@@ -180,7 +180,7 @@ pub(super) fn map_crp_event(
                     payload.insert("mcp_servers".to_string(), mcp_servers);
                 }
                 if let Some(account) = account {
-                    payload.insert("account".to_string(), account);
+                    payload.insert("account".to_string(), *account);
                 }
                 if let Some(fast_mode_state) = fast_mode_state {
                     payload.insert("fast_mode_state".to_string(), json!(fast_mode_state));
@@ -589,14 +589,14 @@ pub(super) fn map_crp_event(
 
 pub(super) fn event_turn_id(event: &CrpEvent) -> Option<&str> {
     match event {
-        CrpEvent::Known(event) => known_event_turn_id(event),
+        CrpEvent::Known(event) => known_event_turn_id(event.as_ref()),
         CrpEvent::Unknown { turn_id, .. } => turn_id.as_deref(),
     }
 }
 
 pub(super) fn event_matches_session(event: &CrpEvent, session_id: &str) -> bool {
     match event {
-        CrpEvent::Known(event) => known_event_session_id(event) == Some(session_id),
+        CrpEvent::Known(event) => known_event_session_id(event.as_ref()) == Some(session_id),
         CrpEvent::Unknown { session_id: id, .. } => id.as_deref() == Some(session_id),
     }
 }
@@ -646,7 +646,7 @@ mod tests {
     use crate::crp::protocol::CrpToolStatus;
 
     fn known(event: KnownCrpEvent) -> CrpEvent {
-        CrpEvent::Known(event)
+        CrpEvent::Known(Box::new(event))
     }
 
     #[test]

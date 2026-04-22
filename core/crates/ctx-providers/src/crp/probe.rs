@@ -110,17 +110,19 @@ pub async fn probe_crp_models(request: CrpModelsProbeRequest) -> Result<CrpModel
                 Ok(env) => env,
                 Err(_) => continue,
             };
-            if let CrpEvent::Known(KnownCrpEvent::ModelsList {
-                models,
-                current_model_id,
-                catalog_source,
-            }) = env.event
-            {
-                return Ok(CrpModelsProbe {
+            if let CrpEvent::Known(event) = env.event {
+                if let KnownCrpEvent::ModelsList {
                     models,
                     current_model_id,
                     catalog_source,
-                });
+                } = *event
+                {
+                    return Ok(CrpModelsProbe {
+                        models,
+                        current_model_id,
+                        catalog_source,
+                    });
+                }
             }
         }
     })

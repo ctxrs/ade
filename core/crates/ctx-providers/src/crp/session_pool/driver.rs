@@ -35,22 +35,29 @@ const CRP_SESSION_MODEL_UPDATE_TIMEOUT: std::time::Duration = std::time::Duratio
 fn is_sweep_only_status_notice(event: &CrpEvent) -> bool {
     matches!(
         event,
-        CrpEvent::Known(KnownCrpEvent::SessionNotice { code, .. })
+        CrpEvent::Known(event)
+            if matches!(
+                event.as_ref(),
+                KnownCrpEvent::SessionNotice { code, .. }
             if code == "session_status" || code == "session_status_failed"
+            )
     )
 }
 
 fn apply_session_opened_state(session: &CrpSession, event: &CrpEvent) {
-    if let CrpEvent::Known(KnownCrpEvent::SessionOpened {
-        supports_session_status,
-        ..
-    }) = event
-    {
+    if let CrpEvent::Known(event) = event {
+        let KnownCrpEvent::SessionOpened {
+            supports_session_status,
+            ..
+        } = event.as_ref()
+        else {
+            return;
+        };
         session.opened.store(true, Ordering::SeqCst);
         session.opening.store(false, Ordering::SeqCst);
         let default_support = session.status_supported.load(Ordering::SeqCst);
         session.status_supported.store(
-            supports_session_status.unwrap_or(default_support),
+            (*supports_session_status).unwrap_or(default_support),
             Ordering::SeqCst,
         );
     }
@@ -356,8 +363,12 @@ impl CrpSessionPool {
                                 apply_session_opened_state(&session, &env.event);
                                 let auth_required = matches!(
                                     &env.event,
-                                    CrpEvent::Known(KnownCrpEvent::SessionNotice { code, .. })
-                                        if code == "auth_required"
+                                    CrpEvent::Known(event)
+                                        if matches!(
+                                            event.as_ref(),
+                                            KnownCrpEvent::SessionNotice { code, .. }
+                                                if code == "auth_required"
+                                        )
                                 );
                                 if auth_required {
                                     session.opening.store(false, Ordering::SeqCst);
@@ -491,8 +502,9 @@ impl CrpSessionPool {
                                 if !event_matches_session(&env.event, &session_key) {
                                     continue;
                                 }
-                                if let CrpEvent::Known(KnownCrpEvent::SessionNotice { code, message, details, .. }) = env.event {
-                                    if code == "session_model_updated" {
+                                if let CrpEvent::Known(event) = env.event {
+                                    if let KnownCrpEvent::SessionNotice { code, message, details, .. } = *event {
+                                        if code == "session_model_updated" {
                                         let selected = details
                                             .as_ref()
                                             .and_then(|value| value.get("model_id"))
@@ -501,12 +513,13 @@ impl CrpSessionPool {
                                         if selected == model_id {
                                             return Ok(());
                                         }
-                                    }
-                                    if code == "session_model_update_failed" {
+                                        }
+                                        if code == "session_model_update_failed" {
                                         let detail = message.unwrap_or_else(|| {
                                             format!("provider rejected session model '{model_id}'")
                                         });
                                         anyhow::bail!("{detail}");
+                                        }
                                     }
                                 }
                             }
@@ -616,13 +629,17 @@ impl CrpSessionPool {
                                 apply_session_opened_state(&session_for_events, &env.event);
                                 let auth_terminal_event = matches!(
                                     &env.event,
-                                    CrpEvent::Known(KnownCrpEvent::SessionNotice { code, .. })
-                                        if code == "auth_complete"
-                                            || code == "auth_completed"
-                                            || code == "auth_success"
-                                            || code == "authenticated"
-                                            || code == "auth_failed"
-                                            || code == "auth_error"
+                                    CrpEvent::Known(event)
+                                        if matches!(
+                                            event.as_ref(),
+                                            KnownCrpEvent::SessionNotice { code, .. }
+                                                if code == "auth_complete"
+                                                    || code == "auth_completed"
+                                                    || code == "auth_success"
+                                                    || code == "authenticated"
+                                                    || code == "auth_failed"
+                                                    || code == "auth_error"
+                                        )
                                 );
                                 if auth_terminal_event {
                                     session_for_events.opening.store(false, Ordering::SeqCst);

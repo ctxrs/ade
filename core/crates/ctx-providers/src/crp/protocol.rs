@@ -57,7 +57,7 @@ impl<'de> Deserialize<'de> for CrpEventEnvelope {
         .map_err(|err| D::Error::custom(format!("invalid CRP event channel: {err}")))?;
 
         let event = match parse_known_event(value.clone()) {
-            Ok(event) => CrpEvent::Known(event),
+            Ok(event) => CrpEvent::Known(Box::new(event)),
             Err(err) => {
                 let event_type = object
                     .get("type")
@@ -90,7 +90,7 @@ impl<'de> Deserialize<'de> for CrpEventEnvelope {
 
 #[derive(Debug, Clone)]
 pub(super) enum CrpEvent {
-    Known(KnownCrpEvent),
+    Known(Box<KnownCrpEvent>),
     Unknown {
         event_type: String,
         session_id: Option<String>,
@@ -150,14 +150,17 @@ mod tests {
 
         assert_eq!(parsed.seq, 7);
         assert!(matches!(parsed.channel, CrpChannel::Control));
+        let CrpEvent::Known(event) = parsed.event else {
+            panic!("expected known CRP event");
+        };
         assert!(matches!(
-            parsed.event,
-            CrpEvent::Known(KnownCrpEvent::MessageDelta {
+            event.as_ref(),
+            KnownCrpEvent::MessageDelta {
                 session_id,
                 turn_id,
                 message_id,
                 delta,
-            }) if session_id == "session-1"
+            } if session_id == "session-1"
                 && turn_id == "turn-1"
                 && message_id == "message-1"
                 && delta == "hello"
@@ -221,15 +224,18 @@ mod tests {
         )
         .expect("underscored tool output delta should parse");
 
+        let CrpEvent::Known(event) = parsed.event else {
+            panic!("expected known CRP event");
+        };
         assert!(matches!(
-            parsed.event,
-            CrpEvent::Known(KnownCrpEvent::ToolOutputDelta {
+            event.as_ref(),
+            KnownCrpEvent::ToolOutputDelta {
                 session_id,
                 turn_id,
                 tool_call_id,
                 chunk,
                 ..
-            }) if session_id == "session-1"
+            } if session_id == "session-1"
                 && turn_id == "turn-1"
                 && tool_call_id == "tool-1"
                 && chunk == "line-1\n"
@@ -252,15 +258,18 @@ mod tests {
         )
         .expect("dotted tool output delta should parse");
 
+        let CrpEvent::Known(event) = parsed.event else {
+            panic!("expected known CRP event");
+        };
         assert!(matches!(
-            parsed.event,
-            CrpEvent::Known(KnownCrpEvent::ToolOutputDelta {
+            event.as_ref(),
+            KnownCrpEvent::ToolOutputDelta {
                 session_id,
                 turn_id,
                 tool_call_id,
                 chunk,
                 ..
-            }) if session_id == "session-2"
+            } if session_id == "session-2"
                 && turn_id == "turn-2"
                 && tool_call_id == "tool-2"
                 && chunk == "line-2\n"
@@ -286,15 +295,18 @@ mod tests {
         let parsed: CrpEventEnvelope =
             serde_json::from_str(&raw).expect("shared envelope should parse");
 
+        let CrpEvent::Known(event) = parsed.event else {
+            panic!("expected known CRP event");
+        };
         assert!(matches!(
-            parsed.event,
-            CrpEvent::Known(KnownCrpEvent::ToolOutputDelta {
+            event.as_ref(),
+            KnownCrpEvent::ToolOutputDelta {
                 session_id,
                 turn_id,
                 tool_call_id,
                 stream,
                 chunk,
-            }) if session_id == "session-1"
+            } if session_id == "session-1"
                 && turn_id == "turn-1"
                 && tool_call_id == "tool-1"
                 && stream == Some(ctx_crp_protocol::CrpToolOutputStream::Stdout)

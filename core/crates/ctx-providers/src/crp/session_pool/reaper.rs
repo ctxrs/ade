@@ -190,16 +190,28 @@ impl CrpSessionPool {
                                 if !event_matches_session(&env.event, session_key) {
                                     continue;
                                 }
-                                match env.event {
-                                    CrpEvent::Known(KnownCrpEvent::SessionNotice { code, details, .. }) if code == "session_status" => {
-                                        let details = details.ok_or_else(|| anyhow::anyhow!("session_status notice missing details"))?;
-                                        return serde_json::from_value::<CrpSessionStatusDetails>(details)
+                                if let CrpEvent::Known(event) = env.event {
+                                    match *event {
+                                        KnownCrpEvent::SessionNotice { code, details, .. }
+                                            if code == "session_status" =>
+                                        {
+                                            let details = details.ok_or_else(|| {
+                                                anyhow::anyhow!("session_status notice missing details")
+                                            })?;
+                                            return serde_json::from_value::<CrpSessionStatusDetails>(
+                                                details,
+                                            )
                                             .context("parsing session status details");
+                                        }
+                                        KnownCrpEvent::SessionNotice { code, message, .. }
+                                            if code == "session_status_failed" =>
+                                        {
+                                            anyhow::bail!(message.unwrap_or_else(|| {
+                                                "session status query failed".to_string()
+                                            }));
+                                        }
+                                        _ => {}
                                     }
-                                    CrpEvent::Known(KnownCrpEvent::SessionNotice { code, message, .. }) if code == "session_status_failed" => {
-                                        anyhow::bail!(message.unwrap_or_else(|| "session status query failed".to_string()));
-                                    }
-                                    _ => {}
                                 }
                             }
                             Err(broadcast::error::RecvError::Lagged(_)) => {}
