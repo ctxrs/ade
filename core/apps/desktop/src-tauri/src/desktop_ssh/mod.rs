@@ -20,6 +20,9 @@ use planner::*;
 use probe::*;
 use transport::*;
 use tunnel::*;
+use update::{
+    begin_remote_update_drain, release_remote_update_drain, run_remote_daemon_self_update,
+};
 
 pub(crate) use commands::{
     desktop_get_git_branch, desktop_kickoff_remote_prewarm, desktop_list_ssh_hosts,

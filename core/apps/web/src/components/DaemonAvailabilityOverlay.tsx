@@ -157,7 +157,7 @@ export default function DaemonAvailabilityOverlay() {
       ) {
         return;
       }
-      await desktopUpdateRemoteDaemon("stable");
+      await desktopUpdateRemoteDaemon();
       await checkNow();
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

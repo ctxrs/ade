@@ -148,6 +148,23 @@ pub(super) async fn linux_sandbox_runtime_prepare(
     State(state): State<Arc<AppState>>,
     Json(req): Json<LinuxSandboxRuntimePrepareReq>,
 ) -> Result<Json<LinuxSandboxRuntimePrepareResult>, (StatusCode, Json<ApiErrorResp>)> {
+    let activity = crate::daemon::daemon_turn_activity_summary(&state)
+        .await
+        .map_err(|err| {
+            tracing::warn!(target: "linux_sandbox", error = %logs::redact_sensitive(&err.to_string()), "linux_sandbox_runtime_prepare activity gate error");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp { error: linux_sandbox_user_message("prepare") }),
+            )
+        })?;
+    if !activity.idle {
+        return Err((
+            StatusCode::CONFLICT,
+            Json(ApiErrorResp {
+                error: "Preparing Linux sandbox runtime is blocked while turns are queued or running. Retry when current work is idle.".to_string(),
+            }),
+        ));
+    }
     let result = prepare_linux_sandbox_runtime(
         &state.core.data_root,
         req.activation_mode

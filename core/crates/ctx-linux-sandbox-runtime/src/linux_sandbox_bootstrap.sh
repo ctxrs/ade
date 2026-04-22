@@ -153,6 +153,19 @@ verify_nerdctl_checksum() {
   [[ "${actual}" == "${expected}" ]]
 }
 
+acquire_nerdctl_download_lock() {
+  local lock_dir="${downloads_dir}/.nerdctl-download.lock"
+  for _ in $(seq 1 120); do
+    if mkdir "${lock_dir}" 2>/dev/null; then
+      printf '%s\n' "${lock_dir}"
+      return 0
+    fi
+    sleep 1
+  done
+  echo "error: timed out waiting for Linux sandbox runtime download lock" >&2
+  exit 1
+}
+
 download_nerdctl() {
   local arch="$1"
   local tarball
@@ -160,16 +173,22 @@ download_nerdctl() {
   local url="https://github.com/containerd/nerdctl/releases/download/${nerdctl_version}/${tarball}"
   local dest
   dest="$(staged_nerdctl_archive_path "${arch}")"
+  local lock_dir
+  lock_dir="$(acquire_nerdctl_download_lock)"
+  trap 'rm -rf "${lock_dir}"' RETURN
   if verify_nerdctl_checksum "${arch}" "${dest}"; then
     return 0
   fi
   rm -f "${dest}"
-  curl -fsSL "${url}" -o "${dest}"
-  if ! verify_nerdctl_checksum "${arch}" "${dest}"; then
-    rm -f "${dest}"
-    echo "error: staged nerdctl archive failed checksum verification" >&2
+  local partial="${dest}.partial.$$"
+  rm -f "${partial}"
+  curl -fsSL "${url}" -o "${partial}"
+  if ! verify_nerdctl_checksum "${arch}" "${partial}"; then
+    rm -f "${partial}"
+    echo "error: staged Linux sandbox runtime archive failed checksum verification" >&2
     exit 1
   fi
+  mv -f "${partial}" "${dest}"
 }
 
 stage_apt_debs() {
@@ -690,7 +709,12 @@ emit_current_status() {
       write_status "failed" true "Installed Linux sandbox runtime is not healthy." "${distro}"
     fi
   elif [[ -f "${staged_archive_path}" ]]; then
-    write_status "downloaded_not_activated" true "" "${distro}"
+    if verify_nerdctl_checksum "${arch}" "${staged_archive_path}"; then
+      write_status "downloaded_not_activated" true "" "${distro}"
+    else
+      rm -f "${staged_archive_path}"
+      write_status "failed" true "Staged Linux sandbox runtime download failed verification." "${distro}"
+    fi
   else
     write_status "download_pending" true "" "${distro}"
   fi

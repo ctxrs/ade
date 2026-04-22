@@ -181,6 +181,7 @@ impl AppState {
                 buffers: BufferStore::default(),
                 ask_user_question,
                 shutdown_tx,
+                update_drain: Arc::new(Mutex::new(None)),
             },
             sessions: SessionRuntime {
                 session_head_cache: Mutex::new(HashMap::new()),

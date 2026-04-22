@@ -15,6 +15,14 @@ pub struct CoreState {
     pub buffers: BufferStore,
     pub ask_user_question: Arc<AskUserQuestionBroker>,
     pub shutdown_tx: broadcast::Sender<()>,
+    pub update_drain: Arc<Mutex<Option<UpdateDrainState>>>,
+}
+
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct UpdateDrainState {
+    pub reason: String,
+    pub owner: String,
+    pub acquired_at_ms: u64,
 }
 
 pub struct SessionRuntime {

@@ -13,7 +13,7 @@ fn daemon_health_clients() -> &'static DaemonHealthClientCache {
     DAEMON_HEALTH_CLIENTS.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize)]
 pub(crate) struct DaemonHealthCompatibility {
     #[serde(default)]
     pub(super) desktop_exact_version: String,
@@ -21,9 +21,11 @@ pub(crate) struct DaemonHealthCompatibility {
     pub(super) desktop_build_id: String,
     #[serde(default)]
     pub(super) desktop_dev_instance_id: String,
+    #[serde(default)]
+    pub(super) protocol_compatibility_token: String,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize)]
 pub(crate) struct DaemonHealthSummary {
     #[serde(default)]
     pub(crate) pid: u32,
@@ -31,6 +33,19 @@ pub(crate) struct DaemonHealthSummary {
     pub(super) data_root: String,
     #[serde(default)]
     pub(super) compatibility: DaemonHealthCompatibility,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DaemonCompatibilityState {
+    Exact,
+    CompatibleMismatch,
+    IncompatibleMismatch,
+}
+
+impl DaemonHealthCompatibility {
+    pub(crate) fn protocol_token(&self) -> &str {
+        self.protocol_compatibility_token.trim()
+    }
 }
 
 pub(crate) fn normalize_daemon_pid(pid: u32) -> Option<u32> {
@@ -396,10 +411,32 @@ pub(crate) fn local_daemon_health_matches_expected(
     if expected_compatibility_token.is_empty() {
         return false;
     }
-    if health.compatibility.desktop_dev_instance_id.trim() != expected_compatibility_token {
+    if health.compatibility.protocol_token() != expected_compatibility_token {
         return false;
     }
     true
+}
+
+pub(crate) fn classify_daemon_compatibility(
+    health: &DaemonHealthSummary,
+    expected_identity: &DesktopBuildIdentity,
+) -> DaemonCompatibilityState {
+    let expected_token = expected_identity.compatibility_token.trim();
+    if expected_token.is_empty() {
+        return DaemonCompatibilityState::IncompatibleMismatch;
+    }
+    if health.compatibility.protocol_token() != expected_token {
+        return DaemonCompatibilityState::IncompatibleMismatch;
+    }
+    let version_matches =
+        health.compatibility.desktop_exact_version.trim() == expected_identity.exact_version.trim();
+    let build_matches =
+        health.compatibility.desktop_build_id.trim() == expected_identity.build_id.trim();
+    if version_matches && build_matches {
+        DaemonCompatibilityState::Exact
+    } else {
+        DaemonCompatibilityState::CompatibleMismatch
+    }
 }
 
 fn display_nonempty(value: &str) -> String {
@@ -540,6 +577,7 @@ mod tests {
                 desktop_exact_version: "1.2.3".to_string(),
                 desktop_build_id: "build-a".to_string(),
                 desktop_dev_instance_id: "dev-wt-a".to_string(),
+                protocol_compatibility_token: String::new(),
             },
         };
         assert!(local_daemon_health_matches_expected(
@@ -570,6 +608,7 @@ mod tests {
                 desktop_exact_version: "1.2.3".to_string(),
                 desktop_build_id: "build-a".to_string(),
                 desktop_dev_instance_id: "dev-wt-a".to_string(),
+                protocol_compatibility_token: String::new(),
             },
         };
         assert!(!local_daemon_health_matches_expected(
@@ -599,6 +638,63 @@ mod tests {
     }
 
     #[test]
+    fn daemon_compatibility_classification_distinguishes_exact_compatible_and_incompatible() {
+        let expected = expected_identity("1.2.3", "build-a", "token-a");
+        let health = DaemonHealthSummary {
+            pid: 42,
+            data_root: "/tmp/ctx".to_string(),
+            compatibility: DaemonHealthCompatibility {
+                desktop_exact_version: "1.2.3".to_string(),
+                desktop_build_id: "build-a".to_string(),
+                desktop_dev_instance_id: "legacy-token".to_string(),
+                protocol_compatibility_token: "token-a".to_string(),
+            },
+        };
+        assert_eq!(
+            classify_daemon_compatibility(&health, &expected),
+            DaemonCompatibilityState::Exact
+        );
+
+        let compatible = DaemonHealthSummary {
+            compatibility: DaemonHealthCompatibility {
+                desktop_exact_version: "1.2.4".to_string(),
+                desktop_build_id: "build-b".to_string(),
+                ..health.compatibility.clone()
+            },
+            ..health.clone()
+        };
+        assert_eq!(
+            classify_daemon_compatibility(&compatible, &expected),
+            DaemonCompatibilityState::CompatibleMismatch
+        );
+
+        let incompatible = DaemonHealthSummary {
+            compatibility: DaemonHealthCompatibility {
+                protocol_compatibility_token: "token-b".to_string(),
+                ..compatible.compatibility.clone()
+            },
+            ..compatible.clone()
+        };
+        assert_eq!(
+            classify_daemon_compatibility(&incompatible, &expected),
+            DaemonCompatibilityState::IncompatibleMismatch
+        );
+
+        let missing_protocol_token = DaemonHealthSummary {
+            compatibility: DaemonHealthCompatibility {
+                protocol_compatibility_token: String::new(),
+                desktop_dev_instance_id: "token-a".to_string(),
+                ..compatible.compatibility
+            },
+            ..compatible
+        };
+        assert_eq!(
+            classify_daemon_compatibility(&missing_protocol_token, &expected),
+            DaemonCompatibilityState::IncompatibleMismatch
+        );
+    }
+
+    #[test]
     fn spawned_daemon_incompatibility_message_reports_expected_and_actual_values() {
         let expected_dir = std::env::temp_dir().join(format!(
             "ctx-daemon-spawn-incompatible-{}",
@@ -611,6 +707,7 @@ mod tests {
                 desktop_exact_version: "0.1.1".to_string(),
                 desktop_build_id: "build-other".to_string(),
                 desktop_dev_instance_id: "dev-other".to_string(),
+                protocol_compatibility_token: String::new(),
             },
         };
 

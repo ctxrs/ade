@@ -5,6 +5,7 @@ struct ConnectedRemoteDaemon {
     token: String,
     tunnel: TunnelHandle,
     runtime: SshRuntimeMetadata,
+    platform: RemoteLinuxPlatform,
 }
 
 struct BootstrapPlanContext {
@@ -114,6 +115,7 @@ fn prepare_initial_connect(
                     ssh_password_once: target.password_once.clone(),
                     admin_password_once: None,
                 },
+                platform,
             }))
         }
         RemoteBootstrapPlan::RefuseBecauseStartRemoteDisabled => {
@@ -165,12 +167,15 @@ fn execute_bootstrap_plan(
         plan.platform.arch,
         &channel,
     )?;
+    let release_base_url = bootstrap_download_base_url();
     start_remote_daemon_over_ssh(
         &plan.target.host,
         plan.target.user.as_deref(),
         plan.target.remote_port,
         plan.target.remote_data_dir.as_deref(),
         MANAGED_REMOTE_CTX_BIN,
+        Some(&channel),
+        Some(&release_base_url),
     )?;
 
     set_job_phase(job_id.as_deref(), ConnectJobPhase::OpeningTunnel);
@@ -204,7 +209,88 @@ fn execute_bootstrap_plan(
             ssh_password_once: plan.target.password_once.clone(),
             admin_password_once: None,
         },
+        platform: plan.platform,
     })
+}
+
+fn update_connected_remote_if_needed(
+    app: &tauri::AppHandle,
+    target: &SshConnectTarget,
+    mut connected: ConnectedRemoteDaemon,
+    channel: &str,
+    expected_identity: &DesktopBuildIdentity,
+) -> Result<ConnectedRemoteDaemon> {
+    let health = daemon_health(&connected.base_url)
+        .context("reading remote daemon health for compatibility classification")?;
+    match classify_daemon_compatibility(&health, expected_identity) {
+        DaemonCompatibilityState::Exact => Ok(connected),
+        DaemonCompatibilityState::CompatibleMismatch => {
+            if connected.runtime.active_ctx_bin.as_deref() != Some(MANAGED_REMOTE_CTX_BIN) {
+                anyhow::bail!(
+                    "remote daemon is compatible but was not started from the managed ctx binary; reconnect with remote start enabled to update it"
+                );
+            }
+            let drained = begin_remote_update_drain(
+                &connected.base_url,
+                &connected.token,
+                "desktop_connect",
+            )?;
+            if !drained {
+                return Ok(connected);
+            }
+            let release_base_url = bootstrap_download_base_url();
+            let update_result = run_remote_daemon_self_update(
+                app,
+                &target.host,
+                target.user.as_deref(),
+                target.remote_port,
+                target.remote_data_dir.as_deref(),
+                MANAGED_REMOTE_CTX_BIN,
+                connected.platform.arch,
+                channel,
+                &connected.base_url,
+                &release_base_url,
+            );
+            if let Err(err) = update_result {
+                release_remote_update_drain(&connected.base_url, &connected.token);
+                return Err(err);
+            }
+            let auth = read_remote_daemon_auth_with_retry(
+                &target.host,
+                target.user.as_deref(),
+                target.remote_data_dir.as_deref(),
+            )?;
+            connected.token = auth.token;
+            Ok(connected)
+        }
+        DaemonCompatibilityState::IncompatibleMismatch => {
+            if connected.runtime.active_ctx_bin.as_deref() != Some(MANAGED_REMOTE_CTX_BIN) {
+                anyhow::bail!(
+                    "remote daemon is incompatible and was not started from the managed ctx binary; restart remote daemon with managed remote start enabled"
+                );
+            }
+            let release_base_url = bootstrap_download_base_url();
+            run_remote_daemon_self_update(
+                app,
+                &target.host,
+                target.user.as_deref(),
+                target.remote_port,
+                target.remote_data_dir.as_deref(),
+                MANAGED_REMOTE_CTX_BIN,
+                connected.platform.arch,
+                channel,
+                &connected.base_url,
+                &release_base_url,
+            )?;
+            let auth = read_remote_daemon_auth_with_retry(
+                &target.host,
+                target.user.as_deref(),
+                target.remote_data_dir.as_deref(),
+            )?;
+            connected.token = auth.token;
+            Ok(connected)
+        }
+    }
 }
 
 async fn desktop_connect_ssh_inner(
@@ -232,7 +318,27 @@ async fn desktop_connect_ssh_inner(
     .map_err(|e| format!("failed to reach remote daemon: {e:#}"))?;
 
     let connected = match prepared {
-        InitialConnectOutcome::Connected(connected) => connected,
+        InitialConnectOutcome::Connected(connected) => {
+            let expected_identity = load_desktop_build_identity(&app)
+                .map_err(|err| format!("failed to load desktop identity: {err:#}"))?;
+            tauri::async_runtime::spawn_blocking({
+                let app = app.clone();
+                let target = target.clone();
+                let channel = channel.clone();
+                move || {
+                    update_connected_remote_if_needed(
+                        &app,
+                        &target,
+                        connected,
+                        &channel,
+                        &expected_identity,
+                    )
+                }
+            })
+            .await
+            .map_err(|e| format!("failed to update remote daemon: {e}"))?
+            .map_err(|e| format!("failed to update remote daemon: {e:#}"))?
+        }
         InitialConnectOutcome::Planned(plan) => {
             desktop_updater::ensure_desktop_app_current_for_remote_bootstrap(&app, &channel)
                 .await?;

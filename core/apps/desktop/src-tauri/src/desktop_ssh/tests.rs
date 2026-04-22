@@ -81,20 +81,23 @@ fn remote_daemon_exec_command_injects_system_sandbox_cli_env_only_when_ready() {
         44199,
         "~/.ctx",
         "~/.ctx/bundles",
+        Some("canary"),
+        Some("https://updates.example/functions/v1"),
     )
     .expect("render remote daemon exec command");
-    assert!(
-        command.contains(
-            "CTX_BUNDLE_DIR=\"$HOME/.ctx/bundles\" \"$HOME/.ctx/bin/ctx\" serve --bind 127.0.0.1:44199 --data-dir \"$HOME/.ctx\""
-        ),
-        "unexpected command: {command}"
-    );
+    assert!(command.contains("CTX_BUNDLE_DIR=\"$HOME/.ctx/bundles\""));
+    assert!(command
+        .contains("\"$HOME/.ctx/bin/ctx\" serve --bind 127.0.0.1:44199 --data-dir \"$HOME/.ctx\""));
     assert!(
         command.contains("CTX_HARNESS_SANDBOX_CLI_PATH"),
         "remote daemon start command should inject a system sandbox CLI path when the managed runtime is healthy: {command}"
     );
     assert!(
-        command.contains("/usr/local/bin/ctx-rootful-nerdctl info >/dev/null 2>&1"),
+        command.contains("CTX_MANAGED_DAEMON_AUTO_UPDATE=1 CTX_DAEMON_UPDATE_CHANNEL='canary' CTX_DAEMON_UPDATE_BASE_URL='https://updates.example/functions/v1'"),
+        "remote daemon start command should persist release source for daemon-owned update checks: {command}"
+    );
+    assert!(
+        command.contains("'/usr/local/bin/ctx-rootful-nerdctl' info >/dev/null 2>&1"),
         "remote daemon start command should guard sandbox env behind a runtime health check: {command}"
     );
     assert!(
@@ -314,8 +317,20 @@ fn remote_path_helpers_round_trip() {
 
 #[test]
 fn update_channel_validation() {
-    assert_eq!(normalize_update_channel(None).expect("default"), "stable");
-    assert!(normalize_update_channel(Some("bad channel")).is_err());
+    assert_eq!(
+        super::model::normalize_update_channel_with_env(None, None).expect("default"),
+        "stable"
+    );
+    assert_eq!(
+        super::model::normalize_update_channel_with_env(None, Some("canary")).expect("env"),
+        "canary"
+    );
+    assert_eq!(
+        super::model::normalize_update_channel_with_env(Some("beta"), Some("canary"))
+            .expect("explicit"),
+        "beta"
+    );
+    assert!(super::model::normalize_update_channel_with_env(Some("bad channel"), None).is_err());
 }
 
 #[test]

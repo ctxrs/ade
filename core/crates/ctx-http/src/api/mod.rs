@@ -289,6 +289,9 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
         .route("/api/logs/open", post(open_logs_folder))
         .route("/api/desktop/log", post(append_desktop_log))
         .route("/api/updates/check", get(check_updates))
+        .route("/api/updates/activity", get(update_activity))
+        .route("/api/updates/drain/begin", post(begin_update_drain))
+        .route("/api/updates/drain/release", post(release_update_drain))
         .route(
             "/api/updates/appimage/download",
             post(download_appimage_update),
@@ -911,6 +914,7 @@ struct HealthCompatibility {
     desktop_exact_version: String,
     desktop_build_id: String,
     desktop_dev_instance_id: String,
+    protocol_compatibility_token: String,
     mobile_api_min: i64,
     mobile_api_max: i64,
 }

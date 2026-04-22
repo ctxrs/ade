@@ -1025,13 +1025,18 @@ async fn managed_avf_linux_runtime_downloads_archive_and_helpers() {
 
     let archive_path = runtime_assets::managed_avf_linux_archive_path(temp.path(), &source);
     assert!(archive_path.exists());
+    let ready_marker = tokio::fs::read_to_string(
+        runtime_assets::managed_avf_linux_runtime_ready_marker_path(&runtime.runtime_root),
+    )
+    .await
+    .unwrap();
+    let ready_json: serde_json::Value = serde_json::from_str(&ready_marker).unwrap();
+    assert_eq!(ready_json["runtime_id"], "avf-linux-guest");
+    assert_eq!(ready_json["source_version"], "managed-runtime");
+    assert_eq!(ready_json["source_sha256"], source.sha256);
     assert_eq!(
-        tokio::fs::read_to_string(runtime_assets::managed_avf_linux_runtime_ready_marker_path(
-            &runtime.runtime_root
-        ))
-        .await
-        .unwrap(),
-        "ready"
+        ready_json["source_identity_sha256"],
+        runtime_assets::managed_avf_linux_runtime_source_identity(&source)
     );
     assert!(runtime_assets::avf_linux_runtime_is_ready(&runtime));
     assert_eq!(

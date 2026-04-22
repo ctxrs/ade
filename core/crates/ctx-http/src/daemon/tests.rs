@@ -1144,6 +1144,12 @@ async fn reconcile_running_turns_leaves_queued_turns_queued() {
     };
     store.insert_session_turn(running_turn).await.unwrap();
 
+    let activity = daemon_turn_activity_summary(&state).await.unwrap();
+    assert!(!activity.idle);
+    assert_eq!(activity.active_turn_count, 2);
+    assert_eq!(activity.queued_turn_count, 1);
+    assert_eq!(activity.running_turn_count, 1);
+
     reconcile_running_turns(&state).await.unwrap();
 
     let queued_after = store
@@ -1167,4 +1173,38 @@ async fn reconcile_running_turns_leaves_queued_turns_queued() {
         SessionTurnStatus::Interrupted,
         "running turn must be interrupted after reconcile_running_turns"
     );
+
+    let activity_after = daemon_turn_activity_summary(&state).await.unwrap();
+    assert!(!activity_after.idle);
+    assert_eq!(activity_after.active_turn_count, 1);
+    assert_eq!(activity_after.queued_turn_count, 1);
+    assert_eq!(activity_after.running_turn_count, 0);
+}
+
+#[tokio::test]
+async fn update_drain_blocks_new_work_until_released() {
+    let temp = tempdir().unwrap();
+    let stores = StoreManager::open(temp.path()).await.unwrap();
+    let state = Arc::new(AppState::new(
+        temp.path().to_path_buf(),
+        stores,
+        HashMap::new(),
+        "http://localhost".to_string(),
+        None,
+    ));
+
+    assert!(state
+        .acquire_update_drain("test_update", "unit_test")
+        .await
+        .is_some());
+    let err = state
+        .reject_if_update_draining()
+        .await
+        .expect_err("drain should reject new work");
+    assert!(err.to_string().contains("daemon update is in progress"));
+    assert!(state.release_update_drain().await);
+    state
+        .reject_if_update_draining()
+        .await
+        .expect("released drain should allow work");
 }

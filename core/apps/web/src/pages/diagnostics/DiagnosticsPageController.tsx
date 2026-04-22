@@ -310,7 +310,7 @@ export default function DiagnosticsPage() {
     setDaemonUpdateBusy(true);
     try {
       if (kind === "ssh") {
-        const resp = await desktopUpdateRemoteDaemon("stable");
+        const resp = await desktopUpdateRemoteDaemon();
         setNotice(resp.message);
       } else {
         await desktopRestartLocalDaemon();

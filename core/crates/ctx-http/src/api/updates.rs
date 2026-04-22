@@ -88,6 +88,133 @@ pub(super) async fn check_updates(
     }))
 }
 
+#[derive(Debug, Serialize)]
+pub(super) struct UpdateActivityResp {
+    activity: crate::daemon::DaemonTurnActivitySummary,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    managed_daemon_auto_update: Option<crate::updates::ManagedDaemonAutoUpdateStatus>,
+}
+
+pub(super) async fn update_activity(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<UpdateActivityResp>, (StatusCode, Json<ApiErrorResp>)> {
+    let activity = crate::daemon::daemon_turn_activity_summary(&state)
+        .await
+        .map_err(|err| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&err.to_string()),
+                }),
+            )
+        })?;
+    let managed_daemon_auto_update =
+        crate::updates::managed_daemon_auto_update_status_snapshot(&state.core.data_root).await;
+    Ok(Json(UpdateActivityResp {
+        activity,
+        managed_daemon_auto_update,
+    }))
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct BeginUpdateDrainReq {
+    confirm: bool,
+    #[serde(default)]
+    reason: Option<String>,
+    #[serde(default)]
+    owner: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub(super) struct BeginUpdateDrainResp {
+    acquired: bool,
+    activity: crate::daemon::DaemonTurnActivitySummary,
+}
+
+pub(super) async fn begin_update_drain(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<BeginUpdateDrainReq>,
+) -> Result<Json<BeginUpdateDrainResp>, (StatusCode, Json<ApiErrorResp>)> {
+    if !req.confirm {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "confirm required".to_string(),
+            }),
+        ));
+    }
+    let reason = req
+        .reason
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "daemon_update".to_string());
+    let owner = req
+        .owner
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "unknown".to_string());
+    if state.acquire_update_drain(reason, owner).await.is_none() {
+        return Err((
+            StatusCode::CONFLICT,
+            Json(ApiErrorResp {
+                error: "daemon update drain already active".to_string(),
+            }),
+        ));
+    }
+    let activity = crate::daemon::daemon_turn_activity_summary(&state)
+        .await
+        .map_err(|err| {
+            let state = state.clone();
+            tokio::spawn(async move {
+                let _ = state.release_update_drain().await;
+            });
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&err.to_string()),
+                }),
+            )
+        })?;
+    if !activity.idle {
+        let _ = state.release_update_drain().await;
+        return Err((
+            StatusCode::CONFLICT,
+            Json(ApiErrorResp {
+                error: "daemon has queued or running turns; update drain was not acquired"
+                    .to_string(),
+            }),
+        ));
+    }
+    Ok(Json(BeginUpdateDrainResp {
+        acquired: true,
+        activity,
+    }))
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct ReleaseUpdateDrainReq {
+    confirm: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub(super) struct ReleaseUpdateDrainResp {
+    released: bool,
+}
+
+pub(super) async fn release_update_drain(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<ReleaseUpdateDrainReq>,
+) -> Result<Json<ReleaseUpdateDrainResp>, (StatusCode, Json<ApiErrorResp>)> {
+    if !req.confirm {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "confirm required".to_string(),
+            }),
+        ));
+    }
+    let released = state.release_update_drain().await;
+    Ok(Json(ReleaseUpdateDrainResp { released }))
+}
+
 #[derive(Debug, Deserialize)]
 pub(super) struct DownloadAppImageReq {
     #[serde(default)]

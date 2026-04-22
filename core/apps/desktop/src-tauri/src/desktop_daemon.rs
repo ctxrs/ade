@@ -32,16 +32,17 @@ pub(super) use auth::{
 pub(super) use commands::{desktop_daemon_request, desktop_upload_blob};
 pub(super) use ctx_desktop_ipc::{DesktopDaemonRequest, DesktopHttpResponse};
 pub(super) use health::{
-    daemon_health, existing_local_daemon_matches, existing_local_daemon_matches_or_absent,
-    local_daemon_health_matches_expected, normalize_daemon_pid, probe_daemon_health,
-    probe_daemon_health_with_retry, probe_local_daemon_health_with_retry,
-    reclaim_incompatible_local_daemon, should_reclaim_incompatible_local_daemon,
-    spawned_local_daemon_incompatibility_message, terminate_pid, wait_for_daemon_reclaim,
+    classify_daemon_compatibility, daemon_health, existing_local_daemon_matches,
+    existing_local_daemon_matches_or_absent, local_daemon_health_matches_expected,
+    normalize_daemon_pid, probe_daemon_health, probe_daemon_health_with_retry,
+    probe_local_daemon_health_with_retry, reclaim_incompatible_local_daemon,
+    should_reclaim_incompatible_local_daemon, spawned_local_daemon_incompatibility_message,
+    terminate_pid, wait_for_daemon_reclaim, DaemonCompatibilityState,
 };
 pub(super) use launch::{spawn_and_validate_local_daemon, try_kill_child, SpawnedLocalDaemonReady};
 pub(super) use login_relay::desktop_start_codex_login_relay;
-pub(crate) use resources::desktop_bundle_dir;
 pub(super) use resources::daemon_data_dir;
+pub(crate) use resources::desktop_bundle_dir;
 pub(super) use systemd::{stop_systemd_scope, systemd_scope_for_local_daemon_url};
 
 pub(super) fn enforce_desktop_parity_bundle_preflight(app: &tauri::AppHandle) -> Result<()> {

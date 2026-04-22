@@ -31,6 +31,57 @@ pub(super) fn resolve_remote_update_target_ctx_bin(
     }
 }
 
+pub(super) fn begin_remote_update_drain(
+    daemon_base_url: &str,
+    token: &str,
+    owner: &str,
+) -> Result<bool> {
+    let url = format!(
+        "{}/api/updates/drain/begin",
+        daemon_base_url.trim_end_matches('/')
+    );
+    let res = reqwest::blocking::Client::new()
+        .post(url)
+        .bearer_auth(token)
+        .json(&serde_json::json!({
+            "confirm": true,
+            "reason": "remote_daemon_update",
+            "owner": owner,
+        }))
+        .send()
+        .context("requesting remote daemon update drain")?;
+    if res.status() == reqwest::StatusCode::CONFLICT {
+        return Ok(false);
+    }
+    if !res.status().is_success() {
+        let status = res.status();
+        let body = res.text().unwrap_or_default();
+        anyhow::bail!("remote daemon update drain failed ({status}): {body}");
+    }
+    Ok(true)
+}
+
+pub(super) fn release_remote_update_drain(daemon_base_url: &str, token: &str) {
+    let url = format!(
+        "{}/api/updates/drain/release",
+        daemon_base_url.trim_end_matches('/')
+    );
+    let _ = reqwest::blocking::Client::new()
+        .post(url)
+        .bearer_auth(token)
+        .json(&serde_json::json!({ "confirm": true }))
+        .send();
+}
+
+fn remote_self_update_cmd(ctx_bin: &str, channel: &str, release_base_url: &str) -> String {
+    format!(
+        "if [ -x {ctx_bin} ]; then {ctx_bin} self-update --yes --channel {channel} --base-url {release_base_url}; else echo 'ctx not executable at configured remote path' >&2; exit 127; fi",
+        ctx_bin = remote_path_expr(ctx_bin),
+        channel = shell_escape(channel),
+        release_base_url = shell_escape(release_base_url),
+    )
+}
+
 #[tauri::command]
 pub(crate) async fn desktop_update_remote_daemon(
     app: tauri::AppHandle,
@@ -64,10 +115,11 @@ pub(crate) fn update_current_remote_daemon(
     let remote_data_dir = target.remote_data_dir;
     let channel_for_update = channel.clone();
     let remote_platform = probe_remote_linux_platform(&host, user.as_deref())?;
-    let base_url = state
+    let daemon_base_url = state
         .info()
         .base_url
         .ok_or_else(|| anyhow!("current SSH connection is missing a base_url"))?;
+    let release_base_url = bootstrap_download_base_url();
     let recorded_active_ctx_bin = target
         .runtime
         .active_ctx_bin
@@ -112,7 +164,8 @@ pub(crate) fn update_current_remote_daemon(
         &active_ctx_bin,
         remote_platform.arch,
         &channel_for_update,
-        &base_url,
+        &daemon_base_url,
+        &release_base_url,
     )?;
     let auth =
         read_remote_daemon_auth_with_retry(&host, user.as_deref(), remote_data_dir.as_deref())?;
@@ -133,7 +186,7 @@ pub(crate) fn update_current_remote_daemon(
     })
 }
 
-fn run_remote_daemon_self_update(
+pub(super) fn run_remote_daemon_self_update(
     app: &tauri::AppHandle,
     host: &str,
     user: Option<&str>,
@@ -142,18 +195,16 @@ fn run_remote_daemon_self_update(
     remote_ctx_bin: &str,
     remote_arch: &str,
     channel: &str,
-    base_url: &str,
+    daemon_base_url: &str,
+    release_base_url: &str,
 ) -> Result<()> {
     let ctx_bin = validate_remote_ctx_bin(remote_ctx_bin)?;
     let backup_ctx_bin = remote_update_backup_ctx_bin(&ctx_bin)?;
     backup_remote_ctx_bin_over_ssh(host, user, &ctx_bin, &backup_ctx_bin)
         .context("backing up remote daemon binary before self-update")?;
-    let update_cmd = format!(
-        "if [ -x {ctx_bin} ]; then {ctx_bin} self-update --yes --channel {channel}; else echo 'ctx not executable at configured remote path' >&2; exit 127; fi",
-        ctx_bin = remote_path_expr(&ctx_bin),
-        channel = shell_escape(channel),
-    );
+    let update_cmd = remote_self_update_cmd(&ctx_bin, channel, release_base_url);
     let mut daemon_stopped = false;
+    let mut bundle_synced = false;
     let update_result = (|| {
         let output =
             run_remote_ssh_shell(host, user, &update_cmd).context("running remote self-update")?;
@@ -173,12 +224,21 @@ fn run_remote_daemon_self_update(
             channel,
         )
         .context("syncing remote bundle metadata before daemon restart")?;
+        bundle_synced = true;
         stop_remote_daemon_over_ssh(host, user, remote_port, remote_data_dir, &ctx_bin)
             .context("stopping remote daemon after self-update")?;
         daemon_stopped = true;
-        start_remote_daemon_over_ssh(host, user, remote_port, remote_data_dir, &ctx_bin)
-            .context("starting remote daemon after self-update")?;
-        wait_for_remote_daemon_health(base_url)
+        start_remote_daemon_over_ssh(
+            host,
+            user,
+            remote_port,
+            remote_data_dir,
+            &ctx_bin,
+            Some(channel),
+            Some(release_base_url),
+        )
+        .context("starting remote daemon after self-update")?;
+        wait_for_remote_daemon_health(daemon_base_url)
             .context("waiting for restarted remote daemon health")?;
         Ok(())
     })();
@@ -187,6 +247,9 @@ fn run_remote_daemon_self_update(
         Ok(()) => {
             if let Err(err) = cleanup_remote_update_backup_over_ssh(host, user, &backup_ctx_bin) {
                 eprintln!("failed to remove remote update backup {backup_ctx_bin}: {err:#}");
+            }
+            if let Err(err) = cleanup_remote_bundle_backup_over_ssh(host, user, remote_data_dir) {
+                eprintln!("failed to remove remote bundle update backup: {err:#}");
             }
             Ok(())
         }
@@ -198,15 +261,25 @@ fn run_remote_daemon_self_update(
                 remote_data_dir,
                 &ctx_bin,
                 &backup_ctx_bin,
-                base_url,
+                daemon_base_url,
+                bundle_synced,
             ) {
                 Ok(()) => Err(anyhow!(
-                    "{err:#}; restored the previous remote daemon binary and restarted it"
+                    "{err:#}; restored the previous remote daemon binary/bundles and restarted it"
                 )),
                 Err(rollback_err) => Err(anyhow!("{err:#}; rollback failed: {rollback_err:#}")),
             }
         }
         Err(err) => {
+            if bundle_synced {
+                if let Err(restore_err) =
+                    restore_remote_bundle_backup_over_ssh(host, user, remote_data_dir)
+                {
+                    return Err(anyhow!(
+                        "{err:#}; failed to restore pre-update remote bundle metadata while the old daemon was still running: {restore_err:#}"
+                    ));
+                }
+            }
             if let Err(restore_err) =
                 restore_remote_ctx_bin_over_ssh(host, user, &ctx_bin, &backup_ctx_bin)
             {
@@ -361,12 +434,25 @@ fn rollback_remote_daemon_update_over_ssh(
     remote_ctx_bin: &str,
     backup_ctx_bin: &str,
     base_url: &str,
+    bundle_synced: bool,
 ) -> Result<()> {
     let _ = stop_remote_daemon_over_ssh(host, user, remote_port, remote_data_dir, remote_ctx_bin);
     restore_remote_ctx_bin_over_ssh(host, user, remote_ctx_bin, backup_ctx_bin)
         .context("restoring pre-update remote daemon binary")?;
-    start_remote_daemon_over_ssh(host, user, remote_port, remote_data_dir, remote_ctx_bin)
-        .context("restarting previous remote daemon binary after rollback")?;
+    if bundle_synced {
+        restore_remote_bundle_backup_over_ssh(host, user, remote_data_dir)
+            .context("restoring pre-update remote bundle metadata")?;
+    }
+    start_remote_daemon_over_ssh(
+        host,
+        user,
+        remote_port,
+        remote_data_dir,
+        remote_ctx_bin,
+        None,
+        None,
+    )
+    .context("restarting previous remote daemon binary after rollback")?;
     wait_for_remote_daemon_health(base_url)
         .context("waiting for rolled back remote daemon health")?;
     if let Err(err) = cleanup_remote_update_backup_over_ssh(host, user, backup_ctx_bin) {
@@ -389,4 +475,20 @@ fn wait_for_remote_daemon_health(base_url: &str) -> Result<()> {
         }
     }
     Err(last_err.unwrap_or_else(|| anyhow!("requesting /api/health failed")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn remote_self_update_command_threads_channel_and_release_base_url() {
+        let cmd = remote_self_update_cmd(
+            "~/.ctx/bin/ctx",
+            "canary",
+            "https://updates.example/functions/v1",
+        );
+        assert!(cmd.contains("self-update --yes --channel 'canary' --base-url 'https://updates.example/functions/v1'"));
+        assert!(cmd.contains("\"$HOME/.ctx/bin/ctx\""));
+    }
 }

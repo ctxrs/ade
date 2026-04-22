@@ -95,9 +95,18 @@ pub(super) fn normalize_optional_text(value: Option<&str>) -> Option<String> {
 }
 
 pub(crate) fn normalize_update_channel(raw: Option<&str>) -> Result<String, String> {
+    let env_channel = std::env::var("CTX_DESKTOP_CHANNEL").ok();
+    normalize_update_channel_with_env(raw, env_channel.as_deref())
+}
+
+pub(super) fn normalize_update_channel_with_env(
+    raw: Option<&str>,
+    env_channel: Option<&str>,
+) -> Result<String, String> {
     let channel = raw
         .map(str::trim)
         .filter(|v| !v.is_empty())
+        .or_else(|| env_channel.map(str::trim).filter(|v| !v.is_empty()))
         .unwrap_or("stable");
     let valid = channel
         .chars()

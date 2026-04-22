@@ -164,7 +164,7 @@ describe("DaemonAvailabilityOverlay", () => {
     expect(await screen.findByRole("button", { name: "Update remote daemon" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Update remote daemon" }));
     await waitFor(() => {
-      expect(vi.mocked(desktopUpdateRemoteDaemon)).toHaveBeenCalledWith("stable");
+      expect(vi.mocked(desktopUpdateRemoteDaemon)).toHaveBeenCalledWith();
     });
   });
 

@@ -856,6 +856,17 @@ mod tests {
     }
 
     #[test]
+    fn bootstrap_script_promotes_runtime_archive_only_after_checksum() {
+        assert!(BOOTSTRAP_SCRIPT.contains("acquire_nerdctl_download_lock"));
+        assert!(BOOTSTRAP_SCRIPT.contains("local partial=\"${dest}.partial.$$\""));
+        assert!(BOOTSTRAP_SCRIPT.contains("verify_nerdctl_checksum \"${arch}\" \"${partial}\""));
+        assert!(BOOTSTRAP_SCRIPT.contains("mv -f \"${partial}\" \"${dest}\""));
+        assert!(
+            BOOTSTRAP_SCRIPT.contains("Staged Linux sandbox runtime download failed verification.")
+        );
+    }
+
+    #[test]
     fn product_message_for_failed_on_ubuntu_is_generic() {
         let platform = LinuxSandboxPlatform::UbuntuDebian {
             distro: "Ubuntu".to_string(),

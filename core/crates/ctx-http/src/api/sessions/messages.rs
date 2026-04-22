@@ -367,6 +367,15 @@ pub(crate) async fn post_message(
         .map_err(|_| api_error(StatusCode::INTERNAL_SERVER_ERROR, "Failed to load session."))?
         .ok_or_else(|| api_error(StatusCode::NOT_FOUND, "Session not found."))?;
     state.remember_session_meta(&session).await;
+    if let Some(drain) = state.update_drain_snapshot().await {
+        return Err(api_error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            format!(
+                "Daemon update is in progress; retry after the daemon restarts. ({})",
+                drain.reason
+            ),
+        ));
+    }
 
     let requested_delivery = req.delivery.clone();
     let delivery = match requested_delivery.clone() {

@@ -1,11 +1,28 @@
 use super::*;
 use ctx_bundled_assets as bundled_assets;
+use sha2::Digest;
+use std::collections::BTreeMap;
 #[cfg(any(test, feature = "test-support"))]
 use std::sync::Mutex as StdMutex;
 #[cfg(any(test, feature = "test-support"))]
 use std::sync::MutexGuard as StdMutexGuard;
 use std::sync::OnceLock;
 use std::time::Instant;
+
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
+struct ManagedAvfLinuxRuntimeReadyMetadata {
+    schema_version: u32,
+    runtime_id: String,
+    source_identity_sha256: String,
+    source_version: String,
+    source_sha256: String,
+    helper_sha256: BTreeMap<String, String>,
+    installed_at_ms: u64,
+}
+
+impl ManagedAvfLinuxRuntimeReadyMetadata {
+    const SCHEMA_VERSION: u32 = 1;
+}
 
 fn emit_runtime_install_info(observer: Option<&dyn HarnessSetupObserver>, message: &str) {
     tracing::info!(component = "avf_runtime_install", "{message}");
@@ -199,11 +216,36 @@ pub(super) fn managed_avf_linux_archive_path(
         ))
 }
 
+pub(super) fn managed_avf_linux_runtime_source_identity(
+    source: &bundled_assets::ManagedRuntimeSource,
+) -> String {
+    let mut hasher = sha2::Sha256::new();
+    hasher.update(b"ctx-avf-linux-runtime-source-v1\n");
+    hasher.update(source.version.trim().as_bytes());
+    hasher.update(b"\n");
+    hasher.update(source.uri.trim().as_bytes());
+    hasher.update(b"\n");
+    hasher.update(source.sha256.trim().to_ascii_lowercase().as_bytes());
+    hasher.update(b"\n");
+    hasher.update(source.bin.trim().as_bytes());
+    let helpers = source.helpers.iter().collect::<BTreeMap<_, _>>();
+    for (name, artifact) in helpers {
+        hasher.update(b"\nhelper:");
+        hasher.update(name.trim().as_bytes());
+        hasher.update(b"\n");
+        hasher.update(artifact.uri.trim().as_bytes());
+        hasher.update(b"\n");
+        hasher.update(artifact.sha256.trim().to_ascii_lowercase().as_bytes());
+    }
+    hex::encode(hasher.finalize())
+}
+
 pub(super) fn managed_avf_linux_runtime_root(
     data_root: &Path,
     source: &bundled_assets::ManagedRuntimeSource,
 ) -> PathBuf {
     let (os, arch) = (std::env::consts::OS, std::env::consts::ARCH);
+    let source_identity = managed_avf_linux_runtime_source_identity(source);
     data_root
         .join("managed")
         .join("runtimes")
@@ -211,8 +253,9 @@ pub(super) fn managed_avf_linux_runtime_root(
         .join(os)
         .join(arch)
         .join(format!(
-            "{AVF_LINUX_GUEST_RUNTIME_ID}-{}",
-            source.version.trim()
+            "{AVF_LINUX_GUEST_RUNTIME_ID}-{}-source-sha256-{}",
+            source.version.trim(),
+            source_identity,
         ))
 }
 
@@ -246,14 +289,30 @@ pub(super) fn avf_linux_runtime_is_ready(runtime: &AvfLinuxGuestRuntime) -> bool
         .as_ref()
         .is_some_and(|path| path.exists());
     let container_stack_ready = runtime.container_stack_path.exists();
+    let managed_ready = if runtime.managed {
+        managed_avf_linux_runtime_ready_metadata(&runtime.runtime_root).is_some_and(|meta| {
+            let root_identity_matches = runtime
+                .runtime_root
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.ends_with(&meta.source_identity_sha256));
+            meta.schema_version == ManagedAvfLinuxRuntimeReadyMetadata::SCHEMA_VERSION
+                && meta.runtime_id == AVF_LINUX_GUEST_RUNTIME_ID
+                && root_identity_matches
+                && meta.source_version == runtime.version
+                && !meta.source_identity_sha256.trim().is_empty()
+                && !meta.source_sha256.trim().is_empty()
+        })
+    } else {
+        true
+    };
     runtime.rootfs_image.exists()
         && runtime.kernel_path.exists()
         && runtime.initrd_path.exists()
         && guest_agent_ready
         && egress_proxy_ready
         && container_stack_ready
-        && (!runtime.managed
-            || managed_avf_linux_runtime_ready_marker_path(&runtime.runtime_root).exists())
+        && managed_ready
 }
 
 fn managed_avf_linux_install_lock() -> &'static Mutex<()> {
@@ -261,9 +320,38 @@ fn managed_avf_linux_install_lock() -> &'static Mutex<()> {
     LOCK.get_or_init(|| Mutex::new(()))
 }
 
-async fn mark_managed_avf_linux_runtime_ready(runtime_root: &Path) -> Result<()> {
+fn managed_avf_linux_runtime_ready_metadata(
+    runtime_root: &Path,
+) -> Option<ManagedAvfLinuxRuntimeReadyMetadata> {
     let marker = managed_avf_linux_runtime_ready_marker_path(runtime_root);
-    fs::write(&marker, b"ready")
+    let bytes = std::fs::read(marker).ok()?;
+    serde_json::from_slice(&bytes).ok()
+}
+
+async fn mark_managed_avf_linux_runtime_ready(
+    runtime_root: &Path,
+    source: &bundled_assets::ManagedRuntimeSource,
+) -> Result<()> {
+    let marker = managed_avf_linux_runtime_ready_marker_path(runtime_root);
+    let helper_sha256 = source
+        .helpers
+        .iter()
+        .map(|(name, artifact)| (name.clone(), artifact.sha256.clone()))
+        .collect::<BTreeMap<_, _>>();
+    let metadata = ManagedAvfLinuxRuntimeReadyMetadata {
+        schema_version: ManagedAvfLinuxRuntimeReadyMetadata::SCHEMA_VERSION,
+        runtime_id: AVF_LINUX_GUEST_RUNTIME_ID.to_string(),
+        source_identity_sha256: managed_avf_linux_runtime_source_identity(source),
+        source_version: source.version.trim().to_string(),
+        source_sha256: source.sha256.trim().to_ascii_lowercase(),
+        helper_sha256,
+        installed_at_ms: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_millis() as u64)
+            .unwrap_or(0),
+    };
+    let bytes = serde_json::to_vec_pretty(&metadata).context("serializing AVF runtime metadata")?;
+    fs::write(&marker, bytes)
         .await
         .with_context(|| format!("writing {}", marker.display()))
 }
@@ -657,7 +745,7 @@ pub async fn ensure_managed_avf_linux_guest_runtime_with_override(
                 .with_context(|| format!("chmod {}", runtime.container_stack_path.display()))?;
         }
     }
-    mark_managed_avf_linux_runtime_ready(&runtime.runtime_root).await?;
+    mark_managed_avf_linux_runtime_ready(&runtime.runtime_root, &source).await?;
     emit_runtime_install_info(
         observer,
         &format!(

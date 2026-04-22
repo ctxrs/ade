@@ -1,4 +1,5 @@
 use super::*;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 struct EnvGuard {
@@ -22,6 +23,76 @@ impl Drop for EnvGuard {
             std::env::remove_var(self.key);
         }
     }
+}
+
+fn managed_source(version: &str, sha256: &str) -> bundled_assets::ManagedRuntimeSource {
+    bundled_assets::ManagedRuntimeSource {
+        uri: "file:///tmp/rootfs.raw.zst".to_string(),
+        sha256: sha256.to_string(),
+        version: version.to_string(),
+        bin: "rootfs.raw".to_string(),
+        helpers: HashMap::from([
+            (
+                AVF_LINUX_KERNEL_HELPER.to_string(),
+                bundled_assets::ManagedArtifactSource {
+                    uri: "file:///tmp/kernel".to_string(),
+                    sha256: "1".repeat(64),
+                },
+            ),
+            (
+                AVF_LINUX_INITRD_HELPER.to_string(),
+                bundled_assets::ManagedArtifactSource {
+                    uri: "file:///tmp/initrd".to_string(),
+                    sha256: "2".repeat(64),
+                },
+            ),
+            (
+                AVF_LINUX_GUEST_AGENT_HELPER.to_string(),
+                bundled_assets::ManagedArtifactSource {
+                    uri: "file:///tmp/guest-agent".to_string(),
+                    sha256: "3".repeat(64),
+                },
+            ),
+            (
+                AVF_LINUX_EGRESS_PROXY_HELPER.to_string(),
+                bundled_assets::ManagedArtifactSource {
+                    uri: "file:///tmp/egress-proxy".to_string(),
+                    sha256: "4".repeat(64),
+                },
+            ),
+            (
+                AVF_LINUX_CONTAINER_STACK_HELPER.to_string(),
+                bundled_assets::ManagedArtifactSource {
+                    uri: "file:///tmp/container-stack".to_string(),
+                    sha256: "5".repeat(64),
+                },
+            ),
+        ]),
+    }
+}
+
+#[test]
+fn managed_runtime_root_is_bound_to_version_and_source_hash() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let source_a = managed_source("runtime-v1", &"a".repeat(64));
+    let source_b = managed_source("runtime-v1", &"b".repeat(64));
+    let mut source_c = source_a.clone();
+    source_c
+        .helpers
+        .get_mut(AVF_LINUX_KERNEL_HELPER)
+        .expect("kernel helper")
+        .sha256 = "6".repeat(64);
+    let root_a = managed_avf_linux_runtime_root(temp.path(), &source_a);
+    let root_b = managed_avf_linux_runtime_root(temp.path(), &source_b);
+    let root_c = managed_avf_linux_runtime_root(temp.path(), &source_c);
+    let identity_a = managed_avf_linux_runtime_source_identity(&source_a);
+
+    assert_ne!(root_a, root_b);
+    assert_ne!(root_a, root_c);
+    assert!(root_a
+        .to_string_lossy()
+        .contains("runtime-v1-source-sha256-"));
+    assert!(root_a.to_string_lossy().contains(&identity_a));
 }
 
 fn write_staged_runtime(runtime_root: &Path, version: &str) {

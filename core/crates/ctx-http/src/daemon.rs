@@ -7,9 +7,11 @@ use anyhow::{Context, Result};
 use axum::Router;
 use chrono::Utc;
 use directories::BaseDirs;
+use serde::Serialize;
 use serde_json::json;
 
-use ctx_core::models::SessionTurnStatus;
+use ctx_core::ids::WorkspaceId;
+use ctx_core::models::{SessionTurn, SessionTurnStatus};
 use ctx_lsp::LspManagerConfig;
 use ctx_providers::adapters::ProviderAdapter;
 use ctx_providers::crp::Tier1CrpAdapter;
@@ -56,8 +58,8 @@ pub(crate) use state::WorktreeVcsDirtyBits;
 pub use state::{
     AppRuntimeFlags, AppState, CacheSweepConfig, CacheSweepStats, CachedFileCompletions,
     CachedProviderOptions, CachedProviderVerify, GitStatusSnapshotCacheEntry, SessionHeadCacheKey,
-    StoreLookup, TimedEntry, WorkspaceActiveHeadCacheEntry, WorkspaceActiveSnapshotCacheEntry,
-    WorktreeVcsSnapshotCacheEntry,
+    StoreLookup, TimedEntry, UpdateDrainState, WorkspaceActiveHeadCacheEntry,
+    WorkspaceActiveSnapshotCacheEntry, WorktreeVcsSnapshotCacheEntry,
 };
 
 fn build_provider_adapter_for_target(
@@ -194,19 +196,96 @@ pub(crate) fn normalize_acp_provider_command(
     crate::provider_launch::resolver::normalize_acp_provider_command(data_root, provider_id, cmd)
 }
 
-async fn reconcile_running_turns(state: &Arc<AppState>) -> Result<()> {
+#[derive(Debug, Clone, Serialize)]
+pub struct ActiveTurnRecord {
+    pub workspace_id: String,
+    pub session_id: String,
+    pub run_id: Option<String>,
+    pub turn_id: String,
+    pub status: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DaemonTurnActivitySummary {
+    pub idle: bool,
+    pub active_turn_count: usize,
+    pub queued_turn_count: usize,
+    pub running_turn_count: usize,
+    pub scanned_workspace_count: usize,
+    pub turns: Vec<ActiveTurnRecord>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub update_drain: Option<UpdateDrainState>,
+}
+
+fn turn_status_name(status: &SessionTurnStatus) -> &'static str {
+    match status {
+        SessionTurnStatus::Queued => "queued",
+        SessionTurnStatus::Running => "running",
+        SessionTurnStatus::Completed => "completed",
+        SessionTurnStatus::Failed => "failed",
+        SessionTurnStatus::Interrupted => "interrupted",
+    }
+}
+
+async fn collect_turns_by_statuses(
+    state: &Arc<AppState>,
+    statuses: &[SessionTurnStatus],
+) -> Result<(usize, Vec<(WorkspaceId, SessionTurn)>)> {
     let workspaces = state.global_store().list_workspaces().await?;
-    let mut running_turns = Vec::new();
+    let workspace_count = workspaces.len();
+    let mut matching_turns = Vec::new();
     for workspace in workspaces {
         let store = state.core.stores.workspace_transient(workspace.id).await?;
-        let mut turns = store
-            .list_session_turns_by_statuses(&[SessionTurnStatus::Running])
-            .await?;
+        let mut turns = store.list_session_turns_by_statuses(statuses).await?;
         store.close().await;
-        running_turns.append(&mut turns);
+        matching_turns.extend(turns.drain(..).map(|turn| (workspace.id, turn)));
     }
+    Ok((workspace_count, matching_turns))
+}
 
-    for turn in running_turns {
+pub async fn daemon_turn_activity_summary(
+    state: &Arc<AppState>,
+) -> Result<DaemonTurnActivitySummary> {
+    let (workspace_count, turns) = collect_turns_by_statuses(
+        state,
+        &[SessionTurnStatus::Queued, SessionTurnStatus::Running],
+    )
+    .await?;
+    let queued_turn_count = turns
+        .iter()
+        .filter(|(_, turn)| matches!(&turn.status, SessionTurnStatus::Queued))
+        .count();
+    let running_turn_count = turns
+        .iter()
+        .filter(|(_, turn)| matches!(&turn.status, SessionTurnStatus::Running))
+        .count();
+    let records = turns
+        .into_iter()
+        .map(|(workspace_id, turn)| ActiveTurnRecord {
+            workspace_id: workspace_id.0.to_string(),
+            session_id: turn.session_id.0.to_string(),
+            run_id: turn.run_id.map(|run_id| run_id.0.to_string()),
+            turn_id: turn.turn_id.0.to_string(),
+            status: turn_status_name(&turn.status).to_string(),
+        })
+        .collect::<Vec<_>>();
+    let active_turn_count = queued_turn_count + running_turn_count;
+    Ok(DaemonTurnActivitySummary {
+        idle: active_turn_count == 0,
+        active_turn_count,
+        queued_turn_count,
+        running_turn_count,
+        scanned_workspace_count: workspace_count,
+        turns: records,
+        update_drain: state.update_drain_snapshot().await,
+    })
+}
+
+async fn reconcile_running_turns(state: &Arc<AppState>) -> Result<()> {
+    let (_, running_turns) =
+        collect_turns_by_statuses(state, &[SessionTurnStatus::Running]).await?;
+
+    for (_, turn) in running_turns {
         if let Err(err) = reconcile_turn_terminal_state(
             state,
             turn.session_id,
@@ -578,6 +657,7 @@ pub async fn serve(bind: Vec<String>, data_dir: Option<String>) -> Result<()> {
     provider_child_reclassifier::spawn_provider_child_reclassifier(state.clone());
     crate::merge_queue::spawn_merge_queue_runner(state.clone());
     provider_usage::spawn_provider_usage_poller(state.clone());
+    crate::updates::spawn_managed_daemon_auto_update(state.clone(), requested_binds.clone());
     lifecycle::spawn_process_shutdown_listener(state.clone());
 
     // Reconnect managed mobile access tunnel on daemon start when enabled.
