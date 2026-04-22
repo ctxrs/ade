@@ -113,10 +113,12 @@ fn resolve_explicit_gemini_cli_paths(
             .collect::<Vec<_>>()
             .join(", ")
     );
-    let core_entry_path = core_entries
-        .into_iter()
-        .next()
-        .expect("non-empty Gemini bundled core entries");
+    let Some(core_entry_path) = core_entries.into_iter().next() else {
+        anyhow::bail!(
+            "Gemini ACP bundled core entrypoint is missing under {}",
+            bundle_dir.display()
+        );
+    };
     anyhow::ensure!(
         cli_root.join("package.json").exists(),
         "Gemini ACP entrypoint must live under a node_modules/@google/gemini-cli install tree: {}",
