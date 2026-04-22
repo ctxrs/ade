@@ -21,8 +21,7 @@ mod sandbox;
 mod watch;
 pub use model::{GitStatusEntry, GitStatusSnapshot};
 use sandbox::{
-    container_git_count_untracked, container_git_diff_name_status,
-    container_git_diff_name_status_count, container_git_list_untracked, container_git_rev_parse,
+    container_git_diff_name_status, container_git_list_untracked, container_git_rev_parse,
     container_git_status_structured,
 };
 pub(crate) use sandbox::{worktree_merge_base, worktree_rev_parse_head};
@@ -168,18 +167,42 @@ async fn load_diff_file_count(
     worktree: &Worktree,
     base_commit_sha: &str,
 ) -> Result<i64> {
-    let data_plane = resolve_worktree_data_plane(state, worktree).await?;
-    if matches!(data_plane.execution_mode, ExecutionMode::Sandbox) {
-        let tracked =
-            container_git_diff_name_status_count(state, worktree, base_commit_sha).await?;
-        let untracked = container_git_count_untracked(state, worktree).await?;
-        return Ok(tracked + untracked);
+    Ok(load_diff_path_states(state, worktree, base_commit_sha)
+        .await?
+        .len() as i64)
+}
+
+fn build_diff_path_states(
+    entries: Vec<(String, String, Option<String>)>,
+    untracked: Vec<String>,
+) -> Result<Vec<(String, Option<String>, String)>> {
+    let mut seen = HashSet::new();
+    let mut out = Vec::new();
+    for (status, path, orig_path) in entries {
+        let path = path.trim().to_string();
+        if path.is_empty() {
+            continue;
+        }
+        if !seen.insert(path.clone()) {
+            continue;
+        }
+        let Some(status_kind) = status.chars().next() else {
+            anyhow::bail!("vcs diff returned an empty status for {path}");
+        };
+        out.push((path, orig_path, status_kind.to_string()));
     }
-    let root = data_plane.live_worktree_root.as_path();
-    let driver = vcs_driver_for_worktree(worktree);
-    let tracked = driver.diff_file_count(root, base_commit_sha).await?;
-    let untracked = driver.untracked_file_count(root).await?;
-    Ok(tracked + untracked)
+    for path in untracked {
+        let path = path.trim().to_string();
+        if path.is_empty() {
+            continue;
+        }
+        if !seen.insert(path.clone()) {
+            continue;
+        }
+        out.push((path, None, "?".to_string()));
+    }
+    out.sort_by(|left, right| left.0.cmp(&right.0));
+    Ok(out)
 }
 
 async fn load_diff_path_states(
@@ -201,39 +224,13 @@ async fn load_diff_path_states(
                 .map(|entry| (entry.status, entry.path, entry.orig_path))
                 .collect()
         };
-    let mut seen = HashSet::new();
-    let mut out = Vec::new();
-    for (status, path, orig_path) in entries {
-        let path = path.trim().to_string();
-        if path.is_empty() {
-            continue;
-        }
-        if !seen.insert(path.clone()) {
-            continue;
-        }
-        let Some(status_kind) = status.chars().next() else {
-            anyhow::bail!("vcs diff returned an empty status for {path}");
-        };
-        out.push((path, orig_path, status_kind.to_string()));
-    }
     let untracked = if matches!(data_plane.execution_mode, ExecutionMode::Sandbox) {
         container_git_list_untracked(state, worktree).await?
     } else {
         let driver = vcs_driver_for_worktree(worktree);
         driver.list_untracked(root).await?
     };
-    for path in untracked {
-        let path = path.trim().to_string();
-        if path.is_empty() {
-            continue;
-        }
-        if !seen.insert(path.clone()) {
-            continue;
-        }
-        out.push((path, None, "?".to_string()));
-    }
-    out.sort_by(|left, right| left.0.cmp(&right.0));
-    Ok(out)
+    build_diff_path_states(entries, untracked)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -979,4 +976,24 @@ pub async fn run_git_status_watcher(state: Arc<AppState>, worktree: Worktree) ->
         return Ok(());
     }
     watch::run_git_status_watcher(state, worktree).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::build_diff_path_states;
+    use anyhow::Result;
+
+    #[test]
+    fn build_diff_path_states_deduplicates_untracked_paths_already_in_diff() -> Result<()> {
+        let out = build_diff_path_states(
+            vec![("D".to_string(), "src/example.rs".to_string(), None)],
+            vec!["src/example.rs".to_string()],
+        )?;
+
+        assert_eq!(
+            out,
+            vec![("src/example.rs".to_string(), None, "D".to_string())]
+        );
+        Ok(())
+    }
 }

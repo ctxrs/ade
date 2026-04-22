@@ -168,22 +168,6 @@ pub(crate) async fn container_git_list_untracked(
     Ok(out)
 }
 
-pub(crate) async fn container_git_count_untracked(
-    state: &Arc<AppState>,
-    worktree: &Worktree,
-) -> Result<i64> {
-    let bytes = container_git_stdout(
-        state,
-        worktree,
-        &["ls-files", "--others", "--exclude-standard", "-z"],
-    )
-    .await?;
-    Ok(bytes
-        .split(|byte| *byte == 0)
-        .filter(|part| !part.is_empty())
-        .count() as i64)
-}
-
 pub(crate) async fn container_git_diff_name_status(
     state: &Arc<AppState>,
     worktree: &Worktree,
@@ -227,51 +211,6 @@ pub(crate) async fn container_git_diff_name_status(
         }
     }
     Ok(out)
-}
-
-pub(crate) async fn container_git_diff_name_status_count(
-    state: &Arc<AppState>,
-    worktree: &Worktree,
-    base_commit_sha: &str,
-) -> Result<i64> {
-    let bytes = container_git_stdout(
-        state,
-        worktree,
-        &["diff", "--name-status", "-z", base_commit_sha],
-    )
-    .await?;
-    Ok(count_name_status_entries(&bytes))
-}
-
-fn count_name_status_entries(bytes: &[u8]) -> i64 {
-    let mut total = 0;
-    let mut parts = bytes
-        .split(|byte| *byte == 0)
-        .filter(|part| !part.is_empty());
-    while let Some(status_bytes) = parts.next() {
-        let status = String::from_utf8_lossy(status_bytes);
-        let status = status.trim();
-        if status.is_empty() {
-            continue;
-        }
-        let Some(path) = parts.next() else {
-            continue;
-        };
-        if String::from_utf8_lossy(path).trim().is_empty() {
-            continue;
-        }
-        let status_char = status.chars().next().unwrap_or('M');
-        if status_char == 'R' || status_char == 'C' {
-            let Some(next_path) = parts.next() else {
-                continue;
-            };
-            if String::from_utf8_lossy(next_path).trim().is_empty() {
-                continue;
-            }
-        }
-        total += 1;
-    }
-    total
 }
 
 pub(crate) async fn container_git_rev_parse(
