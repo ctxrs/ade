@@ -90,6 +90,27 @@ test("wdio mocha timeout inherits case timeout when mocha override is unset", as
   }
 });
 
+test("wdio connection retry budget is explicitly configurable for slow packaged app startup", async () => {
+  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-wdio-timeout-test-"));
+  try {
+    await withEnv(
+      {
+        CTX_AUTOMATION_CN_BACKEND_STATE_DIR: stateDir,
+        CTX_AUTOMATION_CONNECTION_RETRY_COUNT: "18",
+        CTX_AUTOMATION_CONNECTION_RETRY_TIMEOUT_MS: "240000",
+      },
+      (mod) => {
+        assert.equal(mod.__desktopAutomationConfigTestHooks.resolveConnectionRetryCount(), 18);
+        assert.equal(mod.__desktopAutomationConfigTestHooks.resolveConnectionRetryTimeoutMs(), 240000);
+        assert.equal(mod.config.connectionRetryCount, 18);
+        assert.equal(mod.config.connectionRetryTimeout, 240000);
+      },
+    );
+  } finally {
+    fs.rmSync(stateDir, { recursive: true, force: true });
+  }
+});
+
 test("wdio app builds route through desktop_tauri_entry so resources are prepared", async () => {
   const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-wdio-timeout-test-"));
   try {

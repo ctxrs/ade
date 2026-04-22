@@ -198,6 +198,16 @@ const resolveMochaTimeoutMs = () => parsePositiveInt(
   1200000,
 );
 const MOCHA_TIMEOUT_MS = resolveMochaTimeoutMs();
+const resolveConnectionRetryCount = () => parsePositiveInt(
+  process.env.CTX_AUTOMATION_CONNECTION_RETRY_COUNT || "3",
+  3,
+);
+const resolveConnectionRetryTimeoutMs = () => parsePositiveInt(
+  process.env.CTX_AUTOMATION_CONNECTION_RETRY_TIMEOUT_MS || "120000",
+  120000,
+);
+const CONNECTION_RETRY_COUNT = resolveConnectionRetryCount();
+const CONNECTION_RETRY_TIMEOUT_MS = resolveConnectionRetryTimeoutMs();
 const CN_PORT_WAIT_MS = parsePositiveInt(process.env.CTX_AUTOMATION_CN_PORT_WAIT_MS || "120000", 120000);
 const CN_BACKEND_LOCK_TIMEOUT_MS = parsePositiveInt(
   process.env.CTX_AUTOMATION_CN_BACKEND_LOCK_TIMEOUT_MS || "30000",
@@ -1702,6 +1712,8 @@ exports.config = {
     timeout: MOCHA_TIMEOUT_MS,
   },
   logLevel: WDIO_LOG_LEVEL,
+  connectionRetryCount: CONNECTION_RETRY_COUNT,
+  connectionRetryTimeout: CONNECTION_RETRY_TIMEOUT_MS,
   maxInstances: 1,
   capabilities: [
     {
@@ -2137,6 +2149,8 @@ exports.__desktopAutomationConfigTestHooks = {
   expectedManagedAvfGuestRuntimeVersion,
   readAvfGuestRuntimeVersion,
   resolveMochaTimeoutMs,
+  resolveConnectionRetryCount,
+  resolveConnectionRetryTimeoutMs,
   commandMatchesScopedAppProcess,
   createAppBuildInvocation,
   buildAppIfMissing,

@@ -46,3 +46,13 @@ test("wdio remote-only prep on mac arm64 skips the managed AVF payload download"
     /process\.platform === "darwin"[\s\S]*process\.arch === "arm64"[\s\S]*RUNS_REMOTE_ONLY_SCENARIOS[\s\S]*CTX_DESKTOP_ALLOW_MANAGED_AVF_RUNTIME_MISSING_LOCAL_PAYLOAD = "1"/,
   );
 });
+
+test("wdio connection retries are configurable for packaged mac app readiness", () => {
+  const script = fs.readFileSync(configPath, "utf8");
+
+  assert.match(script, /const resolveConnectionRetryCount = \(\) => parsePositiveInt\(/);
+  assert.match(script, /CTX_AUTOMATION_CONNECTION_RETRY_COUNT/);
+  assert.match(script, /CTX_AUTOMATION_CONNECTION_RETRY_TIMEOUT_MS/);
+  assert.match(script, /connectionRetryCount: CONNECTION_RETRY_COUNT/);
+  assert.match(script, /connectionRetryTimeout: CONNECTION_RETRY_TIMEOUT_MS/);
+});
