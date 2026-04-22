@@ -156,6 +156,8 @@ else
   tar -C "${RUNFILES_REPO_ROOT}" "${RSYNC_EXCLUDES[@]}" -cf - . |
     tar -C "${TMP_WORKSPACE}" -xf -
 fi
+# Keep repo-authored docs available to contract tests without copying all .ctx attachments.
+link_real_workspace_dir "${RUNFILES_REPO_ROOT}" "${TMP_WORKSPACE}" ".ctx/docs"
 link_real_workspace_dir "${REAL_WORKSPACE_ROOT}" "${TMP_WORKSPACE}" "core/node_modules"
 link_real_workspace_dir "${REAL_WORKSPACE_ROOT}" "${TMP_WORKSPACE}" "core/apps/web/node_modules"
 

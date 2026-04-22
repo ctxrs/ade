@@ -48,6 +48,8 @@ test("run_workspace_task copies the workspace without requiring rsync", () => {
   fs.mkdirSync(path.join(runfilesRepo, "core", "apps", "web", "test-results"), { recursive: true });
   fs.mkdirSync(path.join(runfilesRepo, "core", "apps", "web", "e2e", "playwright-report"), { recursive: true });
   fs.mkdirSync(path.join(runfilesRepo, "core", "apps", "web", "e2e", "test-results"), { recursive: true });
+  fs.mkdirSync(path.join(runfilesRepo, ".ctx", "docs"), { recursive: true });
+  fs.mkdirSync(path.join(runfilesRepo, ".ctx", "attachments"), { recursive: true });
   fs.mkdirSync(path.join(runfilesRepo, ".git"), { recursive: true });
   fs.mkdirSync(path.join(runfilesRepo, "node_modules"), { recursive: true });
   fs.mkdirSync(path.join(runfilesRepo, "core", "target"), { recursive: true });
@@ -66,6 +68,8 @@ test("run_workspace_task copies the workspace without requiring rsync", () => {
   fs.writeFileSync(path.join(runfilesRepo, "core", "apps", "web", "test-results", "excluded.txt"), "exclude me\n");
   fs.writeFileSync(path.join(runfilesRepo, "core", "apps", "web", "e2e", "playwright-report", "excluded.txt"), "exclude me\n");
   fs.writeFileSync(path.join(runfilesRepo, "core", "apps", "web", "e2e", "test-results", "excluded.txt"), "exclude me\n");
+  fs.writeFileSync(path.join(runfilesRepo, ".ctx", "docs", "contract.md"), "repo doc\n");
+  fs.writeFileSync(path.join(runfilesRepo, ".ctx", "attachments", "excluded.txt"), "exclude me\n");
 
   fs.mkdirSync(path.join(realWorkspace, "core", "node_modules"), { recursive: true });
   fs.mkdirSync(path.join(realWorkspace, "core", "apps", "web", "node_modules"), { recursive: true });
@@ -86,6 +90,9 @@ test("run_workspace_task copies the workspace without requiring rsync", () => {
     "test -f ../../../keep.txt",
     "test -f ./web_keep.txt",
     "test ! -e ../../../.git",
+    "test -L ../../../.ctx/docs",
+    "test -f ../../../.ctx/docs/contract.md",
+    "test ! -e ../../../.ctx/attachments",
     "test ! -e ../../../node_modules",
     "test ! -e ../../target",
     "test ! -e ./dist",

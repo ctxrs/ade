@@ -25,6 +25,17 @@ filegroup(
 )
 
 filegroup(
+    name = "ctx_doc_sources",
+    srcs = glob(
+        [
+            ".ctx/docs/**",
+        ],
+        allow_empty = True,
+    ),
+    visibility = ["//visibility:public"],
+)
+
+filegroup(
     name = "ci_script_sources",
     srcs = glob(
         [
