@@ -305,7 +305,7 @@ export function FileBufferEditor({
             scrollBeyondLastLine: false,
             wordWrap: "on",
           }}
-          onMount={(editor, monaco) => {
+          onMount={(editor: Monaco.editor.IStandaloneCodeEditor, monaco: typeof Monaco) => {
             editorRef.current = editor;
             monacoRef.current = monaco;
             applyMarkers();
@@ -322,7 +322,7 @@ export function FileBufferEditor({
             const language = guessMonacoLanguage(path);
             const completion = monaco.languages.registerCompletionItemProvider(language, {
               triggerCharacters: [".", ":", "<", "\"", "'", "/", "@", "#"],
-              provideCompletionItems: async (m, pos) => {
+              provideCompletionItems: async (m: Monaco.editor.ITextModel, pos: Monaco.Position) => {
                 if (!matchesThisModel(m)) return { suggestions: [] };
                 const line = Math.max(0, Number(pos.lineNumber ?? 1) - 1);
                 const character = Math.max(0, Number(pos.column ?? 1) - 1);
@@ -343,7 +343,7 @@ export function FileBufferEditor({
                   startColumn: word.startColumn,
                   endColumn: word.endColumn,
                 };
-                const suggestions = items.map((it) => {
+                const suggestions = items.map((it: unknown) => {
                   const item = asRecord(it);
                   return {
                     label: String(item.label ?? ""),
@@ -357,7 +357,7 @@ export function FileBufferEditor({
               },
             });
             const hover = monaco.languages.registerHoverProvider(language, {
-              provideHover: async (m, pos) => {
+              provideHover: async (m: Monaco.editor.ITextModel, pos: Monaco.Position) => {
                 if (!matchesThisModel(m)) return null;
                 const line = Math.max(0, Number(pos.lineNumber ?? 1) - 1);
                 const character = Math.max(0, Number(pos.column ?? 1) - 1);
@@ -377,7 +377,7 @@ export function FileBufferEditor({
                       ? contentsRecord.value
                       : Array.isArray(contents)
                         ? contents
-                            .map((c) => {
+                            .map((c: unknown) => {
                               if (typeof c === "string") return c;
                               const rec = asRecord(c);
                               return typeof rec.value === "string" ? rec.value : "";
@@ -392,7 +392,7 @@ export function FileBufferEditor({
             disposables.current.push(completion, hover);
             if (model) applyMarkers();
           }}
-          onChange={(v) => {
+          onChange={(v: string | undefined) => {
             const next = String(v ?? "");
             latestText.current = next;
             setText(next);

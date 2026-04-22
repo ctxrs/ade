@@ -1,6 +1,14 @@
+load("@npm//:defs.bzl", "npm_link_all_packages")
+load("@npm//core/apps/web:eslint/package_json.bzl", eslint_bin = "bin")
+load("@npm//core/apps/web:typescript/package_json.bzl", tsc_bin = "bin")
+load("@npm//core/apps/web:vite/package_json.bzl", vite_bin = "bin")
+load("@npm//core/apps/web:vitest/package_json.bzl", vitest_bin = "bin")
+load("@aspect_rules_js//js:defs.bzl", "js_run_binary")
 load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
 
 package(default_visibility = ["//visibility:public"])
+
+npm_link_all_packages()
 
 exports_files([
     "scripts/run-e2e-bazel-runtime.mjs",
@@ -24,6 +32,25 @@ WEB_SOURCES = glob(
     allow_empty = True,
 )
 
+WEB_CHECK_SOURCES = glob(
+    [
+        "src/**/*",
+        "eslint/**/*",
+        "e2e/utils/**/*",
+        "public/**/*",
+        "*.json",
+        "*.html",
+        "*.ts",
+        "*.tsx",
+        "*.mjs",
+        "*.cjs",
+    ],
+    exclude = [
+        "playwright*.ts",
+    ],
+    allow_empty = True,
+)
+
 COMMON_DATA = WEB_SOURCES + [
     "//core:package.json",
     "//core:pnpm-lock.yaml",
@@ -32,6 +59,101 @@ COMMON_DATA = WEB_SOURCES + [
     "//core:desktop_bundle_files",
     "//core/scripts:sources",
     "//core/packages:sources",
+]
+
+HERMETIC_WEB_CHECK_DATA = WEB_CHECK_SOURCES + [
+    ":node_modules/@chenglou/pretext",
+    ":node_modules/@ctx/design",
+    ":node_modules/@ctx/types",
+    ":node_modules/@eslint/js",
+    ":node_modules/@monaco-editor/react",
+    ":node_modules/@pretext-virtualizer/core",
+    ":node_modules/@pretext-virtualizer/interface",
+    ":node_modules/@radix-ui/react-dropdown-menu",
+    ":node_modules/@radix-ui/react-select",
+    ":node_modules/@radix-ui/react-switch",
+    ":node_modules/@supabase/supabase-js",
+    ":node_modules/@tauri-apps/api",
+    ":node_modules/@tauri-apps/plugin-os",
+    ":node_modules/@tauri-apps/plugin-shell",
+    ":node_modules/@testing-library/jest-dom",
+    ":node_modules/@testing-library/react",
+    ":node_modules/@types/qrcode.react",
+    ":node_modules/@types/react",
+    ":node_modules/@types/react-dom",
+    ":node_modules/@types/react-syntax-highlighter",
+    ":node_modules/@virtuoso.dev/message-list",
+    ":node_modules/@vitejs/plugin-react",
+    ":node_modules/@xterm/addon-fit",
+    ":node_modules/@xterm/addon-web-links",
+    ":node_modules/@xterm/xterm",
+    ":node_modules/autoprefixer",
+    ":node_modules/chrome-tabs",
+    ":node_modules/clsx",
+    ":node_modules/eslint",
+    ":node_modules/eslint-plugin-react-hooks",
+    ":node_modules/globals",
+    ":node_modules/jsdom",
+    ":node_modules/linebreak",
+    ":node_modules/lucide-react",
+    ":node_modules/mdast-util-to-markdown",
+    ":node_modules/monaco-editor",
+    ":node_modules/pixelmatch",
+    ":node_modules/playwright",
+    ":node_modules/pngjs",
+    ":node_modules/postcss",
+    ":node_modules/posthog-js",
+    ":node_modules/qrcode.react",
+    ":node_modules/react",
+    ":node_modules/react-dom",
+    ":node_modules/react-markdown",
+    ":node_modules/react-router-dom",
+    ":node_modules/react-syntax-highlighter",
+    ":node_modules/react-virtuoso",
+    ":node_modules/remark-frontmatter",
+    ":node_modules/remark-gfm",
+    ":node_modules/remark-mdx",
+    ":node_modules/remark-parse",
+    ":node_modules/tailwind-merge",
+    ":node_modules/tailwindcss",
+    ":node_modules/tauri-plugin-stt-api",
+    ":node_modules/typescript",
+    ":node_modules/typescript-eslint",
+    ":node_modules/unified",
+    ":node_modules/unist-util-visit",
+    ":node_modules/vite",
+    ":node_modules/vite-plugin-mkcert",
+    ":node_modules/vitest",
+    "//core/apps/web/e2e:utils_sources",
+]
+
+HERMETIC_WEB_SMOKE_DATA = WEB_CHECK_SOURCES + [
+    ":node_modules/@chenglou/pretext",
+    ":node_modules/@pretext-virtualizer/core",
+    ":node_modules/@pretext-virtualizer/interface",
+    ":node_modules/@tauri-apps/api",
+    ":node_modules/@tauri-apps/plugin-os",
+    ":node_modules/@tauri-apps/plugin-shell",
+    ":node_modules/@testing-library/jest-dom",
+    ":node_modules/@vitejs/plugin-react",
+    ":node_modules/autoprefixer",
+    ":node_modules/jsdom",
+    ":node_modules/linebreak",
+    ":node_modules/mdast-util-to-markdown",
+    ":node_modules/postcss",
+    ":node_modules/posthog-js",
+    ":node_modules/react",
+    ":node_modules/react-dom",
+    ":node_modules/remark-frontmatter",
+    ":node_modules/remark-gfm",
+    ":node_modules/remark-mdx",
+    ":node_modules/remark-parse",
+    ":node_modules/tailwindcss",
+    ":node_modules/unified",
+    ":node_modules/unist-util-visit",
+    ":node_modules/vite",
+    ":node_modules/vite-plugin-mkcert",
+    ":node_modules/vitest",
 ]
 
 ANY_ENFORCE_DATA = WEB_SOURCES + [
@@ -49,11 +171,19 @@ filegroup(
     srcs = COMMON_DATA,
 )
 
-sh_binary(
+vite_bin.vite_binary(
+    name = "vite_bin",
+    data = HERMETIC_WEB_CHECK_DATA,
+    chdir = package_name(),
+)
+
+js_run_binary(
     name = "build",
-    srcs = ["//tools/bazel:run_workspace_task.sh"],
-    args = ["core/apps/web", "pnpm", "build"],
-    data = COMMON_DATA,
+    tool = ":vite_bin",
+    args = ["build"],
+    chdir = package_name(),
+    out_dirs = ["dist"],
+    srcs = HERMETIC_WEB_CHECK_DATA,
 )
 
 sh_binary(
@@ -62,18 +192,25 @@ sh_binary(
     data = COMMON_DATA,
 )
 
-sh_binary(
+eslint_bin.eslint_test(
     name = "lint",
-    srcs = ["//tools/bazel:run_workspace_task.sh"],
-    args = ["core/apps/web", "pnpm", "lint"],
-    data = COMMON_DATA,
+    args = [
+        "src",
+        "--max-warnings=0",
+    ],
+    data = HERMETIC_WEB_CHECK_DATA,
+    chdir = package_name(),
 )
 
-sh_binary(
+tsc_bin.tsc_test(
     name = "typecheck",
-    srcs = ["//tools/bazel:run_workspace_task.sh"],
-    args = ["core/apps/web", "pnpm", "typecheck"],
-    data = COMMON_DATA,
+    args = [
+        "--noEmit",
+        "--incremental",
+        "false",
+    ],
+    data = HERMETIC_WEB_CHECK_DATA,
+    chdir = package_name(),
 )
 
 sh_binary(
@@ -82,11 +219,37 @@ sh_binary(
     data = ANY_ENFORCE_DATA,
 )
 
-sh_binary(
+vitest_bin.vitest_test(
+    name = "unit_smoke",
+    args = [
+        "run",
+        "--silent",
+        "--reporter=dot",
+        "--minWorkers=1",
+        "--maxWorkers=2",
+        "--testTimeout=60000",
+        "src/pages/sessionThread/sessionMarkdownWrapRules.test.ts",
+        "src/pages/sessionThread/transcriptLayoutPlanner.test.ts",
+        "src/pages/sessionThread/sessionMarkdownInlineMeasurementTextPlacement.test.ts",
+        "src/pages/sessionThread/pretextVirtualizerRowLayout.test.ts",
+        "src/state/sessionSupervisor/sessionSubscriptionPlan.test.ts",
+    ],
+    data = HERMETIC_WEB_SMOKE_DATA,
+    chdir = package_name(),
+)
+
+vitest_bin.vitest_test(
     name = "unit_tests",
-    srcs = ["//tools/bazel:run_workspace_task.sh"],
-    args = ["core/apps/web", "pnpm", "test:quiet"],
-    data = COMMON_DATA,
+    args = [
+        "run",
+        "--silent",
+        "--reporter=dot",
+        "--minWorkers=1",
+        "--maxWorkers=2",
+        "--testTimeout=60000",
+    ],
+    data = HERMETIC_WEB_CHECK_DATA,
+    chdir = package_name(),
 )
 
 sh_binary(

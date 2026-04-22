@@ -1,5 +1,6 @@
 import { memo, useEffect, useRef, useState } from "react";
 import Editor from "@monaco-editor/react";
+import type * as Monaco from "monaco-editor";
 import type { editor as MonacoEditor } from "monaco-editor";
 import { ChevronDown, ChevronUp } from "lucide-react";
 import { FileIcon } from "./FileIcon";
@@ -669,7 +670,7 @@ function DecoratedDiffEditor({
         wrappingStrategy: wrapLines ? "advanced" : "simple",
         wordWrapBreakAfterCharacters: wrapLines ? WRAP_BREAK_AFTER_CHARACTERS : undefined,
       }}
-      onMount={(editor, monaco) => {
+      onMount={(editor: MonacoEditor.IStandaloneCodeEditor, monaco: typeof Monaco) => {
         setEditorInstance(editor);
         const applyDecorations = () => {
           const decs = file.renderLineKinds.flatMap((kind, idx) => {

@@ -68,7 +68,7 @@ export function AgentSystemPromptSection({
                   defaultLanguage="markdown"
                   theme={themeVariant === "dark" ? "vs-dark" : "vs"}
                   value={agentPromptText}
-                  onChange={(value) => setAgentPromptText(value ?? "")}
+                  onChange={(value: string | undefined) => setAgentPromptText(value ?? "")}
                   options={{
                     minimap: { enabled: false },
                     lineNumbers: "off",
@@ -109,7 +109,7 @@ export function AgentSystemPromptSection({
                   defaultLanguage="markdown"
                   theme={themeVariant === "dark" ? "vs-dark" : "vs"}
                   value={subagentPromptText}
-                  onChange={(value) => setSubagentPromptText(value ?? "")}
+                  onChange={(value: string | undefined) => setSubagentPromptText(value ?? "")}
                   options={{
                     minimap: { enabled: false },
                     lineNumbers: "off",

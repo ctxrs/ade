@@ -419,6 +419,34 @@ test("bazel pilot linux remote execution keeps lib builds remote and host execut
   );
 });
 
+test("BuildBuddy Linux RBE configs pin target and host platforms to Linux", () => {
+  const bazelrc = fs.readFileSync(path.resolve(__dirname, "..", "..", ".bazelrc"), "utf8");
+  for (const configName of ["buildbuddy-rbe", "buildbuddy-linux-rbe"]) {
+    assert.match(
+      bazelrc,
+      new RegExp(
+        `^common:${configName} --platforms=//tools/bazel/platforms:linux_x86_64$`,
+        "mu",
+      ),
+    );
+    assert.match(
+      bazelrc,
+      new RegExp(
+        `^common:${configName} --host_platform=//tools/bazel/platforms:linux_x86_64$`,
+        "mu",
+      ),
+    );
+  }
+  assert.match(
+    bazelrc,
+    /^common:buildbuddy-linux-arm64-rbe --platforms=\/\/tools\/bazel\/platforms:linux_arm64$/mu,
+  );
+  assert.match(
+    bazelrc,
+    /^common:buildbuddy-linux-arm64-rbe --host_platform=\/\/tools\/bazel\/platforms:linux_arm64$/mu,
+  );
+});
+
 test("bazel pilot keeps run targets local even in linux remote execution mode", () => {
   const invocation = buildBazelPilotInvocation({
     argv: ["run", "//core/apps/web:unit_tests"],

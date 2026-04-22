@@ -132,7 +132,7 @@ export function ContainerNetworkSection({
                 defaultLanguage="plaintext"
                 theme={themeVariant === "dark" ? "vs-dark" : "vs"}
                 value={workspaceAllowlistText}
-                onChange={(value) => {
+                onChange={(value: string | undefined) => {
                   if (allowlistEditorDisabled) return;
                   setWorkspaceAllowlistText(value ?? "");
                 }}

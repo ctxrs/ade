@@ -11,6 +11,7 @@
     "test:agent:broader": "node scripts/run_test_taxonomy_profile.cjs --run --profile agent-broader",
     "test:agent:broader:linux-rbe": "CTX_BAZEL_REMOTE_EXECUTION=linux node scripts/run_test_taxonomy_profile.cjs --run --profile agent-broader",
     "test:agent:buildbuddy-remote": "node scripts/run_buildbuddy_remote.cjs agent-gate",
+    "verify:agent-remote": "node scripts/verify_agent_remote.cjs",
     "verify:touched": "node scripts/run_verification_router.cjs touched",
     "verify:touched:linux-rbe": "CTX_BAZEL_REMOTE_EXECUTION=linux node scripts/run_verification_router.cjs touched",
     "verify:affected": "node scripts/run_verification_router.cjs affected",
@@ -35,11 +36,12 @@
     "bazel:pilot:test:linux-rbe": "CTX_BAZEL_REMOTE_EXECUTION=linux node scripts/run_bazel_pilot.cjs test",
     "bazel:pilot:build": "node scripts/run_bazel_pilot.cjs build",
     "bazel:pilot:build:linux-rbe": "CTX_BAZEL_REMOTE_EXECUTION=linux node scripts/run_bazel_pilot.cjs build",
-    "bazel:web:build": "node scripts/run_bazel_pilot.cjs run //core/apps/web:build",
+    "bazel:web:build": "node scripts/run_bazel_pilot.cjs build //core/apps/web:build",
     "bazel:web:any:enforce": "node scripts/run_bazel_pilot.cjs run //core/apps/web:any_enforce",
-    "bazel:web:lint": "node scripts/run_bazel_pilot.cjs run //core/apps/web:lint",
-    "bazel:web:typecheck": "node scripts/run_bazel_pilot.cjs run //core/apps/web:typecheck",
-    "bazel:web:test": "node scripts/run_bazel_pilot.cjs run //core/apps/web:unit_tests",
+    "bazel:web:lint": "node scripts/run_bazel_pilot.cjs test //core/apps/web:lint",
+    "bazel:web:typecheck": "node scripts/run_bazel_pilot.cjs test //core/apps/web:typecheck",
+    "bazel:web:smoke": "node scripts/run_bazel_pilot.cjs test //core/apps/web:unit_smoke",
+    "bazel:web:test": "node scripts/run_bazel_pilot.cjs test //core/apps/web:unit_tests",
     "bazel:web:unit:non-pretext": "node scripts/run_bazel_pilot.cjs run //core/apps/web:unit_tests_non_pretext",
     "bazel:web:pretext:measurement": "node scripts/run_bazel_pilot.cjs run //core/apps/web:pretext_measurement_unit_tests",
     "bazel:install-site:test": "node scripts/run_bazel_pilot.cjs test //install-site:install_contract_tests",
@@ -431,6 +433,7 @@
     "ws": "^8.16.0"
   },
   "pnpm": {
+    "onlyBuiltDependencies": [],
     "overrides": {
       "react": "19.1.0",
       "react-dom": "19.1.0",

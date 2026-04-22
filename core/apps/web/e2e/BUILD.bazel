@@ -1,3 +1,4 @@
+load("@aspect_rules_js//js:defs.bzl", "js_library")
 load(":web_e2e_test.bzl", "web_e2e_test")
 
 package(default_visibility = ["//visibility:public"])
@@ -11,6 +12,11 @@ filegroup(
             "test-results/**",
         ],
     ),
+)
+
+js_library(
+    name = "utils_sources",
+    srcs = glob(["utils/**/*"]),
 )
 
 web_e2e_test(
