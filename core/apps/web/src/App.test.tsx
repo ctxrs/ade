@@ -29,6 +29,7 @@ import {
   consumePendingDownloadAttributionId,
   getPendingDownloadAttributionId,
   trackAppOpened,
+  trackDesktopWebviewRecoveryObserved,
 } from "./utils/analytics";
 import { emitUiDiagnostic, resetUiDiagnosticsForTests } from "./state/diagnosticsChannel";
 import { refreshUpdateCheck } from "./utils/updateNotice";
@@ -353,6 +354,41 @@ test("desktop recovery bridge polls for incidents that do not reload the rendere
     vi.useRealTimers();
   }
 });
+
+test.each(["window_not_focused", "window_not_visible"] as const)(
+  "desktop recovery bridge keeps benign %s no-op incidents out of the user notice",
+  async (suppressionReason) => {
+    vi.mocked(isDesktopApp).mockReturnValue(true);
+    vi.mocked(desktopWebviewRecoveryConsumeIncidents).mockResolvedValue([
+      {
+        incident_id: `inc-${suppressionReason}`,
+        window_label: "workspace-setup:ws-1",
+        window_surface: "workbench",
+        route: "/workspaces/ws-1",
+        trigger_kind: "heartbeat_timeout",
+        action: "noop",
+        daemon_health: "ok",
+        suppression_reason: suppressionReason,
+        created_at_ms: 126,
+      },
+    ]);
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(trackDesktopWebviewRecoveryObserved).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: "noop",
+          daemonHealth: "ok",
+          suppressionReason,
+          surface: "workbench",
+        }),
+      );
+    });
+    expect(screen.queryByTestId("desktop-webview-recovery-snackbar")).not.toBeInTheDocument();
+    expect(screen.queryByText(/ctx detected a failed workspace window/i)).not.toBeInTheDocument();
+  },
+);
 
 test("persists runtime diagnostics to desktop log", async () => {
   vi.mocked(isDesktopApp).mockReturnValue(true);

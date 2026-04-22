@@ -14,6 +14,10 @@ import { trackDesktopWebviewRecoveryObserved } from "../utils/analytics";
 const HEARTBEAT_INTERVAL_MS = 4_000;
 const INCIDENT_POLL_INTERVAL_MS = 4_000;
 
+const silentNoopSuppressionReasons = new Set<
+  NonNullable<DesktopWebviewRecoveryIncident["suppression_reason"]>
+>(["window_not_focused", "window_not_visible"]);
+
 const surfaceLabel = (surface: DesktopWebviewRecoveryIncident["window_surface"]): string => {
   switch (surface) {
     case "main":
@@ -107,6 +111,12 @@ const emitIncidentDiagnostic = (incident: DesktopWebviewRecoveryIncident): void 
   });
 };
 
+const shouldShowIncidentNotice = (incident: DesktopWebviewRecoveryIncident): boolean => {
+  if (incident.action !== "noop") return true;
+  const suppressionReason = incident.suppression_reason ?? null;
+  return suppressionReason === null || !silentNoopSuppressionReasons.has(suppressionReason);
+};
+
 export function DesktopWebviewRecoveryBridge() {
   const location = useLocation();
   const navigate = useNavigate();
@@ -125,7 +135,10 @@ export function DesktopWebviewRecoveryBridge() {
           for (const incident of incidents) {
             emitIncidentDiagnostic(incident);
           }
-          setPendingIncidents((current) => [...current, ...incidents]);
+          const visibleIncidents = incidents.filter(shouldShowIncidentNotice);
+          if (visibleIncidents.length > 0) {
+            setPendingIncidents((current) => [...current, ...visibleIncidents]);
+          }
         })
         .catch(() => {})
         .finally(() => {
