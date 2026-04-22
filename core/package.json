@@ -238,6 +238,7 @@
     "sdlc:cache:report": "node scripts/sdlc_cache_report.cjs",
     "sdlc:cache:purge": "node scripts/sdlc_cache_purge.cjs",
     "sdlc:cache:purge:external": "node scripts/sdlc_cache_purge.cjs --root external",
+    "sdlc:cache:wipe:external": "node scripts/sdlc_external_cache_wipe.cjs",
     "sdlc:agent-loop:benchmark": "node scripts/sdlc_agent_loop_benchmark.cjs",
     "sdlc:agent-loop:benchmark:agent-mix": "node scripts/sdlc_agent_loop_benchmark.cjs --preset agent-mix --mixed",
     "sdlc:agent-loop:benchmark:main-band": "node scripts/sdlc_agent_loop_benchmark.cjs --preset main-band --mixed",
