@@ -19,20 +19,6 @@ append_encoded_rustflag() {
   fi
 }
 
-cargo_target_dir() {
-  local manifest="$1"
-  cargo metadata --manifest-path "$manifest" --format-version 1 --no-deps | python3 -c '
-import json
-import sys
-
-payload = json.load(sys.stdin)
-target_directory = str(payload.get("target_directory", "")).strip()
-if not target_directory:
-    raise SystemExit(1)
-print(target_directory, end="")
-'
-}
-
 if [[ -n "${PATH:-}" ]]; then
   export PATH="${cargo_home_bin}:${PATH}"
 else
@@ -66,8 +52,10 @@ if ! command -v cargo-zigbuild >/dev/null 2>&1; then
   exit 1
 fi
 
+eval "$(node "${repo_root}/scripts/print_ctx_cache_env.cjs" --mode workspace --cwd "${repo_root}" --format shell --mkdir)"
+
 if [[ -z "${target_root}" ]]; then
-  target_root="${CARGO_TARGET_DIR:-$(cargo_target_dir "${repo_root}/Cargo.toml")}"
+  target_root="${CARGO_TARGET_DIR:?missing CARGO_TARGET_DIR from ctx cache env}"
 fi
 
 if [[ -n "${HOME:-}" ]]; then

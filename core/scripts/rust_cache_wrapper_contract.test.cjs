@@ -4,6 +4,102 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const repoRoot = path.resolve(__dirname, "..", "..");
+const unsafeCargoCommandPattern = /(^|[^A-Za-z0-9_./-])cargo\s+(?:\+\S+\s+)?(build|test|run|clippy|check|doc|nextest|zigbuild|llvm-cov)\b/;
+
+const pathAllowlist = new Map([
+  [
+    "scripts/codex_crp_stage_release_archives.sh",
+    {
+      owner: "provider-artifacts",
+      category: "provider-artifact-packaging",
+      rationale:
+        "Builds distributable codex-crp release archives for explicit target triples; the script sets CARGO_TARGET_DIR for host and container builds and computes artifact paths from that target root.",
+    },
+  ],
+  [
+    "scripts/ensure_bundled_harnesses.sh",
+    {
+      owner: "provider-artifacts",
+      category: "provider-artifact-packaging",
+      rationale:
+        "Assembles runtime provider bundles outside the core Bazel graph; the script exports an isolated bundle CARGO_TARGET_DIR before local bridge/adapter builds.",
+    },
+  ],
+  [
+    "scripts/lib/bundled_harnesses_providers.sh",
+    {
+      owner: "provider-artifacts",
+      category: "provider-artifact-packaging",
+      rationale:
+        "Sourced by bundled harness assembly and preserves explicit target roots for cross-target provider artifacts.",
+    },
+  ],
+  [
+    "scripts/publish_adapter_supabase.sh",
+    {
+      owner: "provider-artifacts",
+      category: "provider-artifact-packaging",
+      rationale:
+        "Publishes harness adapter artifacts outside the core Bazel graph; each Cargo build writes to a staging-local CARGO_TARGET_DIR.",
+    },
+  ],
+  [
+    "core/scripts/desktop_sync_resources.cjs",
+    {
+      owner: "desktop-runtime",
+      category: "diagnostic-text",
+      rationale:
+        "Contains an actionable error message mentioning cargo build; desktop sidecar build execution is handled by prepared Bazel/automation paths.",
+    },
+  ],
+  [
+    "scripts/buildbuddy/reset_macos_release_state.sh",
+    {
+      owner: "release-ops",
+      category: "process-cleanup-pattern",
+      rationale:
+        "Matches a command string while cleaning stale macOS release processes; it is not a build invocation.",
+    },
+  ],
+]);
+const nonInvocationAllowlistCategories = new Set([
+  "diagnostic-text",
+  "process-cleanup-pattern",
+]);
+const allowedCargoLinePatterns = new Map([
+  [
+    "scripts/codex_crp_stage_release_archives.sh",
+    [
+      /cargo build --manifest-path \/work\/Cargo\.toml -p codex-crp --release --target '\$rust_target'/,
+      /cargo zigbuild --manifest-path "\$WORKSPACE_DIR\/Cargo\.toml" -p codex-crp --release --target "\$rust_target"/,
+      /cargo build --manifest-path "\$WORKSPACE_DIR\/Cargo\.toml" -p codex-crp --release --target "\$rust_target"/,
+    ],
+  ],
+  [
+    "scripts/ensure_bundled_harnesses.sh",
+    [
+      /cargo \+stable build --release --target '\$rust_target'/,
+      /\(cd "\$BRIDGE_DIR" && cargo build --release\)/,
+      /\(cd "\$BRIDGE_DIR" && cargo build --release --target "\$rust_target"\)/,
+      /\(cd "\$LOCAL_ADAPTERS_DIR\/\$dir" && cargo build --release --target "\$rust_target"\)/,
+    ],
+  ],
+  [
+    "scripts/lib/bundled_harnesses_providers.sh",
+    [
+      /cargo \+stable build --manifest-path \/work\/Cargo\.toml -p codex-crp --target '\$rust_target'/,
+      /env CARGO_TARGET_DIR="\$target_dir" .* cargo zigbuild --manifest-path "\$CODEX_CRP_WORKSPACE\/Cargo\.toml"/,
+      /env CARGO_TARGET_DIR="\$target_dir" .* cargo build --manifest-path "\$CODEX_CRP_WORKSPACE\/Cargo\.toml"/,
+      /\(cd "\$LOCAL_ADAPTERS_DIR\/\$dir" && cargo build --release --target "\$rust_target"\)/,
+    ],
+  ],
+  [
+    "scripts/publish_adapter_supabase.sh",
+    [
+      /\(cd "\$ROOT_DIR\/harness-adapters\/\$dir" && CARGO_TARGET_DIR="\$target_dir" cargo build --release\)/,
+    ],
+  ],
+]);
 
 function read(relativePath) {
   return fs.readFileSync(path.resolve(repoRoot, relativePath), "utf8");
@@ -50,6 +146,144 @@ function cargoCommandLines(relativePath) {
     });
   }
   return matches;
+}
+
+function listFilesRecursive(rootRelativePath, predicate) {
+  const rootPath = path.resolve(repoRoot, rootRelativePath);
+  if (!fs.existsSync(rootPath)) {
+    return [];
+  }
+  const results = [];
+  const stack = [rootPath];
+  while (stack.length > 0) {
+    const current = stack.pop();
+    const stat = fs.statSync(current);
+    if (stat.isDirectory()) {
+      for (const entry of fs.readdirSync(current)) {
+        if (entry === "node_modules" || entry === ".git") {
+          continue;
+        }
+        stack.push(path.join(current, entry));
+      }
+      continue;
+    }
+    const relativePath = path.relative(repoRoot, current).replace(/\\/g, "/");
+    if (predicate(relativePath)) {
+      results.push(relativePath);
+    }
+  }
+  return results.sort();
+}
+
+function isLiveAutomationFile(relativePath) {
+  if (relativePath.startsWith(".ctx/docs/")) {
+    const basename = path.basename(relativePath);
+    return relativePath.endsWith(".md")
+      && !basename.startsWith("exec-plan-")
+      && !basename.endsWith(".generated.md");
+  }
+  if (relativePath === "core/package.json") {
+    return true;
+  }
+  if (relativePath.startsWith(".buildkite/")) {
+    return /\.(ya?ml|sh|cjs|mjs)$/.test(relativePath);
+  }
+  if (relativePath.startsWith("scripts/") || relativePath.startsWith("core/scripts/")) {
+    if (/\.(test|spec)\.(cjs|mjs|js|ts)$/.test(relativePath)) {
+      return false;
+    }
+    return /\.(sh|cjs|mjs|js|yaml|yml)$/.test(relativePath);
+  }
+  return false;
+}
+
+function collectLiveScanFiles() {
+  const roots = [
+    ".ctx/docs",
+    "core/package.json",
+    ".buildkite",
+    "scripts",
+    "core/scripts",
+  ];
+  const files = new Set();
+  for (const root of roots) {
+    const rootPath = path.resolve(repoRoot, root);
+    if (!fs.existsSync(rootPath)) {
+      continue;
+    }
+    if (fs.statSync(rootPath).isFile()) {
+      if (isLiveAutomationFile(root)) {
+        files.add(root);
+      }
+      continue;
+    }
+    for (const file of listFilesRecursive(root, isLiveAutomationFile)) {
+      files.add(file);
+    }
+  }
+  return [...files].sort();
+}
+
+function hasWrapperContext(context) {
+  return /run_with_ctx_cache_env\.cjs/.test(context)
+    || /ctx_cache_run_workspace_rust/.test(context)
+    || /ctx_cache_run_verify_quick_rust/.test(context);
+}
+
+function isTargetIsolatedContext(context) {
+  return /CARGO_TARGET_DIR=/.test(context) || /--target-dir\b/.test(context);
+}
+
+function validateAllowlist() {
+  for (const [relativePath, entry] of pathAllowlist.entries()) {
+    assert.ok(entry.owner, `${relativePath} allowlist entry needs an owner`);
+    assert.ok(entry.category, `${relativePath} allowlist entry needs a category`);
+    assert.ok(entry.rationale, `${relativePath} allowlist entry needs a rationale`);
+    if (!nonInvocationAllowlistCategories.has(entry.category)) {
+      assert.ok(
+        allowedCargoLinePatterns.has(relativePath),
+        `${relativePath} build-producing allowlist entry needs line patterns`,
+      );
+    }
+  }
+}
+
+function unsafeCargoFindings() {
+  validateAllowlist();
+  const findings = [];
+  for (const relativePath of collectLiveScanFiles()) {
+    const text = read(relativePath);
+    const lines = text.split(/\r?\n/);
+    const allowlistEntry = pathAllowlist.get(relativePath);
+    for (let index = 0; index < lines.length; index += 1) {
+      const line = lines[index];
+      if (!unsafeCargoCommandPattern.test(line)) {
+        continue;
+      }
+      const contextStart = Math.max(0, index - 6);
+      const context = lines.slice(contextStart, index + 1).join("\n");
+      if (hasWrapperContext(context)) {
+        continue;
+      }
+      if (allowlistEntry) {
+        if (nonInvocationAllowlistCategories.has(allowlistEntry.category)) {
+          continue;
+        }
+        const patterns = allowedCargoLinePatterns.get(relativePath) || [];
+        if (isTargetIsolatedContext(text) && patterns.some((pattern) => pattern.test(line))) {
+          continue;
+        }
+      }
+      findings.push(
+        `${relativePath}:${index + 1}: unsafe raw Cargo command without ctx cache wrapper or allowlisted target isolation: ${line.trim()}`,
+      );
+    }
+  }
+  return findings;
+}
+
+function readCorePackageScripts() {
+  return JSON.parse(read("core/package.json")).scripts || {};
 }
 
 test("ctx cache wrapper entrypoints expose cwd-aware observability metadata", () => {
@@ -131,7 +365,7 @@ test("automation cargo invocations are wrapper-managed or explicitly isolated", 
     },
     {
       path: "scripts/publish_adapter_supabase.sh",
-      pattern: /CARGO_TARGET_DIR="\$cargo_target_dir" cargo build --release/,
+      pattern: /CARGO_TARGET_DIR="\$target_dir" cargo build --release/,
       rationale: "legacy adapter publish stages into a temp target under STAGING",
     },
     {
@@ -141,11 +375,6 @@ test("automation cargo invocations are wrapper-managed or explicitly isolated", 
     },
     {
       path: "core/scripts/avf_linux_ci_smoke.sh",
-      pattern: /cargo metadata --manifest-path/,
-      rationale: "metadata lookup discovers Cargo target directories and does not build targets",
-    },
-    {
-      path: "core/scripts/build_avf_linux_guest_agent.sh",
       pattern: /cargo metadata --manifest-path/,
       rationale: "metadata lookup discovers Cargo target directories and does not build targets",
     },
@@ -259,4 +488,13 @@ test("repo-owned automation rust callers use ctx cache wrappers instead of naked
       `${entry.path} should not invoke cargo directly from the script body`,
     );
   }
+});
+
+test("live automation and agent-facing docs do not introduce unsafe raw Cargo build paths", () => {
+  assert.deepEqual(unsafeCargoFindings(), []);
+});
+
+test("top-level package test script routes through the stable agent gate", () => {
+  const scripts = readCorePackageScripts();
+  assert.equal(scripts.test, "pnpm test:agent");
 });

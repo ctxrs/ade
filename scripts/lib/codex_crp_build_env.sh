@@ -10,7 +10,8 @@ codex_crp_target_dir() {
   fi
 
   root_basename="$(basename "${root_dir}")"
-  printf '%s' "${HOME}/.cache/cargo/ctx-monorepo/codex-crp-${root_basename}"
+  local volatile_targets_dir="${CTX_VOLATILE_TARGETS_DIR:-${HOME}/.ctx/volatile/targets}"
+  printf '%s' "${volatile_targets_dir}/ctx-monorepo/codex-crp-${root_basename}"
 }
 
 codex_crp_build_jobs() {

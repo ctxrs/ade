@@ -3,7 +3,7 @@
   "private": true,
   "packageManager": "pnpm@9.15.1",
   "scripts": {
-    "test": "node scripts/run_with_ctx_cache_env.cjs --mode workspace -- cargo test -q && pnpm -C apps/web test",
+    "test": "pnpm test:agent",
     "test:agent:minimal": "node scripts/run_test_taxonomy_profile.cjs --run --profile agent-minimal",
     "test:agent:minimal:linux-rbe": "CTX_BAZEL_REMOTE_EXECUTION=linux node scripts/run_test_taxonomy_profile.cjs --run --profile agent-minimal",
     "test:agent": "node scripts/run_rust_gate.cjs --mode workspace --agent-gate --test-strategy mixed && pnpm bazel:web:test",

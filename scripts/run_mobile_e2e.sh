@@ -107,8 +107,10 @@ fi
 CONTROL_PLANE_URL="${CTX_TUNNEL_CONTROL_PLANE_URL:?set CTX_TUNNEL_CONTROL_PLANE_URL}"
 
 echo "Running mobile e2e..."
-(cd "$CORE_DIR" && \
-  CTX_TUNNEL_CONTROL_PLANE_URL="$CONTROL_PLANE_URL" \
-  CTX_SUPABASE_ACCESS_TOKEN="$USER_TOKEN" \
-  node scripts/run_with_ctx_cache_env.cjs --mode workspace --cwd "$CORE_DIR" -- \
-    cargo run -p ctx-http --bin mobile_e2e)
+CTX_TUNNEL_CONTROL_PLANE_URL="$CONTROL_PLANE_URL" \
+CTX_SUPABASE_ACCESS_TOKEN="$USER_TOKEN" \
+  node "$CORE_DIR/scripts/run_with_ctx_cache_env.cjs" \
+    --mode workspace \
+    --cwd "$CORE_DIR" \
+    -- \
+    cargo run -p ctx-http --bin mobile_e2e

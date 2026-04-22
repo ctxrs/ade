@@ -12,12 +12,13 @@ function writeExecutable(filePath, contents) {
   fs.writeFileSync(filePath, contents, { mode: 0o755 });
 }
 
-test("build_avf_linux_guest_agent.sh defaults guest helpers to the cargo metadata target root", () => {
+test("build_avf_linux_guest_agent.sh defaults guest helpers to the ctx cache target root", () => {
   const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-avf-guest-build-"));
   const fakeHome = path.join(tmpRoot, "home");
   const cargoBinDir = path.join(fakeHome, ".cargo", "bin");
   const toolchainBinDir = path.join(fakeHome, ".rustup", "toolchains", "1.94.1", "bin");
-  const targetRoot = path.join(tmpRoot, "cargo-target");
+  const volatileRoot = path.join(tmpRoot, "volatile");
+  const targetRoot = path.join(volatileRoot, "targets", "ctx-monorepo", "avf-guest-test");
   const rustflagsReport = path.join(tmpRoot, "encoded-rustflags.txt");
   const pathReport = path.join(tmpRoot, "path.txt");
   const rustupReport = path.join(tmpRoot, "rustup-report.txt");
@@ -29,8 +30,8 @@ test("build_avf_linux_guest_agent.sh defaults guest helpers to the cargo metadat
       "#!/bin/sh",
       "set -eu",
       "if [ \"${1:-}\" = \"metadata\" ]; then",
-      "  printf '{\"target_directory\":\"%s\"}' \"$FAKE_TARGET_ROOT\"",
-      "  exit 0",
+      "  echo \"unexpected cargo metadata invocation\" >&2",
+      "  exit 1",
       "fi",
       "echo \"unexpected cargo invocation: $*\" >&2",
       "exit 1",
@@ -120,9 +121,10 @@ test("build_avf_linux_guest_agent.sh defaults guest helpers to the cargo metadat
     env: {
       ...process.env,
       HOME: fakeHome,
-      PATH: `/usr/bin:/bin:/usr/sbin:/sbin`,
+      PATH: `${path.dirname(process.execPath)}:/usr/bin:/bin:/usr/sbin:/sbin`,
       CARGO_TARGET_DIR: "",
-      FAKE_TARGET_ROOT: targetRoot,
+      CTX_VOLATILE_ROOT: volatileRoot,
+      CTX_CACHE_SCOPE_KEY: "avf-guest-test",
       FAKE_ENCODED_RUSTFLAGS_REPORT: rustflagsReport,
       FAKE_PATH_REPORT: pathReport,
       FAKE_RUSTUP_REPORT: rustupReport,
