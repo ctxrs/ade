@@ -212,7 +212,7 @@ pub enum CrpEvent {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         mcp_servers: Option<Value>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        account: Option<Value>,
+        account: Option<Box<Value>>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         fast_mode_state: Option<String>,
     },
