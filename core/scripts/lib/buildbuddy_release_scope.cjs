@@ -23,8 +23,9 @@ const DEFAULT_PROVIDER_DEPS_PROVIDER_IDS = Object.freeze([
   "claude-cli",
   "claude-crp",
   "cline",
-  "copilot",
+  "codex-cli",
   "codex",
+  "copilot",
   "cursor",
   "droid",
   "gemini",
@@ -79,6 +80,38 @@ function readProviderMatrixAtCommit({
     encoding: "utf8",
   });
   return JSON.parse(raw);
+}
+
+function collectManagedArchiveProviderIdsFromMatrix(matrix) {
+  const providerIds = [];
+  for (const entry of Array.isArray(matrix?.providers) ? matrix.providers : []) {
+    const providerId = String(entry?.id || "").trim();
+    if (!providerId) {
+      continue;
+    }
+    const install = entry.managed_install;
+    const kind = String(install?.kind || "").trim().toLowerCase();
+    if (!install || (kind !== "archive" && kind !== "npm" && kind !== "python")) {
+      continue;
+    }
+    if (Object.keys(install.targets || {}).length === 0) {
+      continue;
+    }
+    providerIds.push(providerId);
+  }
+  return providerIds;
+}
+
+function readManagedArchiveProviderIdsAtCommit({
+  commitSha = "",
+  matrixRelativePath = DEFAULT_PROVIDER_MATRIX_RELATIVE_PATH,
+  repoRoot,
+} = {}) {
+  return collectManagedArchiveProviderIdsFromMatrix(readProviderMatrixAtCommit({
+    commitSha,
+    matrixRelativePath,
+    repoRoot,
+  }));
 }
 
 async function inspectManagedArchiveTargets({
@@ -143,6 +176,7 @@ function formatManagedArchiveInspectionSummary({
 
 module.exports = {
   BUILD_BUDDY_RELEASE_SCOPES,
+  collectManagedArchiveProviderIdsFromMatrix,
   DEFAULT_CODEX_PROVIDER_IDS,
   DEFAULT_PROVIDER_DEPS_PROVIDER_IDS,
   DEFAULT_PROVIDER_MATRIX_RELATIVE_PATH,
@@ -150,6 +184,7 @@ module.exports = {
   formatManagedArchiveInspectionSummary,
   inspectManagedArchiveTargets,
   normalizeReleaseScope,
+  readManagedArchiveProviderIdsAtCommit,
   readProviderMatrixAtCommit,
   releaseScopeIncludesCtx,
   releaseScopeIncludesProviders,
