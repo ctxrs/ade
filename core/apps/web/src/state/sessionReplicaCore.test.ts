@@ -1704,7 +1704,119 @@ describe("SessionReplicaCore", () => {
     expect(latest.data.assistantStreamingByTurnId?.["turn-1"]?.content).toBe("Hello world");
   });
 
-  it("drops assistant streaming continuity only on explicit drop_session", () => {
+  it("keeps stream-only assistant chunks out of durable event buffer eviction", () => {
+    const sessionId = "session-assistant-stream-buffer-rollover";
+    const patches: SessionReplicaPatch[] = [];
+    const core = new SessionReplicaCore({
+      api: { getSessionHead: vi.fn() },
+      emit: (next) => patches.push(...next),
+    });
+    const createdAt = new Date().toISOString();
+
+    core.handleCommand({ type: "init", config: { eventBufferLimit: 2, headLimit: 50 } });
+    core.handleCommand({
+      type: "seed_head",
+      sessionId,
+      head: {
+        session: mkSession(sessionId),
+        turns: [
+          {
+            turn_id: "turn-1",
+            session_id: sessionId,
+            run_id: "run-1",
+            user_message_id: "message-1",
+            status: "running",
+            start_seq: 1,
+            end_seq: null,
+            started_at: createdAt,
+            updated_at: createdAt,
+            assistant_partial: null,
+            thought_partial: "",
+            metrics_json: null,
+            tool_total: 0,
+            tool_pending: 0,
+            tool_running: 0,
+            tool_completed: 0,
+            tool_failed: 0,
+          },
+        ],
+        events: [],
+        messages: [
+          {
+            id: "message-1",
+            session_id: sessionId,
+            task_id: "task-1",
+            turn_id: "turn-1",
+            role: "user",
+            content: "hi",
+            delivery: "immediate",
+            created_at: createdAt,
+          },
+        ],
+        last_event_seq: 1,
+        state_rev: 1,
+        has_more_turns: false,
+        has_more_history: false,
+        history_cursor: null,
+      },
+      mode: "bootstrap_seed",
+    });
+    patches.length = 0;
+
+    const fragments = ["a", "b", "c", "d", "e"];
+    for (const [index, fragment] of fragments.entries()) {
+      const seq = index + 2;
+      core.handleCommand({
+        type: "workspace_event",
+        event: {
+          type: "session_head_delta",
+          workspace_id: "ws-1",
+          snapshot_rev: seq,
+          delta: {
+            session_id: sessionId,
+            last_event_seq: seq,
+            projection_rev: seq,
+            state_rev: seq,
+            event: {
+              seq,
+              id: `event-assistant-chunk-${seq}`,
+              session_id: sessionId,
+              run_id: "run-1",
+              turn_id: "turn-1",
+              event_type: "assistant_chunk",
+              payload_json: {
+                content_fragment: fragment,
+              },
+              created_at: createdAt,
+            },
+          },
+        },
+      });
+    }
+
+    expect(patches.some((patch) => patch.op === "evict")).toBe(false);
+    const streamPatches = patches.filter(
+      (patch) =>
+        patch.op === "append" &&
+        patch.sessionId === sessionId &&
+        patch.data.appendMode === "stream_delta",
+    );
+    expect(streamPatches).toHaveLength(fragments.length);
+    expect(streamPatches.every((patch) => patch.op === "append" && patch.data.events === undefined)).toBe(true);
+    expect(streamPatches.every((patch) => patch.op === "append" && patch.data.turns === undefined)).toBe(true);
+    expect(streamPatches.every((patch) => patch.op === "append" && patch.data.messages === undefined)).toBe(true);
+    expect(streamPatches.every((patch) => patch.op === "append" && patch.data.lastEventSeq === undefined)).toBe(true);
+    expect(streamPatches.every((patch) => patch.op === "append" && patch.data.projectionRev === undefined)).toBe(true);
+    expect(streamPatches.every((patch) => patch.op === "append" && patch.data.stateRev === undefined)).toBe(true);
+    expect(streamPatches.every((patch) => patch.op === "append" && patch.data.freshness === undefined)).toBe(true);
+    const latest = streamPatches.at(-1);
+    if (!latest || latest.op === "evict") {
+      throw new Error("expected stream delta patch");
+    }
+    expect(latest.data.assistantStreamingByTurnId?.["turn-1"]?.content).toBe(fragments.join(""));
+  });
+
+  it("does not restore dropped sessions from stream-only assistant chunks", () => {
     const sessionId = "session-assistant-stream-dropped-explicitly";
     const patches: SessionReplicaPatch[] = [];
     const core = new SessionReplicaCore({
@@ -1790,6 +1902,7 @@ describe("SessionReplicaCore", () => {
     });
 
     core.handleCommand({ type: "drop_session", sessionId });
+    const patchCountAfterDrop = patches.length;
 
     core.handleCommand({
       type: "workspace_event",
@@ -1818,17 +1931,8 @@ describe("SessionReplicaCore", () => {
       },
     });
 
-    const latest = [...patches].reverse().find(
-      (patch) =>
-        patch.sessionId === sessionId &&
-        patch.op === "append" &&
-        patch.data.assistantStreamingByTurnId?.["turn-1"]?.content != null,
-    );
-    if (!latest || latest.op === "evict") {
-      throw new Error("expected append patch with assistant streaming state");
-    }
-
-    expect(latest.data.assistantStreamingByTurnId?.["turn-1"]?.content).toBe("world");
+    const postDropPatches = patches.slice(patchCountAfterDrop);
+    expect(postDropPatches).toEqual([]);
   });
 
   it("clears stale assistant streaming overlay on repair replace", () => {

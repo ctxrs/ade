@@ -181,6 +181,14 @@ export function syncSnapshotForProjectionOp({
       if (changedCount > 0 && items.length === previousItems.length + changedCount) {
         return core.appendItems(items.slice(items.length - changedCount), anchorOverride);
       }
+      if (changedCount > 0 && haveSameItemIds(previousItems, items)) {
+        return core.patchItems(
+          items,
+          projectionOp.changedItemIds,
+          projectionOp.remeasureItemIds,
+          anchorOverride,
+        );
+      }
       return core.syncItems(items, anchorOverride);
     case "prepend_history":
       if (nextItemsEndWithStablePreviousItems(previousItems, items)) {
@@ -203,7 +211,12 @@ export function syncSnapshotForProjectionOp({
 }
 
 export function isLocalizedProjectionOp(kind: WorkbenchThreadProjectionOp["kind"]): boolean {
-  return kind === "hydrate_tools" || kind === "terminalize_turn" || kind === "toggle_expansion";
+  return (
+    kind === "append_stream" ||
+    kind === "hydrate_tools" ||
+    kind === "terminalize_turn" ||
+    kind === "toggle_expansion"
+  );
 }
 
 export function createVisibleItemAnchor(

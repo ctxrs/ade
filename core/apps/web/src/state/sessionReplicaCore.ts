@@ -25,6 +25,7 @@ import {
 import {
   applyReplicaTranscriptEvent,
   ensureReplicaEventSeq,
+  isStreamOnlyAssistantChunk,
   mergeReplicaEventsIntoEntry,
   mergeReplicaMessagesIntoEntry,
   mergeReplicaTurnsIntoEntry,
@@ -58,6 +59,10 @@ import type {
   SessionReplicaPatch,
 } from "./sessionReplicaProtocol";
 import { isAuthoritativeSessionReplicaReplace } from "./sessionReplicaProtocol";
+import {
+  buildCanonicalReplicaPatch,
+  buildStreamingOverlayReplicaPatch,
+} from "./sessionReplicaPatches";
 
 export type SessionReplicaApi = {
   getSessionHead: (sessionId: string, limit?: number, includeEvents?: boolean) => Promise<SessionHeadSnapshot | null>;
@@ -413,59 +418,6 @@ export class SessionReplicaCore {
     this.emitPatch("append", sessionId, { session, appendMode: "metadata_update" });
   }
 
-  private buildCanonicalPatch(
-    entry: SessionReplicaEntry,
-    opts: {
-      appendMode: SessionReplicaAppendMode;
-      replaceMode?: SessionReplicaReplaceMode;
-    },
-  ): SessionReplicaData & { appendMode: SessionReplicaAppendMode };
-  private buildCanonicalPatch(
-    entry: SessionReplicaEntry,
-    opts?: {
-      replaceMode?: SessionReplicaReplaceMode;
-      appendMode?: undefined;
-    },
-  ): SessionReplicaData;
-  private buildCanonicalPatch(
-    entry: SessionReplicaEntry,
-    opts?: {
-      replaceMode?: SessionReplicaReplaceMode;
-      appendMode?: SessionReplicaAppendMode;
-    },
-  ): SessionReplicaData {
-    const patch: SessionReplicaData & { appendMode?: SessionReplicaAppendMode } = {
-      session: entry.session,
-      activity: entry.activity ?? null,
-      freshness: entry.freshness,
-      turns: entry.turns,
-      turnsRev: entry.turnsRev,
-      assistantStreamingByTurnId: entry.assistantStreamingByTurnId,
-      assistantStreamingRev: entry.assistantStreamingRev,
-      messages: entry.messages,
-      messagesRev: entry.messagesRev,
-      events: entry.events,
-      eventsRev: entry.eventsRev,
-      toolSummaries: entry.toolSummaries,
-      lastEventSeq: entry.lastEventSeq,
-      projectionRev: entry.projectionRev,
-      hasMoreTurns: entry.hasMoreTurns,
-      summaryCheckpoint: entry.summaryCheckpoint ?? null,
-      headWindow: entry.headWindow ?? null,
-      turnsHydrated: entry.hydrated,
-    };
-    if (entry.stateRev !== undefined) {
-      patch.stateRev = entry.stateRev;
-    }
-    if (opts?.replaceMode) {
-      patch.replaceMode = opts.replaceMode;
-    }
-    if (opts?.appendMode) {
-      patch.appendMode = opts.appendMode;
-    }
-    return patch;
-  }
-
   private closeSession(sessionId: string) {
     const id = normalizeId(sessionId);
     if (!id) return;
@@ -600,13 +552,13 @@ export class SessionReplicaCore {
     entry.hydrated = true;
     rebuildReplicaTranscriptAuxState(entry);
     if (emitOp === "append") {
-      this.emitPatch("append", entry.sessionId, this.buildCanonicalPatch(entry, {
+      this.emitPatch("append", entry.sessionId, buildCanonicalReplicaPatch(entry, {
         ...opts,
         appendMode: opts?.appendMode ?? "head_refresh",
       }));
       return;
     }
-    this.emitPatch("replace", entry.sessionId, this.buildCanonicalPatch(entry, {
+    this.emitPatch("replace", entry.sessionId, buildCanonicalReplicaPatch(entry, {
       replaceMode: opts?.replaceMode,
     }));
   }
@@ -867,15 +819,26 @@ export class SessionReplicaCore {
   private applyHeadDelta(delta: SessionHeadDelta) {
     const sessionId = normalizeId(delta.session_id);
     if (!sessionId) return;
-    const entry = this.ensureEntry(sessionId);
-    entry.freshness = "authoritative";
+    const rawEvent = delta.event ?? null;
+    const rawStreamOnlyAssistantChunk = rawEvent ? isStreamOnlyAssistantChunk(rawEvent) : false;
+    const toolSummaries = Array.isArray(delta.tool_summaries) ? delta.tool_summaries : [];
+    const streamOnlyCandidate =
+      rawStreamOnlyAssistantChunk &&
+      !delta.turn &&
+      !delta.message &&
+      toolSummaries.length === 0;
+    const existingEntry = this.entries.get(sessionId);
+    if (streamOnlyCandidate && !existingEntry) return;
+    const entry = existingEntry ?? this.ensureEntry(sessionId);
+    const previousAssistantStreamingRev = entry.assistantStreamingRev;
     const turns: SessionTurn[] = [];
     const messages: Message[] = [];
     const events: SessionEvent[] = [];
-    const toolSummaries = Array.isArray(delta.tool_summaries) ? delta.tool_summaries : [];
     if (delta.turn) turns.push(delta.turn);
     if (delta.message) messages.push(delta.message);
-    if (delta.event) events.push(this.ensureEventSeq(entry, delta.event));
+    const event = rawEvent && !rawStreamOnlyAssistantChunk ? this.ensureEventSeq(entry, rawEvent) : rawEvent;
+    const streamOnlyAssistantChunk = event ? isStreamOnlyAssistantChunk(event) : false;
+    if (event && !streamOnlyAssistantChunk) events.push(event);
     if (turns.length) {
       mergeReplicaTurnsIntoEntry(entry, turns);
     }
@@ -889,6 +852,9 @@ export class SessionReplicaCore {
     for (const event of newEvents) {
       applyReplicaTranscriptEvent(entry, event);
     }
+    if (event && streamOnlyAssistantChunk) {
+      applyReplicaTranscriptEvent(entry, event);
+    }
     if (toolSummaries.length) {
       const byId = new Map(entry.toolSummaries.map((summary) => [String(summary.tool_call_id), summary]));
       for (const summary of toolSummaries) {
@@ -900,6 +866,19 @@ export class SessionReplicaCore {
     if (typeof evictedBeforeSeq === "number") {
       this.emitPatch("evict", sessionId, { eventsBeforeSeq: evictedBeforeSeq });
     }
+    const streamOnlyDelta =
+      streamOnlyCandidate &&
+      streamOnlyAssistantChunk &&
+      turns.length === 0 &&
+      messages.length === 0 &&
+      events.length === 0 &&
+      toolSummaries.length === 0;
+    if (streamOnlyDelta) {
+      if (entry.assistantStreamingRev === previousAssistantStreamingRev) return;
+      this.emitPatch("append", sessionId, buildStreamingOverlayReplicaPatch(entry));
+      return;
+    }
+    entry.freshness = "authoritative";
     const incomingSeq = typeof delta.last_event_seq === "number" ? delta.last_event_seq : -1;
     const existingSeq = typeof entry.lastEventSeq === "number" ? entry.lastEventSeq : -1;
     if (incomingSeq >= 0 && existingSeq >= 0 && incomingSeq < existingSeq) {
@@ -950,7 +929,7 @@ export class SessionReplicaCore {
     }
     entry.activity = reconcileActivityInterruptedFromTurns(entry.activity, entry.turns);
     entry.hydrated = true;
-    this.emitPatch("append", sessionId, this.buildCanonicalPatch(entry, {
+    this.emitPatch("append", sessionId, buildCanonicalReplicaPatch(entry, {
       appendMode: "stream_delta",
     }));
     void this.persistHead(entry);

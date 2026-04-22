@@ -92,11 +92,7 @@ export function applySessionThreadProjectionOverlay(
   return {
     ...baseProjection,
     turns: turnsForThread,
-    turnsStamp: buildTurnsStamp(
-      turnsForThread,
-      baseProjection.projectionRev + overlayRev,
-      assistantStreamingStamp,
-    ),
+    turnsStamp: buildTurnsStamp(turnsForThread, baseProjection.projectionRev + overlayRev),
     assistantStreamingByTurnId: baseProjection.assistantStreamingByTurnId,
     assistantStreamingStamp,
     messages: mergedMessages,

@@ -107,6 +107,7 @@ export function deriveAssistantStreamingKey(
     hash = hashString(hash, turnId);
     hash = hashString(hash, state.content);
     hash = hashString(hash, state.providerMessageId ?? "");
+    hash = hashNumber(hash, state.orderSeq ?? -1);
   }
   return finalizeHash(entries.length, hash);
 }

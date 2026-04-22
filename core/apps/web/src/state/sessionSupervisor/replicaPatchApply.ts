@@ -122,6 +122,7 @@ const noteLiveEventBursts = (
 
 export type SessionSupervisorReplicaPatchHost = {
   workspaceSnapshotState: SessionSupervisorWorkspaceSnapshotState;
+  getEntry?(sessionId: string): InternalEntry | undefined;
   ensureEntry(sessionId: string): InternalEntry;
   resolveSessionMode(
     sessionId: string,
@@ -666,6 +667,24 @@ const applyCanonicalTranscriptPatch = (
   return changed;
 };
 
+const isOverlayOnlyStreamPatch = (patch: SessionReplicaPatch): boolean => {
+  if (patch.op !== "append" || patch.data.appendMode !== "stream_delta") return false;
+  const data = patch.data;
+  return (
+    data.assistantStreamingByTurnId !== undefined &&
+    data.turns === undefined &&
+    data.messages === undefined &&
+    data.events === undefined &&
+    data.toolSummaries === undefined &&
+    data.session === undefined &&
+    data.activity === undefined &&
+    data.freshness === undefined &&
+    data.lastEventSeq === undefined &&
+    data.projectionRev === undefined &&
+    data.stateRev === undefined
+  );
+};
+
 export const applyReplicaPatches = (
   host: SessionSupervisorReplicaPatchHost,
   patches: SessionReplicaPatch[],
@@ -679,7 +698,9 @@ export const applyReplicaPatches = (
   for (const patch of patches) {
     const sessionId = String(patch.sessionId || "").trim();
     if (!sessionId) continue;
-    const entry = host.ensureEntry(sessionId);
+    const existingEntry = host.getEntry?.(sessionId);
+    if (!existingEntry && isOverlayOnlyStreamPatch(patch)) continue;
+    const entry = existingEntry ?? host.ensureEntry(sessionId);
     const priorHistoryExtended = entry.historyExtended;
 
     if (patch.op === "evict") {

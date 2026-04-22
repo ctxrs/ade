@@ -152,9 +152,137 @@ describe("buildVisibleProjectionUpdatePlan", () => {
     expect(plan.changeKind).toBe("localized-patch");
     expect(plan.reason).toBe("visible:hydrate_tools");
     expect(plan.shouldFollowBottom).toBe(false);
-    expect(plan.projectionOpKey).toBe(
-      "1|hydrate_tools|message-inserted-1,message-inserted-2,message-2,message-3,message-4|message-inserted-1,message-inserted-2",
+    expect(plan.projectionOpKey).toContain(
+      "1|hydrate_tools|message-inserted-1,message-inserted-2,message-2,message-3,message-4|message-inserted-1,message-inserted-2|",
     );
+  });
+
+  it("treats same-row append_stream updates as localized patches", () => {
+    const initialItems = [makeMessage("message-1"), makeMessage("message-2")];
+    const nextItems = [
+      initialItems[0]!,
+      {
+        ...makeMessage("message-2"),
+        content: "streamed update",
+      },
+    ];
+    const { core, preparedState } = createPreparedState(initialItems, {
+      "message-1": 40,
+      "message-2": 40,
+    });
+
+    const plan = buildVisibleProjectionUpdatePlan({
+      core,
+      preparedState,
+      listItems: nextItems,
+      threadProjectionOp: {
+        kind: "append_stream",
+        projectionRevision: 1,
+        changedItemIds: ["message-2"],
+        remeasureItemIds: ["message-1", "message-2"],
+      },
+      runtimeUiStateLayoutRevision: "ui-a",
+      lastAppliedUiStateLayoutRevision: "ui-a",
+      lastAppliedProjectionOpKey: null,
+      viewport: {
+        width: 320,
+        height: 120,
+        scrollTop: 0,
+      },
+      followBottom: false,
+      atBottom: false,
+      activeChangedItemId: "message-2",
+      getLayoutRevision: (item) => (item.kind === "message" ? item.content : 0),
+      bottomThresholdPx: 12,
+    });
+
+    expect(plan.kind).toBe("apply");
+    if (plan.kind !== "apply") {
+      throw new Error("Expected apply plan");
+    }
+    expect(plan.changeKind).toBe("localized-patch");
+    expect(plan.reason).toBe("visible:append_stream");
+  });
+
+  it("keeps consecutive same-row append_stream updates localized", () => {
+    const firstItems = [
+      makeMessage("message-1"),
+      {
+        ...makeMessage("message-2"),
+        content: "streamed update",
+      },
+    ];
+    const secondItems = [
+      firstItems[0]!,
+      {
+        ...makeMessage("message-2"),
+        content: "streamed update plus more text",
+      },
+    ];
+    const { core, preparedState } = createPreparedState(firstItems, {
+      "message-1": 40,
+      "message-2": 40,
+    });
+    const threadProjectionOp: WorkbenchThreadProjectionOp = {
+      kind: "append_stream",
+      projectionRevision: 1,
+      changedItemIds: ["message-2"],
+      remeasureItemIds: ["message-1", "message-2"],
+    };
+    const getLayoutRevision = (item: WorkbenchListItem) =>
+      item.kind === "message" ? item.content : 0;
+    const firstPlan = buildVisibleProjectionUpdatePlan({
+      core,
+      preparedState,
+      listItems: firstItems,
+      threadProjectionOp,
+      runtimeUiStateLayoutRevision: "ui-a",
+      lastAppliedUiStateLayoutRevision: "ui-a",
+      lastAppliedProjectionOpKey: null,
+      viewport: {
+        width: 320,
+        height: 120,
+        scrollTop: 0,
+      },
+      followBottom: false,
+      atBottom: false,
+      activeChangedItemId: "message-2",
+      getLayoutRevision,
+      bottomThresholdPx: 12,
+    });
+
+    expect(firstPlan.kind).toBe("apply");
+    if (firstPlan.kind !== "apply") {
+      throw new Error("Expected first apply plan");
+    }
+    expect(firstPlan.changeKind).toBe("localized-patch");
+    const secondPlan = buildVisibleProjectionUpdatePlan({
+      core,
+      preparedState,
+      listItems: secondItems,
+      threadProjectionOp,
+      runtimeUiStateLayoutRevision: "ui-a",
+      lastAppliedUiStateLayoutRevision: "ui-a",
+      lastAppliedProjectionOpKey: firstPlan.projectionOpKey,
+      viewport: {
+        width: 320,
+        height: 120,
+        scrollTop: 0,
+      },
+      followBottom: false,
+      atBottom: false,
+      activeChangedItemId: "message-2",
+      getLayoutRevision,
+      bottomThresholdPx: 12,
+    });
+
+    expect(secondPlan.kind).toBe("apply");
+    if (secondPlan.kind !== "apply") {
+      throw new Error("Expected apply plan");
+    }
+    expect(secondPlan.projectionOpKey).not.toBe(firstPlan.projectionOpKey);
+    expect(secondPlan.changeKind).toBe("localized-patch");
+    expect(secondPlan.reason).toBe("visible:append_stream");
   });
 
   it("forces a full relayout when only the ui state revision changes", () => {

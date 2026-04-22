@@ -564,6 +564,7 @@ export class SessionSupervisor {
     const { changed, subscriptionCursorsChanged } = applyReplicaPatches(
       {
         workspaceSnapshotState: this.workspaceSnapshotState,
+        getEntry: (sessionId) => this.entries.get(sessionId),
         ensureEntry: (sessionId) => this.ensureEntry(sessionId),
         resolveSessionMode: (sessionId, entry, explicitMode) =>
           this.resolveSessionMode(sessionId, entry, explicitMode),

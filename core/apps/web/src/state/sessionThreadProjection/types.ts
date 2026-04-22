@@ -21,7 +21,7 @@ export const EMPTY_SESSION_THREAD_PROJECTION: SessionThreadProjection = {
   turns: [],
   turnsStamp: "0:0",
   assistantStreamingByTurnId: {},
-  assistantStreamingStamp: "0",
+  assistantStreamingStamp: "0:0",
   messages: [],
   messagesStamp: "0:0",
   events: [],

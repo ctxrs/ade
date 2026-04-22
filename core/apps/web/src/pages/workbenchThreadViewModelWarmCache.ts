@@ -23,6 +23,7 @@ export type WorkbenchThreadViewModelWarmParams = {
   sessionId: string;
   projectionRev?: number;
   turnsStamp: string;
+  assistantStreamingStamp: string;
   messagesStamp: string;
   eventsStamp: string;
   verbosity: SessionViewVerbosity;
@@ -117,6 +118,7 @@ export function buildWorkbenchThreadViewModelSourceKey(
   return [
     projectionRev,
     params.turnsStamp,
+    params.assistantStreamingStamp,
     params.messagesStamp,
     params.eventsStamp,
     params.toolSummariesReady ? "tools:1" : "tools:0",

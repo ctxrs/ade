@@ -88,6 +88,19 @@ const bumpEventsRev = (entry: Pick<SessionReplicaTranscriptEntry, "eventsRev">) 
   entry.eventsRev += 1;
 };
 
+const readPayloadNumber = (payload: unknown, keys: string[]): number | null => {
+  const record = asRecord(payload);
+  for (const key of keys) {
+    const raw = record[key];
+    if (typeof raw === "number" && Number.isFinite(raw)) return raw;
+    if (typeof raw === "string" && raw.trim()) {
+      const parsed = Number(raw);
+      if (Number.isFinite(parsed)) return parsed;
+    }
+  }
+  return null;
+};
+
 export const ensureReplicaEventSeq = (
   entry: Pick<SessionReplicaTranscriptEntry, "nextTransientSeq">,
   event: SessionEvent,
@@ -196,28 +209,31 @@ const applyEventToTurns = (
     | "toolStatusByKey"
     | "assistantStreamingByTurnId"
     | "assistantStreamingRev"
-  >,
+>,
   event: SessionEvent,
 ): boolean => {
   const turnId = idToString(event.turn_id);
   if (!turnId) return false;
+  if (String(event.event_type) === "assistant_chunk") {
+    if (!shouldRenderAssistantChunk(event)) return false;
+    const fragment = String(event.payload_json?.content_fragment ?? "");
+    if (!fragment) return false;
+    const providerMessageId = readPayloadString(event.payload_json, ["message_id", "messageId"]);
+    applyAssistantChunkToStreaming(
+      entry as AssistantStreamingStore,
+      turnId,
+      fragment,
+      providerMessageId,
+      readPayloadNumber(event.payload_json, ["order_seq", "orderSeq"]),
+    );
+    return false;
+  }
   const turnIndex = entry.turns.findIndex((turn) => idToString(turn.turn_id) === turnId);
   if (turnIndex < 0) return false;
 
   const turn = { ...entry.turns[turnIndex] };
   let changed = false;
   switch (String(event.event_type)) {
-    case "assistant_chunk": {
-      if (!shouldRenderAssistantChunk(event)) break;
-      const fragment = String(event.payload_json?.content_fragment ?? "");
-      if (fragment) {
-        const providerMessageId = readPayloadString(event.payload_json, ["message_id", "messageId"]);
-        changed =
-          applyAssistantChunkToStreaming(entry as AssistantStreamingStore, turnId, fragment, providerMessageId) ||
-          changed;
-      }
-      break;
-    }
     case "thought_chunk": {
       if (!shouldRenderThoughtChunk(event) || isFinalThoughtEvent(event)) break;
       const fragment = String(event.payload_json?.content_fragment ?? "");
@@ -243,6 +259,7 @@ const applyEventToTurns = (
           turnId,
           String(full ?? ""),
           providerMessageId,
+          readPayloadNumber(event.payload_json, ["order_seq", "orderSeq"]),
         ) || changed;
       break;
     }
@@ -286,6 +303,9 @@ const applyEventToTurns = (
   bumpTurnsRev(entry);
   return true;
 };
+
+export const isStreamOnlyAssistantChunk = (event: SessionEvent): boolean =>
+  String(event.event_type) === "assistant_chunk";
 
 const applyQueueEvent = (
   entry: Pick<SessionReplicaTranscriptEntry, "messages" | "messagesRev">,
@@ -391,7 +411,8 @@ export const applyReplicaTranscriptEvent = (
   event: SessionEvent,
 ) => {
   const turnId = idToString(event.turn_id);
-  if (turnId && typeof event.seq === "number" && event.seq >= 0) {
+  const streamOnlyAssistantChunk = isStreamOnlyAssistantChunk(event);
+  if (!streamOnlyAssistantChunk && turnId && typeof event.seq === "number" && event.seq >= 0) {
     entry.startedTurnIds.add(turnId);
   }
 
@@ -399,7 +420,9 @@ export const applyReplicaTranscriptEvent = (
   if (derivedMessage) {
     mergeMessagesIntoEntry(entry, [derivedMessage]);
   }
-  ensureTurnFromEvent(entry, event);
+  if (!streamOnlyAssistantChunk) {
+    ensureTurnFromEvent(entry, event);
+  }
   applyEventToTurns(entry, event);
   applyQueueEvent(entry, event);
 };

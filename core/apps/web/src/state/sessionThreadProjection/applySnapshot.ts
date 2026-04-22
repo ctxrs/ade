@@ -37,7 +37,7 @@ export function buildSessionThreadProjectionFromSnapshot(
   return {
     loaded: Boolean(source.stateLoaded),
     turns,
-    turnsStamp: buildTurnsStamp(turns, source.turnsRev, assistantStreamingStamp),
+    turnsStamp: buildTurnsStamp(turns, source.turnsRev),
     assistantStreamingByTurnId,
     assistantStreamingStamp,
     messages,

@@ -58,6 +58,49 @@ const mkEntry = (): SessionReplicaTranscriptEntry => ({
 });
 
 describe("sessionReplicaTranscript", () => {
+  it("keeps assistant chunks in streaming overlay without mutating durable turn structure", () => {
+    const entry = mkEntry();
+    const beforeUpdatedAt = entry.turns[0]?.updated_at;
+
+    applyReplicaTranscriptEvent(
+      entry,
+      mkEvent(2, "assistant_chunk", {
+        content_fragment: "Hello",
+        order_seq: 2,
+      }),
+    );
+
+    expect(entry.assistantStreamingByTurnId["turn-1"]?.content).toBe("Hello");
+    expect(entry.assistantStreamingRev).toBe(1);
+    expect(entry.turnsRev).toBe(0);
+    expect(entry.turns[0]?.updated_at).toBe(beforeUpdatedAt);
+    expect(entry.turns).toHaveLength(1);
+  });
+
+  it("does not synthesize durable turns from assistant chunks alone", () => {
+    const entry = mkEntry();
+    entry.turns = [];
+    entry.startedTurnIds = new Set();
+
+    applyReplicaTranscriptEvent(
+      entry,
+      mkEvent(2, "assistant_chunk", {
+        content_fragment: "Hello",
+        order_seq: 2,
+      }),
+    );
+
+    expect(entry.assistantStreamingByTurnId["turn-1"]).toEqual({
+      content: "Hello",
+      providerMessageId: null,
+      orderSeq: 2,
+    });
+    expect(entry.assistantStreamingRev).toBe(1);
+    expect(entry.turns).toEqual([]);
+    expect(entry.turnsRev).toBe(0);
+    expect(entry.startedTurnIds.size).toBe(0);
+  });
+
   it("promotes failed turns to interrupted when turn_interrupted follows cancel fallout", () => {
     const entry = mkEntry();
 

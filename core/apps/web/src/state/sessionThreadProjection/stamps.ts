@@ -27,9 +27,9 @@ export function buildAssistantStreamingStamp(
 export function buildTurnsStamp(
   turns: readonly SessionTurn[],
   turnsRev: number | undefined,
-  assistantStreamingStamp: string,
 ): string {
-  return `${turnsRev ?? 0}:${turns.length}:${readFirstTurnId(turns)}:${readLastTurnId(turns)}:${assistantStreamingStamp}`;
+  if (turns.length === 0) return `${turnsRev ?? 0}:0`;
+  return `${turnsRev ?? 0}:${turns.length}:${readFirstTurnId(turns)}:${readLastTurnId(turns)}`;
 }
 
 export function buildMessagesStamp(

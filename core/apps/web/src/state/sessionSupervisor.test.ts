@@ -341,14 +341,29 @@ describe("SessionSupervisor", () => {
     });
 
     const sup = new SessionSupervisor();
+    const messagesHydrated = new Promise<void>((resolve, reject) => {
+      let unsubscribe: (() => void) | null = null;
+      const timeout = setTimeout(() => {
+        unsubscribe?.();
+        reject(new Error("Timed out waiting for queued message hydration"));
+      }, SUPPORT_RACE_WAIT_TIMEOUT_MS);
+      const maybeResolve = () => {
+        if (sup.getSnapshot().sessions[sessionId]?.messages.length !== 1) return;
+        clearTimeout(timeout);
+        unsubscribe?.();
+        resolve();
+      };
+      unsubscribe = sup.subscribe(maybeResolve);
+      maybeResolve();
+    });
     sup.openSession(sessionId, { mode: "archived" });
 
-    await waitForCondition(() => sup.getSnapshot().sessions[sessionId]?.messages.length === 1);
+    await messagesHydrated;
 
     const entry = sup.getSnapshot().sessions[sessionId];
     expect(entry?.messages.length).toBe(1);
     expect(entry?.queue.length).toBe(1);
-  }, 15000);
+  }, SUPPORT_RACE_TEST_TIMEOUT_MS);
 
   it("bumps messagesRev when streamed queue events flip delivery in place", async () => {
     const { SessionSupervisor } = await import("./sessionSupervisor");
@@ -937,8 +952,8 @@ describe("SessionSupervisor", () => {
       id: "e1",
       session_id: sessionId,
       turn_id: "turn-1",
-      event_type: "assistant_chunk",
-      payload_json: { content_fragment: "hello" },
+      event_type: "turn_started",
+      payload_json: {},
       created_at: now,
     };
     const message: Message = {
@@ -951,6 +966,25 @@ describe("SessionSupervisor", () => {
       delivery: "immediate",
       created_at: now,
     };
+    const turn: SessionTurn = {
+      turn_id: "turn-1",
+      session_id: sessionId,
+      run_id: "run-1",
+      user_message_id: "m1",
+      status: "running",
+      start_seq: 2,
+      end_seq: null,
+      started_at: now,
+      updated_at: now,
+      assistant_partial: null,
+      thought_partial: "",
+      metrics_json: null,
+      tool_total: 0,
+      tool_pending: 0,
+      tool_running: 0,
+      tool_completed: 0,
+      tool_failed: 0,
+    };
 
     const deltaEvent: WorkspaceActiveSnapshotEvent = {
       type: "session_head_delta",
@@ -961,6 +995,7 @@ describe("SessionSupervisor", () => {
         last_event_seq: 2,
         state_rev: 2,
         event,
+        turn,
         message,
       },
     };
@@ -1073,7 +1108,7 @@ describe("SessionSupervisor", () => {
     alertSpy.mockRestore();
   });
 
-  it("preserves arrival order for transient assistant chunks (seq=null)", async () => {
+  it("preserves arrival order for transient assistant overlay chunks (seq=null)", async () => {
     const { SessionSupervisor } = await import("./sessionSupervisor");
 
     const sessionId = "session-transient-order";
@@ -1084,7 +1119,15 @@ describe("SessionSupervisor", () => {
     });
     getSessionHeadMock.mockResolvedValue({
       session: mkSession(sessionId),
-      turns: [] as SessionTurn[],
+      turns: [
+        mkTurn({
+          sessionId,
+          turnId: "turn-1",
+          status: "running",
+          startSeq: 1,
+          startedAt: new Date(1).toISOString(),
+        }),
+      ],
       events: [] as SessionEvent[],
       messages: [] as Message[],
       last_event_seq: 1,
@@ -1109,7 +1152,7 @@ describe("SessionSupervisor", () => {
     attachWorkspaceStore(sup, store);
     sup.openSession(sessionId, { mode: "active" });
 
-    await waitForCondition(() => sup.getSnapshot().sessions[sessionId] != null);
+    await waitForCondition(() => (sup.getSnapshot().sessions[sessionId]?.turns.length ?? 0) === 1);
 
     const now = Date.now();
     const sendChunk = (id: string, fragment: string, t: number) => {
@@ -1142,8 +1185,8 @@ describe("SessionSupervisor", () => {
     sendChunk("e3", "c", now + 2);
 
     const entry = sup.getSnapshot().sessions[sessionId];
-    const fragments = (entry?.events ?? []).map((e) => String(asRecord(e.payload_json).content_fragment ?? ""));
-    expect(fragments).toEqual(["a", "b", "c"]);
+    expect(entry?.events).toEqual([]);
+    expect(entry?.assistantStreamingByTurnId?.["turn-1"]?.content).toBe("abc");
   });
 
   it("does not mark turn completed on assistant_complete before done", async () => {
@@ -1372,8 +1415,8 @@ describe("SessionSupervisor", () => {
       id: "e2",
       session_id: sessionId,
       turn_id: "turn-2",
-      event_type: "assistant_chunk",
-      payload_json: { content_fragment: "partial" },
+      event_type: "turn_finished",
+      payload_json: {},
       created_at: now,
     };
     const message: Message = {
@@ -3137,6 +3180,7 @@ describe("SessionSupervisor", () => {
             "turn-1": {
               content: "Hi ",
               providerMessageId: "msg-1",
+              orderSeq: 2,
             },
           },
         },

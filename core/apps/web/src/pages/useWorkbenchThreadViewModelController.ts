@@ -27,6 +27,7 @@ type Params = {
   sessionId: string;
   projectionRev?: number;
   turnsStamp: string;
+  assistantStreamingStamp: string;
   messagesStamp: string;
   eventsStamp: string;
   verbosity: SessionViewVerbosity;
@@ -110,6 +111,26 @@ function collectChangedToolTurnIds(
   const keys = new Set([...Object.keys(previous), ...Object.keys(next)]);
   for (const key of keys) {
     if (previous[key] !== next[key]) {
+      changed.add(key);
+    }
+  }
+  return changed;
+}
+
+function collectChangedAssistantStreamingTurnIds(
+  previous: Record<string, AssistantStreamingState>,
+  next: Record<string, AssistantStreamingState>,
+): Set<string> {
+  const changed = new Set<string>();
+  const keys = new Set([...Object.keys(previous), ...Object.keys(next)]);
+  for (const key of keys) {
+    const previousState = previous[key];
+    const nextState = next[key];
+    if (
+      previousState?.content !== nextState?.content ||
+      previousState?.providerMessageId !== nextState?.providerMessageId ||
+      previousState?.orderSeq !== nextState?.orderSeq
+    ) {
       changed.add(key);
     }
   }
@@ -213,6 +234,7 @@ export function useWorkbenchThreadViewModelController(
     sessionId,
     projectionRev: projectionRevInput,
     turnsStamp,
+    assistantStreamingStamp,
     messagesStamp,
     eventsStamp,
     verbosity,
@@ -232,6 +254,7 @@ export function useWorkbenchThreadViewModelController(
       sessionId,
       projectionRev,
       turnsStamp,
+      assistantStreamingStamp,
       messagesStamp,
       eventsStamp,
       verbosity,
@@ -250,6 +273,7 @@ export function useWorkbenchThreadViewModelController(
       sessionId,
       projectionRev,
       turnsStamp,
+      assistantStreamingStamp,
       messagesStamp,
       eventsStamp,
       verbosity,
@@ -270,6 +294,7 @@ export function useWorkbenchThreadViewModelController(
         sessionId,
         projectionRev,
         turnsStamp,
+        assistantStreamingStamp,
         messagesStamp,
         eventsStamp,
         verbosity,
@@ -331,6 +356,7 @@ export function useWorkbenchThreadViewModelController(
   const perTurnCachesRef = useRef<WorkbenchThreadViewModelPerTurnCaches>(initialBuild.caches);
   const lastSessionIdRef = useRef(sessionId);
   const lastTurnsStampRef = useRef(turnsStamp);
+  const lastAssistantStreamingStampRef = useRef(assistantStreamingStamp);
   const lastMessagesStampRef = useRef(messagesStamp);
   const lastEventsStampRef = useRef(eventsStamp);
   const lastEventsRef = useRef(events);
@@ -341,6 +367,7 @@ export function useWorkbenchThreadViewModelController(
   const lastAskUserQuestionAnswersRef = useRef(askUserQuestionAnswers);
   const lastToolSummariesReadyRef = useRef(toolSummariesReady);
   const lastToolsByTurnIdRef = useRef(toolsByTurnId);
+  const lastAssistantStreamingByTurnIdRef = useRef(assistantStreamingByTurnId);
 
   const fullRebuild = useRef((_preferredKind?: WorkbenchThreadProjectionOpKind) => {});
   const commitNextState = (previous: InternalState, next: InternalState): boolean => {
@@ -401,6 +428,7 @@ export function useWorkbenchThreadViewModelController(
   useLayoutEffect(() => {
     const syncInvalidationRefs = () => {
       lastTurnsStampRef.current = turnsStamp;
+      lastAssistantStreamingStampRef.current = assistantStreamingStamp;
       lastMessagesStampRef.current = messagesStamp;
       lastEventsStampRef.current = eventsStamp;
       lastTurnsRef.current = turns;
@@ -411,6 +439,7 @@ export function useWorkbenchThreadViewModelController(
       lastAskUserQuestionAnswersRef.current = askUserQuestionAnswers;
       lastToolSummariesReadyRef.current = toolSummariesReady;
       lastToolsByTurnIdRef.current = toolsByTurnId;
+      lastAssistantStreamingByTurnIdRef.current = assistantStreamingByTurnId;
     };
 
     const tryPrependHistory = (): boolean => {
@@ -739,6 +768,8 @@ export function useWorkbenchThreadViewModelController(
     const messagesStructural =
       messagesStamp !== lastMessagesStampRef.current || messages.length !== state.messagesLen;
     const eventsStampChanged = eventsStamp !== lastEventsStampRef.current;
+    const assistantStreamingStampChanged =
+      assistantStreamingStamp !== lastAssistantStreamingStampRef.current;
     if (turnsStructural || messagesStructural) {
       if (tryPrependHistory()) {
         return;
@@ -755,6 +786,20 @@ export function useWorkbenchThreadViewModelController(
       return;
     }
     if (events.length === state.eventsLen) {
+      if (assistantStreamingStampChanged && !eventsStampChanged) {
+        if (
+          rebuildDirtyTurnGroups(
+            collectChangedAssistantStreamingTurnIds(
+              lastAssistantStreamingByTurnIdRef.current,
+              assistantStreamingByTurnId,
+            ),
+            "append_stream",
+            state.eventsLen,
+          )
+        ) {
+          return;
+        }
+      }
       // If the stamp changed but length didn't, we can't assume append-only.
       if (eventsStampChanged) {
         syncInvalidationRefs();
@@ -820,6 +865,7 @@ export function useWorkbenchThreadViewModelController(
   }, [
     askUserQuestionAnswers,
     assistantStreamingByTurnId,
+    assistantStreamingStamp,
     enableDebugEvents,
     events,
     eventsStamp,

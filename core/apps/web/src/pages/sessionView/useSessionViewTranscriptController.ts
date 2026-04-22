@@ -166,6 +166,7 @@ export function useSessionViewTranscriptController(params: Params): Result {
     sessionId,
     projectionRev: threadProjection.projectionRev,
     turnsStamp: threadProjection.turnsStamp,
+    assistantStreamingStamp: threadProjection.assistantStreamingStamp,
     messagesStamp: threadProjection.messagesStamp,
     eventsStamp: threadProjection.eventsStamp,
     verbosity,
@@ -184,6 +185,7 @@ export function useSessionViewTranscriptController(params: Params): Result {
         sessionId,
         projectionRev: threadProjection.projectionRev,
         turnsStamp: threadProjection.turnsStamp,
+        assistantStreamingStamp: threadProjection.assistantStreamingStamp,
         messagesStamp: threadProjection.messagesStamp,
         eventsStamp: threadProjection.eventsStamp,
         verbosity,
@@ -201,6 +203,7 @@ export function useSessionViewTranscriptController(params: Params): Result {
       sessionId,
       showDebug,
       threadProjection.assistantStreamingByTurnId,
+      threadProjection.assistantStreamingStamp,
       threadProjection.events,
       threadProjection.eventsStamp,
       threadProjection.messages,
@@ -213,14 +216,6 @@ export function useSessionViewTranscriptController(params: Params): Result {
       verbosity,
     ],
   );
-  useSessionViewDebugBridge({
-    sessionId,
-    entry,
-    listItems,
-    threadProjection,
-    perfEnabled,
-  });
-
   const messageListUiState = useMemo<WorkbenchMessageListUiState>(
     () => ({
       expandedTurnHeaders,
@@ -268,6 +263,15 @@ export function useSessionViewTranscriptController(params: Params): Result {
     uiState: messageListUiState,
     workbenchThreadOp: rawWorkbenchThreadOp,
     projectionRevision,
+  });
+  useSessionViewDebugBridge({
+    sessionId,
+    entry,
+    listItems,
+    threadProjection,
+    workbenchThreadOp: rawWorkbenchThreadOp,
+    threadProjectionOp,
+    perfEnabled,
   });
 
   const sessionProjectionReady =

@@ -26,15 +26,28 @@ describe("session thread projection stamps", () => {
   });
 
   it("changes turns stamps when the structural edge changes or the revision changes", () => {
-    const assistantStreamingStamp = buildAssistantStreamingStamp({}, 3);
     const turns = [
       { turn_id: "turn-1" },
       { turn_id: "turn-2" },
     ] as SessionTurn[];
 
-    expect(buildTurnsStamp(turns, 5, assistantStreamingStamp)).toBe("5:2:turn-1:turn-2:3:0");
-    expect(buildTurnsStamp([{ turn_id: "older" }, ...turns] as SessionTurn[], 6, assistantStreamingStamp)).toBe(
-      "6:3:older:turn-2:3:0",
+    expect(buildTurnsStamp(turns, 5)).toBe("5:2:turn-1:turn-2");
+    expect(buildTurnsStamp([{ turn_id: "older" }, ...turns] as SessionTurn[], 6)).toBe(
+      "6:3:older:turn-2",
+    );
+  });
+
+  it("keeps structural turn stamps stable when only assistant streaming changes", () => {
+    const turns = [{ turn_id: "turn-1" }] as SessionTurn[];
+
+    expect(buildTurnsStamp(turns, 5)).toBe(buildTurnsStamp(turns, 5));
+    expect(buildAssistantStreamingStamp({}, 0)).not.toBe(
+      buildAssistantStreamingStamp(
+        {
+          "turn-1": { content: "partial", providerMessageId: "provider-1", orderSeq: 2 },
+        },
+        1,
+      ),
     );
   });
 
@@ -43,7 +56,7 @@ describe("session thread projection stamps", () => {
     expect(
       buildAssistantStreamingStamp(
         {
-          "turn-1": { content: "partial", providerMessageId: "provider-1" },
+          "turn-1": { content: "partial", providerMessageId: "provider-1", orderSeq: 2 },
         },
         4,
       ),

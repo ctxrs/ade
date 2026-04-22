@@ -37,6 +37,7 @@ describe("messageKeys", () => {
       "turn-1": {
         content: "stream",
         providerMessageId: "provider-1",
+        orderSeq: 2,
       },
     });
 

@@ -681,9 +681,11 @@ export function buildWorkbenchThreadViewModelFromTurns(
       pendingTrimmed !== statusTrimmed &&
       !persistedAssistantDuplicate
     ) {
-      const pendingOrderSeq = pendingProviderId
-        ? assistantOrderSeq.byProviderId.get(pendingProviderId)
-        : undefined;
+      const pendingOrderSeq = Number.isFinite(pendingState?.orderSeq)
+        ? pendingState?.orderSeq
+        : pendingProviderId
+          ? assistantOrderSeq.byProviderId.get(pendingProviderId)
+          : undefined;
       if (!Number.isFinite(pendingOrderSeq)) {
         // Skip rendering partials without order_seq to avoid fallback ordering.
       } else {

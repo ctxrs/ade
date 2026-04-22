@@ -12,6 +12,9 @@ import {
 
 type ControllerProps = Parameters<typeof useWorkbenchThreadViewModelController>[0];
 type ControllerResult = ReturnType<typeof useWorkbenchThreadViewModelController>;
+type HarnessProps = Omit<ControllerProps, "assistantStreamingStamp"> & {
+  assistantStreamingStamp?: string;
+};
 
 let latestResult: ControllerResult | null = null;
 
@@ -23,8 +26,8 @@ const isTurnStatusItem = (
   item: ControllerResult["listItems"][number],
 ): item is Extract<ControllerResult["listItems"][number], { kind: "turn_status" }> => item.kind === "turn_status";
 
-function Harness(props: ControllerProps) {
-  latestResult = useWorkbenchThreadViewModelController(props);
+function Harness({ assistantStreamingStamp = "0:0", ...props }: HarnessProps) {
+  latestResult = useWorkbenchThreadViewModelController({ ...props, assistantStreamingStamp });
   return null;
 }
 
@@ -119,6 +122,7 @@ function renderController(
   const baseProps: ControllerProps = {
     sessionId: "session-1",
     turnsStamp: buildTurnsStamp(turns),
+    assistantStreamingStamp: "0:0",
     messagesStamp: buildMessagesStamp(messages),
     eventsStamp: "0:1",
     verbosity: "default",
@@ -226,6 +230,7 @@ describe("useWorkbenchThreadViewModelController", () => {
       sessionId: "session-1",
       projectionRev: 0,
       turnsStamp: buildTurnsStamp(turns),
+      assistantStreamingStamp: "0:0",
       messagesStamp: buildMessagesStamp(messages),
       eventsStamp: "0:1",
       verbosity: "default",
@@ -429,6 +434,247 @@ describe("useWorkbenchThreadViewModelController", () => {
     expect(expectGroup("turn-turn-1")).not.toBe(firstGroupBefore);
     expect(expectGroup("turn-turn-2")).toBe(secondGroupBefore);
     expect(expectListItem("turn-header-turn-2")).toBe(secondHeaderBefore);
+  });
+
+  it("patches streaming overlay changes without structural transcript stamps", async () => {
+    const askUserQuestionAnswers = new Map<string, AskUserQuestionAnswerState>();
+    const emptyToolsByTurnId: Record<string, SessionTurnTool[]> = {};
+    const multiTurns = [
+      {
+        turn_id: "turn-1",
+        session_id: "session-1",
+        run_id: null,
+        user_message_id: "message-1",
+        status: "running",
+        start_seq: 1,
+        end_seq: null,
+        started_at: "2025-12-15T00:00:00.000Z",
+        updated_at: "2025-12-15T00:00:01.000Z",
+        assistant_partial: "",
+        thought_partial: "",
+        metrics_json: null,
+        tool_total: 0,
+        tool_pending: 0,
+        tool_running: 0,
+        tool_completed: 0,
+        tool_failed: 0,
+      },
+      {
+        turn_id: "turn-2",
+        session_id: "session-1",
+        run_id: null,
+        user_message_id: "message-2",
+        status: "completed",
+        start_seq: 3,
+        end_seq: 4,
+        started_at: "2025-12-15T00:00:02.000Z",
+        updated_at: "2025-12-15T00:00:03.000Z",
+        assistant_partial: "",
+        thought_partial: "",
+        metrics_json: null,
+        tool_total: 0,
+        tool_pending: 0,
+        tool_running: 0,
+        tool_completed: 0,
+        tool_failed: 0,
+      },
+    ] as SessionTurn[];
+    const multiMessages = [
+      {
+        id: "message-1",
+        session_id: "session-1",
+        task_id: "task-1",
+        turn_id: "turn-1",
+        turn_sequence: 1,
+        role: "user",
+        content: "First turn",
+        attachments: [],
+        delivery: "immediate",
+        created_at: "2025-12-15T00:00:00.000Z",
+        order_seq: 1,
+      },
+      {
+        id: "message-2",
+        session_id: "session-1",
+        task_id: "task-1",
+        turn_id: "turn-2",
+        turn_sequence: 2,
+        role: "user",
+        content: "Second turn",
+        attachments: [],
+        delivery: "immediate",
+        created_at: "2025-12-15T00:00:02.000Z",
+        order_seq: 3,
+      },
+    ] as unknown as Message[];
+    const streamingEvent: SessionEvent = {
+      seq: 2,
+      id: "event-assistant-chunk-1",
+      session_id: "session-1",
+      run_id: "run-1",
+      turn_id: "turn-1",
+      event_type: "assistant_chunk",
+      payload_json: {
+        content_fragment: "Hello",
+        message_id: "provider-message-1",
+        order_seq: 2,
+      },
+      created_at: "2025-12-15T00:00:01.500Z",
+    };
+    const turnsStamp = buildTurnsStamp(multiTurns);
+    const messagesStamp = buildMessagesStamp(multiMessages);
+    const { rerender } = renderController({
+      turns: multiTurns,
+      messages: multiMessages,
+      events: [streamingEvent],
+      eventsStamp: "1:2",
+      turnsStamp,
+      assistantStreamingStamp: "1:1",
+      assistantStreamingByTurnId: {
+        "turn-1": { content: "Hello", providerMessageId: "provider-message-1", orderSeq: 2 },
+      },
+      messagesStamp,
+      toolsByTurnId: emptyToolsByTurnId,
+      askUserQuestionAnswers,
+    });
+
+    await waitFor(() => {
+      const pendingAssistant = expectListItem("assistant-turn-1-pending");
+      expect(pendingAssistant.kind).toBe("assistant");
+      if (pendingAssistant.kind === "assistant") {
+        expect(pendingAssistant.content).toBe("Hello");
+      }
+    });
+
+    const firstGroupBefore = expectGroup("turn-turn-1");
+    const secondGroupBefore = expectGroup("turn-turn-2");
+
+    rerender(
+      <Harness
+        sessionId="session-1"
+        turnsStamp={turnsStamp}
+        assistantStreamingStamp="2:1"
+        messagesStamp={messagesStamp}
+        eventsStamp="1:2"
+        verbosity="default"
+        turns={multiTurns}
+        assistantStreamingByTurnId={{
+          "turn-1": { content: "Hello world", providerMessageId: "provider-message-1", orderSeq: 2 },
+        }}
+        messages={multiMessages}
+        events={[streamingEvent]}
+        toolsByTurnId={emptyToolsByTurnId}
+        toolSummariesReady
+        askUserQuestionAnswers={askUserQuestionAnswers}
+        enableDebugEvents={false}
+      />,
+    );
+
+    await waitFor(() => {
+      const pendingAssistant = expectListItem("assistant-turn-1-pending");
+      expect(pendingAssistant.kind).toBe("assistant");
+      if (pendingAssistant.kind === "assistant") {
+        expect(pendingAssistant.content).toBe("Hello world");
+      }
+    });
+
+    expect(expectGroup("turn-turn-1")).not.toBe(firstGroupBefore);
+    expect(expectGroup("turn-turn-2")).toBe(secondGroupBefore);
+    expect(latestResult?.lastOp.kind).toBe("append_stream");
+  });
+
+  it("patches assistant stream order-seq backfills without structural transcript stamps", async () => {
+    const askUserQuestionAnswers = new Map<string, AskUserQuestionAnswerState>();
+    const runningTurns = [
+      {
+        turn_id: "turn-1",
+        session_id: "session-1",
+        run_id: null,
+        user_message_id: "message-1",
+        status: "running",
+        start_seq: 1,
+        end_seq: null,
+        started_at: "2025-12-15T00:00:00.000Z",
+        updated_at: "2025-12-15T00:00:01.000Z",
+        assistant_partial: "",
+        thought_partial: "",
+        metrics_json: null,
+        tool_total: 0,
+        tool_pending: 0,
+        tool_running: 0,
+        tool_completed: 0,
+        tool_failed: 0,
+      },
+    ] as SessionTurn[];
+    const runningMessages = [
+      {
+        id: "message-1",
+        session_id: "session-1",
+        task_id: "task-1",
+        turn_id: "turn-1",
+        turn_sequence: 1,
+        role: "user",
+        content: "First turn",
+        attachments: [],
+        delivery: "immediate",
+        created_at: "2025-12-15T00:00:00.000Z",
+        order_seq: 1,
+      },
+    ] as unknown as Message[];
+    const turnsStamp = buildTurnsStamp(runningTurns);
+    const messagesStamp = buildMessagesStamp(runningMessages);
+    const { rerender } = renderController({
+      turns: runningTurns,
+      messages: runningMessages,
+      events: [],
+      eventsStamp: "0:0",
+      turnsStamp,
+      assistantStreamingStamp: "1:no-order",
+      assistantStreamingByTurnId: {
+        "turn-1": { content: "Hello", providerMessageId: "provider-message-1", orderSeq: null },
+      },
+      messagesStamp,
+      toolsByTurnId: {},
+      askUserQuestionAnswers,
+    });
+
+    await waitFor(() => {
+      expect(latestResult?.listItems.some((item) => item.id === "assistant-turn-1-pending")).toBe(false);
+    });
+
+    const firstGroupBefore = expectGroup("turn-turn-1");
+
+    rerender(
+      <Harness
+        sessionId="session-1"
+        turnsStamp={turnsStamp}
+        assistantStreamingStamp="2:with-order"
+        messagesStamp={messagesStamp}
+        eventsStamp="0:0"
+        verbosity="default"
+        turns={runningTurns}
+        assistantStreamingByTurnId={{
+          "turn-1": { content: "Hello", providerMessageId: "provider-message-1", orderSeq: 2 },
+        }}
+        messages={runningMessages}
+        events={[]}
+        toolsByTurnId={{}}
+        toolSummariesReady
+        askUserQuestionAnswers={askUserQuestionAnswers}
+        enableDebugEvents={false}
+      />,
+    );
+
+    await waitFor(() => {
+      const pendingAssistant = expectListItem("assistant-turn-1-pending");
+      expect(pendingAssistant.kind).toBe("assistant");
+      if (pendingAssistant.kind === "assistant") {
+        expect(pendingAssistant.content).toBe("Hello");
+      }
+    });
+
+    expect(expectGroup("turn-turn-1")).not.toBe(firstGroupBefore);
+    expect(latestResult?.lastOp.kind).toBe("append_stream");
   });
 
   it("updates only the dirty turn group on tool-summary changes when transcript stamps stay stable", async () => {
@@ -840,6 +1086,7 @@ describe("useWorkbenchThreadViewModelController", () => {
         sessionId: "session-1",
         projectionRev: 0,
         turnsStamp,
+        assistantStreamingStamp: "0:0",
         messagesStamp,
         eventsStamp: "2:2",
         verbosity: "default",

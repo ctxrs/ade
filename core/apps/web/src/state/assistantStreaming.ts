@@ -4,6 +4,7 @@ import { noteLateChunkAfterTerminal } from "./foregroundFreshnessTelemetry";
 export type AssistantStreamingState = {
   content: string;
   providerMessageId: string | null;
+  orderSeq: number | null;
 };
 
 export type AssistantStreamingStore = {
@@ -40,7 +41,8 @@ function updateState(
   if (
     current &&
     current.content === next.content &&
-    current.providerMessageId === next.providerMessageId
+    current.providerMessageId === next.providerMessageId &&
+    current.orderSeq === next.orderSeq
   ) {
     return false;
   }
@@ -87,6 +89,7 @@ export function applyAssistantChunkToStreaming(
   turnId: string | null | undefined,
   fragment: string,
   providerMessageId?: string | null,
+  orderSeq?: number | null,
 ): boolean {
   const normalizedTurnId = normalizeTurnId(turnId);
   if (!normalizedTurnId || !fragment) return false;
@@ -96,13 +99,16 @@ export function applyAssistantChunkToStreaming(
   }
   const current = store.assistantStreamingByTurnId[normalizedTurnId] ?? null;
   const providerId = providerMessageId?.trim() || null;
+  const normalizedOrderSeq = typeof orderSeq === "number" && Number.isFinite(orderSeq) ? orderSeq : null;
+  const providerChanged = Boolean(providerId && current?.providerMessageId && providerId !== current.providerMessageId);
   const nextContent =
-    providerId && current?.providerMessageId && providerId !== current.providerMessageId
+    providerChanged
       ? fragment
       : appendStreamingFragment(current?.content ?? "", fragment);
   return updateState(store, normalizedTurnId, {
     content: nextContent,
     providerMessageId: providerId ?? current?.providerMessageId ?? null,
+    orderSeq: normalizedOrderSeq ?? (providerChanged ? null : current?.orderSeq ?? null),
   });
 }
 
@@ -111,6 +117,7 @@ export function applyAssistantCompleteToStreaming(
   turnId: string | null | undefined,
   fullContent: string,
   providerMessageId?: string | null,
+  orderSeq?: number | null,
 ): boolean {
   const normalizedTurnId = normalizeTurnId(turnId);
   if (!normalizedTurnId) return false;
@@ -123,6 +130,7 @@ export function applyAssistantCompleteToStreaming(
   const changed = updateState(store, normalizedTurnId, {
     content: nextContent,
     providerMessageId: providerMessageId?.trim() || current?.providerMessageId || null,
+    orderSeq: typeof orderSeq === "number" && Number.isFinite(orderSeq) ? orderSeq : current?.orderSeq ?? null,
   });
   if (addedSeal && !changed) {
     store.assistantStreamingRev += 1;

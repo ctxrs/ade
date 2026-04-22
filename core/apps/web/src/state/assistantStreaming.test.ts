@@ -20,6 +20,7 @@ describe("assistantStreaming", () => {
     expect(store.assistantStreamingByTurnId["turn-1"]).toEqual({
       content: "final answer",
       providerMessageId: "provider-msg-1",
+      orderSeq: null,
     });
     expect(store.sealedAssistantTurnIds?.has("turn-1")).toBe(true);
 
@@ -46,6 +47,7 @@ describe("assistantStreaming", () => {
     expect(store.assistantStreamingByTurnId["turn-1"]).toEqual({
       content: "new stream",
       providerMessageId: "provider-msg-2",
+      orderSeq: null,
     });
   });
 });

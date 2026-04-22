@@ -55,6 +55,11 @@ type StreamOptions = {
   }>;
 };
 
+type StreamStats = {
+  sent: number;
+  failures: string[];
+};
+
 const parseCount = (value: number | NumberRange, index: number): number => {
   if (typeof value === "number") return value;
   const span = Math.max(0, value.max - value.min);
@@ -230,7 +235,7 @@ export async function seedDummyWorkspace(
 export function startStreamingMessages(
   request: APIRequestContext,
   opts: StreamOptions,
-): { stop: () => Promise<void> } {
+): { stop: () => Promise<void>; getStats: () => StreamStats } {
   const intervalMs = opts.intervalMs ?? 250;
   const messagePrefix = opts.messagePrefix ?? "stream msg";
   const includeToolSummaries = Boolean(opts.includeToolSummaries);
@@ -246,6 +251,9 @@ export function startStreamingMessages(
   let stopped = false;
   let tick = 0;
   let inflight: Promise<void> = Promise.resolve();
+  let stopPromise: Promise<void> | null = null;
+  let sent = 0;
+  const failures: string[] = [];
 
   const sendOnce = async () => {
     if (stopped) return;
@@ -264,19 +272,28 @@ export function startStreamingMessages(
       content: `${paddedMessage}${toolMarker}`,
       delivery: "immediate",
     });
+    sent += 1;
   };
 
   const timer = setInterval(() => {
-    inflight = inflight.then(sendOnce).catch(() => {
-      // Swallow to keep the interval alive for the test harness.
+    inflight = inflight.then(sendOnce).catch((error: unknown) => {
+      const message = error instanceof Error && error.message ? error.message : String(error);
+      failures.push(`background stream send failed: ${message}`);
     });
   }, intervalMs);
 
-  const stop = async () => {
-    if (stopped) return;
-    stopped = true;
-    clearInterval(timer);
-    await inflight;
+  const stop = () => {
+    if (!stopPromise) {
+      stopPromise = (async () => {
+        stopped = true;
+        clearInterval(timer);
+        await inflight;
+        if (failures.length > 0) {
+          throw new Error(failures.join("; "));
+        }
+      })();
+    }
+    return stopPromise;
   };
 
   if (opts.durationMs && opts.durationMs > 0) {
@@ -287,5 +304,6 @@ export function startStreamingMessages(
     }, opts.durationMs);
   }
 
-  return { stop };
+  const getStats = () => ({ sent, failures: failures.slice() });
+  return { stop, getStats };
 }

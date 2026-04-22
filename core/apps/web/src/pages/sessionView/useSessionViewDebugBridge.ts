@@ -2,12 +2,15 @@ import { useEffect, useRef } from "react";
 import type { WorkbenchListItem } from "./SessionPage.types";
 import type { SessionThreadProjection } from "../../state/sessionThreadProjection/selectors";
 import type { SessionCacheEntry } from "../../state/sessionSupervisor/entryState";
+import type { WorkbenchThreadProjectionOp } from "../sessionThreadProjection";
 
 type Params = {
   sessionId: string;
   entry: SessionCacheEntry | null | undefined;
   listItems: WorkbenchListItem[];
   threadProjection: SessionThreadProjection;
+  workbenchThreadOp: WorkbenchThreadProjectionOp;
+  threadProjectionOp: WorkbenchThreadProjectionOp;
   perfEnabled: boolean;
 };
 
@@ -16,6 +19,8 @@ export function useSessionViewDebugBridge({
   entry,
   listItems,
   threadProjection,
+  workbenchThreadOp,
+  threadProjectionOp,
   perfEnabled,
 }: Params): void {
   const perfStartRef = useRef<number>(0);
@@ -52,6 +57,9 @@ export function useSessionViewDebugBridge({
           projectionRev: number;
           turnsStamp: string;
           messagesStamp: string;
+          assistantStreamingStamp: string;
+          workbenchThreadOpKind: string;
+          threadProjectionOpKind: string;
           listItemIds: string[];
           assistantContents: string[];
         };
@@ -63,6 +71,9 @@ export function useSessionViewDebugBridge({
       projectionRev: threadProjection.projectionRev,
       turnsStamp: threadProjection.turnsStamp,
       messagesStamp: threadProjection.messagesStamp,
+      assistantStreamingStamp: threadProjection.assistantStreamingStamp,
+      workbenchThreadOpKind: workbenchThreadOp.kind,
+      threadProjectionOpKind: threadProjectionOp.kind,
       listItemIds: listItems.map((item) => item.id),
       assistantContents: listItems
         .filter((item): item is Extract<WorkbenchListItem, { kind: "assistant" }> => item.kind === "assistant")
@@ -75,9 +86,12 @@ export function useSessionViewDebugBridge({
   }, [
     listItems,
     sessionId,
+    threadProjection.assistantStreamingStamp,
     threadProjection.messagesStamp,
     threadProjection.projectionRev,
     threadProjection.turnsStamp,
+    threadProjectionOp.kind,
+    workbenchThreadOp.kind,
   ]);
 
   useEffect(() => {

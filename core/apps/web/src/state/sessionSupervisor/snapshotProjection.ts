@@ -92,7 +92,7 @@ function threadProjectionStillMatchesEntry(
   if (projection.assistantStreamingStamp !== assistantStreamingStamp) {
     return false;
   }
-  const turnsStamp = buildTurnsStamp(entry.turns, entry.turnsRev, assistantStreamingStamp);
+  const turnsStamp = buildTurnsStamp(entry.turns, entry.turnsRev);
   if (projection.turnsStamp !== turnsStamp) {
     return false;
   }

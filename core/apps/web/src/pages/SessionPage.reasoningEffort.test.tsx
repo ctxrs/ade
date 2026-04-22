@@ -111,6 +111,13 @@ vi.mock("./useWorkbenchThreadViewModelController", () => ({
   useWorkbenchThreadViewModelController: () => ({
     view: { debugEvents: [] },
     listItems: [],
+    projectionRevision: 0,
+    lastOp: {
+      kind: "noop",
+      projectionRevision: 0,
+      changedItemIds: [],
+      remeasureItemIds: [],
+    },
   }),
 }));
 

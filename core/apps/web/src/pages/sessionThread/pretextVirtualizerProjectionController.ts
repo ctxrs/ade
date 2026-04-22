@@ -41,15 +41,28 @@ export type SessionThreadVisibleProjectionUpdatePlan =
       shouldFollowBottom: boolean;
     };
 
-function buildProjectionOpKey(projectionOp: WorkbenchThreadProjectionOp): string | null {
+function buildProjectionOpKey(
+  projectionOp: WorkbenchThreadProjectionOp,
+  listItems: readonly WorkbenchListItem[],
+  getLayoutRevision: (item: WorkbenchListItem) => string | number,
+): string | null {
   if (projectionOp.kind === "noop") {
     return null;
+  }
+  const changedIds = new Set(projectionOp.changedItemIds);
+  const changedLayoutRevisions = new Map<string, string>();
+  if (changedIds.size > 0) {
+    for (const item of listItems) {
+      if (!changedIds.has(item.id)) continue;
+      changedLayoutRevisions.set(item.id, String(getLayoutRevision(item)));
+    }
   }
   return [
     projectionOp.projectionRevision,
     projectionOp.kind,
     projectionOp.changedItemIds.join(","),
     projectionOp.remeasureItemIds.join(","),
+    JSON.stringify(projectionOp.changedItemIds.map((id) => [id, changedLayoutRevisions.get(id) ?? "<missing>"])),
   ].join("|");
 }
 
@@ -79,7 +92,11 @@ export function buildVisibleProjectionUpdatePlan(params: {
     params.listItems,
     params.getLayoutRevision,
   );
-  const projectionOpKey = buildProjectionOpKey(params.threadProjectionOp);
+  const projectionOpKey = buildProjectionOpKey(
+    params.threadProjectionOp,
+    params.listItems,
+    params.getLayoutRevision,
+  );
   const projectionChanged =
     projectionOpKey != null && params.lastAppliedProjectionOpKey !== projectionOpKey;
 

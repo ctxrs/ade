@@ -136,6 +136,7 @@ export function useWarmSessionTranscriptRuntimes({
           sessionId,
           projectionRev: threadProjection.projectionRev,
           turnsStamp: threadProjection.turnsStamp,
+          assistantStreamingStamp: threadProjection.assistantStreamingStamp,
           messagesStamp: threadProjection.messagesStamp,
           eventsStamp: threadProjection.eventsStamp,
           verbosity: warmState.verbosity,

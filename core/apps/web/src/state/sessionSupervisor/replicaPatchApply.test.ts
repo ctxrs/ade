@@ -8,6 +8,7 @@ import type { SessionSupervisorHeadProjectionHost } from "./headProjection";
 function createReplicaHost(entry: ReturnType<typeof createInternalEntry>): SessionSupervisorReplicaPatchHost {
   return {
     workspaceSnapshotState: null,
+    getEntry: () => entry,
     ensureEntry: () => entry,
     resolveSessionMode: () => entry.mode ?? null,
     resetEntryProjectionForReplace: () => undefined,
@@ -81,6 +82,35 @@ describe("replicaPatchApply", () => {
     expect(entry.messagesRev).toBe(3);
     expect(entry.eventsRev).toBe(4);
     expect(entry.assistantStreamingRev).toBe(5);
+  });
+
+  it("drops overlay-only stream patches when no supervisor entry exists", () => {
+    const fallbackEntry = createInternalEntry("session-1", { transientSeqStart: 1, warmTtlMs: 60_000 });
+    const ensureEntry = vi.fn(() => fallbackEntry);
+    const host: SessionSupervisorReplicaPatchHost = {
+      ...createReplicaHost(fallbackEntry),
+      getEntry: () => undefined,
+      ensureEntry,
+    };
+
+    const result = applyReplicaPatches(host, [{
+      sessionId: "session-1",
+      op: "append",
+      data: {
+        appendMode: "stream_delta",
+        assistantStreamingByTurnId: {
+          "turn-1": {
+            content: "partial",
+            providerMessageId: null,
+            orderSeq: 2,
+          },
+        },
+        assistantStreamingRev: 1,
+      },
+    }]);
+
+    expect(result).toEqual({ changed: false, subscriptionCursorsChanged: false });
+    expect(ensureEntry).not.toHaveBeenCalled();
   });
 
   it("does not republish duplicate tool summaries", () => {

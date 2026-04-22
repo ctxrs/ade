@@ -15,6 +15,7 @@ import {
   getActiveProjectionFixture,
   getSessionGapSeedFixture,
 } from "../testdata/projectionEquivalenceFixtures";
+import { buildWorkbenchThreadViewModel } from "../pages/SessionPage.workbenchViewModel";
 
 vi.mock("../api/client", () => {
   const idToString = (id: string | null | undefined): string => {
@@ -664,7 +665,6 @@ describe("WorkspaceActiveSnapshotStore", () => {
 
   it("keeps cache and render projections aligned with the shared active fixture", async () => {
     const { WorkspaceActiveSnapshotStoreImpl } = await import("./workspaceActiveSnapshotStoreCore");
-    const { buildWorkbenchThreadViewModel } = await import("../pages/SessionPage.workbenchViewModel");
 
     const fixture = getActiveProjectionFixture();
     const store = new WorkspaceActiveSnapshotStoreImpl(fixture.workspaceId, { disableWorker: true });
