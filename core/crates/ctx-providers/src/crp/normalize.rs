@@ -747,7 +747,7 @@ mod tests {
                 tools: Some(vec!["Read".to_string(), "Write".to_string()]),
                 permission_mode: Some("default".to_string()),
                 mcp_servers: Some(json!([{ "name": "github", "status": "connected" }])),
-                account: Some(json!({ "email": "dev@example.com" })),
+                account: Some(Box::new(json!({ "email": "dev@example.com" }))),
                 fast_mode_state: Some("off".to_string()),
             }),
             CrpChannel::Control,

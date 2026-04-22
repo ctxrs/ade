@@ -309,7 +309,7 @@ mod tests {
             } if session_id == "session-1"
                 && turn_id == "turn-1"
                 && tool_call_id == "tool-1"
-                && stream == Some(ctx_crp_protocol::CrpToolOutputStream::Stdout)
+                && *stream == Some(ctx_crp_protocol::CrpToolOutputStream::Stdout)
                 && chunk == "line-1\n"
         ));
     }
