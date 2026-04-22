@@ -155,6 +155,42 @@ describe("sessionMarkdownBlockMeasurement", () => {
     expect(measureSessionPlainTextBlockHeightMock).not.toHaveBeenCalled();
   });
 
+  it("routes soft-newline-only paragraphs through inline measurement instead of pre-wrap plain text", () => {
+    parseMarkdownMock.mockReturnValue({
+      source: "probe",
+      blocks: [
+        {
+          kind: "paragraph",
+          node: { type: "paragraph" } as never,
+          inlines: [],
+          text: {
+            plainText: "line 1 with enough words to wrap\nline 2 with enough words to wrap",
+            runs: [
+              {
+                kind: "text",
+                text: "line 1 with enough words to wrap\nline 2 with enough words to wrap",
+                style: "body",
+                deleted: false,
+              },
+            ],
+            hasInlineCode: false,
+            hasHardBreak: false,
+            hasStyledText: false,
+            hasLink: false,
+          },
+        },
+      ],
+    });
+    measureInlineRunsHeightMock.mockReturnValue(63);
+    measureSessionPlainTextBlockHeightMock.mockReturnValue(84);
+
+    const height = measureSessionMarkdownDocument("probe", 520);
+
+    expect(height).toBe(63);
+    expect(measureInlineRunsHeightMock).toHaveBeenCalledTimes(1);
+    expect(measureSessionPlainTextBlockHeightMock).not.toHaveBeenCalled();
+  });
+
   it("measures table-cell paragraphs with break-word inline wrapping", () => {
     parseMarkdownMock.mockReturnValue({
       source: "probe",

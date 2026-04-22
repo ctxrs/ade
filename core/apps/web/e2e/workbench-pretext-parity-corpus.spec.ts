@@ -249,6 +249,13 @@ const SOFT_BREAK_MARKDOWN_REGRESSIONS: SoftBreakMarkdownSample[] = [
     ].join("\n"),
   },
   {
+    name: "soft-break-list-slash-token-tail",
+    width: 788,
+    browsers: ["webkit"],
+    markdown:
+      "- **Sample boundaries**: This fixture includes Ubuntu/Debian, a fast `gp3` or local NVMe marker, containerd/BuildKit/nerdctl text, strict VPC/security group wording, and one host/workspace isolation model as needed.",
+  },
+  {
     name: "soft-break-styled-seam-collapse-space",
     width: 788,
     markdown: [

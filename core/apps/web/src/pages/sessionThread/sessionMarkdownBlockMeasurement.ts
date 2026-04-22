@@ -45,6 +45,7 @@ function measureTextBlock(params: {
 }): number {
   const text = params.text.plainText.trim();
   const useBreakWordInlineLayout = params.wrapMode === "break-word";
+  const hasSoftNewlines = text.includes("\n");
   if (!text) {
     return 0;
   }
@@ -75,6 +76,7 @@ function measureTextBlock(params: {
     !useBreakWordInlineLayout &&
     !params.text.hasInlineCode &&
     !params.text.hasHardBreak &&
+    !hasSoftNewlines &&
     !params.text.hasStyledText &&
     !params.text.hasLink
   ) {

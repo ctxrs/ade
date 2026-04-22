@@ -471,13 +471,8 @@ export function placeInlineTextSegment(params: {
           availableWidth: availableWidthWithoutLeadingSpace,
         })
       : regularLineWithoutLeadingSpace;
-  const useLineWithoutLeadingSpace =
-    lineWithoutLeadingSpace != null &&
-    !cursorsMatch(params.startCursor, lineWithoutLeadingSpace.end) &&
-    (lineWithReservedSpace == null ||
-      cursorsMatch(params.startCursor, lineWithReservedSpace.end) ||
-      lineWithoutLeadingSpace.width > lineWithReservedSpace.width + 0.01);
-  const rawLine: LayoutLine | null = useLineWithoutLeadingSpace ? lineWithoutLeadingSpace : lineWithReservedSpace;
+  const useLineWithoutLeadingSpace = false;
+  const rawLine: LayoutLine | null = lineWithReservedSpace;
   const line: LayoutLine | null =
     rawLine == null || cursorsMatch(params.startCursor, rawLine.end)
       ? rawLine
@@ -608,7 +603,7 @@ export function placeInlineTextSegment(params: {
     return { action: "break", state };
   }
 
-  const consumedReservedWidth = useLineWithoutLeadingSpace ? 0 : params.reservedWidth;
+  const consumedReservedWidth = params.reservedWidth;
   const lineWasEmpty = !state.lineHasContent;
   state.remainingWidth = Math.max(0, state.remainingWidth - consumedReservedWidth - line.width);
   if (!state.lineHasContent) {

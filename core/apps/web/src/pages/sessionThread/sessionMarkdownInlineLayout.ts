@@ -132,6 +132,12 @@ function splitTextRunChunks(text: string, preserveSlashDelimitedTokens: boolean)
   if (parts.length === 0) {
     return [];
   }
+  if (
+    preserveSlashDelimitedTokens &&
+    parts.some((part) => !/\s+/.test(part) && isSlashDelimitedTextToken(part))
+  ) {
+    return parts;
+  }
 
   const chunks: string[] = [];
   let current = "";

@@ -125,6 +125,7 @@ describe("sessionMarkdownInlineLayout", () => {
   });
 
   it("uses implicit Thai word boundaries for styled-seam min-start width", () => {
+    const implicitSegments = segmentImplicitWordBreaks("ทดสอบการตัดคำ");
     const items = prepareParagraphItems(
       "Lead [parity](https://example.com) *token* ทดสอบการตัดคำ fragment session one host/workspace.",
       "ทดสอบการตัดคำ fragment session one",
@@ -134,16 +135,13 @@ describe("sessionMarkdownInlineLayout", () => {
       (item): item is Extract<PreparedInlineLayoutItem, { kind: "segment" }> =>
         item.kind === "segment" &&
         item.codeGroupId == null &&
-        item.text.startsWith("ทดสอบการตัดคำ fragment session one"),
+        item.text === "ทดสอบการตัดคำ",
     );
 
     expect(target).toBeDefined();
-    expect(target?.startsAfterStyledTextSeam).toBe(true);
-    const implicitSegments = segmentImplicitWordBreaks("ทดสอบการตัดคำ");
-
     expect(implicitSegments.length).toBeGreaterThan(1);
     expect(implicitSegments.join("")).toBe("ทดสอบการตัดคำ");
-    expect(target!.text.startsWith(implicitSegments[0] ?? "")).toBe(true);
+    expect(target?.text).toBe("ทดสอบการตัดคำ");
   });
 
   it("disables prose min-start guards for break-word table-cell text", () => {
@@ -186,6 +184,24 @@ describe("sessionMarkdownInlineLayout", () => {
       ),
     ).toBe(true);
     expect(textSegments).not.toContain("containerd/BuildKit/nerdctl");
+  });
+
+  it("tokenizes slash-sensitive prose runs at word boundaries in normal wrap mode", () => {
+    const items = prepareParagraphItems(
+      "**Sample boundaries**: This fixture includes Ubuntu/Debian, a fast `gp3` or local NVMe marker, containerd/BuildKit/nerdctl text, strict VPC/security group wording, and one host/workspace isolation model as needed.",
+      "containerd/BuildKit/nerdctl",
+    );
+
+    const textSegments = items
+      .filter((item): item is Extract<PreparedInlineLayoutItem, { kind: "segment" }> => item.kind === "segment")
+      .filter((item) => item.codeGroupId == null)
+      .map((item) => item.text);
+
+    expect(textSegments).toContain("containerd/BuildKit/nerdctl");
+    expect(textSegments).toContain("VPC/security");
+    expect(textSegments).toContain("host/workspace");
+    expect(textSegments).toContain("needed.");
+    expect(textSegments).not.toContain("isolation model as needed.");
   });
 
   it("splits a trailing plain hyphenated path tail into deterministic code fragments", () => {
