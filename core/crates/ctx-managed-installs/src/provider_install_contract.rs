@@ -313,23 +313,27 @@ pub fn resolve_provider_install_contract(
             ),
         }
     })?;
-    let install = entry.managed_install.as_ref().ok_or_else(|| ProviderInstallViabilityIssue {
-        code: "install_target_unsupported",
-        message: format!(
-            "provider '{}' does not support managed install target '{}'",
-            provider_id,
-            target.as_str()
-        ),
-    })?;
+    let install = entry
+        .managed_install
+        .as_ref()
+        .ok_or_else(|| ProviderInstallViabilityIssue {
+            code: "install_target_unsupported",
+            message: format!(
+                "provider '{}' does not support managed install target '{}'",
+                provider_id,
+                target.as_str()
+            ),
+        })?;
 
-    if matches!(target, InstallTarget::Container | InstallTarget::LinuxAarch64 | InstallTarget::LinuxX8664)
-        && matches!(
-            install,
-            provider_matrix::ProviderInstall::Npm { targets, .. }
-                | provider_matrix::ProviderInstall::Python { targets, .. }
-                if !targets.contains_key(resolved_target_key)
-        )
-    {
+    if matches!(
+        target,
+        InstallTarget::Container | InstallTarget::LinuxAarch64 | InstallTarget::LinuxX8664
+    ) && matches!(
+        install,
+        provider_matrix::ProviderInstall::Npm { targets, .. }
+            | provider_matrix::ProviderInstall::Python { targets, .. }
+            if !targets.contains_key(resolved_target_key)
+    ) {
         return Err(ProviderInstallViabilityIssue {
             code: "container_artifact_missing",
             message: format!(

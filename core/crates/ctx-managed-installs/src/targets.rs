@@ -250,7 +250,9 @@ pub fn is_supported_managed_provider_for_target(
     };
 
     match install {
-        provider_matrix::ProviderInstall::Archive { targets, .. } => targets.contains_key(target_key),
+        provider_matrix::ProviderInstall::Archive { targets, .. } => {
+            targets.contains_key(target_key)
+        }
         provider_matrix::ProviderInstall::Npm { targets, .. }
         | provider_matrix::ProviderInstall::Python { targets, .. } => match target {
             InstallTarget::Host => true,

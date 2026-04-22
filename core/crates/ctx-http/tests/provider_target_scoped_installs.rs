@@ -2215,25 +2215,27 @@ async fn acp_container_install_joins_existing_bridge_install_and_surfaces_short_
         "parent install events should retain short prerequisite visibility on the real API surface: {parent_events:#?}"
     );
 
-    let parent_owned_poll_info =
-        {
-            let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
-            loop {
-                let info = get_install_info_api(&app, install_id).await;
-                if matches!(info.state, InstallStateKind::Succeeded | InstallStateKind::Failed)
-                    || info.last_event.as_ref().is_some_and(|event| {
-                        !event.message.to_ascii_lowercase().contains("prerequisite")
-                    })
-                {
-                    break info;
-                }
-                assert!(
+    let parent_owned_poll_info = {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+        loop {
+            let info = get_install_info_api(&app, install_id).await;
+            if matches!(
+                info.state,
+                InstallStateKind::Succeeded | InstallStateKind::Failed
+            ) || info
+                .last_event
+                .as_ref()
+                .is_some_and(|event| !event.message.to_ascii_lowercase().contains("prerequisite"))
+            {
+                break info;
+            }
+            assert!(
                     tokio::time::Instant::now() < deadline,
                     "timed out waiting for parent-owned running progress on the poll surface: {info:#?}"
                 );
-                tokio::time::sleep(Duration::from_millis(100)).await;
-            }
-        };
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    };
     assert!(
         matches!(
             parent_owned_poll_info.state,

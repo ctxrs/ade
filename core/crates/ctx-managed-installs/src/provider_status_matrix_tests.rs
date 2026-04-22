@@ -131,7 +131,10 @@ fn managed_archive_cfg(
     cfg
 }
 
-fn managed_hybrid_npm_container_cfg(version: &str, installed_sha256: &str) -> AgentServerConfigFile {
+fn managed_hybrid_npm_container_cfg(
+    version: &str,
+    installed_sha256: &str,
+) -> AgentServerConfigFile {
     let target = InstallTarget::Container;
     let target_key = target.as_str().to_string();
     let meta = ManagedInstallMetadata {
@@ -317,8 +320,14 @@ async fn provider_status_matrix_marks_hybrid_container_archive_updates_available
     let cfg = managed_hybrid_npm_container_cfg("1.0.0", &old_sha);
     let mut status = installed_status("codex", InstallTarget::Container);
 
-    apply_matrix_to_status(Path::new("/tmp"), &cfg, &entry, &mut status, CURRENT_CTX_VERSION)
-        .await;
+    apply_matrix_to_status(
+        Path::new("/tmp"),
+        &cfg,
+        &entry,
+        &mut status,
+        CURRENT_CTX_VERSION,
+    )
+    .await;
 
     assert_eq!(status.version.as_deref(), Some("1.0.0"));
     assert!(matches!(status.health, ProviderHealth::Ok));

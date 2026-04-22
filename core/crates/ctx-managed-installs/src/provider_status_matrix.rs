@@ -78,9 +78,12 @@ pub async fn apply_matrix_to_status(
     let mut diagnostics = Vec::new();
     let is_archive_install = install_target_from_status(status)
         .and_then(|target| {
-            entry.managed_install
+            entry
+                .managed_install
                 .as_ref()
-                .and_then(|install| install.archive_target(crate::resolve_matrix_target_key(target).ok()?))
+                .and_then(|install| {
+                    install.archive_target(crate::resolve_matrix_target_key(target).ok()?)
+                })
                 .map(|_| true)
         })
         .unwrap_or(matches!(
@@ -341,7 +344,9 @@ pub(super) async fn detect_managed_artifact_fingerprint_mismatch(
     let archive_target_present = entry
         .managed_install
         .as_ref()
-        .and_then(|install| install.archive_target(crate::resolve_matrix_target_key(requested_target).ok()?))
+        .and_then(|install| {
+            install.archive_target(crate::resolve_matrix_target_key(requested_target).ok()?)
+        })
         .is_some();
     match detected_fingerprint {
         Some(detected)

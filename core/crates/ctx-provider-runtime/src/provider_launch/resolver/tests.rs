@@ -395,10 +395,7 @@ fn rejects_gemini_runtime_when_bundle_has_multiple_core_entries() {
     let temp = tempdir().unwrap();
     let data_root = temp.path().join("data");
     let (node_bin, cli_entry, _, core_entry) = create_gemini_runtime_layout(temp.path());
-    let extra_core_entry = cli_entry
-        .parent()
-        .expect("bundle dir")
-        .join("core-zeta.js");
+    let extra_core_entry = cli_entry.parent().expect("bundle dir").join("core-zeta.js");
     std::fs::write(
         &extra_core_entry,
         "export const coreEvents = {}; export const CoreEvent = {}; export const writeToStdout = () => {}; export const writeToStderr = () => {};",
