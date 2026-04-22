@@ -14,6 +14,8 @@ export {
   recordClientCounterMetric,
   recordClientGaugeMetric,
   recordClientHistogramMetric,
+  recordSemanticTelemetryEvent,
+  setSemanticTelemetryRemoteEnabled,
 } from "./clientBase";
 export type {
   DaemonRawResponse,

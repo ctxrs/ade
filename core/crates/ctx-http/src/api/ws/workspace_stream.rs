@@ -1,5 +1,6 @@
 use super::replay::primary_session_id_for_active_task;
 use super::*;
+use serde_json::json;
 
 pub(super) struct WorkspaceStreamRuntime {
     pub(super) priority_control: Arc<StreamQueue<WorkspaceActiveSnapshotStreamMessage>>,
@@ -24,6 +25,21 @@ pub(super) struct WorkspaceStreamLabels {
     pub(super) replay_failure_log: &'static str,
     pub(super) lagged_log: &'static str,
     pub(super) event_queue_label: &'static str,
+}
+
+async fn emit_workspace_stream_incident(
+    state: &Arc<AppState>,
+    event_name: &'static str,
+    _workspace_id: WorkspaceId,
+    labels: &[(&'static str, serde_json::Value)],
+) {
+    let mut event = crate::telemetry::TelemetryEvent::daemon_incident(event_name)
+        .with_source("workspace_stream")
+        .with_property("has_workspace_scope", json!(true));
+    for (key, value) in labels {
+        event = event.with_property(*key, value.clone());
+    }
+    state.telemetry.telemetry.emit(event).await;
 }
 
 pub(super) async fn initialize_workspace_stream(
@@ -410,6 +426,16 @@ pub(super) async fn handle_workspace_stream_lagged(
         "{}",
         labels.lagged_log,
     );
+    emit_workspace_stream_incident(
+        state,
+        "workspace_stream_lagged",
+        workspace_id,
+        &[
+            ("lagged", json!(lagged)),
+            ("queue_label", json!(labels.event_queue_label)),
+        ],
+    )
+    .await;
     queue_workspace_stream_reset(state, workspace_id, runtime).await
 }
 
@@ -705,6 +731,16 @@ async fn queue_workspace_stream_reset(
     {
         return Err(());
     }
+    emit_workspace_stream_incident(
+        state,
+        "workspace_stream_reset_queued",
+        workspace_id,
+        &[(
+            "latest_snapshot_rev",
+            json!(runtime.latest_snapshot_rev.load(Ordering::Relaxed)),
+        )],
+    )
+    .await;
     runtime.reset_queued = true;
     runtime.send_control.set_disconnect_after_flush();
     Ok(())

@@ -20,6 +20,8 @@ export type WorkspaceActiveSnapshotCommand =
       baseUrl?: string | null;
       wsBaseUrl?: string | null;
       runId?: string | null;
+      installId?: string | null;
+      originRuntime?: "web" | "desktop" | "mobile_shell";
       e2eEnabled?: boolean;
     }
   | {
@@ -41,7 +43,8 @@ export type WorkspaceActiveSnapshotCommand =
   | { type: "apply_task_update"; task: Task }
   | { type: "e2e_set_enabled"; enabled: boolean }
   | { type: "e2e_close_stream" }
-  | { type: "e2e_set_drop_messages"; drop: boolean };
+  | { type: "e2e_set_drop_messages"; drop: boolean }
+  | { type: "heartbeat_ack"; token: string };
 
 export type WorkspaceActiveSnapshotPatch = {
   snapshot?: WorkspaceActiveSnapshotState;
@@ -80,7 +83,18 @@ export type WorkspaceActiveSnapshotPatch = {
   oldestForegroundEventReceivedAtMs?: number | null;
 };
 
-export type WorkspaceActiveSnapshotWorkerMessage = {
-  type: "patch";
-  patch: WorkspaceActiveSnapshotPatch;
-};
+export type WorkspaceActiveSnapshotWorkerMessage =
+  | {
+      type: "patch";
+      patch: WorkspaceActiveSnapshotPatch;
+    }
+  | {
+      type: "heartbeat_ping";
+      token: string;
+      sentAtMs: number;
+    }
+  | {
+      type: "heartbeat_missed";
+      missedForMs: number;
+      outstandingAcks: number;
+    };

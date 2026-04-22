@@ -16,7 +16,10 @@ vi.mock("./sections/NotificationsSettingsSection", () => ({
   NotificationsSettingsSection: sectionComponent("notifications"),
 }));
 vi.mock("./sections/AnalyticsSettingsSection", () => ({
-  AnalyticsSettingsSection: sectionComponent("analytics", (props) => String(props.telemetryEnabled)),
+  AnalyticsSettingsSection: sectionComponent(
+    "analytics",
+    (props) => `${String(props.clientTelemetryEnabled)}:${String(props.daemonTelemetryEnabled)}`,
+  ),
 }));
 vi.mock("./sections/WorktreeBootstrapSection", () => ({
   WorktreeBootstrapSection: sectionComponent("worktree_bootstrap"),
@@ -86,11 +89,14 @@ const makeProps = (): ComponentProps<typeof SettingsContentRouter> => ({
     clientSettingsState: {
       loaded: true,
       settings: {
-        v: 2,
+        v: 3,
         desktopNotifications: {
           turnCompleted: true,
           turnFailed: false,
           badgeUnreadCount: true,
+        },
+        telemetry: {
+          clientEnabled: true,
         },
       },
     },
@@ -113,6 +119,7 @@ const makeProps = (): ComponentProps<typeof SettingsContentRouter> => ({
     saving: false,
     telemetry: {
       enabled: true,
+      source: "configured",
       setEnabled: vi.fn(),
     },
     resourceGovernance: {
@@ -148,6 +155,13 @@ const makeProps = (): ComponentProps<typeof SettingsContentRouter> => ({
       setMachineHostPressureSwapThresholdMb: vi.fn(),
       sandboxMachineCanSave: true,
     },
+  },
+  clientTelemetry: {
+    loaded: true,
+    saving: false,
+    error: null,
+    enabled: true,
+    setEnabled: vi.fn(async () => {}),
   },
   themeVariant: "dark",
   account: {
@@ -227,6 +241,17 @@ describe("SettingsContentRouter", () => {
 
     expect(screen.getByText("Loading…")).toBeInTheDocument();
     expect(screen.queryByTestId("analytics")).not.toBeInTheDocument();
+  });
+
+  it("passes split client and daemon telemetry props to the analytics section", () => {
+    render(
+      <SettingsContentRouter
+        {...makeProps()}
+        active="analytics"
+      />,
+    );
+
+    expect(screen.getByTestId("analytics")).toHaveTextContent("true:true");
   });
 
   it("shows daemon settings errors for daemon-backed sections", () => {

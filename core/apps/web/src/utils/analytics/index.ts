@@ -3,6 +3,7 @@ export {
   setAnalyticsEnabled,
   captureAnalyticsEvent,
   captureProductEvent,
+  captureIncidentEvent,
 } from "./client";
 
 export { getFeatureGate, useFeatureGate } from "./featureGates";
@@ -44,6 +45,14 @@ export {
   trackForegroundFreshnessSlaMissed,
   trackForegroundBacklogObserved,
   trackForegroundGapRecoveryObserved,
+  trackRendererBacklogSample,
+  trackRendererBacklogSpike,
+  trackFreshnessRecovered,
+  trackWorkerPatchFlush,
+  trackWorkerPatchApply,
+  trackUnknownEventBurst,
+  trackSessionEventVolumeBurst,
+  trackRendererHeartbeatMissed,
 } from "./activity";
 
 export { sanitizeAnalyticsProperties } from "./schema";

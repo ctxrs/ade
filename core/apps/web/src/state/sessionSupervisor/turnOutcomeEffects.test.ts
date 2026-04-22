@@ -74,11 +74,14 @@ describe("turnOutcomeEffects", () => {
     getClientSettingsState.mockReturnValue({
       loaded: true,
       settings: {
-        v: 2,
+        v: 3,
         desktopNotifications: {
           turnCompleted: true,
           turnFailed: true,
           badgeUnreadCount: true,
+        },
+        telemetry: {
+          clientEnabled: true,
         },
       },
     });
@@ -247,11 +250,14 @@ describe("turnOutcomeEffects", () => {
     getClientSettingsState.mockReturnValue({
       loaded: false,
       settings: {
-        v: 2,
+        v: 3,
         desktopNotifications: {
           turnCompleted: true,
           turnFailed: true,
           badgeUnreadCount: true,
+        },
+        telemetry: {
+          clientEnabled: true,
         },
       },
     });

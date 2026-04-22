@@ -1,10 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { captureProductEventMock } = vi.hoisted(() => ({
+const { captureIncidentEventMock, captureProductEventMock } = vi.hoisted(() => ({
+  captureIncidentEventMock: vi.fn(),
   captureProductEventMock: vi.fn(),
 }));
 
 vi.mock("./client", () => ({
+  captureIncidentEvent: captureIncidentEventMock,
   captureProductEvent: captureProductEventMock,
 }));
 
@@ -12,11 +14,13 @@ import {
   trackTaskCreated,
   trackTurnCompleted,
   trackTurnStarted,
+  trackUnknownEventBurst,
   trackUserMessageSent,
 } from "./activity";
 
 describe("usage analytics activity helpers", () => {
   beforeEach(() => {
+    captureIncidentEventMock.mockReset();
     captureProductEventMock.mockReset();
     window.localStorage.clear();
     window.sessionStorage.clear();
@@ -114,6 +118,33 @@ describe("usage analytics activity helpers", () => {
         remaining_tokens_estimate: 80,
         remaining_fraction: 0.4,
       },
+    );
+  });
+
+  it("buckets unknown event original types before remote incident capture", () => {
+    trackUnknownEventBurst({
+      source: "session_replica_ingest",
+      sessionId: "session-123",
+      taskId: "task-123",
+      workspaceId: "workspace-123",
+      originalType: "vendor.unique.event.name.with.unbounded.detail",
+      count: 25,
+      windowMs: 5_000,
+    });
+
+    expect(captureIncidentEventMock).toHaveBeenCalledWith(
+      "unknown_event_burst",
+      1,
+      {
+        source: "session_replica_ingest",
+        has_session_scope: true,
+        has_task_scope: true,
+        has_workspace_scope: true,
+        original_type_class: "other",
+        count: 25,
+        window_ms: 5_000,
+      },
+      { source: "session_replica_ingest" },
     );
   });
 });

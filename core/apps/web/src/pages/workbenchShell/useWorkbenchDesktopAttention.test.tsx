@@ -74,11 +74,14 @@ describe("useWorkbenchDesktopAttention", () => {
     clientSettingsState = {
       loaded: false,
       settings: {
-        v: 2,
+        v: 3,
         desktopNotifications: {
           turnCompleted: true,
           turnFailed: true,
           badgeUnreadCount: true,
+        },
+        telemetry: {
+          clientEnabled: true,
         },
       },
     };
@@ -127,11 +130,14 @@ describe("useWorkbenchDesktopAttention", () => {
     clientSettingsState = {
       loaded: true,
       settings: {
-        v: 2,
+        v: 3,
         desktopNotifications: {
           turnCompleted: true,
           turnFailed: true,
           badgeUnreadCount: true,
+        },
+        telemetry: {
+          clientEnabled: true,
         },
       },
     };
@@ -187,11 +193,14 @@ describe("useWorkbenchDesktopAttention", () => {
     clientSettingsState = {
       loaded: true,
       settings: {
-        v: 2,
+        v: 3,
         desktopNotifications: {
           turnCompleted: true,
           turnFailed: true,
           badgeUnreadCount: true,
+        },
+        telemetry: {
+          clientEnabled: true,
         },
       },
     };
@@ -226,11 +235,14 @@ describe("useWorkbenchDesktopAttention", () => {
     clientSettingsState = {
       loaded: true,
       settings: {
-        v: 2,
+        v: 3,
         desktopNotifications: {
           turnCompleted: true,
           turnFailed: true,
           badgeUnreadCount: false,
+        },
+        telemetry: {
+          clientEnabled: true,
         },
       },
     };

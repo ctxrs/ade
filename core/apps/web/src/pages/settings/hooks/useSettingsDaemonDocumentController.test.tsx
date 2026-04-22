@@ -18,6 +18,7 @@ const makeSettingsResponse = (overrides: Partial<SettingsResponse> = {}): Settin
   telemetry: {
     enabled: true,
     endpoint: "",
+    source: "configured",
   },
   resource_governance: {
     enabled: true,
@@ -71,15 +72,17 @@ describe("useSettingsDaemonDocumentController", () => {
 
   it("hydrates without immediately saving back the daemon settings document", async () => {
     getSettingsMock.mockResolvedValue(makeSettingsResponse({
-      telemetry: { enabled: false, endpoint: "" },
+      telemetry: { enabled: false, endpoint: "", source: "default" },
     }));
 
-    renderHook(() => useSettingsDaemonDocumentController());
+    const { result } = renderHook(() => useSettingsDaemonDocumentController());
 
     await flushAsync();
     await flushAsync();
 
     expect(getSettingsMock).toHaveBeenCalledTimes(1);
+    expect(result.current.telemetry.enabled).toBe(false);
+    expect(result.current.telemetry.source).toBe("default");
 
     act(() => {
       vi.advanceTimersByTime(1000);
@@ -91,7 +94,7 @@ describe("useSettingsDaemonDocumentController", () => {
   it("autosaves telemetry changes after hydration", async () => {
     getSettingsMock.mockResolvedValue(makeSettingsResponse());
     updateSettingsMock.mockResolvedValue(makeSettingsResponse({
-      telemetry: { enabled: false, endpoint: "" },
+      telemetry: { enabled: false, endpoint: "", source: "configured" },
     }));
 
     const { result } = renderHook(() => useSettingsDaemonDocumentController());
@@ -113,6 +116,7 @@ describe("useSettingsDaemonDocumentController", () => {
     expect(updateSettingsMock).toHaveBeenCalledWith({
       telemetry: { enabled: false, endpoint: "" },
     });
+    expect(result.current.telemetry.source).toBe("configured");
   });
 
   it("does not save invalid sandbox machine settings", async () => {

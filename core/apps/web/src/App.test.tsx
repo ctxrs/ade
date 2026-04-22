@@ -28,10 +28,28 @@ import {
   trackAppOpened,
 } from "./utils/analytics";
 import { emitUiDiagnostic, resetUiDiagnosticsForTests } from "./state/diagnosticsChannel";
-import { useSettingsSnapshot } from "./state/settingsStore";
 import { refreshUpdateCheck } from "./utils/updateNotice";
 
 const desktopHandlers = new Map<string, (payload?: unknown) => void>();
+const clientSettingsStore = vi.hoisted(() => ({
+  state: {
+    loaded: true,
+    settings: {
+      v: 3 as const,
+      desktopNotifications: {
+        turnCompleted: true,
+        turnFailed: true,
+        badgeUnreadCount: true,
+      },
+      telemetry: {
+        clientEnabled: true,
+      },
+    },
+  },
+  getClientSettingsState: vi.fn(),
+  subscribeClientSettings: vi.fn(),
+  loadClientSettings: vi.fn(),
+}));
 
 vi.mock("./api/client", () => ({
   appendDesktopLog: vi.fn(async () => {}),
@@ -102,7 +120,12 @@ vi.mock("./state/sessionSupervisor", () => ({
 
 vi.mock("./state/settingsStore", () => ({
   SettingsStoreProvider: ({ children }: { children: ReactNode }) => <>{children}</>,
-  useSettingsSnapshot: vi.fn(() => ({ loaded: false, loading: false, error: null, settings: null })),
+}));
+
+vi.mock("./state/clientSettings", () => ({
+  getClientSettingsState: clientSettingsStore.getClientSettingsState,
+  subscribeClientSettings: clientSettingsStore.subscribeClientSettings,
+  loadClientSettings: clientSettingsStore.loadClientSettings,
 }));
 
 vi.mock("./utils/harnessCatalog", () => ({
@@ -167,6 +190,11 @@ beforeEach(() => {
   vi.clearAllMocks();
   resetUiDiagnosticsForTests();
   desktopHandlers.clear();
+  clientSettingsStore.state.loaded = true;
+  clientSettingsStore.state.settings.telemetry.clientEnabled = true;
+  clientSettingsStore.getClientSettingsState.mockImplementation(() => clientSettingsStore.state);
+  clientSettingsStore.subscribeClientSettings.mockImplementation(() => () => {});
+  clientSettingsStore.loadClientSettings.mockResolvedValue(clientSettingsStore.state);
   vi.mocked(isDesktopApp).mockReturnValue(false);
   vi.mocked(desktopSetDockRecentLocalWorkspaces).mockResolvedValue();
   vi.mocked(getPendingDownloadAttributionId).mockResolvedValue(null);
@@ -182,12 +210,6 @@ beforeEach(() => {
 });
 
 test("app_opened includes pending download attribution id when present", async () => {
-  vi.mocked(useSettingsSnapshot).mockReturnValue({
-    loaded: true,
-    loading: false,
-    error: null,
-    settings: { telemetry: { enabled: true } },
-  } as never);
   vi.mocked(getPendingDownloadAttributionId).mockResolvedValue("dl-123");
 
   render(<App />);
@@ -201,12 +223,6 @@ test("app_opened includes pending download attribution id when present", async (
 });
 
 test("app_opened still emits once under StrictMode effect replay", async () => {
-  vi.mocked(useSettingsSnapshot).mockReturnValue({
-    loaded: true,
-    loading: false,
-    error: null,
-    settings: { telemetry: { enabled: true } },
-  } as never);
   vi.mocked(getPendingDownloadAttributionId).mockResolvedValue("dl-strict");
 
   render(

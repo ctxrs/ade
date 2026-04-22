@@ -1,4 +1,4 @@
-import type { ClientTelemetryBatch } from "@ctx/types";
+import type { ClientTelemetryBatch, SemanticTelemetryBatch, SemanticTelemetryEvent } from "@ctx/types";
 import { isDesktopApp } from "../utils/desktop";
 import { emitUiDiagnostic, normalizeDiagnosticErrorMessage } from "../state/diagnosticsChannel";
 import {
@@ -362,10 +362,14 @@ export const apiAny = async <T>(path: string, init?: RequestInit): Promise<T> =>
 };
 
 const CLIENT_TELEMETRY_PATH = "/api/telemetry/client";
+const SEMANTIC_TELEMETRY_PATH = "/api/telemetry/events";
 const CLIENT_TELEMETRY_FLUSH_MS = 1000;
 const CLIENT_TELEMETRY_MAX = 200;
 let clientTelemetryTimer: number | null = null;
 const clientTelemetryQueue: ClientTelemetryMetric[] = [];
+let semanticTelemetryTimer: number | null = null;
+const semanticTelemetryQueue: SemanticTelemetryEvent[] = [];
+let semanticTelemetryRemoteEnabled = true;
 
 type ClientTelemetryMetric = {
   name: string;
@@ -412,6 +416,22 @@ const queueClientTelemetry = (event: ClientTelemetryMetric) => {
   clientTelemetryTimer = window.setTimeout(() => {
     clientTelemetryTimer = null;
     flushClientTelemetry().catch(() => {});
+  }, CLIENT_TELEMETRY_FLUSH_MS);
+};
+
+const queueSemanticTelemetry = (event: SemanticTelemetryEvent) => {
+  if (typeof window === "undefined") return;
+  if (event.delivery !== "local_only" && !semanticTelemetryRemoteEnabled) {
+    return;
+  }
+  if (semanticTelemetryQueue.length >= CLIENT_TELEMETRY_MAX) {
+    semanticTelemetryQueue.shift();
+  }
+  semanticTelemetryQueue.push(event);
+  if (semanticTelemetryTimer !== null) return;
+  semanticTelemetryTimer = window.setTimeout(() => {
+    semanticTelemetryTimer = null;
+    flushSemanticTelemetry().catch(() => {});
   }, CLIENT_TELEMETRY_FLUSH_MS);
 };
 
@@ -511,19 +531,56 @@ const recordClientMetric = (
   });
 };
 
+export const recordSemanticTelemetryEvent = (event: SemanticTelemetryEvent): void => {
+  if (!event.event_name.trim() || !event.origin_install_id.trim()) return;
+  queueSemanticTelemetry(event);
+};
+
+export const setSemanticTelemetryRemoteEnabled = (enabled: boolean): void => {
+  semanticTelemetryRemoteEnabled = enabled;
+  if (enabled) return;
+  for (let index = semanticTelemetryQueue.length - 1; index >= 0; index -= 1) {
+    if (semanticTelemetryQueue[index]?.delivery !== "local_only") {
+      semanticTelemetryQueue.splice(index, 1);
+    }
+  }
+  if (!semanticTelemetryQueue.length && semanticTelemetryTimer !== null && typeof window !== "undefined") {
+    window.clearTimeout(semanticTelemetryTimer);
+    semanticTelemetryTimer = null;
+  }
+};
+
 const flushClientTelemetry = async () => {
   if (!clientTelemetryQueue.length) return;
   const batch: ClientTelemetryBatch = { events: clientTelemetryQueue.splice(0) };
+  await postTelemetryBatch(CLIENT_TELEMETRY_PATH, batch, "client_telemetry_flush");
+};
+
+const flushSemanticTelemetry = async () => {
+  if (!semanticTelemetryQueue.length) return;
+  const events = semanticTelemetryQueue
+    .splice(0)
+    .filter((event) => semanticTelemetryRemoteEnabled || event.delivery === "local_only");
+  if (!events.length) return;
+  const batch: SemanticTelemetryBatch = { events };
+  await postTelemetryBatch(SEMANTIC_TELEMETRY_PATH, batch, "semantic_telemetry_flush");
+};
+
+const postTelemetryBatch = async (
+  path: string,
+  batch: ClientTelemetryBatch | SemanticTelemetryBatch,
+  reason: "client_telemetry_flush" | "semantic_telemetry_flush",
+) => {
   const token = authToken();
   try {
     if (isDesktopApp()) {
       await ensureDesktopDaemonConnection({
         connectLocalWhenMissing: false,
-        reason: "client_telemetry_flush",
+        reason,
       });
     }
     if (typeof fetch === "undefined") return;
-    await fetch(getDaemonHttpUrl(CLIENT_TELEMETRY_PATH), {
+    await fetch(getDaemonHttpUrl(path), {
       method: "POST",
       headers: {
         "content-type": "application/json",

@@ -963,6 +963,38 @@ export type ClientTelemetryBatch = {
   events: ClientTelemetryMetric[];
 };
 
+export type SemanticTelemetryPlane = "product" | "incident";
+
+export type SemanticTelemetryDelivery = "remote" | "local_only";
+
+export type SemanticTelemetryOriginRuntime = "web" | "desktop" | "mobile_shell" | "daemon";
+
+export type SemanticTelemetryScalar = string | number | boolean | null;
+
+export type SemanticTelemetryProperties = Record<string, SemanticTelemetryScalar>;
+
+export type SemanticTelemetryEvent = {
+  event_id: string;
+  event_name: string;
+  event_version: number;
+  occurred_at: string;
+  plane: SemanticTelemetryPlane;
+  delivery: SemanticTelemetryDelivery;
+  origin_runtime: SemanticTelemetryOriginRuntime;
+  origin_install_id: string;
+  app_version: string;
+  os: string;
+  arch: string;
+  surface?: "web" | "desktop" | "mobile_shell" | null;
+  env_target?: "local" | "worktree" | "remote" | null;
+  source?: string | null;
+  properties?: SemanticTelemetryProperties;
+};
+
+export type SemanticTelemetryBatch = {
+  events: SemanticTelemetryEvent[];
+};
+
 export type MobileConnectionProfile = {
   id: string;
   label: string;

@@ -22,8 +22,40 @@ describe("clientSettings", () => {
     uiStateDelete.mockReset();
   });
 
-  it("loads persisted v2 settings", async () => {
+  it("loads persisted v3 settings", async () => {
     uiStateGet.mockImplementation(async (key: string) => {
+      if (key === "client.settings.v3") {
+        return {
+          v: 3,
+          desktopNotifications: {
+            turnCompleted: false,
+            turnFailed: true,
+            badgeUnreadCount: false,
+          },
+          telemetry: {
+            clientEnabled: false,
+          },
+        };
+      }
+      return null;
+    });
+    const { loadClientSettings } = await loadModule();
+    const state = await loadClientSettings();
+
+    expect(uiStateGet).toHaveBeenCalledWith("client.settings.v3");
+    expect(state.settings.desktopNotifications).toEqual({
+      turnCompleted: false,
+      turnFailed: true,
+      badgeUnreadCount: false,
+    });
+    expect(state.settings.telemetry).toEqual({
+      clientEnabled: false,
+    });
+  });
+
+  it("migrates persisted v2 settings into v3", async () => {
+    uiStateGet.mockImplementation(async (key: string) => {
+      if (key === "client.settings.v3") return null;
       if (key === "client.settings.v2") {
         return {
           v: 2,
@@ -39,38 +71,19 @@ describe("clientSettings", () => {
     const { loadClientSettings } = await loadModule();
     const state = await loadClientSettings();
 
-    expect(uiStateGet).toHaveBeenCalledWith("client.settings.v2");
-    expect(state.settings.desktopNotifications).toEqual({
-      turnCompleted: false,
-      turnFailed: true,
-      badgeUnreadCount: false,
-    });
-  });
-
-  it("migrates persisted v1 settings into v2", async () => {
-    uiStateGet.mockImplementation(async (key: string) => {
-      if (key === "client.settings.v2") return null;
-      if (key === "client.settings.v1") {
-        return {
-          v: 1,
-          desktopNotifications: { turnCompleted: false },
-        };
-      }
-      return null;
-    });
-    const { loadClientSettings } = await loadModule();
-    const state = await loadClientSettings();
-
     expect(state.settings).toEqual({
-      v: 2,
+      v: 3,
       desktopNotifications: {
         turnCompleted: false,
-        turnFailed: false,
+        turnFailed: true,
         badgeUnreadCount: false,
       },
+      telemetry: {
+        clientEnabled: true,
+      },
     });
-    expect(uiStateSet).toHaveBeenCalledWith("client.settings.v2", state.settings);
-    expect(uiStateDelete).toHaveBeenCalledWith("client.settings.v1");
+    expect(uiStateSet).toHaveBeenCalledWith("client.settings.v3", state.settings);
+    expect(uiStateDelete).toHaveBeenCalledWith("client.settings.v2");
   });
 
   it("uses enabled defaults for new installs", async () => {
@@ -83,9 +96,12 @@ describe("clientSettings", () => {
       turnFailed: true,
       badgeUnreadCount: true,
     });
+    expect(state.settings.telemetry).toEqual({
+      clientEnabled: true,
+    });
   });
 
-  it("persists v2 updates", async () => {
+  it("persists v3 updates", async () => {
     uiStateGet.mockResolvedValue(null);
     const { updateClientSettings } = await loadModule();
 
@@ -95,14 +111,31 @@ describe("clientSettings", () => {
         turnFailed: true,
         badgeUnreadCount: false,
       },
+      telemetry: {
+        clientEnabled: true,
+      },
+    });
+  });
+
+  it("persists telemetry preference updates alongside existing settings", async () => {
+    uiStateGet.mockResolvedValue(null);
+    const { updateClientSettings } = await loadModule();
+
+    await updateClientSettings({
+      telemetry: {
+        clientEnabled: false,
+      },
     });
 
-    expect(uiStateSet).toHaveBeenCalledWith("client.settings.v2", {
-      v: 2,
+    expect(uiStateSet).toHaveBeenCalledWith("client.settings.v3", {
+      v: 3,
       desktopNotifications: {
-        turnCompleted: false,
+        turnCompleted: true,
         turnFailed: true,
-        badgeUnreadCount: false,
+        badgeUnreadCount: true,
+      },
+      telemetry: {
+        clientEnabled: false,
       },
     });
   });

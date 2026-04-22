@@ -7,6 +7,7 @@ import { deriveWorkspaceSetupEffectiveTarget, type RoutePlanInsertionStep } from
 const apiMocks = vi.hoisted(() => ({
   createWorkspace: vi.fn(),
   deleteWorkspace: vi.fn(),
+  getSettings: vi.fn(),
   idToString: vi.fn((id: string | number) => String(id)),
   listWorkspaces: vi.fn(),
   prepareLinuxSandboxRuntime: vi.fn(),
@@ -15,9 +16,28 @@ const apiMocks = vi.hoisted(() => ({
   repoStatus: vi.fn(),
   repoStagingPath: vi.fn(),
   repoValidateDestination: vi.fn(),
+  updateSettings: vi.fn(),
   updateWorkspaceExecutionConfig: vi.fn(),
   updateWorkspaceMergeQueueConfig: vi.fn(),
   updateWorkspaceWorktreeBootstrapConfig: vi.fn(),
+}));
+const clientSettingsMocks = vi.hoisted(() => ({
+  state: {
+    loaded: true,
+    settings: {
+      v: 3 as const,
+      desktopNotifications: {
+        turnCompleted: true,
+        turnFailed: true,
+        badgeUnreadCount: true,
+      },
+      telemetry: {
+        clientEnabled: true,
+      },
+    },
+  },
+  getClientSettingsState: vi.fn(),
+  loadClientSettings: vi.fn(),
 }));
 
 const desktopMocks = vi.hoisted(() => ({
@@ -48,6 +68,7 @@ const workspaceBootstrapGateMocks = vi.hoisted(() => ({
 vi.mock("../../api/client", () => ({
   createWorkspace: apiMocks.createWorkspace,
   deleteWorkspace: apiMocks.deleteWorkspace,
+  getSettings: apiMocks.getSettings,
   idToString: apiMocks.idToString,
   listWorkspaces: apiMocks.listWorkspaces,
   prepareLinuxSandboxRuntime: apiMocks.prepareLinuxSandboxRuntime,
@@ -56,9 +77,15 @@ vi.mock("../../api/client", () => ({
   repoStatus: apiMocks.repoStatus,
   repoStagingPath: apiMocks.repoStagingPath,
   repoValidateDestination: apiMocks.repoValidateDestination,
+  updateSettings: apiMocks.updateSettings,
   updateWorkspaceExecutionConfig: apiMocks.updateWorkspaceExecutionConfig,
   updateWorkspaceMergeQueueConfig: apiMocks.updateWorkspaceMergeQueueConfig,
   updateWorkspaceWorktreeBootstrapConfig: apiMocks.updateWorkspaceWorktreeBootstrapConfig,
+}));
+
+vi.mock("../../state/clientSettings", () => ({
+  getClientSettingsState: clientSettingsMocks.getClientSettingsState,
+  loadClientSettings: clientSettingsMocks.loadClientSettings,
 }));
 
 vi.mock("../../utils/desktop", () => ({
@@ -238,7 +265,18 @@ const renderCreateHook = (
 describe("useWorkspaceSetupCreate", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    clientSettingsMocks.state.loaded = true;
+    clientSettingsMocks.state.settings.telemetry.clientEnabled = true;
+    clientSettingsMocks.getClientSettingsState.mockImplementation(() => clientSettingsMocks.state);
+    clientSettingsMocks.loadClientSettings.mockResolvedValue(clientSettingsMocks.state);
     apiMocks.listWorkspaces.mockResolvedValue([]);
+    apiMocks.getSettings.mockResolvedValue({
+      telemetry: {
+        enabled: true,
+        endpoint: "",
+        source: "default",
+      },
+    });
     apiMocks.repoInit.mockResolvedValue({ path: "/remote/new-sandbox" });
     apiMocks.createWorkspace.mockResolvedValue({ id: "ws-1" });
     apiMocks.prepareLinuxSandboxRuntime.mockResolvedValue({
@@ -253,6 +291,13 @@ describe("useWorkspaceSetupCreate", () => {
       },
     });
     apiMocks.updateWorkspaceExecutionConfig.mockResolvedValue(undefined);
+    apiMocks.updateSettings.mockResolvedValue({
+      telemetry: {
+        enabled: true,
+        endpoint: "",
+        source: "configured",
+      },
+    });
     desktopMocks.desktopConnectLocal.mockResolvedValue({
       kind: "local",
       base_url: "http://127.0.0.1:4319",
@@ -505,6 +550,54 @@ describe("useWorkspaceSetupCreate", () => {
     expect(desktopMocks.desktopEnsureRemoteLinuxSandboxReady).toHaveBeenCalledWith({
       admin_password_once: "admin-password",
     });
+  });
+
+  it("seeds default daemon telemetry from the initiating client preference", async () => {
+    clientSettingsMocks.state.settings.telemetry.clientEnabled = false;
+    apiMocks.getSettings.mockResolvedValue({
+      telemetry: {
+        enabled: true,
+        endpoint: "https://api.ctx.rs/functions/v1/telemetry",
+        source: "default",
+      },
+    });
+    apiMocks.updateSettings.mockResolvedValue({
+      telemetry: {
+        enabled: false,
+        endpoint: "https://api.ctx.rs/functions/v1/telemetry",
+        source: "configured",
+      },
+    });
+    const { hook } = renderCreateHook(null);
+
+    await act(async () => {
+      await hook.result.current.onCreate();
+    });
+
+    expect(apiMocks.updateSettings).toHaveBeenCalledWith({
+      telemetry: {
+        enabled: false,
+        endpoint: "https://api.ctx.rs/functions/v1/telemetry",
+      },
+    });
+  });
+
+  it("does not overwrite an already configured daemon telemetry policy", async () => {
+    clientSettingsMocks.state.settings.telemetry.clientEnabled = false;
+    apiMocks.getSettings.mockResolvedValue({
+      telemetry: {
+        enabled: true,
+        endpoint: "https://api.ctx.rs/functions/v1/telemetry",
+        source: "configured",
+      },
+    });
+    const { hook } = renderCreateHook(null);
+
+    await act(async () => {
+      await hook.result.current.onCreate();
+    });
+
+    expect(apiMocks.updateSettings).not.toHaveBeenCalled();
   });
 
   it("prompts for the local admin password and retries sandbox prepare with it", async () => {

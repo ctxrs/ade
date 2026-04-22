@@ -50,10 +50,19 @@ type SettingsNotificationPreferencesController = {
   onRequestDesktopNotificationPermission: () => Promise<void>;
 };
 
+type SettingsClientTelemetryController = {
+  loaded: boolean;
+  saving: boolean;
+  error: string | null;
+  enabled: boolean;
+  setEnabled: (next: boolean) => Promise<void>;
+};
+
 type SettingsLocalPreferencesController = {
   themeVariant: "light" | "dark";
   general: SettingsGeneralPreferencesController;
   notifications: SettingsNotificationPreferencesController;
+  telemetry: SettingsClientTelemetryController;
 };
 
 const vscodeRemoteTargets: DesktopEditorSettings["target"][] = [
@@ -113,22 +122,22 @@ export function useSettingsLocalPreferencesController(): SettingsLocalPreference
     void refreshDesktopNotificationPermission();
   }, [refreshDesktopNotificationPermission]);
 
-  const handleUpdateDesktopNotifications = useCallback(
+  const handleUpdateClientSettings = useCallback(
     async (
-      patch: Partial<typeof clientSettingsState.settings.desktopNotifications>,
+      patch: Parameters<typeof updateClientSettings>[0],
     ) => {
       if (clientSettingsSaving) return;
       setClientSettingsSaving(true);
       setClientSettingsError(null);
       try {
-        await updateClientSettings({ desktopNotifications: patch });
+        await updateClientSettings(patch);
       } catch (error: unknown) {
         setClientSettingsError(errorMessage(error));
       } finally {
         setClientSettingsSaving(false);
       }
     },
-    [clientSettingsSaving, clientSettingsState.settings.desktopNotifications],
+    [clientSettingsSaving],
   );
 
   const handleRequestDesktopNotificationPermission = useCallback(async () => {
@@ -179,20 +188,34 @@ export function useSettingsLocalPreferencesController(): SettingsLocalPreference
       desktopNotificationPermission,
       desktopNotificationPermissionBusy,
       onToggleCompletedNotifications: async (next) => {
-        await handleUpdateDesktopNotifications({ turnCompleted: next });
+        await handleUpdateClientSettings({ desktopNotifications: { turnCompleted: next } });
       },
       onToggleFailedNotifications: async (next) => {
-        await handleUpdateDesktopNotifications({ turnFailed: next });
+        await handleUpdateClientSettings({ desktopNotifications: { turnFailed: next } });
       },
       onToggleBadgeUnreadCount: async (next) => {
-        await handleUpdateDesktopNotifications({ badgeUnreadCount: next });
+        await handleUpdateClientSettings({ desktopNotifications: { badgeUnreadCount: next } });
       },
       onRequestDesktopNotificationPermission: handleRequestDesktopNotificationPermission,
+    },
+    telemetry: {
+      loaded: clientSettingsState.loaded,
+      saving: clientSettingsSaving,
+      error: clientSettingsError,
+      enabled: clientSettingsState.settings.telemetry.clientEnabled,
+      setEnabled: async (next) => {
+        await handleUpdateClientSettings({
+          telemetry: {
+            clientEnabled: next,
+          },
+        });
+      },
     },
   };
 }
 
 export type {
+  SettingsClientTelemetryController,
   SettingsGeneralPreferencesController,
   SettingsLocalPreferencesController,
   SettingsNotificationPreferencesController,

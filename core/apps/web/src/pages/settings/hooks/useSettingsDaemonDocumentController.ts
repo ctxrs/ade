@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   type ExecutionSettings as ApiExecutionSettings,
+  type PublicTelemetrySettings,
   type ResourceGovernanceLimits,
   type ResourceGovernanceSettings,
   type ResourceGovernanceStatus,
   type SandboxingSettings,
-  type TelemetrySettings,
   type UpdateSettingsRequest,
   getSettings,
   updateSettings,
@@ -24,6 +24,7 @@ import { executionSettingsStableKey, formatGiB, parseGiB } from "../SettingsPage
 
 type SettingsTelemetryController = {
   enabled: boolean;
+  source: PublicTelemetrySettings["source"];
   setEnabled: (next: boolean) => void;
 };
 
@@ -81,6 +82,7 @@ export function useSettingsDaemonDocumentController(): SettingsDaemonDocumentCon
 
   const [telemetryEnabled, setTelemetryEnabled] = useState(true);
   const [telemetryEndpoint, setTelemetryEndpoint] = useState("");
+  const [telemetrySource, setTelemetrySource] = useState<PublicTelemetrySettings["source"]>("default");
 
   const [resourceGovernanceEnabled, setResourceGovernanceEnabled] = useState(true);
   const [resourceGovernanceMode, setResourceGovernanceMode] =
@@ -110,6 +112,12 @@ export function useSettingsDaemonDocumentController(): SettingsDaemonDocumentCon
     try {
       const next = await updateSettings(patch);
       if (seq !== saveSeq.current) return;
+
+      if (next.telemetry) {
+        setTelemetryEnabled(next.telemetry.enabled);
+        setTelemetryEndpoint(next.telemetry.endpoint ?? "");
+        setTelemetrySource(next.telemetry.source);
+      }
 
       if (next.resource_governance) {
         setResourceGovernanceEnabled(next.resource_governance.enabled);
@@ -157,9 +165,11 @@ export function useSettingsDaemonDocumentController(): SettingsDaemonDocumentCon
         if (telemetry) {
           setTelemetryEnabled(telemetry.enabled);
           setTelemetryEndpoint(telemetry.endpoint ?? "");
+          setTelemetrySource(telemetry.source);
         } else {
           setTelemetryEnabled(true);
           setTelemetryEndpoint("");
+          setTelemetrySource("default");
         }
 
         const resourceGovernance = settings.resource_governance ?? null;
@@ -269,7 +279,7 @@ export function useSettingsDaemonDocumentController(): SettingsDaemonDocumentCon
     }
 
     const timer = window.setTimeout(() => {
-      const next: TelemetrySettings = {
+      const next = {
         enabled: telemetryEnabled,
         endpoint: telemetryEndpoint.trim() || telemetryEndpoint,
       };
@@ -335,6 +345,7 @@ export function useSettingsDaemonDocumentController(): SettingsDaemonDocumentCon
     saving,
     telemetry: {
       enabled: telemetryEnabled,
+      source: telemetrySource,
       setEnabled: setTelemetryEnabled,
     },
     resourceGovernance: {

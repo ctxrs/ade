@@ -49,6 +49,7 @@ export default function SettingsPage() {
         workspaceId={pageContext.workspaceId}
         general={localPreferences.general}
         notifications={localPreferences.notifications}
+        clientTelemetry={localPreferences.telemetry}
         daemonSettings={daemonSettings}
         themeVariant={localPreferences.themeVariant}
         account={account}

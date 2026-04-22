@@ -101,7 +101,13 @@ export type UpdateDictationSettingsRequest = {
   livekit?: UpdateLiveKitDictationSettingsRequest | null;
 };
 
-export type TelemetrySettings = {
+export type PublicTelemetrySettings = {
+  enabled: boolean;
+  endpoint: string;
+  source: "default" | "configured";
+};
+
+export type UpdateTelemetrySettingsRequest = {
   enabled: boolean;
   endpoint: string;
 };
@@ -209,7 +215,7 @@ export type TitleGenerationLocalStatus = {
 
 export type PublicSettings = {
   dictation?: DictationSettings | null;
-  telemetry?: TelemetrySettings | null;
+  telemetry?: PublicTelemetrySettings | null;
   title_generation?: TitleGenerationSettings | null;
   resource_governance?: ResourceGovernanceSettings | null;
   provider_guard?: ProviderGuardSettings | null;
@@ -221,7 +227,7 @@ export type PublicSettings = {
 
 export type UpdateSettingsRequest = {
   dictation?: UpdateDictationSettingsRequest | null;
-  telemetry?: TelemetrySettings | null;
+  telemetry?: UpdateTelemetrySettingsRequest | null;
   title_generation?: UpdateTitleGenerationSettingsRequest | null;
   resource_governance?: ResourceGovernanceSettings | null;
   provider_guard?: ProviderGuardSettings | null;

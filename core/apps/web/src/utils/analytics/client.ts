@@ -1,14 +1,11 @@
 import posthog from "posthog-js";
+import type { SemanticTelemetryDelivery, SemanticTelemetryEvent, SemanticTelemetryPlane } from "@ctx/types";
+import { recordSemanticTelemetryEvent, setSemanticTelemetryRemoteEnabled } from "../../api/client";
 import { getPostHogHost, getPostHogKey, getPostHogProjectId, getPostHogUiHost } from "./config";
 import { getInstallId } from "./identity";
-import { buildEventEnvelope } from "./context";
+import { buildEventEnvelope, getAnalyticsSurface } from "./context";
 import { sanitizeAnalyticsProperties } from "./schema";
 import type { AnalyticsProperties } from "./types";
-
-type PendingCapture = {
-  eventName: string;
-  properties: AnalyticsProperties;
-};
 
 type FeatureFlagListener = () => void;
 
@@ -24,10 +21,6 @@ type PostHogFlagMethods = {
 
 const asFlagMethods = (): PostHogFlagMethods =>
   posthog as unknown as PostHogFlagMethods;
-
-export const MAX_PENDING_CAPTURES = 512;
-
-const pendingCaptures: PendingCapture[] = [];
 const featureFlagListeners = new Set<FeatureFlagListener>();
 
 let initAttempted = false;
@@ -43,15 +36,6 @@ const readFeatureOverrides = (): FeatureFlagOverrides | null => {
 
 const notifyFeatureFlags = () => {
   for (const listener of featureFlagListeners) listener();
-};
-
-const flushPending = () => {
-  if (!initResolved || !captureEnabled) return;
-  while (pendingCaptures.length > 0) {
-    const next = pendingCaptures.shift();
-    if (!next) break;
-    posthog.capture(next.eventName, next.properties);
-  }
 };
 
 export const initAnalytics = (): void => {
@@ -81,7 +65,6 @@ export const initAnalytics = (): void => {
         notifyFeatureFlags();
       });
       flagMethods.reloadFeatureFlags?.();
-      flushPending();
       notifyFeatureFlags();
     },
   });
@@ -89,36 +72,85 @@ export const initAnalytics = (): void => {
 
 export const setAnalyticsEnabled = (enabled: boolean): void => {
   captureEnabled = enabled;
-  if (!enabled) {
-    pendingCaptures.length = 0;
-  }
+  setSemanticTelemetryRemoteEnabled(enabled);
   if (!initAttempted) return;
   if (!enabled) {
     posthog.opt_out_capturing();
     return;
   }
   posthog.opt_in_capturing();
-  flushPending();
 };
 
 export const isAnalyticsCaptureEnabled = (): boolean => captureEnabled;
 
+type CaptureSemanticEventOptions = {
+  plane?: SemanticTelemetryPlane;
+  delivery?: SemanticTelemetryDelivery;
+  source?: string;
+};
+
+const createSemanticTelemetryEvent = (
+  eventName: string,
+  envelope: AnalyticsProperties,
+  options?: CaptureSemanticEventOptions,
+): SemanticTelemetryEvent | null => {
+  if (!eventName.trim()) return null;
+  const {
+    occurred_at,
+    app_version,
+    os,
+    arch,
+    surface,
+    event_version,
+    ...properties
+  } = envelope;
+  const envTargetRaw = properties.env_target;
+  const envTarget =
+    envTargetRaw === "local" || envTargetRaw === "worktree" || envTargetRaw === "remote"
+      ? envTargetRaw
+      : null;
+  return {
+    event_id: typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    event_name: eventName.trim(),
+    event_version: typeof event_version === "number" ? event_version : 1,
+    occurred_at: typeof occurred_at === "string" ? occurred_at : new Date().toISOString(),
+    plane: options?.plane ?? "product",
+    delivery: options?.delivery ?? "remote",
+    origin_runtime: getAnalyticsSurface(),
+    origin_install_id: getInstallId(),
+    app_version: typeof app_version === "string" ? app_version : "0.0.0",
+    os: typeof os === "string" ? os : "unknown",
+    arch: typeof arch === "string" ? arch : "unknown",
+    surface: surface === "desktop" || surface === "mobile_shell" || surface === "web" ? surface : null,
+    env_target: envTarget,
+    source: options?.source?.trim() ? options.source.trim() : null,
+    properties,
+  };
+};
+
+const captureSemanticEvent = (
+  eventName: string,
+  eventVersion: number,
+  rawProperties: Record<string, unknown>,
+  options?: CaptureSemanticEventOptions,
+): boolean => {
+  const envelope = buildEventEnvelope(eventVersion, sanitizeAnalyticsProperties(rawProperties));
+  const event = createSemanticTelemetryEvent(eventName, envelope, options);
+  if (!event) return false;
+  const localOnly = event.delivery === "local_only";
+  if (!captureEnabled && !localOnly) return false;
+  recordSemanticTelemetryEvent(event);
+  return true;
+};
+
 export const captureAnalyticsEvent = (
   eventName: string,
   rawProperties: Record<string, unknown>,
+  options?: CaptureSemanticEventOptions,
 ): boolean => {
-  if (!eventName.trim()) return false;
-  const payload = sanitizeAnalyticsProperties(rawProperties);
-  if (!captureEnabled) return false;
-  if (!initResolved) {
-    if (pendingCaptures.length >= MAX_PENDING_CAPTURES) {
-      pendingCaptures.shift();
-    }
-    pendingCaptures.push({ eventName, properties: payload });
-    return true;
-  }
-  posthog.capture(eventName, payload);
-  return true;
+  return captureSemanticEvent(eventName, 1, rawProperties, options);
 };
 
 export const captureProductEvent = (
@@ -126,8 +158,19 @@ export const captureProductEvent = (
   eventVersion: number,
   properties: Record<string, unknown> = {},
 ): boolean => {
-  const envelope = buildEventEnvelope(eventVersion, sanitizeAnalyticsProperties(properties));
-  return captureAnalyticsEvent(eventName, envelope);
+  return captureSemanticEvent(eventName, eventVersion, properties);
+};
+
+export const captureIncidentEvent = (
+  eventName: string,
+  eventVersion: number,
+  properties: Record<string, unknown> = {},
+  options?: Omit<CaptureSemanticEventOptions, "plane">,
+): boolean => {
+  return captureSemanticEvent(eventName, eventVersion, properties, {
+    ...options,
+    plane: "incident",
+  });
 };
 
 export const checkFeatureGate = (gate: string, fallback = false): boolean => {

@@ -12,6 +12,8 @@ import {
   idToString,
   listWorkspaceArchivedTaskSummaries,
 } from "../api/client";
+import { getAnalyticsSurface } from "../utils/analytics/context";
+import { getInstallId } from "../utils/analytics/identity";
 import {
   loadWorkspaceActiveSnapshotV1,
   saveWorkspaceActiveSnapshotV1,
@@ -19,6 +21,11 @@ import {
   type PersistedWorkspaceActiveTaskSummaryV1,
 } from "./uiStateStore";
 import { isDesktopApp } from "../utils/desktop";
+import {
+  trackRendererHeartbeatMissed,
+  trackWorkerPatchApply,
+  trackWorkerPatchFlush,
+} from "../utils/analytics";
 import { emitUiDiagnostic, normalizeDiagnosticErrorMessage } from "./diagnosticsChannel";
 import type {
   WorkspaceActiveSnapshotCommand,
@@ -80,6 +87,30 @@ type WorkspaceActiveSnapshotStoreOptions = {
 
 const SNAPSHOT_WAIT_MS = 1200;
 const WORKSPACE_PATCH_FLUSH_MS = 50;
+const WORKER_PATCH_LOG_SAMPLE_INTERVAL = 25;
+const WORKER_PATCH_LOG_EVENT_THRESHOLD = 16;
+const WORKER_PATCH_LOG_AGE_THRESHOLD_MS = 100;
+
+const shouldRecordWorkerPatch = (
+  seq: number,
+  eventCount: number,
+  publishSnapshot: boolean,
+  persist: boolean,
+  oldestAgeMs: number | null,
+): boolean => {
+  if (eventCount >= WORKER_PATCH_LOG_EVENT_THRESHOLD) return true;
+  if (publishSnapshot || persist) return true;
+  if (typeof oldestAgeMs === "number" && oldestAgeMs >= WORKER_PATCH_LOG_AGE_THRESHOLD_MS) return true;
+  return seq % WORKER_PATCH_LOG_SAMPLE_INTERVAL === 0;
+};
+
+const estimatePatchBytes = (patch: WorkspaceActiveSnapshotPatch): number => {
+  try {
+    return new Blob([JSON.stringify(patch)]).size;
+  } catch {
+    return 0;
+  }
+};
 
 const nowMs = (): number => {
   if (typeof performance !== "undefined" && typeof performance.now === "function") {
@@ -155,6 +186,7 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
   private workerPatchOldestEventReceivedAtMs: number | null = null;
   private workerPatchOldestForegroundEventReceivedAtMs: number | null = null;
   private workerPatchFlushMs = WORKSPACE_PATCH_FLUSH_MS;
+  private workerPatchFlushSeq = 0;
   private lastWorkerPatchSnapshot: WorkspaceActiveSnapshotState | null = null;
   private lastWorkerPatchSessionHeads: Record<string, SessionHeadSnapshot> = {};
   private lastWorkerPatchWorktreeRoots: Record<string, string> = {};
@@ -302,6 +334,18 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
         if (!msg) return;
         if (msg.type === "patch") {
           this.applyWorkerPatch(msg.patch);
+          return;
+        }
+        if (msg.type === "heartbeat_ping") {
+          this.postWorkerCommand({ type: "heartbeat_ack", token: msg.token });
+          return;
+        }
+        if (msg.type === "heartbeat_missed") {
+          trackRendererHeartbeatMissed({
+            source: "workspace_active_worker",
+            missedForMs: msg.missedForMs,
+            outstandingAcks: msg.outstandingAcks,
+          });
         }
       };
       this.postWorkerCommand({
@@ -312,6 +356,8 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
         baseUrl: connection.baseUrl,
         wsBaseUrl: connection.wsBaseUrl || null,
         runId: connection.runId,
+        installId: getInstallId(),
+        originRuntime: getAnalyticsSurface(),
         e2eEnabled: this.e2eEnabled,
       });
       if (this.subscribedSessions.length > 0) {
@@ -437,16 +483,25 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
   private applyWorkerPatch(patch: WorkspaceActiveSnapshotPatch) {
     if (this.destroyed) return;
     const appliedAtMs = nowMs();
+    const oldestEventAgeMs =
+      typeof patch.oldestEventReceivedAtMs === "number"
+        ? Math.max(0, appliedAtMs - patch.oldestEventReceivedAtMs)
+        : null;
+    const oldestForegroundEventAgeMs =
+      typeof patch.oldestForegroundEventReceivedAtMs === "number"
+        ? Math.max(0, appliedAtMs - patch.oldestForegroundEventReceivedAtMs)
+        : null;
     if (typeof patch.oldestEventReceivedAtMs === "number") {
-      noteQueueAgeSample("workspace", appliedAtMs - patch.oldestEventReceivedAtMs, {
+      noteQueueAgeSample("workspace", oldestEventAgeMs ?? 0, {
         source: "worker_patch",
       });
     }
     if (typeof patch.oldestForegroundEventReceivedAtMs === "number") {
-      noteQueueAgeSample("foreground", appliedAtMs - patch.oldestForegroundEventReceivedAtMs, {
+      noteQueueAgeSample("foreground", oldestForegroundEventAgeMs ?? 0, {
         source: "worker_patch",
       });
     }
+    const applyStartedAtMs = nowMs();
     this.state.applyWorkerPatch(patch);
     if (patch.publishSnapshot !== false) {
       this.publish();
@@ -456,6 +511,26 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
     }
     for (const event of patch.events) {
       this.notifyEventListeners(event);
+    }
+    const applyDurationMs = Math.max(0, nowMs() - applyStartedAtMs);
+    if (
+      shouldRecordWorkerPatch(
+        this.workerPatchFlushSeq,
+        patch.events.length,
+        patch.publishSnapshot !== false,
+        patch.persist,
+        oldestEventAgeMs,
+      ) || applyDurationMs >= 250
+    ) {
+      trackWorkerPatchApply({
+        source: "worker_patch",
+        eventCount: patch.events.length,
+        applyDurationMs,
+        publishSnapshot: patch.publishSnapshot !== false,
+        persist: patch.persist,
+        oldestEventAgeStartMs: oldestEventAgeMs,
+        oldestForegroundEventAgeStartMs: oldestForegroundEventAgeMs,
+      });
     }
   }
 
@@ -666,6 +741,7 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
     ) {
       return;
     }
+    this.workerPatchFlushSeq += 1;
     const events = this.workerPatchPendingEvents.slice();
     this.workerPatchPendingEvents = [];
     const snapshot = this.getSnapshot();
@@ -771,6 +847,34 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
     this.lastWorkerPatchSessionHeads = sessionHeads;
     this.lastWorkerPatchWorktreeRoots = worktreeRoots;
     this.lastWorkerPatchSnapshotRev = snapshotRev;
+    const oldestEventAgeMs =
+      typeof patch.oldestEventReceivedAtMs === "number"
+        ? Math.max(0, nowMs() - patch.oldestEventReceivedAtMs)
+        : null;
+    const oldestForegroundEventAgeMs =
+      typeof patch.oldestForegroundEventReceivedAtMs === "number"
+        ? Math.max(0, nowMs() - patch.oldestForegroundEventReceivedAtMs)
+        : null;
+    if (
+      shouldRecordWorkerPatch(
+        this.workerPatchFlushSeq,
+        patch.events.length,
+        patch.publishSnapshot !== false,
+        patch.persist,
+        oldestEventAgeMs,
+      )
+    ) {
+      trackWorkerPatchFlush({
+        source: "worker_patch",
+        eventCount: patch.events.length,
+        activeSessionCount: patch.activeSessionIds.length,
+        publishSnapshot: patch.publishSnapshot !== false,
+        persist: patch.persist,
+        patchBytesEstimate: estimatePatchBytes(patch),
+        oldestEventAgeMs,
+        oldestForegroundEventAgeMs,
+      });
+    }
     this.workerPatchEmitter(patch);
   }
 

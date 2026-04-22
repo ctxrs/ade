@@ -279,6 +279,7 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
         .route("/api/telemetry/summary", get(get_telemetry_summary))
         .route("/api/telemetry/export", get(export_telemetry))
         .route("/api/telemetry/client", post(post_client_telemetry))
+        .route("/api/telemetry/events", post(post_semantic_telemetry))
         .route("/api/blobs", post(upload_blob))
         .route("/api/blobs/:id", get(get_blob))
         .route(

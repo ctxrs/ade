@@ -20,6 +20,7 @@ import type { SettingsAccountController } from "./hooks/useSettingsAccountContro
 import type { SettingsDaemonDocumentController } from "./hooks/useSettingsDaemonDocumentController";
 import type { SettingsDevToolsController } from "./hooks/useSettingsDevToolsController";
 import type {
+  SettingsClientTelemetryController,
   SettingsGeneralPreferencesController,
   SettingsNotificationPreferencesController,
 } from "./hooks/useSettingsLocalPreferencesController";
@@ -31,6 +32,7 @@ export function SettingsContentRouter(props: {
   workspaceId: string | null;
   general: SettingsGeneralPreferencesController;
   notifications: SettingsNotificationPreferencesController;
+  clientTelemetry: SettingsClientTelemetryController;
   daemonSettings: SettingsDaemonDocumentController;
   themeVariant: "light" | "dark";
   account: SettingsAccountController;
@@ -43,6 +45,7 @@ export function SettingsContentRouter(props: {
     workspaceId,
     general,
     notifications,
+    clientTelemetry,
     daemonSettings,
     themeVariant,
     account,
@@ -102,9 +105,15 @@ export function SettingsContentRouter(props: {
     if (status) return status;
     return (
       <AnalyticsSettingsSection
-        telemetryEnabled={daemonSettings.telemetry.enabled}
-        loaded={daemonSettings.loaded}
-        setTelemetryEnabled={daemonSettings.telemetry.setEnabled}
+        clientTelemetryEnabled={clientTelemetry.enabled}
+        clientLoaded={clientTelemetry.loaded}
+        clientSaving={clientTelemetry.saving}
+        clientError={clientTelemetry.error}
+        setClientTelemetryEnabled={clientTelemetry.setEnabled}
+        daemonTelemetryEnabled={daemonSettings.telemetry.enabled}
+        daemonLoaded={daemonSettings.loaded}
+        daemonTelemetrySource={daemonSettings.telemetry.source}
+        setDaemonTelemetryEnabled={daemonSettings.telemetry.setEnabled}
       />
     );
   }

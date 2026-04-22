@@ -57,6 +57,14 @@ pub struct PublicLiveKitDictationSettings {
 pub struct PublicTelemetrySettings {
     pub enabled: bool,
     pub endpoint: String,
+    pub source: PublicSettingsSource,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PublicSettingsSource {
+    Default,
+    Configured,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -309,10 +317,12 @@ pub(super) fn to_public(settings: &Settings) -> PublicSettings {
         Some(t) => PublicTelemetrySettings {
             enabled: t.enabled,
             endpoint: t.endpoint.clone(),
+            source: PublicSettingsSource::Configured,
         },
         None => PublicTelemetrySettings {
             enabled: true,
             endpoint: crate::telemetry::default_telemetry_endpoint(),
+            source: PublicSettingsSource::Default,
         },
     });
     let title_generation =
@@ -432,7 +442,7 @@ pub(super) fn to_public(settings: &Settings) -> PublicSettings {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::settings::{ContainerExecutionSettings, ExecutionSettings};
+    use crate::settings::{ContainerExecutionSettings, ExecutionSettings, TelemetrySettings};
 
     fn runtime_env_test_lock() -> &'static tokio::sync::Mutex<()> {
         crate::test_support::sandbox_cli_env_test_lock()
@@ -549,5 +559,35 @@ mod tests {
         let public = to_public(&settings);
         let machine = public.execution.expect("execution").container.machine;
         assert_eq!(machine.idle_shutdown_seconds, 60);
+    }
+
+    #[test]
+    fn public_telemetry_defaults_are_marked_as_default_source() {
+        let public = to_public(&Settings::default());
+        let telemetry = public.telemetry.expect("telemetry");
+        assert!(telemetry.enabled);
+        assert_eq!(telemetry.source, PublicSettingsSource::Default);
+        assert_eq!(
+            telemetry.endpoint,
+            crate::telemetry::default_telemetry_endpoint()
+        );
+    }
+
+    #[test]
+    fn public_telemetry_configured_values_are_marked_as_configured_source() {
+        let public = to_public(&Settings {
+            telemetry: Some(TelemetrySettings {
+                enabled: false,
+                endpoint: "https://telemetry.example/functions/v1/telemetry".to_string(),
+            }),
+            ..Settings::default()
+        });
+        let telemetry = public.telemetry.expect("telemetry");
+        assert!(!telemetry.enabled);
+        assert_eq!(telemetry.source, PublicSettingsSource::Configured);
+        assert_eq!(
+            telemetry.endpoint,
+            "https://telemetry.example/functions/v1/telemetry"
+        );
     }
 }

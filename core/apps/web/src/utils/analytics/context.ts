@@ -1,5 +1,4 @@
 import { getAnalyticsEnvironment } from "./config";
-import { getInstallId } from "./identity";
 import type { AnalyticsProperties, AnalyticsSurface } from "./types";
 import { isDesktopApp } from "../desktop";
 
@@ -38,6 +37,8 @@ const detectSurface = (): AnalyticsSurface => {
   return isMobileUserAgent() ? "mobile_shell" : "desktop";
 };
 
+export const getAnalyticsSurface = (): AnalyticsSurface => detectSurface();
+
 export const getAppVersion = (): string => {
   const raw = typeof __CTX_APP_VERSION__ === "string" ? __CTX_APP_VERSION__.trim() : "";
   return raw || "0.0.0";
@@ -53,7 +54,6 @@ export const buildEventEnvelope = (
     app_version: getAppVersion(),
     os: detectOs(),
     arch: detectArch(),
-    install_id: getInstallId(),
     surface: detectSurface(),
     analytics_environment: getAnalyticsEnvironment(),
     ...properties,

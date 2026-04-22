@@ -3,6 +3,7 @@ import type { ExecutionLaunchSnapshot } from "../../api/client";
 import {
   createWorkspace,
   deleteWorkspace,
+  getSettings,
   idToString,
   listWorkspaces,
   repoClone,
@@ -10,10 +11,12 @@ import {
   repoStatus,
   repoStagingPath,
   repoValidateDestination,
+  updateSettings,
   updateWorkspaceExecutionConfig,
   updateWorkspaceMergeQueueConfig,
   updateWorkspaceWorktreeBootstrapConfig,
 } from "../../api/client";
+import { getClientSettingsState, loadClientSettings } from "../../state/clientSettings";
 import { desktopConnectLocal, desktopConnectSsh, desktopPickFolder } from "../../utils/desktop";
 import { trackWorkspaceLaunchCompleted } from "../../utils/analytics";
 import { upsertLauncherRecent } from "../../state/launcherRecentsStore";
@@ -89,6 +92,34 @@ type WorkspaceProvisioningState = {
 };
 
 const SYNTHETIC_WORKSPACE_SETUP_JOB_ID = "workspace-setup-provisioning";
+
+const loadClientTelemetryPreference = async (): Promise<boolean> => {
+  const state = getClientSettingsState();
+  if (state.loaded) {
+    return state.settings.telemetry.clientEnabled;
+  }
+  const loaded = await loadClientSettings();
+  return loaded.settings.telemetry.clientEnabled;
+};
+
+const seedDaemonTelemetryPreferenceIfDefault = async (): Promise<void> => {
+  const clientEnabled = await loadClientTelemetryPreference();
+  const settings = await getSettings();
+  const telemetry = settings.telemetry ?? null;
+  if (telemetry && telemetry.source !== "default") {
+    return;
+  }
+  const currentEnabled = telemetry?.enabled ?? true;
+  if (currentEnabled === clientEnabled) {
+    return;
+  }
+  await updateSettings({
+    telemetry: {
+      enabled: clientEnabled,
+      endpoint: telemetry?.endpoint ?? "",
+    },
+  });
+};
 
 export function useWorkspaceSetupCreate({
   currentStepKey,
@@ -602,6 +633,7 @@ export function useWorkspaceSetupCreate({
       }
 
       await waitForDaemonReady(15000);
+      await seedDaemonTelemetryPreferenceIfDefault();
       await prepareSandboxRuntimeIfNeeded();
       beginProvisioningPhase(
         "prepare_source",

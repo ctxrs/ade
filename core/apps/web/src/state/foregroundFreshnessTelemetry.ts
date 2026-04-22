@@ -8,6 +8,9 @@ import {
   trackForegroundBacklogObserved,
   trackForegroundFreshnessSlaMissed,
   trackForegroundGapRecoveryObserved,
+  trackFreshnessRecovered,
+  trackRendererBacklogSample,
+  trackRendererBacklogSpike,
 } from "../utils/analytics";
 
 const SWITCH_FIRST_PAINT_SLA_MS = 100;
@@ -64,6 +67,7 @@ const pendingGapRecoveries = new Map<string, number>();
 const pendingGapRecoveryTimeouts = new Map<string, ReturnType<typeof globalThis.setTimeout>>();
 const lastSlaDiagnosticByKey = new Map<string, number>();
 const lastGaugeSampleByMetric = new Map<string, number>();
+const backlogDegradedSinceByLane = new Map<QueueLane, number>();
 const seenInvariantKeys = new Set<string>();
 const desktopStartupState: DesktopStartupState = {
   windowCreatedAtMs: null,
@@ -118,6 +122,7 @@ const maybeEmitGaugeSample = (
   context?: Record<string, unknown>,
 ) => {
   if (!Number.isFinite(value) || value < 0) return;
+  const source = typeof context?.source === "string" && context.source.trim() ? context.source : "unknown";
   const currentMs = nowMs();
   const previousMs = lastGaugeSampleByMetric.get(metric) ?? 0;
   if (currentMs - previousMs < GAUGE_SAMPLE_INTERVAL_MS && value < thresholdMs) {
@@ -125,7 +130,21 @@ const maybeEmitGaugeSample = (
   }
   lastGaugeSampleByMetric.set(metric, currentMs);
   recordClientGaugeMetric(metric, "ms", value, { lane });
+  trackRendererBacklogSample({
+    lane,
+    source,
+    ageMs: value,
+  });
   if (value < thresholdMs) return;
+  if (!backlogDegradedSinceByLane.has(lane)) {
+    backlogDegradedSinceByLane.set(lane, currentMs);
+    trackRendererBacklogSpike({
+      lane,
+      source,
+      ageMs: value,
+      thresholdMs,
+    });
+  }
   trackForegroundBacklogObserved({
     lane,
     bucket: backlogBucketForDuration(value),
@@ -426,10 +445,23 @@ export const noteQueueAgeSample = (
   ageMs: number,
   context?: Record<string, unknown>,
 ): void => {
+  const thresholdMs = lane === "foreground" ? FOREGROUND_QUEUE_AGE_SLA_MS : WORKSPACE_QUEUE_AGE_SLA_MS;
+  if (Number.isFinite(ageMs) && ageMs >= 0 && ageMs < thresholdMs) {
+    const degradedSince = backlogDegradedSinceByLane.get(lane);
+    if (typeof degradedSince === "number") {
+      backlogDegradedSinceByLane.delete(lane);
+      const source = typeof context?.source === "string" && context.source.trim() ? context.source : "unknown";
+      trackFreshnessRecovered({
+        lane,
+        source,
+        degradedForMs: Math.max(0, nowMs() - degradedSince),
+      });
+    }
+  }
   maybeEmitGaugeSample(
     lane === "foreground" ? "workbench.foreground_queue_age_ms" : "workbench.workspace_backlog_age_ms",
     ageMs,
-    lane === "foreground" ? FOREGROUND_QUEUE_AGE_SLA_MS : WORKSPACE_QUEUE_AGE_SLA_MS,
+    thresholdMs,
     lane,
     context,
   );
@@ -565,6 +597,7 @@ export const resetForegroundFreshnessTelemetryForTests = (): void => {
   pendingGapRecoveryTimeouts.clear();
   lastSlaDiagnosticByKey.clear();
   lastGaugeSampleByMetric.clear();
+  backlogDegradedSinceByLane.clear();
   seenInvariantKeys.clear();
   desktopStartupState.windowCreatedAtMs = null;
   desktopStartupState.rendererPingAtMs = null;

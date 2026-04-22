@@ -20,6 +20,7 @@ import {
 import { resolveTurnAnalyticsMetadata } from "./turnAnalyticsMetadata";
 import { replayTurnStartEffectsFromTurns } from "./turnStartEffects";
 import { replayTurnOutcomeEffectsFromTurns } from "./turnOutcomeEffects";
+import { trackSessionEventVolumeBurst, trackUnknownEventBurst } from "../../utils/analytics";
 import {
   hasSessionReplicaRecoveryData,
   resolveReplicaReadyLoadState,
@@ -30,6 +31,94 @@ import type { SessionReplicaPatch } from "../sessionReplicaProtocol";
 import { shouldPreserveExistingTranscriptWindow } from "../sessionHeadRepair";
 import { adoptLoadedStateRevision } from "./supportLoads";
 import type { SessionSupervisorWorkspaceSnapshotState } from "./workspaceInputs";
+
+const SESSION_EVENT_BURST_WINDOW_MS = 5_000;
+const SESSION_EVENT_BURST_THRESHOLD = 250;
+const UNKNOWN_EVENT_BURST_THRESHOLD = 10;
+
+type BurstWindow = {
+  startedAtMs: number;
+  count: number;
+  emitted: boolean;
+};
+
+const sessionEventBurstBySession = new Map<string, BurstWindow>();
+const unknownEventBurstByKey = new Map<string, BurstWindow>();
+
+const advanceBurstWindow = (
+  map: Map<string, BurstWindow>,
+  key: string,
+  increment: number,
+  nowMs: number,
+): BurstWindow => {
+  const current = map.get(key);
+  if (!current || nowMs - current.startedAtMs > SESSION_EVENT_BURST_WINDOW_MS) {
+    const next = {
+      startedAtMs: nowMs,
+      count: increment,
+      emitted: false,
+    };
+    map.set(key, next);
+    return next;
+  }
+  current.count += increment;
+  return current;
+};
+
+const noteLiveEventBursts = (
+  sessionId: string,
+  entry: InternalEntry,
+  events: SessionEvent[],
+) => {
+  const normalizedSessionId = sessionId.trim();
+  if (!normalizedSessionId || events.length === 0) return;
+  const nowMs = Date.now();
+  const analytics = resolveTurnAnalyticsMetadata(entry.session, normalizedSessionId);
+  const sessionBurst = advanceBurstWindow(
+    sessionEventBurstBySession,
+    normalizedSessionId,
+    events.length,
+    nowMs,
+  );
+  if (!sessionBurst.emitted && sessionBurst.count >= SESSION_EVENT_BURST_THRESHOLD) {
+    sessionBurst.emitted = true;
+    trackSessionEventVolumeBurst({
+      source: "session_replica_ingest",
+      sessionId: analytics.sessionId,
+      taskId: analytics.taskId,
+      workspaceId: analytics.workspaceId,
+      count: sessionBurst.count,
+      windowMs: SESSION_EVENT_BURST_WINDOW_MS,
+    });
+  }
+
+  const unknownCounts = new Map<string, number>();
+  for (const event of events) {
+    if (event.event_type !== "notice") continue;
+    const payload = event.payload_json;
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) continue;
+    const kind = String(payload.kind ?? payload.code ?? "").trim().toLowerCase();
+    if (kind !== "crp_unknown_event") continue;
+    const originalType = String(payload.original_type ?? payload.originalType ?? "unknown").trim() || "unknown";
+    unknownCounts.set(originalType, (unknownCounts.get(originalType) ?? 0) + 1);
+  }
+  for (const [originalType, count] of unknownCounts) {
+    const burstKey = `${normalizedSessionId}:${originalType}`;
+    const burst = advanceBurstWindow(unknownEventBurstByKey, burstKey, count, nowMs);
+    if (!burst.emitted && burst.count >= UNKNOWN_EVENT_BURST_THRESHOLD) {
+      burst.emitted = true;
+      trackUnknownEventBurst({
+        source: "session_replica_ingest",
+        sessionId: analytics.sessionId,
+        taskId: analytics.taskId,
+        workspaceId: analytics.workspaceId,
+        originalType,
+        count: burst.count,
+        windowMs: SESSION_EVENT_BURST_WINDOW_MS,
+      });
+    }
+  }
+};
 
 export type SessionSupervisorReplicaPatchHost = {
   workspaceSnapshotState: SessionSupervisorWorkspaceSnapshotState;
@@ -616,6 +705,9 @@ export const applyReplicaPatches = (
 
     const data = patch.data;
     if (Array.isArray(data.events) && data.events.length > 0) {
+      if (patch.op === "append" && patch.data.appendMode === "stream_delta") {
+        noteLiveEventBursts(sessionId, entry, data.events);
+      }
       host.applyAcpMetaFromEvents(entry, data.events);
       host.applyGitStatusSnapshotFromEvents(entry, data.events);
     }

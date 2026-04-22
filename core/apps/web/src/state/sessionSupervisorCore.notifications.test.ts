@@ -190,11 +190,14 @@ describe("SessionSupervisor turn notifications", () => {
     getClientSettingsState.mockReturnValue({
       loaded: true,
       settings: {
-        v: 2,
+        v: 3,
         desktopNotifications: {
           turnCompleted: true,
           turnFailed: true,
           badgeUnreadCount: true,
+        },
+        telemetry: {
+          clientEnabled: true,
         },
       },
     });
@@ -254,11 +257,14 @@ describe("SessionSupervisor turn notifications", () => {
     getClientSettingsState.mockReturnValue({
       loaded: true,
       settings: {
-        v: 2,
+        v: 3,
         desktopNotifications: {
           turnCompleted: false,
           turnFailed: true,
           badgeUnreadCount: true,
+        },
+        telemetry: {
+          clientEnabled: true,
         },
       },
     });

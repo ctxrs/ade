@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { appendDesktopLog, getDaemonConnectionReadiness, openLogsFolder } from "./api/client";
 import { useDaemonConnection } from "./api/useDaemonConnection";
@@ -14,8 +14,8 @@ import DiagnosticsPage from "./pages/DiagnosticsPage";
 import SettingsPage from "./pages/SettingsPage";
 import WorkspaceSetupPage from "./pages/WorkspaceSetupPage";
 import { SessionSupervisorProvider } from "./state/sessionSupervisor";
-import { SettingsStoreProvider, useSettingsSnapshot } from "./state/settingsStore";
-import { loadClientSettings } from "./state/clientSettings";
+import { SettingsStoreProvider } from "./state/settingsStore";
+import { getClientSettingsState, loadClientSettings, subscribeClientSettings } from "./state/clientSettings";
 import { setUiDiagnosticPersistenceSink, type UiDiagnosticEvent } from "./state/diagnosticsChannel";
 import { loadLauncherRecents } from "./state/launcherRecentsStore";
 import { preloadHarnessLogos } from "./utils/harnessCatalog";
@@ -435,14 +435,18 @@ function DesktopMenuBridge() {
 }
 
 function AnalyticsSettingsBridge() {
-  const snapshot = useSettingsSnapshot();
+  const clientSettingsState = useSyncExternalStore(
+    subscribeClientSettings,
+    getClientSettingsState,
+    getClientSettingsState,
+  );
   const appOpenedSentRef = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
     const enabled = computeAnalyticsCaptureEnabled({
-      settingsLoaded: snapshot.loaded,
-      telemetryEnabled: snapshot.settings?.telemetry?.enabled ?? true,
+      settingsLoaded: clientSettingsState.loaded,
+      telemetryEnabled: clientSettingsState.settings.telemetry.clientEnabled,
       isDev: import.meta.env.DEV,
       devCaptureFlag: import.meta.env.VITE_POSTHOG_CAPTURE_IN_DEV,
     });
@@ -467,7 +471,7 @@ function AnalyticsSettingsBridge() {
     return () => {
       cancelled = true;
     };
-  }, [snapshot.loaded, snapshot.settings?.telemetry?.enabled]);
+  }, [clientSettingsState.loaded, clientSettingsState.settings.telemetry.clientEnabled]);
 
   return null;
 }

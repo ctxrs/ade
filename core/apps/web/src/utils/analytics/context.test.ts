@@ -10,8 +10,8 @@ describe("buildEventEnvelope", () => {
     expect(typeof envelope.app_version).toBe("string");
     expect(typeof envelope.os).toBe("string");
     expect(typeof envelope.arch).toBe("string");
-    expect(typeof envelope.install_id).toBe("string");
     expect(typeof envelope.surface).toBe("string");
+    expect(typeof envelope.analytics_environment).toBe("string");
     expect(envelope.provider_id).toBe("codex");
   });
 });
