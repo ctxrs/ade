@@ -1086,7 +1086,7 @@ if [[ -n "${providers[*]-}" ]]; then
       kimi|mistral|openhands)
         stage_matrix_python_provider "$provider"
         ;;
-      goose)
+      goose|opencode)
         stage_matrix_archive_provider "$provider" "$version"
         ;;
       codex)
