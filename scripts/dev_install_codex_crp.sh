@@ -8,7 +8,7 @@ PROFILE="${CTX_CRP_PROFILE:-debug}"
 # shellcheck source=lib/codex_crp_build_env.sh
 source "${ROOT_DIR}/scripts/lib/codex_crp_build_env.sh"
 
-eval "$(node "${ROOT_DIR}/core/scripts/print_ctx_cache_env.cjs" --mode workspace --cwd "${ROOT_DIR}/core" --format shell --mkdir)"
+codex_crp_export_cache_env "${ROOT_DIR}" "codex-crp-dev-install"
 TARGET_DIR="$(codex_crp_target_dir "${ROOT_DIR}")"
 BUILD_JOBS="$(codex_crp_build_jobs)"
 DATA_DIR="${CTX_DATA_DIR:-${HOME}/.ctx}"
@@ -28,11 +28,7 @@ fi
 
 mkdir -p "${TARGET_DIR}"
 CARGO_TARGET_DIR="${TARGET_DIR}" CARGO_BUILD_JOBS="${BUILD_JOBS}" \
-  node "${ROOT_DIR}/core/scripts/run_with_ctx_cache_env.cjs" \
-    --mode workspace \
-    --cwd "${ROOT_DIR}/core" \
-    -- \
-    cargo build --manifest-path "${WORKSPACE_MANIFEST}" -p codex-crp "${profile_args[@]}"
+  codex_crp_run_rust "${ROOT_DIR}" build --manifest-path "${WORKSPACE_MANIFEST}" -p codex-crp "${profile_args[@]}"
 
 if [[ ! -f "${TARGET_DIR}/${PROFILE}/codex-crp" ]]; then
   echo "error: codex-crp binary not found at ${TARGET_DIR}/${PROFILE}/codex-crp" >&2

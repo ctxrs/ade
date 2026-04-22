@@ -301,6 +301,16 @@ test("ctx cache wrapper entrypoints expose cwd-aware observability metadata", ()
   assert.match(runScript, /\[ctx-cache\] source=%s mode=%s scope=%s target=%s sccache=%s volatile_root_mode=%s/);
 });
 
+test("codex crp rust helpers export wrapper-managed cache env", () => {
+  const helperScript = read("scripts/lib/codex_crp_build_env.sh");
+
+  assert.match(helperScript, /codex_crp_export_cache_env\(\)/);
+  assert.match(helperScript, /print_ctx_cache_env\.cjs/);
+  assert.match(helperScript, /codex_crp_run_rust\(\)/);
+  assert.match(helperScript, /run_with_ctx_cache_env\.cjs/);
+  assert.match(helperScript, /CTX_SESSION_ID/);
+});
+
 test("cloud, mobile, and coverage automation route rust work through ctx cache wrappers", () => {
   const cases = [
     "scripts/run_mobile_e2e.sh",
@@ -408,6 +418,10 @@ test("automation cargo invocations are wrapper-managed or explicitly isolated", 
 test("repo-owned automation rust callers use ctx cache wrappers instead of naked cargo", () => {
   const cases = [
     {
+      path: "core/Makefile",
+      required: [/CTX_MAKE_SESSION_ID/, /print_ctx_cache_env\.cjs/, /run_with_ctx_cache_env\.cjs/],
+    },
+    {
       path: "scripts/buildbuddy/run_agent_gate.sh",
       required: [/ctx_cache_env_lib\.sh/, /ctx_cache_export_workspace_env/],
     },
@@ -470,6 +484,30 @@ test("repo-owned automation rust callers use ctx cache wrappers instead of naked
     {
       path: "core/scripts/memleak_soak.sh",
       required: [/run_with_ctx_cache_env\.cjs/],
+    },
+    {
+      path: "scripts/build_codex_crp.sh",
+      required: [/codex_crp_export_cache_env/, /codex_crp_run_rust/],
+    },
+    {
+      path: "scripts/test_codex_crp.sh",
+      required: [/codex_crp_export_cache_env/, /codex_crp_run_rust/],
+    },
+    {
+      path: "scripts/dev_install_codex_crp.sh",
+      required: [/codex_crp_export_cache_env/, /codex_crp_run_rust/],
+    },
+    {
+      path: "scripts/codex_crp_capture.sh",
+      required: [/codex_crp_export_cache_env/, /codex_crp_run_rust/],
+    },
+    {
+      path: "scripts/codex_crp_dump_codex_events.sh",
+      required: [/codex_crp_export_cache_env/, /codex_crp_run_rust/],
+    },
+    {
+      path: "scripts/crp_dev_harness.sh",
+      required: [/codex_crp_export_cache_env/, /codex_crp_run_rust/, /run_with_ctx_cache_env\.cjs/],
     },
   ];
 

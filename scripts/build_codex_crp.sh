@@ -8,7 +8,7 @@ WORKSPACE_MANIFEST="${ROOT_DIR}/core/Cargo.toml"
 # shellcheck source=lib/codex_crp_build_env.sh
 source "${ROOT_DIR}/scripts/lib/codex_crp_build_env.sh"
 
-eval "$(node "${ROOT_DIR}/core/scripts/print_ctx_cache_env.cjs" --mode workspace --cwd "${ROOT_DIR}/core" --format shell --mkdir)"
+codex_crp_export_cache_env "${ROOT_DIR}" "codex-crp-build"
 TARGET_DIR="$(codex_crp_target_dir "${ROOT_DIR}")"
 BUILD_JOBS="$(codex_crp_build_jobs)"
 
@@ -18,15 +18,7 @@ export CARGO_BUILD_JOBS="${BUILD_JOBS}"
 mkdir -p "${TARGET_DIR}"
 
 if [[ "${PROFILE}" == "release" ]]; then
-  node "${ROOT_DIR}/core/scripts/run_with_ctx_cache_env.cjs" \
-    --mode workspace \
-    --cwd "${ROOT_DIR}/core" \
-    -- \
-    cargo build --manifest-path "${WORKSPACE_MANIFEST}" -p codex-crp --release
+  codex_crp_run_rust "${ROOT_DIR}" build --manifest-path "${WORKSPACE_MANIFEST}" -p codex-crp --release
 else
-  node "${ROOT_DIR}/core/scripts/run_with_ctx_cache_env.cjs" \
-    --mode workspace \
-    --cwd "${ROOT_DIR}/core" \
-    -- \
-    cargo build --manifest-path "${WORKSPACE_MANIFEST}" -p codex-crp
+  codex_crp_run_rust "${ROOT_DIR}" build --manifest-path "${WORKSPACE_MANIFEST}" -p codex-crp
 fi
