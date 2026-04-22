@@ -116,6 +116,7 @@ pub trait VcsDriver: Send + Sync {
         &'a self,
         root: &'a Path,
         include_untracked_files: bool,
+        include_entries: bool,
     ) -> VcsFuture<'a, VcsStructuredStatus>;
     fn build_worktree_patch<'a>(
         &'a self,
@@ -374,8 +375,11 @@ impl VcsDriver for GitVcs {
         &'a self,
         root: &'a Path,
         include_untracked_files: bool,
+        include_entries: bool,
     ) -> VcsFuture<'a, VcsStructuredStatus> {
-        Box::pin(async move { git::git_status_structured(root, include_untracked_files).await })
+        Box::pin(async move {
+            git::git_status_structured(root, include_untracked_files, include_entries).await
+        })
     }
 
     fn build_worktree_patch<'a>(

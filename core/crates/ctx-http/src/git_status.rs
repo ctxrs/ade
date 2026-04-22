@@ -3,7 +3,6 @@ use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
-use serde::Serialize;
 
 use ctx_core::models::{
     Worktree, WorktreeVcsBaseResolution, WorktreeVcsBaseResolutionKind, WorktreeVcsComputeState,
@@ -16,9 +15,11 @@ use crate::api::sessions::{resolve_diff_base_with_meta, SessionDiffQuery};
 use crate::daemon::AppState;
 use crate::settings::ExecutionMode;
 use crate::worktree_data_plane::resolve_worktree_data_plane;
+mod model;
 mod sandbox;
 #[path = "git_status_watch.rs"]
 mod watch;
+pub use model::{GitStatusEntry, GitStatusSnapshot};
 use sandbox::{
     container_git_count_untracked, container_git_diff_name_status,
     container_git_diff_name_status_count, container_git_list_untracked, container_git_rev_parse,
@@ -30,32 +31,6 @@ const GIT_STATUS_DEBOUNCE_MS: u64 = 500;
 const GIT_STATUS_MAX_INTERVAL_MS: u64 = 2000;
 const WORKTREE_VCS_TOUCHED_FILES_CAP: usize = 200;
 const WORKTREE_VCS_SNAPSHOT_SCHEMA_VERSION: i64 = 2;
-
-#[derive(Debug, Clone, Serialize)]
-pub struct GitStatusSnapshot {
-    pub raw: String,
-    pub summary_line: String,
-    pub branch: Option<String>,
-    pub upstream: Option<String>,
-    pub ahead: i64,
-    pub behind: i64,
-    pub detached: bool,
-    pub staged: i64,
-    pub unstaged: i64,
-    pub untracked: i64,
-    pub entries: Vec<GitStatusEntry>,
-    pub entries_total_count: i64,
-    pub entries_truncated: bool,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct GitStatusEntry {
-    pub path: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub orig_path: Option<String>,
-    pub index_status: String,
-    pub worktree_status: String,
-}
 
 fn vcs_driver_for_worktree(worktree: &Worktree) -> Arc<dyn VcsDriver> {
     vcs::driver_for_kind(worktree.vcs_kind.clone())
@@ -412,14 +387,17 @@ pub async fn load_git_status_snapshot(
     state: &Arc<AppState>,
     worktree: &Worktree,
     include_untracked_files: bool,
+    include_entries: bool,
 ) -> Result<GitStatusSnapshot> {
     let data_plane = resolve_worktree_data_plane(state, worktree).await?;
     let root = data_plane.live_worktree_root.as_path();
     let structured = if matches!(data_plane.execution_mode, ExecutionMode::Sandbox) {
-        container_git_status_structured(state, worktree, include_untracked_files).await?
+        container_git_status_structured(state, worktree, include_untracked_files, include_entries)
+            .await?
     } else {
         let vcs = vcs_driver_for_worktree(worktree);
-        vcs.status_structured(root, include_untracked_files).await?
+        vcs.status_structured(root, include_untracked_files, include_entries)
+            .await?
     };
     Ok(GitStatusSnapshot {
         raw: structured.raw,
@@ -432,16 +410,20 @@ pub async fn load_git_status_snapshot(
         staged: structured.staged,
         unstaged: structured.unstaged,
         untracked: structured.untracked,
-        entries: structured
-            .entries
-            .into_iter()
-            .map(|entry| GitStatusEntry {
-                path: entry.path,
-                orig_path: entry.orig_path,
-                index_status: entry.index_status,
-                worktree_status: entry.worktree_status,
-            })
-            .collect(),
+        entries: if include_entries {
+            structured
+                .entries
+                .into_iter()
+                .map(|entry| GitStatusEntry {
+                    path: entry.path,
+                    orig_path: entry.orig_path,
+                    index_status: entry.index_status,
+                    worktree_status: entry.worktree_status,
+                })
+                .collect()
+        } else {
+            Vec::new()
+        },
         entries_total_count: structured.total_count,
         entries_truncated: structured.truncated,
     })
@@ -610,7 +592,13 @@ async fn refresh_worktree_vcs_projection(
         return publish_unavailable_snapshot(state, worktree, resolution, force_emit, reason).await;
     }
 
-    let git_snapshot = match load_git_status_snapshot(state, worktree, refresh_touched_files).await
+    let git_snapshot = match load_git_status_snapshot(
+        state,
+        worktree,
+        refresh_touched_files,
+        refresh_touched_files,
+    )
+    .await
     {
         Ok(snapshot) => snapshot,
         Err(err) if crate::api::sessions::is_no_vcs_repo_error(&err) => {

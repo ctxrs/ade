@@ -491,6 +491,7 @@ pub async fn git_status_porcelain(root_path: impl AsRef<Path>) -> Result<Vec<Str
 pub async fn git_status_structured(
     root_path: impl AsRef<Path>,
     include_untracked_files: bool,
+    include_entries: bool,
 ) -> Result<VcsStructuredStatus> {
     let untracked_mode = if include_untracked_files {
         "--untracked-files=all"
@@ -516,11 +517,21 @@ pub async fn git_status_structured(
             String::from_utf8_lossy(&output.stderr)
         );
     }
-    Ok(git_status_structured_from_bytes(&output.stdout))
+    Ok(git_status_structured_from_bytes_with_entries(
+        &output.stdout,
+        include_entries,
+    ))
 }
 
 pub fn git_status_structured_from_bytes(bytes: &[u8]) -> VcsStructuredStatus {
-    parse_git_status_structured_bytes(bytes)
+    git_status_structured_from_bytes_with_entries(bytes, true)
+}
+
+pub fn git_status_structured_from_bytes_with_entries(
+    bytes: &[u8],
+    include_entries: bool,
+) -> VcsStructuredStatus {
+    parse_git_status_structured_bytes(bytes, include_entries)
 }
 
 pub async fn git_diff_name_status_paths(
@@ -557,50 +568,53 @@ pub async fn git_diff_name_status_paths(
     Ok(parse_git_diff_name_status_bytes(&output.stdout))
 }
 
-fn parse_git_status_structured_bytes(bytes: &[u8]) -> VcsStructuredStatus {
-    let entries = bytes
+fn parse_git_status_structured_bytes(bytes: &[u8], include_entries: bool) -> VcsStructuredStatus {
+    let mut entries = bytes
         .split(|b| *b == 0)
         .filter(|part| !part.is_empty())
-        .map(|part| String::from_utf8_lossy(part).to_string())
-        .collect::<Vec<_>>();
+        .peekable();
     let mut branch = VcsStatusBranchInfo::default();
     let mut parsed_entries = Vec::new();
     let mut staged = 0;
     let mut unstaged = 0;
     let mut untracked = 0;
     let mut total_count = 0;
-    let mut start_index = 0usize;
-    if let Some(first) = entries.first() {
+    if let Some(first) = entries.peek() {
+        let first = String::from_utf8_lossy(first);
         if first.starts_with("## ") {
-            branch = parse_git_status_branch_info(first);
-            start_index = 1;
+            branch = parse_git_status_branch_info(&first);
+            entries.next();
         }
     }
-    let mut index = start_index;
-    while index < entries.len() {
-        let raw = entries[index].trim_end();
+    while let Some(raw_bytes) = entries.next() {
+        let raw = String::from_utf8_lossy(raw_bytes);
+        let raw = raw.trim_end();
         if raw.len() < 3 {
-            index += 1;
             continue;
         }
         let bytes = raw.as_bytes();
         if bytes[2] != b' ' {
-            index += 1;
             continue;
         }
         let index_status = raw.chars().next().unwrap_or(' ');
         let worktree_status = raw.chars().nth(1).unwrap_or(' ');
-        let path = raw[3..].trim().to_string();
+        let path = raw[3..].trim();
         if path.is_empty() {
-            index += 1;
             continue;
         }
         let mut orig_path = None;
-        if (index_status == 'R' || index_status == 'C') && index + 1 < entries.len() {
-            let next = entries[index + 1].trim_end();
+        if let Some(next_bytes) = entries
+            .peek()
+            .copied()
+            .filter(|_| index_status == 'R' || index_status == 'C')
+        {
+            let next = String::from_utf8_lossy(next_bytes);
+            let next = next.trim_end();
             if !looks_like_porcelain_status(next) && !next.is_empty() {
-                orig_path = Some(next.to_string());
-                index += 1;
+                if include_entries {
+                    orig_path = Some(next.to_string());
+                }
+                entries.next();
             }
         }
         total_count += 1;
@@ -614,16 +628,21 @@ fn parse_git_status_structured_bytes(bytes: &[u8]) -> VcsStructuredStatus {
                 unstaged += 1;
             }
         }
-        parsed_entries.push(VcsStatusEntry {
-            path,
-            orig_path,
-            index_status: index_status.to_string(),
-            worktree_status: worktree_status.to_string(),
-        });
-        index += 1;
+        if include_entries {
+            parsed_entries.push(VcsStatusEntry {
+                path: path.to_string(),
+                orig_path,
+                index_status: index_status.to_string(),
+                worktree_status: worktree_status.to_string(),
+            });
+        }
     }
     VcsStructuredStatus {
-        raw: String::from_utf8_lossy(bytes).to_string(),
+        raw: if include_entries {
+            String::from_utf8_lossy(bytes).to_string()
+        } else {
+            String::new()
+        },
         branch,
         entries: parsed_entries,
         staged,
@@ -893,7 +912,10 @@ pub async fn git_apply_patch_allow_noop(
 
 #[cfg(test)]
 mod tests {
-    use super::{git_status_structured_from_bytes, parse_git_diff_name_status_bytes};
+    use super::{
+        git_status_structured_from_bytes, git_status_structured_from_bytes_with_entries,
+        parse_git_diff_name_status_bytes,
+    };
 
     #[test]
     fn parse_git_diff_name_status_handles_regular_entries() {
@@ -928,5 +950,18 @@ mod tests {
         assert_eq!(parsed.entries[0].orig_path.as_deref(), Some("old.txt"));
         assert_eq!(parsed.staged, 1);
         assert_eq!(parsed.unstaged, 0);
+    }
+
+    #[test]
+    fn parse_git_status_structured_can_skip_entries() {
+        let parsed = git_status_structured_from_bytes_with_entries(
+            b"## main\0M  file.txt\0?? new.txt\0",
+            false,
+        );
+        assert!(parsed.entries.is_empty());
+        assert_eq!(parsed.total_count, 2);
+        assert_eq!(parsed.staged, 1);
+        assert_eq!(parsed.untracked, 1);
+        assert!(parsed.raw.is_empty());
     }
 }

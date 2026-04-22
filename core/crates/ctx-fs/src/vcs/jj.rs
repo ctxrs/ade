@@ -406,6 +406,7 @@ impl VcsDriver for JjVcs {
         &'a self,
         root: &'a Path,
         include_untracked_files: bool,
+        include_entries: bool,
     ) -> VcsFuture<'a, VcsStructuredStatus> {
         Box::pin(async move {
             ensure_jj_usable().await?;
@@ -415,24 +416,28 @@ impl VcsDriver for JjVcs {
             let mut entries = Vec::new();
             let staged = 0;
             let unstaged = parsed.entries.len() as i64;
-            for entry in parsed.entries {
-                entries.push(VcsStatusEntry {
-                    path: entry.path,
-                    orig_path: None,
-                    index_status: " ".to_string(),
-                    worktree_status: entry.status.to_string(),
-                });
+            if include_entries {
+                for entry in parsed.entries {
+                    entries.push(VcsStatusEntry {
+                        path: entry.path,
+                        orig_path: None,
+                        index_status: " ".to_string(),
+                        worktree_status: entry.status.to_string(),
+                    });
+                }
             }
             let untracked = if include_untracked_files {
                 let untracked_files = collect_jj_untracked_files(root, &parsed.untracked).await?;
                 let untracked = untracked_files.len() as i64;
-                for path in untracked_files {
-                    entries.push(VcsStatusEntry {
-                        path,
-                        orig_path: None,
-                        index_status: "?".to_string(),
-                        worktree_status: "?".to_string(),
-                    });
+                if include_entries {
+                    for path in untracked_files {
+                        entries.push(VcsStatusEntry {
+                            path,
+                            orig_path: None,
+                            index_status: "?".to_string(),
+                            worktree_status: "?".to_string(),
+                        });
+                    }
                 }
                 untracked
             } else {
@@ -440,7 +445,11 @@ impl VcsDriver for JjVcs {
             };
             let total_count = staged + unstaged + untracked;
             Ok(VcsStructuredStatus {
-                raw: stdout,
+                raw: if include_entries {
+                    stdout
+                } else {
+                    String::new()
+                },
                 branch: VcsStatusBranchInfo {
                     summary_line: "jj status".to_string(),
                     branch: None,

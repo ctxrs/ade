@@ -129,6 +129,7 @@ pub(crate) async fn container_git_status_structured(
     state: &Arc<AppState>,
     worktree: &Worktree,
     include_untracked_files: bool,
+    include_entries: bool,
 ) -> Result<VcsStructuredStatus> {
     let untracked_mode = if include_untracked_files {
         "--untracked-files=all"
@@ -141,7 +142,10 @@ pub(crate) async fn container_git_status_structured(
         &["status", "--porcelain", "-z", "--branch", untracked_mode],
     )
     .await?;
-    Ok(ctx_fs::git::git_status_structured_from_bytes(&bytes))
+    Ok(ctx_fs::git::git_status_structured_from_bytes_with_entries(
+        &bytes,
+        include_entries,
+    ))
 }
 
 pub(crate) async fn container_git_list_untracked(
