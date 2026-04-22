@@ -1,6 +1,8 @@
 import { layoutNextLine, type LayoutLine } from "@chenglou/pretext";
 import { browserAllowsInlineCodeLeadingHang } from "./sessionMarkdownBrowserProfile";
 import {
+  allowsChromiumDottedBoundaryHang,
+  INLINE_CODE_DOTTED_CALL_CONTINUATION_MIN_SPARE_PX,
   isShortExtensionPathLikeFragment,
   INLINE_CODE_PATH_DELIMITER_CONTINUATION_MIN_SPARE_PX,
   shouldBreakBeforePartialDottedCallContinuation,
@@ -22,6 +24,7 @@ import { LINE_START_CURSOR, cursorsMatch } from "./sessionMarkdownMeasurementCor
 
 const INLINE_CODE_CURRENT_LINE_START_RATIO_THRESHOLD = 0.35;
 const INLINE_CODE_HYPHEN_CONTINUATION_GUARD_PX = 2;
+const NON_PUNCTUATION_TRAILING_TEXT_PATTERN = /[\p{L}\p{N}]/u;
 
 type InlineCodePlacementDebug = {
   enabled: boolean;
@@ -36,6 +39,30 @@ export type InlineCodePlacementResult = {
   state: InlineMeasurementLineState;
   forcedFreshWholeCodeGroupIndex: number | null;
 };
+
+function hasNonPunctuationTrailingTextAfterCodeGroup(params: {
+  codeGroupId: number;
+  itemIndex: number;
+  items: readonly PreparedInlineLayoutItem[];
+}): boolean {
+  for (let index = params.itemIndex + 1; index < params.items.length; index += 1) {
+    const item = params.items[index]!;
+    if (item.kind === "hardBreak") {
+      return false;
+    }
+    if (item.kind === "space") {
+      continue;
+    }
+    if (item.codeGroupId === params.codeGroupId) {
+      continue;
+    }
+    if (item.codeGroupId != null) {
+      return false;
+    }
+    return NON_PUNCTUATION_TRAILING_TEXT_PATTERN.test(item.text);
+  }
+  return false;
+}
 
 function acceptCodeFragmentState(params: {
   state: InlineMeasurementLineState;
@@ -363,6 +390,17 @@ export function placeInlineCodeSegment(params: {
       item,
       lastFragmentText: state.lineLastCodeFragmentText,
       maxWidth: params.maxWidth,
+      minSparePx:
+        !browserAllowsInlineCodeLeadingHang() &&
+        item.codeGroupStartsAfterText &&
+        item.codeGroupHasTrailingText &&
+        hasNonPunctuationTrailingTextAfterCodeGroup({
+          codeGroupId,
+          itemIndex: state.itemIndex,
+          items: params.items,
+        })
+          ? INLINE_CODE_DOTTED_CALL_CONTINUATION_MIN_SPARE_PX
+          : 0,
       sameCodeGroupContinuation: state.lineHasContent && state.lastAcceptedCodeGroupId === codeGroupId,
     });
   const lastFragmentIsShortExtensionPath = isShortExtensionPathLikeFragment(state.lineLastCodeFragmentText);
@@ -377,7 +415,12 @@ export function placeInlineCodeSegment(params: {
     item.codeGroupHasDottedPath &&
     !item.text.includes("/") &&
     !item.text.includes("\\") &&
-    (item.text.includes(".") || item.isPathTailFragment);
+    (item.text.includes(".") || item.isPathTailFragment) &&
+    allowsChromiumDottedBoundaryHang({
+      boundaryRemainingWidth,
+      chromeWidth: item.chromeWidth,
+      fullWidth,
+    });
   const effectiveSealedBoundaryOverflow =
     sealedBoundaryOverflow && !shouldAcceptChromiumPathTailContinuation;
 
@@ -432,6 +475,49 @@ export function placeInlineCodeSegment(params: {
   }
   if (canRelaxChromiumDottedPathBoundary) {
     state.lineUsedChromiumDottedPathBoundaryContinuation = true;
+  }
+  if (item.isSealedInlineCodeFragment && canRelaxChromiumDottedPathBoundary) {
+    const remainingWidthBeforeSealedFragmentAccept = state.remainingWidth;
+    acceptCodeFragmentState({
+      state,
+      item,
+      codeGroupId,
+      remainingWidthBeforeAccept: remainingWidthBeforeSealedFragmentAccept,
+      remainingWidthAfterAccept: Math.max(0, state.remainingWidth - fullWidth),
+      lastFragmentText: item.text,
+      lastFragmentEndedWithHyphen: item.text.endsWith("-"),
+      lastFragmentEndedWithPathDelimiter: /[\\/]+$/.test(item.text),
+      shouldLimitCurrentCodeGroupToFirstFragment,
+      shouldTrackWeakProseStartCodeGroup: params.shouldTrackWeakProseStartCodeGroup,
+      shouldForceSoftBreakWeakProseContinuationWrap: params.shouldForceSoftBreakWeakProseContinuationWrap,
+      maxWidth: params.maxWidth,
+    });
+    state.itemIndex += 1;
+    state.pendingSpaceWidth = 0;
+    if (params.debug.enabled) {
+      params.debug.sealedContinuationDecisions.push({
+        canRelaxChromiumDottedPathBoundary,
+        currentCodeGroupStartFragmentText: state.lineCurrentCodeGroupStartFragmentText,
+        fullWidth,
+        guardedRemainingWidth,
+        remainingWidth: remainingWidthBeforeSealedFragmentAccept,
+        continuationSlackPx: params.currentLineFitSlackPx,
+        lastFragmentIsShortExtensionPath,
+        lastFragmentText: state.lineLastCodeFragmentText,
+        sameCodeGroupContinuation: state.lineHasContent,
+        sealedBoundaryOverflow: effectiveSealedBoundaryOverflow,
+        acceptedFragment: true,
+        overflowedAcceptedFragment: fullWidth > guardedRemainingWidth + 0.01,
+        shouldBreakBeforePartialSealedDottedPathFragment,
+        text: item.text,
+      });
+      params.debug.appendLineText(item.text);
+    }
+    return {
+      action: "break",
+      state,
+      forcedFreshWholeCodeGroupIndex: params.forcedFreshWholeCodeGroupIndex,
+    };
   }
 
   if (shouldAcceptChromiumPathTailContinuation) {

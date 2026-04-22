@@ -9,12 +9,15 @@ import {
 import type { PreparedInlineLayoutItem } from "./sessionMarkdownInlineLayout";
 import { resolveInlineCodeStartDecision } from "./sessionMarkdownInlineStartDecisions";
 import { segmentGraphemes } from "./sessionMarkdownMeasurementCore";
+import { SESSION_THREAD_MARKDOWN_INLINE_CODE_FRAGMENT_CHROME_WIDTH_PX } from "./sessionThreadLayoutTokens";
 
 const INLINE_CODE_FRAGMENT_FIT_SLACK_PX = 0;
 const INLINE_CODE_WHOLE_GROUP_FIT_SLACK_PX = 0;
 const INLINE_CODE_WHITESPACE_CONTINUATION_GUARD_PX = 1;
 const INLINE_CODE_WEAK_PROSE_START_CONTINUATION_GUARD_PX = 1;
 export const INLINE_CODE_TAIL_TEXT_SEAM_GUARD_PX = 4;
+export const INLINE_CODE_CONTINUED_TAIL_TEXT_SEAM_GUARD_PX =
+  SESSION_THREAD_MARKDOWN_INLINE_CODE_FRAGMENT_CHROME_WIDTH_PX / 2;
 const INLINE_CODE_SOFT_BREAK_TEXT_START_GUARD_RATIO = 1;
 const INLINE_CODE_SOFT_BREAK_TEXT_START_GUARD_MAX_PX = 36;
 
@@ -166,6 +169,7 @@ export function resolveInlineMeasurementDerivedContext(params: {
   lineHasContent: boolean;
   lineSawInlineCode: boolean;
   lineAcceptedPlainAfterContinuedCode: boolean;
+  lineStartedWithContinuedCode: boolean;
   lineAcceptedSoftBreakProseAfterInlineCode: boolean;
   lineSoftBreakProseAfterInlineCodeGuardPx: number;
   lineSoftBreakProseGuardCodeGroupId: number | null;
@@ -282,11 +286,10 @@ export function resolveInlineMeasurementDerivedContext(params: {
     params.cursor === null &&
     params.codeGroupId == null &&
     params.item.startsAfterInlineCodeSeam &&
+    params.lineStartedWithContinuedCode &&
     !params.item.startsAfterCollapsedSoftBreak &&
-    params.item.startsAfterPathLikeInlineCodeSeam
-      ? browserAllowsInlineCodeLeadingHang()
-        ? INLINE_CODE_TAIL_TEXT_SEAM_GUARD_PX
-        : 0
+    browserAllowsInlineCodeLeadingHang()
+      ? INLINE_CODE_CONTINUED_TAIL_TEXT_SEAM_GUARD_PX
       : 0;
   const currentLineInlineCodeSoftBreakTextStartGuardPx =
     params.lineHasContent &&

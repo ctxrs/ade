@@ -21,6 +21,38 @@ web_e2e_test(
 )
 
 web_e2e_test(
+    name = "pretext_wrap_rules",
+    config = "playwright.pretext-parity.config.ts",
+    runtime_profile = "agent-full",
+    specs = ["e2e/workbench-pretext-wrap-rules.spec.ts"],
+    timeout = "eternal",
+)
+
+web_e2e_test(
+    name = "pretext_parity_corpus",
+    config = "playwright.pretext-parity.config.ts",
+    runtime_profile = "agent-full",
+    specs = ["e2e/workbench-pretext-parity-corpus.spec.ts"],
+    timeout = "eternal",
+)
+
+web_e2e_test(
+    name = "pretext_wrap_rule_fuzz",
+    config = "playwright.pretext-parity.config.ts",
+    runtime_profile = "agent-full",
+    specs = ["e2e/workbench-pretext-wrap-rule-fuzz.spec.ts"],
+    timeout = "eternal",
+)
+
+web_e2e_test(
+    name = "pretext_parity_fuzz",
+    config = "playwright.pretext-parity.config.ts",
+    runtime_profile = "agent-full",
+    specs = ["e2e/workbench-pretext-parity-fuzz.spec.ts"],
+    timeout = "eternal",
+)
+
+web_e2e_test(
     name = "premerge_required",
     config = "playwright.premerge.config.ts",
     runtime_profile = "agent-full",

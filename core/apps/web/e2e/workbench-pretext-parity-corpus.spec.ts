@@ -134,6 +134,7 @@ const MARKDOWN_CORPUS: MarkdownSample[] = [
 
 type SoftBreakMarkdownSample = MarkdownSample & {
   width: number;
+  widths?: readonly number[];
   browsers?: Array<"chromium" | "webkit">;
 };
 
@@ -271,6 +272,92 @@ const SOFT_BREAK_MARKDOWN_REGRESSIONS: SoftBreakMarkdownSample[] = [
     browsers: ["chromium"],
     markdown:
       "- Turn parity `blockquote/sessionMarkdownMeasurement.ts/sessionMarkdownMeasurement.ts/workbenchShell/table` 🙂 測試 佈局 probe delta​epsilon​zeta summary deterministic A B turn [virtualizer probe](https://example.com/inline-code/chromium/transcript?ref=993) בדיקת עיטוף with code pressure.",
+  },
+  {
+    name: "reported-active-heads-dotted-code-continuation",
+    width: 426,
+    browsers: ["webkit"],
+    markdown:
+      "- The sample also keeps `workspaceSnapshot.tasksById` together, so the following prose begins after one complete code chip.",
+  },
+  {
+    name: "reported-active-heads-hyphenated-token-break",
+    width: 456,
+    browsers: ["webkit"],
+    markdown: [
+      "2. **Use active heads for first paint**",
+      "   If `active_heads` has a compatible non-empty sample, render it immediately as bootstrap/pending-authority. Keep the newer fixture state as the current authority.",
+    ].join("\n"),
+  },
+  {
+    name: "reported-dev-machines-inline-code-thresholds",
+    width: 500,
+    widths: [384, 408, 464, 488, 500, 504, 728],
+    markdown: [
+      "This ordered sample records several display values:",
+      "",
+      "1. **Short label**",
+      "   Keep `sample-name` beside ordinary prose at the edge.",
+      "   Example markers:",
+      "   `sample=true`",
+      "   `sample-mode=wrap`",
+      "   `sample-width=<value>`",
+      "   `sample-owner=<fixture>`",
+      "   `sample-expiry=<epoch>`",
+      "",
+      "2. **Default width**",
+      "   Use `24px`, allow `--width-px`, and keep an explicit `--wide` marker for values above `128px`.",
+      "",
+      "3. **Secondary label**",
+      "   Use `alpha` for the first chip and `beta` for the second chip.",
+      "",
+      "4. **State marker**",
+      "   Keep `sample-state=ready` in the document so the line has a stable inline-code tail.",
+      "",
+      "5. **Cleanup note**",
+      "   Remove the sample after the measurement run; record no external state.",
+      "",
+      "6. **Location**",
+      "   Store the fixture in a temporary path such as `/tmp/layout-sample.json`.",
+      "",
+      "7. **Key marker**",
+      "   Generate a per-run key label and discard it with the sample.",
+      "",
+      "8. **Composition**",
+      "   Start with a reachable paragraph and add task-specific code chips only when the layout case requires them.",
+      "",
+      "The neutral recommendation is to keep the `sample` labels and width marker in this fixture so the ordered-list threshold remains repeatable.",
+    ].join("\n"),
+  },
+  {
+    name: "reported-pretext-help-rich-inline-composition",
+    width: 788,
+    widths: [472, 540, 620, 788],
+    markdown: [
+      "The fixture measures a useful part of the layout contract.",
+      "",
+      "What the sample measures:",
+      "- deterministic text measurement",
+      "- segmenting and line-breaking for a prepared text run",
+      "- support for `white-space`, `overflow-wrap`, and grapheme-level breaks",
+      "- a compact arithmetic layout path",
+      "",
+      "What the surrounding document still supplies:",
+      "- rich inline formatting",
+      "- element and span boundaries",
+      "- seam behavior between adjacent styled runs",
+      "- inline-code chip chrome",
+      "- table, list, and block composition",
+      "- browser-specific wrap behavior for mixed inline nodes",
+      "",
+      "The neutral samples cover the glue cases directly:",
+      "- `containerized/sandboxed` remains one ordinary prose token",
+      "  The slash is part of the token rather than a forced break seam.",
+      "- a styled heading keeps its collapsed seam space before the following prose.",
+      "  The following line keeps enough text to make the width threshold visible.",
+      "",
+      "The result is a small composition corpus that compares prepared text with browser DOM behavior.",
+    ].join("\n"),
   },
   {
     name: "soft-break-inline-code-overwide-slash-tail",
@@ -706,8 +793,10 @@ test("workbench: pretext soft-break markdown regressions", async ({ page, browse
   for (const sample of SOFT_BREAK_MARKDOWN_REGRESSIONS.filter((candidate) => {
     return candidate.browsers == null || candidate.browsers.includes(browserName as "chromium" | "webkit");
   })) {
-    const [measurement] = await measureMarkdownParity(page, [sample], sample.width);
-    summary.push({ width: sample.width, ...measurement });
+    for (const width of sample.widths ?? [sample.width]) {
+      const [measurement] = await measureMarkdownParity(page, [sample], width);
+      summary.push({ width, ...measurement });
+    }
   }
 
   if (!ENFORCE) return;

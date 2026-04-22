@@ -169,6 +169,7 @@ function validateEntry(entry, familiesById) {
   }
 
   entry.sourceGlobs = normalizeStringArray(entry.sourceGlobs);
+  entry.excludeGlobs = normalizeStringArray(entry.excludeGlobs);
   entry.dependencyCrates = normalizeStringArray(entry.dependencyCrates);
   entry.notes = typeof entry.notes === "string" ? entry.notes.trim() : "";
   entry.exception = typeof entry.exception === "string" ? entry.exception.trim() : "";

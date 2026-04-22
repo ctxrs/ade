@@ -12,6 +12,7 @@ const THRESHOLD_PX = 1;
 const DEFAULT_SEED = 20260421;
 const DEFAULT_MARKDOWN_CASES = 8;
 const DEFAULT_ASSISTANT_CASES = 6;
+const DEFAULT_WIDTHS_PER_SAMPLE = 2;
 
 test.use({
   screenshot: "off",
@@ -56,6 +57,22 @@ function selectDeterministicWidth(widths: readonly number[], seed: number, offse
   return widths[index]!;
 }
 
+function selectDeterministicWidths(
+  widths: readonly number[],
+  seed: number,
+  offset: number,
+  count: number,
+): readonly number[] {
+  if (widths.length === 0) {
+    throw new Error("wrap-rule fuzz sample is missing width candidates");
+  }
+  const selected = new Set<number>();
+  for (let index = 0; index < Math.max(1, count); index += 1) {
+    selected.add(selectDeterministicWidth(widths, seed, offset + index));
+  }
+  return [...selected];
+}
+
 function formatFailures(
   kind: string,
   failures: Array<{ name: string; width: number; delta: number; planned: number; actual: number }>,
@@ -78,21 +95,23 @@ test("workbench: pretext wrap-rule markdown fuzz parity", async ({ page }, testI
     markdownCount: readEnvInt("CTX_PRETEXT_WRAP_RULE_FUZZ_MARKDOWN_CASES", DEFAULT_MARKDOWN_CASES),
     assistantCount: readEnvInt("CTX_PRETEXT_WRAP_RULE_FUZZ_ASSISTANT_CASES", DEFAULT_ASSISTANT_CASES),
   });
+  const widthsPerSample = readEnvInt("CTX_PRETEXT_WRAP_RULE_FUZZ_WIDTHS_PER_SAMPLE", DEFAULT_WIDTHS_PER_SAMPLE);
 
   const summary: MarkdownSummaryEntry[] = [];
   for (const [index, sample] of corpus.markdownSamples.entries()) {
-    const width = selectDeterministicWidth(sample.markdownWidths, corpus.seed, index);
-    const [measurement] = await measureMarkdownParity(page, [sample], width);
-    summary.push({
-      width,
-      name: sample.name,
-      ruleId: sample.ruleId,
-      family: sample.family,
-      markdown: sample.markdown,
-      planned: measurement!.planned,
-      actual: measurement!.actual,
-      delta: measurement!.delta,
-    });
+    for (const width of selectDeterministicWidths(sample.markdownWidths, corpus.seed, index, widthsPerSample)) {
+      const [measurement] = await measureMarkdownParity(page, [sample], width);
+      summary.push({
+        width,
+        name: sample.name,
+        ruleId: sample.ruleId,
+        family: sample.family,
+        markdown: sample.markdown,
+        planned: measurement!.planned,
+        actual: measurement!.actual,
+        delta: measurement!.delta,
+      });
+    }
   }
 
   const reportPath = testInfo.outputPath("pretext-wrap-rule-markdown-fuzz-parity.json");
@@ -106,6 +125,7 @@ test("workbench: pretext wrap-rule markdown fuzz parity", async ({ page }, testI
         counts: {
           markdown: corpus.markdownSamples.length,
         },
+        widthsPerSample,
         samples: summary,
       },
       null,
@@ -146,24 +166,26 @@ test("workbench: pretext wrap-rule assistant fuzz parity", async ({ page }, test
     markdownCount: readEnvInt("CTX_PRETEXT_WRAP_RULE_FUZZ_MARKDOWN_CASES", DEFAULT_MARKDOWN_CASES),
     assistantCount: readEnvInt("CTX_PRETEXT_WRAP_RULE_FUZZ_ASSISTANT_CASES", DEFAULT_ASSISTANT_CASES),
   });
+  const widthsPerSample = readEnvInt("CTX_PRETEXT_WRAP_RULE_FUZZ_WIDTHS_PER_SAMPLE", DEFAULT_WIDTHS_PER_SAMPLE);
 
   const summary: AssistantSummaryEntry[] = [];
   for (const [index, sample] of corpus.assistantSamples.entries()) {
-    const width = selectDeterministicWidth(sample.assistantViewportWidths, corpus.seed, index);
-    const measurement = await measureAssistantParity(page, {
-      ...sample.params,
-      viewportWidth: width,
-    });
-    summary.push({
-      width,
-      name: sample.name,
-      ruleId: sample.ruleId,
-      family: sample.family,
-      content: sample.params.content,
-      planned: measurement.planned,
-      actual: measurement.actual,
-      delta: measurement.delta,
-    });
+    for (const width of selectDeterministicWidths(sample.assistantViewportWidths, corpus.seed, index, widthsPerSample)) {
+      const measurement = await measureAssistantParity(page, {
+        ...sample.params,
+        viewportWidth: width,
+      });
+      summary.push({
+        width,
+        name: sample.name,
+        ruleId: sample.ruleId,
+        family: sample.family,
+        content: sample.params.content,
+        planned: measurement.planned,
+        actual: measurement.actual,
+        delta: measurement.delta,
+      });
+    }
   }
 
   const reportPath = testInfo.outputPath("pretext-wrap-rule-assistant-fuzz-parity.json");
@@ -177,6 +199,7 @@ test("workbench: pretext wrap-rule assistant fuzz parity", async ({ page }, test
         counts: {
           assistant: corpus.assistantSamples.length,
         },
+        widthsPerSample,
         samples: summary,
       },
       null,

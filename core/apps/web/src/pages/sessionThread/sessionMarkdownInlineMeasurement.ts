@@ -148,6 +148,7 @@ export function measureInlineRunsHeight(params: {
         lineHasContent: lineState.lineHasContent,
         lineSawInlineCode: lineState.lineSawInlineCode,
         lineAcceptedPlainAfterContinuedCode: lineState.lineAcceptedPlainAfterContinuedCode,
+        lineStartedWithContinuedCode: lineState.lineStartedWithContinuedCode,
         lineAcceptedSoftBreakProseAfterInlineCode:
           lineState.lineAcceptedSoftBreakProseAfterInlineCode,
         lineSoftBreakProseAfterInlineCodeGuardPx:

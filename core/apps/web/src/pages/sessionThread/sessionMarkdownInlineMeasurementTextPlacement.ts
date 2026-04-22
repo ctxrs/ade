@@ -33,7 +33,7 @@ type InlineTextPlacementDebug = {
   appendLineText: (text: string) => void;
 };
 
-const INLINE_CODE_TAIL_WHOLE_SEGMENT_FIT_TOLERANCE_PX = 1;
+const INLINE_CODE_TAIL_WHOLE_SEGMENT_FIT_TOLERANCE_PX = 0;
 
 export function resolveInlineCodeTailWholeSegmentFitAllowancePx(params: {
   lineStartedWithContinuedCode: boolean;

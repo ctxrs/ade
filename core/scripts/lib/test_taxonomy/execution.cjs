@@ -86,6 +86,9 @@ function entryMatchesChangedFiles(entry, changedFilesOrContext) {
     return false;
   }
   for (const changedFile of changedContext.normalizedChangedFiles) {
+    if ((entry.excludeGlobs || []).some((glob) => matchesGlob(changedFile, glob))) {
+      continue;
+    }
     for (const glob of entry.sourceGlobs || []) {
       if (matchesGlob(changedFile, glob)) {
         return true;
@@ -201,7 +204,11 @@ function buildCommandsForEntries({ selectedEntries, changedContext, touchedOnly 
 }
 
 function commandPriority(command) {
-  if (command === "pnpm bazel:web:test") {
+  if (
+    command === "pnpm bazel:web:test"
+    || command === "pnpm bazel:web:unit:non-pretext"
+    || command === "pnpm bazel:web:pretext:measurement"
+  ) {
     return 100;
   }
   if (command === "pnpm bazel:web:e2e:premerge") {

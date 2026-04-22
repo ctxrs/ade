@@ -204,6 +204,28 @@ describe("sessionMarkdownInlineLayout", () => {
     expect(textSegments).not.toContain("isolation model as needed.");
   });
 
+  it("preserves hyphen break opportunities when slash-sensitive prose tokenization is active", () => {
+    const items = prepareParagraphItems(
+      [
+        "**Use active heads for first paint**",
+        "If `active_heads` has a compatible non-empty sample, render it immediately as bootstrap/pending-authority. Keep the newer fixture state as the current authority.",
+      ].join("\n"),
+      "non-empty sample",
+    );
+
+    const textSegments = items
+      .filter((item): item is Extract<PreparedInlineLayoutItem, { kind: "segment" }> => item.kind === "segment")
+      .filter((item) => item.codeGroupId == null)
+      .map((item) => item.text);
+
+    expect(textSegments).toContain("non-");
+    expect(textSegments).toContain("empty");
+    expect(textSegments).toContain("bootstrap/pending-");
+    expect(textSegments).toContain("authority.");
+    expect(textSegments).not.toContain("non-empty");
+    expect(textSegments).not.toContain("bootstrap/pending-authority.");
+  });
+
   it("splits a trailing plain hyphenated path tail into deterministic code fragments", () => {
     const items = prepareParagraphItems(
       "Probe `pages/apps/turn-header`: trailing prose keeps wrapping.",

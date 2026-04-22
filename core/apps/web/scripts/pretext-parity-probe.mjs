@@ -255,14 +255,26 @@ async function main() {
 
   const browserType = options.browser === "webkit" ? webkit : chromium;
   const browser = await browserType.launch({ headless: true });
+  const context = await browser.newContext({ ignoreHTTPSErrors: true });
   try {
     let browserUserAgent = "";
 
     async function openProbePage(needsDebug) {
-      const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
-      await page.addInitScript(() => {
+      const page = await context.newPage();
+      await page.setViewportSize({ width: 1280, height: 900 });
+      await page.addInitScript((token) => {
         window.sessionStorage.setItem("ctxE2E", "1");
-      });
+        window.sessionStorage.setItem(
+          "ctxDaemonConnectionV1",
+          JSON.stringify({
+            v: 1,
+            baseUrl: window.location.origin,
+            wsBaseUrl: window.location.origin.replace(/^http/, "ws"),
+            authToken: token,
+            source: "pretext_probe",
+          }),
+        );
+      }, options.token);
       await page.goto(workspaceUrl.toString(), { waitUntil: "domcontentloaded", timeout: 30000 });
       await page.waitForFunction(
         ({ kind, needsDebug }) => {

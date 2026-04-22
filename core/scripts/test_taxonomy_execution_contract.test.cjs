@@ -71,8 +71,44 @@ test("agent-default escalates high-risk web state changes to the canonical preme
   });
 
   assert.deepEqual(plan.commands, [
-    "pnpm bazel:web:test",
+    "pnpm bazel:web:unit:non-pretext",
     "pnpm bazel:web:e2e:premerge",
+  ]);
+});
+
+test("agent-default keeps settings-only web changes off the pretext measurement slice", () => {
+  const plan = buildExecutionPlan({
+    profileId: "agent-default",
+    changedFiles: ["core/apps/web/src/pages/settings/SettingsPage.tsx"],
+    touchedOnly: true,
+  });
+
+  assert.deepEqual(plan.commands, [
+    "pnpm bazel:web:unit:non-pretext",
+  ]);
+});
+
+test("agent-default routes pretext measurement source changes to the dedicated unit slice", () => {
+  const plan = buildExecutionPlan({
+    profileId: "agent-default",
+    changedFiles: ["core/apps/web/src/pages/sessionThread/sessionMarkdownInlineMeasurement.ts"],
+    touchedOnly: true,
+  });
+
+  assert.deepEqual(plan.commands, [
+    "pnpm bazel:web:pretext:measurement",
+  ]);
+});
+
+test("agent-default selects narrow pretext E2E Bazel labels for touched parity specs", () => {
+  const plan = buildExecutionPlan({
+    profileId: "agent-default",
+    changedFiles: ["core/apps/web/e2e/workbench-pretext-wrap-rules.spec.ts"],
+    touchedOnly: true,
+  });
+
+  assert.deepEqual(plan.commands, [
+    "node scripts/run_bazel_pilot.cjs test //core/apps/web/e2e:pretext_wrap_rules",
   ]);
 });
 
@@ -120,7 +156,7 @@ test("agent-default routes shared web E2E runtime changes without fanning out to
   });
 
   assert.deepEqual(plan.commands, [
-    "pnpm bazel:web:test",
+    "pnpm bazel:web:unit:non-pretext",
     "pnpm bazel:web:e2e:premerge",
   ]);
 });
@@ -133,7 +169,7 @@ test("agent-default routes shared web E2E server changes through unit and premer
   });
 
   assert.deepEqual(plan.commands, [
-    "pnpm bazel:web:test",
+    "pnpm bazel:web:unit:non-pretext",
     "pnpm bazel:web:e2e:premerge",
   ]);
 });
@@ -146,7 +182,7 @@ test("agent-default routes shared Playwright config changes through unit and pre
   });
 
   assert.deepEqual(plan.commands, [
-    "pnpm bazel:web:test",
+    "pnpm bazel:web:unit:non-pretext",
     "pnpm bazel:web:e2e:premerge",
   ]);
 });
@@ -159,7 +195,7 @@ test("agent-default routes shared Playwright config tests to web unit tests", ()
   });
 
   assert.deepEqual(plan.commands, [
-    "pnpm bazel:web:test",
+    "pnpm bazel:web:unit:non-pretext",
   ]);
 });
 

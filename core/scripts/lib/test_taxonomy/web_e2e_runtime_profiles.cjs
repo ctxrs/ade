@@ -19,6 +19,10 @@ const SUITE_RUNTIME_PROFILES = {
 };
 
 const SPEC_LABELS = {
+  "e2e/workbench-pretext-parity-corpus.spec.ts": "//core/apps/web/e2e:pretext_parity_corpus",
+  "e2e/workbench-pretext-parity-fuzz.spec.ts": "//core/apps/web/e2e:pretext_parity_fuzz",
+  "e2e/workbench-pretext-wrap-rule-fuzz.spec.ts": "//core/apps/web/e2e:pretext_wrap_rule_fuzz",
+  "e2e/workbench-pretext-wrap-rules.spec.ts": "//core/apps/web/e2e:pretext_wrap_rules",
   "e2e/workbench-unarchive-visible.spec.ts": "//core/apps/web/e2e:workbench_unarchive_visible",
 };
 

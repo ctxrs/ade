@@ -816,7 +816,7 @@ describe("WorkspaceActiveSnapshotStore", () => {
     expect(String(context.error ?? "")).toContain("timeout");
   });
 
-  it("does not mutate workspace heads from session_head_seed events", async () => {
+  it("applies session_head_seed events to the session head cache", async () => {
     const { WorkspaceActiveSnapshotStoreImpl } = await import("./workspaceActiveSnapshotStoreCore");
 
     const now = new Date().toISOString();
@@ -874,8 +874,8 @@ describe("WorkspaceActiveSnapshotStore", () => {
       }),
     );
 
-    expect(store.getSessionHeadSnapshot("session-seed")?.last_event_seq).toBe(0);
-    expect(store.getSessionHeadSnapshot("session-seed")?.messages).toHaveLength(0);
+    expect(store.getSessionHeadSnapshot("session-seed")?.last_event_seq).toBe(3);
+    expect(store.getSessionHeadSnapshot("session-seed")?.messages).toHaveLength(1);
     expect(seenSeedEvents).toContain("session_head_seed");
     unsubscribe();
   });

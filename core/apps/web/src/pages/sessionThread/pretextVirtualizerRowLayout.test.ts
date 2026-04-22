@@ -89,6 +89,8 @@ import {
 } from "./sessionMarkdownMeasurement";
 import { SESSION_THREAD_ROW_MEASUREMENT_CONTRACT } from "./sessionThreadMeasurementContract";
 import {
+  allowsChromiumDottedBoundaryHang,
+  INLINE_CODE_DOTTED_CALL_CONTINUATION_MIN_SPARE_PX,
   resolveInlineCodeContinuationFitSlackPx,
   resolveInlineCodeWhitespaceSeparatedFragmentSlackPx,
   resolveInlineCodeWrapChromeWidth,
@@ -417,6 +419,58 @@ describe("getPretextVirtualizerRowLayout", () => {
     expect(shouldBreak).toBe(true);
   });
 
+  it("keeps strict dotted-call continuations off the previous line when only a tiny spare margin remains", () => {
+    const shouldBreak = shouldBreakBeforePartialDottedCallContinuation({
+      fragmentWidth: 70.43994140625,
+      fullWidth: 70.43994140625,
+      guardedRemainingWidth: 73.7275390625,
+      item: {
+        isPathTailFragment: false,
+        isSealedInlineCodeFragment: false,
+        text: "tasksById",
+      },
+      lastFragmentText: "workspaceSnapshot.",
+      maxWidth: 402,
+      minSparePx: INLINE_CODE_DOTTED_CALL_CONTINUATION_MIN_SPARE_PX,
+      sameCodeGroupContinuation: true,
+    });
+
+    expect(shouldBreak).toBe(true);
+  });
+
+  it("does not apply the long dotted-call spare guard to decimals or short dotted names", () => {
+    const nearFit = {
+      fragmentWidth: 23.47998046875,
+      fullWidth: 23.47998046875,
+      guardedRemainingWidth: 26,
+      item: {
+        isPathTailFragment: false,
+        isSealedInlineCodeFragment: false,
+        text: "65s",
+      },
+      maxWidth: 597,
+      minSparePx: INLINE_CODE_DOTTED_CALL_CONTINUATION_MIN_SPARE_PX,
+      sameCodeGroupContinuation: true,
+    };
+
+    expect(
+      shouldBreakBeforePartialDottedCallContinuation({
+        ...nearFit,
+        lastFragmentText: "0.",
+      }),
+    ).toBe(false);
+    expect(
+      shouldBreakBeforePartialDottedCallContinuation({
+        ...nearFit,
+        lastFragmentText: "Promise.",
+        item: {
+          ...nearFit.item,
+          text: "all",
+        },
+      }),
+    ).toBe(false);
+  });
+
   it("treats markdown hard breaks as forced line breaks in wide paragraphs", () => {
     const markdown = [
       "Short version:  ",
@@ -587,6 +641,23 @@ describe("getPretextVirtualizerRowLayout", () => {
         startsAtLineStart: false,
       }),
     ).toBe(7);
+  });
+
+  it("caps chromium dotted boundary hangs to one inline-code chrome width", () => {
+    expect(
+      allowsChromiumDottedBoundaryHang({
+        boundaryRemainingWidth: 17.34,
+        chromeWidth: 14,
+        fullWidth: 31.31,
+      }),
+    ).toBe(true);
+    expect(
+      allowsChromiumDottedBoundaryHang({
+        boundaryRemainingWidth: 17.34,
+        chromeWidth: 14,
+        fullWidth: 32,
+      }),
+    ).toBe(false);
   });
 
   it("keeps a trailing styled list-item segment on the prose line at the WebKit seam", () => {

@@ -47,9 +47,22 @@ const INLINE_CODE_ENGINE_PROSE_START_FOLLOWING_FRAGMENT_SLACK_PX = 16;
 const INLINE_CODE_CONTINUATION_FIT_SLACK_PX = 5;
 const INLINE_CODE_PATH_TAIL_CONTINUATION_FIT_SLACK_PX = 1;
 export const INLINE_CODE_PATH_DELIMITER_CONTINUATION_MIN_SPARE_PX = 1;
+export const INLINE_CODE_DOTTED_CALL_CONTINUATION_MIN_SPARE_PX = 4;
 const INLINE_CODE_COLON_COMMAND_FRAGMENT_SLACK_PX = 1;
 const INLINE_CODE_PROSE_START_SEAM_GUARD_PX = 4;
 const INLINE_CODE_STANDALONE_HYPHEN_FRAGMENT_SLACK_PX = 2;
+const DOTTED_CALL_SPARE_MIN_STEM_GRAPHEMES = 12;
+
+export function allowsChromiumDottedBoundaryHang(params: {
+  boundaryRemainingWidth: number;
+  chromeWidth: number;
+  fullWidth: number;
+}): boolean {
+  // Chromium's cloned inline-code decoration can effectively hang one chip edge
+  // at a dotted path boundary, but not arbitrary text. Keep the allowance capped
+  // to the code chrome so this cannot mask real wrapping pressure.
+  return params.fullWidth <= params.boundaryRemainingWidth + params.chromeWidth + 0.01;
+}
 
 export function shouldApplyInlineCodeSoftBreakTextStartGuard(params: {
   text: string;
@@ -311,8 +324,14 @@ export function shouldBreakBeforePartialDottedCallContinuation(params: {
   item: Pick<InlineSegmentItem, "isPathTailFragment" | "isSealedInlineCodeFragment" | "text">;
   lastFragmentText: string | null;
   maxWidth: number;
+  minSparePx?: number;
   sameCodeGroupContinuation: boolean;
 }): boolean {
+  const dottedStem = (params.lastFragmentText ?? "").replace(/\.$/, "");
+  const shouldReserveDottedSpare =
+    /^[\p{L}_]/u.test(dottedStem) &&
+    Array.from(dottedStem).length >= DOTTED_CALL_SPARE_MIN_STEM_GRAPHEMES;
+  const minSparePx = shouldReserveDottedSpare ? Math.max(0, params.minSparePx ?? 0) : 0;
   return (
     params.sameCodeGroupContinuation &&
     /\.$/.test(params.lastFragmentText ?? "") &&
@@ -321,7 +340,7 @@ export function shouldBreakBeforePartialDottedCallContinuation(params: {
     !params.item.text.includes(".") &&
     !params.item.text.includes("/") &&
     !params.item.text.includes("\\") &&
-    params.fullWidth > params.guardedRemainingWidth + 0.01 &&
+    params.fullWidth + minSparePx > params.guardedRemainingWidth + 0.01 &&
     params.fragmentWidth <= params.maxWidth + 0.01
   );
 }
@@ -881,7 +900,12 @@ export function createInlineCodeFitPlanner(params: {
         item.codeGroupHasDottedPath &&
         !item.text.includes("/") &&
         !item.text.includes("\\") &&
-        (item.text.includes(".") || item.isPathTailFragment);
+        (item.text.includes(".") || item.isPathTailFragment) &&
+        allowsChromiumDottedBoundaryHang({
+          boundaryRemainingWidth,
+          chromeWidth: item.chromeWidth,
+          fullWidth: reservedWidth + item.fullWidth,
+        });
       if (sealedBoundaryOverflow && !canRelaxChromiumDottedPathBoundary) {
         return {
           consumedWidth,
@@ -894,6 +918,15 @@ export function createInlineCodeFitPlanner(params: {
       }
       if (canRelaxChromiumDottedPathBoundary) {
         usedChromiumDottedPathBoundaryContinuation = true;
+      }
+      if (item.isSealedInlineCodeFragment && canRelaxChromiumDottedPathBoundary) {
+        remainingWidth = Math.max(0, remainingWidth - reservedWidth - item.fullWidth);
+        consumedWidth += reservedWidth + item.fullWidth;
+        lineHasContent = true;
+        chargedChrome = true;
+        pendingSpaceWidth = 0;
+        lastFragmentText = item.text;
+        continue;
       }
       if (shouldAcceptChromiumPathTailContinuation) {
         remainingWidth = Math.max(0, remainingWidth - reservedWidth - item.fullWidth);

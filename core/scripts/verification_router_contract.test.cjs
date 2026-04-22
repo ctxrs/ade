@@ -43,7 +43,7 @@ test("verify:broader keeps web escalations changed-aware", () => {
 
   assert.deepEqual(plan.commands, [
     "pnpm source:file-size:enforce",
-    "pnpm bazel:web:test",
+    "pnpm bazel:web:unit:non-pretext",
     "pnpm bazel:web:e2e:premerge",
   ]);
 });
