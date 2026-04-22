@@ -152,6 +152,12 @@ function requireValue(value: FlowValue | null): FlowValue {
   return value;
 }
 
+function pendingPromise<T>(): Promise<T> {
+  return new Promise<T>(() => {
+    // Intentionally left pending so tests can assert optimistic state before completion.
+  });
+}
+
 function Harness({
   prompt = "Write docs",
   onChange,
@@ -288,6 +294,55 @@ afterEach(() => {
 });
 
 describe("useWorkbenchTaskCreation optimistic lifecycle", () => {
+  it("flushes optimistic state before model and execution config refresh finish", async () => {
+    let current: FlowValue | null = null;
+    const onStartError = vi.fn();
+    const ensureProviderAuthSummary = vi.fn(() => pendingPromise<ProviderOptions | undefined>());
+    mockedGetWorkspaceExecutionConfig.mockReturnValue(
+      pendingPromise<Awaited<ReturnType<typeof getWorkspaceExecutionConfig>>>(),
+    );
+
+    render(
+      <Harness
+        ensureProviderAuthSummary={ensureProviderAuthSummary}
+        onChange={(value) => {
+          current = value;
+        }}
+        onStartError={onStartError}
+      />,
+    );
+
+    act(() => {
+      void requireValue(current).startNewTask();
+    });
+
+    await waitFor(() => {
+      expect(requireValue(current).optimisticTasks[0]?.localStatus).toBe("starting");
+    });
+    expect(requireValue(current).activeTaskId).toBe("task-1");
+    expect(requireValue(current).optimisticFocus).toMatchObject({
+      taskId: "task-1",
+      sessionId: "session-1",
+      navToken: 7,
+    });
+    expect(setSessionMock).toHaveBeenCalledWith(expect.objectContaining({
+      id: "session-1",
+      model_id: "gpt-5",
+    }));
+    const optimisticSession = setSessionMock.mock.calls.at(-1)?.[0] as Session | undefined;
+    expect(optimisticSession?.execution_environment).toBeUndefined();
+
+    await waitFor(() => {
+      expect(ensureProviderAuthSummary).toHaveBeenCalledWith("codex", {
+        force: true,
+        trigger: "explicit",
+      });
+      expect(mockedGetWorkspaceExecutionConfig).toHaveBeenCalledWith("workspace-1");
+    });
+    expect(mockedCreateTask).not.toHaveBeenCalled();
+    expect(mockedCreateSession).not.toHaveBeenCalled();
+  });
+
   it("reconciles a successful start to synced optimistic state", async () => {
     let current: FlowValue | null = null;
     mockedCreateTask.mockResolvedValue(makeTask("task-1", "session-1"));
@@ -572,7 +627,7 @@ describe("useWorkbenchTaskCreation optimistic lifecycle", () => {
     expect(onStartError).toHaveBeenLastCalledWith("task create failed");
   });
 
-  it("fails cleanly when the workspace execution config cannot be loaded", async () => {
+  it("marks the optimistic task failed when the workspace execution config cannot be loaded", async () => {
     let current: FlowValue | null = null;
     mockedGetWorkspaceExecutionConfig.mockRejectedValue(new Error("config unavailable"));
     const onStartError = vi.fn();
@@ -590,7 +645,12 @@ describe("useWorkbenchTaskCreation optimistic lifecycle", () => {
       await requireValue(current).startNewTask();
     });
 
-    expect(requireValue(current).optimisticTasks).toEqual([]);
+    await waitFor(() => {
+      expect(requireValue(current).optimisticTasks[0]?.localStatus).toBe("failed");
+    });
+    expect(requireValue(current).optimisticFailureBySessionId).toEqual({
+      "session-1": { prompt: "Write docs", error: "config unavailable" },
+    });
     expect(mockedCreateTask).not.toHaveBeenCalled();
     expect(mockedCreateSession).not.toHaveBeenCalled();
     expect(onStartError).toHaveBeenLastCalledWith("config unavailable");
@@ -707,7 +767,7 @@ describe("useWorkbenchTaskCreation optimistic lifecycle", () => {
     expect(onStartError).toHaveBeenCalledWith(null);
   });
 
-  it("fails before creating optimistic state when provider refresh fails during session creation", async () => {
+  it("marks the optimistic task failed when provider refresh fails during session creation", async () => {
     let current: FlowValue | null = null;
     mockedCreateTask.mockResolvedValue(makeTask("task-1", "session-1"));
     mockedCreateSession.mockResolvedValue(makeSession("session-1", "task-1"));
@@ -742,7 +802,15 @@ describe("useWorkbenchTaskCreation optimistic lifecycle", () => {
       await requireValue(current).startNewTask();
     });
 
-    expect(requireValue(current).optimisticTasks).toEqual([]);
+    await waitFor(() => {
+      expect(requireValue(current).optimisticTasks[0]?.localStatus).toBe("failed");
+    });
+    expect(requireValue(current).optimisticFailureBySessionId).toEqual({
+      "session-1": {
+        prompt: "Write docs",
+        error: "Failed to refresh models for harness “fake”: refresh failed. Refresh provider settings and try again.",
+      },
+    });
     expect(ensureProviderAuthSummary).toHaveBeenCalledWith("fake", {
       force: true,
       trigger: "explicit",
@@ -754,7 +822,7 @@ describe("useWorkbenchTaskCreation optimistic lifecycle", () => {
     );
   });
 
-  it("fails before creating optimistic state when implicit model refresh fails without a seeded model", async () => {
+  it("marks the optimistic task failed when implicit model refresh fails without a seeded model", async () => {
     let current: FlowValue | null = null;
     mockedCreateTask.mockResolvedValue(makeTask("task-1", "session-1"));
     mockedCreateSession.mockResolvedValue(makeSession("session-1", "task-1"));
@@ -789,7 +857,15 @@ describe("useWorkbenchTaskCreation optimistic lifecycle", () => {
       await requireValue(current).startNewTask();
     });
 
-    expect(requireValue(current).optimisticTasks).toEqual([]);
+    await waitFor(() => {
+      expect(requireValue(current).optimisticTasks[0]?.localStatus).toBe("failed");
+    });
+    expect(requireValue(current).optimisticFailureBySessionId).toEqual({
+      "session-1": {
+        prompt: "Write docs",
+        error: "Failed to refresh models for harness “fake”: refresh failed. Refresh provider settings and try again.",
+      },
+    });
     expect(mockedCreateTask).not.toHaveBeenCalled();
     expect(mockedCreateSession).not.toHaveBeenCalled();
     expect(onStartError).toHaveBeenLastCalledWith(
@@ -797,7 +873,7 @@ describe("useWorkbenchTaskCreation optimistic lifecycle", () => {
     );
   });
 
-  it("fails before creating optimistic state when no concrete model can be resolved", async () => {
+  it("marks the optimistic task failed when no concrete model can be resolved", async () => {
     let current: FlowValue | null = null;
     const onStartError = vi.fn();
 
@@ -817,7 +893,15 @@ describe("useWorkbenchTaskCreation optimistic lifecycle", () => {
       await requireValue(current).startNewTask();
     });
 
-    expect(requireValue(current).optimisticTasks).toEqual([]);
+    await waitFor(() => {
+      expect(requireValue(current).optimisticTasks[0]?.localStatus).toBe("failed");
+    });
+    expect(requireValue(current).optimisticFailureBySessionId).toEqual({
+      "session-1": {
+        prompt: "Write docs",
+        error: "Harness “codex” did not provide a fresh model. Refresh provider settings and try again.",
+      },
+    });
     expect(mockedCreateTask).not.toHaveBeenCalled();
     expect(mockedCreateSession).not.toHaveBeenCalled();
     expect(onStartError).toHaveBeenLastCalledWith(
@@ -825,7 +909,7 @@ describe("useWorkbenchTaskCreation optimistic lifecycle", () => {
     );
   });
 
-  it("fails before creating optimistic state when the selected explicit model is invalid after refresh", async () => {
+  it("marks the optimistic task failed when the selected explicit model is invalid after refresh", async () => {
     let current: FlowValue | null = null;
     const onStartError = vi.fn();
 
@@ -861,7 +945,16 @@ describe("useWorkbenchTaskCreation optimistic lifecycle", () => {
       await requireValue(current).startNewTask();
     });
 
-    expect(requireValue(current).optimisticTasks).toEqual([]);
+    await waitFor(() => {
+      expect(requireValue(current).optimisticTasks[0]?.localStatus).toBe("failed");
+    });
+    expect(requireValue(current).optimisticFailureBySessionId).toEqual({
+      "session-1": {
+        prompt: "Write docs",
+        error:
+          "Selected model “stale-model” is no longer available for harness “codex”. Refresh provider settings and choose another model.",
+      },
+    });
     expect(mockedCreateTask).not.toHaveBeenCalled();
     expect(mockedCreateSession).not.toHaveBeenCalled();
     expect(onStartError).toHaveBeenLastCalledWith(

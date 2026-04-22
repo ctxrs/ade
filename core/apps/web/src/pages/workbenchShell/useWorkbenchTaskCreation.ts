@@ -164,33 +164,14 @@ export function useWorkbenchTaskCreation({
       onStartError("Select a harness to start.");
       return;
     }
-    let resolvedModelId: string;
-    try {
-      resolvedModelId = await resolveSessionModelId(
-        primaryTrack.providerId,
-        primaryTrack.modelId,
-        primaryTrack.preferenceExplicit === true,
-      );
-    } catch (e: unknown) {
-      setStartBusy(false);
-      onStartError(errorMessage(e));
-      return;
-    }
-    const parsedResolvedModel = parseModelId(resolvedModelId);
-    const optimisticSessionModelId = parsedResolvedModel.base || resolvedModelId;
-    const optimisticSessionReasoningEffort = parsedResolvedModel.effort;
+    const optimisticDraftModelId = primaryTrack.modelId.trim();
+    const parsedOptimisticDraftModel = parseModelId(optimisticDraftModelId);
+    const optimisticSessionModelId = parsedOptimisticDraftModel.base || optimisticDraftModelId;
+    const optimisticSessionReasoningEffort = parsedOptimisticDraftModel.effort;
     const optimisticTaskId = randomUuid();
     const optimisticSessionId = randomUuid();
     const optimisticMessageId = randomUuid();
     const optimisticTurnId = randomUuid();
-    let executionEnvironment: ExecutionEnvironment;
-    try {
-      executionEnvironment = (await getWorkspaceExecutionConfig(workspaceId)).environment;
-    } catch (e: unknown) {
-      setStartBusy(false);
-      onStartError(errorMessage(e));
-      return;
-    }
 
     const optimisticTask: Task = {
       id: optimisticTaskId,
@@ -215,7 +196,6 @@ export function useWorkbenchTaskCreation({
       title: "Session 1",
       agent_role: "assistant",
       status: "starting",
-      execution_environment: executionEnvironment,
       created_at: nowIso,
       updated_at: nowIso,
     };
@@ -294,6 +274,20 @@ export function useWorkbenchTaskCreation({
     let primaryMessagePosted = false;
 
     try {
+      // Keep all network-bound resolution below the optimistic flush above. The
+      // new-task view must transition before provider probes or workspace config
+      // requests complete.
+      const [resolvedModelId, executionConfig] = await Promise.all([
+        resolveSessionModelId(
+          primaryTrack.providerId,
+          primaryTrack.modelId,
+          primaryTrack.preferenceExplicit === true,
+        ),
+        getWorkspaceExecutionConfig(workspaceId),
+      ]);
+      const parsedResolvedModel = parseModelId(resolvedModelId);
+      const executionEnvironment: ExecutionEnvironment = executionConfig.environment;
+
       const task = await createTask(workspaceId, title, undefined, {
         create_default_session: false,
         id: optimisticTaskId,
