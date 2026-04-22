@@ -55,7 +55,7 @@ args = entry.get("args") or []
 if len(args) < 2:
     print(f"gemini args are incomplete: {args}", file=sys.stderr)
     raise SystemExit(1)
-if "@google/gemini-cli/dist/index.js" not in str(args[0]):
+if "@google/gemini-cli/bundle/gemini.js" not in str(args[0]):
     print(f"gemini entrypoint arg is not managed npm payload: {args[0]}", file=sys.stderr)
     raise SystemExit(1)
 if args[1] != "--experimental-acp":

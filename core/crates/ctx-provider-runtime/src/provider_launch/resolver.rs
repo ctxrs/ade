@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::{fs, path::Path as StdPath};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use ctx_providers::adapters::{
     ProviderAdapter, ProviderHealth, ProviderProcessInfo, ProviderRestartMode,
     ProviderSessionSweepConfig, ProviderSessionSweepStats, ProviderStatus, RunHandle, TurnInput,
@@ -424,6 +424,7 @@ pub fn acp_bridge_adapter(
 #[derive(Debug, Clone)]
 pub struct ExplicitGeminiCliPaths {
     pub cli_entry_path: PathBuf,
+    pub core_entry_path: PathBuf,
 }
 
 fn file_stem_matches(path: &StdPath, name: &str) -> bool {
@@ -494,6 +495,30 @@ pub fn resolve_explicit_gemini_cli_paths(
             cli_entry_path.display()
         )
     })?;
+    let bundle_dir = cli_root.join("bundle");
+    let mut core_entries = fs::read_dir(&bundle_dir)
+        .with_context(|| format!("reading Gemini ACP bundle dir {}", bundle_dir.display()))?
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.extension().and_then(|s| s.to_str()) == Some("js")
+                && path
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .map(|s| s.starts_with("core-") || s.eq_ignore_ascii_case("core.js"))
+                    .unwrap_or(false)
+        })
+        .collect::<Vec<_>>();
+    anyhow::ensure!(
+        !core_entries.is_empty(),
+        "Gemini ACP bundled core entrypoint is missing under {}",
+        bundle_dir.display()
+    );
+    core_entries.sort();
+    let core_entry_path = core_entries
+        .into_iter()
+        .next()
+        .expect("non-empty Gemini bundled core entries");
     anyhow::ensure!(
         cli_root.join("package.json").exists(),
         "Gemini ACP entrypoint must live under a node_modules/@google/gemini-cli install tree: {}",
@@ -502,15 +527,71 @@ pub fn resolve_explicit_gemini_cli_paths(
 
     Ok(ExplicitGeminiCliPaths {
         cli_entry_path,
+        core_entry_path,
     })
 }
 
 fn maybe_wrap_gemini_acp_command(
     data_root: &Path,
-    cmd: installer::AgentServerCommand,
+    mut cmd: installer::AgentServerCommand,
 ) -> Result<installer::AgentServerCommand> {
-    let _ = data_root;
-    let _ = resolve_explicit_gemini_cli_paths(&cmd.command, &cmd.args)?;
+    let paths = resolve_explicit_gemini_cli_paths(&cmd.command, &cmd.args)?;
+
+    let wrapper_path = data_root
+        .join("providers")
+        .join("agent-servers")
+        .join("gemini-acp-wrapper.mjs");
+    if let Some(parent) = wrapper_path.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("creating Gemini ACP wrapper dir {}", parent.display()))?;
+    }
+
+    let wrapper_contents = format!(
+        "import {{ coreEvents, CoreEvent, writeToStdout, writeToStderr }} from 'file://{}';\n\
+coreEvents.on(CoreEvent.Output, (payload) => {{\n\
+  if (payload.isStderr) {{\n\
+    writeToStderr(payload.chunk, payload.encoding);\n\
+  }} else {{\n\
+    writeToStdout(payload.chunk, payload.encoding);\n\
+  }}\n\
+}});\n\
+coreEvents.on(CoreEvent.ConsoleLog, (payload) => {{\n\
+  writeToStderr(String(payload?.content ?? '') + '\\n');\n\
+}});\n\
+const consentRaw = process.env.CTX_GEMINI_AUTO_OAUTH_CONSENT ?? '';\n\
+const consentDisabled = consentRaw === '0' || consentRaw.toLowerCase() === 'false';\n\
+if (!consentDisabled) {{\n\
+  coreEvents.on(CoreEvent.ConsentRequest, (payload) => {{\n\
+    if (typeof payload?.onConfirm === 'function') {{\n\
+      payload.onConfirm(true);\n\
+    }}\n\
+  }});\n\
+}}\n\
+process.env.GEMINI_CLI_NO_RELAUNCH ??= 'true';\n\
+await import('file://{}');\n",
+        paths.core_entry_path.to_string_lossy(),
+        paths.cli_entry_path.to_string_lossy(),
+    );
+
+    let write_wrapper = match fs::read_to_string(&wrapper_path) {
+        Ok(existing) => existing != wrapper_contents,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => true,
+        Err(err) => {
+            return Err(err)
+                .with_context(|| format!("reading Gemini ACP wrapper {}", wrapper_path.display()));
+        }
+    };
+    if write_wrapper {
+        fs::write(&wrapper_path, wrapper_contents)
+            .with_context(|| format!("writing Gemini ACP wrapper {}", wrapper_path.display()))?;
+    }
+
+    let first = cmd.args.first_mut().ok_or_else(|| {
+        anyhow::anyhow!(
+            "Gemini ACP runtime must pass an explicit absolute @google/gemini-cli/bundle/gemini.js entrypoint as the first argument"
+        )
+    })?;
+    *first = wrapper_path.to_string_lossy().to_string();
     Ok(cmd)
 }
 

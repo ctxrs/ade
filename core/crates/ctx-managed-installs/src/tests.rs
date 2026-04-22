@@ -226,6 +226,100 @@ fn managed_provider_runtime_command_rejects_path_style_gemini_runtime() {
 }
 
 #[test]
+fn managed_provider_runtime_command_wraps_gemini_runtime_with_wrapper() {
+    let data_root = tempfile::tempdir().expect("tempdir");
+    let node_bin = data_root
+        .path()
+        .join("bundle")
+        .join("runtimes")
+        .join("node")
+        .join("bin")
+        .join("node");
+    let cli_entry = data_root
+        .path()
+        .join("bundle")
+        .join("providers")
+        .join("gemini")
+        .join("node_modules")
+        .join("@google")
+        .join("gemini-cli")
+        .join("bundle")
+        .join("gemini.js");
+    let core_entry = cli_entry
+        .parent()
+        .expect("bundle dir")
+        .join("core-ctx-test.js");
+    let package_json = cli_entry
+        .parent()
+        .and_then(|parent| parent.parent())
+        .expect("gemini cli root")
+        .join("package.json");
+    std::fs::create_dir_all(node_bin.parent().expect("node parent")).expect("mkdir node");
+    std::fs::create_dir_all(cli_entry.parent().expect("cli parent")).expect("mkdir gemini");
+    std::fs::write(&node_bin, b"node").expect("write node");
+    std::fs::write(&cli_entry, b"gemini").expect("write cli");
+    std::fs::write(
+        &core_entry,
+        "export const coreEvents = {}; export const CoreEvent = {}; export const writeToStdout = () => {}; export const writeToStderr = () => {};",
+    )
+    .expect("write core");
+    std::fs::write(
+        &package_json,
+        r#"{"name":"@google/gemini-cli","version":"0.38.2"}"#,
+    )
+    .expect("write package");
+    let managed = AgentServerCommand {
+        command: node_bin.to_string_lossy().to_string(),
+        args: vec![
+            cli_entry.to_string_lossy().to_string(),
+            "--experimental-acp".to_string(),
+        ],
+        dependencies: Vec::new(),
+        managed: None,
+    };
+    let bridge = AgentServerCommand {
+        command: "/tmp/acp-crp-bridge".to_string(),
+        args: vec!["--stdio".to_string()],
+        dependencies: Vec::new(),
+        managed: None,
+    };
+
+    let runtime =
+        managed_provider_runtime_command(data_root.path(), "gemini", managed, Some(&bridge))
+            .expect("wrapped runtime");
+
+    let acp_command_index = runtime
+        .args
+        .iter()
+        .position(|arg| arg == "--acp-command")
+        .expect("missing --acp-command");
+    let acp_command = runtime
+        .args
+        .get(acp_command_index + 1)
+        .expect("missing wrapped acp command");
+    let wrapper_path = data_root
+        .path()
+        .join("providers")
+        .join("agent-servers")
+        .join("gemini-acp-wrapper.mjs");
+
+    assert_eq!(runtime.command, "/tmp/acp-crp-bridge");
+    assert!(
+        acp_command.contains(&node_bin.to_string_lossy().to_string()),
+        "bridge should launch Gemini through the explicit node runtime"
+    );
+    assert!(
+        acp_command.contains(&wrapper_path.to_string_lossy().to_string()),
+        "bridge should launch the generated Gemini ACP wrapper"
+    );
+    let wrapper = std::fs::read_to_string(&wrapper_path).expect("read Gemini wrapper");
+    assert!(wrapper.contains(core_entry.to_string_lossy().as_ref()));
+    assert!(wrapper.contains(cli_entry.to_string_lossy().as_ref()));
+    assert!(wrapper.contains("CoreEvent.ConsentRequest"));
+    assert!(wrapper.contains("GEMINI_CLI_NO_RELAUNCH"));
+}
+
+#[test]
 fn managed_provider_runtime_command_wraps_goose_binary_with_acp_and_developer_builtin() {
     let data_root = tempfile::tempdir().expect("tempdir");
     let goose_bin = data_root.path().join("bin").join("goose");
