@@ -8,6 +8,7 @@ CODEX_CRP_RUSTC_ENV = {
 }
 
 CODEX_CRP_DEPS = [
+    "//core/crates/ctx-crp-protocol:lib",
     "@crates//:anyhow",
     "@crates//:base64",
     "@crates//:clap",
