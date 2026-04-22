@@ -1,4 +1,3 @@
-use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -15,15 +14,16 @@ use crate::api::sessions::{resolve_diff_base_with_meta, SessionDiffQuery};
 use crate::daemon::AppState;
 use crate::settings::ExecutionMode;
 use crate::worktree_data_plane::resolve_worktree_data_plane;
+mod diff_paths;
 mod model;
 mod sandbox;
+#[cfg(test)]
+mod tests;
 #[path = "git_status_watch.rs"]
 mod watch;
+use diff_paths::{load_diff_file_count, load_diff_touched_entries};
 pub use model::{GitStatusEntry, GitStatusSnapshot};
-use sandbox::{
-    container_git_diff_name_status, container_git_list_untracked, container_git_rev_parse,
-    container_git_status_structured,
-};
+use sandbox::{container_git_rev_parse, container_git_status_structured};
 pub(crate) use sandbox::{worktree_merge_base, worktree_rev_parse_head};
 
 const GIT_STATUS_DEBOUNCE_MS: u64 = 500;
@@ -142,129 +142,6 @@ fn snapshot_for_durable_cache(snapshot: &WorktreeVcsSnapshot) -> WorktreeVcsSnap
     durable.touched_files_state = WorktreeVcsTouchedFilesState::NotLoaded;
     durable.git_status.entries.clear();
     durable
-}
-
-async fn load_diff_touched_entries(
-    state: &Arc<AppState>,
-    worktree: &Worktree,
-    base_commit_sha: &str,
-) -> Result<Vec<WorktreeVcsTouchedFile>> {
-    let paths = load_diff_path_states(state, worktree, base_commit_sha).await?;
-    let mut items = Vec::new();
-    for (path, orig_path, status) in paths {
-        items.push(WorktreeVcsTouchedFile {
-            path,
-            orig_path,
-            index_status: Some(status),
-            worktree_status: None,
-        });
-    }
-    Ok(items)
-}
-
-async fn load_diff_file_count(
-    state: &Arc<AppState>,
-    worktree: &Worktree,
-    base_commit_sha: &str,
-) -> Result<i64> {
-    let (entries, untracked) = load_diff_path_inputs(state, worktree, base_commit_sha).await?;
-    count_diff_paths(entries, untracked)
-}
-
-fn count_diff_paths(
-    entries: Vec<(String, String, Option<String>)>,
-    untracked: Vec<String>,
-) -> Result<i64> {
-    let mut seen = HashSet::new();
-    for (status, path, _) in entries {
-        let path = path.trim();
-        if path.is_empty() {
-            continue;
-        }
-        if !seen.insert(path.to_string()) {
-            continue;
-        }
-        if status.chars().next().is_none() {
-            anyhow::bail!("vcs diff returned an empty status for {path}");
-        }
-    }
-    for path in untracked {
-        let path = path.trim();
-        if !path.is_empty() {
-            seen.insert(path.to_string());
-        }
-    }
-    Ok(seen.len() as i64)
-}
-
-fn build_diff_path_states(
-    entries: Vec<(String, String, Option<String>)>,
-    untracked: Vec<String>,
-) -> Result<Vec<(String, Option<String>, String)>> {
-    let mut seen = HashSet::new();
-    let mut out = Vec::new();
-    for (status, path, orig_path) in entries {
-        let path = path.trim().to_string();
-        if path.is_empty() {
-            continue;
-        }
-        if !seen.insert(path.clone()) {
-            continue;
-        }
-        let Some(status_kind) = status.chars().next() else {
-            anyhow::bail!("vcs diff returned an empty status for {path}");
-        };
-        out.push((path, orig_path, status_kind.to_string()));
-    }
-    for path in untracked {
-        let path = path.trim().to_string();
-        if path.is_empty() {
-            continue;
-        }
-        if !seen.insert(path.clone()) {
-            continue;
-        }
-        out.push((path, None, "?".to_string()));
-    }
-    out.sort_by(|left, right| left.0.cmp(&right.0));
-    Ok(out)
-}
-
-async fn load_diff_path_inputs(
-    state: &Arc<AppState>,
-    worktree: &Worktree,
-    base_commit_sha: &str,
-) -> Result<(Vec<(String, String, Option<String>)>, Vec<String>)> {
-    let data_plane = resolve_worktree_data_plane(state, worktree).await?;
-    let root = data_plane.live_worktree_root.as_path();
-    let entries: Vec<(String, String, Option<String>)> =
-        if matches!(data_plane.execution_mode, ExecutionMode::Sandbox) {
-            container_git_diff_name_status(state, worktree, base_commit_sha).await?
-        } else {
-            let driver = vcs_driver_for_worktree(worktree);
-            driver
-                .diff_name_status(root, base_commit_sha)
-                .await?
-                .into_iter()
-                .map(|entry| (entry.status, entry.path, entry.orig_path))
-                .collect()
-        };
-    let untracked = if matches!(data_plane.execution_mode, ExecutionMode::Sandbox) {
-        container_git_list_untracked(state, worktree).await?
-    } else {
-        let driver = vcs_driver_for_worktree(worktree);
-        driver.list_untracked(root).await?
-    };
-    Ok((entries, untracked))
-}
-
-async fn load_diff_path_states(
-    state: &Arc<AppState>,
-    worktree: &Worktree,
-    base_commit_sha: &str,
-) -> Result<Vec<(String, Option<String>, String)>> {
-    let (entries, untracked) = load_diff_path_inputs(state, worktree, base_commit_sha).await?;
-    build_diff_path_states(entries, untracked)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1010,35 +887,4 @@ pub async fn run_git_status_watcher(state: Arc<AppState>, worktree: Worktree) ->
         return Ok(());
     }
     watch::run_git_status_watcher(state, worktree).await
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{build_diff_path_states, count_diff_paths};
-    use anyhow::Result;
-
-    #[test]
-    fn build_diff_path_states_deduplicates_untracked_paths_already_in_diff() -> Result<()> {
-        let out = build_diff_path_states(
-            vec![("D".to_string(), "src/example.rs".to_string(), None)],
-            vec!["src/example.rs".to_string()],
-        )?;
-
-        assert_eq!(
-            out,
-            vec![("src/example.rs".to_string(), None, "D".to_string())]
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn count_diff_paths_deduplicates_untracked_paths_already_in_diff() -> Result<()> {
-        let count = count_diff_paths(
-            vec![("D".to_string(), "src/example.rs".to_string(), None)],
-            vec!["src/example.rs".to_string()],
-        )?;
-
-        assert_eq!(count, 1);
-        Ok(())
-    }
 }
