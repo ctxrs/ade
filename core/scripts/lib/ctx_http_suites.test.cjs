@@ -17,6 +17,7 @@ const {
 } = require("./ctx_http_suites.cjs");
 
 const coreRoot = path.resolve(__dirname, "../..");
+const canonicalSuiteNames = CTX_HTTP_SUITES.map((suite) => suite.name);
 
 test("ctx-http suite assignments cover every integration test exactly once", () => {
   const validation = validateCtxHttpSuites(coreRoot);
@@ -32,20 +33,15 @@ test("ctx-http suite assignments cover every integration test exactly once", () 
 test("ctx-http suite names include the meta all task and stable suite task names", () => {
   const names = getCtxHttpSuiteNames({ includeAll: true });
 
-  assert.deepEqual(names, [
-    "base",
-    "workspace-stream",
-    "provider-auth",
-    "provider-runtime",
-    "repo-vcs",
-    "lsp",
-    "turns-terminal",
-    "attachments-routing",
-    "subagents-control",
-    "updates-release",
-    "sandbox-cloud",
-    "all",
-  ]);
+  assert.deepEqual(names, [...canonicalSuiteNames, "all"]);
+  assert.equal(names.includes("provider-runtime-live"), true);
+  assert.equal(names.includes("provider-runtime-simulated"), true);
+  assert.equal(names.includes("subagents-local-runtime"), true);
+  assert.equal(names.includes("sandbox-runtime-container-e2e"), true);
+  assert.equal(names.includes("provider-runtime"), false);
+  assert.equal(names.includes("sandbox-cloud"), false);
+  assert.throws(() => getCtxHttpSuiteTargets("provider-runtime"), /unknown ctx-http suite/u);
+  assert.throws(() => buildCtxHttpSuiteCommands("sandbox-cloud"), /unknown ctx-http suite/u);
   assert.equal(getCtxHttpSuiteTaskName("workspace-stream"), "rust:ctx-http:test:workspace-stream");
 });
 
@@ -66,19 +62,11 @@ test("ctx-http suite command builder expands base and meta suites predictably", 
     ],
     command: "node",
   }]);
-  assert.deepEqual(getCtxHttpSuiteTargets("all"), [
-    `${CTX_HTTP_BAZEL_PACKAGE}:base`,
-    `${CTX_HTTP_BAZEL_PACKAGE}:workspace-stream`,
-    `${CTX_HTTP_BAZEL_PACKAGE}:provider-auth`,
-    `${CTX_HTTP_BAZEL_PACKAGE}:provider-runtime`,
-    `${CTX_HTTP_BAZEL_PACKAGE}:repo-vcs`,
-    `${CTX_HTTP_BAZEL_PACKAGE}:lsp`,
-    `${CTX_HTTP_BAZEL_PACKAGE}:turns-terminal`,
-    `${CTX_HTTP_BAZEL_PACKAGE}:attachments-routing`,
-    `${CTX_HTTP_BAZEL_PACKAGE}:subagents-control`,
-    `${CTX_HTTP_BAZEL_PACKAGE}:updates-release`,
-    `${CTX_HTTP_BAZEL_PACKAGE}:sandbox-cloud`,
-  ]);
+  assert.deepEqual(
+    getCtxHttpSuiteTargets("all"),
+    canonicalSuiteNames.map((suiteName) => `${CTX_HTTP_BAZEL_PACKAGE}:${suiteName}`),
+  );
+  assert.equal(new Set(getCtxHttpSuiteTargets("all")).size, canonicalSuiteNames.length);
   assert.deepEqual(CTX_HTTP_MANUAL_ONLY_BAZEL_TARGETS, [
     `${CTX_HTTP_BAZEL_PACKAGE}:manual-only`,
   ]);

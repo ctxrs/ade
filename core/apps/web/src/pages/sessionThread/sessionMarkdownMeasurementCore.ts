@@ -18,6 +18,7 @@ import {
   normalizeHeight,
   pruneCache,
   segmentGraphemes,
+  segmentImplicitWordBreaks,
   type TextWhiteSpace,
 } from "./sessionTextMeasurement";
 import { SESSION_MARKDOWN_MEASUREMENT_CONTRACT } from "./sessionThreadMeasurementContract";
@@ -51,6 +52,7 @@ export type SessionMarkdownDebugWindow = SessionMarkdownInlineCodeDebugWindow & 
   __ctxPlainTextDebug?: {
     lineCount: number;
     lines: string[];
+    lineWidths: number[];
     text: string;
     width: number;
   };
@@ -110,6 +112,7 @@ export {
   normalizeHeight,
   pruneCache,
   segmentGraphemes,
+  segmentImplicitWordBreaks,
 };
 export type { TextWhiteSpace };
 

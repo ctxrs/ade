@@ -2,10 +2,7 @@ import React from "react";
 import ReactDOMClient from "react-dom/client";
 import { flushSync } from "react-dom";
 import { MemoMarkdown } from "../sessionView";
-import type {
-  SessionMarkdownDebugWindow,
-  SessionMarkdownInlineCodeDebugPayload,
-} from "../sessionThread/sessionMarkdownInlineMeasurementDebug";
+import type { SessionMarkdownInlineCodeDebugPayload } from "../sessionThread/sessionMarkdownInlineMeasurementDebug";
 import {
   clearSessionMarkdownMeasurementCaches,
   measureSessionMarkdownDocument,
@@ -26,16 +23,32 @@ export type WorkbenchMarkdownParityMeasurement = {
 
 export type WorkbenchMarkdownPlannerDebug = SessionMarkdownInlineCodeDebugPayload;
 
+type WorkbenchPlainTextDebug = {
+  lineCount: number;
+  lines: string[];
+  lineWidths: number[];
+  text: string;
+  width: number;
+};
+
 export type WorkbenchMarkdownParityDebugMeasurement = WorkbenchMarkdownParityMeasurement & {
   debug: WorkbenchMarkdownPlannerDebug | null;
+  plainTextDebug: WorkbenchPlainTextDebug | null;
   actualTextRects: Array<{
     text: string;
     rects: Array<{ x: number; y: number; width: number; height: number }>;
   }>;
 };
 
-type WorkbenchMarkdownDebugWindow = SessionMarkdownDebugWindow & {
+type WorkbenchMarkdownDebugWindow = Window & {
+  __ctxForceInlineCodeDebug?: boolean;
+  __ctxInlineCodeDebugTarget?: string;
+  __ctxInlineCodeDebugWidth?: number;
   __ctxInlineCodeDebug?: WorkbenchMarkdownPlannerDebug;
+  __ctxForcePlainTextDebug?: boolean;
+  __ctxPlainTextDebugTarget?: string;
+  __ctxPlainTextDebugWidth?: number;
+  __ctxPlainTextDebug?: WorkbenchPlainTextDebug;
 };
 
 let markdownScrollProbeRoot: ReactDOMClient.Root | null = null;
@@ -119,6 +132,10 @@ export async function measureWorkbenchMarkdownParityDebug(
   debugWindow.__ctxInlineCodeDebugTarget = target;
   debugWindow.__ctxInlineCodeDebugWidth = width;
   debugWindow.__ctxInlineCodeDebug = undefined;
+  debugWindow.__ctxForcePlainTextDebug = true;
+  debugWindow.__ctxPlainTextDebugTarget = "*";
+  debugWindow.__ctxPlainTextDebugWidth = width;
+  debugWindow.__ctxPlainTextDebug = undefined;
 
   try {
     const planned = measureSessionMarkdownDocument(markdown, width);
@@ -143,6 +160,7 @@ export async function measureWorkbenchMarkdownParityDebug(
       actual,
       delta: planned - actual,
       debug: debugWindow.__ctxInlineCodeDebug ?? null,
+      plainTextDebug: debugWindow.__ctxPlainTextDebug ?? null,
       actualTextRects,
     };
   } finally {
@@ -150,6 +168,10 @@ export async function measureWorkbenchMarkdownParityDebug(
     debugWindow.__ctxInlineCodeDebugTarget = undefined;
     debugWindow.__ctxInlineCodeDebugWidth = undefined;
     debugWindow.__ctxInlineCodeDebug = undefined;
+    debugWindow.__ctxForcePlainTextDebug = false;
+    debugWindow.__ctxPlainTextDebugTarget = undefined;
+    debugWindow.__ctxPlainTextDebugWidth = undefined;
+    debugWindow.__ctxPlainTextDebug = undefined;
     clearSessionMarkdownMeasurementCaches();
   }
 }

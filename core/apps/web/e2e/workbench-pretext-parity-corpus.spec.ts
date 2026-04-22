@@ -215,6 +215,47 @@ const SOFT_BREAK_MARKDOWN_REGRESSIONS: SoftBreakMarkdownSample[] = [
       "A second boundary sample keeps `inline-token 9` beside ordinary prose in a containerized/sandboxed path. The browser should keep that slash-delimited token whole while the surrounding sentence wraps naturally.",
   },
   {
+    name: "soft-break-styled-slash-mixed-paragraph",
+    width: 472,
+    markdown: [
+      "Context render للالتفاف around the width threshold ทดสอบการตัดคำ pretext context 📏 測試 佈局 ทดสอบการตัดคำ browser:",
+      "Pretext header ភាសាខ្មែរគ្មានដកឃ្លា probe stream [deterministic marker](https://example.com/virtualizer/webkit/inline-code/webkit?ref=349) **command marker deterministic** VPC/security group delta padding prix : browser summary.",
+    ].join("\n"),
+  },
+  {
+    name: "soft-break-link-slash-paragraph",
+    width: 788,
+    markdown: [
+      "Shell virtualizer buffer C⁠D context marker browser context A B command containerd/BuildKit/nerdctl 📏 測試 佈局 layout A B summary command thread delta​epsilon​zeta message thread:",
+      "Parity turn message ⚙️ 你好 世界 日本語行分割 段落 換行 בדיקת עיטוף near the seam [header token session](https://example.com/chromium/assistant/chromium?ref=447) browser padding stream.",
+    ].join("\n"),
+  },
+  {
+    name: "soft-break-table-inline-code-slash-tail",
+    width: 472,
+    markdown: [
+      "| kind | content | note |",
+      "| --- | --- | --- |",
+      "| command | `sessionThreadDomMeasurement.tsx/table/blockquote/sessionThread/core/inline-code`: containerd/BuildKit/nerdctl | short |",
+    ].join("\n"),
+  },
+  {
+    name: "soft-break-table-inline-code-punctuation-tail",
+    width: 472,
+    markdown: [
+      "| Kind | Token | Note |",
+      "| --- | --- | --- |",
+      "| deterministic | `pnpm -C core/apps/web test:e2e:pretext:parity:webkit`: thread delta message | short |",
+    ].join("\n"),
+  },
+  {
+    name: "soft-break-list-slash-token-tail",
+    width: 788,
+    browsers: ["webkit"],
+    markdown:
+      "- **Sample boundaries**: This fixture includes Ubuntu/Debian, a fast `gp3` or local NVMe marker, containerd/BuildKit/nerdctl text, strict VPC/security group wording, and one host/workspace isolation model as needed.",
+  },
+  {
     name: "soft-break-styled-seam-collapse-space",
     width: 788,
     markdown: [
@@ -272,6 +313,38 @@ const SOFT_BREAK_MARKDOWN_REGRESSIONS: SoftBreakMarkdownSample[] = [
       "",
       "This gives the layout test a repeatable mixed-inline sample without recording an operational conversation.",
     ].join("\n"),
+  },
+  {
+    name: "unicode-soft-hyphen-pre-threshold",
+    width: 220,
+    markdown:
+      "Manual hyphenation sample: Deoxy\u00adribo\u00adnucleic acid remains readable near the wrap threshold when the soft hyphen becomes active.",
+  },
+  {
+    name: "unicode-soft-hyphen-threshold",
+    width: 222,
+    markdown:
+      "Manual hyphenation sample: Deoxy\u00adribo\u00adnucleic acid remains readable near the wrap threshold when the soft hyphen becomes active.",
+  },
+  {
+    name: "unicode-arabic-styled-seam",
+    width: 144,
+    markdown: "هذا **اختبار** للالتفاف around the width threshold",
+  },
+  {
+    name: "unicode-rtl-inline-code",
+    width: 258,
+    markdown: "RTL sample: בדיקת עיטוף `observer.disconnect()` ליד טקסט עברי בקצה הרוחב.",
+  },
+  {
+    name: "unicode-zero-width-space",
+    width: 180,
+    markdown: "ZWSP sample: alpha\u200bbeta\u200bgamma should break only at the discretionary boundaries.",
+  },
+  {
+    name: "unicode-thai-implicit-word-break",
+    width: 144,
+    markdown: "กรุงเทพคือสวยงามและต้องทดสอบการตัดคำในย่อหน้าที่ไม่มีเว้นวรรคมากนัก",
   },
   {
     name: "list-inline-code-prose-tail",

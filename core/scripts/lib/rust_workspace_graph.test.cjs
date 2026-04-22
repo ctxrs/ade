@@ -114,31 +114,49 @@ test("generated turbo tasks include extracted dependency crates for affected ctx
   const graph = buildWorkspaceGraph(coreRoot);
   const tasks = buildGeneratedTurboTasks(graph);
 
-  const providerRuntimeTask = tasks["rust:ctx-http:test:provider-runtime"];
+  const providerRuntimeSimulatedTask = tasks["rust:ctx-http:test:provider-runtime-simulated"];
   assert.equal(
-    providerRuntimeTask.inputs.includes("crates/ctx-execution-runtime/**"),
+    providerRuntimeSimulatedTask.inputs.includes("crates/ctx-execution-runtime/**"),
     true,
   );
   assert.equal(
-    providerRuntimeTask.inputs.includes("crates/ctx-workspace-runtime/**"),
+    providerRuntimeSimulatedTask.inputs.includes("crates/ctx-workspace-runtime/**"),
+    true,
+  );
+  const providerRuntimeLiveTask = tasks["rust:ctx-http:test:provider-runtime-live"];
+  assert.equal(
+    providerRuntimeLiveTask.inputs.includes("crates/ctx-execution-runtime/**"),
+    true,
+  );
+  assert.equal(
+    providerRuntimeLiveTask.inputs.includes("crates/ctx-workspace-runtime/**"),
     true,
   );
 
-  const sandboxCloudTask = tasks["rust:ctx-http:test:sandbox-cloud"];
+  const sandboxRuntimeSimulatedTask = tasks["rust:ctx-http:test:sandbox-runtime-simulated"];
   assert.equal(
-    sandboxCloudTask.inputs.includes("crates/ctx-execution-runtime/**"),
+    sandboxRuntimeSimulatedTask.inputs.includes("crates/ctx-execution-runtime/**"),
     true,
   );
   assert.equal(
-    sandboxCloudTask.inputs.includes("crates/ctx-workspace-runtime/**"),
+    sandboxRuntimeSimulatedTask.inputs.includes("crates/ctx-workspace-runtime/**"),
+    true,
+  );
+  const sandboxRuntimeContainerTask = tasks["rust:ctx-http:test:sandbox-runtime-container-e2e"];
+  assert.equal(
+    sandboxRuntimeContainerTask.inputs.includes("crates/ctx-execution-runtime/**"),
     true,
   );
   assert.equal(
-    sandboxCloudTask.inputs.includes("crates/ctx-http/tests/cloud_gateway_azure_e2e.rs"),
+    sandboxRuntimeContainerTask.inputs.includes("crates/ctx-workspace-runtime/**"),
+    true,
+  );
+  assert.equal(
+    sandboxRuntimeContainerTask.inputs.includes("crates/ctx-http/tests/cloud_gateway_azure_e2e.rs"),
     false,
   );
   assert.equal(
-    sandboxCloudTask.inputs.includes("crates/ctx-http/tests/cloud_gateway_gcp_e2e.rs"),
+    sandboxRuntimeContainerTask.inputs.includes("crates/ctx-http/tests/cloud_gateway_gcp_e2e.rs"),
     false,
   );
 
@@ -157,7 +175,10 @@ test("ctx-http test expansion returns explicit suite task names", () => {
 
   assert.equal(taskNames.includes(getCtxHttpSuiteTaskName("base")), true);
   assert.equal(taskNames.includes(getCtxHttpSuiteTaskName("workspace-stream")), true);
-  assert.equal(taskNames.includes(getCtxHttpSuiteTaskName("sandbox-cloud")), true);
+  assert.equal(taskNames.includes(getCtxHttpSuiteTaskName("provider-runtime-simulated")), true);
+  assert.equal(taskNames.includes(getCtxHttpSuiteTaskName("provider-runtime-live")), true);
+  assert.equal(taskNames.includes(getCtxHttpSuiteTaskName("sandbox-runtime-simulated")), true);
+  assert.equal(taskNames.includes(getCtxHttpSuiteTaskName("sandbox-runtime-container-e2e")), true);
 });
 
 test("manual-only Rust crates stay out of generated CI task surfaces", () => {

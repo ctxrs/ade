@@ -1,5 +1,6 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
+const { getCtxHttpSuiteTargets } = require("./ctx_http_suites.cjs");
 
 const {
   getBazelBuildTargetsForCrates,
@@ -7,6 +8,10 @@ const {
   getBazelTestTargetsForCrates,
   partitionBazelTargetsForLinuxRbe,
 } = require("./bazel_rust_targets.cjs");
+
+function sortUnique(values) {
+  return [...new Set(values)].sort();
+}
 
 test("Bazel-covered crates stay on the intended explicit Rust slice", () => {
   assert.deepEqual(getBazelCoveredCrates(), [
@@ -92,7 +97,7 @@ test("Bazel test target mapping expands per-crate tests deterministically", () =
       "ctx-workspace-config",
       "ctx-core",
     ]),
-    [
+    sortUnique([
       "//core/crates/codex-crp:unit_tests",
       "//core/crates/ctx-avf-linux-guest-agent:unit_tests",
       "//core/crates/ctx-avf-linux-runtime:helper_path_test_support",
@@ -106,17 +111,7 @@ test("Bazel test target mapping expands per-crate tests deterministically", () =
       "//core/crates/ctx-events:unit_tests",
       "//core/crates/ctx-execution-runtime:unit_tests",
       "//core/crates/ctx-fs:unit_tests",
-      "//core/crates/ctx-http:attachments-routing",
-      "//core/crates/ctx-http:base",
-      "//core/crates/ctx-http:lsp",
-      "//core/crates/ctx-http:provider-auth",
-      "//core/crates/ctx-http:provider-runtime",
-      "//core/crates/ctx-http:repo-vcs",
-      "//core/crates/ctx-http:sandbox-cloud",
-      "//core/crates/ctx-http:subagents-control",
-      "//core/crates/ctx-http:turns-terminal",
-      "//core/crates/ctx-http:updates-release",
-      "//core/crates/ctx-http:workspace-stream",
+      ...getCtxHttpSuiteTargets("all"),
       "//core/crates/ctx-lsp:lsp_manager_smoke",
       "//core/crates/ctx-managed-installs:unit_tests",
       "//core/crates/ctx-mcp:lsp_tool_stdio",
@@ -135,7 +130,7 @@ test("Bazel test target mapping expands per-crate tests deterministically", () =
       "//core/crates/ctx-workspace-config:unit_tests",
       "//core/crates/ctx-workspace-services:unit_tests",
       "//core/tools/load-test:unit_tests",
-    ],
+    ]),
   );
 });
 

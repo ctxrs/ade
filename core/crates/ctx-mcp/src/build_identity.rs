@@ -13,14 +13,14 @@ fn compile_time_version() -> String {
 }
 
 fn configured_identity_path() -> Result<Option<PathBuf>> {
-    if let Some(raw) = std::env::var(BUILD_IDENTITY_PATH_ENV).ok() {
+    if let Ok(raw) = std::env::var(BUILD_IDENTITY_PATH_ENV) {
         let trimmed = raw.trim();
         if trimmed.is_empty() {
             anyhow::bail!("{BUILD_IDENTITY_PATH_ENV} must not be empty");
         }
         return Ok(Some(PathBuf::from(trimmed)));
     }
-    let Some(raw) = std::env::var(BUNDLE_DIR_ENV).ok() else {
+    let Ok(raw) = std::env::var(BUNDLE_DIR_ENV) else {
         return Ok(None);
     };
     let trimmed = raw.trim();

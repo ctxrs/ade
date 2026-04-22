@@ -53,7 +53,7 @@ use self::helpers::{
 use self::tool_runtime::{cwd_outside_worktree, maybe_spool_tool_output};
 use super::lifecycle::RunningTurn;
 use super::persistence::{append_session_event_with_retry, emit_event, persist_assistant_message};
-use super::terminal::finalize_failed_turn;
+use super::terminal::{finalize_failed_turn, FailedTurnTerminalization};
 use super::QueuedMessage;
 
 fn provider_mode_id_for(
@@ -172,17 +172,20 @@ pub(crate) async fn start_turn(
         message_id: MessageId,
         err: &anyhow::Error,
     ) {
+        let error_message = err.to_string();
         let _ = finalize_failed_turn(
             state,
             session.id,
             Some(run_id),
             turn_id,
             message_id,
-            &err.to_string(),
-            Some("start_failed"),
-            None,
-            Some(json!("start_failed")),
-            true,
+            FailedTurnTerminalization {
+                message: &error_message,
+                reason: Some("start_failed"),
+                details: None,
+                kind: Some(json!("start_failed")),
+                emit_error_event: true,
+            },
         )
         .await;
     }
@@ -639,17 +642,20 @@ pub(crate) async fn start_turn(
                 "error": err.to_string(),
             }));
             state.telemetry.ops_events.emit(fail_event);
+            let error_message = err.to_string();
             let _ = finalize_failed_turn(
                 state,
                 session.id,
                 Some(run_id),
                 turn_id,
                 message_id,
-                &err.to_string(),
-                Some("provider_start_failed"),
-                None,
-                Some(json!("provider_start_failed")),
-                true,
+                FailedTurnTerminalization {
+                    message: &error_message,
+                    reason: Some("provider_start_failed"),
+                    details: None,
+                    kind: Some(json!("provider_start_failed")),
+                    emit_error_event: true,
+                },
             )
             .await;
             return Err(err);

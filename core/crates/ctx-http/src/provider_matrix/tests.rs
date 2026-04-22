@@ -327,6 +327,7 @@ fn builtin_matrix_tracks_target_specific_codex_cli_archive_binaries() {
         .iter()
         .find(|entry| entry.id == "codex-cli")
         .expect("codex-cli entry");
+    let release = codex_cli.releases.first().expect("codex-cli release");
 
     let managed_install = codex_cli
         .managed_install
@@ -336,7 +337,7 @@ fn builtin_matrix_tracks_target_specific_codex_cli_archive_binaries() {
         ProviderInstall::Archive {
             version, targets, ..
         } => {
-            assert_eq!(version, "0.114.0");
+            assert_eq!(version, &release.version);
             assert_eq!(
                 targets
                     .get("darwin-aarch64")
@@ -400,6 +401,7 @@ fn builtin_matrix_uses_upstream_openhands_python_acp_runtime() {
         .iter()
         .find(|entry| entry.id == "openhands")
         .expect("openhands entry");
+    let release = openhands.releases.first().expect("openhands release");
 
     let command = openhands.command.as_ref().expect("openhands command");
     assert_eq!(command.command, "openhands");
@@ -419,7 +421,7 @@ fn builtin_matrix_uses_upstream_openhands_python_acp_runtime() {
             python_build_tag,
         } => {
             assert_eq!(package, "openhands");
-            assert_eq!(version, "1.13.1");
+            assert_eq!(version, &release.version);
             assert_eq!(entrypoint, "openhands");
             assert_eq!(args, &vec!["acp".to_string()]);
             assert_eq!(python_version.as_deref(), Some("3.12.13"));

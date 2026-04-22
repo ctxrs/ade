@@ -8,6 +8,7 @@ const INLINE_CODE_FIRST_SLICE_ONLY_MIN_WIDTH_PX = 90;
 const INLINE_CODE_FIRST_SLICE_ONLY_START_RATIO_THRESHOLD = 0.4;
 const INLINE_CODE_FIRST_SLICE_ONLY_WITH_FOLLOWING_INLINE_CODE_START_RATIO_THRESHOLD = 0.55;
 const INLINE_CODE_WEBKIT_WEAK_FIRST_SLICE_FRESH_LINE_START_RATIO_THRESHOLD = 0.3;
+const STRONG_RTL_SCRIPT_PATTERN = /[\p{Script=Arabic}\p{Script=Hebrew}\p{Script=Syriac}\p{Script=Thaana}\p{Script=Nko}\p{Script=Adlam}]/u;
 
 type InlineSegmentItem = Extract<PreparedInlineLayoutItem, { kind: "segment" }>;
 
@@ -80,6 +81,13 @@ export function resolveInlineCodeStartDecision(params: {
     params.trailingPlainAfterCodeGroupStart.startsAfterCollapsedSoftBreak
       ? false
       : params.trailingPlainAfterCodeGroupStart.hasFollowingInlineCode;
+  const trailingPlainIsOrdinaryProse =
+    effectiveTrailingPlainWidthAfterCodeGroupStart > 0 &&
+    !effectiveTrailingPlainHasFollowingInlineCode &&
+    !isPunctuationOnlySeamText(params.trailingPlainAfterCodeGroupStart.text);
+  const trailingPlainHasStrongRtlText = containsStrongRtlText(
+    params.trailingPlainAfterCodeGroupStart.text,
+  );
   const shouldAllowChromiumAttachedTrailingPlainPartialFit =
     allowsInlineCodeLeadingHang &&
     currentLineCodeStartFitIsFriendlyReadable &&
@@ -150,25 +158,39 @@ export function resolveInlineCodeStartDecision(params: {
     params.preferredStartWidth <= params.maxWidth + 0.01 &&
     !currentLineCodeStartFitIsReadable;
   const shouldLimitCurrentCodeGroupToFirstFragment =
-    !allowsInlineCodeLeadingHang &&
-    params.lineHasContent &&
-    params.codeGroupId != null &&
-    params.item.isFirstCodeGroupFragment &&
-    params.item.prefersFreshLineStart &&
-    params.item.codeGroupStartsAfterText &&
-    params.item.codeGroupHasTrailingText &&
-    (params.item.codeGroupHasDottedPath ||
-      params.item.text.includes("/") ||
-      params.item.text.includes("\\") ||
-      params.item.isPathTailFragment) &&
-    !params.item.codeGroupHasWhitespace &&
-    params.item.fullWidth >= INLINE_CODE_FIRST_SLICE_ONLY_MIN_WIDTH_PX &&
-    params.currentLineCodeFit != null &&
-    params.currentLineCodeFit.consumedWidth + 0.01 < params.preferredStartWidth &&
-    currentLineStartFitRatio <
-      (effectiveTrailingPlainHasFollowingInlineCode
-        ? INLINE_CODE_FIRST_SLICE_ONLY_WITH_FOLLOWING_INLINE_CODE_START_RATIO_THRESHOLD
-        : INLINE_CODE_FIRST_SLICE_ONLY_START_RATIO_THRESHOLD);
+    (!allowsInlineCodeLeadingHang &&
+      params.lineHasContent &&
+      params.codeGroupId != null &&
+      params.item.isFirstCodeGroupFragment &&
+      params.item.prefersFreshLineStart &&
+      params.item.codeGroupStartsAfterText &&
+      params.item.codeGroupHasTrailingText &&
+      (params.item.codeGroupHasDottedPath ||
+        params.item.text.includes("/") ||
+        params.item.text.includes("\\") ||
+        params.item.isPathTailFragment) &&
+      !trailingPlainIsOrdinaryProse &&
+      !params.item.codeGroupHasWhitespace &&
+      params.item.fullWidth >= INLINE_CODE_FIRST_SLICE_ONLY_MIN_WIDTH_PX &&
+      params.currentLineCodeFit != null &&
+      params.currentLineCodeFit.consumedWidth + 0.01 < params.preferredStartWidth &&
+      currentLineStartFitRatio <
+        (effectiveTrailingPlainHasFollowingInlineCode
+          ? INLINE_CODE_FIRST_SLICE_ONLY_WITH_FOLLOWING_INLINE_CODE_START_RATIO_THRESHOLD
+          : INLINE_CODE_FIRST_SLICE_ONLY_START_RATIO_THRESHOLD)) ||
+    (params.lineHasContent &&
+      params.codeGroupId != null &&
+      params.item.isFirstCodeGroupFragment &&
+      params.item.codeGroupStartsAfterText &&
+      params.item.codeGroupHasTrailingText &&
+      !trailingPlainIsOrdinaryProse &&
+      !params.item.codeGroupHasWhitespace &&
+      !effectiveTrailingPlainHasFollowingInlineCode &&
+      trailingPlainHasStrongRtlText &&
+      currentLineCodeStartFitIsReadable &&
+      params.currentLineCodeFit != null &&
+      !params.currentLineCodeFit.endedInsideFragment &&
+      params.currentLineCodeFit.consumedWidth + 0.01 < params.preferredStartWidth);
   const shouldAllowChromiumPartialDottedPathStart =
     allowsInlineCodeLeadingHang &&
     (params.currentLineCodeFit == null || params.currentLineCodeFit.consumedWidth <= 0.01) &&
@@ -241,4 +263,8 @@ export function resolveInlineCodeStartDecision(params: {
 function isPunctuationOnlySeamText(text: string): boolean {
   const trimmed = text.trim();
   return trimmed.length > 0 && /^[\p{P}\p{S}]+$/u.test(trimmed);
+}
+
+function containsStrongRtlText(text: string): boolean {
+  return STRONG_RTL_SCRIPT_PATTERN.test(text);
 }

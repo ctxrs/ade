@@ -18,6 +18,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
 function parseArgs(argv) {
   const out = {
@@ -45,7 +46,7 @@ const PRODUCTION_ROOT_PATTERNS = [
   /^apps\/tauri-mobile\/src-tauri\/src\//u,
 ];
 
-const TEST_PATH_SEGMENTS = new Set(["tests", "test", "test_support"]);
+const TEST_PATH_SEGMENTS = new Set(["tests", "test", "test_support", "lib_tests"]);
 
 const TEST_FILE_PATTERNS = [
   /_tests?\.rs$/u,
@@ -285,4 +286,15 @@ function main() {
   );
 }
 
-main();
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main();
+}
+
+export {
+  compareAgainstZero,
+  discoverProductionRustFiles,
+  findRuntimeViolations,
+  isProductionRustFile,
+  parseArgs,
+  scanAllFiles,
+};

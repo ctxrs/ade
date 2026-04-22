@@ -110,6 +110,7 @@ test("ctx-http Bazel helper keeps quick-path and manual-only suites explicit", (
   assert.match(ctxHttpBazelTests, /"updates_failure_safety_checksum_mismatch"/);
   assert.match(ctxHttpBazelTests, /"updates_failure_safety_missing_artifact"/);
   assert.match(ctxHttpBazelTests, /"updates_failure_safety_interrupted_transfer"/);
+  assert.match(ctxHttpBazelTests, /"provider_current_ctx_version_regressions"/);
   assert.match(
     ctxHttpBazelTests,
     /"workspace_active_snapshot_http_workspace_stream_under_load_no_gap_or_reset"/,
