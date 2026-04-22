@@ -164,6 +164,9 @@ function classifyWebSpecFamily(specPath) {
   if (/update|updater/u.test(base)) {
     return "updates-release";
   }
+  if (/desktop|webview/u.test(base)) {
+    return "desktop-shell";
+  }
   if (/settings/u.test(base)) {
     return "settings-config";
   }
