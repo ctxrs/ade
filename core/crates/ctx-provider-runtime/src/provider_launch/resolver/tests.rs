@@ -355,7 +355,7 @@ fn rejects_gemini_runtime_when_bundle_has_multiple_core_entries() {
         managed: None,
     };
 
-    let err = resolve_agent_runtime_command("gemini", &data_root, input, true).unwrap_err();
+    let err = normalize_acp_provider_command(&data_root, "gemini", input).unwrap_err();
 
     assert!(err
         .to_string()
