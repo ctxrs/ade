@@ -28,6 +28,7 @@ vi.mock("../api/client", () => ({
   recordClientCounterMetric: vi.fn(),
   recordClientGaugeMetric: vi.fn(),
   recordClientHistogramMetric: vi.fn(),
+  recordSemanticTelemetryEvent: vi.fn(),
 }));
 
 vi.mock("./uiStateStore", () => ({
