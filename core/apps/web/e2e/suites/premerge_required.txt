@@ -1,4 +1,5 @@
 # Deterministic, required pre-merge E2E suite.
+e2e/desktop-webview-recovery-ui.spec.ts
 e2e/golden.spec.ts
 e2e/launcher-wizard-smoke.spec.ts
 e2e/runtime-harness-installs.spec.ts
