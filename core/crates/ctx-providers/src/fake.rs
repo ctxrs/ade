@@ -426,10 +426,16 @@ mod tests {
             crate::adapters::ProviderTurnStatus::Completed
         );
 
-        let event = tokio::time::timeout(std::time::Duration::from_secs(2), event_rx.recv())
-            .await
-            .expect("event timeout")
-            .expect("done event");
-        assert!(matches!(event.event_type, SessionEventType::Done));
+        let done = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            while let Some(event) = event_rx.recv().await {
+                if matches!(event.event_type, SessionEventType::Done) {
+                    return true;
+                }
+            }
+            false
+        })
+        .await
+        .expect("event timeout");
+        assert!(done);
     }
 }

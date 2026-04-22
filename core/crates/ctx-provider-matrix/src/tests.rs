@@ -203,6 +203,7 @@ fn provider_matrix_entry_kind_defaults_to_harness_when_missing_from_json() {
           "managed_install": {
             "kind": "npm",
             "package": "example",
+            "version": "1.0.0",
             "entrypoint": "bin/example.js",
             "args": []
           },
