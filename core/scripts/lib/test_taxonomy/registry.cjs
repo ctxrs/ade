@@ -605,6 +605,8 @@ function buildStaticEntries() {
       owner: "ci-release",
       sourceGlobs: [
         "core/scripts/buildkite_pipeline_contract.test.cjs",
+        "core/scripts/trigger_buildkite_mac_nightly.cjs",
+        "core/scripts/trigger_buildkite_mac_nightly.test.cjs",
         ".buildkite/**",
         "scripts/buildkite/**",
         "scripts/ci/**",
@@ -1171,6 +1173,7 @@ function buildStaticEntries() {
         "core/package.json",
         "core/apps/desktop/package.json",
         "core/apps/desktop/scripts/test_notification_contracts.sh",
+        "core/apps/desktop/automation/notification-signed-smoke.contract.test.cjs",
         "core/apps/desktop/src-tauri/src/desktop_attention.rs",
         "core/apps/desktop/src-tauri/src/desktop_notifications.rs",
         "core/apps/desktop/src-tauri/src/desktop_deeplink.rs",

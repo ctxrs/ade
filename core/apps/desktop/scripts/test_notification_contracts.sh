@@ -50,6 +50,7 @@ if rg -n '"notification:default"' "${TAURI_DIR}/capabilities/default.json"; then
   exit 1
 fi
 
+node --test "${ROOT}/apps/desktop/automation/notification-signed-smoke.contract.test.cjs"
 cargo test --manifest-path "${TAURI_DIR}/Cargo.toml" desktop_attention::tests::
 cargo test --manifest-path "${TAURI_DIR}/Cargo.toml" desktop_notifications::tests::
 cargo test --manifest-path "${TAURI_DIR}/Cargo.toml" desktop_deeplink::deep_link_parse_tests::

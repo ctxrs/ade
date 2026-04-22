@@ -131,7 +131,10 @@ test("deterministic Linux contract gates route through Bazel-owned workspace-tas
   }
 
   assert.match(scriptsBuild, /srcs = \["\/\/tools\/bazel:run_workspace_task\.sh"\]/);
-  assert.match(scriptsBuild, /args = \["core", "node", "--test", "scripts\/buildkite_pipeline_contract\.test\.cjs"\]/);
+  assert.match(
+    scriptsBuild,
+    /args = \["core", "node", "--test", "scripts\/buildkite_pipeline_contract\.test\.cjs", "scripts\/trigger_buildkite_mac_nightly\.test\.cjs"\]/,
+  );
   assert.match(scriptsBuild, /args = \["core", "pnpm", "provider-auth:validate"\]/);
   assert.match(scriptsBuild, /args = \["core", "pnpm", "desktop:check:versions"\]/);
   assert.match(scriptsBuild, /args = \["core", "pnpm", "desktop:runtime:lock:check-matrix"\]/);
