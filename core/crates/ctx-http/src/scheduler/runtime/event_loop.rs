@@ -2,7 +2,7 @@ use super::helpers::{
     read_codex_context_window_metrics, should_track_thought_chunk, strip_emitted_prefix,
 };
 use super::*;
-use crate::scheduler::terminal::finalize_failed_turn;
+use crate::scheduler::terminal::{finalize_failed_turn, FailedTurnTerminalization};
 use crate::scheduler::{latency_bucket, metric_labels};
 use crate::storage_guard;
 
@@ -130,60 +130,67 @@ async fn record_failed_turn_telemetry(
     state.telemetry.ops_events.emit(fail_event);
 }
 
-async fn fail_turn(
-    state: &Arc<AppState>,
+async fn fail_turn(ctx: TurnFailureContext<'_>, failure: TurnFailurePayload) {
+    record_failed_turn_telemetry(
+        ctx.state,
+        ctx.session_id,
+        ctx.worktree_id,
+        ctx.run_id,
+        ctx.turn_id,
+        ctx.provider_id,
+        ctx.model_id,
+        ctx.execution_environment_label,
+        ctx.session_root_kind,
+        ctx.workdir_str,
+        ctx.run_started_at,
+        ctx.perf_run_id,
+        ctx.telemetry_emitted,
+        failure.error_message.clone(),
+        failure.details.clone(),
+        failure.kind.clone(),
+    )
+    .await;
+    *ctx.terminal_status = Some(SessionTurnStatus::Failed);
+    let _ = finalize_failed_turn(
+        ctx.state,
+        ctx.session_id,
+        Some(ctx.run_id),
+        ctx.turn_id,
+        ctx.message_id,
+        FailedTurnTerminalization {
+            message: &failure.error_message,
+            reason: None,
+            details: failure.details,
+            kind: failure.kind,
+            emit_error_event: ctx.emit_error_event,
+        },
+    )
+    .await;
+}
+
+struct TurnFailureContext<'a> {
+    state: &'a Arc<AppState>,
     session_id: ctx_core::ids::SessionId,
     worktree_id: ctx_core::ids::WorktreeId,
     run_id: RunId,
     turn_id: TurnId,
     message_id: MessageId,
-    provider_id: &str,
-    model_id: &str,
-    execution_environment_label: &str,
-    session_root_kind: &str,
-    workdir_str: &str,
+    provider_id: &'a str,
+    model_id: &'a str,
+    execution_environment_label: &'a str,
+    session_root_kind: &'a str,
+    workdir_str: &'a str,
     run_started_at: Instant,
-    perf_run_id: Option<&String>,
-    telemetry_emitted: &mut bool,
-    terminal_status: &mut Option<SessionTurnStatus>,
+    perf_run_id: Option<&'a String>,
+    telemetry_emitted: &'a mut bool,
+    terminal_status: &'a mut Option<SessionTurnStatus>,
+    emit_error_event: bool,
+}
+
+struct TurnFailurePayload {
     error_message: String,
     details: Option<Value>,
     kind: Option<Value>,
-    emit_error_event: bool,
-) {
-    record_failed_turn_telemetry(
-        state,
-        session_id,
-        worktree_id,
-        run_id,
-        turn_id,
-        provider_id,
-        model_id,
-        execution_environment_label,
-        session_root_kind,
-        workdir_str,
-        run_started_at,
-        perf_run_id,
-        telemetry_emitted,
-        error_message.clone(),
-        details.clone(),
-        kind.clone(),
-    )
-    .await;
-    *terminal_status = Some(SessionTurnStatus::Failed);
-    let _ = finalize_failed_turn(
-        state,
-        session_id,
-        Some(run_id),
-        turn_id,
-        message_id,
-        &error_message,
-        None,
-        details,
-        kind,
-        emit_error_event,
-    )
-    .await;
 }
 
 async fn run_turn_event_loop(ctx: TurnEventLoop) {
@@ -636,35 +643,39 @@ async fn run_turn_event_loop(ctx: TurnEventLoop) {
                                 }));
                                 let storage_status = state.storage_guard_snapshot();
                                 fail_turn(
-                                    &state,
-                                    session_id,
-                                    worktree_id,
-                                    run_id,
-                                    turn_id,
-                                    message_id,
-                                    &provider_id,
-                                    &model_id,
-                                    &execution_environment_label,
-                                    &session_root_kind,
-                                    &workdir_str,
-                                    run_started_at,
-                                    perf_run_id.as_ref(),
-                                    &mut telemetry_emitted,
-                                    &mut terminal_status,
-                                    if is_storage_exhausted {
-                                        storage_guard::storage_exhaustion_message(
-                                            storage_status.active.as_ref(),
-                                        )
-                                    } else {
-                                        format!("failed to persist assistant message: {err:#}")
+                                    TurnFailureContext {
+                                        state: &state,
+                                        session_id,
+                                        worktree_id,
+                                        run_id,
+                                        turn_id,
+                                        message_id,
+                                        provider_id: &provider_id,
+                                        model_id: &model_id,
+                                        execution_environment_label: &execution_environment_label,
+                                        session_root_kind: &session_root_kind,
+                                        workdir_str: &workdir_str,
+                                        run_started_at,
+                                        perf_run_id: perf_run_id.as_ref(),
+                                        telemetry_emitted: &mut telemetry_emitted,
+                                        terminal_status: &mut terminal_status,
+                                        emit_error_event: true,
                                     },
-                                    details,
-                                    Some(json!(if is_storage_exhausted {
-                                        "storage_exhausted"
-                                    } else {
-                                        "assistant_message_persist_failed"
-                                    })),
-                                    true,
+                                    TurnFailurePayload {
+                                        error_message: if is_storage_exhausted {
+                                            storage_guard::storage_exhaustion_message(
+                                                storage_status.active.as_ref(),
+                                            )
+                                        } else {
+                                            format!("failed to persist assistant message: {err:#}")
+                                        },
+                                        details,
+                                        kind: Some(json!(if is_storage_exhausted {
+                                            "storage_exhausted"
+                                        } else {
+                                            "assistant_message_persist_failed"
+                                        })),
+                                    },
                                 )
                                 .await;
                                 assistant_partial.clear();
