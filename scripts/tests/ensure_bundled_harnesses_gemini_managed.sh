@@ -27,6 +27,7 @@ CTX_BUNDLE_DIR="$bundle_dir" \
 CTX_BUNDLE_ONLY_PROVIDERS="gemini" \
 CTX_BUNDLE_SKIP_IMAGES=1 \
 CTX_BUNDLE_INCLUDE_BRIDGE=0 \
+CTX_BUNDLE_BUILD_CODEX_CRP=0 \
 "$BUNDLE_SCRIPT" >/dev/null
 
 if ! "$python_cmd" - "$bundle_dir/manifest.json" <<'PY'

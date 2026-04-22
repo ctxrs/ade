@@ -320,6 +320,77 @@ fn managed_provider_runtime_command_wraps_gemini_runtime_with_wrapper() {
 }
 
 #[test]
+fn managed_provider_runtime_command_rejects_gemini_runtime_with_multiple_core_entries() {
+    let data_root = tempfile::tempdir().expect("tempdir");
+    let node_bin = data_root
+        .path()
+        .join("bundle")
+        .join("runtimes")
+        .join("node")
+        .join("bin")
+        .join("node");
+    let cli_entry = data_root
+        .path()
+        .join("bundle")
+        .join("providers")
+        .join("gemini")
+        .join("node_modules")
+        .join("@google")
+        .join("gemini-cli")
+        .join("bundle")
+        .join("gemini.js");
+    let package_json = cli_entry
+        .parent()
+        .and_then(|parent| parent.parent())
+        .expect("gemini cli root")
+        .join("package.json");
+    std::fs::create_dir_all(node_bin.parent().expect("node parent")).expect("mkdir node");
+    std::fs::create_dir_all(cli_entry.parent().expect("cli parent")).expect("mkdir gemini");
+    std::fs::write(&node_bin, b"node").expect("write node");
+    std::fs::write(&cli_entry, b"gemini").expect("write cli");
+    std::fs::write(
+        cli_entry.parent().expect("bundle dir").join("core-alpha.js"),
+        "export const coreEvents = {}; export const CoreEvent = {}; export const writeToStdout = () => {}; export const writeToStderr = () => {};",
+    )
+    .expect("write core alpha");
+    std::fs::write(
+        cli_entry.parent().expect("bundle dir").join("core-beta.js"),
+        "export const coreEvents = {}; export const CoreEvent = {}; export const writeToStdout = () => {}; export const writeToStderr = () => {};",
+    )
+    .expect("write core beta");
+    std::fs::write(
+        &package_json,
+        r#"{"name":"@google/gemini-cli","version":"0.38.2"}"#,
+    )
+    .expect("write package");
+
+    let err = managed_provider_runtime_command(
+        data_root.path(),
+        "gemini",
+        AgentServerCommand {
+            command: node_bin.to_string_lossy().to_string(),
+            args: vec![
+                cli_entry.to_string_lossy().to_string(),
+                "--experimental-acp".to_string(),
+            ],
+            dependencies: Vec::new(),
+            managed: None,
+        },
+        Some(&AgentServerCommand {
+            command: "/tmp/acp-crp-bridge".to_string(),
+            args: vec!["--stdio".to_string()],
+            dependencies: Vec::new(),
+            managed: None,
+        }),
+    )
+    .expect_err("multiple core entries should fail");
+
+    assert!(err
+        .to_string()
+        .contains("Gemini ACP bundle must contain exactly one core entrypoint"));
+}
+
+#[test]
 fn managed_provider_runtime_command_wraps_goose_binary_with_acp_and_developer_builtin() {
     let data_root = tempfile::tempdir().expect("tempdir");
     let goose_bin = data_root.path().join("bin").join("goose");

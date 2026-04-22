@@ -515,6 +515,16 @@ pub fn resolve_explicit_gemini_cli_paths(
         bundle_dir.display()
     );
     core_entries.sort();
+    anyhow::ensure!(
+        core_entries.len() == 1,
+        "Gemini ACP bundle must contain exactly one core entrypoint under {}; found: {}",
+        bundle_dir.display(),
+        core_entries
+            .iter()
+            .map(|path| path.display().to_string())
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
     let core_entry_path = core_entries
         .into_iter()
         .next()

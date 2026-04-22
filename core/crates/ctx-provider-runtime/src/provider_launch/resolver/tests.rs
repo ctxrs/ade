@@ -165,7 +165,8 @@ fn create_gemini_runtime_layout(root: &Path) -> (PathBuf, PathBuf, PathBuf, Path
         .join("gemini.js");
     let package_json = cli_entry
         .parent()
-        .and_then(|parent| parent.parent())
+        .expect("bundle dir")
+        .parent()
         .expect("gemini cli root")
         .join("package.json");
     let core_entry = cli_entry
@@ -326,6 +327,39 @@ fn rejects_gemini_runtime_when_bundled_core_entry_is_missing() {
     assert!(err
         .to_string()
         .contains("Gemini ACP bundled core entrypoint is missing"));
+}
+
+#[test]
+fn rejects_gemini_runtime_when_bundle_has_multiple_core_entries() {
+    let temp = tempdir().unwrap();
+    let data_root = temp.path().join("data");
+    let (node_bin, cli_entry, _, core_entry) = create_gemini_runtime_layout(temp.path());
+    let extra_core_entry = cli_entry
+        .parent()
+        .expect("bundle dir")
+        .join("core-zeta.js");
+    std::fs::write(
+        &extra_core_entry,
+        "export const coreEvents = {}; export const CoreEvent = {}; export const writeToStdout = () => {}; export const writeToStderr = () => {};",
+    )
+    .unwrap();
+    assert!(core_entry.exists());
+
+    let input = installer::AgentServerCommand {
+        command: node_bin.to_string_lossy().to_string(),
+        args: vec![
+            cli_entry.to_string_lossy().to_string(),
+            "--experimental-acp".to_string(),
+        ],
+        dependencies: Vec::new(),
+        managed: None,
+    };
+
+    let err = resolve_agent_runtime_command("gemini", &data_root, input, true).unwrap_err();
+
+    assert!(err
+        .to_string()
+        .contains("Gemini ACP bundle must contain exactly one core entrypoint"));
 }
 
 #[test]

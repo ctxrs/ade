@@ -141,7 +141,7 @@ fn provider_matrix_entry_kind_defaults_to_harness_when_missing_from_json() {
     assert_eq!(entry.kind, ProviderMatrixEntryKind::Harness);
 }
 
-fn create_gemini_probe_layout(root: &Path) -> (PathBuf, PathBuf, PathBuf) {
+fn create_gemini_probe_layout(root: &Path) -> (PathBuf, PathBuf, PathBuf, PathBuf) {
     let node_bin = root
         .join("bundle")
         .join("runtimes")
@@ -157,9 +157,13 @@ fn create_gemini_probe_layout(root: &Path) -> (PathBuf, PathBuf, PathBuf) {
         .join("gemini-cli")
         .join("bundle")
         .join("gemini.js");
+    let core_entry = cli_entry
+        .parent()
+        .expect("bundle dir")
+        .join("core-ctx-test.js");
     let cli_pkg = cli_entry
         .parent()
-        .expect("cli bundle")
+        .expect("bundle dir")
         .parent()
         .expect("cli root")
         .join("package.json");
@@ -169,18 +173,23 @@ fn create_gemini_probe_layout(root: &Path) -> (PathBuf, PathBuf, PathBuf) {
     std::fs::write(&node_bin, b"node").expect("write node");
     std::fs::write(&cli_entry, b"cli").expect("write cli");
     std::fs::write(
+        &core_entry,
+        "export const coreEvents = {}; export const CoreEvent = {}; export const writeToStdout = () => {}; export const writeToStderr = () => {};",
+    )
+    .expect("write core");
+    std::fs::write(
         &cli_pkg,
         r#"{"name":"@google/gemini-cli","version":"0.38.2"}"#,
     )
     .expect("write cli package");
 
-    (node_bin, cli_entry, cli_pkg)
+    (node_bin, cli_entry, core_entry, cli_pkg)
 }
 
 #[test]
 fn probe_node_package_version_uses_explicit_gemini_entrypoint() {
     let temp = tempdir().expect("tempdir");
-    let (node_bin, cli_entry, _) = create_gemini_probe_layout(temp.path());
+    let (node_bin, cli_entry, _, _) = create_gemini_probe_layout(temp.path());
     let command = ProviderCommand {
         command: node_bin.to_string_lossy().to_string(),
         args: vec![cli_entry.to_string_lossy().to_string()],
@@ -207,7 +216,7 @@ fn probe_node_package_version_rejects_path_style_gemini_command() {
 #[test]
 fn probe_node_package_version_rejects_relative_gemini_entrypoint() {
     let temp = tempdir().expect("tempdir");
-    let (node_bin, _, _) = create_gemini_probe_layout(temp.path());
+    let (node_bin, _, _, _) = create_gemini_probe_layout(temp.path());
     let command = ProviderCommand {
         command: node_bin.to_string_lossy().to_string(),
         args: vec!["node_modules/@google/gemini-cli/bundle/gemini.js".to_string()],

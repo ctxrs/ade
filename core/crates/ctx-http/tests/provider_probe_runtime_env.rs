@@ -191,9 +191,13 @@ fn setup_explicit_gemini_runtime_command_with_probe_response(
         .join("gemini-cli")
         .join("bundle")
         .join("gemini.js");
+    let core_entry = cli_entry
+        .parent()
+        .expect("bundle dir")
+        .join("core-ctx-test.js");
     let cli_pkg = cli_entry
         .parent()
-        .expect("cli bundle")
+        .expect("bundle dir")
         .parent()
         .expect("cli root")
         .join("package.json");
@@ -218,6 +222,11 @@ exit 1
         ),
     );
     std::fs::write(&cli_entry, b"cli").expect("write cli entry");
+    std::fs::write(
+        &core_entry,
+        "export const coreEvents = {}; export const CoreEvent = {}; export const writeToStdout = () => {}; export const writeToStderr = () => {};",
+    )
+    .expect("write core entry");
     std::fs::write(
         &cli_pkg,
         r#"{"name":"@google/gemini-cli","version":"0.38.2"}"#,

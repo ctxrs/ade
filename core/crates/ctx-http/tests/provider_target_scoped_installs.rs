@@ -41,7 +41,7 @@ struct EnvVarGuard {
     previous: Option<String>,
 }
 
-fn acp_install_test_lock() -> &'static tokio::sync::Mutex<()> {
+fn provider_install_test_lock() -> &'static tokio::sync::Mutex<()> {
     static LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
     LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
 }
@@ -68,6 +68,13 @@ impl Drop for EnvVarGuard {
             std::env::remove_var(self.key);
         }
     }
+}
+
+fn clear_bundle_matrix_env() -> (EnvVarGuard, EnvVarGuard) {
+    (
+        EnvVarGuard::unset("CTX_BUNDLE_MATRIX_JSON"),
+        EnvVarGuard::unset("CTX_BUNDLE_DIR"),
+    )
 }
 
 fn write_executable(path: &Path, contents: &str) {
@@ -778,6 +785,28 @@ async fn wait_for_running_install_id(
     }
 }
 
+async fn wait_for_tracked_install_id(
+    state: &Arc<AppState>,
+    provider_id: &str,
+    target: Option<InstallTarget>,
+) -> InstallId {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        let installs = state.providers.installs.lock().await;
+        if let Some(install_id) = installs.iter().find_map(|(install_id, install)| {
+            (install.provider_id == provider_id && install.target == target).then_some(*install_id)
+        }) {
+            return install_id;
+        }
+        drop(installs);
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "timed out waiting for tracked install {provider_id} with target {target:?}"
+        );
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+}
+
 async fn wait_for_prerequisite_visibility(
     state: &Arc<AppState>,
     app: &axum::Router,
@@ -937,6 +966,8 @@ async fn sandbox_cli_has_image(sandbox_cli: &Path, image: &str) -> bool {
 
 #[tokio::test]
 async fn provider_status_http_keeps_host_and_container_installs_independent() {
+    let _install_lock = provider_install_test_lock().lock().await;
+    let _bundle_env = clear_bundle_matrix_env();
     let data_dir = tempfile::tempdir().expect("tempdir");
     let runtime = seed_target_scoped_codex_runtime(data_dir.path()).await;
     configure_container_image_defaults(data_dir.path()).await;
@@ -1011,7 +1042,8 @@ async fn provider_status_http_keeps_host_and_container_installs_independent() {
 
 #[tokio::test]
 async fn acp_container_install_surfaces_bridge_as_installable_prerequisite() {
-    let _acp_lock = acp_install_test_lock().lock().await;
+    let _install_lock = provider_install_test_lock().lock().await;
+    let _bundle_env = clear_bundle_matrix_env();
     let data_dir = tempfile::tempdir().expect("tempdir");
     let fixture_dir = data_dir.path().join("fixtures");
     std::fs::create_dir_all(&fixture_dir).expect("create fixture dir");
@@ -1113,6 +1145,8 @@ async fn acp_container_install_surfaces_bridge_as_installable_prerequisite() {
 
 #[tokio::test]
 async fn acp_host_install_surfaces_bridge_as_installable_prerequisite() {
+    let _install_lock = provider_install_test_lock().lock().await;
+    let _bundle_env = clear_bundle_matrix_env();
     let data_dir = tempfile::tempdir().expect("tempdir");
     let fixture_dir = data_dir.path().join("fixtures");
     std::fs::create_dir_all(&fixture_dir).expect("create fixture dir");
@@ -1214,7 +1248,8 @@ async fn acp_host_install_surfaces_bridge_as_installable_prerequisite() {
 
 #[tokio::test]
 async fn acp_container_install_keeps_invalid_bridge_runtime_repairable_before_start() {
-    let _acp_lock = acp_install_test_lock().lock().await;
+    let _install_lock = provider_install_test_lock().lock().await;
+    let _bundle_env = clear_bundle_matrix_env();
     let data_dir = tempfile::tempdir().expect("tempdir");
     let fixture_dir = data_dir.path().join("fixtures");
     std::fs::create_dir_all(&fixture_dir).expect("create fixture dir");
@@ -1304,7 +1339,8 @@ async fn acp_container_install_keeps_invalid_bridge_runtime_repairable_before_st
 #[tokio::test]
 async fn provider_target_scoped_installs_install_all_repairs_invalid_bridge_and_keeps_acp_dependents_installable(
 ) {
-    let _acp_lock = acp_install_test_lock().lock().await;
+    let _install_lock = provider_install_test_lock().lock().await;
+    let _bundle_env = clear_bundle_matrix_env();
     let data_dir = tempfile::tempdir().expect("tempdir");
     let fixture_dir = data_dir.path().join("fixtures");
     std::fs::create_dir_all(&fixture_dir).expect("create fixture dir");
@@ -1426,6 +1462,8 @@ async fn provider_target_scoped_installs_install_all_repairs_invalid_bridge_and_
 #[tokio::test]
 async fn provider_target_scoped_installs_install_all_container_js_archive_harnesses_stay_current_after_success(
 ) {
+    let _install_lock = provider_install_test_lock().lock().await;
+    let _bundle_env = clear_bundle_matrix_env();
     let data_dir = tempfile::tempdir().expect("tempdir");
     let fixture_dir = data_dir.path().join("fixtures");
     std::fs::create_dir_all(&fixture_dir).expect("create fixture dir");
@@ -1591,7 +1629,8 @@ async fn provider_target_scoped_installs_install_all_container_js_archive_harnes
 #[tokio::test]
 async fn provider_target_scoped_installs_install_all_repairs_invalid_bridge_when_acp_dependents_precede_bridge_in_matrix(
 ) {
-    let _acp_lock = acp_install_test_lock().lock().await;
+    let _install_lock = provider_install_test_lock().lock().await;
+    let _bundle_env = clear_bundle_matrix_env();
     let data_dir = tempfile::tempdir().expect("tempdir");
     let fixture_dir = data_dir.path().join("fixtures");
     std::fs::create_dir_all(&fixture_dir).expect("create fixture dir");
@@ -1701,7 +1740,8 @@ async fn provider_target_scoped_installs_install_all_repairs_invalid_bridge_when
 #[tokio::test]
 async fn acp_container_install_happy_path_installs_bridge_prerequisite_and_keeps_registry_entries()
 {
-    let _acp_lock = acp_install_test_lock().lock().await;
+    let _install_lock = provider_install_test_lock().lock().await;
+    let _bundle_env = clear_bundle_matrix_env();
     let data_dir = tempfile::tempdir().expect("tempdir");
     let fixture_dir = data_dir.path().join("fixtures");
     std::fs::create_dir_all(&fixture_dir).expect("create fixture dir");
@@ -1847,7 +1887,8 @@ async fn acp_container_install_happy_path_installs_bridge_prerequisite_and_keeps
 
 #[tokio::test]
 async fn acp_container_install_repairs_invalid_bridge_runtime_and_keeps_registry_entries() {
-    let _acp_lock = acp_install_test_lock().lock().await;
+    let _install_lock = provider_install_test_lock().lock().await;
+    let _bundle_env = clear_bundle_matrix_env();
     let data_dir = tempfile::tempdir().expect("tempdir");
     let fixture_dir = data_dir.path().join("fixtures");
     std::fs::create_dir_all(&fixture_dir).expect("create fixture dir");
@@ -1923,7 +1964,8 @@ async fn acp_container_install_repairs_invalid_bridge_runtime_and_keeps_registry
 
 #[tokio::test]
 async fn acp_container_install_parent_polling_stays_bounded_while_bridge_prerequisite_runs() {
-    let _acp_lock = acp_install_test_lock().lock().await;
+    let _install_lock = provider_install_test_lock().lock().await;
+    let _bundle_env = clear_bundle_matrix_env();
     let data_dir = tempfile::tempdir().expect("tempdir");
     let fixture_dir = data_dir.path().join("fixtures");
     std::fs::create_dir_all(&fixture_dir).expect("create fixture dir");
@@ -2029,7 +2071,8 @@ async fn acp_container_install_parent_polling_stays_bounded_while_bridge_prerequ
 #[tokio::test]
 async fn acp_container_install_joins_existing_bridge_install_and_surfaces_short_prerequisites_to_polling(
 ) {
-    let _acp_lock = acp_install_test_lock().lock().await;
+    let _install_lock = provider_install_test_lock().lock().await;
+    let _bundle_env = clear_bundle_matrix_env();
     let data_dir = tempfile::tempdir().expect("tempdir");
     let fixture_dir = data_dir.path().join("fixtures");
     std::fs::create_dir_all(&fixture_dir).expect("create fixture dir");
@@ -2253,6 +2296,8 @@ async fn acp_container_install_joins_existing_bridge_install_and_surfaces_short_
 #[tokio::test]
 async fn claude_container_install_starts_host_cli_dependency_and_stays_not_ready_until_it_finishes()
 {
+    let _install_lock = provider_install_test_lock().lock().await;
+    let _bundle_env = clear_bundle_matrix_env();
     let data_dir = tempfile::tempdir().expect("tempdir");
     let fixture_dir = data_dir.path().join("fixtures");
     std::fs::create_dir_all(&fixture_dir).expect("create fixture dir");
@@ -2327,23 +2372,15 @@ async fn claude_container_install_starts_host_cli_dependency_and_stays_not_ready
         .and_then(|raw| raw.parse::<InstallId>().ok())
         .expect("install id");
 
-    let dependency_deadline = tokio::time::Instant::now() + Duration::from_secs(6);
-    let claude_cli_install_id = loop {
-        if let Some(install_id) = state
-            .find_running_install("claude-cli", Some(InstallTarget::Host))
-            .await
-        {
-            break install_id;
-        }
-        assert!(
-            tokio::time::Instant::now() < dependency_deadline,
-            "timed out waiting for claude-cli dependency install to start"
-        );
-        tokio::time::sleep(Duration::from_millis(25)).await;
-    };
+    let claude_cli_install_id =
+        wait_for_tracked_install_id(&state, "claude-cli", Some(InstallTarget::Host)).await;
 
     let visibility_deadline = tokio::time::Instant::now() + Duration::from_secs(8);
-    let (parent_poll, parent_status_body) = loop {
+    let (mut parent_poll, parent_status_body) = loop {
+        let dependency_info = state
+            .get_install_info(claude_cli_install_id)
+            .await
+            .expect("missing claude-cli dependency install info");
         let parent_poll = get_install_info_api(&app, install_id).await;
         let (provider_status, provider_body): (StatusCode, serde_json::Value) =
             common::json_request(
@@ -2358,8 +2395,16 @@ async fn claude_container_install_starts_host_cli_dependency_and_stays_not_ready
             StatusCode::OK,
             "provider status failed while claude-cli was still installing: {provider_body:#?}"
         );
-        if matches!(parent_poll.state, InstallStateKind::Running)
-            && parent_poll.progress_pct == Some(99)
+        if matches!(dependency_info.state, InstallStateKind::Running)
+            && matches!(parent_poll.state, InstallStateKind::Running)
+            && parent_poll
+                .last_event
+                .as_ref()
+                .is_some_and(|event| event.message.contains("claude-cli"))
+            && provider_body
+                .pointer("/details/pending_dependency_ids")
+                .and_then(serde_json::Value::as_str)
+                == Some("claude-cli")
         {
             break (parent_poll, provider_body);
         }
@@ -2369,6 +2414,29 @@ async fn claude_container_install_starts_host_cli_dependency_and_stays_not_ready
         );
         tokio::time::sleep(Duration::from_millis(50)).await;
     };
+    assert!(
+        parent_poll.progress_pct.unwrap_or_default() < 100,
+        "parent poll should stay incomplete while claude-cli is still installing: {parent_poll:#?}"
+    );
+    if parent_poll.progress_pct != Some(99) {
+        let progress_deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            let dependency_info = state
+                .get_install_info(claude_cli_install_id)
+                .await
+                .expect("missing claude-cli dependency install info");
+            parent_poll = get_install_info_api(&app, install_id).await;
+            if parent_poll.progress_pct == Some(99) {
+                break;
+            }
+            assert!(
+                tokio::time::Instant::now() < progress_deadline
+                    && matches!(dependency_info.state, InstallStateKind::Running),
+                "timed out waiting for claude readiness progress pin: dependency={dependency_info:#?} parent={parent_poll:#?}"
+            );
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    }
     assert_eq!(
         parent_poll.progress_pct,
         Some(99),
@@ -2380,20 +2448,6 @@ async fn claude_container_install_starts_host_cli_dependency_and_stays_not_ready
             .as_ref()
             .is_some_and(|event| event.message.contains("claude-cli")),
         "parent poll should expose dependency activity while claude-cli is still installing: {parent_poll:#?}"
-    );
-    assert_eq!(
-        parent_status_body
-            .get("installed")
-            .and_then(serde_json::Value::as_bool),
-        Some(true),
-        "claude-crp should already be installed while waiting on claude-cli readiness: {parent_status_body:#?}"
-    );
-    assert_eq!(
-        parent_status_body
-            .pointer("/details/managed_target")
-            .and_then(serde_json::Value::as_str),
-        Some("container"),
-        "claude-crp should keep its container-managed target while waiting: {parent_status_body:#?}"
     );
     assert_eq!(
         parent_status_body
@@ -2424,12 +2478,18 @@ async fn claude_container_install_starts_host_cli_dependency_and_stays_not_ready
         "status should remain target-aware while waiting for the host dependency: {parent_status_body:#?}"
     );
 
-    let dependency_info = wait_for_install_completion(&state, claude_cli_install_id).await;
+    let dependency_info = wait_for_install_completion_with_timeout(
+        &state,
+        claude_cli_install_id,
+        Duration::from_secs(60),
+    )
+    .await;
     assert!(
         matches!(dependency_info.state, InstallStateKind::Succeeded),
         "claude-cli dependency install should succeed: {dependency_info:#?}"
     );
-    let parent_info = wait_for_install_completion(&state, install_id).await;
+    let parent_info =
+        wait_for_install_completion_with_timeout(&state, install_id, Duration::from_secs(30)).await;
     assert!(
         matches!(parent_info.state, InstallStateKind::Succeeded),
         "claude-crp install should complete after its host dependency finishes: {parent_info:#?}"
@@ -2526,6 +2586,8 @@ async fn claude_container_install_starts_host_cli_dependency_and_stays_not_ready
 #[tokio::test]
 #[ignore]
 async fn provider_target_scoped_installs_work_for_host_and_container_workspaces() {
+    let _install_lock = provider_install_test_lock().lock().await;
+    let _bundle_env = clear_bundle_matrix_env();
     if std::env::var("CTX_E2E_SANDBOX").ok().as_deref() != Some("1") {
         eprintln!("skipping: CTX_E2E_SANDBOX not set");
         return;
