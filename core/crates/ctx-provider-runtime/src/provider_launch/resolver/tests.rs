@@ -280,7 +280,7 @@ fn rejects_relative_gemini_entrypoint() {
 
     assert!(err
         .to_string()
-        .contains("Gemini ACP entrypoint must be an explicit absolute path"));
+        .contains("Gemini ACP entrypoint must be an absolute path"));
 }
 
 #[test]
@@ -327,6 +327,67 @@ fn rejects_gemini_runtime_when_bundled_core_entry_is_missing() {
     assert!(err
         .to_string()
         .contains("Gemini ACP bundled core entrypoint is missing"));
+}
+
+#[test]
+fn rejects_gemini_runtime_outside_node_modules_install_tree() {
+    let temp = tempdir().unwrap();
+    let data_root = temp.path().join("data");
+    let node_bin = temp
+        .path()
+        .join("bundle")
+        .join("runtimes")
+        .join("node")
+        .join("bin")
+        .join("node");
+    let cli_entry = temp
+        .path()
+        .join("bundle")
+        .join("providers")
+        .join("gemini")
+        .join("@google")
+        .join("gemini-cli")
+        .join("bundle")
+        .join("gemini.js");
+    let core_entry = cli_entry
+        .parent()
+        .expect("bundle dir")
+        .join("core-ctx-test.js");
+    let package_json = cli_entry
+        .parent()
+        .expect("bundle dir")
+        .parent()
+        .expect("gemini cli root")
+        .join("package.json");
+    std::fs::create_dir_all(node_bin.parent().unwrap()).unwrap();
+    std::fs::create_dir_all(cli_entry.parent().unwrap()).unwrap();
+    std::fs::write(&node_bin, b"node").unwrap();
+    std::fs::write(&cli_entry, b"cli").unwrap();
+    std::fs::write(
+        &core_entry,
+        "export const coreEvents = {}; export const CoreEvent = {}; export const writeToStdout = () => {}; export const writeToStderr = () => {};",
+    )
+    .unwrap();
+    std::fs::write(
+        &package_json,
+        r#"{"name":"@google/gemini-cli","version":"0.38.2"}"#,
+    )
+    .unwrap();
+
+    let input = installer::AgentServerCommand {
+        command: node_bin.to_string_lossy().to_string(),
+        args: vec![
+            cli_entry.to_string_lossy().to_string(),
+            "--experimental-acp".to_string(),
+        ],
+        dependencies: Vec::new(),
+        managed: None,
+    };
+    let err = normalize_acp_provider_command(&data_root, "gemini", input).unwrap_err();
+
+    assert!(err
+        .to_string()
+        .contains("Gemini ACP entrypoint must point to @google/gemini-cli/bundle/gemini.js"));
 }
 
 #[test]

@@ -30,7 +30,7 @@
     "buildkite:sync": "node scripts/sync_buildkite.cjs",
     "buildkite:trigger": "node scripts/trigger_buildkite_build.cjs",
     "buildkite:preview": "node scripts/trigger_buildkite_preview.cjs",
-    "release:buildkite": "node scripts/trigger_buildkite_release.cjs",
+    "release:buildkite": "node scripts/run_buildkite_release_controller.cjs",
     "release:buildkite:provider-deps:verify": "BUILD_BUDDY_RELEASE_COMMIT=${BUILD_BUDDY_RELEASE_COMMIT:?set BUILD_BUDDY_RELEASE_COMMIT} node scripts/trigger_buildkite_provider_deps.cjs --commit \"$BUILD_BUDDY_RELEASE_COMMIT\" --no-publish",
     "release:buildkite:provider-deps:publish": "BUILD_BUDDY_RELEASE_COMMIT=${BUILD_BUDDY_RELEASE_COMMIT:?set BUILD_BUDDY_RELEASE_COMMIT} node scripts/trigger_buildkite_provider_deps.cjs --commit \"$BUILD_BUDDY_RELEASE_COMMIT\" --publish",
     "release:buildkite:codex-crp:verify": "BUILD_BUDDY_RELEASE_COMMIT=${BUILD_BUDDY_RELEASE_COMMIT:?set BUILD_BUDDY_RELEASE_COMMIT} node scripts/trigger_buildkite_provider_deps.cjs --commit \"$BUILD_BUDDY_RELEASE_COMMIT\" --provider codex --no-publish",

@@ -244,6 +244,47 @@ fn builtin_matrix_uses_claude_cli_wrapper_entrypoint() {
 }
 
 #[test]
+fn builtin_matrix_uses_gemini_managed_npm_bundle_entrypoint() {
+    let matrix = builtin_matrix();
+    let gemini = get_entry(&matrix, "gemini").expect("gemini entry");
+    let release = gemini.releases.first().expect("gemini release");
+
+    match gemini
+        .managed_install
+        .as_ref()
+        .expect("gemini managed install")
+    {
+        ProviderInstall::Npm {
+            package,
+            version,
+            entrypoint,
+            args,
+            targets,
+        } => {
+            assert_eq!(package, "@google/gemini-cli");
+            assert_eq!(version, &release.version);
+            assert_eq!(
+                entrypoint,
+                "node_modules/@google/gemini-cli/bundle/gemini.js"
+            );
+            assert_eq!(args, &vec!["--experimental-acp".to_string()]);
+            assert!(
+                targets.is_empty(),
+                "Gemini managed npm install should not use legacy archive targets"
+            );
+        }
+        other => panic!("expected gemini npm managed install, got {other:?}"),
+    }
+
+    match gemini.version_probe.as_ref().expect("gemini version probe") {
+        VersionProbe::NodePackage { package } => {
+            assert_eq!(package, "@google/gemini-cli");
+        }
+        other => panic!("expected gemini node-package version probe, got {other:?}"),
+    }
+}
+
+#[test]
 fn builtin_matrix_uses_kimi_acp_subcommand() {
     let matrix = builtin_matrix();
     let kimi = matrix

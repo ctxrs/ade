@@ -435,42 +435,30 @@ fn file_stem_matches(path: &StdPath, name: &str) -> bool {
 }
 
 fn resolve_existing_absolute_path(raw: &str, label: &str) -> Result<PathBuf> {
-    let path = StdPath::new(raw);
+    let path = PathBuf::from(raw);
     anyhow::ensure!(
         path.is_absolute(),
-        "{label} must be an explicit absolute path; got '{raw}'"
+        "{label} must be an absolute path; got '{raw}'"
     );
-    let path_display = path.display();
-    anyhow::ensure!(path.exists(), "{label} not found: {path_display}");
-    Ok(fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf()))
+    anyhow::ensure!(path.exists(), "{label} does not exist: {}", path.display());
+    Ok(path)
 }
 
 fn gemini_cli_root_from_entrypoint(path: &StdPath) -> Option<PathBuf> {
-    if path.file_name().and_then(|s| s.to_str()) != Some("gemini.js") {
-        return None;
-    }
-    if path
-        .parent()
-        .and_then(|parent| parent.file_name())
-        .and_then(|s| s.to_str())
-        != Some("bundle")
+    let file_name = path.file_name()?.to_str()?;
+    let bundle_dir = path.parent()?;
+    let package_dir = bundle_dir.parent()?;
+    let scope_dir = package_dir.parent()?;
+    let node_modules_dir = scope_dir.parent()?;
+    if file_name != "gemini.js"
+        || bundle_dir.file_name()?.to_str()? != "bundle"
+        || package_dir.file_name()?.to_str()? != "gemini-cli"
+        || scope_dir.file_name()?.to_str()? != "@google"
+        || node_modules_dir.file_name()?.to_str()? != "node_modules"
     {
         return None;
     }
-    for ancestor in path.ancestors() {
-        if ancestor.file_name().and_then(|s| s.to_str()) != Some("gemini-cli") {
-            continue;
-        }
-        let is_google_scope = ancestor
-            .parent()
-            .and_then(|parent| parent.file_name())
-            .and_then(|s| s.to_str())
-            == Some("@google");
-        if is_google_scope {
-            return Some(ancestor.to_path_buf());
-        }
-    }
-    None
+    Some(package_dir.to_path_buf())
 }
 
 pub fn resolve_explicit_gemini_cli_paths(

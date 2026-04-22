@@ -8,6 +8,7 @@ use super::toolchains::{
 };
 use super::*;
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -225,6 +226,69 @@ fn managed_provider_runtime_command_rejects_path_style_gemini_runtime() {
         .contains("must use an explicit absolute node executable"));
 }
 
+fn create_managed_gemini_runtime_layout(root: &Path) -> (PathBuf, PathBuf, PathBuf, PathBuf) {
+    let node_bin = root
+        .join("bundle")
+        .join("runtimes")
+        .join("node")
+        .join("bin")
+        .join("node");
+    let cli_entry = root
+        .join("bundle")
+        .join("providers")
+        .join("gemini")
+        .join("node_modules")
+        .join("@google")
+        .join("gemini-cli")
+        .join("bundle")
+        .join("gemini.js");
+    let package_json = cli_entry
+        .parent()
+        .and_then(|parent| parent.parent())
+        .expect("gemini cli root")
+        .join("package.json");
+    let core_entry = cli_entry
+        .parent()
+        .expect("bundle dir")
+        .join("core-ctx-test.js");
+    std::fs::create_dir_all(node_bin.parent().expect("node parent")).expect("mkdir node");
+    std::fs::create_dir_all(cli_entry.parent().expect("cli parent")).expect("mkdir gemini");
+    std::fs::write(&node_bin, b"node").expect("write node");
+    std::fs::write(&cli_entry, b"gemini").expect("write cli");
+    std::fs::write(
+        &core_entry,
+        "export const coreEvents = {}; export const CoreEvent = {}; export const writeToStdout = () => {}; export const writeToStderr = () => {};",
+    )
+    .expect("write core");
+    std::fs::write(
+        &package_json,
+        r#"{"name":"@google/gemini-cli","version":"0.38.2"}"#,
+    )
+    .expect("write package");
+    (node_bin, cli_entry, package_json, core_entry)
+}
+
+fn gemini_managed_command(node_bin: &Path, cli_entry: &Path) -> AgentServerCommand {
+    AgentServerCommand {
+        command: node_bin.to_string_lossy().to_string(),
+        args: vec![
+            cli_entry.to_string_lossy().to_string(),
+            "--experimental-acp".to_string(),
+        ],
+        dependencies: Vec::new(),
+        managed: None,
+    }
+}
+
+fn acp_bridge_command() -> AgentServerCommand {
+    AgentServerCommand {
+        command: "/tmp/acp-crp-bridge".to_string(),
+        args: vec!["--stdio".to_string()],
+        dependencies: Vec::new(),
+        managed: None,
+    }
+}
+
 #[test]
 fn managed_provider_runtime_command_wraps_gemini_runtime_with_wrapper() {
     let data_root = tempfile::tempdir().expect("tempdir");
@@ -317,6 +381,46 @@ fn managed_provider_runtime_command_wraps_gemini_runtime_with_wrapper() {
     assert!(wrapper.contains(cli_entry.to_string_lossy().as_ref()));
     assert!(wrapper.contains("CoreEvent.ConsentRequest"));
     assert!(wrapper.contains("GEMINI_CLI_NO_RELAUNCH"));
+}
+
+#[test]
+fn managed_provider_runtime_command_rejects_gemini_runtime_with_missing_package_json() {
+    let data_root = tempfile::tempdir().expect("tempdir");
+    let (node_bin, cli_entry, package_json, _) =
+        create_managed_gemini_runtime_layout(data_root.path());
+    std::fs::remove_file(package_json).expect("remove package json");
+
+    let err = managed_provider_runtime_command(
+        data_root.path(),
+        "gemini",
+        gemini_managed_command(&node_bin, &cli_entry),
+        Some(&acp_bridge_command()),
+    )
+    .expect_err("missing package json should fail");
+
+    assert!(err.to_string().contains(
+        "Gemini ACP entrypoint must live under a node_modules/@google/gemini-cli install tree"
+    ));
+}
+
+#[test]
+fn managed_provider_runtime_command_rejects_gemini_runtime_with_missing_core_entry() {
+    let data_root = tempfile::tempdir().expect("tempdir");
+    let (node_bin, cli_entry, _, core_entry) =
+        create_managed_gemini_runtime_layout(data_root.path());
+    std::fs::remove_file(core_entry).expect("remove core entry");
+
+    let err = managed_provider_runtime_command(
+        data_root.path(),
+        "gemini",
+        gemini_managed_command(&node_bin, &cli_entry),
+        Some(&acp_bridge_command()),
+    )
+    .expect_err("missing core entry should fail");
+
+    assert!(err
+        .to_string()
+        .contains("Gemini ACP bundled core entrypoint is missing"));
 }
 
 #[test]
