@@ -7,6 +7,7 @@ import {
   getWorktree,
   idToString,
   listWebSessions,
+  type SessionTurn,
 } from "../../api/client";
 import { useDaemonBaseUrl } from "../../api/useDaemonConnection";
 import { artifactPrefetcher } from "../../state/artifactPrefetch";
@@ -39,6 +40,32 @@ import {
   resolveMeasuredSessionSwitchId,
   useWorkbenchSessionSwitchMetrics,
 } from "./useWorkbenchSessionSwitchMetrics";
+
+const compareSessionTurnOrder = (left: SessionTurn, right: SessionTurn): number => {
+  const leftSeq = Number(left.start_seq ?? Number.NaN);
+  const rightSeq = Number(right.start_seq ?? Number.NaN);
+  if (Number.isFinite(leftSeq) && Number.isFinite(rightSeq) && leftSeq !== rightSeq) {
+    return leftSeq - rightSeq;
+  }
+  if (Number.isFinite(leftSeq) && !Number.isFinite(rightSeq)) return -1;
+  if (!Number.isFinite(leftSeq) && Number.isFinite(rightSeq)) return 1;
+  const leftStartedAt = String(left.started_at ?? "");
+  const rightStartedAt = String(right.started_at ?? "");
+  if (leftStartedAt !== rightStartedAt) {
+    return leftStartedAt.localeCompare(rightStartedAt);
+  }
+  return String(left.turn_id ?? "").localeCompare(String(right.turn_id ?? ""));
+};
+
+const getLatestTurnStatus = (turns: SessionTurn[] | null | undefined): SessionTurn["status"] | null => {
+  let latestTurn: SessionTurn | null = null;
+  for (const turn of turns ?? []) {
+    if (!latestTurn || compareSessionTurnOrder(turn, latestTurn) > 0) {
+      latestTurn = turn;
+    }
+  }
+  return latestTurn?.status ?? null;
+};
 import { buildGitPaneModel } from "./worktreeGitPaneModel";
 
 type PaneMode = "diff" | "artifacts" | "sessions" | null;
@@ -852,7 +879,9 @@ export function useWorkbenchActiveTaskController({
     setTranscriptNotice(null);
   }, [setTranscriptNotice]);
 
-  const canInterruptSession = Boolean(activeSessionId) && hasSessionActiveTurn(activeEntry?.activity);
+  const canInterruptSession =
+    Boolean(activeSessionId) &&
+    hasSessionActiveTurn(activeEntry?.activity, getLatestTurnStatus(activeEntry?.turns ?? null));
 
   const [convoMenu, setConvoMenu] = useState<{ style: React.CSSProperties } | null>(null);
   const convoMenuRef = useRef<HTMLDivElement | null>(null);

@@ -78,7 +78,7 @@ import {
 } from "./sessionSupervisor/thoughtProjection";
 import {
   dedupeIds,
-  reconcileActivityInterruptedFromTurns,
+  reconcileActivityFromTurns,
   reconcileLatestTurnInterruptedFromActivity,
   sameIdList,
 } from "./sessionSupervisor/cachePolicy";
@@ -369,17 +369,19 @@ export class SessionSupervisor {
     if (!id) return;
     const entry = this.ensureEntry(id);
     const nextActivity = activity ?? null;
-    if (
-      (entry.activity?.is_working ?? false) === (nextActivity?.is_working ?? false) &&
-      (entry.activity?.last_turn_status ?? null) === (nextActivity?.last_turn_status ?? null)
-    ) {
+    const normalizedActivity = reconcileActivityFromTurns(nextActivity, entry.turns);
+    if (entry.activity === normalizedActivity) {
       return;
     }
-    entry.activity = nextActivity;
+    entry.activity = normalizedActivity;
     if (reconcileLatestTurnInterruptedFromActivity(entry.turns, nextActivity)) {
       this.bumpTurnsRev(entry);
+      const normalizedAfterInterrupt = reconcileActivityFromTurns(entry.activity, entry.turns);
+      if (normalizedAfterInterrupt !== entry.activity) {
+        entry.activity = normalizedAfterInterrupt;
+      }
     }
-    entry.activity = reconcileActivityInterruptedFromTurns(entry.activity, entry.turns);
+    entry.activity = reconcileActivityFromTurns(entry.activity, entry.turns);
     entry.updatedAtMs = Date.now();
     this.publish();
   };
@@ -405,6 +407,9 @@ export class SessionSupervisor {
     if (opts?.replace) {
       entry.turns = [];
       this.bumpTurnsRev(entry);
+      if (turns.length === 0) {
+        entry.activity = null;
+      }
     }
 
     if (turns.length > 0) {
@@ -432,6 +437,11 @@ export class SessionSupervisor {
       entry.turns = merged;
       this.bumpTurnsRev(entry);
       entry.turnsHydrated = true;
+    }
+
+    const normalizedActivity = reconcileActivityFromTurns(entry.activity, entry.turns);
+    if (normalizedActivity !== entry.activity) {
+      entry.activity = normalizedActivity;
     }
 
     entry.updatedAtMs = Date.now();
@@ -527,6 +537,12 @@ export class SessionSupervisor {
       turnPageLimit: TURN_PAGE_LIMIT,
       resolveEntryWorkspaceOwnerScope: (nextEntry) => this.resolveEntryWorkspaceOwnerScope(nextEntry),
       mergeTurns: (nextEntry, turns) => this.mergeTurns(nextEntry, turns),
+      normalizeActivity: (nextEntry) => {
+        const normalizedActivity = reconcileActivityFromTurns(nextEntry.activity, nextEntry.turns);
+        if (normalizedActivity !== nextEntry.activity) {
+          nextEntry.activity = normalizedActivity;
+        }
+      },
       mergeMessages: (nextEntry, messages) => this.mergeMessages(nextEntry, messages),
       publish: () => this.publish(),
       persistHead: (nextEntry) => this.persistHead(nextEntry),

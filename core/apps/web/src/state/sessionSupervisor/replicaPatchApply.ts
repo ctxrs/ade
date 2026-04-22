@@ -14,7 +14,7 @@ import {
 import { hasModelList } from "./eventHydration";
 import {
   mergeTurnStatus,
-  reconcileActivityInterruptedFromTurns,
+  reconcileActivityFromTurns,
   reconcileLatestTurnInterruptedFromActivity,
 } from "./cachePolicy";
 import { resolveTurnAnalyticsMetadata } from "./turnAnalyticsMetadata";
@@ -576,7 +576,7 @@ const applyCanonicalTranscriptPatch = (
       changed = true;
     }
   }
-  const reconciledActivity = reconcileActivityInterruptedFromTurns(entry.activity, entry.turns);
+  const reconciledActivity = reconcileActivityFromTurns(entry.activity, entry.turns);
   if (reconciledActivity !== entry.activity) {
     entry.activity = reconciledActivity;
     changed = true;

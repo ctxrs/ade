@@ -14,7 +14,7 @@ import { clearAllAssistantStreaming, clearAssistantStreaming } from "../assistan
 import { isBoundedSessionHead } from "../sessionHeadRepair";
 import { findWorkspaceSessionHead } from "../workspaceActiveSnapshot/projection";
 import {
-  reconcileActivityInterruptedFromTurns,
+  reconcileActivityFromTurns,
   reconcileLatestTurnInterruptedFromActivity,
   stripPartialEvents,
   stripTurnPartials,
@@ -206,7 +206,7 @@ export function applyHead(
   if (reconcileLatestTurnInterruptedFromActivity(entry.turns, entry.activity)) {
     this.bumpTurnsRev(entry);
   }
-  entry.activity = reconcileActivityInterruptedFromTurns(entry.activity, entry.turns);
+  entry.activity = reconcileActivityFromTurns(entry.activity, entry.turns);
   // Historical snapshot hydration should not emit fresh analytics events.
   // Live analytics are produced via event-driven paths (replica append patches).
   // See: core/apps/web/src/state/sessionSupervisorCore.analytics.test.ts
@@ -478,6 +478,7 @@ export function resetEntryProjectionForReplace(
   opts?: { skipPublish?: boolean },
 ) {
   const support = entry.support;
+  entry.activity = null;
   entry.turns = [];
   entry.events = [];
   entry.messages = [];

@@ -10,6 +10,7 @@ type LoadMoreTurnsContext = {
   turnPageLimit: number;
   resolveEntryWorkspaceOwnerScope: (entry: InternalEntry) => WorkspaceOwnerScope | null;
   mergeTurns: (entry: InternalEntry, turns: typeof entry.turns) => void;
+  normalizeActivity: (entry: InternalEntry) => void;
   mergeMessages: (entry: InternalEntry, messages: typeof entry.messages) => void;
   publish: () => void;
   persistHead: (entry: InternalEntry) => Promise<void>;
@@ -21,6 +22,7 @@ export async function loadMoreTurnsForEntry({
   turnPageLimit,
   resolveEntryWorkspaceOwnerScope,
   mergeTurns,
+  normalizeActivity,
   mergeMessages,
   publish,
   persistHead,
@@ -42,6 +44,7 @@ export async function loadMoreTurnsForEntry({
     if (cached?.page) {
       const page = cached.page;
       mergeTurns(entry, page.turns);
+      normalizeActivity(entry);
       mergeMessages(entry, page.messages);
       entry.hasMoreTurns = page.has_more;
       entry.oldestTurnSeq = page.next_cursor ?? entry.oldestTurnSeq;
@@ -53,6 +56,7 @@ export async function loadMoreTurnsForEntry({
     }
     const page = await getSessionHistory(sessionId, beforeSeq, turnPageLimit);
     mergeTurns(entry, page.turns);
+    normalizeActivity(entry);
     mergeMessages(entry, page.messages);
     entry.hasMoreTurns = page.has_more;
     entry.oldestTurnSeq = page.next_cursor ?? entry.oldestTurnSeq;

@@ -31,7 +31,9 @@ export const compareSessionTurnOrder = (a: SessionTurn, b: SessionTurn): number 
   if (Number.isFinite(sa) && Number.isFinite(sb) && sa !== sb) {
     return sa - sb;
   }
-  return String(a.started_at).localeCompare(String(b.started_at));
+  const startedAtOrder = String(a.started_at ?? "").localeCompare(String(b.started_at ?? ""));
+  if (startedAtOrder !== 0) return startedAtOrder;
+  return String(a.turn_id ?? "").localeCompare(String(b.turn_id ?? ""));
 };
 
 export const mergeSessionTurns = (prev: SessionTurn[], incoming: SessionTurn[]): SessionTurn[] => {

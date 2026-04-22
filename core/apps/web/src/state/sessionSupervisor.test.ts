@@ -99,13 +99,16 @@ const mkTurn = ({
   turnId,
   status,
   startSeq,
+  startedAt,
 }: {
   sessionId: string;
   turnId: string;
   status: SessionTurn["status"];
   startSeq: number;
+  startedAt?: string;
 }): SessionTurn => {
-  const startedAt = new Date(Date.UTC(2026, 2, 9, 0, 0, startSeq)).toISOString();
+  const resolvedStartedAt =
+    startedAt ?? new Date(Date.UTC(2026, 2, 9, 0, 0, startSeq)).toISOString();
   return {
     turn_id: turnId,
     session_id: sessionId,
@@ -114,8 +117,8 @@ const mkTurn = ({
     status,
     start_seq: startSeq,
     end_seq: status === "completed" ? startSeq + 1 : null,
-    started_at: startedAt,
-    updated_at: startedAt,
+    started_at: resolvedStartedAt,
+    updated_at: resolvedStartedAt,
     assistant_partial: "",
     thought_partial: "",
     metrics_json: null,
@@ -3259,6 +3262,85 @@ describe("SessionSupervisor", () => {
     expect(entry?.lastEventSeq).toBe(1);
     expect(entry?.projectionRev).toBe(1);
     expect(entry?.stateRev).toBe(1);
+  });
+
+  it("normalizes running activity to completed when a terminal turn is applied", async () => {
+    const { SessionSupervisor } = await import("./sessionSupervisor");
+
+    const sessionId = "session-activity-normalizes-terminal";
+    const sup = new SessionSupervisor();
+    sup.setSession(mkSession(sessionId));
+    sup.setTurns(sessionId, [mkTurn({ sessionId, turnId: "turn-1", status: "running", startSeq: 1 })], {
+      replace: true,
+    });
+    sup.setSessionActivity(sessionId, { is_working: true, last_turn_status: "running" });
+    sup.setTurns(sessionId, [mkTurn({ sessionId, turnId: "turn-1", status: "completed", startSeq: 1 })], {
+      replace: true,
+    });
+
+    const entry = sup.getSnapshot().sessions[sessionId];
+    expect(entry?.activity).toEqual({ is_working: false, last_turn_status: "completed" });
+    expect(entry?.turns.at(-1)?.status).toBe("completed");
+  });
+
+  it("keeps a newer running turn working when an older terminal turn arrives later", async () => {
+    const { SessionSupervisor } = await import("./sessionSupervisor");
+
+    const sessionId = "session-activity-keeps-newer-running";
+    const sup = new SessionSupervisor();
+    sup.setSession(mkSession(sessionId));
+    sup.setTurns(
+      sessionId,
+      [
+        mkTurn({ sessionId, turnId: "turn-2", status: "running", startSeq: 20 }),
+      ],
+      { replace: true },
+    );
+    sup.setSessionActivity(sessionId, { is_working: true, last_turn_status: "running" });
+    sup.setTurns(
+      sessionId,
+      [
+        mkTurn({ sessionId, turnId: "turn-1", status: "completed", startSeq: 10 }),
+        mkTurn({ sessionId, turnId: "turn-2", status: "running", startSeq: 20 }),
+      ],
+      { replace: true },
+    );
+
+    const entry = sup.getSnapshot().sessions[sessionId];
+    expect(entry?.activity).toEqual({ is_working: true, last_turn_status: "running" });
+    expect(entry?.turns.map((turn) => turn.status)).toEqual(["completed", "running"]);
+  });
+
+  it("normalizes activity from the latest canonical turn order when start_seq ties", async () => {
+    const { SessionSupervisor } = await import("./sessionSupervisor");
+
+    const sessionId = "session-activity-order-tie";
+    const sup = new SessionSupervisor();
+    sup.setSession(mkSession(sessionId));
+    sup.setTurns(
+      sessionId,
+      [
+        mkTurn({
+          sessionId,
+          turnId: "turn-1",
+          status: "completed",
+          startSeq: 10,
+          startedAt: "2026-03-09T00:00:10.000Z",
+        }),
+        mkTurn({
+          sessionId,
+          turnId: "turn-2",
+          status: "running",
+          startSeq: 10,
+          startedAt: "2026-03-09T00:00:11.000Z",
+        }),
+      ],
+      { replace: true },
+    );
+
+    const entry = sup.getSnapshot().sessions[sessionId];
+    expect(entry?.activity).toEqual({ is_working: true, last_turn_status: "running" });
+    expect(entry?.turns.map((turn) => turn.turn_id)).toEqual(["turn-1", "turn-2"]);
   });
 
   it("ignores older workspace summary deltas for authoritative session entries", async () => {

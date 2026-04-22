@@ -2,7 +2,7 @@ import type { SessionHeadSnapshot } from "../../api/client";
 import type { SessionSubscriptionCursor } from "../sessionSubscription";
 import type { InternalEntry } from "./entryState";
 import { buildSessionSubscriptionPlan } from "./sessionSubscriptionPlan";
-import { reconcileActivityInterruptedFromTurns, reconcileLatestTurnInterruptedFromActivity } from "./cachePolicy";
+import { reconcileActivityFromTurns, reconcileLatestTurnInterruptedFromActivity } from "./cachePolicy";
 import { isReplicaAuthority } from "./config";
 
 export function buildSubscribedSessions(
@@ -112,7 +112,7 @@ export function applySessionActivityUpdate(
       entry.turnsRev += 1;
       changed = true;
     }
-    const reconciledActivity = reconcileActivityInterruptedFromTurns(entry.activity, entry.turns);
+    const reconciledActivity = reconcileActivityFromTurns(entry.activity, entry.turns);
     if (reconciledActivity !== entry.activity) {
       entry.activity = reconciledActivity;
       changed = true;

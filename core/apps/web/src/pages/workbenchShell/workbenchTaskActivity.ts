@@ -1,8 +1,9 @@
 import type { SessionActivityState } from "@ctx/types";
+import type { SessionTurn } from "../../api/client";
 import { idToString } from "../../api/client";
 import type { SessionSupervisorSnapshot } from "../../state/sessionSupervisor";
 import type { WorkspaceActiveSnapshotItem } from "../../state/workspaceActiveSnapshotStore";
-import { hasSessionActiveTurn, isSessionWorkingActivity } from "../../utils/sessionActivity";
+import { hasSessionActiveTurn } from "../../utils/sessionActivity";
 import { pickPreferredSessionId } from "../../utils/workbenchSelection";
 import { lastAssistantMessageMs, parseMs } from "./WorkbenchPage.utils";
 import type { OptimisticTaskSummary } from "./WorkbenchPage.types";
@@ -82,6 +83,57 @@ const pickFreshestTaskLiveSource = (
   return freshest;
 };
 
+const compareSessionTurnOrder = (left: SessionTurn, right: SessionTurn): number => {
+  const leftSeq = Number(left.start_seq ?? Number.NaN);
+  const rightSeq = Number(right.start_seq ?? Number.NaN);
+  if (Number.isFinite(leftSeq) && Number.isFinite(rightSeq) && leftSeq !== rightSeq) {
+    return leftSeq - rightSeq;
+  }
+  if (Number.isFinite(leftSeq) && !Number.isFinite(rightSeq)) return -1;
+  if (!Number.isFinite(leftSeq) && Number.isFinite(rightSeq)) return 1;
+  const leftStartedAt = String(left.started_at ?? "");
+  const rightStartedAt = String(right.started_at ?? "");
+  if (leftStartedAt !== rightStartedAt) {
+    return leftStartedAt.localeCompare(rightStartedAt);
+  }
+  return String(left.turn_id ?? "").localeCompare(String(right.turn_id ?? ""));
+};
+
+const getLatestTurnStatus = (turns: SessionTurn[] | null | undefined): SessionTurn["status"] | null => {
+  let latestTurn: SessionTurn | null = null;
+  for (const turn of turns ?? []) {
+    if (!latestTurn || compareSessionTurnOrder(turn, latestTurn) > 0) {
+      latestTurn = turn;
+    }
+  }
+  return latestTurn?.status ?? null;
+};
+
+const resolveCanonicalTaskWorkingTurnStatus = ({
+  primaryEntry,
+  primaryHead,
+  primarySessionSummary,
+}: {
+  primaryEntry: SessionSupervisorSnapshot["sessions"][string] | undefined;
+  primaryHead: WorkspaceActiveSnapshotItem["primarySessionHead"] | null;
+  primarySessionSummary: WorkspaceActiveSnapshotItem["sessions"][number] | undefined;
+}): SessionTurn["status"] | null => {
+  if (primaryEntry?.freshness === "authoritative" || primaryEntry?.freshness === "replica") {
+    const entryTurnStatus =
+      getLatestTurnStatus(primaryEntry.turns) ?? primaryEntry.activity?.last_turn_status ?? null;
+    if (entryTurnStatus) return entryTurnStatus;
+    const headTurnStatus =
+      getLatestTurnStatus(primaryHead?.turns ?? null) ?? primaryHead?.activity?.last_turn_status ?? null;
+    if (headTurnStatus) return headTurnStatus;
+  }
+
+  const headTurnStatus =
+    getLatestTurnStatus(primaryHead?.turns ?? null) ?? primaryHead?.activity?.last_turn_status ?? null;
+  if (headTurnStatus) return headTurnStatus;
+
+  return primarySessionSummary?.activity?.last_turn_status ?? null;
+};
+
 const readPrimarySessionFallbackId = (
   summary: WorkspaceActiveSnapshotItem | OptimisticTaskSummary | null | undefined,
 ): string => {
@@ -129,7 +181,7 @@ export const isPrimarySessionRunning = ({
 }: {
   primarySessionSummary?: WorkspaceActiveSnapshotItem["sessions"][number];
 }): boolean => {
-  return isSessionWorkingActivity(primarySessionSummary?.activity);
+  return hasSessionActiveTurn(primarySessionSummary?.activity);
 };
 
 export const deriveWorkbenchTaskStatusKind = ({
@@ -299,9 +351,14 @@ export const selectWorkbenchTaskLiveState = ({
   const assistantMs = primaryEntryIsCanonical
     ? liveMs ?? headMs ?? summaryMs
     : headMs ?? summaryMs ?? liveMs;
+  const canonicalTurnStatus = resolveCanonicalTaskWorkingTurnStatus({
+    primaryEntry,
+    primaryHead,
+    primarySessionSummary,
+  });
 
   return {
-    working: isSessionWorkingActivity(freshestActivitySource?.activity ?? null),
+    working: canonicalTurnStatus === "queued" || canonicalTurnStatus === "running",
     hasError: primaryStatus === "failed" || primaryStatus === "cancelled",
     lastAssistantMs: assistantMs,
   };

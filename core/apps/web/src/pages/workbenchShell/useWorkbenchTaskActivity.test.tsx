@@ -154,13 +154,17 @@ const makeSessionEntry = ({
   updatedAtMs,
 });
 
-const makeTurn = (sessionId: string, status: SessionTurn["status"]): SessionTurn => ({
+const makeTurn = (
+  sessionId: string,
+  status: SessionTurn["status"],
+  opts?: { startSeq?: number },
+): SessionTurn => ({
   turn_id: `${sessionId}-${status}`,
   session_id: sessionId,
   run_id: null,
   user_message_id: `${sessionId}-message`,
   status,
-  start_seq: 1,
+  start_seq: opts?.startSeq ?? 1,
   end_seq: status === "running" ? null : 2,
   started_at: now,
   updated_at: now,
@@ -608,7 +612,7 @@ describe("useWorkbenchTaskActivity helpers", () => {
     expect(isWorkbenchTaskUnread({ taskId: "task-1", tasksById: { "task-1": taskSummary }, taskLiveInfo })).toBe(true);
   });
 
-  it("selects task working state from the freshest canonical source", () => {
+  it("prefers canonical head turn status over fresher summary activity", () => {
     const primarySession = makeSession("session-1", "task-1", "active");
     const selectedState = selectWorkbenchTaskLiveState({
       task: makeTaskSummary({
@@ -635,6 +639,31 @@ describe("useWorkbenchTaskActivity helpers", () => {
           has_more_turns: false,
           has_more_history: false,
         },
+      }),
+      entryBySessionId: new Map(),
+    });
+
+    expect(selectedState).toEqual({
+      working: false,
+      hasError: false,
+      lastAssistantMs: Date.parse(now),
+    });
+  });
+
+  it("treats summary-only running activity as working when no turn projection is available", () => {
+    const primarySession = makeSession("session-1", "task-1", "active");
+    const selectedState = selectWorkbenchTaskLiveState({
+      task: makeTaskSummary({
+        taskId: "task-1",
+        primarySessionId: primarySession.id,
+        sessions: [
+          makeSessionSummary(primarySession, {
+            last_event_seq: 12,
+            projection_rev: 12,
+            state_rev: 12,
+            activity: { is_working: true, last_turn_status: "running" },
+          }),
+        ],
       }),
       entryBySessionId: new Map(),
     });
@@ -751,7 +780,7 @@ describe("useWorkbenchTaskActivity helpers", () => {
     expect(taskLiveInfo.workingByTask.has("task-1")).toBe(true);
   });
 
-  it("prefers fresher summary activity over stale canonical head activity", () => {
+  it("does not let summary activity override terminal canonical head activity", () => {
     const primarySession = makeSession("session-1", "task-1", "active");
     const taskLiveInfo = deriveTaskLiveInfo({
       tasksById: {
@@ -785,10 +814,10 @@ describe("useWorkbenchTaskActivity helpers", () => {
       sessions: {},
     });
 
-    expect(taskLiveInfo.workingByTask.has("task-1")).toBe(true);
+    expect(taskLiveInfo.workingByTask.has("task-1")).toBe(false);
   });
 
-  it("prefers fresher summary activity over stale canonical session cache activity", () => {
+  it("does not let summary activity override terminal canonical session cache activity", () => {
     const primarySession = makeSession("session-1", "task-1", "active");
     const taskLiveInfo = deriveTaskLiveInfo({
       tasksById: {
@@ -814,6 +843,140 @@ describe("useWorkbenchTaskActivity helpers", () => {
           lastEventSeq: 8,
           projectionRev: 8,
           stateRev: 8,
+        }),
+      },
+    });
+
+    expect(taskLiveInfo.workingByTask.has("task-1")).toBe(false);
+  });
+
+  it("does not let stale live activity keep a terminal primary turn working", () => {
+    const primarySession = makeSession("session-1", "task-1", "active");
+    const taskLiveInfo = deriveTaskLiveInfo({
+      tasksById: {
+        "task-1": makeTaskSummary({
+          taskId: "task-1",
+          primarySessionId: primarySession.id,
+          sessions: [
+            makeSessionSummary(primarySession, {
+              activity: { is_working: false, last_turn_status: "completed" },
+              last_event_seq: 12,
+              projection_rev: 12,
+              state_rev: 12,
+            }),
+          ],
+          primarySessionHead: {
+            session: primarySession,
+            turns: [makeTurn(primarySession.id, "completed", { startSeq: 12 })],
+            tool_summaries: [],
+            messages: [],
+            events: [],
+            last_event_seq: 12,
+            projection_rev: 12,
+            state_rev: 12,
+            activity: { is_working: false, last_turn_status: "completed" },
+            has_more_turns: false,
+            has_more_history: false,
+          },
+        }),
+      },
+      optimisticTasks: [],
+      sessions: {
+        [primarySession.id]: makeSessionEntry({
+          session: primarySession,
+          activity: { is_working: true, last_turn_status: "running" },
+          turns: [makeTurn(primarySession.id, "completed", { startSeq: 12 })],
+          updatedAtMs: Date.parse(now) + 1,
+          freshness: "authoritative",
+        }),
+      },
+    });
+
+    expect(taskLiveInfo.workingByTask.has("task-1")).toBe(false);
+  });
+
+  it("does not let a fresher summary activity override a terminal canonical head", () => {
+    const primarySession = makeSession("session-1", "task-1", "active");
+    const taskLiveInfo = deriveTaskLiveInfo({
+      tasksById: {
+        "task-1": makeTaskSummary({
+          taskId: "task-1",
+          primarySessionId: primarySession.id,
+          sessions: [
+            makeSessionSummary(primarySession, {
+              activity: { is_working: true, last_turn_status: "running" },
+              last_message_at: "2026-03-09T00:00:20.000Z",
+              last_event_seq: 20,
+              projection_rev: 20,
+              state_rev: 20,
+            }),
+          ],
+          primarySessionHead: {
+            session: primarySession,
+            turns: [makeTurn(primarySession.id, "completed", { startSeq: 12 })],
+            tool_summaries: [],
+            messages: [],
+            events: [],
+            last_event_seq: 12,
+            projection_rev: 12,
+            state_rev: 12,
+            activity: { is_working: false, last_turn_status: "completed" },
+            has_more_turns: false,
+            has_more_history: false,
+          },
+        }),
+      },
+      optimisticTasks: [],
+      sessions: {},
+    });
+
+    expect(taskLiveInfo.workingByTask.has("task-1")).toBe(false);
+  });
+
+  it("keeps a newer running turn working even if an older turn terminalized", () => {
+    const primarySession = makeSession("session-1", "task-1", "active");
+    const taskLiveInfo = deriveTaskLiveInfo({
+      tasksById: {
+        "task-1": makeTaskSummary({
+          taskId: "task-1",
+          primarySessionId: primarySession.id,
+          sessions: [
+            makeSessionSummary(primarySession, {
+              activity: { is_working: true, last_turn_status: "running" },
+              last_event_seq: 20,
+              projection_rev: 20,
+              state_rev: 20,
+            }),
+          ],
+          primarySessionHead: {
+            session: primarySession,
+            turns: [
+              makeTurn(primarySession.id, "completed", { startSeq: 10 }),
+              makeTurn(primarySession.id, "running", { startSeq: 20 }),
+            ],
+            tool_summaries: [],
+            messages: [],
+            events: [],
+            last_event_seq: 20,
+            projection_rev: 20,
+            state_rev: 20,
+            activity: { is_working: true, last_turn_status: "running" },
+            has_more_turns: false,
+            has_more_history: false,
+          },
+        }),
+      },
+      optimisticTasks: [],
+      sessions: {
+        [primarySession.id]: makeSessionEntry({
+          session: primarySession,
+          activity: { is_working: true, last_turn_status: "running" },
+          turns: [
+            makeTurn(primarySession.id, "completed", { startSeq: 10 }),
+            makeTurn(primarySession.id, "running", { startSeq: 20 }),
+          ],
+          updatedAtMs: Date.parse(now) + 1,
+          freshness: "authoritative",
         }),
       },
     });
@@ -864,7 +1027,7 @@ describe("useWorkbenchTaskActivity helpers", () => {
     expect(taskLiveInfo.lastAssistantMsByTask["task-1"]).toBe(Date.parse("2026-03-09T00:00:06.000Z"));
   });
 
-  it("does not let live primary turns override a non-working canonical summary", () => {
+  it("lets canonical live turns override stale summary activity", () => {
     const primarySession = makeSession("session-1", "task-1", "active");
     const taskLiveInfo = deriveTaskLiveInfo({
       tasksById: {
@@ -887,10 +1050,10 @@ describe("useWorkbenchTaskActivity helpers", () => {
       },
     });
 
-    expect(taskLiveInfo.workingByTask.has("task-1")).toBe(false);
+    expect(taskLiveInfo.workingByTask.has("task-1")).toBe(true);
   });
 
-  it("keeps queued primary summaries working when canonical activity is still working", () => {
+  it("keeps queued canonical activity working", () => {
     const primarySession = makeSession("session-1", "task-1", "active");
     const taskLiveInfo = deriveTaskLiveInfo({
       tasksById: {
@@ -916,7 +1079,7 @@ describe("useWorkbenchTaskActivity helpers", () => {
     expect(taskLiveInfo.workingByTask.has("task-1")).toBe(true);
   });
 
-  it("falls back to a running summary when the live cache only has older non-running turns", () => {
+  it("does not let summary activity override a terminal live turn", () => {
     const primarySession = makeSession("session-1", "task-1", "active");
     const taskLiveInfo = deriveTaskLiveInfo({
       tasksById: {
@@ -940,7 +1103,7 @@ describe("useWorkbenchTaskActivity helpers", () => {
       },
     });
 
-    expect(taskLiveInfo.workingByTask.has("task-1")).toBe(true);
+    expect(taskLiveInfo.workingByTask.has("task-1")).toBe(false);
   });
 
   it("ignores optimistic starting state when a real primary running turn exists", () => {

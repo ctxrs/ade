@@ -57,16 +57,55 @@ export const mergeTurnStatus = (
   return nextPriority >= prevPriority ? next : prev;
 };
 
+const compareSessionTurnOrder = (left: SessionTurn, right: SessionTurn): number => {
+  const leftSeq = Number(left.start_seq ?? Number.NaN);
+  const rightSeq = Number(right.start_seq ?? Number.NaN);
+  if (Number.isFinite(leftSeq) && Number.isFinite(rightSeq) && leftSeq !== rightSeq) {
+    return leftSeq - rightSeq;
+  }
+  if (Number.isFinite(leftSeq) && !Number.isFinite(rightSeq)) return -1;
+  if (!Number.isFinite(leftSeq) && Number.isFinite(rightSeq)) return 1;
+  const leftStartedAt = String(left.started_at ?? "");
+  const rightStartedAt = String(right.started_at ?? "");
+  if (leftStartedAt !== rightStartedAt) {
+    return leftStartedAt.localeCompare(rightStartedAt);
+  }
+  return String(left.turn_id ?? "").localeCompare(String(right.turn_id ?? ""));
+};
+
+const getLatestTurnByOrder = (turns: SessionTurn[]): SessionTurn | null => {
+  let latest: SessionTurn | null = null;
+  for (const turn of turns) {
+    if (!latest || compareSessionTurnOrder(turn, latest) > 0) {
+      latest = turn;
+    }
+  }
+  return latest;
+};
+
+const findLatestTurnIndexByOrder = (turns: SessionTurn[]): number => {
+  let latestIndex = -1;
+  let latestTurn: SessionTurn | null = null;
+  turns.forEach((turn, index) => {
+    if (!latestTurn || compareSessionTurnOrder(turn, latestTurn) > 0) {
+      latestTurn = turn;
+      latestIndex = index;
+    }
+  });
+  return latestIndex;
+};
+
 export const reconcileLatestTurnInterruptedFromActivity = (
   turns: SessionTurn[],
   activity: SessionActivityState | null | undefined,
 ): boolean => {
   if ((activity?.last_turn_status ?? null) !== "interrupted") return false;
-  const latestTurn = turns.at(-1);
+  const latestTurnIndex = findLatestTurnIndexByOrder(turns);
+  const latestTurn = latestTurnIndex >= 0 ? turns[latestTurnIndex] ?? null : null;
   if (!latestTurn) return false;
   const nextStatus = mergeTurnStatus(latestTurn.status, "interrupted");
   if (nextStatus === latestTurn.status) return false;
-  turns[turns.length - 1] = { ...latestTurn, status: nextStatus };
+  turns[latestTurnIndex] = { ...latestTurn, status: nextStatus };
   return true;
 };
 
@@ -76,7 +115,7 @@ export const reconcileActivityInterruptedFromTurns = (
 ): SessionActivityState | null => {
   const nextActivity = activity ?? null;
   if (!nextActivity) return null;
-  const latestTurn = turns.at(-1);
+  const latestTurn = getLatestTurnByOrder(turns);
   if (!latestTurn || latestTurn.status !== "interrupted") return nextActivity;
   if (nextActivity.last_turn_status === "interrupted") return nextActivity;
   if (nextActivity.last_turn_status !== "completed" && nextActivity.last_turn_status !== "failed") {
@@ -86,6 +125,36 @@ export const reconcileActivityInterruptedFromTurns = (
     ...nextActivity,
     is_working: false,
     last_turn_status: "interrupted",
+  };
+};
+
+const isWorkingTurnStatus = (status: SessionTurn["status"] | null | undefined): boolean =>
+  status === "queued" || status === "running";
+
+export const reconcileActivityFromTurns = (
+  activity: SessionActivityState | null | undefined,
+  turns: SessionTurn[],
+): SessionActivityState | null => {
+  const latestTurn = getLatestTurnByOrder(turns);
+  if (!latestTurn) return activity ?? null;
+
+  const latestStatus = latestTurn.status ?? null;
+  if (!latestStatus) return activity ?? null;
+
+  const nextIsWorking = isWorkingTurnStatus(latestStatus);
+  const current = activity ?? null;
+  if (
+    current &&
+    current.is_working === nextIsWorking &&
+    (current.last_turn_status ?? null) === latestStatus
+  ) {
+    return current;
+  }
+
+  return {
+    ...(current ?? {}),
+    is_working: nextIsWorking,
+    last_turn_status: latestStatus,
   };
 };
 
