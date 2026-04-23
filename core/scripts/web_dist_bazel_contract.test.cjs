@@ -10,12 +10,24 @@ const scriptText = fs.readFileSync(path.join(repoRoot, "core", "apps", "web", "d
 const anyEnforceToolText = fs.readFileSync(path.join(repoRoot, "core", "apps", "web", "any_enforce_tool.sh"), "utf8");
 const corePackageJson = JSON.parse(fs.readFileSync(path.join(repoRoot, "core", "package.json"), "utf8"));
 
-function targetBlock(buildText, name, nextName) {
-  const start = buildText.indexOf(`name = "${name}"`);
-  assert.notEqual(start, -1, `expected target ${name}`);
-  const end = buildText.indexOf(`name = "${nextName}"`, start + 1);
-  assert.notEqual(end, -1, `expected target ${nextName}`);
-  return buildText.slice(start, end);
+function targetBlock(buildText, name) {
+  const lines = buildText.split(/\r?\n/u);
+  const nameLineIndex = lines.findIndex((line) => line.trim() === `name = "${name}",`);
+  assert.notEqual(nameLineIndex, -1, `expected target ${name}`);
+
+  let startIndex = nameLineIndex;
+  while (startIndex > 0 && !/^[A-Za-z0-9_.]+\($/u.test(lines[startIndex].trim())) {
+    startIndex -= 1;
+  }
+  assert.match(lines[startIndex].trim(), /^[A-Za-z0-9_.]+\($/u, `expected start of target ${name}`);
+
+  let endIndex = nameLineIndex;
+  while (endIndex < lines.length && lines[endIndex].trim() !== ")") {
+    endIndex += 1;
+  }
+  assert.notEqual(endIndex, lines.length, `expected end of target ${name}`);
+
+  return lines.slice(startIndex, endIndex + 1).join("\n");
 }
 
 test("Bazel web dist sync target stays explicit about the caller-supplied output dir", () => {
@@ -77,9 +89,9 @@ test("Bazel web dist sync tool requires an explicit workspace root and output di
 });
 
 test("Bazel web focused unit slices run as native vitest tests", () => {
-  const nonPretextBlock = targetBlock(buildFile, "unit_tests_non_pretext", "pretext_measurement_unit_tests");
-  const pretextBlock = targetBlock(buildFile, "pretext_measurement_unit_tests", "desktop_ipc_corpus");
-  const desktopIpcCorpusBlock = targetBlock(buildFile, "desktop_ipc_corpus", "e2e_premerge");
+  const nonPretextBlock = targetBlock(buildFile, "unit_tests_non_pretext");
+  const pretextBlock = targetBlock(buildFile, "pretext_measurement_unit_tests");
+  const desktopIpcCorpusBlock = targetBlock(buildFile, "desktop_ipc_corpus");
 
   assert.equal(
     corePackageJson.scripts["bazel:web:unit:non-pretext"],
@@ -89,9 +101,9 @@ test("Bazel web focused unit slices run as native vitest tests", () => {
     corePackageJson.scripts["bazel:web:pretext:measurement"],
     "node scripts/run_bazel_pilot.cjs test //core/apps/web:pretext_measurement_unit_tests",
   );
-  assert.match(buildFile, /vitest_bin\.vitest_test\([\s\S]*?name = "unit_tests_non_pretext"/);
-  assert.match(buildFile, /vitest_bin\.vitest_test\([\s\S]*?name = "pretext_measurement_unit_tests"/);
-  assert.match(buildFile, /vitest_bin\.vitest_test\([\s\S]*?name = "desktop_ipc_corpus"/);
+  assert.match(nonPretextBlock, /^vitest_bin\.vitest_test\(/m);
+  assert.match(pretextBlock, /^vitest_bin\.vitest_test\(/m);
+  assert.match(desktopIpcCorpusBlock, /^vitest_bin\.vitest_test\(/m);
   assert.match(nonPretextBlock, /data = HERMETIC_WEB_CHECK_DATA/);
   assert.match(pretextBlock, /data = HERMETIC_WEB_CHECK_DATA/);
   assert.match(desktopIpcCorpusBlock, /data = HERMETIC_WEB_CHECK_DATA/);

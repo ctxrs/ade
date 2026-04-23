@@ -12,12 +12,24 @@ const ctxProvidersBuild = fs.readFileSync(path.join(coreRoot, "crates", "ctx-pro
 const ctxStoreBuild = fs.readFileSync(path.join(coreRoot, "crates", "ctx-store", "BUILD.bazel"), "utf8");
 const webBuild = fs.readFileSync(path.join(coreRoot, "apps", "web", "BUILD.bazel"), "utf8");
 
-function targetBlock(buildText, name, nextName) {
-  const start = buildText.indexOf(`name = "${name}"`);
-  assert.notEqual(start, -1, `expected target ${name}`);
-  const end = buildText.indexOf(`name = "${nextName}"`, start + 1);
-  assert.notEqual(end, -1, `expected target ${nextName}`);
-  return buildText.slice(start, end);
+function targetBlock(buildText, name) {
+  const lines = buildText.split(/\r?\n/u);
+  const nameLineIndex = lines.findIndex((line) => line.trim() === `name = "${name}",`);
+  assert.notEqual(nameLineIndex, -1, `expected target ${name}`);
+
+  let startIndex = nameLineIndex;
+  while (startIndex > 0 && !/^[A-Za-z0-9_.]+\($/u.test(lines[startIndex].trim())) {
+    startIndex -= 1;
+  }
+  assert.match(lines[startIndex].trim(), /^[A-Za-z0-9_.]+\($/u, `expected start of target ${name}`);
+
+  let endIndex = nameLineIndex;
+  while (endIndex < lines.length && lines[endIndex].trim() !== ")") {
+    endIndex += 1;
+  }
+  assert.notEqual(endIndex, lines.length, `expected end of target ${name}`);
+
+  return lines.slice(startIndex, endIndex + 1).join("\n");
 }
 
 test("split resilience lanes use existing Bazel targets where they already exist", () => {
@@ -64,8 +76,8 @@ test("split resilience lanes use existing Bazel targets where they already exist
   assert.match(ctxProvidersBuild, /crate_features = \["fuzz_tests"\]/);
   assert.match(ctxStoreBuild, /name = "unit_tests_fault_injection"/);
   assert.match(ctxStoreBuild, /crate_features = \["fault_injection"\]/);
-  const desktopIpcCorpusBlock = targetBlock(webBuild, "desktop_ipc_corpus", "e2e_premerge");
+  const desktopIpcCorpusBlock = targetBlock(webBuild, "desktop_ipc_corpus");
   assert.match(webBuild, /name = "desktop_ipc_corpus"/);
-  assert.match(webBuild, /vitest_bin\.vitest_test\([\s\S]*?name = "desktop_ipc_corpus"/);
+  assert.match(desktopIpcCorpusBlock, /^vitest_bin\.vitest_test\(/m);
   assert.doesNotMatch(desktopIpcCorpusBlock, /run_workspace_task\.sh/);
 });
