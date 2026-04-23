@@ -7,12 +7,24 @@ bazel_dep(name = "rules_rust", version = "0.69.0")
 bazel_dep(name = "rules_shell", version = "0.7.1")
 bazel_dep(name = "platforms", version = "1.0.0")
 bazel_dep(name = "rules_cc", version = "0.2.17")
+bazel_dep(name = "toolchains_llvm", version = "1.7.0")
 bazel_dep(name = "rules_nodejs", version = "6.7.4")
 bazel_dep(name = "aspect_rules_js", version = "3.0.3")
 
 cc_configure = use_extension("@rules_cc//cc:extensions.bzl", "cc_configure_extension")
 use_repo(cc_configure, "local_config_cc", "local_config_cc_toolchains")
 register_toolchains("@local_config_cc_toolchains//:all")
+
+# Keep the LLVM C/C++ toolchain unregistered so the Linux GNU pilot stays opt-in.
+llvm = use_extension("@toolchains_llvm//toolchain/extensions:llvm.bzl", "llvm")
+llvm.toolchain(
+    name = "ctx_llvm_toolchain",
+    distribution = "LLVM-20.1.4-Linux-X64.tar.xz",
+    exec_arch = "amd64",
+    exec_os = "linux",
+    llvm_version = "20.1.4",
+)
+use_repo(llvm, "ctx_llvm_toolchain")
 
 node = use_extension("@rules_nodejs//nodejs:extensions.bzl", "node")
 node.toolchain(node_version = "22.22.2")

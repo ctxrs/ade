@@ -1,4 +1,4 @@
-load("@rules_shell//shell:sh_test.bzl", "sh_test")
+load("@aspect_rules_js//js:defs.bzl", "js_test")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -9,41 +9,31 @@ INSTALL_SITE_SOURCES = glob([
     "wrangler.toml",
 ])
 
-sh_test(
+js_test(
     name = "install_route_contract_tests",
-    srcs = ["//tools/bazel:run_workspace_task.sh"],
-    args = [
-        "install-site",
-        "node",
-        "--test",
-        "src/index.test.mjs",
-    ],
-    data = INSTALL_SITE_SOURCES + ["//core:package.json"],
+    entry_point = "src/run-node-test-suite.mjs",
+    args = ["src/index.test.mjs"],
+    chdir = package_name(),
+    data = INSTALL_SITE_SOURCES,
 )
 
-sh_test(
+js_test(
     name = "install_script_contract_tests",
-    srcs = ["//tools/bazel:run_workspace_task.sh"],
+    entry_point = "src/run-node-test-suite.mjs",
     args = [
-        "install-site",
-        "node",
-        "--test",
         "src/install-script.test.mjs",
         "src/uninstall-script.test.mjs",
     ],
-    data = INSTALL_SITE_SOURCES + ["//core:package.json"],
+    chdir = package_name(),
+    data = INSTALL_SITE_SOURCES,
 )
 
-sh_test(
+js_test(
     name = "install_bootstrap_contract_tests",
-    srcs = ["//tools/bazel:run_workspace_task.sh"],
-    args = [
-        "install-site",
-        "node",
-        "--test",
-        "src/install-bootstrap-ci.test.mjs",
-    ],
-    data = INSTALL_SITE_SOURCES + ["//core:package.json"],
+    entry_point = "src/run-node-test-suite.mjs",
+    args = ["src/install-bootstrap-ci.test.mjs"],
+    chdir = package_name(),
+    data = INSTALL_SITE_SOURCES,
 )
 
 test_suite(

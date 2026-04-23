@@ -10,6 +10,7 @@ use super::sandbox_machine_recovery::{
 };
 use super::*;
 use crate::settings::{ContainerMountMode, ContainerNetworkMode};
+use crate::test_support::write_running_container_sandbox_cli_shim;
 use chrono::Utc;
 use ctx_bundled_assets as bundled_assets;
 use ctx_bundled_assets::test_support::{
@@ -1113,17 +1114,13 @@ async fn prepare_in_host_mode_does_not_refresh_local_sandbox_activity() {
 #[cfg(unix)]
 #[tokio::test]
 async fn prepare_reuses_running_workspace_container_without_front_loading_image_readiness() {
-    use std::os::unix::fs::PermissionsExt;
-
     let _serial = env_var_test_lock().lock().await;
     let temp = tempfile::tempdir().expect("tempdir");
     let log_path = temp.path().join("sandbox-cli-invocations.log");
-    let sandbox_cli_path = temp.path().join("sandbox-cli.sh");
     let manager = runtime_manager(&temp).await;
     let workspace = sample_workspace(&temp);
     let worktree = sample_worktree(&temp, workspace.id);
     let container_name = workspace_container_name(workspace.id);
-    let volume_name = format!("ctx-ws-{}", workspace.id.0);
     let settings = ExecutionSettings {
         mode: ExecutionMode::Sandbox,
         container: ContainerExecutionSettings {
@@ -1133,23 +1130,13 @@ async fn prepare_reuses_running_workspace_container_without_front_loading_image_
         },
     };
 
-    std::fs::write(
-            &sandbox_cli_path,
-            format!(
-                "#!/bin/sh\nLOG=\"{log}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"info\" ]; then\n  printf '{{}}\\n'\n  exit 0\nfi\nif [ \"$1\" = \"image\" ] && [ \"$2\" = \"inspect\" ]; then\n  echo 'transient image store failure' >&2\n  exit 125\nfi\nif [ \"$1\" = \"volume\" ] && [ \"$2\" = \"inspect\" ]; then\n  exit 1\nfi\nif [ \"$1\" = \"volume\" ] && [ \"$2\" = \"create\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"inspect\" ] && [ \"$3\" = \"{container}\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"inspect\" ] && [ \"$5\" = \"{container}\" ]; then\n  printf 'true\\n'\n  exit 0\nfi\nif [ \"$1\" = \"inspect\" ] && [ \"$2\" = \"{container}\" ]; then\n  printf '[{{\"Mounts\":[{{\"Type\":\"volume\",\"Name\":\"{volume}\",\"Destination\":\"{workspace_root}\"}}]}}]\\n'\n  exit 0\nfi\nif [ \"$1\" = \"exec\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"start\" ] && [ \"$2\" = \"{container}\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"rm\" ] && [ \"$2\" = \"-f\" ] && [ \"$3\" = \"{container}\" ]; then\n  exit 0\nfi\necho \"unexpected sandbox CLI invocation: $*\" >&2\nexit 1\n",
-                log = log_path.display(),
-                container = container_name,
-                volume = volume_name,
-                workspace_root = CTX_CONTAINER_WORKSPACE_ROOT,
-            ),
-        )
-        .expect("write sandbox CLI shim");
-    std::fs::set_permissions(&sandbox_cli_path, std::fs::Permissions::from_mode(0o755))
-        .expect("chmod sandbox CLI shim");
+    let sandbox_cli_path =
+        write_running_container_sandbox_cli_shim(temp.path(), &log_path, &container_name);
     let _guard = EnvGuard::set(
         "CTX_HARNESS_SANDBOX_CLI_PATH",
         &sandbox_cli_path.to_string_lossy(),
     );
+    let _available = EnvGuard::set("CTX_TEST_SANDBOX_CLI_AVAILABLE", "1");
 
     let plan = manager
         .prepare(&workspace, &worktree, &settings, "http://127.0.0.1:4399")
@@ -2092,11 +2079,13 @@ async fn ensure_sandbox_machine_materialized_defers_reconfiguration_when_machine
         "CTX_HARNESS_SANDBOX_CLI_PATH",
         &sandbox_cli_path.to_string_lossy(),
     );
+    let _available = EnvGuard::set("CTX_TEST_SANDBOX_CLI_AVAILABLE", "1");
     let settings = ContainerExecutionSettings {
         machine: crate::settings::ContainerMachineSettings {
             memory_profile: crate::settings::ContainerMachineMemoryProfile::Balanced,
             ..crate::settings::ContainerMachineSettings::default()
         },
+        mount_mode: ContainerMountMode::Legacy,
         runtime: crate::settings::ContainerRuntimeKind::NativeContainer,
         ..ContainerExecutionSettings::default()
     };
@@ -2140,11 +2129,13 @@ async fn ensure_sandbox_machine_materialized_defers_reconfiguration_when_machine
         "CTX_HARNESS_SANDBOX_CLI_PATH",
         &sandbox_cli_path.to_string_lossy(),
     );
+    let _available = EnvGuard::set("CTX_TEST_SANDBOX_CLI_AVAILABLE", "1");
     let settings = ContainerExecutionSettings {
         machine: crate::settings::ContainerMachineSettings {
             memory_profile: crate::settings::ContainerMachineMemoryProfile::Balanced,
             ..crate::settings::ContainerMachineSettings::default()
         },
+        mount_mode: ContainerMountMode::Legacy,
         runtime: crate::settings::ContainerRuntimeKind::NativeContainer,
         ..ContainerExecutionSettings::default()
     };
@@ -2187,6 +2178,7 @@ async fn maybe_reclaim_sandbox_machine_stops_idle_machine() {
         "CTX_HARNESS_SANDBOX_CLI_PATH",
         &sandbox_cli_path.to_string_lossy(),
     );
+    let _available = EnvGuard::set("CTX_TEST_SANDBOX_CLI_AVAILABLE", "1");
     manager.set_last_activity_for_test(Instant::now() - Duration::from_secs(600));
     let settings = ContainerExecutionSettings {
         machine: crate::settings::ContainerMachineSettings {
@@ -2313,6 +2305,7 @@ async fn maybe_reclaim_sandbox_machine_stops_idle_runtime_with_running_workspace
         "CTX_HARNESS_SANDBOX_CLI_PATH",
         &sandbox_cli_path.to_string_lossy(),
     );
+    let _available = EnvGuard::set("CTX_TEST_SANDBOX_CLI_AVAILABLE", "1");
     manager.set_last_activity_for_test(Instant::now() - Duration::from_secs(600));
     let settings = ContainerExecutionSettings {
         machine: crate::settings::ContainerMachineSettings {

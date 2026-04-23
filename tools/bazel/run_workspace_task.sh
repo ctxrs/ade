@@ -135,6 +135,7 @@ RSYNC_EXCLUDES=(
   "--exclude=bazel-testlogs"
   "--exclude=core/node_modules"
   "--exclude=core/apps/web/node_modules"
+  "--exclude=core/apps/desktop/node_modules"
   "--exclude=core/target"
   "--exclude=core/.turbo"
   "--exclude=core/apps/web/dist"
@@ -159,6 +160,7 @@ fi
 # Keep repo-authored docs available to contract tests without copying all .ctx attachments.
 link_real_workspace_dir "${RUNFILES_REPO_ROOT}" "${TMP_WORKSPACE}" ".ctx/docs"
 link_real_workspace_dir "${REAL_WORKSPACE_ROOT}" "${TMP_WORKSPACE}" "core/node_modules"
+link_real_workspace_dir "${REAL_WORKSPACE_ROOT}" "${TMP_WORKSPACE}" "core/apps/desktop/node_modules"
 link_real_workspace_dir "${REAL_WORKSPACE_ROOT}" "${TMP_WORKSPACE}" "core/apps/web/node_modules"
 
 REL_DIR="$1"

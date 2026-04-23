@@ -1,10 +1,19 @@
 const GENERATED_DEP_CONSUMER_CRATES = Object.freeze([
+  "ctx-bundled-assets",
   "ctx-core",
   "ctx-crp-protocol",
   "ctx-events",
+  "ctx-fs",
   "ctx-harness-setup",
   "ctx-provider-install",
+  "ctx-provider-accounts",
+  "ctx-provider-matrix",
   "ctx-runtime-assets",
+  "ctx-sandbox-contract",
+  "ctx-session-tools",
+  "ctx-storage-admission",
+  "ctx-worker-protocol",
+  "ctx-workspace-active-snapshot",
 ]);
 
 const MANUAL_CRATES = Object.freeze({

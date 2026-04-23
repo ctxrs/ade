@@ -251,10 +251,39 @@ test("MODULE parser extracts crate specs", () => {
 test("real workspace model covers migrated crates and skips manual crates", () => {
   const { model } = buildRealWorkspaceModel({ config, coreRoot, repoRoot });
 
+  assert.deepEqual(model.entries["ctx-bundled-assets"], {
+    build_deps: [],
+    deps: [
+      "@crates//:serde",
+      "@crates//:serde_json",
+      "@crates//:tracing",
+    ],
+    dev_deps: ["@crates//:tempfile"],
+    dev_proc_macro_deps: [],
+    proc_macro_deps: [],
+  });
   assert.deepEqual(model.entries["ctx-core"].deps, [
     "@crates//:chrono",
     "@crates//:serde",
     "@crates//:serde_json",
+    "@crates//:uuid",
+  ]);
+  assert.deepEqual(model.entries["ctx-provider-matrix"], {
+    build_deps: [],
+    deps: [
+      "//core/crates/ctx-provider-accounts:lib",
+      "@crates//:anyhow",
+      "@crates//:semver",
+      "@crates//:serde",
+      "@crates//:serde_json",
+      "@crates//:tokio",
+    ],
+    dev_deps: ["@crates//:tempfile"],
+    dev_proc_macro_deps: [],
+    proc_macro_deps: [],
+  });
+  assert.deepEqual(model.entries["ctx-sandbox-contract"].dev_deps, [
+    "@crates//:chrono",
     "@crates//:uuid",
   ]);
   assert.equal(model.entries["ctx-http"], undefined);
