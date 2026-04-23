@@ -5,6 +5,8 @@ const test = require("node:test");
 
 const repoRoot = path.resolve(__dirname, "..", "..");
 const buildFile = fs.readFileSync(path.join(repoRoot, "core", "apps", "web", "BUILD.bazel"), "utf8");
+const e2eBuildFile = fs.readFileSync(path.join(repoRoot, "core", "apps", "web", "e2e", "BUILD.bazel"), "utf8");
+const e2eMacroFile = fs.readFileSync(path.join(repoRoot, "core", "apps", "web", "e2e", "web_e2e_test.bzl"), "utf8");
 const verifyAgentRemote = fs.readFileSync(path.join(repoRoot, "core", "scripts", "verify_agent_remote.cjs"), "utf8");
 
 function targetBlock(name) {
@@ -36,11 +38,14 @@ test("supported web validation targets do not use the non-hermetic workspace wra
   }
 });
 
-test("browser e2e targets remain explicit non-agent wrapper targets", () => {
-  for (const targetName of ["e2e_premerge", "e2e_release", "e2e_cross_platform", "e2e_visual", "e2e_soak", "e2e_load"]) {
-    const block = targetBlock(targetName);
-    assert.match(block, /run_workspace_task\.sh/u, `${targetName} should be visibly outside hermetic web validation`);
+test("browser e2e targets route through the dedicated Bazel runtime instead of workspace wrappers", () => {
+  assert.doesNotMatch(buildFile, /name = "e2e_(premerge|release|cross_platform|visual|soak|load)"/u);
+  assert.match(e2eMacroFile, /srcs = \["\/\/core\/apps\/web:scripts\/run-e2e-bazel-runtime\.sh"\]/u);
+  assert.match(e2eMacroFile, /tags = \[\s*"local",\s*"no-remote",\s*\]/u);
+  for (const targetName of ["premerge_required", "release_required", "cross_platform", "visual", "soak", "load"]) {
+    assert.match(e2eBuildFile, new RegExp(`name = "${targetName}"`));
   }
+  assert.doesNotMatch(e2eBuildFile, /run_workspace_task\.sh/u);
 });
 
 test("verify:agent-remote web profiles run Bazel web targets without dependency hydration", () => {
