@@ -40,6 +40,10 @@ DESKTOP_PARITY_CONTRACT_DATA = COMMON_CORE_DATA + [
     "//core:provider_matrix_sources",
 ]
 
+BUNDLED_HARNESS_CONTRACT_DATA = DESKTOP_PARITY_CONTRACT_DATA + [
+    "//core/crates/ctx-managed-installs:src/lib.rs",
+]
+
 
 sh_binary(
     name = "provider_auth_validate",
@@ -98,9 +102,8 @@ sh_binary(
 
 sh_binary(
     name = "bundled_harness_dependency_contracts",
-    srcs = ["//tools/bazel:run_workspace_task.sh"],
-    args = [".", "bash", "-lc", "scripts/tests/providers_e2e_darwin_codex_fallback_guard.sh && scripts/tests/ensure_bundled_harnesses_droid_dependencies.sh"],
-    data = DESKTOP_PARITY_CONTRACT_DATA,
+    srcs = ["bundled_harness_dependency_contracts.sh"],
+    data = BUNDLED_HARNESS_CONTRACT_DATA,
 )
 
 sh_binary(
@@ -141,8 +144,7 @@ sh_binary(
 
 sh_binary(
     name = "install_desktop_deps_contracts",
-    srcs = ["//tools/bazel:run_workspace_task.sh"],
-    args = [".", "bash", "scripts/tests/install_desktop_deps_linux_ubuntu_contract.sh"],
+    srcs = ["install_desktop_deps_contracts.sh"],
     data = DESKTOP_PARITY_CONTRACT_DATA,
 )
 

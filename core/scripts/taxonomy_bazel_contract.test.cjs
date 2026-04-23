@@ -185,6 +185,11 @@ test("deterministic Linux contract gates route through Bazel-owned contract entr
   );
   assert.doesNotMatch(providerMatrixArchiveContracts, /run_workspace_task\.sh/);
 
+  const bundledHarnessDependencyContracts = readTargetBlock("bundled_harness_dependency_contracts");
+  assert.match(bundledHarnessDependencyContracts, /srcs = \["bundled_harness_dependency_contracts\.sh"\]/);
+  assert.doesNotMatch(bundledHarnessDependencyContracts, /run_workspace_task\.sh/);
+  assert.doesNotMatch(bundledHarnessDependencyContracts, /\bpnpm\b/);
+
   const desktopE2EPreflightContracts = readTargetBlock("desktop_e2e_preflight_contracts");
   assert.match(desktopE2EPreflightContracts, /srcs = \["\/\/tools\/bazel:run_node_task\.sh"\]/);
   assert.match(
@@ -225,4 +230,9 @@ test("deterministic Linux contract gates route through Bazel-owned contract entr
     /args = \["core", "--test", "scripts\/tauri_tools_lock_contract\.test\.cjs"\]/,
   );
   assert.doesNotMatch(tauriToolsLockContracts, /run_workspace_task\.sh/);
+
+  const installDesktopDepsContracts = readTargetBlock("install_desktop_deps_contracts");
+  assert.match(installDesktopDepsContracts, /srcs = \["install_desktop_deps_contracts\.sh"\]/);
+  assert.doesNotMatch(installDesktopDepsContracts, /run_workspace_task\.sh/);
+  assert.doesNotMatch(installDesktopDepsContracts, /\bpnpm\b/);
 });
