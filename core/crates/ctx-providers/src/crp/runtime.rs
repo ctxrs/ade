@@ -650,6 +650,16 @@ fn redact_sensitive(input: &str) -> String {
 }
 
 pub(super) fn apply_outer_process_env(cmd: &mut Command, env: &HashMap<String, String>) {
+    for key in [
+        "CTX_AUTH_TOKEN",
+        "CTX_MCP_TOKEN",
+        "CTX_SESSION_ID",
+        "CTX_PROVIDER_SESSION_REF",
+        "CTX_MCP_DISABLED",
+        "CTX_MCP_COMMAND",
+    ] {
+        cmd.env_remove(key);
+    }
     let is_container_exec = container_exec_spec(env).is_some();
     for (key, value) in env {
         if should_skip_outer_process_env_key(key, is_container_exec) {

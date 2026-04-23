@@ -51,7 +51,7 @@ pub async fn provider_probe_env<H>(
 where
     H: ProviderProbeHost,
 {
-    provider_env_with_runtime_root(state, provider_id, None, true).await
+    provider_env_with_runtime_root(state, provider_id, None, true, false, true).await
 }
 
 async fn provider_env_with_runtime_root<H>(
@@ -59,6 +59,8 @@ async fn provider_env_with_runtime_root<H>(
     provider_id: &str,
     runtime_data_root: Option<&Path>,
     require_subscription_account_env: bool,
+    include_daemon_auth: bool,
+    disable_mcp: bool,
 ) -> Result<(ResolvedHarnessSource, HashMap<String, String>), String>
 where
     H: ProviderProbeHost,
@@ -73,8 +75,13 @@ where
     .map_err(|e| state.redact_sensitive(&e.to_string()))?;
     let mut env = HashMap::new();
     env.insert("CTX_DAEMON_URL".to_string(), state.daemon_url().to_string());
-    if let Some(token) = state.auth_token() {
-        env.insert("CTX_AUTH_TOKEN".to_string(), token.clone());
+    if include_daemon_auth {
+        if let Some(token) = state.auth_token() {
+            env.insert("CTX_AUTH_TOKEN".to_string(), token.clone());
+        }
+    }
+    if disable_mcp {
+        env.insert("CTX_MCP_DISABLED".to_string(), "1".to_string());
     }
     if source.source_kind == HarnessSourceKind::Subscription {
         if require_subscription_account_env && provider_id == CODEX_CRP_PROVIDER_ID {
@@ -185,6 +192,7 @@ async fn provider_context_for_workspace_runtime<H>(
     workspace: &Workspace,
     provider_id: &str,
     require_subscription_account_env: bool,
+    disable_mcp: bool,
 ) -> Result<WorkspaceRuntimeProbeContext, String>
 where
     H: ProviderProbeHost,
@@ -195,6 +203,8 @@ where
         provider_id,
         runtime.runtime_data_root.as_deref(),
         require_subscription_account_env,
+        false,
+        disable_mcp,
     )
     .await?;
     for (key, value) in runtime.env_overrides {
@@ -228,6 +238,8 @@ where
         provider_id,
         runtime.runtime_data_root.as_deref(),
         false,
+        true,
+        false,
     )
     .await?;
     for (key, value) in runtime.env_overrides {
@@ -249,7 +261,7 @@ pub async fn provider_probe_context_for_workspace_runtime<H>(
 where
     H: ProviderProbeHost,
 {
-    provider_context_for_workspace_runtime(state, workspace, provider_id, true).await
+    provider_context_for_workspace_runtime(state, workspace, provider_id, true, false).await
 }
 
 pub async fn provider_auth_context_for_workspace_runtime<H>(
@@ -260,7 +272,7 @@ pub async fn provider_auth_context_for_workspace_runtime<H>(
 where
     H: ProviderProbeHost,
 {
-    provider_context_for_workspace_runtime(state, workspace, provider_id, false).await
+    provider_context_for_workspace_runtime(state, workspace, provider_id, false, true).await
 }
 
 pub async fn provider_has_active_auth_for_workspace_runtime<H>(
@@ -272,10 +284,11 @@ pub async fn provider_has_active_auth_for_workspace_runtime<H>(
 where
     H: ProviderProbeHost,
 {
-    let runtime_root = provider_context_for_workspace_runtime(state, workspace, provider_id, false)
-        .await
-        .ok()
-        .and_then(|context| context.env.get("CTX_DATA_ROOT").map(PathBuf::from));
+    let runtime_root =
+        provider_context_for_workspace_runtime(state, workspace, provider_id, false, false)
+            .await
+            .ok()
+            .and_then(|context| context.env.get("CTX_DATA_ROOT").map(PathBuf::from));
     provider_has_active_auth_config_with_runtime_root(
         state.data_root(),
         runtime_root.as_deref(),

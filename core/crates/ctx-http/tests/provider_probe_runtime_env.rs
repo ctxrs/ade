@@ -133,6 +133,10 @@ fn setup_runtime_command_with_managed_interpreter_and_probe_response(
         &interpreter,
         &format!(
             r#"#!/bin/sh
+if [ -n "${{CTX_AUTH_TOKEN:-}}" ]; then
+  echo "unexpected CTX_AUTH_TOKEN in probe env" >&2
+  exit 91
+fi
 while IFS= read -r line; do
   case "$line" in
     *'"type":"models.list"'*)
@@ -208,6 +212,10 @@ fn setup_explicit_gemini_runtime_command_with_probe_response(
         &node_bin,
         &format!(
             r#"#!/bin/sh
+if [ -n "${{CTX_AUTH_TOKEN:-}}" ]; then
+  echo "unexpected CTX_AUTH_TOKEN in probe env" >&2
+  exit 91
+fi
 while IFS= read -r line; do
   case "$line" in
     *'"type":"models.list"'*)
