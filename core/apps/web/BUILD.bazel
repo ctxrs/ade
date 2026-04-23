@@ -328,11 +328,16 @@ vitest_bin.vitest_test(
     chdir = package_name(),
 )
 
-sh_binary(
+vitest_bin.vitest_test(
     name = "desktop_ipc_corpus",
-    srcs = ["//tools/bazel:run_workspace_task.sh"],
-    args = ["core/apps/web", "pnpm", "exec", "vitest", "run", "src/utils/desktop.corpus.test.ts", "--silent", "--reporter=dot"],
-    data = COMMON_DATA,
+    args = [
+        "run",
+        "--silent",
+        "--reporter=dot",
+        "src/utils/desktop.corpus.test.ts",
+    ],
+    data = HERMETIC_WEB_CHECK_DATA,
+    chdir = package_name(),
 )
 
 sh_binary(

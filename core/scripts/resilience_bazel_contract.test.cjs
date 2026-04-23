@@ -12,6 +12,14 @@ const ctxProvidersBuild = fs.readFileSync(path.join(coreRoot, "crates", "ctx-pro
 const ctxStoreBuild = fs.readFileSync(path.join(coreRoot, "crates", "ctx-store", "BUILD.bazel"), "utf8");
 const webBuild = fs.readFileSync(path.join(coreRoot, "apps", "web", "BUILD.bazel"), "utf8");
 
+function targetBlock(buildText, name, nextName) {
+  const start = buildText.indexOf(`name = "${name}"`);
+  assert.notEqual(start, -1, `expected target ${name}`);
+  const end = buildText.indexOf(`name = "${nextName}"`, start + 1);
+  assert.notEqual(end, -1, `expected target ${nextName}`);
+  return buildText.slice(start, end);
+}
+
 test("split resilience lanes use existing Bazel targets where they already exist", () => {
   assert.equal(
     packageJson.scripts["bazel:anomaly:ctx-http:fault-matrix"],
@@ -43,7 +51,7 @@ test("split resilience lanes use existing Bazel targets where they already exist
   );
   assert.equal(
     packageJson.scripts["bazel:fuzz:desktop-ipc"],
-    "node scripts/run_bazel_pilot.cjs run //core/apps/web:desktop_ipc_corpus",
+    "node scripts/run_bazel_pilot.cjs test //core/apps/web:desktop_ipc_corpus",
   );
 
   assert.match(ctxCoreBuild, /name = "workspace_payload_corpus"/);
@@ -56,5 +64,8 @@ test("split resilience lanes use existing Bazel targets where they already exist
   assert.match(ctxProvidersBuild, /crate_features = \["fuzz_tests"\]/);
   assert.match(ctxStoreBuild, /name = "unit_tests_fault_injection"/);
   assert.match(ctxStoreBuild, /crate_features = \["fault_injection"\]/);
+  const desktopIpcCorpusBlock = targetBlock(webBuild, "desktop_ipc_corpus", "e2e_premerge");
   assert.match(webBuild, /name = "desktop_ipc_corpus"/);
+  assert.match(webBuild, /vitest_bin\.vitest_test\([\s\S]*?name = "desktop_ipc_corpus"/);
+  assert.doesNotMatch(desktopIpcCorpusBlock, /run_workspace_task\.sh/);
 });

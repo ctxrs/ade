@@ -79,6 +79,7 @@ test("Bazel web dist sync tool requires an explicit workspace root and output di
 test("Bazel web focused unit slices run as native vitest tests", () => {
   const nonPretextBlock = targetBlock(buildFile, "unit_tests_non_pretext", "pretext_measurement_unit_tests");
   const pretextBlock = targetBlock(buildFile, "pretext_measurement_unit_tests", "desktop_ipc_corpus");
+  const desktopIpcCorpusBlock = targetBlock(buildFile, "desktop_ipc_corpus", "e2e_premerge");
 
   assert.equal(
     corePackageJson.scripts["bazel:web:unit:non-pretext"],
@@ -90,8 +91,12 @@ test("Bazel web focused unit slices run as native vitest tests", () => {
   );
   assert.match(buildFile, /vitest_bin\.vitest_test\([\s\S]*?name = "unit_tests_non_pretext"/);
   assert.match(buildFile, /vitest_bin\.vitest_test\([\s\S]*?name = "pretext_measurement_unit_tests"/);
+  assert.match(buildFile, /vitest_bin\.vitest_test\([\s\S]*?name = "desktop_ipc_corpus"/);
   assert.match(nonPretextBlock, /data = HERMETIC_WEB_CHECK_DATA/);
   assert.match(pretextBlock, /data = HERMETIC_WEB_CHECK_DATA/);
+  assert.match(desktopIpcCorpusBlock, /data = HERMETIC_WEB_CHECK_DATA/);
   assert.doesNotMatch(nonPretextBlock, /run_workspace_task\.sh/);
   assert.doesNotMatch(pretextBlock, /run_workspace_task\.sh/);
+  assert.doesNotMatch(desktopIpcCorpusBlock, /run_workspace_task\.sh/);
+  assert.doesNotMatch(desktopIpcCorpusBlock, /\bpnpm\b/);
 });

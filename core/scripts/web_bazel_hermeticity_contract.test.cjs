@@ -28,7 +28,7 @@ function targetBlock(name) {
 }
 
 test("supported web validation targets do not use the non-hermetic workspace wrapper", () => {
-  for (const targetName of ["unit_smoke", "unit_tests", "lint", "typecheck", "build"]) {
+  for (const targetName of ["unit_smoke", "unit_tests", "lint", "typecheck", "build", "desktop_ipc_corpus"]) {
     const block = targetBlock(targetName);
     assert.doesNotMatch(block, /run_workspace_task\.sh/u, `${targetName} must not use workspace node_modules`);
     assert.doesNotMatch(block, /args = \[[\s\S]*?"pnpm"/u, `${targetName} must not shell out to pnpm`);
