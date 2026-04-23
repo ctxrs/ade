@@ -496,7 +496,7 @@ pub(in crate::api) async fn create_session_for_task(
                 session_id: session.id,
                 run_id: Some(run_id),
                 user_message_id: Some(saved.id),
-                status: SessionTurnStatus::Running,
+                status: SessionTurnStatus::Starting,
                 start_seq: Some(start_seq),
                 end_seq: None,
                 started_at: saved.created_at,

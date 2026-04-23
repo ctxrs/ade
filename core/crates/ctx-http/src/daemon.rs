@@ -234,6 +234,7 @@ pub struct DaemonSandboxWorkActivitySummary {
 fn turn_status_name(status: &SessionTurnStatus) -> &'static str {
     match status {
         SessionTurnStatus::Queued => "queued",
+        SessionTurnStatus::Starting => "starting",
         SessionTurnStatus::Running => "running",
         SessionTurnStatus::Completed => "completed",
         SessionTurnStatus::Failed => "failed",
@@ -280,7 +281,11 @@ pub async fn daemon_turn_activity_summary(
 ) -> Result<DaemonTurnActivitySummary> {
     let (workspace_count, turns) = collect_turns_by_statuses(
         state,
-        &[SessionTurnStatus::Queued, SessionTurnStatus::Running],
+        &[
+            SessionTurnStatus::Queued,
+            SessionTurnStatus::Starting,
+            SessionTurnStatus::Running,
+        ],
     )
     .await?;
     let queued_turn_count = turns
@@ -289,7 +294,12 @@ pub async fn daemon_turn_activity_summary(
         .count();
     let running_turn_count = turns
         .iter()
-        .filter(|(_, turn)| matches!(&turn.status, SessionTurnStatus::Running))
+        .filter(|(_, turn)| {
+            matches!(
+                &turn.status,
+                SessionTurnStatus::Starting | SessionTurnStatus::Running
+            )
+        })
         .count();
     let records = turns
         .into_iter()
@@ -318,7 +328,11 @@ pub async fn daemon_sandbox_work_activity_summary(
 ) -> Result<DaemonSandboxWorkActivitySummary> {
     let (workspace_count, turns) = collect_turns_by_statuses(
         state,
-        &[SessionTurnStatus::Queued, SessionTurnStatus::Running],
+        &[
+            SessionTurnStatus::Queued,
+            SessionTurnStatus::Starting,
+            SessionTurnStatus::Running,
+        ],
     )
     .await?;
     let mut session_env_cache = HashMap::new();
@@ -336,7 +350,10 @@ pub async fn daemon_sandbox_work_activity_summary(
         if matches!(turn.status, SessionTurnStatus::Queued) {
             queued_sandbox_turn_count += 1;
         }
-        if matches!(turn.status, SessionTurnStatus::Running) {
+        if matches!(
+            turn.status,
+            SessionTurnStatus::Starting | SessionTurnStatus::Running
+        ) {
             running_sandbox_turn_count += 1;
         }
         records.push(ActiveTurnRecord {
@@ -381,8 +398,11 @@ pub async fn daemon_sandbox_work_activity_summary(
 }
 
 async fn reconcile_running_turns(state: &Arc<AppState>) -> Result<()> {
-    let (_, running_turns) =
-        collect_turns_by_statuses(state, &[SessionTurnStatus::Running]).await?;
+    let (_, running_turns) = collect_turns_by_statuses(
+        state,
+        &[SessionTurnStatus::Starting, SessionTurnStatus::Running],
+    )
+    .await?;
 
     for (_, turn) in running_turns {
         if let Err(err) = reconcile_turn_terminal_state(

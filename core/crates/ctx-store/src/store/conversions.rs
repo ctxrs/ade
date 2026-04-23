@@ -526,6 +526,7 @@ pub(super) fn parse_message_delivery(value: &str) -> MessageDelivery {
 pub(super) fn session_turn_status_to_str(status: &SessionTurnStatus) -> &'static str {
     match status {
         SessionTurnStatus::Queued => "queued",
+        SessionTurnStatus::Starting => "starting",
         SessionTurnStatus::Running => "running",
         SessionTurnStatus::Completed => "completed",
         SessionTurnStatus::Interrupted => "interrupted",
@@ -536,6 +537,7 @@ pub(super) fn session_turn_status_to_str(status: &SessionTurnStatus) -> &'static
 pub(super) fn parse_session_turn_status(value: &str) -> SessionTurnStatus {
     match value {
         "queued" => SessionTurnStatus::Queued,
+        "starting" => SessionTurnStatus::Starting,
         "running" => SessionTurnStatus::Running,
         "completed" => SessionTurnStatus::Completed,
         "interrupted" => SessionTurnStatus::Interrupted,

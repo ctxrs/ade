@@ -22,8 +22,8 @@ mod terminal;
 
 pub(crate) use interrupt_telemetry::{latency_bucket, metric_labels, InterruptTelemetryContext};
 use lifecycle::{
-    finalize_start_failure_if_needed, handle_provider_exit, handle_provider_stall,
-    stop_running_turn, RunningTurn, StopReason,
+    fail_starting_turn, finalize_start_failure_if_needed, handle_provider_exit,
+    handle_provider_stall, stop_running_turn, RunningTurn, StopReason, TurnStartProgress,
 };
 use persistence::emit_event;
 use runtime::start_turn;
@@ -72,6 +72,7 @@ pub async fn session_worker(
     let mut running: Option<RunningTurn> = None;
     let mut running_inactivity_timeout: Option<Duration> = None;
     let mut running_inactivity_deadline: Option<TokioInstant> = None;
+    let mut running_start_deadline: Option<TokioInstant> = None;
     let mut suspend_queue = false;
     let mut event_head_rx = state.subscribe_session_event_head(session.id).await;
 
@@ -143,6 +144,7 @@ pub async fn session_worker(
                         let timeout = state.provider_inactivity_timeout().await;
                         running_inactivity_timeout = Some(timeout);
                         running_inactivity_deadline = Some(TokioInstant::now() + timeout);
+                        running_start_deadline = Some(turn.start_deadline);
                         running = Some(turn);
                     }
                     Err(err) => {
@@ -164,6 +166,7 @@ pub async fn session_worker(
                         }
                         state.set_running(session.id, false).await;
                         running = None;
+                        running_start_deadline = None;
                     }
                 }
                 continue;
@@ -194,6 +197,7 @@ pub async fn session_worker(
                     }
                     Some(SchedulerCommand::Cancel) => {
                         if let Some(turn) = running.take() {
+                            running_start_deadline = None;
                             let _ = stop_running_turn(
                                 &state,
                                 session.id,
@@ -206,6 +210,7 @@ pub async fn session_worker(
                     }
                     Some(SchedulerCommand::Interrupt(interrupt)) => {
                         if let Some(turn) = running.take() {
+                            running_start_deadline = None;
                             suspend_queue = stop_running_turn(
                                 &state,
                                 session.id,
@@ -218,6 +223,7 @@ pub async fn session_worker(
                     }
                     Some(SchedulerCommand::StorageEmergency) => {
                         if let Some(turn) = running.take() {
+                            running_start_deadline = None;
                             suspend_queue = stop_running_turn(
                                 &state,
                                 session.id,
@@ -237,6 +243,7 @@ pub async fn session_worker(
                 }
             }, if running.is_some() => {
                 if let Some(turn) = running.take() {
+                    running_start_deadline = None;
                     handle_provider_exit(&state, session.id, turn).await;
                 }
                 state.set_running(session.id, false).await;
@@ -250,11 +257,34 @@ pub async fn session_worker(
                 }
             }
             _ = async {
+                if let Some(deadline) = running_start_deadline {
+                    tokio::time::sleep_until(deadline).await;
+                }
+            }, if running.is_some() && running_start_deadline.is_some() => {
+                let start_still_pending = running
+                    .as_ref()
+                    .is_some_and(|turn| *turn.start_progress.borrow() == TurnStartProgress::Pending);
+                running_start_deadline = None;
+                if start_still_pending {
+                    if let Some(turn) = running.take() {
+                        fail_starting_turn(
+                            &state,
+                            session.id,
+                            turn,
+                            "provider did not report turn start before deadline",
+                        )
+                        .await;
+                    }
+                    state.set_running(session.id, false).await;
+                }
+            }
+            _ = async {
                 if let Some(deadline) = running_inactivity_deadline {
                     tokio::time::sleep_until(deadline).await;
                 }
             }, if running.is_some() && running_inactivity_deadline.is_some() => {
                 if let Some(turn) = running.take() {
+                    running_start_deadline = None;
                     handle_provider_stall(&state, session.id, turn).await;
                 }
                 state.set_running(session.id, false).await;

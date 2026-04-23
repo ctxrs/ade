@@ -588,9 +588,12 @@ impl Store {
             tool_summaries.sort_by(compare_tool_summary_order);
         }
         let last_status = out.last().map(|t| t.status.clone());
-        let has_running_turn = out
-            .iter()
-            .any(|turn| matches!(turn.status, SessionTurnStatus::Running));
+        let has_running_turn = out.iter().any(|turn| {
+            matches!(
+                turn.status,
+                SessionTurnStatus::Starting | SessionTurnStatus::Running
+            )
+        });
         let activity = derive_activity_from_status(last_status, has_running_turn);
         let mut events = if include_events {
             let mut events = self

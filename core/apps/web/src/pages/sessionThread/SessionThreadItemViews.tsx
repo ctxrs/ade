@@ -567,7 +567,7 @@ export const WorkbenchTurnStatusRow = memo(function WorkbenchTurnStatusRow({
 }: {
   item: Extract<ThreadItem, { kind: "turn_status" }>;
 }) {
-  const isRunning = item.status === "running" || item.status === "queued";
+  const isRunning = item.status === "running" || item.status === "starting" || item.status === "queued";
   const nowMs = useRelativeNowMs(1000, isRunning);
   const isCompleted = item.status === "completed";
   const customStatus = item.custom_status?.trim();

@@ -2,7 +2,7 @@ import type { SessionActivityState } from "@ctx/types";
 import type { SessionTurn } from "../api/client";
 
 const isActiveTurnStatus = (status: SessionActivityState["last_turn_status"] | null | undefined): boolean =>
-  status === "running" || status === "queued";
+  status === "running" || status === "starting" || status === "queued";
 
 const isTerminalTurnStatus = (status: SessionTurn["status"] | null | undefined): boolean =>
   status === "completed" || status === "failed" || status === "interrupted";

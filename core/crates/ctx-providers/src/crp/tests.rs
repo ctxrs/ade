@@ -1387,7 +1387,10 @@ done
         "LOG_FILE".to_string(),
         log_path.to_string_lossy().to_string(),
     );
-    env.insert("CTX_CRP_FIRST_EVENT_TIMEOUT_MS".to_string(), "50".to_string());
+    env.insert(
+        "CTX_CRP_FIRST_EVENT_TIMEOUT_MS".to_string(),
+        "50".to_string(),
+    );
 
     let (event_tx, mut event_rx) = mpsc::channel(8);
     let (_cancel_tx, cancel_rx) = oneshot::channel();

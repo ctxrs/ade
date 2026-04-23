@@ -219,6 +219,13 @@ pub(super) fn delivery_matches(left: &MessageDelivery, right: &MessageDelivery) 
     std::mem::discriminant(left) == std::mem::discriminant(right)
 }
 
+fn initial_turn_status(delivery: &MessageDelivery) -> SessionTurnStatus {
+    match delivery {
+        MessageDelivery::Queued => SessionTurnStatus::Queued,
+        MessageDelivery::Immediate => SessionTurnStatus::Starting,
+    }
+}
+
 pub(crate) async fn ensure_session_turn_for_message(
     store: &ctx_store::Store,
     session_id: SessionId,
@@ -238,17 +245,12 @@ pub(crate) async fn ensure_session_turn_for_message(
         return Ok(());
     }
 
-    let turn_status = if matches!(message.delivery, MessageDelivery::Queued) {
-        SessionTurnStatus::Queued
-    } else {
-        SessionTurnStatus::Running
-    };
     let turn = SessionTurn {
         turn_id,
         session_id,
         run_id: message.run_id,
         user_message_id: Some(message.id),
-        status: turn_status,
+        status: initial_turn_status(&message.delivery),
         start_seq: None,
         end_seq: None,
         started_at: message.created_at,
@@ -555,17 +557,12 @@ pub(crate) async fn post_message(
         })?;
     let start_seq = event.seq;
 
-    let turn_status = if matches!(saved.delivery, MessageDelivery::Queued) {
-        SessionTurnStatus::Queued
-    } else {
-        SessionTurnStatus::Running
-    };
     let turn = SessionTurn {
         turn_id,
         session_id,
         run_id: Some(run_id),
         user_message_id: Some(saved.id),
-        status: turn_status,
+        status: initial_turn_status(&saved.delivery),
         start_seq: Some(start_seq),
         end_seq: None,
         started_at: saved.created_at,

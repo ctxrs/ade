@@ -1,12 +1,13 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Result};
 use chrono::Utc;
 use serde_json::{json, Value};
-use tokio::sync::{mpsc, oneshot, Mutex};
+use tokio::sync::{mpsc, oneshot, watch, Mutex};
+use tokio::time::Instant as TokioInstant;
 
 use ctx_core::ids::{MessageId, RunId, TurnId};
 use ctx_core::models::{
@@ -51,7 +52,7 @@ use self::helpers::{
     provider_supports_system_prompt_append, runtime_provider_id_for_session_provider,
 };
 use self::tool_runtime::{cwd_outside_worktree, maybe_spool_tool_output};
-use super::lifecycle::RunningTurn;
+use super::lifecycle::{RunningTurn, TurnStartProgress};
 use super::persistence::{append_session_event_with_retry, emit_event, persist_assistant_message};
 use super::terminal::{finalize_failed_turn, FailedTurnTerminalization};
 use super::QueuedMessage;
@@ -69,6 +70,17 @@ fn provider_mode_id_for(
         },
         ProviderControlMode::HarnessNative | ProviderControlMode::CtxEnforced => None,
     }
+}
+
+const DEFAULT_TURN_START_DEADLINE: Duration = Duration::from_secs(60);
+
+fn turn_start_deadline() -> Duration {
+    std::env::var("CTX_TURN_START_DEADLINE_MS")
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .map(Duration::from_millis)
+        .unwrap_or(DEFAULT_TURN_START_DEADLINE)
 }
 
 pub(crate) async fn start_turn(
@@ -143,27 +155,16 @@ pub(crate) async fn start_turn(
         message.delivery = MessageDelivery::Immediate;
         message.delivered_at = Some(Utc::now());
     }
-    let _ = store
+    store
         .update_session_turn_status(
             session.id,
             turn_id,
-            SessionTurnStatus::Running,
+            SessionTurnStatus::Starting,
             None,
             None,
             Utc::now(),
         )
-        .await;
-    let _ = emit_event(
-        state,
-        session.id,
-        Some(run_id),
-        Some(turn_id),
-        SessionEventType::TurnStarted,
-        json!({
-            "message_id": message.id.0,
-        }),
-    )
-    .await;
+        .await?;
 
     async fn emit_turn_start_failed(
         state: &Arc<AppState>,
@@ -198,6 +199,7 @@ pub(crate) async fn start_turn(
 
     let (ev_tx, ev_rx) = mpsc::channel::<NormalizedEvent>(128);
     let (events_done_tx, events_done_rx) = oneshot::channel();
+    let (start_progress_tx, start_progress_rx) = watch::channel(TurnStartProgress::Pending);
     let event_tx = ev_tx.clone();
 
     let mut provider_env = std::collections::HashMap::new();
@@ -687,6 +689,7 @@ pub(crate) async fn start_turn(
         context_window_metrics,
         ev_rx,
         events_done_tx,
+        start_progress_tx,
         order_seq_state: Arc::clone(&order_seq_state),
     });
 
@@ -702,5 +705,7 @@ pub(crate) async fn start_turn(
         session_root_kind: session_root_kind.to_string(),
         event_tx,
         events_done: Some(events_done_rx),
+        start_progress: start_progress_rx,
+        start_deadline: TokioInstant::now() + turn_start_deadline(),
     })
 }

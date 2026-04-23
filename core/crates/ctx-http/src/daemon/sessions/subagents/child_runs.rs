@@ -22,7 +22,9 @@ pub(super) fn subagent_status_from_turn_status(status: SessionTurnStatus) -> &'s
         SessionTurnStatus::Completed => "completed",
         SessionTurnStatus::Interrupted => "interrupted",
         SessionTurnStatus::Failed => "failed",
-        SessionTurnStatus::Running | SessionTurnStatus::Queued => "running",
+        SessionTurnStatus::Starting | SessionTurnStatus::Running | SessionTurnStatus::Queued => {
+            "running"
+        }
     }
 }
 
@@ -31,7 +33,9 @@ fn subagent_terminal_status_from_turn_status(status: SessionTurnStatus) -> Optio
         SessionTurnStatus::Completed => Some("completed"),
         SessionTurnStatus::Interrupted => Some("interrupted"),
         SessionTurnStatus::Failed => Some("failed"),
-        SessionTurnStatus::Running | SessionTurnStatus::Queued => None,
+        SessionTurnStatus::Starting | SessionTurnStatus::Running | SessionTurnStatus::Queued => {
+            None
+        }
     }
 }
 
@@ -303,7 +307,7 @@ pub(super) async fn enqueue_subagent_prompt(
         session_id: session.id,
         run_id: Some(run_id),
         user_message_id: Some(saved.id),
-        status: SessionTurnStatus::Running,
+        status: SessionTurnStatus::Starting,
         start_seq: Some(start_seq),
         end_seq: None,
         started_at: saved.created_at,

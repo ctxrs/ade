@@ -481,7 +481,7 @@ export function applyToolEventToTurn(
   turn: SessionTurn,
   event: SessionEvent,
 ): boolean {
-  if (turn.status !== "running" && turn.status !== "queued") {
+  if (turn.status !== "running" && turn.status !== "starting" && turn.status !== "queued") {
     return false;
   }
   const toolCallId = extractToolCallId(event);

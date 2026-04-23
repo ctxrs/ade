@@ -134,7 +134,7 @@ function isMutableToolStatus(status: string): boolean {
 }
 
 function isMutableTurnStatus(status: Extract<WorkbenchListItem, { kind: "turn_status" }>["status"]): boolean {
-  return status === "running" || status === "queued";
+  return status === "running" || status === "starting" || status === "queued";
 }
 
 function getTurnStatusHeightRevision(item: Extract<WorkbenchListItem, { kind: "turn_status" }>): string {

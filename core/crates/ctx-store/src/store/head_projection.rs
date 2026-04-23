@@ -43,10 +43,12 @@ impl SessionHeadMaterialization {
         summary_checkpoint: Option<SessionSummaryCheckpoint>,
     ) -> SessionHead {
         let last_status = self.turns.last().map(|t| t.status.clone());
-        let has_running_turn = self
-            .turns
-            .iter()
-            .any(|turn| matches!(turn.status, SessionTurnStatus::Running));
+        let has_running_turn = self.turns.iter().any(|turn| {
+            matches!(
+                turn.status,
+                SessionTurnStatus::Starting | SessionTurnStatus::Running
+            )
+        });
         let activity = derive_activity_from_status(last_status, has_running_turn);
         SessionHead {
             session,
@@ -92,10 +94,12 @@ impl ActiveSnapshotHeadProjection {
 
     pub(crate) fn into_session_head(self, session: Session, projection_rev: i64) -> SessionHead {
         let last_status = self.turns.last().map(|t| t.status.clone());
-        let has_running_turn = self
-            .turns
-            .iter()
-            .any(|turn| matches!(turn.status, SessionTurnStatus::Running));
+        let has_running_turn = self.turns.iter().any(|turn| {
+            matches!(
+                turn.status,
+                SessionTurnStatus::Starting | SessionTurnStatus::Running
+            )
+        });
         let activity = derive_activity_from_status(last_status, has_running_turn);
         SessionHead {
             session,

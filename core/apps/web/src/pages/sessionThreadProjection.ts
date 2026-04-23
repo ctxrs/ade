@@ -136,8 +136,9 @@ function collectChangedItemIds(
 
 function turnTerminalized(current: WorkbenchListItem, next: WorkbenchListItem): boolean {
   if (current.kind === "turn_status" && next.kind === "turn_status") {
-    const currentMutable = current.status === "running" || current.status === "queued";
-    const nextMutable = next.status === "running" || next.status === "queued";
+    const currentMutable =
+      current.status === "running" || current.status === "starting" || current.status === "queued";
+    const nextMutable = next.status === "running" || next.status === "starting" || next.status === "queued";
     return currentMutable && !nextMutable;
   }
   if (current.kind === "assistant" && next.kind === "assistant") {

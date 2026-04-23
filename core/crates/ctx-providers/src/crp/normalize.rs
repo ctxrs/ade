@@ -193,11 +193,19 @@ pub(super) fn map_crp_event(
                     done: false,
                 }
             }
-            // The scheduler already emits the canonical turn lifecycle events. Treat harness-emitted
-            // `turn.started` as internal signal only to avoid duplicating `turn_started` rows with a
-            // mismatched payload shape.
-            KnownCrpEvent::TurnStarted { .. } => MappedCrpEvent {
-                events: Vec::new(),
+            KnownCrpEvent::TurnStarted {
+                session_id,
+                turn_id,
+            } => MappedCrpEvent {
+                events: vec![NormalizedEvent {
+                    event_type: SessionEventType::TurnStarted,
+                    payload_json: json!({
+                        "session_id": session_id,
+                        "turn_id": turn_id,
+                        "crp_seq": seq,
+                        "crp_channel": crp_channel,
+                    }),
+                }],
                 done: false,
             },
             KnownCrpEvent::MessageDelta {
@@ -647,6 +655,39 @@ mod tests {
 
     fn known(event: KnownCrpEvent) -> CrpEvent {
         CrpEvent::Known(Box::new(event))
+    }
+
+    #[test]
+    fn turn_started_maps_to_canonical_lifecycle_event() {
+        let mut tool_output_cache: HashMap<String, String> = HashMap::new();
+        let mut tool_input_cache: HashMap<String, CachedToolInput> = HashMap::new();
+
+        let mapped = map_crp_event(
+            known(KnownCrpEvent::TurnStarted {
+                session_id: "session-1".to_string(),
+                turn_id: "turn-1".to_string(),
+            }),
+            CrpChannel::Control,
+            42,
+            &mut tool_output_cache,
+            &mut tool_input_cache,
+        );
+
+        assert_eq!(mapped.events.len(), 1);
+        assert!(!mapped.done);
+        assert!(matches!(
+            mapped.events[0].event_type,
+            SessionEventType::TurnStarted
+        ));
+        assert_eq!(
+            mapped.events[0].payload_json,
+            json!({
+                "session_id": "session-1",
+                "turn_id": "turn-1",
+                "crp_seq": 42,
+                "crp_channel": null,
+            })
+        );
     }
 
     #[test]

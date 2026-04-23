@@ -139,7 +139,9 @@ pub(crate) async fn init_subagents(
             for turn in turns.iter().rev() {
                 if matches!(
                     turn.status,
-                    SessionTurnStatus::Running | SessionTurnStatus::Queued
+                    SessionTurnStatus::Starting
+                        | SessionTurnStatus::Running
+                        | SessionTurnStatus::Queued
                 ) {
                     parent_turn_id = Some(turn.turn_id);
                     break;

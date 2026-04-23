@@ -144,6 +144,7 @@ export const readTurnStatusFromPayload = (event: SessionEvent): SessionTurn["sta
   const status = raw.trim();
   switch (status) {
     case "queued":
+    case "starting":
     case "running":
     case "completed":
     case "interrupted":

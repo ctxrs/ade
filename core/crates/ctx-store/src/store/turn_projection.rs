@@ -30,7 +30,7 @@ struct RepairedTurnProjection {
 fn is_non_terminal_status(status: &SessionTurnStatus) -> bool {
     matches!(
         status,
-        SessionTurnStatus::Queued | SessionTurnStatus::Running
+        SessionTurnStatus::Queued | SessionTurnStatus::Starting | SessionTurnStatus::Running
     )
 }
 
@@ -229,7 +229,10 @@ impl Store {
                 last_status = Some(effective_status.clone());
                 last_seq = turn.start_seq;
             }
-            if matches!(effective_status, SessionTurnStatus::Running) {
+            if matches!(
+                effective_status,
+                SessionTurnStatus::Starting | SessionTurnStatus::Running
+            ) {
                 running_turn_count += 1;
             }
         }
@@ -267,7 +270,10 @@ impl Store {
                 last_status = Some(effective_status.clone());
                 last_seq = turn.start_seq;
             }
-            if matches!(effective_status, SessionTurnStatus::Running) {
+            if matches!(
+                effective_status,
+                SessionTurnStatus::Starting | SessionTurnStatus::Running
+            ) {
                 running_turn_count += 1;
             }
         }

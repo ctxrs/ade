@@ -3,7 +3,7 @@ use super::helpers::{
 };
 use super::*;
 use crate::scheduler::terminal::{finalize_failed_turn, FailedTurnTerminalization};
-use crate::scheduler::{latency_bucket, metric_labels};
+use crate::scheduler::{latency_bucket, metric_labels, TurnStartProgress};
 use crate::storage_guard;
 
 pub(super) struct TurnEventLoop {
@@ -30,6 +30,7 @@ pub(super) struct TurnEventLoop {
     pub(super) context_window_metrics: Option<Value>,
     pub(super) ev_rx: mpsc::Receiver<NormalizedEvent>,
     pub(super) events_done_tx: oneshot::Sender<()>,
+    pub(super) start_progress_tx: tokio::sync::watch::Sender<TurnStartProgress>,
     pub(super) order_seq_state: Arc<Mutex<OrderSeqState>>,
 }
 
@@ -193,6 +194,23 @@ struct TurnFailurePayload {
     kind: Option<Value>,
 }
 
+fn is_truthful_start_activity(event_type: &SessionEventType) -> bool {
+    matches!(
+        event_type,
+        SessionEventType::TurnStarted
+            | SessionEventType::AssistantChunk
+            | SessionEventType::ThoughtChunk
+            | SessionEventType::AssistantComplete
+            | SessionEventType::ContextWindowUpdate
+            | SessionEventType::ToolCall
+            | SessionEventType::ToolCallUpdate
+            | SessionEventType::ToolResult
+            | SessionEventType::Done
+            | SessionEventType::TurnInterrupted
+            | SessionEventType::Error
+    )
+}
+
 async fn run_turn_event_loop(ctx: TurnEventLoop) {
     let TurnEventLoop {
         state,
@@ -218,6 +236,7 @@ async fn run_turn_event_loop(ctx: TurnEventLoop) {
         context_window_metrics,
         mut ev_rx,
         events_done_tx,
+        start_progress_tx,
         order_seq_state,
     } = ctx;
 
@@ -228,6 +247,7 @@ async fn run_turn_event_loop(ctx: TurnEventLoop) {
     let mut thought_partial = String::new();
     let mut tool_cache: HashMap<String, SessionTurnTool> = HashMap::new();
     let mut terminal_status: Option<SessionTurnStatus> = None;
+    let mut start_progress = TurnStartProgress::Pending;
     let mut first_event_at: Option<Instant> = None;
     let mut telemetry_emitted = false;
 
@@ -422,6 +442,23 @@ async fn run_turn_event_loop(ctx: TurnEventLoop) {
         );
         if !publish_after_persist {
             state.publish_event(event.clone()).await;
+        }
+
+        if start_progress == TurnStartProgress::Pending
+            && is_truthful_start_activity(&event.event_type)
+        {
+            start_progress = TurnStartProgress::Started;
+            let _ = start_progress_tx.send(TurnStartProgress::Started);
+            let _ = store
+                .update_session_turn_status(
+                    session_id,
+                    turn_id,
+                    SessionTurnStatus::Running,
+                    None,
+                    None,
+                    event.created_at,
+                )
+                .await;
         }
 
         match event.event_type {
@@ -699,6 +736,10 @@ async fn run_turn_event_loop(ctx: TurnEventLoop) {
                     .await;
             }
             SessionEventType::Done => {
+                if start_progress != TurnStartProgress::Terminal {
+                    start_progress = TurnStartProgress::Terminal;
+                    let _ = start_progress_tx.send(TurnStartProgress::Terminal);
+                }
                 if terminal_status.is_some() {
                     continue;
                 }
@@ -764,6 +805,10 @@ async fn run_turn_event_loop(ctx: TurnEventLoop) {
                 terminal_status = Some(SessionTurnStatus::Completed);
             }
             SessionEventType::TurnInterrupted => {
+                if start_progress != TurnStartProgress::Terminal {
+                    start_progress = TurnStartProgress::Terminal;
+                    let _ = start_progress_tx.send(TurnStartProgress::Terminal);
+                }
                 if terminal_status.is_some() {
                     continue;
                 }
@@ -879,6 +924,10 @@ async fn run_turn_event_loop(ctx: TurnEventLoop) {
                     .await;
             }
             SessionEventType::Error => {
+                if start_progress != TurnStartProgress::Terminal {
+                    start_progress = TurnStartProgress::Terminal;
+                    let _ = start_progress_tx.send(TurnStartProgress::Terminal);
+                }
                 if terminal_status.is_some() {
                     continue;
                 }

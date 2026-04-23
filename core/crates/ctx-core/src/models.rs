@@ -741,6 +741,7 @@ pub struct Artifact {
 #[serde(rename_all = "snake_case")]
 pub enum SessionTurnStatus {
     Queued,
+    Starting,
     Running,
     Completed,
     Interrupted,

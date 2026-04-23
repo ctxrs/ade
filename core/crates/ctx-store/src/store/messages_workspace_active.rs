@@ -631,9 +631,12 @@ fn decode_active_head_snapshot_row(row: &sqlx::sqlite::SqliteRow) -> Result<Sess
     strip_snapshot_partials(&mut turns, &mut events);
 
     let last_status = turns.last().map(|t| t.status.clone());
-    let has_running_turn = turns
-        .iter()
-        .any(|turn| matches!(turn.status, SessionTurnStatus::Running));
+    let has_running_turn = turns.iter().any(|turn| {
+        matches!(
+            turn.status,
+            SessionTurnStatus::Starting | SessionTurnStatus::Running
+        )
+    });
     let activity = derive_activity_from_status(last_status, has_running_turn);
     let has_more_turns: i64 = row.try_get("has_more_turns")?;
     let last_event_seq: i64 = row.try_get("last_event_seq")?;

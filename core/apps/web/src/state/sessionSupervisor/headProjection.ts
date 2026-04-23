@@ -98,7 +98,7 @@ function pruneOmittedNonTerminalTurns(
   entry.turns = entry.turns.filter((turn) => {
     const turnId = idToString(turn.turn_id);
     if (!turnId || retainedTurnIds.has(turnId)) return true;
-    if (turn.status !== "running" && turn.status !== "queued") return true;
+    if (turn.status !== "running" && turn.status !== "starting" && turn.status !== "queued") return true;
     removedTurnIds.add(turnId);
     return false;
   });

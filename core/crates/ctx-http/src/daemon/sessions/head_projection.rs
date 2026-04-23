@@ -144,6 +144,10 @@ pub(super) fn activity_from_turn(turn: &SessionTurn) -> SessionActivityState {
             is_working: false,
             last_turn_status: Some(SessionTurnStatus::Queued),
         },
+        SessionTurnStatus::Starting => SessionActivityState {
+            is_working: true,
+            last_turn_status: Some(SessionTurnStatus::Starting),
+        },
         SessionTurnStatus::Running => SessionActivityState {
             is_working: true,
             last_turn_status: Some(SessionTurnStatus::Running),
@@ -256,7 +260,7 @@ pub(super) fn turn_from_event(
     let status = if matches!(delivery, MessageDelivery::Queued) {
         SessionTurnStatus::Queued
     } else {
-        SessionTurnStatus::Running
+        SessionTurnStatus::Starting
     };
     Some(SessionTurn {
         turn_id,

@@ -1,7 +1,8 @@
 use serde_json::json;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, watch};
+use tokio::time::Instant as TokioInstant;
 
 use ctx_core::ids::{MessageId, RunId, SessionId, TurnId};
 use ctx_core::models::{SessionEventType, SessionTurnStatus};
@@ -29,10 +30,19 @@ pub(crate) struct RunningTurn {
     pub(crate) session_root_kind: String,
     pub(crate) event_tx: mpsc::Sender<NormalizedEvent>,
     pub(crate) events_done: Option<oneshot::Receiver<()>>,
+    pub(crate) start_progress: watch::Receiver<TurnStartProgress>,
+    pub(crate) start_deadline: TokioInstant,
 }
 
 const PROVIDER_OUTCOME_WAIT_TIMEOUT: Duration = Duration::from_secs(2);
 const TURN_EVENT_LOOP_DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TurnStartProgress {
+    Pending,
+    Started,
+    Terminal,
+}
 
 #[derive(Clone, Copy)]
 pub(crate) enum StopReason {
@@ -328,8 +338,8 @@ pub(crate) async fn handle_provider_stall(
     let run_id = turn.run_id;
     let turn_id = turn.turn_id;
     let message_id = turn.message_id;
-    abort_provider(&mut turn.handle);
-    let outcome = wait_for_provider_outcome(
+    let _ = turn.adapter.cancel(&mut turn.handle).await;
+    let _ = wait_for_provider_outcome(
         &mut turn.handle,
         provider_protocol_violation(
             "provider_protocol_violation_inactivity_timeout",
@@ -345,6 +355,10 @@ pub(crate) async fn handle_provider_stall(
     if let Some(events_done) = turn.events_done.take() {
         wait_for_turn_event_loop(session_id, run_id, turn_id, events_done).await;
     }
+    let outcome = provider_protocol_violation(
+        "provider_protocol_violation_inactivity_timeout",
+        "provider stalled without reporting a terminal outcome before timeout",
+    );
     let _ = finalize_provider_outcome(
         state,
         session_id,
@@ -352,6 +366,43 @@ pub(crate) async fn handle_provider_stall(
         turn_id,
         message_id,
         outcome,
+    )
+    .await;
+}
+
+pub(crate) async fn fail_starting_turn(
+    state: &Arc<AppState>,
+    session_id: SessionId,
+    mut turn: RunningTurn,
+    error_message: &str,
+) {
+    let run_id = turn.run_id;
+    let turn_id = turn.turn_id;
+    let message_id = turn.message_id;
+    let _ = turn.adapter.cancel(&mut turn.handle).await;
+    let _ = wait_for_provider_outcome(
+        &mut turn.handle,
+        provider_protocol_violation("start_not_acknowledged", error_message),
+        provider_protocol_violation("start_not_acknowledged", error_message),
+    )
+    .await;
+    drop(turn.event_tx);
+    if let Some(events_done) = turn.events_done.take() {
+        wait_for_turn_event_loop(session_id, run_id, turn_id, events_done).await;
+    }
+    let _ = finalize_failed_turn(
+        state,
+        session_id,
+        Some(run_id),
+        turn_id,
+        message_id,
+        FailedTurnTerminalization {
+            message: error_message,
+            reason: Some("start_not_acknowledged"),
+            details: None,
+            kind: Some(json!("start_not_acknowledged")),
+            emit_error_event: true,
+        },
     )
     .await;
 }

@@ -651,7 +651,7 @@ export function buildWorkbenchThreadViewModelFromTurns(
     }
 
     const statusText =
-      turn.status === "running" || turn.status === "queued"
+      turn.status === "running" || turn.status === "starting" || turn.status === "queued"
         ? customStatusByTurnId.get(turnId) ?? null
         : null;
     const pendingState = assistantStreamingByTurnId[turnId] ?? null;

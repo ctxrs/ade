@@ -727,7 +727,13 @@ export type SessionEvent = {
   created_at: string;
 };
 
-export type SessionTurnStatus = "queued" | "running" | "completed" | "interrupted" | "failed";
+export type SessionTurnStatus =
+  | "queued"
+  | "starting"
+  | "running"
+  | "completed"
+  | "interrupted"
+  | "failed";
 
 export type SessionActivityState = {
   is_working: boolean;

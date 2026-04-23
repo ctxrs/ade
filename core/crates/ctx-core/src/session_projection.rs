@@ -15,8 +15,9 @@ pub fn derive_activity_from_status(
     last_status: Option<SessionTurnStatus>,
     has_running_turn: bool,
 ) -> SessionActivityState {
+    let has_starting_turn = matches!(last_status, Some(SessionTurnStatus::Starting));
     SessionActivityState {
-        is_working: has_running_turn,
+        is_working: has_running_turn || has_starting_turn,
         last_turn_status: last_status,
     }
 }
@@ -27,6 +28,7 @@ pub fn turn_status_from_finished_payload(payload: &Value) -> Option<SessionTurnS
         Some("failed" | "error") => Some(SessionTurnStatus::Failed),
         Some("interrupted") => Some(SessionTurnStatus::Interrupted),
         Some("queued") => Some(SessionTurnStatus::Queued),
+        Some("starting") => Some(SessionTurnStatus::Starting),
         Some("running") => Some(SessionTurnStatus::Running),
         _ => None,
     }

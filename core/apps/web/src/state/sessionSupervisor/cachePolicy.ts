@@ -34,10 +34,11 @@ export const mergeTurn = (prev: SessionTurn, next: SessionTurn): SessionTurn => 
 
 const TURN_STATUS_PRIORITY: Record<NonNullable<SessionTurn["status"]>, number> = {
   queued: 0,
-  running: 1,
-  completed: 2,
-  interrupted: 3,
-  failed: 4,
+  starting: 1,
+  running: 2,
+  completed: 3,
+  interrupted: 4,
+  failed: 5,
 };
 
 export const mergeTurnStatus = (
@@ -129,7 +130,7 @@ export const reconcileActivityInterruptedFromTurns = (
 };
 
 const isWorkingTurnStatus = (status: SessionTurn["status"] | null | undefined): boolean =>
-  status === "queued" || status === "running";
+  status === "queued" || status === "starting" || status === "running";
 
 export const reconcileActivityFromTurns = (
   activity: SessionActivityState | null | undefined,
