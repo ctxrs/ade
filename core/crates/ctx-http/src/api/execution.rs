@@ -51,6 +51,14 @@ pub(super) async fn launch_start(
     State(state): State<Arc<AppState>>,
     Json(req): Json<ExecutionLaunchStartReq>,
 ) -> Result<Json<ExecutionLaunchSnapshot>, (StatusCode, Json<ApiErrorResp>)> {
+    state.reject_if_update_draining().await.map_err(|err| {
+        (
+            StatusCode::CONFLICT,
+            Json(ApiErrorResp {
+                error: logs::redact_sensitive(&err.to_string()),
+            }),
+        )
+    })?;
     let kind = req.kind.unwrap_or(ExecutionSetupJobKind::WorkspaceLaunch);
     let snapshot = match kind {
         ExecutionSetupJobKind::WorkspaceLaunch => {
@@ -148,20 +156,37 @@ pub(super) async fn linux_sandbox_runtime_prepare(
     State(state): State<Arc<AppState>>,
     Json(req): Json<LinuxSandboxRuntimePrepareReq>,
 ) -> Result<Json<LinuxSandboxRuntimePrepareResult>, (StatusCode, Json<ApiErrorResp>)> {
-    let activity = crate::daemon::daemon_turn_activity_summary(&state)
+    if state
+        .acquire_update_drain("linux_sandbox_runtime_prepare", "execution_api")
+        .await
+        .is_none()
+    {
+        return Err((
+            StatusCode::CONFLICT,
+            Json(ApiErrorResp {
+                error: "Linux sandbox runtime prepare is already in progress. Retry when current maintenance completes.".to_string(),
+            }),
+        ));
+    }
+    let activity = crate::daemon::daemon_sandbox_work_activity_summary(&state)
         .await
         .map_err(|err| {
+            let state = state.clone();
+            tokio::spawn(async move {
+                let _ = state.release_update_drain().await;
+            });
             tracing::warn!(target: "linux_sandbox", error = %logs::redact_sensitive(&err.to_string()), "linux_sandbox_runtime_prepare activity gate error");
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ApiErrorResp { error: linux_sandbox_user_message("prepare") }),
             )
         })?;
-    if !activity.idle {
+    if activity.active {
+        let _ = state.release_update_drain().await;
         return Err((
             StatusCode::CONFLICT,
             Json(ApiErrorResp {
-                error: "Preparing Linux sandbox runtime is blocked while turns are queued or running. Retry when current work is idle.".to_string(),
+                error: "Preparing Linux sandbox runtime is blocked while sandbox work is active. Retry when sandbox turns, terminals, containers, and runtime operations are idle.".to_string(),
             }),
         ));
     }
@@ -174,12 +199,17 @@ pub(super) async fn linux_sandbox_runtime_prepare(
     )
     .await
     .map_err(|err| {
+        let state = state.clone();
+        tokio::spawn(async move {
+            let _ = state.release_update_drain().await;
+        });
         tracing::warn!(target: "linux_sandbox", error = %logs::redact_sensitive(&err.to_string()), "linux_sandbox_runtime_prepare error");
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ApiErrorResp { error: linux_sandbox_user_message("prepare") }),
         )
     })?;
+    let _ = state.release_update_drain().await;
     Ok(Json(result))
 }
 

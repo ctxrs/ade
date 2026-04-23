@@ -122,7 +122,7 @@ impl AppState {
     pub async fn reject_if_update_draining(&self) -> Result<()> {
         if let Some(drain) = self.update_drain_snapshot().await {
             anyhow::bail!(
-                "daemon update is in progress; retry after the daemon restarts (reason={}, owner={})",
+                "daemon maintenance is in progress; retry after it completes (reason={}, owner={})",
                 drain.reason,
                 drain.owner
             );

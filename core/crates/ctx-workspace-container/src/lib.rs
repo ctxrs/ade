@@ -96,6 +96,36 @@ pub fn workspace_container_name(workspace_id: WorkspaceId) -> String {
     format!("ctx-harness-{}", workspace_id.0)
 }
 
+pub async fn list_running_workspace_container_names(
+    data_root: &std::path::Path,
+    mode: &SandboxCommandMode,
+) -> Result<Vec<String>> {
+    let mut cmd = sandbox_container_command(data_root, mode)?;
+    cmd.arg("container")
+        .arg("ls")
+        .arg("--format")
+        .arg("{{.Names}}");
+    let output = command_output_with_timeout(cmd, SANDBOX_OP_TIMEOUT).await?;
+    if !output.status.success() {
+        let combined = command_output_message(&output);
+        if combined.is_empty() {
+            anyhow::bail!(
+                "container list failed while probing running workspace containers (status: {})",
+                output.status
+            );
+        }
+        anyhow::bail!(
+            "container list failed while probing running workspace containers: {combined}"
+        );
+    }
+    Ok(String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(str::trim)
+        .filter(|name| !name.is_empty() && name.starts_with("ctx-harness-"))
+        .map(ToOwned::to_owned)
+        .collect())
+}
+
 pub fn cached_container_action(
     cached: &WorkspaceContainer,
     settings: &ContainerExecutionSettings,
@@ -224,6 +254,13 @@ impl WorkspaceContainerOwner {
             allowlist,
             egress_guard,
         }))
+    }
+
+    pub async fn running_workspace_container_names(
+        &self,
+        mode: &SandboxCommandMode,
+    ) -> Result<Vec<String>> {
+        list_running_workspace_container_names(&self.data_root, mode).await
     }
 
     pub async fn stop_container(
@@ -627,7 +664,41 @@ impl WorkspaceContainerOwner {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
     use std::path::{Path, PathBuf};
+
+    #[cfg(unix)]
+    struct EnvVarGuard {
+        key: &'static str,
+        prev: Option<String>,
+    }
+
+    #[cfg(unix)]
+    impl EnvVarGuard {
+        fn set(key: &'static str, value: &str) -> Self {
+            let prev = std::env::var(key).ok();
+            std::env::set_var(key, value);
+            Self { key, prev }
+        }
+    }
+
+    #[cfg(unix)]
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            if let Some(prev) = self.prev.take() {
+                std::env::set_var(self.key, prev);
+            } else {
+                std::env::remove_var(self.key);
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    fn env_var_test_lock() -> &'static tokio::sync::Mutex<()> {
+        static LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
+        LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+    }
 
     fn sample_container_settings() -> ContainerExecutionSettings {
         ContainerExecutionSettings::default()
@@ -704,5 +775,41 @@ mod tests {
         let networking = sandbox_container_launch_networking(&settings);
         assert_eq!(networking.network, None);
         assert_eq!(networking.add_host, "host.containers.internal:host-gateway");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn running_workspace_container_names_filters_ctx_workspace_containers() {
+        let _serial = env_var_test_lock().lock().await;
+        let temp = tempfile::tempdir().expect("tempdir");
+        let cli_path = temp.path().join("sandbox-cli.sh");
+        let log_path = temp.path().join("sandbox-cli.log");
+        std::fs::write(
+            &cli_path,
+            format!(
+                "#!/bin/sh\nLOG=\"{log}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"ls\" ] && [ \"$3\" = \"--format\" ] && [ \"$4\" = \"{{{{.Names}}}}\" ]; then\n  printf 'ctx-harness-one\\nctx-harness-two\\npostgres\\n\\n'\n  exit 0\nfi\necho \"unexpected invocation: $*\" >&2\nexit 1\n",
+                log = log_path.display(),
+            ),
+        )
+        .expect("write sandbox cli shim");
+        std::fs::set_permissions(&cli_path, std::fs::Permissions::from_mode(0o755))
+            .expect("chmod sandbox cli shim");
+        let _guard = EnvVarGuard::set(
+            ctx_sandbox_container_runtime::CTX_HARNESS_SANDBOX_CLI_PATH_ENV,
+            &cli_path.to_string_lossy(),
+        );
+
+        let names = list_running_workspace_container_names(
+            temp.path(),
+            &SandboxCommandMode::NativeContainer,
+        )
+        .await
+        .expect("list running workspace containers");
+        assert_eq!(names, vec!["ctx-harness-one", "ctx-harness-two"]);
+        let log = std::fs::read_to_string(&log_path).expect("read sandbox cli log");
+        assert!(
+            log.contains("container ls --format {{.Names}}"),
+            "expected running-container probe in log:\n{log}"
+        );
     }
 }

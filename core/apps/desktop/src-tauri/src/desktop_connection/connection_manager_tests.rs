@@ -266,6 +266,72 @@ fn explicit_remote_connection_disables_local_auto_bootstrap() {
 
 #[test]
 #[cfg(unix)]
+fn ssh_connection_info_exposes_and_clears_remote_update_state() {
+    let tunnel = spawn_tokio_sleep_child();
+    let tunnel_pid = tunnel.id();
+
+    let manager = ConnectionManager::default();
+    manager.set_ssh(
+        "http://127.0.0.1:65522".to_string(),
+        Some("token".to_string()),
+        tunnel,
+        "example.test".to_string(),
+        Some("dev".to_string()),
+        22,
+        Some("/tmp/ctx".to_string()),
+        SshRuntimeMetadata {
+            managed_ctx_bin: "~/.ctx/bin/ctx".to_string(),
+            active_ctx_bin: Some("~/.ctx/bin/ctx".to_string()),
+            ssh_password_once: None,
+            admin_password_once: None,
+        },
+    );
+
+    manager
+        .set_ssh_remote_update_state(
+            ctx_desktop_ipc::DesktopRemoteDaemonUpdateState::Pending,
+            Some("waiting for idle".to_string()),
+        )
+        .expect("set pending state");
+    let info = manager.info();
+    assert_eq!(
+        info.remote_update_state,
+        Some(ctx_desktop_ipc::DesktopRemoteDaemonUpdateState::Pending)
+    );
+    assert_eq!(
+        info.remote_update_message.as_deref(),
+        Some("waiting for idle")
+    );
+
+    manager
+        .set_ssh_remote_update_state(
+            ctx_desktop_ipc::DesktopRemoteDaemonUpdateState::Failed,
+            Some("failed".to_string()),
+        )
+        .expect("set failed state");
+    let info = manager.info();
+    assert_eq!(
+        info.remote_update_state,
+        Some(ctx_desktop_ipc::DesktopRemoteDaemonUpdateState::Failed)
+    );
+    assert_eq!(info.remote_update_message.as_deref(), Some("failed"));
+
+    manager
+        .clear_ssh_remote_update_state()
+        .expect("clear remote update state");
+    let info = manager.info();
+    assert_eq!(info.remote_update_state, None);
+    assert_eq!(info.remote_update_message, None);
+
+    manager.disconnect();
+    assert!(
+        wait_for_pid_exit(tunnel_pid, Duration::from_secs(3)),
+        "ssh tunnel should be cleaned up during test teardown"
+    );
+}
+
+#[test]
+#[cfg(unix)]
 fn disconnect_does_not_stop_attached_compatible_local_daemon_pid() {
     let pid = spawn_detached_sleep_pid();
     assert!(

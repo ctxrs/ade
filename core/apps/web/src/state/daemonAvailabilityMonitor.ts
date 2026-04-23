@@ -1,9 +1,10 @@
 import { daemonFetchRaw } from "../api/client";
+import { syncDesktopDaemonConnectionFromBridge } from "../api/desktopDaemonConnection";
 import {
-  desktopGetConnection,
   desktopGetVersion,
   isDesktopApp,
   type DesktopConnectionKind,
+  type DesktopRemoteDaemonUpdateState,
 } from "../utils/desktop";
 
 export type DaemonStatus = "unknown" | "ok" | "down" | "mismatch";
@@ -23,6 +24,8 @@ export type DaemonAvailabilitySnapshot = {
   desktopKind: DesktopConnectionKind | null;
   desktopVersion: string | null;
   mismatch: VersionMismatch | null;
+  remoteUpdateMessage: string | null;
+  remoteUpdateState: DesktopRemoteDaemonUpdateState | null;
 };
 
 type Listener = (snapshot: DaemonAvailabilitySnapshot) => void;
@@ -39,6 +42,8 @@ let snapshot: DaemonAvailabilitySnapshot = {
   desktopKind: null,
   desktopVersion: null,
   mismatch: null,
+  remoteUpdateMessage: null,
+  remoteUpdateState: null,
 };
 
 let pollTimer: number | null = null;
@@ -120,6 +125,8 @@ const sameSnapshot = (
   && left.error === right.error
   && left.desktopKind === right.desktopKind
   && left.desktopVersion === right.desktopVersion
+  && left.remoteUpdateMessage === right.remoteUpdateMessage
+  && left.remoteUpdateState === right.remoteUpdateState
   && sameMismatch(left.mismatch, right.mismatch);
 
 const emitChange = (): void => {
@@ -160,24 +167,47 @@ const schedulePoll = (): void => {
 const syncDesktopMetadata = async (): Promise<{
   desktopKind: DesktopConnectionKind | null;
   desktopVersion: string | null;
+  remoteUpdateMessage: string | null;
+  remoteUpdateState: DesktopRemoteDaemonUpdateState | null;
 }> => {
   if (!isDesktopApp()) {
-    return { desktopKind: null, desktopVersion: null };
+    return {
+      desktopKind: null,
+      desktopVersion: null,
+      remoteUpdateMessage: null,
+      remoteUpdateState: null,
+    };
   }
   let desktopKind: DesktopConnectionKind | null = null;
   let desktopVersion: string | null = null;
+  let remoteUpdateMessage: string | null = null;
+  let remoteUpdateState: DesktopRemoteDaemonUpdateState | null = null;
   try {
-    const info = await desktopGetConnection();
-    desktopKind = info.kind;
+    const sync = await syncDesktopDaemonConnectionFromBridge({
+      reason: "daemon_availability_poll",
+    });
+    const info = sync.info;
+    desktopKind = info?.kind ?? snapshot.desktopKind ?? null;
+    remoteUpdateMessage = typeof info?.remote_update_message === "string"
+      ? info.remote_update_message
+      : snapshot.remoteUpdateMessage ?? null;
+    remoteUpdateState = info?.remote_update_state ?? snapshot.remoteUpdateState ?? null;
   } catch {
     desktopKind = null;
+    remoteUpdateMessage = null;
+    remoteUpdateState = null;
   }
   try {
     desktopVersion = await desktopGetVersion();
   } catch {
     desktopVersion = null;
   }
-  return { desktopKind, desktopVersion };
+  return {
+    desktopKind,
+    desktopVersion,
+    remoteUpdateMessage,
+    remoteUpdateState,
+  };
 };
 
 export const getDaemonAvailabilitySnapshot = (): DaemonAvailabilitySnapshot => snapshot;
@@ -193,7 +223,12 @@ export const checkDaemonAvailabilityNow = async (): Promise<DaemonAvailabilitySn
   });
 
   const run = (async (): Promise<DaemonAvailabilitySnapshot> => {
-    const { desktopKind, desktopVersion } = await syncDesktopMetadata();
+    const {
+      desktopKind,
+      desktopVersion,
+      remoteUpdateMessage,
+      remoteUpdateState,
+    } = await syncDesktopMetadata();
 
     let nextStatus: DaemonStatus = "down";
     let nextError: string | null = null;
@@ -256,6 +291,8 @@ export const checkDaemonAvailabilityNow = async (): Promise<DaemonAvailabilitySn
       desktopKind,
       desktopVersion,
       mismatch: nextMismatch,
+      remoteUpdateMessage,
+      remoteUpdateState,
     };
     setSnapshot(nextSnapshot);
     schedulePoll();

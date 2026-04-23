@@ -1,6 +1,7 @@
 use super::*;
 pub(super) use ctx_desktop_ipc::{
     DesktopConnectionInfo, DesktopConnectionIntent, DesktopConnectionKind,
+    DesktopRemoteDaemonUpdateState,
 };
 
 #[cfg(test)]
@@ -189,7 +190,14 @@ struct SshConnection {
     remote_port: u16,
     remote_data_dir: Option<String>,
     runtime: SshRuntimeMetadata,
+    remote_update_status: Option<SshRemoteUpdateStatus>,
     http_client: std::sync::OnceLock<reqwest::blocking::Client>,
+}
+
+#[derive(Debug, Clone)]
+struct SshRemoteUpdateStatus {
+    state: DesktopRemoteDaemonUpdateState,
+    message: Option<String>,
 }
 
 fn local_connection_source_label(source: LocalConnectionSource) -> &'static str {
@@ -317,6 +325,7 @@ fn build_ssh_connection(
         remote_port,
         remote_data_dir,
         runtime,
+        remote_update_status: None,
         http_client: std::sync::OnceLock::new(),
     })
 }
@@ -349,6 +358,8 @@ impl ConnectionManager {
                 user: None,
                 remote_port: None,
                 remote_data_dir: None,
+                remote_update_message: None,
+                remote_update_state: None,
             };
         };
         let intent = guard.intent.as_ipc();
@@ -364,6 +375,8 @@ impl ConnectionManager {
                 user: None,
                 remote_port: None,
                 remote_data_dir: None,
+                remote_update_message: None,
+                remote_update_state: None,
             },
             Some(ActiveConnection::Local(c)) => DesktopConnectionInfo {
                 kind: DesktopConnectionKind::Local,
@@ -375,6 +388,8 @@ impl ConnectionManager {
                 user: None,
                 remote_port: None,
                 remote_data_dir: None,
+                remote_update_message: None,
+                remote_update_state: None,
             },
             Some(ActiveConnection::Ssh(c)) => DesktopConnectionInfo {
                 kind: DesktopConnectionKind::Ssh,
@@ -386,6 +401,11 @@ impl ConnectionManager {
                 user: c.user.clone(),
                 remote_port: Some(c.remote_port),
                 remote_data_dir: c.remote_data_dir.clone(),
+                remote_update_message: c
+                    .remote_update_status
+                    .as_ref()
+                    .and_then(|status| status.message.clone()),
+                remote_update_state: c.remote_update_status.as_ref().map(|status| status.state),
             },
         }
     }
@@ -818,6 +838,45 @@ impl ConnectionManager {
             anyhow::bail!("current connection is not SSH");
         };
         c.runtime = runtime;
+        Ok(())
+    }
+
+    pub(super) fn set_ssh_remote_update_state(
+        &self,
+        state: DesktopRemoteDaemonUpdateState,
+        message: Option<String>,
+    ) -> Result<()> {
+        let mut guard = self
+            .0
+            .lock()
+            .map_err(|e| anyhow!("connection manager lock poisoned: {e}"))?;
+        let Some(active) = guard.active.as_mut() else {
+            anyhow::bail!("not connected (open a workspace first)");
+        };
+        let ActiveConnection::Ssh(c) = active else {
+            anyhow::bail!("current connection is not SSH");
+        };
+        c.remote_update_status = Some(SshRemoteUpdateStatus {
+            state,
+            message: message
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty()),
+        });
+        Ok(())
+    }
+
+    pub(super) fn clear_ssh_remote_update_state(&self) -> Result<()> {
+        let mut guard = self
+            .0
+            .lock()
+            .map_err(|e| anyhow!("connection manager lock poisoned: {e}"))?;
+        let Some(active) = guard.active.as_mut() else {
+            anyhow::bail!("not connected (open a workspace first)");
+        };
+        let ActiveConnection::Ssh(c) = active else {
+            anyhow::bail!("current connection is not SSH");
+        };
+        c.remote_update_status = None;
         Ok(())
     }
 

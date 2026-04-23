@@ -21,7 +21,8 @@ use probe::*;
 use transport::*;
 use tunnel::*;
 use update::{
-    begin_remote_update_drain, release_remote_update_drain, run_remote_daemon_self_update,
+    begin_remote_update_drain, release_remote_update_drain, remote_update_target_key,
+    run_remote_daemon_self_update, schedule_pending_remote_daemon_update,
 };
 
 pub(crate) use commands::{

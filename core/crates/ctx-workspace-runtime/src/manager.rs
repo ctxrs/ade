@@ -491,6 +491,35 @@ impl HarnessRuntimeManager {
             .await
     }
 
+    pub async fn running_workspace_container_count(&self) -> Result<usize> {
+        let mode = match selected_sandbox_command_mode(&self.data_root) {
+            Ok(mode) => mode,
+            Err(err)
+                if err
+                    .to_string()
+                    .to_ascii_lowercase()
+                    .contains("sandbox container cli unavailable") =>
+            {
+                return Ok(0);
+            }
+            Err(err) => return Err(err),
+        };
+        match self
+            .workspace_containers
+            .running_workspace_container_names(&mode)
+            .await
+        {
+            Ok(containers) => Ok(containers.len()),
+            Err(err) => {
+                if sandbox_engine_ready(&self.data_root).await.unwrap_or(false) {
+                    Err(err)
+                } else {
+                    Ok(0)
+                }
+            }
+        }
+    }
+
     pub async fn stop_container(&self, workspace_id: WorkspaceId) -> Result<bool> {
         let _activity = self.begin_runtime_operation();
         let mode = match selected_sandbox_command_mode(&self.data_root) {

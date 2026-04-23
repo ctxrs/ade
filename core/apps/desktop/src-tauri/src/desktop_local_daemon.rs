@@ -383,6 +383,8 @@ mod desktop_local_daemon_tests {
             host: None,
             remote_data_dir: None,
             remote_port: None,
+            remote_update_message: None,
+            remote_update_state: None,
             token: None,
             user: None,
         }

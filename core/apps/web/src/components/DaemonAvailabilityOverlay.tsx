@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useState, useSyncExternalStore } from "react";
 import { Link, useLocation } from "react-router-dom";
-import { applyDaemonDesktopConnection, listWorkspaceTasks, listWorkspaces } from "../api/client";
+import { applyDaemonDesktopConnection } from "../api/client";
+import { syncDesktopDaemonConnectionFromBridge } from "../api/desktopDaemonConnection";
 import { useDaemonBaseUrl } from "../api/useDaemonConnection";
 import {
   checkDaemonAvailabilityNow,
@@ -29,6 +30,8 @@ const SUPPRESSED_AVAILABILITY = {
   desktopKind: null,
   desktopVersion: null,
   mismatch: null,
+  remoteUpdateMessage: null,
+  remoteUpdateState: null,
 } as const;
 
 const trimError = (value: string): string => {
@@ -68,7 +71,15 @@ export default function DaemonAvailabilityOverlay() {
   const status = availability.status;
   const desktopKind = availability.desktopKind;
   const mismatch = availability.mismatch;
-  const error = actionError ?? availability.error;
+  const remoteUpdateState = availability.remoteUpdateState;
+  const remoteUpdateMessage = availability.remoteUpdateMessage;
+  const error =
+    actionError
+    ?? (remoteUpdateState === "failed" ? remoteUpdateMessage : null)
+    ?? availability.error;
+  const displayNotice =
+    notice
+    ?? (remoteUpdateState === "pending" ? remoteUpdateMessage : null);
 
   const checkNow = useCallback(async () => {
     setActionError(null);
@@ -118,46 +129,17 @@ export default function DaemonAvailabilityOverlay() {
 
   const onMismatchUpdateRemote = useCallback(async () => {
     if (!isDesktop || remoteUpdateLock) return;
+    if (!confirmInterruptingAction("update_remote")) return;
     setRemoteUpdateLock(true);
     setRemoteUpdateBusy(true);
     setActionError(null);
     setNotice(null);
     try {
-      let runningTaskCount: number | null = null;
-      try {
-        const workspaces = await listWorkspaces();
-        const workspaceIds = workspaces
-          .map((workspace) => String(workspace.id ?? "").trim())
-          .filter(Boolean);
-        if (workspaceIds.length === 0) {
-          runningTaskCount = 0;
-        } else {
-          const taskLists = await Promise.all(
-            workspaceIds.map(async (workspaceId) => listWorkspaceTasks(workspaceId)),
-          );
-          runningTaskCount = taskLists
-            .flat()
-            .filter((task) => {
-              const status = String(task.status ?? "").toLowerCase();
-              return status === "running" || Boolean(task.has_active_session);
-            }).length;
-        }
-      } catch {
-        runningTaskCount = null;
-      }
-
-      if (runningTaskCount === null && !confirmInterruptingAction("update_remote")) return;
-      if (
-        runningTaskCount !== null
-        && runningTaskCount > 0
-        && typeof window !== "undefined"
-        && !window.confirm(
-          `Detected ${runningTaskCount} running task(s). Updating the remote daemon may interrupt them. Continue?`,
-        )
-      ) {
-        return;
-      }
       await desktopUpdateRemoteDaemon();
+      await syncDesktopDaemonConnectionFromBridge({
+        force: true,
+        reason: "remote_daemon_manual_update",
+      });
       await checkNow();
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -220,9 +202,16 @@ export default function DaemonAvailabilityOverlay() {
   const mismatchCopy = (() => {
     if (!mismatch) return null;
     if (mismatch.kind === "daemon_older") {
-      return desktopKind === "ssh"
-        ? "The remote daemon is older than this desktop app. If no tasks are running, update proceeds automatically. If tasks are active, this dialog asks for confirmation."
-        : "The local daemon is older than this desktop app. Restart it from this dialog.";
+      if (desktopKind === "ssh") {
+        if (remoteUpdateState === "pending") {
+          return "The remote daemon is older than this desktop app. Update is queued and will restart automatically when no turns are queued or running. Use Restart now to interrupt active work.";
+        }
+        if (remoteUpdateState === "failed") {
+          return "The remote daemon is older than this desktop app. Automatic restart when idle failed. Review the error below or restart it now.";
+        }
+        return "The remote daemon is older than this desktop app. If it is busy, the desktop app will wait for idle before restarting it. Use Restart now to interrupt active work.";
+      }
+      return "The local daemon is older than this desktop app. Restart it from this dialog.";
     }
     if (mismatch.kind === "desktop_older") {
       return "The desktop app is older than the daemon. Update the desktop app from this dialog, then retry.";
@@ -249,7 +238,7 @@ export default function DaemonAvailabilityOverlay() {
             </div>
           )}
           {error && <div className="daemon-overlay-error">{error}</div>}
-          {notice && <div className="daemon-overlay-notice">{notice}</div>}
+          {displayNotice && <div className="daemon-overlay-notice">{displayNotice}</div>}
           <div className="daemon-overlay-actions">
             {mismatch.kind === "daemon_older" && isDesktop && desktopKind !== "ssh" && (
               <button
@@ -262,14 +251,25 @@ export default function DaemonAvailabilityOverlay() {
               </button>
             )}
             {mismatch.kind === "daemon_older" && isDesktop && desktopKind === "ssh" && (
-              <button
-                type="button"
-                className="daemon-overlay-button"
-                onClick={onMismatchUpdateRemote}
-                disabled={checking || restartBusy || remoteUpdateBusy || desktopAppUpdateBusy}
-              >
-                {remoteUpdateBusy ? "Updating..." : "Update remote daemon"}
-              </button>
+              <>
+                {remoteUpdateState === "pending" && (
+                  <button
+                    type="button"
+                    className="daemon-overlay-button"
+                    disabled
+                  >
+                    Waiting for idle...
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="daemon-overlay-button"
+                  onClick={onMismatchUpdateRemote}
+                  disabled={checking || restartBusy || remoteUpdateBusy || desktopAppUpdateBusy}
+                >
+                  {remoteUpdateBusy ? "Restarting..." : "Restart now"}
+                </button>
+              </>
             )}
             {mismatch.kind === "desktop_older" && isDesktop && (
               <button
@@ -317,7 +317,7 @@ export default function DaemonAvailabilityOverlay() {
           </div>
         )}
         {error && <div className="daemon-overlay-error">{error}</div>}
-        {notice && <div className="daemon-overlay-notice">{notice}</div>}
+        {displayNotice && <div className="daemon-overlay-notice">{displayNotice}</div>}
         <div className="daemon-overlay-actions">
           <button
             type="button"

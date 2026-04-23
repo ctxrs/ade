@@ -1,4 +1,5 @@
 use super::*;
+use ctx_desktop_ipc::DesktopRemoteDaemonUpdateState;
 
 struct ConnectedRemoteDaemon {
     base_url: String,
@@ -6,6 +7,7 @@ struct ConnectedRemoteDaemon {
     tunnel: TunnelHandle,
     runtime: SshRuntimeMetadata,
     platform: RemoteLinuxPlatform,
+    pending_remote_update_on_idle: bool,
 }
 
 struct BootstrapPlanContext {
@@ -116,6 +118,7 @@ fn prepare_initial_connect(
                     admin_password_once: None,
                 },
                 platform,
+                pending_remote_update_on_idle: false,
             }))
         }
         RemoteBootstrapPlan::RefuseBecauseStartRemoteDisabled => {
@@ -210,6 +213,7 @@ fn execute_bootstrap_plan(
             admin_password_once: None,
         },
         platform: plan.platform,
+        pending_remote_update_on_idle: false,
     })
 }
 
@@ -236,6 +240,7 @@ fn update_connected_remote_if_needed(
                 "desktop_connect",
             )?;
             if !drained {
+                connected.pending_remote_update_on_idle = true;
                 return Ok(connected);
             }
             let release_base_url = bootstrap_download_base_url();
@@ -261,6 +266,7 @@ fn update_connected_remote_if_needed(
                 target.remote_data_dir.as_deref(),
             )?;
             connected.token = auth.token;
+            connected.pending_remote_update_on_idle = false;
             Ok(connected)
         }
         DaemonCompatibilityState::IncompatibleMismatch => {
@@ -288,6 +294,7 @@ fn update_connected_remote_if_needed(
                 target.remote_data_dir.as_deref(),
             )?;
             connected.token = auth.token;
+            connected.pending_remote_update_on_idle = false;
             Ok(connected)
         }
     }
@@ -356,6 +363,13 @@ async fn desktop_connect_ssh_inner(
 
     set_job_phase(job_id.as_deref(), ConnectJobPhase::HandingOffConnection);
     let state = app.state::<ConnectionManager>();
+    let pending_remote_update_on_idle = connected.pending_remote_update_on_idle;
+    let pending_remote_update_key = remote_update_target_key(
+        &target.host,
+        target.user.as_deref(),
+        target.remote_port,
+        target.remote_data_dir.as_deref(),
+    );
     let prewarm_host = target.host.clone();
     let prewarm_user = target.user.clone();
     let prewarm_remote_data_dir = target.remote_data_dir.clone();
@@ -374,6 +388,20 @@ async fn desktop_connect_ssh_inner(
             connected.runtime,
         )
         .await?;
+    if pending_remote_update_on_idle {
+        state
+            .set_ssh_remote_update_state(
+                DesktopRemoteDaemonUpdateState::Pending,
+                Some(
+                    "Remote daemon update is queued and will restart automatically when no turns are queued or running."
+                        .to_string(),
+                ),
+            )
+            .map_err(|err| format!("failed to record pending remote daemon update: {err:#}"))?;
+        schedule_pending_remote_daemon_update(&app, pending_remote_update_key, channel.clone());
+    } else {
+        let _ = state.clear_ssh_remote_update_state();
+    }
     let _ = super::commands::schedule_remote_prewarm_request(
         app.clone(),
         prewarm_host,

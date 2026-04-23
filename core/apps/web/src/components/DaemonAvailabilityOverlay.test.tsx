@@ -2,11 +2,15 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import DaemonAvailabilityOverlay from "./DaemonAvailabilityOverlay";
-import { daemonFetchRaw, listWorkspaceTasks, listWorkspaces } from "../api/client";
+import { daemonFetchRaw } from "../api/client";
+import {
+  syncDesktopDaemonConnectionFromBridge,
+  type DesktopDaemonConnectionSyncResult,
+} from "../api/desktopDaemonConnection";
 import { useDaemonBaseUrl } from "../api/useDaemonConnection";
 import {
   desktopApplyAppUpdate,
-  desktopGetConnection,
+  type DesktopConnectionInfo,
   desktopGetVersion,
   desktopRestartLocalDaemon,
   type DesktopAppUpdateApplyResp,
@@ -17,8 +21,10 @@ import {
 vi.mock("../api/client", () => ({
   applyDaemonDesktopConnection: vi.fn(),
   daemonFetchRaw: vi.fn(),
-  listWorkspaces: vi.fn(),
-  listWorkspaceTasks: vi.fn(),
+}));
+
+vi.mock("../api/desktopDaemonConnection", () => ({
+  syncDesktopDaemonConnectionFromBridge: vi.fn(),
 }));
 
 vi.mock("../api/useDaemonConnection", () => ({
@@ -28,12 +34,30 @@ vi.mock("../api/useDaemonConnection", () => ({
 vi.mock("../utils/desktop", () => ({
   desktopApplyAppUpdate: vi.fn(),
   desktopConnectLocal: vi.fn(),
-  desktopGetConnection: vi.fn(),
   desktopGetVersion: vi.fn(),
   desktopRestartLocalDaemon: vi.fn(),
   desktopUpdateRemoteDaemon: vi.fn(),
   isDesktopApp: vi.fn(),
 }));
+
+const makeDesktopSyncResult = (
+  infoOverrides: Partial<DesktopConnectionInfo>,
+): DesktopDaemonConnectionSyncResult => ({
+  connection: {
+    baseUrl: null,
+    wsBaseUrl: null,
+    authToken: null,
+    runId: null,
+  },
+  info: {
+    kind: "local",
+    intent: "auto_local_bootstrap" as const,
+    local_auto_bootstrap_allowed: true,
+    ...infoOverrides,
+  },
+  synced: true,
+  error: null,
+});
 
 const renderOverlay = (path = "/workspaces/ws-1") =>
   render(
@@ -74,12 +98,12 @@ describe("DaemonAvailabilityOverlay", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(useDaemonBaseUrl).mockReturnValue(null);
-    vi.mocked(desktopGetConnection).mockResolvedValue({ kind: "local" });
+    vi.mocked(syncDesktopDaemonConnectionFromBridge).mockResolvedValue(
+      makeDesktopSyncResult({ kind: "local" }),
+    );
     vi.mocked(desktopRestartLocalDaemon).mockResolvedValue({ kind: "local" });
     vi.mocked(desktopUpdateRemoteDaemon).mockResolvedValue({ updated: true, message: "ok" });
     vi.mocked(desktopApplyAppUpdate).mockResolvedValue(makeDesktopApplyResp());
-    vi.mocked(listWorkspaces).mockResolvedValue([]);
-    vi.mocked(listWorkspaceTasks).mockResolvedValue([]);
     vi.spyOn(window, "confirm").mockReturnValue(true);
   });
 
@@ -148,7 +172,9 @@ describe("DaemonAvailabilityOverlay", () => {
 
   it("shows SSH-specific update action for daemon older mismatch", async () => {
     vi.mocked(isDesktopApp).mockReturnValue(true);
-    vi.mocked(desktopGetConnection).mockResolvedValue({ kind: "ssh" });
+    vi.mocked(syncDesktopDaemonConnectionFromBridge).mockResolvedValue(
+      makeDesktopSyncResult({ kind: "ssh" }),
+    );
     vi.mocked(desktopGetVersion).mockResolvedValue("2.0.0");
     vi.mocked(daemonFetchRaw).mockResolvedValue({
       status: 200,
@@ -161,35 +187,19 @@ describe("DaemonAvailabilityOverlay", () => {
     });
 
     renderOverlay();
-    expect(await screen.findByRole("button", { name: "Update remote daemon" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Update remote daemon" }));
+    expect(await screen.findByRole("button", { name: "Restart now" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Restart now" }));
     await waitFor(() => {
       expect(vi.mocked(desktopUpdateRemoteDaemon)).toHaveBeenCalledWith();
     });
   });
 
-  it("prompts before remote daemon update when running tasks are active", async () => {
+  it("prompts before restart-now remote daemon update", async () => {
     vi.mocked(isDesktopApp).mockReturnValue(true);
-    vi.mocked(desktopGetConnection).mockResolvedValue({ kind: "ssh" });
+    vi.mocked(syncDesktopDaemonConnectionFromBridge).mockResolvedValue(
+      makeDesktopSyncResult({ kind: "ssh" }),
+    );
     vi.mocked(desktopGetVersion).mockResolvedValue("2.0.0");
-    vi.mocked(listWorkspaces).mockResolvedValue([
-      {
-        id: "ws-1",
-        name: "ws-1",
-        root_path: "/tmp/ws-1",
-        created_at: "2026-02-20T00:00:00Z",
-      },
-    ]);
-    vi.mocked(listWorkspaceTasks).mockResolvedValue([
-      {
-        id: "task-1",
-        workspace_id: "ws-1",
-        title: "task-1",
-        status: "running",
-        created_at: "2026-02-20T00:00:00Z",
-        updated_at: "2026-02-20T00:00:00Z",
-      },
-    ]);
     vi.spyOn(window, "confirm").mockReturnValue(false);
     vi.mocked(daemonFetchRaw).mockResolvedValue({
       status: 200,
@@ -202,8 +212,8 @@ describe("DaemonAvailabilityOverlay", () => {
     });
 
     renderOverlay();
-    expect(await screen.findByRole("button", { name: "Update remote daemon" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Update remote daemon" }));
+    expect(await screen.findByRole("button", { name: "Restart now" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Restart now" }));
     await waitFor(() => {
       expect(vi.mocked(desktopUpdateRemoteDaemon)).not.toHaveBeenCalled();
     });
@@ -211,7 +221,9 @@ describe("DaemonAvailabilityOverlay", () => {
 
   it("runs remote daemon update as a single flight across rapid clicks", async () => {
     vi.mocked(isDesktopApp).mockReturnValue(true);
-    vi.mocked(desktopGetConnection).mockResolvedValue({ kind: "ssh" });
+    vi.mocked(syncDesktopDaemonConnectionFromBridge).mockResolvedValue(
+      makeDesktopSyncResult({ kind: "ssh" }),
+    );
     vi.mocked(desktopGetVersion).mockResolvedValue("2.0.0");
     vi.mocked(daemonFetchRaw).mockResolvedValue({
       status: 200,
@@ -223,19 +235,19 @@ describe("DaemonAvailabilityOverlay", () => {
       content_type: "application/json",
     });
     let releaseGate!: () => void;
-    const precheckGate = new Promise<void>((resolve) => {
+    const updateGate = new Promise<void>((resolve) => {
       releaseGate = () => resolve();
     });
-    vi.mocked(listWorkspaces).mockImplementation(async () => {
-      await precheckGate;
-      return [];
+    vi.mocked(desktopUpdateRemoteDaemon).mockImplementation(async () => {
+      await updateGate;
+      return { updated: true, message: "ok" };
     });
 
     renderOverlay();
-    const button = await screen.findByRole("button", { name: "Update remote daemon" });
+    const button = await screen.findByRole("button", { name: "Restart now" });
     fireEvent.click(button);
     fireEvent.click(button);
-    expect(vi.mocked(listWorkspaces)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(desktopUpdateRemoteDaemon)).toHaveBeenCalledTimes(1);
     releaseGate();
 
     await waitFor(() => {
@@ -243,9 +255,67 @@ describe("DaemonAvailabilityOverlay", () => {
     });
   });
 
+  it("shows waiting-for-idle state for a pending remote daemon update", async () => {
+    vi.mocked(isDesktopApp).mockReturnValue(true);
+    vi.mocked(syncDesktopDaemonConnectionFromBridge).mockResolvedValue(
+      makeDesktopSyncResult({
+        kind: "ssh",
+        remote_update_state: "pending",
+        remote_update_message:
+          "Remote daemon update is queued and will restart automatically when no turns are queued or running.",
+      }),
+    );
+    vi.mocked(desktopGetVersion).mockResolvedValue("2.0.0");
+    vi.mocked(daemonFetchRaw).mockResolvedValue({
+      status: 200,
+      body: JSON.stringify({
+        ...baseHealth,
+        daemon_version: "1.0.0",
+        compatibility: { ...baseHealth.compatibility, desktop_exact_version: "1.0.0" },
+      }),
+      content_type: "application/json",
+    });
+
+    renderOverlay();
+    expect(await screen.findByRole("button", { name: "Waiting for idle..." })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Restart now" })).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Remote daemon update is queued and will restart automatically when no turns are queued or running.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("shows failed pending remote update details from desktop bridge state", async () => {
+    vi.mocked(isDesktopApp).mockReturnValue(true);
+    vi.mocked(syncDesktopDaemonConnectionFromBridge).mockResolvedValue(
+      makeDesktopSyncResult({
+        kind: "ssh",
+        remote_update_state: "failed",
+        remote_update_message: "remote daemon update failed",
+      }),
+    );
+    vi.mocked(desktopGetVersion).mockResolvedValue("2.0.0");
+    vi.mocked(daemonFetchRaw).mockResolvedValue({
+      status: 200,
+      body: JSON.stringify({
+        ...baseHealth,
+        daemon_version: "1.0.0",
+        compatibility: { ...baseHealth.compatibility, desktop_exact_version: "1.0.0" },
+      }),
+      content_type: "application/json",
+    });
+
+    renderOverlay();
+    expect(await screen.findByText("remote daemon update failed")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Restart now" })).toBeInTheDocument();
+  });
+
   it("runs local daemon restart as a single flight across rapid clicks", async () => {
     vi.mocked(isDesktopApp).mockReturnValue(true);
-    vi.mocked(desktopGetConnection).mockResolvedValue({ kind: "local" });
+    vi.mocked(syncDesktopDaemonConnectionFromBridge).mockResolvedValue(
+      makeDesktopSyncResult({ kind: "local" }),
+    );
     vi.mocked(desktopGetVersion).mockResolvedValue("2.0.0");
     vi.mocked(daemonFetchRaw).mockResolvedValue({
       status: 200,
@@ -326,7 +396,7 @@ describe("DaemonAvailabilityOverlay", () => {
     await new Promise((resolve) => window.setTimeout(resolve, 25));
 
     expect(vi.mocked(daemonFetchRaw)).not.toHaveBeenCalled();
-    expect(vi.mocked(desktopGetConnection)).not.toHaveBeenCalled();
+    expect(vi.mocked(syncDesktopDaemonConnectionFromBridge)).not.toHaveBeenCalled();
     expect(screen.queryByText("ctx daemon unavailable")).not.toBeInTheDocument();
   });
 
@@ -343,7 +413,7 @@ describe("DaemonAvailabilityOverlay", () => {
     await new Promise((resolve) => window.setTimeout(resolve, 25));
 
     expect(vi.mocked(daemonFetchRaw)).not.toHaveBeenCalled();
-    expect(vi.mocked(desktopGetConnection)).not.toHaveBeenCalled();
+    expect(vi.mocked(syncDesktopDaemonConnectionFromBridge)).not.toHaveBeenCalled();
     expect(screen.queryByText("ctx daemon unavailable")).not.toBeInTheDocument();
   });
 });

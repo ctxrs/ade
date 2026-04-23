@@ -19,6 +19,13 @@ pub enum DesktopConnectionIntent {
     ExplicitDisconnected,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DesktopRemoteDaemonUpdateState {
+    Pending,
+    Failed,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 pub struct DesktopConnectionInfo {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -38,6 +45,12 @@ pub struct DesktopConnectionInfo {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional = nullable)]
     pub remote_port: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional = nullable)]
+    pub remote_update_message: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional = nullable)]
+    pub remote_update_state: Option<DesktopRemoteDaemonUpdateState>,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional = nullable)]
     pub token: Option<String>,
@@ -706,6 +719,7 @@ pub fn typescript_declarations() -> String {
     push_decl::<BlobUploadResp>(&mut out);
     push_decl::<DesktopConnectionKind>(&mut out);
     push_decl::<DesktopConnectionIntent>(&mut out);
+    push_decl::<DesktopRemoteDaemonUpdateState>(&mut out);
     push_decl::<DesktopConnectionInfo>(&mut out);
     push_decl::<SshConnectReq>(&mut out);
     push_decl::<DesktopSshConnectPollReq>(&mut out);

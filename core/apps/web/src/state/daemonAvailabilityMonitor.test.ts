@@ -1,18 +1,42 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { DesktopDaemonConnectionSyncResult } from "../api/desktopDaemonConnection";
+import type { DesktopConnectionInfo } from "../utils/desktop";
 
 const daemonFetchRawMock = vi.hoisted(() => vi.fn());
-const desktopGetConnectionMock = vi.hoisted(() => vi.fn());
+const syncDesktopDaemonConnectionFromBridgeMock = vi.hoisted(() => vi.fn());
 const desktopGetVersionMock = vi.hoisted(() => vi.fn());
 
 vi.mock("../api/client", () => ({
   daemonFetchRaw: daemonFetchRawMock,
 }));
 
+vi.mock("../api/desktopDaemonConnection", () => ({
+  syncDesktopDaemonConnectionFromBridge: syncDesktopDaemonConnectionFromBridgeMock,
+}));
+
 vi.mock("../utils/desktop", () => ({
-  desktopGetConnection: desktopGetConnectionMock,
   desktopGetVersion: desktopGetVersionMock,
   isDesktopApp: () => true,
 }));
+
+const makeDesktopSyncResult = (
+  infoOverrides: Partial<DesktopConnectionInfo>,
+): DesktopDaemonConnectionSyncResult => ({
+  connection: {
+    baseUrl: null,
+    wsBaseUrl: null,
+    authToken: null,
+    runId: null,
+  },
+  info: {
+    kind: "local",
+    intent: "auto_local_bootstrap" as const,
+    local_auto_bootstrap_allowed: true,
+    ...infoOverrides,
+  },
+  synced: true,
+  error: null,
+});
 
 describe("daemonAvailabilityMonitor", () => {
   beforeEach(() => {
@@ -36,7 +60,9 @@ describe("daemonAvailabilityMonitor", () => {
       }),
       content_type: "application/json",
     });
-    desktopGetConnectionMock.mockResolvedValue({ kind: "local" });
+    syncDesktopDaemonConnectionFromBridgeMock.mockResolvedValue(
+      makeDesktopSyncResult({ kind: "local" }),
+    );
     desktopGetVersionMock.mockResolvedValue("1.2.3");
 
     const mod = await import("./daemonAvailabilityMonitor");
@@ -48,14 +74,14 @@ describe("daemonAvailabilityMonitor", () => {
     await mod.checkDaemonAvailabilityNow();
 
     expect(daemonFetchRawMock).toHaveBeenCalledTimes(1);
-    expect(desktopGetConnectionMock).toHaveBeenCalledTimes(1);
+    expect(syncDesktopDaemonConnectionFromBridgeMock).toHaveBeenCalledTimes(1);
     expect(desktopGetVersionMock).toHaveBeenCalledTimes(1);
     expect(mod.getDaemonAvailabilitySnapshot().status).toBe("ok");
 
     await vi.advanceTimersByTimeAsync(20_000);
 
     expect(daemonFetchRawMock).toHaveBeenCalledTimes(2);
-    expect(desktopGetConnectionMock).toHaveBeenCalledTimes(2);
+    expect(syncDesktopDaemonConnectionFromBridgeMock).toHaveBeenCalledTimes(2);
     expect(desktopGetVersionMock).toHaveBeenCalledTimes(2);
 
     unsubscribeA();
@@ -76,7 +102,9 @@ describe("daemonAvailabilityMonitor", () => {
       }),
       content_type: "application/json",
     });
-    desktopGetConnectionMock.mockResolvedValue({ kind: "ssh" });
+    syncDesktopDaemonConnectionFromBridgeMock.mockResolvedValue(
+      makeDesktopSyncResult({ kind: "ssh" }),
+    );
     desktopGetVersionMock.mockResolvedValue("1.5.0");
 
     const mod = await import("./daemonAvailabilityMonitor");
@@ -93,6 +121,95 @@ describe("daemonAvailabilityMonitor", () => {
         expected_version: "2.0.0",
         kind: "desktop_older",
       },
+    });
+
+    unsubscribe();
+  });
+
+  it("surfaces pending remote update state from desktop bridge sync", async () => {
+    daemonFetchRawMock.mockResolvedValue({
+      status: 200,
+      body: JSON.stringify({
+        ...{
+          daemon_version: "1.0.0",
+          compatibility: {
+            desktop_exact_version: "1.0.0",
+          },
+        },
+      }),
+      content_type: "application/json",
+    });
+    syncDesktopDaemonConnectionFromBridgeMock.mockResolvedValue(
+      makeDesktopSyncResult({
+        kind: "ssh",
+        remote_update_state: "pending",
+        remote_update_message: "waiting for idle",
+      }),
+    );
+    desktopGetVersionMock.mockResolvedValue("1.0.0");
+
+    const mod = await import("./daemonAvailabilityMonitor");
+    const unsubscribe = mod.subscribeDaemonAvailability(() => {});
+    await mod.checkDaemonAvailabilityNow();
+
+    expect(mod.getDaemonAvailabilitySnapshot()).toMatchObject({
+      status: "ok",
+      remoteUpdateState: "pending",
+      remoteUpdateMessage: "waiting for idle",
+    });
+    expect(syncDesktopDaemonConnectionFromBridgeMock).toHaveBeenCalledWith({
+      reason: "daemon_availability_poll",
+    });
+
+    unsubscribe();
+  });
+
+  it("preserves ssh remote update metadata when bridge sync is throttled", async () => {
+    daemonFetchRawMock.mockResolvedValue({
+      status: 200,
+      body: JSON.stringify({
+        daemon_version: "1.0.0",
+        compatibility: {
+          desktop_exact_version: "1.0.0",
+        },
+      }),
+      content_type: "application/json",
+    });
+    syncDesktopDaemonConnectionFromBridgeMock
+      .mockResolvedValueOnce(
+        makeDesktopSyncResult({
+          kind: "ssh",
+          remote_update_state: "pending",
+          remote_update_message: "waiting for idle",
+        }),
+      )
+      .mockResolvedValueOnce({
+        connection: {
+          baseUrl: "http://127.0.0.1:4399",
+          wsBaseUrl: "ws://127.0.0.1:4399",
+          authToken: "token",
+          runId: null,
+        },
+        info: null,
+        synced: false,
+        error: null,
+      });
+    desktopGetVersionMock.mockResolvedValue("1.0.0");
+
+    const mod = await import("./daemonAvailabilityMonitor");
+    const unsubscribe = mod.subscribeDaemonAvailability(() => {});
+    await mod.checkDaemonAvailabilityNow();
+    expect(mod.getDaemonAvailabilitySnapshot()).toMatchObject({
+      desktopKind: "ssh",
+      remoteUpdateState: "pending",
+      remoteUpdateMessage: "waiting for idle",
+    });
+
+    await mod.checkDaemonAvailabilityNow();
+    expect(mod.getDaemonAvailabilitySnapshot()).toMatchObject({
+      desktopKind: "ssh",
+      remoteUpdateState: "pending",
+      remoteUpdateMessage: "waiting for idle",
     });
 
     unsubscribe();

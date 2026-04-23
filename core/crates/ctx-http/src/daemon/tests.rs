@@ -1,19 +1,51 @@
 use super::*;
 use async_trait::async_trait;
 use chrono::Utc;
-use ctx_core::ids::{RunId, TurnId};
-use ctx_core::models::{SessionTurn, SessionTurnStatus, VcsKind};
+use ctx_core::ids::{RunId, TaskId, TurnId, WorkspaceId, WorktreeId};
+use ctx_core::models::{ExecutionEnvironment, SessionTurn, SessionTurnStatus, VcsKind};
 use ctx_providers::adapters::{
     ProviderCapabilities, ProviderHealth, ProviderProcessInfo, ProviderRestartMode,
     ProviderSessionSweepConfig, ProviderSessionSweepStats, ProviderStatus, ProviderUsability,
     RunHandle, TurnInput,
 };
+#[cfg(unix)]
+use ctx_sandbox_container_runtime::CTX_HARNESS_SANDBOX_CLI_PATH_ENV;
 use ctx_store::manager::WorkspaceStoreAccessKind;
 use std::collections::HashMap;
-use std::path::PathBuf;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex as StdMutex;
 use std::time::Instant;
 use tempfile::tempdir;
+
+struct EnvVarGuard {
+    key: &'static str,
+    prev: Option<String>,
+}
+
+impl EnvVarGuard {
+    fn set(key: &'static str, value: &str) -> Self {
+        let prev = std::env::var(key).ok();
+        std::env::set_var(key, value);
+        Self { key, prev }
+    }
+}
+
+impl Drop for EnvVarGuard {
+    fn drop(&mut self) {
+        if let Some(prev) = self.prev.take() {
+            std::env::set_var(self.key, prev);
+        } else {
+            std::env::remove_var(self.key);
+        }
+    }
+}
+
+fn sandbox_cli_env_test_lock() -> &'static tokio::sync::Mutex<()> {
+    static LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
+    LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+}
 
 #[derive(Default)]
 struct RecordingProviderAdapter {
@@ -159,6 +191,85 @@ impl Drop for EnvGuard {
             std::env::remove_var(self.key);
         }
     }
+}
+
+async fn create_session_with_turn_status(
+    state: &Arc<AppState>,
+    root: &Path,
+    environment: ExecutionEnvironment,
+    status: SessionTurnStatus,
+) -> (WorkspaceId, ctx_core::ids::SessionId) {
+    let workspace = state
+        .global_store()
+        .create_workspace(
+            format!("ws-{}", uuid::Uuid::new_v4()),
+            root.join(format!("ws-{}", uuid::Uuid::new_v4()))
+                .to_string_lossy()
+                .to_string(),
+            VcsKind::Git,
+        )
+        .await
+        .unwrap();
+    let store = state.store_for_workspace(workspace.id).await.unwrap();
+    let worktree = store
+        .create_worktree(
+            workspace.id,
+            root.join(format!("worktree-{}", uuid::Uuid::new_v4()))
+                .to_string_lossy()
+                .to_string(),
+            "deadbeef".to_string(),
+            None,
+        )
+        .await
+        .unwrap();
+    let task = store
+        .create_task(workspace.id, "task".to_string(), None)
+        .await
+        .unwrap();
+    let session = store
+        .create_session(
+            task.id,
+            workspace.id,
+            worktree.id,
+            environment,
+            "fake".to_string(),
+            "model".to_string(),
+            "implementer".to_string(),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    state
+        .global_store()
+        .upsert_workspace_session_index(session.id, workspace.id)
+        .await
+        .unwrap();
+    let now = Utc::now();
+    store
+        .insert_session_turn(SessionTurn {
+            turn_id: TurnId::new(),
+            session_id: session.id,
+            run_id: Some(RunId::new()),
+            user_message_id: None,
+            status,
+            start_seq: Some(1),
+            end_seq: None,
+            started_at: now,
+            updated_at: now,
+            assistant_partial: None,
+            thought_partial: None,
+            metrics_json: None,
+            tool_total: 0,
+            tool_pending: 0,
+            tool_running: 0,
+            tool_completed: 0,
+            tool_failed: 0,
+        })
+        .await
+        .unwrap();
+    (workspace.id, session.id)
 }
 
 #[cfg(target_os = "macos")]
@@ -1201,10 +1312,206 @@ async fn update_drain_blocks_new_work_until_released() {
         .reject_if_update_draining()
         .await
         .expect_err("drain should reject new work");
-    assert!(err.to_string().contains("daemon update is in progress"));
+    assert!(err
+        .to_string()
+        .contains("daemon maintenance is in progress"));
     assert!(state.release_update_drain().await);
     state
         .reject_if_update_draining()
         .await
         .expect("released drain should allow work");
+}
+
+#[tokio::test]
+async fn sandbox_work_activity_ignores_host_turns() {
+    let _serial = sandbox_cli_env_test_lock().lock().await;
+    let _disable = EnvVarGuard::set("CTX_TEST_SANDBOX_CLI_AVAILABLE", "0");
+    let temp = tempdir().unwrap();
+    let stores = StoreManager::open(temp.path()).await.unwrap();
+    let state = Arc::new(AppState::new(
+        temp.path().to_path_buf(),
+        stores,
+        HashMap::new(),
+        "http://localhost".to_string(),
+        None,
+    ));
+
+    let _ = create_session_with_turn_status(
+        &state,
+        temp.path(),
+        ExecutionEnvironment::Host,
+        SessionTurnStatus::Running,
+    )
+    .await;
+
+    let activity = daemon_sandbox_work_activity_summary(&state).await.unwrap();
+    assert!(!activity.active);
+    assert_eq!(activity.active_sandbox_turn_count, 0);
+    assert_eq!(activity.running_sandbox_turn_count, 0);
+    assert!(activity.turns.is_empty());
+}
+
+#[tokio::test]
+async fn sandbox_work_activity_counts_sandbox_turns() {
+    let _serial = sandbox_cli_env_test_lock().lock().await;
+    let _disable = EnvVarGuard::set("CTX_TEST_SANDBOX_CLI_AVAILABLE", "0");
+    let temp = tempdir().unwrap();
+    let stores = StoreManager::open(temp.path()).await.unwrap();
+    let state = Arc::new(AppState::new(
+        temp.path().to_path_buf(),
+        stores,
+        HashMap::new(),
+        "http://localhost".to_string(),
+        None,
+    ));
+
+    let _ = create_session_with_turn_status(
+        &state,
+        temp.path(),
+        ExecutionEnvironment::Sandbox,
+        SessionTurnStatus::Queued,
+    )
+    .await;
+    let _ = create_session_with_turn_status(
+        &state,
+        temp.path(),
+        ExecutionEnvironment::Sandbox,
+        SessionTurnStatus::Running,
+    )
+    .await;
+
+    let activity = daemon_sandbox_work_activity_summary(&state).await.unwrap();
+    assert!(activity.active);
+    assert_eq!(activity.active_sandbox_turn_count, 2);
+    assert_eq!(activity.queued_sandbox_turn_count, 1);
+    assert_eq!(activity.running_sandbox_turn_count, 1);
+    assert_eq!(activity.turns.len(), 2);
+}
+
+#[tokio::test]
+async fn sandbox_work_activity_counts_runtime_operations() {
+    let _serial = sandbox_cli_env_test_lock().lock().await;
+    let _disable = EnvVarGuard::set("CTX_TEST_SANDBOX_CLI_AVAILABLE", "0");
+    let temp = tempdir().unwrap();
+    let stores = StoreManager::open(temp.path()).await.unwrap();
+    let state = Arc::new(AppState::new(
+        temp.path().to_path_buf(),
+        stores,
+        HashMap::new(),
+        "http://localhost".to_string(),
+        None,
+    ));
+
+    let _runtime_guard = state.execution.harness.begin_runtime_operation();
+
+    let activity = daemon_sandbox_work_activity_summary(&state).await.unwrap();
+    assert!(activity.active);
+    assert_eq!(activity.runtime_operation_count, 1);
+}
+
+#[tokio::test]
+async fn sandbox_work_activity_counts_prewarm_operations() {
+    let _serial = sandbox_cli_env_test_lock().lock().await;
+    let _disable = EnvVarGuard::set("CTX_TEST_SANDBOX_CLI_AVAILABLE", "0");
+    let temp = tempdir().unwrap();
+    let stores = StoreManager::open(temp.path()).await.unwrap();
+    let state = Arc::new(AppState::new(
+        temp.path().to_path_buf(),
+        stores,
+        HashMap::new(),
+        "http://localhost".to_string(),
+        None,
+    ));
+
+    let _prewarm_guard = state.execution.harness.begin_prewarm_artifact_activity();
+
+    let activity = daemon_sandbox_work_activity_summary(&state).await.unwrap();
+    assert!(activity.active);
+    assert_eq!(activity.prewarm_artifact_operation_count, 1);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn sandbox_work_activity_counts_container_backed_terminals() {
+    let _serial = sandbox_cli_env_test_lock().lock().await;
+    let _disable = EnvVarGuard::set("CTX_TEST_SANDBOX_CLI_AVAILABLE", "0");
+    let temp = tempdir().unwrap();
+    let stores = StoreManager::open(temp.path()).await.unwrap();
+    let state = Arc::new(AppState::new(
+        temp.path().to_path_buf(),
+        stores,
+        HashMap::new(),
+        "http://localhost".to_string(),
+        None,
+    ));
+    let terminal = state
+        .transport
+        .terminals
+        .create(crate::terminals::TerminalCreateRequest {
+            workspace_id: WorkspaceId::new(),
+            task_id: Some(TaskId::new()),
+            session_id: None,
+            worktree_id: Some(WorktreeId::new()),
+            cwd: temp.path().to_path_buf(),
+            shell: "/bin/sh".to_string(),
+            cols: None,
+            rows: None,
+            env: HashMap::new(),
+            native_container: Some(crate::terminals::NativeContainerTerminalSpec {
+                cli_bin: PathBuf::from("/bin/sh"),
+                cli_env: HashMap::new(),
+                container_name: "ctx-harness-terminal".to_string(),
+                workdir: "/workspace".to_string(),
+                user: None,
+            }),
+            shared_vm_container: None,
+        })
+        .await
+        .unwrap();
+
+    let activity = daemon_sandbox_work_activity_summary(&state).await.unwrap();
+    assert!(activity.active);
+    assert!(activity.running_container_backed_terminal);
+
+    let _ = terminal.kill();
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn sandbox_work_activity_counts_running_workspace_containers() {
+    let _serial = sandbox_cli_env_test_lock().lock().await;
+    let _disable = EnvVarGuard::set("CTX_TEST_SANDBOX_CLI_AVAILABLE", "0");
+    let temp = tempdir().unwrap();
+    let cli_path = temp.path().join("sandbox-cli.sh");
+    let log_path = temp.path().join("sandbox-cli.log");
+    std::fs::write(
+        &cli_path,
+        format!(
+            "#!/bin/sh\nLOG=\"{log}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"ls\" ] && [ \"$3\" = \"--format\" ] && [ \"$4\" = \"{{{{.Names}}}}\" ]; then\n  printf 'ctx-harness-one\\nctx-harness-two\\npostgres\\n'\n  exit 0\nfi\necho \"unexpected invocation: $*\" >&2\nexit 1\n",
+            log = log_path.display(),
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&cli_path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let _guard = EnvVarGuard::set(
+        CTX_HARNESS_SANDBOX_CLI_PATH_ENV,
+        &cli_path.to_string_lossy(),
+    );
+    let stores = StoreManager::open(temp.path()).await.unwrap();
+    let state = Arc::new(AppState::new(
+        temp.path().to_path_buf(),
+        stores,
+        HashMap::new(),
+        "http://localhost".to_string(),
+        None,
+    ));
+
+    let activity = daemon_sandbox_work_activity_summary(&state).await.unwrap();
+    assert!(activity.active);
+    assert_eq!(activity.running_workspace_container_count, 2);
+    let log = std::fs::read_to_string(&log_path).unwrap();
+    assert!(
+        log.contains("container ls --format {{.Names}}"),
+        "expected running-container probe in log:\n{log}"
+    );
 }
