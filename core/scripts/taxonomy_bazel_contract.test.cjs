@@ -194,12 +194,12 @@ test("deterministic Linux contract gates route through Bazel-owned contract entr
   assert.doesNotMatch(desktopE2EPreflightContracts, /run_workspace_task\.sh/);
 
   const desktopSyncResourcesContracts = readTargetBlock("desktop_sync_resources_contracts");
-  assert.match(desktopSyncResourcesContracts, /srcs = \["\/\/tools\/bazel:run_workspace_task\.sh"\]/);
+  assert.match(desktopSyncResourcesContracts, /srcs = \["\/\/tools\/bazel:run_node_task\.sh"\]/);
   assert.match(
     desktopSyncResourcesContracts,
-    /args = \["core", "node", "--test", "scripts\/desktop_sync_resources_remote_daemon_policy\.test\.cjs", "scripts\/desktop_sync_resources_avf_guest_runtime\.test\.cjs", "scripts\/desktop_daemon_sidecar_name\.test\.cjs", "apps\/desktop\/automation\/wdio\.container-assets\.test\.cjs"\]/,
+    /args = \["core", "--test", "scripts\/desktop_sync_resources_remote_daemon_policy\.test\.cjs", "scripts\/desktop_sync_resources_avf_guest_runtime\.test\.cjs", "scripts\/desktop_daemon_sidecar_name\.test\.cjs", "apps\/desktop\/automation\/wdio\.container-assets\.test\.cjs"\]/,
   );
-  assert.doesNotMatch(desktopSyncResourcesContracts, /run_node_task\.sh/);
+  assert.doesNotMatch(desktopSyncResourcesContracts, /run_workspace_task\.sh/);
 
   const providersE2EBundleContracts = readTargetBlock("providers_e2e_bundle_contracts");
   assert.match(providersE2EBundleContracts, /srcs = \["\/\/tools\/bazel:run_node_task\.sh"\]/);

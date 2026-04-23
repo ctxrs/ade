@@ -112,8 +112,8 @@ sh_binary(
 
 sh_binary(
     name = "desktop_sync_resources_contracts",
-    srcs = ["//tools/bazel:run_workspace_task.sh"],
-    args = ["core", "node", "--test", "scripts/desktop_sync_resources_remote_daemon_policy.test.cjs", "scripts/desktop_sync_resources_avf_guest_runtime.test.cjs", "scripts/desktop_daemon_sidecar_name.test.cjs", "apps/desktop/automation/wdio.container-assets.test.cjs"],
+    srcs = ["//tools/bazel:run_node_task.sh"],
+    args = ["core", "--test", "scripts/desktop_sync_resources_remote_daemon_policy.test.cjs", "scripts/desktop_sync_resources_avf_guest_runtime.test.cjs", "scripts/desktop_daemon_sidecar_name.test.cjs", "apps/desktop/automation/wdio.container-assets.test.cjs"],
     data = DESKTOP_PARITY_CONTRACT_DATA,
 )
 

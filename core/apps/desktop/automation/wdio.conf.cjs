@@ -33,10 +33,12 @@ process.env.TMPDIR = automationTmpDir;
 process.env.TMP = automationTmpDir;
 process.env.TEMP = automationTmpDir;
 
-const { waitTestRunnerBackendReady } = require("@crabnebula/test-runner-backend");
-const { waitTauriDriverReady } = require("@crabnebula/tauri-driver");
-const TEST_RUNNER_BACKEND_CLI = require.resolve("@crabnebula/test-runner-backend/cli.js");
-const TAURI_DRIVER_CLI = require.resolve("@crabnebula/tauri-driver/cli.js");
+const waitTestRunnerBackendReady = (...args) =>
+  require("@crabnebula/test-runner-backend").waitTestRunnerBackendReady(...args);
+const waitTauriDriverReady = (...args) =>
+  require("@crabnebula/tauri-driver").waitTauriDriverReady(...args);
+const resolveTestRunnerBackendCli = () => require.resolve("@crabnebula/test-runner-backend/cli.js");
+const resolveTauriDriverCli = () => require.resolve("@crabnebula/tauri-driver/cli.js");
 
 const ROOT = path.resolve(__dirname, "..");
 const CORE_ROOT = path.resolve(ROOT, "..", "..");
@@ -1423,7 +1425,7 @@ const openBackendStdio = ({ detached = false } = {}) => {
 };
 
 const spawnCnBackendProcess = (host, port, { detached = false } = {}) => {
-  const backendAlias = createCliAlias(TEST_RUNNER_BACKEND_CLI, "ctx-cnb-cli");
+  const backendAlias = createCliAlias(resolveTestRunnerBackendCli(), "ctx-cnb-cli");
   backendCliAliasDir = backendAlias.aliasDir;
   const stdio = openBackendStdio({ detached });
   const proc = spawn(
@@ -1992,7 +1994,7 @@ exports.config = {
     if (isDarwin) {
       // Use a neutral CLI alias so shared-host kill sweeps targeting
       // "tauri-driver" command names do not terminate this run.
-      const driverAlias = createCliAlias(TAURI_DRIVER_CLI, "ctx-tdrv-cli");
+      const driverAlias = createCliAlias(resolveTauriDriverCli(), "ctx-tdrv-cli");
       driverCliAliasDir = driverAlias.aliasDir;
       driverCmd = process.execPath;
       driverArgs = [driverAlias.cliPath, "--port", String(activeTauriDriverPort)];
