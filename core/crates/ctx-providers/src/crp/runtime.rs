@@ -18,6 +18,23 @@ use crate::container_exec::{build_container_exec_command, container_exec_spec};
 use super::protocol::{CrpCommand, CrpCommandEnvelope, CrpEventEnvelope};
 use super::{CODEX_CRP_DUMP_CODEX_EVENTS_ENV, CODEX_CRP_DUMP_CRP_EVENTS_ENV};
 
+const AMBIENT_PROVIDER_SESSION_ENV_DENYLIST: &[&str] = &[
+    "CTX_PROVIDER_SESSION_REF",
+    "CODEX_THREAD_ID",
+    "CODEX_SESSION_ID",
+    "CLAUDE_SESSION_ID",
+    "CLAUDE_THREAD_ID",
+    "GEMINI_SESSION_ID",
+    "GEMINI_THREAD_ID",
+    "ACP_SESSION_ID",
+];
+
+fn scrub_ambient_provider_session_env(cmd: &mut Command) {
+    for key in AMBIENT_PROVIDER_SESSION_ENV_DENYLIST {
+        cmd.env_remove(key);
+    }
+}
+
 #[derive(Debug, Clone)]
 pub(super) struct CrpAgentConfig {
     pub(super) provider_id: String,
@@ -335,6 +352,7 @@ impl CrpProcess {
                 }
             }
         }
+        scrub_ambient_provider_session_env(&mut cmd);
         apply_outer_process_env(&mut cmd, env);
 
         let mut child = cmd.spawn()?;

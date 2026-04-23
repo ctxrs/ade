@@ -3,6 +3,7 @@ use super::translate::{canonical_context_window_from_thread_usage, translate_not
 use super::*;
 use pretty_assertions::assert_eq;
 use std::fs;
+use std::os::unix::fs::PermissionsExt;
 use tokio::sync::mpsc;
 
 #[derive(Debug, serde::Deserialize)]
@@ -127,6 +128,86 @@ fn assert_snapshot(input: &str, expected: &str) {
     )
     .expect("expected snapshot should parse");
     assert_eq!(actual, expected);
+}
+
+#[tokio::test]
+async fn open_session_fails_closed_on_resume_error_and_scrubs_ambient_session_env() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let workdir = tempdir.path().to_path_buf();
+    let script_path = workdir.join("fake-codex.sh");
+    let log_path = workdir.join("app-server.log");
+    fs::write(
+        &script_path,
+        format!(
+            r#"#!/bin/sh
+printf 'CODEX_THREAD_ID=%s\n' "${{CODEX_THREAD_ID-}}" >> "{}"
+printf 'CTX_PROVIDER_SESSION_REF=%s\n' "${{CTX_PROVIDER_SESSION_REF-}}" >> "{}"
+while IFS= read -r line; do
+  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+  if printf '%s' "$line" | grep -q '"method":"initialize"'; then
+    printf '{{"jsonrpc":"2.0","id":%s,"result":{{"protocolVersion":"0.1","capabilities":{{}},"serverInfo":{{"name":"fake-codex","version":"test"}}}}}}\n' "$id"
+  elif printf '%s' "$line" | grep -q '"method":"thread/resume"'; then
+    printf 'resume\n' >> "{}"
+    printf '{{"jsonrpc":"2.0","id":%s,"error":{{"message":"resume failed"}}}}\n' "$id"
+  elif printf '%s' "$line" | grep -q '"method":"thread/start"'; then
+    printf 'start\n' >> "{}"
+    printf '{{"jsonrpc":"2.0","id":%s,"result":{{"thread":{{"id":"new-thread"}},"model":"gpt-5.4","cwd":"{}","approvalPolicy":{{}},"sandbox":{{}},"reasoningEffort":"medium"}}}}\n' "$id"
+  fi
+done
+"#,
+            log_path.display(),
+            log_path.display(),
+            log_path.display(),
+            log_path.display(),
+            workdir.display()
+        ),
+    )
+    .expect("write fake codex");
+    let mut permissions = fs::metadata(&script_path)
+        .expect("script metadata")
+        .permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&script_path, permissions).expect("script perms");
+
+    let _codex_bin = EnvGuard::set("CTX_CODEX_BIN_PATH", &script_path.to_string_lossy());
+    let _stale_thread = EnvGuard::set("CODEX_THREAD_ID", "stale-thread");
+    let _stale_provider = EnvGuard::set("CTX_PROVIDER_SESSION_REF", "stale-provider");
+
+    let err = match open_session(
+        crate::protocol::CrpSessionConfig {
+            cwd: Some(workdir.clone()),
+            ..Default::default()
+        },
+        Some("expected-provider-ref".to_string()),
+        &RuntimeOptions::default(),
+    )
+    .await
+    {
+        Ok(_) => panic!("resume failure must not succeed"),
+        Err(err) => err,
+    };
+
+    assert!(
+        err.to_string()
+            .contains("failed to resume Codex provider session `expected-provider-ref`"),
+        "{err:#}"
+    );
+
+    let log = fs::read_to_string(&log_path).expect("read fake codex log");
+    assert!(log.contains("resume"));
+    assert!(
+        !log.contains("start"),
+        "resume failure must not fall back to thread/start: {log}"
+    );
+    assert!(
+        log.contains("CODEX_THREAD_ID=") && !log.contains("CODEX_THREAD_ID=stale-thread"),
+        "app-server must not inherit stale CODEX_THREAD_ID: {log}"
+    );
+    assert!(
+        log.contains("CTX_PROVIDER_SESSION_REF=")
+            && !log.contains("CTX_PROVIDER_SESSION_REF=stale-provider"),
+        "app-server must not inherit stale CTX_PROVIDER_SESSION_REF: {log}"
+    );
 }
 
 #[test]

@@ -287,12 +287,6 @@ async fn handle_parsed_command(
             }
 
             let config = config.unwrap_or_default();
-            let provider_session_id = provider_session_id.or_else(|| {
-                std::env::var("CTX_PROVIDER_SESSION_REF")
-                    .ok()
-                    .map(|value| value.trim().to_string())
-                    .filter(|value| !value.is_empty())
-            });
 
             let mut state = open_session(config, provider_session_id, options).await?;
             let provider_session_id = state.thread_id.clone();

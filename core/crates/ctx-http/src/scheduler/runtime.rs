@@ -13,7 +13,7 @@ use ctx_core::ids::{MessageId, RunId, TurnId};
 use ctx_core::models::{
     MessageDelivery, MessageRole, Session, SessionEventType, SessionTurnStatus, SessionTurnTool,
 };
-use ctx_providers::adapters::TurnInput;
+use ctx_providers::adapters::{ProviderRunHooks, ProviderSessionRefClaimHook, TurnInput};
 use ctx_providers::events::NormalizedEvent;
 use ctx_session_tools::{
     build_tool_ops_meta_from_normalized, build_turn_tool_update, merge_tool_update,
@@ -573,6 +573,23 @@ pub(crate) async fn start_turn(
 
     let run_started_at = Instant::now();
     let spawn_started_at = Instant::now();
+    let claim_store = store.clone();
+    let claim_session_id = session.id;
+    let provider_session_ref_claim: ProviderSessionRefClaimHook = Arc::new(move |claim| {
+        let claim_store = claim_store.clone();
+        Box::pin(async move {
+            if let Some(returned_ref) = claim.returned_provider_session_ref {
+                claim_store
+                    .claim_session_provider_session_ref(
+                        claim_session_id,
+                        returned_ref,
+                        "provider.session_opened",
+                    )
+                    .await?;
+            }
+            Ok(())
+        })
+    });
     let handle = match adapter
         .run(
             TurnInput {
@@ -584,6 +601,9 @@ pub(crate) async fn start_turn(
             workdir.to_path_buf(),
             provider_env,
             ev_tx,
+            ProviderRunHooks {
+                provider_session_ref_claim: Some(provider_session_ref_claim),
+            },
         )
         .await
     {

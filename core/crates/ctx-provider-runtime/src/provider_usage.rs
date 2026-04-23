@@ -454,6 +454,18 @@ fn spawn_codex_app_server(env: &HashMap<String, String>) -> Result<Child> {
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    for key in [
+        "CTX_PROVIDER_SESSION_REF",
+        "CODEX_THREAD_ID",
+        "CODEX_SESSION_ID",
+        "CLAUDE_SESSION_ID",
+        "CLAUDE_THREAD_ID",
+        "GEMINI_SESSION_ID",
+        "GEMINI_THREAD_ID",
+        "ACP_SESSION_ID",
+    ] {
+        cmd.env_remove(key);
+    }
     for (key, value) in env {
         cmd.env(key, value);
     }

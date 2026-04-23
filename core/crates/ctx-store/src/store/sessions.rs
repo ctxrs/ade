@@ -324,22 +324,135 @@ impl Store {
         Ok(res.rows_affected() > 0)
     }
 
-    pub async fn update_session_provider_session_ref(
+    pub async fn claim_session_provider_session_ref(
         &self,
         id: SessionId,
-        provider_session_ref: Option<String>,
+        provider_session_ref: String,
+        source: &str,
     ) -> Result<()> {
+        let provider_session_ref = provider_session_ref.trim().to_string();
+        if provider_session_ref.is_empty() {
+            anyhow::bail!("provider session ref claim requires a non-empty ref");
+        }
+        let source = source.trim();
+        if source.is_empty() {
+            anyhow::bail!("provider session ref claim requires a non-empty source");
+        }
         let now = Utc::now().to_rfc3339();
-        self.query(
+        let mut tx = self.pool.begin().await?;
+
+        let session = sqlx::query(
+            r#"SELECT id, provider_id, provider_session_ref, workspace_id, task_id, worktree_id
+               FROM sessions
+               WHERE id = ?"#,
+        )
+        .bind(id.0.to_string())
+        .fetch_optional(&mut *tx)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("session not found for provider ref claim: {}", id.0))?;
+
+        let provider_id: String = session.try_get("provider_id")?;
+        let current_ref: Option<String> = session.try_get("provider_session_ref")?;
+        if let Some(current_ref) = current_ref.as_deref().map(str::trim) {
+            if !current_ref.is_empty() && current_ref != provider_session_ref {
+                anyhow::bail!(
+                    "provider session ref substitution rejected for session {}: existing ref `{}` differs from returned ref `{}`",
+                    id.0,
+                    current_ref,
+                    provider_session_ref
+                );
+            }
+        }
+
+        let local_duplicate: Option<String> = sqlx::query_scalar(
+            r#"SELECT id
+               FROM sessions
+               WHERE provider_id = ?
+                 AND provider_session_ref = ?
+                 AND id <> ?
+               LIMIT 1"#,
+        )
+        .bind(&provider_id)
+        .bind(&provider_session_ref)
+        .bind(id.0.to_string())
+        .fetch_optional(&mut *tx)
+        .await?;
+        if let Some(owner) = local_duplicate {
+            anyhow::bail!(
+                "provider session ref `{}` for provider `{}` is already attached to session {}; refusing to attach it to session {}",
+                provider_session_ref,
+                provider_id,
+                owner,
+                id.0
+            );
+        }
+
+        let binding_owner: Option<String> = sqlx::query_scalar(
+            r#"SELECT session_id
+               FROM provider_session_bindings
+               WHERE provider_id = ?
+                 AND provider_account_scope = 'default'
+                 AND provider_session_ref = ?
+               LIMIT 1"#,
+        )
+        .bind(&provider_id)
+        .bind(&provider_session_ref)
+        .fetch_optional(&mut *tx)
+        .await?;
+        if let Some(owner) = binding_owner {
+            if owner != id.0.to_string() {
+                anyhow::bail!(
+                    "provider session ref `{}` for provider `{}` is owned by session {}; refusing to attach it to session {}",
+                    provider_session_ref,
+                    provider_id,
+                    owner,
+                    id.0
+                );
+            }
+        } else {
+            let workspace_id: String = session.try_get("workspace_id")?;
+            let task_id: String = session.try_get("task_id")?;
+            let worktree_id: String = session.try_get("worktree_id")?;
+            sqlx::query(
+                r#"INSERT INTO provider_session_bindings (
+                    provider_id,
+                    provider_account_scope,
+                    provider_session_ref,
+                    session_id,
+                    workspace_id,
+                    task_id,
+                    worktree_id,
+                    source,
+                    created_at,
+                    updated_at
+                   )
+                   VALUES (?, 'default', ?, ?, ?, ?, ?, ?, ?, ?)"#,
+            )
+            .bind(&provider_id)
+            .bind(&provider_session_ref)
+            .bind(id.0.to_string())
+            .bind(workspace_id)
+            .bind(task_id)
+            .bind(worktree_id)
+            .bind(source)
+            .bind(&now)
+            .bind(&now)
+            .execute(&mut *tx)
+            .await?;
+        }
+
+        sqlx::query(
             r#"UPDATE sessions
                SET provider_session_ref = ?, updated_at = ?
                WHERE id = ?"#,
         )
-        .bind(provider_session_ref)
-        .bind(now)
+        .bind(&provider_session_ref)
+        .bind(&now)
         .bind(id.0.to_string())
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await?;
+
+        tx.commit().await?;
         Ok(())
     }
 

@@ -816,6 +816,7 @@ impl ProviderAdapter for RestartTrackingAdapter {
         _workdir: PathBuf,
         _env: HashMap<String, String>,
         _event_sink: tokio::sync::mpsc::Sender<ctx_providers::events::NormalizedEvent>,
+        _hooks: ctx_providers::adapters::ProviderRunHooks,
     ) -> anyhow::Result<RunHandle> {
         anyhow::bail!("run not used in this test")
     }

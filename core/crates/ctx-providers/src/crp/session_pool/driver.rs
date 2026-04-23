@@ -9,7 +9,7 @@ use tokio::sync::broadcast;
 
 use ctx_core::models::SessionEventType;
 
-use crate::container_exec::{container_exec_spec, translate_thread_cwd_for_container};
+use crate::container_exec::translate_thread_cwd_for_container;
 use crate::events::NormalizedEvent;
 
 use super::super::config::{
@@ -24,16 +24,17 @@ use super::super::policy::{
     extract_runtime_fatal_error_from_stderr_line, parse_native_crp_slash_command_for_provider,
     validate_provider_slash_command_support, CrpSlashCommand,
 };
-use super::super::protocol::{CrpCommand, CrpEvent, CrpSessionConfig, KnownCrpEvent};
+use super::super::protocol::{CrpCommand, CrpEvent, KnownCrpEvent};
 use super::super::{auth_required_notice_payload_from_stderr, CRP_CANCEL_DRAIN_TIMEOUT};
-use super::{registry::ActivePromptGuard, CrpPromptRequest, CrpSession, CrpSessionPool};
+use super::open_handshake::{
+    apply_session_opened_state, crp_first_event_timeout, crp_runtime_label, duration_millis_u64,
+    session_opened_provider_session_id, validate_provider_session_open,
+};
+use super::{registry::ActivePromptGuard, CrpPromptRequest, CrpSessionPool};
 use crate::adapters::{ProviderTurnOutcome, ProviderTurnStatus};
 
 const CRP_AUTH_EVENT_FORWARD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60 * 10);
 const CRP_SESSION_MODEL_UPDATE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
-const CRP_FIRST_EVENT_TIMEOUT_HOST: std::time::Duration = std::time::Duration::from_secs(15);
-const CRP_FIRST_EVENT_TIMEOUT_CONTAINER: std::time::Duration = std::time::Duration::from_secs(45);
-const CRP_FIRST_EVENT_TIMEOUT_ENV: &str = "CTX_CRP_FIRST_EVENT_TIMEOUT_MS";
 
 fn is_sweep_only_status_notice(event: &CrpEvent) -> bool {
     matches!(
@@ -45,25 +46,6 @@ fn is_sweep_only_status_notice(event: &CrpEvent) -> bool {
             if code == "session_status" || code == "session_status_failed"
             )
     )
-}
-
-fn apply_session_opened_state(session: &CrpSession, event: &CrpEvent) {
-    if let CrpEvent::Known(event) = event {
-        let KnownCrpEvent::SessionOpened {
-            supports_session_status,
-            ..
-        } = event.as_ref()
-        else {
-            return;
-        };
-        session.opened.store(true, Ordering::SeqCst);
-        session.opening.store(false, Ordering::SeqCst);
-        let default_support = session.status_supported.load(Ordering::SeqCst);
-        session.status_supported.store(
-            (*supports_session_status).unwrap_or(default_support),
-            Ordering::SeqCst,
-        );
-    }
 }
 
 fn outcome_from_terminal_events(events: &[NormalizedEvent]) -> Option<ProviderTurnOutcome> {
@@ -138,59 +120,7 @@ fn interrupted_outcome_without_event(
     }
 }
 
-fn crp_first_event_timeout(env: &HashMap<String, String>) -> std::time::Duration {
-    let default = if container_exec_spec(env).is_some() {
-        CRP_FIRST_EVENT_TIMEOUT_CONTAINER
-    } else {
-        CRP_FIRST_EVENT_TIMEOUT_HOST
-    };
-    let configured = env
-        .get(CRP_FIRST_EVENT_TIMEOUT_ENV)
-        .cloned()
-        .or_else(|| std::env::var(CRP_FIRST_EVENT_TIMEOUT_ENV).ok());
-    configured
-        .and_then(|value| value.trim().parse::<u64>().ok())
-        .filter(|value| *value > 0)
-        .map(std::time::Duration::from_millis)
-        .unwrap_or(default)
-}
-
-fn crp_runtime_label(env: &HashMap<String, String>) -> &'static str {
-    if container_exec_spec(env).is_some() {
-        "container"
-    } else {
-        "host"
-    }
-}
-
-fn duration_millis_u64(duration: std::time::Duration) -> u64 {
-    duration.as_millis().min(u128::from(u64::MAX)) as u64
-}
-
 impl CrpSessionPool {
-    async fn send_session_open(
-        &self,
-        session: &Arc<CrpSession>,
-        session_key: &str,
-        provider_session_id: Option<String>,
-        config: CrpSessionConfig,
-    ) -> Result<()> {
-        session.opening.store(true, Ordering::SeqCst);
-        if let Err(err) = session
-            .process
-            .send(CrpCommand::SessionOpen {
-                session_id: Some(session_key.to_string()),
-                provider_session_id,
-                config: Some(config),
-            })
-            .await
-        {
-            session.opening.store(false, Ordering::SeqCst);
-            return Err(err);
-        }
-        Ok(())
-    }
-
     pub(in crate::crp) async fn prompt(
         self: &Arc<Self>,
         req: CrpPromptRequest,
@@ -228,6 +158,22 @@ impl CrpSessionPool {
         let result: Result<ProviderTurnOutcome> = async {
             let needs_session_open =
                 !session.opened.load(Ordering::SeqCst) && !session.opening.load(Ordering::SeqCst);
+            let mut last_seq = 0u64;
+            let mut tool_output_cache: HashMap<String, String> = HashMap::new();
+            let mut tool_input_cache: HashMap<String, CachedToolInput> = HashMap::new();
+            let dump_norm_path = std::env::var("CTX_CRP_DUMP_NORMALIZED_EVENTS_PATH")
+                .ok()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty());
+            let mut dump_norm_file = dump_norm_path.as_deref().and_then(|path| {
+                std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(path)
+                    .ok()
+            });
+            let mut outcome: Option<ProviderTurnOutcome> = None;
+            let first_event_timeout = crp_first_event_timeout(&req.env);
             if needs_session_open {
                 let config = build_crp_session_config(&req.env, &req.workdir)?;
                 let provider_session_id = req
@@ -235,12 +181,127 @@ impl CrpSessionPool {
                     .get("CTX_PROVIDER_SESSION_REF")
                     .map(|value| value.trim().to_string())
                     .filter(|value| !value.is_empty());
-                self.send_session_open(&session, &req.session_key, provider_session_id, config)
+                self.send_session_open(
+                    &session,
+                    &req.session_key,
+                    provider_session_id.clone(),
+                    config,
+                )
                     .await?;
+                let first_event_deadline = tokio::time::Instant::now() + first_event_timeout;
+                loop {
+                    tokio::select! {
+                        _ = tokio::time::sleep_until(first_event_deadline) => {
+                            let timeout_ms = duration_millis_u64(first_event_timeout);
+                            let runtime = crp_runtime_label(&req.env);
+                            let message = format!(
+                                "CRP runtime did not emit session.opened within {timeout_ms}ms after launching {runtime} provider session",
+                            );
+                            session.opening.store(false, Ordering::SeqCst);
+                            session.process.shutdown("crp_session_open_timeout").await;
+                            return Ok(ProviderTurnOutcome::failed_with_context(
+                                message,
+                                Some("provider_startup_timeout".to_string()),
+                                Some(json!({
+                                    "timeout_ms": timeout_ms,
+                                    "runtime": runtime,
+                                    "provider_id": self.agent.provider_id,
+                                })),
+                                Some(json!("provider_startup_timeout")),
+                                false,
+                            ));
+                        }
+                        shutdown = shutdown_rx.changed() => {
+                            let reason = match shutdown {
+                                Ok(()) => shutdown_rx
+                                    .borrow()
+                                    .clone()
+                                    .unwrap_or_else(|| "crp_shutdown".to_string()),
+                                Err(_) => "crp_shutdown".to_string(),
+                            };
+                            return Ok(ProviderTurnOutcome::interrupted(reason, true));
+                        }
+                        stderr = stderr_rx.recv() => {
+                            match stderr {
+                                Ok(line) => {
+                                    if let Some(message) = extract_runtime_fatal_error_from_stderr_line(&line) {
+                                        session.process.shutdown("crp_runtime_fatal_stderr").await;
+                                        anyhow::bail!("{message}");
+                                    }
+                                }
+                                Err(broadcast::error::RecvError::Lagged(_)) => {}
+                                Err(broadcast::error::RecvError::Closed) => {}
+                            }
+                        }
+                        recv = rx.recv() => {
+                            let env = match recv {
+                                Ok(env) => env,
+                                Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                                Err(broadcast::error::RecvError::Closed) => {
+                                    return Ok(ProviderTurnOutcome::protocol_violation(
+                                        "provider_protocol_violation_event_stream_closed",
+                                        "CRP event stream closed before session.opened",
+                                    ));
+                                }
+                            };
+                            if !event_matches_session(&env.event, &req.session_key) {
+                                continue;
+                            }
+                            if env.seq <= last_seq {
+                                continue;
+                            }
+                            last_seq = env.seq;
+                            if is_sweep_only_status_notice(&env.event) {
+                                continue;
+                            }
+                            if let Some(returned_provider_session_ref) =
+                                session_opened_provider_session_id(&env.event)
+                            {
+                                if let Err(err) = validate_provider_session_open(
+                                    provider_session_id.as_deref(),
+                                    returned_provider_session_ref,
+                                    req.provider_session_ref_claim.as_ref(),
+                                )
+                                .await
+                                {
+                                    session
+                                        .process
+                                        .shutdown("provider_session_open_validation_failed")
+                                        .await;
+                                    let _ = self.prune_dead_sessions().await;
+                                    return Err(err);
+                                }
+                                apply_session_opened_state(&session, &env.event);
+                                let mapped = map_crp_event(
+                                    env.event,
+                                    env.channel,
+                                    env.seq,
+                                    &mut tool_output_cache,
+                                    &mut tool_input_cache,
+                                );
+                                update_terminal_outcome(&mut outcome, &mapped.events, mapped.done);
+                                for event in mapped.events {
+                                    if let Some(f) = dump_norm_file.as_mut() {
+                                        let _ = writeln!(
+                                            f,
+                                            "{}",
+                                            json!({
+                                                "session_key": req.session_key,
+                                                "turn_id": turn_id,
+                                                "crp_seq": env.seq,
+                                                "event_type": format!("{:?}", event.event_type),
+                                                "payload_json": event.payload_json,
+                                            })
+                                        );
+                                    }
+                                    let _ = req.event_sink.send(event).await;
+                                }
+                                break;
+                            }
+                        }
+                    }
+                }
             }
-            let first_event_timeout = crp_first_event_timeout(&req.env);
-            let first_event_deadline =
-                needs_session_open.then(|| tokio::time::Instant::now() + first_event_timeout);
 
             validate_provider_slash_command_support(&self.agent.provider_id, &req.input.content)?;
             match parse_native_crp_slash_command_for_provider(
@@ -308,24 +369,12 @@ impl CrpSessionPool {
                 }
             }
 
-            let mut last_seq = 0u64;
-            let mut tool_output_cache: HashMap<String, String> = HashMap::new();
-            let mut tool_input_cache: HashMap<String, CachedToolInput> = HashMap::new();
-            let dump_norm_path = std::env::var("CTX_CRP_DUMP_NORMALIZED_EVENTS_PATH")
-                .ok()
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty());
-            let mut dump_norm_file = dump_norm_path.as_deref().and_then(|path| {
-                std::fs::OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open(path)
-                    .ok()
-            });
             let mut cancel_rx = req.cancel_rx;
             let mut cancel_requested = false;
             let mut cancel_deadline: Option<tokio::time::Instant> = None;
-            let mut outcome: Option<ProviderTurnOutcome> = None;
+            let first_event_deadline =
+                (!session.opened.load(Ordering::SeqCst))
+                    .then(|| tokio::time::Instant::now() + first_event_timeout);
             loop {
                 tokio::select! {
                     _ = &mut cancel_rx, if !cancel_requested => {
@@ -626,6 +675,7 @@ impl CrpSessionPool {
         env: HashMap<String, String>,
         method_id: Option<String>,
         event_sink: tokio::sync::mpsc::Sender<NormalizedEvent>,
+        provider_session_ref_claim: Option<crate::adapters::ProviderSessionRefClaimHook>,
     ) -> Result<()> {
         let busy_guard = self.session_busy_guard(session_key.clone());
         let session = self
@@ -636,13 +686,18 @@ impl CrpSessionPool {
         let mut shutdown_rx = session.process.shutdown.subscribe();
         let auth_session_key = session_key.clone();
         if !session.opened.load(Ordering::SeqCst) && !session.opening.load(Ordering::SeqCst) {
-            let config = build_crp_session_config(&env, &workdir)?;
-            let provider_session_id = env
-                .get("CTX_PROVIDER_SESSION_REF")
-                .map(|value| value.trim().to_string())
-                .filter(|value| !value.is_empty());
             if let Err(err) = self
-                .send_session_open(&session, &session_key, provider_session_id, config)
+                .ensure_auth_session_open(
+                    &session_key,
+                    &session,
+                    &workdir,
+                    &env,
+                    &event_sink,
+                    provider_session_ref_claim.as_ref(),
+                    &mut rx,
+                    &mut stderr_rx,
+                    &mut shutdown_rx,
+                )
                 .await
             {
                 session.opening.store(false, Ordering::SeqCst);

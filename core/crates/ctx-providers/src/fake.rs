@@ -151,6 +151,7 @@ impl ProviderAdapter for FakeProviderAdapter {
         _workdir: PathBuf,
         _env: HashMap<String, String>,
         event_sink: mpsc::Sender<NormalizedEvent>,
+        _hooks: crate::adapters::ProviderRunHooks,
     ) -> Result<RunHandle> {
         let (cancel_tx, mut cancel_rx) = oneshot::channel::<()>();
         let (done_tx, done_rx) = oneshot::channel::<()>();
@@ -337,6 +338,7 @@ mod tests {
                 PathBuf::from("."),
                 HashMap::new(),
                 event_tx,
+                crate::adapters::ProviderRunHooks::default(),
             )
             .await
             .expect("run handle");
@@ -368,6 +370,7 @@ mod tests {
                 PathBuf::from("."),
                 HashMap::new(),
                 event_tx,
+                crate::adapters::ProviderRunHooks::default(),
             )
             .await
             .expect("run handle");
@@ -406,6 +409,7 @@ mod tests {
                 PathBuf::from("."),
                 HashMap::new(),
                 event_tx,
+                crate::adapters::ProviderRunHooks::default(),
             )
             .await
             .expect("run handle");

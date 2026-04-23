@@ -40,6 +40,7 @@ impl ProviderAdapter for StartFailProvider {
         _workdir: PathBuf,
         _env: HashMap<String, String>,
         _event_sink: mpsc::Sender<NormalizedEvent>,
+        _hooks: ctx_providers::adapters::ProviderRunHooks,
     ) -> Result<RunHandle> {
         anyhow::bail!("synthetic start failure");
     }

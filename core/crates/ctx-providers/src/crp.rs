@@ -143,6 +143,7 @@ impl ProviderAdapter for Tier1CrpAdapter {
         workdir: PathBuf,
         env: HashMap<String, String>,
         event_sink: mpsc::Sender<NormalizedEvent>,
+        hooks: crate::adapters::ProviderRunHooks,
     ) -> Result<RunHandle> {
         // Fail fast with a clear error if the runtime isn't available.
         // `inspect()` already checks this, but some call paths can attempt runs even after a stale status.
@@ -165,6 +166,7 @@ impl ProviderAdapter for Tier1CrpAdapter {
                 workdir,
                 env,
                 event_sink,
+                provider_session_ref_claim: hooks.provider_session_ref_claim,
                 cancel_rx,
             };
             let outcome = match pool.prompt(request).await {
@@ -252,9 +254,17 @@ impl ProviderAdapter for Tier1CrpAdapter {
         env: HashMap<String, String>,
         method_id: Option<String>,
         event_sink: mpsc::Sender<NormalizedEvent>,
+        hooks: crate::adapters::ProviderRunHooks,
     ) -> Result<()> {
         self.pool
-            .authenticate_session(session_key, workdir, env, method_id, event_sink)
+            .authenticate_session(
+                session_key,
+                workdir,
+                env,
+                method_id,
+                event_sink,
+                hooks.provider_session_ref_claim,
+            )
             .await
     }
 

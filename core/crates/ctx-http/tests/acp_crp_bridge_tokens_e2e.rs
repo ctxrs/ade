@@ -171,6 +171,7 @@ async fn run_and_collect(
             workdir.to_path_buf(),
             env,
             tx,
+            ctx_providers::adapters::ProviderRunHooks::default(),
         )
         .await
         .map_err(|err| format!("provider run failed to start: {err}"))?;

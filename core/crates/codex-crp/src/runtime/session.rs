@@ -10,7 +10,6 @@ use crate::RuntimeOptions;
 use anyhow::Result;
 use serde_json::{json, Value};
 use std::path::PathBuf;
-use tracing::warn;
 
 pub(super) struct ModelsProbe {
     pub(super) models: Vec<CrpModelInfo>,
@@ -64,12 +63,10 @@ pub(super) async fn open_session(
                     (response, thread_id, true)
                 }
                 Err(err) => {
-                    warn!(provider_session_id = %provider_session_id, ?err, "thread/resume failed; starting a new thread");
-                    let response =
-                        start_thread(&mut client, &session_config, developer_instructions, options)
-                            .await?;
-                    let thread_id = response.thread.id.clone();
-                    (response, thread_id, false)
+                    anyhow::bail!(
+                        "failed to resume Codex provider session `{}`: {err}",
+                        provider_session_id
+                    );
                 }
             }
     } else {

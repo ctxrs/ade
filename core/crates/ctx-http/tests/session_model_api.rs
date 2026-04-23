@@ -166,6 +166,7 @@ impl ProviderAdapter for RecordingSetModelAdapter {
         _workdir: PathBuf,
         _env: HashMap<String, String>,
         _event_sink: tokio::sync::mpsc::Sender<NormalizedEvent>,
+        _hooks: ctx_providers::adapters::ProviderRunHooks,
     ) -> anyhow::Result<RunHandle> {
         anyhow::bail!("test adapter does not implement run");
     }
@@ -334,6 +335,7 @@ async fn live_crp_fixture_authenticate_session_emits_ready_signals_and_stays_liv
             auth_env,
             None,
             event_tx,
+            ctx_providers::adapters::ProviderRunHooks::default(),
         )
         .await
         .expect("authenticate live session");
@@ -840,6 +842,7 @@ async fn assert_live_crp_session_model_switch_case(
             auth_env,
             None,
             event_tx,
+            ctx_providers::adapters::ProviderRunHooks::default(),
         )
         .await
         .expect("open live CRP session");

@@ -124,6 +124,7 @@ impl ProviderAdapter for RecordingProviderAdapter {
         _workdir: PathBuf,
         _env: HashMap<String, String>,
         _event_sink: tokio::sync::mpsc::Sender<ctx_providers::events::NormalizedEvent>,
+        _hooks: ctx_providers::adapters::ProviderRunHooks,
     ) -> Result<RunHandle> {
         anyhow::bail!("not used in test");
     }

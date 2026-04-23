@@ -759,6 +759,7 @@ pub(in crate::api) async fn authenticate_provider_for_workspace(
             probe_context.env,
             method_id,
             event_tx,
+            ctx_providers::adapters::ProviderRunHooks::default(),
         )
         .await;
 

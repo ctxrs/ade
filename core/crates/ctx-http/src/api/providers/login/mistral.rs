@@ -88,6 +88,7 @@ async fn monitor_mistral_login(state: Arc<AppState>, login_id: String, label: Op
             provider_env,
             None,
             event_tx,
+            ctx_providers::adapters::ProviderRunHooks::default(),
         )
         .await;
     if let Err(err) = auth_result {

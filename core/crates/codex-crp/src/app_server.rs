@@ -16,6 +16,16 @@ use tokio::sync::{mpsc, oneshot, Mutex};
 
 const CODEX_APP_SERVER_ARGS: [&str; 5] = ["-s", "danger-full-access", "-a", "never", "app-server"];
 const CODEX_RAW_EVENT_DUMP_ENV: &str = "CODEX_CRP_DUMP_CODEX_EVENTS_PATH";
+const AMBIENT_PROVIDER_SESSION_ENV_DENYLIST: &[&str] = &[
+    "CTX_PROVIDER_SESSION_REF",
+    "CODEX_THREAD_ID",
+    "CODEX_SESSION_ID",
+    "CLAUDE_SESSION_ID",
+    "CLAUDE_THREAD_ID",
+    "GEMINI_SESSION_ID",
+    "GEMINI_THREAD_ID",
+    "ACP_SESSION_ID",
+];
 
 static APP_SERVER_EVENT_DUMP: OnceLock<StdMutex<Option<std::io::BufWriter<std::fs::File>>>> =
     OnceLock::new();
@@ -435,6 +445,9 @@ impl AppServerClient {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        for key in AMBIENT_PROVIDER_SESSION_ENV_DENYLIST {
+            command.env_remove(key);
+        }
 
         let mut child = command
             .spawn()

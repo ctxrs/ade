@@ -51,6 +51,7 @@ impl ProviderAdapter for BrokenOutcomeProviderAdapter {
         _workdir: PathBuf,
         _env: HashMap<String, String>,
         event_sink: tokio::sync::mpsc::Sender<NormalizedEvent>,
+        _hooks: ctx_providers::adapters::ProviderRunHooks,
     ) -> Result<RunHandle> {
         let (cancel_tx, cancel_rx) = oneshot::channel();
         let (done_tx, done_rx) = oneshot::channel();
