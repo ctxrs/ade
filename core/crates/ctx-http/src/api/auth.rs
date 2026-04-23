@@ -50,6 +50,7 @@ pub(super) async fn auth_middleware(
 
     let is_terminal_stream = path.starts_with("/api/terminals/") && path.ends_with("/stream");
     let is_ws = is_terminal_stream && is_websocket_upgrade(req.headers());
+    let is_mobile_token_route = path == "/api/mobile/register";
     let header_token = req
         .headers()
         .get(axum::http::header::AUTHORIZATION)
@@ -74,13 +75,16 @@ pub(super) async fn auth_middleware(
         }
         query_token.or(header_token)
     } else {
-        header_token.or(query_token)
+        header_token
     };
 
     if token.as_deref() == state.core.auth_token.as_deref() {
         return Ok(next.run(req).await);
     }
-    if let Some(token_value) = token {
+    if is_mobile_token_route {
+        let Some(token_value) = token else {
+            return Err(StatusCode::UNAUTHORIZED);
+        };
         if let Some(profile_id) = verify_mobile_api_token(&state, &token_value).await? {
             req.extensions_mut()
                 .insert(MobileAuthContext { profile_id });

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use axum::extract::ws::{CloseFrame, Message as WsMessage, WebSocket, WebSocketUpgrade};
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::Response;
 use futures::{SinkExt, StreamExt};
@@ -10,20 +10,18 @@ use tokio_tungstenite::{
     tungstenite::{protocol::CloseFrame as TungsteniteCloseFrame, Message as TungsteniteMessage},
 };
 
+use super::super::web_sessions::{require_web_session_stream_access, WebSessionStreamAccessQuery};
 use crate::daemon::AppState;
 use crate::web_sessions::WebSessionManager;
 
 pub(crate) async fn web_session_signal(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
+    Query(query): Query<WebSessionStreamAccessQuery>,
     ws: WebSocketUpgrade,
 ) -> Result<Response, StatusCode> {
-    state
-        .transport
-        .web_sessions
-        .get(&id)
-        .await
-        .ok_or(StatusCode::NOT_FOUND)?;
+    require_web_session_stream_access(&state.transport.web_sessions, &id, query.token.as_deref())
+        .await?;
     let manager = state.transport.web_sessions.clone();
     let session_id = id.clone();
     Ok(ws.on_upgrade(move |socket| async move {

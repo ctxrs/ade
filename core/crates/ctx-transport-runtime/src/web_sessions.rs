@@ -91,7 +91,7 @@ pub struct WorkerBundle {
     pub node_modules_path: PathBuf,
 }
 
-pub fn render_web_session_view(session: &WebSessionInfo) -> String {
+pub fn render_web_session_view(session: &WebSessionInfo, signal_path: &str) -> String {
     fn escape_html(s: &str) -> String {
         s.replace('&', "&amp;")
             .replace('<', "&lt;")
@@ -273,16 +273,16 @@ pub fn render_web_session_view(session: &WebSessionInfo) -> String {
 </html>
 "#;
 
-    let signal_path = format!("/sessions/web/{}/signal", session.id);
     TEMPLATE
         .replace("%%URL%%", &escape_html(&session.url))
         .replace("%%WIDTH%%", &session.viewport.width.to_string())
         .replace("%%HEIGHT%%", &session.viewport.height.to_string())
-        .replace("%%SIGNAL_PATH%%", &signal_path)
+        .replace("%%SIGNAL_PATH%%", signal_path)
 }
 
 pub struct WebSessionHandle {
     info: WebSessionInfo,
+    stream_token: String,
     runtime: Arc<Mutex<WebSessionRuntime>>,
     run_lock: Arc<Mutex<()>>,
 }
@@ -329,6 +329,14 @@ impl WebSessionHandle {
     pub async fn work_dir(&self) -> Option<PathBuf> {
         let runtime = self.runtime.lock().await;
         runtime.work_dir.clone()
+    }
+
+    pub fn matches_stream_token(&self, token: &str) -> bool {
+        self.stream_token == token
+    }
+
+    pub fn signal_path(&self) -> String {
+        build_signal_path(&self.info.id, &self.stream_token)
     }
 
     pub async fn close(&self) -> Result<()> {
@@ -418,6 +426,7 @@ impl WebSessionManager {
 
     pub async fn create(&self, req: WebSessionCreateRequest) -> Result<Arc<WebSessionHandle>> {
         let id = Uuid::new_v4().to_string();
+        let stream_token = Uuid::new_v4().to_string();
         let viewport = req.viewport.clone().unwrap_or(WebSessionViewport {
             width: DEFAULT_WIDTH,
             height: DEFAULT_HEIGHT,
@@ -426,7 +435,7 @@ impl WebSessionManager {
         let display = self.next_display().await?;
         let worker_port = allocate_port()?;
 
-        let stream_path = format!("/sessions/web/{id}/view");
+        let stream_path = build_stream_path(&id, &stream_token);
         let created_at = Utc::now();
 
         let info = WebSessionInfo {
@@ -458,6 +467,7 @@ impl WebSessionManager {
 
         let handle = Arc::new(WebSessionHandle {
             info,
+            stream_token,
             runtime: Arc::new(Mutex::new(runtime)),
             run_lock: Arc::new(Mutex::new(())),
         });
@@ -550,9 +560,8 @@ impl WebSessionManager {
             let mut sessions = self.sessions.lock().await;
             sessions.remove(id)
         };
-        if let Some(handle) = handle {
-            handle.close().await?;
-        }
+        let handle = handle.context("session not found")?;
+        handle.close().await?;
         Ok(())
     }
 
@@ -830,6 +839,14 @@ async fn resolve_script_path(handle: &WebSessionHandle, script_path: &str) -> Re
     Ok(canonical)
 }
 
+fn build_stream_path(id: &str, stream_token: &str) -> String {
+    format!("/sessions/web/{id}/view?token={stream_token}")
+}
+
+fn build_signal_path(id: &str, stream_token: &str) -> String {
+    format!("/sessions/web/{id}/signal?token={stream_token}")
+}
+
 fn allocate_port() -> Result<u16> {
     let listener = TcpListener::bind("127.0.0.1:0").context("binding port")?;
     let port = listener.local_addr()?.port();
@@ -904,5 +921,61 @@ async fn log_stream<R: tokio::io::AsyncRead + Unpin>(mut reader: R, label: &str)
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_session_info() -> WebSessionInfo {
+        let now = Utc::now();
+        WebSessionInfo {
+            id: "sess-1".to_string(),
+            kind: "web".to_string(),
+            session_id: None,
+            worktree_id: None,
+            status: WebSessionStatus::Running,
+            created_at: now,
+            updated_at: now,
+            last_activity: now,
+            url: "https://example.com".to_string(),
+            viewport: WebSessionViewport {
+                width: 1280,
+                height: 720,
+            },
+            fps: 30,
+            viewers: 0,
+            stream_path: build_stream_path("sess-1", "stream-token"),
+            stream_url: None,
+        }
+    }
+
+    #[test]
+    fn web_session_paths_embed_stream_token() {
+        assert_eq!(
+            build_stream_path("sess-1", "stream-token"),
+            "/sessions/web/sess-1/view?token=stream-token"
+        );
+        assert_eq!(
+            build_signal_path("sess-1", "stream-token"),
+            "/sessions/web/sess-1/signal?token=stream-token"
+        );
+    }
+
+    #[test]
+    fn rendered_view_uses_tokenized_signal_path() {
+        let html = render_web_session_view(
+            &test_session_info(),
+            "/sessions/web/sess-1/signal?token=stream-token",
+        );
+        assert!(html.contains("/sessions/web/sess-1/signal?token=stream-token"));
+    }
+
+    #[tokio::test]
+    async fn closing_missing_session_returns_not_found_error() {
+        let manager = WebSessionManager::new();
+        let err = manager.close("missing-session").await.unwrap_err();
+        assert!(format!("{err:#}").contains("session not found"));
     }
 }

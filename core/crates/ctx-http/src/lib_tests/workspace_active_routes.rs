@@ -1,0 +1,41 @@
+use super::*;
+
+#[tokio::test]
+async fn workspace_active_snapshot_stream_returns_not_found_before_upgrade() {
+    let _serial = home_env_test_lock().lock().await;
+    let home = tempfile::tempdir().unwrap();
+    let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
+
+    let data_dir = tempfile::tempdir().unwrap();
+    let stores = StoreManager::open(data_dir.path()).await.unwrap();
+    let state = Arc::new(AppState::new(
+        data_dir.path().to_path_buf(),
+        stores,
+        HashMap::new(),
+        "http://127.0.0.1:4399".to_string(),
+        Some("daemon-secret".to_string()),
+    ));
+    let app = api::router(state);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    let client = reqwest::Client::new();
+
+    let res = client
+        .get(format!(
+            "http://{addr}/api/workspaces/11111111-1111-1111-1111-111111111111/active_snapshot/stream"
+        ))
+        .header("authorization", "Bearer daemon-secret")
+        .header("connection", "upgrade")
+        .header("upgrade", "websocket")
+        .header("sec-websocket-version", "13")
+        .header("sec-websocket-key", "dGhlIHNhbXBsZSBub25jZQ==")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::NOT_FOUND);
+
+    server.abort();
+}

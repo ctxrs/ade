@@ -156,10 +156,6 @@ fn parse_forwarded_header(value: &str) -> (Option<String>, Option<String>) {
 fn resolve_request_base_url(headers: &HeaderMap, fallback: &str) -> String {
     let fallback = fallback.trim_end_matches('/');
     let fallback_url = Url::parse(fallback).ok();
-    let fallback_scheme = fallback_url
-        .as_ref()
-        .map(|url| url.scheme().to_string())
-        .unwrap_or_else(|| "http".to_string());
     let fallback_host = fallback_url.as_ref().and_then(|url| {
         let host = url.host_str()?;
         Some(match url.port() {
@@ -176,15 +172,28 @@ fn resolve_request_base_url(headers: &HeaderMap, fallback: &str) -> String {
 
     let proto = forwarded_proto
         .or_else(|| header_first_value(headers, "x-forwarded-proto"))
-        .unwrap_or(fallback_scheme);
+        .unwrap_or_else(|| {
+            fallback_url
+                .as_ref()
+                .map(|url| url.scheme().to_string())
+                .unwrap_or_else(|| "http".to_string())
+        })
+        .trim()
+        .trim_end_matches(':')
+        .to_ascii_lowercase();
     let host = forwarded_host
         .or_else(|| header_first_value(headers, "x-forwarded-host"))
         .or_else(|| header_first_value(headers, header::HOST.as_str()))
         .or(fallback_host);
 
     match host {
-        Some(host) => format!("{}://{}", proto, host.trim_end_matches('/')),
+        Some(host)
+            if is_safe_request_base_host(&host) && matches!(proto.as_str(), "http" | "https") =>
+        {
+            format!("{}://{}", proto, host.trim_end_matches('/'))
+        }
         None => fallback.to_string(),
+        Some(_) => fallback.to_string(),
     }
 }
 
@@ -194,6 +203,18 @@ fn is_loopback_host(host: &str) -> bool {
         || normalized.eq_ignore_ascii_case("tauri.localhost")
         || normalized == "127.0.0.1"
         || normalized == "::1"
+}
+
+fn is_safe_request_base_host(host: &str) -> bool {
+    let trimmed = host.trim().trim_end_matches('/');
+    if trimmed.is_empty() {
+        return false;
+    }
+    let parsed = match Url::parse(&format!("http://{trimmed}")) {
+        Ok(url) => url,
+        Err(_) => return false,
+    };
+    parsed.host_str().map(is_loopback_host).unwrap_or(false)
 }
 
 fn is_allowed_desktop_worker_origin(origin: &HeaderValue) -> bool {
@@ -958,4 +979,55 @@ struct HealthResp {
     open_file_limit: Option<crate::process_limits::OpenFileLimitSnapshot>,
     storage: crate::storage_guard::StorageGuardStatus,
     compatibility: HealthCompatibility,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolve_request_base_url_accepts_loopback_host_headers() {
+        let mut headers = HeaderMap::new();
+        headers.insert(header::HOST, HeaderValue::from_static("127.0.0.1:4455"));
+        assert_eq!(
+            resolve_request_base_url(&headers, "http://127.0.0.1:4321"),
+            "http://127.0.0.1:4455"
+        );
+    }
+
+    #[test]
+    fn resolve_request_base_url_rejects_non_loopback_host_headers() {
+        let mut headers = HeaderMap::new();
+        headers.insert(header::HOST, HeaderValue::from_static("evil.example"));
+        assert_eq!(
+            resolve_request_base_url(&headers, "http://127.0.0.1:4321"),
+            "http://127.0.0.1:4321"
+        );
+    }
+
+    #[test]
+    fn resolve_request_base_url_rejects_non_http_forwarded_proto() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::FORWARDED,
+            HeaderValue::from_static("proto=javascript;host=127.0.0.1:4455"),
+        );
+        assert_eq!(
+            resolve_request_base_url(&headers, "http://127.0.0.1:4321"),
+            "http://127.0.0.1:4321"
+        );
+    }
+
+    #[test]
+    fn resolve_request_base_url_accepts_forwarded_loopback_origin() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::FORWARDED,
+            HeaderValue::from_static("proto=https;host=tauri.localhost:3000"),
+        );
+        assert_eq!(
+            resolve_request_base_url(&headers, "http://127.0.0.1:4321"),
+            "https://tauri.localhost:3000"
+        );
+    }
 }

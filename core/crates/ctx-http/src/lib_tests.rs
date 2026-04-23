@@ -122,9 +122,12 @@ fn home_env_test_lock() -> &'static tokio::sync::Mutex<()> {
     LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
 }
 
+mod auth_boundaries;
 mod cors;
 mod daemon_smoke;
 mod execution_launch;
 mod health_diagnostics;
+mod mobile_secure_routes;
 mod session_artifacts;
 mod web_session_routes;
+mod workspace_active_routes;

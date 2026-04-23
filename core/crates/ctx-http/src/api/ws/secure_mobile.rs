@@ -20,6 +20,47 @@ use super::queue::{
 use super::replay::with_stream_rev;
 use super::workspace_stream;
 
+async fn require_mobile_secure_stream_access(
+    state: &Arc<AppState>,
+    workspace_id: WorkspaceId,
+    device_id: &str,
+) -> Result<(), StatusCode> {
+    let device_uuid = uuid::Uuid::parse_str(device_id).map_err(|_| StatusCode::BAD_REQUEST)?;
+    let workspace_exists = state
+        .global_store()
+        .get_workspace(workspace_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .is_some();
+    if !workspace_exists {
+        return Err(StatusCode::NOT_FOUND);
+    }
+
+    let cfg = state
+        .global_store()
+        .get_mobile_access_config()
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::UNAUTHORIZED)?;
+    let device = state
+        .global_store()
+        .get_mobile_device(MobileDeviceId(device_uuid))
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::UNAUTHORIZED)?;
+    if device.profile_id != cfg.profile_id {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+    if device
+        .public_key
+        .as_deref()
+        .is_none_or(|key| key.trim().is_empty())
+    {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+    Ok(())
+}
+
 pub(in crate::api) async fn mobile_secure_workspace_stream_ws(
     ws: WebSocketUpgrade,
     State(state): State<Arc<AppState>>,
@@ -31,6 +72,10 @@ pub(in crate::api) async fn mobile_secure_workspace_stream_ws(
         Err(_) => return StatusCode::BAD_REQUEST.into_response(),
     };
     let device_id = query.device_id.trim().to_string();
+    if let Err(status) = require_mobile_secure_stream_access(&state, workspace_id, &device_id).await
+    {
+        return status.into_response();
+    }
     ws.on_upgrade(move |socket| async move {
         if let Err(err) = handle_mobile_secure_ws(socket, state, workspace_id, device_id).await {
             tracing::warn!("secure mobile ws ended: {err:#}");
