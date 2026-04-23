@@ -42,6 +42,9 @@ async fn require_mobile_secure_stream_access(
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::UNAUTHORIZED)?;
+    if !cfg.enabled {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
     let device = state
         .global_store()
         .get_mobile_device(MobileDeviceId(device_uuid))
@@ -93,6 +96,9 @@ async fn handle_mobile_secure_ws(
     let device_uuid = uuid::Uuid::parse_str(&device_id)?;
     let cfg = state.global_store().get_mobile_access_config().await?;
     let cfg = cfg.ok_or_else(|| anyhow::anyhow!("mobile access not configured"))?;
+    if !cfg.enabled {
+        return Err(anyhow::anyhow!("mobile access not enabled"));
+    }
     let device = state
         .global_store()
         .get_mobile_device(MobileDeviceId(device_uuid))

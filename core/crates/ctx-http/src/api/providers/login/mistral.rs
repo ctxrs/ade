@@ -60,9 +60,7 @@ async fn monitor_mistral_login(state: Arc<AppState>, login_id: String, label: Op
 
     let mut provider_env = HashMap::new();
     provider_env.insert("CTX_DAEMON_URL".to_string(), state.core.daemon_url.clone());
-    if let Some(token) = state.core.auth_token.clone() {
-        provider_env.insert("CTX_AUTH_TOKEN".to_string(), token);
-    }
+    provider_env.insert("CTX_MCP_DISABLED".to_string(), "1".to_string());
     provider_env.insert(
         "CTX_DATA_ROOT".to_string(),
         state.core.data_root.to_string_lossy().to_string(),

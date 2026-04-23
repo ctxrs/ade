@@ -30,6 +30,12 @@ pub struct RuntimeSettingsDocument {
     pub updated_at: DateTime<Utc>,
 }
 
+pub enum MobileDeviceSeqAdvance {
+    Advanced,
+    Stale { current: i64 },
+    Missing,
+}
+
 impl Store {
     // Mobile connection profiles + devices
     pub async fn create_mobile_connection_profile(
@@ -263,6 +269,14 @@ impl Store {
         Ok(())
     }
 
+    pub async fn delete_mobile_access_config(&self) -> Result<()> {
+        self.query(r#"DELETE FROM mobile_access_config WHERE id = ?"#)
+            .bind("default")
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
     pub async fn insert_mobile_pairing_token(
         &self,
         token_id: &str,
@@ -311,18 +325,36 @@ impl Store {
         Ok(true)
     }
 
-    pub async fn update_mobile_device_seq(
+    pub async fn clear_mobile_pairing_tokens(&self) -> Result<()> {
+        self.query(r#"DELETE FROM mobile_pairing_tokens"#)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn advance_mobile_device_seq(
         &self,
         id: MobileDeviceId,
         seq: i64,
-    ) -> Result<Option<i64>> {
+    ) -> Result<MobileDeviceSeqAdvance> {
+        let _write_guard = self.write_gate.lock().await;
+        let mut tx = self.pool.begin().await?;
         let row = self
             .query(r#"SELECT last_seen_seq FROM mobile_devices WHERE id = ?"#)
             .bind(id.0.to_string())
-            .fetch_optional(&self.pool)
+            .fetch_optional(&mut *tx)
             .await?;
 
-        let last_seen: Option<i64> = row.and_then(|r| r.try_get("last_seen_seq").ok());
+        let Some(row) = row else {
+            return Ok(MobileDeviceSeqAdvance::Missing);
+        };
+
+        let last_seen: Option<i64> = row.try_get("last_seen_seq").ok();
+        if let Some(current) = last_seen {
+            if seq <= current {
+                return Ok(MobileDeviceSeqAdvance::Stale { current });
+            }
+        }
         self.query(
             r#"UPDATE mobile_devices
                SET last_seen_seq = ?, last_seen_at = ?
@@ -331,9 +363,10 @@ impl Store {
         .bind(seq)
         .bind(Utc::now().to_rfc3339())
         .bind(id.0.to_string())
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await?;
-        Ok(last_seen)
+        tx.commit().await?;
+        Ok(MobileDeviceSeqAdvance::Advanced)
     }
 
     pub async fn upsert_mobile_device(

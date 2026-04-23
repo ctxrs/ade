@@ -297,8 +297,56 @@ pub(super) async fn disable_mobile_access(
             .await;
     }
 
+    let cfg = state.global_store().get_mobile_access_config().await.map_err(|e| {
+        tracing::error!("failed to read mobile access config while disabling mobile access: {e:?}");
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiErrorResp {
+                error: "failed to read mobile access config".into(),
+            }),
+        )
+    })?;
+
     state.transport.mobile_tunnel.stop().await;
-    let _ = state.global_store().set_mobile_access_enabled(false).await;
+    state
+        .global_store()
+        .clear_mobile_pairing_tokens()
+        .await
+        .map_err(|e| {
+            tracing::error!("failed to clear pairing tokens while disabling mobile access: {e:?}");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: "failed to clear pairing tokens".into(),
+                }),
+            )
+        })?;
+    if let Some(cfg) = cfg {
+        state.global_store().delete_mobile_access_config().await.map_err(|e| {
+            tracing::error!("failed to delete mobile access config while disabling mobile access: {e:?}");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: "failed to delete mobile access config".into(),
+                }),
+            )
+        })?;
+        state
+            .global_store()
+            .delete_mobile_connection_profile(cfg.profile_id)
+            .await
+            .map_err(|e| {
+                tracing::error!(
+                    "failed to delete mobile connection profile while disabling mobile access: {e:?}"
+                );
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ApiErrorResp {
+                        error: "failed to delete mobile connection profile".into(),
+                    }),
+                )
+            })?;
+    }
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -351,6 +399,14 @@ pub(super) async fn pair_mobile_device(
             }),
         ));
     };
+    if !cfg.enabled {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "mobile access not enabled".into(),
+            }),
+        ));
+    }
 
     let device_uuid = uuid::Uuid::parse_str(req.device_id.trim()).map_err(|_| {
         (
@@ -475,6 +531,14 @@ pub(super) async fn handle_mobile_secure(
             }),
         ));
     };
+    if !cfg.enabled {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "mobile access not enabled".into(),
+            }),
+        ));
+    }
     let device = state
         .global_store()
         .get_mobile_device(MobileDeviceId(device_uuid))
@@ -546,18 +610,19 @@ pub(super) async fn handle_mobile_secure(
 
     if payload.path.starts_with("/api/mobile/secure")
         || payload.path.starts_with("/api/mobile/pair")
+        || payload.path.starts_with("/api/mobile/")
     {
         return Err((
             StatusCode::BAD_REQUEST,
             Json(ApiErrorResp {
-                error: "secure proxy cannot target mobile secure endpoints".into(),
+                error: "secure proxy cannot target mobile management endpoints".into(),
             }),
         ));
     }
 
-    let last_seen = state
+    match state
         .global_store()
-        .update_mobile_device_seq(MobileDeviceId(device_uuid), req.seq)
+        .advance_mobile_device_seq(MobileDeviceId(device_uuid), req.seq)
         .await
         .map_err(|e| {
             tracing::error!("failed to update device seq: {e:?}");
@@ -567,13 +632,22 @@ pub(super) async fn handle_mobile_secure(
                     error: "failed to update device".into(),
                 }),
             )
-        })?;
-    if let Some(last) = last_seen {
-        if req.seq <= last {
+        })? {
+        ctx_store::store::MobileDeviceSeqAdvance::Advanced => {}
+        ctx_store::store::MobileDeviceSeqAdvance::Stale { current } => {
+            tracing::warn!(device_id = %device_uuid, seq = req.seq, current, "rejected stale mobile secure request");
             return Err((
                 StatusCode::CONFLICT,
                 Json(ApiErrorResp {
                     error: "stale request sequence".into(),
+                }),
+            ));
+        }
+        ctx_store::store::MobileDeviceSeqAdvance::Missing => {
+            return Err((
+                StatusCode::NOT_FOUND,
+                Json(ApiErrorResp {
+                    error: "device not registered".into(),
                 }),
             ));
         }

@@ -233,6 +233,12 @@ impl ProviderAdapter for GeminiLoginTestAdapter {
                 method_id.unwrap_or_default()
             ));
         }
+        if env.contains_key("CTX_AUTH_TOKEN") {
+            return Err(anyhow!("CTX_AUTH_TOKEN should not be set for browser auth"));
+        }
+        if env.get("CTX_MCP_DISABLED").map(String::as_str) != Some("1") {
+            return Err(anyhow!("CTX_MCP_DISABLED=1 should be set for browser auth"));
+        }
         let Some(home) = env.get("GEMINI_CLI_HOME") else {
             return Err(anyhow!("GEMINI_CLI_HOME missing"));
         };
@@ -357,6 +363,12 @@ impl ProviderAdapter for QwenLoginTestAdapter {
                 method_id.unwrap_or_default()
             ));
         }
+        if env.contains_key("CTX_AUTH_TOKEN") {
+            return Err(anyhow!("CTX_AUTH_TOKEN should not be set for browser auth"));
+        }
+        if env.get("CTX_MCP_DISABLED").map(String::as_str) != Some("1") {
+            return Err(anyhow!("CTX_MCP_DISABLED=1 should be set for browser auth"));
+        }
         let Some(home) = env.get("HOME") else {
             return Err(anyhow!("HOME missing"));
         };
@@ -444,6 +456,12 @@ impl ProviderAdapter for MistralLoginTestAdapter {
         event_sink: mpsc::Sender<NormalizedEvent>,
         _hooks: ctx_providers::adapters::ProviderRunHooks,
     ) -> Result<()> {
+        if env.contains_key("CTX_AUTH_TOKEN") {
+            return Err(anyhow!("CTX_AUTH_TOKEN should not be set for browser auth"));
+        }
+        if env.get("CTX_MCP_DISABLED").map(String::as_str) != Some("1") {
+            return Err(anyhow!("CTX_MCP_DISABLED=1 should be set for browser auth"));
+        }
         if !env.contains_key("HOME") {
             return Err(anyhow!("HOME missing"));
         }
@@ -541,6 +559,12 @@ impl ProviderAdapter for AmpLoginTestAdapter {
                 "unexpected method_id: {:?}",
                 method_id.unwrap_or_default()
             ));
+        }
+        if env.contains_key("CTX_AUTH_TOKEN") {
+            return Err(anyhow!("CTX_AUTH_TOKEN should not be set for browser auth"));
+        }
+        if env.get("CTX_MCP_DISABLED").map(String::as_str) != Some("1") {
+            return Err(anyhow!("CTX_MCP_DISABLED=1 should be set for browser auth"));
         }
         if !env.contains_key("HOME") {
             return Err(anyhow!("HOME missing"));

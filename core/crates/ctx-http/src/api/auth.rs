@@ -44,10 +44,6 @@ pub(super) async fn auth_middleware(
     if state.core.auth_token.is_none() {
         return Ok(next.run(req).await);
     }
-    if req.extensions().get::<MobileAuthContext>().is_some() {
-        return Ok(next.run(req).await);
-    }
-
     let is_terminal_stream = path.starts_with("/api/terminals/") && path.ends_with("/stream");
     let is_ws = is_terminal_stream && is_websocket_upgrade(req.headers());
     let is_mobile_token_route = path == "/api/mobile/register";

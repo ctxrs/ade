@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::Duration;
 
 use axum::http::StatusCode;
 use ctx_http::api;
@@ -48,6 +50,61 @@ async fn start_callback_server() -> (String, tokio::task::JoinHandle<()>) {
         axum::serve(listener, app).await.unwrap();
     });
     (format!("http://127.0.0.1:{}", addr.port()), handle)
+}
+
+async fn start_delayed_callback_server(
+    delay: Duration,
+) -> (String, Arc<AtomicUsize>, tokio::task::JoinHandle<()>) {
+    let hits = Arc::new(AtomicUsize::new(0));
+    let route_hits = hits.clone();
+    let app = axum::Router::new().route(
+        "/auth/callback",
+        axum::routing::get(move || {
+            let route_hits = route_hits.clone();
+            async move {
+                route_hits.fetch_add(1, Ordering::SeqCst);
+                tokio::time::sleep(delay).await;
+                StatusCode::OK
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let handle = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    (format!("http://127.0.0.1:{}", addr.port()), hits, handle)
+}
+
+async fn start_redirecting_callback_server() -> (String, Arc<AtomicUsize>, tokio::task::JoinHandle<()>) {
+    let redirected_hits = Arc::new(AtomicUsize::new(0));
+    let route_hits = redirected_hits.clone();
+    let app = axum::Router::new()
+        .route(
+            "/auth/callback",
+            axum::routing::get(|| async {
+                (
+                    StatusCode::FOUND,
+                    [(axum::http::header::LOCATION, "/redirected")],
+                )
+            }),
+        )
+        .route(
+            "/redirected",
+            axum::routing::get(move || {
+                let route_hits = route_hits.clone();
+                async move {
+                    route_hits.fetch_add(1, Ordering::SeqCst);
+                    StatusCode::OK
+                }
+            }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let handle = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    (format!("http://127.0.0.1:{}", addr.port()), redirected_hits, handle)
 }
 
 async fn app_state(data_root: &std::path::Path) -> Arc<AppState> {
@@ -250,6 +307,37 @@ async fn complete_login_rejects_expected_path_mismatch() {
 }
 
 #[tokio::test]
+async fn complete_login_rejects_expected_host_mismatch() {
+    let data_dir = tempfile::tempdir().unwrap();
+    let state = app_state(data_dir.path()).await;
+    insert_pending_login(
+        &state,
+        "acct-host-mismatch",
+        "token-host-mismatch",
+        "http://127.0.0.1:24567/auth/callback",
+    )
+    .await;
+    let (base, client, server_handle) = start_http_app(state).await;
+
+    let resp = client
+        .post(format!(
+            "{base}/api/providers/codex/accounts/login/acct-host-mismatch"
+        ))
+        .json(&json!({
+            "callback_url": "http://localhost:24567/auth/callback?code=abc",
+            "completion_token": "token-host-mismatch"
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let body: ErrorResp = resp.json().await.unwrap();
+    assert!(body.error.contains("host mismatch"));
+
+    server_handle.abort();
+}
+
+#[tokio::test]
 async fn complete_login_token_is_single_use() {
     let data_dir = tempfile::tempdir().unwrap();
     let state = app_state(data_dir.path()).await;
@@ -286,6 +374,66 @@ async fn complete_login_token_is_single_use() {
     assert_eq!(second.status(), StatusCode::UNAUTHORIZED);
     let body: ErrorResp = second.json().await.unwrap();
     assert!(body.error.contains("invalid completion token"));
+
+    callback_handle.abort();
+    server_handle.abort();
+}
+
+#[tokio::test]
+async fn complete_login_allows_only_one_concurrent_callback_replay() {
+    let data_dir = tempfile::tempdir().unwrap();
+    let state = app_state(data_dir.path()).await;
+    let (callback_base, callback_hits, callback_handle) =
+        start_delayed_callback_server(Duration::from_millis(250)).await;
+    let expected_callback = format!("{callback_base}/auth/callback");
+    let callback_url = format!("{expected_callback}?code=race");
+    insert_pending_login(&state, "acct-race", "token-race", &expected_callback).await;
+
+    let (base, client, server_handle) = start_http_app(state).await;
+    let request_url = format!("{base}/api/providers/codex/accounts/login/acct-race");
+    let payload = json!({
+        "callback_url": callback_url,
+        "completion_token": "token-race"
+    });
+
+    let first = client.post(request_url.clone()).json(&payload).send();
+    let second = client.post(request_url).json(&payload).send();
+    let (first, second) = tokio::join!(first, second);
+    let statuses = [first.unwrap().status(), second.unwrap().status()];
+
+    assert!(statuses.contains(&StatusCode::OK));
+    assert!(statuses.contains(&StatusCode::UNAUTHORIZED));
+    assert_eq!(callback_hits.load(Ordering::SeqCst), 1);
+
+    callback_handle.abort();
+    server_handle.abort();
+}
+
+#[tokio::test]
+async fn complete_login_rejects_redirecting_callback_replay() {
+    let data_dir = tempfile::tempdir().unwrap();
+    let state = app_state(data_dir.path()).await;
+    let (callback_base, redirected_hits, callback_handle) = start_redirecting_callback_server().await;
+    let expected_callback = format!("{callback_base}/auth/callback");
+    let callback_url = format!("{expected_callback}?code=redirect");
+    insert_pending_login(&state, "acct-redirect", "token-redirect", &expected_callback).await;
+
+    let (base, client, server_handle) = start_http_app(state).await;
+    let resp = client
+        .post(format!(
+            "{base}/api/providers/codex/accounts/login/acct-redirect"
+        ))
+        .json(&json!({
+            "callback_url": callback_url,
+            "completion_token": "token-redirect"
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_GATEWAY);
+    let body: ErrorResp = resp.json().await.unwrap();
+    assert!(body.error.contains("302"));
+    assert_eq!(redirected_hits.load(Ordering::SeqCst), 0);
 
     callback_handle.abort();
     server_handle.abort();

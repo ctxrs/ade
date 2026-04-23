@@ -44,6 +44,10 @@ fn is_loopback_host(value: &str) -> bool {
     false
 }
 
+fn normalized_host(value: &str) -> String {
+    value.trim().to_ascii_lowercase()
+}
+
 pub(super) fn expected_callback_from_auth_url(auth_url: &str) -> Option<String> {
     let parsed = Url::parse(auth_url).ok()?;
     let redirect = parsed
@@ -85,6 +89,15 @@ pub(super) fn validate_callback_url(
     if let Some(expected_raw) = expected_callback_url {
         let expected = Url::parse(expected_raw)
             .with_context(|| format!("invalid expected callback URL: {expected_raw}"))?;
+        let expected_host = expected
+            .host_str()
+            .ok_or_else(|| anyhow::anyhow!("expected callback URL must include host"))?;
+        if normalized_host(host) != normalized_host(expected_host) {
+            anyhow::bail!("callback_url host mismatch");
+        }
+        if callback.scheme() != expected.scheme() {
+            anyhow::bail!("callback_url scheme mismatch");
+        }
         if callback.port() != expected.port() {
             anyhow::bail!("callback_url port mismatch");
         }

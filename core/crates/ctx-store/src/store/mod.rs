@@ -56,6 +56,8 @@ mod worktree_vcs;
 mod worktrees;
 
 pub use kernel::{is_unique_constraint_violation, SessionRetentionPruneStats, Store, StoreStats};
-pub use mobile::{MobileAccessConfig, MobileDeviceUpsert, RuntimeSettingsDocument};
+pub use mobile::{
+    MobileAccessConfig, MobileDeviceSeqAdvance, MobileDeviceUpsert, RuntimeSettingsDocument,
+};
 pub use turns::SessionTurnToolCountDeltas;
 pub use worktrees::WorktreeBootstrapResultUpdate;
