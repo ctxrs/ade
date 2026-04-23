@@ -4,6 +4,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const repoRoot = path.resolve(__dirname, "..", "..");
+const bazelIgnore = fs.readFileSync(path.join(repoRoot, ".bazelignore"), "utf8");
 const buildFile = fs.readFileSync(path.join(repoRoot, "core", "apps", "web", "BUILD.bazel"), "utf8");
 const scriptText = fs.readFileSync(path.join(repoRoot, "core", "apps", "web", "dist_sync_tool.sh"), "utf8");
 const anyEnforceToolText = fs.readFileSync(path.join(repoRoot, "core", "apps", "web", "any_enforce_tool.sh"), "utf8");
@@ -11,6 +12,20 @@ const anyEnforceToolText = fs.readFileSync(path.join(repoRoot, "core", "apps", "
 test("Bazel web dist sync target stays explicit about the caller-supplied output dir", () => {
   assert.match(buildFile, /name = "dist_sync"/);
   assert.match(buildFile, /srcs = \["dist_sync_tool\.sh"\]/);
+  assert.match(buildFile, /":node_modules\/@ctx\/design"/);
+  assert.match(buildFile, /":node_modules\/@ctx\/types"/);
+  assert.match(buildFile, /":node_modules\/@pretext-virtualizer\/core"/);
+  assert.match(buildFile, /":node_modules\/@pretext-virtualizer\/interface"/);
+});
+
+test("Bazel ignores workspace-local node_modules trees that would collide with importer aliases", () => {
+  assert.match(bazelIgnore, /^core\/apps\/web\/node_modules$/m);
+  assert.match(bazelIgnore, /^core\/apps\/desktop\/node_modules$/m);
+  assert.match(bazelIgnore, /^core\/packages\/ctx-design\/node_modules$/m);
+  assert.match(bazelIgnore, /^core\/packages\/ctx-types\/node_modules$/m);
+  assert.match(bazelIgnore, /^core\/packages\/pretext-virtualizer-core\/node_modules$/m);
+  assert.match(bazelIgnore, /^core\/packages\/pretext-virtualizer-interface\/node_modules$/m);
+  assert.match(bazelIgnore, /^core\/packages\/web-session-worker\/node_modules$/m);
 });
 
 test("Bazel web any-enforce target stays on a lightweight data set", () => {
