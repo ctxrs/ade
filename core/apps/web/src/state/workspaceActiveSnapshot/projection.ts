@@ -109,7 +109,7 @@ export const collectWorkspaceActivePrimarySessionIds = (
     const primaryId = resolvePrimarySessionId(state.tasksById[taskId]);
     if (primaryId) ids.add(primaryId);
   }
-  return Array.from(ids).sort();
+  return Array.from(ids);
 };
 
 export const findWorkspaceSessionHead = (

@@ -1,5 +1,6 @@
-use super::*;
 use serde::Serialize;
+
+use crate::WorkspaceActiveSnapshotHub;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct WorkspaceActiveSnapshotStats {

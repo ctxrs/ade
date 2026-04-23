@@ -1,4 +1,15 @@
-use super::*;
+use std::collections::HashMap;
+
+use tokio::sync::broadcast;
+
+use ctx_core::ids::{SessionId, TaskId, WorktreeId};
+use ctx_core::models::{
+    SessionHeadDelta, SessionHeadSnapshot, WorkspaceActiveSnapshotEvent,
+    WorkspaceActiveTaskSummary, WorktreeVcsSnapshot,
+};
+
+use crate::replay_state::{SessionReplayResult, SessionReplayState};
+use crate::SessionReplayCursor;
 
 pub(super) struct WorkspaceActiveSnapshotEntry {
     pub(super) tx: broadcast::Sender<WorkspaceActiveSnapshotEvent>,
@@ -24,6 +35,31 @@ impl WorkspaceActiveSnapshotEntry {
             session_replay: HashMap::new(),
             worktree_vcs_snapshots: HashMap::new(),
         }
+    }
+
+    pub(super) fn primary_session_id_for_task(task: &WorkspaceActiveTaskSummary) -> SessionId {
+        task.primary_session_head
+            .as_ref()
+            .map(|head| head.session.id)
+            .unwrap_or(task.primary_session.session.id)
+    }
+
+    pub(super) fn remove_active_task_state(&mut self, task_id: TaskId) -> Option<SessionId> {
+        let removed = self.active_tasks.remove(&task_id)?;
+        let session_id = Self::primary_session_id_for_task(&removed);
+        self.active_heads.remove(&session_id);
+        self.session_replay.remove(&session_id);
+        Some(session_id)
+    }
+
+    pub(super) fn is_primary_session(&self, session_id: SessionId) -> bool {
+        self.active_tasks.values().any(|summary| {
+            let primary_id = summary
+                .task
+                .primary_session_id
+                .unwrap_or(summary.primary_session.session.id);
+            primary_id == session_id
+        })
     }
 
     pub(super) fn session_last_event_seq(&self, session_id: SessionId) -> i64 {

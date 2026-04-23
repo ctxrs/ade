@@ -14,6 +14,9 @@ const analyticsMocks = vi.hoisted(() => ({
   trackForegroundBacklogObserved: vi.fn(),
   trackForegroundFreshnessSlaMissed: vi.fn(),
   trackForegroundGapRecoveryObserved: vi.fn(),
+  trackFreshnessRecovered: vi.fn(),
+  trackRendererBacklogSample: vi.fn(),
+  trackRendererBacklogSpike: vi.fn(),
 }));
 
 vi.mock("../api/client", () => ({
@@ -30,6 +33,9 @@ vi.mock("../utils/analytics", () => ({
   trackForegroundBacklogObserved: analyticsMocks.trackForegroundBacklogObserved,
   trackForegroundFreshnessSlaMissed: analyticsMocks.trackForegroundFreshnessSlaMissed,
   trackForegroundGapRecoveryObserved: analyticsMocks.trackForegroundGapRecoveryObserved,
+  trackFreshnessRecovered: analyticsMocks.trackFreshnessRecovered,
+  trackRendererBacklogSample: analyticsMocks.trackRendererBacklogSample,
+  trackRendererBacklogSpike: analyticsMocks.trackRendererBacklogSpike,
 }));
 
 import {
@@ -40,6 +46,7 @@ import {
   noteFinalVisible,
   noteInterruptClicked,
   noteInterruptPendingVisible,
+  noteQueueAgeSample,
   noteLateChunkAfterTerminal,
   noteNavThreadActivityMismatch,
   noteProjectionOrSeqRegression,
@@ -61,6 +68,9 @@ describe("foregroundFreshnessTelemetry", () => {
     analyticsMocks.trackForegroundBacklogObserved.mockReset();
     analyticsMocks.trackForegroundFreshnessSlaMissed.mockReset();
     analyticsMocks.trackForegroundGapRecoveryObserved.mockReset();
+    analyticsMocks.trackFreshnessRecovered.mockReset();
+    analyticsMocks.trackRendererBacklogSample.mockReset();
+    analyticsMocks.trackRendererBacklogSpike.mockReset();
     resetForegroundFreshnessTelemetryForTests();
   });
 
@@ -194,5 +204,40 @@ describe("foregroundFreshnessTelemetry", () => {
       undefined,
     );
     expect(clientMocks.recordClientCounterMetric).toHaveBeenCalledTimes(5);
+  });
+
+  it("dedupes degraded backlog observations within the same severity bucket and bounds gauge sampling", () => {
+    vi.spyOn(performance, "now").mockReturnValue(0);
+    noteQueueAgeSample("workspace", 300, { source: "worker_patch" });
+
+    vi.spyOn(performance, "now").mockReturnValue(100);
+    noteQueueAgeSample("workspace", 320, { source: "worker_patch" });
+
+    vi.spyOn(performance, "now").mockReturnValue(1200);
+    noteQueueAgeSample("workspace", 340, { source: "worker_patch" });
+
+    vi.spyOn(performance, "now").mockReturnValue(1300);
+    noteQueueAgeSample("workspace", 1200, { source: "worker_patch" });
+
+    vi.spyOn(performance, "now").mockReturnValue(2000);
+    noteQueueAgeSample("workspace", 40, { source: "worker_patch" });
+
+    expect(clientMocks.recordClientGaugeMetric).toHaveBeenCalledTimes(2);
+    expect(analyticsMocks.trackRendererBacklogSample).toHaveBeenCalledTimes(2);
+    expect(analyticsMocks.trackRendererBacklogSpike).toHaveBeenCalledTimes(1);
+    expect(analyticsMocks.trackForegroundBacklogObserved).toHaveBeenCalledTimes(2);
+    expect(analyticsMocks.trackForegroundBacklogObserved).toHaveBeenNthCalledWith(1, {
+      lane: "workspace",
+      bucket: "over_250ms",
+    });
+    expect(analyticsMocks.trackForegroundBacklogObserved).toHaveBeenNthCalledWith(2, {
+      lane: "workspace",
+      bucket: "over_1000ms",
+    });
+    expect(analyticsMocks.trackFreshnessRecovered).toHaveBeenCalledWith({
+      lane: "workspace",
+      source: "worker_patch",
+      degradedForMs: 2000,
+    });
   });
 });

@@ -1,5 +1,11 @@
-use super::*;
 use serde::Serialize;
+use std::cmp::Ordering;
+use std::collections::HashSet;
+
+use ctx_core::models::{
+    Message, Session, SessionActivityState, SessionEvent, SessionEventType, SessionHeadSnapshot,
+    SessionMetadata, SessionTurn, SessionTurnToolSummary,
+};
 
 pub(super) const ACTIVE_HEAD_TURN_LIMIT: usize = 5;
 pub(super) const ACTIVE_HEAD_MESSAGE_LIMIT: usize = 200;
@@ -67,19 +73,6 @@ pub(super) fn new_head_snapshot(session: &Session) -> SessionHeadSnapshot {
         summary_checkpoint: None,
         head_window: new_head_window(),
     }
-}
-
-pub(super) fn is_primary_session(
-    entry: &WorkspaceActiveSnapshotEntry,
-    session_id: SessionId,
-) -> bool {
-    entry.active_tasks.values().any(|summary| {
-        let primary_id = summary
-            .task
-            .primary_session_id
-            .unwrap_or(summary.primary_session.session.id);
-        primary_id == session_id
-    })
 }
 
 fn is_partial_event(event: &SessionEvent) -> bool {

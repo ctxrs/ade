@@ -2,7 +2,9 @@ use super::trim::{
     should_include_event, strip_snapshot_partials, trim_head_window, upsert_event, upsert_message,
     upsert_turn,
 };
-use super::*;
+use ctx_core::models::{
+    SessionHeadDelta, SessionHeadSnapshot, SessionSnapshotSummary, SessionSummaryDelta,
+};
 
 pub(super) fn apply_session_summary_delta(
     summary: &mut SessionSnapshotSummary,

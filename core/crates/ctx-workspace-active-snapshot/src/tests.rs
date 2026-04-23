@@ -435,7 +435,7 @@ mod delta_tests {
 }
 
 mod replay_tests {
-    use super::super::trim::session_metadata_from_session;
+    use super::super::trim::{new_head_snapshot, session_metadata_from_session};
     use super::super::*;
     use chrono::{TimeZone, Utc};
     use ctx_core::ids::{SessionEventId, TurnId};
@@ -507,6 +507,90 @@ mod replay_tests {
             created_at: now,
             updated_at: now,
         }
+    }
+
+    #[tokio::test]
+    async fn prunes_non_active_compact_heads_before_active_primary_heads() {
+        let hub = WorkspaceActiveSnapshotHub::new_with_session_head_limit(3);
+        let active = replay_session(SessionId::new());
+        let active_head = new_head_snapshot(&active);
+        hub.hydrate_snapshot(
+            active.workspace_id,
+            1,
+            0,
+            vec![replay_task(&active)],
+            vec![active_head],
+        )
+        .await;
+
+        let mut stale_session_ids = Vec::new();
+        for _ in 0..3 {
+            let stale_id = SessionId::new();
+            stale_session_ids.push(stale_id);
+            let mut stale = replay_session(stale_id);
+            stale.workspace_id = active.workspace_id;
+            hub.update_compact_session_head(new_head_snapshot(&stale))
+                .await;
+        }
+
+        let stats = hub.stats().await;
+        assert_eq!(stats.session_heads_count, 3);
+        assert!(
+            hub.get_cached_session_head_for_read(active.id)
+                .await
+                .is_some(),
+            "active primary head should survive pruning",
+        );
+        let mut remaining_stale = 0usize;
+        for session_id in &stale_session_ids {
+            if hub
+                .get_cached_session_head_for_read(*session_id)
+                .await
+                .is_some()
+            {
+                remaining_stale += 1;
+            }
+        }
+        assert_eq!(remaining_stale, 2);
+    }
+
+    #[tokio::test]
+    async fn deleted_primary_heads_become_prunable() {
+        let hub = WorkspaceActiveSnapshotHub::new_with_session_head_limit(2);
+        let active = replay_session(SessionId::new());
+        let active_head = new_head_snapshot(&active);
+        hub.hydrate_snapshot(
+            active.workspace_id,
+            1,
+            0,
+            vec![replay_task(&active)],
+            vec![active_head],
+        )
+        .await;
+
+        tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+        let mut stale_a = replay_session(SessionId::new());
+        stale_a.workspace_id = active.workspace_id;
+        hub.update_compact_session_head(new_head_snapshot(&stale_a))
+            .await;
+
+        hub.publish_active_task_delete(active.workspace_id, active.task_id)
+            .await;
+
+        tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+        let mut stale_b = replay_session(SessionId::new());
+        stale_b.workspace_id = active.workspace_id;
+        hub.update_compact_session_head(new_head_snapshot(&stale_b))
+            .await;
+
+        let stats = hub.stats().await;
+        assert_eq!(stats.session_heads_count, 2);
+        assert!(
+            hub.get_cached_session_head_for_read(active.id)
+                .await
+                .is_none(),
+            "former primary head should be prunable after task removal",
+        );
     }
 
     #[test]

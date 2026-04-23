@@ -24,6 +24,7 @@ import {
   getSessionTranscriptWarmState,
   subscribeSessionTranscriptWarmState,
 } from "../sessionThread/sessionTranscriptWarmState";
+import { planSessionHeadPrefetchTargets } from "./sessionHeadPrefetch";
 
 type IdleHandle = number;
 
@@ -76,6 +77,18 @@ export function useWarmSessionTranscriptRuntimes({
     () => collectWorkspaceActivePrimarySessionIds(workspaceSnapshot),
     [workspaceSnapshot],
   );
+  const retainedSessionIds = useMemo(() => {
+    const backgroundWarmSessionIds = planSessionHeadPrefetchTargets({
+      warmSessionIds: activePrimarySessionIds.filter((sessionId) => sessionId !== activeSessionId),
+    }).targetSessionIds;
+    return Array.from(
+      new Set(
+        [activeSessionId, ...backgroundWarmSessionIds].filter((sessionId): sessionId is string =>
+          typeof sessionId === "string" && sessionId.trim().length > 0,
+        ),
+      ),
+    );
+  }, [activePrimarySessionIds, activeSessionId]);
   const warmState = useSyncExternalStore(
     subscribeSessionTranscriptWarmState,
     getSessionTranscriptWarmState,
@@ -86,8 +99,8 @@ export function useWarmSessionTranscriptRuntimes({
     const warmMode = readPretextPerfQueryFlag("pretextWarmMode") ?? "full";
     incrementPretextPerfCounter("pretext_warm_effect_runs");
     addPretextPerfBucket("pretext_warm_mode", warmMode);
-    pruneWarmWorkbenchThreadViewModelCache(activePrimarySessionIds);
-    pruneSessionPretextRuntimeCache(activePrimarySessionIds);
+    pruneWarmWorkbenchThreadViewModelCache(retainedSessionIds);
+    pruneSessionPretextRuntimeCache(retainedSessionIds);
 
     if (warmState.viewportWidth <= 0) {
       incrementPretextPerfCounter("pretext_warm_skipped_missing_viewport");
@@ -99,7 +112,7 @@ export function useWarmSessionTranscriptRuntimes({
       return;
     }
 
-    const sessionIds = activePrimarySessionIds.filter((sessionId) => sessionId !== activeSessionId);
+    const sessionIds = retainedSessionIds.filter((sessionId) => sessionId !== activeSessionId);
     if (sessionIds.length === 0) {
       incrementPretextPerfCounter("pretext_warm_skipped_no_sessions");
       return;
@@ -208,5 +221,5 @@ export function useWarmSessionTranscriptRuntimes({
         cancelIdle(idleHandle);
       }
     };
-  }, [activePrimarySessionIds, activeSessionId, sessionSnap, warmState]);
+  }, [activeSessionId, retainedSessionIds, sessionSnap, warmState]);
 }

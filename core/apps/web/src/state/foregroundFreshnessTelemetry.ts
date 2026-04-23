@@ -68,6 +68,7 @@ const pendingGapRecoveryTimeouts = new Map<string, ReturnType<typeof globalThis.
 const lastSlaDiagnosticByKey = new Map<string, number>();
 const lastGaugeSampleByMetric = new Map<string, number>();
 const backlogDegradedSinceByLane = new Map<QueueLane, number>();
+const lastBacklogObservedBucketByLane = new Map<QueueLane, ReturnType<typeof backlogBucketForDuration>>();
 const seenInvariantKeys = new Set<string>();
 const desktopStartupState: DesktopStartupState = {
   windowCreatedAtMs: null,
@@ -124,8 +125,31 @@ const maybeEmitGaugeSample = (
   if (!Number.isFinite(value) || value < 0) return;
   const source = typeof context?.source === "string" && context.source.trim() ? context.source : "unknown";
   const currentMs = nowMs();
-  const previousMs = lastGaugeSampleByMetric.get(metric) ?? 0;
-  if (currentMs - previousMs < GAUGE_SAMPLE_INTERVAL_MS && value < thresholdMs) {
+  const isDegraded = value >= thresholdMs;
+  if (isDegraded) {
+    const bucket = backlogBucketForDuration(value);
+    const previousBucket = lastBacklogObservedBucketByLane.get(lane);
+    if (previousBucket !== bucket) {
+      lastBacklogObservedBucketByLane.set(lane, bucket);
+      trackForegroundBacklogObserved({
+        lane,
+        bucket,
+      });
+    }
+  } else {
+    lastBacklogObservedBucketByLane.delete(lane);
+  }
+  if (isDegraded && !backlogDegradedSinceByLane.has(lane)) {
+    backlogDegradedSinceByLane.set(lane, currentMs);
+    trackRendererBacklogSpike({
+      lane,
+      source,
+      ageMs: value,
+      thresholdMs,
+    });
+  }
+  const previousMs = lastGaugeSampleByMetric.get(metric);
+  if (typeof previousMs === "number" && currentMs - previousMs < GAUGE_SAMPLE_INTERVAL_MS) {
     return;
   }
   lastGaugeSampleByMetric.set(metric, currentMs);
@@ -135,20 +159,7 @@ const maybeEmitGaugeSample = (
     source,
     ageMs: value,
   });
-  if (value < thresholdMs) return;
-  if (!backlogDegradedSinceByLane.has(lane)) {
-    backlogDegradedSinceByLane.set(lane, currentMs);
-    trackRendererBacklogSpike({
-      lane,
-      source,
-      ageMs: value,
-      thresholdMs,
-    });
-  }
-  trackForegroundBacklogObserved({
-    lane,
-    bucket: backlogBucketForDuration(value),
-  });
+  if (!isDegraded) return;
   const key = `${metric}:${lane}`;
   if (!shouldEmitSlaDiagnostic(key)) return;
   emitUiDiagnostic({
@@ -450,6 +461,7 @@ export const noteQueueAgeSample = (
     const degradedSince = backlogDegradedSinceByLane.get(lane);
     if (typeof degradedSince === "number") {
       backlogDegradedSinceByLane.delete(lane);
+      lastBacklogObservedBucketByLane.delete(lane);
       const source = typeof context?.source === "string" && context.source.trim() ? context.source : "unknown";
       trackFreshnessRecovered({
         lane,
@@ -598,6 +610,7 @@ export const resetForegroundFreshnessTelemetryForTests = (): void => {
   lastSlaDiagnosticByKey.clear();
   lastGaugeSampleByMetric.clear();
   backlogDegradedSinceByLane.clear();
+  lastBacklogObservedBucketByLane.clear();
   seenInvariantKeys.clear();
   desktopStartupState.windowCreatedAtMs = null;
   desktopStartupState.rendererPingAtMs = null;

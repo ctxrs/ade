@@ -117,38 +117,49 @@ function buildSessionSnapshot(entry: SessionCacheEntry): SessionSupervisorSnapsh
   };
 }
 
-function makeWorkspaceSnapshot(sessionId: string): WorkspaceActiveSnapshotState {
+function buildSessionSnapshotMap(entries: SessionCacheEntry[]): SessionSupervisorSnapshot {
+  return {
+    connection: "connected",
+    sessions: Object.fromEntries(entries.map((entry) => [entry.sessionId, entry])),
+  };
+}
+
+function makeWorkspaceSnapshot(sessionIds: string | string[]): WorkspaceActiveSnapshotState {
+  const normalizedSessionIds = Array.isArray(sessionIds) ? sessionIds : [sessionIds];
   return {
     workspaceId: "workspace-1",
     initialized: true,
     liveSnapshotApplied: true,
     connection: "connected",
-    tasksById: {
-      "task-1": {
-        id: "task-1",
-        task: {
-          id: "task-1",
-          workspace_id: "workspace-1",
-          title: "Task 1",
-          status: "running",
-          created_at: now,
-          updated_at: now,
-          last_activity_at: now,
-          archived_at: null,
-          assistant_seen_at: null,
-          last_assistant_message_at: now,
-          primary_session_id: sessionId,
+    tasksById: Object.fromEntries(
+      normalizedSessionIds.map((sessionId, index) => [
+        `task-${index + 1}`,
+        {
+          id: `task-${index + 1}`,
+          task: {
+            id: `task-${index + 1}`,
+            workspace_id: "workspace-1",
+            title: `Task ${index + 1}`,
+            status: "running",
+            created_at: now,
+            updated_at: now,
+            last_activity_at: now,
+            archived_at: null,
+            assistant_seen_at: null,
+            last_assistant_message_at: now,
+            primary_session_id: sessionId,
+          },
+          sessions: [],
+          primarySessionId: sessionId,
+          primarySessionHead: null,
+          sort_at: now,
+          sortAtMs: Date.parse(now),
         },
-        sessions: [],
-        primarySessionId: sessionId,
-        primarySessionHead: null,
-        sort_at: now,
-        sortAtMs: Date.parse(now),
-      },
-    },
-    activeIds: ["task-1"],
+      ]),
+    ),
+    activeIds: normalizedSessionIds.map((_, index) => `task-${index + 1}`),
     archivedIds: [],
-    totalActive: 1,
+    totalActive: normalizedSessionIds.length,
     totalArchived: 0,
     archivedRev: 0,
     worktreeVcsById: {},
@@ -302,5 +313,42 @@ describe("useWarmSessionTranscriptRuntimes", () => {
 
     expect(replaceItemsSpy).not.toHaveBeenCalled();
     expect(getOrCreateSessionPretextRuntime(sessionId).uiState).toBe(previousUiState);
+  });
+
+  it("limits background warming to the prefetch target budget while retaining the foreground runtime", () => {
+    const foregroundSessionId = "session-foreground";
+    const warmSessionIds = Array.from({ length: 12 }, (_, index) => `session-${index + 1}`);
+    const expectedWarmSessionIds = warmSessionIds.slice(0, 8);
+    const entries = [foregroundSessionId, ...warmSessionIds].map((sessionId) =>
+      buildEntry({
+        sessionId,
+        session: {
+          ...baseSession,
+          id: sessionId,
+          task_id: `task-${sessionId}`,
+        },
+      }),
+    );
+
+    renderHook(() =>
+      useWarmSessionTranscriptRuntimes({
+        workspaceSnapshot: makeWorkspaceSnapshot([foregroundSessionId, ...warmSessionIds]),
+        sessionSnap: buildSessionSnapshotMap(entries),
+        activeSessionId: foregroundSessionId,
+      }),
+    );
+
+    act(() => {
+      vi.advanceTimersByTime(200);
+    });
+
+    expect(pruneWarmWorkbenchThreadViewModelCacheMock).toHaveBeenCalledWith([
+      foregroundSessionId,
+      ...expectedWarmSessionIds,
+    ]);
+    expect(primeWarmWorkbenchThreadViewModelMock).toHaveBeenCalledTimes(8);
+    expect(primeWarmWorkbenchThreadViewModelMock.mock.calls.map(([arg]) => (arg as { sessionId: string }).sessionId)).toEqual(
+      expectedWarmSessionIds,
+    );
   });
 });
