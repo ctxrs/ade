@@ -8,11 +8,16 @@ const {
   waitForDesktopAppReady,
 } = require("./helpers/container_lifecycle.cjs");
 
+const notificationPermissionUser = String(process.env.CTX_AUTOMATION_NOTIFICATION_PERMISSION_USER || "").trim();
+const notificationPermissionHome = String(process.env.CTX_AUTOMATION_NOTIFICATION_PERMISSION_HOME || "").trim();
+
 const permissionSetupMessage = [
   "macOS notification permission for bundle identifier rs.ctx.desktop is not granted.",
-  "Prepare the Mac mini by launching the signed ctx.app once from the desktop session and allowing notifications in the native prompt,",
-  "or grant notifications for ctx in System Settings > Notifications before running ctx-mac-nightly unattended.",
-].join(" ");
+  "Prepare the Mac mini by launching the signed ctx.app once from the same macOS user that runs ctx-mac-nightly and allowing notifications in the native prompt,",
+  "or grant notifications for ctx in System Settings > Notifications for that same user before running ctx-mac-nightly unattended.",
+  notificationPermissionUser ? `Buildkite agent user: ${notificationPermissionUser}.` : "",
+  notificationPermissionHome ? `Buildkite agent home: ${notificationPermissionHome}.` : "",
+].filter(Boolean).join(" ");
 
 const requireTauriValue = async (command, payload = {}) => {
   const response = await tauriInvoke(command, payload);
