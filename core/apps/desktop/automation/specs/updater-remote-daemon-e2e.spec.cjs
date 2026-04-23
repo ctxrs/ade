@@ -1,28 +1,61 @@
-const { execFileSync } = require("child_process");
+const path = require("node:path");
 
-const { waitForTauri } = require("./helpers/tauri.cjs");
 const { resolveBoolishFlag } = require("../../../../scripts/lib/boolish.cjs");
+const { waitForTauri } = require("./helpers/tauri.cjs");
+const { createRemoteContractRecorder, resolveRemoteFixtureEnv } = require("../helpers/remote_fixture_contract.cjs");
+const {
+  REMOTE_HOST,
+  BOOTSTRAP_CHANNEL,
+  TARGET_CHANNEL,
+  bootstrapRemoteDaemon,
+  createBusyRemoteTurn,
+  waitForRemoteTurnTerminal,
+  readRemoteVersion,
+  waitForRemoteVersionChange,
+  readRemoteAutoUpdateStatus,
+} = require("./helpers/remote_updater_proof.cjs");
 
-const REMOTE_HOST = String(
-  process.env.CTX_AUTOMATION_REMOTE_HOST || process.env.CTX_UPDATER_E2E_REMOTE_HOST || "",
+const reportPath = String(
+  process.env.CTX_UPDATER_REMOTE_E2E_REPORT
+  || process.env.CTX_UPDATER_REMOTE_PROOF_REPORT
+  || path.join("/tmp", "ctx-updater-remote-proof.json"),
 ).trim();
-const REMOTE_USER = String(process.env.CTX_AUTOMATION_REMOTE_USER || "root").trim() || "root";
-const REMOTE_PORT = Number.parseInt(String(process.env.CTX_AUTOMATION_REMOTE_PORT || "44099"), 10) || 44099;
-const REMOTE_DATA_DIR = String(process.env.CTX_AUTOMATION_REMOTE_DATA_DIR || "").trim();
-const REMOTE_CTX_BIN = "$HOME/.ctx/bin/ctx";
-const REMOTE_CHANNEL = String(
-  process.env.CTX_UPDATER_E2E_REMOTE_CHANNEL || process.env.RELEASE_CHANNEL || "stable",
-).trim() || "stable";
-const SSH_KEY_PATH = String(
-  process.env.CTX_UPDATER_E2E_SSH_KEY_PATH || process.env.CTX_AUTOMATION_REMOTE_SSH_KEY_PATH || "",
-).trim();
-const EXPECT_VERSION_CHANGE = resolveBoolishFlag(
-  process.env.CTX_UPDATER_E2E_EXPECT_VERSION_CHANGE,
+const runIdle = resolveBoolishFlag(
+  process.env.CTX_UPDATER_REMOTE_PROOF_IDLE,
+  true,
+  "CTX_UPDATER_REMOTE_PROOF_IDLE",
+);
+const runPendingIdle = resolveBoolishFlag(
+  process.env.CTX_UPDATER_REMOTE_PROOF_PENDING_IDLE,
   false,
+  "CTX_UPDATER_REMOTE_PROOF_PENDING_IDLE",
+);
+const runPendingRestartNow = resolveBoolishFlag(
+  process.env.CTX_UPDATER_REMOTE_PROOF_PENDING_RESTART_NOW,
+  false,
+  "CTX_UPDATER_REMOTE_PROOF_PENDING_RESTART_NOW",
+);
+const runIncompatibleReconnect = resolveBoolishFlag(
+  process.env.CTX_UPDATER_REMOTE_PROOF_INCOMPATIBLE_RECONNECT,
+  false,
+  "CTX_UPDATER_REMOTE_PROOF_INCOMPATIBLE_RECONNECT",
+);
+const runNoClientAuto = resolveBoolishFlag(
+  process.env.CTX_UPDATER_REMOTE_PROOF_NO_CLIENT_AUTO,
+  false,
+  "CTX_UPDATER_REMOTE_PROOF_NO_CLIENT_AUTO",
+);
+const requireVersionChange = resolveBoolishFlag(
+  process.env.CTX_UPDATER_E2E_EXPECT_VERSION_CHANGE,
+  true,
   "CTX_UPDATER_E2E_EXPECT_VERSION_CHANGE",
 );
-const SSH_CONFIG_PATH = String(process.env.CTX_AUTOMATION_REMOTE_FIXTURE_SSH_CONFIG || "").trim();
-const SSH_PORT = Number.parseInt(String(process.env.CTX_AUTOMATION_REMOTE_SSH_PORT || "0"), 10) || 0;
+const compatibleBootstrapChannel = String(
+  process.env.CTX_UPDATER_E2E_COMPATIBLE_BOOTSTRAP_CHANNEL || BOOTSTRAP_CHANNEL,
+).trim() || BOOTSTRAP_CHANNEL;
+const incompatibleBootstrapChannel = String(
+  process.env.CTX_UPDATER_E2E_INCOMPATIBLE_BOOTSTRAP_CHANNEL || BOOTSTRAP_CHANNEL,
+).trim() || BOOTSTRAP_CHANNEL;
 
 const tauriInvoke = async (command, args) => {
   let result;
@@ -49,93 +82,300 @@ const tauriInvoke = async (command, args) => {
   return { value: result ? result.value : undefined };
 };
 
-const remoteSsh = (command) => {
-  const target = `${REMOTE_USER}@${REMOTE_HOST}`;
-  const args = [
-    "-o",
-    "BatchMode=yes",
-    "-o",
-    "StrictHostKeyChecking=no",
-    "-o",
-    "UserKnownHostsFile=/dev/null",
-    "-o",
-    "ConnectTimeout=10",
-  ];
-  if (SSH_CONFIG_PATH) {
-    args.unshift(SSH_CONFIG_PATH);
-    args.unshift("-F");
-  } else {
-    args.unshift("/dev/null");
-    args.unshift("-F");
+const remoteFixture = () => resolveRemoteFixtureEnv({ lane: "host" });
+
+const connectDesktop = async () => {
+  const fixture = remoteFixture();
+  const response = await tauriInvoke("desktop_connect_ssh", {
+    req: {
+      host: REMOTE_HOST,
+      user: fixture.user || "root",
+      remote_port: fixture.port || undefined,
+      start_remote: true,
+      remote_data_dir: fixture.dataDir || undefined,
+    },
+  });
+  if (response.error) {
+    throw new Error(`desktop_connect_ssh failed: ${response.error}`);
   }
-  if (SSH_PORT > 0) {
-    args.push("-p", String(SSH_PORT));
-  }
-  if (SSH_KEY_PATH) {
-    args.unshift(SSH_KEY_PATH);
-    args.unshift("-i");
-  }
-  args.push(target, command);
-  return String(execFileSync("ssh", args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }) || "").trim();
+  return response.value || {};
 };
 
-const remoteVersion = () => {
-  const cmd = `if [ -x ${REMOTE_CTX_BIN} ]; then ${REMOTE_CTX_BIN} --version; else echo missing; fi`;
-  return remoteSsh(`sh -lc ${JSON.stringify(cmd)}`);
+const disconnectDesktop = async () => {
+  const response = await tauriInvoke("desktop_disconnect", {});
+  if (response.error) {
+    throw new Error(`desktop_disconnect failed: ${response.error}`);
+  }
+  return response.value || {};
 };
+
+const getConnection = async () => {
+  const response = await tauriInvoke("desktop_get_connection", {});
+  if (response.error) {
+    throw new Error(`desktop_get_connection failed: ${response.error}`);
+  }
+  return response.value || {};
+};
+
+const updateRemoteNow = async () => {
+  const response = await tauriInvoke("desktop_update_remote_daemon", {
+    req: {
+      confirm: true,
+      channel: TARGET_CHANNEL,
+    },
+  });
+  if (response.error) {
+    throw new Error(`desktop_update_remote_daemon failed: ${response.error}`);
+  }
+  return response.value || {};
+};
+
+const assertTurnStatus = (turn, allowedStatuses, scenario) => {
+  const status = String(turn?.status || "").toLowerCase();
+  if (!allowedStatuses.includes(status)) {
+    throw new Error(
+      `${scenario} expected terminal turn status ${allowedStatuses.join(" or ")}, got ${status || "<empty>"}`,
+    );
+  }
+};
+
+const waitForConnection = async (predicate, label, timeoutMs = 180000) => {
+  const started = Date.now();
+  let info = await getConnection();
+  while (Date.now() - started < timeoutMs) {
+    if (predicate(info)) {
+      return info;
+    }
+    await browser.pause(1000);
+    info = await getConnection();
+  }
+  throw new Error(`${label} timed out: ${JSON.stringify(info)}`);
+};
+
+const recordPass = (recorder, id, message) => recorder.recordAssertion(id, "pass", message);
 
 describe("updater remote daemon e2e", () => {
-  before(function () {
+  before(function beforeSuite() {
     if (!REMOTE_HOST) {
       this.skip();
     }
   });
 
-  it("connects over SSH, updates remote daemon, and remains connected", async () => {
+  it("proves real remote daemon update flows across configured scenarios", async () => {
     await browser.url("tauri://localhost/workspaces");
     await waitForTauri();
 
-    const beforeVersion = remoteVersion();
-
-    const connectResp = await tauriInvoke("desktop_connect_ssh", {
-      req: {
-        host: REMOTE_HOST,
-        user: REMOTE_USER,
-        remote_port: REMOTE_PORT,
-        start_remote: true,
-        remote_data_dir: REMOTE_DATA_DIR || undefined,
-      },
+    const fixture = remoteFixture();
+    const recorder = createRemoteContractRecorder({
+      outputPath: reportPath,
+      suite: "updater-remote-daemon-e2e",
+      lane: "remote-host",
+      fixture,
+      secretValues: [process.env.OPENROUTER_API_KEY || ""],
     });
-    if (connectResp.error) {
-      throw new Error(`desktop_connect_ssh failed: ${connectResp.error}`);
-    }
+    const executed = [];
+    const finalize = ({ result, reason, error = "" }) =>
+      recorder.finalize({
+        result,
+        reason,
+        error,
+        extras: {
+          bootstrap_channel: BOOTSTRAP_CHANNEL,
+          compatible_bootstrap_channel: compatibleBootstrapChannel,
+          incompatible_bootstrap_channel: incompatibleBootstrapChannel,
+          target_channel: TARGET_CHANNEL,
+          scenarios: executed,
+        },
+      });
 
-    const updateResp = await tauriInvoke("desktop_update_remote_daemon", {
-      req: {
-        confirm: true,
-        channel: REMOTE_CHANNEL,
-      },
-    });
-    if (updateResp.error) {
-      throw new Error(`desktop_update_remote_daemon failed: ${updateResp.error}`);
-    }
+    try {
+      if (runIdle) {
+        const bootstrap = await bootstrapRemoteDaemon({
+          bootstrapChannel: incompatibleBootstrapChannel,
+          updateChannel: TARGET_CHANNEL,
+        });
+        const beforeVersion = readRemoteVersion();
+        const connect = await connectDesktop();
+        recorder.recordArtifact("idle_connect_response", connect);
+        const afterVersion = requireVersionChange
+          ? await waitForRemoteVersionChange(beforeVersion)
+          : readRemoteVersion();
+        const info = await waitForConnection((candidate) => String(candidate?.kind || "").toLowerCase() === "ssh", "ssh reconnect");
+        recorder.recordArtifact("idle_connection_info", info);
+        recorder.recordArtifact("idle_bootstrap", bootstrap);
+        recordPass(
+          recorder,
+          "idle_remote_update",
+          `remote daemon updated on connect from ${beforeVersion} to ${afterVersion}`,
+        );
+        executed.push({
+          scenario: "idle_connect_update",
+          before_version: beforeVersion,
+          after_version: afterVersion,
+        });
+        await disconnectDesktop();
+      }
 
-    const connectionResp = await tauriInvoke("desktop_get_connection", {});
-    if (connectionResp.error) {
-      throw new Error(`desktop_get_connection failed: ${connectionResp.error}`);
-    }
-    const kind = String(connectionResp.value?.kind || "").toLowerCase();
-    if (kind !== "ssh") {
-      throw new Error(`expected ssh connection after remote update, got ${JSON.stringify(connectionResp.value)}`);
-    }
+      if (runPendingIdle) {
+        const bootstrap = await bootstrapRemoteDaemon({
+          bootstrapChannel: compatibleBootstrapChannel,
+          updateChannel: TARGET_CHANNEL,
+        });
+        const beforeVersion = readRemoteVersion();
+        const busyTurn = await createBusyRemoteTurn({ label: "pending-idle", providerId: "qwen" });
+        await connectDesktop();
+        const pendingInfo = await waitForConnection(
+          (info) => String(info?.remote_update_state || "").toLowerCase() === "pending",
+          "pending remote update state after busy connect",
+        );
+        recorder.recordArtifact("pending_idle_connection_info", pendingInfo);
+        const terminalTurn = await waitForRemoteTurnTerminal({
+          token: busyTurn.token,
+          sessionId: busyTurn.session_id,
+        });
+        assertTurnStatus(terminalTurn, ["completed"], "pending restart-on-idle");
+        const afterVersion = requireVersionChange
+          ? await waitForRemoteVersionChange(beforeVersion)
+          : readRemoteVersion();
+        const settledInfo = await waitForConnection(
+          (info) => !String(info?.remote_update_state || "").trim(),
+          "pending remote update state clear",
+        );
+        recorder.recordArtifact("pending_idle_turn_terminal", terminalTurn);
+        recorder.recordArtifact("pending_idle_connection_settled", settledInfo);
+        recorder.recordArtifact("pending_idle_bootstrap", bootstrap);
+        recordPass(
+          recorder,
+          "pending_remote_update_restart_on_idle",
+          `remote daemon waited for idle and updated from ${beforeVersion} to ${afterVersion}`,
+        );
+        executed.push({
+          scenario: "pending_restart_on_idle",
+          before_version: beforeVersion,
+          after_version: afterVersion,
+          terminal_status: terminalTurn.status,
+        });
+        await disconnectDesktop();
+      }
 
-    const afterVersion = remoteVersion();
-    if (EXPECT_VERSION_CHANGE && beforeVersion === afterVersion) {
-      throw new Error(`expected remote version change but remained '${beforeVersion}'`);
-    }
+      if (runPendingRestartNow) {
+        const bootstrap = await bootstrapRemoteDaemon({
+          bootstrapChannel: compatibleBootstrapChannel,
+          updateChannel: TARGET_CHANNEL,
+        });
+        const beforeVersion = readRemoteVersion();
+        const busyTurn = await createBusyRemoteTurn({ label: "pending-restart-now", providerId: "qwen" });
+        await connectDesktop();
+        const pendingInfo = await waitForConnection(
+          (info) => String(info?.remote_update_state || "").toLowerCase() === "pending",
+          "pending remote update state before restart now",
+        );
+        recorder.recordArtifact("pending_restart_now_connection_info", pendingInfo);
+        const restartNowResp = await updateRemoteNow();
+        const afterVersion = requireVersionChange
+          ? await waitForRemoteVersionChange(beforeVersion)
+          : readRemoteVersion();
+        const terminalTurn = await waitForRemoteTurnTerminal({
+          token: busyTurn.token,
+          sessionId: busyTurn.session_id,
+        });
+        assertTurnStatus(terminalTurn, ["failed", "cancelled"], "pending restart-now");
+        const settledInfo = await waitForConnection(
+          (info) => !String(info?.remote_update_state || "").trim(),
+          "pending remote update state clear after restart now",
+        );
+        recorder.recordArtifact("pending_restart_now_response", restartNowResp);
+        recorder.recordArtifact("pending_restart_now_turn_terminal", terminalTurn);
+        recorder.recordArtifact("pending_restart_now_connection_settled", settledInfo);
+        recorder.recordArtifact("pending_restart_now_bootstrap", bootstrap);
+        recordPass(
+          recorder,
+          "pending_remote_update_restart_now",
+          `restart now interrupted active work and updated remote daemon from ${beforeVersion} to ${afterVersion}`,
+        );
+        executed.push({
+          scenario: "pending_restart_now",
+          before_version: beforeVersion,
+          after_version: afterVersion,
+          terminal_status: terminalTurn.status,
+        });
+        await disconnectDesktop();
+      }
 
-    if (!/updated/i.test(String(updateResp.value?.message || ""))) {
-      throw new Error(`unexpected update response: ${JSON.stringify(updateResp.value)}`);
+      if (runIncompatibleReconnect) {
+        const bootstrap = await bootstrapRemoteDaemon({
+          bootstrapChannel: incompatibleBootstrapChannel,
+          updateChannel: TARGET_CHANNEL,
+        });
+        const beforeVersion = readRemoteVersion();
+        const busyTurn = await createBusyRemoteTurn({ label: "incompatible-reconnect", providerId: "qwen" });
+        await connectDesktop();
+        await browser.pause(2000);
+        const maybePending = await getConnection();
+        if (String(maybePending?.remote_update_state || "").toLowerCase() === "pending") {
+          throw new Error(
+            `expected incompatible reconnect to restart immediately, but got pending state: ${JSON.stringify(maybePending)}`,
+          );
+        }
+        const afterVersion = requireVersionChange
+          ? await waitForRemoteVersionChange(beforeVersion)
+          : readRemoteVersion();
+        const terminalTurn = await waitForRemoteTurnTerminal({
+          token: busyTurn.token,
+          sessionId: busyTurn.session_id,
+        });
+        assertTurnStatus(terminalTurn, ["failed", "cancelled"], "incompatible reconnect");
+        recorder.recordArtifact("incompatible_reconnect_turn_terminal", terminalTurn);
+        recorder.recordArtifact("incompatible_reconnect_bootstrap", bootstrap);
+        recordPass(
+          recorder,
+          "incompatible_remote_reconnect_restart_immediate",
+          `incompatible reconnect restarted remote daemon immediately from ${beforeVersion} to ${afterVersion}`,
+        );
+        executed.push({
+          scenario: "incompatible_reconnect_immediate_restart",
+          before_version: beforeVersion,
+          after_version: afterVersion,
+          terminal_status: terminalTurn.status,
+        });
+        await disconnectDesktop();
+      }
+
+      if (runNoClientAuto) {
+        const bootstrap = await bootstrapRemoteDaemon({
+          bootstrapChannel: incompatibleBootstrapChannel,
+          updateChannel: TARGET_CHANNEL,
+        });
+        const beforeVersion = readRemoteVersion();
+        const afterVersion = requireVersionChange
+          ? await waitForRemoteVersionChange(beforeVersion, { timeoutMs: 240000, intervalMs: 2000 })
+          : readRemoteVersion();
+        const status = readRemoteAutoUpdateStatus();
+        recorder.recordArtifact("no_client_auto_status", status);
+        recorder.recordArtifact("no_client_auto_bootstrap", bootstrap);
+        recordPass(
+          recorder,
+          "no_client_remote_auto_update",
+          `daemon-owned updater advanced remote daemon from ${beforeVersion} to ${afterVersion}`,
+        );
+        executed.push({
+          scenario: "no_client_auto_update",
+          before_version: beforeVersion,
+          after_version: afterVersion,
+        });
+      }
+
+      finalize({
+        result: "passed",
+        reason: "remote daemon updater proof passed",
+      });
+    } catch (error) {
+      finalize({
+        result: "failed",
+        reason: "remote daemon updater proof failed",
+        error: String(error),
+      });
+      throw error;
     }
   });
 });

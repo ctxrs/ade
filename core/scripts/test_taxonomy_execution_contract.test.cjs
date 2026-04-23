@@ -269,7 +269,11 @@ test("nightly helper profiles keep the scheduled nightly slices Linux-only and b
 test("release publish-mode profiles stay on the artifact-only finalize boundary", () => {
   assert.deepEqual(
     buildExecutionPlan({ profileId: "canary-proof", touchedOnly: false, changedFiles: [] }).commands,
-    ["bash ../scripts/buildkite/run_release_finalize.sh"],
+    [
+      "bash ../scripts/buildkite/run_release_finalize.sh",
+      "bash ../scripts/tests/updater_linux_release_truth.sh",
+      "bash ../scripts/tests/updater_remote_daemon_e2e.sh",
+    ],
   );
   assert.deepEqual(
     buildExecutionPlan({ profileId: "stable-promotion", touchedOnly: false, changedFiles: [] }).commands,

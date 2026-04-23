@@ -15,7 +15,9 @@ const REMOTE_REAL_CI_WRAPPER = path.join(ROOT, "scripts", "test_remote_real_ci.s
 const REMOTE_DOCKER_WRAPPER = path.join(ROOT, "scripts", "test_remote_docker_contracts.sh");
 const DESKTOP_SMOKE_WRAPPER = path.join(REPO_ROOT, "scripts", "desktop_smoke_with_infisical.sh");
 const LINUX_LOCAL_TRUTH_WRAPPER = path.join(REPO_ROOT, "scripts", "tests", "linux_local_install_sandbox_release_truth.sh");
+const UPDATER_LINUX_PROOF_WRAPPER = path.join(REPO_ROOT, "scripts", "tests", "updater_linux_release_truth.sh");
 const MAC_REMOTE_TRUTH_WRAPPER = path.join(REPO_ROOT, "scripts", "tests", "macos_remote_ubuntu_sandbox_release_truth.sh");
+const UPDATER_REMOTE_WRAPPER = path.join(REPO_ROOT, "scripts", "tests", "updater_remote_daemon_e2e.sh");
 
 test("production desktop build keeps automation runtime available", () => {
   const cargo = fs.readFileSync(TAURI_CARGO, "utf8");
@@ -70,6 +72,59 @@ test("updater native smoke script opts out of container scenario defaults", () =
   );
 });
 
+test("updater remote script runs through the shipped-app desktop smoke wrapper", () => {
+  const pkg = JSON.parse(fs.readFileSync(PACKAGE_JSON, "utf8"));
+  const script = String(pkg.scripts["test:automation:updater-remote"] || "");
+  assert.match(
+    script,
+    /CTX_AUTOMATION_SCENARIOS=\$\{CTX_AUTOMATION_SCENARIOS:-updater-remote\}/,
+  );
+  assert.match(
+    script,
+    /CTX_AUTOMATION_SKIP_DESKTOP_PREP_RELEASE=\$\{CTX_AUTOMATION_SKIP_DESKTOP_PREP_RELEASE:-1\}/,
+  );
+  assert.match(
+    script,
+    /\.\.\/\.\.\/\.\.\/scripts\/desktop_smoke_with_infisical\.sh -- --spec automation\/specs\/updater-remote-daemon-e2e\.spec\.cjs/,
+  );
+});
+
+test("updater remote wrapper uses shipped app without source-side provisioning", () => {
+  const script = fs.readFileSync(UPDATER_REMOTE_WRAPPER, "utf8");
+  assert.match(script, /updater_e2e_remote_matrix\.sh" run -- bash/);
+  assert.match(script, /CTX_UPDATER_E2E_SSH_KEY_PATH\/CTX_AUTOMATION_REMOTE_SSH_KEY_PATH is required/);
+  assert.match(script, /RELEASE_STORAGE_CHANNEL:-\$\{RELEASE_CHANNEL:-stable\}/);
+  assert.match(script, /download_published_controller_app\(\)/);
+  assert.match(script, /latest manifest missing linux-x64 AppImage artifact/);
+  assert.match(script, /sha256sum -c -/);
+  assert.match(script, /CTX_UPDATER_E2E_EXPECT_VERSION_CHANGE="\$\{CTX_UPDATER_E2E_EXPECT_VERSION_CHANGE:-1\}"/);
+  assert.match(script, /CTX_AUTOMATION_SHIPPED_APP="\$\{CTX_AUTOMATION_SHIPPED_APP:-1\}"/);
+  assert.match(script, /CTX_AUTOMATION_SKIP_APP_BUILD="\$\{CTX_AUTOMATION_SKIP_APP_BUILD:-1\}"/);
+  assert.match(script, /CTX_AUTOMATION_SKIP_REMOTE_CTX_PROVISION="\$\{CTX_AUTOMATION_SKIP_REMOTE_CTX_PROVISION:-1\}"/);
+  assert.match(script, /unset CTX_BUNDLE_DIR/);
+});
+
+test("updater Linux proof targets storage channel for stable dry-run proofs", () => {
+  const script = fs.readFileSync(UPDATER_LINUX_PROOF_WRAPPER, "utf8");
+  assert.match(script, /TARGET_CHANNEL="\$\{CTX_UPDATER_LINUX_PROOF_TARGET_CHANNEL:-\$\{RELEASE_STORAGE_CHANNEL:-\$\{RELEASE_CHANNEL:-e2e\}\}\}"/);
+});
+
+test("desktop smoke cleanup unmounts AppImage FUSE mounts even when logs are preserved", () => {
+  const script = fs.readFileSync(DESKTOP_SMOKE_WRAPPER, "utf8");
+  const cleanupStart = script.indexOf("cleanup_automation_tmpdir()");
+  const findmnt = script.indexOf("findmnt -rn -o TARGET", cleanupStart);
+  const fusermount = script.indexOf("fusermount3 -u", cleanupStart);
+  const keepTmp = script.indexOf("CTX_AUTOMATION_KEEP_TMPDIR", cleanupStart);
+  assert.notEqual(cleanupStart, -1);
+  assert.notEqual(findmnt, -1);
+  assert.notEqual(fusermount, -1);
+  assert.notEqual(keepTmp, -1);
+  assert.ok(
+    findmnt < keepTmp,
+    "FUSE unmount must run before keep-tmpdir returns",
+  );
+});
+
 test("mac WDIO automation targets the app executable and performs a real session readiness probe", () => {
   const wdio = fs.readFileSync(WDIO_CONF, "utf8");
   assert.match(wdio, /const resolveWdioApplicationPath = \(appPath\) => \{/);
@@ -101,6 +156,15 @@ test("desktop smoke wrapper preserves CrabNebula backend and driver logs by defa
   assert.match(wrapper, /CTX_AUTOMATION_CN_DRIVER_LOG="\$\{CTX_AUTOMATION_CN_DRIVER_LOG:-\$\{DEFAULT_CN_DRIVER_LOG\}\}"/);
   assert.match(wrapper, /\[desktop-smoke\] CrabNebula backend log: \$\{CTX_AUTOMATION_CN_BACKEND_LOG\}/);
   assert.match(wrapper, /\[desktop-smoke\] CrabNebula driver log: \$\{CTX_AUTOMATION_CN_DRIVER_LOG\}/);
+});
+
+test("desktop smoke wrapper unmounts Linux AppImage FUSE mounts before temp cleanup", () => {
+  const wrapper = fs.readFileSync(DESKTOP_SMOKE_WRAPPER, "utf8");
+  assert.match(wrapper, /command -v findmnt >\/dev\/null 2>&1/);
+  assert.match(wrapper, /findmnt -rn -o TARGET 2>\/dev\/null \| sort -r/);
+  assert.match(wrapper, /fusermount3 -u "\$\{mount_target\}"/);
+  assert.match(wrapper, /umount -l "\$\{mount_target\}"/);
+  assert.match(wrapper, /"\$\{mount_target\}" != "\$\{AUTOMATION_TMPDIR\}\/"\*/);
 });
 
 test("remote real CI wrapper forwards the shared cargo target dir into both WDIO lanes", () => {

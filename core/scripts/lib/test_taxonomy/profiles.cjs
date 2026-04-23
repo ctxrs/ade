@@ -350,6 +350,32 @@ const PROFILES = [
     ],
   },
   {
+    id: "release-updater-proof",
+    title: "Release Updater Proof",
+    purpose: "Prove published Linux app-update and remote-daemon update behavior against real artifacts and real services.",
+    selector: {
+      includeEntryIds: [
+        "updates-release.updater-linux-proof",
+        "updates-release.updater-remote-daemon-proof",
+      ],
+      includeSurfaces: ["promotion"],
+      includeWorlds: ["external-service"],
+      includeCosts: ["slow"],
+      includeStabilities: ["stable"],
+      includeExecutions: ["artifact-tail"],
+      excludeRequirements: ["mac", "single-mac"],
+    },
+    currentCommands: [
+      "pnpm -C core testing:profile:run --profile release-updater-proof",
+    ],
+    pipelines: ["buildbuddy-manual"],
+    remoteStrategy: "Run this on real Linux hosts against published artifacts; local bundle smoke and mocked updater UI are not substitutes for install/update truth.",
+    currentExecution: "Direct profile for the real Linux updater proof lanes that canary-proof also consumes automatically through the promotion/external-service selector.",
+    expansionRules: [
+      "Keep these lanes artifact-first and real-host; do not rewrite them as hermetic mocks or pre-publish source-tree checks.",
+    ],
+  },
+  {
     id: "release-stage-linux-x64",
     title: "Release Stage Linux X64",
     purpose: "Build the linux-x64 release stage archive and publish it as the step artifact boundary.",
@@ -566,6 +592,32 @@ const PROFILES = [
     currentExecution: "Canonical scheduled nightly breadth union; the checked-in nightly pipeline fans this explicit profile out into anomaly and fuzz slices plus separate benchmark evidence.",
     expansionRules: [
       "Quarantined Mac and live-provider checks are excluded from this profile.",
+    ],
+  },
+  {
+    id: "nightly-updater-proof",
+    title: "Nightly Updater Proof",
+    purpose: "Run scheduled Linux updater proof against published artifacts outside the landing loop.",
+    selector: {
+      includeEntryIds: [
+        "updates-release.updater-linux-proof",
+        "updates-release.updater-remote-daemon-proof",
+      ],
+      includeSurfaces: ["promotion"],
+      includeWorlds: ["external-service"],
+      includeCosts: ["slow"],
+      includeStabilities: ["stable"],
+      includeExecutions: ["artifact-tail"],
+      excludeRequirements: ["mac", "single-mac"],
+    },
+    currentCommands: [
+      "pnpm -C core testing:profile:run --profile nightly-updater-proof",
+    ],
+    pipelines: ["ctx-nightly"],
+    remoteStrategy: "Run on Linux using published artifacts, real providers, and live SSH hosts.",
+    currentExecution: "Scheduled updater proof uses external services and is separate from nightly-breadth.",
+    expansionRules: [
+      "This external-service updater profile is separate from the hermetic and simulated nightly-breadth checks.",
     ],
   },
   {

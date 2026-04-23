@@ -55,6 +55,20 @@ cleanup_automation_tmpdir() {
   if [[ "${AUTOMATION_TMPDIR_CREATED}" != "1" ]]; then
     return
   fi
+  if [[ "$(uname -s)" == "Linux" ]] && command -v findmnt >/dev/null 2>&1; then
+    findmnt -rn -o TARGET 2>/dev/null | sort -r | while IFS= read -r mount_target; do
+      if [[ "${mount_target}" != "${AUTOMATION_TMPDIR}" && "${mount_target}" != "${AUTOMATION_TMPDIR}/"* ]]; then
+        continue
+      fi
+      echo "[desktop-smoke] unmounting automation tmpdir mount ${mount_target}" >&2
+      if command -v fusermount3 >/dev/null 2>&1; then
+        fusermount3 -u "${mount_target}" >/dev/null 2>&1 || true
+      fi
+      if findmnt -rn --target "${mount_target}" >/dev/null 2>&1; then
+        umount -l "${mount_target}" >/dev/null 2>&1 || true
+      fi
+    done
+  fi
   if [[ "${CTX_AUTOMATION_KEEP_TMPDIR:-0}" == "1" ]]; then
     echo "[desktop-smoke] preserving automation tmpdir ${AUTOMATION_TMPDIR}" >&2
     return

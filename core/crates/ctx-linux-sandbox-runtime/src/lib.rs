@@ -545,7 +545,7 @@ pub async fn stage_linux_sandbox_runtime_downloads(
 
 fn activation_args(data_root: &Path, user_name: &str) -> Vec<String> {
     vec![
-        "/bin/sh".to_string(),
+        "bash".to_string(),
         "-s".to_string(),
         "--".to_string(),
         "activate".to_string(),
@@ -827,6 +827,15 @@ mod tests {
         assert!(is_posix_safe_username("ctx-user_01"));
         assert!(!is_posix_safe_username("ctx user"));
         assert!(!is_posix_safe_username("ctx$(rm -rf /)"));
+    }
+
+    #[test]
+    fn activation_args_execute_bootstrap_payload_with_bash() {
+        let args = activation_args(Path::new("/tmp/ctx-data"), "ctx-user");
+        assert_eq!(args[0], "bash");
+        assert_eq!(args[1], "-s");
+        assert_eq!(args[2], "--");
+        assert_eq!(args[3], "activate");
     }
 
     #[test]

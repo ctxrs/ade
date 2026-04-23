@@ -21,7 +21,7 @@
     "test:automation:remote-contracts:docker": "bash scripts/test_remote_docker_contracts.sh",
     "test:automation:remote-bootstrap:matrix": "scripts/test_remote_bootstrap_auth_matrix.sh",
     "test:automation:updater-mismatch": "wdio run automation/wdio.conf.cjs --spec automation/specs/updater-mismatch-confirmation.spec.cjs",
-    "test:automation:updater-remote": "CTX_AUTOMATION_SCENARIOS=${CTX_AUTOMATION_SCENARIOS:-updater-remote} wdio run automation/wdio.conf.cjs --spec automation/specs/updater-remote-daemon-e2e.spec.cjs"
+    "test:automation:updater-remote": "CTX_AUTOMATION_SCENARIOS=${CTX_AUTOMATION_SCENARIOS:-updater-remote} CTX_AUTOMATION_SKIP_DESKTOP_PREP_RELEASE=${CTX_AUTOMATION_SKIP_DESKTOP_PREP_RELEASE:-1} ../../../scripts/desktop_smoke_with_infisical.sh -- --spec automation/specs/updater-remote-daemon-e2e.spec.cjs"
   },
   "devDependencies": {
     "@crabnebula/tauri-driver": "2.0.8",

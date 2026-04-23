@@ -6,7 +6,8 @@ usage() {
 Usage:
   scripts/release_runtime_install_smoke.sh \
     --daemon-bin <path-to-ctx-daemon-binary> \
-    --app <path-to-ctx.app> \
+    [--app <path-to-desktop-app-root>] \
+    [--bundle-dir <path-to-bundles-dir>] \
     [--provider <provider-id>] \
     [--all-providers] \
     [--complete] \
@@ -16,6 +17,7 @@ Usage:
 
 Notes:
   - Starts daemon with a fresh data dir and staged bundle resources.
+  - `--app` supports macOS `.app` roots and extracted Linux AppImage roots.
   - Verifies runtime install endpoint can start an install and accept cancel by default.
   - With --complete, waits for the selected provider install to complete successfully.
   - With --all-providers, waits for every install-supported provider to complete successfully.
@@ -25,6 +27,7 @@ USAGE
 
 daemon_bin=""
 app_path=""
+bundle_dir=""
 provider_id="codex"
 install_target="host"
 bind_addr=""
@@ -40,6 +43,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --app)
       app_path="${2:-}"
+      shift 2
+      ;;
+    --bundle-dir)
+      bundle_dir="${2:-}"
       shift 2
       ;;
     --provider)
@@ -79,8 +86,14 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ -z "$daemon_bin" || -z "$app_path" ]]; then
-  echo "error: --daemon-bin and --app are required" >&2
+if [[ -z "$daemon_bin" ]]; then
+  echo "error: --daemon-bin is required" >&2
+  usage
+  exit 1
+fi
+
+if [[ -z "$app_path" && -z "$bundle_dir" ]]; then
+  echo "error: either --app or --bundle-dir is required" >&2
   usage
   exit 1
 fi
@@ -99,9 +112,21 @@ if [[ ! -x "$daemon_bin" ]]; then
   exit 1
 fi
 
-bundle_dir="$app_path/Contents/Resources/bundles"
+if [[ -z "$bundle_dir" ]]; then
+  if [[ -d "$app_path/Contents/Resources/bundles" ]]; then
+    bundle_dir="$app_path/Contents/Resources/bundles"
+  elif [[ -d "$app_path/usr/lib/ctx/bundles" ]]; then
+    bundle_dir="$app_path/usr/lib/ctx/bundles"
+  elif [[ -d "$app_path/bundles" ]]; then
+    bundle_dir="$app_path/bundles"
+  else
+    echo "error: could not resolve bundles dir from app root: $app_path" >&2
+    exit 1
+  fi
+fi
+
 if [[ ! -d "$bundle_dir" ]]; then
-  echo "error: missing bundles dir in app: $bundle_dir" >&2
+  echo "error: missing bundles dir: $bundle_dir" >&2
   exit 1
 fi
 

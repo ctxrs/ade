@@ -388,6 +388,7 @@ const CTX_HTTP_SUITES = [
     testFiles: [
       "openai_responses_sse_stub",
       "release_manifest_corpus",
+      "updates_appimage_apply_safety",
       "updates_failure_safety_checksum_mismatch",
       "updates_failure_safety_interrupted_transfer",
       "updates_failure_safety_manifest_parse",
