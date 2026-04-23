@@ -71,8 +71,14 @@ sh_binary(
 
 sh_binary(
     name = "desktop_provider_matrix_archive_contracts",
-    srcs = ["//tools/bazel:run_workspace_task.sh"],
-    args = ["core", "node", "--test", "scripts/provider_matrix_archive_gap_report.test.cjs", "scripts/provider_matrix_required_targets_gate.test.cjs", "scripts/provider_release_bump.test.cjs"],
+    srcs = ["//tools/bazel:run_node_task.sh"],
+    args = [
+        "core",
+        "--test",
+        "scripts/provider_matrix_archive_gap_report.test.cjs",
+        "scripts/provider_matrix_required_targets_gate.test.cjs",
+        "scripts/provider_release_bump.test.cjs",
+    ],
     data = DESKTOP_PARITY_CONTRACT_DATA,
 )
 
@@ -99,8 +105,8 @@ sh_binary(
 
 sh_binary(
     name = "desktop_e2e_preflight_contracts",
-    srcs = ["//tools/bazel:run_workspace_task.sh"],
-    args = ["core", "node", "--test", "scripts/desktop_e2e_preflight.test.cjs"],
+    srcs = ["//tools/bazel:run_node_task.sh"],
+    args = ["core", "--test", "scripts/desktop_e2e_preflight.test.cjs"],
     data = DESKTOP_PARITY_CONTRACT_DATA,
 )
 
@@ -113,23 +119,23 @@ sh_binary(
 
 sh_binary(
     name = "providers_e2e_bundle_contracts",
-    srcs = ["//tools/bazel:run_workspace_task.sh"],
-    args = ["core", "node", "--test", "scripts/providers_e2e_bundle_isolation.test.cjs"],
+    srcs = ["//tools/bazel:run_node_task.sh"],
+    args = ["core", "--test", "scripts/providers_e2e_bundle_isolation.test.cjs"],
     data = DESKTOP_PARITY_CONTRACT_DATA,
 )
 
 sh_binary(
     name = "linux_arm_provider_contracts",
-    srcs = ["//tools/bazel:run_workspace_task.sh"],
-    args = ["core", "node", "--test", "scripts/linux_arm_provider_reliability_matrix.test.cjs", "scripts/linux_arm_provider_preflight.test.cjs", "scripts/linux_arm_provider_report_summary.test.cjs", "scripts/linux_arm_provider_release_gate.test.cjs"],
+    srcs = ["//tools/bazel:run_node_task.sh"],
+    args = ["core", "--test", "scripts/linux_arm_provider_reliability_matrix.test.cjs", "scripts/linux_arm_provider_preflight.test.cjs", "scripts/linux_arm_provider_report_summary.test.cjs", "scripts/linux_arm_provider_release_gate.test.cjs"],
     data = DESKTOP_PARITY_CONTRACT_DATA,
 )
 
 
 sh_binary(
     name = "tauri_tools_lock_contracts",
-    srcs = ["//tools/bazel:run_workspace_task.sh"],
-    args = ["core", "node", "--test", "scripts/tauri_tools_lock_contract.test.cjs"],
+    srcs = ["//tools/bazel:run_node_task.sh"],
+    args = ["core", "--test", "scripts/tauri_tools_lock_contract.test.cjs"],
     data = DESKTOP_PARITY_CONTRACT_DATA,
 )
 

@@ -176,4 +176,53 @@ test("deterministic Linux contract gates route through Bazel-owned contract entr
     /args = \["core", "--test", "scripts\/desktop_import_bundles\.test\.cjs", "scripts\/desktop_normalize_bundle_permissions\.test\.cjs", "scripts\/desktop_icon_reps\.test\.cjs"\]/,
   );
   assert.doesNotMatch(bundleContracts, /run_workspace_task\.sh/);
+
+  const providerMatrixArchiveContracts = readTargetBlock("desktop_provider_matrix_archive_contracts");
+  assert.match(providerMatrixArchiveContracts, /srcs = \["\/\/tools\/bazel:run_node_task\.sh"\]/);
+  assert.match(
+    providerMatrixArchiveContracts,
+    /args = \["core", "--test", "scripts\/provider_matrix_archive_gap_report\.test\.cjs", "scripts\/provider_matrix_required_targets_gate\.test\.cjs"\]/,
+  );
+  assert.doesNotMatch(providerMatrixArchiveContracts, /run_workspace_task\.sh/);
+
+  const desktopE2EPreflightContracts = readTargetBlock("desktop_e2e_preflight_contracts");
+  assert.match(desktopE2EPreflightContracts, /srcs = \["\/\/tools\/bazel:run_node_task\.sh"\]/);
+  assert.match(
+    desktopE2EPreflightContracts,
+    /args = \["core", "--test", "scripts\/desktop_e2e_preflight\.test\.cjs"\]/,
+  );
+  assert.doesNotMatch(desktopE2EPreflightContracts, /run_workspace_task\.sh/);
+
+  const desktopSyncResourcesContracts = readTargetBlock("desktop_sync_resources_contracts");
+  assert.match(desktopSyncResourcesContracts, /srcs = \["\/\/tools\/bazel:run_workspace_task\.sh"\]/);
+  assert.match(
+    desktopSyncResourcesContracts,
+    /args = \["core", "node", "--test", "scripts\/desktop_sync_resources_remote_daemon_policy\.test\.cjs", "scripts\/desktop_sync_resources_avf_guest_runtime\.test\.cjs", "scripts\/desktop_daemon_sidecar_name\.test\.cjs", "apps\/desktop\/automation\/wdio\.container-assets\.test\.cjs"\]/,
+  );
+  assert.doesNotMatch(desktopSyncResourcesContracts, /run_node_task\.sh/);
+
+  const providersE2EBundleContracts = readTargetBlock("providers_e2e_bundle_contracts");
+  assert.match(providersE2EBundleContracts, /srcs = \["\/\/tools\/bazel:run_node_task\.sh"\]/);
+  assert.match(
+    providersE2EBundleContracts,
+    /args = \["core", "--test", "scripts\/providers_e2e_bundle_isolation\.test\.cjs"\]/,
+  );
+  assert.doesNotMatch(providersE2EBundleContracts, /run_workspace_task\.sh/);
+
+  const linuxArmProviderContracts = readTargetBlock("linux_arm_provider_contracts");
+  assert.match(linuxArmProviderContracts, /srcs = \["\/\/tools\/bazel:run_node_task\.sh"\]/);
+  assert.match(
+    linuxArmProviderContracts,
+    /args = \["core", "--test", "scripts\/linux_arm_provider_reliability_matrix\.test\.cjs", "scripts\/linux_arm_provider_preflight\.test\.cjs", "scripts\/linux_arm_provider_report_summary\.test\.cjs", "scripts\/linux_arm_provider_release_gate\.test\.cjs"\]/,
+  );
+  assert.doesNotMatch(linuxArmProviderContracts, /run_workspace_task\.sh/);
+
+
+  const tauriToolsLockContracts = readTargetBlock("tauri_tools_lock_contracts");
+  assert.match(tauriToolsLockContracts, /srcs = \["\/\/tools\/bazel:run_node_task\.sh"\]/);
+  assert.match(
+    tauriToolsLockContracts,
+    /args = \["core", "--test", "scripts\/tauri_tools_lock_contract\.test\.cjs"\]/,
+  );
+  assert.doesNotMatch(tauriToolsLockContracts, /run_workspace_task\.sh/);
 });
