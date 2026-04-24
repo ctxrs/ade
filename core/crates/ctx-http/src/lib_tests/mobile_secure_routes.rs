@@ -219,8 +219,8 @@ fn mobile_secure_stream_query(
 }
 
 #[tokio::test]
-async fn mobile_secure_workspace_stream_returns_unauthorized_before_upgrade_for_missing_workspace_without_mobile_access(
-) {
+async fn mobile_secure_workspace_stream_returns_unauthorized_before_upgrade_for_missing_workspace_without_mobile_access()
+ {
     let _serial = home_env_test_lock().lock().await;
     let home = tempfile::tempdir().unwrap();
     let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
@@ -259,8 +259,8 @@ async fn mobile_secure_workspace_stream_returns_unauthorized_before_upgrade_for_
 }
 
 #[tokio::test]
-async fn mobile_secure_workspace_stream_returns_not_found_before_upgrade_for_authorized_missing_workspace(
-) {
+async fn mobile_secure_workspace_stream_returns_not_found_before_upgrade_for_authorized_missing_workspace()
+ {
     let _serial = home_env_test_lock().lock().await;
     let home = tempfile::tempdir().unwrap();
     let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
@@ -823,34 +823,125 @@ async fn mobile_secure_proxy_rejects_provider_login_routes() {
         );
     }
 
-    assert!(state
-        .providers
-        .gemini_login_sessions
-        .lock()
-        .await
-        .is_empty());
+    assert!(
+        state
+            .providers
+            .gemini_login_sessions
+            .lock()
+            .await
+            .is_empty()
+    );
     assert!(state.providers.qwen_login_sessions.lock().await.is_empty());
     assert!(state.providers.amp_login_sessions.lock().await.is_empty());
-    assert!(state
-        .providers
-        .mistral_login_sessions
-        .lock()
-        .await
-        .is_empty());
+    assert!(
+        state
+            .providers
+            .mistral_login_sessions
+            .lock()
+            .await
+            .is_empty()
+    );
     assert!(state.providers.kimi_login_sessions.lock().await.is_empty());
-    assert!(state
-        .providers
-        .claude_login_sessions
-        .lock()
-        .await
-        .is_empty());
+    assert!(
+        state
+            .providers
+            .claude_login_sessions
+            .lock()
+            .await
+            .is_empty()
+    );
     assert!(state.providers.codex_login_sessions.lock().await.is_empty());
-    assert!(state
-        .providers
-        .cursor_login_sessions
-        .lock()
-        .await
-        .is_empty());
+    assert!(
+        state
+            .providers
+            .cursor_login_sessions
+            .lock()
+            .await
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn mobile_secure_proxy_rejects_repo_path_management_routes() {
+    let _serial = home_env_test_lock().lock().await;
+    let home = tempfile::tempdir().unwrap();
+    let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
+
+    let (app, _state, device_id, key) = build_mobile_secure_proxy_app(true).await;
+    let sandbox = tempfile::tempdir().unwrap();
+    let clone_parent = sandbox.path().join("mobile-clone-parent");
+    let init_path = sandbox.path().join("mobile-init-target");
+    let existing_repo = setup_git_repo().await;
+
+    let clone_parent_str = clone_parent.to_string_lossy().to_string();
+    let init_path_str = init_path.to_string_lossy().to_string();
+    let existing_repo_str = existing_repo.path().to_string_lossy().to_string();
+    let cases = [
+        (
+            "POST",
+            "/api/repo/clone",
+            json!({
+                "repo_url": "https://example.com/org/repo.git",
+                "dest_parent": clone_parent_str,
+                "dest_name": "repo"
+            }),
+        ),
+        (
+            "POST",
+            "/api/repo/init",
+            json!({
+                "path": init_path_str
+            }),
+        ),
+        (
+            "POST",
+            "/api/repo/status",
+            json!({
+                "path": existing_repo_str
+            }),
+        ),
+        (
+            "POST",
+            "/api/repo/validate_destination",
+            json!({
+                "path": existing_repo_str
+            }),
+        ),
+    ];
+
+    for (index, (method, path, body)) in cases.into_iter().enumerate() {
+        let payload = json!({
+            "method": method,
+            "path": path,
+            "headers": [["content-type", "application/json"]],
+            "body_b64": base64::engine::general_purpose::STANDARD.encode(body.to_string()),
+        });
+        let res =
+            post_mobile_secure_request(&app, &device_id, &key, index as i64 + 1, payload).await;
+        assert_eq!(
+            res.status(),
+            StatusCode::OK,
+            "{method} {path} outer secure response"
+        );
+
+        let payload = decode_mobile_secure_response(res, &device_id, &key).await;
+        assert_eq!(payload["status"], 401, "{method} {path} proxied status");
+
+        let body_bytes = base64::engine::general_purpose::STANDARD
+            .decode(payload["body_b64"].as_str().unwrap())
+            .unwrap();
+        let body_json: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        assert_eq!(body_json["error"], "desktop auth required");
+    }
+
+    assert!(
+        !clone_parent.exists(),
+        "mobile secure proxy unexpectedly created clone parent path"
+    );
+    assert!(
+        !init_path.exists(),
+        "mobile secure proxy unexpectedly created init path"
+    );
 }
 
 #[tokio::test]

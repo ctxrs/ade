@@ -1,15 +1,16 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use axum::extract::{Query, State};
+use axum::Json;
+use axum::extract::{Extension, Query, State};
 use axum::http::StatusCode;
 use axum::response::Response;
-use axum::Json;
 use serde::{Deserialize, Serialize};
 use tokio::process::Command;
 use uuid::Uuid;
 
 use super::errors::ApiErrorResp;
+use crate::api::MobileAuthContext;
 use crate::daemon::AppState;
 use crate::logs;
 use ctx_fs::vcs;
@@ -80,6 +81,20 @@ fn validate_absolute_path(path: &Path, field: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn reject_mobile_auth(
+    mobile_auth: Option<Extension<MobileAuthContext>>,
+) -> Result<(), (StatusCode, Json<ApiErrorResp>)> {
+    if mobile_auth.is_some() {
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            Json(ApiErrorResp {
+                error: "desktop auth required".to_string(),
+            }),
+        ));
+    }
+    Ok(())
+}
+
 fn derive_repo_name(repo_url: &str) -> Option<String> {
     let url = repo_url.trim().trim_end_matches('/');
     if url.is_empty() {
@@ -136,8 +151,10 @@ pub(super) struct RepoCloneResp {
 }
 
 pub(super) async fn repo_clone(
+    mobile_auth: Option<Extension<MobileAuthContext>>,
     Json(req): Json<RepoCloneReq>,
 ) -> Result<Json<RepoCloneResp>, (StatusCode, Json<ApiErrorResp>)> {
+    reject_mobile_auth(mobile_auth)?;
     ensure_git_usable()
         .await
         .map_err(|e| (StatusCode::BAD_REQUEST, Json(ApiErrorResp { error: e })))?;
@@ -268,8 +285,10 @@ pub(super) struct RepoInitResp {
 }
 
 pub(super) async fn repo_init(
+    mobile_auth: Option<Extension<MobileAuthContext>>,
     Json(req): Json<RepoInitReq>,
 ) -> Result<Json<RepoInitResp>, (StatusCode, Json<ApiErrorResp>)> {
+    reject_mobile_auth(mobile_auth)?;
     ensure_git_usable()
         .await
         .map_err(|e| (StatusCode::BAD_REQUEST, Json(ApiErrorResp { error: e })))?;
@@ -423,8 +442,10 @@ pub(super) struct RepoStatusResp {
 }
 
 pub(super) async fn repo_status(
+    mobile_auth: Option<Extension<MobileAuthContext>>,
     Json(req): Json<RepoStatusReq>,
 ) -> Result<Json<RepoStatusResp>, (StatusCode, Json<ApiErrorResp>)> {
+    reject_mobile_auth(mobile_auth)?;
     ensure_git_usable()
         .await
         .map_err(|e| (StatusCode::BAD_REQUEST, Json(ApiErrorResp { error: e })))?;
@@ -459,7 +480,7 @@ pub(super) async fn repo_status(
                 canonical_path: canonical_str,
                 is_repo: false,
                 error: Some(logs::redact_sensitive(&err.to_string())),
-            }))
+            }));
         }
     };
     match driver.assert_repo(&canonical).await {
@@ -491,14 +512,18 @@ pub(super) struct RepoValidateDestinationResp {
 }
 
 pub(super) async fn repo_validate_destination(
+    mobile_auth: Option<Extension<MobileAuthContext>>,
     Json(req): Json<RepoValidateDestinationReq>,
 ) -> Result<Json<RepoValidateDestinationResp>, (StatusCode, Json<ApiErrorResp>)> {
+    reject_mobile_auth(mobile_auth)?;
     repo_validate_destination_impl(req).await
 }
 
 pub(super) async fn repo_validate_destination_get(
+    mobile_auth: Option<Extension<MobileAuthContext>>,
     Query(req): Query<RepoValidateDestinationReq>,
 ) -> Result<Json<RepoValidateDestinationResp>, (StatusCode, Json<ApiErrorResp>)> {
+    reject_mobile_auth(mobile_auth)?;
     repo_validate_destination_impl(req).await
 }
 
@@ -531,7 +556,7 @@ async fn repo_validate_destination_impl(
                         expanded.display()
                     ),
                 }),
-            ))
+            ));
         }
     };
 
