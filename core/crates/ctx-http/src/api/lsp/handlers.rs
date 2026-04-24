@@ -622,30 +622,8 @@ pub(in crate::api) async fn lsp_workspace_symbols(
         return Err(StatusCode::CONFLICT);
     }
 
-    let root = if let Some(session_id) = req.session_id.as_deref() {
-        let sid =
-            SessionId(uuid::Uuid::parse_str(session_id).map_err(|_| StatusCode::BAD_REQUEST)?);
-        let store = state
-            .store_for_session(sid)
-            .await
-            .map_err(|_| StatusCode::NOT_FOUND)?;
-        let session = store
-            .get_session(sid)
-            .await
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-            .ok_or(StatusCode::NOT_FOUND)?;
-        let wt = store
-            .get_worktree(session.worktree_id)
-            .await
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-            .ok_or(StatusCode::NOT_FOUND)?;
-        PathBuf::from(wt.root_path)
-    } else if let Some(root_path) = req.root_path.as_deref() {
-        PathBuf::from(root_path)
-    } else {
-        return Err(StatusCode::BAD_REQUEST);
-    };
-    let root = root.canonicalize().map_err(|_| StatusCode::BAD_REQUEST)?;
+    let root =
+        resolve_lsp_root(&state, req.session_id.as_deref(), req.root_path.as_deref()).await?;
 
     let out = state
         .core
@@ -667,30 +645,8 @@ pub(in crate::api) async fn lsp_workspace_symbol_resolve(
         return Err(StatusCode::CONFLICT);
     }
 
-    let root = if let Some(session_id) = req.session_id.as_deref() {
-        let sid =
-            SessionId(uuid::Uuid::parse_str(session_id).map_err(|_| StatusCode::BAD_REQUEST)?);
-        let store = state
-            .store_for_session(sid)
-            .await
-            .map_err(|_| StatusCode::NOT_FOUND)?;
-        let session = store
-            .get_session(sid)
-            .await
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-            .ok_or(StatusCode::NOT_FOUND)?;
-        let wt = store
-            .get_worktree(session.worktree_id)
-            .await
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-            .ok_or(StatusCode::NOT_FOUND)?;
-        PathBuf::from(wt.root_path)
-    } else if let Some(root_path) = req.root_path.as_deref() {
-        PathBuf::from(root_path)
-    } else {
-        return Err(StatusCode::BAD_REQUEST);
-    };
-    let root = root.canonicalize().map_err(|_| StatusCode::BAD_REQUEST)?;
+    let root =
+        resolve_lsp_root(&state, req.session_id.as_deref(), req.root_path.as_deref()).await?;
 
     let out = state
         .core

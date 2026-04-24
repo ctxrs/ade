@@ -333,7 +333,27 @@ pub(super) async fn resolve_lsp_target(
     state: &Arc<AppState>,
     req: LspFileReq,
 ) -> Result<(PathBuf, PathBuf), StatusCode> {
-    let root = if let Some(session_id) = req.session_id.as_deref() {
+    let root = resolve_lsp_root(state, req.session_id.as_deref(), req.root_path.as_deref()).await?;
+    let candidate = if PathBuf::from(&req.path).is_absolute() {
+        PathBuf::from(&req.path)
+    } else {
+        root.join(&req.path)
+    };
+    let file = candidate
+        .canonicalize()
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+    if !file.starts_with(&root) {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    Ok((root, file))
+}
+
+pub(super) async fn resolve_lsp_root(
+    state: &Arc<AppState>,
+    session_id: Option<&str>,
+    root_path: Option<&str>,
+) -> Result<PathBuf, StatusCode> {
+    if let Some(session_id) = session_id {
         let sid =
             SessionId(uuid::Uuid::parse_str(session_id).map_err(|_| StatusCode::BAD_REQUEST)?);
         let store = state
@@ -350,26 +370,77 @@ pub(super) async fn resolve_lsp_target(
             .await
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
             .ok_or(StatusCode::NOT_FOUND)?;
-        PathBuf::from(wt.root_path)
-    } else if let Some(root_path) = req.root_path.as_deref() {
-        PathBuf::from(root_path)
-    } else {
+        return PathBuf::from(wt.root_path)
+            .canonicalize()
+            .map_err(|_| StatusCode::BAD_REQUEST);
+    }
+
+    let Some(root_path) = root_path else {
         return Err(StatusCode::BAD_REQUEST);
     };
-
-    let root = root.canonicalize().map_err(|_| StatusCode::BAD_REQUEST)?;
-    let candidate = if PathBuf::from(&req.path).is_absolute() {
-        PathBuf::from(&req.path)
-    } else {
-        root.join(&req.path)
-    };
-    let file = candidate
+    let requested = PathBuf::from(root_path)
         .canonicalize()
         .map_err(|_| StatusCode::BAD_REQUEST)?;
-    if !file.starts_with(&root) {
-        return Err(StatusCode::BAD_REQUEST);
+
+    let workspaces = state
+        .global_store()
+        .list_workspaces()
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    for workspace in workspaces {
+        if canonical_matches_registered_root(&requested, &workspace.root_path) {
+            return Ok(requested);
+        }
+
+        let worktrees = state
+            .global_store()
+            .list_worktrees(workspace.id)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        for worktree in worktrees {
+            if canonical_matches_registered_root(&requested, &worktree.root_path) {
+                return Ok(requested);
+            }
+        }
     }
-    Ok((root, file))
+
+    Err(StatusCode::NOT_FOUND)
+}
+
+fn canonical_matches_registered_root(requested: &std::path::Path, registered_root: &str) -> bool {
+    PathBuf::from(registered_root)
+        .canonicalize()
+        .map(|candidate| candidate == requested)
+        .unwrap_or(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    use ctx_store::StoreManager;
+
+    #[tokio::test]
+    async fn resolve_lsp_root_rejects_unregistered_root_paths() {
+        let requested_root = tempfile::tempdir().unwrap();
+        let requested_root_str = requested_root.path().to_string_lossy().to_string();
+        let data_dir = tempfile::tempdir().unwrap();
+        let stores = StoreManager::open(data_dir.path()).await.unwrap();
+        let state = Arc::new(AppState::new(
+            data_dir.path().to_path_buf(),
+            stores,
+            HashMap::new(),
+            "http://127.0.0.1:4399".to_string(),
+            None,
+        ));
+
+        let err = resolve_lsp_root(&state, None, Some(&requested_root_str))
+            .await
+            .unwrap_err();
+        assert_eq!(err, StatusCode::NOT_FOUND);
+    }
 }
 
 pub(super) async fn resolve_session_root_and_file(
