@@ -40,11 +40,7 @@ struct CodexLoginCompletion {
     error: Option<String>,
 }
 
-async fn restore_completion_token(
-    state: &Arc<AppState>,
-    id: &str,
-    completion_token: &str,
-) {
+async fn restore_completion_token(state: &Arc<AppState>, id: &str, completion_token: &str) {
     let mut map = state.providers.codex_login_sessions.lock().await;
     if let Some(status) = map.get_mut(id) {
         if status.status == "pending" && status.completion_token.is_none() {
@@ -84,12 +80,19 @@ pub(crate) async fn complete_codex_login(
                 }),
             ));
         }
-        let expected_callback = status.expected_callback_url.clone();
+        let Some(expected_callback) = status.expected_callback_url.clone() else {
+            return Err((
+                StatusCode::CONFLICT,
+                Json(ApiErrorResp {
+                    error: "login is missing expected callback metadata".to_string(),
+                }),
+            ));
+        };
         status.completion_token = None;
         expected_callback
     };
 
-    if let Err(err) = validate_callback_url(&req.callback_url, expected_callback.as_deref()) {
+    if let Err(err) = validate_callback_url(&req.callback_url, Some(expected_callback.as_str())) {
         restore_completion_token(&state, &id, &req.completion_token).await;
         return Err((
             StatusCode::BAD_REQUEST,

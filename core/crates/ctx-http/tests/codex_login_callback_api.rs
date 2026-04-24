@@ -1,6 +1,6 @@
 use std::collections::HashMap;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 use axum::http::StatusCode;
@@ -76,7 +76,8 @@ async fn start_delayed_callback_server(
     (format!("http://127.0.0.1:{}", addr.port()), hits, handle)
 }
 
-async fn start_redirecting_callback_server() -> (String, Arc<AtomicUsize>, tokio::task::JoinHandle<()>) {
+async fn start_redirecting_callback_server(
+) -> (String, Arc<AtomicUsize>, tokio::task::JoinHandle<()>) {
     let redirected_hits = Arc::new(AtomicUsize::new(0));
     let route_hits = redirected_hits.clone();
     let app = axum::Router::new()
@@ -104,7 +105,11 @@ async fn start_redirecting_callback_server() -> (String, Arc<AtomicUsize>, tokio
     let handle = tokio::spawn(async move {
         axum::serve(listener, app).await.unwrap();
     });
-    (format!("http://127.0.0.1:{}", addr.port()), redirected_hits, handle)
+    (
+        format!("http://127.0.0.1:{}", addr.port()),
+        redirected_hits,
+        handle,
+    )
 }
 
 async fn app_state(data_root: &std::path::Path) -> Arc<AppState> {
@@ -241,6 +246,56 @@ async fn complete_login_rejects_invalid_completion_token() {
     let body: ErrorResp = resp.json().await.unwrap();
     assert!(body.error.contains("invalid completion token"));
 
+    server_handle.abort();
+}
+
+#[tokio::test]
+async fn complete_login_rejects_missing_expected_callback_metadata() {
+    let data_dir = tempfile::tempdir().unwrap();
+    let state = app_state(data_dir.path()).await;
+    let (callback_base, callback_hits, callback_handle) =
+        start_delayed_callback_server(Duration::from_millis(0)).await;
+    let callback_url = format!("{callback_base}/auth/callback?code=abc");
+    let account_id = "acct-missing-expected-callback";
+    let token = "token-missing-expected-callback";
+    {
+        let mut map = state.providers.codex_login_sessions.lock().await;
+        map.insert(
+            account_id.to_string(),
+            CodexLoginStatus {
+                account_id: account_id.to_string(),
+                auth_url: "https://chat.openai.com/oauth/authorize".to_string(),
+                expected_callback_url: None,
+                completion_token: Some(token.to_string()),
+                status: "pending".to_string(),
+                error: None,
+            },
+        );
+    }
+    let (base, client, server_handle) = start_http_app(state.clone()).await;
+
+    let resp = client
+        .post(format!(
+            "{base}/api/providers/codex/accounts/login/{account_id}"
+        ))
+        .json(&json!({
+            "callback_url": callback_url,
+            "completion_token": token
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CONFLICT);
+    let body: ErrorResp = resp.json().await.unwrap();
+    assert!(body.error.contains("expected callback"));
+
+    let map = state.providers.codex_login_sessions.lock().await;
+    let status = map.get(account_id).expect("login status");
+    assert_eq!(status.completion_token.as_deref(), Some(token));
+    drop(map);
+    assert_eq!(callback_hits.load(Ordering::SeqCst), 0);
+
+    callback_handle.abort();
     server_handle.abort();
 }
 
@@ -416,10 +471,17 @@ async fn complete_login_allows_only_one_concurrent_callback_replay() {
 async fn complete_login_rejects_redirecting_callback_replay() {
     let data_dir = tempfile::tempdir().unwrap();
     let state = app_state(data_dir.path()).await;
-    let (callback_base, redirected_hits, callback_handle) = start_redirecting_callback_server().await;
+    let (callback_base, redirected_hits, callback_handle) =
+        start_redirecting_callback_server().await;
     let expected_callback = format!("{callback_base}/auth/callback");
     let callback_url = format!("{expected_callback}?code=redirect");
-    insert_pending_login(&state, "acct-redirect", "token-redirect", &expected_callback).await;
+    insert_pending_login(
+        &state,
+        "acct-redirect",
+        "token-redirect",
+        &expected_callback,
+    )
+    .await;
 
     let (base, client, server_handle) = start_http_app(state).await;
     let resp = client
