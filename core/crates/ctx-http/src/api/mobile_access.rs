@@ -355,29 +355,6 @@ pub(super) async fn pair_mobile_device(
     body: Bytes,
 ) -> Result<Json<SecureEnvelope>, (StatusCode, Json<ApiErrorResp>)> {
     let req: PairMobileDeviceReq = parse_json_body(body)?;
-    let token_hash = hash_pairing_token(req.pairing_token.trim());
-    let allowed = state
-        .global_store()
-        .consume_mobile_pairing_token(&token_hash)
-        .await
-        .map_err(|e| {
-            tracing::error!("failed to check pairing token: {e:?}");
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: "failed to validate pairing token".into(),
-                }),
-            )
-        })?;
-    if !allowed {
-        return Err((
-            StatusCode::UNAUTHORIZED,
-            Json(ApiErrorResp {
-                error: "pairing token invalid or expired".into(),
-            }),
-        ));
-    }
-
     let cfg = state
         .global_store()
         .get_mobile_access_config()
@@ -417,6 +394,41 @@ pub(super) async fn pair_mobile_device(
         )
     })?;
 
+    let token_hash = hash_pairing_token(req.pairing_token.trim());
+    let key = crate::mobile_e2ee::derive_key(
+        &req.device_id,
+        req.public_key.trim(),
+        &cfg.daemon_private_key,
+    )
+    .map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "failed to derive pairing key".into(),
+            }),
+        )
+    })?;
+    let allowed = state
+        .global_store()
+        .consume_mobile_pairing_token(&token_hash)
+        .await
+        .map_err(|e| {
+            tracing::error!("failed to check pairing token: {e:?}");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: "failed to validate pairing token".into(),
+                }),
+            )
+        })?;
+    if !allowed {
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            Json(ApiErrorResp {
+                error: "pairing token invalid or expired".into(),
+            }),
+        ));
+    }
     let _device = state
         .global_store()
         .upsert_mobile_device(
@@ -450,20 +462,6 @@ pub(super) async fn pair_mobile_device(
                 }),
             )
         })?;
-
-    let key = crate::mobile_e2ee::derive_key(
-        &req.device_id,
-        req.public_key.trim(),
-        &cfg.daemon_private_key,
-    )
-    .map_err(|_| {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(ApiErrorResp {
-                error: "failed to derive pairing key".into(),
-            }),
-        )
-    })?;
 
     let payload = serde_json::json!({
         "paired": true,
