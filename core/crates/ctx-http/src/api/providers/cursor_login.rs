@@ -1,5 +1,5 @@
 use super::login::{
-    extract_auth_url, resolve_provider_login_command_from_config,
+    extract_auth_url, reject_mobile_auth, resolve_provider_login_command_from_config,
     resolve_runtime_provider_command_from_config,
 };
 use super::*;
@@ -494,8 +494,10 @@ async fn monitor_cursor_login(state: Arc<AppState>, login_id: String, label: Opt
 
 pub(crate) async fn start_cursor_login(
     State(state): State<Arc<AppState>>,
+    mobile_auth: Option<Extension<MobileAuthContext>>,
     Json(req): Json<CursorLoginStartReq>,
 ) -> Result<Json<CursorLoginStartResp>, (StatusCode, Json<ApiErrorResp>)> {
+    reject_mobile_auth(mobile_auth)?;
     let _ = resolve_cursor_login_runtime(&state).await.map_err(|e| {
         let msg = e.to_string();
         let status = if msg.contains("runtime_command_") {
@@ -535,8 +537,10 @@ pub(crate) async fn start_cursor_login(
 
 pub(crate) async fn get_cursor_login(
     State(state): State<Arc<AppState>>,
+    mobile_auth: Option<Extension<MobileAuthContext>>,
     Path(id): Path<String>,
 ) -> Result<Json<provider_accounts::CursorLoginStatus>, (StatusCode, Json<ApiErrorResp>)> {
+    reject_mobile_auth(mobile_auth)?;
     let map = state.providers.cursor_login_sessions.lock().await;
     let status = map.get(&id).cloned().ok_or_else(|| {
         (

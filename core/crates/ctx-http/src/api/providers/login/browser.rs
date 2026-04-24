@@ -248,8 +248,10 @@ async fn monitor_gemini_login(state: Arc<AppState>, login_id: String, label: Opt
 
 pub(crate) async fn start_gemini_login(
     State(state): State<Arc<AppState>>,
+    mobile_auth: Option<Extension<MobileAuthContext>>,
     Json(req): Json<GeminiLoginStartReq>,
 ) -> Result<Json<GeminiLoginStartResp>, (StatusCode, Json<ApiErrorResp>)> {
+    reject_mobile_auth(mobile_auth)?;
     let login_id = uuid::Uuid::new_v4().to_string();
     {
         let mut map = state.providers.gemini_login_sessions.lock().await;
@@ -279,8 +281,10 @@ pub(crate) async fn start_gemini_login(
 
 pub(crate) async fn get_gemini_login(
     State(state): State<Arc<AppState>>,
+    mobile_auth: Option<Extension<MobileAuthContext>>,
     Path(id): Path<String>,
 ) -> Result<Json<provider_accounts::GeminiLoginStatus>, (StatusCode, Json<ApiErrorResp>)> {
+    reject_mobile_auth(mobile_auth)?;
     let map = state.providers.gemini_login_sessions.lock().await;
     let status = map.get(&id).cloned().ok_or_else(|| {
         (
@@ -495,8 +499,10 @@ async fn monitor_qwen_login(state: Arc<AppState>, login_id: String, label: Optio
 
 pub(crate) async fn start_qwen_login(
     State(state): State<Arc<AppState>>,
+    mobile_auth: Option<Extension<MobileAuthContext>>,
     Json(req): Json<QwenLoginStartReq>,
 ) -> Result<Json<QwenLoginStartResp>, (StatusCode, Json<ApiErrorResp>)> {
+    reject_mobile_auth(mobile_auth)?;
     let login_id = uuid::Uuid::new_v4().to_string();
     {
         let mut map = state.providers.qwen_login_sessions.lock().await;
@@ -526,8 +532,10 @@ pub(crate) async fn start_qwen_login(
 
 pub(crate) async fn get_qwen_login(
     State(state): State<Arc<AppState>>,
+    mobile_auth: Option<Extension<MobileAuthContext>>,
     Path(id): Path<String>,
 ) -> Result<Json<provider_accounts::QwenLoginStatus>, (StatusCode, Json<ApiErrorResp>)> {
+    reject_mobile_auth(mobile_auth)?;
     let map = state.providers.qwen_login_sessions.lock().await;
     let status = map.get(&id).cloned().ok_or_else(|| {
         (
@@ -745,8 +753,10 @@ async fn monitor_amp_login(state: Arc<AppState>, login_id: String, label: Option
 
 pub(crate) async fn start_amp_login(
     State(state): State<Arc<AppState>>,
+    mobile_auth: Option<Extension<MobileAuthContext>>,
     Json(req): Json<AmpLoginStartReq>,
 ) -> Result<Json<AmpLoginStartResp>, (StatusCode, Json<ApiErrorResp>)> {
+    reject_mobile_auth(mobile_auth)?;
     let label = req.label;
     let login_id = uuid::Uuid::new_v4().to_string();
     {
@@ -776,8 +786,10 @@ pub(crate) async fn start_amp_login(
 
 pub(crate) async fn get_amp_login(
     State(state): State<Arc<AppState>>,
+    mobile_auth: Option<Extension<MobileAuthContext>>,
     Path(id): Path<String>,
 ) -> Result<Json<provider_accounts::AmpLoginStatus>, (StatusCode, Json<ApiErrorResp>)> {
+    reject_mobile_auth(mobile_auth)?;
     let map = state.providers.amp_login_sessions.lock().await;
     let status = map.get(&id).cloned().ok_or_else(|| {
         (

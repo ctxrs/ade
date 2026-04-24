@@ -1,8 +1,8 @@
 use super::*;
 use base64::Engine;
 use ctx_core::ids::{ConnectionProfileId, MobileDeviceId, WorkspaceId};
-use sha2::Digest;
 use ctx_store::store::{MobileAccessConfig, MobileDeviceUpsert};
+use sha2::Digest;
 
 const TEST_MOBILE_API_TOKEN: &str = "ctxm_test_mobile_api_token";
 
@@ -171,7 +171,8 @@ async fn post_mobile_secure_request(
     payload: serde_json::Value,
 ) -> axum::response::Response {
     let plaintext = serde_json::to_vec(&payload).unwrap();
-    let envelope = ctx_transport_runtime::mobile_e2ee::encrypt(key, device_id, seq, &plaintext).unwrap();
+    let envelope =
+        ctx_transport_runtime::mobile_e2ee::encrypt(key, device_id, seq, &plaintext).unwrap();
     let req = Request::builder()
         .method("POST")
         .uri("/api/mobile/secure")
@@ -218,8 +219,8 @@ fn mobile_secure_stream_query(
 }
 
 #[tokio::test]
-async fn mobile_secure_workspace_stream_returns_unauthorized_before_upgrade_for_missing_workspace_without_mobile_access()
-{
+async fn mobile_secure_workspace_stream_returns_unauthorized_before_upgrade_for_missing_workspace_without_mobile_access(
+) {
     let _serial = home_env_test_lock().lock().await;
     let home = tempfile::tempdir().unwrap();
     let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
@@ -258,8 +259,8 @@ async fn mobile_secure_workspace_stream_returns_unauthorized_before_upgrade_for_
 }
 
 #[tokio::test]
-async fn mobile_secure_workspace_stream_returns_not_found_before_upgrade_for_authorized_missing_workspace()
-{
+async fn mobile_secure_workspace_stream_returns_not_found_before_upgrade_for_authorized_missing_workspace(
+) {
     let _serial = home_env_test_lock().lock().await;
     let home = tempfile::tempdir().unwrap();
     let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
@@ -546,8 +547,10 @@ async fn mobile_secure_proxy_rejects_disabled_mobile_access_for_existing_device(
     let profile_id = insert_mobile_profile(&state).await;
 
     let device_id = "44444444-4444-4444-4444-444444444444";
-    let (daemon_public_key, daemon_private_key) = ctx_transport_runtime::mobile_e2ee::generate_keypair();
-    let (device_public_key, device_secret_key) = ctx_transport_runtime::mobile_e2ee::generate_keypair();
+    let (daemon_public_key, daemon_private_key) =
+        ctx_transport_runtime::mobile_e2ee::generate_keypair();
+    let (device_public_key, device_secret_key) =
+        ctx_transport_runtime::mobile_e2ee::generate_keypair();
     state
         .global_store()
         .upsert_mobile_access_config(MobileAccessConfig {
@@ -600,7 +603,8 @@ async fn mobile_secure_proxy_rejects_disabled_mobile_access_for_existing_device(
         "headers": []
     }))
     .unwrap();
-    let envelope = ctx_transport_runtime::mobile_e2ee::encrypt(&key, device_id, 1, &plaintext).unwrap();
+    let envelope =
+        ctx_transport_runtime::mobile_e2ee::encrypt(&key, device_id, 1, &plaintext).unwrap();
 
     let app = api::router(state);
     let req = Request::builder()
@@ -710,12 +714,143 @@ async fn mobile_secure_proxy_rejects_mobile_management_paths_after_trimming() {
     assert!(
         state
             .global_store()
-            .get_mobile_device(MobileDeviceId(uuid::Uuid::parse_str(target_device_id).unwrap()))
+            .get_mobile_device(MobileDeviceId(
+                uuid::Uuid::parse_str(target_device_id).unwrap()
+            ))
             .await
             .unwrap()
             .is_none(),
         "mobile secure proxy unexpectedly registered a device through a trimmed management path"
     );
+}
+
+#[tokio::test]
+async fn mobile_secure_proxy_rejects_provider_login_routes() {
+    let _serial = home_env_test_lock().lock().await;
+    let home = tempfile::tempdir().unwrap();
+    let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
+
+    let (app, state, device_id, key) = build_mobile_secure_proxy_app(true).await;
+    let cases = [
+        (
+            "POST",
+            "/api/providers/gemini/accounts/login/start",
+            Some(json!({})),
+        ),
+        ("GET", "/api/providers/gemini/accounts/login/test", None),
+        (
+            "POST",
+            "/api/providers/qwen/accounts/login/start",
+            Some(json!({})),
+        ),
+        ("GET", "/api/providers/qwen/accounts/login/test", None),
+        (
+            "POST",
+            "/api/providers/amp/accounts/login/start",
+            Some(json!({})),
+        ),
+        ("GET", "/api/providers/amp/accounts/login/test", None),
+        (
+            "POST",
+            "/api/providers/mistral/accounts/login/start",
+            Some(json!({})),
+        ),
+        ("GET", "/api/providers/mistral/accounts/login/test", None),
+        (
+            "POST",
+            "/api/providers/kimi/accounts/login/start",
+            Some(json!({})),
+        ),
+        ("GET", "/api/providers/kimi/accounts/login/test", None),
+        (
+            "POST",
+            "/api/providers/claude/accounts/login/start",
+            Some(json!({})),
+        ),
+        ("GET", "/api/providers/claude/accounts/login/test", None),
+        (
+            "POST",
+            "/api/providers/codex/accounts/login/start",
+            Some(json!({})),
+        ),
+        ("GET", "/api/providers/codex/accounts/login/test", None),
+        (
+            "POST",
+            "/api/providers/codex/accounts/login/test",
+            Some(json!({
+                "callback_url": "http://127.0.0.1:4321/auth/callback?code=test",
+                "completion_token": "token"
+            })),
+        ),
+        (
+            "POST",
+            "/api/providers/cursor/accounts/login/start",
+            Some(json!({})),
+        ),
+        ("GET", "/api/providers/cursor/accounts/login/test", None),
+    ];
+
+    for (index, (method, path, body)) in cases.into_iter().enumerate() {
+        let mut payload = json!({
+            "method": method,
+            "path": path,
+            "headers": []
+        });
+        if let Some(body) = body {
+            payload["headers"] = json!([["content-type", "application/json"]]);
+            payload["body_b64"] =
+                json!(base64::engine::general_purpose::STANDARD.encode(body.to_string()));
+        }
+
+        let res =
+            post_mobile_secure_request(&app, &device_id, &key, index as i64 + 1, payload).await;
+        assert_eq!(
+            res.status(),
+            StatusCode::OK,
+            "{method} {path} outer secure response"
+        );
+
+        let payload = decode_mobile_secure_response(res, &device_id, &key).await;
+        assert_eq!(payload["status"], 401, "{method} {path} proxied status");
+
+        let body_bytes = base64::engine::general_purpose::STANDARD
+            .decode(payload["body_b64"].as_str().unwrap())
+            .unwrap();
+        let body_json: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        assert_eq!(
+            body_json["error"], "desktop auth required",
+            "{method} {path} proxied body"
+        );
+    }
+
+    assert!(state
+        .providers
+        .gemini_login_sessions
+        .lock()
+        .await
+        .is_empty());
+    assert!(state.providers.qwen_login_sessions.lock().await.is_empty());
+    assert!(state.providers.amp_login_sessions.lock().await.is_empty());
+    assert!(state
+        .providers
+        .mistral_login_sessions
+        .lock()
+        .await
+        .is_empty());
+    assert!(state.providers.kimi_login_sessions.lock().await.is_empty());
+    assert!(state
+        .providers
+        .claude_login_sessions
+        .lock()
+        .await
+        .is_empty());
+    assert!(state.providers.codex_login_sessions.lock().await.is_empty());
+    assert!(state
+        .providers
+        .cursor_login_sessions
+        .lock()
+        .await
+        .is_empty());
 }
 
 #[tokio::test]

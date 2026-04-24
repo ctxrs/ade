@@ -242,8 +242,10 @@ async fn monitor_kimi_login(
 
 pub(crate) async fn start_kimi_login(
     State(state): State<Arc<AppState>>,
+    mobile_auth: Option<Extension<MobileAuthContext>>,
     Json(req): Json<KimiLoginStartReq>,
 ) -> Result<Json<KimiLoginStartResp>, (StatusCode, Json<ApiErrorResp>)> {
+    reject_mobile_auth(mobile_auth)?;
     let auth = request_kimi_device_authorization().await.map_err(|err| {
         (
             StatusCode::BAD_GATEWAY,
@@ -307,8 +309,10 @@ pub(crate) async fn start_kimi_login(
 
 pub(crate) async fn get_kimi_login(
     State(state): State<Arc<AppState>>,
+    mobile_auth: Option<Extension<MobileAuthContext>>,
     Path(id): Path<String>,
 ) -> Result<Json<provider_accounts::KimiLoginStatus>, (StatusCode, Json<ApiErrorResp>)> {
+    reject_mobile_auth(mobile_auth)?;
     let map = state.providers.kimi_login_sessions.lock().await;
     let status = map.get(&id).cloned().ok_or_else(|| {
         (

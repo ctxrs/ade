@@ -52,8 +52,10 @@ async fn restore_completion_token(state: &Arc<AppState>, id: &str, completion_to
 pub(crate) async fn complete_codex_login(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
+    mobile_auth: Option<Extension<MobileAuthContext>>,
     Json(req): Json<CodexLoginCompleteReq>,
 ) -> Result<Json<CodexLoginCompleteResp>, (StatusCode, Json<ApiErrorResp>)> {
+    reject_mobile_auth(mobile_auth)?;
     let expected_callback = {
         let mut map = state.providers.codex_login_sessions.lock().await;
         let Some(status) = map.get_mut(&id) else {
@@ -180,8 +182,10 @@ pub(crate) async fn complete_codex_login(
 }
 pub(crate) async fn start_codex_login(
     State(state): State<Arc<AppState>>,
+    mobile_auth: Option<Extension<MobileAuthContext>>,
     Json(req): Json<CodexLoginStartReq>,
 ) -> Result<Json<CodexLoginStartResp>, (StatusCode, Json<ApiErrorResp>)> {
+    reject_mobile_auth(mobile_auth)?;
     let account_id = uuid::Uuid::new_v4().to_string();
     let label = provider_accounts::normalize_label(req.label, &account_id);
     let account_dir =
@@ -253,8 +257,10 @@ pub(crate) async fn start_codex_login(
 
 pub(crate) async fn get_codex_login(
     State(state): State<Arc<AppState>>,
+    mobile_auth: Option<Extension<MobileAuthContext>>,
     Path(id): Path<String>,
 ) -> Result<Json<provider_accounts::CodexLoginStatus>, (StatusCode, Json<ApiErrorResp>)> {
+    reject_mobile_auth(mobile_auth)?;
     let map = state.providers.codex_login_sessions.lock().await;
     let status = map.get(&id).cloned().ok_or_else(|| {
         (

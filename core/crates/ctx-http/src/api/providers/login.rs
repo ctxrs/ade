@@ -33,6 +33,20 @@ const MISTRAL_LOGIN_POLL_INTERVAL: Duration = Duration::from_millis(700);
 const QWEN_OAUTH_AUTH_METHOD_ID: &str = "qwen-oauth";
 const AMP_BROWSER_AUTH_METHOD_ID: &str = "amp_browser_login";
 
+pub(super) fn reject_mobile_auth(
+    mobile_auth: Option<Extension<MobileAuthContext>>,
+) -> Result<(), (StatusCode, Json<ApiErrorResp>)> {
+    if mobile_auth.is_some() {
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            Json(ApiErrorResp {
+                error: "desktop auth required".to_string(),
+            }),
+        ));
+    }
+    Ok(())
+}
+
 fn is_loopback_host(value: &str) -> bool {
     let host = value.trim().to_ascii_lowercase();
     if host == "localhost" {

@@ -143,8 +143,10 @@ fn refresh_claude_auth_url_from_capture_path(
 
 pub(crate) async fn start_claude_login(
     State(state): State<Arc<AppState>>,
+    mobile_auth: Option<Extension<MobileAuthContext>>,
     Json(req): Json<ClaudeLoginStartReq>,
 ) -> Result<Json<ClaudeLoginStartResp>, (StatusCode, Json<ApiErrorResp>)> {
+    reject_mobile_auth(mobile_auth)?;
     let login_id = uuid::Uuid::new_v4().to_string();
     let label = req.label;
     let login = start_claude_login_process(&state).await.map_err(|e| {
@@ -179,8 +181,10 @@ pub(crate) async fn start_claude_login(
 
 pub(crate) async fn get_claude_login(
     State(state): State<Arc<AppState>>,
+    mobile_auth: Option<Extension<MobileAuthContext>>,
     Path(id): Path<String>,
 ) -> Result<Json<provider_accounts::ClaudeLoginStatus>, (StatusCode, Json<ApiErrorResp>)> {
+    reject_mobile_auth(mobile_auth)?;
     let map = state.providers.claude_login_sessions.lock().await;
     let status = map.get(&id).cloned().ok_or_else(|| {
         (

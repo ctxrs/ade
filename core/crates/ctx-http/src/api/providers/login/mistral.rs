@@ -216,8 +216,10 @@ async fn monitor_mistral_login(state: Arc<AppState>, login_id: String, label: Op
 
 pub(crate) async fn start_mistral_login(
     State(state): State<Arc<AppState>>,
+    mobile_auth: Option<Extension<MobileAuthContext>>,
     Json(req): Json<MistralLoginStartReq>,
 ) -> Result<Json<MistralLoginStartResp>, (StatusCode, Json<ApiErrorResp>)> {
+    reject_mobile_auth(mobile_auth)?;
     let label = req.label;
     let login_id = uuid::Uuid::new_v4().to_string();
     {
@@ -247,8 +249,10 @@ pub(crate) async fn start_mistral_login(
 
 pub(crate) async fn get_mistral_login(
     State(state): State<Arc<AppState>>,
+    mobile_auth: Option<Extension<MobileAuthContext>>,
     Path(id): Path<String>,
 ) -> Result<Json<provider_accounts::MistralLoginStatus>, (StatusCode, Json<ApiErrorResp>)> {
+    reject_mobile_auth(mobile_auth)?;
     let map = state.providers.mistral_login_sessions.lock().await;
     let status = map.get(&id).cloned().ok_or_else(|| {
         (
