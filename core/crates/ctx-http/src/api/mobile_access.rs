@@ -608,9 +608,10 @@ pub(super) async fn handle_mobile_secure(
         )
     })?;
 
-    if payload.path.starts_with("/api/mobile/secure")
-        || payload.path.starts_with("/api/mobile/pair")
-        || payload.path.starts_with("/api/mobile/")
+    let normalized_path = payload.path.trim();
+    if normalized_path.starts_with("/api/mobile/secure")
+        || normalized_path.starts_with("/api/mobile/pair")
+        || normalized_path.starts_with("/api/mobile/")
     {
         return Err((
             StatusCode::BAD_REQUEST,

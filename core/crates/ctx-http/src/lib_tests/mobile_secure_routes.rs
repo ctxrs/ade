@@ -1,4 +1,5 @@
 use super::*;
+use base64::Engine;
 use ctx_core::ids::{ConnectionProfileId, MobileDeviceId, WorkspaceId};
 use sha2::Digest;
 use ctx_store::store::{MobileAccessConfig, MobileDeviceUpsert};
@@ -492,6 +493,69 @@ async fn mobile_secure_proxy_does_not_grant_daemon_auth_for_api_routes() {
 
     let payload = decode_mobile_secure_response(res, &device_id, &key).await;
     assert_eq!(payload["status"], 401);
+}
+
+#[tokio::test]
+async fn mobile_secure_proxy_rejects_mobile_management_paths_after_trimming() {
+    let _serial = home_env_test_lock().lock().await;
+    let home = tempfile::tempdir().unwrap();
+    let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
+
+    let (app, state, device_id, key) = build_mobile_secure_proxy_app(true).await;
+    let target_device_id = "55555555-5555-5555-5555-555555555555";
+    let pairing_token = "pairing-token-through-secure-proxy";
+    let mut hasher = sha2::Sha256::new();
+    hasher.update(pairing_token.as_bytes());
+    let token_hash = hex::encode(hasher.finalize());
+    state
+        .global_store()
+        .insert_mobile_pairing_token(
+            "pair-smuggle",
+            &token_hash,
+            chrono::Utc::now() + chrono::Duration::minutes(5),
+        )
+        .await
+        .unwrap();
+
+    let res = post_mobile_secure_request(
+        &app,
+        &device_id,
+        &key,
+        1,
+        json!({
+            "method": "POST",
+            "path": " /api/mobile/pair",
+            "headers": [["content-type", "application/json"]],
+            "body_b64": base64::engine::general_purpose::STANDARD.encode(
+                json!({
+                    "pairing_token": pairing_token,
+                    "device_id": target_device_id,
+                    "device_label": "smuggled-device",
+                    "platform": "ios",
+                    "public_key": "smuggled-public-key"
+                })
+                .to_string()
+            )
+        }),
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+
+    let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(
+        payload["error"],
+        "secure proxy cannot target mobile management endpoints"
+    );
+    assert!(
+        state
+            .global_store()
+            .get_mobile_device(MobileDeviceId(uuid::Uuid::parse_str(target_device_id).unwrap()))
+            .await
+            .unwrap()
+            .is_none(),
+        "mobile secure proxy unexpectedly registered a device through a trimmed management path"
+    );
 }
 
 #[tokio::test]
