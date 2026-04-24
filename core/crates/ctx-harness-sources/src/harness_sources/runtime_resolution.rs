@@ -639,7 +639,7 @@ async fn resolve_internal(
     let secret = secrets::read_endpoint_secret(data_root, &endpoint.secret_ref).await?;
     let env = runtime.endpoint_env(&endpoint, &secret).await?;
 
-    let public = selection::public_endpoint_from_internal(&endpoint);
+    let public = selection::public_endpoint_from_internal(data_root, &endpoint).await;
     Ok(ResolvedHarnessSource {
         source_kind: HarnessSourceKind::Endpoint,
         endpoint: Some(public),

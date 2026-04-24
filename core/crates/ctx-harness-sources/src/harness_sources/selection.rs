@@ -39,11 +39,19 @@ fn repair_provider_selection(
     false
 }
 
-fn provider_source_config_from_internal(
+async fn provider_source_config_from_internal(
+    data_root: &Path,
     canonical: &str,
     endpoint_supported: bool,
     provider: &HarnessProviderConfigInternal,
 ) -> HarnessProviderSourceConfig {
+    let mut endpoints = Vec::new();
+    if endpoint_supported {
+        endpoints.reserve(provider.endpoints.len());
+        for endpoint in &provider.endpoints {
+            endpoints.push(public_endpoint_from_internal(data_root, endpoint).await);
+        }
+    }
     HarnessProviderSourceConfig {
         provider_id: canonical.to_string(),
         selected_source_kind: if endpoint_supported && provider.selected_endpoint_id.is_some() {
@@ -56,15 +64,7 @@ fn provider_source_config_from_internal(
         } else {
             None
         },
-        endpoints: if endpoint_supported {
-            provider
-                .endpoints
-                .iter()
-                .map(public_endpoint_from_internal)
-                .collect()
-        } else {
-            Vec::new()
-        },
+        endpoints,
     }
 }
 
@@ -80,13 +80,15 @@ async fn get_provider_source_config_locked(
             .entry(canonical.to_string())
             .or_insert_with(HarnessProviderConfigInternal::default);
         let repaired = repair_provider_selection(provider, endpoint_supported);
-        let config = provider_source_config_from_internal(canonical, endpoint_supported, provider);
-        (repaired, config)
+        (repaired, provider.clone())
     };
     if config.0 {
         registry::save_registry(data_root, registry).await?;
     }
-    Ok(config.1)
+    Ok(
+        provider_source_config_from_internal(data_root, canonical, endpoint_supported, &config.1)
+            .await,
+    )
 }
 
 pub(crate) async fn load_repaired_provider_internal(
@@ -300,7 +302,7 @@ pub async fn upsert_provider_endpoint(
     }
 
     registry::save_registry(data_root, &registry).await?;
-    Ok(public_endpoint_from_internal(&next))
+    Ok(public_endpoint_from_internal(data_root, &next).await)
 }
 
 pub async fn delete_provider_endpoint(
@@ -341,14 +343,24 @@ pub async fn delete_provider_endpoint(
     if before != provider.endpoints.len() {
         let runtime = runtime_resolution::ProviderRuntimeContext::new(canonical, data_root, None);
         for (removed_endpoint_id, secret_ref) in removed {
-            let secret_path = secrets::endpoint_secret_path(data_root, &secret_ref);
-            match tokio::fs::remove_file(&secret_path).await {
-                Ok(()) => {}
-                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            match secrets::endpoint_secret_path(data_root, &secret_ref) {
+                Ok(secret_path) => match tokio::fs::remove_file(&secret_path).await {
+                    Ok(()) => {}
+                    Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(err) => {
+                        return Err(err).with_context(|| {
+                            format!("removing endpoint secret {}", secret_path.display())
+                        });
+                    }
+                },
                 Err(err) => {
-                    return Err(err).with_context(|| {
-                        format!("removing endpoint secret {}", secret_path.display())
-                    });
+                    tracing::warn!(
+                        endpoint_id = %removed_endpoint_id,
+                        provider_id = canonical,
+                        secret_ref = %secret_ref,
+                        error = %err,
+                        "skipping unsafe harness endpoint secret ref during delete"
+                    );
                 }
             }
             runtime
@@ -483,7 +495,7 @@ pub async fn set_provider_endpoint_manual_models(
     };
     endpoint.updated_at = Utc::now();
 
-    let public = public_endpoint_from_internal(endpoint);
+    let public = public_endpoint_from_internal(data_root, endpoint).await;
     registry::save_registry(data_root, &registry).await?;
     Ok(public)
 }
@@ -598,12 +610,13 @@ pub async fn refresh_provider_endpoint_model_catalog(
         }
     }
 
-    let public = public_endpoint_from_internal(endpoint);
+    let public = public_endpoint_from_internal(data_root, endpoint).await;
     registry::save_registry(data_root, &registry).await?;
     Ok(public)
 }
 
-pub(super) fn public_endpoint_from_internal(
+pub(super) async fn public_endpoint_from_internal(
+    data_root: &Path,
     endpoint: &HarnessEndpointRecordInternal,
 ) -> HarnessEndpointRecord {
     let manual_model_ids = validation::normalize_manual_model_ids(&endpoint.manual_model_ids);
@@ -628,7 +641,9 @@ pub(super) fn public_endpoint_from_internal(
         last_verification_status: endpoint.last_verification_status,
         last_verification_at: endpoint.last_verification_at,
         last_error: endpoint.last_error.clone(),
-        has_api_key: true,
+        has_api_key: secrets::read_endpoint_secret(data_root, &endpoint.secret_ref)
+            .await
+            .is_ok(),
         model_catalog_status: endpoint.model_catalog_status,
         model_catalog_fetched_at: endpoint.model_catalog_fetched_at,
         model_catalog_error: endpoint.model_catalog_error.clone(),

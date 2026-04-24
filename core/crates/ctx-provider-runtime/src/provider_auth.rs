@@ -15,7 +15,7 @@ pub fn endpoint_selection_is_active(config: &harness_sources::HarnessProviderSou
     config
         .endpoints
         .iter()
-        .any(|endpoint| endpoint.id == selected_endpoint_id)
+        .any(|endpoint| endpoint.id == selected_endpoint_id && endpoint.has_api_key)
 }
 
 pub async fn provider_has_active_auth_config(
@@ -84,4 +84,62 @@ pub fn provider_auth_mode(
         }
     }
     "subscription"
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Utc;
+    use ctx_harness_sources::{
+        EndpointModelCatalogStatus, HarnessApiShape, HarnessEndpointRecord,
+        HarnessEndpointVerificationStatus,
+    };
+
+    fn sample_endpoint(has_api_key: bool) -> HarnessEndpointRecord {
+        HarnessEndpointRecord {
+            id: "endpoint-1".to_string(),
+            provider_id: "codex-crp".to_string(),
+            name: "Codex endpoint".to_string(),
+            base_url: Some("https://api.openai.com/v1".to_string()),
+            api_shape: HarnessApiShape::OpenaiResponses,
+            auth_type: "bearer".to_string(),
+            model_override: Some("gpt-5.4".to_string()),
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+            last_verification_status: HarnessEndpointVerificationStatus::Unknown,
+            last_verification_at: None,
+            last_error: None,
+            has_api_key,
+            model_catalog_status: EndpointModelCatalogStatus::Unknown,
+            model_catalog_fetched_at: None,
+            model_catalog_error: None,
+            model_catalog_models: Vec::new(),
+            manual_model_ids: Vec::new(),
+            model_catalog_source: None,
+        }
+    }
+
+    #[test]
+    fn endpoint_selection_is_active_requires_credentialed_selected_endpoint() {
+        let config = harness_sources::HarnessProviderSourceConfig {
+            provider_id: "codex-crp".to_string(),
+            selected_source_kind: HarnessSourceKind::Endpoint,
+            selected_endpoint_id: Some("endpoint-1".to_string()),
+            endpoints: vec![sample_endpoint(false)],
+        };
+
+        assert!(!endpoint_selection_is_active(&config));
+    }
+
+    #[test]
+    fn provider_auth_mode_falls_back_when_selected_endpoint_lacks_credentials() {
+        let config = harness_sources::HarnessProviderSourceConfig {
+            provider_id: "codex-crp".to_string(),
+            selected_source_kind: HarnessSourceKind::Endpoint,
+            selected_endpoint_id: Some("endpoint-1".to_string()),
+            endpoints: vec![sample_endpoint(false)],
+        };
+
+        assert_eq!(provider_auth_mode(true, Some(&config)), "subscription");
+    }
 }

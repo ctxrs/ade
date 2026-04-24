@@ -28,8 +28,21 @@ pub(super) struct GeminiVertexSecretMaterial {
     pub location: String,
 }
 
-pub(super) fn endpoint_secret_path(data_root: &Path, secret_ref: &str) -> PathBuf {
-    endpoint_secret_dir(data_root).join(secret_ref)
+pub(super) fn ensure_safe_secret_ref(secret_ref: &str) -> Result<()> {
+    if secret_ref.trim().is_empty() {
+        anyhow::bail!("secret_ref is required");
+    }
+
+    let mut components = Path::new(secret_ref).components();
+    match (components.next(), components.next()) {
+        (Some(std::path::Component::Normal(_)), None) => Ok(()),
+        _ => anyhow::bail!("secret_ref must be a single path segment"),
+    }
+}
+
+pub(super) fn endpoint_secret_path(data_root: &Path, secret_ref: &str) -> Result<PathBuf> {
+    ensure_safe_secret_ref(secret_ref)?;
+    Ok(endpoint_secret_dir(data_root).join(secret_ref))
 }
 
 pub(super) async fn write_endpoint_secret(
@@ -52,7 +65,7 @@ pub(super) async fn write_endpoint_secret(
     }
     let dir = endpoint_secret_dir(data_root);
     tokio::fs::create_dir_all(&dir).await?;
-    let path = endpoint_secret_path(data_root, secret_ref);
+    let path = endpoint_secret_path(data_root, secret_ref)?;
     let payload = serde_json::to_vec_pretty(&EndpointSecretEnvelope {
         version: SECRET_VERSION,
         api_key: secret.api_key.clone(),
@@ -73,7 +86,7 @@ pub(super) async fn read_endpoint_secret(
     data_root: &Path,
     secret_ref: &str,
 ) -> Result<EndpointSecretMaterial> {
-    let path = endpoint_secret_path(data_root, secret_ref);
+    let path = endpoint_secret_path(data_root, secret_ref)?;
     let raw = tokio::fs::read_to_string(&path)
         .await
         .with_context(|| format!("reading endpoint secret {}", path.display()))?;
