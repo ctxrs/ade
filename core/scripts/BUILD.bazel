@@ -72,7 +72,7 @@ sh_binary(
 sh_binary(
     name = "desktop_provider_matrix_archive_contracts",
     srcs = ["//tools/bazel:run_workspace_task.sh"],
-    args = ["core", "node", "--test", "scripts/provider_matrix_archive_gap_report.test.cjs", "scripts/provider_matrix_required_targets_gate.test.cjs"],
+    args = ["core", "node", "--test", "scripts/provider_matrix_archive_gap_report.test.cjs", "scripts/provider_matrix_required_targets_gate.test.cjs", "scripts/provider_release_bump.test.cjs"],
     data = DESKTOP_PARITY_CONTRACT_DATA,
 )
 

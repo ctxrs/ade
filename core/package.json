@@ -107,6 +107,7 @@
     "bundled-deps:check": "node scripts/bundled_dependency_updates.cjs check",
     "bundled-deps:policy": "node scripts/bundled_dependency_updates.cjs policy",
     "bundled-deps:apply": "node scripts/bundled_dependency_updates.cjs apply",
+    "provider-release:bump": "node scripts/provider_release_bump.cjs",
     "test:bundles:claude-crp": "bash -lc '../scripts/tests/ensure_bundled_harnesses_claude_crp.sh'",
     "test:bundles:matrix-required-managed": "bash -lc '../scripts/tests/provider_matrix_required_managed_sources.sh'",
     "test:bundles:codex-provenance": "bash -lc '../scripts/tests/codex_release_provenance_policy.sh'",

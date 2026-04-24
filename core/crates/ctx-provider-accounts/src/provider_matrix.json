@@ -78,7 +78,7 @@
       },
       "managed_install": {
         "kind": "archive",
-        "version": "0.1.3",
+        "version": "0.1.4",
         "args": [],
         "targets": {
           "darwin-aarch64": {
@@ -127,11 +127,11 @@
       },
       "releases": [
         {
-          "version": "0.1.3",
+          "version": "0.1.4",
           "status": "supported",
           "context_min": "0.1.0",
           "notes": "Pinned workspace adapter source (harness-adapters/example-acp/package.json)",
-          "upstream_version": "0.1.0-20260420085647-ga5a688e"
+          "upstream_version": "0.1.0-20260423202803-gfcf58c2"
         }
       ]
     },
@@ -179,7 +179,7 @@
       "managed_install": {
         "kind": "npm",
         "package": "@anthropic-ai/claude-code",
-        "version": "2.1.114",
+        "version": "2.1.119",
         "entrypoint": "node_modules/@anthropic-ai/claude-code/cli-wrapper.cjs",
         "args": []
       },
@@ -189,7 +189,7 @@
       },
       "releases": [
         {
-          "version": "2.1.114",
+          "version": "2.1.119",
           "status": "supported",
           "context_min": "0.1.0",
           "notes": "Pinned Anthropic Claude Code CLI bundle release"
@@ -206,7 +206,7 @@
       },
       "managed_install": {
         "kind": "archive",
-        "version": "0.2.7-ctx.6",
+        "version": "0.2.7-ctx.7",
         "args": [],
         "targets": {
           "darwin-aarch64": {
@@ -262,11 +262,11 @@
       },
       "releases": [
         {
-          "version": "0.2.7-ctx.6",
+          "version": "0.2.7-ctx.7",
           "status": "supported",
           "context_min": "0.1.0",
           "notes": "Pinned workspace adapter source (external-harnesses/claude-crp/package.json)",
-          "upstream_version": "0.2.114"
+          "upstream_version": "0.2.119"
         }
       ]
     },
@@ -283,7 +283,7 @@
       "managed_install": {
         "kind": "npm",
         "package": "cline",
-        "version": "2.15.0",
+        "version": "2.16.0",
         "entrypoint": "node_modules/cline/dist/cli.mjs",
         "args": [
           "--acp"
@@ -295,7 +295,7 @@
       },
       "releases": [
         {
-          "version": "2.15.0",
+          "version": "2.16.0",
           "status": "supported",
           "context_min": "0.1.0",
           "notes": "Pinned Cline CLI ACP bundle release"
@@ -313,30 +313,30 @@
       },
       "managed_install": {
         "kind": "archive",
-        "version": "rust-v0.121.0",
+        "version": "rust-v0.124.0",
         "args": [],
         "targets": {
           "darwin-aarch64": {
-            "url": "https://github.com/openai/codex/releases/download/rust-v0.121.0/codex-aarch64-apple-darwin.tar.gz",
-            "sha256": "60f7039e63a7de8ae474136ac6f593ec1a913e1ddca0df59ade1f6d6eb5f7fd0",
+            "url": "https://github.com/openai/codex/releases/download/rust-v0.124.0/codex-aarch64-apple-darwin.tar.gz",
+            "sha256": "71e8744944791ca8be22b9a51b1f1114af9b05d6dcd29916e53f3961ebe529ce",
             "archive": "tar_gz",
             "bin_path": "codex-aarch64-apple-darwin"
           },
           "darwin-x86_64": {
-            "url": "https://github.com/openai/codex/releases/download/rust-v0.121.0/codex-x86_64-apple-darwin.tar.gz",
-            "sha256": "94e6ba8a552d4625beee857f513fb12bc20e560b9427c4a93733dbd86619f415",
+            "url": "https://github.com/openai/codex/releases/download/rust-v0.124.0/codex-x86_64-apple-darwin.tar.gz",
+            "sha256": "af2300db912d97431c4a8d1ba47f6e979ab45d4923f3aa60c17597d610e03c18",
             "archive": "tar_gz",
             "bin_path": "codex-x86_64-apple-darwin"
           },
           "linux-aarch64": {
-            "url": "https://github.com/openai/codex/releases/download/rust-v0.121.0/codex-aarch64-unknown-linux-gnu.tar.gz",
-            "sha256": "9ce5edd5524898ad2e95b59f278977e312726e0587957d1f10ee389070fe5034",
+            "url": "https://github.com/openai/codex/releases/download/rust-v0.124.0/codex-aarch64-unknown-linux-gnu.tar.gz",
+            "sha256": "9765486daac5af97b26864b5d3501d32aa6306b5f9f81b2bd6160b6ca46cb579",
             "archive": "tar_gz",
             "bin_path": "codex-aarch64-unknown-linux-gnu"
           },
           "linux-x86_64": {
-            "url": "https://github.com/openai/codex/releases/download/rust-v0.121.0/codex-x86_64-unknown-linux-gnu.tar.gz",
-            "sha256": "f053ac81e9c6769920f9ee3566abad47ab0856eb7ee792428681664ece113430",
+            "url": "https://github.com/openai/codex/releases/download/rust-v0.124.0/codex-x86_64-unknown-linux-gnu.tar.gz",
+            "sha256": "0d619d52d24e36c5ed159323d921d8a6709d9ebce375045d043d7a5909fc6b09",
             "archive": "tar_gz",
             "bin_path": "codex-x86_64-unknown-linux-gnu"
           }
@@ -350,11 +350,11 @@
       },
       "releases": [
         {
-          "version": "rust-v0.121.0",
+          "version": "rust-v0.124.0",
           "status": "supported",
           "context_min": "0.1.0",
           "notes": "Pinned stock Codex CLI release",
-          "upstream_version": "0.121.0"
+          "upstream_version": "0.124.0"
         }
       ]
     },
@@ -368,44 +368,44 @@
       },
       "managed_install": {
         "kind": "archive",
-        "version": "0.114.0-ctx.5",
+        "version": "0.124.0-ctx.1",
         "args": [],
         "targets": {
           "darwin-aarch64": {
-            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/codex/0.114.0-ctx.5/macos/aarch64/sha256/6dedd8fd374c9f2d20cdc4ca97c0c9333d9975beb688346bf4554805bf7714e1/codex-crp-0.114.0-ctx.5-aarch64-apple-darwin.tar.gz",
+            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/codex/0.124.0-ctx.1/darwin/aarch64/sha256/268edc0a73fe03804727df8dbbf8a123590bd52c0e854d535d820e3cba5cbce5/codex-crp-0.124.0-ctx.1-aarch64-apple-darwin.tar.gz",
             "archive": "tar_gz",
             "bin_path": "codex-crp",
-            "sha256": "6dedd8fd374c9f2d20cdc4ca97c0c9333d9975beb688346bf4554805bf7714e1"
+            "sha256": "268edc0a73fe03804727df8dbbf8a123590bd52c0e854d535d820e3cba5cbce5"
           },
           "darwin-x86_64": {
-            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/codex/0.114.0-ctx.5/macos/x86_64/sha256/935f43f4eb5b9ac3b485e4f97588902b2cd0049626a554e6aec6448311c70c90/codex-crp-0.114.0-ctx.5-x86_64-apple-darwin.tar.gz",
+            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/codex/0.124.0-ctx.1/darwin/x86_64/sha256/61f9c537df04919eda9e0d8a2edf1925ae220066dea3f7e615bc69bdf6c3b541/codex-crp-0.124.0-ctx.1-x86_64-apple-darwin.tar.gz",
             "archive": "tar_gz",
             "bin_path": "codex-crp",
-            "sha256": "935f43f4eb5b9ac3b485e4f97588902b2cd0049626a554e6aec6448311c70c90"
+            "sha256": "61f9c537df04919eda9e0d8a2edf1925ae220066dea3f7e615bc69bdf6c3b541"
           },
           "linux-aarch64": {
-            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/codex/0.114.0-ctx.5/linux/aarch64/sha256/01215d15a4ce56f6395f88c25d36e5129383e12728fea05bd0615f90c9998831/codex-crp-0.114.0-ctx.5-aarch64-unknown-linux-gnu.tar.gz",
+            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/codex/0.124.0-ctx.1/linux/aarch64/sha256/28b52f9d3f0178c445852e03fda372502ef155d8dfee2d9e6d3a571a868d9819/codex-crp-0.124.0-ctx.1-aarch64-unknown-linux-gnu.tar.gz",
             "archive": "tar_gz",
             "bin_path": "codex-crp",
-            "sha256": "01215d15a4ce56f6395f88c25d36e5129383e12728fea05bd0615f90c9998831"
+            "sha256": "28b52f9d3f0178c445852e03fda372502ef155d8dfee2d9e6d3a571a868d9819"
           },
           "linux-x86_64": {
-            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/codex/0.114.0-ctx.5/linux/x86_64/sha256/d9712b699d1c201fad9dec6bc702408322eafa85412f97ffca7e7ffcd878e932/codex-crp-0.114.0-ctx.5-x86_64-unknown-linux-gnu.tar.gz",
+            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/codex/0.124.0-ctx.1/linux/x86_64/sha256/f814fc4c691f0ea0231d11cd286b4d34e39fc0b11a22238e399fdad1a0710b1e/codex-crp-0.124.0-ctx.1-x86_64-unknown-linux-gnu.tar.gz",
             "archive": "tar_gz",
             "bin_path": "codex-crp",
-            "sha256": "d9712b699d1c201fad9dec6bc702408322eafa85412f97ffca7e7ffcd878e932"
+            "sha256": "f814fc4c691f0ea0231d11cd286b4d34e39fc0b11a22238e399fdad1a0710b1e"
           },
           "macos-aarch64": {
-            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/codex/0.114.0-ctx.5/macos/aarch64/sha256/6dedd8fd374c9f2d20cdc4ca97c0c9333d9975beb688346bf4554805bf7714e1/codex-crp-0.114.0-ctx.5-aarch64-apple-darwin.tar.gz",
+            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/codex/0.124.0-ctx.1/darwin/aarch64/sha256/268edc0a73fe03804727df8dbbf8a123590bd52c0e854d535d820e3cba5cbce5/codex-crp-0.124.0-ctx.1-aarch64-apple-darwin.tar.gz",
             "archive": "tar_gz",
             "bin_path": "codex-crp",
-            "sha256": "6dedd8fd374c9f2d20cdc4ca97c0c9333d9975beb688346bf4554805bf7714e1"
+            "sha256": "268edc0a73fe03804727df8dbbf8a123590bd52c0e854d535d820e3cba5cbce5"
           },
           "macos-x86_64": {
-            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/codex/0.114.0-ctx.5/macos/x86_64/sha256/935f43f4eb5b9ac3b485e4f97588902b2cd0049626a554e6aec6448311c70c90/codex-crp-0.114.0-ctx.5-x86_64-apple-darwin.tar.gz",
+            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/codex/0.124.0-ctx.1/darwin/x86_64/sha256/61f9c537df04919eda9e0d8a2edf1925ae220066dea3f7e615bc69bdf6c3b541/codex-crp-0.124.0-ctx.1-x86_64-apple-darwin.tar.gz",
             "archive": "tar_gz",
             "bin_path": "codex-crp",
-            "sha256": "935f43f4eb5b9ac3b485e4f97588902b2cd0049626a554e6aec6448311c70c90"
+            "sha256": "61f9c537df04919eda9e0d8a2edf1925ae220066dea3f7e615bc69bdf6c3b541"
           }
         }
       },
@@ -424,18 +424,18 @@
       },
       "releases": [
         {
-          "version": "0.114.0-ctx.5",
-          "upstream_version": "0.114.0",
+          "version": "0.124.0-ctx.1",
+          "upstream_version": "0.124.0",
           "provenance": {
             "upstream_repo": "openai/codex",
-            "upstream_release_tag": "rust-v0.114.0",
-            "upstream_commit_sha": "b9904c0ae4ecb773549efd6ea3fb05229402fdb9",
             "ctx_repo": "ctxorgrs/codex-crp",
-            "ctx_release_tag": "v0.114.0-ctx.5"
+            "upstream_release_tag": "rust-v0.124.0",
+            "upstream_commit_sha": "e9fb49366c93a1478ec71cc41ecee415a197d036",
+            "ctx_release_tag": "v0.124.0-ctx.1"
           },
           "status": "supported",
           "context_min": "0.1.0",
-          "notes": "Thin app-server adapter over stock Codex rust-v0.114.0"
+          "notes": "Thin app-server adapter over stock Codex rust-v0.124.0"
         },
         {
           "version": "0.0.0-ctx.2",
@@ -468,7 +468,7 @@
       "managed_install": {
         "kind": "npm",
         "package": "@github/copilot",
-        "version": "1.0.32",
+        "version": "1.0.35",
         "entrypoint": "node_modules/@github/copilot/npm-loader.js",
         "args": [
           "--acp",
@@ -481,7 +481,7 @@
       },
       "releases": [
         {
-          "version": "1.0.32",
+          "version": "1.0.35",
           "status": "supported",
           "context_min": "0.1.0",
           "notes": "Pinned GitHub Copilot CLI ACP bundle release"
@@ -693,7 +693,7 @@
       "managed_install": {
         "kind": "npm",
         "package": "@google/gemini-cli",
-        "version": "0.38.2",
+        "version": "0.39.0",
         "entrypoint": "node_modules/@google/gemini-cli/bundle/gemini.js",
         "args": [
           "--experimental-acp"
@@ -705,7 +705,7 @@
       },
       "releases": [
         {
-          "version": "0.38.2",
+          "version": "0.39.0",
           "status": "supported",
           "context_min": "0.1.0",
           "notes": "Pinned Gemini CLI ACP bundle release (bundle-only in ctx runtime)"
@@ -724,46 +724,46 @@
       },
       "managed_install": {
         "kind": "archive",
-        "version": "1.31.1",
+        "version": "1.32.0",
         "args": [
           "acp"
         ],
         "targets": {
           "darwin-aarch64": {
-            "url": "https://github.com/aaif-goose/goose/releases/download/v1.31.1/goose-aarch64-apple-darwin.tar.bz2",
+            "url": "https://github.com/aaif-goose/goose/releases/download/v1.32.0/goose-aarch64-apple-darwin.tar.bz2",
             "archive": "tar_bz2",
             "bin_path": "goose",
-            "sha256": "fd7cad6b0405fbea267d6ae3a7e5b17a096a28d33a8019779c242a290ec1e16e"
+            "sha256": "917ac8ab1ae9a1d63b3b2785ccc42c171f6ef97c1ca4447afbe7694e7a9a6f00"
           },
           "darwin-x86_64": {
-            "url": "https://github.com/aaif-goose/goose/releases/download/v1.31.1/goose-x86_64-apple-darwin.tar.bz2",
+            "url": "https://github.com/aaif-goose/goose/releases/download/v1.32.0/goose-x86_64-apple-darwin.tar.bz2",
             "archive": "tar_bz2",
             "bin_path": "goose",
-            "sha256": "06cf0f70eed2631eb3fe109af8dd2f5317f4841c469b1929690fdfece09cc77f"
+            "sha256": "35a863bc74ea933d005e9bac63fdb170f501ad3560eeec8854e40761584e9643"
           },
           "linux-aarch64": {
-            "url": "https://github.com/aaif-goose/goose/releases/download/v1.31.1/goose-aarch64-unknown-linux-gnu.tar.bz2",
+            "url": "https://github.com/aaif-goose/goose/releases/download/v1.32.0/goose-aarch64-unknown-linux-gnu.tar.bz2",
             "archive": "tar_bz2",
             "bin_path": "goose",
-            "sha256": "5786ee89dc902f7ef5cf8c986e3893666db8296b83d4e991ca452bad0824fe47"
+            "sha256": "c024e5494d7ae9e8050b0ef22bd0e927a3d91d1929fadd7b7df033a244deaf96"
           },
           "linux-x86_64": {
-            "url": "https://github.com/aaif-goose/goose/releases/download/v1.31.1/goose-x86_64-unknown-linux-gnu.tar.bz2",
+            "url": "https://github.com/aaif-goose/goose/releases/download/v1.32.0/goose-x86_64-unknown-linux-gnu.tar.bz2",
             "archive": "tar_bz2",
             "bin_path": "goose",
-            "sha256": "465662c3ebfdadc54956799a5b4186fbc2bcf896e3d57151c29beb1b94229e2e"
+            "sha256": "20f09c7017ed772b3b234f732c4d2a62b659f3a673b00676051bd10f818c06a9"
           },
           "macos-aarch64": {
-            "url": "https://github.com/aaif-goose/goose/releases/download/v1.31.1/goose-aarch64-apple-darwin.tar.bz2",
+            "url": "https://github.com/aaif-goose/goose/releases/download/v1.32.0/goose-aarch64-apple-darwin.tar.bz2",
             "archive": "tar_bz2",
             "bin_path": "goose",
-            "sha256": "fd7cad6b0405fbea267d6ae3a7e5b17a096a28d33a8019779c242a290ec1e16e"
+            "sha256": "917ac8ab1ae9a1d63b3b2785ccc42c171f6ef97c1ca4447afbe7694e7a9a6f00"
           },
           "macos-x86_64": {
-            "url": "https://github.com/aaif-goose/goose/releases/download/v1.31.1/goose-x86_64-apple-darwin.tar.bz2",
+            "url": "https://github.com/aaif-goose/goose/releases/download/v1.32.0/goose-x86_64-apple-darwin.tar.bz2",
             "archive": "tar_bz2",
             "bin_path": "goose",
-            "sha256": "06cf0f70eed2631eb3fe109af8dd2f5317f4841c469b1929690fdfece09cc77f"
+            "sha256": "35a863bc74ea933d005e9bac63fdb170f501ad3560eeec8854e40761584e9643"
           }
         }
       },
@@ -775,11 +775,11 @@
       },
       "releases": [
         {
-          "version": "1.31.1",
+          "version": "1.32.0",
           "status": "supported",
           "context_min": "0.1.0",
           "notes": "Pinned upstream Goose CLI ACP release",
-          "upstream_version": "1.31.1"
+          "upstream_version": "1.32.0"
         }
       ]
     },
@@ -796,7 +796,7 @@
       "managed_install": {
         "kind": "python",
         "package": "kimi-cli",
-        "version": "1.36.0",
+        "version": "1.38.0",
         "entrypoint": "kimi",
         "args": [
           "acp"
@@ -812,7 +812,7 @@
       },
       "releases": [
         {
-          "version": "1.36.0",
+          "version": "1.38.0",
           "status": "supported",
           "context_min": "0.1.0",
           "notes": "Pinned Kimi CLI ACP bundle release"
@@ -830,7 +830,7 @@
       "managed_install": {
         "kind": "python",
         "package": "mistral-vibe",
-        "version": "2.7.6",
+        "version": "2.8.1",
         "entrypoint": "vibe-acp",
         "args": [],
         "python_version": "3.12.13",
@@ -844,7 +844,7 @@
       },
       "releases": [
         {
-          "version": "2.7.6",
+          "version": "2.8.1",
           "status": "supported",
           "context_min": "0.1.0",
           "notes": "Pinned Mistral Vibe ACP bundle release"
@@ -863,32 +863,32 @@
       },
       "managed_install": {
         "kind": "archive",
-        "version": "1.14.19",
+        "version": "1.14.22",
         "args": [
           "acp"
         ],
         "targets": {
           "darwin-aarch64": {
-            "url": "https://github.com/anomalyco/opencode/releases/download/v1.14.19/opencode-darwin-arm64.zip",
-            "sha256": "554a2019225514f669e1b014482a2e27c7e729c3337020301510f32be7162290",
+            "url": "https://github.com/anomalyco/opencode/releases/download/v1.14.22/opencode-darwin-arm64.zip",
+            "sha256": "cdea83be4d9e12f0fb4b2168b122f01a3d0243593caf4ec81041c5e6d717f8fa",
             "archive": "zip",
             "bin_path": "opencode"
           },
           "darwin-x86_64": {
-            "url": "https://github.com/anomalyco/opencode/releases/download/v1.14.19/opencode-darwin-x64.zip",
-            "sha256": "f78a1e19410ed3387518a9d875c56c3635383513dbdf34192dcbb9f2f13b15a0",
+            "url": "https://github.com/anomalyco/opencode/releases/download/v1.14.22/opencode-darwin-x64.zip",
+            "sha256": "8d5ff5f3864e8c255771eeaf1d4df35c54154972dcbbe93b4baaaa6b3223e3d7",
             "archive": "zip",
             "bin_path": "opencode"
           },
           "linux-aarch64": {
-            "url": "https://github.com/anomalyco/opencode/releases/download/v1.14.19/opencode-linux-arm64.tar.gz",
-            "sha256": "f3d957a9c8000fab2f00e5d80f4ff60877df728e5625f0fdd96126d9ebec9952",
+            "url": "https://github.com/anomalyco/opencode/releases/download/v1.14.22/opencode-linux-arm64.tar.gz",
+            "sha256": "b8bb3cf495348bd41233ed39f3b9d09be7560924705b9c0ea245bbef1d4597c2",
             "archive": "tar_gz",
             "bin_path": "opencode"
           },
           "linux-x86_64": {
-            "url": "https://github.com/anomalyco/opencode/releases/download/v1.14.19/opencode-linux-x64-baseline.tar.gz",
-            "sha256": "3750f51dfe347be97eaa76ac9c5257eb85a66fe6dd4b27844b461c4252898e03",
+            "url": "https://github.com/anomalyco/opencode/releases/download/v1.14.22/opencode-linux-x64-baseline.tar.gz",
+            "sha256": "6081823232a6bb28cfae908c51b9caf2e62481fe3d4ea9ad072d053b80234650",
             "archive": "tar_gz",
             "bin_path": "opencode"
           }
@@ -902,10 +902,11 @@
       },
       "releases": [
         {
-          "version": "1.14.19",
+          "version": "1.14.22",
           "status": "supported",
           "context_min": "0.1.0",
-          "notes": "Pinned OpenCode CLI ACP bundle release"
+          "notes": "Pinned OpenCode CLI ACP bundle release",
+          "upstream_version": "1.14.22"
         }
       ]
     },
@@ -955,7 +956,7 @@
       },
       "managed_install": {
         "kind": "archive",
-        "version": "0.1.2",
+        "version": "0.1.3",
         "args": [],
         "targets": {
           "darwin-aarch64": {
@@ -1004,11 +1005,11 @@
       },
       "releases": [
         {
-          "version": "0.1.2",
+          "version": "0.1.3",
           "status": "supported",
           "context_min": "0.1.0",
           "notes": "Pinned workspace adapter source (harness-adapters/pi-acp/package.json)",
-          "upstream_version": "0.67.68"
+          "upstream_version": "0.70.0"
         }
       ]
     },
@@ -1025,7 +1026,7 @@
       "managed_install": {
         "kind": "npm",
         "package": "@qwen-code/qwen-code",
-        "version": "0.14.5",
+        "version": "0.15.1",
         "entrypoint": "node_modules/@qwen-code/qwen-code/cli.js",
         "args": [
           "--experimental-acp"
@@ -1037,7 +1038,7 @@
       },
       "releases": [
         {
-          "version": "0.14.5",
+          "version": "0.15.1",
           "status": "supported",
           "context_min": "0.1.0",
           "notes": "Pinned Qwen Code CLI ACP bundle release"
