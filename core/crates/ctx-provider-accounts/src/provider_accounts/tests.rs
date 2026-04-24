@@ -525,7 +525,7 @@ async fn removing_account_cleans_secret_file() {
 }
 
 #[tokio::test]
-async fn removing_account_rejects_unsafe_secret_ref_without_mutating_registry() {
+async fn removing_account_with_unsafe_secret_ref_preserves_outside_file_and_clears_registry() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     let account_id = "acct-unsafe";
@@ -550,12 +550,11 @@ async fn removing_account_rejects_unsafe_secret_ref_without_mutating_registry() 
     };
     save_codex_registry(root, &registry).await.unwrap();
 
-    let err = remove_codex_account(root, account_id).await.unwrap_err();
-    assert!(err.to_string().contains("single path segment"));
+    remove_codex_account(root, account_id).await.unwrap();
 
     let persisted = load_codex_registry(root).await;
-    assert_eq!(persisted.accounts.len(), 1);
-    assert_eq!(persisted.active_account_id.as_deref(), Some(account_id));
+    assert!(persisted.accounts.is_empty());
+    assert!(persisted.active_account_id.is_none());
     assert_eq!(
         tokio::fs::read_to_string(&outside_secret).await.unwrap(),
         "do-not-touch"

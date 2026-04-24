@@ -262,7 +262,7 @@ pub async fn remove_cursor_account(
             .iter()
             .filter_map(|entry| entry.secret_ref.as_deref()),
         cursor_secret_path,
-    )?;
+    );
     registry.accounts.retain(|a| a.id != account_id);
     if was_active {
         registry.active_account_id = None;

@@ -129,21 +129,13 @@ pub async fn load_claude_registry(data_root: &Path) -> ClaudeAccountRegistry {
         .filter(|entry| legacy_account_id_set.contains(entry.id.as_str()))
         .cloned()
         .collect();
-    let secret_paths = match collect_secret_paths(
+    let secret_paths = collect_secret_paths(
         data_root,
         removed_entries
             .iter()
             .filter_map(|entry| entry.secret_ref.as_deref()),
         claude_secret_path,
-    ) {
-        Ok(paths) => paths,
-        Err(error) => {
-            tracing::warn!(
-                "refusing to prune legacy Claude accounts with invalid secret_ref: {error:#}"
-            );
-            return registry;
-        }
-    };
+    );
     registry
         .accounts
         .retain(|entry| !legacy_account_id_set.contains(entry.id.as_str()));
@@ -284,7 +276,7 @@ pub async fn remove_claude_account(
             .iter()
             .filter_map(|entry| entry.secret_ref.as_deref()),
         claude_secret_path,
-    )?;
+    );
     registry.accounts.retain(|a| a.id != account_id);
     if was_active {
         registry.active_account_id = None;
@@ -733,5 +725,38 @@ mod tests {
         assert_eq!(loaded.active_account_id, None);
         assert!(!legacy_secret_path.exists());
         assert!(!legacy_account_dir.exists());
+    }
+
+    #[tokio::test]
+    async fn load_claude_registry_prunes_legacy_accounts_even_with_unsafe_secret_ref() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let outside_secret = root.join("outside-secret.json");
+        tokio::fs::write(&outside_secret, b"do-not-touch")
+            .await
+            .unwrap();
+
+        let registry = ClaudeAccountRegistry {
+            active_account_id: Some("legacy-claude-oauth".to_string()),
+            accounts: vec![ClaudeAccountEntry {
+                id: "legacy-claude-oauth".to_string(),
+                label: "Legacy OAuth".to_string(),
+                kind: "claude-ai-oauth".to_string(),
+                email: Some("legacy@example.com".to_string()),
+                subscription_type: Some("pro".to_string()),
+                created_at: Utc::now(),
+                last_used_at: Some(Utc::now()),
+                secret_ref: Some("../outside-secret.json".to_string()),
+            }],
+        };
+        save_claude_registry(root, &registry).await.unwrap();
+
+        let loaded = load_claude_registry(root).await;
+        assert!(loaded.accounts.is_empty());
+        assert!(loaded.active_account_id.is_none());
+        assert_eq!(
+            tokio::fs::read_to_string(&outside_secret).await.unwrap(),
+            "do-not-touch"
+        );
     }
 }

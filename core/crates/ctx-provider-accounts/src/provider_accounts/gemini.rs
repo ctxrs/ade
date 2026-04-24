@@ -199,7 +199,7 @@ pub async fn remove_gemini_account(
             .iter()
             .filter_map(|entry| entry.secret_ref.as_deref()),
         gemini_secret_path,
-    )?;
+    );
     registry.accounts.retain(|a| a.id != account_id);
     if was_active {
         registry.active_account_id = None;

@@ -88,10 +88,18 @@ pub(crate) fn collect_secret_paths<'a>(
     data_root: &Path,
     secret_refs: impl IntoIterator<Item = &'a str>,
     secret_path_for_ref: fn(&Path, &str) -> Result<PathBuf>,
-) -> Result<Vec<PathBuf>> {
+) -> Vec<PathBuf> {
     secret_refs
         .into_iter()
-        .map(|secret_ref| secret_path_for_ref(data_root, secret_ref))
+        .filter_map(
+            |secret_ref| match secret_path_for_ref(data_root, secret_ref) {
+                Ok(path) => Some(path),
+                Err(err) => {
+                    tracing::warn!("skipping unsafe secret_ref {secret_ref:?}: {err:#}");
+                    None
+                }
+            },
+        )
         .collect()
 }
 
