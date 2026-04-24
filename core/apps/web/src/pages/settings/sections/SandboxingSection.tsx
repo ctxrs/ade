@@ -1,5 +1,3 @@
-import type { SandboxingSettings } from "../../../api/client";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../../../components/ui/select";
 import { TextInput } from "../../../components/ui/text-input";
 import { Card, Row } from "../SettingsPage.components";
 import { formatGiB } from "../SettingsPage.utils";
@@ -17,8 +15,6 @@ export function formatResolvedMachineMemory(memoryMb: number | null | undefined)
 
 export function SandboxingSection({
   loaded,
-  providerControlMode,
-  onProviderControlModeChange,
   resolvedMachineMemoryMb,
   idleShutdownSeconds,
   onIdleShutdownSecondsChange,
@@ -27,8 +23,6 @@ export function SandboxingSection({
   canSaveMachineSettings,
 }: {
   loaded: boolean;
-  providerControlMode: SandboxingSettings["provider_control_mode"];
-  onProviderControlModeChange: (value: SandboxingSettings["provider_control_mode"]) => void;
   resolvedMachineMemoryMb: number | null;
   idleShutdownSeconds: string;
   onIdleShutdownSecondsChange: (value: string) => void;
@@ -38,25 +32,6 @@ export function SandboxingSection({
 }) {
   return (
     <>
-      <Card title="Sandboxing">
-        <Row
-          title="Provider control"
-          description="Default is full capability. Switch to honor the harness's native permission settings."
-          control={
-            <Select value={providerControlMode} onValueChange={(value) => onProviderControlModeChange(value as SandboxingSettings["provider_control_mode"])} disabled={!loaded}>
-              <SelectTrigger className="tw-min-w-[10rem]">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="full">Full capability</SelectItem>
-                <SelectItem value="harness_native">Harness-native permissions</SelectItem>
-                <SelectItem value="ctx_enforced">ctx-enforced (coming soon)</SelectItem>
-              </SelectContent>
-            </Select>
-          }
-        />
-      </Card>
-
       <Card title="Local Sandbox Runtime">
         <Row
           title="Machine memory target"

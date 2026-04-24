@@ -5,7 +5,6 @@ import {
   type ResourceGovernanceLimits,
   type ResourceGovernanceSettings,
   type ResourceGovernanceStatus,
-  type SandboxingSettings,
   type UpdateSettingsRequest,
   getSettings,
   updateSettings,
@@ -47,8 +46,6 @@ type SettingsResourceGovernanceController = {
 };
 
 type SettingsSandboxingController = {
-  providerControlMode: SandboxingSettings["provider_control_mode"];
-  setProviderControlMode: (value: SandboxingSettings["provider_control_mode"]) => void;
   machineResolvedMemoryMb: number | null;
   machineIdleShutdownSeconds: string;
   setMachineIdleShutdownSeconds: (value: string) => void;
@@ -76,7 +73,6 @@ export function useSettingsDaemonDocumentController(): SettingsDaemonDocumentCon
 
   const telemetryHydrated = useRef(false);
   const resourceGovernanceHydrated = useRef(false);
-  const sandboxingHydrated = useRef(false);
   const executionHydrated = useRef(false);
   const savedExecutionPayloadKey = useRef<string | null>(null);
 
@@ -93,8 +89,6 @@ export function useSettingsDaemonDocumentController(): SettingsDaemonDocumentCon
   const [resourceEffective, setResourceEffective] = useState<ResourceGovernanceLimits | null>(null);
   const [resourceStatus, setResourceStatus] = useState<ResourceGovernanceStatus | null>(null);
 
-  const [providerControlMode, setProviderControlMode] =
-    useState<SandboxingSettings["provider_control_mode"]>("full");
   const [executionSettings, setExecutionSettings] = useState<ApiExecutionSettings>(() => defaultExecutionSettings());
   const [machineResolvedMemoryMb, setMachineResolvedMemoryMb] = useState<number | null>(null);
   const [machineIdleShutdownSeconds, setMachineIdleShutdownSeconds] = useState(
@@ -129,10 +123,6 @@ export function useSettingsDaemonDocumentController(): SettingsDaemonDocumentCon
         setResourceMemoryMaxGb(formatGiB(next.resource_governance.memory_max_mb));
         setResourceEffective(next.resource_governance.effective ?? null);
         setResourceStatus(next.resource_governance.status ?? null);
-      }
-
-      if (next.sandboxing?.provider_control_mode) {
-        setProviderControlMode(next.sandboxing.provider_control_mode);
       }
 
       const nextExecution = normalizeExecutionSettings(next.execution ?? null);
@@ -181,10 +171,6 @@ export function useSettingsDaemonDocumentController(): SettingsDaemonDocumentCon
           setResourceMemoryMaxGb(formatGiB(resourceGovernance.memory_max_mb));
           setResourceEffective(resourceGovernance.effective ?? null);
           setResourceStatus(resourceGovernance.status ?? null);
-        }
-
-        if (settings.sandboxing?.provider_control_mode) {
-          setProviderControlMode(settings.sandboxing.provider_control_mode);
         }
 
         const nextExecution = normalizeExecutionSettings(settings.execution ?? null);
@@ -291,24 +277,6 @@ export function useSettingsDaemonDocumentController(): SettingsDaemonDocumentCon
 
   useEffect(() => {
     if (!loaded) return;
-    if (!sandboxingHydrated.current) {
-      sandboxingHydrated.current = true;
-      return;
-    }
-
-    const timer = window.setTimeout(() => {
-      void savePatch({
-        sandboxing: {
-          provider_control_mode: providerControlMode,
-        },
-      });
-    }, 450);
-
-    return () => window.clearTimeout(timer);
-  }, [loaded, providerControlMode, savePatch]);
-
-  useEffect(() => {
-    if (!loaded) return;
     if (!executionHydrated.current) {
       executionHydrated.current = true;
       return;
@@ -368,8 +336,6 @@ export function useSettingsDaemonDocumentController(): SettingsDaemonDocumentCon
       },
     },
     sandboxing: {
-      providerControlMode,
-      setProviderControlMode,
       machineResolvedMemoryMb,
       machineIdleShutdownSeconds,
       setMachineIdleShutdownSeconds,

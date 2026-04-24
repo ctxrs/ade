@@ -105,6 +105,37 @@ fn apply_update_preserves_internal_runtime_fields() {
 }
 
 #[test]
+fn apply_update_forces_full_provider_control_mode() {
+    let next = apply_update(
+        Settings::default(),
+        UpdateSettingsReq {
+            dictation: None,
+            title_generation: None,
+            oracle: None,
+            telemetry: None,
+            resource_governance: None,
+            provider_guard: None,
+            tool_limits: None,
+            provider_restart: None,
+            subagents: None,
+            sandboxing: Some(update::UpdateSandboxingSettingsReq {
+                provider_control_mode: ProviderControlMode::HarnessNative,
+            }),
+            execution: None,
+            network_profiles: None,
+        },
+    );
+
+    assert_eq!(
+        next.sandboxing
+            .as_ref()
+            .expect("sandboxing settings")
+            .provider_control_mode,
+        ProviderControlMode::Full
+    );
+}
+
+#[test]
 fn to_public_redacts_secret_values() {
     let settings = Settings {
         dictation: Some(DictationSettings {

@@ -146,8 +146,6 @@ const makeProps = (): ComponentProps<typeof SettingsContentRouter> => ({
       onApplyNow: vi.fn(async () => {}),
     },
     sandboxing: {
-      providerControlMode: "full",
-      setProviderControlMode: vi.fn(),
       machineResolvedMemoryMb: 4096,
       machineIdleShutdownSeconds: "3600",
       setMachineIdleShutdownSeconds: vi.fn(),

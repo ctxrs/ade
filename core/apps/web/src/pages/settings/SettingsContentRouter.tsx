@@ -251,8 +251,6 @@ export function SettingsContentRouter(props: {
     return (
       <SandboxingSection
         loaded={daemonSettings.loaded}
-        providerControlMode={daemonSettings.sandboxing.providerControlMode}
-        onProviderControlModeChange={daemonSettings.sandboxing.setProviderControlMode}
         resolvedMachineMemoryMb={daemonSettings.sandboxing.machineResolvedMemoryMb}
         idleShutdownSeconds={daemonSettings.sandboxing.machineIdleShutdownSeconds}
         onIdleShutdownSecondsChange={daemonSettings.sandboxing.setMachineIdleShutdownSeconds}

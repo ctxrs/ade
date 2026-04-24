@@ -215,6 +215,12 @@ impl Default for SandboxingSettings {
 }
 
 pub(crate) fn normalize_settings_in_place(settings: &mut Settings) {
+    if let Some(sandboxing) = settings.sandboxing.as_mut() {
+        // Only `full` is currently a real product setting. The other variants
+        // stay in the schema as reserved values for future work, but are not
+        // meaningfully supported or user-facing today.
+        sandboxing.provider_control_mode = ProviderControlMode::Full;
+    }
     if let Some(execution) = settings.execution.as_mut() {
         normalize_container_execution_settings(&mut execution.container);
     }

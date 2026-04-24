@@ -9,8 +9,6 @@ describe("SandboxingSection", () => {
     render(
       createElement(SandboxingSection, {
         loaded: true,
-        providerControlMode: "full",
-        onProviderControlModeChange: () => {},
         resolvedMachineMemoryMb: 6144,
         idleShutdownSeconds: "900",
         onIdleShutdownSecondsChange: () => {},
@@ -22,6 +20,7 @@ describe("SandboxingSection", () => {
 
     expect(screen.getByText("Machine memory target")).toBeTruthy();
     expect(screen.getByText("6 GiB")).toBeTruthy();
+    expect(screen.queryByText("Provider control")).toBeNull();
     expect(screen.queryByText(/memory profile/i)).toBeNull();
     expect(screen.queryByText(/custom memory/i)).toBeNull();
     expect(screen.getByDisplayValue("900")).toBeTruthy();
