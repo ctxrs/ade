@@ -19,6 +19,7 @@ use ctx_provider_matrix::{
     ProviderMatrixEntry, ProviderMatrixEntryKind, ProviderRelease, ProviderReleaseStatus,
 };
 use ctx_providers::adapters::{ProviderHealth, ProviderStatus};
+use sha2::{Digest, Sha256};
 
 const TEST_CTX_EXACT_VERSION: &str = "0.59.0-canary.providerlifecycle";
 
@@ -89,6 +90,11 @@ fn write_executable(path: &Path, contents: &str) {
     std::fs::set_permissions(path, perms).expect("set permissions");
 }
 
+fn sha256_hex(bytes: &[u8]) -> String {
+    let digest = Sha256::digest(bytes);
+    format!("{digest:x}")
+}
+
 async fn save_matrix_fixture(data_root: &Path, matrix: &ProviderMatrix) {
     let path = matrix_cache_path(data_root);
     let parent = path.parent().expect("matrix cache parent");
@@ -157,6 +163,7 @@ fn managed_archive_host_entry(
     provider_id: &str,
     version: &str,
     url: String,
+    sha256: String,
     bin_path: &str,
     context_min: &str,
 ) -> ProviderMatrixEntry {
@@ -176,7 +183,7 @@ fn managed_archive_host_entry(
                 host_target,
                 ProviderArchiveTarget {
                     url,
-                    sha256: None,
+                    sha256: Some(sha256),
                     size_bytes: None,
                     archive: ProviderArchiveKind::None,
                     bin_path: bin_path.to_string(),
@@ -362,10 +369,10 @@ async fn host_provider_status_surfaces_stale_installs_for_current_ctx_build() {
             generated_at: None,
             providers: vec![
                 managed_npm_status_entry(
-                    "codex",
+                    "codex-crp",
                     "@openai/codex",
-                    "0.114.0-ctx.3",
-                    "0.114.0-ctx.5",
+                    "0.124.0-ctx.1",
+                    "1.0.0",
                     "0.59.0",
                 ),
                 managed_npm_status_entry(
@@ -392,9 +399,9 @@ async fn host_provider_status_surfaces_stale_installs_for_current_ctx_build() {
     );
     save_managed_provider_target(
         data_dir.path(),
-        "codex",
+        "codex-crp",
         "@openai/codex",
-        "0.114.0-ctx.3",
+        "0.124.0-ctx.1",
         InstallTarget::Host,
     )
     .await;
@@ -425,7 +432,7 @@ async fn host_provider_status_surfaces_stale_installs_for_current_ctx_build() {
     let app = common::router(state.clone());
 
     for (provider_id, version) in [
-        ("codex", "0.114.0-ctx.3"),
+        ("codex-crp", "0.124.0-ctx.1"),
         ("gemini", "0.33.1"),
         ("cursor", "0.7.1"),
     ] {
@@ -468,7 +475,7 @@ async fn host_provider_status_surfaces_stale_installs_for_current_ctx_build() {
             .unwrap_or_else(|| panic!("missing provider {provider_id} in {body:#?}"))
     };
 
-    for (provider_id, expected_version) in [("codex", "0.114.0-ctx.5"), ("gemini", "0.38.2")] {
+    for (provider_id, expected_version) in [("codex-crp", "1.0.0"), ("gemini", "0.38.2")] {
         let provider = find_provider(provider_id);
         assert_eq!(
             provider
@@ -486,7 +493,7 @@ async fn host_provider_status_surfaces_stale_installs_for_current_ctx_build() {
         );
     }
 
-    let codex = find_provider("codex");
+    let codex = find_provider("codex-crp");
     assert_eq!(
         codex
             .pointer("/details/install_supported")
@@ -514,7 +521,8 @@ async fn managed_install_start_uses_runtime_build_identity_for_release_resolutio
 
     let data_dir = tempfile::tempdir().expect("tempdir");
     let fixture = data_dir.path().join("amp-acp");
-    write_executable(&fixture, "#!/bin/sh\nexit 0\n");
+    let fixture_contents = "#!/bin/sh\nexit 0\n";
+    write_executable(&fixture, fixture_contents);
     let matrix_path = matrix_cache_path(data_dir.path());
     save_matrix_fixture(
         data_dir.path(),
@@ -525,6 +533,7 @@ async fn managed_install_start_uses_runtime_build_identity_for_release_resolutio
                 "fixture-provider",
                 "0.1.3",
                 file_url(&fixture),
+                sha256_hex(fixture_contents.as_bytes()),
                 "fixture-provider",
                 "0.59.0",
             )],

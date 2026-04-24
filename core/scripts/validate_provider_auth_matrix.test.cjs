@@ -21,7 +21,7 @@ const baseManifest = () => ({
   schema_version: 1,
   generated_at: "2026-03-05",
   summary: "test manifest",
-  providers: [{ id: "codex", owner: "provider-codex" }],
+  providers: [{ id: "codex-crp", owner: "provider-codex" }],
   auth_modes: [{ id: "endpoint_api_key", description: "api key auth" }],
   daemon_locations: [{ id: "local", description: "local daemon" }],
   execution_environments: [{ id: "sandbox", description: "sandbox" }],
@@ -35,7 +35,7 @@ const baseManifest = () => ({
   cells: [
     {
       id: "codex.endpoint_api_key.local.sandbox",
-      provider_id: "codex",
+      provider_id: "codex-crp",
       auth_mode: "endpoint_api_key",
       daemon_location: "local",
       execution_environment: "sandbox",

@@ -17,9 +17,9 @@ require_pattern() {
   fi
 }
 
-require_pattern 'matrix_has_archive_target "${matrix_json}" "codex" "linux-aarch64"'
+require_pattern 'matrix_has_archive_target "${matrix_json}" "codex-crp" "linux-aarch64"'
 require_pattern 'codex_append_fallback_arch="x86_64"'
-require_pattern 'CTX_BUNDLE_ONLY_PROVIDERS="codex"'
+require_pattern 'CTX_BUNDLE_ONLY_PROVIDERS="codex-crp"'
 require_pattern 'CTX_BUNDLE_ARCH="${codex_append_fallback_arch}"'
 require_pattern 'CTX_BUNDLE_LOCAL_ADAPTERS="off"'
 

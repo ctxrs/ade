@@ -29,7 +29,7 @@ const DEFERRED_RUNNER_SKIP_REASONS = new Set([
   "missing_seed_fixture",
   "provider_external_challenge",
 ]);
-const REQUIRED_PROVIDER_IDS = new Set(["codex"]);
+const REQUIRED_PROVIDER_IDS = new Set(["codex-crp"]);
 const REQUIRED_AUTH_MODES = new Set(["endpoint_api_key", "configure_later_then_connect"]);
 const REQUIRED_DAEMON_LOCATIONS = new Set(["local"]);
 const REQUIRED_EXECUTION_ENVIRONMENTS = new Set(["host", "sandbox"]);
@@ -256,7 +256,7 @@ const validateManifest = (manifest) => {
       errors.push(`cell ${id} desktop_wdio runner requires scenarios`);
     }
     if (
-      providerId === "codex"
+      providerId === "codex-crp"
       && REQUIRED_AUTH_MODES.has(authMode)
       && daemonLocation === "local"
       && executionEnvironment === "host"
@@ -266,7 +266,7 @@ const validateManifest = (manifest) => {
       errors.push(`cell ${id} local host Codex required coverage must include local-codex-host-smoke`);
     }
     if (
-      providerId === "codex"
+      providerId === "codex-crp"
       && REQUIRED_AUTH_MODES.has(authMode)
       && daemonLocation === "local"
       && executionEnvironment === "sandbox"

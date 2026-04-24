@@ -22,7 +22,7 @@ printf 'module.exports = {};\n' > "$fake_root/external-harnesses/claude-crp/dist
 cat > "$fake_root/data/providers/agent-servers/agent_servers.json" <<'JSON'
 {
   "providers": {
-    "codex": {
+    "codex-crp": {
       "command": "/tmp/stale-codex-crp",
       "args": [],
       "dependencies": []
@@ -47,7 +47,7 @@ from pathlib import Path
 
 cfg = json.loads(Path(sys.argv[1]).read_text())
 providers = cfg.get("providers") or {}
-if "codex" in providers:
+if "codex-crp" in providers:
     print("error: stale codex override was not removed", file=sys.stderr)
     raise SystemExit(1)
 claude = providers.get("claude-crp")

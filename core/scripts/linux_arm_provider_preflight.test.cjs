@@ -14,20 +14,20 @@ const mkFixtureDir = () => fs.mkdtempSync(path.join(os.tmpdir(), "ctx-linux-arm-
 
 const baseManifest = {
   version: 1,
-  critical_providers: [{ provider_id: "codex" }],
-  full_nightly_providers: [{ provider_id: "codex" }],
+  critical_providers: [{ provider_id: "codex-crp" }],
+  full_nightly_providers: [{ provider_id: "codex-crp" }],
 };
 
 const baseProviderMatrix = {
   version: 2,
   providers: [
     {
-      id: "codex",
+      id: "codex-crp",
       managed_install: {
         kind: "archive",
         targets: {
           "linux-aarch64": {
-            url: "https://example.invalid/providers/codex/linux-aarch64/codex-linux-aarch64.tar.gz",
+            url: "https://example.invalid/providers/codex-crp/linux-aarch64/codex-linux-aarch64.tar.gz",
             archive: "tar_gz",
             bin_path: "bin/codex",
             sha256: "a".repeat(64),
@@ -44,10 +44,10 @@ const baseRuntimeLock = {
   components: [
     {
       kind: "provider",
-      id: "codex",
+      id: "codex-crp",
       os: "linux",
       arch: "aarch64",
-      sources: [{ source_type: "ci", uri: "locked://providers/codex/linux/aarch64", sha256: "0".repeat(64) }],
+      sources: [{ source_type: "ci", uri: "locked://providers/codex-crp/linux/aarch64", sha256: "0".repeat(64) }],
     },
     {
       kind: "runtime",
@@ -108,7 +108,7 @@ test("linux arm preflight fails when provider target is missing", () => {
 
 test("linux arm preflight fails when provider url points to x86_64 artifact", () => {
   const providerMatrix = structuredClone(baseProviderMatrix);
-  providerMatrix.providers[0].managed_install.targets["linux-aarch64"].url = "https://example.invalid/providers/codex/linux-x86_64/codex-linux-x86_64.tar.gz";
+  providerMatrix.providers[0].managed_install.targets["linux-aarch64"].url = "https://example.invalid/providers/codex-crp/linux-x86_64/codex-linux-x86_64.tar.gz";
   const report = run({ providerMatrix });
   assert.ok(report.summary.errors_total > 0);
   assert.ok(report.errors.some((entry) => entry.includes("suggests non-arm64 artifact")));

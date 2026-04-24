@@ -1,9 +1,22 @@
 use std::path::{Path, PathBuf};
 
 use super::CODEX_RUNTIME_OWNER_FILE;
+use ctx_core::provider_ids::LEGACY_CODEX_PROVIDER_ID;
+
+const CODEX_CRP_PROVIDER_ROOT: &str = "codex-crp";
+
+pub fn legacy_codex_accounts_root(data_root: &Path) -> PathBuf {
+    data_root
+        .join("providers")
+        .join(LEGACY_CODEX_PROVIDER_ID)
+        .join("accounts")
+}
 
 pub fn codex_accounts_root(data_root: &Path) -> PathBuf {
-    data_root.join("providers").join("codex").join("accounts")
+    data_root
+        .join("providers")
+        .join(CODEX_CRP_PROVIDER_ROOT)
+        .join("accounts")
 }
 
 pub fn claude_accounts_root(data_root: &Path) -> PathBuf {
@@ -41,8 +54,12 @@ pub fn amp_accounts_root(data_root: &Path) -> PathBuf {
     data_root.join("providers").join("amp").join("accounts")
 }
 
+pub fn legacy_codex_secrets_root(data_root: &Path) -> PathBuf {
+    data_root.join("secrets").join(LEGACY_CODEX_PROVIDER_ID)
+}
+
 pub fn codex_secrets_root(data_root: &Path) -> PathBuf {
-    data_root.join("secrets").join("codex")
+    data_root.join("secrets").join(CODEX_CRP_PROVIDER_ROOT)
 }
 
 pub fn claude_secrets_root(data_root: &Path) -> PathBuf {
@@ -97,8 +114,18 @@ pub(crate) fn cursor_secret_path(data_root: &Path, secret_ref: &str) -> PathBuf 
     cursor_secrets_root(data_root).join(secret_ref)
 }
 
+pub fn legacy_codex_runtime_home(data_root: &Path) -> PathBuf {
+    data_root
+        .join("providers")
+        .join(LEGACY_CODEX_PROVIDER_ID)
+        .join("home")
+}
+
 pub fn codex_runtime_home(data_root: &Path) -> PathBuf {
-    data_root.join("providers").join("codex").join("home")
+    data_root
+        .join("providers")
+        .join(CODEX_CRP_PROVIDER_ROOT)
+        .join("home")
 }
 
 pub fn codex_registry_path(data_root: &Path) -> PathBuf {

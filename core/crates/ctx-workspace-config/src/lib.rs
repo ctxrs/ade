@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::sync::OnceLock;
 
 use anyhow::{bail, Context, Result};
+use ctx_core::provider_ids::canonical_provider_id;
 pub use ctx_core::models::ExecutionEnvironment;
 use ctx_sandbox_contract::{ContainerNetworkMode, ExecutionMode, ExecutionSettings};
 use ctx_store::Store;
@@ -171,7 +172,7 @@ async fn save_workspace_settings_doc(
 }
 
 fn normalize_provider_preference_key(value: &str) -> Option<String> {
-    trimmed_nonempty(value)
+    trimmed_nonempty(value).map(|trimmed| canonical_provider_id(&trimmed).to_string())
 }
 
 fn deserialize_optional_string_map<'de, D>(

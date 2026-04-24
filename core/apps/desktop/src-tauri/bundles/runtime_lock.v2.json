@@ -447,7 +447,7 @@
     },
     {
       "kind": "provider",
-      "id": "codex",
+      "id": "codex-crp",
       "os": "macos",
       "arch": "aarch64",
       "variant": "default",
@@ -459,14 +459,14 @@
         },
         {
           "source_type": "ci",
-          "uri": "locked://providers/codex/macos/aarch64",
+          "uri": "locked://providers/codex-crp/macos/aarch64",
           "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
         }
       ]
     },
     {
       "kind": "provider",
-      "id": "codex",
+      "id": "codex-crp",
       "os": "linux",
       "arch": "aarch64",
       "variant": "default",
@@ -478,14 +478,14 @@
         },
         {
           "source_type": "ci",
-          "uri": "locked://providers/codex/linux/aarch64",
+          "uri": "locked://providers/codex-crp/linux/aarch64",
           "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
         }
       ]
     },
     {
       "kind": "provider",
-      "id": "codex",
+      "id": "codex-crp",
       "os": "linux",
       "arch": "x86_64",
       "variant": "default",
@@ -497,7 +497,7 @@
         },
         {
           "source_type": "ci",
-          "uri": "locked://providers/codex/linux/x86_64",
+          "uri": "locked://providers/codex-crp/linux/x86_64",
           "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
         }
       ]

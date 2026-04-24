@@ -25,7 +25,7 @@ test("loadMatrix validates default fixture and exposes critical/nightly ids", ()
 
   assert.ok(critical.length > 0);
   assert.ok(nightly.length >= critical.length);
-  assert.deepEqual(critical, ["codex"]);
+  assert.deepEqual(critical, ["codex-crp"]);
   assert.equal(matrix.expected_environment, "sandbox");
   assert.equal(matrix.expected_network_mode, "llm_only");
   for (const providerId of critical) {
@@ -80,8 +80,8 @@ test("droid managed dependencies are attached to droid instead of the ACP bridge
 test("validateMatrix rejects duplicate provider ids", () => {
   const fixture = {
     version: 1,
-    critical_providers: [{ provider_id: "codex" }, { provider_id: "codex" }],
-    full_nightly_providers: [{ provider_id: "codex" }],
+    critical_providers: [{ provider_id: "codex-crp" }, { provider_id: "codex-crp" }],
+    full_nightly_providers: [{ provider_id: "codex-crp" }],
   };
   assert.throws(() => validateMatrix(fixture), /duplicate provider_id/i);
 });
@@ -89,7 +89,7 @@ test("validateMatrix rejects duplicate provider ids", () => {
 test("validateMatrix rejects critical provider outside nightly set", () => {
   const fixture = {
     version: 1,
-    critical_providers: [{ provider_id: "codex" }],
+    critical_providers: [{ provider_id: "codex-crp" }],
     full_nightly_providers: [{ provider_id: "opencode" }],
   };
   assert.throws(() => validateMatrix(fixture), /missing from full_nightly_providers/i);
@@ -98,12 +98,12 @@ test("validateMatrix rejects critical provider outside nightly set", () => {
 test("loadMatrix reads custom path", () => {
   const matrixPath = writeMatrix({
     version: 1,
-    critical_providers: [{ provider_id: "codex" }],
-    full_nightly_providers: [{ provider_id: "codex" }, { provider_id: "opencode" }],
+    critical_providers: [{ provider_id: "codex-crp" }],
+    full_nightly_providers: [{ provider_id: "codex-crp" }, { provider_id: "opencode" }],
     deferred_providers: [{ provider_id: "qwen", reason: "missing linux-aarch64" }],
     unsupported_providers: ["junie"],
   });
   const { matrix } = loadMatrix(matrixPath);
-  assert.deepEqual(providerIdsForLane(matrix, "critical"), ["codex"]);
-  assert.deepEqual(providerIdsForLane(matrix, "nightly"), ["codex", "opencode"]);
+  assert.deepEqual(providerIdsForLane(matrix, "critical"), ["codex-crp"]);
+  assert.deepEqual(providerIdsForLane(matrix, "nightly"), ["codex-crp", "opencode"]);
 });

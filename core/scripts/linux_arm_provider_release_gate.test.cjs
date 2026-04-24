@@ -23,8 +23,8 @@ const mkFixture = ({ manifest, report }) => {
 
 const manifest = {
   version: 1,
-  critical_providers: [{ provider_id: "codex" }, { provider_id: "goose" }],
-  full_nightly_providers: [{ provider_id: "codex" }, { provider_id: "goose" }, { provider_id: "opencode" }],
+  critical_providers: [{ provider_id: "codex-crp" }, { provider_id: "goose" }],
+  full_nightly_providers: [{ provider_id: "codex-crp" }, { provider_id: "goose" }, { provider_id: "opencode" }],
 };
 
 test("release gate passes when all critical providers pass", () => {
@@ -32,7 +32,7 @@ test("release gate passes when all critical providers pass", () => {
     manifest,
     report: {
       results: [
-        { provider_id: "codex", result: "pass" },
+        { provider_id: "codex-crp", result: "pass" },
         { provider_id: "goose", result: "pass" },
       ],
     },
@@ -54,7 +54,7 @@ test("release gate fails when one critical provider fails", () => {
     manifest,
     report: {
       results: [
-        { provider_id: "codex", result: "pass" },
+        { provider_id: "codex-crp", result: "pass" },
         { provider_id: "goose", result: "fail", stage: "first_turn", error_code: "timeout", reason: "upstream timeout" },
       ],
     },
@@ -75,7 +75,7 @@ test("release gate fails on missing provider when strictMissing=true", () => {
   const { manifestPath, reportPath } = mkFixture({
     manifest,
     report: {
-      results: [{ provider_id: "codex", result: "pass" }],
+      results: [{ provider_id: "codex-crp", result: "pass" }],
     },
   });
 
@@ -95,7 +95,7 @@ test("release gate CLI supports explicit override with ticket", () => {
     manifest,
     report: {
       results: [
-        { provider_id: "codex", result: "pass" },
+        { provider_id: "codex-crp", result: "pass" },
         { provider_id: "goose", result: "fail", stage: "first_turn", error_code: "timeout", reason: "upstream timeout" },
       ],
     },

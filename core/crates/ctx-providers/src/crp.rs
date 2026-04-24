@@ -95,7 +95,7 @@ impl Tier1CrpAdapter {
     }
 
     pub fn codex() -> Self {
-        Self::from_provider_runtime("codex", "codex".to_string(), vec![])
+        Self::from_provider_runtime("codex-crp", "codex-crp".to_string(), vec![])
     }
 
     pub fn claude() -> Self {
@@ -234,7 +234,7 @@ impl ProviderAdapter for Tier1CrpAdapter {
     fn supports_resume(&self) -> bool {
         matches!(
             self.id.as_str(),
-            "codex" | "codex-crp" | "claude" | "claude-crp"
+            "codex-crp" | "claude" | "claude-crp"
         )
     }
 
@@ -284,7 +284,7 @@ fn default_caps(id: &str) -> ProviderCapabilities {
         has_tool_call_ids: true,
         has_file_change_events: false,
         has_command_events: false,
-        supports_resume: matches!(id, "codex" | "codex-crp" | "claude" | "claude-crp"),
+        supports_resume: matches!(id, "codex-crp" | "claude" | "claude-crp"),
         supports_stable_session_id: true,
         supports_fork_or_rewind: false,
         supports_headless: true,

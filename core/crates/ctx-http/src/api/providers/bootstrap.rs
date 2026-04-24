@@ -1,5 +1,6 @@
 use super::*;
 use ctx_workspace_config as workspace_config;
+use ctx_core::provider_ids::LEGACY_CODEX_PROVIDER_ID;
 
 fn parse_workspace_id(ws_id: &str) -> Result<WorkspaceId, (StatusCode, Json<serde_json::Value>)> {
     Ok(WorkspaceId(uuid::Uuid::parse_str(ws_id).map_err(|_| {
@@ -163,6 +164,16 @@ pub(crate) async fn get_workspace_providers_bootstrap(
         }
     }
 
+    if let Some(codex_options) = provider_options.get("codex-crp").cloned() {
+        let mut legacy_options = codex_options;
+        legacy_options["provider_id"] = serde_json::json!(LEGACY_CODEX_PROVIDER_ID);
+        provider_options.insert(LEGACY_CODEX_PROVIDER_ID.to_string(), legacy_options);
+    }
+    if let Some(codex_config) = provider_harness_config.get("codex-crp").cloned() {
+        let mut legacy_config = codex_config;
+        super::project_harness_config_for_response(LEGACY_CODEX_PROVIDER_ID, &mut legacy_config);
+        provider_harness_config.insert(LEGACY_CODEX_PROVIDER_ID.to_string(), legacy_config);
+    }
     Ok(Json(ProvidersBootstrapResponse {
         providers,
         provider_options,

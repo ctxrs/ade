@@ -92,25 +92,25 @@ test("codex bumps fail closed when provenance is missing", async () => {
     version: 3,
     providers: [
       {
-        id: "codex",
+        id: "codex-crp",
         managed_install: {
           kind: "archive",
-          version: "0.114.0-ctx.5",
+          version: "0.124.0-ctx.1",
           targets: {},
         },
         releases: [
           {
-            version: "0.114.0-ctx.5",
+            version: "0.124.0-ctx.1",
             status: "supported",
             context_min: "0.1.0",
-            notes: "Thin app-server adapter over stock Codex rust-v0.114.0",
-            upstream_version: "0.114.0",
+            notes: "Thin app-server adapter over stock Codex rust-v0.124.0",
+            upstream_version: "0.124.0",
             provenance: {
               upstream_repo: "openai/codex",
-              upstream_release_tag: "rust-v0.114.0",
-              upstream_commit_sha: "b9904c0ae4ecb773549efd6ea3fb05229402fdb9",
+              upstream_release_tag: "rust-v0.124.0",
+              upstream_commit_sha: "e9fb49366c93a1478ec71cc41ecee415a197d036",
               ctx_repo: "ctxorgrs/codex-crp",
-              ctx_release_tag: "v0.114.0-ctx.5",
+              ctx_release_tag: "v0.124.0-ctx.1",
             },
           },
         ],
@@ -119,7 +119,7 @@ test("codex bumps fail closed when provenance is missing", async () => {
   };
   writeText(
     path.join(repoRoot, "core", "crates", "codex-crp", "Cargo.toml"),
-    '[package]\nname = "codex-crp"\nversion = "0.114.0-ctx.5"\nedition = "2021"\n',
+    '[package]\nname = "codex-crp"\nversion = "0.124.0-ctx.1"\nedition = "2021"\n',
   );
 
   await assert.rejects(
@@ -129,9 +129,9 @@ test("codex bumps fail closed when provenance is missing", async () => {
         repoRoot,
         updates: [
           {
-            id: "codex",
-            version: "0.121.0-ctx.1",
-            upstream_version: "0.121.0",
+            id: "codex-crp",
+            version: "1.0.0",
+            upstream_version: "0.124.0",
           },
         ],
         index: null,
@@ -148,25 +148,25 @@ test("codex bumps rewrite cargo version and provenance metadata", async () => {
     version: 3,
     providers: [
       {
-        id: "codex",
+        id: "codex-crp",
         managed_install: {
           kind: "archive",
-          version: "0.114.0-ctx.5",
+          version: "0.124.0-ctx.1",
           targets: {},
         },
         releases: [
           {
-            version: "0.114.0-ctx.5",
+            version: "0.124.0-ctx.1",
             status: "supported",
             context_min: "0.1.0",
-            notes: "Thin app-server adapter over stock Codex rust-v0.114.0",
-            upstream_version: "0.114.0",
+            notes: "Thin app-server adapter over stock Codex rust-v0.124.0",
+            upstream_version: "0.124.0",
             provenance: {
               upstream_repo: "openai/codex",
-              upstream_release_tag: "rust-v0.114.0",
-              upstream_commit_sha: "b9904c0ae4ecb773549efd6ea3fb05229402fdb9",
+              upstream_release_tag: "rust-v0.124.0",
+              upstream_commit_sha: "e9fb49366c93a1478ec71cc41ecee415a197d036",
               ctx_repo: "ctxorgrs/codex-crp",
-              ctx_release_tag: "v0.114.0-ctx.5",
+              ctx_release_tag: "v0.124.0-ctx.1",
             },
           },
         ],
@@ -176,7 +176,7 @@ test("codex bumps rewrite cargo version and provenance metadata", async () => {
   const cargoToml = path.join(repoRoot, "core", "crates", "codex-crp", "Cargo.toml");
   writeText(
     cargoToml,
-    '[package]\nname = "codex-crp"\nversion = "0.114.0-ctx.5"\nedition = "2021"\n',
+    '[package]\nname = "codex-crp"\nversion = "0.124.0-ctx.1"\nedition = "2021"\n',
   );
 
   const result = await applyBumpPlan({
@@ -184,10 +184,10 @@ test("codex bumps rewrite cargo version and provenance metadata", async () => {
     repoRoot,
     updates: [
       {
-        id: "codex",
-        version: "0.121.0-ctx.1",
+        id: "codex-crp",
+        version: "1.0.0",
         provenance: {
-          upstream_release_tag: "rust-v0.121.0",
+          upstream_release_tag: "rust-v0.124.0",
           upstream_commit_sha: "0123456789abcdef0123456789abcdef01234567",
         },
       },
@@ -198,14 +198,14 @@ test("codex bumps rewrite cargo version and provenance metadata", async () => {
   });
 
   const codex = matrix.providers[0];
-  assert.equal(codex.managed_install.version, "0.121.0-ctx.1");
-  assert.equal(codex.releases[0].version, "0.121.0-ctx.1");
-  assert.equal(codex.releases[0].upstream_version, "0.121.0");
+  assert.equal(codex.managed_install.version, "1.0.0");
+  assert.equal(codex.releases[0].version, "1.0.0");
+  assert.equal(codex.releases[0].upstream_version, "0.124.0");
   assert.equal(codex.releases[0].provenance.upstream_repo, "openai/codex");
   assert.equal(codex.releases[0].provenance.ctx_repo, "ctxorgrs/codex-crp");
-  assert.equal(codex.releases[0].provenance.ctx_release_tag, "v0.121.0-ctx.1");
-  assert.equal(codex.releases[0].notes, "Thin app-server adapter over stock Codex rust-v0.121.0");
-  assert.match(fs.readFileSync(cargoToml, "utf8"), /version = "0\.121\.0-ctx\.1"/);
+  assert.equal(codex.releases[0].provenance.ctx_release_tag, "v1.0.0");
+  assert.equal(codex.releases[0].notes, "Thin app-server adapter over stock Codex rust-v0.124.0");
+  assert.match(fs.readFileSync(cargoToml, "utf8"), /version = "1\.0\.0"/);
   assert.match(result.warnings.join("\n"), /archive version changed/);
 });
 

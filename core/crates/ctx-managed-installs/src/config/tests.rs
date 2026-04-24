@@ -82,8 +82,17 @@ fn bundled_only_provider_scope_defaults_to_all_when_empty() {
     let _bundle_dir = EnvVarGuard::unset("CTX_BUNDLE_DIR");
     let _strict = EnvVarGuard::set("CTX_E2E_BUNDLED_ONLY", "1");
     let _providers = EnvVarGuard::set("CTX_E2E_BUNDLED_ONLY_PROVIDERS", " , ");
-    assert!(bundled_only_mode_applies_to_provider("codex"));
+    assert!(bundled_only_mode_applies_to_provider("codex-crp"));
     assert!(bundled_only_mode_applies_to_provider("acp-crp-bridge"));
+}
+
+#[test]
+fn bundled_only_provider_scope_honors_legacy_codex_alias() {
+    let _guard = env_lock().blocking_lock();
+    let _bundle_dir = EnvVarGuard::unset("CTX_BUNDLE_DIR");
+    let _strict = EnvVarGuard::set("CTX_E2E_BUNDLED_ONLY", "1");
+    let _providers = EnvVarGuard::set("CTX_E2E_BUNDLED_ONLY_PROVIDERS", "codex");
+    assert!(bundled_only_mode_applies_to_provider("codex-crp"));
 }
 
 #[test]
@@ -92,7 +101,7 @@ fn bundled_only_mode_can_be_disabled() {
     let _bundle_dir = EnvVarGuard::unset("CTX_BUNDLE_DIR");
     let _strict = EnvVarGuard::unset("CTX_E2E_BUNDLED_ONLY");
     let _providers = EnvVarGuard::unset("CTX_E2E_BUNDLED_ONLY_PROVIDERS");
-    assert!(!bundled_only_mode_applies_to_provider("codex"));
+    assert!(!bundled_only_mode_applies_to_provider("codex-crp"));
 }
 
 #[test]
@@ -102,7 +111,7 @@ fn bundle_dir_alone_does_not_force_bundled_only_mode() {
     let _bundle_dir = EnvVarGuard::set("CTX_BUNDLE_DIR", &temp.path().to_string_lossy());
     let _strict = EnvVarGuard::unset("CTX_E2E_BUNDLED_ONLY");
     let _providers = EnvVarGuard::unset("CTX_E2E_BUNDLED_ONLY_PROVIDERS");
-    assert!(!bundled_only_mode_applies_to_provider("codex"));
+    assert!(!bundled_only_mode_applies_to_provider("codex-crp"));
 }
 
 #[cfg(unix)]
@@ -126,7 +135,7 @@ fn resolve_runtime_provider_command_preserves_raw_bundle_symlink_paths() {
 
     let mut cfg = AgentServerConfigFile::default();
     cfg.managed_provider_targets.insert(
-        "codex".to_string(),
+        "codex-crp".to_string(),
         HashMap::from([(
             "container".to_string(),
             AgentServerCommand {
@@ -149,7 +158,7 @@ fn resolve_runtime_provider_command_preserves_raw_bundle_symlink_paths() {
     );
 
     let resolved =
-        resolve_runtime_provider_command_for_target(&cfg, "codex", Some(InstallTarget::Container))
+        resolve_runtime_provider_command_for_target(&cfg, "codex-crp", Some(InstallTarget::Container))
             .expect("resolve runtime command")
             .expect("runtime command");
     assert_eq!(resolved.command_abs_path, raw_command.to_string_lossy());
@@ -165,7 +174,7 @@ fn resolve_runtime_provider_command_preserves_raw_bundle_symlink_paths() {
 fn migration_moves_legacy_managed_provider_entries_into_target_buckets() {
     let mut cfg = AgentServerConfigFile::default();
     cfg.providers.insert(
-        "codex".to_string(),
+        "codex-crp".to_string(),
         AgentServerCommand {
             command: "/tmp/codex-host".to_string(),
             args: Vec::new(),
@@ -185,18 +194,18 @@ fn migration_moves_legacy_managed_provider_entries_into_target_buckets() {
     );
 
     assert!(migrate_agent_server_config(&mut cfg));
-    assert!(!cfg.providers.contains_key("codex"));
-    assert!(!cfg.managed_installs.contains_key("codex"));
+    assert!(!cfg.providers.contains_key("codex-crp"));
+    assert!(!cfg.managed_installs.contains_key("codex-crp"));
     assert_eq!(
         cfg.managed_install_targets
-            .get("codex")
+            .get("codex-crp")
             .and_then(|targets| targets.get("host"))
             .and_then(|meta| meta.target),
         Some(InstallTarget::Host)
     );
     assert_eq!(
         cfg.managed_provider_targets
-            .get("codex")
+            .get("codex-crp")
             .and_then(|targets| targets.get("host"))
             .map(|command| command.command.as_str()),
         Some("/tmp/codex-host")
@@ -204,10 +213,69 @@ fn migration_moves_legacy_managed_provider_entries_into_target_buckets() {
 }
 
 #[test]
-fn managed_provider_helpers_ignore_legacy_shared_provider_entries() {
+fn migration_renames_legacy_codex_provider_keys_to_codex_crp() {
     let mut cfg = AgentServerConfigFile::default();
     cfg.providers.insert(
         "codex".to_string(),
+        AgentServerCommand {
+            command: "/tmp/codex-host".to_string(),
+            args: Vec::new(),
+            dependencies: Vec::new(),
+            managed: None,
+        },
+    );
+    cfg.provider_login_executables.insert(
+        "codex".to_string(),
+        ProviderLoginExecutable {
+            executable_path: "/tmp/codex-login".to_string(),
+        },
+    );
+    cfg.managed_provider_targets.insert(
+        "codex".to_string(),
+        HashMap::from([(
+            "host".to_string(),
+            AgentServerCommand {
+                command: "/tmp/codex-managed".to_string(),
+                args: Vec::new(),
+                dependencies: Vec::new(),
+                managed: None,
+            },
+        )]),
+    );
+    cfg.managed_install_targets.insert(
+        "codex".to_string(),
+        HashMap::from([(
+            "host".to_string(),
+            ManagedInstallMetadata {
+                package: Some("@openai/codex".to_string()),
+                version: Some("1.0.0".to_string()),
+                artifact_fingerprint: None,
+                archive_sha256: None,
+                target: Some(InstallTarget::Host),
+                install_dir_rel: None,
+                bin_dir_rel: None,
+                last_success_at: None,
+                last_error: None,
+            },
+        )]),
+    );
+
+    assert!(migrate_agent_server_config(&mut cfg));
+    assert!(!cfg.providers.contains_key("codex"));
+    assert!(!cfg.provider_login_executables.contains_key("codex"));
+    assert!(!cfg.managed_provider_targets.contains_key("codex"));
+    assert!(!cfg.managed_install_targets.contains_key("codex"));
+    assert!(cfg.providers.contains_key("codex-crp"));
+    assert!(cfg.provider_login_executables.contains_key("codex-crp"));
+    assert!(cfg.managed_provider_targets.contains_key("codex-crp"));
+    assert!(cfg.managed_install_targets.contains_key("codex-crp"));
+}
+
+#[test]
+fn managed_provider_helpers_ignore_legacy_shared_provider_entries() {
+    let mut cfg = AgentServerConfigFile::default();
+    cfg.providers.insert(
+        "codex-crp".to_string(),
         AgentServerCommand {
             command: "/tmp/legacy-codex".to_string(),
             args: vec!["--legacy".to_string()],
@@ -226,7 +294,7 @@ fn managed_provider_helpers_ignore_legacy_shared_provider_entries() {
         },
     );
     cfg.managed_installs.insert(
-        "codex".to_string(),
+        "codex-crp".to_string(),
         ManagedInstallMetadata {
             package: Some("@openai/codex".to_string()),
             version: Some("0.9.0".to_string()),
@@ -241,11 +309,11 @@ fn managed_provider_helpers_ignore_legacy_shared_provider_entries() {
     );
 
     assert!(
-        managed_provider_command_for_target(&cfg, "codex", Some(InstallTarget::Host)).is_none(),
+        managed_provider_command_for_target(&cfg, "codex-crp", Some(InstallTarget::Host)).is_none(),
         "provider runtime command resolution must ignore legacy shared managed entries"
     );
     assert!(
-        managed_provider_install_metadata_for_target(&cfg, "codex", Some(InstallTarget::Host))
+        managed_provider_install_metadata_for_target(&cfg, "codex-crp", Some(InstallTarget::Host))
             .is_none(),
         "provider runtime metadata resolution must ignore legacy shared managed entries"
     );
@@ -255,7 +323,7 @@ fn managed_provider_helpers_ignore_legacy_shared_provider_entries() {
 fn resolve_runtime_provider_command_keeps_invalid_managed_commands_invalid_by_default() {
     let mut cfg = AgentServerConfigFile::default();
     cfg.managed_provider_targets.insert(
-        "codex".to_string(),
+        "codex-crp".to_string(),
         HashMap::from([(
             "container".to_string(),
             AgentServerCommand {
@@ -278,13 +346,13 @@ fn resolve_runtime_provider_command_keeps_invalid_managed_commands_invalid_by_de
     );
 
     let err =
-        resolve_runtime_provider_command_for_target(&cfg, "codex", Some(InstallTarget::Container))
+        resolve_runtime_provider_command_for_target(&cfg, "codex-crp", Some(InstallTarget::Container))
             .expect_err(
                 "invalid managed runtime command should remain invalid for general resolution",
             );
     let err_text = err.to_string();
     assert!(
-        err_text.contains("provider=codex source=managed_install"),
+        err_text.contains("provider=codex-crp source=managed_install"),
         "unexpected managed runtime command error: {err_text}"
     );
 }
@@ -294,7 +362,7 @@ fn resolve_runtime_provider_command_repairable_managed_treats_invalid_managed_co
 {
     let mut cfg = AgentServerConfigFile::default();
     cfg.managed_provider_targets.insert(
-        "codex".to_string(),
+        "codex-crp".to_string(),
         HashMap::from([(
             "container".to_string(),
             AgentServerCommand {
@@ -318,7 +386,7 @@ fn resolve_runtime_provider_command_repairable_managed_treats_invalid_managed_co
 
     let resolved = resolve_runtime_provider_command_for_target_repairable_managed(
         &cfg,
-        "codex",
+        "codex-crp",
         Some(InstallTarget::Container),
     )
     .expect("resolve repairable managed runtime command");
@@ -408,7 +476,7 @@ fn resolve_runtime_provider_command_for_target_prefers_target_bucket() {
 
     let mut cfg = AgentServerConfigFile::default();
     cfg.managed_provider_targets.insert(
-        "codex".to_string(),
+        "codex-crp".to_string(),
         HashMap::from([
             (
                 "host".to_string(),
@@ -452,7 +520,7 @@ fn resolve_runtime_provider_command_for_target_prefers_target_bucket() {
     );
 
     let host_resolved =
-        resolve_runtime_provider_command_for_target(&cfg, "codex", Some(InstallTarget::Host))
+        resolve_runtime_provider_command_for_target(&cfg, "codex-crp", Some(InstallTarget::Host))
             .expect("resolve host")
             .expect("host runtime");
     assert_eq!(
@@ -464,7 +532,7 @@ fn resolve_runtime_provider_command_for_target_prefers_target_bucket() {
     assert_eq!(host_resolved.args, vec!["--host".to_string()]);
 
     let container_resolved =
-        resolve_runtime_provider_command_for_target(&cfg, "codex", Some(InstallTarget::Container))
+        resolve_runtime_provider_command_for_target(&cfg, "codex-crp", Some(InstallTarget::Container))
             .expect("resolve container")
             .expect("container runtime");
     assert_eq!(
@@ -622,10 +690,10 @@ fn migration_moves_legacy_claude_login_command_to_runtime_command() {
 fn migration_drops_legacy_bundled_provider_commands() {
     let mut cfg = AgentServerConfigFile::default();
     cfg.providers.insert(
-            "codex".to_string(),
+            "codex-crp".to_string(),
             AgentServerCommand {
                 command:
-                    "/Applications/ctx.app/Contents/Resources/bundles/providers/codex/macos/aarch64/codex"
+                    "/Applications/ctx.app/Contents/Resources/bundles/providers/codex-crp/macos/aarch64/codex"
                         .to_string(),
                 args: Vec::new(),
                 dependencies: Vec::new(),
@@ -635,7 +703,7 @@ fn migration_drops_legacy_bundled_provider_commands() {
                     artifact_fingerprint: None,
                     archive_sha256: None,
                     target: None,
-                    install_dir_rel: Some("bundles/providers/codex/macos/aarch64".to_string()),
+                    install_dir_rel: Some("bundles/providers/codex-crp/macos/aarch64".to_string()),
                     bin_dir_rel: None,
                     last_success_at: None,
                     last_error: None,
@@ -643,14 +711,14 @@ fn migration_drops_legacy_bundled_provider_commands() {
             },
         );
     cfg.managed_installs.insert(
-        "codex".to_string(),
+        "codex-crp".to_string(),
         ManagedInstallMetadata {
             package: Some("@openai/codex".to_string()),
             version: Some("0.2.54".to_string()),
             artifact_fingerprint: None,
             archive_sha256: None,
             target: None,
-            install_dir_rel: Some("bundles/providers/codex/macos/aarch64".to_string()),
+            install_dir_rel: Some("bundles/providers/codex-crp/macos/aarch64".to_string()),
             bin_dir_rel: None,
             last_success_at: None,
             last_error: None,
@@ -658,15 +726,15 @@ fn migration_drops_legacy_bundled_provider_commands() {
     );
 
     assert!(migrate_agent_server_config(&mut cfg));
-    assert!(!cfg.providers.contains_key("codex"));
-    assert!(!cfg.managed_installs.contains_key("codex"));
+    assert!(!cfg.providers.contains_key("codex-crp"));
+    assert!(!cfg.managed_installs.contains_key("codex-crp"));
 }
 
 #[test]
 fn apply_managed_install_details_includes_archive_sha256() {
     let mut cfg = AgentServerConfigFile::default();
     cfg.managed_install_targets.insert(
-        "codex".to_string(),
+        "codex-crp".to_string(),
         HashMap::from([(
             "linux-x86_64".to_string(),
             ManagedInstallMetadata {
@@ -684,7 +752,7 @@ fn apply_managed_install_details_includes_archive_sha256() {
     );
 
     let mut status = ctx_providers::adapters::ProviderStatus {
-        provider_id: "codex".to_string(),
+        provider_id: "codex-crp".to_string(),
         installed: true,
         detected_path: None,
         version: None,

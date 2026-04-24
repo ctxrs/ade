@@ -44,7 +44,7 @@ pub(super) fn parse_native_crp_slash_command_for_provider(
     provider_id: &str,
     content: &str,
 ) -> Option<CrpSlashCommand> {
-    if provider_id != "codex" {
+    if provider_id != "codex-crp" {
         return None;
     }
     parse_crp_slash_command(content)
@@ -207,7 +207,7 @@ pub(super) fn validate_provider_slash_command_support(
         return Ok(());
     };
     match provider_id {
-        "codex" => match classify_codex_slash_command(&name) {
+        "codex-crp" => match classify_codex_slash_command(&name) {
             CodexSlashCommandPolicy::Supported => Ok(()),
             CodexSlashCommandPolicy::Redundant(reason) => Err(anyhow!(
                 "Codex command `/{name}` is intentionally not supported in ctx: {reason}"
@@ -340,11 +340,11 @@ mod tests {
     #[test]
     fn native_crp_slash_commands_are_codex_only() {
         assert_eq!(
-            parse_native_crp_slash_command_for_provider("codex", "/compact"),
+            parse_native_crp_slash_command_for_provider("codex-crp", "/compact"),
             Some(CrpSlashCommand::Compact)
         );
         assert_eq!(
-            parse_native_crp_slash_command_for_provider("codex", "/review focus on security"),
+            parse_native_crp_slash_command_for_provider("codex-crp", "/review focus on security"),
             Some(CrpSlashCommand::Review {
                 instructions: Some("focus on security".to_string())
             })
@@ -377,10 +377,10 @@ mod tests {
                 "Codex custom prompt slash commands are not wired through ctx today."
             )
         );
-        assert!(validate_provider_slash_command_support("codex", "/compact").is_ok());
-        assert!(validate_provider_slash_command_support("codex", "/undo").is_ok());
-        assert!(validate_provider_slash_command_support("codex", "/status").is_err());
-        assert!(validate_provider_slash_command_support("codex", "/prompts:shipit").is_err());
+        assert!(validate_provider_slash_command_support("codex-crp", "/compact").is_ok());
+        assert!(validate_provider_slash_command_support("codex-crp", "/undo").is_ok());
+        assert!(validate_provider_slash_command_support("codex-crp", "/status").is_err());
+        assert!(validate_provider_slash_command_support("codex-crp", "/prompts:shipit").is_err());
     }
 
     #[test]

@@ -208,10 +208,10 @@ fn native_provider_does_not_require_bridge_runtime() {
         root.path(),
         &cfg,
         &matrix_with_entries(vec![archive_entry(
-            "codex",
+            "codex-crp",
             ProviderMatrixEntryKind::Harness,
         )]),
-        "codex",
+        "codex-crp",
         InstallTarget::Container,
         TEST_CTX_VERSION,
     )
@@ -228,7 +228,7 @@ fn provider_install_contract_respects_current_ctx_version() {
     let _guard = env_lock().blocking_lock();
     let root = tempfile::tempdir().expect("tempdir");
     let cfg = AgentServerConfigFile::default();
-    let mut codex = archive_entry("codex", ProviderMatrixEntryKind::Harness);
+    let mut codex = archive_entry("codex-crp", ProviderMatrixEntryKind::Harness);
     codex.releases = vec![ProviderRelease {
         version: "0.114.0-ctx.5".to_string(),
         status: ProviderReleaseStatus::Supported,
@@ -243,7 +243,7 @@ fn provider_install_contract_respects_current_ctx_version() {
         root.path(),
         &cfg,
         &matrix_with_entries(vec![codex]),
-        "codex",
+        "codex-crp",
         InstallTarget::Host,
         Some("0.58.9"),
     )
@@ -262,10 +262,10 @@ fn provider_install_contract_requires_current_ctx_version() {
         root.path(),
         &cfg,
         &matrix_with_entries(vec![archive_entry(
-            "codex",
+            "codex-crp",
             ProviderMatrixEntryKind::Harness,
         )]),
-        "codex",
+        "codex-crp",
         InstallTarget::Host,
         None,
     )
@@ -520,7 +520,7 @@ fn codex_install_resolves_same_target_prerequisite_dependency() {
     let _guard = env_lock().blocking_lock();
     let root = tempfile::tempdir().expect("tempdir");
     let cfg = AgentServerConfigFile::default();
-    let mut codex = archive_entry("codex", ProviderMatrixEntryKind::Harness);
+    let mut codex = archive_entry("codex-crp", ProviderMatrixEntryKind::Harness);
     codex.provider_dependencies = vec![provider_matrix::ProviderInstallDependency {
         id: "codex-cli".to_string(),
         role: ProviderInstallDependencyRole::Prerequisite,
@@ -533,7 +533,7 @@ fn codex_install_resolves_same_target_prerequisite_dependency() {
             codex,
             archive_entry("codex-cli", ProviderMatrixEntryKind::Dependency),
         ]),
-        "codex",
+        "codex-crp",
         InstallTarget::Container,
         TEST_CTX_VERSION,
     )
@@ -554,7 +554,7 @@ fn codex_install_resolves_same_target_prerequisite_dependency() {
 fn codex_prerequisite_dependency_is_marked_satisfied_when_configured() {
     let _guard = env_lock().blocking_lock();
     let root = tempfile::tempdir().expect("tempdir");
-    let script_path = root.path().join("codex");
+    let script_path = root.path().join("codex-crp");
     std::fs::write(&script_path, "#!/bin/sh\nexit 0\n").expect("write script");
     let mut perms = std::fs::metadata(&script_path)
         .expect("metadata")
@@ -575,7 +575,7 @@ fn codex_prerequisite_dependency_is_marked_satisfied_when_configured() {
             managed: None,
         },
     );
-    let mut codex = archive_entry("codex", ProviderMatrixEntryKind::Harness);
+    let mut codex = archive_entry("codex-crp", ProviderMatrixEntryKind::Harness);
     codex.provider_dependencies = vec![provider_matrix::ProviderInstallDependency {
         id: "codex-cli".to_string(),
         role: ProviderInstallDependencyRole::Prerequisite,
@@ -588,7 +588,7 @@ fn codex_prerequisite_dependency_is_marked_satisfied_when_configured() {
             codex,
             archive_entry("codex-cli", ProviderMatrixEntryKind::Dependency),
         ]),
-        "codex",
+        "codex-crp",
         InstallTarget::Host,
         TEST_CTX_VERSION,
     )
@@ -633,7 +633,7 @@ fn codex_container_prerequisite_dependency_is_marked_satisfied_when_configured()
             },
         )]),
     );
-    let mut codex = archive_entry("codex", ProviderMatrixEntryKind::Harness);
+    let mut codex = archive_entry("codex-crp", ProviderMatrixEntryKind::Harness);
     codex.provider_dependencies = vec![provider_matrix::ProviderInstallDependency {
         id: "codex-cli".to_string(),
         role: ProviderInstallDependencyRole::Prerequisite,
@@ -646,7 +646,7 @@ fn codex_container_prerequisite_dependency_is_marked_satisfied_when_configured()
             codex,
             archive_entry("codex-cli", ProviderMatrixEntryKind::Dependency),
         ]),
-        "codex",
+        "codex-crp",
         InstallTarget::Container,
         TEST_CTX_VERSION,
     )

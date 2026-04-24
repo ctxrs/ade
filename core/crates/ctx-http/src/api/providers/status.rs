@@ -1,6 +1,7 @@
 use super::*;
 
 use anyhow::Context;
+use ctx_core::provider_ids::CODEX_CRP_PROVIDER_ID;
 use ctx_core::ids::WorkspaceId;
 
 use crate::execution_effective;
@@ -52,6 +53,11 @@ pub(super) async fn providers_statuses_response(
                 .await,
         );
     }
+    let legacy_aliases = out
+        .iter()
+        .filter_map(super::legacy_codex_status_alias)
+        .collect::<Vec<_>>();
+    out.extend(legacy_aliases);
 
     let show_fake = std::env::var("CTX_SHOW_FAKE_PROVIDER")
         .ok()
@@ -131,9 +137,8 @@ pub(crate) async fn get_provider(
     Path(id): Path<String>,
     Query(query): Query<InstallTargetQuery>,
 ) -> Result<Json<ProviderStatus>, (StatusCode, Json<serde_json::Value>)> {
-    if id == "codex-crp" {
-        return Err(invalid_provider_id_error("codex-crp", "codex"));
-    }
+    let requested_id = id;
+    let id = super::canonicalize_provider_id(&requested_id);
     let target = installer::parse_install_target(query.target.as_deref()).map_err(|e| {
         (
             StatusCode::BAD_REQUEST,
@@ -163,8 +168,9 @@ pub(crate) async fn get_provider(
     }
     let mut status =
         provider_status_for_target(state.as_ref(), &managed, &matrix, &id, target).await;
+    status.provider_id = super::project_provider_id_for_response(&requested_id, &status.provider_id);
     if let Some(bytes) =
-        installer::managed_install_download_size_bytes(&matrix, &status.provider_id, target)
+        installer::managed_install_download_size_bytes(&matrix, &id, target)
     {
         status
             .details
@@ -186,9 +192,8 @@ pub(crate) async fn get_provider_usage(
     Path(id): Path<String>,
     Query(query): Query<ProviderUsageQuery>,
 ) -> Result<Json<provider_usage::ProviderUsageSnapshot>, (StatusCode, Json<serde_json::Value>)> {
-    if id == "codex-crp" {
-        return Err(invalid_provider_id_error("codex-crp", "codex"));
-    }
+    let requested_id = id;
+    let id = super::canonicalize_provider_id(&requested_id);
     let refresh = query.refresh.unwrap_or(false);
     let snapshot = if !refresh {
         let cache = state.providers.usage_cache.lock().await;
@@ -199,7 +204,7 @@ pub(crate) async fn get_provider_usage(
     let snapshot = match snapshot {
         Some(snapshot) => snapshot,
         None => {
-            let env = if id == "codex" {
+            let env = if id == CODEX_CRP_PROVIDER_ID {
                 provider_accounts::codex_env_for_active_account(&state.core.data_root)
                     .await
                     .map_err(|e| {
@@ -213,7 +218,8 @@ pub(crate) async fn get_provider_usage(
             } else {
                 HashMap::new()
             };
-            provider_usage::refresh_provider_usage_for(state.as_ref(), &id, env)
+            let mut snapshot =
+                provider_usage::refresh_provider_usage_for(state.as_ref(), &id, env)
                 .await
                 .map_err(|e| {
                     (
@@ -222,7 +228,12 @@ pub(crate) async fn get_provider_usage(
                             "error": e.to_string()
                         })),
                     )
-                })?
+                })?;
+            snapshot.provider_id = super::project_provider_id_for_response(
+                &requested_id,
+                &snapshot.provider_id,
+            );
+            snapshot
         }
     };
     Ok(Json(snapshot))

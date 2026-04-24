@@ -16,7 +16,7 @@ fn status_with_managed_target(target: &str) -> ctx_providers::adapters::Provider
     let mut details = HashMap::new();
     details.insert("managed_target".to_string(), target.to_string());
     ctx_providers::adapters::ProviderStatus {
-        provider_id: "codex".to_string(),
+        provider_id: "codex-crp".to_string(),
         installed: true,
         detected_path: Some("/tmp/codex".to_string()),
         version: None,
@@ -30,7 +30,7 @@ fn status_with_managed_target(target: &str) -> ctx_providers::adapters::Provider
 
 fn host_detected_status() -> ctx_providers::adapters::ProviderStatus {
     ctx_providers::adapters::ProviderStatus {
-        provider_id: "codex".to_string(),
+        provider_id: "codex-crp".to_string(),
         installed: true,
         detected_path: Some("/usr/local/bin/codex".to_string()),
         version: None,
@@ -45,7 +45,7 @@ fn host_detected_status() -> ctx_providers::adapters::ProviderStatus {
 #[test]
 fn managed_provider_installs_are_enabled_for_supported_entries() {
     let matrix = provider_matrix::builtin_matrix();
-    assert!(is_supported_managed_provider(&matrix, "codex"));
+    assert!(is_supported_managed_provider(&matrix, "codex-crp"));
     assert!(is_supported_managed_provider(&matrix, "opencode"));
 }
 
@@ -595,7 +595,7 @@ fn managed_provider_runtime_command_keeps_native_crp_providers_raw() {
         managed: None,
     };
 
-    let runtime = managed_provider_runtime_command(Path::new("/tmp"), "codex", managed, None)
+    let runtime = managed_provider_runtime_command(Path::new("/tmp"), "codex-crp", managed, None)
         .expect("raw runtime command");
 
     assert_eq!(runtime.command, "/tmp/codex-crp");
@@ -765,7 +765,7 @@ fn inject_codex_cli_command_env_sets_explicit_runtime_path() {
     );
 
     let mut env = HashMap::new();
-    ensure_codex_cli_command_env_for_target(&mut env, &cfg, "codex", Some(InstallTarget::Host))
+    ensure_codex_cli_command_env_for_target(&mut env, &cfg, "codex-crp", Some(InstallTarget::Host))
         .expect("inject codex env");
 
     assert_eq!(
@@ -784,7 +784,7 @@ fn ensure_codex_cli_command_env_rejects_missing_runtime_path() {
     let err = ensure_codex_cli_command_env_for_target(
         &mut HashMap::new(),
         &AgentServerConfigFile::default(),
-        "codex",
+        "codex-crp",
         Some(InstallTarget::Host),
     )
     .expect_err("missing codex-cli path should fail");
@@ -813,7 +813,7 @@ fn managed_provider_target_support_matches_install_kind() {
     let matrix = provider_matrix::builtin_matrix();
     let harness_provider_ids = [
         "claude-crp",
-        "codex",
+        "codex-crp",
         "qwen",
         "cursor",
         "pi",
@@ -975,7 +975,7 @@ fn expected_managed_dependency_version_detects_runtime_dependencies() {
         expected_managed_dependency_version("runtime-python-container"),
         Some(PYTHON_VERSION)
     );
-    assert_eq!(expected_managed_dependency_version("codex"), None);
+    assert_eq!(expected_managed_dependency_version("codex-crp"), None);
 }
 
 #[test]
@@ -1023,14 +1023,14 @@ fn validate_sha256_digest_rejects_mismatch() {
 #[test]
 fn agent_server_download_tmp_name_is_content_scoped() {
     let first = agent_server_download_tmp_name(
-        "codex",
+        "codex-crp",
         "0.114.0-ctx.5",
         InstallTarget::Host,
         "https://example.invalid/codex-a.tar.gz",
         Some("A".repeat(64).as_str()),
     );
     let second = agent_server_download_tmp_name(
-        "codex",
+        "codex-crp",
         "0.114.0-ctx.5",
         InstallTarget::Host,
         "https://example.invalid/codex-b.tar.gz",
@@ -1117,7 +1117,7 @@ fn apply_install_target_status_marks_host_detected_status_unverified_for_contain
 #[test]
 fn validate_post_install_status_rejects_target_mismatch() {
     let status = status_with_managed_target("host");
-    let err = validate_post_install_status(&status, "codex", InstallTarget::Container)
+    let err = validate_post_install_status(&status, "codex-crp", InstallTarget::Container)
         .expect_err("target mismatch should fail verification");
     assert!(err.to_string().contains("expected 'container'"));
 }
@@ -1125,17 +1125,17 @@ fn validate_post_install_status_rejects_target_mismatch() {
 #[test]
 fn validate_post_install_status_accepts_matching_target() {
     let status = status_with_managed_target("container");
-    validate_post_install_status(&status, "codex", InstallTarget::Container)
+    validate_post_install_status(&status, "codex-crp", InstallTarget::Container)
         .expect("matching target should pass verification");
 }
 
 #[tokio::test]
 async fn provider_install_lock_serializes_same_provider_target() {
-    let first = acquire_provider_install_lock("codex", InstallTarget::Container).await;
+    let first = acquire_provider_install_lock("codex-crp", InstallTarget::Container).await;
     let acquired = Arc::new(AtomicBool::new(false));
     let acquired2 = acquired.clone();
     let waiter = tokio::spawn(async move {
-        let _second = acquire_provider_install_lock("codex", InstallTarget::Container).await;
+        let _second = acquire_provider_install_lock("codex-crp", InstallTarget::Container).await;
         acquired2.store(true, Ordering::SeqCst);
     });
 
@@ -1156,7 +1156,7 @@ async fn provider_install_lock_serializes_same_provider_target() {
 #[tokio::test]
 async fn atomic_install_commit_replaces_existing_install_dir() {
     let temp = tempfile::tempdir().expect("tempdir");
-    let install_dir = temp.path().join("providers").join("codex").join("1.2.3");
+    let install_dir = temp.path().join("providers").join("codex-crp").join("1.2.3");
     tokio::fs::create_dir_all(install_dir.join("old"))
         .await
         .expect("create old dir");

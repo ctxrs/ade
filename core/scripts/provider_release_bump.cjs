@@ -13,7 +13,7 @@ const defaultMatrixPath = path.join(coreRoot, "crates", "ctx-provider-accounts",
 const workspaceVersionSources = {
   "acp-crp-bridge": { kind: "cargo", relPath: "external-harnesses/acp-crp-bridge/Cargo.toml" },
   amp: { kind: "package_json", relPath: "harness-adapters/example-acp/package.json" },
-  codex: { kind: "cargo", relPath: "core/crates/codex-crp/Cargo.toml" },
+  "codex-crp": { kind: "cargo", relPath: "core/crates/codex-crp/Cargo.toml" },
   "claude-crp": { kind: "package_json", relPath: "external-harnesses/claude-crp/package.json" },
   droid: { kind: "cargo", relPath: "harness-adapters/droid-acp/Cargo.toml" },
   pi: { kind: "package_json", relPath: "harness-adapters/pi-acp/package.json" },
@@ -97,16 +97,16 @@ function printHelp() {
       "Update spec shape:",
       '  { "providers": [',
       '      {',
-      '        "id": "codex",',
-      '        "version": "0.121.0-ctx.1",',
+      '        "id": "codex-crp",',
+      '        "version": "1.0.0",',
       '        "upstream_version": "0.121.0",',
-      '        "workspace_version": "0.121.0-ctx.1",',
+      '        "workspace_version": "1.0.0",',
       '        "package_dependencies": { "@scope/pkg": "1.2.3" },',
       '        "github_release": { "tag": "v1.2.3" },',
       '        "provenance": {',
       '          "upstream_release_tag": "rust-v0.121.0",',
       '          "upstream_commit_sha": "<40-char sha>",',
-      '          "ctx_release_tag": "v0.121.0-ctx.1"',
+      '          "ctx_release_tag": "v1.0.0"',
       "        }",
       "      }",
       "    ] }",
@@ -428,7 +428,7 @@ async function applyProviderUpdate({ matrix, repoRoot, update, warnings, targetR
     release.notes = notes;
   }
 
-  if (providerId === "codex") {
+  if (providerId === "codex-crp") {
     applyCodexProvenance({ release, update, version });
   }
 

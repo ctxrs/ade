@@ -69,7 +69,7 @@ async fn fixture_model_id_for_provider(
     provider_id: &str,
 ) -> String {
     let fallback_model_id = match provider_id {
-        "codex" => Some("gpt-5.4/medium"),
+        "codex-crp" => Some("gpt-5.4/medium"),
         "claude-crp" => Some("default/medium"),
         _ => None,
     };
@@ -301,7 +301,7 @@ async fn provider_scenarios_offline_crp_fixtures() {
 
     let provider_ids: &[&str] = &[
         "codex-crp",
-        "codex",
+        "codex-crp",
         "claude-crp",
         "claude",
         // ACP bridge providers
@@ -524,7 +524,7 @@ async fn provider_scenarios_offline_crp_fixtures_persist_context_window_metrics(
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
     let script_path = common::crp_fixture_runtime::write_crp_fixture_runtime(data_dir.path());
     common::seed_managed_codex_cli_host_runtime(data_dir.path(), &python).await;
-    let provider_ids: &[&str] = &["codex", "claude-crp"];
+    let provider_ids: &[&str] = &["codex-crp", "claude-crp"];
     let providers = common::crp_fixture_runtime::build_crp_fixture_providers(
         provider_ids,
         &python,

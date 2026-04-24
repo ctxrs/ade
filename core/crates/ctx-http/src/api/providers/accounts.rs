@@ -121,7 +121,7 @@ pub(crate) async fn get_codex_accounts_usage(
     let active_id = registry.active_account_id.clone();
     let cached_active = if !refresh {
         let cache = state.providers.usage_cache.lock().await;
-        cache.get("codex").cloned()
+        cache.get("codex-crp").cloned()
     } else {
         None
     };
@@ -150,7 +150,7 @@ pub(crate) async fn get_codex_accounts_usage(
         crate::installer::ensure_codex_cli_command_env_for_target(
             &mut env,
             &cfg,
-            "codex",
+            "codex-crp",
             Some(ctx_provider_install::install_state::InstallTarget::Host),
         )
         .map_err(to_err)?;

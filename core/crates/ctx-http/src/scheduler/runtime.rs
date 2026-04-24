@@ -63,7 +63,7 @@ fn provider_mode_id_for(
 ) -> Option<&'static str> {
     match control_mode {
         ProviderControlMode::Full => match provider_id {
-            "codex" => Some("full-access"),
+            "codex-crp" => Some("full-access"),
             "claude-crp" => Some("bypassPermissions"),
             "droid" => Some("auto_high"),
             _ => None,
@@ -382,7 +382,7 @@ pub(crate) async fn start_turn(
     )
     .await;
 
-    if runtime_provider_id == "codex" && is_linux_sandbox && using_endpoint_source {
+    if runtime_provider_id == "codex-crp" && is_linux_sandbox && using_endpoint_source {
         if let Some(root) = runtime_plan.env_overrides.get("CTX_DATA_ROOT") {
             provider_accounts::ensure_codex_endpoint_runtime_home_from_env(
                 std::path::Path::new(root),
@@ -392,7 +392,7 @@ pub(crate) async fn start_turn(
         }
     }
 
-    if runtime_provider_id == "codex"
+    if runtime_provider_id == "codex-crp"
         && !provider_env.contains_key("CODEX_HOME")
         && !using_endpoint_source
     {
@@ -414,7 +414,7 @@ pub(crate) async fn start_turn(
             }
         }
     }
-    if runtime_provider_id != "codex" && !using_endpoint_source {
+    if runtime_provider_id != "codex-crp" && !using_endpoint_source {
         let env = if is_linux_sandbox {
             if let Some(root) = runtime_plan.env_overrides.get("CTX_DATA_ROOT") {
                 provider_accounts::subscription_env_for_active_account_with_runtime_root(
@@ -441,7 +441,7 @@ pub(crate) async fn start_turn(
             provider_env.insert(key, value);
         }
     }
-    if runtime_provider_id == "codex" {
+    if runtime_provider_id == "codex-crp" {
         let codex_home = provider_env
             .get("CODEX_HOME")
             .cloned()

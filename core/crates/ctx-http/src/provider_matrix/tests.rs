@@ -702,7 +702,7 @@ fn builtin_matrix_routes_codex_cli_prerequisite_same_as_provider() {
     let codex = matrix
         .providers
         .iter()
-        .find(|entry| entry.id == "codex")
+        .find(|entry| entry.id == "codex-crp")
         .expect("codex entry");
 
     let dependency = codex
@@ -762,7 +762,7 @@ fn builtin_matrix_uses_upstream_openhands_python_acp_runtime() {
 fn user_facing_harness_filter_excludes_known_dependencies_only() {
     let matrix = builtin_matrix();
 
-    assert!(is_user_facing_harness_id(&matrix, "codex"));
+    assert!(is_user_facing_harness_id(&matrix, "codex-crp"));
     assert!(!is_user_facing_harness_id(&matrix, "acp-crp-bridge"));
     assert!(!is_user_facing_harness_id(&matrix, "claude-cli"));
     assert!(is_user_facing_harness_id(&matrix, "unknown-provider"));
@@ -772,7 +772,7 @@ fn user_facing_harness_filter_excludes_known_dependencies_only() {
 fn managed_dependency_update_available_when_runtime_dependency_missing() {
     let mut cfg = AgentServerConfigFile::default();
     cfg.providers.insert(
-        "codex".to_string(),
+        "codex-crp".to_string(),
         AgentServerCommand {
             command: "/tmp/codex".to_string(),
             args: Vec::new(),
@@ -781,7 +781,7 @@ fn managed_dependency_update_available_when_runtime_dependency_missing() {
         },
     );
     let status = ctx_providers::adapters::ProviderStatus {
-        provider_id: "codex".to_string(),
+        provider_id: "codex-crp".to_string(),
         installed: true,
         detected_path: None,
         version: None,
@@ -802,7 +802,7 @@ fn managed_dependency_update_available_when_runtime_dependency_missing() {
 fn managed_dependency_update_available_when_runtime_dependency_version_mismatched() {
     let mut cfg = AgentServerConfigFile::default();
     cfg.providers.insert(
-        "codex".to_string(),
+        "codex-crp".to_string(),
         AgentServerCommand {
             command: "/tmp/codex".to_string(),
             args: Vec::new(),
@@ -825,7 +825,7 @@ fn managed_dependency_update_available_when_runtime_dependency_version_mismatche
         },
     );
     let status = ctx_providers::adapters::ProviderStatus {
-        provider_id: "codex".to_string(),
+        provider_id: "codex-crp".to_string(),
         installed: true,
         detected_path: None,
         version: None,
@@ -846,7 +846,7 @@ fn managed_dependency_update_available_when_runtime_dependency_version_mismatche
 fn managed_dependency_update_unavailable_when_runtime_dependency_matches_expected() {
     let mut cfg = AgentServerConfigFile::default();
     cfg.providers.insert(
-        "codex".to_string(),
+        "codex-crp".to_string(),
         AgentServerCommand {
             command: "/tmp/codex".to_string(),
             args: Vec::new(),
@@ -871,7 +871,7 @@ fn managed_dependency_update_unavailable_when_runtime_dependency_matches_expecte
         },
     );
     let status = ctx_providers::adapters::ProviderStatus {
-        provider_id: "codex".to_string(),
+        provider_id: "codex-crp".to_string(),
         installed: true,
         detected_path: None,
         version: None,
@@ -1130,7 +1130,7 @@ fn sha256_hex(bytes: &[u8]) -> String {
 
 fn codex_archive_test_entry(version: &str, sha256: &str) -> ProviderMatrixEntry {
     ProviderMatrixEntry {
-        id: "codex".to_string(),
+        id: "codex-crp".to_string(),
         kind: ProviderMatrixEntryKind::Harness,
         display_name: Some("Codex".to_string()),
         tier: Some("tier1".to_string()),
@@ -1166,7 +1166,7 @@ fn codex_archive_test_entry(version: &str, sha256: &str) -> ProviderMatrixEntry 
 
 fn codex_npm_test_entry(version: &str) -> ProviderMatrixEntry {
     ProviderMatrixEntry {
-        id: "codex".to_string(),
+        id: "codex-crp".to_string(),
         kind: ProviderMatrixEntryKind::Harness,
         display_name: Some("Codex".to_string()),
         tier: Some("tier1".to_string()),
@@ -1211,11 +1211,11 @@ fn managed_archive_cfg(
     };
     let mut cfg = AgentServerConfigFile::default();
     cfg.managed_install_targets.insert(
-        "codex".to_string(),
+        "codex-crp".to_string(),
         HashMap::from([("linux-x86_64".to_string(), meta.clone())]),
     );
     cfg.managed_provider_targets.insert(
-        "codex".to_string(),
+        "codex-crp".to_string(),
         HashMap::from([(
             "linux-x86_64".to_string(),
             AgentServerCommand {
@@ -1240,7 +1240,7 @@ async fn apply_matrix_to_status_flags_managed_archive_checksum_mismatch() {
     let entry = codex_archive_test_entry("0.114.0-ctx.2", &expected_sha256);
     let cfg = managed_archive_cfg(&runtime, "0.114.0-ctx.2", &actual_sha256);
     let mut status = ctx_providers::adapters::ProviderStatus {
-        provider_id: "codex".to_string(),
+        provider_id: "codex-crp".to_string(),
         installed: true,
         detected_path: Some(runtime.to_string_lossy().to_string()),
         version: None,
@@ -1316,7 +1316,7 @@ async fn apply_matrix_to_status_accepts_matching_managed_archive_checksum() {
     let entry = codex_archive_test_entry("0.114.0-ctx.2", &sha256);
     let cfg = managed_archive_cfg(&runtime, "0.114.0-ctx.2", &sha256);
     let mut status = ctx_providers::adapters::ProviderStatus {
-        provider_id: "codex".to_string(),
+        provider_id: "codex-crp".to_string(),
         installed: true,
         detected_path: Some(runtime.to_string_lossy().to_string()),
         version: None,
@@ -1350,7 +1350,7 @@ async fn apply_matrix_to_status_clears_stale_matrix_update_flags_when_runtime_is
     let entry = codex_archive_test_entry("0.114.0-ctx.2", &sha256);
     let cfg = managed_archive_cfg(&runtime, "0.114.0-ctx.2", &sha256);
     let mut status = ctx_providers::adapters::ProviderStatus {
-        provider_id: "codex".to_string(),
+        provider_id: "codex-crp".to_string(),
         installed: true,
         detected_path: Some(runtime.to_string_lossy().to_string()),
         version: Some("0.114.0-ctx.1".to_string()),
@@ -1428,7 +1428,7 @@ async fn apply_matrix_to_status_marks_stale_installed_provider_as_updateable_for
     }];
     let cfg = managed_archive_cfg(&runtime, "0.114.0-ctx.3", &sha_old);
     let mut status = ctx_providers::adapters::ProviderStatus {
-        provider_id: "codex".to_string(),
+        provider_id: "codex-crp".to_string(),
         installed: true,
         detected_path: Some(runtime.to_string_lossy().to_string()),
         version: None,
@@ -1473,7 +1473,7 @@ async fn apply_matrix_to_status_marks_out_of_matrix_runtime_as_unsupported() {
     let entry = codex_npm_test_entry("1.2.3");
     let mut cfg = AgentServerConfigFile::default();
     cfg.managed_install_targets.insert(
-        "codex".to_string(),
+        "codex-crp".to_string(),
         HashMap::from([(
             "host".to_string(),
             ManagedInstallMetadata {
@@ -1490,7 +1490,7 @@ async fn apply_matrix_to_status_marks_out_of_matrix_runtime_as_unsupported() {
         )]),
     );
     let mut status = ctx_providers::adapters::ProviderStatus {
-        provider_id: "codex".to_string(),
+        provider_id: "codex-crp".to_string(),
         installed: true,
         detected_path: Some(runtime.to_string_lossy().to_string()),
         version: None,
@@ -1529,11 +1529,11 @@ async fn apply_matrix_to_status_flags_missing_npm_artifact_fingerprint() {
         last_error: None,
     };
     cfg.managed_install_targets.insert(
-        "codex".to_string(),
+        "codex-crp".to_string(),
         HashMap::from([("host".to_string(), meta.clone())]),
     );
     cfg.managed_provider_targets.insert(
-        "codex".to_string(),
+        "codex-crp".to_string(),
         HashMap::from([(
             "host".to_string(),
             AgentServerCommand {
@@ -1546,7 +1546,7 @@ async fn apply_matrix_to_status_flags_missing_npm_artifact_fingerprint() {
     );
 
     let mut status = ctx_providers::adapters::ProviderStatus {
-        provider_id: "codex".to_string(),
+        provider_id: "codex-crp".to_string(),
         installed: true,
         detected_path: None,
         version: None,

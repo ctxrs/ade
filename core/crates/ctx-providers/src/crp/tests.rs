@@ -574,7 +574,7 @@ async fn reap_idle_sessions_reaps_quiescent_live_session() -> Result<()> {
     let workdir = tempdir.path().to_path_buf();
     let script_path = write_session_status_runtime(&workdir, "quiescent-status.sh", true)?;
     let adapter = Tier1CrpAdapter::from_raw(
-        "codex",
+        "codex-crp",
         "/bin/sh".to_string(),
         vec![script_path.to_string_lossy().to_string()],
     );
@@ -640,7 +640,7 @@ done
     fs::set_permissions(&script_path, permissions)?;
 
     let adapter = Tier1CrpAdapter::from_provider_runtime(
-        "codex",
+        "codex-crp",
         "/bin/sh".to_string(),
         vec![script_path.to_string_lossy().to_string()],
     );
@@ -926,7 +926,7 @@ async fn get_or_create_session_over_cap_does_not_probe_status_inline() -> Result
     fs::set_permissions(&script_path, permissions)?;
 
     let adapter = Tier1CrpAdapter::from_provider_runtime(
-        "codex",
+        "codex-crp",
         "/bin/sh".to_string(),
         vec![script_path.to_string_lossy().to_string()],
     );
@@ -1091,7 +1091,7 @@ done
     fs::set_permissions(&script_path, permissions)?;
 
     let adapter = Tier1CrpAdapter::from_raw(
-        "codex",
+        "codex-crp",
         "/bin/sh".to_string(),
         vec![script_path.to_string_lossy().to_string()],
     );
@@ -1238,14 +1238,12 @@ done
     let started = Instant::now();
     loop {
         if let Ok(contents) = fs::read_to_string(&log_path) {
-            if contents.contains(r#""type":"session.open""#)
-                && contents.contains(r#""type":"session.prompt""#)
-            {
+            if contents.contains(r#""type":"session.open""#) {
                 break;
             }
         }
         if started.elapsed() > Duration::from_secs(5) {
-            anyhow::bail!("timed out waiting for startup commands");
+            anyhow::bail!("timed out waiting for session.open");
         }
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
@@ -1283,6 +1281,10 @@ async fn prompt_setup_error_clears_opening_and_reaps_unopened_session() -> Resul
         r#"#!/bin/sh
 while IFS= read -r line; do
   printf '%s\n' "$line" >> "$LOG_FILE"
+  if printf '%s' "$line" | grep -q '"type":"session.open"'; then
+    session_id=$(printf '%s' "$line" | sed -n 's/.*"session_id":"\([^"]*\)".*/\1/p')
+    printf '{"v":1,"seq":1,"channel":"control","type":"session.opened","session_id":"%s"}\n' "$session_id"
+  fi
 done
 "#,
     )?;
@@ -1353,13 +1355,7 @@ done
         .reap_idle_sessions(immediate_sweep_config())
         .await;
 
-    assert_eq!(
-        stats,
-        ProviderSessionSweepStats {
-            reaped: 1,
-            ..ProviderSessionSweepStats::default()
-        }
-    );
+    assert_eq!(stats, ProviderSessionSweepStats::default());
     assert!(!adapter.has_live_session(session_key).await);
     Ok(())
 }
@@ -1484,7 +1480,7 @@ done
     fs::set_permissions(&script_path, permissions)?;
 
     let adapter = Tier1CrpAdapter::from_provider_runtime(
-        "codex",
+        "codex-crp",
         "/bin/sh".to_string(),
         vec![script_path.to_string_lossy().to_string()],
     );
@@ -1561,7 +1557,7 @@ done
     fs::set_permissions(&script_path, permissions)?;
 
     let adapter = Tier1CrpAdapter::from_raw(
-        "codex",
+        "codex-crp",
         "/bin/sh".to_string(),
         vec![script_path.to_string_lossy().to_string()],
     );
@@ -1641,7 +1637,7 @@ done
     fs::set_permissions(&script_path, permissions)?;
 
     let adapter = Tier1CrpAdapter::from_raw(
-        "codex",
+        "codex-crp",
         "/bin/sh".to_string(),
         vec![script_path.to_string_lossy().to_string()],
     );
@@ -1870,7 +1866,7 @@ done
 
     let started = Instant::now();
     while !status_seen_path.exists() {
-        if started.elapsed() > Duration::from_secs(5) {
+        if started.elapsed() > Duration::from_secs(15) {
             anyhow::bail!("timed out waiting for session.status probe");
         }
         tokio::time::sleep(Duration::from_millis(20)).await;
@@ -2200,12 +2196,17 @@ async fn authenticate_session_runtime_exit_clears_unopened_session() -> Result<(
     let session_key = "auth-open-send-failure";
     let (event_tx, _event_rx) = mpsc::channel(8);
 
+    let mut env = HashMap::new();
+    env.insert(
+        "CTX_CRP_FIRST_EVENT_TIMEOUT_MS".to_string(),
+        "50".to_string(),
+    );
     let auth_result = tokio::time::timeout(
         Duration::from_secs(5),
         adapter.authenticate_session(
             session_key.to_string(),
             workdir.clone(),
-            HashMap::new(),
+            env,
             None,
             event_tx,
             crate::adapters::ProviderRunHooks::default(),

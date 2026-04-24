@@ -238,7 +238,7 @@ async fn seed_target_scoped_codex_runtime(data_root: &Path) -> SeededRuntime {
     let mut cfg = AgentServerConfigFile::default();
     seed_managed_node_runtime_metadata(&mut cfg, data_root);
     cfg.managed_provider_targets.insert(
-        "codex".to_string(),
+        "codex-crp".to_string(),
         HashMap::from([
             (
                 "host".to_string(),
@@ -289,7 +289,7 @@ async fn seed_target_scoped_codex_runtime(data_root: &Path) -> SeededRuntime {
         ]),
     );
     cfg.managed_install_targets.insert(
-        "codex".to_string(),
+        "codex-crp".to_string(),
         HashMap::from([
             (
                 "host".to_string(),
@@ -338,9 +338,9 @@ async fn build_state_with_host_codex(data_root: &Path, host_command: &str) -> Ar
     let stores = common::setup_store(data_root).await;
     let mut providers: HashMap<String, Arc<dyn ProviderAdapter>> = HashMap::new();
     providers.insert(
-        "codex".to_string(),
+        "codex-crp".to_string(),
         Arc::new(Tier1CrpAdapter::from_raw(
-            "codex",
+            "codex-crp",
             host_command.to_string(),
             Vec::new(),
         )),
@@ -2775,7 +2775,7 @@ async fn provider_target_scoped_installs_work_for_host_and_container_workspaces(
         common::json_request(
             &app,
             axum::http::Method::GET,
-            format!("/api/workspaces/{}/providers/codex/options", host_ws.id.0),
+            format!("/api/workspaces/{}/providers/codex-crp/options", host_ws.id.0),
             None,
         )
         .await;
@@ -2796,7 +2796,7 @@ async fn provider_target_scoped_installs_work_for_host_and_container_workspaces(
             &app,
             axum::http::Method::GET,
             format!(
-                "/api/workspaces/{}/providers/codex/options",
+                "/api/workspaces/{}/providers/codex-crp/options",
                 container_ws.id.0
             ),
             None,
@@ -2817,9 +2817,9 @@ async fn provider_target_scoped_installs_work_for_host_and_container_workspaces(
 
     let host_task = common::create_task(&app, host_ws.id.0, "host-task").await;
     let container_task = common::create_task(&app, container_ws.id.0, "container-task").await;
-    let host_session = common::create_session(&app, host_task.id.0, "codex", "host-model").await;
+    let host_session = common::create_session(&app, host_task.id.0, "codex-crp", "host-model").await;
     let container_session =
-        common::create_session(&app, container_task.id.0, "codex", "container-model").await;
+        common::create_session(&app, container_task.id.0, "codex-crp", "container-model").await;
 
     post_message(&app, host_session.id.0, "reply exactly once").await;
     post_message(&app, container_session.id.0, "reply exactly once").await;

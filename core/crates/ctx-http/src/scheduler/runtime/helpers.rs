@@ -103,7 +103,7 @@ pub(super) fn should_track_thought_chunk(payload: &serde_json::Value) -> bool {
     };
 
     let reasoning_kind = meta
-        .and_then(|v| v.get("codex"))
+        .and_then(|v| v.get("codex-crp"))
         .and_then(|v| v.get("reasoning_kind").or_else(|| v.get("reasoningKind")))
         .and_then(Value::as_str);
     if matches!(reasoning_kind, Some("summary" | "status")) {
@@ -113,7 +113,7 @@ pub(super) fn should_track_thought_chunk(payload: &serde_json::Value) -> bool {
         if has_status_text(meta) {
             return false;
         }
-        if let Some(codex_meta) = meta.get("codex") {
+        if let Some(codex_meta) = meta.get("codex-crp") {
             if has_status_text(codex_meta) {
                 return false;
             }
@@ -275,7 +275,7 @@ pub(super) fn normalize_session_model_id(model_id: &str) -> Option<String> {
 }
 
 pub(super) fn provider_supports_system_prompt_append(provider_id: &str) -> bool {
-    matches!(provider_id, "claude-crp" | "codex")
+    matches!(provider_id, "claude-crp" | "codex-crp")
 }
 
 pub(super) fn runtime_provider_id_for_session_provider<'a>(
@@ -467,7 +467,7 @@ mod tests {
         let temp = tempfile::tempdir().expect("tempdir");
         let mut env = HashMap::from([("CTX_MCP_DISABLED".to_string(), "0".to_string())]);
 
-        apply_provider_launch_overrides("codex", temp.path(), &mut env)
+        apply_provider_launch_overrides("codex-crp", temp.path(), &mut env)
             .await
             .expect("apply overrides");
 

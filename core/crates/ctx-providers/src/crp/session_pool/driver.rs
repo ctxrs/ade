@@ -156,6 +156,7 @@ impl CrpSessionPool {
         }
 
         let result: Result<ProviderTurnOutcome> = async {
+            let mut cancel_rx = req.cancel_rx;
             let needs_session_open =
                 !session.opened.load(Ordering::SeqCst) && !session.opening.load(Ordering::SeqCst);
             let mut last_seq = 0u64;
@@ -191,6 +192,20 @@ impl CrpSessionPool {
                 let first_event_deadline = tokio::time::Instant::now() + first_event_timeout;
                 loop {
                     tokio::select! {
+                        _ = &mut cancel_rx => {
+                            session.opening.store(false, Ordering::SeqCst);
+                            let _ = req
+                                .event_sink
+                                .send(NormalizedEvent {
+                                    event_type: SessionEventType::TurnInterrupted,
+                                    payload_json: json!({
+                                        "reason": "cancelled",
+                                        "provider_cancelled": true,
+                                    }),
+                                })
+                                .await;
+                            return Ok(ProviderTurnOutcome::interrupted("cancelled".to_string(), true));
+                        }
                         _ = tokio::time::sleep_until(first_event_deadline) => {
                             let timeout_ms = duration_millis_u64(first_event_timeout);
                             let runtime = crp_runtime_label(&req.env);
@@ -198,6 +213,23 @@ impl CrpSessionPool {
                                 "CRP runtime did not emit session.opened within {timeout_ms}ms after launching {runtime} provider session",
                             );
                             session.opening.store(false, Ordering::SeqCst);
+                            let emitted = req
+                                .event_sink
+                                .send(NormalizedEvent {
+                                    event_type: SessionEventType::Error,
+                                    payload_json: json!({
+                                        "kind": "provider_startup_timeout",
+                                        "reason": "provider_startup_timeout",
+                                        "message": message,
+                                        "details": {
+                                            "timeout_ms": timeout_ms,
+                                            "runtime": runtime,
+                                            "provider_id": self.agent.provider_id,
+                                        },
+                                    }),
+                                })
+                                .await
+                                .is_ok();
                             session.process.shutdown("crp_session_open_timeout").await;
                             return Ok(ProviderTurnOutcome::failed_with_context(
                                 message,
@@ -208,7 +240,7 @@ impl CrpSessionPool {
                                     "provider_id": self.agent.provider_id,
                                 })),
                                 Some(json!("provider_startup_timeout")),
-                                false,
+                                emitted,
                             ));
                         }
                         shutdown = shutdown_rx.changed() => {
@@ -303,73 +335,83 @@ impl CrpSessionPool {
                 }
             }
 
-            validate_provider_slash_command_support(&self.agent.provider_id, &req.input.content)?;
-            match parse_native_crp_slash_command_for_provider(
-                &self.agent.provider_id,
-                &req.input.content,
-            ) {
-                Some(CrpSlashCommand::Compact) => {
-                    session
-                        .process
-                        .send(CrpCommand::SessionCompact {
-                            session_id: Some(req.session_key.clone()),
-                            turn_id: Some(turn_id.clone()),
-                        })
-                        .await?;
-                }
-                Some(CrpSlashCommand::Undo) => {
-                    session
-                        .process
-                        .send(CrpCommand::SessionUndo {
-                            session_id: Some(req.session_key.clone()),
-                            turn_id: Some(turn_id.clone()),
-                        })
-                        .await?;
-                }
-                Some(CrpSlashCommand::Review { instructions }) => {
-                    session
-                        .process
-                        .send(CrpCommand::SessionReview {
-                            session_id: Some(req.session_key.clone()),
-                            turn_id: Some(turn_id.clone()),
-                            instructions,
-                        })
-                        .await?;
-                }
-                None => {
-                    let items = build_prompt_items(&req.input, &req.workdir, &req.env).await?;
-                    let (prompt_items, prompt) =
-                        if provider_requires_flattened_text_prompt(&self.agent.provider_id) {
-                            (None, Some(flatten_prompt_items_as_text(&items)?))
+            let send_result: Result<()> = async {
+                validate_provider_slash_command_support(&self.agent.provider_id, &req.input.content)?;
+                match parse_native_crp_slash_command_for_provider(
+                    &self.agent.provider_id,
+                    &req.input.content,
+                ) {
+                    Some(CrpSlashCommand::Compact) => {
+                        session
+                            .process
+                            .send(CrpCommand::SessionCompact {
+                                session_id: Some(req.session_key.clone()),
+                                turn_id: Some(turn_id.clone()),
+                            })
+                            .await?;
+                    }
+                    Some(CrpSlashCommand::Undo) => {
+                        session
+                            .process
+                            .send(CrpCommand::SessionUndo {
+                                session_id: Some(req.session_key.clone()),
+                                turn_id: Some(turn_id.clone()),
+                            })
+                            .await?;
+                    }
+                    Some(CrpSlashCommand::Review { instructions }) => {
+                        session
+                            .process
+                            .send(CrpCommand::SessionReview {
+                                session_id: Some(req.session_key.clone()),
+                                turn_id: Some(turn_id.clone()),
+                                instructions,
+                            })
+                            .await?;
+                    }
+                    None => {
+                        let items = build_prompt_items(&req.input, &req.workdir, &req.env).await?;
+                        let (prompt_items, prompt) =
+                            if provider_requires_flattened_text_prompt(&self.agent.provider_id) {
+                                (None, Some(flatten_prompt_items_as_text(&items)?))
+                            } else {
+                                (Some(items), Some(req.input.content.clone()))
+                            };
+                        let (model, reasoning_effort) = if model_override_disabled(&req.env) {
+                            (None, None)
                         } else {
-                            (Some(items), Some(req.input.content.clone()))
+                            req.input
+                                .model_id
+                                .as_deref()
+                                .map(split_model_id_and_effort)
+                                .unwrap_or((None, None))
                         };
-                    let (model, reasoning_effort) = if model_override_disabled(&req.env) {
-                        (None, None)
-                    } else {
-                        req.input
-                            .model_id
-                            .as_deref()
-                            .map(split_model_id_and_effort)
-                            .unwrap_or((None, None))
-                    };
-                    let prompt_cwd = translate_thread_cwd_for_container(&req.env, &req.workdir)?;
-                    session
-                        .process
-                        .send(CrpCommand::SessionPrompt {
-                            session_id: Some(req.session_key.clone()),
-                            turn_id: Some(turn_id.clone()),
-                            items: prompt_items,
-                            prompt,
-                            model,
-                            reasoning_effort,
-                            cwd: Some(prompt_cwd),
-                        })
-                        .await?;
+                        let prompt_cwd =
+                            translate_thread_cwd_for_container(&req.env, &req.workdir)?;
+                        session
+                            .process
+                            .send(CrpCommand::SessionPrompt {
+                                session_id: Some(req.session_key.clone()),
+                                turn_id: Some(turn_id.clone()),
+                                items: prompt_items,
+                                prompt,
+                                model,
+                                reasoning_effort,
+                                cwd: Some(prompt_cwd),
+                            })
+                            .await?;
+                    }
                 }
+                Ok(())
+            }
+            .await;
+            if let Err(err) = send_result {
+                if session.opened.load(Ordering::SeqCst) {
+                    session.draining.store(true, Ordering::SeqCst);
+                }
+                return Err(err);
             }
 
-            let mut cancel_rx = req.cancel_rx;
             let mut cancel_requested = false;
             let mut cancel_deadline: Option<tokio::time::Instant> = None;
             let first_event_deadline =
@@ -701,6 +743,7 @@ impl CrpSessionPool {
                 .await
             {
                 session.opening.store(false, Ordering::SeqCst);
+                session.draining.store(true, Ordering::SeqCst);
                 drop(busy_guard);
                 self.drain_session_if_needed(&auth_session_key, &session)
                     .await;
@@ -719,6 +762,7 @@ impl CrpSessionPool {
             if !session.opened.load(Ordering::SeqCst) {
                 session.opening.store(false, Ordering::SeqCst);
             }
+            session.draining.store(true, Ordering::SeqCst);
             drop(busy_guard);
             self.drain_session_if_needed(&auth_session_key, &session)
                 .await;

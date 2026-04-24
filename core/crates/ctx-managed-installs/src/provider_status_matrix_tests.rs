@@ -42,7 +42,7 @@ fn codex_archive_entry(
     releases: Vec<ProviderRelease>,
 ) -> ProviderMatrixEntry {
     ProviderMatrixEntry {
-        id: "codex".to_string(),
+        id: "codex-crp".to_string(),
         kind: ProviderMatrixEntryKind::Harness,
         display_name: Some("Codex".to_string()),
         tier: Some("tier1".to_string()),
@@ -74,7 +74,7 @@ fn codex_npm_entry(releases: Vec<ProviderRelease>) -> ProviderMatrixEntry {
         .map(|release| release.version.clone())
         .unwrap_or_else(|| "1.0.0".to_string());
     ProviderMatrixEntry {
-        id: "codex".to_string(),
+        id: "codex-crp".to_string(),
         kind: ProviderMatrixEntryKind::Harness,
         display_name: Some("Codex".to_string()),
         tier: Some("tier1".to_string()),
@@ -113,11 +113,11 @@ fn managed_archive_cfg(
     };
     let mut cfg = AgentServerConfigFile::default();
     cfg.managed_install_targets.insert(
-        "codex".to_string(),
+        "codex-crp".to_string(),
         HashMap::from([(target_key.clone(), meta.clone())]),
     );
     cfg.managed_provider_targets.insert(
-        "codex".to_string(),
+        "codex-crp".to_string(),
         HashMap::from([(
             target_key,
             AgentServerCommand {
@@ -150,11 +150,11 @@ fn managed_hybrid_npm_container_cfg(
     };
     let mut cfg = AgentServerConfigFile::default();
     cfg.managed_install_targets.insert(
-        "codex".to_string(),
+        "codex-crp".to_string(),
         HashMap::from([(target_key.clone(), meta.clone())]),
     );
     cfg.managed_provider_targets.insert(
-        "codex".to_string(),
+        "codex-crp".to_string(),
         HashMap::from([(
             target_key,
             AgentServerCommand {
@@ -184,11 +184,11 @@ fn managed_npm_cfg(version: &str) -> AgentServerConfigFile {
     };
     let mut cfg = AgentServerConfigFile::default();
     cfg.managed_install_targets.insert(
-        "codex".to_string(),
+        "codex-crp".to_string(),
         HashMap::from([(target_key.clone(), meta.clone())]),
     );
     cfg.managed_provider_targets.insert(
-        "codex".to_string(),
+        "codex-crp".to_string(),
         HashMap::from([(
             target_key,
             AgentServerCommand {
@@ -236,7 +236,7 @@ async fn provider_status_matrix_marks_supported_stale_runtime_updateable_without
         ],
     );
     let cfg = managed_archive_cfg(&runtime, "1.0.0", &old_sha);
-    let mut status = installed_status("codex", InstallTarget::LinuxX8664);
+    let mut status = installed_status("codex-crp", InstallTarget::LinuxX8664);
 
     apply_matrix_to_status(temp.path(), &cfg, &entry, &mut status, CURRENT_CTX_VERSION).await;
 
@@ -272,11 +272,11 @@ async fn provider_status_matrix_marks_missing_runtime_dependency_updateable() {
     );
     let mut cfg = managed_archive_cfg(&runtime, "1.0.1", &sha);
     cfg.managed_provider_targets
-        .get_mut("codex")
+        .get_mut("codex-crp")
         .and_then(|targets| targets.get_mut(InstallTarget::LinuxX8664.as_str()))
         .expect("codex linux target")
         .dependencies = vec!["runtime-node-host".to_string()];
-    let mut status = installed_status("codex", InstallTarget::LinuxX8664);
+    let mut status = installed_status("codex-crp", InstallTarget::LinuxX8664);
 
     apply_matrix_to_status(temp.path(), &cfg, &entry, &mut status, CURRENT_CTX_VERSION).await;
 
@@ -318,7 +318,7 @@ async fn provider_status_matrix_marks_hybrid_container_archive_updates_available
         );
     }
     let cfg = managed_hybrid_npm_container_cfg("1.0.0", &old_sha);
-    let mut status = installed_status("codex", InstallTarget::Container);
+    let mut status = installed_status("codex-crp", InstallTarget::Container);
 
     apply_matrix_to_status(
         Path::new("/tmp"),
@@ -355,7 +355,7 @@ async fn provider_status_matrix_marks_latest_ctx_incompatible_release_as_require
         release("1.2.3", ProviderReleaseStatus::Supported, Some("0.99.0")),
     ]);
     let cfg = managed_npm_cfg("1.2.2");
-    let mut status = installed_status("codex", InstallTarget::Host);
+    let mut status = installed_status("codex-crp", InstallTarget::Host);
 
     apply_matrix_to_status(
         Path::new("/tmp"),
@@ -399,7 +399,7 @@ async fn provider_status_matrix_marks_blocked_installed_release_unsupported() {
         release("1.2.3", ProviderReleaseStatus::Supported, None),
     ]);
     let cfg = managed_npm_cfg("1.2.2");
-    let mut status = installed_status("codex", InstallTarget::Host);
+    let mut status = installed_status("codex-crp", InstallTarget::Host);
 
     apply_matrix_to_status(
         Path::new("/tmp"),

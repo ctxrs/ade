@@ -7,9 +7,8 @@ pub(in crate::api) async fn get_provider_options(
     const CACHE_TTL: Duration = Duration::from_secs(30);
     const VERIFY_TTL: Duration = Duration::from_secs(30 * 60);
 
-    if provider_id == "codex-crp" {
-        return Err(invalid_provider_id_error("codex-crp", "codex"));
-    }
+    let requested_provider_id = provider_id;
+    let provider_id = canonicalize_provider_id(&requested_provider_id);
 
     let ws_id = parse_workspace_id(&ws_id)?;
     let install_target = install_target_for_workspace(&state, ws_id)
@@ -36,6 +35,7 @@ pub(in crate::api) async fn get_provider_options(
     if let Some((cached_at, cached_value)) = authoritative_cached_entry {
         if cached_at.elapsed() < CACHE_TTL {
             let mut out = cached_value.clone();
+            project_provider_id_field(&requested_provider_id, &mut out);
             attach_verify_cache(&mut out, verify_entry.as_ref(), VERIFY_TTL);
             return Ok(Json(out));
         }
@@ -154,6 +154,7 @@ pub(in crate::api) async fn get_provider_options(
             },
         );
         let mut out = base_resp;
+        project_provider_id_field(&requested_provider_id, &mut out);
         attach_verify_cache(&mut out, verify_entry.as_ref(), VERIFY_TTL);
         return Ok(Json(out));
     }
@@ -222,6 +223,7 @@ pub(in crate::api) async fn get_provider_options(
             );
 
             let mut out = resp;
+            project_provider_id_field(&requested_provider_id, &mut out);
             attach_verify_cache(&mut out, verify_entry.as_ref(), VERIFY_TTL);
             return Ok(Json(out));
         }
@@ -462,6 +464,7 @@ pub(in crate::api) async fn get_provider_options(
     );
 
     let mut out = resp;
+    project_provider_id_field(&requested_provider_id, &mut out);
     attach_verify_cache(&mut out, verify_entry.as_ref(), VERIFY_TTL);
     Ok(Json(out))
 }
@@ -470,9 +473,8 @@ pub(in crate::api) async fn verify_provider_for_workspace(
     State(state): State<Arc<AppState>>,
     Path((ws_id, provider_id)): Path<(String, String)>,
 ) -> Result<Json<ProviderAuthCheckResp>, (StatusCode, Json<serde_json::Value>)> {
-    if provider_id == "codex-crp" {
-        return Err(invalid_provider_id_error("codex-crp", "codex"));
-    }
+    let requested_provider_id = provider_id;
+    let provider_id = canonicalize_provider_id(&requested_provider_id);
     let ws_id = parse_workspace_id(&ws_id)?;
 
     let workspace = state
@@ -671,7 +673,7 @@ pub(in crate::api) async fn verify_provider_for_workspace(
     }
 
     let resp = ProviderAuthCheckResp {
-        provider_id: provider_id.clone(),
+        provider_id: project_provider_id_for_response(&requested_provider_id, &provider_id),
         workspace_id: ws_id.0.to_string(),
         status: status.clone(),
         auth_required,
@@ -697,9 +699,8 @@ pub(in crate::api) async fn authenticate_provider_for_workspace(
     Path((ws_id, provider_id)): Path<(String, String)>,
     req: Option<Json<AuthenticateProviderReq>>,
 ) -> Result<Json<ProviderAuthCheckResp>, (StatusCode, Json<serde_json::Value>)> {
-    if provider_id == "codex-crp" {
-        return Err(invalid_provider_id_error("codex-crp", "codex"));
-    }
+    let requested_provider_id = provider_id;
+    let provider_id = canonicalize_provider_id(&requested_provider_id);
     let ws_id = parse_workspace_id(&ws_id)?;
     let method_id = req.and_then(|value| value.0.method_id);
     let workspace = state
@@ -765,7 +766,7 @@ pub(in crate::api) async fn authenticate_provider_for_workspace(
 
     let resp = match result {
         Ok(()) => ProviderAuthCheckResp {
-            provider_id: provider_id.clone(),
+            provider_id: project_provider_id_for_response(&requested_provider_id, &provider_id),
             workspace_id: ws_id.0.to_string(),
             status: "ok".to_string(),
             auth_required: Some(false),
@@ -776,7 +777,7 @@ pub(in crate::api) async fn authenticate_provider_for_workspace(
             let msg = logs::redact_sensitive(&err.to_string());
             let (status, auth_required, _) = classify_probe_error(&msg);
             ProviderAuthCheckResp {
-                provider_id: provider_id.clone(),
+                provider_id: project_provider_id_for_response(&requested_provider_id, &provider_id),
                 workspace_id: ws_id.0.to_string(),
                 status: status.to_string(),
                 auth_required,
@@ -804,9 +805,8 @@ pub(in crate::api) async fn install_provider(
     Path(id): Path<String>,
     Query(query): Query<InstallTargetQuery>,
 ) -> Result<Json<InstallStartResponse>, (StatusCode, Json<serde_json::Value>)> {
-    if id == "codex-crp" {
-        return Err(invalid_provider_id_error("codex-crp", "codex"));
-    }
+    let requested_provider_id = id;
+    let id = canonicalize_provider_id(&requested_provider_id);
     let target = crate::installer::parse_install_target(query.target.as_deref()).map_err(|e| {
         (
             StatusCode::BAD_REQUEST,
@@ -820,7 +820,7 @@ pub(in crate::api) async fn install_provider(
         provider_launch_install::start_provider_install(&state, &id, target).await?;
 
     Ok(Json(InstallStartResponse {
-        provider_id: id,
+        provider_id: project_provider_id_for_response(&requested_provider_id, &id),
         install_id,
         target,
     }))

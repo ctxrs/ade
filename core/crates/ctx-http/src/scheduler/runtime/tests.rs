@@ -25,7 +25,7 @@ fn returns_full_when_no_emitted() {
 #[test]
 fn full_provider_control_maps_known_full_access_modes() {
     assert_eq!(
-        provider_mode_id_for("codex", &ProviderControlMode::Full),
+        provider_mode_id_for("codex-crp", &ProviderControlMode::Full),
         Some("full-access")
     );
     assert_eq!(
@@ -222,7 +222,7 @@ fn runtime_path_includes_target_specific_managed_provider_dependency_bin_dirs() 
     std::fs::create_dir_all(&provider_bin_dir).expect("provider_bin_dir");
     std::fs::create_dir_all(&dependency_bin_dir).expect("dependency_bin_dir");
     let provider_cmd = provider_bin_dir.join("provider-cmd");
-    let dependency_cmd = dependency_bin_dir.join("codex");
+    let dependency_cmd = dependency_bin_dir.join("codex-crp");
     std::fs::write(&provider_cmd, b"#!/bin/sh\n").expect("provider_cmd");
     std::fs::write(&dependency_cmd, b"#!/bin/sh\n").expect("dependency_cmd");
 
@@ -353,7 +353,7 @@ fn codex_env_injects_target_specific_codex_cli_command_path() {
     ensure_codex_cli_command_env_for_target(
         &mut provider_env,
         &cfg,
-        "codex",
+        "codex-crp",
         Some(InstallTarget::Container),
     )
     .expect("inject codex env");
@@ -372,7 +372,7 @@ fn codex_env_injects_target_specific_codex_cli_command_path() {
 #[test]
 fn codex_env_preserves_existing_explicit_codex_bin_path() {
     let tmp = tempdir().expect("tempdir");
-    let codex_bin = tmp.path().join("codex");
+    let codex_bin = tmp.path().join("codex-crp");
     std::fs::write(&codex_bin, b"#!/bin/sh\n").expect("write codex");
     let expected = std::fs::canonicalize(&codex_bin)
         .expect("canonicalize codex")
@@ -385,7 +385,7 @@ fn codex_env_preserves_existing_explicit_codex_bin_path() {
     ensure_codex_cli_command_env_for_target(
         &mut provider_env,
         &AgentServerConfigFile::default(),
-        "codex",
+        "codex-crp",
         Some(InstallTarget::Host),
     )
     .expect("preserve existing codex path");
@@ -397,11 +397,11 @@ fn codex_env_preserves_existing_explicit_codex_bin_path() {
 
 #[test]
 fn codex_env_rejects_relative_explicit_codex_bin_path() {
-    let mut provider_env = HashMap::from([("CTX_CODEX_BIN_PATH".to_string(), "codex".to_string())]);
+    let mut provider_env = HashMap::from([("CTX_CODEX_BIN_PATH".to_string(), "codex-crp".to_string())]);
     let err = ensure_codex_cli_command_env_for_target(
         &mut provider_env,
         &AgentServerConfigFile::default(),
-        "codex",
+        "codex-crp",
         Some(InstallTarget::Host),
     )
     .expect_err("relative codex path should fail");

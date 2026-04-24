@@ -53,7 +53,7 @@ except Exception as e:
 provider_session_id = PROVIDER_ID + "-thread"
 
 def default_models(provider_id):
-    if provider_id == "codex":
+    if provider_id == "codex-crp":
         return [
             {"id": "gpt-5.4/medium", "name": "GPT-5.4 (Medium)"},
             {"id": "gpt-5.4/xhigh", "name": "GPT-5.4 (Extra High)"},

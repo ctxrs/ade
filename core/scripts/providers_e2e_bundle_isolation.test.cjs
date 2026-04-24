@@ -64,7 +64,7 @@ test("linux-arm lanes source repo-owned local adapters from the workspace before
   );
   assert.match(
     script,
-    /if \[\[ "\$\{CTX_BUNDLE_BUILD_CODEX_CRP:-0\}" == "0" \]\]; then[\s\S]*bundled_only_provider_csv="\$\(csv_remove_provider "\$\{bundled_only_provider_csv\}" "codex"\)"/,
+    /if \[\[ "\$\{CTX_BUNDLE_BUILD_CODEX_CRP:-0\}" == "0" \]\]; then[\s\S]*bundled_only_provider_csv="\$\(csv_remove_provider "\$\{bundled_only_provider_csv\}" "codex-crp"\)"/,
   );
   assert.match(
     script,
