@@ -21,7 +21,7 @@ async fn session_state_exposes_artifact_metadata_and_session_scoped_downloads() 
         "http://127.0.0.1:4399".to_string(),
         None,
     ));
-    let app = api::router(state);
+    let app = api::router(state.clone());
 
     let workspace = create_workspace_via_api(&app, &git_repo.path().to_string_lossy()).await;
 
@@ -62,7 +62,13 @@ async fn session_state_exposes_artifact_metadata_and_session_scoped_downloads() 
     let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
     let wrong_session: ctx_core::models::Session = serde_json::from_slice(&body).unwrap();
 
-    let artifact_path = git_repo.path().join("artifact.txt");
+    let store = state.store_for_session(session.id).await.unwrap();
+    let worktree = store
+        .get_worktree(session.worktree_id)
+        .await
+        .unwrap()
+        .expect("session worktree");
+    let artifact_path = std::path::PathBuf::from(worktree.root_path).join("artifact.txt");
     std::fs::write(&artifact_path, b"artifact-body\n").unwrap();
 
     let req = Request::builder()
@@ -308,4 +314,126 @@ async fn session_state_exposes_artifact_metadata_and_session_scoped_downloads() 
     assert_eq!(res.status(), StatusCode::NOT_MODIFIED);
     let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
     assert!(body.is_empty());
+}
+
+#[tokio::test]
+async fn session_artifacts_reject_outside_root_paths_and_fail_closed_for_legacy_rows() {
+    let _serial = home_env_test_lock().lock().await;
+    let git_repo = setup_git_repo().await;
+    let home = tempfile::tempdir().unwrap();
+    let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
+
+    let data_dir = tempfile::tempdir().unwrap();
+    let stores = StoreManager::open(data_dir.path()).await.unwrap();
+
+    let mut providers: HashMap<String, Arc<dyn ctx_providers::adapters::ProviderAdapter>> =
+        HashMap::new();
+    providers.insert("fake".into(), Arc::new(FakeProviderAdapter::new()));
+
+    let state = Arc::new(AppState::new(
+        data_dir.path().to_path_buf(),
+        stores,
+        providers,
+        "http://127.0.0.1:4399".to_string(),
+        None,
+    ));
+    let app = api::router(state.clone());
+
+    let workspace = create_workspace_via_api(&app, &git_repo.path().to_string_lossy()).await;
+    let req = Request::builder()
+        .method("POST")
+        .uri(format!("/api/workspaces/{}/tasks", workspace.id.0))
+        .header("content-type", "application/json")
+        .body(Body::from(json!({"title":"t1"}).to_string()))
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let task: ctx_core::models::Task = serde_json::from_slice(&body).unwrap();
+
+    let req = Request::builder()
+        .method("POST")
+        .uri(format!("/api/tasks/{}/sessions", task.id.0))
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({"provider_id":"fake","model_id":"fake-model"}).to_string(),
+        ))
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let session: ctx_core::models::Session = serde_json::from_slice(&body).unwrap();
+
+    let outside_dir = tempfile::tempdir().unwrap();
+    let outside_path = outside_dir.path().join("outside.txt");
+    std::fs::write(&outside_path, b"outside-body\n").unwrap();
+
+    let req = Request::builder()
+        .method("POST")
+        .uri(format!("/api/sessions/{}/artifacts", session.id.0))
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "artifacts": [
+                    {
+                        "absolute_file_path": outside_path.to_string_lossy(),
+                        "name": "outside.txt",
+                        "mime_type": "text/plain"
+                    }
+                ]
+            })
+            .to_string(),
+        ))
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+    let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(
+        payload["error"].as_str(),
+        Some("artifact 1 absolute_file_path must stay inside the session worktree or tool-output spool")
+    );
+
+    let store = state.store_for_session(session.id).await.unwrap();
+    let legacy = store
+        .upsert_session_artifact_by_path(&ctx_core::models::Artifact {
+            id: ctx_core::ids::ArtifactId::new(),
+            session_id: session.id,
+            task_id: session.task_id,
+            workspace_id: session.workspace_id,
+            worktree_id: session.worktree_id,
+            name: Some("outside.txt".to_string()),
+            absolute_path: outside_path.to_string_lossy().to_string(),
+            mime_type: "text/plain".to_string(),
+            bytes: 13,
+            created_at: chrono::Utc::now(),
+            missing: None,
+        })
+        .await
+        .unwrap();
+
+    let req = Request::builder()
+        .method("GET")
+        .uri(format!("/api/sessions/{}/state", session.id.0))
+        .body(Body::empty())
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let session_state: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(
+        session_state["artifacts"][0]["missing"].as_bool(),
+        Some(true)
+    );
+
+    let req = Request::builder()
+        .method("GET")
+        .uri(format!(
+            "/api/sessions/{}/artifacts/{}",
+            session.id.0, legacy.id.0
+        ))
+        .body(Body::empty())
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::NOT_FOUND);
 }

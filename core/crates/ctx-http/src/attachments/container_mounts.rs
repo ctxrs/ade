@@ -651,6 +651,23 @@ async fn container_remove_attachment_data_best_effort(
     Ok(())
 }
 
+async fn resolve_attachment_source_path(root: &Path, subpath: Option<&str>) -> Result<PathBuf> {
+    let root_canonical = tokio::fs::canonicalize(root)
+        .await
+        .unwrap_or_else(|_| root.to_path_buf());
+    let candidate = match subpath {
+        Some(subpath) => root.join(subpath),
+        None => root.to_path_buf(),
+    };
+    let candidate_canonical = tokio::fs::canonicalize(&candidate)
+        .await
+        .with_context(|| format!("attachment source not found at {}", candidate.display()))?;
+    if !candidate_canonical.starts_with(&root_canonical) {
+        anyhow::bail!("attachment subpath escapes the materialized root");
+    }
+    Ok(candidate_canonical)
+}
+
 pub(crate) async fn ensure_attachment_mount(
     state: &AppState,
     workspace: &Workspace,
@@ -700,11 +717,9 @@ pub(crate) async fn ensure_attachment_mount(
                     should_refresh,
                 )
                 .await?;
-                let source_path = if let Some(subpath) = &attachment.subpath {
-                    imported.join(subpath)
-                } else {
-                    imported
-                };
+                let source_path =
+                    resolve_attachment_source_path(&imported, attachment.subpath.as_deref())
+                        .await?;
                 container_ensure_mount(state, &container_id, &mount_abs, &source_path).await?;
             }
             AttachmentRuntime::SharedVmContainer {
@@ -712,11 +727,11 @@ pub(crate) async fn ensure_attachment_mount(
                 worktree_id,
                 worktree_root,
             } => {
-                let source_path = if let Some(subpath) = &attachment.subpath {
-                    materialized.path.join(subpath)
-                } else {
-                    materialized.path.clone()
-                };
+                let source_path = resolve_attachment_source_path(
+                    &materialized.path,
+                    attachment.subpath.as_deref(),
+                )
+                .await?;
                 avf_copy_source_to_mount(
                     state,
                     workspace_id,
@@ -732,11 +747,9 @@ pub(crate) async fn ensure_attachment_mount(
         if let Some(parent) = mount_abs.parent() {
             tokio::fs::create_dir_all(parent).await?;
         }
-        let source_path = if let Some(subpath) = &attachment.subpath {
-            materialized.path.join(subpath)
-        } else {
-            materialized.path.clone()
-        };
+        let source_path =
+            resolve_attachment_source_path(&materialized.path, attachment.subpath.as_deref())
+                .await?;
         ensure_mount(&mount_abs, &source_path).await?;
     }
 
@@ -807,4 +820,34 @@ pub(crate) async fn cleanup_removed_attachment(
         container_remove_attachment_data_best_effort(state, attachment.workspace_id, attachment)
             .await;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_attachment_source_path;
+
+    #[tokio::test]
+    async fn resolve_attachment_source_path_rejects_parent_traversal() {
+        let root = tempfile::tempdir().unwrap();
+        let err = resolve_attachment_source_path(root.path(), Some("../escape.txt"))
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("attachment source not found"));
+    }
+
+    #[tokio::test]
+    async fn resolve_attachment_source_path_rejects_symlink_escape() {
+        #[cfg(unix)]
+        {
+            let root = tempfile::tempdir().unwrap();
+            let outside = tempfile::tempdir().unwrap();
+            std::fs::write(outside.path().join("escape.txt"), b"escape").unwrap();
+            std::os::unix::fs::symlink(outside.path(), root.path().join("link")).unwrap();
+
+            let err = resolve_attachment_source_path(root.path(), Some("link/escape.txt"))
+                .await
+                .unwrap_err();
+            assert!(err.to_string().contains("escapes the materialized root"));
+        }
+    }
 }

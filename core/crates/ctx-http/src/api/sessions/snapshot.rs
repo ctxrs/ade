@@ -131,16 +131,24 @@ pub(crate) async fn get_session_state(
     if session.is_none() {
         return Err(StatusCode::NOT_FOUND);
     }
-    let mut state = store
+    let mut session_state = store
         .get_session_state(session_id)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    for artifact in state.artifacts.iter_mut() {
-        if tokio::fs::metadata(&artifact.absolute_path).await.is_err() {
+    let session = session.ok_or(StatusCode::NOT_FOUND)?;
+    for artifact in session_state.artifacts.iter_mut() {
+        if !super::super::artifacts::session_artifact_path_is_accessible(
+            &state,
+            &store,
+            &session,
+            std::path::Path::new(&artifact.absolute_path),
+        )
+        .await?
+        {
             artifact.missing = Some(true);
         }
     }
-    Ok(Json(state))
+    Ok(Json(session_state))
 }
 
 pub(crate) async fn get_session_events(

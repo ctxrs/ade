@@ -40,6 +40,70 @@ fn infer_upload_blob_mime_type(file_name: Option<&str>, override_value: Option<S
     }
 }
 
+async fn canonicalize_existing_or_raw(path: &StdPath) -> PathBuf {
+    tokio::fs::canonicalize(path)
+        .await
+        .unwrap_or_else(|_| path.to_path_buf())
+}
+
+async fn session_artifact_allowed_roots(
+    state: &Arc<AppState>,
+    store: &ctx_store::Store,
+    session: &ctx_core::models::Session,
+) -> Result<Vec<PathBuf>, StatusCode> {
+    let mut roots = Vec::with_capacity(2);
+    let worktree_root = if let Some(worktree) = store
+        .get_worktree(session.worktree_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    {
+        PathBuf::from(worktree.root_path)
+    } else {
+        let workspace = state
+            .global_store()
+            .get_workspace(session.workspace_id)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+            .ok_or(StatusCode::NOT_FOUND)?;
+        PathBuf::from(workspace.root_path)
+    };
+    roots.push(canonicalize_existing_or_raw(&worktree_root).await);
+    roots.push(canonicalize_existing_or_raw(&state.core.tool_output_spool_dir).await);
+    Ok(roots)
+}
+
+pub(super) async fn session_artifact_path_is_accessible(
+    state: &Arc<AppState>,
+    store: &ctx_store::Store,
+    session: &ctx_core::models::Session,
+    path: &StdPath,
+) -> Result<bool, StatusCode> {
+    let roots = session_artifact_allowed_roots(state, store, session).await?;
+    let canonical = match tokio::fs::canonicalize(path).await {
+        Ok(canonical) => canonical,
+        Err(_) => return Ok(false),
+    };
+    Ok(roots.iter().any(|root| canonical.starts_with(root)))
+}
+
+async fn validate_session_artifact_write_path(
+    state: &Arc<AppState>,
+    store: &ctx_store::Store,
+    session: &ctx_core::models::Session,
+    path: &StdPath,
+) -> Result<PathBuf, String> {
+    let roots = session_artifact_allowed_roots(state, store, session)
+        .await
+        .map_err(|status| format!("failed to resolve session artifact roots: {status}"))?;
+    let canonical = tokio::fs::canonicalize(path)
+        .await
+        .map_err(|e| logs::redact_sensitive(&e.to_string()))?;
+    if roots.iter().any(|root| canonical.starts_with(root)) {
+        return Ok(canonical);
+    }
+    Err("absolute_file_path must stay inside the session worktree or tool-output spool".into())
+}
+
 pub(super) async fn persist_blob_bytes(
     state: &AppState,
     bytes: &[u8],
@@ -378,6 +442,9 @@ pub(super) async fn get_session_artifact(
     }
 
     let path = PathBuf::from(&artifact.absolute_path);
+    if !session_artifact_path_is_accessible(&state, &store, &session, &path).await? {
+        return Err(StatusCode::NOT_FOUND);
+    }
     let meta = tokio::fs::metadata(&path)
         .await
         .map_err(|_| StatusCode::NOT_FOUND)?;
@@ -519,7 +586,14 @@ pub(super) async fn list_session_artifacts(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     for artifact in artifacts.iter_mut() {
-        if tokio::fs::metadata(&artifact.absolute_path).await.is_err() {
+        if !session_artifact_path_is_accessible(
+            &state,
+            &store,
+            &session,
+            StdPath::new(&artifact.absolute_path),
+        )
+        .await?
+        {
             artifact.missing = Some(true);
         }
     }
@@ -606,6 +680,16 @@ pub(super) async fn set_session_artifacts(
                 }),
             ));
         }
+        let path = validate_session_artifact_write_path(&state, &store, &session, &path)
+            .await
+            .map_err(|error| {
+                (
+                    StatusCode::BAD_REQUEST,
+                    Json(ApiErrorResp {
+                        error: format!("artifact {} {error}", idx + 1),
+                    }),
+                )
+            })?;
 
         let name = normalize_artifact_name(artifact.name, &path);
         let mime_type = infer_artifact_mime_type(&path, artifact.mime_type);

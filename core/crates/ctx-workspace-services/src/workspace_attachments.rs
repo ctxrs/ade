@@ -142,7 +142,7 @@ where
 {
     let existing =
         find_workspace_attachment(host, workspace_id, cfg.kind.clone(), &cfg.name).await?;
-    let attachment = normalize_attachment_config(workspace_id, cfg, existing);
+    let attachment = normalize_attachment_config(workspace_id, cfg, existing)?;
     host.upsert_workspace_attachment(&attachment).await?;
     Ok(attachment)
 }
@@ -287,6 +287,25 @@ pub fn sanitize_mount_relpath(value: &str) -> Result<PathBuf> {
     Ok(path)
 }
 
+pub fn sanitize_attachment_subpath(value: &str) -> Result<PathBuf> {
+    if value.trim().is_empty() {
+        anyhow::bail!("subpath must not be empty");
+    }
+    let path = PathBuf::from(value);
+    if path.is_absolute() {
+        anyhow::bail!("subpath must be relative: {value}");
+    }
+    for part in path.components() {
+        if matches!(
+            part,
+            std::path::Component::ParentDir | std::path::Component::Prefix(_)
+        ) {
+            anyhow::bail!("subpath must not escape the attachment root: {value}");
+        }
+    }
+    Ok(path)
+}
+
 pub fn revision_key(attachment: &WorkspaceAttachment) -> String {
     let base = attachment.revision.as_deref().unwrap_or("default");
     sanitize_name(base)
@@ -296,7 +315,7 @@ fn normalize_attachment_config(
     workspace_id: WorkspaceId,
     cfg: AttachmentConfig,
     existing: Option<WorkspaceAttachment>,
-) -> WorkspaceAttachment {
+) -> Result<WorkspaceAttachment> {
     let name = cfg.name.trim().to_string();
     let now = Utc::now();
     let (id, created_at, status, last_sync_at, error_message) = match existing {
@@ -320,8 +339,15 @@ fn normalize_attachment_config(
         .mount_relpath
         .clone()
         .unwrap_or_else(|| default_mount_relpath(&cfg.kind, &name));
+    let subpath = cfg
+        .subpath
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    if let Some(value) = subpath.as_deref() {
+        sanitize_attachment_subpath(value)?;
+    }
 
-    WorkspaceAttachment {
+    Ok(WorkspaceAttachment {
         id,
         workspace_id,
         kind: cfg.kind,
@@ -331,10 +357,7 @@ fn normalize_attachment_config(
             .revision
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty()),
-        subpath: cfg
-            .subpath
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty()),
+        subpath,
         mount_relpath,
         mode: cfg.mode.unwrap_or(AttachmentMode::Ro),
         update_policy: cfg.update_policy.unwrap_or(AttachmentUpdatePolicy::Manual),
@@ -343,7 +366,7 @@ fn normalize_attachment_config(
         error_message,
         created_at,
         updated_at: now,
-    }
+    })
 }
 
 async fn materialize_reference_repo(
@@ -595,8 +618,8 @@ fn looks_like_sha(value: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        default_mount_relpath, normalize_attachment_config, revision_key, sanitize_mount_relpath,
-        AttachmentConfig,
+        default_mount_relpath, normalize_attachment_config, revision_key,
+        sanitize_attachment_subpath, sanitize_mount_relpath, AttachmentConfig,
     };
     use ctx_core::ids::WorkspaceId;
     use ctx_core::models::{
@@ -624,6 +647,15 @@ mod tests {
     }
 
     #[test]
+    fn sanitize_attachment_subpath_rejects_escape_paths() {
+        assert!(sanitize_attachment_subpath("guide/index.md").is_ok());
+        assert!(sanitize_attachment_subpath("").is_err());
+        assert!(sanitize_attachment_subpath("/absolute/path").is_err());
+        assert!(sanitize_attachment_subpath("../escape").is_err());
+        assert!(sanitize_attachment_subpath("guide/../../escape").is_err());
+    }
+
+    #[test]
     fn normalize_attachment_config_preserves_existing_identity() {
         let workspace_id = WorkspaceId::new();
         let existing = normalize_attachment_config(
@@ -639,7 +671,8 @@ mod tests {
                 update_policy: Some(AttachmentUpdatePolicy::Manual),
             },
             None,
-        );
+        )
+        .unwrap();
 
         let updated = normalize_attachment_config(
             workspace_id,
@@ -654,7 +687,8 @@ mod tests {
                 update_policy: Some(AttachmentUpdatePolicy::OnOpen),
             },
             Some(existing.clone()),
-        );
+        )
+        .unwrap();
 
         assert_eq!(updated.id, existing.id);
         assert_eq!(updated.created_at, existing.created_at);
@@ -680,7 +714,8 @@ mod tests {
                 update_policy: None,
             },
             None,
-        );
+        )
+        .unwrap();
         assert_eq!(revision_key(&attachment), "feature-branch");
     }
 }
