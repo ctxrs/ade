@@ -2,7 +2,7 @@ use super::*;
 use crate::telemetry::{
     TelemetryDelivery, TelemetryEvent, TelemetryOriginRuntime, TelemetryPlane, TelemetryProperties,
 };
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveDate, Utc};
 use serde::Deserialize;
 use serde_json::{Map, Value};
 
@@ -38,13 +38,20 @@ pub(super) struct TelemetryExportQuery {
     date: Option<String>,
 }
 
+fn normalize_export_date(raw: Option<String>) -> Result<String, StatusCode> {
+    let date = match raw {
+        Some(raw) => NaiveDate::parse_from_str(raw.trim(), "%Y-%m-%d")
+            .map_err(|_| StatusCode::BAD_REQUEST)?,
+        None => Utc::now().date_naive(),
+    };
+    Ok(date.format("%Y-%m-%d").to_string())
+}
+
 pub(super) async fn export_telemetry(
     State(state): State<Arc<AppState>>,
     Query(q): Query<TelemetryExportQuery>,
 ) -> Result<Response, StatusCode> {
-    let date = q
-        .date
-        .unwrap_or_else(|| chrono::Utc::now().format("%Y-%m-%d").to_string());
+    let date = normalize_export_date(q.date)?;
     let path = crate::perf_telemetry::perf_log_path_for_date(&state.core.data_root, &date);
     let bytes = tokio::fs::read(&path)
         .await
