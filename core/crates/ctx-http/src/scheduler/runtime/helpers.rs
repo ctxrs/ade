@@ -299,7 +299,20 @@ pub(super) async fn apply_provider_launch_overrides(
         // These providers currently behave truthfully only on their native ACP tool paths.
         provider_env.insert("CTX_MCP_DISABLED".to_string(), "1".to_string());
     }
+    strip_unused_daemon_auth_from_provider_env(provider_env);
     Ok(())
+}
+
+fn strip_unused_daemon_auth_from_provider_env(provider_env: &mut HashMap<String, String>) {
+    let mcp_disabled = provider_env
+        .get("CTX_MCP_DISABLED")
+        .and_then(|value| ctx_core::boolish::parse_boolish(value))
+        .unwrap_or(false);
+    if !mcp_disabled {
+        return;
+    }
+    provider_env.remove("CTX_AUTH_TOKEN");
+    provider_env.remove("CTX_MCP_TOKEN");
 }
 
 async fn apply_openhands_launch_overrides(
@@ -439,26 +452,36 @@ mod tests {
     #[tokio::test]
     async fn opencode_launch_overrides_disable_mcp() {
         let temp = tempfile::tempdir().expect("tempdir");
-        let mut env = HashMap::new();
+        let mut env = HashMap::from([
+            ("CTX_AUTH_TOKEN".to_string(), "daemon-secret".to_string()),
+            ("CTX_MCP_TOKEN".to_string(), "mcp-secret".to_string()),
+        ]);
 
         apply_provider_launch_overrides("opencode", temp.path(), &mut env)
             .await
             .expect("apply overrides");
 
         assert_eq!(env.get("CTX_MCP_DISABLED").map(String::as_str), Some("1"));
+        assert!(!env.contains_key("CTX_AUTH_TOKEN"));
+        assert!(!env.contains_key("CTX_MCP_TOKEN"));
         assert!(!env.contains_key("ACP_CWD"));
     }
 
     #[tokio::test]
     async fn kimi_launch_overrides_disable_mcp() {
         let temp = tempfile::tempdir().expect("tempdir");
-        let mut env = HashMap::new();
+        let mut env = HashMap::from([
+            ("CTX_AUTH_TOKEN".to_string(), "daemon-secret".to_string()),
+            ("CTX_MCP_TOKEN".to_string(), "mcp-secret".to_string()),
+        ]);
 
         apply_provider_launch_overrides("kimi", temp.path(), &mut env)
             .await
             .expect("apply overrides");
 
         assert_eq!(env.get("CTX_MCP_DISABLED").map(String::as_str), Some("1"));
+        assert!(!env.contains_key("CTX_AUTH_TOKEN"));
+        assert!(!env.contains_key("CTX_MCP_TOKEN"));
         assert!(!env.contains_key("ACP_CWD"));
     }
 
@@ -473,6 +496,24 @@ mod tests {
 
         assert_eq!(env.get("CTX_MCP_DISABLED").map(String::as_str), Some("0"));
         assert!(!env.contains_key("ACP_CWD"));
+    }
+
+    #[tokio::test]
+    async fn predisabled_mcp_strips_unused_daemon_tokens() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let mut env = HashMap::from([
+            ("CTX_MCP_DISABLED".to_string(), "1".to_string()),
+            ("CTX_AUTH_TOKEN".to_string(), "daemon-secret".to_string()),
+            ("CTX_MCP_TOKEN".to_string(), "mcp-secret".to_string()),
+        ]);
+
+        apply_provider_launch_overrides("codex", temp.path(), &mut env)
+            .await
+            .expect("apply overrides");
+
+        assert_eq!(env.get("CTX_MCP_DISABLED").map(String::as_str), Some("1"));
+        assert!(!env.contains_key("CTX_AUTH_TOKEN"));
+        assert!(!env.contains_key("CTX_MCP_TOKEN"));
     }
 
     #[tokio::test]
