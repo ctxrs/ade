@@ -79,6 +79,47 @@ const readWorkspaceSessionHeads = (
   return collectSessionHeadsForSupervisor(snapshot, store, bootstrapHeads, sessionIds);
 };
 
+const snapshotHasSessionSummary = (
+  snapshot: WorkspaceActiveSnapshotState,
+  sessionId: string,
+): boolean => {
+  const normalizedSessionId = idToString(sessionId);
+  if (!normalizedSessionId) return false;
+  for (const taskId of snapshot.activeIds) {
+    const item = snapshot.tasksById[taskId];
+    if (!item) continue;
+    if (item.sessions.some((summary) => idToString(summary.session.id) === normalizedSessionId)) {
+      return true;
+    }
+  }
+  return false;
+};
+
+export const deriveRetainedPrefetchSessionIds = ({
+  snapshot,
+  foregroundSessionIds,
+  taskArchived,
+}: {
+  snapshot: WorkspaceActiveSnapshotState;
+  foregroundSessionIds: readonly string[];
+  taskArchived: boolean;
+}): string[] => {
+  const liveForegroundSessionIds = foregroundSessionIds.filter((sessionId) => {
+    const normalizedSessionId = idToString(sessionId);
+    if (!normalizedSessionId) return false;
+    return taskArchived || snapshotHasSessionSummary(snapshot, normalizedSessionId);
+  });
+  const warmSessionIds = deriveWarmSessionIds({
+    activeTaskSessionIds: liveForegroundSessionIds,
+    tasksById: snapshot.tasksById,
+    activeIds: snapshot.activeIds,
+  });
+  return planSessionHeadPrefetchTargets({
+    foregroundSessionIds: liveForegroundSessionIds,
+    warmSessionIds,
+  }).targetSessionIds;
+};
+
 export function useWorkbenchSessionBridge({
   activeTaskId,
   activeSessionIdFromTab,
@@ -102,6 +143,74 @@ export function useWorkbenchSessionBridge({
   const sessionHeadBootstrapCache = useMemo(() => new SessionHeadBootstrapCache(), []);
   const prefetchGenerationRef = useRef(0);
   const prefetchSessionIdsRef = useRef<Set<string>>(new Set());
+  const foregroundSessionIdsRef = useRef<string[]>([]);
+  const activeSessionId = useMemo(
+    () =>
+      resolveWorkbenchActiveSessionId({
+        activeSessionIdFromTab,
+        primarySessionId,
+        sessions,
+      }),
+    [activeSessionIdFromTab, primarySessionId, sessions],
+  );
+  const taskArchived = Boolean(activeTaskSummary?.task.archived_at);
+  const taskArchivedRef = useRef(taskArchived);
+  const foregroundSessionIds = useMemo(
+    () => (activeSessionId ? [activeSessionId] : primarySessionId ? [primarySessionId] : []),
+    [activeSessionId, primarySessionId],
+  );
+  const warmSessionIds = useMemo(
+    () =>
+      deriveWarmSessionIds({
+        activeTaskSessionIds: foregroundSessionIds,
+        tasksById,
+        activeIds: workspaceSnapshot.activeIds,
+      }),
+    [foregroundSessionIds, tasksById, workspaceSnapshot.activeIds],
+  );
+  const plannedPrefetchSessionIds = useMemo(
+    () =>
+      planSessionHeadPrefetchTargets({
+        foregroundSessionIds,
+        warmSessionIds,
+      }).targetSessionIds,
+    [foregroundSessionIds, warmSessionIds],
+  );
+  const prefetchSessionIdsKey = plannedPrefetchSessionIds.join("\u001f");
+  const prefetchSessionIds = useMemo(
+    () => plannedPrefetchSessionIds,
+    [prefetchSessionIdsKey],
+  );
+  const computeRetainedPrefetchSessionIds = useCallback(
+    (snapshot: WorkspaceActiveSnapshotState): string[] => {
+      return deriveRetainedPrefetchSessionIds({
+        snapshot,
+        foregroundSessionIds: foregroundSessionIdsRef.current,
+        taskArchived: taskArchivedRef.current,
+      });
+    },
+    [],
+  );
+  const isPrefetchSessionRetained = useCallback(
+    (sessionId: string, snapshot?: WorkspaceActiveSnapshotState): boolean => {
+      return computeRetainedPrefetchSessionIds(snapshot ?? workspaceSnapshotStore.getSnapshot()).includes(sessionId);
+    },
+    [computeRetainedPrefetchSessionIds, workspaceSnapshotStore],
+  );
+  const refreshRetainedPrefetchTargets = useCallback(
+    (snapshot?: WorkspaceActiveSnapshotState) => {
+      const nextSnapshot = snapshot ?? workspaceSnapshotStore.getSnapshot();
+      const nextSessionIds = computeRetainedPrefetchSessionIds(nextSnapshot);
+      prefetchSessionIdsRef.current = new Set(nextSessionIds);
+      sessionHeadBootstrapCache.retain(nextSessionIds);
+      return {
+        snapshot: nextSnapshot,
+        sessionIds: nextSessionIds,
+        sessionIdSet: prefetchSessionIdsRef.current,
+      };
+    },
+    [computeRetainedPrefetchSessionIds, sessionHeadBootstrapCache, workspaceSnapshotStore],
+  );
   const primeAuthoritativeHeadsForSessions = useCallback(
     async (sessionIdsToPrime: readonly string[], generation?: number) => {
       const shouldContinue = () => generation === undefined || prefetchGenerationRef.current === generation;
@@ -113,14 +222,16 @@ export function useWorkbenchSessionBridge({
         sessionIdsToPrime,
         {
           shouldContinue,
+          getSnapshot: () => workspaceSnapshotStore.getSnapshot(),
+          shouldRetainSessionId: (sessionId) => isPrefetchSessionRetained(sessionId),
           onHead: (sessionId, head) => {
-            if (!shouldContinue()) return;
+            if (!shouldContinue() || !isPrefetchSessionRetained(sessionId)) return;
             supervisor.upsertWorkspaceSessionHead(sessionId, head);
           },
         },
       );
     },
-    [sessionHeadBootstrapCache, supervisor, workspaceSnapshotStore],
+    [isPrefetchSessionRetained, sessionHeadBootstrapCache, supervisor, workspaceSnapshotStore],
   );
 
   useEffect(() => {
@@ -128,15 +239,25 @@ export function useWorkbenchSessionBridge({
       workspaceSnapshotStore.setSubscribedSessions?.(sessionIdsForSubscription);
     });
     const syncWorkspace = () => {
-      const snapshot = workspaceSnapshotStore.getSnapshot();
+      const { snapshot, sessionIds } = refreshRetainedPrefetchTargets();
       supervisor.setWorkspaceSessionHeads(
-        readWorkspaceSessionHeads(snapshot, workspaceSnapshotStore, sessionHeadBootstrapCache),
+        readWorkspaceSessionHeads(
+          snapshot,
+          workspaceSnapshotStore,
+          sessionHeadBootstrapCache,
+          sessionIds,
+        ),
       );
       supervisor.setWorkspaceSnapshotState(snapshot);
       lifecycleCoordinator.setWorkspaceSnapshotState(snapshot);
     };
     const handleWorkspaceEvent = (evt: WorkspaceActiveSnapshotEvent) => {
-      const didCacheSeed = maybeCacheSessionHeadSeed(sessionHeadBootstrapCache, evt);
+      const { snapshot, sessionIds, sessionIdSet } = refreshRetainedPrefetchTargets();
+      const didCacheSeed = maybeCacheSessionHeadSeed(
+        sessionHeadBootstrapCache,
+        evt,
+        sessionIdSet,
+      );
       const sessionId =
         evt.type === "session_head_delta"
           ? idToString(evt.delta.session_id)
@@ -149,18 +270,32 @@ export function useWorkbenchSessionBridge({
             : "";
       if (sessionId) {
         const head = workspaceSnapshotStore.getSessionHeadSnapshot(sessionId);
-        if (head) {
+        if (head && sessionIdSet.has(sessionId)) {
           supervisor.upsertWorkspaceSessionHead(sessionId, head);
+        } else if (didCacheSeed && evt.type === "session_head_seed") {
+          const cachedHead = readWorkspaceSessionHeads(
+            snapshot,
+            workspaceSnapshotStore,
+            sessionHeadBootstrapCache,
+            [sessionId],
+          )[sessionId];
+          if (cachedHead) {
+            supervisor.upsertWorkspaceSessionHead(sessionId, cachedHead);
+          }
         } else if (
           (evt.type === "session_summary_delta" || evt.type === "session_summary") &&
-          prefetchSessionIdsRef.current.has(sessionId)
+          sessionIdSet.has(sessionId)
         ) {
           void primeAuthoritativeHeadsForSessions([sessionId]);
         }
       } else if (didCacheSeed) {
-        const snapshot = workspaceSnapshotStore.getSnapshot();
         supervisor.setWorkspaceSessionHeads(
-          readWorkspaceSessionHeads(snapshot, workspaceSnapshotStore, sessionHeadBootstrapCache),
+          readWorkspaceSessionHeads(
+            snapshot,
+            workspaceSnapshotStore,
+            sessionHeadBootstrapCache,
+            sessionIds,
+          ),
         );
       }
       supervisor.handleWorkspaceEvent(evt);
@@ -178,6 +313,7 @@ export function useWorkbenchSessionBridge({
       lifecycleCoordinator.setWorkspaceSnapshotState(null);
     };
   }, [
+    refreshRetainedPrefetchTargets,
     lifecycleCoordinator,
     primeAuthoritativeHeadsForSessions,
     supervisor,
@@ -194,8 +330,6 @@ export function useWorkbenchSessionBridge({
       }),
     [optimisticTasks, sessionSnap.sessions, tasksById],
   );
-  const taskArchived = Boolean(activeTaskSummary?.task.archived_at);
-
   useEffect(() => {
     if (!activeTaskId) return;
     const snapshotReady = workspaceSnapshot.initialized && workspaceSnapshot.fetchState.active === "idle";
@@ -298,16 +432,6 @@ export function useWorkbenchSessionBridge({
     void markTaskRead(activeTaskId);
   }, [activeTaskId, appInForeground, isTaskUnread, markTaskRead, optimisticTasksById, taskLiveInfo.workingByTask, tasksById]);
 
-  const activeSessionId = useMemo(
-    () =>
-      resolveWorkbenchActiveSessionId({
-        activeSessionIdFromTab,
-        primarySessionId,
-        sessions,
-      }),
-    [activeSessionIdFromTab, primarySessionId, sessions],
-  );
-
   useEffect(() => {
     if (!activeTaskId || !activeSessionId) return;
     const activeEntry = sessionSnap.sessions[activeSessionId];
@@ -324,37 +448,15 @@ export function useWorkbenchSessionBridge({
     [sessionSnap.sessions],
   );
 
-  const foregroundSessionIds = useMemo(
-    () => (activeSessionId ? [activeSessionId] : primarySessionId ? [primarySessionId] : []),
-    [activeSessionId, primarySessionId],
-  );
-
-  const warmSessionIds = useMemo(
-    () =>
-      deriveWarmSessionIds({
-        activeTaskSessionIds: foregroundSessionIds,
-        tasksById,
-        activeIds: workspaceSnapshot.activeIds,
-      }),
-    [foregroundSessionIds, tasksById, workspaceSnapshot.activeIds],
-  );
-  const plannedPrefetchSessionIds = useMemo(
-    () =>
-      planSessionHeadPrefetchTargets({
-        foregroundSessionIds,
-        warmSessionIds,
-      }).targetSessionIds,
-    [foregroundSessionIds, warmSessionIds],
-  );
-  const prefetchSessionIdsKey = plannedPrefetchSessionIds.join("\u001f");
-  const prefetchSessionIds = useMemo(
-    () => plannedPrefetchSessionIds,
-    [prefetchSessionIdsKey],
-  );
-
   useEffect(() => {
+    sessionHeadBootstrapCache.retain(prefetchSessionIds);
+  }, [prefetchSessionIds, sessionHeadBootstrapCache]);
+
+  useLayoutEffect(() => {
+    foregroundSessionIdsRef.current = foregroundSessionIds;
+    taskArchivedRef.current = taskArchived;
     prefetchSessionIdsRef.current = new Set(prefetchSessionIds);
-  }, [prefetchSessionIds]);
+  }, [foregroundSessionIds, prefetchSessionIds, taskArchived]);
 
   useEffect(() => {
     const generation = prefetchGenerationRef.current + 1;
@@ -368,16 +470,19 @@ export function useWorkbenchSessionBridge({
         workspaceSnapshotStore,
         sessionHeadBootstrapCache,
         prefetchSessionIds,
-        { shouldContinue },
+        {
+          shouldContinue,
+          shouldRetainSessionId: (sessionId) => isPrefetchSessionRetained(sessionId),
+        },
       );
       if (persistedChanged && shouldContinue()) {
-        const nextSnapshot = workspaceSnapshotStore.getSnapshot();
+        const { snapshot: nextSnapshot, sessionIds } = refreshRetainedPrefetchTargets();
         supervisor.setWorkspaceSessionHeads(
           readWorkspaceSessionHeads(
             nextSnapshot,
             workspaceSnapshotStore,
             sessionHeadBootstrapCache,
-            prefetchSessionIds,
+            sessionIds,
           ),
         );
       }
@@ -390,8 +495,10 @@ export function useWorkbenchSessionBridge({
       }
     };
   }, [
+    isPrefetchSessionRetained,
     prefetchSessionIds,
     primeAuthoritativeHeadsForSessions,
+    refreshRetainedPrefetchTargets,
     sessionHeadBootstrapCache,
     supervisor,
     workspaceSnapshot.initialized,
@@ -399,17 +506,15 @@ export function useWorkbenchSessionBridge({
   ]);
 
   useLayoutEffect(() => {
-    if (prefetchSessionIds.length > 0) {
-      const snapshot = workspaceSnapshotStore.getSnapshot();
-      supervisor.setWorkspaceSessionHeads(
-        readWorkspaceSessionHeads(
-          snapshot,
-          workspaceSnapshotStore,
-          sessionHeadBootstrapCache,
-          prefetchSessionIds,
-        ),
-      );
-    }
+    const snapshot = workspaceSnapshotStore.getSnapshot();
+    supervisor.setWorkspaceSessionHeads(
+      readWorkspaceSessionHeads(
+        snapshot,
+        workspaceSnapshotStore,
+        sessionHeadBootstrapCache,
+        prefetchSessionIds,
+      ),
+    );
     supervisor.setActiveTaskSessionIds(foregroundSessionIds);
   }, [
     foregroundSessionIds,

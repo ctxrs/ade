@@ -29,6 +29,8 @@ type PrefetchControlOptions = {
   maxTargets?: number;
   concurrency?: number;
   shouldContinue?: () => boolean;
+  getSnapshot?: () => WorkspaceActiveSnapshotState;
+  shouldRetainSessionId?: (sessionId: string) => boolean;
 };
 
 export type SessionHeadPrefetchTargetPlan = {
@@ -180,19 +182,21 @@ export const collectSessionHeadsForSupervisor = (
   const bootstrapHeads = bootstrapCache.snapshot();
 
   for (const sessionId of targetSessionIds) {
+    const summary = findSessionSummary(snapshot, sessionId);
     const batchHead = batchHeads[sessionId];
-    if (batchHead) {
+    if (batchHead && isSessionHeadCompatibleWithSummary(summary, batchHead)) {
       out[sessionId] = batchHead;
     }
     const head = store.getSessionHeadSnapshot(sessionId);
-    if (head && shouldReplaceSessionHead(out[sessionId], head)) {
+    if (head && isSessionHeadCompatibleWithSummary(summary, head) && shouldReplaceSessionHead(out[sessionId], head)) {
       out[sessionId] = head;
     }
   }
 
   for (const [sessionId, head] of Object.entries(bootstrapHeads)) {
-    if (targetSessionIds.length > 0 && !targetSessionIds.includes(sessionId)) continue;
-    if (shouldReplaceSessionHead(out[sessionId], head)) {
+    if (!targetSessionIds.includes(sessionId)) continue;
+    const summary = findSessionSummary(snapshot, sessionId);
+    if (isSessionHeadCompatibleWithSummary(summary, head) && shouldReplaceSessionHead(out[sessionId], head)) {
       out[sessionId] = head;
     }
   }
@@ -228,18 +232,38 @@ export const primePersistedSessionHeads = async (
     targetSessionIds,
     opts?.concurrency ?? SESSION_HEAD_PREFETCH_CONCURRENCY,
     async (sessionId) => {
-      if (opts?.shouldContinue && !opts.shouldContinue()) return;
-      if (!bootstrapCache.beginPersistedPrefetch(sessionId)) return;
-      const persisted = await loadSessionHeadV1(sessionId).catch(() => null);
-      if (opts?.shouldContinue && !opts.shouldContinue()) return;
-      if (!persisted?.head) return;
-      const persistedHead = persistedHeadToSnapshot(persisted.head);
-      const directHead = batchHeads[sessionId] ?? store.getSessionHeadSnapshot(sessionId);
-      if (directHead && !shouldReplaceSessionHead(directHead, persistedHead)) {
-        return;
-      }
-      if (bootstrapCache.upsert(persistedHead)) {
-        changed = true;
+      while (true) {
+        if (opts?.shouldContinue && !opts.shouldContinue()) return;
+        if (opts?.shouldRetainSessionId && !opts.shouldRetainSessionId(sessionId)) return;
+        const lease = bootstrapCache.beginPersistedPrefetch(sessionId);
+        if (lease.state === "skip") return;
+        if (lease.state === "wait") {
+          await lease.promise;
+          continue;
+        }
+        let completed = false;
+        try {
+          const persisted = await loadSessionHeadV1(sessionId).catch(() => null);
+          if (opts?.shouldContinue && !opts.shouldContinue()) return;
+          if (opts?.shouldRetainSessionId && !opts.shouldRetainSessionId(sessionId)) return;
+          completed = true;
+          if (!persisted?.head) return;
+          const persistedHead = persistedHeadToSnapshot(persisted.head);
+          const directHead = batchHeads[sessionId] ?? store.getSessionHeadSnapshot(sessionId);
+          if (directHead && !shouldReplaceSessionHead(directHead, persistedHead)) {
+            return;
+          }
+          if (bootstrapCache.upsert(persistedHead)) {
+            changed = true;
+          }
+          return;
+        } finally {
+          if (!completed) {
+            lease.finish(false);
+          } else {
+            lease.finish(true);
+          }
+        }
       }
     },
   );
@@ -264,33 +288,45 @@ export const primeAuthoritativeSessionHeads = async (
     targetSessionIds,
     opts?.concurrency ?? SESSION_HEAD_PREFETCH_CONCURRENCY,
     async (sessionId) => {
-      if (opts?.shouldContinue && !opts.shouldContinue()) return;
-      const summary = findSessionSummary(snapshot, sessionId);
-      const directHead = batchHeads[sessionId] ?? store.getSessionHeadSnapshot(sessionId);
-      if (isSessionHeadCompatibleWithSummary(summary, directHead)) {
-        return;
-      }
-      const bootstrapHead = bootstrapCache.get(sessionId);
-      if (isSessionHeadCompatibleWithSummary(summary, bootstrapHead)) {
-        return;
-      }
-      const versionKey = buildPrefetchVersionKey(summary, sessionId);
-      if (!bootstrapCache.beginAuthoritativePrefetch(sessionId, versionKey)) {
-        return;
-      }
-      let fetchSucceeded = false;
-      try {
-        const head = await getSessionHead(sessionId, HEAD_LIMIT, true).catch(() => null);
+      while (true) {
         if (opts?.shouldContinue && !opts.shouldContinue()) return;
-        if (!head) return;
-        fetchSucceeded = isSessionHeadCompatibleWithSummary(summary, head);
-        const didChange = bootstrapCache.upsert(head);
-        if (didChange) {
-          changed = true;
-          opts?.onHead?.(sessionId, head);
+        if (opts?.shouldRetainSessionId && !opts.shouldRetainSessionId(sessionId)) return;
+        const summary = findSessionSummary(snapshot, sessionId);
+        const directHead = batchHeads[sessionId] ?? store.getSessionHeadSnapshot(sessionId);
+        if (isSessionHeadCompatibleWithSummary(summary, directHead)) {
+          return;
         }
-      } finally {
-        bootstrapCache.finishAuthoritativePrefetch(sessionId, versionKey, fetchSucceeded);
+        const bootstrapHead = bootstrapCache.get(sessionId);
+        if (isSessionHeadCompatibleWithSummary(summary, bootstrapHead)) {
+          return;
+        }
+        const versionKey = buildPrefetchVersionKey(summary, sessionId);
+        const lease = bootstrapCache.beginAuthoritativePrefetch(sessionId, versionKey);
+        if (lease.state === "skip") return;
+        if (lease.state === "wait") {
+          await lease.promise;
+          continue;
+        }
+        let fetchSucceeded = false;
+        try {
+          const head = await getSessionHead(sessionId, HEAD_LIMIT, true).catch(() => null);
+          if (opts?.shouldContinue && !opts.shouldContinue()) return;
+          if (opts?.shouldRetainSessionId && !opts.shouldRetainSessionId(sessionId)) return;
+          if (!head) return;
+          const latestSummary = findSessionSummary(opts?.getSnapshot?.() ?? snapshot, sessionId);
+          fetchSucceeded = isSessionHeadCompatibleWithSummary(latestSummary, head);
+          if (!fetchSucceeded) return;
+          const didChange = bootstrapCache.upsert(head);
+          if (didChange) {
+            const cachedHead = bootstrapCache.get(sessionId);
+            if (!cachedHead) return;
+            changed = true;
+            opts?.onHead?.(sessionId, cachedHead);
+          }
+          return;
+        } finally {
+          lease.finish(fetchSucceeded);
+        }
       }
     },
   );
@@ -301,7 +337,12 @@ export const primeAuthoritativeSessionHeads = async (
 export const maybeCacheSessionHeadSeed = (
   cache: SessionHeadBootstrapCache,
   evt: WorkspaceActiveSnapshotEvent,
+  retainedSessionIds?: ReadonlySet<string>,
 ): boolean => {
   if (evt.type !== "session_head_seed") return false;
-  return cache.upsert((evt as { head?: SessionHeadSnapshot }).head);
+  const head = (evt as { head?: SessionHeadSnapshot }).head;
+  const sessionId = idToString(head?.session?.id ?? "");
+  if (!sessionId) return false;
+  if (retainedSessionIds && !retainedSessionIds.has(sessionId)) return false;
+  return cache.upsert(head);
 };

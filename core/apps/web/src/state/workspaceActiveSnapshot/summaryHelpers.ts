@@ -7,7 +7,7 @@ import type {
   WorkspaceActiveSnapshotSessionSummaryDelta,
 } from "@ctx/types";
 import { idToString } from "../../api/client";
-import { sanitizeSessionHeadSnapshot } from "../sessionHeadState";
+import { compactActiveSessionHeadSnapshot } from "../sessionHeadState";
 import { asRecord, hasOwnProperty, readString } from "./projection";
 
 type SessionSummaryVersion = {
@@ -198,15 +198,20 @@ export function shouldReplaceSessionHead(
   if (prevSeq < 0 && nextSeq >= 0) return true;
   if (prevSeq >= 0 && nextSeq < 0) return false;
   if (prevSeq >= 0 && nextSeq >= 0) {
-    return nextSeq >= prevSeq;
+    if (nextSeq > prevSeq) return true;
+    if (nextSeq < prevSeq) return false;
   }
   const prevProjectionRev = typeof prev.projection_rev === "number" ? prev.projection_rev : -1;
   const nextProjectionRev = typeof next.projection_rev === "number" ? next.projection_rev : -1;
-  if (prevProjectionRev >= 0 && nextProjectionRev >= 0 && nextProjectionRev < prevProjectionRev) {
-    return false;
+  if (prevProjectionRev >= 0 || nextProjectionRev >= 0) {
+    if (nextProjectionRev > prevProjectionRev) return true;
+    if (nextProjectionRev < prevProjectionRev) return false;
   }
-  if (prevProjectionRev >= 0 && nextProjectionRev >= 0 && nextProjectionRev > prevProjectionRev) {
-    return true;
+  const prevStateRev = typeof prev.state_rev === "number" ? prev.state_rev : -1;
+  const nextStateRev = typeof next.state_rev === "number" ? next.state_rev : -1;
+  if (prevStateRev >= 0 || nextStateRev >= 0) {
+    if (nextStateRev > prevStateRev) return true;
+    if (nextStateRev < prevStateRev) return false;
   }
   return true;
 }
@@ -262,7 +267,7 @@ export function readPrimarySessionHead(summary: unknown): SessionHeadSnapshot | 
   const rec = summary as Record<string, unknown>;
   const head = rec.primary_session_head ?? rec.primarySessionHead ?? null;
   if (!head || typeof head !== "object") return null;
-  return sanitizeSessionHeadSnapshot(head as SessionHeadSnapshot);
+  return compactActiveSessionHeadSnapshot(head as SessionHeadSnapshot);
 }
 
 export function readPrimarySessionId(summary: unknown): string | null {

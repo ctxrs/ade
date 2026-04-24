@@ -98,9 +98,8 @@ export function normalizeActiveSnapshotSummary(params: {
   summary: WorkspaceActiveTaskSummary | PersistedWorkspaceActiveTaskSummaryV1;
   existing?: WorkspaceActiveSnapshotItem;
   sessionHeadsById: Map<string, SessionHeadSnapshot>;
-  rememberSessionHead: RememberSessionHead;
 }): WorkspaceActiveSnapshotItem {
-  const { summary, existing, sessionHeadsById, rememberSessionHead } = params;
+  const { summary, existing, sessionHeadsById } = params;
   const id = idToString(summary.task.id);
   const summaryHasPrimary = hasOwnProperty(summary, "primary_session") || hasOwnProperty(summary, "primarySession");
   const summaryHasSessions = hasOwnProperty(summary, "sessions");
@@ -137,7 +136,6 @@ export function normalizeActiveSnapshotSummary(params: {
   if (primaryHead && !isSessionHeadCompatibleWithSummary(primarySummary, primaryHead)) {
     primaryHead = null;
   }
-  rememberSessionHead(primaryHead);
 
   const sessionsRaw = summaryHasSessions
     ? Array.isArray((summary as PersistedWorkspaceActiveTaskSummaryV1).sessions)

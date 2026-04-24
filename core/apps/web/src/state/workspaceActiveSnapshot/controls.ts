@@ -196,6 +196,30 @@ export function getCanonicalStreamUrl(
   return `${wsBaseUrl.replace(/\/+$/, "")}/api/workspaces/${host.workspaceId}/active_snapshot/stream${qs}`;
 }
 
+const syncRetainedLiveSessionIds = (host: WorkspaceActiveSnapshotControlHost) => {
+  const retained = new Set<string>();
+  for (const session of host.subscribedSessions) {
+    const sessionId = session.sessionId.trim();
+    if (sessionId) {
+      retained.add(sessionId);
+    }
+  }
+  for (const sessionId of host.vcsOpenSessionIds) {
+    const normalized = sessionId.trim();
+    if (normalized) {
+      retained.add(normalized);
+    }
+  }
+  const foregroundSessionId =
+    typeof host.foregroundSessionId === "string" ? host.foregroundSessionId.trim() : "";
+  if (foregroundSessionId) {
+    retained.add(foregroundSessionId);
+  }
+  if (host.state.setRetainedLiveSessionIds(Array.from(retained))) {
+    host.publish();
+  }
+};
+
 export function setSubscribedSessions(
   host: WorkspaceActiveSnapshotControlHost,
   sessions: SessionSubscriptionCursor[],
@@ -205,6 +229,7 @@ export function setSubscribedSessions(
   const previous = host.subscribedSessions;
   const idsChanged = !sameSessionSubscriptionCursorIds(deduped, previous);
   host.subscribedSessions = deduped;
+  syncRetainedLiveSessionIds(host);
   if (host.worker) {
     host.postWorkerCommand({ type: "set_subscribed_sessions", sessions: deduped });
     return;
@@ -233,6 +258,7 @@ export function setVcsOpenSessionIds(
     return;
   }
   host.vcsOpenSessionIds = next;
+  syncRetainedLiveSessionIds(host);
   if (host.worker) {
     host.postWorkerCommand({ type: "set_vcs_open_session_ids", sessionIds: next });
     return;
@@ -248,6 +274,7 @@ export function setForegroundSessionId(
   const next = normalized ? normalized : null;
   if (next === host.foregroundSessionId) return;
   host.foregroundSessionId = next;
+  syncRetainedLiveSessionIds(host);
   if (host.worker) {
     host.postWorkerCommand({ type: "set_foreground_session_id", sessionId: next });
     return;

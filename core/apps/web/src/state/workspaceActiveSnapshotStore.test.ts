@@ -16,6 +16,7 @@ import {
   getSessionGapSeedFixture,
 } from "../testdata/projectionEquivalenceFixtures";
 import { buildWorkbenchThreadViewModel } from "../pages/SessionPage.workbenchViewModel";
+import type { WorkspaceActiveSnapshotPatch } from "./workspaceActiveSnapshotProtocol";
 
 vi.mock("../api/client", () => {
   const idToString = (id: string | null | undefined): string => {
@@ -276,6 +277,35 @@ describe("WorkspaceActiveSnapshotStore", () => {
     const snapshot = store.getSnapshot();
     expect(snapshot.activeIds).toEqual(["task-1"]);
     expect(store.getSessionHeadSnapshot("session-1")?.last_event_seq).toBe(0);
+  });
+
+  it("retains a primary session head from snapshot summaries without a separate active head batch", async () => {
+    const { WorkspaceActiveSnapshotStoreImpl } = await import("./workspaceActiveSnapshotStoreCore");
+
+    const now = new Date().toISOString();
+    const task = mkTask("task-1", "ws-1", now);
+    const session = mkSession("session-1", "task-1", "ws-1", now);
+    const summary = mkSummary(session, now);
+    const head = mkHead(session);
+
+    const store = new WorkspaceActiveSnapshotStoreImpl("ws-1", { disableWorker: true });
+    await asStoreInternals(store).handleStreamMessage(
+      JSON.stringify({
+        type: "snapshot",
+        rev: 2,
+        active_snapshot: {
+          workspace_id: "ws-1",
+          snapshot_rev: 2,
+          archived_rev: 0,
+          active: { total_count: 1, tasks: [mkActiveSummary(task, summary, head, now)] },
+        },
+      }),
+    );
+
+    await waitForCondition(() => store.getSnapshot().initialized);
+
+    expect(store.getSessionHeadSnapshot(session.id)?.session.id).toBe(session.id);
+    expect(store.getSnapshot().tasksById[task.id]?.primarySessionHead?.session.id).toBe(session.id);
   });
 
   it("clears cached worktree vcs when a live snapshot omits it for an active worktree", async () => {
@@ -701,9 +731,8 @@ describe("WorkspaceActiveSnapshotStore", () => {
 
     const head = store.getSessionHeadSnapshot(fixture.session.id);
     expect(head?.last_event_seq).toBe(fixture.expected.headLastEventSeq);
-    expect((head?.events ?? []).map((event) => event.event_type)).toEqual(
-      fixture.expected.stableEventTypes,
-    );
+    expect(head?.head_window?.event_limit).toBe(0);
+    expect(head?.events ?? []).toEqual([]);
     expect((head?.events ?? []).some((event) => event.event_type === "assistant_chunk")).toBe(false);
 
     const view = buildWorkbenchThreadViewModel(
@@ -842,12 +871,34 @@ describe("WorkspaceActiveSnapshotStore", () => {
 
     const seededHead: SessionHeadSnapshot = {
       ...head,
+      turns: [
+        {
+          turn_id: "turn-seed",
+          session_id: "session-seed",
+          run_id: null,
+          user_message_id: "user-seed",
+          status: "completed",
+          start_seq: 1,
+          end_seq: 2,
+          started_at: now,
+          updated_at: now,
+          assistant_partial: null,
+          thought_partial: null,
+          metrics_json: null,
+          tool_total: 0,
+          tool_pending: 0,
+          tool_running: 0,
+          tool_completed: 0,
+          tool_failed: 0,
+        },
+      ],
       last_event_seq: 3,
       messages: [
         {
           id: "msg-seed",
           session_id: "session-seed",
           task_id: "task-seed",
+          turn_id: "turn-seed",
           role: "assistant",
           content: "seeded",
           delivery: "immediate",
@@ -1261,10 +1312,30 @@ describe("WorkspaceActiveSnapshotStore", () => {
             session_id: session.id,
             last_event_seq: 5,
             state_rev: 5,
+            turn: {
+              turn_id: "turn-1",
+              session_id: session.id,
+              run_id: null,
+              user_message_id: "user-1",
+              status: "completed",
+              start_seq: 1,
+              end_seq: 2,
+              started_at: now,
+              updated_at: now,
+              assistant_partial: null,
+              thought_partial: null,
+              metrics_json: null,
+              tool_total: 0,
+              tool_pending: 0,
+              tool_running: 0,
+              tool_completed: 0,
+              tool_failed: 0,
+            },
             message: {
               id: "m-1",
               session_id: session.id,
               task_id: task.id,
+              turn_id: "turn-1",
               role: "assistant",
               content: "from delta",
               delivery: "immediate",
@@ -1279,6 +1350,872 @@ describe("WorkspaceActiveSnapshotStore", () => {
     expect(seededHead?.activity).toBeUndefined();
     expect(seededHead?.last_event_seq).toBe(5);
     expect(seededHead?.messages?.[0]?.content).toBe("from delta");
+  });
+
+  it("keeps session_head_delta transcript tails bounded in the workspace head cache", async () => {
+    const { WorkspaceActiveSnapshotStoreImpl } = await import("./workspaceActiveSnapshotStoreCore");
+
+    const now = "2024-01-01T00:00:00.000Z";
+    const task = mkTask("task-1", "ws-1", now);
+    const session = mkSession("session-1", "task-1", "ws-1", now);
+    const summary: SessionSnapshotSummary = {
+      ...mkSummary(session, now),
+      last_event_seq: 0,
+      projection_rev: 0,
+      state_rev: 0,
+    };
+
+    const store = new WorkspaceActiveSnapshotStoreImpl("ws-1", { disableWorker: true });
+    await asStoreInternals(store).handleStreamMessage(
+      JSON.stringify({
+        type: "snapshot",
+        rev: 1,
+        active_snapshot: {
+          workspace_id: "ws-1",
+          snapshot_rev: 1,
+          archived_rev: 0,
+          active: {
+            total_count: 1,
+            tasks: [
+              {
+                task,
+                primary_session: summary,
+                sessions: [summary],
+                sort_at: now,
+              } as WorkspaceActiveTaskSummary,
+            ],
+          },
+        },
+      }),
+    );
+
+    await waitForCondition(() => store.getSnapshot().initialized);
+
+    for (let index = 0; index < 8; index += 1) {
+      const seq = index + 1;
+      const createdAt = `2024-01-01T00:00:${String(seq).padStart(2, "0")}.000Z`;
+      await asStoreInternals(store).handleStreamMessage(
+        JSON.stringify({
+          type: "event",
+          rev: seq + 1,
+          event: {
+            type: "session_head_delta",
+            workspace_id: "ws-1",
+            snapshot_rev: seq + 1,
+            delta: {
+              session_id: session.id,
+              last_event_seq: seq,
+              projection_rev: seq,
+              state_rev: seq,
+              turn: {
+                turn_id: `turn-${seq}`,
+                session_id: session.id,
+                run_id: null,
+                user_message_id: `user-${seq}`,
+                status: "completed",
+                start_seq: seq,
+                end_seq: seq + 1,
+                started_at: createdAt,
+                updated_at: createdAt,
+                assistant_partial: null,
+                thought_partial: null,
+                metrics_json: null,
+                tool_total: 0,
+                tool_pending: 0,
+                tool_running: 0,
+                tool_completed: 0,
+                tool_failed: 0,
+              },
+              message: {
+                id: `message-${seq}`,
+                session_id: session.id,
+                task_id: task.id,
+                turn_id: `turn-${seq}`,
+                role: seq % 2 === 0 ? "assistant" : "user",
+                content: `message-${seq}`,
+                delivery: "immediate",
+                created_at: createdAt,
+                updated_at: createdAt,
+              },
+              event: {
+                seq,
+                id: `event-${seq}`,
+                session_id: session.id,
+                turn_id: `turn-${seq}`,
+                event_type: "done",
+                payload_json: { seq },
+                created_at: createdAt,
+              },
+            },
+          },
+        }),
+      );
+    }
+
+    const boundedHead = store.getSessionHeadSnapshot(session.id);
+    expect(boundedHead?.turns.map((turn) => turn.turn_id)).toEqual([
+      "turn-4",
+      "turn-5",
+      "turn-6",
+      "turn-7",
+      "turn-8",
+    ]);
+    expect(boundedHead?.messages.map((message) => message.turn_id)).toEqual([
+      "turn-4",
+      "turn-5",
+      "turn-6",
+      "turn-7",
+      "turn-8",
+    ]);
+    expect(boundedHead?.events).toEqual([]);
+    expect(boundedHead?.head_window?.turn_limit).toBe(5);
+    expect(boundedHead?.head_window?.event_limit).toBe(0);
+    expect(boundedHead?.head_window?.truncated).toBe(true);
+  });
+
+  it("evicts unsubscribed non-primary session heads even when the task summary still lists them", async () => {
+    const { WorkspaceActiveSnapshotStoreImpl } = await import("./workspaceActiveSnapshotStoreCore");
+
+    const now = "2024-01-01T00:00:00.000Z";
+    const task = mkTask("task-1", "ws-1", now);
+    const primarySession = mkSession("session-primary", "task-1", "ws-1", now);
+    const warmSessionA = mkSession("session-warm-a", "task-1", "ws-1", now);
+    const warmSessionB = mkSession("session-warm-b", "task-1", "ws-1", now);
+    const primarySummary = mkSummary(primarySession, now);
+    const warmSummaryA = mkSummary(warmSessionA, now);
+    const warmSummaryB = mkSummary(warmSessionB, now);
+
+    const store = new WorkspaceActiveSnapshotStoreImpl("ws-1", { disableWorker: true });
+    await asStoreInternals(store).handleStreamMessage(
+      JSON.stringify({
+        type: "snapshot",
+        rev: 1,
+        active_snapshot: {
+          workspace_id: "ws-1",
+          snapshot_rev: 1,
+          archived_rev: 0,
+          active: {
+            total_count: 1,
+            tasks: [
+              {
+                task,
+                primary_session: primarySummary,
+                primary_session_head: mkHead(primarySession),
+                sessions: [primarySummary, warmSummaryA, warmSummaryB],
+                sort_at: now,
+              } as WorkspaceActiveTaskSummary,
+            ],
+          },
+        },
+      }),
+    );
+
+    await waitForCondition(() => store.getSnapshot().initialized);
+
+    store.setSubscribedSessions([
+      { sessionId: warmSessionA.id, replay: { kind: "auto" } },
+      { sessionId: warmSessionB.id, replay: { kind: "auto" } },
+    ]);
+
+    await asStoreInternals(store).handleStreamMessage(
+      JSON.stringify({
+        type: "event",
+        rev: 2,
+        event: {
+          type: "session_head_seed",
+          workspace_id: "ws-1",
+          snapshot_rev: 1,
+          head: {
+            ...mkHead(warmSessionA),
+            turns: [
+              {
+                turn_id: "turn-warm-a",
+                session_id: warmSessionA.id,
+                run_id: null,
+                user_message_id: "user-warm-a",
+                status: "completed",
+                start_seq: 1,
+                end_seq: 2,
+                started_at: now,
+                updated_at: now,
+                assistant_partial: null,
+                thought_partial: null,
+                metrics_json: null,
+                tool_total: 0,
+                tool_pending: 0,
+                tool_running: 0,
+                tool_completed: 0,
+                tool_failed: 0,
+              },
+            ],
+            last_event_seq: 1,
+            messages: [
+              {
+                id: "msg-warm-a",
+                session_id: warmSessionA.id,
+                task_id: task.id,
+                turn_id: "turn-warm-a",
+                role: "assistant",
+                content: "warm-a",
+                delivery: "immediate",
+                created_at: now,
+              },
+            ],
+          },
+        },
+      }),
+    );
+    await asStoreInternals(store).handleStreamMessage(
+      JSON.stringify({
+        type: "event",
+        rev: 3,
+        event: {
+          type: "session_head_seed",
+          workspace_id: "ws-1",
+          snapshot_rev: 1,
+          head: {
+            ...mkHead(warmSessionB),
+            turns: [
+              {
+                turn_id: "turn-warm-b",
+                session_id: warmSessionB.id,
+                run_id: null,
+                user_message_id: "user-warm-b",
+                status: "completed",
+                start_seq: 1,
+                end_seq: 2,
+                started_at: now,
+                updated_at: now,
+                assistant_partial: null,
+                thought_partial: null,
+                metrics_json: null,
+                tool_total: 0,
+                tool_pending: 0,
+                tool_running: 0,
+                tool_completed: 0,
+                tool_failed: 0,
+              },
+            ],
+            last_event_seq: 1,
+            messages: [
+              {
+                id: "msg-warm-b",
+                session_id: warmSessionB.id,
+                task_id: task.id,
+                turn_id: "turn-warm-b",
+                role: "assistant",
+                content: "warm-b",
+                delivery: "immediate",
+                created_at: now,
+              },
+            ],
+          },
+        },
+      }),
+    );
+
+    expect(store.getSessionHeadSnapshot(warmSessionA.id)?.messages[0]?.content).toBe("warm-a");
+    expect(store.getSessionHeadSnapshot(warmSessionB.id)?.messages[0]?.content).toBe("warm-b");
+
+    store.setSubscribedSessions([{ sessionId: warmSessionA.id, replay: { kind: "auto" } }]);
+
+    expect(store.getSessionHeadSnapshot(warmSessionA.id)).not.toBeNull();
+    expect(store.getSessionHeadSnapshot(warmSessionB.id)).toBeNull();
+
+    store.setSubscribedSessions([]);
+
+    expect(store.getSessionHeadSnapshot(warmSessionA.id)).toBeNull();
+
+    await asStoreInternals(store).handleStreamMessage(
+      JSON.stringify({
+        type: "event",
+        rev: 4,
+        event: {
+          type: "session_head_seed",
+          workspace_id: "ws-1",
+          snapshot_rev: 1,
+          head: {
+            ...mkHead(warmSessionA),
+            turns: [
+              {
+                turn_id: "turn-warm-a-late",
+                session_id: warmSessionA.id,
+                run_id: null,
+                user_message_id: "user-warm-a-late",
+                status: "completed",
+                start_seq: 2,
+                end_seq: 3,
+                started_at: now,
+                updated_at: now,
+                assistant_partial: null,
+                thought_partial: null,
+                metrics_json: null,
+                tool_total: 0,
+                tool_pending: 0,
+                tool_running: 0,
+                tool_completed: 0,
+                tool_failed: 0,
+              },
+            ],
+            last_event_seq: 2,
+            messages: [
+              {
+                id: "msg-warm-a-late",
+                session_id: warmSessionA.id,
+                task_id: task.id,
+                turn_id: "turn-warm-a-late",
+                role: "assistant",
+                content: "late-warm-a",
+                delivery: "immediate",
+                created_at: now,
+              },
+            ],
+          },
+        },
+      }),
+    );
+
+    expect(store.getSessionHeadSnapshot(warmSessionA.id)).toBeNull();
+  });
+
+  it("keeps retained non-primary heads across live and cached snapshot resets", async () => {
+    const { WorkspaceActiveSnapshotStoreImpl } = await import("./workspaceActiveSnapshotStoreCore");
+
+    const now = "2024-01-01T00:00:00.000Z";
+    const task = mkTask("task-1", "ws-1", now);
+    const primarySession = mkSession("session-primary", "task-1", "ws-1", now);
+    const retainedSession = mkSession("session-retained", "task-1", "ws-1", now);
+    const primarySummary = mkSummary(primarySession, now);
+    const retainedSummary = mkSummary(retainedSession, now);
+
+    const liveTask = {
+      task,
+      primary_session: primarySummary,
+      primary_session_head: mkHead(primarySession),
+      sessions: [primarySummary, retainedSummary],
+      sort_at: now,
+    } as WorkspaceActiveTaskSummary;
+
+    const store = new WorkspaceActiveSnapshotStoreImpl("ws-1", { disableWorker: true });
+    await asStoreInternals(store).handleStreamMessage(
+      JSON.stringify({
+        type: "snapshot",
+        rev: 1,
+        active_snapshot: {
+          workspace_id: "ws-1",
+          snapshot_rev: 1,
+          archived_rev: 0,
+          active: { total_count: 1, tasks: [liveTask] },
+        },
+      }),
+    );
+
+    await waitForCondition(() => store.getSnapshot().initialized);
+    store.setSubscribedSessions([{ sessionId: retainedSession.id, replay: { kind: "auto" } }]);
+
+    await asStoreInternals(store).handleStreamMessage(
+      JSON.stringify({
+        type: "event",
+        rev: 2,
+        event: {
+          type: "session_head_seed",
+          workspace_id: "ws-1",
+          snapshot_rev: 1,
+          head: {
+            ...mkHead(retainedSession),
+            turns: [
+              {
+                turn_id: "turn-retained",
+                session_id: retainedSession.id,
+                run_id: null,
+                user_message_id: "user-retained",
+                status: "completed",
+                start_seq: 1,
+                end_seq: 2,
+                started_at: now,
+                updated_at: now,
+                assistant_partial: null,
+                thought_partial: null,
+                metrics_json: null,
+                tool_total: 0,
+                tool_pending: 0,
+                tool_running: 0,
+                tool_completed: 0,
+                tool_failed: 0,
+              },
+            ],
+            last_event_seq: 1,
+            messages: [
+              {
+                id: "msg-retained",
+                session_id: retainedSession.id,
+                task_id: task.id,
+                turn_id: "turn-retained",
+                role: "assistant",
+                content: "retained-hot-head",
+                delivery: "immediate",
+                created_at: now,
+              },
+            ],
+          },
+        },
+      }),
+    );
+
+    expect(store.getSessionHeadSnapshot(retainedSession.id)?.messages[0]?.content).toBe(
+      "retained-hot-head",
+    );
+
+    await asStoreInternals(store).handleStreamMessage(
+      JSON.stringify({
+        type: "snapshot",
+        rev: 3,
+        active_snapshot: {
+          workspace_id: "ws-1",
+          snapshot_rev: 3,
+          archived_rev: 0,
+          active: { total_count: 1, tasks: [liveTask] },
+        },
+      }),
+    );
+
+    expect(store.getSessionHeadSnapshot(retainedSession.id)?.messages[0]?.content).toBe(
+      "retained-hot-head",
+    );
+
+    store.seedCachedSnapshot({
+      v: 1,
+      workspaceId: "ws-1",
+      snapshotRev: 4,
+      archivedRev: 0,
+      worktreeVcsSnapshots: [],
+      active: {
+        totalCount: 1,
+        tasks: [{ ...liveTask, primary_session_head: liveTask.primary_session_head ?? null }],
+      },
+      updatedAtMs: Date.now(),
+    });
+
+    expect(store.getSessionHeadSnapshot(retainedSession.id)?.messages[0]?.content).toBe(
+      "retained-hot-head",
+    );
+
+    const updatedRetainedSummary = {
+      ...retainedSummary,
+      last_event_seq: 5,
+      projection_rev: 5,
+      state_rev: 5,
+    };
+    const updatedLiveTask = {
+      ...liveTask,
+      sessions: [primarySummary, updatedRetainedSummary],
+    } as WorkspaceActiveTaskSummary;
+
+    await asStoreInternals(store).handleStreamMessage(
+      JSON.stringify({
+        type: "snapshot",
+        rev: 5,
+        active_snapshot: {
+          workspace_id: "ws-1",
+          snapshot_rev: 5,
+          archived_rev: 0,
+          active: { total_count: 1, tasks: [updatedLiveTask] },
+        },
+      }),
+    );
+
+    expect(store.getSessionHeadSnapshot(retainedSession.id)).toBeNull();
+
+    store.seedCachedSnapshot({
+      v: 1,
+      workspaceId: "ws-1",
+      snapshotRev: 6,
+      archivedRev: 0,
+      worktreeVcsSnapshots: [],
+      active: {
+        totalCount: 1,
+        tasks: [{ ...updatedLiveTask, primary_session_head: updatedLiveTask.primary_session_head ?? null }],
+      },
+      updatedAtMs: Date.now(),
+    });
+
+    expect(store.getSessionHeadSnapshot(retainedSession.id)).toBeNull();
+  });
+
+  it("does not restore retained heads after the session disappears from refreshed summaries", async () => {
+    const { WorkspaceActiveSnapshotStoreImpl } = await import("./workspaceActiveSnapshotStoreCore");
+
+    const now = "2024-01-01T00:00:00.000Z";
+    const task = mkTask("task-1", "ws-1", now);
+    const primarySession = mkSession("session-primary", "task-1", "ws-1", now);
+    const retainedSession = mkSession("session-retained", "task-1", "ws-1", now);
+    const primarySummary = mkSummary(primarySession, now);
+    const retainedSummary = mkSummary(retainedSession, now);
+
+    const liveTask = {
+      task,
+      primary_session: primarySummary,
+      primary_session_head: mkHead(primarySession),
+      sessions: [primarySummary, retainedSummary],
+      sort_at: now,
+    } as WorkspaceActiveTaskSummary;
+    const prunedTask = {
+      ...liveTask,
+      sessions: [primarySummary],
+    } as WorkspaceActiveTaskSummary;
+
+    const store = new WorkspaceActiveSnapshotStoreImpl("ws-1", { disableWorker: true });
+    await asStoreInternals(store).handleStreamMessage(
+      JSON.stringify({
+        type: "snapshot",
+        rev: 1,
+        active_snapshot: {
+          workspace_id: "ws-1",
+          snapshot_rev: 1,
+          archived_rev: 0,
+          active: { total_count: 1, tasks: [liveTask] },
+        },
+      }),
+    );
+
+    await waitForCondition(() => store.getSnapshot().initialized);
+    store.setSubscribedSessions([{ sessionId: retainedSession.id, replay: { kind: "auto" } }]);
+
+    await asStoreInternals(store).handleStreamMessage(
+      JSON.stringify({
+        type: "event",
+        rev: 2,
+        event: {
+          type: "session_head_seed",
+          workspace_id: "ws-1",
+          snapshot_rev: 1,
+          head: {
+            ...mkHead(retainedSession),
+            last_event_seq: 1,
+          },
+        },
+      }),
+    );
+
+    expect(store.getSessionHeadSnapshot(retainedSession.id)?.session.id).toBe(retainedSession.id);
+
+    await asStoreInternals(store).handleStreamMessage(
+      JSON.stringify({
+        type: "snapshot",
+        rev: 3,
+        active_snapshot: {
+          workspace_id: "ws-1",
+          snapshot_rev: 3,
+          archived_rev: 0,
+          active: { total_count: 1, tasks: [prunedTask] },
+        },
+      }),
+    );
+
+    expect(store.getSessionHeadSnapshot(retainedSession.id)).toBeNull();
+
+    store.seedCachedSnapshot({
+      v: 1,
+      workspaceId: "ws-1",
+      snapshotRev: 4,
+      archivedRev: 0,
+      worktreeVcsSnapshots: [],
+      active: {
+        totalCount: 1,
+        tasks: [{ ...prunedTask, primary_session_head: prunedTask.primary_session_head ?? null }],
+      },
+      updatedAtMs: Date.now(),
+    });
+
+    expect(store.getSessionHeadSnapshot(retainedSession.id)).toBeNull();
+  });
+
+  it("evicts retained non-primary heads when the task is removed incrementally", async () => {
+    const { WorkspaceActiveSnapshotStoreImpl } = await import("./workspaceActiveSnapshotStoreCore");
+
+    const now = "2024-01-01T00:00:00.000Z";
+    const archivedAt = "2024-01-02T00:00:00.000Z";
+    const task = mkTask("task-1", "ws-1", now);
+    const primarySession = mkSession("session-primary", "task-1", "ws-1", now);
+    const retainedSession = mkSession("session-retained", "task-1", "ws-1", now);
+    const primarySummary = mkSummary(primarySession, now);
+    const retainedSummary = mkSummary(retainedSession, now);
+
+    const liveTask = {
+      task,
+      primary_session: primarySummary,
+      primary_session_head: mkHead(primarySession),
+      sessions: [primarySummary, retainedSummary],
+      sort_at: now,
+    } as WorkspaceActiveTaskSummary;
+
+    const store = new WorkspaceActiveSnapshotStoreImpl("ws-1", { disableWorker: true });
+    await asStoreInternals(store).handleStreamMessage(
+      JSON.stringify({
+        type: "snapshot",
+        rev: 1,
+        active_snapshot: {
+          workspace_id: "ws-1",
+          snapshot_rev: 1,
+          archived_rev: 0,
+          active: { total_count: 1, tasks: [liveTask] },
+        },
+      }),
+    );
+
+    await waitForCondition(() => store.getSnapshot().initialized);
+    store.setSubscribedSessions([{ sessionId: retainedSession.id, replay: { kind: "auto" } }]);
+
+    await asStoreInternals(store).handleStreamMessage(
+      JSON.stringify({
+        type: "event",
+        rev: 2,
+        event: {
+          type: "session_head_seed",
+          workspace_id: "ws-1",
+          snapshot_rev: 1,
+          head: {
+            ...mkHead(retainedSession),
+            last_event_seq: 1,
+          },
+        },
+      }),
+    );
+
+    expect(store.getSessionHeadSnapshot(retainedSession.id)?.session.id).toBe(retainedSession.id);
+
+    await asStoreInternals(store).handleStreamMessage(
+      JSON.stringify({
+        type: "event",
+        rev: 3,
+        event: {
+          type: "task_delta",
+          workspace_id: "ws-1",
+          snapshot_rev: 1,
+          delta: {
+            kind: "archived",
+            task: {
+              ...task,
+              archived_at: archivedAt,
+              updated_at: archivedAt,
+            },
+          },
+        },
+      }),
+    );
+
+    expect(store.getSessionHeadSnapshot(retainedSession.id)).toBeNull();
+  });
+
+  it("ignores stale worker head upserts and late seeds after a retained session has been evicted", async () => {
+    const { WorkspaceActiveSnapshotStoreState } = await import("./workspaceActiveSnapshot/storeState");
+
+    const now = "2024-01-01T00:00:00.000Z";
+    const archivedAt = "2024-01-02T00:00:00.000Z";
+    const task = mkTask("task-1", "ws-1", now);
+    const primarySession = mkSession("session-primary", "task-1", "ws-1", now);
+    const retainedSession = mkSession("session-retained", "task-1", "ws-1", now);
+    const primarySummary = mkSummary(primarySession, now);
+    const retainedSummary = mkSummary(retainedSession, now);
+    const state = new WorkspaceActiveSnapshotStoreState("ws-1");
+
+    state.applyWorkspaceSnapshot({
+      workspace_id: "ws-1",
+      snapshot_rev: 1,
+      archived_rev: 0,
+      active: {
+        total_count: 1,
+        tasks: [{
+          task,
+          primary_session: primarySummary,
+          primary_session_head: mkHead(primarySession),
+          sessions: [primarySummary, retainedSummary],
+          sort_at: now,
+        } as WorkspaceActiveTaskSummary],
+      },
+    });
+    state.setRetainedLiveSessionIds([retainedSession.id]);
+    state.applySessionHeadSeed({
+      ...mkHead(retainedSession),
+      last_event_seq: 1,
+    });
+
+    expect(state.getSessionHeadSnapshot(retainedSession.id)?.session.id).toBe(retainedSession.id);
+
+    state.applyTaskDelta({
+      type: "task_delta",
+      workspace_id: "ws-1",
+      snapshot_rev: 1,
+      delta: {
+        kind: "archived",
+        task: {
+          ...task,
+          archived_at: archivedAt,
+          updated_at: archivedAt,
+        },
+      },
+    });
+
+    expect(state.getSessionHeadSnapshot(retainedSession.id)).toBeNull();
+
+    state.applySessionHeadSeed({
+      ...mkHead(retainedSession),
+      last_event_seq: 2,
+    });
+
+    expect(state.getSessionHeadSnapshot(retainedSession.id)).toBeNull();
+
+    state.applyWorkerPatch({
+      events: [],
+      snapshotRev: 1,
+      archivedRev: 0,
+      activeSessionIds: [],
+      persist: false,
+      sessionHeadUpserts: {
+        [retainedSession.id]: {
+          ...mkHead(retainedSession),
+          last_event_seq: 2,
+        },
+      },
+    } satisfies WorkspaceActiveSnapshotPatch);
+
+    expect(state.getSessionHeadSnapshot(retainedSession.id)).toBeNull();
+  });
+
+  it("filters full worker snapshot replacements through current retention rules", async () => {
+    const { WorkspaceActiveSnapshotStoreState } = await import("./workspaceActiveSnapshot/storeState");
+
+    const now = "2024-01-01T00:00:00.000Z";
+    const task = mkTask("task-1", "ws-1", now);
+    const primarySession = mkSession("session-primary", "task-1", "ws-1", now);
+    const retainedSession = mkSession("session-retained", "task-1", "ws-1", now);
+    const primarySummary = mkSummary(primarySession, now);
+    const retainedSummary = mkSummary(retainedSession, now);
+    const state = new WorkspaceActiveSnapshotStoreState("ws-1");
+
+    state.applyWorkspaceSnapshot({
+      workspace_id: "ws-1",
+      snapshot_rev: 1,
+      archived_rev: 0,
+      active: {
+        total_count: 1,
+        tasks: [{
+          task,
+          primary_session: primarySummary,
+          primary_session_head: mkHead(primarySession),
+          sessions: [primarySummary, retainedSummary],
+          sort_at: now,
+        } as WorkspaceActiveTaskSummary],
+      },
+    });
+    state.setRetainedLiveSessionIds([retainedSession.id]);
+    state.applySessionHeadSeed({
+      ...mkHead(retainedSession),
+      last_event_seq: 1,
+    });
+
+    expect(state.getSessionHeadSnapshot(retainedSession.id)?.session.id).toBe(retainedSession.id);
+
+    state.setRetainedLiveSessionIds([]);
+    expect(state.getSessionHeadSnapshot(retainedSession.id)).toBeNull();
+
+    state.applyWorkerPatch({
+      snapshot: state.getSnapshot(),
+      events: [],
+      snapshotRev: state.getSnapshotRev(),
+      archivedRev: state.getArchivedRev(),
+      activeSessionIds: state.getActiveSessionIds(),
+      persist: false,
+      sessionHeadUpserts: {
+        [retainedSession.id]: {
+          ...mkHead(retainedSession),
+          last_event_seq: 2,
+        },
+      },
+    } satisfies WorkspaceActiveSnapshotPatch);
+
+    expect(state.getSessionHeadSnapshot(retainedSession.id)).toBeNull();
+  });
+
+  it("reprojects restored retained primary heads onto task summaries across live and cached resets", async () => {
+    const { WorkspaceActiveSnapshotStoreImpl } = await import("./workspaceActiveSnapshotStoreCore");
+
+    const now = "2024-01-01T00:00:00.000Z";
+    const task = mkTask("task-1", "ws-1", now);
+    const session = mkSession("session-primary", "task-1", "ws-1", now);
+    const summary = mkSummary(session, now);
+    const head: SessionHeadSnapshot = {
+      ...mkHead(session),
+      messages: [
+        {
+          id: "msg-primary",
+          session_id: session.id,
+          task_id: task.id,
+          turn_id: "turn-primary",
+          role: "assistant",
+          content: "primary-head",
+          delivery: "immediate",
+          created_at: now,
+        },
+      ],
+      last_event_seq: 1,
+    };
+
+    const initialTask = mkActiveSummary(task, summary, head, now);
+    const resetTask = {
+      ...initialTask,
+      primary_session_head: null,
+    } as WorkspaceActiveTaskSummary;
+
+    const store = new WorkspaceActiveSnapshotStoreImpl("ws-1", { disableWorker: true });
+    await asStoreInternals(store).handleStreamMessage(
+      JSON.stringify({
+        type: "snapshot",
+        rev: 1,
+        active_snapshot: {
+          workspace_id: "ws-1",
+          snapshot_rev: 1,
+          archived_rev: 0,
+          active: { total_count: 1, tasks: [initialTask] },
+        },
+      }),
+    );
+
+    await waitForCondition(() => store.getSnapshot().initialized);
+    expect(store.getSessionHeadSnapshot(session.id)?.session.id).toBe(session.id);
+    store.setSubscribedSessions([{ sessionId: session.id, replay: { kind: "auto" } }]);
+
+    await asStoreInternals(store).handleStreamMessage(
+      JSON.stringify({
+        type: "snapshot",
+        rev: 2,
+        active_snapshot: {
+          workspace_id: "ws-1",
+          snapshot_rev: 2,
+          archived_rev: 0,
+          active: { total_count: 1, tasks: [resetTask] },
+        },
+      }),
+    );
+
+    expect(store.getSessionHeadSnapshot(session.id)?.session.id).toBe(session.id);
+    expect(store.getSnapshot().tasksById[task.id]?.primarySessionHead?.session.id).toBe(session.id);
+
+    store.seedCachedSnapshot({
+      v: 1,
+      workspaceId: "ws-1",
+      snapshotRev: 3,
+      archivedRev: 0,
+      worktreeVcsSnapshots: [],
+      active: {
+        totalCount: 1,
+        tasks: [{ ...resetTask, primary_session_head: resetTask.primary_session_head ?? null }],
+      },
+      updatedAtMs: Date.now(),
+    });
+
+    expect(store.getSessionHeadSnapshot(session.id)?.session.id).toBe(session.id);
+    expect(store.getSnapshot().tasksById[task.id]?.primarySessionHead?.session.id).toBe(session.id);
   });
 
   it("applies session_summary_delta preview metadata and canonical activity when revision advances", async () => {
@@ -1526,6 +2463,27 @@ describe("WorkspaceActiveSnapshotStore", () => {
     };
     const reconnectHead: SessionHeadSnapshot = {
       ...mkHead(session),
+      turns: [
+        {
+          turn_id: "turn-1",
+          session_id: "session-1",
+          run_id: null,
+          user_message_id: "user-1",
+          status: "completed",
+          start_seq: 1,
+          end_seq: 2,
+          started_at: now,
+          updated_at: now,
+          assistant_partial: null,
+          thought_partial: null,
+          metrics_json: null,
+          tool_total: 0,
+          tool_pending: 0,
+          tool_running: 0,
+          tool_completed: 0,
+          tool_failed: 0,
+        },
+      ],
       last_event_seq: 10,
       projection_rev: 6,
       state_rev: 7,
@@ -1570,9 +2528,9 @@ describe("WorkspaceActiveSnapshotStore", () => {
     const snapshot = store.getSnapshot();
     expect(snapshot.tasksById["task-1"]?.primarySessionHead?.last_event_seq).toBe(10);
     expect(snapshot.tasksById["task-1"]?.primarySessionHead?.projection_rev).toBe(6);
-    expect(store.getSessionHeadSnapshot("session-1")?.messages.map((message) => message.content)).toEqual([
-      "recovered message",
-    ]);
+    expect(
+      snapshot.tasksById["task-1"]?.primarySessionHead?.messages.map((message) => message.content),
+    ).toEqual(["recovered message"]);
   });
 
   it("replaces a cached session head when the event cursor advances even if the projection cursor trails", async () => {
@@ -1622,6 +2580,27 @@ describe("WorkspaceActiveSnapshotStore", () => {
 
     const repairedHead: SessionHeadSnapshot = {
       ...initialHead,
+      turns: [
+        {
+          turn_id: "turn-1",
+          session_id: "session-1",
+          run_id: null,
+          user_message_id: "user-1",
+          status: "completed",
+          start_seq: 1,
+          end_seq: 2,
+          started_at: now,
+          updated_at: now,
+          assistant_partial: null,
+          thought_partial: null,
+          metrics_json: null,
+          tool_total: 0,
+          tool_pending: 0,
+          tool_running: 0,
+          tool_completed: 0,
+          tool_failed: 0,
+        },
+      ],
       last_event_seq: 11,
       projection_rev: 6,
       state_rev: 7,

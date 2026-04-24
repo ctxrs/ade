@@ -7,6 +7,7 @@ import { hasSessionActiveTurn } from "../../utils/sessionActivity";
 import { pickPreferredSessionId } from "../../utils/workbenchSelection";
 import { lastAssistantMessageMs, parseMs } from "./WorkbenchPage.utils";
 import type { OptimisticTaskSummary } from "./WorkbenchPage.types";
+import { SESSION_HEAD_PREFETCH_TARGET_LIMIT } from "./sessionHeadPrefetch";
 
 export type WorkbenchTaskLiveInfo = {
   workingByTask: Set<string>;
@@ -255,7 +256,7 @@ export const deriveWarmSessionIds = ({
     if (left.running !== right.running) return left.running ? -1 : 1;
     return right.updatedAt - left.updatedAt;
   });
-  return candidates.map((candidate) => candidate.id).slice(0, 20);
+  return candidates.map((candidate) => candidate.id).slice(0, SESSION_HEAD_PREFETCH_TARGET_LIMIT);
 };
 
 const buildTasksForLiveInfo = (

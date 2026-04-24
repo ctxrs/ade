@@ -4,6 +4,7 @@ import { SessionHeadBootstrapCache } from "../../state/sessionHeadBootstrapCache
 import type { WorkspaceActiveSnapshotState } from "../../state/workspaceActiveSnapshotStore";
 import {
   collectSessionHeadsForSupervisor,
+  maybeCacheSessionHeadSeed,
   planSessionHeadPrefetchTargets,
   primeAuthoritativeSessionHeads,
   primePersistedSessionHeads,
@@ -195,6 +196,146 @@ describe("sessionHeadPrefetch", () => {
     expect(bootstrapCache.snapshot()[sessionId]?.turns).toHaveLength(2);
   });
 
+  it("retries persisted prefetch after a canceled generation keeps the session retained", async () => {
+    const sessionId = "session-1";
+    const snapshot = makeSnapshot(sessionId);
+    const persistedHead = makeHead(sessionId, { turnCount: 2, lastEventSeq: 2 });
+    let resolvePersisted: ((value: unknown) => void) | null = null;
+    loadSessionHeadV1Mock.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolvePersisted = resolve;
+        }),
+    );
+    const bootstrapCache = new SessionHeadBootstrapCache();
+    const store = {
+      getSessionHeadSnapshot: vi.fn(() => null),
+      getSessionHeadsSnapshot: vi.fn(() => ({})),
+    };
+    let shouldContinue = true;
+
+    const first = primePersistedSessionHeads(snapshot, store, bootstrapCache, [sessionId], {
+      shouldContinue: () => shouldContinue,
+    });
+    shouldContinue = false;
+    if (!resolvePersisted) {
+      throw new Error("Expected persisted resolver");
+    }
+    const resolveFirstPersisted = resolvePersisted as (value: unknown) => void;
+    resolveFirstPersisted({
+      v: 1,
+      sessionId,
+      head: {
+        ...persistedHead,
+        has_more_history: undefined,
+        history_cursor: undefined,
+      },
+      updatedAtMs: Date.now(),
+    });
+    await first;
+
+    shouldContinue = true;
+    loadSessionHeadV1Mock.mockResolvedValue({
+      v: 1,
+      sessionId,
+      head: {
+        ...persistedHead,
+        has_more_history: undefined,
+        history_cursor: undefined,
+      },
+      updatedAtMs: Date.now(),
+    });
+
+    const secondChanged = await primePersistedSessionHeads(snapshot, store, bootstrapCache, [sessionId], {
+      shouldContinue: () => shouldContinue,
+    });
+
+    expect(secondChanged).toBe(true);
+    expect(loadSessionHeadV1Mock).toHaveBeenCalledTimes(2);
+    expect(bootstrapCache.get(sessionId)?.turns).toHaveLength(2);
+  });
+
+  it("retries persisted prefetch when a newer generation overlaps an older canceled load", async () => {
+    const sessionId = "session-1";
+    const snapshot = makeSnapshot(sessionId);
+    const persistedHead = makeHead(sessionId, { turnCount: 2, lastEventSeq: 2 });
+    let resolveFirstPersisted: ((value: unknown) => void) | null = null;
+    let loadCalls = 0;
+    loadSessionHeadV1Mock.mockImplementation(() => {
+      loadCalls += 1;
+      if (loadCalls === 1) {
+        return new Promise((resolve) => {
+          resolveFirstPersisted = resolve;
+        });
+      }
+      return Promise.resolve({
+        v: 1,
+        sessionId,
+        head: {
+          ...persistedHead,
+          has_more_history: undefined,
+          history_cursor: undefined,
+        },
+        updatedAtMs: Date.now(),
+      });
+    });
+    const bootstrapCache = new SessionHeadBootstrapCache();
+    const store = {
+      getSessionHeadSnapshot: vi.fn(() => null),
+      getSessionHeadsSnapshot: vi.fn(() => ({})),
+    };
+    let firstShouldContinue = true;
+
+    const first = primePersistedSessionHeads(snapshot, store, bootstrapCache, [sessionId], {
+      shouldContinue: () => firstShouldContinue,
+    });
+    await vi.waitFor(() => {
+      expect(loadSessionHeadV1Mock).toHaveBeenCalledTimes(1);
+    });
+
+    const second = primePersistedSessionHeads(snapshot, store, bootstrapCache, [sessionId], {
+      shouldContinue: () => true,
+    });
+
+    firstShouldContinue = false;
+    if (!resolveFirstPersisted) {
+      throw new Error("Expected first persisted resolver");
+    }
+    const finishFirstPersisted = resolveFirstPersisted as (value: unknown) => void;
+    finishFirstPersisted({
+      v: 1,
+      sessionId,
+      head: {
+        ...persistedHead,
+        has_more_history: undefined,
+        history_cursor: undefined,
+      },
+      updatedAtMs: Date.now(),
+    });
+
+    const firstChanged = await first;
+    await vi.waitFor(() => {
+      expect(loadSessionHeadV1Mock).toHaveBeenCalledTimes(2);
+    });
+    const secondChanged = await second;
+
+    expect(firstChanged).toBe(false);
+    expect(secondChanged).toBe(true);
+    expect(bootstrapCache.get(sessionId)?.turns).toHaveLength(2);
+  });
+
+  it("evicts bootstrap heads that fall out of the current target set", () => {
+    const bootstrapCache = new SessionHeadBootstrapCache();
+    bootstrapCache.upsert(makeHead("session-1", { turnCount: 2, lastEventSeq: 2 }));
+    bootstrapCache.upsert(makeHead("session-2", { turnCount: 2, lastEventSeq: 2 }));
+
+    bootstrapCache.retain(["session-2"]);
+
+    expect(Object.keys(bootstrapCache.snapshot())).toEqual(["session-2"]);
+    expect(bootstrapCache.get("session-1")).toBeUndefined();
+    expect(bootstrapCache.get("session-2")?.turns).toHaveLength(2);
+  });
+
   it("prefers the richer bootstrap cached head over a narrower direct store head", () => {
     const sessionId = "session-1";
     const snapshot = makeSnapshot(sessionId);
@@ -211,6 +352,24 @@ describe("sessionHeadPrefetch", () => {
 
     expect(heads[sessionId]?.turns).toHaveLength(2);
     expect(heads[sessionId]?.messages).toHaveLength(2);
+  });
+
+  it("compacts oversized bootstrap heads before merging them into supervisor state", () => {
+    const sessionId = "session-1";
+    const snapshot = makeSnapshot(sessionId);
+    const directHead = makeHead(sessionId, { turnCount: 1, lastEventSeq: 8 });
+    const persistedHead = makeHead(sessionId, { turnCount: 8, lastEventSeq: 8 });
+    const bootstrapCache = new SessionHeadBootstrapCache();
+    bootstrapCache.upsert(persistedHead);
+    const store = {
+      getSessionHeadSnapshot: vi.fn(() => directHead),
+      getSessionHeadsSnapshot: vi.fn(() => ({ [sessionId]: directHead })),
+    };
+
+    const heads = collectSessionHeadsForSupervisor(snapshot, store, bootstrapCache);
+
+    expect(heads[sessionId]?.turns).toHaveLength(5);
+    expect(heads[sessionId]?.messages).toHaveLength(5);
   });
 
   it("collects only the requested session heads when an explicit target list is provided", () => {
@@ -236,6 +395,53 @@ describe("sessionHeadPrefetch", () => {
     expect(heads[sessionId]?.turns).toHaveLength(2);
   });
 
+  it("does not keep bootstrap-only heads when the explicit target list is empty", () => {
+    const sessionId = "session-1";
+    const snapshot = makeSnapshot(sessionId);
+    const bootstrapCache = new SessionHeadBootstrapCache();
+    bootstrapCache.upsert(makeHead(sessionId, { turnCount: 2, lastEventSeq: 2 }));
+    const store = {
+      getSessionHeadSnapshot: vi.fn(() => null),
+      getSessionHeadsSnapshot: vi.fn(() => ({})),
+    };
+
+    const heads = collectSessionHeadsForSupervisor(snapshot, store, bootstrapCache, []);
+
+    expect(heads).toEqual({});
+  });
+
+  it("keeps bootstrap heads scoped to the current snapshot sessions when no explicit target list is provided", () => {
+    const sessionId = "session-1";
+    const offSnapshotSessionId = "session-2";
+    const snapshot = makeSnapshot(sessionId);
+    const bootstrapCache = new SessionHeadBootstrapCache();
+    bootstrapCache.upsert(makeHead(sessionId, { turnCount: 2, lastEventSeq: 2 }));
+    bootstrapCache.upsert(makeHead(offSnapshotSessionId, { turnCount: 2, lastEventSeq: 2 }));
+    const store = {
+      getSessionHeadSnapshot: vi.fn(() => null),
+      getSessionHeadsSnapshot: vi.fn(() => ({})),
+    };
+
+    const heads = collectSessionHeadsForSupervisor(snapshot, store, bootstrapCache);
+
+    expect(Object.keys(heads)).toEqual([sessionId]);
+  });
+
+  it("rejects bootstrap heads that lag the current summary cursor", () => {
+    const sessionId = "session-1";
+    const snapshot = makeSnapshot(sessionId, { lastEventSeq: 5 });
+    const bootstrapCache = new SessionHeadBootstrapCache();
+    bootstrapCache.upsert(makeHead(sessionId, { turnCount: 3, lastEventSeq: 3 }));
+    const store = {
+      getSessionHeadSnapshot: vi.fn(() => null),
+      getSessionHeadsSnapshot: vi.fn(() => ({})),
+    };
+
+    const heads = collectSessionHeadsForSupervisor(snapshot, store, bootstrapCache);
+
+    expect(heads).toEqual({});
+  });
+
   it("prefetches an authoritative head when the summary is newer than known heads", async () => {
     const sessionId = "session-1";
     const snapshot = makeSnapshot(sessionId, { lastEventSeq: 5 });
@@ -254,6 +460,141 @@ describe("sessionHeadPrefetch", () => {
     expect(secondChanged).toBe(false);
     expect(getSessionHeadMock).toHaveBeenCalledTimes(1);
     expect(bootstrapCache.snapshot()[sessionId]?.last_event_seq).toBe(5);
+  });
+
+  it("rejects authoritative heads that become stale against the latest summary before completion", async () => {
+    const sessionId = "session-1";
+    const initialSnapshot = makeSnapshot(sessionId, { lastEventSeq: 1 });
+    const latestSnapshot = makeSnapshot(sessionId, { lastEventSeq: 5 });
+    getSessionHeadMock.mockResolvedValue(makeHead(sessionId, { turnCount: 3, lastEventSeq: 3 }));
+    const bootstrapCache = new SessionHeadBootstrapCache();
+    const onHead = vi.fn();
+    const store = {
+      getSessionHeadSnapshot: vi.fn(() => null),
+      getSessionHeadsSnapshot: vi.fn(() => ({})),
+    };
+
+    const changed = await primeAuthoritativeSessionHeads(initialSnapshot, store, bootstrapCache, [sessionId], {
+      getSnapshot: () => latestSnapshot,
+      onHead,
+    });
+
+    expect(changed).toBe(false);
+    expect(onHead).not.toHaveBeenCalled();
+    expect(bootstrapCache.get(sessionId)).toBeUndefined();
+  });
+
+  it("retries same-version authoritative prefetch when a newer generation overlaps an older canceled load", async () => {
+    const sessionId = "session-1";
+    const snapshot = makeSnapshot(sessionId, { lastEventSeq: 5 });
+    const authoritativeHead = makeHead(sessionId, { turnCount: 3, lastEventSeq: 5 });
+    let resolveFirstFetch: ((value: SessionHeadSnapshot) => void) | null = null;
+    let fetchCalls = 0;
+    getSessionHeadMock.mockImplementation(() => {
+      fetchCalls += 1;
+      if (fetchCalls === 1) {
+        return new Promise((resolve) => {
+          resolveFirstFetch = resolve as (value: SessionHeadSnapshot) => void;
+        });
+      }
+      return Promise.resolve(authoritativeHead);
+    });
+    const bootstrapCache = new SessionHeadBootstrapCache();
+    const store = {
+      getSessionHeadSnapshot: vi.fn(() => null),
+      getSessionHeadsSnapshot: vi.fn(() => ({})),
+    };
+    let firstShouldContinue = true;
+
+    const first = primeAuthoritativeSessionHeads(snapshot, store, bootstrapCache, [sessionId], {
+      shouldContinue: () => firstShouldContinue,
+    });
+    await vi.waitFor(() => {
+      expect(getSessionHeadMock).toHaveBeenCalledTimes(1);
+    });
+
+    const second = primeAuthoritativeSessionHeads(snapshot, store, bootstrapCache, [sessionId], {
+      shouldContinue: () => true,
+    });
+
+    firstShouldContinue = false;
+    if (!resolveFirstFetch) {
+      throw new Error("Expected first authoritative resolver");
+    }
+    const finishFirstFetch = resolveFirstFetch as (value: SessionHeadSnapshot) => void;
+    finishFirstFetch(authoritativeHead);
+
+    const firstChanged = await first;
+    await vi.waitFor(() => {
+      expect(getSessionHeadMock).toHaveBeenCalledTimes(2);
+    });
+    const secondChanged = await second;
+
+    expect(firstChanged).toBe(false);
+    expect(secondChanged).toBe(true);
+    expect(bootstrapCache.get(sessionId)?.last_event_seq).toBe(5);
+  });
+
+  it("rejects authoritative heads when the retained target set drops before completion", async () => {
+    const sessionId = "session-1";
+    const snapshot = makeSnapshot(sessionId, { lastEventSeq: 1 });
+    let resolveFetch: ((value: SessionHeadSnapshot) => void) | null = null;
+    getSessionHeadMock.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveFetch = resolve as (value: SessionHeadSnapshot) => void;
+        }),
+    );
+    const bootstrapCache = new SessionHeadBootstrapCache();
+    const onHead = vi.fn();
+    const store = {
+      getSessionHeadSnapshot: vi.fn(() => null),
+      getSessionHeadsSnapshot: vi.fn(() => ({})),
+    };
+    let shouldRetain = true;
+
+    const pending = primeAuthoritativeSessionHeads(snapshot, store, bootstrapCache, [sessionId], {
+      shouldRetainSessionId: () => shouldRetain,
+      onHead,
+    });
+    await vi.waitFor(() => {
+      expect(getSessionHeadMock).toHaveBeenCalledTimes(1);
+    });
+
+    shouldRetain = false;
+    if (!resolveFetch) {
+      throw new Error("Expected authoritative resolver");
+    }
+    const finishFetch = resolveFetch as (value: SessionHeadSnapshot) => void;
+    finishFetch(makeHead(sessionId, { turnCount: 3, lastEventSeq: 3 }));
+
+    const changed = await pending;
+
+    expect(changed).toBe(false);
+    expect(onHead).not.toHaveBeenCalled();
+    expect(bootstrapCache.get(sessionId)).toBeUndefined();
+  });
+
+  it("publishes the compacted authoritative head to downstream consumers", async () => {
+    const sessionId = "session-1";
+    const snapshot = makeSnapshot(sessionId, { lastEventSeq: 8 });
+    getSessionHeadMock.mockResolvedValue(makeHead(sessionId, { turnCount: 8, lastEventSeq: 8 }));
+    const bootstrapCache = new SessionHeadBootstrapCache();
+    const onHead = vi.fn();
+    const store = {
+      getSessionHeadSnapshot: vi.fn(() => null),
+      getSessionHeadsSnapshot: vi.fn(() => ({})),
+    };
+
+    const changed = await primeAuthoritativeSessionHeads(snapshot, store, bootstrapCache, [sessionId], {
+      onHead,
+    });
+
+    expect(changed).toBe(true);
+    expect(bootstrapCache.get(sessionId)?.turns).toHaveLength(5);
+    const publishedHead = onHead.mock.calls[0]?.[1] as SessionHeadSnapshot | undefined;
+    expect(publishedHead?.turns).toHaveLength(5);
+    expect(publishedHead?.messages).toHaveLength(5);
   });
 
   it("does not prefetch an authoritative head when the direct head already satisfies the summary", async () => {
@@ -354,5 +695,24 @@ describe("sessionHeadPrefetch", () => {
 
     expect(maxInFlight).toBeLessThanOrEqual(SESSION_HEAD_PREFETCH_CONCURRENCY);
     expect(getSessionHeadMock).toHaveBeenCalledTimes(sessionIds.length);
+  });
+
+  it("ignores late seed events for sessions that are no longer retained", () => {
+    const sessionId = "session-1";
+    const bootstrapCache = new SessionHeadBootstrapCache();
+
+    const changed = maybeCacheSessionHeadSeed(
+      bootstrapCache,
+      {
+        type: "session_head_seed",
+        workspace_id: "workspace-1",
+        snapshot_rev: 1,
+        head: makeHead(sessionId, { turnCount: 3, lastEventSeq: 3 }),
+      },
+      new Set(["session-2"]),
+    );
+
+    expect(changed).toBe(false);
+    expect(bootstrapCache.get(sessionId)).toBeUndefined();
   });
 });

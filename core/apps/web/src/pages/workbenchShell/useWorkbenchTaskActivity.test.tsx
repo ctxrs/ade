@@ -1,11 +1,13 @@
 import React from "react";
 import { act, cleanup, render, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { WorkspaceActiveSnapshotEvent } from "@ctx/types";
 import type { Session, SessionHeadSnapshot, SessionSnapshotSummary, SessionTurn } from "../../api/client";
 import { SessionSupervisorProvider, type SessionCacheEntry, type SessionSupervisorSnapshot } from "../../state/sessionSupervisor";
 import type { WorkspaceActiveSnapshotItem, WorkspaceActiveSnapshotState } from "../../state/workspaceActiveSnapshotStore";
 import { WORKBENCH_TASK_IDLE_EVENT, type WorkbenchTaskIdleDetail } from "../../utils/updaterEvents";
 import type { OptimisticTaskSummary } from "./WorkbenchPage.types";
+import { SESSION_HEAD_PREFETCH_TARGET_LIMIT } from "./sessionHeadPrefetch";
 import { deriveWorkspaceAttentionState } from "./workbenchTaskActivity";
 import {
   canRenderWorkbenchActiveSession,
@@ -278,6 +280,33 @@ describe("useWorkbenchTaskActivity helpers", () => {
     });
 
     expect(warmIds).toEqual(["session-running", "session-idle"]);
+  });
+
+  it("caps warm subscriptions at the bounded prefetch head target limit", () => {
+    const sessions = Array.from({ length: SESSION_HEAD_PREFETCH_TARGET_LIMIT + 5 }, (_, index) =>
+      makeSessionSummary(makeSession(`session-${index + 1}`, `task-${index + 1}`, "completed"), {
+        last_message_at: `2026-03-09T00:${String(index).padStart(2, "0")}:00.000Z`,
+      }),
+    );
+    const tasksById = Object.fromEntries(
+      sessions.map((summary, index) => [
+        `task-${index + 1}`,
+        makeTaskSummary({
+          taskId: `task-${index + 1}`,
+          primarySessionId: summary.session.id,
+          sessions: [summary],
+        }),
+      ]),
+    );
+
+    const warmIds = deriveWarmSessionIds({
+      activeTaskSessionIds: [],
+      activeIds: Object.keys(tasksById),
+      tasksById,
+    });
+
+    expect(warmIds).toHaveLength(SESSION_HEAD_PREFETCH_TARGET_LIMIT);
+    expect(warmIds[0]).toBe(`session-${sessions.length}`);
   });
 
   it("derives task live info and unread state from primary sessions only", () => {
@@ -1436,6 +1465,88 @@ describe("useWorkbenchTaskActivity", () => {
     });
   });
 
+  it("forwards bootstrap-only warm session seeds to the supervisor immediately", async () => {
+    const primarySession = makeSession("session-1", "task-1", "active");
+    const secondarySession = makeSession("session-2", "task-1", "completed");
+    const taskSummary = makeTaskSummary({
+      taskId: "task-1",
+      primarySessionId: "session-1",
+      sessions: [
+        makeSessionSummary(primarySession),
+        makeSessionSummary(secondarySession),
+      ],
+    });
+    const workspaceSnapshot = makeWorkspaceSnapshot({ "task-1": taskSummary }, ["task-1"]);
+    const supervisor = makeSupervisor();
+    const secondaryHead = {
+      session: secondarySession,
+      turns: [],
+      events: [],
+      messages: [],
+      last_event_seq: 3,
+      has_more_turns: false,
+      has_more_history: false,
+      history_cursor: null,
+    };
+    let eventHandler: ((evt: WorkspaceActiveSnapshotEvent) => void) | null = null;
+    const workspaceSnapshotStore = {
+      subscribe: vi.fn(() => () => {}),
+      subscribeEvents: vi.fn((handler: (evt: WorkspaceActiveSnapshotEvent) => void) => {
+        eventHandler = handler;
+        return () => {};
+      }),
+      getSnapshot: vi.fn(() => workspaceSnapshot),
+      getSessionHeadSnapshot: vi.fn(() => null),
+      getSessionHeadsSnapshot: vi.fn(() => ({})),
+      setSubscribedSessions: vi.fn(),
+      setForegroundSessionId: vi.fn(),
+    };
+
+    renderHarness({
+      activeTaskId: "task-1",
+      activeSessionIdFromTab: null,
+      activeTaskSummary: taskSummary,
+      tasksById: { "task-1": taskSummary },
+      workspaceSnapshot,
+      sessionSnap: makeSessionSnapshot({
+        "session-1": makeSessionEntry({ session: primarySession }),
+        "session-2": makeSessionEntry({ session: secondarySession }),
+      }),
+      optimisticTasks: [] satisfies OptimisticTaskSummary[],
+      optimisticTasksById: {},
+      supervisor,
+      workbenchStore: makeWorkbenchStore("task-1"),
+      workspaceSnapshotStore,
+      markTaskRead: vi.fn(async () => {}),
+    });
+
+    await waitFor(() => {
+      expect(eventHandler).toBeTypeOf("function");
+    });
+    supervisor.upsertWorkspaceSessionHead.mockClear();
+
+    if (!eventHandler) {
+      throw new Error("Expected workspace event handler");
+    }
+    const handleWorkspaceEvent = eventHandler as (evt: WorkspaceActiveSnapshotEvent) => void;
+    handleWorkspaceEvent({
+      type: "session_head_seed",
+      workspace_id: "workspace-1",
+      snapshot_rev: 1,
+      head: secondaryHead,
+    });
+
+    await waitFor(() => {
+      expect(supervisor.upsertWorkspaceSessionHead).toHaveBeenCalledWith(
+        "session-2",
+        expect.objectContaining({
+          session: expect.objectContaining({ id: "session-2" }),
+          last_event_seq: 3,
+        }),
+      );
+    });
+  });
+
   it("syncs workspace session heads before snapshot state so remembered non-primary sessions can seed immediately", async () => {
     const primarySession = makeSession("session-1", "task-1", "active");
     const secondarySession = makeSession("session-2", "task-1", "completed");
@@ -1495,6 +1606,171 @@ describe("useWorkbenchTaskActivity", () => {
     expect(
       supervisor.setWorkspaceSessionHeads.mock.invocationCallOrder[0],
     ).toBeLessThan(supervisor.setWorkspaceSnapshotState.mock.invocationCallOrder[0]);
+  });
+
+  it("scopes initial workspace head syncs to the planned prefetch target set", async () => {
+    const taskSummaries = Object.fromEntries(
+      Array.from({ length: SESSION_HEAD_PREFETCH_TARGET_LIMIT + 3 }, (_, index) => {
+        const taskId = `task-${index + 1}`;
+        const sessionId = `session-${index + 1}`;
+        const session = makeSession(sessionId, taskId, index === 0 ? "active" : "completed");
+        const summary = makeSessionSummary(session, {
+          last_message_at: `2026-03-09T00:${String(index).padStart(2, "0")}:00.000Z`,
+        });
+        return [
+          taskId,
+          makeTaskSummary({
+            taskId,
+            primarySessionId: sessionId,
+            sessions: [summary],
+          }),
+        ];
+      }),
+    );
+    const workspaceSnapshot = makeWorkspaceSnapshot(taskSummaries, Object.keys(taskSummaries));
+    const supervisor = makeSupervisor();
+    const headsById = Object.fromEntries(
+      Object.entries(taskSummaries).map(([taskId, taskSummary]) => {
+        const sessionId = taskSummary.primarySessionId ?? taskSummary.sessions[0]?.session.id ?? taskId;
+        const session = taskSummary.sessions[0]?.session ?? makeSession(sessionId, taskId, "completed");
+        return [
+          sessionId,
+          {
+            session,
+            turns: [],
+            events: [],
+            messages: [],
+            last_event_seq: 1,
+            has_more_turns: false,
+            has_more_history: false,
+            history_cursor: null,
+          } satisfies SessionHeadSnapshot,
+        ];
+      }),
+    );
+    const workspaceSnapshotStore = {
+      subscribe: vi.fn(() => () => {}),
+      subscribeEvents: vi.fn(() => () => {}),
+      getSnapshot: vi.fn(() => workspaceSnapshot),
+      getSessionHeadSnapshot: vi.fn((sessionId: string) => headsById[sessionId] ?? null),
+      setSubscribedSessions: vi.fn(),
+      setForegroundSessionId: vi.fn(),
+    };
+
+    renderHarness({
+      activeTaskId: "task-1",
+      activeSessionIdFromTab: null,
+      activeTaskSummary: taskSummaries["task-1"],
+      tasksById: taskSummaries,
+      workspaceSnapshot,
+      sessionSnap: makeSessionSnapshot(
+        Object.fromEntries(
+          Object.entries(taskSummaries).map(([taskId, taskSummary]) => {
+            const session = taskSummary.sessions[0]?.session ?? makeSession(taskId, taskId, "completed");
+            return [session.id, makeSessionEntry({ session })];
+          }),
+        ),
+      ),
+      optimisticTasks: [] satisfies OptimisticTaskSummary[],
+      optimisticTasksById: {},
+      supervisor,
+      workbenchStore: makeWorkbenchStore("task-1"),
+      workspaceSnapshotStore,
+      markTaskRead: vi.fn(async () => {}),
+    });
+
+    await waitFor(() => {
+      const syncedHeads = supervisor.setWorkspaceSessionHeads.mock.calls.at(-1)?.[0] ?? {};
+      expect(Object.keys(syncedHeads)).toHaveLength(SESSION_HEAD_PREFETCH_TARGET_LIMIT);
+      expect(syncedHeads["session-1"]).toBeDefined();
+      expect(syncedHeads["session-2"]).toBeUndefined();
+    });
+  });
+
+  it("clears supervisor workspace heads when the prefetch target set shrinks to zero", async () => {
+    const primarySession = makeSession("session-1", "task-1", "active");
+    const secondarySession = makeSession("session-2", "task-1", "completed");
+    const fullTaskSummary = makeTaskSummary({
+      taskId: "task-1",
+      primarySessionId: "session-1",
+      sessions: [
+        makeSessionSummary(primarySession),
+        makeSessionSummary(secondarySession),
+      ],
+    });
+    const trimmedTaskSummary = makeTaskSummary({
+      taskId: "task-1",
+      primarySessionId: "session-1",
+      sessions: [makeSessionSummary(primarySession)],
+    });
+    let currentSnapshot = makeWorkspaceSnapshot({ "task-1": fullTaskSummary }, ["task-1"]);
+    const supervisor = makeSupervisor();
+    const secondaryHead = {
+      session: secondarySession,
+      turns: [],
+      events: [],
+      messages: [],
+      last_event_seq: 3,
+      has_more_turns: false,
+      has_more_history: false,
+      history_cursor: null,
+    };
+    const workspaceSnapshotStore = {
+      subscribe: vi.fn(() => () => {}),
+      subscribeEvents: vi.fn(() => () => {}),
+      getSnapshot: vi.fn(() => currentSnapshot),
+      getSessionHeadSnapshot: vi.fn((sessionId: string) => (sessionId === "session-2" ? secondaryHead : null)),
+      setSubscribedSessions: vi.fn(),
+      setForegroundSessionId: vi.fn(),
+    };
+
+    const rendered = renderHarness({
+      activeTaskId: "task-1",
+      activeSessionIdFromTab: null,
+      activeTaskSummary: fullTaskSummary,
+      tasksById: { "task-1": fullTaskSummary },
+      workspaceSnapshot: currentSnapshot,
+      sessionSnap: makeSessionSnapshot({
+        "session-1": makeSessionEntry({ session: primarySession }),
+        "session-2": makeSessionEntry({ session: secondarySession }),
+      }),
+      optimisticTasks: [] satisfies OptimisticTaskSummary[],
+      optimisticTasksById: {},
+      supervisor,
+      workbenchStore: makeWorkbenchStore("task-1"),
+      workspaceSnapshotStore,
+      markTaskRead: vi.fn(async () => {}),
+    });
+
+    await waitFor(() => {
+      expect(supervisor.setWorkspaceSessionHeads).toHaveBeenCalledWith({ "session-2": secondaryHead });
+    });
+
+    currentSnapshot = makeWorkspaceSnapshot({ "task-1": trimmedTaskSummary }, ["task-1"]);
+    rendered.rerender(
+      <SessionSupervisorProvider>
+        <Harness
+          activeTaskId="task-1"
+          activeSessionIdFromTab={null}
+          activeTaskSummary={trimmedTaskSummary}
+          tasksById={{ "task-1": trimmedTaskSummary }}
+          workspaceSnapshot={currentSnapshot}
+          sessionSnap={makeSessionSnapshot({
+            "session-1": makeSessionEntry({ session: primarySession }),
+          })}
+          optimisticTasks={[] satisfies OptimisticTaskSummary[]}
+          optimisticTasksById={{}}
+          supervisor={supervisor}
+          workbenchStore={makeWorkbenchStore("task-1")}
+          workspaceSnapshotStore={workspaceSnapshotStore}
+          markTaskRead={vi.fn(async () => {})}
+        />
+      </SessionSupervisorProvider>,
+    );
+
+    await waitFor(() => {
+      expect(supervisor.setWorkspaceSessionHeads).toHaveBeenLastCalledWith({});
+    });
   });
 
   it("marks the active task read once it is idle and unread", async () => {

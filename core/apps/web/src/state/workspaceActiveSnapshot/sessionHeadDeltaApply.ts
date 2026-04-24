@@ -1,11 +1,11 @@
-import type { SessionHeadDelta, SessionHeadSnapshot } from "@ctx/types";
+import type { Message, SessionHeadDelta, SessionHeadSnapshot, SessionTurn } from "@ctx/types";
 import { idToString } from "../../api/client";
 import {
+  compactActiveSessionHeadSnapshot,
   mergeSessionEvents,
   mergeSessionMessages,
   mergeSessionToolSummaries,
   mergeSessionTurns,
-  sanitizeSessionHeadSnapshot,
 } from "../sessionHeadState";
 import { createSeedHeadSnapshot } from "./sessionHeadSeed";
 import type { WorkspaceActiveSnapshotItem } from "./storeTypes";
@@ -15,10 +15,14 @@ export function applySessionHeadDeltaToSnapshot(params: {
   delta: SessionHeadDelta;
   tasks: Map<string, WorkspaceActiveSnapshotItem>;
   sessionHeadsById: Map<string, SessionHeadSnapshot>;
+  shouldRetainSessionHead?: (sessionId: string) => boolean;
 }): boolean {
-  const { delta, tasks, sessionHeadsById } = params;
+  const { delta, tasks, sessionHeadsById, shouldRetainSessionHead } = params;
   const sessionId = idToString(delta?.session_id ?? "");
   if (!sessionId) return false;
+  if (shouldRetainSessionHead && !shouldRetainSessionHead(sessionId)) {
+    return false;
+  }
   let existing = sessionHeadsById.get(sessionId);
   if (!existing) {
     const seeded = createSeedHeadSnapshot(tasks, sessionId);
@@ -31,12 +35,62 @@ export function applySessionHeadDeltaToSnapshot(params: {
   let toolSummaries = Array.isArray(existing.tool_summaries) ? existing.tool_summaries : [];
   let messages = existing.messages ?? [];
   let events = existing.events ?? [];
+  const ensureTurnForMessage = (
+    message: Message,
+  ): { turn: SessionTurn | null; message: Message } => {
+    const existingTurnIds = new Set(
+      turns.map((turn) => idToString(turn.turn_id)).filter((turnId) => turnId.length > 0),
+    );
+    const existingMessageTurnId = idToString(message.turn_id ?? "");
+    if (existingMessageTurnId && existingTurnIds.has(existingMessageTurnId)) {
+      return { turn: null, message };
+    }
+    const syntheticTurnId = existingMessageTurnId || `synthetic-turn:${idToString(message.id)}`;
+    const timestamp = message.created_at ?? existing.session.updated_at ?? existing.session.created_at;
+    const sequence =
+      typeof message.order_seq === "number"
+        ? message.order_seq
+        : typeof message.turn_sequence === "number"
+          ? message.turn_sequence
+          : typeof delta.last_event_seq === "number"
+            ? delta.last_event_seq
+            : 0;
+    return {
+      turn: {
+        turn_id: syntheticTurnId,
+        session_id: idToString(message.session_id ?? existing.session.id),
+        run_id: null,
+        user_message_id: null,
+        status: "queued",
+        start_seq: sequence,
+        end_seq: sequence,
+        started_at: timestamp,
+        updated_at: timestamp,
+        assistant_partial: null,
+        thought_partial: null,
+        metrics_json: null,
+        tool_total: 0,
+        tool_pending: 0,
+        tool_running: 0,
+        tool_completed: 0,
+        tool_failed: 0,
+      },
+      message: {
+        ...message,
+        turn_id: syntheticTurnId,
+      },
+    };
+  };
   if (delta.turn) {
     turns = mergeSessionTurns(turns, [delta.turn]);
     changed = true;
   }
   if (delta.message) {
-    messages = mergeSessionMessages(messages, [delta.message]);
+    const normalized = ensureTurnForMessage(delta.message);
+    if (normalized.turn) {
+      turns = mergeSessionTurns(turns, [normalized.turn]);
+    }
+    messages = mergeSessionMessages(messages, [normalized.message]);
     changed = true;
   }
   if (delta.event) {
@@ -48,7 +102,7 @@ export function applySessionHeadDeltaToSnapshot(params: {
     toolSummaries = mergeSessionToolSummaries(toolSummaries, incomingToolSummaries, turns);
     changed = true;
   }
-  const next: SessionHeadSnapshot = sanitizeSessionHeadSnapshot({
+  const next: SessionHeadSnapshot = compactActiveSessionHeadSnapshot({
     ...existing,
     turns,
     tool_summaries: toolSummaries,
