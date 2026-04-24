@@ -96,8 +96,8 @@ pub(super) async fn create_web_session(
         },
     )
     .await?;
-    let base_url = resolve_request_base_url(&headers, &state.core.daemon_url);
-    info.stream_url = Some(format!("{}{}", base_url, info.stream_path));
+    info.stream_url = resolve_request_base_url(&headers, &state.core.daemon_url)
+        .map(|base_url| format!("{}{}", base_url, info.stream_path.clone()));
     Ok(Json(info))
 }
 
@@ -111,9 +111,9 @@ pub(super) async fn list_web_sessions(
         uuid::Uuid::parse_str(session_id).map_err(|_| StatusCode::BAD_REQUEST)?;
         sessions.retain(|session| session.session_id.as_deref() == Some(session_id));
     }
-    let base_url = resolve_request_base_url(&headers, &state.core.daemon_url);
     for session in sessions.iter_mut() {
-        session.stream_url = Some(format!("{}{}", base_url, session.stream_path));
+        session.stream_url = resolve_request_base_url(&headers, &state.core.daemon_url)
+            .map(|base_url| format!("{}{}", base_url, session.stream_path.clone()));
     }
     Ok(Json(sessions))
 }
@@ -130,8 +130,8 @@ pub(super) async fn get_web_session(
         .await
         .ok_or(StatusCode::NOT_FOUND)?;
     let mut info = handle.snapshot().await;
-    let base_url = resolve_request_base_url(&headers, &state.core.daemon_url);
-    info.stream_url = Some(format!("{}{}", base_url, info.stream_path));
+    info.stream_url = resolve_request_base_url(&headers, &state.core.daemon_url)
+        .map(|base_url| format!("{}{}", base_url, info.stream_path.clone()));
     Ok(Json(info))
 }
 

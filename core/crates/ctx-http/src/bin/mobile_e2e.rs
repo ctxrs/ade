@@ -196,7 +196,7 @@ async fn run_e2e(
         return Err(anyhow!("secure response missing daemon_url"));
     }
 
-    let ws_url = build_ws_url(&base_url, &expected_workspace_id, &device_id)?;
+    let ws_url = build_ws_url(&base_url, &expected_workspace_id, &device_id, &key)?;
     let (mut ws, _) = connect_async(ws_url.as_str()).await?;
     let msg = ws
         .next()
@@ -295,7 +295,12 @@ fn encrypt_secure_request(
     })
 }
 
-fn build_ws_url(base_url: &str, workspace_id: &str, device_id: &str) -> Result<Url> {
+fn build_ws_url(
+    base_url: &str,
+    workspace_id: &str,
+    device_id: &str,
+    key: &mobile_e2ee::E2eeKey,
+) -> Result<Url> {
     let mut url = Url::parse(base_url)?;
     let ws_scheme = match url.scheme() {
         "https" => "wss",
@@ -311,7 +316,8 @@ fn build_ws_url(base_url: &str, workspace_id: &str, device_id: &str) -> Result<U
         format!("{prefix}/api/mobile/secure/workspaces/{workspace_id}/stream")
     };
     url.set_path(&path);
-    url.set_query(Some(&format!("device_id={device_id}")));
+    let token = mobile_e2ee::derive_stream_token(key, workspace_id);
+    url.set_query(Some(&format!("device_id={device_id}&token={token}")));
     Ok(url)
 }
 

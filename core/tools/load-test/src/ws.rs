@@ -4,6 +4,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result};
 use futures::{SinkExt, StreamExt};
 use serde_json::Value;
+use sha2::Digest;
 use tokio::task::JoinHandle;
 use tokio_tungstenite::{connect_async, tungstenite::Message as WsMessage};
 use url::Url;
@@ -20,6 +21,30 @@ use crate::output::{EventRecord, EventWriter};
 
 const WS_REPLAY_READ_TIMEOUT_MS: u64 = 500;
 
+fn workspace_active_snapshot_query_token(auth_token: &str, workspace_id: WorkspaceId) -> String {
+    let mut hasher = sha2::Sha256::new();
+    hasher.update(b"ctx-browser-stream|");
+    hasher.update(format!("workspace_active_snapshot:{}", workspace_id.0).as_bytes());
+    hasher.update(b"|");
+    hasher.update(auth_token.as_bytes());
+    let digest = hasher.finalize();
+    digest.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+fn append_workspace_stream_query_token(
+    url: &mut Url,
+    auth_token: Option<&str>,
+    workspace_id: WorkspaceId,
+) {
+    let Some(auth_token) = auth_token else {
+        return;
+    };
+    url.query_pairs_mut().append_pair(
+        "token",
+        &workspace_active_snapshot_query_token(auth_token, workspace_id),
+    );
+}
+
 pub(crate) async fn spawn_ws_listener(
     client: &Client,
     auth_token: Option<&str>,
@@ -34,9 +59,7 @@ pub(crate) async fn spawn_ws_listener(
     }
     let mut url =
         Url::parse(&client.workspace_stream_url(workspace_id)?).context("parsing ws url")?;
-    if let Some(token) = auth_token {
-        url.query_pairs_mut().append_pair("token", token);
-    }
+    append_workspace_stream_query_token(&mut url, auth_token, workspace_id);
 
     let (ws_stream, _) = connect_async(url.to_string())
         .await
@@ -145,9 +168,7 @@ pub(crate) async fn run_ws_replay_once(
 ) -> Result<()> {
     let mut url =
         Url::parse(&client.workspace_stream_url(workspace_id)?).context("parsing ws url")?;
-    if let Some(token) = auth_token {
-        url.query_pairs_mut().append_pair("token", token);
-    }
+    append_workspace_stream_query_token(&mut url, auth_token, workspace_id);
     let (ws_stream, _) = connect_async(url.to_string())
         .await
         .context("connecting ws")?;
@@ -187,6 +208,44 @@ pub(crate) async fn run_ws_replay_once(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn append_workspace_stream_query_token_uses_scoped_token() {
+        let workspace_id =
+            WorkspaceId(uuid::Uuid::parse_str("11111111-1111-1111-1111-111111111111").unwrap());
+        let mut url =
+            Url::parse("wss://example.com/api/workspaces/11111111-1111-1111-1111-111111111111/active_snapshot/stream")
+                .unwrap();
+        append_workspace_stream_query_token(&mut url, Some("daemon-secret"), workspace_id);
+        let token = url
+            .query_pairs()
+            .find_map(|(key, value)| (key == "token").then_some(value.into_owned()))
+            .unwrap();
+        assert_eq!(token.len(), 64);
+        assert_ne!(token, "daemon-secret");
+        assert_eq!(
+            token,
+            workspace_active_snapshot_query_token("daemon-secret", workspace_id)
+        );
+    }
+
+    #[test]
+    fn workspace_stream_query_token_varies_by_workspace() {
+        let auth_token = "daemon-secret";
+        let workspace_a =
+            WorkspaceId(uuid::Uuid::parse_str("11111111-1111-1111-1111-111111111111").unwrap());
+        let workspace_b =
+            WorkspaceId(uuid::Uuid::parse_str("22222222-2222-2222-2222-222222222222").unwrap());
+        assert_ne!(
+            workspace_active_snapshot_query_token(auth_token, workspace_a),
+            workspace_active_snapshot_query_token(auth_token, workspace_b)
+        );
+    }
 }
 
 fn extract_event_content(event_type: &SessionEventType, payload: &Value) -> Option<String> {

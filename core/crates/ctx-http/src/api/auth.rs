@@ -220,6 +220,9 @@ pub(super) async fn auth_middleware(
     if path.starts_with("/api/mobile/secure") || path == "/api/mobile/pair" {
         return Ok(next.run(req).await);
     }
+    if req.extensions().get::<MobileAuthContext>().is_some() {
+        return Ok(next.run(req).await);
+    }
     if state.core.auth_token.is_none() {
         return Ok(next.run(req).await);
     }

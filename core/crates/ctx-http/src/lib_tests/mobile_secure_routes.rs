@@ -24,7 +24,15 @@ async fn insert_mobile_profile(state: &Arc<AppState>) -> ConnectionProfileId {
         .id
 }
 
-async fn build_mobile_access_app(enabled: bool) -> (axum::Router, Arc<AppState>, WorkspaceId) {
+async fn build_mobile_access_app(
+    enabled: bool,
+) -> (
+    axum::Router,
+    Arc<AppState>,
+    WorkspaceId,
+    String,
+    ctx_transport_runtime::mobile_e2ee::E2eeKey,
+) {
     let git_repo = setup_git_repo().await;
     let data_dir = tempfile::tempdir().unwrap();
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
@@ -38,6 +46,11 @@ async fn build_mobile_access_app(enabled: bool) -> (axum::Router, Arc<AppState>,
     let app = api::router(state.clone());
     let workspace = create_workspace_via_api(&app, &git_repo.path().to_string_lossy()).await;
     let profile_id = insert_mobile_profile(&state).await;
+    let device_id = "22222222-2222-2222-2222-222222222222".to_string();
+    let (daemon_public_key, daemon_private_key) =
+        ctx_transport_runtime::mobile_e2ee::generate_keypair();
+    let (device_public_key, device_secret_key) =
+        ctx_transport_runtime::mobile_e2ee::generate_keypair();
 
     state
         .global_store()
@@ -48,8 +61,8 @@ async fn build_mobile_access_app(enabled: bool) -> (axum::Router, Arc<AppState>,
             public_base_url: "https://example.com".to_string(),
             relay_base_url: "https://relay.example.com".to_string(),
             tunnel_secret: "secret".to_string(),
-            daemon_public_key: "daemon-public".to_string(),
-            daemon_private_key: "daemon-private".to_string(),
+            daemon_public_key: daemon_public_key.clone(),
+            daemon_private_key,
             enabled,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
@@ -59,21 +72,28 @@ async fn build_mobile_access_app(enabled: bool) -> (axum::Router, Arc<AppState>,
     state
         .global_store()
         .upsert_mobile_device(
-            MobileDeviceId(uuid::Uuid::parse_str("22222222-2222-2222-2222-222222222222").unwrap()),
+            MobileDeviceId(uuid::Uuid::parse_str(&device_id).unwrap()),
             profile_id,
             MobileDeviceUpsert {
                 device_label: Some("phone".to_string()),
                 platform: Some("ios".to_string()),
                 push_token: None,
                 push_provider: None,
-                public_key: Some("device-public".to_string()),
+                public_key: Some(device_public_key),
                 app_version: Some("1.0.0".to_string()),
             },
         )
         .await
         .unwrap();
 
-    (app, state, workspace.id)
+    let key = ctx_transport_runtime::mobile_e2ee::derive_client_key(
+        &device_id,
+        &device_secret_key,
+        &daemon_public_key,
+    )
+    .unwrap();
+
+    (app, state, workspace.id, device_id, key)
 }
 
 async fn build_mobile_secure_proxy_app(
@@ -187,8 +207,19 @@ async fn decode_mobile_secure_response(
     serde_json::from_slice(&plaintext).unwrap()
 }
 
+fn mobile_secure_stream_query(
+    device_id: &str,
+    key: &ctx_transport_runtime::mobile_e2ee::E2eeKey,
+    workspace_id: WorkspaceId,
+) -> String {
+    let token =
+        ctx_transport_runtime::mobile_e2ee::derive_stream_token(key, &workspace_id.0.to_string());
+    format!("device_id={device_id}&token={token}")
+}
+
 #[tokio::test]
-async fn mobile_secure_workspace_stream_returns_not_found_before_upgrade_for_missing_workspace() {
+async fn mobile_secure_workspace_stream_returns_unauthorized_before_upgrade_for_missing_workspace_without_mobile_access()
+{
     let _serial = home_env_test_lock().lock().await;
     let home = tempfile::tempdir().unwrap();
     let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
@@ -212,7 +243,42 @@ async fn mobile_secure_workspace_stream_returns_not_found_before_upgrade_for_mis
 
     let res = client
         .get(format!(
-            "http://{addr}/api/mobile/secure/workspaces/11111111-1111-1111-1111-111111111111/stream?device_id=22222222-2222-2222-2222-222222222222"
+            "http://{addr}/api/mobile/secure/workspaces/11111111-1111-1111-1111-111111111111/stream?device_id=22222222-2222-2222-2222-222222222222&token=bad-token"
+        ))
+        .header("connection", "upgrade")
+        .header("upgrade", "websocket")
+        .header("sec-websocket-version", "13")
+        .header("sec-websocket-key", "dGhlIHNhbXBsZSBub25jZQ==")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+
+    server.abort();
+}
+
+#[tokio::test]
+async fn mobile_secure_workspace_stream_returns_not_found_before_upgrade_for_authorized_missing_workspace()
+{
+    let _serial = home_env_test_lock().lock().await;
+    let home = tempfile::tempdir().unwrap();
+    let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
+
+    let (app, _state, _workspace_id, device_id, key) = build_mobile_access_app(true).await;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    let client = reqwest::Client::new();
+
+    let missing_workspace_id =
+        WorkspaceId(uuid::Uuid::parse_str("11111111-1111-1111-1111-111111111111").unwrap());
+    let query = mobile_secure_stream_query(&device_id, &key, missing_workspace_id);
+    let res = client
+        .get(format!(
+            "http://{addr}/api/mobile/secure/workspaces/{}/stream?{query}",
+            missing_workspace_id.0
         ))
         .header("connection", "upgrade")
         .header("upgrade", "websocket")
@@ -255,7 +321,7 @@ async fn mobile_secure_workspace_stream_returns_unauthorized_before_upgrade_with
 
     let res = client
         .get(format!(
-            "http://{addr}/api/mobile/secure/workspaces/{}/stream?device_id=22222222-2222-2222-2222-222222222222",
+            "http://{addr}/api/mobile/secure/workspaces/{}/stream?device_id=22222222-2222-2222-2222-222222222222&token=bad-token",
             workspace.id.0
         ))
         .header("connection", "upgrade")
@@ -276,7 +342,7 @@ async fn mobile_secure_workspace_stream_rejects_disabled_mobile_access_before_up
     let home = tempfile::tempdir().unwrap();
     let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
 
-    let (app, _state, workspace_id) = build_mobile_access_app(false).await;
+    let (app, _state, workspace_id, device_id, key) = build_mobile_access_app(false).await;
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let server = tokio::spawn(async move {
@@ -284,9 +350,10 @@ async fn mobile_secure_workspace_stream_rejects_disabled_mobile_access_before_up
     });
     let client = reqwest::Client::new();
 
+    let query = mobile_secure_stream_query(&device_id, &key, workspace_id);
     let res = client
         .get(format!(
-            "http://{addr}/api/mobile/secure/workspaces/{}/stream?device_id=22222222-2222-2222-2222-222222222222",
+            "http://{addr}/api/mobile/secure/workspaces/{}/stream?{query}",
             workspace_id.0
         ))
         .header("connection", "upgrade")
@@ -471,7 +538,7 @@ async fn mobile_secure_proxy_rejects_disabled_mobile_access_for_existing_device(
 }
 
 #[tokio::test]
-async fn mobile_secure_proxy_does_not_grant_daemon_auth_for_api_routes() {
+async fn mobile_secure_proxy_grants_mobile_auth_for_proxied_api_routes() {
     let _serial = home_env_test_lock().lock().await;
     let home = tempfile::tempdir().unwrap();
     let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
@@ -492,7 +559,12 @@ async fn mobile_secure_proxy_does_not_grant_daemon_auth_for_api_routes() {
     assert_eq!(res.status(), StatusCode::OK);
 
     let payload = decode_mobile_secure_response(res, &device_id, &key).await;
-    assert_eq!(payload["status"], 401);
+    assert_eq!(payload["status"], 200);
+    let body_bytes = base64::engine::general_purpose::STANDARD
+        .decode(payload["body_b64"].as_str().unwrap())
+        .unwrap();
+    let body_json: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+    assert_eq!(body_json, json!([]));
 }
 
 #[tokio::test]

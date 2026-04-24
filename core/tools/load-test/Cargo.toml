@@ -11,6 +11,7 @@ futures = { workspace = true }
 rand = "0.8"
 serde = { workspace = true }
 serde_json = { workspace = true }
+sha2 = "0.10"
 tokio = { workspace = true }
 tokio-tungstenite = { version = "0.26", features = ["rustls-tls-webpki-roots"] }
 url = "2"

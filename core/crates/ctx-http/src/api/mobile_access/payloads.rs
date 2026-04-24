@@ -80,4 +80,5 @@ pub(in crate::api) struct MobileSecureEnvelope {
 #[derive(Debug, Deserialize)]
 pub(in crate::api) struct MobileSecureStreamQuery {
     pub(in crate::api) device_id: String,
+    pub(in crate::api) token: String,
 }

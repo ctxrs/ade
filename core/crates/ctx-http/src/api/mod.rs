@@ -160,15 +160,20 @@ fn parse_forwarded_header(value: &str) -> (Option<String>, Option<String>) {
     (proto, host)
 }
 
-fn resolve_request_base_url(headers: &HeaderMap, fallback: &str) -> String {
+fn resolve_request_base_url(headers: &HeaderMap, fallback: &str) -> Option<String> {
     let fallback = fallback.trim_end_matches('/');
     let fallback_url = Url::parse(fallback).ok();
-    let fallback_host = fallback_url.as_ref().and_then(|url| {
+    let fallback_base = fallback_url.as_ref().and_then(|url| {
         let host = url.host_str()?;
-        Some(match url.port() {
+        let host = match url.port() {
             Some(port) => format!("{host}:{port}"),
             None => host.to_string(),
-        })
+        };
+        if is_safe_request_base_host(&host) && matches!(url.scheme(), "http" | "https") {
+            Some(format!("{}://{}", url.scheme(), host.trim_end_matches('/')))
+        } else {
+            None
+        }
     });
 
     let (forwarded_proto, forwarded_host) = headers
@@ -190,17 +195,16 @@ fn resolve_request_base_url(headers: &HeaderMap, fallback: &str) -> String {
         .to_ascii_lowercase();
     let host = forwarded_host
         .or_else(|| header_first_value(headers, "x-forwarded-host"))
-        .or_else(|| header_first_value(headers, header::HOST.as_str()))
-        .or(fallback_host);
+        .or_else(|| header_first_value(headers, header::HOST.as_str()));
 
     match host {
         Some(host)
             if is_safe_request_base_host(&host) && matches!(proto.as_str(), "http" | "https") =>
         {
-            format!("{}://{}", proto, host.trim_end_matches('/'))
+            Some(format!("{}://{}", proto, host.trim_end_matches('/')))
         }
-        None => fallback.to_string(),
-        Some(_) => fallback.to_string(),
+        Some(_) => None,
+        None => fallback_base,
     }
 }
 
@@ -1003,7 +1007,7 @@ mod tests {
         headers.insert(header::HOST, HeaderValue::from_static("127.0.0.1:4455"));
         assert_eq!(
             resolve_request_base_url(&headers, "http://127.0.0.1:4321"),
-            "http://127.0.0.1:4455"
+            Some("http://127.0.0.1:4455".to_string())
         );
     }
 
@@ -1011,10 +1015,7 @@ mod tests {
     fn resolve_request_base_url_rejects_non_loopback_host_headers() {
         let mut headers = HeaderMap::new();
         headers.insert(header::HOST, HeaderValue::from_static("evil.example"));
-        assert_eq!(
-            resolve_request_base_url(&headers, "http://127.0.0.1:4321"),
-            "http://127.0.0.1:4321"
-        );
+        assert_eq!(resolve_request_base_url(&headers, "http://127.0.0.1:4321"), None);
     }
 
     #[test]
@@ -1024,10 +1025,7 @@ mod tests {
             header::FORWARDED,
             HeaderValue::from_static("proto=javascript;host=127.0.0.1:4455"),
         );
-        assert_eq!(
-            resolve_request_base_url(&headers, "http://127.0.0.1:4321"),
-            "http://127.0.0.1:4321"
-        );
+        assert_eq!(resolve_request_base_url(&headers, "http://127.0.0.1:4321"), None);
     }
 
     #[test]
@@ -1039,7 +1037,16 @@ mod tests {
         );
         assert_eq!(
             resolve_request_base_url(&headers, "http://127.0.0.1:4321"),
-            "https://tauri.localhost:3000"
+            Some("https://tauri.localhost:3000".to_string())
+        );
+    }
+
+    #[test]
+    fn resolve_request_base_url_uses_loopback_fallback_without_request_host() {
+        let headers = HeaderMap::new();
+        assert_eq!(
+            resolve_request_base_url(&headers, "http://127.0.0.1:4321"),
+            Some("http://127.0.0.1:4321".to_string())
         );
     }
 }

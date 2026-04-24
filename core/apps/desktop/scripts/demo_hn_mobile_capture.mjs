@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { createWriteStream, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, createWriteStream, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { spawn, spawnSync } from "node:child_process";
 import path from "node:path";
 
@@ -201,20 +201,43 @@ async function waitForSessionCompletion(baseUrl, token, sessionId) {
   });
 }
 
-async function maybeAttachArtifact(baseUrl, token, sessionId, artifactPath) {
+async function maybeAttachArtifact(baseUrl, token, sessionId, artifactPath, worktreeRoot) {
   if (!artifactPath) return null;
   if (!existsSync(artifactPath)) {
     throw new Error(`artifact path does not exist: ${artifactPath}`);
   }
+  const stagedPath = stageSessionArtifactPath(worktreeRoot, artifactPath);
   return api(baseUrl, token, "POST", `/api/sessions/${sessionId}/artifacts`, {
     artifacts: [
       {
-        absolute_file_path: artifactPath,
-        name: path.basename(artifactPath),
-        mime_type: inferVideoArtifactMimeType(artifactPath),
+        absolute_file_path: stagedPath,
+        name: path.basename(stagedPath),
+        mime_type: inferVideoArtifactMimeType(stagedPath),
       },
     ],
   });
+}
+
+function stageSessionArtifactPath(worktreeRoot, artifactPath) {
+  if (!artifactPath) return null;
+  if (!worktreeRoot) {
+    throw new Error("cannot attach a session artifact without a task worktree root");
+  }
+  const resolvedPath = path.resolve(artifactPath);
+  const relativePath = path.relative(worktreeRoot, resolvedPath);
+  if (
+    relativePath
+    && !relativePath.startsWith("..")
+    && !path.isAbsolute(relativePath)
+  ) {
+    return resolvedPath;
+  }
+
+  const stagedDir = path.join(worktreeRoot, ".ctx-session-artifacts");
+  mkdirSync(stagedDir, { recursive: true });
+  const stagedPath = path.join(stagedDir, path.basename(resolvedPath));
+  copyFileSync(resolvedPath, stagedPath);
+  return stagedPath;
 }
 
 async function main() {
@@ -326,7 +349,13 @@ async function main() {
       effectiveArtifactPath = recordedArtifactPath;
     }
 
-    const artifacts = await maybeAttachArtifact(auth.daemonUrl, auth.authToken, session.id, effectiveArtifactPath);
+    const artifacts = await maybeAttachArtifact(
+      auth.daemonUrl,
+      auth.authToken,
+      session.id,
+      effectiveArtifactPath,
+      worktreeRoot,
+    );
 
     const captureScenarioScript = path.resolve(REPO_ROOT, "core/apps/desktop/scripts/demo_capture_to_scenario.mjs");
     runChecked(process.execPath, [

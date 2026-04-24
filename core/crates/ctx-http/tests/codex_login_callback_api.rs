@@ -307,14 +307,18 @@ async fn complete_login_rejects_expected_path_mismatch() {
 }
 
 #[tokio::test]
-async fn complete_login_rejects_expected_host_mismatch() {
+async fn complete_login_accepts_loopback_alias_for_expected_host() {
     let data_dir = tempfile::tempdir().unwrap();
     let state = app_state(data_dir.path()).await;
+    let (callback_base, callback_handle) = start_callback_server().await;
+    let expected_callback = format!("{callback_base}/auth/callback");
+    let parsed = reqwest::Url::parse(&expected_callback).unwrap();
+    let port = parsed.port().unwrap();
     insert_pending_login(
         &state,
         "acct-host-mismatch",
         "token-host-mismatch",
-        "http://127.0.0.1:24567/auth/callback",
+        &expected_callback,
     )
     .await;
     let (base, client, server_handle) = start_http_app(state).await;
@@ -324,16 +328,15 @@ async fn complete_login_rejects_expected_host_mismatch() {
             "{base}/api/providers/codex/accounts/login/acct-host-mismatch"
         ))
         .json(&json!({
-            "callback_url": "http://localhost:24567/auth/callback?code=abc",
+            "callback_url": format!("http://localhost:{port}/auth/callback?code=abc"),
             "completion_token": "token-host-mismatch"
         }))
         .send()
         .await
         .unwrap();
-    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
-    let body: ErrorResp = resp.json().await.unwrap();
-    assert!(body.error.contains("host mismatch"));
+    assert_eq!(resp.status(), StatusCode::OK);
 
+    callback_handle.abort();
     server_handle.abort();
 }
 

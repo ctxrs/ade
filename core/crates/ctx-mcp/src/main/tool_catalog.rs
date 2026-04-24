@@ -108,7 +108,7 @@ pub(super) fn tools_list_response() -> Value {
             {
                 "name": "artifacts_set",
                 "title": "Set Session Artifacts",
-                "description": "Sets the ordered list of artifacts for the current session. Video artifacts such as mp4, webm, and mov are supported.",
+                "description": "Sets the ordered list of artifacts for the current session. Paths must stay inside the session worktree or that session's tool-output spool subtree. Video artifacts such as mp4, webm, and mov are supported.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {

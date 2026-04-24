@@ -66,6 +66,16 @@ pub fn derive_client_key(
     Ok(E2eeKey(out))
 }
 
+pub fn derive_stream_token(key: &E2eeKey, workspace_id: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(b"ctx-mobile-stream|");
+    hasher.update(workspace_id.as_bytes());
+    hasher.update(b"|");
+    hasher.update(key.0);
+    let digest = hasher.finalize();
+    digest.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
 pub fn encrypt(key: &E2eeKey, device_id: &str, seq: i64, plaintext: &[u8]) -> Result<Envelope> {
     let mut nonce = [0u8; 24];
     rand_core::OsRng.fill_bytes(&mut nonce);

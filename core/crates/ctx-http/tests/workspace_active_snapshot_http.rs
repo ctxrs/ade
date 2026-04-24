@@ -310,6 +310,7 @@ fn build_mobile_secure_ws_url(
     base: &str,
     workspace_id: ctx_core::ids::WorkspaceId,
     device_id: &str,
+    key: &mobile_e2ee::E2eeKey,
 ) -> String {
     let mut url = Url::parse(base).expect("parse base url");
     match url.scheme() {
@@ -325,7 +326,8 @@ fn build_mobile_secure_ws_url(
         "/api/mobile/secure/workspaces/{}/stream",
         workspace_id.0
     ));
-    url.set_query(Some(&format!("device_id={device_id}")));
+    let token = mobile_e2ee::derive_stream_token(key, &workspace_id.0.to_string());
+    url.set_query(Some(&format!("device_id={device_id}&token={token}")));
     url.to_string()
 }
 
@@ -2141,7 +2143,7 @@ async fn mobile_secure_workspace_stream_replay_only_subscribe_reseeds_cached_wor
         .unwrap();
 
     let (device_id, key) = configure_mobile_secure_access(&state).await;
-    let ws_url = build_mobile_secure_ws_url(base, ws.id, &device_id);
+    let ws_url = build_mobile_secure_ws_url(base, ws.id, &device_id, &key);
     let (mut socket, _) = connect_async(&ws_url).await.unwrap();
     let ready =
         recv_secure_workspace_message(&mut socket, &key, &device_id, Duration::from_secs(2))
@@ -2776,7 +2778,7 @@ async fn mobile_secure_workspace_stream_active_subscribe_includes_secondary_work
         .unwrap();
 
     let (device_id, key) = configure_mobile_secure_access(&state).await;
-    let ws_url = build_mobile_secure_ws_url(base, ws.id, &device_id);
+    let ws_url = build_mobile_secure_ws_url(base, ws.id, &device_id, &key);
     let (mut socket, _) = connect_async(&ws_url).await.unwrap();
     let ready =
         recv_secure_workspace_message(&mut socket, &key, &device_id, Duration::from_secs(2))

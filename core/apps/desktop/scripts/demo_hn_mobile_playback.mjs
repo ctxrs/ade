@@ -441,6 +441,28 @@ export function resolvePlaybackSessionArtifactPath(fixturePath, fixture, explici
   return explicitArtifactPath || resolveFixturePath(fixturePath, fixture.session_artifact_path) || DEFAULT_SESSION_ARTIFACT_PATH;
 }
 
+function stageSessionArtifactPath(worktreeRoot, artifactPath) {
+  if (!artifactPath) return null;
+  if (!worktreeRoot) {
+    throw new Error("cannot attach a session artifact without a task worktree root");
+  }
+  const resolvedPath = path.resolve(artifactPath);
+  const relativePath = path.relative(worktreeRoot, resolvedPath);
+  if (
+    relativePath
+    && !relativePath.startsWith("..")
+    && !path.isAbsolute(relativePath)
+  ) {
+    return resolvedPath;
+  }
+
+  const stagedDir = path.join(worktreeRoot, ".ctx-session-artifacts");
+  mkdirSync(stagedDir, { recursive: true });
+  const stagedPath = path.join(stagedDir, path.basename(resolvedPath));
+  copyFileSync(resolvedPath, stagedPath);
+  return stagedPath;
+}
+
 function writeJson(pathname, value) {
   writeFileSync(pathname, `${JSON.stringify(value, null, 2)}\n`, "utf8");
 }
@@ -1585,17 +1607,18 @@ async function waitForArtifactVideoCompletion(browser) {
   await sleep(completionPlan.tailDwellMs);
 }
 
-async function attachSessionArtifact(baseUrl, token, sessionId, artifactPath) {
+async function attachSessionArtifact(baseUrl, token, sessionId, artifactPath, worktreeRoot) {
   if (!artifactPath) return null;
   if (!existsSync(artifactPath)) {
     throw new Error(`session artifact does not exist: ${artifactPath}`);
   }
+  const stagedPath = stageSessionArtifactPath(worktreeRoot, artifactPath);
   return api(baseUrl, token, "POST", `/api/sessions/${sessionId}/artifacts`, {
     artifacts: [
       {
-        absolute_file_path: artifactPath,
-        name: path.basename(artifactPath),
-        mime_type: inferVideoArtifactMimeType(artifactPath),
+        absolute_file_path: stagedPath,
+        name: path.basename(stagedPath),
+        mime_type: inferVideoArtifactMimeType(stagedPath),
       },
     ],
   });
@@ -1824,7 +1847,13 @@ async function main() {
       await sleep(PRIMARY_DIFF_PANE_DWELL_MS);
     }
 
-    const attachedArtifacts = await attachSessionArtifact(baseUrl, authToken, session.id, options.sessionArtifactPath);
+    const attachedArtifacts = await attachSessionArtifact(
+      baseUrl,
+      authToken,
+      session.id,
+      options.sessionArtifactPath,
+      worktreeRoot,
+    );
     writeJson(path.join(options.artifactDir, "attached-artifacts.json"), attachedArtifacts);
     await sleep(POST_ARTIFACT_ATTACH_DWELL_MS);
 

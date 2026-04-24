@@ -24,18 +24,9 @@ async fn require_mobile_secure_stream_access(
     state: &Arc<AppState>,
     workspace_id: WorkspaceId,
     device_id: &str,
+    provided_token: &str,
 ) -> Result<(), StatusCode> {
     let device_uuid = uuid::Uuid::parse_str(device_id).map_err(|_| StatusCode::BAD_REQUEST)?;
-    let workspace_exists = state
-        .global_store()
-        .get_workspace(workspace_id)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .is_some();
-    if !workspace_exists {
-        return Err(StatusCode::NOT_FOUND);
-    }
-
     let cfg = state
         .global_store()
         .get_mobile_access_config()
@@ -61,6 +52,26 @@ async fn require_mobile_secure_stream_access(
     {
         return Err(StatusCode::UNAUTHORIZED);
     }
+    let key = crate::mobile_e2ee::derive_key(
+        device_id,
+        device.public_key.as_deref().unwrap_or_default(),
+        &cfg.daemon_private_key,
+    )
+    .map_err(|_| StatusCode::UNAUTHORIZED)?;
+    let expected_token =
+        crate::mobile_e2ee::derive_stream_token(&key, &workspace_id.0.to_string());
+    if provided_token != expected_token {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+    let workspace_exists = state
+        .global_store()
+        .get_workspace(workspace_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .is_some();
+    if !workspace_exists {
+        return Err(StatusCode::NOT_FOUND);
+    }
     Ok(())
 }
 
@@ -75,7 +86,9 @@ pub(in crate::api) async fn mobile_secure_workspace_stream_ws(
         Err(_) => return StatusCode::BAD_REQUEST.into_response(),
     };
     let device_id = query.device_id.trim().to_string();
-    if let Err(status) = require_mobile_secure_stream_access(&state, workspace_id, &device_id).await
+    let token = query.token.trim().to_string();
+    if let Err(status) =
+        require_mobile_secure_stream_access(&state, workspace_id, &device_id, &token).await
     {
         return status.into_response();
     }

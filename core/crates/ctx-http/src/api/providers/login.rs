@@ -92,7 +92,9 @@ pub(super) fn validate_callback_url(
         let expected_host = expected
             .host_str()
             .ok_or_else(|| anyhow::anyhow!("expected callback URL must include host"))?;
-        if normalized_host(host) != normalized_host(expected_host) {
+        let same_host = normalized_host(host) == normalized_host(expected_host);
+        let same_loopback = is_loopback_host(host) && is_loopback_host(expected_host);
+        if !same_host && !same_loopback {
             anyhow::bail!("callback_url host mismatch");
         }
         if callback.scheme() != expected.scheme() {
