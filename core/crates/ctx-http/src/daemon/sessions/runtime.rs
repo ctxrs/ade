@@ -379,20 +379,33 @@ impl SessionRuntime {
             }
 
             match state.store_for_task(task_id).await {
-                Ok(store) => match store.get_task(task_id).await {
-                    Ok(Some(task)) => {
-                        let kind = if task.archived_at.is_some() {
-                            TaskDeltaKind::Archived
-                        } else {
-                            TaskDeltaKind::Updated
-                        };
-                        let _ = state.emit_workspace_task_delta(task, kind).await;
+                Ok(store) => match store.get_workspace_active_task_summary(task_id).await {
+                    Ok(Some(summary)) => {
+                        let _ = state
+                            .emit_workspace_task_delta(summary.task, TaskDeltaKind::Updated)
+                            .await;
                     }
-                    Ok(None) => {}
+                    Ok(None) => match store.get_task(task_id).await {
+                        Ok(Some(task)) => {
+                            let kind = if task.archived_at.is_some() {
+                                TaskDeltaKind::Archived
+                            } else {
+                                TaskDeltaKind::Updated
+                            };
+                            let _ = state.emit_workspace_task_delta(task, kind).await;
+                        }
+                        Ok(None) => {}
+                        Err(err) => {
+                            tracing::warn!(
+                                task_id = %task_id.0,
+                                "workspace task delta refresh read failed: {err:?}"
+                            );
+                        }
+                    },
                     Err(err) => {
                         tracing::warn!(
                             task_id = %task_id.0,
-                            "workspace task delta refresh read failed: {err:?}"
+                            "workspace task delta refresh summary read failed: {err:?}"
                         );
                     }
                 },

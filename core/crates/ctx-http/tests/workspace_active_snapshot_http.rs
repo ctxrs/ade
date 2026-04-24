@@ -2271,6 +2271,56 @@ async fn worktree_vcs_emit_and_summary_refresh_share_refresh_lock() {
 }
 
 #[tokio::test]
+async fn worktree_vcs_activity_eviction_drops_refresh_lock() {
+    let (repo, _data_dir, state, server) = setup_git().await;
+    let base = &server.base_url;
+    let client = &server.client;
+
+    let ws: ctx_core::models::Workspace = client
+        .post(format!("{base}/api/workspaces"))
+        .json(&json!({"root_path": repo.path(), "name": "ws"}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    let task = create_task_with_primary_worktree(
+        client,
+        &state,
+        base,
+        ws.id,
+        repo.path(),
+        "refresh-lock-eviction",
+    )
+    .await;
+    let session = create_primary_worktree_session(client, base, task.id).await;
+    let store = state.store_for_session(session.id).await.unwrap();
+    let worktree = store
+        .get_worktree(session.worktree_id)
+        .await
+        .unwrap()
+        .expect("worktree");
+
+    let active = HashSet::from([worktree.id]);
+    state
+        .update_worktree_vcs_activity(&HashSet::new(), &active)
+        .await;
+
+    let initial_lock = state.worktree_vcs_refresh_lock(worktree.id).await;
+    state
+        .update_worktree_vcs_activity(&active, &HashSet::new())
+        .await;
+
+    let next_lock = state.worktree_vcs_refresh_lock(worktree.id).await;
+    assert!(
+        !Arc::ptr_eq(&initial_lock, &next_lock),
+        "worktree VCS eviction should drop the cached refresh lock"
+    );
+}
+
+#[tokio::test]
 async fn workspace_stream_replay_only_subscribe_reseeds_cached_worktree_vcs_snapshot() {
     let (repo, _data_dir, state, server) = setup_git().await;
     let base = &server.base_url;
@@ -3472,6 +3522,10 @@ async fn workspace_stream_session_updates_emit_task_delta_without_full_active_ta
                         if delta.task.id == task.id
                             && matches!(delta.kind, ctx_core::models::TaskDeltaKind::Updated) =>
                     {
+                        assert!(
+                            delta.task.has_active_session,
+                            "session-driven task delta must preserve has_active_session"
+                        );
                         saw_task_delta = true;
                     }
                     WorkspaceActiveSnapshotEvent::ActiveTaskUpsert { task: summary, .. }

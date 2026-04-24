@@ -197,6 +197,12 @@ impl WorkspaceRuntime {
                     runtime.remove(worktree_id);
                 }
             }
+            {
+                let mut locks = self.worktree_vcs_refresh_locks.lock().await;
+                for worktree_id in &evicted {
+                    locks.remove(worktree_id);
+                }
+            }
             self.workspace_active_snapshot
                 .drop_worktree_vcs_snapshots(&evicted)
                 .await;
