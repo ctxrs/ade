@@ -258,4 +258,19 @@ async fn buffer_open_update_and_conflict() {
         .unwrap();
     let res = app.clone().oneshot(req).await.unwrap();
     assert_eq!(res.status(), StatusCode::OK);
+
+    let req = Request::builder()
+        .method("POST")
+        .uri("/api/buffers/close")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "session_id": session.id.0.to_string(),
+                "buffer_id": opened.get("buffer_id").unwrap(),
+            })
+            .to_string(),
+        ))
+        .unwrap();
+    let res = app.oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::NOT_FOUND);
 }

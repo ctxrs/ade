@@ -701,7 +701,9 @@ pub(super) async fn close_buffer(
     let bid = BufferId(uuid::Uuid::parse_str(&req.buffer_id).map_err(|_| StatusCode::BAD_REQUEST)?);
     let sid =
         SessionId(uuid::Uuid::parse_str(&req.session_id).map_err(|_| StatusCode::BAD_REQUEST)?);
-    state.core.buffers.close(bid, sid).await;
+    if state.core.buffers.close(bid, sid).await.is_none() {
+        return Err(StatusCode::NOT_FOUND);
+    }
     Ok(StatusCode::OK)
 }
 
