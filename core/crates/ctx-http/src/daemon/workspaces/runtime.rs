@@ -25,6 +25,7 @@ pub(crate) fn normalize_hydrated_worktree_vcs_snapshot(
     if snapshot.compute_state == WorktreeVcsComputeState::Computing {
         snapshot.compute_state = WorktreeVcsComputeState::Ready;
     }
+    snapshot.git_status.raw.clear();
     snapshot.freshness = match snapshot.compute_state {
         WorktreeVcsComputeState::Error => WorktreeVcsFreshness::Error,
         WorktreeVcsComputeState::Ready | WorktreeVcsComputeState::Computing => {
@@ -227,6 +228,18 @@ impl WorkspaceRuntime {
             let entry = open.entry(*worktree_id).or_insert(0);
             *entry += 1;
         }
+    }
+
+    pub async fn worktree_vcs_refresh_lock(
+        &self,
+        worktree_id: WorktreeId,
+    ) -> Arc<tokio::sync::Mutex<()>> {
+        let mut locks = self.worktree_vcs_refresh_locks.lock().await;
+        Arc::clone(
+            locks
+                .entry(worktree_id)
+                .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(()))),
+        )
     }
 
     pub async fn is_worktree_vcs_active(&self, worktree_id: WorktreeId) -> bool {

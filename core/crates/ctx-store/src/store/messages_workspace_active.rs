@@ -71,17 +71,35 @@ impl Store {
     pub async fn list_workspace_worktree_vcs_snapshots(
         &self,
         workspace_id: WorkspaceId,
+        worktree_ids: &HashSet<WorktreeId>,
     ) -> Result<Vec<WorktreeVcsSnapshot>> {
-        let rows = self
-            .query(
-                r#"SELECT worktree_id, snapshot_json
-                   FROM worktree_vcs_snapshot_cache
-                   WHERE workspace_id = ?
-                   ORDER BY updated_at DESC, worktree_id ASC"#,
-            )
-            .bind(workspace_id.0.to_string())
-            .fetch_all(&self.pool)
-            .await?;
+        if worktree_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut ordered_ids = worktree_ids.iter().copied().collect::<Vec<_>>();
+        ordered_ids.sort_by_key(|worktree_id| worktree_id.0);
+
+        let mut sql = String::from(
+            r#"SELECT worktree_id, snapshot_json
+               FROM worktree_vcs_snapshot_cache
+               WHERE workspace_id = ?
+                 AND worktree_id IN ("#,
+        );
+        for (idx, _) in ordered_ids.iter().enumerate() {
+            if idx > 0 {
+                sql.push_str(", ");
+            }
+            sql.push('?');
+        }
+        sql.push_str(") ORDER BY updated_at DESC, worktree_id ASC");
+
+        let sql = self.rewrite_sql(&sql);
+        let mut query = sqlx::query(sql.as_ref()).bind(workspace_id.0.to_string());
+        for worktree_id in ordered_ids {
+            query = query.bind(worktree_id.0.to_string());
+        }
+        let rows = query.fetch_all(&self.pool).await?;
 
         let mut snapshots = Vec::with_capacity(rows.len());
         for row in rows {

@@ -202,6 +202,7 @@ impl AppState {
                 git_status_snapshots: Mutex::new(HashMap::new()),
                 worktree_vcs_snapshots: Mutex::new(HashMap::new()),
                 worktree_vcs_active: Mutex::new(HashMap::new()),
+                worktree_vcs_refresh_locks: Mutex::new(HashMap::new()),
                 worktree_vcs_open_panes: Mutex::new(HashMap::new()),
                 worktree_vcs_summary_gen: Mutex::new(HashMap::new()),
                 worktree_vcs_runtime: Mutex::new(HashMap::new()),

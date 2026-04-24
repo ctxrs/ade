@@ -81,11 +81,8 @@ impl WorkspaceSnapshotHydrationStore for Store {
         workspace_id: WorkspaceId,
         worktree_ids: &HashSet<WorktreeId>,
     ) -> Result<Vec<WorktreeVcsSnapshot>> {
-        let mut snapshots = self
-            .list_workspace_worktree_vcs_snapshots(workspace_id)
-            .await?;
-        snapshots.retain(|snapshot| worktree_ids.contains(&snapshot.worktree_id));
-        Ok(snapshots)
+        self.list_workspace_worktree_vcs_snapshots(workspace_id, worktree_ids)
+            .await
     }
 }
 
@@ -456,7 +453,10 @@ mod tests {
                 line_deletions: Some(4),
                 line_count: Some(15),
             },
-            git_status: WorktreeVcsGitStatusSummary::default(),
+            git_status: WorktreeVcsGitStatusSummary {
+                raw: "## main\n M edited.txt\n".to_string(),
+                ..Default::default()
+            },
             touched_files: WorktreeVcsTouchedFiles::default(),
             touched_files_state: ctx_core::models::WorktreeVcsTouchedFilesState::Ready,
             freshness: WorktreeVcsFreshness::Fresh,
@@ -550,6 +550,7 @@ mod tests {
             git_status_snapshots: AsyncMutex::new(HashMap::new()),
             worktree_vcs_snapshots: AsyncMutex::new(HashMap::new()),
             worktree_vcs_active: AsyncMutex::new(HashMap::new()),
+            worktree_vcs_refresh_locks: AsyncMutex::new(HashMap::new()),
             worktree_vcs_open_panes: AsyncMutex::new(HashMap::new()),
             worktree_vcs_summary_gen: AsyncMutex::new(HashMap::new()),
             worktree_vcs_runtime: AsyncMutex::new(HashMap::new()),
@@ -610,6 +611,10 @@ mod tests {
             snapshot.worktree_vcs_snapshots[0].freshness,
             WorktreeVcsFreshness::Stale
         );
+        assert!(
+            snapshot.worktree_vcs_snapshots[0].git_status.raw.is_empty(),
+            "hydrated workspace snapshot should not expose raw git status text"
+        );
 
         let heads = runtime
             .workspace_active_snapshot
@@ -624,5 +629,9 @@ mod tests {
             .await
             .expect("expected hydrated runtime worktree vcs snapshot");
         assert_eq!(cached.freshness, WorktreeVcsFreshness::Stale);
+        assert!(
+            cached.git_status.raw.is_empty(),
+            "hydrated runtime snapshot should not expose raw git status text"
+        );
     }
 }

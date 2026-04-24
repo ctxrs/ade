@@ -151,6 +151,7 @@ fn snapshot_for_durable_cache(snapshot: &WorktreeVcsSnapshot) -> WorktreeVcsSnap
     let mut durable = snapshot.clone();
     durable.touched_files = WorktreeVcsTouchedFiles::default();
     durable.touched_files_state = WorktreeVcsTouchedFilesState::NotLoaded;
+    durable.git_status.raw.clear();
     durable.git_status.entries.clear();
     durable
 }

@@ -122,6 +122,13 @@ impl AppState {
         self.workspaces.is_worktree_vcs_pane_open(worktree_id).await
     }
 
+    pub async fn worktree_vcs_refresh_lock(
+        &self,
+        worktree_id: WorktreeId,
+    ) -> Arc<tokio::sync::Mutex<()>> {
+        self.workspaces.worktree_vcs_refresh_lock(worktree_id).await
+    }
+
     pub async fn ensure_workspace_active_snapshot_hydrated(
         &self,
         workspace_id: WorkspaceId,
