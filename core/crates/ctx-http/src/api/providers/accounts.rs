@@ -146,9 +146,19 @@ pub(crate) async fn get_codex_accounts_usage(
     };
 
     let mut entries = Vec::new();
-    let cfg = crate::installer::load_agent_server_config(&state.core.data_root)
-        .await
-        .unwrap_or_default();
+    let (cfg, config_error) =
+        crate::api::provider_launch::load_managed_agent_server_config_with_error(
+            &state.core.data_root,
+        )
+        .await;
+    if let Some(config_error) = config_error {
+        return Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiErrorResp {
+                error: config_error,
+            }),
+        ));
+    }
 
     for account in registry.accounts {
         let _ = provider_accounts::hydrate_codex_account_home_from_secret(
