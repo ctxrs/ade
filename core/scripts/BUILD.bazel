@@ -43,50 +43,50 @@ DESKTOP_PARITY_CONTRACT_DATA = COMMON_CORE_DATA + [
 
 sh_binary(
     name = "provider_auth_validate",
-    srcs = ["//tools/bazel:run_workspace_task.sh"],
-    args = ["core", "pnpm", "provider-auth:validate"],
+    srcs = ["//tools/bazel:run_node_task.sh"],
+    args = ["core", "scripts/provider_auth_validate_bazel.cjs"],
     data = PROVIDER_AUTH_CONTRACT_DATA,
 )
 
 sh_binary(
     name = "desktop_version_check",
-    srcs = ["//tools/bazel:run_workspace_task.sh"],
-    args = ["core", "pnpm", "desktop:check:versions"],
+    srcs = ["//tools/bazel:run_node_task.sh"],
+    args = ["core", "scripts/desktop_check_versions.cjs"],
     data = DESKTOP_RELEASE_CONTRACT_DATA,
 )
 
 sh_binary(
     name = "desktop_runtime_lock_check_matrix",
-    srcs = ["//tools/bazel:run_workspace_task.sh"],
-    args = ["core", "pnpm", "desktop:runtime:lock:check-matrix"],
+    srcs = ["//tools/bazel:run_node_task.sh"],
+    args = ["core", "scripts/runtime_lock_matrix_consistency.cjs"],
     data = DESKTOP_RELEASE_CONTRACT_DATA,
 )
 
 sh_binary(
     name = "desktop_runtime_lock_validate",
-    srcs = ["//tools/bazel:run_workspace_task.sh"],
-    args = ["core", "node", "scripts/runtime_lock_validate.cjs", "--profile", "parity"],
+    srcs = ["//tools/bazel:run_node_task.sh"],
+    args = ["core", "scripts/runtime_lock_validate.cjs", "--profile", "parity"],
     data = DESKTOP_RELEASE_CONTRACT_DATA,
 )
 
 sh_binary(
     name = "desktop_provider_matrix_archive_contracts",
     srcs = ["//tools/bazel:run_workspace_task.sh"],
-    args = ["core", "node", "--test", "scripts/provider_matrix_archive_gap_report.test.cjs", "scripts/provider_matrix_required_targets_gate.test.cjs"],
+    args = ["core", "node", "--test", "scripts/provider_matrix_archive_gap_report.test.cjs", "scripts/provider_matrix_required_targets_gate.test.cjs", "scripts/provider_release_bump.test.cjs"],
     data = DESKTOP_PARITY_CONTRACT_DATA,
 )
 
 sh_binary(
     name = "desktop_launch_mode_contracts",
-    srcs = ["//tools/bazel:run_workspace_task.sh"],
-    args = ["core", "node", "--test", "scripts/desktop_mode_contract.test.cjs", "scripts/desktop_prepare.test.cjs", "scripts/desktop_tauri_entry.test.cjs"],
+    srcs = ["//tools/bazel:run_node_task.sh"],
+    args = ["core", "--test", "scripts/desktop_mode_contract.test.cjs", "scripts/desktop_prepare.test.cjs", "scripts/desktop_tauri_entry.test.cjs"],
     data = DESKTOP_PARITY_CONTRACT_DATA,
 )
 
 sh_binary(
     name = "desktop_bundle_contracts",
-    srcs = ["//tools/bazel:run_workspace_task.sh"],
-    args = ["core", "node", "--test", "scripts/desktop_import_bundles.test.cjs", "scripts/desktop_normalize_bundle_permissions.test.cjs", "scripts/desktop_icon_reps.test.cjs"],
+    srcs = ["//tools/bazel:run_node_task.sh"],
+    args = ["core", "--test", "scripts/desktop_import_bundles.test.cjs", "scripts/desktop_normalize_bundle_permissions.test.cjs", "scripts/desktop_icon_reps.test.cjs"],
     data = DESKTOP_PARITY_CONTRACT_DATA,
 )
 

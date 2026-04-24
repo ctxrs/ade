@@ -84,6 +84,7 @@ const CLAUDE_PINNED_SUBSCRIPTION_MODELS: [PinnedReasoningModel; 3] = [
 
 const GEMINI_CATALOG_VERSION_0_33_1: &str = "0.33.1";
 const GEMINI_CATALOG_VERSION_0_38_2: &str = "0.38.2";
+const GEMINI_CATALOG_VERSION_0_39_0: &str = "0.39.0";
 
 const GEMINI_PINNED_SUBSCRIPTION_MODELS_0_33_1: [PinnedFlatModel; 7] = [
     PinnedFlatModel {
@@ -184,14 +185,14 @@ fn normalize_cli_version(version: &str) -> Option<String> {
 fn gemini_models_value_for_version(version: &str) -> Option<serde_json::Value> {
     let normalized_version = normalize_cli_version(version)?;
     match normalized_version.as_str() {
-        GEMINI_CATALOG_VERSION_0_33_1 | GEMINI_CATALOG_VERSION_0_38_2 => {
-            Some(pinned_flat_models_value(
-                "gemini_cli_version_pinned",
-                normalized_version.as_str(),
-                GEMINI_PINNED_SUBSCRIPTION_MODELS_0_33_1[0].id,
-                &GEMINI_PINNED_SUBSCRIPTION_MODELS_0_33_1,
-            ))
-        }
+        GEMINI_CATALOG_VERSION_0_33_1
+        | GEMINI_CATALOG_VERSION_0_38_2
+        | GEMINI_CATALOG_VERSION_0_39_0 => Some(pinned_flat_models_value(
+            "gemini_cli_version_pinned",
+            normalized_version.as_str(),
+            GEMINI_PINNED_SUBSCRIPTION_MODELS_0_33_1[0].id,
+            &GEMINI_PINNED_SUBSCRIPTION_MODELS_0_33_1,
+        )),
         _ => None,
     }
 }
@@ -201,7 +202,7 @@ pub fn pinned_subscription_models_value(
     provider_version: Option<&str>,
 ) -> Option<serde_json::Value> {
     match provider_id {
-        "codex" => Some(pinned_reasoning_models_value(
+        "codex-crp" => Some(pinned_reasoning_models_value(
             "codex_bundle_pinned",
             format!(
                 "{}/{}",
@@ -232,7 +233,7 @@ mod tests {
     #[test]
     fn codex_pinned_subscription_models_include_reasoning_variants() {
         let payload =
-            pinned_subscription_models_value("codex", None).expect("codex pinned payload");
+            pinned_subscription_models_value("codex-crp", None).expect("codex pinned payload");
         assert_eq!(
             payload
                 .get("current_model_id")

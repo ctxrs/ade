@@ -79,6 +79,121 @@ async fn setup_session_fixture() -> SessionFixture {
     }
 }
 
+async fn create_peer_session(fixture: &SessionFixture) -> SessionId {
+    fixture
+        .store
+        .create_session(
+            fixture.task_id,
+            fixture.workspace_id,
+            fixture.worktree_id,
+            ctx_core::models::ExecutionEnvironment::Host,
+            "fake".into(),
+            "fake".into(),
+            "implementer".into(),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap()
+        .id
+}
+
+#[tokio::test]
+async fn provider_session_ref_claim_sets_projection_and_binding() {
+    let fixture = setup_session_fixture().await;
+
+    fixture
+        .store
+        .claim_session_provider_session_ref(fixture.session_id, "provider-thread-1".into(), "test")
+        .await
+        .unwrap();
+
+    let session = fixture
+        .store
+        .get_session(fixture.session_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        session.provider_session_ref.as_deref(),
+        Some("provider-thread-1")
+    );
+
+    let owner: String = sqlx::query_scalar(
+        "SELECT session_id FROM provider_session_bindings WHERE provider_id = 'fake' AND provider_session_ref = 'provider-thread-1'",
+    )
+    .fetch_one(fixture.store.pool())
+    .await
+    .unwrap();
+    assert_eq!(owner, fixture.session_id.0.to_string());
+}
+
+#[tokio::test]
+async fn provider_session_ref_claim_is_idempotent_for_same_session() {
+    let fixture = setup_session_fixture().await;
+
+    fixture
+        .store
+        .claim_session_provider_session_ref(fixture.session_id, "provider-thread-1".into(), "test")
+        .await
+        .unwrap();
+    fixture
+        .store
+        .claim_session_provider_session_ref(fixture.session_id, "provider-thread-1".into(), "test")
+        .await
+        .unwrap();
+
+    let count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM provider_session_bindings WHERE provider_id = 'fake' AND provider_session_ref = 'provider-thread-1'",
+    )
+    .fetch_one(fixture.store.pool())
+    .await
+    .unwrap();
+    assert_eq!(count, 1);
+}
+
+#[tokio::test]
+async fn provider_session_ref_claim_rejects_duplicate_owner() {
+    let fixture = setup_session_fixture().await;
+    let peer_session_id = create_peer_session(&fixture).await;
+
+    fixture
+        .store
+        .claim_session_provider_session_ref(fixture.session_id, "provider-thread-1".into(), "test")
+        .await
+        .unwrap();
+
+    let err = fixture
+        .store
+        .claim_session_provider_session_ref(peer_session_id, "provider-thread-1".into(), "test")
+        .await
+        .unwrap_err();
+    assert!(
+        err.to_string().contains("owned by session")
+            || err.to_string().contains("already attached to session"),
+        "{err:#}"
+    );
+}
+
+#[tokio::test]
+async fn provider_session_ref_claim_rejects_same_session_substitution() {
+    let fixture = setup_session_fixture().await;
+
+    fixture
+        .store
+        .claim_session_provider_session_ref(fixture.session_id, "provider-thread-1".into(), "test")
+        .await
+        .unwrap();
+
+    let err = fixture
+        .store
+        .claim_session_provider_session_ref(fixture.session_id, "provider-thread-2".into(), "test")
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("substitution rejected"), "{err:#}");
+}
+
 fn make_turn(session_id: SessionId, run_id: RunId, turn_id: TurnId) -> SessionTurn {
     let now = Utc::now();
     SessionTurn {
@@ -401,6 +516,120 @@ async fn concurrent_event_and_message_writes_do_not_error() {
     })
     .await
     .unwrap();
+}
+
+#[tokio::test]
+async fn provider_session_binding_migration_preserves_one_canonical_owner() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("db.sqlite");
+    std::fs::File::create(&db_path).unwrap();
+    let pool = SqlitePool::connect(&sqlite_url(&db_path)).await.unwrap();
+
+    sqlx::query(
+        r#"CREATE TABLE sessions (
+            id TEXT PRIMARY KEY,
+            provider_id TEXT NOT NULL,
+            provider_session_ref TEXT,
+            workspace_id TEXT NOT NULL,
+            task_id TEXT NOT NULL,
+            worktree_id TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )"#,
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    sqlx::query(
+        "INSERT INTO sessions (id, provider_id, provider_session_ref, workspace_id, task_id, worktree_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind("session-a")
+    .bind("fake")
+    .bind("shared-ref")
+    .bind("workspace")
+    .bind("task")
+    .bind("worktree")
+    .bind("2026-04-23T10:00:00Z")
+    .bind("2026-04-23T10:00:00Z")
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO sessions (id, provider_id, provider_session_ref, workspace_id, task_id, worktree_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind("session-b")
+    .bind("fake")
+    .bind("shared-ref")
+    .bind("workspace")
+    .bind("task")
+    .bind("worktree")
+    .bind("2026-04-23T10:05:00Z")
+    .bind("2026-04-23T10:05:00Z")
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO sessions (id, provider_id, provider_session_ref, workspace_id, task_id, worktree_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind("session-c")
+    .bind("fake")
+    .bind("unique-ref")
+    .bind("workspace")
+    .bind("task")
+    .bind("worktree")
+    .bind("2026-04-23T10:10:00Z")
+    .bind("2026-04-23T10:10:00Z")
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let migration_sql = include_str!("../migrations/0061_provider_session_bindings.sql");
+    for statement in migration_sql
+        .split(";\n\n")
+        .map(str::trim)
+        .filter(|statement| !statement.is_empty())
+    {
+        sqlx::query(statement).execute(&pool).await.unwrap();
+    }
+
+    let canonical_ref: Option<String> =
+        sqlx::query_scalar("SELECT provider_session_ref FROM sessions WHERE id = 'session-a'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let quarantined_ref: Option<String> =
+        sqlx::query_scalar("SELECT provider_session_ref FROM sessions WHERE id = 'session-b'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let unique_ref: Option<String> =
+        sqlx::query_scalar("SELECT provider_session_ref FROM sessions WHERE id = 'session-c'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+
+    assert_eq!(canonical_ref.as_deref(), Some("shared-ref"));
+    assert_eq!(quarantined_ref, None);
+    assert_eq!(unique_ref.as_deref(), Some("unique-ref"));
+
+    let binding_owner: String = sqlx::query_scalar(
+        "SELECT session_id FROM provider_session_bindings WHERE provider_id = 'fake' AND provider_session_ref = 'shared-ref'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(binding_owner, "session-a");
+
+    let binding_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM provider_session_bindings WHERE provider_id = 'fake'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(binding_count, 2);
+
+    pool.close().await;
 }
 
 #[tokio::test]

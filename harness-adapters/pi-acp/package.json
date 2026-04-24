@@ -1,6 +1,6 @@
 {
   "name": "@ctx/pi-acp",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "private": true,
   "type": "module",
   "description": "ACP-compatible adapter for Pi coding agent via Pi RPC mode",
@@ -21,7 +21,7 @@
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "0.12.0",
-    "@mariozechner/pi-coding-agent": "0.67.68"
+    "@mariozechner/pi-coding-agent": "0.70.0"
   },
   "devDependencies": {
     "@types/node": "25.0.1",

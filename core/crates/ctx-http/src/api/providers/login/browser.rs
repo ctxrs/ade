@@ -95,6 +95,7 @@ async fn monitor_gemini_login(state: Arc<AppState>, login_id: String, label: Opt
             provider_env,
             Some(provider_accounts::GEMINI_CREDENTIAL_KIND_OAUTH_PERSONAL.to_string()),
             event_tx,
+            ctx_providers::adapters::ProviderRunHooks::default(),
         )
         .await;
     if let Err(err) = auth_result {
@@ -356,6 +357,7 @@ async fn monitor_qwen_login(state: Arc<AppState>, login_id: String, label: Optio
             provider_env,
             Some(QWEN_OAUTH_AUTH_METHOD_ID.to_string()),
             event_tx,
+            ctx_providers::adapters::ProviderRunHooks::default(),
         )
         .await;
     if let Err(err) = auth_result {
@@ -614,6 +616,7 @@ async fn monitor_amp_login(state: Arc<AppState>, login_id: String, label: Option
             provider_env,
             Some(AMP_BROWSER_AUTH_METHOD_ID.to_string()),
             event_tx,
+            ctx_providers::adapters::ProviderRunHooks::default(),
         )
         .await;
     if let Err(err) = auth_result {

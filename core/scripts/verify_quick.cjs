@@ -81,6 +81,7 @@ function main() {
       "scripts/release_bundle_contracts_bazel_contract.test.cjs",
       "scripts/web_dist_bazel_contract.test.cjs",
       "scripts/updates_failure_safety_bazel_contract.test.cjs",
+      "scripts/run_node_task_contract.test.cjs",
       "scripts/run_workspace_task_contract.test.cjs",
       "scripts/rust_crate_task.test.cjs",
       "scripts/lib/bazel_rust_targets.test.cjs",

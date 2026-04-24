@@ -2,7 +2,7 @@ use super::*;
 use crate::order_seq::OrderSeqState;
 use crate::scheduler::lifecycle::{fail_starting_turn, RunningTurn};
 use ctx_core::models::{ExecutionEnvironment, SessionTurn, VcsKind};
-use ctx_providers::adapters::{ProviderAdapter, TurnInput};
+use ctx_providers::adapters::{ProviderAdapter, ProviderRunHooks, TurnInput};
 use ctx_providers::events::NormalizedEvent;
 use ctx_providers::fake::FakeProviderAdapter;
 use ctx_store::StoreManager;
@@ -301,6 +301,7 @@ async fn start_deadline_failure_finalizes_starting_turn_as_failed() {
             fixture.workspace_root.clone(),
             HashMap::new(),
             event_tx.clone(),
+            ProviderRunHooks::default(),
         )
         .await
         .expect("run handle");
@@ -982,10 +983,10 @@ async fn codex_done_metrics_use_runtime_codex_home_instead_of_home_dir_guess() {
     let data_dir = tempdir().expect("temp data dir");
 
     write_codex_rollout_log(codex_home.path(), session_ref).await;
-    let fixture = build_loop_fixture(data_dir.path(), "codex", "gpt-5.4/medium").await;
+    let fixture = build_loop_fixture(data_dir.path(), "codex-crp", "gpt-5.4/medium").await;
     let (_fixture, turn) = run_done_event_loop(
         fixture,
-        "codex",
+        "codex-crp",
         "gpt-5.4/medium",
         session_ref,
         Some(codex_home.path()),

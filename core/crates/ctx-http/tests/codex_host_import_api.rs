@@ -81,7 +81,7 @@ async fn host_import_probe_and_import_projects_runtime_auth() {
     let (base, client, server_handle) = start_http_app(state).await;
 
     let probe = client
-        .get(format!("{base}/api/providers/codex/import/host"))
+        .get(format!("{base}/api/providers/codex-crp/import/host"))
         .send()
         .await
         .unwrap();
@@ -91,7 +91,7 @@ async fn host_import_probe_and_import_projects_runtime_auth() {
     assert_eq!(probe_body.auth_kind.as_deref(), Some("api_key"));
 
     let imported = client
-        .post(format!("{base}/api/providers/codex/import/host"))
+        .post(format!("{base}/api/providers/codex-crp/import/host"))
         .json(&json!({ "label": "Imported Host Auth" }))
         .send()
         .await

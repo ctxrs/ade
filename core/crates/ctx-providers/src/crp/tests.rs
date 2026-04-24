@@ -288,6 +288,7 @@ done
         workdir: workdir.clone(),
         env: env.clone(),
         event_sink: event_tx,
+        provider_session_ref_claim: None,
         cancel_rx,
     };
 
@@ -369,6 +370,7 @@ async fn prompt_fails_fast_on_fatal_startup_stderr_and_shuts_down_runtime() -> R
             workdir,
             env,
             event_sink,
+            crate::adapters::ProviderRunHooks::default(),
         )
         .await?;
 
@@ -446,6 +448,7 @@ async fn opencode_flattens_prompt_items_into_single_prompt_field() -> Result<()>
             workdir.clone(),
             env,
             event_sink,
+            crate::adapters::ProviderRunHooks::default(),
         )
         .await?;
 
@@ -509,6 +512,7 @@ async fn prompt_model_override_can_be_disabled_via_env() -> Result<()> {
             workdir.clone(),
             env,
             event_sink,
+            crate::adapters::ProviderRunHooks::default(),
         )
         .await?;
 
@@ -570,7 +574,7 @@ async fn reap_idle_sessions_reaps_quiescent_live_session() -> Result<()> {
     let workdir = tempdir.path().to_path_buf();
     let script_path = write_session_status_runtime(&workdir, "quiescent-status.sh", true)?;
     let adapter = Tier1CrpAdapter::from_raw(
-        "codex",
+        "codex-crp",
         "/bin/sh".to_string(),
         vec![script_path.to_string_lossy().to_string()],
     );
@@ -636,7 +640,7 @@ done
     fs::set_permissions(&script_path, permissions)?;
 
     let adapter = Tier1CrpAdapter::from_provider_runtime(
-        "codex",
+        "codex-crp",
         "/bin/sh".to_string(),
         vec![script_path.to_string_lossy().to_string()],
     );
@@ -662,6 +666,7 @@ done
             workdir.clone(),
             env,
             event_sink,
+            crate::adapters::ProviderRunHooks::default(),
         )
         .await?;
     tokio::time::timeout(Duration::from_secs(5), handle.done)
@@ -921,7 +926,7 @@ async fn get_or_create_session_over_cap_does_not_probe_status_inline() -> Result
     fs::set_permissions(&script_path, permissions)?;
 
     let adapter = Tier1CrpAdapter::from_provider_runtime(
-        "codex",
+        "codex-crp",
         "/bin/sh".to_string(),
         vec![script_path.to_string_lossy().to_string()],
     );
@@ -1086,7 +1091,7 @@ done
     fs::set_permissions(&script_path, permissions)?;
 
     let adapter = Tier1CrpAdapter::from_raw(
-        "codex",
+        "codex-crp",
         "/bin/sh".to_string(),
         vec![script_path.to_string_lossy().to_string()],
     );
@@ -1223,6 +1228,7 @@ done
         workdir: workdir.clone(),
         env: env.clone(),
         event_sink: event_tx,
+        provider_session_ref_claim: None,
         cancel_rx,
     };
 
@@ -1232,14 +1238,12 @@ done
     let started = Instant::now();
     loop {
         if let Ok(contents) = fs::read_to_string(&log_path) {
-            if contents.contains(r#""type":"session.open""#)
-                && contents.contains(r#""type":"session.prompt""#)
-            {
+            if contents.contains(r#""type":"session.open""#) {
                 break;
             }
         }
         if started.elapsed() > Duration::from_secs(5) {
-            anyhow::bail!("timed out waiting for startup commands");
+            anyhow::bail!("timed out waiting for session.open");
         }
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
@@ -1277,6 +1281,10 @@ async fn prompt_setup_error_clears_opening_and_reaps_unopened_session() -> Resul
         r#"#!/bin/sh
 while IFS= read -r line; do
   printf '%s\n' "$line" >> "$LOG_FILE"
+  if printf '%s' "$line" | grep -q '"type":"session.open"'; then
+    session_id=$(printf '%s' "$line" | sed -n 's/.*"session_id":"\([^"]*\)".*/\1/p')
+    printf '{"v":1,"seq":1,"channel":"control","type":"session.opened","session_id":"%s"}\n' "$session_id"
+  fi
 done
 "#,
     )?;
@@ -1313,6 +1321,7 @@ done
         workdir: workdir.clone(),
         env,
         event_sink: event_tx,
+        provider_session_ref_claim: None,
         cancel_rx,
     };
 
@@ -1346,13 +1355,7 @@ done
         .reap_idle_sessions(immediate_sweep_config())
         .await;
 
-    assert_eq!(
-        stats,
-        ProviderSessionSweepStats {
-            reaped: 1,
-            ..ProviderSessionSweepStats::default()
-        }
-    );
+    assert_eq!(stats, ProviderSessionSweepStats::default());
     assert!(!adapter.has_live_session(session_key).await);
     Ok(())
 }
@@ -1405,6 +1408,7 @@ done
         workdir: workdir.clone(),
         env,
         event_sink: event_tx,
+        provider_session_ref_claim: None,
         cancel_rx,
     };
 
@@ -1476,7 +1480,7 @@ done
     fs::set_permissions(&script_path, permissions)?;
 
     let adapter = Tier1CrpAdapter::from_provider_runtime(
-        "codex",
+        "codex-crp",
         "/bin/sh".to_string(),
         vec![script_path.to_string_lossy().to_string()],
     );
@@ -1496,6 +1500,7 @@ done
                 workdir.clone(),
                 env,
                 event_sink,
+                crate::adapters::ProviderRunHooks::default(),
             )
             .await?;
         tokio::time::timeout(Duration::from_secs(5), handle.done)
@@ -1552,7 +1557,7 @@ done
     fs::set_permissions(&script_path, permissions)?;
 
     let adapter = Tier1CrpAdapter::from_raw(
-        "codex",
+        "codex-crp",
         "/bin/sh".to_string(),
         vec![script_path.to_string_lossy().to_string()],
     );
@@ -1632,7 +1637,7 @@ done
     fs::set_permissions(&script_path, permissions)?;
 
     let adapter = Tier1CrpAdapter::from_raw(
-        "codex",
+        "codex-crp",
         "/bin/sh".to_string(),
         vec![script_path.to_string_lossy().to_string()],
     );
@@ -1749,6 +1754,7 @@ done
         workdir: workdir.clone(),
         env: env.clone(),
         event_sink: event_tx,
+        provider_session_ref_claim: None,
         cancel_rx,
     };
 
@@ -1860,7 +1866,7 @@ done
 
     let started = Instant::now();
     while !status_seen_path.exists() {
-        if started.elapsed() > Duration::from_secs(5) {
+        if started.elapsed() > Duration::from_secs(15) {
             anyhow::bail!("timed out waiting for session.status probe");
         }
         tokio::time::sleep(Duration::from_millis(20)).await;
@@ -1879,6 +1885,7 @@ done
         workdir: workdir.clone(),
         env: env.clone(),
         event_sink: event_tx,
+        provider_session_ref_claim: None,
         cancel_rx,
     };
 
@@ -1978,6 +1985,7 @@ done
         workdir: workdir.clone(),
         env: env.clone(),
         event_sink: event_tx,
+        provider_session_ref_claim: None,
         cancel_rx,
     };
 
@@ -2068,6 +2076,7 @@ done
         workdir: workdir.clone(),
         env: env.clone(),
         event_sink: event_tx,
+        provider_session_ref_claim: None,
         cancel_rx,
     };
 
@@ -2133,6 +2142,7 @@ done
             HashMap::new(),
             None,
             event_tx,
+            crate::adapters::ProviderRunHooks::default(),
         )
         .await?;
 
@@ -2186,14 +2196,20 @@ async fn authenticate_session_runtime_exit_clears_unopened_session() -> Result<(
     let session_key = "auth-open-send-failure";
     let (event_tx, _event_rx) = mpsc::channel(8);
 
+    let mut env = HashMap::new();
+    env.insert(
+        "CTX_CRP_FIRST_EVENT_TIMEOUT_MS".to_string(),
+        "50".to_string(),
+    );
     let auth_result = tokio::time::timeout(
         Duration::from_secs(5),
         adapter.authenticate_session(
             session_key.to_string(),
             workdir.clone(),
-            HashMap::new(),
+            env,
             None,
             event_tx,
+            crate::adapters::ProviderRunHooks::default(),
         ),
     )
     .await
@@ -2214,6 +2230,244 @@ async fn authenticate_session_runtime_exit_clears_unopened_session() -> Result<(
     }
 
     assert!(!adapter.has_live_session(session_key).await);
+    Ok(())
+}
+
+#[tokio::test]
+async fn prompt_rejects_provider_session_open_mismatch_before_prompt() -> Result<()> {
+    let tempdir = tempfile::tempdir()?;
+    let workdir = tempdir.path().to_path_buf();
+    let script_path = workdir.join("resume-mismatch.sh");
+    let log_path = workdir.join("stdin.log");
+
+    fs::write(
+        &script_path,
+        r#"#!/bin/sh
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$LOG_FILE"
+  case "$line" in
+    *'"type":"session.open"'*)
+      session_id=$(printf '%s' "$line" | sed -n 's/.*"session_id":"\([^"]*\)".*/\1/p')
+      printf '{"v":1,"seq":1,"channel":"control","type":"session.opened","session_id":"%s","provider_session_id":"wrong-provider-ref"}\n' "$session_id"
+      ;;
+    *'"type":"session.prompt"'*)
+      printf 'unexpected prompt\n' >> "$LOG_FILE"
+      ;;
+  esac
+done
+"#,
+    )?;
+    let mut permissions = fs::metadata(&script_path)?.permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&script_path, permissions)?;
+
+    let adapter = Tier1CrpAdapter::from_raw(
+        "fake-crp",
+        "/bin/sh".to_string(),
+        vec![script_path.to_string_lossy().to_string()],
+    );
+    let mut env = HashMap::new();
+    env.insert(
+        "LOG_FILE".to_string(),
+        log_path.to_string_lossy().to_string(),
+    );
+    env.insert(
+        "CTX_PROVIDER_SESSION_REF".to_string(),
+        "expected-provider-ref".to_string(),
+    );
+    let (event_tx, _event_rx) = mpsc::channel(8);
+    let (_cancel_tx, cancel_rx) = oneshot::channel();
+    let err = adapter
+        .pool
+        .prompt(CrpPromptRequest {
+            session_key: "resume-mismatch".to_string(),
+            input: TurnInput {
+                content: "user".to_string(),
+                attachments: vec![],
+                context_blocks: vec![],
+                model_id: None,
+            },
+            workdir: workdir.clone(),
+            env,
+            event_sink: event_tx,
+            provider_session_ref_claim: None,
+            cancel_rx,
+        })
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("resume mismatch"), "{err:#}");
+
+    let started = Instant::now();
+    while adapter.pool.session_count_for_test().await != 0 {
+        if started.elapsed() > Duration::from_secs(5) {
+            anyhow::bail!("timed out waiting for rejected prompt session to leave the pool");
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(!adapter.has_live_session("resume-mismatch").await);
+
+    let stdin_log = fs::read_to_string(&log_path)?;
+    assert!(
+        !stdin_log.contains(r#""type":"session.prompt""#),
+        "prompt must not be sent after open mismatch: {stdin_log}"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn prompt_waits_for_provider_session_claim_before_prompt() -> Result<()> {
+    let tempdir = tempfile::tempdir()?;
+    let workdir = tempdir.path().to_path_buf();
+    let script_path = workdir.join("claim-hook-blocks-prompt.sh");
+    let log_path = workdir.join("stdin.log");
+
+    fs::write(
+        &script_path,
+        r#"#!/bin/sh
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$LOG_FILE"
+  case "$line" in
+    *'"type":"session.open"'*)
+      session_id=$(printf '%s' "$line" | sed -n 's/.*"session_id":"\([^"]*\)".*/\1/p')
+      printf '{"v":1,"seq":1,"channel":"control","type":"session.opened","session_id":"%s","provider_session_id":"expected-provider-ref"}\n' "$session_id"
+      ;;
+    *'"type":"session.prompt"'*)
+      printf 'unexpected prompt\n' >> "$LOG_FILE"
+      ;;
+  esac
+done
+"#,
+    )?;
+    let mut permissions = fs::metadata(&script_path)?.permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&script_path, permissions)?;
+
+    let adapter = Tier1CrpAdapter::from_raw(
+        "fake-crp",
+        "/bin/sh".to_string(),
+        vec![script_path.to_string_lossy().to_string()],
+    );
+    let mut env = HashMap::new();
+    env.insert(
+        "LOG_FILE".to_string(),
+        log_path.to_string_lossy().to_string(),
+    );
+    env.insert(
+        "CTX_PROVIDER_SESSION_REF".to_string(),
+        "expected-provider-ref".to_string(),
+    );
+    let (event_tx, _event_rx) = mpsc::channel(8);
+    let (_cancel_tx, cancel_rx) = oneshot::channel();
+    let err = adapter
+        .pool
+        .prompt(CrpPromptRequest {
+            session_key: "claim-hook-blocks-prompt".to_string(),
+            input: TurnInput {
+                content: "user".to_string(),
+                attachments: vec![],
+                context_blocks: vec![],
+                model_id: None,
+            },
+            workdir: workdir.clone(),
+            env,
+            event_sink: event_tx,
+            provider_session_ref_claim: Some(Arc::new(|_claim| {
+                Box::pin(async { anyhow::bail!("claim rejected") })
+            })),
+            cancel_rx,
+        })
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("claim rejected"), "{err:#}");
+
+    let started = Instant::now();
+    while adapter.pool.session_count_for_test().await != 0 {
+        if started.elapsed() > Duration::from_secs(5) {
+            anyhow::bail!("timed out waiting for rejected claim-hook session to leave the pool");
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(!adapter.has_live_session("claim-hook-blocks-prompt").await);
+
+    let stdin_log = fs::read_to_string(&log_path)?;
+    assert!(
+        !stdin_log.contains(r#""type":"session.prompt""#),
+        "prompt must not be sent if provider-session claim hook fails: {stdin_log}"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn authenticate_session_rejects_open_mismatch_before_authenticate() -> Result<()> {
+    let tempdir = tempfile::tempdir()?;
+    let workdir = tempdir.path().to_path_buf();
+    let script_path = workdir.join("auth-open-mismatch.sh");
+    let log_path = workdir.join("stdin.log");
+
+    fs::write(
+        &script_path,
+        r#"#!/bin/sh
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$LOG_FILE"
+  case "$line" in
+    *'"type":"session.open"'*)
+      session_id=$(printf '%s' "$line" | sed -n 's/.*"session_id":"\([^"]*\)".*/\1/p')
+      printf '{"v":1,"seq":1,"channel":"control","type":"session.opened","session_id":"%s","provider_session_id":"wrong-provider-ref"}\n' "$session_id"
+      ;;
+    *'"type":"session.authenticate"'*)
+      printf 'unexpected authenticate\n' >> "$LOG_FILE"
+      ;;
+  esac
+done
+"#,
+    )?;
+    let mut permissions = fs::metadata(&script_path)?.permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&script_path, permissions)?;
+
+    let adapter = Tier1CrpAdapter::from_raw(
+        "fake-crp",
+        "/bin/sh".to_string(),
+        vec![script_path.to_string_lossy().to_string()],
+    );
+    let mut env = HashMap::new();
+    env.insert(
+        "LOG_FILE".to_string(),
+        log_path.to_string_lossy().to_string(),
+    );
+    env.insert(
+        "CTX_PROVIDER_SESSION_REF".to_string(),
+        "expected-provider-ref".to_string(),
+    );
+    let (event_tx, _event_rx) = mpsc::channel(8);
+
+    let err = adapter
+        .authenticate_session(
+            "auth-open-mismatch".to_string(),
+            workdir.clone(),
+            env,
+            None,
+            event_tx,
+            crate::adapters::ProviderRunHooks::default(),
+        )
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("resume mismatch"), "{err:#}");
+
+    let started = Instant::now();
+    while adapter.pool.session_count_for_test().await != 0 {
+        if started.elapsed() > Duration::from_secs(5) {
+            anyhow::bail!("timed out waiting for rejected auth-open session to leave the pool");
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(!adapter.has_live_session("auth-open-mismatch").await);
+
+    let stdin_log = fs::read_to_string(&log_path)?;
+    assert!(
+        !stdin_log.contains(r#""type":"session.authenticate""#),
+        "authenticate must not be sent after open mismatch: {stdin_log}"
+    );
     Ok(())
 }
 

@@ -1,4 +1,5 @@
 use super::*;
+use ctx_core::provider_ids::{canonical_provider_id, CODEX_CRP_PROVIDER_ID};
 
 pub fn supports_harness_endpoint(provider_id: &str) -> bool {
     normalize_provider_id(provider_id).is_some_and(provider_supports_harness_endpoint)
@@ -83,8 +84,8 @@ pub(super) fn provider_requires_verified_endpoint_for_run(canonical: &str) -> bo
 }
 
 pub(super) fn normalize_provider_id(provider_id: &str) -> Option<&'static str> {
-    match provider_id {
-        PROVIDER_CODEX => Some(PROVIDER_CODEX),
+    match canonical_provider_id(provider_id) {
+        CODEX_CRP_PROVIDER_ID => Some(PROVIDER_CODEX),
         PROVIDER_CLAUDE => Some(PROVIDER_CLAUDE),
         PROVIDER_GEMINI => Some(PROVIDER_GEMINI),
         PROVIDER_KIMI => Some(PROVIDER_KIMI),

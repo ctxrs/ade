@@ -1,5 +1,8 @@
 use std::collections::HashMap;
+use std::future::Future;
 use std::path::PathBuf;
+use std::pin::Pin;
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Result;
@@ -138,6 +141,33 @@ pub struct TurnInput {
     pub attachments: Vec<MessageAttachment>,
     pub context_blocks: Vec<Value>,
     pub model_id: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ProviderSessionRefClaim {
+    pub requested_provider_session_ref: Option<String>,
+    pub returned_provider_session_ref: Option<String>,
+}
+
+pub type ProviderSessionRefClaimFuture = Pin<Box<dyn Future<Output = Result<()>> + Send>>;
+
+pub type ProviderSessionRefClaimHook =
+    Arc<dyn Fn(ProviderSessionRefClaim) -> ProviderSessionRefClaimFuture + Send + Sync>;
+
+#[derive(Clone, Default)]
+pub struct ProviderRunHooks {
+    pub provider_session_ref_claim: Option<ProviderSessionRefClaimHook>,
+}
+
+impl std::fmt::Debug for ProviderRunHooks {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ProviderRunHooks")
+            .field(
+                "provider_session_ref_claim",
+                &self.provider_session_ref_claim.is_some(),
+            )
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -300,6 +330,7 @@ pub trait ProviderAdapter: Send + Sync {
         workdir: PathBuf,
         env: HashMap<String, String>,
         event_sink: tokio::sync::mpsc::Sender<NormalizedEvent>,
+        hooks: ProviderRunHooks,
     ) -> Result<RunHandle>;
 
     async fn cancel(&self, handle: &mut RunHandle) -> Result<()>;
@@ -347,6 +378,7 @@ pub trait ProviderAdapter: Send + Sync {
         _env: HashMap<String, String>,
         _method_id: Option<String>,
         _event_sink: tokio::sync::mpsc::Sender<NormalizedEvent>,
+        _hooks: ProviderRunHooks,
     ) -> Result<()> {
         anyhow::bail!("provider does not support authenticate");
     }

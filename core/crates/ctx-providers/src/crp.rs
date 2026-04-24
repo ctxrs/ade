@@ -95,7 +95,7 @@ impl Tier1CrpAdapter {
     }
 
     pub fn codex() -> Self {
-        Self::from_provider_runtime("codex", "codex".to_string(), vec![])
+        Self::from_provider_runtime("codex-crp", "codex-crp".to_string(), vec![])
     }
 
     pub fn claude() -> Self {
@@ -143,6 +143,7 @@ impl ProviderAdapter for Tier1CrpAdapter {
         workdir: PathBuf,
         env: HashMap<String, String>,
         event_sink: mpsc::Sender<NormalizedEvent>,
+        hooks: crate::adapters::ProviderRunHooks,
     ) -> Result<RunHandle> {
         // Fail fast with a clear error if the runtime isn't available.
         // `inspect()` already checks this, but some call paths can attempt runs even after a stale status.
@@ -165,6 +166,7 @@ impl ProviderAdapter for Tier1CrpAdapter {
                 workdir,
                 env,
                 event_sink,
+                provider_session_ref_claim: hooks.provider_session_ref_claim,
                 cancel_rx,
             };
             let outcome = match pool.prompt(request).await {
@@ -230,10 +232,7 @@ impl ProviderAdapter for Tier1CrpAdapter {
     }
 
     fn supports_resume(&self) -> bool {
-        matches!(
-            self.id.as_str(),
-            "codex" | "codex-crp" | "claude" | "claude-crp"
-        )
+        matches!(self.id.as_str(), "codex-crp" | "claude" | "claude-crp")
     }
 
     async fn set_session_pinned(&self, session_key: String, pinned: bool) -> Result<()> {
@@ -252,9 +251,17 @@ impl ProviderAdapter for Tier1CrpAdapter {
         env: HashMap<String, String>,
         method_id: Option<String>,
         event_sink: mpsc::Sender<NormalizedEvent>,
+        hooks: crate::adapters::ProviderRunHooks,
     ) -> Result<()> {
         self.pool
-            .authenticate_session(session_key, workdir, env, method_id, event_sink)
+            .authenticate_session(
+                session_key,
+                workdir,
+                env,
+                method_id,
+                event_sink,
+                hooks.provider_session_ref_claim,
+            )
             .await
     }
 
@@ -274,7 +281,7 @@ fn default_caps(id: &str) -> ProviderCapabilities {
         has_tool_call_ids: true,
         has_file_change_events: false,
         has_command_events: false,
-        supports_resume: matches!(id, "codex" | "codex-crp" | "claude" | "claude-crp"),
+        supports_resume: matches!(id, "codex-crp" | "claude" | "claude-crp"),
         supports_stable_session_id: true,
         supports_fork_or_rewind: false,
         supports_headless: true,

@@ -81,7 +81,7 @@ test("required targets gate fails on missing target even with empty lock provide
   delete archiveTargets["linux-x86_64"];
   const { matrixPath, lockPath } = writeFixture(tmp, [
     {
-      id: "codex",
+      id: "codex-crp",
       managed_install: {
         kind: "archive",
         version: "1.0.0",

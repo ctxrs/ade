@@ -3,6 +3,19 @@
 # Do not edit manually. Run `pnpm rust:bazel-deps:write` from core/.
 
 RUST_BAZEL_DEPS = {
+    "ctx-bundled-assets": struct(
+        build_deps = [],
+        deps = [
+            "@crates//:serde",
+            "@crates//:serde_json",
+            "@crates//:tracing",
+        ],
+        dev_deps = [
+            "@crates//:tempfile",
+        ],
+        dev_proc_macro_deps = [],
+        proc_macro_deps = [],
+    ),
     "ctx-core": struct(
         build_deps = [],
         deps = [
@@ -34,12 +47,44 @@ RUST_BAZEL_DEPS = {
         dev_proc_macro_deps = [],
         proc_macro_deps = [],
     ),
+    "ctx-fs": struct(
+        build_deps = [],
+        deps = [
+            "//core/crates/ctx-core:lib",
+            "@crates//:anyhow",
+            "@crates//:directories",
+            "@crates//:tokio",
+        ],
+        dev_deps = [
+            "@crates//:tempfile",
+        ],
+        dev_proc_macro_deps = [],
+        proc_macro_deps = [],
+    ),
     "ctx-harness-setup": struct(
         build_deps = [],
         deps = [
             "@crates//:serde",
         ],
         dev_deps = [],
+        dev_proc_macro_deps = [],
+        proc_macro_deps = [],
+    ),
+    "ctx-provider-accounts": struct(
+        build_deps = [],
+        deps = [
+            "@crates//:anyhow",
+            "@crates//:chrono",
+            "@crates//:directories",
+            "@crates//:serde",
+            "@crates//:serde_json",
+            "@crates//:tokio",
+            "@crates//:tracing",
+            "@crates//:uuid",
+        ],
+        dev_deps = [
+            "@crates//:tempfile",
+        ],
         dev_proc_macro_deps = [],
         proc_macro_deps = [],
     ),
@@ -52,6 +97,22 @@ RUST_BAZEL_DEPS = {
             "@crates//:uuid",
         ],
         dev_deps = [],
+        dev_proc_macro_deps = [],
+        proc_macro_deps = [],
+    ),
+    "ctx-provider-matrix": struct(
+        build_deps = [],
+        deps = [
+            "//core/crates/ctx-provider-accounts:lib",
+            "@crates//:anyhow",
+            "@crates//:semver",
+            "@crates//:serde",
+            "@crates//:serde_json",
+            "@crates//:tokio",
+        ],
+        dev_deps = [
+            "@crates//:tempfile",
+        ],
         dev_proc_macro_deps = [],
         proc_macro_deps = [],
     ),
@@ -74,6 +135,68 @@ RUST_BAZEL_DEPS = {
         ],
         dev_deps = [
             "@crates//:tempfile",
+        ],
+        dev_proc_macro_deps = [],
+        proc_macro_deps = [],
+    ),
+    "ctx-sandbox-contract": struct(
+        build_deps = [],
+        deps = [
+            "//core/crates/ctx-core:lib",
+            "@crates//:anyhow",
+            "@crates//:serde",
+            "@crates//:serde_json",
+        ],
+        dev_deps = [
+            "@crates//:chrono",
+            "@crates//:uuid",
+        ],
+        dev_proc_macro_deps = [],
+        proc_macro_deps = [],
+    ),
+    "ctx-session-tools": struct(
+        build_deps = [],
+        deps = [
+            "//core/crates/ctx-core:lib",
+            "@crates//:chrono",
+            "@crates//:serde_json",
+            "@crates//:tracing",
+        ],
+        dev_deps = [],
+        dev_proc_macro_deps = [],
+        proc_macro_deps = [],
+    ),
+    "ctx-storage-admission": struct(
+        build_deps = [],
+        deps = [
+            "@crates//:serde",
+        ],
+        dev_deps = [],
+        dev_proc_macro_deps = [],
+        proc_macro_deps = [],
+    ),
+    "ctx-worker-protocol": struct(
+        build_deps = [],
+        deps = [
+            "@crates//:chrono",
+            "@crates//:serde",
+            "@crates//:uuid",
+        ],
+        dev_deps = [],
+        dev_proc_macro_deps = [],
+        proc_macro_deps = [],
+    ),
+    "ctx-workspace-active-snapshot": struct(
+        build_deps = [],
+        deps = [
+            "//core/crates/ctx-core:lib",
+            "@crates//:serde",
+            "@crates//:serde_json",
+            "@crates//:tokio",
+        ],
+        dev_deps = [
+            "@crates//:chrono",
+            "@crates//:uuid",
         ],
         dev_proc_macro_deps = [],
         proc_macro_deps = [],

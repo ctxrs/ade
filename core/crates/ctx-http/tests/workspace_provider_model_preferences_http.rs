@@ -14,7 +14,7 @@ use serde_json::Value;
 
 fn fake_codex_providers() -> HashMap<String, Arc<dyn ProviderAdapter>> {
     let mut providers = common::fake_providers();
-    providers.insert("codex".into(), Arc::new(FakeProviderAdapter::new()));
+    providers.insert("codex-crp".into(), Arc::new(FakeProviderAdapter::new()));
     providers
 }
 
@@ -32,7 +32,7 @@ async fn build_state_with_fake_codex(
         .inspect()
         .await
         .expect("inspect fake codex provider");
-    status.provider_id = "codex".into();
+    status.provider_id = "codex-crp".into();
     status.usability = ProviderUsability {
         usable: true,
         status: ProviderUsabilityStatus::Ready,
@@ -46,7 +46,7 @@ async fn build_state_with_fake_codex(
         .statuses
         .lock()
         .await
-        .insert("codex".into(), status);
+        .insert("codex-crp".into(), status);
     state
 }
 
@@ -258,7 +258,10 @@ async fn provider_options_cache_is_invalidated_when_preference_changes() {
     let (initial_options_status, initial_options_body): (StatusCode, Value) = common::json_request(
         &app,
         Method::GET,
-        format!("/api/workspaces/{}/providers/codex/options", workspace.id.0),
+        format!(
+            "/api/workspaces/{}/providers/codex-crp/options",
+            workspace.id.0
+        ),
         None,
     )
     .await;
@@ -286,7 +289,10 @@ async fn provider_options_cache_is_invalidated_when_preference_changes() {
     let (updated_options_status, updated_options_body): (StatusCode, Value) = common::json_request(
         &app,
         Method::GET,
-        format!("/api/workspaces/{}/providers/codex/options", workspace.id.0),
+        format!(
+            "/api/workspaces/{}/providers/codex-crp/options",
+            workspace.id.0
+        ),
         None,
     )
     .await;
@@ -318,7 +324,7 @@ async fn malformed_workspace_model_preferences_do_not_break_bootstrap() {
             r#"{
   "new_session": {
     "preferred_model_by_provider": {
-      "codex": 7
+      "codex-crp": 7
     }
   }
 }"#,
@@ -348,7 +354,10 @@ async fn malformed_workspace_model_preferences_do_not_break_bootstrap() {
     let (options_status, options_body): (StatusCode, Value) = common::json_request(
         &app,
         Method::GET,
-        format!("/api/workspaces/{}/providers/codex/options", workspace.id.0),
+        format!(
+            "/api/workspaces/{}/providers/codex-crp/options",
+            workspace.id.0
+        ),
         None,
     )
     .await;
@@ -381,7 +390,7 @@ async fn session_creation_and_model_switch_persist_workspace_provider_preference
             Method::POST,
             format!("/api/tasks/{}/sessions", task.id.0),
             Some(serde_json::json!({
-                "provider_id": "codex",
+                "provider_id": "codex-crp",
                 "model_id": "gpt-5.4",
                 "reasoning_effort": "xhigh",
                 "remember_model_preference": true
@@ -460,7 +469,7 @@ async fn session_creation_does_not_persist_auto_seeded_workspace_provider_prefer
             Method::POST,
             format!("/api/tasks/{}/sessions", task.id.0),
             Some(serde_json::json!({
-                "provider_id": "codex",
+                "provider_id": "codex-crp",
                 "model_id": "gpt-5.4",
                 "reasoning_effort": "medium"
             })),

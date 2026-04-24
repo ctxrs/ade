@@ -60,10 +60,10 @@ cat > "$matrix_path" <<JSON
   "version": 2,
   "providers": [
     {
-      "id": "codex",
+      "id": "codex-crp",
       "display_name": "Codex",
       "tier": "tier2",
-      "command": { "command": "codex", "args": [] },
+      "command": { "command": "codex-crp", "args": [] },
       "managed_install": {
         "kind": "archive",
         "version": "0.0.0-test",
@@ -85,7 +85,7 @@ JSON
 
 CTX_BUNDLE_DIR="$bundle_dir" \
 CTX_BUNDLE_MATRIX_JSON="$matrix_path" \
-CTX_BUNDLE_ONLY_PROVIDERS="codex" \
+CTX_BUNDLE_ONLY_PROVIDERS="codex-crp" \
 CTX_BUNDLE_SKIP_RUNTIMES=1 \
 CTX_BUNDLE_SKIP_IMAGES=1 \
 CTX_BUNDLE_INCLUDE_BRIDGE=0 \
@@ -110,7 +110,7 @@ if len(providers) != 1:
     raise SystemExit(1)
 
 entry = providers[0]
-if entry.get("id") != "codex":
+if entry.get("id") != "codex-crp":
     print(f"expected codex provider entry, got {entry.get('id')!r}", file=sys.stderr)
     raise SystemExit(1)
 if entry.get("version") != "0.0.0-test":

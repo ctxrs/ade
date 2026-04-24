@@ -97,7 +97,7 @@ async fn complete_login_replays_loopback_callback_and_clears_token() {
     let (base, client, server_handle) = start_http_app(state.clone()).await;
     let resp = client
         .post(format!(
-            "{base}/api/providers/codex/accounts/login/{account_id}"
+            "{base}/api/providers/codex-crp/accounts/login/{account_id}"
         ))
         .json(&json!({
             "callback_url": callback_url,
@@ -143,7 +143,7 @@ async fn complete_login_replays_localhost_callback_via_ipv4_override() {
     let (base, client, server_handle) = start_http_app(state.clone()).await;
     let resp = client
         .post(format!(
-            "{base}/api/providers/codex/accounts/login/{account_id}"
+            "{base}/api/providers/codex-crp/accounts/login/{account_id}"
         ))
         .json(&json!({
             "callback_url": callback_url,
@@ -171,7 +171,7 @@ async fn complete_login_rejects_invalid_completion_token() {
 
     let resp = client
         .post(format!(
-            "{base}/api/providers/codex/accounts/login/acct-token"
+            "{base}/api/providers/codex-crp/accounts/login/acct-token"
         ))
         .json(&json!({
             "callback_url": "http://localhost:43210/auth/callback?code=abc",
@@ -202,7 +202,7 @@ async fn complete_login_rejects_non_loopback_host() {
 
     let resp = client
         .post(format!(
-            "{base}/api/providers/codex/accounts/login/acct-host"
+            "{base}/api/providers/codex-crp/accounts/login/acct-host"
         ))
         .json(&json!({
             "callback_url": "http://example.com:12345/auth/callback?code=abc",
@@ -233,7 +233,7 @@ async fn complete_login_rejects_expected_path_mismatch() {
 
     let resp = client
         .post(format!(
-            "{base}/api/providers/codex/accounts/login/acct-path"
+            "{base}/api/providers/codex-crp/accounts/login/acct-path"
         ))
         .json(&json!({
             "callback_url": "http://localhost:24567/auth/other?code=abc",
@@ -261,7 +261,7 @@ async fn complete_login_token_is_single_use() {
     let (base, client, server_handle) = start_http_app(state).await;
     let first = client
         .post(format!(
-            "{base}/api/providers/codex/accounts/login/acct-replay"
+            "{base}/api/providers/codex-crp/accounts/login/acct-replay"
         ))
         .json(&json!({
             "callback_url": callback_url,
@@ -274,7 +274,7 @@ async fn complete_login_token_is_single_use() {
 
     let second = client
         .post(format!(
-            "{base}/api/providers/codex/accounts/login/acct-replay"
+            "{base}/api/providers/codex-crp/accounts/login/acct-replay"
         ))
         .json(&json!({
             "callback_url": "http://localhost:1/auth/callback?code=replay",
@@ -319,7 +319,7 @@ async fn set_active_account_rejects_incompatible_endpoint_profile() {
 
     let (base, client, server_handle) = start_http_app(state).await;
     let resp = client
-        .put(format!("{base}/api/providers/codex/active-account"))
+        .put(format!("{base}/api/providers/codex-crp/active-account"))
         .json(&json!({ "account_id": "acct-incompatible" }))
         .send()
         .await

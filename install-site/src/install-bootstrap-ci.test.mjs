@@ -8,7 +8,8 @@ import path from "node:path";
 import { renderInstallScript } from "./install-script.js";
 
 const makeTempDir = (prefix) => mkdtempSync(path.join(tmpdir(), prefix));
-const NODE_BIN = JSON.stringify(process.execPath);
+const NODE_EXEC_PATH = process.env.JS_BINARY__NODE_BINARY ?? process.execPath;
+const NODE_BIN = JSON.stringify(NODE_EXEC_PATH);
 
 const createFakeAppImage = () => `#!/bin/sh
 set -eu
@@ -29,7 +30,7 @@ const createExtractorScript = (stubDir) => {
   const extractorPath = path.join(stubDir, "extract-json.mjs");
   writeExecutable(
     extractorPath,
-    `#!${process.execPath}
+    `#!${NODE_EXEC_PATH}
 import fs from "node:fs";
 
 const manifestPath = process.argv[2];
@@ -162,7 +163,7 @@ esac
   );
   writeExecutable(
     path.join(stubDir, "ditto"),
-    `#!${process.execPath}
+    `#!${NODE_EXEC_PATH}
 import fs from "node:fs";
 
 const [, , src, dest] = process.argv;

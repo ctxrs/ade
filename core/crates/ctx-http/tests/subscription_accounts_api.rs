@@ -209,6 +209,7 @@ impl ProviderAdapter for GeminiLoginTestAdapter {
         _workdir: PathBuf,
         _env: HashMap<String, String>,
         _event_sink: mpsc::Sender<NormalizedEvent>,
+        _hooks: ctx_providers::adapters::ProviderRunHooks,
     ) -> Result<RunHandle> {
         Err(anyhow!("run is not used in this test adapter"))
     }
@@ -224,6 +225,7 @@ impl ProviderAdapter for GeminiLoginTestAdapter {
         env: HashMap<String, String>,
         method_id: Option<String>,
         event_sink: mpsc::Sender<NormalizedEvent>,
+        _hooks: ctx_providers::adapters::ProviderRunHooks,
     ) -> Result<()> {
         if method_id.as_deref() != Some("oauth-personal") {
             return Err(anyhow!(
@@ -331,6 +333,7 @@ impl ProviderAdapter for QwenLoginTestAdapter {
         _workdir: PathBuf,
         _env: HashMap<String, String>,
         _event_sink: mpsc::Sender<NormalizedEvent>,
+        _hooks: ctx_providers::adapters::ProviderRunHooks,
     ) -> Result<RunHandle> {
         Err(anyhow!("run is not used in this test adapter"))
     }
@@ -346,6 +349,7 @@ impl ProviderAdapter for QwenLoginTestAdapter {
         env: HashMap<String, String>,
         method_id: Option<String>,
         event_sink: mpsc::Sender<NormalizedEvent>,
+        _hooks: ctx_providers::adapters::ProviderRunHooks,
     ) -> Result<()> {
         if method_id.as_deref() != Some("qwen-oauth") {
             return Err(anyhow!(
@@ -422,6 +426,7 @@ impl ProviderAdapter for MistralLoginTestAdapter {
         _workdir: PathBuf,
         _env: HashMap<String, String>,
         _event_sink: mpsc::Sender<NormalizedEvent>,
+        _hooks: ctx_providers::adapters::ProviderRunHooks,
     ) -> Result<RunHandle> {
         Err(anyhow!("run is not used in this test adapter"))
     }
@@ -437,6 +442,7 @@ impl ProviderAdapter for MistralLoginTestAdapter {
         env: HashMap<String, String>,
         _method_id: Option<String>,
         event_sink: mpsc::Sender<NormalizedEvent>,
+        _hooks: ctx_providers::adapters::ProviderRunHooks,
     ) -> Result<()> {
         if !env.contains_key("HOME") {
             return Err(anyhow!("HOME missing"));
@@ -512,6 +518,7 @@ impl ProviderAdapter for AmpLoginTestAdapter {
         _workdir: PathBuf,
         _env: HashMap<String, String>,
         _event_sink: mpsc::Sender<NormalizedEvent>,
+        _hooks: ctx_providers::adapters::ProviderRunHooks,
     ) -> Result<RunHandle> {
         Err(anyhow!("run is not used in this test adapter"))
     }
@@ -527,6 +534,7 @@ impl ProviderAdapter for AmpLoginTestAdapter {
         env: HashMap<String, String>,
         method_id: Option<String>,
         event_sink: mpsc::Sender<NormalizedEvent>,
+        _hooks: ctx_providers::adapters::ProviderRunHooks,
     ) -> Result<()> {
         if method_id.as_deref() != Some("amp_browser_login") {
             return Err(anyhow!(

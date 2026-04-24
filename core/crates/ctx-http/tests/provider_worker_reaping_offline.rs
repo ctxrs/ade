@@ -172,7 +172,7 @@ async fn assert_provider_session_resume_after_idle_reap(provider_id: &str, model
     let _guard_scenario = EnvGuard::set("CTX_TEST_SCENARIO", "resume");
     let _guard_command_log =
         EnvGuard::set("CTX_TEST_CRP_COMMAND_LOG", &command_log.to_string_lossy());
-    let _codex_home = if matches!(provider_id, "codex" | "codex-crp") {
+    let _codex_home = if matches!(provider_id, "codex-crp" | "codex-crp") {
         Some(configure_hermetic_codex_home().await)
     } else {
         None
@@ -180,7 +180,7 @@ async fn assert_provider_session_resume_after_idle_reap(provider_id: &str, model
 
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
     let script_path = common::crp_fixture_runtime::write_crp_fixture_runtime(data_dir.path());
-    if provider_id == "codex" {
+    if provider_id == "codex-crp" {
         common::seed_managed_codex_cli_host_runtime(data_dir.path(), &python).await;
     }
     let adapter: Arc<dyn ProviderAdapter> = Arc::new(Tier1CrpAdapter::from_raw(
@@ -250,6 +250,6 @@ async fn assert_provider_session_resume_after_idle_reap(provider_id: &str, model
 async fn idle_reaped_crp_workers_resume_via_provider_session_ref() {
     let _env_lock = lock_env();
 
-    assert_provider_session_resume_after_idle_reap("codex", "gpt-5.4/medium").await;
+    assert_provider_session_resume_after_idle_reap("codex-crp", "gpt-5.4/medium").await;
     assert_provider_session_resume_after_idle_reap("claude-crp", "default/medium").await;
 }

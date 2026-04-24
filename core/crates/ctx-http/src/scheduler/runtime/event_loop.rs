@@ -252,7 +252,7 @@ async fn run_turn_event_loop(ctx: TurnEventLoop) {
     let mut telemetry_emitted = false;
 
     while let Some(ev) = ev_rx.recv().await {
-        let event_type = ev.event_type.clone();
+        let mut event_type = ev.event_type.clone();
         let raw_payload = ev.payload_json.clone();
         let mut payload = raw_payload.clone();
         if first_event_at.is_none() {
@@ -292,16 +292,36 @@ async fn run_turn_event_loop(ctx: TurnEventLoop) {
             }
             let provider_session_id = payload.get("provider_session_id").and_then(Value::as_str);
             if let Some(ps) = provider_session_id {
-                provider_session_ref = Some(ps.to_string());
-                let _ = store
-                    .update_session_provider_session_ref(session_id, Some(ps.to_string()))
-                    .await;
+                match store
+                    .claim_session_provider_session_ref(
+                        session_id,
+                        ps.to_string(),
+                        "scheduler.init_event",
+                    )
+                    .await
+                {
+                    Ok(()) => {
+                        provider_session_ref = Some(ps.to_string());
+                    }
+                    Err(err) => {
+                        event_type = SessionEventType::Error;
+                        payload = json!({
+                            "message": err.to_string(),
+                            "reason": "provider_session_ref_claim_failed",
+                            "kind": "provider_session_ref_claim_failed",
+                            "details": {
+                                "provider_session_id": ps,
+                                "provider_id": provider_id.clone(),
+                            },
+                        });
+                    }
+                }
             }
         }
         if matches!(ev.event_type, SessionEventType::Done) {
             if let Some(obj) = payload.as_object_mut() {
                 if obj.get("context_window").is_none() {
-                    let metrics = if provider_id == "codex" {
+                    let metrics = if provider_id == "codex-crp" {
                         codex_home
                             .as_deref()
                             .and_then(|home| {

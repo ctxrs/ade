@@ -124,6 +124,7 @@ impl ProviderAdapter for RecordingProviderAdapter {
         _workdir: PathBuf,
         _env: HashMap<String, String>,
         _event_sink: tokio::sync::mpsc::Sender<ctx_providers::events::NormalizedEvent>,
+        _hooks: ctx_providers::adapters::ProviderRunHooks,
     ) -> Result<RunHandle> {
         anyhow::bail!("not used in test");
     }
@@ -1117,11 +1118,11 @@ async fn shutdown_shared_substrate_requests_save_or_stop_when_shared_backend_ava
 #[test]
 fn runtime_probe_command_keeps_native_crp_provider_unwrapped() {
     let temp = tempdir().unwrap();
-    let codex_cmd = temp.path().join("codex");
-    std::fs::write(&codex_cmd, b"codex").unwrap();
+    let codex_cmd = temp.path().join("codex-crp");
+    std::fs::write(&codex_cmd, b"codex-crp").unwrap();
     let cfg = installer::AgentServerConfigFile {
         providers: HashMap::from([(
-            "codex".to_string(),
+            "codex-crp".to_string(),
             installer::AgentServerCommand {
                 command: codex_cmd.to_string_lossy().to_string(),
                 args: vec!["serve".to_string()],
@@ -1136,7 +1137,7 @@ fn runtime_probe_command_keeps_native_crp_provider_unwrapped() {
         managed_install_targets: HashMap::new(),
     };
 
-    let resolved = runtime_probe_command_as_agent_command(temp.path(), &cfg, "codex")
+    let resolved = runtime_probe_command_as_agent_command(temp.path(), &cfg, "codex-crp")
         .expect("probe command")
         .expect("runtime command");
 
@@ -1144,7 +1145,7 @@ fn runtime_probe_command_keeps_native_crp_provider_unwrapped() {
         PathBuf::from(&resolved.command)
             .file_name()
             .and_then(|name| name.to_str()),
-        Some("codex")
+        Some("codex-crp")
     );
     assert_eq!(resolved.args, vec!["serve".to_string()]);
     assert_eq!(resolved.dependencies, vec!["codex-dep".to_string()]);

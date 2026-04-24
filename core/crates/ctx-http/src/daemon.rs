@@ -68,7 +68,7 @@ fn build_provider_adapter_for_target(
     provider_id: &str,
     target: InstallTarget,
 ) -> Arc<dyn ProviderAdapter> {
-    if matches!(provider_id, "codex" | "claude-crp") {
+    if matches!(provider_id, "codex-crp" | "claude-crp") {
         return match runtime_command_as_agent_command_for_target(cfg, provider_id, Some(target)) {
             Ok(Some(cmd)) => Arc::new(Tier1CrpAdapter::from_provider_runtime(
                 provider_id,
@@ -551,7 +551,7 @@ pub async fn serve(bind: Vec<String>, data_dir: Option<String>) -> Result<()> {
         }
     };
 
-    for provider_id in ["codex", "claude-crp"] {
+    for provider_id in ["codex-crp", "claude-crp"] {
         let adapter: Arc<dyn ProviderAdapter> =
             match runtime_command_as_agent_command(&agent_cfg, provider_id) {
                 Ok(Some(cmd)) => Arc::new(Tier1CrpAdapter::from_provider_runtime(

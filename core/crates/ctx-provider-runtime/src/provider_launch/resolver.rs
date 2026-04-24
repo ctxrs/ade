@@ -31,6 +31,7 @@ impl ProviderAdapter for StaticStatusAdapter {
         _workdir: PathBuf,
         _env: HashMap<String, String>,
         _event_sink: tokio::sync::mpsc::Sender<ctx_providers::events::NormalizedEvent>,
+        _hooks: ctx_providers::adapters::ProviderRunHooks,
     ) -> Result<ctx_providers::adapters::RunHandle> {
         let msg = self
             .status
@@ -236,8 +237,9 @@ impl ProviderAdapter for OpenHandsRuntimeContractAdapter {
         workdir: PathBuf,
         env: HashMap<String, String>,
         event_sink: tokio::sync::mpsc::Sender<ctx_providers::events::NormalizedEvent>,
+        hooks: ctx_providers::adapters::ProviderRunHooks,
     ) -> Result<RunHandle> {
-        self.inner.run(input, workdir, env, event_sink).await
+        self.inner.run(input, workdir, env, event_sink, hooks).await
     }
 
     async fn cancel(&self, handle: &mut RunHandle) -> Result<()> {
@@ -282,9 +284,10 @@ impl ProviderAdapter for OpenHandsRuntimeContractAdapter {
         env: HashMap<String, String>,
         method_id: Option<String>,
         event_sink: tokio::sync::mpsc::Sender<ctx_providers::events::NormalizedEvent>,
+        hooks: ctx_providers::adapters::ProviderRunHooks,
     ) -> Result<()> {
         self.inner
-            .authenticate_session(session_key, workdir, env, method_id, event_sink)
+            .authenticate_session(session_key, workdir, env, method_id, event_sink, hooks)
             .await
     }
 }
@@ -720,7 +723,7 @@ fn build_provider_adapter_for_target(
     provider_id: &str,
     target: InstallTarget,
 ) -> Arc<dyn ProviderAdapter> {
-    if matches!(provider_id, "codex" | "claude-crp") {
+    if matches!(provider_id, "codex-crp" | "claude-crp") {
         return match runtime_command_as_agent_command_for_target(cfg, provider_id, Some(target)) {
             Ok(Some(cmd)) => Arc::new(Tier1CrpAdapter::from_provider_runtime(
                 provider_id,

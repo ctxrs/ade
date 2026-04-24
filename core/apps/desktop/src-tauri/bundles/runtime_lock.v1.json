@@ -7,7 +7,7 @@
   "required": {
     "provider_ids": [
       "acp-crp-bridge",
-      "codex",
+      "codex-crp",
       "gemini",
       "cursor",
       "pi",

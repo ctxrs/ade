@@ -13,7 +13,7 @@ use ctx_provider_accounts::CODEX_AUTH_TYPE_BEARER;
 const REGISTRY_VERSION: u32 = 1;
 const SECRET_VERSION: u32 = 1;
 
-const PROVIDER_CODEX: &str = "codex";
+const PROVIDER_CODEX: &str = "codex-crp";
 const PROVIDER_CLAUDE: &str = "claude-crp";
 const PROVIDER_GEMINI: &str = "gemini";
 const PROVIDER_KIMI: &str = "kimi";

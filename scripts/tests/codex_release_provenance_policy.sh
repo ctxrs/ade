@@ -26,7 +26,7 @@ providers = matrix.get("providers") or []
 
 entry = None
 for provider in providers:
-    if str(provider.get("id") or "").strip() == "codex":
+    if str(provider.get("id") or "").strip() == "codex-crp":
         entry = provider
         break
 
@@ -106,7 +106,7 @@ else:
     if not isinstance(targets, dict) or not targets:
         errors.append("codex managed_install.targets missing")
     else:
-        expected_url_path = f"/providers/codex/{managed_version}/" if managed_version else ""
+        expected_url_path = f"/providers/codex-crp/{managed_version}/" if managed_version else ""
         for target_id, target in targets.items():
             if not isinstance(target, dict):
                 errors.append(f"codex target entry invalid: {target_id}")

@@ -50,24 +50,6 @@ fn supplement_models_payload_with_endpoint_metadata(
     }
 }
 
-pub(super) fn invalid_provider_id_error(
-    provider_id: &str,
-    canonical_id: &str,
-) -> (StatusCode, Json<serde_json::Value>) {
-    (
-        StatusCode::BAD_REQUEST,
-        Json(serde_json::json!({
-            "error": format!(
-                "provider '{}' is not supported; use '{}'",
-                provider_id, canonical_id
-            ),
-            "code": "invalid_provider_id",
-            "provider_id": provider_id,
-            "canonical_id": canonical_id,
-        })),
-    )
-}
-
 pub(super) fn parse_workspace_id(
     ws_id: &str,
 ) -> Result<WorkspaceId, (StatusCode, Json<serde_json::Value>)> {
@@ -216,7 +198,7 @@ mod tests {
     fn test_endpoint() -> HarnessEndpointRecord {
         HarnessEndpointRecord {
             id: "ep-1".to_string(),
-            provider_id: "codex".to_string(),
+            provider_id: "codex-crp".to_string(),
             name: "OpenRouter".to_string(),
             base_url: Some("https://openrouter.ai/api/v1".to_string()),
             api_shape: HarnessApiShape::OpenaiResponses,
@@ -257,7 +239,7 @@ mod tests {
             },
         });
 
-        supplement_models_payload_with_endpoint_metadata(&mut models, "codex", &endpoint, now);
+        supplement_models_payload_with_endpoint_metadata(&mut models, "codex-crp", &endpoint, now);
 
         let model_ids = models
             .get("models")
@@ -308,7 +290,7 @@ mod tests {
             },
         });
 
-        supplement_models_payload_with_endpoint_metadata(&mut models, "codex", &endpoint, now);
+        supplement_models_payload_with_endpoint_metadata(&mut models, "codex-crp", &endpoint, now);
 
         assert_eq!(
             models

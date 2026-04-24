@@ -1,6 +1,9 @@
 load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
+load("//tools/bazel:rust_deps.generated.bzl", "RUST_BAZEL_DEPS")
 
 package(default_visibility = ["//visibility:public"])
+
+_CTX_FS_DEPS = RUST_BAZEL_DEPS["ctx-fs"]
 
 rust_library(
     name = "lib",
@@ -8,18 +11,13 @@ rust_library(
     crate_root = "src/lib.rs",
     edition = "2021",
     srcs = glob(["src/**/*.rs"]),
-    deps = [
-        "//core/crates/ctx-core:lib",
-        "@crates//:anyhow",
-        "@crates//:directories",
-        "@crates//:tokio",
-    ],
+    deps = _CTX_FS_DEPS.deps,
 )
 
 rust_test(
     name = "unit_tests",
     crate = ":lib",
-    deps = ["@crates//:tempfile"],
+    deps = _CTX_FS_DEPS.dev_deps,
 )
 
 rust_test(
@@ -29,7 +27,6 @@ rust_test(
     srcs = ["tests/jj_worktrees.rs"],
     deps = [
         ":lib",
-        "@crates//:tempfile",
         "@crates//:tokio",
-    ],
+    ] + _CTX_FS_DEPS.dev_deps,
 )

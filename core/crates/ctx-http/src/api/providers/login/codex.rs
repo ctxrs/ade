@@ -391,6 +391,18 @@ fn spawn_codex_app_server(
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
+    for key in [
+        "CTX_PROVIDER_SESSION_REF",
+        "CODEX_THREAD_ID",
+        "CODEX_SESSION_ID",
+        "CLAUDE_SESSION_ID",
+        "CLAUDE_THREAD_ID",
+        "GEMINI_SESSION_ID",
+        "GEMINI_THREAD_ID",
+        "ACP_SESSION_ID",
+    ] {
+        cmd.env_remove(key);
+    }
     cmd.env("CODEX_HOME", account_dir);
     cmd.spawn()
         .with_context(|| format!("spawning codex app-server via `{codex_bin}`"))

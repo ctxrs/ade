@@ -16,7 +16,7 @@ use self::provider_fs::{
 };
 pub(super) use self::provider_fs::{
     cline_endpoint_home, codex_endpoint_home, droid_endpoint_home, gemini_endpoint_home,
-    goose_endpoint_path_root, qwen_endpoint_home,
+    goose_endpoint_path_root, legacy_codex_endpoint_home, qwen_endpoint_home,
 };
 #[cfg(test)]
 pub(super) use self::provider_fs::{openhands_endpoint_home, seed_droid_auth_from_host_path};
@@ -114,34 +114,39 @@ impl<'a> ProviderRuntimeContext<'a> {
     }
 
     pub(super) async fn cleanup_endpoint_runtime(&self, endpoint_id: &str) -> Result<()> {
-        let Some(endpoint_home) = (match self.canonical {
-            PROVIDER_CODEX => Some(codex_endpoint_home(self.data_root, endpoint_id)),
-            PROVIDER_CLINE => Some(cline_endpoint_home(self.data_root, endpoint_id)),
-            PROVIDER_GOOSE => Some(goose_endpoint_path_root(self.data_root, endpoint_id)),
-            PROVIDER_KIMI => Some(kimi_endpoint_home(self.data_root, endpoint_id)),
-            PROVIDER_QWEN => Some(qwen_endpoint_home(self.data_root, endpoint_id)),
-            PROVIDER_GEMINI => Some(gemini_endpoint_home(self.data_root, endpoint_id)),
-            PROVIDER_DROID => Some(droid_endpoint_home(self.data_root, endpoint_id)),
-            PROVIDER_OPENHANDS => Some(provider_fs::openhands_endpoint_home(
+        let Some(endpoint_homes) = (match self.canonical {
+            PROVIDER_CODEX => Some(vec![
+                codex_endpoint_home(self.data_root, endpoint_id),
+                legacy_codex_endpoint_home(self.data_root, endpoint_id),
+            ]),
+            PROVIDER_CLINE => Some(vec![cline_endpoint_home(self.data_root, endpoint_id)]),
+            PROVIDER_GOOSE => Some(vec![goose_endpoint_path_root(self.data_root, endpoint_id)]),
+            PROVIDER_KIMI => Some(vec![kimi_endpoint_home(self.data_root, endpoint_id)]),
+            PROVIDER_QWEN => Some(vec![qwen_endpoint_home(self.data_root, endpoint_id)]),
+            PROVIDER_GEMINI => Some(vec![gemini_endpoint_home(self.data_root, endpoint_id)]),
+            PROVIDER_DROID => Some(vec![droid_endpoint_home(self.data_root, endpoint_id)]),
+            PROVIDER_OPENHANDS => Some(vec![provider_fs::openhands_endpoint_home(
                 self.data_root,
                 endpoint_id,
-            )),
+            )]),
             _ => None,
         }) else {
             return Ok(());
         };
 
         validation::ensure_safe_endpoint_id(endpoint_id)?;
-        match tokio::fs::remove_dir_all(&endpoint_home).await {
-            Ok(()) => {}
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-            Err(err) => {
-                return Err(err).with_context(|| {
-                    format!(
-                        "removing {} endpoint home for endpoint {}",
-                        self.canonical, endpoint_id
-                    )
-                });
+        for endpoint_home in endpoint_homes {
+            match tokio::fs::remove_dir_all(&endpoint_home).await {
+                Ok(()) => {}
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+                Err(err) => {
+                    return Err(err).with_context(|| {
+                        format!(
+                            "removing {} endpoint home for endpoint {}",
+                            self.canonical, endpoint_id
+                        )
+                    });
+                }
             }
         }
         Ok(())
@@ -161,6 +166,25 @@ impl<'a> ProviderRuntimeContext<'a> {
                 validation::ensure_shape_compatible(self.canonical, endpoint.api_shape)?;
                 validation::ensure_safe_endpoint_id(&endpoint.id)?;
                 let codex_home = codex_endpoint_home(self.data_root, &endpoint.id);
+                let legacy_codex_home = legacy_codex_endpoint_home(self.data_root, &endpoint.id);
+                if !codex_home.exists() && legacy_codex_home.exists() {
+                    if let Some(parent) = codex_home.parent() {
+                        tokio::fs::create_dir_all(parent).await.with_context(|| {
+                            format!(
+                                "creating canonical codex endpoint parent for endpoint {}",
+                                endpoint.id
+                            )
+                        })?;
+                    }
+                    tokio::fs::rename(&legacy_codex_home, &codex_home)
+                        .await
+                        .with_context(|| {
+                            format!(
+                                "migrating legacy codex endpoint home to codex-crp for endpoint {}",
+                                endpoint.id
+                            )
+                        })?;
+                }
                 prepare_codex_home_with_api_key(&codex_home, &api_key).await?;
                 env.insert(
                     "CODEX_HOME".to_string(),

@@ -116,7 +116,7 @@ for provider_id in required:
                 "provider claude-cli entrypoint must be node_modules/@anthropic-ai/claude-code/cli-wrapper.cjs"
             )
 
-    if provider_id == "codex":
+    if provider_id == "codex-crp":
         releases = [r for r in releases if isinstance(r, dict)]
         release = releases[0] if releases else {}
         provenance = release.get("provenance") if isinstance(release, dict) else {}
@@ -155,7 +155,7 @@ for provider_id in required:
         if not isinstance(targets, dict) or not targets:
             errors.append("provider codex managed_install.targets missing")
         else:
-            expected_url_path = f"/providers/codex/{managed_version}/" if managed_version else ""
+            expected_url_path = f"/providers/codex-crp/{managed_version}/" if managed_version else ""
             for target_id, target in targets.items():
                 if not isinstance(target, dict):
                     errors.append(f"provider codex target invalid ({target_id})")

@@ -29,6 +29,7 @@ mod tests {
                 std::env::current_dir().unwrap(),
                 Default::default(),
                 tx,
+                crate::adapters::ProviderRunHooks::default(),
             )
             .await
             .unwrap();
@@ -58,6 +59,7 @@ mod tests {
                 std::env::current_dir().unwrap(),
                 Default::default(),
                 tx,
+                crate::adapters::ProviderRunHooks::default(),
             )
             .await
             .unwrap();

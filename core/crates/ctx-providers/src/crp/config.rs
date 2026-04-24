@@ -94,7 +94,7 @@ pub(super) fn build_crp_session_config(
         personality: env
             .get("CTX_PROVIDER_ID")
             .map(|provider_id| provider_id.as_str())
-            .filter(|provider_id| *provider_id == "codex")
+            .filter(|provider_id| *provider_id == "codex-crp")
             .map(|_| "pragmatic".to_string()),
         mcp_servers,
     })
@@ -329,7 +329,7 @@ mod tests {
     #[test]
     fn build_crp_session_config_sets_pragmatic_personality_for_codex() {
         let mut env = HashMap::new();
-        env.insert("CTX_PROVIDER_ID".to_string(), "codex".to_string());
+        env.insert("CTX_PROVIDER_ID".to_string(), "codex-crp".to_string());
         let workdir = PathBuf::from("/tmp/workdir");
 
         let cfg = build_crp_session_config(&env, &workdir).expect("build session config");

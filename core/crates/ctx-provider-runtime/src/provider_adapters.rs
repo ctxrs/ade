@@ -27,6 +27,7 @@ impl ProviderAdapter for StaticStatusAdapter {
         _workdir: PathBuf,
         _env: HashMap<String, String>,
         _event_sink: tokio::sync::mpsc::Sender<ctx_providers::events::NormalizedEvent>,
+        _hooks: ctx_providers::adapters::ProviderRunHooks,
     ) -> Result<RunHandle> {
         let msg = self
             .status

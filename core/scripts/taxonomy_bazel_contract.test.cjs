@@ -15,7 +15,14 @@ const ctxProviderAccountsBuild = fs.readFileSync(
 );
 const scriptsBuild = fs.readFileSync(path.join(coreRoot, "scripts", "BUILD.bazel"), "utf8");
 
-test("deterministic Linux contract gates route through Bazel-owned workspace-task wrappers", () => {
+function readTargetBlock(targetName) {
+  const start = scriptsBuild.indexOf(`name = "${targetName}"`);
+  assert.notEqual(start, -1, `missing target block for ${targetName}`);
+  const next = scriptsBuild.indexOf("\nsh_binary(", start + 1);
+  return scriptsBuild.slice(start, next === -1 ? undefined : next);
+}
+
+test("deterministic Linux contract gates route through Bazel-owned contract entrypoints", () => {
   assert.equal(
     packageJson.scripts["bazel:provider-auth:validate"],
     "node scripts/run_bazel_pilot.cjs run //core/scripts:provider_auth_validate",
@@ -130,13 +137,43 @@ test("deterministic Linux contract gates route through Bazel-owned workspace-tas
     assert.match(scriptsBuild, new RegExp(target.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")));
   }
 
-  assert.match(scriptsBuild, /srcs = \["\/\/tools\/bazel:run_workspace_task\.sh"\]/);
+
+  const providerAuthValidate = readTargetBlock("provider_auth_validate");
+  assert.match(providerAuthValidate, /srcs = \["\/\/tools\/bazel:run_node_task\.sh"\]/);
+  assert.match(providerAuthValidate, /args = \["core", "scripts\/provider_auth_validate_bazel\.cjs"\]/);
+  assert.doesNotMatch(providerAuthValidate, /run_workspace_task\.sh/);
+  assert.doesNotMatch(providerAuthValidate, /\bpnpm\b/);
+
+  const desktopVersionCheck = readTargetBlock("desktop_version_check");
+  assert.match(desktopVersionCheck, /srcs = \["\/\/tools\/bazel:run_node_task\.sh"\]/);
+  assert.match(desktopVersionCheck, /args = \["core", "scripts\/desktop_check_versions\.cjs"\]/);
+  assert.doesNotMatch(desktopVersionCheck, /run_workspace_task\.sh/);
+  assert.doesNotMatch(desktopVersionCheck, /\bpnpm\b/);
+
+  const runtimeLockCheckMatrix = readTargetBlock("desktop_runtime_lock_check_matrix");
+  assert.match(runtimeLockCheckMatrix, /srcs = \["\/\/tools\/bazel:run_node_task\.sh"\]/);
+  assert.match(runtimeLockCheckMatrix, /args = \["core", "scripts\/runtime_lock_matrix_consistency\.cjs"\]/);
+  assert.doesNotMatch(runtimeLockCheckMatrix, /run_workspace_task\.sh/);
+  assert.doesNotMatch(runtimeLockCheckMatrix, /\bpnpm\b/);
+
+  const runtimeLockValidate = readTargetBlock("desktop_runtime_lock_validate");
+  assert.match(runtimeLockValidate, /srcs = \["\/\/tools\/bazel:run_node_task\.sh"\]/);
+  assert.match(runtimeLockValidate, /args = \["core", "scripts\/runtime_lock_validate\.cjs", "--profile", "parity"\]/);
+  assert.doesNotMatch(runtimeLockValidate, /run_workspace_task\.sh/);
+
+  const launchModeContracts = readTargetBlock("desktop_launch_mode_contracts");
+  assert.match(launchModeContracts, /srcs = \["\/\/tools\/bazel:run_node_task\.sh"\]/);
   assert.match(
-    scriptsBuild,
-    /args = \["core", "node", "--test", "scripts\/buildkite_pipeline_contract\.test\.cjs", "scripts\/trigger_buildkite_mac_nightly\.test\.cjs"\]/,
+    launchModeContracts,
+    /args = \["core", "--test", "scripts\/desktop_mode_contract\.test\.cjs", "scripts\/desktop_prepare\.test\.cjs", "scripts\/desktop_tauri_entry\.test\.cjs"\]/,
   );
-  assert.match(scriptsBuild, /args = \["core", "pnpm", "provider-auth:validate"\]/);
-  assert.match(scriptsBuild, /args = \["core", "pnpm", "desktop:check:versions"\]/);
-  assert.match(scriptsBuild, /args = \["core", "pnpm", "desktop:runtime:lock:check-matrix"\]/);
-  assert.match(scriptsBuild, /args = \["core", "node", "scripts\/runtime_lock_validate\.cjs", "--profile", "parity"\]/);
+  assert.doesNotMatch(launchModeContracts, /run_workspace_task\.sh/);
+
+  const bundleContracts = readTargetBlock("desktop_bundle_contracts");
+  assert.match(bundleContracts, /srcs = \["\/\/tools\/bazel:run_node_task\.sh"\]/);
+  assert.match(
+    bundleContracts,
+    /args = \["core", "--test", "scripts\/desktop_import_bundles\.test\.cjs", "scripts\/desktop_normalize_bundle_permissions\.test\.cjs", "scripts\/desktop_icon_reps\.test\.cjs"\]/,
+  );
+  assert.doesNotMatch(bundleContracts, /run_workspace_task\.sh/);
 });

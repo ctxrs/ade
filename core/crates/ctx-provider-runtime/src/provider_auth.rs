@@ -1,5 +1,6 @@
 use std::path::Path as StdPath;
 
+use ctx_core::provider_ids::{canonical_provider_id, CODEX_CRP_PROVIDER_ID};
 use ctx_harness_sources as harness_sources;
 use ctx_harness_sources::HarnessSourceKind;
 use ctx_provider_accounts as provider_accounts;
@@ -32,6 +33,7 @@ pub async fn provider_has_active_auth_config_with_runtime_root(
     provider_id: &str,
     source_config: Option<&harness_sources::HarnessProviderSourceConfig>,
 ) -> bool {
+    let provider_id = canonical_provider_id(provider_id);
     if provider_id == "fake" {
         return true;
     }
@@ -40,7 +42,7 @@ pub async fn provider_has_active_auth_config_with_runtime_root(
             return true;
         }
     }
-    if provider_id == "codex" {
+    if provider_id == CODEX_CRP_PROVIDER_ID {
         return match runtime_data_root {
             Some(runtime_root) => {
                 provider_accounts::codex_has_active_auth_with_runtime_root(data_root, runtime_root)

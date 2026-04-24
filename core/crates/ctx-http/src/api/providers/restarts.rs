@@ -37,7 +37,7 @@ pub(super) async fn restart_provider_for_auth_change(
 }
 
 pub(super) async fn restart_codex_providers_for_auth_change(state: &Arc<AppState>, reason: &str) {
-    restart_provider_for_auth_change(state, "codex", reason).await;
+    restart_provider_for_auth_change(state, "codex-crp", reason).await;
 }
 
 pub(super) async fn restart_claude_providers_for_auth_change(state: &Arc<AppState>, reason: &str) {

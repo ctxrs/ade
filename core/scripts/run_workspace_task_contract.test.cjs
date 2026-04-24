@@ -72,9 +72,14 @@ test("run_workspace_task copies the workspace without requiring rsync", () => {
   fs.writeFileSync(path.join(runfilesRepo, ".ctx", "attachments", "excluded.txt"), "exclude me\n");
 
   fs.mkdirSync(path.join(realWorkspace, "core", "node_modules"), { recursive: true });
+  fs.mkdirSync(path.join(realWorkspace, "core", "apps", "desktop", "node_modules"), { recursive: true });
   fs.mkdirSync(path.join(realWorkspace, "core", "apps", "web", "node_modules"), { recursive: true });
   fs.writeFileSync(path.join(realWorkspace, "core", "package.json"), "{}\n");
   fs.writeFileSync(path.join(realWorkspace, "core", "node_modules", "marker.txt"), "root-node-modules\n");
+  fs.writeFileSync(
+    path.join(realWorkspace, "core", "apps", "desktop", "node_modules", "marker.txt"),
+    "desktop-node-modules\n",
+  );
   fs.writeFileSync(
     path.join(realWorkspace, "core", "apps", "web", "node_modules", "marker.txt"),
     "web-node-modules\n",
@@ -103,8 +108,10 @@ test("run_workspace_task copies the workspace without requiring rsync", () => {
     "test ! -e ./e2e/playwright-report",
     "test ! -e ./e2e/test-results",
     "test -L ../../node_modules",
+    "test -L ../desktop/node_modules",
     "test -L ./node_modules",
     'test "$(cat ../../node_modules/marker.txt)" = "root-node-modules"',
+    'test "$(cat ../desktop/node_modules/marker.txt)" = "desktop-node-modules"',
     'test "$(cat ./node_modules/marker.txt)" = "web-node-modules"',
   ].join(" && ");
 
@@ -132,9 +139,14 @@ test("run_workspace_task falls back to the caller PWD when BUILD_WORKSPACE_DIREC
   fs.writeFileSync(path.join(runfilesRepo, "core", "apps", "web", "web_keep.txt"), "web\n");
 
   fs.mkdirSync(path.join(realWorkspace, "core", "node_modules"), { recursive: true });
+  fs.mkdirSync(path.join(realWorkspace, "core", "apps", "desktop", "node_modules"), { recursive: true });
   fs.mkdirSync(path.join(realWorkspace, "core", "apps", "web", "node_modules"), { recursive: true });
   fs.writeFileSync(path.join(realWorkspace, "core", "package.json"), "{}\n");
   fs.writeFileSync(path.join(realWorkspace, "core", "node_modules", "marker.txt"), "root-node-modules\n");
+  fs.writeFileSync(
+    path.join(realWorkspace, "core", "apps", "desktop", "node_modules", "marker.txt"),
+    "desktop-node-modules\n",
+  );
   fs.writeFileSync(
     path.join(realWorkspace, "core", "apps", "web", "node_modules", "marker.txt"),
     "web-node-modules\n",
@@ -149,8 +161,10 @@ test("run_workspace_task falls back to the caller PWD when BUILD_WORKSPACE_DIREC
   const checkScript = [
     "test -f ./web_keep.txt",
     "test -L ../../node_modules",
+    "test -L ../desktop/node_modules",
     "test -L ./node_modules",
     'test "$(cat ../../node_modules/marker.txt)" = "root-node-modules"',
+    'test "$(cat ../desktop/node_modules/marker.txt)" = "desktop-node-modules"',
     'test "$(cat ./node_modules/marker.txt)" = "web-node-modules"',
   ].join(" && ");
 
@@ -180,9 +194,14 @@ test("run_workspace_task prefers INIT_CWD when the sandbox PWD is not the real w
   fs.writeFileSync(path.join(runfilesRepo, "core", "apps", "web", "web_keep.txt"), "web\n");
 
   fs.mkdirSync(path.join(realWorkspace, "core", "node_modules"), { recursive: true });
+  fs.mkdirSync(path.join(realWorkspace, "core", "apps", "desktop", "node_modules"), { recursive: true });
   fs.mkdirSync(path.join(realWorkspace, "core", "apps", "web", "node_modules"), { recursive: true });
   fs.writeFileSync(path.join(realWorkspace, "core", "package.json"), "{}\n");
   fs.writeFileSync(path.join(realWorkspace, "core", "node_modules", "marker.txt"), "root-node-modules\n");
+  fs.writeFileSync(
+    path.join(realWorkspace, "core", "apps", "desktop", "node_modules", "marker.txt"),
+    "desktop-node-modules\n",
+  );
   fs.writeFileSync(
     path.join(realWorkspace, "core", "apps", "web", "node_modules", "marker.txt"),
     "web-node-modules\n",
@@ -201,8 +220,10 @@ test("run_workspace_task prefers INIT_CWD when the sandbox PWD is not the real w
   const checkScript = [
     "test -f ./web_keep.txt",
     "test -L ../../node_modules",
+    "test -L ../desktop/node_modules",
     "test -L ./node_modules",
     'test "$(cat ../../node_modules/marker.txt)" = "root-node-modules"',
+    'test "$(cat ../desktop/node_modules/marker.txt)" = "desktop-node-modules"',
     'test "$(cat ./node_modules/marker.txt)" = "web-node-modules"',
   ].join(" && ");
 
@@ -263,6 +284,7 @@ test("run_workspace_task disables macOS metadata propagation during workspace mi
 test("run_workspace_task excludes generated desktop bin and web test artifacts but preserves declared bundle data", () => {
   assert.match(scriptText, /core\/apps\/desktop\/src-tauri\/bin/);
   assert.doesNotMatch(scriptText, /core\/apps\/desktop\/src-tauri\/bundles/);
+  assert.match(scriptText, /core\/apps\/desktop\/node_modules/);
   assert.match(scriptText, /core\/apps\/web\/playwright-report/);
   assert.match(scriptText, /core\/apps\/web\/test-results/);
   assert.match(scriptText, /core\/apps\/web\/e2e\/playwright-report/);

@@ -1,6 +1,9 @@
 load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
+load("//tools/bazel:rust_deps.generated.bzl", "RUST_BAZEL_DEPS")
 
 package(default_visibility = ["//visibility:public"])
+
+_CTX_WORKER_PROTOCOL_DEPS = RUST_BAZEL_DEPS["ctx-worker-protocol"]
 
 rust_library(
     name = "lib",
@@ -8,11 +11,7 @@ rust_library(
     crate_root = "src/lib.rs",
     edition = "2021",
     srcs = glob(["src/**/*.rs"]),
-    deps = [
-        "@crates//:chrono",
-        "@crates//:serde",
-        "@crates//:uuid",
-    ],
+    deps = _CTX_WORKER_PROTOCOL_DEPS.deps,
 )
 
 rust_test(

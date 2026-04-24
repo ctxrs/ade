@@ -1611,6 +1611,60 @@ async fn deleting_codex_endpoint_removes_endpoint_home() {
 }
 
 #[tokio::test]
+async fn codex_endpoint_resolution_migrates_legacy_endpoint_home() {
+    let root = tempfile::tempdir().expect("tempdir");
+    let endpoint = upsert_provider_endpoint(
+        root.path(),
+        PROVIDER_CODEX,
+        HarnessEndpointUpsert {
+            endpoint_id: None,
+            name: "Legacy Codex".to_string(),
+            base_url: Some("https://openrouter.ai/api/v1".to_string()),
+            api_shape: Some(HarnessApiShape::OpenaiResponses),
+            auth_type: None,
+            model_override: None,
+            api_key: Some("sk-test".to_string()),
+            service_account_json: None,
+            project_id: None,
+            location: None,
+        },
+    )
+    .await
+    .expect("upsert");
+
+    let legacy_endpoint_home = root
+        .path()
+        .join("providers")
+        .join("codex")
+        .join("endpoint-homes")
+        .join(&endpoint.id);
+    tokio::fs::create_dir_all(&legacy_endpoint_home)
+        .await
+        .expect("mkdir legacy endpoint home");
+    tokio::fs::write(legacy_endpoint_home.join("legacy.txt"), b"legacy")
+        .await
+        .expect("write legacy marker");
+
+    set_provider_source_selection(
+        root.path(),
+        PROVIDER_CODEX,
+        HarnessSourceKind::Endpoint,
+        Some(endpoint.id.clone()),
+    )
+    .await
+    .expect("select");
+
+    resolve_provider_source_for_probe(root.path(), PROVIDER_CODEX)
+        .await
+        .expect("resolve probe");
+
+    let endpoint_home = codex_endpoint_home(root.path(), &endpoint.id);
+    assert!(endpoint_home.exists());
+    assert!(endpoint_home.join("legacy.txt").exists());
+    assert!(!legacy_endpoint_home.exists());
+}
+
+#[tokio::test]
 async fn pi_endpoint_uses_openrouter_provider_for_openrouter_base_urls() {
     let root = tempfile::tempdir().expect("tempdir");
     let endpoint = upsert_provider_endpoint(

@@ -9,6 +9,10 @@ use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::Json;
 use chrono::{DateTime, Utc};
+use ctx_core::provider_ids::{
+    canonical_provider_id, legacy_provider_id_alias, CODEX_CRP_PROVIDER_ID,
+    LEGACY_CODEX_PROVIDER_ID,
+};
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use tokio::process::Command;
@@ -87,22 +91,43 @@ use probe::*;
 #[cfg(test)]
 use restarts::*;
 
-fn invalid_provider_id_error(
-    provider_id: &str,
-    canonical_id: &str,
-) -> (StatusCode, Json<serde_json::Value>) {
-    (
-        StatusCode::BAD_REQUEST,
-        Json(serde_json::json!({
-            "error": format!(
-                "provider '{}' is not supported; use '{}'",
-                provider_id, canonical_id
-            ),
-            "code": "invalid_provider_id",
-            "provider_id": provider_id,
-            "canonical_id": canonical_id,
-        })),
-    )
+pub(super) fn canonicalize_provider_id(provider_id: &str) -> String {
+    canonical_provider_id(provider_id).to_string()
+}
+
+pub(super) fn project_provider_id_for_response(
+    requested_provider_id: &str,
+    canonical_provider_id_value: &str,
+) -> String {
+    if requested_provider_id == LEGACY_CODEX_PROVIDER_ID
+        && canonical_provider_id_value == CODEX_CRP_PROVIDER_ID
+    {
+        LEGACY_CODEX_PROVIDER_ID.to_string()
+    } else {
+        canonical_provider_id_value.to_string()
+    }
+}
+
+pub(super) fn legacy_codex_status_alias(status: &ProviderStatus) -> Option<ProviderStatus> {
+    let legacy_alias = legacy_provider_id_alias(&status.provider_id)?;
+    let mut aliased = status.clone();
+    aliased.provider_id = legacy_alias.to_string();
+    Some(aliased)
+}
+
+pub(super) fn project_harness_config_for_response(
+    requested_provider_id: &str,
+    config: &mut harness_sources::HarnessProviderSourceConfig,
+) {
+    let projected_provider_id =
+        project_provider_id_for_response(requested_provider_id, &config.provider_id);
+    if projected_provider_id == config.provider_id {
+        return;
+    }
+    config.provider_id = projected_provider_id.clone();
+    for endpoint in &mut config.endpoints {
+        endpoint.provider_id = projected_provider_id.clone();
+    }
 }
 
 #[derive(Debug, Default, Deserialize)]

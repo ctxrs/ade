@@ -8,6 +8,15 @@ const bazelIgnore = fs.readFileSync(path.join(repoRoot, ".bazelignore"), "utf8")
 const buildFile = fs.readFileSync(path.join(repoRoot, "core", "apps", "web", "BUILD.bazel"), "utf8");
 const scriptText = fs.readFileSync(path.join(repoRoot, "core", "apps", "web", "dist_sync_tool.sh"), "utf8");
 const anyEnforceToolText = fs.readFileSync(path.join(repoRoot, "core", "apps", "web", "any_enforce_tool.sh"), "utf8");
+const corePackageJson = JSON.parse(fs.readFileSync(path.join(repoRoot, "core", "package.json"), "utf8"));
+
+function targetBlock(buildText, name, nextName) {
+  const start = buildText.indexOf(`name = "${name}"`);
+  assert.notEqual(start, -1, `expected target ${name}`);
+  const end = buildText.indexOf(`name = "${nextName}"`, start + 1);
+  assert.notEqual(end, -1, `expected target ${nextName}`);
+  return buildText.slice(start, end);
+}
 
 test("Bazel web dist sync target stays explicit about the caller-supplied output dir", () => {
   assert.match(buildFile, /name = "dist_sync"/);
@@ -65,4 +74,24 @@ test("Bazel web dist sync tool requires an explicit workspace root and output di
   assert.match(scriptText, /expected web-local vite at/);
   assert.match(scriptText, /"\$\{VITE_BIN\}" build/);
   assert.match(scriptText, /cp -R dist "\$\{OUTPUT_DIR\}"/);
+});
+
+test("Bazel web focused unit slices run as native vitest tests", () => {
+  const nonPretextBlock = targetBlock(buildFile, "unit_tests_non_pretext", "pretext_measurement_unit_tests");
+  const pretextBlock = targetBlock(buildFile, "pretext_measurement_unit_tests", "desktop_ipc_corpus");
+
+  assert.equal(
+    corePackageJson.scripts["bazel:web:unit:non-pretext"],
+    "node scripts/run_bazel_pilot.cjs test //core/apps/web:unit_tests_non_pretext",
+  );
+  assert.equal(
+    corePackageJson.scripts["bazel:web:pretext:measurement"],
+    "node scripts/run_bazel_pilot.cjs test //core/apps/web:pretext_measurement_unit_tests",
+  );
+  assert.match(buildFile, /vitest_bin\.vitest_test\([\s\S]*?name = "unit_tests_non_pretext"/);
+  assert.match(buildFile, /vitest_bin\.vitest_test\([\s\S]*?name = "pretext_measurement_unit_tests"/);
+  assert.match(nonPretextBlock, /data = HERMETIC_WEB_CHECK_DATA/);
+  assert.match(pretextBlock, /data = HERMETIC_WEB_CHECK_DATA/);
+  assert.doesNotMatch(nonPretextBlock, /run_workspace_task\.sh/);
+  assert.doesNotMatch(pretextBlock, /run_workspace_task\.sh/);
 });

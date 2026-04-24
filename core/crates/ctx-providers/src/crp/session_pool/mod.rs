@@ -9,6 +9,7 @@ use crate::adapters::ProviderSessionSweepConfig;
 use super::runtime::CrpAgentConfig;
 
 mod driver;
+mod open_handshake;
 mod reaper;
 mod registry;
 mod state;

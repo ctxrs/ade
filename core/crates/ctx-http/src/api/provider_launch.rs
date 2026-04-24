@@ -14,6 +14,9 @@ use axum::http::StatusCode;
 use axum::response::sse::{Event as SseEvent, KeepAlive, Sse};
 use axum::Json;
 use chrono::Utc;
+use ctx_core::provider_ids::{
+    canonical_provider_id, CODEX_CRP_PROVIDER_ID, LEGACY_CODEX_PROVIDER_ID,
+};
 use futures::{Stream, StreamExt};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
@@ -300,7 +303,39 @@ fn workspace_provider_cache_key(
     target: InstallTarget,
     provider_id: &str,
 ) -> String {
-    format!("{}/{}/{}", workspace_id.0, target.as_str(), provider_id)
+    format!(
+        "{}/{}/{}",
+        workspace_id.0,
+        target.as_str(),
+        canonical_provider_id(provider_id)
+    )
+}
+
+fn canonicalize_provider_id(provider_id: &str) -> String {
+    canonical_provider_id(provider_id).to_string()
+}
+
+fn project_provider_id_for_response(
+    requested_provider_id: &str,
+    canonical_provider_id_value: &str,
+) -> String {
+    if requested_provider_id == LEGACY_CODEX_PROVIDER_ID
+        && canonical_provider_id_value == CODEX_CRP_PROVIDER_ID
+    {
+        LEGACY_CODEX_PROVIDER_ID.to_string()
+    } else {
+        canonical_provider_id_value.to_string()
+    }
+}
+
+fn project_provider_id_field(requested_provider_id: &str, value: &mut serde_json::Value) {
+    let Some(provider_id) = value.get("provider_id").and_then(serde_json::Value::as_str) else {
+        return;
+    };
+    let projected = project_provider_id_for_response(requested_provider_id, provider_id);
+    if projected != provider_id {
+        value["provider_id"] = serde_json::json!(projected);
+    }
 }
 
 pub(super) fn selected_endpoint_from_harness_config(

@@ -76,5 +76,7 @@ pub(in crate::crp) struct CrpPromptRequest {
     pub(in crate::crp) workdir: PathBuf,
     pub(in crate::crp) env: HashMap<String, String>,
     pub(in crate::crp) event_sink: mpsc::Sender<NormalizedEvent>,
+    pub(in crate::crp) provider_session_ref_claim:
+        Option<crate::adapters::ProviderSessionRefClaimHook>,
     pub(in crate::crp) cancel_rx: oneshot::Receiver<()>,
 }

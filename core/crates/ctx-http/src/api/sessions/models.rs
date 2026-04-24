@@ -1,4 +1,5 @@
 use super::*;
+use ctx_core::provider_ids::canonical_provider_id;
 use ctx_harness_sources as harness_sources;
 use ctx_provider_accounts as provider_accounts;
 
@@ -400,6 +401,7 @@ async fn load_provider_model_catalog_for_install_target(
     provider_id: &str,
     install_target: ctx_provider_install::install_state::InstallTarget,
 ) -> Result<Option<ModelCatalog>, String> {
+    let provider_id = canonical_provider_id(provider_id);
     let cache_key = format!(
         "{}/{}/{}",
         workspace.id.0,
@@ -693,7 +695,7 @@ mod tests {
         .expect("save settings");
 
         state.providers.options_cache.lock().await.insert(
-            format!("{}/container/codex", workspace.id.0),
+            format!("{}/container/codex-crp", workspace.id.0),
             crate::daemon::CachedProviderOptions {
                 cached_at: std::time::Instant::now(),
                 value: serde_json::json!({
@@ -713,7 +715,7 @@ mod tests {
             },
         );
 
-        let catalog = load_provider_model_catalog(&state, &workspace, "codex")
+        let catalog = load_provider_model_catalog(&state, &workspace, "codex-crp")
             .await
             .expect("load catalog")
             .expect("catalog");

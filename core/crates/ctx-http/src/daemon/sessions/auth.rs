@@ -9,7 +9,7 @@ use crate::logs;
 use crate::order_seq::attach_order_seq;
 use ctx_core::ids::SessionId;
 use ctx_core::models::{Session, SessionEventType};
-use ctx_providers::adapters::ProviderAdapter;
+use ctx_providers::adapters::{ProviderAdapter, ProviderRunHooks, ProviderSessionRefClaimHook};
 use ctx_providers::events::NormalizedEvent;
 
 #[derive(Debug)]
@@ -24,6 +24,27 @@ struct PreparedSessionAuth {
     adapter: Arc<dyn ProviderAdapter>,
     workdir: PathBuf,
     provider_env: HashMap<String, String>,
+}
+
+fn provider_session_claim_hook(
+    store: ctx_store::Store,
+    session_id: SessionId,
+) -> ProviderSessionRefClaimHook {
+    Arc::new(move |claim| {
+        let store = store.clone();
+        Box::pin(async move {
+            if let Some(returned_ref) = claim.returned_provider_session_ref {
+                store
+                    .claim_session_provider_session_ref(
+                        session_id,
+                        returned_ref,
+                        "provider.session_opened.auth",
+                    )
+                    .await?;
+            }
+            Ok(())
+        })
+    })
 }
 
 pub(crate) async fn run_session_authentication(
@@ -55,6 +76,12 @@ pub(crate) async fn run_session_authentication(
             prepared.provider_env,
             method_id,
             event_sender,
+            ProviderRunHooks {
+                provider_session_ref_claim: Some(provider_session_claim_hook(
+                    store.clone(),
+                    session.id,
+                )),
+            },
         )
         .await;
 
@@ -164,7 +191,7 @@ async fn prepare_session_auth_runtime(
     if let Ok(value) = std::env::var("CTX_MCP_DISABLED") {
         provider_env.insert("CTX_MCP_DISABLED".to_string(), value);
     }
-    if session.provider_id == "codex" && !provider_env.contains_key("CODEX_HOME") {
+    if session.provider_id == "codex-crp" && !provider_env.contains_key("CODEX_HOME") {
         if let Ok(extra) =
             ctx_provider_accounts::codex_env_for_active_account(&state.core.data_root).await
         {
@@ -207,6 +234,7 @@ fn spawn_session_auth_event_sink(
     let (event_sender, mut event_receiver) = mpsc::channel::<NormalizedEvent>(128);
     tokio::spawn(async move {
         while let Some(event) = event_receiver.recv().await {
+            let mut event_type = event.event_type.clone();
             let mut payload = event.payload_json.clone();
             if matches!(event.event_type, SessionEventType::Init) {
                 if payload.get("crp_session_id").is_some() {
@@ -222,12 +250,24 @@ fn spawn_session_auth_event_sink(
                     .get("provider_session_id")
                     .and_then(serde_json::Value::as_str)
                 {
-                    let _ = store
-                        .update_session_provider_session_ref(
+                    if let Err(err) = store
+                        .claim_session_provider_session_ref(
                             session_id,
-                            Some(provider_session_id.to_string()),
+                            provider_session_id.to_string(),
+                            "sessions.auth_event_init",
                         )
-                        .await;
+                        .await
+                    {
+                        event_type = SessionEventType::Error;
+                        payload = serde_json::json!({
+                            "message": err.to_string(),
+                            "reason": "provider_session_ref_claim_failed",
+                            "kind": "provider_session_ref_claim_failed",
+                            "details": {
+                                "provider_session_id": provider_session_id,
+                            },
+                        });
+                    }
                 }
             }
             if payload.is_object() {
@@ -262,7 +302,7 @@ fn spawn_session_auth_event_sink(
                 }
             }
             if let Ok(appended_event) = store
-                .append_session_event(session_id, None, None, event.event_type.clone(), payload)
+                .append_session_event(session_id, None, None, event_type, payload)
                 .await
             {
                 state.publish_event(appended_event).await;

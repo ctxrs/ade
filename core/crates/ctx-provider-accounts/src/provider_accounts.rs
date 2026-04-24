@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 use chrono::{DateTime, Utc};
+use ctx_core::provider_ids::{canonical_provider_id, CODEX_CRP_PROVIDER_ID};
 use serde::{Deserialize, Serialize};
 
 mod amp;
@@ -225,11 +226,42 @@ pub struct CodexHostImportProbe {
     pub error: Option<String>,
 }
 
+async fn migrate_legacy_codex_storage(data_root: &Path) -> Result<()> {
+    let moves = [
+        (
+            legacy_codex_accounts_root(data_root),
+            codex_accounts_root(data_root),
+        ),
+        (
+            legacy_codex_secrets_root(data_root),
+            codex_secrets_root(data_root),
+        ),
+        (
+            legacy_codex_runtime_home(data_root),
+            codex_runtime_home(data_root),
+        ),
+    ];
+    for (legacy_path, canonical_path) in moves {
+        if !legacy_path.exists() || canonical_path.exists() {
+            continue;
+        }
+        if let Some(parent) = canonical_path.parent() {
+            tokio::fs::create_dir_all(parent).await?;
+        }
+        tokio::fs::rename(&legacy_path, &canonical_path).await?;
+    }
+    Ok(())
+}
+
 pub async fn load_codex_registry(data_root: &Path) -> CodexAccountRegistry {
+    if let Err(error) = migrate_legacy_codex_storage(data_root).await {
+        tracing::warn!("failed to migrate legacy Codex storage roots: {error:#}");
+    }
     load_json_registry(&codex_registry_path(data_root)).await
 }
 
 pub async fn save_codex_registry(data_root: &Path, registry: &CodexAccountRegistry) -> Result<()> {
+    migrate_legacy_codex_storage(data_root).await?;
     save_json_registry(&codex_registry_path(data_root), registry).await
 }
 
@@ -336,8 +368,8 @@ pub async fn subscription_env_for_active_account(
     data_root: &Path,
     provider_id: &str,
 ) -> Result<HashMap<String, String>> {
-    match provider_id {
-        "codex" => codex_env_for_active_account(data_root).await,
+    match canonical_provider_id(provider_id) {
+        CODEX_CRP_PROVIDER_ID => codex_env_for_active_account(data_root).await,
         "claude-crp" => claude_env_for_active_account(data_root).await,
         "gemini" => gemini_env_for_active_account(data_root).await,
         "qwen" => qwen_env_for_active_account(data_root).await,
@@ -359,8 +391,10 @@ pub async fn subscription_env_for_active_account_with_runtime_root(
         return subscription_env_for_active_account(data_root, provider_id).await;
     }
 
-    match provider_id {
-        "codex" => codex_env_for_active_account_with_runtime_root(data_root, runtime_root).await,
+    match canonical_provider_id(provider_id) {
+        CODEX_CRP_PROVIDER_ID => {
+            codex_env_for_active_account_with_runtime_root(data_root, runtime_root).await
+        }
         "claude-crp" => {
             claude_env_for_active_account_with_runtime_root(data_root, runtime_root).await
         }

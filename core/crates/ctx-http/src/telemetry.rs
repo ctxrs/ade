@@ -583,7 +583,7 @@ mod tests {
     #[test]
     fn session_interrupt_latency_event_sets_bounded_fields() {
         let event = TelemetryEvent::session_interrupt_latency(
-            "codex".to_string(),
+            "codex-crp".to_string(),
             "gpt-5.2-codex".to_string(),
             Some("host".to_string()),
             Some("worktree".to_string()),
