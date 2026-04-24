@@ -1,7 +1,7 @@
+import { buildSessionSubscriptionPlan } from "@ctx/session-supervisor-core";
 import type { SessionHeadSnapshot } from "../../api/client";
 import type { SessionSubscriptionCursor } from "../sessionSubscription";
 import type { InternalEntry } from "./entryState";
-import { buildSessionSubscriptionPlan } from "./sessionSubscriptionPlan";
 import { reconcileActivityFromTurns, reconcileLatestTurnInterruptedFromActivity } from "./cachePolicy";
 import { isReplicaAuthority } from "./config";
 

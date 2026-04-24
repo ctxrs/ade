@@ -22,6 +22,22 @@ test("verify:touched adds source invariants to the targeted Rust gate plan", () 
   ]);
 });
 
+test("verify:affected broadens the canonical Rust leaf beyond verify:touched", () => {
+  const plan = buildVerificationPlan({
+    intent: "affected",
+    base: "origin/main",
+    changedFiles: ["core/crates/ctx-provider-accounts/src/lib.rs"],
+  });
+
+  assert.deepEqual(plan.commands, [
+    "pnpm source:file-size:enforce",
+    "pnpm rust:turbo:check",
+    "node scripts/ctx_http_suite_task.cjs --suite provider-auth",
+    "node scripts/ctx_http_suite_task.cjs --suite provider-runtime-simulated",
+    "pnpm exec node scripts/run_rust_gate.cjs --mode workspace --include-reverse-deps --clippy --test-strategy mixed --crate ctx-provider-accounts",
+  ]);
+});
+
 test("verify:affected routes supabase migrations through the dedicated invariant check", () => {
   const plan = buildVerificationPlan({
     intent: "affected",
@@ -45,6 +61,60 @@ test("verify:broader keeps web escalations changed-aware", () => {
     "pnpm source:file-size:enforce",
     "pnpm bazel:web:unit:non-pretext",
     "pnpm bazel:web:e2e:premerge",
+  ]);
+});
+
+test("verify:affected routes extracted layout package changes to the dedicated pretext slice", () => {
+  const plan = buildVerificationPlan({
+    intent: "affected",
+    base: "origin/main",
+    changedFiles: ["core/packages/session-thread-layout/src/sessionMarkdownContract.ts"],
+  });
+
+  assert.deepEqual(plan.commands, [
+    "pnpm source:file-size:enforce",
+    "pnpm bazel:web:pretext:measurement",
+  ]);
+});
+
+test("verify:affected routes extracted supervisor package changes to direct package truth plus app coverage", () => {
+  const plan = buildVerificationPlan({
+    intent: "affected",
+    base: "origin/main",
+    changedFiles: ["core/packages/session-supervisor-core/src/sessionSubscriptionPlan.ts"],
+  });
+
+  assert.deepEqual(plan.commands, [
+    "pnpm source:file-size:enforce",
+    "pnpm bazel:web:unit:supervisor-core",
+    "pnpm bazel:web:unit:non-pretext",
+  ]);
+});
+
+test("verify:affected adds ctx-http base compile truth for canonical scheduler runtime changes", () => {
+  const plan = buildVerificationPlan({
+    intent: "affected",
+    base: "origin/main",
+    changedFiles: ["core/crates/ctx-http/src/scheduler/runtime/event_loop.rs"],
+  });
+
+  assert.deepEqual(plan.commands, [
+    "pnpm source:file-size:enforce",
+    "node scripts/ctx_http_suite_task.cjs --suite base",
+    "node scripts/ctx_http_suite_task.cjs --suite turns-terminal",
+  ]);
+});
+
+test("verify:affected keeps direct ctx-http suite test edits on suite truth plus base compile truth", () => {
+  const plan = buildVerificationPlan({
+    intent: "affected",
+    base: "origin/main",
+    changedFiles: ["core/crates/ctx-http/tests/subscription_accounts_api.rs"],
+  });
+
+  assert.deepEqual(plan.commands, [
+    "node scripts/ctx_http_suite_task.cjs --suite base",
+    "node scripts/ctx_http_suite_task.cjs --suite provider-auth",
   ]);
 });
 

@@ -596,8 +596,44 @@ function createPhaseFailureResult({ command = "", error, invocation, phase, star
   };
 }
 
+function buildBazelPilotSummary(invocation, phaseResults, exitCode) {
+  const summarizeTargets = (phaseName) => phaseResults
+    .filter((phase) => phase.name === phaseName)
+    .reduce((total, phase) => total + (Array.isArray(phase.targets) ? phase.targets.length : 0), 0);
+  const localPhases = phaseResults.filter((phase) => phase.name === "local");
+  const remotePhases = phaseResults.filter((phase) => phase.name !== "local");
+  return {
+    command: invocation.command,
+    exitCode,
+    localPhaseCount: localPhases.length,
+    localTargetCount: summarizeTargets("local"),
+    localSpill: localPhases.length > 0,
+    phaseCount: phaseResults.length,
+    phases: phaseResults.map((phase) => ({
+      buildBuddyInvocationId: String(phase.buildBuddyInvocationId || ""),
+      buildBuddyInvocationUrl: String(phase.buildBuddyInvocationUrl || ""),
+      durationMs: Number(phase.durationMs || 0),
+      name: phase.name,
+      status: Number(phase.status || 0),
+      targetCount: Array.isArray(phase.targets) ? phase.targets.length : 0,
+    })),
+    remoteExecutionMode: invocation.remoteExecutionMode,
+    remotePhaseCount: remotePhases.length,
+    remoteTargetCount: remotePhases.reduce(
+      (total, phase) => total + (Array.isArray(phase.targets) ? phase.targets.length : 0),
+      0,
+    ),
+    success: exitCode === 0,
+  };
+}
+
+function formatBazelPilotSummaryLine(summary) {
+  return `CTX_BAZEL_PILOT_SUMMARY ${JSON.stringify(summary)}`;
+}
+
 function runBazelPilotInvocationPhases(invocation, {
   exitImpl = process.exit,
+  emitSummaryImpl = (line) => process.stderr.write(`${line}\n`),
   logErrorImpl = console.error,
   spawnSyncImpl = childProcess.spawnSync,
   withHostJobBudgetImpl = withHostJobBudget,
@@ -770,6 +806,9 @@ function runBazelPilotInvocationPhases(invocation, {
   } finally {
     finalizeTelemetry();
   }
+  emitSummaryImpl(
+    formatBazelPilotSummaryLine(buildBazelPilotSummary(invocation, phaseResults, exitCode)),
+  );
   if (exitCode !== 0) {
     exitImpl(exitCode);
   }
@@ -813,5 +852,7 @@ module.exports = {
   resolvePhaseBudgetKey,
   resolveBuildBuddyApiBaseUrl,
   resolveBazeliskCommand,
+  buildBazelPilotSummary,
+  formatBazelPilotSummaryLine,
   runBazelPilotInvocationPhases,
 };

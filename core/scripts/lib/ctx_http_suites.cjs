@@ -33,7 +33,7 @@ const CTX_HTTP_SHARED_SOURCE_GLOBS = [
 
 const CTX_HTTP_SUITES = [
   {
-    dependencyCrates: [],
+    dependencyCrates: ["ctx-http"],
     name: "base",
     description: "ctx-http lib, bins, and doc tests",
     sourceGlobs: [],

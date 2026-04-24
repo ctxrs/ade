@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   PRETEXT_WRAP_RULE_CATALOG,
   getPretextWrapRuleById,
-} from "../../testdata/pretextWrapRuleCatalog";
+} from "./testdata/pretextWrapRuleCatalog";
 import { measureSessionMarkdownDocument } from "./sessionMarkdownMeasurement";
 import { BODY_LINE_HEIGHT_PX } from "./sessionMarkdownMeasurementCore";
 

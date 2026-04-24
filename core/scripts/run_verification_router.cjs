@@ -200,7 +200,7 @@ function buildVerificationPlan(args) {
   const taxonomyPlan = buildExecutionPlan({
     profileId: config.profileId,
     changedFiles: changeSet.changedFiles,
-    touchedOnly: true,
+    selectionMode: config.intent === "touched" ? "touched" : "affected",
   });
   const overlayCommands = buildOverlayCommands(changeSet.changedFiles);
   const commands = dedupeCommands([...overlayCommands, ...taxonomyPlan.commands]);

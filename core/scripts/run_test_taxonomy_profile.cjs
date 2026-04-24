@@ -23,6 +23,7 @@ function parseArgs(argv) {
     listProfiles: false,
     profile: "",
     run: false,
+    selectionMode: "",
     touchedOnly: false,
   };
 
@@ -39,6 +40,9 @@ function parseArgs(argv) {
       index += 1;
     } else if (arg === "--touched-only") {
       args.touchedOnly = true;
+    } else if (arg === "--selection-mode") {
+      args.selectionMode = argv[index + 1] || "";
+      index += 1;
     } else if (arg === "--check-nonempty") {
       args.checkNonEmpty = true;
     } else if (arg === "--json") {
@@ -102,6 +106,7 @@ function main() {
   const plan = buildExecutionPlan({
     profileId: args.profile,
     changedFiles,
+    selectionMode: args.selectionMode,
     touchedOnly: args.touchedOnly,
   });
 

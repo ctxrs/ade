@@ -1,10 +1,1 @@
-import { SESSION_THREAD_GEOMETRY_VIEWS } from "./sessionThreadGeometryViews";
-
-export const SESSION_THREAD_MEASUREMENT_GEOMETRY_REVISION =
-  SESSION_THREAD_GEOMETRY_VIEWS.geometryRevision;
-
-export const SESSION_MARKDOWN_MEASUREMENT_CONTRACT =
-  SESSION_THREAD_GEOMETRY_VIEWS.measurementContract;
-
-export const SESSION_THREAD_ROW_MEASUREMENT_CONTRACT =
-  SESSION_THREAD_GEOMETRY_VIEWS.rowMeasurementContract;
+export * from "@ctx/session-thread-layout";

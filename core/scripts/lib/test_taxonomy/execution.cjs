@@ -78,7 +78,7 @@ function buildChangedContext(changedFiles) {
   };
 }
 
-function entryMatchesChangedFiles(entry, changedFilesOrContext) {
+function entryMatchesChangedFiles(entry, changedFilesOrContext, { selectionMode = "touched" } = {}) {
   const changedContext = Array.isArray(changedFilesOrContext)
     ? buildChangedContext(changedFilesOrContext)
     : changedFilesOrContext;
@@ -94,12 +94,24 @@ function entryMatchesChangedFiles(entry, changedFilesOrContext) {
         return true;
       }
     }
+    if (selectionMode === "affected") {
+      for (const glob of entry.affectedGlobs || []) {
+        if (matchesGlob(changedFile, glob)) {
+          return true;
+        }
+      }
+    }
   }
   if (entry.entrypointType === "rust-crate-gate" && changedContext.workspaceLevelRustChange) {
     return true;
   }
-  const supportsCrateMatching = entry.entrypointType === "rust-crate-gate" || entry.id === "build-graph.rust-turbo-check";
-  if (supportsCrateMatching && (entry.dependencyCrates || []).some((crateName) => changedContext.changedCrates.includes(crateName))) {
+  const supportsCrateMatching = selectionMode === "touched"
+    ? entry.entrypointType === "rust-crate-gate" || entry.id === "build-graph.rust-turbo-check"
+    : true;
+  if (
+    supportsCrateMatching
+    && (entry.dependencyCrates || []).some((crateName) => changedContext.changedCrates.includes(crateName))
+  ) {
     return true;
   }
   return false;
@@ -117,6 +129,13 @@ function profileMatchesTouchedOnlyEscalation(profile, entry) {
     return true;
   }
   return entry.entrypointType === "web-e2e-spec";
+}
+
+function profileMatchesAffectedExpansion(profile, entry) {
+  if (profile.id === "agent-default") {
+    return entry.id === "web-workbench.web-premerge-required";
+  }
+  return false;
 }
 
 function buildCommandForEntry(entry) {
@@ -149,7 +168,7 @@ function buildCommandForEntry(entry) {
   throw new Error(`unsupported entrypoint type for command mapping: ${entry.entrypointType}`);
 }
 
-function buildRustGateCommand({ rustGateEntries, changedContext, touchedOnly }) {
+function buildRustGateCommand({ rustGateEntries, changedContext, selectionMode }) {
   const args = [
     "exec",
     "node",
@@ -162,7 +181,7 @@ function buildRustGateCommand({ rustGateEntries, changedContext, touchedOnly }) 
     "mixed",
   ];
 
-  if (touchedOnly) {
+  if (selectionMode === "touched") {
     for (const changedFile of changedContext.normalizedChangedFiles) {
       if (
         changedContext.workspaceLevelRustChange ||
@@ -184,7 +203,7 @@ function buildRustGateCommand({ rustGateEntries, changedContext, touchedOnly }) 
   return shellJoin("pnpm", args);
 }
 
-function buildCommandsForEntries({ selectedEntries, changedContext, touchedOnly }) {
+function buildCommandsForEntries({ selectedEntries, changedContext, selectionMode }) {
   const commands = [];
   const rustGateEntries = [];
 
@@ -197,13 +216,33 @@ function buildCommandsForEntries({ selectedEntries, changedContext, touchedOnly 
   }
 
   if (rustGateEntries.length > 0) {
-    commands.push(buildRustGateCommand({ rustGateEntries, changedContext, touchedOnly }));
+    commands.push(buildRustGateCommand({
+      rustGateEntries,
+      changedContext,
+      selectionMode,
+    }));
   }
 
   return commands;
 }
 
+function normalizeSelectionMode({ selectionMode = "", touchedOnly = false } = {}) {
+  const normalized = touchedOnly ? "touched" : String(selectionMode || "").trim().toLowerCase();
+  if (!normalized) {
+    return "all";
+  }
+  if (!["all", "touched", "affected"].includes(normalized)) {
+    throw new Error(`unsupported selection mode: ${selectionMode}`);
+  }
+  return normalized;
+}
+
 function commandPriority(command) {
+  if (
+    command === "pnpm bazel:web:unit:supervisor-core"
+  ) {
+    return 90;
+  }
   if (
     command === "pnpm bazel:web:test"
     || command === "pnpm bazel:web:unit:non-pretext"
@@ -250,19 +289,23 @@ function orderSelectedEntries(entries, profile) {
     .map(({ entry }) => entry);
 }
 
-function buildExecutionPlan({ profileId, changedFiles = [], touchedOnly = false }) {
+function buildExecutionPlan({ profileId, changedFiles = [], touchedOnly = false, selectionMode = "" }) {
   const registry = buildTaxonomyRegistry();
   const profile = getProfileById(profileId);
+  const resolvedSelectionMode = normalizeSelectionMode({ selectionMode, touchedOnly });
   const matchingEntries = registry.filter((entry) =>
     profileMatchesEntry(profile, entry)
-    || (touchedOnly && profileMatchesTouchedOnlyEscalation(profile, entry)),
+    || (resolvedSelectionMode === "touched" && profileMatchesTouchedOnlyEscalation(profile, entry))
+    || (resolvedSelectionMode === "affected" && profileMatchesAffectedExpansion(profile, entry)),
   );
   const changedContext = buildChangedContext(changedFiles);
 
   let selectedEntries = matchingEntries;
-  if (touchedOnly) {
+  if (resolvedSelectionMode !== "all") {
     selectedEntries = matchingEntries.filter((entry) =>
-      isAlwaysOnEntry(entry, profileId) || entryMatchesChangedFiles(entry, changedContext),
+      isAlwaysOnEntry(entry, profileId) || entryMatchesChangedFiles(entry, changedContext, {
+        selectionMode: resolvedSelectionMode,
+      }),
     );
   }
   selectedEntries = orderSelectedEntries(selectedEntries, profile);
@@ -270,11 +313,12 @@ function buildExecutionPlan({ profileId, changedFiles = [], touchedOnly = false 
   const commands = dedupeCommands(buildCommandsForEntries({
     selectedEntries,
     changedContext,
-    touchedOnly,
+    selectionMode: resolvedSelectionMode,
   }));
 
   return {
     profile,
+    selectionMode: resolvedSelectionMode,
     selectedEntries,
     commands,
   };
@@ -292,6 +336,7 @@ module.exports = {
   buildCommandForEntry,
   buildChangedContext,
   entryMatchesChangedFiles,
+  normalizeSelectionMode,
   normalizeRepoRelativePath,
   resolveChangedFilesFromGit,
   shellJoin,

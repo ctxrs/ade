@@ -12,6 +12,8 @@ const {
   buildBuildBuddyAuthArgs,
   buildBazelPilotSpawn,
   buildBazelPilotInvocation,
+  buildBazelPilotSummary,
+  formatBazelPilotSummaryLine,
   formatSpawnFailureMessage,
   parseArgs,
   parseBatchMode,
@@ -259,6 +261,110 @@ test("bazel pilot runner writes telemetry summaries and redacts BuildBuddy heade
   );
   assert.match(summary.phases[0].buildBuddyInvocationUrl, /https:\/\/app\.buildbuddy\.io\/invocation\//u);
   assert.equal(fs.existsSync(invocation.telemetry.hostSamplesPath), true);
+});
+
+test("bazel pilot emits a machine-readable phase summary with local spill accounting", () => {
+  const invocation = buildBazelPilotInvocation({
+    argv: [
+      "build",
+      "//core/crates/ctx-provider-accounts:lib",
+      "//core/crates/ctx-lsp:ctx-lsp-test-server",
+    ],
+    env: {
+      ...process.env,
+      CTX_VOLATILE_ROOT: "/tmp/ctx-bazel-pilot-summary",
+      CTX_SESSION_ID: "bazel-summary-session",
+      CTX_BAZEL_REMOTE_EXECUTION: "linux",
+      BUILD_BUDDY_API_KEY: "buildbuddy-linux-key",
+    },
+  });
+  const emitted = [];
+
+  runBazelPilotInvocationPhases(invocation, {
+    emitSummaryImpl: (line) => emitted.push(line),
+    spawnSyncImpl: () => ({ status: 0 }),
+    withHostJobBudgetImpl: (_options, fn) => fn(),
+  });
+
+  assert.equal(emitted.length, 1);
+  assert.match(emitted[0], /^CTX_BAZEL_PILOT_SUMMARY /u);
+  const summary = JSON.parse(emitted[0].replace(/^CTX_BAZEL_PILOT_SUMMARY /u, ""));
+  assert.equal(summary.remoteExecutionMode, "linux");
+  assert.equal(summary.success, true);
+  assert.equal(summary.phaseCount, 2);
+  assert.equal(summary.remotePhaseCount, 1);
+  assert.equal(summary.localPhaseCount, 1);
+  assert.equal(summary.remoteTargetCount, 1);
+  assert.equal(summary.localTargetCount, 1);
+  assert.equal(summary.localSpill, true);
+  assert.deepEqual(summary.phases.map((phase) => phase.name), ["linux-rbe", "local"]);
+});
+
+test("bazel pilot default summary emitter writes to stderr instead of stdout", () => {
+  const invocation = buildBazelPilotInvocation({
+    argv: ["test", "//core/crates/ctx-core:unit_tests"],
+    env: {
+      ...process.env,
+      CTX_VOLATILE_ROOT: fs.mkdtempSync(path.join(os.tmpdir(), "ctx-bazel-pilot-default-emitter-")),
+      CTX_SESSION_ID: "bazel-default-emitter-session",
+      CTX_BAZEL_REMOTE_EXECUTION: "off",
+    },
+  });
+  const stdoutChunks = [];
+  const stderrChunks = [];
+  const originalStdoutWrite = process.stdout.write;
+  const originalStderrWrite = process.stderr.write;
+
+  process.stdout.write = ((chunk, encoding, callback) => {
+    stdoutChunks.push(Buffer.isBuffer(chunk) ? chunk.toString("utf8") : String(chunk));
+    if (typeof callback === "function") {
+      callback();
+    }
+    return true;
+  });
+  process.stderr.write = ((chunk, encoding, callback) => {
+    stderrChunks.push(Buffer.isBuffer(chunk) ? chunk.toString("utf8") : String(chunk));
+    if (typeof callback === "function") {
+      callback();
+    }
+    return true;
+  });
+
+  try {
+    runBazelPilotInvocationPhases(invocation, {
+      spawnSyncImpl: () => ({ status: 0 }),
+      withHostJobBudgetImpl: (_options, fn) => fn(),
+    });
+  } finally {
+    process.stdout.write = originalStdoutWrite;
+    process.stderr.write = originalStderrWrite;
+  }
+
+  assert.equal(stdoutChunks.some((chunk) => chunk.includes("CTX_BAZEL_PILOT_SUMMARY")), false);
+  assert.equal(stderrChunks.some((chunk) => chunk.includes("CTX_BAZEL_PILOT_SUMMARY")), true);
+});
+
+test("bazel pilot summary formatter is stable for parser consumption", () => {
+  const line = formatBazelPilotSummaryLine(buildBazelPilotSummary({
+    command: "test",
+    phases: [],
+    remoteExecutionMode: "all",
+  }, [
+    {
+      durationMs: 1200,
+      name: "remote",
+      status: 0,
+      targets: ["//core/crates/ctx-core:unit_tests"],
+    },
+  ], 0));
+
+  assert.match(line, /^CTX_BAZEL_PILOT_SUMMARY \{/u);
+  const parsed = JSON.parse(line.replace(/^CTX_BAZEL_PILOT_SUMMARY /u, ""));
+  assert.equal(parsed.command, "test");
+  assert.equal(parsed.remoteExecutionMode, "all");
+  assert.equal(parsed.phaseCount, 1);
+  assert.equal(parsed.remoteTargetCount, 1);
+  assert.equal(parsed.localSpill, false);
 });
 
 test("bazel pilot does not record dead BuildBuddy links when Bazel never starts", () => {

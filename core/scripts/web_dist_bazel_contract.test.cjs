@@ -94,12 +94,16 @@ test("Bazel web focused unit slices run as native vitest tests", () => {
   const desktopIpcCorpusBlock = targetBlock(buildFile, "desktop_ipc_corpus");
 
   assert.equal(
+    corePackageJson.scripts["bazel:web:unit:supervisor-core"],
+    "node scripts/run_bazel_pilot.cjs test //core/packages/session-supervisor-core:unit_tests",
+  );
+  assert.equal(
     corePackageJson.scripts["bazel:web:unit:non-pretext"],
     "node scripts/run_bazel_pilot.cjs test //core/apps/web:unit_tests_non_pretext",
   );
   assert.equal(
     corePackageJson.scripts["bazel:web:pretext:measurement"],
-    "node scripts/run_bazel_pilot.cjs test //core/apps/web:pretext_measurement_unit_tests",
+    "node scripts/run_bazel_pilot.cjs test //core/packages/session-thread-layout:unit_tests //core/apps/web:pretext_measurement_unit_tests",
   );
   assert.match(nonPretextBlock, /^vitest_bin\.vitest_test\(/m);
   assert.match(pretextBlock, /^vitest_bin\.vitest_test\(/m);

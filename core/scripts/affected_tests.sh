@@ -121,7 +121,7 @@ echo "changed files:"
 echo "${changed_files}" | sed 's/^/  - /'
 echo "taxonomy profile: ${taxonomy_profile}"
 
-declare -a taxonomy_args=(scripts/run_test_taxonomy_profile.cjs --profile "${taxonomy_profile}" --touched-only --list)
+declare -a taxonomy_args=(scripts/run_test_taxonomy_profile.cjs --profile "${taxonomy_profile}" --selection-mode affected --list)
 while IFS= read -r path; do
   [[ -z "${path}" ]] && continue
   taxonomy_args+=(--changed-file "${path}")

@@ -51,6 +51,16 @@ WEB_CHECK_SOURCES = glob(
     allow_empty = True,
 )
 
+WEB_SMOKE_SOURCES = [
+    "package.json",
+    "tsconfig.json",
+    "vite.config.ts",
+    "vitest.setup.ts",
+    "src/pages/sessionThread/transcriptLayoutPlanner.appSmoke.test.ts",
+    "src/pages/sessionThread/transcriptLayoutPlanner.ts",
+    "src/pages/sessionThread/pretextVirtualizerRowLayout.ts",
+]
+
 COMMON_DATA = WEB_SOURCES + [
     "//core:package.json",
     "//core:pnpm-lock.yaml",
@@ -62,8 +72,11 @@ COMMON_DATA = WEB_SOURCES + [
 ]
 
 HERMETIC_WEB_CHECK_DATA = WEB_CHECK_SOURCES + [
+    "//core/packages/ctx-types:pkg",
     ":node_modules/@chenglou/pretext",
     ":node_modules/@ctx/design",
+    ":node_modules/@ctx/session-supervisor-core",
+    ":node_modules/@ctx/session-thread-layout",
     ":node_modules/@ctx/types",
     ":node_modules/@eslint/js",
     ":node_modules/@monaco-editor/react",
@@ -127,8 +140,12 @@ HERMETIC_WEB_CHECK_DATA = WEB_CHECK_SOURCES + [
     "//core/apps/web/e2e:utils_sources",
 ]
 
-HERMETIC_WEB_SMOKE_DATA = WEB_CHECK_SOURCES + [
+HERMETIC_WEB_SMOKE_DATA = WEB_SMOKE_SOURCES + [
+    "//core/packages/ctx-types:pkg",
     ":node_modules/@chenglou/pretext",
+    ":node_modules/@ctx/session-supervisor-core",
+    ":node_modules/@ctx/session-thread-layout",
+    ":node_modules/@ctx/types",
     ":node_modules/@pretext-virtualizer/core",
     ":node_modules/@pretext-virtualizer/interface",
     ":node_modules/@tauri-apps/api",
@@ -228,11 +245,7 @@ vitest_bin.vitest_test(
         "--minWorkers=1",
         "--maxWorkers=2",
         "--testTimeout=60000",
-        "src/pages/sessionThread/sessionMarkdownWrapRules.test.ts",
-        "src/pages/sessionThread/transcriptLayoutPlanner.test.ts",
-        "src/pages/sessionThread/sessionMarkdownInlineMeasurementTextPlacement.test.ts",
-        "src/pages/sessionThread/pretextVirtualizerRowLayout.test.ts",
-        "src/state/sessionSupervisor/sessionSubscriptionPlan.test.ts",
+        "src/pages/sessionThread/transcriptLayoutPlanner.appSmoke.test.ts",
     ],
     data = HERMETIC_WEB_SMOKE_DATA,
     chdir = package_name(),
@@ -307,17 +320,6 @@ vitest_bin.vitest_test(
         "src/pages/sessionThread/pretextSessionRuntimeCache.test.ts",
         "src/pages/sessionThread/pretextVirtualizerListInternals.test.ts",
         "src/pages/sessionThread/pretextVirtualizerProjectionController.test.ts",
-        "src/pages/sessionThread/pretextVirtualizerRowLayout.test.ts",
-        "src/pages/sessionThread/sessionMarkdownBlockMeasurement.test.ts",
-        "src/pages/sessionThread/sessionMarkdownContract.test.ts",
-        "src/pages/sessionThread/sessionMarkdownInlineLayout.test.ts",
-        "src/pages/sessionThread/sessionMarkdownInlineMeasurementDebug.test.ts",
-        "src/pages/sessionThread/sessionMarkdownInlineMeasurementTextPlacement.test.ts",
-        "src/pages/sessionThread/sessionMarkdownMeasurement.debug.test.ts",
-        "src/pages/sessionThread/sessionMarkdownWrapRules.test.ts",
-        "src/pages/sessionThread/sessionThreadMeasurementContract.test.ts",
-        "src/pages/sessionThread/transcriptLayoutPlanner.test.ts",
-        "src/pages/sessionThread/transcriptRowLayoutModel.test.ts",
         "src/pages/sessionView/SessionPage.markdown.test.tsx",
         "src/utils/inlineCodeFragments.test.ts",
     ],

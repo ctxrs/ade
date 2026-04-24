@@ -1,4 +1,4 @@
-import { mergeOrderedIds, sameIdList } from "./cachePolicy";
+import { mergeOrderedIds, sameIdList } from "./idList";
 
 type SessionSubscriptionPlanInput = {
   openSessionIds: string[];

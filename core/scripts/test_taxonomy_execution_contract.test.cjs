@@ -46,6 +46,21 @@ test("agent-default keeps non-ctx-http Rust crate changes on the taxonomy-backed
   ]);
 });
 
+test("agent-default affected selection expands a Rust leaf into downstream dependency-truthful suites", () => {
+  const plan = buildExecutionPlan({
+    profileId: "agent-default",
+    changedFiles: ["core/crates/ctx-provider-accounts/src/lib.rs"],
+    selectionMode: "affected",
+  });
+
+  assert.deepEqual(plan.commands, [
+    "pnpm rust:turbo:check",
+    "node scripts/ctx_http_suite_task.cjs --suite provider-auth",
+    "node scripts/ctx_http_suite_task.cjs --suite provider-runtime-simulated",
+    "pnpm exec node scripts/run_rust_gate.cjs --mode workspace --include-reverse-deps --clippy --test-strategy mixed --crate ctx-provider-accounts",
+  ]);
+});
+
 test("agent-default workspace-level Rust inputs select the taxonomy-backed Rust gate set", () => {
   const plan = buildExecutionPlan({
     profileId: "agent-default",
@@ -100,6 +115,43 @@ test("agent-default routes pretext measurement source changes to the dedicated u
   ]);
 });
 
+test("agent-default routes extracted layout package changes to the dedicated pretext unit slice", () => {
+  const plan = buildExecutionPlan({
+    profileId: "agent-default",
+    changedFiles: ["core/packages/session-thread-layout/src/sessionMarkdownContract.ts"],
+    touchedOnly: true,
+  });
+
+  assert.deepEqual(plan.commands, [
+    "pnpm bazel:web:pretext:measurement",
+  ]);
+});
+
+test("agent-default touched selection keeps extracted supervisor package changes on the direct package unit gate", () => {
+  const plan = buildExecutionPlan({
+    profileId: "agent-default",
+    changedFiles: ["core/packages/session-supervisor-core/src/sessionSubscriptionPlan.ts"],
+    touchedOnly: true,
+  });
+
+  assert.deepEqual(plan.commands, [
+    "pnpm bazel:web:unit:supervisor-core",
+  ]);
+});
+
+test("agent-default affected selection expands extracted supervisor package changes into app consumer coverage", () => {
+  const plan = buildExecutionPlan({
+    profileId: "agent-default",
+    changedFiles: ["core/packages/session-supervisor-core/src/sessionSubscriptionPlan.ts"],
+    selectionMode: "affected",
+  });
+
+  assert.deepEqual(plan.commands, [
+    "pnpm bazel:web:unit:supervisor-core",
+    "pnpm bazel:web:unit:non-pretext",
+  ]);
+});
+
 test("agent-default selects narrow pretext E2E Bazel labels for touched parity specs", () => {
   const plan = buildExecutionPlan({
     profileId: "agent-default",
@@ -109,6 +161,32 @@ test("agent-default selects narrow pretext E2E Bazel labels for touched parity s
 
   assert.deepEqual(plan.commands, [
     "node scripts/run_bazel_pilot.cjs test //core/apps/web/e2e:pretext_wrap_rules",
+  ]);
+});
+
+test("agent-default affected selection adds ctx-http base compile truth for scheduler runtime changes", () => {
+  const plan = buildExecutionPlan({
+    profileId: "agent-default",
+    changedFiles: ["core/crates/ctx-http/src/scheduler/runtime/event_loop.rs"],
+    selectionMode: "affected",
+  });
+
+  assert.deepEqual(plan.commands, [
+    "node scripts/ctx_http_suite_task.cjs --suite base",
+    "node scripts/ctx_http_suite_task.cjs --suite turns-terminal",
+  ]);
+});
+
+test("agent-default affected selection keeps direct ctx-http suite test edits on suite truth plus base compile truth", () => {
+  const plan = buildExecutionPlan({
+    profileId: "agent-default",
+    changedFiles: ["core/crates/ctx-http/tests/subscription_accounts_api.rs"],
+    selectionMode: "affected",
+  });
+
+  assert.deepEqual(plan.commands, [
+    "node scripts/ctx_http_suite_task.cjs --suite base",
+    "node scripts/ctx_http_suite_task.cjs --suite provider-auth",
   ]);
 });
 
