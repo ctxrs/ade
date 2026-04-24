@@ -632,8 +632,10 @@ pub(super) struct RepoStagingPathResp {
 /// Used for disk-isolated clone/new: the daemon manages the path so the wizard
 /// doesn't need to ask the user for a host destination.
 pub(super) async fn repo_staging_path(
+    mobile_auth: Option<Extension<MobileAuthContext>>,
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<RepoStagingPathResp>, (StatusCode, Json<ApiErrorResp>)> {
+    reject_mobile_auth(mobile_auth)?;
     let staging_dir = state
         .core
         .data_root

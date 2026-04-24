@@ -867,55 +867,58 @@ async fn mobile_secure_proxy_rejects_repo_path_management_routes() {
     let home = tempfile::tempdir().unwrap();
     let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
 
-    let (app, _state, device_id, key) = build_mobile_secure_proxy_app(true).await;
+    let (app, state, device_id, key) = build_mobile_secure_proxy_app(true).await;
     let sandbox = tempfile::tempdir().unwrap();
     let clone_parent = sandbox.path().join("mobile-clone-parent");
     let init_path = sandbox.path().join("mobile-init-target");
     let existing_repo = setup_git_repo().await;
+    let staging_root = state.core.data_root.join("workspaces").join("staging");
 
-    let clone_parent_str = clone_parent.to_string_lossy().to_string();
-    let init_path_str = init_path.to_string_lossy().to_string();
-    let existing_repo_str = existing_repo.path().to_string_lossy().to_string();
     let cases = [
         (
             "POST",
             "/api/repo/clone",
-            json!({
+            Some(json!({
                 "repo_url": "https://example.com/org/repo.git",
-                "dest_parent": clone_parent_str,
+                "dest_parent": clone_parent.to_string_lossy(),
                 "dest_name": "repo"
-            }),
+            })),
         ),
         (
             "POST",
             "/api/repo/init",
-            json!({
-                "path": init_path_str
-            }),
+            Some(json!({
+                "path": init_path.to_string_lossy()
+            })),
         ),
         (
             "POST",
             "/api/repo/status",
-            json!({
-                "path": existing_repo_str
-            }),
+            Some(json!({
+                "path": existing_repo.path().to_string_lossy()
+            })),
         ),
         (
             "POST",
             "/api/repo/validate_destination",
-            json!({
-                "path": existing_repo_str
-            }),
+            Some(json!({
+                "path": existing_repo.path().to_string_lossy()
+            })),
         ),
+        ("GET", "/api/repo/staging_path", None),
     ];
 
     for (index, (method, path, body)) in cases.into_iter().enumerate() {
-        let payload = json!({
+        let mut payload = json!({
             "method": method,
             "path": path,
-            "headers": [["content-type", "application/json"]],
-            "body_b64": base64::engine::general_purpose::STANDARD.encode(body.to_string()),
+            "headers": [],
         });
+        if let Some(body) = body {
+            payload["headers"] = json!([["content-type", "application/json"]]);
+            payload["body_b64"] =
+                json!(base64::engine::general_purpose::STANDARD.encode(body.to_string()));
+        }
         let res =
             post_mobile_secure_request(&app, &device_id, &key, index as i64 + 1, payload).await;
         assert_eq!(
@@ -941,6 +944,10 @@ async fn mobile_secure_proxy_rejects_repo_path_management_routes() {
     assert!(
         !init_path.exists(),
         "mobile secure proxy unexpectedly created init path"
+    );
+    assert!(
+        !staging_root.exists(),
+        "mobile secure proxy unexpectedly created repo staging path"
     );
 }
 
