@@ -9,6 +9,54 @@ fn write_invalid_agent_server_config(data_root: &std::path::Path) {
     std::fs::write(path, "{ not valid json").unwrap();
 }
 
+async fn create_fake_session_via_api(
+    app: &axum::Router,
+    git_repo_path: &str,
+) -> ctx_core::models::Session {
+    let req = Request::builder()
+        .method("POST")
+        .uri("/api/workspaces")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "root_path": git_repo_path,
+                "name": "ws"
+            })
+            .to_string(),
+        ))
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let ws: ctx_core::models::Workspace = serde_json::from_slice(&body).unwrap();
+
+    let req = Request::builder()
+        .method("POST")
+        .uri(format!("/api/workspaces/{}/tasks", ws.id.0))
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({"title":"t1","description":null}).to_string(),
+        ))
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let task: ctx_core::models::Task = serde_json::from_slice(&body).unwrap();
+
+    let req = Request::builder()
+        .method("POST")
+        .uri(format!("/api/tasks/{}/sessions", task.id.0))
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({"provider_id":"fake","model_id":"fake-model"}).to_string(),
+        ))
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    serde_json::from_slice(&body).unwrap()
+}
+
 #[tokio::test]
 async fn daemon_golden_path_with_fake_provider() {
     let _serial = home_env_test_lock().lock().await;
@@ -150,49 +198,7 @@ async fn subagent_init_surfaces_agent_server_config_errors() {
         *state.providers.statuses.lock().await = statuses;
     }
     let app = api::router(state.clone());
-
-    let req = Request::builder()
-        .method("POST")
-        .uri("/api/workspaces")
-        .header("content-type", "application/json")
-        .body(Body::from(
-            json!({
-                "root_path": git_repo.path().to_string_lossy(),
-                "name": "ws"
-            })
-            .to_string(),
-        ))
-        .unwrap();
-    let res = app.clone().oneshot(req).await.unwrap();
-    assert_eq!(res.status(), StatusCode::OK);
-    let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
-    let ws: ctx_core::models::Workspace = serde_json::from_slice(&body).unwrap();
-
-    let req = Request::builder()
-        .method("POST")
-        .uri(format!("/api/workspaces/{}/tasks", ws.id.0))
-        .header("content-type", "application/json")
-        .body(Body::from(
-            json!({"title":"t1","description":null}).to_string(),
-        ))
-        .unwrap();
-    let res = app.clone().oneshot(req).await.unwrap();
-    assert_eq!(res.status(), StatusCode::OK);
-    let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
-    let task: ctx_core::models::Task = serde_json::from_slice(&body).unwrap();
-
-    let req = Request::builder()
-        .method("POST")
-        .uri(format!("/api/tasks/{}/sessions", task.id.0))
-        .header("content-type", "application/json")
-        .body(Body::from(
-            json!({"provider_id":"fake","model_id":"fake-model"}).to_string(),
-        ))
-        .unwrap();
-    let res = app.clone().oneshot(req).await.unwrap();
-    assert_eq!(res.status(), StatusCode::OK);
-    let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
-    let session: ctx_core::models::Session = serde_json::from_slice(&body).unwrap();
+    let session = create_fake_session_via_api(&app, &git_repo.path().to_string_lossy()).await;
 
     let req = Request::builder()
         .method("POST")
@@ -209,6 +215,46 @@ async fn subagent_init_surfaces_agent_server_config_errors() {
             })
             .to_string(),
         ))
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert!(payload["error"]
+        .as_str()
+        .is_some_and(|value| value.contains("parsing agent server config")));
+}
+
+#[tokio::test]
+async fn authenticate_session_surfaces_agent_server_config_errors() {
+    let _serial = home_env_test_lock().lock().await;
+    let git_repo = setup_git_repo().await;
+    let home = tempfile::tempdir().unwrap();
+    let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
+
+    let data_dir = tempfile::tempdir().unwrap();
+    write_invalid_agent_server_config(data_dir.path());
+    let stores = StoreManager::open(data_dir.path()).await.unwrap();
+
+    let mut providers: HashMap<String, Arc<dyn ctx_providers::adapters::ProviderAdapter>> =
+        HashMap::new();
+    providers.insert("fake".into(), Arc::new(FakeProviderAdapter::new()));
+
+    let state = Arc::new(AppState::new(
+        data_dir.path().to_path_buf(),
+        stores,
+        providers,
+        "http://127.0.0.1:4399".to_string(),
+        None,
+    ));
+    let app = api::router(state);
+    let session = create_fake_session_via_api(&app, &git_repo.path().to_string_lossy()).await;
+
+    let req = Request::builder()
+        .method("POST")
+        .uri(format!("/api/sessions/{}/authenticate", session.id.0))
+        .header("content-type", "application/json")
+        .body(Body::from("{}"))
         .unwrap();
     let res = app.clone().oneshot(req).await.unwrap();
     assert_eq!(res.status(), StatusCode::INTERNAL_SERVER_ERROR);
