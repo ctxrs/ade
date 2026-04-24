@@ -255,6 +255,64 @@ async fn worktree_vcs_snapshot_clears_stale_counts_when_repo_becomes_unavailable
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn worktree_vcs_snapshot_populates_jj_head_commit_metadata() {
+    if !common::jj_available().await {
+        eprintln!(
+            "skipping worktree_vcs_snapshot_populates_jj_head_commit_metadata: jj not installed or too old"
+        );
+        return;
+    }
+
+    let _guard = worktree_vcs_snapshot_test_lock().lock().await;
+    let repo = common::init_jj_repo(&[("file.txt", "hello\n")]).await;
+    let data_dir = tempfile::tempdir().unwrap();
+    let stores = common::setup_store(data_dir.path()).await;
+    let state = common::build_state(
+        data_dir.path(),
+        stores,
+        common::fake_providers(),
+        "http://127.0.0.1:0",
+    );
+    let app = common::router(state.clone());
+
+    let ws = common::create_workspace(&app, repo.path(), "jj-ws").await;
+    let task = common::create_task(&app, ws.id.0, "jj-vcs").await;
+    let session = common::create_session(&app, task.id.0, "fake", "fake-model").await;
+    let worktree = state
+        .store_for_worktree(session.worktree_id)
+        .await
+        .expect("store for worktree")
+        .get_worktree(session.worktree_id)
+        .await
+        .expect("load worktree")
+        .expect("worktree should exist");
+
+    let mut next_active = HashSet::new();
+    next_active.insert(worktree.id);
+    state
+        .workspaces
+        .update_worktree_vcs_activity(&HashSet::new(), &next_active)
+        .await;
+
+    emit_worktree_vcs_snapshot_for_worktree(&state, &worktree, true)
+        .await
+        .expect("snapshot emission should succeed for jj worktree");
+
+    let expected_head = common::run_jj_output(
+        repo.path(),
+        &["log", "-r", "@", "-T", "commit_id ++ \"\\n\""],
+    )
+    .await
+    .trim()
+    .to_string();
+    let snapshot = state
+        .get_worktree_vcs_snapshot(worktree.id)
+        .await
+        .expect("snapshot should be present");
+    assert_eq!(snapshot.head_commit_sha.as_deref(), Some(expected_head.as_str()));
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn worktree_vcs_snapshot_recovers_when_repo_is_reinitialized() {
     let _guard = worktree_vcs_snapshot_test_lock().lock().await;
     let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;

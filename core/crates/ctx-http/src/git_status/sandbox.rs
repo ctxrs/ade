@@ -303,7 +303,12 @@ pub(crate) async fn worktree_rev_parse_refs(
     let driver = vcs::driver_for_path(root).await?;
     let mut commits = Vec::with_capacity(references.len());
     for reference in references {
-        commits.push(driver.rev_parse_ref(root, reference).await?);
+        let commit = if *reference == "HEAD" {
+            driver.rev_parse_head(root).await?
+        } else {
+            driver.rev_parse_ref(root, reference).await?
+        };
+        commits.push(commit);
     }
     Ok(commits)
 }
