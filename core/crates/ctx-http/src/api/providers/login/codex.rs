@@ -199,9 +199,18 @@ pub(crate) async fn start_codex_login(
                     }),
                 )
             })?;
-    let cfg = crate::installer::load_agent_server_config(&state.core.data_root)
-        .await
-        .unwrap_or_default();
+    let (cfg, managed_config_error) =
+        crate::api::provider_launch::load_managed_agent_server_config_with_error(
+            &state.core.data_root,
+        )
+        .await;
+    if let Some(error) = managed_config_error {
+        let _ = tokio::fs::remove_dir_all(&account_dir).await;
+        return Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiErrorResp { error }),
+        ));
+    }
     let codex_bin = crate::installer::require_codex_cli_command_path_for_target(
         &cfg,
         Some(ctx_provider_install::install_state::InstallTarget::Host),

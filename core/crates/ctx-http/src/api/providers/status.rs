@@ -177,9 +177,11 @@ pub(crate) async fn get_provider(
         )
     })?;
 
-    let managed = installer::load_agent_server_config(&state.core.data_root)
-        .await
-        .unwrap_or_default();
+    let (managed, managed_config_error) =
+        crate::api::provider_launch::load_managed_agent_server_config_with_error(
+            &state.core.data_root,
+        )
+        .await;
     let matrix = crate::provider_matrix::load_matrix_cached(
         &state.core.data_root,
         &state.providers.matrix_cache,
@@ -201,6 +203,9 @@ pub(crate) async fn get_provider(
         provider_status_for_target(state.as_ref(), &managed, &matrix, &id, target).await;
     status.provider_id =
         super::project_provider_id_for_response(&requested_id, &status.provider_id);
+    if let Some(config_error) = managed_config_error.as_deref() {
+        mark_provider_status_with_managed_config_error(&mut status, config_error);
+    }
     if let Some(bytes) = installer::managed_install_download_size_bytes(&matrix, &id, target) {
         status
             .details
