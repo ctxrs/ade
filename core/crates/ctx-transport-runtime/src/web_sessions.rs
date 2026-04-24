@@ -822,13 +822,14 @@ async fn build_run_payload(
 
 async fn resolve_script_path(handle: &WebSessionHandle, script_path: &str) -> Result<PathBuf> {
     let candidate = PathBuf::from(script_path);
+    let work_dir = handle.work_dir().await;
     if candidate.is_absolute() {
+        if work_dir.is_none() {
+            return Ok(candidate);
+        }
         anyhow::bail!("script_path must be relative to work_dir");
     }
-    let work_dir = handle
-        .work_dir()
-        .await
-        .context("script_path requires work_dir")?;
+    let work_dir = work_dir.context("script_path requires work_dir")?;
     let joined = work_dir.join(candidate);
     let canonical = joined
         .canonicalize()
@@ -1011,6 +1012,18 @@ mod tests {
             .unwrap_err();
         assert!(err.to_string().contains("relative to work_dir"));
         let _ = tokio::fs::remove_dir_all(&dir).await;
+    }
+
+    #[tokio::test]
+    async fn resolve_script_path_allows_absolute_paths_without_work_dir() {
+        let absolute =
+            std::env::temp_dir().join(format!("ctx-web-session-test-{}.js", Uuid::new_v4()));
+        let handle = test_handle(None);
+
+        let resolved = resolve_script_path(&handle, absolute.to_str().unwrap())
+            .await
+            .unwrap();
+        assert_eq!(resolved, absolute);
     }
 
     #[tokio::test]
