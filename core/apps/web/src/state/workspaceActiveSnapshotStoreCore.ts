@@ -7,36 +7,20 @@ import type {
 } from "@ctx/types";
 import {
   getDaemonClientConfig,
-  getDaemonConnectionReadiness,
   subscribeDaemonConfig,
-  idToString,
   listWorkspaceArchivedTaskSummaries,
   recordClientCounterMetric,
   recordClientHistogramMetric,
 } from "../api/client";
-import { getAnalyticsSurface } from "../utils/analytics/context";
-import { getInstallId } from "../utils/analytics/identity";
-import {
-  loadWorkspaceActiveSnapshotV1,
-  saveWorkspaceActiveSnapshotV1,
-  type PersistedWorkspaceActiveSnapshotV1,
-  type PersistedWorkspaceActiveTaskSummaryV1,
-} from "./uiStateStore";
-import { isDesktopApp } from "../utils/desktop";
-import {
-  trackRendererHeartbeatMissed,
-  trackWorkerPatchApply,
-  trackWorkerPatchFlush,
-} from "../utils/analytics";
+import { type PersistedWorkspaceActiveSnapshotV1 } from "./uiStateStore";
 import { emitUiDiagnostic, normalizeDiagnosticErrorMessage } from "./diagnosticsChannel";
 import type {
   WorkspaceActiveSnapshotCommand,
   WorkspaceActiveSnapshotPatch,
-  WorkspaceActiveSnapshotWorkerMessage,
 } from "./workspaceActiveSnapshotProtocol";
 import type { SessionSubscriptionCursor } from "./sessionSubscription";
 import { WorkspaceActiveSnapshotStoreState } from "./workspaceActiveSnapshot/storeState";
-import { noteQueueAgeSample, noteWorkspaceStreamReset } from "./foregroundFreshnessTelemetry";
+import { noteWorkspaceStreamReset } from "./foregroundFreshnessTelemetry";
 import type {
   WorkspaceActiveSnapshotEventSource,
   WorkspaceActiveSnapshotItem,
@@ -67,17 +51,26 @@ import {
   type WorkspaceActiveSnapshotStreamHost,
 } from "./workspaceActiveSnapshot/streamRuntime";
 import {
-  resolveWorkerConnectionState,
-  type WorkerAuthUpdateConfig,
-} from "./workspaceActiveSnapshot/workerConnection";
+  applyTaskUpdate as applyWorkerTaskUpdate,
+  destroyWorkerRuntime,
+  ensureWorkerAvailable,
+  flushWorkerPatchNow,
+  hydrateFromCache,
+  isForegroundSessionEvent,
+  postWorkerCommand,
+  schedulePersistCache,
+  scheduleWorkerPatchFlush,
+  seedCachedSnapshot,
+  startWorker,
+  updateAuthConfig as updateWorkerAuthConfig,
+  type WorkspaceActiveSnapshotWorkerHost,
+} from "./workspaceActiveSnapshot/workerRuntime";
+import type { WorkerAuthUpdateConfig } from "./workspaceActiveSnapshot/workerConnection";
 export type {
   WorkspaceActiveSnapshotEventSource,
   WorkspaceActiveSnapshotItem,
   WorkspaceActiveSnapshotState,
 } from "./workspaceActiveSnapshot/storeTypes";
-
-const patchKindFor = (patch: WorkspaceActiveSnapshotPatch): "replace" | "diff" =>
-  patch.snapshot ? "replace" : "diff";
 
 type WorkspaceActiveSnapshotStoreOptions = {
   disableCache?: boolean;
@@ -93,81 +86,6 @@ type WorkspaceActiveSnapshotStoreOptions = {
 
 const SNAPSHOT_WAIT_MS = 1200;
 const WORKSPACE_PATCH_FLUSH_MS = 50;
-const WORKER_PATCH_LOG_SAMPLE_INTERVAL = 25;
-const WORKER_PATCH_LOG_EVENT_THRESHOLD = 16;
-const WORKER_PATCH_LOG_AGE_THRESHOLD_MS = 100;
-
-const shouldRecordWorkerPatch = (
-  seq: number,
-  eventCount: number,
-  publishSnapshot: boolean,
-  persist: boolean,
-  oldestAgeMs: number | null,
-): boolean => {
-  if (eventCount >= WORKER_PATCH_LOG_EVENT_THRESHOLD) return true;
-  if (publishSnapshot || persist) return true;
-  if (typeof oldestAgeMs === "number" && oldestAgeMs >= WORKER_PATCH_LOG_AGE_THRESHOLD_MS) return true;
-  return seq % WORKER_PATCH_LOG_SAMPLE_INTERVAL === 0;
-};
-
-const estimatePatchBytes = (patch: WorkspaceActiveSnapshotPatch): number => {
-  try {
-    return new Blob([JSON.stringify(patch)]).size;
-  } catch {
-    return 0;
-  }
-};
-
-const nowMs = (): number => {
-  if (typeof performance !== "undefined" && typeof performance.now === "function") {
-    return (performance.timeOrigin ?? Date.now()) + performance.now();
-  }
-  return Date.now();
-};
-
-const sameIdList = (left: readonly string[], right: readonly string[]): boolean => {
-  if (left === right) return true;
-  if (left.length !== right.length) return false;
-  for (let index = 0; index < left.length; index += 1) {
-    if (left[index] !== right[index]) return false;
-  }
-  return true;
-};
-
-const sameRecordRefs = <T,>(left: Record<string, T>, right: Record<string, T>): boolean => {
-  if (left === right) return true;
-  const leftKeys = Object.keys(left);
-  const rightKeys = Object.keys(right);
-  if (leftKeys.length !== rightKeys.length) return false;
-  for (const key of leftKeys) {
-    if (!(key in right) || left[key] !== right[key]) {
-      return false;
-    }
-  }
-  return true;
-};
-
-const diffRecordEntries = <T,>(
-  previous: Record<string, T>,
-  next: Record<string, T>,
-): { upserts?: Record<string, T>; deletes?: string[] } => {
-  const upserts: Record<string, T> = {};
-  const deletes: string[] = [];
-  for (const [key, value] of Object.entries(next)) {
-    if (!(key in previous) || previous[key] !== value) {
-      upserts[key] = value;
-    }
-  }
-  for (const key of Object.keys(previous)) {
-    if (!(key in next)) {
-      deletes.push(key);
-    }
-  }
-  return {
-    ...(Object.keys(upserts).length > 0 ? { upserts } : {}),
-    ...(deletes.length > 0 ? { deletes } : {}),
-  };
-};
 
 export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshotEventSource {
   private listeners = new Set<() => void>();
@@ -233,10 +151,7 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
   }
 
   private ensureWorkerAvailable() {
-    if (this.disableWorker) return;
-    if (typeof Worker === "undefined") {
-      throw new Error("Workspace active snapshot requires Worker support.");
-    }
+    ensureWorkerAvailable(this as unknown as WorkspaceActiveSnapshotWorkerHost);
   }
 
   subscribe = (listener: () => void): (() => void) => {
@@ -321,129 +236,7 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
   };
 
   private async startWorker() {
-    if (this.worker || this.destroyed || this.workerStarting) return;
-    this.workerStarting = true;
-    try {
-      const connection = await resolveWorkerConnectionState({
-        workspaceId: this.workspaceId,
-        phase: "worker_init",
-        authTokenOverride: this.authTokenOverride,
-        wsBaseUrlOverride: this.wsBaseUrlOverride,
-      });
-      if (this.worker || this.destroyed) {
-        return;
-      }
-      if (isDesktopApp() && !getDaemonConnectionReadiness(connection).isReady) {
-        return;
-      }
-      this.useWorker = true;
-      this.worker = new Worker(new URL("../workers/workspaceActiveSnapshot.worker.ts", import.meta.url), {
-        type: "module",
-      });
-      this.worker.onmessage = (event: MessageEvent<WorkspaceActiveSnapshotWorkerMessage>) => {
-        const msg = event.data;
-        if (!msg) return;
-        if (msg.type === "patch") {
-          this.applyWorkerPatch(msg.patch);
-          return;
-        }
-        if (msg.type === "heartbeat_ping") {
-          this.postWorkerCommand({ type: "heartbeat_ack", token: msg.token });
-          return;
-        }
-        if (msg.type === "heartbeat_missed") {
-          trackRendererHeartbeatMissed({
-            source: "workspace_active_worker",
-            missedForMs: msg.missedForMs,
-            outstandingAcks: msg.outstandingAcks,
-          });
-        }
-      };
-      this.postWorkerCommand({
-        type: "init",
-        workspaceId: this.workspaceId,
-        connectionSeq: ++this.workerConnectionSeq,
-        authToken: connection.authToken,
-        baseUrl: connection.baseUrl,
-        wsBaseUrl: connection.wsBaseUrl || null,
-        runId: connection.runId,
-        installId: getInstallId(),
-        originRuntime: getAnalyticsSurface(),
-        e2eEnabled: this.e2eEnabled,
-      });
-      if (this.subscribedSessions.length > 0) {
-        this.postWorkerCommand({
-          type: "set_subscribed_sessions",
-          sessions: this.subscribedSessions.slice(),
-        });
-      }
-      if (this.vcsOpenSessionIds.length > 0) {
-        this.postWorkerCommand({
-          type: "set_vcs_open_session_ids",
-          sessionIds: this.vcsOpenSessionIds.slice(),
-        });
-      }
-      if (this.foregroundSessionId) {
-        this.postWorkerCommand({
-          type: "set_foreground_session_id",
-          sessionId: this.foregroundSessionId,
-        });
-      }
-      if (this.pendingWorkerCache) {
-        this.postWorkerCommand({ type: "seed_cache", snapshot: this.pendingWorkerCache });
-        this.pendingWorkerCache = null;
-      }
-    } finally {
-      this.workerStarting = false;
-    }
-  }
-
-  private queueWorkerAuthUpdate(opts: WorkerAuthUpdateConfig) {
-    this.pendingWorkerAuthUpdate = {
-      authToken: opts.authToken ?? null,
-      wsBaseUrl: opts.wsBaseUrl ?? null,
-      baseUrl: opts.baseUrl,
-      runId: opts.runId ?? null,
-    };
-    if (this.workerAuthReconcileInFlight || this.destroyed) return;
-    this.workerAuthReconcileInFlight = true;
-    void this.runWorkerAuthReconcileLoop();
-  }
-
-  private async runWorkerAuthReconcileLoop() {
-    try {
-      while (!this.destroyed) {
-        const pending = this.pendingWorkerAuthUpdate;
-        if (!pending) return;
-        this.pendingWorkerAuthUpdate = null;
-        const connection = await resolveWorkerConnectionState({
-          workspaceId: this.workspaceId,
-          phase: "worker_update_auth",
-          authTokenOverride: this.authTokenOverride,
-          wsBaseUrlOverride: this.wsBaseUrlOverride,
-          opts: pending,
-        });
-        if (!this.worker || this.destroyed) return;
-        // Newer auth arrived while we were awaiting bridge sync; discard stale result.
-        if (this.pendingWorkerAuthUpdate) {
-          continue;
-        }
-        this.postWorkerCommand({
-          type: "update_auth",
-          connectionSeq: ++this.workerConnectionSeq,
-          authToken: connection.authToken,
-          baseUrl: connection.baseUrl,
-          wsBaseUrl: connection.wsBaseUrl,
-          runId: connection.runId,
-        });
-      }
-    } finally {
-      this.workerAuthReconcileInFlight = false;
-      if (!this.destroyed && this.pendingWorkerAuthUpdate) {
-        this.workerAuthReconcileInFlight = true;
-        void this.runWorkerAuthReconcileLoop();
-      }
-    }
+    await startWorker(this as unknown as WorkspaceActiveSnapshotWorkerHost);
   }
 
   updateAuthConfig = (opts: {
@@ -451,124 +244,10 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
     wsBaseUrl?: string | null;
     baseUrl?: string | null;
     runId?: string | null;
-  }) => {
-    const nextAuth = opts.authToken ?? null;
-    const nextWs = opts.wsBaseUrl ?? null;
-    const authChanged = this.authTokenOverride !== nextAuth;
-    const wsChanged = this.wsBaseUrlOverride !== nextWs;
-    this.authTokenOverride = nextAuth;
-    this.wsBaseUrlOverride = nextWs;
-    if (authChanged || wsChanged) {
-      this.canonicalStreamUrl = null;
-    }
-
-    if (this.worker) {
-      this.queueWorkerAuthUpdate({
-        authToken: nextAuth,
-        wsBaseUrl: nextWs,
-        baseUrl: opts.baseUrl,
-        runId: opts.runId ?? null,
-      });
-      return;
-    }
-
-    if (!this.disableWorker) {
-      if (!this.destroyed) {
-        this.startWorker().catch(() => {});
-      }
-      return;
-    }
-    if (!authChanged && !wsChanged) return;
-    if (this.ws) {
-      try {
-        this.ws.close();
-      } catch {
-        // ignore
-      }
-      this.ws = null;
-      if (this.state.setConnection("disconnected")) {
-        this.publish();
-      }
-    }
-    if (!this.destroyed) {
-      this.connectStream().catch(() => {});
-    }
-  };
+  }) => updateWorkerAuthConfig(this as unknown as WorkspaceActiveSnapshotWorkerHost, opts);
 
   postWorkerCommand(cmd: WorkspaceActiveSnapshotCommand) {
-    if (!this.worker) return;
-    this.worker.postMessage(cmd);
-  }
-
-  private applyWorkerPatch(patch: WorkspaceActiveSnapshotPatch) {
-    if (this.destroyed) return;
-    const appliedAtMs = nowMs();
-    const oldestEventAgeMs =
-      typeof patch.oldestEventReceivedAtMs === "number"
-        ? Math.max(0, appliedAtMs - patch.oldestEventReceivedAtMs)
-        : null;
-    const oldestForegroundEventAgeMs =
-      typeof patch.oldestForegroundEventReceivedAtMs === "number"
-        ? Math.max(0, appliedAtMs - patch.oldestForegroundEventReceivedAtMs)
-        : null;
-    const patchKind = patchKindFor(patch);
-    if (typeof patch.oldestEventReceivedAtMs === "number") {
-      noteQueueAgeSample("workspace", oldestEventAgeMs ?? 0, {
-        source: "worker_patch",
-      });
-    }
-    if (typeof patch.oldestForegroundEventReceivedAtMs === "number") {
-      noteQueueAgeSample("foreground", oldestForegroundEventAgeMs ?? 0, {
-        source: "worker_patch",
-      });
-    }
-    const applyStartedAtMs = nowMs();
-    this.state.applyWorkerPatch(patch);
-    recordClientHistogramMetric(
-      "workspace.active_snapshot.worker_patch_apply_ms",
-      "ms",
-      Math.max(0, nowMs() - applyStartedAtMs),
-      {
-        patch_kind: patchKind,
-      },
-    );
-    recordClientHistogramMetric(
-      "workspace.active_snapshot.worker_patch_event_count",
-      "count",
-      patch.events.length,
-      {
-        patch_kind: patchKind,
-      },
-    );
-    if (patch.publishSnapshot !== false) {
-      this.publish();
-    }
-    if (patch.persist) {
-      this.schedulePersistCache();
-    }
-    for (const event of patch.events) {
-      this.notifyEventListeners(event);
-    }
-    const applyDurationMs = Math.max(0, nowMs() - applyStartedAtMs);
-    if (
-      shouldRecordWorkerPatch(
-        this.workerPatchFlushSeq,
-        patch.events.length,
-        patch.publishSnapshot !== false,
-        patch.persist,
-        oldestEventAgeMs,
-      ) || applyDurationMs >= 250
-    ) {
-      trackWorkerPatchApply({
-        source: "worker_patch",
-        eventCount: patch.events.length,
-        applyDurationMs,
-        publishSnapshot: patch.publishSnapshot !== false,
-        persist: patch.persist,
-        oldestEventAgeStartMs: oldestEventAgeMs,
-        oldestForegroundEventAgeStartMs: oldestForegroundEventAgeMs,
-      });
-    }
+    postWorkerCommand(this as unknown as WorkspaceActiveSnapshotWorkerHost, cmd);
   }
 
   private getForegroundSessionId(): string {
@@ -576,31 +255,12 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
   }
 
   private isForegroundSessionEvent(evt: WorkspaceActiveSnapshotEvent): boolean {
-    const foregroundSessionId = this.getForegroundSessionId();
-    if (!foregroundSessionId) return false;
-    switch (evt.type) {
-      case "session_head_delta":
-        return idToString(evt.delta.session_id) === foregroundSessionId;
-      case "session_summary":
-        return idToString(evt.summary.session.id) === foregroundSessionId;
-      case "session_summary_delta":
-        return idToString(evt.delta.session_id) === foregroundSessionId;
-      case "session_gap":
-        return idToString(evt.session_id) === foregroundSessionId;
-      default:
-        return false;
-    }
+    return isForegroundSessionEvent(this.getForegroundSessionId(), evt);
   }
 
   destroy = () => {
     this.destroyed = true;
-    this.pendingWorkerAuthUpdate = null;
-    this.workerAuthReconcileInFlight = false;
-    this.workerConnectionSeq = 0;
-    if (this.worker) {
-      this.worker.terminate();
-      this.worker = null;
-    }
+    destroyWorkerRuntime(this as unknown as WorkspaceActiveSnapshotWorkerHost);
     if (this.configUnsubscribe) {
       this.configUnsubscribe();
       this.configUnsubscribe = null;
@@ -618,23 +278,6 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
       this.reconnectTimer = null;
     }
     this.clearSnapshotWarning();
-    if (this.cachePersistTimer) {
-      globalThis.clearTimeout(this.cachePersistTimer);
-      this.cachePersistTimer = null;
-    }
-    if (this.workerPatchTimer) {
-      globalThis.clearTimeout(this.workerPatchTimer);
-      this.workerPatchTimer = null;
-    }
-    this.workerPatchPendingEvents = [];
-    this.workerPatchPendingPersist = false;
-    this.workerPatchDirty = false;
-    this.workerPatchOldestEventReceivedAtMs = null;
-    this.workerPatchOldestForegroundEventReceivedAtMs = null;
-    this.lastWorkerPatchSnapshot = null;
-    this.lastWorkerPatchSessionHeads = {};
-    this.lastWorkerPatchWorktreeRoots = {};
-    this.lastWorkerPatchSnapshotRev = -1;
     this.listeners.clear();
     this.eventListeners.clear();
   };
@@ -662,41 +305,15 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
   };
 
   applyTaskUpdate(task: Task) {
-    if (this.worker) {
-      this.postWorkerCommand({ type: "apply_task_update", task });
-      return;
-    }
-    if (!this.state.applyTaskUpdate(task)) return;
-    this.publish();
-    this.schedulePersistCache();
+    applyWorkerTaskUpdate(this as unknown as WorkspaceActiveSnapshotWorkerHost, task);
   }
 
   seedCachedSnapshot(cached: PersistedWorkspaceActiveSnapshotV1) {
-    if (!cached || this.destroyed) return;
-    try {
-      this.state.applyCachedSnapshot(cached);
-      this.publish();
-    } catch {
-      // ignore invalid cache payloads
-    }
+    seedCachedSnapshot(this as unknown as WorkspaceActiveSnapshotWorkerHost, cached);
   }
 
   private async hydrateFromCache() {
-    if (this.cacheHydrated) return;
-    this.cacheHydrated = true;
-    try {
-      const cached = await loadWorkspaceActiveSnapshotV1(this.workspaceId);
-      if (!cached || this.destroyed || this.state.hasLiveSnapshotApplied()) return;
-      this.state.applyCachedSnapshot(cached);
-      this.publish();
-      if (this.worker) {
-        this.postWorkerCommand({ type: "seed_cache", snapshot: cached });
-      } else if (!this.disableWorker) {
-        this.pendingWorkerCache = cached;
-      }
-    } catch {
-      // ignore cache errors
-    }
+    await hydrateFromCache(this as unknown as WorkspaceActiveSnapshotWorkerHost);
   }
 
   scheduleSnapshotWarning(reason: string) {
@@ -741,202 +358,15 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
   }
 
   private schedulePersistCache() {
-    if (this.workerPatchEmitter) {
-      this.workerPatchPendingPersist = true;
-      this.scheduleWorkerPatchFlush();
-      return;
-    }
-    if (this.destroyed || this.cachePersistTimer) return;
-    this.cachePersistTimer = globalThis.setTimeout(() => {
-      this.cachePersistTimer = null;
-      this.persistCache().catch(() => {});
-    }, 300);
+    schedulePersistCache(this as unknown as WorkspaceActiveSnapshotWorkerHost);
   }
 
   scheduleWorkerPatchFlush() {
-    if (!this.workerPatchEmitter || this.workerPatchTimer) return;
-    this.workerPatchTimer = globalThis.setTimeout(() => {
-      this.workerPatchTimer = null;
-      this.flushWorkerPatch();
-    }, this.workerPatchFlushMs);
+    scheduleWorkerPatchFlush(this as unknown as WorkspaceActiveSnapshotWorkerHost);
   }
 
   flushWorkerPatchNow() {
-    if (this.workerPatchTimer) {
-      globalThis.clearTimeout(this.workerPatchTimer);
-      this.workerPatchTimer = null;
-    }
-    this.flushWorkerPatch();
-  }
-
-  private flushWorkerPatch() {
-    if (!this.workerPatchEmitter) return;
-    if (
-      !this.workerPatchDirty &&
-      !this.workerPatchPendingPersist &&
-      this.workerPatchPendingEvents.length === 0
-    ) {
-      return;
-    }
-    this.workerPatchFlushSeq += 1;
-    const flushStartedAtMs = nowMs();
-    const events = this.workerPatchPendingEvents.slice();
-    this.workerPatchPendingEvents = [];
-    const snapshot = this.getSnapshot();
-    const sessionHeads = this.getSessionHeadsSnapshot();
-    const worktreeRoots = this.getWorktreeRootsSnapshot();
-    const activeSessionIds = this.state.getActiveSessionIds();
-    const snapshotRev = this.state.getSnapshotRev();
-    const forceSnapshotReplace =
-      this.lastWorkerPatchSnapshot == null || snapshotRev < this.lastWorkerPatchSnapshotRev;
-
-    let patch: WorkspaceActiveSnapshotPatch;
-    if (forceSnapshotReplace) {
-      patch = {
-        snapshot,
-        sessionHeadUpserts: sessionHeads,
-        worktreeRootUpserts: worktreeRoots,
-        events,
-        snapshotRev,
-        archivedRev: this.state.getArchivedRev(),
-        activeSessionIds,
-        publishSnapshot: true,
-        persist: this.workerPatchPendingPersist,
-        oldestEventReceivedAtMs: this.workerPatchOldestEventReceivedAtMs,
-        oldestForegroundEventReceivedAtMs: this.workerPatchOldestForegroundEventReceivedAtMs,
-      };
-    } else {
-      const previousSnapshot = this.lastWorkerPatchSnapshot!;
-      const previousSessionHeads = this.lastWorkerPatchSessionHeads;
-      const previousWorktreeRoots = this.lastWorkerPatchWorktreeRoots;
-      const taskDiff = diffRecordEntries(previousSnapshot.tasksById, snapshot.tasksById);
-      const sessionHeadDiff = diffRecordEntries(previousSessionHeads, sessionHeads);
-      const worktreeRootDiff = diffRecordEntries(previousWorktreeRoots, worktreeRoots);
-      const shell: NonNullable<WorkspaceActiveSnapshotPatch["shell"]> = {};
-
-      if (snapshot.initialized !== previousSnapshot.initialized) {
-        shell.initialized = snapshot.initialized;
-      }
-      if (snapshot.liveSnapshotApplied !== previousSnapshot.liveSnapshotApplied) {
-        shell.liveSnapshotApplied = snapshot.liveSnapshotApplied;
-      }
-      if (snapshot.connection !== previousSnapshot.connection) {
-        shell.connection = snapshot.connection;
-      }
-      if (!sameIdList(snapshot.activeIds, previousSnapshot.activeIds)) {
-        shell.activeIds = snapshot.activeIds.slice();
-      }
-      if (!sameIdList(snapshot.archivedIds, previousSnapshot.archivedIds)) {
-        shell.archivedIds = snapshot.archivedIds.slice();
-      }
-      if (snapshot.totalActive !== previousSnapshot.totalActive) {
-        shell.totalActive = snapshot.totalActive;
-      }
-      if (snapshot.totalArchived !== previousSnapshot.totalArchived) {
-        shell.totalArchived = snapshot.totalArchived;
-      }
-      if (snapshot.archivedRev !== previousSnapshot.archivedRev) {
-        shell.archivedRev = snapshot.archivedRev;
-      }
-      if (
-        snapshot.fetchState.active !== previousSnapshot.fetchState.active ||
-        snapshot.fetchState.archived !== previousSnapshot.fetchState.archived
-      ) {
-        shell.fetchState = { ...snapshot.fetchState };
-      }
-      if (snapshot.hasMoreActive !== previousSnapshot.hasMoreActive) {
-        shell.hasMoreActive = snapshot.hasMoreActive;
-      }
-      if (snapshot.hasMoreArchived !== previousSnapshot.hasMoreArchived) {
-        shell.hasMoreArchived = snapshot.hasMoreArchived;
-      }
-      if (snapshot.archivedLoaded !== previousSnapshot.archivedLoaded) {
-        shell.archivedLoaded = snapshot.archivedLoaded;
-      }
-      if (!sameRecordRefs(snapshot.worktreeVcsById, previousSnapshot.worktreeVcsById)) {
-        shell.worktreeVcsById = snapshot.worktreeVcsById;
-      }
-
-      const shellChanged = Object.keys(shell).length > 0;
-      const taskChanged = Boolean(taskDiff.upserts) || Boolean(taskDiff.deletes);
-      patch = {
-        ...(shellChanged ? { shell } : {}),
-        ...(taskDiff.upserts ? { taskUpserts: taskDiff.upserts } : {}),
-        ...(taskDiff.deletes ? { taskDeletes: taskDiff.deletes } : {}),
-        ...(sessionHeadDiff.upserts ? { sessionHeadUpserts: sessionHeadDiff.upserts } : {}),
-        ...(sessionHeadDiff.deletes ? { sessionHeadDeletes: sessionHeadDiff.deletes } : {}),
-        ...(worktreeRootDiff.upserts ? { worktreeRootUpserts: worktreeRootDiff.upserts } : {}),
-        ...(worktreeRootDiff.deletes ? { worktreeRootDeletes: worktreeRootDiff.deletes } : {}),
-        events,
-        snapshotRev,
-        archivedRev: this.state.getArchivedRev(),
-        activeSessionIds,
-        publishSnapshot: this.workerPatchDirty || shellChanged || taskChanged,
-        persist: this.workerPatchPendingPersist,
-        oldestEventReceivedAtMs: this.workerPatchOldestEventReceivedAtMs,
-        oldestForegroundEventReceivedAtMs: this.workerPatchOldestForegroundEventReceivedAtMs,
-      };
-    }
-    const patchKind = patchKindFor(patch);
-    this.workerPatchDirty = false;
-    this.workerPatchPendingPersist = false;
-    this.workerPatchOldestEventReceivedAtMs = null;
-    this.workerPatchOldestForegroundEventReceivedAtMs = null;
-    this.lastWorkerPatchSnapshot = snapshot;
-    this.lastWorkerPatchSessionHeads = sessionHeads;
-    this.lastWorkerPatchWorktreeRoots = worktreeRoots;
-    this.lastWorkerPatchSnapshotRev = snapshotRev;
-    const oldestEventAgeMs =
-      typeof patch.oldestEventReceivedAtMs === "number"
-        ? Math.max(0, nowMs() - patch.oldestEventReceivedAtMs)
-        : null;
-    const oldestForegroundEventAgeMs =
-      typeof patch.oldestForegroundEventReceivedAtMs === "number"
-        ? Math.max(0, nowMs() - patch.oldestForegroundEventReceivedAtMs)
-        : null;
-    if (
-      shouldRecordWorkerPatch(
-        this.workerPatchFlushSeq,
-        patch.events.length,
-        patch.publishSnapshot !== false,
-        patch.persist,
-        oldestEventAgeMs,
-      )
-    ) {
-      trackWorkerPatchFlush({
-        source: "worker_patch",
-        eventCount: patch.events.length,
-        activeSessionCount: patch.activeSessionIds.length,
-        publishSnapshot: patch.publishSnapshot !== false,
-        persist: patch.persist,
-        patchBytesEstimate: estimatePatchBytes(patch),
-        oldestEventAgeMs,
-        oldestForegroundEventAgeMs,
-      });
-    }
-    recordClientCounterMetric("workspace.active_snapshot.worker_patch_flush_count", {
-      patch_kind: patchKind,
-      persist: patch.persist ? "true" : "false",
-    });
-    recordClientHistogramMetric(
-      "workspace.active_snapshot.worker_patch_flush_ms",
-      "ms",
-      Math.max(0, nowMs() - flushStartedAtMs),
-      {
-        patch_kind: patchKind,
-        persist: patch.persist ? "true" : "false",
-      },
-    );
-    this.workerPatchEmitter(patch);
-  }
-
-  private async persistCache() {
-    if (this.destroyed) return;
-    try {
-      await saveWorkspaceActiveSnapshotV1(this.workspaceId, this.state.buildPersistedSnapshot());
-    } catch {
-      // ignore cache errors
-    }
+    flushWorkerPatchNow(this as unknown as WorkspaceActiveSnapshotWorkerHost);
   }
 
   private applyWorkspaceSnapshot(snapshot: WorkspaceActiveSnapshot, heads?: SessionHeadSnapshot[] | null) {
