@@ -4,9 +4,9 @@ import { apiAny } from "./clientBase";
 export type Health = {
   version: string;
   daemon_version: string;
-  pid: number;
-  data_root: string;
-  daemon_url: string;
+  pid?: number;
+  data_root?: string;
+  daemon_url?: string;
   auth_required: boolean;
   storage?: {
     level: "normal" | "warning" | "emergency";

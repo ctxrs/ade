@@ -972,12 +972,17 @@ struct HealthCompatibility {
 struct HealthResp {
     version: String,
     daemon_version: String,
-    pid: u32,
-    data_root: String,
-    daemon_url: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pid: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    data_root: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    daemon_url: Option<String>,
     auth_required: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
     open_file_limit: Option<crate::process_limits::OpenFileLimitSnapshot>,
-    storage: crate::storage_guard::StorageGuardStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    storage: Option<crate::storage_guard::StorageGuardStatus>,
     compatibility: HealthCompatibility,
 }
 

@@ -57,28 +57,16 @@ pub(in crate::api) struct RegisterMobileDeviceReq {
 
 pub(in crate::api) async fn health(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
 ) -> Result<Json<HealthResp>, StatusCode> {
     let identity = crate::build_identity::current_build_identity()
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let version = identity.exact_version.clone();
-    Ok(Json(HealthResp {
-        version: version.clone(),
-        daemon_version: version.clone(),
-        pid: std::process::id(),
-        data_root: state.core.data_root.to_string_lossy().to_string(),
-        daemon_url: state.core.daemon_url.clone(),
-        auth_required: state.core.auth_token.is_some(),
-        open_file_limit: crate::process_limits::current_open_file_limit(),
-        storage: state.storage_guard_snapshot(),
-        compatibility: HealthCompatibility {
-            desktop_exact_version: version,
-            desktop_build_id: identity.build_id.clone(),
-            desktop_dev_instance_id: identity.compatibility_token.clone(),
-            protocol_compatibility_token: identity.compatibility_token.clone(),
-            mobile_api_min: MOBILE_API_MIN_VERSION,
-            mobile_api_max: MOBILE_API_MAX_VERSION,
-        },
-    }))
+    let include_sensitive = health_request_is_authorized(&state, &headers);
+    Ok(Json(build_health_response(
+        &state,
+        &identity,
+        include_sensitive,
+    )))
 }
 
 pub(in crate::api) const TITLE_GENERATION_LOCAL_INSTALL_KEY: &str = "title_generation_local";
@@ -187,26 +175,8 @@ pub(in crate::api) async fn diagnostics(
 
     let identity = crate::build_identity::current_build_identity()
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let version = identity.exact_version.clone();
     Ok(Json(DiagnosticsResp {
-        daemon: HealthResp {
-            version: version.clone(),
-            daemon_version: version.clone(),
-            pid: std::process::id(),
-            data_root: state.core.data_root.to_string_lossy().to_string(),
-            daemon_url: state.core.daemon_url.clone(),
-            auth_required: state.core.auth_token.is_some(),
-            open_file_limit: crate::process_limits::current_open_file_limit(),
-            storage: state.storage_guard_snapshot(),
-            compatibility: HealthCompatibility {
-                desktop_exact_version: version,
-                desktop_build_id: identity.build_id.clone(),
-                desktop_dev_instance_id: identity.compatibility_token.clone(),
-                protocol_compatibility_token: identity.compatibility_token.clone(),
-                mobile_api_min: MOBILE_API_MIN_VERSION,
-                mobile_api_max: MOBILE_API_MAX_VERSION,
-            },
-        },
+        daemon: build_health_response(&state, &identity, true),
         platform: serde_json::json!({
             "os": std::env::consts::OS,
             "arch": std::env::consts::ARCH,
@@ -222,6 +192,47 @@ pub(in crate::api) async fn diagnostics(
         providers,
         managed_installs,
     }))
+}
+
+fn health_request_is_authorized(state: &Arc<AppState>, headers: &HeaderMap) -> bool {
+    let Some(expected) = state.core.auth_token.as_deref() else {
+        return true;
+    };
+    headers
+        .get(header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "))
+        .is_some_and(|value| value == expected)
+}
+
+fn build_health_response(
+    state: &Arc<AppState>,
+    identity: &crate::build_identity::BuildIdentity,
+    include_sensitive: bool,
+) -> HealthResp {
+    let version = identity.exact_version.clone();
+    HealthResp {
+        version: version.clone(),
+        daemon_version: version.clone(),
+        pid: include_sensitive.then_some(std::process::id()),
+        data_root: include_sensitive.then(|| state.core.data_root.to_string_lossy().to_string()),
+        daemon_url: include_sensitive.then(|| state.core.daemon_url.clone()),
+        auth_required: state.core.auth_token.is_some(),
+        open_file_limit: if include_sensitive {
+            crate::process_limits::current_open_file_limit()
+        } else {
+            None
+        },
+        storage: include_sensitive.then(|| state.storage_guard_snapshot()),
+        compatibility: HealthCompatibility {
+            desktop_exact_version: version,
+            desktop_build_id: identity.build_id.clone(),
+            desktop_dev_instance_id: identity.compatibility_token.clone(),
+            protocol_compatibility_token: identity.compatibility_token.clone(),
+            mobile_api_min: MOBILE_API_MIN_VERSION,
+            mobile_api_max: MOBILE_API_MAX_VERSION,
+        },
+    }
 }
 
 #[derive(Debug, Deserialize)]

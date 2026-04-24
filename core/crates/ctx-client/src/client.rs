@@ -286,6 +286,22 @@ mod tests {
         .to_string()
     }
 
+    fn public_health_body() -> String {
+        json!({
+            "version": "1.0.0",
+            "daemon_version": "1.0.0",
+            "auth_required": true,
+            "compatibility": {
+                "desktop_exact_version": "1.0.0",
+                "desktop_build_id": "build-1",
+                "desktop_dev_instance_id": "dev-1",
+                "mobile_api_min": 1,
+                "mobile_api_max": 1
+            }
+        })
+        .to_string()
+    }
+
     fn active_snapshot_body(workspace_id: WorkspaceId) -> String {
         json!({
             "workspace_id": workspace_id,
@@ -349,7 +365,7 @@ mod tests {
         let request = server.next_request();
         server.finish();
 
-        assert_eq!(health.pid, 42);
+        assert_eq!(health.pid, Some(42));
         assert_eq!(request.method, "GET");
         assert_eq!(request.target, "/api/health");
         assert!(request.body.is_empty());
@@ -377,6 +393,25 @@ mod tests {
 
         assert_eq!(request.target, "/api/health");
         assert!(!request.headers.contains_key("authorization"));
+    }
+
+    #[tokio::test]
+    async fn public_health_payload_parses_without_sensitive_fields() {
+        let server = TestServer::spawn("200 OK", public_health_body(), Some("application/json"));
+        let client = test_client(server.base_url.clone(), None);
+
+        let health: Health = client
+            .request_json(Method::GET, "/api/health", None::<&()>)
+            .await
+            .unwrap();
+        server.next_request();
+        server.finish();
+
+        assert_eq!(health.auth_required, true);
+        assert_eq!(health.pid, None);
+        assert_eq!(health.data_root, None);
+        assert_eq!(health.daemon_url, None);
+        assert_eq!(health.compatibility.mobile_api_max, 1);
     }
 
     #[tokio::test]
