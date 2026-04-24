@@ -239,6 +239,7 @@ fn map_interactive_session(value: &mut Value) {
             obj.insert("session_ref".to_string(), session_id);
         }
     }
+    obj.remove("session_id");
     obj.remove("ctx_session_id");
     obj.remove("workspace_id");
     obj.remove("worktree_id");

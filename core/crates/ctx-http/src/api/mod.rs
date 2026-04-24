@@ -48,6 +48,7 @@ mod web_sessions;
 mod workspaces;
 mod ws;
 
+#[cfg(test)]
 pub(crate) use auth::{
     derive_browser_capability_token, derive_browser_stream_token,
     BrowserCapabilityAuthScope, BrowserStreamAuthScope,

@@ -16,6 +16,11 @@ pub(crate) struct WebSessionStreamAccessQuery {
     pub(crate) token: Option<String>,
 }
 
+#[derive(Debug, Deserialize, Default)]
+pub(super) struct WebSessionListQuery {
+    session_id: Option<String>,
+}
+
 pub(crate) async fn require_web_session_stream_access(
     manager: &Arc<WebSessionManager>,
     id: &str,
@@ -99,8 +104,13 @@ pub(super) async fn create_web_session(
 pub(super) async fn list_web_sessions(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
+    Query(query): Query<WebSessionListQuery>,
 ) -> Result<Json<Vec<WebSessionInfo>>, StatusCode> {
     let mut sessions = state.transport.web_sessions.list().await;
+    if let Some(session_id) = query.session_id.as_deref() {
+        uuid::Uuid::parse_str(session_id).map_err(|_| StatusCode::BAD_REQUEST)?;
+        sessions.retain(|session| session.session_id.as_deref() == Some(session_id));
+    }
     let base_url = resolve_request_base_url(&headers, &state.core.daemon_url);
     for session in sessions.iter_mut() {
         session.stream_url = Some(format!("{}{}", base_url, session.stream_path));
