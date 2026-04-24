@@ -3,6 +3,9 @@ use super::*;
 use anyhow::Context;
 use ctx_core::ids::WorkspaceId;
 use ctx_core::provider_ids::CODEX_CRP_PROVIDER_ID;
+use ctx_providers::adapters::{
+    ProviderHealth, ProviderRecommendedAction, ProviderUsability, ProviderUsabilityStatus,
+};
 
 use crate::execution_effective;
 #[allow(unused_imports)]
@@ -10,14 +13,39 @@ pub(crate) use crate::provider_launch::status::{
     apply_target_aware_provider_status, provider_status_for_target,
 };
 
+fn mark_provider_status_with_managed_config_error(status: &mut ProviderStatus, config_error: &str) {
+    let reason = format!("managed provider config error: {config_error}");
+    status.health = ProviderHealth::Error;
+    status
+        .details
+        .insert("managed_config_error".into(), "true".into());
+    status.details.insert(
+        "managed_config_error_message".into(),
+        config_error.to_string(),
+    );
+    if !status.diagnostics.iter().any(|value| value == &reason) {
+        status.diagnostics.push(reason.clone());
+    }
+    status.usability = ProviderUsability {
+        usable: false,
+        status: ProviderUsabilityStatus::Blocked,
+        reason_code: Some("managed_config_error".into()),
+        reason: Some(reason),
+        blocking_provider_ids: Vec::new(),
+        recommended_action: ProviderRecommendedAction::ConfigureRuntime,
+    };
+}
+
 pub(super) async fn providers_statuses_response(
     state: &Arc<AppState>,
     target: InstallTarget,
     include_matrix_providers: bool,
 ) -> Vec<ProviderStatus> {
-    let managed = installer::load_agent_server_config(&state.core.data_root)
-        .await
-        .unwrap_or_default();
+    let (managed, managed_config_error) =
+        crate::api::provider_launch::load_managed_agent_server_config_with_error(
+            &state.core.data_root,
+        )
+        .await;
     let matrix = crate::provider_matrix::load_matrix_cached(
         &state.core.data_root,
         &state.providers.matrix_cache,
@@ -91,6 +119,9 @@ pub(super) async fn providers_statuses_response(
             status
                 .details
                 .insert("install_id".into(), install_id.to_string());
+        }
+        if let Some(config_error) = managed_config_error.as_deref() {
+            mark_provider_status_with_managed_config_error(status, config_error);
         }
     }
     out
