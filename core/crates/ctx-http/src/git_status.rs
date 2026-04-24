@@ -476,6 +476,8 @@ async fn refresh_worktree_vcs_projection(
     if !is_active {
         return Ok(());
     }
+    let refresh_lock = state.worktree_vcs_refresh_lock(worktree.id).await;
+    let _refresh_guard = refresh_lock.lock().await;
 
     let cached_snapshot = state.get_worktree_vcs_snapshot(worktree.id).await;
     let cached_summary = cached_snapshot
