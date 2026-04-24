@@ -221,10 +221,15 @@ async fn load_pinned_subscription_model_catalog(
     state: &Arc<AppState>,
     provider_id: &str,
     install_target: ctx_provider_install::install_state::InstallTarget,
-) -> Option<ModelCatalog> {
-    let managed = crate::installer::load_agent_server_config(&state.core.data_root)
-        .await
-        .unwrap_or_default();
+) -> Result<Option<ModelCatalog>, String> {
+    let (managed, config_error) =
+        crate::api::provider_launch::load_managed_agent_server_config_with_error(
+            &state.core.data_root,
+        )
+        .await;
+    if let Some(config_error) = config_error {
+        return Err(config_error);
+    }
     let matrix = crate::provider_matrix::load_matrix_cached(
         &state.core.data_root,
         &state.providers.matrix_cache,
@@ -241,8 +246,8 @@ async fn load_pinned_subscription_model_catalog(
     let models_value = provider_accounts::pinned_subscription_models_value(
         provider_id,
         provider_status.version.as_deref(),
-    )?;
-    build_model_catalog(&models_value)
+    );
+    Ok(models_value.and_then(|value| build_model_catalog(&value)))
 }
 
 fn pick_default_effort(efforts: &[String]) -> Option<String> {
@@ -428,10 +433,15 @@ async fn load_provider_model_catalog_for_install_target(
         }
     }
 
-    let source_config =
-        harness_sources::get_provider_source_config(&state.core.data_root, provider_id)
-            .await
-            .ok();
+    let (source_config, source_config_error) =
+        crate::api::provider_launch::load_provider_source_config_with_error(
+            &state.core.data_root,
+            provider_id,
+        )
+        .await;
+    if let Some(config_error) = source_config_error {
+        return Err(config_error);
+    }
     if let Some(config) = source_config.as_ref() {
         if config.selected_source_kind == harness_sources::HarnessSourceKind::Endpoint {
             let selected_endpoint_id = config.selected_endpoint_id.as_deref().ok_or_else(|| {
@@ -496,17 +506,20 @@ async fn load_provider_model_catalog_for_install_target(
     }
 
     if !crate::api::provider_catalog::provider_supports_runtime_model_catalog(provider_id) {
-        return Ok(
-            load_pinned_subscription_model_catalog(state, provider_id, install_target).await,
-        );
+        return load_pinned_subscription_model_catalog(state, provider_id, install_target).await;
     }
 
     let pinned_catalog =
-        load_pinned_subscription_model_catalog(state, provider_id, install_target).await;
+        load_pinned_subscription_model_catalog(state, provider_id, install_target).await?;
 
-    let cfg = installer::load_agent_server_config(&state.core.data_root)
-        .await
-        .unwrap_or_default();
+    let (cfg, config_error) =
+        crate::api::provider_launch::load_managed_agent_server_config_with_error(
+            &state.core.data_root,
+        )
+        .await;
+    if let Some(config_error) = config_error {
+        return Err(config_error);
+    }
     let runtime_command = match installer::resolve_runtime_provider_command_for_target(
         &cfg,
         provider_id,
@@ -661,6 +674,25 @@ mod tests {
     use crate::daemon::AppState;
     use crate::settings::{ExecutionMode, ExecutionSettings, Settings};
 
+    fn write_invalid_harness_registry(data_root: &std::path::Path) {
+        let path = data_root
+            .join("providers")
+            .join("harness_sources")
+            .join("registry.json");
+        std::fs::create_dir_all(path.parent().expect("registry parent")).expect("mkdir registry");
+        std::fs::write(path, "{ not valid json").expect("write invalid registry");
+    }
+
+    fn write_invalid_agent_server_config(data_root: &std::path::Path) {
+        let path = data_root
+            .join("providers")
+            .join("agent-servers")
+            .join("agent_servers.json");
+        std::fs::create_dir_all(path.parent().expect("agent server config parent"))
+            .expect("mkdir agent server config");
+        std::fs::write(path, "{ not valid json").expect("write invalid agent server config");
+    }
+
     #[tokio::test]
     async fn load_provider_model_catalog_reads_target_scoped_options_cache() {
         let temp = tempfile::tempdir().expect("tempdir");
@@ -772,6 +804,90 @@ mod tests {
             .full_ids
             .iter()
             .any(|id| id == "gemini-3-pro-preview"));
+    }
+
+    #[tokio::test]
+    async fn load_provider_model_catalog_surfaces_harness_config_errors() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        write_invalid_harness_registry(temp.path());
+        let stores = StoreManager::open(temp.path()).await.expect("open stores");
+        let state = Arc::new(AppState::new(
+            temp.path().to_path_buf(),
+            stores,
+            HashMap::new(),
+            "http://127.0.0.1:4312".to_string(),
+            None,
+        ));
+        let workspace = state
+            .global_store()
+            .create_workspace(
+                "ws".to_string(),
+                temp.path().join("repo").to_string_lossy().to_string(),
+                VcsKind::Git,
+            )
+            .await
+            .expect("create workspace");
+
+        let err = load_provider_model_catalog(&state, &workspace, "qwen")
+            .await
+            .expect_err("harness config error should surface");
+        assert!(err.contains("parsing harness source registry"));
+    }
+
+    #[tokio::test]
+    async fn load_provider_model_catalog_surfaces_agent_server_config_errors() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        write_invalid_agent_server_config(temp.path());
+        let stores = StoreManager::open(temp.path()).await.expect("open stores");
+        let state = Arc::new(AppState::new(
+            temp.path().to_path_buf(),
+            stores,
+            HashMap::new(),
+            "http://127.0.0.1:4313".to_string(),
+            None,
+        ));
+        let workspace = state
+            .global_store()
+            .create_workspace(
+                "ws".to_string(),
+                temp.path().join("repo").to_string_lossy().to_string(),
+                VcsKind::Git,
+            )
+            .await
+            .expect("create workspace");
+
+        let err = load_provider_model_catalog(&state, &workspace, "qwen")
+            .await
+            .expect_err("managed config error should surface");
+        assert!(err.contains("parsing agent server config"));
+    }
+
+    #[tokio::test]
+    async fn load_provider_model_catalog_surfaces_agent_server_config_errors_for_pinned_catalogs() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        write_invalid_agent_server_config(temp.path());
+        let stores = StoreManager::open(temp.path()).await.expect("open stores");
+        let state = Arc::new(AppState::new(
+            temp.path().to_path_buf(),
+            stores,
+            HashMap::new(),
+            "http://127.0.0.1:4314".to_string(),
+            None,
+        ));
+        let workspace = state
+            .global_store()
+            .create_workspace(
+                "ws".to_string(),
+                temp.path().join("repo").to_string_lossy().to_string(),
+                VcsKind::Git,
+            )
+            .await
+            .expect("create workspace");
+
+        let err = load_provider_model_catalog(&state, &workspace, "gemini")
+            .await
+            .expect_err("managed config error should surface for pinned catalogs too");
+        assert!(err.contains("parsing agent server config"));
     }
 
     #[test]
