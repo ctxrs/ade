@@ -199,6 +199,7 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
   private lastWorkerPatchSnapshotRev = -1;
   authTokenOverride: string | null = null;
   wsBaseUrlOverride: string | null = null;
+  canonicalStreamUrl: string | null = null;
   private configUnsubscribe: (() => void) | null = null;
   private listWorkspaceArchivedTaskSummariesFn: typeof listWorkspaceArchivedTaskSummaries;
   subscribedSessions: SessionSubscriptionCursor[] = [];
@@ -457,6 +458,9 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
     const wsChanged = this.wsBaseUrlOverride !== nextWs;
     this.authTokenOverride = nextAuth;
     this.wsBaseUrlOverride = nextWs;
+    if (authChanged || wsChanged) {
+      this.canonicalStreamUrl = null;
+    }
 
     if (this.worker) {
       this.queueWorkerAuthUpdate({

@@ -11,6 +11,7 @@ import {
   idToString,
   listWorkspaceArchivedTaskSummaries,
 } from "../../api/client";
+import { setBrowserStreamQueryToken } from "../../api/browserStreamAuth";
 import {
   emitUiDiagnostic,
   normalizeDiagnosticErrorMessage,
@@ -41,6 +42,7 @@ export type WorkspaceActiveSnapshotStreamHost = {
   e2eDropStreamMessages: boolean;
   authTokenOverride: string | null;
   wsBaseUrlOverride: string | null;
+  canonicalStreamUrl: string | null;
   state: WorkspaceActiveSnapshotStoreState;
   listWorkspaceArchivedTaskSummariesFn: typeof listWorkspaceArchivedTaskSummaries;
   ws: WebSocket | null;
@@ -140,6 +142,7 @@ export const connectStream = async (host: WorkspaceActiveSnapshotStreamHost): Pr
     const wsBaseUrl = host.wsBaseUrlOverride ?? daemonConfig.wsBaseUrl ?? null;
     const token = host.authTokenOverride ?? daemonConfig.authToken;
     if (!wsBaseUrl) {
+      host.canonicalStreamUrl = null;
       emitUiDiagnostic({
         source: "workspace_stream",
         code: "workspace.stream_connection_missing",
@@ -154,8 +157,15 @@ export const connectStream = async (host: WorkspaceActiveSnapshotStreamHost): Pr
       }
       return;
     }
-    const qs = token ? `?token=${encodeURIComponent(token)}` : "";
+    const query = new URLSearchParams();
+    await setBrowserStreamQueryToken(query, token, {
+      kind: "workspace_active_snapshot",
+      workspaceId: host.workspaceId,
+    });
+    const serializedQuery = query.toString();
+    const qs = serializedQuery ? `?${serializedQuery}` : "";
     const url = `${wsBaseUrl.replace(/\/+$/, "")}/api/workspaces/${host.workspaceId}/active_snapshot/stream${qs}`;
+    host.canonicalStreamUrl = url;
     if (host.destroyed) return;
     const openConnection =
       host.openWebSocket?.bind(host) ??

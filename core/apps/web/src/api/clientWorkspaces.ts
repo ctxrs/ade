@@ -15,6 +15,7 @@ import type {
   WorkspaceAttachmentKind,
 } from "@ctx/types";
 import { apiAny, daemonFetchRaw, idToString } from "./clientBase";
+import { setBrowserStreamQueryToken } from "./browserStreamAuth";
 import { getDaemonConnection, getDaemonWsUrl } from "./daemonConnection";
 import {
   trackWorkspaceCreated,
@@ -303,11 +304,13 @@ export const getExecutionLaunchStatus = (jobId: string) =>
     `/api/execution/launch/status?job_id=${encodeURIComponent(jobId)}`,
   );
 
-export const buildExecutionLaunchWsUrl = (jobId: string): string => {
+export const buildExecutionLaunchWsUrl = async (jobId: string): Promise<string> => {
   const qs = new URLSearchParams();
   qs.set("job_id", jobId);
-  const token = getDaemonConnection().authToken;
-  if (token) qs.set("token", token);
+  await setBrowserStreamQueryToken(qs, getDaemonConnection().authToken, {
+    kind: "execution_launch",
+    jobId,
+  });
   return getDaemonWsUrl("/api/execution/launch/stream", qs);
 };
 

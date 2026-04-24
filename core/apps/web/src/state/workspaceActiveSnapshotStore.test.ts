@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { deriveBrowserStreamToken } from "../api/browserStreamAuth";
 import type {
   Session,
   SessionHeadSnapshot,
@@ -809,12 +810,16 @@ describe("WorkspaceActiveSnapshotStore", () => {
     const internals = asStoreInternals(store);
     const openSpy = vi.spyOn(internals, "openWebSocket").mockResolvedValueOnce(undefined);
     const reconnectSpy = vi.spyOn(internals, "scheduleReconnect").mockImplementation(() => {});
+    const expectedToken = await deriveBrowserStreamToken("token-1", {
+      kind: "workspace_active_snapshot",
+      workspaceId: "ws-1",
+    });
 
     await internals.connectStream();
 
     expect(openSpy).toHaveBeenCalledTimes(1);
     expect(openSpy).toHaveBeenCalledWith(
-      "ws://daemon.local/api/workspaces/ws-1/active_snapshot/stream?token=token-1",
+      `ws://daemon.local/api/workspaces/ws-1/active_snapshot/stream?token=${expectedToken}`,
     );
     expect(reconnectSpy).not.toHaveBeenCalled();
     const diagnostics = getUiDiagnostics().filter((event) => event.code === "workspace.stream_connect_failed");

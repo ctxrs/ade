@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { deriveBrowserStreamToken } from "./browserStreamAuth";
 
 vi.mock("./daemonConnection", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./daemonConnection")>();
@@ -26,7 +27,7 @@ describe("clientWorkspaces websocket urls", () => {
     vi.clearAllMocks();
   });
 
-  it("builds execution launch stream URL on canonical daemon host with token", () => {
+  it("builds execution launch stream URL on canonical daemon host with a scoped query token", async () => {
     vi.mocked(getDaemonConnection).mockReturnValueOnce({
       baseUrl: null,
       wsBaseUrl: null,
@@ -35,14 +36,19 @@ describe("clientWorkspaces websocket urls", () => {
       source: null,
     });
 
-    const url = buildExecutionLaunchWsUrl("job-1");
-    expect(url).toContain("ws://daemon.test/api/execution/launch/stream");
-    expect(url).toContain("job_id=job-1");
-    expect(url).toContain("token=token-1");
+    const expectedToken = await deriveBrowserStreamToken("token-1", {
+      kind: "execution_launch",
+      jobId: "job-1",
+    });
+    const url = await buildExecutionLaunchWsUrl("job-1");
+    expect(url).toBe(
+      `ws://daemon.test/api/execution/launch/stream?job_id=job-1&token=${expectedToken}`,
+    );
+    expect(url).not.toContain("token=token-1");
     expect(vi.mocked(getDaemonWsUrl)).toHaveBeenCalledTimes(1);
   });
 
-  it("builds execution launch stream URL without token when auth is absent", () => {
+  it("builds execution launch stream URL without token when auth is absent", async () => {
     vi.mocked(getDaemonConnection).mockReturnValueOnce({
       baseUrl: null,
       wsBaseUrl: null,
@@ -51,7 +57,7 @@ describe("clientWorkspaces websocket urls", () => {
       source: null,
     });
 
-    const url = buildExecutionLaunchWsUrl("job-2");
+    const url = await buildExecutionLaunchWsUrl("job-2");
     expect(url).toContain("ws://daemon.test/api/execution/launch/stream");
     expect(url).toContain("job_id=job-2");
     expect(url).not.toContain("token=");

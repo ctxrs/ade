@@ -47,6 +47,9 @@ mod updates;
 mod web_sessions;
 mod workspaces;
 mod ws;
+
+pub(crate) use auth::{derive_browser_stream_token, BrowserStreamAuthScope};
+
 use artifacts::*;
 use execution::*;
 use lsp::*;

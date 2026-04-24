@@ -1,5 +1,6 @@
 import type { ProviderStatus } from "@ctx/types";
 import { apiAny, authToken } from "./clientBase";
+import { setBrowserStreamQueryToken } from "./browserStreamAuth";
 import { getDaemonHttpUrl } from "./daemonConnection";
 
 export type InstallEventLevel = "info" | "warning" | "error" | "success";
@@ -861,12 +862,15 @@ export const cancelInstall = (installId: string) =>
 export const listInstallEvents = (installId: string) =>
   apiAny<InstallProgressEvent[]>(`/api/providers/install/${installId}/events`);
 
-export const installStreamUrl = (installId: string): string => {
-  const token = authToken();
+export const installStreamUrl = async (installId: string): Promise<string> => {
   const base = getDaemonHttpUrl(`/api/providers/install/${installId}/stream`);
-  return token
-    ? `${base}?token=${encodeURIComponent(token)}`
-    : base;
+  const query = new URLSearchParams();
+  await setBrowserStreamQueryToken(query, authToken(), {
+    kind: "provider_install",
+    installId,
+  });
+  const serialized = query.toString();
+  return serialized ? `${base}?${serialized}` : base;
 };
 
 export type DevRestartProvidersMode = "immediate" | "drain";

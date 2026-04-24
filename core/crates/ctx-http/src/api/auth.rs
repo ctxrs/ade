@@ -9,6 +9,7 @@ use axum::response::IntoResponse;
 use base64::Engine;
 use rand_core::RngCore;
 use sha2::Digest;
+use url::form_urlencoded;
 
 use crate::daemon::AppState;
 use ctx_core::ids::ConnectionProfileId;
@@ -18,12 +19,118 @@ pub(super) struct MobileAuthContext {
     pub(super) profile_id: ConnectionProfileId,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum BrowserStreamAuthScope {
+    WorkspaceActiveSnapshot { workspace_id: String },
+    WorkspaceStream { workspace_id: String },
+    ExecutionLaunch { job_id: String },
+    DictationLivekit,
+    ProviderInstall { install_id: String },
+}
+
+impl BrowserStreamAuthScope {
+    fn serialize(&self) -> String {
+        match self {
+            Self::WorkspaceActiveSnapshot { workspace_id } => {
+                format!("workspace_active_snapshot:{workspace_id}")
+            }
+            Self::WorkspaceStream { workspace_id } => format!("workspace_stream:{workspace_id}"),
+            Self::ExecutionLaunch { job_id } => format!("execution_launch:{job_id}"),
+            Self::DictationLivekit => "dictation_livekit".to_string(),
+            Self::ProviderInstall { install_id } => format!("provider_install:{install_id}"),
+        }
+    }
+}
+
 fn is_websocket_upgrade(headers: &axum::http::HeaderMap) -> bool {
     headers
         .get(axum::http::header::UPGRADE)
         .and_then(|value| value.to_str().ok())
         .is_some_and(|value| value.eq_ignore_ascii_case("websocket"))
         || headers.contains_key("sec-websocket-key")
+}
+
+fn query_param(req: &Request<Body>, key: &str) -> Option<String> {
+    let query = req.uri().query()?;
+    form_urlencoded::parse(query.as_bytes())
+        .find(|(candidate, _)| candidate == key)
+        .map(|(_, value)| value.into_owned())
+}
+
+fn workspace_stream_scope(path: &str) -> Option<BrowserStreamAuthScope> {
+    let remainder = path.strip_prefix("/api/workspaces/")?;
+    let (workspace_id, suffix) = remainder.split_once('/')?;
+    let workspace_id = workspace_id.trim();
+    if workspace_id.is_empty() {
+        return None;
+    }
+    match suffix {
+        "active_snapshot/stream" => Some(BrowserStreamAuthScope::WorkspaceActiveSnapshot {
+            workspace_id: workspace_id.to_string(),
+        }),
+        "stream" => Some(BrowserStreamAuthScope::WorkspaceStream {
+            workspace_id: workspace_id.to_string(),
+        }),
+        _ => None,
+    }
+}
+
+fn provider_install_stream_scope(path: &str) -> Option<BrowserStreamAuthScope> {
+    let remainder = path.strip_prefix("/api/providers/install/")?;
+    let (install_id, suffix) = remainder.split_once('/')?;
+    let install_id = install_id.trim();
+    if install_id.is_empty() || suffix != "stream" {
+        return None;
+    }
+    Some(BrowserStreamAuthScope::ProviderInstall {
+        install_id: install_id.to_string(),
+    })
+}
+
+fn browser_stream_scope(req: &Request<Body>) -> Option<BrowserStreamAuthScope> {
+    let path = req.uri().path();
+    if let Some(scope) = workspace_stream_scope(path) {
+        return Some(scope);
+    }
+    if let Some(scope) = provider_install_stream_scope(path) {
+        return Some(scope);
+    }
+    match path {
+        "/api/execution/launch/stream" => {
+            let job_id = query_param(req, "job_id")?;
+            let job_id = job_id.trim();
+            if job_id.is_empty() {
+                return None;
+            }
+            Some(BrowserStreamAuthScope::ExecutionLaunch {
+                job_id: job_id.to_string(),
+            })
+        }
+        "/api/dictation/livekit/stream" => Some(BrowserStreamAuthScope::DictationLivekit),
+        _ => None,
+    }
+}
+
+pub(crate) fn derive_browser_stream_token(
+    auth_token: &str,
+    scope: &BrowserStreamAuthScope,
+) -> String {
+    let mut hasher = sha2::Sha256::new();
+    hasher.update(b"ctx-browser-stream|");
+    hasher.update(scope.serialize().as_bytes());
+    hasher.update(b"|");
+    hasher.update(auth_token.as_bytes());
+    hex::encode(hasher.finalize())
+}
+
+fn browser_stream_query_token_is_valid(req: &Request<Body>, auth_token: &str) -> bool {
+    let Some(scope) = browser_stream_scope(req) else {
+        return false;
+    };
+    let Some(query_token) = query_param(req, "token") else {
+        return false;
+    };
+    query_token == derive_browser_stream_token(auth_token, &scope)
 }
 
 pub(super) async fn auth_middleware(
@@ -60,6 +167,11 @@ pub(super) async fn auth_middleware(
 
     if token.as_deref() == state.core.auth_token.as_deref() {
         return Ok(next.run(req).await);
+    }
+    if let Some(auth_token) = state.core.auth_token.as_deref() {
+        if browser_stream_query_token_is_valid(&req, auth_token) {
+            return Ok(next.run(req).await);
+        }
     }
     if is_mobile_token_route {
         let Some(token_value) = token else {

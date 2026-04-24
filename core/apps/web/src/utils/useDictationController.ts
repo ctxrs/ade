@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { setBrowserStreamQueryToken } from "../api/browserStreamAuth";
 import { getSettings, updateSettings } from "../api/client";
 import type { DictationSettings, UpdateDictationSettingsRequest } from "../api/client";
 import { getDaemonConnection, getDaemonWsUrl } from "../api/daemonConnection";
@@ -526,11 +527,12 @@ export const useDictationController = (opts: DictationControllerOptions): Dictat
       if (existing && existing.readyState !== WebSocket.CLOSED) return true;
       if (dictationRecording) return true;
 
-      const token = getDaemonConnection().authToken;
       const query = new URLSearchParams();
-      if (token) query.set("token", token);
       let wsUrl = "";
       try {
+        await setBrowserStreamQueryToken(query, getDaemonConnection().authToken, {
+          kind: "dictation_livekit",
+        });
         wsUrl = getDaemonWsUrl("/api/dictation/livekit/stream", query);
       } catch (err: unknown) {
         setDictationError(errorMessage(err));

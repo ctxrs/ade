@@ -322,7 +322,7 @@ describe("WorkspaceSetupPage", () => {
     navigateMock.mockReset();
     waitForWorkspaceBootstrapBeforeNavigationMock.mockReset();
     waitForWorkspaceBootstrapBeforeNavigationMock.mockResolvedValue(undefined);
-    vi.mocked(buildExecutionLaunchWsUrl).mockReturnValue("ws://127.0.0.1:1/launch");
+    vi.mocked(buildExecutionLaunchWsUrl).mockResolvedValue("ws://127.0.0.1:1/launch");
     vi.mocked(isDesktopApp).mockReturnValue(false);
     vi.mocked(listProviderAuthImportCandidates).mockResolvedValue({ candidates: [] });
     vi.mocked(listWorkspaces).mockResolvedValue([]);

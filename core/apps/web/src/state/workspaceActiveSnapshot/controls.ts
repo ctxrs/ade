@@ -22,6 +22,7 @@ export type WorkspaceActiveSnapshotControlHost = {
   ws: WebSocket | null;
   wsBaseUrlOverride: string | null;
   authTokenOverride: string | null;
+  canonicalStreamUrl: string | null;
   workspaceId: string;
   subscribedSessions: SessionSubscriptionCursor[];
   vcsOpenSessionIds: string[];
@@ -188,12 +189,13 @@ export function getCanonicalStreamUrl(
   host: WorkspaceActiveSnapshotControlHost,
 ): string | null {
   if (!host.e2eEnabled) return null;
+  if (host.canonicalStreamUrl) return host.canonicalStreamUrl;
   const daemonConfig = getDaemonClientConfig();
   const wsBaseUrl = host.wsBaseUrlOverride ?? daemonConfig.wsBaseUrl ?? null;
   const token = host.authTokenOverride ?? daemonConfig.authToken;
   if (!wsBaseUrl) return null;
-  const qs = token ? `?token=${encodeURIComponent(token)}` : "";
-  return `${wsBaseUrl.replace(/\/+$/, "")}/api/workspaces/${host.workspaceId}/active_snapshot/stream${qs}`;
+  if (token) return null;
+  return `${wsBaseUrl.replace(/\/+$/, "")}/api/workspaces/${host.workspaceId}/active_snapshot/stream`;
 }
 
 const syncRetainedLiveSessionIds = (host: WorkspaceActiveSnapshotControlHost) => {

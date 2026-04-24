@@ -94,67 +94,76 @@ export const waitForLaunchHandoffTerminal = async (
 
   await new Promise<void>((resolve, reject) => {
     let settled = false;
-    const ws = new WebSocket(buildExecutionLaunchWsUrl(initial.job_id));
     const logBatcher = createLaunchLogBatcher(callbacks.appendLines);
+    let ws: WebSocket | null = null;
 
     const settle = (error?: Error) => {
       if (settled) return;
       settled = true;
       logBatcher.flush();
       logBatcher.dispose();
-      ws.close();
+      ws?.close();
       if (error) reject(error);
       else resolve();
     };
 
-    ws.onmessage = (event) => {
-      let parsed: ExecutionLaunchStreamEvent | null = null;
-      try {
-        parsed = JSON.parse(String(event.data ?? "")) as ExecutionLaunchStreamEvent;
-      } catch {
-        return;
-      }
-      if (!parsed) return;
-      if (parsed.type === "launch_log") {
-        logBatcher.enqueue(parsed.line);
-        return;
-      }
-      if (parsed.type === "launch_snapshot") {
-        logBatcher.flush();
-        callbacks.applySnapshot(parsed.snapshot);
-        return;
-      }
-      if (parsed.type === "launch_complete") {
-        logBatcher.flush();
-        callbacks.applySnapshot(parsed.snapshot);
-        settle();
-        return;
-      }
-      if (parsed.type === "launch_error") {
-        logBatcher.flush();
-        callbacks.applySnapshot(parsed.snapshot);
-        settle(new Error(launchErrorFromSnapshot(parsed.snapshot)));
-      }
-    };
+    void buildExecutionLaunchWsUrl(initial.job_id)
+      .then((wsUrl) => {
+        if (settled) return;
+        ws = new WebSocket(wsUrl);
 
-    ws.onclose = () => {
-      if (settled) return;
-      logBatcher.flush();
-      getExecutionLaunchStatus(initial.job_id)
-        .then((latest) => {
-          callbacks.applySnapshot(latest);
-          if (latest.state === "ready") {
-            settle();
-          } else if (latest.state === "error") {
-            settle(new Error(launchErrorFromSnapshot(latest)));
-          } else {
-            settle(new Error("Lost workspace launch stream before setup finished."));
+        ws.onmessage = (event) => {
+          let parsed: ExecutionLaunchStreamEvent | null = null;
+          try {
+            parsed = JSON.parse(String(event.data ?? "")) as ExecutionLaunchStreamEvent;
+          } catch {
+            return;
           }
-        })
-        .catch((error: unknown) => {
-          settle(new Error(messageFromError(error)));
-        });
-    };
+          if (!parsed) return;
+          if (parsed.type === "launch_log") {
+            logBatcher.enqueue(parsed.line);
+            return;
+          }
+          if (parsed.type === "launch_snapshot") {
+            logBatcher.flush();
+            callbacks.applySnapshot(parsed.snapshot);
+            return;
+          }
+          if (parsed.type === "launch_complete") {
+            logBatcher.flush();
+            callbacks.applySnapshot(parsed.snapshot);
+            settle();
+            return;
+          }
+          if (parsed.type === "launch_error") {
+            logBatcher.flush();
+            callbacks.applySnapshot(parsed.snapshot);
+            settle(new Error(launchErrorFromSnapshot(parsed.snapshot)));
+          }
+        };
+
+        ws.onclose = () => {
+          if (settled) return;
+          logBatcher.flush();
+          getExecutionLaunchStatus(initial.job_id)
+            .then((latest) => {
+              callbacks.applySnapshot(latest);
+              if (latest.state === "ready") {
+                settle();
+              } else if (latest.state === "error") {
+                settle(new Error(launchErrorFromSnapshot(latest)));
+              } else {
+                settle(new Error("Lost workspace launch stream before setup finished."));
+              }
+            })
+            .catch((error: unknown) => {
+              settle(new Error(messageFromError(error)));
+            });
+        };
+      })
+      .catch((error: unknown) => {
+        settle(new Error(messageFromError(error)));
+      });
   });
 };
 
