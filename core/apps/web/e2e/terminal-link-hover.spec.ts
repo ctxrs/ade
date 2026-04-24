@@ -13,6 +13,15 @@ const AUTH_TOKEN = process.env.CTX_E2E_AUTH_TOKEN ?? "ctx-e2e-auth-token";
 const LINK_TEXT = "https://example.com";
 const TERMINAL_DONE = "TERM_LINK_DONE";
 
+type WorkspaceRecord = {
+  id: string;
+};
+
+type TerminalLookupRecord = {
+  id: unknown;
+  stream_path?: unknown;
+};
+
 type TerminalCellDimensions = {
   width: number;
   height: number;
@@ -175,15 +184,36 @@ async function waitForVisibleTerminalId(page: Page): Promise<string> {
   return terminalId;
 }
 
-function terminalWsUrl(baseURL: string, token: string, terminalId: string): string {
-  const url = new URL(`/api/terminals/${terminalId}/stream`, baseURL);
-  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-  url.searchParams.set("token", token);
-  return url.toString();
+async function terminalWsUrl(baseURL: string, token: string, terminalId: string): Promise<string> {
+  const workspacesResp = await fetch(new URL("/api/workspaces", baseURL), {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+  if (!workspacesResp.ok) {
+    throw new Error(`Failed to list workspaces for terminal lookup: ${workspacesResp.status}`);
+  }
+  const workspaces = (await workspacesResp.json()) as WorkspaceRecord[];
+  for (const workspace of workspaces) {
+    const terminalsResp = await fetch(new URL(`/api/workspaces/${workspace.id}/terminals`, baseURL), {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+    if (!terminalsResp.ok) continue;
+    const terminals = (await terminalsResp.json()) as TerminalLookupRecord[];
+    const terminal = terminals.find((candidate) => candidate.id === terminalId);
+    if (terminal && typeof terminal.stream_path === "string" && terminal.stream_path) {
+      const url = new URL(terminal.stream_path, baseURL);
+      url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+      return url.toString();
+    }
+  }
+  throw new Error(`Failed to resolve stream path for terminal ${terminalId}`);
 }
 
 async function seedTerminalOutput(baseURL: string, token: string, terminalId: string, link: string) {
-  const wsUrl = terminalWsUrl(baseURL, token, terminalId);
+  const wsUrl = await terminalWsUrl(baseURL, token, terminalId);
   const linkLine = JSON.stringify(`${link}\n`);
   const command = [
     "export PS1='$ ' PROMPT_COMMAND=''",

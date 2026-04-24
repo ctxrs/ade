@@ -46,6 +46,9 @@ pub(super) async fn auth_middleware(
     }
     let is_terminal_stream = path.starts_with("/api/terminals/") && path.ends_with("/stream");
     let is_ws = is_terminal_stream && is_websocket_upgrade(req.headers());
+    if is_ws {
+        return Ok(next.run(req).await);
+    }
     let is_mobile_token_route = path == "/api/mobile/register";
     let header_token = req
         .headers()
@@ -53,26 +56,7 @@ pub(super) async fn auth_middleware(
         .and_then(|h| h.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "))
         .map(|v| v.to_string());
-    let query_token = req.uri().query().and_then(|q| {
-        q.split('&').find_map(|kv| {
-            let (k, v) = kv.split_once('=')?;
-            if k == "token" {
-                Some(v.to_string())
-            } else {
-                None
-            }
-        })
-    });
-    let token = if is_ws {
-        if header_token.is_some() {
-            tracing::warn!(
-                "Authorization header is deprecated for terminal websocket auth; use ?token="
-            );
-        }
-        query_token.or(header_token)
-    } else {
-        header_token
-    };
+    let token = header_token;
 
     if token.as_deref() == state.core.auth_token.as_deref() {
         return Ok(next.run(req).await);

@@ -16,6 +16,12 @@ mod common;
 type WsStream =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
+fn terminal_ws_url(base: &str, terminal: &TerminalSession) -> String {
+    format!("{base}{}", terminal.stream_path)
+        .replacen("https://", "wss://", 1)
+        .replacen("http://", "ws://", 1)
+}
+
 async fn read_terminal_status(socket: &mut WsStream) -> (TerminalStatus, Option<i32>) {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
     while tokio::time::Instant::now() < deadline {
@@ -232,8 +238,7 @@ async fn terminal_disconnect_and_reconnect_do_not_poison_workspace_control_plane
         .await
         .unwrap();
 
-    let terminal_ws_url =
-        format!("{base}/api/terminals/{}/stream", terminal.id.0).replace("http://", "ws://");
+    let terminal_ws_url = terminal_ws_url(base, &terminal);
     let (mut terminal_socket, _) = connect_async(&terminal_ws_url).await.unwrap();
     let (status, _) = read_terminal_status(&mut terminal_socket).await;
     assert!(matches!(status, TerminalStatus::Running));

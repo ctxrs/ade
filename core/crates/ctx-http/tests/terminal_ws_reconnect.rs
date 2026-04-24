@@ -15,6 +15,25 @@ mod common;
 type WsStream =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
+fn websocket_url_from_http(http_url: String) -> String {
+    http_url
+        .replacen("https://", "wss://", 1)
+        .replacen("http://", "ws://", 1)
+}
+
+fn terminal_ws_url(base: &str, terminal: &TerminalSession) -> String {
+    websocket_url_from_http(format!("{base}{}", terminal.stream_path))
+}
+
+fn terminal_ws_url_with_tail(base: &str, terminal: &TerminalSession, tail: usize) -> String {
+    let joiner = if terminal.stream_path.contains('?') {
+        '&'
+    } else {
+        '?'
+    };
+    websocket_url_from_http(format!("{base}{}{joiner}tail={tail}", terminal.stream_path))
+}
+
 async fn read_status(socket: &mut WsStream) -> (TerminalStatus, Option<i32>) {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
     while tokio::time::Instant::now() < deadline {
@@ -186,8 +205,7 @@ async fn terminal_ws_reconnect_sends_status_and_tail() {
         .await
         .unwrap();
 
-    let ws_url =
-        format!("{base}/api/terminals/{}/stream", terminal.id.0).replace("http://", "ws://");
+    let ws_url = terminal_ws_url(base, &terminal);
     let (mut socket, _) = connect_async(&ws_url).await.unwrap();
 
     let (status, _) = read_status(&mut socket).await;
@@ -276,8 +294,7 @@ async fn terminal_ws_reconnect_resyncs_bounded_tail_after_churn() {
         .await
         .unwrap();
 
-    let ws_url =
-        format!("{base}/api/terminals/{}/stream", terminal.id.0).replace("http://", "ws://");
+    let ws_url = terminal_ws_url(base, &terminal);
     let (mut socket, _) = connect_async(&ws_url).await.unwrap();
 
     let (status, _) = read_status(&mut socket).await;
@@ -300,8 +317,7 @@ async fn terminal_ws_reconnect_resyncs_bounded_tail_after_churn() {
     let _ = socket.close(None).await;
     tokio::time::sleep(Duration::from_millis(200)).await;
 
-    let bounded_ws_url = format!("{base}/api/terminals/{}/stream?tail=4096", terminal.id.0)
-        .replace("http://", "ws://");
+    let bounded_ws_url = terminal_ws_url_with_tail(base, &terminal, 4096);
     let (mut socket, _) = connect_async(&bounded_ws_url).await.unwrap();
     let (status, _) = read_status(&mut socket).await;
     assert!(matches!(status, TerminalStatus::Running));
@@ -358,8 +374,7 @@ async fn terminal_ws_keepalive_pong() {
         .await
         .unwrap();
 
-    let ws_url =
-        format!("{base}/api/terminals/{}/stream", terminal.id.0).replace("http://", "ws://");
+    let ws_url = terminal_ws_url(base, &terminal);
     let (mut socket, _) = connect_async(&ws_url).await.unwrap();
 
     let (status, _) = read_status(&mut socket).await;
@@ -460,8 +475,7 @@ printf 'CTX_TERM_BOUND_TAIL\n'
         "latest terminal output should remain available in the reconnect buffer"
     );
 
-    let ws_url = format!("{base}/api/terminals/{}/stream?tail=4096", terminal.id.0)
-        .replace("http://", "ws://");
+    let ws_url = terminal_ws_url_with_tail(base, &terminal, 4096);
     let (mut socket, _) = connect_async(&ws_url).await.unwrap();
 
     let (status, exit_code) = read_status(&mut socket).await;

@@ -18,6 +18,7 @@ use tokio::sync::{broadcast, mpsc};
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{connect_async, connect_async_tls_with_config, Connector};
+use uuid::Uuid;
 
 use ctx_core::ids::{SessionId, TaskId, TerminalId, WorkspaceId, WorktreeId};
 use ctx_core::models::{TerminalSession, TerminalStatus};
@@ -148,6 +149,7 @@ enum TerminalBackend {
 
 pub struct TerminalSessionHandle {
     info: TerminalSession,
+    stream_token: String,
     container_backed: bool,
     runtime: Arc<Mutex<TerminalRuntime>>,
     output_tx: broadcast::Sender<Vec<u8>>,
@@ -173,6 +175,10 @@ impl TerminalSessionHandle {
             updated_at: runtime.updated_at,
             ..self.info.clone()
         }
+    }
+
+    pub fn matches_stream_token(&self, token: &str) -> bool {
+        self.stream_token == token
     }
 
     fn touch_activity(&self) {
@@ -232,6 +238,8 @@ impl TerminalSessionHandle {
     #[doc(hidden)]
     pub fn test_handle_with_output(output: &[u8]) -> Arc<Self> {
         let now = Utc::now();
+        let id = TerminalId::new();
+        let stream_token = Uuid::new_v4().to_string();
         let (output_tx, _) = broadcast::channel(16);
         let (status_tx, _) = broadcast::channel(16);
         let (_outbound_tx, outbound_rx) = mpsc::unbounded_channel();
@@ -239,7 +247,7 @@ impl TerminalSessionHandle {
         output_buffer.extend(output.iter().copied());
         Arc::new(Self {
             info: TerminalSession {
-                id: TerminalId::new(),
+                id,
                 workspace_id: WorkspaceId::new(),
                 task_id: None,
                 session_id: None,
@@ -249,9 +257,11 @@ impl TerminalSessionHandle {
                 title: "test-terminal".to_string(),
                 status: TerminalStatus::Running,
                 exit_code: None,
+                stream_path: build_stream_path(id, &stream_token),
                 created_at: now,
                 updated_at: now,
             },
+            stream_token,
             container_backed: false,
             runtime: Arc::new(Mutex::new(TerminalRuntime {
                 status: TerminalStatus::Running,
@@ -569,6 +579,7 @@ impl TerminalManager {
         });
 
         let id = TerminalId::new();
+        let stream_token = Uuid::new_v4().to_string();
         let title = PathBuf::from(&req.shell)
             .file_name()
             .and_then(|s| s.to_str())
@@ -586,12 +597,14 @@ impl TerminalManager {
             title,
             status: TerminalStatus::Running,
             exit_code: None,
+            stream_path: build_stream_path(id, &stream_token),
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };
 
         let session = Arc::new(TerminalSessionHandle {
             info,
+            stream_token,
             container_backed: req.native_container.is_some() || req.shared_vm_container.is_some(),
             runtime,
             output_tx,
@@ -615,6 +628,7 @@ impl TerminalManager {
         remote: RemoteTerminalRequest,
     ) -> Result<Arc<TerminalSessionHandle>> {
         let id = remote.terminal_id;
+        let stream_token = Uuid::new_v4().to_string();
         let title = PathBuf::from(&req.shell)
             .file_name()
             .and_then(|s| s.to_str())
@@ -646,12 +660,14 @@ impl TerminalManager {
             title,
             status: TerminalStatus::Running,
             exit_code: None,
+            stream_path: build_stream_path(id, &stream_token),
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };
 
         let session = Arc::new(TerminalSessionHandle {
             info,
+            stream_token,
             container_backed: false,
             runtime: runtime.clone(),
             output_tx: output_tx.clone(),
@@ -823,6 +839,10 @@ fn push_output(
         runtime.updated_at = runtime.last_activity;
     }
     let _ = output_tx.send(bytes.to_vec());
+}
+
+fn build_stream_path(id: TerminalId, stream_token: &str) -> String {
+    format!("/api/terminals/{}/stream?token={stream_token}", id.0)
 }
 
 #[derive(Debug)]

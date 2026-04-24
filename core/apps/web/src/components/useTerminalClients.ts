@@ -4,7 +4,7 @@ import { Terminal, type ILink, type ILinkProvider } from "@xterm/xterm";
 import type { TerminalSession } from "@ctx/types";
 import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { idToString } from "../api/client";
-import { getDaemonConnection, getDaemonWsUrl } from "../api/daemonConnection";
+import { getDaemonWsUrl } from "../api/daemonConnection";
 import { openExternalLink } from "../utils/desktop";
 import { readCssVar, useThemeVariant, withAlpha, type ThemeVariant } from "../utils/theme";
 
@@ -144,11 +144,8 @@ export function useTerminalClients(
   return clientsRef;
 }
 
-function buildTerminalWsUrl(terminalId: string): string {
-  const query = new URLSearchParams();
-  const token = getDaemonConnection().authToken;
-  if (token) query.set("token", token);
-  return getDaemonWsUrl(`/api/terminals/${terminalId}/stream`, query);
+function buildTerminalWsUrl(terminal: TerminalSession): string {
+  return getDaemonWsUrl(terminal.stream_path);
 }
 
 function terminalTheme(themeVariant: ThemeVariant) {
@@ -462,7 +459,7 @@ function createClient(
     setConnectionStatus(nextState);
     let wsUrl = "";
     try {
-      wsUrl = buildTerminalWsUrl(id);
+      wsUrl = buildTerminalWsUrl(terminal);
     } catch {
       scheduleReconnect();
       return;

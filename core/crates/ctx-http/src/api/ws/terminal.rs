@@ -17,6 +17,19 @@ pub(super) enum TerminalWsQueueOutcome {
     Closed,
 }
 
+async fn require_terminal_stream_access(
+    manager: &Arc<crate::terminals::TerminalManager>,
+    id: TerminalId,
+    token: Option<&str>,
+) -> Result<Arc<crate::terminals::TerminalSessionHandle>, StatusCode> {
+    let provided_token = token.ok_or(StatusCode::UNAUTHORIZED)?;
+    let handle = manager.get(id).await.ok_or(StatusCode::NOT_FOUND)?;
+    if !handle.matches_stream_token(provided_token) {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+    Ok(handle)
+}
+
 pub(in crate::api) async fn terminal_stream_ws(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
@@ -24,13 +37,12 @@ pub(in crate::api) async fn terminal_stream_ws(
     ws: WebSocketUpgrade,
 ) -> Result<Response, StatusCode> {
     let terminal_id = TerminalId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
-
-    let session = state
-        .transport
-        .terminals
-        .get(terminal_id)
-        .await
-        .ok_or(StatusCode::NOT_FOUND)?;
+    let session = require_terminal_stream_access(
+        &state.transport.terminals,
+        terminal_id,
+        params.get("token").map(String::as_str),
+    )
+    .await?;
 
     let tail_bytes = terminal_stream_tail_bytes(&params);
     Ok(ws.on_upgrade(move |socket| async move {

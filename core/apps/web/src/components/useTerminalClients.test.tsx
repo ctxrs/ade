@@ -110,6 +110,7 @@ const baseTerminal = (): TerminalSession => ({
   title: "bash",
   status: "running",
   exit_code: null,
+  stream_path: "/api/terminals/terminal-1/stream?token=terminal-secret",
   created_at: new Date().toISOString(),
   updated_at: new Date().toISOString(),
 });

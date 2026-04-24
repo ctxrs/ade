@@ -17,6 +17,31 @@ use crate::client::Client;
 use crate::types::*;
 
 impl Client {
+    fn websocket_url_for_path(&self, stream_path: &str) -> Result<String> {
+        let mut url = Url::parse(&self.base_url)
+            .with_context(|| format!("invalid base url: {}", self.base_url))?;
+        let scheme = match url.scheme() {
+            "http" => "ws",
+            "https" => "wss",
+            other => return Err(anyhow!("unsupported base url scheme: {other}")),
+        };
+        url.set_scheme(scheme)
+            .map_err(|_| anyhow!("failed to set websocket scheme"))?;
+        let prefix = url.path().trim_end_matches('/').to_string();
+        let (path, query) = match stream_path.split_once('?') {
+            Some((path, query)) => (path, Some(query)),
+            None => (stream_path, None),
+        };
+        let path = if prefix.is_empty() {
+            path.to_string()
+        } else {
+            format!("{prefix}{path}")
+        };
+        url.set_path(&path);
+        url.set_query(query);
+        Ok(url.to_string())
+    }
+
     pub async fn get_health(&self) -> Result<Health> {
         self.request_json(Method::GET, "/api/health", None::<&()>)
             .await
@@ -141,53 +166,16 @@ impl Client {
     }
 
     pub fn workspace_stream_url(&self, workspace_id: WorkspaceId) -> Result<String> {
-        let mut url = Url::parse(&self.base_url)
-            .with_context(|| format!("invalid base url: {}", self.base_url))?;
-        let scheme = match url.scheme() {
-            "http" => "ws",
-            "https" => "wss",
-            other => return Err(anyhow!("unsupported base url scheme: {other}")),
-        };
-        url.set_scheme(scheme)
-            .map_err(|_| anyhow!("failed to set websocket scheme"))?;
-        let prefix = url.path().trim_end_matches('/');
-        let path = if prefix.is_empty() {
-            format!("/api/workspaces/{}/active_snapshot/stream", workspace_id.0)
-        } else {
-            format!(
-                "{}/api/workspaces/{}/active_snapshot/stream",
-                prefix, workspace_id.0
-            )
-        };
-        url.set_path(&path);
-        url.set_query(None);
-        Ok(url.to_string())
+        self.websocket_url_for_path(&format!(
+            "/api/workspaces/{}/active_snapshot/stream",
+            workspace_id.0
+        ))
     }
 
-    /// Terminal websocket auth uses `?token=` for browser compatibility; headers are deprecated.
-    /// Append `tail=<bytes>` to cap the initial snapshot size.
-    pub fn terminal_stream_url(&self, terminal_id: TerminalId) -> Result<String> {
-        let mut url = Url::parse(&self.base_url)
-            .with_context(|| format!("invalid base url: {base_url}", base_url = self.base_url))?;
-        let scheme = match url.scheme() {
-            "http" => "ws",
-            "https" => "wss",
-            other => return Err(anyhow!("unsupported base url scheme: {other}")),
-        };
-        url.set_scheme(scheme)
-            .map_err(|_| anyhow!("failed to set websocket scheme"))?;
-        let prefix = url.path().trim_end_matches('/');
-        let path = if prefix.is_empty() {
-            format!("/api/terminals/{}/stream", terminal_id.0)
-        } else {
-            format!("{}/api/terminals/{}/stream", prefix, terminal_id.0)
-        };
-        url.set_path(&path);
-        url.set_query(None);
-        if let Some(token) = &self.auth_token {
-            url.query_pairs_mut().append_pair("token", token);
-        }
-        Ok(url.to_string())
+    /// Terminal websocket URLs use the terminal-scoped `stream_path` minted by the daemon.
+    /// Append `tail=<bytes>` to the returned URL to cap the initial snapshot size.
+    pub fn terminal_stream_url(&self, terminal: &TerminalSession) -> Result<String> {
+        self.websocket_url_for_path(&terminal.stream_path)
     }
 
     pub async fn list_workspace_terminals(
@@ -813,18 +801,37 @@ mod tests {
     }
 
     #[test]
-    fn terminal_stream_url_uses_query_token_for_browser_compatibility() {
+    fn terminal_stream_url_uses_terminal_scoped_stream_path() {
         let client = Client::new(DaemonConfig {
             base_url: "https://example.com/base/".to_string(),
             auth_token: Some("secret-token".to_string()),
         })
         .unwrap();
         let terminal_id = TerminalId::new();
-        let url = client.terminal_stream_url(terminal_id).unwrap();
+        let terminal: TerminalSession = serde_json::from_value(serde_json::json!({
+            "id": terminal_id.0,
+            "workspace_id": WorkspaceId::new().0,
+            "task_id": null,
+            "session_id": null,
+            "worktree_id": null,
+            "cwd": "/tmp",
+            "shell": "/bin/bash",
+            "title": "bash",
+            "status": "running",
+            "exit_code": null,
+            "stream_path": format!(
+                "/api/terminals/{}/stream?token=terminal-secret",
+                terminal_id.0
+            ),
+            "created_at": "2026-04-23T00:00:00Z",
+            "updated_at": "2026-04-23T00:00:00Z"
+        }))
+        .unwrap();
+        let url = client.terminal_stream_url(&terminal).unwrap();
         assert_eq!(
             url,
             format!(
-                "wss://example.com/base/api/terminals/{}/stream?token=secret-token",
+                "wss://example.com/base/api/terminals/{}/stream?token=terminal-secret",
                 terminal_id.0
             )
         );
@@ -843,7 +850,23 @@ mod tests {
             .to_string()
             .contains("unsupported base url scheme: ftp"));
 
-        let terminal_err = client.terminal_stream_url(TerminalId::new()).unwrap_err();
+        let terminal: TerminalSession = serde_json::from_value(serde_json::json!({
+            "id": TerminalId::new().0,
+            "workspace_id": WorkspaceId::new().0,
+            "task_id": null,
+            "session_id": null,
+            "worktree_id": null,
+            "cwd": "/tmp",
+            "shell": "/bin/bash",
+            "title": "bash",
+            "status": "running",
+            "exit_code": null,
+            "stream_path": "/api/terminals/test/stream?token=terminal-secret",
+            "created_at": "2026-04-23T00:00:00Z",
+            "updated_at": "2026-04-23T00:00:00Z"
+        }))
+        .unwrap();
+        let terminal_err = client.terminal_stream_url(&terminal).unwrap_err();
         assert!(terminal_err
             .to_string()
             .contains("unsupported base url scheme: ftp"));

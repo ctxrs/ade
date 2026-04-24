@@ -159,6 +159,7 @@ export type TerminalSession = {
   title: string;
   status: TerminalStatus;
   exit_code?: number | null;
+  stream_path: string;
   created_at: string;
   updated_at: string;
 };

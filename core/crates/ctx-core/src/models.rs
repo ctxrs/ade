@@ -664,6 +664,7 @@ pub struct TerminalSession {
     pub status: TerminalStatus,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub exit_code: Option<i32>,
+    pub stream_path: String,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }

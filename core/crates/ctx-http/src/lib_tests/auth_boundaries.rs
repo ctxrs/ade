@@ -69,10 +69,11 @@ async fn daemon_http_routes_require_bearer_header_not_query_token() {
 }
 
 #[tokio::test]
-async fn terminal_websocket_stream_still_accepts_query_token_auth() {
+async fn terminal_websocket_stream_requires_terminal_scoped_query_token() {
     let _serial = home_env_test_lock().lock().await;
     let home = tempfile::tempdir().unwrap();
     let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
+    let git_repo = setup_git_repo().await;
 
     let data_dir = tempfile::tempdir().unwrap();
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
@@ -83,7 +84,40 @@ async fn terminal_websocket_stream_still_accepts_query_token_auth() {
         "http://127.0.0.1:4399".to_string(),
         Some("daemon-secret".to_string()),
     ));
-    let app = api::router(state);
+    let app = api::router(state.clone());
+
+    let req = Request::builder()
+        .method("POST")
+        .uri("/api/workspaces")
+        .header("authorization", "Bearer daemon-secret")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "root_path": git_repo.path().to_string_lossy(),
+                "name": "terminal-auth-boundary"
+            })
+            .to_string(),
+        ))
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let workspace: ctx_core::models::Workspace = serde_json::from_slice(&body).unwrap();
+
+    let req = Request::builder()
+        .method("POST")
+        .uri(format!("/api/workspaces/{}/terminals", workspace.id.0))
+        .header("authorization", "Bearer daemon-secret")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({"cwd": git_repo.path().to_string_lossy()}).to_string(),
+        ))
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let terminal: ctx_core::models::TerminalSession = serde_json::from_slice(&body).unwrap();
+
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let server = tokio::spawn(async move {
@@ -91,10 +125,10 @@ async fn terminal_websocket_stream_still_accepts_query_token_auth() {
     });
     let client = reqwest::Client::new();
 
-    let terminal_id = "11111111-1111-1111-1111-111111111111";
     let res = client
         .get(format!(
-            "http://{addr}/api/terminals/{terminal_id}/stream?token=daemon-secret"
+            "http://{addr}/api/terminals/{}/stream?token=daemon-secret",
+            terminal.id.0
         ))
         .header("connection", "upgrade")
         .header("upgrade", "websocket")
@@ -103,10 +137,13 @@ async fn terminal_websocket_stream_still_accepts_query_token_auth() {
         .send()
         .await
         .unwrap();
-    assert_eq!(res.status(), StatusCode::NOT_FOUND);
+    assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
 
     let res = client
-        .get(format!("http://{addr}/api/terminals/{terminal_id}/stream"))
+        .get(format!(
+            "http://{addr}/api/terminals/{}/stream",
+            terminal.id.0
+        ))
         .header("connection", "upgrade")
         .header("upgrade", "websocket")
         .header("sec-websocket-version", "13")
@@ -115,6 +152,17 @@ async fn terminal_websocket_stream_still_accepts_query_token_auth() {
         .await
         .unwrap();
     assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+
+    let res = client
+        .get(format!("http://{addr}{}", terminal.stream_path))
+        .header("connection", "upgrade")
+        .header("upgrade", "websocket")
+        .header("sec-websocket-version", "13")
+        .header("sec-websocket-key", "dGhlIHNhbXBsZSBub25jZQ==")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::SWITCHING_PROTOCOLS);
 
     server.abort();
 }
