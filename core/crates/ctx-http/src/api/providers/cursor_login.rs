@@ -3,6 +3,8 @@ use super::login::{
     resolve_runtime_provider_command_from_config,
 };
 use super::*;
+use crate::api::MobileAuthContext;
+use axum::Extension;
 use tokio::io::{AsyncBufReadExt, AsyncRead, BufReader};
 
 #[cfg(test)]
