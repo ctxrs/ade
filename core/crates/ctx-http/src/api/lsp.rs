@@ -389,7 +389,7 @@ pub(super) async fn resolve_lsp_root(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     for workspace in workspaces {
-        if canonical_matches_registered_root(&requested, &workspace.root_path) {
+        if requested_within_registered_root(&requested, &workspace.root_path) {
             return Ok(requested);
         }
 
@@ -399,7 +399,7 @@ pub(super) async fn resolve_lsp_root(
             .await
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
         for worktree in worktrees {
-            if canonical_matches_registered_root(&requested, &worktree.root_path) {
+            if requested_within_registered_root(&requested, &worktree.root_path) {
                 return Ok(requested);
             }
         }
@@ -408,10 +408,10 @@ pub(super) async fn resolve_lsp_root(
     Err(StatusCode::NOT_FOUND)
 }
 
-fn canonical_matches_registered_root(requested: &std::path::Path, registered_root: &str) -> bool {
+fn requested_within_registered_root(requested: &std::path::Path, registered_root: &str) -> bool {
     PathBuf::from(registered_root)
         .canonicalize()
-        .map(|candidate| candidate == requested)
+        .map(|candidate| requested.starts_with(&candidate))
         .unwrap_or(false)
 }
 
@@ -420,6 +420,7 @@ mod tests {
     use super::*;
     use std::collections::HashMap;
 
+    use ctx_core::models::VcsKind;
     use ctx_store::StoreManager;
 
     #[tokio::test]
@@ -440,6 +441,37 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(err, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn resolve_lsp_root_allows_registered_workspace_subdirectories() {
+        let workspace_root = tempfile::tempdir().unwrap();
+        let requested_root = workspace_root.path().join("packages").join("nested");
+        tokio::fs::create_dir_all(&requested_root).await.unwrap();
+        let data_dir = tempfile::tempdir().unwrap();
+        let stores = StoreManager::open(data_dir.path()).await.unwrap();
+        let state = Arc::new(AppState::new(
+            data_dir.path().to_path_buf(),
+            stores,
+            HashMap::new(),
+            "http://127.0.0.1:4399".to_string(),
+            None,
+        ));
+        state
+            .global_store()
+            .create_workspace(
+                "ws".to_string(),
+                workspace_root.path().to_string_lossy().to_string(),
+                VcsKind::Git,
+            )
+            .await
+            .unwrap();
+
+        let requested_root_str = requested_root.to_string_lossy().to_string();
+        let resolved = resolve_lsp_root(&state, None, Some(&requested_root_str))
+            .await
+            .unwrap();
+        assert_eq!(resolved, requested_root.canonicalize().unwrap());
     }
 }
 
