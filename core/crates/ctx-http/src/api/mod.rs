@@ -48,7 +48,10 @@ mod web_sessions;
 mod workspaces;
 mod ws;
 
-pub(crate) use auth::{derive_browser_stream_token, BrowserStreamAuthScope};
+pub(crate) use auth::{
+    derive_browser_capability_token, derive_browser_stream_token,
+    BrowserCapabilityAuthScope, BrowserStreamAuthScope,
+};
 
 use artifacts::*;
 use execution::*;

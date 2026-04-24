@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { deriveBrowserCapabilityToken } from "./browserCapabilityAuth";
 
 const {
   apiAnyMock,
@@ -51,7 +52,14 @@ vi.mock("../utils/analytics", async (importOriginal) => {
   };
 });
 
-import { createSession, postMessage, uploadBlob } from "./clientSessions";
+import {
+  artifactUrl,
+  blobUrl,
+  createSession,
+  postMessage,
+  uploadBlob,
+} from "./clientSessions";
+import { getDaemonHttpUrl } from "./daemonConnection";
 
 describe("createSession analytics", () => {
   beforeEach(() => {
@@ -161,6 +169,48 @@ describe("postMessage analytics", () => {
       providerId: "codex",
       modelId: "gpt-5-codex/xhigh",
     });
+  });
+});
+
+describe("browser download urls", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(getDaemonHttpUrl).mockImplementation((path: string) => `http://daemon.test${path}`);
+  });
+
+  it("builds blob urls with a scoped capability token instead of the raw daemon bearer", () => {
+    getDaemonConnectionMock.mockReturnValueOnce({
+      baseUrl: "http://daemon.test",
+      targetScope: { kind: "desktop_local" },
+      authToken: "daemon-secret",
+    });
+
+    const expectedToken = deriveBrowserCapabilityToken("daemon-secret", {
+      kind: "blob",
+      blobId: "blob-1",
+    });
+
+    expect(blobUrl("blob-1")).toBe(
+      `http://daemon.test/api/blobs/blob-1?token=${expectedToken}`,
+    );
+  });
+
+  it("builds artifact urls with a scoped capability token instead of the raw daemon bearer", () => {
+    getDaemonConnectionMock.mockReturnValueOnce({
+      baseUrl: "http://daemon.test",
+      targetScope: { kind: "desktop_local" },
+      authToken: "daemon-secret",
+    });
+
+    const expectedToken = deriveBrowserCapabilityToken("daemon-secret", {
+      kind: "session_artifact",
+      sessionId: "session-1",
+      artifactId: "artifact-1",
+    });
+
+    expect(artifactUrl("session-1", "artifact-1")).toBe(
+      `http://daemon.test/api/sessions/session-1/artifacts/artifact-1?token=${expectedToken}`,
+    );
   });
 });
 

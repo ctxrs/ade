@@ -15,6 +15,7 @@ import type {
 } from "@ctx/types";
 import type { BlobUploadResp } from "../generated/desktop-ipc";
 import { apiAny, authToken } from "./clientBase";
+import { setBrowserCapabilityQueryToken } from "./browserCapabilityAuth";
 import { getDaemonConnection, getDaemonHttpUrl } from "./daemonConnection";
 import { desktopUploadBlob, isDesktopApp } from "../utils/desktop";
 import {
@@ -467,17 +468,28 @@ export const deleteMessage = (sessionId: string, messageId: string) =>
   apiAny(`/api/sessions/${sessionId}/messages/${messageId}`, { method: "DELETE" });
 
 export const blobUrl = (blobId: string): string => {
-  const token = getDaemonConnection().authToken;
   const url = getDaemonHttpUrl(`/api/blobs/${encodeURIComponent(String(blobId || ""))}`);
-  return token ? `${url}?token=${encodeURIComponent(token)}` : url;
+  const query = new URLSearchParams();
+  setBrowserCapabilityQueryToken(query, getDaemonConnection().authToken, {
+    kind: "blob",
+    blobId: String(blobId || ""),
+  });
+  const serialized = query.toString();
+  return serialized ? `${url}?${serialized}` : url;
 };
 
 export const artifactUrl = (sessionId: string, artifactId: string): string => {
-  const token = getDaemonConnection().authToken;
   const url = getDaemonHttpUrl(
     `/api/sessions/${encodeURIComponent(String(sessionId || ""))}/artifacts/${encodeURIComponent(
       String(artifactId || ""),
     )}`,
   );
-  return token ? `${url}?token=${encodeURIComponent(token)}` : url;
+  const query = new URLSearchParams();
+  setBrowserCapabilityQueryToken(query, getDaemonConnection().authToken, {
+    kind: "session_artifact",
+    sessionId: String(sessionId || ""),
+    artifactId: String(artifactId || ""),
+  });
+  const serialized = query.toString();
+  return serialized ? `${url}?${serialized}` : url;
 };
