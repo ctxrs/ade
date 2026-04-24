@@ -157,10 +157,13 @@ fn resolve_runtime_provider_command_preserves_raw_bundle_symlink_paths() {
         )]),
     );
 
-    let resolved =
-        resolve_runtime_provider_command_for_target(&cfg, "codex-crp", Some(InstallTarget::Container))
-            .expect("resolve runtime command")
-            .expect("runtime command");
+    let resolved = resolve_runtime_provider_command_for_target(
+        &cfg,
+        "codex-crp",
+        Some(InstallTarget::Container),
+    )
+    .expect("resolve runtime command")
+    .expect("runtime command");
     assert_eq!(resolved.command_abs_path, raw_command.to_string_lossy());
     assert_ne!(
         std::fs::canonicalize(&raw_command)
@@ -345,11 +348,12 @@ fn resolve_runtime_provider_command_keeps_invalid_managed_commands_invalid_by_de
         )]),
     );
 
-    let err =
-        resolve_runtime_provider_command_for_target(&cfg, "codex-crp", Some(InstallTarget::Container))
-            .expect_err(
-                "invalid managed runtime command should remain invalid for general resolution",
-            );
+    let err = resolve_runtime_provider_command_for_target(
+        &cfg,
+        "codex-crp",
+        Some(InstallTarget::Container),
+    )
+    .expect_err("invalid managed runtime command should remain invalid for general resolution");
     let err_text = err.to_string();
     assert!(
         err_text.contains("provider=codex-crp source=managed_install"),
@@ -531,10 +535,13 @@ fn resolve_runtime_provider_command_for_target_prefers_target_bucket() {
     );
     assert_eq!(host_resolved.args, vec!["--host".to_string()]);
 
-    let container_resolved =
-        resolve_runtime_provider_command_for_target(&cfg, "codex-crp", Some(InstallTarget::Container))
-            .expect("resolve container")
-            .expect("container runtime");
+    let container_resolved = resolve_runtime_provider_command_for_target(
+        &cfg,
+        "codex-crp",
+        Some(InstallTarget::Container),
+    )
+    .expect("resolve container")
+    .expect("container runtime");
     assert_eq!(
         container_resolved.command_abs_path,
         std::fs::canonicalize(&container)

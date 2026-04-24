@@ -1,8 +1,8 @@
 use super::*;
 
 use anyhow::Context;
-use ctx_core::provider_ids::CODEX_CRP_PROVIDER_ID;
 use ctx_core::ids::WorkspaceId;
+use ctx_core::provider_ids::CODEX_CRP_PROVIDER_ID;
 
 use crate::execution_effective;
 #[allow(unused_imports)]
@@ -168,10 +168,9 @@ pub(crate) async fn get_provider(
     }
     let mut status =
         provider_status_for_target(state.as_ref(), &managed, &matrix, &id, target).await;
-    status.provider_id = super::project_provider_id_for_response(&requested_id, &status.provider_id);
-    if let Some(bytes) =
-        installer::managed_install_download_size_bytes(&matrix, &id, target)
-    {
+    status.provider_id =
+        super::project_provider_id_for_response(&requested_id, &status.provider_id);
+    if let Some(bytes) = installer::managed_install_download_size_bytes(&matrix, &id, target) {
         status
             .details
             .insert("install_download_size_bytes".into(), bytes.to_string());
@@ -218,8 +217,7 @@ pub(crate) async fn get_provider_usage(
             } else {
                 HashMap::new()
             };
-            let mut snapshot =
-                provider_usage::refresh_provider_usage_for(state.as_ref(), &id, env)
+            let mut snapshot = provider_usage::refresh_provider_usage_for(state.as_ref(), &id, env)
                 .await
                 .map_err(|e| {
                     (
@@ -229,10 +227,8 @@ pub(crate) async fn get_provider_usage(
                         })),
                     )
                 })?;
-            snapshot.provider_id = super::project_provider_id_for_response(
-                &requested_id,
-                &snapshot.provider_id,
-            );
+            snapshot.provider_id =
+                super::project_provider_id_for_response(&requested_id, &snapshot.provider_id);
             snapshot
         }
     };

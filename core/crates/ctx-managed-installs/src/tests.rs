@@ -1156,7 +1156,11 @@ async fn provider_install_lock_serializes_same_provider_target() {
 #[tokio::test]
 async fn atomic_install_commit_replaces_existing_install_dir() {
     let temp = tempfile::tempdir().expect("tempdir");
-    let install_dir = temp.path().join("providers").join("codex-crp").join("1.2.3");
+    let install_dir = temp
+        .path()
+        .join("providers")
+        .join("codex-crp")
+        .join("1.2.3");
     tokio::fs::create_dir_all(install_dir.join("old"))
         .await
         .expect("create old dir");

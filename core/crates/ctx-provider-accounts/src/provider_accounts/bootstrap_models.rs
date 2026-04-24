@@ -187,14 +187,12 @@ fn gemini_models_value_for_version(version: &str) -> Option<serde_json::Value> {
     match normalized_version.as_str() {
         GEMINI_CATALOG_VERSION_0_33_1
         | GEMINI_CATALOG_VERSION_0_38_2
-        | GEMINI_CATALOG_VERSION_0_39_0 => {
-            Some(pinned_flat_models_value(
-                "gemini_cli_version_pinned",
-                normalized_version.as_str(),
-                GEMINI_PINNED_SUBSCRIPTION_MODELS_0_33_1[0].id,
-                &GEMINI_PINNED_SUBSCRIPTION_MODELS_0_33_1,
-            ))
-        }
+        | GEMINI_CATALOG_VERSION_0_39_0 => Some(pinned_flat_models_value(
+            "gemini_cli_version_pinned",
+            normalized_version.as_str(),
+            GEMINI_PINNED_SUBSCRIPTION_MODELS_0_33_1[0].id,
+            &GEMINI_PINNED_SUBSCRIPTION_MODELS_0_33_1,
+        )),
         _ => None,
     }
 }

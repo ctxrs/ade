@@ -344,7 +344,10 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
             "/api/providers/auth/import",
             post(import_provider_auth_candidates),
         )
-        .route("/api/providers/codex-crp/accounts", get(list_codex_accounts))
+        .route(
+            "/api/providers/codex-crp/accounts",
+            get(list_codex_accounts),
+        )
         .route("/api/providers/codex/accounts", get(list_codex_accounts))
         .route(
             "/api/providers/codex-crp/import/host",

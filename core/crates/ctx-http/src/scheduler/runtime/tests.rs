@@ -397,7 +397,8 @@ fn codex_env_preserves_existing_explicit_codex_bin_path() {
 
 #[test]
 fn codex_env_rejects_relative_explicit_codex_bin_path() {
-    let mut provider_env = HashMap::from([("CTX_CODEX_BIN_PATH".to_string(), "codex-crp".to_string())]);
+    let mut provider_env =
+        HashMap::from([("CTX_CODEX_BIN_PATH".to_string(), "codex-crp".to_string())]);
     let err = ensure_codex_cli_command_env_for_target(
         &mut provider_env,
         &AgentServerConfigFile::default(),

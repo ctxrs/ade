@@ -14,7 +14,9 @@ use axum::http::StatusCode;
 use axum::response::sse::{Event as SseEvent, KeepAlive, Sse};
 use axum::Json;
 use chrono::Utc;
-use ctx_core::provider_ids::{canonical_provider_id, CODEX_CRP_PROVIDER_ID, LEGACY_CODEX_PROVIDER_ID};
+use ctx_core::provider_ids::{
+    canonical_provider_id, CODEX_CRP_PROVIDER_ID, LEGACY_CODEX_PROVIDER_ID,
+};
 use futures::{Stream, StreamExt};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
@@ -326,10 +328,7 @@ fn project_provider_id_for_response(
     }
 }
 
-fn project_provider_id_field(
-    requested_provider_id: &str,
-    value: &mut serde_json::Value,
-) {
+fn project_provider_id_field(requested_provider_id: &str, value: &mut serde_json::Value) {
     let Some(provider_id) = value.get("provider_id").and_then(serde_json::Value::as_str) else {
         return;
     };

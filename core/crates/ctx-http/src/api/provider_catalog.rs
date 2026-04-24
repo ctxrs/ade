@@ -145,7 +145,8 @@ mod tests {
         });
 
         assert!(!provider_options_cache_entry_is_authoritative(
-            "codex-crp", &cached,
+            "codex-crp",
+            &cached,
         ));
     }
 
@@ -166,7 +167,8 @@ mod tests {
         });
 
         assert!(provider_options_cache_entry_is_authoritative(
-            "codex-crp", &cached,
+            "codex-crp",
+            &cached,
         ));
     }
 

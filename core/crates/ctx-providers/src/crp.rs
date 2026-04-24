@@ -232,10 +232,7 @@ impl ProviderAdapter for Tier1CrpAdapter {
     }
 
     fn supports_resume(&self) -> bool {
-        matches!(
-            self.id.as_str(),
-            "codex-crp" | "claude" | "claude-crp"
-        )
+        matches!(self.id.as_str(), "codex-crp" | "claude" | "claude-crp")
     }
 
     async fn set_session_pinned(&self, session_key: String, pinned: bool) -> Result<()> {

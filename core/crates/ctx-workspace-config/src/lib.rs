@@ -2,8 +2,8 @@ use std::collections::HashMap;
 use std::sync::OnceLock;
 
 use anyhow::{bail, Context, Result};
-use ctx_core::provider_ids::canonical_provider_id;
 pub use ctx_core::models::ExecutionEnvironment;
+use ctx_core::provider_ids::canonical_provider_id;
 use ctx_sandbox_contract::{ContainerNetworkMode, ExecutionMode, ExecutionSettings};
 use ctx_store::Store;
 use serde::{Deserialize, Deserializer, Serialize};

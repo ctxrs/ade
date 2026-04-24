@@ -258,7 +258,10 @@ async fn provider_options_cache_is_invalidated_when_preference_changes() {
     let (initial_options_status, initial_options_body): (StatusCode, Value) = common::json_request(
         &app,
         Method::GET,
-        format!("/api/workspaces/{}/providers/codex-crp/options", workspace.id.0),
+        format!(
+            "/api/workspaces/{}/providers/codex-crp/options",
+            workspace.id.0
+        ),
         None,
     )
     .await;
@@ -286,7 +289,10 @@ async fn provider_options_cache_is_invalidated_when_preference_changes() {
     let (updated_options_status, updated_options_body): (StatusCode, Value) = common::json_request(
         &app,
         Method::GET,
-        format!("/api/workspaces/{}/providers/codex-crp/options", workspace.id.0),
+        format!(
+            "/api/workspaces/{}/providers/codex-crp/options",
+            workspace.id.0
+        ),
         None,
     )
     .await;
@@ -348,7 +354,10 @@ async fn malformed_workspace_model_preferences_do_not_break_bootstrap() {
     let (options_status, options_body): (StatusCode, Value) = common::json_request(
         &app,
         Method::GET,
-        format!("/api/workspaces/{}/providers/codex-crp/options", workspace.id.0),
+        format!(
+            "/api/workspaces/{}/providers/codex-crp/options",
+            workspace.id.0
+        ),
         None,
     )
     .await;

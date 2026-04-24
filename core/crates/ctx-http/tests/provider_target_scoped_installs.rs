@@ -2775,7 +2775,10 @@ async fn provider_target_scoped_installs_work_for_host_and_container_workspaces(
         common::json_request(
             &app,
             axum::http::Method::GET,
-            format!("/api/workspaces/{}/providers/codex-crp/options", host_ws.id.0),
+            format!(
+                "/api/workspaces/{}/providers/codex-crp/options",
+                host_ws.id.0
+            ),
             None,
         )
         .await;
@@ -2817,7 +2820,8 @@ async fn provider_target_scoped_installs_work_for_host_and_container_workspaces(
 
     let host_task = common::create_task(&app, host_ws.id.0, "host-task").await;
     let container_task = common::create_task(&app, container_ws.id.0, "container-task").await;
-    let host_session = common::create_session(&app, host_task.id.0, "codex-crp", "host-model").await;
+    let host_session =
+        common::create_session(&app, host_task.id.0, "codex-crp", "host-model").await;
     let container_session =
         common::create_session(&app, container_task.id.0, "codex-crp", "container-model").await;
 

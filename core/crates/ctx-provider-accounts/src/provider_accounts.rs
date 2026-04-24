@@ -228,9 +228,18 @@ pub struct CodexHostImportProbe {
 
 async fn migrate_legacy_codex_storage(data_root: &Path) -> Result<()> {
     let moves = [
-        (legacy_codex_accounts_root(data_root), codex_accounts_root(data_root)),
-        (legacy_codex_secrets_root(data_root), codex_secrets_root(data_root)),
-        (legacy_codex_runtime_home(data_root), codex_runtime_home(data_root)),
+        (
+            legacy_codex_accounts_root(data_root),
+            codex_accounts_root(data_root),
+        ),
+        (
+            legacy_codex_secrets_root(data_root),
+            codex_secrets_root(data_root),
+        ),
+        (
+            legacy_codex_runtime_home(data_root),
+            codex_runtime_home(data_root),
+        ),
     ];
     for (legacy_path, canonical_path) in moves {
         if !legacy_path.exists() || canonical_path.exists() {

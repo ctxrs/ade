@@ -55,7 +55,10 @@ mod tests {
             LEGACY_CODEX_PROVIDER_ID,
             CODEX_CRP_PROVIDER_ID
         ));
-        assert!(provider_id_matches(CODEX_CRP_PROVIDER_ID, CODEX_CRP_PROVIDER_ID));
+        assert!(provider_id_matches(
+            CODEX_CRP_PROVIDER_ID,
+            CODEX_CRP_PROVIDER_ID
+        ));
         assert!(!provider_id_matches("claude-crp", CODEX_CRP_PROVIDER_ID));
     }
 }
