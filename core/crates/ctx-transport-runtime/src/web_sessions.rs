@@ -823,7 +823,7 @@ async fn build_run_payload(
 async fn resolve_script_path(handle: &WebSessionHandle, script_path: &str) -> Result<PathBuf> {
     let candidate = PathBuf::from(script_path);
     if candidate.is_absolute() {
-        return Ok(candidate);
+        anyhow::bail!("script_path must be relative to work_dir");
     }
     let work_dir = handle
         .work_dir()
@@ -927,7 +927,6 @@ async fn log_stream<R: tokio::io::AsyncRead + Unpin>(mut reader: R, label: &str)
 #[cfg(test)]
 mod tests {
     use super::*;
-
     fn test_session_info() -> WebSessionInfo {
         let now = Utc::now();
         WebSessionInfo {
@@ -948,6 +947,24 @@ mod tests {
             viewers: 0,
             stream_path: build_stream_path("sess-1", "stream-token"),
             stream_url: None,
+        }
+    }
+
+    fn test_handle(work_dir: Option<PathBuf>) -> WebSessionHandle {
+        let now = Utc::now();
+        WebSessionHandle {
+            info: test_session_info(),
+            stream_token: "stream-token".to_string(),
+            runtime: Arc::new(Mutex::new(WebSessionRuntime {
+                status: WebSessionStatus::Running,
+                updated_at: now,
+                last_activity: now,
+                viewers: 0,
+                worker_port: 4321,
+                child: None,
+                work_dir,
+            })),
+            run_lock: Arc::new(Mutex::new(())),
         }
     }
 
@@ -977,5 +994,40 @@ mod tests {
         let manager = WebSessionManager::new();
         let err = manager.close("missing-session").await.unwrap_err();
         assert!(format!("{err:#}").contains("session not found"));
+    }
+
+    #[tokio::test]
+    async fn resolve_script_path_rejects_absolute_paths() {
+        let dir = std::env::temp_dir().join(format!("ctx-web-session-test-{}", Uuid::new_v4()));
+        tokio::fs::create_dir_all(&dir).await.unwrap();
+        let handle = test_handle(Some(dir.clone()));
+        let absolute = dir.join("script.js");
+        tokio::fs::write(&absolute, "console.log('hi');")
+            .await
+            .unwrap();
+
+        let err = resolve_script_path(&handle, absolute.to_str().unwrap())
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("relative to work_dir"));
+        let _ = tokio::fs::remove_dir_all(&dir).await;
+    }
+
+    #[tokio::test]
+    async fn resolve_script_path_accepts_relative_paths_inside_work_dir() {
+        let dir = std::env::temp_dir().join(format!("ctx-web-session-test-{}", Uuid::new_v4()));
+        let nested = dir.join("scripts");
+        tokio::fs::create_dir_all(&nested).await.unwrap();
+        let script = nested.join("script.js");
+        tokio::fs::write(&script, "console.log('hi');")
+            .await
+            .unwrap();
+        let handle = test_handle(Some(dir.clone()));
+
+        let resolved = resolve_script_path(&handle, "scripts/script.js")
+            .await
+            .unwrap();
+        assert_eq!(resolved, script.canonicalize().unwrap());
+        let _ = tokio::fs::remove_dir_all(&dir).await;
     }
 }
