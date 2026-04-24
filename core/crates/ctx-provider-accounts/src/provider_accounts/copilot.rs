@@ -6,8 +6,8 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use super::shared::{
-    apply_email_update, apply_label_update, ensure_safe_account_id, load_json_registry,
-    normalize_optional_email, save_json_registry, write_secure_file_atomic,
+    apply_email_update, apply_label_update, ensure_account_exists, ensure_safe_account_id,
+    load_json_registry, normalize_optional_email, save_json_registry, write_secure_file_atomic,
 };
 use super::{
     copilot_account_dir, copilot_registry_path, copilot_secret_path,
@@ -234,6 +234,7 @@ pub async fn remove_copilot_account(
         .filter(|a| a.id == account_id)
         .cloned()
         .collect();
+    ensure_account_exists(!removed.is_empty())?;
     registry.accounts.retain(|a| a.id != account_id);
     if was_active {
         registry.active_account_id = None;

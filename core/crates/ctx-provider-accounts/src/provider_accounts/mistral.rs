@@ -6,8 +6,9 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use super::shared::{
-    apply_label_update, ensure_home_config_cache_dirs, ensure_safe_account_id,
-    home_config_cache_env, load_json_registry, normalize_optional_email, save_json_registry,
+    apply_label_update, ensure_account_exists, ensure_home_config_cache_dirs,
+    ensure_safe_account_id, home_config_cache_env, load_json_registry, normalize_optional_email,
+    save_json_registry,
 };
 use super::{mistral_registry_path, mistral_runtime_home, MISTRAL_CREDENTIAL_KIND_BROWSER_OAUTH};
 
@@ -161,6 +162,8 @@ pub async fn remove_mistral_account(
     ensure_safe_account_id(account_id)?;
     let mut registry = load_mistral_registry(data_root).await;
     let was_active = registry.active_account_id.as_deref() == Some(account_id);
+    let removed = registry.accounts.iter().any(|entry| entry.id == account_id);
+    ensure_account_exists(removed)?;
     registry.accounts.retain(|entry| entry.id != account_id);
     if was_active {
         registry.active_account_id = None;

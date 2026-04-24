@@ -252,6 +252,9 @@ pub async fn delete_provider_endpoint(
         .map(|ep| (ep.id.clone(), ep.secret_ref.clone()))
         .collect();
     provider.endpoints.retain(|ep| ep.id != endpoint_id);
+    if removed.is_empty() {
+        anyhow::bail!("unknown endpoint");
+    }
 
     if provider.selected_endpoint_id.as_deref() == Some(endpoint_id) {
         provider.selected_source_kind = HarnessSourceKind::Subscription;

@@ -6,9 +6,9 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use super::shared::{
-    apply_email_update, apply_label_update, ensure_safe_account_id, load_json_registry,
-    normalize_optional_email, remove_projected_account_home_for_runtime_roots, save_json_registry,
-    write_secure_file_atomic,
+    apply_email_update, apply_label_update, ensure_account_exists, ensure_safe_account_id,
+    load_json_registry, normalize_optional_email, remove_projected_account_home_for_runtime_roots,
+    save_json_registry, write_secure_file_atomic,
 };
 use super::{
     cursor_account_home, cursor_registry_path, cursor_secret_path, CURSOR_CREDENTIAL_KIND_API_KEY,
@@ -255,6 +255,7 @@ pub async fn remove_cursor_account(
         .filter(|a| a.id == account_id)
         .cloned()
         .collect();
+    ensure_account_exists(!removed.is_empty())?;
     registry.accounts.retain(|a| a.id != account_id);
     if was_active {
         registry.active_account_id = None;

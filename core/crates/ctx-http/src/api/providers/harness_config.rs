@@ -1,5 +1,15 @@
 use super::*;
 
+fn provider_harness_delete_error(err: anyhow::Error) -> (StatusCode, Json<serde_json::Value>) {
+    let error = logs::redact_sensitive(&err.to_string());
+    let status = if error.contains("unknown endpoint") {
+        StatusCode::NOT_FOUND
+    } else {
+        StatusCode::BAD_REQUEST
+    };
+    (status, Json(serde_json::json!({ "error": error })))
+}
+
 pub(crate) async fn get_provider_harness_config(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
@@ -213,14 +223,7 @@ pub(crate) async fn delete_provider_harness_endpoint(
     let mut config =
         harness_sources::delete_provider_endpoint(&state.core.data_root, &id, &endpoint_id)
             .await
-            .map_err(|e| {
-                (
-                    StatusCode::BAD_REQUEST,
-                    Json(serde_json::json!({
-                        "error": logs::redact_sensitive(&e.to_string()),
-                    })),
-                )
-            })?;
+            .map_err(provider_harness_delete_error)?;
     restarts::invalidate_provider_runtime_state(&state, &id).await;
     super::project_harness_config_for_response(&requested_id, &mut config);
     Ok(Json(config))

@@ -1856,3 +1856,12 @@ async fn unsafe_endpoint_id_is_rejected() {
         .to_string()
         .contains("endpoint_id may only contain ASCII letters"));
 }
+
+#[tokio::test]
+async fn deleting_missing_provider_endpoint_returns_unknown_endpoint() {
+    let root = tempfile::tempdir().expect("tempdir");
+    let err = delete_provider_endpoint(root.path(), PROVIDER_QWEN, "missing")
+        .await
+        .expect_err("missing endpoint should fail");
+    assert!(err.to_string().contains("unknown endpoint"));
+}

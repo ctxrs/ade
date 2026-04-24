@@ -6,8 +6,8 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use super::shared::{
-    apply_email_update, apply_label_update, ensure_home_config_cache_dirs, ensure_safe_account_id,
-    home_config_cache_env, load_json_registry, normalize_optional_email,
+    apply_email_update, apply_label_update, ensure_account_exists, ensure_home_config_cache_dirs,
+    ensure_safe_account_id, home_config_cache_env, load_json_registry, normalize_optional_email,
     parse_required_json_object, remove_projected_account_home_for_runtime_roots,
     save_json_registry, write_secure_file_atomic,
 };
@@ -161,6 +161,7 @@ pub async fn remove_qwen_account(
         .filter(|a| a.id == account_id)
         .cloned()
         .collect();
+    ensure_account_exists(!removed.is_empty())?;
     registry.accounts.retain(|a| a.id != account_id);
     if was_active {
         registry.active_account_id = None;

@@ -65,6 +65,13 @@ pub(crate) fn ensure_safe_account_id(account_id: &str) -> Result<()> {
     }
 }
 
+pub(crate) fn ensure_account_exists(found: bool) -> Result<()> {
+    if !found {
+        bail!("unknown account");
+    }
+    Ok(())
+}
+
 pub(crate) async fn remove_projected_account_home_for_runtime_roots(
     data_root: &Path,
     account_id: &str,

@@ -6,9 +6,9 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use super::shared::{
-    apply_label_update, ensure_home_config_cache_dirs, ensure_safe_account_id,
-    home_config_cache_env, load_json_registry, normalize_optional_email, save_json_registry,
-    write_secure_file_atomic,
+    apply_label_update, ensure_account_exists, ensure_home_config_cache_dirs,
+    ensure_safe_account_id, home_config_cache_env, load_json_registry, normalize_optional_email,
+    save_json_registry, write_secure_file_atomic,
 };
 use super::{amp_registry_path, amp_runtime_home, AMP_CREDENTIAL_KIND_BROWSER_OAUTH};
 
@@ -156,6 +156,8 @@ pub async fn remove_amp_account(data_root: &Path, account_id: &str) -> Result<Am
     ensure_safe_account_id(account_id)?;
     let mut registry = load_amp_registry(data_root).await;
     let was_active = registry.active_account_id.as_deref() == Some(account_id);
+    let removed = registry.accounts.iter().any(|entry| entry.id == account_id);
+    ensure_account_exists(removed)?;
     registry.accounts.retain(|entry| entry.id != account_id);
     if was_active {
         registry.active_account_id = None;

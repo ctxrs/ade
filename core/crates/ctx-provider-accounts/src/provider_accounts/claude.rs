@@ -6,8 +6,9 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use super::shared::{
-    apply_label_update, ensure_safe_account_id, load_json_registry, prepend_dir_to_path_env,
-    remove_projected_account_home_for_runtime_roots, save_json_registry, write_secure_file_atomic,
+    apply_label_update, ensure_account_exists, ensure_safe_account_id, load_json_registry,
+    prepend_dir_to_path_env, remove_projected_account_home_for_runtime_roots, save_json_registry,
+    write_secure_file_atomic,
 };
 use super::{
     claude_account_dir, claude_registry_path, claude_secret_path,
@@ -262,6 +263,7 @@ pub async fn remove_claude_account(
         .filter(|a| a.id == account_id)
         .cloned()
         .collect();
+    ensure_account_exists(!removed.is_empty())?;
     registry.accounts.retain(|a| a.id != account_id);
     if was_active {
         registry.active_account_id = None;

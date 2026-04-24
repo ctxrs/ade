@@ -1,5 +1,12 @@
 use super::*;
 
+fn assert_unknown_account_error(err: anyhow::Error) {
+    assert!(
+        err.to_string().contains("unknown account"),
+        "expected unknown account error, got: {err:#}"
+    );
+}
+
 static ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 const CLAUDE_TEST_SETUP_TOKEN: &str =
     "sk-ant-oat01-abcDEF1234567890_abcdefghijklmnopqrstuvwxyz_0123456789";
@@ -1043,4 +1050,20 @@ async fn subscription_env_runtime_root_projects_path_based_providers() {
             .unwrap();
     let mistral_home = PathBuf::from(mistral_env.get("HOME").unwrap());
     assert!(mistral_home.starts_with(runtime_root));
+}
+
+#[tokio::test]
+async fn removing_missing_accounts_returns_unknown_account() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+
+    assert_unknown_account_error(remove_codex_account(root, "missing").await.unwrap_err());
+    assert_unknown_account_error(remove_claude_account(root, "missing").await.unwrap_err());
+    assert_unknown_account_error(remove_gemini_account(root, "missing").await.unwrap_err());
+    assert_unknown_account_error(remove_qwen_account(root, "missing").await.unwrap_err());
+    assert_unknown_account_error(remove_kimi_account(root, "missing").await.unwrap_err());
+    assert_unknown_account_error(remove_amp_account(root, "missing").await.unwrap_err());
+    assert_unknown_account_error(remove_mistral_account(root, "missing").await.unwrap_err());
+    assert_unknown_account_error(remove_copilot_account(root, "missing").await.unwrap_err());
+    assert_unknown_account_error(remove_cursor_account(root, "missing").await.unwrap_err());
 }

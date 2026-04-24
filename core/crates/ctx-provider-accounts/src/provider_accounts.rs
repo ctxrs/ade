@@ -37,7 +37,9 @@ use self::paths::{
     cursor_secret_path, gemini_secret_path, kimi_secret_path, qwen_secret_path,
 };
 use self::qwen::qwen_env_for_active_account_with_runtime_root;
-use self::shared::{ensure_safe_account_id, load_json_registry, save_json_registry};
+use self::shared::{
+    ensure_account_exists, ensure_safe_account_id, load_json_registry, save_json_registry,
+};
 
 pub use self::amp::{
     amp_env_for_active_account, clear_amp_runtime_home, ensure_amp_registry_from_runtime_auth,
@@ -303,6 +305,7 @@ pub async fn remove_codex_account(
         .filter(|a| a.id == account_id)
         .cloned()
         .collect();
+    ensure_account_exists(!removed.is_empty())?;
     registry.accounts.retain(|a| a.id != account_id);
     if was_active {
         registry.active_account_id = None;
