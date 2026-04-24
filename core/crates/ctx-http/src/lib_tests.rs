@@ -129,6 +129,7 @@ mod edit_plan_routes;
 mod execution_launch;
 mod health_diagnostics;
 mod mobile_secure_routes;
+mod mobile_profile_routes;
 mod session_artifacts;
 mod web_session_routes;
 mod workspace_active_routes;

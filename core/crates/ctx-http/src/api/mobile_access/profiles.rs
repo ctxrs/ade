@@ -125,6 +125,18 @@ pub(in crate::api) async fn delete_mobile_connection_profile(
         return Err(StatusCode::UNAUTHORIZED);
     }
     let uuid = uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?;
+    if state
+        .global_store()
+        .get_mobile_connection_profile(ConnectionProfileId(uuid))
+        .await
+        .map_err(|e| {
+            tracing::error!("failed to load mobile profile before delete: {e:?}");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?
+        .is_none()
+    {
+        return Err(StatusCode::NOT_FOUND);
+    }
     state
         .global_store()
         .delete_mobile_connection_profile(ConnectionProfileId(uuid))
