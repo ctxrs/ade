@@ -39,13 +39,6 @@ pub(super) async fn save_registry(
     Ok(())
 }
 
-pub(super) fn provider_store<'a>(
-    registry: &'a HarnessSourceRegistryInternal,
-    provider_id: &str,
-) -> Option<&'a HarnessProviderConfigInternal> {
-    registry.providers.get(provider_id)
-}
-
 pub(super) fn registry_path(data_root: &Path) -> PathBuf {
     data_root
         .join("providers")

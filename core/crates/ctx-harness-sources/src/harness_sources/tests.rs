@@ -1865,3 +1865,180 @@ async fn deleting_missing_provider_endpoint_returns_unknown_endpoint() {
         .expect_err("missing endpoint should fail");
     assert!(err.to_string().contains("unknown endpoint"));
 }
+
+#[tokio::test]
+async fn get_provider_source_config_persists_repair_for_missing_selected_endpoint() {
+    let root = tempfile::tempdir().expect("tempdir");
+    let endpoint = upsert_provider_endpoint(
+        root.path(),
+        PROVIDER_CODEX,
+        HarnessEndpointUpsert {
+            endpoint_id: None,
+            name: "Codex endpoint".to_string(),
+            base_url: Some("https://api.openai.com/v1".to_string()),
+            api_shape: Some(HarnessApiShape::OpenaiResponses),
+            auth_type: None,
+            model_override: Some("gpt-5.4".to_string()),
+            api_key: Some("sk-test".to_string()),
+            service_account_json: None,
+            project_id: None,
+            location: None,
+        },
+    )
+    .await
+    .expect("upsert endpoint");
+
+    set_provider_source_selection(
+        root.path(),
+        PROVIDER_CODEX,
+        HarnessSourceKind::Endpoint,
+        Some(endpoint.id.clone()),
+    )
+    .await
+    .expect("select endpoint");
+
+    let mut registry = registry::load_registry(root.path())
+        .await
+        .expect("load registry");
+    let provider = registry
+        .providers
+        .get_mut(PROVIDER_CODEX)
+        .expect("provider entry");
+    provider.endpoints.clear();
+    registry::save_registry(root.path(), &registry)
+        .await
+        .expect("save stale registry");
+
+    let cfg = get_provider_source_config(root.path(), PROVIDER_CODEX)
+        .await
+        .expect("get source config");
+    assert_eq!(cfg.selected_source_kind, HarnessSourceKind::Subscription);
+    assert!(cfg.selected_endpoint_id.is_none());
+
+    let repaired = registry::load_registry(root.path())
+        .await
+        .expect("reload registry");
+    let provider = repaired.providers.get(PROVIDER_CODEX).expect("provider");
+    assert_eq!(
+        provider.selected_source_kind,
+        HarnessSourceKind::Subscription
+    );
+    assert!(provider.selected_endpoint_id.is_none());
+    assert!(provider.endpoints.is_empty());
+
+    let resolved = resolve_provider_source_for_run(root.path(), PROVIDER_CODEX)
+        .await
+        .expect("resolve source after repair");
+    assert_eq!(resolved.source_kind, HarnessSourceKind::Subscription);
+}
+
+#[tokio::test]
+async fn resolve_provider_source_for_run_repairs_missing_selected_endpoint() {
+    let root = tempfile::tempdir().expect("tempdir");
+    let endpoint = upsert_provider_endpoint(
+        root.path(),
+        PROVIDER_CODEX,
+        HarnessEndpointUpsert {
+            endpoint_id: None,
+            name: "Codex endpoint".to_string(),
+            base_url: Some("https://api.openai.com/v1".to_string()),
+            api_shape: Some(HarnessApiShape::OpenaiResponses),
+            auth_type: None,
+            model_override: Some("gpt-5.4".to_string()),
+            api_key: Some("sk-test".to_string()),
+            service_account_json: None,
+            project_id: None,
+            location: None,
+        },
+    )
+    .await
+    .expect("upsert endpoint");
+
+    set_provider_source_selection(
+        root.path(),
+        PROVIDER_CODEX,
+        HarnessSourceKind::Endpoint,
+        Some(endpoint.id.clone()),
+    )
+    .await
+    .expect("select endpoint");
+
+    let mut registry = registry::load_registry(root.path())
+        .await
+        .expect("load registry");
+    let provider = registry
+        .providers
+        .get_mut(PROVIDER_CODEX)
+        .expect("provider entry");
+    provider.endpoints.clear();
+    registry::save_registry(root.path(), &registry)
+        .await
+        .expect("save stale registry");
+
+    let resolved = resolve_provider_source_for_run(root.path(), PROVIDER_CODEX)
+        .await
+        .expect("resolve source after repair");
+    assert_eq!(resolved.source_kind, HarnessSourceKind::Subscription);
+
+    let repaired = registry::load_registry(root.path())
+        .await
+        .expect("reload registry");
+    let provider = repaired.providers.get(PROVIDER_CODEX).expect("provider");
+    assert_eq!(
+        provider.selected_source_kind,
+        HarnessSourceKind::Subscription
+    );
+    assert!(provider.selected_endpoint_id.is_none());
+}
+
+#[tokio::test]
+async fn get_provider_source_config_clears_stray_selected_endpoint_when_subscription_is_active() {
+    let root = tempfile::tempdir().expect("tempdir");
+    let endpoint = upsert_provider_endpoint(
+        root.path(),
+        PROVIDER_CODEX,
+        HarnessEndpointUpsert {
+            endpoint_id: None,
+            name: "Codex endpoint".to_string(),
+            base_url: Some("https://api.openai.com/v1".to_string()),
+            api_shape: Some(HarnessApiShape::OpenaiResponses),
+            auth_type: None,
+            model_override: Some("gpt-5.4".to_string()),
+            api_key: Some("sk-test".to_string()),
+            service_account_json: None,
+            project_id: None,
+            location: None,
+        },
+    )
+    .await
+    .expect("upsert endpoint");
+
+    let mut registry = registry::load_registry(root.path())
+        .await
+        .expect("load registry");
+    let provider = registry
+        .providers
+        .get_mut(PROVIDER_CODEX)
+        .expect("provider entry");
+    provider.selected_source_kind = HarnessSourceKind::Subscription;
+    provider.selected_endpoint_id = Some(endpoint.id.clone());
+    registry::save_registry(root.path(), &registry)
+        .await
+        .expect("save stray endpoint selection");
+
+    let cfg = get_provider_source_config(root.path(), PROVIDER_CODEX)
+        .await
+        .expect("get source config");
+    assert_eq!(cfg.selected_source_kind, HarnessSourceKind::Subscription);
+    assert!(cfg.selected_endpoint_id.is_none());
+
+    let repaired = registry::load_registry(root.path())
+        .await
+        .expect("reload registry");
+    let provider = repaired.providers.get(PROVIDER_CODEX).expect("provider");
+    assert_eq!(
+        provider.selected_source_kind,
+        HarnessSourceKind::Subscription
+    );
+    assert!(provider.selected_endpoint_id.is_none());
+}

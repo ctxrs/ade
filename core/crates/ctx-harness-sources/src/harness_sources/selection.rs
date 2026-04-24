@@ -1,39 +1,61 @@
 use super::*;
 
-pub async fn get_provider_source_config(
-    data_root: &Path,
-    provider_id: &str,
-) -> Result<HarnessProviderSourceConfig> {
-    let canonical = validation::normalize_provider_id(provider_id).ok_or_else(|| {
-        anyhow::anyhow!("provider does not support harness endpoints: {provider_id}")
-    })?;
-    let endpoint_supported = validation::provider_supports_harness_endpoint(canonical);
-    let registry = registry::load_registry(data_root).await?;
-    let provider = registry
-        .providers
-        .get(canonical)
-        .cloned()
-        .unwrap_or_default();
-    let mut selected_endpoint_id = provider.selected_endpoint_id;
+fn repair_provider_selection(
+    provider: &mut HarnessProviderConfigInternal,
+    endpoint_supported: bool,
+) -> bool {
     if !endpoint_supported {
-        selected_endpoint_id = None;
-    } else if provider.selected_source_kind == HarnessSourceKind::Endpoint {
-        let exists = selected_endpoint_id
+        if provider.selected_source_kind != HarnessSourceKind::Subscription
+            || provider.selected_endpoint_id.is_some()
+        {
+            provider.selected_source_kind = HarnessSourceKind::Subscription;
+            provider.selected_endpoint_id = None;
+            return true;
+        }
+        return false;
+    }
+
+    if provider.selected_source_kind != HarnessSourceKind::Endpoint {
+        if provider.selected_endpoint_id.is_some() {
+            provider.selected_endpoint_id = None;
+            return true;
+        }
+        return false;
+    }
+
+    if provider.selected_source_kind == HarnessSourceKind::Endpoint {
+        let exists = provider
+            .selected_endpoint_id
             .as_ref()
             .and_then(|id| provider.endpoints.iter().find(|ep| ep.id == *id))
             .is_some();
         if !exists {
-            selected_endpoint_id = None;
+            provider.selected_source_kind = HarnessSourceKind::Subscription;
+            provider.selected_endpoint_id = None;
+            return true;
         }
     }
-    Ok(HarnessProviderSourceConfig {
+
+    false
+}
+
+fn provider_source_config_from_internal(
+    canonical: &str,
+    endpoint_supported: bool,
+    provider: &HarnessProviderConfigInternal,
+) -> HarnessProviderSourceConfig {
+    HarnessProviderSourceConfig {
         provider_id: canonical.to_string(),
-        selected_source_kind: if endpoint_supported && selected_endpoint_id.is_some() {
+        selected_source_kind: if endpoint_supported && provider.selected_endpoint_id.is_some() {
             provider.selected_source_kind
         } else {
             HarnessSourceKind::Subscription
         },
-        selected_endpoint_id,
+        selected_endpoint_id: if endpoint_supported {
+            provider.selected_endpoint_id.clone()
+        } else {
+            None
+        },
         endpoints: if endpoint_supported {
             provider
                 .endpoints
@@ -43,7 +65,62 @@ pub async fn get_provider_source_config(
         } else {
             Vec::new()
         },
-    })
+    }
+}
+
+async fn get_provider_source_config_locked(
+    data_root: &Path,
+    registry: &mut HarnessSourceRegistryInternal,
+    canonical: &str,
+    endpoint_supported: bool,
+) -> Result<HarnessProviderSourceConfig> {
+    let config = {
+        let provider = registry
+            .providers
+            .entry(canonical.to_string())
+            .or_insert_with(HarnessProviderConfigInternal::default);
+        let repaired = repair_provider_selection(provider, endpoint_supported);
+        let config = provider_source_config_from_internal(canonical, endpoint_supported, provider);
+        (repaired, config)
+    };
+    if config.0 {
+        registry::save_registry(data_root, registry).await?;
+    }
+    Ok(config.1)
+}
+
+pub(crate) async fn load_repaired_provider_internal(
+    data_root: &Path,
+    canonical: &str,
+    endpoint_supported: bool,
+) -> Result<HarnessProviderConfigInternal> {
+    let _registry_write_guard = REGISTRY_WRITE_LOCK.lock().await;
+    let mut registry = registry::load_registry(data_root).await?;
+    let provider = {
+        let provider = registry
+            .providers
+            .entry(canonical.to_string())
+            .or_insert_with(HarnessProviderConfigInternal::default);
+        let repaired = repair_provider_selection(provider, endpoint_supported);
+        (repaired, provider.clone())
+    };
+    if provider.0 {
+        registry::save_registry(data_root, &registry).await?;
+    }
+    Ok(provider.1)
+}
+
+pub async fn get_provider_source_config(
+    data_root: &Path,
+    provider_id: &str,
+) -> Result<HarnessProviderSourceConfig> {
+    let canonical = validation::normalize_provider_id(provider_id).ok_or_else(|| {
+        anyhow::anyhow!("provider does not support harness endpoints: {provider_id}")
+    })?;
+    let endpoint_supported = validation::provider_supports_harness_endpoint(canonical);
+    let _registry_write_guard = REGISTRY_WRITE_LOCK.lock().await;
+    let mut registry = registry::load_registry(data_root).await?;
+    get_provider_source_config_locked(data_root, &mut registry, canonical, endpoint_supported).await
 }
 
 pub async fn find_provider_endpoint_import_match(
@@ -281,7 +358,8 @@ pub async fn delete_provider_endpoint(
         registry::save_registry(data_root, &registry).await?;
     }
 
-    get_provider_source_config(data_root, canonical).await
+    let endpoint_supported = validation::provider_supports_harness_endpoint(canonical);
+    get_provider_source_config_locked(data_root, &mut registry, canonical, endpoint_supported).await
 }
 
 pub async fn set_provider_source_selection(
@@ -325,7 +403,8 @@ pub async fn set_provider_source_selection(
     }
 
     registry::save_registry(data_root, &registry).await?;
-    get_provider_source_config(data_root, canonical).await
+    let endpoint_supported = validation::provider_supports_harness_endpoint(canonical);
+    get_provider_source_config_locked(data_root, &mut registry, canonical, endpoint_supported).await
 }
 
 pub async fn mark_endpoint_verification(

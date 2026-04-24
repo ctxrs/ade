@@ -593,11 +593,11 @@ async fn resolve_internal(
         }
     };
     let runtime = ProviderRuntimeContext::new(canonical, data_root, runtime_data_root);
+    let endpoint_supported = validation::provider_supports_harness_endpoint(canonical);
 
-    let registry = registry::load_registry(data_root).await?;
-    let provider = registry::provider_store(&registry, canonical)
-        .cloned()
-        .unwrap_or_default();
+    let provider =
+        selection::load_repaired_provider_internal(data_root, canonical, endpoint_supported)
+            .await?;
 
     if provider.selected_source_kind != HarnessSourceKind::Endpoint {
         return Ok(ResolvedHarnessSource {
@@ -607,7 +607,7 @@ async fn resolve_internal(
         });
     }
 
-    if !validation::provider_supports_harness_endpoint(canonical) {
+    if !endpoint_supported {
         return Ok(ResolvedHarnessSource {
             source_kind: HarnessSourceKind::Subscription,
             endpoint: None,
