@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -388,4 +388,14 @@ pub(super) async fn load_and_cache_workspace_files(
         .record_metric(metric, None, None, None)
         .await;
     Ok(files)
+}
+
+pub(super) async fn path_resolves_within_root(path: &Path, root: &Path) -> bool {
+    let Ok(canonical_path) = tokio::fs::canonicalize(path).await else {
+        return false;
+    };
+    let Ok(canonical_root) = tokio::fs::canonicalize(root).await else {
+        return false;
+    };
+    canonical_path.starts_with(&canonical_root)
 }

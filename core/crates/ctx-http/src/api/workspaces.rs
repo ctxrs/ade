@@ -19,7 +19,7 @@ pub(in crate::api) use management::*;
 use super::errors::ApiErrorResp;
 use super::shared::{
     load_and_cache_workspace_files, map_effective_execution_settings_error,
-    store_for_existing_workspace_status, FileCompletionsQuery,
+    path_resolves_within_root, store_for_existing_workspace_status, FileCompletionsQuery,
 };
 use crate::attachments;
 use crate::completions;
@@ -119,6 +119,10 @@ pub(super) async fn get_worktree_bootstrap_logs(
     let Some(path) = worktree.bootstrap_log_path.as_deref() else {
         return Err(StatusCode::NOT_FOUND);
     };
+    let log_root = logs::logs_dir(&state.core.data_root).join("worktree-bootstrap");
+    if !path_resolves_within_root(StdPath::new(path), &log_root).await {
+        return Err(StatusCode::NOT_FOUND);
+    }
     let bytes = tokio::fs::read(path)
         .await
         .map_err(|_| StatusCode::NOT_FOUND)?;

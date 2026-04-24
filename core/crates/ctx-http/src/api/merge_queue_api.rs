@@ -1,5 +1,5 @@
 use super::*;
-use crate::api::shared::store_for_existing_workspace_status;
+use crate::api::shared::{path_resolves_within_root, store_for_existing_workspace_status};
 
 pub(super) async fn submit_merge_queue_entry(
     State(state): State<Arc<AppState>>,
@@ -149,6 +149,11 @@ pub(super) async fn get_merge_queue_entry_logs(
         .await
         .map_err(|_| StatusCode::NOT_FOUND)?;
     let store = store_for_existing_workspace_status(&state, workspace_id).await?;
+    let workspace = store
+        .get_workspace(workspace_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
     let run = store
         .get_latest_merge_queue_run(entry_id)
         .await
@@ -157,6 +162,13 @@ pub(super) async fn get_merge_queue_entry_logs(
     let Some(path) = run.log_path.as_deref() else {
         return Err(StatusCode::NOT_FOUND);
     };
+    let log_root = std::path::PathBuf::from(&workspace.root_path)
+        .join(".ctx")
+        .join("merge-queue")
+        .join("logs");
+    if !path_resolves_within_root(std::path::Path::new(path), &log_root).await {
+        return Err(StatusCode::NOT_FOUND);
+    }
     let bytes = tokio::fs::read(path)
         .await
         .map_err(|_| StatusCode::NOT_FOUND)?;
