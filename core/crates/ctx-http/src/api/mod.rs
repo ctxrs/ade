@@ -49,9 +49,11 @@ mod workspaces;
 mod ws;
 
 #[cfg(test)]
+pub(crate) use artifacts::open_canonical_session_artifact_file;
+#[cfg(test)]
 pub(crate) use auth::{
-    derive_browser_capability_token, derive_browser_stream_token,
-    BrowserCapabilityAuthScope, BrowserStreamAuthScope,
+    derive_browser_capability_token, derive_browser_stream_token, BrowserCapabilityAuthScope,
+    BrowserStreamAuthScope,
 };
 
 use artifacts::*;
@@ -332,7 +334,10 @@ mod tests {
     fn resolve_request_base_url_rejects_non_loopback_host_headers() {
         let mut headers = HeaderMap::new();
         headers.insert(header::HOST, HeaderValue::from_static("evil.example"));
-        assert_eq!(resolve_request_base_url(&headers, "http://127.0.0.1:4321"), None);
+        assert_eq!(
+            resolve_request_base_url(&headers, "http://127.0.0.1:4321"),
+            None
+        );
     }
 
     #[test]
@@ -342,7 +347,10 @@ mod tests {
             header::FORWARDED,
             HeaderValue::from_static("proto=javascript;host=127.0.0.1:4455"),
         );
-        assert_eq!(resolve_request_base_url(&headers, "http://127.0.0.1:4321"), None);
+        assert_eq!(
+            resolve_request_base_url(&headers, "http://127.0.0.1:4321"),
+            None
+        );
     }
 
     #[test]

@@ -87,12 +87,12 @@ pub(crate) async fn get_workspace_providers_bootstrap(
             let preferred_model_by_provider = std::sync::Arc::clone(&preferred_model_by_provider);
             async move {
                 let provider_id = provider_status.provider_id.clone();
-                let source_config = harness_sources::get_provider_source_config(
+                let (source_config, source_config_error) =
+                    crate::api::provider_launch::load_provider_source_config_with_error(
                     &state.core.data_root,
                     &provider_id,
                 )
-                .await
-                .ok();
+                .await;
                 // Bootstrap is auth/config hydration only. It must stay substrate-agnostic and
                 // never cross into workspace runtime preparation.
                 let has_active_auth =
@@ -119,6 +119,11 @@ pub(crate) async fn get_workspace_providers_bootstrap(
                 });
                 if let Some(probe_error) = probe_error {
                     options["probe_error"] = serde_json::json!(probe_error);
+                }
+                if let Some(config_error) = source_config_error.as_ref() {
+                    options["probe_ok"] = serde_json::json!(false);
+                    options["probe_error"] = serde_json::json!(config_error);
+                    options["config_error"] = serde_json::json!(config_error);
                 }
                 if let Some(source) = source_config.as_ref() {
                     options["source"] =

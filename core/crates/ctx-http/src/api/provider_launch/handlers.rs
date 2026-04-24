@@ -51,9 +51,8 @@ pub(in crate::api) async fn get_provider_options(
         .cloned()
         .filter(|v| !v.is_null());
 
-    let managed = crate::installer::load_agent_server_config(&state.core.data_root)
-        .await
-        .unwrap_or_default();
+    let (managed, managed_config_error) =
+        load_managed_agent_server_config_with_error(&state.core.data_root).await;
     let matrix = crate::provider_matrix::load_matrix_cached(
         &state.core.data_root,
         &state.providers.matrix_cache,
@@ -64,10 +63,8 @@ pub(in crate::api) async fn get_provider_options(
         map.contains_key(&provider_id)
             || crate::provider_matrix::get_entry(&matrix, &provider_id).is_some()
     };
-    let source_config =
-        harness_sources::get_provider_source_config(&state.core.data_root, &provider_id)
-            .await
-            .ok();
+    let (source_config, source_config_error) =
+        load_provider_source_config_with_error(&state.core.data_root, &provider_id).await;
     if !known {
         return Err((
             StatusCode::BAD_REQUEST,
@@ -114,6 +111,78 @@ pub(in crate::api) async fn get_provider_options(
     .await;
     let auth_mode = provider_auth_mode(has_active_auth, source_config.as_ref());
     let selected_endpoint = selected_endpoint_record_from_harness_config(source_config.as_ref());
+
+    if let Some(config_error) = managed_config_error.as_ref() {
+        let mut raw_resp = serde_json::json!({
+            "provider_id": provider_id,
+            "workspace_id": ws_id.0,
+            "probe_ok": false,
+            "supports_load": false,
+            "auth_required": false,
+            "has_active_auth": has_active_auth,
+            "auth_mode": auth_mode,
+            "probed_at": chrono::Utc::now().to_rfc3339(),
+            "probe_error": config_error,
+            "config_error": config_error,
+        });
+        if let Some(source) = source_config.as_ref() {
+            raw_resp["source"] = serde_json::to_value(source).unwrap_or(serde_json::Value::Null);
+        }
+        inject_preferred_model_id(&mut raw_resp, preferred_model_id.clone());
+        let resp = redact_json_value(raw_resp);
+        state.providers.options_cache.lock().await.insert(
+            cache_key,
+            crate::daemon::CachedProviderOptions {
+                cached_at: std::time::Instant::now(),
+                value: resp.clone(),
+            },
+        );
+        let mut out = resp;
+        project_provider_id_field(&requested_provider_id, &mut out);
+        attach_verify_cache(&mut out, verify_entry.as_ref(), VERIFY_TTL);
+        return Ok(Json(out));
+    }
+
+    if let Some(config_error) = source_config_error.as_ref() {
+        let now = chrono::Utc::now();
+        let mut raw_resp = serde_json::json!({
+            "provider_id": provider_id,
+            "workspace_id": ws_id.0,
+            "installed": provider_status.installed,
+            "probe_ok": false,
+            "supports_load": false,
+            "auth_required": false,
+            "has_active_auth": has_active_auth,
+            "auth_mode": auth_mode,
+            "probed_at": now.to_rfc3339(),
+            "probe_error": config_error,
+            "config_error": config_error,
+        });
+        attach_static_provider_models_and_modes(
+            &state,
+            &mut raw_resp,
+            &provider_id,
+            &provider_status,
+            None,
+            cached_models.clone(),
+            cached_modes.clone(),
+        )
+        .await;
+        inject_preferred_model_id(&mut raw_resp, preferred_model_id.clone());
+
+        let resp = redact_json_value(raw_resp);
+        state.providers.options_cache.lock().await.insert(
+            cache_key,
+            crate::daemon::CachedProviderOptions {
+                cached_at: std::time::Instant::now(),
+                value: resp.clone(),
+            },
+        );
+        let mut out = resp;
+        project_provider_id_field(&requested_provider_id, &mut out);
+        attach_verify_cache(&mut out, verify_entry.as_ref(), VERIFY_TTL);
+        return Ok(Json(out));
+    }
 
     if !provider_status_is_usable(&provider_status) {
         let mut raw_base_resp = serde_json::json!({
@@ -499,9 +568,8 @@ pub(in crate::api) async fn verify_provider_for_workspace(
     let install_target = install_target_for_workspace(&state, workspace.id)
         .await
         .map_err(|error| workspace_execution_settings_error_json(&error))?;
-    let managed = crate::installer::load_agent_server_config(&state.core.data_root)
-        .await
-        .unwrap_or_default();
+    let (managed, managed_config_error) =
+        load_managed_agent_server_config_with_error(&state.core.data_root).await;
     let matrix = crate::provider_matrix::load_matrix_cached(
         &state.core.data_root,
         &state.providers.matrix_cache,
@@ -534,13 +602,55 @@ pub(in crate::api) async fn verify_provider_for_workspace(
     let mut auth_required = Some(false);
     let mut message: Option<String> = None;
     let mut endpoint_status = HarnessEndpointVerificationStatus::Valid;
-    let source_config =
-        harness_sources::get_provider_source_config(&state.core.data_root, &provider_id)
-            .await
-            .ok();
+    let (source_config, source_config_error) =
+        load_provider_source_config_with_error(&state.core.data_root, &provider_id).await;
     let selected_endpoint = selected_endpoint_record_from_harness_config(source_config.as_ref());
     let mut selected_endpoint_id: Option<String> =
         selected_endpoint_from_harness_config(source_config);
+
+    if let Some(config_error) = managed_config_error {
+        let resp = ProviderAuthCheckResp {
+            provider_id: project_provider_id_for_response(&requested_provider_id, &provider_id),
+            workspace_id: ws_id.0.to_string(),
+            status: "error".to_string(),
+            auth_required: Some(false),
+            checked_at: Some(checked_at.clone()),
+            message: Some(config_error),
+        };
+        let verify_value =
+            redact_json_value(serde_json::to_value(&resp).unwrap_or(serde_json::Value::Null));
+        let cache_key = workspace_provider_cache_key(ws_id, install_target, &provider_id);
+        state.providers.verify_cache.lock().await.insert(
+            cache_key,
+            crate::daemon::CachedProviderVerify {
+                cached_at: std::time::Instant::now(),
+                value: verify_value,
+            },
+        );
+        return Ok(Json(resp));
+    }
+
+    if let Some(config_error) = source_config_error {
+        let resp = ProviderAuthCheckResp {
+            provider_id: project_provider_id_for_response(&requested_provider_id, &provider_id),
+            workspace_id: ws_id.0.to_string(),
+            status: "error".to_string(),
+            auth_required: Some(false),
+            checked_at: Some(checked_at.clone()),
+            message: Some(config_error),
+        };
+        let verify_value =
+            redact_json_value(serde_json::to_value(&resp).unwrap_or(serde_json::Value::Null));
+        let cache_key = workspace_provider_cache_key(ws_id, install_target, &provider_id);
+        state.providers.verify_cache.lock().await.insert(
+            cache_key,
+            crate::daemon::CachedProviderVerify {
+                cached_at: std::time::Instant::now(),
+                value: verify_value,
+            },
+        );
+        return Ok(Json(resp));
+    }
 
     if !provider_status_is_usable(&provider_status) {
         status = "error".to_string();

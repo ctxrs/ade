@@ -1,5 +1,5 @@
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path as FsPath, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -158,6 +158,35 @@ pub(in crate::api) fn classify_probe_error(
     )
 }
 
+pub(in crate::api) async fn load_provider_source_config_with_error(
+    data_root: &FsPath,
+    provider_id: &str,
+) -> (
+    Option<harness_sources::HarnessProviderSourceConfig>,
+    Option<String>,
+) {
+    if !harness_sources::supports_harness_endpoint(provider_id) {
+        return (None, None);
+    }
+
+    match harness_sources::get_provider_source_config(data_root, provider_id).await {
+        Ok(config) => (Some(config), None),
+        Err(err) => (None, Some(logs::redact_sensitive(&err.to_string()))),
+    }
+}
+
+pub(in crate::api) async fn load_managed_agent_server_config_with_error(
+    data_root: &FsPath,
+) -> (crate::installer::AgentServerConfigFile, Option<String>) {
+    match crate::installer::load_agent_server_config(data_root).await {
+        Ok(config) => (config, None),
+        Err(err) => (
+            crate::installer::AgentServerConfigFile::default(),
+            Some(logs::redact_sensitive(&err.to_string())),
+        ),
+    }
+}
+
 struct PreparedProviderRuntimeProbe {
     command: String,
     args: Vec<String>,
@@ -205,9 +234,11 @@ async fn prepare_provider_runtime_probe(
                 &error,
             ))
         })?;
-    let cfg = crate::installer::load_agent_server_config(&state.core.data_root)
-        .await
-        .unwrap_or_default();
+    let (cfg, config_error) =
+        load_managed_agent_server_config_with_error(&state.core.data_root).await;
+    if let Some(config_error) = config_error {
+        return Err(PreparedProviderRuntimeProbeError::Verify(config_error));
+    }
     let runtime_command = runtime_probe_command_as_agent_command_for_target(
         &state.core.data_root,
         &cfg,

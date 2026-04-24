@@ -333,7 +333,7 @@ async fn open_canonical_session_artifact_file_rejects_symlink_swap() {
     std::fs::rename(&artifact_path, &renamed).unwrap();
     std::os::unix::fs::symlink(&outside_path, &artifact_path).unwrap();
 
-    let err = crate::api::artifacts::open_canonical_session_artifact_file(&canonical)
+    let err = crate::api::open_canonical_session_artifact_file(&canonical)
         .await
         .unwrap_err();
     assert_eq!(err, StatusCode::NOT_FOUND);
