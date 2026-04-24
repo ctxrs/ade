@@ -1,18 +1,19 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use super::shared::{
-    apply_email_update, apply_label_update, ensure_account_exists, ensure_safe_account_id,
-    load_json_registry, normalize_optional_email, parse_required_json_object,
-    remove_projected_account_home_for_runtime_roots, save_json_registry, write_secure_file_atomic,
+    apply_email_update, apply_label_update, collect_secret_paths, ensure_account_exists,
+    ensure_safe_account_id, load_json_registry, normalize_optional_email,
+    parse_required_json_object, remove_projected_account_home_for_runtime_roots,
+    save_json_registry, write_secure_file_atomic,
 };
 use super::{
-    kimi_account_home, kimi_registry_path, kimi_secret_path, KIMI_CREDENTIAL_KIND_CREDENTIALS_JSON,
-    KIMI_CREDENTIAL_KIND_OAUTH, KIMI_SECRET_VERSION, KIMI_SHARE_DIR_ENV,
+    KIMI_CREDENTIAL_KIND_CREDENTIALS_JSON, KIMI_CREDENTIAL_KIND_OAUTH, KIMI_SECRET_VERSION,
+    KIMI_SHARE_DIR_ENV, kimi_account_home, kimi_registry_path, kimi_secret_path,
 };
 
 const KIMI_CANONICAL_PROVIDER: &str = "kimi-code";
@@ -229,18 +230,22 @@ pub async fn remove_kimi_account(
         .cloned()
         .collect();
     ensure_account_exists(!removed.is_empty())?;
+    let secret_paths = collect_secret_paths(
+        data_root,
+        removed
+            .iter()
+            .filter_map(|entry| entry.secret_ref.as_deref()),
+        kimi_secret_path,
+    )?;
     registry.accounts.retain(|a| a.id != account_id);
     if was_active {
         registry.active_account_id = None;
     }
     save_kimi_registry(data_root, &registry).await?;
 
-    for entry in removed {
-        if let Some(secret_ref) = entry.secret_ref {
-            let secret_path = kimi_secret_path(data_root, &secret_ref);
-            if secret_path.exists() {
-                let _ = tokio::fs::remove_file(secret_path).await;
-            }
+    for secret_path in secret_paths {
+        if secret_path.exists() {
+            let _ = tokio::fs::remove_file(secret_path).await;
         }
     }
 
@@ -415,7 +420,7 @@ async fn write_kimi_secret_for_account(
     let credentials = parse_required_json_object(credentials_json, "credentials_json")?;
     let provider = normalize_kimi_provider(Some(provider.to_string()))?;
     let secret_ref = format!("{account_id}.json");
-    let path = kimi_secret_path(data_root, &secret_ref);
+    let path = kimi_secret_path(data_root, &secret_ref)?;
     let envelope = KimiSecretEnvelope {
         version: KIMI_SECRET_VERSION,
         provider,
@@ -430,7 +435,7 @@ pub(crate) async fn read_kimi_secret_for_ref(
     data_root: &Path,
     secret_ref: &str,
 ) -> Result<KimiSecretEnvelope> {
-    let path = kimi_secret_path(data_root, secret_ref);
+    let path = kimi_secret_path(data_root, secret_ref)?;
     let payload = tokio::fs::read_to_string(&path)
         .await
         .with_context(|| format!("reading kimi secret {}", path.display()))?;

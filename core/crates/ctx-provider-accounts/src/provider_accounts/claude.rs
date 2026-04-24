@@ -1,18 +1,18 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use super::shared::{
-    apply_label_update, ensure_account_exists, ensure_safe_account_id, load_json_registry,
-    prepend_dir_to_path_env, remove_projected_account_home_for_runtime_roots, save_json_registry,
-    write_secure_file_atomic,
+    apply_label_update, collect_secret_paths, ensure_account_exists, ensure_safe_account_id,
+    load_json_registry, prepend_dir_to_path_env, remove_projected_account_home_for_runtime_roots,
+    save_json_registry, write_secure_file_atomic,
 };
 use super::{
-    claude_account_dir, claude_registry_path, claude_secret_path,
-    CLAUDE_CREDENTIAL_KIND_SETUP_TOKEN, CLAUDE_SECRET_VERSION,
+    CLAUDE_CREDENTIAL_KIND_SETUP_TOKEN, CLAUDE_SECRET_VERSION, claude_account_dir,
+    claude_registry_path, claude_secret_path,
 };
 
 const CLAUDE_AUTH_ENV_KEY: &str = "CLAUDE_CODE_OAUTH_TOKEN";
@@ -129,6 +129,21 @@ pub async fn load_claude_registry(data_root: &Path) -> ClaudeAccountRegistry {
         .filter(|entry| legacy_account_id_set.contains(entry.id.as_str()))
         .cloned()
         .collect();
+    let secret_paths = match collect_secret_paths(
+        data_root,
+        removed_entries
+            .iter()
+            .filter_map(|entry| entry.secret_ref.as_deref()),
+        claude_secret_path,
+    ) {
+        Ok(paths) => paths,
+        Err(error) => {
+            tracing::warn!(
+                "refusing to prune legacy Claude accounts with invalid secret_ref: {error:#}"
+            );
+            return registry;
+        }
+    };
     registry
         .accounts
         .retain(|entry| !legacy_account_id_set.contains(entry.id.as_str()));
@@ -142,11 +157,10 @@ pub async fn load_claude_registry(data_root: &Path) -> ClaudeAccountRegistry {
     if let Err(error) = save_json_registry(&claude_registry_path(data_root), &registry).await {
         tracing::warn!("failed to persist migrated Claude registry: {error}");
     }
+    for secret_path in secret_paths {
+        let _ = tokio::fs::remove_file(secret_path).await;
+    }
     for entry in removed_entries {
-        if let Some(secret_ref) = entry.secret_ref {
-            let secret_path = claude_secret_path(data_root, &secret_ref);
-            let _ = tokio::fs::remove_file(secret_path).await;
-        }
         let account_dir = claude_account_dir(data_root, &entry.id);
         let _ = tokio::fs::remove_dir_all(account_dir).await;
         let _ = remove_projected_account_home_for_runtime_roots(
@@ -264,18 +278,22 @@ pub async fn remove_claude_account(
         .cloned()
         .collect();
     ensure_account_exists(!removed.is_empty())?;
+    let secret_paths = collect_secret_paths(
+        data_root,
+        removed
+            .iter()
+            .filter_map(|entry| entry.secret_ref.as_deref()),
+        claude_secret_path,
+    )?;
     registry.accounts.retain(|a| a.id != account_id);
     if was_active {
         registry.active_account_id = None;
     }
     save_claude_registry(data_root, &registry).await?;
 
-    for entry in removed {
-        if let Some(secret_ref) = entry.secret_ref {
-            let secret_path = claude_secret_path(data_root, &secret_ref);
-            if secret_path.exists() {
-                let _ = tokio::fs::remove_file(secret_path).await;
-            }
+    for secret_path in secret_paths {
+        if secret_path.exists() {
+            let _ = tokio::fs::remove_file(secret_path).await;
         }
     }
 
@@ -436,7 +454,7 @@ async fn write_claude_secret_for_account(
 ) -> Result<String> {
     let token = normalize_claude_setup_token(setup_token)?;
     let secret_ref = format!("{account_id}.json");
-    let path = claude_secret_path(data_root, &secret_ref);
+    let path = claude_secret_path(data_root, &secret_ref)?;
     let envelope = ClaudeSecretEnvelope {
         version: CLAUDE_SECRET_VERSION,
         claude_code_oauth_token: Some(token),
@@ -449,7 +467,7 @@ async fn read_claude_secret_for_ref(
     data_root: &Path,
     secret_ref: &str,
 ) -> Result<ClaudeSecretEnvelope> {
-    let path = claude_secret_path(data_root, secret_ref);
+    let path = claude_secret_path(data_root, secret_ref)?;
     let payload = tokio::fs::read_to_string(&path)
         .await
         .with_context(|| format!("reading claude secret {}", path.display()))?;
@@ -668,7 +686,7 @@ mod tests {
             write_claude_secret_for_account(root, setup_id, CLAUDE_TEST_SETUP_TOKEN)
                 .await
                 .expect("write setup secret");
-        let legacy_secret_path = claude_secret_path(root, &legacy_secret_ref);
+        let legacy_secret_path = claude_secret_path(root, &legacy_secret_ref).unwrap();
         write_secure_file_atomic(
             &legacy_secret_path,
             br#"{"version":1,"anthropic_auth_token":"sk-ant-oat01-legacy1234567890_abcdefghijklmnopqrstuvwxyz_0123456789"}"#,

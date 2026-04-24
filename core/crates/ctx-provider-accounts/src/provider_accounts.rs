@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 use chrono::{DateTime, Utc};
-use ctx_core::provider_ids::{canonical_provider_id, CODEX_CRP_PROVIDER_ID};
+use ctx_core::provider_ids::{CODEX_CRP_PROVIDER_ID, canonical_provider_id};
 use serde::{Deserialize, Serialize};
 
 mod amp;
@@ -38,21 +38,22 @@ use self::paths::{
 };
 use self::qwen::qwen_env_for_active_account_with_runtime_root;
 use self::shared::{
-    ensure_account_exists, ensure_safe_account_id, load_json_registry, save_json_registry,
+    collect_secret_paths, ensure_account_exists, ensure_safe_account_id, load_json_registry,
+    save_json_registry,
 };
 
 pub use self::amp::{
-    amp_env_for_active_account, clear_amp_runtime_home, ensure_amp_registry_from_runtime_auth,
-    ensure_amp_runtime_home, load_amp_registry, normalize_amp_label, remove_amp_account,
-    save_amp_registry, set_active_amp_account, upsert_amp_account, AmpAccountEntry,
-    AmpAccountRegistry, AmpLoginStatus,
+    AmpAccountEntry, AmpAccountRegistry, AmpLoginStatus, amp_env_for_active_account,
+    clear_amp_runtime_home, ensure_amp_registry_from_runtime_auth, ensure_amp_runtime_home,
+    load_amp_registry, normalize_amp_label, remove_amp_account, save_amp_registry,
+    set_active_amp_account, upsert_amp_account,
 };
 pub use self::bootstrap_models::pinned_subscription_models_value;
 pub use self::claude::{
-    add_claude_account, claude_env_for_account, claude_env_for_active_account,
-    ensure_claude_account_dir, load_claude_registry, normalize_claude_label, remove_claude_account,
-    save_claude_registry, set_active_claude_account, ClaudeAccountEntry, ClaudeAccountRegistry,
-    ClaudeLoginStatus,
+    ClaudeAccountEntry, ClaudeAccountRegistry, ClaudeLoginStatus, add_claude_account,
+    claude_env_for_account, claude_env_for_active_account, ensure_claude_account_dir,
+    load_claude_registry, normalize_claude_label, remove_claude_account, save_claude_registry,
+    set_active_claude_account,
 };
 pub use self::codex_auth::{
     codex_env_for_active_account, codex_env_for_active_account_with_runtime_root,
@@ -64,42 +65,42 @@ pub use self::codex_auth::{
 };
 pub use self::copilot::copilot_models_value_for_version;
 pub use self::copilot::{
-    add_copilot_account, copilot_env_for_account, copilot_env_for_active_account,
-    ensure_copilot_account_dir, load_copilot_registry, normalize_copilot_label,
-    remove_copilot_account, save_copilot_registry, set_active_copilot_account, CopilotAccountEntry,
-    CopilotAccountRegistry,
+    CopilotAccountEntry, CopilotAccountRegistry, add_copilot_account, copilot_env_for_account,
+    copilot_env_for_active_account, ensure_copilot_account_dir, load_copilot_registry,
+    normalize_copilot_label, remove_copilot_account, save_copilot_registry,
+    set_active_copilot_account,
 };
 pub use self::cursor::{
-    add_cursor_account, add_cursor_oauth_account, cursor_env_for_account,
-    cursor_env_for_active_account, ensure_cursor_account_home, load_cursor_registry,
-    normalize_cursor_label, remove_cursor_account, save_cursor_registry, set_active_cursor_account,
-    CursorAccountEntry, CursorAccountRegistry, CursorLoginStatus,
+    CursorAccountEntry, CursorAccountRegistry, CursorLoginStatus, add_cursor_account,
+    add_cursor_oauth_account, cursor_env_for_account, cursor_env_for_active_account,
+    ensure_cursor_account_home, load_cursor_registry, normalize_cursor_label,
+    remove_cursor_account, save_cursor_registry, set_active_cursor_account,
 };
 pub use self::gemini::{
-    add_gemini_account, gemini_env_for_account, gemini_env_for_active_account,
-    load_gemini_registry, normalize_gemini_label, remove_gemini_account, save_gemini_registry,
-    set_active_gemini_account, GeminiAccountEntry, GeminiAccountRegistry, GeminiLoginStatus,
+    GeminiAccountEntry, GeminiAccountRegistry, GeminiLoginStatus, add_gemini_account,
+    gemini_env_for_account, gemini_env_for_active_account, load_gemini_registry,
+    normalize_gemini_label, remove_gemini_account, save_gemini_registry, set_active_gemini_account,
 };
 pub use self::gemini::{
     apply_gemini_api_key_runtime_auth_env, apply_gemini_vertex_runtime_auth_env,
     write_gemini_auth_settings,
 };
 pub use self::kimi::{
-    add_kimi_account, add_kimi_oauth_account, kimi_env_for_account, kimi_env_for_active_account,
-    load_kimi_registry, normalize_kimi_label, remove_kimi_account, save_kimi_registry,
-    set_active_kimi_account, KimiAccountEntry, KimiAccountRegistry, KimiLoginStatus,
+    KimiAccountEntry, KimiAccountRegistry, KimiLoginStatus, add_kimi_account,
+    add_kimi_oauth_account, kimi_env_for_account, kimi_env_for_active_account, load_kimi_registry,
+    normalize_kimi_label, remove_kimi_account, save_kimi_registry, set_active_kimi_account,
 };
 pub use self::mistral::{
-    clear_mistral_runtime_home, ensure_mistral_runtime_home, load_mistral_registry,
-    mistral_env_for_active_account, normalize_mistral_label, remove_mistral_account,
-    save_mistral_registry, set_active_mistral_account, upsert_mistral_account, MistralAccountEntry,
-    MistralAccountRegistry, MistralLoginStatus,
+    MistralAccountEntry, MistralAccountRegistry, MistralLoginStatus, clear_mistral_runtime_home,
+    ensure_mistral_runtime_home, load_mistral_registry, mistral_env_for_active_account,
+    normalize_mistral_label, remove_mistral_account, save_mistral_registry,
+    set_active_mistral_account, upsert_mistral_account,
 };
 pub use self::paths::*;
 pub use self::qwen::{
-    add_qwen_account, load_qwen_registry, normalize_qwen_label, qwen_env_for_account,
-    qwen_env_for_active_account, remove_qwen_account, save_qwen_registry, set_active_qwen_account,
-    QwenAccountEntry, QwenAccountRegistry, QwenLoginStatus,
+    QwenAccountEntry, QwenAccountRegistry, QwenLoginStatus, add_qwen_account, load_qwen_registry,
+    normalize_qwen_label, qwen_env_for_account, qwen_env_for_active_account, remove_qwen_account,
+    save_qwen_registry, set_active_qwen_account,
 };
 pub use self::runtime_env::{
     ensure_codex_endpoint_runtime_home_from_env, ensure_provider_runtime_home_env,
@@ -306,6 +307,13 @@ pub async fn remove_codex_account(
         .cloned()
         .collect();
     ensure_account_exists(!removed.is_empty())?;
+    let secret_paths = collect_secret_paths(
+        data_root,
+        removed
+            .iter()
+            .filter_map(|entry| entry.secret_ref.as_deref()),
+        codex_secret_path,
+    )?;
     registry.accounts.retain(|a| a.id != account_id);
     if was_active {
         registry.active_account_id = None;
@@ -314,12 +322,9 @@ pub async fn remove_codex_account(
     if was_active {
         clear_runtime_auth_projection(data_root).await?;
     }
-    for entry in removed {
-        if let Some(secret_ref) = entry.secret_ref {
-            let secret_path = codex_secret_path(data_root, &secret_ref);
-            if secret_path.exists() {
-                let _ = tokio::fs::remove_file(secret_path).await;
-            }
+    for secret_path in secret_paths {
+        if secret_path.exists() {
+            let _ = tokio::fs::remove_file(secret_path).await;
         }
     }
     let account_dir = codex_account_dir(data_root, account_id);

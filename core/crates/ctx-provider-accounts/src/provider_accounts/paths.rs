@@ -1,6 +1,8 @@
 use std::path::{Path, PathBuf};
 
 use super::CODEX_RUNTIME_OWNER_FILE;
+use super::shared::ensure_safe_secret_ref;
+use anyhow::Result;
 use ctx_core::provider_ids::LEGACY_CODEX_PROVIDER_ID;
 
 const CODEX_CRP_PROVIDER_ROOT: &str = "codex-crp";
@@ -86,32 +88,39 @@ pub fn cursor_secrets_root(data_root: &Path) -> PathBuf {
     data_root.join("secrets").join("cursor")
 }
 
-pub(crate) fn codex_secret_path(data_root: &Path, secret_ref: &str) -> PathBuf {
-    codex_secrets_root(data_root).join(secret_ref)
+pub(crate) fn codex_secret_path(data_root: &Path, secret_ref: &str) -> Result<PathBuf> {
+    ensure_safe_secret_ref(secret_ref)?;
+    Ok(codex_secrets_root(data_root).join(secret_ref))
 }
 
-pub(crate) fn claude_secret_path(data_root: &Path, secret_ref: &str) -> PathBuf {
-    claude_secrets_root(data_root).join(secret_ref)
+pub(crate) fn claude_secret_path(data_root: &Path, secret_ref: &str) -> Result<PathBuf> {
+    ensure_safe_secret_ref(secret_ref)?;
+    Ok(claude_secrets_root(data_root).join(secret_ref))
 }
 
-pub(crate) fn gemini_secret_path(data_root: &Path, secret_ref: &str) -> PathBuf {
-    gemini_secrets_root(data_root).join(secret_ref)
+pub(crate) fn gemini_secret_path(data_root: &Path, secret_ref: &str) -> Result<PathBuf> {
+    ensure_safe_secret_ref(secret_ref)?;
+    Ok(gemini_secrets_root(data_root).join(secret_ref))
 }
 
-pub(crate) fn qwen_secret_path(data_root: &Path, secret_ref: &str) -> PathBuf {
-    qwen_secrets_root(data_root).join(secret_ref)
+pub(crate) fn qwen_secret_path(data_root: &Path, secret_ref: &str) -> Result<PathBuf> {
+    ensure_safe_secret_ref(secret_ref)?;
+    Ok(qwen_secrets_root(data_root).join(secret_ref))
 }
 
-pub(crate) fn kimi_secret_path(data_root: &Path, secret_ref: &str) -> PathBuf {
-    kimi_secrets_root(data_root).join(secret_ref)
+pub(crate) fn kimi_secret_path(data_root: &Path, secret_ref: &str) -> Result<PathBuf> {
+    ensure_safe_secret_ref(secret_ref)?;
+    Ok(kimi_secrets_root(data_root).join(secret_ref))
 }
 
-pub(crate) fn copilot_secret_path(data_root: &Path, secret_ref: &str) -> PathBuf {
-    copilot_secrets_root(data_root).join(secret_ref)
+pub(crate) fn copilot_secret_path(data_root: &Path, secret_ref: &str) -> Result<PathBuf> {
+    ensure_safe_secret_ref(secret_ref)?;
+    Ok(copilot_secrets_root(data_root).join(secret_ref))
 }
 
-pub(crate) fn cursor_secret_path(data_root: &Path, secret_ref: &str) -> PathBuf {
-    cursor_secrets_root(data_root).join(secret_ref)
+pub(crate) fn cursor_secret_path(data_root: &Path, secret_ref: &str) -> Result<PathBuf> {
+    ensure_safe_secret_ref(secret_ref)?;
+    Ok(cursor_secrets_root(data_root).join(secret_ref))
 }
 
 pub fn legacy_codex_runtime_home(data_root: &Path) -> PathBuf {

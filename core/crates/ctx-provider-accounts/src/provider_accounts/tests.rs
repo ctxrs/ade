@@ -464,7 +464,7 @@ async fn runtime_home_refresh_reconciles_back_to_active_secret() {
         .await
         .unwrap();
     tokio::fs::write(
-        codex_secret_path(root, &secret_ref),
+        codex_secret_path(root, &secret_ref).unwrap(),
         br#"{"version":1,"auth":{"tokens":{"access_token":"old-access","refresh_token":"old-refresh"}}}"#,
     )
     .await
@@ -482,7 +482,7 @@ async fn runtime_home_refresh_reconciles_back_to_active_secret() {
 
     let _ = codex_env_for_active_account(root).await.unwrap();
 
-    let secret_payload = tokio::fs::read_to_string(codex_secret_path(root, &secret_ref))
+    let secret_payload = tokio::fs::read_to_string(codex_secret_path(root, &secret_ref).unwrap())
         .await
         .unwrap();
     assert!(secret_payload.contains("new-access"));
@@ -514,14 +514,52 @@ async fn removing_account_cleans_secret_file() {
         .await
         .unwrap();
     tokio::fs::write(
-        codex_secret_path(root, &secret_ref),
+        codex_secret_path(root, &secret_ref).unwrap(),
         br#"{"version":1,"auth":{"OPENAI_API_KEY":"test-key"}}"#,
     )
     .await
     .unwrap();
 
     remove_codex_account(root, account_id).await.unwrap();
-    assert!(!codex_secret_path(root, &secret_ref).exists());
+    assert!(!codex_secret_path(root, &secret_ref).unwrap().exists());
+}
+
+#[tokio::test]
+async fn removing_account_rejects_unsafe_secret_ref_without_mutating_registry() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let account_id = "acct-unsafe";
+    let secret_ref = "../../outside-secret.json";
+    let outside_secret = root.join("outside-secret.json");
+    tokio::fs::write(&outside_secret, b"do-not-touch")
+        .await
+        .unwrap();
+    let registry = CodexAccountRegistry {
+        active_account_id: Some(account_id.to_string()),
+        accounts: vec![CodexAccountEntry {
+            id: account_id.to_string(),
+            label: "acct".to_string(),
+            kind: CODEX_CREDENTIAL_KIND_OAUTH.to_string(),
+            email: None,
+            plan_type: None,
+            created_at: Utc::now(),
+            last_used_at: None,
+            secret_ref: Some(secret_ref.to_string()),
+            endpoint_profile: CodexEndpointProfile::default(),
+        }],
+    };
+    save_codex_registry(root, &registry).await.unwrap();
+
+    let err = remove_codex_account(root, account_id).await.unwrap_err();
+    assert!(err.to_string().contains("single path segment"));
+
+    let persisted = load_codex_registry(root).await;
+    assert_eq!(persisted.accounts.len(), 1);
+    assert_eq!(persisted.active_account_id.as_deref(), Some(account_id));
+    assert_eq!(
+        tokio::fs::read_to_string(&outside_secret).await.unwrap(),
+        "do-not-touch"
+    );
 }
 
 #[tokio::test]
@@ -1005,10 +1043,12 @@ async fn subscription_env_runtime_root_projects_path_based_providers() {
             .unwrap();
     let kimi_share = PathBuf::from(kimi_env.get(KIMI_SHARE_DIR_ENV).unwrap());
     assert!(kimi_share.starts_with(runtime_root));
-    assert!(kimi_share
-        .join("credentials")
-        .join("kimi-code.json")
-        .exists());
+    assert!(
+        kimi_share
+            .join("credentials")
+            .join("kimi-code.json")
+            .exists()
+    );
     let kimi_config = tokio::fs::read_to_string(kimi_share.join("config.toml"))
         .await
         .unwrap();

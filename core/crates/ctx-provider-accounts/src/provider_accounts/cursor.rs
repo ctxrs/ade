@@ -1,18 +1,18 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use super::shared::{
-    apply_email_update, apply_label_update, ensure_account_exists, ensure_safe_account_id,
-    load_json_registry, normalize_optional_email, remove_projected_account_home_for_runtime_roots,
-    save_json_registry, write_secure_file_atomic,
+    apply_email_update, apply_label_update, collect_secret_paths, ensure_account_exists,
+    ensure_safe_account_id, load_json_registry, normalize_optional_email,
+    remove_projected_account_home_for_runtime_roots, save_json_registry, write_secure_file_atomic,
 };
 use super::{
-    cursor_account_home, cursor_registry_path, cursor_secret_path, CURSOR_CREDENTIAL_KIND_API_KEY,
-    CURSOR_CREDENTIAL_KIND_OAUTH_TOKEN, CURSOR_SECRET_VERSION,
+    CURSOR_CREDENTIAL_KIND_API_KEY, CURSOR_CREDENTIAL_KIND_OAUTH_TOKEN, CURSOR_SECRET_VERSION,
+    cursor_account_home, cursor_registry_path, cursor_secret_path,
 };
 
 fn default_cursor_credential_kind() -> String {
@@ -256,18 +256,22 @@ pub async fn remove_cursor_account(
         .cloned()
         .collect();
     ensure_account_exists(!removed.is_empty())?;
+    let secret_paths = collect_secret_paths(
+        data_root,
+        removed
+            .iter()
+            .filter_map(|entry| entry.secret_ref.as_deref()),
+        cursor_secret_path,
+    )?;
     registry.accounts.retain(|a| a.id != account_id);
     if was_active {
         registry.active_account_id = None;
     }
     save_cursor_registry(data_root, &registry).await?;
 
-    for entry in removed {
-        if let Some(secret_ref) = entry.secret_ref {
-            let secret_path = cursor_secret_path(data_root, &secret_ref);
-            if secret_path.exists() {
-                let _ = tokio::fs::remove_file(secret_path).await;
-            }
+    for secret_path in secret_paths {
+        if secret_path.exists() {
+            let _ = tokio::fs::remove_file(secret_path).await;
         }
     }
 
@@ -406,7 +410,7 @@ async fn write_cursor_secret_for_ref(
     let auth_token = normalize_cursor_auth_token(auth_token)?;
     let refresh_token =
         normalize_optional_cursor_auth_token(refresh_token)?.filter(|token| token != &auth_token);
-    let path = cursor_secret_path(data_root, secret_ref);
+    let path = cursor_secret_path(data_root, secret_ref)?;
     let envelope = CursorSecretEnvelope {
         version: CURSOR_SECRET_VERSION,
         auth_token,
@@ -420,7 +424,7 @@ async fn read_cursor_secret_for_ref(
     data_root: &Path,
     secret_ref: &str,
 ) -> Result<CursorSecretRecord> {
-    let path = cursor_secret_path(data_root, secret_ref);
+    let path = cursor_secret_path(data_root, secret_ref)?;
     let payload = tokio::fs::read_to_string(&path)
         .await
         .with_context(|| format!("reading cursor secret {}", path.display()))?;

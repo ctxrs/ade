@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
 
-use anyhow::{anyhow, bail, Context, Result};
-use serde::de::DeserializeOwned;
+use anyhow::{Context, Result, anyhow, bail};
 use serde::Serialize;
+use serde::de::DeserializeOwned;
 
 pub(crate) fn parse_required_json_object(raw: &str, field: &str) -> Result<serde_json::Value> {
     let parsed = parse_json_value(raw, field)?;
@@ -65,11 +65,34 @@ pub(crate) fn ensure_safe_account_id(account_id: &str) -> Result<()> {
     }
 }
 
+pub(crate) fn ensure_safe_secret_ref(secret_ref: &str) -> Result<()> {
+    if secret_ref.trim().is_empty() {
+        bail!("secret_ref is required");
+    }
+
+    let mut components = Path::new(secret_ref).components();
+    match (components.next(), components.next()) {
+        (Some(Component::Normal(_)), None) => Ok(()),
+        _ => bail!("secret_ref must be a single path segment"),
+    }
+}
+
 pub(crate) fn ensure_account_exists(found: bool) -> Result<()> {
     if !found {
         bail!("unknown account");
     }
     Ok(())
+}
+
+pub(crate) fn collect_secret_paths<'a>(
+    data_root: &Path,
+    secret_refs: impl IntoIterator<Item = &'a str>,
+    secret_path_for_ref: fn(&Path, &str) -> Result<PathBuf>,
+) -> Result<Vec<PathBuf>> {
+    secret_refs
+        .into_iter()
+        .map(|secret_ref| secret_path_for_ref(data_root, secret_ref))
+        .collect()
 }
 
 pub(crate) async fn remove_projected_account_home_for_runtime_roots(
@@ -197,7 +220,7 @@ async fn container_runtime_data_roots(data_root: &Path) -> Vec<PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    use super::ensure_safe_account_id;
+    use super::{ensure_safe_account_id, ensure_safe_secret_ref};
 
     #[test]
     fn account_id_validation_rejects_path_traversal() {
@@ -211,5 +234,19 @@ mod tests {
         assert!(ensure_safe_account_id("../acct").is_err());
         assert!(ensure_safe_account_id("acct/../x").is_err());
         assert!(ensure_safe_account_id("acct/x").is_err());
+    }
+
+    #[test]
+    fn secret_ref_validation_rejects_path_traversal() {
+        ensure_safe_secret_ref("acct-123.json").unwrap();
+        ensure_safe_secret_ref("acct_123").unwrap();
+
+        assert!(ensure_safe_secret_ref("").is_err());
+        assert!(ensure_safe_secret_ref("  ").is_err());
+        assert!(ensure_safe_secret_ref(".").is_err());
+        assert!(ensure_safe_secret_ref("..").is_err());
+        assert!(ensure_safe_secret_ref("../secret").is_err());
+        assert!(ensure_safe_secret_ref("/tmp/secret").is_err());
+        assert!(ensure_safe_secret_ref("nested/secret").is_err());
     }
 }

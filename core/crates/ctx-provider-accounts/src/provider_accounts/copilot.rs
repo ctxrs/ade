@@ -1,17 +1,18 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use super::shared::{
-    apply_email_update, apply_label_update, ensure_account_exists, ensure_safe_account_id,
-    load_json_registry, normalize_optional_email, save_json_registry, write_secure_file_atomic,
+    apply_email_update, apply_label_update, collect_secret_paths, ensure_account_exists,
+    ensure_safe_account_id, load_json_registry, normalize_optional_email, save_json_registry,
+    write_secure_file_atomic,
 };
 use super::{
-    copilot_account_dir, copilot_registry_path, copilot_secret_path,
-    COPILOT_CREDENTIAL_KIND_GH_TOKEN, COPILOT_SECRET_VERSION,
+    COPILOT_CREDENTIAL_KIND_GH_TOKEN, COPILOT_SECRET_VERSION, copilot_account_dir,
+    copilot_registry_path, copilot_secret_path,
 };
 
 pub(crate) const COPILOT_BOOTSTRAP_MODEL_ID: &str = "gpt-5-mini";
@@ -235,17 +236,21 @@ pub async fn remove_copilot_account(
         .cloned()
         .collect();
     ensure_account_exists(!removed.is_empty())?;
+    let secret_paths = collect_secret_paths(
+        data_root,
+        removed
+            .iter()
+            .filter_map(|entry| entry.secret_ref.as_deref()),
+        copilot_secret_path,
+    )?;
     registry.accounts.retain(|a| a.id != account_id);
     if was_active {
         registry.active_account_id = None;
     }
     save_copilot_registry(data_root, &registry).await?;
-    for entry in removed {
-        if let Some(secret_ref) = entry.secret_ref {
-            let secret_path = copilot_secret_path(data_root, &secret_ref);
-            if secret_path.exists() {
-                let _ = tokio::fs::remove_file(secret_path).await;
-            }
+    for secret_path in secret_paths {
+        if secret_path.exists() {
+            let _ = tokio::fs::remove_file(secret_path).await;
         }
     }
     let account_dir = copilot_account_dir(data_root, account_id);
@@ -403,7 +408,7 @@ async fn write_copilot_secret_for_account(
 ) -> Result<String> {
     let token = normalize_copilot_token(token)?;
     let secret_ref = format!("{account_id}.json");
-    let path = copilot_secret_path(data_root, &secret_ref);
+    let path = copilot_secret_path(data_root, &secret_ref)?;
     let envelope = CopilotSecretEnvelope {
         version: COPILOT_SECRET_VERSION,
         gh_token: token,
@@ -413,7 +418,7 @@ async fn write_copilot_secret_for_account(
 }
 
 async fn read_copilot_secret_for_ref(data_root: &Path, secret_ref: &str) -> Result<String> {
-    let path = copilot_secret_path(data_root, secret_ref);
+    let path = copilot_secret_path(data_root, secret_ref)?;
     let payload = tokio::fs::read_to_string(&path)
         .await
         .with_context(|| format!("reading copilot secret {}", path.display()))?;
