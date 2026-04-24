@@ -55,6 +55,7 @@ impl WorkspaceActiveSnapshotHub {
                 snapshots.push(snapshot.clone());
             }
         }
+        snapshots.sort_by_key(|snapshot| snapshot.worktree_id.0);
         WorkspaceActiveSnapshot {
             workspace_id,
             snapshot_rev,

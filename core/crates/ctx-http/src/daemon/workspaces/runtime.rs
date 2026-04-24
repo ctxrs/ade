@@ -1,12 +1,14 @@
 use std::collections::HashSet;
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::Result;
 use tokio::sync::watch;
 
 use ctx_core::ids::{TaskId, WorkspaceId, WorktreeId};
 use ctx_core::models::{
-    Task, WorkspaceActiveHeadBatch, WorkspaceActiveSnapshot, Worktree, WorktreeVcsSnapshot,
+    Task, WorkspaceActiveHeadBatch, WorkspaceActiveSnapshot, Worktree, WorktreeVcsComputeState,
+    WorktreeVcsFreshness, WorktreeVcsSnapshot,
 };
 
 use crate::daemon::state::{
@@ -14,6 +16,28 @@ use crate::daemon::state::{
     WorkspaceRuntime, WorktreeBootstrapGate,
 };
 use crate::git_status;
+
+const HYDRATED_WORKTREE_VCS_CACHE_BACKDATE: Duration = Duration::from_secs(10);
+
+pub(crate) fn normalize_hydrated_worktree_vcs_snapshot(
+    mut snapshot: WorktreeVcsSnapshot,
+) -> WorktreeVcsSnapshot {
+    if snapshot.compute_state == WorktreeVcsComputeState::Computing {
+        snapshot.compute_state = WorktreeVcsComputeState::Ready;
+    }
+    snapshot.freshness = match snapshot.compute_state {
+        WorktreeVcsComputeState::Error => WorktreeVcsFreshness::Error,
+        WorktreeVcsComputeState::Ready | WorktreeVcsComputeState::Computing => {
+            WorktreeVcsFreshness::Stale
+        }
+    };
+    snapshot
+}
+
+fn hydrated_worktree_vcs_cache_seed_instant(now: std::time::Instant) -> std::time::Instant {
+    now.checked_sub(HYDRATED_WORKTREE_VCS_CACHE_BACKDATE)
+        .unwrap_or(now)
+}
 
 impl WorkspaceRuntime {
     pub async fn cached_workspace_active_snapshot_state(
@@ -88,6 +112,26 @@ impl WorkspaceRuntime {
                 last_summary_at: Some(now),
             }),
         );
+    }
+
+    pub async fn hydrate_worktree_vcs_snapshots(&self, snapshots: Vec<WorktreeVcsSnapshot>) {
+        if !self.worktree_vcs_enabled || snapshots.is_empty() {
+            return;
+        }
+        let now = std::time::Instant::now();
+        let seed_instant = hydrated_worktree_vcs_cache_seed_instant(now);
+        let mut cache = self.worktree_vcs_snapshots.lock().await;
+        for snapshot in snapshots {
+            cache.entry(snapshot.worktree_id).or_insert_with(|| {
+                crate::daemon::TimedEntry::new(crate::daemon::WorktreeVcsSnapshotCacheEntry {
+                    fingerprint: serde_json::to_string(&snapshot).unwrap_or_default(),
+                    snapshot,
+                    emitted_at: seed_instant,
+                    last_change_at: seed_instant,
+                    last_summary_at: None,
+                })
+            });
+        }
     }
 
     pub async fn get_worktree_vcs_snapshot(

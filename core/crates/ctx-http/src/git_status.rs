@@ -24,7 +24,7 @@ mod watch;
 use diff_paths::{load_diff_file_count, load_diff_touched_entries};
 pub use model::{GitStatusEntry, GitStatusSnapshot};
 use sandbox::{container_git_rev_parse, container_git_status_structured};
-pub(crate) use sandbox::{worktree_merge_base, worktree_rev_parse_head};
+pub(crate) use sandbox::{worktree_merge_base, worktree_rev_parse_head, worktree_rev_parse_refs};
 
 const GIT_STATUS_DEBOUNCE_MS: u64 = 500;
 const GIT_STATUS_MAX_INTERVAL_MS: u64 = 2000;
@@ -184,6 +184,10 @@ async fn build_worktree_vcs_snapshot_from_parts(
         }
     };
     let base_commit_sha = resolution.base_commit_sha.clone();
+    let target_branch = resolution.target_branch.clone();
+    let resolved_head_commit_sha = resolution.head_commit_sha.clone();
+    let resolved_target_branch_commit_sha = resolution.target_branch_commit_sha.clone();
+    let allow_live_target_lookup = unavailable_reason.is_none();
     let (head_commit_sha, target_branch_commit_sha) = if matches!(
         unavailable_reason,
         Some(ctx_core::models::DiffUnavailableReason::NoRepo)
@@ -193,20 +197,38 @@ async fn build_worktree_vcs_snapshot_from_parts(
         let data_plane = resolve_worktree_data_plane(state, worktree).await?;
         let root = data_plane.live_worktree_root.as_path();
         if matches!(data_plane.execution_mode, ExecutionMode::Sandbox) {
-            let head = container_git_rev_parse(state, worktree, "HEAD").await?;
-            let target = match resolution.target_branch.as_ref() {
-                Some(target_branch) => {
+            let head = match resolved_head_commit_sha {
+                Some(head) => head,
+                None => container_git_rev_parse(state, worktree, "HEAD").await?,
+            };
+            let target = match (
+                resolved_target_branch_commit_sha,
+                target_branch.as_ref(),
+                allow_live_target_lookup,
+            ) {
+                (Some(commit), _, _) => Some(commit),
+                (None, Some(target_branch), true) => {
                     Some(container_git_rev_parse(state, worktree, target_branch).await?)
                 }
-                None => None,
+                (None, _, _) => None,
             };
             (head, target)
         } else {
             let driver = vcs::driver_for_path(root).await?;
-            let head = driver.rev_parse_head(root).await?;
-            let target = match resolution.target_branch.as_ref() {
-                Some(target_branch) => Some(driver.rev_parse_ref(root, target_branch).await?),
-                None => None,
+            let head = match resolved_head_commit_sha {
+                Some(head) => head,
+                None => driver.rev_parse_head(root).await?,
+            };
+            let target = match (
+                resolved_target_branch_commit_sha,
+                target_branch.as_ref(),
+                allow_live_target_lookup,
+            ) {
+                (Some(commit), _, _) => Some(commit),
+                (None, Some(target_branch), true) => {
+                    Some(driver.rev_parse_ref(root, target_branch).await?)
+                }
+                (None, _, _) => None,
             };
             (head, target)
         }
@@ -223,7 +245,7 @@ async fn build_worktree_vcs_snapshot_from_parts(
         emitted_at_ms: 0,
         base_commit_sha,
         head_commit_sha,
-        target_branch: resolution.target_branch,
+        target_branch,
         target_branch_commit_sha,
         base_resolution,
         compute_state,
@@ -481,6 +503,8 @@ async fn refresh_worktree_vcs_projection(
             worktree,
             crate::api::sessions::WorktreeDiffBaseResolution {
                 base_commit_sha: worktree.base_commit_sha.clone(),
+                head_commit_sha: None,
+                target_branch_commit_sha: None,
                 target_branch: None,
                 target_source: None,
                 kind: WorktreeVcsBaseResolutionKind::WorktreeBase,

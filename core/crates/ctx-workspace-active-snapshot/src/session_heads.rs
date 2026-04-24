@@ -272,6 +272,10 @@ impl WorkspaceActiveSnapshotHub {
             }
             cached.touch(Self::now_ms());
             let head = &cached.head;
+            if cached.capability == SessionHeadCapability::CompactOnly && head.head_window.truncated
+            {
+                return None;
+            }
             if head.turns.len() > requested {
                 return None;
             }

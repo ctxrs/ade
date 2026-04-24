@@ -239,6 +239,34 @@ pub(crate) async fn container_git_rev_parse(
     Ok(String::from_utf8_lossy(&bytes).trim().to_string())
 }
 
+pub(crate) async fn container_git_rev_parse_refs(
+    state: &Arc<AppState>,
+    worktree: &Worktree,
+    references: &[&str],
+) -> Result<Vec<String>> {
+    if references.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut args = Vec::with_capacity(references.len() + 1);
+    args.push("rev-parse");
+    args.extend_from_slice(references);
+    let bytes = container_git_stdout(state, worktree, &args).await?;
+    let commits = String::from_utf8_lossy(&bytes)
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(ToOwned::to_owned)
+        .collect::<Vec<_>>();
+    if commits.len() != references.len() {
+        anyhow::bail!(
+            "git rev-parse returned {} refs for {} requested refs",
+            commits.len(),
+            references.len()
+        );
+    }
+    Ok(commits)
+}
+
 async fn container_git_merge_base(
     state: &Arc<AppState>,
     worktree: &Worktree,
@@ -260,6 +288,24 @@ pub(crate) async fn worktree_rev_parse_head(
     let root = data_plane.live_worktree_root.as_path();
     let driver = vcs::driver_for_path(root).await?;
     driver.rev_parse_head(root).await
+}
+
+pub(crate) async fn worktree_rev_parse_refs(
+    state: &Arc<AppState>,
+    worktree: &Worktree,
+    references: &[&str],
+) -> Result<Vec<String>> {
+    let data_plane = resolve_worktree_data_plane(state, worktree).await?;
+    if matches!(data_plane.execution_mode, ExecutionMode::Sandbox) {
+        return container_git_rev_parse_refs(state, worktree, references).await;
+    }
+    let root = data_plane.live_worktree_root.as_path();
+    let driver = vcs::driver_for_path(root).await?;
+    let mut commits = Vec::with_capacity(references.len());
+    for reference in references {
+        commits.push(driver.rev_parse_ref(root, reference).await?);
+    }
+    Ok(commits)
 }
 
 pub(crate) async fn worktree_merge_base(

@@ -4,7 +4,7 @@ use std::collections::HashSet;
 
 use ctx_core::models::{
     Message, Session, SessionActivityState, SessionEvent, SessionEventType, SessionHeadSnapshot,
-    SessionMetadata, SessionTurn, SessionTurnToolSummary,
+    SessionMetadata, SessionTurn, SessionTurnToolSummary, WorktreeVcsSnapshot,
 };
 
 pub(super) const ACTIVE_HEAD_TURN_LIMIT: usize = 5;

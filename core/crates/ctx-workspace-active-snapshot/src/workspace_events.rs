@@ -5,6 +5,7 @@ use ctx_core::models::{
 };
 
 use crate::entry::WorkspaceActiveSnapshotEntry;
+use crate::trim::compact_worktree_vcs_snapshot;
 use crate::WorkspaceActiveSnapshotHub;
 
 impl WorkspaceActiveSnapshotHub {
@@ -57,6 +58,7 @@ impl WorkspaceActiveSnapshotHub {
         workspace_id: WorkspaceId,
         snapshot: WorktreeVcsSnapshot,
     ) {
+        let snapshot = compact_worktree_vcs_snapshot(&snapshot);
         let (tx, snapshot_rev) = {
             let mut guard = self.inner.lock().await;
             let entry = guard
@@ -73,6 +75,26 @@ impl WorkspaceActiveSnapshotHub {
             snapshot_rev,
             snapshot: Box::new(snapshot),
         });
+    }
+
+    pub async fn hydrate_worktree_vcs_snapshots(
+        &self,
+        workspace_id: WorkspaceId,
+        snapshots: Vec<WorktreeVcsSnapshot>,
+    ) {
+        if snapshots.is_empty() {
+            return;
+        }
+        let mut guard = self.inner.lock().await;
+        let entry = guard
+            .entry(workspace_id)
+            .or_insert_with(WorkspaceActiveSnapshotEntry::new);
+        for snapshot in snapshots {
+            entry
+                .worktree_vcs_snapshots
+                .entry(snapshot.worktree_id)
+                .or_insert(snapshot);
+        }
     }
 
     pub async fn drop_worktree_vcs_snapshots(&self, worktree_ids: &[WorktreeId]) {

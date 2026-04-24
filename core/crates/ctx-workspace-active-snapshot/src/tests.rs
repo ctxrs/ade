@@ -442,7 +442,8 @@ mod worktree_vcs_tests {
         SessionActivityState, SessionMetadata, SessionSnapshotSummary, SessionStatus,
         SessionTurnStatus, Task, TaskStatus, WorkspaceActiveTaskSummary, WorktreeVcsBaseResolution,
         WorktreeVcsComputeState, WorktreeVcsFreshness, WorktreeVcsGitStatusSummary,
-        WorktreeVcsSummary, WorktreeVcsTouchedFiles,
+        WorktreeVcsSnapshot, WorktreeVcsSummary, WorktreeVcsTouchedFiles,
+        WorktreeVcsTouchedFilesState,
     };
 
     fn sample_worktree_vcs_snapshot(worktree_id: WorktreeId) -> WorktreeVcsSnapshot {
@@ -463,6 +464,7 @@ mod worktree_vcs_tests {
                 ..Default::default()
             },
             touched_files: WorktreeVcsTouchedFiles::default(),
+            touched_files_state: WorktreeVcsTouchedFilesState::Ready,
             freshness: WorktreeVcsFreshness::Fresh,
             available: true,
             unavailable_reason: None,

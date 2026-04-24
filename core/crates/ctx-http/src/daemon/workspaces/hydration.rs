@@ -276,13 +276,13 @@ mod tests {
         WorktreeVcsTouchedFiles,
     };
     use std::collections::{HashMap, HashSet};
-    use std::sync::atomic::AtomicU64;
+    use std::sync::atomic::{AtomicBool, AtomicU64};
     use std::sync::{Arc, Mutex};
-    use tokio::sync::Mutex as AsyncMutex;
+    use tokio::sync::{Mutex as AsyncMutex, Notify, Semaphore};
 
     use ctx_workspace_active_snapshot::WorkspaceActiveSnapshotHub;
 
-    use crate::daemon::state::WorkspaceRuntime;
+    use crate::daemon::state::{WorkspaceRuntime, WorktreeVcsSchedulerRuntime};
 
     struct FakeHydrationStore {
         snapshot_state: (i64, i64),
@@ -458,6 +458,7 @@ mod tests {
             },
             git_status: WorktreeVcsGitStatusSummary::default(),
             touched_files: WorktreeVcsTouchedFiles::default(),
+            touched_files_state: ctx_core::models::WorktreeVcsTouchedFilesState::Ready,
             freshness: WorktreeVcsFreshness::Fresh,
             available: true,
             unavailable_reason: None,
@@ -543,13 +544,20 @@ mod tests {
         let session_id = SessionId::new();
         let worktree_id = WorktreeId::new();
         let runtime = WorkspaceRuntime {
+            worktree_vcs_enabled: true,
             file_completions_cache: AsyncMutex::new(HashMap::new()),
             workspace_file_completions_cache: AsyncMutex::new(HashMap::new()),
             git_status_snapshots: AsyncMutex::new(HashMap::new()),
             worktree_vcs_snapshots: AsyncMutex::new(HashMap::new()),
             worktree_vcs_active: AsyncMutex::new(HashMap::new()),
-            worktree_vcs_refresh_locks: AsyncMutex::new(HashMap::new()),
+            worktree_vcs_open_panes: AsyncMutex::new(HashMap::new()),
             worktree_vcs_summary_gen: AsyncMutex::new(HashMap::new()),
+            worktree_vcs_runtime: AsyncMutex::new(HashMap::new()),
+            worktree_vcs_scheduler: WorktreeVcsSchedulerRuntime {
+                started: AtomicBool::new(false),
+                notify: Arc::new(Notify::new()),
+                permits: Arc::new(Semaphore::new(1)),
+            },
             git_status_watchers: AsyncMutex::new(HashSet::new()),
             workspace_active_snapshot: Arc::new(WorkspaceActiveSnapshotHub::new()),
             workspace_active_snapshot_cache: AsyncMutex::new(HashMap::new()),
