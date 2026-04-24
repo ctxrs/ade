@@ -55,7 +55,6 @@ export function SessionThreadPane({
     <>
       {shouldRenderList ? (
         <SessionThreadMessageList
-          key={sessionId}
           sessionId={sessionId}
           isActive={isActive}
           style={style}

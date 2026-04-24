@@ -6,12 +6,18 @@ import { HARNESS_CATALOG } from "../../utils/harnessCatalog";
 import { shouldSendOnEnter } from "../../utils/keyboard";
 import { formatRelativeAgeShort } from "../../utils/relativeTime";
 import { useRelativeNowMs } from "../../utils/useRelativeNowMs";
+import { getLoadTestTelemetry } from "../../utils/loadTestTelemetry";
+import { noteVisibleSessionSwitchStarted } from "../../state/visibleSessionSwitchState";
 import { spinnerDelayForNow } from "./WorkbenchPage.utils";
 import type { AnchorRect } from "./WorkbenchPage.types";
 
 type TaskRowProps = {
   taskId: string;
   sessionId?: string | null;
+  activeSessionId?: string | null;
+  taskIndex?: number;
+  subscribedAtClick?: boolean;
+  authoritativeAtClick?: boolean;
   title: string;
   archived: boolean;
   archivePending: boolean;
@@ -53,6 +59,10 @@ function RelativeAgeLabel({
 export const TaskRow = React.memo(function TaskRow({
   taskId,
   sessionId,
+  activeSessionId,
+  taskIndex,
+  subscribedAtClick,
+  authoritativeAtClick,
   title,
   archived,
   archivePending,
@@ -130,6 +140,19 @@ export const TaskRow = React.memo(function TaskRow({
   const showArchive = archiveEnabled !== false && !onDismiss;
   const showDismiss = typeof onDismiss === "function";
   const resolvedDismissLabel = dismissLabel || "Dismiss";
+  const recordSwitchStart = (source: "pointer" | "keyboard") => {
+    if (!sessionId || sessionId === activeSessionId) return;
+    noteVisibleSessionSwitchStarted(sessionId);
+    getLoadTestTelemetry()?.startVisibleSessionSwitch({
+      fromSessionId: activeSessionId ?? null,
+      toSessionId: sessionId ?? null,
+      taskId,
+      targetIndex: taskIndex,
+      source,
+      subscribedAtClick,
+      authoritativeAtClick,
+    });
+  };
 
   return (
     <div
@@ -142,7 +165,10 @@ export const TaskRow = React.memo(function TaskRow({
         e.preventDefault();
         e.stopPropagation();
       }}
-      onClick={() => onFocusTask(taskId, sessionId ?? null)}
+      onClick={() => {
+        recordSwitchStart("pointer");
+        onFocusTask(taskId, sessionId ?? null);
+      }}
       onPointerEnter={() => onHoverEnter(taskId)}
       onPointerLeave={() => onHoverLeave(taskId)}
       onContextMenu={(e) => {
@@ -158,6 +184,7 @@ export const TaskRow = React.memo(function TaskRow({
         }
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
+          recordSwitchStart("keyboard");
           onFocusTask(taskId, sessionId ?? null);
         }
       }}

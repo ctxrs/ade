@@ -10,7 +10,11 @@ import {
   unarchiveTask,
   updateTaskTitle,
 } from "../../api/client";
-import type { SessionSupervisor } from "../../state/sessionSupervisor";
+import type {
+  SessionSupervisor,
+  SessionSupervisorSnapshot,
+} from "../../state/sessionSupervisor";
+import { isReplicaAuthority } from "../../state/sessionSupervisor/config";
 import type {
   WorkspaceActiveSnapshotItem,
   WorkspaceActiveSnapshotState,
@@ -56,6 +60,7 @@ type TaskMenuState = {
 type TaskListControllerArgs = {
   workspaceId: string;
   activeTaskId: string | null;
+  activeSessionId?: string | null;
   tasksById: Record<string, WorkspaceActiveSnapshotItem>;
   workspaceSnapshot: WorkspaceActiveSnapshotState;
   workspaceSnapshotStore: WorkspaceSnapshotStore;
@@ -64,6 +69,7 @@ type TaskListControllerArgs = {
   optimisticTasksById: Record<string, OptimisticTaskSummary>;
   taskLiveInfo: WorkbenchTaskLiveInfo;
   providerIdsByTaskFromSessions: Record<string, string[]>;
+  sessionEntries: SessionSupervisorSnapshot["sessions"];
   isTaskUnread: (taskId: string) => boolean;
   focusTask: (taskId: string, sessionId?: string | null) => void;
   focusNewTask: () => void;
@@ -76,6 +82,7 @@ type TaskListControllerArgs = {
 export function useWorkbenchTaskListController({
   workspaceId,
   activeTaskId,
+  activeSessionId,
   tasksById,
   workspaceSnapshot,
   workspaceSnapshotStore,
@@ -84,6 +91,7 @@ export function useWorkbenchTaskListController({
   optimisticTasksById,
   taskLiveInfo,
   providerIdsByTaskFromSessions,
+  sessionEntries,
   isTaskUnread,
   focusTask,
   focusNewTask,
@@ -424,6 +432,9 @@ export function useWorkbenchTaskListController({
   const renderTaskRow = useCallback(
     (summary: WorkspaceActiveSnapshotItem, opts?: { archived?: boolean }) => {
       const taskId = summary.id;
+      const taskIndex = opts?.archived
+        ? undefined
+        : activeTaskSummaries.findIndex((candidate) => candidate.id === taskId);
       const task = summary.task;
       const optimistic = isOptimisticTask(summary) ? summary : null;
       const localStatus = optimistic?.localStatus ?? null;
@@ -437,6 +448,7 @@ export function useWorkbenchTaskListController({
         idToString(summary.primarySessionId) ||
         idToString(task.primary_session_id ?? "") ||
         idToString(summary.primarySessionHead?.session?.id ?? "");
+      const focusEntry = focusSessionId ? sessionEntries[focusSessionId] : undefined;
       const working = taskLiveInfo.workingByTask.has(taskId);
       const hasError = taskLiveInfo.errorByTask.has(taskId);
       const unread = !working && isWorkbenchTaskUnread({ taskId, tasksById, taskLiveInfo });
@@ -473,6 +485,10 @@ export function useWorkbenchTaskListController({
           key={taskId}
           taskId={taskId}
           sessionId={focusSessionId || null}
+          activeSessionId={activeSessionId ?? null}
+          taskIndex={typeof taskIndex === "number" && taskIndex >= 0 ? taskIndex : undefined}
+          subscribedAtClick={focusEntry ? focusEntry.subscribed : false}
+          authoritativeAtClick={focusEntry ? isReplicaAuthority(focusEntry.freshness) : false}
           title={title}
           archived={archived}
           archivePending={archivePending}
@@ -502,6 +518,8 @@ export function useWorkbenchTaskListController({
     },
     [
       activeTaskId,
+      activeSessionId,
+      activeTaskSummaries,
       archivePendingById,
       cancelRenameTask,
       commitRenameTask,
@@ -514,6 +532,7 @@ export function useWorkbenchTaskListController({
       providerIdsByTaskFromSessions,
       renamingTaskId,
       setRenameDraft,
+      sessionEntries,
       taskLiveInfo.errorByTask,
       taskLiveInfo.lastAssistantMsByTask,
       taskLiveInfo.workingByTask,

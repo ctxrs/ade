@@ -53,8 +53,21 @@ export function useWorkbenchSessionSwitchMetrics({
   useEffect(() => {
     if (!loadTestTelemetry?.enabled) return;
     if (!measuredSessionSwitchId || !activeEntry || activeEntry.loading) return;
+    loadTestTelemetry.updateVisibleSessionSwitchState(measuredSessionSwitchId, {
+      subscribedWhenActive: activeEntry.subscribed,
+      authoritativeWhenActive: isReplicaAuthority(activeEntry.freshness),
+      httpRehydrateSeen: Boolean(activeEntry.fetching?.head),
+    });
     loadTestTelemetry.finishSessionSwitch(measuredSessionSwitchId);
-  }, [activeEntry?.loading, activeEntry?.updatedAtMs, loadTestTelemetry, measuredSessionSwitchId]);
+  }, [
+    activeEntry?.fetching?.head,
+    activeEntry?.freshness,
+    activeEntry?.loading,
+    activeEntry?.subscribed,
+    activeEntry?.updatedAtMs,
+    loadTestTelemetry,
+    measuredSessionSwitchId,
+  ]);
 
   useEffect(() => {
     if (

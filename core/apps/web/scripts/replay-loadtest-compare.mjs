@@ -5,6 +5,14 @@ import path from "node:path";
 
 const METRICS = [
   { key: "session_switch_ms", label: "Session switch p95", target: 100, kind: "latency" },
+  { key: "switch_to_visible_ms", label: "Switch->visible p95", target: 100, kind: "latency" },
+  { key: "switch_to_stable_ms", label: "Switch->stable p95", target: 150, kind: "latency" },
+  { path: ["switch_overlap_long_task_ms", "count"], label: "Switch-overlap long tasks", target: 0, kind: "count" },
+  { path: ["switch_overlap_long_task_ms", "max"], label: "Switch-overlap long task max", target: 50, kind: "latency", emptyValue: 0 },
+  { key: "event_loop_gap_ms", label: "Event-loop gap p95", target: 100, kind: "latency", emptyValue: 0 },
+  { path: ["event_loop_gap_ms", "max"], label: "Event-loop gap max", target: 250, kind: "latency", emptyValue: 0 },
+  { key: "raf_gap_ms", label: "RAF gap p95", target: 100, kind: "latency", emptyValue: 0 },
+  { path: ["raf_gap_ms", "max"], label: "RAF gap max", target: 250, kind: "latency", emptyValue: 0 },
   { key: "replay_final_to_state_ms", label: "Replay final marker->state p95", target: 150, kind: "latency" },
   { key: "replay_final_to_dom_ms", label: "Replay final marker->DOM p95", target: 200, kind: "latency" },
   { key: "final_ingress_to_dom_ms", label: "Final ingress->DOM p95", target: 150, kind: "latency" },
@@ -116,7 +124,21 @@ function readMetricValue(summary, metric) {
   if (Number.isFinite(value)) {
     return value;
   }
-  return Number.isFinite(value?.p95) ? value.p95 : null;
+  if (Number.isFinite(value?.p95)) {
+    return value.p95;
+  }
+  if (Number.isFinite(metric.emptyValue)) {
+    const summaryObject =
+      Array.isArray(metric.path) && metric.path.length > 1
+        ? metric.path
+            .slice(0, -1)
+            .reduce((current, key) => (current == null ? undefined : current[key]), summary)
+        : value;
+    if (summaryObject == null || summaryObject?.count === 0 || value == null) {
+      return metric.emptyValue;
+    }
+  }
+  return null;
 }
 
 function pct(value) {

@@ -92,6 +92,47 @@ describe("buildVisibleProjectionUpdatePlan", () => {
     });
   });
 
+  it("skips a first visible relayout when the prepared items already match a reconcile op", () => {
+    const items = [makeMessage("message-1"), makeMessage("message-2")];
+    const { core, preparedState } = createPreparedState(items, {
+      "message-1": 40,
+      "message-2": 40,
+    });
+
+    const plan = buildVisibleProjectionUpdatePlan({
+      core,
+      preparedState,
+      listItems: items,
+      threadProjectionOp: {
+        kind: "reconcile",
+        projectionRevision: 7,
+        changedItemIds: ["message-1", "message-2"],
+        remeasureItemIds: ["message-1", "message-2"],
+      },
+      runtimeUiStateLayoutRevision: "ui-a",
+      lastAppliedUiStateLayoutRevision: "ui-a",
+      lastAppliedProjectionOpKey: null,
+      viewport: {
+        width: 320,
+        height: 120,
+        scrollTop: 0,
+      },
+      followBottom: false,
+      atBottom: false,
+      activeChangedItemId: null,
+      getLayoutRevision: () => 0,
+      bottomThresholdPx: 12,
+    });
+
+    expect(plan).toEqual({
+      kind: "noop",
+      projectionOpKey: expect.stringContaining("7|reconcile|message-1,message-2|message-1,message-2|"),
+      uiStateChanged: false,
+      itemsChanged: false,
+      projectionChanged: true,
+    });
+  });
+
   it("returns a localized patch plan for mid-list projection updates", () => {
     const initialItems = [
       makeMessage("message-1"),
@@ -251,11 +292,13 @@ describe("buildVisibleProjectionUpdatePlan", () => {
       bottomThresholdPx: 12,
     });
 
-    expect(firstPlan.kind).toBe("apply");
-    if (firstPlan.kind !== "apply") {
-      throw new Error("Expected first apply plan");
-    }
-    expect(firstPlan.changeKind).toBe("localized-patch");
+    expect(firstPlan).toEqual({
+      kind: "noop",
+      projectionOpKey: expect.stringContaining("1|append_stream|message-2|message-1,message-2|"),
+      uiStateChanged: false,
+      itemsChanged: false,
+      projectionChanged: true,
+    });
     const secondPlan = buildVisibleProjectionUpdatePlan({
       core,
       preparedState,

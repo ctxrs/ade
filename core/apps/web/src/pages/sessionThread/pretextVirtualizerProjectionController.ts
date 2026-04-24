@@ -100,7 +100,7 @@ export function buildVisibleProjectionUpdatePlan(params: {
   const projectionChanged =
     projectionOpKey != null && params.lastAppliedProjectionOpKey !== projectionOpKey;
 
-  if (!itemsChanged && !projectionChanged && !uiStateChanged) {
+  if (!itemsChanged && !uiStateChanged && params.lastAppliedProjectionOpKey === null) {
     return {
       kind: "noop",
       projectionOpKey,

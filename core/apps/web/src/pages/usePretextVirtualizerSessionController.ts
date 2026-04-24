@@ -53,6 +53,7 @@ export function usePretextVirtualizerSessionController(params: Params): Result {
   const continueHistoryAtTopRef = useRef(false);
   const blockedTopPinnedHistoryRef = useRef(false);
   const initialContentRenderedSessionIdRef = useRef<string | null>(null);
+  const renderedItemCountRef = useRef(0);
   const renderedAnchorIdRef = useRef<string | null>(null);
   const renderedTopIdRef = useRef<string | null>(null);
   const [loadingOlder, setLoadingOlder] = useState(false);
@@ -107,6 +108,7 @@ export function usePretextVirtualizerSessionController(params: Params): Result {
     lastAtBottomRef.current = true;
     renderedAnchorIdRef.current = null;
     renderedTopIdRef.current = null;
+    renderedItemCountRef.current = 0;
     lastIsActiveRef.current = isActive;
     initialContentRenderedSessionIdRef.current = null;
     onAtBottomChange?.(true);
@@ -199,7 +201,15 @@ export function usePretextVirtualizerSessionController(params: Params): Result {
     [canLoadOlder, isActive, onAtBottomChange, requestOlderHistory],
   );
 
+  useLayoutEffect(() => {
+    if (!loaded || renderedItemCountRef.current === 0) return;
+    if (initialContentRenderedSessionIdRef.current === sessionId) return;
+    initialContentRenderedSessionIdRef.current = sessionId;
+    onInitialContentRendered?.();
+  }, [loaded, onInitialContentRendered, sessionId]);
+
   const onRenderedDataChange = useCallback((range: readonly WorkbenchListItem[]) => {
+    renderedItemCountRef.current = range.length;
     const topId = range[0]?.id ?? null;
     const middleIndex = range.length > 0 ? Math.floor(range.length / 2) : 0;
     renderedTopIdRef.current = topId;

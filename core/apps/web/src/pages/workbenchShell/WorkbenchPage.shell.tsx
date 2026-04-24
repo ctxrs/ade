@@ -435,6 +435,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const taskListController = useWorkbenchTaskListController({
     workspaceId,
     activeTaskId,
+    activeSessionId,
     tasksById,
     workspaceSnapshot,
     workspaceSnapshotStore,
@@ -443,6 +444,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     optimisticTasksById,
     taskLiveInfo,
     providerIdsByTaskFromSessions,
+    sessionEntries: sessionSnap.sessions,
     isTaskUnread,
     focusTask,
     focusNewTask,

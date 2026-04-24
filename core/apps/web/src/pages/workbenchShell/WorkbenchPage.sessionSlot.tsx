@@ -42,7 +42,6 @@ export function WorkbenchSessionSlot({
     <div className="wb-session-slot" aria-hidden="false">
       <div className="wb-session-slot-body">
         <SessionView
-          key={sessionId}
           sessionId={sessionId}
           autoOpenSession={false}
           hideSessionLoadIssuesBanner

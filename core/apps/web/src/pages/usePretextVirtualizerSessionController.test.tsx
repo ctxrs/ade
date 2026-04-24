@@ -457,6 +457,38 @@ describe("usePretextVirtualizerSessionController", () => {
     expect(onInitialContentRendered).toHaveBeenCalledTimes(1);
   });
 
+  it("marks the initial projection once loaded becomes true after rows already rendered", async () => {
+    const onInitialContentRendered = vi.fn();
+    const { result, rerender } = renderHook(
+      ({ loaded }) =>
+        usePretextVirtualizerSessionController({
+          sessionId: "session-1",
+          isActive: true,
+          loaded,
+          listItems,
+          canLoadOlder: false,
+          loadOlder: vi.fn(async () => {}),
+          showDebug: false,
+          onInitialContentRendered,
+        }),
+      {
+        initialProps: { loaded: false },
+      },
+    );
+
+    act(() => {
+      result.current.onRenderedDataChange([listItems[0], listItems[1]]);
+    });
+    expect(onInitialContentRendered).not.toHaveBeenCalled();
+
+    await act(async () => {
+      rerender({ loaded: true });
+      await Promise.resolve();
+    });
+
+    expect(onInitialContentRendered).toHaveBeenCalledTimes(1);
+  });
+
   it("does not request older history while still well below the top edge", async () => {
     const loadOlder = vi.fn(async () => {});
     const { result } = renderHook(() =>

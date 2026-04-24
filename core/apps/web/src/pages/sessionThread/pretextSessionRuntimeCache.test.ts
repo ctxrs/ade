@@ -89,6 +89,37 @@ describe("pretextSessionRuntimeCache", () => {
     expect(syncItemsSpy).not.toHaveBeenCalled();
   });
 
+  it("skips keyed item replacement when equal content arrives as a new array", () => {
+    const listItems = makeItems(8);
+    const nextListItems = listItems.map((item) => ({ ...item }));
+    const uiState = createDefaultSessionTranscriptUiState("default", ["turn-1"]);
+    const sourceKey = buildSessionPretextRuntimeSourceKey(listItems, uiState);
+    const layoutKey = buildSessionPretextRuntimeLayoutKey({ uiState, listItems });
+    const runtime = primeSessionPretextRuntime({
+      sessionId: "session-stable-key",
+      listItems,
+      uiState,
+      viewportWidth: 900,
+      viewportHeight: 300,
+      sourceKey,
+      layoutKey,
+    });
+    const syncItemsSpy = vi.spyOn(runtime.core, "syncItems");
+
+    primeSessionPretextRuntime({
+      sessionId: "session-stable-key",
+      listItems: nextListItems,
+      uiState,
+      viewportWidth: 900,
+      viewportHeight: 300,
+      sourceKey,
+      layoutKey,
+    });
+
+    expect(syncItemsSpy).not.toHaveBeenCalled();
+    expect(readSessionPretextRuntimePreparedState(runtime).listItems).toBe(listItems);
+  });
+
   it("records explicit source and layout keys for prepared runtimes", () => {
     const listItems = makeItems(3);
     const uiState = createDefaultSessionTranscriptUiState("default", ["turn-1"]);

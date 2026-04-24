@@ -17,12 +17,15 @@ import {
   noteFinalVisible,
   noteSessionSwitchFirstPaint,
 } from "../../state/foregroundFreshnessTelemetry";
+import { noteVisibleSessionSwitchSettled } from "../../state/visibleSessionSwitchState";
+import { getLoadTestTelemetry } from "../../utils/loadTestTelemetry";
 import { useStableAskUserQuestionAnswers } from "./useStableAskUserQuestionAnswers";
 import { useSessionViewDebugBridge } from "./useSessionViewDebugBridge";
 import type { AskUserQuestionAnswerState } from "./SessionPage.types";
 import type { SessionThreadSurfaceTranscriptProps } from "./SessionThreadSurface";
 import { deriveSessionError } from "../workbenchViewModel/SessionPage.workbenchViewModel";
 import { selectSessionThreadProjection } from "../../state/sessionThreadProjection/selectors";
+import { shouldMarkEmptySessionSwitchRendered } from "./sessionViewVisibleSwitch";
 
 type ThreadProjection = ReturnType<typeof selectSessionThreadProjection>;
 
@@ -234,9 +237,37 @@ export function useSessionViewTranscriptController(params: Params): Result {
       verbosity,
     ],
   );
-  const handleInitialTranscriptRendered = useCallback(() => {
+  const markLoadTestSwitchRendered = useCallback(() => {
     noteSessionSwitchFirstPaint(sessionId);
+    const loadTestTelemetry = getLoadTestTelemetry();
+    loadTestTelemetry?.markVisibleSessionSwitchVisible(sessionId);
+    if (loadTestTelemetry?.enabled && typeof requestAnimationFrame === "function") {
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          loadTestTelemetry.markVisibleSessionSwitchStable(sessionId);
+          noteVisibleSessionSwitchSettled(sessionId);
+        });
+      });
+    } else {
+      loadTestTelemetry?.markVisibleSessionSwitchStable(sessionId);
+      noteVisibleSessionSwitchSettled(sessionId);
+    }
   }, [sessionId]);
+  const handleInitialTranscriptRendered = useCallback(() => {
+    if (!isActive) return;
+    markLoadTestSwitchRendered();
+  }, [isActive, markLoadTestSwitchRendered]);
+
+  useEffect(() => {
+    if (!isActive || !entry?.stateLoaded) return;
+    if (shouldMarkEmptySessionSwitchRendered({
+      isActive,
+      stateLoaded: Boolean(entry?.stateLoaded),
+      listItemCount: listItems.length,
+    })) {
+      markLoadTestSwitchRendered();
+    }
+  }, [entry?.stateLoaded, isActive, listItems.length, markLoadTestSwitchRendered]);
   const {
     threadProjectionOp,
     itemIdentity,

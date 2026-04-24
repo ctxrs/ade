@@ -18,6 +18,16 @@ let baseUrl = process.env.CTX_LOADTEST_BASE_URL || defaultBaseUrl;
 let check = false;
 let maxSessionSwitchP95 = null;
 let maxSessionSwitchP99 = null;
+let maxVisibleSwitchP95 = null;
+let maxVisibleSwitchP99 = null;
+let maxVisibleSwitchMax = null;
+let maxStableSwitchP95 = null;
+let maxStableSwitchP99 = null;
+let maxStableSwitchMax = null;
+let maxSwitchOverlapLongTaskMs = null;
+let maxSwitchOverlapLongTaskCount = null;
+let maxEventLoopGapMs = null;
+let maxRafGapMs = null;
 let maxLongTaskMs = null;
 let maxLongTaskCount = null;
 let synthesizeDeltas = null;
@@ -39,6 +49,7 @@ let synthesizeForegroundTerminalSessionId = null;
 let resetSessionHeadToRunningId = null;
 let waitTimeoutMs = null;
 let skipWaitForSynth = false;
+let trackForegroundFinal = true;
 
 for (let i = 0; i < args.length; i++) {
   const arg = args[i];
@@ -68,6 +79,56 @@ for (let i = 0; i < args.length; i++) {
   }
   if (arg === "--max-session-switch-p99") {
     maxSessionSwitchP99 = Number(args[i + 1]);
+    i += 1;
+    continue;
+  }
+  if (arg === "--max-visible-switch-p95") {
+    maxVisibleSwitchP95 = Number(args[i + 1]);
+    i += 1;
+    continue;
+  }
+  if (arg === "--max-visible-switch-p99") {
+    maxVisibleSwitchP99 = Number(args[i + 1]);
+    i += 1;
+    continue;
+  }
+  if (arg === "--max-visible-switch-max") {
+    maxVisibleSwitchMax = Number(args[i + 1]);
+    i += 1;
+    continue;
+  }
+  if (arg === "--max-stable-switch-p95") {
+    maxStableSwitchP95 = Number(args[i + 1]);
+    i += 1;
+    continue;
+  }
+  if (arg === "--max-stable-switch-p99") {
+    maxStableSwitchP99 = Number(args[i + 1]);
+    i += 1;
+    continue;
+  }
+  if (arg === "--max-stable-switch-max") {
+    maxStableSwitchMax = Number(args[i + 1]);
+    i += 1;
+    continue;
+  }
+  if (arg === "--max-switch-overlap-long-task-ms") {
+    maxSwitchOverlapLongTaskMs = Number(args[i + 1]);
+    i += 1;
+    continue;
+  }
+  if (arg === "--max-switch-overlap-long-task-count") {
+    maxSwitchOverlapLongTaskCount = Number(args[i + 1]);
+    i += 1;
+    continue;
+  }
+  if (arg === "--max-event-loop-gap-ms") {
+    maxEventLoopGapMs = Number(args[i + 1]);
+    i += 1;
+    continue;
+  }
+  if (arg === "--max-raf-gap-ms") {
+    maxRafGapMs = Number(args[i + 1]);
     i += 1;
     continue;
   }
@@ -184,10 +245,18 @@ for (let i = 0; i < args.length; i++) {
     skipWaitForSynth = true;
     continue;
   }
+  if (arg === "--no-track-foreground-final") {
+    trackForegroundFinal = false;
+    continue;
+  }
   if (arg === "--help" || arg === "-h") {
     console.log(
       "Usage: node ./scripts/replay-loadtest.mjs [--fixture path] [--out path] [--base-url url] " +
         "[--check] [--max-session-switch-p95 ms] [--max-session-switch-p99 ms] " +
+        "[--max-visible-switch-p95 ms] [--max-visible-switch-p99 ms] [--max-visible-switch-max ms] " +
+        "[--max-stable-switch-p95 ms] [--max-stable-switch-p99 ms] [--max-stable-switch-max ms] " +
+        "[--max-switch-overlap-long-task-ms ms] [--max-switch-overlap-long-task-count n] " +
+        "[--max-event-loop-gap-ms ms] [--max-raf-gap-ms ms] " +
         "[--max-long-task-ms ms] [--max-long-task-count n] " +
         "[--synthesize-deltas n] [--synthesize-interval-ms ms] [--synthesize-start-delay-ms ms] " +
         "[--synthesize-message-bytes n] [--synthesize-session-ids id1,id2] " +
@@ -198,7 +267,7 @@ for (let i = 0; i < args.length; i++) {
         "[--synthesize-task-start-delay-ms ms] [--synthesize-task-ids id1,id2] " +
         "[--synthesize-foreground-terminal-delay-ms ms] [--synthesize-foreground-terminal-session-id id] " +
         "[--reset-session-head-to-running id] " +
-        "[--wait-timeout-ms ms] [--no-wait-for-synth]\n",
+        "[--wait-timeout-ms ms] [--no-wait-for-synth] [--no-track-foreground-final]\n",
     );
     process.exit(0);
   }
@@ -219,6 +288,11 @@ const summarizeValues = (values) => ({
   p99: percentile(values, 0.99),
   max: values.length ? Math.max(...values) : null,
 });
+
+const parseNonNegativeIntegerEnv = (name, fallback = 0) => {
+  const value = Number(process.env[name] || fallback);
+  return Number.isInteger(value) && value >= 0 ? value : fallback;
+};
 
 const fixture = JSON.parse(await readFile(fixturePath, "utf8"));
 const workspaceId = fixture?.workspace?.id || fixture?.active_snapshot?.workspace_id;
@@ -610,6 +684,7 @@ if (Number.isFinite(synthesizeTaskDeltas) && synthesizeTaskDeltas > 0) {
 }
 
 if (
+  trackForegroundFinal &&
   Number.isFinite(synthesizeForegroundTerminalDelayMs) &&
   synthesizeForegroundTerminalDelayMs >= 0
 ) {
@@ -695,7 +770,7 @@ if (
   }
 }
 
-if (!trackedForegroundFinal) {
+if (trackForegroundFinal && !trackedForegroundFinal) {
   const foregroundSessionId = getForegroundSessionId();
   if (foregroundSessionId) {
     const fallbackFinal = [...streamEvents]
@@ -936,7 +1011,6 @@ await page.addInitScript(({ events, markerPlans }) => {
       this._listeners = new Map();
       this._timers = [];
       this._closed = false;
-
       const openTimer = window.setTimeout(() => {
         if (this._closed) return;
         this.readyState = ReplayWebSocket.OPEN;
@@ -1214,6 +1288,11 @@ await page.route("**/api/**", async (route) => {
     return;
   }
 
+  if (pathname === "/api/telemetry/events") {
+    await route.fulfill({ status: 204, body: "" });
+    return;
+  }
+
   if (pathname === "/api/telemetry/client") {
     try {
       const body = route.request().postDataJSON?.() ?? JSON.parse(route.request().postData() || "{}");
@@ -1234,12 +1313,16 @@ await page.route("**/api/**", async (route) => {
 try {
   const url = new URL(`${baseUrl}/workspaces/${workspaceId}`);
   url.searchParams.set("loadtest", "1");
+  const warmModeOverride = process.env.CTX_REPLAY_PRETEXT_WARM_MODE;
+  if (warmModeOverride) {
+    url.searchParams.set("pretextWarmMode", warmModeOverride);
+  }
   if (waitForTargets.length > 0 || trackedForegroundFinal) {
     url.searchParams.set("ctxE2E", "1");
   }
   await page.goto(url.toString(), { waitUntil: "domcontentloaded" });
   try {
-  await page.waitForFunction(() => document.querySelectorAll(".wb-task-row").length >= 1, null, { timeout: 15000 });
+    await page.waitForFunction(() => document.querySelectorAll(".wb-task-row").length >= 1, null, { timeout: 15000 });
   } catch (err) {
     const taskCount = await page.evaluate(() => document.querySelectorAll(".wb-task-row").length);
     console.log(`task rows after timeout: ${taskCount}`);
@@ -1251,6 +1334,14 @@ try {
     throw err;
   }
   await page.evaluate(() => window.__ctxLoadTestTelemetry?.reset?.());
+  const requestedInitialWaitMs = Number(process.env.CTX_REPLAY_INITIAL_WAIT_MS || 0);
+  const initialWaitMs =
+    Number.isFinite(requestedInitialWaitMs) && requestedInitialWaitMs >= 0
+      ? requestedInitialWaitMs
+      : 0;
+  if (initialWaitMs > 0) {
+    await page.waitForTimeout(initialWaitMs);
+  }
 
   const rows = page.locator(".wb-task-row");
   const taskCount = await rows.count();
@@ -1290,10 +1381,20 @@ try {
     }
   } else {
     const useDirectClicks = Number.isFinite(synthesizeDeltas) && synthesizeDeltas > 0;
+    const envClickSequence = String(process.env.CTX_REPLAY_CLICK_SEQUENCE || "")
+      .split(",")
+      .map((value) => Number(value.trim()))
+      .filter((value) => Number.isInteger(value) && value >= 0 && value < taskCount);
     const clickSequence =
-      taskCount >= 2
-        ? [0, 1, 0]
-        : [0];
+      envClickSequence.length > 0
+        ? envClickSequence
+        : taskCount >= 2
+          ? [0, 1, 0]
+          : [0];
+    const clickWaitsMs = String(process.env.CTX_REPLAY_CLICK_WAITS_MS || "")
+      .split(",")
+      .map((value) => Number(value.trim()))
+      .filter((value) => Number.isFinite(value) && value >= 0);
     for (let i = 0; i < clickSequence.length; i += 1) {
       const targetIndex = clickSequence[i];
       if (useDirectClicks) {
@@ -1302,12 +1403,17 @@ try {
         await rows.nth(targetIndex).click();
       }
       if (i < clickSequence.length - 1) {
-        await page.waitForTimeout(i === 0 ? 300 : 400);
+        await page.waitForTimeout(clickWaitsMs[i] ?? (i === 0 ? 300 : 400));
       }
     }
   }
 
-  await page.waitForTimeout(1500);
+  const requestedFinalWaitMs = Number(process.env.CTX_REPLAY_FINAL_WAIT_MS || 1500);
+  const finalWaitMs =
+    Number.isFinite(requestedFinalWaitMs) && requestedFinalWaitMs >= 0
+      ? requestedFinalWaitMs
+      : 1500;
+  await page.waitForTimeout(finalWaitMs);
 
   if (waitForTargets.length > 0) {
     await page.waitForFunction(
@@ -1462,6 +1568,16 @@ try {
   if (check) {
     if (!Number.isFinite(maxSessionSwitchP95)) maxSessionSwitchP95 = 100;
     if (!Number.isFinite(maxSessionSwitchP99)) maxSessionSwitchP99 = 300;
+    if (!Number.isFinite(maxVisibleSwitchP95)) maxVisibleSwitchP95 = 100;
+    if (!Number.isFinite(maxVisibleSwitchP99)) maxVisibleSwitchP99 = 300;
+    if (!Number.isFinite(maxVisibleSwitchMax)) maxVisibleSwitchMax = 300;
+    if (!Number.isFinite(maxStableSwitchP95)) maxStableSwitchP95 = 150;
+    if (!Number.isFinite(maxStableSwitchP99)) maxStableSwitchP99 = 500;
+    if (!Number.isFinite(maxStableSwitchMax)) maxStableSwitchMax = 500;
+    if (!Number.isFinite(maxSwitchOverlapLongTaskMs)) maxSwitchOverlapLongTaskMs = 50;
+    if (!Number.isFinite(maxSwitchOverlapLongTaskCount)) maxSwitchOverlapLongTaskCount = 0;
+    if (!Number.isFinite(maxEventLoopGapMs)) maxEventLoopGapMs = 250;
+    if (!Number.isFinite(maxRafGapMs)) maxRafGapMs = 250;
     if (!Number.isFinite(maxLongTaskMs)) maxLongTaskMs = 50;
     if (!Number.isFinite(maxLongTaskCount)) maxLongTaskCount = 0;
   }
@@ -1471,10 +1587,56 @@ try {
         .filter((entry) => entry?.status === "completed" && Number.isFinite(entry?.duration_ms))
         .map((entry) => entry.duration_ms)
     : [];
+  const allVisibleSwitches = Array.isArray(telemetry?.visible_session_switches)
+    ? telemetry.visible_session_switches.filter((entry) => entry?.status === "stable" || entry?.status === "visible")
+    : [];
+  const switchWarmupCount = Math.min(
+    allVisibleSwitches.length,
+    parseNonNegativeIntegerEnv("CTX_REPLAY_SWITCH_WARMUP_COUNT", 0),
+  );
+  const visibleSwitches = allVisibleSwitches.slice(switchWarmupCount);
+  const visibleSwitchDurations = visibleSwitches
+    .filter((entry) => Number.isFinite(entry?.click_to_visible_ms))
+    .map((entry) => entry.click_to_visible_ms);
+  const stableSwitchDurations = visibleSwitches
+    .filter((entry) => Number.isFinite(entry?.click_to_stable_ms))
+    .map((entry) => entry.click_to_stable_ms);
   const longTasks = Array.isArray(telemetry?.long_tasks) ? telemetry.long_tasks : [];
   const longTaskDurations = longTasks
     .filter((entry) => Number.isFinite(entry?.duration_ms))
     .map((entry) => entry.duration_ms);
+  const eventLoopGapDurations = Array.isArray(telemetry?.event_loop_gaps)
+    ? telemetry.event_loop_gaps
+        .filter((entry) => Number.isFinite(entry?.gap_ms))
+        .map((entry) => entry.gap_ms)
+    : [];
+  const eventLoopGapUnthrottledDurations = Array.isArray(telemetry?.event_loop_gaps)
+    ? telemetry.event_loop_gaps
+        .filter((entry) => Number.isFinite(entry?.gap_ms) && entry?.timer_throttled_suspected !== true)
+        .map((entry) => entry.gap_ms)
+    : [];
+  const rafGapDurations = Array.isArray(telemetry?.raf_gaps)
+    ? telemetry.raf_gaps
+        .filter((entry) => Number.isFinite(entry?.gap_ms))
+        .map((entry) => entry.gap_ms)
+    : [];
+  const switchOverlapLongTaskDurations = visibleSwitches.flatMap((switchEntry) => {
+    const startedAtMs = Number(switchEntry?.started_at_ms);
+    const finishedAtMs = Number(
+      switchEntry?.stable_at_ms ?? switchEntry?.visible_at_ms ?? switchEntry?.started_at_ms,
+    );
+    if (!Number.isFinite(startedAtMs) || !Number.isFinite(finishedAtMs)) return [];
+    return longTasks
+      .filter((longTask) => {
+        const longStart = Number(longTask?.start_ms);
+        const duration = Number(longTask?.duration_ms);
+        if (!Number.isFinite(longStart) || !Number.isFinite(duration)) return false;
+        const longEnd = longStart + duration;
+        return longStart <= finishedAtMs && longEnd >= startedAtMs;
+      })
+      .map((longTask) => longTask.duration_ms)
+      .filter(Number.isFinite);
+  });
   const summarizeClientMetric = (name) => {
     const values = clientTelemetryEvents
       .filter((event) => event?.name === name && Number.isFinite(event?.value))
@@ -1498,7 +1660,15 @@ try {
     ? longTaskDurations.filter((value) => value > longTaskBudget).length
     : 0;
   const summary = {
+    switch_sample_count_raw: allVisibleSwitches.length,
+    switch_warmup_count: switchWarmupCount,
     session_switch_ms: summarizeValues(sessionDurations),
+    switch_to_visible_ms: summarizeValues(visibleSwitchDurations),
+    switch_to_stable_ms: summarizeValues(stableSwitchDurations),
+    switch_overlap_long_task_ms: summarizeValues(switchOverlapLongTaskDurations),
+    event_loop_gap_ms: summarizeValues(eventLoopGapDurations),
+    event_loop_gap_unthrottled_ms: summarizeValues(eventLoopGapUnthrottledDurations),
+    raf_gap_ms: summarizeValues(rafGapDurations),
     long_tasks_ms: {
       count: longTaskDurations.length,
       max: longTaskDurations.length ? Math.max(...longTaskDurations) : null,
@@ -1553,10 +1723,45 @@ try {
       `max=${summary.session_switch_ms.max ?? "n/a"}`,
   );
   console.log(
+    `visible switches: count=${summary.switch_to_visible_ms.count} ` +
+      `warmup=${summary.switch_warmup_count} ` +
+      `p50=${summary.switch_to_visible_ms.p50 ?? "n/a"} ` +
+      `p95=${summary.switch_to_visible_ms.p95 ?? "n/a"} ` +
+      `p99=${summary.switch_to_visible_ms.p99 ?? "n/a"} ` +
+      `max=${summary.switch_to_visible_ms.max ?? "n/a"}`,
+  );
+  console.log(
+    `stable switches: count=${summary.switch_to_stable_ms.count} ` +
+      `p50=${summary.switch_to_stable_ms.p50 ?? "n/a"} ` +
+      `p95=${summary.switch_to_stable_ms.p95 ?? "n/a"} ` +
+      `p99=${summary.switch_to_stable_ms.p99 ?? "n/a"} ` +
+      `max=${summary.switch_to_stable_ms.max ?? "n/a"}`,
+  );
+  console.log(
+    `switch-overlap long tasks: count=${summary.switch_overlap_long_task_ms.count} ` +
+      `p95=${summary.switch_overlap_long_task_ms.p95 ?? "n/a"} ` +
+      `max=${summary.switch_overlap_long_task_ms.max ?? "n/a"}`,
+  );
+  console.log(
     `long tasks: count=${summary.long_tasks_ms.count} ` +
       `over_budget=${summary.long_tasks_ms.over_budget} ` +
       `max=${summary.long_tasks_ms.max ?? "n/a"} ` +
       `budget=${summary.long_tasks_ms.budget_ms ?? "n/a"}`,
+  );
+  console.log(
+    `event loop gaps: count=${summary.event_loop_gap_ms.count} ` +
+      `p95=${summary.event_loop_gap_ms.p95 ?? "n/a"} ` +
+      `max=${summary.event_loop_gap_ms.max ?? "n/a"}`,
+  );
+  console.log(
+    `event loop gaps (unthrottled): count=${summary.event_loop_gap_unthrottled_ms.count} ` +
+      `p95=${summary.event_loop_gap_unthrottled_ms.p95 ?? "n/a"} ` +
+      `max=${summary.event_loop_gap_unthrottled_ms.max ?? "n/a"}`,
+  );
+  console.log(
+    `raf gaps: count=${summary.raf_gap_ms.count} ` +
+      `p95=${summary.raf_gap_ms.p95 ?? "n/a"} ` +
+      `max=${summary.raf_gap_ms.max ?? "n/a"}`,
   );
   console.log(
     `replay final marker->state: count=${summary.replay_final_to_state_ms.count} ` +
@@ -1583,6 +1788,12 @@ try {
   if (check && sessionDurations.length === 0) {
     failures.push("no session switch telemetry captured");
   }
+  if (check && visibleSwitchDurations.length === 0) {
+    failures.push("no visible switch telemetry captured");
+  }
+  if (check && stableSwitchDurations.length === 0) {
+    failures.push("no stable switch telemetry captured");
+  }
   if (check && Number.isFinite(maxSessionSwitchP95)) {
     const p95 = summary.session_switch_ms.p95 ?? Infinity;
     if (p95 > maxSessionSwitchP95) {
@@ -1593,6 +1804,70 @@ try {
     const p99 = summary.session_switch_ms.p99 ?? Infinity;
     if (p99 > maxSessionSwitchP99) {
       failures.push(`session switch p99 ${p99}ms > ${maxSessionSwitchP99}ms`);
+    }
+  }
+  if (check && Number.isFinite(maxVisibleSwitchP95)) {
+    const p95 = summary.switch_to_visible_ms.p95 ?? Infinity;
+    if (p95 > maxVisibleSwitchP95) {
+      failures.push(`visible switch p95 ${p95}ms > ${maxVisibleSwitchP95}ms`);
+    }
+  }
+  if (check && Number.isFinite(maxVisibleSwitchP99)) {
+    const p99 = summary.switch_to_visible_ms.p99 ?? Infinity;
+    if (p99 > maxVisibleSwitchP99) {
+      failures.push(`visible switch p99 ${p99}ms > ${maxVisibleSwitchP99}ms`);
+    }
+  }
+  if (check && Number.isFinite(maxVisibleSwitchMax)) {
+    const max = summary.switch_to_visible_ms.max ?? Infinity;
+    if (max > maxVisibleSwitchMax) {
+      failures.push(`visible switch max ${max}ms > ${maxVisibleSwitchMax}ms`);
+    }
+  }
+  if (check && Number.isFinite(maxStableSwitchP95)) {
+    const p95 = summary.switch_to_stable_ms.p95 ?? Infinity;
+    if (p95 > maxStableSwitchP95) {
+      failures.push(`stable switch p95 ${p95}ms > ${maxStableSwitchP95}ms`);
+    }
+  }
+  if (check && Number.isFinite(maxStableSwitchP99)) {
+    const p99 = summary.switch_to_stable_ms.p99 ?? Infinity;
+    if (p99 > maxStableSwitchP99) {
+      failures.push(`stable switch p99 ${p99}ms > ${maxStableSwitchP99}ms`);
+    }
+  }
+  if (check && Number.isFinite(maxStableSwitchMax)) {
+    const max = summary.switch_to_stable_ms.max ?? Infinity;
+    if (max > maxStableSwitchMax) {
+      failures.push(`stable switch max ${max}ms > ${maxStableSwitchMax}ms`);
+    }
+  }
+  if (check && Number.isFinite(maxSwitchOverlapLongTaskCount)) {
+    if (summary.switch_overlap_long_task_ms.count > maxSwitchOverlapLongTaskCount) {
+      failures.push(
+        `switch-overlap long tasks ${summary.switch_overlap_long_task_ms.count} > ${maxSwitchOverlapLongTaskCount}`,
+      );
+    }
+  }
+  if (check && Number.isFinite(maxSwitchOverlapLongTaskMs)) {
+    const max = summary.switch_overlap_long_task_ms.max ?? 0;
+    if (max > maxSwitchOverlapLongTaskMs) {
+      failures.push(`switch-overlap long task max ${max}ms > ${maxSwitchOverlapLongTaskMs}ms`);
+    }
+  }
+  if (check && Number.isFinite(maxEventLoopGapMs)) {
+    const max =
+      summary.event_loop_gap_unthrottled_ms.count > 0
+        ? (summary.event_loop_gap_unthrottled_ms.max ?? 0)
+        : (summary.event_loop_gap_ms.max ?? 0);
+    if (max > maxEventLoopGapMs) {
+      failures.push(`event-loop gap max ${max}ms > ${maxEventLoopGapMs}ms`);
+    }
+  }
+  if (check && Number.isFinite(maxRafGapMs)) {
+    const max = summary.raf_gap_ms.max ?? 0;
+    if (max > maxRafGapMs) {
+      failures.push(`RAF gap max ${max}ms > ${maxRafGapMs}ms`);
     }
   }
   if (check && Number.isFinite(maxLongTaskCount)) {

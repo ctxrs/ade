@@ -202,6 +202,33 @@ export function getOrCreateSessionPretextRuntime(
   return record;
 }
 
+export function readSessionPretextRuntime(sessionId: string): SessionPretextRuntimeRecord | null {
+  return sessionTranscriptCache.get(sessionId)?.runtime ?? null;
+}
+
+export function isSessionPretextRuntimePreparedFor({
+  sessionId,
+  sourceKey,
+  layoutKey,
+  viewportWidth,
+  viewportHeight,
+}: {
+  sessionId: string;
+  sourceKey: string;
+  layoutKey: string;
+  viewportWidth: number;
+  viewportHeight?: number;
+}): boolean {
+  const record = readSessionPretextRuntime(sessionId);
+  if (!record) return false;
+  if (record.preparedSourceKey !== sourceKey || record.preparedLayoutKey !== layoutKey) return false;
+  const nextWidth = normalizeViewportDimension(viewportWidth);
+  const nextHeight = normalizeViewportDimension(viewportHeight);
+  if (nextWidth > 0 && record.preparedSnapshot.viewportWidth !== nextWidth) return false;
+  if (nextHeight > 0 && record.preparedSnapshot.viewportHeight !== nextHeight) return false;
+  return true;
+}
+
 export function noteSessionPretextRuntimeSnapshot(
   record: SessionPretextRuntimeRecord,
   snapshot: PretextVirtualizerSnapshot<WorkbenchListItem>,
@@ -235,8 +262,7 @@ export function primeSessionPretextRuntime(
       listItems: params.listItems,
     });
   const uiStateChanged = record.uiStateRevision !== nextUiStateRevision;
-  const itemsChanged =
-    record.preparedItems !== params.listItems || record.preparedSourceKey !== nextSourceKey;
+  const itemsChanged = record.preparedSourceKey !== nextSourceKey;
   const layoutChanged = record.preparedLayoutKey !== nextLayoutKey;
   if (uiStateChanged) {
     bindSessionPretextRuntime(record, {
