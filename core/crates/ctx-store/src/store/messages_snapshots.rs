@@ -1,5 +1,24 @@
 use super::*;
 
+fn session_snapshot_preview_sql(column: &str) -> String {
+    let trimmed_all = format!("trim({column}, char(9) || char(10) || char(13) || ' ')");
+    let first_line = format!(
+        "CASE WHEN instr({trimmed_all}, char(10)) > 0 THEN substr({trimmed_all}, 1, instr({trimmed_all}, char(10)) - 1) ELSE {trimmed_all} END",
+    );
+    let trimmed = format!("trim({first_line})");
+    format!(
+        "CASE \
+            WHEN {column} IS NULL THEN NULL \
+            WHEN length({trimmed}) = 0 THEN NULL \
+            WHEN length({trimmed}) > {limit} THEN substr({trimmed}, 1, {limit}) || '...' \
+            ELSE {trimmed} \
+         END",
+        column = column,
+        trimmed = trimmed,
+        limit = MESSAGE_PREVIEW_MAX_CHARS,
+    )
+}
+
 impl Store {
     pub(super) async fn build_workspace_task_summaries(
         &self,
@@ -107,12 +126,13 @@ impl Store {
     pub(super) async fn list_session_snapshot_rows(
         &self,
         task_ids: &[TaskId],
-    ) -> Result<Vec<SessionSnapshotRow>> {
+    ) -> Result<Vec<SessionSnapshotSummary>> {
         if task_ids.is_empty() {
             return Ok(Vec::new());
         }
 
-        let mut session_sql = String::from(
+        let preview_expr = session_snapshot_preview_sql("ss.last_message_preview");
+        let mut session_sql = format!(
             r#"
             SELECT
                 s.id,
@@ -133,7 +153,7 @@ impl Store {
                 s.relationship,
                 s.created_at,
                 s.updated_at,
-                ss.last_message_preview AS last_message_content,
+                {preview_expr} AS last_message_preview,
                 ss.last_message_at AS last_message_at,
                 ss.last_event_seq AS last_event_seq,
                 COALESCE(ss.projection_rev, COALESCE(ss.last_event_seq, 0)) AS projection_rev,
@@ -150,7 +170,7 @@ impl Store {
             }
             session_sql.push('?');
         }
-        session_sql.push_str(") ORDER BY s.created_at ASC");
+        session_sql.push_str(") ORDER BY s.task_id ASC, s.created_at ASC, s.id ASC");
 
         let session_sql = self.rewrite_sql(&session_sql);
         let mut session_query = sqlx::query(session_sql.as_ref());
@@ -161,63 +181,7 @@ impl Store {
         let mut out = Vec::with_capacity(session_rows.len());
 
         for r in session_rows {
-            let id: String = r.try_get("id")?;
-            let task_id: String = r.try_get("task_id")?;
-            let ws_id: String = r.try_get("workspace_id")?;
-            let wt_id: String = r.try_get("worktree_id")?;
-            let created_at: String = r.try_get("created_at")?;
-            let updated_at: String = r.try_get("updated_at")?;
-            let last_message_at: Option<String> = r.try_get("last_message_at")?;
-            let last_message_content: Option<String> = r.try_get("last_message_content")?;
-            let last_event_seq: Option<i64> = r.try_get("last_event_seq")?;
-            let projection_rev: i64 = r.try_get("projection_rev")?;
-            let last_turn_status: Option<String> = r.try_get("last_turn_status")?;
-            let running_turn_count: i64 = r.try_get("running_turn_count")?;
-
-            let session = Session {
-                id: SessionId(uuid::Uuid::parse_str(&id)?),
-                task_id: TaskId(uuid::Uuid::parse_str(&task_id)?),
-                workspace_id: WorkspaceId(uuid::Uuid::parse_str(&ws_id)?),
-                worktree_id: WorktreeId(uuid::Uuid::parse_str(&wt_id)?),
-                execution_environment: parse_execution_environment(
-                    r.try_get::<String, _>("execution_environment")?.as_str(),
-                ),
-                provider_id: r.try_get("provider_id")?,
-                model_id: r.try_get("model_id")?,
-                reasoning_effort: r.try_get("reasoning_effort")?,
-                title: r.try_get("title")?,
-                agent_role: r.try_get("agent_role")?,
-                status: parse_session_status(r.try_get::<String, _>("status")?.as_str()),
-                provider_session_ref: r.try_get("provider_session_ref")?,
-                parent_session_id: parse_optional_session_id(r.try_get("parent_session_id")?),
-                relationship: r.try_get("relationship")?,
-                created_at: parse_dt(&created_at)?,
-                updated_at: parse_dt(&updated_at)?,
-            };
-
-            let last_message_preview = last_message_content.as_deref().and_then(|content| {
-                let preview = derive_message_preview(content);
-                if preview.is_empty() {
-                    None
-                } else {
-                    Some(preview)
-                }
-            });
-
-            let activity = derive_activity_from_status(
-                last_turn_status.as_deref().map(parse_session_turn_status),
-                running_turn_count > 0,
-            );
-
-            let row = SessionSnapshotRow {
-                session,
-                last_message_at: last_message_at.as_deref().map(parse_dt).transpose()?,
-                last_message_preview,
-                last_event_seq,
-                projection_rev,
-                activity,
-            };
-            out.push(row);
+            out.push(decode_session_snapshot_summary_row(&r)?);
         }
 
         Ok(out)
@@ -226,12 +190,13 @@ impl Store {
     pub(super) async fn list_session_snapshot_rows_base(
         &self,
         task_ids: &[TaskId],
-    ) -> Result<Vec<SessionSnapshotRow>> {
+    ) -> Result<Vec<SessionSnapshotSummary>> {
         if task_ids.is_empty() {
             return Ok(Vec::new());
         }
 
-        let mut session_sql = String::from(
+        let preview_expr = session_snapshot_preview_sql("lm.content");
+        let mut session_sql = format!(
             r#"
             WITH session_scope AS (
                 SELECT id
@@ -306,6 +271,7 @@ impl Store {
                 s.provider_session_ref,
                 s.created_at,
                 s.updated_at,
+                {preview_expr} AS last_message_preview,
                 lm.content AS last_message_content,
                 lm.created_at AS last_message_at,
                 le.last_event_seq AS last_event_seq,
@@ -319,8 +285,9 @@ impl Store {
             LEFT JOIN last_events le ON le.session_id = s.id
             LEFT JOIN last_turns lt ON lt.session_id = s.id AND lt.rn = 1
             LEFT JOIN running_turns rt ON rt.session_id = s.id
-            ORDER BY s.created_at ASC"#,
+            ORDER BY s.task_id ASC, s.created_at ASC, s.id ASC"#,
         );
+        let session_sql = session_sql.replace("{preview_expr}", preview_expr.as_str());
 
         let session_sql = self.rewrite_sql(&session_sql);
         let mut session_query = sqlx::query(session_sql.as_ref());
@@ -331,75 +298,61 @@ impl Store {
         let mut out = Vec::with_capacity(session_rows.len());
 
         for r in session_rows {
-            let id: String = r.try_get("id")?;
-            let task_id: String = r.try_get("task_id")?;
-            let ws_id: String = r.try_get("workspace_id")?;
-            let wt_id: String = r.try_get("worktree_id")?;
-            let created_at: String = r.try_get("created_at")?;
-            let updated_at: String = r.try_get("updated_at")?;
-            let last_message_at: Option<String> = r.try_get("last_message_at")?;
-            let last_message_content: Option<String> = r.try_get("last_message_content")?;
-            let last_event_seq: Option<i64> = r.try_get("last_event_seq")?;
-            let projection_rev: i64 = r.try_get("projection_rev")?;
-            let last_turn_status: Option<String> = r.try_get("last_turn_status")?;
-            let running_turn_count: i64 = r.try_get("running_turn_count")?;
-
-            let session = Session {
-                id: SessionId(uuid::Uuid::parse_str(&id)?),
-                task_id: TaskId(uuid::Uuid::parse_str(&task_id)?),
-                workspace_id: WorkspaceId(uuid::Uuid::parse_str(&ws_id)?),
-                worktree_id: WorktreeId(uuid::Uuid::parse_str(&wt_id)?),
-                execution_environment: parse_execution_environment(
-                    r.try_get::<String, _>("execution_environment")?.as_str(),
-                ),
-                provider_id: r.try_get("provider_id")?,
-                model_id: r.try_get("model_id")?,
-                reasoning_effort: r.try_get("reasoning_effort")?,
-                title: r.try_get("title")?,
-                agent_role: r.try_get("agent_role")?,
-                status: parse_session_status(r.try_get::<String, _>("status")?.as_str()),
-                provider_session_ref: r.try_get("provider_session_ref")?,
-                parent_session_id: parse_optional_session_id(r.try_get("parent_session_id")?),
-                relationship: r.try_get("relationship")?,
-                created_at: parse_dt(&created_at)?,
-                updated_at: parse_dt(&updated_at)?,
-            };
-
-            let last_message_preview = last_message_content.as_deref().and_then(|content| {
-                let preview = derive_message_preview(content);
-                if preview.is_empty() {
-                    None
-                } else {
-                    Some(preview)
-                }
-            });
-
-            let activity = derive_activity_from_status(
-                last_turn_status.as_deref().map(parse_session_turn_status),
-                running_turn_count > 0,
-            );
-
-            let row = SessionSnapshotRow {
-                session,
-                last_message_at: last_message_at.as_deref().map(parse_dt).transpose()?,
-                last_message_preview,
-                last_event_seq,
-                projection_rev,
-                activity,
-            };
-            out.push(row);
+            out.push(decode_session_snapshot_summary_row(&r)?);
         }
 
         Ok(out)
     }
 
-    pub(super) async fn get_session_snapshot_summary(
+    pub(crate) async fn get_session_snapshot_summary(
         &self,
         session_id: SessionId,
     ) -> Result<Option<SessionSnapshotSummary>> {
-        let row = self
-            .query(
-                r#"
+        let preview_expr = session_snapshot_preview_sql("lm.content");
+        let sql = format!(
+            r#"
+            WITH last_messages AS (
+                SELECT
+                    m.session_id,
+                    m.content,
+                    m.created_at,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY m.session_id
+                        ORDER BY m.created_at DESC,
+                                 COALESCE(m.turn_sequence, -1) DESC,
+                                 m.id DESC
+                    ) AS rn
+                FROM messages m
+                WHERE m.session_id = ?
+                  AND m.role IN ('assistant', 'user')
+            ),
+            last_events AS (
+                SELECT e.session_id, MAX(e.seq) AS last_event_seq
+                FROM session_events e
+                WHERE e.session_id = ?
+                GROUP BY e.session_id
+            ),
+            last_turns AS (
+                SELECT
+                    t.session_id,
+                    t.status,
+                    t.start_seq,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY t.session_id
+                        ORDER BY COALESCE(t.start_seq, -1) DESC,
+                                 t.started_at DESC,
+                                 t.turn_id DESC
+                    ) AS rn
+                FROM session_turns t
+                WHERE t.session_id = ?
+            ),
+            running_turns AS (
+                SELECT t.session_id, COUNT(*) AS running_count
+                FROM session_turns t
+                WHERE t.session_id = ?
+                  AND t.status = 'running'
+                GROUP BY t.session_id
+            )
             SELECT
                 s.id,
                 s.task_id,
@@ -419,17 +372,32 @@ impl Store {
                 s.relationship,
                 s.created_at,
                 s.updated_at,
-                ss.last_message_preview AS last_message_content,
-                ss.last_message_at AS last_message_at,
-                ss.last_event_seq AS last_event_seq,
-                COALESCE(ss.projection_rev, COALESCE(ss.last_event_seq, 0)) AS projection_rev,
-                ss.last_turn_status AS last_turn_status,
-                COALESCE(ss.running_turn_count, 0) AS running_turn_count
+                {preview_expr} AS last_message_preview,
+                lm.content AS last_message_content,
+                lm.created_at AS last_message_at,
+                le.last_event_seq AS last_event_seq,
+                COALESCE(ss.projection_rev, COALESCE(le.last_event_seq, 0)) AS projection_rev,
+                lt.status AS last_turn_status,
+                COALESCE(rt.running_count, 0) AS running_turn_count
             FROM sessions s
             LEFT JOIN session_snapshot_summaries ss
               ON ss.session_id = s.id
+            LEFT JOIN last_messages lm
+              ON lm.session_id = s.id AND lm.rn = 1
+            LEFT JOIN last_events le
+              ON le.session_id = s.id
+            LEFT JOIN last_turns lt
+              ON lt.session_id = s.id AND lt.rn = 1
+            LEFT JOIN running_turns rt
+              ON rt.session_id = s.id
             WHERE s.id = ?"#,
-            )
+        );
+        let sql = self.rewrite_sql(&sql);
+        let row = sqlx::query(sql.as_ref())
+            .bind(session_id.0.to_string())
+            .bind(session_id.0.to_string())
+            .bind(session_id.0.to_string())
+            .bind(session_id.0.to_string())
             .bind(session_id.0.to_string())
             .fetch_optional(&self.pool)
             .await?;
@@ -438,63 +406,6 @@ impl Store {
             return Ok(None);
         };
 
-        let id: String = r.try_get("id")?;
-        let task_id: String = r.try_get("task_id")?;
-        let ws_id: String = r.try_get("workspace_id")?;
-        let wt_id: String = r.try_get("worktree_id")?;
-        let created_at: String = r.try_get("created_at")?;
-        let updated_at: String = r.try_get("updated_at")?;
-        let last_message_at: Option<String> = r.try_get("last_message_at")?;
-        let last_message_content: Option<String> = r.try_get("last_message_content")?;
-        let last_event_seq: Option<i64> = r.try_get("last_event_seq")?;
-        let projection_rev: i64 = r.try_get("projection_rev")?;
-        let last_turn_status: Option<String> = r.try_get("last_turn_status")?;
-        let running_turn_count: i64 = r.try_get("running_turn_count")?;
-
-        let session = Session {
-            id: SessionId(uuid::Uuid::parse_str(&id)?),
-            task_id: TaskId(uuid::Uuid::parse_str(&task_id)?),
-            workspace_id: WorkspaceId(uuid::Uuid::parse_str(&ws_id)?),
-            worktree_id: WorktreeId(uuid::Uuid::parse_str(&wt_id)?),
-            execution_environment: parse_execution_environment(
-                r.try_get::<String, _>("execution_environment")?.as_str(),
-            ),
-            provider_id: r.try_get("provider_id")?,
-            model_id: r.try_get("model_id")?,
-            reasoning_effort: r.try_get("reasoning_effort")?,
-            title: r.try_get("title")?,
-            agent_role: r.try_get("agent_role")?,
-            status: parse_session_status(r.try_get::<String, _>("status")?.as_str()),
-            provider_session_ref: r.try_get("provider_session_ref")?,
-            parent_session_id: parse_optional_session_id(r.try_get("parent_session_id")?),
-            relationship: r.try_get("relationship")?,
-            created_at: parse_dt(&created_at)?,
-            updated_at: parse_dt(&updated_at)?,
-        };
-
-        let last_message_preview = last_message_content.as_deref().and_then(|content| {
-            let preview = derive_message_preview(content);
-            if preview.is_empty() {
-                None
-            } else {
-                Some(preview)
-            }
-        });
-
-        let activity = derive_activity_from_status(
-            last_turn_status.as_deref().map(parse_session_turn_status),
-            running_turn_count > 0,
-        );
-
-        Ok(Some(SessionSnapshotSummary {
-            session: session_metadata_from_session(&session),
-            last_message_at: last_message_at.as_deref().map(parse_dt).transpose()?,
-            last_message_preview,
-            last_event_seq,
-            projection_rev,
-            state_rev: last_event_seq.unwrap_or(0),
-            activity,
-            unread: None,
-        }))
+        Ok(Some(decode_session_snapshot_summary_row(&r)?))
     }
 }

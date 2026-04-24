@@ -425,6 +425,8 @@ pub async fn activate_workspace_merge_queue<H: MergeQueueHost>(
     state: &Arc<H>,
     workspace_id: WorkspaceId,
 ) {
+    let activate_start = std::time::Instant::now();
+    let raw_store_start = std::time::Instant::now();
     let store = match H::raw_workspace_store(state.as_ref(), workspace_id).await {
         Ok(store) => store,
         Err(err) => {
@@ -435,6 +437,8 @@ pub async fn activate_workspace_merge_queue<H: MergeQueueHost>(
             return;
         }
     };
+    let raw_store_ms = raw_store_start.elapsed().as_millis();
+    let load_cfg_start = std::time::Instant::now();
     let cfg = match load_merge_queue_config(&store).await {
         Ok(cfg) => cfg,
         Err(err) => {
@@ -445,6 +449,8 @@ pub async fn activate_workspace_merge_queue<H: MergeQueueHost>(
             return;
         }
     };
+    let load_cfg_ms = load_cfg_start.elapsed().as_millis();
+    let list_queued_start = std::time::Instant::now();
     let queued = match store.list_queued_merge_queue_entries().await {
         Ok(entries) => entries,
         Err(err) => {
@@ -455,6 +461,19 @@ pub async fn activate_workspace_merge_queue<H: MergeQueueHost>(
             return;
         }
     };
+    let list_queued_ms = list_queued_start.elapsed().as_millis();
+    if std::env::var_os("CTX_DEBUG_WORKSPACE_STREAM_TIMINGS").is_some() {
+        eprintln!(
+            "CTX_WS_TIMING merge_queue_activate workspace_id={} raw_store_ms={} load_cfg_ms={} list_queued_ms={} queued_entries={} enabled={} total_ms={}",
+            workspace_id.0,
+            raw_store_ms,
+            load_cfg_ms,
+            list_queued_ms,
+            queued.len(),
+            cfg.enabled,
+            activate_start.elapsed().as_millis(),
+        );
+    }
     if queued.is_empty() {
         return;
     }
@@ -469,10 +488,17 @@ pub async fn activate_workspace_merge_queue<H: MergeQueueHost>(
         }
         return;
     }
+    let schedule_start = std::time::Instant::now();
     if let Err(err) = schedule_workspace_if_enabled_and_queued(state, workspace_id).await {
         tracing::warn!(
             workspace_id = %workspace_id.0,
             "failed to activate merge queue for opened workspace: {err:#}"
+        );
+    } else if std::env::var_os("CTX_DEBUG_WORKSPACE_STREAM_TIMINGS").is_some() {
+        eprintln!(
+            "CTX_WS_TIMING merge_queue_schedule workspace_id={} schedule_ms={}",
+            workspace_id.0,
+            schedule_start.elapsed().as_millis(),
         );
     }
 }

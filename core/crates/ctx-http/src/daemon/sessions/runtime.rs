@@ -7,7 +7,7 @@ use tokio::sync::{broadcast, mpsc, watch, Mutex};
 use ctx_core::ids::{SessionId, TaskId};
 use ctx_core::models::{
     Session, SessionEvent, SessionEventType, SessionHeadDelta, SessionHeadSnapshot,
-    SessionTurnToolSummary,
+    SessionTurnToolSummary, TaskDeltaKind,
 };
 use ctx_store::Store;
 use ctx_workspace_active_snapshot::session_metadata_from_session;
@@ -185,7 +185,7 @@ impl SessionRuntime {
                 | SessionEventType::Error
         );
         if update_task {
-            self.queue_workspace_task_refresh(state, session.task_id)
+            self.queue_workspace_task_delta_refresh(state, session.task_id)
                 .await;
         }
 
@@ -328,7 +328,7 @@ impl SessionRuntime {
         }
     }
 
-    async fn queue_workspace_task_refresh(&self, state: &Arc<AppState>, task_id: TaskId) {
+    async fn queue_workspace_task_delta_refresh(&self, state: &Arc<AppState>, task_id: TaskId) {
         let should_spawn = {
             let mut map = self.active_task_refreshes.lock().await;
             if let Some(entry) = map.get_mut(&task_id) {
@@ -348,13 +348,13 @@ impl SessionRuntime {
                 let state_clone = state.clone();
                 state
                     .sessions
-                    .run_workspace_task_refresh(state_clone, task_id)
+                    .run_workspace_task_delta_refresh(state_clone, task_id)
                     .await;
             });
         }
     }
 
-    async fn run_workspace_task_refresh(&self, state: Arc<AppState>, task_id: TaskId) {
+    async fn run_workspace_task_delta_refresh(&self, state: Arc<AppState>, task_id: TaskId) {
         let debounce = Duration::from_millis(ACTIVE_TASK_REFRESH_DEBOUNCE_MS.max(1));
         loop {
             let generation = {
@@ -378,11 +378,30 @@ impl SessionRuntime {
                 continue;
             }
 
-            if let Err(err) = state.emit_workspace_task_upsert(task_id).await {
-                tracing::warn!(
-                    task_id = %task_id.0,
-                    "workspace active snapshot refresh failed: {err:?}"
-                );
+            match state.store_for_task(task_id).await {
+                Ok(store) => match store.get_task(task_id).await {
+                    Ok(Some(task)) => {
+                        let kind = if task.archived_at.is_some() {
+                            TaskDeltaKind::Archived
+                        } else {
+                            TaskDeltaKind::Updated
+                        };
+                        let _ = state.emit_workspace_task_delta(task, kind).await;
+                    }
+                    Ok(None) => {}
+                    Err(err) => {
+                        tracing::warn!(
+                            task_id = %task_id.0,
+                            "workspace task delta refresh read failed: {err:?}"
+                        );
+                    }
+                },
+                Err(err) => {
+                    tracing::warn!(
+                        task_id = %task_id.0,
+                        "workspace task delta refresh store lookup failed: {err:?}"
+                    );
+                }
             }
 
             let mut map = self.active_task_refreshes.lock().await;

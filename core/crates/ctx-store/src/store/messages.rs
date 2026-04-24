@@ -86,7 +86,7 @@ impl Store {
                 if matches!(message.role, MessageRole::Assistant | MessageRole::User) {
                     let session_snapshot_id = message.session_id.0.to_string();
                     let session_snapshot_created_at = message.created_at.to_rfc3339();
-                    let session_snapshot_content = message.content.clone();
+                    let session_snapshot_content = derive_message_preview(&message.content);
                     let now = Utc::now().to_rfc3339();
                     let ensure_write_bytes =
                         bytes_str(&session_snapshot_id) + I64_BYTES + (bytes_str(&now) * 2);

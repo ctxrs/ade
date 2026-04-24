@@ -403,14 +403,61 @@ pub(crate) async fn get_session_git_status(
     Ok(Json(resp))
 }
 
+#[derive(Clone)]
 pub(crate) struct WorktreeDiffBaseResolution {
     pub base_commit_sha: String,
+    pub head_commit_sha: Option<String>,
     pub target_branch: Option<String>,
+    pub target_branch_commit_sha: Option<String>,
     pub target_source: Option<WorktreeVcsTargetSource>,
     pub kind: WorktreeVcsBaseResolutionKind,
     pub error: Option<String>,
     pub unavailable_reason: Option<DiffUnavailableReason>,
     pub explicit_target: bool,
+}
+
+async fn resolve_worktree_ref_commits(
+    state: &Arc<AppState>,
+    worktree: &Worktree,
+    target_branch: Option<&str>,
+) -> (Option<String>, Option<String>) {
+    let Some(target_branch) = target_branch else {
+        return match crate::git_status::worktree_rev_parse_refs(state, worktree, &["HEAD"]).await {
+            Ok(commits) => (commits.first().cloned(), None),
+            Err(err) => {
+                tracing::warn!(
+                    worktree_id = %worktree.id.0,
+                    "failed to resolve worktree head for diff metadata: {err:#}"
+                );
+                (None, None)
+            }
+        };
+    };
+    let refs = vec!["HEAD", target_branch];
+    match crate::git_status::worktree_rev_parse_refs(state, worktree, &refs).await {
+        Ok(commits) => {
+            let head = commits.first().cloned();
+            let target = commits.get(1).cloned();
+            (head, target)
+        }
+        Err(err) => {
+            tracing::warn!(
+                worktree_id = %worktree.id.0,
+                "failed to resolve worktree refs for diff metadata: {err:#}"
+            );
+            let head = match crate::git_status::worktree_rev_parse_head(state, worktree).await {
+                Ok(head) => Some(head),
+                Err(head_err) => {
+                    tracing::warn!(
+                        worktree_id = %worktree.id.0,
+                        "failed to resolve worktree head after target branch lookup failed: {head_err:#}"
+                    );
+                    None
+                }
+            };
+            (head, None)
+        }
+    }
 }
 
 pub(crate) async fn resolve_diff_base_with_meta(
@@ -423,9 +470,12 @@ pub(crate) async fn resolve_diff_base_with_meta(
     if let Some(base) = query.base_commit_sha.as_deref() {
         let trimmed = base.trim();
         if !trimmed.is_empty() {
+            let (head_commit_sha, _) = resolve_worktree_ref_commits(state, worktree, None).await;
             return WorktreeDiffBaseResolution {
                 base_commit_sha: trimmed.to_string(),
+                head_commit_sha,
                 target_branch: None,
+                target_branch_commit_sha: None,
                 target_source: None,
                 kind: WorktreeVcsBaseResolutionKind::ExplicitBase,
                 error: None,
@@ -457,9 +507,13 @@ pub(crate) async fn resolve_diff_base_with_meta(
                 target_source = Some(WorktreeVcsTargetSource::PrimaryBranchConfig);
             }
             Ok(None) => {
+                let (head_commit_sha, _) =
+                    resolve_worktree_ref_commits(state, worktree, None).await;
                 return WorktreeDiffBaseResolution {
                     base_commit_sha: worktree.base_commit_sha.clone(),
+                    head_commit_sha,
                     target_branch: None,
+                    target_branch_commit_sha: None,
                     target_source: None,
                     kind: WorktreeVcsBaseResolutionKind::WorktreeBase,
                     error: Some("workspace primary branch is not configured".to_string()),
@@ -479,9 +533,13 @@ pub(crate) async fn resolve_diff_base_with_meta(
     if let Some(target_branch) = target_branch.clone() {
         match crate::git_status::worktree_merge_base(state, worktree, &target_branch).await {
             Ok(base) => {
+                let (head_commit_sha, target_branch_commit_sha) =
+                    resolve_worktree_ref_commits(state, worktree, Some(&target_branch)).await;
                 return WorktreeDiffBaseResolution {
                     base_commit_sha: base,
+                    head_commit_sha,
                     target_branch: Some(target_branch),
+                    target_branch_commit_sha,
                     target_source,
                     kind: WorktreeVcsBaseResolutionKind::MergeBase,
                     error: None,
@@ -492,7 +550,11 @@ pub(crate) async fn resolve_diff_base_with_meta(
             Err(err) => {
                 let redacted = logs::redact_sensitive(&err.to_string());
                 error = Some(redacted);
-                unavailable_reason = Some(DiffUnavailableReason::NoTargetBranch);
+                unavailable_reason = Some(if is_no_vcs_repo_error(&err) {
+                    DiffUnavailableReason::NoRepo
+                } else {
+                    DiffUnavailableReason::NoTargetBranch
+                });
                 tracing::warn!(
                     worktree_id = %worktree.id.0,
                     "merge-base failed for target {target_branch}: {err:#}"
@@ -501,9 +563,13 @@ pub(crate) async fn resolve_diff_base_with_meta(
         }
     }
 
+    let (head_commit_sha, target_branch_commit_sha) =
+        resolve_worktree_ref_commits(state, worktree, target_branch.as_deref()).await;
     WorktreeDiffBaseResolution {
         base_commit_sha: worktree.base_commit_sha.clone(),
+        head_commit_sha,
         target_branch,
+        target_branch_commit_sha,
         target_source,
         kind: WorktreeVcsBaseResolutionKind::WorktreeBase,
         error,

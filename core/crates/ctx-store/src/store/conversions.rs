@@ -122,15 +122,6 @@ pub(super) fn map_merge_queue_run(row: SqliteRow) -> Option<MergeQueueRun> {
     })
 }
 
-pub(super) struct SessionSnapshotRow {
-    pub(super) session: Session,
-    pub(super) last_message_at: Option<DateTime<Utc>>,
-    pub(super) last_message_preview: Option<String>,
-    pub(super) last_event_seq: Option<i64>,
-    pub(super) projection_rev: i64,
-    pub(super) activity: SessionActivityState,
-}
-
 pub(super) fn session_metadata_from_session(session: &Session) -> SessionMetadata {
     SessionMetadata {
         id: session.id,
@@ -171,15 +162,83 @@ pub(super) fn session_head_to_snapshot(head: SessionHead) -> SessionHeadSnapshot
     }
 }
 
+pub(super) fn decode_session_snapshot_summary_row(
+    row: &sqlx::sqlite::SqliteRow,
+) -> Result<SessionSnapshotSummary> {
+    let id: String = row.try_get("id")?;
+    let task_id: String = row.try_get("task_id")?;
+    let ws_id: String = row.try_get("workspace_id")?;
+    let wt_id: String = row.try_get("worktree_id")?;
+    let created_at: String = row.try_get("created_at")?;
+    let updated_at: String = row.try_get("updated_at")?;
+    let last_message_at: Option<String> = row.try_get("last_message_at")?;
+    let last_message_preview: Option<String> = row.try_get("last_message_preview")?;
+    let last_message_content: Option<String> = row.try_get("last_message_content").ok().flatten();
+    let last_event_seq: Option<i64> = row.try_get("last_event_seq")?;
+    let projection_rev: i64 = row.try_get("projection_rev")?;
+    let last_turn_status: Option<String> = row.try_get("last_turn_status")?;
+    let running_turn_count: i64 = row.try_get("running_turn_count")?;
+
+    let session = SessionMetadata {
+        id: SessionId(uuid::Uuid::parse_str(&id)?),
+        task_id: TaskId(uuid::Uuid::parse_str(&task_id)?),
+        workspace_id: WorkspaceId(uuid::Uuid::parse_str(&ws_id)?),
+        worktree_id: WorktreeId(uuid::Uuid::parse_str(&wt_id)?),
+        execution_environment: parse_execution_environment(
+            row.try_get::<String, _>("execution_environment")?.as_str(),
+        ),
+        parent_session_id: parse_optional_session_id(row.try_get("parent_session_id")?),
+        relationship: row.try_get("relationship")?,
+        provider_id: row.try_get("provider_id")?,
+        model_id: row.try_get("model_id")?,
+        reasoning_effort: row.try_get("reasoning_effort")?,
+        title: row.try_get("title")?,
+        agent_role: row.try_get("agent_role")?,
+        status: parse_session_status(row.try_get::<String, _>("status")?.as_str()),
+        provider_session_ref: row.try_get("provider_session_ref")?,
+        created_at: parse_dt(&created_at)?,
+        updated_at: parse_dt(&updated_at)?,
+    };
+
+    let activity = derive_activity_from_status(
+        last_turn_status.as_deref().map(parse_session_turn_status),
+        running_turn_count > 0,
+    );
+    let last_message_preview = last_message_preview
+        .filter(|preview| !preview.is_empty())
+        .or_else(|| {
+            last_message_content.and_then(|content| {
+                let preview = derive_message_preview(&content);
+                if preview.is_empty() {
+                    None
+                } else {
+                    Some(preview)
+                }
+            })
+        });
+
+    Ok(SessionSnapshotSummary {
+        session,
+        last_message_at: last_message_at.as_deref().map(parse_dt).transpose()?,
+        last_message_preview,
+        last_event_seq,
+        projection_rev,
+        state_rev: last_event_seq.unwrap_or(0),
+        activity,
+        unread: None,
+    })
+}
+
+pub(super) const MESSAGE_PREVIEW_MAX_CHARS: usize = 160;
+
 pub(super) fn derive_message_preview(content: &str) -> String {
     let trimmed = content.trim();
     let line = trimmed.lines().next().unwrap_or("").trim();
     if line.is_empty() {
         return String::new();
     }
-    const MAX_CHARS: usize = 160;
-    let mut out: String = line.chars().take(MAX_CHARS).collect();
-    if line.chars().count() > MAX_CHARS {
+    let mut out: String = line.chars().take(MESSAGE_PREVIEW_MAX_CHARS).collect();
+    if line.chars().count() > MESSAGE_PREVIEW_MAX_CHARS {
         out.push_str("...");
     }
     out

@@ -33,6 +33,23 @@ async fn run_git(root: &Path, args: &[&str]) {
     );
 }
 
+async fn git_stdout(root: &Path, args: &[&str]) -> String {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(args)
+        .output()
+        .await
+        .expect("run git command");
+    assert!(
+        output.status.success(),
+        "git {:?} failed: {}",
+        args,
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8_lossy(&output.stdout).trim().to_string()
+}
+
 async fn remove_git_marker(root: &Path) {
     let git_path = root.join(".git");
     let Ok(metadata) = tokio::fs::metadata(&git_path).await else {
@@ -571,4 +588,76 @@ async fn worktree_vcs_snapshot_watcher_recomputes_when_target_branch_ref_moves()
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn worktree_vcs_snapshot_preserves_head_when_configured_target_branch_disappears() {
+    let _guard = worktree_vcs_snapshot_test_lock().lock().await;
+    let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
+    run_git(repo.path(), &["branch", "merge-target"]).await;
+
+    let data_dir = tempfile::tempdir().unwrap();
+    let stores = common::setup_store(data_dir.path()).await;
+    let state = common::build_state(
+        data_dir.path(),
+        stores,
+        common::fake_providers(),
+        "http://127.0.0.1:0",
+    );
+    let app = common::router(state.clone());
+    let ws = common::create_workspace(&app, repo.path(), "ws").await;
+    let workspace_store = state
+        .store_for_workspace(ws.id)
+        .await
+        .expect("workspace store should open");
+    ctx_workspace_config::update_primary_branch(&workspace_store, "merge-target")
+        .await
+        .expect("updating primary branch should succeed");
+
+    let task = common::create_task(&app, ws.id.0, "missing-target-head").await;
+    let session = common::create_session(&app, task.id.0, "fake", "fake-model").await;
+    let worktree = state
+        .store_for_worktree(session.worktree_id)
+        .await
+        .expect("store for worktree")
+        .get_worktree(session.worktree_id)
+        .await
+        .expect("load worktree")
+        .expect("worktree should exist");
+
+    let mut next_active = HashSet::new();
+    next_active.insert(worktree.id);
+    state
+        .workspaces
+        .update_worktree_vcs_activity(&HashSet::new(), &next_active)
+        .await;
+
+    let worktree_root = Path::new(&worktree.root_path);
+    tokio::fs::write(worktree_root.join("file.txt"), "hello\nadvanced\n")
+        .await
+        .expect("write changed file");
+    run_git(worktree_root, &["add", "file.txt"]).await;
+    run_git(worktree_root, &["commit", "-m", "advance head"]).await;
+    let expected_head = git_stdout(worktree_root, &["rev-parse", "HEAD"]).await;
+    assert_ne!(expected_head, worktree.base_commit_sha);
+
+    run_git(repo.path(), &["branch", "-D", "merge-target"]).await;
+
+    emit_worktree_vcs_snapshot_for_worktree(&state, &worktree, true)
+        .await
+        .expect("snapshot emission should succeed when target branch disappears");
+
+    let snapshot = state
+        .get_worktree_vcs_snapshot(worktree.id)
+        .await
+        .expect("snapshot should be present");
+    assert!(!snapshot.available);
+    assert_eq!(
+        snapshot.unavailable_reason,
+        Some(DiffUnavailableReason::NoTargetBranch)
+    );
+    assert_eq!(snapshot.base_commit_sha, worktree.base_commit_sha);
+    assert_eq!(snapshot.head_commit_sha, expected_head);
+    assert_eq!(snapshot.target_branch.as_deref(), Some("merge-target"));
+    assert_eq!(snapshot.target_branch_commit_sha, None);
 }

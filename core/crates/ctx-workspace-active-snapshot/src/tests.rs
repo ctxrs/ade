@@ -434,6 +434,159 @@ mod delta_tests {
     }
 }
 
+mod worktree_vcs_tests {
+    use super::super::*;
+    use chrono::Utc;
+    use ctx_core::ids::{SessionId, TaskId};
+    use ctx_core::models::{
+        SessionActivityState, SessionMetadata, SessionSnapshotSummary, SessionStatus,
+        SessionTurnStatus, Task, TaskStatus, WorkspaceActiveTaskSummary, WorktreeVcsBaseResolution,
+        WorktreeVcsComputeState, WorktreeVcsFreshness, WorktreeVcsGitStatusSummary,
+        WorktreeVcsSummary, WorktreeVcsTouchedFiles,
+    };
+
+    fn sample_worktree_vcs_snapshot(worktree_id: WorktreeId) -> WorktreeVcsSnapshot {
+        WorktreeVcsSnapshot {
+            worktree_id,
+            rev: 1,
+            emitted_at_ms: 1,
+            base_commit_sha: "base".to_string(),
+            head_commit_sha: "head".to_string(),
+            target_branch: Some("origin/main".to_string()),
+            target_branch_commit_sha: Some("target".to_string()),
+            base_resolution: WorktreeVcsBaseResolution::default(),
+            compute_state: WorktreeVcsComputeState::Ready,
+            summary: WorktreeVcsSummary::default(),
+            git_status: WorktreeVcsGitStatusSummary {
+                raw: "## main\n M edited.txt\n".to_string(),
+                summary_line: "## main".to_string(),
+                ..Default::default()
+            },
+            touched_files: WorktreeVcsTouchedFiles::default(),
+            freshness: WorktreeVcsFreshness::Fresh,
+            available: true,
+            unavailable_reason: None,
+            schema_version: 1,
+        }
+    }
+
+    fn sample_task_summary(
+        workspace_id: WorkspaceId,
+        worktree_id: WorktreeId,
+    ) -> WorkspaceActiveTaskSummary {
+        let now = Utc::now();
+        let task_id = TaskId::new();
+        let session_id = SessionId::new();
+        WorkspaceActiveTaskSummary {
+            task: Task {
+                id: task_id,
+                workspace_id,
+                title: "task".to_string(),
+                description: None,
+                status: TaskStatus::Running,
+                exec_plan_id: None,
+                primary_session_id: Some(session_id),
+                primary_worktree_id: Some(worktree_id),
+                created_at: now,
+                updated_at: now,
+                archived_at: None,
+                assistant_seen_at: None,
+                last_activity_at: Some(now),
+                last_assistant_message_at: None,
+                has_active_session: true,
+            },
+            primary_session: SessionSnapshotSummary {
+                session: SessionMetadata {
+                    id: session_id,
+                    task_id,
+                    workspace_id,
+                    worktree_id,
+                    execution_environment: ctx_core::models::ExecutionEnvironment::Host,
+                    parent_session_id: None,
+                    relationship: None,
+                    provider_id: "fake".to_string(),
+                    model_id: "fake-model".to_string(),
+                    reasoning_effort: None,
+                    title: "session".to_string(),
+                    agent_role: "assistant".to_string(),
+                    status: SessionStatus::Active,
+                    provider_session_ref: None,
+                    created_at: now,
+                    updated_at: now,
+                },
+                last_message_at: None,
+                last_message_preview: None,
+                last_event_seq: None,
+                projection_rev: 0,
+                state_rev: 0,
+                activity: SessionActivityState {
+                    is_working: false,
+                    last_turn_status: Some(SessionTurnStatus::Completed),
+                },
+                unread: None,
+            },
+            primary_session_head: None,
+            sessions: Vec::new(),
+            sort_at: now,
+        }
+    }
+
+    #[tokio::test]
+    async fn publish_worktree_vcs_snapshot_clears_raw_git_status_text() {
+        let hub = WorkspaceActiveSnapshotHub::new();
+        let workspace_id = WorkspaceId::new();
+        let worktree_id = WorktreeId::new();
+        let mut rx = hub.subscribe(workspace_id).await;
+
+        hub.publish_worktree_vcs_snapshot(workspace_id, sample_worktree_vcs_snapshot(worktree_id))
+            .await;
+
+        let event = rx.recv().await.expect("worktree vcs event");
+        match event {
+            WorkspaceActiveSnapshotEvent::WorktreeVcsSnapshot { snapshot, .. } => {
+                assert_eq!(snapshot.worktree_id, worktree_id);
+                assert_eq!(snapshot.git_status.raw, "");
+                assert_eq!(snapshot.git_status.summary_line, "## main");
+            }
+            other => panic!("expected worktree vcs snapshot, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn active_snapshot_orders_worktree_vcs_snapshots_by_worktree_id() {
+        let hub = WorkspaceActiveSnapshotHub::new();
+        let workspace_id = WorkspaceId::new();
+        let worktree_a = WorktreeId::new();
+        let worktree_b = WorktreeId::new();
+        let tasks = vec![
+            sample_task_summary(workspace_id, worktree_a),
+            sample_task_summary(workspace_id, worktree_b),
+        ];
+
+        hub.hydrate_snapshot(workspace_id, 1, 0, tasks, Vec::new())
+            .await;
+        hub.hydrate_worktree_vcs_snapshots(
+            workspace_id,
+            vec![
+                sample_worktree_vcs_snapshot(worktree_b),
+                sample_worktree_vcs_snapshot(worktree_a),
+            ],
+        )
+        .await;
+
+        let snapshot = hub.active_snapshot(workspace_id, i64::MAX).await;
+        let actual = snapshot
+            .worktree_vcs_snapshots
+            .into_iter()
+            .map(|snapshot| snapshot.worktree_id)
+            .collect::<Vec<_>>();
+        let mut expected = vec![worktree_a, worktree_b];
+        expected.sort_by_key(|worktree_id| worktree_id.0);
+
+        assert_eq!(actual, expected);
+    }
+}
+
 mod replay_tests {
     use super::super::trim::{new_head_snapshot, session_metadata_from_session};
     use super::super::*;
@@ -827,6 +980,54 @@ mod replay_tests {
             }
             other => panic!("expected replay, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn truncated_compact_session_head_cache_misses_request_path() {
+        let hub = WorkspaceActiveSnapshotHub::new();
+        let primary = replay_session(SessionId::new());
+        let mut compact = new_head_snapshot(&primary);
+        compact.last_event_seq = 7;
+        compact.projection_rev = 7;
+        compact.head_window.truncated = true;
+
+        hub.update_compact_session_head(compact).await;
+
+        assert!(
+            hub.get_cached_session_head_for_request(primary.id, false, 60)
+                .await
+                .is_none(),
+            "truncated compact heads must not satisfy the stronger request path"
+        );
+    }
+
+    #[tokio::test]
+    async fn hydrate_snapshot_seeds_compact_read_cache_without_replay_capability() {
+        let hub = WorkspaceActiveSnapshotHub::new();
+        let session = replay_session(SessionId::new());
+        let mut head = new_head_snapshot(&session);
+        head.last_event_seq = 11;
+        head.projection_rev = 17;
+
+        hub.hydrate_snapshot(
+            session.workspace_id,
+            1,
+            0,
+            vec![replay_task(&session)],
+            vec![head.clone()],
+        )
+        .await;
+
+        assert!(
+            hub.get_session_head(session.id).await.is_none(),
+            "hydrated compact heads must not be treated as replay-capable seeds"
+        );
+        let cached = hub
+            .get_cached_session_head_for_read(session.id)
+            .await
+            .expect("hydrated compact head should be readable from cache");
+        assert_eq!(cached.last_event_seq, head.last_event_seq);
+        assert_eq!(cached.projection_rev, head.projection_rev);
     }
 
     #[tokio::test]

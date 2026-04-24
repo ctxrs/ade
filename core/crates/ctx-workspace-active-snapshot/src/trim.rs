@@ -236,6 +236,12 @@ pub(super) fn compact_active_head_snapshot(head: &SessionHeadSnapshot) -> Sessio
     out
 }
 
+pub(super) fn compact_worktree_vcs_snapshot(snapshot: &WorktreeVcsSnapshot) -> WorktreeVcsSnapshot {
+    let mut out = snapshot.clone();
+    out.git_status.raw.clear();
+    out
+}
+
 pub(super) fn strip_snapshot_partials(turns: &mut [SessionTurn], events: &mut Vec<SessionEvent>) {
     for turn in turns.iter_mut() {
         turn.assistant_partial = None;

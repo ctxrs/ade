@@ -5,6 +5,7 @@ pub(super) const SESSION_HEAD_MESSAGE_LIMIT: usize = 200;
 pub(super) const SESSION_HEAD_EVENT_LIMIT: usize = 200;
 pub(super) const SESSION_HEAD_BYTE_LIMIT: usize = 1_500_000;
 pub(super) const ACTIVE_SNAPSHOT_HEAD_LIMIT: u32 = 5;
+pub(super) const ACTIVE_SNAPSHOT_TOOL_SUMMARY_LIMIT: usize = 200;
 pub(super) const SESSION_HEAD_ARCHIVED_TURN_LIMIT: u32 = 50;
 
 fn retain_messages_for_turns(messages: &mut Vec<Message>, turns: &[SessionTurn]) {

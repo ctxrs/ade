@@ -2013,6 +2013,264 @@ async fn workspace_stream_repeat_subscribe_preserves_ready_worktree_vcs_state() 
 }
 
 #[tokio::test]
+async fn workspace_stream_subscribe_does_not_reemit_when_worktree_vcs_is_already_computing() {
+    let (repo, _data_dir, state, server) = setup_git().await;
+    let base = &server.base_url;
+    let client = &server.client;
+
+    let ws: ctx_core::models::Workspace = client
+        .post(format!("{base}/api/workspaces"))
+        .json(&json!({"root_path": repo.path(), "name": "ws"}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    let task = create_task_with_primary_worktree(
+        client,
+        &state,
+        base,
+        ws.id,
+        repo.path(),
+        "computing-vcs",
+    )
+    .await;
+    let session = create_primary_worktree_session(client, base, task.id).await;
+    let store = state.store_for_session(session.id).await.unwrap();
+    let worktree = store
+        .get_worktree(session.worktree_id)
+        .await
+        .unwrap()
+        .expect("missing worktree");
+
+    tokio::fs::write(
+        Path::new(&worktree.root_path).join("file.txt"),
+        "hello\nchanged\n",
+    )
+    .await
+    .unwrap();
+
+    let mut next = HashSet::new();
+    next.insert(worktree.id);
+    state
+        .update_worktree_vcs_activity(&HashSet::new(), &next)
+        .await;
+    ctx_http::git_status::emit_worktree_vcs_snapshot_for_worktree(&state, &worktree, true)
+        .await
+        .unwrap();
+
+    let seeded = state
+        .get_worktree_vcs_snapshot(worktree.id)
+        .await
+        .expect("expected seeded worktree vcs snapshot");
+    assert_eq!(seeded.freshness, WorktreeVcsFreshness::Refreshing);
+    let seeded_rev = seeded.rev;
+
+    let ws_url = format!("{base}/api/workspaces/{}/stream", ws.id.0).replace("http://", "ws://");
+    let (mut socket, _) = connect_async(&ws_url).await.unwrap();
+    let _ = tokio::time::timeout(Duration::from_secs(2), socket.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+
+    let subscribe = json!({
+        "type": "subscribe",
+        "scope": "active",
+        "include_active_heads": true,
+    })
+    .to_string();
+    socket
+        .send(WsMessage::Text(subscribe.into()))
+        .await
+        .unwrap();
+
+    let first = tokio::time::timeout(Duration::from_secs(2), socket.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    let WsMessage::Text(first_text) = first else {
+        panic!("expected text frame after subscribe");
+    };
+    let first_message: ctx_core::models::WorkspaceActiveSnapshotStreamMessage =
+        serde_json::from_str(&first_text).unwrap();
+    let initial_worktree =
+        worktree_vcs_snapshot_from_message(first_message, worktree.id).expect("missing worktree");
+    assert_eq!(initial_worktree.freshness, WorktreeVcsFreshness::Refreshing);
+    assert_eq!(
+        initial_worktree.rev, seeded_rev,
+        "subscribe should reuse the in-flight computing snapshot instead of force-emitting again"
+    );
+
+    let deadline = tokio::time::Instant::now() + Duration::from_millis(300);
+    while tokio::time::Instant::now() < deadline {
+        let snapshot = state
+            .get_worktree_vcs_snapshot(worktree.id)
+            .await
+            .expect("expected worktree vcs snapshot to remain present");
+        assert_eq!(
+            snapshot.rev, seeded_rev,
+            "subscribe should not bump the worktree vcs rev while the summary refresh is already in flight"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+#[tokio::test]
+async fn worktree_vcs_summary_refresh_reloads_live_inventory_before_ready_publish() {
+    let (repo, _data_dir, state, server) = setup_git().await;
+    let base = &server.base_url;
+    let client = &server.client;
+
+    let ws: ctx_core::models::Workspace = client
+        .post(format!("{base}/api/workspaces"))
+        .json(&json!({"root_path": repo.path(), "name": "ws"}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    let task = create_task_with_primary_worktree(
+        client,
+        &state,
+        base,
+        ws.id,
+        repo.path(),
+        "summary-refresh-live-inventory",
+    )
+    .await;
+    let session = create_primary_worktree_session(client, base, task.id).await;
+    let store = state.store_for_session(session.id).await.unwrap();
+    let worktree = store
+        .get_worktree(session.worktree_id)
+        .await
+        .unwrap()
+        .expect("missing worktree");
+
+    let first_path = Path::new(&worktree.root_path).join("first.txt");
+    let second_path = Path::new(&worktree.root_path).join("second.txt");
+    tokio::fs::write(&first_path, "first\n").await.unwrap();
+
+    let mut next = HashSet::new();
+    next.insert(worktree.id);
+    state
+        .update_worktree_vcs_activity(&HashSet::new(), &next)
+        .await;
+    ctx_http::git_status::emit_worktree_vcs_snapshot_for_worktree(&state, &worktree, true)
+        .await
+        .unwrap();
+
+    tokio::fs::remove_file(&first_path).await.unwrap();
+    tokio::fs::write(&second_path, "second\n").await.unwrap();
+
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
+    while tokio::time::Instant::now() < deadline {
+        let snapshot = state
+            .get_worktree_vcs_snapshot(worktree.id)
+            .await
+            .expect("expected worktree vcs snapshot");
+        if snapshot.freshness == WorktreeVcsFreshness::Fresh {
+            let touched_paths = snapshot
+                .touched_files
+                .items
+                .iter()
+                .map(|item| item.path.as_str())
+                .collect::<Vec<_>>();
+            assert!(
+                touched_paths.contains(&"second.txt"),
+                "summary refresh should recompute live inventory before publishing ready state"
+            );
+            assert!(
+                !touched_paths.contains(&"first.txt"),
+                "ready snapshot should not publish stale touched-file inventory"
+            );
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+
+    panic!("timed out waiting for ready worktree vcs snapshot");
+}
+
+#[tokio::test]
+async fn worktree_vcs_emit_and_summary_refresh_share_refresh_lock() {
+    let (repo, _data_dir, state, server) = setup_git().await;
+    let base = &server.base_url;
+    let client = &server.client;
+
+    let ws: ctx_core::models::Workspace = client
+        .post(format!("{base}/api/workspaces"))
+        .json(&json!({"root_path": repo.path(), "name": "ws"}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    let task = create_task_with_primary_worktree(
+        client,
+        &state,
+        base,
+        ws.id,
+        repo.path(),
+        "shared-refresh-lock",
+    )
+    .await;
+    let session = create_primary_worktree_session(client, base, task.id).await;
+    let store = state.store_for_session(session.id).await.unwrap();
+    let worktree = store
+        .get_worktree(session.worktree_id)
+        .await
+        .unwrap()
+        .expect("worktree");
+
+    state
+        .update_worktree_vcs_activity(&HashSet::new(), &HashSet::from([worktree.id]))
+        .await;
+
+    let refresh_lock = state.worktree_vcs_refresh_lock(worktree.id).await;
+    let refresh_guard = refresh_lock.lock().await;
+
+    let emit_state = state.clone();
+    let emit_worktree = worktree.clone();
+    let emit_handle = tokio::spawn(async move {
+        ctx_http::git_status::emit_worktree_vcs_snapshot_for_worktree(
+            &emit_state,
+            &emit_worktree,
+            false,
+        )
+        .await
+    });
+
+    let summary_state = state.clone();
+    let summary_worktree = worktree.clone();
+    let summary_handle = tokio::spawn(async move {
+        ctx_http::git_status::refresh_worktree_vcs_summary(summary_state, summary_worktree).await
+    });
+
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(
+        !emit_handle.is_finished(),
+        "emit path should wait on the shared per-worktree refresh lock"
+    );
+    assert!(
+        !summary_handle.is_finished(),
+        "summary refresh should wait on the shared per-worktree refresh lock"
+    );
+
+    drop(refresh_guard);
+
+    emit_handle.await.unwrap().unwrap();
+    summary_handle.await.unwrap().unwrap();
+}
+
+#[tokio::test]
 async fn workspace_stream_replay_only_subscribe_reseeds_cached_worktree_vcs_snapshot() {
     let (repo, _data_dir, state, server) = setup_git().await;
     let base = &server.base_url;
@@ -3106,6 +3364,142 @@ async fn workspace_active_snapshot_stream_pushes_updates() {
         }
     }
     assert!(saw_upsert);
+}
+
+#[tokio::test]
+async fn workspace_stream_session_updates_emit_task_delta_without_full_active_task_upsert() {
+    let (repo, _data_dir, state, server) = setup().await;
+    let base = &server.base_url;
+    let client = &server.client;
+
+    let ws: ctx_core::models::Workspace = client
+        .post(format!("{base}/api/workspaces"))
+        .json(&json!({"root_path": repo.path(), "name": "ws"}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    let task =
+        create_task_with_primary_worktree(client, &state, base, ws.id, repo.path(), "delta").await;
+    let session = create_primary_worktree_session(client, base, task.id).await;
+    state.remember_session_meta(&session).await;
+
+    let ws_url = format!("{base}/api/workspaces/{}/stream", ws.id.0).replace("http://", "ws://");
+    let (mut socket, _) = connect_async(&ws_url).await.unwrap();
+    let _ = tokio::time::timeout(Duration::from_secs(2), socket.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+
+    let subscribe = json!({
+        "type": "subscribe",
+        "scope": "active",
+        "include_active_heads": true,
+    })
+    .to_string();
+    socket
+        .send(WsMessage::Text(subscribe.into()))
+        .await
+        .unwrap();
+
+    let mut saw_snapshot = false;
+    let snapshot_deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+    while tokio::time::Instant::now() < snapshot_deadline {
+        let remaining = snapshot_deadline.saturating_duration_since(tokio::time::Instant::now());
+        let wait = remaining.min(Duration::from_millis(250));
+        let next = tokio::time::timeout(wait, socket.next()).await;
+        if let Ok(Some(Ok(WsMessage::Text(txt)))) = next {
+            if let Ok(WorkspaceActiveSnapshotStreamMessage::Snapshot {
+                active_snapshot, ..
+            }) = serde_json::from_str::<WorkspaceActiveSnapshotStreamMessage>(&txt)
+            {
+                if active_snapshot
+                    .active
+                    .tasks
+                    .iter()
+                    .any(|summary| summary.task.id == task.id)
+                {
+                    saw_snapshot = true;
+                    break;
+                }
+            }
+        }
+    }
+    assert!(
+        saw_snapshot,
+        "expected initial active snapshot after subscribe"
+    );
+
+    let store = state.store_for_task(task.id).await.unwrap();
+    let event = store
+        .append_session_event(
+            session.id,
+            None,
+            Some(TurnId::new()),
+            SessionEventType::UserMessage,
+            json!({
+                "message_id": uuid::Uuid::new_v4().to_string(),
+                "content": "hello from test",
+            }),
+        )
+        .await
+        .unwrap();
+    state.publish_event(event).await;
+
+    let mut saw_summary_delta = false;
+    let mut saw_task_delta = false;
+    let mut saw_upsert = false;
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
+    while tokio::time::Instant::now() < deadline {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        let wait = remaining.min(Duration::from_millis(250));
+        let next = tokio::time::timeout(wait, socket.next()).await;
+        if let Ok(Some(Ok(WsMessage::Text(txt)))) = next {
+            if let Ok(WorkspaceActiveSnapshotStreamMessage::Event { event, .. }) =
+                serde_json::from_str::<WorkspaceActiveSnapshotStreamMessage>(&txt)
+            {
+                match event.as_ref() {
+                    WorkspaceActiveSnapshotEvent::SessionSummaryDelta { delta, .. }
+                        if delta.task_id == task.id && delta.session_id == session.id =>
+                    {
+                        saw_summary_delta = true;
+                    }
+                    WorkspaceActiveSnapshotEvent::TaskDelta { delta, .. }
+                        if delta.task.id == task.id
+                            && matches!(delta.kind, ctx_core::models::TaskDeltaKind::Updated) =>
+                    {
+                        saw_task_delta = true;
+                    }
+                    WorkspaceActiveSnapshotEvent::ActiveTaskUpsert { task: summary, .. }
+                        if summary.task.id == task.id =>
+                    {
+                        saw_upsert = true;
+                    }
+                    _ => {}
+                }
+            }
+        }
+        if saw_summary_delta && saw_task_delta && saw_upsert {
+            break;
+        }
+    }
+
+    assert!(
+        saw_summary_delta,
+        "expected session_summary_delta for active task session"
+    );
+    assert!(
+        saw_task_delta,
+        "expected task_delta update instead of a full task upsert"
+    );
+    assert!(
+        !saw_upsert,
+        "session updates should not emit a full active_task_upsert after the roster is already hydrated"
+    );
 }
 
 #[tokio::test]
