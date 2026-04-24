@@ -28,7 +28,16 @@ pub(super) async fn check_updates(
     State(_state): State<Arc<AppState>>,
     axum::extract::Query(q): axum::extract::Query<UpdateCheckQuery>,
 ) -> Result<Json<UpdateCheckResp>, (StatusCode, Json<ApiErrorResp>)> {
-    let channel = q.channel.unwrap_or_else(|| "stable".to_string());
+    let channel =
+        crate::updates::normalize_release_channel(q.channel.as_deref().unwrap_or("stable"))
+            .map_err(|err| {
+                (
+                    StatusCode::BAD_REQUEST,
+                    Json(ApiErrorResp {
+                        error: err.to_string(),
+                    }),
+                )
+            })?;
     let base_url = crate::updates::default_download_base_url();
     let platform = crate::updates::platform_key().map(|s| s.to_string());
     let current_version = crate::build_identity::current_build_identity()
@@ -231,7 +240,16 @@ pub(super) async fn download_appimage_update(
     State(state): State<Arc<AppState>>,
     Json(req): Json<DownloadAppImageReq>,
 ) -> Result<Json<DownloadAppImageResp>, (StatusCode, Json<ApiErrorResp>)> {
-    let channel = req.channel.unwrap_or_else(|| "stable".to_string());
+    let channel =
+        crate::updates::normalize_release_channel(req.channel.as_deref().unwrap_or("stable"))
+            .map_err(|err| {
+                (
+                    StatusCode::BAD_REQUEST,
+                    Json(ApiErrorResp {
+                        error: err.to_string(),
+                    }),
+                )
+            })?;
     let base_url = crate::updates::default_download_base_url();
     let platform = crate::updates::platform_key().ok_or_else(|| {
         (
@@ -357,7 +375,16 @@ pub(super) async fn apply_appimage_update(
         ));
     }
 
-    let channel = req.channel.unwrap_or_else(|| "stable".to_string());
+    let channel =
+        crate::updates::normalize_release_channel(req.channel.as_deref().unwrap_or("stable"))
+            .map_err(|err| {
+                (
+                    StatusCode::BAD_REQUEST,
+                    Json(ApiErrorResp {
+                        error: err.to_string(),
+                    }),
+                )
+            })?;
     let base_url = crate::updates::default_download_base_url();
     let platform = crate::updates::platform_key().ok_or_else(|| {
         (

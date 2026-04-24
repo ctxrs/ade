@@ -68,6 +68,23 @@ pub fn default_download_base_url() -> String {
         .unwrap_or_else(|_| "https://api.ctx.rs/functions/v1".to_string())
 }
 
+pub fn normalize_release_channel(channel: &str) -> Result<String> {
+    let trimmed = channel.trim();
+    if trimmed.is_empty() {
+        anyhow::bail!("channel must be non-empty");
+    }
+    if trimmed.len() > 64 {
+        anyhow::bail!("channel must be 64 characters or fewer");
+    }
+    if !trimmed
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.'))
+    {
+        anyhow::bail!("channel must use only ASCII letters, digits, '.', '_' or '-'");
+    }
+    Ok(trimmed.to_string())
+}
+
 pub fn platform_key() -> Option<&'static str> {
     let os = std::env::consts::OS;
     let arch = std::env::consts::ARCH;
@@ -135,7 +152,8 @@ pub async fn fetch_latest_manifest_with_params(
     channel: &str,
     query: Option<&[(&str, String)]>,
 ) -> Result<ReleaseManifest> {
-    let mut url = release_manifest_url(base_url, channel);
+    let channel = normalize_release_channel(channel)?;
+    let mut url = release_manifest_url(base_url, &channel);
     if let Some(q) = query {
         let qs = q
             .iter()

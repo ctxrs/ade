@@ -40,10 +40,17 @@ pub(super) fn managed_daemon_auto_update_source_from_env() -> Option<ManagedDaem
     if !env_truthy("CTX_MANAGED_DAEMON_AUTO_UPDATE") {
         return None;
     }
-    let channel = std::env::var("CTX_DAEMON_UPDATE_CHANNEL")
+    let raw_channel = std::env::var("CTX_DAEMON_UPDATE_CHANNEL")
         .ok()
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())?;
+    let channel = match normalize_release_channel(&raw_channel) {
+        Ok(channel) => channel,
+        Err(err) => {
+            tracing::warn!(err = %err, "managed daemon auto-update channel is invalid");
+            return None;
+        }
+    };
     let base_url = std::env::var("CTX_DAEMON_UPDATE_BASE_URL")
         .ok()
         .map(|value| value.trim().to_string())

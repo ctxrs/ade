@@ -6,6 +6,7 @@ pub async fn self_update_daemon(
     yes: bool,
     check_only: bool,
 ) -> Result<()> {
+    let channel = normalize_release_channel(channel)?;
     let Some(platform) = platform_key() else {
         anyhow::bail!(
             "unsupported platform for self-update: {}/{}",
@@ -21,7 +22,7 @@ pub async fn self_update_daemon(
     )
     .context("parsing current version")?;
 
-    let manifest = fetch_latest_manifest(base_url, channel).await?;
+    let manifest = fetch_latest_manifest(base_url, &channel).await?;
     let latest_version = normalize_version_str(&manifest.latest_version)
         .with_context(|| format!("parsing latest_version: {}", manifest.latest_version))?;
 
@@ -30,7 +31,7 @@ pub async fn self_update_daemon(
         "Current version: {}\nLatest version:  {}\nChannel:         {}\nUpdate:          {}",
         current_version,
         latest_version,
-        channel,
+        &channel,
         if update_available {
             "available"
         } else {
