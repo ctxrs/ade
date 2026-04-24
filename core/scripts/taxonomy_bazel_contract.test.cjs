@@ -181,7 +181,7 @@ test("deterministic Linux contract gates route through Bazel-owned contract entr
   assert.match(providerMatrixArchiveContracts, /srcs = \["\/\/tools\/bazel:run_node_task\.sh"\]/);
   assert.match(
     providerMatrixArchiveContracts,
-    /args = \["core", "--test", "scripts\/provider_matrix_archive_gap_report\.test\.cjs", "scripts\/provider_matrix_required_targets_gate\.test\.cjs"\]/,
+    /args = \[\s*"core",\s*"--test",\s*"scripts\/provider_matrix_archive_gap_report\.test\.cjs",\s*"scripts\/provider_matrix_required_targets_gate\.test\.cjs",\s*"scripts\/provider_release_bump\.test\.cjs",\s*\]/,
   );
   assert.doesNotMatch(providerMatrixArchiveContracts, /run_workspace_task\.sh/);
 
