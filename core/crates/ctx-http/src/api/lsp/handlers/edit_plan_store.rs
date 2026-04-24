@@ -232,7 +232,9 @@ pub(in crate::api) async fn discard_edit_plan(
     let pid = crate::edit_plans::EditPlanId(
         uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?,
     );
-    state.workspaces.edit_plans.lock().await.remove(&pid);
+    if state.workspaces.edit_plans.lock().await.remove(&pid).is_none() {
+        return Err(StatusCode::NOT_FOUND);
+    }
     state.delete_edit_plan_file(pid);
     Ok(StatusCode::NO_CONTENT)
 }

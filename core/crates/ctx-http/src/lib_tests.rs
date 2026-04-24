@@ -125,6 +125,7 @@ fn home_env_test_lock() -> &'static tokio::sync::Mutex<()> {
 mod auth_boundaries;
 mod cors;
 mod daemon_smoke;
+mod edit_plan_routes;
 mod execution_launch;
 mod health_diagnostics;
 mod mobile_secure_routes;
