@@ -63,9 +63,6 @@ vi.mock("./sections/CodexAccountsSection", () => ({
 vi.mock("./sections/DevToolsSection", () => ({
   DevToolsSection: sectionComponent("dev_tools"),
 }));
-vi.mock("./sections/SandboxingSection", () => ({
-  SandboxingSection: sectionComponent("sandboxing"),
-}));
 
 const makeProps = (): ComponentProps<typeof SettingsContentRouter> => ({
   active: "general",
@@ -256,13 +253,25 @@ describe("SettingsContentRouter", () => {
     render(
       <SettingsContentRouter
         {...makeProps()}
-        active="sandboxing"
+        active="analytics"
         daemonSettings={{ ...makeProps().daemonSettings, loadError: "daemon failed" }}
       />,
     );
 
     expect(screen.getByText("daemon failed")).toBeInTheDocument();
-    expect(screen.queryByTestId("sandboxing")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("analytics")).not.toBeInTheDocument();
+  });
+
+  it("keeps the merged sandbox and networking page available even when daemon runtime settings fail to load", () => {
+    render(
+      <SettingsContentRouter
+        {...makeProps()}
+        active="container_network"
+        daemonSettings={{ ...makeProps().daemonSettings, loadError: "daemon failed" }}
+      />,
+    );
+
+    expect(screen.getByTestId("container_network")).toBeInTheDocument();
   });
 
   it("routes account and dev tool branches explicitly", () => {

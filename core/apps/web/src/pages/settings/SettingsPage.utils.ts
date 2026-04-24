@@ -121,6 +121,7 @@ const readFiniteNumber = (value: unknown): number | null => {
 export function sectionFromHash(hash: string): SectionId | null {
   const raw = String(hash || "").replace(/^#/, "").trim();
   if (!raw) return null;
+  if (raw === "sandboxing") return "container_network";
   const match = SECTIONS.find((s) => s.id === raw);
   if (!match) return null;
   if (match.id === "dev_tools" && !import.meta.env.DEV) return null;

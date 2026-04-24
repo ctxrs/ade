@@ -13,6 +13,7 @@ import {
   isContainerizedEnvironment,
   normalizeDesktopEditorSettings,
   promptAutosaveStatusLabel,
+  sectionFromHash,
   worktreeBootstrapFormFromConfig,
 } from "./SettingsPage.utils";
 
@@ -35,6 +36,12 @@ describe("promptAutosaveStatusLabel", () => {
     expect(promptAutosaveStatusLabel("saved")).toBe("Saved");
     expect(promptAutosaveStatusLabel("error")).toBe("Save failed");
     expect(promptAutosaveStatusLabel("idle")).toBe("");
+  });
+});
+
+describe("sectionFromHash", () => {
+  it("maps the legacy sandboxing hash to container_network", () => {
+    expect(sectionFromHash("#sandboxing")).toBe("container_network");
   });
 });
 

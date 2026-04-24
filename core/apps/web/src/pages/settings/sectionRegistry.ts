@@ -7,7 +7,6 @@ export const SETTINGS_SECTION_COMPONENTS: Record<SectionId, SettingsSectionCompo
   agent_harnesses: "harness_authentication",
   harness_subscriptions: "legacy",
   models_routing: "legacy",
-  sandboxing: "legacy",
   container_network: "container_network",
   worktree_bootstrap: "worktree_bootstrap",
   agent_system_prompt: "agent_system_prompt",

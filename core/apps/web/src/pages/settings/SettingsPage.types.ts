@@ -7,7 +7,6 @@ export type SectionId =
   | "agent_harnesses"
   | "harness_subscriptions"
   | "models_routing"
-  | "sandboxing"
   | "container_network"
   | "worktree_bootstrap"
   | "agent_system_prompt"

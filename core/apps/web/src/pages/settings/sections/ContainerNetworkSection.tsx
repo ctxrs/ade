@@ -8,10 +8,12 @@ import {
   SelectValue,
 } from "../../../components/ui/select";
 import { isContainerizedEnvironment, promptAutosaveStatusLabel } from "../SettingsPage.utils";
-import { Row } from "../SettingsPage.components";
+import { Card, Row } from "../SettingsPage.components";
 import type { WorkspaceExecutionConfig } from "../../../api/client";
 import { useContainerNetworkController } from "../hooks/useContainerNetworkController";
+import type { SettingsSandboxingController } from "../hooks/useSettingsDaemonDocumentController";
 import { GeneralSection } from "./GeneralSection";
+import { SandboxingSection } from "./SandboxingSection";
 
 type WorkspaceNetworkMode = NonNullable<WorkspaceExecutionConfig["network_mode"]>;
 
@@ -19,12 +21,18 @@ type ContainerNetworkSectionProps = {
   workspaceId: string | null;
   active: boolean;
   themeVariant: "dark" | "light";
+  sandboxRuntimeLoaded: boolean;
+  sandboxRuntimeLoadError: string | null;
+  sandboxRuntime: SettingsSandboxingController;
 };
 
 export function ContainerNetworkSection({
   workspaceId,
   active,
   themeVariant,
+  sandboxRuntimeLoaded,
+  sandboxRuntimeLoadError,
+  sandboxRuntime,
 }: ContainerNetworkSectionProps) {
   const {
     workspaceExecution,
@@ -152,6 +160,27 @@ export function ContainerNetworkSection({
           </div>
         </div>
       </div>
+      {sandboxRuntimeLoaded ? (
+        sandboxRuntimeLoadError ? (
+          <Card title="Local Sandbox Runtime">
+            <div className="settings-empty settings-empty-error">{sandboxRuntimeLoadError}</div>
+          </Card>
+        ) : (
+          <SandboxingSection
+            loaded={sandboxRuntimeLoaded}
+            resolvedMachineMemoryMb={sandboxRuntime.machineResolvedMemoryMb}
+            idleShutdownSeconds={sandboxRuntime.machineIdleShutdownSeconds}
+            onIdleShutdownSecondsChange={sandboxRuntime.setMachineIdleShutdownSeconds}
+            hostPressureSwapThresholdMb={sandboxRuntime.machineHostPressureSwapThresholdMb}
+            onHostPressureSwapThresholdMbChange={sandboxRuntime.setMachineHostPressureSwapThresholdMb}
+            canSaveMachineSettings={sandboxRuntime.sandboxMachineCanSave}
+          />
+        )
+      ) : (
+        <Card title="Local Sandbox Runtime">
+          <div className="settings-empty">Loading…</div>
+        </Card>
+      )}
       {workspaceExecutionError ? <div className="settings-banner settings-banner-error">{workspaceExecutionError}</div> : null}
     </GeneralSection>
   );

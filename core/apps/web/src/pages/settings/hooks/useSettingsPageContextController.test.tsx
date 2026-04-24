@@ -65,6 +65,25 @@ describe("useSettingsPageContextController", () => {
     });
   });
 
+  it("maps legacy sandboxing hashes to the merged sandbox and networking page", async () => {
+    listWorkspacesMock.mockResolvedValue([makeWorkspace("workspace-a")]);
+    window.location.hash = "#sandboxing";
+
+    const { result } = renderHook(
+      () => useSettingsPageContextController(),
+      {
+        wrapper: wrapper("/settings"),
+      },
+    );
+
+    await waitFor(() => {
+      expect(result.current.workspaceId).toBe("workspace-a");
+    });
+
+    expect(result.current.active).toBe("container_network");
+    expect(result.current.headerLabel).toBe("Sandbox & Networking");
+  });
+
   it("filters sidebar sections and updates the hash when the active section changes", async () => {
     listWorkspacesMock.mockResolvedValue([makeWorkspace("workspace-a")]);
 

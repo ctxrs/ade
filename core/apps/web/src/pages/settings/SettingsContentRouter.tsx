@@ -15,7 +15,6 @@ import { BillingSection } from "./sections/BillingSection";
 import { HarnessAuthenticationSection } from "./sections/HarnessAuthenticationSection";
 import { CodexAccountsSection } from "./sections/CodexAccountsSection";
 import { DevToolsSection } from "./sections/DevToolsSection";
-import { SandboxingSection } from "./sections/SandboxingSection";
 import type { SettingsAccountController } from "./hooks/useSettingsAccountController";
 import type { SettingsDaemonDocumentController } from "./hooks/useSettingsDaemonDocumentController";
 import type { SettingsDevToolsController } from "./hooks/useSettingsDevToolsController";
@@ -131,7 +130,16 @@ export function SettingsContentRouter(props: {
   }
 
   if (active === "container_network") {
-    return <ContainerNetworkSection workspaceId={workspaceId} active themeVariant={themeVariant} />;
+    return (
+      <ContainerNetworkSection
+        workspaceId={workspaceId}
+        active
+        themeVariant={themeVariant}
+        sandboxRuntimeLoaded={daemonSettings.loaded}
+        sandboxRuntimeLoadError={daemonSettings.loadError}
+        sandboxRuntime={daemonSettings.sandboxing}
+      />
+    );
   }
 
   if (active === "merge_queue") {
@@ -241,22 +249,6 @@ export function SettingsContentRouter(props: {
         devRestartError={devTools.restartError}
         devRestartResults={devTools.restartResults}
         onRestart={devTools.onRestart}
-      />
-    );
-  }
-
-  if (active === "sandboxing") {
-    const status = renderDaemonDocumentState();
-    if (status) return status;
-    return (
-      <SandboxingSection
-        loaded={daemonSettings.loaded}
-        resolvedMachineMemoryMb={daemonSettings.sandboxing.machineResolvedMemoryMb}
-        idleShutdownSeconds={daemonSettings.sandboxing.machineIdleShutdownSeconds}
-        onIdleShutdownSecondsChange={daemonSettings.sandboxing.setMachineIdleShutdownSeconds}
-        hostPressureSwapThresholdMb={daemonSettings.sandboxing.machineHostPressureSwapThresholdMb}
-        onHostPressureSwapThresholdMbChange={daemonSettings.sandboxing.setMachineHostPressureSwapThresholdMb}
-        canSaveMachineSettings={daemonSettings.sandboxing.sandboxMachineCanSave}
       />
     );
   }

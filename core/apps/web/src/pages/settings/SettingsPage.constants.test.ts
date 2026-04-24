@@ -15,10 +15,13 @@ describe("Settings sections", () => {
     expect(dictation?.navHidden).toBe(true);
   });
 
-  it("keeps sandboxing visible in the sidebar navigation", () => {
+  it("keeps sandbox and networking visible in settings navigation without a separate sandboxing entry", () => {
+    const sandboxAndNetworking = SECTIONS.find((section) => section.id === "container_network");
     const sandboxing = SECTIONS.find((section) => section.id === "sandboxing");
 
-    expect(sandboxing).toBeDefined();
-    expect(sandboxing?.navHidden).not.toBe(true);
+    expect(sandboxAndNetworking).toBeDefined();
+    expect(sandboxAndNetworking?.label).toBe("Sandbox & Networking");
+    expect(sandboxAndNetworking?.navHidden).not.toBe(true);
+    expect(sandboxing).toBeUndefined();
   });
 });
