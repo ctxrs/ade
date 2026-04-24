@@ -336,13 +336,10 @@ pub(in super::super) fn spawn_and_validate_local_daemon(
 ) -> Result<SpawnedLocalDaemonReady> {
     let (url, child, systemd_scope) = spawn_daemon(app, data_dir, true)?;
     let pending = PendingSpawnedLocalDaemon::new(url, child, systemd_scope);
-    let health = daemon_health(pending.url())
-        .context("requesting /api/health for spawned local daemon compatibility")?;
-    let compatible = local_daemon_health_matches_expected(
-        &health,
-        data_dir,
-        desktop_identity,
-    );
+    let auth = read_daemon_auth_with_retry(data_dir)?;
+    let health = daemon_health_with_auth(pending.url(), Some(auth.token.as_str()))
+        .context("requesting authenticated /api/health for spawned local daemon compatibility")?;
+    let compatible = local_daemon_health_matches_expected(&health, data_dir, desktop_identity);
     if !compatible {
         anyhow::bail!(
             "{}",
@@ -354,7 +351,6 @@ pub(in super::super) fn spawn_and_validate_local_daemon(
             )
         );
     }
-    let auth = read_daemon_auth_with_retry(data_dir)?;
     let (url, child, systemd_scope) = pending.disarm()?;
     Ok(SpawnedLocalDaemonReady {
         url,

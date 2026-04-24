@@ -1,9 +1,10 @@
 use super::*;
 use crate::desktop_daemon::{
-    daemon_data_dir, daemon_health, existing_local_daemon_matches,
-    existing_local_daemon_matches_or_absent, normalize_daemon_pid, probe_daemon_health,
-    probe_local_daemon_health_with_retry, read_daemon_auth_with_retry, resolve_env_local_daemon,
-    resolve_existing_local_daemon, spawn_and_validate_local_daemon, SpawnedLocalDaemonReady,
+    daemon_data_dir, daemon_health, existing_local_daemon_matches_or_absent,
+    existing_local_daemon_matches_with_auth, normalize_daemon_pid, probe_daemon_health,
+    probe_daemon_health_with_auth, probe_local_daemon_health_with_retry_auth,
+    read_daemon_auth_with_retry, resolve_env_local_daemon, resolve_existing_local_daemon,
+    spawn_and_validate_local_daemon, SpawnedLocalDaemonReady,
 };
 pub(super) use ctx_desktop_ipc::DesktopRestartLocalDaemonReq;
 
@@ -294,7 +295,7 @@ fn ensure_local_connection_with_mode(
         let data_dir = daemon_data_dir(app)?;
         let desktop_identity = load_desktop_build_identity(app)?;
         if let Some((url, token)) = resolve_env_local_daemon(app)? {
-            probe_daemon_health(&url)?;
+            probe_daemon_health_with_auth(&url, Some(token.as_str()))?;
             set_attached_local_for_ensure_mode(
                 state,
                 mode,
@@ -328,9 +329,10 @@ fn ensure_local_connection_with_mode(
                     return Err(err)
                         .context("spawning local daemon failed (auth file missing daemon_url)");
                 };
-                probe_local_daemon_health_with_retry(url)?;
-                let compatible = existing_local_daemon_matches(
+                probe_local_daemon_health_with_retry_auth(url, Some(auth.token.as_str()))?;
+                let compatible = existing_local_daemon_matches_with_auth(
                     url,
+                    Some(auth.token.as_str()),
                     &data_dir,
                     &desktop_identity,
                 )

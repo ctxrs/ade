@@ -1,4 +1,5 @@
 use super::*;
+use crate::desktop_daemon::daemon_health_with_auth;
 use ctx_desktop_ipc::DesktopRemoteDaemonUpdateState;
 
 const REMOTE_UPDATE_HEALTH_RETRIES: usize = 24;
@@ -175,7 +176,7 @@ fn run_pending_remote_daemon_update_worker(
             .clone()
             .ok_or_else(|| anyhow!("pending remote daemon update is missing auth token"))?;
         let expected_identity = load_desktop_build_identity(app)?;
-        let health = daemon_health(&base_url)
+        let health = daemon_health_with_auth(&base_url, Some(token.as_str()))
             .context("reading remote daemon health during pending update")?;
         if matches!(
             classify_daemon_compatibility(&health, &expected_identity),

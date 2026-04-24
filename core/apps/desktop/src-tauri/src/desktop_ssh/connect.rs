@@ -1,4 +1,5 @@
 use super::*;
+use crate::desktop_daemon::daemon_health_with_auth;
 use ctx_desktop_ipc::DesktopRemoteDaemonUpdateState;
 
 struct ConnectedRemoteDaemon {
@@ -224,7 +225,7 @@ fn update_connected_remote_if_needed(
     channel: &str,
     expected_identity: &DesktopBuildIdentity,
 ) -> Result<ConnectedRemoteDaemon> {
-    let health = daemon_health(&connected.base_url)
+    let health = daemon_health_with_auth(&connected.base_url, Some(connected.token.as_str()))
         .context("reading remote daemon health for compatibility classification")?;
     match classify_daemon_compatibility(&health, expected_identity) {
         DaemonCompatibilityState::Exact => Ok(connected),

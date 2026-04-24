@@ -211,6 +211,9 @@ fn build_health_response(
     include_sensitive: bool,
 ) -> HealthResp {
     let version = identity.exact_version.clone();
+    let compatibility_token = include_sensitive
+        .then(|| identity.compatibility_token.clone())
+        .unwrap_or_default();
     HealthResp {
         version: version.clone(),
         daemon_version: version.clone(),
@@ -227,8 +230,8 @@ fn build_health_response(
         compatibility: HealthCompatibility {
             desktop_exact_version: version,
             desktop_build_id: identity.build_id.clone(),
-            desktop_dev_instance_id: identity.compatibility_token.clone(),
-            protocol_compatibility_token: identity.compatibility_token.clone(),
+            desktop_dev_instance_id: compatibility_token.clone(),
+            protocol_compatibility_token: compatibility_token,
             mobile_api_min: MOBILE_API_MIN_VERSION,
             mobile_api_max: MOBILE_API_MAX_VERSION,
         },

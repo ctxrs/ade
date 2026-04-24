@@ -85,27 +85,30 @@ pub(crate) fn should_reclaim_incompatible_local_daemon(
 pub(crate) fn reclaim_incompatible_local_daemon(
     base_url: &str,
     health: &DaemonHealthSummary,
+    auth_token: Option<&str>,
 ) -> Result<()> {
     if health.pid == 0 {
         anyhow::bail!("incompatible local daemon missing pid");
     }
     let pid = health.pid;
-    let graceful_revalidated = daemon_reports_expected_pid(base_url, pid);
+    let graceful_revalidated = daemon_reports_expected_pid_with_auth(base_url, pid, auth_token);
     let graceful_err = if graceful_revalidated {
         terminate_pid(pid, false).err()
     } else {
         None
     };
-    if wait_for_daemon_reclaim(base_url, pid, Duration::from_secs(3)).is_ok() {
+    if wait_for_daemon_reclaim_with_auth(base_url, pid, Duration::from_secs(3), auth_token).is_ok()
+    {
         return Ok(());
     }
-    let force_revalidated = daemon_reports_expected_pid(base_url, pid);
+    let force_revalidated = daemon_reports_expected_pid_with_auth(base_url, pid, auth_token);
     let force_err = if force_revalidated {
         terminate_pid(pid, true).err()
     } else {
         None
     };
-    if wait_for_daemon_reclaim(base_url, pid, Duration::from_secs(2)).is_ok() {
+    if wait_for_daemon_reclaim_with_auth(base_url, pid, Duration::from_secs(2), auth_token).is_ok()
+    {
         return Ok(());
     }
     let mut details = Vec::new();
@@ -137,7 +140,12 @@ pub(crate) fn reclaim_incompatible_local_daemon(
     );
 }
 
-fn wait_until_daemon_reclaimed(base_url: &str, pid: u32, timeout: Duration) -> bool {
+fn wait_until_daemon_reclaimed(
+    base_url: &str,
+    pid: u32,
+    timeout: Duration,
+    auth_token: Option<&str>,
+) -> bool {
     const RECLAIM_HEALTH_PROBE_MAX_TIMEOUT: Duration = Duration::from_millis(250);
     let deadline = Instant::now() + timeout;
     loop {
@@ -147,7 +155,7 @@ fn wait_until_daemon_reclaimed(base_url: &str, pid: u32, timeout: Duration) -> b
         }
         let health_timeout =
             reclaim_health_probe_timeout(remaining, RECLAIM_HEALTH_PROBE_MAX_TIMEOUT);
-        let health = daemon_health_with_timeout(base_url, health_timeout).ok();
+        let health = daemon_health_with_timeout_auth(base_url, auth_token, health_timeout).ok();
         let pid_alive = is_pid_alive(pid).unwrap_or(true);
         if reclaim_complete(pid, pid_alive, health.as_ref()) {
             return true;
@@ -160,10 +168,19 @@ fn wait_until_daemon_reclaimed(base_url: &str, pid: u32, timeout: Duration) -> b
 }
 
 pub(crate) fn wait_for_daemon_reclaim(base_url: &str, pid: u32, timeout: Duration) -> Result<()> {
+    wait_for_daemon_reclaim_with_auth(base_url, pid, timeout, None)
+}
+
+fn wait_for_daemon_reclaim_with_auth(
+    base_url: &str,
+    pid: u32,
+    timeout: Duration,
+    auth_token: Option<&str>,
+) -> Result<()> {
     if pid == 0 {
         anyhow::bail!("invalid pid 0");
     }
-    if wait_until_daemon_reclaimed(base_url, pid, timeout) {
+    if wait_until_daemon_reclaimed(base_url, pid, timeout, auth_token) {
         return Ok(());
     }
     anyhow::bail!("local daemon pid {pid} did not exit within {:?}", timeout);
@@ -181,8 +198,12 @@ fn reclaim_complete(pid: u32, pid_alive: bool, health: Option<&DaemonHealthSumma
     !pid_alive && !same_pid_serving_health
 }
 
-fn daemon_reports_expected_pid(base_url: &str, pid: u32) -> bool {
-    let health = daemon_health(base_url).ok();
+fn daemon_reports_expected_pid_with_auth(
+    base_url: &str,
+    pid: u32,
+    auth_token: Option<&str>,
+) -> bool {
+    let health = daemon_health_with_auth(base_url, auth_token).ok();
     health_reports_expected_pid(pid, health.as_ref())
 }
 
@@ -317,7 +338,14 @@ fn command_reports_permission_denied(output: &std::process::Output) -> bool {
 }
 
 pub(crate) fn daemon_health(base_url: &str) -> Result<DaemonHealthSummary> {
-    daemon_health_with_timeout(base_url, daemon_health_timeout())
+    daemon_health_with_auth(base_url, None)
+}
+
+pub(crate) fn daemon_health_with_auth(
+    base_url: &str,
+    auth_token: Option<&str>,
+) -> Result<DaemonHealthSummary> {
+    daemon_health_with_timeout_auth(base_url, auth_token, daemon_health_timeout())
 }
 
 #[cfg(test)]
@@ -357,9 +385,22 @@ fn daemon_health_client(timeout: Duration) -> Result<reqwest::blocking::Client> 
 }
 
 fn daemon_health_with_timeout(base_url: &str, timeout: Duration) -> Result<DaemonHealthSummary> {
+    daemon_health_with_timeout_auth(base_url, None, timeout)
+}
+
+fn daemon_health_with_timeout_auth(
+    base_url: &str,
+    auth_token: Option<&str>,
+    timeout: Duration,
+) -> Result<DaemonHealthSummary> {
     let url = format!("{}/api/health", base_url.trim_end_matches('/'));
     let client = daemon_health_client(timeout)?;
-    let res = client.get(url).send().context("requesting /api/health")?;
+    let request = client.get(url);
+    let request = match auth_token {
+        Some(token) if !token.trim().is_empty() => request.bearer_auth(token),
+        _ => request,
+    };
+    let res = request.send().context("requesting /api/health")?;
     let res = res.error_for_status().context("health status")?;
     res.json::<DaemonHealthSummary>()
         .context("parsing /api/health response")
@@ -474,7 +515,16 @@ pub(crate) fn existing_local_daemon_matches(
     expected_data_dir: &Path,
     expected_identity: &DesktopBuildIdentity,
 ) -> Result<bool> {
-    let health = daemon_health(base_url)?;
+    existing_local_daemon_matches_with_auth(base_url, None, expected_data_dir, expected_identity)
+}
+
+pub(crate) fn existing_local_daemon_matches_with_auth(
+    base_url: &str,
+    auth_token: Option<&str>,
+    expected_data_dir: &Path,
+    expected_identity: &DesktopBuildIdentity,
+) -> Result<bool> {
+    let health = daemon_health_with_auth(base_url, auth_token)?;
     Ok(local_daemon_health_matches_expected(
         &health,
         expected_data_dir,
@@ -491,14 +541,28 @@ pub(crate) fn existing_local_daemon_matches_or_absent(
 }
 
 pub(crate) fn probe_daemon_health(base_url: &str) -> Result<()> {
-    let _ = daemon_health(base_url)?;
+    probe_daemon_health_with_auth(base_url, None)
+}
+
+pub(crate) fn probe_daemon_health_with_auth(
+    base_url: &str,
+    auth_token: Option<&str>,
+) -> Result<()> {
+    let _ = daemon_health_with_auth(base_url, auth_token)?;
     Ok(())
 }
 
 pub(crate) fn probe_local_daemon_health_with_retry(base_url: &str) -> Result<()> {
+    probe_local_daemon_health_with_retry_auth(base_url, None)
+}
+
+pub(crate) fn probe_local_daemon_health_with_retry_auth(
+    base_url: &str,
+    auth_token: Option<&str>,
+) -> Result<()> {
     let mut last_err: Option<anyhow::Error> = None;
     for attempt in 0..LOCAL_DAEMON_HEALTH_RETRIES {
-        match probe_daemon_health(base_url) {
+        match probe_daemon_health_with_auth(base_url, auth_token) {
             Ok(()) => return Ok(()),
             Err(err) => last_err = Some(err),
         }

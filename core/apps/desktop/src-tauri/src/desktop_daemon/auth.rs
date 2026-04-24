@@ -87,7 +87,7 @@ pub(in super::super) fn resolve_existing_local_daemon(
         return Ok(None);
     };
     let desktop_identity = load_desktop_build_identity(app)?;
-    let Ok(health) = daemon_health(url) else {
+    let Ok(health) = daemon_health_with_auth(url, Some(auth.token.as_str())) else {
         return Ok(None);
     };
     if local_daemon_health_matches_expected(&health, data_dir, &desktop_identity) {
@@ -98,7 +98,7 @@ pub(in super::super) fn resolve_existing_local_daemon(
         )));
     }
     if should_reclaim_incompatible_local_daemon(url, &health, data_dir) {
-        if let Err(err) = reclaim_incompatible_local_daemon(url, &health)
+        if let Err(err) = reclaim_incompatible_local_daemon(url, &health, Some(auth.token.as_str()))
             .with_context(|| format!("reclaiming incompatible local daemon at {url}"))
         {
             eprintln!("{err:#}");

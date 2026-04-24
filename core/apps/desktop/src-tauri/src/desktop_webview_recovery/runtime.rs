@@ -5,8 +5,8 @@ use tauri::Manager;
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
 use crate::{
-    ConnectionManager, daemon_data_dir, daemon_health, desktop_restart_app,
-    load_desktop_build_identity, local_daemon_health_matches_expected, log_desktop_startup_error,
+    daemon_data_dir, daemon_health_with_auth, desktop_restart_app, load_desktop_build_identity,
+    local_daemon_health_matches_expected, log_desktop_startup_error, ConnectionManager,
 };
 
 use ctx_desktop_ipc::{
@@ -136,7 +136,7 @@ fn snapshot_daemon_health(app: &tauri::AppHandle) -> DesktopWebviewRecoveryDaemo
     let Some(base_url) = info.base_url else {
         return DesktopWebviewRecoveryDaemonHealth::Unknown;
     };
-    let health = match daemon_health(&base_url) {
+    let health = match daemon_health_with_auth(&base_url, info.token.as_deref()) {
         Ok(health) => health,
         Err(_) => return DesktopWebviewRecoveryDaemonHealth::Down,
     };

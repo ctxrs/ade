@@ -107,6 +107,20 @@ async fn unauthenticated_health_omits_sensitive_fields_when_daemon_auth_is_enabl
         Some(true)
     );
     assert!(health.get("compatibility").is_some());
+    assert_eq!(
+        health
+            .pointer("/compatibility/desktop_dev_instance_id")
+            .and_then(|v| v.as_str()),
+        Some(""),
+        "health leaked desktop_dev_instance_id: {health:#?}"
+    );
+    assert_eq!(
+        health
+            .pointer("/compatibility/protocol_compatibility_token")
+            .and_then(|v| v.as_str()),
+        Some(""),
+        "health leaked protocol_compatibility_token: {health:#?}"
+    );
     assert!(
         health.get("pid").is_none(),
         "health leaked pid: {health:#?}"
@@ -166,5 +180,19 @@ async fn authorized_health_keeps_sensitive_fields_when_daemon_auth_is_enabled() 
             .and_then(|v| v.as_str())
             .is_some(),
         "authorized health missing storage state"
+    );
+    assert_ne!(
+        health
+            .pointer("/compatibility/desktop_dev_instance_id")
+            .and_then(|v| v.as_str()),
+        Some(""),
+        "authorized health missing desktop_dev_instance_id"
+    );
+    assert_ne!(
+        health
+            .pointer("/compatibility/protocol_compatibility_token")
+            .and_then(|v| v.as_str()),
+        Some(""),
+        "authorized health missing protocol_compatibility_token"
     );
 }
