@@ -2315,9 +2315,20 @@ async fn worktree_vcs_activity_eviction_drops_refresh_lock() {
 
     let next_lock = state.worktree_vcs_refresh_lock(worktree.id).await;
     assert!(
-        !Arc::ptr_eq(&initial_lock, &next_lock),
-        "worktree VCS eviction should drop the cached refresh lock"
+        Arc::ptr_eq(&initial_lock, &next_lock),
+        "worktree VCS reactivation should reuse an in-flight refresh lock"
     );
+
+    let old_lock = Arc::downgrade(&initial_lock);
+    drop(next_lock);
+    drop(initial_lock);
+
+    let replacement_lock = state.worktree_vcs_refresh_lock(worktree.id).await;
+    assert!(
+        old_lock.upgrade().is_none(),
+        "evicted refresh lock should eventually be released once no refreshes are using it"
+    );
+    assert_eq!(Arc::strong_count(&replacement_lock), 1);
 }
 
 #[tokio::test]

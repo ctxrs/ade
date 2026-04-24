@@ -26,6 +26,7 @@ pub(crate) fn normalize_hydrated_worktree_vcs_snapshot(
         snapshot.compute_state = WorktreeVcsComputeState::Ready;
     }
     snapshot.git_status.raw.clear();
+    snapshot.git_status.entries.clear();
     snapshot.freshness = match snapshot.compute_state {
         WorktreeVcsComputeState::Error => WorktreeVcsFreshness::Error,
         WorktreeVcsComputeState::Ready | WorktreeVcsComputeState::Computing => {
@@ -197,12 +198,6 @@ impl WorkspaceRuntime {
                     runtime.remove(worktree_id);
                 }
             }
-            {
-                let mut locks = self.worktree_vcs_refresh_locks.lock().await;
-                for worktree_id in &evicted {
-                    locks.remove(worktree_id);
-                }
-            }
             self.workspace_active_snapshot
                 .drop_worktree_vcs_snapshots(&evicted)
                 .await;
@@ -241,11 +236,14 @@ impl WorkspaceRuntime {
         worktree_id: WorktreeId,
     ) -> Arc<tokio::sync::Mutex<()>> {
         let mut locks = self.worktree_vcs_refresh_locks.lock().await;
-        Arc::clone(
-            locks
-                .entry(worktree_id)
-                .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(()))),
-        )
+        match locks.get(&worktree_id).and_then(std::sync::Weak::upgrade) {
+            Some(lock) => lock,
+            None => {
+                let lock = Arc::new(tokio::sync::Mutex::new(()));
+                locks.insert(worktree_id, Arc::downgrade(&lock));
+                lock
+            }
+        }
     }
 
     pub async fn is_worktree_vcs_active(&self, worktree_id: WorktreeId) -> bool {

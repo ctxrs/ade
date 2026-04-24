@@ -270,6 +270,7 @@ mod tests {
         TaskStatus, WorkspaceActiveTaskSummary, WorktreeVcsBaseResolution,
         WorktreeVcsBaseResolutionKind, WorktreeVcsComputeState, WorktreeVcsFreshness,
         WorktreeVcsGitStatusSummary, WorktreeVcsSnapshot, WorktreeVcsSummary,
+        WorktreeVcsTouchedFile,
         WorktreeVcsTouchedFiles,
     };
     use std::collections::{HashMap, HashSet};
@@ -455,6 +456,12 @@ mod tests {
             },
             git_status: WorktreeVcsGitStatusSummary {
                 raw: "## main\n M edited.txt\n".to_string(),
+                entries: vec![WorktreeVcsTouchedFile {
+                    path: "edited.txt".to_string(),
+                    orig_path: None,
+                    index_status: Some("M".to_string()),
+                    worktree_status: Some(" ".to_string()),
+                }],
                 ..Default::default()
             },
             touched_files: WorktreeVcsTouchedFiles::default(),
@@ -615,6 +622,10 @@ mod tests {
             snapshot.worktree_vcs_snapshots[0].git_status.raw.is_empty(),
             "hydrated workspace snapshot should not expose raw git status text"
         );
+        assert!(
+            snapshot.worktree_vcs_snapshots[0].git_status.entries.is_empty(),
+            "hydrated workspace snapshot should not expose cached git status entries"
+        );
 
         let heads = runtime
             .workspace_active_snapshot
@@ -632,6 +643,10 @@ mod tests {
         assert!(
             cached.git_status.raw.is_empty(),
             "hydrated runtime snapshot should not expose raw git status text"
+        );
+        assert!(
+            cached.git_status.entries.is_empty(),
+            "hydrated runtime snapshot should not expose cached git status entries"
         );
     }
 }

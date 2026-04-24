@@ -60,7 +60,7 @@ pub struct WorkspaceRuntime {
     pub worktree_vcs_snapshots:
         Mutex<HashMap<WorktreeId, TimedEntry<WorktreeVcsSnapshotCacheEntry>>>,
     pub worktree_vcs_active: Mutex<HashMap<WorktreeId, usize>>,
-    pub(crate) worktree_vcs_refresh_locks: Mutex<HashMap<WorktreeId, Arc<Mutex<()>>>>,
+    pub(crate) worktree_vcs_refresh_locks: Mutex<HashMap<WorktreeId, std::sync::Weak<Mutex<()>>>>,
     pub worktree_vcs_open_panes: Mutex<HashMap<WorktreeId, usize>>,
     pub worktree_vcs_summary_gen: Mutex<HashMap<WorktreeId, u64>>,
     pub worktree_vcs_runtime: Mutex<HashMap<WorktreeId, WorktreeVcsRuntimeState>>,
