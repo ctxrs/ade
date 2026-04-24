@@ -17,23 +17,24 @@ mod manifest;
 mod self_update;
 
 pub use appimage::{
-    appimage_candidate_meta_path, appimage_candidate_partial_path, appimage_candidate_path,
-    appimage_path_env, atomic_replace_file, clear_appimage_candidate, download_and_verify,
+    AppImageCandidateRequest, VerifiedAppImageCandidateMeta, appimage_candidate_meta_path,
+    appimage_candidate_partial_path, appimage_candidate_path, appimage_path_env,
+    atomic_replace_file, clear_appimage_candidate, download_and_verify,
     download_verified_appimage_candidate, read_verified_appimage_candidate_meta, updates_dir,
-    validate_verified_appimage_candidate, AppImageCandidateRequest, VerifiedAppImageCandidateMeta,
+    validate_verified_appimage_candidate,
 };
 pub use fs_ops::{
     atomic_replace_exe, atomic_replace_exe_with_backup, download_to_path, sha256_hex_file,
 };
 pub use managed_daemon::{
-    managed_daemon_auto_update_status_snapshot, spawn_managed_daemon_auto_update,
-    ManagedDaemonAutoUpdateStatus,
+    ManagedDaemonAutoUpdateStatus, managed_daemon_auto_update_status_snapshot,
+    spawn_managed_daemon_auto_update,
 };
 pub use manifest::{
-    default_download_base_url, fetch_latest_manifest, fetch_latest_manifest_with_params,
-    in_place_update_capability, is_update_available, join_url, normalize_release_channel,
-    normalize_version_str, platform_key, platform_supported, release_manifest_url,
-    ReleaseArtifact, ReleaseManifest, ReleasePlatform,
+    ReleaseArtifact, ReleaseManifest, ReleasePlatform, default_download_base_url,
+    fetch_latest_manifest, fetch_latest_manifest_with_params, in_place_update_capability,
+    is_update_available, join_url, normalize_release_channel, normalize_version_str, platform_key,
+    platform_supported, release_manifest_url,
 };
 pub use self_update::self_update_daemon;
 
@@ -41,9 +42,9 @@ pub use self_update::self_update_daemon;
 mod tests {
     use super::appimage::in_place_update_capability_with_appimage_path;
     use super::managed_daemon::{
-        activate_managed_daemon_bundle, managed_daemon_auto_update_source_from_env,
-        restore_managed_daemon_bundle, write_managed_daemon_auto_update_status,
-        ManagedDaemonAutoUpdateSource,
+        ManagedDaemonAutoUpdateSource, activate_managed_daemon_bundle,
+        managed_daemon_auto_update_source_from_env, restore_managed_daemon_bundle,
+        write_managed_daemon_auto_update_status,
     };
     use super::*;
 
@@ -313,6 +314,15 @@ mod tests {
     fn normalize_release_channel_rejects_path_traversal() {
         let err = normalize_release_channel("x/../../../secret").expect_err("invalid channel");
         assert!(err.to_string().contains("ASCII letters"));
+    }
+
+    #[test]
+    fn normalize_release_channel_rejects_dot_segments() {
+        let err = normalize_release_channel("..").expect_err("invalid channel");
+        assert!(err.to_string().contains("must not be"));
+
+        let err = normalize_release_channel(".").expect_err("invalid channel");
+        assert!(err.to_string().contains("must not be"));
     }
 
     #[test]

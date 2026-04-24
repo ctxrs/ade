@@ -76,6 +76,9 @@ pub fn normalize_release_channel(channel: &str) -> Result<String> {
     if trimmed.len() > 64 {
         anyhow::bail!("channel must be 64 characters or fewer");
     }
+    if matches!(trimmed, "." | "..") {
+        anyhow::bail!("channel must not be '.' or '..'");
+    }
     if !trimmed
         .chars()
         .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.'))
