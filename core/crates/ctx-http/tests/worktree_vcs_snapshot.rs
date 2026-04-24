@@ -309,7 +309,7 @@ async fn worktree_vcs_snapshot_populates_jj_head_commit_metadata() {
         .get_worktree_vcs_snapshot(worktree.id)
         .await
         .expect("snapshot should be present");
-    assert_eq!(snapshot.head_commit_sha.as_deref(), Some(expected_head.as_str()));
+    assert_eq!(snapshot.head_commit_sha, expected_head);
 }
 
 #[tokio::test(flavor = "current_thread")]
