@@ -71,18 +71,60 @@ async fn session_artifact_allowed_roots(
     Ok(roots)
 }
 
+async fn resolve_session_artifact_accessible_path(
+    state: &Arc<AppState>,
+    store: &ctx_store::Store,
+    session: &ctx_core::models::Session,
+    path: &StdPath,
+) -> Result<Option<PathBuf>, StatusCode> {
+    let roots = session_artifact_allowed_roots(state, store, session).await?;
+    let canonical = match tokio::fs::canonicalize(path).await {
+        Ok(canonical) => canonical,
+        Err(_) => return Ok(None),
+    };
+    Ok(roots
+        .iter()
+        .any(|root| canonical.starts_with(root))
+        .then_some(canonical))
+}
+
 pub(super) async fn session_artifact_path_is_accessible(
     state: &Arc<AppState>,
     store: &ctx_store::Store,
     session: &ctx_core::models::Session,
     path: &StdPath,
 ) -> Result<bool, StatusCode> {
-    let roots = session_artifact_allowed_roots(state, store, session).await?;
-    let canonical = match tokio::fs::canonicalize(path).await {
-        Ok(canonical) => canonical,
-        Err(_) => return Ok(false),
-    };
-    Ok(roots.iter().any(|root| canonical.starts_with(root)))
+    Ok(
+        resolve_session_artifact_accessible_path(state, store, session, path)
+            .await?
+            .is_some(),
+    )
+}
+
+pub(crate) async fn open_canonical_session_artifact_file(
+    path: &StdPath,
+) -> Result<tokio::fs::File, StatusCode> {
+    #[cfg(unix)]
+    {
+        let canonical = path.to_path_buf();
+        let std_file = tokio::task::spawn_blocking(move || {
+            use std::os::unix::fs::OpenOptionsExt;
+
+            let mut options = std::fs::OpenOptions::new();
+            options.read(true).custom_flags(libc::O_NOFOLLOW);
+            options.open(canonical)
+        })
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .map_err(|_| StatusCode::NOT_FOUND)?;
+        Ok(tokio::fs::File::from_std(std_file))
+    }
+    #[cfg(not(unix))]
+    {
+        tokio::fs::File::open(path)
+            .await
+            .map_err(|_| StatusCode::NOT_FOUND)
+    }
 }
 
 async fn validate_session_artifact_write_path(
@@ -441,12 +483,11 @@ pub(super) async fn get_session_artifact(
     }
 
     let path = PathBuf::from(&artifact.absolute_path);
-    if !session_artifact_path_is_accessible(&state, &store, &session, &path).await? {
-        return Err(StatusCode::NOT_FOUND);
-    }
-    let meta = tokio::fs::metadata(&path)
-        .await
-        .map_err(|_| StatusCode::NOT_FOUND)?;
+    let canonical_path = resolve_session_artifact_accessible_path(&state, &store, &session, &path)
+        .await?
+        .ok_or(StatusCode::NOT_FOUND)?;
+    let mut file = open_canonical_session_artifact_file(&canonical_path).await?;
+    let meta = file.metadata().await.map_err(|_| StatusCode::NOT_FOUND)?;
     if !meta.is_file() {
         return Err(StatusCode::NOT_FOUND);
     }
@@ -498,10 +539,6 @@ pub(super) async fn get_session_artifact(
             }
         }
     };
-
-    let mut file = tokio::fs::File::open(&path)
-        .await
-        .map_err(|_| StatusCode::NOT_FOUND)?;
 
     let (status, body, content_length, content_range) = if let Some((start, end)) = maybe_range {
         file.seek(SeekFrom::Start(start))

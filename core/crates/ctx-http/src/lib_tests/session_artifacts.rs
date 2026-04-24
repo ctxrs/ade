@@ -317,6 +317,28 @@ async fn session_state_exposes_artifact_metadata_and_session_scoped_downloads() 
     assert!(body.is_empty());
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn open_canonical_session_artifact_file_rejects_symlink_swap() {
+    let root = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    let outside_path = outside.path().join("outside.txt");
+    std::fs::write(&outside_path, b"outside\n").unwrap();
+
+    let artifact_path = root.path().join("artifact.txt");
+    std::fs::write(&artifact_path, b"inside\n").unwrap();
+    let canonical = tokio::fs::canonicalize(&artifact_path).await.unwrap();
+
+    let renamed = root.path().join("artifact.saved");
+    std::fs::rename(&artifact_path, &renamed).unwrap();
+    std::os::unix::fs::symlink(&outside_path, &artifact_path).unwrap();
+
+    let err = crate::api::artifacts::open_canonical_session_artifact_file(&canonical)
+        .await
+        .unwrap_err();
+    assert_eq!(err, StatusCode::NOT_FOUND);
+}
+
 #[tokio::test]
 async fn session_artifacts_reject_outside_root_paths_and_fail_closed_for_legacy_rows() {
     let _serial = home_env_test_lock().lock().await;
