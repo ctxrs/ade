@@ -36,6 +36,20 @@ async fn web_session_routes_are_registered() {
     );
 
     let req = Request::builder()
+        .method("POST")
+        .uri("/api/sessions/web")
+        .header("content-type", "application/json")
+        .body(Body::from(json!({"url": "file:///etc/passwd"}).to_string()))
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+    let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&body).unwrap(),
+        json!({"error":"url must use http:// or https://"})
+    );
+
+    let req = Request::builder()
         .method("GET")
         .uri("/sessions/web/does-not-exist/view")
         .body(Body::empty())

@@ -4,6 +4,7 @@ use std::sync::Arc;
 use anyhow::Context;
 use axum::http::StatusCode;
 use axum::Json;
+use url::Url;
 
 use crate::api::errors::ApiErrorResp;
 use crate::daemon::AppState;
@@ -22,6 +23,8 @@ pub(crate) async fn create_web_session(
     state: &Arc<AppState>,
     request: WebSessionLaunchRequest,
 ) -> Result<WebSessionInfo, (StatusCode, Json<ApiErrorResp>)> {
+    validate_web_session_url(&request.url).map_err(|e| bad_request(e.to_string()))?;
+
     let work_dir = resolve_web_session_work_dir(state, request.session_id, request.worktree_id)
         .await
         .map_err(|e| bad_request(e.to_string()))?;
@@ -109,4 +112,15 @@ fn bad_request(error: impl Into<String>) -> (StatusCode, Json<ApiErrorResp>) {
 
 fn internal_error(error: impl Into<String>) -> (StatusCode, Json<ApiErrorResp>) {
     error_response(StatusCode::INTERNAL_SERVER_ERROR, error)
+}
+
+fn validate_web_session_url(raw: &str) -> anyhow::Result<()> {
+    let parsed = Url::parse(raw).context("url must be an absolute URL")?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        anyhow::bail!("url must use http:// or https://");
+    }
+    if parsed.host_str().is_none() {
+        anyhow::bail!("url must include host");
+    }
+    Ok(())
 }
