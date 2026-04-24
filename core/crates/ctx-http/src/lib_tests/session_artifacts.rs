@@ -437,3 +437,143 @@ async fn session_artifacts_reject_outside_root_paths_and_fail_closed_for_legacy_
     let res = app.clone().oneshot(req).await.unwrap();
     assert_eq!(res.status(), StatusCode::NOT_FOUND);
 }
+
+#[tokio::test]
+async fn session_artifacts_do_not_accept_other_session_spool_files() {
+    let _serial = home_env_test_lock().lock().await;
+    let git_repo = setup_git_repo().await;
+    let home = tempfile::tempdir().unwrap();
+    let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
+
+    let data_dir = tempfile::tempdir().unwrap();
+    let stores = StoreManager::open(data_dir.path()).await.unwrap();
+
+    let mut providers: HashMap<String, Arc<dyn ctx_providers::adapters::ProviderAdapter>> =
+        HashMap::new();
+    providers.insert("fake".into(), Arc::new(FakeProviderAdapter::new()));
+
+    let state = Arc::new(AppState::new(
+        data_dir.path().to_path_buf(),
+        stores,
+        providers,
+        "http://127.0.0.1:4399".to_string(),
+        None,
+    ));
+    let app = api::router(state.clone());
+
+    let workspace = create_workspace_via_api(&app, &git_repo.path().to_string_lossy()).await;
+    let req = Request::builder()
+        .method("POST")
+        .uri(format!("/api/workspaces/{}/tasks", workspace.id.0))
+        .header("content-type", "application/json")
+        .body(Body::from(json!({"title":"t1"}).to_string()))
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let task: ctx_core::models::Task = serde_json::from_slice(&body).unwrap();
+
+    let req = Request::builder()
+        .method("POST")
+        .uri(format!("/api/tasks/{}/sessions", task.id.0))
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({"provider_id":"fake","model_id":"fake-model"}).to_string(),
+        ))
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let session: ctx_core::models::Session = serde_json::from_slice(&body).unwrap();
+
+    let req = Request::builder()
+        .method("POST")
+        .uri(format!("/api/tasks/{}/sessions", task.id.0))
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({"provider_id":"fake","model_id":"fake-model"}).to_string(),
+        ))
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let other_session: ctx_core::models::Session = serde_json::from_slice(&body).unwrap();
+
+    let other_spool_dir = state
+        .core
+        .tool_output_spool_dir
+        .join(other_session.id.0.to_string())
+        .join(uuid::Uuid::new_v4().to_string());
+    std::fs::create_dir_all(&other_spool_dir).unwrap();
+    let other_spool_path = other_spool_dir.join("foreign.txt");
+    std::fs::write(&other_spool_path, b"other-session-spool\n").unwrap();
+
+    let store = state.store_for_session(session.id).await.unwrap();
+    let legacy = store
+        .upsert_session_artifact_by_path(&ctx_core::models::Artifact {
+            id: ctx_core::ids::ArtifactId::new(),
+            session_id: session.id,
+            task_id: session.task_id,
+            workspace_id: session.workspace_id,
+            worktree_id: session.worktree_id,
+            name: Some("foreign.txt".to_string()),
+            absolute_path: other_spool_path.to_string_lossy().to_string(),
+            mime_type: "text/plain".to_string(),
+            bytes: 20,
+            created_at: chrono::Utc::now(),
+            missing: None,
+        })
+        .await
+        .unwrap();
+
+    let req = Request::builder()
+        .method("POST")
+        .uri(format!("/api/sessions/{}/artifacts", session.id.0))
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "artifacts": [
+                    {
+                        "absolute_file_path": other_spool_path.to_string_lossy(),
+                        "name": "foreign.txt",
+                        "mime_type": "text/plain"
+                    }
+                ]
+            })
+            .to_string(),
+        ))
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+    let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(
+        payload["error"].as_str(),
+        Some("artifact 1 absolute_file_path must stay inside the session worktree or tool-output spool")
+    );
+
+    let req = Request::builder()
+        .method("GET")
+        .uri(format!("/api/sessions/{}/state", session.id.0))
+        .body(Body::empty())
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let session_state: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(
+        session_state["artifacts"][0]["missing"].as_bool(),
+        Some(true)
+    );
+
+    let req = Request::builder()
+        .method("GET")
+        .uri(format!(
+            "/api/sessions/{}/artifacts/{}",
+            session.id.0, legacy.id.0
+        ))
+        .body(Body::empty())
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::NOT_FOUND);
+}

@@ -52,23 +52,22 @@ async fn session_artifact_allowed_roots(
     session: &ctx_core::models::Session,
 ) -> Result<Vec<PathBuf>, StatusCode> {
     let mut roots = Vec::with_capacity(2);
-    let worktree_root = if let Some(worktree) = store
+    if let Some(worktree) = store
         .get_worktree(session.worktree_id)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
     {
-        PathBuf::from(worktree.root_path)
-    } else {
-        let workspace = state
-            .global_store()
-            .get_workspace(session.workspace_id)
-            .await
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-            .ok_or(StatusCode::NOT_FOUND)?;
-        PathBuf::from(workspace.root_path)
-    };
-    roots.push(canonicalize_existing_or_raw(&worktree_root).await);
-    roots.push(canonicalize_existing_or_raw(&state.core.tool_output_spool_dir).await);
+        roots.push(canonicalize_existing_or_raw(&PathBuf::from(worktree.root_path)).await);
+    }
+    roots.push(
+        canonicalize_existing_or_raw(
+            &state
+                .core
+                .tool_output_spool_dir
+                .join(session.id.0.to_string()),
+        )
+        .await,
+    );
     Ok(roots)
 }
 
