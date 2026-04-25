@@ -1,5 +1,4 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown } from "lucide-react";
 
 import {
   type ArchiveTaskResponse,
@@ -28,8 +27,6 @@ import type {
   AnchorRect,
   ArchiveConfirmState,
   OptimisticTaskSummary,
-  TaskListContext,
-  TaskListItem,
 } from "./WorkbenchPage.types";
 import {
   ARCHIVE_CONFIRM_STORAGE_KEY,
@@ -38,7 +35,8 @@ import {
   normalizeAnchorRect,
   parseMs,
 } from "./WorkbenchPage.utils";
-import { useWorkbenchTaskScrollbar } from "./useWorkbenchTaskScrollbar";
+import { useWorkbenchTaskContextMenu } from "./useWorkbenchTaskContextMenu";
+import { useWorkbenchTaskListModel } from "./workbenchTaskListModel";
 import {
   deriveWorkbenchTaskStatusKind,
   isWorkbenchTaskUnread,
@@ -50,11 +48,6 @@ type WorkspaceSnapshotStore = {
   loadMoreActive: () => void;
   loadMoreArchived: () => void;
   applyTaskUpdate: (task: Task) => void;
-};
-
-type TaskMenuState = {
-  taskId: string;
-  style: React.CSSProperties;
 };
 
 type TaskListControllerArgs = {
@@ -109,8 +102,6 @@ export function useWorkbenchTaskListController({
   const [archivePendingById, setArchivePendingById] = useState<Record<string, "archive" | "unarchive">>({});
   const [archiveCleanupNotice, setArchiveCleanupNotice] = useState(false);
   const archiveConfirmRef = useRef<HTMLDivElement | null>(null);
-  const [taskMenu, setTaskMenu] = useState<TaskMenuState | null>(null);
-  const taskMenuRef = useRef<HTMLDivElement | null>(null);
   const [hoveredTaskId, setHoveredTaskId] = useState<string | null>(null);
   const [renamingTaskId, setRenamingTaskId] = useState<string | null>(null);
   const renameDraftsRef = useRef<Map<string, string>>(new Map());
@@ -136,24 +127,6 @@ export function useWorkbenchTaskListController({
     if (!workspaceId) return;
     localStorage.setItem(`wb.archivedCollapsed.${workspaceId}`, archivedCollapsed ? "1" : "0");
   }, [archivedCollapsed, workspaceId]);
-
-  useEffect(() => {
-    const onPointerDown = (event: PointerEvent) => {
-      if (!taskMenu) return;
-      const element = event.target as HTMLElement | null;
-      if (element && (element.closest(".wb-task-menu") || element.closest(".wb-task-menu-trigger"))) return;
-      setTaskMenu(null);
-    };
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setTaskMenu(null);
-    };
-    window.addEventListener("pointerdown", onPointerDown);
-    window.addEventListener("keydown", onKeyDown);
-    return () => {
-      window.removeEventListener("pointerdown", onPointerDown);
-      window.removeEventListener("keydown", onKeyDown);
-    };
-  }, [taskMenu]);
 
   useEffect(() => {
     if (!archiveConfirm) return;
@@ -357,20 +330,6 @@ export function useWorkbenchTaskListController({
     return { left, top, width };
   }, [archiveConfirm]);
 
-  const openTaskMenu = useCallback((taskId: string, opts: { triggerEl: HTMLElement } | { x: number; y: number }) => {
-    const baseLeft =
-      "triggerEl" in opts
-        ? opts.triggerEl.getBoundingClientRect().left
-        : Math.max(8, Math.min(opts.x, window.innerWidth - 8));
-    const baseTop =
-      "triggerEl" in opts
-        ? opts.triggerEl.getBoundingClientRect().bottom + 6
-        : Math.max(8, Math.min(opts.y, window.innerHeight - 8));
-    const left = Math.min(baseLeft, window.innerWidth - 240);
-    const top = Math.min(baseTop, window.innerHeight - 260);
-    setTaskMenu((prev) => (prev?.taskId === taskId ? null : { taskId, style: { left, top } }));
-  }, []);
-
   const dismissOptimisticTask = useCallback(
     (taskId: string) => {
       const summary = optimisticTasksById[taskId];
@@ -428,6 +387,51 @@ export function useWorkbenchTaskListController({
     },
     [cancelRenameTask, clearRenameDraft, tasksById, workspaceSnapshotStore],
   );
+
+  const onDeleteTask = useCallback(
+    async (taskId: string) => {
+      const summary = tasksById[taskId];
+      const title = String(summary?.task.title ?? "this task");
+      if (!window.confirm(`Delete “${title}”? This deletes all sessions and messages in the task.`)) return;
+      try {
+        await deleteTask(taskId);
+        if (activeTaskId === taskId) {
+          focusNewTask();
+        }
+      } catch (error: unknown) {
+        window.alert(errorMessage(error) || "Failed to delete task.");
+      }
+    },
+    [activeTaskId, focusNewTask, tasksById],
+  );
+
+  const isArchivePending = useCallback(
+    (taskId: string | null | undefined) => (taskId ? Boolean(archivePendingById[taskId]) : false),
+    [archivePendingById],
+  );
+
+  const {
+    taskMenu,
+    taskMenuRef,
+    openTaskMenu,
+    taskMenuArchiveDisabled,
+    taskMenuArchiveLabel,
+    taskMenuMarkReadDisabled,
+    taskMenuMarkReadLabel,
+    onTaskMenuRename,
+    onTaskMenuToggleArchive,
+    onTaskMenuToggleRead,
+    onTaskMenuDelete,
+  } = useWorkbenchTaskContextMenu({
+    tasksById,
+    beginRenameTask,
+    isArchivePending,
+    isTaskUnread,
+    onToggleArchive,
+    markTaskRead,
+    markTaskUnread,
+    onDeleteTask,
+  });
 
   const renderTaskRow = useCallback(
     (summary: WorkspaceActiveSnapshotItem, opts?: { archived?: boolean }) => {
@@ -534,231 +538,27 @@ export function useWorkbenchTaskListController({
       setRenameDraft,
       sessionEntries,
       taskLiveInfo.errorByTask,
-      taskLiveInfo.lastAssistantMsByTask,
       taskLiveInfo.workingByTask,
     ],
   );
 
-  const renderArchivedRow = useCallback(
-    (summary: WorkspaceActiveSnapshotItem) => renderTaskRow(summary, { archived: true }),
-    [renderTaskRow],
-  );
-
-  const taskListItems = useMemo<TaskListItem[]>(() => {
-    const items: TaskListItem[] = [];
-    activeTaskSummaries.forEach((summary) => items.push({ kind: "active-task", summary }));
-    items.push({ kind: "archived-header" });
-    if (!archivedCollapsed) {
-      if (workspaceSnapshot.fetchState.archived === "error") {
-        items.push({ kind: "archived-error" });
-      }
-      archivedTaskSummaries.forEach((summary) => items.push({ kind: "archived-task", summary }));
-      if (
-        archivedTaskSummaries.length === 0 &&
-        workspaceSnapshot.archivedLoaded &&
-        workspaceSnapshot.fetchState.archived !== "loading"
-      ) {
-        items.push({ kind: "archived-empty" });
-      }
-      if (workspaceSnapshot.fetchState.archived === "loading") {
-        items.push({ kind: "archived-loading" });
-      }
-    }
-    return items;
-  }, [
+  const {
+    taskListVirtuosoKey,
+    taskListItems,
+    initialTaskListItemCount,
+    computeTaskListItemKey,
+    renderTaskListItem,
+    taskListContext,
+    onTaskListRangeChanged,
+  } = useWorkbenchTaskListModel({
     activeTaskSummaries,
-    archivedCollapsed,
     archivedTaskSummaries,
-    workspaceSnapshot.archivedLoaded,
-    workspaceSnapshot.fetchState.archived,
-  ]);
-
-  const activeSectionLastIndex = useMemo(() => {
-    if (activeTaskSummaries.length > 0) {
-      return activeTaskSummaries.length - 1;
-    }
-    if (workspaceSnapshot.initialized && workspaceSnapshot.fetchState.active !== "loading") {
-      return 0;
-    }
-    return -1;
-  }, [activeTaskSummaries.length, workspaceSnapshot.fetchState.active, workspaceSnapshot.initialized]);
-
-  const renderTaskListItem = useCallback(
-    (item: TaskListItem) => {
-      switch (item.kind) {
-        case "active-task":
-          return renderTaskRow(item.summary);
-        case "archived-header":
-          return (
-            <div className="wb-section-header wb-section-header-archived">
-              <button
-                type="button"
-                className="wb-section-toggle"
-                onClick={() => {
-                  const next = !archivedCollapsed;
-                  setArchivedCollapsed(next);
-                  if (!next) {
-                    workspaceSnapshotStore.ensureArchivedLoaded();
-                  }
-                }}
-                aria-expanded={!archivedCollapsed}
-              >
-                <span className="wb-section-title">Archived Tasks</span>
-                <span className={`wb-section-chev ${archivedCollapsed ? "wb-section-chev-collapsed" : ""}`}>
-                  <ChevronDown size={14} />
-                </span>
-              </button>
-            </div>
-          );
-        case "archived-loading":
-          return (
-            <div className="wb-archived-loading" aria-live="polite" aria-label="Loading archived tasks">
-              <span className="wb-archived-spinner" aria-hidden="true" />
-            </div>
-          );
-        case "archived-error":
-          return <div className="wb-muted">Failed to load archived tasks. Retry.</div>;
-        case "archived-empty":
-          return <div className="wb-muted">No archived tasks.</div>;
-        case "archived-task":
-          return renderArchivedRow(item.summary);
-        default:
-          return null;
-      }
-    },
-    [archivedCollapsed, renderArchivedRow, renderTaskRow, workspaceSnapshotStore],
-  );
-
-  const computeTaskListItemKey = useCallback((_: number, item: TaskListItem) => {
-    switch (item.kind) {
-      case "active-task":
-        return `active-${item.summary.id}`;
-      case "archived-task":
-        return `archived-${item.summary.id}`;
-      case "archived-header":
-        return "archived-header";
-      case "archived-loading":
-        return "archived-loading";
-      case "archived-error":
-        return "archived-error";
-      case "archived-empty":
-        return "archived-empty";
-      default:
-        return "unknown";
-    }
-  }, []);
-
-  const onTaskListRangeChanged = useCallback(
-    (range: { startIndex: number; endIndex: number }) => {
-      if (!workspaceSnapshot.hasMoreActive) return;
-      if (workspaceSnapshot.fetchState.active === "loading") return;
-      if (activeSectionLastIndex < 0) return;
-      if (range.endIndex < activeSectionLastIndex) return;
-      workspaceSnapshotStore.loadMoreActive();
-    },
-    [activeSectionLastIndex, workspaceSnapshot.fetchState.active, workspaceSnapshot.hasMoreActive, workspaceSnapshotStore],
-  );
-
-  const { onTaskListScroll, onTaskListScrollerChange } = useWorkbenchTaskScrollbar({
-    itemCount: taskListItems.length,
+    archivedCollapsed,
+    setArchivedCollapsed,
+    workspaceSnapshot,
+    workspaceSnapshotStore,
+    renderTaskRow,
   });
-  const initialTaskListItemCount =
-    activeTaskSummaries.length === 0 && taskListItems.length > 0 ? taskListItems.length : undefined;
-  const taskListVirtuosoKey =
-    activeTaskSummaries.length === 0 ? `empty-${archivedCollapsed ? "collapsed" : "expanded"}-${taskListItems.length}` : "default";
-
-  const loadMoreArchived = useCallback(() => {
-    workspaceSnapshotStore.loadMoreArchived();
-  }, [workspaceSnapshotStore]);
-
-  const taskListContext = useMemo<TaskListContext>(
-    () => ({
-      archivedCollapsed,
-      archivedFetchState: workspaceSnapshot.fetchState.archived,
-      hasMoreArchived: workspaceSnapshot.hasMoreArchived,
-      onLoadMoreArchived: loadMoreArchived,
-      onScroll: onTaskListScroll,
-      onScrollerChange: onTaskListScrollerChange,
-    }),
-    [
-      archivedCollapsed,
-      loadMoreArchived,
-      onTaskListScroll,
-      onTaskListScrollerChange,
-      workspaceSnapshot.fetchState.archived,
-      workspaceSnapshot.hasMoreArchived,
-    ],
-  );
-
-  const onDeleteTask = useCallback(
-    async (taskId: string) => {
-      const summary = tasksById[taskId];
-      const title = String(summary?.task.title ?? "this task");
-      if (!window.confirm(`Delete “${title}”? This deletes all sessions and messages in the task.`)) return;
-      try {
-        await deleteTask(taskId);
-        if (activeTaskId === taskId) {
-          focusNewTask();
-        }
-      } catch (error: unknown) {
-        window.alert(errorMessage(error) || "Failed to delete task.");
-      }
-    },
-    [activeTaskId, focusNewTask, tasksById],
-  );
-
-  const isArchivePending = useCallback(
-    (taskId: string | null | undefined) => (taskId ? Boolean(archivePendingById[taskId]) : false),
-    [archivePendingById],
-  );
-
-  const taskMenuArchiveDisabled = taskMenu ? isArchivePending(taskMenu.taskId) : true;
-  const taskMenuArchiveLabel =
-    taskMenu && tasksById[taskMenu.taskId]?.task.archived_at ? "Unarchive" : "Archive";
-  const taskMenuMarkReadDisabled = taskMenu
-    ? !Boolean(tasksById[taskMenu.taskId]?.task.last_assistant_message_at)
-    : true;
-  const taskMenuMarkReadLabel =
-    taskMenu && isTaskUnread(taskMenu.taskId) ? "Mark as Read" : "Mark as Unread";
-
-  const onTaskMenuRename = useCallback(() => {
-    if (!taskMenu) return;
-    const taskId = taskMenu.taskId;
-    setTaskMenu(null);
-    beginRenameTask(taskId);
-  }, [beginRenameTask, taskMenu]);
-
-  const onTaskMenuToggleArchive = useCallback(
-    (event: React.MouseEvent<HTMLButtonElement>) => {
-      if (!taskMenu) return;
-      const taskId = taskMenu.taskId;
-      const summary = tasksById[taskId];
-      const nextArchived = !summary?.task.archived_at;
-      const anchor = event.currentTarget.getBoundingClientRect();
-      void onToggleArchive(taskId, nextArchived, anchor).catch(() => {});
-      setTaskMenu(null);
-    },
-    [onToggleArchive, taskMenu, tasksById],
-  );
-
-  const onTaskMenuToggleRead = useCallback(() => {
-    if (!taskMenu) return;
-    const taskId = taskMenu.taskId;
-    const unread = isTaskUnread(taskId);
-    setTaskMenu(null);
-    if (unread) {
-      void markTaskRead(taskId);
-      return;
-    }
-    void markTaskUnread(taskId);
-  }, [isTaskUnread, markTaskRead, markTaskUnread, taskMenu]);
-
-  const onTaskMenuDelete = useCallback(() => {
-    if (!taskMenu) return;
-    const taskId = taskMenu.taskId;
-    setTaskMenu(null);
-    void onDeleteTask(taskId);
-  }, [onDeleteTask, taskMenu]);
 
   return {
     taskSearchRef,
