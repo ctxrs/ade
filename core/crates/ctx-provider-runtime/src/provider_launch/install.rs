@@ -177,7 +177,7 @@ where
 pub async fn start_all_provider_installs<H>(
     state: &Arc<H>,
     target: InstallTarget,
-) -> Vec<(String, InstallId)>
+) -> Result<Vec<(String, InstallId)>, StartProviderInstallError>
 where
     H: ProviderInstallHost,
 {
@@ -192,7 +192,10 @@ where
         state.as_ref(),
     ))
     .await
-    .unwrap_or_default();
+    .map_err(|err| StartProviderInstallError {
+        message: err.to_string(),
+        code: Some("agent_server_config_invalid".to_string()),
+    })?;
     let mut deferred_acp_repairs = Vec::new();
     for entry in &matrix.providers {
         if entry.kind != provider_matrix::ProviderMatrixEntryKind::Harness {
@@ -240,7 +243,7 @@ where
     }
 
     if deferred_acp_repairs.is_empty() {
-        return out;
+        return Ok(out);
     }
 
     let mut deferred_bridge_install_id = state
@@ -265,7 +268,10 @@ where
         installer::ManagedInstallHost::data_root(state.as_ref()),
     )
     .await
-    .unwrap_or_default();
+    .map_err(|err| StartProviderInstallError {
+        message: err.to_string(),
+        code: Some("agent_server_config_invalid".to_string()),
+    })?;
     let mut deferred_queue = Vec::new();
     for provider_id in deferred_acp_repairs {
         let issue = provider_install_contract::provider_install_viability_issue(
@@ -311,7 +317,7 @@ where
         deferred_queue,
         target,
     );
-    out
+    Ok(out)
 }
 
 async fn seed_running_prerequisite_progress<H>(

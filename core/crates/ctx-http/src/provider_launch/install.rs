@@ -20,8 +20,21 @@ impl ctx_provider_runtime::provider_launch::install::ProviderInstallHost for App
 
 #[allow(unused_imports)]
 pub(crate) use ctx_provider_runtime::provider_launch::install::{
-    should_skip_install_for_healthy_provider, start_all_provider_installs,
+    should_skip_install_for_healthy_provider,
+    start_all_provider_installs as runtime_start_all_provider_installs,
 };
+
+fn provider_install_error_to_response(
+    error: ctx_provider_runtime::provider_launch::install::StartProviderInstallError,
+) -> (StatusCode, Json<serde_json::Value>) {
+    (
+        StatusCode::BAD_REQUEST,
+        Json(serde_json::json!({
+            "error": logs::redact_sensitive(&error.message),
+            "code": error.code,
+        })),
+    )
+}
 
 pub(crate) async fn start_provider_install(
     state: &Arc<AppState>,
@@ -34,13 +47,14 @@ pub(crate) async fn start_provider_install(
         target,
     )
     .await
-    .map_err(|error| {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({
-                "error": logs::redact_sensitive(&error.message),
-                "code": error.code,
-            })),
-        )
-    })
+    .map_err(provider_install_error_to_response)
+}
+
+pub(crate) async fn start_all_provider_installs(
+    state: &Arc<AppState>,
+    target: InstallTarget,
+) -> Result<Vec<(String, InstallId)>, (StatusCode, Json<serde_json::Value>)> {
+    runtime_start_all_provider_installs(state, target)
+        .await
+        .map_err(provider_install_error_to_response)
 }
