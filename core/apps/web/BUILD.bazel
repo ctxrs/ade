@@ -297,6 +297,10 @@ NON_PRETEXT_WORKBENCH_TESTS = glob([
 NON_PRETEXT_MISC_ARGS = NON_PRETEXT_VITEST_ARGS + [
     "--passWithNoTests",
     "--exclude",
+    "*.test.ts",
+    "--exclude",
+    "*.test.tsx",
+    "--exclude",
     "src/api/*.test.ts",
     "--exclude",
     "src/api/*.test.tsx",

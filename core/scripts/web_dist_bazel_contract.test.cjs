@@ -134,4 +134,14 @@ test("Bazel web focused unit slices run as native vitest tests", () => {
   assert.doesNotMatch(pretextBlock, /run_workspace_task\.sh/);
   assert.doesNotMatch(desktopIpcCorpusBlock, /run_workspace_task\.sh/);
   assert.doesNotMatch(desktopIpcCorpusBlock, /\bpnpm\b/);
+  assert.match(
+    buildFile,
+    /NON_PRETEXT_WORKBENCH_TESTS = glob\(\[[\s\S]*?"\*\.test\.ts"[\s\S]*?"\*\.test\.tsx"/,
+  );
+  assert.match(
+    buildFile,
+    /NON_PRETEXT_MISC_ARGS = NON_PRETEXT_VITEST_ARGS \+ \[[\s\S]*?"--exclude",\s*"\*\.test\.ts"[\s\S]*?"--exclude",\s*"\*\.test\.tsx"/,
+  );
+  assert.match(buildFile, /NON_PRETEXT_EXCLUDES = \[[\s\S]*?"src\/pages\/sessionThread\/pretext\*\.test\.ts"/);
+  assert.match(buildFile, /NON_PRETEXT_EXCLUDES = \[[\s\S]*?"src\/pages\/sessionThread\/sessionMarkdown\*\.test\.ts"/);
 });
