@@ -9,11 +9,13 @@ use serde::Serialize;
 use sysinfo::{Disk, Disks, System};
 
 #[cfg(not(target_os = "linux"))]
-use sysinfo::{Pid, ProcessRefreshKind};
+use sysinfo::Pid;
 
 use ctx_core::ids::WorkspaceId;
 use ctx_core::models::{Workspace, Worktree};
 use ctx_providers::adapters::ProviderProcessInfo;
+
+mod process;
 
 const SYSTEM_CACHE_TTL: Duration = Duration::from_millis(750);
 const DISK_CACHE_TTL: Duration = Duration::from_secs(30);
@@ -166,7 +168,7 @@ impl ResourceSampler {
         let mut disks = Disks::new_with_refreshed_list();
         disks.refresh();
         #[cfg(target_os = "linux")]
-        let clock_ticks = clock_ticks_per_second();
+        let clock_ticks = process::clock_ticks_per_second();
         Self {
             system,
             disks,
@@ -227,7 +229,7 @@ impl ResourceSampler {
         {
             let now = Instant::now();
             let mut seen = HashSet::new();
-            let daemon = proc_snapshot_from_proc(
+            let daemon = process::proc_snapshot_from_proc(
                 daemon_pid,
                 "ctx daemon",
                 now,
@@ -239,7 +241,7 @@ impl ResourceSampler {
                 .iter()
                 .filter_map(|p| {
                     let label = p.label.clone().unwrap_or_else(|| p.provider_id.clone());
-                    proc_snapshot_from_proc(
+                    process::proc_snapshot_from_proc(
                         p.pid,
                         &label,
                         now,
@@ -265,15 +267,15 @@ impl ResourceSampler {
             for pid in pids {
                 let _ = self
                     .system
-                    .refresh_process_specifics(pid, process_refresh_kind());
+                    .refresh_process_specifics(pid, process::process_refresh_kind());
             }
 
-            let daemon = aggregate_process_sysinfo(&self.system, daemon_pid, "ctx daemon");
+            let daemon = process::aggregate_process_sysinfo(&self.system, daemon_pid, "ctx daemon");
             let providers = providers
                 .iter()
                 .filter_map(|p| {
                     let label = p.label.clone().unwrap_or_else(|| p.provider_id.clone());
-                    aggregate_process_sysinfo(&self.system, p.pid, &label)
+                    process::aggregate_process_sysinfo(&self.system, p.pid, &label)
                 })
                 .collect();
 
@@ -291,7 +293,7 @@ impl ResourceSampler {
                 .iter()
                 .filter_map(|p| {
                     let label = p.label.clone().unwrap_or_else(|| p.provider_id.clone());
-                    let rollup = read_proc_memory_rollup(p.pid)?;
+                    let rollup = process::read_proc_memory_rollup(p.pid)?;
                     Some(ProviderMemorySample {
                         provider_id: p.provider_id.clone(),
                         label,
@@ -306,9 +308,10 @@ impl ResourceSampler {
         #[cfg(not(target_os = "linux"))]
         {
             for provider in providers {
-                let _ = self
-                    .system
-                    .refresh_process_specifics(Pid::from_u32(provider.pid), memory_refresh_kind());
+                let _ = self.system.refresh_process_specifics(
+                    Pid::from_u32(provider.pid),
+                    process::memory_refresh_kind(),
+                );
             }
             providers
                 .iter()
@@ -335,7 +338,7 @@ impl ResourceSampler {
             .iter()
             .map(|p| {
                 let label = p.label.clone().unwrap_or_else(|| p.provider_id.clone());
-                let rollup = read_proc_memory_rollup(p.pid);
+                let rollup = process::read_proc_memory_rollup(p.pid);
                 ProviderMemoryRollup {
                     provider_id: p.provider_id.clone(),
                     label,
@@ -435,57 +438,6 @@ pub fn compute_workspace_disk_snapshot(
     }
 }
 
-#[cfg(target_os = "linux")]
-fn proc_snapshot_from_proc(
-    pid: u32,
-    label: &str,
-    now: Instant,
-    proc_cpu: &mut HashMap<u32, ProcCpuSample>,
-    clock_ticks: u64,
-    seen: &mut HashSet<u32>,
-) -> Option<ResourceProcess> {
-    let rollup = read_proc_memory_rollup(pid)?;
-    let cpu_pct = read_proc_cpu_pct(pid, now, proc_cpu, clock_ticks);
-    let memory_bytes = rollup.rss_bytes.or(rollup.vm_hwm_bytes).unwrap_or(0);
-    let virtual_memory_bytes = rollup.vm_size_bytes.or(rollup.vm_hwm_bytes).unwrap_or(0);
-    seen.insert(pid);
-    Some(ResourceProcess {
-        label: label.to_string(),
-        pid,
-        cpu_pct,
-        memory_bytes,
-        virtual_memory_bytes,
-        child_count: 0,
-        children: Vec::new(),
-        children_truncated: false,
-    })
-}
-
-#[cfg(not(target_os = "linux"))]
-fn aggregate_process_sysinfo(system: &System, pid: u32, label: &str) -> Option<ResourceProcess> {
-    let proc = system.process(Pid::from_u32(pid))?;
-    Some(ResourceProcess {
-        label: label.to_string(),
-        pid,
-        cpu_pct: proc.cpu_usage(),
-        memory_bytes: proc.memory(),
-        virtual_memory_bytes: proc.virtual_memory(),
-        child_count: 0,
-        children: Vec::new(),
-        children_truncated: false,
-    })
-}
-
-#[cfg(not(target_os = "linux"))]
-fn process_refresh_kind() -> ProcessRefreshKind {
-    ProcessRefreshKind::new().with_memory().with_cpu()
-}
-
-#[cfg(not(target_os = "linux"))]
-fn memory_refresh_kind() -> ProcessRefreshKind {
-    ProcessRefreshKind::new().with_memory()
-}
-
 impl From<&Disk> for DiskSnapshot {
     fn from(disk: &Disk) -> Self {
         let file_system = disk.file_system().to_string_lossy().to_string();
@@ -523,114 +475,4 @@ fn dir_size(root: &Path) -> u64 {
         }
     }
     total
-}
-
-#[cfg(target_os = "linux")]
-fn read_proc_memory_rollup(pid: u32) -> Option<ProcMemoryRollup> {
-    let mut rollup = ProcMemoryRollup::default();
-    let smaps_path = format!("/proc/{pid}/smaps_rollup");
-    if let Ok(contents) = std::fs::read_to_string(smaps_path) {
-        for line in contents.lines() {
-            if let Some(value) = parse_kb_line(line, "Rss:") {
-                rollup.rss_bytes = Some(value);
-            } else if let Some(value) = parse_kb_line(line, "RssAnon:") {
-                rollup.rss_anon_bytes = Some(value);
-            } else if let Some(value) = parse_kb_line(line, "RssFile:") {
-                rollup.rss_file_bytes = Some(value);
-            } else if let Some(value) = parse_kb_line(line, "RssShmem:") {
-                rollup.rss_shmem_bytes = Some(value);
-            }
-        }
-    }
-
-    let status_path = format!("/proc/{pid}/status");
-    if let Ok(contents) = std::fs::read_to_string(status_path) {
-        for line in contents.lines() {
-            if rollup.rss_bytes.is_none() {
-                if let Some(value) = parse_kb_line(line, "VmRSS:") {
-                    rollup.rss_bytes = Some(value);
-                }
-            }
-            if let Some(value) = parse_kb_line(line, "VmHWM:") {
-                rollup.vm_hwm_bytes = Some(value);
-            }
-            if let Some(value) = parse_kb_line(line, "VmSize:") {
-                rollup.vm_size_bytes = Some(value);
-            }
-        }
-    }
-
-    if rollup.is_empty() {
-        None
-    } else {
-        Some(rollup)
-    }
-}
-
-#[cfg(not(target_os = "linux"))]
-fn read_proc_memory_rollup(_pid: u32) -> Option<ProcMemoryRollup> {
-    None
-}
-
-#[cfg(target_os = "linux")]
-fn parse_kb_line(line: &str, key: &str) -> Option<u64> {
-    let mut parts = line.split_whitespace();
-    if parts.next()? != key {
-        return None;
-    }
-    let value = parts.next()?.parse::<u64>().ok()?;
-    Some(value.saturating_mul(1024))
-}
-
-#[cfg(target_os = "linux")]
-fn read_proc_cpu_pct(
-    pid: u32,
-    now: Instant,
-    proc_cpu: &mut HashMap<u32, ProcCpuSample>,
-    clock_ticks: u64,
-) -> f32 {
-    let total_ticks = match read_proc_cpu_ticks(pid) {
-        Some(total) => total,
-        None => return 0.0,
-    };
-    let prev = proc_cpu.insert(
-        pid,
-        ProcCpuSample {
-            total_ticks,
-            at: now,
-        },
-    );
-    let Some(prev) = prev else {
-        return 0.0;
-    };
-    let delta_ticks = total_ticks.saturating_sub(prev.total_ticks);
-    let delta_secs = now.duration_since(prev.at).as_secs_f64();
-    if delta_secs <= 0.0 || clock_ticks == 0 {
-        return 0.0;
-    }
-    let cpu = (delta_ticks as f64 / clock_ticks as f64) / delta_secs * 100.0;
-    cpu as f32
-}
-
-#[cfg(target_os = "linux")]
-fn read_proc_cpu_ticks(pid: u32) -> Option<u64> {
-    let stat_path = format!("/proc/{pid}/stat");
-    let contents = std::fs::read_to_string(stat_path).ok()?;
-    let end = contents.rfind(')')?;
-    let rest = contents.get(end + 2..)?;
-    let fields: Vec<&str> = rest.split_whitespace().collect();
-    let utime: u64 = fields.get(11)?.parse().ok()?;
-    let stime: u64 = fields.get(12)?.parse().ok()?;
-    Some(utime.saturating_add(stime))
-}
-
-#[cfg(target_os = "linux")]
-fn clock_ticks_per_second() -> u64 {
-    unsafe {
-        let ticks = libc::sysconf(libc::_SC_CLK_TCK);
-        if ticks > 0 {
-            return ticks as u64;
-        }
-    }
-    100
 }

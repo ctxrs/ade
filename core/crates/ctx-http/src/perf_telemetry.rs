@@ -1,34 +1,27 @@
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::Result;
 use chrono::{DateTime, Utc};
-use opentelemetry::global;
-use opentelemetry::metrics::{Counter, Gauge, Histogram, Meter, MeterProvider, Unit};
-use opentelemetry::propagation::Extractor;
-use opentelemetry::trace::{Span, SpanBuilder, SpanKind, TraceId, Tracer, TracerProvider};
+use opentelemetry::trace::{Span, SpanBuilder, SpanKind, TraceId, Tracer};
 use opentelemetry::{Context as OtelContext, KeyValue};
-use opentelemetry_otlp::WithExportConfig;
-use opentelemetry_sdk::metrics::SdkMeterProvider;
-use opentelemetry_sdk::propagation::TraceContextPropagator;
-use opentelemetry_sdk::trace::{
-    BatchSpanProcessor, Config as TraceConfig, Sampler, Span as SdkSpan,
-    TracerProvider as SdkTracerProvider,
-};
-use opentelemetry_sdk::{runtime, Resource};
+use opentelemetry_sdk::trace::Span as SdkSpan;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tokio::time::timeout;
 
 use crate::logs;
 
+mod aggregator;
+mod otel;
+
+use aggregator::PerfAggregator;
+use otel::OtelRuntime;
+
 const PERF_LOG_PREFIX: &str = "perf-telemetry-";
 const PERF_LOG_SUFFIX: &str = ".jsonl";
 const PERF_CHANNEL_SEND_TIMEOUT: Duration = Duration::from_millis(250);
-static FIRST_REMOTE_EXPORT: AtomicBool = AtomicBool::new(false);
-
 const DEFAULT_TRACE_SAMPLE_RATE: f64 = 0.01;
 const DEFAULT_TRACE_SLOW_MS: u64 = 2000;
 const DEFAULT_RETENTION_DAYS: u64 = 14;
@@ -46,19 +39,6 @@ fn lock_or_recover<'a, T>(mutex: &'a Mutex<T>, name: &str) -> std::sync::MutexGu
 pub fn perf_log_path_for_date(data_root: &std::path::Path, date: &str) -> std::path::PathBuf {
     logs::logs_dir(data_root).join(format!("{PERF_LOG_PREFIX}{date}{PERF_LOG_SUFFIX}"))
 }
-const REMOTE_LABEL_ALLOWLIST: &[&str] = &[
-    "endpoint",
-    "method",
-    "status",
-    "success",
-    "provider_id",
-    "model_id",
-    "execution_environment",
-    "session_root_kind",
-    "source",
-    "event",
-];
-
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum PerfMetricKind {
@@ -179,7 +159,7 @@ impl PerfTelemetry {
     pub fn new(data_root: std::path::PathBuf) -> Self {
         let config = PerfTelemetryConfig::from_env();
         let aggregator = Arc::new(Mutex::new(PerfAggregator::default()));
-        let otel = Arc::new(Mutex::new(build_otel(&config)));
+        let otel = Arc::new(Mutex::new(otel::build_otel(&config)));
         let (tx, rx) = mpsc::channel(2048);
         let cfg = Arc::new(Mutex::new(config.clone()));
         let agg = aggregator.clone();
@@ -240,7 +220,7 @@ impl PerfTelemetry {
         let Some(otel) = otel else {
             return;
         };
-        export_metric(&otel, &metric, &cfg);
+        otel::export_metric(&otel, &metric, &cfg);
     }
 
     pub fn start_span(
@@ -308,10 +288,10 @@ impl PerfTelemetry {
             }
             s.end_with_timestamp(SystemTime::now());
             if let Some(id) = span.trace_id {
-                trace_id = Some(trace_id_to_string(id));
+                trace_id = Some(otel::trace_id_to_string(id));
             }
             if let Some(id) = span.span_id {
-                span_id = Some(span_id_to_string(id));
+                span_id = Some(otel::span_id_to_string(id));
             }
         }
 
@@ -340,8 +320,7 @@ impl PerfTelemetry {
     }
 
     pub fn extract_trace_context(&self, headers: &axum::http::HeaderMap) -> OtelContext {
-        let extractor = HeaderExtractor { headers };
-        global::get_text_map_propagator(|prop| prop.extract(&extractor))
+        otel::extract_trace_context(headers)
     }
 
     pub fn summary(
@@ -365,20 +344,7 @@ impl PerfTelemetry {
 
     pub fn stats(&self) -> PerfTelemetryStats {
         let agg = lock_or_recover(self.aggregator.as_ref(), "perf aggregator");
-        let mut total_samples = 0;
-        let mut max_samples = 0;
-        for window in agg.metrics.values() {
-            let count = window.samples.len();
-            total_samples += count;
-            if count > max_samples {
-                max_samples = count;
-            }
-        }
-        PerfTelemetryStats {
-            metric_keys: agg.metrics.len(),
-            total_samples,
-            max_samples,
-        }
+        agg.stats()
     }
 }
 
@@ -406,199 +372,6 @@ enum PerfCommand {
     UpdateRemoteEnabled(bool),
 }
 
-#[derive(Default)]
-struct PerfAggregator {
-    metrics: HashMap<MetricKey, MetricWindow>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-struct MetricKey {
-    name: String,
-    kind: PerfMetricKind,
-    unit: String,
-    labels: Vec<(String, String)>,
-    run_id: Option<String>,
-}
-
-struct MetricWindow {
-    samples: Vec<MetricSample>,
-    count: u64,
-    sum: f64,
-}
-
-struct MetricSample {
-    value: f64,
-    collected_at: Instant,
-}
-
-impl PerfAggregator {
-    fn record(&mut self, metric: &PerfMetric, run_id: Option<&str>) {
-        let mut labels: Vec<(String, String)> = metric
-            .labels
-            .iter()
-            .map(|(k, v)| (k.clone(), v.clone()))
-            .collect();
-        labels.sort_by(|a, b| a.0.cmp(&b.0));
-        let key = MetricKey {
-            name: metric.name.clone(),
-            kind: metric.kind.clone(),
-            unit: metric.unit.clone(),
-            labels,
-            run_id: run_id.map(|v| v.to_string()),
-        };
-        let entry = self.metrics.entry(key).or_insert(MetricWindow {
-            samples: Vec::new(),
-            count: 0,
-            sum: 0.0,
-        });
-        entry.count += 1;
-        entry.sum += metric.value;
-        entry.samples.push(MetricSample {
-            value: metric.value,
-            collected_at: Instant::now(),
-        });
-        const MAX_SAMPLES: usize = 2048;
-        if entry.samples.len() > MAX_SAMPLES {
-            let overflow = entry.samples.len() - MAX_SAMPLES;
-            entry.samples.drain(0..overflow);
-        }
-    }
-
-    fn summary(
-        &self,
-        metric_name: Option<&str>,
-        run_id: Option<&str>,
-        window_ms: Option<u64>,
-        limit: Option<usize>,
-    ) -> Vec<PerfMetricSummary> {
-        let now = Instant::now();
-        let window = window_ms.map(Duration::from_millis);
-        let mut out = Vec::new();
-        for (key, windowed) in &self.metrics {
-            if let Some(name) = metric_name {
-                if key.name != name {
-                    continue;
-                }
-            }
-            if let Some(run_id) = run_id {
-                if key.run_id.as_deref() != Some(run_id) {
-                    continue;
-                }
-            }
-            let mut values: Vec<f64> = windowed
-                .samples
-                .iter()
-                .filter(|s| match window {
-                    Some(w) => now.duration_since(s.collected_at) <= w,
-                    None => true,
-                })
-                .map(|s| s.value)
-                .collect();
-            if values.is_empty() {
-                continue;
-            }
-            values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-            let count = values.len() as u64;
-            let sum = values.iter().sum::<f64>();
-            let min = values.first().copied();
-            let max = values.last().copied();
-            let (p50, p95, p99) = if matches!(key.kind, PerfMetricKind::Histogram) {
-                (
-                    percentile(&values, 0.50),
-                    percentile(&values, 0.95),
-                    percentile(&values, 0.99),
-                )
-            } else {
-                (None, None, None)
-            };
-            let labels = key.labels.iter().cloned().collect();
-            out.push(PerfMetricSummary {
-                name: key.name.clone(),
-                kind: key.kind.clone(),
-                unit: key.unit.clone(),
-                labels,
-                run_id: key.run_id.clone(),
-                count,
-                sum,
-                min,
-                max,
-                p50,
-                p95,
-                p99,
-            });
-        }
-        if let Some(limit) = limit {
-            out.truncate(limit);
-        }
-        out
-    }
-}
-
-struct OtelRuntime {
-    tracer: opentelemetry_sdk::trace::Tracer,
-    slow_tracer: opentelemetry_sdk::trace::Tracer,
-    _trace_provider: opentelemetry_sdk::trace::TracerProvider,
-    _slow_trace_provider: opentelemetry_sdk::trace::TracerProvider,
-    meter: Meter,
-    _meter_provider: SdkMeterProvider,
-    registry: Mutex<MetricRegistry>,
-}
-
-impl OtelRuntime {
-    fn tracer(&self) -> &opentelemetry_sdk::trace::Tracer {
-        &self.tracer
-    }
-
-    fn slow_tracer(&self) -> &opentelemetry_sdk::trace::Tracer {
-        &self.slow_tracer
-    }
-}
-
-#[derive(Default)]
-struct MetricRegistry {
-    histograms: HashMap<String, Histogram<f64>>,
-    counters: HashMap<String, Counter<u64>>,
-    gauges: HashMap<String, Gauge<f64>>,
-}
-
-impl MetricRegistry {
-    fn histogram(&mut self, meter: &Meter, name: &str, unit: &str) -> Histogram<f64> {
-        if let Some(h) = self.histograms.get(name) {
-            return h.clone();
-        }
-        let h = meter
-            .f64_histogram(name.to_string())
-            .with_unit(Unit::new(unit.to_string()))
-            .init();
-        self.histograms.insert(name.to_string(), h.clone());
-        h
-    }
-
-    fn counter(&mut self, meter: &Meter, name: &str, unit: &str) -> Counter<u64> {
-        if let Some(c) = self.counters.get(name) {
-            return c.clone();
-        }
-        let c = meter
-            .u64_counter(name.to_string())
-            .with_unit(Unit::new(unit.to_string()))
-            .init();
-        self.counters.insert(name.to_string(), c.clone());
-        c
-    }
-
-    fn gauge(&mut self, meter: &Meter, name: &str, unit: &str) -> Gauge<f64> {
-        if let Some(g) = self.gauges.get(name) {
-            return g.clone();
-        }
-        let g = meter
-            .f64_gauge(name.to_string())
-            .with_unit(Unit::new(unit.to_string()))
-            .init();
-        self.gauges.insert(name.to_string(), g.clone());
-        g
-    }
-}
-
 async fn perf_worker(
     data_root: std::path::PathBuf,
     mut rx: mpsc::Receiver<PerfCommand>,
@@ -623,7 +396,7 @@ async fn perf_worker(
                 }
                 if cfg.effective_remote_enabled() {
                     if let Some(runtime) = lock_or_recover(otel.as_ref(), "perf otel").clone() {
-                        export_metric(&runtime, &event.metric, &cfg);
+                        otel::export_metric(&runtime, &event.metric, &cfg);
                     }
                 }
             }
@@ -634,187 +407,6 @@ async fn perf_worker(
             }
         }
     }
-}
-
-fn export_metric(runtime: &OtelRuntime, metric: &PerfMetric, cfg: &PerfTelemetryConfig) {
-    let is_first = !FIRST_REMOTE_EXPORT.swap(true, Ordering::Relaxed);
-    if is_first {
-        tracing::info!(metric = %metric.name, "exporting perf metric via OTLP");
-    }
-    let labels = filter_labels(&metric.labels, cfg);
-    let attrs = labels_to_kvs(&labels);
-    let mut registry = lock_or_recover(&runtime.registry, "perf registry");
-    match metric.kind {
-        PerfMetricKind::Histogram => {
-            let hist = registry.histogram(&runtime.meter, &metric.name, &metric.unit);
-            hist.record(metric.value, &attrs);
-        }
-        PerfMetricKind::Counter => {
-            let counter = registry.counter(&runtime.meter, &metric.name, &metric.unit);
-            counter.add(metric.value as u64, &attrs);
-        }
-        PerfMetricKind::Gauge => {
-            let gauge = registry.gauge(&runtime.meter, &metric.name, &metric.unit);
-            gauge.record(metric.value, &attrs);
-        }
-    }
-    drop(registry);
-
-    if is_first {
-        let meter_provider = runtime._meter_provider.clone();
-        tokio::spawn(async move {
-            let flush = tokio::task::spawn_blocking(move || meter_provider.force_flush());
-            match timeout(Duration::from_secs(5), flush).await {
-                Ok(Ok(Ok(()))) => tracing::info!("forced flush perf metrics"),
-                Ok(Ok(Err(err))) => {
-                    tracing::warn!("failed to force flush perf metrics: {err}")
-                }
-                Ok(Err(err)) => tracing::warn!("failed to force flush perf metrics task: {err}"),
-                Err(_) => tracing::warn!("force flush perf metrics timed out"),
-            }
-        });
-    }
-}
-
-fn build_otel(cfg: &PerfTelemetryConfig) -> Option<Arc<OtelRuntime>> {
-    let endpoint = cfg.otlp_endpoint.as_ref()?;
-    let trace_endpoint = otlp_endpoint_for_signal(endpoint, "traces");
-    let metric_endpoint = otlp_endpoint_for_signal(endpoint, "metrics");
-    tracing::info!(
-        otlp_traces_endpoint = %trace_endpoint,
-        otlp_metrics_endpoint = %metric_endpoint,
-        "perf telemetry OTLP exporter configured"
-    );
-    let resource = Resource::new(vec![
-        KeyValue::new("service.name", "ctx-daemon"),
-        KeyValue::new("service.version", env!("CARGO_PKG_VERSION").to_string()),
-        KeyValue::new("os.type", std::env::consts::OS.to_string()),
-        KeyValue::new("host.arch", std::env::consts::ARCH.to_string()),
-    ]);
-
-    global::set_text_map_propagator(TraceContextPropagator::new());
-
-    let trace_exporter = opentelemetry_otlp::new_exporter()
-        .http()
-        .with_endpoint(trace_endpoint.clone())
-        .with_headers(cfg.otlp_headers.clone());
-
-    let trace_exporter = match trace_exporter.build_span_exporter() {
-        Ok(exporter) => exporter,
-        Err(err) => {
-            tracing::warn!("failed to initialize OTLP trace exporter: {err}");
-            return None;
-        }
-    };
-
-    let trace_config = TraceConfig::default()
-        .with_resource(resource.clone())
-        .with_sampler(Sampler::ParentBased(Box::new(Sampler::TraceIdRatioBased(
-            cfg.traces_sample_rate,
-        ))));
-    let trace_processor = BatchSpanProcessor::builder(trace_exporter, runtime::Tokio).build();
-    let trace_provider = SdkTracerProvider::builder()
-        .with_span_processor(trace_processor)
-        .with_config(trace_config)
-        .build();
-    let tracer = trace_provider
-        .tracer_builder("ctx-daemon")
-        .with_version(env!("CARGO_PKG_VERSION"))
-        .build();
-
-    let slow_exporter = opentelemetry_otlp::new_exporter()
-        .http()
-        .with_endpoint(trace_endpoint)
-        .with_headers(cfg.otlp_headers.clone());
-    let slow_exporter = match slow_exporter.build_span_exporter() {
-        Ok(exporter) => exporter,
-        Err(err) => {
-            tracing::warn!("failed to initialize OTLP slow trace exporter: {err}");
-            return None;
-        }
-    };
-    let slow_config = TraceConfig::default()
-        .with_resource(resource.clone())
-        .with_sampler(Sampler::AlwaysOn);
-    let slow_processor = BatchSpanProcessor::builder(slow_exporter, runtime::Tokio).build();
-    let slow_trace_provider = SdkTracerProvider::builder()
-        .with_span_processor(slow_processor)
-        .with_config(slow_config)
-        .build();
-    let slow_tracer = slow_trace_provider
-        .tracer_builder("ctx-daemon-slow")
-        .with_version(env!("CARGO_PKG_VERSION"))
-        .build();
-
-    let metric_exporter = opentelemetry_otlp::new_exporter()
-        .http()
-        .with_endpoint(metric_endpoint)
-        .with_headers(cfg.otlp_headers.clone());
-    let meter_provider = match opentelemetry_otlp::new_pipeline()
-        .metrics(runtime::Tokio)
-        .with_exporter(metric_exporter)
-        .with_resource(resource)
-        .build()
-    {
-        Ok(provider) => provider,
-        Err(err) => {
-            tracing::warn!("failed to initialize OTLP metrics exporter: {err}");
-            return None;
-        }
-    };
-    let meter = meter_provider.meter("ctx-daemon");
-
-    Some(Arc::new(OtelRuntime {
-        tracer,
-        slow_tracer,
-        _trace_provider: trace_provider,
-        _slow_trace_provider: slow_trace_provider,
-        meter,
-        _meter_provider: meter_provider,
-        registry: Mutex::new(MetricRegistry::default()),
-    }))
-}
-
-fn otlp_endpoint_for_signal(base: &str, signal: &str) -> String {
-    let trimmed = base.trim_end_matches('/');
-    if let Some(prefix) = trimmed.strip_suffix("/v1") {
-        return format!("{prefix}/v1/{signal}");
-    }
-    if let Some((prefix, _)) = trimmed.rsplit_once("/v1/") {
-        return format!("{prefix}/v1/{signal}");
-    }
-    format!("{trimmed}/v1/{signal}")
-}
-
-fn filter_labels(
-    labels: &HashMap<String, String>,
-    cfg: &PerfTelemetryConfig,
-) -> HashMap<String, String> {
-    if !cfg.effective_remote_enabled() {
-        return HashMap::new();
-    }
-    let mut out = HashMap::new();
-    for key in REMOTE_LABEL_ALLOWLIST {
-        if let Some(value) = labels.get(*key) {
-            out.insert((*key).to_string(), value.clone());
-        }
-    }
-    out
-}
-
-fn labels_to_kvs(labels: &HashMap<String, String>) -> Vec<KeyValue> {
-    labels
-        .iter()
-        .map(|(k, v)| KeyValue::new(k.clone(), v.clone()))
-        .collect()
-}
-
-fn percentile(values: &[f64], p: f64) -> Option<f64> {
-    if values.is_empty() {
-        return None;
-    }
-    let idx = ((values.len() - 1) as f64 * p).round() as usize;
-    values.get(idx).copied()
 }
 
 fn parse_headers(raw: String) -> HashMap<String, String> {
@@ -882,26 +474,4 @@ async fn cleanup_old_logs(data_root: &std::path::Path, retention_days: u64) -> R
         }
     }
     Ok(())
-}
-
-fn trace_id_to_string(id: TraceId) -> String {
-    format!("{id:032x}")
-}
-
-fn span_id_to_string(id: opentelemetry::trace::SpanId) -> String {
-    format!("{id:016x}")
-}
-
-struct HeaderExtractor<'a> {
-    headers: &'a axum::http::HeaderMap,
-}
-
-impl<'a> Extractor for HeaderExtractor<'a> {
-    fn get(&self, key: &str) -> Option<&str> {
-        self.headers.get(key).and_then(|v| v.to_str().ok())
-    }
-
-    fn keys(&self) -> Vec<&str> {
-        self.headers.keys().map(|k| k.as_str()).collect()
-    }
 }

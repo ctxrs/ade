@@ -1,9 +1,10 @@
 use super::*;
 use crate::api::{
-    derive_browser_capability_token, derive_browser_stream_token,
-    BrowserCapabilityAuthScope, BrowserStreamAuthScope,
+    derive_browser_capability_token, derive_browser_stream_token, BrowserCapabilityAuthScope,
+    BrowserStreamAuthScope,
 };
-use sha2::Digest;
+
+mod mobile_tokens;
 
 async fn serve_test_app(app: axum::Router) -> (std::net::SocketAddr, tokio::task::JoinHandle<()>) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -550,7 +551,9 @@ async fn session_artifact_download_requires_browser_capability_query_token() {
 
     let req = Request::builder()
         .method("GET")
-        .uri(format!("/api/sessions/{session_id}/artifacts/{artifact_id}"))
+        .uri(format!(
+            "/api/sessions/{session_id}/artifacts/{artifact_id}"
+        ))
         .body(Body::empty())
         .unwrap();
     let res = app.clone().oneshot(req).await.unwrap();
@@ -572,114 +575,4 @@ async fn session_artifact_download_requires_browser_capability_query_token() {
         .unwrap();
     let res = app.oneshot(req).await.unwrap();
     assert_eq!(res.status(), StatusCode::NOT_FOUND);
-}
-
-#[tokio::test]
-async fn mobile_api_tokens_do_not_authorize_desktop_api_routes() {
-    let _serial = home_env_test_lock().lock().await;
-    let home = tempfile::tempdir().unwrap();
-    let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
-    let git_repo = setup_git_repo().await;
-
-    let data_dir = tempfile::tempdir().unwrap();
-    let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let state = Arc::new(AppState::new(
-        data_dir.path().to_path_buf(),
-        stores,
-        HashMap::new(),
-        "http://127.0.0.1:4399".to_string(),
-        Some("daemon-secret".to_string()),
-    ));
-
-    let token = "ctxm_test_mobile_token";
-    let mut hasher = sha2::Sha256::new();
-    hasher.update(token.as_bytes());
-    let token_hash = hex::encode(hasher.finalize());
-    state
-        .global_store()
-        .create_mobile_connection_profile(
-            "mobile".to_string(),
-            "https://example.com".to_string(),
-            token_hash,
-            "ctxm_tes".to_string(),
-            Vec::new(),
-        )
-        .await
-        .unwrap();
-
-    let app = api::router(state);
-    let req = Request::builder()
-        .method("GET")
-        .uri("/api/workspaces")
-        .header("authorization", format!("Bearer {token}"))
-        .body(Body::empty())
-        .unwrap();
-    let res = app.clone().oneshot(req).await.unwrap();
-    assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
-
-    let req = Request::builder()
-        .method("POST")
-        .uri("/api/workspaces")
-        .header("authorization", format!("Bearer {token}"))
-        .header("content-type", "application/json")
-        .body(Body::from(
-            json!({
-                "root_path": git_repo.path().to_string_lossy(),
-                "name": "mobile-token-ws"
-            })
-            .to_string(),
-        ))
-        .unwrap();
-    let res = app.oneshot(req).await.unwrap();
-    assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
-}
-
-#[tokio::test]
-async fn mobile_api_tokens_still_authorize_mobile_registration() {
-    let _serial = home_env_test_lock().lock().await;
-    let home = tempfile::tempdir().unwrap();
-    let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
-
-    let data_dir = tempfile::tempdir().unwrap();
-    let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let state = Arc::new(AppState::new(
-        data_dir.path().to_path_buf(),
-        stores,
-        HashMap::new(),
-        "http://127.0.0.1:4399".to_string(),
-        Some("daemon-secret".to_string()),
-    ));
-
-    let token = "ctxm_test_mobile_token";
-    let mut hasher = sha2::Sha256::new();
-    hasher.update(token.as_bytes());
-    let token_hash = hex::encode(hasher.finalize());
-    state
-        .global_store()
-        .create_mobile_connection_profile(
-            "mobile".to_string(),
-            "https://example.com".to_string(),
-            token_hash,
-            "ctxm_tes".to_string(),
-            Vec::new(),
-        )
-        .await
-        .unwrap();
-
-    let app = api::router(state);
-    let req = Request::builder()
-        .method("POST")
-        .uri("/api/mobile/register")
-        .header("authorization", format!("Bearer {token}"))
-        .header("content-type", "application/json")
-        .body(Body::from(
-            json!({
-                "device_id": "11111111-1111-1111-1111-111111111111",
-                "device_label": "test phone"
-            })
-            .to_string(),
-        ))
-        .unwrap();
-    let res = app.oneshot(req).await.unwrap();
-    assert_eq!(res.status(), StatusCode::OK);
 }
