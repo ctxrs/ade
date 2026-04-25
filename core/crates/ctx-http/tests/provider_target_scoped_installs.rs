@@ -16,11 +16,13 @@ use ctx_http::settings::{
     ExecutionMode, ExecutionSettings, Settings,
 };
 use ctx_managed_installs::{
-    load_agent_server_config, refresh_provider_statuses, save_agent_server_config,
-    AgentServerCommand, AgentServerConfigFile, ManagedInstallMetadata,
+    agent_server_config_path, load_agent_server_config, refresh_provider_statuses,
+    save_agent_server_config, AgentServerCommand, AgentServerConfigFile,
+    ManagedInstallMetadata,
 };
 use ctx_provider_install::install_state::{
-    InstallId, InstallInfo, InstallProgressEvent, InstallStateKind, InstallTarget,
+    InstallErrorCode, InstallId, InstallInfo, InstallProgressEvent, InstallStateKind,
+    InstallTarget,
 };
 use ctx_provider_matrix::{
     matrix_cache_path, ProviderArchiveKind, ProviderArchiveTarget, ProviderInstall,
@@ -84,6 +86,18 @@ fn write_executable(path: &Path, contents: &str) {
     let mut perms = std::fs::metadata(path).expect("metadata").permissions();
     perms.set_mode(0o755);
     std::fs::set_permissions(path, perms).expect("set permissions");
+}
+
+async fn write_invalid_agent_server_config(data_root: &Path) {
+    let path = agent_server_config_path(data_root);
+    if let Some(parent) = path.parent() {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .expect("create agent server config parent");
+    }
+    tokio::fs::write(path, "{ invalid json")
+        .await
+        .expect("write invalid agent server config");
 }
 
 fn write_fake_node_runtime(path: &Path, tag: &str) {
@@ -2028,6 +2042,73 @@ async fn acp_container_install_happy_path_installs_bridge_prerequisite_and_keeps
             .pointer("/details/managed_checksum_mismatch")
             .is_none(),
         "successful archive installs must not report checksum drift: {provider_body:#?}"
+    );
+}
+
+#[tokio::test]
+async fn tracked_provider_install_surfaces_agent_server_config_errors() {
+    let _install_lock = provider_install_test_lock().lock().await;
+    let _bundle_env = clear_bundle_matrix_env();
+    let data_dir = tempfile::tempdir().expect("tempdir");
+    let fixture_dir = data_dir.path().join("fixtures");
+    std::fs::create_dir_all(&fixture_dir).expect("create fixture dir");
+    let bridge_fixture = fixture_dir.join("acp-crp-bridge");
+    let provider_fixture = fixture_dir.join("kimi-acp");
+    write_executable(&bridge_fixture, "#!/bin/sh\nexit 0\n");
+    write_executable(&provider_fixture, "#!/bin/sh\nexit 0\n");
+    let _matrix_fixture = activate_matrix_fixture(
+        data_dir.path(),
+        &provider_fixture_matrix(file_url(&bridge_fixture), file_url(&provider_fixture)),
+    )
+    .await;
+    write_invalid_agent_server_config(data_dir.path()).await;
+
+    let stores = common::setup_store(data_dir.path()).await;
+    let state = common::build_state(
+        data_dir.path().to_path_buf(),
+        stores,
+        HashMap::new(),
+        "http://127.0.0.1:0",
+    );
+    let (install_id, started_new) = state
+        .start_install("kimi".to_string(), Some(InstallTarget::Container))
+        .await;
+    assert!(started_new, "tracked install should start cleanly");
+
+    let err = ctx_managed_installs::install_provider_with_progress(
+        state.clone(),
+        install_id,
+        "kimi".to_string(),
+        InstallTarget::Container,
+    )
+    .await
+    .expect_err("invalid managed config should fail tracked install");
+    let err_text = format!("{err:#}");
+    assert!(
+        err_text.contains("loading agent server config for provider install contract resolution")
+            && err_text.contains("parsing agent server config"),
+        "tracked install should surface the managed config parse error chain: {err_text}"
+    );
+
+    let install_info = state
+        .get_install_info(install_id)
+        .await
+        .expect("install info should be recorded");
+    assert!(
+        matches!(install_info.state, InstallStateKind::Failed),
+        "tracked install should be marked failed: {install_info:#?}"
+    );
+    assert!(
+        install_info
+            .error
+            .as_deref()
+            .is_some_and(|value| value.contains("parsing agent server config")),
+        "tracked install failure should persist the managed config error: {install_info:#?}"
+    );
+    assert_ne!(
+        install_info.error_code,
+        Some(InstallErrorCode::RegistryWriteFailed),
+        "tracked install should not misclassify invalid config as a registry write failure: {install_info:#?}"
     );
 }
 

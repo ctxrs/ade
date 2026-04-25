@@ -38,7 +38,7 @@ pub(crate) async fn install_provider_impl(
             })?;
         let install_cfg = load_agent_server_config(state.data_root())
             .await
-            .unwrap_or_default();
+            .context("loading agent server config for provider install contract resolution")?;
         let install_contract = provider_install_contract::resolve_provider_install_contract(
             state.data_root(),
             &install_cfg,
