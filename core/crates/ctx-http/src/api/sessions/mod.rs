@@ -19,7 +19,7 @@ use super::shared::{load_and_cache_worktree_files, FileCompletionsQuery};
 use crate::completions;
 use crate::daemon::AppState;
 use crate::execution_effective;
-use crate::git_status::{load_git_status_snapshot, GitStatusEntry};
+use crate::git_status::GitStatusEntry;
 use crate::installer;
 use crate::logs;
 use crate::oracle;
@@ -50,7 +50,6 @@ pub(super) use subagents::{
     mcp_subagent_wait,
 };
 mod diff_exec;
-use diff_exec::diff_worktree_for_session;
 pub(crate) use diff_exec::diff_worktree_summary_for_session;
 mod control;
 pub(super) use control::{

@@ -1,6 +1,4 @@
 use super::*;
-use ctx_workspace_config as workspace_config;
-
 #[path = "snapshot/vcs.rs"]
 mod vcs;
 pub(crate) use vcs::{

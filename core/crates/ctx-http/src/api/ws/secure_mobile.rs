@@ -58,8 +58,7 @@ async fn require_mobile_secure_stream_access(
         &cfg.daemon_private_key,
     )
     .map_err(|_| StatusCode::UNAUTHORIZED)?;
-    let expected_token =
-        crate::mobile_e2ee::derive_stream_token(&key, &workspace_id.0.to_string());
+    let expected_token = crate::mobile_e2ee::derive_stream_token(&key, &workspace_id.0.to_string());
     if provided_token != expected_token {
         return Err(StatusCode::UNAUTHORIZED);
     }
@@ -176,8 +175,8 @@ async fn handle_mobile_secure_ws(
                 {
                     match next {
                         NextWorkspaceStreamItem::Control(entry) => {
-                            let message = entry.message;
-                            let queued_ms = entry.enqueued_at.elapsed().as_millis();
+                            let (enqueued_at, message) = entry.into_parts();
+                            let queued_ms = enqueued_at.elapsed().as_millis();
                             let is_snapshot = matches!(
                                 message,
                                 WorkspaceActiveSnapshotStreamMessage::Snapshot { .. }
@@ -290,11 +289,11 @@ async fn handle_mobile_secure_ws(
                 }
 
                 tokio::select! {
-                    _ = priority_control.notify.notified() => {},
-                    _ = control.notify.notified() => {},
-                    _ = foreground_head_buffer.notify.notified() => {},
-                    _ = background_head_buffer.notify.notified() => {},
-                    _ = summary_buffer.notify.notified() => {},
+                    _ = priority_control.notify().notified() => {},
+                    _ = control.notify().notified() => {},
+                    _ = foreground_head_buffer.notify().notified() => {},
+                    _ = background_head_buffer.notify().notified() => {},
+                    _ = summary_buffer.notify().notified() => {},
                     _ = tick.tick() => {},
                 }
             }

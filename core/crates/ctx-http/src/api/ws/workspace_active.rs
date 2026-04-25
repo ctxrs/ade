@@ -84,8 +84,8 @@ async fn handle_workspace_active_snapshot_ws(
                 {
                     match next {
                         NextWorkspaceStreamItem::Control(entry) => {
-                            let message = entry.message;
-                            let queued_ms = entry.enqueued_at.elapsed().as_millis();
+                            let (enqueued_at, message) = entry.into_parts();
+                            let queued_ms = enqueued_at.elapsed().as_millis();
                             let is_snapshot = matches!(
                                 message,
                                 WorkspaceActiveSnapshotStreamMessage::Snapshot { .. }
@@ -199,11 +199,11 @@ async fn handle_workspace_active_snapshot_ws(
                 }
 
                 tokio::select! {
-                    _ = priority_control.notify.notified() => {},
-                    _ = control.notify.notified() => {},
-                    _ = foreground_head_buffer.notify.notified() => {},
-                    _ = background_head_buffer.notify.notified() => {},
-                    _ = summary_buffer.notify.notified() => {},
+                    _ = priority_control.notify().notified() => {},
+                    _ = control.notify().notified() => {},
+                    _ = foreground_head_buffer.notify().notified() => {},
+                    _ = background_head_buffer.notify().notified() => {},
+                    _ = summary_buffer.notify().notified() => {},
                     _ = tick.tick() => {},
                 }
             }
