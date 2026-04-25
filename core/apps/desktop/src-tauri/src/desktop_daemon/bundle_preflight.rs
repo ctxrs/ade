@@ -1,150 +1,26 @@
-use anyhow::{anyhow, Context, Result};
 use crate::desktop_runtime::DesktopBuildIdentity;
-use serde::Deserialize;
-use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
+use anyhow::{anyhow, Context, Result};
+use std::path::Path;
 
-#[derive(Debug, Clone, Deserialize)]
-struct DesktopBundledAssetsManifest {
-    #[allow(dead_code)]
-    version: u32,
-    #[serde(default)]
-    providers: Vec<DesktopBundledProvider>,
-    #[serde(default)]
-    runtimes: Vec<DesktopBundledRuntime>,
-    #[serde(default)]
-    images: Vec<DesktopBundledImage>,
-}
+mod models;
+mod paths;
+mod targets;
+#[cfg(test)]
+mod tests;
 
-#[derive(Debug, Clone, Deserialize)]
-struct DesktopBundledProviderManifest {
-    version: u32,
-    #[serde(default)]
-    providers: Vec<serde_json::Value>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct DesktopBundledProvider {
-    id: String,
-    os: String,
-    arch: String,
-    command: String,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct DesktopBundledRuntime {
-    id: String,
-    os: String,
-    arch: String,
-    root: String,
-    bin: String,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct DesktopBundledImage {
-    id: String,
-    os: String,
-    arch: String,
-    tar: String,
-}
-
-#[derive(Debug, Clone, Default, Deserialize)]
-struct RuntimeLockRequiredTargets {
-    #[serde(default)]
-    provider: Vec<String>,
-    #[serde(default)]
-    runtime: Vec<String>,
-    #[serde(default)]
-    image: Vec<String>,
-    #[serde(default)]
-    machine_cache: Vec<String>,
-}
-
-#[derive(Debug, Clone, Default, Deserialize)]
-struct RuntimeLockRequired {
-    #[serde(default)]
-    provider_ids: Vec<String>,
-    #[serde(default)]
-    runtime_ids: Vec<String>,
-    #[serde(default)]
-    image_ids: Vec<String>,
-    #[serde(default)]
-    machine_cache_ids: Vec<String>,
-    #[serde(default)]
-    targets: RuntimeLockRequiredTargets,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct RuntimeLockV2 {
-    version: u32,
-    #[serde(default)]
-    profiles: HashMap<String, RuntimeLockProfile>,
-    required: RuntimeLockRequired,
-    #[serde(default)]
-    components: Vec<RuntimeLockComponent>,
-}
-
-#[derive(Debug, Clone, Default, Deserialize)]
-struct RuntimeLockProfile {
-    #[serde(default)]
-    allowed_source_types: Vec<String>,
-}
-
-#[derive(Debug, Clone, Default, Deserialize)]
-struct RuntimeLockComponentSource {
-    #[serde(default)]
-    source_type: String,
-    #[serde(default)]
-    uri: Option<String>,
-    #[serde(default)]
-    sha256: Option<String>,
-}
-
-#[derive(Debug, Clone, Default, Deserialize)]
-struct RuntimeLockComponentHelper {
-    #[serde(default)]
-    uri: Option<String>,
-    #[serde(default)]
-    sha256: Option<String>,
-}
-
-#[derive(Debug, Clone, Default, Deserialize)]
-struct RuntimeLockComponentHelpers {
-    #[serde(default)]
-    kernel: Option<RuntimeLockComponentHelper>,
-    #[serde(default)]
-    initrd: Option<RuntimeLockComponentHelper>,
-    #[serde(rename = "guest-agent", default)]
-    guest_agent: Option<RuntimeLockComponentHelper>,
-    #[serde(rename = "egress-proxy", default)]
-    egress_proxy: Option<RuntimeLockComponentHelper>,
-    #[serde(rename = "container-stack", default)]
-    container_stack: Option<RuntimeLockComponentHelper>,
-}
-
-#[derive(Debug, Clone, Default, Deserialize)]
-struct RuntimeLockComponent {
-    #[serde(default)]
-    kind: String,
-    #[serde(default)]
-    id: String,
-    #[serde(default)]
-    os: String,
-    #[serde(default)]
-    arch: String,
-    #[serde(default)]
-    variant: Option<String>,
-    #[serde(default)]
-    sources: Vec<RuntimeLockComponentSource>,
-    #[serde(default)]
-    helpers: RuntimeLockComponentHelpers,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct RuntimeTarget {
-    os: String,
-    arch: String,
-}
+pub(super) use models::{
+    allowed_source_types_for_profile, avf_helper_metadata_complete, avf_helper_names_and_paths,
+    find_required_component, required_component_has_managed_source, DesktopBundledAssetsManifest,
+    DesktopBundledProviderManifest, RuntimeLockV2,
+};
+pub(super) use paths::{
+    bundle_manifest_path, bundled_artifact_identity_path, bundled_provider_manifest_path,
+};
+pub(super) use targets::{
+    host_default_image_targets, host_default_machine_cache_targets, host_default_provider_targets,
+    host_default_runtime_targets, host_relevant_targets, parse_target, required_targets_or_default,
+    RuntimeTarget,
+};
 
 fn parity_profile_enabled() -> bool {
     matches!(
@@ -166,302 +42,6 @@ fn active_runtime_profile() -> &'static str {
         Some("source-all") => "source-all",
         _ => "parity",
     }
-}
-
-fn allowed_source_types_for_profile(lock: &RuntimeLockV2) -> HashSet<String> {
-    let mut out = HashSet::new();
-    let profile = active_runtime_profile();
-    let cfg = lock
-        .profiles
-        .get(profile)
-        .or_else(|| lock.profiles.get("parity"));
-    if let Some(cfg) = cfg {
-        for source_type in &cfg.allowed_source_types {
-            let trimmed = source_type.trim();
-            if trimmed.is_empty() {
-                continue;
-            }
-            out.insert(trimmed.to_string());
-        }
-    }
-    out
-}
-
-fn lock_component_has_managed_source(
-    component: &RuntimeLockComponent,
-    allowed_sources: &HashSet<String>,
-) -> bool {
-    component.sources.iter().any(|source| {
-        let source_type = source.source_type.trim();
-        if source_type.is_empty() || source_type == "local" {
-            return false;
-        }
-        if !allowed_sources.is_empty() && !allowed_sources.contains(source_type) {
-            return false;
-        }
-        let Some(uri) = source
-            .uri
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-        else {
-            return false;
-        };
-        let Some(sha256) = source
-            .sha256
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-        else {
-            return false;
-        };
-        if component.kind == "runtime"
-            && component.id == "avf-linux-guest"
-            && (!managed_source_is_resolved(uri) || !sha256_is_resolved(sha256))
-        {
-            return false;
-        }
-        true
-    })
-}
-
-fn required_component_has_managed_source(
-    lock: &RuntimeLockV2,
-    kind: &str,
-    id: &str,
-    target: &RuntimeTarget,
-    allowed_sources: &HashSet<String>,
-) -> bool {
-    find_required_component(lock, kind, id, target)
-        .map(|component| lock_component_has_managed_source(component, allowed_sources))
-        .unwrap_or(false)
-}
-
-fn find_required_component<'a>(
-    lock: &'a RuntimeLockV2,
-    kind: &str,
-    id: &str,
-    target: &RuntimeTarget,
-) -> Option<&'a RuntimeLockComponent> {
-    lock.components.iter().find(|component| {
-        let variant = component
-            .variant
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .unwrap_or("default");
-        component.kind == kind
-            && component.id == id
-            && component.os == target.os
-            && component.arch == target.arch
-            && variant == "default"
-    })
-}
-
-fn managed_source_is_resolved(uri: &str) -> bool {
-    !uri.trim().starts_with("locked://")
-}
-
-fn sha256_is_resolved(sha256: &str) -> bool {
-    let trimmed = sha256.trim();
-    !trimmed.is_empty() && !(trimmed.len() == 64 && trimmed.bytes().all(|byte| byte == b'0'))
-}
-
-fn helper_metadata_complete(
-    helper: Option<&RuntimeLockComponentHelper>,
-    require_resolved: bool,
-) -> bool {
-    let Some(uri) = helper
-        .and_then(|helper| helper.uri.as_deref())
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    else {
-        return false;
-    };
-    let Some(sha256) = helper
-        .and_then(|helper| helper.sha256.as_deref())
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    else {
-        return false;
-    };
-    if require_resolved {
-        managed_source_is_resolved(uri) && sha256_is_resolved(sha256)
-    } else {
-        true
-    }
-}
-
-fn avf_helper_names_and_paths() -> [(&'static str, &'static str); 5] {
-    [
-        ("kernel", "helpers/kernel"),
-        ("initrd", "helpers/initrd"),
-        ("guest-agent", "helpers/guest-agent"),
-        ("egress-proxy", "helpers/egress-proxy"),
-        ("container-stack", "helpers/container-stack.tar.gz"),
-    ]
-}
-
-fn avf_helper_metadata_complete(component: &RuntimeLockComponent) -> bool {
-    helper_metadata_complete(component.helpers.kernel.as_ref(), true)
-        && helper_metadata_complete(component.helpers.initrd.as_ref(), true)
-        && helper_metadata_complete(component.helpers.guest_agent.as_ref(), true)
-        && helper_metadata_complete(component.helpers.egress_proxy.as_ref(), true)
-        && helper_metadata_complete(component.helpers.container_stack.as_ref(), true)
-}
-
-fn normalize_target_token(raw: &str, host_value: &str) -> Option<String> {
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-    if trimmed.eq_ignore_ascii_case("host") {
-        return Some(host_value.to_string());
-    }
-    Some(trimmed.to_string())
-}
-
-fn parse_target(raw: &str, host_os: &str, host_arch: &str) -> Option<RuntimeTarget> {
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-    let (os, arch) = trimmed.split_once('/')?;
-    let os = normalize_target_token(os, host_os)?;
-    let arch = normalize_target_token(arch, host_arch)?;
-    Some(RuntimeTarget { os, arch })
-}
-
-fn required_targets_or_default(
-    configured: &[String],
-    fallback: &[RuntimeTarget],
-    host_os: &str,
-    host_arch: &str,
-) -> Vec<RuntimeTarget> {
-    if configured.is_empty() {
-        return fallback.to_vec();
-    }
-    let mut out = Vec::<RuntimeTarget>::new();
-    for value in configured {
-        if let Some(target) = parse_target(value, host_os, host_arch) {
-            if !out.contains(&target) {
-                out.push(target);
-            }
-        }
-    }
-    if out.is_empty() {
-        return fallback.to_vec();
-    }
-    out
-}
-
-fn host_default_provider_targets() -> Vec<RuntimeTarget> {
-    let host_os = std::env::consts::OS.to_string();
-    let host_arch = std::env::consts::ARCH.to_string();
-    if host_os == "macos" && host_arch == "aarch64" {
-        return vec![
-            RuntimeTarget {
-                os: "macos".to_string(),
-                arch: "aarch64".to_string(),
-            },
-            RuntimeTarget {
-                os: "linux".to_string(),
-                arch: "aarch64".to_string(),
-            },
-            RuntimeTarget {
-                os: "linux".to_string(),
-                arch: "x86_64".to_string(),
-            },
-        ];
-    }
-    let mut out = vec![RuntimeTarget {
-        os: host_os.clone(),
-        arch: host_arch.clone(),
-    }];
-    let linux_target = RuntimeTarget {
-        os: "linux".to_string(),
-        arch: host_arch,
-    };
-    if !out.contains(&linux_target) {
-        out.push(linux_target);
-    }
-    out
-}
-
-fn host_default_runtime_targets() -> Vec<RuntimeTarget> {
-    host_default_provider_targets()
-}
-
-fn host_default_image_targets() -> Vec<RuntimeTarget> {
-    let host_arch = std::env::consts::ARCH.to_string();
-    if std::env::consts::OS == "macos" && host_arch == "aarch64" {
-        return vec![
-            RuntimeTarget {
-                os: "linux".to_string(),
-                arch: "aarch64".to_string(),
-            },
-            RuntimeTarget {
-                os: "linux".to_string(),
-                arch: "x86_64".to_string(),
-            },
-        ];
-    }
-    vec![RuntimeTarget {
-        os: "linux".to_string(),
-        arch: host_arch,
-    }]
-}
-
-fn host_default_machine_cache_targets() -> Vec<RuntimeTarget> {
-    if std::env::consts::OS != "macos" {
-        return Vec::new();
-    }
-    vec![RuntimeTarget {
-        os: "macos".to_string(),
-        arch: std::env::consts::ARCH.to_string(),
-    }]
-}
-
-fn host_relevant_targets(
-    all_targets: &[RuntimeTarget],
-    fallback: &[RuntimeTarget],
-) -> Vec<RuntimeTarget> {
-    if all_targets.is_empty() {
-        return fallback.to_vec();
-    }
-    let mut out = Vec::<RuntimeTarget>::new();
-    for target in all_targets {
-        if fallback.contains(target) && !out.contains(target) {
-            out.push(target.clone());
-        }
-    }
-    out
-}
-
-fn bundle_manifest_path(bundle_dir: &Path) -> PathBuf {
-    if let Ok(raw) = std::env::var("CTX_BUNDLE_MANIFEST") {
-        let trimmed = raw.trim();
-        if !trimmed.is_empty() {
-            let candidate = PathBuf::from(trimmed);
-            if candidate.is_absolute() {
-                return candidate;
-            }
-            return bundle_dir.join(candidate);
-        }
-    }
-    let effective_manifest = bundle_dir.join("runtime_manifest.effective.json");
-    if effective_manifest.exists() {
-        return effective_manifest;
-    }
-    bundle_dir.join("manifest.json")
-}
-
-fn bundled_artifact_identity_path(bundle_dir: &Path) -> PathBuf {
-    bundle_dir.join("artifact_identity.json")
-}
-
-fn bundled_provider_manifest_path(bundle_dir: &Path) -> PathBuf {
-    bundle_dir.join("provider_matrix.json")
 }
 
 pub(super) fn enforce_desktop_parity_bundle_preflight(bundle_dir: Option<&Path>) -> Result<()> {
@@ -501,6 +81,7 @@ pub(super) fn enforce_desktop_parity_bundle_preflight(bundle_dir: Option<&Path>)
             artifact_identity_path.display()
         );
     }
+
     let bundled_provider_manifest_path = bundled_provider_manifest_path(bundle_dir);
     let bundled_provider_manifest_raw = std::fs::read_to_string(&bundled_provider_manifest_path)
         .with_context(|| format!("reading {}", bundled_provider_manifest_path.display()))?;
@@ -519,6 +100,7 @@ pub(super) fn enforce_desktop_parity_bundle_preflight(bundle_dir: Option<&Path>)
             bundled_provider_manifest_path.display()
         );
     }
+
     let manifest_path = bundle_manifest_path(bundle_dir);
     let manifest_parent = manifest_path
         .parent()
@@ -589,7 +171,7 @@ pub(super) fn enforce_desktop_parity_bundle_preflight(bundle_dir: Option<&Path>)
         ),
         &machine_cache_default_targets,
     );
-    let allowed_managed_sources = allowed_source_types_for_profile(&lock);
+    let allowed_managed_sources = allowed_source_types_for_profile(&lock, active_runtime_profile());
 
     let mut failures = Vec::<String>::new();
 
@@ -749,6 +331,3 @@ pub(super) fn enforce_desktop_parity_bundle_preflight(bundle_dir: Option<&Path>)
     }
     Ok(())
 }
-
-#[cfg(test)]
-mod tests;
