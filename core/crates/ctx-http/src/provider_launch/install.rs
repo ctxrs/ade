@@ -4,6 +4,7 @@ use axum::http::StatusCode;
 use axum::Json;
 
 use crate::daemon::AppState;
+use crate::logs;
 use ctx_provider_install::install_state::{InstallId, InstallTarget};
 
 #[async_trait::async_trait]
@@ -37,7 +38,7 @@ pub(crate) async fn start_provider_install(
         (
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({
-                "error": error.message,
+                "error": logs::redact_sensitive(&error.message),
                 "code": error.code,
             })),
         )

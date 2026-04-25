@@ -106,7 +106,10 @@ where
         state.as_ref(),
     ))
     .await
-    .unwrap_or_default();
+    .map_err(|err| StartProviderInstallError {
+        message: err.to_string(),
+        code: Some("agent_server_config_invalid".to_string()),
+    })?;
     if !installer::is_supported_managed_provider_for_target(&matrix, provider_id, target) {
         return Err(StartProviderInstallError {
             message: format!(
