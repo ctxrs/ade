@@ -97,6 +97,8 @@ test("Bazel web focused unit slices run as native vitest tests", () => {
   const nonPretextSettingsSetupBlock = targetBlock(buildFile, "unit_tests_non_pretext_settings_setup");
   const nonPretextWorkbenchBlock = targetBlock(buildFile, "unit_tests_non_pretext_workbench");
   const nonPretextWorkbenchSurfaceBlock = targetBlock(buildFile, "unit_tests_non_pretext_workbench_surface");
+  const nonPretextWorkbenchSurfaceAppBlock = targetBlock(buildFile, "unit_tests_non_pretext_workbench_surface_app");
+  const nonPretextWorkbenchSurfaceSessionBlock = targetBlock(buildFile, "unit_tests_non_pretext_workbench_surface_session");
   const nonPretextWorkbenchShellBlock = targetBlock(buildFile, "unit_tests_non_pretext_workbench_shell");
   const pretextBlock = targetBlock(buildFile, "pretext_measurement_unit_tests");
   const desktopIpcCorpusBlock = targetBlock(buildFile, "desktop_ipc_corpus");
@@ -134,6 +136,14 @@ test("Bazel web focused unit slices run as native vitest tests", () => {
     "node scripts/run_bazel_pilot.cjs test //core/apps/web:unit_tests_non_pretext_workbench_surface",
   );
   assert.equal(
+    corePackageJson.scripts["bazel:web:unit:non-pretext:workbench:surface:app"],
+    "node scripts/run_bazel_pilot.cjs test //core/apps/web:unit_tests_non_pretext_workbench_surface_app",
+  );
+  assert.equal(
+    corePackageJson.scripts["bazel:web:unit:non-pretext:workbench:surface:session"],
+    "node scripts/run_bazel_pilot.cjs test //core/apps/web:unit_tests_non_pretext_workbench_surface_session",
+  );
+  assert.equal(
     corePackageJson.scripts["bazel:web:unit:non-pretext:workbench:shell"],
     "node scripts/run_bazel_pilot.cjs test //core/apps/web:unit_tests_non_pretext_workbench_shell",
   );
@@ -152,7 +162,9 @@ test("Bazel web focused unit slices run as native vitest tests", () => {
   assert.match(nonPretextMiscBlock, /^vitest_bin\.vitest_test\(/m);
   assert.match(nonPretextSettingsSetupBlock, /^vitest_bin\.vitest_test\(/m);
   assert.match(nonPretextWorkbenchBlock, /^test_suite\(/m);
-  assert.match(nonPretextWorkbenchSurfaceBlock, /^vitest_bin\.vitest_test\(/m);
+  assert.match(nonPretextWorkbenchSurfaceBlock, /^test_suite\(/m);
+  assert.match(nonPretextWorkbenchSurfaceAppBlock, /^vitest_bin\.vitest_test\(/m);
+  assert.match(nonPretextWorkbenchSurfaceSessionBlock, /^vitest_bin\.vitest_test\(/m);
   assert.match(nonPretextWorkbenchShellBlock, /^vitest_bin\.vitest_test\(/m);
   assert.match(pretextBlock, /^vitest_bin\.vitest_test\(/m);
   assert.match(desktopIpcCorpusBlock, /^vitest_bin\.vitest_test\(/m);
@@ -162,13 +174,16 @@ test("Bazel web focused unit slices run as native vitest tests", () => {
   assert.match(nonPretextBlock, /unit_tests_non_pretext_workbench/);
   assert.match(nonPretextFoundationBlock, /unit_tests_non_pretext_foundation_shared/);
   assert.match(nonPretextFoundationBlock, /unit_tests_non_pretext_foundation_state/);
+  assert.match(nonPretextWorkbenchSurfaceBlock, /unit_tests_non_pretext_workbench_surface_app/);
+  assert.match(nonPretextWorkbenchSurfaceBlock, /unit_tests_non_pretext_workbench_surface_session/);
   assert.match(nonPretextWorkbenchBlock, /unit_tests_non_pretext_workbench_surface/);
   assert.match(nonPretextWorkbenchBlock, /unit_tests_non_pretext_workbench_shell/);
   assert.match(nonPretextFoundationSharedBlock, /data = HERMETIC_WEB_CHECK_DATA/);
   assert.match(nonPretextFoundationStateBlock, /data = HERMETIC_WEB_CHECK_DATA/);
   assert.match(nonPretextMiscBlock, /data = HERMETIC_WEB_CHECK_DATA/);
   assert.match(nonPretextSettingsSetupBlock, /data = HERMETIC_WEB_CHECK_DATA/);
-  assert.match(nonPretextWorkbenchSurfaceBlock, /data = HERMETIC_WEB_CHECK_DATA/);
+  assert.match(nonPretextWorkbenchSurfaceAppBlock, /data = HERMETIC_WEB_CHECK_DATA/);
+  assert.match(nonPretextWorkbenchSurfaceSessionBlock, /data = HERMETIC_WEB_CHECK_DATA/);
   assert.match(nonPretextWorkbenchShellBlock, /data = HERMETIC_WEB_CHECK_DATA/);
   assert.match(pretextBlock, /data = HERMETIC_WEB_CHECK_DATA/);
   assert.match(desktopIpcCorpusBlock, /data = HERMETIC_WEB_CHECK_DATA/);
@@ -184,7 +199,11 @@ test("Bazel web focused unit slices run as native vitest tests", () => {
   assert.doesNotMatch(desktopIpcCorpusBlock, /\bpnpm\b/);
   assert.match(
     buildFile,
-    /NON_PRETEXT_WORKBENCH_SURFACE_TESTS = glob\(\[[\s\S]*?"\*\.test\.ts"[\s\S]*?"\*\.test\.tsx"/,
+    /NON_PRETEXT_WORKBENCH_SURFACE_APP_TESTS = glob\(\[[\s\S]*?"\*\.test\.ts"[\s\S]*?"\*\.test\.tsx"/,
+  );
+  assert.match(
+    buildFile,
+    /NON_PRETEXT_WORKBENCH_SURFACE_SESSION_TESTS = glob\(\[[\s\S]*?"src\/pages\/SessionPage\*\.test\.ts"[\s\S]*?"src\/pages\/sessionThread\/\*\*\/\*\.test\.tsx"/,
   );
   assert.match(
     buildFile,

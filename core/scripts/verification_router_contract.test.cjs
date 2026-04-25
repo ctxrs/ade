@@ -77,7 +77,7 @@ test("verify:affected routes extracted layout package changes to the dedicated p
   ]);
 });
 
-test("verify:touched routes root-level web shell files to the workbench surface shard", () => {
+test("verify:touched routes root-level web shell files to the workbench surface app shard", () => {
   const plan = buildVerificationPlan({
     intent: "touched",
     base: "origin/main",
@@ -86,7 +86,20 @@ test("verify:touched routes root-level web shell files to the workbench surface 
 
   assert.deepEqual(plan.commands, [
     "pnpm source:file-size:enforce",
-    "pnpm bazel:web:unit:non-pretext:workbench:surface",
+    "pnpm bazel:web:unit:non-pretext:workbench:surface:app",
+  ]);
+});
+
+test("verify:touched routes session workbench files to the workbench surface session shard", () => {
+  const plan = buildVerificationPlan({
+    intent: "touched",
+    base: "origin/main",
+    changedFiles: ["core/apps/web/src/pages/sessionView/SessionWorkbenchPane.tsx"],
+  });
+
+  assert.deepEqual(plan.commands, [
+    "pnpm source:file-size:enforce",
+    "pnpm bazel:web:unit:non-pretext:workbench:surface:session",
   ]);
 });
 
