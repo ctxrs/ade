@@ -835,6 +835,52 @@ impl ProviderAdapter for RestartTrackingAdapter {
     }
 }
 
+#[derive(Default)]
+struct RestartFailingAdapter {
+    restart_calls: AtomicUsize,
+}
+
+#[async_trait::async_trait]
+impl ProviderAdapter for RestartFailingAdapter {
+    async fn inspect(&self) -> anyhow::Result<ProviderStatus> {
+        Ok(ProviderStatus {
+            provider_id: "codex-crp".to_string(),
+            installed: true,
+            detected_path: None,
+            version: Some("test".to_string()),
+            capabilities: None,
+            health: ProviderHealth::Ok,
+            diagnostics: Vec::new(),
+            details: HashMap::new(),
+            usability: ctx_providers::adapters::ProviderUsability::default(),
+        })
+    }
+
+    async fn run(
+        &self,
+        _input: TurnInput,
+        _workdir: PathBuf,
+        _env: HashMap<String, String>,
+        _event_sink: tokio::sync::mpsc::Sender<ctx_providers::events::NormalizedEvent>,
+        _hooks: ctx_providers::adapters::ProviderRunHooks,
+    ) -> anyhow::Result<RunHandle> {
+        anyhow::bail!("run not used in this test")
+    }
+
+    async fn cancel(&self, _handle: &mut RunHandle) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    async fn list_processes(&self) -> Vec<ProviderProcessInfo> {
+        Vec::new()
+    }
+
+    async fn restart(&self, _reason: &str, _mode: ProviderRestartMode) -> anyhow::Result<()> {
+        self.restart_calls.fetch_add(1, Ordering::SeqCst);
+        anyhow::bail!("restart failed")
+    }
+}
+
 #[tokio::test]
 async fn restart_provider_for_auth_change_invalidates_only_matching_provider_probe_caches() {
     let temp = tempfile::tempdir().expect("tempdir");
@@ -880,7 +926,9 @@ async fn restart_provider_for_auth_change_invalidates_only_matching_provider_pro
         },
     );
 
-    restart_provider_for_auth_change(&state, "codex-crp", "test auth updated").await;
+    restart_provider_for_auth_change(&state, "codex-crp", "test auth updated")
+        .await
+        .expect("restart should succeed");
 
     let options_cache = state.providers.options_cache.lock().await;
     assert!(!options_cache.contains_key("ws-a/host/codex"));
@@ -893,6 +941,91 @@ async fn restart_provider_for_auth_change_invalidates_only_matching_provider_pro
     drop(verify_cache);
 
     assert_eq!(adapter.restart_calls.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn restart_provider_for_auth_change_returns_error_when_adapter_restart_fails() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let stores = StoreManager::open(temp.path()).await.expect("open stores");
+    let adapter = Arc::new(RestartFailingAdapter::default());
+    let state = Arc::new(AppState::new(
+        temp.path().to_path_buf(),
+        stores,
+        HashMap::from([(
+            "codex-crp".to_string(),
+            adapter.clone() as Arc<dyn ProviderAdapter>,
+        )]),
+        "http://127.0.0.1:4310".to_string(),
+        None,
+    ));
+
+    state.providers.options_cache.lock().await.insert(
+        "ws-a/host/codex".to_string(),
+        crate::daemon::CachedProviderOptions {
+            cached_at: std::time::Instant::now(),
+            value: serde_json::json!({ "provider_id": "codex-crp", "probe_ok": false }),
+        },
+    );
+
+    let err = restart_provider_for_auth_change(&state, "codex-crp", "test auth updated")
+        .await
+        .expect_err("restart failure should bubble up");
+    assert!(err
+        .to_string()
+        .contains("provider auth updated but drain-restart failed for codex-crp"));
+
+    let options_cache = state.providers.options_cache.lock().await;
+    assert!(!options_cache.contains_key("ws-a/host/codex"));
+    drop(options_cache);
+
+    assert_eq!(adapter.restart_calls.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn set_codex_active_account_returns_error_when_restart_fails() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let stores = StoreManager::open(temp.path()).await.expect("open stores");
+    let state = Arc::new(AppState::new(
+        temp.path().to_path_buf(),
+        stores,
+        HashMap::from([(
+            "codex-crp".to_string(),
+            Arc::new(RestartFailingAdapter::default()) as Arc<dyn ProviderAdapter>,
+        )]),
+        "http://127.0.0.1:4310".to_string(),
+        None,
+    ));
+    provider_accounts::upsert_codex_account(
+        &state.core.data_root,
+        provider_accounts::CodexAccountEntry {
+            id: "acct".to_string(),
+            label: "Account".to_string(),
+            kind: provider_accounts::CODEX_CREDENTIAL_KIND_OAUTH.to_string(),
+            email: Some("acct@example.com".to_string()),
+            plan_type: None,
+            created_at: Utc::now(),
+            last_used_at: None,
+            secret_ref: None,
+            endpoint_profile: provider_accounts::CodexEndpointProfile::default(),
+        },
+    )
+    .await
+    .expect("seed codex account");
+
+    let err = set_codex_active_account(
+        State(Arc::clone(&state)),
+        Json(CodexActiveAccountReq {
+            account_id: Some("acct".to_string()),
+        }),
+    )
+    .await
+    .expect_err("restart failure should surface");
+    assert_eq!(err.0, StatusCode::INTERNAL_SERVER_ERROR);
+    assert!(err
+        .1
+         .0
+        .error
+        .contains("provider auth updated but drain-restart failed"));
 }
 
 #[tokio::test]

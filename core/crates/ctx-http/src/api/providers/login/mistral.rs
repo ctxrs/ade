@@ -184,14 +184,27 @@ async fn monitor_mistral_login(state: Arc<AppState>, login_id: String, label: Op
                     let _ = tokio::fs::remove_dir_all(&login_home).await;
                     return;
                 }
+                let restart_result = restarts::restart_mistral_providers_for_auth_change(
+                    &state,
+                    "mistral auth updated",
+                )
+                .await;
                 let mut map = state.providers.mistral_login_sessions.lock().await;
                 if let Some(entry) = map.get_mut(&login_id) {
-                    entry.status = "success".to_string();
                     entry.auth_url = None;
-                    entry.error = None;
+                    match restart_result {
+                        Ok(()) => {
+                            entry.status = "success".to_string();
+                            entry.error = None;
+                        }
+                        Err(err) => {
+                            entry.status = "failed".to_string();
+                            entry.error = Some(logs::redact_sensitive(&format!(
+                                "auth saved but provider restart failed: {err:#}"
+                            )));
+                        }
+                    }
                 }
-                restarts::restart_mistral_providers_for_auth_change(&state, "mistral auth updated")
-                    .await;
                 let _ = tokio::fs::remove_dir_all(&login_home).await;
                 return;
             }

@@ -449,13 +449,22 @@ async fn monitor_cursor_login(state: Arc<AppState>, login_id: String, label: Opt
                             .await
                             {
                                 Ok(registry) => {
-                                    final_status = "success".to_string();
-                                    final_account_id = registry.active_account_id;
-                                    super::restarts::restart_cursor_providers_for_auth_change(
+                                    final_account_id = registry.active_account_id.clone();
+                                    match super::restarts::restart_cursor_providers_for_auth_change(
                                         &state,
                                         "cursor auth updated",
                                     )
-                                    .await;
+                                    .await
+                                    {
+                                        Ok(()) => {
+                                            final_status = "success".to_string();
+                                        }
+                                        Err(err) => {
+                                            final_error = Some(logs::redact_sensitive(&format!(
+                                                "auth saved but provider restart failed: {err:#}"
+                                            )));
+                                        }
+                                    }
                                 }
                                 Err(err) => {
                                     final_error = Some(logs::redact_sensitive(&err.to_string()));

@@ -70,13 +70,24 @@ pub(crate) async fn import_provider_auth_candidates(
         .filter(|result| import_result_requires_provider_restart(result))
         .map(|result| result.provider_id.clone())
         .collect();
+    let mut restart_errors = Vec::new();
     for provider_id in mutated_providers {
-        restarts::restart_provider_for_auth_change(
+        if let Err(err) = restarts::restart_provider_for_auth_change(
             &state,
             &provider_id,
             &format!("{provider_id} auth updated"),
         )
-        .await;
+        .await
+        {
+            restart_errors.push(err.to_string());
+        }
+    }
+    if !restart_errors.is_empty() {
+        let err = anyhow::anyhow!(
+            "provider auth updated but one or more runtime restarts failed: {}",
+            restart_errors.join("; ")
+        );
+        return Err(crate::api::shared::map_internal_api_error(&err));
     }
     Ok(Json(ProviderAuthImportResponse { results }))
 }

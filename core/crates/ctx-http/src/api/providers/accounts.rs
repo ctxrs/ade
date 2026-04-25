@@ -10,6 +10,10 @@ fn provider_account_delete_error(err: anyhow::Error) -> (StatusCode, Json<ApiErr
     (status, Json(ApiErrorResp { error }))
 }
 
+fn provider_restart_error(err: anyhow::Error) -> (StatusCode, Json<ApiErrorResp>) {
+    crate::api::shared::map_internal_api_error(&err)
+}
+
 pub(crate) async fn codex_accounts_response(state: &Arc<AppState>) -> CodexAccountsResponse {
     let registry = provider_accounts::load_codex_registry(&state.core.data_root).await;
     let logins = {
@@ -118,7 +122,9 @@ pub(crate) async fn import_host_codex_auth(
                 }),
             )
         })?;
-    restarts::restart_codex_providers_for_auth_change(&state, "codex auth updated").await;
+    restarts::restart_codex_providers_for_auth_change(&state, "codex auth updated")
+        .await
+        .map_err(provider_restart_error)?;
     Ok(Json(codex_accounts_response(&state).await))
 }
 
@@ -230,7 +236,9 @@ pub(crate) async fn set_codex_active_account(
                 };
                 (status, Json(ApiErrorResp { error: msg }))
             })?;
-    restarts::restart_codex_providers_for_auth_change(&state, "codex auth updated").await;
+    restarts::restart_codex_providers_for_auth_change(&state, "codex auth updated")
+        .await
+        .map_err(provider_restart_error)?;
     let logins = {
         let map = state.providers.codex_login_sessions.lock().await;
         map.values().cloned().collect::<Vec<_>>()
@@ -249,7 +257,9 @@ pub(crate) async fn delete_codex_account(
     let registry = provider_accounts::remove_codex_account(&state.core.data_root, &id)
         .await
         .map_err(provider_account_delete_error)?;
-    restarts::restart_codex_providers_for_auth_change(&state, "codex auth updated").await;
+    restarts::restart_codex_providers_for_auth_change(&state, "codex auth updated")
+        .await
+        .map_err(provider_restart_error)?;
     let logins = {
         let mut map = state.providers.codex_login_sessions.lock().await;
         map.remove(&id);
@@ -282,7 +292,9 @@ pub(crate) async fn upsert_claude_account(
                 }),
             )
         })?;
-    restarts::restart_claude_providers_for_auth_change(&state, "claude auth updated").await;
+    restarts::restart_claude_providers_for_auth_change(&state, "claude auth updated")
+        .await
+        .map_err(provider_restart_error)?;
     Ok(Json(claude_accounts_response(&state).await))
 }
 
@@ -311,7 +323,9 @@ pub(crate) async fn set_claude_active_account(
                 }),
             )
         })?;
-    restarts::restart_claude_providers_for_auth_change(&state, "claude auth updated").await;
+    restarts::restart_claude_providers_for_auth_change(&state, "claude auth updated")
+        .await
+        .map_err(provider_restart_error)?;
     Ok(Json(claude_accounts_response(&state).await))
 }
 
@@ -322,7 +336,9 @@ pub(crate) async fn delete_claude_account(
     provider_accounts::remove_claude_account(&state.core.data_root, &id)
         .await
         .map_err(provider_account_delete_error)?;
-    restarts::restart_claude_providers_for_auth_change(&state, "claude auth updated").await;
+    restarts::restart_claude_providers_for_auth_change(&state, "claude auth updated")
+        .await
+        .map_err(provider_restart_error)?;
     Ok(Json(claude_accounts_response(&state).await))
 }
 
@@ -354,7 +370,9 @@ pub(crate) async fn upsert_amp_account(
                 }),
             )
         })?;
-    restarts::restart_amp_providers_for_auth_change(&state, "amp auth updated").await;
+    restarts::restart_amp_providers_for_auth_change(&state, "amp auth updated")
+        .await
+        .map_err(provider_restart_error)?;
     Ok(Json(amp_accounts_response(&state).await.map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -390,7 +408,9 @@ pub(crate) async fn set_amp_active_account(
                 }),
             )
         })?;
-    restarts::restart_amp_providers_for_auth_change(&state, "amp auth updated").await;
+    restarts::restart_amp_providers_for_auth_change(&state, "amp auth updated")
+        .await
+        .map_err(provider_restart_error)?;
     let response = amp_accounts_response(&state).await.map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -409,7 +429,9 @@ pub(crate) async fn delete_amp_account(
     provider_accounts::remove_amp_account(&state.core.data_root, &id)
         .await
         .map_err(provider_account_delete_error)?;
-    restarts::restart_amp_providers_for_auth_change(&state, "amp auth updated").await;
+    restarts::restart_amp_providers_for_auth_change(&state, "amp auth updated")
+        .await
+        .map_err(provider_restart_error)?;
     let response = amp_accounts_response(&state).await.map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -447,7 +469,9 @@ pub(crate) async fn upsert_gemini_account(
             }),
         )
     })?;
-    restarts::restart_gemini_providers_for_auth_change(&state, "gemini auth updated").await;
+    restarts::restart_gemini_providers_for_auth_change(&state, "gemini auth updated")
+        .await
+        .map_err(provider_restart_error)?;
     Ok(Json(gemini_accounts_response(&state).await))
 }
 
@@ -476,7 +500,9 @@ pub(crate) async fn set_gemini_active_account(
                 }),
             )
         })?;
-    restarts::restart_gemini_providers_for_auth_change(&state, "gemini auth updated").await;
+    restarts::restart_gemini_providers_for_auth_change(&state, "gemini auth updated")
+        .await
+        .map_err(provider_restart_error)?;
     Ok(Json(gemini_accounts_response(&state).await))
 }
 
@@ -487,7 +513,9 @@ pub(crate) async fn delete_gemini_account(
     provider_accounts::remove_gemini_account(&state.core.data_root, &id)
         .await
         .map_err(provider_account_delete_error)?;
-    restarts::restart_gemini_providers_for_auth_change(&state, "gemini auth updated").await;
+    restarts::restart_gemini_providers_for_auth_change(&state, "gemini auth updated")
+        .await
+        .map_err(provider_restart_error)?;
     Ok(Json(gemini_accounts_response(&state).await))
 }
 
@@ -516,7 +544,9 @@ pub(crate) async fn upsert_qwen_account(
             }),
         )
     })?;
-    restarts::restart_qwen_providers_for_auth_change(&state, "qwen auth updated").await;
+    restarts::restart_qwen_providers_for_auth_change(&state, "qwen auth updated")
+        .await
+        .map_err(provider_restart_error)?;
     Ok(Json(qwen_accounts_response(&state).await))
 }
 
@@ -545,7 +575,9 @@ pub(crate) async fn set_qwen_active_account(
                 }),
             )
         })?;
-    restarts::restart_qwen_providers_for_auth_change(&state, "qwen auth updated").await;
+    restarts::restart_qwen_providers_for_auth_change(&state, "qwen auth updated")
+        .await
+        .map_err(provider_restart_error)?;
     Ok(Json(qwen_accounts_response(&state).await))
 }
 
@@ -556,7 +588,9 @@ pub(crate) async fn delete_qwen_account(
     provider_accounts::remove_qwen_account(&state.core.data_root, &id)
         .await
         .map_err(provider_account_delete_error)?;
-    restarts::restart_qwen_providers_for_auth_change(&state, "qwen auth updated").await;
+    restarts::restart_qwen_providers_for_auth_change(&state, "qwen auth updated")
+        .await
+        .map_err(provider_restart_error)?;
     Ok(Json(qwen_accounts_response(&state).await))
 }
 
@@ -587,7 +621,9 @@ pub(crate) async fn upsert_kimi_account(
             }),
         )
     })?;
-    restarts::restart_kimi_providers_for_auth_change(&state, "kimi auth updated").await;
+    restarts::restart_kimi_providers_for_auth_change(&state, "kimi auth updated")
+        .await
+        .map_err(provider_restart_error)?;
     Ok(Json(kimi_accounts_response(&state).await))
 }
 
@@ -616,7 +652,9 @@ pub(crate) async fn set_kimi_active_account(
                 }),
             )
         })?;
-    restarts::restart_kimi_providers_for_auth_change(&state, "kimi auth updated").await;
+    restarts::restart_kimi_providers_for_auth_change(&state, "kimi auth updated")
+        .await
+        .map_err(provider_restart_error)?;
     Ok(Json(kimi_accounts_response(&state).await))
 }
 
@@ -627,7 +665,9 @@ pub(crate) async fn delete_kimi_account(
     provider_accounts::remove_kimi_account(&state.core.data_root, &id)
         .await
         .map_err(provider_account_delete_error)?;
-    restarts::restart_kimi_providers_for_auth_change(&state, "kimi auth updated").await;
+    restarts::restart_kimi_providers_for_auth_change(&state, "kimi auth updated")
+        .await
+        .map_err(provider_restart_error)?;
     Ok(Json(kimi_accounts_response(&state).await))
 }
 
@@ -651,7 +691,9 @@ pub(crate) async fn upsert_mistral_account(
                 }),
             )
         })?;
-    restarts::restart_mistral_providers_for_auth_change(&state, "mistral auth updated").await;
+    restarts::restart_mistral_providers_for_auth_change(&state, "mistral auth updated")
+        .await
+        .map_err(provider_restart_error)?;
     Ok(Json(mistral_accounts_response(&state).await))
 }
 
@@ -680,7 +722,9 @@ pub(crate) async fn set_mistral_active_account(
                 }),
             )
         })?;
-    restarts::restart_mistral_providers_for_auth_change(&state, "mistral auth updated").await;
+    restarts::restart_mistral_providers_for_auth_change(&state, "mistral auth updated")
+        .await
+        .map_err(provider_restart_error)?;
     Ok(Json(mistral_accounts_response(&state).await))
 }
 
@@ -691,7 +735,9 @@ pub(crate) async fn delete_mistral_account(
     provider_accounts::remove_mistral_account(&state.core.data_root, &id)
         .await
         .map_err(provider_account_delete_error)?;
-    restarts::restart_mistral_providers_for_auth_change(&state, "mistral auth updated").await;
+    restarts::restart_mistral_providers_for_auth_change(&state, "mistral auth updated")
+        .await
+        .map_err(provider_restart_error)?;
     Ok(Json(mistral_accounts_response(&state).await))
 }
 
@@ -715,7 +761,9 @@ pub(crate) async fn upsert_copilot_account(
                 }),
             )
         })?;
-    restarts::restart_copilot_providers_for_auth_change(&state, "copilot auth updated").await;
+    restarts::restart_copilot_providers_for_auth_change(&state, "copilot auth updated")
+        .await
+        .map_err(provider_restart_error)?;
     Ok(Json(copilot_accounts_response(&state).await))
 }
 
@@ -744,7 +792,9 @@ pub(crate) async fn set_copilot_active_account(
                 }),
             )
         })?;
-    restarts::restart_copilot_providers_for_auth_change(&state, "copilot auth updated").await;
+    restarts::restart_copilot_providers_for_auth_change(&state, "copilot auth updated")
+        .await
+        .map_err(provider_restart_error)?;
     Ok(Json(copilot_accounts_response(&state).await))
 }
 
@@ -755,7 +805,9 @@ pub(crate) async fn delete_copilot_account(
     provider_accounts::remove_copilot_account(&state.core.data_root, &id)
         .await
         .map_err(provider_account_delete_error)?;
-    restarts::restart_copilot_providers_for_auth_change(&state, "copilot auth updated").await;
+    restarts::restart_copilot_providers_for_auth_change(&state, "copilot auth updated")
+        .await
+        .map_err(provider_restart_error)?;
     Ok(Json(copilot_accounts_response(&state).await))
 }
 
@@ -779,7 +831,9 @@ pub(crate) async fn upsert_cursor_account(
                 }),
             )
         })?;
-    restarts::restart_cursor_providers_for_auth_change(&state, "cursor auth updated").await;
+    restarts::restart_cursor_providers_for_auth_change(&state, "cursor auth updated")
+        .await
+        .map_err(provider_restart_error)?;
     Ok(Json(cursor_accounts_response(&state).await))
 }
 
@@ -808,7 +862,9 @@ pub(crate) async fn set_cursor_active_account(
                 }),
             )
         })?;
-    restarts::restart_cursor_providers_for_auth_change(&state, "cursor auth updated").await;
+    restarts::restart_cursor_providers_for_auth_change(&state, "cursor auth updated")
+        .await
+        .map_err(provider_restart_error)?;
     Ok(Json(cursor_accounts_response(&state).await))
 }
 
@@ -819,6 +875,8 @@ pub(crate) async fn delete_cursor_account(
     provider_accounts::remove_cursor_account(&state.core.data_root, &id)
         .await
         .map_err(provider_account_delete_error)?;
-    restarts::restart_cursor_providers_for_auth_change(&state, "cursor auth updated").await;
+    restarts::restart_cursor_providers_for_auth_change(&state, "cursor auth updated")
+        .await
+        .map_err(provider_restart_error)?;
     Ok(Json(cursor_accounts_response(&state).await))
 }

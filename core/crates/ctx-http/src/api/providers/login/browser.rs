@@ -191,17 +191,27 @@ async fn monitor_gemini_login(state: Arc<AppState>, login_id: String, label: Opt
             .await;
             match added {
                 Ok(registry) => {
-                    let mut map = state.providers.gemini_login_sessions.lock().await;
-                    if let Some(entry) = map.get_mut(&login_id) {
-                        entry.status = "success".to_string();
-                        entry.account_id = registry.active_account_id.clone();
-                        entry.error = None;
-                    }
-                    restarts::restart_gemini_providers_for_auth_change(
+                    let restart_result = restarts::restart_gemini_providers_for_auth_change(
                         &state,
                         "gemini auth updated",
                     )
                     .await;
+                    let mut map = state.providers.gemini_login_sessions.lock().await;
+                    if let Some(entry) = map.get_mut(&login_id) {
+                        entry.account_id = registry.active_account_id.clone();
+                        match restart_result {
+                            Ok(()) => {
+                                entry.status = "success".to_string();
+                                entry.error = None;
+                            }
+                            Err(err) => {
+                                entry.status = "failed".to_string();
+                                entry.error = Some(logs::redact_sensitive(&format!(
+                                    "auth saved but provider restart failed: {err:#}"
+                                )));
+                            }
+                        }
+                    }
                 }
                 Err(err) => {
                     let mut map = state.providers.gemini_login_sessions.lock().await;
@@ -446,14 +456,27 @@ async fn monitor_qwen_login(state: Arc<AppState>, login_id: String, label: Optio
             .await;
             match added {
                 Ok(registry) => {
+                    let restart_result = restarts::restart_qwen_providers_for_auth_change(
+                        &state,
+                        "qwen auth updated",
+                    )
+                    .await;
                     let mut map = state.providers.qwen_login_sessions.lock().await;
                     if let Some(entry) = map.get_mut(&login_id) {
-                        entry.status = "success".to_string();
                         entry.account_id = registry.active_account_id.clone();
-                        entry.error = None;
+                        match restart_result {
+                            Ok(()) => {
+                                entry.status = "success".to_string();
+                                entry.error = None;
+                            }
+                            Err(err) => {
+                                entry.status = "failed".to_string();
+                                entry.error = Some(logs::redact_sensitive(&format!(
+                                    "auth saved but provider restart failed: {err:#}"
+                                )));
+                            }
+                        }
                     }
-                    restarts::restart_qwen_providers_for_auth_change(&state, "qwen auth updated")
-                        .await;
                 }
                 Err(err) => {
                     let mut map = state.providers.qwen_login_sessions.lock().await;
@@ -722,13 +745,25 @@ async fn monitor_amp_login(state: Arc<AppState>, login_id: String, label: Option
                     let _ = tokio::fs::remove_dir_all(&login_home).await;
                     return;
                 }
+                let restart_result =
+                    restarts::restart_amp_providers_for_auth_change(&state, "amp auth updated")
+                        .await;
                 let mut map = state.providers.amp_login_sessions.lock().await;
                 if let Some(entry) = map.get_mut(&login_id) {
-                    entry.status = "success".to_string();
                     entry.auth_url = None;
-                    entry.error = None;
+                    match restart_result {
+                        Ok(()) => {
+                            entry.status = "success".to_string();
+                            entry.error = None;
+                        }
+                        Err(err) => {
+                            entry.status = "failed".to_string();
+                            entry.error = Some(logs::redact_sensitive(&format!(
+                                "auth saved but provider restart failed: {err:#}"
+                            )));
+                        }
+                    }
                 }
-                restarts::restart_amp_providers_for_auth_change(&state, "amp auth updated").await;
                 let _ = tokio::fs::remove_dir_all(&login_home).await;
                 return;
             }

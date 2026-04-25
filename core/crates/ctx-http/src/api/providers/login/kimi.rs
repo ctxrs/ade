@@ -170,17 +170,27 @@ async fn monitor_kimi_login(
                 .await;
                 match added {
                     Ok(registry) => {
-                        let mut map = state.providers.kimi_login_sessions.lock().await;
-                        if let Some(entry) = map.get_mut(&login_id) {
-                            entry.status = "success".to_string();
-                            entry.account_id = registry.active_account_id.clone();
-                            entry.error = None;
-                        }
-                        restarts::restart_kimi_providers_for_auth_change(
+                        let restart_result = restarts::restart_kimi_providers_for_auth_change(
                             &state,
                             "kimi auth updated",
                         )
                         .await;
+                        let mut map = state.providers.kimi_login_sessions.lock().await;
+                        if let Some(entry) = map.get_mut(&login_id) {
+                            entry.account_id = registry.active_account_id.clone();
+                            match restart_result {
+                                Ok(()) => {
+                                    entry.status = "success".to_string();
+                                    entry.error = None;
+                                }
+                                Err(err) => {
+                                    entry.status = "failed".to_string();
+                                    entry.error = Some(logs::redact_sensitive(&format!(
+                                        "auth saved but provider restart failed: {err:#}"
+                                    )));
+                                }
+                            }
+                        }
                     }
                     Err(err) => {
                         let mut map = state.providers.kimi_login_sessions.lock().await;
