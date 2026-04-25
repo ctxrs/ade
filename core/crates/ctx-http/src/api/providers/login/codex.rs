@@ -359,7 +359,7 @@ async fn monitor_codex_login(
     mut login: CodexLoginProcess,
 ) {
     let completion = wait_for_codex_login_completion(&mut login.reader, &login.login_id).await;
-    let status = match completion {
+    let mut status = match completion {
         Ok(completion) => completion,
         Err(err) => CodexLoginCompletion {
             success: false,
@@ -371,32 +371,12 @@ async fn monitor_codex_login(
         let (email, plan_type) = fetch_codex_account_details(&mut login.stdin, &mut login.reader)
             .await
             .unwrap_or((None, None));
-        let entry = provider_accounts::CodexAccountEntry {
-            id: account_id.clone(),
-            label,
-            kind: provider_accounts::CODEX_CREDENTIAL_KIND_OAUTH.to_string(),
-            email,
-            plan_type,
-            created_at: Utc::now(),
-            last_used_at: Some(Utc::now()),
-            secret_ref: None,
-            endpoint_profile: provider_accounts::CodexEndpointProfile::default(),
-        };
-        if provider_accounts::upsert_codex_account(&state.core.data_root, entry)
-            .await
-            .is_ok()
+        if let Err(err) =
+            persist_successful_codex_login(&state, &account_id, label, email, plan_type).await
         {
-            let _ = provider_accounts::ingest_codex_account_auth_to_secret_store(
-                &state.core.data_root,
-                &account_id,
-            )
-            .await;
-            let _ = provider_accounts::set_active_codex_account(
-                &state.core.data_root,
-                Some(account_id.clone()),
-            )
-            .await;
-            restarts::restart_codex_providers_for_auth_change(&state, "codex auth updated").await;
+            status.success = false;
+            status.error = Some(err.to_string());
+            let _ = tokio::fs::remove_dir_all(&login.account_dir).await;
         }
     } else {
         let _ = tokio::fs::remove_dir_all(&login.account_dir).await;
@@ -416,6 +396,98 @@ async fn monitor_codex_login(
     }
 
     let _ = login.child.kill().await;
+}
+
+async fn persist_successful_codex_login(
+    state: &Arc<AppState>,
+    account_id: &str,
+    label: String,
+    email: Option<String>,
+    plan_type: Option<String>,
+) -> anyhow::Result<()> {
+    let entry = provider_accounts::CodexAccountEntry {
+        id: account_id.to_string(),
+        label,
+        kind: provider_accounts::CODEX_CREDENTIAL_KIND_OAUTH.to_string(),
+        email,
+        plan_type,
+        created_at: Utc::now(),
+        last_used_at: Some(Utc::now()),
+        secret_ref: None,
+        endpoint_profile: provider_accounts::CodexEndpointProfile::default(),
+    };
+    provider_accounts::upsert_codex_account(&state.core.data_root, entry)
+        .await
+        .with_context(|| format!("persisting codex account {account_id}"))?;
+
+    let persist_result = async {
+        let ingested = provider_accounts::ingest_codex_account_auth_to_secret_store(
+            &state.core.data_root,
+            account_id,
+        )
+        .await
+        .with_context(|| format!("ingesting codex auth for account {account_id}"))?;
+        if !ingested {
+            anyhow::bail!("missing persisted codex auth file for account {account_id}");
+        }
+        provider_accounts::set_active_codex_account(
+            &state.core.data_root,
+            Some(account_id.to_string()),
+        )
+        .await
+        .with_context(|| format!("setting active codex account {account_id}"))?;
+        restarts::restart_codex_providers_for_auth_change(state, "codex auth updated").await;
+        Ok(())
+    }
+    .await;
+
+    if let Err(err) = persist_result {
+        let _ = provider_accounts::remove_codex_account(&state.core.data_root, account_id).await;
+        return Err(err);
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ctx_store::StoreManager;
+    use std::collections::HashMap;
+
+    #[tokio::test]
+    async fn codex_login_persistence_requires_auth_file() {
+        let data_dir = tempfile::tempdir().unwrap();
+        let stores = StoreManager::open(data_dir.path()).await.unwrap();
+        let state = Arc::new(AppState::new(
+            data_dir.path().to_path_buf(),
+            stores,
+            HashMap::new(),
+            "http://127.0.0.1:4399".to_string(),
+            None,
+        ));
+        let account_id = "acct-missing-auth";
+        provider_accounts::ensure_codex_account_dir(&state.core.data_root, account_id)
+            .await
+            .unwrap();
+
+        let err = persist_successful_codex_login(
+            &state,
+            account_id,
+            "Missing Auth".to_string(),
+            None,
+            None,
+        )
+        .await
+        .unwrap_err();
+
+        assert!(err
+            .to_string()
+            .contains("missing persisted codex auth file"));
+        let registry = provider_accounts::load_codex_registry(&state.core.data_root).await;
+        assert!(registry.accounts.is_empty());
+        assert!(registry.active_account_id.is_none());
+    }
 }
 
 fn spawn_codex_app_server(
