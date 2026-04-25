@@ -8,7 +8,6 @@ use anyhow::{Context, Result};
 use tokio::sync::{broadcast, mpsc, watch, Mutex, Notify, Semaphore};
 use tokio::task::JoinHandle;
 
-use crate::buffers::BufferStore;
 use crate::git_status::GitStatusSnapshot;
 use crate::mobile_tunnel::MobileTunnelManager;
 use crate::ops_events::{OpsEvent, OpsEvents};

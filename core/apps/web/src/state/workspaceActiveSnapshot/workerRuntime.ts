@@ -327,6 +327,7 @@ export const hydrateFromCache = async (
 };
 
 export {
+  applyWorkerPatch,
   flushWorkerPatchNow,
   isForegroundSessionEvent,
   schedulePersistCache,

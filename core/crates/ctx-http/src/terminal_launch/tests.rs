@@ -143,6 +143,58 @@ fn resolve_container_terminal_cwd_maps_plain_workspace_terminal_paths_without_wo
     assert_eq!(cwd, PathBuf::from("/ctx/ws/subdir"));
 }
 
+#[test]
+fn resolve_container_terminal_cwd_maps_relative_paths_within_live_root() {
+    let workspace = sample_workspace("/host/ws");
+    let worktree_id = WorktreeId(uuid::Uuid::new_v4());
+    let worktree = sample_worktree(&workspace, PathBuf::from("/host/ws"));
+    let data_plane = WorktreeDataPlane {
+        binding: None,
+        workspace: workspace.clone(),
+        execution_mode: ExecutionMode::Sandbox,
+        live_workspace_root: PathBuf::from("/ctx/ws"),
+        live_worktree_root: container_worktree_root(worktree_id),
+    };
+
+    let cwd = resolve_container_terminal_cwd(
+        &data_plane,
+        &PathBuf::from(&workspace.root_path),
+        Some(&PathBuf::from(&worktree.root_path)),
+        Some(&PathBuf::from("src/bin")),
+    )
+    .unwrap();
+
+    assert_eq!(cwd, container_worktree_root(worktree_id).join("src/bin"));
+}
+
+#[test]
+fn resolve_container_terminal_cwd_rejects_relative_parent_escape() {
+    let workspace = sample_workspace("/host/ws");
+    let worktree_id = WorktreeId(uuid::Uuid::new_v4());
+    let worktree = sample_worktree(&workspace, PathBuf::from("/host/ws"));
+    let data_plane = WorktreeDataPlane {
+        binding: None,
+        workspace,
+        execution_mode: ExecutionMode::Sandbox,
+        live_workspace_root: PathBuf::from("/ctx/ws"),
+        live_worktree_root: container_worktree_root(worktree_id),
+    };
+
+    let err = resolve_container_terminal_cwd(
+        &data_plane,
+        &PathBuf::from("/host/ws"),
+        Some(&PathBuf::from(&worktree.root_path)),
+        Some(&PathBuf::from("../../escape")),
+    )
+    .expect_err("relative cwd escape should be rejected");
+
+    assert_eq!(err.0, axum::http::StatusCode::BAD_REQUEST);
+    assert_eq!(
+        err.1 .0.error,
+        "cwd must be within the container worktree/workspace root"
+    );
+}
+
 #[tokio::test]
 async fn resolve_terminal_host_root_preserves_missing_path_for_container_mode() {
     let temp = tempfile::tempdir().expect("tempdir");

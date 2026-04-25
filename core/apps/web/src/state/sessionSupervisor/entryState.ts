@@ -112,7 +112,6 @@ export type SessionCacheEntry = {
   headWindow?: SessionHeadWindow | null;
   projectionRev?: number;
   threadProjection?: SessionThreadProjection;
-  diagnosticsByPath?: Record<string, unknown[]>;
   lastEventSeq?: number;
   loading: boolean;
   error?: string;
@@ -186,7 +185,6 @@ export type InternalEntry = InternalEntryBase & {
   thoughtCacheDirty: boolean;
   thoughtCacheOwnerTaskKey?: string;
   thoughtCacheLoadToken: number;
-  diagnosticsByPath: Record<string, unknown[]>;
   overlay: SessionOverlayState;
   support: SessionSupportState;
 };
@@ -222,7 +220,6 @@ export function createInternalEntry(
     summaryCheckpoint: null,
     headWindow: null,
     projectionRev: undefined,
-    diagnosticsByPath: {},
     lastEventSeq: undefined,
     loading: false,
     error: undefined,

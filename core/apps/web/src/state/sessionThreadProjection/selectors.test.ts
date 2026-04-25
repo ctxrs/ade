@@ -62,7 +62,6 @@ function buildEntry(overrides: Partial<SessionCacheEntry> = {}): SessionCacheEnt
     stateLoading: false,
     loadErrors: {},
     queue: [],
-    diagnosticsByPath: {},
     loading: false,
     subscribed: false,
     updatedAtMs: 0,

@@ -9,7 +9,6 @@ pub struct CoreState {
     pub stores: StoreManager,
     pub daemon_url: String,
     pub auth_token: Option<String>,
-    pub buffers: BufferStore,
     pub ask_user_question: Arc<AskUserQuestionBroker>,
     pub shutdown_tx: broadcast::Sender<()>,
     pub update_drain: Arc<Mutex<Option<UpdateDrainState>>>,

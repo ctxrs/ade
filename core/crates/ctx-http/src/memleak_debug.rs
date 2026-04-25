@@ -7,7 +7,6 @@ use chrono::{DateTime, Utc};
 use serde::Serialize;
 use tokio::time::MissedTickBehavior;
 
-use crate::buffers::BufferStoreStats;
 use crate::daemon::AppState;
 use crate::logs;
 use crate::perf_telemetry::PerfTelemetryStats;
@@ -28,7 +27,6 @@ struct MemleakDebugSnapshot {
     workspaces: WorkspaceCacheStats,
     providers: ProviderCacheStats,
     active_snapshot: WorkspaceActiveSnapshotStats,
-    buffers: BufferStoreStats,
     terminals: TerminalManagerStats,
     perf_telemetry: PerfTelemetryStats,
     web_sessions: WebSessionManagerStats,
@@ -306,7 +304,6 @@ async fn sample_once(state: &Arc<AppState>) -> Result<()> {
     };
 
     let active_snapshot = state.workspaces.workspace_active_snapshot.stats().await;
-    let buffers = state.core.buffers.stats().await;
     let terminals = state.transport.terminals.stats().await;
     let perf_telemetry = state.telemetry.perf_telemetry.stats();
     let web_sessions = state.transport.web_sessions.stats().await;
@@ -323,7 +320,6 @@ async fn sample_once(state: &Arc<AppState>) -> Result<()> {
         workspaces,
         providers,
         active_snapshot,
-        buffers,
         terminals,
         perf_telemetry,
         web_sessions,

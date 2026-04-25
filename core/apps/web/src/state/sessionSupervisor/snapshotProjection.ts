@@ -196,7 +196,6 @@ const cloneSessionEntry = (entry: InternalEntry, previous?: SessionCacheEntry): 
     headWindow: entry.headWindow ?? null,
     projectionRev: baseThreadProjection.projectionRev,
     threadProjection: baseThreadProjection,
-    diagnosticsByPath: entry.diagnosticsByPath,
     lastEventSeq: entry.lastEventSeq,
     loading: entry.loading,
     error: entry.error,
@@ -250,7 +249,6 @@ const cloneSessionEntry = (entry: InternalEntry, previous?: SessionCacheEntry): 
     previous.headWindow === nextEntry.headWindow &&
     previous.projectionRev === nextEntry.projectionRev &&
     previous.threadProjection === nextEntry.threadProjection &&
-    previous.diagnosticsByPath === nextEntry.diagnosticsByPath &&
     previous.lastEventSeq === nextEntry.lastEventSeq &&
     previous.loading === nextEntry.loading &&
     previous.error === nextEntry.error &&

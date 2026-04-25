@@ -15,6 +15,11 @@ use ctx_store::StoreManager;
 use ctx_http::api;
 use ctx_http::daemon::AppState;
 
+const CONTAINER_FILE_SHA256: &str =
+    "dc155555ce7bf6f6b7aa998bafe7e1cafa3c7017bc5dcdeb8ef72ebc5961c11a";
+const TERM_WRITE_SHA256: &str =
+    "21ce56d2f98a9ed161e56e42a704fb47cea917ffe91bee9d75405349fdc4ee68";
+
 struct EnvVarGuard {
     key: &'static str,
     prev: Option<std::ffi::OsString>,
@@ -153,8 +158,30 @@ async fn sandbox_volume_exists(data_root: &Path, name: &str) -> bool {
     }
 }
 
+async fn wait_for_terminal_output(
+    ws_stream: &mut tokio_tungstenite::WebSocketStream<
+        tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+    >,
+    needle: &str,
+    timeout: Duration,
+) -> bool {
+    tokio::time::timeout(timeout, async {
+        while let Some(Ok(frame)) = ws_stream.next().await {
+            if let tokio_tungstenite::tungstenite::Message::Binary(bytes) = frame {
+                let txt = String::from_utf8_lossy(&bytes);
+                if txt.contains(needle) {
+                    return true;
+                }
+            }
+        }
+        false
+    })
+    .await
+    .unwrap_or(false)
+}
+
 #[tokio::test]
-async fn disk_isolated_smoke_sandbox_volume_buffers_terminal() {
+async fn disk_isolated_smoke_sandbox_volume_attachments_and_terminal() {
     if !should_run() {
         return;
     }
@@ -300,6 +327,54 @@ async fn disk_isolated_smoke_sandbox_volume_buffers_terminal() {
         worktree.root_path
     );
 
+    let term: ctx_core::models::TerminalSession = client
+        .post(format!("{base}/api/workspaces/{}/terminals", ws.id.0))
+        .json(&json!({
+            "worktree_id": worktree_id.0,
+            "shell": "/bin/bash",
+        }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    let ws_url = format!("http://{}{}", addr, term.stream_path)
+        .replacen("https://", "wss://", 1)
+        .replacen("http://", "ws://", 1);
+    let (mut ws_stream, _) = tokio_tungstenite::connect_async(ws_url).await.unwrap();
+
+    ws_stream
+        .send(tokio_tungstenite::tungstenite::Message::Text(
+            "cat file.txt\n".into(),
+        ))
+        .await
+        .unwrap();
+    assert!(
+        wait_for_terminal_output(&mut ws_stream, "hello", Duration::from_secs(15)).await,
+        "terminal output did not include initial file contents"
+    );
+
+    ws_stream
+        .send(tokio_tungstenite::tungstenite::Message::Text(
+            "printf 'hello from container\\n' > file.txt\nsha256sum file.txt\n".into(),
+        ))
+        .await
+        .unwrap();
+    assert!(
+        wait_for_terminal_output(
+            &mut ws_stream,
+            CONTAINER_FILE_SHA256,
+            Duration::from_secs(15),
+        )
+        .await,
+        "terminal output did not include rewritten file hash"
+    );
+
+    // Host FS remains unchanged.
+    let host_text_after = fs::read_to_string(&host_file_path).unwrap();
+    assert_eq!(host_text_after, host_text_before);
     // Attachments: daemon fetches via host git and imports into the disk-isolated volume.
     let _attachments: serde_json::Value = client
         .post(format!("{base}/api/workspaces/{}/attachments", ws.id.0))
@@ -337,29 +412,11 @@ async fn disk_isolated_smoke_sandbox_volume_buffers_terminal() {
     .await
     .unwrap_or(false);
     assert!(attachment_ready, "attachment did not become ready");
-
     assert!(!host_root
         .join(".ctx/attachments/refs/ref1/ref.txt")
         .exists());
 
     // Terminal should run inside the container worktree.
-    let term: ctx_core::models::TerminalSession = client
-        .post(format!("{base}/api/workspaces/{}/terminals", ws.id.0))
-        .json(&json!({
-            "worktree_id": worktree_id.0,
-            "shell": "/bin/bash",
-        }))
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
-
-    let ws_url = format!("http://{}{}", addr, term.stream_path)
-        .replacen("https://", "wss://", 1)
-        .replacen("http://", "ws://", 1);
-    let (mut ws_stream, _) = tokio_tungstenite::connect_async(ws_url).await.unwrap();
     ws_stream
         .send(tokio_tungstenite::tungstenite::Message::Text(
             "pwd\n".into(),
@@ -368,52 +425,42 @@ async fn disk_isolated_smoke_sandbox_volume_buffers_terminal() {
         .unwrap();
 
     let expected_prefix = "/ctx/ws/worktrees/";
-    let saw_pwd = tokio::time::timeout(Duration::from_secs(15), async {
-        while let Some(Ok(frame)) = ws_stream.next().await {
-            if let tokio_tungstenite::tungstenite::Message::Binary(bytes) = frame {
-                let txt = String::from_utf8_lossy(&bytes);
-                if txt.contains(expected_prefix) {
-                    return true;
-                }
-            }
-        }
-        false
-    })
-    .await
-    .unwrap_or(false);
+    let saw_pwd =
+        wait_for_terminal_output(&mut ws_stream, expected_prefix, Duration::from_secs(15)).await;
     assert!(saw_pwd, "terminal output did not include {expected_prefix}");
 
     ws_stream
         .send(tokio_tungstenite::tungstenite::Message::Text(
-            "printf 'hello from container\\n' > file.txt\ncat file.txt\ncat .ctx/attachments/refs/ref1/ref.txt\n".into(),
+            "sha256sum file.txt\ncat .ctx/attachments/refs/ref1/ref.txt\n".into(),
         ))
         .await
         .unwrap();
 
-    let saw_container_file_and_attachment = tokio::time::timeout(Duration::from_secs(15), async {
-        let mut saw_file_update = false;
-        let mut saw_attachment = false;
-        while let Some(Ok(frame)) = ws_stream.next().await {
-            if let tokio_tungstenite::tungstenite::Message::Binary(bytes) = frame {
-                let txt = String::from_utf8_lossy(&bytes);
-                if txt.contains("hello from container") {
-                    saw_file_update = true;
-                }
-                if txt.contains("refdata") {
-                    saw_attachment = true;
-                }
-                if saw_file_update && saw_attachment {
-                    return true;
+    let saw_container_file_hash_and_attachment =
+        tokio::time::timeout(Duration::from_secs(15), async {
+            let mut saw_file_hash = false;
+            let mut saw_attachment = false;
+            while let Some(Ok(frame)) = ws_stream.next().await {
+                if let tokio_tungstenite::tungstenite::Message::Binary(bytes) = frame {
+                    let txt = String::from_utf8_lossy(&bytes);
+                    if txt.contains(CONTAINER_FILE_SHA256) {
+                        saw_file_hash = true;
+                    }
+                    if txt.contains("refdata") {
+                        saw_attachment = true;
+                    }
+                    if saw_file_hash && saw_attachment {
+                        return true;
+                    }
                 }
             }
-        }
-        false
-    })
-    .await
-    .unwrap_or(false);
+            false
+        })
+        .await
+        .unwrap_or(false);
     assert!(
-        saw_container_file_and_attachment,
-        "terminal output did not include container file update and attachment contents"
+        saw_container_file_hash_and_attachment,
+        "terminal output did not include container file hash and attachment contents"
     );
 
     let host_text_after = fs::read_to_string(&host_file_path).unwrap();
@@ -422,27 +469,16 @@ async fn disk_isolated_smoke_sandbox_volume_buffers_terminal() {
     // Terminal write should affect container FS, and git status should reflect it.
     ws_stream
         .send(tokio_tungstenite::tungstenite::Message::Text(
-            "printf 'term wrote\\n' > term_write.txt\ncat term_write.txt\n".into(),
+            "printf 'term wrote\\n' > term_write.txt\nsha256sum term_write.txt\n".into(),
         ))
         .await
         .unwrap();
 
-    let saw_term_write = tokio::time::timeout(Duration::from_secs(15), async {
-        while let Some(Ok(frame)) = ws_stream.next().await {
-            if let tokio_tungstenite::tungstenite::Message::Binary(bytes) = frame {
-                let txt = String::from_utf8_lossy(&bytes);
-                if txt.contains("term wrote") {
-                    return true;
-                }
-            }
-        }
-        false
-    })
-    .await
-    .unwrap_or(false);
+    let saw_term_write =
+        wait_for_terminal_output(&mut ws_stream, TERM_WRITE_SHA256, Duration::from_secs(15)).await;
     assert!(
         saw_term_write,
-        "terminal output did not include expected write"
+        "terminal output did not include expected file hash"
     );
 
     let status: SessionGitStatusResponse = client
