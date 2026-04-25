@@ -1,43 +1,22 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { X } from "lucide-react";
 import {
   MessageAttachment,
-  Workspace,
-  daemonFetchRaw,
-  getHealth,
   interruptSession,
-  markTaskRead as markTaskReadApi,
-  markTaskUnread as markTaskUnreadApi,
 } from "../../api/client";
 import { useSessionCacheSnapshot, useSessionSupervisor } from "../../state/sessionSupervisor";
-import { TerminalPanel } from "../../components/TerminalPanel";
-import { TitleGenerationInstallBanner } from "../../components/TitleGenerationInstallBanner";
-import { WorktreeBootstrapSnackbar } from "../../components/WorktreeBootstrapSnackbar";
 import { type DraftHarness, type WorkbenchModeId } from "../../components/WorkbenchComposer";
 import type { SlashCommandDescriptor } from "../../state/useComposerAutocomplete";
 import { isDesktopApp } from "../../utils/desktop";
-import { copyTextToClipboard } from "../../utils/clipboard";
-import { hasConfiguredHarnessAuth } from "../../utils/providerAuthStatus";
 import { useDictationController } from "../../utils/useDictationController";
 import { NEW_TASK_DRAFT_KEY, useActiveWorkbenchIds, useNewTaskDraft, useWorkbenchShellSnapshot, useWorkbenchStore } from "../../workbench/store";
 import { useWorkspaceActiveSnapshotSnapshot, useWorkspaceActiveSnapshotStore } from "../../state/workspaceActiveSnapshotStore";
 import { useHarnessAuthenticationController } from "../settings/hooks/useHarnessAuthenticationController";
 import { HarnessAuthenticationSectionView } from "../settings/sections/HarnessAuthenticationSection";
 import { useWorkbenchDragDropAttachments } from "./useWorkbenchDragDropAttachments";
-import {
-  collectSelectableHarnessProviderIds,
-  getHarnessMruStorageKey,
-  resolveInitialHarnessSelection,
-  shouldFinalizeInitialHarnessSelection,
-} from "./harnessSelection";
 import { useWorkbenchOptimisticTasks } from "./useWorkbenchOptimisticTasks";
 import { useWorkbenchProviders } from "./useWorkbenchProviders";
-import { WorkbenchActiveTaskView } from "./WorkbenchActiveTaskView";
-import { WorkbenchEmptyState } from "./WorkbenchEmptyState";
-import { WorkbenchSidebar, WorkbenchTopbar } from "./WorkbenchShellChrome";
-import { WorkbenchPageMenus } from "./WorkbenchPageMenus";
-import { WorkbenchProviderWarningBanner } from "./WorkbenchProviderWarningBanner";
+import { WorkbenchPageShellView } from "./WorkbenchPageShellView";
 import { useWorkbenchChromeIntegration } from "./useWorkbenchChromeIntegration";
 import { useWorkbenchShellLayout } from "./useWorkbenchShellLayout";
 import { useWorkbenchSessionBridge } from "./useWorkbenchSessionBridge";
@@ -46,9 +25,14 @@ import { useWorkbenchTaskCreation } from "./useWorkbenchTaskCreation";
 import { useWorkbenchTaskListController } from "./useWorkbenchTaskListController";
 import { useWorkbenchActiveTaskController } from "./useWorkbenchActiveTaskController";
 import { useWorkbenchComposerHarnessAuth } from "./useWorkbenchComposerHarnessAuth";
+import { useWorkbenchDebugIds } from "./useWorkbenchDebugIds";
+import { useWorkbenchDraftHarnessSelection } from "./useWorkbenchDraftHarnessSelection";
+import { useWorkbenchE2EFocusBridge } from "./useWorkbenchE2EFocusBridge";
 import { useWorkbenchShellIntegrations } from "./useWorkbenchShellIntegrations";
 import type { OptimisticFocus } from "./WorkbenchPage.types";
 import { appendSegment } from "./WorkbenchPage.utils";
+import { useWorkbenchTaskReadActions } from "./useWorkbenchTaskReadActions";
+import { useWorkbenchWorkspaceMetadata } from "./useWorkbenchWorkspaceMetadata";
 import {
   readWorkbenchNavigationTarget,
   stripWorkbenchNavigationTarget,
@@ -78,8 +62,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const { value: newTaskDraft, setValue: setNewTaskDraft } = useNewTaskDraft();
   const draftPrompt = newTaskDraft.text;
   const draftMode = newTaskDraft.modeId;
-  const [workspace, setWorkspace] = useState<Workspace | null>(null);
-  const [daemonDataRoot, setDaemonDataRoot] = useState<string | null>(null);
+  const { workspace, daemonDataRoot } = useWorkbenchWorkspaceMetadata({ navigate, workspaceId });
   const manualDemoHarnessSelection = useMemo(() => {
     const params = new URLSearchParams(window.location.search);
     return params.get("ctxDemoManualHarness") === "1";
@@ -109,8 +92,6 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const [draftHarness, setDraftHarness] = useState<DraftHarness | null>(null);
   const [startError, setStartError] = useState<string | null>(null);
   const [draftAttachments, setDraftAttachments] = useState<MessageAttachment[]>([]);
-  const prefetchedProviderOptionsRef = useRef<Set<string>>(new Set());
-  const initialHarnessSelectionResolvedRef = useRef(false);
   const composerHarnessAuth = useHarnessAuthenticationController({
     workspaceId,
     enabled: true,
@@ -218,17 +199,16 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     onStartError: setStartError,
   });
 
-  const selectableHarnessProviderIds = useMemo(
-    () => collectSelectableHarnessProviderIds(providersById),
-    [providersById],
-  );
-
-  const setSingleDraftHarness = useCallback((providerId: string) => {
-    setDraftHarness((prev) => {
-      if (prev?.providerId === providerId) return prev;
-      return { providerId, modelId: "" };
-    });
-  }, []);
+  const { setSingleDraftHarness } = useWorkbenchDraftHarnessSelection({
+    activeTaskId,
+    workspaceId,
+    draftHarness,
+    setDraftHarness,
+    providersById,
+    providerOptions,
+    ensureProviderAuthSummary,
+    manualDemoHarnessSelection,
+  });
 
   const { requestHarnessAuthFromComposer } = useWorkbenchComposerHarnessAuth({
     activeTaskId,
@@ -266,143 +246,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     onStartError: setStartError,
   });
 
-  useEffect(() => {
-    if (activeTaskId) return;
-    for (const providerId of selectableHarnessProviderIds) {
-      if (providerOptions[providerId]) continue;
-      if (prefetchedProviderOptionsRef.current.has(providerId)) continue;
-      prefetchedProviderOptionsRef.current.add(providerId);
-      ensureProviderAuthSummary(providerId).catch(() => {});
-    }
-  }, [activeTaskId, ensureProviderAuthSummary, providerOptions, selectableHarnessProviderIds]);
-
-  useEffect(() => {
-    prefetchedProviderOptionsRef.current.clear();
-    initialHarnessSelectionResolvedRef.current = false;
-  }, [workspaceId]);
-
-  useEffect(() => {
-    if (activeTaskId) return;
-    if (!workspaceId) return;
-    if (draftHarness) return;
-    if (initialHarnessSelectionResolvedRef.current) return;
-    if (selectableHarnessProviderIds.length === 0) return;
-
-    let mruProviderId: string | null = null;
-    try {
-      mruProviderId = localStorage.getItem(getHarnessMruStorageKey(workspaceId));
-    } catch {
-      // ignore
-    }
-
-    const selectedProviderId = resolveInitialHarnessSelection({
-      providerIds: selectableHarnessProviderIds,
-      providerOptions,
-      mruProviderId,
-      disableAutoselect: manualDemoHarnessSelection,
-    });
-    if (!shouldFinalizeInitialHarnessSelection(selectedProviderId)) return;
-    initialHarnessSelectionResolvedRef.current = true;
-    setSingleDraftHarness(selectedProviderId);
-  }, [
-    activeTaskId,
-    draftHarness,
-    manualDemoHarnessSelection,
-    providerOptions,
-    selectableHarnessProviderIds,
-    setSingleDraftHarness,
-    workspaceId,
-  ]);
-
-  const selectedDraftProviderId = draftHarness?.providerId ?? null;
-
-  useEffect(() => {
-    if (activeTaskId) return;
-    if (!workspaceId) return;
-    if (!selectedDraftProviderId) return;
-    if (!hasConfiguredHarnessAuth(selectedDraftProviderId, providerOptions[selectedDraftProviderId])) return;
-    try {
-      localStorage.setItem(getHarnessMruStorageKey(workspaceId), selectedDraftProviderId);
-    } catch {
-      // ignore
-    }
-  }, [activeTaskId, providerOptions, selectedDraftProviderId, workspaceId]);
-
-  useEffect(() => {
-    if (!workspaceId) return;
-    let cancelled = false;
-    const loadWorkspace = async () => {
-      const response = await daemonFetchRaw(`/api/workspaces/${workspaceId}`);
-      if (cancelled) return;
-      if (response.status === 404 || response.status === 400) {
-        navigate("/", { replace: true });
-        return;
-      }
-      if (response.status >= 200 && response.status < 300 && response.body) {
-        try {
-          setWorkspace(JSON.parse(response.body) as Workspace);
-          return;
-        } catch {
-          // ignore parse errors and fall through to null
-        }
-      }
-      setWorkspace(null);
-    };
-    loadWorkspace().catch(() => setWorkspace(null));
-    return () => {
-      cancelled = true;
-    };
-  }, [navigate, workspaceId]);
-
-  useEffect(() => {
-    if (!workspaceId) return;
-    let cancelled = false;
-    getHealth()
-      .then((health) => {
-        if (cancelled) return;
-        const root = String(health.data_root ?? "").trim();
-        setDaemonDataRoot(root || null);
-      })
-      .catch(() => {
-        if (cancelled) return;
-        setDaemonDataRoot(null);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [workspaceId]);
-
-  const markTaskReadInFlightRef = useRef<Record<string, Promise<void> | undefined>>({});
-  const markTaskRead = useCallback(
-    async (taskId: string) => {
-      if (markTaskReadInFlightRef.current[taskId]) return;
-      const promise = (async () => {
-        try {
-          const updated = await markTaskReadApi(taskId);
-          workspaceSnapshotStore.applyTaskUpdate(updated);
-        } catch {
-          // ignore
-        }
-      })().finally(() => {
-        delete markTaskReadInFlightRef.current[taskId];
-      });
-      markTaskReadInFlightRef.current[taskId] = promise;
-      await promise;
-    },
-    [workspaceSnapshotStore],
-  );
-
-  const markTaskUnread = useCallback(
-    async (taskId: string) => {
-      try {
-        const updated = await markTaskUnreadApi(taskId);
-        workspaceSnapshotStore.applyTaskUpdate(updated);
-      } catch {
-        // ignore
-      }
-    },
-    [workspaceSnapshotStore],
-  );
+  const { markTaskRead, markTaskUnread } = useWorkbenchTaskReadActions(workspaceSnapshotStore);
 
   const {
     sessions,
@@ -481,28 +325,11 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     toggleArtifactsPane: () => activeTaskController.toggleArtifactsPane("unknown"),
   });
 
-  const showDebugIds = useMemo(() => {
-    const params = new URLSearchParams(window.location.search);
-    const ids = params.get("ids");
-    const debug = params.get("debug");
-    if (ids === "1" || debug === "1") {
-      localStorage.setItem("contextDebugIds", "1");
-      return true;
-    }
-    if (ids === "0" || debug === "0") {
-      localStorage.removeItem("contextDebugIds");
-      return false;
-    }
-    return localStorage.getItem("contextDebugIds") === "1";
-  }, []);
-
-  const debugIdLabel = useMemo(() => {
-    const short = (value: string | null) => {
-      const text = String(value ?? "");
-      return text ? text.slice(0, 8) : "-";
-    };
-    return `task:${short(activeTaskId)} session:${short(activeSessionId)}`;
-  }, [activeTaskId, activeSessionId]);
+  const { showDebugIds, debugIdLabel, copyDebugIds } = useWorkbenchDebugIds({
+    activeSessionId,
+    activeTaskId,
+    workspaceId,
+  });
 
   const optimisticFailure = activeSessionId
     ? optimisticFailureBySessionId[activeSessionId] ?? null
@@ -521,23 +348,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     setSidebarCollapsed((prev) => !prev);
   }, []);
 
-  useEffect(() => {
-    if (window.sessionStorage.getItem("ctxE2E") !== "1") return;
-    const win = window as Window & {
-      __ctxE2E?: {
-        focusTask?: (taskId: string, sessionId?: string | null) => boolean;
-      };
-    };
-    win.__ctxE2E ??= {};
-    win.__ctxE2E.focusTask = (taskId: string, sessionId?: string | null) => {
-      const navToken = workbenchStore.getNavToken();
-      return workbenchStore.focusTask(taskId, sessionId, { navToken, source: "system" });
-    };
-    return () => {
-      if (!win.__ctxE2E) return;
-      delete win.__ctxE2E.focusTask;
-    };
-  }, [workbenchStore]);
+  useWorkbenchE2EFocusBridge(workbenchStore);
 
   const {
     desktopUi,
@@ -608,365 +419,171 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     navigate(`/settings?ws=${encodeURIComponent(workspaceId)}#agent_harnesses`);
   }, [navigate, workspaceId]);
 
-  const desktopStorageNoticeSubtitle =
-    desktopStorageNotice?.reason === "schema_mismatch"
-      ? "Desktop detected an outdated local UI state format and reset local UI state."
-      : "Desktop detected invalid local UI state data and reset local UI state.";
-
-  const archiveCleanupSnackbar = taskListController.archiveCleanupNotice ? (
-    <div className="wb-snackbar" role="status" aria-live="polite">
-      <div className="wb-snackbar-body">
-        <div className="wb-snackbar-title">Archived task, but some cleanup failed.</div>
-        <div className="wb-snackbar-subtitle">
-          Some worktree files were likely root-owned and could not be removed. Fix permissions and delete them manually if
-          needed.
-        </div>
-      </div>
-      <button
-        type="button"
-        className="wb-snackbar-close"
-        onClick={taskListController.dismissArchiveCleanupNotice}
-        aria-label="Dismiss"
-      >
-        <X size={14} aria-hidden="true" />
-      </button>
-    </div>
-  ) : null;
-
-  const transcriptNoticeSnackbar = activeTaskController.transcriptNotice ? (
-    <div className="wb-snackbar" role="status" aria-live="polite">
-      <div className="wb-snackbar-body">
-        <div className="wb-snackbar-title">{activeTaskController.transcriptNotice}</div>
-      </div>
-      <button
-        type="button"
-        className="wb-snackbar-close"
-        onClick={activeTaskController.dismissTranscriptNotice}
-        aria-label="Dismiss"
-      >
-        <X size={14} aria-hidden="true" />
-      </button>
-    </div>
-  ) : null;
-
-  const desktopStorageNoticeSnackbar = desktopStorageNotice ? (
-    <div className="wb-snackbar" role="status" aria-live="polite">
-      <div className="wb-snackbar-body">
-        <div className="wb-snackbar-title">Local UI state was reset.</div>
-        <div className="wb-snackbar-subtitle">{desktopStorageNoticeSubtitle}</div>
-      </div>
-      <button
-        type="button"
-        className="wb-snackbar-close"
-        onClick={dismissDesktopStorageNotice}
-        aria-label="Dismiss"
-      >
-        <X size={14} aria-hidden="true" />
-      </button>
-    </div>
-  ) : null;
-
-  type RootStyle = React.CSSProperties & {
-    "--wb-sidebar-width": string;
-    "--wb-terminal-offset": string;
-    "--wb-topbar-height": string;
-  };
-
-  const rootStyle = useMemo<RootStyle>(() => {
-    const max = Math.max(170, window.innerWidth - 240);
-    const clamped = Math.min(max, Math.max(170, Math.round(sidebarWidth)));
-    const terminalOffset = activeTaskController.terminalOpen ? activeTaskController.terminalHeight : 0;
-    return {
-      "--wb-sidebar-width": `${clamped}px`,
-      "--wb-terminal-offset": `${terminalOffset}px`,
-      "--wb-topbar-height": useHtmlTopbar ? "46px" : "0px",
-    };
-  }, [
-    activeTaskController.terminalHeight,
-    activeTaskController.terminalOpen,
-    sidebarWidth,
-    useHtmlTopbar,
-  ]);
-
-  const copyDebugIds = useCallback(() => {
-    void copyTextToClipboard(
-      JSON.stringify(
-        {
-          workspaceId,
-          taskId: activeTaskId,
-          sessionId: activeSessionId,
-        },
-        null,
-        2,
-      ),
-    );
-  }, [activeSessionId, activeTaskId, workspaceId]);
-
   const workspaceTitle = workspace?.name ?? "";
   const slashCommands = useMemo<SlashCommandDescriptor[]>(() => [], []);
-  const topbar = useHtmlTopbar ? (
-    <div data-tauri-drag-region={desktopUi ? true : undefined}>
-      <WorkbenchTopbar
-        workspaceId={workspaceId}
-        workspaceTitle={workspaceTitle}
-        showDebugIds={showDebugIds}
-        debugIdLabel={debugIdLabel}
-        onCopyDebugIds={copyDebugIds}
-      />
-    </div>
-  ) : null;
-
   const composerHarnessAuthModal = (
     <HarnessAuthenticationSectionView
       controller={composerHarnessAuth}
       modalOnly
     />
   );
-
   const workspaceBootstrapGateState = resolveWorkspaceBootstrapGateState({
     workbenchHydrated: workbenchSnap.hydrated,
     providerBootstrapState,
   });
 
-  if (workspaceBootstrapGateState === "loading") {
-    return (
-      <div
-        className={`wb-root ${sidebarCollapsed ? "wb-root-collapsed" : ""} ${sidebarResizing ? "wb-root-resizing" : ""} ${activeTaskController.diffResizing ? "wb-root-diff-resizing" : ""} ${activeTaskController.terminalResizing ? "wb-root-terminal-resizing" : ""} ${!useHtmlTopbar ? "wb-root-native-titlebar" : ""}`}
-        style={rootStyle}
-      >
-        <WorktreeBootstrapSnackbar />
-        {composerHarnessAuthModal}
-        {archiveCleanupSnackbar}
-        {transcriptNoticeSnackbar}
-        {desktopStorageNoticeSnackbar}
-        {topbar}
-        <div className="wb-main">
-          <div className="wb-center">
-            <div className="wb-muted" style={{ padding: 16 }}>
-              Loading workspace...
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  if (workspaceBootstrapGateState === "error") {
-    return (
-      <div
-        className={`wb-root ${sidebarCollapsed ? "wb-root-collapsed" : ""} ${sidebarResizing ? "wb-root-resizing" : ""} ${activeTaskController.diffResizing ? "wb-root-diff-resizing" : ""} ${activeTaskController.terminalResizing ? "wb-root-terminal-resizing" : ""} ${!useHtmlTopbar ? "wb-root-native-titlebar" : ""}`}
-        style={rootStyle}
-      >
-        <WorktreeBootstrapSnackbar />
-        {composerHarnessAuthModal}
-        {archiveCleanupSnackbar}
-        {transcriptNoticeSnackbar}
-        {desktopStorageNoticeSnackbar}
-        {topbar}
-        <div className="wb-main">
-          <div className="wb-center">
-            <div style={{ maxWidth: 480, padding: 16 }}>
-              <div>Failed to load workspace.</div>
-              {providerBootstrapError ? (
-                <div className="wb-muted" style={{ paddingTop: 8 }}>
-                  {providerBootstrapError}
-                </div>
-              ) : null}
-              <button
-                style={{ marginTop: 12 }}
-                onClick={() => {
-                  void refreshBootstrap();
-                }}
-                type="button"
-              >
-                Retry workspace load
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
   return (
-    <div
-      className={`wb-root ${sidebarCollapsed ? "wb-root-collapsed" : ""} ${sidebarResizing ? "wb-root-resizing" : ""} ${activeTaskController.diffResizing ? "wb-root-diff-resizing" : ""} ${activeTaskController.terminalResizing ? "wb-root-terminal-resizing" : ""} ${!useHtmlTopbar ? "wb-root-native-titlebar" : ""}`}
-      style={rootStyle}
-    >
-      <WorktreeBootstrapSnackbar />
-      <TitleGenerationInstallBanner />
-      {archiveCleanupSnackbar}
-      {transcriptNoticeSnackbar}
-      {desktopStorageNoticeSnackbar}
-      {topbar}
-
-      {composerHarnessAuthModal}
-
-      {workbenchSnap.warnings.length > 0 && (
-        <div className="banner" style={{ margin: "8px 12px 0" }}>
-          {workbenchSnap.warnings[0]}
-        </div>
-      )}
-      <WorkbenchProviderWarningBanner
-        acknowledgementScopeId={getProviderOwnerScopeKeyOrNull(workspaceId) ?? workspaceId}
-        providersById={providersById}
-        updateAllBusy={installAllBusy}
-        onUpdateProviders={updateProvidersFromMenu}
-        onOpenSettings={openProviderSettings}
-      />
-
-      <WorkbenchSidebar
-        collapsed={sidebarCollapsed}
-        taskSearchRef={taskListController.taskSearchRef}
-        taskQuery={taskListController.taskQuery}
-        onTaskQueryChange={taskListController.setTaskQuery}
-        onNewTask={focusNewTask}
-        taskListVirtuosoKey={taskListController.taskListVirtuosoKey}
-        taskListItems={taskListController.taskListItems}
-        initialTaskListItemCount={taskListController.initialTaskListItemCount}
-        computeTaskListItemKey={taskListController.computeTaskListItemKey}
-        renderTaskListItem={taskListController.renderTaskListItem}
-        taskListContext={taskListController.taskListContext}
-        onTaskListRangeChanged={taskListController.onTaskListRangeChanged}
-        onExpandSidebar={() => setSidebarCollapsed(false)}
-        onCollapseSidebar={() => setSidebarCollapsed(true)}
-        onSidebarResizerMouseDown={onSidebarResizerMouseDown}
-        onResetSidebarWidth={() => setSidebarWidth(260)}
-      />
-
-      <div className="wb-main">
-        {!activeTaskId ? (
-          <WorkbenchEmptyState
-            newComposerRef={setNewComposerElement}
-            dropActive={dropActive}
-            draftPrompt={draftPrompt}
-            setDraftPrompt={setDraftPrompt}
-            dictationRecording={dictationRecording}
-            onToggleRecording={() => {
-              if (dictationRecording) stopDictation().catch(() => {});
-              else startDictation().catch(() => {});
-            }}
-            workspaceId={workspaceId}
-            slashCommands={slashCommands}
-            draftAttachments={draftAttachments}
-            setDraftAttachments={setDraftAttachments}
-            onAttachmentError={setStartError}
-            onSend={startNewTask}
-            sendDisabled={Boolean(startBlockedReason)}
-            sendDisabledReason={startBlockedReason}
-            draftMode={draftMode}
-            setDraftMode={setDraftMode}
-            providersById={providersById}
-            providerInstallsById={providerInstallsById}
-            onInstallProvider={installProviderFromMenu}
-            onCancelInstallProvider={cancelProviderInstallFromMenu}
-            onInstallAllProviders={installAllProvidersFromMenu}
-            installAllBusy={installAllBusy}
-            providerOptions={providerOptions}
-            ensureProviderAuthSummary={ensureProviderAuthSummary}
-            onRequestHarnessAuth={requestHarnessAuthFromComposer}
-            draftHarness={draftHarness}
-            setDraftHarness={setDraftHarness}
-            defaultProviderId={defaultProviderId}
-            dictationDebugText={dictationDebugText}
-            dictationError={dictationError}
-            startError={startError}
-            dictationOnboarding={dictationOnboarding}
-            onCloseDictationOnboarding={dismissDictationOnboarding}
-            onBackDictationOnboarding={backDictationOnboarding}
-            onChooseDictationOnboardingLocal={chooseDictationOnboardingLocal}
-            onChooseDictationOnboardingCloud={chooseDictationOnboardingCloud}
-            onCloudChangeDictationOnboarding={updateDictationOnboardingCloud}
-            onSubmitCloudDictationOnboarding={() => {
-              void submitDictationOnboardingCloud();
-            }}
-            onSubmitLocalDictationOnboarding={() => {
-              void submitDictationOnboardingLocal();
-            }}
-          />
-        ) : null}
-
-        {activeTaskId && (
-          <WorkbenchActiveTaskView
-            sessionsCount={sessions.length}
-            showSingleSessionHeader={activeTaskController.showSingleSessionHeader}
-            singleSessionTitle={activeTaskController.singleSessionHeaderForRender?.title ?? "Conversation"}
-            worktreeChip={activeTaskController.worktreeChip}
-            worktreeCopied={activeTaskController.worktreeCopied}
-            showArtifactsPane={activeTaskController.showArtifactsPane}
-            showReviewPane={activeTaskController.showReviewPane}
-            terminalOpen={activeTaskController.terminalOpen}
-            artifactsCount={activeTaskController.artifacts.length}
-            diffBadgeCount={activeTaskController.diffBadgeCount}
-            onCopyWorktreeLocation={() => void activeTaskController.copyWorktreeLocation()}
-            onOpenWorktreeTerminal={() => void activeTaskController.openWorktreeTerminal()}
-            onToggleArtifactsPane={() => activeTaskController.toggleArtifactsPane("header_button")}
-            onToggleDiffPane={() => activeTaskController.toggleDiffPane("header_button")}
-            onToggleTerminalPanel={() => activeTaskController.toggleTerminalPanel("header_button")}
-            onOpenConvoMenu={activeTaskController.openConvoMenu}
-            sessionLoadIssues={activeTaskController.sessionLoadIssues}
-            onRetrySessionLoads={activeTaskController.retryActiveSessionLoads}
-            activeSessionId={activeSessionId}
-            activeSessionRenderable={activeTaskController.activeSessionRenderable}
-            optimisticFailure={optimisticFailure}
-            rightPaneOpen={activeTaskController.rightPaneOpen}
-            onSplitterMouseDown={activeTaskController.onSplitterMouseDown}
-            diffWidth={activeTaskController.diffWidth}
-            showSessionsPane={activeTaskController.showSessionsPane}
-            sessionSections={activeTaskController.sessionSections}
-            activeSessionKind={activeTaskController.activeSessionKind}
-            onSectionChange={activeTaskController.setActiveSessionKind}
-            activeWebSessionId={activeTaskController.activeWebSessionId}
-            onSelectWebSession={activeTaskController.setActiveWebSessionId}
-            daemonBaseUrl={activeTaskController.daemonBaseUrl}
-            webSessionsLoading={activeTaskController.webSessionsLoading}
-            hasDiff={activeTaskController.hasDiff}
-            gitPaneModel={activeTaskController.gitPaneModel}
-            diffLoading={activeTaskController.diffLoading}
-            diffSummaryError={activeTaskController.diffSummaryError}
-            diffTooLarge={activeTaskController.diffTooLarge}
-            diffTooLargeLabel={activeTaskController.diffTooLargeLabel}
-            activeSessionDiff={activeTaskController.activeSessionDiff}
-            activeDiffContentError={activeTaskController.activeDiffContentError}
-            diffEmptyLabel={activeTaskController.diffEmptyLabel}
-            artifacts={activeTaskController.artifacts}
-            artifactsLoading={activeTaskController.artifactsLoading}
-            artifactsError={activeTaskController.artifactsError}
-            onRetryArtifactsLoad={activeTaskController.retryArtifactsLoad}
-          />
-        )}
-      </div>
-
-      <div className="wb-terminal-shell" aria-hidden={!activeTaskController.terminalOpen}>
-        {activeTaskController.terminalOpen && (
-          <div className="wb-terminal-resizer" onMouseDown={activeTaskController.onTerminalResizerMouseDown} />
-        )}
-        <div
-          className="wb-terminal-panel"
-          style={{
-            height: activeTaskController.terminalOpen ? activeTaskController.terminalHeight : 0,
-            pointerEvents: activeTaskController.terminalOpen ? "auto" : "none",
-          }}
-          aria-hidden={!activeTaskController.terminalOpen}
-        >
-          <TerminalPanel
-            ref={activeTaskController.terminalPanelRef}
-            workspaceId={workspaceId}
-            activeTaskId={activeTaskId}
-            activeSessionId={activeSessionId}
-            open={activeTaskController.terminalOpen}
-            height={activeTaskController.terminalHeight}
-            onRequestClose={activeTaskController.closeTerminalPanel}
-          />
-        </div>
-      </div>
-
-      <WorkbenchPageMenus
-        activeTaskController={activeTaskController}
-        taskListController={taskListController}
-        activeTaskId={activeTaskId}
-        activeSessionId={activeSessionId}
-      />
-    </div>
+    <WorkbenchPageShellView
+      workspaceId={workspaceId}
+      activeTaskId={activeTaskId}
+      activeSessionId={activeSessionId}
+      sidebarCollapsed={sidebarCollapsed}
+      sidebarResizing={sidebarResizing}
+      sidebarWidth={sidebarWidth}
+      desktopUi={desktopUi}
+      useHtmlTopbar={useHtmlTopbar}
+      desktopStorageNoticeReason={desktopStorageNotice?.reason ?? null}
+      onDismissDesktopStorageNotice={dismissDesktopStorageNotice}
+      composerHarnessAuthModal={composerHarnessAuthModal}
+      workspaceBootstrapGateState={workspaceBootstrapGateState}
+      providerBootstrapError={providerBootstrapError}
+      onRefreshBootstrap={() => {
+        void refreshBootstrap();
+      }}
+      workbenchWarnings={workbenchSnap.warnings}
+      activeTaskController={activeTaskController}
+      taskListController={taskListController}
+      topbarProps={{
+        workspaceId,
+        workspaceTitle,
+        showDebugIds,
+        debugIdLabel,
+        onCopyDebugIds: copyDebugIds,
+      }}
+      providerWarningProps={{
+        acknowledgementScopeId: getProviderOwnerScopeKeyOrNull(workspaceId) ?? workspaceId,
+        providersById,
+        updateAllBusy: installAllBusy,
+        onUpdateProviders: updateProvidersFromMenu,
+        onOpenSettings: openProviderSettings,
+      }}
+      sidebarProps={{
+        collapsed: sidebarCollapsed,
+        taskSearchRef: taskListController.taskSearchRef,
+        taskQuery: taskListController.taskQuery,
+        onTaskQueryChange: taskListController.setTaskQuery,
+        onNewTask: focusNewTask,
+        taskListVirtuosoKey: taskListController.taskListVirtuosoKey,
+        taskListItems: taskListController.taskListItems,
+        initialTaskListItemCount: taskListController.initialTaskListItemCount,
+        computeTaskListItemKey: taskListController.computeTaskListItemKey,
+        renderTaskListItem: taskListController.renderTaskListItem,
+        taskListContext: taskListController.taskListContext,
+        onTaskListRangeChanged: taskListController.onTaskListRangeChanged,
+        onExpandSidebar: () => setSidebarCollapsed(false),
+        onCollapseSidebar: () => setSidebarCollapsed(true),
+        onSidebarResizerMouseDown,
+        onResetSidebarWidth: () => setSidebarWidth(260),
+      }}
+      emptyStateProps={{
+        newComposerRef: setNewComposerElement,
+        dropActive,
+        draftPrompt,
+        setDraftPrompt,
+        dictationRecording,
+        onToggleRecording: () => {
+          if (dictationRecording) stopDictation().catch(() => {});
+          else startDictation().catch(() => {});
+        },
+        workspaceId,
+        slashCommands,
+        draftAttachments,
+        setDraftAttachments,
+        onAttachmentError: setStartError,
+        onSend: startNewTask,
+        sendDisabled: Boolean(startBlockedReason),
+        sendDisabledReason: startBlockedReason,
+        draftMode,
+        setDraftMode,
+        providersById,
+        providerInstallsById,
+        onInstallProvider: installProviderFromMenu,
+        onCancelInstallProvider: cancelProviderInstallFromMenu,
+        onInstallAllProviders: installAllProvidersFromMenu,
+        installAllBusy,
+        providerOptions,
+        ensureProviderAuthSummary,
+        onRequestHarnessAuth: requestHarnessAuthFromComposer,
+        draftHarness,
+        setDraftHarness,
+        defaultProviderId,
+        dictationDebugText,
+        dictationError,
+        startError,
+        dictationOnboarding,
+        onCloseDictationOnboarding: dismissDictationOnboarding,
+        onBackDictationOnboarding: backDictationOnboarding,
+        onChooseDictationOnboardingLocal: chooseDictationOnboardingLocal,
+        onChooseDictationOnboardingCloud: chooseDictationOnboardingCloud,
+        onCloudChangeDictationOnboarding: updateDictationOnboardingCloud,
+        onSubmitCloudDictationOnboarding: () => {
+          void submitDictationOnboardingCloud();
+        },
+        onSubmitLocalDictationOnboarding: () => {
+          void submitDictationOnboardingLocal();
+        },
+      }}
+      activeTaskViewProps={
+        activeTaskId
+          ? {
+              sessionsCount: sessions.length,
+              showSingleSessionHeader: activeTaskController.showSingleSessionHeader,
+              singleSessionTitle: activeTaskController.singleSessionHeaderForRender?.title ?? "Conversation",
+              worktreeChip: activeTaskController.worktreeChip,
+              worktreeCopied: activeTaskController.worktreeCopied,
+              showArtifactsPane: activeTaskController.showArtifactsPane,
+              showReviewPane: activeTaskController.showReviewPane,
+              terminalOpen: activeTaskController.terminalOpen,
+              artifactsCount: activeTaskController.artifacts.length,
+              diffBadgeCount: activeTaskController.diffBadgeCount,
+              onCopyWorktreeLocation: () => void activeTaskController.copyWorktreeLocation(),
+              onOpenWorktreeTerminal: () => void activeTaskController.openWorktreeTerminal(),
+              onToggleArtifactsPane: () => activeTaskController.toggleArtifactsPane("header_button"),
+              onToggleDiffPane: () => activeTaskController.toggleDiffPane("header_button"),
+              onToggleTerminalPanel: () => activeTaskController.toggleTerminalPanel("header_button"),
+              onOpenConvoMenu: activeTaskController.openConvoMenu,
+              sessionLoadIssues: activeTaskController.sessionLoadIssues,
+              onRetrySessionLoads: activeTaskController.retryActiveSessionLoads,
+              activeSessionId,
+              activeSessionRenderable: activeTaskController.activeSessionRenderable,
+              optimisticFailure,
+              rightPaneOpen: activeTaskController.rightPaneOpen,
+              onSplitterMouseDown: activeTaskController.onSplitterMouseDown,
+              diffWidth: activeTaskController.diffWidth,
+              showSessionsPane: activeTaskController.showSessionsPane,
+              sessionSections: activeTaskController.sessionSections,
+              activeSessionKind: activeTaskController.activeSessionKind,
+              onSectionChange: activeTaskController.setActiveSessionKind,
+              activeWebSessionId: activeTaskController.activeWebSessionId,
+              onSelectWebSession: activeTaskController.setActiveWebSessionId,
+              daemonBaseUrl: activeTaskController.daemonBaseUrl,
+              webSessionsLoading: activeTaskController.webSessionsLoading,
+              hasDiff: activeTaskController.hasDiff,
+              gitPaneModel: activeTaskController.gitPaneModel,
+              diffLoading: activeTaskController.diffLoading,
+              diffSummaryError: activeTaskController.diffSummaryError,
+              diffTooLarge: activeTaskController.diffTooLarge,
+              diffTooLargeLabel: activeTaskController.diffTooLargeLabel,
+              activeSessionDiff: activeTaskController.activeSessionDiff,
+              activeDiffContentError: activeTaskController.activeDiffContentError,
+              diffEmptyLabel: activeTaskController.diffEmptyLabel,
+              artifacts: activeTaskController.artifacts,
+              artifactsLoading: activeTaskController.artifactsLoading,
+              artifactsError: activeTaskController.artifactsError,
+              onRetryArtifactsLoad: activeTaskController.retryArtifactsLoad,
+            }
+          : null
+      }
+    />
   );
 }

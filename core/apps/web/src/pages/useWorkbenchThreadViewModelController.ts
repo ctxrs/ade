@@ -1,13 +1,8 @@
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { Message, SessionEvent, SessionTurn, SessionTurnTool } from "../api/client";
+import type { SessionTurn } from "../api/client";
 import { idToString } from "../api/client";
-import type { AskUserQuestionAnswerState, WorkbenchListItem, WorkbenchThreadView } from "./SessionPage.types";
-import type { SessionViewVerbosity } from "../state/uiStateStore";
-import type { AssistantStreamingState } from "../state/assistantStreaming";
-import {
-  buildWorkbenchThreadViewModelFromTurns,
-  filterThreadItemsForVerbosity,
-} from "./SessionPage.workbenchViewModel";
+import type { WorkbenchListItem, WorkbenchThreadView } from "./SessionPage.types";
+import { buildWorkbenchThreadViewModelFromTurns } from "./SessionPage.workbenchViewModel";
 import {
   classifyWorkbenchThreadProjectionOp,
   createWorkbenchThreadProjectionOp,
@@ -15,203 +10,24 @@ import {
   type WorkbenchThreadProjectionOpKind,
 } from "./sessionThreadProjection";
 import {
-  buildWorkbenchThreadViewModelLayoutKey,
-  buildWorkbenchThreadViewModelSourceKey,
-  buildWorkbenchThreadViewModelWarmKey,
-  persistWarmWorkbenchThreadViewModel,
   primeWarmWorkbenchThreadViewModel,
   type WorkbenchThreadViewModelPerTurnCaches,
 } from "./workbenchThreadViewModelWarmCache";
+import {
+  areInternalStatesEquivalent,
+  areToolMapsShallowEqual,
+  buildGroupSegment,
+  collectChangedAssistantStreamingTurnIds,
+  collectChangedToolTurnIds,
+  getTurnGroupKey,
+  type WorkbenchThreadControllerParams,
+  type WorkbenchThreadInternalState,
+} from "./workbenchThreadViewModelControllerUtils";
+import { persistWorkbenchThreadControllerSnapshot } from "./workbenchThreadViewModelControllerPersistence";
+import { buildPrependedHistoryUpdate } from "./workbenchThreadViewModelPrependHistory";
 
-type Params = {
-  sessionId: string;
-  projectionRev?: number;
-  turnsStamp: string;
-  assistantStreamingStamp: string;
-  messagesStamp: string;
-  eventsStamp: string;
-  verbosity: SessionViewVerbosity;
-  turns: SessionTurn[];
-  assistantStreamingByTurnId?: Record<string, AssistantStreamingState>;
-  messages: Message[];
-  events: SessionEvent[];
-  toolsByTurnId: Record<string, SessionTurnTool[]>;
-  toolSummariesReady: boolean;
-  askUserQuestionAnswers: Map<string, AskUserQuestionAnswerState>;
-  // If enabled, we fall back to full rebuilds to keep debugEvents accurate.
-  enableDebugEvents: boolean;
-};
-
-type InternalState = {
-  view: WorkbenchThreadView;
-  listItems: WorkbenchListItem[];
-  groupRanges: Map<string, { start: number; end: number }>;
-  projectionRevision: number;
-  lastOp: WorkbenchThreadProjectionOp;
-  changedItemIds: string[];
-  remeasureItemIds: string[];
-  // Snapshot markers for cheap "append-only" detection.
-  turnsLen: number;
-  messagesLen: number;
-  eventsLen: number;
-};
-
-function haveSameIds(previous: readonly string[], next: readonly string[]): boolean {
-  if (previous === next) return true;
-  if (previous.length !== next.length) return false;
-  for (let index = 0; index < previous.length; index += 1) {
-    if (previous[index] !== next[index]) return false;
-  }
-  return true;
-}
-
-function areInternalStatesEquivalent(previous: InternalState, next: InternalState): boolean {
-  return (
-    previous === next ||
-    (previous.view === next.view &&
-      previous.listItems === next.listItems &&
-      previous.groupRanges === next.groupRanges &&
-      previous.projectionRevision === next.projectionRevision &&
-      previous.lastOp.kind === next.lastOp.kind &&
-      previous.lastOp.projectionRevision === next.lastOp.projectionRevision &&
-      haveSameIds(previous.lastOp.changedItemIds, next.lastOp.changedItemIds) &&
-      haveSameIds(previous.lastOp.remeasureItemIds, next.lastOp.remeasureItemIds) &&
-      haveSameIds(previous.changedItemIds, next.changedItemIds) &&
-      haveSameIds(previous.remeasureItemIds, next.remeasureItemIds) &&
-      previous.turnsLen === next.turnsLen &&
-      previous.messagesLen === next.messagesLen &&
-      previous.eventsLen === next.eventsLen)
-  );
-}
-
-function getTurnGroupKey(turnId: string): string {
-  return `turn-${turnId}`;
-}
-
-function areToolMapsShallowEqual(
-  previous: Record<string, SessionTurnTool[]>,
-  next: Record<string, SessionTurnTool[]>,
-): boolean {
-  if (previous === next) return true;
-  const previousKeys = Object.keys(previous);
-  const nextKeys = Object.keys(next);
-  if (previousKeys.length !== nextKeys.length) return false;
-  for (const key of previousKeys) {
-    if (!(key in next)) return false;
-    if (previous[key] !== next[key]) return false;
-  }
-  return true;
-}
-
-function collectChangedToolTurnIds(
-  previous: Record<string, SessionTurnTool[]>,
-  next: Record<string, SessionTurnTool[]>,
-): Set<string> {
-  const changed = new Set<string>();
-  const keys = new Set([...Object.keys(previous), ...Object.keys(next)]);
-  for (const key of keys) {
-    if (previous[key] !== next[key]) {
-      changed.add(key);
-    }
-  }
-  return changed;
-}
-
-function collectChangedAssistantStreamingTurnIds(
-  previous: Record<string, AssistantStreamingState>,
-  next: Record<string, AssistantStreamingState>,
-): Set<string> {
-  const changed = new Set<string>();
-  const keys = new Set([...Object.keys(previous), ...Object.keys(next)]);
-  for (const key of keys) {
-    const previousState = previous[key];
-    const nextState = next[key];
-    if (
-      previousState?.content !== nextState?.content ||
-      previousState?.providerMessageId !== nextState?.providerMessageId ||
-      previousState?.orderSeq !== nextState?.orderSeq
-    ) {
-      changed.add(key);
-    }
-  }
-  return changed;
-}
-
-function buildGroupSegment(
-  group: WorkbenchThreadView["groups"][number],
-  verbosity: SessionViewVerbosity,
-): WorkbenchListItem[] {
-  const segment: WorkbenchListItem[] = [];
-  if (group.header) {
-    segment.push({ kind: "turn_header", id: `turn-header-${group.header.id}`, header: group.header });
-  }
-  segment.push(...filterThreadItemsForVerbosity(group.items, verbosity));
-  return segment;
-}
-
-function flattenWorkbenchGroups(
-  groups: WorkbenchThreadView["groups"],
-  verbosity: SessionViewVerbosity,
-): {
-  listItems: WorkbenchListItem[];
-  groupRanges: Map<string, { start: number; end: number }>;
-} {
-  const listItems: WorkbenchListItem[] = [];
-  const groupRanges = new Map<string, { start: number; end: number }>();
-  for (const group of groups) {
-    const start = listItems.length;
-    listItems.push(...buildGroupSegment(group, verbosity));
-    groupRanges.set(String(group.key ?? getTurnGroupKey("")), {
-      start,
-      end: listItems.length,
-    });
-  }
-  return { listItems, groupRanges };
-}
-
-function hasExactStableSuffixById<T>(
-  previous: readonly T[],
-  next: readonly T[],
-  getId: (value: T) => string,
-): boolean {
-  if (next.length < previous.length) return false;
-  const offset = next.length - previous.length;
-  for (let index = 0; index < previous.length; index += 1) {
-    if (
-      previous[index] !== next[offset + index] ||
-      getId(previous[index]!) !== getId(next[offset + index]!)
-    ) {
-      return false;
-    }
-  }
-  return true;
-}
-
-function buildSubsetToolMap(
-  turnIds: ReadonlySet<string>,
-  toolsByTurnId: Record<string, SessionTurnTool[]>,
-): Record<string, SessionTurnTool[]> {
-  const subset: Record<string, SessionTurnTool[]> = {};
-  for (const turnId of turnIds) {
-    subset[turnId] = toolsByTurnId[turnId] ?? [];
-  }
-  return subset;
-}
-
-function buildSubsetAssistantStreamingMap(
-  turnIds: ReadonlySet<string>,
-  assistantStreamingByTurnId: Record<string, AssistantStreamingState>,
-): Record<string, AssistantStreamingState> {
-  const subset: Record<string, AssistantStreamingState> = {};
-  for (const turnId of turnIds) {
-    const state = assistantStreamingByTurnId[turnId];
-    if (state) {
-      subset[turnId] = state;
-    }
-  }
-  return subset;
-}
-
+type Params = WorkbenchThreadControllerParams;
+type InternalState = WorkbenchThreadInternalState;
 
 /**
  * Narrow sanctioned projector fast path:
@@ -269,7 +85,7 @@ export function useWorkbenchThreadViewModelController(
     });
 
   const persistCurrentWarmSnapshot = (nextState: InternalState) => {
-    const sourceKey = buildWorkbenchThreadViewModelSourceKey({
+    persistWorkbenchThreadControllerSnapshot({
       sessionId,
       projectionRev,
       turnsStamp,
@@ -285,35 +101,7 @@ export function useWorkbenchThreadViewModelController(
       toolSummariesReady,
       askUserQuestionAnswers,
       enableDebugEvents,
-    });
-    const layoutKey = buildWorkbenchThreadViewModelLayoutKey({ verbosity });
-    persistWarmWorkbenchThreadViewModel(sessionId, {
-      sourceKey,
-      layoutKey,
-      warmKey: buildWorkbenchThreadViewModelWarmKey({
-        sessionId,
-        projectionRev,
-        turnsStamp,
-        assistantStreamingStamp,
-        messagesStamp,
-        eventsStamp,
-        verbosity,
-        turns,
-        assistantStreamingByTurnId,
-        messages,
-        events,
-        toolsByTurnId,
-        toolSummariesReady,
-        askUserQuestionAnswers,
-        enableDebugEvents,
-      }),
-      projectionRevision: nextState.projectionRevision,
-      view: nextState.view,
-      listItems: nextState.listItems,
-      groupRanges: nextState.groupRanges,
-      turnsLen: nextState.turnsLen,
-      messagesLen: nextState.messagesLen,
-      eventsLen: nextState.eventsLen,
+      nextState,
       caches: perTurnCachesRef.current,
     });
   };
@@ -443,124 +231,28 @@ export function useWorkbenchThreadViewModelController(
     };
 
     const tryPrependHistory = (): boolean => {
-      const previousTurns = lastTurnsRef.current;
-      const previousMessages = lastMessagesRef.current;
-      if (eventsStampChanged || events.length !== state.eventsLen) {
-        return false;
-      }
-      if (turns.length <= previousTurns.length || messages.length < previousMessages.length) {
-        return false;
-      }
-      if (
-        !hasExactStableSuffixById(previousTurns, turns, (turn) => idToString(turn.turn_id)) ||
-        !hasExactStableSuffixById(previousMessages, messages, (message) => idToString(message.id))
-      ) {
-        return false;
-      }
-
-      const prependedTurns = turns.slice(0, turns.length - previousTurns.length);
-      if (prependedTurns.length === 0) {
-        return false;
-      }
-      const prependedMessages = messages.slice(0, messages.length - previousMessages.length);
-      const prependedTurnIds = prependedTurns
-        .map((turn) => idToString(turn.turn_id))
-        .filter((turnId) => turnId.length > 0);
-      if (prependedTurnIds.length !== prependedTurns.length) {
-        return false;
-      }
-      const prependedTurnIdSet = new Set(prependedTurnIds);
-      for (const message of prependedMessages) {
-        const turnId = idToString(message.turn_id);
-        if (!turnId || !prependedTurnIdSet.has(turnId)) {
-          return false;
-        }
-      }
-
-      const currentTurnGroupKeys = state.view.groups
-        .map((group) => String(group.key ?? ""))
-        .filter((groupKey) => groupKey.startsWith("turn-"));
-      if (currentTurnGroupKeys.length !== previousTurns.length) {
-        return false;
-      }
-      for (let index = 0; index < previousTurns.length; index += 1) {
-        const previousTurnId = idToString(previousTurns[index]?.turn_id);
-        if (!previousTurnId || currentTurnGroupKeys[index] !== getTurnGroupKey(previousTurnId)) {
-          return false;
-        }
-      }
-
-      const prependedEvents = events.filter((event) => {
-        const turnId = idToString(event.turn_id ?? "");
-        return turnId.length > 0 && prependedTurnIdSet.has(turnId);
-      });
-      const prependedView = buildWorkbenchThreadViewModelFromTurns(
-        prependedTurns,
-        prependedMessages,
-        toolSummariesReady ? buildSubsetToolMap(prependedTurnIdSet, toolsByTurnId) : {},
-        prependedEvents,
-        buildSubsetAssistantStreamingMap(prependedTurnIdSet, assistantStreamingByTurnId),
+      const update = buildPrependedHistoryUpdate({
+        eventsStampChanged,
+        previousTurns: lastTurnsRef.current,
+        previousMessages: lastMessagesRef.current,
+        turns,
+        messages,
+        events,
+        state,
+        toolSummariesReady,
+        toolsByTurnId,
+        assistantStreamingByTurnId,
         askUserQuestionAnswers,
-      );
-      const prependedFlattened = flattenWorkbenchGroups(prependedView.groups, verbosity);
-      const prependedItemCount = prependedFlattened.listItems.length;
-      if (prependedItemCount === 0) {
-        return false;
-      }
-
-      const nextList = [...prependedFlattened.listItems, ...state.listItems];
-      const nextRanges = new Map<string, { start: number; end: number }>(
-        prependedFlattened.groupRanges,
-      );
-      for (const [groupKey, range] of state.groupRanges.entries()) {
-        nextRanges.set(groupKey, {
-          start: range.start + prependedItemCount,
-          end: range.end + prependedItemCount,
-        });
-      }
-
-      const nextOp = classifyWorkbenchThreadProjectionOp({
-        current: state.listItems,
-        next: nextList,
-        projectionRevision: projectionRev,
-        fallbackKind: "prepend_history",
+        verbosity,
+        projectionRev,
+        perTurnCaches: perTurnCachesRef.current,
       });
-      if (nextOp.kind !== "prepend_history") {
+      if (!update) {
         return false;
       }
-
-      const nextMessagesByTurnId = new Map(perTurnCachesRef.current.messagesByTurnId);
-      const nextEventsByTurnId = new Map(perTurnCachesRef.current.eventsByTurnId);
-      for (const turnId of prependedTurnIdSet) {
-        nextMessagesByTurnId.set(
-          turnId,
-          prependedMessages.filter((message) => idToString(message.turn_id) === turnId),
-        );
-        if (!nextEventsByTurnId.has(turnId)) {
-          nextEventsByTurnId.set(turnId, []);
-        }
-      }
-      perTurnCachesRef.current = {
-        messagesByTurnId: nextMessagesByTurnId,
-        eventsByTurnId: nextEventsByTurnId,
-      };
-
+      perTurnCachesRef.current = update.caches;
       syncInvalidationRefs();
-      commitNextState(state, {
-        view: {
-          groups: [...prependedView.groups, ...state.view.groups],
-          debugEvents: state.view.debugEvents,
-        },
-        listItems: nextList,
-        groupRanges: nextRanges,
-        projectionRevision: projectionRev,
-        lastOp: nextOp,
-        changedItemIds: nextOp.changedItemIds,
-        remeasureItemIds: nextOp.remeasureItemIds,
-        turnsLen: turns.length,
-        messagesLen: messages.length,
-        eventsLen: state.eventsLen,
-      });
+      commitNextState(state, update.state);
       return true;
     };
 

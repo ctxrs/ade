@@ -1,106 +1,24 @@
-import {
-  useLayoutEffect,
-  type Dispatch,
-  type MutableRefObject,
-  type SetStateAction,
-} from "react";
-import type {
-  AutoscrollToBottom,
-  ItemLocation,
-  VirtuosoMessageListMethods,
-} from "@virtuoso.dev/message-list";
-import type { WorkbenchListItem } from "./SessionPage.types";
-import type { WorkbenchMessageListContext } from "./SessionPage.thread";
-import type { WorkbenchThreadProjectionOp } from "./sessionThreadProjection";
-import { debugItemSummary } from "./sessionMessageListDataDebug";
+import { useLayoutEffect } from "react";
+import type { ItemLocation } from "@virtuoso.dev/message-list";
 import { runSessionMessageListDevValidation } from "./sessionMessageListDevValidation";
 import { logSessionMessageListReconcileDebug } from "./sessionMessageListReconcileDebug";
-import {
-  applyStableListUpdate,
-  applyStructuralStableListUpdate,
-} from "./sessionMessageListStableUpdate";
+import { applyStructuralStableListUpdate } from "./sessionMessageListStableUpdate";
 import {
   assertWholeListPurgeAllowed,
-  computeHistoryPrependTailReconcilePlan,
   findSharedItemSizeCacheKeyChanges,
   haveSameItemIdSequence,
-  isExactContiguousIdWindow,
   shouldReplaceBottomLockedStructuralUpdate,
   trimTrailingAppendsWhileScrolledUp,
 } from "./sessionMessageListControllerUtils";
-
-type MessageListMethods = VirtuosoMessageListMethods<
-  WorkbenchListItem,
-  WorkbenchMessageListContext
->;
-
-type Params = {
-  sessionId: string;
-  isActive: boolean;
-  listItems: WorkbenchListItem[];
-  visibleListItems: WorkbenchListItem[];
-  loadingOlder: boolean;
-  deferTrailingAppends: boolean;
-  layoutRevision: string;
-  itemSizeCacheKey: (item: WorkbenchListItem) => string | null;
-  threadOp?: WorkbenchThreadProjectionOp | null;
-  showDebug: boolean;
-  initialLocation: ItemLocation;
-  appendBehavior: AutoscrollToBottom<WorkbenchListItem, WorkbenchMessageListContext>;
-  methodsRef: MutableRefObject<MessageListMethods | null>;
-  lastSessionIdRef: MutableRefObject<string>;
-  contractViolationLoggedRef: MutableRefObject<{ sessionId: string; violationKey: string } | null>;
-  lastScrollLocationRef: MutableRefObject<unknown>;
-  lastAtBottomRef: MutableRefObject<boolean | null>;
-  lastListOffsetRef: MutableRefObject<number | null>;
-  stickToBottomRef: MutableRefObject<boolean>;
-  renderedAnchorIdRef: MutableRefObject<string | null>;
-  renderedTopIdRef: MutableRefObject<string | null>;
-  firstListItemIdRef: MutableRefObject<string | null>;
-  pendingHistoryRef: MutableRefObject<boolean>;
-  historyExpectedRef: MutableRefObject<boolean>;
-  historyRequestedAtTopRef: MutableRefObject<boolean>;
-  historyRequestedAnchorIdRef: MutableRefObject<string | null>;
-  lastLayoutRevisionRef: MutableRefObject<string>;
-  reconcileEpochRef: MutableRefObject<number>;
-  suppressIdDiffLogsRef: MutableRefObject<{ sessionId: string; remainingTicks: number } | null>;
-  setLoadingOlder: Dispatch<SetStateAction<boolean>>;
-  setDeferTrailingAppends: Dispatch<SetStateAction<boolean>>;
-  snapToBottom: (methods: MessageListMethods) => void;
-  recordDebugSnapshot: (cause: string, detail?: Record<string, unknown> | null) => void;
-  startFlashProbe: (cause: string, detail?: Record<string, unknown> | null) => void;
-  logMessageListDebug: (label: string, detail: Record<string, unknown>) => void;
-};
-
-function applyPrependDrivenHistoryUpdate({
-  methods,
-  current,
-  retainedNext,
-  prefix,
-  suffix,
-  stickToBottom,
-  appendBehavior,
-}: {
-  methods: MessageListMethods;
-  current: WorkbenchListItem[];
-  retainedNext: WorkbenchListItem[];
-  prefix: WorkbenchListItem[];
-  suffix: WorkbenchListItem[];
-  stickToBottom: boolean;
-  appendBehavior: AutoscrollToBottom<WorkbenchListItem, WorkbenchMessageListContext>;
-}) {
-  applyStableListUpdate({
-    methods,
-    current,
-    next: retainedNext,
-    prefix,
-    suffix,
-    stickToBottom,
-    anchorIndex: -1,
-    appendBehavior,
-    allowAnchorMap: false,
-  });
-}
+import type { SessionMessageListReconcileParams as Params } from "./sessionMessageListReconcileTypes";
+import {
+  tryApplyExpectedHistoryUpdate,
+  tryApplyPurePrependUpdate,
+} from "./sessionMessageListReconcileHistory";
+import {
+  tryApplyPureAppendUpdate,
+  tryApplySameLengthUpdate,
+} from "./sessionMessageListReconcileStable";
 
 export function useSessionMessageListReconcileEffect({
   sessionId,
@@ -385,401 +303,96 @@ export function useSessionMessageListReconcileEffect({
       return;
     }
 
-    if (historyExpectedRef.current && currentLen > 0 && effectiveNextLen >= currentLen) {
-      const wasAtTop = historyRequestedAtTopRef.current;
-      const requestedAnchorId = historyRequestedAnchorIdRef.current;
-      const firstId = current[0]?.id ?? null;
-      const lastId = current[currentLen - 1]?.id ?? null;
-      const firstIndex = firstId ? next.findIndex((it) => it.id === firstId) : -1;
-      const lastIndex = lastId ? next.findIndex((it) => it.id === lastId) : -1;
-      const exactContiguousWindow = isExactContiguousIdWindow(currentIds, nextIds, firstIndex);
-      if (firstIndex >= 0 && lastIndex >= firstIndex && exactContiguousWindow) {
-        const retainedNext = next.slice(firstIndex, lastIndex + 1);
-        let retainedMatchesCurrent = retainedNext.length === currentLen;
-        if (retainedMatchesCurrent) {
-          for (let index = 0; index < currentLen; index += 1) {
-            if (retainedNext[index]?.id !== current[index]?.id) {
-              retainedMatchesCurrent = false;
-              break;
-            }
-          }
-        }
-        if (!retainedMatchesCurrent) {
-          historyExpectedRef.current = false;
-        } else {
-          const currentIdSet = new Set(current.map((it) => it.id));
-          const prefix = next.slice(0, firstIndex).filter((it) => !currentIdSet.has(it.id));
-          const suffix = next.slice(lastIndex + 1).filter((it) => !currentIdSet.has(it.id));
-          if (import.meta.env.DEV && showDebug) {
-            const nextIdSet = new Set(next.map((it) => it.id));
-            const missingFromNext: string[] = [];
-            for (const it of current) if (!nextIdSet.has(it.id)) missingFromNext.push(it.id);
-            if (missingFromNext.length > 0) {
-              const currentById = new Map(current.map((it) => [it.id, it] as const));
-              // eslint-disable-next-line no-console
-              console.warn("[MessageList][history:extend][ids:missing-from-next]", {
-                sessionId,
-                count: missingFromNext.length,
-                sample: missingFromNext.slice(0, 12).map((id) =>
-                  debugItemSummary(currentById.get(id) ?? { id }),
-                ),
-              });
-            }
-          }
-          startFlashProbe("history:extend", {
-            currentLen,
-            nextLen: effectiveNextLen,
-            prefixLen: prefix.length,
-            suffixLen: suffix.length,
-            firstIndex,
-            lastIndex,
-            requestedAnchorId,
-            wasAtTop,
-          });
-
-          applyPrependDrivenHistoryUpdate({
-            methods,
-            current,
-            retainedNext,
-            prefix,
-            suffix,
-            stickToBottom: stickToBottomRef.current,
-            appendBehavior,
-          });
-
-          historyExpectedRef.current = false;
-          historyRequestedAtTopRef.current = false;
-          historyRequestedAnchorIdRef.current = null;
-          recordDebugSnapshot("history:extend", {
-            prefixLen: prefix.length,
-            suffixLen: suffix.length,
-            firstIndex,
-            lastIndex,
-            nextLen: effectiveNextLen,
-            currentLen,
-            requestedAnchorId,
-            wasAtTop,
-          });
-          if (import.meta.env.DEV && showDebug) {
-            // eslint-disable-next-line no-console
-            console.debug("[MessageList][history:extend]", {
-              sessionId,
-              prefixLen: prefix.length,
-              suffixLen: suffix.length,
-              firstIndex,
-              lastIndex,
-              nextLen: effectiveNextLen,
-              currentLen,
-            });
-          }
-          return;
-        }
-      }
-      const mixedHistoryPlan = computeHistoryPrependTailReconcilePlan({
+    if (
+      tryApplyExpectedHistoryUpdate({
+        sessionId,
+        showDebug,
+        methods,
+        methodsRef,
+        reconcileEpochRef,
+        reconcileEpoch,
+        current,
+        next,
         currentIds,
         nextIds,
-        startIndex: firstIndex,
-        anchorId: renderedAnchorIdRef.current,
-      });
-      if (mixedHistoryPlan) {
-        const nextById = new Map(next.map((it) => [it.id, it] as const));
-        const prefix = next.slice(0, mixedHistoryPlan.prefixLen);
-        const insertData = next.slice(
-          mixedHistoryPlan.insertStart,
-          mixedHistoryPlan.insertStart + mixedHistoryPlan.insertCount,
-        );
-
-        startFlashProbe("history:prepend-tail-reconcile", {
-          currentLen,
-          nextLen: effectiveNextLen,
-          prefixLen: mixedHistoryPlan.prefixLen,
-          overlapLen: mixedHistoryPlan.overlapLen,
-          deleteOffset: mixedHistoryPlan.deleteOffset,
-          deleteCount: mixedHistoryPlan.deleteCount,
-          insertLen: insertData.length,
-          suffixLen: mixedHistoryPlan.suffixLen,
-          requestedAnchorId,
-          wasAtTop,
-        });
-
-        methods.data.prepend(prefix);
-        requestAnimationFrame(() => {
-          if (reconcileEpochRef.current !== reconcileEpoch) return;
-          const liveMethods = methodsRef.current;
-          if (!liveMethods) return;
-          if (mixedHistoryPlan.deleteCount > 0 || insertData.length > 0) {
-            liveMethods.data.batch(
-              () => {
-                if (mixedHistoryPlan.deleteCount > 0) {
-                  liveMethods.data.deleteRange(
-                    mixedHistoryPlan.deleteOffset,
-                    mixedHistoryPlan.deleteCount,
-                  );
-                }
-                if (insertData.length > 0) {
-                  liveMethods.data.insert(
-                    insertData,
-                    mixedHistoryPlan.deleteOffset,
-                    appendBehavior,
-                  );
-                }
-                liveMethods.data.map(
-                  (item) => nextById.get(item.id) ?? item,
-                  stickToBottomRef.current ? ("auto" as const) : undefined,
-                );
-              },
-              appendBehavior,
-            );
-            return;
-          }
-          liveMethods.data.map(
-            (item) => nextById.get(item.id) ?? item,
-            stickToBottomRef.current ? ("auto" as const) : undefined,
-          );
-        });
-
-        historyExpectedRef.current = false;
-        historyRequestedAtTopRef.current = false;
-        historyRequestedAnchorIdRef.current = null;
-        recordDebugSnapshot("history:prepend-tail-reconcile", {
-          prefixLen: mixedHistoryPlan.prefixLen,
-          overlapLen: mixedHistoryPlan.overlapLen,
-          deleteOffset: mixedHistoryPlan.deleteOffset,
-          deleteCount: mixedHistoryPlan.deleteCount,
-          insertLen: insertData.length,
-          suffixLen: mixedHistoryPlan.suffixLen,
-          nextLen: effectiveNextLen,
-          currentLen,
-          requestedAnchorId,
-          wasAtTop,
-        });
-        if (import.meta.env.DEV && showDebug) {
-          // eslint-disable-next-line no-console
-          console.debug("[MessageList][history:prepend-tail-reconcile]", {
-            sessionId,
-            prefixLen: mixedHistoryPlan.prefixLen,
-            overlapLen: mixedHistoryPlan.overlapLen,
-            deleteOffset: mixedHistoryPlan.deleteOffset,
-            deleteCount: mixedHistoryPlan.deleteCount,
-            insertLen: insertData.length,
-            suffixLen: mixedHistoryPlan.suffixLen,
-            nextLen: effectiveNextLen,
-            currentLen,
-          });
-        }
-        return;
-      }
-      if (import.meta.env.DEV && showDebug && firstIndex >= 0 && lastIndex >= firstIndex) {
-        // eslint-disable-next-line no-console
-        console.debug("[MessageList][history:extend:skipped]", {
-          sessionId,
-          reason: "nonContiguousWindow",
-          firstIndex,
-          lastIndex,
-          nextLen: effectiveNextLen,
-          currentLen,
-          requestedAnchorId,
-          wasAtTop,
-        });
-      }
+        currentLen,
+        effectiveNextLen,
+        stickToBottomRef,
+        renderedAnchorIdRef,
+        historyExpectedRef,
+        historyRequestedAtTopRef,
+        historyRequestedAnchorIdRef,
+        appendBehavior,
+        recordDebugSnapshot,
+        startFlashProbe,
+      })
+    ) {
+      return;
     }
 
-    if (effectiveNextLen > currentLen) {
-      let isPurePrepend = true;
-      for (let i = 0; i < currentLen; i += 1) {
-        if (next[effectiveNextLen - currentLen + i]?.id !== current[i]?.id) {
-          isPurePrepend = false;
-          break;
-        }
-      }
-      if (isPurePrepend) {
-        const wasAtTop = historyRequestedAtTopRef.current;
-        const requestedAnchorId = historyRequestedAnchorIdRef.current;
-        const prefix = next.slice(0, effectiveNextLen - currentLen);
-        const anchorId = renderedAnchorIdRef.current;
-        const anchorIndex = anchorId ? next.findIndex((it) => it.id === anchorId) : -1;
-
-        startFlashProbe("data:prepend", {
-          currentLen,
-          nextLen: effectiveNextLen,
-          prefixLen: prefix.length,
-          anchorId,
-          anchorIndex,
-          requestedAnchorId,
-          wasAtTop,
-        });
-
-        applyPrependDrivenHistoryUpdate({
-          methods,
-          current,
-          retainedNext: next.slice(effectiveNextLen - currentLen),
-          prefix,
-          suffix: [],
-          stickToBottom: stickToBottomRef.current,
-          appendBehavior,
-        });
-
-        recordDebugSnapshot("data:prepend", {
-          prefixLen: prefix.length,
-          nextLen: effectiveNextLen,
-          currentLen,
-          anchorId,
-          anchorIndex,
-          requestedAnchorId,
-          wasAtTop,
-        });
-        if (import.meta.env.DEV && showDebug) {
-          // eslint-disable-next-line no-console
-          console.debug("[MessageList][data:prepend]", {
-            sessionId,
-            prefixLen: prefix.length,
-            nextLen: effectiveNextLen,
-            currentLen,
-            anchorId,
-            anchorIndex,
-          });
-        }
-        if (historyExpectedRef.current) {
-          historyExpectedRef.current = false;
-          historyRequestedAtTopRef.current = false;
-          historyRequestedAnchorIdRef.current = null;
-          if (import.meta.env.DEV && showDebug) {
-            // eslint-disable-next-line no-console
-            console.debug("[MessageList][history:applied]", { sessionId, prefixLen: prefix.length });
-          }
-        }
-        return;
-      }
+    if (
+      tryApplyPurePrependUpdate({
+        sessionId,
+        showDebug,
+        methods,
+        current,
+        next,
+        currentLen,
+        effectiveNextLen,
+        stickToBottomRef,
+        renderedAnchorIdRef,
+        historyExpectedRef,
+        historyRequestedAtTopRef,
+        historyRequestedAnchorIdRef,
+        appendBehavior,
+        recordDebugSnapshot,
+        startFlashProbe,
+      })
+    ) {
+      return;
     }
 
-    if (effectiveNextLen > currentLen) {
-      let isPureAppend = true;
-      for (let i = 0; i < currentLen; i += 1) {
-        if (next[i]?.id !== current[i]?.id) {
-          isPureAppend = false;
-          break;
-        }
-      }
-      if (isPureAppend) {
-        const suffix = next.slice(currentLen);
-        const anchorId = renderedAnchorIdRef.current;
-        const anchorIndex = anchorId ? next.findIndex((it) => it.id === anchorId) : -1;
-        const updateResult = applyStableListUpdate({
-          methods,
-          current,
-          next: next.slice(0, currentLen),
-          suffix,
-          stickToBottom: stickToBottomRef.current,
-          anchorIndex,
-          appendBehavior,
-        });
-        if (stickToBottomRef.current && updateResult.mode === "remeasure") {
-          snapToBottom(methods);
-        }
-        recordDebugSnapshot("data:append", {
-          suffixLen: suffix.length,
-          nextLen: effectiveNextLen,
-          currentLen,
-          changedSpans: updateResult.changedSpans,
-        });
-        logMessageListDebug("data:append", {
-          suffixLen: suffix.length,
-          nextLen: effectiveNextLen,
-          currentLen,
-          stickToBottom: stickToBottomRef.current,
-          anchorId,
-          changedSpans: updateResult.changedSpans,
-        });
-        return;
-      }
+    if (
+      tryApplyPureAppendUpdate({
+        sessionId,
+        methods,
+        current,
+        next,
+        currentLen,
+        effectiveNextLen,
+        stickToBottomRef,
+        renderedAnchorIdRef,
+        appendBehavior,
+        snapToBottom,
+        recordDebugSnapshot,
+        logMessageListDebug,
+      })
+    ) {
+      return;
     }
 
-    if (effectiveNextLen === currentLen) {
-      let same = true;
-      for (let i = 0; i < currentLen; i += 1) {
-        if (next[i]?.id !== current[i]?.id) {
-          same = false;
-          break;
-        }
-      }
-      if (same) {
-        const anchorId = renderedAnchorIdRef.current;
-        const anchorIndex = anchorId ? next.findIndex((it) => it.id === anchorId) : -1;
-        const updateResult = applyStableListUpdate({
-          methods,
-          current,
-          next,
-          stickToBottom: stickToBottomRef.current,
-          anchorIndex,
-          appendBehavior,
-          forceRemeasureItemIds: hasLocalizedThreadOp ? (threadOp?.remeasureItemIds ?? []) : [],
-        });
-        if (stickToBottomRef.current && updateResult.mode === "remeasure") {
-          snapToBottom(methods);
-        }
-        const updateLabel = updateResult.mode === "remeasure" ? "data:remeasure" : "data:map";
-        if (updateResult.mode === "remeasure") {
-          startFlashProbe("data:remeasure", {
-            nextLen: effectiveNextLen,
-            currentLen,
-            anchorId,
-            anchorIndex,
-            stickToBottom: stickToBottomRef.current,
-            changedSpans: updateResult.changedSpans,
-          });
-        }
-        if (import.meta.env.DEV && showDebug) {
-          let changedByRef = 0;
-          const sampleChangedIds: string[] = [];
-          for (let i = 0; i < currentLen; i += 1) {
-            if (current[i] !== next[i]) {
-              changedByRef += 1;
-              if (sampleChangedIds.length < 8) {
-                sampleChangedIds.push(String(next[i]?.id ?? current[i]?.id ?? ""));
-              }
-            }
-          }
-          const mapMode =
-            updateResult.mode === "remeasure"
-              ? "batch:remeasure"
-              : !stickToBottomRef.current && anchorIndex >= 0
-                ? "mapWithAnchor"
-                : stickToBottomRef.current
-                  ? "map:auto"
-                  : "map";
-          // eslint-disable-next-line no-console
-          console.debug(`[MessageList][${updateLabel}]`, {
-            sessionId,
-            nextLen: effectiveNextLen,
-            currentLen,
-            stickToBottom: stickToBottomRef.current,
-            anchorId,
-            anchorIndex,
-            mapMode,
-            changedByRef,
-            sampleChangedIds,
-            changedSpans: updateResult.changedSpans,
-            renderedTopId: renderedTopIdRef.current,
-          });
-        }
-        recordDebugSnapshot(updateLabel, {
-          nextLen: effectiveNextLen,
-          currentLen,
-          anchorId,
-          anchorIndex,
-          stickToBottom: stickToBottomRef.current,
-          changedSpans: updateResult.changedSpans,
-        });
-        logMessageListDebug(updateLabel, {
-          nextLen: effectiveNextLen,
-          currentLen,
-          anchorId,
-          anchorIndex,
-          stickToBottom: stickToBottomRef.current,
-          changedSpans: updateResult.changedSpans,
-        });
-        return;
-      }
+    if (
+      tryApplySameLengthUpdate({
+        sessionId,
+        showDebug,
+        methods,
+        current,
+        next,
+        currentLen,
+        effectiveNextLen,
+        stickToBottomRef,
+        renderedAnchorIdRef,
+        renderedTopIdRef,
+        appendBehavior,
+        snapToBottom,
+        recordDebugSnapshot,
+        startFlashProbe,
+        logMessageListDebug,
+        hasLocalizedThreadOp,
+        threadOp,
+      })
+    ) {
+      return;
     }
 
     let prefixLen = 0;
