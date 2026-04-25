@@ -65,6 +65,7 @@ test("ctx-http changes fan out into suite-level commands", () => {
     "bash -lc node scripts/ctx_http_suite_task.cjs --suite provider-runtime-simulated",
     "bash -lc node scripts/ctx_http_suite_task.cjs --suite repo-vcs",
     "bash -lc node scripts/ctx_http_suite_task.cjs --suite sandbox-runtime-simulated",
+    "bash -lc node scripts/ctx_http_suite_task.cjs --suite scheduler-runtime",
     "bash -lc node scripts/ctx_http_suite_task.cjs --suite subagents-control",
     "bash -lc node scripts/ctx_http_suite_task.cjs --suite turns-terminal",
     "bash -lc node scripts/ctx_http_suite_task.cjs --suite updates-release",

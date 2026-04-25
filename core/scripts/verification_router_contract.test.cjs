@@ -166,6 +166,21 @@ test("verify:affected adds ctx-http base compile truth for canonical scheduler r
   assert.deepEqual(plan.commands, [
     "pnpm source:file-size:enforce",
     "node scripts/ctx_http_suite_task.cjs --suite base",
+    "node scripts/ctx_http_suite_task.cjs --suite scheduler-runtime",
+  ]);
+});
+
+test("verify:affected keeps shared turn execution paths on both scheduler runtime and terminal suites", () => {
+  const plan = buildVerificationPlan({
+    intent: "affected",
+    base: "origin/main",
+    changedFiles: ["core/crates/ctx-http/src/api/execution.rs"],
+  });
+
+  assert.deepEqual(plan.commands, [
+    "pnpm source:file-size:enforce",
+    "node scripts/ctx_http_suite_task.cjs --suite base",
+    "node scripts/ctx_http_suite_task.cjs --suite scheduler-runtime",
     "node scripts/ctx_http_suite_task.cjs --suite turns-terminal",
   ]);
 });

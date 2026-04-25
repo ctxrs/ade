@@ -214,6 +214,7 @@ test("buildBazelTargetBatches isolates ctx-http suite aliases into sequential ba
     ["//core/crates/ctx-http:sandbox-runtime-memory-leak"],
     ["//core/crates/ctx-http:sandbox-runtime-resource-governance"],
     ["//core/crates/ctx-http:sandbox-runtime-simulated"],
+    ["//core/crates/ctx-http:scheduler-runtime"],
     ["//core/crates/ctx-http:subagents-control"],
     ["//core/crates/ctx-http:subagents-local-runtime"],
     ["//core/crates/ctx-http:turns-terminal"],

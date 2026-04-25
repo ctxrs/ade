@@ -23,6 +23,7 @@ test("agent-default fans out ctx-http shared changes into suite-level commands",
     "node scripts/ctx_http_suite_task.cjs --suite provider-runtime-simulated",
     "node scripts/ctx_http_suite_task.cjs --suite repo-vcs",
     "node scripts/ctx_http_suite_task.cjs --suite sandbox-runtime-simulated",
+    "node scripts/ctx_http_suite_task.cjs --suite scheduler-runtime",
     "node scripts/ctx_http_suite_task.cjs --suite subagents-control",
     "node scripts/ctx_http_suite_task.cjs --suite turns-terminal",
     "node scripts/ctx_http_suite_task.cjs --suite updates-release",
@@ -233,6 +234,20 @@ test("agent-default affected selection adds ctx-http base compile truth for sche
 
   assert.deepEqual(plan.commands, [
     "node scripts/ctx_http_suite_task.cjs --suite base",
+    "node scripts/ctx_http_suite_task.cjs --suite scheduler-runtime",
+  ]);
+});
+
+test("agent-default affected selection keeps shared turn execution paths on both scheduler runtime and terminal suites", () => {
+  const plan = buildExecutionPlan({
+    profileId: "agent-default",
+    changedFiles: ["core/crates/ctx-http/src/api/execution.rs"],
+    selectionMode: "affected",
+  });
+
+  assert.deepEqual(plan.commands, [
+    "node scripts/ctx_http_suite_task.cjs --suite base",
+    "node scripts/ctx_http_suite_task.cjs --suite scheduler-runtime",
     "node scripts/ctx_http_suite_task.cjs --suite turns-terminal",
   ]);
 });

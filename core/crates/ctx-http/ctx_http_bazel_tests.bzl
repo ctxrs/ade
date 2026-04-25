@@ -7,6 +7,7 @@ CTX_HTTP_SUITE_ORDER = [
     "provider-runtime-live",
     "repo-vcs",
     "buffers",
+    "scheduler-runtime",
     "turns-terminal",
     "attachments-routing",
     "subagents-control",
@@ -93,17 +94,19 @@ CTX_HTTP_SUITE_TESTS = {
     "buffers": [
         "buffers_http_e2e",
     ],
-    "turns-terminal": [
+    "scheduler-runtime": [
         "assistant_chunk_stream_only",
         "assistant_message_persistence_faults",
+        "noisy_output_backpressure",
+        "turn_lifecycle_events",
+        "turn_terminal_reconciliation",
+    ],
+    "turns-terminal": [
         "demo_seed_transcript_http",
         "message_idempotency_post_message_idempotent_same_payload",
         "message_idempotency_post_message_idempotent_conflict_on_change",
-        "noisy_output_backpressure",
         "terminal_workspace_stream_separation",
         "terminal_ws_reconnect",
-        "turn_lifecycle_events",
-        "turn_terminal_reconciliation",
     ],
     "attachments-routing": [
         "global_id_routing_http",
@@ -149,6 +152,12 @@ CTX_HTTP_MANUAL_ONLY_TESTS = [
     "cloud_gateway_azure_e2e",
     "cloud_gateway_gcp_e2e",
 ]
+
+CTX_HTTP_SUITE_EXTRA_TARGETS = {
+    "scheduler-runtime": [
+        ":unit_tests_scheduler",
+    ],
+}
 
 CTX_HTTP_CUSTOM_INTEGRATION_TARGETS = {
     "workspace_active_snapshot_http_workspace_active_hydration_returns_500_for_store_open_failures_and_404_for_missing_workspaces": {
@@ -439,6 +448,7 @@ def declare_ctx_http_integration_tests(common_srcs, compile_data, data, deps, pr
                 )
                 declared[test_name] = True
             test_labels.append(_as_label(test_name))
+        test_labels.extend(CTX_HTTP_SUITE_EXTRA_TARGETS.get(suite_name, []))
         native.test_suite(
             name = suite_name,
             tests = test_labels,
