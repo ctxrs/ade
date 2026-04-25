@@ -17,7 +17,7 @@ pub use crate::git::ApplyPatchTarget;
 mod jj;
 mod jj_status;
 
-use jj::{ensure_jj_usable, JjVcs};
+use jj::JjVcs;
 
 pub use jj::jj_command_output;
 
@@ -467,7 +467,6 @@ pub async fn driver_for_path(root: impl AsRef<Path>) -> Result<Arc<dyn VcsDriver
     }
     let jj = JjVcs;
     if jj.is_repo(root).await.unwrap_or(false) {
-        ensure_jj_usable().await?;
         return Ok(Arc::new(JjVcs));
     }
     let git = GitVcs;

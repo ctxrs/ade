@@ -1,3 +1,11 @@
+#[path = "02_server/auth.rs"]
+mod auth;
+#[path = "02_server/public_routes.rs"]
+mod public_routes;
+
+use auth::auth_middleware;
+use public_routes::{get_worker_bootstrap, get_worker_shim, health};
+
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
@@ -220,119 +228,6 @@ async fn main() -> Result<()> {
         }
     }
     Ok(())
-}
-
-async fn get_worker_shim(State(state): State<AppState>) -> Result<impl IntoResponse, StatusCode> {
-    let file = tokio::fs::File::open(&state.worker_shim_path)
-        .await
-        .map_err(|_| StatusCode::NOT_FOUND)?;
-    let stream = ReaderStream::new(file);
-    let body = axum::body::Body::from_stream(stream);
-    Ok((
-        [
-            ("content-type", "application/octet-stream"),
-            ("cache-control", "no-store"),
-        ],
-        body,
-    ))
-}
-
-async fn get_worker_bootstrap(
-    State(state): State<AppState>,
-    Path(worker_id): Path<String>,
-) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let spec = get_request_spec(&state, &worker_id).await?;
-    let base_commit = get_base_commit(&state, &worker_id).await?;
-    let mut candidates = vec![
-        "/dev/xvdf".to_string(),
-        "/dev/sdf".to_string(),
-        "/dev/nvme1n1".to_string(),
-    ];
-    candidates.retain(|v| !v.is_empty());
-    let shim_url = format!("{}/shim", state.public_base_url.trim_end_matches('/'));
-    let bootstrap = bootstrap::BootstrapSpec {
-        worker_id: &worker_id,
-        gateway_url: state.public_base_url.as_str(),
-        gateway_token: spec.env.get("CTX_WORKER_GATEWAY_TOKEN").map(|v| v.as_str()),
-        base_commit: &base_commit,
-        diff_debounce_ms: spec.diff_debounce_ms.unwrap_or(1500),
-        repo: &spec.repo,
-        provider_id: spec.provider_id.as_deref(),
-        env: &spec.env,
-        shim_url: &shim_url,
-        workdir: &state.workdir_path,
-        mount_path: &state.session_mount_path,
-        mount_device_candidates: candidates,
-    };
-    let script = render_bootstrap_script(&bootstrap);
-    Ok((
-        [
-            ("content-type", "text/x-shellscript"),
-            ("cache-control", "no-store"),
-        ],
-        script,
-    ))
-}
-
-async fn health() -> impl IntoResponse {
-    Json(json!({"ok": true}))
-}
-
-async fn auth_middleware(
-    State(state): State<AppState>,
-    req: Request<axum::body::Body>,
-    next: Next,
-) -> Response {
-    let path = req.uri().path();
-    let method = req.method().as_str();
-    if gateway_request_is_authorized(
-        state.auth_token.as_deref(),
-        method,
-        path,
-        req.uri().query(),
-        req.headers(),
-    ) {
-        return next.run(req).await;
-    }
-
-    (StatusCode::UNAUTHORIZED, "unauthorized").into_response()
-}
-
-fn gateway_request_is_authorized(
-    expected: Option<&str>,
-    method: &str,
-    path: &str,
-    query: Option<&str>,
-    headers: &axum::http::HeaderMap,
-) -> bool {
-    let Some(expected) = expected else {
-        return true;
-    };
-    if path == "/health" {
-        return true;
-    }
-    if method == "GET"
-        && !path.contains("/bootstrap")
-        && path.starts_with("/workers/")
-        && !path.contains("/terminals/")
-        && !path.ends_with("/export")
-    {
-        return true;
-    }
-
-    let header_token = headers
-        .get("x-ctx-gateway-token")
-        .and_then(|value| value.to_str().ok());
-    if header_token == Some(expected) {
-        return true;
-    }
-
-    (path == "/shim" || path.contains("/bootstrap"))
-        && query.is_some_and(|query| {
-            query.split('&').any(
-                |part| matches!(part.split_once('='), Some(("token", value)) if value == expected),
-            )
-        })
 }
 
 async fn start_worker(
@@ -660,104 +555,4 @@ async fn handle_terminal_control_socket(state: AppState, worker_id: String, sock
     let _ = send_task.await;
     let mut relay_guard = relay.lock().await;
     relay_guard.control_tx = None;
-}
-
-#[cfg(test)]
-mod gateway_auth_tests {
-    use super::*;
-
-    fn headers_with_token(token: &str) -> axum::http::HeaderMap {
-        let mut headers = axum::http::HeaderMap::new();
-        headers.insert(
-            "x-ctx-gateway-token",
-            axum::http::HeaderValue::from_str(token).expect("header token"),
-        );
-        headers
-    }
-
-    #[test]
-    fn gateway_auth_allows_public_and_read_only_routes() {
-        assert!(gateway_request_is_authorized(
-            Some("secret"),
-            "GET",
-            "/health",
-            None,
-            &axum::http::HeaderMap::new(),
-        ));
-        assert!(gateway_request_is_authorized(
-            Some("secret"),
-            "GET",
-            "/workers/worker-1",
-            None,
-            &axum::http::HeaderMap::new(),
-        ));
-        assert!(!gateway_request_is_authorized(
-            Some("secret"),
-            "GET",
-            "/workers/worker-1/export",
-            None,
-            &axum::http::HeaderMap::new(),
-        ));
-        assert!(!gateway_request_is_authorized(
-            Some("secret"),
-            "GET",
-            "/workers/worker-1/terminals/terminal-1/daemon",
-            None,
-            &axum::http::HeaderMap::new(),
-        ));
-    }
-
-    #[test]
-    fn gateway_auth_accepts_header_token_for_private_routes() {
-        assert!(gateway_request_is_authorized(
-            Some("secret"),
-            "POST",
-            "/workers",
-            None,
-            &headers_with_token("secret"),
-        ));
-        assert!(!gateway_request_is_authorized(
-            Some("secret"),
-            "POST",
-            "/workers",
-            None,
-            &headers_with_token("wrong"),
-        ));
-    }
-
-    #[test]
-    fn gateway_auth_accepts_query_token_for_bootstrap_and_shim() {
-        assert!(gateway_request_is_authorized(
-            Some("secret"),
-            "GET",
-            "/workers/worker-1/bootstrap",
-            Some("token=secret"),
-            &axum::http::HeaderMap::new(),
-        ));
-        assert!(gateway_request_is_authorized(
-            Some("secret"),
-            "GET",
-            "/shim",
-            Some("foo=bar&token=secret"),
-            &axum::http::HeaderMap::new(),
-        ));
-        assert!(!gateway_request_is_authorized(
-            Some("secret"),
-            "GET",
-            "/workers/worker-1/bootstrap",
-            Some("token=wrong"),
-            &axum::http::HeaderMap::new(),
-        ));
-    }
-
-    #[test]
-    fn gateway_auth_allows_everything_when_token_is_unset() {
-        assert!(gateway_request_is_authorized(
-            None,
-            "POST",
-            "/workers",
-            None,
-            &axum::http::HeaderMap::new(),
-        ));
-    }
 }

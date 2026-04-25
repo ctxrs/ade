@@ -77,21 +77,6 @@ pub fn droid_cli_model_id_for_endpoint_model(
     runtime_resolution::droid_cli_model_id_for_endpoint_model(model_id, base_url)
 }
 
-#[cfg(test)]
-use model_catalog::{
-    infer_endpoint_model_provider_namespace, normalize_namespaced_model_override,
-    parse_openai_models_payload, truncate_discovery_error,
-};
-#[cfg(test)]
-use registry::registry_path;
-#[cfg(test)]
-use runtime_resolution::{
-    cline_endpoint_home, codex_endpoint_home, droid_endpoint_home, gemini_endpoint_home,
-    qwen_endpoint_home, seed_droid_auth_from_host_path,
-};
-#[cfg(test)]
-use validation::normalize_manual_model_ids;
-
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum HarnessSourceKind {
