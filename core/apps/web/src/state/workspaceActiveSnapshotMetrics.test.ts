@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import * as clientApi from "../api/client";
 import { WorkspaceActiveSnapshotStoreImpl } from "./workspaceActiveSnapshotStoreCore";
+import { applyWorkerPatch } from "./workspaceActiveSnapshot/workerRuntime";
 
 vi.mock("../api/client", () => ({
   idToString: (id: string | null | undefined) => (typeof id === "string" ? id : ""),
@@ -61,11 +62,7 @@ describe("WorkspaceActiveSnapshotStore metrics", () => {
       onPatch: () => {},
     });
 
-    (
-      store as unknown as {
-        applyWorkerPatch: (patch: Record<string, unknown>) => void;
-      }
-    ).applyWorkerPatch({
+    applyWorkerPatch(store, {
       shell: {
         initialized: true,
         activeIds: [],
