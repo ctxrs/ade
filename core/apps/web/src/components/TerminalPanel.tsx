@@ -4,7 +4,6 @@ import React, {
   useEffect,
   useImperativeHandle,
   useLayoutEffect,
-  useMemo,
   useRef,
   useState,
 } from "react";
@@ -17,23 +16,14 @@ import {
   type CreateTerminalRequest,
 } from "../api/client";
 import type {
-  PersistedWorkbenchTerminalLayoutV1,
   TerminalGroupState,
   TerminalPanelScopeState,
   TerminalScope,
 } from "../workbench/types";
 import {
-  loadWorkbenchTerminalLayoutV1,
-  loadWorkbenchTerminalTitlesV1,
-  saveWorkbenchTerminalLayoutV1,
-  saveWorkbenchTerminalTitlesV1,
-} from "../workbench/persistence";
-import {
   createSingleTerminalGroup,
-  defaultPanelState,
   findGroupForTerminal,
   findLeafIdForTerminal,
-  findTerminalIdForLeaf,
   firstLeafId,
   reconcileScopeState,
   removeTerminalFromLayout,
@@ -44,6 +34,13 @@ import {
 } from "./terminalLayout";
 import { TerminalSplitView } from "./TerminalSplitView";
 import { TerminalTabs } from "./TerminalTabs";
+import {
+  TerminalPanelContextMenu,
+  type TerminalPanelContextMenuState,
+} from "./terminalPanel/TerminalPanelContextMenu";
+import { useTerminalPanelPersistence } from "./terminalPanel/useTerminalPanelPersistence";
+import { useTerminalPanelRename } from "./terminalPanel/useTerminalPanelRename";
+import { useTerminalPanelScopeModel } from "./terminalPanel/useTerminalPanelScopeModel";
 import { useTerminalClients } from "./useTerminalClients";
 
 export type TerminalPanelHandle = {
@@ -75,16 +72,14 @@ export const TerminalPanel = forwardRef<TerminalPanelHandle, TerminalPanelProps>
   ref,
 ) {
   const [terminals, setTerminals] = useState<TerminalSession[]>([]);
-  const [panelState, setPanelState] = useState<PersistedWorkbenchTerminalLayoutV1>(defaultPanelState);
-  const [layoutHydrated, setLayoutHydrated] = useState(false);
-  const [titlesHydrated, setTitlesHydrated] = useState(false);
-  const [titleOverrides, setTitleOverrides] = useState<Record<string, string>>({});
-  const [renamingId, setRenamingId] = useState<string | null>(null);
-  const [renameValue, setRenameValue] = useState("");
-  const renameInputRef = useRef<HTMLInputElement | null>(null);
-  const [contextMenu, setContextMenu] = useState<{ terminalId: string; x: number; y: number } | null>(null);
-  const [contextMenuStyle, setContextMenuStyle] = useState<React.CSSProperties | null>(null);
-  const contextMenuRef = useRef<HTMLDivElement | null>(null);
+  const {
+    panelState,
+    setPanelState,
+    layoutHydrated,
+    titleOverrides,
+    setTitleOverrides,
+  } = useTerminalPanelPersistence(workspaceId);
+  const [contextMenu, setContextMenu] = useState<TerminalPanelContextMenuState | null>(null);
   const clientsRef = useTerminalClients(terminals, setTerminals, workspaceId);
   const resizeFrameRef = useRef<number | null>(null);
   const autoCreateWorkspaceRef = useRef(false);
@@ -96,130 +91,30 @@ export const TerminalPanel = forwardRef<TerminalPanelHandle, TerminalPanelProps>
   }, [workspaceId]);
 
   useEffect(() => {
-    let cancelled = false;
-    if (!workspaceId) return;
-    loadWorkbenchTerminalLayoutV1(workspaceId)
-      .then((loaded) => {
-        if (cancelled) return;
-        if (loaded) setPanelState(loaded);
-        else setPanelState(defaultPanelState());
-        setLayoutHydrated(true);
-      })
-      .catch(() => {
-        if (cancelled) return;
-        setLayoutHydrated(true);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [workspaceId]);
-
-  useEffect(() => {
-    let cancelled = false;
-    setTitlesHydrated(false);
-    if (!workspaceId) {
-      setTitleOverrides({});
-      setTitlesHydrated(true);
-      return;
-    }
-    loadWorkbenchTerminalTitlesV1(workspaceId)
-      .then((loaded) => {
-        if (cancelled) return;
-        setTitleOverrides(loaded?.titles ?? {});
-        setTitlesHydrated(true);
-      })
-      .catch(() => {
-        if (cancelled) return;
-        setTitleOverrides({});
-        setTitlesHydrated(true);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [workspaceId]);
-
-  useEffect(() => {
-    if (!layoutHydrated) return;
-    if (!workspaceId) return;
-    saveWorkbenchTerminalLayoutV1(workspaceId, panelState).catch(() => {});
-  }, [layoutHydrated, panelState, workspaceId]);
-
-  useEffect(() => {
-    if (!titlesHydrated) return;
-    if (!workspaceId) return;
-    saveWorkbenchTerminalTitlesV1(workspaceId, { v: 1, titles: titleOverrides }).catch(() => {});
-  }, [titleOverrides, titlesHydrated, workspaceId]);
-
-  useEffect(() => {
-    if (!renamingId) return;
-    const frame = window.requestAnimationFrame(() => {
-      renameInputRef.current?.focus();
-      renameInputRef.current?.select();
-    });
-    return () => window.cancelAnimationFrame(frame);
-  }, [renamingId]);
-
-  useEffect(() => {
     refreshTerminals().catch(() => {});
   }, [refreshTerminals]);
 
-  useEffect(() => {
-    if (!contextMenu) return;
-    const onPointerDown = (e: PointerEvent) => {
-      const target = e.target as HTMLElement | null;
-      if (target && contextMenuRef.current?.contains(target)) return;
-      setContextMenu(null);
-    };
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setContextMenu(null);
-    };
-    window.addEventListener("pointerdown", onPointerDown);
-    window.addEventListener("keydown", onKeyDown);
-    return () => {
-      window.removeEventListener("pointerdown", onPointerDown);
-      window.removeEventListener("keydown", onKeyDown);
-    };
-  }, [contextMenu]);
-
-  useLayoutEffect(() => {
-    if (!contextMenu) {
-      setContextMenuStyle(null);
-      return;
-    }
-    const menu = contextMenuRef.current;
-    if (!menu) return;
-    const rect = menu.getBoundingClientRect();
-    const margin = 8;
-    let left = contextMenu.x;
-    let top = contextMenu.y;
-    if (left + rect.width > window.innerWidth - margin) {
-      left = window.innerWidth - margin - rect.width;
-    }
-    if (top + rect.height > window.innerHeight - margin) {
-      top = window.innerHeight - margin - rect.height;
-    }
-    left = Math.max(margin, left);
-    top = Math.max(margin, top);
-    setContextMenuStyle({ left, top, position: "fixed" });
-  }, [contextMenu]);
-
-
-  const workspaceTerminals = terminals;
-  const taskTerminals = useMemo(() => {
-    if (!activeTaskId) return [];
-    return terminals.filter((t) => idToString(t.task_id) === activeTaskId);
-  }, [activeTaskId, terminals]);
-
-  const scopeTerminals = panelState.scope === "workspace" ? workspaceTerminals : taskTerminals;
-
-  const terminalsById = useMemo(() => {
-    const map = new Map<string, TerminalSession>();
-    for (const terminal of terminals) {
-      const id = idToString(terminal.id);
-      if (id) map.set(id, terminal);
-    }
-    return map;
-  }, [terminals]);
+  const {
+    workspaceTerminals,
+    taskTerminals,
+    scopeState,
+    activeGroupId,
+    activeLeafId,
+    activeTerminalId,
+    orderedTerminals,
+    groupInfoByTerminal,
+    scopeDisabled,
+    terminalsById,
+  } = useTerminalPanelScopeModel({ terminals, activeTaskId, panelState });
+  const {
+    renamingId,
+    renameValue,
+    renameInputRef,
+    setRenameValue,
+    beginRenameTerminal,
+    cancelRenameTerminal,
+    commitRenameTerminal,
+  } = useTerminalPanelRename({ terminalsById, titleOverrides, setTitleOverrides });
 
   useEffect(() => {
     if (!open) {
@@ -243,46 +138,6 @@ export const TerminalPanel = forwardRef<TerminalPanelHandle, TerminalPanelProps>
       return next;
     });
   }, [activeTaskId, layoutHydrated, taskTerminals, workspaceTerminals]);
-
-  const scopeState = panelState.scopes[panelState.scope];
-  const activeGroup = useMemo(() => {
-    if (scopeState.groups.length === 0) return null;
-    const activeId = scopeState.activeGroupId ?? scopeState.groups[0].id;
-    return scopeState.groups.find((group) => group.id === activeId) ?? scopeState.groups[0];
-  }, [scopeState]);
-  const activeGroupId = activeGroup?.id ?? null;
-  const activeLayout = activeGroup?.layout ?? null;
-  const activeLeafId = resolveActiveLeafId(activeLayout, activeGroup?.activeLeafId ?? null);
-  const activeTerminalId = activeLayout ? findTerminalIdForLeaf(activeLayout, activeLeafId) : null;
-  const orderedTerminals = useMemo(() => {
-    const byId = new Map(scopeTerminals.map((t) => [idToString(t.id), t]));
-    const ordered: TerminalSession[] = [];
-    for (const id of scopeState.tabOrder) {
-      const t = byId.get(id);
-      if (t) ordered.push(t);
-    }
-    for (const t of scopeTerminals) {
-      const id = idToString(t.id);
-      if (id && !scopeState.tabOrder.includes(id)) ordered.push(t);
-    }
-    return ordered;
-  }, [scopeState.tabOrder, scopeTerminals]);
-
-  const groupInfoByTerminal = useMemo(() => {
-    const info = new Map<string, { position: "top" | "middle" | "bottom"; size: number }>();
-    scopeState.groups.forEach((group) => {
-      const ids = terminalIdsInLayout(group.layout);
-      if (ids.length <= 1) return;
-      const groupSet = new Set(ids);
-      const ordered = scopeState.tabOrder.filter((id) => groupSet.has(id));
-      const orderedIds = ordered.length > 0 ? ordered : ids;
-      orderedIds.forEach((id, idx) => {
-        const position = idx === 0 ? "top" : idx === orderedIds.length - 1 ? "bottom" : "middle";
-        info.set(id, { position, size: orderedIds.length });
-      });
-    });
-    return info;
-  }, [scopeState.groups, scopeState.tabOrder]);
 
   const updateScopeState = useCallback(
     (scope: TerminalScope, updater: (state: TerminalPanelScopeState) => TerminalPanelScopeState) => {
@@ -518,38 +373,6 @@ export const TerminalPanel = forwardRef<TerminalPanelHandle, TerminalPanelProps>
     [panelState.scope, scheduleFitAll, updateScopeState],
   );
 
-  const beginRenameTerminal = useCallback(
-    (terminalId: string) => {
-      const current = titleOverrides[terminalId] ?? terminalsById.get(terminalId)?.title ?? "";
-      setRenamingId(terminalId);
-      setRenameValue(current);
-    },
-    [terminalsById, titleOverrides],
-  );
-
-  const cancelRenameTerminal = useCallback(() => {
-    setRenamingId(null);
-    setRenameValue("");
-  }, []);
-
-  const commitRenameTerminal = useCallback(() => {
-    if (!renamingId) return;
-    const terminal = terminalsById.get(renamingId);
-    const fallback = terminal?.title ?? "";
-    const trimmed = renameValue.trim();
-    setTitleOverrides((prev) => {
-      const next = { ...prev };
-      if (!trimmed || trimmed === fallback) {
-        delete next[renamingId];
-      } else {
-        next[renamingId] = trimmed;
-      }
-      return next;
-    });
-    setRenamingId(null);
-    setRenameValue("");
-  }, [renameValue, renamingId, terminalsById]);
-
   useEffect(() => {
     if (open) return;
     setContextMenu(null);
@@ -685,7 +508,6 @@ export const TerminalPanel = forwardRef<TerminalPanelHandle, TerminalPanelProps>
     return () => window.removeEventListener("resize", onResize);
   }, [open, scheduleFitAll]);
 
-  const scopeDisabled = panelState.scope === "task" && !activeTaskId;
   const contextTerminal = contextMenu ? terminalsById.get(contextMenu.terminalId) ?? null : null;
   const contextGroupInfo = contextMenu ? findGroupForTerminal(scopeState.groups, contextMenu.terminalId) : null;
   const contextGroupSize = contextGroupInfo ? terminalIdsInLayout(contextGroupInfo.group.layout).length : 0;
@@ -748,61 +570,20 @@ export const TerminalPanel = forwardRef<TerminalPanelHandle, TerminalPanelProps>
         </div>
       </div>
       {contextMenu && (
-        <div
-          ref={contextMenuRef}
-          className="wb-menu wb-terminal-menu"
-          role="menu"
-          style={contextMenuStyle ?? { left: contextMenu.x, top: contextMenu.y, position: "fixed" }}
-        >
-          <button
-            type="button"
-            className="wb-menu-item"
-            onClick={() => {
-              setContextMenu(null);
-              if (contextTerminal) beginRenameTerminal(contextMenu.terminalId);
-            }}
-            disabled={!contextTerminal}
-            role="menuitem"
-          >
-            Rename
-          </button>
-          <button
-            type="button"
-            className="wb-menu-item"
-            onClick={() => {
-              setContextMenu(null);
-              void splitTerminalForId(contextTerminal ? contextMenu.terminalId : null);
-            }}
-            disabled={!contextTerminal}
-            role="menuitem"
-          >
-            Split
-          </button>
-          <button
-            type="button"
-            className="wb-menu-item"
-            onClick={() => {
-              setContextMenu(null);
-              handleUnsplitTerminal(contextTerminal ? contextMenu.terminalId : null);
-            }}
-            disabled={!contextTerminal || !canUnsplit}
-            role="menuitem"
-          >
-            Unsplit
-          </button>
-          <button
-            type="button"
-            className="wb-menu-item wb-menu-item-danger"
-            onClick={() => {
-              setContextMenu(null);
-              void handleKillTerminal(contextTerminal ? contextMenu.terminalId : null);
-            }}
-            disabled={!contextTerminal}
-            role="menuitem"
-          >
-            Kill terminal
-          </button>
-        </div>
+        <TerminalPanelContextMenu
+          contextMenu={contextMenu}
+          contextTerminal={contextTerminal}
+          canUnsplit={canUnsplit}
+          onClose={() => setContextMenu(null)}
+          onRename={beginRenameTerminal}
+          onSplit={(terminalId) => {
+            void splitTerminalForId(terminalId);
+          }}
+          onUnsplit={handleUnsplitTerminal}
+          onKill={(terminalId) => {
+            void handleKillTerminal(terminalId);
+          }}
+        />
       )}
     </div>
   );

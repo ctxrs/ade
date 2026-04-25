@@ -20,41 +20,17 @@ import {
   attachmentDisplayName,
   formatElapsedMs,
   formatToolInput,
-  humanToolKind,
   humanToolStatus,
   humanTurnStatus,
   imageAttachmentSrc,
-  isPlaceholderToolLabel,
   looksLikeMarkdown,
-  normalizeDisplayToolLabel,
   parseIsoMs,
   toolKindIcon,
   toolSummaryLine,
-  truncateMiddle,
 } from "../sessionView";
 import type { ThreadItem, WorkbenchTurnHeader } from "../sessionView";
+import { buildWorkbenchToolLabel } from "./sessionThreadToolLabel";
 import { getWorkbenchMessageCollapseState, getWorkbenchMessageLayoutState } from "./transcriptRowLayoutModel";
-
-const asRecord = (value: unknown): Record<string, unknown> => {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
-  return value as Record<string, unknown>;
-};
-
-const INLINE_SUMMARY_VERBS = new Set([
-  "Read",
-  "Explored",
-  "Searched",
-  "Wrote",
-  "Edited",
-  "Ran",
-  "Run",
-  "Fetch",
-  "Fetched",
-  "Search",
-  "List",
-  "Write",
-  "Edit",
-]);
 
 type SelectionSnapshot = {
   text: string;
@@ -341,198 +317,7 @@ export function WorkbenchToolRow({
   void verbosity;
   void expanded;
   void onToggle;
-  const kind = String(item.tool_kind ?? "").toLowerCase();
-  const pathFromLoc = item.locations?.[0]?.path;
-  const title = String(item.title ?? "").trim();
-  const summary = String(item.subtitle ?? "").trim() || toolSummaryLine(kind, item.input);
-
-  const normalizeWorktreePath = (p?: string) => {
-    const s = String(p ?? "").trim();
-    if (!s) return "";
-    // Strip the ctx worktree prefix.
-    return s.replace(/\/home\/[^/]+\/\.ctx\/worktrees\/[0-9a-f-]+\/[0-9a-f-]+\//g, "");
-  };
-
-  const shortPath = (p?: string) => {
-    const s0 = normalizeWorktreePath(p);
-    const s = String(s0 ?? "").trim();
-    if (!s) return "";
-    const parts = s.split(/[\\/]/).filter(Boolean);
-    if (parts.length <= 2) return s;
-    return `${parts[parts.length - 2]}/${parts[parts.length - 1]}`;
-  };
-
-  const shortCommand = (raw: string) => {
-    let cmd = String(raw ?? "").trim();
-    if (!cmd) return "";
-    cmd = cmd.replace(/^\/bin\/bash\s+-lc\s+/, "");
-    cmd = cmd.replace(/^bash\s+-lc\s+/, "");
-    cmd = cmd.replace(/^set\s+-euo\s+pipefail\s*;?\s*/i, "");
-    cmd = cmd.replace(/^\s*&&\s*/, "");
-    cmd = cmd.replace(/^"(.+)"$/, "$1");
-    cmd = cmd.replace(/\/home\/[^/]+\/\.ctx\/worktrees\/[0-9a-f-]+\/[0-9a-f-]+\//g, "");
-    const mSupercat = cmd.match(/(?:^|\s)(\.?\/?scripts\/supercat\.sh)\s+([^\s&;]+)/);
-    if (mSupercat) return `./scripts/supercat.sh ${shortPath(mSupercat[2])}`;
-    const mReadMany =
-      cmd.match(/rg\s+--files\s+([^\s|&;]+)\s*\|\s*sort\b[\s\S]*xargs[\s\S]*\bcat\b/) ??
-      cmd.match(/find\s+([^\s|&;]+)\s+.*xargs[\s\S]*\bcat\b/);
-    if (mReadMany) return `Read ${shortPath(mReadMany[1])}`;
-    const mCat = cmd.match(/(?:^|[;&|]\s*)cat\s+([^\s|&;]+)(?:\s|$)/);
-    if (mCat) return `Read ${shortPath(mCat[1])}`;
-    const mLs = cmd.match(/(?:^|[;&|]\s*)(?:ls|ls\s+-la|ls\s+-l)\s+([^\s|&;]+)(?:\s|$)/);
-    if (mLs) return `Explored ${shortPath(mLs[1])}`;
-    const mRg = cmd.match(/(?:^|[;&|]\s*)rg\s+([^\s]+)\s+([^\s|&;]+)(?:\s|$)/);
-    if (mRg) return `Searched ${truncateMiddle(mRg[1], 60)}`;
-    const first = cmd.split(/\s+/).slice(0, 4).join(" ");
-    return truncateMiddle(first, 80);
-  };
-
-  const makeParts = (verb: string, rest?: string) => {
-    const trimmedRest = String(rest ?? "").trim();
-    return {
-      verb,
-      rest: trimmedRest,
-      label: trimmedRest ? `${verb} ${trimmedRest}` : verb,
-    };
-  };
-
-  const parsePrefixed = (value: string, verbs: string[]) => {
-    const trimmed = String(value ?? "").trim();
-    if (!trimmed) return null;
-    for (const verb of verbs) {
-      if (trimmed === verb) return makeParts(verb);
-      if (trimmed.startsWith(`${verb} `)) return makeParts(verb, trimmed.slice(verb.length + 1));
-    }
-    return null;
-  };
-
-  const isInlineSummaryVerb = (value: string) => INLINE_SUMMARY_VERBS.has(String(value ?? "").trim());
-
-  const labelParts = (() => {
-    const normalizedTitle = normalizeWorktreePath(title);
-    const displayTitle = isPlaceholderToolLabel(normalizedTitle) ? "" : normalizeDisplayToolLabel(normalizedTitle);
-    const providerToolName = normalizeWorktreePath(String(item.provider_tool_name ?? "").trim());
-    const displayProviderToolName = isPlaceholderToolLabel(providerToolName)
-      ? ""
-      : normalizeDisplayToolLabel(providerToolName);
-    const titlePrefixed = parsePrefixed(displayTitle, [
-      "Read",
-      "Explored",
-      "Searched",
-      "Wrote",
-      "Edited",
-      "Run",
-      "Fetch",
-      "Search",
-      "List",
-      "Write",
-      "Edit",
-      "Subagent",
-    ]);
-    const titleRest = titlePrefixed?.rest ?? "";
-
-    if (displayTitle && displayTitle !== "Tool") {
-      if (summary && isInlineSummaryVerb(displayTitle)) {
-        return makeParts(displayTitle, summary);
-      }
-      if (titlePrefixed) return titlePrefixed;
-      return makeParts(displayTitle);
-    }
-
-    const providerPrefixed = parsePrefixed(displayProviderToolName, [
-      "Read",
-      "Explored",
-      "Searched",
-      "Wrote",
-      "Edited",
-      "Run",
-      "Fetch",
-      "Search",
-      "List",
-      "Write",
-      "Edit",
-      "Subagent",
-    ]);
-    if (displayProviderToolName) {
-      if (providerPrefixed) return providerPrefixed;
-      return makeParts(displayProviderToolName);
-    }
-
-    const inputRecord = asRecord(item.input);
-    const parsedCmd = inputRecord.parsed_cmd;
-    const parsed = Array.isArray(parsedCmd) ? parsedCmd.map((cmd) => asRecord(cmd)) : [];
-    if (parsed.length > 0) {
-      const c0 = parsed[0] ?? {};
-      const c0Path = typeof c0.path === "string" ? c0.path : "";
-      if (c0.type === "list_files" && c0Path) return makeParts("Explored", shortPath(c0Path));
-      if (c0.type === "read_file" && c0Path) return makeParts("Read", shortPath(c0Path));
-      if (c0.type === "search") {
-        const q = String(c0.query ?? c0.pattern ?? c0.regex ?? c0.text ?? "").trim();
-        if (q) return makeParts("Searched", truncateMiddle(q, 90));
-        if (c0Path) return makeParts("Searched", shortPath(c0Path));
-        return makeParts("Searched");
-      }
-    }
-    if (kind === "search") {
-      const q = String(
-        inputRecord.query ??
-          inputRecord.pattern ??
-          inputRecord.regex ??
-          inputRecord.text ??
-          summary ??
-          titleRest ??
-          "",
-      ).trim();
-      return q ? makeParts("Searched", truncateMiddle(q, 90)) : makeParts("Searched");
-    }
-    if (kind === "execute") {
-      const cmd = Array.isArray(inputRecord.command) ? inputRecord.command.join(" ") : inputRecord.command;
-      const short = shortCommand(String(cmd ?? ""));
-      const parsedShort = parsePrefixed(short, ["Read", "Explored", "Searched", "Wrote", "Edited"]);
-      if (parsedShort) return parsedShort;
-      return short ? makeParts("Run", short) : makeParts("Run");
-    }
-    if (kind === "read_file" || kind === "read") {
-      const p = pathFromLoc ?? summary ?? titleRest;
-      return p ? makeParts("Read", shortPath(p)) : makeParts("Read");
-    }
-    if (kind === "list" || kind === "list_files") {
-      const p = summary || pathFromLoc || titleRest;
-      return p ? makeParts("Explored", shortPath(p)) : makeParts("Explored");
-    }
-    if (kind === "write" || kind === "edit" || kind === "apply_patch") {
-      const p = summary || pathFromLoc || titleRest;
-      const verb = kind === "write" ? "Wrote" : "Edited";
-      return p ? makeParts(verb, shortPath(p)) : makeParts(verb);
-    }
-    if (kind === "fetch" || kind === "http") {
-      const p = summary || titleRest;
-      return p ? makeParts("Fetch", p) : makeParts("Fetch");
-    }
-    if (kind === "error") return makeParts("Error");
-
-    const fallbackVerb = humanToolKind(item.tool_kind);
-    if (summary && fallbackVerb === "Tool") {
-      return makeParts("Tool", summary);
-    }
-    const fallbackLabel = displayTitle || displayProviderToolName || fallbackVerb;
-    const parsedLabel = parsePrefixed(fallbackLabel, ["Read", "Explored", "Searched", "Wrote", "Edited", "Run"]);
-    if (parsedLabel) return parsedLabel;
-    if (fallbackLabel && fallbackLabel !== fallbackVerb) {
-      return makeParts(fallbackVerb, fallbackLabel);
-    }
-    return makeParts(fallbackVerb);
-  })();
-
-  const { verb, rest, label } = labelParts;
-  const description = (() => {
-    const trimmed = String(summary ?? "").trim();
-    if (!trimmed) return "";
-    if (trimmed === rest || trimmed === label || trimmed === title) return "";
-    return trimmed;
-  })();
-  const inlineTail = [rest, description].filter((part) => String(part).trim().length > 0).join(" · ");
-  const fullLabel = inlineTail ? `${verb} · ${inlineTail}` : verb;
+  const { verb, inlineTail } = buildWorkbenchToolLabel(item);
   return (
     <div className="wb-tool-row">
       <div className="wb-event-row wb-event-row-static">

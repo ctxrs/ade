@@ -1,67 +1,31 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { flushSync } from "react-dom";
+import { useCallback, useMemo, useRef } from "react";
 import { ArrowUp, ChevronDown, Ellipsis, Image, Square } from "lucide-react";
 import { shouldSendOnEnter } from "../../utils/keyboard";
-import { buildModelCatalog, formatEffortLabel, parseModelId } from "../../utils/modelEffort";
+import { formatEffortLabel } from "../../utils/modelEffort";
 import { errorMessage } from "../../utils/errorMessage";
-import {
-  isReadyVisibleHarnessProviderStatus,
-} from "../../utils/providerInventory";
 import { shouldHydrateProviderModels } from "../../pages/workbenchShell/useWorkbenchProviders";
 import { ComposerAutocompleteMenu } from "../ComposerAutocompleteMenu";
 import { useComposerAutocomplete } from "../../state/useComposerAutocomplete";
 import { imageFilesToMessageAttachments } from "../../utils/messageAttachments";
 import { TextInput, Textarea } from "../ui/text-input";
-import {
-  extractImageFilesFromClipboardTransfer,
-  clipboardHasImagePayload,
-  imageAttachmentsFromClipboardTransfer,
-} from "../../utils/pastedImageAttachments";
 import type { SessionViewVerbosity } from "../../state/uiStateStore";
 import { MenuTitleRow } from "./WorkbenchComposerMenu";
 import { WorkbenchComposerHarnessMenu } from "./WorkbenchComposerHarnessMenu";
 import {
   MENU_DESCRIPTIONS,
   attachmentDisplayName,
-  buildModelsForProvider,
-  clamp,
   describeContextWindow,
-  deriveFullModelIdForBase,
   imageAttachmentSrc,
   labelForVerbosity,
-  modelIdFromProviderOptions,
-  nextAutoSeededModelId,
   pickDefaultEffort,
-  shouldShowLoadingProviderModels,
 } from "./WorkbenchComposer.utils";
 import type { ActiveSessionProps, NewSessionProps, WorkbenchComposerProps } from "./WorkbenchComposer.types";
-import {
-  findComposerTranscriptScroller,
-  normalizeComposerWheelDeltaY,
-  resolveComposerWheelTarget,
-} from "./workbenchComposerScrollOwnership";
-
-type OpenMenuId = "harness" | "model" | "effort" | "verbosity";
+import { useWorkbenchComposerFloatingMenu } from "./useWorkbenchComposerFloatingMenu";
+import { useWorkbenchComposerInputController } from "./useWorkbenchComposerInputController";
+import { useWorkbenchComposerModelState } from "./useWorkbenchComposerModelState";
 
 const logoClasses = (base: string, invertInDark?: boolean, invertInLight?: boolean) =>
   [base, invertInDark ? "wb-invert" : "", invertInLight ? "wb-invert-light" : ""].filter(Boolean).join(" ");
-
-type WorkbenchComposerPasteDebug = {
-  attachedCount: number;
-  hitCount: number;
-  lastAttachedClassName: string | null;
-  lastHit?: {
-    fileCount: number;
-    itemCount: number;
-    extractedFileCount: number;
-    hasImagePayload: boolean;
-    types: string[];
-  };
-  lastQueuedAttachmentCount?: number;
-  lastRenderedAttachmentCount?: number;
-  lastResolvedAttachmentCount?: number;
-  lastError?: string | null;
-};
 
 export function WorkbenchComposer(props: WorkbenchComposerProps) {
   const {
@@ -99,21 +63,34 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
     [contextWindow, variant],
   );
 
-  const [openMenu, setOpenMenu] = useState<OpenMenuId | null>(null);
-  const [menuStyle, setMenuStyle] = useState<React.CSSProperties | null>(null);
-  const [textareaNode, setTextareaNode] = useState<HTMLTextAreaElement | null>(null);
-  const rootRef = useRef<HTMLDivElement | null>(null);
-  const menuRef = useRef<HTMLDivElement | null>(null);
-  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
-  const mirrorRef = useRef<HTMLDivElement | null>(null);
-  const lastHeightRef = useRef<number>(0);
-  const restoreDraftTailRef = useRef(true);
-  const autoSeededModelIdByProviderRef = useRef<Record<string, string>>({});
-  const pendingSelectionRef = useRef<number | null>(null);
-  const harnessTriggerRef = useRef<HTMLButtonElement | null>(null);
-  const modelTriggerRef = useRef<HTMLButtonElement | null>(null);
-  const effortTriggerRef = useRef<HTMLButtonElement | null>(null);
-  const verbosityTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const {
+    openMenu,
+    setOpenMenu,
+    menuStyle,
+    rootRef,
+    menuRef,
+    harnessTriggerRef,
+    modelTriggerRef,
+    effortTriggerRef,
+    verbosityTriggerRef,
+  } = useWorkbenchComposerFloatingMenu();
+  const {
+    clearSelectionBeforeSubmit,
+    handleTextareaChange,
+    handleTextareaWheelCapture,
+    mirrorRef,
+    setTextareaElement,
+    textareaRef,
+  } = useWorkbenchComposerInputController({
+    attachments,
+    onAttachmentError,
+    recording,
+    setAttachments,
+    setOpenMenu,
+    setValue,
+    value,
+    variant,
+  });
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const autocomplete = useComposerAutocomplete({
     sessionId: sessionIdForAutocomplete,
@@ -123,71 +100,17 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
     textareaRef,
     slashCommands,
   });
-
-  const setTextareaElement = useCallback((node: HTMLTextAreaElement | null) => {
-    textareaRef.current = node;
-    setTextareaNode(node);
-  }, []);
-
-  const resizeTextarea = useCallback(() => {
-    const el = textareaRef.current;
-    const mirror = mirrorRef.current;
-    if (!el || !mirror) return;
-
-    const minHeightPx = variant === "newSession" ? 88 : 28;
-    const maxHeightPx = variant === "newSession" ? 380 : 220;
-
-    mirror.style.width = `${el.clientWidth}px`;
-    mirror.textContent = value.length > 0 ? `${value}\n` : "\n";
-    let measured = mirror.scrollHeight;
-    if (!measured) {
-      const styles = window.getComputedStyle(el);
-      const lineHeight = Number.parseFloat(styles.lineHeight || "") || 20;
-      const paddingTop = Number.parseFloat(styles.paddingTop || "") || 0;
-      const paddingBottom = Number.parseFloat(styles.paddingBottom || "") || 0;
-      const lines = Math.max(1, value.split("\n").length);
-      measured = Math.ceil(lines * lineHeight + paddingTop + paddingBottom);
-    }
-    if (!measured) {
-      measured = el.scrollHeight;
-    }
-    const next = Math.min(maxHeightPx, Math.max(minHeightPx, measured));
-    const currentHeight =
-      lastHeightRef.current ||
-      Number.parseFloat(el.style.height || "0") ||
-      el.getBoundingClientRect().height ||
-      minHeightPx;
-    const hasInlineHeight = el.style.height !== "";
-    if (!hasInlineHeight || !Number.isFinite(currentHeight) || Math.abs(next - currentHeight) > 0.5) {
-      el.style.height = `${next}px`;
-      lastHeightRef.current = next;
-    } else {
-      lastHeightRef.current = currentHeight;
-    }
-
-    if (recording) el.scrollTop = el.scrollHeight;
-  }, [recording, value, variant]);
-
-  const clearSelectionBeforeSubmit = useCallback(() => {
-    if (variant !== "newSession") return;
-
-    setOpenMenu(null);
-    autocomplete.dismiss();
-
-    const textarea = textareaRef.current;
-    if (textarea) {
-      const cursor =
-        textarea.selectionEnd
-        ?? textarea.selectionStart
-        ?? textarea.value.length;
-      textarea.setSelectionRange(cursor, cursor);
-      if (document.activeElement === textarea) {
-        textarea.blur();
-      }
-    }
-
-    window.getSelection()?.removeAllRanges();
-  }, [autocomplete, variant]);
+  const {
+    activeModelData,
+    currentBase,
+    currentEffort,
+    currentModelLabel,
+    deriveFullModelIdForBase,
+    effortOptions,
+    harnessControl,
+    setActiveModelId,
+    showModelEffort,
+  } = useWorkbenchComposerModelState({ props, variant, newSession });
 
   const handleSendAction = useCallback(() => {
     if (showStop) {
@@ -198,288 +121,12 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
       return;
     }
 
+    if (variant === "newSession") {
+      autocomplete.dismiss();
+    }
     clearSelectionBeforeSubmit();
     onSend();
-  }, [clearSelectionBeforeSubmit, interruptPending, onInterrupt, onSend, showStop]);
-
-  const insertPastedText = useCallback((textarea: HTMLTextAreaElement, text: string) => {
-    if (!text) return;
-    const start = textarea.selectionStart ?? textarea.value.length;
-    const end = textarea.selectionEnd ?? start;
-    pendingSelectionRef.current = start + text.length;
-    restoreDraftTailRef.current = false;
-    setValue(`${textarea.value.slice(0, start)}${text}${textarea.value.slice(end)}`);
-  }, [setValue]);
-
-  const handleClipboardPaste = useCallback((
-    textarea: HTMLTextAreaElement,
-    transfer: DataTransfer | null,
-    preventDefault: () => void,
-  ) => {
-    const debugWindow = window as Window & { __ctxComposerPasteDebug?: WorkbenchComposerPasteDebug };
-    const debug = debugWindow.__ctxComposerPasteDebug;
-    const extractedFiles = extractImageFilesFromClipboardTransfer(transfer);
-    const hasImagePayload = extractedFiles.length > 0 || clipboardHasImagePayload(transfer);
-    if (debug) {
-      debug.hitCount += 1;
-      debug.lastHit = {
-        fileCount: Array.from(transfer?.files ?? []).length,
-        itemCount: Array.from(transfer?.items ?? []).length,
-        extractedFileCount: extractedFiles.length,
-        hasImagePayload,
-        types: Array.from(transfer?.types ?? []),
-      };
-      debug.lastResolvedAttachmentCount = undefined;
-      debug.lastError = null;
-    }
-    if (!hasImagePayload) return;
-    preventDefault();
-    const pastedText = transfer?.getData?.("text/plain") ?? "";
-    if (pastedText.length > 0) {
-      flushSync(() => {
-        insertPastedText(textarea, pastedText);
-      });
-    }
-    onAttachmentError?.(null);
-    void imageAttachmentsFromClipboardTransfer(transfer)
-      .then((next) => {
-        if (debug) {
-          debug.lastResolvedAttachmentCount = next.length;
-        }
-        if (next.length === 0) return;
-        flushSync(() => {
-          setAttachments((prev) => {
-            const merged = [...prev, ...next];
-            if (debug) {
-              debug.lastQueuedAttachmentCount = merged.length;
-            }
-            return merged;
-          });
-        });
-      })
-      .catch((error: unknown) => {
-        if (debug) {
-          debug.lastError = errorMessage(error);
-        }
-        onAttachmentError?.(errorMessage(error));
-      });
-  }, [insertPastedText, onAttachmentError, setAttachments]);
-
-  const handleTextareaWheelCapture = useCallback((event: React.WheelEvent<HTMLTextAreaElement>) => {
-    const textarea = textareaRef.current;
-    if (!textarea || event.ctrlKey) return;
-
-    const lineHeightPx = Number.parseFloat(window.getComputedStyle(textarea).lineHeight || "") || 20;
-    const deltaY = normalizeComposerWheelDeltaY(event.deltaY, event.deltaMode, lineHeightPx);
-    const target = resolveComposerWheelTarget(
-      {
-        scrollTop: textarea.scrollTop,
-        clientHeight: textarea.clientHeight,
-        scrollHeight: textarea.scrollHeight,
-      },
-      deltaY,
-    );
-
-    if (target === "ignore") return;
-
-    if (target === "composer") {
-      const maxScrollTop = Math.max(0, textarea.scrollHeight - textarea.clientHeight);
-      const nextTop = clamp(textarea.scrollTop + deltaY, 0, maxScrollTop);
-      event.preventDefault();
-      event.stopPropagation();
-      if (Math.abs(nextTop - textarea.scrollTop) > 0.5) {
-        textarea.scrollTop = nextTop;
-      }
-      return;
-    }
-
-    const scroller = findComposerTranscriptScroller(textarea);
-    if (!scroller) return;
-
-    const maxScrollTop = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
-    const nextTop = Math.max(0, Math.min(maxScrollTop, scroller.scrollTop + deltaY));
-    event.preventDefault();
-    event.stopPropagation();
-    if (Math.abs(nextTop - scroller.scrollTop) <= 0.5) return;
-    scroller.scrollTop = nextTop;
-    scroller.dispatchEvent(new Event("scroll"));
-  }, []);
-
-  useLayoutEffect(() => {
-    resizeTextarea();
-    const textarea = textareaRef.current;
-    if (!textarea) return;
-    const pendingSelection = pendingSelectionRef.current;
-    if (pendingSelection !== null) {
-      textarea.setSelectionRange(pendingSelection, pendingSelection);
-      pendingSelectionRef.current = null;
-      return;
-    }
-    if (!restoreDraftTailRef.current || value.length === 0) return;
-    const end = textarea.value.length;
-    textarea.setSelectionRange(end, end);
-    textarea.scrollTop = textarea.scrollHeight;
-    restoreDraftTailRef.current = false;
-  }, [resizeTextarea, value]);
-
-  useEffect(() => {
-    const textarea = textareaNode;
-    if (!textarea) return;
-    const params = new URLSearchParams(window.location.search);
-    const e2eEnabled = window.sessionStorage.getItem("ctxE2E") === "1" || params.get("ctxE2E") === "1";
-    const debugWindow = window as Window & { __ctxComposerPasteDebug?: WorkbenchComposerPasteDebug };
-    if (e2eEnabled) {
-      debugWindow.__ctxComposerPasteDebug ??= {
-        attachedCount: 0,
-        hitCount: 0,
-        lastAttachedClassName: null,
-      };
-      debugWindow.__ctxComposerPasteDebug.attachedCount += 1;
-      debugWindow.__ctxComposerPasteDebug.lastAttachedClassName = textarea.className || null;
-    }
-    const onNativePaste = (event: ClipboardEvent) => {
-      handleClipboardPaste(textarea, event.clipboardData, () => event.preventDefault());
-    };
-    textarea.addEventListener("paste", onNativePaste);
-    return () => textarea.removeEventListener("paste", onNativePaste);
-  }, [handleClipboardPaste, textareaNode]);
-
-  useEffect(() => {
-    const debugWindow = window as Window & { __ctxComposerPasteDebug?: WorkbenchComposerPasteDebug };
-    if (!debugWindow.__ctxComposerPasteDebug) return;
-    debugWindow.__ctxComposerPasteDebug.lastRenderedAttachmentCount = attachments.length;
-  }, [attachments]);
-
-  useEffect(() => {
-    if (!openMenu) return;
-    const onPointerDown = (e: PointerEvent) => {
-      const root = rootRef.current;
-      if (!root) return;
-      const target = e.target as Node;
-      if (!root.contains(target)) {
-        setOpenMenu(null);
-        return;
-      }
-      const el = e.target as Element | null;
-      if (el && (el.closest(".wb-menu") || el.closest(".wb-menu-trigger"))) return;
-      setOpenMenu(null);
-    };
-    document.addEventListener("pointerdown", onPointerDown);
-    return () => document.removeEventListener("pointerdown", onPointerDown);
-  }, [openMenu]);
-
-  const getTriggerForMenu = useCallback(
-    (id: OpenMenuId): HTMLButtonElement | null => {
-      if (id === "harness") return harnessTriggerRef.current;
-      if (id === "model") return modelTriggerRef.current;
-      if (id === "effort") return effortTriggerRef.current;
-      if (id === "verbosity") return verbosityTriggerRef.current;
-      return null;
-    },
-    [],
-  );
-
-  const recomputeMenuPosition = useCallback(() => {
-    if (!openMenu) return;
-    const menuEl = menuRef.current;
-    const triggerEl = getTriggerForMenu(openMenu);
-    if (!menuEl || !triggerEl) return;
-
-    const margin = 10;
-    const viewportW = window.innerWidth;
-    const viewportH = window.innerHeight;
-
-    const triggerRect = triggerEl.getBoundingClientRect();
-    const menuRect = menuEl.getBoundingClientRect();
-    const menuW = Math.max(160, menuRect.width);
-    const menuH = Math.max(40, menuRect.height);
-
-    let left = triggerRect.left;
-    let top = triggerRect.bottom + 8;
-    let maxHeight: number | null = null;
-    let overflowY: React.CSSProperties["overflowY"] = "visible";
-
-    if (openMenu === "harness") {
-      left = triggerRect.right + 10;
-      top = triggerRect.top + triggerRect.height / 2 - menuH / 2;
-
-      if (left + menuW > viewportW - margin) {
-        left = Math.max(margin, viewportW - margin - menuW);
-      }
-      top = Math.max(margin, Math.min(top, viewportH - margin - menuH));
-
-      const maxH = viewportH - margin * 2;
-      if (menuH > maxH) {
-        top = margin;
-        maxHeight = maxH;
-        overflowY = "hidden";
-      }
-    } else {
-      const downTop = triggerRect.bottom + 8;
-      const upTop = triggerRect.top - 8 - menuH;
-      const availableDown = viewportH - margin - downTop;
-      const availableUp = triggerRect.top - margin - 8;
-
-      const shouldOpenUp = availableDown < menuH && availableUp > availableDown;
-      if (shouldOpenUp) {
-        const maxH = Math.max(120, availableUp);
-        const usedH = Math.min(menuH, maxH);
-        top = triggerRect.top - 8 - usedH;
-        maxHeight = menuH > maxH ? maxH : null;
-        overflowY = menuH > maxH ? "auto" : "visible";
-      } else {
-        top = downTop;
-        const maxH = Math.max(120, availableDown);
-        maxHeight = menuH > maxH ? maxH : null;
-        overflowY = menuH > maxH ? "auto" : "visible";
-      }
-
-      if (left + menuW > viewportW - margin) left = viewportW - margin - menuW;
-      if (left < margin) left = margin;
-      if (top < margin) top = margin;
-    }
-
-    setMenuStyle({
-      position: "fixed",
-      left,
-      top,
-      maxHeight: maxHeight ?? undefined,
-      overflowY,
-      visibility: "visible",
-    });
-  }, [getTriggerForMenu, openMenu]);
-
-  useLayoutEffect(() => {
-    if (!openMenu) {
-      setMenuStyle(null);
-      return;
-    }
-    setMenuStyle({
-      position: "fixed",
-      left: 0,
-      top: 0,
-      maxHeight: undefined,
-      overflowY: "visible",
-      visibility: "hidden",
-    });
-
-    const raf = window.requestAnimationFrame(() => {
-      recomputeMenuPosition();
-    });
-
-    window.addEventListener("resize", recomputeMenuPosition);
-    const onAnyScroll = (e: Event) => {
-      const target = e.target as Element | null;
-      if (target && typeof target.closest === "function" && target.closest(".wb-menu")) return;
-      recomputeMenuPosition();
-    };
-    window.addEventListener("scroll", onAnyScroll, true);
-    return () => {
-      window.cancelAnimationFrame(raf);
-      window.removeEventListener("resize", recomputeMenuPosition);
-      window.removeEventListener("scroll", onAnyScroll, true);
-    };
-  }, [openMenu, recomputeMenuPosition]);
+  }, [autocomplete, clearSelectionBeforeSubmit, interruptPending, onInterrupt, onSend, showStop, variant]);
 
   const verbosityMenu = canAdjustVerbosity ? (
     <div className="wb-menu" role="menu" ref={menuRef} style={menuStyle ?? undefined}>
@@ -506,94 +153,6 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
       ))}
     </div>
   ) : null;
-
-  const activeModelData = useMemo(() => {
-    if (variant === "activeSession") {
-      const models = (props as ActiveSessionProps).availableModels;
-      const catalog = buildModelCatalog(models);
-      const parsed = parseModelId((props as ActiveSessionProps).currentModelId, catalog);
-      return { models, catalog, parsed, loading: false, fromProviderOptions: false };
-    }
-
-    const ns = newSession;
-    const primary = ns?.draftHarness ?? null;
-    if (!primary) return { models: [], catalog: buildModelCatalog([]), parsed: parseModelId(""), loading: false, fromProviderOptions: true };
-    const opts = ns?.providerOptions[primary.providerId];
-    const models = buildModelsForProvider(primary.providerId, opts);
-    const catalog = buildModelCatalog(models);
-    const parsed = parseModelId(primary.modelId, catalog);
-    const loading = shouldShowLoadingProviderModels(primary.providerId, opts);
-    return { models, catalog, parsed, loading, fromProviderOptions: true };
-  }, [newSession, props, variant]);
-
-  const providerIdsToEnsure = useMemo(() => {
-    if (!newSession) return [];
-    return [newSession.draftHarness?.providerId ?? newSession.defaultProviderId].filter(Boolean);
-  }, [newSession?.defaultProviderId, newSession?.draftHarness]);
-
-  // Proactively hydrate provider auth/config summary from providers/bootstrap.
-  useEffect(() => {
-    if (!newSession) return;
-    for (const providerId of providerIdsToEnsure) {
-      const st = newSession.providersById[providerId];
-      if (!isReadyVisibleHarnessProviderStatus(st)) continue;
-      newSession.ensureProviderAuthSummary(providerId).catch(() => {});
-    }
-  }, [newSession?.ensureProviderAuthSummary, newSession?.providerOptions, newSession?.providersById, providerIdsToEnsure]);
-
-  // Seed the primary draft model from the daemon-backed saved preference when valid,
-  // otherwise fall back to the provider-advertised current/default model.
-  useEffect(() => {
-    if (!newSession) return;
-    const primary = newSession.draftHarness ?? null;
-    if (!primary) return;
-    if (primary.preferenceExplicit) return;
-    const providerId = primary.providerId;
-    const opts = newSession.providerOptions[providerId];
-    const next = modelIdFromProviderOptions(opts);
-    const previousAutoSeed = autoSeededModelIdByProviderRef.current[providerId] ?? null;
-    const nextSeededModelId = nextAutoSeededModelId(primary.modelId, next, previousAutoSeed);
-    if (!nextSeededModelId) return;
-    autoSeededModelIdByProviderRef.current[providerId] = nextSeededModelId;
-    newSession.setDraftHarness((prev) =>
-      prev && prev.providerId === providerId ? { ...prev, modelId: nextSeededModelId } : prev,
-    );
-  }, [newSession?.draftHarness, newSession?.providerOptions, newSession?.setDraftHarness]);
-
-  const showModelEffort = useMemo(() => {
-    if (variant === "newSession") {
-      return !!newSession?.draftHarness;
-    }
-    return true;
-  }, [newSession?.draftHarness, variant]);
-
-  const currentBase = activeModelData.parsed.base || activeModelData.catalog.baseIds[0] || "";
-  const currentEffort = activeModelData.parsed.effort;
-  const effortOptions = activeModelData.catalog.effortsByBase[currentBase] ?? [];
-  const currentModelLabel = useMemo(() => {
-    if (variant === "activeSession") {
-      const displayLabel = (props as ActiveSessionProps).currentModelDisplayLabel?.trim();
-      if (displayLabel) return displayLabel;
-    }
-    if (currentBase) {
-      return activeModelData.catalog.displayNameByBase[currentBase] ?? currentBase;
-    }
-    return "Model";
-  }, [activeModelData.catalog.displayNameByBase, currentBase, props, variant]);
-
-  const setActiveModelId = useCallback(
-    (nextFullId: string) => {
-      if (variant === "activeSession") {
-        (props as ActiveSessionProps).onSetModelId(nextFullId);
-        return;
-      }
-      const ns = props as NewSessionProps;
-      ns.setDraftHarness((prev) =>
-        prev ? { ...prev, modelId: nextFullId, preferenceExplicit: true } : prev,
-      );
-    },
-    [props, variant],
-  );
 
   const modelMenu = (
     <div className="wb-menu wb-model-menu" role="menu" ref={menuRef} style={menuStyle ?? undefined}>
@@ -663,40 +222,6 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
     </div>
   );
 
-  const harnessControl = useMemo(() => {
-    if (variant === "activeSession") {
-      const as = props as ActiveSessionProps;
-      return {
-        label: as.harnessLabel,
-        logoSrc: as.harnessLogoSrc,
-        invertInDark: as.harnessLogoInvert,
-        invertInLight: as.harnessLogoInvertInLight,
-        locked: true,
-      };
-    }
-
-    const ns = props as NewSessionProps;
-    const primary = ns.draftHarness ?? null;
-    if (!primary) {
-      return {
-        label: "Select agent",
-        logoSrc: "",
-        invertInDark: false,
-        invertInLight: false,
-        locked: false,
-      };
-    }
-    const providerId = primary.providerId;
-    const info = ns.harnessCatalog.find((h) => h.id === providerId);
-    const label = info?.label ?? providerId;
-    return {
-      label,
-      logoSrc: info?.logoSrc,
-      invertInDark: info?.invertInDark,
-      invertInLight: info?.invertInLight,
-      locked: false,
-    };
-  }, [props, variant]);
 
   return (
     <div
@@ -745,10 +270,7 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
         }
         placeholder={placeholder}
         value={value}
-        onChange={(e) => {
-          restoreDraftTailRef.current = false;
-          setValue(e.target.value);
-        }}
+        onChange={(e) => handleTextareaChange(e.target.value)}
         disabled={!!inputDisabled}
         onWheelCapture={handleTextareaWheelCapture}
         onKeyDown={(e) => {
