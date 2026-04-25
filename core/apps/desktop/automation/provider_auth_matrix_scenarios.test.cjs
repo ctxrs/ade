@@ -21,6 +21,20 @@ test("codex local container endpoint cells include the local codex smoke alias",
   assert(tags.includes("endpoint_api_key"));
 });
 
+test("codex-crp local required cells keep the shared codex smoke aliases", () => {
+  const tags = providerAuthMatrixScenarioTags({
+    cellId: "codex.endpoint_api_key.local.host",
+    providerId: "codex-crp",
+    authMode: "endpoint_api_key",
+    daemonLocation: "local",
+    executionEnvironment: "host",
+  });
+
+  assert(tags.includes("provider-auth-matrix"));
+  assert(tags.includes("local-codex-host-smoke"));
+  assert.equal(tags.includes("local-codex-smoke"), false);
+});
+
 test("codex local host required cells use the host-only codex smoke alias", () => {
   const tags = providerAuthMatrixScenarioTags({
     cellId: "codex.configure_later_then_connect.local.host",

@@ -120,8 +120,20 @@ const deriveExecutionTopology = (daemonLocation, executionEnvironment) => {
   return `${normalizedDaemonLocation}_${normalizedExecutionEnvironment}`;
 };
 
+const canonicalProviderId = (providerId) => {
+  const normalized = readString(providerId).trim();
+  if (normalized === "codex") return "codex-crp";
+  return normalized;
+};
+
+const cellIdProviderSegment = (providerId) => {
+  const normalized = readString(providerId).trim();
+  if (normalized === "codex-crp") return "codex";
+  return normalized;
+};
+
 const buildCellId = (providerId, authMode, daemonLocation, executionEnvironment) =>
-  `${providerId}.${authMode}.${daemonLocation}.${executionEnvironment}`;
+  `${cellIdProviderSegment(providerId)}.${authMode}.${daemonLocation}.${executionEnvironment}`;
 
 const validateManifest = (manifest) => {
   const errors = [];
@@ -186,6 +198,7 @@ const validateManifest = (manifest) => {
     seenCellIds.add(id);
 
     const providerId = readString(cell.provider_id).trim();
+    const canonicalProvider = canonicalProviderId(providerId);
     const authMode = readString(cell.auth_mode).trim();
     const daemonLocation = readString(cell.daemon_location).trim();
     const executionEnvironment = readString(cell.execution_environment).trim();
@@ -199,7 +212,9 @@ const validateManifest = (manifest) => {
     const requiredAssertions = asArray(cell.required_assertions).map((entry) => readString(entry).trim()).filter(Boolean);
     const prerequisites = asArray(cell.prerequisites).map((entry) => readString(entry).trim()).filter(Boolean);
 
-    if (!providerIdSet.has(providerId)) errors.push(`cell ${id} has unknown provider_id '${providerId}'`);
+    if (!providerIdSet.has(providerId) && !providerIdSet.has(canonicalProvider)) {
+      errors.push(`cell ${id} has unknown provider_id '${providerId}'`);
+    }
     if (!authModeSet.has(authMode)) errors.push(`cell ${id} has unknown auth_mode '${authMode}'`);
     if (!daemonLocationSet.has(daemonLocation)) {
       errors.push(`cell ${id} has unknown daemon_location '${daemonLocation}'`);
@@ -256,7 +271,7 @@ const validateManifest = (manifest) => {
       errors.push(`cell ${id} desktop_wdio runner requires scenarios`);
     }
     if (
-      providerId === "codex-crp"
+      canonicalProvider === "codex-crp"
       && REQUIRED_AUTH_MODES.has(authMode)
       && daemonLocation === "local"
       && executionEnvironment === "host"
@@ -266,7 +281,7 @@ const validateManifest = (manifest) => {
       errors.push(`cell ${id} local host Codex required coverage must include local-codex-host-smoke`);
     }
     if (
-      providerId === "codex-crp"
+      canonicalProvider === "codex-crp"
       && REQUIRED_AUTH_MODES.has(authMode)
       && daemonLocation === "local"
       && executionEnvironment === "sandbox"
@@ -284,7 +299,7 @@ const validateManifest = (manifest) => {
       }
     }
     if (lane === "required") {
-      if (!REQUIRED_PROVIDER_IDS.has(providerId)) {
+      if (!REQUIRED_PROVIDER_IDS.has(canonicalProvider)) {
         errors.push(`cell ${id} lane=required requires provider_id in ${JSON.stringify([...REQUIRED_PROVIDER_IDS])}`);
       }
       if (!REQUIRED_AUTH_MODES.has(authMode)) {

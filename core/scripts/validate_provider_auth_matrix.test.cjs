@@ -74,6 +74,18 @@ test("validate script passes for a minimal valid manifest", () => {
   assert.equal(second.status, 0, `stdout=${second.stdout}\nstderr=${second.stderr}`);
 });
 
+test("validate script accepts the legacy codex alias for required lane provider cells", () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-auth-matrix-pass-codex-alias-"));
+  const manifestPath = path.join(tmp, "provider_auth_matrix.json");
+  const manifest = baseManifest();
+  manifest.providers = [{ id: "codex", owner: "provider-codex" }];
+  manifest.cells[0].provider_id = "codex";
+  writeJson(manifestPath, manifest);
+
+  const result = run(["--manifest", manifestPath]);
+  assert.equal(result.status, 0, `stdout=${result.stdout}\nstderr=${result.stderr}`);
+});
+
 test("validate script fails when required cross-product cell is missing", () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-auth-matrix-fail-missing-"));
   const manifestPath = path.join(tmp, "provider_auth_matrix.json");
