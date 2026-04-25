@@ -251,6 +251,7 @@ test("bazel pilot runner writes telemetry summaries and redacts BuildBuddy heade
   assert.equal(summary.buildBuddyEnabled, true);
   assert.equal(summary.parentEntrypoint, "verify:affected");
   assert.equal(summary.parentRunId, "router-run-1");
+  assert.equal(summary.runId, invocation.telemetry.runId);
   assert.equal(summary.phases.length, 1);
   assert.equal(summary.buildBuddyInvocations.length, 1);
   assert.equal(summary.buildBuddyInvocations[0].phaseName, "remote");
@@ -260,6 +261,9 @@ test("bazel pilot runner writes telemetry summaries and redacts BuildBuddy heade
     true,
   );
   assert.match(summary.phases[0].buildBuddyInvocationUrl, /https:\/\/app\.buildbuddy\.io\/invocation\//u);
+  assert.equal(typeof summary.queueTimeMs, "number");
+  assert.equal(typeof summary.remoteActionTimeMs, "number");
+  assert.equal(typeof summary.runnerLocalOverheadMs, "number");
   assert.equal(fs.existsSync(invocation.telemetry.hostSamplesPath), true);
 });
 
@@ -291,12 +295,16 @@ test("bazel pilot emits a machine-readable phase summary with local spill accoun
   const summary = JSON.parse(emitted[0].replace(/^CTX_BAZEL_PILOT_SUMMARY /u, ""));
   assert.equal(summary.remoteExecutionMode, "linux");
   assert.equal(summary.success, true);
+  assert.equal(summary.runId, invocation.telemetry.runId);
   assert.equal(summary.phaseCount, 2);
   assert.equal(summary.remotePhaseCount, 1);
   assert.equal(summary.localPhaseCount, 1);
   assert.equal(summary.remoteTargetCount, 1);
   assert.equal(summary.localTargetCount, 1);
   assert.equal(summary.localSpill, true);
+  assert.equal(typeof summary.queueTimeMs, "number");
+  assert.equal(typeof summary.remoteActionTimeMs, "number");
+  assert.equal(typeof summary.runnerLocalOverheadMs, "number");
   assert.deepEqual(summary.phases.map((phase) => phase.name), ["linux-rbe", "local"]);
 });
 
@@ -347,12 +355,19 @@ test("bazel pilot default summary emitter writes to stderr instead of stdout", (
 test("bazel pilot summary formatter is stable for parser consumption", () => {
   const line = formatBazelPilotSummaryLine(buildBazelPilotSummary({
     command: "test",
+    env: {
+      CTX_VERIFY_PARENT_RUN_ID: "router-run-1",
+    },
     phases: [],
     remoteExecutionMode: "all",
+    telemetry: {
+      runId: "bazel-run-1",
+    },
   }, [
     {
       durationMs: 1200,
       name: "remote",
+      queueTimeMs: 200,
       status: 0,
       targets: ["//core/crates/ctx-core:unit_tests"],
     },
@@ -361,9 +376,17 @@ test("bazel pilot summary formatter is stable for parser consumption", () => {
   assert.match(line, /^CTX_BAZEL_PILOT_SUMMARY \{/u);
   const parsed = JSON.parse(line.replace(/^CTX_BAZEL_PILOT_SUMMARY /u, ""));
   assert.equal(parsed.command, "test");
+  assert.equal(parsed.kind, "bazel");
+  assert.equal(parsed.entrypoint, "run_bazel_pilot");
+  assert.equal(parsed.runId, "bazel-run-1");
+  assert.equal(parsed.parentRunId, "router-run-1");
   assert.equal(parsed.remoteExecutionMode, "all");
+  assert.equal(parsed.durationMs, 1200);
   assert.equal(parsed.phaseCount, 1);
   assert.equal(parsed.remoteTargetCount, 1);
+  assert.equal(parsed.queueTimeMs, 200);
+  assert.equal(parsed.remoteActionTimeMs, 1000);
+  assert.equal(parsed.runnerLocalOverheadMs, 200);
   assert.equal(parsed.localSpill, false);
 });
 
@@ -405,7 +428,7 @@ test("bazel pilot includes generated run-script time in recorded phase durations
     },
   });
 
-  const durations = [0, 500, 1000, 1750];
+  const durations = [0, 0, 500, 1000, 1750];
   const originalNow = Date.now;
   Date.now = () => durations.shift();
 
@@ -451,6 +474,9 @@ test("bazel pilot duration includes host-budget queue time for local phases", ()
   const summary = JSON.parse(fs.readFileSync(invocation.telemetry.summaryPath, "utf8"));
   assert.equal(summary.phases.length, 1);
   assert.ok(summary.phases[0].durationMs >= 50);
+  assert.ok(summary.phases[0].queueTimeMs >= 50);
+  assert.ok(summary.queueTimeMs >= 50);
+  assert.ok(summary.runnerLocalOverheadMs >= 50);
 });
 
 test("bazel pilot still writes a thin summary when host-budget acquisition throws", () => {

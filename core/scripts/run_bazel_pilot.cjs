@@ -24,6 +24,7 @@ const { HOST_HEAVY_BUDGET_KEY, withHostJobBudget } = require("./lib/host_job_bud
 const { appendHostSample } = require("./lib/verification_host_sampler.cjs");
 const {
   createRunArtifacts,
+  deriveBazelMetrics,
   finalizeRunArtifacts,
 } = require("./lib/verification_run_store.cjs");
 
@@ -582,12 +583,14 @@ function formatSpawnFailureMessage(command, error) {
 }
 
 function createPhaseFailureResult({ command = "", error, invocation, phase, startedAt, startedMs }) {
+  const durationMs = Math.max(0, Date.now() - startedMs);
   return {
     command,
     commandArgs: [],
-    durationMs: Math.max(0, Date.now() - startedMs),
+    durationMs,
     error: String(error?.message || error || "unknown phase failure"),
     name: phase.name,
+    queueTimeMs: durationMs,
     runArgs: invocation.command === "run" ? invocation.runArgs : [],
     startedAt,
     status: 1,
@@ -602,18 +605,31 @@ function buildBazelPilotSummary(invocation, phaseResults, exitCode) {
     .reduce((total, phase) => total + (Array.isArray(phase.targets) ? phase.targets.length : 0), 0);
   const localPhases = phaseResults.filter((phase) => phase.name === "local");
   const remotePhases = phaseResults.filter((phase) => phase.name !== "local");
-  return {
+  const summary = {
+    buildBuddyInvocations: phaseResults
+      .filter((phase) => String(phase.buildBuddyInvocationId || "").trim())
+      .map((phase) => ({
+        phaseName: phase.name,
+        invocationId: phase.buildBuddyInvocationId,
+        invocationUrl: phase.buildBuddyInvocationUrl,
+      })),
     command: invocation.command,
+    durationMs: phaseResults.reduce((total, phase) => total + Number(phase.durationMs || 0), 0),
+    entrypoint: "run_bazel_pilot",
     exitCode,
+    kind: "bazel",
     localPhaseCount: localPhases.length,
     localTargetCount: summarizeTargets("local"),
-    localSpill: localPhases.length > 0,
+    localSpill: localPhases.length > 0 && remotePhases.length > 0,
+    parentEntrypoint: String(invocation.env.CTX_VERIFY_PARENT_ENTRYPOINT || "").trim(),
+    parentRunId: String(invocation.env.CTX_VERIFY_PARENT_RUN_ID || "").trim(),
     phaseCount: phaseResults.length,
     phases: phaseResults.map((phase) => ({
       buildBuddyInvocationId: String(phase.buildBuddyInvocationId || ""),
       buildBuddyInvocationUrl: String(phase.buildBuddyInvocationUrl || ""),
       durationMs: Number(phase.durationMs || 0),
       name: phase.name,
+      queueTimeMs: Number(phase.queueTimeMs || 0),
       status: Number(phase.status || 0),
       targetCount: Array.isArray(phase.targets) ? phase.targets.length : 0,
     })),
@@ -623,7 +639,12 @@ function buildBazelPilotSummary(invocation, phaseResults, exitCode) {
       (total, phase) => total + (Array.isArray(phase.targets) ? phase.targets.length : 0),
       0,
     ),
+    runId: String(invocation.telemetry?.runId || ""),
     success: exitCode === 0,
+  };
+  return {
+    ...summary,
+    ...deriveBazelMetrics(summary),
   };
 }
 
@@ -684,6 +705,7 @@ function runBazelPilotInvocationPhases(invocation, {
         if (invocation.telemetry != null) {
           appendHostSample(invocation.telemetry.hostSamplesPath, `phase:start:${phase.name}`);
         }
+        const queueTimeMs = Math.max(0, Date.now() - phaseStartedMs);
         const spawn = buildSpawnForPhase(invocation, phase);
         const result = spawnSyncImpl(spawn.command, spawn.args, spawn.options);
         const phaseResult = {
@@ -691,6 +713,7 @@ function runBazelPilotInvocationPhases(invocation, {
           commandArgs: redactCommandArgs(spawn.args),
           durationMs: Date.now() - phaseStartedMs,
           name: phase.name,
+          queueTimeMs,
           runArgs: invocation.command === "run" ? invocation.runArgs : [],
           startedAt: phaseStartedAt,
           targets: phase.targets,

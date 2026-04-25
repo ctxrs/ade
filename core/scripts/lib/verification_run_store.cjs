@@ -43,6 +43,257 @@ function writeJsonAtomic(filePath, payload) {
   writeTextAtomic(filePath, `${JSON.stringify(payload, null, 2)}\n`);
 }
 
+function toNonNegativeMs(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return 0;
+  }
+  return parsed;
+}
+
+function isPresentMetricValue(value) {
+  return value !== undefined && value !== null && value !== "";
+}
+
+function toOptionalNonNegativeMs(value) {
+  if (!isPresentMetricValue(value)) {
+    return undefined;
+  }
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return undefined;
+  }
+  return parsed;
+}
+
+function toOptionalBoolean(value) {
+  if (!isPresentMetricValue(value)) {
+    return undefined;
+  }
+  if (typeof value === "boolean") {
+    return value;
+  }
+  if (value === 0 || value === 1) {
+    return Boolean(value);
+  }
+  const normalized = String(value).trim().toLowerCase();
+  if (normalized === "true") {
+    return true;
+  }
+  if (normalized === "false") {
+    return false;
+  }
+  return Boolean(value);
+}
+
+function sumInstrumentedMetric(entries, readMetric, { emptyValue = undefined } = {}) {
+  if (!Array.isArray(entries)) {
+    return undefined;
+  }
+  if (entries.length === 0) {
+    return emptyValue;
+  }
+  let total = 0;
+  for (const entry of entries) {
+    const value = readMetric(entry);
+    if (value === undefined) {
+      return undefined;
+    }
+    total += value;
+  }
+  return total;
+}
+
+function normalizeCacheHitShapeValue(value) {
+  const normalized = String(value || "").trim();
+  return normalized;
+}
+
+function deriveCacheHitShape(cacheStats) {
+  if (!cacheStats || typeof cacheStats !== "object") {
+    return "";
+  }
+  const actionCacheHits = Number(
+    cacheStats.actionCacheHits
+    || cacheStats.action_cache_hits
+    || 0,
+  );
+  const actionCacheMisses = Number(
+    cacheStats.actionCacheMisses
+    || cacheStats.action_cache_misses
+    || 0,
+  );
+  const casCacheHits = Number(
+    cacheStats.casCacheHits
+    || cacheStats.cas_cache_hits
+    || 0,
+  );
+  const casCacheMisses = Number(
+    cacheStats.casCacheMisses
+    || cacheStats.cas_cache_misses
+    || 0,
+  );
+  if (actionCacheHits > 0 && actionCacheMisses === 0) {
+    return "action-cache-all-hit";
+  }
+  if (actionCacheHits > 0 && actionCacheMisses > 0) {
+    return "action-cache-mixed";
+  }
+  if (actionCacheMisses > 0) {
+    return "action-cache-miss";
+  }
+  if (casCacheHits > 0 && casCacheMisses === 0) {
+    return "cas-cache-all-hit";
+  }
+  if (casCacheHits > 0 && casCacheMisses > 0) {
+    return "cas-cache-mixed";
+  }
+  if (casCacheMisses > 0) {
+    return "cas-cache-miss";
+  }
+  return "";
+}
+
+function deriveBazelMetrics(summary) {
+  const phases = Array.isArray(summary.phases) ? summary.phases : [];
+  const localPhases = phases.filter((phase) => phase?.name === "local");
+  const remotePhases = phases.filter((phase) => phase?.name !== "local");
+  const durationMs = summary.durationMs != null
+    ? toNonNegativeMs(summary.durationMs)
+    : phases.reduce((total, phase) => total + toNonNegativeMs(phase.durationMs), 0);
+  const queueTimeMs = summary.queueTimeMs != null
+    ? toOptionalNonNegativeMs(summary.queueTimeMs)
+    : sumInstrumentedMetric(phases, (phase) => toOptionalNonNegativeMs(phase?.queueTimeMs));
+  const remoteActionTimeMs = summary.remoteActionTimeMs != null
+    ? toOptionalNonNegativeMs(summary.remoteActionTimeMs)
+    : Array.isArray(summary.phases)
+      ? sumInstrumentedMetric(
+      remotePhases,
+      (phase) => {
+        const phaseDurationMs = toOptionalNonNegativeMs(phase?.durationMs);
+        const phaseQueueTimeMs = toOptionalNonNegativeMs(phase?.queueTimeMs);
+        if (phaseDurationMs === undefined || phaseQueueTimeMs === undefined) {
+          return undefined;
+        }
+        return Math.max(0, phaseDurationMs - phaseQueueTimeMs);
+      },
+      { emptyValue: 0 },
+    )
+      : undefined;
+  const explicitRunnerLocalOverheadMs = toOptionalNonNegativeMs(summary.runnerLocalOverheadMs);
+  return {
+    durationMs,
+    queueTimeMs,
+    remoteActionTimeMs,
+    cacheHitShape:
+      normalizeCacheHitShapeValue(summary.cacheHitShape)
+      || deriveCacheHitShape(summary.cacheStats),
+    runnerLocalOverheadMs: explicitRunnerLocalOverheadMs !== undefined
+      ? explicitRunnerLocalOverheadMs
+      : remoteActionTimeMs !== undefined
+        ? Math.max(0, durationMs - remoteActionTimeMs)
+        : undefined,
+    localSpill: summary.localSpill != null
+      ? toOptionalBoolean(summary.localSpill)
+      : Array.isArray(summary.phases)
+        ? localPhases.length > 0 && remotePhases.length > 0
+        : undefined,
+  };
+}
+
+function combineCacheHitShapes(entries) {
+  const uniqueShapes = [...new Set(
+    entries
+      .map((entry) => normalizeCacheHitShapeValue(entry?.cacheHitShape))
+      .filter(Boolean),
+  )];
+  if (uniqueShapes.length === 0) {
+    return "";
+  }
+  if (uniqueShapes.length === 1) {
+    return uniqueShapes[0];
+  }
+  return "mixed";
+}
+
+function normalizeChildBazelRuns(entries) {
+  if (!Array.isArray(entries)) {
+    return [];
+  }
+  return entries.map((entry) => normalizeVerificationRunSummary({
+    ...entry,
+    kind: entry?.kind || "bazel",
+    entrypoint: entry?.entrypoint || "run_bazel_pilot",
+  }));
+}
+
+function deriveRouterMetrics(summary) {
+  const childBazelRuns = normalizeChildBazelRuns(summary.childBazelRuns);
+  const durationMs = toNonNegativeMs(summary.durationMs);
+  const queueTimeMs = summary.queueTimeMs != null
+    ? toOptionalNonNegativeMs(summary.queueTimeMs)
+    : sumInstrumentedMetric(
+      childBazelRuns,
+      (entry) => toOptionalNonNegativeMs(entry?.queueTimeMs),
+    );
+  const remoteActionTimeMs = summary.remoteActionTimeMs != null
+    ? toOptionalNonNegativeMs(summary.remoteActionTimeMs)
+    : sumInstrumentedMetric(
+      childBazelRuns,
+      (entry) => toOptionalNonNegativeMs(entry?.remoteActionTimeMs),
+    );
+  const remoteSetupMs = toOptionalNonNegativeMs(summary.remoteSetupMs);
+  const childLocalOverheadMs = sumInstrumentedMetric(
+    childBazelRuns,
+    (entry) => toOptionalNonNegativeMs(entry?.runnerLocalOverheadMs),
+  );
+  const explicitRunnerLocalOverheadMs = toOptionalNonNegativeMs(summary.runnerLocalOverheadMs);
+  const runnerLocalOverheadMs = explicitRunnerLocalOverheadMs !== undefined
+    ? explicitRunnerLocalOverheadMs
+    : remoteSetupMs !== undefined && childLocalOverheadMs !== undefined
+      ? remoteSetupMs + childLocalOverheadMs
+      : remoteSetupMs !== undefined && childBazelRuns.length === 0
+        ? remoteSetupMs
+        : undefined;
+  const explicitLocalSpill = toOptionalBoolean(summary.localSpill);
+  const childLocalSpillValues = childBazelRuns.map((entry) => toOptionalBoolean(entry?.localSpill));
+  const localSpill = explicitLocalSpill !== undefined
+    ? explicitLocalSpill
+    : childLocalSpillValues.length > 0 && childLocalSpillValues.every((value) => value !== undefined)
+      ? childLocalSpillValues.some(Boolean)
+      : undefined;
+  return {
+    childBazelRuns,
+    durationMs,
+    queueTimeMs,
+    remoteActionTimeMs,
+    cacheHitShape:
+      normalizeCacheHitShapeValue(summary.cacheHitShape)
+      || combineCacheHitShapes(childBazelRuns),
+    runnerLocalOverheadMs,
+    localSpill,
+  };
+}
+
+function normalizeVerificationRunSummary(summary) {
+  if (!summary || typeof summary !== "object") {
+    return summary;
+  }
+  if (summary.kind === "bazel") {
+    return {
+      ...summary,
+      ...deriveBazelMetrics(summary),
+    };
+  }
+  if (summary.kind === "router") {
+    return {
+      ...summary,
+      ...deriveRouterMetrics(summary),
+    };
+  }
+  return summary;
+}
+
 function acquireLock(lockPath, { retries = 200, retryDelayMs = 25 } = {}) {
   for (let attempt = 0; attempt < retries; attempt += 1) {
     try {
@@ -152,14 +403,14 @@ function createRunArtifacts({
 
 function finalizeRunArtifacts(runArtifacts, summary, { env = process.env } = {}) {
   ensureDir(runArtifacts.runDir);
-  const normalizedSummary = {
+  const normalizedSummary = normalizeVerificationRunSummary({
     ...summary,
     runId: runArtifacts.runId,
     kind: runArtifacts.kind,
     entrypoint: runArtifacts.entrypoint,
     hostSamplesPath: path.relative(runArtifacts.rootDir, runArtifacts.hostSamplesPath),
     hostStats: summary.hostStats || summarizeHostSamples(runArtifacts.hostSamplesPath),
-  };
+  });
   writeJsonAtomic(runArtifacts.summaryPath, normalizedSummary);
 
   const releaseLock = acquireLock(path.join(runArtifacts.rootDir, ".lock"));
@@ -194,7 +445,10 @@ module.exports = {
   acquireLock,
   createRunArtifacts,
   createRunId,
+  deriveBazelMetrics,
+  deriveRouterMetrics,
   finalizeRunArtifacts,
+  normalizeVerificationRunSummary,
   pruneRunStore,
   readIndexedSummaries,
   readSummaryFile,
