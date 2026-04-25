@@ -1,52 +1,37 @@
-import { type MutableRefObject, useEffect, useRef, useState } from "react";
-import type { ExecutionLaunchSnapshot } from "../../api/client";
+import { type MutableRefObject, useEffect, useState } from "react";
 import {
   createWorkspace,
   deleteWorkspace,
   idToString,
-  listWorkspaces,
-  repoClone,
-  repoInit,
-  repoStatus,
-  repoStagingPath,
-  repoValidateDestination,
   updateWorkspaceExecutionConfig,
   updateWorkspaceMergeQueueConfig,
   updateWorkspaceWorktreeBootstrapConfig,
 } from "../../api/client";
-import { desktopConnectLocal, desktopConnectSsh, desktopPickFolder } from "../../utils/desktop";
+import { desktopConnectLocal, desktopConnectSsh } from "../../utils/desktop";
 import { trackWorkspaceLaunchCompleted } from "../../utils/analytics";
 import { upsertLauncherRecent } from "../../state/launcherRecentsStore";
-import { deriveRepoNameFromUrl, parseCloneDestPath, resolveWorkspaceName } from "./WorkspaceSetupPage.logic";
 import {
-  currentLaunchStepLabel as deriveCurrentLaunchStepLabel,
-  formatLaunchElapsed,
-  formatLaunchRemaining,
-  formatLaunchTime,
-  launchElapsedMs,
-  launchEtaRemainingMs,
-  stabilizeLaunchEtaRemainingMs,
-  workspaceSetupProvisioningPhaseLabel,
-  workspaceSetupProvisioningRemainingMs,
-  type WorkspaceSetupProvisioningExecutionMode,
-  type WorkspaceSetupProvisioningPhase,
-  type WorkspaceSetupProvisioningSource,
-  type WorkspaceSetupLaunchLogLine,
-} from "./launchProgress";
+  buildWorkspaceSetupCreateIntent,
+  parseNetworkAllowlist,
+  resolveCreateErrorStepKey,
+  type WorkspaceSetupCreateIntent,
+} from "./createHandoff";
 import type { WizardStepKey } from "./wizardFlow";
-import { lastPathSegment, messageFromError, type ImportInitDialogState } from "./wizardTypes";
-import { buildWorkspaceSetupCreateIntent, parseNetworkAllowlist, resolveCreateErrorStepKey, type WorkspaceSetupCreateIntent } from "./createHandoff";
+import { lastPathSegment, messageFromError } from "./wizardTypes";
 import { waitForWorkspaceBootstrapBeforeNavigation } from "../workspaceBootstrapGate";
 import type {
   RoutePlanInsertionStep,
   WorkspaceSetupEffectiveTarget,
 } from "./workflowTypes";
 import {
-  copyWorkspaceSetupLaunchDiagnostics,
   prepareWorkspaceSetupSandboxRuntime,
   waitForWorkspaceSetupLaunchCompletion,
 } from "./workspaceSetupLaunchHelpers";
 import { seedDaemonTelemetryPreferenceIfDefault } from "./workspaceSetupTelemetry";
+import { useWorkspaceSetupCreateProgress } from "./useWorkspaceSetupCreateProgress";
+import { useWorkspaceSetupSourcePreflight } from "./useWorkspaceSetupSourcePreflight";
+import { prepareWorkspaceSetupSource } from "./workspaceSetupCreateSource";
+import type { WorkspaceSetupProvisioningSource } from "./launchProgress";
 
 type UseWorkspaceSetupCreateArgs = {
   currentStepKey: WizardStepKey;
@@ -78,19 +63,6 @@ type UseWorkspaceSetupCreateArgs = {
   setCreateError: (message: string | null) => void;
 };
 
-type WorkspaceProvisioningState = {
-  phase: WorkspaceSetupProvisioningPhase;
-  stepLabel: string;
-  startedAtMs: number;
-  phaseStartedAtMs: number;
-  updatedAtMs: number;
-  state: "running" | "ready" | "error";
-  error: string | null;
-  workspaceId: string | null;
-};
-
-const SYNTHETIC_WORKSPACE_SETUP_JOB_ID = "workspace-setup-provisioning";
-
 export function useWorkspaceSetupCreate({
   currentStepKey,
   intent,
@@ -121,34 +93,11 @@ export function useWorkspaceSetupCreate({
   const [creating, setCreating] = useState(false);
   const [localAdminPasswordPromptVisible, setLocalAdminPasswordPromptVisible] = useState(false);
   const [localAdminPasswordInput, setLocalAdminPasswordInput] = useState("");
-  const [sandboxPrepareMessage, setSandboxPrepareMessage] = useState<string | null>(null);
-  const [launchSnapshot, setLaunchSnapshot] = useState<ExecutionLaunchSnapshot | null>(null);
-  const [launchLogs, setLaunchLogs] = useState<WorkspaceSetupLaunchLogLine[]>([]);
-  const [provisioningState, setProvisioningState] = useState<WorkspaceProvisioningState | null>(null);
-  const [launchEtaDisplayMs, setLaunchEtaDisplayMs] = useState<number | null>(null);
-  const [launchTick, setLaunchTick] = useState(0);
-  const [launchCopyState, setLaunchCopyState] = useState<"idle" | "copied" | "failed">("idle");
-  const [importInitDialog, setImportInitDialog] = useState<ImportInitDialogState | null>(null);
-  const importInitResolveRef = useRef<((confirmed: boolean) => void) | null>(null);
-  const provisioningStateRef = useRef<WorkspaceProvisioningState | null>(null);
-  const syntheticLogSeqRef = useRef(-1);
-  const launchEtaDisplayRef = useRef<{
-    nowMs: number | null;
-    rawRemainingMs: number | null;
-    recalibrationTargetMs: number | null;
-    remainingMs: number | null;
-  }>({
-    nowMs: null,
-    rawRemainingMs: null,
-    recalibrationTargetMs: null,
-    remainingMs: null,
-  });
   const createIntent = buildWorkspaceSetupCreateIntent(intent);
   const {
     selections,
     sourcePath,
     repoUrl,
-    repoBranch,
     workspaceName,
     networkAllowlist,
     useSandboxStaging,
@@ -170,9 +119,55 @@ export function useWorkspaceSetupCreate({
   const parsedRemotePort = remoteTarget?.port ?? null;
   const remoteDataDir = remoteTarget?.dataDir ?? null;
   const provisioningSource = selections.source as WorkspaceSetupProvisioningSource;
-  const provisioningExecutionMode =
-    (selections.container === "host" ? "host" : "sandbox") satisfies WorkspaceSetupProvisioningExecutionMode;
+  const provisioningExecutionMode = selections.container === "host" ? "host" : "sandbox";
   const localAdminPasswordOnce = localAdminPasswordInput.length > 0 ? localAdminPasswordInput : null;
+
+  const {
+    sandboxPrepareMessage,
+    setSandboxPrepareMessage,
+    launchSnapshot,
+    setLaunchSnapshot,
+    launchLogs,
+    setLaunchLogs,
+    appendSyntheticLaunchLog,
+    beginProvisioningPhase,
+    markProvisioningError,
+    setProvisioningWorkspaceId,
+    markProvisioningReady,
+    resetLaunchProgressState,
+    currentLaunchStepLabel,
+    currentLaunchElapsed,
+    currentLaunchEtaLabel,
+    launchCopyLabel,
+    showLaunchPanel,
+    onCopyLaunchDiagnostics,
+  } = useWorkspaceSetupCreateProgress({
+    creating,
+    provisioningSource,
+    provisioningExecutionMode,
+  });
+
+  const {
+    importInitDialog,
+    resolveImportInitDialog,
+    confirmInitImportFolder,
+    onPickLocalFolder,
+    preflightSourceStep,
+  } = useWorkspaceSetupSourcePreflight({
+    currentStepKey,
+    selections,
+    desktopApp,
+    sourcePath,
+    repoUrl,
+    useSandboxStaging,
+    setSourcePath,
+    setImportRepoStatus,
+    setImportRepoNote,
+    setCreateError,
+    connectDaemonForImport,
+    ensureOnboardingAfterDaemonConnect,
+    onOnboardingInsertionRequested,
+  });
 
   useEffect(() => {
     if (selections.location === "local") {
@@ -181,342 +176,6 @@ export function useWorkspaceSetupCreate({
     setLocalAdminPasswordPromptVisible(false);
     setLocalAdminPasswordInput("");
   }, [selections.location]);
-
-  useEffect(() => {
-    provisioningStateRef.current = provisioningState;
-  }, [provisioningState]);
-
-  const buildSyntheticLaunchSnapshot = (
-    state: WorkspaceProvisioningState | null,
-  ): ExecutionLaunchSnapshot | null => {
-    if (!state) return null;
-    const startedAt = new Date(state.startedAtMs).toISOString();
-    return {
-      job_id: SYNTHETIC_WORKSPACE_SETUP_JOB_ID,
-      workspace_id: state.workspaceId ?? "pending",
-      kind: "workspace_launch",
-      state: state.state,
-      created_at: startedAt,
-      started_at: startedAt,
-      updated_at: new Date(state.updatedAtMs).toISOString(),
-      finished_at: state.state === "running" ? null : new Date(state.updatedAtMs).toISOString(),
-      current_phase: null,
-      current_step_label: state.stepLabel,
-      progress_pct: null,
-      eta_ms: null,
-      active_download: null,
-      phases: [],
-      logs: [],
-      error: state.error,
-    };
-  };
-
-  const appendSyntheticLaunchLog = (
-    phase: WorkspaceSetupProvisioningPhase,
-    message: string,
-    level: "info" | "warn" | "error" = "info",
-  ) => {
-    const ts = new Date().toISOString();
-    const seq = syntheticLogSeqRef.current;
-    syntheticLogSeqRef.current -= 1;
-    setLaunchLogs((prev) => prev.concat({
-      seq,
-      ts,
-      phase: "machine_check",
-      level,
-      message,
-      phaseLabel: workspaceSetupProvisioningPhaseLabel(phase),
-      provisioningPhase: phase,
-      timeLabel: formatLaunchTime(ts),
-    }).slice(-400));
-  };
-
-  const beginProvisioningPhase = (
-    phase: WorkspaceSetupProvisioningPhase,
-    stepLabel: string,
-    message: string,
-    workspaceId?: string | null,
-  ) => {
-    const nowMs = Date.now();
-    const startedAtMs = provisioningStateRef.current?.startedAtMs ?? nowMs;
-    const nextState: WorkspaceProvisioningState = {
-      phase,
-      stepLabel,
-      startedAtMs,
-      phaseStartedAtMs: nowMs,
-      updatedAtMs: nowMs,
-      state: "running",
-      error: null,
-      workspaceId: workspaceId ?? provisioningStateRef.current?.workspaceId ?? null,
-    };
-    provisioningStateRef.current = nextState;
-    setProvisioningState(nextState);
-    appendSyntheticLaunchLog(phase, message);
-  };
-
-  const clearProvisioningState = () => {
-    provisioningStateRef.current = null;
-    setProvisioningState(null);
-  };
-
-  const markProvisioningError = (message: string) => {
-    const current = provisioningStateRef.current;
-    if (!current) return;
-    const nowMs = Date.now();
-    const nextState: WorkspaceProvisioningState = {
-      ...current,
-      updatedAtMs: nowMs,
-      state: "error",
-      error: message,
-    };
-    provisioningStateRef.current = nextState;
-    setProvisioningState(nextState);
-    appendSyntheticLaunchLog(current.phase, message, "error");
-  };
-
-  const syntheticLaunchSnapshot = buildSyntheticLaunchSnapshot(provisioningState);
-  const effectiveLaunchSnapshot =
-    provisioningState?.state === "running"
-      ? syntheticLaunchSnapshot
-      : launchSnapshot ?? syntheticLaunchSnapshot;
-
-  useEffect(() => {
-    if (!creating || !effectiveLaunchSnapshot || effectiveLaunchSnapshot.state !== "running") return;
-    const handle = window.setInterval(() => setLaunchTick((value) => value + 1), 1000);
-    return () => window.clearInterval(handle);
-  }, [
-    creating,
-    launchSnapshot?.job_id,
-    launchSnapshot?.state,
-    provisioningState?.phase,
-    provisioningState?.state,
-  ]);
-
-  useEffect(() => {
-    if (
-      provisioningState?.state !== "running"
-      || provisioningState.phase !== "launch_runtime"
-      || !launchSnapshot
-    ) {
-      return;
-    }
-    clearProvisioningState();
-  }, [
-    launchSnapshot,
-    provisioningState?.phase,
-    provisioningState?.state,
-  ]);
-
-  useEffect(() => {
-    const nowMs = Date.now();
-    if (!creating || !effectiveLaunchSnapshot) {
-      launchEtaDisplayRef.current = {
-        nowMs: null,
-        rawRemainingMs: null,
-        recalibrationTargetMs: null,
-        remainingMs: null,
-      };
-      setLaunchEtaDisplayMs(null);
-      return;
-    }
-    if (effectiveLaunchSnapshot.state === "ready") {
-      launchEtaDisplayRef.current = {
-        nowMs,
-        rawRemainingMs: 0,
-        recalibrationTargetMs: null,
-        remainingMs: 0,
-      };
-      setLaunchEtaDisplayMs(0);
-      return;
-    }
-    if (effectiveLaunchSnapshot.state === "error") {
-      launchEtaDisplayRef.current = {
-        nowMs,
-        rawRemainingMs: null,
-        recalibrationTargetMs: null,
-        remainingMs: null,
-      };
-      setLaunchEtaDisplayMs(null);
-      return;
-    }
-    const rawRemainingMs = provisioningState?.state === "running"
-      ? workspaceSetupProvisioningRemainingMs({
-        phase: provisioningState.phase,
-        source: provisioningSource,
-        executionMode: provisioningExecutionMode,
-        phaseStartedAtMs: provisioningState.phaseStartedAtMs,
-        nowMs,
-      })
-      : launchEtaRemainingMs(launchSnapshot, nowMs);
-    const nextRemainingMs = stabilizeLaunchEtaRemainingMs({
-      previousRemainingMs: launchEtaDisplayRef.current.remainingMs,
-      previousRawRemainingMs: launchEtaDisplayRef.current.rawRemainingMs,
-      previousRecalibrationTargetMs: launchEtaDisplayRef.current.recalibrationTargetMs,
-      previousNowMs: launchEtaDisplayRef.current.nowMs,
-      nowMs,
-      rawRemainingMs,
-    });
-    launchEtaDisplayRef.current = {
-      nowMs,
-      rawRemainingMs,
-      recalibrationTargetMs: nextRemainingMs.recalibrationTargetMs,
-      remainingMs: nextRemainingMs.remainingMs,
-    };
-    setLaunchEtaDisplayMs(nextRemainingMs.remainingMs);
-  }, [
-    creating,
-    launchSnapshot?.job_id,
-    launchSnapshot?.state,
-    launchSnapshot?.updated_at,
-    launchSnapshot?.current_phase,
-    launchSnapshot?.current_step_label,
-    provisioningExecutionMode,
-    provisioningSource,
-    provisioningState?.phase,
-    provisioningState?.phaseStartedAtMs,
-    provisioningState?.state,
-    provisioningState?.stepLabel,
-    provisioningState?.updatedAtMs,
-    provisioningState?.workspaceId,
-    launchTick,
-  ]);
-
-  useEffect(() => () => {
-    const resolve = importInitResolveRef.current;
-    importInitResolveRef.current = null;
-    resolve?.(false);
-  }, []);
-
-  const onPickLocalFolder = async () => {
-    if (!desktopApp) return;
-    try {
-      const picked = await desktopPickFolder();
-      if (picked) {
-        setCreateError(null);
-        setSourcePath(picked);
-      }
-    } catch {
-      // ignore
-    }
-  };
-
-  const resolveImportInitDialog = (confirmed: boolean) => {
-    const resolve = importInitResolveRef.current;
-    importInitResolveRef.current = null;
-    setImportInitDialog(null);
-    resolve?.(confirmed);
-  };
-
-  const confirmInitImportFolder = (path: string) =>
-    new Promise<boolean>((resolve) => {
-      if (importInitResolveRef.current) {
-        importInitResolveRef.current(false);
-      }
-      importInitResolveRef.current = resolve;
-      setImportInitDialog({ path });
-    });
-
-  const preflightSourceStep = async (): Promise<boolean> => {
-    if (currentStepKey !== "source") return true;
-
-    if (desktopApp && selections.location === "local") {
-      try {
-        await connectDaemonForImport();
-        const onboardingResult = await ensureOnboardingAfterDaemonConnect({ allowTitlingInsertion: true });
-        if (onboardingResult?.insertionStep) {
-          onOnboardingInsertionRequested(onboardingResult.insertionStep);
-          return false;
-        }
-      } catch (error) {
-        setCreateError(messageFromError(error));
-        return false;
-      }
-    }
-
-    if (selections.source === "clone" && !useSandboxStaging) {
-      const dest = parseCloneDestPath(sourcePath);
-      if (!dest) {
-        setCreateError("Destination must be an absolute path (e.g. /Users/example-user/projects/ or /Users/example-user/projects/repo-name).");
-        return false;
-      }
-      const destName = dest.dest_name ?? deriveRepoNameFromUrl(repoUrl);
-      if (!destName) {
-        setCreateError("Could not derive repo name from URL.");
-        return false;
-      }
-      const normalizedParent = dest.dest_parent.replace(/\/+$/, "") || "/";
-      const fullDestPath = normalizedParent === "/" ? `/${destName}` : `${normalizedParent}/${destName}`;
-      if (selections.location === "remote") {
-        return true;
-      }
-      try {
-        await repoValidateDestination({ path: fullDestPath, must_not_exist: true });
-      } catch (error) {
-        setCreateError(messageFromError(error));
-        return false;
-      }
-      return true;
-    }
-
-    if (selections.source === "new" && !useSandboxStaging) {
-      const destPath = sourcePath.trim().replace(/\/+$/, "");
-      if (!destPath) {
-        setCreateError("Destination folder is required.");
-        return false;
-      }
-      if (selections.location === "remote") {
-        return true;
-      }
-      try {
-        await repoValidateDestination({
-          path: destPath,
-          require_empty_if_exists: true,
-        });
-      } catch (error) {
-        setCreateError(messageFromError(error));
-        return false;
-      }
-      return true;
-    }
-
-    if (selections.source === "import") {
-      const rootPath = sourcePath.trim().replace(/\/+$/, "");
-      if (!rootPath) {
-        setCreateError("Folder is required.");
-        return false;
-      }
-      if (selections.location === "remote") {
-        setImportRepoStatus("ok");
-        setImportRepoNote("Remote folder checks run during Create so the remote daemon stays cold until launch.");
-        return true;
-      }
-      setImportRepoStatus("checking");
-      setImportRepoNote(null);
-      try {
-        const status = await repoStatus({ path: rootPath });
-        if (status.is_repo) {
-          setImportRepoStatus("ok");
-          setImportRepoNote(null);
-          return true;
-        }
-        const detail = String(status.error ?? "").trim();
-        const note = detail
-          ? `Not a git repo yet (${detail}). We'll offer to initialize it during Create.`
-          : "Not a git repo yet. We'll offer to initialize it during Create.";
-        setImportRepoStatus("ok");
-        setImportRepoNote(note);
-        return true;
-      } catch (error) {
-        const message = `Could not verify the selected folder. ${messageFromError(error)}`;
-        setImportRepoStatus("error");
-        setImportRepoNote(message);
-        setCreateError(message);
-        return false;
-      }
-    }
-
-    return true;
-  };
 
   const prepareSandboxRuntimeIfNeeded = async () => {
     await prepareWorkspaceSetupSandboxRuntime({
@@ -540,30 +199,9 @@ export function useWorkspaceSetupCreate({
     });
   };
 
-  const onCopyLaunchDiagnostics = async () => {
-    await copyWorkspaceSetupLaunchDiagnostics(
-      effectiveLaunchSnapshot,
-      launchLogs,
-      setLaunchCopyState,
-    );
-  };
-
   const onCreate = async () => {
     setCreateError(null);
-    setLaunchSnapshot(null);
-    setLaunchLogs([]);
-    clearProvisioningState();
-    launchEtaDisplayRef.current = {
-      nowMs: null,
-      rawRemainingMs: null,
-      recalibrationTargetMs: null,
-      remainingMs: null,
-    };
-    setLaunchEtaDisplayMs(null);
-    setLaunchCopyState("idle");
-    setLaunchTick(0);
-    syntheticLogSeqRef.current = -1;
-    setSandboxPrepareMessage(null);
+    resetLaunchProgressState();
     setCreating(true);
     const launchStartedAtMs = Date.now();
     let createdWorkspaceId: string | null = null;
@@ -617,9 +255,7 @@ export function useWorkspaceSetupCreate({
         ? null
         : onboardingResult?.insertionStep;
       if (blockingInsertionStep) {
-        // Harness downloads remain optional even when a freshly connected remote daemon reports
-        // missing installs. Once the user has committed Create, keep the workspace launch moving
-        // and let the remote daemon surface optional downloads separately.
+        // Harness downloads remain optional once Create has started; keep launch moving.
         onOnboardingInsertionRequested(blockingInsertionStep);
         return;
       }
@@ -636,148 +272,15 @@ export function useWorkspaceSetupCreate({
         }
       }
 
-      let allWorkspaces: Awaited<ReturnType<typeof listWorkspaces>> | null = null;
-      const getAllWorkspaces = async () => {
-        if (!allWorkspaces) {
-          allWorkspaces = await listWorkspaces();
-        }
-        return allWorkspaces;
-      };
-      const getExistingWorkspaceNamesForGenerated = async () => {
-        try {
-          const all = await getAllWorkspaces();
-          return all
-            .map((workspace) => String(workspace.name ?? "").trim())
-            .filter(Boolean);
-        } catch {
-          return [];
-        }
-      };
-
-      let rootPath = "";
-      let name: string | undefined;
-      let workspaceId = "";
-      if (selections.source === "import") {
-        beginProvisioningPhase(
-          "import_repo",
-          "Checking import source",
-          "Checking the selected folder before importing it as a workspace.",
-        );
-        rootPath = sourcePath.trim().replace(/\/+$/, "");
-        if (!rootPath) throw new Error("Folder is required.");
-        let status = await repoStatus({ path: rootPath }).catch(() => null);
-        if (!status) {
-          setImportRepoStatus("error");
-          setImportRepoNote("Could not verify the selected folder. Check the path and try again.");
-          throw new Error("Could not verify the selected folder as a repository.");
-        }
-        if (status && !status.is_repo) {
-          const confirmed = await confirmInitImportFolder(rootPath);
-          if (!confirmed) {
-            setImportRepoStatus("error");
-            setImportRepoNote("Folder is not a repo. Initialization cancelled.");
-            throw new Error("Selected folder is not a repo.");
-          }
-          beginProvisioningPhase(
-            "init_repo",
-            "Initializing Git repository",
-            "Initializing a new Git repository in the selected folder.",
-          );
-          setImportRepoStatus("checking");
-          setImportRepoNote("Initializing Git repo in selected folder…");
-          const init = await repoInit({ path: rootPath, allow_existing: true, allow_non_empty: true });
-          rootPath = String(init.path ?? "").trim() || rootPath;
-          status = await repoStatus({ path: rootPath });
-          if (!status.is_repo) {
-            const detailAfter = String(status.error ?? "").trim();
-            throw new Error(detailAfter ? `Selected folder is not a repo: ${detailAfter}` : "Selected folder is not a repo.");
-          }
-        }
-        if (status?.canonical_path) {
-          rootPath = String(status.canonical_path).trim() || rootPath;
-        }
-        setImportRepoStatus("ok");
-        setImportRepoNote(null);
-        const all = await getAllWorkspaces();
-        const hit = all.find((workspace) => String(workspace.root_path) === rootPath);
-        if (hit) {
-          workspaceId = idToString(hit.id);
-        } else {
-          name = workspaceName.trim() || undefined;
-        }
-      } else if (selections.source === "clone") {
-        beginProvisioningPhase(
-          "prepare_source",
-          "Preparing clone destination",
-          useSandboxStaging
-            ? "Allocating sandbox staging before cloning the repository."
-            : "Preparing the destination folder for the repository clone.",
-        );
-        let destParent: string;
-        let destName: string | null;
-        if (useSandboxStaging) {
-          const staging = await repoStagingPath();
-          destParent = staging.path;
-          destName = deriveRepoNameFromUrl(repoUrl) || workspaceName.trim() || null;
-          if (!destName) throw new Error("Could not derive repo name from URL.");
-        } else {
-          const dest = parseCloneDestPath(sourcePath);
-          if (!dest) throw new Error("Destination must be an absolute path (e.g. /Users/example-user/projects/ or /Users/example-user/projects/repo-name).");
-          destParent = dest.dest_parent;
-          destName = dest.dest_name ?? null;
-        }
-        beginProvisioningPhase(
-          "clone_repo",
-          "Cloning repository",
-          `Cloning ${repoUrl.trim()}${repoBranch.trim() ? ` (${repoBranch.trim()})` : ""}.`,
-        );
-        const response = await repoClone({
-          repo_url: repoUrl.trim(),
-          branch: repoBranch.trim() || null,
-          dest_parent: destParent,
-          dest_name: destName,
-        });
-        rootPath = response.path;
-        const existingWorkspaceNames = await getExistingWorkspaceNamesForGenerated();
-        name = resolveWorkspaceName({
-          source: selections.source,
-          workspaceName,
-          repoUrl,
-          destPath: useSandboxStaging ? null : sourcePath,
-          useSandboxStaging,
-          existingWorkspaceNames,
-        });
-      } else if (selections.source === "new") {
-        beginProvisioningPhase(
-          "init_repo",
-          "Initializing repository",
-          useSandboxStaging
-            ? "Allocating sandbox staging before creating the new repository."
-            : "Initializing a new Git repository for the workspace.",
-        );
-        let destPath: string;
-        if (useSandboxStaging) {
-          const staging = await repoStagingPath();
-          destPath = staging.path;
-        } else {
-          destPath = sourcePath.trim().replace(/\/+$/, "");
-          if (!destPath) throw new Error("Destination folder is required.");
-        }
-        const init = await repoInit({ path: destPath, allow_existing: true });
-        rootPath = String(init.path ?? "").trim() || destPath;
-        const existingWorkspaceNames = await getExistingWorkspaceNamesForGenerated();
-        name = resolveWorkspaceName({
-          source: selections.source,
-          workspaceName,
-          repoUrl,
-          destPath,
-          useSandboxStaging,
-          existingWorkspaceNames,
-        });
-      } else {
-        throw new Error("Choose a source option.");
-      }
-
+      const preparedSource = await prepareWorkspaceSetupSource({
+        intent: createIntent,
+        beginProvisioningPhase,
+        confirmInitImportFolder,
+        setImportRepoStatus,
+        setImportRepoNote,
+      });
+      const { rootPath, name } = preparedSource;
+      let { workspaceId } = preparedSource;
       const workspaceKind = selections.location === "remote" ? "remote" : "local";
       const executionMode = selections.container === "host" ? "host" : "sandbox";
       let pendingRouteLaunch: {
@@ -797,7 +300,7 @@ export function useWorkspaceSetupCreate({
         workspaceId = idToString(created.id);
         createdWorkspaceId = workspaceId;
         shouldCleanupCreatedWorkspace = true;
-        setProvisioningState((current) => current ? { ...current, workspaceId } : current);
+        setProvisioningWorkspaceId(workspaceId);
       }
 
       beginProvisioningPhase(
@@ -818,7 +321,7 @@ export function useWorkspaceSetupCreate({
       await updateWorkspaceExecutionConfig(workspaceId, {
         environment,
         network_mode: selections.container !== "host" ? netMode : null,
-          allowlist: selections.container !== "host" && netMode === "allowlist" ? allowlist : null,
+        allowlist: selections.container !== "host" && netMode === "allowlist" ? allowlist : null,
       });
 
       if (selections.container !== "host") {
@@ -910,15 +413,10 @@ export function useWorkspaceSetupCreate({
       } catch {
         // best-effort only; do not block workspace creation if recents persistence fails
       }
-      // The workspace is fully created at this point. If provider bootstrap fails or stalls
-      // while gating navigation, preserve the created workspace so recovery stays possible.
+      // The workspace is fully created at this point; preserve it if bootstrap gating fails.
       shouldCleanupCreatedWorkspace = false;
       await waitForWorkspaceBootstrapBeforeNavigation(workspaceId);
-      setProvisioningState((current) => current ? {
-        ...current,
-        updatedAtMs: Date.now(),
-        state: "ready",
-      } : current);
+      markProvisioningReady();
       if (pendingRouteLaunch) {
         trackWorkspaceLaunchCompleted({
           ...pendingRouteLaunch,
@@ -952,16 +450,6 @@ export function useWorkspaceSetupCreate({
     }
   };
 
-  const currentLaunchElapsed = (() => {
-    return formatLaunchElapsed(launchElapsedMs(effectiveLaunchSnapshot, Date.now()));
-  })();
-  const currentLaunchStepLabel = deriveCurrentLaunchStepLabel(effectiveLaunchSnapshot);
-  const currentLaunchEtaLabel = effectiveLaunchSnapshot?.state === "ready"
-    ? "Ready"
-    : effectiveLaunchSnapshot?.state === "error"
-      ? "Launch failed"
-      : formatLaunchRemaining(launchEtaDisplayMs);
-
   return {
     creating,
     localAdminPasswordPromptVisible,
@@ -972,17 +460,13 @@ export function useWorkspaceSetupCreate({
     resolveImportInitDialog,
     onPickLocalFolder,
     preflightSourceStep,
-    launchSnapshot: effectiveLaunchSnapshot,
+    launchSnapshot,
     launchLogs,
-    showLaunchPanel: Boolean(effectiveLaunchSnapshot) && (creating || effectiveLaunchSnapshot?.state === "error"),
+    showLaunchPanel,
     currentLaunchStepLabel,
     currentLaunchElapsed,
     currentLaunchEtaLabel,
-    launchCopyLabel: launchCopyState === "copied"
-      ? "Copied"
-      : launchCopyState === "failed"
-        ? "Copy failed"
-        : "Copy diagnostics",
+    launchCopyLabel,
     createButtonLabel: creating
       ? (sandboxPrepareMessage ?? "Creating…")
       : "Create workspace",
