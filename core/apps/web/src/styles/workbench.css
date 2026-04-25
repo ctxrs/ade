@@ -4835,50 +4835,6 @@
   line-height: 1.5;
 }
 
-.wb-editplans {
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-}
-
-.wb-editplans-list {
-  display: flex;
-  gap: 8px;
-  padding: 10px 12px;
-  border-bottom: 1px solid var(--border);
-  overflow-x: auto;
-}
-
-.wb-editplan-item {
-  text-align: left;
-  min-width: 180px;
-  padding: 10px;
-  border-radius: 10px;
-  border: 1px solid var(--border);
-  background: var(--surface-ghost);
-}
-
-.wb-editplan-item:hover {
-  background: var(--surface-soft);
-}
-
-.wb-editplan-item-active {
-  border-color: color-mix(in srgb, var(--accent) 40%, var(--border) 60%);
-  background: color-mix(in srgb, var(--accent) 10%, var(--surface-ghost) 90%);
-}
-
-.wb-editplan-title {
-  font-size: 12px;
-  color: var(--text);
-  line-height: 1.2;
-}
-
-.wb-editplan-sub {
-  font-size: 12px;
-  color: var(--muted);
-  margin-top: 4px;
-}
-
 /* AskUserQuestion modal (Claude ACP extension) */
 .askq-overlay {
   position: fixed;

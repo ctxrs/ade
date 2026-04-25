@@ -378,15 +378,15 @@ describe("clientBase desktop connection sync", () => {
     fetchMock.mockImplementation(() => Promise.resolve(okJsonResponse({ ok: true })));
 
     const mod = await import("./clientBase");
-    const result = await mod.daemonFetchRaw("/api/buffers/open", {
+    const result = await mod.daemonFetchRaw("/api/sessions/web", {
       method: "POST",
-      body: JSON.stringify({ path: "README.md" }),
+      body: JSON.stringify({ label: "preflight-check" }),
     });
 
     expect(result.status).toBe(200);
     expect(desktopGetConnectionMock).toHaveBeenCalledTimes(1);
     expect(fetchMock).toHaveBeenCalledWith(
-      "http://127.0.0.1:4399/api/buffers/open",
+      "http://127.0.0.1:4399/api/sessions/web",
       expect.objectContaining({
         headers: expect.objectContaining({
           authorization: "Bearer abc",
@@ -404,23 +404,23 @@ describe("clientBase desktop connection sync", () => {
     fetchMock.mockImplementation(() => Promise.resolve(okJsonResponse({ ok: true })));
 
     const mod = await import("./clientBase");
-    const result = await mod.daemonFetchRaw("/api/buffers/update", {
+    const result = await mod.daemonFetchRaw("/api/sessions/web", {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        "x-file-buffer-id": "buf-1",
+        "x-test-case": "raw-fetch-merge",
       },
-      body: JSON.stringify({ version: 2 }),
+      body: JSON.stringify({ label: "header-merge" }),
     });
 
     expect(result.status).toBe(200);
     expect(fetchMock).toHaveBeenCalledWith(
-      "http://127.0.0.1:4399/api/buffers/update",
+      "http://127.0.0.1:4399/api/sessions/web",
       expect.objectContaining({
         headers: expect.objectContaining({
           authorization: "Bearer abc",
           "content-type": "application/json",
-          "x-file-buffer-id": "buf-1",
+          "x-test-case": "raw-fetch-merge",
         }),
       }),
     );

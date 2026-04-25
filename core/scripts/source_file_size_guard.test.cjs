@@ -30,7 +30,6 @@ test("source file classification distinguishes production from test and ignored 
   assert.equal(classifySourceFile("core/crates/ctx-provider-accounts/src/provider_accounts/tests.rs"), "test_or_automation");
   assert.equal(classifySourceFile("core/apps/web/e2e/workbench-index.spec.ts"), "test_or_automation");
   assert.equal(classifySourceFile("core/scripts/bundled_dependency_updates.cjs"), "test_or_automation");
-  assert.equal(classifySourceFile("core/crates/ctx-http/src/api/buffers_api.rs"), "production");
   assert.equal(classifySourceFile("external-harnesses/codex/codex-rs/core/src/codex.rs"), "ignore");
 });
 

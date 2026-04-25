@@ -7,7 +7,6 @@ use axum::Json;
 use ctx_sandbox_container_runtime::sandbox_cli_invocation;
 
 use crate::api::errors::ApiErrorResp;
-use crate::buffers::BufferStore;
 use crate::daemon::AppState;
 use crate::execution_effective;
 use crate::settings::{ContainerRuntimeKind, ExecutionMode};
@@ -402,7 +401,7 @@ pub(crate) fn resolve_container_terminal_cwd(
 
     let requested_str = requested.to_string_lossy().to_string();
     if requested.is_relative() {
-        return BufferStore::resolve_path_lexical(&fallback, &requested_str)
+        return resolve_path_lexical_within_root(&fallback, &requested_str)
             .map_err(|_| bad_request("cwd must be within the container worktree/workspace root"));
     }
 
@@ -456,6 +455,45 @@ fn not_found(error: impl Into<String>) -> (StatusCode, Json<ApiErrorResp>) {
 
 fn internal_error(error: impl Into<String>) -> (StatusCode, Json<ApiErrorResp>) {
     error_response(StatusCode::INTERNAL_SERVER_ERROR, error)
+}
+
+fn resolve_path_lexical_within_root(root: &FsPath, path: &str) -> anyhow::Result<PathBuf> {
+    let candidate = if PathBuf::from(path).is_absolute() {
+        PathBuf::from(path)
+    } else {
+        root.join(path)
+    };
+    let mut is_abs = false;
+    let mut parts: Vec<std::ffi::OsString> = Vec::new();
+    for comp in candidate.components() {
+        use std::path::Component;
+        match comp {
+            Component::Prefix(_) => anyhow::bail!("unsupported path prefix"),
+            Component::RootDir => {
+                is_abs = true;
+                parts.clear();
+            }
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if parts.is_empty() {
+                    continue;
+                }
+                parts.pop();
+            }
+            Component::Normal(seg) => parts.push(seg.to_os_string()),
+        }
+    }
+    let mut normalized = PathBuf::new();
+    if is_abs {
+        normalized.push(std::path::MAIN_SEPARATOR.to_string());
+    }
+    for part in &parts {
+        normalized.push(part);
+    }
+    if !normalized.starts_with(root) {
+        anyhow::bail!("path outside root");
+    }
+    Ok(normalized)
 }
 
 #[cfg(test)]

@@ -14,7 +14,6 @@ use base64::Engine;
 use opentelemetry::trace::SpanKind;
 use opentelemetry::KeyValue;
 use serde::{Deserialize, Serialize};
-use sha2::Digest;
 use tokio::process::Command;
 use tower::util::ServiceExt;
 use tower_http::cors::{AllowOrigin, CorsLayer};
@@ -23,7 +22,6 @@ use url::Url;
 
 pub(crate) mod artifacts;
 mod auth;
-mod buffers_api;
 mod demo;
 pub(crate) mod errors;
 mod execution;
@@ -57,7 +55,6 @@ pub(crate) use auth::{
 };
 
 use artifacts::*;
-use buffers_api::*;
 use execution::*;
 use merge_queue_api::*;
 use mobile_access::*;
@@ -87,10 +84,6 @@ use ws::{
 use ctx_core::{ids::*, models::*};
 use ctx_store::store::MobileDeviceUpsert;
 
-use crate::buffers::{
-    BufferCloseReq, BufferConflictResp, BufferId, BufferOpenReq, BufferOpenResp, BufferUpdateReq,
-    BufferUpdateResp,
-};
 use crate::daemon::AppState;
 use crate::installer;
 use crate::logs;

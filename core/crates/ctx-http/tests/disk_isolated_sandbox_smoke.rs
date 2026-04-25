@@ -39,13 +39,6 @@ impl Drop for EnvVarGuard {
 }
 
 #[derive(Debug, Deserialize)]
-struct BufferOpenResp {
-    buffer_id: String,
-    version: u64,
-    text: String,
-}
-
-#[derive(Debug, Deserialize)]
 struct SessionGitStatusResponse {
     #[serde(default)]
     entries: Vec<SessionGitStatusEntry>,
@@ -307,52 +300,6 @@ async fn disk_isolated_smoke_sandbox_volume_buffers_terminal() {
         worktree.root_path
     );
 
-    // Buffer open + update should edit container FS only.
-    let opened: BufferOpenResp = client
-        .post(format!("{base}/api/buffers/open"))
-        .json(&json!({
-            "session_id": session_id.0,
-            "path": "file.txt"
-        }))
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
-    assert_eq!(opened.text, "hello\n");
-
-    let new_text = "hello from container\n";
-    let _ = client
-        .post(format!("{base}/api/buffers/update"))
-        .json(&json!({
-            "buffer_id": opened.buffer_id,
-            "version": opened.version,
-            "text": new_text,
-            "persist": true
-        }))
-        .send()
-        .await
-        .unwrap();
-
-    let reopened: BufferOpenResp = client
-        .post(format!("{base}/api/buffers/open"))
-        .json(&json!({
-            "session_id": session_id.0,
-            "path": "file.txt"
-        }))
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
-    assert_eq!(reopened.text, new_text);
-
-    // Host FS remains unchanged.
-    let host_text_after = fs::read_to_string(&host_file_path).unwrap();
-    assert_eq!(host_text_after, host_text_before);
-
     // Attachments: daemon fetches via host git and imports into the disk-isolated volume.
     let _attachments: serde_json::Value = client
         .post(format!("{base}/api/workspaces/{}/attachments", ws.id.0))
@@ -391,19 +338,6 @@ async fn disk_isolated_smoke_sandbox_volume_buffers_terminal() {
     .unwrap_or(false);
     assert!(attachment_ready, "attachment did not become ready");
 
-    let attachment_buf: BufferOpenResp = client
-        .post(format!("{base}/api/buffers/open"))
-        .json(&json!({
-            "session_id": session_id.0,
-            "path": ".ctx/attachments/refs/ref1/ref.txt"
-        }))
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
-    assert_eq!(attachment_buf.text, "refdata\n");
     assert!(!host_root
         .join(".ctx/attachments/refs/ref1/ref.txt")
         .exists());
@@ -449,6 +383,42 @@ async fn disk_isolated_smoke_sandbox_volume_buffers_terminal() {
     .unwrap_or(false);
     assert!(saw_pwd, "terminal output did not include {expected_prefix}");
 
+    ws_stream
+        .send(tokio_tungstenite::tungstenite::Message::Text(
+            "printf 'hello from container\\n' > file.txt\ncat file.txt\ncat .ctx/attachments/refs/ref1/ref.txt\n".into(),
+        ))
+        .await
+        .unwrap();
+
+    let saw_container_file_and_attachment = tokio::time::timeout(Duration::from_secs(15), async {
+        let mut saw_file_update = false;
+        let mut saw_attachment = false;
+        while let Some(Ok(frame)) = ws_stream.next().await {
+            if let tokio_tungstenite::tungstenite::Message::Binary(bytes) = frame {
+                let txt = String::from_utf8_lossy(&bytes);
+                if txt.contains("hello from container") {
+                    saw_file_update = true;
+                }
+                if txt.contains("refdata") {
+                    saw_attachment = true;
+                }
+                if saw_file_update && saw_attachment {
+                    return true;
+                }
+            }
+        }
+        false
+    })
+    .await
+    .unwrap_or(false);
+    assert!(
+        saw_container_file_and_attachment,
+        "terminal output did not include container file update and attachment contents"
+    );
+
+    let host_text_after = fs::read_to_string(&host_file_path).unwrap();
+    assert_eq!(host_text_after, host_text_before);
+
     // Terminal write should affect container FS, and git status should reflect it.
     ws_stream
         .send(tokio_tungstenite::tungstenite::Message::Text(
@@ -474,20 +444,6 @@ async fn disk_isolated_smoke_sandbox_volume_buffers_terminal() {
         saw_term_write,
         "terminal output did not include expected write"
     );
-
-    let term_written: BufferOpenResp = client
-        .post(format!("{base}/api/buffers/open"))
-        .json(&json!({
-            "session_id": session_id.0,
-            "path": "term_write.txt"
-        }))
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
-    assert_eq!(term_written.text, "term wrote\n");
 
     let status: SessionGitStatusResponse = client
         .get(format!("{base}/api/sessions/{}/git/status", session_id.0))

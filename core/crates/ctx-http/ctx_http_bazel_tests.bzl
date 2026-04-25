@@ -6,7 +6,6 @@ CTX_HTTP_SUITE_ORDER = [
     "provider-runtime-simulated",
     "provider-runtime-live",
     "repo-vcs",
-    "buffers",
     "scheduler-runtime",
     "turns-terminal",
     "attachments-routing",
@@ -90,9 +89,6 @@ CTX_HTTP_SUITE_TESTS = {
         "workspace_merge_queue_config_http",
         "worktree_archive_http",
         "worktree_vcs_snapshot",
-    ],
-    "buffers": [
-        "buffers_http_e2e",
     ],
     "scheduler-runtime": [
         "assistant_chunk_stream_only",

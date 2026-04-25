@@ -424,7 +424,7 @@
     "rust:ctx-http:test:provider-runtime-simulated": "node scripts/ctx_http_suite_task.cjs --suite provider-runtime-simulated",
     "rust:ctx-http:test:provider-runtime-live": "node scripts/ctx_http_suite_task.cjs --suite provider-runtime-live",
     "rust:ctx-http:test:repo-vcs": "node scripts/ctx_http_suite_task.cjs --suite repo-vcs",
-    "rust:ctx-http:test:buffers": "node scripts/ctx_http_suite_task.cjs --suite buffers",
+    "rust:ctx-http:test:scheduler-runtime": "node scripts/ctx_http_suite_task.cjs --suite scheduler-runtime",
     "rust:ctx-http:test:turns-terminal": "node scripts/ctx_http_suite_task.cjs --suite turns-terminal",
     "rust:ctx-http:test:attachments-routing": "node scripts/ctx_http_suite_task.cjs --suite attachments-routing",
     "rust:ctx-http:test:subagents-control": "node scripts/ctx_http_suite_task.cjs --suite subagents-control",

@@ -302,7 +302,6 @@ test("ctx-http Bazel helper keeps quick-path and manual-only suites explicit", (
     ctxHttpBazelTests,
     /"message_idempotency_post_message_idempotent_conflict_on_change"/,
   );
-  assert.match(ctxHttpBazelTests, /"buffers_http_e2e"/);
   assert.match(
     ctxHttpBazelTests,
     /"global_id_routing_http_message_delete_route_is_session_scoped"/,

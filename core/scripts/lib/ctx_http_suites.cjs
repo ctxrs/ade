@@ -225,22 +225,6 @@ const CTX_HTTP_SUITES = [
   {
     dependencyCrates: [
       "ctx-core",
-      "ctx-providers",
-      "ctx-store",
-      "ctx-worktree-data-plane",
-    ],
-    name: "buffers",
-    description: "session-scoped file buffers and autosave conflict handling",
-    sourceGlobs: [
-      "crates/ctx-http/src/api/buffers_api.rs",
-      "crates/ctx-http/src/buffers.rs",
-    ],
-    testFiles: ["buffers_http_e2e"],
-    type: "integration",
-  },
-  {
-    dependencyCrates: [
-      "ctx-core",
       "ctx-events",
       "ctx-store",
       "ctx-transport-runtime",
