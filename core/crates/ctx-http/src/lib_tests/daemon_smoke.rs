@@ -158,6 +158,25 @@ async fn daemon_golden_path_with_fake_provider() {
 }
 
 #[tokio::test]
+async fn daemon_startup_surfaces_agent_server_config_errors() {
+    let _serial = home_env_test_lock().lock().await;
+    let home = tempfile::tempdir().unwrap();
+    let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
+
+    let data_dir = tempfile::tempdir().unwrap();
+    write_invalid_agent_server_config(data_dir.path());
+
+    let err = crate::daemon::serve(
+        Vec::new(),
+        Some(data_dir.path().to_string_lossy().to_string()),
+    )
+    .await
+    .expect_err("startup should fail when agent server config is invalid");
+
+    assert!(err.to_string().contains("parsing agent server config"));
+}
+
+#[tokio::test]
 async fn subagent_init_surfaces_agent_server_config_errors() {
     let _serial = home_env_test_lock().lock().await;
     let git_repo = setup_git_repo().await;

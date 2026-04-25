@@ -541,9 +541,7 @@ pub async fn serve(bind: Vec<String>, data_dir: Option<String>) -> Result<()> {
         });
     }
 
-    let agent_cfg = installer::load_agent_server_config(&data_root)
-        .await
-        .unwrap_or_default();
+    let agent_cfg = load_managed_agent_server_config_or_err(&data_root).await?;
 
     let mut bridge_runtime_error: Option<String> = None;
     let mut providers: HashMap<String, Arc<dyn ProviderAdapter>> = HashMap::new();
