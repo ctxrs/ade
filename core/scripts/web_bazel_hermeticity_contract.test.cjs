@@ -82,8 +82,9 @@ test("verify:agent-remote web profiles run Bazel web targets without dependency 
   assert.match(verifyAgentRemote, /"web-smoke"[\s\S]*?\/\/core\/packages\/session-thread-layout:unit_smoke/u);
   assert.match(verifyAgentRemote, /"web-smoke"[\s\S]*?\/\/core\/apps\/web:unit_smoke/u);
   assert.match(verifyAgentRemote, /"web-unit"[\s\S]*?\/\/core\/packages\/session-supervisor-core:unit_tests/u);
+  assert.match(verifyAgentRemote, /"web-unit"[\s\S]*?\/\/core\/apps\/web:unit_tests_non_pretext/u);
   assert.match(verifyAgentRemote, /"web-unit"[\s\S]*?\/\/core\/packages\/session-thread-layout:unit_tests/u);
-  assert.match(verifyAgentRemote, /"web-unit"[\s\S]*?\/\/core\/apps\/web:unit_tests/u);
+  assert.match(verifyAgentRemote, /"web-unit"[\s\S]*?\/\/core\/apps\/web:pretext_measurement_unit_tests/u);
   assert.match(verifyAgentRemote, /function requiresWebHydration\(step\) \{\n  return false;\n\}/u);
   assert.doesNotMatch(verifyAgentRemote, /pnpm[^\n]+install[^\n]+frozen-lockfile/u);
 });
