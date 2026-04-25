@@ -971,6 +971,9 @@ pub(in crate::api) async fn install_all_providers(
 ) -> Result<Json<Vec<InstallStartResponse>>, StatusCode> {
     let target = crate::installer::parse_install_target(query.target.as_deref())
         .map_err(|_| StatusCode::BAD_REQUEST)?;
+    crate::daemon::load_managed_agent_server_config_or_err(&state.core.data_root)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let installs = provider_launch_install::start_all_provider_installs(&state, target).await;
     Ok(Json(
         installs
