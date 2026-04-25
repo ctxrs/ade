@@ -90,6 +90,10 @@ test("Bazel web dist sync tool requires an explicit workspace root and output di
 
 test("Bazel web focused unit slices run as native vitest tests", () => {
   const nonPretextBlock = targetBlock(buildFile, "unit_tests_non_pretext");
+  const nonPretextFoundationBlock = targetBlock(buildFile, "unit_tests_non_pretext_foundation");
+  const nonPretextMiscBlock = targetBlock(buildFile, "unit_tests_non_pretext_misc");
+  const nonPretextSettingsSetupBlock = targetBlock(buildFile, "unit_tests_non_pretext_settings_setup");
+  const nonPretextWorkbenchBlock = targetBlock(buildFile, "unit_tests_non_pretext_workbench");
   const pretextBlock = targetBlock(buildFile, "pretext_measurement_unit_tests");
   const desktopIpcCorpusBlock = targetBlock(buildFile, "desktop_ipc_corpus");
 
@@ -105,13 +109,28 @@ test("Bazel web focused unit slices run as native vitest tests", () => {
     corePackageJson.scripts["bazel:web:pretext:measurement"],
     "node scripts/run_bazel_pilot.cjs test //core/packages/session-thread-layout:unit_tests //core/apps/web:pretext_measurement_unit_tests",
   );
-  assert.match(nonPretextBlock, /^vitest_bin\.vitest_test\(/m);
+  assert.match(nonPretextBlock, /^test_suite\(/m);
+  assert.match(nonPretextFoundationBlock, /^vitest_bin\.vitest_test\(/m);
+  assert.match(nonPretextMiscBlock, /^vitest_bin\.vitest_test\(/m);
+  assert.match(nonPretextSettingsSetupBlock, /^vitest_bin\.vitest_test\(/m);
+  assert.match(nonPretextWorkbenchBlock, /^vitest_bin\.vitest_test\(/m);
   assert.match(pretextBlock, /^vitest_bin\.vitest_test\(/m);
   assert.match(desktopIpcCorpusBlock, /^vitest_bin\.vitest_test\(/m);
-  assert.match(nonPretextBlock, /data = HERMETIC_WEB_CHECK_DATA/);
+  assert.match(nonPretextBlock, /unit_tests_non_pretext_foundation/);
+  assert.match(nonPretextBlock, /unit_tests_non_pretext_misc/);
+  assert.match(nonPretextBlock, /unit_tests_non_pretext_settings_setup/);
+  assert.match(nonPretextBlock, /unit_tests_non_pretext_workbench/);
+  assert.match(nonPretextFoundationBlock, /data = HERMETIC_WEB_CHECK_DATA/);
+  assert.match(nonPretextMiscBlock, /data = HERMETIC_WEB_CHECK_DATA/);
+  assert.match(nonPretextSettingsSetupBlock, /data = HERMETIC_WEB_CHECK_DATA/);
+  assert.match(nonPretextWorkbenchBlock, /data = HERMETIC_WEB_CHECK_DATA/);
   assert.match(pretextBlock, /data = HERMETIC_WEB_CHECK_DATA/);
   assert.match(desktopIpcCorpusBlock, /data = HERMETIC_WEB_CHECK_DATA/);
   assert.doesNotMatch(nonPretextBlock, /run_workspace_task\.sh/);
+  assert.doesNotMatch(nonPretextFoundationBlock, /run_workspace_task\.sh/);
+  assert.doesNotMatch(nonPretextMiscBlock, /run_workspace_task\.sh/);
+  assert.doesNotMatch(nonPretextSettingsSetupBlock, /run_workspace_task\.sh/);
+  assert.doesNotMatch(nonPretextWorkbenchBlock, /run_workspace_task\.sh/);
   assert.doesNotMatch(pretextBlock, /run_workspace_task\.sh/);
   assert.doesNotMatch(desktopIpcCorpusBlock, /run_workspace_task\.sh/);
   assert.doesNotMatch(desktopIpcCorpusBlock, /\bpnpm\b/);
