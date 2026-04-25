@@ -1,52 +1,25 @@
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
-import {
-  applyAppImageUpdate,
-  downloadAppImageUpdate,
-  type UpdateCheck,
-} from "../../api/client";
+import { useCallback, useEffect, useReducer, useRef, useState } from "react";
+import { applyAppImageUpdate, downloadAppImageUpdate, type UpdateCheck } from "../../api/client";
 import {
   desktopApplyAppUpdate,
-  desktopGetAppUpdateState,
   desktopRestartApp,
   isDesktopApp,
   type DesktopAppUpdateStateResp,
 } from "../../utils/desktop";
 import {
-  DESKTOP_UPDATE_MENU_STATE_EVENT,
-  REQUEST_UPDATE_CHECK_EVENT,
-  REQUEST_UPDATE_RESTART_EVENT,
-  type DesktopUpdateMenuState,
-  type DesktopUpdateMenuStateDetail,
+  DESKTOP_UPDATE_MENU_STATE_EVENT, REQUEST_UPDATE_CHECK_EVENT,
+  REQUEST_UPDATE_RESTART_EVENT, type DesktopUpdateMenuStateDetail,
 } from "../../utils/desktopMenuCommands";
+import { deriveUpdateNoticeBannerState } from "../../utils/updateNoticeBannerModel";
+import { refreshDesktopUpdateNoticeState } from "../../utils/updateNoticeBannerRefresh";
 import { readCachedUpdateCheck, refreshUpdateCheck } from "../../utils/updateNotice";
-import {
-  UPDATER_REFRESH_BROADCAST_STORAGE_KEY,
-  writeUpdaterRefreshBroadcast,
-} from "../../utils/updaterEvents";
-import {
-  IDLE_UPDATE_VERSION_STORAGE_KEY,
-  POLL_INTERVAL_MS,
-  PROMPT_SNOOZE_MS,
-  PROMPT_SNOOZE_STORAGE_KEY,
-  RESTART_READY_MESSAGE,
-} from "./constants";
-import {
-  initialNoticeUiState,
-  noticeUiReducer,
-  type UpdateApplySource,
-} from "./state";
-import {
-  clearRestartRequiredVersion,
-  readIdleUpdateVersions,
-  readPromptSnoozeByVersion,
-  readRestartRequiredVersion,
-  writeIdleUpdateVersions,
-  writePromptSnoozeByVersion,
-  writeRestartRequiredVersion,
-} from "./storage";
+import { useUpdateNoticeVersionState } from "../../utils/useUpdateNoticeVersionState";
+import { UPDATER_REFRESH_BROADCAST_STORAGE_KEY, writeUpdaterRefreshBroadcast } from "../../utils/updaterEvents";
+import { IDLE_UPDATE_VERSION_STORAGE_KEY, POLL_INTERVAL_MS, PROMPT_SNOOZE_STORAGE_KEY, RESTART_READY_MESSAGE } from "./constants";
+import { initialNoticeUiState, noticeUiReducer, type UpdateApplySource } from "./state";
+import { readIdleUpdateVersions, readPromptSnoozeByVersion, readRestartRequiredVersion, writeIdleUpdateVersions } from "./storage";
 import {
   areUpdateChecksEqual,
-  deriveBaseUrlFromEndpoint,
   getInPlaceCapability,
   isCurrentVersionAtOrAbove,
   isForcedUpdate,
@@ -92,14 +65,18 @@ export function useUpdateNoticeBanner({
   const [updateInfo, setUpdateInfo] = useState<UpdateCheck | null>(() =>
     isDesktop ? null : readCachedUpdateCheck(),
   );
-  const [desktopNativeState, setDesktopNativeState] =
-    useState<DesktopAppUpdateStateResp | null>(null);
-  const [promptSnoozeByVersion, setPromptSnoozeByVersion] = useState<
-    Record<string, number>
-  >(() => readPromptSnoozeByVersion());
-  const [idleUpdateVersions, setIdleUpdateVersions] = useState<Set<string>>(() =>
-    readIdleUpdateVersions(),
-  );
+  const [desktopNativeState, setDesktopNativeState] = useState<DesktopAppUpdateStateResp | null>(null);
+  const {
+    clearRestartRequiredVersionState,
+    clearVersionFlags,
+    idleUpdateVersions,
+    promptSnoozeByVersion,
+    scheduleVersionForNextIdle,
+    setIdleUpdateVersions,
+    setPromptSnoozeByVersion,
+    setRestartRequiredVersionState,
+    snoozeVersionPrompt,
+  } = useUpdateNoticeVersionState();
   const [uiState, dispatchUi] = useReducer(noticeUiReducer, initialNoticeUiState);
   const [restartingApp, setRestartingApp] = useState(false);
   const [desktopRefreshGeneration, setDesktopRefreshGeneration] = useState(0);
@@ -107,7 +84,7 @@ export function useUpdateNoticeBanner({
   const manualCheckInFlightRef = useRef(false);
   const updateInfoRef = useRef<UpdateCheck | null>(updateInfo);
   const desktopNativeStateRef = useRef<DesktopAppUpdateStateResp | null>(desktopNativeState);
-  const nativeStateSignatureRef = useRef<string>("");
+  const nativeStateSignatureRef = useRef("");
 
   useEffect(() => {
     updateInfoRef.current = updateInfo;
@@ -117,96 +94,41 @@ export function useUpdateNoticeBanner({
     desktopNativeStateRef.current = desktopNativeState;
   }, [desktopNativeState]);
 
-  const latest = (updateInfo?.latest_version ?? "").trim() || "unknown";
-  const latestKnownVersion = (updateInfo?.latest_version ?? "").trim();
-  const minimumSupportedVersion = (updateInfo?.min_supported_version ?? "").trim();
-  const nextPromptAtMs = latestKnownVersion
-    ? Number(promptSnoozeByVersion[latestKnownVersion] ?? 0)
-    : 0;
-  const nowMs = Date.now();
-  const desktopPhase = normalizeOptionalString(desktopNativeState?.phase).toLowerCase();
-  const desktopStagedReady =
-    isDesktop &&
-    (desktopNativeState?.staged === true || desktopPhase === "staged_ready");
-  const desktopStaging = isDesktop && desktopPhase === "staging";
-  const manualTransient =
-    uiState.phase === "checking" ||
-    uiState.phase === "manual_installing" ||
-    uiState.phase === "up_to_date" ||
-    uiState.phase === "manual_failed";
-  const inPlaceCapability = getInPlaceCapability(updateInfo);
-  const canApplyFromCurrentClient = isDesktop || inPlaceCapability.supported;
-  const forcedUpdateNeedsManualInstall =
-    isForcedUpdate(updateInfo) && !canApplyFromCurrentClient;
-  const shouldShow = isDesktop
-    ? uiState.phase === "restart_required" || manualTransient
-    : Boolean(updateInfo?.update_available) && nowMs >= nextPromptAtMs;
-  const forcedUpdate = isForcedUpdate(updateInfo) && canApplyFromCurrentClient;
-  const applyingUpdate = uiState.phase === "applying";
-  const restartRequired = uiState.phase === "restart_required";
+  const {
+    applyingUpdate,
+    desktopStagedReady,
+    desktopStaging,
+    desktopUpdateMenuState,
+    effectiveError,
+    forcedUpdate,
+    forcedUpdateNeedsManualInstall,
+    latest,
+    latestKnownVersion,
+    minimumSupportedVersion,
+    releaseNotesUrl,
+    restartRequired,
+    shouldRenderBanner,
+    showUpdateActions,
+    snackbarTitle,
+    updateActionDisabled,
+    updateActionLabel,
+  } = deriveUpdateNoticeBannerState({
+    isDesktop,
+    updateInfo,
+    desktopNativeState,
+    promptSnoozeByVersion,
+    restartingApp,
+    uiState,
+  });
   const showInfoModal = uiState.infoModalOpen;
   const updateError = uiState.error;
   const updateStatus = uiState.status;
-  const effectiveError =
-    updateError ||
-    (forcedUpdateNeedsManualInstall
-      ? inPlaceCapability.reason ||
-        "This version is no longer supported on this install path. Install the latest version from release notes."
-      : null);
-  const desktopUpdateMenuState: DesktopUpdateMenuState = restartRequired
-    ? "restart"
-    : desktopStaging ||
-        (isDesktop &&
-          (applyingUpdate ||
-            uiState.phase === "checking" ||
-            uiState.phase === "manual_installing"))
-      ? "downloading"
-      : "check";
-
-  const snoozeVersionPrompt = useCallback((version: string) => {
-    if (!version) return;
-    setPromptSnoozeByVersion((prev) => {
-      const next = {
-        ...prev,
-        [version]: Date.now() + PROMPT_SNOOZE_MS,
-      };
-      writePromptSnoozeByVersion(next);
-      return next;
-    });
-  }, []);
 
   const dismissForLater = useCallback(() => {
     if (!latestKnownVersion) return;
     snoozeVersionPrompt(latestKnownVersion);
     writeUpdaterRefreshBroadcast("dismiss-for-later");
   }, [latestKnownVersion, snoozeVersionPrompt]);
-
-  const clearVersionFlags = useCallback((version: string) => {
-    if (!version) return;
-    setPromptSnoozeByVersion((prev) => {
-      if (!(version in prev)) return prev;
-      const next = { ...prev };
-      delete next[version];
-      writePromptSnoozeByVersion(next);
-      return next;
-    });
-    setIdleUpdateVersions((prev) => {
-      if (!prev.has(version)) return prev;
-      const next = new Set(prev);
-      next.delete(version);
-      writeIdleUpdateVersions(next);
-      return next;
-    });
-  }, []);
-
-  const setRestartRequiredVersionState = useCallback((version: string) => {
-    if (!version) return;
-    writeRestartRequiredVersion(version);
-  }, []);
-
-  const clearRestartRequiredVersionState = useCallback(() => {
-    clearRestartRequiredVersion();
-  }, []);
 
   const reconcileRestartRequiredState = useCallback(
     (info: UpdateCheck | null): boolean => {
@@ -234,108 +156,29 @@ export function useUpdateNoticeBanner({
     async (force = false): Promise<UpdateCheck | null> => {
       let info: UpdateCheck | null = null;
       if (isDesktop) {
-        let daemonPolicy: UpdateCheck | null = null;
-        try {
-          daemonPolicy = await refreshUpdateCheck(force ? { force: true } : undefined);
-        } catch {
-          daemonPolicy = null;
-        }
-        try {
-          const native = await desktopGetAppUpdateState();
-          desktopNativeStateRef.current = native;
-          setDesktopNativeState(native);
+        const result = await refreshDesktopUpdateNoticeState({
+          force,
+          previousInfo: updateInfoRef.current,
+          previousNativeSignature: nativeStateSignatureRef.current,
+        });
+        desktopNativeStateRef.current = result.nativeState;
+        setDesktopNativeState(result.nativeState);
+        nativeStateSignatureRef.current = result.nativeSignature;
+        if (result.nativeState) {
           setDesktopRefreshGeneration((prev) => prev + 1);
-          const latestVersion = normalizeOptionalString(native.latest_version) || null;
-          const nativeSignature = [
-            normalizeOptionalString(native.current_version),
-            normalizeOptionalString(native.latest_version),
-            normalizeOptionalString(native.phase).toLowerCase(),
-            native.restart_required ? "1" : "0",
-            native.available ? "1" : "0",
-            native.staged ? "1" : "0",
-          ].join("|");
-          if (nativeSignature !== nativeStateSignatureRef.current) {
-            nativeStateSignatureRef.current = nativeSignature;
-            writeUpdaterRefreshBroadcast("native-state-change");
-          }
-          info = {
-            channel: normalizeOptionalString(daemonPolicy?.channel) || "stable",
-            base_url: deriveBaseUrlFromEndpoint(native.endpoint),
-            platform: normalizeOptionalString(native.target) || null,
-            current_version: normalizeOptionalString(native.current_version),
-            latest_version: latestVersion,
-            min_supported_version:
-              normalizeOptionalString(daemonPolicy?.min_supported_version) || null,
-            platform_supported: daemonPolicy?.platform_supported ?? true,
-            in_place_update_supported: Boolean(native.configured),
-            in_place_update_reason: native.configured
-              ? normalizeOptionalString(native.last_error) || null
-              : normalizeOptionalString(native.message) ||
-                "Native updater is not configured.",
-            update_available: Boolean(
-              native.available ||
-                normalizeOptionalString(native.phase).toLowerCase() === "staging" ||
-                normalizeOptionalString(native.phase).toLowerCase() === "staged_ready",
-            ),
-          };
-          if (native.restart_required) {
-            if (latestVersion) {
-              setRestartRequiredVersionState(latestVersion);
-            }
-            dispatchUi({
-              type: "restart_required",
-              message: RESTART_READY_MESSAGE,
-            });
-          } else {
-            const nativePhase = normalizeOptionalString(native.phase).toLowerCase();
-            const nativeLastError = normalizeOptionalString(native.last_error);
-            const nativeMessage = normalizeOptionalString(native.message);
-            if (nativeLastError) {
-              dispatchUi({
-                type: "check_failed",
-                message: nativeLastError,
-              });
-            } else if (nativePhase === "failed" && nativeMessage) {
-              dispatchUi({
-                type: "check_failed",
-                message: nativeMessage,
-              });
-            } else {
-              dispatchUi({ type: "check_recovered" });
-            }
-          }
-        } catch (err) {
-          desktopNativeStateRef.current = null;
-          setDesktopNativeState(null);
-          const reason = messageFromUnknownError(err, "Desktop updater check failed.");
-          const previous = updateInfoRef.current;
-          info = previous
-            ? {
-                ...previous,
-                update_available: false,
-                in_place_update_reason: reason,
-              }
-            : {
-                channel: normalizeOptionalString(daemonPolicy?.channel) || "stable",
-                base_url: normalizeOptionalString(daemonPolicy?.base_url),
-                platform: normalizeOptionalString(daemonPolicy?.platform) || null,
-                current_version: normalizeOptionalString(daemonPolicy?.current_version),
-                latest_version: null,
-                min_supported_version:
-                  normalizeOptionalString(daemonPolicy?.min_supported_version) || null,
-                platform_supported: daemonPolicy?.platform_supported ?? true,
-                in_place_update_supported: false,
-                in_place_update_reason: reason,
-                update_available: false,
-              };
-          dispatchUi({
-            type: "check_failed",
-            message: reason,
-          });
         }
+        if (result.nativeStateChanged) {
+          writeUpdaterRefreshBroadcast("native-state-change");
+        }
+        if (result.restartRequiredVersion) {
+          setRestartRequiredVersionState(result.restartRequiredVersion);
+        }
+        dispatchUi(result.uiAction);
+        info = result.info;
       } else {
         info = await refreshUpdateCheck(force ? { force: true } : undefined);
       }
+
       if (info) {
         updateInfoRef.current = info;
         setUpdateInfo((prev) => (areUpdateChecksEqual(prev, info) ? prev : info));
@@ -346,7 +189,7 @@ export function useUpdateNoticeBanner({
       }
       return effectiveInfo;
     },
-    [isDesktop, reconcileRestartRequiredState],
+    [isDesktop, reconcileRestartRequiredState, setRestartRequiredVersionState],
   );
 
   const applyUpdateNow = useCallback(
@@ -588,11 +431,10 @@ export function useUpdateNoticeBanner({
     if (!isDesktop) return;
     if (restartRequired) return;
     if (!desktopStagedReady) return;
-    const version = latestKnownVersion;
-    if (!version) return;
+    if (!latestKnownVersion) return;
     if (isForcedUpdate(updateInfo)) return;
     if (readRestartRequiredVersion()) return;
-    void applyUpdateNow(version, "desktop_auto");
+    void applyUpdateNow(latestKnownVersion, "desktop_auto");
   }, [
     applyUpdateNow,
     desktopRefreshGeneration,
@@ -695,55 +537,24 @@ export function useUpdateNoticeBanner({
   const requestUpdateOnNextIdle = useCallback(() => {
     const version = latestKnownVersion || readRestartRequiredVersion();
     if (version) {
-      setIdleUpdateVersions((prev) => {
-        const next = new Set(prev);
-        next.add(version);
-        writeIdleUpdateVersions(next);
-        return next;
-      });
+      scheduleVersionForNextIdle(version);
       if (!restartRequired) {
         snoozeVersionPrompt(version);
       }
       writeUpdaterRefreshBroadcast("schedule-next-idle");
     }
-  }, [latestKnownVersion, restartRequired, snoozeVersionPrompt]);
-
-  const releaseNotesUrl = useMemo(
-    () => `https://ctx.rs/release-notes/${encodeURIComponent(latest)}`,
-    [latest],
-  );
+  }, [
+    latestKnownVersion,
+    restartRequired,
+    scheduleVersionForNextIdle,
+    snoozeVersionPrompt,
+  ]);
 
   const onForcedUpdateNow = useCallback(() => {
     const version = latestKnownVersion || minimumSupportedVersion || latest;
     if (!version) return;
     void applyUpdateNow(version, "forced");
   }, [applyUpdateNow, latest, latestKnownVersion, minimumSupportedVersion]);
-
-  const shouldRenderBanner =
-    forcedUpdateNeedsManualInstall ||
-    shouldShow ||
-    (!isDesktop && (applyingUpdate || restartRequired));
-  const restartActionEnabled = restartRequired && isDesktop;
-  const updateActionDisabled =
-    applyingUpdate || (restartRequired && (!restartActionEnabled || restartingApp));
-  const updateActionLabel = restartRequired
-    ? "Relaunch"
-    : applyingUpdate
-      ? "Updating..."
-      : "Update Now";
-  const snackbarTitle = restartRequired
-    ? `Ready to relaunch: ${latest}.`
-    : uiState.phase === "checking"
-      ? "Checking for updates..."
-      : uiState.phase === "manual_installing"
-        ? "Update found. Installing in background..."
-        : uiState.phase === "up_to_date"
-          ? "You're up to date."
-          : uiState.phase === "manual_failed"
-            ? "Update check failed."
-            : `Update available: ${latest}.`;
-  const showUpdateActions =
-    restartRequired || (!isDesktop && Boolean(updateInfo?.update_available));
 
   return {
     applyingUpdate,

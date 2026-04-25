@@ -2,20 +2,26 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useS
 import type { MessageAttachment } from "../api/client";
 import { randomUuid } from "../utils/randomUuid";
 import { errorMessage } from "../utils/errorMessage";
+import {
+  defaultWindowState,
+  ensureLeafActiveTab,
+  findLeaf,
+  getActiveTabFromLeaf,
+  getOrCreateWindowId,
+  readSessionWindowV1,
+  updateLeaf,
+  writeSessionWindowV1,
+} from "../utils/workbenchStoreLayout";
 import type { WorkbenchModeId } from "../components/WorkbenchComposer";
-import type { LayoutNode, PersistedWorkbenchWindowV1, WorkbenchDraft, WorkbenchTab } from "./types";
+import type { PersistedWorkbenchWindowV1, WorkbenchDraft, WorkbenchTab } from "./types";
 import {
   loadWorkbenchDraftV1,
   loadWorkbenchWindowV1,
-  decodePersistedWorkbenchWindowV1,
   saveWorkbenchDraftV1,
-  saveWorkbenchWindowV1,
   saveWorkbenchWindowV1Immediate,
   workbenchDaemonKey,
 } from "./persistence";
 
-const WINDOW_ID_STORAGE_KEY = "contextUiWindowId.v1";
-const WINDOW_SESSION_STORAGE_PREFIX = "wb.window.session.v1";
 type WorkbenchDraftValue = {
   text: string;
   modeId: WorkbenchModeId;
@@ -33,123 +39,10 @@ type WorkbenchDraftUpdate =
       attachments?: MessageAttachment[];
     });
 
-function sessionWindowKeyV1(workspaceId: string, windowId: string): string {
-  return `${WINDOW_SESSION_STORAGE_PREFIX}.${workspaceId}.${windowId}`;
-}
-
-function readSessionWindowV1(workspaceId: string, windowId: string): PersistedWorkbenchWindowV1 | null {
-  try {
-    const raw = sessionStorage.getItem(sessionWindowKeyV1(workspaceId, windowId));
-    if (!raw) return null;
-    return decodePersistedWorkbenchWindowV1(JSON.parse(raw));
-  } catch {
-    return null;
-  }
-}
-
-function writeSessionWindowV1(workspaceId: string, windowId: string, win: PersistedWorkbenchWindowV1) {
-  try {
-    sessionStorage.setItem(sessionWindowKeyV1(workspaceId, windowId), JSON.stringify(win));
-  } catch {
-    // ignore
-  }
-}
-
 export const NEW_TASK_DRAFT_KEY = "new_task";
 
 export function sessionDraftKey(sessionId: string): string {
   return `session:${sessionId}`;
-}
-
-function getOrCreateWindowId(): string {
-  const windowNamePrefix = "ctx-ui-window-id:";
-  const readWindowName = (): string | null => {
-    try {
-      if (typeof window === "undefined") return null;
-      const name = String(window.name ?? "");
-      if (!name.startsWith(windowNamePrefix)) return null;
-      const id = name.slice(windowNamePrefix.length).trim();
-      return id || null;
-    } catch {
-      return null;
-    }
-  };
-  const writeWindowName = (id: string) => {
-    try {
-      if (typeof window === "undefined") return;
-      const name = String(window.name ?? "");
-      if (name && !name.startsWith(windowNamePrefix)) return;
-      window.name = `${windowNamePrefix}${id}`;
-    } catch {
-      // ignore
-    }
-  };
-  try {
-    const existing = sessionStorage.getItem(WINDOW_ID_STORAGE_KEY);
-    if (existing && existing.trim()) return existing;
-    const fromName = readWindowName();
-    if (fromName) {
-      sessionStorage.setItem(WINDOW_ID_STORAGE_KEY, fromName);
-      return fromName;
-    }
-    const created = randomUuid();
-    sessionStorage.setItem(WINDOW_ID_STORAGE_KEY, created);
-    writeWindowName(created);
-    return created;
-  } catch {
-    const fromName = readWindowName();
-    if (fromName) return fromName;
-    const created = randomUuid();
-    writeWindowName(created);
-    return created;
-  }
-}
-
-function defaultWindowState(): PersistedWorkbenchWindowV1 {
-  const leafId = randomUuid();
-  const tabId = randomUuid();
-  return {
-    v: 1,
-    layout: {
-      kind: "leaf",
-      id: leafId,
-      tabs: [{ id: tabId, kind: "new_task" }],
-      activeTabId: tabId,
-    },
-    focusedLeafId: leafId,
-  };
-}
-
-function findLeaf(node: LayoutNode, leafId: string): Extract<LayoutNode, { kind: "leaf" }> | null {
-  if (node.kind === "leaf") return node.id === leafId ? node : null;
-  return findLeaf(node.first, leafId) ?? findLeaf(node.second, leafId);
-}
-
-function mapLayout(node: LayoutNode, fn: (n: LayoutNode) => LayoutNode): LayoutNode {
-  const next = fn(node);
-  if (next.kind === "split") {
-    return { ...next, first: mapLayout(next.first, fn), second: mapLayout(next.second, fn) };
-  }
-  return next;
-}
-
-function updateLeaf(node: LayoutNode, leafId: string, fn: (leaf: Extract<LayoutNode, { kind: "leaf" }>) => LayoutNode): LayoutNode {
-  return mapLayout(node, (n) => {
-    if (n.kind !== "leaf") return n;
-    if (n.id !== leafId) return n;
-    return fn(n);
-  });
-}
-
-function ensureLeafActiveTab(leaf: Extract<LayoutNode, { kind: "leaf" }>): Extract<LayoutNode, { kind: "leaf" }> {
-  const activeOk = leaf.tabs.some((t) => t.id === leaf.activeTabId);
-  if (activeOk) return leaf;
-  return { ...leaf, activeTabId: leaf.tabs[0]?.id ?? leaf.activeTabId };
-}
-
-function getActiveTabFromLeaf(leaf: Extract<LayoutNode, { kind: "leaf" }>): WorkbenchTab | null {
-  const found = leaf.tabs.find((t) => t.id === leaf.activeTabId);
-  return found ?? leaf.tabs[0] ?? null;
 }
 
 type DraftSnapshot = {
@@ -186,19 +79,19 @@ type WorkbenchStoreListener = () => void;
 
 type DraftBroadcastMsg =
   | {
-    type: "draft";
-    workspaceId: string;
-    windowId: string;
-    draftKey: string;
-    draft: WorkbenchDraft;
-  }
+      type: "draft";
+      workspaceId: string;
+      windowId: string;
+      draftKey: string;
+      draft: WorkbenchDraft;
+    }
   | {
-    type: "draft_delete";
-    workspaceId: string;
-    windowId: string;
-    draftKey: string;
-    updatedAtMs: number;
-  };
+      type: "draft_delete";
+      workspaceId: string;
+      windowId: string;
+      draftKey: string;
+      updatedAtMs: number;
+    };
 
 export class WorkbenchStore {
   private listeners = new Set<WorkbenchStoreListener>();
@@ -209,8 +102,6 @@ export class WorkbenchStore {
   private draftLoadsInFlight = new Map<string, Promise<void>>();
   private channel: BroadcastChannel | null = null;
   private layoutDirtyBeforeHydrate = false;
-  // If we successfully seeded from sessionStorage, that value is typically newer than IndexedDB due to
-  // debounced persistence. Avoid a post-reload "snap back" when hydrate completes.
   private seededFromSessionStorage = false;
   private shellSnapshotCache: {
     window: PersistedWorkbenchWindowV1;
@@ -258,9 +149,9 @@ export class WorkbenchStore {
   };
 
   init = () => {
-    this.hydrate().catch(() => { });
+    this.hydrate().catch(() => {});
     this.initBroadcast();
-    this.ensureDraftLoaded(NEW_TASK_DRAFT_KEY).catch(() => { });
+    this.ensureDraftLoaded(NEW_TASK_DRAFT_KEY).catch(() => {});
   };
 
   private publish() {
@@ -373,7 +264,7 @@ export class WorkbenchStore {
     this.publish();
   }
 
-  getFocusedLeaf(): Extract<LayoutNode, { kind: "leaf" }> | null {
+  getFocusedLeaf(): Extract<PersistedWorkbenchWindowV1["layout"], { kind: "leaf" }> | null {
     return findLeaf(this.snapshot.window.layout, this.snapshot.window.focusedLeafId);
   }
 
@@ -558,6 +449,7 @@ export class WorkbenchStore {
     const key = String(draftKey || "").trim();
     if (!key) return;
     if (!this.persistEnabled) return;
+
     const draft = this.snapshot.drafts.byKey[key];
     if (!draft) return;
 
@@ -646,7 +538,7 @@ export function useWorkbenchDraft(
   useEffect(() => {
     if (!key) return;
     if (loaded) return;
-    store.ensureDraftLoaded(key).catch(() => { });
+    store.ensureDraftLoaded(key).catch(() => {});
   }, [store, key, loaded]);
 
   const value = useMemo<WorkbenchDraftValue>(() => {
@@ -658,7 +550,7 @@ export function useWorkbenchDraft(
     (next: WorkbenchDraftUpdate) => {
       store.setDraft(key, next);
     },
-    [store, key, fallback],
+    [store, key],
   );
 
   return { value, setValue, updatedAtMs: draft?.updatedAtMs ?? 0 };

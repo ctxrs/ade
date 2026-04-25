@@ -1,4 +1,4 @@
-import type { ClientTelemetryBatch, SemanticTelemetryBatch, SemanticTelemetryEvent } from "@ctx/types";
+import type { SemanticTelemetryEvent } from "@ctx/types";
 import { isDesktopApp } from "../utils/desktop";
 import { emitUiDiagnostic, normalizeDiagnosticErrorMessage } from "../state/diagnosticsChannel";
 import {
@@ -16,6 +16,17 @@ import {
   subscribeDaemonConnection,
 } from "./daemonConnection";
 import { buildDaemonRequestHeaders } from "./daemonRequestHeaders";
+import {
+  createTraceparent,
+  getTelemetryRunId,
+  recordClientApiError,
+  recordClientApiMetric,
+  recordClientCounterMetric,
+  recordClientGaugeMetric,
+  recordClientHistogramMetric,
+  recordSemanticTelemetryEvent,
+  setSemanticTelemetryRemoteEnabled,
+} from "./clientBaseTelemetry";
 
 export type DaemonClientConfig = {
   baseUrl: string | null;
@@ -114,6 +125,17 @@ const emitApiDiagnostic = (args: {
   });
 };
 
+const looksLikeHtml = (text: string): boolean => {
+  const t = String(text || "").trimStart().toLowerCase();
+  return t.startsWith("<!doctype html") || t.startsWith("<html");
+};
+
+const trimForError = (text: string): string => {
+  const s = String(text || "").trim();
+  if (s.length <= 800) return s;
+  return `${s.slice(0, 800)}…`;
+};
+
 export const api = async <T>(path: string, init?: RequestInit): Promise<T> => {
   const token = authToken();
   const traceparent = createTraceparent();
@@ -146,24 +168,11 @@ export const api = async <T>(path: string, init?: RequestInit): Promise<T> => {
   const end = typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
   recordClientApiMetric(path, method, res.status, res.status < 500, end - start, runId);
 
-  const looksLikeHtml = (text: string): boolean => {
-    const t = String(text || "").trimStart().toLowerCase();
-    return t.startsWith("<!doctype html") || t.startsWith("<html");
-  };
-
-  const trimForError = (text: string): string => {
-    const s = String(text || "").trim();
-    if (s.length <= 800) return s;
-    return `${s.slice(0, 800)}…`;
-  };
-
   if (!res.ok) {
     const text = await res.text();
     const contentType = res.headers.get("content-type") ?? "";
 
     if ((contentType.includes("text/html") || looksLikeHtml(text)) && path.startsWith("/api/")) {
-      // This usually means the web UI server served its SPA fallback for an /api route.
-      // Most commonly: the daemon is old and doesn't implement the endpoint, or the dev proxy isn't pointing at the daemon.
       const message = `The daemon returned HTML for ${path} (${res.status}). Restart/update the daemon (and ensure Vite is proxying /api to it).`;
       emitApiDiagnostic({
         path,
@@ -243,9 +252,7 @@ const desktopApi = async <T>(path: string, init?: RequestInit): Promise<T> => {
   const token = authToken();
   const traceparent = createTraceparent();
   const runId = getTelemetryRunId();
-
   const method = init?.method ? String(init.method) : "GET";
-
   const start = typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
   let res: Response;
   try {
@@ -275,18 +282,6 @@ const desktopApi = async <T>(path: string, init?: RequestInit): Promise<T> => {
 
   const contentType = String(res.headers.get("content-type") ?? "");
   const text = await res.text();
-
-  const looksLikeHtml = (t: string): boolean => {
-    const s = String(t || "").trimStart().toLowerCase();
-    return s.startsWith("<!doctype html") || s.startsWith("<html");
-  };
-
-  const trimForError = (t: string): string => {
-    const s = String(t || "").trim();
-    if (s.length <= 800) return s;
-    return `${s.slice(0, 800)}…`;
-  };
-
   const ok = res.status >= 200 && res.status < 300;
   if (!ok) {
     if ((contentType.includes("text/html") || looksLikeHtml(text)) && path.startsWith("/api/")) {
@@ -361,251 +356,16 @@ export const apiAny = async <T>(path: string, init?: RequestInit): Promise<T> =>
   return api<T>(path, init);
 };
 
-const CLIENT_TELEMETRY_PATH = "/api/telemetry/client";
-const SEMANTIC_TELEMETRY_PATH = "/api/telemetry/events";
-const CLIENT_TELEMETRY_FLUSH_MS = 1000;
-const CLIENT_TELEMETRY_MAX = 200;
-let clientTelemetryTimer: number | null = null;
-const clientTelemetryQueue: ClientTelemetryMetric[] = [];
-let semanticTelemetryTimer: number | null = null;
-const semanticTelemetryQueue: SemanticTelemetryEvent[] = [];
-let semanticTelemetryRemoteEnabled = true;
-
-type ClientTelemetryMetric = {
-  name: string;
-  kind: "histogram" | "counter" | "gauge";
-  unit: string;
-  value: number;
-  labels?: Record<string, string>;
-  run_id?: string | null;
-};
-
-const normalizePath = (path: string): string => {
-  const uuid = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
-  const numeric = /\/(\d+)(?=\/|$)/g;
-  return path.replace(uuid, ":id").replace(numeric, "/:id");
-};
-
-const toHex = (bytes: Uint8Array): string =>
-  Array.from(bytes)
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
-
-const createTraceparent = (): string | null => {
-  if (typeof crypto === "undefined" || !crypto.getRandomValues) return null;
-  const traceId = new Uint8Array(16);
-  const spanId = new Uint8Array(8);
-  crypto.getRandomValues(traceId);
-  crypto.getRandomValues(spanId);
-  return `00-${toHex(traceId)}-${toHex(spanId)}-01`;
-};
-
-const getTelemetryRunId = (): string | null => {
-  try {
-    return sessionStorage.getItem("ctxRunId");
-  } catch {
-    return null;
-  }
-};
-
-const queueClientTelemetry = (event: ClientTelemetryMetric) => {
-  if (typeof window === "undefined") return;
-  if (clientTelemetryQueue.length >= CLIENT_TELEMETRY_MAX) return;
-  clientTelemetryQueue.push(event);
-  if (clientTelemetryTimer !== null) return;
-  clientTelemetryTimer = window.setTimeout(() => {
-    clientTelemetryTimer = null;
-    flushClientTelemetry().catch(() => {});
-  }, CLIENT_TELEMETRY_FLUSH_MS);
-};
-
-const queueSemanticTelemetry = (event: SemanticTelemetryEvent) => {
-  if (typeof window === "undefined") return;
-  if (event.delivery !== "local_only" && !semanticTelemetryRemoteEnabled) {
-    return;
-  }
-  if (semanticTelemetryQueue.length >= CLIENT_TELEMETRY_MAX) {
-    semanticTelemetryQueue.shift();
-  }
-  semanticTelemetryQueue.push(event);
-  if (semanticTelemetryTimer !== null) return;
-  semanticTelemetryTimer = window.setTimeout(() => {
-    semanticTelemetryTimer = null;
-    flushSemanticTelemetry().catch(() => {});
-  }, CLIENT_TELEMETRY_FLUSH_MS);
-};
-
-const shouldRecordClientTelemetry = (path: string): boolean =>
-  path.startsWith("/api/") && !path.startsWith("/api/telemetry");
-
-const recordClientApiMetric = (
-  path: string,
-  method: string,
-  status: number | null,
-  ok: boolean,
-  durationMs: number,
-  runId: string | null,
-) => {
-  if (!shouldRecordClientTelemetry(path) || typeof window === "undefined") return;
-  const endpoint = normalizePath(path);
-  queueClientTelemetry({
-    name: "client.api.duration_ms",
-    kind: "histogram",
-    unit: "ms",
-    value: durationMs,
-    run_id: runId,
-    labels: {
-      endpoint,
-      method,
-      status: status === null ? "error" : String(status),
-      success: ok ? "true" : "false",
-      source: "client",
-    },
-  });
-};
-
-const recordClientApiError = (path: string, method: string, durationMs: number, runId: string | null) => {
-  if (!shouldRecordClientTelemetry(path) || typeof window === "undefined") return;
-  const endpoint = normalizePath(path);
-  queueClientTelemetry({
-    name: "client.api.error_count",
-    kind: "counter",
-    unit: "count",
-    value: 1,
-    run_id: runId,
-    labels: {
-      endpoint,
-      method,
-      status: "error",
-      success: "false",
-      source: "client",
-    },
-  });
-  recordClientApiMetric(path, method, null, false, durationMs, runId);
-};
-
-export const recordClientCounterMetric = (
-  name: string,
-  labels: Record<string, string> = {},
-  value = 1,
-): void => {
-  recordClientMetric("counter", name, "count", value, labels);
-};
-
-export const recordClientHistogramMetric = (
-  name: string,
-  unit: string,
-  value: number,
-  labels: Record<string, string> = {},
-): void => {
-  recordClientMetric("histogram", name, unit, value, labels);
-};
-
-export const recordClientGaugeMetric = (
-  name: string,
-  unit: string,
-  value: number,
-  labels: Record<string, string> = {},
-): void => {
-  recordClientMetric("gauge", name, unit, value, labels);
-};
-
-const recordClientMetric = (
-  kind: ClientTelemetryMetric["kind"],
-  name: string,
-  unit: string,
-  value: number,
-  labels: Record<string, string> = {},
-) => {
-  if (!name.trim() || typeof window === "undefined") return;
-  queueClientTelemetry({
-    name,
-    kind,
-    unit,
-    value,
-    run_id: getTelemetryRunId(),
-    labels: {
-      source: "client",
-      ...labels,
-    },
-  });
-};
-
-export const recordSemanticTelemetryEvent = (event: SemanticTelemetryEvent): void => {
-  if (!event.event_name.trim() || !event.origin_install_id.trim()) return;
-  queueSemanticTelemetry(event);
-};
-
-export const setSemanticTelemetryRemoteEnabled = (enabled: boolean): void => {
-  semanticTelemetryRemoteEnabled = enabled;
-  if (enabled) return;
-  for (let index = semanticTelemetryQueue.length - 1; index >= 0; index -= 1) {
-    if (semanticTelemetryQueue[index]?.delivery !== "local_only") {
-      semanticTelemetryQueue.splice(index, 1);
-    }
-  }
-  if (!semanticTelemetryQueue.length && semanticTelemetryTimer !== null && typeof window !== "undefined") {
-    window.clearTimeout(semanticTelemetryTimer);
-    semanticTelemetryTimer = null;
-  }
-};
-
-const flushClientTelemetry = async () => {
-  if (!clientTelemetryQueue.length) return;
-  const batch: ClientTelemetryBatch = { events: clientTelemetryQueue.splice(0) };
-  await postTelemetryBatch(CLIENT_TELEMETRY_PATH, batch, "client_telemetry_flush");
-};
-
-const flushSemanticTelemetry = async () => {
-  if (!semanticTelemetryQueue.length) return;
-  const events = semanticTelemetryQueue
-    .splice(0)
-    .filter((event) => semanticTelemetryRemoteEnabled || event.delivery === "local_only");
-  if (!events.length) return;
-  const batch: SemanticTelemetryBatch = { events };
-  await postTelemetryBatch(SEMANTIC_TELEMETRY_PATH, batch, "semantic_telemetry_flush");
-};
-
-const postTelemetryBatch = async (
-  path: string,
-  batch: ClientTelemetryBatch | SemanticTelemetryBatch,
-  reason: "client_telemetry_flush" | "semantic_telemetry_flush",
-) => {
-  const token = authToken();
-  try {
-    if (isDesktopApp()) {
-      await ensureDesktopDaemonConnection({
-        connectLocalWhenMissing: false,
-        reason,
-      });
-    }
-    if (typeof fetch === "undefined") return;
-    await fetch(getDaemonHttpUrl(path), {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        ...(token ? { authorization: `Bearer ${token}` } : {}),
-      },
-      body: JSON.stringify(batch),
-      keepalive: true,
-    });
-  } catch {
-    // Ignore telemetry upload failures.
-  }
-};
-
 export type DaemonRawResponse = {
   status: number;
   body: string;
   content_type: string;
 };
 
-// For endpoints that need to handle non-2xx statuses without throwing (e.g. buffers update conflict 409).
 export const daemonFetchRaw = async (path: string, init?: RequestInit): Promise<DaemonRawResponse> => {
   const method = init?.method ? String(init.method) : "GET";
   const traceparent = createTraceparent();
   const runId = getTelemetryRunId();
-
   const start =
     typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
 
@@ -656,3 +416,13 @@ export const idToString = (id: string | null | undefined): string => {
   }
   return id;
 };
+
+export {
+  recordClientCounterMetric,
+  recordClientGaugeMetric,
+  recordClientHistogramMetric,
+  recordSemanticTelemetryEvent,
+  setSemanticTelemetryRemoteEnabled,
+};
+
+export type { SemanticTelemetryEvent };

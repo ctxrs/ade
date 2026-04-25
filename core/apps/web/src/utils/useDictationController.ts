@@ -4,6 +4,12 @@ import { getSettings, updateSettings } from "../api/client";
 import type { DictationSettings, UpdateDictationSettingsRequest } from "../api/client";
 import { getDaemonConnection, getDaemonWsUrl } from "../api/daemonConnection";
 import { isDesktopApp } from "./desktop";
+import {
+  DEFAULT_LIVEKIT_LANGUAGE,
+  DictationOnboardingCloudDraft,
+  DictationOnboardingState,
+  needsDictationOnboarding,
+} from "./dictationControllerSettings";
 import { startMicPcmStream } from "./micPcmStream";
 import {
   type SttApi,
@@ -13,41 +19,14 @@ import {
   loadSttApi,
   normalizeTauriLanguage,
 } from "./tauriStt";
-import { readBoolish } from "./boolish";
 import { parseWsJson } from "./wsJson";
 import { errorMessage } from "./errorMessage";
 import { trackFeatureUsed } from "./analytics";
-import { useTauriSttModelStatus, type TauriModelStatus } from "./useTauriSttModelStatus";
+import { useDictationOnboardingFlow } from "./useDictationOnboardingFlow";
+
+export type { DictationOnboardingCloudDraft, DictationOnboardingState } from "./dictationControllerSettings";
 
 type DictationProvider = DictationSettings["provider"];
-
-const DEFAULT_LIVEKIT_BASE_URL = "https://agent-gateway.livekit.cloud/v1";
-const DEFAULT_LIVEKIT_MODEL = "auto";
-const DEFAULT_LIVEKIT_LANGUAGE = "en";
-const ONBOARDING_REOPEN_COOLDOWN_MS = 400;
-
-export type DictationOnboardingStage = "choose" | "local_setup" | "cloud_setup";
-
-export type DictationOnboardingCloudDraft = {
-  baseUrl: string;
-  apiKey: string;
-  apiKeySet: boolean;
-  apiSecret: string;
-  apiSecretSet: boolean;
-  model: string;
-  language: string;
-};
-
-export type DictationOnboardingState = {
-  open: boolean;
-  stage: DictationOnboardingStage;
-  busy: boolean;
-  error: string | null;
-  cloud: DictationOnboardingCloudDraft;
-  localModelStatus: TauriModelStatus;
-  localPendingStart: boolean;
-  localOptionDisabledReason: string | null;
-};
 
 type DictationControllerOptions = {
   text: string;
@@ -74,107 +53,6 @@ type DictationController = {
 const asRecord = (value: unknown): Record<string, unknown> => {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
   return value as Record<string, unknown>;
-};
-
-const seedCloudDraft = (settings: DictationSettings | null | undefined): DictationOnboardingCloudDraft => {
-  const livekit = settings?.livekit;
-  return {
-    baseUrl: String(livekit?.base_url ?? DEFAULT_LIVEKIT_BASE_URL),
-    apiKey: "",
-    apiKeySet: readBoolish(livekit?.api_key_set) ?? false,
-    apiSecret: "",
-    apiSecretSet: readBoolish(livekit?.api_secret_set) ?? false,
-    model: String(livekit?.model ?? DEFAULT_LIVEKIT_MODEL),
-    language: String(livekit?.language ?? DEFAULT_LIVEKIT_LANGUAGE),
-  };
-};
-
-const normalizeCloudDraft = (draft: DictationOnboardingCloudDraft) => {
-  const baseUrl = draft.baseUrl.trim() || DEFAULT_LIVEKIT_BASE_URL;
-  const apiKey = draft.apiKey.trim();
-  const apiSecret = draft.apiSecret.trim();
-  const model = draft.model.trim() || DEFAULT_LIVEKIT_MODEL;
-  const language = draft.language.trim() || DEFAULT_LIVEKIT_LANGUAGE;
-  return { baseUrl, apiKey, apiSecret, model, language };
-};
-
-const cloudSettingsFromDraft = (draft: DictationOnboardingCloudDraft): UpdateDictationSettingsRequest => {
-  const normalized = normalizeCloudDraft(draft);
-  const livekit: UpdateDictationSettingsRequest["livekit"] = {
-    base_url: normalized.baseUrl,
-    model: normalized.model,
-    language: normalized.language,
-  };
-  if (normalized.apiKey) {
-    livekit.api_key = normalized.apiKey;
-  }
-  if (normalized.apiSecret) {
-    livekit.api_secret = normalized.apiSecret;
-  }
-  return {
-    enabled: true,
-    provider: "livekit_inference",
-    livekit,
-  };
-};
-
-const localSettingsFromDraft = (draft: DictationOnboardingCloudDraft): UpdateDictationSettingsRequest => {
-  const normalized = normalizeCloudDraft(draft);
-  const livekit: UpdateDictationSettingsRequest["livekit"] = {
-    base_url: normalized.baseUrl,
-    model: normalized.model,
-    language: normalized.language,
-  };
-  if (normalized.apiKey) {
-    livekit.api_key = normalized.apiKey;
-  }
-  if (normalized.apiSecret) {
-    livekit.api_secret = normalized.apiSecret;
-  }
-  return {
-    enabled: true,
-    provider: "tauri_stt",
-    livekit,
-  };
-};
-
-const runtimeSettingsFromDraft = (
-  provider: DictationSettings["provider"],
-  draft: DictationOnboardingCloudDraft,
-): DictationSettings => {
-  const normalized = normalizeCloudDraft(draft);
-  return {
-    enabled: true,
-    provider,
-    livekit: {
-      base_url: normalized.baseUrl,
-      api_key_set: draft.apiKeySet || Boolean(normalized.apiKey),
-      api_secret_set: draft.apiSecretSet || Boolean(normalized.apiSecret),
-      model: normalized.model,
-      language: normalized.language,
-    },
-  };
-};
-
-const needsDictationOnboarding = (settings: DictationSettings | null | undefined): boolean => {
-  if (!settings) return true;
-  if (!settings.enabled) return true;
-
-  const provider = settings.provider ?? "livekit_inference";
-  if (provider === "disabled") return true;
-
-  if (provider === "tauri_stt") {
-    return !isDesktopApp();
-  }
-
-  if (provider === "livekit_inference") {
-    const livekit = settings.livekit;
-    const hasKey = readBoolish(livekit?.api_key_set) ?? false;
-    const hasSecret = readBoolish(livekit?.api_secret_set) ?? false;
-    return !hasKey || !hasSecret;
-  }
-
-  return true;
 };
 
 export const useDictationController = (opts: DictationControllerOptions): DictationController => {
@@ -211,35 +89,6 @@ export const useDictationController = (opts: DictationControllerOptions): Dictat
   const dictationTauriStateRef = useRef<SttStateChange["state"]>("idle");
   const dictationTauriListenersRef = useRef<Array<() => void> | null>(null);
   const dictationTauriApiRef = useRef<SttApi | null>(null);
-
-  const [onboardingOpen, setOnboardingOpen] = useState(false);
-  const [onboardingStage, setOnboardingStage] = useState<DictationOnboardingStage>("choose");
-  const [onboardingBusy, setOnboardingBusy] = useState(false);
-  const [onboardingError, setOnboardingError] = useState<string | null>(null);
-  const [onboardingCloud, setOnboardingCloud] = useState<DictationOnboardingCloudDraft>(() => seedCloudDraft(null));
-  const [onboardingLocalPendingStart, setOnboardingLocalPendingStart] = useState(false);
-  const onboardingReopenCooldownUntilRef = useRef(0);
-  const onboardingOpenRef = useRef(false);
-  const onboardingSubmissionIdRef = useRef(0);
-
-  useEffect(() => {
-    onboardingOpenRef.current = onboardingOpen;
-  }, [onboardingOpen]);
-
-  const localOptionDisabledReason = useMemo(
-    () => (isDesktopApp() ? null : "Local model is only available in the desktop app."),
-    [],
-  );
-
-  const onboardingModelProvider: DictationSettings["provider"] =
-    onboardingOpen && onboardingStage === "local_setup" ? "tauri_stt" : "livekit_inference";
-  const {
-    modelStatus: onboardingLocalModelStatus,
-    startModelDownload: startOnboardingLocalModelDownload,
-  } = useTauriSttModelStatus({
-    provider: onboardingModelProvider,
-    language: onboardingCloud.language,
-  });
 
   const cleanupTauriListeners = useCallback(() => {
     const listeners = dictationTauriListenersRef.current;
@@ -288,43 +137,6 @@ export const useDictationController = (opts: DictationControllerOptions): Dictat
     setDictationSettings(persisted);
     return persisted;
   }, []);
-
-  const beginOnboardingSubmission = useCallback((): number => {
-    const nextId = onboardingSubmissionIdRef.current + 1;
-    onboardingSubmissionIdRef.current = nextId;
-    return nextId;
-  }, []);
-
-  const isOnboardingSubmissionActive = useCallback((submissionId: number): boolean => {
-    return onboardingSubmissionIdRef.current === submissionId && onboardingOpenRef.current;
-  }, []);
-
-  const dismissDictationOnboarding = useCallback(() => {
-    onboardingSubmissionIdRef.current += 1;
-    onboardingOpenRef.current = false;
-    setOnboardingOpen(false);
-    setOnboardingStage("choose");
-    setOnboardingBusy(false);
-    setOnboardingError(null);
-    setOnboardingLocalPendingStart(false);
-    onboardingReopenCooldownUntilRef.current = Date.now() + ONBOARDING_REOPEN_COOLDOWN_MS;
-  }, []);
-
-  const openDictationOnboarding = useCallback(
-    (settings: DictationSettings | null | undefined) => {
-      if (onboardingOpen) return;
-      if (Date.now() < onboardingReopenCooldownUntilRef.current) return;
-      onboardingSubmissionIdRef.current += 1;
-      onboardingOpenRef.current = true;
-      setOnboardingCloud(seedCloudDraft(settings));
-      setOnboardingStage("choose");
-      setOnboardingBusy(false);
-      setOnboardingError(null);
-      setOnboardingLocalPendingStart(false);
-      setOnboardingOpen(true);
-    },
-    [onboardingOpen],
-  );
 
   const stopDictation = useCallback(async (opts?: { awaitFinal?: boolean }): Promise<string> => {
     const awaitFinal = opts?.awaitFinal === true;
@@ -443,8 +255,7 @@ export const useDictationController = (opts: DictationControllerOptions): Dictat
           setDictationError("Tauri dictation is only available in the desktop app.");
           return false;
         }
-        if (dictationRecording) return true;
-        if (dictationTauriListenersRef.current) return true;
+        if (dictationRecording || dictationTauriListenersRef.current) return true;
 
         const stt = dictationTauriApiRef.current ?? (await loadSttApi());
         dictationTauriApiRef.current = stt;
@@ -524,8 +335,7 @@ export const useDictationController = (opts: DictationControllerOptions): Dictat
       }
 
       const existing = dictationWsRef.current;
-      if (existing && existing.readyState !== WebSocket.CLOSED) return true;
-      if (dictationRecording) return true;
+      if ((existing && existing.readyState !== WebSocket.CLOSED) || dictationRecording) return true;
 
       const query = new URLSearchParams();
       let wsUrl = "";
@@ -632,6 +442,22 @@ export const useDictationController = (opts: DictationControllerOptions): Dictat
     [appendSegment, cleanupTauriListeners, dictationRecording, resetSegments, updateTextFromSegments],
   );
 
+  const {
+    dictationOnboarding,
+    openDictationOnboarding,
+    dismissDictationOnboarding,
+    backDictationOnboarding,
+    chooseDictationOnboardingLocal,
+    chooseDictationOnboardingCloud,
+    updateDictationOnboardingCloud,
+    submitDictationOnboardingLocal,
+    submitDictationOnboardingCloud,
+  } = useDictationOnboardingFlow({
+    startDictationWithSettings,
+    persistDictationSettings,
+    stopDictation: () => stopDictation(),
+  });
+
   const startDictation = useCallback(async () => {
     setDictationError(null);
 
@@ -663,215 +489,6 @@ export const useDictationController = (opts: DictationControllerOptions): Dictat
     await startDictationWithSettings(settings as DictationSettings);
   }, [dictationSettings, openDictationOnboarding, startDictationWithSettings]);
 
-  const chooseDictationOnboardingLocal = useCallback(() => {
-    if (localOptionDisabledReason) {
-      setOnboardingError(localOptionDisabledReason);
-      return;
-    }
-    setOnboardingError(null);
-    setOnboardingStage("local_setup");
-  }, [localOptionDisabledReason]);
-
-  const chooseDictationOnboardingCloud = useCallback(() => {
-    setOnboardingError(null);
-    setOnboardingStage("cloud_setup");
-  }, []);
-
-  const backDictationOnboarding = useCallback(() => {
-    onboardingSubmissionIdRef.current += 1;
-    setOnboardingError(null);
-    setOnboardingBusy(false);
-    setOnboardingLocalPendingStart(false);
-    setOnboardingStage("choose");
-  }, []);
-
-  const updateDictationOnboardingCloud = useCallback((patch: Partial<DictationOnboardingCloudDraft>) => {
-    setOnboardingCloud((prev) => ({ ...prev, ...patch }));
-  }, []);
-
-  const finishLocalOnboardingStart = useCallback(
-    async (submissionId: number) => {
-      const localSettings = localSettingsFromDraft(onboardingCloud);
-      const started = await startDictationWithSettings(runtimeSettingsFromDraft("tauri_stt", onboardingCloud));
-      if (!isOnboardingSubmissionActive(submissionId)) {
-        if (started) {
-          await stopDictationRef.current().catch(() => {});
-        }
-        return;
-      }
-      if (!started) {
-        setOnboardingError("Failed to start local dictation.");
-        return;
-      }
-
-      try {
-        await persistDictationSettings(localSettings);
-      } catch (e: unknown) {
-        if (!isOnboardingSubmissionActive(submissionId)) {
-          await stopDictationRef.current().catch(() => {});
-          return;
-        }
-        await stopDictationRef.current().catch(() => {});
-        setOnboardingError(errorMessage(e) || "Failed to save local dictation settings.");
-        return;
-      }
-
-      if (!isOnboardingSubmissionActive(submissionId)) {
-        await stopDictationRef.current().catch(() => {});
-        return;
-      }
-
-      dismissDictationOnboarding();
-    },
-    [
-      dismissDictationOnboarding,
-      isOnboardingSubmissionActive,
-      onboardingCloud,
-      persistDictationSettings,
-      startDictationWithSettings,
-    ],
-  );
-
-  const submitDictationOnboardingCloud = useCallback(async () => {
-    if (!onboardingOpen || onboardingBusy) return;
-
-    const normalized = normalizeCloudDraft(onboardingCloud);
-    if (!onboardingCloud.apiKeySet && !normalized.apiKey) {
-      setOnboardingError("API key is required.");
-      return;
-    }
-    if (!onboardingCloud.apiSecretSet && !normalized.apiSecret) {
-      setOnboardingError("API secret is required.");
-      return;
-    }
-
-    const submissionId = beginOnboardingSubmission();
-    setOnboardingBusy(true);
-    setOnboardingError(null);
-    try {
-      const persisted = await persistDictationSettings(cloudSettingsFromDraft(onboardingCloud));
-      if (!isOnboardingSubmissionActive(submissionId)) return;
-      const started = await startDictationWithSettings(persisted);
-      if (!isOnboardingSubmissionActive(submissionId)) {
-        if (started) {
-          await stopDictationRef.current().catch(() => {});
-        }
-        return;
-      }
-      if (!started) {
-        setOnboardingError("Failed to start cloud dictation.");
-        return;
-      }
-      dismissDictationOnboarding();
-    } catch (e: unknown) {
-      if (isOnboardingSubmissionActive(submissionId)) {
-        setOnboardingError(errorMessage(e) || "Failed to configure cloud dictation.");
-      }
-    } finally {
-      if (onboardingSubmissionIdRef.current === submissionId) {
-        setOnboardingBusy(false);
-      }
-    }
-  }, [
-    beginOnboardingSubmission,
-    dismissDictationOnboarding,
-    isOnboardingSubmissionActive,
-    onboardingBusy,
-    onboardingCloud,
-    onboardingOpen,
-    persistDictationSettings,
-    startDictationWithSettings,
-  ]);
-
-  const submitDictationOnboardingLocal = useCallback(async () => {
-    if (!onboardingOpen || onboardingBusy) return;
-    if (localOptionDisabledReason) {
-      setOnboardingError(localOptionDisabledReason);
-      return;
-    }
-    if (onboardingLocalModelStatus.status === "checking" || onboardingLocalModelStatus.status === "idle") {
-      setOnboardingError("Checking local model status. Please wait.");
-      return;
-    }
-
-    const submissionId = beginOnboardingSubmission();
-    setOnboardingBusy(true);
-    setOnboardingError(null);
-
-    try {
-      if (onboardingLocalModelStatus.installed || onboardingLocalModelStatus.status === "ready") {
-        await finishLocalOnboardingStart(submissionId);
-        return;
-      }
-
-      setOnboardingLocalPendingStart(true);
-      await startOnboardingLocalModelDownload();
-    } catch (e: unknown) {
-      if (isOnboardingSubmissionActive(submissionId)) {
-        setOnboardingLocalPendingStart(false);
-        setOnboardingError(errorMessage(e) || "Failed to configure local dictation.");
-      }
-    } finally {
-      if (onboardingSubmissionIdRef.current === submissionId) {
-        setOnboardingBusy(false);
-      }
-    }
-  }, [
-    beginOnboardingSubmission,
-    finishLocalOnboardingStart,
-    isOnboardingSubmissionActive,
-    localOptionDisabledReason,
-    onboardingBusy,
-    onboardingLocalModelStatus.status,
-    onboardingLocalModelStatus.installed,
-    onboardingOpen,
-    startOnboardingLocalModelDownload,
-  ]);
-
-  useEffect(() => {
-    if (!onboardingOpen) return;
-    if (onboardingStage !== "local_setup") return;
-    if (!onboardingLocalPendingStart) return;
-
-    if (onboardingLocalModelStatus.status === "error") {
-      setOnboardingLocalPendingStart(false);
-      setOnboardingError(onboardingLocalModelStatus.error ?? "Local model download failed.");
-      return;
-    }
-
-    if (!onboardingLocalModelStatus.installed && onboardingLocalModelStatus.status !== "ready") {
-      return;
-    }
-
-    const submissionId = beginOnboardingSubmission();
-    setOnboardingLocalPendingStart(false);
-    setOnboardingBusy(true);
-    setOnboardingError(null);
-
-    void (async () => {
-      try {
-        await finishLocalOnboardingStart(submissionId);
-      } catch (e: unknown) {
-        if (!isOnboardingSubmissionActive(submissionId)) return;
-        setOnboardingError(errorMessage(e) || "Failed to configure local dictation.");
-      } finally {
-        if (onboardingSubmissionIdRef.current === submissionId) {
-          setOnboardingBusy(false);
-        }
-      }
-    })();
-  }, [
-    beginOnboardingSubmission,
-    finishLocalOnboardingStart,
-    isOnboardingSubmissionActive,
-    onboardingLocalModelStatus.error,
-    onboardingLocalModelStatus.installed,
-    onboardingLocalModelStatus.status,
-    onboardingLocalPendingStart,
-    onboardingOpen,
-    onboardingStage,
-  ]);
-
   useEffect(() => {
     if (!dictationDebugEnabled) return;
     if (!dictationRecording) {
@@ -893,29 +510,6 @@ export const useDictationController = (opts: DictationControllerOptions): Dictat
     }, 500);
     return () => window.clearInterval(timer);
   }, [dictationDebugEnabled, dictationRecording]);
-
-  const dictationOnboarding = useMemo<DictationOnboardingState | null>(() => {
-    if (!onboardingOpen) return null;
-    return {
-      open: onboardingOpen,
-      stage: onboardingStage,
-      busy: onboardingBusy,
-      error: onboardingError,
-      cloud: onboardingCloud,
-      localModelStatus: onboardingLocalModelStatus,
-      localPendingStart: onboardingLocalPendingStart,
-      localOptionDisabledReason,
-    };
-  }, [
-    localOptionDisabledReason,
-    onboardingBusy,
-    onboardingCloud,
-    onboardingError,
-    onboardingLocalModelStatus,
-    onboardingLocalPendingStart,
-    onboardingOpen,
-    onboardingStage,
-  ]);
 
   return {
     dictationRecording,

@@ -1,191 +1,36 @@
-import type { DesktopConnectionInfo } from "../utils/desktop";
 import {
-  cloneDaemonTargetScope,
   createBrowserDaemonTargetScope,
-  createDesktopLocalDaemonTargetScope,
-  daemonTargetScopeFromDesktopConnectionInfo,
-  deserializeDaemonTargetScope,
-  sameDaemonTargetScope,
-  serializeDaemonTargetScope,
   type DaemonTargetScope,
+  sameDaemonTargetScope,
 } from "../state/scopeIdentity";
-
-export type DaemonConnection = {
-  baseUrl: string | null;
-  wsBaseUrl: string | null;
-  authToken: string | null;
-  runId: string | null;
-  source?: string | null;
-  targetScope?: DaemonTargetScope | null;
-};
-
-export type DaemonConnectionUpdate = {
-  baseUrl?: string | null;
-  wsBaseUrl?: string | null;
-  authToken?: string | null;
-  runId?: string | null;
-  source?: string | null;
-  targetScope?: DaemonTargetScope | null;
-};
-
-export type SetDaemonConnectionOptions = {
-  persistBaseUrl?: boolean;
-  clearPersistedBaseUrl?: boolean;
-};
-
-export type DaemonConnectionReadiness = {
-  hasBaseUrl: boolean;
-  hasAuthToken: boolean;
-  isReady: boolean;
-  missing: "base" | "auth" | null;
-};
-
-type StoredDaemonConnectionV1 = {
-  v: 1;
-  baseUrl: string | null;
-  wsBaseUrl: string | null;
-  authToken: string | null;
-  source?: string | null;
-  targetScope?: string | null;
-};
-
-type PersistedDaemonBaseV1 = {
-  v: 1;
-  baseUrl: string | null;
-  wsBaseUrl: string | null;
-  targetScope?: string | null;
-};
-
-type ParsedStoredDaemonConnection = {
-  baseUrl: string | null;
-  wsBaseUrl: string | null;
-  authToken: string | null;
-  source: string | null;
-  targetScope: DaemonTargetScope | null;
-};
-
-type ParsedPersistedDaemonBase = {
-  baseUrl: string | null;
-  wsBaseUrl: string | null;
-  targetScope: DaemonTargetScope | null;
-};
-
-type DesktopDaemonConnectionInfoLike = {
-  kind?: DesktopConnectionInfo["kind"] | null;
-  base_url?: string | null;
-  token?: string | null;
-  host?: string | null;
-  user?: string | null;
-  remote_port?: number | null;
-  remote_data_dir?: string | null;
-};
+import {
+  cloneNullableTargetScope,
+  daemonTargetScopeFromDesktopConnectionLike,
+  persistBaseIfRequested,
+  readRunId,
+  readStoredDaemonConnection,
+  readStoredPersistedBase,
+  writeCanonicalSession,
+} from "./daemonConnectionStorage";
+import {
+  type DaemonConnection,
+  type DaemonConnectionReadiness,
+  type DaemonConnectionUpdate,
+  type DesktopDaemonConnectionInfoLike,
+  type SetDaemonConnectionOptions,
+} from "./daemonConnection.types";
+import {
+  deriveDaemonWsBaseUrl,
+  isDesktopWindow,
+  normalizeDaemonBaseUrl,
+  normalizeDaemonWsBaseUrl,
+  normalizeRunId,
+  normalizeToken,
+} from "./daemonConnectionUrl";
 
 type DaemonConnectionListener = (connection: DaemonConnection) => void;
 
-const SESSION_CONNECTION_KEY = "ctxDaemonConnectionV1";
-const LOCAL_PERSISTED_BASE_KEY = "ctxDaemonConnectionBaseV1";
-const RUN_ID_KEY = "ctxRunId";
-
 const listeners = new Set<DaemonConnectionListener>();
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  Boolean(value) && typeof value === "object";
-
-type TauriGlobals = {
-  __TAURI_INTERNALS__?: unknown;
-  __TAURI__?: unknown;
-};
-
-const isDesktopWindow = (): boolean => {
-  try {
-    const g = globalThis as typeof globalThis & TauriGlobals;
-    return Boolean(g.__TAURI_INTERNALS__ || g.__TAURI__);
-  } catch {
-    return false;
-  }
-};
-
-const normalizeToken = (value: string | null | undefined): string | null => {
-  if (value === null || value === undefined) return null;
-  const trimmed = String(value).trim();
-  return trimmed ? trimmed : null;
-};
-
-const trimTrailingSlash = (value: string): string => value.replace(/\/+$/, "");
-
-const parseUrlSafely = (value: string): URL | null => {
-  try {
-    return new URL(value);
-  } catch {
-    return null;
-  }
-};
-
-export const deriveDaemonWsBaseUrl = (baseUrl: string | null): string | null => {
-  if (!baseUrl) return null;
-  const trimmed = trimTrailingSlash(baseUrl);
-  if (!trimmed) return null;
-  if (trimmed.startsWith("ws://") || trimmed.startsWith("wss://")) return trimmed;
-  if (trimmed.startsWith("https://")) return trimmed.replace(/^https:\/\//, "wss://");
-  if (trimmed.startsWith("http://")) return trimmed.replace(/^http:\/\//, "ws://");
-  return null;
-};
-
-export const normalizeDaemonBaseUrl = (value: string | null | undefined): string | null => {
-  if (value === null || value === undefined) return null;
-  const trimmed = String(value).trim();
-  if (!trimmed) return null;
-
-  // Compatibility: allow ws/wss values and normalize them to http/https.
-  if (trimmed.startsWith("ws://")) {
-    return trimmed.replace(/^ws:\/\//, "http://").replace(/\/+$/, "");
-  }
-  if (trimmed.startsWith("wss://")) {
-    return trimmed.replace(/^wss:\/\//, "https://").replace(/\/+$/, "");
-  }
-
-  const parsed = parseUrlSafely(trimmed);
-  if (!parsed) return null;
-  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
-  return trimTrailingSlash(parsed.toString());
-};
-
-export const normalizeDaemonWsBaseUrl = (
-  value: string | null | undefined,
-  baseUrlForFallback?: string | null,
-): string | null => {
-  if (value === null || value === undefined) {
-    return deriveDaemonWsBaseUrl(baseUrlForFallback ?? null);
-  }
-  const trimmed = String(value).trim();
-  if (!trimmed) return deriveDaemonWsBaseUrl(baseUrlForFallback ?? null);
-
-  const parsed = parseUrlSafely(trimmed);
-  if (!parsed) {
-    return deriveDaemonWsBaseUrl(baseUrlForFallback ?? null);
-  }
-  if (parsed.protocol === "ws:" || parsed.protocol === "wss:") {
-    return trimTrailingSlash(parsed.toString());
-  }
-  if (parsed.protocol === "http:") {
-    parsed.protocol = "ws:";
-    return trimTrailingSlash(parsed.toString());
-  }
-  if (parsed.protocol === "https:") {
-    parsed.protocol = "wss:";
-    return trimTrailingSlash(parsed.toString());
-  }
-  return deriveDaemonWsBaseUrl(baseUrlForFallback ?? null);
-};
-
-const normalizeRunId = (value: string | null | undefined): string | null => {
-  if (value === null || value === undefined) return null;
-  const trimmed = String(value).trim();
-  return trimmed ? trimmed : null;
-};
-
-const cloneNullableTargetScope = (scope: DaemonTargetScope | null | undefined): DaemonTargetScope | null =>
-  scope ? cloneDaemonTargetScope(scope) : null;
 
 const sameNullableTargetScope = (
   lhs: DaemonTargetScope | null | undefined,
@@ -196,172 +41,8 @@ const sameNullableTargetScope = (
   return sameDaemonTargetScope(lhs, rhs);
 };
 
-const inferLegacyDaemonTargetScope = (
-  baseUrl: string | null,
-  source: string | null | undefined,
-): DaemonTargetScope | null => {
-  if (!baseUrl) return null;
-  if (source === "desktop" || isDesktopWindow()) {
-    return createDesktopLocalDaemonTargetScope();
-  }
-  return createBrowserDaemonTargetScope(baseUrl);
-};
-
-const parseStoredTargetScope = (
-  value: unknown,
-  fallbackBaseUrl: string | null,
-  fallbackSource: string | null | undefined,
-): DaemonTargetScope | null | undefined => {
-  if (value === undefined) {
-    return inferLegacyDaemonTargetScope(fallbackBaseUrl, fallbackSource);
-  }
-  if (value === null) {
-    return fallbackBaseUrl ? undefined : null;
-  }
-  if (typeof value !== "string") return undefined;
-  const targetScope = deserializeDaemonTargetScope(value);
-  return targetScope ?? undefined;
-};
-
-const daemonTargetScopeFromDesktopConnectionLike = (
-  info: DesktopDaemonConnectionInfoLike | null | undefined,
-): DaemonTargetScope | null => {
-  if (!info) return null;
-  const fromBridge = info.kind
-    ? daemonTargetScopeFromDesktopConnectionInfo({
-        kind: info.kind,
-        host: info.host,
-        user: info.user,
-        remote_port: info.remote_port,
-        remote_data_dir: info.remote_data_dir,
-      })
-    : null;
-  if (fromBridge) return fromBridge;
-  return info.base_url ? createDesktopLocalDaemonTargetScope() : null;
-};
-
-const readSession = (key: string): string | null => {
-  try {
-    return sessionStorage.getItem(key);
-  } catch {
-    return null;
-  }
-};
-
-const writeSession = (key: string, value: string | null) => {
-  try {
-    if (value === null) {
-      sessionStorage.removeItem(key);
-    } else {
-      sessionStorage.setItem(key, value);
-    }
-  } catch {
-    // ignore
-  }
-};
-
-const readLocal = (key: string): string | null => {
-  try {
-    return localStorage.getItem(key);
-  } catch {
-    return null;
-  }
-};
-
-const writeLocal = (key: string, value: string | null) => {
-  try {
-    if (value === null) {
-      localStorage.removeItem(key);
-    } else {
-      localStorage.setItem(key, value);
-    }
-  } catch {
-    // ignore
-  }
-};
-
-const parseStoredConnection = (value: string | null): ParsedStoredDaemonConnection | null => {
-  if (!value) return null;
-  try {
-    const parsed = JSON.parse(value) as unknown;
-    if (!isRecord(parsed)) return null;
-    if (parsed.v !== 1) return null;
-    const baseUrl = normalizeDaemonBaseUrl(String(parsed.baseUrl ?? ""));
-    const wsBaseUrl = normalizeDaemonWsBaseUrl(parsed.wsBaseUrl as string | null | undefined, baseUrl);
-    const authToken = normalizeToken(parsed.authToken as string | null | undefined);
-    const source = normalizeToken(parsed.source as string | null | undefined);
-    const targetScope = parseStoredTargetScope(parsed.targetScope, baseUrl, source);
-    if (targetScope === undefined) return null;
-    return {
-      baseUrl,
-      wsBaseUrl,
-      authToken,
-      source,
-      targetScope,
-    };
-  } catch {
-    return null;
-  }
-};
-
-const parsePersistedBase = (value: string | null): ParsedPersistedDaemonBase | null => {
-  if (!value) return null;
-  try {
-    const parsed = JSON.parse(value) as unknown;
-    if (!isRecord(parsed)) return null;
-    if (parsed.v !== 1) return null;
-    const baseUrl = normalizeDaemonBaseUrl(String(parsed.baseUrl ?? ""));
-    const wsBaseUrl = normalizeDaemonWsBaseUrl(parsed.wsBaseUrl as string | null | undefined, baseUrl);
-    const targetScope = parseStoredTargetScope(parsed.targetScope, baseUrl, "persisted_base");
-    if (targetScope === undefined) return null;
-    return {
-      baseUrl,
-      wsBaseUrl,
-      targetScope,
-    };
-  } catch {
-    return null;
-  }
-};
-
-const readRunId = (): string | null => normalizeRunId(readSession(RUN_ID_KEY));
-
-const writeCanonicalSession = (connection: DaemonConnection) => {
-  const serialized: StoredDaemonConnectionV1 = {
-    v: 1,
-    baseUrl: connection.baseUrl,
-    wsBaseUrl: connection.wsBaseUrl,
-    authToken: connection.authToken,
-    source: connection.source ?? null,
-    targetScope: connection.targetScope ? serializeDaemonTargetScope(connection.targetScope) : null,
-  };
-  writeSession(SESSION_CONNECTION_KEY, JSON.stringify(serialized));
-};
-
-const persistBaseIfRequested = (
-  connection: DaemonConnection,
-  opts?: SetDaemonConnectionOptions,
-) => {
-  if (opts?.clearPersistedBaseUrl) {
-    writeLocal(LOCAL_PERSISTED_BASE_KEY, null);
-    return;
-  }
-  if (!opts?.persistBaseUrl) return;
-  if (!connection.baseUrl) {
-    writeLocal(LOCAL_PERSISTED_BASE_KEY, null);
-    return;
-  }
-  const persisted: PersistedDaemonBaseV1 = {
-    v: 1,
-    baseUrl: connection.baseUrl,
-    wsBaseUrl: connection.wsBaseUrl,
-    targetScope: connection.targetScope ? serializeDaemonTargetScope(connection.targetScope) : null,
-  };
-  writeLocal(LOCAL_PERSISTED_BASE_KEY, JSON.stringify(persisted));
-};
-
 const initialConnection = (): DaemonConnection => {
-  const canonical = parseStoredConnection(readSession(SESSION_CONNECTION_KEY));
+  const canonical = readStoredDaemonConnection();
   if (canonical) {
     return {
       baseUrl: canonical.baseUrl,
@@ -373,7 +54,7 @@ const initialConnection = (): DaemonConnection => {
     };
   }
 
-  const persisted = parsePersistedBase(readLocal(LOCAL_PERSISTED_BASE_KEY));
+  const persisted = readStoredPersistedBase();
   const baseUrl = persisted?.baseUrl ?? null;
   const wsBaseUrl = normalizeDaemonWsBaseUrl(persisted?.wsBaseUrl ?? null, baseUrl);
   const restored: DaemonConnection = {
@@ -388,8 +69,6 @@ const initialConnection = (): DaemonConnection => {
     writeCanonicalSession(restored);
     return restored;
   }
-  // Desktop windows do not use same-origin daemon routing; base URL must be supplied by
-  // desktop bridge connection state to keep main-thread and worker clients aligned.
   if (!isDesktopWindow() && typeof window !== "undefined") {
     const protocol = String(window.location.protocol || "").toLowerCase();
     if (protocol === "http:" || protocol === "https:") {
@@ -597,9 +276,7 @@ export const bootstrapDaemonConnectionFromRuntime = () => {
       if (isLoopbackHost(host)) {
         setDaemonConnection(
           {
-            // URL query token has highest precedence for this load.
             authToken: envToken && !hadTokenParam ? envToken : undefined,
-            // In dev loopback mode, explicit env daemon URL is authoritative.
             baseUrl: envDaemonUrl ?? undefined,
             source: "dev_env",
           },
@@ -610,8 +287,6 @@ export const bootstrapDaemonConnectionFromRuntime = () => {
   }
 
   const latest = getDaemonConnection();
-  // In browser mode, same-origin /api is valid. In desktop mode, daemon origin comes from
-  // bridge-managed connection state instead of the webview origin.
   if (!latest.baseUrl && !isDesktopWindow()) {
     const sameOriginBaseUrl = getBrowserSameOriginBaseUrl();
     if (sameOriginBaseUrl) {
@@ -652,4 +327,18 @@ export const getDaemonHttpUrl = (path: string): string => {
   const prefix = connection.baseUrl.replace(/\/+$/, "");
   const pathname = path.startsWith("/") ? path : `/${path}`;
   return `${prefix}${pathname}`;
+};
+
+export {
+  deriveDaemonWsBaseUrl,
+  normalizeDaemonBaseUrl,
+  normalizeDaemonWsBaseUrl,
+};
+
+export type {
+  DaemonConnection,
+  DaemonConnectionReadiness,
+  DaemonConnectionUpdate,
+  DesktopDaemonConnectionInfoLike,
+  SetDaemonConnectionOptions,
 };

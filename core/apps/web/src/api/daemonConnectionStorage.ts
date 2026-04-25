@@ -1,0 +1,205 @@
+import {
+  cloneDaemonTargetScope,
+  createBrowserDaemonTargetScope,
+  createDesktopLocalDaemonTargetScope,
+  daemonTargetScopeFromDesktopConnectionInfo,
+  deserializeDaemonTargetScope,
+  serializeDaemonTargetScope,
+  type DaemonTargetScope,
+} from "../state/scopeIdentity";
+import {
+  type DaemonConnection,
+  type DesktopDaemonConnectionInfoLike,
+  type ParsedPersistedDaemonBase,
+  type ParsedStoredDaemonConnection,
+  type PersistedDaemonBaseV1,
+  type SetDaemonConnectionOptions,
+  type StoredDaemonConnectionV1,
+} from "./daemonConnection.types";
+import {
+  isDesktopWindow,
+  normalizeDaemonBaseUrl,
+  normalizeDaemonWsBaseUrl,
+  normalizeRunId,
+  normalizeToken,
+} from "./daemonConnectionUrl";
+
+const SESSION_CONNECTION_KEY = "ctxDaemonConnectionV1";
+const LOCAL_PERSISTED_BASE_KEY = "ctxDaemonConnectionBaseV1";
+const RUN_ID_KEY = "ctxRunId";
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  Boolean(value) && typeof value === "object";
+
+const inferLegacyDaemonTargetScope = (
+  baseUrl: string | null,
+  source: string | null | undefined,
+): DaemonTargetScope | null => {
+  if (!baseUrl) return null;
+  if (source === "desktop" || isDesktopWindow()) {
+    return createDesktopLocalDaemonTargetScope();
+  }
+  return createBrowserDaemonTargetScope(baseUrl);
+};
+
+const parseStoredTargetScope = (
+  value: unknown,
+  fallbackBaseUrl: string | null,
+  fallbackSource: string | null | undefined,
+): DaemonTargetScope | null | undefined => {
+  if (value === undefined) {
+    return inferLegacyDaemonTargetScope(fallbackBaseUrl, fallbackSource);
+  }
+  if (value === null) {
+    return fallbackBaseUrl ? undefined : null;
+  }
+  if (typeof value !== "string") return undefined;
+  const targetScope = deserializeDaemonTargetScope(value);
+  return targetScope ?? undefined;
+};
+
+export const daemonTargetScopeFromDesktopConnectionLike = (
+  info: DesktopDaemonConnectionInfoLike | null | undefined,
+): DaemonTargetScope | null => {
+  if (!info) return null;
+  const fromBridge = info.kind
+    ? daemonTargetScopeFromDesktopConnectionInfo({
+        kind: info.kind,
+        host: info.host,
+        user: info.user,
+        remote_port: info.remote_port,
+        remote_data_dir: info.remote_data_dir,
+      })
+    : null;
+  if (fromBridge) return fromBridge;
+  return info.base_url ? createDesktopLocalDaemonTargetScope() : null;
+};
+
+const readSession = (key: string): string | null => {
+  try {
+    return sessionStorage.getItem(key);
+  } catch {
+    return null;
+  }
+};
+
+const writeSession = (key: string, value: string | null) => {
+  try {
+    if (value === null) {
+      sessionStorage.removeItem(key);
+    } else {
+      sessionStorage.setItem(key, value);
+    }
+  } catch {
+    // ignore
+  }
+};
+
+const readLocal = (key: string): string | null => {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+};
+
+const writeLocal = (key: string, value: string | null) => {
+  try {
+    if (value === null) {
+      localStorage.removeItem(key);
+    } else {
+      localStorage.setItem(key, value);
+    }
+  } catch {
+    // ignore
+  }
+};
+
+const parseStoredConnection = (value: string | null): ParsedStoredDaemonConnection | null => {
+  if (!value) return null;
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!isRecord(parsed)) return null;
+    if (parsed.v !== 1) return null;
+    const baseUrl = normalizeDaemonBaseUrl(String(parsed.baseUrl ?? ""));
+    const wsBaseUrl = normalizeDaemonWsBaseUrl(parsed.wsBaseUrl as string | null | undefined, baseUrl);
+    const authToken = normalizeToken(parsed.authToken as string | null | undefined);
+    const source = normalizeToken(parsed.source as string | null | undefined);
+    const targetScope = parseStoredTargetScope(parsed.targetScope, baseUrl, source);
+    if (targetScope === undefined) return null;
+    return {
+      baseUrl,
+      wsBaseUrl,
+      authToken,
+      source,
+      targetScope,
+    };
+  } catch {
+    return null;
+  }
+};
+
+const parsePersistedBase = (value: string | null): ParsedPersistedDaemonBase | null => {
+  if (!value) return null;
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!isRecord(parsed)) return null;
+    if (parsed.v !== 1) return null;
+    const baseUrl = normalizeDaemonBaseUrl(String(parsed.baseUrl ?? ""));
+    const wsBaseUrl = normalizeDaemonWsBaseUrl(parsed.wsBaseUrl as string | null | undefined, baseUrl);
+    const targetScope = parseStoredTargetScope(parsed.targetScope, baseUrl, "persisted_base");
+    if (targetScope === undefined) return null;
+    return {
+      baseUrl,
+      wsBaseUrl,
+      targetScope,
+    };
+  } catch {
+    return null;
+  }
+};
+
+export const readStoredDaemonConnection = (): ParsedStoredDaemonConnection | null =>
+  parseStoredConnection(readSession(SESSION_CONNECTION_KEY));
+
+export const readStoredPersistedBase = (): ParsedPersistedDaemonBase | null =>
+  parsePersistedBase(readLocal(LOCAL_PERSISTED_BASE_KEY));
+
+export const readRunId = (): string | null => normalizeRunId(readSession(RUN_ID_KEY));
+
+export const writeCanonicalSession = (connection: DaemonConnection) => {
+  const serialized: StoredDaemonConnectionV1 = {
+    v: 1,
+    baseUrl: connection.baseUrl,
+    wsBaseUrl: connection.wsBaseUrl,
+    authToken: connection.authToken,
+    source: connection.source ?? null,
+    targetScope: connection.targetScope ? serializeDaemonTargetScope(connection.targetScope) : null,
+  };
+  writeSession(SESSION_CONNECTION_KEY, JSON.stringify(serialized));
+};
+
+export const persistBaseIfRequested = (
+  connection: DaemonConnection,
+  opts?: SetDaemonConnectionOptions,
+) => {
+  if (opts?.clearPersistedBaseUrl) {
+    writeLocal(LOCAL_PERSISTED_BASE_KEY, null);
+    return;
+  }
+  if (!opts?.persistBaseUrl) return;
+  if (!connection.baseUrl) {
+    writeLocal(LOCAL_PERSISTED_BASE_KEY, null);
+    return;
+  }
+  const persisted: PersistedDaemonBaseV1 = {
+    v: 1,
+    baseUrl: connection.baseUrl,
+    wsBaseUrl: connection.wsBaseUrl,
+    targetScope: connection.targetScope ? serializeDaemonTargetScope(connection.targetScope) : null,
+  };
+  writeLocal(LOCAL_PERSISTED_BASE_KEY, JSON.stringify(persisted));
+};
+
+export const cloneNullableTargetScope = (scope: DaemonTargetScope | null | undefined): DaemonTargetScope | null =>
+  scope ? cloneDaemonTargetScope(scope) : null;
