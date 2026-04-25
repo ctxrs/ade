@@ -442,7 +442,7 @@ test("message list: short-thread opens bottom-aligned without lower blank or pos
 
   const seed = await createShortThreadHarnessWorkspace(request);
 
-  await page.goto(`/workspaces/${seed.workspaceId}?${new URLSearchParams({ token: WORKSPACE_TOKEN, debug: "1" }).toString()}`, {
+  await page.goto(`/workspaces/${seed.workspaceId}?debug=1#token=${encodeURIComponent(WORKSPACE_TOKEN)}`, {
     waitUntil: "domcontentloaded",
     timeout: 30_000,
   });

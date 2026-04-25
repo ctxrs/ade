@@ -47,9 +47,11 @@ export async function createWorkspaceAndOpenWorkbench(opts: CreateWorkspaceArgs)
   expect(workspaceId).not.toBe("");
 
   const query = new URLSearchParams();
-  if (authToken) query.set("token", authToken);
   if (debug) query.set("debug", "1");
-  const workspaceUrl = query.size > 0 ? `/workspaces/${workspaceId}?${query.toString()}` : `/workspaces/${workspaceId}`;
+  const fragment = authToken ? `#token=${encodeURIComponent(authToken)}` : "";
+  const workspaceUrl = query.size > 0
+    ? `/workspaces/${workspaceId}?${query.toString()}${fragment}`
+    : `/workspaces/${workspaceId}${fragment}`;
   await page.goto(workspaceUrl, { waitUntil: "domcontentloaded" });
   await expect(page).toHaveURL(new RegExp(`/workspaces/${workspaceId}(\\?.*)?$`), { timeout: 20_000 });
   await expect(page.locator(".wb-main")).toBeVisible({ timeout: 20_000 });

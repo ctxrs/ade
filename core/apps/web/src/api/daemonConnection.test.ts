@@ -245,18 +245,19 @@ describe("daemonConnection", () => {
     expect(mod.getDaemonConnection().authToken).toBe("fresh-token");
   });
 
-  it("keeps URL token precedence over dev env token", async () => {
+  it("keeps fragment token precedence over dev env token", async () => {
     vi.stubEnv("VITE_CTX_AUTH_TOKEN", "env-token");
     const mod = await import("./daemonConnection");
-    window.history.replaceState({}, "", "/?token=url-token");
+    window.history.replaceState({}, "", "/#token=url-token");
 
     mod.bootstrapDaemonConnectionFromRuntime();
     const connection = mod.getDaemonConnection();
     expect(connection.authToken).toBe("url-token");
     expect(window.location.search).toBe("");
+    expect(window.location.hash).toBe("");
   });
 
-  it("resets stale stored browser base to same-origin when URL token is present", async () => {
+  it("resets stale stored browser base to same-origin when fragment token is present", async () => {
     sessionStorage.setItem(
       SESSION_CONNECTION_KEY,
       JSON.stringify({
@@ -277,7 +278,7 @@ describe("daemonConnection", () => {
     );
 
     const mod = await import("./daemonConnection");
-    window.history.replaceState({}, "", "/workspaces/ws-1?token=url-token");
+    window.history.replaceState({}, "", "/workspaces/ws-1#token=url-token");
 
     mod.bootstrapDaemonConnectionFromRuntime();
 
@@ -288,9 +289,10 @@ describe("daemonConnection", () => {
     expect(connection.source).toBe("url_token");
     expect(localStorage.getItem(LOCAL_PERSISTED_BASE_KEY)).toBeNull();
     expect(window.location.search).toBe("");
+    expect(window.location.hash).toBe("");
   });
 
-  it("keeps explicit dev env daemon target authoritative when URL token is present", async () => {
+  it("keeps explicit dev env daemon target authoritative when fragment token is present", async () => {
     vi.stubEnv("VITE_CTX_DAEMON_URL", "http://127.0.0.1:4399");
     vi.stubEnv("VITE_CTX_AUTH_TOKEN", "env-token");
     sessionStorage.setItem(
@@ -305,7 +307,7 @@ describe("daemonConnection", () => {
     );
 
     const mod = await import("./daemonConnection");
-    window.history.replaceState({}, "", "/workspaces/ws-1?token=url-token");
+    window.history.replaceState({}, "", "/workspaces/ws-1#token=url-token");
 
     mod.bootstrapDaemonConnectionFromRuntime();
 
@@ -313,6 +315,19 @@ describe("daemonConnection", () => {
     expect(connection.baseUrl).toBe("http://127.0.0.1:4399");
     expect(connection.wsBaseUrl).toBe("ws://127.0.0.1:4399");
     expect(connection.authToken).toBe("url-token");
+    expect(window.location.search).toBe("");
+    expect(window.location.hash).toBe("");
+  });
+
+  it("ignores query-string tokens during browser bootstrap", async () => {
+    vi.stubEnv("VITE_CTX_AUTH_TOKEN", "env-token");
+    const mod = await import("./daemonConnection");
+    window.history.replaceState({}, "", "/workspaces/ws-1?token=url-token");
+
+    mod.bootstrapDaemonConnectionFromRuntime();
+
+    const connection = mod.getDaemonConnection();
+    expect(connection.authToken).toBe("env-token");
     expect(window.location.search).toBe("");
   });
 });

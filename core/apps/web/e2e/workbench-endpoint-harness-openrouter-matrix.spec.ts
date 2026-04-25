@@ -624,7 +624,7 @@ test("workbench: endpoint harness OpenRouter matrix first pass", async ({ page, 
   expect(workspaceId).not.toBe("");
 
   await page.goto(
-    `/workspaces/${workspaceId}?token=${encodeURIComponent(authToken)}&desktop_ui=1`,
+    `/workspaces/${workspaceId}?desktop_ui=1#token=${encodeURIComponent(authToken)}`,
   );
   try {
     await expect(page).toHaveURL(new RegExp(`/workspaces/${workspaceId}`), { timeout: 20_000 });

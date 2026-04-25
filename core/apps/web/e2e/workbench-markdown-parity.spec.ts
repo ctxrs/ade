@@ -65,7 +65,7 @@ test("workbench: deterministic markdown planner matches rendered block geometry"
   const samples: MarkdownSample[] = [
     {
       name: "inline-code-list",
-      markdown: String.raw`A paragraph with inline code like \`pnpm -C core/apps/web typecheck\` and a long URL \`http://192.0.2.19:5182/workspaces/00000000-0000-4000-8000-000000000001?token=00000000-0000-4000-8000-000000000002\`.
+      markdown: String.raw`A paragraph with inline code like \`pnpm -C core/apps/web typecheck\` and a long URL \`http://192.0.2.19:5182/workspaces/00000000-0000-4000-8000-000000000001#token=00000000-0000-4000-8000-000000000002\`.
 
 - bullet with \`ctx-devapp-5182\`
 - second bullet with \`testing/documentation\``,
@@ -94,7 +94,7 @@ test("workbench: deterministic markdown planner matches rendered block geometry"
     },
     {
       name: "assistant-tail-inline-code-url",
-      markdown: String.raw`The synthetic example workspace is available at \`http://192.0.2.19:5182/workspaces/00000000-0000-4000-8000-000000000001?token=00000000-0000-4000-8000-000000000002\`.`,
+      markdown: String.raw`The synthetic example workspace is available at \`http://192.0.2.19:5182/workspaces/00000000-0000-4000-8000-000000000001#token=00000000-0000-4000-8000-000000000002\`.`,
     },
   ];
 

@@ -533,16 +533,47 @@ const getBrowserSameOriginBaseUrl = (): string | null => {
   return normalizeDaemonBaseUrl(window.location.origin);
 };
 
+const stripQueryTokenFromLocation = (): void => {
+  const params = new URLSearchParams(window.location.search);
+  if (!params.has("token")) return;
+  params.delete("token");
+  const next =
+    window.location.pathname
+    + (params.toString() ? `?${params.toString()}` : "")
+    + window.location.hash;
+  window.history.replaceState({}, "", next);
+};
+
+const consumeFragmentTokenFromLocation = (): { token: string | null; hadTokenParam: boolean } => {
+  const rawHash = String(window.location.hash || "").replace(/^#/, "");
+  if (!rawHash) {
+    return { token: null, hadTokenParam: false };
+  }
+  const normalizedHash = rawHash.startsWith("?") ? rawHash.slice(1) : rawHash;
+  const params = new URLSearchParams(normalizedHash);
+  if (!params.has("token")) {
+    return { token: null, hadTokenParam: false };
+  }
+  const token = normalizeToken(params.get("token"));
+  params.delete("token");
+  const nextHash = params.toString();
+  const next =
+    window.location.pathname
+    + window.location.search
+    + (nextHash ? `#${nextHash}` : "");
+  window.history.replaceState({}, "", next);
+  return { token, hadTokenParam: Boolean(token) };
+};
+
 export const bootstrapDaemonConnectionFromRuntime = () => {
   if (typeof window === "undefined") return;
-  const params = new URLSearchParams(window.location.search);
-  const tokenFromQuery = normalizeToken(params.get("token"));
-  const hadTokenParam = Boolean(tokenFromQuery);
+  stripQueryTokenFromLocation();
+  const { token: tokenFromFragment, hadTokenParam } = consumeFragmentTokenFromLocation();
   const envToken = import.meta.env.DEV ? normalizeToken(import.meta.env.VITE_CTX_AUTH_TOKEN) : null;
   const envDaemonUrl = import.meta.env.DEV
     ? normalizeDaemonBaseUrl(import.meta.env.VITE_CTX_DAEMON_URL ?? null)
     : null;
-  if (tokenFromQuery) {
+  if (tokenFromFragment) {
     const sameOriginBaseUrl = getBrowserSameOriginBaseUrl();
     const current = getDaemonConnection();
     const shouldResetBrowserBaseFromToken =
@@ -553,17 +584,11 @@ export const bootstrapDaemonConnectionFromRuntime = () => {
     setDaemonConnection(
       {
         baseUrl: shouldResetBrowserBaseFromToken ? sameOriginBaseUrl : undefined,
-        authToken: tokenFromQuery,
+        authToken: tokenFromFragment,
         source: "url_token",
       },
       shouldResetBrowserBaseFromToken ? { clearPersistedBaseUrl: true } : undefined,
     );
-    params.delete("token");
-    const next =
-      window.location.pathname
-      + (params.toString() ? `?${params.toString()}` : "")
-      + window.location.hash;
-    window.history.replaceState({}, "", next);
   }
 
   if (import.meta.env.DEV) {

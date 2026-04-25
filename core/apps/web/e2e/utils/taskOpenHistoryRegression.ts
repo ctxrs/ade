@@ -203,8 +203,8 @@ export async function collectSessionTurnCoverageFromApi(
   sessionId: string,
   authToken?: string,
 ): Promise<SessionTurnCoverage> {
-  const authQuery = authToken ? `?token=${encodeURIComponent(authToken)}` : "";
-  const snapshotResp = await request.get(`/api/sessions/${sessionId}/snapshot${authQuery}`);
+  const headers = authToken ? { authorization: `Bearer ${authToken}` } : undefined;
+  const snapshotResp = await request.get(`/api/sessions/${sessionId}/snapshot`, { headers });
   if (!snapshotResp.ok()) {
     throw new Error(`snapshot request failed for ${sessionId}: ${snapshotResp.status()}`);
   }
@@ -222,7 +222,8 @@ export async function collectSessionTurnCoverageFromApi(
     if (safety > 40) break;
     safety += 1;
     const historyResp = await request.get(
-      `/api/sessions/${sessionId}/history?before_seq=${beforeSeq}${authToken ? `&token=${encodeURIComponent(authToken)}` : ""}`,
+      `/api/sessions/${sessionId}/history?before_seq=${beforeSeq}`,
+      { headers },
     );
     if (!historyResp.ok()) break;
     const page = asRecord(await historyResp.json());
