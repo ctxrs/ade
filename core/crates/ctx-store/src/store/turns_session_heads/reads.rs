@@ -128,9 +128,13 @@ impl Store {
             }
         }
 
-        let turn_limit = match head_kind {
-            SessionHeadKind::Active => SESSION_HEAD_MAX_TURNS,
-            SessionHeadKind::Archived => SESSION_HEAD_ARCHIVED_TURN_LIMIT,
+        let turn_limit = if disable_head_materialization_writes_for(head_kind) {
+            limit
+        } else {
+            match head_kind {
+                SessionHeadKind::Active => SESSION_HEAD_MAX_TURNS,
+                SessionHeadKind::Archived => SESSION_HEAD_ARCHIVED_TURN_LIMIT,
+            }
         };
         let materialize_limits = session_head_limits(head_kind, turn_limit);
         let head = self

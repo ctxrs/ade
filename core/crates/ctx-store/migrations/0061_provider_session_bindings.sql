@@ -17,7 +17,7 @@ CREATE INDEX IF NOT EXISTS idx_provider_session_bindings_session_id
 
 UPDATE sessions
 SET provider_session_ref = NULL,
-    updated_at = datetime('now')
+    updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
 WHERE provider_session_ref IS NOT NULL
   AND trim(provider_session_ref) <> ''
   AND EXISTS (

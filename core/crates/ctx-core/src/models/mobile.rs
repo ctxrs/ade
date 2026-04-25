@@ -1,4 +1,7 @@
-use super::*;
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+
+use crate::ids::*;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MobileConnectionProfile {

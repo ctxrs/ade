@@ -613,6 +613,15 @@ async fn provider_session_binding_migration_preserves_one_canonical_owner() {
     assert_eq!(quarantined_ref, None);
     assert_eq!(unique_ref.as_deref(), Some("unique-ref"));
 
+    let quarantined_updated_at: String =
+        sqlx::query_scalar("SELECT updated_at FROM sessions WHERE id = 'session-b'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(quarantined_updated_at.contains('T'));
+    assert!(quarantined_updated_at.ends_with('Z'));
+    chrono::DateTime::parse_from_rfc3339(&quarantined_updated_at).unwrap();
+
     let binding_owner: String = sqlx::query_scalar(
         "SELECT session_id FROM provider_session_bindings WHERE provider_id = 'fake' AND provider_session_ref = 'shared-ref'",
     )

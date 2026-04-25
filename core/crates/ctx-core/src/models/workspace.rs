@@ -25,18 +25,6 @@ pub enum TaskStatus {
     Cancelled,
 }
 
-fn is_false(v: &bool) -> bool {
-    !*v
-}
-
-fn is_true(v: &bool) -> bool {
-    *v
-}
-
-fn default_true() -> bool {
-    true
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Task {
     pub id: TaskId,
