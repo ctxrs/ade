@@ -7,8 +7,7 @@ const path = require("node:path");
 const coreRoot = path.resolve(__dirname, "..");
 const repoRoot = path.resolve(coreRoot, "..");
 
-const SOFT_MAX_LINES = 800;
-const HARD_MAX_LINES = 1000;
+const MAX_LINES = 600;
 const SOURCE_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".rs"]);
 const EXCLUDED_PARTS = new Set([
   ".ctx",
@@ -40,7 +39,7 @@ const PRODUCTION_ROOT_PATTERNS = [
 ];
 
 const GUIDANCE_MESSAGE =
-  "If you are receiving this error message, do not try to make small tweaks just to barely slip below the 1000-line cap. Take the opportunity to pause, think through an architecturally sound split that will age well, and use that to bring the file back under the limit. This file is getting too big, which is usually a code smell pointing to a module with too many concerns. Break it up along clean responsibility boundaries instead of sharding it arbitrarily. We do not allow production-source exceptions to this hard cap.";
+  "If you are receiving this error message, do not try to make small tweaks just to barely slip below the 600-line cap. Take the opportunity to pause, think through an architecturally sound split that will age well, and use that to bring the file back under the limit. This file is getting too big, which is usually a code smell pointing to a module with too many concerns. Break it up along clean responsibility boundaries instead of sharding it arbitrarily. We do not allow production-source exceptions to this hard cap.";
 
 const toPosix = (value) => value.split(path.sep).join("/");
 
@@ -120,55 +119,32 @@ const collectSourceFileStats = (rootDir = repoRoot) => {
 
 const evaluateSourceFileSizes = ({
   files,
-  softMaxLines = SOFT_MAX_LINES,
-  hardMaxLines = HARD_MAX_LINES,
+  maxLines = MAX_LINES,
 }) => {
-  const warnings = [];
   const violations = [];
 
   for (const file of files) {
-    if (file.lineCount > softMaxLines) {
-      warnings.push({
-        type: "soft_limit",
-        path: file.path,
-        lineCount: file.lineCount,
-        limit: softMaxLines,
-      });
-    }
-
-    if (file.lineCount <= hardMaxLines) {
+    if (file.lineCount <= maxLines) {
       continue;
     }
 
     violations.push({
       path: file.path,
       lineCount: file.lineCount,
-      limit: hardMaxLines,
+      limit: maxLines,
     });
   }
 
-  return { warnings, violations };
+  return { violations };
 };
 
-const formatWarning = (warning) =>
-  `warning: ${warning.path} is ${warning.lineCount} lines (soft limit ${warning.limit})`;
-
 const formatViolation = (violation) =>
-  `${violation.path} is ${violation.lineCount} lines (hard limit ${violation.limit}).`;
+  `${violation.path} is ${violation.lineCount} lines (limit ${violation.limit}).`;
 
 const printReport = ({
-  warnings,
   violations,
   stream = process.stderr,
 }) => {
-  if (warnings.length > 0) {
-    stream.write("source-file-size warnings:\n");
-    for (const warning of warnings) {
-      stream.write(`  - ${formatWarning(warning)}\n`);
-    }
-    stream.write("\n");
-  }
-
   if (violations.length === 0) return;
 
   stream.write("source-file-size violations:\n");
@@ -177,7 +153,7 @@ const printReport = ({
   }
   stream.write("\n");
   stream.write(`${GUIDANCE_MESSAGE}\n\n`);
-  stream.write(`No production-source exceptions are allowed. Refactor the file below ${HARD_MAX_LINES} lines.\n`);
+  stream.write(`No production-source exceptions are allowed. Refactor the file below ${MAX_LINES} lines.\n`);
 };
 
 const run = ({
@@ -200,8 +176,7 @@ if (require.main === module) {
 }
 
 module.exports = {
-  SOFT_MAX_LINES,
-  HARD_MAX_LINES,
+  MAX_LINES,
   GUIDANCE_MESSAGE,
   collectSourceFileStats,
   countLines,

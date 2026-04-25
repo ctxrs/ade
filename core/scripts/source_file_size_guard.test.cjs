@@ -6,8 +6,7 @@ const test = require("node:test");
 
 const {
   GUIDANCE_MESSAGE,
-  HARD_MAX_LINES,
-  SOFT_MAX_LINES,
+  MAX_LINES,
   classifySourceFile,
   collectSourceFileStats,
   countLines,
@@ -46,16 +45,15 @@ test("isTrackedSourceFile includes production files and excludes tests and exter
   assert.equal(isTestOrAutomationFile("core/apps/web/src/pages/SessionPage.view.tsx"), false);
 });
 
-test("evaluateSourceFileSizes reports soft-limit warnings and hard-limit violations", () => {
+test("evaluateSourceFileSizes reports violations above the single cap", () => {
   const files = [
-    { path: "apps/web/src/Small.ts", lineCount: SOFT_MAX_LINES + 10 },
-    { path: "apps/web/src/TooBig.ts", lineCount: HARD_MAX_LINES + 1 },
-    { path: "crates/ctx-http/src/Huge.rs", lineCount: HARD_MAX_LINES + 50 },
+    { path: "apps/web/src/Ok.ts", lineCount: MAX_LINES },
+    { path: "apps/web/src/TooBig.ts", lineCount: MAX_LINES + 1 },
+    { path: "crates/ctx-http/src/Huge.rs", lineCount: MAX_LINES + 50 },
   ];
 
   const result = evaluateSourceFileSizes({ files });
 
-  assert.equal(result.warnings.length, 3);
   assert.deepEqual(result.violations.map((entry) => entry.path), [
     "apps/web/src/TooBig.ts",
     "crates/ctx-http/src/Huge.rs",
@@ -70,7 +68,7 @@ test("countLines matches newline-terminated and unterminated files", () => {
 
 test("run emits the architectural guidance and exits nonzero when enforcement fails", () => {
   const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "source-file-size-"));
-  writeFile(rootDir, "core/apps/web/src/pages/HugePage.tsx", HARD_MAX_LINES + 5);
+  writeFile(rootDir, "core/apps/web/src/pages/HugePage.tsx", MAX_LINES + 5);
   let output = "";
   const stream = {
     write(chunk) {
@@ -92,9 +90,9 @@ test("run emits the architectural guidance and exits nonzero when enforcement fa
 
 test("run ignores oversized test and automation files", () => {
   const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "source-file-size-ignore-"));
-  writeFile(rootDir, "core/apps/web/src/pages/AllowedPage.test.tsx", HARD_MAX_LINES + 50);
-  writeFile(rootDir, "core/apps/web/e2e/workbench-index.spec.ts", HARD_MAX_LINES + 50);
-  writeFile(rootDir, "core/scripts/replay-loadtest.mjs", HARD_MAX_LINES + 50);
+  writeFile(rootDir, "core/apps/web/src/pages/AllowedPage.test.tsx", MAX_LINES + 50);
+  writeFile(rootDir, "core/apps/web/e2e/workbench-index.spec.ts", MAX_LINES + 50);
+  writeFile(rootDir, "core/scripts/replay-loadtest.mjs", MAX_LINES + 50);
   const files = collectSourceFileStats(rootDir);
   assert.equal(files.length, 0);
   const exitCode = run({
