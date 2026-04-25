@@ -3,7 +3,7 @@ use super::*;
 mod providers;
 mod shared;
 
-pub(super) use self::providers::import_codex_candidate;
+pub(crate) use self::providers::import_codex_candidate;
 use self::providers::{
     import_amp_candidate, import_gemini_auth_file_candidate, import_gemini_env_candidate,
     import_opencode_candidate, import_qwen_candidate,

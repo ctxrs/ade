@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) async fn get_mobile_access_status(
+pub(in crate::api) async fn get_mobile_access_status(
     State(state): State<Arc<AppState>>,
     mobile_auth: Option<Extension<MobileAuthContext>>,
 ) -> Result<Json<MobileAccessStatus>, StatusCode> {
@@ -37,7 +37,7 @@ pub(super) async fn get_mobile_access_status(
     }))
 }
 
-pub(super) async fn enable_mobile_access(
+pub(in crate::api) async fn enable_mobile_access(
     State(state): State<Arc<AppState>>,
     mobile_auth: Option<Extension<MobileAuthContext>>,
     Json(req): Json<EnableMobileAccessReq>,
@@ -260,7 +260,7 @@ pub(super) async fn enable_mobile_access(
     }))
 }
 
-pub(super) async fn disable_mobile_access(
+pub(in crate::api) async fn disable_mobile_access(
     State(state): State<Arc<AppState>>,
     mobile_auth: Option<Extension<MobileAuthContext>>,
     Json(req): Json<EnableMobileAccessReq>,

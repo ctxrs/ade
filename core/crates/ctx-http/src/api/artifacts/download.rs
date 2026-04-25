@@ -159,7 +159,7 @@ fn parse_range_header(range: Option<&HeaderValue>, size: u64) -> ParsedRange {
     ParsedRange::Satisfiable(start, end)
 }
 
-pub(super) async fn get_session_artifact(
+pub(in crate::api) async fn get_session_artifact(
     State(state): State<Arc<AppState>>,
     Path((session_id, artifact_id)): Path<(String, String)>,
     headers: HeaderMap,

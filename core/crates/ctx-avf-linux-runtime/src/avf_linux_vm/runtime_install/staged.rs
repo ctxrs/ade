@@ -1,7 +1,7 @@
 use super::*;
 
 impl AvfLinuxGuestRuntime {
-    pub(super) fn from_source(
+    pub(crate) fn from_source(
         data_root: &Path,
         source: &bundled_assets::ManagedRuntimeSource,
     ) -> Result<Self> {
@@ -102,7 +102,7 @@ fn staged_runtime_version(runtime_root: &Path) -> String {
         .unwrap_or_else(|| "staged".to_string())
 }
 
-pub(super) fn staged_avf_linux_guest_runtime() -> Result<Option<AvfLinuxGuestRuntime>> {
+pub(crate) fn staged_avf_linux_guest_runtime() -> Result<Option<AvfLinuxGuestRuntime>> {
     let Some(runtime_root) = explicit_staged_avf_linux_guest_runtime_dir() else {
         return Ok(None);
     };
@@ -123,7 +123,7 @@ pub(super) fn staged_avf_linux_guest_runtime() -> Result<Option<AvfLinuxGuestRun
     );
 }
 
-pub(super) fn bundled_avf_linux_guest_runtime() -> Option<AvfLinuxGuestRuntime> {
+pub(crate) fn bundled_avf_linux_guest_runtime() -> Option<AvfLinuxGuestRuntime> {
     let runtime = bundled_assets::bundled_avf_linux_guest_runtime()?;
     let runtime = AvfLinuxGuestRuntime::from_bundled(runtime);
     if avf_linux_runtime_is_ready(&runtime) {

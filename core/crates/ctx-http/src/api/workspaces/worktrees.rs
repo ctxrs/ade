@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) async fn get_worktree(
+pub(in crate::api) async fn get_worktree(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> Result<Json<Worktree>, StatusCode> {
@@ -25,7 +25,7 @@ pub(super) async fn get_worktree(
     }
 }
 
-pub(super) async fn get_worktree_bootstrap_logs(
+pub(in crate::api) async fn get_worktree_bootstrap_logs(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> Result<Response, StatusCode> {

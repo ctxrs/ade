@@ -1,6 +1,6 @@
 use super::*;
 
-async fn cleanup_orphaned_provisioned_worktree(
+pub(super) async fn cleanup_orphaned_provisioned_worktree(
     state: &Arc<AppState>,
     store: &Store,
     workspace: &Workspace,

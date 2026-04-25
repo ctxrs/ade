@@ -7,7 +7,7 @@ mod registry;
 use self::dependencies::{
     install_provider_blocking_dependencies, wait_for_provider_readiness_dependencies,
 };
-use self::flow::install_provider_impl;
+pub(crate) use self::flow::install_provider_impl;
 pub(crate) use self::registry::repair_install_dir;
 use self::registry::update_registry_last_error;
 

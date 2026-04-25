@@ -1,4 +1,5 @@
 use super::*;
+use crate::daemon::ensure_provider_adapter_for_target;
 
 pub(in crate::api) async fn verify_provider_for_workspace(
     State(state): State<Arc<AppState>>,
@@ -320,21 +321,27 @@ pub(in crate::api) async fn authenticate_provider_for_workspace(
     let install_target = install_target_for_workspace(&state, workspace.id)
         .await
         .map_err(|error| workspace_execution_settings_error_json(&error))?;
-    let adapter =
-        ensure_provider_adapter_for_target(state.as_ref(), &provider_id, install_target).await;
     let (event_tx, mut event_rx) = mpsc::channel(32);
     tokio::spawn(async move { while event_rx.recv().await.is_some() {} });
     let checked_at = Utc::now().to_rfc3339();
-    let result = adapter
-        .authenticate_session(
-            format!("auth-{}", uuid::Uuid::new_v4()),
-            probe_context.cwd,
-            probe_context.env,
-            method_id,
-            event_tx,
-            ctx_providers::adapters::ProviderRunHooks::default(),
-        )
-        .await;
+    let result =
+        match ensure_provider_adapter_for_target(state.as_ref(), &provider_id, install_target)
+            .await
+        {
+            Ok(adapter) => {
+                adapter
+                    .authenticate_session(
+                        format!("auth-{}", uuid::Uuid::new_v4()),
+                        probe_context.cwd,
+                        probe_context.env,
+                        method_id,
+                        event_tx,
+                        ctx_providers::adapters::ProviderRunHooks::default(),
+                    )
+                    .await
+            }
+            Err(err) => Err(err),
+        };
 
     let resp = match result {
         Ok(()) => ProviderAuthCheckResp {

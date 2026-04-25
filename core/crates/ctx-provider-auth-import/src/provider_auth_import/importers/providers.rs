@@ -3,7 +3,7 @@ use super::shared::{
 };
 use super::*;
 
-pub(super) async fn import_codex_candidate(
+pub(crate) async fn import_codex_candidate(
     data_root: &Path,
     material: &CandidateMaterial,
 ) -> Result<ProviderAuthImportResult> {

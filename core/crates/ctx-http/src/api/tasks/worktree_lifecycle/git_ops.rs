@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) async fn remove_worktree(
+pub(crate) async fn remove_worktree(
     workspace_root: impl AsRef<StdPath>,
     worktree_path: impl AsRef<StdPath>,
 ) -> anyhow::Result<()> {
@@ -30,7 +30,7 @@ pub(super) async fn remove_worktree(
     Ok(())
 }
 
-pub(super) async fn prune_worktrees(workspace_root: impl AsRef<StdPath>) -> anyhow::Result<()> {
+pub(crate) async fn prune_worktrees(workspace_root: impl AsRef<StdPath>) -> anyhow::Result<()> {
     let output = Command::new("git")
         .arg("-C")
         .arg(workspace_root.as_ref())
@@ -148,7 +148,7 @@ pub(crate) async fn branch_exists(
     )
 }
 
-pub(super) async fn is_git_worktree(worktree_path: impl AsRef<StdPath>) -> anyhow::Result<bool> {
+pub(crate) async fn is_git_worktree(worktree_path: impl AsRef<StdPath>) -> anyhow::Result<bool> {
     let output = Command::new("git")
         .arg("-C")
         .arg(worktree_path.as_ref())

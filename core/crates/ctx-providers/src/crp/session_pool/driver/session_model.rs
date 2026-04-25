@@ -1,4 +1,3 @@
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use anyhow::Result;
@@ -6,7 +5,7 @@ use tokio::sync::broadcast;
 
 use super::super::super::normalize::event_matches_session;
 use super::super::super::protocol::{CrpCommand, CrpEvent, KnownCrpEvent};
-use super::{CrpSessionPool};
+use super::super::CrpSessionPool;
 
 const CRP_SESSION_MODEL_UPDATE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 

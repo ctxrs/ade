@@ -12,7 +12,6 @@ use provider_routes::provider_routes;
 pub(super) fn api_routes() -> axum::Router<Arc<AppState>> {
     core_routes()
         .merge(provider_routes())
-        .merge(utility_routes())
         .merge(workspace_routes())
         .merge(mobile_routes())
         .merge(session_routes())

@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) async fn pair_mobile_device(
+pub(in crate::api) async fn pair_mobile_device(
     State(state): State<Arc<AppState>>,
     body: Bytes,
 ) -> Result<Json<SecureEnvelope>, (StatusCode, Json<ApiErrorResp>)> {
@@ -145,7 +145,7 @@ pub(super) async fn pair_mobile_device(
     }))
 }
 
-pub(super) async fn handle_mobile_secure(
+pub(in crate::api) async fn handle_mobile_secure(
     State(state): State<Arc<AppState>>,
     body: Bytes,
 ) -> Result<Json<SecureEnvelope>, (StatusCode, Json<ApiErrorResp>)> {

@@ -20,10 +20,12 @@ use super::{CODEX_CRP_DUMP_CODEX_EVENTS_ENV, CODEX_CRP_DUMP_CRP_EVENTS_ENV};
 #[path = "runtime/path_rewrite.rs"]
 mod path_rewrite;
 
-use self::path_rewrite::{resolve_explicit_command_path, rewrite_container_command_for_linux};
 #[cfg(test)]
 use self::path_rewrite::rewrite_container_args_for_linux;
-pub(crate) use self::path_rewrite::rewrite_bundled_path_for_linux;
+pub(crate) use self::path_rewrite::{
+    resolve_explicit_command_path, rewrite_bundled_path_for_linux,
+    rewrite_container_command_for_linux,
+};
 
 const AMBIENT_PROVIDER_SESSION_ENV_DENYLIST: &[&str] = &[
     "CTX_PROVIDER_SESSION_REF",

@@ -1,7 +1,7 @@
 use super::install_kind::install_provider_release;
 use super::*;
 
-pub(super) async fn install_provider_impl(
+pub(crate) async fn install_provider_impl(
     state: &AppState,
     provider_id: &str,
     target: InstallTarget,

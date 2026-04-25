@@ -221,7 +221,7 @@ fn resolve_node_binary_from_env(env: &HashMap<String, String>) -> Option<String>
     None
 }
 
-pub(super) fn rewrite_container_command_for_linux(
+pub(crate) fn rewrite_container_command_for_linux(
     command: &str,
     args: &[String],
     env: &HashMap<String, String>,
@@ -245,7 +245,7 @@ pub(super) fn rewrite_container_command_for_linux(
     Ok((rewritten_node, final_args))
 }
 
-pub(super) fn resolve_explicit_command_path(command: &str) -> Option<PathBuf> {
+pub(crate) fn resolve_explicit_command_path(command: &str) -> Option<PathBuf> {
     let trimmed = command.trim();
     if trimmed.is_empty() {
         return None;

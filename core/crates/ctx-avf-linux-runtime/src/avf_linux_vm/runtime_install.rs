@@ -16,6 +16,8 @@ mod tests;
 
 use assets::*;
 use staged::*;
+pub(super) use assets::{avf_linux_runtime_is_ready, managed_avf_linux_guest_source};
+pub(super) use staged::{bundled_avf_linux_guest_runtime, staged_avf_linux_guest_runtime};
 
 pub fn runtime_target_label() -> String {
     if explicit_staged_avf_linux_guest_runtime_dir().is_some() {

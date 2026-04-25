@@ -31,7 +31,7 @@ pub(super) fn emit_runtime_install_info(
     );
 }
 
-pub(super) fn managed_avf_linux_guest_source() -> Option<bundled_assets::ManagedRuntimeSource> {
+pub(crate) fn managed_avf_linux_guest_source() -> Option<bundled_assets::ManagedRuntimeSource> {
     #[cfg(any(test, feature = "test-support"))]
     if let Some(source) = lock_test_runtime_source_override().clone() {
         return Some(source);
@@ -141,7 +141,7 @@ pub(super) fn managed_avf_linux_runtime_ready_marker_path(runtime_root: &Path) -
     runtime_root.join(AVF_LINUX_RUNTIME_READY_MARKER)
 }
 
-pub(super) fn avf_linux_runtime_is_ready(runtime: &AvfLinuxGuestRuntime) -> bool {
+pub(crate) fn avf_linux_runtime_is_ready(runtime: &AvfLinuxGuestRuntime) -> bool {
     let guest_agent_ready = runtime
         .guest_agent_path
         .as_ref()

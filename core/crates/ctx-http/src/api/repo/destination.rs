@@ -1,7 +1,7 @@
 use super::*;
 
 #[derive(Debug, Deserialize)]
-pub(super) struct RepoValidateDestinationReq {
+pub(in crate::api) struct RepoValidateDestinationReq {
     path: String,
     #[serde(default)]
     must_not_exist: bool,
@@ -10,11 +10,11 @@ pub(super) struct RepoValidateDestinationReq {
 }
 
 #[derive(Debug, Serialize)]
-pub(super) struct RepoValidateDestinationResp {
+pub(in crate::api) struct RepoValidateDestinationResp {
     path: String,
 }
 
-pub(super) async fn repo_validate_destination(
+pub(in crate::api) async fn repo_validate_destination(
     mobile_auth: Option<Extension<MobileAuthContext>>,
     Json(req): Json<RepoValidateDestinationReq>,
 ) -> Result<Json<RepoValidateDestinationResp>, (StatusCode, Json<ApiErrorResp>)> {
@@ -22,7 +22,7 @@ pub(super) async fn repo_validate_destination(
     repo_validate_destination_impl(req).await
 }
 
-pub(super) async fn repo_validate_destination_get(
+pub(in crate::api) async fn repo_validate_destination_get(
     mobile_auth: Option<Extension<MobileAuthContext>>,
     Query(req): Query<RepoValidateDestinationReq>,
 ) -> Result<Json<RepoValidateDestinationResp>, (StatusCode, Json<ApiErrorResp>)> {
@@ -127,14 +127,14 @@ async fn repo_validate_destination_impl(
 }
 
 #[derive(Debug, Serialize)]
-pub(super) struct RepoStagingPathResp {
+pub(in crate::api) struct RepoStagingPathResp {
     path: String,
 }
 
 /// Returns a unique staging path under data_root/workspaces/staging/<uuid>.
 /// Used for disk-isolated clone/new: the daemon manages the path so the wizard
 /// doesn't need to ask the user for a host destination.
-pub(super) async fn repo_staging_path(
+pub(in crate::api) async fn repo_staging_path(
     mobile_auth: Option<Extension<MobileAuthContext>>,
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<RepoStagingPathResp>, (StatusCode, Json<ApiErrorResp>)> {
