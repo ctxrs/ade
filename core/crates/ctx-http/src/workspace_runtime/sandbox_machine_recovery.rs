@@ -17,7 +17,7 @@ pub(in crate::workspace_runtime) use self::helper_cleanup::{
     is_ctx_managed_sandbox_helper_process_command, kill_ctx_managed_sandbox_helper_processes,
     literal_pkill_pattern,
 };
-pub(super) use self::running::ensure_sandbox_machine_running_with_observer;
+pub(in crate::workspace_runtime) use self::running::ensure_sandbox_machine_running_with_observer;
 
 use ctx_harness_setup::{
     observe_log, observe_progress, HarnessSetupLogLevel, HarnessSetupObserver, HarnessSetupPhase,

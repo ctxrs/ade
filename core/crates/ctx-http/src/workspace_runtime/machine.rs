@@ -35,13 +35,13 @@ pub(super) mod archive;
 mod cache;
 mod cli_runtime;
 
-pub(super) use cache::{
+pub(in crate::workspace_runtime) use cache::{
     managed_sandbox_machine_cache_path, persist_sandbox_machine_cache_to_shared,
     persist_sandbox_machine_cache_to_shared_best_effort, sandbox_machine_cache_root,
     sandbox_machine_home_root, sandbox_machine_runtime_root, sandbox_machine_temp_root,
     seed_shared_sandbox_machine_cache, seed_shared_sandbox_machine_cache_best_effort,
 };
-pub(super) use cli_runtime::{
+pub(in crate::workspace_runtime) use cli_runtime::{
     ensure_managed_sandbox_cli_runtime, ensure_managed_sandbox_cli_runtime_with_override,
     ensure_managed_sandbox_machine_cache, managed_sandbox_cli_runtime_bin_path,
     managed_sandbox_cli_runtime_source,

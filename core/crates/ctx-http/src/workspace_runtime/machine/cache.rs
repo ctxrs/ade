@@ -12,7 +12,7 @@ fn sandbox_machine_data_root_hash(data_root: &Path) -> String {
 }
 
 #[cfg(test)]
-pub(super) fn sandbox_machine_runtime_root(data_root: &Path) -> PathBuf {
+pub(in crate::workspace_runtime) fn sandbox_machine_runtime_root(data_root: &Path) -> PathBuf {
     let hash = sandbox_machine_data_root_hash(data_root);
     #[cfg(unix)]
     {
@@ -25,17 +25,17 @@ pub(super) fn sandbox_machine_runtime_root(data_root: &Path) -> PathBuf {
 }
 
 #[cfg(test)]
-pub(super) fn sandbox_machine_home_root(data_root: &Path) -> PathBuf {
+pub(in crate::workspace_runtime) fn sandbox_machine_home_root(data_root: &Path) -> PathBuf {
     sandbox_machine_runtime_root(data_root).join("home")
 }
 
 #[cfg(test)]
-pub(super) fn sandbox_machine_temp_root(data_root: &Path) -> PathBuf {
+pub(in crate::workspace_runtime) fn sandbox_machine_temp_root(data_root: &Path) -> PathBuf {
     sandbox_machine_runtime_root(data_root).join("tmp")
 }
 
 #[cfg(test)]
-pub(super) fn sandbox_machine_cache_root(data_root: &Path) -> PathBuf {
+pub(in crate::workspace_runtime) fn sandbox_machine_cache_root(data_root: &Path) -> PathBuf {
     data_root
         .join("sandbox-cli")
         .join("xdg")
@@ -84,7 +84,7 @@ fn managed_artifact_file_name(url: &str, sha256: &str, fallback_prefix: &str) ->
 }
 
 #[cfg(test)]
-pub(super) fn managed_sandbox_machine_cache_path(
+pub(in crate::workspace_runtime) fn managed_sandbox_machine_cache_path(
     data_root: &Path,
     source: &bundled_assets::ManagedArtifactSource,
 ) -> PathBuf {
@@ -230,7 +230,7 @@ async fn materialize_sandbox_machine_cache_file(
 }
 
 #[cfg(test)]
-pub(super) async fn seed_shared_sandbox_machine_cache(
+pub(in crate::workspace_runtime) async fn seed_shared_sandbox_machine_cache(
     data_root: &Path,
     observer: Option<&dyn HarnessSetupObserver>,
 ) -> Result<()> {
@@ -267,7 +267,7 @@ pub(super) async fn seed_shared_sandbox_machine_cache(
 }
 
 #[cfg(test)]
-pub(super) async fn persist_sandbox_machine_cache_to_shared(
+pub(in crate::workspace_runtime) async fn persist_sandbox_machine_cache_to_shared(
     data_root: &Path,
     observer: Option<&dyn HarnessSetupObserver>,
 ) -> Result<()> {
@@ -304,7 +304,7 @@ pub(super) async fn persist_sandbox_machine_cache_to_shared(
 }
 
 #[cfg(test)]
-pub(super) async fn seed_shared_sandbox_machine_cache_best_effort(
+pub(in crate::workspace_runtime) async fn seed_shared_sandbox_machine_cache_best_effort(
     data_root: &Path,
     observer: Option<&dyn HarnessSetupObserver>,
 ) {
@@ -374,7 +374,7 @@ pub(super) async fn seed_shared_sandbox_machine_cache_best_effort(
 }
 
 #[cfg(test)]
-pub(super) async fn persist_sandbox_machine_cache_to_shared_best_effort(
+pub(in crate::workspace_runtime) async fn persist_sandbox_machine_cache_to_shared_best_effort(
     data_root: &Path,
     observer: Option<&dyn HarnessSetupObserver>,
 ) {

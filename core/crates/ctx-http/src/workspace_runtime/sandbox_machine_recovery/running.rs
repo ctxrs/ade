@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) async fn ensure_sandbox_machine_running_with_observer(
+pub(in crate::workspace_runtime) async fn ensure_sandbox_machine_running_with_observer(
     data_root: &Path,
     observer: Option<&dyn HarnessSetupObserver>,
 ) -> Result<()> {

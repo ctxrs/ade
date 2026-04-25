@@ -182,7 +182,11 @@ impl ExecutionSetupCoordinator {
         self.clear_running_launch(workspace.id, &job.job_id).await;
     }
 
-    async fn clear_running_launch(&self, workspace_id: WorkspaceId, job_id: &str) {
+    pub(in crate::execution_setup) async fn clear_running_launch(
+        &self,
+        workspace_id: WorkspaceId,
+        job_id: &str,
+    ) {
         let mut inner = self.inner.lock().await;
         if inner
             .running_launch_by_workspace
