@@ -2,8 +2,11 @@ use super::*;
 use crate::api::sessions;
 use crate::api::shared;
 
+#[path = "creation_session/cleanup.rs"]
 mod cleanup;
+#[path = "creation_session/initial_prompt.rs"]
 mod initial_prompt;
+#[path = "creation_session/request.rs"]
 mod request;
 
 use cleanup::cleanup_orphaned_provisioned_worktree;

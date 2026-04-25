@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
@@ -12,8 +12,8 @@ use super::shared::{
     save_json_registry, write_secure_file_atomic,
 };
 use super::{
-    KIMI_CREDENTIAL_KIND_CREDENTIALS_JSON, KIMI_CREDENTIAL_KIND_OAUTH, KIMI_SECRET_VERSION,
-    KIMI_SHARE_DIR_ENV, kimi_account_home, kimi_registry_path, kimi_secret_path,
+    kimi_account_home, kimi_registry_path, kimi_secret_path, KIMI_CREDENTIAL_KIND_CREDENTIALS_JSON,
+    KIMI_CREDENTIAL_KIND_OAUTH, KIMI_SECRET_VERSION, KIMI_SHARE_DIR_ENV,
 };
 
 const KIMI_CANONICAL_PROVIDER: &str = "kimi-code";

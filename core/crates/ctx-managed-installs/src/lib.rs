@@ -8,10 +8,6 @@ use std::time::Duration;
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use chrono::Utc;
-use sha2::Digest;
-use tokio::process::Command;
-use tokio::sync::Mutex;
-use tokio::time::timeout;
 use ctx_provider_install::install_state::{
     truncate_for_storage, InstallErrorCode, InstallEventLevel, InstallId, InstallInfo,
     InstallProgressEvent, InstallStateKind, InstallTarget,
@@ -19,6 +15,10 @@ use ctx_provider_install::install_state::{
 use ctx_provider_matrix as provider_matrix;
 use ctx_providers::adapters::{ProviderAdapter, ProviderStatus};
 use ctx_providers::crp::Tier1CrpAdapter;
+use sha2::Digest;
+use tokio::process::Command;
+use tokio::sync::Mutex;
+use tokio::time::timeout;
 
 mod artifacts;
 mod config;

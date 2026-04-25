@@ -1,5 +1,5 @@
-use super::*;
 use super::runtime_resolution::{cline_endpoint_home, gemini_endpoint_home};
+use super::*;
 
 #[tokio::test]
 async fn codex_endpoint_requires_verify_for_run_resolution() {

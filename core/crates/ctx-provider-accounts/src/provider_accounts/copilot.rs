@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
@@ -11,8 +11,8 @@ use super::shared::{
     write_secure_file_atomic,
 };
 use super::{
-    COPILOT_CREDENTIAL_KIND_GH_TOKEN, COPILOT_SECRET_VERSION, copilot_account_dir,
-    copilot_registry_path, copilot_secret_path,
+    copilot_account_dir, copilot_registry_path, copilot_secret_path,
+    COPILOT_CREDENTIAL_KIND_GH_TOKEN, COPILOT_SECRET_VERSION,
 };
 
 pub(crate) const COPILOT_BOOTSTRAP_MODEL_ID: &str = "gpt-5-mini";

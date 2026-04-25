@@ -1,5 +1,5 @@
-use super::*;
 use super::runtime_resolution::{droid_endpoint_home, seed_droid_auth_from_host_path};
+use super::*;
 
 #[tokio::test]
 async fn gemini_endpoint_rejects_unknown_auth_type() {

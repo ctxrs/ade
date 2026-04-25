@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
 
-use anyhow::{Context, Result, anyhow, bail};
-use serde::Serialize;
+use anyhow::{anyhow, bail, Context, Result};
 use serde::de::DeserializeOwned;
+use serde::Serialize;
 
 pub(crate) fn parse_required_json_object(raw: &str, field: &str) -> Result<serde_json::Value> {
     let parsed = parse_json_value(raw, field)?;

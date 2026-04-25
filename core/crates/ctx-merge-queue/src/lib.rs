@@ -24,8 +24,8 @@ use ctx_fs::vcs::{self, VcsDriver};
 use ctx_store::Store;
 use ctx_workspace_config::{load_merge_queue_config, MergeQueueCanonicalSync, MergeQueueConfig};
 
-mod context;
 mod commands;
+mod context;
 mod execution;
 mod runtime_scheduler;
 mod storage;
@@ -36,8 +36,9 @@ use commands::{command_for_shell, merge_queue_command, QueueError};
 use context::*;
 use execution::*;
 pub use runtime_scheduler::{
-    activate_workspace_merge_queue, begin_workspace_drain, cancel_queued_entries_for_disabled_workspace,
-    finish_workspace_drain, reschedule_workspace_after_drain, schedule_workspace_drain,
+    activate_workspace_merge_queue, begin_workspace_drain,
+    cancel_queued_entries_for_disabled_workspace, finish_workspace_drain,
+    reschedule_workspace_after_drain, schedule_workspace_drain,
     schedule_workspace_if_enabled_and_queued, spawn_merge_queue_runner, WorkspaceDrainStop,
 };
 use storage::{merge_queue_log_path, open_log_file, write_log_line, write_patch_file};
@@ -401,7 +402,6 @@ pub async fn retry_merge_queue_entry<H: MergeQueueHost>(
     }
 }
 
-
 async fn run_entry<H: MergeQueueHost>(
     state: &Arc<H>,
     workspace: &Workspace,
@@ -537,7 +537,6 @@ fn ensure_merge_queue_success(entry: &MergeQueueEntry) -> Result<()> {
         ),
     }
 }
-
 
 #[cfg(test)]
 mod tests {

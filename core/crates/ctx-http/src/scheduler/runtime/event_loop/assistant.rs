@@ -1,13 +1,13 @@
 use ctx_core::ids::MessageId;
 use ctx_core::models::{SessionEvent, SessionEventType};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 use crate::order_seq::{attach_order_seq, read_order_seq};
 use crate::scheduler::persistence::{emit_event, persist_assistant_message};
 use crate::storage_guard;
 
 use super::super::helpers::strip_emitted_prefix;
-use super::failure::{TurnFailurePayload, fail_turn};
+use super::failure::{fail_turn, TurnFailurePayload};
 use super::{EventLoopRuntimeState, TurnEventLoop};
 
 pub(super) async fn handle_assistant_complete(

@@ -421,7 +421,6 @@ pub async fn ensure_managed_default_container_image_tar_with_source(
     Ok(final_tar)
 }
 
-
 #[derive(Debug, Clone)]
 pub struct ContainerImageStatus {
     pub present: bool,

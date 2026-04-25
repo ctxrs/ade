@@ -1,5 +1,5 @@
-use super::*;
 use super::registry::registry_path;
+use super::*;
 
 #[tokio::test]
 async fn amp_subscription_sets_persistent_home_env() {

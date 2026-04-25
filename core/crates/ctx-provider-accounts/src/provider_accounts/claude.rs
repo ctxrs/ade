@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
@@ -11,8 +11,8 @@ use super::shared::{
     save_json_registry, write_secure_file_atomic,
 };
 use super::{
-    CLAUDE_CREDENTIAL_KIND_SETUP_TOKEN, CLAUDE_SECRET_VERSION, claude_account_dir,
-    claude_registry_path, claude_secret_path,
+    claude_account_dir, claude_registry_path, claude_secret_path,
+    CLAUDE_CREDENTIAL_KIND_SETUP_TOKEN, CLAUDE_SECRET_VERSION,
 };
 
 const CLAUDE_AUTH_ENV_KEY: &str = "CLAUDE_CODE_OAUTH_TOKEN";

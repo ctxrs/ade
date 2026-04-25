@@ -1,9 +1,9 @@
-use super::*;
 use super::model_catalog::{
     infer_endpoint_model_provider_namespace, normalize_namespaced_model_override,
     parse_openai_models_payload, truncate_discovery_error,
 };
 use super::validation::normalize_manual_model_ids;
+use super::*;
 
 #[test]
 fn endpoint_support_gating_includes_cline_goose_and_openhands_but_not_cursor() {

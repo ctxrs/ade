@@ -1,5 +1,8 @@
+#[path = "terminals_gateway.rs"]
 mod terminals_gateway;
+#[path = "terminals_handle.rs"]
 mod terminals_handle;
+#[path = "terminals_manager.rs"]
 mod terminals_manager;
 
 use std::collections::{HashMap, VecDeque};
@@ -28,8 +31,8 @@ use ctx_core::ids::{SessionId, TaskId, TerminalId, WorkspaceId, WorktreeId};
 use ctx_core::models::{TerminalSession, TerminalStatus};
 use terminals_gateway::connect_terminal_gateway;
 use terminals_handle::build_stream_path;
-pub use terminals_manager::TerminalManagerStats;
 use terminals_manager::push_output;
+pub use terminals_manager::TerminalManagerStats;
 
 const DEFAULT_COLS: u16 = 80;
 const DEFAULT_ROWS: u16 = 24;

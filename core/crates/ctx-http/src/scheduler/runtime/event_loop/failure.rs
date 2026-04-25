@@ -1,11 +1,11 @@
 use std::collections::HashMap;
 
 use ctx_core::models::SessionTurnStatus;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 use crate::ops_events::OpsEvent;
 use crate::perf_telemetry::{PerfMetric, PerfMetricKind};
-use crate::scheduler::terminal::{FailedTurnTerminalization, finalize_failed_turn};
+use crate::scheduler::terminal::{finalize_failed_turn, FailedTurnTerminalization};
 use crate::telemetry::TelemetryEvent;
 
 use super::{EventLoopRuntimeState, TurnEventLoop};

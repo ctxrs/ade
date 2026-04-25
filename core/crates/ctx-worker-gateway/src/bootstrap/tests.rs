@@ -4,7 +4,10 @@ use ctx_worker_protocol::RepoSpec;
 
 use super::*;
 
-fn sample_bootstrap_spec<'a>(repo: &'a RepoSpec, env: &'a HashMap<String, String>) -> BootstrapSpec<'a> {
+fn sample_bootstrap_spec<'a>(
+    repo: &'a RepoSpec,
+    env: &'a HashMap<String, String>,
+) -> BootstrapSpec<'a> {
     BootstrapSpec {
         worker_id: "worker-123",
         gateway_url: "https://gateway.example.test",

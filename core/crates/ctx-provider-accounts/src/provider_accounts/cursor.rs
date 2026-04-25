@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
@@ -11,8 +11,8 @@ use super::shared::{
     remove_projected_account_home_for_runtime_roots, save_json_registry, write_secure_file_atomic,
 };
 use super::{
-    CURSOR_CREDENTIAL_KIND_API_KEY, CURSOR_CREDENTIAL_KIND_OAUTH_TOKEN, CURSOR_SECRET_VERSION,
-    cursor_account_home, cursor_registry_path, cursor_secret_path,
+    cursor_account_home, cursor_registry_path, cursor_secret_path, CURSOR_CREDENTIAL_KIND_API_KEY,
+    CURSOR_CREDENTIAL_KIND_OAUTH_TOKEN, CURSOR_SECRET_VERSION,
 };
 
 fn default_cursor_credential_kind() -> String {

@@ -16,8 +16,8 @@ use crate::{
 use ctx_core::ids::WorkspaceId;
 use ctx_core::models::Workspace;
 
-mod launch_state;
 mod launch_jobs;
+mod launch_state;
 mod progress;
 mod startup_prewarm;
 #[cfg(test)]
@@ -34,14 +34,14 @@ use progress::{
     normalize_container_engine_ready_for_gate, read_prewarm_metadata, write_prewarm_metadata,
     LaunchObserver,
 };
-pub use types::{
-    ExecutionLaunchLogLine, ExecutionLaunchPhaseStatus, ExecutionLaunchSnapshot,
-    ExecutionLaunchState, ExecutionLaunchStreamEvent, ExecutionSetupJobKind,
-    RuntimePrewarmScope, StartupPrewarmSnapshot, StartupPrewarmState,
-};
+use types::runtime_prewarm_ready_phase_message;
 #[cfg(test)]
 use types::sandbox_cli_env_test_lock;
-use types::runtime_prewarm_ready_phase_message;
+pub use types::{
+    ExecutionLaunchLogLine, ExecutionLaunchPhaseStatus, ExecutionLaunchSnapshot,
+    ExecutionLaunchState, ExecutionLaunchStreamEvent, ExecutionSetupJobKind, RuntimePrewarmScope,
+    StartupPrewarmSnapshot, StartupPrewarmState,
+};
 pub use warmup_coordination::SharedWarmupOperations;
 use warmup_coordination::{
     LaunchPrewarmCoordinator, PrewarmJobRegistry, RequestedPrewarmScope, SharedPrewarmLaunchJob,
@@ -60,7 +60,6 @@ fn lock_or_recover<'a, T>(mutex: &'a StdMutex<T>, name: &str) -> std::sync::Mute
         }
     }
 }
-
 
 pub struct ExecutionSetupCoordinator {
     data_root: PathBuf,

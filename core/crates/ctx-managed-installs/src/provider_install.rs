@@ -821,9 +821,7 @@ pub(super) fn classify_install_error(stage: &str, err: &anyhow::Error) -> Instal
     if stage == "refresh" || text.contains("not healthy") {
         return InstallErrorCode::HealthCheckFailed;
     }
-    if stage == "registry"
-        || text.contains("managed install registry")
-    {
+    if stage == "registry" || text.contains("managed install registry") {
         return InstallErrorCode::RegistryWriteFailed;
     }
     if text.contains("matrix version mismatch") || text.contains("no compatible release") {

@@ -105,14 +105,7 @@ pub(super) async fn open_buffer(
     let st = state
         .core
         .buffers
-        .open_or_reuse(
-            sid,
-            worktree_id,
-            root,
-            file,
-            text.clone(),
-            disk_sha.clone(),
-        )
+        .open_or_reuse(sid, worktree_id, root, file, text.clone(), disk_sha.clone())
         .await;
     Ok(Json(BufferOpenResp {
         buffer_id: st.id.0.to_string(),

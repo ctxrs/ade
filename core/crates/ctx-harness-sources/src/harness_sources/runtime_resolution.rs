@@ -4,8 +4,8 @@ use ctx_provider_accounts::{
     write_gemini_auth_settings, GEMINI_AUTH_SELECTED_TYPE_API_KEY,
     GEMINI_AUTH_SELECTED_TYPE_VERTEX_AI, KIMI_SHARE_DIR_ENV,
 };
-mod provider_fs;
 mod provider_env;
+mod provider_fs;
 
 use self::provider_fs::{
     amp_subscription_home, endpoint_preferred_model_id, goose_subscription_path_root,

@@ -86,10 +86,7 @@ fn apply_outer_process_env_removes_inherited_ctx_auth_token() {
 fn apply_outer_process_env_keeps_explicit_ctx_auth_token_override() {
     let _guard = ScopedEnvVar::set("CTX_AUTH_TOKEN", "host-token");
     let mut cmd = tokio::process::Command::new("/usr/bin/env");
-    let env = HashMap::from([(
-        "CTX_AUTH_TOKEN".to_string(),
-        "explicit-token".to_string(),
-    )]);
+    let env = HashMap::from([("CTX_AUTH_TOKEN".to_string(), "explicit-token".to_string())]);
     apply_outer_process_env(&mut cmd, &env);
     let envs: HashMap<_, _> = cmd.as_std().get_envs().collect();
     assert_eq!(

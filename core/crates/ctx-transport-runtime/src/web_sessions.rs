@@ -18,18 +18,18 @@ const DEFAULT_FPS: u32 = 30;
 const DEFAULT_IDLE_SECS: u64 = 30 * 60;
 const REAPER_INTERVAL_SECS: u64 = 60;
 
+mod runtime_support;
 mod view;
 mod worker_bundle;
-mod runtime_support;
 
 #[cfg(test)]
 mod tests;
 
-pub use view::render_web_session_view;
-pub use worker_bundle::ensure_worker_bundle;
 use runtime_support::{
     allocate_port, build_run_payload, build_signal_path, build_stream_path, log_stream,
 };
+pub use view::render_web_session_view;
+pub use worker_bundle::ensure_worker_bundle;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]

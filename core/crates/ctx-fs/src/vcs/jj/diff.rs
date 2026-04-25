@@ -3,7 +3,11 @@ use crate::patch::should_ignore_path;
 use std::collections::HashSet;
 use std::io::ErrorKind;
 
-pub(super) async fn git_output_allow(root: &Path, args: &[&str], ok_codes: &[i32]) -> Result<String> {
+pub(super) async fn git_output_allow(
+    root: &Path,
+    args: &[&str],
+    ok_codes: &[i32],
+) -> Result<String> {
     let output = Command::new("git")
         .arg("-C")
         .arg(root)

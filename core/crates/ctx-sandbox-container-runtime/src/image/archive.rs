@@ -10,17 +10,16 @@ use flate2::read::GzDecoder;
 use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
 use tar::{Archive, Builder};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::fs;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use super::{
     command_output_message, container_image_present, format_image_load_elapsed,
-    image_load_heartbeat_interval, image_load_poll_interval,
-    image_post_load_visibility_timeout, normalized_shared_vm_container_image_tar_path,
-    observe_log, observe_phase, observe_progress, sandbox_container_command, sha256_hex_file,
-    shared_vm_image_archive_normalization_lock, HarnessSetupLogLevel, HarnessSetupObserver,
-    HarnessSetupPhase, HarnessSetupProgressUpdate, SANDBOX_IMAGE_LOAD_TIMEOUT,
-    SandboxCommandMode,
+    image_load_heartbeat_interval, image_load_poll_interval, image_post_load_visibility_timeout,
+    normalized_shared_vm_container_image_tar_path, observe_log, observe_phase, observe_progress,
+    sandbox_container_command, sha256_hex_file, shared_vm_image_archive_normalization_lock,
+    HarnessSetupLogLevel, HarnessSetupObserver, HarnessSetupPhase, HarnessSetupProgressUpdate,
+    SandboxCommandMode, SANDBOX_IMAGE_LOAD_TIMEOUT,
 };
 
 pub(super) async fn load_container_image_tar(

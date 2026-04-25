@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) async fn run_entry_inner<H: MergeQueueHost>(
+pub(crate) async fn run_entry_inner<H: MergeQueueHost>(
     state: &Arc<H>,
     workspace: &Workspace,
     entry: &MergeQueueEntry,

@@ -197,4 +197,3 @@ async fn mcp_subagent_tools_call_daemon_http() {
     assert!(got_wait, "did not receive subagent_wait response");
     let _ = child.kill().await;
 }
-

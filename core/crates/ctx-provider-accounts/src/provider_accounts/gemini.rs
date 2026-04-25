@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
@@ -12,9 +12,9 @@ use super::shared::{
     remove_projected_account_home_for_runtime_roots, save_json_registry, write_secure_file_atomic,
 };
 use super::{
+    gemini_account_home, gemini_registry_path, gemini_secret_path,
     GEMINI_AUTH_SELECTED_TYPE_OAUTH_PERSONAL, GEMINI_CREDENTIAL_KIND_OAUTH_PERSONAL,
-    GEMINI_FORCE_FILE_STORAGE_ENV, GEMINI_SECRET_VERSION, gemini_account_home,
-    gemini_registry_path, gemini_secret_path,
+    GEMINI_FORCE_FILE_STORAGE_ENV, GEMINI_SECRET_VERSION,
 };
 
 const GEMINI_RUNTIME_AUTH_ENV_KEYS: &[&str] = &[

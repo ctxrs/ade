@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
@@ -12,8 +12,8 @@ use super::shared::{
     remove_projected_account_home_for_runtime_roots, save_json_registry, write_secure_file_atomic,
 };
 use super::{
-    QWEN_AUTH_SELECTED_TYPE_OAUTH, QWEN_CREDENTIAL_KIND_OAUTH, QWEN_SECRET_VERSION,
-    qwen_account_home, qwen_registry_path, qwen_secret_path,
+    qwen_account_home, qwen_registry_path, qwen_secret_path, QWEN_AUTH_SELECTED_TYPE_OAUTH,
+    QWEN_CREDENTIAL_KIND_OAUTH, QWEN_SECRET_VERSION,
 };
 
 fn default_qwen_credential_kind() -> String {

@@ -4,6 +4,7 @@ use ctx_core::models::{SandboxGuestIdentity, SandboxSubstrate, VcsKind};
 use ctx_store::{Store, StoreManager};
 use std::collections::HashMap;
 
+#[path = "lifecycle_tests/delete.rs"]
 mod delete;
 fn git(args: &[&str], cwd: &StdPath) {
     let status = std::process::Command::new("git")

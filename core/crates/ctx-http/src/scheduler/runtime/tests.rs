@@ -3,8 +3,8 @@ use super::provider_mode_id_for;
 use super::runtime_provider_id_for_session_provider;
 use crate::installer;
 use crate::installer::{
-    AgentServerCommand, AgentServerConfigFile, ManagedInstallMetadata,
-    ensure_codex_cli_command_env_for_target,
+    ensure_codex_cli_command_env_for_target, AgentServerCommand, AgentServerConfigFile,
+    ManagedInstallMetadata,
 };
 use crate::settings::ProviderControlMode;
 use chrono::Utc;

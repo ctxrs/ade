@@ -115,10 +115,7 @@ pub(super) fn jj_command(root: &Path) -> Command {
     cmd
 }
 
-pub async fn jj_command_output(
-    root: &Path,
-    args: &[&str],
-) -> Result<std::process::Output> {
+pub async fn jj_command_output(root: &Path, args: &[&str]) -> Result<std::process::Output> {
     ensure_jj_usable().await?;
     let output = jj_command(root)
         .args(args)

@@ -1,6 +1,6 @@
 use super::*;
 use crate::order_seq::OrderSeqState;
-use crate::scheduler::lifecycle::{RunningTurn, fail_starting_turn};
+use crate::scheduler::lifecycle::{fail_starting_turn, RunningTurn};
 use ctx_core::models::{ExecutionEnvironment, SessionTurn, VcsKind};
 use ctx_providers::adapters::{ProviderAdapter, ProviderRunHooks, TurnInput};
 use ctx_providers::events::NormalizedEvent;

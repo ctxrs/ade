@@ -219,7 +219,6 @@ impl AzureDriver {
             json!({ "id": self.config.image })
         }
     }
-
 }
 
 #[async_trait]

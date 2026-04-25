@@ -91,4 +91,3 @@ async fn mcp_subagent_tools_work_end_to_end_against_real_daemon_router() {
 
     let _ = child.kill().await;
 }
-

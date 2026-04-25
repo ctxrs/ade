@@ -17,24 +17,23 @@ mod manifest;
 mod self_update;
 
 pub use appimage::{
-    AppImageCandidateRequest, VerifiedAppImageCandidateMeta, appimage_candidate_meta_path,
-    appimage_candidate_partial_path, appimage_candidate_path, appimage_path_env,
-    atomic_replace_file, clear_appimage_candidate, download_and_verify,
+    appimage_candidate_meta_path, appimage_candidate_partial_path, appimage_candidate_path,
+    appimage_path_env, atomic_replace_file, clear_appimage_candidate, download_and_verify,
     download_verified_appimage_candidate, read_verified_appimage_candidate_meta, updates_dir,
-    validate_verified_appimage_candidate,
+    validate_verified_appimage_candidate, AppImageCandidateRequest, VerifiedAppImageCandidateMeta,
 };
 pub use fs_ops::{
     atomic_replace_exe, atomic_replace_exe_with_backup, download_to_path, sha256_hex_file,
 };
 pub use managed_daemon::{
-    ManagedDaemonAutoUpdateStatus, managed_daemon_auto_update_status_snapshot,
-    spawn_managed_daemon_auto_update,
+    managed_daemon_auto_update_status_snapshot, spawn_managed_daemon_auto_update,
+    ManagedDaemonAutoUpdateStatus,
 };
 pub use manifest::{
-    ReleaseArtifact, ReleaseManifest, ReleasePlatform, default_download_base_url,
-    fetch_latest_manifest, fetch_latest_manifest_with_params, in_place_update_capability,
-    is_update_available, join_url, normalize_release_channel, normalize_version_str, platform_key,
-    platform_supported, release_manifest_url,
+    default_download_base_url, fetch_latest_manifest, fetch_latest_manifest_with_params,
+    in_place_update_capability, is_update_available, join_url, normalize_release_channel,
+    normalize_version_str, platform_key, platform_supported, release_manifest_url, ReleaseArtifact,
+    ReleaseManifest, ReleasePlatform,
 };
 pub use self_update::self_update_daemon;
 
@@ -42,9 +41,9 @@ pub use self_update::self_update_daemon;
 mod tests {
     use super::appimage::in_place_update_capability_with_appimage_path;
     use super::managed_daemon::{
-        ManagedDaemonAutoUpdateSource, activate_managed_daemon_bundle,
-        managed_daemon_auto_update_source_from_env, restore_managed_daemon_bundle,
-        write_managed_daemon_auto_update_status,
+        activate_managed_daemon_bundle, managed_daemon_auto_update_source_from_env,
+        restore_managed_daemon_bundle, write_managed_daemon_auto_update_status,
+        ManagedDaemonAutoUpdateSource,
     };
     use super::*;
 

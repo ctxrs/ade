@@ -44,7 +44,9 @@ impl BrowserStreamAuthScope {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum BrowserCapabilityAuthScope {
-    Blob { blob_id: String },
+    Blob {
+        blob_id: String,
+    },
     SessionArtifact {
         session_id: String,
         artifact_id: String,

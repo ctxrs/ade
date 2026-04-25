@@ -176,7 +176,6 @@ async fn wait_for_response(
     panic!("timed out waiting for response id {response_id}");
 }
 
-
 mod daemon_http;
 mod e2e_router;
 mod live_provider;

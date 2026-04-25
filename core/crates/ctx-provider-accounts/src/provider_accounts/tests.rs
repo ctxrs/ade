@@ -1042,12 +1042,10 @@ async fn subscription_env_runtime_root_projects_path_based_providers() {
             .unwrap();
     let kimi_share = PathBuf::from(kimi_env.get(KIMI_SHARE_DIR_ENV).unwrap());
     assert!(kimi_share.starts_with(runtime_root));
-    assert!(
-        kimi_share
-            .join("credentials")
-            .join("kimi-code.json")
-            .exists()
-    );
+    assert!(kimi_share
+        .join("credentials")
+        .join("kimi-code.json")
+        .exists());
     let kimi_config = tokio::fs::read_to_string(kimi_share.join("config.toml"))
         .await
         .unwrap();

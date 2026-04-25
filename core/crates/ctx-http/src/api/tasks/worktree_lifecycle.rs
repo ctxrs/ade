@@ -1,5 +1,6 @@
 use super::*;
 
+#[path = "worktree_lifecycle/git_ops.rs"]
 mod git_ops;
 
 pub(crate) use git_ops::{branch_exists, ensure_worktree_attached};

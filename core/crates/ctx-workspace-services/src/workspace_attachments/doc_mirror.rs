@@ -1,4 +1,8 @@
 use super::*;
+use std::io::Write;
+
+use tempfile::NamedTempFile;
+use toml::Value as TomlValue;
 
 pub(super) async fn materialize_doc_mirror(
     data_root: &Path,

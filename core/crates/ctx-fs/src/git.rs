@@ -8,15 +8,15 @@ use anyhow::{bail, Context, Result};
 use tokio::process::Command;
 
 use crate::vcs::{VcsStatusBranchInfo, VcsStatusEntry, VcsStructuredStatus};
+pub(crate) use patch::{branch_exists, is_git_worktree};
 pub use patch::{
     git_apply_patch, git_apply_patch_allow_noop, git_diff_untracked_file, list_tracked_files,
 };
-pub(crate) use patch::{branch_exists, is_git_worktree};
+use status::parse_git_diff_name_status_bytes;
 pub use status::{
     git_diff_name_status_paths, git_status_structured, git_status_structured_from_bytes,
     git_status_structured_from_bytes_with_entries,
 };
-use status::parse_git_diff_name_status_bytes;
 
 #[derive(Debug, Clone, Copy)]
 pub enum ApplyPatchTarget {
