@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
@@ -18,8 +18,14 @@ const DEFAULT_FPS: u32 = 30;
 const DEFAULT_IDLE_SECS: u64 = 30 * 60;
 const REAPER_INTERVAL_SECS: u64 = 60;
 
-const WORKER_PACKAGE_JSON: &str = include_str!("../../../packages/web-session-worker/package.json");
-const WORKER_SCRIPT: &str = include_str!("../../../packages/web-session-worker/bin/worker.mjs");
+mod view;
+mod worker_bundle;
+
+#[cfg(test)]
+mod tests;
+
+pub use view::render_web_session_view;
+pub use worker_bundle::ensure_worker_bundle;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -89,195 +95,6 @@ pub struct NodeRuntimeSpec {
 pub struct WorkerBundle {
     pub worker_path: PathBuf,
     pub node_modules_path: PathBuf,
-}
-
-pub fn render_web_session_view(session: &WebSessionInfo, signal_path: &str) -> String {
-    fn escape_html(s: &str) -> String {
-        s.replace('&', "&amp;")
-            .replace('<', "&lt;")
-            .replace('>', "&gt;")
-            .replace('\"', "&quot;")
-            .replace('\'', "&#39;")
-    }
-
-    const TEMPLATE: &str = r#"<!doctype html>
-<html>
-  <head>
-    <meta charset="utf-8" />
-    <title>Web Session</title>
-    <style>
-      :root { color-scheme: dark; }
-      body { margin: 0; background: #0b0b0b; color: #ddd; font-family: system-ui, sans-serif; }
-      header { padding: 8px 12px; background: #111; font-size: 14px; display: flex; gap: 12px; align-items: center; }
-      #status { font-size: 12px; opacity: 0.7; }
-      #wrap { width: 100vw; height: calc(100vh - 36px); display: flex; align-items: center; justify-content: center; background: #000; }
-      video { width: 100%; height: 100%; object-fit: contain; background: #000; cursor: default; }
-    </style>
-  </head>
-  <body>
-    <header>
-      <div>Web Session: %%URL%%</div>
-      <div id="status">connecting…</div>
-    </header>
-    <div id="wrap">
-      <video id="view" autoplay playsinline muted></video>
-    </div>
-    <script>
-      const status = document.getElementById('status');
-      const video = document.getElementById('view');
-      const VIEW_W = %%WIDTH%%;
-      const VIEW_H = %%HEIGHT%%;
-      let focused = false;
-      let lastPoint = { x: VIEW_W / 2, y: VIEW_H / 2 };
-
-      const wsUrl = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '%%SIGNAL_PATH%%';
-      const ws = new WebSocket(wsUrl);
-      const pc = new RTCPeerConnection({ iceServers: [{urls: 'stun:stun.l.google.com:19302'}] });
-
-      pc.ontrack = (ev) => {
-        const stream = ev.streams && ev.streams[0] ? ev.streams[0] : new MediaStream([ev.track]);
-        if (video.srcObject !== stream) {
-          video.srcObject = stream;
-          video.play().catch(() => {});
-        }
-      };
-
-      pc.onicecandidate = (ev) => {
-        if (ev.candidate) ws.send(JSON.stringify({ type: 'candidate', candidate: ev.candidate }));
-      };
-
-      ws.addEventListener('open', async () => {
-        status.textContent = 'signaling';
-        pc.addTransceiver('video', { direction: 'recvonly' });
-        const offer = await pc.createOffer();
-        await pc.setLocalDescription(offer);
-        ws.send(JSON.stringify({ type: 'offer', sdp: offer.sdp }));
-      });
-
-      ws.addEventListener('message', async (ev) => {
-        const msg = JSON.parse(ev.data);
-        if (msg.type === 'answer') {
-          await pc.setRemoteDescription({ type: 'answer', sdp: msg.sdp });
-          status.textContent = 'connected';
-        } else if (msg.type === 'candidate') {
-          if (msg.candidate) await pc.addIceCandidate(msg.candidate);
-        } else if (msg.type === 'cursor') {
-          updateCursor(msg.cursor);
-        }
-      });
-
-      function mods(ev) {
-        let m = 0;
-        if (ev.altKey) m |= 1;
-        if (ev.ctrlKey) m |= 2;
-        if (ev.metaKey) m |= 4;
-        if (ev.shiftKey) m |= 8;
-        return m;
-      }
-
-      function mapCoords(ev) {
-        const rect = video.getBoundingClientRect();
-        const actualW = video.videoWidth || VIEW_W;
-        const actualH = video.videoHeight || VIEW_H;
-        const videoAspect = actualW / actualH;
-        const rectAspect = rect.width / rect.height;
-        let displayW = rect.width;
-        let displayH = rect.height;
-        let offsetX = 0;
-        let offsetY = 0;
-        if (rectAspect > videoAspect) {
-          displayH = rect.height;
-          displayW = rect.height * videoAspect;
-          offsetX = (rect.width - displayW) / 2;
-        } else {
-          displayW = rect.width;
-          displayH = rect.width / videoAspect;
-          offsetY = (rect.height - displayH) / 2;
-        }
-        const x = (ev.clientX - rect.left - offsetX) * actualW / displayW;
-        const y = (ev.clientY - rect.top - offsetY) * actualH / displayH;
-        const mapped = { x: Math.max(0, Math.min(actualW, x)), y: Math.max(0, Math.min(actualH, y)) };
-        lastPoint = mapped;
-        return mapped;
-      }
-
-      function buttonName(button) {
-        if (button === 1) return 'middle';
-        if (button === 2) return 'right';
-        return 'left';
-      }
-
-      function send(msg) {
-        if (ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify(msg));
-        }
-      }
-
-      let lastCursor = 'default';
-      let cursorTimer = null;
-      function startCursorProbe() {
-        if (cursorTimer) return;
-        cursorTimer = setInterval(() => {
-          if (!focused) return;
-          send({ type: 'cursor_probe', x: lastPoint.x, y: lastPoint.y });
-        }, 120);
-      }
-
-      function updateCursor(cursor) {
-        if (!cursor || cursor === lastCursor) return;
-        lastCursor = cursor;
-        video.style.cursor = cursor;
-      }
-
-      video.addEventListener('mousedown', (ev) => {
-        ev.preventDefault();
-        focused = true;
-        const { x, y } = mapCoords(ev);
-        send({ type: 'mouse', event: 'down', x, y, button: buttonName(ev.button), buttons: ev.buttons, clickCount: ev.detail, modifiers: mods(ev) });
-        send({ type: 'cursor_probe', x, y });
-        startCursorProbe();
-      });
-      video.addEventListener('mouseup', (ev) => {
-        ev.preventDefault();
-        const { x, y } = mapCoords(ev);
-        send({ type: 'mouse', event: 'up', x, y, button: buttonName(ev.button), buttons: ev.buttons, clickCount: ev.detail, modifiers: mods(ev) });
-      });
-      video.addEventListener('mousemove', (ev) => {
-        const { x, y } = mapCoords(ev);
-        send({ type: 'mouse', event: 'move', x, y, buttons: ev.buttons, modifiers: mods(ev) });
-        send({ type: 'cursor_probe', x, y });
-      });
-      video.addEventListener('wheel', (ev) => {
-        ev.preventDefault();
-        const { x, y } = mapCoords(ev);
-        send({ type: 'mouse', event: 'wheel', x, y, deltaX: ev.deltaX, deltaY: ev.deltaY, modifiers: mods(ev) });
-      }, { passive: false });
-      video.addEventListener('contextmenu', (ev) => ev.preventDefault());
-
-      window.addEventListener('keydown', (ev) => {
-        if (!focused) return;
-        ev.preventDefault();
-        const modifiers = mods(ev);
-        const text = (modifiers === 0 && ev.key && ev.key.length === 1) ? ev.key : '';
-        const raw = modifiers !== 0 || !text;
-        send({ type: 'key', event: 'down', key: ev.key, code: ev.code, keyCode: ev.keyCode, text, modifiers, raw });
-      });
-      window.addEventListener('keyup', (ev) => {
-        if (!focused) return;
-        ev.preventDefault();
-        const modifiers = mods(ev);
-        send({ type: 'key', event: 'up', key: ev.key, code: ev.code, keyCode: ev.keyCode, modifiers });
-      });
-    </script>
-  </body>
-</html>
-"#;
-
-    TEMPLATE
-        .replace("%%URL%%", &escape_html(&session.url))
-        .replace("%%WIDTH%%", &session.viewport.width.to_string())
-        .replace("%%HEIGHT%%", &session.viewport.height.to_string())
-        .replace("%%SIGNAL_PATH%%", signal_path)
 }
 
 pub struct WebSessionHandle {
@@ -745,57 +562,6 @@ impl Default for WebSessionManager {
     }
 }
 
-pub async fn ensure_worker_bundle(
-    data_root: &Path,
-    node: &NodeRuntimeSpec,
-) -> Result<WorkerBundle> {
-    if let Ok(worker_path) = std::env::var("CTX_WEB_SESSION_WORKER") {
-        let node_modules_path = std::env::var("CTX_WEB_SESSION_NODE_PATH")
-            .context("CTX_WEB_SESSION_NODE_PATH required with CTX_WEB_SESSION_WORKER")?;
-        let worker_path = PathBuf::from(worker_path);
-        let node_modules_path = PathBuf::from(node_modules_path);
-        if !worker_path.exists() {
-            anyhow::bail!("web session worker not found at {}", worker_path.display());
-        }
-        if !node_modules_path.exists() {
-            anyhow::bail!(
-                "web session node_modules not found at {}",
-                node_modules_path.display()
-            );
-        }
-        return Ok(WorkerBundle {
-            worker_path,
-            node_modules_path,
-        });
-    }
-
-    let version = worker_version()?;
-    let root = data_root
-        .join("tools")
-        .join("web-session-worker")
-        .join(&version);
-    let bin_dir = root.join("bin");
-    tokio::fs::create_dir_all(&bin_dir).await?;
-    tokio::fs::write(root.join("package.json"), WORKER_PACKAGE_JSON).await?;
-    tokio::fs::write(bin_dir.join("worker.mjs"), WORKER_SCRIPT).await?;
-
-    let node_modules = root.join("node_modules");
-    let deps_ready = node_modules.join("playwright").exists() && node_modules.join("wrtc").exists();
-    if !deps_ready {
-        let _guard = worker_install_lock().lock().await;
-        let deps_ready =
-            node_modules.join("playwright").exists() && node_modules.join("wrtc").exists();
-        if !deps_ready {
-            install_worker_deps(node, &root).await?;
-        }
-    }
-
-    Ok(WorkerBundle {
-        worker_path: bin_dir.join("worker.mjs"),
-        node_modules_path: node_modules,
-    })
-}
-
 async fn build_run_payload(
     handle: &WebSessionHandle,
     req: WebSessionRunRequest,
@@ -854,59 +620,6 @@ fn allocate_port() -> Result<u16> {
     Ok(port)
 }
 
-fn worker_install_lock() -> &'static Mutex<()> {
-    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| Mutex::new(()))
-}
-
-fn worker_version() -> Result<String> {
-    static VERSION: OnceLock<String> = OnceLock::new();
-    if let Some(version) = VERSION.get() {
-        return Ok(version.clone());
-    }
-    let value: serde_json::Value =
-        serde_json::from_str(WORKER_PACKAGE_JSON).context("parsing worker package.json")?;
-    let version = value
-        .get("version")
-        .and_then(|v| v.as_str())
-        .context("worker package.json missing version")?
-        .to_string();
-    let _ = VERSION.set(version.clone());
-    Ok(version)
-}
-
-async fn install_worker_deps(node: &NodeRuntimeSpec, root: &Path) -> Result<()> {
-    let mut cmd = if let Ok(pnpm) = which::which("pnpm") {
-        let mut cmd = Command::new(pnpm);
-        cmd.arg("install")
-            .arg("--prod")
-            .arg("--ignore-scripts")
-            .arg("--reporter")
-            .arg("silent")
-            .current_dir(root);
-        cmd
-    } else {
-        let mut cmd = Command::new(&node.node_bin);
-        cmd.arg(&node.npm_cli_js)
-            .arg("install")
-            .arg("--omit=dev")
-            .arg("--no-audit")
-            .arg("--no-fund")
-            .arg("--ignore-scripts")
-            .current_dir(root)
-            .env("npm_config_update_notifier", "false")
-            .env("npm_config_ignore_scripts", "true");
-        cmd
-    };
-
-    let output = cmd.output().await.context("running package install")?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("package install failed: {}", stderr.trim());
-    }
-    Ok(())
-}
-
 async fn log_stream<R: tokio::io::AsyncRead + Unpin>(mut reader: R, label: &str) {
     use tokio::io::AsyncReadExt;
     let mut buf = [0u8; 8192];
@@ -922,125 +635,5 @@ async fn log_stream<R: tokio::io::AsyncRead + Unpin>(mut reader: R, label: &str)
                 }
             }
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    fn test_session_info() -> WebSessionInfo {
-        let now = Utc::now();
-        WebSessionInfo {
-            id: "sess-1".to_string(),
-            kind: "web".to_string(),
-            session_id: None,
-            worktree_id: None,
-            status: WebSessionStatus::Running,
-            created_at: now,
-            updated_at: now,
-            last_activity: now,
-            url: "https://example.com".to_string(),
-            viewport: WebSessionViewport {
-                width: 1280,
-                height: 720,
-            },
-            fps: 30,
-            viewers: 0,
-            stream_path: build_stream_path("sess-1", "stream-token"),
-            stream_url: None,
-        }
-    }
-
-    fn test_handle(work_dir: Option<PathBuf>) -> WebSessionHandle {
-        let now = Utc::now();
-        WebSessionHandle {
-            info: test_session_info(),
-            stream_token: "stream-token".to_string(),
-            runtime: Arc::new(Mutex::new(WebSessionRuntime {
-                status: WebSessionStatus::Running,
-                updated_at: now,
-                last_activity: now,
-                viewers: 0,
-                worker_port: 4321,
-                child: None,
-                work_dir,
-            })),
-            run_lock: Arc::new(Mutex::new(())),
-        }
-    }
-
-    #[test]
-    fn web_session_paths_embed_stream_token() {
-        assert_eq!(
-            build_stream_path("sess-1", "stream-token"),
-            "/sessions/web/sess-1/view?token=stream-token"
-        );
-        assert_eq!(
-            build_signal_path("sess-1", "stream-token"),
-            "/sessions/web/sess-1/signal?token=stream-token"
-        );
-    }
-
-    #[test]
-    fn rendered_view_uses_tokenized_signal_path() {
-        let html = render_web_session_view(
-            &test_session_info(),
-            "/sessions/web/sess-1/signal?token=stream-token",
-        );
-        assert!(html.contains("/sessions/web/sess-1/signal?token=stream-token"));
-    }
-
-    #[tokio::test]
-    async fn closing_missing_session_returns_not_found_error() {
-        let manager = WebSessionManager::new();
-        let err = manager.close("missing-session").await.unwrap_err();
-        assert!(format!("{err:#}").contains("session not found"));
-    }
-
-    #[tokio::test]
-    async fn resolve_script_path_rejects_absolute_paths() {
-        let dir = std::env::temp_dir().join(format!("ctx-web-session-test-{}", Uuid::new_v4()));
-        tokio::fs::create_dir_all(&dir).await.unwrap();
-        let handle = test_handle(Some(dir.clone()));
-        let absolute = dir.join("script.js");
-        tokio::fs::write(&absolute, "console.log('hi');")
-            .await
-            .unwrap();
-
-        let err = resolve_script_path(&handle, absolute.to_str().unwrap())
-            .await
-            .unwrap_err();
-        assert!(err.to_string().contains("relative to work_dir"));
-        let _ = tokio::fs::remove_dir_all(&dir).await;
-    }
-
-    #[tokio::test]
-    async fn resolve_script_path_allows_absolute_paths_without_work_dir() {
-        let absolute =
-            std::env::temp_dir().join(format!("ctx-web-session-test-{}.js", Uuid::new_v4()));
-        let handle = test_handle(None);
-
-        let resolved = resolve_script_path(&handle, absolute.to_str().unwrap())
-            .await
-            .unwrap();
-        assert_eq!(resolved, absolute);
-    }
-
-    #[tokio::test]
-    async fn resolve_script_path_accepts_relative_paths_inside_work_dir() {
-        let dir = std::env::temp_dir().join(format!("ctx-web-session-test-{}", Uuid::new_v4()));
-        let nested = dir.join("scripts");
-        tokio::fs::create_dir_all(&nested).await.unwrap();
-        let script = nested.join("script.js");
-        tokio::fs::write(&script, "console.log('hi');")
-            .await
-            .unwrap();
-        let handle = test_handle(Some(dir.clone()));
-
-        let resolved = resolve_script_path(&handle, "scripts/script.js")
-            .await
-            .unwrap();
-        assert_eq!(resolved, script.canonicalize().unwrap());
-        let _ = tokio::fs::remove_dir_all(&dir).await;
     }
 }

@@ -297,15 +297,21 @@ pub(super) async fn disable_mobile_access(
             .await;
     }
 
-    let cfg = state.global_store().get_mobile_access_config().await.map_err(|e| {
-        tracing::error!("failed to read mobile access config while disabling mobile access: {e:?}");
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiErrorResp {
-                error: "failed to read mobile access config".into(),
-            }),
-        )
-    })?;
+    let cfg = state
+        .global_store()
+        .get_mobile_access_config()
+        .await
+        .map_err(|e| {
+            tracing::error!(
+                "failed to read mobile access config while disabling mobile access: {e:?}"
+            );
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: "failed to read mobile access config".into(),
+                }),
+            )
+        })?;
 
     state.transport.mobile_tunnel.stop().await;
     state
@@ -322,15 +328,21 @@ pub(super) async fn disable_mobile_access(
             )
         })?;
     if let Some(cfg) = cfg {
-        state.global_store().delete_mobile_access_config().await.map_err(|e| {
-            tracing::error!("failed to delete mobile access config while disabling mobile access: {e:?}");
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: "failed to delete mobile access config".into(),
-                }),
-            )
-        })?;
+        state
+            .global_store()
+            .delete_mobile_access_config()
+            .await
+            .map_err(|e| {
+                tracing::error!(
+                    "failed to delete mobile access config while disabling mobile access: {e:?}"
+                );
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ApiErrorResp {
+                        error: "failed to delete mobile access config".into(),
+                    }),
+                )
+            })?;
         state
             .global_store()
             .delete_mobile_connection_profile(cfg.profile_id)
@@ -699,6 +711,9 @@ pub(super) async fn proxy_secure_request(
     if !path.starts_with("/api/") {
         return Err("secure proxy only supports /api/* paths".to_string());
     }
+    if is_provider_login_management_path(&path) {
+        return desktop_auth_required_secure_response();
+    }
 
     let method = axum::http::Method::from_bytes(payload.method.as_bytes())
         .map_err(|_| "invalid http method".to_string())?;
@@ -754,5 +769,25 @@ pub(super) async fn proxy_secure_request(
         status,
         headers,
         body_b64,
+    })
+}
+
+fn is_provider_login_management_path(path: &str) -> bool {
+    let Some(rest) = path.strip_prefix("/api/providers/") else { return false; };
+    let mut segments = rest.split('/');
+    let Some(_) = segments.next() else { return false; };
+    matches!(
+        (segments.next(), segments.next(), segments.next()),
+        (Some("accounts"), Some("login"), Some(_))
+    )
+}
+
+fn desktop_auth_required_secure_response() -> Result<SecureResponsePayload, String> {
+    let body = serde_json::to_vec(&ApiErrorResp { error: "desktop auth required".to_string() })
+        .map_err(|_| "failed to encode secure response".to_string())?;
+    Ok(SecureResponsePayload {
+        status: StatusCode::UNAUTHORIZED.as_u16(),
+        headers: vec![(header::CONTENT_TYPE.as_str().to_string(), "application/json".to_string())],
+        body_b64: base64::engine::general_purpose::STANDARD.encode(body),
     })
 }

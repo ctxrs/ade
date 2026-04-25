@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { deriveBrowserCapabilityToken } from "./browserCapabilityAuth";
+import type { DaemonConnection } from "./daemonConnection";
 
 const {
   apiAnyMock,
@@ -15,11 +16,15 @@ const {
   trackFirstTurnSubmittedMock: vi.fn(),
   trackSessionCreatedMock: vi.fn(),
   trackUserMessageSentMock: vi.fn(),
-  getDaemonConnectionMock: vi.fn(() => ({
-    baseUrl: "http://127.0.0.1:4399",
-    targetScope: { kind: "desktop_local" },
-    authToken: null,
-  })),
+  getDaemonConnectionMock: vi.fn(
+    (): DaemonConnection => ({
+      baseUrl: "http://127.0.0.1:4399",
+      wsBaseUrl: "ws://127.0.0.1:4399",
+      targetScope: { kind: "desktop_local" },
+      authToken: null,
+      runId: null,
+    }),
+  ),
   isDesktopAppMock: vi.fn(() => false),
 }));
 
@@ -181,8 +186,10 @@ describe("browser download urls", () => {
   it("builds blob urls with a scoped capability token instead of the raw daemon bearer", () => {
     getDaemonConnectionMock.mockReturnValueOnce({
       baseUrl: "http://daemon.test",
+      wsBaseUrl: "ws://daemon.test",
       targetScope: { kind: "desktop_local" },
       authToken: "daemon-secret",
+      runId: null,
     });
 
     const expectedToken = deriveBrowserCapabilityToken("daemon-secret", {
@@ -198,8 +205,10 @@ describe("browser download urls", () => {
   it("builds artifact urls with a scoped capability token instead of the raw daemon bearer", () => {
     getDaemonConnectionMock.mockReturnValueOnce({
       baseUrl: "http://daemon.test",
+      wsBaseUrl: "ws://daemon.test",
       targetScope: { kind: "desktop_local" },
       authToken: "daemon-secret",
+      runId: null,
     });
 
     const expectedToken = deriveBrowserCapabilityToken("daemon-secret", {

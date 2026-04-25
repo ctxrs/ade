@@ -21,7 +21,7 @@ use tower_http::cors::{AllowOrigin, CorsLayer};
 use tower_http::services::{ServeDir, ServeFile};
 use url::Url;
 
-mod artifacts;
+pub(crate) mod artifacts;
 mod auth;
 mod demo;
 pub(crate) mod errors;
