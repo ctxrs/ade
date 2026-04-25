@@ -858,11 +858,40 @@ pub(in crate::api) async fn authenticate_provider_for_workspace(
     let install_target = install_target_for_workspace(&state, workspace.id)
         .await
         .map_err(|error| workspace_execution_settings_error_json(&error))?;
-    let adapter =
-        ensure_provider_adapter_for_target(state.as_ref(), &provider_id, install_target).await;
+    let checked_at = Utc::now().to_rfc3339();
+    let (_, managed_config_error) =
+        load_managed_agent_server_config_with_error(&state.core.data_root).await;
+    if let Some(config_error) = managed_config_error {
+        return Ok(Json(ProviderAuthCheckResp {
+            provider_id: project_provider_id_for_response(&requested_provider_id, &provider_id),
+            workspace_id: ws_id.0.to_string(),
+            status: "error".to_string(),
+            auth_required: Some(false),
+            checked_at: Some(checked_at),
+            message: Some(config_error),
+        }));
+    }
+    let adapter = match crate::daemon::ensure_provider_adapter_for_target(
+        state.as_ref(),
+        &provider_id,
+        install_target,
+    )
+    .await
+    {
+        Ok(adapter) => adapter,
+        Err(err) => {
+            return Ok(Json(ProviderAuthCheckResp {
+                provider_id: project_provider_id_for_response(&requested_provider_id, &provider_id),
+                workspace_id: ws_id.0.to_string(),
+                status: "error".to_string(),
+                auth_required: Some(false),
+                checked_at: Some(checked_at),
+                message: Some(logs::redact_sensitive(&err.to_string())),
+            }));
+        }
+    };
     let (event_tx, mut event_rx) = mpsc::channel(32);
     tokio::spawn(async move { while event_rx.recv().await.is_some() {} });
-    let checked_at = Utc::now().to_rfc3339();
     let result = adapter
         .authenticate_session(
             format!("auth-{}", uuid::Uuid::new_v4()),
