@@ -59,7 +59,7 @@ test("verify:broader keeps web escalations changed-aware", () => {
 
   assert.deepEqual(plan.commands, [
     "pnpm source:file-size:enforce",
-    "pnpm bazel:web:unit:non-pretext",
+    "pnpm bazel:web:unit:non-pretext:foundation",
     "pnpm bazel:web:e2e:premerge",
   ]);
 });
@@ -74,6 +74,19 @@ test("verify:affected routes extracted layout package changes to the dedicated p
   assert.deepEqual(plan.commands, [
     "pnpm source:file-size:enforce",
     "pnpm bazel:web:pretext:measurement",
+  ]);
+});
+
+test("verify:touched routes root-level web shell files to the workbench shard", () => {
+  const plan = buildVerificationPlan({
+    intent: "touched",
+    base: "origin/main",
+    changedFiles: ["core/apps/web/src/main.tsx"],
+  });
+
+  assert.deepEqual(plan.commands, [
+    "pnpm source:file-size:enforce",
+    "pnpm bazel:web:unit:non-pretext:workbench",
   ]);
 });
 

@@ -88,7 +88,7 @@ test("web high-risk changes escalate to the canonical premerge browser suite", (
   const commands = runScenario(["core/apps/web/src/state/providerOnboardingCoordinator.ts"]);
 
   assert.deepEqual(commands, [
-    "bash -lc pnpm bazel:web:unit:non-pretext",
+    "bash -lc pnpm bazel:web:unit:non-pretext:foundation",
     "bash -lc pnpm bazel:web:e2e:premerge",
   ]);
 });
@@ -96,7 +96,7 @@ test("web high-risk changes escalate to the canonical premerge browser suite", (
 test("web settings-only changes stay off the dedicated pretext measurement slice", () => {
   const commands = runScenario(["core/apps/web/src/pages/settings/SettingsPage.tsx"]);
 
-  assert.deepEqual(commands, ["bash -lc pnpm bazel:web:unit:non-pretext"]);
+  assert.deepEqual(commands, ["bash -lc pnpm bazel:web:unit:non-pretext:settings-setup"]);
 });
 
 test("pretext measurement changes route to the dedicated pretext unit slice", () => {
@@ -130,7 +130,7 @@ test("shared Playwright runtime changes run web unit and canonical premerge brow
   const commands = runScenario(["core/apps/web/playwright.shared.ts"]);
 
   assert.deepEqual(commands, [
-    "bash -lc pnpm bazel:web:unit:non-pretext",
+    "bash -lc pnpm bazel:web:unit:non-pretext:workbench",
     "bash -lc pnpm bazel:web:e2e:premerge",
   ]);
 });

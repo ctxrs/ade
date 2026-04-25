@@ -86,7 +86,7 @@ test("agent-default escalates high-risk web state changes to the canonical preme
   });
 
   assert.deepEqual(plan.commands, [
-    "pnpm bazel:web:unit:non-pretext",
+    "pnpm bazel:web:unit:non-pretext:foundation",
     "pnpm bazel:web:e2e:premerge",
   ]);
 });
@@ -99,7 +99,19 @@ test("agent-default keeps settings-only web changes off the pretext measurement 
   });
 
   assert.deepEqual(plan.commands, [
-    "pnpm bazel:web:unit:non-pretext",
+    "pnpm bazel:web:unit:non-pretext:settings-setup",
+  ]);
+});
+
+test("agent-default routes root-level web shell files to the workbench shard", () => {
+  const plan = buildExecutionPlan({
+    profileId: "agent-default",
+    changedFiles: ["core/apps/web/src/main.tsx"],
+    touchedOnly: true,
+  });
+
+  assert.deepEqual(plan.commands, [
+    "pnpm bazel:web:unit:non-pretext:workbench",
   ]);
 });
 
@@ -234,7 +246,7 @@ test("agent-default routes shared web E2E runtime changes without fanning out to
   });
 
   assert.deepEqual(plan.commands, [
-    "pnpm bazel:web:unit:non-pretext",
+    "pnpm bazel:web:unit:non-pretext:misc",
     "pnpm bazel:web:e2e:premerge",
   ]);
 });
@@ -247,7 +259,7 @@ test("agent-default routes shared web E2E server changes through unit and premer
   });
 
   assert.deepEqual(plan.commands, [
-    "pnpm bazel:web:unit:non-pretext",
+    "pnpm bazel:web:unit:non-pretext:misc",
     "pnpm bazel:web:e2e:premerge",
   ]);
 });
@@ -260,7 +272,7 @@ test("agent-default routes shared Playwright config changes through unit and pre
   });
 
   assert.deepEqual(plan.commands, [
-    "pnpm bazel:web:unit:non-pretext",
+    "pnpm bazel:web:unit:non-pretext:workbench",
     "pnpm bazel:web:e2e:premerge",
   ]);
 });
@@ -273,7 +285,7 @@ test("agent-default routes shared Playwright config tests to web unit tests", ()
   });
 
   assert.deepEqual(plan.commands, [
-    "pnpm bazel:web:unit:non-pretext",
+    "pnpm bazel:web:unit:non-pretext:workbench",
   ]);
 });
 

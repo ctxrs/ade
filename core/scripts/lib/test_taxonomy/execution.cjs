@@ -246,6 +246,10 @@ function commandPriority(command) {
   if (
     command === "pnpm bazel:web:test"
     || command === "pnpm bazel:web:unit:non-pretext"
+    || command === "pnpm bazel:web:unit:non-pretext:foundation"
+    || command === "pnpm bazel:web:unit:non-pretext:settings-setup"
+    || command === "pnpm bazel:web:unit:non-pretext:workbench"
+    || command === "pnpm bazel:web:unit:non-pretext:misc"
     || command === "pnpm bazel:web:pretext:measurement"
   ) {
     return 100;

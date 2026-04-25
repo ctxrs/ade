@@ -106,6 +106,22 @@ test("Bazel web focused unit slices run as native vitest tests", () => {
     "node scripts/run_bazel_pilot.cjs test //core/apps/web:unit_tests_non_pretext",
   );
   assert.equal(
+    corePackageJson.scripts["bazel:web:unit:non-pretext:foundation"],
+    "node scripts/run_bazel_pilot.cjs test //core/apps/web:unit_tests_non_pretext_foundation",
+  );
+  assert.equal(
+    corePackageJson.scripts["bazel:web:unit:non-pretext:settings-setup"],
+    "node scripts/run_bazel_pilot.cjs test //core/apps/web:unit_tests_non_pretext_settings_setup",
+  );
+  assert.equal(
+    corePackageJson.scripts["bazel:web:unit:non-pretext:workbench"],
+    "node scripts/run_bazel_pilot.cjs test //core/apps/web:unit_tests_non_pretext_workbench",
+  );
+  assert.equal(
+    corePackageJson.scripts["bazel:web:unit:non-pretext:misc"],
+    "node scripts/run_bazel_pilot.cjs test //core/apps/web:unit_tests_non_pretext_misc",
+  );
+  assert.equal(
     corePackageJson.scripts["bazel:web:pretext:measurement"],
     "node scripts/run_bazel_pilot.cjs test //core/packages/session-thread-layout:unit_tests //core/apps/web:pretext_measurement_unit_tests",
   );
