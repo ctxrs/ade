@@ -17,6 +17,10 @@ pub(super) const AVF_LINUX_HELPER_PATH_ENV: &str = "CTX_AVF_LINUX_HELPER_PATH";
 pub(super) const DESKTOP_BUNDLE_DIR_ENV: &str = "CTX_BUNDLE_DIR";
 const DESKTOP_DAEMON_BIN_NAME: &str = "ctx-daemon";
 const AVF_GUEST_GATEWAY_HOST: &str = "192.168.64.1";
+const DAEMON_AUTH_FILENAME: &str = "daemon_auth.json";
+const DAEMON_AUTH_READ_TIMEOUT: Duration = Duration::from_secs(5);
+const DAEMON_AUTH_REMOTE_TIMEOUT: Duration = Duration::from_secs(10);
+const DAEMON_AUTH_RETRY_DELAY: Duration = Duration::from_millis(200);
 const DAEMON_AUTOMATION_ENV_BLOCKLIST: &[&str] = &[
     "AUTOMATION_LIBRARY_PATH",
     "AUTOMATION_PORT",
@@ -33,13 +37,13 @@ pub(super) use commands::{desktop_daemon_request, desktop_upload_blob};
 pub(super) use ctx_desktop_ipc::{DesktopDaemonRequest, DesktopHttpResponse};
 pub(super) use health::{
     classify_daemon_compatibility, daemon_health, daemon_health_with_auth,
-    existing_local_daemon_matches_or_absent,
-    existing_local_daemon_matches_with_auth, local_daemon_health_matches_expected,
-    normalize_daemon_pid, probe_daemon_health, probe_daemon_health_with_auth,
-    probe_daemon_health_with_retry, probe_local_daemon_health_with_retry,
-    probe_local_daemon_health_with_retry_auth, reclaim_incompatible_local_daemon,
-    should_reclaim_incompatible_local_daemon, spawned_local_daemon_incompatibility_message,
-    terminate_pid, wait_for_daemon_reclaim, DaemonCompatibilityState,
+    existing_local_daemon_matches_or_absent, existing_local_daemon_matches_with_auth,
+    local_daemon_health_matches_expected, normalize_daemon_pid, probe_daemon_health,
+    probe_daemon_health_with_auth, probe_daemon_health_with_retry,
+    probe_local_daemon_health_with_retry, probe_local_daemon_health_with_retry_auth,
+    reclaim_incompatible_local_daemon, should_reclaim_incompatible_local_daemon,
+    spawned_local_daemon_incompatibility_message, terminate_pid, wait_for_daemon_reclaim,
+    DaemonCompatibilityState,
 };
 pub(super) use launch::{spawn_and_validate_local_daemon, try_kill_child, SpawnedLocalDaemonReady};
 pub(super) use login_relay::desktop_start_codex_login_relay;

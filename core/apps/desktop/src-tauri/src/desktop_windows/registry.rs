@@ -1,8 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use ctx_desktop_ipc::{
-    DesktopDockRecentLocalWorkspace as DockRecentLocalWorkspaceEntry,
-};
+use ctx_desktop_ipc::DesktopDockRecentLocalWorkspace as DockRecentLocalWorkspaceEntry;
 use serde::{Deserialize, Serialize};
 
 use super::*;
@@ -14,16 +12,16 @@ pub(crate) struct WorkspaceWindowRegistry {
     dock_recent_local_workspaces: std::sync::Mutex<Vec<DockRecentLocalWorkspaceEntry>>,
 }
 
-const MAX_RECENT_WORKSPACES: usize = 8;
+pub(crate) const MAX_RECENT_WORKSPACES: usize = 8;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-struct RecentWorkspaceEntry {
+pub(crate) struct RecentWorkspaceEntry {
     workspace_id: String,
     label: String,
 }
 
 impl WorkspaceWindowRegistry {
-    pub(super) fn register(&self, window_label: &str, workspace_id: &str) {
+    pub(crate) fn register(&self, window_label: &str, workspace_id: &str) {
         let mut map = match self.by_window.lock() {
             Ok(map) => map,
             Err(_) => return,
@@ -33,7 +31,7 @@ impl WorkspaceWindowRegistry {
             .insert(workspace_id.to_string());
     }
 
-    pub(super) fn unregister_window(&self, window_label: &str) {
+    pub(crate) fn unregister_window(&self, window_label: &str) {
         let mut map = match self.by_window.lock() {
             Ok(map) => map,
             Err(_) => return,
@@ -41,7 +39,7 @@ impl WorkspaceWindowRegistry {
         map.remove(window_label);
     }
 
-    pub(super) fn set_window_workspaces(&self, window_label: &str, workspace_ids: Vec<String>) {
+    pub(crate) fn set_window_workspaces(&self, window_label: &str, workspace_ids: Vec<String>) {
         let mut map = match self.by_window.lock() {
             Ok(map) => map,
             Err(_) => return,
@@ -61,7 +59,7 @@ impl WorkspaceWindowRegistry {
         }
     }
 
-    pub(super) fn window_for_workspace(&self, workspace_id: &str) -> Option<String> {
+    pub(crate) fn window_for_workspace(&self, workspace_id: &str) -> Option<String> {
         let map = self.by_window.lock().ok()?;
         map.iter().find_map(|(label, ids)| {
             if ids.contains(workspace_id) {
@@ -72,7 +70,7 @@ impl WorkspaceWindowRegistry {
         })
     }
 
-    pub(super) fn workspace_ids(&self) -> Vec<String> {
+    pub(crate) fn workspace_ids(&self) -> Vec<String> {
         let map = match self.by_window.lock() {
             Ok(map) => map,
             Err(_) => return Vec::new(),
@@ -86,7 +84,11 @@ impl WorkspaceWindowRegistry {
         out.into_iter().collect()
     }
 
-    pub(super) fn record_recent_workspace(&self, workspace_id: &str, workspace_label: Option<&str>) {
+    pub(crate) fn record_recent_workspace(
+        &self,
+        workspace_id: &str,
+        workspace_label: Option<&str>,
+    ) {
         let workspace_id = workspace_id.trim();
         if workspace_id.is_empty() {
             return;
@@ -115,14 +117,17 @@ impl WorkspaceWindowRegistry {
         }
     }
 
-    fn recent_workspaces(&self) -> Vec<RecentWorkspaceEntry> {
+    pub(crate) fn recent_workspaces(&self) -> Vec<RecentWorkspaceEntry> {
         match self.recent_workspaces.lock() {
             Ok(recent) => recent.clone(),
             Err(_) => Vec::new(),
         }
     }
 
-    pub(super) fn set_dock_recent_local_workspaces(&self, entries: Vec<DockRecentLocalWorkspaceEntry>) {
+    pub(crate) fn set_dock_recent_local_workspaces(
+        &self,
+        entries: Vec<DockRecentLocalWorkspaceEntry>,
+    ) {
         let mut dedup = HashSet::new();
         let mut normalized = Vec::new();
         for entry in entries {
@@ -154,7 +159,7 @@ impl WorkspaceWindowRegistry {
         *guard = normalized;
     }
 
-    pub(super) fn dock_recent_local_workspaces(&self) -> Vec<DockRecentLocalWorkspaceEntry> {
+    pub(crate) fn dock_recent_local_workspaces(&self) -> Vec<DockRecentLocalWorkspaceEntry> {
         match self.dock_recent_local_workspaces.lock() {
             Ok(entries) => entries.clone(),
             Err(_) => Vec::new(),
@@ -185,7 +190,8 @@ mod tests {
     fn recent_workspaces_are_trimmed_to_max_size() {
         let registry = WorkspaceWindowRegistry::default();
         for idx in 0..(MAX_RECENT_WORKSPACES + 4) {
-            registry.record_recent_workspace(&format!("ws-{idx}"), Some(&format!("Workspace {idx}")));
+            registry
+                .record_recent_workspace(&format!("ws-{idx}"), Some(&format!("Workspace {idx}")));
         }
 
         let recent = registry.recent_workspaces();
@@ -214,7 +220,10 @@ mod tests {
 
         assert_eq!(registry.window_for_workspace("ws-a"), None);
         assert_eq!(registry.window_for_workspace("ws-b"), None);
-        assert_eq!(registry.window_for_workspace("ws-c").as_deref(), Some("window-a"));
+        assert_eq!(
+            registry.window_for_workspace("ws-c").as_deref(),
+            Some("window-a")
+        );
     }
 
     #[test]

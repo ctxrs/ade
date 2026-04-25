@@ -7,7 +7,7 @@ const path = require("node:path");
 const coreRoot = path.resolve(__dirname, "..");
 const repoRoot = path.resolve(coreRoot, "..");
 
-const MAX_LINES = 1000;
+const MAX_LINES = 600;
 const SOURCE_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".rs"]);
 const EXCLUDED_PARTS = new Set([
   ".ctx",
@@ -39,7 +39,7 @@ const PRODUCTION_ROOT_PATTERNS = [
 ];
 
 const GUIDANCE_MESSAGE =
-  "If you are receiving this error message, do not try to make small tweaks just to barely slip below the 1000-line cap. Take the opportunity to pause, think through an architecturally sound split that will age well, and use that to bring the file back under the limit. This file is getting too big, which is usually a code smell pointing to a module with too many concerns. Break it up along clean responsibility boundaries instead of sharding it arbitrarily. We do not allow production-source exceptions to this hard cap.";
+  "If you are receiving this error message, do not try to make small tweaks just to barely slip below the 600-line cap. Take the opportunity to pause, think through an architecturally sound split that will age well, and use that to bring the file back under the limit. This file is getting too big, which is usually a code smell pointing to a module with too many concerns. Break it up along clean responsibility boundaries instead of sharding it arbitrarily. We do not allow production-source exceptions to this hard cap.";
 
 const toPosix = (value) => value.split(path.sep).join("/");
 

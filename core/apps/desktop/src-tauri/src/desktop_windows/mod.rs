@@ -27,3 +27,4 @@ pub(super) use navigation::{
     workspace_registry_parse_target_route, WorkspaceRouteTarget,
 };
 pub(crate) use registry::WorkspaceWindowRegistry;
+pub(super) use registry::MAX_RECENT_WORKSPACES;
