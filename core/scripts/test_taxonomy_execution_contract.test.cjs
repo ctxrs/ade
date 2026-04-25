@@ -115,6 +115,18 @@ test("agent-default routes root-level web shell files to the workbench shard", (
   ]);
 });
 
+test("agent-default routes non-pretext web fixture changes to the foundation shard", () => {
+  const plan = buildExecutionPlan({
+    profileId: "agent-default",
+    changedFiles: ["core/apps/web/src/testdata/projectionEquivalenceFixtures.ts"],
+    touchedOnly: true,
+  });
+
+  assert.deepEqual(plan.commands, [
+    "pnpm bazel:web:unit:non-pretext:foundation",
+  ]);
+});
+
 test("agent-default routes pretext measurement source changes to the dedicated unit slice", () => {
   const plan = buildExecutionPlan({
     profileId: "agent-default",

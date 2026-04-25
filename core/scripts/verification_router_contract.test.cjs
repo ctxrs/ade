@@ -90,6 +90,19 @@ test("verify:touched routes root-level web shell files to the workbench shard", 
   ]);
 });
 
+test("verify:touched routes non-pretext web fixture changes to the foundation shard", () => {
+  const plan = buildVerificationPlan({
+    intent: "touched",
+    base: "origin/main",
+    changedFiles: ["core/apps/web/src/testdata/projectionEquivalenceFixtures.ts"],
+  });
+
+  assert.deepEqual(plan.commands, [
+    "pnpm source:file-size:enforce",
+    "pnpm bazel:web:unit:non-pretext:foundation",
+  ]);
+});
+
 test("verify:affected routes extracted supervisor package changes to direct package truth plus app coverage", () => {
   const plan = buildVerificationPlan({
     intent: "affected",

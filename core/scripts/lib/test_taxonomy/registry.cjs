@@ -1092,6 +1092,7 @@ function buildStaticEntries() {
         "core/apps/web/src/lib/**",
         "core/apps/web/src/state/**",
         "core/apps/web/src/styles/**",
+        "core/apps/web/src/testdata/**",
         "core/apps/web/src/testUtils/**",
         "core/apps/web/src/testing/**",
         "core/apps/web/src/utils/**",
