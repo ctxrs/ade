@@ -9,6 +9,9 @@ use std::time::{Duration, Instant};
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 use tokio::sync::Mutex;
 
+mod inspection;
+mod reclaim;
+
 const SANDBOX_OP_TIMEOUT: Duration = Duration::from_secs(60);
 
 #[async_trait::async_trait]
@@ -132,63 +135,11 @@ impl SandboxMachineLifecycleExt for HarnessRuntimeManager {
     }
 
     async fn inspect_sandbox_machine_memory_mb(&self, machine_name: &str) -> Result<Option<u32>> {
-        let mut cmd = sandbox_container_command(self.data_root())?;
-        cmd.arg("machine").arg("inspect").arg(machine_name);
-        let output = command_output_with_timeout(cmd, SANDBOX_INFO_TIMEOUT).await?;
-        if !output.status.success() {
-            return Ok(None);
-        }
-        let value: serde_json::Value = serde_json::from_slice(&output.stdout)
-            .context("parsing sandbox machine inspect output")?;
-        let machine = value
-            .as_array()
-            .and_then(|items| items.first())
-            .unwrap_or(&value);
-        Ok(machine
-            .get("Resources")
-            .and_then(|resources| resources.get("Memory"))
-            .or_else(|| {
-                machine
-                    .get("resources")
-                    .and_then(|resources| resources.get("memory"))
-            })
-            .and_then(|memory| memory.as_u64())
-            .and_then(|memory| u32::try_from(memory).ok()))
+        inspection::inspect_sandbox_machine_memory_mb(self.data_root(), machine_name).await
     }
 
     async fn inspect_sandbox_machine_state(&self, machine_name: &str) -> Result<Option<String>> {
-        let mut cmd = sandbox_container_command(self.data_root())?;
-        cmd.arg("machine").arg("inspect").arg(machine_name);
-        let output = match command_output_with_timeout(cmd, SANDBOX_INFO_TIMEOUT).await {
-            Ok(output) => output,
-            Err(err) => {
-                tracing::debug!(
-                    "unable to inspect local sandbox runtime state during workload probe fallback: {err:#}"
-                );
-                return Ok(None);
-            }
-        };
-        if !output.status.success() {
-            return Ok(None);
-        }
-        let value: serde_json::Value = match serde_json::from_slice(&output.stdout) {
-            Ok(value) => value,
-            Err(err) => {
-                tracing::debug!(
-                    "unable to parse local sandbox runtime inspect output during workload probe fallback: {err:#}"
-                );
-                return Ok(None);
-            }
-        };
-        let machine = value
-            .as_array()
-            .and_then(|items| items.first())
-            .unwrap_or(&value);
-        Ok(machine
-            .get("State")
-            .or_else(|| machine.get("state"))
-            .and_then(|state| state.as_str())
-            .map(|state| state.trim().to_ascii_lowercase()))
+        inspection::inspect_sandbox_machine_state(self.data_root(), machine_name).await
     }
 
     async fn init_sandbox_machine_locked(
@@ -606,61 +557,16 @@ impl SandboxMachineLifecycleExt for HarnessRuntimeManager {
         running_sessions: &Arc<Mutex<HashSet<SessionId>>>,
         terminals: &TerminalManager,
     ) -> Result<bool> {
-        if !sandbox_machine_required() {
-            return Ok(false);
-        }
-        if self.runtime_operation_count() > 0 || self.prewarm_artifact_operation_count() > 0 {
-            return Ok(false);
-        }
-        if self
-            .should_defer_reclaim_for_active_container_runtime(stores, running_sessions, terminals)
-            .await
-        {
-            self.note_runtime_activity();
-            return Ok(false);
-        }
-        let idle_for = self.runtime_idle_for();
-        let idle_timeout = Duration::from_secs(normalize_container_machine_idle_shutdown_seconds(
-            settings.machine.idle_shutdown_seconds,
-        ));
-        let swap_threshold_bytes =
-            u64::from(settings.machine.host_pressure_swap_threshold_mb) * 1024 * 1024;
-        let host_pressure =
-            swap_threshold_bytes > 0 && system.swap_used_bytes >= swap_threshold_bytes;
-        let pressure_idle_grace = if cfg!(test) {
-            Duration::from_millis(100)
-        } else {
-            Duration::from_secs(60)
-        };
-        let should_stop =
-            idle_for >= idle_timeout || (host_pressure && idle_for >= pressure_idle_grace);
-        if !should_stop {
-            return Ok(false);
-        }
-
-        let machine_name = sandbox_machine_name(self.data_root());
-        let machine_lock = sandbox_machine_singleflight_lock(&machine_name);
-        let _machine_guard = machine_lock.lock().await;
-        if self.runtime_operation_count() > 0 || self.prewarm_artifact_operation_count() > 0 {
-            return Ok(false);
-        }
-        if self
-            .should_defer_reclaim_for_active_container_runtime(stores, running_sessions, terminals)
-            .await
-        {
-            self.note_runtime_activity();
-            return Ok(false);
-        }
-        if !sandbox_machine_present(self.data_root(), &machine_name).await? {
-            return Ok(false);
-        }
-        let stopped = self
-            .stop_sandbox_machine_locked(&machine_name, observer)
-            .await?;
-        if stopped {
-            self.note_runtime_activity();
-        }
-        Ok(stopped)
+        reclaim::maybe_reclaim_sandbox_machine(
+            self,
+            settings,
+            system,
+            observer,
+            stores,
+            running_sessions,
+            terminals,
+        )
+        .await
     }
 
     #[cfg(any(target_os = "macos", target_os = "windows"))]
@@ -670,42 +576,11 @@ impl SandboxMachineLifecycleExt for HarnessRuntimeManager {
         running_sessions: &Arc<Mutex<HashSet<SessionId>>>,
         terminals: &TerminalManager,
     ) -> bool {
-        if terminals.has_running_container_backed().await {
-            return true;
-        }
-
-        let session_ids = {
-            let running = running_sessions.lock().await;
-            running.iter().copied().collect::<Vec<_>>()
-        };
-
-        for session_id in session_ids {
-            let store = match stores.store_for_session(session_id).await {
-                Ok(store) => store,
-                Err(err) => {
-                    tracing::warn!(
-                        session_id = ?session_id,
-                        "deferring local sandbox reclaim because running session store lookup failed: {err:#}"
-                    );
-                    return true;
-                }
-            };
-            let session = match store.get_session(session_id).await {
-                Ok(Some(session)) => session,
-                Ok(None) => continue,
-                Err(err) => {
-                    tracing::warn!(
-                        session_id = ?session_id,
-                        "deferring local sandbox reclaim because running session lookup failed: {err:#}"
-                    );
-                    return true;
-                }
-            };
-            if matches!(session.execution_environment, ExecutionEnvironment::Sandbox) {
-                return true;
-            }
-        }
-
-        false
+        reclaim::should_defer_reclaim_for_active_container_runtime(
+            stores,
+            running_sessions,
+            terminals,
+        )
+        .await
     }
 }

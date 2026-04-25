@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use anyhow::{anyhow, Result};
 use chrono::Utc;
@@ -24,15 +24,13 @@ use ctx_store::store::SessionTurnToolCountDeltas;
 use crate::api::sessions::compose_model_id;
 use crate::daemon::{ensure_provider_adapter_for_target_with_cfg, AppState};
 use crate::execution_effective;
-use crate::installer;
 use crate::ops_events::OpsEvent;
 use crate::order_seq::{attach_order_seq, read_order_seq, OrderSeqState};
 use crate::perf_telemetry::{PerfMetric, PerfMetricKind};
-use crate::settings::{self, ProviderControlMode};
+use crate::settings;
 use crate::storage_guard;
 use crate::telemetry::TelemetryEvent;
 use ctx_harness_sources::HarnessSourceKind;
-use ctx_provider_accounts as provider_accounts;
 use ctx_provider_install::install_state::InstallTarget;
 use ctx_workspace_config as workspace_config;
 use ctx_worktree_data_plane::apply_data_plane_to_execution_settings;
@@ -41,9 +39,11 @@ use crate::worktree_data_plane::resolve_worktree_data_plane;
 
 mod event_loop;
 mod helpers;
+mod provider_env;
 #[cfg(test)]
 mod tests;
 mod tool_runtime;
+mod turn_start;
 
 use self::event_loop::{spawn_turn_event_loop, TurnEventLoop};
 pub(crate) use self::helpers::model_context_window;
@@ -51,37 +51,13 @@ use self::helpers::{
     apply_provider_launch_overrides, compute_context_window_metrics, normalize_session_model_id,
     provider_supports_system_prompt_append, runtime_provider_id_for_session_provider,
 };
+use self::provider_env::{emit_provider_run_env_ready_event, prepare_provider_runtime_environment};
 use self::tool_runtime::{cwd_outside_worktree, maybe_spool_tool_output};
+use self::turn_start::{provider_mode_id_for, turn_start_deadline};
 use super::lifecycle::{RunningTurn, TurnStartProgress};
 use super::persistence::append_session_event_with_retry;
 use super::terminal::{finalize_failed_turn, FailedTurnTerminalization};
 use super::QueuedMessage;
-
-fn provider_mode_id_for(
-    provider_id: &str,
-    control_mode: &ProviderControlMode,
-) -> Option<&'static str> {
-    match control_mode {
-        ProviderControlMode::Full => match provider_id {
-            "codex-crp" => Some("full-access"),
-            "claude-crp" => Some("bypassPermissions"),
-            "droid" => Some("auto_high"),
-            _ => None,
-        },
-        ProviderControlMode::HarnessNative | ProviderControlMode::CtxEnforced => None,
-    }
-}
-
-const DEFAULT_TURN_START_DEADLINE: Duration = Duration::from_secs(60);
-
-fn turn_start_deadline() -> Duration {
-    std::env::var("CTX_TURN_START_DEADLINE_MS")
-        .ok()
-        .and_then(|value| value.trim().parse::<u64>().ok())
-        .filter(|value| *value > 0)
-        .map(Duration::from_millis)
-        .unwrap_or(DEFAULT_TURN_START_DEADLINE)
-}
 
 pub(crate) async fn start_turn(
     state: &Arc<AppState>,
@@ -388,163 +364,33 @@ pub(crate) async fn start_turn(
     )
     .await;
 
-    if runtime_provider_id == "codex-crp" && is_linux_sandbox && using_endpoint_source {
-        if let Some(root) = runtime_plan.env_overrides.get("CTX_DATA_ROOT") {
-            provider_accounts::ensure_codex_endpoint_runtime_home_from_env(
-                std::path::Path::new(root),
-                &mut provider_env,
-            )
-            .await?;
-        }
-    }
-
-    if runtime_provider_id == "codex-crp"
-        && !provider_env.contains_key("CODEX_HOME")
-        && !using_endpoint_source
-    {
-        if is_linux_sandbox {
-            if let Some(root) = runtime_plan.env_overrides.get("CTX_DATA_ROOT") {
-                let codex_home = provider_accounts::codex_runtime_home(std::path::Path::new(root));
-                tokio::fs::create_dir_all(&codex_home).await.ok();
-                provider_accounts::seed_codex_auth_from_host(&codex_home).await?;
-                provider_env.insert(
-                    "CODEX_HOME".to_string(),
-                    codex_home.to_string_lossy().to_string(),
-                );
-            }
-        } else {
-            let env =
-                provider_accounts::codex_env_for_active_account(&state.core.data_root).await?;
-            for (key, value) in env {
-                provider_env.insert(key, value);
-            }
-        }
-    }
-    if runtime_provider_id != "codex-crp" && !using_endpoint_source {
-        let env = if is_linux_sandbox {
-            if let Some(root) = runtime_plan.env_overrides.get("CTX_DATA_ROOT") {
-                provider_accounts::subscription_env_for_active_account_with_runtime_root(
-                    &state.core.data_root,
-                    Path::new(root),
-                    runtime_provider_id,
-                )
-                .await?
-            } else {
-                provider_accounts::subscription_env_for_active_account(
-                    &state.core.data_root,
-                    runtime_provider_id,
-                )
-                .await?
-            }
-        } else {
-            provider_accounts::subscription_env_for_active_account(
-                &state.core.data_root,
-                runtime_provider_id,
-            )
-            .await?
-        };
-        for (key, value) in env {
-            provider_env.insert(key, value);
-        }
-    }
-    if runtime_provider_id == "codex-crp" {
-        let codex_home = provider_env
-            .get("CODEX_HOME")
-            .cloned()
-            .ok_or_else(|| anyhow!("missing CODEX_HOME for {runtime_provider_id}"))?;
-        provider_accounts::ensure_codex_auth_ready(Path::new(&codex_home))
-            .await
-            .map_err(|err| {
-                if using_endpoint_source {
-                    anyhow!(
-                        "Codex endpoint credentials are not configured correctly. Open Settings -> Agent Harnesses and verify the selected endpoint. Details: {err}"
-                    )
-                } else {
-                    anyhow!(
-                        "Codex authentication is not configured. Open Settings -> Codex and add a subscription login or API key. Details: {err}"
-                    )
-                }
-            })?;
-        if is_linux_sandbox && using_endpoint_source {
-            let openai_api_key_present = provider_env
-                .get("OPENAI_API_KEY")
-                .is_some_and(|value| !value.trim().is_empty());
-            if !openai_api_key_present {
-                anyhow::bail!(
-                    "codex endpoint container runtime missing OPENAI_API_KEY after endpoint resolution"
-                );
-            }
-            if let Some(root) = runtime_plan.env_overrides.get("CTX_DATA_ROOT") {
-                let expected_home = provider_accounts::codex_runtime_home(Path::new(root));
-                if Path::new(&codex_home) != expected_home {
-                    anyhow::bail!(
-                        "codex endpoint container runtime must use CODEX_HOME={} but resolved {}",
-                        expected_home.display(),
-                        codex_home
-                    );
-                }
-            }
-        }
-    }
-
-    if is_linux_sandbox {
-        if let Some(root) = runtime_plan.env_overrides.get("CTX_DATA_ROOT") {
-            provider_accounts::ensure_provider_runtime_home_env(
-                Path::new(root),
-                runtime_provider_id,
-                &mut provider_env,
-            )
-            .await?;
-        }
-    }
-
-    installer::prepend_runtime_bin_dirs_to_provider_path_for_target(
+    prepare_provider_runtime_environment(
+        state,
         &mut provider_env,
-        &adapter_cfg,
         runtime_provider_id,
-        &state.core.data_root,
-        Some(install_target),
+        &runtime_plan,
+        is_linux_sandbox,
+        using_endpoint_source,
+        &adapter_cfg,
+        install_target,
+    )
+    .await?;
+
+    emit_provider_run_env_ready_event(
+        state,
+        session,
+        run_id,
+        turn_id,
+        &workdir_str,
+        &full_model_id,
+        execution_environment.as_str(),
+        session_root_kind,
+        runtime_provider_id,
+        using_endpoint_source,
+        is_linux_sandbox,
+        &runtime_plan,
+        &provider_env,
     );
-    installer::ensure_codex_cli_command_env_for_target(
-        &mut provider_env,
-        &adapter_cfg,
-        runtime_provider_id,
-        Some(install_target),
-    )?;
-
-    let mut run_env_event = OpsEvent::new("info", "provider_run_env_ready");
-    run_env_event.session_id = Some(session.id.0.to_string());
-    run_env_event.worktree_id = Some(session.worktree_id.0.to_string());
-    run_env_event.run_id = Some(run_id.0.to_string());
-    run_env_event.turn_id = Some(turn_id.0.to_string());
-    run_env_event.provider_id = Some(session.provider_id.clone());
-    run_env_event.cwd = Some(workdir_str.clone());
-    run_env_event.worktree_root = Some(workdir_str.clone());
-    run_env_event.meta = Some(json!({
-        "model_id": full_model_id.clone(),
-        "reasoning_effort": session.reasoning_effort.clone(),
-        "execution_environment": execution_environment.as_str(),
-        "session_root_kind": session_root_kind,
-        "runtime_provider_id": runtime_provider_id,
-        "source_kind": if using_endpoint_source { "endpoint" } else { "subscription" },
-        "is_container": is_linux_sandbox,
-        "runtime_kind": runtime_plan
-            .env_overrides
-            .get(ctx_harness_runtime::CTX_HARNESS_RUNTIME_KIND_ENV)
-            .cloned()
-            .unwrap_or_else(|| "host".to_string()),
-        "has_openai_api_key": provider_env
-            .get("OPENAI_API_KEY")
-            .is_some_and(|value| !value.trim().is_empty()),
-        "has_codex_home": provider_env
-            .get("CODEX_HOME")
-            .is_some_and(|value| !value.trim().is_empty()),
-        "openai_base_url_host": provider_env
-            .get("OPENAI_BASE_URL")
-            .and_then(|value| url::Url::parse(value).ok())
-            .and_then(|parsed| parsed.host_str().map(|host| host.to_string())),
-    }));
-    state.telemetry.ops_events.emit(run_env_event);
 
     let prompt_config = workspace_config::load_agent_system_prompt_append(&store)
         .await
