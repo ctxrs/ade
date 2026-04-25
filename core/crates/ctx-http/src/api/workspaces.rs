@@ -12,9 +12,11 @@ use serde::{Deserialize, Serialize};
 
 mod context;
 mod management;
+mod worktrees;
 
 use context::*;
 pub(in crate::api) use management::*;
+pub(super) use worktrees::{get_worktree, get_worktree_bootstrap_logs};
 
 use super::errors::ApiErrorResp;
 use super::shared::{
@@ -75,70 +77,6 @@ pub(super) struct UpdateWorkspacePrimaryBranchReq {
 #[derive(Debug, Serialize)]
 pub(super) struct WorkspacePrimaryBranchResp {
     primary_branch: String,
-}
-
-pub(super) async fn get_worktree(
-    State(state): State<Arc<AppState>>,
-    Path(id): Path<String>,
-) -> Result<Json<Worktree>, StatusCode> {
-    let worktree_id = WorktreeId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
-    let store = state
-        .store_for_worktree(worktree_id)
-        .await
-        .map_err(|_| StatusCode::NOT_FOUND)?;
-    match store
-        .get_worktree(worktree_id)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-    {
-        Some(mut wt) => {
-            let data_plane = crate::worktree_data_plane::resolve_worktree_data_plane(&state, &wt)
-                .await
-                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-            wt.root_path = data_plane.live_worktree_root.to_string_lossy().to_string();
-            Ok(Json(wt))
-        }
-        None => Err(StatusCode::NOT_FOUND),
-    }
-}
-
-pub(super) async fn get_worktree_bootstrap_logs(
-    State(state): State<Arc<AppState>>,
-    Path(id): Path<String>,
-) -> Result<Response, StatusCode> {
-    let worktree_id = WorktreeId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
-    let store = state
-        .store_for_worktree(worktree_id)
-        .await
-        .map_err(|_| StatusCode::NOT_FOUND)?;
-    let worktree = store
-        .get_worktree(worktree_id)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::NOT_FOUND)?;
-    let Some(path) = worktree.bootstrap_log_path.as_deref() else {
-        return Err(StatusCode::NOT_FOUND);
-    };
-    let log_root = logs::logs_dir(&state.core.data_root).join("worktree-bootstrap");
-    if !path_resolves_within_root(StdPath::new(path), &log_root).await {
-        return Err(StatusCode::NOT_FOUND);
-    }
-    let bytes = tokio::fs::read(path)
-        .await
-        .map_err(|_| StatusCode::NOT_FOUND)?;
-
-    let filename = format!("worktree-bootstrap-{}.log", worktree_id.0);
-    let mut resp = Response::new(Body::from(bytes));
-    resp.headers_mut().insert(
-        header::CONTENT_TYPE,
-        header::HeaderValue::from_static("text/plain; charset=utf-8"),
-    );
-    resp.headers_mut().insert(
-        header::CONTENT_DISPOSITION,
-        header::HeaderValue::from_str(&format!("attachment; filename=\"{filename}\""))
-            .unwrap_or_else(|_| header::HeaderValue::from_static("attachment")),
-    );
-    Ok(resp)
 }
 
 #[derive(Debug, Deserialize)]
@@ -608,102 +546,4 @@ pub(super) async fn sync_workspace_attachments(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use chrono::Utc;
-    use ctx_core::ids::WorktreeId;
-    use ctx_core::models::{
-        SandboxBinding, SandboxGuestIdentity, SandboxProfile, SandboxSubstrate,
-    };
-    use ctx_store::StoreManager;
-    use std::collections::HashMap;
-    use uuid::Uuid;
-
-    #[tokio::test]
-    async fn get_worktree_returns_live_root_for_bound_sandbox_worktree() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let workspace_root = temp.path().join("repo");
-        std::fs::create_dir_all(&workspace_root).expect("create workspace root");
-        let state = Arc::new(AppState::new(
-            temp.path().to_path_buf(),
-            StoreManager::open(temp.path()).await.expect("open stores"),
-            HashMap::new(),
-            "http://127.0.0.1:4310".to_string(),
-            None,
-        ));
-        let workspace = state
-            .global_store()
-            .create_workspace(
-                "ws".to_string(),
-                workspace_root.to_string_lossy().to_string(),
-                VcsKind::Git,
-            )
-            .await
-            .expect("create workspace");
-        let store = state
-            .store_for_workspace(workspace.id)
-            .await
-            .expect("workspace store");
-        let host_root = temp.path().join("managed-worktree");
-        std::fs::create_dir_all(&host_root).expect("create managed worktree");
-        let worktree = store
-            .insert_worktree(Worktree {
-                id: WorktreeId(Uuid::new_v4()),
-                workspace_id: workspace.id,
-                root_path: host_root.to_string_lossy().to_string(),
-                base_commit_sha: "abc123".to_string(),
-                git_branch: Some("ctx/test".to_string()),
-                vcs_kind: Some(VcsKind::Git),
-                base_revision: Some("abc123".to_string()),
-                vcs_ref: Some("ctx/test".to_string()),
-                created_at: Utc::now(),
-                bootstrap_status: None,
-                bootstrap_started_at: None,
-                bootstrap_finished_at: None,
-                bootstrap_exit_code: None,
-                bootstrap_timeout_sec: None,
-                bootstrap_error: None,
-                bootstrap_log_path: None,
-                bootstrap_log_truncated: None,
-                bootstrap_command: None,
-                bootstrap_script_path: None,
-            })
-            .await
-            .expect("insert worktree");
-        store
-            .upsert_sandbox_binding(SandboxBinding {
-                worktree_id: worktree.id,
-                workspace_id: workspace.id,
-                sandbox_instance_id: ctx_core::models::sandbox_instance_id_for_workspace(
-                    workspace.id,
-                ),
-                substrate: SandboxSubstrate::SharedVmContainer,
-                guest_identity: SandboxGuestIdentity::linux_container_ubuntu(),
-                profile: SandboxProfile::Standard,
-                live_workspace_root: "/ctx/ws".to_string(),
-                live_worktree_root: format!("/ctx/ws/worktrees/{}", worktree.id.0),
-                execution_settings_json: None,
-                container_name: Some("ctx-test".to_string()),
-                host_materialization_root: None,
-                created_at: Utc::now(),
-            })
-            .await
-            .expect("upsert sandbox binding");
-        state
-            .global_store()
-            .upsert_workspace_worktree_index(worktree.id, workspace.id)
-            .await
-            .expect("upsert worktree index");
-
-        let Json(response) = get_worktree(State(state), Path(worktree.id.0.to_string()))
-            .await
-            .expect("get worktree");
-
-        assert_eq!(
-            response.root_path,
-            format!("/ctx/ws/worktrees/{}", worktree.id.0)
-        );
-        assert_eq!(response.id, worktree.id);
-        assert_eq!(response.workspace_id, worktree.workspace_id);
-    }
-}
+mod tests;
