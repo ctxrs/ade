@@ -73,6 +73,7 @@ RUST_BAZEL_DEPS = {
     "ctx-provider-accounts": struct(
         build_deps = [],
         deps = [
+            "//core/crates/ctx-core:lib",
             "@crates//:anyhow",
             "@crates//:chrono",
             "@crates//:directories",

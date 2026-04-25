@@ -191,6 +191,7 @@ impl AppState {
                 session_event_heads: Mutex::new(HashMap::new()),
                 order_seq_states: Mutex::new(HashMap::new()),
                 active_task_refreshes: Mutex::new(HashMap::new()),
+                task_session_creation_locks: Mutex::new(HashMap::new()),
                 running_sessions,
                 session_pins: Mutex::new(HashMap::new()),
                 session_meta_cache: Mutex::new(HashMap::new()),

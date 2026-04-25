@@ -29,6 +29,19 @@ use super::head_projection::{
 const ACTIVE_TASK_REFRESH_DEBOUNCE_MS: u64 = 250;
 
 impl SessionRuntime {
+    pub async fn task_session_creation_lock(&self, task_id: TaskId) -> Arc<Mutex<()>> {
+        let mut locks = self.task_session_creation_locks.lock().await;
+        locks.retain(|_, weak| weak.upgrade().is_some());
+        match locks.get(&task_id).and_then(std::sync::Weak::upgrade) {
+            Some(lock) => lock,
+            None => {
+                let lock = Arc::new(Mutex::new(()));
+                locks.insert(task_id, Arc::downgrade(&lock));
+                lock
+            }
+        }
+    }
+
     pub async fn get_order_seq_state(
         &self,
         store: &Store,

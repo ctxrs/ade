@@ -61,13 +61,91 @@ where
     Ok(trimmed.to_string())
 }
 
-pub(in crate::api) async fn create_session_for_task(
-    State(state): State<Arc<AppState>>,
-    Path(id): Path<String>,
+async fn cleanup_orphaned_provisioned_worktree(
+    state: &Arc<AppState>,
+    store: &Store,
+    workspace: &Workspace,
+    task_id: TaskId,
+    worktree_id: WorktreeId,
+) {
+    let worktree = match store.get_worktree(worktree_id).await {
+        Ok(Some(worktree)) => worktree,
+        Ok(None) => return,
+        Err(err) => {
+            tracing::warn!(
+                task_id = %task_id.0,
+                worktree_id = %worktree_id.0,
+                "failed to load provisioned worktree for rollback cleanup: {err:#}"
+            );
+            return;
+        }
+    };
+    let sandbox_binding = match store.get_sandbox_binding(worktree_id).await {
+        Ok(binding) => binding,
+        Err(err) => {
+            tracing::warn!(
+                task_id = %task_id.0,
+                worktree_id = %worktree_id.0,
+                "failed to load sandbox binding for provisioned worktree rollback: {err:#}"
+            );
+            None
+        }
+    };
+    let cleanup_targets = [TaskWorktreeCleanupTarget {
+        managed_root: managed_worktree_root(state, workspace, &worktree),
+        sandbox_binding,
+        worktree: worktree.clone(),
+        destroy_worktree_on_cleanup: true,
+    }];
+    let cleanup_errors =
+        cleanup_task_worktrees(state.as_ref(), workspace, task_id, &cleanup_targets).await;
+    if !cleanup_errors.is_empty() {
+        tracing::warn!(
+            task_id = %task_id.0,
+            worktree_id = %worktree_id.0,
+            cleanup_errors = cleanup_errors.len(),
+            "provisioned worktree rollback had cleanup errors"
+        );
+        return;
+    }
+    let deleted_worktree_row = match store.delete_worktree(worktree_id).await {
+        Ok(deleted) => deleted,
+        Err(err) => {
+            tracing::warn!(
+                task_id = %task_id.0,
+                worktree_id = %worktree_id.0,
+                "failed to delete provisioned worktree row during rollback: {err:#}"
+            );
+            false
+        }
+    };
+    if !deleted_worktree_row {
+        tracing::warn!(
+            task_id = %task_id.0,
+            worktree_id = %worktree_id.0,
+            "skipping worktree index deletion because provisioned worktree row was not deleted"
+        );
+        return;
+    }
+    if let Err(err) = state
+        .global_store()
+        .delete_workspace_worktree_index(worktree_id)
+        .await
+    {
+        tracing::warn!(
+            task_id = %task_id.0,
+            worktree_id = %worktree_id.0,
+            "failed to delete provisioned worktree index during rollback: {err:#}"
+        );
+    }
+}
+
+async fn create_session_for_task_inner(
+    state: Arc<AppState>,
+    task_id: TaskId,
     headers: HeaderMap,
-    Json(req): Json<CreateSessionReq>,
+    req: CreateSessionReq,
 ) -> Result<Json<Session>, StatusCode> {
-    let task_id = TaskId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
     let store = state
         .store_for_task(task_id)
         .await
@@ -209,6 +287,7 @@ pub(in crate::api) async fn create_session_for_task(
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
         worktree_id
     };
+    let created_worktree_id = existing_worktree.is_none().then_some(worktree_id);
     let execution_environment = if let Some(existing) = existing_worktree.as_ref() {
         let persisted = existing.execution_environment();
         if let Some(requested) = req.execution_environment {
@@ -223,6 +302,16 @@ pub(in crate::api) async fn create_session_for_task(
         match req.execution_environment {
             Some(requested) => {
                 if requested != effective_execution_environment {
+                    if let Some(created_worktree_id) = created_worktree_id.clone() {
+                        cleanup_orphaned_provisioned_worktree(
+                            &state,
+                            &store,
+                            &workspace,
+                            task_id,
+                            created_worktree_id,
+                        )
+                        .await;
+                    }
                     return Err(StatusCode::BAD_REQUEST);
                 }
                 requested
@@ -230,29 +319,56 @@ pub(in crate::api) async fn create_session_for_task(
             None => effective_execution_environment,
         }
     };
-    let catalog = sessions::load_provider_model_catalog_for_execution_environment(
+    let catalog = match sessions::load_provider_model_catalog_for_execution_environment(
         &state,
         &workspace,
         &provider_id,
         execution_environment,
     )
     .await
-    .map_err(|error| {
-        tracing::warn!(
-            workspace_id = %workspace.id.0,
-            provider_id = provider_id,
-            execution_environment = execution_environment.as_str(),
-            "failed to load provider model catalog while creating session: {error}"
-        );
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
-    let resolved_model = sessions::resolve_model_id(
+    {
+        Ok(catalog) => catalog,
+        Err(error) => {
+            tracing::warn!(
+                workspace_id = %workspace.id.0,
+                provider_id = provider_id,
+                execution_environment = execution_environment.as_str(),
+                "failed to load provider model catalog while creating session: {error}"
+            );
+            if let Some(created_worktree_id) = created_worktree_id.clone() {
+                cleanup_orphaned_provisioned_worktree(
+                    &state,
+                    &store,
+                    &workspace,
+                    task_id,
+                    created_worktree_id,
+                )
+                .await;
+            }
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+    };
+    let resolved_model = match sessions::resolve_model_id(
         Some(req.model_id.as_str()),
         req.reasoning_effort.as_deref(),
         None,
         catalog.as_ref(),
-    )
-    .map_err(|_| StatusCode::BAD_REQUEST)?;
+    ) {
+        Ok(model) => model,
+        Err(_) => {
+            if let Some(created_worktree_id) = created_worktree_id.clone() {
+                cleanup_orphaned_provisioned_worktree(
+                    &state,
+                    &store,
+                    &workspace,
+                    task_id,
+                    created_worktree_id,
+                )
+                .await;
+            }
+            return Err(StatusCode::BAD_REQUEST);
+        }
+    };
     let model_id = resolved_model.model_id.clone();
     let reasoning_effort = resolved_model.reasoning_effort.clone();
     let preferred_model_id = sessions::compose_model_id(&model_id, reasoning_effort.as_deref());
@@ -265,6 +381,16 @@ pub(in crate::api) async fn create_session_for_task(
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
         if let Some(existing_ws) = existing_ws {
             if existing_ws != task.workspace_id {
+                if let Some(created_worktree_id) = created_worktree_id.clone() {
+                    cleanup_orphaned_provisioned_worktree(
+                        &state,
+                        &store,
+                        &workspace,
+                        task_id,
+                        created_worktree_id,
+                    )
+                    .await;
+                }
                 return Err(StatusCode::CONFLICT);
             }
             let existing = store
@@ -282,6 +408,16 @@ pub(in crate::api) async fn create_session_for_task(
                     || existing.parent_session_id != parent_session_id
                     || existing.relationship != relationship
                 {
+                    if let Some(created_worktree_id) = created_worktree_id.clone() {
+                        cleanup_orphaned_provisioned_worktree(
+                            &state,
+                            &store,
+                            &workspace,
+                            task_id,
+                            created_worktree_id,
+                        )
+                        .await;
+                    }
                     return Err(StatusCode::CONFLICT);
                 }
                 state.remember_session_meta(&existing).await;
@@ -305,6 +441,16 @@ pub(in crate::api) async fn create_session_for_task(
                 }
                 return Ok(Json(existing));
             }
+            if let Some(created_worktree_id) = created_worktree_id.clone() {
+                cleanup_orphaned_provisioned_worktree(
+                    &state,
+                    &store,
+                    &workspace,
+                    task_id,
+                    created_worktree_id,
+                )
+                .await;
+            }
             return Err(StatusCode::INTERNAL_SERVER_ERROR);
         }
     }
@@ -323,7 +469,7 @@ pub(in crate::api) async fn create_session_for_task(
 
     let requested_session_id = session_id;
     let session = if let Some(session_id) = requested_session_id {
-        store
+        match store
             .create_session_with_id_and_reasoning_effort(
                 session_id,
                 task_id,
@@ -339,9 +485,24 @@ pub(in crate::api) async fn create_session_for_task(
                 None,
             )
             .await
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        {
+            Ok(session) => session,
+            Err(_) => {
+                if let Some(created_worktree_id) = created_worktree_id.clone() {
+                    cleanup_orphaned_provisioned_worktree(
+                        &state,
+                        &store,
+                        &workspace,
+                        task_id,
+                        created_worktree_id,
+                    )
+                    .await;
+                }
+                return Err(StatusCode::INTERNAL_SERVER_ERROR);
+            }
+        }
     } else {
-        store
+        match store
             .create_session_with_reasoning_effort(
                 task_id,
                 task.workspace_id,
@@ -356,7 +517,22 @@ pub(in crate::api) async fn create_session_for_task(
                 None,
             )
             .await
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        {
+            Ok(session) => session,
+            Err(_) => {
+                if let Some(created_worktree_id) = created_worktree_id.clone() {
+                    cleanup_orphaned_provisioned_worktree(
+                        &state,
+                        &store,
+                        &workspace,
+                        task_id,
+                        created_worktree_id,
+                    )
+                    .await;
+                }
+                return Err(StatusCode::INTERNAL_SERVER_ERROR);
+            }
+        }
     };
     if let Some(session_id) = requested_session_id {
         if session.id != session_id
@@ -599,4 +775,47 @@ pub(in crate::api) async fn create_session_for_task(
     }
 
     Ok(Json(session))
+}
+
+pub(in crate::api) async fn create_session_for_task(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    Json(req): Json<CreateSessionReq>,
+) -> Result<Json<Session>, StatusCode> {
+    let task_id = TaskId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
+    let creation_lock = state.task_session_creation_lock(task_id).await;
+    let _creation_guard = creation_lock.lock().await;
+    create_session_for_task_inner(state, task_id, headers, req).await
+}
+
+pub(in crate::api) async fn create_default_session_for_task(
+    state: Arc<AppState>,
+    task_id: TaskId,
+    provider_id: String,
+    model_id: String,
+    reasoning_effort: Option<String>,
+    execution_environment: ExecutionEnvironment,
+) -> Result<Session, StatusCode> {
+    let Json(session) = create_session_for_task_inner(
+        state,
+        task_id,
+        HeaderMap::new(),
+        CreateSessionReq {
+            id: None,
+            provider_id,
+            model_id,
+            reasoning_effort,
+            remember_model_preference: false,
+            parent_session_id: None,
+            relationship: None,
+            initial_prompt: None,
+            initial_message_id: None,
+            initial_turn_id: None,
+            worktree_id: None,
+            execution_environment: Some(execution_environment),
+        },
+    )
+    .await?;
+    Ok(session)
 }

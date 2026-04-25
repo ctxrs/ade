@@ -36,7 +36,7 @@ fn mark_provider_status_with_managed_config_error(status: &mut ProviderStatus, c
     };
 }
 
-pub(super) async fn providers_statuses_response(
+pub(crate) async fn providers_statuses_response(
     state: &Arc<AppState>,
     target: InstallTarget,
     include_matrix_providers: bool,
@@ -127,7 +127,7 @@ pub(super) async fn providers_statuses_response(
     out
 }
 
-pub(super) async fn install_target_for_workspace(
+pub(crate) async fn install_target_for_workspace(
     state: &Arc<AppState>,
     workspace_id: WorkspaceId,
 ) -> anyhow::Result<InstallTarget> {

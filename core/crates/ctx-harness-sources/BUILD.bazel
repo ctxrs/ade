@@ -9,6 +9,7 @@ rust_library(
     edition = "2021",
     srcs = glob(["src/**/*.rs"]),
     deps = [
+        "//core/crates/ctx-core:lib",
         "//core/crates/ctx-provider-accounts:lib",
         "@crates//:anyhow",
         "@crates//:chrono",

@@ -34,6 +34,8 @@ pub struct SessionRuntime {
     pub session_event_heads: Mutex<HashMap<SessionId, TimedEntry<watch::Sender<i64>>>>,
     pub order_seq_states: Mutex<HashMap<SessionId, TimedEntry<Arc<Mutex<OrderSeqState>>>>>,
     pub(crate) active_task_refreshes: Mutex<HashMap<TaskId, ActiveTaskRefreshEntry>>,
+    pub(crate) task_session_creation_locks:
+        Mutex<HashMap<TaskId, std::sync::Weak<tokio::sync::Mutex<()>>>>,
     pub running_sessions: Arc<Mutex<HashSet<SessionId>>>,
     pub session_pins: Mutex<HashMap<SessionId, SessionPinState>>,
     pub session_meta_cache: Mutex<HashMap<SessionId, TimedEntry<Session>>>,

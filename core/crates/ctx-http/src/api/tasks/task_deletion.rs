@@ -1,27 +1,13 @@
 use super::*;
 
-pub(in crate::api) async fn delete_task(
-    State(state): State<Arc<AppState>>,
-    Path(id): Path<String>,
-) -> Result<StatusCode, StatusCode> {
-    let task_id = TaskId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
-    let store = state
-        .store_for_task(task_id)
-        .await
-        .map_err(|_| StatusCode::NOT_FOUND)?;
-    let task = store
-        .get_task(task_id)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::NOT_FOUND)?;
-    let workspace = state
-        .global_store()
-        .get_workspace(task.workspace_id)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
+pub(in crate::api) async fn delete_loaded_task_with_cleanup(
+    state: &Arc<AppState>,
+    store: &Store,
+    workspace: &Workspace,
+    task: &Task,
+) -> Result<(), StatusCode> {
     let sessions = store
-        .list_sessions_for_task(task_id)
+        .list_sessions_for_task(task.id)
         .await
         .unwrap_or_default();
     let mut worktree_ids: HashSet<WorktreeId> = sessions.iter().map(|s| s.worktree_id).collect();
@@ -31,13 +17,13 @@ pub(in crate::api) async fn delete_task(
     let mut cleanup_targets = Vec::new();
     for worktree_id in &worktree_ids {
         let other_active = match store
-            .count_active_tasks_for_worktree(*worktree_id, Some(task_id))
+            .count_active_tasks_for_worktree(*worktree_id, Some(task.id))
             .await
         {
             Ok(count) => count > 0,
             Err(err) => {
                 tracing::warn!(
-                    task_id = %task_id.0,
+                    task_id = %task.id.0,
                     worktree_id = %worktree_id.0,
                     "failed to check worktree usage: {err:#}"
                 );
@@ -48,13 +34,13 @@ pub(in crate::api) async fn delete_task(
             continue;
         }
         let other_tasks = match store
-            .count_tasks_for_worktree(*worktree_id, Some(task_id))
+            .count_tasks_for_worktree(*worktree_id, Some(task.id))
             .await
         {
             Ok(count) => count > 0,
             Err(err) => {
                 tracing::warn!(
-                    task_id = %task_id.0,
+                    task_id = %task.id.0,
                     worktree_id = %worktree_id.0,
                     "failed to check total worktree usage: {err:#}"
                 );
@@ -66,7 +52,7 @@ pub(in crate::api) async fn delete_task(
             Ok(None) => continue,
             Err(err) => {
                 tracing::warn!(
-                    task_id = %task_id.0,
+                    task_id = %task.id.0,
                     worktree_id = %worktree_id.0,
                     "failed to load worktree for delete cleanup: {err:#}"
                 );
@@ -77,7 +63,7 @@ pub(in crate::api) async fn delete_task(
             Ok(binding) => binding,
             Err(err) => {
                 tracing::warn!(
-                    task_id = %task_id.0,
+                    task_id = %task.id.0,
                     worktree_id = %worktree_id.0,
                     "failed to load sandbox binding for delete cleanup: {err:#}"
                 );
@@ -95,17 +81,17 @@ pub(in crate::api) async fn delete_task(
         state.cleanup_session(session.id).await;
     }
     let deleted = store
-        .delete_task(task_id)
+        .delete_task(task.id)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     if !deleted {
         return Err(StatusCode::NOT_FOUND);
     }
     let cleanup_errors =
-        cleanup_task_worktrees(state.as_ref(), &workspace, task_id, &cleanup_targets).await;
+        cleanup_task_worktrees(state.as_ref(), workspace, task.id, &cleanup_targets).await;
     if !cleanup_errors.is_empty() {
         tracing::warn!(
-            task_id = %task_id.0,
+            task_id = %task.id.0,
             cleanup_errors = cleanup_errors.len(),
             "delete cleanup had errors after task row removal"
         );
@@ -119,7 +105,7 @@ pub(in crate::api) async fn delete_task(
             Ok(deleted) => deleted,
             Err(err) => {
                 tracing::warn!(
-                    task_id = %task_id.0,
+                    task_id = %task.id.0,
                     worktree_id = %target.worktree.id.0,
                     "failed to delete worktree row after task delete: {err:#}"
                 );
@@ -128,7 +114,7 @@ pub(in crate::api) async fn delete_task(
         };
         if !deleted_worktree_row {
             tracing::warn!(
-                task_id = %task_id.0,
+                task_id = %task.id.0,
                 worktree_id = %target.worktree.id.0,
                 "skipping worktree index deletion because worktree row was not deleted"
             );
@@ -140,7 +126,7 @@ pub(in crate::api) async fn delete_task(
             .await
         {
             tracing::warn!(
-                task_id = %task_id.0,
+                task_id = %task.id.0,
                 worktree_id = %target.worktree.id.0,
                 "failed to delete worktree index after task delete: {err:#}"
             );
@@ -148,7 +134,7 @@ pub(in crate::api) async fn delete_task(
     }
     let _ = state
         .global_store()
-        .delete_workspace_task_index(task_id)
+        .delete_workspace_task_index(task.id)
         .await;
     for session in sessions {
         let _ = state
@@ -157,12 +143,43 @@ pub(in crate::api) async fn delete_task(
             .await;
     }
     state
-        .emit_workspace_task_delete(task.workspace_id, task_id)
+        .emit_workspace_task_delete(task.workspace_id, task.id)
         .await;
     if task.archived_at.is_some() {
         state
-            .emit_workspace_archived_task_delete(task.workspace_id, task_id)
+            .emit_workspace_archived_task_delete(task.workspace_id, task.id)
             .await;
     }
+    Ok(())
+}
+
+pub(in crate::api) async fn delete_task_with_cleanup(
+    state: &Arc<AppState>,
+    task_id: TaskId,
+) -> Result<(), StatusCode> {
+    let store = state
+        .store_for_task(task_id)
+        .await
+        .map_err(|_| StatusCode::NOT_FOUND)?;
+    let task = store
+        .get_task(task_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+    let workspace = state
+        .global_store()
+        .get_workspace(task.workspace_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
+    delete_loaded_task_with_cleanup(state, &store, &workspace, &task).await
+}
+
+pub(in crate::api) async fn delete_task(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<StatusCode, StatusCode> {
+    let task_id = TaskId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
+    delete_task_with_cleanup(&state, task_id).await?;
     Ok(StatusCode::NO_CONTENT)
 }

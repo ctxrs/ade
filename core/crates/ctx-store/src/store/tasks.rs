@@ -1,5 +1,10 @@
 use super::*;
 
+pub struct CreateTaskInsertResult {
+    pub task: Task,
+    pub created: bool,
+}
+
 impl Store {
     // Task APIs
     pub async fn list_tasks(&self, workspace_id: WorkspaceId) -> Result<Vec<Task>> {
@@ -76,8 +81,10 @@ impl Store {
         title: String,
         description: Option<String>,
     ) -> Result<Task> {
-        self.create_task_with_id(workspace_id, TaskId::new(), title, description)
-            .await
+        Ok(self
+            .create_task_with_id_result(workspace_id, TaskId::new(), title, description)
+            .await?
+            .task)
     }
 
     pub async fn create_task_with_id(
@@ -87,6 +94,19 @@ impl Store {
         title: String,
         description: Option<String>,
     ) -> Result<Task> {
+        Ok(self
+            .create_task_with_id_result(workspace_id, task_id, title, description)
+            .await?
+            .task)
+    }
+
+    pub async fn create_task_with_id_result(
+        &self,
+        workspace_id: WorkspaceId,
+        task_id: TaskId,
+        title: String,
+        description: Option<String>,
+    ) -> Result<CreateTaskInsertResult> {
         let now = Utc::now();
         let task = Task {
             id: task_id,
@@ -127,10 +147,17 @@ impl Store {
             return self
                 .get_task(task_id)
                 .await?
+                .map(|task| CreateTaskInsertResult {
+                    task,
+                    created: false,
+                })
                 .ok_or_else(|| anyhow::anyhow!("task exists but could not be loaded"));
         }
 
-        Ok(task)
+        Ok(CreateTaskInsertResult {
+            task,
+            created: true,
+        })
     }
 
     pub async fn get_task(&self, id: TaskId) -> Result<Option<Task>> {

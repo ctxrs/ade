@@ -562,6 +562,7 @@
   justify-content: flex-end;
   gap: 0;
   transition: opacity 120ms ease;
+  pointer-events: none;
 }
 
 .wb-task-age {

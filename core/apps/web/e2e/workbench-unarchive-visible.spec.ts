@@ -45,6 +45,7 @@ test("workbench: unarchived task returns to active list immediately", async ({ p
   await expect(archivedRow).toBeVisible({ timeout: 20_000 });
   await expect(activeRow).toHaveCount(0);
 
+  await archivedRow.hover();
   await archivedRow.getByRole("button", { name: "Unarchive" }).click();
 
   await expect(activeRow).toBeVisible({ timeout: 20_000 });

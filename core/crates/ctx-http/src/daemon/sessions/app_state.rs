@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use tokio::sync::{broadcast, mpsc, watch};
 
-use ctx_core::ids::SessionId;
+use ctx_core::ids::{SessionId, TaskId};
 use ctx_core::models::{Session, SessionEvent, SessionHeadSnapshot};
 
 use crate::daemon::state::AppState;
@@ -91,5 +91,9 @@ impl AppState {
 
     pub async fn list_running_sessions(&self) -> Vec<SessionId> {
         self.sessions.list_running_sessions().await
+    }
+
+    pub async fn task_session_creation_lock(&self, task_id: TaskId) -> Arc<tokio::sync::Mutex<()>> {
+        self.sessions.task_session_creation_lock(task_id).await
     }
 }

@@ -28,7 +28,7 @@ pub(crate) use execution::sandbox_execution_settings_from_binding;
 #[allow(unused_imports)]
 pub(in crate::api) use execution::*;
 pub(in crate::api) use handlers::*;
-pub(super) use task_deletion::delete_task;
+pub(super) use task_deletion::{delete_loaded_task_with_cleanup, delete_task};
 pub(super) use task_title::update_task_title;
 #[cfg(test)]
 pub(crate) use worktree_lifecycle::branch_exists;
