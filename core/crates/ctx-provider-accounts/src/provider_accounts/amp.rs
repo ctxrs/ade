@@ -105,8 +105,8 @@ pub async fn upsert_amp_account(
             entry.last_used_at = Some(Utc::now());
         }
         registry.active_account_id = Some(existing_id);
-        save_amp_registry(data_root, &registry).await?;
         let _ = ensure_amp_runtime_home(data_root).await?;
+        save_amp_registry(data_root, &registry).await?;
         return Ok(registry);
     }
 
@@ -120,8 +120,8 @@ pub async fn upsert_amp_account(
         last_used_at: Some(Utc::now()),
     });
     registry.active_account_id = Some(account_id);
-    save_amp_registry(data_root, &registry).await?;
     let _ = ensure_amp_runtime_home(data_root).await?;
+    save_amp_registry(data_root, &registry).await?;
     Ok(registry)
 }
 
@@ -328,6 +328,30 @@ mod tests {
         let env = amp_env_for_active_account(root).await.unwrap();
         assert!(env.is_empty());
         assert!(!amp_runtime_home(root).exists());
+    }
+
+    #[tokio::test]
+    async fn amp_upsert_does_not_persist_registry_when_runtime_home_setup_fails() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let home = amp_runtime_home(root);
+        tokio::fs::create_dir_all(home.parent().unwrap())
+            .await
+            .unwrap();
+        tokio::fs::write(&home, b"occupied").await.unwrap();
+
+        let err = upsert_amp_account(
+            root,
+            Some("Amp Test".to_string()),
+            Some("amp@example.com".to_string()),
+        )
+        .await
+        .unwrap_err();
+
+        assert!(!err.to_string().is_empty());
+        let registry = load_amp_registry(root).await;
+        assert!(registry.accounts.is_empty());
+        assert!(registry.active_account_id.is_none());
     }
 
     #[tokio::test]

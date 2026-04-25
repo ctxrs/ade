@@ -108,8 +108,8 @@ pub async fn upsert_mistral_account(
             entry.last_used_at = Some(Utc::now());
         }
         registry.active_account_id = Some(existing_id);
-        save_mistral_registry(data_root, &registry).await?;
         let _ = ensure_mistral_runtime_home(data_root).await?;
+        save_mistral_registry(data_root, &registry).await?;
         return Ok(registry);
     }
 
@@ -123,8 +123,8 @@ pub async fn upsert_mistral_account(
         last_used_at: Some(Utc::now()),
     });
     registry.active_account_id = Some(account_id);
-    save_mistral_registry(data_root, &registry).await?;
     let _ = ensure_mistral_runtime_home(data_root).await?;
+    save_mistral_registry(data_root, &registry).await?;
     Ok(registry)
 }
 
@@ -240,5 +240,29 @@ mod tests {
         assert_eq!(home, mistral_runtime_home(root));
         assert!(home.join(".config").exists());
         assert!(home.join(".cache").exists());
+    }
+
+    #[tokio::test]
+    async fn mistral_upsert_does_not_persist_registry_when_runtime_home_setup_fails() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let home = mistral_runtime_home(root);
+        tokio::fs::create_dir_all(home.parent().unwrap())
+            .await
+            .unwrap();
+        tokio::fs::write(&home, b"occupied").await.unwrap();
+
+        let err = upsert_mistral_account(
+            root,
+            Some("Mistral".to_string()),
+            Some("mistral@example.com".to_string()),
+        )
+        .await
+        .unwrap_err();
+
+        assert!(!err.to_string().is_empty());
+        let registry = load_mistral_registry(root).await;
+        assert!(registry.accounts.is_empty());
+        assert!(registry.active_account_id.is_none());
     }
 }
