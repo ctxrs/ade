@@ -557,7 +557,7 @@ pub(super) async fn install_provider_impl(
 
         let adapter_cfg = load_agent_server_config(state.data_root())
             .await
-            .unwrap_or_default();
+            .context("loading managed install registry for provider install verification")?;
         let bridge_cmd = if state.is_acp_provider_id(&provider_id) {
             resolve_runtime_provider_command_for_target(
                 &adapter_cfg,
@@ -604,7 +604,7 @@ pub(super) async fn install_provider_impl(
         ensure_install_not_cancelled(state, install_id).await?;
         let mut status_cfg = load_agent_server_config(state.data_root())
             .await
-            .unwrap_or_default();
+            .context("loading managed install registry for provider status refresh")?;
         apply_managed_provider_install_to_cfg(
             &mut status_cfg,
             &provider_id,
@@ -851,7 +851,7 @@ pub(super) fn classify_install_error(stage: &str, err: &anyhow::Error) -> Instal
 pub async fn refresh_provider_statuses(state: &AppState) -> Result<()> {
     let cfg = load_agent_server_config(state.data_root())
         .await
-        .unwrap_or_default();
+        .context("loading managed install registry for provider status refresh")?;
     refresh_provider_statuses_with_cfg(state, cfg).await
 }
 
