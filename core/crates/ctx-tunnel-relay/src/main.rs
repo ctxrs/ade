@@ -22,6 +22,8 @@ use tokio::sync::{mpsc, oneshot, Mutex, RwLock};
 use tracing::{info, warn};
 use uuid::Uuid;
 
+mod http_proxy;
+
 #[derive(Parser, Debug)]
 #[command(name = "ctx-tunnel-relay", version)]
 struct Args {
@@ -145,13 +147,13 @@ async fn main() -> Result<()> {
         .route("/connect/:tunnel_id", get(desktop_connect_ws))
         .route(
             "/t/:tunnel_id/*path",
-            get(proxy_get)
-                .post(proxy_http)
-                .put(proxy_http)
-                .delete(proxy_http)
-                .patch(proxy_http)
-                .options(proxy_http)
-                .head(proxy_http),
+            get(http_proxy::proxy_get)
+                .post(http_proxy::proxy_http)
+                .put(http_proxy::proxy_http)
+                .delete(http_proxy::proxy_http)
+                .patch(http_proxy::proxy_http)
+                .options(http_proxy::proxy_http)
+                .head(http_proxy::proxy_http),
         )
         .with_state(state);
 
@@ -348,135 +350,6 @@ async fn dispatch_client_message(tunnel: &Arc<Tunnel>, msg: ClientToRelay) {
     }
 }
 
-async fn proxy_get(
-    State(state): State<RelayState>,
-    Path((tunnel_id, path)): Path<(String, String)>,
-    req: Request<axum::body::Body>,
-) -> Response {
-    let (mut parts, body) = req.into_parts();
-    let is_ws = is_websocket_upgrade(&parts.headers);
-    if is_ws {
-        match axum::extract::ws::WebSocketUpgrade::from_request_parts(&mut parts, &state).await {
-            Ok(ws) => {
-                let headers = parts.headers.clone();
-                let uri = parts.uri.clone();
-                return ws
-                    .on_upgrade(move |socket| async move {
-                        if let Err(err) = handle_mobile_ws(
-                            state,
-                            tunnel_id,
-                            path,
-                            uri.query().map(str::to_string),
-                            headers,
-                            socket,
-                        )
-                        .await
-                        {
-                            warn!("mobile ws error: {err:#}");
-                        }
-                    })
-                    .into_response();
-            }
-            Err(_) => return StatusCode::BAD_REQUEST.into_response(),
-        }
-    }
-
-    let req = Request::from_parts(parts, body);
-    proxy_http_inner(state, tunnel_id, path, req).await
-}
-
-async fn proxy_http(
-    State(state): State<RelayState>,
-    Path((tunnel_id, path)): Path<(String, String)>,
-    uri: Uri,
-    method: Method,
-    headers: HeaderMap,
-    body: Bytes,
-) -> Response {
-    let uri_path = format!("/{}", path.trim_start_matches('/'));
-    proxy_http_message(
-        state,
-        tunnel_id,
-        method,
-        uri_path,
-        uri.query().map(str::to_string),
-        headers,
-        body,
-    )
-    .await
-}
-
-async fn proxy_http_inner(
-    state: RelayState,
-    tunnel_id: String,
-    path: String,
-    req: Request<axum::body::Body>,
-) -> Response {
-    let (parts, body) = req.into_parts();
-    let method = parts.method;
-    let headers = parts.headers;
-    let query = parts.uri.query().map(str::to_string);
-    let bytes = match axum::body::to_bytes(body, 16 * 1024 * 1024).await {
-        Ok(b) => b,
-        Err(_) => return StatusCode::BAD_REQUEST.into_response(),
-    };
-    let uri = format!("/{}", path.trim_start_matches('/'));
-    proxy_http_message(state, tunnel_id, method, uri, query, headers, bytes).await
-}
-
-async fn proxy_http_message(
-    state: RelayState,
-    tunnel_id: String,
-    method: Method,
-    path: String,
-    query: Option<String>,
-    headers: HeaderMap,
-    body: Bytes,
-) -> Response {
-    let tunnel = get_or_create_tunnel(&state, &tunnel_id).await;
-
-    let desktop = {
-        let inner = tunnel.inner.lock().await;
-        inner.desktop.clone()
-    };
-    let Some(desktop) = desktop else {
-        return (StatusCode::BAD_GATEWAY, "tunnel not connected").into_response();
-    };
-
-    let request_id = Uuid::new_v4().to_string();
-    let (tx, rx) = oneshot::channel::<HttpResponse>();
-    {
-        let mut inner = tunnel.inner.lock().await;
-        inner.pending_http.insert(request_id.clone(), tx);
-    }
-
-    let forward_headers = extract_ws_forward_headers(&headers);
-    let mut full_path = path;
-    if let Some(q) = query {
-        if !q.is_empty() {
-            full_path.push('?');
-            full_path.push_str(&q);
-        }
-    }
-
-    let msg = RelayToClient::HttpRequest {
-        id: request_id.clone(),
-        method: method.to_string(),
-        path: full_path,
-        headers: forward_headers,
-        body_b64: BASE64.encode(body),
-    };
-    if desktop.tx.send(msg).is_err() {
-        return (StatusCode::BAD_GATEWAY, "tunnel disconnected").into_response();
-    }
-
-    match tokio::time::timeout(Duration::from_secs(30), rx).await {
-        Ok(Ok(resp)) => build_http_response(resp),
-        Ok(Err(_)) => (StatusCode::BAD_GATEWAY, "tunnel response dropped").into_response(),
-        Err(_) => (StatusCode::GATEWAY_TIMEOUT, "tunnel request timed out").into_response(),
-    }
-}
-
 async fn handle_mobile_ws(
     state: RelayState,
     tunnel_id: String,
@@ -623,65 +496,6 @@ async fn get_or_create_tunnel(state: &RelayState, tunnel_id: &str) -> Arc<Tunnel
         .clone()
 }
 
-fn is_websocket_upgrade(headers: &HeaderMap) -> bool {
-    let Some(upgrade) = headers.get(axum::http::header::UPGRADE) else {
-        return false;
-    };
-    let Ok(upgrade) = upgrade.to_str() else {
-        return false;
-    };
-    upgrade.eq_ignore_ascii_case("websocket")
-}
-
-fn extract_forward_headers(headers: &HeaderMap) -> Vec<(String, String)> {
-    const HOP_BY_HOP: &[axum::http::header::HeaderName] = &[
-        axum::http::header::CONNECTION,
-        axum::http::header::UPGRADE,
-        axum::http::header::PROXY_AUTHENTICATE,
-        axum::http::header::PROXY_AUTHORIZATION,
-        axum::http::header::TE,
-        axum::http::header::TRAILER,
-        axum::http::header::TRANSFER_ENCODING,
-        axum::http::header::HOST,
-    ];
-
-    headers
-        .iter()
-        .filter(|(k, _)| !HOP_BY_HOP.contains(k))
-        .filter_map(|(k, v)| Some((k.to_string(), v.to_str().ok()?.to_string())))
-        .collect()
-}
-
-fn extract_ws_forward_headers(headers: &HeaderMap) -> Vec<(String, String)> {
-    headers
-        .iter()
-        .filter(|(k, _)| k.as_str().eq_ignore_ascii_case("authorization"))
-        .filter_map(|(k, v)| Some((k.to_string(), v.to_str().ok()?.to_string())))
-        .collect()
-}
-
-fn build_http_response(resp: HttpResponse) -> Response {
-    let status = StatusCode::from_u16(resp.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
-    let mut builder = Response::builder().status(status);
-    if let Some(headers) = builder.headers_mut() {
-        for (k, v) in resp.headers {
-            if let (Ok(name), Ok(value)) = (
-                axum::http::header::HeaderName::from_bytes(k.as_bytes()),
-                axum::http::HeaderValue::from_str(&v),
-            ) {
-                headers.insert(name, value);
-            }
-        }
-    } else {
-        tracing::warn!(
-            "response builder headers unavailable; returning response without forwarded headers"
-        );
-    }
-    builder
-        .body(axum::body::Body::from(resp.body))
-        .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
-}
-
 fn derive_secret(master_secret: &[u8], tunnel_id: &str) -> Result<String> {
     let mut mac = Hmac::<Sha256>::new_from_slice(master_secret)
         .map_err(|err| anyhow!("failed to initialize hmac for tunnel secret derivation: {err}"))?;
@@ -694,156 +508,5 @@ static BASE64: base64::engine::general_purpose::GeneralPurpose =
     base64::engine::general_purpose::STANDARD;
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn test_tunnel() -> Arc<Tunnel> {
-        Arc::new(Tunnel {
-            inner: Mutex::new(TunnelInner {
-                secret: None,
-                desktop: None,
-                pending_http: HashMap::new(),
-                pending_ws_open: HashMap::new(),
-                ws_streams: HashMap::new(),
-            }),
-        })
-    }
-
-    #[tokio::test]
-    async fn dispatch_client_message_delivers_pending_http_response() {
-        let tunnel = test_tunnel();
-        let (tx, rx) = oneshot::channel();
-        {
-            let mut inner = tunnel.inner.lock().await;
-            inner.pending_http.insert("req-1".to_string(), tx);
-        }
-
-        dispatch_client_message(
-            &tunnel,
-            ClientToRelay::HttpResponse {
-                id: "req-1".to_string(),
-                status: 204,
-                headers: vec![("content-type".to_string(), "text/plain".to_string())],
-                body_b64: BASE64.encode("ok"),
-            },
-        )
-        .await;
-
-        let response = rx.await.expect("http response");
-        assert_eq!(response.status, 204);
-        assert_eq!(response.body, b"ok");
-        assert!(tunnel.inner.lock().await.pending_http.is_empty());
-    }
-
-    #[tokio::test]
-    async fn dispatch_client_message_delivers_ws_open_result_and_forwards_messages() {
-        let tunnel = test_tunnel();
-        let (open_tx, open_rx) = oneshot::channel();
-        let (mobile_tx, mut mobile_rx) = mpsc::unbounded_channel();
-        {
-            let mut inner = tunnel.inner.lock().await;
-            inner
-                .pending_ws_open
-                .insert("stream-1".to_string(), open_tx);
-            inner
-                .ws_streams
-                .insert("stream-1".to_string(), WsStreamHandle { mobile_tx });
-        }
-
-        dispatch_client_message(
-            &tunnel,
-            ClientToRelay::WsOpenResult {
-                id: "stream-1".to_string(),
-                ok: true,
-                error: None,
-            },
-        )
-        .await;
-        assert!(open_rx.await.expect("ws open result").is_ok());
-
-        dispatch_client_message(
-            &tunnel,
-            ClientToRelay::WsMessage {
-                id: "stream-1".to_string(),
-                is_binary: false,
-                data: "hello".to_string(),
-            },
-        )
-        .await;
-        let forwarded = mobile_rx.recv().await.expect("forwarded mobile message");
-        assert_eq!(forwarded, Message::Text("hello".to_string()));
-    }
-
-    #[tokio::test]
-    async fn dispatch_client_message_ignores_unknown_ids_and_removes_closed_streams() {
-        let tunnel = test_tunnel();
-        let (mobile_tx, mut mobile_rx) = mpsc::unbounded_channel();
-        {
-            let mut inner = tunnel.inner.lock().await;
-            inner
-                .ws_streams
-                .insert("stream-1".to_string(), WsStreamHandle { mobile_tx });
-        }
-
-        dispatch_client_message(
-            &tunnel,
-            ClientToRelay::WsMessage {
-                id: "missing".to_string(),
-                is_binary: false,
-                data: "ignored".to_string(),
-            },
-        )
-        .await;
-        assert!(mobile_rx.try_recv().is_err());
-
-        dispatch_client_message(
-            &tunnel,
-            ClientToRelay::WsClosed {
-                id: "stream-1".to_string(),
-                code: Some(1000),
-                reason: Some("done".to_string()),
-            },
-        )
-        .await;
-        let closed = mobile_rx.recv().await.expect("close forwarded");
-        assert!(matches!(closed, Message::Close(_)));
-        assert!(tunnel.inner.lock().await.ws_streams.is_empty());
-    }
-
-    #[test]
-    fn relay_header_helpers_strip_hop_by_hop_headers() {
-        let mut headers = HeaderMap::new();
-        headers.insert(axum::http::header::HOST, "example.test".parse().unwrap());
-        headers.insert(axum::http::header::CONNECTION, "upgrade".parse().unwrap());
-        headers.insert(
-            axum::http::header::AUTHORIZATION,
-            "Bearer secret".parse().unwrap(),
-        );
-        headers.insert("x-custom", "value".parse().unwrap());
-
-        let forwarded = extract_forward_headers(&headers);
-        assert!(forwarded.contains(&(String::from("authorization"), String::from("Bearer secret"))));
-        assert!(forwarded.contains(&(String::from("x-custom"), String::from("value"))));
-        assert!(!forwarded
-            .iter()
-            .any(|(name, _)| name.eq_ignore_ascii_case("host")));
-        assert!(!forwarded
-            .iter()
-            .any(|(name, _)| name.eq_ignore_ascii_case("connection")));
-
-        let ws_forwarded = extract_ws_forward_headers(&headers);
-        assert_eq!(
-            ws_forwarded,
-            vec![(String::from("authorization"), String::from("Bearer secret"))]
-        );
-    }
-
-    #[test]
-    fn derive_secret_is_deterministic() {
-        let first = derive_secret(b"master-secret", "tunnel-1").unwrap();
-        let second = derive_secret(b"master-secret", "tunnel-1").unwrap();
-        let third = derive_secret(b"master-secret", "tunnel-2").unwrap();
-        assert_eq!(first, second);
-        assert_ne!(first, third);
-    }
-}
+#[cfg(test)]
+mod tests;

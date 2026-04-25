@@ -1,4 +1,3 @@
-use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
@@ -10,9 +9,10 @@ use ctx_core::models::{
     WorkspaceAttachmentKind, WorkspaceAttachmentStatus,
 };
 use serde::{Deserialize, Serialize};
-use tempfile::NamedTempFile;
 use tokio::process::Command;
-use toml::Value as TomlValue;
+
+mod doc_mirror;
+use doc_mirror::materialize_doc_mirror;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AttachmentConfig {
@@ -454,129 +454,8 @@ async fn clone_reference_repo(source: &str, revision: Option<&str>, dest: &Path)
     Ok(())
 }
 
-async fn materialize_doc_mirror(
-    data_root: &Path,
-    workspace: &Workspace,
-    attachment: &WorkspaceAttachment,
-    refresh: bool,
-) -> Result<MaterializationResult> {
-    let revision = revision_key(attachment);
-    let dest = materialized_path_for_attachment(data_root, attachment);
-    let should_update = refresh || !dest.exists();
-    if should_update {
-        if dest.exists() {
-            tokio::fs::remove_dir_all(&dest).await?;
-        }
-        tokio::fs::create_dir_all(&dest).await?;
-        run_doc_mirror_script(workspace, attachment, &dest).await?;
-    }
-    Ok(MaterializationResult {
-        path: dest,
-        materialized_id: revision,
-    })
-}
-
-async fn run_doc_mirror_script(
-    workspace: &Workspace,
-    attachment: &WorkspaceAttachment,
-    dest: &Path,
-) -> Result<()> {
-    if looks_like_url(&attachment.source) {
-        return run_doc_mirror_cli(workspace, attachment, dest).await;
-    }
-    let script_path = resolve_workspace_path(&workspace.root_path, &attachment.source);
-    if !script_path.exists() {
-        anyhow::bail!("doc mirror script not found: {}", script_path.display());
-    }
-
-    let mut cmd = if script_path.extension().and_then(|value| value.to_str()) == Some("py") {
-        let mut cmd = Command::new("python3");
-        cmd.arg(&script_path);
-        cmd
-    } else if script_path.extension().and_then(|value| value.to_str()) == Some("sh") {
-        let mut cmd = Command::new("bash");
-        cmd.arg(&script_path);
-        cmd
-    } else {
-        Command::new(&script_path)
-    };
-
-    cmd.arg(dest)
-        .current_dir(&workspace.root_path)
-        .env("CTX_DOCS_OUTPUT_DIR", dest)
-        .env("CTX_DOCS_OUTPUT_DIR", dest)
-        .kill_on_drop(true);
-    let output = cmd.output().await.context("running doc mirror script")?;
-    if !output.status.success() {
-        anyhow::bail!(
-            "doc mirror script failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
-    Ok(())
-}
-
-fn docs_mirror_bin() -> PathBuf {
-    std::env::var_os("CTX_DOCS_MIRROR_BIN")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("ctx-docs-mirror"))
-}
-
-fn looks_like_url(value: &str) -> bool {
-    value.starts_with("http://") || value.starts_with("https://")
-}
-
-async fn run_doc_mirror_cli(
-    workspace: &Workspace,
-    attachment: &WorkspaceAttachment,
-    dest: &Path,
-) -> Result<()> {
-    let mut table = toml::value::Table::new();
-    table.insert(
-        "source".to_string(),
-        TomlValue::String(attachment.source.clone()),
-    );
-    table.insert(
-        "docs_url".to_string(),
-        TomlValue::String(attachment.source.clone()),
-    );
-    let cfg = TomlValue::Table(table);
-    let cfg_text = toml::to_string_pretty(&cfg).context("serializing docs mirror config")?;
-    let mut temp = NamedTempFile::new().context("creating docs mirror config file")?;
-    temp.write_all(cfg_text.as_bytes())
-        .context("writing docs mirror config")?;
-    temp.flush().context("flushing docs mirror config")?;
-
-    let bin = docs_mirror_bin();
-    let mut cmd = Command::new(&bin);
-    cmd.arg("mirror")
-        .arg("--config")
-        .arg(temp.path())
-        .arg("--out")
-        .arg(dest)
-        .current_dir(&workspace.root_path)
-        .kill_on_drop(true);
-    let output = cmd.output().await.context("running ctx-docs-mirror")?;
-    if !output.status.success() {
-        anyhow::bail!(
-            "ctx-docs-mirror failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
-    Ok(())
-}
-
 fn attachment_store_root(data_root: &Path) -> PathBuf {
     data_root.join("attachments")
-}
-
-fn resolve_workspace_path(workspace_root: &str, raw: &str) -> PathBuf {
-    let path = PathBuf::from(raw);
-    if path.is_absolute() {
-        path
-    } else {
-        Path::new(workspace_root).join(path)
-    }
 }
 
 fn default_mount_relpath(kind: &WorkspaceAttachmentKind, name: &str) -> String {
@@ -616,106 +495,5 @@ fn looks_like_sha(value: &str) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::{
-        default_mount_relpath, normalize_attachment_config, revision_key,
-        sanitize_attachment_subpath, sanitize_mount_relpath, AttachmentConfig,
-    };
-    use ctx_core::ids::WorkspaceId;
-    use ctx_core::models::{
-        AttachmentMode, AttachmentUpdatePolicy, WorkspaceAttachmentKind, WorkspaceAttachmentStatus,
-    };
-
-    #[test]
-    fn default_mount_relpath_uses_kind_specific_roots() {
-        assert_eq!(
-            default_mount_relpath(&WorkspaceAttachmentKind::ReferenceRepo, "My Docs"),
-            ".ctx/attachments/refs/my-docs"
-        );
-        assert_eq!(
-            default_mount_relpath(&WorkspaceAttachmentKind::DocMirror, "API Guide"),
-            ".ctx/attachments/docs/api-guide"
-        );
-    }
-
-    #[test]
-    fn sanitize_mount_relpath_rejects_invalid_paths() {
-        assert!(sanitize_mount_relpath(".ctx/attachments/docs/api-guide").is_ok());
-        assert!(sanitize_mount_relpath("").is_err());
-        assert!(sanitize_mount_relpath("/absolute/path").is_err());
-        assert!(sanitize_mount_relpath("../escape").is_err());
-    }
-
-    #[test]
-    fn sanitize_attachment_subpath_rejects_escape_paths() {
-        assert!(sanitize_attachment_subpath("guide/index.md").is_ok());
-        assert!(sanitize_attachment_subpath("").is_err());
-        assert!(sanitize_attachment_subpath("/absolute/path").is_err());
-        assert!(sanitize_attachment_subpath("../escape").is_err());
-        assert!(sanitize_attachment_subpath("guide/../../escape").is_err());
-    }
-
-    #[test]
-    fn normalize_attachment_config_preserves_existing_identity() {
-        let workspace_id = WorkspaceId::new();
-        let existing = normalize_attachment_config(
-            workspace_id,
-            AttachmentConfig {
-                kind: WorkspaceAttachmentKind::ReferenceRepo,
-                name: "Docs".to_string(),
-                source: "https://example.com/repo.git".to_string(),
-                revision: None,
-                subpath: None,
-                mount_relpath: None,
-                mode: Some(AttachmentMode::Ro),
-                update_policy: Some(AttachmentUpdatePolicy::Manual),
-            },
-            None,
-        )
-        .unwrap();
-
-        let updated = normalize_attachment_config(
-            workspace_id,
-            AttachmentConfig {
-                kind: WorkspaceAttachmentKind::ReferenceRepo,
-                name: "Docs".to_string(),
-                source: "https://example.com/repo.git".to_string(),
-                revision: Some("main".to_string()),
-                subpath: Some("guide".to_string()),
-                mount_relpath: Some(".ctx/attachments/refs/docs".to_string()),
-                mode: Some(AttachmentMode::Ro),
-                update_policy: Some(AttachmentUpdatePolicy::OnOpen),
-            },
-            Some(existing.clone()),
-        )
-        .unwrap();
-
-        assert_eq!(updated.id, existing.id);
-        assert_eq!(updated.created_at, existing.created_at);
-        assert_eq!(updated.status, WorkspaceAttachmentStatus::Pending);
-        assert_eq!(updated.mount_relpath, ".ctx/attachments/refs/docs");
-        assert_eq!(updated.revision.as_deref(), Some("main"));
-        assert_eq!(updated.subpath.as_deref(), Some("guide"));
-        assert_eq!(updated.update_policy, AttachmentUpdatePolicy::OnOpen);
-    }
-
-    #[test]
-    fn revision_key_defaults_and_sanitizes() {
-        let attachment = normalize_attachment_config(
-            WorkspaceId::new(),
-            AttachmentConfig {
-                kind: WorkspaceAttachmentKind::DocMirror,
-                name: "Docs".to_string(),
-                source: "https://example.com".to_string(),
-                revision: Some("Feature/Branch".to_string()),
-                subpath: None,
-                mount_relpath: None,
-                mode: None,
-                update_policy: None,
-            },
-            None,
-        )
-        .unwrap();
-        assert_eq!(revision_key(&attachment), "feature-branch");
-    }
-}
+#[cfg(test)]
+mod tests;
