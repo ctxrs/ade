@@ -16,10 +16,16 @@ struct PinnedReasoningModel {
     efforts: &'static [&'static str],
 }
 
-const CODEX_PINNED_SUBSCRIPTION_MODELS: [PinnedReasoningModel; 7] = [
+const CODEX_PINNED_SUBSCRIPTION_MODELS: [PinnedReasoningModel; 8] = [
     PinnedReasoningModel {
         id: "gpt-5.4",
         display_name: "gpt-5.4",
+        default_effort: "medium",
+        efforts: &["low", "medium", "high", "xhigh"],
+    },
+    PinnedReasoningModel {
+        id: "gpt-5.5",
+        display_name: "gpt-5.5",
         default_effort: "medium",
         efforts: &["low", "medium", "high", "xhigh"],
     },
