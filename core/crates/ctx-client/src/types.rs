@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use ts_rs::TS;
 
 use ctx_core::ids::{MessageId, SessionId, TaskId, TurnId, WorktreeId};
@@ -10,9 +9,15 @@ use ctx_core::models::{
     MessageDelivery, WorkspaceAttachmentKind, WorkspaceIndexCursor,
 };
 
+mod mobile;
+mod providers;
+mod resources;
 #[path = "types_settings.rs"]
 mod settings;
 
+pub use mobile::*;
+pub use providers::*;
+pub use resources::*;
 pub use settings::*;
 
 #[derive(Debug, Clone, Deserialize)]
@@ -310,246 +315,6 @@ pub struct DeleteWorkspaceAttachmentRequest {
 #[derive(Debug, Clone, Serialize)]
 pub struct SyncWorkspaceAttachmentsRequest {
     pub refresh: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum MobileTunnelState {
-    Idle,
-    Running,
-    Error,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MobileAccessStatus {
-    pub enabled: bool,
-    #[serde(default)]
-    pub tunnel_id: Option<String>,
-    #[serde(default)]
-    pub public_base_url: Option<String>,
-    #[serde(default)]
-    pub relay_base_url: Option<String>,
-    #[serde(default)]
-    pub daemon_public_key: Option<String>,
-    pub tunnel_state: MobileTunnelState,
-    #[serde(default)]
-    pub last_error: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EnableMobileAccessResponse {
-    pub status: MobileAccessStatus,
-    pub qr_payload: Value,
-    pub pairing_expires_at: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SystemSnapshot {
-    pub cpu_pct: f32,
-    pub memory_total_bytes: u64,
-    pub memory_used_bytes: u64,
-    pub swap_total_bytes: u64,
-    pub swap_used_bytes: u64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DiskSnapshot {
-    pub name: String,
-    pub mount_point: String,
-    pub total_bytes: u64,
-    pub available_bytes: u64,
-    pub file_system: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ResourceChildProcess {
-    pub pid: u32,
-    #[serde(default)]
-    pub parent_pid: Option<u32>,
-    pub name: String,
-    #[serde(default)]
-    pub cmdline: Option<String>,
-    pub cpu_pct: f32,
-    pub memory_bytes: u64,
-    pub virtual_memory_bytes: u64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ResourceProcess {
-    pub label: String,
-    pub pid: u32,
-    pub cpu_pct: f32,
-    pub memory_bytes: u64,
-    pub virtual_memory_bytes: u64,
-    pub child_count: u64,
-    pub children: Vec<ResourceChildProcess>,
-    pub children_truncated: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ResourceProcesses {
-    #[serde(default)]
-    pub daemon: Option<ResourceProcess>,
-    pub providers: Vec<ResourceProcess>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WorktreeDiskSnapshot {
-    pub worktree_id: String,
-    pub root_path: String,
-    pub size_bytes: u64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WorkspaceDiskSnapshot {
-    pub workspace_id: String,
-    pub root_path: String,
-    pub size_bytes: u64,
-    pub size_collected_at: String,
-    pub size_cache_age_ms: u64,
-    #[serde(default)]
-    pub disk: Option<DiskSnapshot>,
-    pub worktrees: Vec<WorktreeDiskSnapshot>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ResourceUtilizationSnapshot {
-    pub collected_at: String,
-    pub cache_age_ms: u64,
-    pub system: SystemSnapshot,
-    pub processes: ResourceProcesses,
-    pub workspace: WorkspaceDiskSnapshot,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct ProviderOptions {
-    pub provider_id: String,
-    pub workspace_id: String,
-    #[serde(default)]
-    pub installed: Option<bool>,
-    #[serde(default)]
-    pub probe_ok: Option<bool>,
-    #[serde(default)]
-    pub probe_error: Option<String>,
-    #[serde(default)]
-    pub supports_load: bool,
-    #[serde(default)]
-    pub auth_required: bool,
-    #[serde(default)]
-    pub auth_methods: Option<Value>,
-    #[serde(default)]
-    pub modes: Option<Value>,
-    #[serde(default)]
-    pub models: Option<Value>,
-    #[serde(default)]
-    pub verify: Option<ProviderAuthCheck>,
-    #[serde(default)]
-    pub probed_at: Option<String>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct ProviderAuthCheck {
-    pub provider_id: String,
-    pub workspace_id: String,
-    pub status: String,
-    #[serde(default)]
-    pub auth_required: Option<bool>,
-    #[serde(default)]
-    pub auth_methods: Option<Value>,
-    #[serde(default)]
-    pub checked_at: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct InstallStartResponse {
-    pub provider_id: String,
-    pub install_id: String,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct TitleGenerationLocalRuntimeStatus {
-    pub version: String,
-    pub installed: bool,
-    #[serde(default)]
-    pub path: Option<String>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct TitleGenerationLocalModelStatus {
-    pub model_id: String,
-    pub file_name: String,
-    pub installed: bool,
-    #[serde(default)]
-    pub version: Option<String>,
-    #[serde(default)]
-    pub sha256: Option<String>,
-    #[serde(default)]
-    pub size_bytes: Option<u64>,
-    #[serde(default)]
-    pub installed_at: Option<String>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct TitleGenerationLocalStatus {
-    pub ready: bool,
-    pub runtime: TitleGenerationLocalRuntimeStatus,
-    pub model: TitleGenerationLocalModelStatus,
-    #[serde(default)]
-    pub install_id: Option<String>,
-    #[serde(default)]
-    pub install_running: bool,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct TitleGenerationLocalInstallResponse {
-    pub install_id: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum InstallEventLevel {
-    Info,
-    Warning,
-    Error,
-    Success,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct InstallProgressEvent {
-    pub install_id: String,
-    pub provider_id: String,
-    pub at: String,
-    pub stage: String,
-    pub message: String,
-    pub level: InstallEventLevel,
-    #[serde(default)]
-    pub bytes: Option<u64>,
-    #[serde(default)]
-    pub total_bytes: Option<u64>,
-    #[serde(default)]
-    pub attempt: Option<u32>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum InstallStateKind {
-    Running,
-    Succeeded,
-    Failed,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct InstallInfo {
-    pub install_id: String,
-    pub provider_id: String,
-    pub state: InstallStateKind,
-    pub started_at: String,
-    #[serde(default)]
-    pub finished_at: Option<String>,
-    #[serde(default)]
-    pub error: Option<String>,
-    #[serde(default)]
-    pub last_event: Option<InstallProgressEvent>,
 }
 
 #[cfg(test)]
