@@ -65,6 +65,7 @@ import {
   updateAuthConfig as updateWorkerAuthConfig,
   type WorkspaceActiveSnapshotWorkerHost,
 } from "./workspaceActiveSnapshot/workerRuntime";
+import { applyWorkerPatch as applyWorkspaceWorkerPatch } from "./workspaceActiveSnapshot/workerPatchQueue";
 import type { WorkerAuthUpdateConfig } from "./workspaceActiveSnapshot/workerConnection";
 export type {
   WorkspaceActiveSnapshotEventSource,
@@ -367,6 +368,10 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
 
   flushWorkerPatchNow() {
     flushWorkerPatchNow(this as unknown as WorkspaceActiveSnapshotWorkerHost);
+  }
+
+  applyWorkerPatch(patch: WorkspaceActiveSnapshotPatch) {
+    applyWorkspaceWorkerPatch(this as unknown as WorkspaceActiveSnapshotWorkerHost, patch);
   }
 
   private applyWorkspaceSnapshot(snapshot: WorkspaceActiveSnapshot, heads?: SessionHeadSnapshot[] | null) {

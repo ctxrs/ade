@@ -1,11 +1,8 @@
 import {
-  idToString,
   type GitStatusSummary,
   type Message,
   type ProviderOptions,
   type Session,
-  type SessionEvent,
-  type SessionHead,
   type SessionHeadSnapshot,
   type SessionState,
   type SessionTurn,
@@ -16,14 +13,11 @@ import { type PersistedTaskThoughtsV1 } from "./uiStateStore";
 import { SessionReplicaBridge } from "./sessionReplicaBridge";
 import type {
   SessionReplicaCommand,
-  SessionReplicaFreshnessState,
   SessionReplicaPatch,
 } from "./sessionReplicaProtocol";
-import { emitUiDiagnostic } from "./diagnosticsChannel";
 import type { SessionSubscriptionCursor } from "./sessionSubscription";
 import {
   createInternalEntry,
-  type ConnectionStatus,
   type InternalEntry,
   type OpenOptions,
   type SessionCacheEntry,
@@ -71,32 +65,44 @@ import {
   resolveWorkspaceOwnerScope,
 } from "./sessionSupervisor/thoughtCache";
 import {
-  buildThoughtCacheKey,
-  isFinalThoughtEvent,
-  normalizeFinalThoughtPayload,
-  readThoughtFullContent,
-} from "./sessionSupervisor/thoughtProjection";
-import {
-  dedupeIds,
   reconcileActivityFromTurns,
-  reconcileLatestTurnInterruptedFromActivity,
-  sameIdList,
 } from "./sessionSupervisor/cachePolicy";
 import {
   addOptimisticQueueRemovalId,
-  reconcileOptimisticOverlay,
   removeOptimisticQueuedMessage,
   removeOptimisticQueueRemovalId,
   removeOptimisticThreadMessage,
   upsertOptimisticQueuedMessage,
   upsertOptimisticThreadMessage,
 } from "./sessionSupervisor/optimisticOverlay";
-import { applyReplicaPatches } from "./sessionSupervisor/replicaPatchApply";
+import {
+  applyReplicaPatchesToSupervisor,
+  createSessionLifecycleHost,
+  createWorkspaceActiveSyncHost,
+  createWorkspaceAuthorityHost,
+  emitSupervisorSubscribedSessions,
+  markOpenSessionsRecoveringForSupervisor,
+  bumpSupervisorEventsRev,
+  bumpSupervisorMessagesRev,
+  bumpSupervisorTurnsRev,
+  resolveSupervisorSessionMode,
+  setSupervisorFatalError,
+  setSupervisorSessionLoadState,
+  setSupervisorActiveTaskSessionIds,
+  setSupervisorWarmSessionIds,
+  shouldFailPendingSupervisorSessionOpen,
+  refreshSupervisorSubscriptions,
+  rehydrateRecoveringOpenSessions,
+  syncSupervisorActiveSnapshot,
+} from "./sessionSupervisor/coreSupport";
+import {
+  setSupervisorMessages,
+  setSupervisorSession,
+  setSupervisorSessionActivity,
+  setSupervisorTurns,
+} from "./sessionSupervisor/manualMutations";
 import {
   buildSubscribedSessions,
-  emitSubscribedSessions,
-  markOpenSessionsRecovering,
-  refreshSubscriptions,
 } from "./sessionSupervisor/subscriptions";
 import type { SessionActivityState } from "@ctx/types";
 import {
@@ -108,8 +114,6 @@ import {
   openSession as openSessionLifecycle,
   refreshSession as refreshSessionLifecycle,
 } from "./sessionSupervisor/sessionLifecycle";
-import { seedReplicaFromActiveSnapshot } from "./sessionSupervisor/activeSnapshotSeed";
-import { resolveSessionMode, shouldFailPendingSessionOpen } from "./sessionSupervisor/sessionMode";
 import {
   EVENT_BUFFER_LIMIT,
   HEAD_LIMIT,
@@ -135,7 +139,6 @@ import {
   ingestWorkspaceEvent as ingestWorkspaceAuthorityEvent,
   setWorkspaceSessionHeads as setWorkspaceAuthoritySessionHeads,
   setWorkspaceSnapshotState as setWorkspaceAuthoritySnapshotState,
-  syncActiveSnapshot as syncWorkspaceAuthorityActiveSnapshot,
   upsertWorkspaceSessionHead as upsertWorkspaceAuthoritySessionHead,
 } from "./sessionSupervisor/workspaceAuthority";
 
@@ -319,133 +322,23 @@ export class SessionSupervisor {
   }
 
   setActiveTaskSessionIds = (sessionIds: string[]) => {
-    const next = dedupeIds(sessionIds);
-    if (sameIdList(next, this.activeTaskSessionIds)) return;
-    const previous = this.activeTaskSessionIds;
-    this.activeTaskSessionIds = next;
-    for (const sessionId of next) {
-      if (previous.includes(sessionId)) continue;
-      const entry = this.ensureEntry(sessionId);
-      seedReplicaFromActiveSnapshot(
-        {
-          workspaceSnapshotState: this.workspaceSnapshotState,
-          workspaceSessionHeadsById: this.workspaceSessionHeadsById,
-          dispatchSeedHead: (cmd) => this.replicaDispatch(cmd),
-        },
-        sessionId,
-        entry,
-        { allowRecoveringRefresh: true, allowRepairReplace: true },
-      );
-    }
-    this.refreshSubscriptions({ emitIfUnchanged: true });
+    setSupervisorActiveTaskSessionIds(this as never, sessionIds);
   };
   setWarmSessionIds = (sessionIds: string[]) => {
-    const next = dedupeIds(sessionIds);
-    if (sameIdList(next, this.warmSessionIds)) return;
-    this.warmSessionIds = next;
-    for (const sessionId of next) {
-      const entry = this.ensureEntry(sessionId);
-      seedReplicaFromActiveSnapshot(
-        {
-          workspaceSnapshotState: this.workspaceSnapshotState,
-          workspaceSessionHeadsById: this.workspaceSessionHeadsById,
-          dispatchSeedHead: (cmd) => this.replicaDispatch(cmd),
-        },
-        sessionId,
-        entry,
-        { allowRecoveringRefresh: true, allowRepairReplace: true },
-      );
-    }
-    this.refreshSubscriptions({ emitIfUnchanged: true });
+    setSupervisorWarmSessionIds(this as never, sessionIds);
   };
   setSession = (session: Session) => {
-    const sessionId = idToString(session.id);
-    if (!sessionId) return;
-    this.ensureEntry(sessionId);
-    this.replica.dispatch({ type: "set_session", session });
+    setSupervisorSession(this as never, session);
   };
   setSessionActivity = (sessionId: string, activity: SessionActivityState | null) => {
-    const id = String(sessionId || "").trim();
-    if (!id) return;
-    const entry = this.ensureEntry(id);
-    const nextActivity = activity ?? null;
-    const normalizedActivity = reconcileActivityFromTurns(nextActivity, entry.turns);
-    if (entry.activity === normalizedActivity) {
-      return;
-    }
-    entry.activity = normalizedActivity;
-    if (reconcileLatestTurnInterruptedFromActivity(entry.turns, nextActivity)) {
-      this.bumpTurnsRev(entry);
-      const normalizedAfterInterrupt = reconcileActivityFromTurns(entry.activity, entry.turns);
-      if (normalizedAfterInterrupt !== entry.activity) {
-        entry.activity = normalizedAfterInterrupt;
-      }
-    }
-    entry.activity = reconcileActivityFromTurns(entry.activity, entry.turns);
-    entry.updatedAtMs = Date.now();
-    this.publish();
+    setSupervisorSessionActivity(this as never, sessionId, activity);
   };
   setMessages = (sessionId: string, messages: Message[], opts?: { replace?: boolean }) => {
-    const id = String(sessionId || "").trim();
-    if (!id) return;
-    const entry = this.ensureEntry(id);
-    if (opts?.replace) {
-      entry.messages = [];
-      entry.queue = [];
-      this.bumpMessagesRev(entry);
-    }
-    this.mergeMessages(entry, messages);
-    reconcileOptimisticOverlay(entry);
-    entry.updatedAtMs = Date.now();
-    this.publish();
+    setSupervisorMessages(this as never, sessionId, messages, opts);
   };
 
   setTurns = (sessionId: string, turns: SessionTurn[], opts?: { replace?: boolean }) => {
-    const id = String(sessionId || "").trim();
-    if (!id) return;
-    const entry = this.ensureEntry(id);
-    if (opts?.replace) {
-      entry.turns = [];
-      this.bumpTurnsRev(entry);
-      if (turns.length === 0) {
-        entry.activity = null;
-      }
-    }
-
-    if (turns.length > 0) {
-      const byId = new Map<string, SessionTurn>();
-      for (const t of entry.turns) {
-        const tid = idToString(t.turn_id);
-        if (tid) byId.set(tid, t);
-      }
-      for (const t of turns) {
-        const tid = idToString(t.turn_id);
-        if (tid) byId.set(tid, t);
-      }
-      const merged = Array.from(byId.values());
-      merged.sort((a, b) => {
-        const aSeq = Number(a.start_seq ?? Number.NaN);
-        const bSeq = Number(b.start_seq ?? Number.NaN);
-        if (Number.isFinite(aSeq) && Number.isFinite(bSeq) && aSeq !== bSeq) return aSeq - bSeq;
-        if (Number.isFinite(aSeq) && !Number.isFinite(bSeq)) return -1;
-        if (!Number.isFinite(aSeq) && Number.isFinite(bSeq)) return 1;
-        const aStart = String(a.started_at ?? "");
-        const bStart = String(b.started_at ?? "");
-        if (aStart !== bStart) return aStart.localeCompare(bStart);
-        return String(a.turn_id ?? "").localeCompare(String(b.turn_id ?? ""));
-      });
-      entry.turns = merged;
-      this.bumpTurnsRev(entry);
-      entry.turnsHydrated = true;
-    }
-
-    const normalizedActivity = reconcileActivityFromTurns(entry.activity, entry.turns);
-    if (normalizedActivity !== entry.activity) {
-      entry.activity = normalizedActivity;
-    }
-
-    entry.updatedAtMs = Date.now();
-    this.publish();
+    setSupervisorTurns(this as never, sessionId, turns, opts);
   };
 
   upsertOptimisticThreadMessage = (sessionId: string, message: Message) => {
@@ -561,76 +454,7 @@ export class SessionSupervisor {
   }
 
   private handleReplicaPatches = (patches: SessionReplicaPatch[]) => {
-    const { changed, subscriptionCursorsChanged } = applyReplicaPatches(
-      {
-        workspaceSnapshotState: this.workspaceSnapshotState,
-        getEntry: (sessionId) => this.entries.get(sessionId),
-        ensureEntry: (sessionId) => this.ensureEntry(sessionId),
-        resolveSessionMode: (sessionId, entry, explicitMode) =>
-          this.resolveSessionMode(sessionId, entry, explicitMode),
-        resetEntryProjectionForReplace: (entry, opts) => this.resetEntryProjectionForReplace(entry, opts),
-        setSessionLoadState: (entry, next) => this.setSessionLoadState(entry, next),
-        setFatalError: (entry, message) => this.setFatalError(entry, message),
-        applyAcpMetaFromEvents: (entry, events) => this.applyAcpMetaFromEvents(entry, events),
-        applyGitStatusSnapshotFromEvents: (entry, events) =>
-          this.applyGitStatusSnapshotFromEvents(entry, events),
-        syncStateCache: (entry) => this.syncStateCache(entry),
-        clearSupportLoadError: (entry, key) => this.clearSupportLoadError(entry, key),
-        adoptLoadedSubagentInvocationsRevision: (entry, stateRev) =>
-          this.adoptLoadedSubagentInvocationsRevision(entry, stateRev),
-        ensureProviderOptions: (entry) => this.ensureProviderOptions(entry),
-        ensureSubagentInvocations: (entry, opts) => this.ensureSubagentInvocations(entry, opts),
-        syncSupportLoadsForOpenSession: (entry) => this.syncSupportLoadsForOpenSession(entry),
-        bumpTurnsRev: (entry) => this.bumpTurnsRev(entry),
-      },
-      patches,
-    );
-    for (const patch of patches) {
-      if (patch.op === "evict") continue;
-      const sessionId = String(patch.sessionId || "").trim();
-      if (!sessionId) continue;
-      const entry = this.entries.get(sessionId);
-      if (!entry) continue;
-      if (patch.data.session) {
-        void this.ensureThoughtCache(entry);
-      }
-      if (Array.isArray(patch.data.events) && patch.data.events.length > 0) {
-        let thoughtChanged = false;
-        for (const event of patch.data.events) {
-          if (!isFinalThoughtEvent(event)) continue;
-          const key = buildThoughtCacheKey(event);
-          if (!key) continue;
-          const payload = normalizeFinalThoughtPayload(event.payload_json ?? {});
-          if (!readThoughtFullContent(payload)) continue;
-          const normalizedEvent: SessionEvent = {
-            ...event,
-            payload_json: payload,
-          };
-          const existing = entry.thoughtCacheByKey[key];
-          if (existing && existing.event.seq === normalizedEvent.seq) continue;
-          entry.thoughtCacheByKey = {
-            ...entry.thoughtCacheByKey,
-            [key]: {
-              key,
-              event: normalizedEvent,
-              updatedAtMs: Date.now(),
-            },
-          };
-          entry.thoughtCacheDirty = true;
-          thoughtChanged = true;
-        }
-        if (thoughtChanged) {
-          void this.persistThoughtCache(entry);
-        }
-      }
-      reconcileOptimisticOverlay(entry);
-    }
-    if (changed) {
-      this.publish();
-    }
-    if (subscriptionCursorsChanged) {
-      this.emitSubscribedSessions();
-    }
+    applyReplicaPatchesToSupervisor(this as never, patches);
   };
 
   private ensureEntry(sessionId: string): InternalEntry {
@@ -645,78 +469,15 @@ export class SessionSupervisor {
   }
 
   private createSessionLifecycleHost() {
-    return {
-      entries: this.entries,
-      getWorkspaceSnapshotState: () => this.workspaceSnapshotState,
-      getWorkspaceSessionHeadsById: () => this.workspaceSessionHeadsById,
-      getActiveTaskSessionIds: () => this.activeTaskSessionIds,
-      setActiveTaskSessionIds: (sessionIds: string[]) => {
-        this.activeTaskSessionIds = sessionIds;
-      },
-      getWarmSessionIds: () => this.warmSessionIds,
-      setWarmSessionIds: (sessionIds: string[]) => {
-        this.warmSessionIds = sessionIds;
-      },
-      getSubscribedSessionIds: () => this.subscribedSessionIds,
-      setSubscribedSessionIds: (sessionIds: string[]) => {
-        this.subscribedSessionIds = sessionIds;
-      },
-      ensureEntry: (sessionId: string) => this.ensureEntry(sessionId),
-      invalidateSupportLoadsWithoutAuthoritativeRevision: (entry: InternalEntry) =>
-        this.invalidateSupportLoadsWithoutAuthoritativeRevision(entry),
-      resolveRequestedStateRev: (entry: InternalEntry) => this.resolveRequestedStateRev(entry),
-      setSessionLoadState: (entry: InternalEntry, next: SessionLoadState) =>
-        this.setSessionLoadState(entry, next),
-      setFatalError: (entry: InternalEntry, message: string) => this.setFatalError(entry, message),
-      syncSupportLoadsForOpenSession: (entry: InternalEntry) => this.syncSupportLoadsForOpenSession(entry),
-      resolveSessionMode: (sessionId: string, entry?: InternalEntry, explicitMode?: SessionMode) =>
-        this.resolveSessionMode(sessionId, entry, explicitMode),
-      shouldFailPendingSessionOpen: () => this.shouldFailPendingSessionOpen(),
-      refreshSubscriptions: (opts?: { emitIfUnchanged?: boolean }) => this.refreshSubscriptions(opts),
-      publish: () => this.publish(),
-      replicaDispatch: (cmd: SessionReplicaCommand) => this.replicaDispatch(cmd),
-    };
+    return createSessionLifecycleHost(this as never);
   }
 
   private createWorkspaceAuthorityHost() {
-    return {
-      getWorkspaceSnapshotState: () => this.workspaceSnapshotState,
-      setWorkspaceSnapshotState: (state: SessionSupervisorWorkspaceSnapshotState) => {
-        this.workspaceSnapshotState = state;
-      },
-      getWorkspaceSessionHeadsById: () => this.workspaceSessionHeadsById,
-      setWorkspaceSessionHeadsById: (heads: Map<string, SessionHeadSnapshot>) => {
-        this.workspaceSessionHeadsById = heads;
-      },
-      getWorkspaceActivePrimarySessionIds: () => this.workspaceActivePrimarySessionIds,
-      setWorkspaceActivePrimarySessionIds: (sessionIds: string[]) => {
-        this.workspaceActivePrimarySessionIds = sessionIds;
-      },
-      mapConnection: (connection: WorkspaceActiveSnapshotState["connection"]) =>
-        this.mapConnection(connection),
-      setConnection: (next: ConnectionStatus) => this.setConnection(next),
-      syncActiveSnapshot: (state: WorkspaceActiveSnapshotState) => this.syncActiveSnapshot(state),
-      markOpenSessionsRecovering: () => this.markOpenSessionsRecovering(),
-      rehydrateRecoveringOpenSessions: () => this.rehydrateRecoveringOpenSessions(),
-      refreshSubscriptions: (opts?: { emitIfUnchanged?: boolean }) => this.refreshSubscriptions(opts),
-      emitSubscribedSessions: () => this.emitSubscribedSessions(),
-      clearTaskThoughts: (taskId: string) => this.clearTaskThoughts(taskId),
-      publish: () => this.publish(),
-      syncSupportLoadsForOpenSession: (entry: InternalEntry) => this.syncSupportLoadsForOpenSession(entry),
-      replicaDispatch: (cmd: SessionReplicaCommand) => this.replicaDispatch(cmd),
-      entries: this.entries,
-      ensureEntry: (sessionId: string) => this.ensureEntry(sessionId),
-      setSessionLoadState: (entry: InternalEntry, next: SessionLoadState) =>
-        this.setSessionLoadState(entry, next),
-    };
+    return createWorkspaceAuthorityHost(this as never);
   }
 
   private createWorkspaceActiveSyncHost() {
-    return {
-      ensureEntry: (sessionId: string) => this.ensureEntry(sessionId),
-      getWorkspaceSessionHeadsById: () => this.workspaceSessionHeadsById,
-      replicaDispatch: (cmd: SessionReplicaCommand) => this.replicaDispatch(cmd),
-    };
+    return createWorkspaceActiveSyncHost(this as never);
   }
 
   resolveSessionMode(
@@ -724,85 +485,47 @@ export class SessionSupervisor {
     entry?: InternalEntry,
     explicitMode?: SessionMode,
   ): SessionMode | null {
-    return resolveSessionMode.call(this, sessionId, entry, explicitMode);
+    return resolveSupervisorSessionMode(this as never, sessionId, entry, explicitMode);
   }
 
   private shouldFailPendingSessionOpen() {
-    return shouldFailPendingSessionOpen(this.workspaceSnapshotState);
+    return shouldFailPendingSupervisorSessionOpen(this as never);
   }
 
   setSessionLoadState(entry: InternalEntry, next: SessionLoadState) {
-    if (entry.loadState === next) return;
-    entry.loadState = next;
+    setSupervisorSessionLoadState(entry, next);
   }
 
   bumpTurnsRev(entry: InternalEntry) {
-    entry.turnsRev += 1;
+    bumpSupervisorTurnsRev(entry);
   }
 
   bumpMessagesRev(entry: InternalEntry) {
-    entry.messagesRev += 1;
+    bumpSupervisorMessagesRev(entry);
   }
 
   bumpEventsRev(entry: InternalEntry) {
-    entry.eventsRev += 1;
+    bumpSupervisorEventsRev(entry);
   }
 
   private setFatalError(entry: InternalEntry, message: string) {
-    emitUiDiagnostic({
-      source: "session_supervisor",
-      code: "session.load_fatal",
-      severity: "error",
-      fatal: true,
-      message,
-      context: {
-        sessionId: entry.sessionId,
-        mode: entry.mode ?? null,
-      },
-    });
-    entry.error = message;
-    this.setSessionLoadState(entry, "fatal");
+    setSupervisorFatalError(entry, message);
   }
 
   private markOpenSessionsRecovering() {
-    markOpenSessionsRecovering({ entries: this.entries, emitSubscribedSessions: () => this.emitSubscribedSessions(), publish: () => this.publish() });
+    markOpenSessionsRecoveringForSupervisor(this as never);
   }
 
   private rehydrateRecoveringOpenSessions() {
-    let changed = false;
-    for (const entry of this.entries.values()) {
-      if (entry.refCount <= 0) continue;
-      if (entry.loadState !== "recovering" && entry.freshness !== "recovering") continue;
-      entry.error = undefined;
-      entry.updatedAtMs = Date.now();
-      changed = true;
-      this.replicaDispatch({
-        type: "hydrate_session_head",
-        sessionId: entry.sessionId,
-        force: true,
-        silent: true,
-      });
-    }
-    if (changed) {
-      this.publish();
-    }
+    rehydrateRecoveringOpenSessions(this as never);
   }
 
   private refreshSubscriptions(opts?: { emitIfUnchanged?: boolean }) {
-    refreshSubscriptions({
-      entries: this.entries,
-      activeTaskSessionIds: this.activeTaskSessionIds,
-      warmSessionIds: this.warmSessionIds,
-      subscribedSessionIds: this.subscribedSessionIds,
-      setSubscribedSessionIds: (next) => { this.subscribedSessionIds = next; },
-      emitSubscribedSessions: () => this.emitSubscribedSessions(),
-      ensureEntry: (sessionId) => this.ensureEntry(sessionId),
-      publish: () => this.publish(),
-    }, opts);
+    refreshSupervisorSubscriptions(this as never, opts);
   }
 
   private emitSubscribedSessions() {
-    emitSubscribedSessions(this.subscribedSessionIdsSink, this.buildSubscribedSessions());
+    emitSupervisorSubscribedSessions(this as never);
   }
 
   onEvictSession = (sessionId: string) => {
@@ -810,6 +533,6 @@ export class SessionSupervisor {
   };
 
   private syncActiveSnapshot(state: WorkspaceActiveSnapshotState) {
-    syncWorkspaceAuthorityActiveSnapshot(this.createWorkspaceActiveSyncHost(), state);
+    syncSupervisorActiveSnapshot(this as never, state);
   }
 }

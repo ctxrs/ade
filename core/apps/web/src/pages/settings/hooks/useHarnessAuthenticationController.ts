@@ -9,10 +9,10 @@ import {
   type SetStateAction,
 } from "react";
 import {
-  upsertCursorAccount,
   type AmpAccountsResponse,
   type ClaudeAccountsResponse,
   type CodexAccountsResponse,
+  type CodexLoginStatus,
   type CopilotAccountsResponse,
   type CursorAccountsResponse,
   type GeminiAccountsResponse,
@@ -23,8 +23,6 @@ import {
   type QwenAccountsResponse,
 } from "../../../api/client";
 import { subscribeDaemonConnection } from "../../../api/daemonConnection";
-import { desktopStartCodexLoginRelay, isDesktopApp, openExternalLink } from "../../../utils/desktop";
-import { trackFeatureUsed } from "../../../utils/analytics";
 import {
   invalidateHostProvidersBootstrap,
   invalidateProvidersBootstrap,
@@ -36,16 +34,6 @@ import {
   type ProviderOnboardingInstallState,
 } from "../../../state/providerOnboardingCoordinator";
 import {
-  deleteProviderAccount as executeDeleteProviderAccount,
-  deleteProviderEndpoint as executeDeleteProviderEndpoint,
-  refreshProviderEndpointModels as executeRefreshProviderEndpointModels,
-  selectProviderSubscriptionAccount as executeSelectProviderSubscriptionAccount,
-  selectProviderSource as executeSelectProviderSource,
-  selectSubscriptionSourceIfSupported as executeSelectSubscriptionSourceIfSupported,
-  submitProviderEndpointAuth,
-  type ProviderAccountMutationProviderId,
-} from "../../../state/providerOnboardingActions";
-import {
   createMissingProviderOwnerScopeError,
   getProviderOwnerScopeKeyOrNull,
   getProviderOwnerScopeOrNull,
@@ -53,28 +41,15 @@ import {
 import type { HarnessAuthModalState, InstallSession } from "../SettingsPage.types";
 import type { HarnessAuthRow } from "../harnessAuthRows";
 import {
-  defaultShapeForHarnessProvider,
-  normalizeOptionalBaseUrl,
-  nextDefaultEndpointName,
-  nextTokenEndpointName,
-} from "../harnessEndpointProviders";
-import {
-  harnessEndpointRequiresApiShape,
   harnessEndpointRequiresBaseUrl,
   messageFromError,
-  preferredModelIdFromEndpointSummary,
   supportsHarnessEndpointConfigStatic,
   supportsHarnessSubscriptionAuth,
   toErrorObject,
-  validateHarnessEndpointConfigForOwnerScope,
 } from "./harnessAuth/capabilities";
-import { runHarnessSubscriptionFlow } from "./harnessAuth/subscriptionFlow";
 import { useHarnessAuthAccountCollections } from "./harnessAuth/useHarnessAuthAccountCollections";
+import { useHarnessAuthenticationActions } from "./harnessAuth/useHarnessAuthenticationActions";
 import { useHarnessAuthModalController } from "./harnessAuth/useHarnessAuthModalController";
-import {
-  acknowledgeProviderRuntimeWarnings,
-  getProviderRuntimeWarningIds,
-} from "../../../utils/providerRuntimeWarnings";
 
 export {
   extractGithubDeviceCodeFromAuthUrl,
@@ -145,6 +120,7 @@ export type HarnessAuthenticationController = {
 };
 
 type StateSetter<T> = Dispatch<SetStateAction<T>>;
+type StoreChangeListener = () => void;
 
 const toInstallSession = (
   session: ProviderOnboardingInstallState,
@@ -214,7 +190,7 @@ export function useHarnessAuthenticationController({
   const [cursorAccountsBusy, setCursorAccountsBusy] = useState(false);
   const [ampAccountsBusy, setAmpAccountsBusy] = useState(false);
   const ownerScopeKey = useSyncExternalStore(
-    useCallback((listener) => subscribeDaemonConnection((_connection) => listener()), []),
+    useCallback((listener: StoreChangeListener) => subscribeDaemonConnection(() => listener()), []),
     useCallback(() => getProviderOwnerScopeKeyOrNull(workspaceId), [workspaceId]),
     useCallback(() => getProviderOwnerScopeKeyOrNull(workspaceId), [workspaceId]),
   );
@@ -399,7 +375,9 @@ export function useHarnessAuthenticationController({
 
   useEffect(() => {
     if (!enabled || !workspaceId) return;
-    const pending = codexAccounts?.logins?.some((login) => login.status === "pending") ?? false;
+    const pending = codexAccounts?.logins?.some(
+      (login: CodexLoginStatus) => login.status === "pending",
+    ) ?? false;
     if (pending) {
       previousCodexPendingRef.current = true;
       return;
@@ -413,494 +391,80 @@ export function useHarnessAuthenticationController({
     }).catch(() => {});
   }, [codexAccounts, enabled, onboarding, workspaceId]);
 
-  const runDeleteProviderAccount = useCallback(
-    async <TKey extends ProviderAccountMutationProviderId>(
-      providerId: TKey,
-      accountId: string,
-      setBusy: StateSetter<boolean>,
-    ) => {
-      await mutateProviderAccount({
-        mutate: async () => {
-          await executeDeleteProviderAccount(requireOwnerScope(), providerId, accountId);
-        },
-        setBusy,
-        setProviderError,
-      });
-    },
-    [requireOwnerScope],
-  );
-
-  const runSelectProviderSubscriptionAccount = useCallback(
-    async <TKey extends ProviderAccountMutationProviderId>(
-      providerId: TKey,
-      accountId: string | null,
-      setBusy: StateSetter<boolean>,
-    ) => {
-      await mutateProviderAccount({
-        mutate: async () => {
-          await executeSelectProviderSubscriptionAccount({
-            ownerScope: requireOwnerScope(),
-            providerId,
-            accountId,
-            supportsEndpointConfig: supportsHarnessEndpointConfig(providerId),
-          });
-          await onboarding.ensureProviderAuthSummary(providerId, { force: true, trigger: "explicit" });
-        },
-        setBusy,
-        setProviderError,
-      });
-    },
-    [onboarding, requireOwnerScope, supportsHarnessEndpointConfig],
-  );
-
-  const onDeleteProviderEndpoint = useCallback(async (providerId: string, endpointId: string) => {
-    setProviderHarnessBusyForProvider(providerId, true);
-    setProviderError(null);
-    try {
-      await executeDeleteProviderEndpoint(requireOwnerScope(), providerId, endpointId);
-      await refreshProviderSlicesAfterMutation(providerId);
-    } catch (error) {
-      setProviderError(messageFromError(error));
-    } finally {
-      setProviderHarnessBusyForProvider(providerId, false);
-    }
-  }, [refreshProviderSlicesAfterMutation, requireOwnerScope, setProviderHarnessBusyForProvider]);
-
-  const onRefreshProviderEndpointModels = useCallback(async (providerId: string, endpointId: string) => {
-    setProviderHarnessBusyForProvider(providerId, true);
-    setProviderError(null);
-    try {
-      await executeRefreshProviderEndpointModels(requireOwnerScope(), providerId, endpointId);
-      await refreshProviderSlicesAfterMutation(providerId);
-    } catch (error) {
-      setProviderError(messageFromError(error));
-    } finally {
-      setProviderHarnessBusyForProvider(providerId, false);
-    }
-  }, [refreshProviderSlicesAfterMutation, requireOwnerScope, setProviderHarnessBusyForProvider]);
-
-  const onSelectProviderSource = useCallback(
-    async (providerId: string, sourceKind: "subscription" | "endpoint", endpointId?: string | null) => {
-      const ownerScope = requireOwnerScope();
-      setProviderHarnessBusyForProvider(providerId, true);
-      setProviderError(null);
-      try {
-        await executeSelectProviderSource(ownerScope, providerId, {
-          sourceKind,
-          endpointId: endpointId ?? null,
-        });
-        trackFeatureUsed("provider_source_selected", {
-          provider_id: providerId,
-          source_kind: sourceKind,
-          scope_kind: ownerScope.kind,
-        });
-      } catch (error) {
-        setProviderError(messageFromError(error));
-        throw toErrorObject(error);
-      } finally {
-        setProviderHarnessBusyForProvider(providerId, false);
-      }
-    },
-    [requireOwnerScope, setProviderHarnessBusyForProvider],
-  );
-
-  const selectSubscriptionSourceIfSupported = useCallback(
-    async (providerId: string) => {
-      await executeSelectSubscriptionSourceIfSupported({
-        ownerScope: requireOwnerScope(),
-        providerId,
-        supportsEndpointConfig: supportsHarnessEndpointConfig(providerId),
-        onEndpointUnsupported: () => {
-          markProviderEndpointUnsupported(providerId);
-        },
-      });
-    },
-    [
-      markProviderEndpointUnsupported,
-      requireOwnerScope,
-      supportsHarnessEndpointConfig,
-    ],
-  );
-
-  const openHarnessAuthModal = useCallback((providerId: string) => {
-    setProviderError(null);
-    baseOpenHarnessAuthModal(providerId);
-  }, [baseOpenHarnessAuthModal]);
-
-  const closeHarnessAuthModal = useCallback(() => {
-    baseCloseHarnessAuthModal();
-  }, [baseCloseHarnessAuthModal]);
-
-  const patchHarnessAuthModal = useCallback((patch: Partial<HarnessAuthModalState>) => {
-    basePatchHarnessAuthModal(patch);
-  }, [basePatchHarnessAuthModal]);
-
-  const submitHarnessApiKeyModal = useCallback(async () => {
-    const modal = harnessAuthModal;
-    if (!modal || modal.stage !== "api_key") return;
-    if (modal.api_key_busy) return;
-
-    const isCursor = modal.provider_id === "cursor";
-    if (!isCursor && !supportsHarnessEndpointConfig(modal.provider_id)) {
-      setProviderError("API key auth is not configurable for this harness yet.");
-      return;
-    }
-
-    const requiresBaseUrl = harnessEndpointRequiresBaseUrl(modal.provider_id);
-    const requiresApiShape = harnessEndpointRequiresApiShape(modal.provider_id);
-    const nameInput = modal.endpoint_name.trim();
-    const existingNames = (providerHarnessConfigRef.current[modal.provider_id]?.endpoints ?? []).map((endpoint) => endpoint.name);
-    const name = nameInput
-      || (requiresBaseUrl
-        ? nextDefaultEndpointName(modal.endpoint_provider_id, existingNames)
-        : nextTokenEndpointName(modal.provider_id, existingNames));
-    const geminiAuthType = modal.provider_id === "gemini" ? modal.gemini_endpoint_auth_type : null;
-    const usesGeminiVertexServiceAccount = modal.provider_id === "gemini" && geminiAuthType === "vertex_ai";
-    const base = modal.base_url.trim();
-    const normalizedBase = normalizeOptionalBaseUrl(base);
-    const effectiveBaseUrl = modal.provider_id === "gemini" ? null : normalizedBase;
-    const key = modal.api_key.trim();
-    const serviceAccountJson = modal.service_account_json.trim();
-    const projectId = modal.project_id.trim();
-    const location = modal.location.trim();
-    const manualModelIds = modal.manual_model_ids
-      .split(/[\n,]/)
-      .map((value: string) => value.trim())
-      .filter((value: string) => value.length > 0);
-    const ownerScope = requireOwnerScope();
-    const existingEndpoint = (providerHarnessConfigRef.current[modal.provider_id]?.endpoints ?? [])
-      .find((endpoint) => endpoint.id === modal.endpoint_id);
-    const ownerScopeValidationError = validateHarnessEndpointConfigForOwnerScope({
-      ownerScopeKind: ownerScope.kind,
-      providerId: modal.provider_id,
-      baseUrl: effectiveBaseUrl,
-      manualModelIds,
-      existingPreferredModelId: preferredModelIdFromEndpointSummary(existingEndpoint),
-    });
-
-    if (requiresBaseUrl && !base) {
-      setProviderError("Endpoint base URL is required.");
-      return;
-    }
-    if (usesGeminiVertexServiceAccount) {
-      if (!serviceAccountJson) {
-        setProviderError("Service account JSON is required.");
-        return;
-      }
-    } else if (!key) {
-      setProviderError("API key is required.");
-      return;
-    }
-    if (ownerScopeValidationError) {
-      setProviderError(ownerScopeValidationError);
-      return;
-    }
-
-    const operation = startHarnessAuthModalOperation("modal-action");
-    patchHarnessAuthModalForOperation(operation, { api_key_busy: true });
-    setProviderError(null);
-
-    const previousSourceConfig = providerHarnessConfigRef.current[modal.provider_id];
-    const previousSourceKind = previousSourceConfig?.selected_source_kind ?? "subscription";
-    const previousEndpointId = previousSourceKind === "endpoint"
-      ? previousSourceConfig?.selected_endpoint_id ?? null
-      : null;
-
-    try {
-      if (isCursor) {
-        const label = name.trim();
-        const next = await upsertCursorAccount(key, label ? { label } : undefined);
-        await refreshProviderSlicesAfterMutation(modal.provider_id);
-        if (!operation.isCurrent()) return;
-        applyCursorAccounts(next);
-        await selectSubscriptionSourceIfSupported(modal.provider_id);
-        if (!operation.isCurrent()) return;
-        setSubscriptionSourceFallback(modal.provider_id);
-        closeHarnessAuthModalForOperation(operation);
-        return;
-      }
-
-      const result = await submitProviderEndpointAuth({
-        ownerScope,
-        providerId: modal.provider_id,
-        requestedEndpointId: modal.endpoint_id?.trim() || null,
-        name,
-        baseUrl: effectiveBaseUrl,
-        apiShape: requiresApiShape ? defaultShapeForHarnessProvider(modal.provider_id) : null,
-        authType: geminiAuthType,
-        apiKey: usesGeminiVertexServiceAccount ? null : key,
-        serviceAccountJson: usesGeminiVertexServiceAccount ? serviceAccountJson : null,
-        projectId: usesGeminiVertexServiceAccount ? (projectId || null) : null,
-        location: usesGeminiVertexServiceAccount ? (location || null) : null,
-        manualModelIds,
-        previousSelection: {
-          sourceKind: previousSourceKind,
-          endpointId: previousEndpointId,
-        },
-        isStale: () => !operation.isCurrent(),
-      });
-
-      if (operation.isCurrent()) {
-        patchHarnessAuthModalForOperation(operation, { endpoint_id: result.selectedEndpointId });
-      }
-
-      if (result.status === "applied") {
-        closeHarnessAuthModalForOperation(operation);
-        return;
-      }
-
-      if (result.status === "rolled_back") {
-        if (operation.isCurrent()) {
-          setProviderError(result.message);
-        }
-        return;
-      }
-
-      if (result.status === "rollback_failed") {
-        if (operation.isCurrent()) {
-          setProviderError(
-            result.message
-              ? `${result.message} Failed to restore previous provider source: ${messageFromError(result.rollbackError)}`
-              : `Failed to restore previous provider source: ${messageFromError(result.rollbackError)}`,
-          );
-        }
-        return;
-      }
-    } catch (error) {
-      if (operation.isCurrent()) {
-        setProviderError(messageFromError(error));
-      }
-    } finally {
-      patchHarnessAuthModalForOperation(operation, { api_key_busy: false });
-      finishHarnessAuthModalOperation(operation);
-    }
-  }, [
+  const {
+    closeHarnessAuthModal,
+    onAmpDelete,
+    onCancelInstall,
+    onClaudeDelete,
+    onCodexDelete,
+    onCopilotDelete,
+    onCursorDelete,
+    onDeleteProviderEndpoint,
+    onGeminiDelete,
+    onInstall,
+    onInstallAll,
+    onKimiDelete,
+    onMistralDelete,
+    onQwenDelete,
+    onRefreshProviderEndpointModels,
+    onSelectHarnessAuthRow,
+    openHarnessAuthModal,
+    patchHarnessAuthModal,
+    submitHarnessApiKeyModal,
+    submitHarnessSubscriptionModal,
+  } = useHarnessAuthenticationActions({
+    workspaceId,
+    ownerScopeKey,
     harnessAuthModal,
-    closeHarnessAuthModalForOperation,
-    finishHarnessAuthModalOperation,
-    patchHarnessAuthModalForOperation,
-    refreshProviderSlicesAfterMutation,
+    onboarding,
+    providerHarnessConfigRef,
+    supportsHarnessEndpointConfig,
     requireOwnerScope,
-    selectSubscriptionSourceIfSupported,
+    mutateProviderAccount,
+    markProviderEndpointUnsupported,
+    setProviderHarnessBusyForProvider,
     setSubscriptionSourceFallback,
+    refreshProviderSlicesAfterMutation,
+    setProviderError,
+    setInstallBusy,
+    applyCursorAccounts,
+    baseOpenHarnessAuthModal,
+    baseCloseHarnessAuthModal,
+    basePatchHarnessAuthModal,
     startHarnessAuthModalOperation,
-  ]);
-
-  const tryStartCodexDesktopRelay = useCallback(async (params: {
-    accountId: string;
-    expectedCallbackUrl?: string | null;
-    completionToken?: string | null;
-  }) => {
-    if (!isDesktopApp()) return false;
-    if (!params.expectedCallbackUrl) return false;
-    if (!params.completionToken) return false;
-    try {
-      return await desktopStartCodexLoginRelay({
-        login_id: params.accountId,
-        callback_url: params.expectedCallbackUrl,
-        completion_token: params.completionToken,
-      });
-    } catch {
-      return false;
-    }
-  }, []);
-
-  const openCodexAuthUrl = useCallback(
-    async (
-      url: string,
-      params?: { accountId: string; expectedCallbackUrl: string | null; completionToken: string | null },
-    ) => {
-      if (!url) return;
-      if (params) {
-        await tryStartCodexDesktopRelay(params);
-      }
-      await openExternalLink(url);
-    },
-    [tryStartCodexDesktopRelay],
-  );
-
-  const submitHarnessSubscriptionModal = useCallback(async () => {
-    const modal = harnessAuthModal;
-    if (!modal) return;
-
-    if (modal.subscription_busy) {
-      return;
-    }
-
-    if (hasActiveHarnessAuthModalOperation("subscription-flow")) {
-      return;
-    }
-
-    const flow = startHarnessAuthModalOperation("subscription-flow");
-    patchHarnessAuthModalForOperation(flow, {
-      stage: "subscription",
-      subscription_phase: "editing",
-      subscription_busy: true,
-      subscription_status: "Starting subscription flow...",
-    });
-    setProviderError(null);
-    try {
-      await runHarnessSubscriptionFlow({
-        modal,
-        workspaceId,
-        flow,
-        patchHarnessAuthModalForOperation,
-        markAwaitingBrowserForOperation,
-        markFinalizingForOperation,
-        failSubscriptionFlowForOperation,
-        closeHarnessAuthModalForOperation,
-        setProviderError,
-        refreshBootstrapAfterMutation: refreshProviderSlicesAfterMutation,
-        selectSubscriptionSourceIfSupported,
-        refreshCodexAccounts,
-        refreshClaudeAccounts,
-        refreshGeminiAccounts,
-        refreshQwenAccounts,
-        refreshKimiAccounts,
-        refreshCursorAccounts,
-        refreshAmpAccounts,
-        refreshMistralAccounts,
-        setClaudeAccounts: setScopedClaudeAccounts,
-        setCopilotAccounts: setScopedCopilotAccounts,
-        openCodexAuthUrl,
-      });
-    } finally {
-      patchHarnessAuthModalForOperation(flow, { subscription_busy: false });
-      finishHarnessAuthModalOperation(flow);
-    }
-  }, [
-    harnessAuthModal,
-    closeHarnessAuthModalForOperation,
     finishHarnessAuthModalOperation,
-    failSubscriptionFlowForOperation,
     hasActiveHarnessAuthModalOperation,
+    patchHarnessAuthModalForOperation,
     markAwaitingBrowserForOperation,
     markFinalizingForOperation,
-    openCodexAuthUrl,
-    patchHarnessAuthModalForOperation,
-    refreshAmpAccounts,
-    refreshProviderSlicesAfterMutation,
-    refreshClaudeAccounts,
+    failSubscriptionFlowForOperation,
+    closeHarnessAuthModalForOperation,
     refreshCodexAccounts,
-    refreshCursorAccounts,
+    refreshClaudeAccounts,
     refreshGeminiAccounts,
-    refreshKimiAccounts,
-    refreshMistralAccounts,
     refreshQwenAccounts,
+    refreshKimiAccounts,
+    refreshCursorAccounts,
+    refreshAmpAccounts,
+    refreshMistralAccounts,
     setScopedClaudeAccounts,
     setScopedCopilotAccounts,
-    selectSubscriptionSourceIfSupported,
-    startHarnessAuthModalOperation,
-    workspaceId,
-  ]);
-
-  const onCodexDelete = useCallback(async (accountId: string) => {
-    await runDeleteProviderAccount("codex", accountId, setCodexAccountsBusy);
-  }, [runDeleteProviderAccount]);
-
-  const onClaudeDelete = useCallback(async (accountId: string) => {
-    await runDeleteProviderAccount("claude-crp", accountId, setClaudeAccountsBusy);
-  }, [runDeleteProviderAccount]);
-
-  const onGeminiDelete = useCallback(async (accountId: string) => {
-    await runDeleteProviderAccount("gemini", accountId, setGeminiAccountsBusy);
-  }, [runDeleteProviderAccount]);
-
-  const onQwenDelete = useCallback(async (accountId: string) => {
-    await runDeleteProviderAccount("qwen", accountId, setQwenAccountsBusy);
-  }, [runDeleteProviderAccount]);
-
-  const onKimiDelete = useCallback(async (accountId: string) => {
-    await runDeleteProviderAccount("kimi", accountId, setKimiAccountsBusy);
-  }, [runDeleteProviderAccount]);
-
-  const onMistralDelete = useCallback(async (accountId: string) => {
-    await runDeleteProviderAccount("mistral", accountId, setMistralAccountsBusy);
-  }, [runDeleteProviderAccount]);
-
-  const onCopilotDelete = useCallback(async (accountId: string) => {
-    await runDeleteProviderAccount("copilot", accountId, setCopilotAccountsBusy);
-  }, [runDeleteProviderAccount]);
-
-  const onCursorDelete = useCallback(async (accountId: string) => {
-    await runDeleteProviderAccount("cursor", accountId, setCursorAccountsBusy);
-  }, [runDeleteProviderAccount]);
-
-  const onAmpDelete = useCallback(async (accountId: string) => {
-    await runDeleteProviderAccount("amp", accountId, setAmpAccountsBusy);
-  }, [runDeleteProviderAccount]);
-
-  const onSelectHarnessAuthRow = useCallback(async (providerId: string, row: HarnessAuthRow) => {
-    try {
-      if (!row.selectable) return;
-      if (row.kind === "api_key" && row.endpoint_id) {
-        await onSelectProviderSource(providerId, "endpoint", row.endpoint_id);
-        return;
-      }
-      if (providerId === "codex" && row.account_id) {
-        await runSelectProviderSubscriptionAccount("codex", row.account_id, setCodexAccountsBusy);
-      } else if (providerId === "claude-crp" && row.account_id) {
-        await runSelectProviderSubscriptionAccount("claude-crp", row.account_id, setClaudeAccountsBusy);
-      } else if (providerId === "gemini" && row.account_id) {
-        await runSelectProviderSubscriptionAccount("gemini", row.account_id, setGeminiAccountsBusy);
-      } else if (providerId === "qwen" && row.account_id) {
-        await runSelectProviderSubscriptionAccount("qwen", row.account_id, setQwenAccountsBusy);
-      } else if (providerId === "kimi" && row.account_id) {
-        await runSelectProviderSubscriptionAccount("kimi", row.account_id, setKimiAccountsBusy);
-      } else if (providerId === "mistral" && row.account_id) {
-        await runSelectProviderSubscriptionAccount("mistral", row.account_id, setMistralAccountsBusy);
-      } else if (providerId === "copilot" && row.account_id) {
-        await runSelectProviderSubscriptionAccount("copilot", row.account_id, setCopilotAccountsBusy);
-      } else if (providerId === "cursor" && row.account_id) {
-        await runSelectProviderSubscriptionAccount("cursor", row.account_id, setCursorAccountsBusy);
-      } else if (providerId === "amp" && row.account_id) {
-        await runSelectProviderSubscriptionAccount("amp", row.account_id, setAmpAccountsBusy);
-      }
-    } catch (error) {
-      setProviderError(messageFromError(error));
-    }
-  }, [
-    onSelectProviderSource,
-    runSelectProviderSubscriptionAccount,
-  ]);
-
-  const onInstall = useCallback(async (providerId: string) => {
-    setInstallBusy(providerId);
-    setProviderError(null);
-    try {
-      await onboarding.startProviderInstall(providerId);
-    } catch (error) {
-      setProviderError(messageFromError(error));
-    } finally {
-      setInstallBusy(null);
-    }
-  }, [onboarding]);
-
-  const onInstallAll = useCallback(async () => {
-    setInstallBusy("all");
-    setProviderError(null);
-    try {
-      acknowledgeProviderRuntimeWarnings(ownerScopeKey ?? workspaceId, getProviderRuntimeWarningIds(onboarding.providersById));
-      await onboarding.startAllProviderInstalls();
-    } catch (error) {
-      setProviderError(messageFromError(error));
-    } finally {
-      setInstallBusy(null);
-    }
-  }, [onboarding, ownerScopeKey, workspaceId]);
-
-  const onCancelInstall = useCallback(async (providerId: string) => {
-    setProviderError(null);
-    try {
-      await onboarding.cancelProviderInstall(providerId);
-    } catch (error) {
-      setProviderError(messageFromError(error));
-    }
-  }, [onboarding]);
+    setCodexAccountsBusy,
+    setClaudeAccountsBusy,
+    setGeminiAccountsBusy,
+    setQwenAccountsBusy,
+    setKimiAccountsBusy,
+    setMistralAccountsBusy,
+    setCopilotAccountsBusy,
+    setCursorAccountsBusy,
+    setAmpAccountsBusy,
+  });
 
   useEffect(() => {
     if (!enabled) return;
-    const pending = codexAccounts?.logins?.some((login) => login.status === "pending");
+    const pending = codexAccounts?.logins?.some(
+      (login: CodexLoginStatus) => login.status === "pending",
+    );
     if (!pending) return;
     const interval = window.setInterval(() => {
       refreshCodexAccounts({ silent: true }).catch(() => {});

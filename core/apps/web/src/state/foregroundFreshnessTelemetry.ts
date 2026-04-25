@@ -12,6 +12,13 @@ import {
   trackRendererBacklogSample,
   trackRendererBacklogSpike,
 } from "../utils/analytics";
+import {
+  backlogBucketForDuration,
+  type ForegroundFreshnessQueueLane,
+  type ForegroundFreshnessSurface,
+  gapBucketForDuration,
+  severityBucketForDuration,
+} from "./foregroundFreshnessTelemetryBuckets";
 
 const SWITCH_FIRST_PAINT_SLA_MS = 100;
 const SWITCH_AUTHORITATIVE_SLA_MS = 200;
@@ -27,16 +34,8 @@ const FIRST_PAINT_TIMEOUT_MS = 500;
 const SLA_DIAGNOSTIC_DEDUPE_MS = 60_000;
 const GAUGE_SAMPLE_INTERVAL_MS = 1000;
 
-type Surface =
-  | "final_delivery"
-  | "interrupt"
-  | "session_switch"
-  | "gap_recovery"
-  | "workspace_backlog"
-  | "foreground_backlog"
-  | "desktop_startup";
-
-type QueueLane = "foreground" | "workspace";
+type Surface = ForegroundFreshnessSurface;
+type QueueLane = ForegroundFreshnessQueueLane;
 
 type PendingSwitch = {
   startedAtMs: number;
@@ -81,26 +80,6 @@ const nowMs = (): number => {
     return (performance.timeOrigin ?? Date.now()) + performance.now();
   }
   return Date.now();
-};
-
-const severityBucketForDuration = (durationMs: number): "slight" | "moderate" | "severe" => {
-  if (durationMs < 250) return "slight";
-  if (durationMs < 1000) return "moderate";
-  return "severe";
-};
-
-const gapBucketForDuration = (
-  durationMs: number,
-): "under_250ms" | "250ms_to_1000ms" | "1000ms_plus" => {
-  if (durationMs < 250) return "under_250ms";
-  if (durationMs < 1000) return "250ms_to_1000ms";
-  return "1000ms_plus";
-};
-
-const backlogBucketForDuration = (durationMs: number): "over_75ms" | "over_250ms" | "over_1000ms" => {
-  if (durationMs >= 1000) return "over_1000ms";
-  if (durationMs >= 250) return "over_250ms";
-  return "over_75ms";
 };
 
 const finalKey = (sessionId: string, turnId: string): string => `${sessionId}:${turnId}`;
