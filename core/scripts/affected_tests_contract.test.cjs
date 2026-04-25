@@ -60,7 +60,7 @@ test("ctx-http changes fan out into suite-level commands", () => {
   assert.deepEqual(commands, [
     "bash -lc node scripts/ctx_http_suite_task.cjs --suite attachments-routing",
     "bash -lc node scripts/ctx_http_suite_task.cjs --suite base",
-    "bash -lc node scripts/ctx_http_suite_task.cjs --suite lsp",
+    "bash -lc node scripts/ctx_http_suite_task.cjs --suite buffers",
     "bash -lc node scripts/ctx_http_suite_task.cjs --suite provider-auth",
     "bash -lc node scripts/ctx_http_suite_task.cjs --suite provider-runtime-simulated",
     "bash -lc node scripts/ctx_http_suite_task.cjs --suite repo-vcs",
@@ -77,6 +77,7 @@ test("ctx-providers changes expand into affected dependency-truthful Rust and su
 
   assert.deepEqual(commands, [
     "bash -lc pnpm rust:turbo:check",
+    "bash -lc node scripts/ctx_http_suite_task.cjs --suite buffers",
     "bash -lc node scripts/ctx_http_suite_task.cjs --suite provider-auth",
     "bash -lc node scripts/ctx_http_suite_task.cjs --suite provider-runtime-simulated",
     "bash -lc node scripts/ctx_http_suite_task.cjs --suite sandbox-runtime-simulated",

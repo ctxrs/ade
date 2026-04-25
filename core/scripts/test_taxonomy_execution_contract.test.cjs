@@ -18,7 +18,7 @@ test("agent-default fans out ctx-http shared changes into suite-level commands",
 
   assert.deepEqual(plan.commands, [
     "node scripts/ctx_http_suite_task.cjs --suite attachments-routing",
-    "node scripts/ctx_http_suite_task.cjs --suite lsp",
+    "node scripts/ctx_http_suite_task.cjs --suite buffers",
     "node scripts/ctx_http_suite_task.cjs --suite provider-auth",
     "node scripts/ctx_http_suite_task.cjs --suite provider-runtime-simulated",
     "node scripts/ctx_http_suite_task.cjs --suite repo-vcs",

@@ -55,11 +55,6 @@ test("resolveCrates expands reverse deps automatically for ctx-execution-runtime
       deps: ["ctx-http"],
       reverseDeps: [],
     },
-    {
-      crateName: "ctx-lsp",
-      deps: [],
-      reverseDeps: [],
-    },
   ];
   const graph = {
     crates,
@@ -210,7 +205,7 @@ test("buildBazelTargetBatches isolates ctx-http suite aliases into sequential ba
   assert.deepEqual(buildBazelTargetBatches(["ctx-http"]), [
     ["//core/crates/ctx-http:attachments-routing"],
     ["//core/crates/ctx-http:base"],
-    ["//core/crates/ctx-http:lsp"],
+    ["//core/crates/ctx-http:buffers"],
     ["//core/crates/ctx-http:provider-auth"],
     ["//core/crates/ctx-http:provider-runtime-live"],
     ["//core/crates/ctx-http:provider-runtime-simulated"],

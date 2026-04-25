@@ -35,11 +35,6 @@ const FAMILIES = [
     description: "Repo bootstrap, worktree lifecycle, merge queue, VCS snapshots, and diff flows.",
   },
   {
-    id: "lsp-editing",
-    title: "LSP Editing",
-    description: "LSP integration, editing plans, file completions, and buffer orchestration.",
-  },
-  {
     id: "turns-terminal",
     title: "Turns And Terminal",
     description: "Turns, streaming assistant output, terminal orchestration, and message durability.",

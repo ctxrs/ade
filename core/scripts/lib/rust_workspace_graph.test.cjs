@@ -74,19 +74,28 @@ test("generated package scripts include per-crate and ctx-http suite tasks", () 
 test("generated turbo tasks include dependency-closure inputs", () => {
   const graph = buildWorkspaceGraph(coreRoot);
   const tasks = buildGeneratedTurboTasks(graph);
-  const ctxHttpLspSuiteTask = tasks["rust:ctx-http:test:lsp"];
+  const ctxHttpBuffersSuiteTask = tasks["rust:ctx-http:test:buffers"];
   const ctxHttpProviderAuthSuiteTask = tasks["rust:ctx-http:test:provider-auth"];
 
-  assert.equal(Array.isArray(ctxHttpLspSuiteTask.inputs), true);
-  assert.equal(ctxHttpLspSuiteTask.inputs.includes("crates/ctx-http/src/api/lsp/**"), true);
-  assert.equal(ctxHttpLspSuiteTask.inputs.includes("crates/ctx-http/src/workspace_runtime/**"), false);
-  assert.equal(ctxHttpLspSuiteTask.inputs.includes("crates/ctx-lsp/**"), true);
-  assert.equal(ctxHttpLspSuiteTask.inputs.includes("crates/ctx-http/src/api/providers/imports.rs"), false);
+  assert.equal(Array.isArray(ctxHttpBuffersSuiteTask.inputs), true);
   assert.equal(
-    ctxHttpLspSuiteTask.inputs.includes("crates/ctx-http/tests/lsp_http_e2e.rs"),
+    ctxHttpBuffersSuiteTask.inputs.includes("crates/ctx-http/src/api/buffers_api.rs"),
     true,
   );
-  assert.equal(ctxHttpLspSuiteTask.inputs.includes("scripts/ctx_http_suite_task.cjs"), true);
+  assert.equal(
+    ctxHttpBuffersSuiteTask.inputs.includes("crates/ctx-http/src/workspace_runtime/**"),
+    false,
+  );
+  assert.equal(ctxHttpBuffersSuiteTask.inputs.includes("crates/ctx-providers/**"), true);
+  assert.equal(
+    ctxHttpBuffersSuiteTask.inputs.includes("crates/ctx-http/src/api/providers/imports.rs"),
+    false,
+  );
+  assert.equal(
+    ctxHttpBuffersSuiteTask.inputs.includes("crates/ctx-http/tests/buffers_http_e2e.rs"),
+    true,
+  );
+  assert.equal(ctxHttpBuffersSuiteTask.inputs.includes("scripts/ctx_http_suite_task.cjs"), true);
 
   assert.equal(ctxHttpProviderAuthSuiteTask.inputs.includes("crates/ctx-provider-auth-import/**"), true);
   assert.equal(ctxHttpProviderAuthSuiteTask.inputs.includes("crates/ctx-http/src/api/providers/imports.rs"), true);

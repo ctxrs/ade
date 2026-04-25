@@ -180,7 +180,7 @@ test("bazel pilot marks only local phases as host-budgeted work", () => {
     argv: [
       "build",
       "//core/crates/ctx-provider-accounts:lib",
-      "//core/crates/ctx-lsp:ctx-lsp-test-server",
+      "//core/crates/ctx-http:ctx",
     ],
     env: {
       ...process.env,
@@ -272,7 +272,7 @@ test("bazel pilot emits a machine-readable phase summary with local spill accoun
     argv: [
       "build",
       "//core/crates/ctx-provider-accounts:lib",
-      "//core/crates/ctx-lsp:ctx-lsp-test-server",
+      "//core/crates/ctx-http:ctx",
     ],
     env: {
       ...process.env,
@@ -510,7 +510,7 @@ test("bazel pilot linux remote execution keeps lib builds remote and host execut
     argv: [
       "build",
       "//core/crates/ctx-provider-accounts:lib",
-      "//core/crates/ctx-lsp:ctx-lsp-test-server",
+      "//core/crates/ctx-http:ctx",
     ],
     env: {
       ...process.env,
@@ -542,7 +542,7 @@ test("bazel pilot linux remote execution keeps lib builds remote and host execut
       },
       {
         name: "local",
-        targets: ["//core/crates/ctx-lsp:ctx-lsp-test-server"],
+        targets: ["//core/crates/ctx-http:ctx"],
         hasBuildBuddyCache: true,
         hasLinuxConfig: false,
         hasBuildBuddyHeader: true,

@@ -24,7 +24,7 @@ run_rust() {
 
 case "${suite}" in
   required_integration)
-    run_rust test -q -p ctx-core -p ctx-providers -p ctx-http -p ctx-mcp -p ctx-lsp -p ctx-store
+    run_rust test -q -p ctx-core -p ctx-providers -p ctx-http -p ctx-mcp -p ctx-store
     ;;
   cross_platform)
     run_rust test -q -p ctx-http --test terminal_ws_reconnect

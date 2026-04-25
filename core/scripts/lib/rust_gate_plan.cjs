@@ -10,7 +10,6 @@ const AGENT_GATE_CRATES = [
   "ctx-harness-runtime",
   "ctx-harness-sources",
   "ctx-http",
-  "ctx-lsp",
   "ctx-linux-sandbox-runtime",
   "ctx-mcp",
   "ctx-managed-installs",
