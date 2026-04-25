@@ -666,7 +666,7 @@ pub(super) async fn handle_mobile_secure(
 
     let response_payload = proxy_secure_request(&state, device.profile_id, payload)
         .await
-        .map_err(|e| (StatusCode::BAD_GATEWAY, Json(ApiErrorResp { error: e })))?;
+        .map_err(|e| (e.status, Json(ApiErrorResp { error: e.message })))?;
 
     let response_bytes = serde_json::to_vec(&response_payload).map_err(|_| {
         (
@@ -698,7 +698,7 @@ pub(super) async fn proxy_secure_request(
     state: &Arc<AppState>,
     profile_id: ConnectionProfileId,
     mut payload: SecureRequestPayload,
-) -> Result<SecureResponsePayload, String> {
+) -> Result<SecureResponsePayload, SecureProxyError> {
     if let Some((path, query)) = payload.path.split_once('?') {
         let path = path.to_string();
         let query = query.to_string();
@@ -709,14 +709,21 @@ pub(super) async fn proxy_secure_request(
     }
     let path = payload.path.trim().to_string();
     if !path.starts_with("/api/") {
-        return Err("secure proxy only supports /api/* paths".to_string());
+        return Err(SecureProxyError::bad_request(
+            "secure proxy only supports /api/* paths",
+        ));
     }
-    if is_provider_login_management_path(&path) {
+    if secure_proxy_path_is_unnormalized(&path) {
+        return Err(SecureProxyError::bad_request(
+            "secure proxy path must be normalized",
+        ));
+    }
+    if mobile_secure_proxy_requires_desktop_auth(&path) {
         return desktop_auth_required_secure_response();
     }
 
     let method = axum::http::Method::from_bytes(payload.method.as_bytes())
-        .map_err(|_| "invalid http method".to_string())?;
+        .map_err(|_| SecureProxyError::bad_request("invalid http method"))?;
     let mut uri = path;
     if let Some(query) = payload
         .query
@@ -728,7 +735,7 @@ pub(super) async fn proxy_secure_request(
         uri.push_str(query.trim_start_matches('?'));
     }
 
-    let body = decode_body_b64(&payload.body_b64)?;
+    let body = decode_body_b64(&payload.body_b64).map_err(SecureProxyError::bad_request_owned)?;
     let mut builder = Request::builder().method(method).uri(uri);
     for (name, value) in payload.headers {
         if name.eq_ignore_ascii_case("host") || name.eq_ignore_ascii_case("content-length") {
@@ -745,7 +752,7 @@ pub(super) async fn proxy_secure_request(
 
     let mut req = builder
         .body(Body::from(body))
-        .map_err(|_| "failed to build proxied request".to_string())?;
+        .map_err(|_| SecureProxyError::bad_request("failed to build proxied request"))?;
     req.extensions_mut()
         .insert(MobileAuthContext { profile_id });
 
@@ -753,7 +760,7 @@ pub(super) async fn proxy_secure_request(
     let resp = app
         .oneshot(req)
         .await
-        .map_err(|_| "failed to proxy request".to_string())?;
+        .map_err(|_| SecureProxyError::bad_gateway("failed to proxy request"))?;
 
     let status = resp.status().as_u16();
     let headers: Vec<(String, String)> = resp
@@ -763,7 +770,7 @@ pub(super) async fn proxy_secure_request(
         .collect();
     let body_bytes = axum::body::to_bytes(resp.into_body(), 16 * 1024 * 1024)
         .await
-        .map_err(|_| "failed to read proxied response".to_string())?;
+        .map_err(|_| SecureProxyError::bad_gateway("failed to read proxied response"))?;
     let body_b64 = base64::engine::general_purpose::STANDARD.encode(body_bytes);
     Ok(SecureResponsePayload {
         status,
@@ -772,22 +779,69 @@ pub(super) async fn proxy_secure_request(
     })
 }
 
-fn is_provider_login_management_path(path: &str) -> bool {
-    let Some(rest) = path.strip_prefix("/api/providers/") else { return false; };
-    let mut segments = rest.split('/');
-    let Some(_) = segments.next() else { return false; };
-    matches!(
-        (segments.next(), segments.next(), segments.next()),
-        (Some("accounts"), Some("login"), Some(_))
-    )
+pub(super) struct SecureProxyError {
+    status: StatusCode,
+    message: String,
 }
 
-fn desktop_auth_required_secure_response() -> Result<SecureResponsePayload, String> {
-    let body = serde_json::to_vec(&ApiErrorResp { error: "desktop auth required".to_string() })
-        .map_err(|_| "failed to encode secure response".to_string())?;
+impl SecureProxyError {
+    fn bad_request(message: &str) -> Self {
+        Self {
+            status: StatusCode::BAD_REQUEST,
+            message: message.to_string(),
+        }
+    }
+
+    fn bad_request_owned(message: String) -> Self {
+        Self {
+            status: StatusCode::BAD_REQUEST,
+            message,
+        }
+    }
+
+    fn bad_gateway(message: &str) -> Self {
+        Self {
+            status: StatusCode::BAD_GATEWAY,
+            message: message.to_string(),
+        }
+    }
+}
+
+fn mobile_secure_proxy_requires_desktop_auth(path: &str) -> bool {
+    path == "/api/providers" || path.starts_with("/api/providers/")
+}
+
+fn secure_proxy_path_is_unnormalized(path: &str) -> bool {
+    if path.contains('%') {
+        return true;
+    }
+    let mut saw_leading = false;
+    for segment in path.split('/') {
+        if !saw_leading {
+            saw_leading = true;
+            if !segment.is_empty() {
+                return true;
+            }
+            continue;
+        }
+        if segment.is_empty() || segment == "." || segment == ".." {
+            return true;
+        }
+    }
+    false
+}
+
+fn desktop_auth_required_secure_response() -> Result<SecureResponsePayload, SecureProxyError> {
+    let body = serde_json::to_vec(&ApiErrorResp {
+        error: "desktop auth required".to_string(),
+    })
+    .map_err(|_| SecureProxyError::bad_gateway("failed to encode secure response"))?;
     Ok(SecureResponsePayload {
         status: StatusCode::UNAUTHORIZED.as_u16(),
-        headers: vec![(header::CONTENT_TYPE.as_str().to_string(), "application/json".to_string())],
+        headers: vec![(
+            header::CONTENT_TYPE.as_str().to_string(),
+            "application/json".to_string(),
+        )],
         body_b64: base64::engine::general_purpose::STANDARD.encode(body),
     })
 }
