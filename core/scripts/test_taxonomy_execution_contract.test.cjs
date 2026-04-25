@@ -86,7 +86,7 @@ test("agent-default escalates high-risk web state changes to the canonical preme
   });
 
   assert.deepEqual(plan.commands, [
-    "pnpm bazel:web:unit:non-pretext:foundation",
+    "pnpm bazel:web:unit:non-pretext:foundation:state",
     "pnpm bazel:web:e2e:premerge",
   ]);
 });
@@ -123,7 +123,19 @@ test("agent-default routes non-pretext web fixture changes to the foundation sha
   });
 
   assert.deepEqual(plan.commands, [
-    "pnpm bazel:web:unit:non-pretext:foundation",
+    "pnpm bazel:web:unit:non-pretext:foundation:state",
+  ]);
+});
+
+test("agent-default routes foundation utility changes to the shared foundation shard", () => {
+  const plan = buildExecutionPlan({
+    profileId: "agent-default",
+    changedFiles: ["core/apps/web/src/utils/codeTokenLinks.ts"],
+    touchedOnly: true,
+  });
+
+  assert.deepEqual(plan.commands, [
+    "pnpm bazel:web:unit:non-pretext:foundation:shared",
   ]);
 });
 

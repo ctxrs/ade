@@ -91,6 +91,8 @@ test("Bazel web dist sync tool requires an explicit workspace root and output di
 test("Bazel web focused unit slices run as native vitest tests", () => {
   const nonPretextBlock = targetBlock(buildFile, "unit_tests_non_pretext");
   const nonPretextFoundationBlock = targetBlock(buildFile, "unit_tests_non_pretext_foundation");
+  const nonPretextFoundationSharedBlock = targetBlock(buildFile, "unit_tests_non_pretext_foundation_shared");
+  const nonPretextFoundationStateBlock = targetBlock(buildFile, "unit_tests_non_pretext_foundation_state");
   const nonPretextMiscBlock = targetBlock(buildFile, "unit_tests_non_pretext_misc");
   const nonPretextSettingsSetupBlock = targetBlock(buildFile, "unit_tests_non_pretext_settings_setup");
   const nonPretextWorkbenchBlock = targetBlock(buildFile, "unit_tests_non_pretext_workbench");
@@ -110,6 +112,14 @@ test("Bazel web focused unit slices run as native vitest tests", () => {
     "node scripts/run_bazel_pilot.cjs test //core/apps/web:unit_tests_non_pretext_foundation",
   );
   assert.equal(
+    corePackageJson.scripts["bazel:web:unit:non-pretext:foundation:shared"],
+    "node scripts/run_bazel_pilot.cjs test //core/apps/web:unit_tests_non_pretext_foundation_shared",
+  );
+  assert.equal(
+    corePackageJson.scripts["bazel:web:unit:non-pretext:foundation:state"],
+    "node scripts/run_bazel_pilot.cjs test //core/apps/web:unit_tests_non_pretext_foundation_state",
+  );
+  assert.equal(
     corePackageJson.scripts["bazel:web:unit:non-pretext:settings-setup"],
     "node scripts/run_bazel_pilot.cjs test //core/apps/web:unit_tests_non_pretext_settings_setup",
   );
@@ -126,7 +136,9 @@ test("Bazel web focused unit slices run as native vitest tests", () => {
     "node scripts/run_bazel_pilot.cjs test //core/packages/session-thread-layout:unit_tests //core/apps/web:pretext_measurement_unit_tests",
   );
   assert.match(nonPretextBlock, /^test_suite\(/m);
-  assert.match(nonPretextFoundationBlock, /^vitest_bin\.vitest_test\(/m);
+  assert.match(nonPretextFoundationBlock, /^test_suite\(/m);
+  assert.match(nonPretextFoundationSharedBlock, /^vitest_bin\.vitest_test\(/m);
+  assert.match(nonPretextFoundationStateBlock, /^vitest_bin\.vitest_test\(/m);
   assert.match(nonPretextMiscBlock, /^vitest_bin\.vitest_test\(/m);
   assert.match(nonPretextSettingsSetupBlock, /^vitest_bin\.vitest_test\(/m);
   assert.match(nonPretextWorkbenchBlock, /^vitest_bin\.vitest_test\(/m);
@@ -136,7 +148,10 @@ test("Bazel web focused unit slices run as native vitest tests", () => {
   assert.match(nonPretextBlock, /unit_tests_non_pretext_misc/);
   assert.match(nonPretextBlock, /unit_tests_non_pretext_settings_setup/);
   assert.match(nonPretextBlock, /unit_tests_non_pretext_workbench/);
-  assert.match(nonPretextFoundationBlock, /data = HERMETIC_WEB_CHECK_DATA/);
+  assert.match(nonPretextFoundationBlock, /unit_tests_non_pretext_foundation_shared/);
+  assert.match(nonPretextFoundationBlock, /unit_tests_non_pretext_foundation_state/);
+  assert.match(nonPretextFoundationSharedBlock, /data = HERMETIC_WEB_CHECK_DATA/);
+  assert.match(nonPretextFoundationStateBlock, /data = HERMETIC_WEB_CHECK_DATA/);
   assert.match(nonPretextMiscBlock, /data = HERMETIC_WEB_CHECK_DATA/);
   assert.match(nonPretextSettingsSetupBlock, /data = HERMETIC_WEB_CHECK_DATA/);
   assert.match(nonPretextWorkbenchBlock, /data = HERMETIC_WEB_CHECK_DATA/);
@@ -144,6 +159,8 @@ test("Bazel web focused unit slices run as native vitest tests", () => {
   assert.match(desktopIpcCorpusBlock, /data = HERMETIC_WEB_CHECK_DATA/);
   assert.doesNotMatch(nonPretextBlock, /run_workspace_task\.sh/);
   assert.doesNotMatch(nonPretextFoundationBlock, /run_workspace_task\.sh/);
+  assert.doesNotMatch(nonPretextFoundationSharedBlock, /run_workspace_task\.sh/);
+  assert.doesNotMatch(nonPretextFoundationStateBlock, /run_workspace_task\.sh/);
   assert.doesNotMatch(nonPretextMiscBlock, /run_workspace_task\.sh/);
   assert.doesNotMatch(nonPretextSettingsSetupBlock, /run_workspace_task\.sh/);
   assert.doesNotMatch(nonPretextWorkbenchBlock, /run_workspace_task\.sh/);
@@ -157,6 +174,10 @@ test("Bazel web focused unit slices run as native vitest tests", () => {
   assert.match(
     buildFile,
     /NON_PRETEXT_MISC_ARGS = NON_PRETEXT_VITEST_ARGS \+ \[[\s\S]*?"--exclude",\s*"\*\.test\.ts"[\s\S]*?"--exclude",\s*"\*\.test\.tsx"/,
+  );
+  assert.match(
+    buildFile,
+    /NON_PRETEXT_MISC_ARGS = NON_PRETEXT_VITEST_ARGS \+ \[[\s\S]*?"--exclude",\s*"src\/testdata\/\*\.test\.ts"[\s\S]*?"--exclude",\s*"src\/testdata\/\*\*\/\*\.test\.tsx"/,
   );
   assert.match(buildFile, /NON_PRETEXT_EXCLUDES = \[[\s\S]*?"src\/pages\/sessionThread\/pretext\*\.test\.ts"/);
   assert.match(buildFile, /NON_PRETEXT_EXCLUDES = \[[\s\S]*?"src\/pages\/sessionThread\/sessionMarkdown\*\.test\.ts"/);

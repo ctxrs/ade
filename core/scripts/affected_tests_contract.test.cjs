@@ -88,7 +88,7 @@ test("web high-risk changes escalate to the canonical premerge browser suite", (
   const commands = runScenario(["core/apps/web/src/state/providerOnboardingCoordinator.ts"]);
 
   assert.deepEqual(commands, [
-    "bash -lc pnpm bazel:web:unit:non-pretext:foundation",
+    "bash -lc pnpm bazel:web:unit:non-pretext:foundation:state",
     "bash -lc pnpm bazel:web:e2e:premerge",
   ]);
 });
@@ -132,6 +132,14 @@ test("shared Playwright runtime changes run web unit and canonical premerge brow
   assert.deepEqual(commands, [
     "bash -lc pnpm bazel:web:unit:non-pretext:workbench",
     "bash -lc pnpm bazel:web:e2e:premerge",
+  ]);
+});
+
+test("foundation utility changes stay on the shared foundation shard", () => {
+  const commands = runScenario(["core/apps/web/src/utils/codeTokenLinks.ts"]);
+
+  assert.deepEqual(commands, [
+    "bash -lc pnpm bazel:web:unit:non-pretext:foundation:shared",
   ]);
 });
 

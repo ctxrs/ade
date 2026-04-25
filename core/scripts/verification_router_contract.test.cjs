@@ -59,7 +59,7 @@ test("verify:broader keeps web escalations changed-aware", () => {
 
   assert.deepEqual(plan.commands, [
     "pnpm source:file-size:enforce",
-    "pnpm bazel:web:unit:non-pretext:foundation",
+    "pnpm bazel:web:unit:non-pretext:foundation:state",
     "pnpm bazel:web:e2e:premerge",
   ]);
 });
@@ -99,7 +99,20 @@ test("verify:touched routes non-pretext web fixture changes to the foundation sh
 
   assert.deepEqual(plan.commands, [
     "pnpm source:file-size:enforce",
-    "pnpm bazel:web:unit:non-pretext:foundation",
+    "pnpm bazel:web:unit:non-pretext:foundation:state",
+  ]);
+});
+
+test("verify:touched routes foundation utility changes to the shared foundation shard", () => {
+  const plan = buildVerificationPlan({
+    intent: "touched",
+    base: "origin/main",
+    changedFiles: ["core/apps/web/src/utils/codeTokenLinks.ts"],
+  });
+
+  assert.deepEqual(plan.commands, [
+    "pnpm source:file-size:enforce",
+    "pnpm bazel:web:unit:non-pretext:foundation:shared",
   ]);
 });
 

@@ -209,7 +209,7 @@ NON_PRETEXT_VITEST_ARGS = [
     "--testTimeout=60000",
 ]
 
-NON_PRETEXT_FOUNDATION_TESTS = glob([
+NON_PRETEXT_FOUNDATION_SHARED_TESTS = glob([
     "src/api/*.test.ts",
     "src/api/*.test.tsx",
     "src/api/**/*.test.ts",
@@ -222,10 +222,6 @@ NON_PRETEXT_FOUNDATION_TESTS = glob([
     "src/lib/*.test.tsx",
     "src/lib/**/*.test.ts",
     "src/lib/**/*.test.tsx",
-    "src/state/*.test.ts",
-    "src/state/*.test.tsx",
-    "src/state/**/*.test.ts",
-    "src/state/**/*.test.tsx",
     "src/testing/*.test.ts",
     "src/testing/*.test.tsx",
     "src/testing/**/*.test.ts",
@@ -238,6 +234,17 @@ NON_PRETEXT_FOUNDATION_TESTS = glob([
     "src/workbench/*.test.tsx",
     "src/workbench/**/*.test.ts",
     "src/workbench/**/*.test.tsx",
+], exclude = NON_PRETEXT_EXCLUDES, allow_empty = True)
+
+NON_PRETEXT_FOUNDATION_STATE_TESTS = glob([
+    "src/state/*.test.ts",
+    "src/state/*.test.tsx",
+    "src/state/**/*.test.ts",
+    "src/state/**/*.test.tsx",
+    "src/testdata/*.test.ts",
+    "src/testdata/*.test.tsx",
+    "src/testdata/**/*.test.ts",
+    "src/testdata/**/*.test.tsx",
 ], exclude = NON_PRETEXT_EXCLUDES, allow_empty = True)
 
 NON_PRETEXT_SETTINGS_SETUP_TESTS = glob([
@@ -348,6 +355,14 @@ NON_PRETEXT_MISC_ARGS = NON_PRETEXT_VITEST_ARGS + [
     "src/state/**/*.test.ts",
     "--exclude",
     "src/state/**/*.test.tsx",
+    "--exclude",
+    "src/testdata/*.test.ts",
+    "--exclude",
+    "src/testdata/*.test.tsx",
+    "--exclude",
+    "src/testdata/**/*.test.ts",
+    "--exclude",
+    "src/testdata/**/*.test.tsx",
     "--exclude",
     "src/testing/*.test.ts",
     "--exclude",
@@ -552,10 +567,25 @@ vitest_bin.vitest_test(
 )
 
 vitest_bin.vitest_test(
-    name = "unit_tests_non_pretext_foundation",
-    args = NON_PRETEXT_VITEST_ARGS + NON_PRETEXT_FOUNDATION_TESTS,
+    name = "unit_tests_non_pretext_foundation_shared",
+    args = NON_PRETEXT_VITEST_ARGS + NON_PRETEXT_FOUNDATION_SHARED_TESTS,
     data = HERMETIC_WEB_CHECK_DATA,
     chdir = package_name(),
+)
+
+vitest_bin.vitest_test(
+    name = "unit_tests_non_pretext_foundation_state",
+    args = NON_PRETEXT_VITEST_ARGS + NON_PRETEXT_FOUNDATION_STATE_TESTS,
+    data = HERMETIC_WEB_CHECK_DATA,
+    chdir = package_name(),
+)
+
+test_suite(
+    name = "unit_tests_non_pretext_foundation",
+    tests = [
+        ":unit_tests_non_pretext_foundation_shared",
+        ":unit_tests_non_pretext_foundation_state",
+    ],
 )
 
 vitest_bin.vitest_test(

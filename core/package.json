@@ -45,6 +45,8 @@
     "bazel:web:unit:supervisor-core": "node scripts/run_bazel_pilot.cjs test //core/packages/session-supervisor-core:unit_tests",
     "bazel:web:unit:non-pretext": "node scripts/run_bazel_pilot.cjs test //core/apps/web:unit_tests_non_pretext",
     "bazel:web:unit:non-pretext:foundation": "node scripts/run_bazel_pilot.cjs test //core/apps/web:unit_tests_non_pretext_foundation",
+    "bazel:web:unit:non-pretext:foundation:shared": "node scripts/run_bazel_pilot.cjs test //core/apps/web:unit_tests_non_pretext_foundation_shared",
+    "bazel:web:unit:non-pretext:foundation:state": "node scripts/run_bazel_pilot.cjs test //core/apps/web:unit_tests_non_pretext_foundation_state",
     "bazel:web:unit:non-pretext:settings-setup": "node scripts/run_bazel_pilot.cjs test //core/apps/web:unit_tests_non_pretext_settings_setup",
     "bazel:web:unit:non-pretext:workbench": "node scripts/run_bazel_pilot.cjs test //core/apps/web:unit_tests_non_pretext_workbench",
     "bazel:web:unit:non-pretext:misc": "node scripts/run_bazel_pilot.cjs test //core/apps/web:unit_tests_non_pretext_misc",
