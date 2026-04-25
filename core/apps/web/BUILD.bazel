@@ -268,7 +268,33 @@ NON_PRETEXT_SETTINGS_SETUP_TESTS = glob([
     "src/pages/WorkspaceSetupPage.test.tsx",
 ], exclude = NON_PRETEXT_EXCLUDES, allow_empty = True)
 
-NON_PRETEXT_WORKBENCH_TESTS = glob([
+NON_PRETEXT_WORKBENCH_SHELL_TESTS = glob([
+    "src/pages/workbenchShell/*.test.ts",
+    "src/pages/workbenchShell/*.test.tsx",
+    "src/pages/workbenchShell/**/*.test.ts",
+    "src/pages/workbenchShell/**/*.test.tsx",
+], exclude = NON_PRETEXT_EXCLUDES + [
+    "src/pages/settings/*.test.ts",
+    "src/pages/settings/*.test.tsx",
+    "src/pages/settings/**/*.test.ts",
+    "src/pages/settings/**/*.test.tsx",
+    "src/pages/workspaceSetup/*.test.ts",
+    "src/pages/workspaceSetup/*.test.tsx",
+    "src/pages/workspaceSetup/**/*.test.ts",
+    "src/pages/workspaceSetup/**/*.test.tsx",
+    "src/pages/diagnostics/*.test.ts",
+    "src/pages/diagnostics/*.test.tsx",
+    "src/pages/diagnostics/**/*.test.ts",
+    "src/pages/diagnostics/**/*.test.tsx",
+    "src/pages/launcher/*.test.ts",
+    "src/pages/launcher/*.test.tsx",
+    "src/pages/launcher/**/*.test.ts",
+    "src/pages/launcher/**/*.test.tsx",
+    "src/pages/workspaceBootstrapGate.test.ts",
+    "src/pages/WorkspaceSetupPage.test.tsx",
+], allow_empty = True)
+
+NON_PRETEXT_WORKBENCH_SURFACE_TESTS = glob([
     "*.test.ts",
     "*.test.tsx",
     "src/components/*.test.ts",
@@ -293,6 +319,10 @@ NON_PRETEXT_WORKBENCH_TESTS = glob([
     "src/pages/diagnostics/*.test.tsx",
     "src/pages/diagnostics/**/*.test.ts",
     "src/pages/diagnostics/**/*.test.tsx",
+    "src/pages/workbenchShell/*.test.ts",
+    "src/pages/workbenchShell/*.test.tsx",
+    "src/pages/workbenchShell/**/*.test.ts",
+    "src/pages/workbenchShell/**/*.test.tsx",
     "src/pages/launcher/*.test.ts",
     "src/pages/launcher/*.test.tsx",
     "src/pages/launcher/**/*.test.ts",
@@ -596,10 +626,25 @@ vitest_bin.vitest_test(
 )
 
 vitest_bin.vitest_test(
-    name = "unit_tests_non_pretext_workbench",
-    args = NON_PRETEXT_VITEST_ARGS + NON_PRETEXT_WORKBENCH_TESTS,
+    name = "unit_tests_non_pretext_workbench_surface",
+    args = NON_PRETEXT_VITEST_ARGS + NON_PRETEXT_WORKBENCH_SURFACE_TESTS,
     data = HERMETIC_WEB_CHECK_DATA,
     chdir = package_name(),
+)
+
+vitest_bin.vitest_test(
+    name = "unit_tests_non_pretext_workbench_shell",
+    args = NON_PRETEXT_VITEST_ARGS + NON_PRETEXT_WORKBENCH_SHELL_TESTS,
+    data = HERMETIC_WEB_CHECK_DATA,
+    chdir = package_name(),
+)
+
+test_suite(
+    name = "unit_tests_non_pretext_workbench",
+    tests = [
+        ":unit_tests_non_pretext_workbench_shell",
+        ":unit_tests_non_pretext_workbench_surface",
+    ],
 )
 
 vitest_bin.vitest_test(

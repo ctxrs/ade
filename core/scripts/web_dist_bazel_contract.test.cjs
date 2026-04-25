@@ -96,6 +96,8 @@ test("Bazel web focused unit slices run as native vitest tests", () => {
   const nonPretextMiscBlock = targetBlock(buildFile, "unit_tests_non_pretext_misc");
   const nonPretextSettingsSetupBlock = targetBlock(buildFile, "unit_tests_non_pretext_settings_setup");
   const nonPretextWorkbenchBlock = targetBlock(buildFile, "unit_tests_non_pretext_workbench");
+  const nonPretextWorkbenchSurfaceBlock = targetBlock(buildFile, "unit_tests_non_pretext_workbench_surface");
+  const nonPretextWorkbenchShellBlock = targetBlock(buildFile, "unit_tests_non_pretext_workbench_shell");
   const pretextBlock = targetBlock(buildFile, "pretext_measurement_unit_tests");
   const desktopIpcCorpusBlock = targetBlock(buildFile, "desktop_ipc_corpus");
 
@@ -128,6 +130,14 @@ test("Bazel web focused unit slices run as native vitest tests", () => {
     "node scripts/run_bazel_pilot.cjs test //core/apps/web:unit_tests_non_pretext_workbench",
   );
   assert.equal(
+    corePackageJson.scripts["bazel:web:unit:non-pretext:workbench:surface"],
+    "node scripts/run_bazel_pilot.cjs test //core/apps/web:unit_tests_non_pretext_workbench_surface",
+  );
+  assert.equal(
+    corePackageJson.scripts["bazel:web:unit:non-pretext:workbench:shell"],
+    "node scripts/run_bazel_pilot.cjs test //core/apps/web:unit_tests_non_pretext_workbench_shell",
+  );
+  assert.equal(
     corePackageJson.scripts["bazel:web:unit:non-pretext:misc"],
     "node scripts/run_bazel_pilot.cjs test //core/apps/web:unit_tests_non_pretext_misc",
   );
@@ -141,7 +151,9 @@ test("Bazel web focused unit slices run as native vitest tests", () => {
   assert.match(nonPretextFoundationStateBlock, /^vitest_bin\.vitest_test\(/m);
   assert.match(nonPretextMiscBlock, /^vitest_bin\.vitest_test\(/m);
   assert.match(nonPretextSettingsSetupBlock, /^vitest_bin\.vitest_test\(/m);
-  assert.match(nonPretextWorkbenchBlock, /^vitest_bin\.vitest_test\(/m);
+  assert.match(nonPretextWorkbenchBlock, /^test_suite\(/m);
+  assert.match(nonPretextWorkbenchSurfaceBlock, /^vitest_bin\.vitest_test\(/m);
+  assert.match(nonPretextWorkbenchShellBlock, /^vitest_bin\.vitest_test\(/m);
   assert.match(pretextBlock, /^vitest_bin\.vitest_test\(/m);
   assert.match(desktopIpcCorpusBlock, /^vitest_bin\.vitest_test\(/m);
   assert.match(nonPretextBlock, /unit_tests_non_pretext_foundation/);
@@ -150,11 +162,14 @@ test("Bazel web focused unit slices run as native vitest tests", () => {
   assert.match(nonPretextBlock, /unit_tests_non_pretext_workbench/);
   assert.match(nonPretextFoundationBlock, /unit_tests_non_pretext_foundation_shared/);
   assert.match(nonPretextFoundationBlock, /unit_tests_non_pretext_foundation_state/);
+  assert.match(nonPretextWorkbenchBlock, /unit_tests_non_pretext_workbench_surface/);
+  assert.match(nonPretextWorkbenchBlock, /unit_tests_non_pretext_workbench_shell/);
   assert.match(nonPretextFoundationSharedBlock, /data = HERMETIC_WEB_CHECK_DATA/);
   assert.match(nonPretextFoundationStateBlock, /data = HERMETIC_WEB_CHECK_DATA/);
   assert.match(nonPretextMiscBlock, /data = HERMETIC_WEB_CHECK_DATA/);
   assert.match(nonPretextSettingsSetupBlock, /data = HERMETIC_WEB_CHECK_DATA/);
-  assert.match(nonPretextWorkbenchBlock, /data = HERMETIC_WEB_CHECK_DATA/);
+  assert.match(nonPretextWorkbenchSurfaceBlock, /data = HERMETIC_WEB_CHECK_DATA/);
+  assert.match(nonPretextWorkbenchShellBlock, /data = HERMETIC_WEB_CHECK_DATA/);
   assert.match(pretextBlock, /data = HERMETIC_WEB_CHECK_DATA/);
   assert.match(desktopIpcCorpusBlock, /data = HERMETIC_WEB_CHECK_DATA/);
   assert.doesNotMatch(nonPretextBlock, /run_workspace_task\.sh/);
@@ -169,7 +184,11 @@ test("Bazel web focused unit slices run as native vitest tests", () => {
   assert.doesNotMatch(desktopIpcCorpusBlock, /\bpnpm\b/);
   assert.match(
     buildFile,
-    /NON_PRETEXT_WORKBENCH_TESTS = glob\(\[[\s\S]*?"\*\.test\.ts"[\s\S]*?"\*\.test\.tsx"/,
+    /NON_PRETEXT_WORKBENCH_SURFACE_TESTS = glob\(\[[\s\S]*?"\*\.test\.ts"[\s\S]*?"\*\.test\.tsx"/,
+  );
+  assert.match(
+    buildFile,
+    /NON_PRETEXT_WORKBENCH_SHELL_TESTS = glob\(\[[\s\S]*?"src\/pages\/workbenchShell\/\*\.test\.ts"[\s\S]*?"src\/pages\/workbenchShell\/\*\*\/\*\.test\.tsx"/,
   );
   assert.match(
     buildFile,

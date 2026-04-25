@@ -251,6 +251,8 @@ function commandPriority(command) {
     || command === "pnpm bazel:web:unit:non-pretext:foundation:state"
     || command === "pnpm bazel:web:unit:non-pretext:settings-setup"
     || command === "pnpm bazel:web:unit:non-pretext:workbench"
+    || command === "pnpm bazel:web:unit:non-pretext:workbench:surface"
+    || command === "pnpm bazel:web:unit:non-pretext:workbench:shell"
     || command === "pnpm bazel:web:unit:non-pretext:misc"
     || command === "pnpm bazel:web:pretext:measurement"
   ) {

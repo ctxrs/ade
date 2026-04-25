@@ -130,8 +130,16 @@ test("shared Playwright runtime changes run web unit and canonical premerge brow
   const commands = runScenario(["core/apps/web/playwright.shared.ts"]);
 
   assert.deepEqual(commands, [
-    "bash -lc pnpm bazel:web:unit:non-pretext:workbench",
+    "bash -lc pnpm bazel:web:unit:non-pretext:workbench:surface",
     "bash -lc pnpm bazel:web:e2e:premerge",
+  ]);
+});
+
+test("workbench shell changes stay on the dedicated shell shard", () => {
+  const commands = runScenario(["core/apps/web/src/pages/workbenchShell/WorkbenchPage.shell.tsx"]);
+
+  assert.deepEqual(commands, [
+    "bash -lc pnpm bazel:web:unit:non-pretext:workbench:shell",
   ]);
 });
 

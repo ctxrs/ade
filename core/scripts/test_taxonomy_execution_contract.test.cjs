@@ -103,7 +103,7 @@ test("agent-default keeps settings-only web changes off the pretext measurement 
   ]);
 });
 
-test("agent-default routes root-level web shell files to the workbench shard", () => {
+test("agent-default routes root-level web shell files to the workbench surface shard", () => {
   const plan = buildExecutionPlan({
     profileId: "agent-default",
     changedFiles: ["core/apps/web/src/main.tsx"],
@@ -111,7 +111,19 @@ test("agent-default routes root-level web shell files to the workbench shard", (
   });
 
   assert.deepEqual(plan.commands, [
-    "pnpm bazel:web:unit:non-pretext:workbench",
+    "pnpm bazel:web:unit:non-pretext:workbench:surface",
+  ]);
+});
+
+test("agent-default routes workbench shell files to the dedicated shell shard", () => {
+  const plan = buildExecutionPlan({
+    profileId: "agent-default",
+    changedFiles: ["core/apps/web/src/pages/workbenchShell/WorkbenchPage.shell.tsx"],
+    touchedOnly: true,
+  });
+
+  assert.deepEqual(plan.commands, [
+    "pnpm bazel:web:unit:non-pretext:workbench:shell",
   ]);
 });
 
@@ -296,7 +308,7 @@ test("agent-default routes shared Playwright config changes through unit and pre
   });
 
   assert.deepEqual(plan.commands, [
-    "pnpm bazel:web:unit:non-pretext:workbench",
+    "pnpm bazel:web:unit:non-pretext:workbench:surface",
     "pnpm bazel:web:e2e:premerge",
   ]);
 });
@@ -309,7 +321,7 @@ test("agent-default routes shared Playwright config tests to web unit tests", ()
   });
 
   assert.deepEqual(plan.commands, [
-    "pnpm bazel:web:unit:non-pretext:workbench",
+    "pnpm bazel:web:unit:non-pretext:workbench:surface",
   ]);
 });
 

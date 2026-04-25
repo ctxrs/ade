@@ -49,6 +49,8 @@
     "bazel:web:unit:non-pretext:foundation:state": "node scripts/run_bazel_pilot.cjs test //core/apps/web:unit_tests_non_pretext_foundation_state",
     "bazel:web:unit:non-pretext:settings-setup": "node scripts/run_bazel_pilot.cjs test //core/apps/web:unit_tests_non_pretext_settings_setup",
     "bazel:web:unit:non-pretext:workbench": "node scripts/run_bazel_pilot.cjs test //core/apps/web:unit_tests_non_pretext_workbench",
+    "bazel:web:unit:non-pretext:workbench:surface": "node scripts/run_bazel_pilot.cjs test //core/apps/web:unit_tests_non_pretext_workbench_surface",
+    "bazel:web:unit:non-pretext:workbench:shell": "node scripts/run_bazel_pilot.cjs test //core/apps/web:unit_tests_non_pretext_workbench_shell",
     "bazel:web:unit:non-pretext:misc": "node scripts/run_bazel_pilot.cjs test //core/apps/web:unit_tests_non_pretext_misc",
     "bazel:web:pretext:measurement": "node scripts/run_bazel_pilot.cjs test //core/packages/session-thread-layout:unit_tests //core/apps/web:pretext_measurement_unit_tests",
     "bazel:install-site:test": "node scripts/run_bazel_pilot.cjs test //install-site:install_contract_tests",
