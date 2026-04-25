@@ -587,13 +587,32 @@ function validateCtxHttpSuites(coreRoot) {
   };
 }
 
+function normalizeCtxHttpSuiteSelection(suiteSelection) {
+  const suiteNames = (Array.isArray(suiteSelection) ? suiteSelection : [suiteSelection])
+    .map((suiteName) => String(suiteName || "").trim())
+    .filter(Boolean);
+  if (suiteNames.length === 0) {
+    throw new Error(`missing ctx-http suite selection; expected one of ${getCtxHttpSuiteNames({ includeAll: true }).join(", ")}`);
+  }
+  if (suiteNames.includes("all") && suiteNames.length > 1) {
+    throw new Error("ctx-http suite selection cannot mix 'all' with explicit suites");
+  }
+  for (const suiteName of suiteNames) {
+    if (suiteName === "all") {
+      continue;
+    }
+    if (!getCtxHttpSuiteByName(suiteName)) {
+      throw new Error(`unknown ctx-http suite: ${suiteName}`);
+    }
+  }
+  return suiteNames;
+}
+
 function buildCtxHttpSuiteCommands(suiteName) {
-  return [
-    {
-      args: ["scripts/run_bazel_pilot.cjs", "test", ...getCtxHttpSuiteTargets(suiteName)],
-      command: "node",
-    },
-  ];
+  return getCtxHttpSuiteTargets(suiteName).map((target) => ({
+    args: ["scripts/run_bazel_pilot.cjs", "test", target],
+    command: "node",
+  }));
 }
 
 function getCtxHttpSuiteTarget(suiteName) {
@@ -605,10 +624,16 @@ function getCtxHttpSuiteTarget(suiteName) {
 }
 
 function getCtxHttpSuiteTargets(suiteName) {
-  if (suiteName === "all") {
+  const suiteNames = normalizeCtxHttpSuiteSelection(suiteName);
+  if (suiteNames.length === 1 && suiteNames[0] === "all") {
     return CTX_HTTP_SUITES.map((suite) => getCtxHttpSuiteTarget(suite.name));
   }
-  return [getCtxHttpSuiteTarget(suiteName)];
+  return suiteNames.map((entry) => getCtxHttpSuiteTarget(entry));
+}
+
+function buildCtxHttpSuiteTaskArgs(suiteName) {
+  return normalizeCtxHttpSuiteSelection(suiteName)
+    .flatMap((entry) => ["--suite", entry]);
 }
 
 module.exports = {
@@ -620,6 +645,7 @@ module.exports = {
   CTX_HTTP_SUITE_SCRIPT_INPUTS,
   MANUAL_ONLY_CTX_HTTP_TEST_FILES,
   buildCtxHttpSuiteCommands,
+  buildCtxHttpSuiteTaskArgs,
   getCtxHttpSuiteTarget,
   getCtxHttpSuiteTargets,
   getCtxHttpSuiteByName,

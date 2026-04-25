@@ -48,8 +48,7 @@ test("leaf Rust crate changes broaden to the affected dependency-truthful Rust f
 
   assert.deepEqual(commands, [
     "bash -lc pnpm rust:turbo:check",
-    "bash -lc node scripts/ctx_http_suite_task.cjs --suite provider-auth",
-    "bash -lc node scripts/ctx_http_suite_task.cjs --suite provider-runtime-simulated",
+    "bash -lc node scripts/ctx_http_suite_task.cjs --suite provider-auth --suite provider-runtime-simulated",
     "bash -lc pnpm exec node scripts/run_rust_gate.cjs --mode workspace --include-reverse-deps --clippy --test-strategy mixed --crate ctx-provider-accounts",
   ]);
 });
@@ -58,17 +57,7 @@ test("ctx-http changes fan out into suite-level commands", () => {
   const commands = runScenario(["core/crates/ctx-http/src/api/mod.rs"]);
 
   assert.deepEqual(commands, [
-    "bash -lc node scripts/ctx_http_suite_task.cjs --suite attachments-routing",
-    "bash -lc node scripts/ctx_http_suite_task.cjs --suite base",
-    "bash -lc node scripts/ctx_http_suite_task.cjs --suite provider-auth",
-    "bash -lc node scripts/ctx_http_suite_task.cjs --suite provider-runtime-simulated",
-    "bash -lc node scripts/ctx_http_suite_task.cjs --suite repo-vcs",
-    "bash -lc node scripts/ctx_http_suite_task.cjs --suite sandbox-runtime-simulated",
-    "bash -lc node scripts/ctx_http_suite_task.cjs --suite scheduler-runtime",
-    "bash -lc node scripts/ctx_http_suite_task.cjs --suite subagents-control",
-    "bash -lc node scripts/ctx_http_suite_task.cjs --suite turns-terminal",
-    "bash -lc node scripts/ctx_http_suite_task.cjs --suite updates-release",
-    "bash -lc node scripts/ctx_http_suite_task.cjs --suite workspace-stream",
+    "bash -lc node scripts/ctx_http_suite_task.cjs --suite attachments-routing --suite base --suite provider-auth --suite provider-runtime-simulated --suite repo-vcs --suite sandbox-runtime-simulated --suite scheduler-runtime --suite subagents-control --suite turns-terminal --suite updates-release --suite workspace-stream",
   ]);
 });
 
@@ -77,9 +66,7 @@ test("ctx-providers changes expand into affected dependency-truthful Rust and su
 
   assert.deepEqual(commands, [
     "bash -lc pnpm rust:turbo:check",
-    "bash -lc node scripts/ctx_http_suite_task.cjs --suite provider-auth",
-    "bash -lc node scripts/ctx_http_suite_task.cjs --suite provider-runtime-simulated",
-    "bash -lc node scripts/ctx_http_suite_task.cjs --suite sandbox-runtime-simulated",
+    "bash -lc node scripts/ctx_http_suite_task.cjs --suite provider-auth --suite provider-runtime-simulated --suite sandbox-runtime-simulated",
     "bash -lc pnpm exec node scripts/run_rust_gate.cjs --mode workspace --include-reverse-deps --clippy --test-strategy mixed --crate ctx-providers",
   ]);
 });
@@ -191,15 +178,12 @@ test("combined root-level Rust and crate changes expand to the affected workspac
   ]);
 
   assert.equal(commands[0], "bash -lc pnpm rust:turbo:check");
-  assert.deepEqual(commands.slice(1, 3), [
-    "bash -lc node scripts/ctx_http_suite_task.cjs --suite provider-auth",
-    "bash -lc node scripts/ctx_http_suite_task.cjs --suite provider-runtime-simulated",
-  ]);
-  assert.equal(commands.length, 4);
-  assert.match(commands[3], /^bash -lc pnpm exec node scripts\/run_rust_gate\.cjs --mode workspace --include-reverse-deps --clippy --test-strategy mixed /u);
-  assert.match(commands[3], /--crate ctx-core/u);
-  assert.match(commands[3], /--crate ctx-provider-accounts/u);
-  assert.doesNotMatch(commands[3], /--changed-file/u);
+  assert.equal(commands[1], "bash -lc node scripts/ctx_http_suite_task.cjs --suite provider-auth --suite provider-runtime-simulated");
+  assert.equal(commands.length, 3);
+  assert.match(commands[2], /^bash -lc pnpm exec node scripts\/run_rust_gate\.cjs --mode workspace --include-reverse-deps --clippy --test-strategy mixed /u);
+  assert.match(commands[2], /--crate ctx-core/u);
+  assert.match(commands[2], /--crate ctx-provider-accounts/u);
+  assert.doesNotMatch(commands[2], /--changed-file/u);
 });
 
 test("no-change path uses the platform-aware fast gate", () => {

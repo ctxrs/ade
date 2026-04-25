@@ -339,6 +339,7 @@ function buildCtxHttpEntries() {
       execution: executionBySuite[suite.name],
       owner: "ctx-http",
       sourceGlobs: [
+        "core/scripts/ctx_http_suite_task.cjs",
         "core/scripts/lib/ctx_http_suites.cjs",
         ...(suite.type === "integration" ? CTX_HTTP_SHARED_SOURCE_GLOBS.map((glob) => `core/${glob}`) : []),
         ...suite.sourceGlobs.map((glob) => `core/${glob}`),

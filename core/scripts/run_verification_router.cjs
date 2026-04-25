@@ -32,6 +32,9 @@ const VERIFICATION_TOOLING_COMMAND = [
   "scripts/verification_run_store.test.cjs",
   "scripts/sdlc_verify_metrics_report.test.cjs",
   "scripts/run_bazel_pilot.test.cjs",
+  "scripts/ctx_http_suite_task.test.cjs",
+  "scripts/lib/ctx_http_suites.test.cjs",
+  "scripts/ctx_http_bazel_contract.test.cjs",
   "scripts/testing_tiers_contract.test.cjs",
   "scripts/test_taxonomy_execution_contract.test.cjs",
   "scripts/affected_tests_contract.test.cjs",
@@ -144,10 +147,12 @@ function buildOverlayCommands(changedFiles) {
     entry.startsWith("core/scripts/run_verification_router")
     || entry.startsWith("core/scripts/sdlc_verify_metrics_report")
     || entry.startsWith("core/scripts/verification_")
+    || entry.startsWith("core/scripts/ctx_http_suite_task")
     || entry.startsWith("core/scripts/run_bazel_pilot")
     || entry.startsWith("core/scripts/run_test_taxonomy_profile")
     || entry.startsWith("core/scripts/affected_tests")
     || entry.startsWith("core/scripts/lib/verification_")
+    || entry.startsWith("core/scripts/lib/ctx_http_suites")
     || entry.startsWith("core/scripts/lib/test_taxonomy/")
   )) {
     commands.push(VERIFICATION_TOOLING_COMMAND);

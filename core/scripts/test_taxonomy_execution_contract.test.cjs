@@ -17,16 +17,7 @@ test("agent-default fans out ctx-http shared changes into suite-level commands",
   ));
 
   assert.deepEqual(plan.commands, [
-    "node scripts/ctx_http_suite_task.cjs --suite attachments-routing",
-    "node scripts/ctx_http_suite_task.cjs --suite provider-auth",
-    "node scripts/ctx_http_suite_task.cjs --suite provider-runtime-simulated",
-    "node scripts/ctx_http_suite_task.cjs --suite repo-vcs",
-    "node scripts/ctx_http_suite_task.cjs --suite sandbox-runtime-simulated",
-    "node scripts/ctx_http_suite_task.cjs --suite scheduler-runtime",
-    "node scripts/ctx_http_suite_task.cjs --suite subagents-control",
-    "node scripts/ctx_http_suite_task.cjs --suite turns-terminal",
-    "node scripts/ctx_http_suite_task.cjs --suite updates-release",
-    "node scripts/ctx_http_suite_task.cjs --suite workspace-stream",
+    "node scripts/ctx_http_suite_task.cjs --suite attachments-routing --suite provider-auth --suite provider-runtime-simulated --suite repo-vcs --suite sandbox-runtime-simulated --suite scheduler-runtime --suite subagents-control --suite turns-terminal --suite updates-release --suite workspace-stream",
   ]);
 });
 
@@ -55,8 +46,7 @@ test("agent-default affected selection expands a Rust leaf into downstream depen
 
   assert.deepEqual(plan.commands, [
     "pnpm rust:turbo:check",
-    "node scripts/ctx_http_suite_task.cjs --suite provider-auth",
-    "node scripts/ctx_http_suite_task.cjs --suite provider-runtime-simulated",
+    "node scripts/ctx_http_suite_task.cjs --suite provider-auth --suite provider-runtime-simulated",
     "pnpm exec node scripts/run_rust_gate.cjs --mode workspace --include-reverse-deps --clippy --test-strategy mixed --crate ctx-provider-accounts",
   ]);
 });
@@ -245,8 +235,7 @@ test("agent-default affected selection adds ctx-http base compile truth for sche
   });
 
   assert.deepEqual(plan.commands, [
-    "node scripts/ctx_http_suite_task.cjs --suite base",
-    "node scripts/ctx_http_suite_task.cjs --suite scheduler-runtime",
+    "node scripts/ctx_http_suite_task.cjs --suite base --suite scheduler-runtime",
   ]);
 });
 
@@ -258,9 +247,7 @@ test("agent-default affected selection keeps shared turn execution paths on both
   });
 
   assert.deepEqual(plan.commands, [
-    "node scripts/ctx_http_suite_task.cjs --suite base",
-    "node scripts/ctx_http_suite_task.cjs --suite scheduler-runtime",
-    "node scripts/ctx_http_suite_task.cjs --suite turns-terminal",
+    "node scripts/ctx_http_suite_task.cjs --suite base --suite scheduler-runtime --suite turns-terminal",
   ]);
 });
 
@@ -272,8 +259,7 @@ test("agent-default affected selection keeps direct ctx-http suite test edits on
   });
 
   assert.deepEqual(plan.commands, [
-    "node scripts/ctx_http_suite_task.cjs --suite base",
-    "node scripts/ctx_http_suite_task.cjs --suite provider-auth",
+    "node scripts/ctx_http_suite_task.cjs --suite base --suite provider-auth",
   ]);
 });
 

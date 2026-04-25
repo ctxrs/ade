@@ -3,6 +3,7 @@ const path = require("node:path");
 const { buildTaxonomyRegistry } = require("./registry.cjs");
 const { getFamiliesById } = require("./families.cjs");
 const { getProfiles, profileMatchesEntry } = require("./profiles.cjs");
+const { buildCtxHttpSuiteTaskArgs } = require("../ctx_http_suites.cjs");
 const {
   resolveMergeBaseFiles,
   resolveWorkingTreeFiles,
@@ -205,15 +206,30 @@ function buildRustGateCommand({ rustGateEntries, changedContext, selectionMode }
 
 function buildCommandsForEntries({ selectedEntries, changedContext, selectionMode }) {
   const commands = [];
+  const ctxHttpSuites = [];
   const rustGateEntries = [];
+  const flushCtxHttpSuites = () => {
+    if (ctxHttpSuites.length === 0) {
+      return;
+    }
+    commands.push(shellJoin("node", ["scripts/ctx_http_suite_task.cjs", ...buildCtxHttpSuiteTaskArgs(ctxHttpSuites)]));
+    ctxHttpSuites.length = 0;
+  };
 
   for (const entry of selectedEntries) {
     if (entry.entrypointType === "rust-crate-gate") {
+      flushCtxHttpSuites();
       rustGateEntries.push(entry);
       continue;
     }
+    if (entry.entrypointType === "ctx-http-suite") {
+      ctxHttpSuites.push(entry.entrypoint);
+      continue;
+    }
+    flushCtxHttpSuites();
     commands.push(buildCommandForEntry(entry));
   }
+  flushCtxHttpSuites();
 
   if (rustGateEntries.length > 0) {
     commands.push(buildRustGateCommand({

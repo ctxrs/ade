@@ -32,8 +32,7 @@ test("verify:affected broadens the canonical Rust leaf beyond verify:touched", (
   assert.deepEqual(plan.commands, [
     "pnpm source:file-size:enforce",
     "pnpm rust:turbo:check",
-    "node scripts/ctx_http_suite_task.cjs --suite provider-auth",
-    "node scripts/ctx_http_suite_task.cjs --suite provider-runtime-simulated",
+    "node scripts/ctx_http_suite_task.cjs --suite provider-auth --suite provider-runtime-simulated",
     "pnpm exec node scripts/run_rust_gate.cjs --mode workspace --include-reverse-deps --clippy --test-strategy mixed --crate ctx-provider-accounts",
   ]);
 });
@@ -179,8 +178,7 @@ test("verify:affected adds ctx-http base compile truth for canonical scheduler r
 
   assert.deepEqual(plan.commands, [
     "pnpm source:file-size:enforce",
-    "node scripts/ctx_http_suite_task.cjs --suite base",
-    "node scripts/ctx_http_suite_task.cjs --suite scheduler-runtime",
+    "node scripts/ctx_http_suite_task.cjs --suite base --suite scheduler-runtime",
   ]);
 });
 
@@ -193,9 +191,7 @@ test("verify:affected keeps shared turn execution paths on both scheduler runtim
 
   assert.deepEqual(plan.commands, [
     "pnpm source:file-size:enforce",
-    "node scripts/ctx_http_suite_task.cjs --suite base",
-    "node scripts/ctx_http_suite_task.cjs --suite scheduler-runtime",
-    "node scripts/ctx_http_suite_task.cjs --suite turns-terminal",
+    "node scripts/ctx_http_suite_task.cjs --suite base --suite scheduler-runtime --suite turns-terminal",
   ]);
 });
 
@@ -207,8 +203,7 @@ test("verify:affected keeps direct ctx-http suite test edits on suite truth plus
   });
 
   assert.deepEqual(plan.commands, [
-    "node scripts/ctx_http_suite_task.cjs --suite base",
-    "node scripts/ctx_http_suite_task.cjs --suite provider-auth",
+    "node scripts/ctx_http_suite_task.cjs --suite base --suite provider-auth",
   ]);
 });
 
@@ -256,8 +251,21 @@ test("verify:touched routes verification-tooling edits through the local tooling
   });
 
   assert.deepEqual(plan.commands, [
-    "node --test scripts/verification_git_changes.test.cjs scripts/verification_router_contract.test.cjs scripts/verification_run_store.test.cjs scripts/sdlc_verify_metrics_report.test.cjs scripts/run_bazel_pilot.test.cjs scripts/testing_tiers_contract.test.cjs scripts/test_taxonomy_execution_contract.test.cjs scripts/affected_tests_contract.test.cjs",
+    "node --test scripts/verification_git_changes.test.cjs scripts/verification_router_contract.test.cjs scripts/verification_run_store.test.cjs scripts/sdlc_verify_metrics_report.test.cjs scripts/run_bazel_pilot.test.cjs scripts/ctx_http_suite_task.test.cjs scripts/lib/ctx_http_suites.test.cjs scripts/ctx_http_bazel_contract.test.cjs scripts/testing_tiers_contract.test.cjs scripts/test_taxonomy_execution_contract.test.cjs scripts/affected_tests_contract.test.cjs",
   ]);
+});
+
+test("verify:affected routes ctx-http suite runner edits through tooling coverage plus ctx-http truth", () => {
+  const plan = buildVerificationPlan({
+    intent: "affected",
+    base: "origin/main",
+    changedFiles: ["core/scripts/ctx_http_suite_task.cjs"],
+  });
+
+  assert.equal(plan.commands[0], "node --test scripts/verification_git_changes.test.cjs scripts/verification_router_contract.test.cjs scripts/verification_run_store.test.cjs scripts/sdlc_verify_metrics_report.test.cjs scripts/run_bazel_pilot.test.cjs scripts/ctx_http_suite_task.test.cjs scripts/lib/ctx_http_suites.test.cjs scripts/ctx_http_bazel_contract.test.cjs scripts/testing_tiers_contract.test.cjs scripts/test_taxonomy_execution_contract.test.cjs scripts/affected_tests_contract.test.cjs");
+  assert.equal(plan.commands[1], "pnpm rust:turbo:check");
+  assert.equal(plan.commands[2], "node scripts/ctx_http_suite_task.cjs --suite attachments-routing --suite base --suite provider-auth --suite provider-runtime-simulated --suite repo-vcs --suite sandbox-runtime-simulated --suite scheduler-runtime --suite subagents-control --suite turns-terminal --suite updates-release --suite workspace-stream");
+  assert.match(plan.commands[3], /^pnpm exec node scripts\/run_rust_gate\.cjs --mode workspace --include-reverse-deps --clippy --test-strategy mixed /u);
 });
 
 test("verify router telemetry honors CTX_DISABLE_VERIFICATION_TELEMETRY and still runs commands", () => {

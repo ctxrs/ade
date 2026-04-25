@@ -12,12 +12,16 @@ const {
 function parseArgs(argv) {
   const args = {
     list: false,
-    suite: "",
+    suites: [],
   };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     if (arg === "--suite") {
-      args.suite = argv[index + 1] || "";
+      const suiteName = argv[index + 1] || "";
+      if (!suiteName || suiteName.startsWith("--")) {
+        throw new Error("--suite requires a suite name");
+      }
+      args.suites.push(suiteName);
       index += 1;
     } else if (arg === "--list") {
       args.list = true;
@@ -25,7 +29,7 @@ function parseArgs(argv) {
       throw new Error(`unknown arg: ${arg}`);
     }
   }
-  if (!args.suite) {
+  if (args.suites.length === 0) {
     throw new Error(`--suite is required; expected one of ${getCtxHttpSuiteNames({ includeAll: true }).join(", ")}`);
   }
   return args;
@@ -47,7 +51,8 @@ function run(command, args, options) {
 
 function main() {
   const args = parseArgs(process.argv.slice(2));
-  const commands = buildCtxHttpSuiteCommands(args.suite);
+  const commands = buildCtxHttpSuiteCommands(args.suites);
+  const isBatchSelection = commands.length > 1;
   if (args.list) {
     for (const command of commands) {
       console.log([command.command, ...command.args].join(" "));
@@ -64,6 +69,9 @@ function main() {
   });
   if (!String(env.RUST_TEST_THREADS ?? "").trim()) {
     env.RUST_TEST_THREADS = "1";
+  }
+  if (isBatchSelection) {
+    process.stderr.write(`CTX_HTTP_SUITE_BATCH ${JSON.stringify({ suites: args.suites })}\n`);
   }
 
   for (const command of commands) {
