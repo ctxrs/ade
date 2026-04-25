@@ -176,7 +176,7 @@ test("agent-default routes pretext measurement source changes to the dedicated u
   ]);
 });
 
-test("agent-default routes extracted layout package changes to the dedicated pretext unit slice", () => {
+test("agent-default touched selection keeps extracted layout package changes on the direct package unit gate", () => {
   const plan = buildExecutionPlan({
     profileId: "agent-default",
     changedFiles: ["core/packages/session-thread-layout/src/sessionMarkdownContract.ts"],
@@ -184,6 +184,19 @@ test("agent-default routes extracted layout package changes to the dedicated pre
   });
 
   assert.deepEqual(plan.commands, [
+    "pnpm bazel:web:unit:thread-layout",
+  ]);
+});
+
+test("agent-default affected selection expands extracted layout package changes into app consumer coverage", () => {
+  const plan = buildExecutionPlan({
+    profileId: "agent-default",
+    changedFiles: ["core/packages/session-thread-layout/src/sessionMarkdownContract.ts"],
+    selectionMode: "affected",
+  });
+
+  assert.deepEqual(plan.commands, [
+    "pnpm bazel:web:unit:thread-layout",
     "pnpm bazel:web:pretext:measurement",
   ]);
 });

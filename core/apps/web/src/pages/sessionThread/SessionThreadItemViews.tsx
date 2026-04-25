@@ -15,7 +15,7 @@ import { blobUrl, type MessageAttachment } from "../../api/client";
 import { type SessionViewVerbosity } from "../../state/uiStateStore";
 import { copyTextToClipboard } from "../../utils/clipboard";
 import { useRelativeNowMs } from "../../utils/useRelativeNowMs";
-import { MemoMarkdown } from "../sessionView";
+import { MemoMarkdown } from "../sessionView/SessionPage.markdown";
 import {
   attachmentDisplayName,
   formatElapsedMs,
@@ -27,8 +27,8 @@ import {
   parseIsoMs,
   toolKindIcon,
   toolSummaryLine,
-} from "../sessionView";
-import type { ThreadItem, WorkbenchTurnHeader } from "../sessionView";
+} from "../sessionView/SessionPage.helpers";
+import type { ThreadItem, WorkbenchTurnHeader } from "../sessionView/SessionPage.types";
 import { buildWorkbenchToolLabel } from "./sessionThreadToolLabel";
 import { getWorkbenchMessageCollapseState, getWorkbenchMessageLayoutState } from "./transcriptRowLayoutModel";
 

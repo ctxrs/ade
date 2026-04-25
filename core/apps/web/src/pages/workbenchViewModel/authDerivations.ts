@@ -1,5 +1,5 @@
 import { idToString, type SessionEvent, type SessionTurn } from "../../api/client";
-import { parseIsoMs } from "../sessionView";
+import { parseIsoMs } from "../sessionView/SessionPage.helpers";
 
 export type AuthMethodOption = { id: string; name: string };
 export type SessionErrorInfo = { message: string; provider?: string };

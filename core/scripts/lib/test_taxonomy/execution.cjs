@@ -240,6 +240,7 @@ function normalizeSelectionMode({ selectionMode = "", touchedOnly = false } = {}
 function commandPriority(command) {
   if (
     command === "pnpm bazel:web:unit:supervisor-core"
+    || command === "pnpm bazel:web:unit:thread-layout"
   ) {
     return 90;
   }

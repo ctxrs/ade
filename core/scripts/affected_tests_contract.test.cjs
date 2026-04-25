@@ -107,10 +107,13 @@ test("pretext measurement changes route to the dedicated pretext unit slice", ()
   assert.deepEqual(commands, ["bash -lc pnpm bazel:web:pretext:measurement"]);
 });
 
-test("extracted layout package changes route to the dedicated pretext unit slice", () => {
+test("extracted layout package changes route to direct package truth plus app coverage", () => {
   const commands = runScenario(["core/packages/session-thread-layout/src/sessionMarkdownContract.ts"]);
 
-  assert.deepEqual(commands, ["bash -lc pnpm bazel:web:pretext:measurement"]);
+  assert.deepEqual(commands, [
+    "bash -lc pnpm bazel:web:unit:thread-layout",
+    "bash -lc pnpm bazel:web:pretext:measurement",
+  ]);
 });
 
 test("extracted supervisor package changes route to direct package truth plus affected app coverage", () => {

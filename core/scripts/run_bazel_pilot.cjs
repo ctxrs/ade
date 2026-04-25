@@ -620,7 +620,7 @@ function buildBazelPilotSummary(invocation, phaseResults, exitCode) {
     kind: "bazel",
     localPhaseCount: localPhases.length,
     localTargetCount: summarizeTargets("local"),
-    localSpill: localPhases.length > 0 && remotePhases.length > 0,
+    localSpill: ["all", "linux", "darwin"].includes(String(invocation.remoteExecutionMode || "")) && localPhases.length > 0,
     parentEntrypoint: String(invocation.env.CTX_VERIFY_PARENT_ENTRYPOINT || "").trim(),
     parentRunId: String(invocation.env.CTX_VERIFY_PARENT_RUN_ID || "").trim(),
     phaseCount: phaseResults.length,

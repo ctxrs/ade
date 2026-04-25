@@ -64,7 +64,20 @@ test("verify:broader keeps web escalations changed-aware", () => {
   ]);
 });
 
-test("verify:affected routes extracted layout package changes to the dedicated pretext slice", () => {
+test("verify:touched routes extracted layout package changes to the direct package gate", () => {
+  const plan = buildVerificationPlan({
+    intent: "touched",
+    base: "origin/main",
+    changedFiles: ["core/packages/session-thread-layout/src/sessionMarkdownContract.ts"],
+  });
+
+  assert.deepEqual(plan.commands, [
+    "pnpm source:file-size:enforce",
+    "pnpm bazel:web:unit:thread-layout",
+  ]);
+});
+
+test("verify:affected routes extracted layout package changes to direct package truth plus app coverage", () => {
   const plan = buildVerificationPlan({
     intent: "affected",
     base: "origin/main",
@@ -73,6 +86,7 @@ test("verify:affected routes extracted layout package changes to the dedicated p
 
   assert.deepEqual(plan.commands, [
     "pnpm source:file-size:enforce",
+    "pnpm bazel:web:unit:thread-layout",
     "pnpm bazel:web:pretext:measurement",
   ]);
 });

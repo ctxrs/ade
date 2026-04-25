@@ -108,6 +108,10 @@ test("Bazel web focused unit slices run as native vitest tests", () => {
     "node scripts/run_bazel_pilot.cjs test //core/packages/session-supervisor-core:unit_tests",
   );
   assert.equal(
+    corePackageJson.scripts["bazel:web:unit:thread-layout"],
+    "node scripts/run_bazel_pilot.cjs test //core/packages/session-thread-layout:unit_tests",
+  );
+  assert.equal(
     corePackageJson.scripts["bazel:web:unit:non-pretext"],
     "node scripts/run_bazel_pilot.cjs test //core/apps/web:unit_tests_non_pretext",
   );
@@ -185,7 +189,8 @@ test("Bazel web focused unit slices run as native vitest tests", () => {
   assert.match(nonPretextWorkbenchSurfaceAppBlock, /data = HERMETIC_WEB_CHECK_DATA/);
   assert.match(nonPretextWorkbenchSurfaceSessionBlock, /data = HERMETIC_WEB_CHECK_DATA/);
   assert.match(nonPretextWorkbenchShellBlock, /data = HERMETIC_WEB_CHECK_DATA/);
-  assert.match(pretextBlock, /data = HERMETIC_WEB_CHECK_DATA/);
+  assert.match(pretextBlock, /data = HERMETIC_WEB_PRETEXT_APP_DATA/);
+  assert.match(pretextBlock, /src\/pages\/sessionThread\/transcriptLayoutPlanner\.appSmoke\.test\.ts/);
   assert.match(desktopIpcCorpusBlock, /data = HERMETIC_WEB_CHECK_DATA/);
   assert.doesNotMatch(nonPretextBlock, /run_workspace_task\.sh/);
   assert.doesNotMatch(nonPretextFoundationBlock, /run_workspace_task\.sh/);

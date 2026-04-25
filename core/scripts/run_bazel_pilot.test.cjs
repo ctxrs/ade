@@ -390,6 +390,28 @@ test("bazel pilot summary formatter is stable for parser consumption", () => {
   assert.equal(parsed.localSpill, false);
 });
 
+test("bazel pilot reports local spill for linux remote mode with local-only execution", () => {
+  const summary = buildBazelPilotSummary({
+    command: "test",
+    env: {},
+    phases: [],
+    remoteExecutionMode: "linux",
+    telemetry: null,
+  }, [
+    {
+      durationMs: 900,
+      name: "local",
+      queueTimeMs: 0,
+      status: 0,
+      targets: ["//core/apps/web:pretext_measurement_unit_tests"],
+    },
+  ], 0);
+
+  assert.equal(summary.localPhaseCount, 1);
+  assert.equal(summary.remotePhaseCount, 0);
+  assert.equal(summary.localSpill, true);
+});
+
 test("bazel pilot does not record dead BuildBuddy links when Bazel never starts", () => {
   const volatileRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-bazel-pilot-spawn-failure-"));
   const invocation = buildBazelPilotInvocation({

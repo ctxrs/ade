@@ -1,5 +1,5 @@
 import type { WorkbenchListItem } from "./SessionPage.types";
-import { humanTurnStatus } from "./SessionPage.helpers";
+import { humanTurnStatus } from "./sessionView/SessionPage.helpers";
 import { SESSION_TRANSCRIPT_LAYOUT_ENGINE_REVISION } from "./sessionThread/sessionMarkdownMeasurement";
 import {
   getWorkbenchMessageLayoutState,

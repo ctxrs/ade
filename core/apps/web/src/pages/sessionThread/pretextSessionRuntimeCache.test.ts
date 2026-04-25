@@ -1,20 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorkbenchListItem } from "../sessionView";
 import {
-  persistWarmWorkbenchThreadViewModel,
-  readWarmWorkbenchThreadViewModel,
-  resetWarmWorkbenchThreadViewModelCache,
-} from "../workbenchThreadViewModelWarmCache";
-import {
   buildSessionPretextRuntimeLayoutKey,
   buildSessionPretextRuntimeSourceKey,
   createDefaultSessionTranscriptUiState,
   getOrCreateSessionPretextRuntime,
   getSessionPretextRuntimeCacheSize,
   noteSessionPretextRuntimeSnapshot,
+  persistSessionTranscriptWarmEntry,
   primeSessionPretextRuntime,
   pruneSessionPretextRuntimeCache,
+  readSessionTranscriptWarmEntry,
   readSessionPretextRuntimePreparedState,
+  resetSessionTranscriptWarmEntries,
   resetSessionPretextRuntimeCache,
 } from "./pretextSessionRuntimeCache";
 
@@ -31,7 +29,7 @@ const makeItems = (count = 2): WorkbenchListItem[] =>
 describe("pretextSessionRuntimeCache", () => {
   beforeEach(() => {
     resetSessionPretextRuntimeCache();
-    resetWarmWorkbenchThreadViewModelCache();
+    resetSessionTranscriptWarmEntries();
   });
 
   afterEach(() => {
@@ -234,7 +232,7 @@ describe("pretextSessionRuntimeCache", () => {
 
   it("keeps warm snapshots when pruning only the runtime slice", () => {
     const sessionId = "session-shared";
-    persistWarmWorkbenchThreadViewModel(sessionId, {
+    persistSessionTranscriptWarmEntry(sessionId, {
       sourceKey: "source-1",
       layoutKey: "verbosity:default",
       warmKey: "warm-1",
@@ -252,6 +250,7 @@ describe("pretextSessionRuntimeCache", () => {
         messagesByTurnId: new Map(),
         eventsByTurnId: new Map(),
       },
+      updatedAtMs: Date.now(),
     });
 
     primeSessionPretextRuntime({
@@ -265,7 +264,7 @@ describe("pretextSessionRuntimeCache", () => {
     pruneSessionPretextRuntimeCache([]);
 
     expect(getSessionPretextRuntimeCacheSize()).toBe(0);
-    expect(readWarmWorkbenchThreadViewModel(sessionId, "warm-1")).not.toBeNull();
+    expect(readSessionTranscriptWarmEntry(sessionId)).not.toBeNull();
   });
 
   it("evicts unretained prepared runtimes because reopen no longer depends on cached scroll state", () => {
