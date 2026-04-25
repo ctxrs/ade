@@ -48,6 +48,35 @@ test("browser e2e targets route through the dedicated Bazel runtime instead of w
   assert.doesNotMatch(e2eBuildFile, /run_workspace_task\.sh/u);
 });
 
+test("playwright browser runtimes are Bazel-owned inputs instead of ambient cache state", () => {
+  for (const [targetName, repoName] of [
+    ["playwright_browsers_mac15_arm64", "playwright_browser_runtime_mac15_arm64"],
+    ["playwright_browsers_ubuntu22_04_x64", "playwright_browser_runtime_ubuntu22_04_x64"],
+  ]) {
+    const block = targetBlock(targetName);
+    assert.ok(
+      block.includes(`@${repoName}//:runtime_manifest.json`),
+      `${targetName} should consume the Bazel-provided runtime manifest`,
+    );
+    assert.ok(
+      block.includes(`@${repoName}//:runtime_trees`),
+      `${targetName} should consume the Bazel-provided extracted runtime trees`,
+    );
+    assert.doesNotMatch(block, /run_workspace_task\.sh/u);
+    assert.doesNotMatch(block, /pnpm/u);
+  }
+});
+
+test("playwright runtime script tests use a dedicated node:test runner instead of app Vitest wiring", () => {
+  const block = targetBlock("playwright_runtime_script_tests");
+  assert.ok(
+    block.includes('entry_point = "scripts/run-node-test-suite.mjs"'),
+    "playwright_runtime_script_tests should use the dedicated node:test runner",
+  );
+  assert.doesNotMatch(block, /vitest/u);
+  assert.doesNotMatch(block, /HERMETIC_WEB_CHECK_DATA/u);
+});
+
 test("verify:agent-remote web profiles run Bazel web targets without dependency hydration", () => {
   assert.match(verifyAgentRemote, /"web-smoke"[\s\S]*?\/\/core\/packages\/session-supervisor-core:unit_tests/u);
   assert.match(verifyAgentRemote, /"web-smoke"[\s\S]*?\/\/core\/packages\/session-thread-layout:unit_smoke/u);

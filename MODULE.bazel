@@ -57,6 +57,19 @@ npm.npm_translate_lock(
 )
 use_repo(npm, "npm")
 
+playwright_browser_runtime = use_repo_rule(
+    "//tools/bazel:playwright_browser_runtime_repo.bzl",
+    "playwright_browser_runtime_repository",
+)
+playwright_browser_runtime(
+    name = "playwright_browser_runtime_mac15_arm64",
+    platforms = ["mac15-arm64"],
+)
+playwright_browser_runtime(
+    name = "playwright_browser_runtime_ubuntu22_04_x64",
+    platforms = ["ubuntu22.04-x64"],
+)
+
 rust = use_extension("@rules_rust//rust:extensions.bzl", "rust")
 rust.toolchain(
     edition = "2021",
