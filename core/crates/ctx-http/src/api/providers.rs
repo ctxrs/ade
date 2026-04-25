@@ -69,7 +69,7 @@ pub(super) use imports::{
     import_provider_auth_candidates, list_provider_auth_import_candidates,
     list_provider_auth_import_profiles,
 };
-pub(super) use install::{dev_restart_providers, install_lsp_server, refresh_provider_matrix};
+pub(super) use install::{dev_restart_providers, refresh_provider_matrix};
 pub(super) use login::{
     complete_codex_login, get_amp_login, get_claude_login, get_codex_login, get_gemini_login,
     get_kimi_login, get_mistral_login, get_qwen_login, start_amp_login, start_claude_login,
@@ -401,12 +401,6 @@ pub(super) struct UpsertHarnessEndpointReq {
 pub(super) struct SetEndpointManualModelsReq {
     #[serde(default)]
     model_ids: Vec<String>,
-}
-
-#[derive(Debug, Serialize)]
-pub(super) struct LspInstallStartResponse {
-    server_id: String,
-    install_id: InstallId,
 }
 
 #[derive(Debug, Serialize)]

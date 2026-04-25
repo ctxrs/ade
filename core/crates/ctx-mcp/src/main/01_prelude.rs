@@ -29,76 +29,11 @@ fn ctx_env_opt(name: &str) -> Option<String> {
     ctx_env(name).ok()
 }
 
-fn lsp_tools_enabled() -> bool {
-    ctx_env_opt("MCP_ENABLE_LSP_TOOLS")
-        .as_deref()
-        .and_then(ctx_core::boolish::parse_boolish)
-        .unwrap_or(false)
-}
-
 fn dev_tools_enabled() -> bool {
     ctx_env_opt("MCP_DEV_MODE")
         .as_deref()
         .and_then(ctx_core::boolish::parse_boolish)
         .unwrap_or(false)
-}
-
-fn is_lsp_related_tool(name: &str) -> bool {
-    name.starts_with("lsp_")
-        || matches!(
-            name,
-            "list_edit_plans" | "get_edit_plan" | "apply_edit_plan" | "discard_edit_plan"
-        )
-}
-
-#[derive(Default)]
-struct EditPlanRefMap {
-    by_edit_plan: HashMap<String, String>,
-    by_plan: HashMap<String, String>,
-}
-
-impl EditPlanRefMap {
-    fn edit_plan_id_for_internal(&mut self, plan_id: &str) -> String {
-        if let Some(existing) = self.by_plan.get(plan_id) {
-            return existing.clone();
-        }
-        let edit_plan_id = format!("edit-plan-{}", Uuid::new_v4());
-        self.by_plan
-            .insert(plan_id.to_string(), edit_plan_id.clone());
-        self.by_edit_plan
-            .insert(edit_plan_id.clone(), plan_id.to_string());
-        edit_plan_id
-    }
-
-    fn internal_plan_id_for_edit_plan(&self, edit_plan_id: &str) -> Option<String> {
-        self.by_edit_plan.get(edit_plan_id).cloned()
-    }
-}
-
-static EDIT_PLAN_REFS: OnceLock<Mutex<EditPlanRefMap>> = OnceLock::new();
-
-fn edit_plan_refs() -> &'static Mutex<EditPlanRefMap> {
-    EDIT_PLAN_REFS.get_or_init(|| Mutex::new(EditPlanRefMap::default()))
-}
-
-fn lock_or_recover<'a, T>(mutex: &'a Mutex<T>, name: &str) -> std::sync::MutexGuard<'a, T> {
-    match mutex.lock() {
-        Ok(guard) => guard,
-        Err(poisoned) => {
-            tracing::warn!(mutex = name, "mutex poisoned; recovering");
-            poisoned.into_inner()
-        }
-    }
-}
-
-fn edit_plan_id_for_internal(plan_id: &str) -> String {
-    let mut map = lock_or_recover(edit_plan_refs(), "edit plan ref map");
-    map.edit_plan_id_for_internal(plan_id)
-}
-
-fn internal_plan_id_for_edit_plan(edit_plan_id: &str) -> Option<String> {
-    let map = lock_or_recover(edit_plan_refs(), "edit plan ref map");
-    map.internal_plan_id_for_edit_plan(edit_plan_id)
 }
 
 #[derive(Default)]
@@ -129,6 +64,16 @@ static INTERACTIVE_SESSION_REFS: OnceLock<Mutex<InteractiveSessionRefMap>> = Onc
 
 fn interactive_session_refs() -> &'static Mutex<InteractiveSessionRefMap> {
     INTERACTIVE_SESSION_REFS.get_or_init(|| Mutex::new(InteractiveSessionRefMap::default()))
+}
+
+fn lock_or_recover<'a, T>(mutex: &'a Mutex<T>, name: &str) -> std::sync::MutexGuard<'a, T> {
+    match mutex.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => {
+            tracing::warn!(mutex = name, "mutex poisoned; recovering");
+            poisoned.into_inner()
+        }
+    }
 }
 
 fn session_ref_for_session_id(session_id: &str) -> String {
@@ -199,32 +144,6 @@ fn map_subagent_results(value: &mut Value) {
     for item in items {
         map_subagent_result(item);
     }
-}
-
-fn map_edit_plan_summary(value: &mut Value) {
-    let Some(obj) = value.as_object_mut() else {
-        return;
-    };
-    let plan_id = obj.remove("id").or_else(|| obj.remove("plan_id"));
-    let Some(plan_id) = plan_id else {
-        return;
-    };
-    if let Some(id) = plan_id.as_str() {
-        let edit_plan_id = edit_plan_id_for_internal(id);
-        obj.insert("edit_plan_id".to_string(), Value::String(edit_plan_id));
-    } else {
-        obj.insert("edit_plan_id".to_string(), plan_id);
-    }
-}
-
-fn map_edit_plan_summaries(value: &mut Value) {
-    if let Some(items) = value.as_array_mut() {
-        for item in items {
-            map_edit_plan_summary(item);
-        }
-        return;
-    }
-    map_edit_plan_summary(value);
 }
 
 fn map_interactive_session(value: &mut Value) {

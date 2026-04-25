@@ -17,14 +17,7 @@ use self::targeting::{
 use super::expected_managed_dependency_version;
 use ctx_provider_install::install_state::{truncate_for_storage, InstallErrorCode, InstallTarget};
 
-mod lsp_config;
 mod targeting;
-
-pub use self::lsp_config::{
-    apply_managed_lsp_server_config, apply_user_lsp_server_config, load_lsp_server_config,
-    load_user_lsp_config, save_lsp_server_config, LspServerConfigFile, UserLspConfigFile,
-    UserLspServerSpec,
-};
 
 static AGENT_SERVER_CONFIG_MUTATION_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 

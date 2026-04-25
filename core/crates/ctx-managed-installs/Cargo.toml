@@ -10,7 +10,6 @@ chrono.workspace = true
 ctx-bundled-assets = { path = "../ctx-bundled-assets" }
 ctx-core = { path = "../ctx-core" }
 ctx-harness-runtime = { path = "../ctx-harness-runtime" }
-ctx-lsp = { path = "../ctx-lsp" }
 ctx-provider-install = { path = "../ctx-provider-install" }
 ctx-provider-matrix = { path = "../ctx-provider-matrix" }
 ctx-providers = { path = "../ctx-providers" }

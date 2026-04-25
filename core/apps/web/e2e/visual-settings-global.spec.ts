@@ -110,31 +110,6 @@ const diagnosticsPayload = {
   },
 };
 
-const lspStatus = {
-  enabled: true,
-  edit_plans_enabled: true,
-  servers: [
-    {
-      language: "rust",
-      found: true,
-      command: "rust-analyzer",
-      args: [],
-      resolved_path: "/usr/bin/rust-analyzer",
-      version: "2026.03.01",
-      install_hints: [],
-    },
-    {
-      language: "typescript",
-      found: false,
-      command: "typescript-language-server",
-      args: ["--stdio"],
-      resolved_path: null,
-      version: null,
-      install_hints: ["npm install -g typescript-language-server typescript"],
-    },
-  ],
-};
-
 const FIXTURE_ISO = "2026-03-10T12:00:00.000Z";
 
 const cursorEndpoint = {
@@ -213,7 +188,6 @@ const installGlobalAppRoutes = async (
 
 const installDiagnosticsRoutes = async (page: Page) => {
   await installJsonRoute(page, "**/api/diagnostics", diagnosticsPayload);
-  await installJsonRoute(page, "**/api/lsp/status", lspStatus);
 };
 
 const installHarnessAuthRoutes = async (page: Page) => {
@@ -516,7 +490,7 @@ test.describe.serial("visual: settings and global surfaces", () => {
         page,
         buildVisualName(["diagnostics", theme, visualViewportLabel("fullpage")]),
         {
-          ready: page.getByText("Language Servers (LSP)"),
+          ready: page.getByText("Check updates"),
         },
       );
     });

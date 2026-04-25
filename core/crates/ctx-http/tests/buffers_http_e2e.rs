@@ -3,7 +3,6 @@ mod common;
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
-use std::time::Duration;
 
 use axum::body::{to_bytes, Body};
 use axum::http::{Request, StatusCode};
@@ -13,7 +12,6 @@ use tower::ServiceExt;
 
 use ctx_http::api;
 use ctx_http::daemon::AppState;
-use ctx_lsp::LspManagerConfig;
 use ctx_providers::adapters::ProviderAdapter;
 use ctx_providers::fake::FakeProviderAdapter;
 use ctx_store::StoreManager;
@@ -66,23 +64,12 @@ async fn setup_state() -> (tempfile::TempDir, Arc<AppState>, axum::Router) {
     let data_dir = tempfile::tempdir().unwrap();
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
 
-    let lsp_server = common::resolve_cargo_bin_exe(env!("CARGO_BIN_EXE_ctx-http-lsp-test-server"))
-        .display()
-        .to_string();
-    let state = Arc::new(AppState::new_with_lsp_config_and_flags(
+    let state = Arc::new(AppState::new(
         data_dir.path().to_path_buf(),
         stores,
         fake_providers(),
         "http://127.0.0.1:4399".to_string(),
         None,
-        LspManagerConfig {
-            enabled: true,
-            rust_command: lsp_server,
-            rust_args: vec![],
-            diagnostics_wait: Duration::from_secs(2),
-            ..Default::default()
-        },
-        false,
     ));
     let app = api::router(state.clone());
     (data_dir, state, app)

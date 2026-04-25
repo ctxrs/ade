@@ -8,7 +8,7 @@ use crate::daemon::AppState;
 pub(super) fn api_routes() -> axum::Router<Arc<AppState>> {
     core_routes()
         .merge(provider_routes())
-        .merge(lsp_routes())
+        .merge(utility_routes())
         .merge(workspace_routes())
         .merge(mobile_routes())
         .merge(session_routes())
@@ -356,10 +356,8 @@ fn provider_routes() -> axum::Router<Arc<AppState>> {
         )
 }
 
-fn lsp_routes() -> axum::Router<Arc<AppState>> {
+fn utility_routes() -> axum::Router<Arc<AppState>> {
     axum::Router::new()
-        .route("/api/lsp/status", get(lsp_status))
-        .route("/api/lsp/catalog", get(lsp_catalog_list))
         .route(
             "/api/worktrees/:id/bootstrap/logs",
             get(get_worktree_bootstrap_logs),
@@ -380,102 +378,6 @@ fn lsp_routes() -> axum::Router<Arc<AppState>> {
             "/api/workspaces/:id/merge_queue/entries/:entry_id/retry",
             post(retry_merge_queue_entry),
         )
-        .route(
-            "/api/lsp/catalog/:id/install",
-            post(install_lsp_catalog_server),
-        )
-        .route("/api/lsp/servers/:id/install", post(install_lsp_server))
-        .route("/api/lsp/diagnostics", post(lsp_diagnostics))
-        .route("/api/lsp/definition", post(lsp_definition))
-        .route("/api/lsp/type_definition", post(lsp_type_definition))
-        .route("/api/lsp/implementation", post(lsp_implementation))
-        .route("/api/lsp/references", post(lsp_references))
-        .route("/api/lsp/hover", post(lsp_hover))
-        .route("/api/lsp/signature_help", post(lsp_signature_help))
-        .route("/api/lsp/completion", post(lsp_completion))
-        .route("/api/lsp/completion/resolve", post(lsp_completion_resolve))
-        .route(
-            "/api/lsp/code_action/resolve",
-            post(lsp_code_action_resolve),
-        )
-        .route("/api/lsp/inlay_hints", post(lsp_inlay_hints))
-        .route("/api/lsp/document_highlight", post(lsp_document_highlight))
-        .route("/api/lsp/selection_ranges", post(lsp_selection_ranges))
-        .route(
-            "/api/lsp/call_hierarchy/prepare",
-            post(lsp_call_hierarchy_prepare),
-        )
-        .route(
-            "/api/lsp/call_hierarchy/incoming",
-            post(lsp_call_hierarchy_incoming),
-        )
-        .route(
-            "/api/lsp/call_hierarchy/outgoing",
-            post(lsp_call_hierarchy_outgoing),
-        )
-        .route("/api/lsp/code_lens", post(lsp_code_lens))
-        .route("/api/lsp/code_lens/resolve", post(lsp_code_lens_resolve))
-        .route("/api/lsp/prepare_rename", post(lsp_prepare_rename))
-        .route("/api/lsp/document_links", post(lsp_document_links))
-        .route(
-            "/api/lsp/document_links/resolve",
-            post(lsp_document_link_resolve),
-        )
-        .route(
-            "/api/lsp/semantic_tokens/full",
-            post(lsp_semantic_tokens_full),
-        )
-        .route(
-            "/api/lsp/semantic_tokens/delta",
-            post(lsp_semantic_tokens_delta),
-        )
-        .route("/api/lsp/folding_ranges", post(lsp_folding_ranges))
-        .route(
-            "/api/lsp/linked_editing_range",
-            post(lsp_linked_editing_range),
-        )
-        .route(
-            "/api/lsp/type_hierarchy/prepare",
-            post(lsp_type_hierarchy_prepare),
-        )
-        .route(
-            "/api/lsp/type_hierarchy/supertypes",
-            post(lsp_type_hierarchy_supertypes),
-        )
-        .route(
-            "/api/lsp/type_hierarchy/subtypes",
-            post(lsp_type_hierarchy_subtypes),
-        )
-        .route("/api/lsp/execute_command", post(lsp_execute_command))
-        .route(
-            "/api/lsp/execute_command/plan",
-            post(lsp_execute_command_plan),
-        )
-        .route("/api/lsp/document_symbols", post(lsp_document_symbols))
-        .route("/api/lsp/workspace_symbols", post(lsp_workspace_symbols))
-        .route(
-            "/api/lsp/workspace_symbols/resolve",
-            post(lsp_workspace_symbol_resolve),
-        )
-        .route("/api/lsp/code_actions", post(lsp_code_actions))
-        .route(
-            "/api/lsp/code_actions/by_diagnostic/plan",
-            post(lsp_code_actions_by_diagnostic_plan),
-        )
-        .route("/api/lsp/rename/plan", post(lsp_rename_plan))
-        .route("/api/lsp/format/plan", post(lsp_format_plan))
-        .route(
-            "/api/lsp/organize_imports/plan",
-            post(lsp_organize_imports_plan),
-        )
-        .route("/api/lsp/code_actions/plan", post(lsp_code_actions_plan))
-        .route(
-            "/api/worktrees/:id/edit_plans",
-            get(list_edit_plans_for_worktree),
-        )
-        .route("/api/edit_plans/:id", get(get_edit_plan))
-        .route("/api/edit_plans/:id/apply", post(apply_edit_plan_patch))
-        .route("/api/edit_plans/:id/discard", post(discard_edit_plan))
         .route("/api/buffers/open", post(open_buffer))
         .route("/api/buffers/update", post(update_buffer))
         .route("/api/buffers/close", post(close_buffer))

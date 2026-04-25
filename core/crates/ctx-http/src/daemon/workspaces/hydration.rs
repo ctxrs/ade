@@ -573,7 +573,6 @@ mod tests {
             worktree_bootstrap_gates: AsyncMutex::new(HashMap::new()),
             attachment_materializations: AsyncMutex::new(HashMap::new()),
             attachment_materialization_generation: AtomicU64::new(0),
-            edit_plans: AsyncMutex::new(HashMap::new()),
         };
         let payload = WorkspaceSnapshotHydrationPayload {
             snapshot_rev: 23,

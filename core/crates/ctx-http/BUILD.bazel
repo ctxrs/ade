@@ -16,7 +16,6 @@ CTX_HTTP_RUSTC_ENV = {
 }
 
 CTX_HTTP_COMPILE_DATA = [
-    "src/lsp_catalog.json",
     "//core/packages:web-session-worker/bin/worker.mjs",
     "//core/packages:web-session-worker/package.json",
 ]
@@ -26,7 +25,6 @@ CTX_HTTP_TEST_CORPUS_DATA = glob(["tests/corpus/**"])
 CTX_HTTP_TEST_FIXTURE_DATA = glob(["tests/fixtures/**"])
 CTX_HTTP_INTEGRATION_TEST_DATA = CTX_HTTP_COMPILE_DATA + CTX_HTTP_TEST_CORPUS_DATA + CTX_HTTP_TEST_FIXTURE_DATA + [
     ":ctx",
-    ":ctx-http-lsp-test-server",
     ":llama_server_mock",
 ]
 
@@ -161,7 +159,6 @@ CTX_HTTP_SHARED_INTERNAL_DEPS = [
     "//core/crates/ctx-harness-sources:lib",
     "//core/crates/ctx-managed-installs:lib",
     "//core/crates/ctx-linux-sandbox-runtime:lib",
-    "//core/crates/ctx-lsp:lib",
     "//core/crates/ctx-merge-queue:lib",
     "//core/crates/ctx-provider-accounts:lib",
     "//core/crates/ctx-provider-auth-import:lib",
@@ -195,7 +192,6 @@ CTX_HTTP_SHARED_INTERNAL_TEST_SUPPORT_DEPS = [
     "//core/crates/ctx-harness-sources:lib",
     "//core/crates/ctx-managed-installs:lib",
     "//core/crates/ctx-linux-sandbox-runtime:lib",
-    "//core/crates/ctx-lsp:lib",
     "//core/crates/ctx-merge-queue:lib",
     "//core/crates/ctx-provider-accounts:lib",
     "//core/crates/ctx-provider-auth-import:lib",
@@ -243,7 +239,6 @@ CTX_HTTP_SHARED_EXTERNAL_DEPS = [
     "@crates//:hyper-util",
     "@crates//:jsonwebtoken",
     "@crates//:libc",
-    "@crates//:lsp-types",
     "@crates//:mime_guess",
     "@crates//:notify",
     "@crates//:opentelemetry",
@@ -299,7 +294,6 @@ CTX_HTTP_DIRECT_TEST_DEPS = [
     "//core/crates/ctx-bundled-assets:lib_test_support",
     "//core/crates/ctx-core:lib",
     "//core/crates/ctx-fs:lib",
-    "//core/crates/ctx-lsp:lib",
     "//core/crates/ctx-managed-installs:lib",
     "//core/crates/ctx-merge-queue:lib",
     "//core/crates/ctx-provider-accounts:lib",
@@ -391,17 +385,6 @@ rust_binary(
         "@crates//:tracing",
         "@crates//:tracing-appender",
         "@crates//:tracing-subscriber",
-    ],
-)
-
-rust_binary(
-    name = "ctx-http-lsp-test-server",
-    crate_root = "src/bin/ctx-http-lsp-test-server.rs",
-    edition = "2021",
-    srcs = ["src/bin/ctx-http-lsp-test-server.rs"],
-    deps = [
-        "@crates//:anyhow",
-        "@crates//:serde_json",
     ],
 )
 

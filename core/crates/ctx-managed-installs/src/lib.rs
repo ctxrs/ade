@@ -12,8 +12,6 @@ use sha2::Digest;
 use tokio::process::Command;
 use tokio::sync::Mutex;
 use tokio::time::timeout;
-
-use crate::lsp_catalog::{LspCatalogArchive, LspCatalogInstall};
 use ctx_provider_install::install_state::{
     truncate_for_storage, InstallErrorCode, InstallEventLevel, InstallId, InstallInfo,
     InstallProgressEvent, InstallStateKind, InstallTarget,
@@ -25,8 +23,6 @@ use ctx_providers::crp::Tier1CrpAdapter;
 mod artifacts;
 mod config;
 mod dependencies;
-mod lsp;
-pub mod lsp_catalog;
 mod provider_install;
 pub mod provider_install_contract;
 pub mod provider_status_matrix;
@@ -43,8 +39,8 @@ mod test_support;
 
 pub(crate) use self::artifacts::{
     download_to_file, ensure_executable, extract_zip_to_dir, find_unique_path_ending_with,
-    install_agent_server_url_binary, install_url_binary, resolve_command_path,
-    run_command_with_timeout, validate_expected_sha256,
+    install_agent_server_url_binary, resolve_command_path, run_command_with_timeout,
+    validate_expected_sha256,
 };
 use self::dependencies::{
     install_managed_archive_dependency, install_managed_npm_dependency, map_archive_kind,
@@ -59,19 +55,15 @@ pub(crate) use ctx_bundled_assets as bundled_assets;
 
 pub use config::{
     agent_server_config_path, apply_managed_install_details,
-    apply_managed_install_details_for_target, apply_managed_lsp_server_config,
-    apply_user_lsp_server_config, load_agent_server_config, load_lsp_server_config,
-    load_user_lsp_config, managed_dependency_install_metadata_for_target,
-    managed_install_metadata_for_target, managed_provider_command_for_target,
-    managed_provider_install_metadata_for_target, mutate_agent_server_config,
-    resolve_provider_command, resolve_provider_login_command, resolve_runtime_provider_command,
-    resolve_runtime_provider_command_for_target,
+    apply_managed_install_details_for_target, load_agent_server_config,
+    managed_dependency_install_metadata_for_target, managed_install_metadata_for_target,
+    managed_provider_command_for_target, managed_provider_install_metadata_for_target,
+    mutate_agent_server_config, resolve_provider_command, resolve_provider_login_command,
+    resolve_runtime_provider_command, resolve_runtime_provider_command_for_target,
     resolve_runtime_provider_command_for_target_repairable_managed, save_agent_server_config,
-    save_lsp_server_config, AgentServerCommand, AgentServerConfigFile, LspServerConfigFile,
-    ManagedInstallError, ManagedInstallMetadata, ProviderLoginExecutable, ProviderRuntimeCommand,
-    ProviderRuntimeCommandSource, UserLspConfigFile, UserLspServerSpec,
+    AgentServerCommand, AgentServerConfigFile, ManagedInstallError, ManagedInstallMetadata,
+    ProviderLoginExecutable, ProviderRuntimeCommand, ProviderRuntimeCommandSource,
 };
-pub use lsp::{install_lsp_catalog_server_with_progress, install_lsp_server_with_progress};
 pub use provider_install::refresh_provider_statuses;
 #[allow(unused_imports)]
 pub use targets::{
@@ -431,13 +423,6 @@ fn validate_post_install_status(
         );
     }
     Ok(())
-}
-
-pub fn is_supported_managed_lsp_server(server_id: &str) -> bool {
-    matches!(
-        server_id,
-        "typescript" | "python" | "html" | "css" | "json" | "yaml" | "bash" | "dockerfile"
-    )
 }
 
 pub async fn install_provider_with_progress(

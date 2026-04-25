@@ -8,73 +8,26 @@ impl AppState {
         daemon_url: String,
         auth_token: Option<String>,
     ) -> Self {
-        Self::new_with_lsp_config(
+        Self::new_with_runtime_flags(
             data_root,
             stores,
             providers,
             daemon_url,
             auth_token,
-            LspManagerConfig::default(),
-        )
-    }
-
-    pub fn new_with_lsp_config(
-        data_root: PathBuf,
-        stores: StoreManager,
-        providers: HashMap<String, Arc<dyn ProviderAdapter>>,
-        daemon_url: String,
-        auth_token: Option<String>,
-        lsp_cfg: LspManagerConfig,
-    ) -> Self {
-        let lsp_edit_plans_enabled = std::env::var("CTX_LSP_EDITPLANS_ENABLED")
-            .ok()
-            .as_deref()
-            .and_then(ctx_core::boolish::parse_boolish)
-            .unwrap_or(false);
-        Self::new_with_lsp_config_and_flags(
-            data_root,
-            stores,
-            providers,
-            daemon_url,
-            auth_token,
-            lsp_cfg,
-            lsp_edit_plans_enabled,
-        )
-    }
-
-    pub fn new_with_lsp_config_and_flags(
-        data_root: PathBuf,
-        stores: StoreManager,
-        providers: HashMap<String, Arc<dyn ProviderAdapter>>,
-        daemon_url: String,
-        auth_token: Option<String>,
-        lsp_cfg: LspManagerConfig,
-        lsp_edit_plans_enabled: bool,
-    ) -> Self {
-        Self::new_with_lsp_config_and_runtime_flags(
-            data_root,
-            stores,
-            providers,
-            daemon_url,
-            auth_token,
-            lsp_cfg,
             AppRuntimeFlags {
-                lsp_edit_plans_enabled,
                 worktree_vcs_enabled: worktree_vcs_enabled_from_env(),
             },
         )
     }
 
-    pub fn new_with_lsp_config_and_runtime_flags(
+    pub fn new_with_runtime_flags(
         data_root: PathBuf,
         stores: StoreManager,
         providers: HashMap<String, Arc<dyn ProviderAdapter>>,
         daemon_url: String,
         auth_token: Option<String>,
-        lsp_cfg: LspManagerConfig,
         runtime_flags: AppRuntimeFlags,
     ) -> Self {
-        let lsp_edit_plans_enabled = runtime_flags.lsp_edit_plans_enabled;
         let worktree_vcs_enabled = runtime_flags.worktree_vcs_enabled;
         // Internal spool-path mechanics remain experimental, but once output is
         // promoted into the session artifact list it follows the normal
@@ -93,19 +46,9 @@ impl AppState {
                 );
             }
         }
-        let edit_plans_dir = edit_plans::edit_plans_dir(&data_root);
-        if let Err(e) = std::fs::create_dir_all(&edit_plans_dir) {
-            tracing::warn!(
-                "failed to create edit plans dir {}: {e}",
-                edit_plans_dir.to_string_lossy()
-            );
-        }
-        let edit_plans = edit_plans::load_edit_plans_from_disk(&data_root);
 
         let (shutdown_tx, _) = broadcast::channel(8);
-        let (lsp_diag_broadcaster, _) = broadcast::channel(2048);
         let ask_user_question = Arc::new(AskUserQuestionBroker::new());
-        let lsp = Arc::new(LspManager::new(lsp_cfg.clone()));
         let telemetry = Telemetry::new(data_root.clone());
         let ops_events = OpsEvents::new(data_root.clone());
         let perf_telemetry = PerfTelemetry::new(data_root.clone());
@@ -175,9 +118,6 @@ impl AppState {
                 stores,
                 daemon_url,
                 auth_token,
-                lsp_cfg,
-                lsp,
-                lsp_edit_plans_enabled,
                 buffers: BufferStore::default(),
                 ask_user_question,
                 shutdown_tx,
@@ -221,7 +161,6 @@ impl AppState {
                 worktree_bootstrap_gates: Mutex::new(HashMap::new()),
                 attachment_materializations: Mutex::new(HashMap::new()),
                 attachment_materialization_generation: AtomicU64::new(0),
-                edit_plans: Mutex::new(edit_plans),
             },
             providers: ProviderRuntime {
                 adapters: Mutex::new(providers),
@@ -256,8 +195,6 @@ impl AppState {
                 mobile_tunnel: MobileTunnelManager::default(),
                 web_sessions,
                 merge_queue: Arc::new(ctx_merge_queue::MergeQueueRuntime::new()),
-                lsp_diag_broadcaster,
-                lsp_diag_forwarders: Mutex::new(HashSet::new()),
             },
             execution: ExecutionRuntime {
                 harness: harness_runtime,

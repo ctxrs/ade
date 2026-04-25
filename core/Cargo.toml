@@ -11,7 +11,6 @@ members = [
   "crates/ctx-events",
   "crates/ctx-providers",
   "crates/codex-crp",
-  "crates/ctx-lsp",
   "crates/ctx-mcp",
   "crates/ctx-provider-accounts",
   "crates/ctx-provider-matrix",
@@ -80,7 +79,6 @@ tokio-util = "0.7"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 sum-tree = { version = "0.2.0", package = "zed-sum-tree" }
-lsp-types = { version = "0.97.0", features = ["proposed"] }
 notify = "7.0.0"
 raw-window-handle = "0.6.2"
 ropey = { version = "=2.0.0-beta.1", features = ["metric_lines_lf", "metric_utf16"] }

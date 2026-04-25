@@ -9,9 +9,6 @@ pub struct CoreState {
     pub stores: StoreManager,
     pub daemon_url: String,
     pub auth_token: Option<String>,
-    pub lsp_cfg: LspManagerConfig,
-    pub lsp: Arc<LspManager>,
-    pub lsp_edit_plans_enabled: bool,
     pub buffers: BufferStore,
     pub ask_user_question: Arc<AskUserQuestionBroker>,
     pub shutdown_tx: broadcast::Sender<()>,
@@ -78,7 +75,6 @@ pub struct WorkspaceRuntime {
     pub(crate) attachment_materializations:
         Mutex<HashMap<WorkspaceAttachmentId, AttachmentMaterializationTask>>,
     pub(crate) attachment_materialization_generation: AtomicU64,
-    pub edit_plans: Mutex<HashMap<EditPlanId, EditPlan>>,
 }
 
 pub struct ProviderRuntime {
@@ -116,8 +112,6 @@ pub struct TransportRuntime {
     pub mobile_tunnel: MobileTunnelManager,
     pub web_sessions: Arc<WebSessionManager>,
     pub merge_queue: Arc<ctx_merge_queue::MergeQueueRuntime>,
-    pub lsp_diag_broadcaster: broadcast::Sender<serde_json::Value>,
-    pub lsp_diag_forwarders: Mutex<HashSet<String>>,
 }
 
 pub struct ExecutionRuntime {
@@ -242,7 +236,6 @@ const DEFAULT_WORKTREE_VCS_SCHEDULER_CONCURRENCY: usize = 2;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct AppRuntimeFlags {
-    pub lsp_edit_plans_enabled: bool,
     pub worktree_vcs_enabled: bool,
 }
 

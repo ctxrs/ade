@@ -23,12 +23,6 @@ const diagnostics = {
   managed_installs: {},
 };
 
-const lspStatus = {
-  enabled: true,
-  edit_plans_enabled: true,
-  servers: [],
-};
-
 const installDiagnosticsBaselineRoutes = async (page: Page) => {
   await page.route("**/api/health", async (route) => {
     await route.fulfill({
@@ -45,13 +39,6 @@ const installDiagnosticsBaselineRoutes = async (page: Page) => {
       status: 200,
       contentType: "application/json",
       body: JSON.stringify(diagnostics),
-    });
-  });
-  await page.route("**/api/lsp/status", async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify(lspStatus),
     });
   });
 };

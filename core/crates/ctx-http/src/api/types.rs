@@ -342,34 +342,6 @@ pub(in crate::api) fn env_bool(key: &str) -> Option<bool> {
         .and_then(ctx_core::boolish::parse_boolish)
 }
 
-#[derive(Debug, Deserialize)]
-pub(in crate::api) struct LspFileReq {
-    /// Optional session scope; when present, `path` is resolved within the session worktree.
-    pub(in crate::api) session_id: Option<String>,
-    /// Optional explicit root path; used only when `session_id` is absent.
-    pub(in crate::api) root_path: Option<String>,
-    /// File path to analyze (absolute or relative to resolved root).
-    pub(in crate::api) path: String,
-}
-
-#[derive(Debug, Serialize)]
-pub(in crate::api) struct LspServerStatus {
-    pub(in crate::api) language: String,
-    pub(in crate::api) command: String,
-    pub(in crate::api) args: Vec<String>,
-    pub(in crate::api) found: bool,
-    pub(in crate::api) resolved_path: Option<String>,
-    pub(in crate::api) version: Option<String>,
-    pub(in crate::api) install_hints: Vec<String>,
-}
-
-#[derive(Debug, Serialize)]
-pub(in crate::api) struct LspStatusResp {
-    pub(in crate::api) enabled: bool,
-    pub(in crate::api) edit_plans_enabled: bool,
-    pub(in crate::api) servers: Vec<LspServerStatus>,
-}
-
 pub(in crate::api) async fn open_logs_folder(
     State(state): State<Arc<AppState>>,
 ) -> Result<StatusCode, (StatusCode, Json<ApiErrorResp>)> {

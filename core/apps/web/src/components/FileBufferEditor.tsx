@@ -59,7 +59,6 @@ export function FileBufferEditor({
   const latestText = useRef<string>("");
   const latestBufferId = useRef<string | null>(null);
   const latestVersion = useRef<number>(1);
-  const disposables = useRef<{ dispose: () => void }[]>([]);
 
   const [bufferId, setBufferId] = useState<string | null>(null);
   const [version, setVersion] = useState<number>(1);
@@ -115,7 +114,7 @@ export function FileBufferEditor({
           };
         })
       : [];
-    monaco.editor.setModelMarkers(model, "ctx-lsp", markers);
+    monaco.editor.setModelMarkers(model, "ctx-editor", markers);
   };
 
   useEffect(() => {
@@ -215,14 +214,6 @@ export function FileBufferEditor({
     return () => {
       if (saveTimer.current) window.clearTimeout(saveTimer.current);
       if (syncTimer.current) window.clearTimeout(syncTimer.current);
-      for (const d of disposables.current) {
-        try {
-          d.dispose();
-        } catch {
-          // ignore
-        }
-      }
-      disposables.current = [];
       const bid = latestBufferId.current;
       if (bid) {
         daemonFetchRaw("/api/buffers/close", {
@@ -312,85 +303,6 @@ export function FileBufferEditor({
             editor.onDidBlurEditorWidget(() => {
               doSave().catch(() => {});
             });
-
-            // Lightweight LSP-backed completion + hover for this editor only.
-            const model = editor.getModel?.();
-            const matchesThisModel = (m: Monaco.editor.ITextModel) => {
-              const p = String(m.uri.path ?? "");
-              return p.endsWith(path) || p === path || p.endsWith(`/${path}`);
-            };
-            const language = guessMonacoLanguage(path);
-            const completion = monaco.languages.registerCompletionItemProvider(language, {
-              triggerCharacters: [".", ":", "<", "\"", "'", "/", "@", "#"],
-              provideCompletionItems: async (m: Monaco.editor.ITextModel, pos: Monaco.Position) => {
-                if (!matchesThisModel(m)) return { suggestions: [] };
-                const line = Math.max(0, Number(pos.lineNumber ?? 1) - 1);
-                const character = Math.max(0, Number(pos.column ?? 1) - 1);
-                const res = await daemonFetchRaw("/api/lsp/completion", {
-                  method: "POST",
-                  headers: { "content-type": "application/json" },
-                  body: JSON.stringify({ session_id: sessionId, path, line, character }),
-                });
-                if (res.status < 200 || res.status >= 300) return { suggestions: [] };
-                const parsed = res.body ? (JSON.parse(res.body) as unknown) : null;
-                const v = asRecord(parsed);
-                const rawItems = Array.isArray(parsed) ? parsed : v.items;
-                const items = Array.isArray(rawItems) ? rawItems : [];
-                const word = m.getWordUntilPosition(pos);
-                const range = {
-                  startLineNumber: pos.lineNumber,
-                  endLineNumber: pos.lineNumber,
-                  startColumn: word.startColumn,
-                  endColumn: word.endColumn,
-                };
-                const suggestions = items.map((it: unknown) => {
-                  const item = asRecord(it);
-                  return {
-                    label: String(item.label ?? ""),
-                    kind: monaco.languages.CompletionItemKind.Text,
-                    insertText: String(item.insertText ?? item.label ?? ""),
-                    detail: typeof item.detail === "string" ? item.detail : undefined,
-                    range,
-                  };
-                });
-                return { suggestions };
-              },
-            });
-            const hover = monaco.languages.registerHoverProvider(language, {
-              provideHover: async (m: Monaco.editor.ITextModel, pos: Monaco.Position) => {
-                if (!matchesThisModel(m)) return null;
-                const line = Math.max(0, Number(pos.lineNumber ?? 1) - 1);
-                const character = Math.max(0, Number(pos.column ?? 1) - 1);
-                const res = await daemonFetchRaw("/api/lsp/hover", {
-                  method: "POST",
-                  headers: { "content-type": "application/json" },
-                  body: JSON.stringify({ session_id: sessionId, path, line, character }),
-                });
-                if (res.status < 200 || res.status >= 300) return null;
-                const v = asRecord(res.body ? JSON.parse(res.body) : null);
-                const contents = v.contents;
-                const contentsRecord = asRecord(contents);
-                const markdown =
-                  typeof contents === "string"
-                    ? contents
-                    : typeof contentsRecord.value === "string"
-                      ? contentsRecord.value
-                      : Array.isArray(contents)
-                        ? contents
-                            .map((c: unknown) => {
-                              if (typeof c === "string") return c;
-                              const rec = asRecord(c);
-                              return typeof rec.value === "string" ? rec.value : "";
-                            })
-                            .filter(Boolean)
-                            .join("\n\n")
-                        : "";
-                if (!markdown) return null;
-                return { contents: [{ value: markdown }] };
-              },
-            });
-            disposables.current.push(completion, hover);
-            if (model) applyMarkers();
           }}
           onChange={(v: string | undefined) => {
             const next = String(v ?? "");

@@ -1592,7 +1592,6 @@ dependencies = [
  "ctx-harness-setup",
  "ctx-harness-sources",
  "ctx-linux-sandbox-runtime",
- "ctx-lsp",
  "ctx-managed-installs",
  "ctx-merge-queue",
  "ctx-provider-accounts",
@@ -1631,7 +1630,6 @@ dependencies = [
  "hyper-util",
  "jsonwebtoken",
  "libc",
- "lsp-types",
  "mime_guess",
  "notify 7.0.0",
  "opentelemetry",
@@ -1705,21 +1703,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ctx-lsp"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "ctx-core",
- "lsp-types",
- "serde",
- "serde_json",
- "tempfile",
- "tokio",
- "tracing",
- "url",
-]
-
-[[package]]
 name = "ctx-managed-installs"
 version = "0.1.0"
 dependencies = [
@@ -1730,7 +1713,6 @@ dependencies = [
  "ctx-bundled-assets",
  "ctx-core",
  "ctx-harness-runtime",
- "ctx-lsp",
  "ctx-provider-install",
  "ctx-provider-matrix",
  "ctx-providers",
@@ -2537,15 +2519,6 @@ checksum = "b375d6465b98090a5f25b1c7703f3859783755aa9a80433b36e0379a3ec2f369"
 dependencies = [
  "crc32fast",
  "miniz_oxide",
-]
-
-[[package]]
-name = "fluent-uri"
-version = "0.1.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "17c704e9dbe1ddd863da1e6ff3567795087b1eb201ce80d8fa81162e1516500d"
-dependencies = [
- "bitflags 1.3.2",
 ]
 
 [[package]]
@@ -3582,19 +3555,6 @@ name = "lru-slab"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "112b39cec0b298b6c1999fee3e31427f74f676e4cb9879ed1a121b43661a4154"
-
-[[package]]
-name = "lsp-types"
-version = "0.97.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "53353550a17c04ac46c585feb189c2db82154fc84b79c7a66c96c2c644f66071"
-dependencies = [
- "bitflags 1.3.2",
- "fluent-uri",
- "serde",
- "serde_json",
- "serde_repr",
-]
 
 [[package]]
 name = "lzma-rs"
@@ -5037,17 +4997,6 @@ dependencies = [
  "percent-encoding",
  "serde",
  "thiserror 1.0.69",
-]
-
-[[package]]
-name = "serde_repr"
-version = "0.1.20"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "175ee3e80ae9982737ca543e96133087cbd9a485eecc3bc4de9c1a37b47ea59c"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
 ]
 
 [[package]]

@@ -1,37 +1,5 @@
 use super::*;
 
-pub(crate) async fn install_lsp_server(
-    State(state): State<Arc<AppState>>,
-    Path(id): Path<String>,
-) -> Result<Json<LspInstallStartResponse>, StatusCode> {
-    if !installer::is_supported_managed_lsp_server(&id) {
-        return Err(StatusCode::BAD_REQUEST);
-    }
-
-    let install_key = format!("lsp:{id}");
-    let (install_id, started_new) = state.start_install(install_key, None).await;
-    if started_new {
-        let state2 = state.clone();
-        let server_id = id.clone();
-        tokio::spawn(async move {
-            if let Err(e) = installer::install_lsp_server_with_progress(
-                state2.clone(),
-                install_id,
-                server_id.clone(),
-            )
-            .await
-            {
-                tracing::error!("lsp install failed ({server_id}): {e:#}");
-            }
-        });
-    }
-
-    Ok(Json(LspInstallStartResponse {
-        server_id: id,
-        install_id,
-    }))
-}
-
 pub(crate) async fn refresh_provider_matrix(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<MatrixRefreshResponse>, (StatusCode, Json<ApiErrorResp>)> {

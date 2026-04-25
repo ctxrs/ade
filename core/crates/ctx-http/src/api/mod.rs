@@ -23,11 +23,11 @@ use url::Url;
 
 pub(crate) mod artifacts;
 mod auth;
+mod buffers_api;
 mod demo;
 pub(crate) mod errors;
-mod execution;
 mod extractors;
-mod lsp;
+mod execution;
 mod merge_queue_api;
 mod mobile_access;
 mod provider_catalog;
@@ -57,8 +57,8 @@ pub(crate) use auth::{
 };
 
 use artifacts::*;
+use buffers_api::*;
 use execution::*;
-use lsp::*;
 use merge_queue_api::*;
 use mobile_access::*;
 use providers::*;
@@ -79,7 +79,6 @@ use auth::{
 };
 use demo::*;
 use errors::ApiErrorResp;
-use extractors::extract_workspace_edit_from_command;
 use ws::{
     dictation_livekit_stream_ws, mobile_secure_workspace_stream_ws, terminal_stream_ws,
     web_session_signal, workspace_active_snapshot_stream_ws,

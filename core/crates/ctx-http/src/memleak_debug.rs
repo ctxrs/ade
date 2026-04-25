@@ -14,7 +14,6 @@ use crate::perf_telemetry::PerfTelemetryStats;
 use crate::terminals::TerminalManagerStats;
 use crate::web_sessions::WebSessionManagerStats;
 use ctx_harness_runtime::HarnessRuntimeStats;
-use ctx_lsp::LspManagerStats;
 use ctx_store::StoreManagerStats;
 use ctx_workspace_active_snapshot::WorkspaceActiveSnapshotStats;
 
@@ -32,7 +31,6 @@ struct MemleakDebugSnapshot {
     buffers: BufferStoreStats,
     terminals: TerminalManagerStats,
     perf_telemetry: PerfTelemetryStats,
-    lsp: LspManagerStats,
     web_sessions: WebSessionManagerStats,
     harness_runtime: HarnessRuntimeStats,
     stores: StoreManagerStats,
@@ -79,7 +77,6 @@ struct WorkspaceCacheStats {
     workspace_active_heads_cache_bytes: usize,
     workspace_active_heads_cache_max_bytes: usize,
     worktree_bootstrap_gates: usize,
-    edit_plans: usize,
 }
 
 #[derive(Debug, Serialize)]
@@ -269,7 +266,6 @@ async fn sample_once(state: &Arc<AppState>) -> Result<()> {
         }
         drop(workspace_heads_guard);
         let worktree_bootstrap_gates = state.workspaces.worktree_bootstrap_gates.lock().await.len();
-        let edit_plans = state.workspaces.edit_plans.lock().await.len();
 
         WorkspaceCacheStats {
             file_completions_cache,
@@ -288,7 +284,6 @@ async fn sample_once(state: &Arc<AppState>) -> Result<()> {
             workspace_active_heads_cache_bytes,
             workspace_active_heads_cache_max_bytes,
             worktree_bootstrap_gates,
-            edit_plans,
         }
     };
 
@@ -314,7 +309,6 @@ async fn sample_once(state: &Arc<AppState>) -> Result<()> {
     let buffers = state.core.buffers.stats().await;
     let terminals = state.transport.terminals.stats().await;
     let perf_telemetry = state.telemetry.perf_telemetry.stats();
-    let lsp = state.core.lsp.stats().await;
     let web_sessions = state.transport.web_sessions.stats().await;
     let harness_runtime = state.execution.harness.stats().await;
     let stores = state.core.stores.stats().await;
@@ -332,7 +326,6 @@ async fn sample_once(state: &Arc<AppState>) -> Result<()> {
         buffers,
         terminals,
         perf_telemetry,
-        lsp,
         web_sessions,
         harness_runtime,
         stores,

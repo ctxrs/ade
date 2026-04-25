@@ -8,9 +8,7 @@ import {
   checkUpdates,
   Diagnostics,
   DownloadAppImageUpdateResp,
-  LspStatus,
   getDiagnostics,
-  getLspStatus,
   UpdateCheck,
   applyAppImageUpdate,
   downloadAppImageUpdate,
@@ -88,7 +86,6 @@ const joinBaseAndPath = (baseUrl: string, urlPath: string): string => {
 export default function DiagnosticsPage() {
   const location = useLocation();
   const [diagnostics, setDiagnostics] = useState<Diagnostics | null>(null);
-  const [lspStatus, setLspStatus] = useState<LspStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [updateInfo, setUpdateInfo] = useState<UpdateCheck | null>(null);
@@ -105,13 +102,9 @@ export default function DiagnosticsPage() {
 
   const refresh = () => {
     setError(null);
-    return Promise.all([
-      getDiagnostics(),
-      getLspStatus().catch(() => null),
-    ])
-      .then(([d, lsp]) => {
+    return getDiagnostics()
+      .then((d) => {
         setDiagnostics(d);
-        setLspStatus(lsp);
         setNotice(null);
       })
       .catch((e) => setError(e.message));
@@ -135,11 +128,6 @@ export default function DiagnosticsPage() {
     () => (diagnostics ? JSON.stringify(diagnostics, null, 2) : ""),
     [diagnostics],
   );
-
-  const lspMissing = useMemo(() => {
-    const servers = lspStatus?.servers ?? [];
-    return servers.filter((s) => !s.found);
-  }, [lspStatus]);
 
   const onCopy = async () => {
     if (!diagnostics) return;
@@ -354,74 +342,6 @@ export default function DiagnosticsPage() {
 
       {notice && <div className="banner">{notice}</div>}
       {error && <div className="error">{error}</div>}
-
-      {lspStatus && (
-        <div className="card">
-          <h2 style={{ marginTop: 0 }}>Language Servers (LSP)</h2>
-          <div className="muted" style={{ marginBottom: 8 }}>
-            <div>
-              <b>Enabled:</b> {lspStatus.enabled ? "Yes" : "No"}{" "}
-              {!lspStatus.enabled && (
-                <span className="muted">
-                  (set <code>CTX_LSP_ENABLED=1</code>)
-                </span>
-              )}
-            </div>
-          </div>
-
-          <ul className="list">
-            {lspStatus.servers.map((s) => (
-              <li key={s.language}>
-                <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
-                  <div>
-                    <div>
-                      <b>{s.language}</b>{" "}
-                      <span className="muted">
-                        {s.found ? "installed" : "missing"}
-                      </span>
-                    </div>
-                    <div className="muted">
-                      <code>{s.command}</code>
-                      {s.args?.length ? (
-                        <>
-                          {" "}
-                          <span className="muted">{s.args.join(" ")}</span>
-                        </>
-                      ) : null}
-                    </div>
-                    {s.resolved_path ? (
-                      <div className="muted">
-                        <span className="muted">Path:</span> {s.resolved_path}
-                      </div>
-                    ) : null}
-                    {s.version ? (
-                      <div className="muted">
-                        <span className="muted">Version:</span> {s.version}
-                      </div>
-                    ) : null}
-                    {!s.found && s.install_hints?.length ? (
-                      <div className="muted" style={{ marginTop: 6 }}>
-                        <div className="muted">Install:</div>
-                        {s.install_hints.map((h, idx) => (
-                          <div key={idx}>
-                            <code>{h}</code>
-                          </div>
-                        ))}
-                      </div>
-                    ) : null}
-                  </div>
-                </div>
-              </li>
-            ))}
-          </ul>
-
-          {lspMissing.length > 0 && (
-            <div className="muted" style={{ marginTop: 10 }}>
-              Missing servers will cause LSP features to fail for those languages.
-            </div>
-          )}
-        </div>
-      )}
 
       <div className="card">
         <h2 style={{ marginTop: 0 }}>Updates</h2>

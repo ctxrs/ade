@@ -6,7 +6,7 @@ CTX_HTTP_SUITE_ORDER = [
     "provider-runtime-simulated",
     "provider-runtime-live",
     "repo-vcs",
-    "lsp",
+    "buffers",
     "turns-terminal",
     "attachments-routing",
     "subagents-control",
@@ -24,6 +24,7 @@ CTX_HTTP_SUITE_TESTS = {
         "fault_matrix",
         "hot_endpoints_no_db",
         "replay_properties",
+        "task_default_session_http",
         "workspace_active_snapshot_http_workspace_active_hydration_returns_500_for_store_open_failures_and_404_for_missing_workspaces",
         "workspace_active_snapshot_http_workspace_active_snapshot_includes_sessions",
         "workspace_active_snapshot_http_create_session_rejects_initial_prompt_without_client_ids",
@@ -89,11 +90,8 @@ CTX_HTTP_SUITE_TESTS = {
         "worktree_archive_http",
         "worktree_vcs_snapshot",
     ],
-    "lsp": [
+    "buffers": [
         "buffers_http_e2e",
-        "lsp_catalog_http_e2e",
-        "lsp_edit_plans_http_e2e",
-        "lsp_http_e2e",
     ],
     "turns-terminal": [
         "assistant_chunk_stream_only",
@@ -123,6 +121,7 @@ CTX_HTTP_SUITE_TESTS = {
     ],
     "updates-release": [
         "openai_responses_sse_stub",
+        "updates_appimage_apply_safety",
         "updates_failure_safety_checksum_mismatch",
         "updates_failure_safety_interrupted_transfer",
         "release_manifest_corpus",
@@ -381,7 +380,6 @@ def _integration_rustc_env(rustc_env):
     for key, value in rustc_env.items():
         merged[key] = value
     merged["CARGO_BIN_EXE_ctx"] = "$(rootpath :ctx)"
-    merged["CARGO_BIN_EXE_ctx-http-lsp-test-server"] = "$(rootpath :ctx-http-lsp-test-server)"
     merged["CARGO_BIN_EXE_llama_server_mock"] = "$(rootpath :llama_server_mock)"
     return merged
 

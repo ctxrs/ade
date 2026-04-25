@@ -9,7 +9,6 @@ use tokio::sync::{broadcast, mpsc, watch, Mutex, Notify, Semaphore};
 use tokio::task::JoinHandle;
 
 use crate::buffers::BufferStore;
-use crate::edit_plans::{EditPlan, EditPlanId};
 use crate::git_status::GitStatusSnapshot;
 use crate::mobile_tunnel::MobileTunnelManager;
 use crate::ops_events::{OpsEvent, OpsEvents};
@@ -33,7 +32,6 @@ use ctx_core::models::{
     WorktreeVcsSnapshot, WorktreeVcsTouchedFiles, WorktreeVcsTouchedFilesState,
 };
 use ctx_execution_runtime::ExecutionSetupCoordinator;
-use ctx_lsp::{LspManager, LspManagerConfig};
 use ctx_provider_accounts as provider_accounts;
 use ctx_provider_install::install_state::{
     InstallErrorCode, InstallEventLevel, InstallId, InstallProgressEvent, InstallState,
@@ -50,7 +48,6 @@ mod installs;
 mod metrics;
 mod types;
 
-use super::edit_plans;
 pub(crate) use types::{
     provider_inactivity_timeout_from_env, worktree_vcs_enabled_from_env,
     worktree_vcs_scheduler_concurrency_from_env, ActiveTaskRefreshEntry,
@@ -73,22 +70,6 @@ pub use types::{
 };
 
 impl AppState {
-    pub fn edit_plans_dir(&self) -> PathBuf {
-        edit_plans::edit_plans_dir(&self.core.data_root)
-    }
-
-    pub fn persist_edit_plan(&self, plan: &EditPlan) {
-        if let Err(e) = edit_plans::persist_edit_plan_to_disk(&self.core.data_root, plan) {
-            tracing::warn!("failed to persist edit plan {}: {e}", plan.id.0);
-        }
-    }
-
-    pub fn delete_edit_plan_file(&self, plan_id: EditPlanId) {
-        if let Err(e) = edit_plans::delete_edit_plan_file(&self.core.data_root, plan_id) {
-            tracing::warn!("failed to delete edit plan {} file: {e}", plan_id.0);
-        }
-    }
-
     pub fn global_store(&self) -> &Store {
         self.core.stores.global()
     }

@@ -57,22 +57,6 @@ export type ApplyAppImageUpdateResp = {
   message: string;
 };
 
-export type LspServerStatus = {
-  language: string;
-  command: string;
-  args: string[];
-  found: boolean;
-  resolved_path?: string | null;
-  version?: string | null;
-  install_hints: string[];
-};
-
-export type LspStatus = {
-  enabled: boolean;
-  edit_plans_enabled: boolean;
-  servers: LspServerStatus[];
-};
-
 export type LiveKitDictationSettings = {
   base_url: string;
   api_key_set?: boolean;
@@ -331,8 +315,6 @@ export const getResourceUtilization = (workspaceId: string) =>
   apiAny<ResourceUtilization>(`/api/resource_utilization?workspace_id=${encodeURIComponent(workspaceId)}`);
 
 export const getHealth = () => apiAny<Health>(`/api/health`);
-
-export const getLspStatus = () => apiAny<LspStatus>(`/api/lsp/status`);
 
 export const openLogsFolder = () => apiAny(`/api/logs/open`, { method: "POST" });
 

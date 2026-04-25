@@ -42,7 +42,6 @@ ctx-workspace-container = { path = "../ctx-workspace-container" }
 ctx-workspace-services = { path = "../ctx-workspace-services" }
 ctx-workspace-active-snapshot = { path = "../ctx-workspace-active-snapshot" }
 ctx-worker-protocol = { path = "../ctx-worker-protocol" }
-ctx-lsp = { path = "../ctx-lsp" }
 ctx-store = { path = "../ctx-store" }
 directories.workspace = true
 futures.workspace = true
@@ -88,7 +87,6 @@ semver = "1"
 atty = "0.2"
 urlencoding = "2"
 url = "2"
-lsp-types = { version = "0.97", features = ["proposed"] }
 similar = "2"
 jsonwebtoken = "9"
 tokio-tungstenite = { version = "0.26", features = ["rustls-tls-webpki-roots"] }

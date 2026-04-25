@@ -1,10 +1,6 @@
 use super::*;
 
 impl AppState {
-    pub fn lsp_diag_broadcaster(&self) -> broadcast::Sender<serde_json::Value> {
-        self.transport.lsp_diag_broadcaster.clone()
-    }
-
     pub(crate) async fn emit_cache_miss(&self, cache: &str) {
         self.emit_cache_counter("daemon.cache_miss", cache, 1, None)
             .await;

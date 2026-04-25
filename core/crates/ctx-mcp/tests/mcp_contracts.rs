@@ -11,7 +11,7 @@ fn mcp_bin() -> &'static str {
 }
 
 #[tokio::test]
-async fn mcp_tools_list_hides_lsp_by_default() {
+async fn mcp_tools_list_omits_removed_lsp_and_edit_plan_tools() {
     let bin = mcp_bin();
     let mut child = Command::new(bin)
         .arg("--stdio")
@@ -53,14 +53,14 @@ async fn mcp_tools_list_hides_lsp_by_default() {
                 .collect();
             assert!(
                 !names.iter().any(|n| n.starts_with("lsp_")),
-                "expected lsp_* tools to be hidden by default"
+                "expected removed lsp_* tools to stay absent"
             );
             assert!(
                 !names.iter().any(|n| matches!(
                     n.as_str(),
                     "list_edit_plans" | "get_edit_plan" | "apply_edit_plan" | "discard_edit_plan"
                 )),
-                "expected edit plan tools to be hidden by default"
+                "expected removed edit plan tools to stay absent"
             );
             got_list = true;
             break;
@@ -68,6 +68,59 @@ async fn mcp_tools_list_hides_lsp_by_default() {
     }
 
     assert!(got_list, "did not receive tools/list response");
+    let _ = child.kill().await;
+}
+
+#[tokio::test]
+async fn mcp_removed_lsp_tool_calls_return_actionable_errors() {
+    let bin = mcp_bin();
+    let mut child = Command::new(bin)
+        .arg("--stdio")
+        .env("CTX_DAEMON_URL", "http://127.0.0.1:9")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    let mut stdin = child.stdin.take().unwrap();
+    let stdout = child.stdout.take().unwrap();
+    let mut reader = BufReader::new(stdout).lines();
+
+    for msg in [
+        json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25"}}),
+        json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"lsp_hover","arguments":{"workspace":"ignored","file":"ignored","line":1,"character":1}}}),
+    ] {
+        stdin.write_all(msg.to_string().as_bytes()).await.unwrap();
+        stdin.write_all(b"\n").await.unwrap();
+    }
+    stdin.flush().await.unwrap();
+
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+    let mut got_response = false;
+    while tokio::time::Instant::now() < deadline {
+        let Some(line) = reader.next_line().await.unwrap() else {
+            break;
+        };
+        let v: Value = serde_json::from_str(&line).unwrap();
+        if v.get("id").and_then(|id| id.as_i64()) == Some(2) {
+            assert_eq!(v["result"]["isError"].as_bool(), Some(true));
+            let text = v["result"]["content"][0]["text"]
+                .as_str()
+                .expect("tool error text");
+            assert!(
+                text.contains("tool removed: lsp_hover"),
+                "expected removed tool message, got: {text}"
+            );
+            assert!(
+                text.contains("795129c6a"),
+                "expected recovery commit in removed tool message, got: {text}"
+            );
+            got_response = true;
+            break;
+        }
+    }
+
+    assert!(got_response, "did not receive removed tool response");
     let _ = child.kill().await;
 }
 

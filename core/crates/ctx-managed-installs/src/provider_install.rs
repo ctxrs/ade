@@ -823,7 +823,6 @@ pub(super) fn classify_install_error(stage: &str, err: &anyhow::Error) -> Instal
     }
     if stage == "registry"
         || text.contains("managed install registry")
-        || text.contains("saving lsp server config")
     {
         return InstallErrorCode::RegistryWriteFailed;
     }

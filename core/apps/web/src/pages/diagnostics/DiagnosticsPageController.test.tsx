@@ -7,9 +7,8 @@ import {
   appendDesktopLog,
   checkUpdates,
   getDiagnostics,
-  getLspStatus,
 } from "../../api/client";
-import type { Diagnostics, LspStatus } from "../../api/client";
+import type { Diagnostics } from "../../api/client";
 import {
   desktopApplyAppUpdate,
   desktopCheckAppUpdate,
@@ -36,7 +35,6 @@ vi.mock("../../api/client", () => ({
   checkUpdates: vi.fn(),
   downloadAppImageUpdate: vi.fn(),
   getDiagnostics: vi.fn(),
-  getLspStatus: vi.fn(),
   openLogsFolder: vi.fn(),
 }));
 
@@ -125,13 +123,7 @@ describe("DiagnosticsPage updates", () => {
       providers: [],
       managed_installs: {},
     };
-    const lspStatus: LspStatus = {
-      enabled: true,
-      edit_plans_enabled: true,
-      servers: [],
-    };
     vi.mocked(getDiagnostics).mockResolvedValue(diagnostics);
-    vi.mocked(getLspStatus).mockResolvedValue(lspStatus);
     vi.mocked(isDesktopApp).mockReturnValue(true);
     vi.mocked(desktopGetConnection).mockResolvedValue({ kind: "local" });
     vi.mocked(getDesktopPlatform).mockResolvedValue("windows");

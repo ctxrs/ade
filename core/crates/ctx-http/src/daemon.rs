@@ -12,7 +12,6 @@ use serde_json::json;
 
 use ctx_core::ids::WorkspaceId;
 use ctx_core::models::{ExecutionEnvironment, SessionTurn, SessionTurnStatus};
-use ctx_lsp::LspManagerConfig;
 use ctx_providers::adapters::ProviderAdapter;
 use ctx_providers::crp::Tier1CrpAdapter;
 use ctx_providers::fake::FakeProviderAdapter;
@@ -35,7 +34,6 @@ use crate::tool_cgroup;
 use ctx_provider_install::install_state::InstallTarget;
 
 mod auth;
-mod edit_plans;
 mod lifecycle;
 mod provider_adapters;
 pub(crate) mod sessions;
@@ -717,19 +715,15 @@ pub async fn serve(bind: Vec<String>, data_dir: Option<String>) -> Result<()> {
     let mut auth = auth::load_or_init_daemon_auth(&data_root)?;
     let auth_token = Some(auth.token.clone());
 
-    let mut lsp_cfg = LspManagerConfig::default();
-    let _ = installer::apply_managed_lsp_server_config(&data_root, &mut lsp_cfg).await;
-    let _ = installer::apply_user_lsp_server_config(&data_root, &mut lsp_cfg).await;
     auth.daemon_url = Some(daemon_url.clone());
     auth::write_daemon_auth_file(&auth::daemon_auth_path(&data_root), &auth)?;
 
-    let state = Arc::new(AppState::new_with_lsp_config(
+    let state = Arc::new(AppState::new(
         data_root,
         stores,
         providers,
         daemon_url.clone(),
         auth_token,
-        lsp_cfg,
     ));
     state.transport.web_sessions.clone().start_reaper().await;
     state.transport.terminals.clone().start_reaper().await;

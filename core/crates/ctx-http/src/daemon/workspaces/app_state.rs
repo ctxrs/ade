@@ -1,5 +1,4 @@
 use std::collections::HashSet;
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::Result;
@@ -9,7 +8,6 @@ use ctx_core::models::{
     Task, TaskDeltaKind, WorkspaceActiveHeadBatch, WorkspaceActiveSnapshot, Worktree,
     WorktreeVcsSnapshot,
 };
-use ctx_lsp::Language as LspLanguage;
 
 use crate::daemon::state::AppState;
 
@@ -209,72 +207,5 @@ impl AppState {
         self.workspaces
             .release_git_status_watcher(worktree_id)
             .await;
-    }
-
-    pub async fn ensure_lsp_diagnostics_forwarder(
-        self: &Arc<Self>,
-        root: PathBuf,
-        lang: LspLanguage,
-    ) {
-        if !self.core.lsp.enabled() {
-            return;
-        }
-        let key = format!("{}:{}", root.to_string_lossy(), lang.id());
-        {
-            let mut set = self.transport.lsp_diag_forwarders.lock().await;
-            if set.contains(&key) {
-                return;
-            }
-            set.insert(key);
-        }
-
-        let state = self.clone();
-        tokio::spawn(async move {
-            let mut rx = match state
-                .core
-                .lsp
-                .subscribe_diagnostics_for_language(&root, lang)
-                .await
-            {
-                Ok(v) => v,
-                Err(_) => return,
-            };
-            loop {
-                let update = match rx.recv().await {
-                    Ok(u) => u,
-                    Err(_) => break,
-                };
-                let url = match url::Url::parse(&update.uri.to_string()) {
-                    Ok(u) => u,
-                    Err(_) => continue,
-                };
-                if url.scheme() != "file" {
-                    continue;
-                }
-                let Ok(abs_path) = url.to_file_path() else {
-                    continue;
-                };
-
-                let watchers = state.core.buffers.watchers_for_abs_path(&abs_path).await;
-                if watchers.is_empty() {
-                    continue;
-                }
-
-                let diagnostics_json = match serde_json::to_value(&update.diagnostics) {
-                    Ok(v) => v,
-                    Err(_) => continue,
-                };
-
-                for (sid, rel) in watchers {
-                    let msg = serde_json::json!({
-                        "type": "lsp_diagnostics",
-                        "session_id": sid.0.to_string(),
-                        "path": rel.to_string_lossy(),
-                        "diagnostics": diagnostics_json,
-                    });
-                    let _ = state.transport.lsp_diag_broadcaster.send(msg);
-                }
-            }
-        });
     }
 }

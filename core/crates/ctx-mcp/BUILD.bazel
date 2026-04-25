@@ -71,17 +71,6 @@ rust_test(
 )
 
 rust_test(
-    name = "lsp_tool_stdio",
-    crate_root = "tests/lsp_tool_stdio.rs",
-    edition = "2021",
-    srcs = ["tests/lsp_tool_stdio.rs"],
-    args = ["--test-threads=1"],
-    data = [":ctx-mcp"],
-    rustc_env = CTX_MCP_TEST_RUSTC_ENV,
-    deps = CTX_MCP_TEST_DEPS,
-)
-
-rust_test(
     name = "fuzz_tests",
     crate_root = "src/main.rs",
     crate_features = ["fuzz_tests"],

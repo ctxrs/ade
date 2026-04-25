@@ -50,15 +50,6 @@ export type WebSessionInfo = {
   stream_url?: string | null;
 };
 
-export type EditPlanSummary = {
-  id: string;
-  title: string;
-  created_at: string;
-  remaining_files: number;
-  remaining_hunks: number;
-  diff: string;
-};
-
 export const createSession = (
   taskId: string,
   provider_id: string,
@@ -447,21 +438,6 @@ export const applySessionDiffPatch = (sessionId: string, action: "accept" | "rej
   apiAny<SessionDiffResponse>(`/api/sessions/${sessionId}/diff/apply`, {
     method: "POST",
     body: JSON.stringify({ action, patch }),
-  });
-
-export const getEditPlan = (planId: string) =>
-  apiAny<EditPlanSummary>(`/api/edit_plans/${planId}`);
-
-export const applyEditPlanPatch = (planId: string, action: "accept" | "reject", patch: string) =>
-  apiAny<EditPlanSummary>(`/api/edit_plans/${planId}/apply`, {
-    method: "POST",
-    body: JSON.stringify({ action, patch }),
-  });
-
-export const discardEditPlan = (planId: string) =>
-  apiAny<void>(`/api/edit_plans/${planId}/discard`, {
-    method: "POST",
-    body: JSON.stringify({}),
   });
 
 export const deleteMessage = (sessionId: string, messageId: string) =>

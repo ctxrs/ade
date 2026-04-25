@@ -12,7 +12,6 @@ use ctx_http::git_status::{
     emit_worktree_vcs_snapshot_for_worktree, refresh_worktree_vcs_summary,
     request_worktree_vcs_refresh, run_git_status_watcher,
 };
-use ctx_lsp::LspManagerConfig;
 use serde_json::Value;
 use std::sync::Arc;
 use tokio::process::Command;
@@ -82,15 +81,13 @@ fn worktree_vcs_snapshot_test_lock() -> &'static tokio::sync::Mutex<()> {
 }
 
 fn build_vcs_disabled_state(data_dir: &Path, stores: ctx_store::StoreManager) -> Arc<AppState> {
-    Arc::new(AppState::new_with_lsp_config_and_runtime_flags(
+    Arc::new(AppState::new_with_runtime_flags(
         data_dir.to_path_buf(),
         stores,
         common::fake_providers(),
         "http://127.0.0.1:0".to_string(),
         None,
-        LspManagerConfig::default(),
         AppRuntimeFlags {
-            lsp_edit_plans_enabled: false,
             worktree_vcs_enabled: false,
         },
     ))
