@@ -1,5 +1,6 @@
 const crypto = require("node:crypto");
 const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
 
 const { resolveCtxCacheLayout } = require("./cache_roots.cjs");
@@ -8,7 +9,9 @@ const { summarizeHostSamples } = require("./verification_host_sampler.cjs");
 const VERIFICATION_RUNS_DIRNAME = "verification-runs";
 const DEFAULT_MAX_RUNS = 200;
 const DEFAULT_MAX_AGE_DAYS = 14;
+const DEFAULT_LOCK_STALE_AFTER_MS = 30 * 1000;
 const INDEX_FILENAME = "index.jsonl";
+const LOCK_OWNER_FILENAME = "owner.json";
 
 function sleepMs(durationMs) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, durationMs);
@@ -41,6 +44,131 @@ function writeTextAtomic(filePath, contents) {
 
 function writeJsonAtomic(filePath, payload) {
   writeTextAtomic(filePath, `${JSON.stringify(payload, null, 2)}\n`);
+}
+
+function createLockOwnerRecord() {
+  return {
+    acquiredAt: new Date().toISOString(),
+    hostname: os.hostname(),
+    pid: process.pid,
+    token: crypto.randomBytes(8).toString("hex"),
+  };
+}
+
+function readJsonIfPresent(filePath) {
+  try {
+    if (!fs.existsSync(filePath)) {
+      return null;
+    }
+    return JSON.parse(fs.readFileSync(filePath, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+function readLockOwnerRecord(lockPath) {
+  return readJsonIfPresent(path.join(lockPath, LOCK_OWNER_FILENAME));
+}
+
+function writeLockOwnerRecord(lockPath, ownerRecord) {
+  fs.writeFileSync(
+    path.join(lockPath, LOCK_OWNER_FILENAME),
+    `${JSON.stringify(ownerRecord, null, 2)}\n`,
+    "utf8",
+  );
+}
+
+function isLiveProcess(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) {
+    return false;
+  }
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    if (error?.code === "EPERM") {
+      return true;
+    }
+    return false;
+  }
+}
+
+function getLockAgeMs(lockPath, ownerRecord, nowMs) {
+  const acquiredAtMs = Date.parse(ownerRecord?.acquiredAt || "");
+  if (Number.isFinite(acquiredAtMs)) {
+    return Math.max(0, nowMs - acquiredAtMs);
+  }
+  try {
+    return Math.max(0, nowMs - fs.statSync(lockPath).mtimeMs);
+  } catch {
+    return 0;
+  }
+}
+
+function observeLock(lockPath) {
+  try {
+    const stats = fs.statSync(lockPath);
+    return {
+      dev: stats.dev,
+      ino: stats.ino,
+      mtimeMs: stats.mtimeMs,
+      ownerRecord: readLockOwnerRecord(lockPath),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function isSameLockObservation(left, right) {
+  if (left == null || right == null) {
+    return false;
+  }
+  const leftToken = String(left.ownerRecord?.token || "");
+  const rightToken = String(right.ownerRecord?.token || "");
+  if (leftToken || rightToken) {
+    return leftToken !== "" && leftToken === rightToken;
+  }
+  return left.dev === right.dev && left.ino === right.ino && left.mtimeMs === right.mtimeMs;
+}
+
+function getStaleLockObservation(lockPath, {
+  nowMs = Date.now(),
+  staleAfterMs = DEFAULT_LOCK_STALE_AFTER_MS,
+} = {}) {
+  const observation = observeLock(lockPath);
+  if (observation == null) {
+    return null;
+  }
+  const { ownerRecord } = observation;
+  const sameHostOwner = ownerRecord?.hostname && ownerRecord.hostname === os.hostname();
+  if (sameHostOwner && !isLiveProcess(ownerRecord.pid)) {
+    return observation;
+  }
+  if (sameHostOwner) {
+    return null;
+  }
+  return getLockAgeMs(lockPath, ownerRecord, nowMs) >= staleAfterMs
+    ? observation
+    : null;
+}
+
+function breakStaleLock(lockPath, observation) {
+  if (!isSameLockObservation(observation, observeLock(lockPath))) {
+    return false;
+  }
+  fs.rmSync(lockPath, { recursive: true, force: true });
+  return true;
+}
+
+function releaseLock(lockPath, ownerRecord) {
+  if (!fs.existsSync(lockPath)) {
+    return;
+  }
+  const currentOwnerRecord = readLockOwnerRecord(lockPath);
+  if (currentOwnerRecord?.token && currentOwnerRecord.token !== ownerRecord.token) {
+    return;
+  }
+  fs.rmSync(lockPath, { recursive: true, force: true });
 }
 
 function toNonNegativeMs(value) {
@@ -294,14 +422,30 @@ function normalizeVerificationRunSummary(summary) {
   return summary;
 }
 
-function acquireLock(lockPath, { retries = 200, retryDelayMs = 25 } = {}) {
+function acquireLock(lockPath, {
+  retries = 200,
+  retryDelayMs = 25,
+  staleAfterMs = DEFAULT_LOCK_STALE_AFTER_MS,
+} = {}) {
+  const ownerRecord = createLockOwnerRecord();
   for (let attempt = 0; attempt < retries; attempt += 1) {
     try {
       fs.mkdirSync(lockPath);
-      return () => fs.rmSync(lockPath, { recursive: true, force: true });
+      try {
+        writeLockOwnerRecord(lockPath, ownerRecord);
+      } catch (error) {
+        fs.rmSync(lockPath, { recursive: true, force: true });
+        throw error;
+      }
+      return () => releaseLock(lockPath, ownerRecord);
     } catch (error) {
       if (error?.code !== "EEXIST") {
         throw error;
+      }
+      const staleLockObservation = getStaleLockObservation(lockPath, { staleAfterMs });
+      if (staleLockObservation != null && breakStaleLock(lockPath, staleLockObservation)) {
+        attempt -= 1;
+        continue;
       }
       sleepMs(retryDelayMs);
     }
@@ -439,15 +583,19 @@ function readIndexedSummaries({ cwd, env = process.env, layout } = {}) {
 
 module.exports = {
   DEFAULT_MAX_AGE_DAYS,
+  DEFAULT_LOCK_STALE_AFTER_MS,
   DEFAULT_MAX_RUNS,
   INDEX_FILENAME,
+  LOCK_OWNER_FILENAME,
   VERIFICATION_RUNS_DIRNAME,
   acquireLock,
+  breakStaleLock,
   createRunArtifacts,
   createRunId,
   deriveBazelMetrics,
   deriveRouterMetrics,
   finalizeRunArtifacts,
+  getStaleLockObservation,
   normalizeVerificationRunSummary,
   pruneRunStore,
   readIndexedSummaries,

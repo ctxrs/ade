@@ -5,8 +5,13 @@ const path = require("node:path");
 const test = require("node:test");
 
 const {
+  DEFAULT_LOCK_STALE_AFTER_MS,
+  LOCK_OWNER_FILENAME,
+  acquireLock,
+  breakStaleLock,
   createRunArtifacts,
   finalizeRunArtifacts,
+  getStaleLockObservation,
   normalizeVerificationRunSummary,
   readIndexedSummaries,
 } = require("./lib/verification_run_store.cjs");
@@ -206,4 +211,120 @@ test("run store preserves explicit zero-valued telemetry", () => {
   assert.equal(summary.remoteActionTimeMs, 0);
   assert.equal(summary.runnerLocalOverheadMs, 0);
   assert.equal(summary.localSpill, false);
+});
+
+test("run store finalization reclaims stale legacy lock directories", () => {
+  const layout = tempLayout();
+  const rootDir = path.join(layout.artifactsDir, "verification-runs");
+  const lockPath = path.join(rootDir, ".lock");
+  fs.mkdirSync(lockPath, { recursive: true });
+  const staleAtSeconds = (Date.now() - DEFAULT_LOCK_STALE_AFTER_MS - 1000) / 1000;
+  fs.utimesSync(lockPath, staleAtSeconds, staleAtSeconds);
+
+  const run = createRunArtifacts({
+    cwd: process.cwd(),
+    env: process.env,
+    entrypoint: "verify:agent-remote",
+    kind: "router",
+    layout,
+    runId: "stale-legacy-lock",
+  });
+
+  const summary = finalizeRunArtifacts(run, {
+    startedAt: "2026-04-25T00:00:00.000Z",
+    completedAt: "2026-04-25T00:00:01.000Z",
+    durationMs: 1000,
+    success: true,
+  }, { env: process.env });
+
+  assert.equal(summary.runId, "stale-legacy-lock");
+  assert.equal(fs.existsSync(lockPath), false);
+  assert.equal(fs.existsSync(run.summaryPath), true);
+});
+
+test("acquireLock reclaims dead same-host owners without waiting for stale age", () => {
+  const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "verification-lock-"));
+  const lockPath = path.join(rootDir, ".lock");
+  fs.mkdirSync(lockPath, { recursive: true });
+  fs.writeFileSync(path.join(lockPath, LOCK_OWNER_FILENAME), `${JSON.stringify({
+    acquiredAt: new Date().toISOString(),
+    hostname: os.hostname(),
+    pid: 99_999_999,
+    token: "dead-owner",
+  }, null, 2)}\n`);
+
+  const releaseLock = acquireLock(lockPath, {
+    retries: 1,
+    retryDelayMs: 0,
+    staleAfterMs: 60 * 60 * 1000,
+  });
+
+  assert.equal(fs.existsSync(path.join(lockPath, LOCK_OWNER_FILENAME)), true);
+  releaseLock();
+  assert.equal(fs.existsSync(lockPath), false);
+});
+
+test("acquireLock does not break live same-host owners even when the lock looks old", () => {
+  const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "verification-lock-"));
+  const lockPath = path.join(rootDir, ".lock");
+  fs.mkdirSync(lockPath, { recursive: true });
+  fs.writeFileSync(path.join(lockPath, LOCK_OWNER_FILENAME), `${JSON.stringify({
+    acquiredAt: "2026-04-01T00:00:00.000Z",
+    hostname: os.hostname(),
+    pid: process.pid,
+    token: "live-owner",
+  }, null, 2)}\n`);
+
+  assert.throws(
+    () => acquireLock(lockPath, {
+      retries: 1,
+      retryDelayMs: 0,
+      staleAfterMs: 1,
+    }),
+    /timed out acquiring verification run-store lock/u,
+  );
+  assert.equal(fs.existsSync(lockPath), true);
+  fs.rmSync(lockPath, { recursive: true, force: true });
+});
+
+test("acquireLock release does not remove a newer lock owner", () => {
+  const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "verification-lock-"));
+  const lockPath = path.join(rootDir, ".lock");
+  const releaseLock = acquireLock(lockPath, { retries: 1, retryDelayMs: 0 });
+  const ownerPath = path.join(lockPath, LOCK_OWNER_FILENAME);
+  const newerOwner = {
+    ...JSON.parse(fs.readFileSync(ownerPath, "utf8")),
+    token: "newer-owner-token",
+  };
+  fs.writeFileSync(ownerPath, `${JSON.stringify(newerOwner, null, 2)}\n`);
+
+  releaseLock();
+
+  assert.equal(fs.existsSync(lockPath), true);
+  fs.rmSync(lockPath, { recursive: true, force: true });
+});
+
+test("breakStaleLock does not delete a lock that was replaced after observation", () => {
+  const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "verification-lock-"));
+  const lockPath = path.join(rootDir, ".lock");
+  fs.mkdirSync(lockPath, { recursive: true });
+  fs.writeFileSync(path.join(lockPath, LOCK_OWNER_FILENAME), `${JSON.stringify({
+    acquiredAt: "2026-04-01T00:00:00.000Z",
+    hostname: os.hostname(),
+    pid: 99_999_999,
+    token: "stale-owner",
+  }, null, 2)}\n`);
+
+  const staleObservation = getStaleLockObservation(lockPath, {
+    staleAfterMs: 60 * 60 * 1000,
+  });
+  assert.ok(staleObservation);
+
+  fs.rmSync(lockPath, { recursive: true, force: true });
+  const releaseLock = acquireLock(lockPath, { retries: 1, retryDelayMs: 0 });
+
+  assert.equal(breakStaleLock(lockPath, staleObservation), false);
+  assert.equal(fs.existsSync(lockPath), true);
+
+  releaseLock();
 });
