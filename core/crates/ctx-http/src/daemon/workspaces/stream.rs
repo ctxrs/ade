@@ -218,11 +218,17 @@ pub(crate) async fn resolve_workspace_active_snapshot_subscriptions(
             let mut active_scope = false;
             let mut foreground_session_ids = None;
             for sub in sessions {
+                if !session_belongs_to_workspace(state, workspace_id, sub.session_id).await {
+                    continue;
+                }
                 replay_map.insert(sub.session_id, sub.replay);
                 resolved.insert(sub.session_id);
                 explicit_sessions.insert(sub.session_id);
             }
             for session_id in session_ids {
+                if !session_belongs_to_workspace(state, workspace_id, session_id).await {
+                    continue;
+                }
                 resolved.insert(session_id);
                 explicit_sessions.insert(session_id);
             }
@@ -263,13 +269,18 @@ pub(crate) async fn resolve_workspace_active_snapshot_subscriptions(
                 }
             }
             for session_id in vcs_open_session_ids {
+                if !session_belongs_to_workspace(state, workspace_id, session_id).await {
+                    continue;
+                }
                 open_vcs_sessions.insert(session_id);
                 resolved.insert(session_id);
             }
             if let Some(session_id) = foreground_session_id {
-                let mut sessions = HashSet::new();
-                sessions.insert(session_id);
-                foreground_session_ids = Some(sessions);
+                if session_belongs_to_workspace(state, workspace_id, session_id).await {
+                    let mut sessions = HashSet::new();
+                    sessions.insert(session_id);
+                    foreground_session_ids = Some(sessions);
+                }
             }
 
             let mut next = Vec::with_capacity(resolved.len());
@@ -323,6 +334,21 @@ pub(crate) async fn resolve_workspace_active_snapshot_subscriptions(
                 state: subscription_state,
             })
         }
+    }
+}
+
+async fn session_belongs_to_workspace(
+    state: &Arc<AppState>,
+    workspace_id: WorkspaceId,
+    session_id: SessionId,
+) -> bool {
+    let store = match state.store_for_session(session_id).await {
+        Ok(store) => store,
+        Err(_) => return false,
+    };
+    match store.get_session(session_id).await {
+        Ok(Some(session)) => session.workspace_id == workspace_id,
+        _ => false,
     }
 }
 
@@ -555,9 +581,67 @@ async fn resolve_worktree_ids_for_sessions(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
+
+    use ctx_core::models::ExecutionEnvironment;
+    use ctx_store::StoreManager;
 
     fn session_id(value: &str) -> SessionId {
         SessionId(uuid::Uuid::parse_str(value).unwrap())
+    }
+
+    async fn create_workspace_session(
+        state: &Arc<AppState>,
+        root: &Path,
+    ) -> (WorkspaceId, SessionId) {
+        let workspace = state
+            .global_store()
+            .create_workspace(
+                format!("ws-{}", uuid::Uuid::new_v4()),
+                root.join(format!("ws-{}", uuid::Uuid::new_v4()))
+                    .to_string_lossy()
+                    .to_string(),
+                ctx_core::models::VcsKind::Git,
+            )
+            .await
+            .unwrap();
+        let store = state.store_for_workspace(workspace.id).await.unwrap();
+        let worktree = store
+            .create_worktree(
+                workspace.id,
+                root.join(format!("worktree-{}", uuid::Uuid::new_v4()))
+                    .to_string_lossy()
+                    .to_string(),
+                "deadbeef".to_string(),
+                None,
+            )
+            .await
+            .unwrap();
+        let task = store
+            .create_task(workspace.id, "task".to_string(), None)
+            .await
+            .unwrap();
+        let session = store
+            .create_session(
+                task.id,
+                workspace.id,
+                worktree.id,
+                ExecutionEnvironment::Host,
+                "fake".to_string(),
+                "model".to_string(),
+                "implementer".to_string(),
+                None,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        state
+            .global_store()
+            .upsert_workspace_session_index(session.id, workspace.id)
+            .await
+            .unwrap();
+        (workspace.id, session.id)
     }
 
     #[test]
@@ -767,5 +851,50 @@ mod tests {
             foreground_session_id,
             Some(session_id("00000000-0000-0000-0000-000000000001"))
         );
+    }
+
+    #[tokio::test]
+    async fn subscription_resolution_filters_cross_workspace_session_references() {
+        let root = tempfile::tempdir().unwrap();
+        let stores = StoreManager::open(root.path()).await.unwrap();
+        let state = Arc::new(AppState::new(
+            root.path().to_path_buf(),
+            stores,
+            HashMap::new(),
+            "http://127.0.0.1:4399".to_string(),
+            Some("daemon-secret".to_string()),
+        ));
+        let (workspace_a, session_a) = create_workspace_session(&state, root.path()).await;
+        let (_workspace_b, session_b) = create_workspace_session(&state, root.path()).await;
+
+        let resolved = resolve_workspace_active_snapshot_subscriptions(
+            &state,
+            workspace_a,
+            WorkspaceActiveSnapshotClientMessage::Subscribe {
+                session_ids: vec![session_a, session_b],
+                sessions: vec![
+                    ctx_core::models::WorkspaceActiveSnapshotSessionSubscription {
+                        session_id: session_b,
+                        replay: WorkspaceActiveSnapshotSessionReplay::Reset,
+                    },
+                ],
+                task_ids: Vec::new(),
+                foreground_session_id: Some(session_b),
+                vcs_open_session_ids: vec![session_b],
+                scope: None,
+                include_active_heads: false,
+            },
+            &HashMap::new(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(resolved.sessions.len(), 1);
+        assert_eq!(resolved.sessions[0].session_id, session_a);
+        assert_eq!(resolved.worktree_vcs_summary_session_ids, vec![session_a]);
+        assert!(resolved.worktree_vcs_open_session_ids.is_empty());
+        assert!(resolved.state.vcs_open_sessions.is_empty());
+        assert!(resolved.state.foreground_session_ids.is_none());
+        assert_eq!(resolved.state.explicit_sessions, HashSet::from([session_a]));
     }
 }
