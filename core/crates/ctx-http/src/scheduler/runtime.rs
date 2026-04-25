@@ -3,10 +3,10 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use chrono::Utc;
-use serde_json::{Value, json};
-use tokio::sync::{Mutex, mpsc, oneshot, watch};
+use serde_json::{json, Value};
+use tokio::sync::{mpsc, oneshot, watch, Mutex};
 use tokio::time::Instant as TokioInstant;
 
 use ctx_core::ids::{MessageId, RunId, TurnId};
@@ -22,11 +22,11 @@ use ctx_session_tools::{
 use ctx_store::store::SessionTurnToolCountDeltas;
 
 use crate::api::sessions::compose_model_id;
-use crate::daemon::{AppState, ensure_provider_adapter_for_target_with_cfg};
+use crate::daemon::{ensure_provider_adapter_for_target_with_cfg, AppState};
 use crate::execution_effective;
 use crate::installer;
 use crate::ops_events::OpsEvent;
-use crate::order_seq::{OrderSeqState, attach_order_seq, read_order_seq};
+use crate::order_seq::{attach_order_seq, read_order_seq, OrderSeqState};
 use crate::perf_telemetry::{PerfMetric, PerfMetricKind};
 use crate::settings::{self, ProviderControlMode};
 use crate::storage_guard;
@@ -45,17 +45,17 @@ mod helpers;
 mod tests;
 mod tool_runtime;
 
-use self::event_loop::{TurnEventLoop, spawn_turn_event_loop};
+use self::event_loop::{spawn_turn_event_loop, TurnEventLoop};
 pub(crate) use self::helpers::model_context_window;
 use self::helpers::{
     apply_provider_launch_overrides, compute_context_window_metrics, normalize_session_model_id,
     provider_supports_system_prompt_append, runtime_provider_id_for_session_provider,
 };
 use self::tool_runtime::{cwd_outside_worktree, maybe_spool_tool_output};
-use super::QueuedMessage;
 use super::lifecycle::{RunningTurn, TurnStartProgress};
 use super::persistence::append_session_event_with_retry;
-use super::terminal::{FailedTurnTerminalization, finalize_failed_turn};
+use super::terminal::{finalize_failed_turn, FailedTurnTerminalization};
+use super::QueuedMessage;
 
 fn provider_mode_id_for(
     provider_id: &str,
@@ -371,9 +371,15 @@ pub(crate) async fn start_turn(
     } else {
         InstallTarget::Host
     };
-    let adapter_cfg = installer::load_agent_server_config(&state.core.data_root)
-        .await
-        .unwrap_or_default();
+    let adapter_cfg =
+        match crate::daemon::load_managed_agent_server_config_or_err(&state.core.data_root).await {
+            Ok(cfg) => cfg,
+            Err(err) => {
+                let err = anyhow!(err.to_string());
+                emit_turn_start_failed(state, session, run_id, turn_id, message_id, &err).await;
+                return Err(err);
+            }
+        };
     let adapter = ensure_provider_adapter_for_target_with_cfg(
         state,
         &adapter_cfg,

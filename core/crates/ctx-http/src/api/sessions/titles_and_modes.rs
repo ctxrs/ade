@@ -132,7 +132,13 @@ pub(crate) async fn set_session_model(
         &session.provider_id,
         install_target,
     )
-    .await;
+    .await
+    .map_err(|err| {
+        session_model_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            logs::redact_sensitive(&err.to_string()),
+        )
+    })?;
 
     let reasoning_effort = req
         .reasoning_effort
@@ -333,7 +339,8 @@ pub(crate) async fn set_session_mode(
         &session.provider_id,
         install_target,
     )
-    .await;
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     adapter
         .set_session_mode(session.id.0.to_string(), req.mode_id.clone())

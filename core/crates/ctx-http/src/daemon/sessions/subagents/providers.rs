@@ -25,14 +25,9 @@ pub(super) async fn load_requested_model_catalogs(
     )
     .await
     .map_err(internal_api_error)?;
-    let (managed, managed_config_error) =
-        crate::api::provider_launch::load_managed_agent_server_config_with_error(
-            &state.core.data_root,
-        )
-        .await;
-    if let Some(config_error) = managed_config_error {
-        return Err(internal_api_error(anyhow::anyhow!(config_error)));
-    }
+    let managed = crate::daemon::load_managed_agent_server_config_or_err(&state.core.data_root)
+        .await
+        .map_err(internal_api_error)?;
     let matrix = crate::provider_matrix::load_matrix_cached(
         &state.core.data_root,
         &state.providers.matrix_cache,

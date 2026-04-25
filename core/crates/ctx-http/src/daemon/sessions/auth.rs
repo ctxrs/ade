@@ -167,16 +167,12 @@ async fn prepare_session_auth_runtime(
             "failed to load workspace execution settings: {error:#}"
         ))
     })?;
-    let (adapter_cfg, managed_config_error) =
-        crate::api::provider_launch::load_managed_agent_server_config_with_error(
-            &state.core.data_root,
-        )
-        .await;
-    if let Some(config_error) = managed_config_error {
-        return Err(SessionAuthError::Internal(config_error));
-    }
-    let adapter = crate::daemon::ensure_provider_adapter_for_target(
+    let adapter_cfg = crate::daemon::load_managed_agent_server_config_or_err(&state.core.data_root)
+        .await
+        .map_err(|err| SessionAuthError::Internal(err.to_string()))?;
+    let adapter = crate::daemon::ensure_provider_adapter_for_target_with_cfg(
         state.as_ref(),
+        &adapter_cfg,
         &session.provider_id,
         install_target,
     )
