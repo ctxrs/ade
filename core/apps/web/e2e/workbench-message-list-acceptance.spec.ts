@@ -245,10 +245,9 @@ async function createShortThreadHarnessWorkspace(
   const sessionSource = await resolveAcceptanceSeedSource(request);
   const seed = await seedDummyWorkspace(request, {
     tasks: 1,
-    sessionsPerTask: 0,
+    sessionsPerTask: 1,
     turnsPerSession: 0,
     throttleMs: 0,
-    createDefaultSession: false,
     messagePrefix: "short-thread",
     sessionSource,
   });
@@ -258,16 +257,7 @@ async function createShortThreadHarnessWorkspace(
   }
 
   const shortMessage = `short-thread-${Date.now()}`;
-  const sessionResp = await request.post(`/api/tasks/${shortTaskId}/sessions`, {
-    data: {
-      provider_id: sessionSource.providerId,
-      model_id: sessionSource.modelId,
-      execution_environment: sessionSource.executionEnvironment,
-    },
-  });
-  expect(sessionResp.ok(), "short-thread session creation succeeds").toBeTruthy();
-  const session = (await sessionResp.json()) as { id?: string | null };
-  const sessionId = typeof session.id === "string" ? session.id : "";
+  const sessionId = seed.sessionIdsByTask[shortTaskId]?.[0] ?? "";
   expect(sessionId, "short-thread session id exists").toBeTruthy();
 
   const messageResp = await request.post(`/api/sessions/${sessionId}/messages`, {

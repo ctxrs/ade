@@ -22,8 +22,8 @@ async fn assistant_chunks_are_stream_only() {
     let app = common::router(state.clone());
 
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
-    let task = common::create_task(&app, ws.id.0, "t1").await;
-    let session = common::create_session(&app, task.id.0, "fake", "fake-model").await;
+    let (_task, session) =
+        common::create_task_with_session(&app, ws.id.0, "t1", "fake", "fake-model").await;
 
     let (status, _msg): (StatusCode, ctx_core::models::Message) = common::json_request(
         &app,

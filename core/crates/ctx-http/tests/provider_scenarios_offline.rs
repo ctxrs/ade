@@ -2,11 +2,11 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use axum::body::{to_bytes, Body};
+use axum::body::Body;
 use axum::http::{Method, Request, StatusCode};
 use tower::ServiceExt;
 
-use ctx_core::models::{MessageRole, SessionEventType};
+use ctx_core::models::{MessageRole, SessionEventType, SessionTurnStatus};
 use ctx_http::daemon::AppState;
 use ctx_store::StoreManager;
 
@@ -14,6 +14,7 @@ mod common;
 
 static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 const STORAGE_GUARD_EMERGENCY_FREE_BYTES: u64 = 1024 * 1024 * 1024;
+const CRP_FIXTURE_FIRST_EVENT_TIMEOUT_MS: &str = "60000";
 
 fn lock_env() -> std::sync::MutexGuard<'static, ()> {
     ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner())
@@ -112,69 +113,100 @@ async fn post_message(app: &axum::Router, session_id: uuid::Uuid, content: &str)
     assert_eq!(res.status(), StatusCode::OK);
 }
 
-async fn create_session_for_provider(
-    app: &axum::Router,
-    task_id: uuid::Uuid,
-    provider_id: &str,
-    model_id: &str,
-) -> Result<ctx_core::models::Session, String> {
-    let req = Request::builder()
-        .method(Method::POST)
-        .uri(format!("/api/tasks/{task_id}/sessions"))
-        .header("content-type", "application/json")
-        .body(Body::from(
-            serde_json::json!({
-                "provider_id": provider_id,
-                "model_id": model_id,
-            })
-            .to_string(),
-        ))
-        .map_err(|error| format!("build request failed: {error}"))?;
-    let res = app
-        .clone()
-        .oneshot(req)
-        .await
-        .map_err(|error| format!("request failed: {error}"))?;
-    let status = res.status();
-    let body = to_bytes(res.into_body(), usize::MAX)
-        .await
-        .map_err(|error| format!("read body failed: {error}"))?;
-    if status != StatusCode::OK {
-        return Err(format!(
-            "create_session status {status}; model_id={model_id}; body={}",
-            String::from_utf8_lossy(&body)
-        ));
-    }
-    serde_json::from_slice(&body).map_err(|error| {
-        format!(
-            "failed to parse session JSON: {error}; body={}",
-            String::from_utf8_lossy(&body)
-        )
-    })
+async fn wait_for_done(state: &Arc<AppState>, session_id: ctx_core::ids::SessionId) {
+    wait_for_done_inner(state, session_id, false).await;
 }
 
-async fn wait_for_done(state: &Arc<AppState>, session_id: ctx_core::ids::SessionId) {
+async fn wait_for_done_and_completed_turn(
+    state: &Arc<AppState>,
+    session_id: ctx_core::ids::SessionId,
+) {
+    wait_for_done_inner(state, session_id, true).await;
+}
+
+async fn wait_for_done_inner(
+    state: &Arc<AppState>,
+    session_id: ctx_core::ids::SessionId,
+    require_completed_turn: bool,
+) {
     let store = state.store_for_session(session_id).await.unwrap();
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(120);
+    let timeout_secs = std::env::var("CTX_TEST_WAIT_FOR_DONE_SECS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(120);
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(timeout_secs);
     loop {
         let events = store.list_session_events(session_id).await.unwrap();
         if events
             .iter()
-            .any(|e| matches!(e.event_type, SessionEventType::Done))
+            .any(|e| matches!(e.event_type, SessionEventType::Error))
         {
-            if events
-                .iter()
-                .any(|e| matches!(e.event_type, SessionEventType::Error))
-            {
-                panic!("saw Error event(s): {events:#?}");
+            let provider_logs = provider_log_snapshot(&state.core.data_root);
+            panic!("saw Error event(s): {events:#?}\nprovider logs:\n{provider_logs}");
+        }
+        let saw_done = events
+            .iter()
+            .any(|e| matches!(e.event_type, SessionEventType::Done));
+        if saw_done {
+            if !require_completed_turn {
+                return;
             }
-            return;
+            let turns = store
+                .list_session_turns_page_by_seq(session_id, None, Some(1))
+                .await
+                .unwrap();
+            if let Some(turn) = turns.last() {
+                match turn.status {
+                    SessionTurnStatus::Completed => return,
+                    SessionTurnStatus::Failed | SessionTurnStatus::Interrupted => {
+                        panic!("saw terminal non-completed turn after Done: {turn:#?}");
+                    }
+                    SessionTurnStatus::Queued
+                    | SessionTurnStatus::Starting
+                    | SessionTurnStatus::Running => {}
+                }
+            }
         }
         if tokio::time::Instant::now() >= deadline {
-            panic!("timed out waiting for Done event: {events:#?}");
+            let provider_logs = provider_log_snapshot(&state.core.data_root);
+            let turns = store
+                .list_session_turns_page_by_seq(session_id, None, Some(3))
+                .await
+                .unwrap_or_default();
+            panic!(
+                "timed out waiting for Done event after {timeout_secs}s: {events:#?}\nturns:\n{turns:#?}\nprovider logs:\n{provider_logs}"
+            );
         }
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
+}
+
+fn provider_log_snapshot(data_root: &std::path::Path) -> String {
+    let dir = data_root.join("logs").join("providers");
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return format!("missing provider log dir: {}", dir.display());
+    };
+    let mut files = entries
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| path.is_file())
+        .collect::<Vec<_>>();
+    files.sort();
+
+    if files.is_empty() {
+        return format!("empty provider log dir: {}", dir.display());
+    }
+
+    files
+        .into_iter()
+        .map(|path| {
+            let contents = std::fs::read_to_string(&path)
+                .unwrap_or_else(|err| format!("<failed to read: {err}>"));
+            format!("== {} ==\n{}", path.display(), contents)
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn check_no_session_gap(events: &[ctx_core::models::SessionEvent]) -> Result<(), String> {
@@ -298,9 +330,12 @@ async fn provider_scenarios_offline_crp_fixtures() {
         .join("provider_scenarios");
     let _guard_fixtures = EnvGuard::set("CTX_TEST_FIXTURES_DIR", &fixtures_dir.to_string_lossy());
     let _guard_scenario = EnvGuard::set("CTX_TEST_SCENARIO", "basic");
+    let _guard_first_event_timeout = EnvGuard::set(
+        "CTX_CRP_FIRST_EVENT_TIMEOUT_MS",
+        CRP_FIXTURE_FIRST_EVENT_TIMEOUT_MS,
+    );
 
     let provider_ids: &[&str] = &[
-        "codex-crp",
         "codex-crp",
         "claude-crp",
         "claude",
@@ -331,7 +366,12 @@ async fn provider_scenarios_offline_crp_fixtures() {
     let (_codex_home, _guard_codex_home) = configure_hermetic_codex_home().await;
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
     let script_path = common::crp_fixture_runtime::write_crp_fixture_runtime(data_dir.path());
-    common::seed_managed_codex_cli_host_runtime(data_dir.path(), &python).await;
+    common::seed_managed_codex_cli_host_runtime_with_args(
+        data_dir.path(),
+        &python,
+        vec![script_path.to_string_lossy().to_string()],
+    )
+    .await;
     let providers = common::crp_fixture_runtime::build_crp_fixture_providers(
         provider_ids,
         &python,
@@ -348,19 +388,12 @@ async fn provider_scenarios_offline_crp_fixtures() {
     let app = ctx_http::api::router(state.clone());
 
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
-    let task = common::create_task(&app, ws.id.0, "t1").await;
 
     let mut failures: HashMap<&str, String> = HashMap::new();
     for provider_id in provider_ids {
         let model_id = fixture_model_id_for_provider(&app, ws.id.0, provider_id).await;
-        let session =
-            match create_session_for_provider(&app, task.id.0, provider_id, &model_id).await {
-                Ok(session) => session,
-                Err(err) => {
-                    failures.insert(*provider_id, err);
-                    continue;
-                }
-            };
+        let (_task, session) =
+            common::create_task_with_session(&app, ws.id.0, "t1", provider_id, &model_id).await;
 
         post_message(&app, session.id.0, "hi").await;
         wait_for_done(&state, session.id).await;
@@ -416,6 +449,10 @@ async fn provider_scenarios_offline_interleaved_assistant_tools_do_not_fragment_
         .join("provider_scenarios");
     let _guard_fixtures = EnvGuard::set("CTX_TEST_FIXTURES_DIR", &fixtures_dir.to_string_lossy());
     let _guard_scenario = EnvGuard::set("CTX_TEST_SCENARIO", "interleaved_assistant_tools");
+    let _guard_first_event_timeout = EnvGuard::set(
+        "CTX_CRP_FIRST_EVENT_TIMEOUT_MS",
+        CRP_FIXTURE_FIRST_EVENT_TIMEOUT_MS,
+    );
 
     let repo = common::init_git_repo(&[("note.txt", "hello\n")]).await;
     let data_dir = tempfile::tempdir().unwrap();
@@ -426,6 +463,12 @@ async fn provider_scenarios_offline_interleaved_assistant_tools_do_not_fragment_
     let (_codex_home, _guard_codex_home) = configure_hermetic_codex_home().await;
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
     let script_path = common::crp_fixture_runtime::write_crp_fixture_runtime(data_dir.path());
+    common::seed_managed_codex_cli_host_runtime_with_args(
+        data_dir.path(),
+        &python,
+        vec![script_path.to_string_lossy().to_string()],
+    )
+    .await;
     let providers = common::crp_fixture_runtime::build_crp_fixture_providers(
         &["codex-crp"],
         &python,
@@ -442,8 +485,8 @@ async fn provider_scenarios_offline_interleaved_assistant_tools_do_not_fragment_
     let app = ctx_http::api::router(state.clone());
 
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
-    let task = common::create_task(&app, ws.id.0, "t1").await;
-    let session = common::create_session(&app, task.id.0, "codex-crp", "fake-model").await;
+    let (_task, session) =
+        common::create_task_with_session(&app, ws.id.0, "t1", "codex-crp", "fake-model").await;
 
     post_message(&app, session.id.0, "hi").await;
     wait_for_done(&state, session.id).await;
@@ -513,6 +556,10 @@ async fn provider_scenarios_offline_crp_fixtures_persist_context_window_metrics(
         .join("provider_scenarios");
     let _guard_fixtures = EnvGuard::set("CTX_TEST_FIXTURES_DIR", &fixtures_dir.to_string_lossy());
     let _guard_scenario = EnvGuard::set("CTX_TEST_SCENARIO", "context_window");
+    let _guard_first_event_timeout = EnvGuard::set(
+        "CTX_CRP_FIRST_EVENT_TIMEOUT_MS",
+        CRP_FIXTURE_FIRST_EVENT_TIMEOUT_MS,
+    );
 
     let repo = common::init_git_repo(&[("note.txt", "hello\n")]).await;
     let data_dir = tempfile::tempdir().unwrap();
@@ -523,7 +570,12 @@ async fn provider_scenarios_offline_crp_fixtures_persist_context_window_metrics(
     let (_codex_home, _guard_codex_home) = configure_hermetic_codex_home().await;
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
     let script_path = common::crp_fixture_runtime::write_crp_fixture_runtime(data_dir.path());
-    common::seed_managed_codex_cli_host_runtime(data_dir.path(), &python).await;
+    common::seed_managed_codex_cli_host_runtime_with_args(
+        data_dir.path(),
+        &python,
+        vec![script_path.to_string_lossy().to_string()],
+    )
+    .await;
     let provider_ids: &[&str] = &["codex-crp", "claude-crp"];
     let providers = common::crp_fixture_runtime::build_crp_fixture_providers(
         provider_ids,
@@ -541,16 +593,14 @@ async fn provider_scenarios_offline_crp_fixtures_persist_context_window_metrics(
     let app = ctx_http::api::router(state.clone());
 
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
-    let task = common::create_task(&app, ws.id.0, "t1").await;
 
     for provider_id in provider_ids {
         let model_id = fixture_model_id_for_provider(&app, ws.id.0, provider_id).await;
-        let session = create_session_for_provider(&app, task.id.0, provider_id, &model_id)
-            .await
-            .unwrap_or_else(|err| panic!("failed to create session for {provider_id}: {err}"));
+        let (_task, session) =
+            common::create_task_with_session(&app, ws.id.0, "t1", provider_id, &model_id).await;
 
         post_message(&app, session.id.0, "hi").await;
-        wait_for_done(&state, session.id).await;
+        wait_for_done_and_completed_turn(&state, session.id).await;
 
         let store = state.store_for_session(session.id).await.unwrap();
         let turns = store

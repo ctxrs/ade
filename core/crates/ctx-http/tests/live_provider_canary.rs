@@ -190,8 +190,8 @@ async fn live_provider_canary_turn_invariants() {
     ));
     let app = ctx_http::api::router(state.clone());
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
-    let task = common::create_task(&app, ws.id.0, "t1").await;
-    let session = common::create_session(&app, task.id.0, &provider_id, &model_id).await;
+    let (_task, session) =
+        common::create_task_with_session(&app, ws.id.0, "t1", &provider_id, &model_id).await;
 
     let expected_token = format!("CTX_LIVE_PROVIDER_CANARY_OK_{}", uuid::Uuid::new_v4());
     post_message(
@@ -244,8 +244,9 @@ async fn live_codex_canary_can_edit_workspace_file() {
     ));
     let app = ctx_http::api::router(state.clone());
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
-    let task = common::create_task(&app, ws.id.0, "codex-write").await;
-    let session = common::create_session(&app, task.id.0, &provider_id, &model_id).await;
+    let (_task, session) =
+        common::create_task_with_session(&app, ws.id.0, "codex-write", &provider_id, &model_id)
+            .await;
 
     let expected_token = format!("CTX_LIVE_CODEX_WRITE_OK_{}", uuid::Uuid::new_v4());
     let relative_path = "live-codex-write-proof.txt";
@@ -442,8 +443,14 @@ async fn live_claude_endpoint_profile_api_key_round_trip() {
         })
         .unwrap_or_else(|| "sonnet".to_string());
 
-    let task = common::create_task(&app, ws.id.0, "live-claude-endpoint-task").await;
-    let session = common::create_session(&app, task.id.0, &provider_id, &model_id).await;
+    let (_task, session) = common::create_task_with_session(
+        &app,
+        ws.id.0,
+        "live-claude-endpoint-task",
+        &provider_id,
+        &model_id,
+    )
+    .await;
 
     post_message(
         &app,
@@ -620,8 +627,14 @@ async fn live_claude_openrouter_opus_v1_base_url_normalization_round_trip() {
         "provider verify did not return ok: {verify_body:#?}"
     );
 
-    let task = common::create_task(&app, ws.id.0, "live-claude-openrouter-opus").await;
-    let session = common::create_session(&app, task.id.0, &provider_id, requested_model).await;
+    let (_task, session) = common::create_task_with_session(
+        &app,
+        ws.id.0,
+        "live-claude-openrouter-opus",
+        &provider_id,
+        requested_model,
+    )
+    .await;
 
     post_message(
         &app,

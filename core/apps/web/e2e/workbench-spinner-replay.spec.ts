@@ -70,12 +70,12 @@ test("workbench: spinner clears after replayed completion", async ({ page }) => 
 ]
 [[/tool_calls]]`;
   await page.locator("textarea.wb-composer-textarea").first().fill(prompt);
-  const createSessionResp = page.waitForResponse((resp) => {
+  const createTaskResp = page.waitForResponse((resp) => {
     if (resp.request().method() !== "POST") return false;
-    return /\/api\/tasks\/[^/]+\/sessions$/.test(resp.url()) && resp.status() === 200;
+    return /\/api\/workspaces\/[^/]+\/tasks$/.test(resp.url()) && resp.status() === 200;
   });
   await page.getByRole("button", { name: "Send" }).click();
-  await createSessionResp;
+  await createTaskResp;
 
   const activeSpinners = page.locator(
     ".wb-task-row-active .wb-task-spinner:not(.wb-task-spinner-archive)",

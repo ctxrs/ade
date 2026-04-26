@@ -2,7 +2,7 @@ use serde_json::json;
 
 use ctx_core::models::ExecutionEnvironment;
 
-use super::CreateSessionReq;
+use super::{CreateSessionReq, CreateTaskReq};
 
 #[test]
 fn create_session_req_accepts_execution_environment() {
@@ -76,4 +76,28 @@ fn create_session_req_rejects_empty_provider_id() {
     .unwrap_err();
 
     assert!(err.to_string().contains("provider_id must not be empty"));
+}
+
+#[test]
+fn create_task_req_rejects_legacy_default_session_flag() {
+    let err = serde_json::from_value::<CreateTaskReq>(json!({
+        "title": "task",
+        "create_default_session": false
+    }))
+    .unwrap_err();
+
+    assert!(err.to_string().contains("unknown field"));
+}
+
+#[test]
+fn create_task_req_accepts_default_session_options() {
+    serde_json::from_value::<CreateTaskReq>(json!({
+        "title": "task",
+        "default_session": {
+            "provider_id": "fake",
+            "model_id": "fake-model",
+            "execution_environment": "host"
+        }
+    }))
+    .unwrap();
 }

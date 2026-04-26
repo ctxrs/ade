@@ -381,8 +381,8 @@ async fn archiving_task_invalidates_cached_replay_session_head() {
     let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
     let app = common::router(state.clone());
     let workspace = common::create_workspace(&app, repo.path(), "ws").await;
-    let task = common::create_task(&app, workspace.id.0, "task").await;
-    let session = common::create_session(&app, task.id.0, "fake", "model").await;
+    let (task, session) =
+        common::create_task_with_session(&app, workspace.id.0, "task", "fake", "model").await;
     let store = state.store_for_workspace(workspace.id).await.unwrap();
 
     let full_head = store

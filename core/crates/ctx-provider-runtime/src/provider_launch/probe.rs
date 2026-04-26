@@ -378,8 +378,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn codex_endpoint_probe_runtime_preserves_openrouter_base_url_and_model_provider(
-    ) {
+    async fn codex_endpoint_probe_runtime_preserves_openrouter_base_url_and_model_provider() {
         let root = tempfile::tempdir().expect("tempdir");
         let data_root = root.path().join("data-root");
         let runtime_root = root.path().join("runtime-root");

@@ -93,10 +93,8 @@ async fn image_attachments_use_blobs_and_never_persist_base64() {
     let repo = common::init_git_repo(&[("README.md", "hello\n")]).await;
 
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
-    let task = common::create_task(&app, ws.id.0, "t1").await;
-    let task_id = task.id.0;
-
-    let session = common::create_session(&app, task_id, "fake", "fake-model").await;
+    let (_task, session) =
+        common::create_task_with_session(&app, ws.id.0, "t1", "fake", "fake-model").await;
 
     let data_base64 = base64::engine::general_purpose::STANDARD.encode(&png_bytes);
     let (status, msg): (StatusCode, ctx_core::models::Message) = common::json_request(
@@ -165,8 +163,8 @@ async fn image_ref_attachments_use_stored_blob_mime_type() {
 
     let repo = common::init_git_repo(&[("README.md", "hello\n")]).await;
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
-    let task = common::create_task(&app, ws.id.0, "t1").await;
-    let session = common::create_session(&app, task.id.0, "fake", "fake-model").await;
+    let (_task, session) =
+        common::create_task_with_session(&app, ws.id.0, "t1", "fake", "fake-model").await;
 
     let (status, msg): (StatusCode, ctx_core::models::Message) = common::json_request(
         &app,
@@ -260,8 +258,8 @@ async fn non_image_blob_refs_are_rejected() {
 
     let repo = common::init_git_repo(&[("README.md", "hello\n")]).await;
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
-    let task = common::create_task(&app, ws.id.0, "t1").await;
-    let session = common::create_session(&app, task.id.0, "fake", "fake-model").await;
+    let (_task, session) =
+        common::create_task_with_session(&app, ws.id.0, "t1", "fake", "fake-model").await;
 
     let (status, err): (StatusCode, serde_json::Value) = common::json_request(
         &app,
@@ -304,8 +302,8 @@ async fn oversized_image_ref_attachments_are_rejected_before_turn_start() {
 
     let repo = common::init_git_repo(&[("README.md", "hello\n")]).await;
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
-    let task = common::create_task(&app, ws.id.0, "t1").await;
-    let session = common::create_session(&app, task.id.0, "fake", "fake-model").await;
+    let (_task, session) =
+        common::create_task_with_session(&app, ws.id.0, "t1", "fake", "fake-model").await;
     let blob_id = uuid::Uuid::new_v4().to_string();
     let sha256 = hex::encode(sha2::Sha256::digest(b"oversized-image-ref"));
     state

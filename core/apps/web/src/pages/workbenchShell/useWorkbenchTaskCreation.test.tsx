@@ -6,6 +6,7 @@ import {
   createSession,
   createTask,
   getWorkspaceExecutionConfig,
+  listTaskSessions,
   postMessage,
 } from "../../api/client";
 import type { DraftHarness, ProviderAuthSummaryTrigger } from "../../components/WorkbenchComposer";
@@ -40,6 +41,7 @@ vi.mock("../../api/client", async (importOriginal) => {
     createTask: vi.fn(),
     createSession: vi.fn(),
     getWorkspaceExecutionConfig: vi.fn(),
+    listTaskSessions: vi.fn(),
     postMessage: vi.fn(),
   };
 });
@@ -67,6 +69,7 @@ vi.mock("../../utils/analytics", async (importOriginal) => {
 const mockedCreateTask = vi.mocked(createTask);
 const mockedCreateSession = vi.mocked(createSession);
 const mockedGetWorkspaceExecutionConfig = vi.mocked(getWorkspaceExecutionConfig);
+const mockedListTaskSessions = vi.mocked(listTaskSessions);
 const mockedPostMessage = vi.mocked(postMessage);
 
 const now = "2026-03-10T00:00:00.000Z";
@@ -282,6 +285,7 @@ beforeEach(async () => {
     source: "workspace",
     environment: "sandbox",
   });
+  mockedListTaskSessions.mockResolvedValue([makeSession("session-1", "task-1")]);
   const { randomUuid } = await import("../../utils/randomUuid");
   vi.mocked(randomUuid).mockImplementationOnce(() => "task-1");
   vi.mocked(randomUuid).mockImplementationOnce(() => "session-1");
@@ -373,14 +377,20 @@ describe("useWorkbenchTaskCreation optimistic lifecycle", () => {
     });
     expect(requireValue(current).optimisticStartingTaskRef.current).toBeNull();
     expect(mockedCreateTask).toHaveBeenCalledWith("workspace-1", "New Task", undefined, {
-      create_default_session: false,
       id: "task-1",
+      default_session: expect.objectContaining({
+        id: "session-1",
+        provider_id: "codex",
+        model_id: "gpt-5",
+        execution_environment: "sandbox",
+        remember_model_preference: false,
+        initial_prompt: "Write docs",
+        initial_message_id: "message-1",
+        initial_turn_id: "turn-1",
+      }),
     });
     expect(mockedGetWorkspaceExecutionConfig).toHaveBeenCalledWith("workspace-1");
-    expect(mockedCreateSession).toHaveBeenCalledWith("task-1", "codex", "gpt-5", expect.objectContaining({
-      execution_environment: "sandbox",
-      remember_model_preference: false,
-    }));
+    expect(mockedCreateSession).not.toHaveBeenCalled();
     expect(trackTaskCreatedMock).toHaveBeenCalledWith({
       providerId: "codex",
       modelId: "gpt-5",
@@ -446,12 +456,19 @@ describe("useWorkbenchTaskCreation optimistic lifecycle", () => {
     await waitFor(() => {
       expect(requireValue(current).optimisticTasks[0]?.localStatus).toBe("synced");
     });
-    expect(mockedCreateSession).toHaveBeenCalledWith("task-1", "codex", "gpt-5", expect.objectContaining({
-      execution_environment: "sandbox",
-      initial_message_id: "message-1",
-      initial_turn_id: "turn-1",
-    }));
-    expect(mockedCreateSession.mock.calls[0]?.[3]).not.toHaveProperty("initial_prompt");
+    expect(mockedCreateTask).toHaveBeenCalledWith("workspace-1", "New Task", undefined, {
+      id: "task-1",
+      default_session: expect.objectContaining({
+        id: "session-1",
+        provider_id: "codex",
+        model_id: "gpt-5",
+        execution_environment: "sandbox",
+        initial_message_id: "message-1",
+        initial_turn_id: "turn-1",
+      }),
+    });
+    expect(mockedCreateTask.mock.calls[0]?.[3]?.default_session).not.toHaveProperty("initial_prompt");
+    expect(mockedCreateSession).not.toHaveBeenCalled();
     expect(mockedPostMessage).toHaveBeenCalledWith("session-1", "Write docs", "immediate", attachments, {
       id: "message-1",
       turn_id: "turn-1",
@@ -533,17 +550,23 @@ describe("useWorkbenchTaskCreation optimistic lifecycle", () => {
     await waitFor(() => {
       expect(requireValue(current).optimisticTasks[0]?.localStatus).toBe("synced");
     });
-    expect(mockedCreateSession).toHaveBeenCalledWith("task-1", "codex", "gpt-5/xhigh", expect.objectContaining({
-      execution_environment: "sandbox",
-      remember_model_preference: true,
-    }));
+    expect(mockedCreateTask).toHaveBeenCalledWith("workspace-1", "New Task", undefined, {
+      id: "task-1",
+      default_session: expect.objectContaining({
+        id: "session-1",
+        provider_id: "codex",
+        model_id: "gpt-5/xhigh",
+        execution_environment: "sandbox",
+        remember_model_preference: true,
+      }),
+    });
     expect(trackTaskCreatedMock).toHaveBeenCalledWith({
       providerId: "codex",
       modelId: "gpt-5/xhigh",
       reasoningEffort: "xhigh",
       executionEnvironment: "sandbox",
     });
-    expect(mockedCreateSession.mock.calls[0]?.[3]).not.toHaveProperty("reasoning_effort");
+    expect(mockedCreateTask.mock.calls[0]?.[3]?.default_session).not.toHaveProperty("reasoning_effort");
     expect(onStartError).toHaveBeenCalledWith(null);
   });
 
@@ -585,10 +608,16 @@ describe("useWorkbenchTaskCreation optimistic lifecycle", () => {
     await waitFor(() => {
       expect(requireValue(current).optimisticTasks[0]?.localStatus).toBe("synced");
     });
-    expect(mockedCreateSession).toHaveBeenCalledWith("task-1", "claude-crp", "default/medium", expect.objectContaining({
-      execution_environment: "sandbox",
-    }));
-    expect(mockedCreateSession.mock.calls[0]?.[3]).not.toHaveProperty("reasoning_effort");
+    expect(mockedCreateTask).toHaveBeenCalledWith("workspace-1", "New Task", undefined, {
+      id: "task-1",
+      default_session: expect.objectContaining({
+        id: "session-1",
+        provider_id: "claude-crp",
+        model_id: "default/medium",
+        execution_environment: "sandbox",
+      }),
+    });
+    expect(mockedCreateTask.mock.calls[0]?.[3]?.default_session).not.toHaveProperty("reasoning_effort");
     expect(onStartError).toHaveBeenCalledWith(null);
   });
 
@@ -696,14 +725,19 @@ describe("useWorkbenchTaskCreation optimistic lifecycle", () => {
     await waitFor(() => {
       expect(requireValue(current).optimisticTasks[0]?.localStatus).toBe("synced");
     });
-    expect(mockedCreateSession).toHaveBeenCalledWith(
-      "task-1",
-      "fake",
-      "saved-model",
+    expect(mockedCreateTask).toHaveBeenCalledWith(
+      "workspace-1",
+      "New Task",
+      undefined,
       expect.objectContaining({
-        execution_environment: "sandbox",
+        default_session: expect.objectContaining({
+          provider_id: "fake",
+          model_id: "saved-model",
+          execution_environment: "sandbox",
+        }),
       }),
     );
+    expect(mockedCreateSession).not.toHaveBeenCalled();
     expect(onStartError).toHaveBeenCalledWith(null);
   });
 
@@ -756,14 +790,19 @@ describe("useWorkbenchTaskCreation optimistic lifecycle", () => {
       force: true,
       trigger: "explicit",
     });
-    expect(mockedCreateSession).toHaveBeenCalledWith(
-      "task-1",
-      "fake",
-      "saved-model",
+    expect(mockedCreateTask).toHaveBeenCalledWith(
+      "workspace-1",
+      "New Task",
+      undefined,
       expect.objectContaining({
-        execution_environment: "sandbox",
+        default_session: expect.objectContaining({
+          provider_id: "fake",
+          model_id: "saved-model",
+          execution_environment: "sandbox",
+        }),
       }),
     );
+    expect(mockedCreateSession).not.toHaveBeenCalled();
     expect(onStartError).toHaveBeenCalledWith(null);
   });
 

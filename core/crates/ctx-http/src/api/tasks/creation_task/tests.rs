@@ -1,4 +1,4 @@
-use super::select_default_provider_id;
+use super::default_session_plan::select_default_provider_id;
 use ctx_providers::adapters::{
     ProviderHealth, ProviderRecommendedAction, ProviderStatus, ProviderUsability,
     ProviderUsabilityStatus,

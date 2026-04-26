@@ -1,26 +1,5 @@
 use super::*;
 
-pub(crate) fn resolve_command_path(command: &str) -> (bool, Option<PathBuf>) {
-    if command.contains(std::path::MAIN_SEPARATOR)
-        || command.contains('/')
-        || command.contains('\\')
-    {
-        let p = PathBuf::from(command);
-        if p.exists() {
-            return (true, Some(p));
-        }
-        return (false, None);
-    }
-    let path = std::env::var_os("PATH").unwrap_or_default();
-    for dir in std::env::split_paths(&path) {
-        let candidate = dir.join(command);
-        if candidate.exists() {
-            return (true, Some(candidate));
-        }
-    }
-    (false, None)
-}
-
 pub(crate) fn ensure_executable(path: &Path) -> Result<()> {
     #[cfg(unix)]
     {

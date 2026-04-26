@@ -17,10 +17,6 @@ pub(super) fn api_routes() -> axum::Router<Arc<AppState>> {
         .merge(session_routes())
 }
 
-fn utility_routes() -> axum::Router<Arc<AppState>> {
-    axum::Router::new()
-}
-
 fn core_routes() -> axum::Router<Arc<AppState>> {
     axum::Router::new()
         .route("/api/health", get(health))
@@ -75,6 +71,10 @@ fn core_routes() -> axum::Router<Arc<AppState>> {
             post(download_appimage_update),
         )
         .route("/api/updates/appimage/apply", post(apply_appimage_update))
+        .route(
+            "/api/merge-queue/entries",
+            get(list_merge_queue_entries).post(submit_merge_queue_entry),
+        )
         .route("/api/dev/providers/restart", post(dev_restart_providers))
         .route(
             "/api/dev/sessions/:id/seed_transcript",
@@ -180,6 +180,18 @@ fn workspace_routes() -> axum::Router<Arc<AppState>> {
             get(get_merge_queue_config).post(update_merge_queue_config),
         )
         .route(
+            "/api/workspaces/:workspace_id/merge_queue/entries/:id/cancel",
+            post(cancel_merge_queue_entry),
+        )
+        .route(
+            "/api/workspaces/:workspace_id/merge_queue/entries/:id/retry",
+            post(retry_merge_queue_entry),
+        )
+        .route(
+            "/api/workspaces/:workspace_id/merge_queue/entries/:id/logs",
+            get(get_merge_queue_entry_logs),
+        )
+        .route(
             "/api/workspaces/:id/execution_config",
             get(get_execution_config).post(update_execution_config),
         )
@@ -204,6 +216,10 @@ fn workspace_routes() -> axum::Router<Arc<AppState>> {
         .route("/api/terminals/:id", delete(delete_terminal))
         .route("/api/terminals/:id/stream", get(terminal_stream_ws))
         .route("/api/worktrees/:id", get(get_worktree))
+        .route(
+            "/api/worktrees/:id/bootstrap/logs",
+            get(get_worktree_bootstrap_logs),
+        )
 }
 
 fn mobile_routes() -> axum::Router<Arc<AppState>> {

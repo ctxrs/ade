@@ -188,15 +188,7 @@ async fn terminal_disconnect_and_reconnect_do_not_poison_workspace_control_plane
         .await
         .unwrap();
 
-    let session: Session = client
-        .post(format!("{base}/api/tasks/{}/sessions", task.id.0))
-        .json(&json!({"provider_id":"fake","model_id":"fake-model"}))
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
+    let session: Session = common::load_primary_session_http(client, base, &task).await;
 
     let terminal: TerminalSession = client
         .post(format!(

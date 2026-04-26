@@ -232,8 +232,9 @@ async fn read_codex_base_url(env: &HashMap<String, String>) -> Result<String> {
             return Ok("https://chatgpt.com/backend-api".to_string());
         }
         Err(err) => {
-            return Err(err)
-                .with_context(|| format!("reading codex config.toml at {}", config_path.display()));
+            return Err(err).with_context(|| {
+                format!("reading codex config.toml at {}", config_path.display())
+            });
         }
     };
     let config = toml::from_str::<CodexConfigFile>(&contents)

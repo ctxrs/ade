@@ -167,17 +167,25 @@ async fn monitor_gemini_login(state: Arc<AppState>, login_id: String, label: Opt
             .await;
             match added {
                 Ok(registry) => {
+                    if let Err(err) = restarts::restart_gemini_providers_for_auth_change(
+                        &state,
+                        "gemini auth updated",
+                    )
+                    .await
+                    {
+                        let mut map = state.providers.gemini_login_sessions.lock().await;
+                        if let Some(entry) = map.get_mut(&login_id) {
+                            entry.status = "failed".to_string();
+                            entry.error = Some(logs::redact_sensitive(&err.to_string()));
+                        }
+                        return;
+                    }
                     let mut map = state.providers.gemini_login_sessions.lock().await;
                     if let Some(entry) = map.get_mut(&login_id) {
                         entry.status = "success".to_string();
                         entry.account_id = registry.active_account_id.clone();
                         entry.error = None;
                     }
-                    restarts::restart_gemini_providers_for_auth_change(
-                        &state,
-                        "gemini auth updated",
-                    )
-                    .await;
                 }
                 Err(err) => {
                     let mut map = state.providers.gemini_login_sessions.lock().await;

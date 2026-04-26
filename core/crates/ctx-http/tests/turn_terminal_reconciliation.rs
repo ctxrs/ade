@@ -106,8 +106,8 @@ async fn setup_state_with_providers(
     );
     let app = common::router(state.clone());
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
-    let task = common::create_task(&app, ws.id.0, "t1").await;
-    let session = common::create_session(&app, task.id.0, "fake", "fake-model").await;
+    let (_task, session) =
+        common::create_task_with_session(&app, ws.id.0, "t1", "fake", "fake-model").await;
     let store = state.store_for_session(session.id).await.unwrap();
     TestHarness {
         _repo: repo,

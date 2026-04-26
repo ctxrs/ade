@@ -6,12 +6,18 @@ use crate::api::shared;
 mod cleanup;
 #[path = "creation_session/initial_prompt.rs"]
 mod initial_prompt;
+#[path = "creation_session/replay.rs"]
+mod replay;
 #[path = "creation_session/request.rs"]
 mod request;
 
 use cleanup::cleanup_orphaned_provisioned_worktree;
 use initial_prompt::{seed_initial_prompt, InitialPromptSeed};
+pub(super) use replay::{
+    create_requested_default_session_for_task, replay_requested_default_session_for_task,
+};
 pub(in crate::api) use request::CreateSessionReq;
+pub(in crate::api::tasks) use request::CreateTaskDefaultSessionReq;
 
 async fn create_session_for_task_inner(
     state: Arc<AppState>,
@@ -34,6 +40,18 @@ async fn create_session_for_task_inner(
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
+    create_session_for_loaded_task_inner(state, store, task, workspace, headers, req).await
+}
+
+async fn create_session_for_loaded_task_inner(
+    state: Arc<AppState>,
+    store: Store,
+    task: Task,
+    workspace: Workspace,
+    headers: HeaderMap,
+    req: CreateSessionReq,
+) -> Result<Json<Session>, StatusCode> {
+    let task_id = task.id;
     let run_id_header = headers
         .get("x-ctx-run-id")
         .and_then(|v| v.to_str().ok())
@@ -71,6 +89,13 @@ async fn create_session_for_task_inner(
     if parent_session_id.is_some() != relationship.is_some() {
         return Err(StatusCode::BAD_REQUEST);
     }
+    if parent_session_id.is_none() && relationship.is_none() {
+        if let Some(primary_session_id) = task.primary_session_id {
+            if session_id.as_ref() != Some(&primary_session_id) {
+                return Err(StatusCode::CONFLICT);
+            }
+        }
+    }
     if req.initial_prompt.is_some()
         && (req.initial_message_id.is_none() || req.initial_turn_id.is_none())
     {
@@ -105,7 +130,7 @@ async fn create_session_for_task_inner(
         let workspace_root = StdPath::new(&workspace.root_path);
         let vcs = vcs::driver_for_path(workspace_root)
             .await
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+            .map_err(|_| StatusCode::BAD_REQUEST)?;
         let base_commit_sha = vcs.rev_parse_head(workspace_root).await.map_err(|e| {
             let msg = e.to_string().to_lowercase();
             if msg.contains("ambiguous argument 'head'")
@@ -523,15 +548,19 @@ pub(in crate::api) async fn create_session_for_task(
 
 pub(in crate::api) async fn create_default_session_for_task(
     state: Arc<AppState>,
-    task_id: TaskId,
+    store: Store,
+    task: Task,
+    workspace: Workspace,
     provider_id: String,
     model_id: String,
     reasoning_effort: Option<String>,
     execution_environment: ExecutionEnvironment,
 ) -> Result<Session, StatusCode> {
-    let Json(session) = create_session_for_task_inner(
+    let Json(session) = create_session_for_loaded_task_inner(
         state,
-        task_id,
+        store,
+        task,
+        workspace,
         HeaderMap::new(),
         CreateSessionReq {
             id: None,

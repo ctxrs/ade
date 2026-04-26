@@ -158,15 +158,16 @@ async function seedTask(
   workspaceId: string,
   seed: AcceptanceTaskSeed,
 ) {
-  const task = await apiPost<{ id: string }>(request, `/api/workspaces/${workspaceId}/tasks`, {
+  const task = await apiPost<{ id: string; primary_session_id?: string | null }>(request, `/api/workspaces/${workspaceId}/tasks`, {
     title: seed.title,
-    create_default_session: false,
+    default_session: {
+      provider_id: "fake",
+      model_id: "fake-model",
+      execution_environment: "host",
+    },
   });
-  const session = await apiPost<{ id: string }>(request, `/api/tasks/${task.id}/sessions`, {
-    provider_id: "fake",
-    model_id: "fake-model",
-    execution_environment: "host",
-  });
+  const session = { id: task.primary_session_id };
+  if (!session.id) throw new Error(`seeded task ${task.id} did not include a primary session`);
 
   for (let turnIndex = 0; turnIndex < seed.turns; turnIndex += 1) {
     const toolFixtures = seed.includeToolSummaries

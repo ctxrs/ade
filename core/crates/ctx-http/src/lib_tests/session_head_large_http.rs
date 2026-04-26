@@ -32,22 +32,26 @@ async fn large_session_head_http_responses_are_bounded() {
         format!("/api/workspaces/{}/tasks", workspace.id.0),
         Some(json!({
             "title": "Large Head",
-            "create_default_session": false
+            "default_session": {
+                "provider_id": "fake",
+                "model_id": "fake-model"
+            }
         })),
     )
     .await;
     assert_eq!(task_status, StatusCode::OK);
-    let (session_status, session): (StatusCode, ctx_core::models::Session) = json_request(
+    let (session_status, sessions): (StatusCode, Vec<ctx_core::models::Session>) = json_request(
         &app,
-        Method::POST,
+        Method::GET,
         format!("/api/tasks/{}/sessions", task.id.0),
-        Some(json!({
-            "provider_id": "fake",
-            "model_id": "fake-model"
-        })),
+        None,
     )
     .await;
     assert_eq!(session_status, StatusCode::OK);
+    let session = sessions
+        .into_iter()
+        .find(|session| Some(session.id) == task.primary_session_id)
+        .expect("created task should list its default session");
 
     let store = state.store_for_session(session.id).await.unwrap();
     seed_large_session(&store, session.id, task.id, 240).await;

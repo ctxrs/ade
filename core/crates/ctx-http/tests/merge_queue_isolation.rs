@@ -1031,8 +1031,9 @@ async fn merge_queue_submit_uses_worktree_root() {
     let workspace = common::create_workspace(&app, repo.path(), "mq-root").await;
     let store = state.store_for_workspace(workspace.id).await.unwrap();
     write_merge_queue_config(&store, &target_branch, "never").await;
-    let task = common::create_task(&app, workspace.id.0, "mq-root").await;
-    let session = common::create_session(&app, task.id.0, "fake", "fake-model").await;
+    let (_task, session) =
+        common::create_task_with_session(&app, workspace.id.0, "mq-root", "fake", "fake-model")
+            .await;
 
     let worktree_root = tempfile::tempdir().unwrap();
     let feature_path = worktree_root.path().join("feature-root");

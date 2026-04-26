@@ -26,7 +26,7 @@ test("workbench: failed start shows one bounded alert and does not mount a sessi
   await selectHarnessBySearch(page, "fake", /fake/i);
 
   let failedOnce = false;
-  await page.route("**/api/tasks/*/sessions", async (route) => {
+  await page.route("**/api/workspaces/*/tasks", async (route) => {
     if (failedOnce) {
       await route.continue();
       return;

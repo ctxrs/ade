@@ -69,6 +69,50 @@ async fn create_workspace_via_api(
     serde_json::from_slice(&body).unwrap()
 }
 
+async fn load_primary_session_via_api(
+    app: &axum::Router,
+    task: &ctx_core::models::Task,
+) -> ctx_core::models::Session {
+    let req = Request::builder()
+        .method("GET")
+        .uri(format!("/api/tasks/{}/sessions", task.id.0))
+        .body(Body::empty())
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let sessions: Vec<ctx_core::models::Session> = serde_json::from_slice(&body).unwrap();
+    sessions
+        .into_iter()
+        .find(|session| Some(session.id) == task.primary_session_id)
+        .expect("created task should list its default session")
+}
+
+async fn create_subagent_session_via_api(
+    app: &axum::Router,
+    task: &ctx_core::models::Task,
+    parent_session_id: ctx_core::ids::SessionId,
+) -> ctx_core::models::Session {
+    let req = Request::builder()
+        .method("POST")
+        .uri(format!("/api/tasks/{}/sessions", task.id.0))
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "provider_id": "fake",
+                "model_id": "fake-model",
+                "parent_session_id": parent_session_id.0.to_string(),
+                "relationship": "sub_agent"
+            })
+            .to_string(),
+        ))
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    serde_json::from_slice(&body).unwrap()
+}
+
 fn write_failing_sandbox_cli_shim(dir: &Path) -> std::path::PathBuf {
     let path = dir.join(if cfg!(windows) {
         "sandbox-cli-fail-fast.cmd"

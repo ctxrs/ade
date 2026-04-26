@@ -339,7 +339,6 @@ test("workbench: switching into a ready final stays fresh under pressure", async
     tasks: TASK_COUNT,
     sessionsPerTask: 1,
     turnsPerSession: 0,
-    createDefaultSession: false,
     sessionSource: {
       providerId: "codex",
       modelId: "gpt-5.4",

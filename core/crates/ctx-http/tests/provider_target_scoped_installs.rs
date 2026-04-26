@@ -33,6 +33,7 @@ use ctx_provider_runtime::provider_launch::resolver::target_adapter_cache_key;
 use ctx_providers::adapters::{ProviderAdapter, ProviderHealth, ProviderStatus};
 use ctx_providers::crp::Tier1CrpAdapter;
 use ctx_store::Store;
+use sha2::{Digest, Sha256};
 
 struct SeededRuntime {
     host_command: String,
@@ -425,6 +426,29 @@ async fn set_workspace_container_execution(
     );
 }
 
+async fn write_workspace_container_execution_without_runtime_probe(
+    state: &Arc<AppState>,
+    workspace_id: uuid::Uuid,
+) {
+    let store = state
+        .core
+        .stores
+        .workspace(ctx_core::ids::WorkspaceId(workspace_id))
+        .await
+        .expect("workspace store");
+    ctx_workspace_config::update_execution_config(
+        &store,
+        ctx_workspace_config::ExecutionConfigUpdate {
+            environment: ctx_workspace_config::ExecutionEnvironment::Sandbox,
+            network_mode: None,
+            allowlist: None,
+            image: None,
+        },
+    )
+    .await
+    .expect("write workspace execution config");
+}
+
 async fn assert_target_adapter_not_cached(
     state: &Arc<AppState>,
     provider_id: &str,
@@ -453,11 +477,26 @@ struct DownloadFixture {
     delay_ms: u64,
 }
 
-async fn spawn_download_fixture_server(fixtures: Vec<(&str, Vec<u8>, u64)>) -> common::TestServer {
+struct DownloadFixtureServer {
+    server: common::TestServer,
+    sha256_by_name: HashMap<String, String>,
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    hex::encode(Sha256::digest(bytes))
+}
+
+async fn spawn_download_fixture_server(
+    fixtures: Vec<(&str, Vec<u8>, u64)>,
+) -> DownloadFixtureServer {
+    let mut sha256_by_name = HashMap::new();
     let fixture_map = Arc::new(
         fixtures
             .into_iter()
-            .map(|(name, body, delay_ms)| (name.to_string(), DownloadFixture { body, delay_ms }))
+            .map(|(name, body, delay_ms)| {
+                sha256_by_name.insert(name.to_string(), sha256_hex(&body));
+                (name.to_string(), DownloadFixture { body, delay_ms })
+            })
             .collect::<HashMap<_, _>>(),
     );
 
@@ -476,26 +515,49 @@ async fn spawn_download_fixture_server(fixtures: Vec<(&str, Vec<u8>, u64)>) -> c
         )
     }
 
-    common::spawn_http_server(
+    let server = common::spawn_http_server(
         axum::Router::new()
             .route("/:name", axum::routing::get(serve_fixture))
             .with_state(fixture_map),
     )
-    .await
+    .await;
+    DownloadFixtureServer {
+        server,
+        sha256_by_name,
+    }
 }
 
-fn fixture_download_url(server: &common::TestServer, name: &str) -> String {
-    format!("{}/{}", server.base_url, name)
+fn fixture_download_url(server: &DownloadFixtureServer, name: &str) -> String {
+    let sha256 = server
+        .sha256_by_name
+        .get(name)
+        .expect("download fixture should have sha256");
+    format!("{}/{}?sha256={}", server.server.base_url, name, sha256)
 }
 
 fn fixture_matrix_version() -> u32 {
     ctx_provider_matrix::builtin_matrix().version
 }
 
+fn archive_sha256_for_url(url: &str) -> String {
+    let parsed = url::Url::parse(url).expect("fixture archive url should parse");
+    if let Some((_, sha256)) = parsed.query_pairs().find(|(key, _)| key == "sha256") {
+        return sha256.into_owned();
+    }
+    if parsed.scheme() == "file" {
+        let path = parsed
+            .to_file_path()
+            .expect("fixture file archive url should convert to path");
+        return sha256_hex(&std::fs::read(path).expect("read fixture archive file"));
+    }
+    panic!("fixture archive url must be file:// or include sha256 query: {url}");
+}
+
 fn local_archive_entry_with_bin_path(url: String, bin_path: &str) -> ProviderArchiveTarget {
+    let sha256 = archive_sha256_for_url(&url);
     ProviderArchiveTarget {
         url,
-        sha256: None,
+        sha256: Some(sha256),
         size_bytes: None,
         archive: ProviderArchiveKind::None,
         bin_path: bin_path.to_string(),
@@ -2153,7 +2215,7 @@ async fn invalid_managed_config_container_routes_do_not_seed_target_adapter_cach
     );
     let app = common::router(state.clone());
     let workspace = common::create_workspace(&app, repo.path(), "container-ws").await;
-    set_workspace_container_execution(&app, workspace.id.0, "sandbox").await;
+    write_workspace_container_execution_without_runtime_probe(&state, workspace.id.0).await;
 
     let (options_status, options_body): (StatusCode, serde_json::Value) = common::json_request(
         &app,
@@ -3022,12 +3084,22 @@ async fn provider_target_scoped_installs_work_for_host_and_container_workspaces(
         "unexpected container options body: {container_options:#?}"
     );
 
-    let host_task = common::create_task(&app, host_ws.id.0, "host-task").await;
-    let container_task = common::create_task(&app, container_ws.id.0, "container-task").await;
-    let host_session =
-        common::create_session(&app, host_task.id.0, "codex-crp", "host-model").await;
-    let container_session =
-        common::create_session(&app, container_task.id.0, "codex-crp", "container-model").await;
+    let (_host_task, host_session) = common::create_task_with_session(
+        &app,
+        host_ws.id.0,
+        "host-task",
+        "codex-crp",
+        "host-model",
+    )
+    .await;
+    let (_container_task, container_session) = common::create_task_with_session(
+        &app,
+        container_ws.id.0,
+        "container-task",
+        "codex-crp",
+        "container-model",
+    )
+    .await;
 
     post_message(&app, host_session.id.0, "reply exactly once").await;
     post_message(&app, container_session.id.0, "reply exactly once").await;

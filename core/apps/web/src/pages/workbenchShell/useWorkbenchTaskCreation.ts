@@ -2,10 +2,10 @@ import { useEffect, useMemo, useRef, useState, type Dispatch, type MutableRefObj
 import { flushSync } from "react-dom";
 import type { SessionActivityState } from "@ctx/types";
 import {
-  createSession,
   createTask,
   getWorkspaceExecutionConfig,
   idToString,
+  listTaskSessions,
   postMessage,
   type ExecutionEnvironment,
   type Message,
@@ -288,46 +288,6 @@ export function useWorkbenchTaskCreation({
       const parsedResolvedModel = parseModelId(resolvedModelId);
       const executionEnvironment: ExecutionEnvironment = executionConfig.environment;
 
-      const task = await createTask(workspaceId, title, undefined, {
-        create_default_session: false,
-        id: optimisticTaskId,
-      });
-      const taskId = idToString(task.id);
-      if (!taskId) throw new Error("Task creation failed.");
-
-      if (taskId !== optimisticTaskId) {
-        throw new Error("Task creation returned an unexpected id.");
-      }
-
-      currentTaskId = taskId;
-      trackTaskCreated({
-        providerId: primaryTrack.providerId,
-        modelId: resolvedModelId,
-        reasoningEffort: parsedResolvedModel.effort,
-        executionEnvironment,
-      });
-      setOptimisticTasks((prev) =>
-        prev.map((item) => {
-          if (item.id !== currentTaskId) return item;
-          const nextTask: Task = { ...task, primary_session_id: item.primarySessionId ?? null };
-          const nextSessions = item.sessions.map((summary) => ({
-            ...summary,
-            session: {
-              ...summary.session,
-              task_id: currentTaskId,
-              workspace_id: task.workspace_id ?? summary.session.workspace_id,
-            },
-          }));
-          return {
-            ...item,
-            task: nextTask,
-            sessions: nextSessions,
-            sort_at: task.created_at ?? item.sort_at,
-            sortAtMs: Date.parse(task.created_at ?? item.sort_at ?? "") || item.sortAtMs,
-          };
-        }),
-      );
-
       const installed = isReadyVisibleHarnessProviderStatus(providersById[primaryTrack.providerId]);
       if (!installed) {
         const diag = providerUsabilityReason(providersById[primaryTrack.providerId]);
@@ -341,14 +301,60 @@ export function useWorkbenchTaskCreation({
       const messageId = optimisticMessageId;
       const turnId = optimisticTurnId;
       const shouldSendInitialPrompt = attachmentsToSend.length === 0;
-      const session = await createSession(currentTaskId, primaryTrack.providerId, resolvedModelId, {
-        execution_environment: executionEnvironment,
-        id: clientSessionId,
-        remember_model_preference: primaryTrack.preferenceExplicit === true,
-        initial_message_id: messageId,
-        initial_turn_id: turnId,
-        ...(shouldSendInitialPrompt ? { initial_prompt: prompt } : {}),
+      const task = await createTask(workspaceId, title, undefined, {
+        id: optimisticTaskId,
+        default_session: {
+          id: clientSessionId,
+          provider_id: primaryTrack.providerId,
+          model_id: resolvedModelId,
+          execution_environment: executionEnvironment,
+          remember_model_preference: primaryTrack.preferenceExplicit === true,
+          initial_message_id: messageId,
+          initial_turn_id: turnId,
+          ...(shouldSendInitialPrompt ? { initial_prompt: prompt } : {}),
+        },
       });
+      const taskId = idToString(task.id);
+      if (!taskId) throw new Error("Task creation failed.");
+
+      if (taskId !== optimisticTaskId) {
+        throw new Error("Task creation returned an unexpected id.");
+      }
+      if (idToString(task.primary_session_id) !== clientSessionId) {
+        throw new Error("Task creation returned an unexpected default session.");
+      }
+
+      currentTaskId = taskId;
+      trackTaskCreated({
+        providerId: primaryTrack.providerId,
+        modelId: resolvedModelId,
+        reasoningEffort: parsedResolvedModel.effort,
+        executionEnvironment,
+      });
+      setOptimisticTasks((prev) =>
+        prev.map((item) => {
+          if (item.id !== currentTaskId) return item;
+          const nextSessions = item.sessions.map((summary) => ({
+            ...summary,
+            session: {
+              ...summary.session,
+              task_id: currentTaskId,
+              workspace_id: task.workspace_id ?? summary.session.workspace_id,
+            },
+          }));
+          return {
+            ...item,
+            task,
+            sessions: nextSessions,
+            sort_at: task.created_at ?? item.sort_at,
+            sortAtMs: Date.parse(task.created_at ?? item.sort_at ?? "") || item.sortAtMs,
+          };
+        }),
+      );
+
+      const sessions = await listTaskSessions(taskId);
+      const session = sessions.find((candidate) => idToString(candidate.id) === clientSessionId);
+      if (!session) throw new Error("Default session lookup failed.");
       const sessionId = idToString(session.id);
       if (!sessionId) throw new Error("Session creation failed.");
       if (sessionId !== clientSessionId) {

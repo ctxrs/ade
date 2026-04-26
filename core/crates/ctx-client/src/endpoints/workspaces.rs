@@ -5,7 +5,7 @@ use url::form_urlencoded;
 use ctx_core::ids::{TaskId, TerminalId, WorkspaceId};
 use ctx_core::models::{
     Task, TerminalSession, Workspace, WorkspaceActiveHeadBatch, WorkspaceActiveSnapshot,
-    WorkspaceArchivedPage, WorkspaceAttachment,
+    WorkspaceArchivedPage,
 };
 
 use crate::client::Client;

@@ -154,22 +154,7 @@ async fn setup_projection_harness() -> ProjectionHarness {
         .await
         .unwrap();
 
-    let session: Session = server
-        .client
-        .post(format!(
-            "{}/api/tasks/{}/sessions",
-            server.base_url, task.id.0
-        ))
-        .json(&json!({
-            "provider_id": "fake",
-            "model_id": "fake-model",
-        }))
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
+    let session = common::load_primary_session_http(&server.client, &server.base_url, &task).await;
 
     state.remember_session_meta(&session).await;
 

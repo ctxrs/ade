@@ -102,6 +102,46 @@ async fn wait_for_notice_kind(
     .unwrap_or_else(|_| panic!("timed out waiting for notice {expected_kind}"));
 }
 
+async fn create_task_with_default_session(
+    client: &reqwest::Client,
+    base: &str,
+    workspace_id: ctx_core::ids::WorkspaceId,
+    provider_id: &str,
+    model_id: &str,
+) -> (ctx_core::models::Task, Session) {
+    let session_id = uuid::Uuid::new_v4().to_string();
+    let task: ctx_core::models::Task = client
+        .post(format!("{base}/api/workspaces/{}/tasks", workspace_id.0))
+        .json(&json!({
+            "title": "session-model",
+            "default_session": {
+                "id": session_id,
+                "provider_id": provider_id,
+                "model_id": model_id,
+            }
+        }))
+        .send()
+        .await
+        .expect("create task")
+        .json()
+        .await
+        .expect("task json");
+
+    let sessions: Vec<Session> = client
+        .get(format!("{base}/api/tasks/{}/sessions", task.id.0))
+        .send()
+        .await
+        .expect("list sessions")
+        .json()
+        .await
+        .expect("sessions json");
+    let session = sessions
+        .into_iter()
+        .find(|session| Some(session.id) == task.primary_session_id)
+        .expect("created task should include default session");
+    (task, session)
+}
+
 #[derive(Default)]
 struct RecordingSetModelAdapter {
     calls: Mutex<Vec<(String, String)>>,
@@ -229,25 +269,14 @@ async fn set_session_model_updates_session_and_appends_init_event() {
         .await
         .expect("workspace json");
 
-    let task: ctx_core::models::Task = client
-        .post(format!("{base}/api/workspaces/{}/tasks", workspace.id.0))
-        .json(&json!({"title":"session-model"}))
-        .send()
-        .await
-        .expect("create task")
-        .json()
-        .await
-        .expect("task json");
-
-    let session: Session = client
-        .post(format!("{base}/api/tasks/{}/sessions", task.id.0))
-        .json(&json!({"provider_id":"fake-set-model","model_id":"start-model"}))
-        .send()
-        .await
-        .expect("create session")
-        .json()
-        .await
-        .expect("session json");
+    let (_task, session) = create_task_with_default_session(
+        client,
+        base,
+        workspace.id,
+        "fake-set-model",
+        "start-model",
+    )
+    .await;
 
     let updated: Session = client
         .post(format!("{base}/api/sessions/{}/model", session.id.0))
@@ -383,25 +412,14 @@ async fn set_session_model_skips_adapter_when_session_is_not_live() {
         .await
         .expect("workspace json");
 
-    let task: ctx_core::models::Task = client
-        .post(format!("{base}/api/workspaces/{}/tasks", workspace.id.0))
-        .json(&json!({"title":"session-model"}))
-        .send()
-        .await
-        .expect("create task")
-        .json()
-        .await
-        .expect("task json");
-
-    let session: Session = client
-        .post(format!("{base}/api/tasks/{}/sessions", task.id.0))
-        .json(&json!({"provider_id":"fake-set-model","model_id":"start-model"}))
-        .send()
-        .await
-        .expect("create session")
-        .json()
-        .await
-        .expect("session json");
+    let (_task, session) = create_task_with_default_session(
+        client,
+        base,
+        workspace.id,
+        "fake-set-model",
+        "start-model",
+    )
+    .await;
 
     let updated: Session = client
         .post(format!("{base}/api/sessions/{}/model", session.id.0))
@@ -475,25 +493,14 @@ async fn set_session_model_returns_structured_error_when_live_switch_fails() {
         .await
         .expect("workspace json");
 
-    let task: ctx_core::models::Task = client
-        .post(format!("{base}/api/workspaces/{}/tasks", workspace.id.0))
-        .json(&json!({"title":"session-model"}))
-        .send()
-        .await
-        .expect("create task")
-        .json()
-        .await
-        .expect("task json");
-
-    let session: Session = client
-        .post(format!("{base}/api/tasks/{}/sessions", task.id.0))
-        .json(&json!({"provider_id":"fake-set-model","model_id":"start-model"}))
-        .send()
-        .await
-        .expect("create session")
-        .json()
-        .await
-        .expect("session json");
+    let (_task, session) = create_task_with_default_session(
+        client,
+        base,
+        workspace.id,
+        "fake-set-model",
+        "start-model",
+    )
+    .await;
 
     let response = client
         .post(format!("{base}/api/sessions/{}/model", session.id.0))
@@ -548,28 +555,14 @@ async fn create_session_splits_legacy_combined_model_id_into_reasoning_effort() 
         .await
         .expect("workspace json");
 
-    let task: ctx_core::models::Task = client
-        .post(format!("{base}/api/workspaces/{}/tasks", workspace.id.0))
-        .json(&json!({"title":"session-model"}))
-        .send()
-        .await
-        .expect("create task")
-        .json()
-        .await
-        .expect("task json");
-
-    let session: Session = client
-        .post(format!("{base}/api/tasks/{}/sessions", task.id.0))
-        .json(&json!({
-            "provider_id":"fake-set-model",
-            "model_id":"gpt-5/xhigh"
-        }))
-        .send()
-        .await
-        .expect("create session")
-        .json()
-        .await
-        .expect("session json");
+    let (_task, session) = create_task_with_default_session(
+        client,
+        base,
+        workspace.id,
+        "fake-set-model",
+        "gpt-5/xhigh",
+    )
+    .await;
 
     assert_eq!(session.model_id, "gpt-5");
     assert_eq!(session.reasoning_effort.as_deref(), Some("xhigh"));
@@ -605,25 +598,14 @@ async fn set_session_model_persists_reasoning_effort_and_forwards_full_model_id(
         .await
         .expect("workspace json");
 
-    let task: ctx_core::models::Task = client
-        .post(format!("{base}/api/workspaces/{}/tasks", workspace.id.0))
-        .json(&json!({"title":"session-model"}))
-        .send()
-        .await
-        .expect("create task")
-        .json()
-        .await
-        .expect("task json");
-
-    let session: Session = client
-        .post(format!("{base}/api/tasks/{}/sessions", task.id.0))
-        .json(&json!({"provider_id":"fake-set-model","model_id":"start-model"}))
-        .send()
-        .await
-        .expect("create session")
-        .json()
-        .await
-        .expect("session json");
+    let (_task, session) = create_task_with_default_session(
+        client,
+        base,
+        workspace.id,
+        "fake-set-model",
+        "start-model",
+    )
+    .await;
 
     let updated: Session = client
         .post(format!("{base}/api/sessions/{}/model", session.id.0))
@@ -991,25 +973,14 @@ async fn set_session_model_allows_explicit_model_outside_cached_catalog() {
         },
     );
 
-    let task: ctx_core::models::Task = client
-        .post(format!("{base}/api/workspaces/{}/tasks", workspace.id.0))
-        .json(&json!({"title":"session-model"}))
-        .send()
-        .await
-        .expect("create task")
-        .json()
-        .await
-        .expect("task json");
-
-    let session: Session = client
-        .post(format!("{base}/api/tasks/{}/sessions", task.id.0))
-        .json(&json!({"provider_id":"fake-set-model","model_id":"known-model"}))
-        .send()
-        .await
-        .expect("create session")
-        .json()
-        .await
-        .expect("session json");
+    let (_task, session) = create_task_with_default_session(
+        client,
+        base,
+        workspace.id,
+        "fake-set-model",
+        "known-model",
+    )
+    .await;
 
     let updated: Session = client
         .post(format!("{base}/api/sessions/{}/model", session.id.0))

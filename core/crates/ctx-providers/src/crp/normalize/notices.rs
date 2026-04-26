@@ -4,12 +4,12 @@ use ctx_core::models::SessionEventType;
 
 use crate::events::NormalizedEvent;
 
-use super::super::protocol::{CrpChannel, CrpEvent, KnownCrpEvent};
+use super::super::protocol::KnownCrpEvent;
 use super::super::unknown_event::{
     bound_unknown_crp_payload, extract_unknown_crp_tool_name, extract_unknown_crp_tool_preview,
     summarize_unknown_crp_event,
 };
-use super::{CachedToolInput, MappedCrpEvent};
+use super::MappedCrpEvent;
 
 fn is_auth_notice_code(code: &str) -> bool {
     matches!(

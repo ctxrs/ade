@@ -78,13 +78,6 @@ pub(crate) trait SandboxMachineLifecycleExt {
         running_sessions: &Arc<Mutex<HashSet<SessionId>>>,
         terminals: &TerminalManager,
     ) -> Result<bool>;
-    #[cfg(any(target_os = "macos", target_os = "windows"))]
-    async fn should_defer_reclaim_for_active_container_runtime(
-        &self,
-        stores: &StoreManager,
-        running_sessions: &Arc<Mutex<HashSet<SessionId>>>,
-        terminals: &TerminalManager,
-    ) -> bool;
 }
 
 #[async_trait::async_trait]
@@ -562,21 +555,6 @@ impl SandboxMachineLifecycleExt for HarnessRuntimeManager {
             settings,
             system,
             observer,
-            stores,
-            running_sessions,
-            terminals,
-        )
-        .await
-    }
-
-    #[cfg(any(target_os = "macos", target_os = "windows"))]
-    async fn should_defer_reclaim_for_active_container_runtime(
-        &self,
-        stores: &StoreManager,
-        running_sessions: &Arc<Mutex<HashSet<SessionId>>>,
-        terminals: &TerminalManager,
-    ) -> bool {
-        reclaim::should_defer_reclaim_for_active_container_runtime(
             stores,
             running_sessions,
             terminals,

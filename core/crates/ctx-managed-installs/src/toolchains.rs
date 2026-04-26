@@ -10,6 +10,7 @@ pub use npm::{
     sanitize_npm_package_for_path,
 };
 pub use python::{ensure_python_pip, ensure_python_runtime_versioned};
+#[cfg(test)]
 pub(crate) use python::{python_target_can_use_bundled_runtime, resolve_python_bin};
 
 pub(crate) fn target_uses_windows_layout(target: InstallTarget) -> bool {

@@ -377,49 +377,10 @@ async fn send_secure_workspace_subscribe(
         .expect("send secure subscribe");
 }
 
-async fn create_task_without_default_session(
-    client: &reqwest::Client,
-    base: &str,
-    workspace_id: ctx_core::ids::WorkspaceId,
-    title: &str,
-) -> ctx_core::models::Task {
-    let response = client
-        .post(format!("{base}/api/workspaces/{}/tasks", workspace_id.0))
-        .json(&json!({
-            "title": title,
-            "create_default_session": false,
-        }))
-        .send()
-        .await
-        .unwrap();
-    assert!(
-        response.status().is_success(),
-        "create_task_without_default_session failed for title {:?}: status {}",
-        title,
-        response.status()
-    );
-    decode_json_response(response).await
-}
-
-async fn attach_primary_worktree(
-    state: &Arc<AppState>,
-    workspace_id: ctx_core::ids::WorkspaceId,
-    task_id: ctx_core::ids::TaskId,
-    root_path: &Path,
-) -> ctx_core::models::Worktree {
-    let worktree = insert_worktree(state, workspace_id, task_id, root_path).await;
-    let store = state.store_for_task(task_id).await.unwrap();
-    store
-        .set_task_primary_worktree(task_id, worktree.id)
-        .await
-        .unwrap();
-    worktree
-}
-
 async fn insert_worktree(
     state: &Arc<AppState>,
     workspace_id: ctx_core::ids::WorkspaceId,
-    task_id: ctx_core::ids::TaskId,
+    _task_id: ctx_core::ids::TaskId,
     root_path: &Path,
 ) -> ctx_core::models::Worktree {
     let worktree = ctx_core::models::Worktree {
@@ -444,7 +405,7 @@ async fn insert_worktree(
         bootstrap_script_path: None,
     };
 
-    let store = state.store_for_task(task_id).await.unwrap();
+    let store = state.store_for_workspace(workspace_id).await.unwrap();
     store.insert_worktree(worktree.clone()).await.unwrap();
     state
         .global_store()
@@ -462,8 +423,31 @@ async fn create_task_with_primary_worktree(
     root_path: &Path,
     title: &str,
 ) -> ctx_core::models::Task {
-    let task = create_task_without_default_session(client, base, workspace_id, title).await;
-    attach_primary_worktree(state, workspace_id, task.id, root_path).await;
+    let task_id = ctx_core::ids::TaskId::new();
+    let worktree = insert_worktree(state, workspace_id, task_id, root_path).await;
+    let response = client
+        .post(format!("{base}/api/workspaces/{}/tasks", workspace_id.0))
+        .json(&json!({
+            "id": task_id.0.to_string(),
+            "title": title,
+            "default_session": {
+                "provider_id": "fake",
+                "model_id": "fake-model",
+                "worktree_id": worktree.id.0.to_string(),
+            },
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert!(
+        response.status().is_success(),
+        "create_task_with_primary_worktree failed for title {:?}: status {}",
+        title,
+        response.status()
+    );
+    let task: ctx_core::models::Task = decode_json_response(response).await;
+    assert_eq!(task.primary_worktree_id, Some(worktree.id));
+    assert!(task.primary_session_id.is_some());
     task
 }
 
@@ -477,6 +461,10 @@ async fn create_session_with_request(
         Value::Object(map) => map,
         _ => panic!("session request must be a JSON object"),
     };
+    assert!(
+        request.contains_key("parent_session_id") && request.contains_key("relationship"),
+        "test session creation through /api/tasks/:id/sessions must be an explicit child session"
+    );
 
     let response = client
         .post(format!("{base}/api/tasks/{}/sessions", task_id.0))
@@ -498,16 +486,25 @@ async fn create_primary_worktree_session(
     base: &str,
     task_id: ctx_core::ids::TaskId,
 ) -> ctx_core::models::Session {
-    create_session_with_request(
-        client,
-        base,
-        task_id,
-        json!({"provider_id":"fake","model_id":"fake-model"}),
-    )
-    .await
+    let response = client
+        .get(format!("{base}/api/tasks/{}/sessions", task_id.0))
+        .send()
+        .await
+        .unwrap();
+    assert!(
+        response.status().is_success(),
+        "list sessions failed for task {}: status {}",
+        task_id.0,
+        response.status()
+    );
+    let sessions: Vec<ctx_core::models::Session> = decode_json_response(response).await;
+    sessions
+        .into_iter()
+        .find(|session| session.parent_session_id.is_none() && session.relationship.is_none())
+        .expect("task should have a primary session")
 }
 
-async fn create_primary_worktree_session_with_request(
+async fn create_child_worktree_session_with_request(
     client: &reqwest::Client,
     base: &str,
     task_id: ctx_core::ids::TaskId,
@@ -535,21 +532,7 @@ async fn workspace_active_snapshot_includes_sessions() {
     let task_active =
         create_task_with_primary_worktree(client, &state, base, ws.id, repo.path(), "active").await;
 
-    let initial_message_id = uuid::Uuid::new_v4().to_string();
-    let initial_turn_id = uuid::Uuid::new_v4().to_string();
-    let session = create_primary_worktree_session_with_request(
-        client,
-        base,
-        task_active.id,
-        json!({
-            "provider_id":"fake",
-            "model_id":"fake-model",
-            "initial_prompt":"hello",
-            "initial_message_id": initial_message_id,
-            "initial_turn_id": initial_turn_id,
-        }),
-    )
-    .await;
+    let session = create_primary_worktree_session(client, base, task_active.id).await;
 
     let snapshot: ctx_core::models::WorkspaceActiveSnapshot = client
         .get(format!(
@@ -588,10 +571,17 @@ async fn create_session_rejects_initial_prompt_without_client_ids() {
 
     let task_active =
         create_task_with_primary_worktree(client, &state, base, ws.id, repo.path(), "active").await;
+    let primary_session = create_primary_worktree_session(client, base, task_active.id).await;
 
     let resp = client
         .post(format!("{base}/api/tasks/{}/sessions", task_active.id.0))
-        .json(&json!({"provider_id":"fake","model_id":"fake-model","initial_prompt":"hello"}))
+        .json(&json!({
+            "provider_id": "fake",
+            "model_id": "fake-model",
+            "parent_session_id": primary_session.id.0.to_string(),
+            "relationship": "sub_agent",
+            "initial_prompt": "hello"
+        }))
         .send()
         .await
         .unwrap();
@@ -2794,7 +2784,7 @@ async fn workspace_stream_initial_snapshot_excludes_secondary_worktree_vcs_for_a
         .unwrap()
         .expect("missing primary worktree");
     let secondary_worktree = insert_worktree(&state, ws.id, task.id, repo.path()).await;
-    let secondary_session = create_primary_worktree_session_with_request(
+    let secondary_session = create_child_worktree_session_with_request(
         client,
         base,
         task.id,
@@ -2927,7 +2917,7 @@ async fn workspace_stream_active_subscribe_includes_secondary_worktree_vcs_when_
         .unwrap()
         .expect("missing primary worktree");
     let secondary_worktree = insert_worktree(&state, ws.id, task.id, repo.path()).await;
-    let secondary_session = create_primary_worktree_session_with_request(
+    let secondary_session = create_child_worktree_session_with_request(
         client,
         base,
         task.id,
@@ -3060,7 +3050,7 @@ async fn mobile_secure_workspace_stream_active_subscribe_includes_secondary_work
         .unwrap()
         .expect("missing primary worktree");
     let secondary_worktree = insert_worktree(&state, ws.id, task.id, repo.path()).await;
-    let secondary_session = create_primary_worktree_session_with_request(
+    let secondary_session = create_child_worktree_session_with_request(
         client,
         base,
         task.id,

@@ -435,13 +435,20 @@ async fn monitor_claude_login(
                     .await
                     {
                         Ok(registry) => {
-                            final_status = "success".to_string();
-                            final_account_id = registry.active_account_id;
-                            restarts::restart_claude_providers_for_auth_change(
+                            match restarts::restart_claude_providers_for_auth_change(
                                 &state,
                                 "claude auth updated",
                             )
-                            .await;
+                            .await
+                            {
+                                Ok(()) => {
+                                    final_status = "success".to_string();
+                                    final_account_id = registry.active_account_id;
+                                }
+                                Err(err) => {
+                                    final_error = Some(logs::redact_sensitive(&err.to_string()));
+                                }
+                            }
                         }
                         Err(err) => {
                             final_error = Some(logs::redact_sensitive(&err.to_string()));

@@ -76,17 +76,21 @@ fn browser_open_shim_capture_only_writes_auth_url() {
     let auth_url =
         "https://claude.ai/oauth/authorize?redirect_uri=http%3A%2F%2Flocalhost%3A5999%2Fcallback&state=test";
 
-    let status = Command::new("/bin/sh")
+    let output = Command::new("/bin/sh")
         .arg(&script_path)
         .arg(auth_url)
         .env("CTX_CLAUDE_AUTH_URL_CAPTURE_PATH", &capture_path)
-        .status()
+        .output()
         .expect("run capture-only shim");
 
-    assert!(status.success());
+    assert!(output.status.success());
     assert_eq!(
         std::fs::read_to_string(&capture_path).expect("read capture path"),
         format!("{auth_url}\n")
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        format!("{CLAUDE_BROWSER_OPEN_MARKER}{auth_url}\n")
     );
 }
 
@@ -109,18 +113,22 @@ fn browser_open_shim_invokes_open_and_captures_auth_url() {
         "https://claude.ai/oauth/authorize?redirect_uri=http%3A%2F%2Flocalhost%3A6001%2Fcallback&state=test";
     let path_env = format!("{}:/usr/bin:/bin", temp_dir.path().display());
 
-    let status = Command::new("/bin/sh")
+    let output = Command::new("/bin/sh")
         .arg(&script_path)
         .arg(auth_url)
         .env("CTX_CLAUDE_AUTH_URL_CAPTURE_PATH", &capture_path)
         .env("PATH", path_env)
-        .status()
+        .output()
         .expect("run browser-open shim");
 
-    assert!(status.success());
+    assert!(output.status.success());
     assert_eq!(
         std::fs::read_to_string(&capture_path).expect("read capture path"),
         format!("{auth_url}\n")
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        format!("{CLAUDE_BROWSER_OPEN_MARKER}{auth_url}\n")
     );
     assert_eq!(
         std::fs::read_to_string(&open_log_path).expect("read open log"),

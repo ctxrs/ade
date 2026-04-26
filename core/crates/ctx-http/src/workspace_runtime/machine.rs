@@ -42,7 +42,5 @@ pub(in crate::workspace_runtime) use cache::{
     seed_shared_sandbox_machine_cache, seed_shared_sandbox_machine_cache_best_effort,
 };
 pub(in crate::workspace_runtime) use cli_runtime::{
-    ensure_managed_sandbox_cli_runtime, ensure_managed_sandbox_cli_runtime_with_override,
-    ensure_managed_sandbox_machine_cache, managed_sandbox_cli_runtime_bin_path,
-    managed_sandbox_cli_runtime_source,
+    ensure_managed_sandbox_cli_runtime, ensure_managed_sandbox_machine_cache,
 };

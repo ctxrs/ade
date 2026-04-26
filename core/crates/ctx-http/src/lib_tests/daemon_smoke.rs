@@ -44,18 +44,7 @@ async fn create_fake_session_via_api(
     let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
     let task: ctx_core::models::Task = serde_json::from_slice(&body).unwrap();
 
-    let req = Request::builder()
-        .method("POST")
-        .uri(format!("/api/tasks/{}/sessions", task.id.0))
-        .header("content-type", "application/json")
-        .body(Body::from(
-            json!({"provider_id":"fake","model_id":"fake-model"}).to_string(),
-        ))
-        .unwrap();
-    let res = app.clone().oneshot(req).await.unwrap();
-    assert_eq!(res.status(), StatusCode::OK);
-    let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
-    serde_json::from_slice(&body).unwrap()
+    load_primary_session_via_api(app, &task).await
 }
 
 #[tokio::test]
@@ -113,19 +102,8 @@ async fn daemon_golden_path_with_fake_provider() {
     let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
     let task: ctx_core::models::Task = serde_json::from_slice(&body).unwrap();
 
-    // create session
-    let req = Request::builder()
-        .method("POST")
-        .uri(format!("/api/tasks/{}/sessions", task.id.0))
-        .header("content-type", "application/json")
-        .body(Body::from(
-            json!({"provider_id":"fake","model_id":"fake-model"}).to_string(),
-        ))
-        .unwrap();
-    let res = app.clone().oneshot(req).await.unwrap();
-    assert_eq!(res.status(), StatusCode::OK);
-    let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
-    let session: ctx_core::models::Session = serde_json::from_slice(&body).unwrap();
+    // load the default session created with the task
+    let session = load_primary_session_via_api(&app, &task).await;
 
     // post message
     let req = Request::builder()
@@ -244,16 +222,19 @@ async fn daemon_http_and_ws_streaming() {
         .await
         .unwrap();
 
-    // create session
-    let session: ctx_core::models::Session = client
-        .post(format!("{base}/api/tasks/{}/sessions", task.id.0))
-        .json(&json!({"provider_id":"fake","model_id":"fake-model"}))
+    // load the default session created with the task
+    let sessions: Vec<ctx_core::models::Session> = client
+        .get(format!("{base}/api/tasks/{}/sessions", task.id.0))
         .send()
         .await
         .unwrap()
         .json()
         .await
         .unwrap();
+    let session = sessions
+        .into_iter()
+        .find(|session| Some(session.id) == task.primary_session_id)
+        .expect("created task should list its default session");
 
     // open workspace stream before sending message
     let ws_url = format!("ws://{}/api/workspaces/{}/stream", addr, ws.id.0);
@@ -457,12 +438,21 @@ async fn create_session_rejects_unknown_provider_id() {
     let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
     let task: ctx_core::models::Task = serde_json::from_slice(&body).unwrap();
 
+    let primary_session_id = task
+        .primary_session_id
+        .expect("task should have a default session");
     let req = Request::builder()
         .method("POST")
         .uri(format!("/api/tasks/{}/sessions", task.id.0))
         .header("content-type", "application/json")
         .body(Body::from(
-            json!({"provider_id":"not-a-provider","model_id":"fake-model"}).to_string(),
+            json!({
+                "provider_id": "not-a-provider",
+                "model_id": "fake-model",
+                "parent_session_id": primary_session_id.0.to_string(),
+                "relationship": "sub_agent"
+            })
+            .to_string(),
         ))
         .unwrap();
     let res = app.clone().oneshot(req).await.unwrap();

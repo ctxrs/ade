@@ -23,8 +23,8 @@ async fn session_diff_endpoints_return_no_repo_unavailable() {
     let app = common::router(state);
 
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
-    let task = common::create_task(&app, ws.id.0, "diff").await;
-    let session = common::create_session(&app, task.id.0, "fake", "fake-model").await;
+    let (_task, session) =
+        common::create_task_with_session(&app, ws.id.0, "diff", "fake", "fake-model").await;
     let session_id = session.id;
 
     let (worktree_status, worktree): (StatusCode, Worktree) = common::json_request(
@@ -111,8 +111,8 @@ async fn session_diff_endpoints_return_no_target_branch_unavailable() {
         .await
         .expect("clearing runtime settings should succeed");
 
-    let task = common::create_task(&app, ws.id.0, "diff").await;
-    let session = common::create_session(&app, task.id.0, "fake", "fake-model").await;
+    let (_task, session) =
+        common::create_task_with_session(&app, ws.id.0, "diff", "fake", "fake-model").await;
     let session_id = session.id;
 
     let (diff_status, diff): (StatusCode, Value) = common::json_request(
@@ -225,8 +225,14 @@ async fn workspace_primary_branch_endpoint_updates_branch() {
         Some("merge-target")
     );
 
-    let task = common::create_task(&app, ws.id.0, "primary-branch-refresh").await;
-    let session = common::create_session(&app, task.id.0, "fake", "fake-model").await;
+    let (_task, session) = common::create_task_with_session(
+        &app,
+        ws.id.0,
+        "primary-branch-refresh",
+        "fake",
+        "fake-model",
+    )
+    .await;
     let worktree = state
         .store_for_worktree(session.worktree_id)
         .await

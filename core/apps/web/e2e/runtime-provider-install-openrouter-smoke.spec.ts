@@ -544,32 +544,26 @@ async function runFirstTurnAttempt(
   const taskResp = await request.post(`/api/workspaces/${workspaceId}/tasks`, {
     data: {
       title: `runtime-install-smoke-${providerId}-${Date.now()}`,
-      create_default_session: false,
+      default_session: {
+        provider_id: providerId,
+        model_id: modelId,
+        execution_environment: environment,
+      },
     },
   });
   if (!taskResp.ok()) {
     throw createStageError(stage, `task create failed (${taskResp.status()}): ${normalizeErrorMessage(await taskResp.text().catch(() => ""))}`);
   }
-  const taskId = firstText(asRecord(await taskResp.json()).id);
+  const task = asRecord(await taskResp.json());
+  const taskId = firstText(task.id);
   if (!taskId) {
     throw createStageError(stage, "task create returned empty task id");
   }
 
   stage = "session_create";
-  const sessionResp = await request.post(`/api/tasks/${taskId}/sessions`, {
-    data: {
-      provider_id: providerId,
-      model_id: modelId,
-      execution_environment: environment,
-    },
-  });
-  if (!sessionResp.ok()) {
-    const body = normalizeErrorMessage(await sessionResp.text().catch(() => ""));
-    throw createStageError(stage, `session create failed (${sessionResp.status()}): ${body}`);
-  }
-  const sessionId = firstText(asRecord(await sessionResp.json()).id);
+  const sessionId = firstText(task.primary_session_id);
   if (!sessionId) {
-    throw createStageError(stage, "session create returned empty session id");
+    throw createStageError(stage, "task create returned empty default session id");
   }
 
   stage = "first_turn_request";

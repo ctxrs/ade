@@ -28,7 +28,9 @@ pub(crate) async fn upsert_amp_account(
     provider_accounts::upsert_amp_account(&state.core.data_root, req.label, req.email)
         .await
         .map_err(bad_request)?;
-    restarts::restart_amp_providers_for_auth_change(&state, "amp auth updated").await;
+    restarts::restart_amp_providers_for_auth_change(&state, "amp auth updated")
+        .await
+        .map_err(internal_error)?;
     Ok(Json(
         amp_accounts_response(&state)
             .await
@@ -51,7 +53,9 @@ pub(crate) async fn set_amp_active_account(
     provider_accounts::set_active_amp_account(&state.core.data_root, req.account_id)
         .await
         .map_err(bad_request)?;
-    restarts::restart_amp_providers_for_auth_change(&state, "amp auth updated").await;
+    restarts::restart_amp_providers_for_auth_change(&state, "amp auth updated")
+        .await
+        .map_err(internal_error)?;
     let response = amp_accounts_response(&state)
         .await
         .map_err(internal_error)?;
@@ -65,7 +69,9 @@ pub(crate) async fn delete_amp_account(
     provider_accounts::remove_amp_account(&state.core.data_root, &id)
         .await
         .map_err(provider_account_delete_error)?;
-    restarts::restart_amp_providers_for_auth_change(&state, "amp auth updated").await;
+    restarts::restart_amp_providers_for_auth_change(&state, "amp auth updated")
+        .await
+        .map_err(internal_error)?;
     let response = amp_accounts_response(&state)
         .await
         .map_err(internal_error)?;

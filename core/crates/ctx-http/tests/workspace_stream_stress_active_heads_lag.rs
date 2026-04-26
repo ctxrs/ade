@@ -103,15 +103,7 @@ async fn workspace_stream_does_not_reset_during_hydration_when_active_heads_are_
             .await
             .unwrap();
 
-        let session: ctx_core::models::Session = client
-            .post(format!("{base}/api/tasks/{}/sessions", task.id.0))
-            .json(&json!({"provider_id":"fake","model_id":"fake-model"}))
-            .send()
-            .await
-            .unwrap()
-            .json()
-            .await
-            .unwrap();
+        let session = common::load_primary_session_http(client, base, &task).await;
         sessions.push(session);
     }
 

@@ -382,22 +382,39 @@ async fn session_creation_and_model_switch_persist_workspace_provider_preference
     let state = build_state_with_fake_codex(data_dir.path(), stores).await;
     let app = common::router(state);
     let workspace = common::create_workspace(&app, repo.path(), "ws").await;
-    let task = common::create_task(&app, workspace.id.0, "pref persistence").await;
+    let session_id = uuid::Uuid::new_v4();
 
-    let (create_status, created_session): (StatusCode, ctx_core::models::Session) =
-        common::json_request(
-            &app,
-            Method::POST,
-            format!("/api/tasks/{}/sessions", task.id.0),
-            Some(serde_json::json!({
+    let (create_status, task): (StatusCode, ctx_core::models::Task) = common::json_request(
+        &app,
+        Method::POST,
+        format!("/api/workspaces/{}/tasks", workspace.id.0),
+        Some(serde_json::json!({
+            "title": "pref persistence",
+            "default_session": {
+                "id": session_id.to_string(),
                 "provider_id": "codex-crp",
                 "model_id": "gpt-5.4",
                 "reasoning_effort": "xhigh",
                 "remember_model_preference": true
-            })),
+            }
+        })),
+    )
+    .await;
+    assert_eq!(create_status, StatusCode::OK);
+    assert_eq!(task.primary_session_id.map(|id| id.0), Some(session_id));
+    let (sessions_status, sessions): (StatusCode, Vec<ctx_core::models::Session>) =
+        common::json_request(
+            &app,
+            Method::GET,
+            format!("/api/tasks/{}/sessions", task.id.0),
+            None,
         )
         .await;
-    assert_eq!(create_status, StatusCode::OK);
+    assert_eq!(sessions_status, StatusCode::OK);
+    let created_session = sessions
+        .into_iter()
+        .find(|session| session.id.0 == session_id)
+        .expect("created default session should be listed");
     assert_eq!(created_session.model_id, "gpt-5.4");
     assert_eq!(created_session.reasoning_effort.as_deref(), Some("xhigh"));
 
@@ -461,21 +478,22 @@ async fn session_creation_does_not_persist_auto_seeded_workspace_provider_prefer
     let state = build_state_with_fake_codex(data_dir.path(), stores).await;
     let app = common::router(state);
     let workspace = common::create_workspace(&app, repo.path(), "ws").await;
-    let task = common::create_task(&app, workspace.id.0, "pref persistence").await;
-
-    let (create_status, _created_session): (StatusCode, ctx_core::models::Session) =
-        common::json_request(
-            &app,
-            Method::POST,
-            format!("/api/tasks/{}/sessions", task.id.0),
-            Some(serde_json::json!({
+    let (create_status, task): (StatusCode, ctx_core::models::Task) = common::json_request(
+        &app,
+        Method::POST,
+        format!("/api/workspaces/{}/tasks", workspace.id.0),
+        Some(serde_json::json!({
+            "title": "pref persistence",
+            "default_session": {
                 "provider_id": "codex-crp",
                 "model_id": "gpt-5.4",
                 "reasoning_effort": "medium"
-            })),
-        )
-        .await;
+            }
+        })),
+    )
+    .await;
     assert_eq!(create_status, StatusCode::OK);
+    assert!(task.primary_session_id.is_some());
 
     let (pref_status, pref_body): (StatusCode, Value) = common::json_request(
         &app,

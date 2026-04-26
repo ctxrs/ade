@@ -954,7 +954,11 @@ test("workbench: endpoint harness OpenRouter matrix first pass", async ({ page, 
         const createTaskResp = await request.post(`/api/workspaces/${workspaceId}/tasks`, {
           data: {
             title: promptMarker,
-            create_default_session: false,
+            default_session: {
+              provider_id: entry.providerId,
+              model_id: modelSelection.modelId,
+              execution_environment: executionEnvironment,
+            },
           },
         });
         if (!createTaskResp.ok()) {
@@ -974,7 +978,8 @@ test("workbench: endpoint harness OpenRouter matrix first pass", async ({ page, 
           });
           continue;
         }
-        const taskId = readString(asRecord(await createTaskResp.json()).id);
+        const task = asRecord(await createTaskResp.json());
+        const taskId = readString(task.id);
         if (!taskId) {
           results.push({
             ...baseRecord,
@@ -989,44 +994,7 @@ test("workbench: endpoint harness OpenRouter matrix first pass", async ({ page, 
           continue;
         }
 
-        const createSessionResp = await request.post(`/api/tasks/${taskId}/sessions`, {
-          data: {
-            provider_id: entry.providerId,
-            model_id: modelSelection.modelId,
-            execution_environment: executionEnvironment,
-          },
-        });
-        if (!createSessionResp.ok()) {
-          const bodyText = normalizeErrorMessage(await createSessionResp.text().catch(() => ""));
-          let body: Record<string, unknown> = {};
-          if (bodyText) {
-            try {
-              body = asRecord(JSON.parse(bodyText));
-            } catch {
-              body = {};
-            }
-          }
-          const reason = normalizeErrorMessage(
-            firstText(
-              body.error,
-              body.message,
-              bodyText,
-              `session create failed (${createSessionResp.status()})`,
-            ),
-          );
-          results.push({
-            ...baseRecord,
-            auth_saved: true,
-            auth_detail: authResult.detail,
-            harness_selected: true,
-            harness_detail: harnessSelect.detail,
-            result: isLikelyRuntimeSkip(reason) ? "skip" : "fail",
-            reason,
-            elapsed_ms: Date.now() - startMs,
-          });
-          continue;
-        }
-        const sessionId = readString(asRecord(await createSessionResp.json()).id);
+        const sessionId = readString(task.primary_session_id);
         if (!sessionId) {
           results.push({
             ...baseRecord,
@@ -1035,7 +1003,7 @@ test("workbench: endpoint harness OpenRouter matrix first pass", async ({ page, 
             harness_selected: true,
             harness_detail: harnessSelect.detail,
             result: "fail",
-            reason: "session create returned empty session id",
+            reason: "task create returned empty default session id",
             elapsed_ms: Date.now() - startMs,
           });
           continue;

@@ -28,7 +28,9 @@ pub(crate) async fn upsert_cursor_account(
     provider_accounts::add_cursor_account(&state.core.data_root, req.label, req.token, req.email)
         .await
         .map_err(bad_request)?;
-    restarts::restart_cursor_providers_for_auth_change(&state, "cursor auth updated").await;
+    restarts::restart_cursor_providers_for_auth_change(&state, "cursor auth updated")
+        .await
+        .map_err(internal_error)?;
     Ok(Json(
         cursor_accounts_response(&state)
             .await
@@ -51,7 +53,9 @@ pub(crate) async fn set_cursor_active_account(
     provider_accounts::set_active_cursor_account(&state.core.data_root, req.account_id)
         .await
         .map_err(bad_request)?;
-    restarts::restart_cursor_providers_for_auth_change(&state, "cursor auth updated").await;
+    restarts::restart_cursor_providers_for_auth_change(&state, "cursor auth updated")
+        .await
+        .map_err(internal_error)?;
     Ok(Json(
         cursor_accounts_response(&state)
             .await
@@ -66,7 +70,9 @@ pub(crate) async fn delete_cursor_account(
     provider_accounts::remove_cursor_account(&state.core.data_root, &id)
         .await
         .map_err(provider_account_delete_error)?;
-    restarts::restart_cursor_providers_for_auth_change(&state, "cursor auth updated").await;
+    restarts::restart_cursor_providers_for_auth_change(&state, "cursor auth updated")
+        .await
+        .map_err(internal_error)?;
     Ok(Json(
         cursor_accounts_response(&state)
             .await

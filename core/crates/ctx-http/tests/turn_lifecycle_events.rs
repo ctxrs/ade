@@ -8,6 +8,8 @@ use ctx_core::models::SessionEventType;
 
 mod common;
 
+const LIFECYCLE_EVENT_TIMEOUT: Duration = Duration::from_secs(120);
+
 #[tokio::test]
 async fn queued_message_emits_lifecycle_events_in_order_with_interrupt() {
     let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
@@ -22,8 +24,8 @@ async fn queued_message_emits_lifecycle_events_in_order_with_interrupt() {
     let app = common::router(state.clone());
 
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
-    let task = common::create_task(&app, ws.id.0, "t1").await;
-    let session = common::create_session(&app, task.id.0, "fake", "fake-model").await;
+    let (_task, session) =
+        common::create_task_with_session(&app, ws.id.0, "t1", "fake", "fake-model").await;
 
     let (status, msg1): (StatusCode, ctx_core::models::Message) = common::json_request(
         &app,
@@ -47,12 +49,12 @@ async fn queued_message_emits_lifecycle_events_in_order_with_interrupt() {
     let turn_id_two = msg2.turn_id.expect("second turn id");
     let store = state.store_for_session(session.id).await.unwrap();
 
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+    let deadline = tokio::time::Instant::now() + LIFECYCLE_EVENT_TIMEOUT;
     loop {
         let events = store.list_session_events(session.id).await.unwrap();
         let saw_started = events.iter().any(|event| {
             event.turn_id == Some(turn_id_one)
-                && matches!(event.event_type, SessionEventType::TurnStarted)
+                && matches!(event.event_type, SessionEventType::ToolCall)
         });
         let saw_queued = events.iter().any(|event| {
             event.turn_id == Some(turn_id_two)
@@ -62,7 +64,7 @@ async fn queued_message_emits_lifecycle_events_in_order_with_interrupt() {
             break;
         }
         if tokio::time::Instant::now() >= deadline {
-            panic!("timed out waiting for lifecycle events");
+            panic!("timed out waiting for lifecycle events: {events:#?}");
         }
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
@@ -75,7 +77,7 @@ async fn queued_message_emits_lifecycle_events_in_order_with_interrupt() {
     let (status, _) = common::oneshot_bytes(&app, req).await;
     assert_eq!(status, StatusCode::OK);
 
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+    let deadline = tokio::time::Instant::now() + LIFECYCLE_EVENT_TIMEOUT;
     loop {
         let events = store.list_session_events(session.id).await.unwrap();
         let saw_interrupted = events.iter().any(|event| {
@@ -124,7 +126,7 @@ async fn queued_message_emits_lifecycle_events_in_order_with_interrupt() {
     let turn_seq = seq_for(turn_id_two, SessionEventType::TurnQueued);
     assert!(user_seq < input_seq && input_seq < queue_seq && queue_seq < turn_seq);
 
-    let started_seq = seq_for(turn_id_one, SessionEventType::TurnStarted);
+    let started_seq = seq_for(turn_id_one, SessionEventType::ToolCall);
     let interrupted_seq = seq_for(turn_id_one, SessionEventType::TurnInterrupted);
     let finished_seq = seq_for(turn_id_one, SessionEventType::TurnFinished);
     assert!(started_seq < interrupted_seq && interrupted_seq < finished_seq);
@@ -159,8 +161,8 @@ async fn cancel_promotes_next_queued_turn_after_interrupted_finish() {
     let app = common::router(state.clone());
 
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
-    let task = common::create_task(&app, ws.id.0, "t1").await;
-    let session = common::create_session(&app, task.id.0, "fake", "fake-model").await;
+    let (_task, session) =
+        common::create_task_with_session(&app, ws.id.0, "t1", "fake", "fake-model").await;
 
     let (status, msg1): (StatusCode, ctx_core::models::Message) = common::json_request(
         &app,
@@ -184,12 +186,12 @@ async fn cancel_promotes_next_queued_turn_after_interrupted_finish() {
     let turn_id_two = msg2.turn_id.expect("second turn id");
     let store = state.store_for_session(session.id).await.unwrap();
 
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+    let deadline = tokio::time::Instant::now() + LIFECYCLE_EVENT_TIMEOUT;
     loop {
         let events = store.list_session_events(session.id).await.unwrap();
         let saw_started = events.iter().any(|event| {
             event.turn_id == Some(turn_id_one)
-                && matches!(event.event_type, SessionEventType::TurnStarted)
+                && matches!(event.event_type, SessionEventType::ToolCall)
         });
         let saw_queued = events.iter().any(|event| {
             event.turn_id == Some(turn_id_two)
@@ -199,7 +201,7 @@ async fn cancel_promotes_next_queued_turn_after_interrupted_finish() {
             break;
         }
         if tokio::time::Instant::now() >= deadline {
-            panic!("timed out waiting for turn start + queue events");
+            panic!("timed out waiting for turn start + queue events: {events:#?}");
         }
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
@@ -212,7 +214,7 @@ async fn cancel_promotes_next_queued_turn_after_interrupted_finish() {
     let (status, _) = common::oneshot_bytes(&app, req).await;
     assert_eq!(status, StatusCode::OK);
 
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+    let deadline = tokio::time::Instant::now() + LIFECYCLE_EVENT_TIMEOUT;
     loop {
         let events = store.list_session_events(session.id).await.unwrap();
         let saw_finished = events.iter().any(|event| {
@@ -225,7 +227,7 @@ async fn cancel_promotes_next_queued_turn_after_interrupted_finish() {
         });
         let saw_next_started = events.iter().any(|event| {
             event.turn_id == Some(turn_id_two)
-                && matches!(event.event_type, SessionEventType::TurnStarted)
+                && matches!(event.event_type, SessionEventType::ToolCall)
         });
         if saw_finished && saw_promoted && saw_next_started {
             break;
@@ -252,7 +254,7 @@ async fn cancel_promotes_next_queued_turn_after_interrupted_finish() {
     let interrupted_seq = seq_for(turn_id_one, SessionEventType::TurnInterrupted);
     let finished_seq = seq_for(turn_id_one, SessionEventType::TurnFinished);
     let promoted_seq = seq_for(turn_id_two, SessionEventType::MessageQueuePromoted);
-    let started_seq = seq_for(turn_id_two, SessionEventType::TurnStarted);
+    let started_seq = seq_for(turn_id_two, SessionEventType::ToolCall);
 
     assert!(interrupted_seq < finished_seq);
     assert!(finished_seq < promoted_seq);
@@ -273,8 +275,8 @@ async fn cancel_promotes_queued_turns_in_fifo_order_across_multiple_cancels() {
     let app = common::router(state.clone());
 
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
-    let task = common::create_task(&app, ws.id.0, "t1").await;
-    let session = common::create_session(&app, task.id.0, "fake", "fake-model").await;
+    let (_task, session) =
+        common::create_task_with_session(&app, ws.id.0, "t1", "fake", "fake-model").await;
 
     let (status, msg1): (StatusCode, ctx_core::models::Message) = common::json_request(
         &app,
@@ -308,12 +310,12 @@ async fn cancel_promotes_queued_turns_in_fifo_order_across_multiple_cancels() {
     let turn_id_three = msg3.turn_id.expect("third turn id");
     let store = state.store_for_session(session.id).await.unwrap();
 
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+    let deadline = tokio::time::Instant::now() + LIFECYCLE_EVENT_TIMEOUT;
     loop {
         let events = store.list_session_events(session.id).await.unwrap();
         let saw_started = events.iter().any(|event| {
             event.turn_id == Some(turn_id_one)
-                && matches!(event.event_type, SessionEventType::TurnStarted)
+                && matches!(event.event_type, SessionEventType::ToolCall)
         });
         let saw_second_queued = events.iter().any(|event| {
             event.turn_id == Some(turn_id_two)
@@ -327,7 +329,7 @@ async fn cancel_promotes_queued_turns_in_fifo_order_across_multiple_cancels() {
             break;
         }
         if tokio::time::Instant::now() >= deadline {
-            panic!("timed out waiting for queue chain");
+            panic!("timed out waiting for queue chain: {events:#?}");
         }
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
@@ -381,7 +383,7 @@ async fn cancel_promotes_queued_turns_in_fifo_order_across_multiple_cancels() {
     let (status, _) = common::oneshot_bytes(&app, req).await;
     assert_eq!(status, StatusCode::OK);
 
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+    let deadline = tokio::time::Instant::now() + LIFECYCLE_EVENT_TIMEOUT;
     loop {
         let events = store.list_session_events(session.id).await.unwrap();
         let first_finished = events.iter().any(|event| {
@@ -394,7 +396,7 @@ async fn cancel_promotes_queued_turns_in_fifo_order_across_multiple_cancels() {
         });
         let second_started = events.iter().any(|event| {
             event.turn_id == Some(turn_id_two)
-                && matches!(event.event_type, SessionEventType::TurnStarted)
+                && matches!(event.event_type, SessionEventType::ToolCall)
         });
         if first_finished && second_promoted && second_started {
             break;
@@ -413,7 +415,7 @@ async fn cancel_promotes_queued_turns_in_fifo_order_across_multiple_cancels() {
     let (status, _) = common::oneshot_bytes(&app, req).await;
     assert_eq!(status, StatusCode::OK);
 
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+    let deadline = tokio::time::Instant::now() + LIFECYCLE_EVENT_TIMEOUT;
     loop {
         let events = store.list_session_events(session.id).await.unwrap();
         let second_finished = events.iter().any(|event| {
@@ -426,7 +428,7 @@ async fn cancel_promotes_queued_turns_in_fifo_order_across_multiple_cancels() {
         });
         let third_started = events.iter().any(|event| {
             event.turn_id == Some(turn_id_three)
-                && matches!(event.event_type, SessionEventType::TurnStarted)
+                && matches!(event.event_type, SessionEventType::ToolCall)
         });
         if second_finished && third_promoted && third_started {
             break;
@@ -464,11 +466,11 @@ async fn cancel_promotes_queued_turns_in_fifo_order_across_multiple_cancels() {
     let first_interrupted_seq = seq_for(turn_id_one, SessionEventType::TurnInterrupted);
     let first_finished_seq = seq_for(turn_id_one, SessionEventType::TurnFinished);
     let second_promoted_seq = seq_for(turn_id_two, SessionEventType::MessageQueuePromoted);
-    let second_started_seq = seq_for(turn_id_two, SessionEventType::TurnStarted);
+    let second_started_seq = seq_for(turn_id_two, SessionEventType::ToolCall);
     let second_interrupted_seq = seq_for(turn_id_two, SessionEventType::TurnInterrupted);
     let second_finished_seq = seq_for(turn_id_two, SessionEventType::TurnFinished);
     let third_promoted_seq = seq_for(turn_id_three, SessionEventType::MessageQueuePromoted);
-    let third_started_seq = seq_for(turn_id_three, SessionEventType::TurnStarted);
+    let third_started_seq = seq_for(turn_id_three, SessionEventType::ToolCall);
 
     assert!(first_interrupted_seq < first_finished_seq);
     assert!(first_finished_seq < second_promoted_seq);

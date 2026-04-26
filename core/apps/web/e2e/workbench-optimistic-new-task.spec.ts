@@ -43,17 +43,17 @@ test("workbench: optimistic new task message skips queued UI", async ({ page }) 
   // Choose Fake harness so the test doesn't depend on external agents.
   await selectHarnessBySearch(page, "fake", /fake/i);
 
-  // Stall the first session create request so we can assert the optimistic turn renders
+  // Stall the first task create request so we can assert the optimistic turn renders
   // immediately (i.e. without waiting on the daemon response).
-  let allowFirstCreateSession: (() => void) | null = null;
-  const firstCreateSessionGate = new Promise<void>((resolve) => {
-    allowFirstCreateSession = resolve;
+  let allowFirstCreateTask: (() => void) | null = null;
+  const firstCreateTaskGate = new Promise<void>((resolve) => {
+    allowFirstCreateTask = resolve;
   });
-  let stalledCreateSession = true;
-  await page.route("**/api/tasks/*/sessions", async (route) => {
-    if (stalledCreateSession && route.request().method() === "POST") {
-      stalledCreateSession = false;
-      await firstCreateSessionGate;
+  let stalledCreateTask = true;
+  await page.route("**/api/workspaces/*/tasks", async (route) => {
+    if (stalledCreateTask && route.request().method() === "POST") {
+      stalledCreateTask = false;
+      await firstCreateTaskGate;
     }
     await route.continue();
   });
@@ -148,8 +148,8 @@ test("workbench: optimistic new task message skips queued UI", async ({ page }) 
   // Expect a fast optimistic render, but allow some variance across CI/dev machines.
   expect(elapsedMs).toBeLessThan(500);
 
-  // Release the stalled create-session request now that we verified the optimistic UI.
-  allowFirstCreateSession?.();
+  // Release the stalled create-task request now that we verified the optimistic UI.
+  allowFirstCreateTask?.();
 
   await page.evaluate(() => {
     (window as OptimisticWindow).__optimisticHeaderAt = performance.now();

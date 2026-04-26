@@ -35,10 +35,6 @@ type TaskRecord = {
   id: string;
 };
 
-type SessionRecord = {
-  id: string;
-};
-
 const readTerminalId = (value: unknown): string | undefined => {
   if (typeof value === "string" && value) return value;
   if (Array.isArray(value) && typeof value[0] === "string" && value[0]) return value[0];
@@ -202,24 +198,16 @@ async function createTaskAndSessionForWorkspace(page: Page, workspaceId: string)
     headers: { authorization: `Bearer ${AUTH_TOKEN}` },
     data: {
       title: "terminal scroll test",
-      create_default_session: false,
+      default_session: {
+        provider_id: "fake",
+        model_id: "fake-model",
+        execution_environment: "host",
+      },
     },
   });
   expect(taskResp.ok()).toBeTruthy();
   const task = (await taskResp.json()) as TaskRecord;
   if (!task.id) throw new Error("failed to parse seeded task id");
-
-  const sessionResp = await page.request.post(`/api/tasks/${task.id}/sessions`, {
-    headers: { authorization: `Bearer ${AUTH_TOKEN}` },
-    data: {
-      provider_id: "fake",
-      model_id: "fake-model",
-      execution_environment: "host",
-    },
-  });
-  expect(sessionResp.ok()).toBeTruthy();
-  const session = (await sessionResp.json()) as SessionRecord;
-  if (!session.id) throw new Error("failed to parse seeded session id");
 }
 
 async function openTerminalPanel(page: Page) {

@@ -45,6 +45,9 @@ capture_path="${CTX_CLAUDE_AUTH_URL_CAPTURE_PATH:-}"
 if [ -n "$url" ] && [ -n "$capture_path" ]; then
   printf '%s\n' "$url" > "$capture_path"
 fi
+if [ -n "$url" ]; then
+  printf 'CTX_CLAUDE_AUTH_URL:%s\n' "$url"
+fi
 exit 0
 "#
     } else {
@@ -53,6 +56,9 @@ url="${1:-}"
 capture_path="${CTX_CLAUDE_AUTH_URL_CAPTURE_PATH:-}"
 if [ -n "$url" ] && [ -n "$capture_path" ]; then
   printf '%s\n' "$url" > "$capture_path"
+fi
+if [ -n "$url" ]; then
+  printf 'CTX_CLAUDE_AUTH_URL:%s\n' "$url"
 fi
 if [ -z "$url" ]; then
   exit 1

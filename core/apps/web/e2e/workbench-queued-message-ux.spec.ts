@@ -41,12 +41,12 @@ const setupRunningSession = async (page: Page) => {
 [[/tool_calls]]`;
 
   await page.locator("textarea.wb-composer-textarea").first().fill(slowMessage);
-  const createSessionResp = page.waitForResponse((resp: Response) => {
+  const createTaskResp = page.waitForResponse((resp: Response) => {
     if (resp.request().method() !== "POST") return false;
-    return /\/api\/tasks\/[^/]+\/sessions$/.test(resp.url()) && resp.status() === 200;
+    return /\/api\/workspaces\/[^/]+\/tasks$/.test(resp.url()) && resp.status() === 200;
   });
   await page.getByRole("button", { name: "Send" }).click();
-  await createSessionResp;
+  await createTaskResp;
 
   await expect(page.locator(".wb-session-slot[aria-hidden=\"false\"] textarea.wb-active-textarea")).toBeVisible({ timeout: 20_000 });
   await expect(page.locator(".wb-session button[aria-label=\"Stop\"]")).toBeVisible({ timeout: 20_000 });

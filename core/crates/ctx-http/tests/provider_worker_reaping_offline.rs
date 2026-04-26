@@ -16,6 +16,7 @@ use ctx_store::StoreManager;
 mod common;
 
 static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+const CRP_FIXTURE_FIRST_EVENT_TIMEOUT_MS: &str = "60000";
 
 fn lock_env() -> std::sync::MutexGuard<'static, ()> {
     ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner())
@@ -172,6 +173,10 @@ async fn assert_provider_session_resume_after_idle_reap(provider_id: &str, model
     let _guard_scenario = EnvGuard::set("CTX_TEST_SCENARIO", "resume");
     let _guard_command_log =
         EnvGuard::set("CTX_TEST_CRP_COMMAND_LOG", &command_log.to_string_lossy());
+    let _guard_first_event_timeout = EnvGuard::set(
+        "CTX_CRP_FIRST_EVENT_TIMEOUT_MS",
+        CRP_FIXTURE_FIRST_EVENT_TIMEOUT_MS,
+    );
     let _codex_home = if matches!(provider_id, "codex-crp") {
         Some(configure_hermetic_codex_home().await)
     } else {
@@ -181,7 +186,12 @@ async fn assert_provider_session_resume_after_idle_reap(provider_id: &str, model
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
     let script_path = common::crp_fixture_runtime::write_crp_fixture_runtime(data_dir.path());
     if provider_id == "codex-crp" {
-        common::seed_managed_codex_cli_host_runtime(data_dir.path(), &python).await;
+        common::seed_managed_codex_cli_host_runtime_with_args(
+            data_dir.path(),
+            &python,
+            vec![script_path.to_string_lossy().to_string()],
+        )
+        .await;
     }
     let adapter: Arc<dyn ProviderAdapter> = Arc::new(Tier1CrpAdapter::from_raw(
         provider_id,
@@ -201,8 +211,8 @@ async fn assert_provider_session_resume_after_idle_reap(provider_id: &str, model
     let app = ctx_http::api::router(state.clone());
 
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
-    let task = common::create_task(&app, ws.id.0, "resume-test").await;
-    let session = common::create_session(&app, task.id.0, provider_id, model_id).await;
+    let (_task, session) =
+        common::create_task_with_session(&app, ws.id.0, "resume-test", provider_id, model_id).await;
 
     post_message(&app, session.id.0, "first").await;
     wait_for_done_count(&state, session.id, 1).await;

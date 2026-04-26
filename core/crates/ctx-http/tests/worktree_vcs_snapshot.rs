@@ -103,8 +103,8 @@ async fn worktree_vcs_disabled_mode_suppresses_projection_work() {
     let app = common::router(state.clone());
 
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
-    let task = common::create_task(&app, ws.id.0, "vcs-disabled").await;
-    let session = common::create_session(&app, task.id.0, "fake", "fake-model").await;
+    let (_task, session) =
+        common::create_task_with_session(&app, ws.id.0, "vcs-disabled", "fake", "fake-model").await;
     let worktree = state
         .store_for_worktree(session.worktree_id)
         .await
@@ -163,8 +163,8 @@ async fn worktree_vcs_snapshot_clears_stale_counts_when_repo_becomes_unavailable
     let app = common::router(state.clone());
 
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
-    let task = common::create_task(&app, ws.id.0, "snapshot").await;
-    let session = common::create_session(&app, task.id.0, "fake", "fake-model").await;
+    let (_task, session) =
+        common::create_task_with_session(&app, ws.id.0, "snapshot", "fake", "fake-model").await;
     let worktree = state
         .store_for_worktree(session.worktree_id)
         .await
@@ -273,8 +273,8 @@ async fn worktree_vcs_snapshot_populates_jj_head_commit_metadata() {
     let app = common::router(state.clone());
 
     let ws = common::create_workspace(&app, repo.path(), "jj-ws").await;
-    let task = common::create_task(&app, ws.id.0, "jj-vcs").await;
-    let session = common::create_session(&app, task.id.0, "fake", "fake-model").await;
+    let (_task, session) =
+        common::create_task_with_session(&app, ws.id.0, "jj-vcs", "fake", "fake-model").await;
     let worktree = state
         .store_for_worktree(session.worktree_id)
         .await
@@ -324,8 +324,9 @@ async fn worktree_vcs_snapshot_recovers_when_repo_is_reinitialized() {
     let app = common::router(state.clone());
 
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
-    let task = common::create_task(&app, ws.id.0, "snapshot-recovery").await;
-    let session = common::create_session(&app, task.id.0, "fake", "fake-model").await;
+    let (_task, session) =
+        common::create_task_with_session(&app, ws.id.0, "snapshot-recovery", "fake", "fake-model")
+            .await;
     let worktree = state
         .store_for_worktree(session.worktree_id)
         .await
@@ -416,8 +417,8 @@ async fn worktree_vcs_snapshot_noop_emit_preserves_freshness() {
     let app = common::router(state.clone());
 
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
-    let task = common::create_task(&app, ws.id.0, "noop-fresh").await;
-    let session = common::create_session(&app, task.id.0, "fake", "fake-model").await;
+    let (_task, session) =
+        common::create_task_with_session(&app, ws.id.0, "noop-fresh", "fake", "fake-model").await;
     let worktree = state
         .store_for_worktree(session.worktree_id)
         .await
@@ -489,8 +490,9 @@ async fn worktree_vcs_snapshot_does_not_repopulate_cache_after_activity_eviction
     let app = common::router(state.clone());
 
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
-    let task = common::create_task(&app, ws.id.0, "snapshot-eviction").await;
-    let session = common::create_session(&app, task.id.0, "fake", "fake-model").await;
+    let (_task, session) =
+        common::create_task_with_session(&app, ws.id.0, "snapshot-eviction", "fake", "fake-model")
+            .await;
     let worktree = state
         .store_for_worktree(session.worktree_id)
         .await
@@ -570,8 +572,9 @@ async fn worktree_vcs_snapshot_watcher_recomputes_when_target_branch_ref_moves()
     )
     .await;
 
-    let task = common::create_task(&app, ws.id.0, "watcher-ref-move").await;
-    let session = common::create_session(&app, task.id.0, "fake", "fake-model").await;
+    let (_task, session) =
+        common::create_task_with_session(&app, ws.id.0, "watcher-ref-move", "fake", "fake-model")
+            .await;
     let worktree = state
         .store_for_worktree(session.worktree_id)
         .await
@@ -669,8 +672,14 @@ async fn worktree_vcs_snapshot_preserves_head_when_configured_target_branch_disa
         .await
         .expect("updating primary branch should succeed");
 
-    let task = common::create_task(&app, ws.id.0, "missing-target-head").await;
-    let session = common::create_session(&app, task.id.0, "fake", "fake-model").await;
+    let (_task, session) = common::create_task_with_session(
+        &app,
+        ws.id.0,
+        "missing-target-head",
+        "fake",
+        "fake-model",
+    )
+    .await;
     let worktree = state
         .store_for_worktree(session.worktree_id)
         .await

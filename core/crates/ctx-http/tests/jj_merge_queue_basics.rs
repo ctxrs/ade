@@ -4,7 +4,7 @@ use axum::body::Body;
 use axum::http::{Method, StatusCode};
 use serde_json::json;
 
-use ctx_core::models::{MergeQueueEntry, MergeQueueEntryStatus, Session};
+use ctx_core::models::{MergeQueueEntry, MergeQueueEntryStatus};
 
 mod common;
 
@@ -39,19 +39,14 @@ target_branch = \"main\"\n",
     let app = common::router(state.clone());
 
     let workspace = common::create_workspace(&app, repo.path(), "jj-ws").await;
-    let task = common::create_task(&app, workspace.id.into(), "jj merge queue").await;
-    let (status, session): (StatusCode, Session) = common::json_request(
+    let (task, session) = common::create_task_with_session(
         &app,
-        Method::POST,
-        format!("/api/tasks/{}/sessions", task.id.0),
-        Some(json!({
-            "provider_id": "fake",
-            "model_id": "fake-model",
-            "execution_environment": "host"
-        })),
+        workspace.id.into(),
+        "jj merge queue",
+        "fake",
+        "fake-model",
     )
     .await;
-    assert_eq!(status, StatusCode::OK);
 
     let store = state.store_for_task(task.id).await.unwrap();
     let worktree = store

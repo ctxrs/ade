@@ -123,15 +123,15 @@ test("workbench: optimistic first user message survives new-task handoff while t
   await createWorkspaceAndOpenWorkbench({ page, request: page.request, repo, workspaceName });
   await selectHarnessBySearch(page, "fake", /fake/i);
 
-  let allowFirstCreateSession: (() => void) | null = null;
-  const firstCreateSessionGate = new Promise<void>((resolve) => {
-    allowFirstCreateSession = resolve;
+  let allowFirstCreateTask: (() => void) | null = null;
+  const firstCreateTaskGate = new Promise<void>((resolve) => {
+    allowFirstCreateTask = resolve;
   });
-  let stalledCreateSession = true;
-  await page.route("**/api/tasks/*/sessions", async (route) => {
-    if (stalledCreateSession && route.request().method() === "POST") {
-      stalledCreateSession = false;
-      await firstCreateSessionGate;
+  let stalledCreateTask = true;
+  await page.route("**/api/workspaces/*/tasks", async (route) => {
+    if (stalledCreateTask && route.request().method() === "POST") {
+      stalledCreateTask = false;
+      await firstCreateTaskGate;
     }
     await route.continue();
   });
@@ -231,7 +231,7 @@ test("workbench: optimistic first user message survives new-task handoff while t
   );
   expect(headerItemId).toBeTruthy();
 
-  allowFirstCreateSession?.();
+  allowFirstCreateTask?.();
   await page.waitForTimeout(1000);
 
   if (headerItemId) {

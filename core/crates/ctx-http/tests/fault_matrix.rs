@@ -110,15 +110,7 @@ async fn setup_server() -> (
         .await
         .unwrap();
 
-    let session: ctx_core::models::Session = client
-        .post(format!("{base}/api/tasks/{}/sessions", task.id.0))
-        .json(&json!({"provider_id":"fake","model_id":"fake-model"}))
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
+    let session = common::load_primary_session_http(client, &base, &task).await;
     let store = state.store_for_task(task.id).await.unwrap();
     let sessions = store.list_sessions_for_task(task.id).await.unwrap();
     assert!(

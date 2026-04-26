@@ -100,15 +100,15 @@ test("workbench: context window meter renders for a live fake-provider session",
   });
 
   const prompt = "slow-diff-test 0123456789";
-  const createSessionResponsePromise = page.waitForResponse((response) =>
+  const createTaskResponsePromise = page.waitForResponse((response) =>
     response.request().method() === "POST"
-    && /\/api\/tasks\/[^/]+\/sessions$/.test(response.url()),
+    && /\/api\/workspaces\/[^/]+\/tasks$/.test(response.url()),
   );
   await page.locator("textarea.wb-composer-textarea").first().fill(prompt);
   await page.getByRole("button", { name: "Send" }).click();
-  const createSessionResponse = await createSessionResponsePromise;
-  expect(createSessionResponse.ok()).toBe(true);
-  const sessionId = String((await createSessionResponse.json() as { id?: string }).id ?? "");
+  const createTaskResponse = await createTaskResponsePromise;
+  expect(createTaskResponse.ok()).toBe(true);
+  const sessionId = String((await createTaskResponse.json() as { primary_session_id?: string | null }).primary_session_id ?? "");
   expect(sessionId).not.toBe("");
 
   const rows = page.locator(".wb-task-row");
@@ -149,15 +149,15 @@ test("workbench: context window meter live-updates before the turn finishes", as
   await selectHarnessBySearch(page, "fake", /fake/i);
 
   const prompt = "slow-diff-test emit-live-context-window";
-  const createSessionResponsePromise = page.waitForResponse((response) =>
+  const createTaskResponsePromise = page.waitForResponse((response) =>
     response.request().method() === "POST"
-    && /\/api\/tasks\/[^/]+\/sessions$/.test(response.url()),
+    && /\/api\/workspaces\/[^/]+\/tasks$/.test(response.url()),
   );
   await page.locator("textarea.wb-composer-textarea").first().fill(prompt);
   await page.getByRole("button", { name: "Send" }).click();
-  const createSessionResponse = await createSessionResponsePromise;
-  expect(createSessionResponse.ok()).toBe(true);
-  const sessionId = String((await createSessionResponse.json() as { id?: string }).id ?? "");
+  const createTaskResponse = await createTaskResponsePromise;
+  expect(createTaskResponse.ok()).toBe(true);
+  const sessionId = String((await createTaskResponse.json() as { primary_session_id?: string | null }).primary_session_id ?? "");
   expect(sessionId).not.toBe("");
 
   const rows = page.locator(".wb-task-row");
@@ -199,15 +199,16 @@ test("workbench: seeded context window metrics render in the workbench UI", asyn
     workspaceName: `provider-meter-${Date.now()}`,
   });
 
-  const task = await apiPost<{ id: string }>(request, `/api/workspaces/${workspaceId}/tasks`, {
+  const task = await apiPost<{ id: string; primary_session_id?: string | null }>(request, `/api/workspaces/${workspaceId}/tasks`, {
     title: SEEDED_HARNESS_CASE.title,
-    create_default_session: false,
+    default_session: {
+      provider_id: SEEDED_HARNESS_CASE.providerId,
+      model_id: SEEDED_HARNESS_CASE.modelId,
+      execution_environment: "host",
+    },
   });
-  const session = await apiPost<{ id: string }>(request, `/api/tasks/${task.id}/sessions`, {
-    provider_id: SEEDED_HARNESS_CASE.providerId,
-    model_id: SEEDED_HARNESS_CASE.modelId,
-    execution_environment: "host",
-  });
+  const session = { id: task.primary_session_id };
+  if (!session.id) throw new Error(`seeded task ${task.id} did not include a primary session`);
   await waitForSessionSnapshotReady(request, session.id);
   await apiPost(request, `/api/dev/sessions/${session.id}/seed_transcript`, {
     turns: [

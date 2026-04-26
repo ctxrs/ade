@@ -248,6 +248,14 @@ pub async fn setup_store(data_root: &Path) -> StoreManager {
 }
 
 pub async fn seed_managed_codex_cli_host_runtime(data_root: &Path, command_abs_path: &Path) {
+    seed_managed_codex_cli_host_runtime_with_args(data_root, command_abs_path, Vec::new()).await;
+}
+
+pub async fn seed_managed_codex_cli_host_runtime_with_args(
+    data_root: &Path,
+    command_abs_path: &Path,
+    args: Vec<String>,
+) {
     assert!(
         command_abs_path.is_absolute(),
         "codex-cli runtime path must be absolute"
@@ -284,7 +292,7 @@ pub async fn seed_managed_codex_cli_host_runtime(data_root: &Path, command_abs_p
             InstallTarget::Host.as_str().to_string(),
             AgentServerCommand {
                 command,
-                args: Vec::new(),
+                args,
                 dependencies: Vec::new(),
                 managed: Some(meta),
             },
@@ -408,20 +416,105 @@ pub async fn create_workspace(app: &axum::Router, root_path: &Path, name: &str) 
 }
 
 pub async fn create_task(app: &axum::Router, workspace_id: uuid::Uuid, title: &str) -> Task {
-    let (status, task) = json_request(
-        app,
-        Method::POST,
-        format!("/api/workspaces/{workspace_id}/tasks"),
-        Some(serde_json::json!({ "title": title })),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
+    let (task, _) = create_task_with_session(app, workspace_id, title, "fake", "fake-model").await;
     task
 }
 
-pub async fn create_session(
+/// Creates the production task shape: a task with its one primary/default session.
+/// Tests that need extra sessions should create subagents with `create_subagent_session`.
+pub async fn create_task_with_session(
+    app: &axum::Router,
+    workspace_id: uuid::Uuid,
+    title: &str,
+    provider_id: &str,
+    model_id: &str,
+) -> (Task, Session) {
+    let session_id = uuid::Uuid::new_v4();
+    let (status, task): (StatusCode, Task) = json_request(
+        app,
+        Method::POST,
+        format!("/api/workspaces/{workspace_id}/tasks"),
+        Some(serde_json::json!({
+            "title": title,
+            "default_session": {
+                "id": session_id.to_string(),
+                "provider_id": provider_id,
+                "model_id": model_id,
+            },
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        task.primary_session_id.map(|id| id.0),
+        Some(session_id),
+        "created task must expose its default session"
+    );
+
+    let (status, sessions): (StatusCode, Vec<Session>) = json_request(
+        app,
+        Method::GET,
+        format!("/api/tasks/{}/sessions", task.id.0),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let session = sessions
+        .into_iter()
+        .find(|session| session.id.0 == session_id)
+        .expect("default session should be listed for task");
+    (task, session)
+}
+
+pub async fn load_primary_session_http(
+    client: &reqwest::Client,
+    base: &str,
+    task: &Task,
+) -> Session {
+    let sessions: Vec<Session> = client
+        .get(format!("{base}/api/tasks/{}/sessions", task.id.0))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    sessions
+        .into_iter()
+        .find(|session| Some(session.id) == task.primary_session_id)
+        .expect("created task should list its default session")
+}
+
+/// Creates an additional child/subagent session. Public HTTP tests should not
+/// use the sessions endpoint to create another top-level session.
+pub async fn create_subagent_session_http(
+    client: &reqwest::Client,
+    base: &str,
+    task: &Task,
+    parent_session_id: uuid::Uuid,
+) -> Session {
+    client
+        .post(format!("{base}/api/tasks/{}/sessions", task.id.0))
+        .json(&serde_json::json!({
+            "provider_id": "fake",
+            "model_id": "fake-model",
+            "parent_session_id": parent_session_id.to_string(),
+            "relationship": "sub_agent",
+        }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap()
+}
+
+/// Creates an additional child/subagent session. Public HTTP tests should not
+/// use the sessions endpoint to create another top-level session.
+pub async fn create_subagent_session(
     app: &axum::Router,
     task_id: uuid::Uuid,
+    parent_session_id: uuid::Uuid,
     provider_id: &str,
     model_id: &str,
 ) -> Session {
@@ -429,7 +522,12 @@ pub async fn create_session(
         app,
         Method::POST,
         format!("/api/tasks/{task_id}/sessions"),
-        Some(serde_json::json!({ "provider_id": provider_id, "model_id": model_id })),
+        Some(serde_json::json!({
+            "provider_id": provider_id,
+            "model_id": model_id,
+            "parent_session_id": parent_session_id.to_string(),
+            "relationship": "sub_agent",
+        })),
     )
     .await;
     assert_eq!(status, StatusCode::OK);

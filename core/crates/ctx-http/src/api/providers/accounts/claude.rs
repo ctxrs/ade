@@ -28,7 +28,9 @@ pub(crate) async fn upsert_claude_account(
     provider_accounts::add_claude_account(&state.core.data_root, req.label, req.setup_token)
         .await
         .map_err(bad_request)?;
-    restarts::restart_claude_providers_for_auth_change(&state, "claude auth updated").await;
+    restarts::restart_claude_providers_for_auth_change(&state, "claude auth updated")
+        .await
+        .map_err(internal_error)?;
     Ok(Json(
         claude_accounts_response(&state)
             .await
@@ -56,7 +58,9 @@ pub(crate) async fn set_claude_active_account(
     provider_accounts::set_active_claude_account(&state.core.data_root, req.account_id)
         .await
         .map_err(bad_request)?;
-    restarts::restart_claude_providers_for_auth_change(&state, "claude auth updated").await;
+    restarts::restart_claude_providers_for_auth_change(&state, "claude auth updated")
+        .await
+        .map_err(internal_error)?;
     Ok(Json(
         claude_accounts_response(&state)
             .await
@@ -71,7 +75,9 @@ pub(crate) async fn delete_claude_account(
     provider_accounts::remove_claude_account(&state.core.data_root, &id)
         .await
         .map_err(provider_account_delete_error)?;
-    restarts::restart_claude_providers_for_auth_change(&state, "claude auth updated").await;
+    restarts::restart_claude_providers_for_auth_change(&state, "claude auth updated")
+        .await
+        .map_err(internal_error)?;
     Ok(Json(
         claude_accounts_response(&state)
             .await

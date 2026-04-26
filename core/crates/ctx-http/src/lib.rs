@@ -4,7 +4,6 @@ pub mod attachments;
 mod build_identity;
 mod completions;
 mod container_builder;
-mod container_fs;
 pub mod daemon;
 mod dictation_livekit;
 mod execution_effective;

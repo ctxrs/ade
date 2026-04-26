@@ -15,6 +15,12 @@ use tokio::time::{timeout, Duration};
 
 mod common;
 
+static TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+async fn lock_test() -> tokio::sync::MutexGuard<'static, ()> {
+    TEST_LOCK.lock().await
+}
+
 struct EnvVarGuard {
     key: &'static str,
     prev: Option<String>,
@@ -69,6 +75,7 @@ async fn setup_state(data_root: &std::path::Path, prewarm_statuses: bool) -> Arc
 
 #[tokio::test]
 async fn create_task_creates_default_session_when_requested() {
+    let _test_lock = lock_test().await;
     let _show_fake = EnvVarGuard::set("CTX_SHOW_FAKE_PROVIDER", "1");
     let repo = common::init_git_repo(&[("README.md", "hello\n")]).await;
     let data_dir = tempfile::tempdir().unwrap();
@@ -115,6 +122,7 @@ async fn create_task_creates_default_session_when_requested() {
 
 #[tokio::test]
 async fn create_task_creates_default_session_without_prewarmed_provider_statuses() {
+    let _test_lock = lock_test().await;
     let _show_fake = EnvVarGuard::set("CTX_SHOW_FAKE_PROVIDER", "1");
     let repo = common::init_git_repo(&[("README.md", "hello\n")]).await;
     let data_dir = tempfile::tempdir().unwrap();
@@ -149,7 +157,108 @@ async fn create_task_creates_default_session_without_prewarmed_provider_statuses
 }
 
 #[tokio::test]
+async fn create_task_rejects_legacy_create_default_session_flag() {
+    let _test_lock = lock_test().await;
+    let _show_fake = EnvVarGuard::set("CTX_SHOW_FAKE_PROVIDER", "1");
+    let repo = common::init_git_repo(&[("README.md", "hello\n")]).await;
+    let data_dir = tempfile::tempdir().unwrap();
+    let state = setup_state(data_dir.path(), true).await;
+    let app = common::router(Arc::clone(&state));
+    let workspace = state
+        .global_store()
+        .create_workspace(
+            "ws".to_string(),
+            repo.path().to_string_lossy().to_string(),
+            VcsKind::Git,
+        )
+        .await
+        .unwrap();
+
+    let req = Request::builder()
+        .method(Method::POST)
+        .uri(format!("/api/workspaces/{}/tasks", workspace.id.0))
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "title": "legacy bare task",
+                "create_default_session": false,
+            })
+            .to_string(),
+        ))
+        .unwrap();
+    let (status, _body) = common::oneshot_bytes(&app, req).await;
+
+    assert!(
+        status.is_client_error(),
+        "legacy task-create field must be rejected, got {status}"
+    );
+    let store = state.store_for_workspace(workspace.id).await.unwrap();
+    let tasks = store.list_tasks(workspace.id).await.unwrap();
+    assert!(
+        tasks.is_empty(),
+        "rejected legacy task-create field must not persist a task"
+    );
+}
+
+#[tokio::test]
+async fn create_session_rejects_second_top_level_session_for_task() {
+    let _test_lock = lock_test().await;
+    let _show_fake = EnvVarGuard::set("CTX_SHOW_FAKE_PROVIDER", "1");
+    let repo = common::init_git_repo(&[("README.md", "hello\n")]).await;
+    let data_dir = tempfile::tempdir().unwrap();
+    let state = setup_state(data_dir.path(), true).await;
+    let app = common::router(Arc::clone(&state));
+    let workspace = state
+        .global_store()
+        .create_workspace(
+            "ws".to_string(),
+            repo.path().to_string_lossy().to_string(),
+            VcsKind::Git,
+        )
+        .await
+        .unwrap();
+
+    let (task_status, task): (StatusCode, Task) = common::json_request(
+        &app,
+        axum::http::Method::POST,
+        format!("/api/workspaces/{}/tasks", workspace.id.0),
+        Some(json!({ "title": "single primary task" })),
+    )
+    .await;
+    assert_eq!(task_status, StatusCode::OK);
+    assert!(
+        task.primary_session_id.is_some(),
+        "task creation must create the primary session"
+    );
+
+    let req = Request::builder()
+        .method(Method::POST)
+        .uri(format!("/api/tasks/{}/sessions", task.id.0))
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "provider_id": "fake",
+                "model_id": "fake-model",
+            })
+            .to_string(),
+        ))
+        .unwrap();
+    let (session_status, _body) = common::oneshot_bytes(&app, req).await;
+    assert_eq!(session_status, StatusCode::CONFLICT);
+
+    let store = state.store_for_workspace(workspace.id).await.unwrap();
+    let sessions = store.list_sessions_for_task(task.id).await.unwrap();
+    assert_eq!(
+        sessions.len(),
+        1,
+        "failed second top-level session create must not create another session"
+    );
+    assert_eq!(Some(sessions[0].id), task.primary_session_id);
+}
+
+#[tokio::test]
 async fn create_task_replay_with_same_id_does_not_create_extra_default_sessions() {
+    let _test_lock = lock_test().await;
     let _show_fake = EnvVarGuard::set("CTX_SHOW_FAKE_PROVIDER", "1");
     let repo = common::init_git_repo(&[("README.md", "hello\n")]).await;
     let data_dir = tempfile::tempdir().unwrap();
@@ -167,6 +276,7 @@ async fn create_task_replay_with_same_id_does_not_create_extra_default_sessions(
 
     let task_id = uuid::Uuid::new_v4().to_string();
     let uri = format!("/api/workspaces/{}/tasks", workspace.id.0);
+    let store = state.store_for_workspace(workspace.id).await.unwrap();
     let request_body = json!({
         "id": task_id,
         "title": "replayed task",
@@ -191,7 +301,6 @@ async fn create_task_replay_with_same_id_does_not_create_extra_default_sessions(
     assert!(task_a.primary_session_id.is_some());
     assert!(task_a.primary_worktree_id.is_some());
 
-    let store = state.store_for_workspace(workspace.id).await.unwrap();
     let sessions = store.list_sessions_for_task(task_a.id).await.unwrap();
     assert_eq!(sessions.len(), 1, "expected exactly one default session");
     let worktrees = store.list_worktrees(workspace.id).await.unwrap();
@@ -203,7 +312,138 @@ async fn create_task_replay_with_same_id_does_not_create_extra_default_sessions(
 }
 
 #[tokio::test]
+async fn create_task_replay_validates_requested_default_session() {
+    let _test_lock = lock_test().await;
+    let _show_fake = EnvVarGuard::set("CTX_SHOW_FAKE_PROVIDER", "1");
+    let repo = common::init_git_repo(&[("README.md", "hello\n")]).await;
+    let data_dir = tempfile::tempdir().unwrap();
+    let state = setup_state(data_dir.path(), true).await;
+    let app = common::router(Arc::clone(&state));
+    let workspace = state
+        .global_store()
+        .create_workspace(
+            "ws".to_string(),
+            repo.path().to_string_lossy().to_string(),
+            VcsKind::Git,
+        )
+        .await
+        .unwrap();
+
+    let task_id = uuid::Uuid::new_v4().to_string();
+    let session_id = uuid::Uuid::new_v4().to_string();
+    let uri = format!("/api/workspaces/{}/tasks", workspace.id.0);
+    let request_body = json!({
+        "id": task_id,
+        "title": "replayed explicit default",
+        "default_session": {
+            "id": session_id,
+            "provider_id": "fake",
+            "model_id": "fake-model",
+        }
+    });
+
+    let (status_a, task_a): (StatusCode, Task) = common::json_request(
+        &app,
+        axum::http::Method::POST,
+        uri.clone(),
+        Some(request_body.clone()),
+    )
+    .await;
+    assert_eq!(status_a, StatusCode::OK);
+    assert_eq!(
+        task_a.primary_session_id.map(|id| id.0.to_string()),
+        Some(session_id.clone())
+    );
+
+    let (status_b, task_b): (StatusCode, Task) = common::json_request(
+        &app,
+        axum::http::Method::POST,
+        uri.clone(),
+        Some(request_body),
+    )
+    .await;
+    assert_eq!(status_b, StatusCode::OK);
+    assert_eq!(task_b.id, task_a.id);
+    assert_eq!(task_b.primary_session_id, task_a.primary_session_id);
+
+    let (conflict_status, _body): (StatusCode, Value) = common::json_request(
+        &app,
+        axum::http::Method::POST,
+        uri,
+        Some(json!({
+            "id": task_id,
+            "title": "replayed explicit default",
+            "default_session": {
+                "id": uuid::Uuid::new_v4().to_string(),
+                "provider_id": "fake",
+                "model_id": "fake-model",
+            }
+        })),
+    )
+    .await;
+    assert_eq!(conflict_status, StatusCode::CONFLICT);
+
+    let store = state.store_for_workspace(workspace.id).await.unwrap();
+    let sessions = store.list_sessions_for_task(task_a.id).await.unwrap();
+    assert_eq!(sessions.len(), 1);
+    assert_eq!(sessions[0].id, task_a.primary_session_id.unwrap());
+}
+
+#[tokio::test]
+async fn create_task_replay_allows_server_generated_default_session_id() {
+    let _test_lock = lock_test().await;
+    let _show_fake = EnvVarGuard::set("CTX_SHOW_FAKE_PROVIDER", "1");
+    let repo = common::init_git_repo(&[("README.md", "hello\n")]).await;
+    let data_dir = tempfile::tempdir().unwrap();
+    let state = setup_state(data_dir.path(), true).await;
+    let app = common::router(Arc::clone(&state));
+    let workspace = state
+        .global_store()
+        .create_workspace(
+            "ws".to_string(),
+            repo.path().to_string_lossy().to_string(),
+            VcsKind::Git,
+        )
+        .await
+        .unwrap();
+
+    let task_id = uuid::Uuid::new_v4().to_string();
+    let uri = format!("/api/workspaces/{}/tasks", workspace.id.0);
+    let request_body = json!({
+        "id": task_id,
+        "title": "replayed implicit default id",
+        "default_session": {
+            "provider_id": "fake",
+            "model_id": "fake-model",
+        }
+    });
+
+    let (status_a, task_a): (StatusCode, Task) = common::json_request(
+        &app,
+        axum::http::Method::POST,
+        uri.clone(),
+        Some(request_body.clone()),
+    )
+    .await;
+    assert_eq!(status_a, StatusCode::OK);
+    assert!(task_a.primary_session_id.is_some());
+
+    let (status_b, task_b): (StatusCode, Task) =
+        common::json_request(&app, axum::http::Method::POST, uri, Some(request_body)).await;
+    assert_eq!(status_b, StatusCode::OK);
+    assert_eq!(task_b.id, task_a.id);
+    assert_eq!(task_b.primary_session_id, task_a.primary_session_id);
+    assert_eq!(task_b.primary_worktree_id, task_a.primary_worktree_id);
+
+    let store = state.store_for_workspace(workspace.id).await.unwrap();
+    let sessions = store.list_sessions_for_task(task_a.id).await.unwrap();
+    assert_eq!(sessions.len(), 1);
+    assert_eq!(Some(sessions[0].id), task_a.primary_session_id);
+}
+
+#[tokio::test]
 async fn create_task_in_non_repo_workspace_returns_bad_request() {
+    let _test_lock = lock_test().await;
     let _show_fake = EnvVarGuard::set("CTX_SHOW_FAKE_PROVIDER", "1");
     let workspace_root = tempfile::tempdir().unwrap();
     std::fs::write(workspace_root.path().join("README.md"), "hello\n").unwrap();
@@ -244,6 +484,7 @@ async fn create_task_in_non_repo_workspace_returns_bad_request() {
 
 #[tokio::test]
 async fn create_task_rolls_back_if_default_session_preflight_fails_after_task_persist() {
+    let _test_lock = lock_test().await;
     let _show_fake = EnvVarGuard::set("CTX_SHOW_FAKE_PROVIDER", "1");
     let repo = common::init_git_repo(&[("README.md", "hello\n")]).await;
     let data_dir = tempfile::tempdir().unwrap();
@@ -319,6 +560,7 @@ async fn create_task_rolls_back_if_default_session_preflight_fails_after_task_pe
 
 #[tokio::test]
 async fn create_session_waits_for_task_session_creation_lock() {
+    let _test_lock = lock_test().await;
     let _show_fake = EnvVarGuard::set("CTX_SHOW_FAKE_PROVIDER", "1");
     let repo = common::init_git_repo(&[("README.md", "hello\n")]).await;
     let data_dir = tempfile::tempdir().unwrap();
@@ -381,6 +623,7 @@ async fn create_session_waits_for_task_session_creation_lock() {
 
 #[tokio::test]
 async fn concurrent_replayed_create_task_failures_return_validation_error_not_not_found() {
+    let _test_lock = lock_test().await;
     let _show_fake = EnvVarGuard::set("CTX_SHOW_FAKE_PROVIDER", "1");
     let repo = common::init_git_repo(&[("README.md", "hello\n")]).await;
     let data_dir = tempfile::tempdir().unwrap();
@@ -464,6 +707,7 @@ async fn concurrent_replayed_create_task_failures_return_validation_error_not_no
 
 #[tokio::test]
 async fn concurrent_replayed_create_task_with_different_payload_conflicts() {
+    let _test_lock = lock_test().await;
     let _show_fake = EnvVarGuard::set("CTX_SHOW_FAKE_PROVIDER", "1");
     let repo = common::init_git_repo(&[("README.md", "hello\n")]).await;
     let data_dir = tempfile::tempdir().unwrap();
@@ -556,6 +800,7 @@ async fn concurrent_replayed_create_task_with_different_payload_conflicts() {
 
 #[tokio::test]
 async fn conflicting_session_id_does_not_leak_new_worktree() {
+    let _test_lock = lock_test().await;
     let _show_fake = EnvVarGuard::set("CTX_SHOW_FAKE_PROVIDER", "1");
     let repo = common::init_git_repo(&[("README.md", "hello\n")]).await;
     let data_dir = tempfile::tempdir().unwrap();
@@ -587,13 +832,16 @@ async fn conflicting_session_id_does_not_leak_new_worktree() {
         &app,
         axum::http::Method::POST,
         format!("/api/workspaces/{}/tasks", workspace.id.0),
-        Some(json!({
-            "title": "target task",
-            "create_default_session": false,
-        })),
+        Some(json!({ "title": "target task" })),
     )
     .await;
     assert_eq!(target_status, StatusCode::OK);
+    let target_primary_session_id = target_task
+        .primary_session_id
+        .expect("target task should have a default session");
+    let target_primary_worktree_id = target_task
+        .primary_worktree_id
+        .expect("target task should have a default worktree");
 
     let store = state.store_for_workspace(workspace.id).await.unwrap();
     let worktree_count_before = store.list_worktrees(workspace.id).await.unwrap().len();
@@ -607,6 +855,8 @@ async fn conflicting_session_id_does_not_leak_new_worktree() {
                 "id": existing_session_id.0.to_string(),
                 "provider_id": "fake",
                 "model_id": "fake-model",
+                "parent_session_id": target_primary_session_id.0.to_string(),
+                "relationship": "sub_agent",
             })
             .to_string(),
         ))
@@ -620,14 +870,13 @@ async fn conflicting_session_id_does_not_leak_new_worktree() {
     );
 
     let sessions = store.list_sessions_for_task(target_task.id).await.unwrap();
-    assert!(
-        sessions.is_empty(),
-        "conflicting explicit session id must not create a session for the target task"
-    );
+    assert_eq!(sessions.len(), 1);
+    assert_eq!(sessions[0].id, target_primary_session_id);
     let refreshed_target = store.get_task(target_task.id).await.unwrap().unwrap();
     assert_eq!(
-        refreshed_target.primary_worktree_id, None,
-        "conflicting explicit session id must not attach a primary worktree to the task"
+        refreshed_target.primary_worktree_id,
+        Some(target_primary_worktree_id),
+        "conflicting explicit child session id must not change the target task primary worktree"
     );
     let worktree_count_after = store.list_worktrees(workspace.id).await.unwrap().len();
     assert_eq!(

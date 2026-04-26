@@ -36,31 +36,9 @@ async fn session_state_exposes_artifact_metadata_and_session_scoped_downloads() 
     let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
     let task: ctx_core::models::Task = serde_json::from_slice(&body).unwrap();
 
-    let req = Request::builder()
-        .method("POST")
-        .uri(format!("/api/tasks/{}/sessions", task.id.0))
-        .header("content-type", "application/json")
-        .body(Body::from(
-            json!({"provider_id":"fake","model_id":"fake-model"}).to_string(),
-        ))
-        .unwrap();
-    let res = app.clone().oneshot(req).await.unwrap();
-    assert_eq!(res.status(), StatusCode::OK);
-    let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
-    let session: ctx_core::models::Session = serde_json::from_slice(&body).unwrap();
+    let session = load_primary_session_via_api(&app, &task).await;
 
-    let req = Request::builder()
-        .method("POST")
-        .uri(format!("/api/tasks/{}/sessions", task.id.0))
-        .header("content-type", "application/json")
-        .body(Body::from(
-            json!({"provider_id":"fake","model_id":"fake-model"}).to_string(),
-        ))
-        .unwrap();
-    let res = app.clone().oneshot(req).await.unwrap();
-    assert_eq!(res.status(), StatusCode::OK);
-    let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
-    let wrong_session: ctx_core::models::Session = serde_json::from_slice(&body).unwrap();
+    let wrong_session = create_subagent_session_via_api(&app, &task, session.id).await;
 
     let store = state.store_for_session(session.id).await.unwrap();
     let worktree = store

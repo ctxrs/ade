@@ -9,7 +9,7 @@ use crate::events::NormalizedEvent;
 use super::super::normalize_tool_payload::{
     build_tool_completed_payload, build_tool_started_payload,
 };
-use super::super::protocol::{CrpChannel, CrpEvent, CrpToolStatus, KnownCrpEvent};
+use super::super::protocol::KnownCrpEvent;
 use super::{insert_crp_channel, CachedToolInput, MappedCrpEvent};
 
 pub(super) fn map_known_event(

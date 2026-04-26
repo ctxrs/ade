@@ -101,7 +101,14 @@ async fn archive_and_unarchive_recreates_managed_worktrees() {
 
     let task: Task = client
         .post(format!("{base}/api/workspaces/{}/tasks", ws.id.0))
-        .json(&json!({"title":"archive me"}))
+        .json(&json!({
+            "title": "archive me",
+            "default_session": {
+                "provider_id":"fake",
+                "model_id":"fake-model",
+                "execution_environment":"host"
+            }
+        }))
         .send()
         .await
         .unwrap()
@@ -109,12 +116,18 @@ async fn archive_and_unarchive_recreates_managed_worktrees() {
         .await
         .unwrap();
 
+    let primary_session_id = task
+        .primary_session_id
+        .expect("task creation should create a primary session");
+
     client
         .post(format!("{base}/api/tasks/{}/sessions", task.id.0))
         .json(&json!({
             "provider_id":"fake",
             "model_id":"fake-model",
-            "execution_environment":"host"
+            "execution_environment":"host",
+            "parent_session_id": primary_session_id.0.to_string(),
+            "relationship": "sub_agent"
         }))
         .send()
         .await
@@ -125,18 +138,9 @@ async fn archive_and_unarchive_recreates_managed_worktrees() {
         .json(&json!({
             "provider_id":"fake",
             "model_id":"fake-model",
-            "execution_environment":"host"
-        }))
-        .send()
-        .await
-        .unwrap();
-
-    client
-        .post(format!("{base}/api/tasks/{}/sessions", task.id.0))
-        .json(&json!({
-            "provider_id":"fake",
-            "model_id":"fake-model",
-            "execution_environment":"host"
+            "execution_environment":"host",
+            "parent_session_id": primary_session_id.0.to_string(),
+            "relationship": "sub_agent"
         }))
         .send()
         .await

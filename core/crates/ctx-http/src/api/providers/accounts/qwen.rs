@@ -33,7 +33,9 @@ pub(crate) async fn upsert_qwen_account(
     )
     .await
     .map_err(bad_request)?;
-    restarts::restart_qwen_providers_for_auth_change(&state, "qwen auth updated").await;
+    restarts::restart_qwen_providers_for_auth_change(&state, "qwen auth updated")
+        .await
+        .map_err(internal_error)?;
     Ok(Json(
         qwen_accounts_response(&state)
             .await
@@ -56,7 +58,9 @@ pub(crate) async fn set_qwen_active_account(
     provider_accounts::set_active_qwen_account(&state.core.data_root, req.account_id)
         .await
         .map_err(bad_request)?;
-    restarts::restart_qwen_providers_for_auth_change(&state, "qwen auth updated").await;
+    restarts::restart_qwen_providers_for_auth_change(&state, "qwen auth updated")
+        .await
+        .map_err(internal_error)?;
     Ok(Json(
         qwen_accounts_response(&state)
             .await
@@ -71,7 +75,9 @@ pub(crate) async fn delete_qwen_account(
     provider_accounts::remove_qwen_account(&state.core.data_root, &id)
         .await
         .map_err(provider_account_delete_error)?;
-    restarts::restart_qwen_providers_for_auth_change(&state, "qwen auth updated").await;
+    restarts::restart_qwen_providers_for_auth_change(&state, "qwen auth updated")
+        .await
+        .map_err(internal_error)?;
     Ok(Json(
         qwen_accounts_response(&state)
             .await

@@ -121,24 +121,19 @@ test("workbench: gemini Vertex AI service account auth can run a real task", asy
   const createTaskResp = await request.post(`/api/workspaces/${workspaceId}/tasks`, {
     data: {
       title: promptMarker,
-      create_default_session: false,
+      default_session: {
+        provider_id: "gemini",
+        model_id: geminiModelId,
+        execution_environment: "host",
+      },
     },
     timeout: REQUEST_TIMEOUT_MS,
   });
   expect(createTaskResp.ok(), `task create failed (${createTaskResp.status()})`).toBe(true);
-  const taskId = readString(asRecord(await createTaskResp.json()).id);
+  const task = asRecord(await createTaskResp.json());
+  const taskId = readString(task.id);
   expect(taskId).not.toBe("");
-
-  const createSessionResp = await request.post(`/api/tasks/${taskId}/sessions`, {
-    data: {
-      provider_id: "gemini",
-      model_id: geminiModelId,
-      execution_environment: "host",
-    },
-    timeout: REQUEST_TIMEOUT_MS,
-  });
-  expect(createSessionResp.ok(), `session create failed (${createSessionResp.status()})`).toBe(true);
-  const sessionId = readString(asRecord(await createSessionResp.json()).id);
+  const sessionId = readString(task.primary_session_id);
   expect(sessionId).not.toBe("");
 
   const messageResp = await request.post(`/api/sessions/${sessionId}/messages`, {

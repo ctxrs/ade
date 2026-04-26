@@ -52,19 +52,14 @@ async fn dev_seed_session_transcript_populates_prior_turns() {
     let app = common::router(state);
 
     let workspace = common::create_workspace(&app, repo.path(), "demo").await;
-    let (task_status, task): (StatusCode, ctx_core::models::Task) = common::json_request(
+    let (task, session) = common::create_task_with_session(
         &app,
-        Method::POST,
-        format!("/api/workspaces/{}/tasks", workspace.id.0),
-        Some(json!({
-            "title": "Ping Pong Demo",
-            "create_default_session": false
-        })),
+        workspace.id.0,
+        "Ping Pong Demo",
+        "fake",
+        "fake-model",
     )
     .await;
-    assert_eq!(task_status, StatusCode::OK);
-
-    let session = common::create_session(&app, task.id.0, "fake", "fake-model").await;
 
     let (seed_status, seed_body): (StatusCode, serde_json::Value) = common::json_request(
         &app,

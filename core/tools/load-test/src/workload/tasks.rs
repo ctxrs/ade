@@ -3,7 +3,9 @@ use rand::rngs::StdRng;
 use rand::Rng;
 
 use crate::scenario::{Cli, ScenarioSpec};
-use ctx_client::{Client, CreateSessionRequest, CreateTaskRequest};
+use ctx_client::{
+    Client, CreateSessionRequest, CreateTaskDefaultSessionRequest, CreateTaskRequest,
+};
 use ctx_core::ids::{SessionId, TaskId, WorkspaceId};
 
 pub(crate) async fn resolve_workspace(client: &Client, id: Option<&str>) -> Result<WorkspaceId> {
@@ -36,12 +38,27 @@ pub(crate) async fn setup_tasks_and_sessions(
                     id: None,
                     title,
                     description: None,
-                    create_default_session: Some(false),
+                    default_session: Some(CreateTaskDefaultSessionRequest {
+                        id: None,
+                        provider_id: cli.provider_id.clone(),
+                        model_id: cli.model_id.clone(),
+                        reasoning_effort: None,
+                        remember_model_preference: false,
+                        execution_environment: None,
+                        worktree_id: None,
+                        initial_prompt: None,
+                        initial_message_id: None,
+                        initial_turn_id: None,
+                    }),
                 },
             )
             .await
             .with_context(|| "creating task")?;
         tasks.push(task.id);
+        let primary_session_id = task
+            .primary_session_id
+            .ok_or_else(|| anyhow!("created task did not include a primary session"))?;
+        sessions.push(primary_session_id);
 
         let subagents =
             rng.gen_range(scenario.workload.subagents_min..=scenario.workload.subagents_max);
@@ -53,8 +70,8 @@ pub(crate) async fn setup_tasks_and_sessions(
                         id: None,
                         provider_id: cli.provider_id.clone(),
                         model_id: cli.model_id.clone(),
-                        parent_session_id: None,
-                        relationship: None,
+                        parent_session_id: Some(primary_session_id),
+                        relationship: Some("sub_agent".to_string()),
                         execution_environment: None,
                         worktree_id: None,
                         initial_prompt: None,

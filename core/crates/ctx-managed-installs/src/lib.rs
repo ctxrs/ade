@@ -40,8 +40,7 @@ mod test_support;
 
 pub(crate) use self::artifacts::{
     download_to_file, ensure_executable, extract_zip_to_dir, find_unique_path_ending_with,
-    install_agent_server_url_binary, resolve_command_path, run_command_with_timeout,
-    validate_expected_sha256,
+    install_agent_server_url_binary, run_command_with_timeout, validate_expected_sha256,
 };
 use self::dependencies::{
     install_managed_archive_dependency, install_managed_npm_dependency, map_archive_kind,
@@ -51,8 +50,8 @@ use self::managed_installers::{
     install_managed_archive_provider, install_managed_npm_provider, install_managed_python_provider,
 };
 use self::provider_install::{
-    classify_install_error, emit_install, emit_install_with_code, ensure_install_not_cancelled,
-    install_provider_impl, repair_install_dir, run_tracked_provider_install,
+    classify_install_error, emit_install, ensure_install_not_cancelled, install_provider_impl,
+    repair_install_dir, run_tracked_provider_install,
 };
 use self::runtime_commands::{is_acp_provider_id, managed_provider_runtime_command};
 pub(crate) use ctx_bundled_assets as bundled_assets;
@@ -98,14 +97,6 @@ pub use toolchains::{
 const NODE_VERSION: &str = "24.15.0";
 const PYTHON_VERSION: &str = "3.13.13";
 const PYTHON_BUILD_TAG: &str = "20260414";
-
-const TYPESCRIPT_LS_VERSION: &str = "5.1.3";
-const TYPESCRIPT_VERSION: &str = "5.9.3";
-const PYRIGHT_VERSION: &str = "1.1.407";
-const VSCODE_LANGSERVERS_EXTRACTED_VERSION: &str = "4.10.0";
-const YAML_LANGUAGE_SERVER_VERSION: &str = "1.19.2";
-const BASH_LANGUAGE_SERVER_VERSION: &str = "5.6.0";
-const DOCKERFILE_LANGUAGE_SERVER_VERSION: &str = "0.15.0";
 
 const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 const NPM_INSTALL_TIMEOUT: Duration = Duration::from_secs(12 * 60);
@@ -436,16 +427,6 @@ pub async fn install_provider_with_progress(
     target: InstallTarget,
 ) -> Result<()> {
     run_tracked_provider_install(state.as_ref(), install_id, &provider_id, target).await
-}
-
-fn catalog_target_key() -> &'static str {
-    match (std::env::consts::OS, std::env::consts::ARCH) {
-        ("linux", "x86_64") => "linux-x64",
-        ("linux", "aarch64") => "linux-arm64",
-        ("macos", "x86_64") => "darwin-x64",
-        ("macos", "aarch64") => "darwin-arm64",
-        _ => "unknown",
-    }
 }
 
 #[derive(Debug, Clone, Copy)]

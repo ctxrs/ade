@@ -54,15 +54,7 @@ async fn assert_hot_endpoints_with_failpoints(failpoints: &[&'static str]) {
         .await
         .unwrap();
 
-    let session: ctx_core::models::Session = client
-        .post(format!("{base}/api/tasks/{}/sessions", task.id.0))
-        .json(&json!({"provider_id":"fake","model_id":"fake-model"}))
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
+    let session = common::load_primary_session_http(client, base, &task).await;
 
     let store = state.store_for_session(session.id).await.unwrap();
     let _ = store
@@ -316,15 +308,7 @@ async fn cold_workspace_active_endpoints_fail_closed_when_hydration_fails() {
         .await
         .unwrap();
 
-    let _session: ctx_core::models::Session = client
-        .post(format!("{base}/api/tasks/{}/sessions", task.id.0))
-        .json(&json!({"provider_id":"fake","model_id":"fake-model"}))
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
+    let _session = common::load_primary_session_http(client, base, &task).await;
 
     ctx_store::fault_injection::set_failpoint("ctx_store.list_workspace_active_head_snapshots", 2);
 
@@ -387,15 +371,7 @@ async fn publish_event_does_not_trigger_full_session_head_rebuilds() {
         .await
         .unwrap();
 
-    let session: ctx_core::models::Session = client
-        .post(format!("{base}/api/tasks/{}/sessions", task.id.0))
-        .json(&json!({"provider_id":"fake","model_id":"fake-model"}))
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
+    let session = common::load_primary_session_http(client, base, &task).await;
 
     state
         .ensure_workspace_active_snapshot_hydrated(ws.id)

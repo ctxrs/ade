@@ -10,10 +10,7 @@ mod avf;
 mod native;
 
 use avf::{avf_copy_source_to_mount, avf_rm_rf, avf_run_success};
-use native::{
-    container_ensure_mount, container_mkdir_p, container_path_exists, container_rm_rf,
-    ensure_attachment_imported_to_container,
-};
+use native::{container_ensure_mount, container_rm_rf, ensure_attachment_imported_to_container};
 
 fn command_failure_detail(output: &std::process::Output) -> String {
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();

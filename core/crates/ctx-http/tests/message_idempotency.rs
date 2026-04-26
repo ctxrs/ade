@@ -18,8 +18,8 @@ async fn post_message_idempotent_same_payload() {
     let app = common::router(state.clone());
 
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
-    let task = common::create_task(&app, ws.id.0, "t1").await;
-    let session = common::create_session(&app, task.id.0, "fake", "fake-model").await;
+    let (_task, session) =
+        common::create_task_with_session(&app, ws.id.0, "t1", "fake", "fake-model").await;
 
     let message_id = common::fixed_uuid(1);
     let turn_id = common::fixed_uuid(2);
@@ -66,8 +66,8 @@ async fn post_message_idempotent_conflict_on_change() {
     let app = common::router(state.clone());
 
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
-    let task = common::create_task(&app, ws.id.0, "t1").await;
-    let session = common::create_session(&app, task.id.0, "fake", "fake-model").await;
+    let (_task, session) =
+        common::create_task_with_session(&app, ws.id.0, "t1", "fake", "fake-model").await;
 
     let message_id = common::fixed_uuid(10);
     let turn_id = common::fixed_uuid(11);

@@ -14,6 +14,7 @@ use ctx_store::StoreManager;
 mod common;
 
 const STORAGE_GUARD_EMERGENCY_FREE_BYTES: u64 = 1024 * 1024 * 1024;
+const CRP_FIXTURE_FIRST_EVENT_TIMEOUT_MS: &str = "60000";
 
 static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
@@ -85,6 +86,10 @@ async fn noisy_tool_output_stays_bounded_end_to_end() {
         .join("provider_scenarios");
     let _guard_fixtures = EnvGuard::set("CTX_TEST_FIXTURES_DIR", &fixtures_dir.to_string_lossy());
     let _guard_scenario = EnvGuard::set("CTX_TEST_SCENARIO", "noisy_tool_output");
+    let _guard_first_event_timeout = EnvGuard::set(
+        "CTX_CRP_FIRST_EVENT_TIMEOUT_MS",
+        CRP_FIXTURE_FIRST_EVENT_TIMEOUT_MS,
+    );
 
     let repo = common::init_git_repo(&[("note.txt", "hello\n")]).await;
     let data_dir = tempfile::tempdir().unwrap();
@@ -112,6 +117,12 @@ async fn noisy_tool_output_stays_bounded_end_to_end() {
 
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
     let script_path = common::crp_fixture_runtime::write_crp_fixture_runtime(data_dir.path());
+    common::seed_managed_codex_cli_host_runtime_with_args(
+        data_dir.path(),
+        &python,
+        vec![script_path.to_string_lossy().to_string()],
+    )
+    .await;
     let providers = common::crp_fixture_runtime::build_crp_fixture_providers(
         &["codex-crp"],
         &python,
@@ -128,8 +139,14 @@ async fn noisy_tool_output_stays_bounded_end_to_end() {
     let server = common::spawn_http_server(app.clone()).await;
 
     let workspace = common::create_workspace(&app, repo.path(), "ws").await;
-    let task = common::create_task(&app, workspace.id.0, "noisy-output").await;
-    let session = common::create_session(&app, task.id.0, "codex-crp", "fake-model").await;
+    let (_task, session) = common::create_task_with_session(
+        &app,
+        workspace.id.0,
+        "noisy-output",
+        "codex-crp",
+        "fake-model",
+    )
+    .await;
 
     let ws_url = format!(
         "{}/api/workspaces/{}/stream",

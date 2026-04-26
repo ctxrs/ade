@@ -331,6 +331,36 @@ CTX_HTTP_CUSTOM_INTEGRATION_TARGETS = {
         "args": [],
         "timeout": "eternal",
     },
+    "image_attachments_http_e2e": {
+        "source": "image_attachments_http_e2e",
+        "args": [],
+        "timeout": "eternal",
+    },
+    "acp_target_scoped_status": {
+        "source": "acp_target_scoped_status",
+        "args": [],
+        "timeout": "long",
+    },
+    "codex_host_import_api": {
+        "source": "codex_host_import_api",
+        "args": [],
+        "timeout": "long",
+    },
+    "codex_login_callback_api": {
+        "source": "codex_login_callback_api",
+        "args": [],
+        "timeout": "long",
+    },
+    "install_start_contract": {
+        "source": "install_start_contract",
+        "args": [],
+        "timeout": "long",
+    },
+    "provider_current_ctx_version_regressions": {
+        "source": "provider_current_ctx_version_regressions",
+        "args": [],
+        "timeout": "long",
+    },
     "session_model_api": {
         "source": "session_model_api",
         "args": [],
@@ -340,6 +370,16 @@ CTX_HTTP_CUSTOM_INTEGRATION_TARGETS = {
         "source": "workspace_provider_model_preferences_http",
         "args": [],
         "timeout": "eternal",
+    },
+    "provider_probe_runtime_env": {
+        "source": "provider_probe_runtime_env",
+        "args": [],
+        "timeout": "long",
+    },
+    "provider_worker_reaping_offline": {
+        "source": "provider_worker_reaping_offline",
+        "args": [],
+        "timeout": "long",
     },
     "terminal_workspace_stream_separation": {
         "source": "terminal_workspace_stream_separation",
@@ -364,14 +404,22 @@ CTX_HTTP_CUSTOM_INTEGRATION_TARGETS = {
     "provider_scenarios_offline_crp_fixtures": {
         "source": "provider_scenarios_offline",
         "args": ["--exact", "provider_scenarios_offline_crp_fixtures"],
+        "timeout": "long",
     },
     "provider_scenarios_offline_interleaved_assistant_tools_do_not_fragment_messages": {
         "source": "provider_scenarios_offline",
         "args": ["--exact", "provider_scenarios_offline_interleaved_assistant_tools_do_not_fragment_messages"],
+        "timeout": "long",
     },
     "provider_scenarios_offline_crp_fixtures_persist_context_window_metrics": {
         "source": "provider_scenarios_offline",
         "args": ["--exact", "provider_scenarios_offline_crp_fixtures_persist_context_window_metrics"],
+        "timeout": "long",
+    },
+    "turn_lifecycle_events": {
+        "source": "turn_lifecycle_events",
+        "args": [],
+        "timeout": "eternal",
     },
 }
 

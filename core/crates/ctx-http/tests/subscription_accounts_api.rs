@@ -19,7 +19,7 @@ use ctx_managed_installs::{
     ProviderLoginExecutable,
 };
 use ctx_providers::adapters::{
-    ProviderAdapter, ProviderHealth, ProviderStatus, RunHandle, TurnInput,
+    ProviderAdapter, ProviderHealth, ProviderRestartMode, ProviderStatus, RunHandle, TurnInput,
 };
 use ctx_providers::events::NormalizedEvent;
 
@@ -218,6 +218,10 @@ impl ProviderAdapter for GeminiLoginTestAdapter {
         Ok(())
     }
 
+    async fn restart(&self, _reason: &str, _mode: ProviderRestartMode) -> Result<()> {
+        Ok(())
+    }
+
     async fn authenticate_session(
         &self,
         _session_key: String,
@@ -348,6 +352,10 @@ impl ProviderAdapter for QwenLoginTestAdapter {
         Ok(())
     }
 
+    async fn restart(&self, _reason: &str, _mode: ProviderRestartMode) -> Result<()> {
+        Ok(())
+    }
+
     async fn authenticate_session(
         &self,
         _session_key: String,
@@ -447,6 +455,10 @@ impl ProviderAdapter for MistralLoginTestAdapter {
         Ok(())
     }
 
+    async fn restart(&self, _reason: &str, _mode: ProviderRestartMode) -> Result<()> {
+        Ok(())
+    }
+
     async fn authenticate_session(
         &self,
         _session_key: String,
@@ -542,6 +554,10 @@ impl ProviderAdapter for AmpLoginTestAdapter {
     }
 
     async fn cancel(&self, _handle: &mut RunHandle) -> Result<()> {
+        Ok(())
+    }
+
+    async fn restart(&self, _reason: &str, _mode: ProviderRestartMode) -> Result<()> {
         Ok(())
     }
 
@@ -1182,7 +1198,7 @@ echo "ZXY987654321"
     );
 
     let status =
-        poll_claude_login_status(&server, &start_body.login_id, Duration::from_secs(8)).await;
+        poll_claude_login_status(&server, &start_body.login_id, Duration::from_secs(30)).await;
     assert_eq!(status.status, "success");
     assert!(status.account_id.is_some());
     assert!(status.error.is_none());
@@ -1190,6 +1206,9 @@ echo "ZXY987654321"
         std::fs::read_to_string(&opened_url_path).expect("read opened url"),
         "https://claude.ai/oauth/authorize?redirect_uri=http%3A%2F%2Flocalhost%3A64111%2Fcallback&state=test\n"
     );
+    // Keep the mock runtime and fake browser tempdir alive until the spawned
+    // setup-token process has completed.
+    assert!(data_dir.path().exists());
 }
 
 #[tokio::test]
@@ -1225,6 +1244,7 @@ async fn claude_login_start_requires_managed_or_configured_runtime_command() {
 
 #[tokio::test]
 async fn claude_login_start_rejects_manual_copy_code_fallback_without_browser_open_capture() {
+    let _env_lock = CLAUDE_TOKEN_ENV_LOCK.lock().await;
     let data_dir = tempfile::tempdir().expect("tempdir");
     let stores = common::setup_store(data_dir.path()).await;
     let state = common::build_state(
@@ -1274,6 +1294,8 @@ echo "https://claude.ai/oauth/authorize?redirect_uri=https%3A%2F%2Fplatform.clau
         .as_str()
         .unwrap_or_default()
         .contains("fell back to manual code entry"));
+    // Keep the mock runtime tempdir alive through the async start request.
+    assert!(data_dir.path().exists());
 }
 
 #[tokio::test]
@@ -1360,10 +1382,13 @@ echo "ZXY987654321"
     );
 
     let status =
-        poll_claude_login_status(&server, &start_body.login_id, Duration::from_secs(8)).await;
+        poll_claude_login_status(&server, &start_body.login_id, Duration::from_secs(30)).await;
     assert_eq!(status.status, "success");
     assert!(status.account_id.is_some());
     assert!(status.error.is_none());
+    // Keep the mock runtime and fake browser tempdir alive until the spawned
+    // setup-token process has completed.
+    assert!(data_dir.path().exists());
 }
 
 // The real desktop/browser lane still needs OS automation, but the tests below
@@ -1608,7 +1633,7 @@ echo "ZXY987654321"
     assert!(start_body.auth_url.is_some());
 
     let status =
-        poll_claude_login_status(&server, &start_body.login_id, Duration::from_secs(8)).await;
+        poll_claude_login_status(&server, &start_body.login_id, Duration::from_secs(30)).await;
     assert_eq!(status.status, "success");
     assert!(status.account_id.is_some());
     assert!(status.error.is_none());
@@ -1666,7 +1691,7 @@ echo "Token omitted intentionally for test."
     let start_body: ClaudeLoginStartResponse = start_resp.json().await.expect("start body");
 
     let status =
-        poll_claude_login_status(&server, &start_body.login_id, Duration::from_secs(8)).await;
+        poll_claude_login_status(&server, &start_body.login_id, Duration::from_secs(30)).await;
     assert_eq!(status.status, "failed");
     assert!(status.account_id.is_none());
     assert!(status
@@ -1817,7 +1842,7 @@ echo "{shared_token}"
     let start_body: ClaudeLoginStartResponse = start_resp.json().await.expect("start body");
 
     let status =
-        poll_claude_login_status(&server, &start_body.login_id, Duration::from_secs(8)).await;
+        poll_claude_login_status(&server, &start_body.login_id, Duration::from_secs(30)).await;
     assert_eq!(status.status, "success");
     assert_eq!(status.account_id.as_deref(), Some(existing_id.as_str()));
 

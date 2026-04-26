@@ -83,7 +83,28 @@ pub struct CreateTaskRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub create_default_session: Option<bool>,
+    pub default_session: Option<CreateTaskDefaultSessionRequest>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CreateTaskDefaultSessionRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<SessionId>,
+    pub provider_id: String,
+    pub model_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<String>,
+    pub remember_model_preference: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub execution_environment: Option<ExecutionEnvironment>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub worktree_id: Option<WorktreeId>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub initial_prompt: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub initial_message_id: Option<MessageId>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub initial_turn_id: Option<TurnId>,
 }
 
 #[derive(Debug, Clone, Serialize)]

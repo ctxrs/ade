@@ -269,7 +269,16 @@ async fn create_session_with_provider(
         .method("POST")
         .uri(format!("/api/workspaces/{}/tasks", ws.id.0))
         .header("content-type", "application/json")
-        .body(Body::from(json!({"title":"t1"}).to_string()))
+        .body(Body::from(
+            json!({
+                "title": "t1",
+                "default_session": {
+                    "provider_id": provider_id,
+                    "model_id": "fake-model"
+                }
+            })
+            .to_string(),
+        ))
         .unwrap();
     let res = app.clone().oneshot(req).await.unwrap();
     assert_eq!(res.status(), StatusCode::OK);
@@ -277,17 +286,18 @@ async fn create_session_with_provider(
     let task: ctx_core::models::Task = serde_json::from_slice(&body).unwrap();
 
     let req = Request::builder()
-        .method("POST")
+        .method("GET")
         .uri(format!("/api/tasks/{}/sessions", task.id.0))
-        .header("content-type", "application/json")
-        .body(Body::from(
-            json!({"provider_id":provider_id,"model_id":"fake-model"}).to_string(),
-        ))
+        .body(Body::empty())
         .unwrap();
     let res = app.clone().oneshot(req).await.unwrap();
     assert_eq!(res.status(), StatusCode::OK);
     let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
-    serde_json::from_slice(&body).unwrap()
+    let sessions: Vec<ctx_core::models::Session> = serde_json::from_slice(&body).unwrap();
+    sessions
+        .into_iter()
+        .find(|session| Some(session.id) == task.primary_session_id)
+        .expect("created task should list its default session")
 }
 
 async fn post_message(app: &mut axum::Router, session_id: &str, content: &str) {

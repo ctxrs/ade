@@ -7,11 +7,15 @@ use std::sync::{Mutex, MutexGuard};
 mod manifest;
 
 use self::manifest::{
-    active_bundle_dir as bundle_dir, current_arch, current_platform, manifest_path,
-    read_manifest_from_root, read_runtime_lock_from_root, resolve_bundle_args, resolve_bundle_path,
-    runtime_lock_path, RuntimeLockComponent, RuntimeLockHelperSource, RuntimeLockProfile,
-    RuntimeLockSource, RuntimeLockV2, AVF_LINUX_GUEST_RUNTIME_ID, AVF_REQUIRED_HELPERS,
-    BUNDLE_ENV_MANIFEST, MANIFEST_FILENAME, MANIFEST_VERSION, RUNTIME_LOCK_VERSION,
+    active_bundle_dir as bundle_dir, current_arch, current_platform, read_manifest_from_root,
+    read_runtime_lock_from_root, resolve_bundle_args, resolve_bundle_path, RuntimeLockComponent,
+    RuntimeLockV2, AVF_LINUX_GUEST_RUNTIME_ID, AVF_REQUIRED_HELPERS,
+};
+#[cfg(test)]
+use self::manifest::{
+    manifest_path, runtime_lock_path, RuntimeLockHelperSource, RuntimeLockProfile,
+    RuntimeLockSource, BUNDLE_ENV_MANIFEST, MANIFEST_FILENAME, MANIFEST_VERSION,
+    RUNTIME_LOCK_VERSION,
 };
 pub use self::manifest::{
     BundledAssetsManifest, BundledCommand, BundledImage, BundledProvider, BundledRuntime,

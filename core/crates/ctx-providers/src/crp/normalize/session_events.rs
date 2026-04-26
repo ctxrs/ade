@@ -1,13 +1,11 @@
-use std::collections::HashMap;
-
 use serde_json::{json, Value};
 
 use ctx_core::models::SessionEventType;
 
 use crate::events::NormalizedEvent;
 
-use super::super::protocol::{CrpChannel, CrpEvent, CrpTurnStatus, KnownCrpEvent};
-use super::{CachedToolInput, MappedCrpEvent};
+use super::super::protocol::{CrpTurnStatus, KnownCrpEvent};
+use super::MappedCrpEvent;
 
 pub(super) fn map_known_event(
     event: KnownCrpEvent,

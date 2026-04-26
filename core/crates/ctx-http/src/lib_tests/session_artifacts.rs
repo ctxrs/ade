@@ -59,18 +59,7 @@ async fn session_artifacts_reject_outside_root_paths_and_fail_closed_for_legacy_
     let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
     let task: ctx_core::models::Task = serde_json::from_slice(&body).unwrap();
 
-    let req = Request::builder()
-        .method("POST")
-        .uri(format!("/api/tasks/{}/sessions", task.id.0))
-        .header("content-type", "application/json")
-        .body(Body::from(
-            json!({"provider_id":"fake","model_id":"fake-model"}).to_string(),
-        ))
-        .unwrap();
-    let res = app.clone().oneshot(req).await.unwrap();
-    assert_eq!(res.status(), StatusCode::OK);
-    let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
-    let session: ctx_core::models::Session = serde_json::from_slice(&body).unwrap();
+    let session = load_primary_session_via_api(&app, &task).await;
 
     let outside_dir = tempfile::tempdir().unwrap();
     let outside_path = outside_dir.path().join("outside.txt");
@@ -181,18 +170,7 @@ async fn session_artifacts_report_deleted_in_root_files_as_missing() {
     let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
     let task: ctx_core::models::Task = serde_json::from_slice(&body).unwrap();
 
-    let req = Request::builder()
-        .method("POST")
-        .uri(format!("/api/tasks/{}/sessions", task.id.0))
-        .header("content-type", "application/json")
-        .body(Body::from(
-            json!({"provider_id":"fake","model_id":"fake-model"}).to_string(),
-        ))
-        .unwrap();
-    let res = app.clone().oneshot(req).await.unwrap();
-    assert_eq!(res.status(), StatusCode::OK);
-    let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
-    let session: ctx_core::models::Session = serde_json::from_slice(&body).unwrap();
+    let session = load_primary_session_via_api(&app, &task).await;
 
     let store = state.store_for_session(session.id).await.unwrap();
     let worktree = store
@@ -289,31 +267,9 @@ async fn session_artifacts_do_not_accept_other_session_spool_files() {
     let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
     let task: ctx_core::models::Task = serde_json::from_slice(&body).unwrap();
 
-    let req = Request::builder()
-        .method("POST")
-        .uri(format!("/api/tasks/{}/sessions", task.id.0))
-        .header("content-type", "application/json")
-        .body(Body::from(
-            json!({"provider_id":"fake","model_id":"fake-model"}).to_string(),
-        ))
-        .unwrap();
-    let res = app.clone().oneshot(req).await.unwrap();
-    assert_eq!(res.status(), StatusCode::OK);
-    let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
-    let session: ctx_core::models::Session = serde_json::from_slice(&body).unwrap();
+    let session = load_primary_session_via_api(&app, &task).await;
 
-    let req = Request::builder()
-        .method("POST")
-        .uri(format!("/api/tasks/{}/sessions", task.id.0))
-        .header("content-type", "application/json")
-        .body(Body::from(
-            json!({"provider_id":"fake","model_id":"fake-model"}).to_string(),
-        ))
-        .unwrap();
-    let res = app.clone().oneshot(req).await.unwrap();
-    assert_eq!(res.status(), StatusCode::OK);
-    let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
-    let other_session: ctx_core::models::Session = serde_json::from_slice(&body).unwrap();
+    let other_session = create_subagent_session_via_api(&app, &task, session.id).await;
 
     let other_spool_dir = state
         .core

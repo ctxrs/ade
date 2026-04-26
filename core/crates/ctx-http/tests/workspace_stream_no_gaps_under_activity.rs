@@ -90,15 +90,7 @@ async fn workspace_stream_stays_live_without_gaps_under_activity() {
             .await
             .unwrap();
 
-        let session: ctx_core::models::Session = client
-            .post(format!("{base}/api/tasks/{}/sessions", task.id.0))
-            .json(&json!({"provider_id":"fake","model_id":"fake-model"}))
-            .send()
-            .await
-            .unwrap()
-            .json()
-            .await
-            .unwrap();
+        let session = common::load_primary_session_http(client, base, &task).await;
         sessions.push(session);
     }
 

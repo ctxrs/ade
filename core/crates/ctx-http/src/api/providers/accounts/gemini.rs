@@ -34,7 +34,9 @@ pub(crate) async fn upsert_gemini_account(
     )
     .await
     .map_err(bad_request)?;
-    restarts::restart_gemini_providers_for_auth_change(&state, "gemini auth updated").await;
+    restarts::restart_gemini_providers_for_auth_change(&state, "gemini auth updated")
+        .await
+        .map_err(internal_error)?;
     Ok(Json(
         gemini_accounts_response(&state)
             .await
@@ -57,7 +59,9 @@ pub(crate) async fn set_gemini_active_account(
     provider_accounts::set_active_gemini_account(&state.core.data_root, req.account_id)
         .await
         .map_err(bad_request)?;
-    restarts::restart_gemini_providers_for_auth_change(&state, "gemini auth updated").await;
+    restarts::restart_gemini_providers_for_auth_change(&state, "gemini auth updated")
+        .await
+        .map_err(internal_error)?;
     Ok(Json(
         gemini_accounts_response(&state)
             .await
@@ -72,7 +76,9 @@ pub(crate) async fn delete_gemini_account(
     provider_accounts::remove_gemini_account(&state.core.data_root, &id)
         .await
         .map_err(provider_account_delete_error)?;
-    restarts::restart_gemini_providers_for_auth_change(&state, "gemini auth updated").await;
+    restarts::restart_gemini_providers_for_auth_change(&state, "gemini auth updated")
+        .await
+        .map_err(internal_error)?;
     Ok(Json(
         gemini_accounts_response(&state)
             .await

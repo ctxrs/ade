@@ -1,6 +1,8 @@
+#[cfg(target_os = "linux")]
 use std::collections::HashMap;
 #[cfg(target_os = "linux")]
 use std::collections::HashSet;
+#[cfg(target_os = "linux")]
 use std::time::Instant;
 
 #[cfg(not(target_os = "linux"))]

@@ -63,17 +63,14 @@ use ctx_fs::worktrees::{create_worktree, managed_worktree_path};
 use ctx_store::{is_unique_constraint_violation, Store};
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(super) struct CreateTaskReq {
     #[serde(default)]
     id: Option<String>,
     title: String,
     description: Option<String>,
-    #[serde(default = "default_true")]
-    create_default_session: bool,
-}
-
-fn default_true() -> bool {
-    true
+    #[serde(default)]
+    default_session: Option<CreateTaskDefaultSessionReq>,
 }
 
 fn task_request_matches(existing: &Task, title: &str, description: &Option<String>) -> bool {

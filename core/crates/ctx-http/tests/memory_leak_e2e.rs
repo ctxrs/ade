@@ -112,8 +112,14 @@ async fn run_scenario(label: &'static str, monitoring_enabled: bool) -> LeakRepo
     let session_count = env_u64("CTX_MEMLEAK_SESSION_COUNT").unwrap_or(6);
     let mut sessions = Vec::new();
     for idx in 0..session_count {
-        let task = common::create_task(&app, ws.id.0, &format!("task-{idx}")).await;
-        let session = common::create_session(&app, task.id.0, "fake", "fake-model").await;
+        let (_task, session) = common::create_task_with_session(
+            &app,
+            ws.id.0,
+            &format!("task-{idx}"),
+            "fake",
+            "fake-model",
+        )
+        .await;
         sessions.push(session);
     }
 

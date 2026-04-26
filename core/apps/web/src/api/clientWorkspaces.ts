@@ -1,6 +1,7 @@
 import type {
   AttachmentMode,
   AttachmentUpdatePolicy,
+  ExecutionEnvironment,
   MergeQueueEntry,
   Session,
   Task,
@@ -478,7 +479,21 @@ export const createTask = (
   workspaceId: string,
   title: string,
   description?: string,
-  opts?: { create_default_session?: boolean; id?: string },
+  opts?: {
+    id?: string;
+    default_session?: {
+      id?: string;
+      provider_id: string;
+      model_id: string;
+      reasoning_effort?: string | null;
+      remember_model_preference?: boolean;
+      execution_environment?: ExecutionEnvironment;
+      worktree_id?: string;
+      initial_prompt?: string;
+      initial_message_id?: string;
+      initial_turn_id?: string;
+    };
+  },
 ) =>
   apiAny<Task>(`/api/workspaces/${workspaceId}/tasks`, {
     method: "POST",
@@ -486,7 +501,7 @@ export const createTask = (
       ...(opts?.id ? { id: opts.id } : {}),
       title,
       description,
-      ...(opts?.create_default_session === undefined ? {} : { create_default_session: opts.create_default_session }),
+      ...(opts?.default_session ? { default_session: opts.default_session } : {}),
     }),
   });
 

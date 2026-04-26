@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::path::{Path as StdPath, PathBuf};
+use std::path::Path as StdPath;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -14,7 +14,6 @@ use base64::Engine;
 use opentelemetry::trace::SpanKind;
 use opentelemetry::KeyValue;
 use serde::{Deserialize, Serialize};
-use tokio::process::Command;
 use tower::util::ServiceExt;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use tower_http::services::{ServeDir, ServeFile};

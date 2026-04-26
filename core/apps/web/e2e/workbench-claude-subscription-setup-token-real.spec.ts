@@ -224,15 +224,15 @@ test("workbench: claude setup-token subscription auth can run a real task", asyn
   await selectHarnessBySearch(page, "claude", /claude code/i);
   await page.locator("textarea.wb-composer-textarea").first().fill(prompt);
 
-  const createSessionResponsePromise = page.waitForResponse((response) =>
+  const createTaskResponsePromise = page.waitForResponse((response) =>
     response.request().method() === "POST"
-    && /\/api\/tasks\/[^/]+\/sessions$/.test(response.url()),
+    && /\/api\/workspaces\/[^/]+\/tasks$/.test(response.url()),
   );
   await page.getByRole("button", { name: "Send" }).click();
 
-  const createSessionResp = await createSessionResponsePromise;
-  expect(createSessionResp.ok(), `session create failed (${createSessionResp.status()})`).toBe(true);
-  const sessionId = String(asRecord(await createSessionResp.json()).id ?? "");
+  const createTaskResp = await createTaskResponsePromise;
+  expect(createTaskResp.ok(), `task create failed (${createTaskResp.status()})`).toBe(true);
+  const sessionId = String(asRecord(await createTaskResp.json()).primary_session_id ?? "");
   expect(sessionId).not.toBe("");
 
   await expect(page.getByText("Failed to start")).toHaveCount(0);

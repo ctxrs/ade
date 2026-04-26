@@ -177,7 +177,6 @@ test("workbench: streaming overlay contention does not stall composer input", as
     tasks: 3,
     sessionsPerTask: 1,
     turnsPerSession: 0,
-    createDefaultSession: false,
   });
   const taskId = seed.taskIds[0] ?? "";
   const activeSessionId = taskId ? seed.sessionIdsByTask[taskId]?.[0] ?? "" : "";

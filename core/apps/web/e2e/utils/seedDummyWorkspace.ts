@@ -13,7 +13,6 @@ type SeedOptions = {
   workspaceName?: string;
   repoRoot?: string;
   throttleMs?: number;
-  createDefaultSession?: boolean;
   messageBytes?: number | NumberRange;
   messagePrefix?: string;
   includeToolSummaries?: boolean;
@@ -150,7 +149,6 @@ export async function seedDummyWorkspace(
   const taskIds: string[] = [];
   const sessionIdsByTask: Record<string, string[]> = {};
   const throttle = opts.throttleMs ?? 15;
-  const createDefaultSession = opts.createDefaultSession ?? true;
   const includeToolSummaries = Boolean(opts.includeToolSummaries);
   const toolSummariesPerTurn = opts.toolSummariesPerTurn ?? 6;
   const toolSummaryFixtures = opts.toolSummaryFixtures ?? DEFAULT_TOOL_FIXTURES;
@@ -165,21 +163,39 @@ export async function seedDummyWorkspace(
   };
 
   for (let i = 0; i < opts.tasks; i++) {
-    const task = await apiPost<{ id: string }>(request, `/api/workspaces/${workspace.id}/tasks`, {
-      title: `fixture task ${i + 1}`,
-      create_default_session: createDefaultSession,
-    });
+    const task = await apiPost<{ id: string; primary_session_id?: string | null }>(
+      request,
+      `/api/workspaces/${workspace.id}/tasks`,
+      {
+        title: `fixture task ${i + 1}`,
+        default_session: {
+          provider_id: sessionSource.providerId,
+          model_id: sessionSource.modelId,
+          execution_environment: sessionSource.executionEnvironment,
+        },
+      },
+    );
     taskIds.push(task.id);
     sessionIdsByTask[task.id] = [];
 
-    const sessionCount = parseCount(opts.sessionsPerTask, i);
+    const requestedSessionCount = parseCount(opts.sessionsPerTask, i);
+    const sessionCount = Math.max(1, requestedSessionCount);
     for (let s = 0; s < sessionCount; s++) {
-      const session = await apiPost<{ id: string }>(request, `/api/tasks/${task.id}/sessions`, {
-        provider_id: sessionSource.providerId,
-        model_id: sessionSource.modelId,
-        execution_environment: sessionSource.executionEnvironment,
-      });
-      sessionIdsByTask[task.id].push(session.id);
+      let sessionId = task.primary_session_id;
+      if (!sessionId) throw new Error(`seeded task ${task.id} did not include a primary session`);
+      if (s > 0) {
+        const session = await apiPost<{ id: string }>(request, `/api/tasks/${task.id}/sessions`, {
+          provider_id: sessionSource.providerId,
+          model_id: sessionSource.modelId,
+          execution_environment: sessionSource.executionEnvironment,
+          parent_session_id: task.primary_session_id,
+          relationship: "sub_agent",
+        });
+        sessionId = session.id;
+      }
+      sessionIdsByTask[task.id].push(sessionId);
+
+      if (s >= requestedSessionCount) continue;
 
       for (let t = 0; t < opts.turnsPerSession; t++) {
         const toolFixtures = includeToolSummaries
@@ -191,7 +207,7 @@ export async function seedDummyWorkspace(
           baseMessage,
           messageBytes ? parseCount(messageBytes, t) : undefined,
         );
-        await apiPost(request, `/api/sessions/${session.id}/messages`, {
+        await apiPost(request, `/api/sessions/${sessionId}/messages`, {
           content: `${paddedMessage}${toolMarker}`,
           delivery: "immediate",
         });
@@ -203,12 +219,12 @@ export async function seedDummyWorkspace(
                 turns: Array<{ status: string; tool_total?: number | null }>;
                 tool_summaries?: unknown[];
               };
-            }>(request, `/api/sessions/${session.id}/snapshot?limit=1`);
+            }>(request, `/api/sessions/${sessionId}/snapshot?limit=1`);
             const head = snapshot?.head;
             const turns = Array.isArray(head?.turns) ? head.turns : [];
             if (turns.length === 0) {
               if (Date.now() - start > completionTimeoutMs) {
-                throw new Error(`turn completion timeout for session ${session.id}`);
+                throw new Error(`turn completion timeout for session ${sessionId}`);
               }
               await sleep(50);
               continue;
@@ -217,7 +233,7 @@ export async function seedDummyWorkspace(
             const done = last?.status === "completed" || last?.status === "done";
             if (done) break;
             if (Date.now() - start > completionTimeoutMs) {
-              throw new Error(`turn completion timeout for session ${session.id}`);
+              throw new Error(`turn completion timeout for session ${sessionId}`);
             }
             await sleep(50);
           }

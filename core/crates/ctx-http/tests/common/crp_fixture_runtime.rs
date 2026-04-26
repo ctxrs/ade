@@ -44,6 +44,8 @@ try:
     if not FIXTURE_ROOT:
         raise RuntimeError("missing CTX_TEST_FIXTURES_DIR")
     fixture_path = os.path.join(FIXTURE_ROOT, PROVIDER_ID, SCENARIO + ".json")
+    if PROVIDER_ID == "codex-crp" and not os.path.exists(fixture_path):
+        fixture_path = os.path.join(FIXTURE_ROOT, "codex", SCENARIO + ".json")
     with open(fixture_path, "r") as f:
         scenario = json.load(f)
 except Exception as e:

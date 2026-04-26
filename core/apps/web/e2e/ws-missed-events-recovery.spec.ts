@@ -33,18 +33,16 @@ test("workbench: recovers when workspace stream misses events", async ({ page })
   const rows = page.locator(".wb-task-row");
   const createTask = async (title: string) => {
     const resp = await page.request.post(`/api/workspaces/${workspaceId}/tasks`, {
-      data: { title, create_default_session: true },
+      data: {
+        title,
+        default_session: { provider_id: "fake", model_id: "fake-model", execution_environment: "host" },
+      },
     });
     expect(resp.ok()).toBe(true);
-    const task = (await resp.json()) as { id?: string };
+    const task = (await resp.json()) as { id?: string; primary_session_id?: string | null };
     const taskId = String(task?.id ?? "");
     expect(taskId).toBeTruthy();
-    const sessionResp = await page.request.post(`/api/tasks/${taskId}/sessions`, {
-      data: { provider_id: "fake", model_id: "fake-model", execution_environment: "host" },
-    });
-    expect(sessionResp.ok()).toBe(true);
-    const session = (await sessionResp.json()) as { id?: string };
-    const sessionId = String(session?.id ?? "");
+    const sessionId = String(task?.primary_session_id ?? "");
     expect(sessionId).toBeTruthy();
     const msgResp = await page.request.post(`/api/sessions/${sessionId}/messages`, {
       data: { content: `fixture msg ${title}`, delivery: "immediate" },

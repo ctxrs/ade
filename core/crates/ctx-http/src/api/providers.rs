@@ -29,7 +29,9 @@ use ctx_harness_sources as harness_sources;
 use ctx_harness_sources::{HarnessApiShape, HarnessEndpointUpsert, HarnessSourceKind};
 use ctx_provider_accounts as provider_accounts;
 use ctx_provider_auth_import as provider_auth_import;
-use ctx_provider_install::install_state::{InstallId, InstallTarget};
+#[cfg(test)]
+use ctx_provider_install::install_state::InstallId;
+use ctx_provider_install::install_state::InstallTarget;
 use ctx_providers::adapters::{ProviderRestartMode, ProviderStatus};
 
 mod accounts;
