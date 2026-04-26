@@ -5,13 +5,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use tokio::sync::{mpsc, oneshot};
-
-mod worker;
 use tokio::time::timeout;
-pub use worker::default_telemetry_endpoint;
-#[cfg(test)]
-use worker::{load_or_create_install_id, telemetry_state_path, TelemetryStateFile};
-use worker::{telemetry_worker, TelemetryCommand};
 
 pub use event::{
     default_telemetry_endpoint, TelemetryConfig, TelemetryDelivery, TelemetryEvent,
