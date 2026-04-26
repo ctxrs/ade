@@ -89,7 +89,10 @@ pub(crate) async fn repair_install_dir(
     if install_dir.exists() {
         let expected = install_dir.join(expected_entrypoint_rel);
         let node_modules = install_dir.join("node_modules");
-        if !node_modules.exists() || !expected.exists() {
+        if !node_modules.exists()
+            || !expected.exists()
+            || gemini_acp_bundle_needs_repair(provider_id, &expected)?
+        {
             tokio::fs::remove_dir_all(install_dir).await.ok();
         }
     }
@@ -97,6 +100,44 @@ pub(crate) async fn repair_install_dir(
         .await
         .with_context(|| format!("creating install dir: {}", install_dir.display()))?;
     Ok(())
+}
+
+fn gemini_acp_bundle_needs_repair(provider_id: &str, expected_entrypoint: &Path) -> Result<bool> {
+    if provider_id != "gemini" {
+        return Ok(false);
+    }
+    let Some(bundle_dir) = expected_entrypoint.parent() else {
+        return Ok(true);
+    };
+    let entries = match std::fs::read_dir(bundle_dir) {
+        Ok(entries) => entries,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(true),
+        Err(err) => {
+            return Err(err)
+                .with_context(|| format!("reading Gemini ACP bundle {}", bundle_dir.display()));
+        }
+    };
+    let mut core_entry_count = 0usize;
+    for entry in entries {
+        let entry = entry.with_context(|| {
+            format!(
+                "reading Gemini ACP bundle entry under {}",
+                bundle_dir.display()
+            )
+        })?;
+        let path = entry.path();
+        if path.extension().and_then(|value| value.to_str()) == Some("js")
+            && path
+                .file_name()
+                .and_then(|value| value.to_str())
+                .is_some_and(|value| {
+                    value.starts_with("core-") || value.eq_ignore_ascii_case("core.js")
+                })
+        {
+            core_entry_count += 1;
+        }
+    }
+    Ok(core_entry_count != 1)
 }
 
 #[cfg(test)]
@@ -136,6 +177,49 @@ mod tests {
         assert!(
             !cfg.providers.contains_key("droid"),
             "provider install errors must not recreate legacy shared provider entries"
+        );
+    }
+
+    #[test]
+    fn gemini_acp_bundle_repair_detects_duplicate_core_entries() {
+        let temp = tempdir().expect("tempdir");
+        let bundle_dir = temp
+            .path()
+            .join("node_modules")
+            .join("@google")
+            .join("gemini-cli")
+            .join("bundle");
+        std::fs::create_dir_all(&bundle_dir).expect("create bundle dir");
+        let entrypoint = bundle_dir.join("gemini.js");
+        std::fs::write(&entrypoint, b"gemini").expect("write entrypoint");
+        std::fs::write(bundle_dir.join("core-alpha.js"), b"core").expect("write core alpha");
+        std::fs::write(bundle_dir.join("core-beta.js"), b"core").expect("write core beta");
+
+        assert!(
+            gemini_acp_bundle_needs_repair("gemini", &entrypoint)
+                .expect("repair check should succeed"),
+            "duplicate Gemini core entries should force reinstall"
+        );
+    }
+
+    #[test]
+    fn gemini_acp_bundle_repair_accepts_single_core_entry() {
+        let temp = tempdir().expect("tempdir");
+        let bundle_dir = temp
+            .path()
+            .join("node_modules")
+            .join("@google")
+            .join("gemini-cli")
+            .join("bundle");
+        std::fs::create_dir_all(&bundle_dir).expect("create bundle dir");
+        let entrypoint = bundle_dir.join("gemini.js");
+        std::fs::write(&entrypoint, b"gemini").expect("write entrypoint");
+        std::fs::write(bundle_dir.join("core-alpha.js"), b"core").expect("write core alpha");
+
+        assert!(
+            !gemini_acp_bundle_needs_repair("gemini", &entrypoint)
+                .expect("repair check should succeed"),
+            "single Gemini core entry should not force reinstall"
         );
     }
 }
