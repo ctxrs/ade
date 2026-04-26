@@ -13,7 +13,34 @@ impl ConnectionManager {
         remote_data_dir: Option<String>,
         runtime: SshRuntimeMetadata,
     ) {
-        let previous = self.replace_with_ssh(
+        self.set_ssh_for_scope(
+            DEFAULT_CONNECTION_SCOPE,
+            base_url,
+            token,
+            tunnel,
+            host,
+            user,
+            remote_port,
+            remote_data_dir,
+            runtime,
+        );
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_ssh_for_scope(
+        &self,
+        scope: &str,
+        base_url: String,
+        token: Option<String>,
+        tunnel: Child,
+        host: String,
+        user: Option<String>,
+        remote_port: u16,
+        remote_data_dir: Option<String>,
+        runtime: SshRuntimeMetadata,
+    ) {
+        let previous = self.replace_with_ssh_for_scope(
+            scope,
             base_url,
             token,
             tunnel,
@@ -28,6 +55,7 @@ impl ConnectionManager {
         }
     }
 
+    #[cfg(test)]
     pub(crate) async fn set_ssh_with_blocking_cleanup(
         &self,
         base_url: String,
@@ -39,9 +67,36 @@ impl ConnectionManager {
         remote_data_dir: Option<String>,
         runtime: SshRuntimeMetadata,
     ) -> Result<(), String> {
+        self.set_ssh_with_blocking_cleanup_for_scope(
+            DEFAULT_CONNECTION_SCOPE,
+            base_url,
+            token,
+            tunnel,
+            host,
+            user,
+            remote_port,
+            remote_data_dir,
+            runtime,
+        )
+        .await
+    }
+
+    pub(crate) async fn set_ssh_with_blocking_cleanup_for_scope(
+        &self,
+        scope: &str,
+        base_url: String,
+        token: Option<String>,
+        tunnel: Child,
+        host: String,
+        user: Option<String>,
+        remote_port: u16,
+        remote_data_dir: Option<String>,
+        runtime: SshRuntimeMetadata,
+    ) -> Result<(), String> {
         let log_host = host.clone();
         let log_user = user.clone();
-        let previous = self.replace_with_ssh(
+        let previous = self.replace_with_ssh_for_scope(
+            scope,
             base_url,
             token,
             tunnel,
@@ -64,8 +119,9 @@ impl ConnectionManager {
         Ok(())
     }
 
-    pub(super) fn replace_with_ssh(
+    pub(super) fn replace_with_ssh_for_scope(
         &self,
+        scope: &str,
         base_url: String,
         token: Option<String>,
         tunnel: Child,
@@ -94,16 +150,58 @@ impl ConnectionManager {
                 return None;
             }
         };
-        guard.intent = ConnectionIntent::ExplicitRemote;
-        guard.active.replace(next)
+        let scoped = guard.scope_mut(scope);
+        scoped.intent = ConnectionIntent::ExplicitRemote;
+        let previous = scoped.active.replace(next);
+        match previous {
+            Some(ActiveConnection::Local(mut local)) => {
+                if guard.transfer_local_ownership_if_shared(scope, &mut local) {
+                    None
+                } else {
+                    Some(ActiveConnection::Local(local))
+                }
+            }
+            other => other,
+        }
     }
 
+    #[cfg(test)]
+    pub(crate) fn replace_with_ssh(
+        &self,
+        base_url: String,
+        token: Option<String>,
+        tunnel: Child,
+        host: String,
+        user: Option<String>,
+        remote_port: u16,
+        remote_data_dir: Option<String>,
+        runtime: SshRuntimeMetadata,
+    ) -> Option<ActiveConnection> {
+        self.replace_with_ssh_for_scope(
+            DEFAULT_CONNECTION_SCOPE,
+            base_url,
+            token,
+            tunnel,
+            host,
+            user,
+            remote_port,
+            remote_data_dir,
+            runtime,
+        )
+    }
+
+    #[cfg(test)]
     pub(crate) fn ssh_target(&self) -> Result<SshConnectionTarget> {
+        self.ssh_target_for_scope(DEFAULT_CONNECTION_SCOPE)
+    }
+
+    pub(crate) fn ssh_target_for_scope(&self, scope: &str) -> Result<SshConnectionTarget> {
         let guard = self
             .0
             .lock()
             .map_err(|e| anyhow!("connection manager lock poisoned: {e}"))?;
-        let Some(active) = guard.active.as_ref() else {
+        let scoped = guard.scope(scope);
+        let Some(active) = scoped.active else {
             anyhow::bail!("not connected (open a workspace first)");
         };
         let ActiveConnection::Ssh(c) = active else {
@@ -118,12 +216,18 @@ impl ConnectionManager {
         })
     }
 
+    #[cfg(test)]
     pub(crate) fn update_ssh_token(&self, token: String) -> Result<()> {
+        self.update_ssh_token_for_scope(DEFAULT_CONNECTION_SCOPE, token)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn update_ssh_token_for_scope(&self, scope: &str, token: String) -> Result<()> {
         let mut guard = self
             .0
             .lock()
             .map_err(|e| anyhow!("connection manager lock poisoned: {e}"))?;
-        let Some(active) = guard.active.as_mut() else {
+        let Some(active) = guard.scope_mut(scope).active.as_mut() else {
             anyhow::bail!("not connected (open a workspace first)");
         };
         let ActiveConnection::Ssh(c) = active else {
@@ -133,12 +237,52 @@ impl ConnectionManager {
         Ok(())
     }
 
-    pub(crate) fn update_ssh_runtime(&self, runtime: SshRuntimeMetadata) -> Result<()> {
+    pub(crate) fn update_ssh_auth_and_runtime_for_matching_target(
+        &self,
+        host: &str,
+        user: Option<&str>,
+        remote_port: u16,
+        remote_data_dir: Option<&str>,
+        token: String,
+        runtime: SshRuntimeMetadata,
+    ) -> Result<usize> {
         let mut guard = self
             .0
             .lock()
             .map_err(|e| anyhow!("connection manager lock poisoned: {e}"))?;
-        let Some(active) = guard.active.as_mut() else {
+        let mut updated = 0;
+        for state in guard.scopes.values_mut() {
+            let Some(ActiveConnection::Ssh(c)) = state.active.as_mut() else {
+                continue;
+            };
+            if !ssh_connection_matches_target(c, host, user, remote_port, remote_data_dir) {
+                continue;
+            }
+            c.token = Some(token.clone());
+            c.runtime = runtime.clone();
+            updated += 1;
+        }
+        if updated == 0 {
+            anyhow::bail!("current connection is not SSH");
+        }
+        Ok(updated)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn update_ssh_runtime(&self, runtime: SshRuntimeMetadata) -> Result<()> {
+        self.update_ssh_runtime_for_scope(DEFAULT_CONNECTION_SCOPE, runtime)
+    }
+
+    pub(crate) fn update_ssh_runtime_for_scope(
+        &self,
+        scope: &str,
+        runtime: SshRuntimeMetadata,
+    ) -> Result<()> {
+        let mut guard = self
+            .0
+            .lock()
+            .map_err(|e| anyhow!("connection manager lock poisoned: {e}"))?;
+        let Some(active) = guard.scope_mut(scope).active.as_mut() else {
             anyhow::bail!("not connected (open a workspace first)");
         };
         let ActiveConnection::Ssh(c) = active else {
@@ -148,8 +292,18 @@ impl ConnectionManager {
         Ok(())
     }
 
+    #[cfg(test)]
     pub(crate) fn set_ssh_remote_update_state(
         &self,
+        state: DesktopRemoteDaemonUpdateState,
+        message: Option<String>,
+    ) -> Result<()> {
+        self.set_ssh_remote_update_state_for_scope(DEFAULT_CONNECTION_SCOPE, state, message)
+    }
+
+    pub(crate) fn set_ssh_remote_update_state_for_scope(
+        &self,
+        scope: &str,
         state: DesktopRemoteDaemonUpdateState,
         message: Option<String>,
     ) -> Result<()> {
@@ -157,7 +311,7 @@ impl ConnectionManager {
             .0
             .lock()
             .map_err(|e| anyhow!("connection manager lock poisoned: {e}"))?;
-        let Some(active) = guard.active.as_mut() else {
+        let Some(active) = guard.scope_mut(scope).active.as_mut() else {
             anyhow::bail!("not connected (open a workspace first)");
         };
         let ActiveConnection::Ssh(c) = active else {
@@ -172,12 +326,18 @@ impl ConnectionManager {
         Ok(())
     }
 
+    #[cfg(test)]
     pub(crate) fn clear_ssh_remote_update_state(&self) -> Result<()> {
+        self.clear_ssh_remote_update_state_for_scope(DEFAULT_CONNECTION_SCOPE)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn clear_ssh_remote_update_state_for_scope(&self, scope: &str) -> Result<()> {
         let mut guard = self
             .0
             .lock()
             .map_err(|e| anyhow!("connection manager lock poisoned: {e}"))?;
-        let Some(active) = guard.active.as_mut() else {
+        let Some(active) = guard.scope_mut(scope).active.as_mut() else {
             anyhow::bail!("not connected (open a workspace first)");
         };
         let ActiveConnection::Ssh(c) = active else {
@@ -186,4 +346,90 @@ impl ConnectionManager {
         c.remote_update_status = None;
         Ok(())
     }
+
+    pub(crate) fn set_ssh_remote_update_state_for_matching_target(
+        &self,
+        host: &str,
+        user: Option<&str>,
+        remote_port: u16,
+        remote_data_dir: Option<&str>,
+        state: DesktopRemoteDaemonUpdateState,
+        message: Option<String>,
+    ) -> Result<usize> {
+        let mut guard = self
+            .0
+            .lock()
+            .map_err(|e| anyhow!("connection manager lock poisoned: {e}"))?;
+        let mut updated = 0;
+        let normalized_message = message
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
+        for scoped in guard.scopes.values_mut() {
+            let Some(ActiveConnection::Ssh(c)) = scoped.active.as_mut() else {
+                continue;
+            };
+            if !ssh_connection_matches_target(c, host, user, remote_port, remote_data_dir) {
+                continue;
+            }
+            c.remote_update_status = Some(SshRemoteUpdateStatus {
+                state,
+                message: normalized_message.clone(),
+            });
+            updated += 1;
+        }
+        if updated == 0 {
+            anyhow::bail!("current connection is not SSH");
+        }
+        Ok(updated)
+    }
+
+    pub(crate) fn clear_ssh_remote_update_state_for_matching_target(
+        &self,
+        host: &str,
+        user: Option<&str>,
+        remote_port: u16,
+        remote_data_dir: Option<&str>,
+    ) -> Result<usize> {
+        let mut guard = self
+            .0
+            .lock()
+            .map_err(|e| anyhow!("connection manager lock poisoned: {e}"))?;
+        let mut cleared = 0;
+        for scoped in guard.scopes.values_mut() {
+            let Some(ActiveConnection::Ssh(c)) = scoped.active.as_mut() else {
+                continue;
+            };
+            if !ssh_connection_matches_target(c, host, user, remote_port, remote_data_dir) {
+                continue;
+            }
+            c.remote_update_status = None;
+            cleared += 1;
+        }
+        if cleared == 0 {
+            anyhow::bail!("current connection is not SSH");
+        }
+        Ok(cleared)
+    }
+}
+
+fn normalize_optional_target_part(value: Option<&str>) -> &str {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("")
+}
+
+fn ssh_connection_matches_target(
+    connection: &SshConnection,
+    host: &str,
+    user: Option<&str>,
+    remote_port: u16,
+    remote_data_dir: Option<&str>,
+) -> bool {
+    connection.host.trim() == host.trim()
+        && normalize_optional_target_part(connection.user.as_deref())
+            == normalize_optional_target_part(user)
+        && connection.remote_port == remote_port
+        && normalize_optional_target_part(connection.remote_data_dir.as_deref())
+            == normalize_optional_target_part(remote_data_dir)
 }

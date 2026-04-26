@@ -123,6 +123,21 @@ fn navigate_window_to_workspace(
     let _ = window.emit("workspace:open", workspace_id.to_string());
 }
 
+fn daemon_key_for_window_label(app: &tauri::AppHandle, window_label: &str) -> Option<String> {
+    app.try_state::<ConnectionManager>()
+        .and_then(|state| state.daemon_target_key_for_scope(window_label))
+}
+
+fn register_workspace_for_window_target(
+    app: &tauri::AppHandle,
+    registry: &WorkspaceWindowRegistry,
+    window_label: &str,
+    workspace_id: &str,
+) {
+    let daemon_key = daemon_key_for_window_label(app, window_label);
+    registry.register_for_daemon(window_label, daemon_key.as_deref(), workspace_id);
+}
+
 pub(crate) fn open_workspace_window(
     app: &tauri::AppHandle,
     registry: &WorkspaceWindowRegistry,
@@ -150,7 +165,7 @@ pub(crate) fn open_workspace_target(
                 session_id,
                 "reuse_window",
             );
-            registry.register(&window_label, workspace_id);
+            register_workspace_for_window_target(app, registry, &window_label, workspace_id);
             registry.record_recent_workspace(workspace_id, None);
             return Ok(());
         }
@@ -172,7 +187,7 @@ pub(crate) fn open_workspace_target(
         session_id,
         "reuse_main_window",
     );
-    registry.register("main", workspace_id);
+    register_workspace_for_window_target(app, registry, "main", workspace_id);
     registry.record_recent_workspace(workspace_id, None);
     Ok(())
 }
@@ -234,7 +249,7 @@ pub(crate) fn open_workspace_target_in_window_with_label(
     }
     let _ = window.show();
     let _ = window.set_focus();
-    registry.register(&label, workspace_id);
+    register_workspace_for_window_target(app, registry, &label, workspace_id);
     registry.record_recent_workspace(workspace_id, None);
     Ok(())
 }
@@ -271,7 +286,7 @@ pub(crate) fn focus_or_open_workspace_target(
                 session_id,
                 "focus_existing_window",
             );
-            registry.register(&window_label, workspace_id);
+            register_workspace_for_window_target(app, registry, &window_label, workspace_id);
             registry.record_recent_workspace(workspace_id, None);
             return Ok(());
         }
@@ -412,7 +427,7 @@ pub(crate) fn open_main_window_at_route(app: &tauri::AppHandle, start_path: &str
     register_window_for_recovery(app, "main", start_path);
     if let Some(target) = main_workspace_target {
         let registry = app.state::<WorkspaceWindowRegistry>();
-        registry.register("main", &target.workspace_id);
+        register_workspace_for_window_target(app, &registry, "main", &target.workspace_id);
         registry.record_recent_workspace(&target.workspace_id, None);
     }
     #[cfg(target_os = "macos")]

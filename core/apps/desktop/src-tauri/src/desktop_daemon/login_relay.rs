@@ -101,6 +101,7 @@ fn callback_url_from_target(
 
 fn process_codex_login_relay_connection(
     app: &tauri::AppHandle,
+    scope: &str,
     mut stream: TcpStream,
     login_id: &str,
     completion_token: &str,
@@ -132,18 +133,22 @@ fn process_codex_login_relay_connection(
 
     let state = app.state::<ConnectionManager>();
     let manager: &ConnectionManager = state.inner();
-    ensure_local_connection_for_user_action(app, manager).context("ensuring daemon connection")?;
+    ensure_local_connection_for_user_action_for_scope(app, manager, scope)
+        .context("ensuring daemon connection")?;
     let body = serde_json::json!({
         "callback_url": callback_url,
         "completion_token": completion_token,
     })
     .to_string();
-    let response = manager.daemon_request(DesktopDaemonRequest {
-        method: "POST".to_string(),
-        path: format!("/api/providers/codex/accounts/login/{login_id}"),
-        body: Some(body),
-        headers: vec![("Content-Type".to_string(), "application/json".to_string())],
-    })?;
+    let response = manager.daemon_request_for_scope(
+        scope,
+        DesktopDaemonRequest {
+            method: "POST".to_string(),
+            path: format!("/api/providers/codex/accounts/login/{login_id}"),
+            body: Some(body),
+            headers: vec![("Content-Type".to_string(), "application/json".to_string())],
+        },
+    )?;
     if (200..300).contains(&response.status) {
         write_http_response(
             &mut stream,
@@ -167,6 +172,7 @@ fn process_codex_login_relay_connection(
 #[tauri::command]
 pub(crate) async fn desktop_start_codex_login_relay(
     app: tauri::AppHandle,
+    window: tauri::Window,
     req: DesktopCodexLoginRelayReq,
 ) -> Result<bool, String> {
     tauri::async_runtime::spawn_blocking(move || {
@@ -204,6 +210,7 @@ pub(crate) async fn desktop_start_codex_login_relay(
         listener
             .set_nonblocking(true)
             .context("setting callback relay nonblocking")?;
+        let scope = window.label().to_string();
 
         std::thread::spawn(move || {
             let deadline = Instant::now() + Duration::from_secs(5 * 60);
@@ -215,6 +222,7 @@ pub(crate) async fn desktop_start_codex_login_relay(
                     Ok((stream, _addr)) => {
                         if let Err(err) = process_codex_login_relay_connection(
                             &app,
+                            &scope,
                             stream,
                             &login_id,
                             &completion_token,

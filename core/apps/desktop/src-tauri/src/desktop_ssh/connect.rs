@@ -303,6 +303,7 @@ fn update_connected_remote_if_needed(
 
 async fn desktop_connect_ssh_inner(
     app: tauri::AppHandle,
+    scope: String,
     req: SshConnectReq,
     job_id: Option<String>,
 ) -> Result<DesktopConnectionInfo, String> {
@@ -313,7 +314,7 @@ async fn desktop_connect_ssh_inner(
     let target = normalize_connect_target(req)?;
     {
         let state = app.state::<ConnectionManager>();
-        state.mark_explicit_remote_intent();
+        state.mark_explicit_remote_intent_for_scope(&scope);
     }
     let channel = normalize_update_channel(std::env::var("CTX_DESKTOP_CHANNEL").ok().as_deref())?;
     let prepared = tauri::async_runtime::spawn_blocking({
@@ -375,7 +376,8 @@ async fn desktop_connect_ssh_inner(
     let prewarm_user = target.user.clone();
     let prewarm_remote_data_dir = target.remote_data_dir.clone();
     state
-        .set_ssh_with_blocking_cleanup(
+        .set_ssh_with_blocking_cleanup_for_scope(
+            &scope,
             connected.base_url,
             Some(connected.token),
             connected
@@ -391,7 +393,11 @@ async fn desktop_connect_ssh_inner(
         .await?;
     if pending_remote_update_on_idle {
         state
-            .set_ssh_remote_update_state(
+            .set_ssh_remote_update_state_for_matching_target(
+                &prewarm_host,
+                prewarm_user.as_deref(),
+                target.remote_port,
+                prewarm_remote_data_dir.as_deref(),
                 DesktopRemoteDaemonUpdateState::Pending,
                 Some(
                     "Remote daemon update is queued and will restart automatically when no turns are queued or running."
@@ -399,44 +405,58 @@ async fn desktop_connect_ssh_inner(
                 ),
             )
             .map_err(|err| format!("failed to record pending remote daemon update: {err:#}"))?;
-        schedule_pending_remote_daemon_update(&app, pending_remote_update_key, channel.clone());
+        schedule_pending_remote_daemon_update(
+            &app,
+            scope.clone(),
+            pending_remote_update_key,
+            channel.clone(),
+        );
     } else {
-        let _ = state.clear_ssh_remote_update_state();
+        let _ = state.clear_ssh_remote_update_state_for_matching_target(
+            &prewarm_host,
+            prewarm_user.as_deref(),
+            target.remote_port,
+            prewarm_remote_data_dir.as_deref(),
+        );
     }
     let _ = super::commands::schedule_remote_prewarm_request(
         app.clone(),
+        scope.clone(),
         prewarm_host,
         prewarm_user,
         target.remote_port,
         prewarm_remote_data_dir,
     );
-    Ok(state.info())
+    Ok(state.info_for_scope(&scope))
 }
 
 #[tauri::command]
 pub(crate) async fn desktop_connect_ssh(
     app: tauri::AppHandle,
+    window: tauri::Window,
     req: SshConnectReq,
 ) -> Result<DesktopConnectionInfo, String> {
-    desktop_connect_ssh_inner(app, req, None).await
+    desktop_connect_ssh_inner(app, window.label().to_string(), req, None).await
 }
 
 #[tauri::command]
 pub(crate) fn desktop_connect_ssh_begin(
     app: tauri::AppHandle,
+    window: tauri::Window,
     req: SshConnectReq,
 ) -> Result<String, String> {
     let _ = normalize_connect_target(req.clone())?;
+    let scope = window.label().to_string();
     {
         let state = app.state::<ConnectionManager>();
-        state.mark_explicit_remote_intent();
+        state.mark_explicit_remote_intent_for_scope(&scope);
     }
     let job_id = begin_connect_job()?;
     let app_for_job = app.clone();
     let job_id_for_task = job_id.clone();
     tauri::async_runtime::spawn(async move {
         let result =
-            desktop_connect_ssh_inner(app_for_job, req, Some(job_id_for_task.clone())).await;
+            desktop_connect_ssh_inner(app_for_job, scope, req, Some(job_id_for_task.clone())).await;
         match result {
             Ok(info) => complete_connect_job_success(&job_id_for_task, info),
             Err(err) => complete_connect_job_failure(&job_id_for_task, err),

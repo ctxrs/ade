@@ -81,8 +81,10 @@ pub(super) fn desktop_update_editor_settings(
 pub(super) fn desktop_open_file(
     state: tauri::State<ConnectionManager>,
     app: tauri::AppHandle,
+    window: tauri::Window,
     req: DesktopOpenFileReq,
 ) -> Result<(), String> {
+    let scope = window.label().to_string();
     let worktree_id = req.worktree_id.trim();
     if worktree_id.is_empty() {
         return Err("worktree_id is required".to_string());
@@ -92,12 +94,19 @@ pub(super) fn desktop_open_file(
         return Err("path is required".to_string());
     }
 
-    let worktree_root = resolve_worktree_root(&state, worktree_id).map_err(to_err)?;
+    let worktree_root = resolve_worktree_root(&state, &scope, worktree_id).map_err(to_err)?;
     let resolved = resolve_worktree_path(&worktree_root, path).map_err(to_err)?;
     let line = req.line.filter(|v| *v > 0);
     let col = req.col.filter(|v| *v > 0);
     let editor_settings = load_desktop_settings(&app).editor;
-    open_in_editor(&editor_settings, &resolved, line, col, state.is_remote()).map_err(to_err)?;
+    open_in_editor(
+        &editor_settings,
+        &resolved,
+        line,
+        col,
+        state.is_remote_for_scope(&scope),
+    )
+    .map_err(to_err)?;
     Ok(())
 }
 
@@ -240,13 +249,20 @@ fn save_desktop_settings(app: &tauri::AppHandle, settings: &DesktopSettings) -> 
     Ok(())
 }
 
-fn resolve_worktree_root(state: &ConnectionManager, worktree_id: &str) -> Result<PathBuf> {
-    let resp = state.daemon_request(DesktopDaemonRequest {
-        method: "GET".to_string(),
-        path: format!("/api/worktrees/{worktree_id}"),
-        body: None,
-        headers: vec![],
-    })?;
+fn resolve_worktree_root(
+    state: &ConnectionManager,
+    scope: &str,
+    worktree_id: &str,
+) -> Result<PathBuf> {
+    let resp = state.daemon_request_for_scope(
+        scope,
+        DesktopDaemonRequest {
+            method: "GET".to_string(),
+            path: format!("/api/worktrees/{worktree_id}"),
+            body: None,
+            headers: vec![],
+        },
+    )?;
     if resp.status != 200 {
         return Err(anyhow!(
             "failed to load worktree ({status}): {body}",

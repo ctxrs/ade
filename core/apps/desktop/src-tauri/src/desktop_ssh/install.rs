@@ -4,7 +4,46 @@ use super::*;
 mod artifacts;
 
 pub(super) use artifacts::*;
+fn render_remote_verified_download_fragment(
+    artifact: &ResolvedRemoteReleaseArtifact,
+    remote_tmp_path: &str,
+    make_executable: bool,
+    error_label: &str,
+) -> String {
+    let chmod_cmd = if make_executable {
+        "chmod 755 \"$download_tmp\"; "
+    } else {
+        ""
+    };
+    format!(
+        "download_url={url}; \
+download_sha={sha}; \
+download_tmp={tmp}; \
+if ! command -v sha256sum >/dev/null 2>&1; then echo 'remote host missing sha256sum required for {label} verification' >&2; exit 127; fi; \
+rm -f \"$download_tmp\"; \
+if command -v curl >/dev/null 2>&1; then curl -fL --retry 3 --connect-timeout 20 --max-time 600 -o \"$download_tmp\" \"$download_url\"; \
+elif command -v wget >/dev/null 2>&1; then wget -q -O \"$download_tmp\" \"$download_url\"; \
+else echo 'remote host missing curl or wget required to download {label}' >&2; exit 127; fi; \
+printf '%s  %s\\n' \"$download_sha\" \"$download_tmp\" | sha256sum -c - >/dev/null; \
+{chmod_cmd}",
+        url = shell_escape(&artifact.url),
+        sha = shell_escape(&artifact.sha256),
+        tmp = remote_path_expr(remote_tmp_path),
+        label = error_label,
+        chmod_cmd = chmod_cmd,
+    )
+}
+
+fn render_remote_daemon_artifact_validation_cmd(remote_tmp_path: &str) -> String {
+    format!(
+        "if command -v timeout >/dev/null 2>&1; then validator='timeout 20s'; else validator=''; fi; \
+if ! $validator {tmp} serve --help >/dev/null 2>&1; then echo 'managed remote daemon artifact is not a headless ctx daemon: serve --help failed' >&2; exit 126; fi;",
+        tmp = remote_path_expr(remote_tmp_path),
+    )
+}
+
 fn render_remote_bundle_sync_cmd(
+    artifact: &ResolvedRemoteReleaseArtifact,
     remote_data_dir: &str,
     remote_bundle_dir: &str,
     remote_bundle_backup_dir: &str,
@@ -15,22 +54,21 @@ fn render_remote_bundle_sync_cmd(
 ) -> String {
     format!(
         "set -eu; \
-tmp_root={tmp_root}; \
-appimage={appimage}; \
-extract_root={extract_root}; \
+	tmp_root={tmp_root}; \
+	appimage={appimage}; \
+	extract_root={extract_root}; \
 staged_bundle={staged_bundle}; \
 dest={dest}; \
 backup={backup}; \
 no_previous_marker=\"$backup/.ctx-no-previous-bundle\"; \
 cleanup() {{ rm -rf \"$tmp_root\"; }}; \
-trap cleanup EXIT INT TERM; \
-mkdir -p {data_dir}; \
-rm -rf \"$tmp_root\"; \
-mkdir -p \"$extract_root\" \"$staged_bundle\"; \
-cat > \"$appimage\"; \
-chmod 755 \"$appimage\"; \
-(cd \"$extract_root\" && \"$appimage\" --appimage-extract >/dev/null 2>&1); \
-bundle_src=$(find \"$extract_root\"/squashfs-root -type d -path '*/bundles' -print -quit); \
+	trap cleanup EXIT INT TERM; \
+	mkdir -p {data_dir}; \
+	rm -rf \"$tmp_root\"; \
+	mkdir -p \"$extract_root\" \"$staged_bundle\"; \
+	{download_appimage}\
+	(cd \"$extract_root\" && \"$appimage\" --appimage-extract >/dev/null 2>&1); \
+	bundle_src=$(find \"$extract_root\"/squashfs-root -type d -path '*/bundles' -print -quit); \
 if [ -z \"$bundle_src\" ]; then echo 'managed remote desktop artifact missing bundles directory' >&2; exit 1; fi; \
 cp -R \"$bundle_src\"/. \"$staged_bundle\"/; \
 rm -rf \"$backup\"; \
@@ -43,11 +81,13 @@ if mv \"$staged_bundle\" \"$dest\"; then :; else status=$?; if [ -e \"$no_previo
         data_dir = remote_path_expr(remote_data_dir),
         dest = remote_path_expr(remote_bundle_dir),
         backup = remote_path_expr(remote_bundle_backup_dir),
+        download_appimage =
+            render_remote_verified_download_fragment(artifact, remote_appimage_path, true, "managed remote bundle"),
     )
 }
 
 pub(super) fn install_remote_daemon_over_ssh(
-    app: &tauri::AppHandle,
+    _app: &tauri::AppHandle,
     host: &str,
     user: Option<&str>,
     remote_platform: RemoteLinuxPlatform,
@@ -56,17 +96,26 @@ pub(super) fn install_remote_daemon_over_ssh(
     let target = ssh_target(host, user);
     let channel = normalize_update_channel(std::env::var("CTX_DESKTOP_CHANNEL").ok().as_deref())
         .map_err(anyhow::Error::msg)?;
-    let local_bin = ensure_managed_remote_daemon_binary(app, remote_platform.arch, &channel)?;
+    let artifact = resolve_managed_remote_daemon_artifact(remote_platform.arch, &channel)?;
     let parent_dir = remote_ctx_bin_parent_dir(remote_ctx_bin)?;
     let remote_ctx_bin = validate_remote_ctx_bin(remote_ctx_bin)?;
     let temp_remote_path = format!("{remote_ctx_bin}.tmp-{}", std::process::id());
+    let download_cmd = render_remote_verified_download_fragment(
+        &artifact,
+        &temp_remote_path,
+        true,
+        "managed remote daemon",
+    );
+    let validate_cmd = render_remote_daemon_artifact_validation_cmd(&temp_remote_path);
     let install_cmd = format!(
-        "mkdir -p {parent} && cat > {tmp} && chmod 755 {tmp} && mv -f {tmp} {dest}",
+        "set -eu; tmp={tmp}; cleanup() {{ rm -f \"$tmp\"; }}; trap cleanup EXIT INT TERM; mkdir -p {parent}; {download_cmd}{validate_cmd}mv -f \"$tmp\" {dest}",
         parent = remote_path_expr(&parent_dir),
         tmp = remote_path_expr(&temp_remote_path),
         dest = remote_path_expr(&remote_ctx_bin),
+        download_cmd = download_cmd,
+        validate_cmd = validate_cmd,
     );
-    let mut child = new_ssh_command()
+    let output = new_ssh_command()
         .arg("-o")
         .arg("BatchMode=yes")
         .arg("-o")
@@ -77,22 +126,10 @@ pub(super) fn install_remote_daemon_over_ssh(
         .arg("ServerAliveCountMax=2")
         .arg(target)
         .arg(format!("sh -lc {}", shell_escape(&install_cmd)))
-        .stdin(Stdio::piped())
+        .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
-        .spawn()
-        .context("spawning ssh for remote daemon install")?;
-    {
-        let mut file = std::fs::File::open(&local_bin)
-            .with_context(|| format!("opening managed daemon at {}", local_bin.display()))?;
-        let mut stdin = child
-            .stdin
-            .take()
-            .ok_or_else(|| anyhow!("ssh stdin unavailable for daemon install"))?;
-        std::io::copy(&mut file, &mut stdin).context("streaming daemon binary over ssh")?;
-    }
-    let output = child
-        .wait_with_output()
+        .output()
         .context("waiting for remote daemon install ssh command")?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
@@ -105,14 +142,14 @@ pub(super) fn install_remote_daemon_over_ssh(
 }
 
 pub(super) fn sync_remote_bundle_metadata_over_ssh(
-    app: &tauri::AppHandle,
+    _app: &tauri::AppHandle,
     host: &str,
     user: Option<&str>,
     remote_data_dir: Option<&str>,
     remote_arch: &str,
     channel: &str,
 ) -> Result<()> {
-    let local_appimage = ensure_managed_remote_bundle_appimage(app, remote_arch, channel)?;
+    let artifact = resolve_managed_remote_bundle_appimage_artifact(remote_arch, channel)?;
     let data_dir = remote_data_dir
         .filter(|d| !d.trim().is_empty())
         .unwrap_or("~/.ctx");
@@ -127,6 +164,7 @@ pub(super) fn sync_remote_bundle_metadata_over_ssh(
     let remote_staged_bundle_dir = join_remote_path(&remote_tmp_root, "bundles");
     let target = ssh_target(host, user);
     let remote_cmd = render_remote_bundle_sync_cmd(
+        &artifact,
         data_dir,
         &remote_bundle_dir,
         &remote_bundle_backup_dir,
@@ -135,7 +173,7 @@ pub(super) fn sync_remote_bundle_metadata_over_ssh(
         &remote_extract_root,
         &remote_staged_bundle_dir,
     );
-    let mut ssh_child = new_ssh_command()
+    let ssh_output = new_ssh_command()
         .arg("-o")
         .arg("BatchMode=yes")
         .arg("-o")
@@ -146,27 +184,10 @@ pub(super) fn sync_remote_bundle_metadata_over_ssh(
         .arg("ServerAliveCountMax=2")
         .arg(target)
         .arg(format!("sh -lc {}", shell_escape(&remote_cmd)))
-        .stdin(Stdio::piped())
+        .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
-        .spawn()
-        .context("spawning ssh for remote bundle sync")?;
-    {
-        let mut local_appimage_file = std::fs::File::open(&local_appimage).with_context(|| {
-            format!(
-                "opening managed remote desktop artifact at {}",
-                local_appimage.display()
-            )
-        })?;
-        let mut ssh_stdin = ssh_child
-            .stdin
-            .take()
-            .ok_or_else(|| anyhow!("ssh stdin unavailable for remote bundle sync"))?;
-        std::io::copy(&mut local_appimage_file, &mut ssh_stdin)
-            .context("streaming managed remote desktop artifact over ssh")?;
-    }
-    let ssh_output = ssh_child
-        .wait_with_output()
+        .output()
         .context("waiting for remote bundle metadata ssh command")?;
     if !ssh_output.status.success() {
         let stderr = String::from_utf8_lossy(&ssh_output.stderr)
@@ -266,7 +287,12 @@ mod tests {
 
     #[test]
     fn remote_bundle_sync_command_extracts_appimage_on_remote() {
+        let artifact = ResolvedRemoteReleaseArtifact {
+            url: "https://api.ctx.rs/functions/v1/download/stable/1.2.3/ctx.AppImage".to_string(),
+            sha256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string(),
+        };
         let cmd = render_remote_bundle_sync_cmd(
+            &artifact,
             "~/.ctx",
             "~/.ctx/bundles",
             "~/.ctx/bundles.pre-update-backup",
@@ -285,8 +311,22 @@ mod tests {
             cmd.contains("if [ -e \"$no_previous_marker\" ]; then rm -rf \"$dest\" \"$backup\";")
         );
         assert!(!cmd.contains("rm -rf \"$HOME/.ctx/bundles\""));
-        assert!(cmd.contains("cat > \"$appimage\""));
+        assert!(cmd.contains("curl -fL --retry 3"));
+        assert!(cmd.contains("wget -q -O"));
+        assert!(cmd.contains("sha256sum -c -"));
+        assert!(cmd.contains(
+            "download_url='https://api.ctx.rs/functions/v1/download/stable/1.2.3/ctx.AppImage'"
+        ));
+        assert!(!cmd.contains("cat > \"$appimage\""));
         assert!(!cmd.contains("desktop_bundle_dir"));
+    }
+
+    #[test]
+    fn remote_daemon_install_command_validates_headless_daemon() {
+        let cmd = render_remote_daemon_artifact_validation_cmd("~/.ctx/bin/ctx.tmp-42");
+        assert!(cmd.contains("serve --help"));
+        assert!(cmd.contains("timeout 20s"));
+        assert!(cmd.contains("managed remote daemon artifact is not a headless ctx daemon"));
     }
 }
 

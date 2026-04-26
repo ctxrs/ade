@@ -16,7 +16,9 @@ use http_client::{connection_http_client_build_count, reset_connection_http_clie
 #[cfg(test)]
 use lifecycle::cleanup_active_connection;
 pub(crate) use manager::ConnectionManager;
-pub(crate) use types::{LocalConnectionSource, SshConnectionTarget, SshRuntimeMetadata};
+pub(crate) use types::{
+    LocalConnectionSource, SshConnectionTarget, SshRuntimeMetadata, DEFAULT_CONNECTION_SCOPE,
+};
 
 #[cfg(test)]
 mod connection_manager_tests;

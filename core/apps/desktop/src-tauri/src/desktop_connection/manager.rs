@@ -13,7 +13,8 @@ pub(super) use super::lifecycle::{
 pub(super) use super::types::{
     log_local_connection_established, log_ssh_connection_established, ActiveConnection,
     ConnectionIntent, ConnectionState, LocalConnection, LocalConnectionOwnership,
-    LocalConnectionSource, SshConnectionTarget, SshRemoteUpdateStatus, SshRuntimeMetadata,
+    LocalConnectionSource, SshConnection, SshConnectionTarget, SshRemoteUpdateStatus,
+    SshRuntimeMetadata, DEFAULT_CONNECTION_SCOPE,
 };
 
 pub(crate) struct ConnectionManager(pub(super) std::sync::Mutex<ConnectionState>);

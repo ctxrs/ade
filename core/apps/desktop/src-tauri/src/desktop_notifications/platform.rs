@@ -6,7 +6,9 @@ use super::automation::{
     DesktopClearDeliveredNotificationsReq, DesktopDeliveredNotificationEntry,
     DesktopDeliveredNotificationSnapshot, NOTIFICATION_IDENTIFIER_PREFIX,
 };
-use super::deep_links::{notification_deep_link_from_payload_value, open_notification_target};
+#[cfg(target_os = "macos")]
+use super::deep_links::notification_deep_link_from_payload_value;
+use super::deep_links::open_notification_target;
 
 #[cfg(target_os = "macos")]
 const NOTIFICATION_DEEP_LINK_USER_INFO_KEY: &str = "deep_link";

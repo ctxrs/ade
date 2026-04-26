@@ -102,8 +102,13 @@ fn runtime_with_persisted_remote_admin_password(
     runtime
 }
 
-fn remote_stage_status(manager: &ConnectionManager) -> Result<LinuxSandboxBootstrapStatus> {
-    remote_stage_status_response(manager.daemon_request(build_remote_stage_request())?)
+fn remote_stage_status(
+    manager: &ConnectionManager,
+    scope: &str,
+) -> Result<LinuxSandboxBootstrapStatus> {
+    remote_stage_status_response(
+        manager.daemon_request_for_scope(scope, build_remote_stage_request())?,
+    )
 }
 
 fn remote_stage_status_response(
@@ -134,10 +139,11 @@ fn build_remote_prepare_request(sudo_password: Option<&str>) -> DesktopDaemonReq
 
 fn remote_prepare_status(
     manager: &ConnectionManager,
+    scope: &str,
     sudo_password: Option<&str>,
 ) -> Result<LinuxSandboxPrepareResponse> {
     parse_remote_daemon_json(
-        manager.daemon_request(build_remote_prepare_request(sudo_password))?,
+        manager.daemon_request_for_scope(scope, build_remote_prepare_request(sudo_password))?,
         "/api/execution/linux_sandbox_runtime/prepare",
     )
 }
@@ -145,14 +151,16 @@ fn remote_prepare_status(
 #[tauri::command]
 pub(crate) async fn desktop_ensure_remote_linux_sandbox_ready(
     app: tauri::AppHandle,
+    window: tauri::Window,
     req: DesktopRemoteLinuxSandboxEnsureReq,
 ) -> Result<DesktopLinuxSandboxEnsureResp, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<ConnectionManager>();
         let manager: &ConnectionManager = state.inner();
-        let target = manager.ssh_target().map_err(to_err)?;
+        let scope = window.label().to_string();
+        let target = manager.ssh_target_for_scope(&scope).map_err(to_err)?;
         let (ssh_password_once, cached_admin_password) = active_remote_passwords(&target);
-        let status = remote_stage_status(manager).map_err(to_err)?;
+        let status = remote_stage_status(manager, &scope).map_err(to_err)?;
         match status.state.as_str() {
             "ready" => Ok(DesktopLinuxSandboxEnsureResp { ready: true }),
             "manual_runtime_required" => Err(if status.message.trim().is_empty() {
@@ -166,15 +174,20 @@ pub(crate) async fn desktop_ensure_remote_linux_sandbox_ready(
                     cached_admin_password.as_deref(),
                     ssh_password_once.as_deref(),
                 );
-                let prepare = remote_prepare_status(manager, selected_password).map_err(to_err)?;
+                let prepare =
+                    remote_prepare_status(manager, &scope, selected_password).map_err(to_err)?;
                 if prepare.ready {
                     if let Some(password) = selected_password {
-                        let latest_runtime = manager.ssh_target().map_err(to_err)?.runtime;
+                        let latest_runtime =
+                            manager.ssh_target_for_scope(&scope).map_err(to_err)?.runtime;
                         manager
-                            .update_ssh_runtime(runtime_with_persisted_remote_admin_password(
+                            .update_ssh_runtime_for_scope(
+                                &scope,
+                                runtime_with_persisted_remote_admin_password(
                                 latest_runtime,
                                 password,
-                            ))
+                                ),
+                            )
                             .map_err(to_err)?;
                     }
                     return Ok(DesktopLinuxSandboxEnsureResp { ready: true });

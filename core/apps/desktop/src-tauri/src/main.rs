@@ -226,6 +226,8 @@ fn main() {
                 clear_cached_menu_state_for_window(&app_handle, window.label());
                 let registry = window.state::<WorkspaceWindowRegistry>();
                 registry.unregister_window(window.label());
+                let manager = window.state::<ConnectionManager>();
+                manager.disconnect_for_scope(window.label());
                 let attention = window.state::<DesktopAttentionRegistry>();
                 attention.clear_window_attention(window.label());
                 if let Err(err) = attention.apply_to_app(&app_handle) {
@@ -266,7 +268,7 @@ fn main() {
             tauri::RunEvent::Exit | tauri::RunEvent::ExitRequested { .. }
         ) {
             let manager = app_handle.state::<ConnectionManager>();
-            manager.disconnect();
+            manager.disconnect_all();
         }
     });
 }

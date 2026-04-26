@@ -12,10 +12,11 @@ pub(super) use commands::{
     desktop_set_open_workspaces, desktop_set_titlebar_color, desktop_set_window_title,
     desktop_unregister_workspace_window, open_workspace_setup_window_with_label,
 };
+pub(super) use macos::apply_workbench_titlebar;
+#[cfg(target_os = "macos")]
 pub(super) use macos::{
-    apply_workbench_titlebar, emit_settings_inplace, install_macos_settings_button,
-    load_lucide_settings_icon, settings_button_target_class, SETTINGS_BUTTON_APP,
-    SETTINGS_BUTTON_CLASS,
+    emit_settings_inplace, install_macos_settings_button, load_lucide_settings_icon,
+    settings_button_target_class, SETTINGS_BUTTON_APP, SETTINGS_BUTTON_CLASS,
 };
 pub(super) use navigation::{
     confirm_action, desktop_startup_initialization_script, focus_app_window,

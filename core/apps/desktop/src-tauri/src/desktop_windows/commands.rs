@@ -3,10 +3,16 @@ use super::*;
 #[tauri::command]
 pub(crate) fn desktop_set_open_workspaces(
     window: tauri::WebviewWindow,
+    state: tauri::State<ConnectionManager>,
     registry: tauri::State<WorkspaceWindowRegistry>,
     req: DesktopSetOpenWorkspacesReq,
 ) -> Result<(), String> {
-    registry.set_window_workspaces(window.label(), req.workspace_ids);
+    let daemon_key = state.daemon_target_key_for_scope(window.label());
+    registry.set_window_workspaces_for_daemon(
+        window.label(),
+        daemon_key.as_deref(),
+        req.workspace_ids,
+    );
     Ok(())
 }
 
@@ -115,6 +121,7 @@ pub(crate) fn desktop_set_window_title(
 #[tauri::command]
 pub(crate) fn desktop_register_workspace_window(
     registry: tauri::State<WorkspaceWindowRegistry>,
+    state: tauri::State<ConnectionManager>,
     workspace_id: String,
     window_label: String,
 ) -> Result<(), String> {
@@ -126,7 +133,8 @@ pub(crate) fn desktop_register_workspace_window(
     if window_label.is_empty() {
         return Err("window_label is required".to_string());
     }
-    registry.register(window_label, workspace_id);
+    let daemon_key = state.daemon_target_key_for_scope(window_label);
+    registry.register_for_daemon(window_label, daemon_key.as_deref(), workspace_id);
     Ok(())
 }
 
@@ -146,6 +154,7 @@ pub(crate) fn desktop_unregister_workspace_window(
 #[tauri::command]
 pub(crate) fn desktop_record_workspace_visit(
     window: tauri::WebviewWindow,
+    state: tauri::State<ConnectionManager>,
     registry: tauri::State<WorkspaceWindowRegistry>,
     req: DesktopRecordWorkspaceVisitReq,
 ) -> Result<(), String> {
@@ -153,7 +162,12 @@ pub(crate) fn desktop_record_workspace_visit(
     if workspace_id.is_empty() {
         return Err("workspace_id is required".to_string());
     }
-    registry.set_window_workspaces(window.label(), vec![workspace_id.to_string()]);
+    let daemon_key = state.daemon_target_key_for_scope(window.label());
+    registry.set_window_workspaces_for_daemon(
+        window.label(),
+        daemon_key.as_deref(),
+        vec![workspace_id.to_string()],
+    );
     registry.record_recent_workspace(workspace_id, Some(&req.workspace_label));
     Ok(())
 }

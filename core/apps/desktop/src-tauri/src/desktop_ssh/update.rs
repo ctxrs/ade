@@ -6,6 +6,11 @@ use ctx_desktop_ipc::DesktopRemoteDaemonUpdateState;
 mod self_update;
 
 pub(super) use self_update::run_remote_daemon_self_update;
+#[cfg(test)]
+pub(super) use self_update::{
+    remote_backup_ctx_bin_cmd, remote_cleanup_backup_ctx_bin_cmd, remote_restore_ctx_bin_cmd,
+    remote_stop_daemon_cmd, remote_update_backup_ctx_bin,
+};
 
 const REMOTE_UPDATE_HEALTH_RETRIES: usize = 24;
 const REMOTE_UPDATE_HEALTH_DELAY_MS: u64 = 500;
@@ -97,16 +102,17 @@ fn trim_remote_update_message(value: &str) -> String {
     text.chars().take(220).collect::<String>() + "..."
 }
 
-fn mark_remote_update_failed(state: &ConnectionManager, message: impl Into<String>) {
+fn mark_remote_update_failed(state: &ConnectionManager, scope: &str, message: impl Into<String>) {
     let text = trim_remote_update_message(&message.into());
-    let _ = state.set_ssh_remote_update_state(
+    let _ = state.set_ssh_remote_update_state_for_scope(
+        scope,
         DesktopRemoteDaemonUpdateState::Failed,
         if text.is_empty() { None } else { Some(text) },
     );
 }
 
-fn active_ssh_target_matches_key(state: &ConnectionManager, target_key: &str) -> bool {
-    let Ok(target) = state.ssh_target() else {
+fn active_ssh_target_matches_key(state: &ConnectionManager, scope: &str, target_key: &str) -> bool {
+    let Ok(target) = state.ssh_target_for_scope(scope) else {
         return false;
     };
     remote_update_target_key_for_target(&target) == target_key
@@ -114,6 +120,7 @@ fn active_ssh_target_matches_key(state: &ConnectionManager, target_key: &str) ->
 
 pub(super) fn schedule_pending_remote_daemon_update(
     app: &tauri::AppHandle,
+    scope: String,
     target_key: String,
     channel: String,
 ) {
@@ -124,9 +131,12 @@ pub(super) fn schedule_pending_remote_daemon_update(
     tauri::async_runtime::spawn(async move {
         let result = tauri::async_runtime::spawn_blocking({
             let app_handle = app_handle.clone();
+            let scope = scope.clone();
             let target_key = target_key.clone();
             let channel = channel.clone();
-            move || run_pending_remote_daemon_update_worker(&app_handle, &target_key, &channel)
+            move || {
+                run_pending_remote_daemon_update_worker(&app_handle, &scope, &target_key, &channel)
+            }
         })
         .await;
         clear_pending_remote_update_worker(&target_key);
@@ -134,15 +144,16 @@ pub(super) fn schedule_pending_remote_daemon_update(
             Ok(Ok(())) => {}
             Ok(Err(err)) => {
                 let state = app_handle.state::<ConnectionManager>();
-                if active_ssh_target_matches_key(state.inner(), &target_key) {
-                    mark_remote_update_failed(state.inner(), err.to_string());
+                if active_ssh_target_matches_key(state.inner(), &scope, &target_key) {
+                    mark_remote_update_failed(state.inner(), &scope, err.to_string());
                 }
             }
             Err(err) => {
                 let state = app_handle.state::<ConnectionManager>();
-                if active_ssh_target_matches_key(state.inner(), &target_key) {
+                if active_ssh_target_matches_key(state.inner(), &scope, &target_key) {
                     mark_remote_update_failed(
                         state.inner(),
+                        &scope,
                         format!("pending remote daemon update task failed: {err}"),
                     );
                 }
@@ -153,19 +164,20 @@ pub(super) fn schedule_pending_remote_daemon_update(
 
 fn run_pending_remote_daemon_update_worker(
     app: &tauri::AppHandle,
+    scope: &str,
     target_key: &str,
     channel: &str,
 ) -> Result<()> {
     loop {
         let state = app.state::<ConnectionManager>();
-        let info = state.info();
+        let info = state.info_for_scope(scope);
         if !matches!(info.kind, DesktopConnectionKind::Ssh) {
             return Ok(());
         }
         if info.remote_update_state != Some(DesktopRemoteDaemonUpdateState::Pending) {
             return Ok(());
         }
-        let target = match state.ssh_target() {
+        let target = match state.ssh_target_for_scope(scope) {
             Ok(target) => target,
             Err(_) => return Ok(()),
         };
@@ -187,7 +199,12 @@ fn run_pending_remote_daemon_update_worker(
             classify_daemon_compatibility(&health, &expected_identity),
             DaemonCompatibilityState::Exact
         ) {
-            let _ = state.clear_ssh_remote_update_state();
+            let _ = state.clear_ssh_remote_update_state_for_matching_target(
+                &target.host,
+                target.user.as_deref(),
+                target.remote_port,
+                target.remote_data_dir.as_deref(),
+            );
             return Ok(());
         }
 
@@ -197,7 +214,7 @@ fn run_pending_remote_daemon_update_worker(
             continue;
         }
 
-        match update_current_remote_daemon(app, state.inner(), Some(channel)) {
+        match update_current_remote_daemon_for_scope(app, state.inner(), scope, Some(channel)) {
             Ok(_) => return Ok(()),
             Err(err) => {
                 release_remote_update_drain(&base_url, &token);
@@ -280,6 +297,7 @@ pub(super) fn release_remote_update_drain(daemon_base_url: &str, token: &str) {
 #[tauri::command]
 pub(crate) async fn desktop_update_remote_daemon(
     app: tauri::AppHandle,
+    window: tauri::Window,
     req: DesktopRemoteDaemonUpdateReq,
 ) -> Result<DesktopRemoteDaemonUpdateResp, String> {
     if !req.confirm {
@@ -287,26 +305,47 @@ pub(crate) async fn desktop_update_remote_daemon(
     }
     let channel = req.channel.clone();
     let app_for_update = app.clone();
+    let scope = window.label().to_string();
     tauri::async_runtime::spawn_blocking(move || {
         let state = app_for_update.state::<ConnectionManager>();
-        update_current_remote_daemon(&app_for_update, state.inner(), channel.as_deref())
+        update_current_remote_daemon_for_scope(
+            &app_for_update,
+            state.inner(),
+            &scope,
+            channel.as_deref(),
+        )
     })
     .await
     .map_err(|err| format!("remote daemon update task failed: {err}"))?
     .map_err(to_err)
 }
 
+#[cfg(test)]
 pub(crate) fn update_current_remote_daemon(
     app: &tauri::AppHandle,
     state: &ConnectionManager,
     requested_channel: Option<&str>,
 ) -> Result<DesktopRemoteDaemonUpdateResp> {
+    update_current_remote_daemon_for_scope(app, state, DEFAULT_CONNECTION_SCOPE, requested_channel)
+}
+
+pub(crate) fn update_current_remote_daemon_for_scope(
+    app: &tauri::AppHandle,
+    state: &ConnectionManager,
+    scope: &str,
+    requested_channel: Option<&str>,
+) -> Result<DesktopRemoteDaemonUpdateResp> {
     let channel = normalize_update_channel(requested_channel).map_err(anyhow::Error::msg)?;
-    let target = state.ssh_target()?;
+    let target = state.ssh_target_for_scope(scope)?;
     let target_key = remote_update_target_key_for_target(&target);
     let _singleflight = acquire_remote_update_singleflight(&target_key)
         .ok_or_else(|| anyhow!("remote daemon update already in progress"))?;
-    let _ = state.clear_ssh_remote_update_state();
+    let _ = state.clear_ssh_remote_update_state_for_matching_target(
+        &target.host,
+        target.user.as_deref(),
+        target.remote_port,
+        target.remote_data_dir.as_deref(),
+    );
     let managed_remote_ctx_bin = target.runtime.managed_ctx_bin.clone();
     let host = target.host;
     let user = target.user;
@@ -315,7 +354,7 @@ pub(crate) fn update_current_remote_daemon(
     let channel_for_update = channel.clone();
     let remote_platform = probe_remote_linux_platform(&host, user.as_deref())?;
     let daemon_base_url = state
-        .info()
+        .info_for_scope(scope)
         .base_url
         .ok_or_else(|| anyhow!("current SSH connection is missing a base_url"))?;
     let release_base_url = bootstrap_download_base_url();
@@ -370,17 +409,26 @@ pub(crate) fn update_current_remote_daemon(
         let auth =
             read_remote_daemon_auth_with_retry(&host, user.as_deref(), remote_data_dir.as_deref())?;
         state
-            .update_ssh_token(auth.token)
+            .update_ssh_auth_and_runtime_for_matching_target(
+                &host,
+                user.as_deref(),
+                remote_port,
+                remote_data_dir.as_deref(),
+                auth.token,
+                SshRuntimeMetadata {
+                    managed_ctx_bin: managed_remote_ctx_bin.clone(),
+                    active_ctx_bin: Some(active_ctx_bin),
+                    ssh_password_once: None,
+                    admin_password_once: None,
+                },
+            )
             .map_err(anyhow::Error::msg)?;
-        state
-            .update_ssh_runtime(SshRuntimeMetadata {
-                managed_ctx_bin: managed_remote_ctx_bin.clone(),
-                active_ctx_bin: Some(active_ctx_bin),
-                ssh_password_once: None,
-                admin_password_once: None,
-            })
-            .map_err(anyhow::Error::msg)?;
-        let _ = state.clear_ssh_remote_update_state();
+        let _ = state.clear_ssh_remote_update_state_for_matching_target(
+            &host,
+            user.as_deref(),
+            remote_port,
+            remote_data_dir.as_deref(),
+        );
         Ok(DesktopRemoteDaemonUpdateResp {
             updated: true,
             message: format!("Remote daemon updated on channel `{channel}` and restarted."),
@@ -388,7 +436,14 @@ pub(crate) fn update_current_remote_daemon(
     })();
 
     if let Err(err) = result.as_ref() {
-        mark_remote_update_failed(state, err.to_string());
+        let _ = state.set_ssh_remote_update_state_for_matching_target(
+            &host,
+            user.as_deref(),
+            remote_port,
+            remote_data_dir.as_deref(),
+            DesktopRemoteDaemonUpdateState::Failed,
+            Some(err.to_string()),
+        );
     }
     result
 }

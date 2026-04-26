@@ -163,10 +163,12 @@ pub(crate) async fn desktop_get_git_branch(
 #[tauri::command]
 pub(crate) async fn desktop_kickoff_remote_prewarm(
     app: tauri::AppHandle,
+    window: tauri::Window,
     req: DesktopRemotePrewarmReq,
 ) -> Result<(), String> {
     schedule_remote_prewarm_request(
         app,
+        window.label().to_string(),
         req.host,
         req.user,
         req.remote_port.unwrap_or(4399),
@@ -176,6 +178,7 @@ pub(crate) async fn desktop_kickoff_remote_prewarm(
 
 pub(super) fn schedule_remote_prewarm_request(
     app: tauri::AppHandle,
+    scope: String,
     host: String,
     user: Option<String>,
     remote_port: u16,
@@ -208,6 +211,7 @@ pub(super) fn schedule_remote_prewarm_request(
         let result = tauri::async_runtime::spawn_blocking(move || {
             request_remote_startup_prewarm(
                 &app,
+                &scope,
                 &host,
                 user.as_deref(),
                 remote_port,
@@ -229,6 +233,7 @@ pub(super) fn schedule_remote_prewarm_request(
 
 fn request_remote_startup_prewarm(
     app: &tauri::AppHandle,
+    scope: &str,
     host: &str,
     user: Option<&str>,
     remote_port: u16,
@@ -236,7 +241,7 @@ fn request_remote_startup_prewarm(
 ) -> Result<()> {
     let state = app.state::<ConnectionManager>();
     let manager: &ConnectionManager = state.inner();
-    let active = manager.ssh_target()?;
+    let active = manager.ssh_target_for_scope(scope)?;
     let requested_key = remote_prewarm_dedupe_key(host, user, remote_port, remote_data_dir);
     let active_key = remote_prewarm_dedupe_key(
         &active.host,
@@ -247,9 +252,11 @@ fn request_remote_startup_prewarm(
     if requested_key != active_key {
         anyhow::bail!("current SSH connection target does not match remote prewarm request");
     }
-    let response = manager.daemon_request(build_remote_startup_prewarm_request())?;
+    let response =
+        manager.daemon_request_for_scope(scope, build_remote_startup_prewarm_request())?;
     if (200..300).contains(&response.status) {
-        let stage_response = manager.daemon_request(build_remote_linux_sandbox_stage_request())?;
+        let stage_response =
+            manager.daemon_request_for_scope(scope, build_remote_linux_sandbox_stage_request())?;
         if (200..300).contains(&stage_response.status) {
             return Ok(());
         }

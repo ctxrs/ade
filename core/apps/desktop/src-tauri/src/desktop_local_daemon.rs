@@ -23,14 +23,17 @@ pub(super) fn lock_local_connect_gate() -> Result<std::sync::MutexGuard<'static,
 #[tauri::command]
 pub(super) async fn desktop_connect_local(
     app: tauri::AppHandle,
+    window: tauri::Window,
 ) -> Result<DesktopConnectionInfo, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let _guard = lock_local_connect_gate().map_err(to_err)?;
         let state = app.state::<ConnectionManager>();
+        let scope = window.label().to_string();
         let data_dir = daemon_data_dir(&app).map_err(to_err)?;
         let desktop_identity = load_desktop_build_identity(&app).map_err(to_err)?;
-        let result = connect_local_with_sources(
+        let result = connect_local_with_sources_for_scope(
             state.inner(),
+            &scope,
             |url| existing_local_daemon_matches_or_absent(url, &data_dir, &desktop_identity),
             || resolve_env_local_daemon(&app),
             probe_daemon_health,
@@ -50,6 +53,7 @@ pub(super) async fn desktop_connect_local(
     .map_err(|e| format!("failed to connect to daemon: {e}"))?
 }
 
+#[cfg(test)]
 pub(super) fn connect_local_with_sources<
     CurrentLocalMatchesFn,
     ResolveEnvFn,
@@ -58,6 +62,39 @@ pub(super) fn connect_local_with_sources<
     SpawnFn,
 >(
     state: &ConnectionManager,
+    current_local_matches_or_absent: CurrentLocalMatchesFn,
+    resolve_env_local_daemon: ResolveEnvFn,
+    probe_health: ProbeHealthFn,
+    resolve_existing_local_daemon: ResolveExistingFn,
+    spawn_and_validate_local_daemon: SpawnFn,
+) -> Result<DesktopConnectionInfo>
+where
+    CurrentLocalMatchesFn: Fn(&str) -> bool,
+    ResolveEnvFn: FnOnce() -> Result<Option<(String, String)>>,
+    ProbeHealthFn: Fn(&str) -> Result<()>,
+    ResolveExistingFn: FnMut() -> Result<Option<(String, String, Option<u32>)>>,
+    SpawnFn: FnOnce() -> Result<SpawnedLocalDaemonReady>,
+{
+    connect_local_with_sources_for_scope(
+        state,
+        DEFAULT_CONNECTION_SCOPE,
+        current_local_matches_or_absent,
+        resolve_env_local_daemon,
+        probe_health,
+        resolve_existing_local_daemon,
+        spawn_and_validate_local_daemon,
+    )
+}
+
+pub(super) fn connect_local_with_sources_for_scope<
+    CurrentLocalMatchesFn,
+    ResolveEnvFn,
+    ProbeHealthFn,
+    ResolveExistingFn,
+    SpawnFn,
+>(
+    state: &ConnectionManager,
+    scope: &str,
     current_local_matches_or_absent: CurrentLocalMatchesFn,
     resolve_env_local_daemon: ResolveEnvFn,
     probe_health: ProbeHealthFn,
@@ -74,12 +111,12 @@ where
     // Idempotent: if we're already connected to a healthy local daemon, keep the connection.
     // The workspace wizard calls connect_local as part of its flow; disconnecting here can
     // kill a just-started daemon and introduce flakiness on cold start.
-    let info = state.info();
+    let info = state.info_for_scope(scope);
     if matches!(info.kind, DesktopConnectionKind::Local) {
         if let Some(url) = info.base_url.as_deref() {
             if current_local_matches_or_absent(url) {
-                state.mark_explicit_local_intent_if_local();
-                return Ok(state.info());
+                state.mark_explicit_local_intent_if_local_for_scope(scope);
+                return Ok(state.info_for_scope(scope));
             }
         }
     }
@@ -88,17 +125,24 @@ where
     // ConnectionManager swaps and cleans up the old transport only after the new one is ready.
     if let Some((url, token)) = resolve_env_local_daemon()? {
         probe_health(&url)?;
-        state.set_local_attached(url, token, None, LocalConnectionSource::EnvOverride);
-        return Ok(state.info());
+        state.set_local_attached_for_scope(
+            scope,
+            url,
+            token,
+            None,
+            LocalConnectionSource::EnvOverride,
+        );
+        return Ok(state.info_for_scope(scope));
     }
     if let Some((url, token, daemon_pid)) = resolve_existing_local_daemon()? {
-        state.set_local_attached(
+        state.set_local_attached_for_scope(
+            scope,
             url,
             token,
             daemon_pid,
             LocalConnectionSource::ExistingCompatibleDaemon,
         );
-        return Ok(state.info());
+        return Ok(state.info_for_scope(scope));
     }
 
     // Block until the daemon is actually reachable before returning. The workspace wizard
@@ -110,33 +154,50 @@ where
     } else {
         None
     };
-    apply_validated_local_connection(state, spawned, fallback_existing)
+    apply_validated_local_connection_for_scope(state, scope, spawned, fallback_existing)
 }
 
+#[cfg(test)]
 pub(super) fn apply_validated_local_connection(
     state: &ConnectionManager,
     spawned: Result<SpawnedLocalDaemonReady>,
     fallback_existing: Option<(String, String, Option<u32>)>,
 ) -> Result<DesktopConnectionInfo> {
+    apply_validated_local_connection_for_scope(
+        state,
+        DEFAULT_CONNECTION_SCOPE,
+        spawned,
+        fallback_existing,
+    )
+}
+
+pub(super) fn apply_validated_local_connection_for_scope(
+    state: &ConnectionManager,
+    scope: &str,
+    spawned: Result<SpawnedLocalDaemonReady>,
+    fallback_existing: Option<(String, String, Option<u32>)>,
+) -> Result<DesktopConnectionInfo> {
     match spawned {
         Ok(spawned) => {
-            state.set_local(
+            state.set_local_for_scope(
+                scope,
                 spawned.url,
                 spawned.token,
                 spawned.child,
                 spawned.systemd_scope,
             );
-            Ok(state.info())
+            Ok(state.info_for_scope(scope))
         }
         Err(err) => {
             if let Some((url, token, daemon_pid)) = fallback_existing {
-                state.set_local_attached(
+                state.set_local_attached_for_scope(
+                    scope,
                     url,
                     token,
                     daemon_pid,
                     LocalConnectionSource::ExistingCompatibleDaemon,
                 );
-                return Ok(state.info());
+                return Ok(state.info_for_scope(scope));
             }
             Err(err)
         }
@@ -150,17 +211,33 @@ pub(super) fn restart_local_with_spawn<SpawnFn>(
 where
     SpawnFn: FnOnce() -> Result<SpawnedLocalDaemonReady>,
 {
-    if state.should_disconnect_for_local_restart() {
-        state.disconnect_for_local_restart()?;
+    restart_local_with_spawn_for_scope(
+        DEFAULT_CONNECTION_SCOPE,
+        state,
+        spawn_and_validate_local_daemon,
+    )
+}
+
+pub(super) fn restart_local_with_spawn_for_scope<SpawnFn>(
+    scope: &str,
+    state: &ConnectionManager,
+    spawn_and_validate_local_daemon: SpawnFn,
+) -> Result<DesktopConnectionInfo>
+where
+    SpawnFn: FnOnce() -> Result<SpawnedLocalDaemonReady>,
+{
+    if state.should_disconnect_for_local_restart_for_scope(scope) {
+        state.disconnect_for_local_restart_for_scope(scope)?;
     }
     let spawned = spawn_and_validate_local_daemon()?;
-    state.set_local(
+    state.set_local_for_scope(
+        scope,
         spawned.url,
         spawned.token,
         spawned.child,
         spawned.systemd_scope,
     );
-    Ok(state.info())
+    Ok(state.info_for_scope(scope))
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -169,9 +246,15 @@ enum EnsureLocalConnectionMode {
     ExplicitLocal,
 }
 
-fn ensure_mode_allows_connect(mode: EnsureLocalConnectionMode, state: &ConnectionManager) -> bool {
+fn ensure_mode_allows_connect(
+    mode: EnsureLocalConnectionMode,
+    state: &ConnectionManager,
+    scope: &str,
+) -> bool {
     match mode {
-        EnsureLocalConnectionMode::AutoBootstrap => state.local_auto_bootstrap_allowed(),
+        EnsureLocalConnectionMode::AutoBootstrap => {
+            state.local_auto_bootstrap_allowed_for_scope(scope)
+        }
         EnsureLocalConnectionMode::ExplicitLocal => true,
     }
 }
@@ -208,6 +291,7 @@ where
 
 fn set_attached_local_for_ensure_mode(
     state: &ConnectionManager,
+    scope: &str,
     mode: EnsureLocalConnectionMode,
     url: String,
     token: String,
@@ -216,22 +300,25 @@ fn set_attached_local_for_ensure_mode(
 ) {
     match mode {
         EnsureLocalConnectionMode::AutoBootstrap => {
-            state.set_local_attached_auto_bootstrap(url, token, daemon_pid, source);
+            state
+                .set_local_attached_auto_bootstrap_for_scope(scope, url, token, daemon_pid, source);
         }
         EnsureLocalConnectionMode::ExplicitLocal => {
-            state.set_local_attached(url, token, daemon_pid, source);
+            state.set_local_attached_for_scope(scope, url, token, daemon_pid, source);
         }
     }
 }
 
 fn set_spawned_local_for_ensure_mode(
     state: &ConnectionManager,
+    scope: &str,
     mode: EnsureLocalConnectionMode,
     spawned: SpawnedLocalDaemonReady,
 ) {
     match mode {
         EnsureLocalConnectionMode::AutoBootstrap => {
-            state.set_local_auto_bootstrap(
+            state.set_local_auto_bootstrap_for_scope(
+                scope,
                 spawned.url,
                 spawned.token,
                 spawned.child,
@@ -239,7 +326,8 @@ fn set_spawned_local_for_ensure_mode(
             );
         }
         EnsureLocalConnectionMode::ExplicitLocal => {
-            state.set_local(
+            state.set_local_for_scope(
+                scope,
                 spawned.url,
                 spawned.token,
                 spawned.child,
@@ -252,6 +340,7 @@ fn set_spawned_local_for_ensure_mode(
 #[tauri::command]
 pub(super) async fn desktop_restart_local_daemon(
     app: tauri::AppHandle,
+    window: tauri::Window,
     req: DesktopRestartLocalDaemonReq,
 ) -> Result<DesktopConnectionInfo, String> {
     if !req.confirm {
@@ -261,9 +350,10 @@ pub(super) async fn desktop_restart_local_daemon(
         let _guard = lock_local_connect_gate().map_err(to_err)?;
         let state = app.state::<ConnectionManager>();
         let manager: &ConnectionManager = state.inner();
+        let scope = window.label().to_string();
         let data_dir = daemon_data_dir(&app).map_err(to_err)?;
         let desktop_identity = load_desktop_build_identity(&app).map_err(to_err)?;
-        restart_local_with_spawn(manager, || {
+        restart_local_with_spawn_for_scope(&scope, manager, || {
             spawn_and_validate_local_daemon(&app, &data_dir, &desktop_identity)
         })
         .map_err(to_err)
@@ -276,42 +366,59 @@ pub(super) fn ensure_local_connection(
     app: &tauri::AppHandle,
     state: &ConnectionManager,
 ) -> Result<()> {
-    ensure_local_connection_with_mode(app, state, EnsureLocalConnectionMode::AutoBootstrap)
+    ensure_local_connection_for_scope(app, state, DEFAULT_CONNECTION_SCOPE)
+}
+
+pub(super) fn ensure_local_connection_for_scope(
+    app: &tauri::AppHandle,
+    state: &ConnectionManager,
+    scope: &str,
+) -> Result<()> {
+    ensure_local_connection_with_mode(app, state, scope, EnsureLocalConnectionMode::AutoBootstrap)
 }
 
 pub(super) fn ensure_local_connection_for_user_action(
     app: &tauri::AppHandle,
     state: &ConnectionManager,
 ) -> Result<()> {
-    ensure_local_connection_with_mode(app, state, EnsureLocalConnectionMode::ExplicitLocal)
+    ensure_local_connection_for_user_action_for_scope(app, state, DEFAULT_CONNECTION_SCOPE)
+}
+
+pub(super) fn ensure_local_connection_for_user_action_for_scope(
+    app: &tauri::AppHandle,
+    state: &ConnectionManager,
+    scope: &str,
+) -> Result<()> {
+    ensure_local_connection_with_mode(app, state, scope, EnsureLocalConnectionMode::ExplicitLocal)
 }
 
 fn ensure_local_connection_with_mode(
     app: &tauri::AppHandle,
     state: &ConnectionManager,
+    scope: &str,
     mode: EnsureLocalConnectionMode,
 ) -> Result<()> {
     let result = (|| -> Result<()> {
-        let initial_info = state.info();
+        let initial_info = state.info_for_scope(scope);
         if !ensure_mode_needs_connect(mode, &initial_info)
             && !current_local_connection_stale(&initial_info, probe_daemon_health)
         {
             return Ok(());
         }
-        if !ensure_mode_allows_connect(mode, state) {
+        if !ensure_mode_allows_connect(mode, state, scope) {
             return Ok(());
         }
         // Multiple webview requests can race on cold start (overlay pollers, initial data loads, etc.).
         // Serialize the "connect local" path so we don't concurrently spawn the daemon and trip the
         // daemon's lockfile, which can surface as spurious "daemon unavailable" errors in the UI.
         let _guard = lock_local_connect_gate()?;
-        let current_info = state.info();
+        let current_info = state.info_for_scope(scope);
         if !ensure_mode_needs_connect(mode, &current_info)
             && !current_local_connection_stale(&current_info, probe_daemon_health)
         {
             return Ok(());
         }
-        if !ensure_mode_allows_connect(mode, state) {
+        if !ensure_mode_allows_connect(mode, state, scope) {
             return Ok(());
         }
         let data_dir = daemon_data_dir(app)?;
@@ -320,6 +427,7 @@ fn ensure_local_connection_with_mode(
             probe_daemon_health_with_auth(&url, Some(token.as_str()))?;
             set_attached_local_for_ensure_mode(
                 state,
+                scope,
                 mode,
                 url,
                 token,
@@ -331,6 +439,7 @@ fn ensure_local_connection_with_mode(
         if let Some((url, token, daemon_pid)) = resolve_existing_local_daemon(app, &data_dir)? {
             set_attached_local_for_ensure_mode(
                 state,
+                scope,
                 mode,
                 url,
                 token,
@@ -373,6 +482,7 @@ fn ensure_local_connection_with_mode(
                     .and_then(|health| normalize_daemon_pid(health.pid));
                 set_attached_local_for_ensure_mode(
                     state,
+                    scope,
                     mode,
                     url.to_string(),
                     auth.token,
@@ -382,7 +492,7 @@ fn ensure_local_connection_with_mode(
                 return Ok(());
             }
         };
-        set_spawned_local_for_ensure_mode(state, mode, spawned);
+        set_spawned_local_for_ensure_mode(state, scope, mode, spawned);
         Ok(())
     })();
     if let Err(err) = &result {
@@ -395,4 +505,5 @@ fn ensure_local_connection_with_mode(
 }
 
 #[cfg(test)]
+#[path = "desktop_local_daemon_tests.rs"]
 mod desktop_local_daemon_tests;

@@ -2,6 +2,14 @@ use super::*;
 
 impl ConnectionManager {
     pub(crate) fn daemon_request(&self, req: DesktopDaemonRequest) -> Result<DesktopHttpResponse> {
+        self.daemon_request_for_scope(DEFAULT_CONNECTION_SCOPE, req)
+    }
+
+    pub(crate) fn daemon_request_for_scope(
+        &self,
+        scope: &str,
+        req: DesktopDaemonRequest,
+    ) -> Result<DesktopHttpResponse> {
         if !req.path.starts_with("/api/") {
             return Err(anyhow!("only /api/* paths are supported"));
         }
@@ -11,9 +19,9 @@ impl ConnectionManager {
                 .0
                 .lock()
                 .map_err(|e| anyhow!("connection manager lock poisoned: {e}"))?;
-            let active = guard
+            let scoped = guard.scope(scope);
+            let active = scoped
                 .active
-                .as_ref()
                 .ok_or_else(|| anyhow!("not connected (open a workspace first)"))?;
             match active {
                 ActiveConnection::Local(c) => (
@@ -69,8 +77,19 @@ impl ConnectionManager {
         })
     }
 
+    #[cfg(test)]
     pub(crate) fn upload_blob(
         &self,
+        bytes: Vec<u8>,
+        mime_type: String,
+        name: Option<String>,
+    ) -> Result<serde_json::Value> {
+        self.upload_blob_for_scope(DEFAULT_CONNECTION_SCOPE, bytes, mime_type, name)
+    }
+
+    pub(crate) fn upload_blob_for_scope(
+        &self,
+        scope: &str,
         bytes: Vec<u8>,
         mime_type: String,
         name: Option<String>,
@@ -80,9 +99,9 @@ impl ConnectionManager {
                 .0
                 .lock()
                 .map_err(|e| anyhow!("connection manager lock poisoned: {e}"))?;
-            let active = guard
+            let scoped = guard.scope(scope);
+            let active = scoped
                 .active
-                .as_ref()
                 .ok_or_else(|| anyhow!("not connected (open a workspace first)"))?;
             match active {
                 ActiveConnection::Local(c) => (

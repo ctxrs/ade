@@ -10,13 +10,17 @@ pub(crate) struct DesktopDemoConnectionRequest {
 #[tauri::command]
 pub(crate) fn desktop_get_connection(
     state: tauri::State<ConnectionManager>,
+    window: tauri::Window,
 ) -> DesktopConnectionInfo {
-    state.info()
+    state.info_for_scope(window.label())
 }
 
 #[tauri::command]
-pub(crate) fn desktop_disconnect(state: tauri::State<ConnectionManager>) -> Result<(), String> {
-    state.disconnect();
+pub(crate) fn desktop_disconnect(
+    state: tauri::State<ConnectionManager>,
+    window: tauri::Window,
+) -> Result<(), String> {
+    state.disconnect_for_scope(window.label());
     Ok(())
 }
 
@@ -40,6 +44,7 @@ pub(crate) fn demo_commands_enabled() -> bool {
 #[tauri::command]
 pub(crate) fn desktop_set_demo_connection(
     state: tauri::State<ConnectionManager>,
+    window: tauri::Window,
     req: DesktopDemoConnectionRequest,
 ) -> Result<DesktopConnectionInfo, String> {
     #[cfg(feature = "automation")]
@@ -58,14 +63,21 @@ pub(crate) fn desktop_set_demo_connection(
         if token.is_empty() {
             return Err("token is required".to_string());
         }
-        state.set_local_attached(base_url, token, None, LocalConnectionSource::EnvOverride);
-        return Ok(state.info());
+        state.set_local_attached_for_scope(
+            window.label(),
+            base_url,
+            token,
+            None,
+            LocalConnectionSource::EnvOverride,
+        );
+        return Ok(state.info_for_scope(window.label()));
     }
 
     #[cfg(not(feature = "automation"))]
     {
         let _ = state;
         let _ = req;
+        let _ = window;
         Err("desktop_set_demo_connection is automation-only".to_string())
     }
 }

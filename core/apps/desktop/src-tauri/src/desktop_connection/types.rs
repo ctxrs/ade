@@ -18,11 +18,79 @@ pub(crate) struct SshRuntimeMetadata {
 }
 
 pub(super) struct ConnectionState {
+    pub(super) scopes: HashMap<String, ScopedConnectionState>,
+}
+
+impl Default for ConnectionState {
+    fn default() -> Self {
+        let mut scopes = HashMap::new();
+        scopes.insert(
+            DEFAULT_CONNECTION_SCOPE.to_string(),
+            ScopedConnectionState::default(),
+        );
+        Self { scopes }
+    }
+}
+
+impl ConnectionState {
+    pub(super) fn scope(&self, scope: &str) -> ScopedConnectionStateRef<'_> {
+        let key = normalize_connection_scope(scope);
+        match self.scopes.get(&key) {
+            Some(state) => ScopedConnectionStateRef {
+                active: state.active.as_ref(),
+                intent: state.intent,
+            },
+            None => ScopedConnectionStateRef {
+                active: None,
+                intent: ConnectionIntent::AutoLocalBootstrap,
+            },
+        }
+    }
+
+    pub(super) fn scope_mut(&mut self, scope: &str) -> &mut ScopedConnectionState {
+        let key = normalize_connection_scope(scope);
+        self.scopes.entry(key).or_default()
+    }
+
+    pub(super) fn transfer_local_ownership_if_shared(
+        &mut self,
+        removed_scope: &str,
+        removed: &mut LocalConnection,
+    ) -> bool {
+        if !matches!(
+            removed.ownership,
+            LocalConnectionOwnership::OwnedChild { .. }
+        ) {
+            return false;
+        }
+        let removed_scope = normalize_connection_scope(removed_scope);
+        let ownership = std::mem::replace(
+            &mut removed.ownership,
+            LocalConnectionOwnership::UnownedExternal,
+        );
+        for (scope, state) in &mut self.scopes {
+            if scope == &removed_scope {
+                continue;
+            }
+            let Some(ActiveConnection::Local(existing)) = state.active.as_mut() else {
+                continue;
+            };
+            if same_local_daemon_for_ownership(removed, existing) {
+                existing.ownership = ownership;
+                return true;
+            }
+        }
+        removed.ownership = ownership;
+        false
+    }
+}
+
+pub(super) struct ScopedConnectionState {
     pub(super) active: Option<ActiveConnection>,
     pub(super) intent: ConnectionIntent,
 }
 
-impl Default for ConnectionState {
+impl Default for ScopedConnectionState {
     fn default() -> Self {
         Self {
             active: None,
@@ -31,7 +99,12 @@ impl Default for ConnectionState {
     }
 }
 
-impl ConnectionState {
+pub(super) struct ScopedConnectionStateRef<'a> {
+    pub(super) active: Option<&'a ActiveConnection>,
+    pub(super) intent: ConnectionIntent,
+}
+
+impl<'a> ScopedConnectionStateRef<'a> {
     pub(super) fn local_auto_bootstrap_allowed(&self) -> bool {
         self.intent.allows_local_auto_bootstrap()
             && !matches!(self.active, Some(ActiveConnection::Ssh(_)))
@@ -45,6 +118,26 @@ impl ConnectionState {
             ConnectionIntent::ExplicitLocal => ConnectionIntent::ExplicitLocal,
             _ => ConnectionIntent::AutoLocalBootstrap,
         })
+    }
+}
+
+impl ScopedConnectionState {
+    pub(super) fn as_ref(&self) -> ScopedConnectionStateRef<'_> {
+        ScopedConnectionStateRef {
+            active: self.active.as_ref(),
+            intent: self.intent,
+        }
+    }
+}
+
+pub(crate) const DEFAULT_CONNECTION_SCOPE: &str = "__default__";
+
+pub(super) fn normalize_connection_scope(scope: &str) -> String {
+    let trimmed = scope.trim();
+    if trimmed.is_empty() {
+        DEFAULT_CONNECTION_SCOPE.to_string()
+    } else {
+        trimmed.to_string()
     }
 }
 
@@ -98,6 +191,17 @@ pub(super) struct LocalConnection {
 pub(super) enum LocalConnectionOwnership {
     OwnedChild { child: Child, systemd_scope: bool },
     UnownedExternal,
+}
+
+pub(super) fn same_local_daemon_for_ownership(
+    left: &LocalConnection,
+    right: &LocalConnection,
+) -> bool {
+    left.base_url == right.base_url
+        && left.token == right.token
+        && (left.daemon_pid.is_none()
+            || right.daemon_pid.is_none()
+            || left.daemon_pid == right.daemon_pid)
 }
 
 pub(super) struct SshConnection {

@@ -2,21 +2,19 @@ use super::diagnostics::ssh_log_snippet;
 use super::*;
 
 mod reclaim;
-mod transport;
 #[cfg(test)]
 mod tests;
+mod transport;
 
+#[cfg(test)]
+use reclaim::{health_reports_expected_pid, reclaim_complete, reclaim_health_probe_timeout};
 pub(crate) use reclaim::{
     normalize_daemon_pid, reclaim_incompatible_local_daemon,
     should_reclaim_incompatible_local_daemon, terminate_pid, wait_for_daemon_reclaim,
 };
-#[cfg(test)]
-pub(super) use reclaim::{
-    health_reports_expected_pid, reclaim_complete, reclaim_health_probe_timeout,
-};
 pub(crate) use transport::{daemon_health, daemon_health_with_auth};
 #[cfg(test)]
-pub(super) use transport::{
+use transport::{
     daemon_health_client_build_count, daemon_health_with_timeout,
     reset_daemon_health_client_build_count,
 };

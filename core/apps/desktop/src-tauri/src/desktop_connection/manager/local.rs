@@ -1,6 +1,7 @@
 use super::*;
 
 impl ConnectionManager {
+    #[cfg(test)]
     pub(crate) fn set_local(
         &self,
         base_url: String,
@@ -8,7 +9,25 @@ impl ConnectionManager {
         child: Child,
         systemd_scope: bool,
     ) {
+        self.set_local_for_scope(
+            DEFAULT_CONNECTION_SCOPE,
+            base_url,
+            token,
+            child,
+            systemd_scope,
+        );
+    }
+
+    pub(crate) fn set_local_for_scope(
+        &self,
+        scope: &str,
+        base_url: String,
+        token: String,
+        child: Child,
+        systemd_scope: bool,
+    ) {
         self.set_local_with_intent(
+            scope,
             base_url,
             token,
             child,
@@ -17,6 +36,7 @@ impl ConnectionManager {
         );
     }
 
+    #[cfg(test)]
     pub(crate) fn set_local_auto_bootstrap(
         &self,
         base_url: String,
@@ -24,11 +44,29 @@ impl ConnectionManager {
         child: Child,
         systemd_scope: bool,
     ) -> bool {
-        self.set_local_with_auto_bootstrap_gate(base_url, token, child, systemd_scope)
+        self.set_local_auto_bootstrap_for_scope(
+            DEFAULT_CONNECTION_SCOPE,
+            base_url,
+            token,
+            child,
+            systemd_scope,
+        )
+    }
+
+    pub(crate) fn set_local_auto_bootstrap_for_scope(
+        &self,
+        scope: &str,
+        base_url: String,
+        token: String,
+        child: Child,
+        systemd_scope: bool,
+    ) -> bool {
+        self.set_local_with_auto_bootstrap_gate(scope, base_url, token, child, systemd_scope)
     }
 
     fn set_local_with_auto_bootstrap_gate(
         &self,
+        scope: &str,
         base_url: String,
         token: String,
         child: Child,
@@ -54,13 +92,14 @@ impl ConnectionManager {
                     return false;
                 }
             };
-            let Some(intent) = guard.auto_local_install_intent() else {
+            let scoped = guard.scope_mut(scope);
+            let Some(intent) = scoped.as_ref().auto_local_install_intent() else {
                 drop(guard);
                 cleanup_active_connection(next);
                 return false;
             };
-            guard.intent = intent;
-            guard.active = Some(next);
+            scoped.intent = intent;
+            scoped.active = Some(next);
         }
         log_local_connection_established(LocalConnectionSource::SpawnedByDesktop, daemon_pid);
         true
@@ -68,6 +107,7 @@ impl ConnectionManager {
 
     fn set_local_with_intent(
         &self,
+        scope: &str,
         base_url: String,
         token: String,
         child: Child,
@@ -83,8 +123,9 @@ impl ConnectionManager {
                     return;
                 }
             };
-            guard.intent = intent;
-            guard
+            let scoped = guard.scope_mut(scope);
+            scoped.intent = intent;
+            let previous = scoped
                 .active
                 .replace(ActiveConnection::Local(LocalConnection {
                     base_url,
@@ -96,7 +137,17 @@ impl ConnectionManager {
                         systemd_scope,
                     },
                     http_client: std::sync::OnceLock::new(),
-                }))
+                }));
+            match previous {
+                Some(ActiveConnection::Local(mut local)) => {
+                    if guard.transfer_local_ownership_if_shared(scope, &mut local) {
+                        None
+                    } else {
+                        Some(ActiveConnection::Local(local))
+                    }
+                }
+                other => other,
+            }
         };
         if let Some(previous) = previous {
             cleanup_active_connection(previous);
@@ -104,6 +155,7 @@ impl ConnectionManager {
         log_local_connection_established(LocalConnectionSource::SpawnedByDesktop, daemon_pid);
     }
 
+    #[cfg(test)]
     pub(crate) fn set_local_attached(
         &self,
         base_url: String,
@@ -111,7 +163,25 @@ impl ConnectionManager {
         daemon_pid: Option<u32>,
         source: LocalConnectionSource,
     ) {
+        self.set_local_attached_for_scope(
+            DEFAULT_CONNECTION_SCOPE,
+            base_url,
+            token,
+            daemon_pid,
+            source,
+        );
+    }
+
+    pub(crate) fn set_local_attached_for_scope(
+        &self,
+        scope: &str,
+        base_url: String,
+        token: String,
+        daemon_pid: Option<u32>,
+        source: LocalConnectionSource,
+    ) {
         self.set_local_attached_with_intent(
+            scope,
             base_url,
             token,
             daemon_pid,
@@ -120,6 +190,7 @@ impl ConnectionManager {
         );
     }
 
+    #[cfg(test)]
     pub(crate) fn set_local_attached_auto_bootstrap(
         &self,
         base_url: String,
@@ -127,11 +198,29 @@ impl ConnectionManager {
         daemon_pid: Option<u32>,
         source: LocalConnectionSource,
     ) -> bool {
-        self.set_local_attached_with_auto_bootstrap_gate(base_url, token, daemon_pid, source)
+        self.set_local_attached_auto_bootstrap_for_scope(
+            DEFAULT_CONNECTION_SCOPE,
+            base_url,
+            token,
+            daemon_pid,
+            source,
+        )
+    }
+
+    pub(crate) fn set_local_attached_auto_bootstrap_for_scope(
+        &self,
+        scope: &str,
+        base_url: String,
+        token: String,
+        daemon_pid: Option<u32>,
+        source: LocalConnectionSource,
+    ) -> bool {
+        self.set_local_attached_with_auto_bootstrap_gate(scope, base_url, token, daemon_pid, source)
     }
 
     fn set_local_attached_with_auto_bootstrap_gate(
         &self,
+        scope: &str,
         base_url: String,
         token: String,
         daemon_pid: Option<u32>,
@@ -141,11 +230,12 @@ impl ConnectionManager {
             Ok(g) => g,
             Err(_) => return false,
         };
-        let Some(intent) = guard.auto_local_install_intent() else {
+        let scoped = guard.scope_mut(scope);
+        let Some(intent) = scoped.as_ref().auto_local_install_intent() else {
             return false;
         };
-        guard.intent = intent;
-        guard.active = Some(ActiveConnection::Local(LocalConnection {
+        scoped.intent = intent;
+        scoped.active = Some(ActiveConnection::Local(LocalConnection {
             base_url,
             token,
             daemon_pid,
@@ -160,6 +250,7 @@ impl ConnectionManager {
 
     fn set_local_attached_with_intent(
         &self,
+        scope: &str,
         base_url: String,
         token: String,
         daemon_pid: Option<u32>,
@@ -179,7 +270,8 @@ impl ConnectionManager {
                 Ok(g) => g,
                 Err(_) => return,
             };
-            let previous = guard.active.take();
+            let scoped = guard.scope_mut(scope);
+            let previous = scoped.active.take();
             let previous = match previous {
                 Some(ActiveConnection::Local(c))
                     if should_preserve_local_handoff(
@@ -194,14 +286,23 @@ impl ConnectionManager {
                     next.ownership = c.ownership;
                     next.source = c.source;
                     next.http_client = c.http_client;
-                    guard.intent = intent;
+                    scoped.intent = intent;
                     None
                 }
                 other => other,
             };
-            guard.intent = intent;
-            guard.active = Some(ActiveConnection::Local(next));
-            previous
+            scoped.intent = intent;
+            scoped.active = Some(ActiveConnection::Local(next));
+            match previous {
+                Some(ActiveConnection::Local(mut local)) => {
+                    if guard.transfer_local_ownership_if_shared(scope, &mut local) {
+                        None
+                    } else {
+                        Some(ActiveConnection::Local(local))
+                    }
+                }
+                other => other,
+            }
         };
         if let Some(previous) = previous {
             cleanup_active_connection(previous);
