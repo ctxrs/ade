@@ -41,6 +41,55 @@ fn migration_versions_are_unique() -> Result<()> {
 }
 
 #[tokio::test]
+async fn session_head_lookup_indexes_exist_and_match_query_shapes() -> Result<()> {
+    let tempdir = tempfile::tempdir().context("creating tempdir for index hardening")?;
+    let db_path = tempdir.path().join("db.sqlite");
+    let store = Store::open(&db_path)
+        .await
+        .context("opening store for index hardening")?;
+    let pool = store.pool();
+
+    assert_index_columns(
+        pool,
+        "idx_messages_session_turn_created",
+        &["session_id", "turn_id", "created_at", "turn_sequence"],
+    )
+    .await?;
+    assert_index_columns(
+        pool,
+        "idx_session_turn_tools_session_turn_created",
+        &["session_id", "turn_id", "created_at"],
+    )
+    .await?;
+
+    assert_query_plan_uses_index(
+        pool,
+        "messages head lookup",
+        "idx_messages_session_turn_created",
+        r#"EXPLAIN QUERY PLAN
+           SELECT id
+           FROM messages
+           WHERE session_id = ? AND turn_id = ?
+           ORDER BY created_at ASC, turn_sequence ASC"#,
+    )
+    .await?;
+    assert_query_plan_uses_index(
+        pool,
+        "turn tool head lookup",
+        "idx_session_turn_tools_session_turn_created",
+        r#"EXPLAIN QUERY PLAN
+           SELECT tool_call_id
+           FROM session_turn_tools
+           WHERE session_id = ? AND turn_id = ?
+           ORDER BY created_at ASC"#,
+    )
+    .await?;
+
+    store.close().await;
+    Ok(())
+}
+
+#[tokio::test]
 async fn migrations_upgrade_cleanly_from_every_historical_prefix() -> Result<()> {
     let migrations = migration_files()?;
     assert!(
@@ -624,6 +673,54 @@ async fn column_exists(db_path: &Path, table: &str, column: &str) -> Result<bool
         .with_context(|| format!("checking {table}.{column}"))?;
     pool.close().await;
     Ok(count > 0)
+}
+
+async fn assert_index_columns(
+    pool: &sqlx::SqlitePool,
+    index_name: &str,
+    expected_columns: &[&str],
+) -> Result<()> {
+    let query = format!("PRAGMA index_info('{index_name}')");
+    let rows = sqlx::query(&query)
+        .fetch_all(pool)
+        .await
+        .with_context(|| format!("reading index_info for {index_name}"))?;
+    let actual_columns = rows
+        .into_iter()
+        .map(|row| row.get::<String, _>("name"))
+        .collect::<Vec<_>>();
+    let expected_columns = expected_columns
+        .iter()
+        .map(|column| column.to_string())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        actual_columns, expected_columns,
+        "unexpected column order for {index_name}"
+    );
+    Ok(())
+}
+
+async fn assert_query_plan_uses_index(
+    pool: &sqlx::SqlitePool,
+    label: &str,
+    index_name: &str,
+    sql: &str,
+) -> Result<()> {
+    let rows = sqlx::query(sql)
+        .bind("session")
+        .bind("turn")
+        .fetch_all(pool)
+        .await
+        .with_context(|| format!("explaining {label}"))?;
+    let details = rows
+        .into_iter()
+        .map(|row| row.get::<String, _>("detail"))
+        .collect::<Vec<_>>();
+    assert!(
+        details.iter().any(|detail| detail.contains(index_name)),
+        "expected {label} plan to use {index_name}; details: {details:?}"
+    );
+    Ok(())
 }
 
 fn migration_files() -> Result<Vec<PathBuf>> {

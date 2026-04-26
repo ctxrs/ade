@@ -396,7 +396,11 @@ async fn handle_parsed_command(
             method_id,
         } => {
             let notice_session_id = session_id
-                .or_else(|| session.as_ref().map(|state| state.tracker.session_id.clone()))
+                .or_else(|| {
+                    session
+                        .as_ref()
+                        .map(|state| state.tracker.session_id.clone())
+                })
                 .unwrap_or_else(|| "unknown".to_string());
             warn!(
                 session_id = %notice_session_id,

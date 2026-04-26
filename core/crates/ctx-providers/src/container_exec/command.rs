@@ -53,8 +53,10 @@ pub fn build_container_exec_command(
                 if should_skip_linux_exec_env_key(spec, key) {
                     continue;
                 }
-                let rewritten = rewrite_container_env_value_for_linux(key, value)
-                    .with_context(|| format!("rewriting container env {key} for linux execution"))?;
+                let rewritten =
+                    rewrite_container_env_value_for_linux(key, value).with_context(|| {
+                        format!("rewriting container env {key} for linux execution")
+                    })?;
                 cmd.arg("--env").arg(format!("{key}={rewritten}"));
             }
             cmd.arg(container_id);
@@ -107,8 +109,10 @@ pub fn build_container_exec_command(
                 if should_skip_linux_exec_env_key(spec, key) {
                     continue;
                 }
-                let rewritten = rewrite_container_env_value_for_linux(key, value)
-                    .with_context(|| format!("rewriting container env {key} for linux execution"))?;
+                let rewritten =
+                    rewrite_container_env_value_for_linux(key, value).with_context(|| {
+                        format!("rewriting container env {key} for linux execution")
+                    })?;
                 cmd.arg("--env").arg(format!("{key}={rewritten}"));
             }
             cmd.arg(format!("ctx-harness-{workspace_id}"));

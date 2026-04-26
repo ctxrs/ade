@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 use std::io::Cursor;
 
-use super::*;
 use super::process_setup::prepare_exec_request;
+use super::*;
 
 #[test]
 fn exec_stream_payload_budget_stays_within_shared_vm_safe_limit() {

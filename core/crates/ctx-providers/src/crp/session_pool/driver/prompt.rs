@@ -24,7 +24,7 @@ use super::super::super::policy::{
     validate_provider_slash_command_support, CrpSlashCommand,
 };
 use super::super::super::protocol::{CrpCommand, CrpEvent, KnownCrpEvent};
-use super::super::super::{CRP_CANCEL_DRAIN_TIMEOUT};
+use super::super::super::CRP_CANCEL_DRAIN_TIMEOUT;
 use super::super::open_handshake::{
     apply_session_opened_state, crp_first_event_timeout, crp_runtime_label, duration_millis_u64,
     session_opened_provider_session_id, validate_provider_session_open,

@@ -6,7 +6,7 @@ use std::time::Duration;
 use ctx_core::ids::{MessageId, RunId, SessionId, TaskId, TurnId, WorkspaceId, WorktreeId};
 use ctx_core::models::{
     Message, MessageDelivery, MessageRole, SessionEventType, SessionTurn, SessionTurnStatus,
-    VcsKind,
+    SessionTurnTool, VcsKind,
 };
 use sqlx::{Row, SqlitePool};
 use tokio::sync::Barrier;
@@ -1394,6 +1394,121 @@ async fn session_heads_preserve_latest_turn_when_it_exceeds_message_limit() {
         .iter()
         .all(|message| message.turn_id == Some(latest_turn_id)));
     assert!(active_head.has_more_turns);
+}
+
+#[tokio::test]
+async fn active_session_head_snapshot_uses_requested_limit_for_large_unmaterialized_heads() {
+    let fixture = setup_session_fixture().await;
+    let total_turns = 240_i64;
+    let requested_turns = 60_u32;
+
+    for index in 0..total_turns {
+        let run_id = RunId::new();
+        let turn_id = TurnId::new();
+        let mut turn = make_turn(fixture.session_id, run_id, turn_id);
+        turn.start_seq = Some(index + 1);
+        turn.end_seq = Some(index + 1);
+        turn.status = SessionTurnStatus::Completed;
+        turn.tool_total = 1;
+        turn.tool_completed = 1;
+        fixture.store.insert_session_turn(turn).await.unwrap();
+
+        let notice = fixture
+            .store
+            .append_session_event(
+                fixture.session_id,
+                Some(run_id),
+                Some(turn_id),
+                SessionEventType::Notice,
+                serde_json::json!({
+                    "kind": "large_head_checkpoint",
+                    "turn_index": index,
+                }),
+            )
+            .await
+            .unwrap();
+        fixture
+            .store
+            .insert_message(make_assistant_message(
+                fixture.session_id,
+                fixture.task_id,
+                run_id,
+                turn_id,
+                &format!("answer {index}"),
+            ))
+            .await
+            .unwrap();
+        let now = Utc::now();
+        fixture
+            .store
+            .upsert_session_turn_tool(SessionTurnTool {
+                session_id: fixture.session_id,
+                tool_call_id: format!("tool-{index}"),
+                turn_id,
+                tool_kind: Some("execute".to_string()),
+                provider_tool_name: Some("Bash".to_string()),
+                title: Some("Bash".to_string()),
+                subtitle: Some(format!("turn {index}")),
+                status: Some("completed".to_string()),
+                input_json: Some(serde_json::json!({ "cmd": format!("echo {index}") })),
+                output_text: Some(format!("output {index}")),
+                order_seq: 1,
+                first_event_seq: Some(notice.seq),
+                input_truncated: Some(false),
+                input_original_bytes: None,
+                output_truncated: Some(false),
+                output_original_bytes: None,
+                created_at: now,
+                updated_at: now,
+            })
+            .await
+            .unwrap();
+    }
+
+    let active_materialization_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM session_head_materializations WHERE session_id = ? AND head_kind = 'active'",
+    )
+    .bind(fixture.session_id.0.to_string())
+    .fetch_one(fixture.store.pool())
+    .await
+    .unwrap();
+    assert_eq!(
+        active_materialization_count, 0,
+        "active session heads should not rely on durable session_head_materializations rows"
+    );
+
+    let head = fixture
+        .store
+        .get_session_head_snapshot(fixture.session_id, requested_turns, true)
+        .await
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(head.turns.len(), requested_turns as usize);
+    assert!(head.has_more_turns);
+    assert_eq!(head.turns.first().unwrap().start_seq, Some(181));
+    assert_eq!(head.turns.last().unwrap().start_seq, Some(total_turns));
+    assert_eq!(head.messages.len(), requested_turns as usize);
+    assert_eq!(head.messages.first().unwrap().content, "answer 180");
+    assert_eq!(head.messages.last().unwrap().content, "answer 239");
+    assert_eq!(head.tool_summaries.len(), requested_turns as usize);
+    assert!(head
+        .tool_summaries
+        .iter()
+        .any(|tool| tool.tool_call_id == "tool-239"));
+    assert!(head.events.len() <= 200);
+
+    let active_materialization_count_after_read: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM session_head_materializations WHERE session_id = ? AND head_kind = 'active'",
+    )
+    .bind(fixture.session_id.0.to_string())
+    .fetch_one(fixture.store.pool())
+    .await
+    .unwrap();
+    assert_eq!(
+        active_materialization_count_after_read, 0,
+        "bounded active reads must not create active session_head_materializations rows"
+    );
 }
 
 #[tokio::test]

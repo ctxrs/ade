@@ -37,7 +37,10 @@ pub(super) fn map_known_event(
             let mut payload = serde_json::Map::new();
             payload.insert("session_id".to_string(), json!(session_id));
             if let Some(provider_session_id) = provider_session_id {
-                payload.insert("provider_session_id".to_string(), json!(provider_session_id));
+                payload.insert(
+                    "provider_session_id".to_string(),
+                    json!(provider_session_id),
+                );
             }
             if let Some(supports_session_status) = supports_session_status {
                 payload.insert(

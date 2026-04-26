@@ -33,7 +33,10 @@ pub(super) fn build_prompt_command_infos(
         .collect()
 }
 
-pub(super) fn discover_prompts_in_excluding(dir: &Path, exclude: &HashSet<String>) -> Vec<CustomPrompt> {
+pub(super) fn discover_prompts_in_excluding(
+    dir: &Path,
+    exclude: &HashSet<String>,
+) -> Vec<CustomPrompt> {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return Vec::new();
     };

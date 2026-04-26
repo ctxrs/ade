@@ -30,15 +30,14 @@ pub(in crate::api) async fn install_all_providers(
     State(state): State<Arc<AppState>>,
     Query(query): Query<InstallTargetQuery>,
 ) -> Result<Json<Vec<InstallStartResponse>>, (StatusCode, Json<serde_json::Value>)> {
-    let target = crate::installer::parse_install_target(query.target.as_deref())
-        .map_err(|_| {
-            (
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({
-                    "error": "invalid install target",
-                })),
-            )
-        })?;
+    let target = crate::installer::parse_install_target(query.target.as_deref()).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": "invalid install target",
+            })),
+        )
+    })?;
     let installs = provider_launch_install::start_all_provider_installs(&state, target).await?;
     Ok(Json(
         installs

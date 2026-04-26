@@ -12,11 +12,11 @@ use crate::app_server::{
 };
 use crate::protocol::{CrpChannel, CrpEvent, CrpTurnError, CrpTurnStatus};
 
-use super::AppServerSessionState;
 pub(super) use self::support::{
     canonical_context_window_from_thread_usage, emit_turn_request_error,
     emit_unsupported_server_request_notice,
 };
+use super::AppServerSessionState;
 
 pub(super) fn translate_notification(
     session_state: &mut AppServerSessionState,
@@ -214,7 +214,11 @@ pub(super) fn translate_notification(
             if payload.thread_id != session_state.thread_id {
                 return Ok(Vec::new());
             }
-            item_lifecycle::translate_item_lifecycle(session_state, method == "item/completed", payload)
+            item_lifecycle::translate_item_lifecycle(
+                session_state,
+                method == "item/completed",
+                payload,
+            )
         }
         "error" => Ok(Vec::new()),
         _ => Ok(Vec::new()),

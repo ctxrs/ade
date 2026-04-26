@@ -10,18 +10,17 @@ use ctx_core::models::SessionEventType;
 
 use crate::events::NormalizedEvent;
 
+use super::super::super::auth_required_notice_payload_from_stderr;
 use super::super::super::normalize::{event_matches_session, map_crp_event, CachedToolInput};
 use super::super::super::policy::{
     extract_auth_error_from_stderr_line, extract_auth_url_from_stderr_line,
 };
 use super::super::super::protocol::{CrpCommand, CrpEvent, KnownCrpEvent};
-use super::super::super::auth_required_notice_payload_from_stderr;
 use super::super::open_handshake::apply_session_opened_state;
 use super::super::CrpSessionPool;
 use super::terminal::is_sweep_only_status_notice;
 
-const CRP_AUTH_EVENT_FORWARD_TIMEOUT: std::time::Duration =
-    std::time::Duration::from_secs(60 * 10);
+const CRP_AUTH_EVENT_FORWARD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60 * 10);
 
 impl CrpSessionPool {
     pub(in crate::crp) async fn authenticate_session(

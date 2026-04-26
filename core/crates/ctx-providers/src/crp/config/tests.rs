@@ -59,7 +59,10 @@ fn build_crp_session_config_omits_personality_for_non_codex() {
 #[test]
 fn build_crp_session_config_can_disable_model_override() {
     let mut env = HashMap::new();
-    env.insert("CTX_MODEL_ID".to_string(), "openai/gpt-4.1-mini".to_string());
+    env.insert(
+        "CTX_MODEL_ID".to_string(),
+        "openai/gpt-4.1-mini".to_string(),
+    );
     env.insert(
         "CTX_CRP_DISABLE_MODEL_OVERRIDE".to_string(),
         "1".to_string(),
@@ -284,8 +287,14 @@ async fn build_prompt_items_emits_blob_refs_as_image_refs() {
         .await
         .expect("blob image should be emitted as image_ref");
     assert_eq!(items.len(), 2);
-    assert_eq!(items[0].get("type").and_then(Value::as_str), Some("image_ref"));
-    assert_eq!(items[0].get("blob_id").and_then(Value::as_str), Some(blob_id));
+    assert_eq!(
+        items[0].get("type").and_then(Value::as_str),
+        Some("image_ref")
+    );
+    assert_eq!(
+        items[0].get("blob_id").and_then(Value::as_str),
+        Some(blob_id)
+    );
     assert_eq!(
         items[0].get("mime_type").and_then(Value::as_str),
         Some("image/png")

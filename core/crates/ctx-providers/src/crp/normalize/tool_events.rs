@@ -6,7 +6,9 @@ use ctx_core::models::SessionEventType;
 
 use crate::events::NormalizedEvent;
 
-use super::super::normalize_tool_payload::{build_tool_completed_payload, build_tool_started_payload};
+use super::super::normalize_tool_payload::{
+    build_tool_completed_payload, build_tool_started_payload,
+};
 use super::super::protocol::{CrpChannel, CrpEvent, CrpToolStatus, KnownCrpEvent};
 use super::{insert_crp_channel, CachedToolInput, MappedCrpEvent};
 

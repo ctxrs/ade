@@ -17,12 +17,10 @@ use ctx_http::settings::{
 };
 use ctx_managed_installs::{
     agent_server_config_path, load_agent_server_config, refresh_provider_statuses,
-    save_agent_server_config, AgentServerCommand, AgentServerConfigFile,
-    ManagedInstallMetadata,
+    save_agent_server_config, AgentServerCommand, AgentServerConfigFile, ManagedInstallMetadata,
 };
 use ctx_provider_install::install_state::{
-    InstallErrorCode, InstallId, InstallInfo, InstallProgressEvent, InstallStateKind,
-    InstallTarget,
+    InstallErrorCode, InstallId, InstallInfo, InstallProgressEvent, InstallStateKind, InstallTarget,
 };
 use ctx_provider_matrix::{
     matrix_cache_path, ProviderArchiveKind, ProviderArchiveTarget, ProviderInstall,

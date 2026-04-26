@@ -17,7 +17,9 @@ use tracing::error;
 
 use self::commands::handle_command;
 use self::io::{read_commands, run_writer, CrpEventRouter, CrpWriter};
-pub(super) use self::state::{current_model_id, AppServerSessionState, TurnAliasState, TurnTracker};
+pub(super) use self::state::{
+    current_model_id, AppServerSessionState, TurnAliasState, TurnTracker,
+};
 
 const DATA_PLANE_BUFFER_CAPACITY: usize = 256;
 

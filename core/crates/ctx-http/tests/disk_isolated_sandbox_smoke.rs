@@ -17,8 +17,7 @@ use ctx_http::daemon::AppState;
 
 const CONTAINER_FILE_SHA256: &str =
     "dc155555ce7bf6f6b7aa998bafe7e1cafa3c7017bc5dcdeb8ef72ebc5961c11a";
-const TERM_WRITE_SHA256: &str =
-    "21ce56d2f98a9ed161e56e42a704fb47cea917ffe91bee9d75405349fdc4ee68";
+const TERM_WRITE_SHA256: &str = "21ce56d2f98a9ed161e56e42a704fb47cea917ffe91bee9d75405349fdc4ee68";
 
 struct EnvVarGuard {
     key: &'static str,

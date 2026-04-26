@@ -18,7 +18,10 @@ pub fn build_session_command_infos(codex_home: &Path) -> Vec<CrpCommandInfo> {
         .map(|command| command.name.clone())
         .collect::<HashSet<_>>();
     let prompts_dir = codex_home.join("prompts");
-    commands.extend(prompts::build_prompt_command_infos(&prompts_dir, &mut exclude));
+    commands.extend(prompts::build_prompt_command_infos(
+        &prompts_dir,
+        &mut exclude,
+    ));
     commands
 }
 

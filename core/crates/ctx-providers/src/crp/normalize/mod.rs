@@ -56,9 +56,8 @@ pub(super) fn map_crp_event(
                 tool_output_cache,
                 tool_input_cache,
             ),
-            event @ KnownCrpEvent::SessionNotice { .. } | event @ KnownCrpEvent::SessionGap { .. } => {
-                notices::map_known_event(event, seq)
-            }
+            event @ KnownCrpEvent::SessionNotice { .. }
+            | event @ KnownCrpEvent::SessionGap { .. } => notices::map_known_event(event, seq),
         },
         CrpEvent::Unknown {
             event_type,

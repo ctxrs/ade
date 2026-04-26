@@ -149,8 +149,9 @@ fn rewrite_bundled_paths_in_shell_command(
     raw: &str,
     env: &HashMap<String, String>,
 ) -> Result<String> {
-    let tokens = shlex::split(raw)
-        .ok_or_else(|| anyhow::anyhow!("invalid shell command in --acp-command: unmatched quote"))?;
+    let tokens = shlex::split(raw).ok_or_else(|| {
+        anyhow::anyhow!("invalid shell command in --acp-command: unmatched quote")
+    })?;
     if tokens.is_empty() {
         return Ok(raw.to_string());
     }

@@ -132,6 +132,7 @@ mod mobile_profile_routes;
 mod mobile_secure_routes;
 mod provider_routes;
 mod session_artifacts;
+mod session_head_large_http;
 mod telemetry_export_boundaries;
 mod update_boundaries;
 mod web_session_routes;
