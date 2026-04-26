@@ -1,5 +1,5 @@
 import { useEffect, useRef, type ReactNode } from "react";
-import type { WorkbenchListItem } from "../sessionView";
+import type { WorkbenchListItem } from "../sessionView/SessionPage.types";
 import { AuditedPretextRow } from "./pretextVirtualizerRowAudit";
 
 const ROW_SIZE_DELTA_PX = 1;

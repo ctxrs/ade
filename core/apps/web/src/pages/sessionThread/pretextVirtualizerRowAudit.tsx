@@ -1,5 +1,5 @@
 import { useEffect, useRef, type ReactNode, type Ref } from "react";
-import type { WorkbenchListItem } from "../sessionView";
+import type { WorkbenchListItem } from "../sessionView/SessionPage.types";
 import { recordSessionMessageListRowSizeMismatch } from "../sessionMessageListDebug";
 
 const DEBUG_ROW_SIZE_DELTA_PX = 1;

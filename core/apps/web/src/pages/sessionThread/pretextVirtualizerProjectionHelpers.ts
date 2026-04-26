@@ -7,7 +7,7 @@ import type {
   PretextVirtualizerItemAlign,
   PretextVirtualizerItemLocation,
 } from "@pretext-virtualizer/interface";
-import type { WorkbenchListItem } from "../sessionView";
+import type { WorkbenchListItem } from "../sessionView/SessionPage.types";
 import type { WorkbenchThreadProjectionOp } from "../sessionThreadProjection";
 
 export function resolveScrollTopForLocation(

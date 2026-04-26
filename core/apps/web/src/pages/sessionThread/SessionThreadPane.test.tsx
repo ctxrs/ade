@@ -2,7 +2,7 @@ import React, { createRef } from "react";
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { PretextVirtualizerListMethods } from "@pretext-virtualizer/interface";
-import type { WorkbenchListItem } from "../sessionView";
+import type { WorkbenchListItem } from "../sessionView/SessionPage.types";
 import type { WorkbenchMessageListContext } from "../sessionThread";
 import { SessionThreadPane } from "./SessionThreadPane";
 

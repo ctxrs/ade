@@ -6,7 +6,7 @@ import type {
   PretextVirtualizerShortSizeAlign,
 } from "@pretext-virtualizer/interface";
 import type { WorkbenchMessageListContext } from "../sessionThread";
-import type { WorkbenchListItem } from "../sessionView";
+import type { WorkbenchListItem } from "../sessionView/SessionPage.types";
 import type { WorkbenchThreadProjectionOp } from "../sessionThreadProjection";
 import { SessionThreadMessageList } from "../SessionThreadMessageList";
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { WorkbenchListItem } from "../sessionView";
+import type { WorkbenchListItem } from "../sessionView/SessionPage.types";
 import { getPretextVirtualizerRowLayout } from "./pretextVirtualizerRowLayout.app";
 import {
   getTranscriptRowPlannedLayout,

@@ -4,8 +4,8 @@ import React, { type ReactNode } from "react";
 import ReactDOMClient from "react-dom/client";
 import { flushSync } from "react-dom";
 import type { MessageAttachment } from "../../api/client";
-import type { WorkbenchListItem, WorkbenchTurnHeader } from "../sessionView";
-import { MemoMarkdown } from "../sessionView";
+import { MemoMarkdown } from "../sessionView/SessionPage.markdown";
+import type { WorkbenchListItem, WorkbenchTurnHeader } from "../sessionView/SessionPage.types";
 import {
   AssistantEntry,
   ThreadItemView,

@@ -1,5 +1,5 @@
 import { type VirtuosoMessageListProps, useVirtuosoLocation, useVirtuosoMethods } from "@virtuoso.dev/message-list";
-import type { WorkbenchListItem } from "../sessionView";
+import type { WorkbenchListItem } from "../sessionView/SessionPage.types";
 import type { WorkbenchMessageListContext } from "../sessionThread";
 
 type WorkbenchMessageListProps = VirtuosoMessageListProps<WorkbenchListItem, WorkbenchMessageListContext>;

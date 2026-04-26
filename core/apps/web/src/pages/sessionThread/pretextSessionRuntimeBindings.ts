@@ -1,5 +1,5 @@
 import type { PretextVirtualizerDiagnosticEvent } from "@pretext-virtualizer/core";
-import type { WorkbenchListItem } from "../sessionView";
+import type { WorkbenchListItem } from "../sessionView/SessionPage.types";
 import { getWorkbenchListItemHeightRevision, type WorkbenchMessageListUiState } from "../sessionMessageListItemIdentity";
 import type { AppPretextVirtualizerRowLayoutContext } from "./pretextVirtualizerRowLayout.app";
 import { defaultTranscriptLayoutPlanner } from "./transcriptLayoutPlanner.app";

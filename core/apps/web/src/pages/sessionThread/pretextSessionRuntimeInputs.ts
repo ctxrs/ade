@@ -1,4 +1,4 @@
-import type { WorkbenchListItem } from "../sessionView";
+import type { WorkbenchListItem } from "../sessionView/SessionPage.types";
 import {
   collectWorkbenchToolGroupExpansionIds,
   getWorkbenchMessageListLayoutRevision,

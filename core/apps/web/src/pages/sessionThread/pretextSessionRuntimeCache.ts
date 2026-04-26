@@ -3,7 +3,7 @@ import {
   type PretextVirtualizerDiagnosticEvent,
   type PretextVirtualizerSnapshot,
 } from "@pretext-virtualizer/core";
-import type { WorkbenchListItem } from "../sessionView";
+import type { WorkbenchListItem } from "../sessionView/SessionPage.types";
 import {
   type WorkbenchMessageListUiState,
 } from "../sessionMessageListItemIdentity";
