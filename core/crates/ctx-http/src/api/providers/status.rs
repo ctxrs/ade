@@ -270,6 +270,46 @@ pub(crate) async fn get_provider(
     Ok(Json(status))
 }
 
+fn provider_usage_internal_error(
+    error: impl std::fmt::Display,
+) -> (StatusCode, Json<serde_json::Value>) {
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(serde_json::json!({
+            "error": error.to_string()
+        })),
+    )
+}
+
+async fn provider_usage_env_for_request(
+    state: &Arc<AppState>,
+    provider_id: &str,
+) -> Result<HashMap<String, String>, (StatusCode, Json<serde_json::Value>)> {
+    if provider_id != CODEX_CRP_PROVIDER_ID {
+        return Ok(HashMap::new());
+    }
+
+    let mut env = provider_accounts::codex_env_for_active_account(&state.core.data_root)
+        .await
+        .map_err(provider_usage_internal_error)?;
+    let (cfg, config_error) =
+        crate::api::provider_launch::load_managed_agent_server_config_with_error(
+            &state.core.data_root,
+        )
+        .await;
+    if let Some(config_error) = config_error {
+        return Err(provider_usage_internal_error(config_error));
+    }
+    crate::installer::ensure_codex_cli_command_env_for_target(
+        &mut env,
+        &cfg,
+        CODEX_CRP_PROVIDER_ID,
+        Some(InstallTarget::Host),
+    )
+    .map_err(provider_usage_internal_error)?;
+    Ok(env)
+}
+
 pub(crate) async fn get_provider_usage(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
@@ -278,43 +318,20 @@ pub(crate) async fn get_provider_usage(
     let requested_id = id;
     let id = super::canonicalize_provider_id(&requested_id);
     let refresh = query.refresh.unwrap_or(false);
+    let env = provider_usage_env_for_request(&state, &id).await?;
     let snapshot = if !refresh {
         let cache = state.providers.usage_cache.lock().await;
         cache.get(&id).cloned()
     } else {
         None
     };
-    let snapshot = match snapshot {
+    let mut snapshot = match snapshot {
         Some(snapshot) => snapshot,
-        None => {
-            let env = if id == CODEX_CRP_PROVIDER_ID {
-                provider_accounts::codex_env_for_active_account(&state.core.data_root)
-                    .await
-                    .map_err(|e| {
-                        (
-                            StatusCode::INTERNAL_SERVER_ERROR,
-                            Json(serde_json::json!({
-                                "error": e.to_string()
-                            })),
-                        )
-                    })?
-            } else {
-                HashMap::new()
-            };
-            let mut snapshot = provider_usage::refresh_provider_usage_for(state.as_ref(), &id, env)
-                .await
-                .map_err(|e| {
-                    (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        Json(serde_json::json!({
-                            "error": e.to_string()
-                        })),
-                    )
-                })?;
-            snapshot.provider_id =
-                super::project_provider_id_for_response(&requested_id, &snapshot.provider_id);
-            snapshot
-        }
+        None => provider_usage::refresh_provider_usage_for(state.as_ref(), &id, env)
+            .await
+            .map_err(provider_usage_internal_error)?,
     };
+    snapshot.provider_id =
+        super::project_provider_id_for_response(&requested_id, &snapshot.provider_id);
     Ok(Json(snapshot))
 }
