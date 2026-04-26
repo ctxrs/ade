@@ -285,6 +285,34 @@ pub(super) fn runtime_provider_id_for_session_provider<'a>(
     session_provider_id
 }
 
+pub(super) async fn load_system_prompt_append_for_relationship(
+    store: &ctx_store::Store,
+    relationship: Option<&str>,
+) -> Result<Option<String>> {
+    let prompt_config = workspace_config::load_agent_system_prompt_append(store)
+        .await
+        .context("loading agent system prompt append config")?;
+    let mut system_prompt_append = prompt_config.effective_append();
+
+    if relationship == Some("sub_agent") {
+        let subagent_config = workspace_config::load_subagent_system_prompt_append(store)
+            .await
+            .context("loading subagent system prompt append config")?;
+        if let Some(subagent_append) = subagent_config.effective_append() {
+            system_prompt_append = Some(match system_prompt_append {
+                Some(mut append) => {
+                    append.push_str("\n\n");
+                    append.push_str(&subagent_append);
+                    append
+                }
+                None => subagent_append,
+            });
+        }
+    }
+
+    Ok(system_prompt_append)
+}
+
 pub(super) async fn apply_provider_launch_overrides(
     provider_id: &str,
     workdir: &std::path::Path,

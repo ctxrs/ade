@@ -48,7 +48,8 @@ mod turn_start;
 use self::event_loop::{spawn_turn_event_loop, TurnEventLoop};
 pub(crate) use self::helpers::model_context_window;
 use self::helpers::{
-    apply_provider_launch_overrides, compute_context_window_metrics, normalize_session_model_id,
+    apply_provider_launch_overrides, compute_context_window_metrics,
+    load_system_prompt_append_for_relationship, normalize_session_model_id,
     provider_supports_system_prompt_append, runtime_provider_id_for_session_provider,
 };
 use self::provider_env::{emit_provider_run_env_ready_event, prepare_provider_runtime_environment};
@@ -392,25 +393,8 @@ pub(crate) async fn start_turn(
         &provider_env,
     );
 
-    let prompt_config = workspace_config::load_agent_system_prompt_append(&store)
-        .await
-        .unwrap_or_else(|_| workspace_config::AgentSystemPromptAppendConfig::new_default());
-    let mut system_prompt_append = prompt_config.effective_append();
-    if session.relationship.as_deref() == Some("sub_agent") {
-        let subagent_config = workspace_config::load_subagent_system_prompt_append(&store)
-            .await
-            .unwrap_or_else(|_| workspace_config::SubagentSystemPromptAppendConfig::new_default());
-        if let Some(subagent_append) = subagent_config.effective_append() {
-            system_prompt_append = Some(match system_prompt_append {
-                Some(mut append) => {
-                    append.push_str("\n\n");
-                    append.push_str(&subagent_append);
-                    append
-                }
-                None => subagent_append,
-            });
-        }
-    }
+    let system_prompt_append =
+        load_system_prompt_append_for_relationship(&store, session.relationship.as_deref()).await?;
     let mut context_blocks = Vec::new();
     if let Some(append) = system_prompt_append.as_deref() {
         if !provider_supports_system_prompt_append(&session.provider_id) {
