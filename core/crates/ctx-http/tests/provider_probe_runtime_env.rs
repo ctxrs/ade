@@ -5,6 +5,10 @@ use std::path::Path;
 use std::sync::Arc;
 
 use axum::http::StatusCode;
+use ctx_harness_sources::{
+    set_provider_source_selection, upsert_provider_endpoint, HarnessApiShape,
+    HarnessEndpointUpsert, HarnessSourceKind,
+};
 use ctx_http::api;
 use ctx_http::daemon::AppState;
 use ctx_managed_installs::{
@@ -79,6 +83,54 @@ fn write_invalid_kimi_account_registry(data_root: &Path) {
     std::fs::create_dir_all(path.parent().expect("kimi registry parent"))
         .expect("create kimi registry parent");
     std::fs::write(path, "{ not valid json").expect("write invalid kimi registry");
+}
+
+#[cfg(unix)]
+async fn write_stale_codex_endpoint_selection(data_root: &Path) {
+    let endpoint = upsert_provider_endpoint(
+        data_root,
+        "codex-crp",
+        HarnessEndpointUpsert {
+            endpoint_id: None,
+            name: "Codex endpoint".to_string(),
+            base_url: Some("https://api.openai.com/v1".to_string()),
+            api_shape: Some(HarnessApiShape::OpenaiResponses),
+            auth_type: None,
+            model_override: Some("gpt-5.4".to_string()),
+            api_key: Some("sk-test".to_string()),
+            service_account_json: None,
+            project_id: None,
+            location: None,
+        },
+    )
+    .await
+    .expect("upsert codex endpoint");
+    set_provider_source_selection(
+        data_root,
+        "codex-crp",
+        HarnessSourceKind::Endpoint,
+        Some(endpoint.id.clone()),
+    )
+    .await
+    .expect("select codex endpoint");
+
+    let registry_path = data_root
+        .join("providers")
+        .join("harness_sources")
+        .join("registry.json");
+    let mut registry: serde_json::Value = serde_json::from_slice(
+        &tokio::fs::read(&registry_path)
+            .await
+            .expect("read harness registry"),
+    )
+    .expect("parse harness registry");
+    registry["providers"]["codex-crp"]["endpoints"] = serde_json::json!([]);
+    tokio::fs::write(
+        &registry_path,
+        serde_json::to_vec_pretty(&registry).expect("serialize harness registry"),
+    )
+    .await
+    .expect("write stale harness registry");
 }
 
 #[cfg(unix)]
@@ -732,6 +784,99 @@ async fn provider_bootstrap_fails_closed_on_kimi_account_registry_errors() {
             .and_then(serde_json::Value::as_str)
             .is_some_and(|value| value.contains("failed to load kimi accounts")),
         "expected kimi registry load failure in bootstrap response: {body:#?}"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn codex_provider_options_surface_stale_selected_endpoint_errors() {
+    let _env_lock = lock_env().await;
+    let data_dir = tempfile::tempdir().expect("tempdir");
+    let repo = common::init_git_repo(&[("note.txt", "hello\n")]).await;
+    write_stale_codex_endpoint_selection(data_dir.path()).await;
+
+    let state = app_state(data_dir.path()).await;
+    state.providers.statuses.lock().await.insert(
+        "codex-crp".to_string(),
+        ProviderStatus {
+            provider_id: "codex-crp".to_string(),
+            installed: true,
+            detected_path: None,
+            version: None,
+            capabilities: None,
+            health: ProviderHealth::Ok,
+            diagnostics: Vec::new(),
+            details: HashMap::new(),
+            usability: ctx_providers::adapters::ProviderUsability::default(),
+        },
+    );
+    let app = api::router(state.clone());
+    let ws = common::create_workspace(&app, repo.path(), "ws").await;
+    let (status, body): (StatusCode, serde_json::Value) = common::json_request(
+        &app,
+        axum::http::Method::GET,
+        format!("/api/workspaces/{}/providers/codex-crp/options", ws.id.0),
+        None,
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "options request failed: {body:#?}");
+    assert_eq!(
+        body.get("probe_ok").and_then(serde_json::Value::as_bool),
+        Some(false),
+        "expected probe_ok=false for stale selected endpoint: {body:#?}"
+    );
+    assert!(
+        body.get("config_error")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|value| value.contains("selected endpoint")),
+        "expected stale selected endpoint error in options response: {body:#?}"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn provider_bootstrap_surfaces_stale_selected_endpoint_errors() {
+    let _env_lock = lock_env().await;
+    let data_dir = tempfile::tempdir().expect("tempdir");
+    let repo = common::init_git_repo(&[("note.txt", "hello\n")]).await;
+    write_stale_codex_endpoint_selection(data_dir.path()).await;
+
+    let state = app_state(data_dir.path()).await;
+    state.providers.statuses.lock().await.insert(
+        "codex-crp".to_string(),
+        ProviderStatus {
+            provider_id: "codex-crp".to_string(),
+            installed: true,
+            detected_path: None,
+            version: None,
+            capabilities: None,
+            health: ProviderHealth::Ok,
+            diagnostics: Vec::new(),
+            details: HashMap::new(),
+            usability: ctx_providers::adapters::ProviderUsability::default(),
+        },
+    );
+    let app = api::router(state.clone());
+    let ws = common::create_workspace(&app, repo.path(), "ws").await;
+    let (status, body): (StatusCode, serde_json::Value) = common::json_request(
+        &app,
+        axum::http::Method::GET,
+        format!("/api/workspaces/{}/providers/bootstrap", ws.id.0),
+        None,
+    )
+    .await;
+
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "bootstrap request failed unexpectedly: {body:#?}"
+    );
+    assert!(
+        body.pointer("/provider_options/codex/config_error")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|value| value.contains("selected endpoint")),
+        "expected stale selected endpoint error in bootstrap response: {body:#?}"
     );
 }
 

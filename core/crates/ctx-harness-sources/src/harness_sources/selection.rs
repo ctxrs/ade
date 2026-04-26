@@ -1,27 +1,71 @@
 use super::*;
 mod helpers;
 
-use helpers::{get_provider_source_config_locked, repair_provider_selection};
+use helpers::get_provider_source_config_locked;
 
-pub(crate) async fn load_repaired_provider_internal(
+pub(super) fn validate_provider_selection(
+    provider: &HarnessProviderConfigInternal,
+    canonical: &str,
+    endpoint_supported: bool,
+) -> Result<()> {
+    if !endpoint_supported {
+        if provider.selected_source_kind != HarnessSourceKind::Subscription
+            || provider.selected_endpoint_id.is_some()
+        {
+            anyhow::bail!(
+                "provider {canonical} does not support harness endpoints but endpoint selection is configured"
+            );
+        }
+        return Ok(());
+    }
+
+    match provider.selected_source_kind {
+        HarnessSourceKind::Subscription => {
+            if let Some(endpoint_id) = provider.selected_endpoint_id.as_deref() {
+                anyhow::bail!(
+                    "provider {canonical} is configured for subscription but still has selected endpoint '{endpoint_id}'"
+                );
+            }
+        }
+        HarnessSourceKind::Endpoint => {
+            let endpoint_id =
+                provider
+                    .selected_endpoint_id
+                    .as_deref()
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "provider {canonical} is configured for endpoint mode but has no selected endpoint_id"
+                        )
+                    })?;
+            if !provider
+                .endpoints
+                .iter()
+                .any(|endpoint| endpoint.id == endpoint_id)
+            {
+                anyhow::bail!(
+                    "selected endpoint '{endpoint_id}' not found for provider {canonical}"
+                );
+            }
+        }
+    }
+
+    Ok(())
+}
+
+pub(crate) async fn load_provider_internal(
     data_root: &Path,
     canonical: &str,
     endpoint_supported: bool,
 ) -> Result<HarnessProviderConfigInternal> {
     let _registry_write_guard = REGISTRY_WRITE_LOCK.lock().await;
     let mut registry = registry::load_registry(data_root).await?;
-    let provider = {
-        let provider = registry
-            .providers
-            .entry(canonical.to_string())
-            .or_insert_with(HarnessProviderConfigInternal::default);
-        let repaired = repair_provider_selection(provider, endpoint_supported);
-        (repaired, provider.clone())
-    };
-    if provider.0 {
-        registry::save_registry(data_root, &registry).await?;
-    }
-    Ok(provider.1)
+    let provider = registry
+        .providers
+        .entry(canonical.to_string())
+        .or_insert_with(HarnessProviderConfigInternal::default)
+        .clone();
+    validate_provider_selection(&provider, canonical, endpoint_supported)?;
+    Ok(provider)
 }
 
 pub async fn get_provider_source_config(

@@ -62,7 +62,7 @@ async fn deleting_missing_provider_endpoint_returns_unknown_endpoint() {
 }
 
 #[tokio::test]
-async fn get_provider_source_config_persists_repair_for_missing_selected_endpoint() {
+async fn get_provider_source_config_fails_on_missing_selected_endpoint_without_repair() {
     let root = tempfile::tempdir().expect("tempdir");
     let endpoint = upsert_provider_endpoint(
         root.path(),
@@ -104,27 +104,21 @@ async fn get_provider_source_config_persists_repair_for_missing_selected_endpoin
         .await
         .expect("save stale registry");
 
-    let cfg = get_provider_source_config(root.path(), PROVIDER_CODEX)
+    let err = get_provider_source_config(root.path(), PROVIDER_CODEX)
         .await
-        .expect("get source config");
-    assert_eq!(cfg.selected_source_kind, HarnessSourceKind::Subscription);
-    assert!(cfg.selected_endpoint_id.is_none());
+        .expect_err("stale selected endpoint should fail");
+    assert!(err.to_string().contains("selected endpoint"));
 
     let repaired = registry::load_registry(root.path())
         .await
         .expect("reload registry");
     let provider = repaired.providers.get(PROVIDER_CODEX).expect("provider");
+    assert_eq!(provider.selected_source_kind, HarnessSourceKind::Endpoint);
     assert_eq!(
-        provider.selected_source_kind,
-        HarnessSourceKind::Subscription
+        provider.selected_endpoint_id.as_deref(),
+        Some(endpoint.id.as_str())
     );
-    assert!(provider.selected_endpoint_id.is_none());
     assert!(provider.endpoints.is_empty());
-
-    let resolved = resolve_provider_source_for_run(root.path(), PROVIDER_CODEX)
-        .await
-        .expect("resolve source after repair");
-    assert_eq!(resolved.source_kind, HarnessSourceKind::Subscription);
 }
 
 #[tokio::test]
@@ -239,7 +233,7 @@ async fn delete_provider_endpoint_skips_unsafe_secret_ref_and_preserves_outside_
 }
 
 #[tokio::test]
-async fn resolve_provider_source_for_run_repairs_missing_selected_endpoint() {
+async fn resolve_provider_source_for_run_fails_on_missing_selected_endpoint_without_repair() {
     let root = tempfile::tempdir().expect("tempdir");
     let endpoint = upsert_provider_endpoint(
         root.path(),
@@ -281,24 +275,24 @@ async fn resolve_provider_source_for_run_repairs_missing_selected_endpoint() {
         .await
         .expect("save stale registry");
 
-    let resolved = resolve_provider_source_for_run(root.path(), PROVIDER_CODEX)
+    let err = resolve_provider_source_for_run(root.path(), PROVIDER_CODEX)
         .await
-        .expect("resolve source after repair");
-    assert_eq!(resolved.source_kind, HarnessSourceKind::Subscription);
+        .expect_err("stale selected endpoint should fail");
+    assert!(err.to_string().contains("selected endpoint"));
 
     let repaired = registry::load_registry(root.path())
         .await
         .expect("reload registry");
     let provider = repaired.providers.get(PROVIDER_CODEX).expect("provider");
+    assert_eq!(provider.selected_source_kind, HarnessSourceKind::Endpoint);
     assert_eq!(
-        provider.selected_source_kind,
-        HarnessSourceKind::Subscription
+        provider.selected_endpoint_id.as_deref(),
+        Some(endpoint.id.as_str())
     );
-    assert!(provider.selected_endpoint_id.is_none());
 }
 
 #[tokio::test]
-async fn get_provider_source_config_clears_stray_selected_endpoint_when_subscription_is_active() {
+async fn get_provider_source_config_fails_on_stray_selected_endpoint_when_subscription_is_active() {
     let root = tempfile::tempdir().expect("tempdir");
     let endpoint = upsert_provider_endpoint(
         root.path(),
@@ -332,11 +326,10 @@ async fn get_provider_source_config_clears_stray_selected_endpoint_when_subscrip
         .await
         .expect("save stray endpoint selection");
 
-    let cfg = get_provider_source_config(root.path(), PROVIDER_CODEX)
+    let err = get_provider_source_config(root.path(), PROVIDER_CODEX)
         .await
-        .expect("get source config");
-    assert_eq!(cfg.selected_source_kind, HarnessSourceKind::Subscription);
-    assert!(cfg.selected_endpoint_id.is_none());
+        .expect_err("stray selected endpoint should fail");
+    assert!(err.to_string().contains("configured for subscription"));
 
     let repaired = registry::load_registry(root.path())
         .await
@@ -346,5 +339,8 @@ async fn get_provider_source_config_clears_stray_selected_endpoint_when_subscrip
         provider.selected_source_kind,
         HarnessSourceKind::Subscription
     );
-    assert!(provider.selected_endpoint_id.is_none());
+    assert_eq!(
+        provider.selected_endpoint_id.as_deref(),
+        Some(endpoint.id.as_str())
+    );
 }

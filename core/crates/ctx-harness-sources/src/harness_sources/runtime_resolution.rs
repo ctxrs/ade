@@ -530,8 +530,7 @@ async fn resolve_internal(
     let endpoint_supported = validation::provider_supports_harness_endpoint(canonical);
 
     let provider =
-        selection::load_repaired_provider_internal(data_root, canonical, endpoint_supported)
-            .await?;
+        selection::load_provider_internal(data_root, canonical, endpoint_supported).await?;
 
     if provider.selected_source_kind != HarnessSourceKind::Endpoint {
         return Ok(ResolvedHarnessSource {
