@@ -1,6 +1,7 @@
 import type { PretextVirtualizerDiagnosticEvent } from "@pretext-virtualizer/core";
 import type { WorkbenchListItem } from "../sessionView";
 import { getWorkbenchListItemHeightRevision, type WorkbenchMessageListUiState } from "../sessionMessageListItemIdentity";
+import type { AppPretextVirtualizerRowLayoutContext } from "./pretextVirtualizerRowLayout.app";
 import { defaultTranscriptLayoutPlanner } from "./transcriptLayoutPlanner.app";
 import { getSessionTranscriptUiStateRevision } from "./pretextSessionRuntimeInputs";
 import type { SessionPretextRuntimeRecord } from "./pretextSessionRuntimeCache";
@@ -25,13 +26,14 @@ export function bindSessionPretextRuntime(
     });
   record.callbacks.getLayoutRevision = getLayoutRevision;
   record.callbacks.getPlannedLayout = (item, viewport) => {
-    const plan = defaultTranscriptLayoutPlanner.planRow(item, viewport.width, {
+    const planContext: AppPretextVirtualizerRowLayoutContext = {
       sessionId: record.sessionId,
       expandedTurnHeaders: bindings.uiState.expandedTurnHeaders,
       expandedTurnDetailsById: bindings.uiState.expandedTurnDetailsById,
       expandedMessageById: bindings.uiState.expandedMessageById,
       turnToolsLoading: bindings.uiState.turnToolsLoading,
-    });
+    };
+    const plan = defaultTranscriptLayoutPlanner.planRow(item, viewport.width, planContext);
     return plan.plannedLayout;
   };
   record.callbacks.onDiagnosticEvent = bindings.onDiagnosticEvent ?? null;
