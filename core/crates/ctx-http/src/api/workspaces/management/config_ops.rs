@@ -218,7 +218,12 @@ pub(super) async fn load_workspace_execution_config(
         }
         Ok(None) => {}
         Err(error) => {
-            tracing::warn!("failed to load workspace execution config: {error:#}");
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&error.to_string()),
+                }),
+            ));
         }
     }
 
