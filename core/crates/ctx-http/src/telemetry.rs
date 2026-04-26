@@ -396,12 +396,23 @@ async fn send_batch_with_timeout(runtime: &TelemetryRuntime, batch: &[TelemetryE
 
 async fn load_or_create_install_id(data_root: &Path) -> Option<String> {
     let path = telemetry_state_path(data_root);
-    if let Ok(raw) = tokio::fs::read_to_string(&path).await {
-        if let Ok(state) = serde_json::from_str::<TelemetryStateFile>(&raw) {
-            if !state.install_id.trim().is_empty() {
-                return Some(state.install_id);
+    match tokio::fs::read_to_string(&path).await {
+        Ok(raw) => match serde_json::from_str::<TelemetryStateFile>(&raw) {
+            Ok(state) if !state.install_id.trim().is_empty() => return Some(state.install_id),
+            Ok(_) => {
+                tracing::warn!("telemetry install id missing from {}", path.display());
+                return None;
             }
+            Err(err) => {
+                tracing::warn!("failed to parse telemetry state {}: {err:#}", path.display());
+                return None;
+            }
+        },
+        Err(err) if err.kind() != std::io::ErrorKind::NotFound => {
+            tracing::warn!("failed to read telemetry state {}: {err:#}", path.display());
+            return None;
         }
+        Err(_) => {}
     }
 
     let install_id = uuid::Uuid::new_v4().to_string();
@@ -409,8 +420,24 @@ async fn load_or_create_install_id(data_root: &Path) -> Option<String> {
         install_id: install_id.clone(),
         created_at: Utc::now(),
     };
-    if let Ok(bytes) = serde_json::to_vec_pretty(&state) {
-        let _ = tokio::fs::write(&path, bytes).await;
+    let Some(parent) = path.parent() else {
+        tracing::warn!("telemetry state path has no parent: {}", path.display());
+        return None;
+    };
+    if let Err(err) = tokio::fs::create_dir_all(parent).await {
+        tracing::warn!(
+            "failed to create telemetry state directory {}: {err:#}",
+            parent.display()
+        );
+        return None;
+    }
+    let Ok(bytes) = serde_json::to_vec_pretty(&state) else {
+        tracing::warn!("failed to serialize telemetry state for {}", path.display());
+        return None;
+    };
+    if let Err(err) = tokio::fs::write(&path, bytes).await {
+        tracing::warn!("failed to write telemetry state {}: {err:#}", path.display());
+        return None;
     }
     Some(install_id)
 }
