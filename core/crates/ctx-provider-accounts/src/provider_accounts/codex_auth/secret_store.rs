@@ -165,14 +165,29 @@ pub async fn import_host_codex_auth_to_secret_store(
 
     let registry = load_codex_registry(data_root).await?;
     for existing in &registry.accounts {
-        let _ = hydrate_codex_account_home_from_secret(data_root, &existing.id).await;
+        hydrate_codex_account_home_from_secret(data_root, &existing.id).await?;
         let existing_auth_path = codex_account_dir(data_root, &existing.id).join("auth.json");
-        if let Ok(existing_payload) = tokio::fs::read_to_string(&existing_auth_path).await {
-            if let Ok(existing_auth) = serde_json::from_str::<serde_json::Value>(&existing_payload)
-            {
+        match tokio::fs::read_to_string(&existing_auth_path).await {
+            Ok(existing_payload) => {
+                let existing_auth: serde_json::Value = serde_json::from_str(&existing_payload)
+                    .with_context(|| {
+                        format!(
+                            "invalid codex auth JSON at {}",
+                            existing_auth_path.display()
+                        )
+                    })?;
                 if existing_auth == auth {
                     return set_active_codex_account(data_root, Some(existing.id.clone())).await;
                 }
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(err) => {
+                return Err(err).with_context(|| {
+                    format!(
+                        "reading existing codex auth at {}",
+                        existing_auth_path.display()
+                    )
+                });
             }
         }
     }

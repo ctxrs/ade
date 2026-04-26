@@ -684,6 +684,67 @@ async fn import_host_auth_dedupes_existing_account() {
 }
 
 #[tokio::test]
+async fn import_host_auth_fails_closed_on_malformed_existing_account_auth() {
+    let _env_lock = lock_env().await;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let host_dir = tempfile::tempdir().unwrap();
+    let auth_path = host_dir.path().join("auth.json");
+    tokio::fs::write(
+        &auth_path,
+        br#"{"tokens":{"access_token":"a","refresh_token":"b"}}"#,
+    )
+    .await
+    .unwrap();
+    let _path_guard = EnvGuard::set(
+        CTX_CODEX_HOST_AUTH_PATH_ENV,
+        auth_path.to_string_lossy().as_ref(),
+    );
+
+    save_codex_registry(
+        root,
+        &CodexAccountRegistry {
+            active_account_id: Some("acct-1".to_string()),
+            accounts: vec![CodexAccountEntry {
+                id: "acct-1".to_string(),
+                label: "Existing".to_string(),
+                kind: CODEX_CREDENTIAL_KIND_OAUTH.to_string(),
+                email: None,
+                plan_type: None,
+                created_at: Utc::now(),
+                last_used_at: Some(Utc::now()),
+                secret_ref: None,
+                endpoint_profile: CodexEndpointProfile::default(),
+            }],
+        },
+    )
+    .await
+    .unwrap();
+    tokio::fs::create_dir_all(codex_account_dir(root, "acct-1"))
+        .await
+        .unwrap();
+    tokio::fs::write(
+        codex_account_dir(root, "acct-1").join("auth.json"),
+        "{ invalid json",
+    )
+    .await
+    .unwrap();
+
+    let err = import_host_codex_auth_to_secret_store(root, Some("Imported".to_string()))
+        .await
+        .expect_err("malformed existing account auth should fail closed");
+    let message = format!("{err:#}");
+    assert!(
+        message.contains("invalid codex auth JSON"),
+        "expected parse context in error: {message}"
+    );
+    assert!(
+        message.contains("acct-1/auth.json"),
+        "expected existing auth path in error: {message}"
+    );
+}
+
+#[tokio::test]
 async fn upsert_rejects_incompatible_endpoint_profile() {
     let dir = tempfile::tempdir().unwrap();
     let entry = CodexAccountEntry {
