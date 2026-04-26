@@ -3,11 +3,19 @@ use super::*;
 #[path = "worktree_lifecycle/git_ops.rs"]
 mod git_ops;
 
-pub(crate) use git_ops::{branch_exists, ensure_worktree_attached};
+#[cfg(test)]
+pub(crate) use git_ops::branch_exists;
+pub(crate) use git_ops::ensure_worktree_attached;
 pub(super) use git_ops::{is_git_worktree, prune_worktrees, remove_worktree};
 
 pub(crate) const GLOBAL_INDEX_WRITE_RETRY_LIMIT: usize = 3;
 pub(crate) const GLOBAL_INDEX_WRITE_RETRY_BASE_MS: u64 = 40;
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub(crate) enum BranchCleanupErrorMode {
+    BestEffort,
+    Report,
+}
 
 pub(crate) fn execution_environment_from_settings(
     settings: &ExecutionSettings,
@@ -240,6 +248,7 @@ pub(crate) async fn cleanup_task_worktrees(
     workspace: &Workspace,
     task_id: TaskId,
     targets: &[TaskWorktreeCleanupTarget],
+    branch_cleanup_error_mode: BranchCleanupErrorMode,
 ) -> Vec<anyhow::Error> {
     let mut errors = Vec::new();
     let mut needs_prune = false;
@@ -416,6 +425,9 @@ pub(crate) async fn cleanup_task_worktrees(
                 branch,
                 "failed to delete worktree branch: {err:#}"
             );
+            if matches!(branch_cleanup_error_mode, BranchCleanupErrorMode::Report) {
+                errors.push(err);
+            }
         }
     }
     errors

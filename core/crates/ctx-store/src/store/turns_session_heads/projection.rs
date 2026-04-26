@@ -364,7 +364,7 @@ impl Store {
         &self,
         task_id: TaskId,
     ) -> Result<()> {
-        let sessions = self.list_sessions_for_task(task_id).await?;
+        let sessions = self.list_active_sessions_for_task(task_id).await?;
         for session in sessions {
             self.refresh_active_snapshot_head(session.id, None).await?;
         }

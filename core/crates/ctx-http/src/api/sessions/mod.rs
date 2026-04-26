@@ -38,16 +38,15 @@ use ctx_workspace_container::workspace_container_name;
 
 mod subagents;
 pub(crate) use subagents::{
-    aggregate_subagent_status, build_subagent_result, build_subagent_result_for_session,
-    context_window_for_run, context_window_for_session, estimate_context_window_for_prompt,
-    estimate_context_window_for_prompt_len, worktree_path_for_child, AgentInitItem, AgentInitReq,
-    AgentInitResp, AgentInitResult, AgentReplyReq, AgentReplyResp, SubagentInterruptReq,
-    SubagentInterruptResp, SubagentListItem, SubagentWaitReq, SubagentWaitResp,
+    context_window_for_run, worktree_path_for_child, AgentDetail, AgentInitItem, AgentInitReq,
+    AgentResult, AgentSummary, ArchiveAgentReq, ArchiveAgentResp, GetAgentReq, GetAgentResp,
+    InterruptAgentReq, InterruptAgentResp, SendInputReq, SendInputResp, SpawnAgentReq,
+    SpawnAgentResp, WaitAgentReq, WaitAgentResp,
 };
 pub(super) use subagents::{
     get_session_subagent_invocation, list_session_subagent_invocations, list_session_subagents,
-    mcp_agent_init, mcp_agent_reply, mcp_oracle, mcp_subagent_interrupt, mcp_subagent_list,
-    mcp_subagent_wait,
+    mcp_archive_agent, mcp_get_agent, mcp_interrupt_agent, mcp_list_agents, mcp_oracle,
+    mcp_send_input, mcp_spawn_agent, mcp_wait_agent,
 };
 mod diff_exec;
 pub(crate) use diff_exec::diff_worktree_summary_for_session;
@@ -84,17 +83,35 @@ pub(super) use titles_and_modes::{
 #[cfg(test)]
 use titles_and_modes::{generate_title_for_prompt, TitleGenerationSource};
 
+async fn store_for_existing_session_status_allow_archived(
+    state: &Arc<AppState>,
+    session_id: SessionId,
+) -> Result<ctx_store::Store, StatusCode> {
+    let store = match state.lookup_session_store(session_id).await {
+        crate::daemon::StoreLookup::Found(store) => store,
+        crate::daemon::StoreLookup::Missing | crate::daemon::StoreLookup::Deleting => {
+            return Err(StatusCode::NOT_FOUND);
+        }
+        crate::daemon::StoreLookup::Unavailable(_) => {
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+    };
+    Ok(store)
+}
+
 async fn store_for_existing_session_status(
     state: &Arc<AppState>,
     session_id: SessionId,
 ) -> Result<ctx_store::Store, StatusCode> {
-    match state.lookup_session_store(session_id).await {
-        crate::daemon::StoreLookup::Found(store) => Ok(store),
-        crate::daemon::StoreLookup::Missing | crate::daemon::StoreLookup::Deleting => {
-            Err(StatusCode::NOT_FOUND)
-        }
-        crate::daemon::StoreLookup::Unavailable(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
+    let store = store_for_existing_session_status_allow_archived(state, session_id).await?;
+    if store
+        .is_archived_subagent_session(session_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    {
+        return Err(StatusCode::NOT_FOUND);
     }
+    Ok(store)
 }
 
 const STORE_OPEN_RETRY_LIMIT: usize = 3;
@@ -138,41 +155,81 @@ async fn store_for_existing_session_status_for_write(
     state: &Arc<AppState>,
     session_id: SessionId,
 ) -> Result<ctx_store::Store, StatusCode> {
-    store_for_existing_session_status_with_retry(
+    let store = store_for_existing_session_status_with_retry(
         state,
         session_id,
         STORE_OPEN_RETRY_LIMIT,
         STORE_OPEN_RETRY_BASE_MS,
     )
-    .await
+    .await?;
+    if store
+        .is_archived_subagent_session(session_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    {
+        return Err(StatusCode::NOT_FOUND);
+    }
+    Ok(store)
+}
+
+async fn store_for_existing_session_api_error_allow_archived(
+    state: &Arc<AppState>,
+    session_id: SessionId,
+) -> Result<ctx_store::Store, (StatusCode, Json<ApiErrorResp>)> {
+    let store = match state.lookup_session_store(session_id).await {
+        crate::daemon::StoreLookup::Found(store) => store,
+        crate::daemon::StoreLookup::Missing | crate::daemon::StoreLookup::Deleting => {
+            return Err((
+                StatusCode::NOT_FOUND,
+                Json(ApiErrorResp {
+                    error: "session not found".to_string(),
+                }),
+            ));
+        }
+        crate::daemon::StoreLookup::Unavailable(err) => {
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&err.to_string()),
+                }),
+            ));
+        }
+    };
+    Ok(store)
 }
 
 async fn store_for_existing_session_api_error(
     state: &Arc<AppState>,
     session_id: SessionId,
 ) -> Result<ctx_store::Store, (StatusCode, Json<ApiErrorResp>)> {
-    match state.lookup_session_store(session_id).await {
-        crate::daemon::StoreLookup::Found(store) => Ok(store),
-        crate::daemon::StoreLookup::Missing | crate::daemon::StoreLookup::Deleting => Err((
+    let store = store_for_existing_session_api_error_allow_archived(state, session_id).await?;
+    if store
+        .is_archived_subagent_session(session_id)
+        .await
+        .map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: "workspace store unavailable".to_string(),
+                }),
+            )
+        })?
+    {
+        return Err((
             StatusCode::NOT_FOUND,
             Json(ApiErrorResp {
                 error: "session not found".to_string(),
             }),
-        )),
-        crate::daemon::StoreLookup::Unavailable(err) => Err((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiErrorResp {
-                error: logs::redact_sensitive(&err.to_string()),
-            }),
-        )),
+        ));
     }
+    Ok(store)
 }
 
 async fn store_for_existing_session_api_error_for_write(
     state: &Arc<AppState>,
     session_id: SessionId,
 ) -> Result<ctx_store::Store, (StatusCode, Json<ApiErrorResp>)> {
-    match store_for_existing_session_status_with_retry(
+    let store = match store_for_existing_session_status_with_retry(
         state,
         session_id,
         STORE_OPEN_RETRY_LIMIT,
@@ -180,299 +237,53 @@ async fn store_for_existing_session_api_error_for_write(
     )
     .await
     {
-        Ok(store) => Ok(store),
-        Err(StatusCode::NOT_FOUND) => Err((
+        Ok(store) => store,
+        Err(StatusCode::NOT_FOUND) => {
+            return Err((
+                StatusCode::NOT_FOUND,
+                Json(ApiErrorResp {
+                    error: "session not found".to_string(),
+                }),
+            ));
+        }
+        Err(StatusCode::INTERNAL_SERVER_ERROR) => {
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: "workspace store unavailable".to_string(),
+                }),
+            ));
+        }
+        Err(status) => {
+            return Err((
+                status,
+                Json(ApiErrorResp {
+                    error: status.to_string(),
+                }),
+            ));
+        }
+    };
+    if store
+        .is_archived_subagent_session(session_id)
+        .await
+        .map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: "workspace store unavailable".to_string(),
+                }),
+            )
+        })?
+    {
+        return Err((
             StatusCode::NOT_FOUND,
             Json(ApiErrorResp {
                 error: "session not found".to_string(),
             }),
-        )),
-        Err(StatusCode::INTERNAL_SERVER_ERROR) => Err((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiErrorResp {
-                error: "workspace store unavailable".to_string(),
-            }),
-        )),
-        Err(status) => Err((
-            status,
-            Json(ApiErrorResp {
-                error: status.to_string(),
-            }),
-        )),
+        ));
     }
+    Ok(store)
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::title_generation_local;
-    use std::collections::HashMap;
-
-    use ctx_providers::fake::FakeProviderAdapter;
-    use ctx_store::StoreManager;
-
-    async fn setup_state() -> (tempfile::TempDir, Arc<AppState>, Session) {
-        let data_dir = tempfile::tempdir().unwrap();
-        let stores = StoreManager::open(data_dir.path()).await.unwrap();
-
-        let workspace = stores
-            .global()
-            .create_workspace(
-                "ws".to_string(),
-                data_dir.path().to_string_lossy().to_string(),
-                VcsKind::Git,
-            )
-            .await
-            .unwrap();
-        let store = stores.workspace(workspace.id).await.unwrap();
-        let worktree = store
-            .create_worktree(
-                workspace.id,
-                data_dir.path().to_string_lossy().to_string(),
-                "base".to_string(),
-                None,
-            )
-            .await
-            .unwrap();
-        stores
-            .global()
-            .upsert_workspace_worktree_index(worktree.id, workspace.id)
-            .await
-            .unwrap();
-        let task = store
-            .create_task(
-                workspace.id,
-                title_generation::DEFAULT_SESSION_TITLE.to_string(),
-                None,
-            )
-            .await
-            .unwrap();
-        stores
-            .global()
-            .upsert_workspace_task_index(task.id, workspace.id)
-            .await
-            .unwrap();
-        let session = store
-            .create_session(
-                task.id,
-                workspace.id,
-                worktree.id,
-                ctx_core::models::ExecutionEnvironment::Host,
-                "fake".to_string(),
-                "fake-model".to_string(),
-                "implementer".to_string(),
-                None,
-                None,
-                None,
-            )
-            .await
-            .unwrap();
-        stores
-            .global()
-            .upsert_workspace_session_index(session.id, workspace.id)
-            .await
-            .unwrap();
-
-        let mut providers: HashMap<String, Arc<dyn ctx_providers::adapters::ProviderAdapter>> =
-            HashMap::new();
-        providers.insert("fake".into(), Arc::new(FakeProviderAdapter::new()));
-
-        let state = Arc::new(AppState::new(
-            data_dir.path().to_path_buf(),
-            stores,
-            providers,
-            "http://127.0.0.1:0".to_string(),
-            None,
-        ));
-
-        (data_dir, state, session)
-    }
-
-    async fn block_workspace_store_for_session(
-        data_dir: &tempfile::TempDir,
-        state: &Arc<AppState>,
-        session: &Session,
-    ) {
-        state.cleanup_session(session.id).await;
-        state
-            .core
-            .stores
-            .evict_workspace(session.workspace_id)
-            .await;
-
-        let blocked_workspace_store_dir = data_dir
-            .path()
-            .join("db")
-            .join("workspaces")
-            .join(session.workspace_id.0.to_string());
-        if let Ok(metadata) = tokio::fs::metadata(&blocked_workspace_store_dir).await {
-            if metadata.is_dir() {
-                tokio::fs::remove_dir_all(&blocked_workspace_store_dir)
-                    .await
-                    .unwrap();
-            } else {
-                tokio::fs::remove_file(&blocked_workspace_store_dir)
-                    .await
-                    .unwrap();
-            }
-        }
-        tokio::fs::create_dir_all(blocked_workspace_store_dir.parent().unwrap())
-            .await
-            .unwrap();
-        tokio::fs::write(&blocked_workspace_store_dir, b"blocked workspace store")
-            .await
-            .unwrap();
-    }
-
-    #[tokio::test]
-    async fn schedule_title_generation_falls_back_without_config() {
-        let (_data_dir, state, session) = setup_state().await;
-        let prompt = "make the title this: hello world";
-        let spawned = schedule_session_title_generation(
-            state.clone(),
-            session.clone(),
-            prompt.to_string(),
-            false,
-        )
-        .await;
-
-        assert!(!spawned);
-
-        let store = state.store_for_session(session.id).await.unwrap();
-        let updated = store.get_session(session.id).await.unwrap().unwrap();
-        let expected = title_generation::fallback_title_from_prompt(prompt);
-        assert_eq!(updated.title, expected);
-    }
-
-    #[tokio::test]
-    async fn generate_title_falls_back_when_local_runtime_missing() {
-        let data_dir = tempfile::tempdir().unwrap();
-        let model_path = title_generation_local::model_path(data_dir.path());
-        if let Some(parent) = model_path.parent() {
-            tokio::fs::create_dir_all(parent).await.unwrap();
-        }
-        tokio::fs::write(&model_path, b"stub").await.unwrap();
-
-        let cfg = user_settings::TitleGenerationSettings {
-            mode: user_settings::TitleGenerationMode::Local,
-            local: user_settings::TitleGenerationLocalSettings {
-                model_id: title_generation_local::LOCAL_MODEL_ID.to_string(),
-                use_json: true,
-            },
-            ..Default::default()
-        };
-
-        let prompt = "make the title this: hello world";
-        let outcome = generate_title_for_prompt(Some(&cfg), prompt, data_dir.path())
-            .await
-            .unwrap();
-
-        assert!(matches!(outcome.source, TitleGenerationSource::Fallback));
-        assert_eq!(
-            outcome.title,
-            title_generation::fallback_title_from_prompt(prompt)
-        );
-    }
-
-    #[tokio::test]
-    async fn existing_session_store_helper_returns_500_when_workspace_store_cannot_open() {
-        let (data_dir, state, session) = setup_state().await;
-        block_workspace_store_for_session(&data_dir, &state, &session).await;
-
-        let result = store_for_existing_session_status(&state, session.id).await;
-        match result {
-            Ok(_) => panic!("expected store open failure"),
-            Err(status) => assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR),
-        }
-    }
-
-    #[tokio::test]
-    async fn existing_session_store_api_error_helper_returns_500_when_workspace_store_cannot_open()
-    {
-        let (data_dir, state, session) = setup_state().await;
-        block_workspace_store_for_session(&data_dir, &state, &session).await;
-
-        let result = store_for_existing_session_api_error(&state, session.id).await;
-        match result {
-            Ok(_) => panic!("expected store open failure"),
-            Err((status, body)) => {
-                assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
-                assert!(!body.0.error.is_empty());
-            }
-        }
-    }
-
-    #[tokio::test]
-    async fn existing_session_write_store_helper_returns_500_when_workspace_store_cannot_open() {
-        let (data_dir, state, session) = setup_state().await;
-        block_workspace_store_for_session(&data_dir, &state, &session).await;
-
-        let result = store_for_existing_session_status_for_write(&state, session.id).await;
-        match result {
-            Ok(_) => panic!("expected store open failure"),
-            Err(status) => assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR),
-        }
-    }
-
-    #[tokio::test]
-    async fn existing_session_write_store_api_error_helper_returns_500_when_workspace_store_cannot_open(
-    ) {
-        let (data_dir, state, session) = setup_state().await;
-        block_workspace_store_for_session(&data_dir, &state, &session).await;
-
-        let result = store_for_existing_session_api_error_for_write(&state, session.id).await;
-        match result {
-            Ok(_) => panic!("expected store open failure"),
-            Err((status, body)) => {
-                assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
-                assert!(!body.0.error.is_empty());
-            }
-        }
-    }
-
-    #[tokio::test]
-    async fn existing_session_store_helpers_return_404_while_workspace_is_deleting() {
-        let (_data_dir, state, session) = setup_state().await;
-        state
-            .core
-            .stores
-            .begin_workspace_delete(session.workspace_id)
-            .await;
-
-        let result = store_for_existing_session_status(&state, session.id).await;
-        match result {
-            Ok(_) => panic!("expected delete-in-progress session to look missing"),
-            Err(status) => assert_eq!(status, StatusCode::NOT_FOUND),
-        }
-
-        let result = store_for_existing_session_api_error(&state, session.id).await;
-        match result {
-            Ok(_) => panic!("expected delete-in-progress session to look missing"),
-            Err((status, body)) => {
-                assert_eq!(status, StatusCode::NOT_FOUND);
-                assert_eq!(body.0.error, "session not found");
-            }
-        }
-
-        let result = store_for_existing_session_status_for_write(&state, session.id).await;
-        match result {
-            Ok(_) => panic!("expected delete-in-progress session to look missing"),
-            Err(status) => assert_eq!(status, StatusCode::NOT_FOUND),
-        }
-
-        let result = store_for_existing_session_api_error_for_write(&state, session.id).await;
-        match result {
-            Ok(_) => panic!("expected delete-in-progress session to look missing"),
-            Err((status, body)) => {
-                assert_eq!(status, StatusCode::NOT_FOUND);
-                assert_eq!(body.0.error, "session not found");
-            }
-        }
-
-        state
-            .core
-            .stores
-            .finish_workspace_delete(session.workspace_id)
-            .await;
-    }
-}
+mod tests;

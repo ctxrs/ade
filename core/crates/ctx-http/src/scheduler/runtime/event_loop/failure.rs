@@ -23,6 +23,9 @@ pub(super) async fn record_failed_turn_telemetry(
     details: Option<Value>,
     kind: Option<Value>,
 ) {
+    let Some(state) = ctx.state() else {
+        return;
+    };
     if !runtime.telemetry_emitted {
         runtime.telemetry_emitted = true;
         let duration_ms = ctx.run_started_at.elapsed().as_millis() as u64;
@@ -45,12 +48,12 @@ pub(super) async fn record_failed_turn_telemetry(
             value: duration_ms as f64,
             labels: run_labels,
         };
-        ctx.state
+        state
             .telemetry
             .perf_telemetry
             .record_metric(run_metric, ctx.perf_run_id.clone(), None, None)
             .await;
-        ctx.state
+        state
             .telemetry
             .telemetry
             .emit(TelemetryEvent::provider_call(
@@ -62,7 +65,7 @@ pub(super) async fn record_failed_turn_telemetry(
                 duration_ms,
             ))
             .await;
-        ctx.state
+        state
             .telemetry
             .telemetry
             .emit(TelemetryEvent::session_completed(
@@ -92,7 +95,7 @@ pub(super) async fn record_failed_turn_telemetry(
         "details": details.clone(),
         "kind": kind.clone(),
     }));
-    ctx.state.telemetry.ops_events.emit(fail_event);
+    state.telemetry.ops_events.emit(fail_event);
 }
 
 pub(super) async fn fail_turn(
@@ -101,6 +104,9 @@ pub(super) async fn fail_turn(
     failure: TurnFailurePayload,
     emit_error_event: bool,
 ) {
+    let Some(state) = ctx.state() else {
+        return;
+    };
     record_failed_turn_telemetry(
         ctx,
         runtime,
@@ -111,7 +117,7 @@ pub(super) async fn fail_turn(
     .await;
     runtime.terminal_status = Some(SessionTurnStatus::Failed);
     let _ = finalize_failed_turn(
-        &ctx.state,
+        &state,
         ctx.session_id,
         Some(ctx.run_id),
         ctx.turn_id,

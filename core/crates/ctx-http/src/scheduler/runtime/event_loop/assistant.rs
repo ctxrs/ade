@@ -15,6 +15,9 @@ pub(super) async fn handle_assistant_complete(
     runtime: &mut EventLoopRuntimeState,
     event: &SessionEvent,
 ) {
+    let Some(state) = ctx.state() else {
+        return;
+    };
     let provider_message_id = event
         .payload_json
         .get("message_id")
@@ -55,7 +58,7 @@ pub(super) async fn handle_assistant_complete(
                 order_seq_state.get_or_assign(format!("message:{}", assistant_message_id.0), None)
             };
             match persist_assistant_message(
-                ctx.state.as_ref(),
+                state.as_ref(),
                 &ctx.store,
                 ctx.workspace_id,
                 assistant_message_id,
@@ -101,7 +104,7 @@ pub(super) async fn handle_assistant_complete(
                         );
                     }
                     let _ = emit_event(
-                        &ctx.state,
+                        &state,
                         ctx.session_id,
                         Some(ctx.run_id),
                         Some(ctx.turn_id),
@@ -121,7 +124,7 @@ pub(super) async fn handle_assistant_complete(
                         "turn_sequence": runtime.assistant_sequence + 1,
                         "root_cause": err_string,
                     }));
-                    let storage_status = ctx.state.storage_guard_snapshot();
+                    let storage_status = state.storage_guard_snapshot();
                     fail_turn(
                         ctx,
                         runtime,

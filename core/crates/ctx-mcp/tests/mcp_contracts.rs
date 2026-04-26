@@ -10,10 +10,55 @@ fn mcp_bin() -> &'static str {
     env!("CARGO_BIN_EXE_ctx-mcp")
 }
 
+fn mcp_command() -> Command {
+    let mut command = Command::new(mcp_bin());
+    // These tests run inside ctx and inherit ambient session env. Scrub it so
+    // the child MCP process only sees the context each test sets explicitly.
+    for key in [
+        "CTX_AUTH_TOKEN",
+        "CTX_BUNDLE_DIR",
+        "CTX_BUILD_IDENTITY_PATH",
+        "CTX_DAEMON_URL",
+        "CTX_MCP_DEV_MODE",
+        "CTX_SESSION_ID",
+        "CTX_WORKTREE_ID",
+        "CTX_WORKTREE_ROOT",
+    ] {
+        command.env_remove(key);
+    }
+    command
+}
+
+async fn write_mcp_message(stdin: &mut tokio::process::ChildStdin, msg: Value) {
+    stdin.write_all(msg.to_string().as_bytes()).await.unwrap();
+    stdin.write_all(b"\n").await.unwrap();
+    stdin.flush().await.unwrap();
+}
+
+async fn wait_for_response(
+    reader: &mut tokio::io::Lines<BufReader<tokio::process::ChildStdout>>,
+    response_id: i64,
+    timeout: Duration,
+) -> Value {
+    let deadline = tokio::time::Instant::now() + timeout;
+    loop {
+        let next_line = tokio::time::timeout_at(deadline, reader.next_line())
+            .await
+            .unwrap_or_else(|_| panic!("timed out waiting for response id {response_id}"));
+        let Some(line) = next_line.unwrap() else {
+            break;
+        };
+        let value: Value = serde_json::from_str(&line).unwrap();
+        if value.get("id").and_then(|id| id.as_i64()) == Some(response_id) {
+            return value;
+        }
+    }
+    panic!("timed out waiting for response id {response_id}");
+}
+
 #[tokio::test]
 async fn mcp_tools_list_omits_removed_lsp_and_edit_plan_tools() {
-    let bin = mcp_bin();
-    let mut child = Command::new(bin)
+    let mut child = mcp_command()
         .arg("--stdio")
         .env("CTX_DAEMON_URL", "http://127.0.0.1:9")
         .stdin(std::process::Stdio::piped())
@@ -25,56 +70,45 @@ async fn mcp_tools_list_omits_removed_lsp_and_edit_plan_tools() {
     let stdout = child.stdout.take().unwrap();
     let mut reader = BufReader::new(stdout).lines();
 
-    for msg in [
+    write_mcp_message(
+        &mut stdin,
         json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25"}}),
+    )
+    .await;
+    let _ = wait_for_response(&mut reader, 1, Duration::from_secs(15)).await;
+    write_mcp_message(
+        &mut stdin,
         json!({"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}),
-    ] {
-        stdin.write_all(msg.to_string().as_bytes()).await.unwrap();
-        stdin.write_all(b"\n").await.unwrap();
-    }
-    stdin.flush().await.unwrap();
+    )
+    .await;
 
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
-    let mut got_list = false;
-    while tokio::time::Instant::now() < deadline {
-        let Some(line) = reader.next_line().await.unwrap() else {
-            break;
-        };
-        let v: Value = serde_json::from_str(&line).unwrap();
-        if v.get("id").and_then(|id| id.as_i64()) == Some(2) {
-            let tools = v["result"]["tools"].as_array().expect("tools array");
-            let names: Vec<String> = tools
-                .iter()
-                .filter_map(|t| {
-                    t.get("name")
-                        .and_then(|n| n.as_str())
-                        .map(|s| s.to_string())
-                })
-                .collect();
-            assert!(
-                !names.iter().any(|n| n.starts_with("lsp_")),
-                "expected removed lsp_* tools to stay absent"
-            );
-            assert!(
-                !names.iter().any(|n| matches!(
-                    n.as_str(),
-                    "list_edit_plans" | "get_edit_plan" | "apply_edit_plan" | "discard_edit_plan"
-                )),
-                "expected removed edit plan tools to stay absent"
-            );
-            got_list = true;
-            break;
-        }
-    }
-
-    assert!(got_list, "did not receive tools/list response");
+    let v = wait_for_response(&mut reader, 2, Duration::from_secs(15)).await;
+    let tools = v["result"]["tools"].as_array().expect("tools array");
+    let names: Vec<String> = tools
+        .iter()
+        .filter_map(|t| {
+            t.get("name")
+                .and_then(|n| n.as_str())
+                .map(|s| s.to_string())
+        })
+        .collect();
+    assert!(
+        !names.iter().any(|n| n.starts_with("lsp_")),
+        "expected removed lsp_* tools to stay absent"
+    );
+    assert!(
+        !names.iter().any(|n| matches!(
+            n.as_str(),
+            "list_edit_plans" | "get_edit_plan" | "apply_edit_plan" | "discard_edit_plan"
+        )),
+        "expected removed edit plan tools to stay absent"
+    );
     let _ = child.kill().await;
 }
 
 #[tokio::test]
 async fn mcp_removed_lsp_tool_calls_return_actionable_errors() {
-    let bin = mcp_bin();
-    let mut child = Command::new(bin)
+    let mut child = mcp_command()
         .arg("--stdio")
         .env("CTX_DAEMON_URL", "http://127.0.0.1:9")
         .stdin(std::process::Stdio::piped())
@@ -86,48 +120,37 @@ async fn mcp_removed_lsp_tool_calls_return_actionable_errors() {
     let stdout = child.stdout.take().unwrap();
     let mut reader = BufReader::new(stdout).lines();
 
-    for msg in [
+    write_mcp_message(
+        &mut stdin,
         json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25"}}),
+    )
+    .await;
+    let _ = wait_for_response(&mut reader, 1, Duration::from_secs(15)).await;
+    write_mcp_message(
+        &mut stdin,
         json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"lsp_hover","arguments":{"workspace":"ignored","file":"ignored","line":1,"character":1}}}),
-    ] {
-        stdin.write_all(msg.to_string().as_bytes()).await.unwrap();
-        stdin.write_all(b"\n").await.unwrap();
-    }
-    stdin.flush().await.unwrap();
+    )
+    .await;
 
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
-    let mut got_response = false;
-    while tokio::time::Instant::now() < deadline {
-        let Some(line) = reader.next_line().await.unwrap() else {
-            break;
-        };
-        let v: Value = serde_json::from_str(&line).unwrap();
-        if v.get("id").and_then(|id| id.as_i64()) == Some(2) {
-            assert_eq!(v["result"]["isError"].as_bool(), Some(true));
-            let text = v["result"]["content"][0]["text"]
-                .as_str()
-                .expect("tool error text");
-            assert!(
-                text.contains("tool removed: lsp_hover"),
-                "expected removed tool message, got: {text}"
-            );
-            assert!(
-                text.contains("795129c6a"),
-                "expected recovery commit in removed tool message, got: {text}"
-            );
-            got_response = true;
-            break;
-        }
-    }
-
-    assert!(got_response, "did not receive removed tool response");
+    let v = wait_for_response(&mut reader, 2, Duration::from_secs(15)).await;
+    assert_eq!(v["result"]["isError"].as_bool(), Some(true));
+    let text = v["result"]["content"][0]["text"]
+        .as_str()
+        .expect("tool error text");
+    assert!(
+        text.contains("tool removed: lsp_hover"),
+        "expected removed tool message, got: {text}"
+    );
+    assert!(
+        text.contains("795129c6a"),
+        "expected recovery commit in removed tool message, got: {text}"
+    );
     let _ = child.kill().await;
 }
 
 #[tokio::test]
-async fn mcp_subagent_tool_schemas_avoid_top_level_combinators() {
-    let bin = mcp_bin();
-    let mut child = Command::new(bin)
+async fn mcp_agent_tool_schemas_avoid_top_level_combinators() {
+    let mut child = mcp_command()
         .arg("--stdio")
         .env("CTX_DAEMON_URL", "http://127.0.0.1:9")
         .stdin(std::process::Stdio::piped())
@@ -139,48 +162,51 @@ async fn mcp_subagent_tool_schemas_avoid_top_level_combinators() {
     let stdout = child.stdout.take().unwrap();
     let mut reader = BufReader::new(stdout).lines();
 
-    for msg in [
+    write_mcp_message(
+        &mut stdin,
         json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25"}}),
+    )
+    .await;
+    let _ = wait_for_response(&mut reader, 1, Duration::from_secs(15)).await;
+    write_mcp_message(
+        &mut stdin,
         json!({"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}),
-    ] {
-        stdin.write_all(msg.to_string().as_bytes()).await.unwrap();
-        stdin.write_all(b"\n").await.unwrap();
-    }
-    stdin.flush().await.unwrap();
+    )
+    .await;
 
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
-    let mut got_list = false;
-    while tokio::time::Instant::now() < deadline {
-        let Some(line) = reader.next_line().await.unwrap() else {
-            break;
-        };
-        let v: Value = serde_json::from_str(&line).unwrap();
-        if v.get("id").and_then(|id| id.as_i64()) == Some(2) {
-            let tools = v["result"]["tools"].as_array().expect("tools array");
-            for tool_name in ["subagent_wait", "subagent_interrupt"] {
-                let tool = tools
-                    .iter()
-                    .find(|tool| tool.get("name").and_then(|name| name.as_str()) == Some(tool_name))
-                    .unwrap_or_else(|| panic!("missing tool {tool_name}"));
-                let schema = tool["inputSchema"].as_object().expect("inputSchema object");
-                assert_eq!(
-                    schema.get("type").and_then(|value| value.as_str()),
-                    Some("object"),
-                    "expected {tool_name} schema type=object"
-                );
-                for key in ["anyOf", "allOf", "oneOf", "not", "enum"] {
-                    assert!(
-                        !schema.contains_key(key),
-                        "expected {tool_name} schema to avoid top-level {key}"
-                    );
-                }
-            }
-            got_list = true;
-            break;
+    let v = wait_for_response(&mut reader, 2, Duration::from_secs(15)).await;
+    let tools = v["result"]["tools"].as_array().expect("tools array");
+    let spawn_agent = tools
+        .iter()
+        .find(|tool| tool.get("name").and_then(|name| name.as_str()) == Some("spawn_agent"))
+        .expect("missing tool spawn_agent");
+    let required = spawn_agent["inputSchema"]["required"]
+        .as_array()
+        .expect("spawn_agent required array");
+    assert!(
+        required
+            .iter()
+            .any(|value| value.as_str() == Some("worktree")),
+        "spawn_agent schema must require worktree"
+    );
+    for tool_name in ["wait_agent", "interrupt_agent", "archive_agent"] {
+        let tool = tools
+            .iter()
+            .find(|tool| tool.get("name").and_then(|name| name.as_str()) == Some(tool_name))
+            .unwrap_or_else(|| panic!("missing tool {tool_name}"));
+        let schema = tool["inputSchema"].as_object().expect("inputSchema object");
+        assert_eq!(
+            schema.get("type").and_then(|value| value.as_str()),
+            Some("object"),
+            "expected {tool_name} schema type=object"
+        );
+        for key in ["anyOf", "allOf", "oneOf", "not", "enum"] {
+            assert!(
+                !schema.contains_key(key),
+                "expected {tool_name} schema to avoid top-level {key}"
+            );
         }
     }
-
-    assert!(got_list, "did not receive tools/list response");
     let _ = child.kill().await;
 }
 
@@ -209,8 +235,7 @@ async fn mcp_list_workspaces_scrubs_internal_ids() {
         axum::serve(listener, app).await.unwrap();
     });
 
-    let bin = mcp_bin();
-    let mut child = Command::new(bin)
+    let mut child = mcp_command()
         .arg("--stdio")
         .env("CTX_DAEMON_URL", format!("http://{addr}"))
         .stdin(std::process::Stdio::piped())
@@ -304,8 +329,7 @@ async fn mcp_merge_queue_submit_scrubs_internal_ids() {
         axum::serve(listener, app).await.unwrap();
     });
 
-    let bin = mcp_bin();
-    let mut child = Command::new(bin)
+    let mut child = mcp_command()
         .arg("--stdio")
         .env("CTX_DAEMON_URL", format!("http://{addr}"))
         .env("CTX_SESSION_ID", "00000000-0000-0000-0000-000000000000")
@@ -444,8 +468,7 @@ async fn mcp_oracle_forwards_prompt_and_overrides() {
         axum::serve(listener, app).await.unwrap();
     });
 
-    let bin = mcp_bin();
-    let mut child = Command::new(bin)
+    let mut child = mcp_command()
         .arg("--stdio")
         .env("CTX_DAEMON_URL", format!("http://{addr}"))
         .env("CTX_SESSION_ID", "00000000-0000-0000-0000-000000000000")

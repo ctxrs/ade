@@ -4,7 +4,7 @@ pub(crate) async fn init_subagents(
     state: Arc<AppState>,
     parent_id: SessionId,
     req: AgentInitReq,
-) -> ApiResult<AgentInitResp> {
+) -> ApiResult<Vec<SpawnedChild>> {
     if req.agents.is_empty() {
         return Err(api_error(StatusCode::BAD_REQUEST, "agents is required"));
     }
@@ -28,13 +28,38 @@ pub(crate) async fn init_subagents(
     {
         return Err(api_error(
             StatusCode::BAD_REQUEST,
-            "response_mode is not supported; use subagent_wait to await",
+            "response_mode is not supported; use wait_agent to await",
         ));
     }
     let worktree_selection = parse_subagent_worktree(req.worktree.as_deref())
         .map_err(|error| api_error(StatusCode::BAD_REQUEST, error))?;
 
     let (store, parent) = load_parent_session(state.as_ref(), parent_id).await?;
+    let creation_lock = state.task_session_creation_lock(parent.task_id).await;
+    let _creation_guard = creation_lock.lock().await;
+    if parent.parent_session_id.is_some() {
+        return Err(api_error(
+            StatusCode::BAD_REQUEST,
+            format!(
+                "subagents cannot spawn child agents; max depth is {}",
+                super::request::DEFAULT_MAX_SUBAGENT_DEPTH
+            ),
+        ));
+    }
+    let existing_active = store
+        .count_active_subagent_sessions(parent.id)
+        .await
+        .map_err(internal_api_error)?;
+    if existing_active + req.agents.len() > super::request::DEFAULT_MAX_ACTIVE_SUBAGENTS_PER_PARENT
+    {
+        return Err(api_error(
+            StatusCode::BAD_REQUEST,
+            format!(
+                "max {} active child agents per parent",
+                super::request::DEFAULT_MAX_ACTIVE_SUBAGENTS_PER_PARENT
+            ),
+        ));
+    }
     let workspace = state
         .global_store()
         .get_workspace(parent.workspace_id)
@@ -258,8 +283,8 @@ pub(crate) async fn init_subagents(
             let prompt_length = prompt.chars().count() as i64;
             let reasoning_effort = resolved.reasoning_effort.clone();
 
-            let worktree_id = match worktree_selection {
-                super::request::SubagentWorktreeSelection::Inherit => parent.worktree_id,
+            let (worktree_id, worktree_path) = match worktree_selection {
+                super::request::SubagentWorktreeSelection::Inherit => (parent.worktree_id, None),
                 super::request::SubagentWorktreeSelection::New => {
                     let (vcs_kind, base_commit_sha) = worktree_plan.clone().ok_or_else(|| {
                         api_error(StatusCode::INTERNAL_SERVER_ERROR, "worktree plan missing")
@@ -274,7 +299,7 @@ pub(crate) async fn init_subagents(
                         &parent_effective,
                     )
                     .await?;
-                    worktree.id
+                    (worktree.id, Some(worktree.root_path))
                 }
             };
 
@@ -313,12 +338,12 @@ pub(crate) async fn init_subagents(
             }
 
             let child_created_at = chrono::Utc::now();
-            let (run_id, _message) = enqueue_subagent_prompt(&state, &session, prompt).await?;
+            let persisted = persist_subagent_prompt(&state, &session, prompt).await?;
             let child_session_id = session.id;
             let child = SubagentInvocationChild {
                 invocation_id: invocation_id.clone(),
                 child_session_id,
-                run_id: Some(run_id),
+                run_id: Some(persisted.run_id),
                 position: idx as i64,
                 status: "running".to_string(),
                 label: Some(label),
@@ -353,12 +378,17 @@ pub(crate) async fn init_subagents(
                 }),
             )
             .await?;
+            dispatch_subagent_prompt(&state, &session, &persisted.saved_message).await;
 
-            Ok(child)
+            Ok(SpawnedChild {
+                child,
+                worktree_path,
+                last_event_seq: persisted.last_event_seq,
+            })
         });
     }
 
-    let children = match futures::future::try_join_all(futures).await {
+    let spawned_children = match futures::future::try_join_all(futures).await {
         Ok(children) => children,
         Err(error) => {
             let updated_at = chrono::Utc::now();
@@ -394,51 +424,33 @@ pub(crate) async fn init_subagents(
         }
     };
 
-    for child in children.iter().cloned() {
-        let state = state.clone();
+    for spawned in spawned_children.iter().cloned() {
+        let state_weak = Arc::downgrade(&state);
         let invocation_id = invocation_id.clone();
         let tool_call_id = tool_call_id.clone();
         let parent_id = parent.id;
         let parent_worktree_id = parent.worktree_id;
         tokio::spawn(async move {
-            if let Err(error) = run_subagent_child(&state, child, parent_worktree_id).await {
+            if let Err(error) =
+                run_subagent_child(&state_weak, spawned.child, parent_worktree_id).await
+            {
                 tracing::warn!(error = %error, "subagent execution failed");
             }
-            if let Err(error) = finalize_subagent_invocation(
-                &state,
-                &invocation_id,
-                &tool_call_id,
-                parent_id,
-                parent_turn_id,
-            )
-            .await
-            {
-                tracing::warn!(error = %error, "failed to finalize subagent invocation");
+            if let Some(state) = state_weak.upgrade() {
+                if let Err(error) = finalize_subagent_invocation(
+                    &state,
+                    &invocation_id,
+                    &tool_call_id,
+                    parent_id,
+                    parent_turn_id,
+                )
+                .await
+                {
+                    tracing::warn!(error = %error, "failed to finalize subagent invocation");
+                }
             }
         });
     }
 
-    let results = futures::future::try_join_all(children.iter().map(|child| {
-        let context_window = match (child.harness.as_deref(), child.model.as_deref()) {
-            (Some(provider_id), Some(model_id)) => {
-                estimate_context_window_for_prompt_len(provider_id, model_id, child.prompt_length)
-            }
-            _ => None,
-        };
-        build_subagent_result(
-            &state,
-            parent.worktree_id,
-            child,
-            "running".to_string(),
-            None,
-            context_window,
-        )
-    }))
-    .await
-    .map_err(|error| api_error(StatusCode::INTERNAL_SERVER_ERROR, error))?;
-
-    Ok(AgentInitResp {
-        status: "running".to_string(),
-        results,
-    })
+    Ok(spawned_children)
 }

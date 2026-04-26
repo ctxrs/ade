@@ -4,8 +4,8 @@ use crate::api::shared::store_for_existing_workspace_status;
 #[derive(Debug, Serialize)]
 pub(in crate::api) struct ArchiveTaskResponse {
     #[serde(flatten)]
-    task: Task,
-    cleanup_failed: bool,
+    pub(in crate::api) task: Task,
+    pub(in crate::api) cleanup_failed: bool,
 }
 
 pub(in crate::api) async fn archive_task(
@@ -23,7 +23,7 @@ pub(in crate::api) async fn archive_task(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
     let session_ids: Vec<SessionId> = store
-        .list_sessions_for_task(task_id)
+        .list_all_sessions_for_task(task_id)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .into_iter()
@@ -36,7 +36,7 @@ pub(in crate::api) async fn archive_task(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
     let sessions = store
-        .list_sessions_for_task(task_id)
+        .list_all_sessions_for_task(task_id)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     for session in &sessions {
@@ -102,11 +102,18 @@ pub(in crate::api) async fn archive_task(
             managed_root: managed_worktree_root(&state, &workspace, worktree),
             sandbox_binding,
             worktree: worktree.clone(),
-            destroy_worktree_on_cleanup: false,
+            destroy_worktree_on_cleanup: true,
         });
     }
     errors.extend(
-        cleanup_task_worktrees(state.as_ref(), &workspace, task_id, &cleanup_targets).await,
+        cleanup_task_worktrees(
+            state.as_ref(),
+            &workspace,
+            task_id,
+            &cleanup_targets,
+            crate::api::tasks::BranchCleanupErrorMode::Report,
+        )
+        .await,
     );
     let cleanup_failed = !errors.is_empty();
     if cleanup_failed {

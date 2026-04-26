@@ -69,7 +69,11 @@ pub async fn clear_mistral_runtime_home(data_root: &Path) -> Result<()> {
 }
 
 pub async fn load_mistral_registry(data_root: &Path) -> Result<MistralAccountRegistry> {
-    load_json_registry(&mistral_registry_path(data_root), "Mistral account registry").await
+    load_json_registry(
+        &mistral_registry_path(data_root),
+        "Mistral account registry",
+    )
+    .await
 }
 
 pub async fn upsert_mistral_account(

@@ -15,7 +15,9 @@ pub(crate) async fn list_claude_accounts(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<ClaudeAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
     Ok(Json(
-        claude_accounts_response(&state).await.map_err(internal_error)?,
+        claude_accounts_response(&state)
+            .await
+            .map_err(internal_error)?,
     ))
 }
 
@@ -28,7 +30,9 @@ pub(crate) async fn upsert_claude_account(
         .map_err(bad_request)?;
     restarts::restart_claude_providers_for_auth_change(&state, "claude auth updated").await;
     Ok(Json(
-        claude_accounts_response(&state).await.map_err(internal_error)?,
+        claude_accounts_response(&state)
+            .await
+            .map_err(internal_error)?,
     ))
 }
 
@@ -54,7 +58,9 @@ pub(crate) async fn set_claude_active_account(
         .map_err(bad_request)?;
     restarts::restart_claude_providers_for_auth_change(&state, "claude auth updated").await;
     Ok(Json(
-        claude_accounts_response(&state).await.map_err(internal_error)?,
+        claude_accounts_response(&state)
+            .await
+            .map_err(internal_error)?,
     ))
 }
 
@@ -67,6 +73,8 @@ pub(crate) async fn delete_claude_account(
         .map_err(provider_account_delete_error)?;
     restarts::restart_claude_providers_for_auth_change(&state, "claude auth updated").await;
     Ok(Json(
-        claude_accounts_response(&state).await.map_err(internal_error)?,
+        claude_accounts_response(&state)
+            .await
+            .map_err(internal_error)?,
     ))
 }

@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 use std::time::{Duration, Instant};
 
 use serde_json::json;
@@ -29,7 +29,6 @@ use persistence::emit_event;
 use runtime::start_turn;
 
 pub use reconcile::{reconcile_turn_failed_on_provider_exit, reconcile_turn_terminal_state};
-pub(crate) use runtime::model_context_window;
 
 #[derive(Debug)]
 pub struct QueuedMessage {
@@ -49,10 +48,15 @@ pub enum SchedulerCommand {
 }
 
 pub async fn session_worker(
-    state: Arc<AppState>,
+    state_weak: Weak<AppState>,
     session: Session,
     mut rx: mpsc::Receiver<SchedulerCommand>,
 ) {
+    // Keep only a weak reference in the scheduler task so background workers do not
+    // keep AppState alive after tests or shutdown drop the owner.
+    let Some(state) = state_weak.upgrade() else {
+        return;
+    };
     let mut session = session;
     let mut queue: VecDeque<QueuedMessage> = VecDeque::new();
     let store = match state.store_for_session(session.id).await {
@@ -99,10 +103,14 @@ pub async fn session_worker(
         "git_branch": worktree.git_branch,
     }));
     state.telemetry.ops_events.emit(worktree_event);
+    drop(state);
 
     loop {
         if running.is_none() && !suspend_queue {
             if let Some(msg) = queue.pop_front() {
+                let Some(state) = state_weak.upgrade() else {
+                    break;
+                };
                 let msg_id = msg.message.id;
                 let msg_run_id = msg.message.run_id;
                 let msg_turn_id = msg.message.turn_id;
@@ -198,6 +206,9 @@ pub async fn session_worker(
                     Some(SchedulerCommand::Cancel) => {
                         if let Some(turn) = running.take() {
                             running_start_deadline = None;
+                            let Some(state) = state_weak.upgrade() else {
+                                break;
+                            };
                             let _ = stop_running_turn(
                                 &state,
                                 session.id,
@@ -211,6 +222,9 @@ pub async fn session_worker(
                     Some(SchedulerCommand::Interrupt(interrupt)) => {
                         if let Some(turn) = running.take() {
                             running_start_deadline = None;
+                            let Some(state) = state_weak.upgrade() else {
+                                break;
+                            };
                             suspend_queue = stop_running_turn(
                                 &state,
                                 session.id,
@@ -224,6 +238,9 @@ pub async fn session_worker(
                     Some(SchedulerCommand::StorageEmergency) => {
                         if let Some(turn) = running.take() {
                             running_start_deadline = None;
+                            let Some(state) = state_weak.upgrade() else {
+                                break;
+                            };
                             suspend_queue = stop_running_turn(
                                 &state,
                                 session.id,
@@ -244,11 +261,21 @@ pub async fn session_worker(
             }, if running.is_some() => {
                 if let Some(turn) = running.take() {
                     running_start_deadline = None;
+                    let Some(state) = state_weak.upgrade() else {
+                        break;
+                    };
                     handle_provider_exit(&state, session.id, turn).await;
+                    state.set_running(session.id, false).await;
+                } else if let Some(state) = state_weak.upgrade() {
+                    state.set_running(session.id, false).await;
+                } else {
+                    break;
                 }
-                state.set_running(session.id, false).await;
             }
             changed = event_head_rx.changed(), if running.is_some() => {
+                let Some(state) = state_weak.upgrade() else {
+                    break;
+                };
                 if changed.is_err() {
                     event_head_rx = state.subscribe_session_event_head(session.id).await;
                 }
@@ -267,6 +294,9 @@ pub async fn session_worker(
                 running_start_deadline = None;
                 if start_still_pending {
                     if let Some(turn) = running.take() {
+                        let Some(state) = state_weak.upgrade() else {
+                            break;
+                        };
                         fail_starting_turn(
                             &state,
                             session.id,
@@ -274,8 +304,12 @@ pub async fn session_worker(
                             "provider did not report turn start before deadline",
                         )
                         .await;
+                        state.set_running(session.id, false).await;
+                    } else if let Some(state) = state_weak.upgrade() {
+                        state.set_running(session.id, false).await;
+                    } else {
+                        break;
                     }
-                    state.set_running(session.id, false).await;
                 }
             }
             _ = async {
@@ -285,9 +319,16 @@ pub async fn session_worker(
             }, if running.is_some() && running_inactivity_deadline.is_some() => {
                 if let Some(turn) = running.take() {
                     running_start_deadline = None;
+                    let Some(state) = state_weak.upgrade() else {
+                        break;
+                    };
                     handle_provider_stall(&state, session.id, turn).await;
+                    state.set_running(session.id, false).await;
+                } else if let Some(state) = state_weak.upgrade() {
+                    state.set_running(session.id, false).await;
+                } else {
+                    break;
                 }
-                state.set_running(session.id, false).await;
             }
         }
     }

@@ -288,24 +288,20 @@ fn session_routes() -> axum::Router<Arc<AppState>> {
         .route("/api/sessions/:id/cancel", post(cancel_session))
         .route("/api/sessions/:id/interrupt", post(interrupt_session))
         .route("/api/sessions/:id/authenticate", post(authenticate_session))
-        .route("/api/mcp/sessions/:id/subagent_init", post(mcp_agent_init))
+        .route("/api/mcp/sessions/:id/spawn_agent", post(mcp_spawn_agent))
+        .route("/api/mcp/sessions/:id/send_input", post(mcp_send_input))
         .route(
-            "/api/mcp/sessions/:id/subagent_reply",
-            post(mcp_agent_reply),
+            "/api/mcp/sessions/:id/archive_agent",
+            post(mcp_archive_agent),
         )
         .route(
-            "/api/mcp/sessions/:id/subagent_interrupt",
-            post(mcp_subagent_interrupt),
+            "/api/mcp/sessions/:id/interrupt_agent",
+            post(mcp_interrupt_agent),
         )
-        .route(
-            "/api/mcp/sessions/:id/subagent_list",
-            get(mcp_subagent_list),
-        )
+        .route("/api/mcp/sessions/:id/list_agents", get(mcp_list_agents))
+        .route("/api/mcp/sessions/:id/get_agent", post(mcp_get_agent))
         .route("/api/mcp/sessions/:id/oracle", post(mcp_oracle))
-        .route(
-            "/api/mcp/sessions/:id/subagent_wait",
-            post(mcp_subagent_wait),
-        )
+        .route("/api/mcp/sessions/:id/wait_agent", post(mcp_wait_agent))
         .route(
             "/api/sessions/web",
             post(create_web_session).get(list_web_sessions),

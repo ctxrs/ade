@@ -14,7 +14,11 @@ pub(crate) async fn qwen_accounts_response(
 pub(crate) async fn list_qwen_accounts(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<QwenAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
-    Ok(Json(qwen_accounts_response(&state).await.map_err(internal_error)?))
+    Ok(Json(
+        qwen_accounts_response(&state)
+            .await
+            .map_err(internal_error)?,
+    ))
 }
 
 pub(crate) async fn upsert_qwen_account(
@@ -30,7 +34,11 @@ pub(crate) async fn upsert_qwen_account(
     .await
     .map_err(bad_request)?;
     restarts::restart_qwen_providers_for_auth_change(&state, "qwen auth updated").await;
-    Ok(Json(qwen_accounts_response(&state).await.map_err(internal_error)?))
+    Ok(Json(
+        qwen_accounts_response(&state)
+            .await
+            .map_err(internal_error)?,
+    ))
 }
 
 pub(crate) async fn set_qwen_active_account(
@@ -49,7 +57,11 @@ pub(crate) async fn set_qwen_active_account(
         .await
         .map_err(bad_request)?;
     restarts::restart_qwen_providers_for_auth_change(&state, "qwen auth updated").await;
-    Ok(Json(qwen_accounts_response(&state).await.map_err(internal_error)?))
+    Ok(Json(
+        qwen_accounts_response(&state)
+            .await
+            .map_err(internal_error)?,
+    ))
 }
 
 pub(crate) async fn delete_qwen_account(
@@ -60,5 +72,9 @@ pub(crate) async fn delete_qwen_account(
         .await
         .map_err(provider_account_delete_error)?;
     restarts::restart_qwen_providers_for_auth_change(&state, "qwen auth updated").await;
-    Ok(Json(qwen_accounts_response(&state).await.map_err(internal_error)?))
+    Ok(Json(
+        qwen_accounts_response(&state)
+            .await
+            .map_err(internal_error)?,
+    ))
 }

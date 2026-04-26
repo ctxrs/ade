@@ -1,10 +1,10 @@
 use super::*;
 
-pub(crate) async fn mcp_agent_init(
+pub(crate) async fn mcp_spawn_agent(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
-    Json(req): Json<AgentInitReq>,
-) -> Result<Json<AgentInitResp>, (StatusCode, Json<ApiErrorResp>)> {
+    Json(req): Json<SpawnAgentReq>,
+) -> Result<Json<SpawnAgentResp>, (StatusCode, Json<ApiErrorResp>)> {
     let parent_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| {
         (
             StatusCode::BAD_REQUEST,
@@ -14,7 +14,7 @@ pub(crate) async fn mcp_agent_init(
         )
     })?);
 
-    crate::daemon::sessions::subagents::init_subagents(state, parent_id, req)
+    crate::daemon::sessions::subagents::spawn_agent(state, parent_id, req)
         .await
         .map(Json)
 }

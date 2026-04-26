@@ -43,6 +43,13 @@ pub(super) async fn load_parent_session(
     parent_id: SessionId,
 ) -> ApiResult<(ctx_store::Store, Session)> {
     let store = store_for_session(state, parent_id).await?;
+    if store
+        .is_archived_subagent_session(parent_id)
+        .await
+        .map_err(internal_api_error)?
+    {
+        return Err(api_error(StatusCode::NOT_FOUND, "parent session not found"));
+    }
     let parent = store
         .get_session(parent_id)
         .await

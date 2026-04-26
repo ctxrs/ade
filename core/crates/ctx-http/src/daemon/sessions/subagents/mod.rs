@@ -1,3 +1,4 @@
+mod agent_control;
 mod child_runs;
 mod errors;
 mod init;
@@ -5,29 +6,33 @@ mod providers;
 mod request;
 mod worktrees;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use axum::http::StatusCode;
+use base64::Engine;
 
 use crate::api::sessions::{
-    build_subagent_result, build_subagent_result_for_session, context_window_for_run,
-    context_window_for_session, estimate_context_window_for_prompt,
-    estimate_context_window_for_prompt_len, resolve_model_id, worktree_path_for_child,
-    AgentInitReq, AgentInitResp, AgentReplyReq, AgentReplyResp, SubagentInterruptReq,
-    SubagentInterruptResp, SubagentListItem, SubagentWaitReq, SubagentWaitResp,
+    context_window_for_run, resolve_model_id, worktree_path_for_child, AgentDetail, AgentInitReq,
+    AgentResult, AgentSummary, ArchiveAgentReq, ArchiveAgentResp, GetAgentReq, GetAgentResp,
+    InterruptAgentReq, InterruptAgentResp, SendInputReq, SendInputResp, SpawnAgentReq,
+    SpawnAgentResp, WaitAgentReq, WaitAgentResp,
 };
 use crate::daemon::AppState;
 use crate::scheduler::{InterruptTelemetryContext, SchedulerCommand};
 use crate::settings as user_settings;
-use ctx_core::ids::SessionId;
+use ctx_core::ids::{RunId, SessionId};
 use ctx_core::models::{
-    SessionStatus, SessionTurnStatus, SubagentInvocation, SubagentInvocationChild,
+    MessageDelivery, SessionTurnStatus, SubagentInvocation, SubagentInvocationChild,
 };
 
+pub(crate) use self::agent_control::{
+    archive_agent, get_agent, interrupt_agent, list_agents, send_input, spawn_agent, wait_agent,
+};
 use self::child_runs::{
-    emit_subagent_invocation_notice, enqueue_subagent_prompt, finalize_subagent_invocation,
-    run_subagent_child, subagent_status_from_turn_status, wait_for_run_terminal_turn,
+    dispatch_subagent_prompt, emit_subagent_invocation_notice, finalize_subagent_invocation,
+    persist_subagent_prompt, run_subagent_child, PersistedSubagentPrompt,
 };
 use self::errors::{api_error, internal_api_error, load_parent_session, ApiResult};
 use self::providers::load_requested_model_catalogs;
@@ -35,285 +40,448 @@ use self::request::{
     build_subagent_request_json, collect_provider_ids, default_catalog_model_id,
     parse_subagent_worktree, resolve_max_subagents_per_call, validate_requested_labels,
 };
-use self::worktrees::{create_subagent_worktree, plan_subagent_worktree_creation};
+use self::worktrees::{
+    cleanup_archived_subagent_worktree, create_subagent_worktree, plan_subagent_worktree_creation,
+};
+
 pub(crate) use init::init_subagents;
 
-pub(crate) async fn reply_to_subagent(
-    state: Arc<AppState>,
-    parent_id: SessionId,
-    req: AgentReplyReq,
-) -> ApiResult<AgentReplyResp> {
-    let (store, parent) = load_parent_session(state.as_ref(), parent_id).await?;
+#[derive(Clone)]
+pub(crate) struct SpawnedChild {
+    child: SubagentInvocationChild,
+    worktree_path: Option<String>,
+    last_event_seq: i64,
+}
 
-    let label = req.label.trim();
-    if label.is_empty() {
-        return Err(api_error(StatusCode::BAD_REQUEST, "label is required"));
+fn encode_agent_ref(session_id: SessionId) -> String {
+    format!(
+        "agent_{}",
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(session_id.0.as_bytes())
+    )
+}
+
+fn decode_agent_ref(raw: &str) -> Result<SessionId, String> {
+    let encoded = raw
+        .trim()
+        .strip_prefix("agent_")
+        .ok_or_else(|| "invalid agent_id".to_string())?;
+    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(encoded)
+        .map_err(|_| "invalid agent_id".to_string())?;
+    let uuid = uuid::Uuid::from_slice(&bytes).map_err(|_| "invalid agent_id".to_string())?;
+    Ok(SessionId(uuid))
+}
+
+fn encode_run_ref(run_id: RunId) -> String {
+    format!(
+        "run_{}",
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(run_id.0.as_bytes())
+    )
+}
+
+#[derive(Clone, Copy)]
+enum AgentWaitMode {
+    Any,
+    All,
+}
+
+impl AgentWaitMode {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Any => "any",
+            Self::All => "all",
+        }
     }
-    let child = store
-        .get_subagent_session_by_label(parent.id, label)
-        .await
-        .map_err(internal_api_error)?
-        .ok_or_else(|| api_error(StatusCode::NOT_FOUND, "subagent label not found"))?;
+}
 
-    let prompt = req.prompt.trim().to_string();
-    if prompt.is_empty() {
-        return Err(api_error(StatusCode::BAD_REQUEST, "prompt is required"));
+#[derive(Clone, Copy)]
+enum AgentWaitUntil {
+    Terminal,
+    Update,
+}
+
+impl AgentWaitUntil {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Terminal => "terminal",
+            Self::Update => "update",
+        }
     }
+}
 
-    if store
-        .get_running_turn_for_session(child.id)
-        .await
-        .map_err(internal_api_error)?
-        .is_some()
+fn agent_terminal_result_status(status: SessionTurnStatus) -> Option<&'static str> {
+    match status {
+        SessionTurnStatus::Completed => Some("completed"),
+        SessionTurnStatus::Interrupted => Some("interrupted"),
+        SessionTurnStatus::Failed => Some("failed"),
+        SessionTurnStatus::Queued | SessionTurnStatus::Starting | SessionTurnStatus::Running => {
+            None
+        }
+    }
+}
+
+fn agent_delivery_label(delivery: &MessageDelivery) -> &'static str {
+    match delivery {
+        MessageDelivery::Immediate => "immediate",
+        MessageDelivery::Queued => "queued",
+    }
+}
+
+fn is_active_turn_status(status: &SessionTurnStatus) -> bool {
+    matches!(
+        status,
+        SessionTurnStatus::Queued | SessionTurnStatus::Starting | SessionTurnStatus::Running
+    )
+}
+
+fn is_terminal_turn_status(status: &SessionTurnStatus) -> bool {
+    matches!(
+        status,
+        SessionTurnStatus::Completed | SessionTurnStatus::Interrupted | SessionTurnStatus::Failed
+    )
+}
+
+fn agent_active_state(status: SessionTurnStatus) -> &'static str {
+    match status {
+        SessionTurnStatus::Queued => "queued",
+        SessionTurnStatus::Starting => "starting",
+        SessionTurnStatus::Running => "running",
+        SessionTurnStatus::Completed
+        | SessionTurnStatus::Interrupted
+        | SessionTurnStatus::Failed => "waiting_input",
+    }
+}
+
+fn agent_health(
+    active_turn: Option<&ctx_core::models::SessionTurn>,
+    inactivity_timeout: Duration,
+) -> &'static str {
+    let Some(turn) = active_turn else {
+        return "healthy";
+    };
+
+    let stalled_after = inactivity_timeout.max(Duration::from_millis(1));
+    let slow_after = stalled_after.checked_div(2).unwrap_or(stalled_after);
+    let age = chrono::Utc::now()
+        .signed_duration_since(turn.updated_at)
+        .to_std()
+        .unwrap_or_default();
+    if age >= stalled_after {
+        "stalled"
+    } else if !slow_after.is_zero() && age >= slow_after {
+        "slow"
+    } else {
+        "healthy"
+    }
+}
+
+async fn latest_terminal_turn_for_session(
+    store: &ctx_store::Store,
+    session_id: SessionId,
+    latest_turn: Option<&ctx_core::models::SessionTurn>,
+) -> ApiResult<Option<ctx_core::models::SessionTurn>> {
+    if latest_turn
+        .as_ref()
+        .is_some_and(|turn| is_terminal_turn_status(&turn.status))
     {
-        return Err(api_error(
-            StatusCode::CONFLICT,
-            "subagent_busy: The subagent is still running. Please await it with subagent_wait or interrupt it with subagent_interrupt.",
-        ));
+        return Ok(latest_turn.cloned());
     }
 
-    let mut context_window =
-        estimate_context_window_for_prompt(&child.provider_id, &child.model_id, &prompt);
-    if context_window.is_none() {
-        context_window = context_window_for_session(&state, child.id).await;
+    let mut before_seq = latest_turn.as_ref().and_then(|turn| turn.start_seq);
+    loop {
+        let page = store
+            .list_session_turns_page_by_seq(session_id, before_seq, Some(50))
+            .await
+            .map_err(internal_api_error)?;
+        if page.is_empty() {
+            return Ok(None);
+        }
+        if let Some(turn) = page
+            .iter()
+            .rev()
+            .find(|turn| is_terminal_turn_status(&turn.status))
+            .cloned()
+        {
+            return Ok(Some(turn));
+        }
+        before_seq = page.first().and_then(|turn| turn.start_seq);
+        if before_seq.is_none() {
+            return Ok(None);
+        }
     }
+}
 
-    let (_run_id, _message) = enqueue_subagent_prompt(&state, &child, prompt).await?;
-    let worktree_path = worktree_path_for_child(&state, parent.worktree_id, child.id).await;
+async fn resolve_child_agent_session(
+    store: &ctx_store::Store,
+    parent: &ctx_core::models::Session,
+    raw_agent_id: &str,
+) -> ApiResult<ctx_core::models::Session> {
+    let agent_id = decode_agent_ref(raw_agent_id)
+        .map_err(|error| api_error(StatusCode::BAD_REQUEST, error))?;
+    let child = store
+        .get_active_subagent_session(parent.id, agent_id)
+        .await
+        .map_err(internal_api_error)?
+        .ok_or_else(|| api_error(StatusCode::NOT_FOUND, "agent not found"))?;
+    Ok(child)
+}
 
-    Ok(AgentReplyResp {
-        label: label.to_string(),
-        status: "running".to_string(),
-        context_window,
-        worktree_path,
+async fn build_agent_summary(
+    store: &ctx_store::Store,
+    session_id: SessionId,
+    session_title: &str,
+    inactivity_timeout: Duration,
+) -> ApiResult<(AgentSummary, Option<ctx_core::models::SessionTurn>)> {
+    let latest_turn = store
+        .get_latest_turn_for_session(session_id)
+        .await
+        .map_err(internal_api_error)?;
+    let latest_terminal_turn =
+        latest_terminal_turn_for_session(store, session_id, latest_turn.as_ref()).await?;
+    let active_turn = match store.get_running_turn_for_session(session_id).await {
+        Ok(Some(turn)) => Some(turn),
+        Ok(None) => latest_turn
+            .clone()
+            .filter(|turn| is_active_turn_status(&turn.status)),
+        Err(error) => return Err(internal_api_error(error)),
+    };
+    let task_label = {
+        let trimmed = session_title.trim();
+        if trimmed.is_empty() {
+            format!("agent-{}", session_id.0)
+        } else {
+            trimmed.to_string()
+        }
+    };
+    let summary = AgentSummary {
+        agent_id: encode_agent_ref(session_id),
+        task_label,
+        state: active_turn
+            .as_ref()
+            .map(|turn| agent_active_state(turn.status.clone()).to_string())
+            .unwrap_or_else(|| "waiting_input".to_string()),
+        health: agent_health(active_turn.as_ref(), inactivity_timeout).to_string(),
+        current_run_id: active_turn
+            .as_ref()
+            .and_then(|turn| turn.run_id.map(encode_run_ref)),
+        latest_result_status: latest_terminal_turn
+            .as_ref()
+            .and_then(|turn| agent_terminal_result_status(turn.status.clone()))
+            .map(str::to_string),
+        last_progress_at: active_turn
+            .as_ref()
+            .or(latest_turn.as_ref())
+            .map(|turn| turn.updated_at.to_rfc3339()),
+        last_event_seq: store
+            .get_session_last_event_seq(session_id)
+            .await
+            .map_err(internal_api_error)?,
+    };
+    Ok((summary, latest_terminal_turn))
+}
+
+async fn build_agent_detail(
+    state: &Arc<AppState>,
+    store: &ctx_store::Store,
+    parent: &ctx_core::models::Session,
+    session: &ctx_core::models::Session,
+    inactivity_timeout: Duration,
+) -> ApiResult<AgentDetail> {
+    let (summary, latest_turn) =
+        build_agent_summary(store, session.id, &session.title, inactivity_timeout).await?;
+    let latest_result = if let Some(turn) = latest_turn.as_ref() {
+        if let Some(status) = agent_terminal_result_status(turn.status.clone()) {
+            let content = if let Some(run_id) = turn.run_id {
+                store
+                    .get_last_assistant_message_for_run(session.id, run_id)
+                    .await
+                    .map_err(internal_api_error)?
+                    .map(|message| message.content)
+            } else {
+                None
+            };
+            Some(AgentResult {
+                run_id: turn.run_id.map(encode_run_ref),
+                status: status.to_string(),
+                content,
+                context_window: if let Some(run_id) = turn.run_id {
+                    context_window_for_run(state, session.id, run_id).await
+                } else {
+                    None
+                },
+            })
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    Ok(AgentDetail {
+        agent: summary,
+        latest_result,
+        worktree_path: worktree_path_for_child(state, parent.worktree_id, session.id).await,
     })
 }
 
-pub(crate) async fn list_subagents(
-    state: Arc<AppState>,
-    parent_id: SessionId,
-) -> ApiResult<Vec<SubagentListItem>> {
-    let (store, parent) = load_parent_session(state.as_ref(), parent_id).await?;
-    let subs = store
-        .list_subagent_sessions(parent.id)
-        .await
-        .map_err(internal_api_error)?;
-
-    let mut results = Vec::with_capacity(subs.len());
-    for sub in subs {
-        let label = sub.title.trim().to_string();
-        let status = match sub.status {
-            SessionStatus::Active => "active",
-            SessionStatus::Completed => "completed",
-            SessionStatus::Failed => "failed",
-            SessionStatus::Cancelled => "cancelled",
-        }
-        .to_string();
-        let context_window = context_window_for_session(&state, sub.id).await;
-        let worktree_path = worktree_path_for_child(&state, parent.worktree_id, sub.id).await;
-        results.push(SubagentListItem {
-            label,
-            status,
-            context_window,
-            worktree_path,
-        });
-    }
-
-    Ok(results)
-}
-
-pub(crate) async fn interrupt_subagents(
-    state: Arc<AppState>,
-    parent_id: SessionId,
-    req: SubagentInterruptReq,
-) -> ApiResult<SubagentInterruptResp> {
-    let (store, parent) = load_parent_session(state.as_ref(), parent_id).await?;
-
-    let use_all = req.all.unwrap_or(false);
-    let labels = match (use_all, req.label) {
-        (true, Some(_)) => {
-            return Err(api_error(
-                StatusCode::BAD_REQUEST,
-                "provide either label or all",
-            ));
-        }
-        (true, None) => {
-            let subs = store
-                .list_subagent_sessions(parent.id)
-                .await
-                .map_err(internal_api_error)?;
-            subs.into_iter()
-                .map(|sub| sub.title.trim().to_string())
-                .collect::<Vec<_>>()
-        }
-        (false, Some(label)) => vec![label],
-        (false, None) => {
-            return Err(api_error(
-                StatusCode::BAD_REQUEST,
-                "label or all is required",
-            ));
+async fn build_enqueued_agent_detail(
+    state: &Arc<AppState>,
+    parent: &ctx_core::models::Session,
+    session: &ctx_core::models::Session,
+    persisted: &PersistedSubagentPrompt,
+) -> AgentDetail {
+    let task_label = {
+        let trimmed = session.title.trim();
+        if trimmed.is_empty() {
+            format!("agent-{}", session.id.0)
+        } else {
+            trimmed.to_string()
         }
     };
 
-    let mut results = Vec::with_capacity(labels.len());
-    for label in labels {
-        let trimmed = label.trim();
-        if trimmed.is_empty() {
-            return Err(api_error(StatusCode::BAD_REQUEST, "label cannot be empty"));
-        }
-        let child = store
-            .get_subagent_session_by_label(parent.id, trimmed)
-            .await
-            .map_err(internal_api_error)?
-            .ok_or_else(|| {
-                api_error(
-                    StatusCode::NOT_FOUND,
-                    format!("subagent label '{trimmed}' not found"),
-                )
-            })?;
-
-        let tx = state.ensure_scheduler(child.clone()).await;
-        let interrupt = InterruptTelemetryContext::new(uuid::Uuid::new_v4().to_string());
-        let _ = tx.send(SchedulerCommand::Interrupt(interrupt)).await;
-
-        let context_window = context_window_for_session(&state, child.id).await;
-        results.push(
-            build_subagent_result_for_session(
-                &state,
-                parent.worktree_id,
-                &child,
-                trimmed.to_string(),
-                "interrupt_requested".to_string(),
-                None,
-                context_window,
-            )
-            .await
-            .map_err(|error| api_error(StatusCode::INTERNAL_SERVER_ERROR, error))?,
-        );
+    AgentDetail {
+        agent: AgentSummary {
+            agent_id: encode_agent_ref(session.id),
+            task_label,
+            state: agent_active_state(match persisted.saved_message.delivery {
+                MessageDelivery::Queued => SessionTurnStatus::Queued,
+                MessageDelivery::Immediate => SessionTurnStatus::Starting,
+            })
+            .to_string(),
+            health: "healthy".to_string(),
+            current_run_id: Some(encode_run_ref(persisted.run_id)),
+            latest_result_status: None,
+            last_progress_at: Some(persisted.saved_message.created_at.to_rfc3339()),
+            last_event_seq: persisted.last_event_seq,
+        },
+        latest_result: None,
+        worktree_path: worktree_path_for_child(state, parent.worktree_id, session.id).await,
     }
-
-    Ok(SubagentInterruptResp {
-        status: "interrupt_requested".to_string(),
-        results,
-    })
 }
 
-pub(crate) async fn wait_for_subagents(
-    state: Arc<AppState>,
-    parent_id: SessionId,
-    req: SubagentWaitReq,
-) -> ApiResult<SubagentWaitResp> {
-    let (store, parent) = load_parent_session(state.as_ref(), parent_id).await?;
+fn build_spawned_agent_detail(spawned: &SpawnedChild) -> AgentDetail {
+    let child = &spawned.child;
+    AgentDetail {
+        agent: AgentSummary {
+            agent_id: encode_agent_ref(child.child_session_id),
+            task_label: child
+                .label
+                .clone()
+                .unwrap_or_else(|| format!("Subagent {}", child.position + 1)),
+            state: "running".to_string(),
+            health: "healthy".to_string(),
+            current_run_id: child.run_id.map(encode_run_ref),
+            latest_result_status: None,
+            last_progress_at: Some(child.updated_at.to_rfc3339()),
+            last_event_seq: spawned.last_event_seq,
+        },
+        latest_result: None,
+        worktree_path: spawned.worktree_path.clone(),
+    }
+}
 
-    let mut labels = match (req.label, req.labels) {
-        (Some(label), None) => vec![label],
-        (None, Some(labels)) => labels,
+fn parse_wait_mode(mode: Option<&str>) -> ApiResult<AgentWaitMode> {
+    match mode.map(str::trim).filter(|value| !value.is_empty()) {
+        None | Some("any") => Ok(AgentWaitMode::Any),
+        Some("all") => Ok(AgentWaitMode::All),
+        Some(other) => Err(api_error(
+            StatusCode::BAD_REQUEST,
+            format!("unsupported wait mode '{other}'"),
+        )),
+    }
+}
+
+fn parse_wait_until(until: Option<&str>) -> ApiResult<AgentWaitUntil> {
+    match until.map(str::trim).filter(|value| !value.is_empty()) {
+        None | Some("terminal") => Ok(AgentWaitUntil::Terminal),
+        Some("update") => Ok(AgentWaitUntil::Update),
+        Some(other) => Err(api_error(
+            StatusCode::BAD_REQUEST,
+            format!("unsupported wait until '{other}'"),
+        )),
+    }
+}
+
+fn detail_satisfies_terminal(detail: &AgentDetail) -> bool {
+    detail.agent.current_run_id.is_none() && detail.agent.latest_result_status.is_some()
+}
+
+fn detail_satisfies_update(detail: &AgentDetail, threshold: i64) -> bool {
+    detail.agent.last_event_seq > threshold
+}
+
+fn wait_predicate_satisfied(
+    details: &[AgentDetail],
+    mode: AgentWaitMode,
+    until: AgentWaitUntil,
+    thresholds: &HashMap<String, i64>,
+) -> bool {
+    let per_agent = |detail: &AgentDetail| match until {
+        AgentWaitUntil::Terminal => detail_satisfies_terminal(detail),
+        AgentWaitUntil::Update => detail_satisfies_update(
+            detail,
+            thresholds
+                .get(&detail.agent.agent_id)
+                .copied()
+                .unwrap_or_default(),
+        ),
+    };
+
+    match mode {
+        AgentWaitMode::Any => details.iter().any(per_agent),
+        AgentWaitMode::All => details.iter().all(per_agent),
+    }
+}
+
+fn normalize_wait_agent_ids(req: &WaitAgentReq) -> ApiResult<Vec<String>> {
+    let raw_ids = match (&req.agent_id, &req.agent_ids) {
+        (Some(agent_id), None) => vec![agent_id.clone()],
+        (None, Some(agent_ids)) => agent_ids.clone(),
         (Some(_), Some(_)) => {
             return Err(api_error(
                 StatusCode::BAD_REQUEST,
-                "provide either label or labels",
+                "provide either agent_id or agent_ids",
             ));
         }
         (None, None) => {
             return Err(api_error(
                 StatusCode::BAD_REQUEST,
-                "label or labels is required",
+                "agent_id or agent_ids is required",
             ));
         }
     };
-    if labels.is_empty() {
-        return Err(api_error(StatusCode::BAD_REQUEST, "labels is required"));
+    if raw_ids.is_empty() {
+        return Err(api_error(StatusCode::BAD_REQUEST, "agent_ids is required"));
     }
     let mut seen = HashSet::new();
-    for label in &mut labels {
-        let trimmed = label.trim().to_string();
+    let mut normalized_ids = Vec::with_capacity(raw_ids.len());
+    for raw in raw_ids {
+        let trimmed = raw.trim().to_string();
         if trimmed.is_empty() {
-            return Err(api_error(StatusCode::BAD_REQUEST, "label cannot be empty"));
+            return Err(api_error(
+                StatusCode::BAD_REQUEST,
+                "agent_id cannot be empty",
+            ));
         }
         if !seen.insert(trimmed.clone()) {
             return Err(api_error(
                 StatusCode::BAD_REQUEST,
-                format!("duplicate label '{trimmed}'"),
+                format!("duplicate agent_id '{trimmed}'"),
             ));
         }
-        *label = trimmed;
+        normalized_ids.push(trimmed);
     }
+    Ok(normalized_ids)
+}
 
-    let mut results = Vec::with_capacity(labels.len());
-    for label in labels {
-        let child = store
-            .get_subagent_session_by_label(parent.id, &label)
-            .await
-            .map_err(internal_api_error)?
-            .ok_or_else(|| {
-                api_error(
-                    StatusCode::NOT_FOUND,
-                    format!("subagent label '{label}' not found"),
-                )
-            })?;
-
-        let running_turn = store
-            .get_running_turn_for_session(child.id)
-            .await
-            .map_err(internal_api_error)?;
-
-        let (status, run_id) = if let Some(turn) = running_turn {
-            let run_id = turn.run_id.ok_or_else(|| {
-                api_error(
-                    StatusCode::BAD_REQUEST,
-                    "subagent run_id missing; cannot wait",
-                )
-            })?;
-            let status = match wait_for_run_terminal_turn(&state, child.id, run_id).await {
-                Ok(turn) => subagent_status_from_turn_status(turn.status).to_string(),
-                Err(_) => "unknown".to_string(),
-            };
-            (status, Some(run_id))
-        } else if let Some(turn) = store
-            .get_latest_turn_for_session(child.id)
-            .await
-            .map_err(internal_api_error)?
-        {
-            let status = subagent_status_from_turn_status(turn.status).to_string();
-            (status, turn.run_id)
-        } else {
-            return Err(api_error(
-                StatusCode::BAD_REQUEST,
-                format!("subagent '{label}' has no runs to wait for"),
-            ));
-        };
-
-        let content = match run_id {
-            Some(run_id) => store
-                .get_last_assistant_message_for_run(child.id, run_id)
-                .await
-                .ok()
-                .flatten()
-                .map(|message| message.content),
-            None => None,
-        };
-        let context_window = match run_id {
-            Some(run_id) => context_window_for_run(&state, child.id, run_id).await,
-            None => context_window_for_session(&state, child.id).await,
-        };
-
-        results.push(
-            build_subagent_result_for_session(
-                &state,
-                parent.worktree_id,
-                &child,
-                label,
-                status,
-                content,
-                context_window,
-            )
-            .await
-            .map_err(|error| api_error(StatusCode::INTERNAL_SERVER_ERROR, error))?,
-        );
+async fn collect_wait_targets(
+    store: &ctx_store::Store,
+    parent: &ctx_core::models::Session,
+    agent_ids: &[String],
+) -> ApiResult<Vec<ctx_core::models::Session>> {
+    let mut agents = Vec::with_capacity(agent_ids.len());
+    for agent_id in agent_ids {
+        agents.push(resolve_child_agent_session(store, parent, agent_id).await?);
     }
-
-    Ok(SubagentWaitResp {
-        status: crate::api::sessions::aggregate_subagent_status(&results).to_string(),
-        results,
-    })
+    Ok(agents)
 }

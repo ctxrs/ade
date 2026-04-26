@@ -15,7 +15,9 @@ pub(crate) async fn list_gemini_accounts(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<GeminiAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
     Ok(Json(
-        gemini_accounts_response(&state).await.map_err(internal_error)?,
+        gemini_accounts_response(&state)
+            .await
+            .map_err(internal_error)?,
     ))
 }
 
@@ -34,7 +36,9 @@ pub(crate) async fn upsert_gemini_account(
     .map_err(bad_request)?;
     restarts::restart_gemini_providers_for_auth_change(&state, "gemini auth updated").await;
     Ok(Json(
-        gemini_accounts_response(&state).await.map_err(internal_error)?,
+        gemini_accounts_response(&state)
+            .await
+            .map_err(internal_error)?,
     ))
 }
 
@@ -55,7 +59,9 @@ pub(crate) async fn set_gemini_active_account(
         .map_err(bad_request)?;
     restarts::restart_gemini_providers_for_auth_change(&state, "gemini auth updated").await;
     Ok(Json(
-        gemini_accounts_response(&state).await.map_err(internal_error)?,
+        gemini_accounts_response(&state)
+            .await
+            .map_err(internal_error)?,
     ))
 }
 
@@ -68,6 +74,8 @@ pub(crate) async fn delete_gemini_account(
         .map_err(provider_account_delete_error)?;
     restarts::restart_gemini_providers_for_auth_change(&state, "gemini auth updated").await;
     Ok(Json(
-        gemini_accounts_response(&state).await.map_err(internal_error)?,
+        gemini_accounts_response(&state)
+            .await
+            .map_err(internal_error)?,
     ))
 }

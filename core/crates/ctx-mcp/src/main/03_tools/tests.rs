@@ -118,8 +118,9 @@ async fn session_list_call_requests_current_session_scope() -> Result<()> {
     });
 
     let client = reqwest::Client::new();
-    let response = session_list_call(&client, &format!("http://{addr}"), &json!({"kind":"web"}))
-        .await?;
+    let response =
+        web_sessions::session_list_call(&client, &format!("http://{addr}"), &json!({"kind":"web"}))
+            .await?;
 
     let sessions = response
         .as_array()

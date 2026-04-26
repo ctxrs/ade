@@ -36,8 +36,14 @@ pub(super) async fn cleanup_orphaned_provisioned_worktree(
         worktree: worktree.clone(),
         destroy_worktree_on_cleanup: true,
     }];
-    let cleanup_errors =
-        cleanup_task_worktrees(state.as_ref(), workspace, task_id, &cleanup_targets).await;
+    let cleanup_errors = cleanup_task_worktrees(
+        state.as_ref(),
+        workspace,
+        task_id,
+        &cleanup_targets,
+        crate::api::tasks::BranchCleanupErrorMode::Report,
+    )
+    .await;
     if !cleanup_errors.is_empty() {
         tracing::warn!(
             task_id = %task_id.0,

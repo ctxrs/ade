@@ -2,6 +2,18 @@ use super::lifecycle::queue_workspace_stream_reset;
 use super::*;
 use serde_json::json;
 
+async fn remove_runtime_subscription(
+    state: &Arc<AppState>,
+    runtime: &mut WorkspaceStreamRuntime,
+    session_id: SessionId,
+) -> bool {
+    let removed = runtime.subscriptions.remove(&session_id).is_some();
+    if removed {
+        state.detach_session(session_id).await;
+    }
+    removed
+}
+
 pub(crate) async fn handle_workspace_stream_lagged(
     state: &Arc<AppState>,
     workspace_id: WorkspaceId,
@@ -48,6 +60,35 @@ pub(crate) async fn handle_workspace_stream_event(
     }
 
     let mut refresh_active_worktrees = false;
+    if let WorkspaceActiveSnapshotEvent::SessionRemoved { session_id, .. } = &event {
+        let removed_explicit = runtime
+            .subscription_state
+            .explicit_sessions
+            .remove(session_id);
+        let removed_open = runtime
+            .subscription_state
+            .vcs_open_sessions
+            .remove(session_id);
+        let removed_foreground = runtime
+            .subscription_state
+            .foreground_session_ids
+            .as_mut()
+            .map(|foreground| foreground.remove(session_id))
+            .unwrap_or(false);
+        if runtime
+            .subscription_state
+            .foreground_session_ids
+            .as_ref()
+            .is_some_and(HashSet::is_empty)
+        {
+            runtime.subscription_state.foreground_session_ids = None;
+        }
+        let removed_subscription = remove_runtime_subscription(state, runtime, *session_id).await;
+        if !(removed_explicit || removed_open || removed_foreground || removed_subscription) {
+            return Ok(());
+        }
+        refresh_active_worktrees = true;
+    }
     if runtime.subscription_state.active_scope {
         match &event {
             WorkspaceActiveSnapshotEvent::ActiveTaskUpsert { task, .. } => {
@@ -94,7 +135,7 @@ pub(crate) async fn handle_workspace_stream_event(
                             .explicit_sessions
                             .contains(&session_id)
                     {
-                        runtime.subscriptions.remove(&session_id);
+                        remove_runtime_subscription(state, runtime, session_id).await;
                     }
                 }
                 if removed_vcs_sessions.is_some() {
@@ -125,7 +166,7 @@ pub(crate) async fn handle_workspace_stream_event(
                             .explicit_sessions
                             .contains(&session_id)
                     {
-                        runtime.subscriptions.remove(&session_id);
+                        remove_runtime_subscription(state, runtime, session_id).await;
                     }
                 }
                 if removed_vcs_sessions.is_some() {
@@ -177,6 +218,7 @@ pub(crate) async fn handle_workspace_stream_event(
         WorkspaceActiveSnapshotEvent::SessionHeadSeed { head, .. } => Some(head.session.id),
         WorkspaceActiveSnapshotEvent::SessionGap { session_id, .. } => Some(*session_id),
         WorkspaceActiveSnapshotEvent::SessionSummaryDelta { delta, .. } => Some(delta.session_id),
+        WorkspaceActiveSnapshotEvent::SessionRemoved { session_id, .. } => Some(*session_id),
         _ => None,
     };
 

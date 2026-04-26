@@ -134,7 +134,7 @@ impl Store {
     }
 
     pub(super) async fn materialize_archived_heads_for_task(&self, task_id: TaskId) -> Result<()> {
-        let sessions = self.list_sessions_for_task(task_id).await?;
+        let sessions = self.list_all_sessions_for_task(task_id).await?;
         if sessions.is_empty() {
             return Ok(());
         }

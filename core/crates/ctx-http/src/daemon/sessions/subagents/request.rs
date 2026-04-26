@@ -9,6 +9,8 @@ use ctx_core::ids::TaskId;
 use super::errors::{api_error, internal_api_error, ApiResult};
 
 const DEFAULT_MAX_SUBAGENTS_PER_CALL: usize = 10;
+pub(super) const DEFAULT_MAX_ACTIVE_SUBAGENTS_PER_PARENT: usize = 12;
+pub(super) const DEFAULT_MAX_SUBAGENT_DEPTH: usize = 1;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum SubagentWorktreeSelection {

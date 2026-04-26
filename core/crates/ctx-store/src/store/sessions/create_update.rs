@@ -320,6 +320,30 @@ impl Store {
         Ok(res.rows_affected() > 0)
     }
 
+    pub async fn archive_subagent_session(
+        &self,
+        parent_session_id: SessionId,
+        session_id: SessionId,
+    ) -> Result<bool> {
+        let now = Utc::now().to_rfc3339();
+        let res = self
+            .query(
+                r#"UPDATE sessions
+                   SET archived_at = ?, updated_at = ?
+                   WHERE id = ?
+                     AND parent_session_id = ?
+                     AND relationship = 'sub_agent'
+                     AND archived_at IS NULL"#,
+            )
+            .bind(&now)
+            .bind(&now)
+            .bind(session_id.0.to_string())
+            .bind(parent_session_id.0.to_string())
+            .execute(&self.pool)
+            .await?;
+        Ok(res.rows_affected() > 0)
+    }
+
     pub async fn claim_session_provider_session_ref(
         &self,
         id: SessionId,

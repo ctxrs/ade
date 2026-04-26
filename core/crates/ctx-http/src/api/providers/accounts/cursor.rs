@@ -15,7 +15,9 @@ pub(crate) async fn list_cursor_accounts(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<CursorAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
     Ok(Json(
-        cursor_accounts_response(&state).await.map_err(internal_error)?,
+        cursor_accounts_response(&state)
+            .await
+            .map_err(internal_error)?,
     ))
 }
 
@@ -28,7 +30,9 @@ pub(crate) async fn upsert_cursor_account(
         .map_err(bad_request)?;
     restarts::restart_cursor_providers_for_auth_change(&state, "cursor auth updated").await;
     Ok(Json(
-        cursor_accounts_response(&state).await.map_err(internal_error)?,
+        cursor_accounts_response(&state)
+            .await
+            .map_err(internal_error)?,
     ))
 }
 
@@ -49,7 +53,9 @@ pub(crate) async fn set_cursor_active_account(
         .map_err(bad_request)?;
     restarts::restart_cursor_providers_for_auth_change(&state, "cursor auth updated").await;
     Ok(Json(
-        cursor_accounts_response(&state).await.map_err(internal_error)?,
+        cursor_accounts_response(&state)
+            .await
+            .map_err(internal_error)?,
     ))
 }
 
@@ -62,6 +68,8 @@ pub(crate) async fn delete_cursor_account(
         .map_err(provider_account_delete_error)?;
     restarts::restart_cursor_providers_for_auth_change(&state, "cursor auth updated").await;
     Ok(Json(
-        cursor_accounts_response(&state).await.map_err(internal_error)?,
+        cursor_accounts_response(&state)
+            .await
+            .map_err(internal_error)?,
     ))
 }

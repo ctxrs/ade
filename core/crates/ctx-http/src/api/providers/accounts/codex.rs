@@ -20,7 +20,9 @@ pub(crate) async fn list_codex_accounts(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<CodexAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
     Ok(Json(
-        codex_accounts_response(&state).await.map_err(internal_error)?,
+        codex_accounts_response(&state)
+            .await
+            .map_err(internal_error)?,
     ))
 }
 
@@ -41,7 +43,9 @@ pub(crate) async fn import_host_codex_auth(
         .map_err(bad_request)?;
     restarts::restart_codex_providers_for_auth_change(&state, "codex auth updated").await;
     Ok(Json(
-        codex_accounts_response(&state).await.map_err(internal_error)?,
+        codex_accounts_response(&state)
+            .await
+            .map_err(internal_error)?,
     ))
 }
 

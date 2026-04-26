@@ -748,6 +748,83 @@ mod replay_tests {
         );
     }
 
+    #[tokio::test]
+    async fn removing_subagent_session_updates_active_snapshot_task_summary() {
+        let hub = WorkspaceActiveSnapshotHub::new();
+        let primary = replay_session(SessionId::new());
+        let mut child = replay_session(SessionId::new());
+        child.task_id = primary.task_id;
+        child.workspace_id = primary.workspace_id;
+        child.worktree_id = WorktreeId::new();
+        child.parent_session_id = Some(primary.id);
+        child.relationship = Some("sub_agent".to_string());
+
+        let mut task = replay_task(&primary);
+        task.sessions.push(SessionSnapshotSummary {
+            session: session_metadata_from_session(&child),
+            last_message_at: None,
+            last_message_preview: None,
+            last_event_seq: Some(0),
+            projection_rev: 0,
+            state_rev: 0,
+            activity: SessionActivityState::default(),
+            unread: None,
+        });
+        hub.hydrate_snapshot(primary.workspace_id, 1, 0, vec![task], Vec::new())
+            .await;
+
+        let mut rx = hub.subscribe(primary.workspace_id).await;
+        assert!(
+            hub.remove_subagent_session_from_active_task(
+                primary.workspace_id,
+                primary.task_id,
+                child.id,
+            )
+            .await
+        );
+
+        let event = rx.recv().await.expect("subagent removal event");
+        match event {
+            WorkspaceActiveSnapshotEvent::ActiveTaskUpsert { task, .. } => {
+                assert!(task
+                    .sessions
+                    .iter()
+                    .all(|summary| summary.session.id != child.id));
+            }
+            other => panic!("expected active task upsert, got {other:?}"),
+        }
+
+        let snapshot = hub.active_snapshot(primary.workspace_id, 10).await;
+        assert_eq!(snapshot.active.tasks.len(), 1);
+        assert!(snapshot.active.tasks[0]
+            .sessions
+            .iter()
+            .all(|summary| summary.session.id != child.id));
+    }
+
+    #[tokio::test]
+    async fn removing_session_emits_session_removed_event() {
+        let hub = WorkspaceActiveSnapshotHub::new();
+        let session = replay_session(SessionId::new());
+        hub.update_session_head(new_head_snapshot(&session)).await;
+
+        let mut rx = hub.subscribe(session.workspace_id).await;
+        hub.remove_session(session.id).await;
+
+        let event = rx.recv().await.expect("session removal event");
+        match event {
+            WorkspaceActiveSnapshotEvent::SessionRemoved {
+                workspace_id,
+                session_id,
+                ..
+            } => {
+                assert_eq!(workspace_id, session.workspace_id);
+                assert_eq!(session_id, session.id);
+            }
+            other => panic!("expected session removed, got {other:?}"),
+        }
+    }
+
     #[test]
     fn replay_records_delta_without_event() {
         let session_id = SessionId(uuid::Uuid::nil());

@@ -142,31 +142,41 @@ async fn main() -> Result<()> {
                                 Err(e) => ok(id.clone(), tool_err(e)),
                             }
                         }
-                        "subagent_init" => {
-                            match agent_init_call(&client, &daemon_url, &arguments).await {
+                        "spawn_agent" => {
+                            match spawn_agent_call(&client, &daemon_url, &arguments).await {
                                 Ok(val) => ok(id.clone(), tool_ok(val)),
                                 Err(e) => ok(id.clone(), tool_err(e)),
                             }
                         }
-                        "subagent_reply" => {
-                            match agent_reply_call(&client, &daemon_url, &arguments).await {
+                        "send_input" => {
+                            match send_input_call(&client, &daemon_url, &arguments).await {
                                 Ok(val) => ok(id.clone(), tool_ok(val)),
                                 Err(e) => ok(id.clone(), tool_err(e)),
                             }
                         }
-                        "subagent_wait" => {
-                            match subagent_wait_call(&client, &daemon_url, &arguments).await {
+                        "archive_agent" => {
+                            match archive_agent_call(&client, &daemon_url, &arguments).await {
                                 Ok(val) => ok(id.clone(), tool_ok(val)),
                                 Err(e) => ok(id.clone(), tool_err(e)),
                             }
                         }
-                        "subagent_interrupt" => {
-                            match subagent_interrupt_call(&client, &daemon_url, &arguments).await {
+                        "wait_agent" => {
+                            match wait_agent_call(&client, &daemon_url, &arguments).await {
                                 Ok(val) => ok(id.clone(), tool_ok(val)),
                                 Err(e) => ok(id.clone(), tool_err(e)),
                             }
                         }
-                        "subagent_list" => match subagent_list_call(&client, &daemon_url).await {
+                        "interrupt_agent" => {
+                            match interrupt_agent_call(&client, &daemon_url, &arguments).await {
+                                Ok(val) => ok(id.clone(), tool_ok(val)),
+                                Err(e) => ok(id.clone(), tool_err(e)),
+                            }
+                        }
+                        "list_agents" => match list_agents_call(&client, &daemon_url).await {
+                            Ok(val) => ok(id.clone(), tool_ok(val)),
+                            Err(e) => ok(id.clone(), tool_err(e)),
+                        },
+                        "get_agent" => match get_agent_call(&client, &daemon_url, &arguments).await {
                             Ok(val) => ok(id.clone(), tool_ok(val)),
                             Err(e) => ok(id.clone(), tool_err(e)),
                         },
@@ -265,37 +275,59 @@ async fn main() -> Result<()> {
                         // TODO: Re-enable web session MCP tool handlers.
                         /*
                         "session_create" => {
-                            match session_create_call(&client, &daemon_url, &arguments).await {
+                            match web_sessions::session_create_call(&client, &daemon_url, &arguments)
+                                .await
+                            {
                                 Ok(val) => ok(id.clone(), tool_ok(val)),
                                 Err(e) => ok(id.clone(), tool_err(e)),
                             }
                         }
                         "session_list" => {
-                            match session_list_call(&client, &daemon_url, &arguments).await {
+                            match web_sessions::session_list_call(&client, &daemon_url, &arguments)
+                                .await
+                            {
                                 Ok(val) => ok(id.clone(), tool_ok(val)),
                                 Err(e) => ok(id.clone(), tool_err(e)),
                             }
                         }
                         "session_info" => {
-                            match session_info_call(&client, &daemon_url, &arguments).await {
+                            match web_sessions::session_info_call(&client, &daemon_url, &arguments)
+                                .await
+                            {
                                 Ok(val) => ok(id.clone(), tool_ok(val)),
                                 Err(e) => ok(id.clone(), tool_err(e)),
                             }
                         }
                         "session_run" => {
-                            match session_run_call(&client, &daemon_url, &arguments, false).await {
+                            match web_sessions::session_run_call(
+                                &client,
+                                &daemon_url,
+                                &arguments,
+                                false,
+                            )
+                            .await
+                            {
                                 Ok(val) => ok(id.clone(), tool_ok(val)),
                                 Err(e) => ok(id.clone(), tool_err(e)),
                             }
                         }
                         "session_eval" => {
-                            match session_run_call(&client, &daemon_url, &arguments, true).await {
+                            match web_sessions::session_run_call(
+                                &client,
+                                &daemon_url,
+                                &arguments,
+                                true,
+                            )
+                            .await
+                            {
                                 Ok(val) => ok(id.clone(), tool_ok(val)),
                                 Err(e) => ok(id.clone(), tool_err(e)),
                             }
                         }
                         "session_close" => {
-                            match session_close_call(&client, &daemon_url, &arguments).await {
+                            match web_sessions::session_close_call(&client, &daemon_url, &arguments)
+                                .await
+                            {
                                 Ok(val) => ok(id.clone(), tool_ok(val)),
                                 Err(e) => ok(id.clone(), tool_err(e)),
                             }

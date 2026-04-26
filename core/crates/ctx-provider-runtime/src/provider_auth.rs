@@ -65,7 +65,8 @@ pub async fn provider_has_active_auth_config_with_runtime_root(
             provider_accounts::subscription_env_for_active_account(data_root, provider_id).await
         }
     };
-    env.map(|env| !env.is_empty()).map_err(|err| err.to_string())
+    env.map(|env| !env.is_empty())
+        .map_err(|err| err.to_string())
 }
 
 pub fn provider_auth_mode(

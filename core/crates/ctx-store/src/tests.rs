@@ -737,6 +737,125 @@ async fn subagent_sessions_and_last_message_for_run() {
 }
 
 #[tokio::test]
+async fn archived_subagents_are_hidden_from_active_queries_and_labels_can_be_reused() {
+    let fixture = setup_session_fixture().await;
+    let store = &fixture.store;
+    let parent = store
+        .get_session(fixture.session_id)
+        .await
+        .unwrap()
+        .unwrap();
+
+    let archived = store
+        .create_session(
+            fixture.task_id,
+            fixture.workspace_id,
+            fixture.worktree_id,
+            ctx_core::models::ExecutionEnvironment::Host,
+            "fake".into(),
+            "fake".into(),
+            "subagent".into(),
+            Some(parent.id),
+            Some("sub_agent".into()),
+            None,
+        )
+        .await
+        .unwrap();
+    assert!(store
+        .update_session_title(archived.id, "Alpha".into())
+        .await
+        .unwrap());
+    assert_eq!(
+        store
+            .count_active_subagent_sessions(parent.id)
+            .await
+            .unwrap(),
+        1
+    );
+    assert!(store
+        .subagent_label_exists(parent.task_id, "Alpha")
+        .await
+        .unwrap());
+
+    assert!(store
+        .archive_subagent_session(parent.id, archived.id)
+        .await
+        .unwrap());
+    assert!(store
+        .list_subagent_sessions(parent.id)
+        .await
+        .unwrap()
+        .is_empty());
+    assert!(store
+        .get_subagent_session_by_label(parent.id, "Alpha")
+        .await
+        .unwrap()
+        .is_none());
+    assert_eq!(
+        store
+            .count_active_subagent_sessions(parent.id)
+            .await
+            .unwrap(),
+        0
+    );
+    assert!(!store
+        .subagent_label_exists(parent.task_id, "Alpha")
+        .await
+        .unwrap());
+    let task_sessions = store.list_sessions_for_task(parent.task_id).await.unwrap();
+    assert_eq!(
+        task_sessions.len(),
+        1,
+        "task session listings should hide archived children"
+    );
+    let all_task_sessions = store
+        .list_all_sessions_for_task(parent.task_id)
+        .await
+        .unwrap();
+    assert_eq!(
+        all_task_sessions.len(),
+        2,
+        "all task session listings should retain archived children for cleanup flows"
+    );
+    let worktree_sessions = store
+        .list_sessions_for_worktree(parent.worktree_id)
+        .await
+        .unwrap();
+    assert_eq!(
+        worktree_sessions.len(),
+        1,
+        "worktree session listings should hide archived children"
+    );
+
+    let replacement = store
+        .create_session(
+            fixture.task_id,
+            fixture.workspace_id,
+            fixture.worktree_id,
+            ctx_core::models::ExecutionEnvironment::Host,
+            "fake".into(),
+            "fake".into(),
+            "subagent".into(),
+            Some(parent.id),
+            Some("sub_agent".into()),
+            None,
+        )
+        .await
+        .unwrap();
+    assert!(store
+        .update_session_title(replacement.id, "Alpha".into())
+        .await
+        .unwrap());
+
+    let looked_up = store
+        .get_subagent_session_by_label(parent.id, "Alpha")
+        .await
+        .unwrap()
+        .expect("replacement should be active");
+    assert_eq!(looked_up.id, replacement.id);
+}
+
+#[tokio::test]
 async fn tool_projection_normalizes_mixed_payloads_and_rebuilds_from_event_log() {
     let fixture = setup_session_fixture().await;
     let run_id = RunId::new();

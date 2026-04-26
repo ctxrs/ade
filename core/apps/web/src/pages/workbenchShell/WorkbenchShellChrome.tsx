@@ -267,7 +267,8 @@ export function WorkbenchArchiveConfirm({
       <div className="wb-archive-confirm-title">Archive conversation?</div>
       <div className="wb-archive-confirm-body">
         Archiving deletes the ctx-managed worktrees and branches associated with this task, including its
-        subagents. Later, you can unarchive to recreate them, but unmerged changes will be lost.
+        live dedicated subagents. Later, you can unarchive to recreate the live task worktrees, but
+        unmerged changes will be lost. Archived subagents stay archived.
         <br />
         <br />
         If you want to keep changes made here, consider instructing the primary agent to use the Merge Queue

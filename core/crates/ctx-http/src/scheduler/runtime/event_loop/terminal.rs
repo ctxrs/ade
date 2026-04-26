@@ -28,12 +28,15 @@ pub(super) fn is_truthful_start_activity(event_type: &SessionEventType) -> bool 
 }
 
 pub(super) async fn handle_session_gap_notice(ctx: &TurnEventLoop, event: &SessionEvent) {
+    let Some(state) = ctx.state() else {
+        return;
+    };
     let reason = event
         .payload_json
         .get("reason")
         .and_then(Value::as_str)
         .map(|value| value.to_string());
-    ctx.state
+    state
         .workspaces
         .workspace_active_snapshot
         .publish_session_gap(ctx.workspace_id, ctx.session_id, event.seq, reason)
@@ -41,6 +44,9 @@ pub(super) async fn handle_session_gap_notice(ctx: &TurnEventLoop, event: &Sessi
 }
 
 pub(super) async fn handle_done_event(ctx: &TurnEventLoop, runtime: &mut EventLoopRuntimeState) {
+    let Some(state) = ctx.state() else {
+        return;
+    };
     runtime.promote_terminal(&ctx.start_progress_tx);
     if runtime.terminal_status.is_some() {
         return;
@@ -67,12 +73,12 @@ pub(super) async fn handle_done_event(ctx: &TurnEventLoop, runtime: &mut EventLo
             value: duration_ms as f64,
             labels: run_labels,
         };
-        ctx.state
+        state
             .telemetry
             .perf_telemetry
             .record_metric(run_metric, ctx.perf_run_id.clone(), None, None)
             .await;
-        ctx.state
+        state
             .telemetry
             .telemetry
             .emit(TelemetryEvent::provider_call(
@@ -84,7 +90,7 @@ pub(super) async fn handle_done_event(ctx: &TurnEventLoop, runtime: &mut EventLo
                 duration_ms,
             ))
             .await;
-        ctx.state
+        state
             .telemetry
             .telemetry
             .emit(TelemetryEvent::session_completed(
@@ -116,6 +122,9 @@ pub(super) async fn handle_turn_interrupted(
     runtime: &mut EventLoopRuntimeState,
     event: &SessionEvent,
 ) {
+    let Some(state) = ctx.state() else {
+        return;
+    };
     runtime.promote_terminal(&ctx.start_progress_tx);
     if runtime.terminal_status.is_some() {
         return;
@@ -136,12 +145,12 @@ pub(super) async fn handle_turn_interrupted(
                 "run_interrupt",
             ),
         };
-        ctx.state
+        state
             .telemetry
             .perf_telemetry
             .record_metric(run_metric, ctx.perf_run_id.clone(), None, None)
             .await;
-        ctx.state
+        state
             .telemetry
             .telemetry
             .emit(TelemetryEvent::provider_call(
@@ -153,7 +162,7 @@ pub(super) async fn handle_turn_interrupted(
                 duration_ms,
             ))
             .await;
-        ctx.state
+        state
             .telemetry
             .telemetry
             .emit(TelemetryEvent::session_completed(
@@ -186,12 +195,12 @@ pub(super) async fn handle_turn_interrupted(
                 "turn_interrupted_visible",
             ),
         };
-        ctx.state
+        state
             .telemetry
             .perf_telemetry
             .record_metric(interrupt_metric, ctx.perf_run_id.clone(), None, None)
             .await;
-        ctx.state
+        state
             .telemetry
             .telemetry
             .emit(TelemetryEvent::session_interrupt_latency(
@@ -237,6 +246,9 @@ pub(super) async fn handle_error_event(
     runtime: &mut EventLoopRuntimeState,
     event: &SessionEvent,
 ) {
+    if ctx.state().is_none() {
+        return;
+    }
     runtime.promote_terminal(&ctx.start_progress_tx);
     if runtime.terminal_status.is_some() {
         return;

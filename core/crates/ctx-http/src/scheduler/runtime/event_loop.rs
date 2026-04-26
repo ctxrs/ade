@@ -6,13 +6,14 @@ use self::terminal::{
 use super::helpers::{read_codex_context_window_metrics, should_track_thought_chunk};
 use super::*;
 use crate::scheduler::TurnStartProgress;
+use std::sync::Weak;
 
 mod assistant;
 mod failure;
 mod terminal;
 
 pub(super) struct TurnEventLoop {
-    pub(super) state: Arc<AppState>,
+    pub(super) state_weak: Weak<AppState>,
     pub(super) store: ctx_store::Store,
     pub(super) session_id: ctx_core::ids::SessionId,
     pub(super) task_id: ctx_core::ids::TaskId,
@@ -37,6 +38,12 @@ pub(super) struct TurnEventLoop {
     pub(super) events_done_tx: oneshot::Sender<()>,
     pub(super) start_progress_tx: tokio::sync::watch::Sender<TurnStartProgress>,
     pub(super) order_seq_state: Arc<Mutex<OrderSeqState>>,
+}
+
+impl TurnEventLoop {
+    fn state(&self) -> Option<Arc<AppState>> {
+        self.state_weak.upgrade()
+    }
 }
 
 struct EventLoopRuntimeState {
@@ -112,6 +119,9 @@ async fn run_turn_event_loop(mut ctx: TurnEventLoop) {
     let mut runtime = EventLoopRuntimeState::default();
 
     while let Some(ev) = ctx.ev_rx.recv().await {
+        let Some(state) = ctx.state() else {
+            break;
+        };
         let mut event_type = ev.event_type.clone();
         let raw_payload = ev.payload_json.clone();
         let mut payload = raw_payload.clone();
@@ -137,7 +147,7 @@ async fn run_turn_event_loop(mut ctx: TurnEventLoop) {
                 value: first_ms as f64,
                 labels: first_labels,
             };
-            ctx.state
+            state
                 .telemetry
                 .perf_telemetry
                 .record_metric(first_metric, ctx.perf_run_id.clone(), None, None)
@@ -146,7 +156,7 @@ async fn run_turn_event_loop(mut ctx: TurnEventLoop) {
 
         if matches!(&ev.event_type, SessionEventType::Init) {
             if payload.get("crp_session_id").is_some() {
-                ctx.state
+                state
                     .emit_compat_payload_reject_counter(
                         "scheduler.init_event",
                         "crp_session_id",
@@ -248,7 +258,7 @@ async fn run_turn_event_loop(mut ctx: TurnEventLoop) {
                 } else {
                     Some(Value::Object(meta))
                 };
-                ctx.state.telemetry.ops_events.emit(event);
+                state.telemetry.ops_events.emit(event);
 
                 if let Some(cwd) = tool_meta.cwd.as_deref() {
                     if cwd_outside_worktree(cwd, &ctx.workdir_root, ctx.workdir_canonical.as_ref())
@@ -266,7 +276,7 @@ async fn run_turn_event_loop(mut ctx: TurnEventLoop) {
                             "reason": "cwd_outside_worktree",
                             "tool_call_id": tool_meta.tool_call_id,
                         }));
-                        ctx.state.telemetry.ops_events.emit(warn_event);
+                        state.telemetry.ops_events.emit(warn_event);
                     }
                 }
             }
@@ -275,7 +285,7 @@ async fn run_turn_event_loop(mut ctx: TurnEventLoop) {
         if let Some(tool_event) = normalized_tool_event.as_ref() {
             let output_artifact = if matches!(&event_type, SessionEventType::ToolResult) {
                 maybe_spool_tool_output(
-                    ctx.state.as_ref(),
+                    state.as_ref(),
                     &ctx.store,
                     tool_event,
                     tool_runtime::ToolOutputArtifactScope {
@@ -334,7 +344,7 @@ async fn run_turn_event_loop(mut ctx: TurnEventLoop) {
                 | SessionEventType::ToolResult
         );
         if !publish_after_persist {
-            ctx.state.publish_event(event.clone()).await;
+            state.publish_event(event.clone()).await;
         }
 
         if is_truthful_start_activity(&event.event_type)
@@ -479,7 +489,7 @@ async fn run_turn_event_loop(mut ctx: TurnEventLoop) {
         }
 
         if publish_after_persist {
-            ctx.state.publish_event(event.clone()).await;
+            state.publish_event(event.clone()).await;
         }
     }
     let _ = ctx.events_done_tx.send(());

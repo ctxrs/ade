@@ -72,6 +72,7 @@ pub(super) fn event_snapshot_rev(event: &WorkspaceActiveSnapshotEvent) -> Option
         | WorkspaceActiveSnapshotEvent::TaskDelta { snapshot_rev, .. }
         | WorkspaceActiveSnapshotEvent::SessionSummary { snapshot_rev, .. }
         | WorkspaceActiveSnapshotEvent::SessionSummaryDelta { snapshot_rev, .. }
+        | WorkspaceActiveSnapshotEvent::SessionRemoved { snapshot_rev, .. }
         | WorkspaceActiveSnapshotEvent::SessionHeadDelta { snapshot_rev, .. }
         | WorkspaceActiveSnapshotEvent::SessionHeadSeed { snapshot_rev, .. }
         | WorkspaceActiveSnapshotEvent::SessionGap { snapshot_rev, .. }

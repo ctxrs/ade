@@ -314,12 +314,10 @@ async fn load_system_prompt_append_for_subagent_combines_agent_and_subagent_appe
     .await
     .expect("save subagent prompt append");
 
-    let append = super::helpers::load_system_prompt_append_for_relationship(
-        &store,
-        Some("sub_agent"),
-    )
-    .await
-    .expect("load combined prompt append");
+    let append =
+        super::helpers::load_system_prompt_append_for_relationship(&store, Some("sub_agent"))
+            .await
+            .expect("load combined prompt append");
     assert_eq!(append, Some("Agent prompt\n\nSubagent prompt".to_string()));
 
     store.close().await;

@@ -72,7 +72,11 @@ impl Store {
                 }
                 session_sql.push('?');
             }
-            session_sql.push_str(")) WHERE rn <= ? ORDER BY task_id, rn");
+            session_sql.push_str(
+                ")
+                      AND (s.relationship != 'sub_agent' OR s.relationship IS NULL OR s.archived_at IS NULL)
+                ) WHERE rn <= ? ORDER BY task_id, rn",
+            );
 
             let session_sql = self.rewrite_sql(&session_sql);
             let mut session_query = sqlx::query(session_sql.as_ref());
@@ -170,7 +174,11 @@ impl Store {
             }
             session_sql.push('?');
         }
-        session_sql.push_str(") ORDER BY s.task_id ASC, s.created_at ASC, s.id ASC");
+        session_sql.push_str(
+            ")
+              AND (s.relationship != 'sub_agent' OR s.relationship IS NULL OR s.archived_at IS NULL)
+            ORDER BY s.task_id ASC, s.created_at ASC, s.id ASC",
+        );
 
         let session_sql = self.rewrite_sql(&session_sql);
         let mut session_query = sqlx::query(session_sql.as_ref());
@@ -211,6 +219,7 @@ impl Store {
         }
         session_sql.push_str(
             r#")
+                  AND (relationship != 'sub_agent' OR relationship IS NULL OR archived_at IS NULL)
             ),
             last_messages AS (
                 SELECT

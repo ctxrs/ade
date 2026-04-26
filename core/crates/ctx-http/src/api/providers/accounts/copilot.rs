@@ -15,7 +15,9 @@ pub(crate) async fn list_copilot_accounts(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<CopilotAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
     Ok(Json(
-        copilot_accounts_response(&state).await.map_err(internal_error)?,
+        copilot_accounts_response(&state)
+            .await
+            .map_err(internal_error)?,
     ))
 }
 
@@ -28,7 +30,9 @@ pub(crate) async fn upsert_copilot_account(
         .map_err(bad_request)?;
     restarts::restart_copilot_providers_for_auth_change(&state, "copilot auth updated").await;
     Ok(Json(
-        copilot_accounts_response(&state).await.map_err(internal_error)?,
+        copilot_accounts_response(&state)
+            .await
+            .map_err(internal_error)?,
     ))
 }
 
@@ -49,7 +53,9 @@ pub(crate) async fn set_copilot_active_account(
         .map_err(bad_request)?;
     restarts::restart_copilot_providers_for_auth_change(&state, "copilot auth updated").await;
     Ok(Json(
-        copilot_accounts_response(&state).await.map_err(internal_error)?,
+        copilot_accounts_response(&state)
+            .await
+            .map_err(internal_error)?,
     ))
 }
 
@@ -62,6 +68,8 @@ pub(crate) async fn delete_copilot_account(
         .map_err(provider_account_delete_error)?;
     restarts::restart_copilot_providers_for_auth_change(&state, "copilot auth updated").await;
     Ok(Json(
-        copilot_accounts_response(&state).await.map_err(internal_error)?,
+        copilot_accounts_response(&state)
+            .await
+            .map_err(internal_error)?,
     ))
 }

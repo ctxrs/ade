@@ -1,11 +1,109 @@
 impl Store {
+    pub async fn list_all_sessions_for_task(&self, task_id: TaskId) -> Result<Vec<Session>> {
+        let rows = self.query(
+            r#"SELECT id, task_id, workspace_id, worktree_id, parent_session_id, relationship,
+               execution_environment, provider_id, model_id, reasoning_effort, agent_role, title, status, provider_session_ref, created_at, updated_at
+               FROM sessions
+               WHERE task_id = ?
+               ORDER BY created_at ASC"#,
+        )
+        .bind(task_id.0.to_string())
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut out = Vec::with_capacity(rows.len());
+        for r in rows {
+            let id: String = r.try_get("id")?;
+            let task_id: String = r.try_get("task_id")?;
+            let ws_id: String = r.try_get("workspace_id")?;
+            let wt_id: String = r.try_get("worktree_id")?;
+            let created_at: String = r.try_get("created_at")?;
+            let updated_at: String = r.try_get("updated_at")?;
+            out.push(Session {
+                id: SessionId(uuid::Uuid::parse_str(&id)?),
+                task_id: TaskId(uuid::Uuid::parse_str(&task_id)?),
+                workspace_id: WorkspaceId(uuid::Uuid::parse_str(&ws_id)?),
+                worktree_id: WorktreeId(uuid::Uuid::parse_str(&wt_id)?),
+                execution_environment: parse_execution_environment(
+                    r.try_get::<String, _>("execution_environment")?.as_str(),
+                ),
+                parent_session_id: parse_optional_session_id(r.try_get("parent_session_id")?),
+                relationship: r.try_get("relationship")?,
+                provider_id: r.try_get("provider_id")?,
+                model_id: r.try_get("model_id")?,
+                reasoning_effort: r.try_get("reasoning_effort")?,
+                title: r.try_get("title")?,
+                agent_role: r.try_get("agent_role")?,
+                status: parse_session_status(r.try_get::<String, _>("status")?.as_str()),
+                provider_session_ref: r.try_get("provider_session_ref")?,
+                created_at: parse_dt(&created_at)?,
+                updated_at: parse_dt(&updated_at)?,
+            });
+        }
+        Ok(out)
+    }
+
     pub async fn list_sessions_for_task(&self, task_id: TaskId) -> Result<Vec<Session>> {
         let rows = self.query(
             r#"SELECT id, task_id, workspace_id, worktree_id, parent_session_id, relationship,
                execution_environment, provider_id, model_id, reasoning_effort, agent_role, title, status, provider_session_ref, created_at, updated_at
-               FROM sessions WHERE task_id = ? ORDER BY created_at ASC"#,
+               FROM sessions
+               WHERE task_id = ?
+                 AND (relationship != 'sub_agent' OR relationship IS NULL OR archived_at IS NULL)
+               ORDER BY created_at ASC"#,
         )
         .bind(task_id.0.to_string())
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut out = Vec::with_capacity(rows.len());
+        for r in rows {
+            let id: String = r.try_get("id")?;
+            let task_id: String = r.try_get("task_id")?;
+            let ws_id: String = r.try_get("workspace_id")?;
+            let wt_id: String = r.try_get("worktree_id")?;
+            let created_at: String = r.try_get("created_at")?;
+            let updated_at: String = r.try_get("updated_at")?;
+            out.push(Session {
+                id: SessionId(uuid::Uuid::parse_str(&id)?),
+                task_id: TaskId(uuid::Uuid::parse_str(&task_id)?),
+                workspace_id: WorkspaceId(uuid::Uuid::parse_str(&ws_id)?),
+                worktree_id: WorktreeId(uuid::Uuid::parse_str(&wt_id)?),
+                execution_environment: parse_execution_environment(
+                    r.try_get::<String, _>("execution_environment")?.as_str(),
+                ),
+                parent_session_id: parse_optional_session_id(r.try_get("parent_session_id")?),
+                relationship: r.try_get("relationship")?,
+                provider_id: r.try_get("provider_id")?,
+                model_id: r.try_get("model_id")?,
+                reasoning_effort: r.try_get("reasoning_effort")?,
+                title: r.try_get("title")?,
+                agent_role: r.try_get("agent_role")?,
+                status: parse_session_status(r.try_get::<String, _>("status")?.as_str()),
+                provider_session_ref: r.try_get("provider_session_ref")?,
+                created_at: parse_dt(&created_at)?,
+                updated_at: parse_dt(&updated_at)?,
+            });
+        }
+        Ok(out)
+    }
+
+    pub async fn list_active_sessions_for_task(&self, task_id: TaskId) -> Result<Vec<Session>> {
+        self.list_sessions_for_task(task_id).await
+    }
+
+    pub async fn list_all_sessions_for_worktree(
+        &self,
+        worktree_id: WorktreeId,
+    ) -> Result<Vec<Session>> {
+        let rows = self.query(
+            r#"SELECT id, task_id, workspace_id, worktree_id, parent_session_id, relationship,
+               execution_environment, provider_id, model_id, reasoning_effort, agent_role, title, status, provider_session_ref, created_at, updated_at
+               FROM sessions
+               WHERE worktree_id = ?
+               ORDER BY created_at ASC"#,
+        )
+        .bind(worktree_id.0.to_string())
         .fetch_all(&self.pool)
         .await?;
 
@@ -48,7 +146,10 @@ impl Store {
         let rows = self.query(
             r#"SELECT id, task_id, workspace_id, worktree_id, parent_session_id, relationship,
                execution_environment, provider_id, model_id, reasoning_effort, agent_role, title, status, provider_session_ref, created_at, updated_at
-               FROM sessions WHERE worktree_id = ? ORDER BY created_at ASC"#,
+               FROM sessions
+               WHERE worktree_id = ?
+                 AND (relationship != 'sub_agent' OR relationship IS NULL OR archived_at IS NULL)
+               ORDER BY created_at ASC"#,
         )
         .bind(worktree_id.0.to_string())
         .fetch_all(&self.pool)
@@ -86,6 +187,19 @@ impl Store {
         Ok(out)
     }
 
+    pub async fn is_archived_subagent_session(&self, session_id: SessionId) -> Result<bool> {
+        let archived = self
+            .query_scalar::<i64>(
+                r#"SELECT 1
+                   FROM sessions
+                   WHERE id = ? AND relationship = 'sub_agent' AND archived_at IS NOT NULL"#,
+            )
+            .bind(session_id.0.to_string())
+            .fetch_optional(&self.pool)
+            .await?;
+        Ok(archived.is_some())
+    }
+
     pub async fn list_subagent_sessions(
         &self,
         parent_session_id: SessionId,
@@ -95,7 +209,7 @@ impl Store {
                 r#"SELECT id, task_id, workspace_id, parent_session_id, relationship,
                execution_environment, provider_id, model_id, reasoning_effort, title, status, created_at, updated_at
                FROM sessions
-               WHERE parent_session_id = ? AND relationship = 'sub_agent'
+               WHERE parent_session_id = ? AND relationship = 'sub_agent' AND archived_at IS NULL
                ORDER BY created_at ASC"#,
             )
             .bind(parent_session_id.0.to_string())
@@ -143,7 +257,7 @@ impl Store {
                 r#"SELECT id, task_id, workspace_id, worktree_id, parent_session_id, relationship,
                execution_environment, provider_id, model_id, reasoning_effort, agent_role, title, status, provider_session_ref, created_at, updated_at
                FROM sessions
-               WHERE parent_session_id = ? AND relationship = 'sub_agent' AND title = ?
+               WHERE parent_session_id = ? AND relationship = 'sub_agent' AND archived_at IS NULL AND title = ?
                LIMIT 1"#,
             )
             .bind(parent_session_id.0.to_string())
@@ -183,12 +297,75 @@ impl Store {
         }))
     }
 
+    pub async fn get_active_subagent_session(
+        &self,
+        parent_session_id: SessionId,
+        session_id: SessionId,
+    ) -> Result<Option<Session>> {
+        let row = self
+            .query(
+                r#"SELECT id, task_id, workspace_id, worktree_id, parent_session_id, relationship,
+               execution_environment, provider_id, model_id, reasoning_effort, agent_role, title, status, provider_session_ref, created_at, updated_at
+               FROM sessions
+               WHERE id = ? AND parent_session_id = ? AND relationship = 'sub_agent' AND archived_at IS NULL
+               LIMIT 1"#,
+            )
+            .bind(session_id.0.to_string())
+            .bind(parent_session_id.0.to_string())
+            .fetch_optional(&self.pool)
+            .await?;
+
+        Ok(row.and_then(|r| {
+            let id: String = r.try_get("id").ok()?;
+            let task_id: String = r.try_get("task_id").ok()?;
+            let ws_id: String = r.try_get("workspace_id").ok()?;
+            let wt_id: String = r.try_get("worktree_id").ok()?;
+            let created_at: String = r.try_get("created_at").ok()?;
+            let updated_at: String = r.try_get("updated_at").ok()?;
+            Some(Session {
+                id: SessionId(uuid::Uuid::parse_str(&id).ok()?),
+                task_id: TaskId(uuid::Uuid::parse_str(&task_id).ok()?),
+                workspace_id: WorkspaceId(uuid::Uuid::parse_str(&ws_id).ok()?),
+                worktree_id: WorktreeId(uuid::Uuid::parse_str(&wt_id).ok()?),
+                execution_environment: parse_execution_environment(
+                    r.try_get::<String, _>("execution_environment")
+                        .ok()?
+                        .as_str(),
+                ),
+                parent_session_id: parse_optional_session_id(r.try_get("parent_session_id").ok()?),
+                relationship: r.try_get("relationship").ok()?,
+                provider_id: r.try_get("provider_id").ok()?,
+                model_id: r.try_get("model_id").ok()?,
+                reasoning_effort: r.try_get("reasoning_effort").ok()?,
+                title: r.try_get("title").ok()?,
+                agent_role: r.try_get("agent_role").ok()?,
+                status: parse_session_status(r.try_get::<String, _>("status").ok()?.as_str()),
+                provider_session_ref: r.try_get("provider_session_ref").ok()?,
+                created_at: parse_dt(&created_at).ok()?,
+                updated_at: parse_dt(&updated_at).ok()?,
+            })
+        }))
+    }
+
+    pub async fn count_active_subagent_sessions(&self, parent_session_id: SessionId) -> Result<usize> {
+        let count: i64 = self
+            .query_scalar(
+                r#"SELECT COUNT(*)
+                   FROM sessions
+                   WHERE parent_session_id = ? AND relationship = 'sub_agent' AND archived_at IS NULL"#,
+            )
+            .bind(parent_session_id.0.to_string())
+            .fetch_one(&self.pool)
+            .await?;
+        Ok(count as usize)
+    }
+
     pub async fn subagent_label_exists(&self, task_id: TaskId, label: &str) -> Result<bool> {
         let row = self
             .query(
                 r#"SELECT 1
                FROM sessions
-               WHERE task_id = ? AND relationship = 'sub_agent' AND title = ?
+               WHERE task_id = ? AND relationship = 'sub_agent' AND archived_at IS NULL AND title = ?
                LIMIT 1"#,
             )
             .bind(task_id.0.to_string())

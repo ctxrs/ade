@@ -175,7 +175,11 @@ impl WorkspaceActiveSnapshotHub {
         session_heads.remove(&session_id);
     }
 
-    pub async fn remove_session(&self, session_id: SessionId) {
+    async fn remove_session_inner(
+        &self,
+        session_id: SessionId,
+        workspace_id_hint: Option<WorkspaceId>,
+    ) {
         let cached_workspace_id = {
             let mut session_heads = self.session_heads.lock().await;
             session_heads
@@ -186,18 +190,58 @@ impl WorkspaceActiveSnapshotHub {
             let mut index = self.active_head_index.lock().await;
             index.remove(&session_id)
         };
-        let mut guard = self.inner.lock().await;
-        if let Some(workspace_id) = cached_workspace_id.or(indexed_workspace_id) {
-            if let Some(entry) = guard.get_mut(&workspace_id) {
-                entry.active_heads.remove(&session_id);
-                entry.session_replay.remove(&session_id);
+        let removed = {
+            let mut guard = self.inner.lock().await;
+            if let Some(workspace_id) = cached_workspace_id
+                .or(indexed_workspace_id)
+                .or(workspace_id_hint)
+            {
+                let Some(entry) = guard.get_mut(&workspace_id) else {
+                    return;
+                };
+                let changed = entry.active_heads.remove(&session_id).is_some()
+                    || entry.session_replay.remove(&session_id).is_some();
+                if changed || workspace_id_hint.is_some() {
+                    entry.snapshot_rev += 1;
+                    Some((entry.tx.clone(), entry.snapshot_rev, workspace_id))
+                } else {
+                    None
+                }
+            } else {
+                let mut removed = None;
+                for (workspace_id, entry) in guard.iter_mut() {
+                    let changed = entry.active_heads.remove(&session_id).is_some()
+                        || entry.session_replay.remove(&session_id).is_some();
+                    if changed {
+                        entry.snapshot_rev += 1;
+                        removed = Some((entry.tx.clone(), entry.snapshot_rev, *workspace_id));
+                        break;
+                    }
+                }
+                removed
             }
-        } else {
-            for entry in guard.values_mut() {
-                entry.active_heads.remove(&session_id);
-                entry.session_replay.remove(&session_id);
-            }
+        };
+
+        if let Some((tx, snapshot_rev, workspace_id)) = removed {
+            let _ = tx.send(WorkspaceActiveSnapshotEvent::SessionRemoved {
+                workspace_id,
+                snapshot_rev,
+                session_id,
+            });
         }
+    }
+
+    pub async fn remove_session(&self, session_id: SessionId) {
+        self.remove_session_inner(session_id, None).await;
+    }
+
+    pub async fn remove_session_with_workspace_hint(
+        &self,
+        workspace_id: WorkspaceId,
+        session_id: SessionId,
+    ) {
+        self.remove_session_inner(session_id, Some(workspace_id))
+            .await;
     }
 
     pub async fn remove_workspace(&self, workspace_id: WorkspaceId) {

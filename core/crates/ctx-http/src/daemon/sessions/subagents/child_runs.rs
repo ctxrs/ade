@@ -1,7 +1,6 @@
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 use std::time::Instant;
 
-use crate::api::sessions::{build_subagent_result, context_window_for_run, AgentInitResult};
 use crate::daemon::AppState;
 use crate::logs;
 use crate::scheduler::{QueuedMessage, SchedulerCommand};
@@ -16,6 +15,12 @@ use ctx_core::models::{
 use ctx_core::session_projection::turn_status_from_finished_payload;
 
 use super::errors::{internal_api_error, store_for_session, ApiResult};
+
+pub(super) struct PersistedSubagentPrompt {
+    pub(super) run_id: RunId,
+    pub(super) saved_message: Message,
+    pub(super) last_event_seq: i64,
+}
 
 pub(super) fn subagent_status_from_turn_status(status: SessionTurnStatus) -> &'static str {
     match status {
@@ -37,6 +42,13 @@ fn subagent_terminal_status_from_turn_status(status: SessionTurnStatus) -> Optio
             None
         }
     }
+}
+
+fn turn_status_has_input_backlog(status: &SessionTurnStatus) -> bool {
+    matches!(
+        status,
+        SessionTurnStatus::Queued | SessionTurnStatus::Starting | SessionTurnStatus::Running
+    )
 }
 
 #[cfg(test)]
@@ -66,34 +78,38 @@ async fn latest_terminal_turn_for_run(
 }
 
 pub(super) async fn wait_for_run_terminal_turn(
-    state: &Arc<AppState>,
+    state_weak: &Weak<AppState>,
+    store: &ctx_store::Store,
     session_id: SessionId,
     run_id: RunId,
-) -> Result<SessionTurn, String> {
-    let store = state
-        .store_for_session(session_id)
-        .await
-        .map_err(|error| logs::redact_sensitive(&error.to_string()))?;
-    let mut rx = state.subscribe_session_event_head(session_id).await;
+) -> Result<Option<SessionTurn>, String> {
     if let Some(turn) = latest_terminal_turn_for_run(&store, session_id, run_id).await? {
-        return Ok(turn);
+        return Ok(Some(turn));
     }
+    let Some(state) = state_weak.upgrade() else {
+        return Ok(None);
+    };
+    let mut rx = state.subscribe_session_event_head(session_id).await;
+    drop(state);
 
     loop {
         tokio::select! {
             changed = rx.changed() => {
                 if changed.is_err() {
+                    let Some(state) = state_weak.upgrade() else {
+                        return Ok(None);
+                    };
                     rx = state.subscribe_session_event_head(session_id).await;
                 }
                 if let Some(turn) = latest_terminal_turn_for_run(&store, session_id, run_id).await?
                 {
-                    return Ok(turn);
+                    return Ok(Some(turn));
                 }
             }
             _ = tokio::time::sleep(std::time::Duration::from_millis(250)) => {
                 if let Some(turn) = latest_terminal_turn_for_run(&store, session_id, run_id).await?
                 {
-                    return Ok(turn);
+                    return Ok(Some(turn));
                 }
             }
         }
@@ -122,19 +138,31 @@ pub(super) async fn emit_subagent_invocation_notice(
 }
 
 pub(super) async fn run_subagent_child(
-    state: &Arc<AppState>,
+    state_weak: &Weak<AppState>,
     child: SubagentInvocationChild,
-    parent_worktree_id: WorktreeId,
-) -> Result<AgentInitResult, String> {
+    _parent_worktree_id: WorktreeId,
+) -> Result<(), String> {
     let run_id = child
         .run_id
         .ok_or_else(|| "subagent run_id missing".to_string())?;
+    let Some(state) = state_weak.upgrade() else {
+        return Ok(());
+    };
     let store = state
         .store_for_session(child.child_session_id)
         .await
         .map_err(|error| logs::redact_sensitive(&error.to_string()))?;
-    let status = match wait_for_run_terminal_turn(state, child.child_session_id, run_id).await {
-        Ok(turn) => subagent_status_from_turn_status(turn.status).to_string(),
+    drop(state);
+    let status = match wait_for_run_terminal_turn(
+        state_weak,
+        &store,
+        child.child_session_id,
+        run_id,
+    )
+    .await
+    {
+        Ok(Some(turn)) => subagent_status_from_turn_status(turn.status).to_string(),
+        Ok(None) => return Ok(()),
         Err(_) => "unknown".to_string(),
     };
 
@@ -146,24 +174,7 @@ pub(super) async fn run_subagent_child(
         .upsert_subagent_invocation_child(updated_child)
         .await
         .map_err(|error| logs::redact_sensitive(&error.to_string()))?;
-
-    let content = store
-        .get_last_assistant_message_for_run(child.child_session_id, run_id)
-        .await
-        .ok()
-        .flatten()
-        .map(|message| message.content);
-
-    let context_window = context_window_for_run(state, child.child_session_id, run_id).await;
-    build_subagent_result(
-        state,
-        parent_worktree_id,
-        &child,
-        status,
-        content,
-        context_window,
-    )
-    .await
+    Ok(())
 }
 
 pub(super) async fn finalize_subagent_invocation(
@@ -248,11 +259,11 @@ pub(super) async fn finalize_subagent_invocation(
     Ok(())
 }
 
-pub(super) async fn enqueue_subagent_prompt(
+pub(super) async fn persist_subagent_prompt(
     state: &Arc<AppState>,
     session: &Session,
     prompt: String,
-) -> ApiResult<(RunId, Message)> {
+) -> ApiResult<PersistedSubagentPrompt> {
     let store = state
         .store_for_session(session.id)
         .await
@@ -265,6 +276,28 @@ pub(super) async fn enqueue_subagent_prompt(
         let mut order_seq_state = order_seq_state.lock().await;
         order_seq_state.get_or_assign(format!("message:{}", message_id.0), None)
     };
+    let has_backlog = if state.is_running(session.id).await {
+        true
+    } else if !store
+        .list_queued_messages_for_session(session.id)
+        .await
+        .map_err(internal_api_error)?
+        .is_empty()
+    {
+        true
+    } else {
+        store
+            .get_latest_turn_for_session(session.id)
+            .await
+            .map_err(internal_api_error)?
+            .as_ref()
+            .is_some_and(|turn| turn_status_has_input_backlog(&turn.status))
+    };
+    let delivery = if has_backlog {
+        MessageDelivery::Queued
+    } else {
+        MessageDelivery::Immediate
+    };
     let msg = Message {
         id: message_id,
         session_id: session.id,
@@ -276,7 +309,7 @@ pub(super) async fn enqueue_subagent_prompt(
         role: MessageRole::User,
         content: prompt,
         attachments: vec![],
-        delivery: MessageDelivery::Immediate,
+        delivery,
         delivered_at: None,
         created_at: chrono::Utc::now(),
     };
@@ -301,13 +334,17 @@ pub(super) async fn enqueue_subagent_prompt(
         .await
         .map_err(internal_api_error)?;
     let start_seq = event.seq;
+    let mut last_event_seq = start_seq;
 
     let turn = SessionTurn {
         turn_id,
         session_id: session.id,
         run_id: Some(run_id),
         user_message_id: Some(saved.id),
-        status: SessionTurnStatus::Starting,
+        status: match saved.delivery {
+            MessageDelivery::Queued => SessionTurnStatus::Queued,
+            MessageDelivery::Immediate => SessionTurnStatus::Starting,
+        },
         start_seq: Some(start_seq),
         end_seq: None,
         started_at: saved.created_at,
@@ -323,7 +360,74 @@ pub(super) async fn enqueue_subagent_prompt(
     };
     let _ = store.insert_session_turn(turn).await;
     state.publish_event(event).await;
+    if matches!(saved.delivery, MessageDelivery::Queued) {
+        let queued = store
+            .append_session_event(
+                session.id,
+                Some(run_id),
+                Some(turn_id),
+                SessionEventType::InputQueued,
+                serde_json::json!({"message_id": saved.id.0}),
+            )
+            .await
+            .map_err(internal_api_error)?;
+        state.publish_event(queued).await;
 
+        let queue_position = store
+            .list_queued_messages_for_session(session.id)
+            .await
+            .ok()
+            .and_then(|messages| {
+                messages
+                    .iter()
+                    .position(|message| message.id == saved.id)
+                    .map(|idx| idx as i64)
+            });
+
+        let queue_added = store
+            .append_session_event(
+                session.id,
+                Some(run_id),
+                Some(turn_id),
+                SessionEventType::MessageQueueAdded,
+                serde_json::json!({
+                    "message_id": saved.id.0,
+                    "queue_position": queue_position,
+                }),
+            )
+            .await
+            .map_err(internal_api_error)?;
+        state.publish_event(queue_added).await;
+
+        let turn_queued = store
+            .append_session_event(
+                session.id,
+                Some(run_id),
+                Some(turn_id),
+                SessionEventType::TurnQueued,
+                serde_json::json!({
+                    "message_id": saved.id.0,
+                    "queue_position": queue_position,
+                }),
+            )
+            .await
+            .map_err(internal_api_error)?;
+        last_event_seq = turn_queued.seq;
+        state.publish_event(turn_queued).await;
+    }
+
+    Ok(PersistedSubagentPrompt {
+        run_id,
+        saved_message: saved,
+        last_event_seq,
+    })
+}
+
+pub(super) async fn dispatch_subagent_prompt(
+    state: &Arc<AppState>,
+    session: &Session,
+    saved: &Message,
+) {
     let tx = state.ensure_scheduler(session.clone()).await;
     let queued = QueuedMessage {
         message: saved.clone(),
@@ -331,8 +435,16 @@ pub(super) async fn enqueue_subagent_prompt(
         run_id: None,
     };
     let _ = tx.send(SchedulerCommand::Enqueue(queued)).await;
+}
 
-    Ok((run_id, saved))
+pub(super) async fn enqueue_subagent_prompt(
+    state: &Arc<AppState>,
+    session: &Session,
+    prompt: String,
+) -> ApiResult<PersistedSubagentPrompt> {
+    let persisted = persist_subagent_prompt(state, session, prompt).await?;
+    dispatch_subagent_prompt(state, session, &persisted.saved_message).await;
+    Ok(persisted)
 }
 
 #[cfg(test)]
@@ -372,5 +484,15 @@ mod tests {
             subagent_terminal_status_from_event(&terminal_event("interrupted")),
             Some("interrupted")
         );
+    }
+
+    #[test]
+    fn input_backlog_includes_starting_turns() {
+        assert!(turn_status_has_input_backlog(&SessionTurnStatus::Starting));
+        assert!(turn_status_has_input_backlog(&SessionTurnStatus::Running));
+        assert!(turn_status_has_input_backlog(&SessionTurnStatus::Queued));
+        assert!(!turn_status_has_input_backlog(
+            &SessionTurnStatus::Completed
+        ));
     }
 }

@@ -353,6 +353,11 @@ pub enum WorkspaceActiveSnapshotEvent {
         snapshot_rev: i64,
         delta: Box<SessionSummaryDelta>,
     },
+    SessionRemoved {
+        workspace_id: WorkspaceId,
+        snapshot_rev: i64,
+        session_id: SessionId,
+    },
     SessionHeadDelta {
         workspace_id: WorkspaceId,
         snapshot_rev: i64,

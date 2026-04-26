@@ -15,7 +15,9 @@ pub(crate) async fn list_mistral_accounts(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<MistralAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
     Ok(Json(
-        mistral_accounts_response(&state).await.map_err(internal_error)?,
+        mistral_accounts_response(&state)
+            .await
+            .map_err(internal_error)?,
     ))
 }
 
@@ -28,7 +30,9 @@ pub(crate) async fn upsert_mistral_account(
         .map_err(bad_request)?;
     restarts::restart_mistral_providers_for_auth_change(&state, "mistral auth updated").await;
     Ok(Json(
-        mistral_accounts_response(&state).await.map_err(internal_error)?,
+        mistral_accounts_response(&state)
+            .await
+            .map_err(internal_error)?,
     ))
 }
 
@@ -49,7 +53,9 @@ pub(crate) async fn set_mistral_active_account(
         .map_err(bad_request)?;
     restarts::restart_mistral_providers_for_auth_change(&state, "mistral auth updated").await;
     Ok(Json(
-        mistral_accounts_response(&state).await.map_err(internal_error)?,
+        mistral_accounts_response(&state)
+            .await
+            .map_err(internal_error)?,
     ))
 }
 
@@ -62,6 +68,8 @@ pub(crate) async fn delete_mistral_account(
         .map_err(provider_account_delete_error)?;
     restarts::restart_mistral_providers_for_auth_change(&state, "mistral auth updated").await;
     Ok(Json(
-        mistral_accounts_response(&state).await.map_err(internal_error)?,
+        mistral_accounts_response(&state)
+            .await
+            .map_err(internal_error)?,
     ))
 }

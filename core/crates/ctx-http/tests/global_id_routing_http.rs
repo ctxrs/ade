@@ -261,14 +261,15 @@ async fn subagent_invocation_route_is_session_scoped() {
     let resp = server
         .client
         .post(format!(
-            "{}/api/mcp/sessions/{}/subagent_init",
+            "{}/api/mcp/sessions/{}/spawn_agent",
             server.base_url, workspace_b.session_id.0
         ))
         .json(&json!({
             "worktree": "inherit",
-            "agents": [
-                { "prompt": "hello", "label": "Worker", "harness": "fake", "model": "fake-model" }
-            ]
+            "prompt": "hello",
+            "task_label": "Worker",
+            "harness": "fake",
+            "model": "fake-model"
         }))
         .send()
         .await

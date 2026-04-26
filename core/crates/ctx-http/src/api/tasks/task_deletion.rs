@@ -7,7 +7,7 @@ pub(in crate::api) async fn delete_loaded_task_with_cleanup(
     task: &Task,
 ) -> Result<(), StatusCode> {
     let sessions = store
-        .list_sessions_for_task(task.id)
+        .list_all_sessions_for_task(task.id)
         .await
         .unwrap_or_default();
     let mut worktree_ids: HashSet<WorktreeId> = sessions.iter().map(|s| s.worktree_id).collect();
@@ -87,8 +87,14 @@ pub(in crate::api) async fn delete_loaded_task_with_cleanup(
     if !deleted {
         return Err(StatusCode::NOT_FOUND);
     }
-    let cleanup_errors =
-        cleanup_task_worktrees(state.as_ref(), workspace, task.id, &cleanup_targets).await;
+    let cleanup_errors = cleanup_task_worktrees(
+        state.as_ref(),
+        workspace,
+        task.id,
+        &cleanup_targets,
+        crate::api::tasks::BranchCleanupErrorMode::BestEffort,
+    )
+    .await;
     if !cleanup_errors.is_empty() {
         tracing::warn!(
             task_id = %task.id.0,

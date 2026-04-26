@@ -497,7 +497,7 @@ impl SessionRuntime {
         }
         let (tx, rx) = mpsc::channel(64);
         map.insert(session.id, TimedEntry::new(tx.clone()));
-        tokio::spawn(session_worker(state.clone(), session, rx));
+        tokio::spawn(session_worker(Arc::downgrade(state), session, rx));
         tx
     }
 
@@ -521,11 +521,25 @@ impl SessionRuntime {
     }
 
     pub async fn cleanup_session(&self, state: &AppState, session_id: SessionId) {
-        state
-            .workspaces
-            .workspace_active_snapshot
-            .remove_session(session_id)
-            .await;
+        let workspace_id = state
+            .global_store()
+            .get_workspace_id_for_session(session_id)
+            .await
+            .ok()
+            .flatten();
+        if let Some(workspace_id) = workspace_id {
+            state
+                .workspaces
+                .workspace_active_snapshot
+                .remove_session_with_workspace_hint(workspace_id, session_id)
+                .await;
+        } else {
+            state
+                .workspaces
+                .workspace_active_snapshot
+                .remove_session(session_id)
+                .await;
+        }
         {
             let mut cache = self.session_head_cache.lock().await;
             cache.remove(&session_id);

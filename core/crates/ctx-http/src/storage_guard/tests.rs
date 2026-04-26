@@ -186,6 +186,27 @@ async fn preflight_blocks_turn_start_during_emergency() {
 }
 
 #[tokio::test]
+async fn preflight_samples_storage_without_allocating_reserve_file() {
+    let data_root = tempdir().expect("data root");
+    let stores = StoreManager::open(data_root.path()).await.expect("stores");
+    let state = Arc::new(AppState::new(
+        data_root.path().to_path_buf(),
+        stores,
+        HashMap::new(),
+        "http://127.0.0.1:4399".to_string(),
+        None,
+    ));
+    let _ = state.core.shutdown_tx.send(());
+
+    preflight_turn_start(&state, &state.core.data_root)
+        .await
+        .expect("preflight should succeed");
+
+    assert!(!data_root.path().join(RESERVE_FILE_NAME).exists());
+    assert!(!state.storage_guard_snapshot().reserve_file_active);
+}
+
+#[tokio::test]
 async fn dispatches_storage_emergency_interrupts_to_running_sessions() {
     let state = app_state_for_test().await;
     let session_id = SessionId(uuid::Uuid::new_v4());

@@ -29,79 +29,100 @@ pub(super) fn tools_list_response() -> Value {
                 }
             },
             {
-                "name": "subagent_init",
-                "title": "Init Subagents",
-                "description": "Spawns one or more subagents (max configurable, default 10) for the current session. Enqueue-only; use subagent_wait to await.",
+                "name": "spawn_agent",
+                "title": "Spawn Agent",
+                "description": "Creates a durable child agent for the current session and starts its first run.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
-                        "worktree": { "type": "string", "enum": ["inherit", "new"], "description": "Worktree selection for spawned subagents." },
-                        "agents": {
-                            "type": "array",
-                            "items": {
-                                "type": "object",
-                                "properties": {
-                                    "prompt": { "type": "string" },
-                                    "label": { "type": "string" },
-                                    "harness": { "type": "string" },
-                                    "model": { "type": "string" },
-                                    "reasoning_effort": { "type": "string" }
-                                },
-                                "required": ["prompt", "label"],
-                                "additionalProperties": false
-                            }
-                        }
+                        "task_label": { "type": "string", "description": "Stable human-readable label for the agent." },
+                        "prompt": { "type": "string", "description": "Initial work request for the new agent." },
+                        "worktree": { "type": "string", "enum": ["inherit", "new"], "description": "`inherit` shares the caller worktree; `new` creates a dedicated child worktree." },
+                        "harness": { "type": "string", "description": "Optional provider override." },
+                        "model": { "type": "string", "description": "Optional model override." },
+                        "reasoning_effort": { "type": "string", "description": "Optional reasoning effort override." }
                     },
-                    "required": ["worktree", "agents"],
+                    "required": ["task_label", "prompt", "worktree"],
                     "additionalProperties": false
                 }
             },
             {
-                "name": "subagent_reply",
-                "title": "Reply to Subagent",
-                "description": "Sends a prompt to an existing subagent (enqueue-only). Use subagent_wait to await the response.",
+                "name": "send_input",
+                "title": "Send Input",
+                "description": "Queues follow-up work for an existing child agent. Optionally interrupts the current run first.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
-                        "label": { "type": "string", "description": "Subagent label." },
-                        "prompt": { "type": "string" }
+                        "agent_id": { "type": "string", "description": "Opaque agent reference returned by spawn_agent/list_agents/get_agent." },
+                        "message": { "type": "string", "description": "Message to queue for the agent." },
+                        "interrupt": { "type": "boolean", "description": "Interrupt the current run before queueing the new message." }
                     },
-                    "required": ["label", "prompt"],
+                    "required": ["agent_id", "message"],
                     "additionalProperties": false
                 }
             },
             {
-                "name": "subagent_wait",
-                "title": "Wait for Subagent Invocation",
-                "description": "Waits for subagent runs to complete and returns results.",
+                "name": "archive_agent",
+                "title": "Archive Agent",
+                "description": "Archives an idle child agent so it no longer counts toward the active child limit. Dedicated child worktrees are reclaimed; inherited parent worktrees are preserved.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
-                        "label": { "type": "string", "description": "Subagent label." },
-                        "labels": { "type": "array", "items": { "type": "string" }, "description": "Subagent labels." }
+                        "agent_id": { "type": "string", "description": "Opaque agent reference returned by spawn_agent/list_agents/get_agent." }
                     },
+                    "required": ["agent_id"],
                     "additionalProperties": false
                 }
             },
             {
-                "name": "subagent_interrupt",
-                "title": "Interrupt Subagent",
-                "description": "Requests interruption for a subagent (or all subagents) in the current session.",
+                "name": "wait_agent",
+                "title": "Wait Agent",
+                "description": "Waits in a bounded way for agent updates or terminal outcomes.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
-                        "label": { "type": "string", "description": "Subagent label." },
-                        "all": { "type": "boolean", "description": "Interrupt all subagents." }
+                        "agent_id": { "type": "string", "description": "Single opaque agent reference." },
+                        "agent_ids": { "type": "array", "items": { "type": "string" }, "description": "Multiple opaque agent references." },
+                        "timeout_ms": { "type": "integer", "minimum": 0, "description": "Maximum wait time in milliseconds. 0 means poll." },
+                        "mode": { "type": "string", "enum": ["any", "all"], "description": "Whether any or all targets must satisfy the wait condition." },
+                        "until": { "type": "string", "enum": ["terminal", "update"], "description": "What kind of condition to wait for." },
+                        "since_seq": { "type": "integer", "description": "Optional event-sequence cursor for single-agent update waits." }
                     },
                     "additionalProperties": false
                 }
             },
             {
-                "name": "subagent_list",
-                "title": "List Subagents",
-                "description": "Lists subagents for the current session.",
+                "name": "interrupt_agent",
+                "title": "Interrupt Agent",
+                "description": "Requests interruption for a running child agent.",
                 "inputSchema": {
                     "type": "object",
+                    "properties": {
+                        "agent_id": { "type": "string", "description": "Opaque agent reference returned by spawn_agent/list_agents/get_agent." }
+                    },
+                    "required": ["agent_id"],
+                    "additionalProperties": false
+                }
+            },
+            {
+                "name": "list_agents",
+                "title": "List Agents",
+                "description": "Lists child agents for the current session as cheap summaries.",
+                "inputSchema": {
+                    "type": "object",
+                    "additionalProperties": false
+                }
+            },
+            {
+                "name": "get_agent",
+                "title": "Get Agent",
+                "description": "Returns durable state and latest result details for a child agent.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "agent_id": { "type": "string", "description": "Opaque agent reference returned by spawn_agent/list_agents/get_agent." }
+                    },
+                    "required": ["agent_id"],
                     "additionalProperties": false
                 }
             },

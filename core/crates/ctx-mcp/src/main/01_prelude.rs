@@ -114,6 +114,14 @@ fn scrub_internal_fields(value: &mut Value) {
         }
         Value::Object(obj) => {
             for key in INTERNAL_KEYS {
+                if key == "run_id"
+                    && obj
+                        .get(key)
+                        .and_then(|value| value.as_str())
+                        .is_some_and(|value| value.starts_with("run_"))
+                {
+                    continue;
+                }
                 obj.remove(key);
             }
             for item in obj.values_mut() {
@@ -121,28 +129,6 @@ fn scrub_internal_fields(value: &mut Value) {
             }
         }
         _ => {}
-    }
-}
-
-fn map_subagent_result(value: &mut Value) {
-    let Some(obj) = value.as_object_mut() else {
-        return;
-    };
-    obj.remove("session_id");
-    if let Some(provider_id) = obj.remove("provider_id") {
-        obj.insert("provider".to_string(), provider_id);
-    }
-    if let Some(model_id) = obj.remove("model_id") {
-        obj.insert("model".to_string(), model_id);
-    }
-}
-
-fn map_subagent_results(value: &mut Value) {
-    let Some(items) = value.as_array_mut() else {
-        return;
-    };
-    for item in items {
-        map_subagent_result(item);
     }
 }
 

@@ -35,7 +35,7 @@ pub(crate) use worktree_lifecycle::branch_exists;
 pub(crate) use worktree_lifecycle::{
     cleanup_task_worktrees, ensure_worktree_attached, execution_environment_from_settings,
     managed_worktree_root, persist_provisioned_worktree, provision_worktree_for_execution,
-    rematerialize_sandbox_binding_for_worktree, retry_global_index_write,
+    rematerialize_sandbox_binding_for_worktree, retry_global_index_write, BranchCleanupErrorMode,
     TaskWorktreeCleanupTarget,
 };
 

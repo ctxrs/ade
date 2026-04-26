@@ -2,7 +2,7 @@ use super::*;
 
 #[tokio::test]
 #[ignore = "Requires live provider credentials and a built ctx-mcp binary on the product path."]
-async fn live_provider_parent_can_invoke_real_subagent_via_ctx_mcp() {
+async fn live_provider_parent_can_invoke_real_agent_via_ctx_mcp() {
     let provider_id = std::env::var("CTX_LIVE_PROVIDER_ID").ok();
     let model_id = std::env::var("CTX_LIVE_MODEL_ID").ok();
     if provider_id.is_none() || model_id.is_none() {
@@ -91,7 +91,7 @@ async fn live_provider_parent_can_invoke_real_subagent_via_ctx_mcp() {
         .post(format!("{base_url}/api/sessions/{}/messages", session.id.0))
         .json(&json!({
             "content": format!(
-                "Use ctx.subagent_init to launch exactly one subagent labeled ping. Ask it to reply with exactly {token}. Then use ctx.subagent_wait for label ping. After the subagent completes, reply with exactly {token} and nothing else."
+                "Use ctx.spawn_agent to launch exactly one agent labeled ping. Ask it to reply with exactly {token}. Read the returned agent.agent.agent_id, then use ctx.wait_agent with that agent_id. After the child agent completes, reply with exactly {token} and nothing else."
             )
         }))
         .send()

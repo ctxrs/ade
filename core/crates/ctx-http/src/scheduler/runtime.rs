@@ -46,7 +46,6 @@ mod tool_runtime;
 mod turn_start;
 
 use self::event_loop::{spawn_turn_event_loop, TurnEventLoop};
-pub(crate) use self::helpers::model_context_window;
 use self::helpers::{
     apply_provider_launch_overrides, compute_context_window_metrics,
     load_system_prompt_append_for_relationship, normalize_session_model_id,
@@ -522,7 +521,7 @@ pub(crate) async fn start_turn(
     };
 
     spawn_turn_event_loop(TurnEventLoop {
-        state: Arc::clone(state),
+        state_weak: Arc::downgrade(state),
         store: store.clone(),
         session_id: session.id,
         task_id: session.task_id,

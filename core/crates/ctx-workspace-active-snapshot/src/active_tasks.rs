@@ -1,4 +1,4 @@
-use ctx_core::ids::{TaskId, WorkspaceId};
+use ctx_core::ids::{SessionId, TaskId, WorkspaceId};
 use ctx_core::models::{
     SessionSnapshotSummary, SessionSummaryDelta, Task, TaskDelta, TaskDeltaKind,
     WorkspaceActiveSnapshotEvent, WorkspaceActiveTaskSummary,
@@ -252,5 +252,40 @@ impl WorkspaceActiveSnapshotHub {
             snapshot_rev,
             summary: Box::new(summary),
         });
+    }
+
+    pub async fn remove_subagent_session_from_active_task(
+        &self,
+        workspace_id: WorkspaceId,
+        task_id: TaskId,
+        session_id: SessionId,
+    ) -> bool {
+        let (tx, snapshot_rev, task_update) = {
+            let mut guard = self.inner.lock().await;
+            let entry = guard
+                .entry(workspace_id)
+                .or_insert_with(WorkspaceActiveSnapshotEntry::new);
+            let mut task_update = None;
+            if let Some(active_task) = entry.active_tasks.get_mut(&task_id) {
+                let before_len = active_task.sessions.len();
+                active_task
+                    .sessions
+                    .retain(|summary| summary.session.id != session_id);
+                if active_task.sessions.len() != before_len {
+                    entry.snapshot_rev += 1;
+                    task_update = Some(active_task.clone());
+                }
+            }
+            (entry.tx.clone(), entry.snapshot_rev, task_update)
+        };
+        let Some(task) = task_update else {
+            return false;
+        };
+        let _ = tx.send(WorkspaceActiveSnapshotEvent::ActiveTaskUpsert {
+            workspace_id,
+            snapshot_rev,
+            task: Box::new(task),
+        });
+        true
     }
 }

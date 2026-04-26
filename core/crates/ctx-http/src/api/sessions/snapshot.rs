@@ -42,7 +42,7 @@ pub(crate) async fn get_session_snapshot(
     let limit = q.limit.unwrap_or(60);
     let include_events = parse_boolish_flag(q.include_events.as_deref(), "include_events")
         .map_err(|_| StatusCode::BAD_REQUEST)?;
-    let store = store_for_existing_session_status(&state, session_id).await?;
+    let store = store_for_existing_session_status_allow_archived(&state, session_id).await?;
     match store
         .get_session_snapshot(session_id, limit, include_events)
         .await
@@ -74,6 +74,7 @@ pub(crate) async fn get_session_head(
     if state.core.stores.is_workspace_deleting(workspace_id).await {
         return Err(StatusCode::NOT_FOUND);
     }
+    let store = store_for_existing_session_status_allow_archived(&state, session_id).await?;
     if let Some(head) = state
         .workspaces
         .workspace_active_snapshot
@@ -83,7 +84,6 @@ pub(crate) async fn get_session_head(
         return Ok(Json(head));
     }
     state.emit_cache_miss("session_head").await;
-    let store = store_for_existing_session_status(&state, session_id).await?;
     match store
         .get_session_head_snapshot(session_id, limit, include_events)
         .await
@@ -121,7 +121,7 @@ pub(crate) async fn get_session_state(
     Path(id): Path<String>,
 ) -> Result<Json<SessionState>, StatusCode> {
     let session_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
-    let store = store_for_existing_session_status(&state, session_id).await?;
+    let store = store_for_existing_session_status_allow_archived(&state, session_id).await?;
     let session = store
         .get_session(session_id)
         .await
@@ -161,7 +161,7 @@ pub(crate) async fn get_session_events(
     let limit = q.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT);
     let include_transient = parse_boolish_flag(q.include_transient.as_deref(), "include_transient")
         .map_err(|_| StatusCode::BAD_REQUEST)?;
-    let store = store_for_existing_session_status(&state, session_id).await?;
+    let store = store_for_existing_session_status_allow_archived(&state, session_id).await?;
 
     let (events, has_more, next_cursor) = if let Some(tail) = q.tail {
         let tail = tail.clamp(1, MAX_LIMIT);
@@ -208,7 +208,7 @@ pub(crate) async fn get_session_history(
 ) -> Result<Json<SessionHistoryPage>, StatusCode> {
     let session_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
     let limit = q.limit.unwrap_or(60);
-    let store = store_for_existing_session_status(&state, session_id).await?;
+    let store = store_for_existing_session_status_allow_archived(&state, session_id).await?;
     match store
         .get_session_history_page(session_id, q.before_seq, limit)
         .await
@@ -225,7 +225,7 @@ pub(crate) async fn list_session_turn_tools(
 ) -> Result<Json<Vec<SessionTurnTool>>, StatusCode> {
     let session_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
     let turn_id = TurnId(uuid::Uuid::parse_str(&turn_id).map_err(|_| StatusCode::BAD_REQUEST)?);
-    let store = store_for_existing_session_status(&state, session_id).await?;
+    let store = store_for_existing_session_status_allow_archived(&state, session_id).await?;
     store
         .list_turn_tools(session_id, turn_id)
         .await

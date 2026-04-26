@@ -1,10 +1,10 @@
 use super::*;
 
-pub(crate) async fn mcp_agent_reply(
+pub(crate) async fn mcp_send_input(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
-    Json(req): Json<AgentReplyReq>,
-) -> Result<Json<AgentReplyResp>, (StatusCode, Json<ApiErrorResp>)> {
+    Json(req): Json<SendInputReq>,
+) -> Result<Json<SendInputResp>, (StatusCode, Json<ApiErrorResp>)> {
     let parent_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| {
         (
             StatusCode::BAD_REQUEST,
@@ -14,15 +14,16 @@ pub(crate) async fn mcp_agent_reply(
         )
     })?);
 
-    crate::daemon::sessions::subagents::reply_to_subagent(state, parent_id, req)
+    crate::daemon::sessions::subagents::send_input(state, parent_id, req)
         .await
         .map(Json)
 }
 
-pub(crate) async fn mcp_subagent_list(
+pub(crate) async fn mcp_archive_agent(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
-) -> Result<Json<Vec<SubagentListItem>>, (StatusCode, Json<ApiErrorResp>)> {
+    Json(req): Json<ArchiveAgentReq>,
+) -> Result<Json<ArchiveAgentResp>, (StatusCode, Json<ApiErrorResp>)> {
     let parent_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| {
         (
             StatusCode::BAD_REQUEST,
@@ -32,16 +33,15 @@ pub(crate) async fn mcp_subagent_list(
         )
     })?);
 
-    crate::daemon::sessions::subagents::list_subagents(state, parent_id)
+    crate::daemon::sessions::subagents::archive_agent(state, parent_id, req)
         .await
         .map(Json)
 }
 
-pub(crate) async fn mcp_subagent_interrupt(
+pub(crate) async fn mcp_list_agents(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
-    Json(req): Json<SubagentInterruptReq>,
-) -> Result<Json<SubagentInterruptResp>, (StatusCode, Json<ApiErrorResp>)> {
+) -> Result<Json<Vec<AgentSummary>>, (StatusCode, Json<ApiErrorResp>)> {
     let parent_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| {
         (
             StatusCode::BAD_REQUEST,
@@ -51,7 +51,64 @@ pub(crate) async fn mcp_subagent_interrupt(
         )
     })?);
 
-    crate::daemon::sessions::subagents::interrupt_subagents(state, parent_id, req)
+    crate::daemon::sessions::subagents::list_agents(state, parent_id)
+        .await
+        .map(Json)
+}
+
+pub(crate) async fn mcp_get_agent(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Json(req): Json<GetAgentReq>,
+) -> Result<Json<GetAgentResp>, (StatusCode, Json<ApiErrorResp>)> {
+    let parent_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "invalid session id".to_string(),
+            }),
+        )
+    })?);
+
+    crate::daemon::sessions::subagents::get_agent(state, parent_id, req)
+        .await
+        .map(Json)
+}
+
+pub(crate) async fn mcp_interrupt_agent(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Json(req): Json<InterruptAgentReq>,
+) -> Result<Json<InterruptAgentResp>, (StatusCode, Json<ApiErrorResp>)> {
+    let parent_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "invalid session id".to_string(),
+            }),
+        )
+    })?);
+
+    crate::daemon::sessions::subagents::interrupt_agent(state, parent_id, req)
+        .await
+        .map(Json)
+}
+
+pub(crate) async fn mcp_wait_agent(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Json(req): Json<WaitAgentReq>,
+) -> Result<Json<WaitAgentResp>, (StatusCode, Json<ApiErrorResp>)> {
+    let parent_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "invalid session id".to_string(),
+            }),
+        )
+    })?);
+
+    crate::daemon::sessions::subagents::wait_agent(state, parent_id, req)
         .await
         .map(Json)
 }
@@ -152,23 +209,4 @@ pub(crate) async fn mcp_oracle(
     })?;
 
     Ok(Json(resp))
-}
-
-pub(crate) async fn mcp_subagent_wait(
-    State(state): State<Arc<AppState>>,
-    Path(id): Path<String>,
-    Json(req): Json<SubagentWaitReq>,
-) -> Result<Json<SubagentWaitResp>, (StatusCode, Json<ApiErrorResp>)> {
-    let parent_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(ApiErrorResp {
-                error: "invalid session id".to_string(),
-            }),
-        )
-    })?);
-
-    crate::daemon::sessions::subagents::wait_for_subagents(state, parent_id, req)
-        .await
-        .map(Json)
 }

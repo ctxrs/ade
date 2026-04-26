@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use chrono::Utc;
 use fs2::FileExt;
 use serde::Serialize;
@@ -152,7 +152,7 @@ pub async fn preflight_turn_start(state: &Arc<AppState>, workdir: &Path) -> Resu
     if current.is_emergency() {
         anyhow::bail!(storage_emergency_message(current.active.as_ref()));
     }
-    let snapshot = evaluate_storage_guard(state, &[workdir.to_path_buf()]).await?;
+    let snapshot = refresh_preflight_storage_guard(state, &[workdir.to_path_buf()]).await;
     if snapshot.is_emergency() {
         anyhow::bail!(storage_emergency_message(snapshot.active.as_ref()));
     }
@@ -198,7 +198,7 @@ pub async fn evaluate_storage_guard(
     state: &Arc<AppState>,
     extra_paths: &[PathBuf],
 ) -> Result<StorageGuardStatus> {
-    let (snapshot, should_interrupt) = {
+    let (previous, snapshot) = {
         let mut controller = state.core.storage_guard.controller.lock().await;
         let previous = state.core.storage_guard.snapshot();
 
@@ -206,7 +206,9 @@ pub async fn evaluate_storage_guard(
             sample_storage_assessment(state, extra_paths, controller.reserve_file_active).await;
 
         if assessment.status.level == StorageGuardLevel::Normal && !controller.reserve_file_active {
-            if let Err(err) = ensure_reserve_file(&state.core.storage_guard.reserve_file_path) {
+            if let Err(err) =
+                ensure_reserve_file_async(state.core.storage_guard.reserve_file_path.clone()).await
+            {
                 tracing::warn!(
                     reserve_file = %state.core.storage_guard.reserve_file_path.to_string_lossy(),
                     "failed to allocate storage reserve file: {err:#}"
@@ -234,7 +236,9 @@ pub async fn evaluate_storage_guard(
                 .unwrap_or(false);
 
         if should_release_reserve {
-            if let Err(err) = release_reserve_file(&state.core.storage_guard.reserve_file_path) {
+            if let Err(err) =
+                release_reserve_file_async(state.core.storage_guard.reserve_file_path.clone()).await
+            {
                 tracing::warn!(
                     reserve_file = %state.core.storage_guard.reserve_file_path.to_string_lossy(),
                     "failed to release storage reserve file: {err:#}"
@@ -247,22 +251,39 @@ pub async fn evaluate_storage_guard(
             }
         }
 
-        let snapshot = assessment.status;
-        let should_interrupt = previous.level != StorageGuardLevel::Emergency
-            && snapshot.level == StorageGuardLevel::Emergency;
-        if !snapshot.same_meaningful_state(&previous) {
-            emit_storage_guard_transition(state, &snapshot);
-        }
-        state.core.storage_guard.publish(snapshot.clone());
-
-        (snapshot, should_interrupt)
+        (previous, assessment.status)
     };
 
-    if should_interrupt {
-        dispatch_storage_emergency_interrupts(state, &snapshot).await;
-    }
-
+    publish_storage_guard_snapshot(state, &previous, &snapshot).await;
     Ok(snapshot)
+}
+
+async fn refresh_preflight_storage_guard(
+    state: &Arc<AppState>,
+    extra_paths: &[PathBuf],
+) -> StorageGuardStatus {
+    let previous = state.core.storage_guard.snapshot();
+    let snapshot = sample_storage_assessment(state, extra_paths, previous.reserve_file_active)
+        .await
+        .status;
+    publish_storage_guard_snapshot(state, &previous, &snapshot).await;
+    snapshot
+}
+
+async fn publish_storage_guard_snapshot(
+    state: &Arc<AppState>,
+    previous: &StorageGuardStatus,
+    snapshot: &StorageGuardStatus,
+) {
+    let should_interrupt = previous.level != StorageGuardLevel::Emergency
+        && snapshot.level == StorageGuardLevel::Emergency;
+    if !snapshot.same_meaningful_state(previous) {
+        emit_storage_guard_transition(state, snapshot);
+    }
+    state.core.storage_guard.publish(snapshot.clone());
+    if should_interrupt {
+        dispatch_storage_emergency_interrupts(state, snapshot).await;
+    }
 }
 
 fn emit_storage_guard_transition(state: &AppState, snapshot: &StorageGuardStatus) {
@@ -478,6 +499,12 @@ fn ensure_reserve_file(path: &Path) -> Result<()> {
     Ok(())
 }
 
+async fn ensure_reserve_file_async(path: PathBuf) -> Result<()> {
+    tokio::task::spawn_blocking(move || ensure_reserve_file(&path))
+        .await
+        .map_err(|error| anyhow!("storage reserve allocation task failed: {error}"))?
+}
+
 fn release_reserve_file(path: &Path) -> Result<()> {
     if !path.exists() {
         return Ok(());
@@ -488,6 +515,12 @@ fn release_reserve_file(path: &Path) -> Result<()> {
             path.to_string_lossy()
         )
     })
+}
+
+async fn release_reserve_file_async(path: PathBuf) -> Result<()> {
+    tokio::task::spawn_blocking(move || release_reserve_file(&path))
+        .await
+        .map_err(|error| anyhow!("storage reserve release task failed: {error}"))?
 }
 
 fn format_path_label(path: &StorageGuardPathStatus) -> String {

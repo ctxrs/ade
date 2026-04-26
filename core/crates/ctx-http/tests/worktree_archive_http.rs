@@ -157,7 +157,7 @@ async fn archive_and_unarchive_recreates_managed_worktrees() {
             managed.push(worktree);
         }
     }
-    assert_eq!(managed.len(), 3);
+    assert_eq!(managed.len(), 4);
 
     let managed_roots: Vec<PathBuf> = managed
         .iter()
@@ -189,15 +189,15 @@ async fn archive_and_unarchive_recreates_managed_worktrees() {
     assert!(resp.status().is_success());
 
     for root in &managed_roots {
-        assert!(tokio::fs::metadata(root).await.is_ok());
+        assert!(tokio::fs::metadata(root).await.is_err());
     }
     let list_archived = git_worktree_list(repo.path()).await;
     for root in &managed_roots {
         let root_str = root.to_string_lossy();
-        assert!(list_archived.contains(root_str.as_ref()));
+        assert!(!list_archived.contains(root_str.as_ref()));
     }
     for branch in &managed_branches {
-        assert!(branch_exists(repo.path(), branch).await);
+        assert!(!branch_exists(repo.path(), branch).await);
     }
 
     let resp = client

@@ -284,11 +284,12 @@ pub async fn provider_has_active_auth_for_workspace_runtime<H>(
 where
     H: ProviderProbeHost,
 {
-    let runtime_root = provider_context_for_workspace_runtime(state, workspace, provider_id, false, false)
-        .await?
-        .env
-        .get("CTX_DATA_ROOT")
-        .map(PathBuf::from);
+    let runtime_root =
+        provider_context_for_workspace_runtime(state, workspace, provider_id, false, false)
+            .await?
+            .env
+            .get("CTX_DATA_ROOT")
+            .map(PathBuf::from);
     provider_has_active_auth_config_with_runtime_root(
         state.data_root(),
         runtime_root.as_deref(),
