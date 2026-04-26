@@ -77,7 +77,8 @@ pub(super) use login::{
 };
 pub(super) use status::{get_provider, get_provider_usage, list_providers};
 pub(crate) use status::{
-    install_target_for_workspace, provider_status_for_target, providers_statuses_response,
+    install_target_for_workspace, mark_provider_status_with_managed_config_error,
+    provider_status_for_target, providers_statuses_response,
 };
 
 #[cfg(test)]

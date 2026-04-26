@@ -13,7 +13,10 @@ pub(crate) use crate::provider_launch::status::{
     apply_target_aware_provider_status, provider_status_for_target,
 };
 
-fn mark_provider_status_with_managed_config_error(status: &mut ProviderStatus, config_error: &str) {
+pub(crate) fn mark_provider_status_with_managed_config_error(
+    status: &mut ProviderStatus,
+    config_error: &str,
+) {
     let reason = format!("managed provider config error: {config_error}");
     status.health = ProviderHealth::Error;
     status

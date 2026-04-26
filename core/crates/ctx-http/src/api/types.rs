@@ -145,10 +145,33 @@ pub(in crate::api) async fn diagnostics(
         .unwrap_or_else(
             |err| serde_json::json!({"error": logs::redact_sensitive(&err.to_string())}),
         );
+    let (managed_installs, managed_config_error) =
+        match installer::load_agent_server_config(&state.core.data_root).await {
+            Ok(cfg) => (
+                serde_json::to_value(cfg).unwrap_or_else(|_| serde_json::json!({})),
+                None,
+            ),
+            Err(err) => {
+                let error = logs::redact_sensitive(&err.to_string());
+                (serde_json::json!({ "error": error }), Some(error))
+            }
+        };
+    let managed_installs = redact_json_value(managed_installs);
+
     let providers = {
         let map = state.providers.statuses.lock().await;
-        map.values()
-            .cloned()
+        let mut providers = map.values().cloned().collect::<Vec<_>>();
+        drop(map);
+        if let Some(config_error) = managed_config_error.as_deref() {
+            for status in &mut providers {
+                super::providers::mark_provider_status_with_managed_config_error(
+                    status,
+                    config_error,
+                );
+            }
+        }
+        providers
+            .into_iter()
             .map(|mut s| {
                 s.diagnostics = s
                     .diagnostics
@@ -167,11 +190,6 @@ pub(in crate::api) async fn diagnostics(
     };
 
     let log_files = logs::list_log_files(&state.core.data_root).await;
-    let managed_installs = installer::load_agent_server_config(&state.core.data_root)
-        .await
-        .map(|cfg| serde_json::to_value(cfg).unwrap_or_else(|_| serde_json::json!({})))
-        .unwrap_or_else(|e| serde_json::json!({"error": logs::redact_sensitive(&e.to_string())}));
-    let managed_installs = redact_json_value(managed_installs);
 
     let identity = crate::build_identity::current_build_identity()
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
