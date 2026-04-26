@@ -154,6 +154,24 @@ require_cmd() {
   fi
 }
 
+download_with_retry() {
+  local url="$1"
+  local output_path="$2"
+  require_cmd curl
+  curl \
+    --fail \
+    --location \
+    --silent \
+    --show-error \
+    --retry "${CTX_PROVIDER_DEPS_CURL_RETRIES:-3}" \
+    --retry-delay "${CTX_PROVIDER_DEPS_CURL_RETRY_DELAY_SECONDS:-2}" \
+    --retry-all-errors \
+    --connect-timeout "${CTX_PROVIDER_DEPS_CURL_CONNECT_TIMEOUT_SECONDS:-20}" \
+    --max-time "${CTX_PROVIDER_DEPS_CURL_MAX_TIME_SECONDS:-600}" \
+    "$url" \
+    --output "$output_path"
+}
+
 resolve_python_cmd() {
   if command -v python3 >/dev/null 2>&1; then
     echo "python3"
@@ -398,12 +416,10 @@ stage_matrix_archive_provider() {
     require_prebuilt_provider_archive "$provider_id"
   fi
 
-  require_cmd curl
-
   local filename
   filename="$(basename "${url%%\?*}")"
   local staged_archive="$OUT_DIR/$filename"
-  curl --fail --location --silent --show-error "$url" --output "$staged_archive"
+  download_with_retry "$url" "$staged_archive"
 
   local sha
   sha="$(sha256_file "$staged_archive")"
@@ -493,7 +509,6 @@ ensure_python_runtime() {
     return
   fi
 
-  require_cmd curl
   require_cmd tar
 
   mkdir -p "$(dirname "$runtime_root")"
@@ -501,7 +516,7 @@ ensure_python_runtime() {
   local url="https://github.com/indygreg/python-build-standalone/releases/download/${python_build_tag}/${asset}"
   local archive_tmp
   archive_tmp="$(mktemp "$OUT_DIR/.python-runtime.XXXXXX")"
-  curl --fail --location --silent --show-error "$url" --output "$archive_tmp"
+  download_with_retry "$url" "$archive_tmp"
 
   local extract_dir
   extract_dir="$(mktemp -d "$OUT_DIR/.python-runtime-extract.XXXXXX")"
