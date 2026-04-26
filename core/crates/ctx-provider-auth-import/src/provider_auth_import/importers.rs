@@ -148,7 +148,7 @@ impl<'a> CanonicalAuthImporter<'a> {
         let mut remaining_profiles: Vec<ProviderImportedAuthProfile> = Vec::new();
         for profile in registry.profiles.iter().cloned() {
             let Some(secret_bytes) =
-                legacy::read_legacy_secret_material_bytes(self.data_root, &profile.id).await
+                legacy::read_legacy_secret_material_bytes(self.data_root, &profile.id).await?
             else {
                 remaining_profiles.push(profile);
                 continue;

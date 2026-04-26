@@ -50,6 +50,14 @@ async fn write_legacy_secret_material(
         .unwrap();
 }
 
+async fn write_invalid_legacy_secret_material(data_root: &Path, profile_id: &str) {
+    let path = imported_secret_path(data_root, profile_id);
+    if let Some(parent) = path.parent() {
+        tokio::fs::create_dir_all(parent).await.unwrap();
+    }
+    tokio::fs::write(path, "{ invalid json").await.unwrap();
+}
+
 fn test_roots(base: &Path) -> HostRoots {
     HostRoots {
         home: base.join("home"),
@@ -219,6 +227,52 @@ async fn load_imported_registry_fails_closed_on_malformed_registry_json() {
         message.contains("profiles.json"),
         "expected registry path in error: {message}"
     );
+}
+
+#[tokio::test]
+async fn list_provider_auth_profiles_fails_closed_on_malformed_legacy_secret_material() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let now = Utc::now();
+    let profile = ProviderImportedAuthProfile {
+        id: "legacy-codex".to_string(),
+        provider_id: "codex".to_string(),
+        provider_label: "Codex".to_string(),
+        label: "Legacy Codex".to_string(),
+        account_identity: None,
+        endpoint: None,
+        auth_type: Some("subscription".to_string()),
+        source_path: "/tmp/.codex/auth.json".to_string(),
+        source_kind: "auth_file".to_string(),
+        secret_fingerprint: "fp-codex".to_string(),
+        imported_at: now,
+        updated_at: now,
+    };
+    save_imported_registry(
+        root,
+        &ProviderImportedAuthRegistry {
+            profiles: vec![profile.clone()],
+        },
+    )
+    .await
+    .unwrap();
+    write_invalid_legacy_secret_material(root, &profile.id).await;
+
+    let err = list_provider_auth_profiles(root)
+        .await
+        .expect_err("malformed legacy secret material should fail closed");
+    let message = format!("{err:#}");
+    assert!(
+        message.contains("parsing imported auth secret material"),
+        "expected parse context in error: {message}"
+    );
+    assert!(
+        message.contains(&format!("{}.json", profile.id)),
+        "expected secret material path in error: {message}"
+    );
+    assert!(tokio::fs::metadata(legacy_migration_marker_path(root))
+        .await
+        .is_err());
 }
 
 #[tokio::test]

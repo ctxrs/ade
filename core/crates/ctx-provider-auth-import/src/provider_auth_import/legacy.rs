@@ -121,13 +121,40 @@ pub(super) async fn write_legacy_migration_marker(data_root: &Path) -> Result<()
 pub(super) async fn read_legacy_secret_material_bytes(
     data_root: &Path,
     profile_id: &str,
-) -> Option<Vec<u8>> {
-    let payload = tokio::fs::read_to_string(imported_secret_path(data_root, profile_id))
-        .await
-        .ok()?;
-    let parsed = serde_json::from_str::<StoredSecretMaterial>(&payload).ok()?;
-    let content = parsed.content_b64?;
-    base64::Engine::decode(&base64::engine::general_purpose::STANDARD, content).ok()
+) -> Result<Option<Vec<u8>>> {
+    let path = imported_secret_path(data_root, profile_id);
+    let payload = match tokio::fs::read_to_string(&path).await {
+        Ok(payload) => payload,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => {
+            return Err(err).with_context(|| {
+                format!(
+                    "reading imported auth secret material at {}",
+                    path.display()
+                )
+            });
+        }
+    };
+    let parsed = serde_json::from_str::<StoredSecretMaterial>(&payload).with_context(|| {
+        format!(
+            "parsing imported auth secret material at {}",
+            path.display()
+        )
+    })?;
+    let content = parsed.content_b64.ok_or_else(|| {
+        anyhow::anyhow!(
+            "imported auth secret material at {} is missing content_b64",
+            path.display()
+        )
+    })?;
+    let bytes = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, content)
+        .with_context(|| {
+            format!(
+                "decoding imported auth secret material at {}",
+                path.display()
+            )
+        })?;
+    Ok(Some(bytes))
 }
 
 pub(super) fn imported_secret_path(data_root: &Path, profile_id: &str) -> PathBuf {
