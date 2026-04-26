@@ -33,7 +33,7 @@ impl<'a> CanonicalAuthImporter<'a> {
 
     async fn list_profiles(&self) -> Result<Vec<ProviderImportedAuthProfile>> {
         self.migrate_legacy_imported_profiles_once().await?;
-        let registry = legacy::load_imported_registry(self.data_root).await;
+        let registry = legacy::load_imported_registry(self.data_root).await?;
         Ok(registry.profiles)
     }
 
@@ -139,7 +139,7 @@ impl<'a> CanonicalAuthImporter<'a> {
             return Ok(());
         }
 
-        let mut registry = legacy::load_imported_registry(self.data_root).await;
+        let mut registry = legacy::load_imported_registry(self.data_root).await?;
         if registry.profiles.is_empty() {
             legacy::write_legacy_migration_marker(self.data_root).await?;
             return Ok(());

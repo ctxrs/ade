@@ -74,8 +74,8 @@ pub(crate) struct GeminiSecretEnvelope {
     google_accounts: Option<serde_json::Value>,
 }
 
-pub async fn load_gemini_registry(data_root: &Path) -> GeminiAccountRegistry {
-    load_json_registry(&gemini_registry_path(data_root)).await
+pub async fn load_gemini_registry(data_root: &Path) -> Result<GeminiAccountRegistry> {
+    load_json_registry(&gemini_registry_path(data_root), "Gemini account registry").await
 }
 
 pub async fn save_gemini_registry(
@@ -93,7 +93,7 @@ pub async fn add_gemini_account(
     email: Option<String>,
 ) -> Result<GeminiAccountRegistry> {
     let oauth_creds = parse_required_json_object(&oauth_creds_json, "oauth_creds_json")?;
-    let mut registry = load_gemini_registry(data_root).await;
+    let mut registry = load_gemini_registry(data_root).await?;
     let mut existing_account_id: Option<String> = None;
 
     for existing in &registry.accounts {
@@ -159,7 +159,7 @@ pub async fn set_active_gemini_account(
     data_root: &Path,
     account_id: Option<String>,
 ) -> Result<GeminiAccountRegistry> {
-    let mut registry = load_gemini_registry(data_root).await;
+    let mut registry = load_gemini_registry(data_root).await?;
     if let Some(active_id) = account_id.as_deref() {
         let Some(entry) = registry.accounts.iter().find(|a| a.id == active_id) else {
             bail!("unknown account");
@@ -184,7 +184,7 @@ pub async fn remove_gemini_account(
     account_id: &str,
 ) -> Result<GeminiAccountRegistry> {
     ensure_safe_account_id(account_id)?;
-    let mut registry = load_gemini_registry(data_root).await;
+    let mut registry = load_gemini_registry(data_root).await?;
     let was_active = registry.active_account_id.as_deref() == Some(account_id);
     let removed: Vec<GeminiAccountEntry> = registry
         .accounts
@@ -272,7 +272,7 @@ pub fn gemini_env_for_account(data_root: &Path, account_id: &str) -> HashMap<Str
 }
 
 pub async fn gemini_env_for_active_account(data_root: &Path) -> Result<HashMap<String, String>> {
-    let registry = load_gemini_registry(data_root).await;
+    let registry = load_gemini_registry(data_root).await?;
     let Some(active) = registry
         .active_account_id
         .as_deref()
@@ -299,7 +299,7 @@ pub(crate) async fn gemini_env_for_active_account_with_runtime_root(
     data_root: &Path,
     runtime_root: &Path,
 ) -> Result<HashMap<String, String>> {
-    let registry = load_gemini_registry(data_root).await;
+    let registry = load_gemini_registry(data_root).await?;
     let Some(active) = registry
         .active_account_id
         .as_deref()

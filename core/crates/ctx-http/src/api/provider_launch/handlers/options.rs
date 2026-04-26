@@ -131,15 +131,6 @@ pub(in crate::api) async fn get_provider_options(
         return Ok(Json(out));
     }
 
-    let has_active_auth = probe::provider_has_active_auth_for_workspace_runtime(
-        state.as_ref(),
-        &workspace,
-        &provider_id,
-        source_config.as_ref(),
-    )
-    .await;
-    let auth_mode = provider_auth_mode(has_active_auth, source_config.as_ref());
-
     let provider_status = provider_status_for_target(
         state.as_ref(),
         &managed,
@@ -158,8 +149,8 @@ pub(in crate::api) async fn get_provider_options(
             "probe_ok": false,
             "supports_load": false,
             "auth_required": false,
-            "has_active_auth": has_active_auth,
-            "auth_mode": auth_mode,
+            "has_active_auth": false,
+            "auth_mode": provider_auth_mode(false, source_config.as_ref()),
             "probed_at": now.to_rfc3339(),
             "probe_error": config_error,
             "config_error": config_error,
@@ -182,6 +173,52 @@ pub(in crate::api) async fn get_provider_options(
         attach_verify_cache(&mut out, verify_entry.as_ref(), VERIFY_TTL);
         return Ok(Json(out));
     }
+
+    let has_active_auth = match probe::provider_has_active_auth_for_workspace_runtime(
+        state.as_ref(),
+        &workspace,
+        &provider_id,
+        source_config.as_ref(),
+    )
+    .await
+    {
+        Ok(value) => value,
+        Err(config_error) => {
+            let config_error = logs::redact_sensitive(&config_error);
+            let now = chrono::Utc::now();
+            let mut raw_resp = serde_json::json!({
+                "provider_id": provider_id,
+                "workspace_id": ws_id.0,
+                "installed": provider_status.installed,
+                "probe_ok": false,
+                "supports_load": false,
+                "auth_required": false,
+                "has_active_auth": false,
+                "auth_mode": "none",
+                "probed_at": now.to_rfc3339(),
+                "probe_error": config_error,
+                "config_error": config_error,
+            });
+            attach_static_provider_models_and_modes(
+                &state,
+                &mut raw_resp,
+                &provider_id,
+                &provider_status,
+                None,
+                cached_models.clone(),
+                cached_modes.clone(),
+            )
+            .await;
+            inject_preferred_model_id(&mut raw_resp, preferred_model_id.clone());
+
+            let resp = redact_json_value(raw_resp);
+            let mut out = resp;
+            project_provider_id_field(&requested_provider_id, &mut out);
+            attach_verify_cache(&mut out, verify_entry.as_ref(), VERIFY_TTL);
+            return Ok(Json(out));
+        }
+    };
+    let auth_mode = provider_auth_mode(has_active_auth, source_config.as_ref());
 
     if !provider_status_is_usable(&provider_status) {
         let mut raw_base_resp = serde_json::json!({

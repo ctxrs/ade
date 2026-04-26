@@ -1,18 +1,22 @@
-use super::common::{bad_request, provider_account_delete_error, unknown_account};
+use super::common::{bad_request, internal_error, provider_account_delete_error, unknown_account};
 use super::*;
 
-pub(crate) async fn mistral_accounts_response(state: &Arc<AppState>) -> MistralAccountsResponse {
-    let registry = provider_accounts::load_mistral_registry(&state.core.data_root).await;
-    MistralAccountsResponse {
+pub(crate) async fn mistral_accounts_response(
+    state: &Arc<AppState>,
+) -> anyhow::Result<MistralAccountsResponse> {
+    let registry = provider_accounts::load_mistral_registry(&state.core.data_root).await?;
+    Ok(MistralAccountsResponse {
         active_account_id: registry.active_account_id,
         accounts: registry.accounts,
-    }
+    })
 }
 
 pub(crate) async fn list_mistral_accounts(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<MistralAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
-    Ok(Json(mistral_accounts_response(&state).await))
+    Ok(Json(
+        mistral_accounts_response(&state).await.map_err(internal_error)?,
+    ))
 }
 
 pub(crate) async fn upsert_mistral_account(
@@ -23,7 +27,9 @@ pub(crate) async fn upsert_mistral_account(
         .await
         .map_err(bad_request)?;
     restarts::restart_mistral_providers_for_auth_change(&state, "mistral auth updated").await;
-    Ok(Json(mistral_accounts_response(&state).await))
+    Ok(Json(
+        mistral_accounts_response(&state).await.map_err(internal_error)?,
+    ))
 }
 
 pub(crate) async fn set_mistral_active_account(
@@ -31,7 +37,9 @@ pub(crate) async fn set_mistral_active_account(
     Json(req): Json<MistralActiveAccountReq>,
 ) -> Result<Json<MistralAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
     if let Some(ref account_id) = req.account_id {
-        let registry = provider_accounts::load_mistral_registry(&state.core.data_root).await;
+        let registry = provider_accounts::load_mistral_registry(&state.core.data_root)
+            .await
+            .map_err(internal_error)?;
         if !registry.accounts.iter().any(|a| a.id == *account_id) {
             return Err(unknown_account());
         }
@@ -40,7 +48,9 @@ pub(crate) async fn set_mistral_active_account(
         .await
         .map_err(bad_request)?;
     restarts::restart_mistral_providers_for_auth_change(&state, "mistral auth updated").await;
-    Ok(Json(mistral_accounts_response(&state).await))
+    Ok(Json(
+        mistral_accounts_response(&state).await.map_err(internal_error)?,
+    ))
 }
 
 pub(crate) async fn delete_mistral_account(
@@ -51,5 +61,7 @@ pub(crate) async fn delete_mistral_account(
         .await
         .map_err(provider_account_delete_error)?;
     restarts::restart_mistral_providers_for_auth_change(&state, "mistral auth updated").await;
-    Ok(Json(mistral_accounts_response(&state).await))
+    Ok(Json(
+        mistral_accounts_response(&state).await.map_err(internal_error)?,
+    ))
 }

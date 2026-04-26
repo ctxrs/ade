@@ -47,10 +47,6 @@ pub struct AmpLoginStatus {
     pub error: Option<String>,
 }
 
-pub async fn load_amp_registry(data_root: &Path) -> AmpAccountRegistry {
-    load_json_registry(&amp_registry_path(data_root)).await
-}
-
 pub async fn save_amp_registry(data_root: &Path, registry: &AmpAccountRegistry) -> Result<()> {
     save_json_registry(&amp_registry_path(data_root), registry).await
 }
@@ -69,12 +65,16 @@ pub async fn clear_amp_runtime_home(data_root: &Path) -> Result<()> {
     }
 }
 
+pub async fn load_amp_registry(data_root: &Path) -> Result<AmpAccountRegistry> {
+    load_json_registry(&amp_registry_path(data_root), "Amp account registry").await
+}
+
 pub async fn upsert_amp_account(
     data_root: &Path,
     label: Option<String>,
     email: Option<String>,
 ) -> Result<AmpAccountRegistry> {
-    let mut registry = load_amp_registry(data_root).await;
+    let mut registry = load_amp_registry(data_root).await?;
     let normalized_email = normalize_optional_email(email);
     let existing_id = normalized_email
         .as_deref()
@@ -129,7 +129,7 @@ pub async fn set_active_amp_account(
     data_root: &Path,
     account_id: Option<String>,
 ) -> Result<AmpAccountRegistry> {
-    let mut registry = load_amp_registry(data_root).await;
+    let mut registry = load_amp_registry(data_root).await?;
     if let Some(active_id) = account_id.as_deref() {
         if !registry.accounts.iter().any(|entry| entry.id == active_id) {
             anyhow::bail!("unknown account");
@@ -154,7 +154,7 @@ pub async fn set_active_amp_account(
 
 pub async fn remove_amp_account(data_root: &Path, account_id: &str) -> Result<AmpAccountRegistry> {
     ensure_safe_account_id(account_id)?;
-    let mut registry = load_amp_registry(data_root).await;
+    let mut registry = load_amp_registry(data_root).await?;
     let was_active = registry.active_account_id.as_deref() == Some(account_id);
     let removed = registry.accounts.iter().any(|entry| entry.id == account_id);
     ensure_account_exists(removed)?;
@@ -215,7 +215,7 @@ pub fn normalize_amp_label(label: Option<String>, account_id: &str) -> String {
 }
 
 pub async fn ensure_amp_registry_from_runtime_auth(data_root: &Path) -> Result<AmpAccountRegistry> {
-    let registry = load_amp_registry(data_root).await;
+    let registry = load_amp_registry(data_root).await?;
     if !registry.accounts.is_empty() && registry.active_account_id.is_some() {
         return Ok(registry);
     }
@@ -349,7 +349,7 @@ mod tests {
         .unwrap_err();
 
         assert!(!err.to_string().is_empty());
-        let registry = load_amp_registry(root).await;
+        let registry = load_amp_registry(root).await.unwrap();
         assert!(registry.accounts.is_empty());
         assert!(registry.active_account_id.is_none());
     }
@@ -403,7 +403,7 @@ mod tests {
         let home = PathBuf::from(env.get("HOME").expect("HOME should be set"));
         assert!(home.starts_with(&runtime_root));
 
-        let registry = load_amp_registry(root).await;
+        let registry = load_amp_registry(root).await.unwrap();
         assert_eq!(registry.accounts.len(), 1);
         assert!(registry.active_account_id.is_some());
 

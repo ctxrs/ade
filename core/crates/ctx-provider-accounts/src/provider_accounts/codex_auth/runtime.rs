@@ -163,7 +163,7 @@ async fn prepare_codex_runtime_auth_with_runtime_root(
         }
     }
 
-    let registry = load_codex_registry(data_root).await;
+    let registry = load_codex_registry(data_root).await?;
     if let Some(active) = registry
         .active_account_id
         .as_deref()

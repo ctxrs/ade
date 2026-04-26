@@ -559,7 +559,9 @@ async fn cursor_subscription_selection_requires_managed_account() {
         selected_endpoint_id: None,
         endpoints: vec![],
     };
-    let active = provider_has_active_auth_config(root.path(), "cursor", Some(&source)).await;
+    let active = provider_has_active_auth_config(root.path(), "cursor", Some(&source))
+        .await
+        .unwrap();
     assert!(!active);
 }
 
@@ -572,7 +574,9 @@ async fn amp_subscription_selection_requires_managed_account() {
         selected_endpoint_id: None,
         endpoints: vec![],
     };
-    let active = provider_has_active_auth_config(root.path(), "amp", Some(&source)).await;
+    let active = provider_has_active_auth_config(root.path(), "amp", Some(&source))
+        .await
+        .unwrap();
     assert!(!active);
 }
 
@@ -592,7 +596,9 @@ async fn amp_active_account_counts_as_active_auth_config() {
         selected_endpoint_id: None,
         endpoints: vec![],
     };
-    let active = provider_has_active_auth_config(root.path(), "amp", Some(&source)).await;
+    let active = provider_has_active_auth_config(root.path(), "amp", Some(&source))
+        .await
+        .unwrap();
     assert!(active);
 }
 

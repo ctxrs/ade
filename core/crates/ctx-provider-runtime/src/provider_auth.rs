@@ -22,7 +22,7 @@ pub async fn provider_has_active_auth_config(
     data_root: &StdPath,
     provider_id: &str,
     source_config: Option<&harness_sources::HarnessProviderSourceConfig>,
-) -> bool {
+) -> Result<bool, String> {
     provider_has_active_auth_config_with_runtime_root(data_root, None, provider_id, source_config)
         .await
 }
@@ -32,14 +32,14 @@ pub async fn provider_has_active_auth_config_with_runtime_root(
     runtime_data_root: Option<&StdPath>,
     provider_id: &str,
     source_config: Option<&harness_sources::HarnessProviderSourceConfig>,
-) -> bool {
+) -> Result<bool, String> {
     let provider_id = canonical_provider_id(provider_id);
     if provider_id == "fake" {
-        return true;
+        return Ok(true);
     }
     if let Some(config) = source_config {
         if endpoint_selection_is_active(config) {
-            return true;
+            return Ok(true);
         }
     }
     if provider_id == CODEX_CRP_PROVIDER_ID {
@@ -50,7 +50,7 @@ pub async fn provider_has_active_auth_config_with_runtime_root(
             }
             None => provider_accounts::codex_has_active_auth(data_root).await,
         }
-        .unwrap_or(false);
+        .map_err(|err| err.to_string());
     }
     let env = match runtime_data_root {
         Some(runtime_root) => {
@@ -65,10 +65,7 @@ pub async fn provider_has_active_auth_config_with_runtime_root(
             provider_accounts::subscription_env_for_active_account(data_root, provider_id).await
         }
     };
-    match env {
-        Ok(env) => !env.is_empty(),
-        Err(_) => false,
-    }
+    env.map(|env| !env.is_empty()).map_err(|err| err.to_string())
 }
 
 pub fn provider_auth_mode(

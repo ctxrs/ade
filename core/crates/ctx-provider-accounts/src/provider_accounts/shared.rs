@@ -128,10 +128,15 @@ pub(crate) async fn remove_projected_account_home_for_runtime_roots(
     Ok(())
 }
 
-pub(crate) async fn load_json_registry<T: DeserializeOwned + Default>(path: &Path) -> T {
+pub(crate) async fn load_json_registry<T: DeserializeOwned + Default>(
+    path: &Path,
+    label: &str,
+) -> Result<T> {
     match tokio::fs::read_to_string(path).await {
-        Ok(contents) => serde_json::from_str(&contents).unwrap_or_default(),
-        Err(_) => T::default(),
+        Ok(contents) => serde_json::from_str(&contents)
+            .with_context(|| format!("parsing {label} at {}", path.display())),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(T::default()),
+        Err(err) => Err(err).with_context(|| format!("reading {label} at {}", path.display())),
     }
 }
 

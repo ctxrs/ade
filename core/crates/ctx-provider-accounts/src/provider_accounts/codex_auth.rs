@@ -24,10 +24,9 @@ pub use self::host::{
     host_codex_auth_path, probe_host_codex_auth_candidate, seed_codex_auth_from_host,
     seeding_codex_auth_from_host_enabled,
 };
-pub(crate) use self::runtime::{
-    clear_runtime_auth_projection, ingest_runtime_home_auth_to_active_secret,
-    write_runtime_owner_marker,
-};
+pub(crate) use self::runtime::clear_runtime_auth_projection;
+#[cfg(test)]
+pub(crate) use self::runtime::write_runtime_owner_marker;
 pub use self::runtime::{
     codex_env_for_active_account, codex_env_for_active_account_with_runtime_root,
     codex_env_for_runtime_home, codex_has_active_auth, codex_has_active_auth_with_runtime_root,

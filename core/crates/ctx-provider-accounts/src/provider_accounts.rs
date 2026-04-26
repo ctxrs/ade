@@ -256,11 +256,9 @@ async fn migrate_legacy_codex_storage(data_root: &Path) -> Result<()> {
     Ok(())
 }
 
-pub async fn load_codex_registry(data_root: &Path) -> CodexAccountRegistry {
-    if let Err(error) = migrate_legacy_codex_storage(data_root).await {
-        tracing::warn!("failed to migrate legacy Codex storage roots: {error:#}");
-    }
-    load_json_registry(&codex_registry_path(data_root)).await
+pub async fn load_codex_registry(data_root: &Path) -> Result<CodexAccountRegistry> {
+    migrate_legacy_codex_storage(data_root).await?;
+    load_json_registry(&codex_registry_path(data_root), "Codex account registry").await
 }
 
 pub async fn save_codex_registry(data_root: &Path, registry: &CodexAccountRegistry) -> Result<()> {
@@ -272,7 +270,7 @@ pub async fn upsert_codex_account(
     data_root: &Path,
     entry: CodexAccountEntry,
 ) -> Result<CodexAccountRegistry> {
-    let mut registry = load_codex_registry(data_root).await;
+    let mut registry = load_codex_registry(data_root).await?;
     let mut normalized = entry;
     let account_id = normalized.id.clone();
     if normalized.kind.trim().is_empty() {
@@ -298,7 +296,7 @@ pub async fn remove_codex_account(
     account_id: &str,
 ) -> Result<CodexAccountRegistry> {
     ensure_safe_account_id(account_id)?;
-    let mut registry = load_codex_registry(data_root).await;
+    let mut registry = load_codex_registry(data_root).await?;
     let was_active = registry.active_account_id.as_deref() == Some(account_id);
     let removed: Vec<CodexAccountEntry> = registry
         .accounts
@@ -338,7 +336,7 @@ pub async fn set_active_codex_account(
     data_root: &Path,
     account_id: Option<String>,
 ) -> Result<CodexAccountRegistry> {
-    let mut registry = load_codex_registry(data_root).await;
+    let mut registry = load_codex_registry(data_root).await?;
     if let Some(active_id) = account_id.as_deref() {
         let Some(entry) = registry.accounts.iter().find(|a| a.id == active_id) else {
             anyhow::bail!("unknown account");

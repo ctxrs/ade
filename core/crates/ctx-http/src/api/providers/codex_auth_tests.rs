@@ -56,7 +56,9 @@ async fn codex_subscription_selection_requires_real_auth() {
         selected_endpoint_id: None,
         endpoints: vec![],
     };
-    let active = provider_has_active_auth_config(root.path(), "codex-crp", Some(&source)).await;
+    let active = provider_has_active_auth_config(root.path(), "codex-crp", Some(&source))
+        .await
+        .unwrap();
     assert!(!active);
 }
 
@@ -84,6 +86,8 @@ async fn codex_subscription_selection_counts_host_auth_candidate_as_active_auth_
         selected_endpoint_id: None,
         endpoints: vec![],
     };
-    let active = provider_has_active_auth_config(root.path(), "codex-crp", Some(&source)).await;
+    let active = provider_has_active_auth_config(root.path(), "codex-crp", Some(&source))
+        .await
+        .unwrap();
     assert!(active);
 }

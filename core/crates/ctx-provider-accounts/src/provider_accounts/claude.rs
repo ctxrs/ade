@@ -108,9 +108,12 @@ struct ClaudeSecretEnvelope {
     claude_code_oauth_token: Option<String>,
 }
 
-pub async fn load_claude_registry(data_root: &Path) -> ClaudeAccountRegistry {
-    let mut registry: ClaudeAccountRegistry =
-        load_json_registry(&claude_registry_path(data_root)).await;
+pub async fn load_claude_registry(data_root: &Path) -> Result<ClaudeAccountRegistry> {
+    let mut registry: ClaudeAccountRegistry = load_json_registry(
+        &claude_registry_path(data_root),
+        "Claude account registry",
+    )
+    .await?;
     let legacy_account_ids: Vec<String> = registry
         .accounts
         .iter()
@@ -118,7 +121,7 @@ pub async fn load_claude_registry(data_root: &Path) -> ClaudeAccountRegistry {
         .map(|entry| entry.id.clone())
         .collect();
     if legacy_account_ids.is_empty() {
-        return registry;
+        return Ok(registry);
     }
 
     let legacy_account_id_set: std::collections::HashSet<&str> =
@@ -146,9 +149,7 @@ pub async fn load_claude_registry(data_root: &Path) -> ClaudeAccountRegistry {
     {
         registry.active_account_id = None;
     }
-    if let Err(error) = save_json_registry(&claude_registry_path(data_root), &registry).await {
-        tracing::warn!("failed to persist migrated Claude registry: {error}");
-    }
+    save_json_registry(&claude_registry_path(data_root), &registry).await?;
     for secret_path in secret_paths {
         let _ = tokio::fs::remove_file(secret_path).await;
     }
@@ -163,7 +164,7 @@ pub async fn load_claude_registry(data_root: &Path) -> ClaudeAccountRegistry {
         )
         .await;
     }
-    registry
+    Ok(registry)
 }
 
 pub async fn save_claude_registry(
@@ -185,7 +186,7 @@ pub async fn add_claude_account(
     setup_token: String,
 ) -> Result<ClaudeAccountRegistry> {
     let token = normalize_claude_setup_token(&setup_token)?;
-    let mut registry = load_claude_registry(data_root).await;
+    let mut registry = load_claude_registry(data_root).await?;
     let mut existing_account_id: Option<String> = None;
 
     for existing in &registry.accounts {
@@ -236,7 +237,7 @@ pub async fn set_active_claude_account(
     data_root: &Path,
     account_id: Option<String>,
 ) -> Result<ClaudeAccountRegistry> {
-    let mut registry = load_claude_registry(data_root).await;
+    let mut registry = load_claude_registry(data_root).await?;
     if let Some(active_id) = account_id.as_deref() {
         let Some(entry) = registry.accounts.iter().find(|a| a.id == active_id) else {
             bail!("unknown account");
@@ -261,7 +262,7 @@ pub async fn remove_claude_account(
     account_id: &str,
 ) -> Result<ClaudeAccountRegistry> {
     ensure_safe_account_id(account_id)?;
-    let mut registry = load_claude_registry(data_root).await;
+    let mut registry = load_claude_registry(data_root).await?;
     let was_active = registry.active_account_id.as_deref() == Some(account_id);
     let removed: Vec<ClaudeAccountEntry> = registry
         .accounts
@@ -351,7 +352,7 @@ pub fn claude_env_for_account(
 }
 
 pub async fn claude_env_for_active_account(data_root: &Path) -> Result<HashMap<String, String>> {
-    let registry = load_claude_registry(data_root).await;
+    let registry = load_claude_registry(data_root).await?;
     let Some(active) = registry
         .active_account_id
         .as_deref()
@@ -378,7 +379,7 @@ pub(crate) async fn claude_env_for_active_account_with_runtime_root(
     data_root: &Path,
     runtime_root: &Path,
 ) -> Result<HashMap<String, String>> {
-    let registry = load_claude_registry(data_root).await;
+    let registry = load_claude_registry(data_root).await?;
     let Some(active) = registry
         .active_account_id
         .as_deref()

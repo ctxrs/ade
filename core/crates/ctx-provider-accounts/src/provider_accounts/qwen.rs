@@ -61,8 +61,8 @@ struct QwenSecretEnvelope {
     oauth_creds: serde_json::Value,
 }
 
-pub async fn load_qwen_registry(data_root: &Path) -> QwenAccountRegistry {
-    load_json_registry(&qwen_registry_path(data_root)).await
+pub async fn load_qwen_registry(data_root: &Path) -> Result<QwenAccountRegistry> {
+    load_json_registry(&qwen_registry_path(data_root), "Qwen account registry").await
 }
 
 pub async fn save_qwen_registry(data_root: &Path, registry: &QwenAccountRegistry) -> Result<()> {
@@ -76,7 +76,7 @@ pub async fn add_qwen_account(
     email: Option<String>,
 ) -> Result<QwenAccountRegistry> {
     let oauth_creds = parse_required_json_object(&oauth_creds_json, "oauth_creds_json")?;
-    let mut registry = load_qwen_registry(data_root).await;
+    let mut registry = load_qwen_registry(data_root).await?;
     let mut existing_account_id: Option<String> = None;
 
     for existing in &registry.accounts {
@@ -128,7 +128,7 @@ pub async fn set_active_qwen_account(
     data_root: &Path,
     account_id: Option<String>,
 ) -> Result<QwenAccountRegistry> {
-    let mut registry = load_qwen_registry(data_root).await;
+    let mut registry = load_qwen_registry(data_root).await?;
     if let Some(active_id) = account_id.as_deref() {
         let Some(entry) = registry.accounts.iter().find(|a| a.id == active_id) else {
             bail!("unknown account");
@@ -153,7 +153,7 @@ pub async fn remove_qwen_account(
     account_id: &str,
 ) -> Result<QwenAccountRegistry> {
     ensure_safe_account_id(account_id)?;
-    let mut registry = load_qwen_registry(data_root).await;
+    let mut registry = load_qwen_registry(data_root).await?;
     let was_active = registry.active_account_id.as_deref() == Some(account_id);
     let removed: Vec<QwenAccountEntry> = registry
         .accounts
@@ -202,7 +202,7 @@ pub fn qwen_env_for_account(data_root: &Path, account_id: &str) -> HashMap<Strin
 }
 
 pub async fn qwen_env_for_active_account(data_root: &Path) -> Result<HashMap<String, String>> {
-    let registry = load_qwen_registry(data_root).await;
+    let registry = load_qwen_registry(data_root).await?;
     let Some(active) = registry
         .active_account_id
         .as_deref()
@@ -226,7 +226,7 @@ pub(crate) async fn qwen_env_for_active_account_with_runtime_root(
     data_root: &Path,
     runtime_root: &Path,
 ) -> Result<HashMap<String, String>> {
-    let registry = load_qwen_registry(data_root).await;
+    let registry = load_qwen_registry(data_root).await?;
     let Some(active) = registry
         .active_account_id
         .as_deref()

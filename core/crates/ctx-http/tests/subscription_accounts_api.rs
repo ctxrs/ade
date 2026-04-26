@@ -2088,7 +2088,9 @@ async fn kimi_login_start_and_status_success_persists_oauth_account() {
     assert_eq!(accounts.active_account_id, status.account_id);
     assert_eq!(accounts.accounts[0].label.as_deref(), Some("Kimi Google"));
 
-    let registry = ctx_provider_accounts::load_kimi_registry(data_dir.path()).await;
+    let registry = ctx_provider_accounts::load_kimi_registry(data_dir.path())
+        .await
+        .unwrap();
     assert_eq!(registry.accounts.len(), 1);
     assert_eq!(registry.accounts[0].kind, "oauth");
 
@@ -2146,6 +2148,92 @@ async fn qwen_login_start_and_status_success_persists_account() {
     assert_eq!(accounts.accounts.len(), 1);
     assert_eq!(accounts.active_account_id, status.account_id);
     assert_eq!(accounts.accounts[0].label.as_deref(), Some("Qwen OAuth"));
+}
+
+#[tokio::test]
+async fn kimi_accounts_list_fails_closed_on_malformed_registry_json() {
+    let data_dir = tempfile::tempdir().expect("tempdir");
+    let path = ctx_provider_accounts::kimi_registry_path(data_dir.path());
+    tokio::fs::create_dir_all(path.parent().expect("registry parent"))
+        .await
+        .expect("create kimi registry parent");
+    tokio::fs::write(&path, "{ invalid json")
+        .await
+        .expect("write malformed kimi registry");
+
+    let stores = common::setup_store(data_dir.path()).await;
+    let state = common::build_state(
+        data_dir.path().to_path_buf(),
+        stores,
+        common::fake_providers(),
+        "http://127.0.0.1:0",
+    );
+    let server = common::spawn_http_server(common::router(state)).await;
+
+    let accounts_url = format!("{}/api/providers/kimi/accounts", server.base_url);
+    let response = server
+        .client
+        .get(accounts_url)
+        .send()
+        .await
+        .expect("kimi accounts request");
+    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    let body: ErrorResp = response.json().await.expect("error body");
+    assert!(
+        body.error.contains("Kimi account registry"),
+        "expected registry label in error: {}",
+        body.error
+    );
+    assert!(
+        body.error.contains("parsing"),
+        "expected parse context in error: {}",
+        body.error
+    );
+}
+
+#[tokio::test]
+async fn auth_import_profiles_route_fails_closed_on_malformed_registry_json() {
+    let data_dir = tempfile::tempdir().expect("tempdir");
+    let path = data_dir
+        .path()
+        .join("providers")
+        .join("auth_import")
+        .join("profiles.json");
+    tokio::fs::create_dir_all(path.parent().expect("registry parent"))
+        .await
+        .expect("create import registry parent");
+    tokio::fs::write(&path, "{ invalid json")
+        .await
+        .expect("write malformed import registry");
+
+    let stores = common::setup_store(data_dir.path()).await;
+    let state = common::build_state(
+        data_dir.path().to_path_buf(),
+        stores,
+        common::fake_providers(),
+        "http://127.0.0.1:0",
+    );
+    let server = common::spawn_http_server(common::router(state)).await;
+
+    let profiles_url = format!("{}/api/providers/auth/import/profiles", server.base_url);
+    let response = server
+        .client
+        .get(profiles_url)
+        .send()
+        .await
+        .expect("auth import profiles request");
+    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    let body: ErrorResp = response.json().await.expect("error body");
+    assert!(
+        body.error.contains("parsing imported auth registry"),
+        "expected parse context in error: {}",
+        body.error
+    );
+    assert!(
+        body.error.contains("profiles.json"),
+        "expected registry path in error: {}",
+        body.error
+    );
 }
 
 #[tokio::test]

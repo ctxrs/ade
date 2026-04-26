@@ -144,7 +144,7 @@ struct LegacyMigrationMarker {
     completed_at: DateTime<Utc>,
 }
 
-pub async fn load_imported_registry(data_root: &Path) -> ProviderImportedAuthRegistry {
+pub async fn load_imported_registry(data_root: &Path) -> Result<ProviderImportedAuthRegistry> {
     legacy::load_imported_registry(data_root).await
 }
 

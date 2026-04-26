@@ -19,7 +19,7 @@ pub(crate) async fn import_codex_candidate(
 
     let imported_fingerprint = catalog::sha256_hex(bytes);
     let imported_auth = serde_json::from_slice::<serde_json::Value>(bytes).ok();
-    let mut registry = provider_accounts::load_codex_registry(data_root).await;
+    let mut registry = provider_accounts::load_codex_registry(data_root).await?;
 
     for account in &registry.accounts {
         let _ =
@@ -180,7 +180,7 @@ pub(super) async fn import_gemini_auth_file_candidate(
     };
 
     let before_len = provider_accounts::load_gemini_registry(data_root)
-        .await
+        .await?
         .accounts
         .len();
     let registry = provider_accounts::add_gemini_account(

@@ -74,6 +74,14 @@ exit 1
 }
 
 #[cfg(unix)]
+fn write_invalid_kimi_account_registry(data_root: &Path) {
+    let path = ctx_provider_accounts::kimi_registry_path(data_root);
+    std::fs::create_dir_all(path.parent().expect("kimi registry parent"))
+        .expect("create kimi registry parent");
+    std::fs::write(path, "{ not valid json").expect("write invalid kimi registry");
+}
+
+#[cfg(unix)]
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 fn write_avf_probe_helper(path: &Path) {
     write_executable(
@@ -648,6 +656,82 @@ async fn kimi_provider_options_expose_live_runtime_catalog_and_bootstrap_stays_h
             .and_then(serde_json::Value::as_str),
         Some("runtime_probe_live"),
         "bootstrap must not expose kimi's live runtime model catalog: {bootstrap:#?}"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn kimi_provider_options_fail_closed_on_account_registry_errors() {
+    let _env_lock = lock_env().await;
+    let data_dir = tempfile::tempdir().expect("tempdir");
+    let repo = common::init_git_repo(&[("note.txt", "hello\n")]).await;
+    write_invalid_kimi_account_registry(data_dir.path());
+
+    let state = app_state(data_dir.path()).await;
+    let app = api::router(state.clone());
+    let ws = common::create_workspace(&app, repo.path(), "ws").await;
+    let (status, body): (StatusCode, serde_json::Value) = common::json_request(
+        &app,
+        axum::http::Method::GET,
+        format!("/api/workspaces/{}/providers/kimi/options", ws.id.0),
+        None,
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "options request failed: {body:#?}");
+    assert_eq!(
+        body.get("probe_ok").and_then(serde_json::Value::as_bool),
+        Some(false),
+        "expected probe_ok=false for invalid kimi account registry: {body:#?}"
+    );
+    assert_eq!(
+        body.get("has_active_auth")
+            .and_then(serde_json::Value::as_bool),
+        Some(false),
+        "expected has_active_auth=false for invalid kimi account registry: {body:#?}"
+    );
+    assert_eq!(
+        body.get("auth_mode").and_then(serde_json::Value::as_str),
+        Some("none"),
+        "expected auth_mode=none for invalid kimi account registry: {body:#?}"
+    );
+    assert!(
+        body.get("config_error")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|value| value.contains("Kimi account registry")),
+        "expected kimi registry parse context in options response: {body:#?}"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn provider_bootstrap_fails_closed_on_kimi_account_registry_errors() {
+    let _env_lock = lock_env().await;
+    let data_dir = tempfile::tempdir().expect("tempdir");
+    let repo = common::init_git_repo(&[("note.txt", "hello\n")]).await;
+    write_invalid_kimi_account_registry(data_dir.path());
+
+    let state = app_state(data_dir.path()).await;
+    let app = api::router(state.clone());
+    let ws = common::create_workspace(&app, repo.path(), "ws").await;
+    let (status, body): (StatusCode, serde_json::Value) = common::json_request(
+        &app,
+        axum::http::Method::GET,
+        format!("/api/workspaces/{}/providers/bootstrap", ws.id.0),
+        None,
+    )
+    .await;
+
+    assert_eq!(
+        status,
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "bootstrap request unexpectedly succeeded: {body:#?}"
+    );
+    assert!(
+        body.get("error")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|value| value.contains("failed to load kimi accounts")),
+        "expected kimi registry load failure in bootstrap response: {body:#?}"
     );
 }
 

@@ -69,8 +69,8 @@ struct CursorSecretRecord {
     refresh_token: Option<String>,
 }
 
-pub async fn load_cursor_registry(data_root: &Path) -> CursorAccountRegistry {
-    load_json_registry(&cursor_registry_path(data_root)).await
+pub async fn load_cursor_registry(data_root: &Path) -> Result<CursorAccountRegistry> {
+    load_json_registry(&cursor_registry_path(data_root), "Cursor account registry").await
 }
 
 pub async fn save_cursor_registry(
@@ -131,7 +131,7 @@ async fn upsert_cursor_account_internal(
 ) -> Result<CursorAccountRegistry> {
     let auth_token = normalize_cursor_auth_token(&auth_token)?;
     let refresh_token = normalize_optional_cursor_auth_token(refresh_token.as_deref())?;
-    let mut registry = load_cursor_registry(data_root).await;
+    let mut registry = load_cursor_registry(data_root).await?;
     let mut existing_account_id: Option<String> = None;
 
     for existing in &registry.accounts {
@@ -222,7 +222,7 @@ pub async fn set_active_cursor_account(
     data_root: &Path,
     account_id: Option<String>,
 ) -> Result<CursorAccountRegistry> {
-    let mut registry = load_cursor_registry(data_root).await;
+    let mut registry = load_cursor_registry(data_root).await?;
     if let Some(active_id) = account_id.as_deref() {
         let Some(entry) = registry.accounts.iter().find(|a| a.id == active_id) else {
             bail!("unknown account");
@@ -247,7 +247,7 @@ pub async fn remove_cursor_account(
     account_id: &str,
 ) -> Result<CursorAccountRegistry> {
     ensure_safe_account_id(account_id)?;
-    let mut registry = load_cursor_registry(data_root).await;
+    let mut registry = load_cursor_registry(data_root).await?;
     let was_active = registry.active_account_id.as_deref() == Some(account_id);
     let removed: Vec<CursorAccountEntry> = registry
         .accounts
@@ -314,7 +314,7 @@ pub fn cursor_env_for_account(
 }
 
 pub async fn cursor_env_for_active_account(data_root: &Path) -> Result<HashMap<String, String>> {
-    let registry = load_cursor_registry(data_root).await;
+    let registry = load_cursor_registry(data_root).await?;
     let Some(active) = registry
         .active_account_id
         .as_deref()
@@ -343,7 +343,7 @@ pub(crate) async fn cursor_env_for_active_account_with_runtime_root(
     data_root: &Path,
     runtime_root: &Path,
 ) -> Result<HashMap<String, String>> {
-    let registry = load_cursor_registry(data_root).await;
+    let registry = load_cursor_registry(data_root).await?;
     let Some(active) = registry
         .active_account_id
         .as_deref()

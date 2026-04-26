@@ -200,7 +200,7 @@ async fn load_claude_registry_prunes_legacy_non_setup_token_accounts() {
         .await
         .expect("save registry");
 
-    let loaded = load_claude_registry(root).await;
+    let loaded = load_claude_registry(root).await.unwrap();
     assert_eq!(loaded.accounts.len(), 1);
     assert_eq!(loaded.accounts[0].id, setup_id);
     assert_eq!(loaded.active_account_id, None);
@@ -232,7 +232,7 @@ async fn load_claude_registry_prunes_legacy_accounts_even_with_unsafe_secret_ref
     };
     save_claude_registry(root, &registry).await.unwrap();
 
-    let loaded = load_claude_registry(root).await;
+    let loaded = load_claude_registry(root).await.unwrap();
     assert!(loaded.accounts.is_empty());
     assert!(loaded.active_account_id.is_none());
     assert_eq!(

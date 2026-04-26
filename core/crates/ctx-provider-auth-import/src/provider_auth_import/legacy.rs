@@ -1,10 +1,15 @@
 use super::*;
 
-pub async fn load_imported_registry(data_root: &Path) -> ProviderImportedAuthRegistry {
+pub async fn load_imported_registry(data_root: &Path) -> Result<ProviderImportedAuthRegistry> {
     let path = imported_registry_path(data_root);
-    match tokio::fs::read_to_string(path).await {
-        Ok(contents) => serde_json::from_str(&contents).unwrap_or_default(),
-        Err(_) => ProviderImportedAuthRegistry::default(),
+    match tokio::fs::read_to_string(&path).await {
+        Ok(contents) => serde_json::from_str(&contents)
+            .with_context(|| format!("parsing imported auth registry at {}", path.display())),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            Ok(ProviderImportedAuthRegistry::default())
+        }
+        Err(err) => Err(err)
+            .with_context(|| format!("reading imported auth registry at {}", path.display())),
     }
 }
 
@@ -50,7 +55,7 @@ pub(super) async fn upsert_imported_profile_metadata(
             )
         });
     let now = Utc::now();
-    let mut registry = load_imported_registry(data_root).await;
+    let mut registry = load_imported_registry(data_root).await?;
 
     if let Some(existing) = registry
         .profiles

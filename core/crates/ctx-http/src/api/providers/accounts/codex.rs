@@ -1,23 +1,27 @@
 use super::common::{bad_request, internal_error, provider_account_delete_error};
 use super::*;
 
-pub(crate) async fn codex_accounts_response(state: &Arc<AppState>) -> CodexAccountsResponse {
-    let registry = provider_accounts::load_codex_registry(&state.core.data_root).await;
+pub(crate) async fn codex_accounts_response(
+    state: &Arc<AppState>,
+) -> anyhow::Result<CodexAccountsResponse> {
+    let registry = provider_accounts::load_codex_registry(&state.core.data_root).await?;
     let logins = {
         let map = state.providers.codex_login_sessions.lock().await;
         map.values().cloned().collect::<Vec<_>>()
     };
-    CodexAccountsResponse {
+    Ok(CodexAccountsResponse {
         active_account_id: registry.active_account_id,
         accounts: registry.accounts,
         logins,
-    }
+    })
 }
 
 pub(crate) async fn list_codex_accounts(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<CodexAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
-    Ok(Json(codex_accounts_response(&state).await))
+    Ok(Json(
+        codex_accounts_response(&state).await.map_err(internal_error)?,
+    ))
 }
 
 pub(crate) async fn probe_host_codex_import(
@@ -36,7 +40,9 @@ pub(crate) async fn import_host_codex_auth(
         .await
         .map_err(bad_request)?;
     restarts::restart_codex_providers_for_auth_change(&state, "codex auth updated").await;
-    Ok(Json(codex_accounts_response(&state).await))
+    Ok(Json(
+        codex_accounts_response(&state).await.map_err(internal_error)?,
+    ))
 }
 
 pub(crate) async fn get_codex_accounts_usage(
@@ -44,7 +50,9 @@ pub(crate) async fn get_codex_accounts_usage(
     Query(query): Query<ProviderUsageQuery>,
 ) -> Result<Json<CodexAccountsUsageResponse>, (StatusCode, Json<ApiErrorResp>)> {
     let refresh = query.refresh.unwrap_or(false);
-    let registry = provider_accounts::load_codex_registry(&state.core.data_root).await;
+    let registry = provider_accounts::load_codex_registry(&state.core.data_root)
+        .await
+        .map_err(internal_error)?;
     let active_id = registry.active_account_id.clone();
     let cached_active = if !refresh {
         let cache = state.providers.usage_cache.lock().await;
@@ -110,7 +118,9 @@ pub(crate) async fn set_codex_active_account(
     Json(req): Json<CodexActiveAccountReq>,
 ) -> Result<Json<CodexAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
     if let Some(ref account_id) = req.account_id {
-        let registry = provider_accounts::load_codex_registry(&state.core.data_root).await;
+        let registry = provider_accounts::load_codex_registry(&state.core.data_root)
+            .await
+            .map_err(internal_error)?;
         if !registry.accounts.iter().any(|a| a.id == *account_id) {
             return Err((
                 StatusCode::NOT_FOUND,

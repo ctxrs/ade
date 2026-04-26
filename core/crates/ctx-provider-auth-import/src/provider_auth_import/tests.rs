@@ -172,7 +172,7 @@ async fn legacy_migration_keeps_unmigrated_profiles_without_marker() {
 
     migrate_legacy_imported_profiles_once(root).await.unwrap();
 
-    let registry = load_imported_registry(root).await;
+    let registry = load_imported_registry(root).await.unwrap();
     assert_eq!(registry.profiles.len(), 1);
     assert_eq!(registry.profiles[0].id, unsupported_profile.id);
 
@@ -190,8 +190,35 @@ async fn legacy_migration_keeps_unmigrated_profiles_without_marker() {
             .is_ok()
     );
 
-    let codex_registry = provider_accounts::load_codex_registry(root).await;
+    let codex_registry = provider_accounts::load_codex_registry(root).await.unwrap();
     assert_eq!(codex_registry.accounts.len(), 1);
+}
+
+#[tokio::test]
+async fn load_imported_registry_fails_closed_on_malformed_registry_json() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let path = root
+        .join("providers")
+        .join("auth_import")
+        .join("profiles.json");
+    tokio::fs::create_dir_all(path.parent().unwrap())
+        .await
+        .unwrap();
+    tokio::fs::write(&path, "{ invalid json").await.unwrap();
+
+    let err = load_imported_registry(root)
+        .await
+        .expect_err("malformed imported auth registry should fail closed");
+    let message = format!("{err:#}");
+    assert!(
+        message.contains("parsing imported auth registry"),
+        "expected parse context in error: {message}"
+    );
+    assert!(
+        message.contains("profiles.json"),
+        "expected registry path in error: {message}"
+    );
 }
 
 #[tokio::test]
@@ -310,7 +337,7 @@ async fn gemini_oauth_candidate_import_writes_canonical_account_registry() {
         .await
         .unwrap();
     assert_eq!(result.status, "imported");
-    let registry = provider_accounts::load_gemini_registry(root).await;
+    let registry = provider_accounts::load_gemini_registry(root).await.unwrap();
     assert_eq!(registry.accounts.len(), 1);
     assert_eq!(registry.active_account_id, result.profile_id);
     let profiles = list_provider_auth_profiles(root).await.unwrap();

@@ -78,7 +78,7 @@ async fn update_account_secret_ref(
     secret_ref: String,
     kind: Option<String>,
 ) -> Result<()> {
-    let mut registry = load_codex_registry(data_root).await;
+    let mut registry = load_codex_registry(data_root).await?;
     if let Some(entry) = registry.accounts.iter_mut().find(|a| a.id == account_id) {
         entry.secret_ref = Some(secret_ref);
         entry.kind = kind.unwrap_or_else(default_codex_credential_kind);
@@ -163,7 +163,7 @@ pub async fn import_host_codex_auth_to_secret_store(
         )
     })?;
 
-    let registry = load_codex_registry(data_root).await;
+    let registry = load_codex_registry(data_root).await?;
     for existing in &registry.accounts {
         let _ = hydrate_codex_account_home_from_secret(data_root, &existing.id).await;
         let existing_auth_path = codex_account_dir(data_root, &existing.id).join("auth.json");
@@ -198,7 +198,7 @@ pub async fn hydrate_codex_account_home_from_secret(
     data_root: &Path,
     account_id: &str,
 ) -> Result<bool> {
-    let registry = load_codex_registry(data_root).await;
+    let registry = load_codex_registry(data_root).await?;
     let Some(account) = registry.accounts.iter().find(|a| a.id == account_id) else {
         return Ok(false);
     };

@@ -47,10 +47,6 @@ pub struct MistralLoginStatus {
     pub error: Option<String>,
 }
 
-pub async fn load_mistral_registry(data_root: &Path) -> MistralAccountRegistry {
-    load_json_registry(&mistral_registry_path(data_root)).await
-}
-
 pub async fn save_mistral_registry(
     data_root: &Path,
     registry: &MistralAccountRegistry,
@@ -72,12 +68,16 @@ pub async fn clear_mistral_runtime_home(data_root: &Path) -> Result<()> {
     }
 }
 
+pub async fn load_mistral_registry(data_root: &Path) -> Result<MistralAccountRegistry> {
+    load_json_registry(&mistral_registry_path(data_root), "Mistral account registry").await
+}
+
 pub async fn upsert_mistral_account(
     data_root: &Path,
     label: Option<String>,
     email: Option<String>,
 ) -> Result<MistralAccountRegistry> {
-    let mut registry = load_mistral_registry(data_root).await;
+    let mut registry = load_mistral_registry(data_root).await?;
     let normalized_email = normalize_optional_email(email);
     let existing_id = normalized_email
         .as_deref()
@@ -132,7 +132,7 @@ pub async fn set_active_mistral_account(
     data_root: &Path,
     account_id: Option<String>,
 ) -> Result<MistralAccountRegistry> {
-    let mut registry = load_mistral_registry(data_root).await;
+    let mut registry = load_mistral_registry(data_root).await?;
     if let Some(active_id) = account_id.as_deref() {
         if !registry.accounts.iter().any(|entry| entry.id == active_id) {
             anyhow::bail!("unknown account");
@@ -160,7 +160,7 @@ pub async fn remove_mistral_account(
     account_id: &str,
 ) -> Result<MistralAccountRegistry> {
     ensure_safe_account_id(account_id)?;
-    let mut registry = load_mistral_registry(data_root).await;
+    let mut registry = load_mistral_registry(data_root).await?;
     let was_active = registry.active_account_id.as_deref() == Some(account_id);
     let removed = registry.accounts.iter().any(|entry| entry.id == account_id);
     ensure_account_exists(removed)?;
@@ -176,7 +176,7 @@ pub async fn remove_mistral_account(
 }
 
 pub async fn mistral_env_for_active_account(data_root: &Path) -> Result<HashMap<String, String>> {
-    let registry = load_mistral_registry(data_root).await;
+    let registry = load_mistral_registry(data_root).await?;
     let Some(active) = registry
         .active_account_id
         .as_deref()
@@ -196,7 +196,7 @@ pub(crate) async fn mistral_env_for_active_account_with_runtime_root(
     data_root: &Path,
     runtime_root: &Path,
 ) -> Result<HashMap<String, String>> {
-    let registry = load_mistral_registry(data_root).await;
+    let registry = load_mistral_registry(data_root).await?;
     let Some(active) = registry
         .active_account_id
         .as_deref()
@@ -261,7 +261,7 @@ mod tests {
         .unwrap_err();
 
         assert!(!err.to_string().is_empty());
-        let registry = load_mistral_registry(root).await;
+        let registry = load_mistral_registry(root).await.unwrap();
         assert!(registry.accounts.is_empty());
         assert!(registry.active_account_id.is_none());
     }

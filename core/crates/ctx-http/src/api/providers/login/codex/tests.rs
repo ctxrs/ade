@@ -31,7 +31,9 @@ async fn codex_login_persistence_requires_auth_file() {
     assert!(err
         .to_string()
         .contains("missing persisted codex auth file"));
-    let registry = provider_accounts::load_codex_registry(&state.core.data_root).await;
+    let registry = provider_accounts::load_codex_registry(&state.core.data_root)
+        .await
+        .unwrap();
     assert!(registry.accounts.is_empty());
     assert!(registry.active_account_id.is_none());
 }
@@ -115,7 +117,9 @@ async fn codex_login_persistence_rolls_back_when_restart_fails() {
     .expect_err("restart failure should bubble up");
     assert!(!err.to_string().is_empty());
 
-    let registry = provider_accounts::load_codex_registry(&state.core.data_root).await;
+    let registry = provider_accounts::load_codex_registry(&state.core.data_root)
+        .await
+        .unwrap();
     assert!(registry.accounts.is_empty());
     assert!(registry.active_account_id.is_none());
 }

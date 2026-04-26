@@ -123,8 +123,8 @@ struct CopilotSecretEnvelope {
     gh_token: String,
 }
 
-pub async fn load_copilot_registry(data_root: &Path) -> CopilotAccountRegistry {
-    load_json_registry(&copilot_registry_path(data_root)).await
+pub async fn load_copilot_registry(data_root: &Path) -> Result<CopilotAccountRegistry> {
+    load_json_registry(&copilot_registry_path(data_root), "Copilot account registry").await
 }
 
 pub async fn save_copilot_registry(
@@ -151,7 +151,7 @@ pub async fn add_copilot_account(
     email: Option<String>,
 ) -> Result<CopilotAccountRegistry> {
     let token = normalize_copilot_token(&token)?;
-    let mut registry = load_copilot_registry(data_root).await;
+    let mut registry = load_copilot_registry(data_root).await?;
     let mut existing_account_id: Option<String> = None;
 
     for existing in &registry.accounts {
@@ -202,7 +202,7 @@ pub async fn set_active_copilot_account(
     data_root: &Path,
     account_id: Option<String>,
 ) -> Result<CopilotAccountRegistry> {
-    let mut registry = load_copilot_registry(data_root).await;
+    let mut registry = load_copilot_registry(data_root).await?;
     if let Some(active_id) = account_id.as_deref() {
         let Some(entry) = registry.accounts.iter().find(|a| a.id == active_id) else {
             bail!("unknown account");
@@ -227,7 +227,7 @@ pub async fn remove_copilot_account(
     account_id: &str,
 ) -> Result<CopilotAccountRegistry> {
     ensure_safe_account_id(account_id)?;
-    let mut registry = load_copilot_registry(data_root).await;
+    let mut registry = load_copilot_registry(data_root).await?;
     let was_active = registry.active_account_id.as_deref() == Some(account_id);
     let removed: Vec<CopilotAccountEntry> = registry
         .accounts
@@ -299,7 +299,7 @@ pub fn copilot_env_for_account(
 }
 
 pub async fn copilot_env_for_active_account(data_root: &Path) -> Result<HashMap<String, String>> {
-    let registry = load_copilot_registry(data_root).await;
+    let registry = load_copilot_registry(data_root).await?;
     let Some(active) = registry
         .active_account_id
         .as_deref()
@@ -323,7 +323,7 @@ pub(crate) async fn copilot_env_for_active_account_with_runtime_root(
     data_root: &Path,
     runtime_root: &Path,
 ) -> Result<HashMap<String, String>> {
-    let registry = load_copilot_registry(data_root).await;
+    let registry = load_copilot_registry(data_root).await?;
     let Some(active) = registry
         .active_account_id
         .as_deref()

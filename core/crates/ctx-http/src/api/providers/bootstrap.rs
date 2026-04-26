@@ -2,6 +2,21 @@ use super::*;
 use ctx_core::provider_ids::LEGACY_CODEX_PROVIDER_ID;
 use ctx_workspace_config as workspace_config;
 
+fn bootstrap_accounts_error(
+    provider_id: &str,
+    err: anyhow::Error,
+) -> (StatusCode, Json<serde_json::Value>) {
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(serde_json::json!({
+            "error": format!(
+                "failed to load {provider_id} accounts: {}",
+                logs::redact_sensitive(&err.to_string())
+            ),
+        })),
+    )
+}
+
 fn parse_workspace_id(ws_id: &str) -> Result<WorkspaceId, (StatusCode, Json<serde_json::Value>)> {
     Ok(WorkspaceId(uuid::Uuid::parse_str(ws_id).map_err(|_| {
         (
@@ -95,17 +110,40 @@ pub(crate) async fn get_workspace_providers_bootstrap(
                 .await;
                 // Bootstrap is auth/config hydration only. It must stay substrate-agnostic and
                 // never cross into workspace runtime preparation.
-                let has_active_auth =
-                    crate::api::provider_probe_auth::provider_has_active_auth_config_with_runtime_root(
-                        &state.core.data_root,
-                        None,
-                        &provider_id,
-                        source_config.as_ref(),
-                    )
-                    .await;
-                let auth_mode = probe::provider_auth_mode(has_active_auth, source_config.as_ref());
-                let (probe_ok, auth_required, probe_error) =
+                let (has_active_auth, auth_mode, auth_config_error) =
+                    if source_config_error.is_some() {
+                        (false, "none", None)
+                    } else {
+                        match crate::api::provider_probe_auth::provider_has_active_auth_config_with_runtime_root(
+                            &state.core.data_root,
+                            None,
+                            &provider_id,
+                            source_config.as_ref(),
+                        )
+                        .await
+                        {
+                            Ok(has_active_auth) => (
+                                has_active_auth,
+                                probe::provider_auth_mode(
+                                    has_active_auth,
+                                    source_config.as_ref(),
+                                ),
+                                None,
+                            ),
+                            Err(err) => (
+                                false,
+                                "none",
+                                Some(logs::redact_sensitive(&err)),
+                            ),
+                        }
+                    };
+                let (mut probe_ok, mut auth_required, mut probe_error) =
                     probe::bootstrap_provider_probe_summary(&provider_status, has_active_auth);
+                if let Some(config_error) = auth_config_error.as_ref() {
+                    probe_ok = false;
+                    auth_required = false;
+                    probe_error = Some(config_error.clone());
+                }
 
                 let mut options = serde_json::json!({
                     "provider_id": provider_id,
@@ -120,7 +158,10 @@ pub(crate) async fn get_workspace_providers_bootstrap(
                 if let Some(probe_error) = probe_error {
                     options["probe_error"] = serde_json::json!(probe_error);
                 }
-                if let Some(config_error) = source_config_error.as_ref() {
+                if let Some(config_error) = source_config_error
+                    .as_ref()
+                    .or(auth_config_error.as_ref())
+                {
                     options["probe_ok"] = serde_json::json!(false);
                     options["probe_error"] = serde_json::json!(config_error);
                     options["config_error"] = serde_json::json!(config_error);
@@ -183,25 +224,33 @@ pub(crate) async fn get_workspace_providers_bootstrap(
         providers,
         provider_options,
         provider_harness_config,
-        codex_accounts: accounts::codex_accounts_response(&state).await,
-        claude_accounts: accounts::claude_accounts_response(&state).await,
-        gemini_accounts: accounts::gemini_accounts_response(&state).await,
-        qwen_accounts: accounts::qwen_accounts_response(&state).await,
-        kimi_accounts: accounts::kimi_accounts_response(&state).await,
-        mistral_accounts: accounts::mistral_accounts_response(&state).await,
-        copilot_accounts: accounts::copilot_accounts_response(&state).await,
-        cursor_accounts: accounts::cursor_accounts_response(&state).await,
-        amp_accounts: accounts::amp_accounts_response(&state).await.map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({
-                    "error": format!(
-                        "failed to load amp accounts: {}",
-                        logs::redact_sensitive(&e.to_string())
-                    ),
-                })),
-            )
-        })?,
+        codex_accounts: accounts::codex_accounts_response(&state)
+            .await
+            .map_err(|err| bootstrap_accounts_error("codex-crp", err))?,
+        claude_accounts: accounts::claude_accounts_response(&state)
+            .await
+            .map_err(|err| bootstrap_accounts_error("claude-crp", err))?,
+        gemini_accounts: accounts::gemini_accounts_response(&state)
+            .await
+            .map_err(|err| bootstrap_accounts_error("gemini", err))?,
+        qwen_accounts: accounts::qwen_accounts_response(&state)
+            .await
+            .map_err(|err| bootstrap_accounts_error("qwen", err))?,
+        kimi_accounts: accounts::kimi_accounts_response(&state)
+            .await
+            .map_err(|err| bootstrap_accounts_error("kimi", err))?,
+        mistral_accounts: accounts::mistral_accounts_response(&state)
+            .await
+            .map_err(|err| bootstrap_accounts_error("mistral", err))?,
+        copilot_accounts: accounts::copilot_accounts_response(&state)
+            .await
+            .map_err(|err| bootstrap_accounts_error("copilot", err))?,
+        cursor_accounts: accounts::cursor_accounts_response(&state)
+            .await
+            .map_err(|err| bootstrap_accounts_error("cursor", err))?,
+        amp_accounts: accounts::amp_accounts_response(&state)
+            .await
+            .map_err(|err| bootstrap_accounts_error("amp", err))?,
     }))
 }
 

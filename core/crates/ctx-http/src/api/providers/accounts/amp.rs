@@ -41,7 +41,9 @@ pub(crate) async fn set_amp_active_account(
     Json(req): Json<AmpActiveAccountReq>,
 ) -> Result<Json<AmpAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
     if let Some(ref account_id) = req.account_id {
-        let registry = provider_accounts::load_amp_registry(&state.core.data_root).await;
+        let registry = provider_accounts::load_amp_registry(&state.core.data_root)
+            .await
+            .map_err(internal_error)?;
         if !registry.accounts.iter().any(|a| a.id == *account_id) {
             return Err(unknown_account());
         }

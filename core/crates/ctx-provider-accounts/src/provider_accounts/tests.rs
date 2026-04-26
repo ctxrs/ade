@@ -552,12 +552,36 @@ async fn removing_account_with_unsafe_secret_ref_preserves_outside_file_and_clea
 
     remove_codex_account(root, account_id).await.unwrap();
 
-    let persisted = load_codex_registry(root).await;
+    let persisted = load_codex_registry(root).await.unwrap();
     assert!(persisted.accounts.is_empty());
     assert!(persisted.active_account_id.is_none());
     assert_eq!(
         tokio::fs::read_to_string(&outside_secret).await.unwrap(),
         "do-not-touch"
+    );
+}
+
+#[tokio::test]
+async fn load_codex_registry_fails_closed_on_malformed_registry_json() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let path = codex_registry_path(root);
+    tokio::fs::create_dir_all(path.parent().unwrap())
+        .await
+        .unwrap();
+    tokio::fs::write(&path, "{ invalid json").await.unwrap();
+
+    let err = load_codex_registry(root)
+        .await
+        .expect_err("malformed registry should fail closed");
+    let message = format!("{err:#}");
+    assert!(
+        message.contains("Codex account registry"),
+        "expected registry label in error: {message}"
+    );
+    assert!(
+        message.contains("parsing"),
+        "expected parse context in error: {message}"
     );
 }
 
