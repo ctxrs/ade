@@ -14,23 +14,50 @@ pub(in crate::api) async fn get_provider_options(
     let install_target = install_target_for_workspace(&state, ws_id)
         .await
         .map_err(|error| workspace_execution_settings_error_json(&error))?;
+    let (managed, managed_config_error) =
+        load_managed_agent_server_config_with_error(&state.core.data_root).await;
+    let matrix = crate::provider_matrix::load_matrix_cached(
+        &state.core.data_root,
+        &state.providers.matrix_cache,
+    )
+    .await;
+    let known = {
+        let map = state.providers.statuses.lock().await;
+        map.contains_key(&provider_id)
+            || crate::provider_matrix::get_entry(&matrix, &provider_id).is_some()
+    };
+    let (source_config, source_config_error) =
+        load_provider_source_config_with_error(&state.core.data_root, &provider_id).await;
     let cache_key = workspace_provider_cache_key(ws_id, install_target, &provider_id);
-    let verify_entry: Option<(std::time::Instant, serde_json::Value)> = state
-        .providers
-        .verify_cache
-        .lock()
-        .await
-        .get(&cache_key)
-        .map(|c| (c.cached_at, c.value.clone()));
-    let cached_entry: Option<(std::time::Instant, serde_json::Value)> = state
-        .providers
-        .options_cache
-        .lock()
-        .await
-        .get(&cache_key)
-        .map(|c| (c.cached_at, c.value.clone()));
+    let skip_cached_config_surfaces =
+        managed_config_error.is_some() || source_config_error.is_some();
+    let verify_entry: Option<(std::time::Instant, serde_json::Value)> =
+        if skip_cached_config_surfaces {
+            None
+        } else {
+            state
+                .providers
+                .verify_cache
+                .lock()
+                .await
+                .get(&cache_key)
+                .map(|c| (c.cached_at, c.value.clone()))
+        };
+    let cached_entry: Option<(std::time::Instant, serde_json::Value)> =
+        if skip_cached_config_surfaces {
+            None
+        } else {
+            state
+                .providers
+                .options_cache
+                .lock()
+                .await
+                .get(&cache_key)
+                .map(|c| (c.cached_at, c.value.clone()))
+        };
     let authoritative_cached_entry = cached_entry
         .as_ref()
+        .filter(|(_, value)| value.get("config_error").is_none())
         .filter(|(_, value)| provider_options_cache_entry_is_authoritative(&provider_id, value));
     if let Some((cached_at, cached_value)) = authoritative_cached_entry {
         if cached_at.elapsed() < CACHE_TTL {
@@ -50,21 +77,6 @@ pub(in crate::api) async fn get_provider_options(
         .and_then(|(_, value)| value.get("modes"))
         .cloned()
         .filter(|v| !v.is_null());
-
-    let (managed, managed_config_error) =
-        load_managed_agent_server_config_with_error(&state.core.data_root).await;
-    let matrix = crate::provider_matrix::load_matrix_cached(
-        &state.core.data_root,
-        &state.providers.matrix_cache,
-    )
-    .await;
-    let known = {
-        let map = state.providers.statuses.lock().await;
-        map.contains_key(&provider_id)
-            || crate::provider_matrix::get_entry(&matrix, &provider_id).is_some()
-    };
-    let (source_config, source_config_error) =
-        load_provider_source_config_with_error(&state.core.data_root, &provider_id).await;
     if !known {
         return Err((
             StatusCode::BAD_REQUEST,
@@ -93,23 +105,6 @@ pub(in crate::api) async fn get_provider_options(
             })),
         ))?;
     let preferred_model_id = load_workspace_preferred_model_id(&state, ws_id, &provider_id).await?;
-
-    let provider_status = provider_status_for_target(
-        state.as_ref(),
-        &managed,
-        &matrix,
-        &provider_id,
-        install_target,
-    )
-    .await;
-    let has_active_auth = probe::provider_has_active_auth_for_workspace_runtime(
-        state.as_ref(),
-        &workspace,
-        &provider_id,
-        source_config.as_ref(),
-    )
-    .await;
-    let auth_mode = provider_auth_mode(has_active_auth, source_config.as_ref());
     let selected_endpoint = selected_endpoint_record_from_harness_config(source_config.as_ref());
 
     if let Some(config_error) = managed_config_error.as_ref() {
@@ -119,8 +114,8 @@ pub(in crate::api) async fn get_provider_options(
             "probe_ok": false,
             "supports_load": false,
             "auth_required": false,
-            "has_active_auth": has_active_auth,
-            "auth_mode": auth_mode,
+            "has_active_auth": false,
+            "auth_mode": provider_auth_mode(false, source_config.as_ref()),
             "probed_at": chrono::Utc::now().to_rfc3339(),
             "probe_error": config_error,
             "config_error": config_error,
@@ -130,18 +125,29 @@ pub(in crate::api) async fn get_provider_options(
         }
         inject_preferred_model_id(&mut raw_resp, preferred_model_id.clone());
         let resp = redact_json_value(raw_resp);
-        state.providers.options_cache.lock().await.insert(
-            cache_key,
-            crate::daemon::CachedProviderOptions {
-                cached_at: std::time::Instant::now(),
-                value: resp.clone(),
-            },
-        );
         let mut out = resp;
         project_provider_id_field(&requested_provider_id, &mut out);
         attach_verify_cache(&mut out, verify_entry.as_ref(), VERIFY_TTL);
         return Ok(Json(out));
     }
+
+    let has_active_auth = probe::provider_has_active_auth_for_workspace_runtime(
+        state.as_ref(),
+        &workspace,
+        &provider_id,
+        source_config.as_ref(),
+    )
+    .await;
+    let auth_mode = provider_auth_mode(has_active_auth, source_config.as_ref());
+
+    let provider_status = provider_status_for_target(
+        state.as_ref(),
+        &managed,
+        &matrix,
+        &provider_id,
+        install_target,
+    )
+    .await;
 
     if let Some(config_error) = source_config_error.as_ref() {
         let now = chrono::Utc::now();
@@ -171,13 +177,6 @@ pub(in crate::api) async fn get_provider_options(
         inject_preferred_model_id(&mut raw_resp, preferred_model_id.clone());
 
         let resp = redact_json_value(raw_resp);
-        state.providers.options_cache.lock().await.insert(
-            cache_key,
-            crate::daemon::CachedProviderOptions {
-                cached_at: std::time::Instant::now(),
-                value: resp.clone(),
-            },
-        );
         let mut out = resp;
         project_provider_id_field(&requested_provider_id, &mut out);
         attach_verify_cache(&mut out, verify_entry.as_ref(), VERIFY_TTL);

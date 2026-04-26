@@ -36,6 +36,48 @@ fn mark_provider_status_with_managed_config_error(status: &mut ProviderStatus, c
     };
 }
 
+async fn provider_status_without_target_bootstrap(
+    state: &Arc<AppState>,
+    provider_id: &str,
+    target: InstallTarget,
+) -> ProviderStatus {
+    if matches!(target, InstallTarget::Host) {
+        return state
+            .providers
+            .statuses
+            .lock()
+            .await
+            .get(provider_id)
+            .cloned()
+            .unwrap_or_else(|| ProviderStatus {
+                provider_id: provider_id.to_string(),
+                installed: false,
+                detected_path: None,
+                version: None,
+                capabilities: None,
+                health: ProviderHealth::Missing,
+                diagnostics: vec![format!("provider not available: {provider_id}")],
+                details: std::collections::HashMap::new(),
+                usability: ProviderUsability::default(),
+            });
+    }
+
+    ProviderStatus {
+        provider_id: provider_id.to_string(),
+        installed: false,
+        detected_path: None,
+        version: None,
+        capabilities: None,
+        health: ProviderHealth::Missing,
+        diagnostics: vec![format!(
+            "provider not available for target '{}'",
+            target.as_str()
+        )],
+        details: std::collections::HashMap::new(),
+        usability: ProviderUsability::default(),
+    }
+}
+
 pub(crate) async fn providers_statuses_response(
     state: &Arc<AppState>,
     target: InstallTarget,
@@ -76,10 +118,13 @@ pub(crate) async fn providers_statuses_response(
     }
     let mut out = Vec::with_capacity(provider_ids.len());
     for provider_id in provider_ids {
-        out.push(
+        let status = if managed_config_error.is_some() {
+            provider_status_without_target_bootstrap(state, &provider_id, target).await
+        } else {
             provider_status_for_target(state.as_ref(), &managed, &matrix, &provider_id, target)
-                .await,
-        );
+                .await
+        };
+        out.push(status);
     }
     let legacy_aliases = out
         .iter()
@@ -199,8 +244,11 @@ pub(crate) async fn get_provider(
             })),
         ));
     }
-    let mut status =
-        provider_status_for_target(state.as_ref(), &managed, &matrix, &id, target).await;
+    let mut status = if managed_config_error.is_some() {
+        provider_status_without_target_bootstrap(&state, &id, target).await
+    } else {
+        provider_status_for_target(state.as_ref(), &managed, &matrix, &id, target).await
+    };
     status.provider_id =
         super::project_provider_id_for_response(&requested_id, &status.provider_id);
     if let Some(config_error) = managed_config_error.as_deref() {

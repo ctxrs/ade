@@ -51,15 +51,6 @@ pub(in crate::api) async fn verify_provider_for_workspace(
             })),
         ));
     }
-    let provider_status = provider_status_for_target(
-        state.as_ref(),
-        &managed,
-        &matrix,
-        &provider_id,
-        install_target,
-    )
-    .await;
-
     let checked_at = Utc::now().to_rfc3339();
     let mut status = "ok".to_string();
     let mut auth_required = Some(false);
@@ -80,16 +71,6 @@ pub(in crate::api) async fn verify_provider_for_workspace(
             checked_at: Some(checked_at.clone()),
             message: Some(config_error),
         };
-        let verify_value =
-            redact_json_value(serde_json::to_value(&resp).unwrap_or(serde_json::Value::Null));
-        let cache_key = workspace_provider_cache_key(ws_id, install_target, &provider_id);
-        state.providers.verify_cache.lock().await.insert(
-            cache_key,
-            crate::daemon::CachedProviderVerify {
-                cached_at: std::time::Instant::now(),
-                value: verify_value,
-            },
-        );
         return Ok(Json(resp));
     }
 
@@ -102,18 +83,17 @@ pub(in crate::api) async fn verify_provider_for_workspace(
             checked_at: Some(checked_at.clone()),
             message: Some(config_error),
         };
-        let verify_value =
-            redact_json_value(serde_json::to_value(&resp).unwrap_or(serde_json::Value::Null));
-        let cache_key = workspace_provider_cache_key(ws_id, install_target, &provider_id);
-        state.providers.verify_cache.lock().await.insert(
-            cache_key,
-            crate::daemon::CachedProviderVerify {
-                cached_at: std::time::Instant::now(),
-                value: verify_value,
-            },
-        );
         return Ok(Json(resp));
     }
+
+    let provider_status = provider_status_for_target(
+        state.as_ref(),
+        &managed,
+        &matrix,
+        &provider_id,
+        install_target,
+    )
+    .await;
 
     if !provider_status_is_usable(&provider_status) {
         status = "error".to_string();

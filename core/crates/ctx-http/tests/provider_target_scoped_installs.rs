@@ -8,7 +8,8 @@ use std::sync::Arc;
 use std::sync::OnceLock;
 use std::time::Duration;
 
-use axum::http::StatusCode;
+use axum::body::Body;
+use axum::http::{Request, StatusCode};
 use ctx_core::models::SessionEventType;
 use ctx_http::daemon::AppState;
 use ctx_http::settings::{
@@ -28,6 +29,7 @@ use ctx_provider_matrix::{
     ProviderInstallDependencyTarget, ProviderMatrix, ProviderMatrixEntry, ProviderMatrixEntryKind,
     ProviderRelease, ProviderReleaseStatus,
 };
+use ctx_provider_runtime::provider_launch::resolver::target_adapter_cache_key;
 use ctx_providers::adapters::{ProviderAdapter, ProviderHealth, ProviderStatus};
 use ctx_providers::crp::Tier1CrpAdapter;
 use ctx_store::Store;
@@ -402,17 +404,41 @@ async fn set_workspace_container_execution(
     workspace_id: uuid::Uuid,
     environment: &str,
 ) {
-    let (status, body): (StatusCode, serde_json::Value) = common::json_request(
-        app,
-        axum::http::Method::POST,
-        format!("/api/workspaces/{workspace_id}/execution_config"),
-        Some(serde_json::json!({
-            "environment": environment,
-            "network_mode": "all",
-        })),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "execution config failed: {body:#?}");
+    let req = Request::builder()
+        .method(axum::http::Method::POST)
+        .uri(format!("/api/workspaces/{workspace_id}/execution_config"))
+        .header("content-type", "application/json")
+        .body(Body::from(
+            serde_json::json!({
+                "environment": environment,
+                "network_mode": "all",
+            })
+            .to_string(),
+        ))
+        .expect("build execution config request");
+    let (status, body) = common::oneshot_bytes(app, req).await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "execution config failed: {}",
+        String::from_utf8_lossy(&body)
+    );
+}
+
+async fn assert_target_adapter_not_cached(
+    state: &Arc<AppState>,
+    provider_id: &str,
+    target: InstallTarget,
+    context: &str,
+) {
+    let cache_key = target_adapter_cache_key(provider_id, target)
+        .expect("non-host target should have a target adapter cache key");
+    let adapters = state.providers.target_adapters.lock().await;
+    assert!(
+        !adapters.contains_key(&cache_key),
+        "{context}: invalid managed config should not seed target adapter cache entry {cache_key}; keys={:?}",
+        adapters.keys().collect::<Vec<_>>()
+    );
 }
 
 fn file_url(path: &Path) -> String {
@@ -2108,6 +2134,105 @@ async fn tracked_provider_install_surfaces_agent_server_config_errors() {
         Some(InstallErrorCode::RegistryWriteFailed),
         "tracked install should not misclassify invalid config as a registry write failure: {install_info:#?}"
     );
+}
+
+#[tokio::test]
+async fn invalid_managed_config_container_routes_do_not_seed_target_adapter_cache() {
+    let _install_lock = provider_install_test_lock().lock().await;
+    let data_dir = tempfile::tempdir().expect("tempdir");
+    configure_container_image_defaults(data_dir.path()).await;
+    write_invalid_agent_server_config(data_dir.path()).await;
+
+    let repo = common::init_git_repo(&[("note.txt", "container\n")]).await;
+    let stores = common::setup_store(data_dir.path()).await;
+    let state = common::build_state(
+        data_dir.path().to_path_buf(),
+        stores,
+        HashMap::new(),
+        "http://127.0.0.1:0",
+    );
+    let app = common::router(state.clone());
+    let workspace = common::create_workspace(&app, repo.path(), "container-ws").await;
+    set_workspace_container_execution(&app, workspace.id.0, "sandbox").await;
+
+    let (options_status, options_body): (StatusCode, serde_json::Value) = common::json_request(
+        &app,
+        axum::http::Method::GET,
+        format!("/api/workspaces/{}/providers/qwen/options", workspace.id.0),
+        None,
+    )
+    .await;
+    assert_eq!(
+        options_status,
+        StatusCode::OK,
+        "container options route failed: {options_body:#?}"
+    );
+    assert!(
+        options_body["config_error"]
+            .as_str()
+            .is_some_and(|value| value.contains("parsing agent server config")),
+        "container options route should surface managed config parse errors: {options_body:#?}"
+    );
+    assert_target_adapter_not_cached(
+        &state,
+        "qwen",
+        InstallTarget::Container,
+        "container options route",
+    )
+    .await;
+
+    let (verify_status, verify_body): (StatusCode, serde_json::Value) = common::json_request(
+        &app,
+        axum::http::Method::POST,
+        format!("/api/workspaces/{}/providers/qwen/verify", workspace.id.0),
+        None,
+    )
+    .await;
+    assert_eq!(
+        verify_status,
+        StatusCode::OK,
+        "container verify route failed: {verify_body:#?}"
+    );
+    assert!(
+        verify_body["message"]
+            .as_str()
+            .is_some_and(|value| value.contains("parsing agent server config")),
+        "container verify route should surface managed config parse errors: {verify_body:#?}"
+    );
+    assert_target_adapter_not_cached(
+        &state,
+        "qwen",
+        InstallTarget::Container,
+        "container verify route",
+    )
+    .await;
+
+    let (provider_status, provider_body): (StatusCode, serde_json::Value) = common::json_request(
+        &app,
+        axum::http::Method::GET,
+        "/api/providers/qwen?target=container",
+        None,
+    )
+    .await;
+    assert_eq!(
+        provider_status,
+        StatusCode::OK,
+        "container provider status route failed: {provider_body:#?}"
+    );
+    assert_eq!(
+        provider_body
+            .pointer("/usability/reason_code")
+            .and_then(serde_json::Value::as_str),
+        Some("managed_config_error"),
+        "container provider status route should surface managed-config errors: {provider_body:#?}"
+    );
+    assert_target_adapter_not_cached(
+        &state,
+        "qwen",
+        InstallTarget::Container,
+        "container provider status route",
+    )
+    .await;
 }
 
 #[tokio::test]
