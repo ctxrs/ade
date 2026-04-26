@@ -1,11 +1,15 @@
 use super::*;
 mod helpers;
+mod model_catalog_selection;
 mod mutations;
 
 use helpers::get_provider_source_config_locked;
+pub use model_catalog_selection::{
+    refresh_provider_endpoint_model_catalog, set_provider_endpoint_manual_models,
+};
 pub use mutations::{
-    delete_provider_endpoint, mark_endpoint_verification, refresh_provider_endpoint_model_catalog,
-    set_provider_endpoint_manual_models, set_provider_source_selection, upsert_provider_endpoint,
+    delete_provider_endpoint, mark_endpoint_verification, set_provider_source_selection,
+    upsert_provider_endpoint,
 };
 
 pub(super) fn validate_provider_selection(

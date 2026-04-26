@@ -20,21 +20,21 @@ use super::super::super::normalize::{
     event_matches_session, event_turn_id, map_crp_event, CachedToolInput,
 };
 use super::super::super::policy::{
-    extract_auth_error_from_stderr_line, extract_auth_url_from_stderr_line,
-    extract_runtime_fatal_error_from_stderr_line, parse_native_crp_slash_command_for_provider,
-    validate_provider_slash_command_support, CrpSlashCommand,
+    parse_native_crp_slash_command_for_provider, validate_provider_slash_command_support,
+    CrpSlashCommand,
 };
 use super::super::super::protocol::{CrpCommand, CrpEvent, KnownCrpEvent};
-use super::super::super::{auth_required_notice_payload_from_stderr, CRP_CANCEL_DRAIN_TIMEOUT};
+use super::super::super::CRP_CANCEL_DRAIN_TIMEOUT;
 use super::super::open_handshake::{
     apply_session_opened_state, crp_first_event_timeout, crp_runtime_label, duration_millis_u64,
     session_opened_provider_session_id, validate_provider_session_open,
 };
 use super::super::{registry::ActivePromptGuard, CrpPromptRequest, CrpSessionPool};
+use super::startup_stderr::handle_startup_stderr_line;
 use super::terminal::{
     interrupted_outcome_without_event, is_sweep_only_status_notice, update_terminal_outcome,
 };
-use crate::adapters::{ProviderTurnOutcome, ProviderTurnStatus};
+use crate::adapters::ProviderTurnOutcome;
 
 impl CrpSessionPool {
     pub(in crate::crp) async fn prompt(
@@ -172,62 +172,11 @@ impl CrpSessionPool {
                         stderr = stderr_rx.recv() => {
                             match stderr {
                                 Ok(line) => {
-                                    if let Some(auth_url) = extract_auth_url_from_stderr_line(&line) {
-                                        session.opening.store(false, Ordering::SeqCst);
-                                        let notice = NormalizedEvent {
-                                            event_type: SessionEventType::Notice,
-                                            payload_json: auth_required_notice_payload_from_stderr(
-                                                &auth_url,
-                                            ),
-                                        };
-                                        let interrupted = NormalizedEvent {
-                                            event_type: SessionEventType::TurnInterrupted,
-                                            payload_json: json!({
-                                                "reason": "auth_required",
-                                            }),
-                                        };
-                                        let _ = req.event_sink.send(notice).await;
-                                        let emitted = req
-                                            .event_sink
-                                            .send(interrupted)
-                                            .await
-                                            .is_ok();
-                                        session.process.shutdown("crp_auth_required_stderr").await;
-                                        return Ok(ProviderTurnOutcome {
-                                            status: ProviderTurnStatus::Interrupted,
-                                            message: None,
-                                            reason: Some("auth_required".to_string()),
-                                            details: None,
-                                            kind: None,
-                                            provider_cancelled: None,
-                                            terminal_event_emitted: emitted,
-                                        });
-                                    }
-                                    if let Some(message) = extract_auth_error_from_stderr_line(&line) {
-                                        session.opening.store(false, Ordering::SeqCst);
-                                        let emitted = req
-                                            .event_sink
-                                            .send(NormalizedEvent {
-                                                event_type: SessionEventType::Error,
-                                                payload_json: json!({
-                                                    "message": message,
-                                                    "source": "crp_stderr",
-                                                }),
-                                            })
-                                            .await
-                                            .is_ok();
-                                        session.process.shutdown("crp_auth_error_stderr").await;
-                                        return Ok(ProviderTurnOutcome::failed_with_context(
-                                            message,
-                                            None,
-                                            None,
-                                            None,
-                                            emitted,
-                                        ));
-                                    }
-                                    if let Some(message) = extract_runtime_fatal_error_from_stderr_line(&line) {
-                                        session.process.shutdown("crp_runtime_fatal_stderr").await;
-                                        anyhow::bail!("{message}");
+                                    if let Some(startup) =
+                                        handle_startup_stderr_line(&line, &session, &req.event_sink)
+                                            .await?
+                                    {
+                                        return Ok(startup.outcome);
                                     }
                                 }
                                 Err(broadcast::error::RecvError::Lagged(_)) => {}
@@ -470,43 +419,17 @@ impl CrpSessionPool {
                         match stderr {
                             Ok(line) => {
                                 if last_seq == 0 {
-                                    if let Some(auth_url) = extract_auth_url_from_stderr_line(&line) {
-                                        session.opening.store(false, Ordering::SeqCst);
-                                        let notice = NormalizedEvent {
-                                            event_type: SessionEventType::Notice,
-                                            payload_json: auth_required_notice_payload_from_stderr(
-                                                &auth_url,
-                                            ),
-                                        };
-                                        let interrupted = NormalizedEvent {
-                                            event_type: SessionEventType::TurnInterrupted,
-                                            payload_json: json!({
-                                                "reason": "auth_required",
-                                            }),
-                                        };
-                                        let _ = req.event_sink.send(notice).await;
-                                        let _ = req.event_sink.send(interrupted.clone()).await;
-                                        session.process.shutdown("crp_auth_required_stderr").await;
-                                        update_terminal_outcome(&mut outcome, &[interrupted], false);
+                                    if let Some(startup) =
+                                        handle_startup_stderr_line(&line, &session, &req.event_sink)
+                                            .await?
+                                    {
+                                        update_terminal_outcome(
+                                            &mut outcome,
+                                            &startup.terminal_events,
+                                            false,
+                                        );
+                                        outcome = Some(startup.outcome);
                                         break;
-                                    }
-                                    if let Some(message) = extract_auth_error_from_stderr_line(&line) {
-                                        session.opening.store(false, Ordering::SeqCst);
-                                        let error = NormalizedEvent {
-                                            event_type: SessionEventType::Error,
-                                            payload_json: json!({
-                                                "message": message,
-                                                "source": "crp_stderr",
-                                            }),
-                                        };
-                                        let _ = req.event_sink.send(error.clone()).await;
-                                        session.process.shutdown("crp_auth_error_stderr").await;
-                                        update_terminal_outcome(&mut outcome, &[error], false);
-                                        break;
-                                    }
-                                    if let Some(message) = extract_runtime_fatal_error_from_stderr_line(&line) {
-                                        session.process.shutdown("crp_runtime_fatal_stderr").await;
-                                        anyhow::bail!("{message}");
                                     }
                                 }
                             }
