@@ -147,6 +147,9 @@ pub(crate) async fn providers_statuses_response(
                 if show_fake { "false" } else { "true" }.into(),
             );
         }
+        if status.provider_id == CODEX_CRP_PROVIDER_ID {
+            status.details.insert("ui_hidden".into(), "true".into());
+        }
         status
             .details
             .insert("install_target".into(), target.as_str().to_string());

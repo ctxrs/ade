@@ -137,7 +137,7 @@ fn gemini_acp_bundle_needs_repair(provider_id: &str, expected_entrypoint: &Path)
             core_entry_count += 1;
         }
     }
-    Ok(core_entry_count != 1)
+    Ok(core_entry_count == 0)
 }
 
 #[cfg(test)]
@@ -181,7 +181,7 @@ mod tests {
     }
 
     #[test]
-    fn gemini_acp_bundle_repair_detects_duplicate_core_entries() {
+    fn gemini_acp_bundle_repair_accepts_duplicate_core_entries() {
         let temp = tempdir().expect("tempdir");
         let bundle_dir = temp
             .path()
@@ -196,9 +196,9 @@ mod tests {
         std::fs::write(bundle_dir.join("core-beta.js"), b"core").expect("write core beta");
 
         assert!(
-            gemini_acp_bundle_needs_repair("gemini", &entrypoint)
+            !gemini_acp_bundle_needs_repair("gemini", &entrypoint)
                 .expect("repair check should succeed"),
-            "duplicate Gemini core entries should force reinstall"
+            "duplicate Gemini core entries are valid in current Gemini CLI bundles"
         );
     }
 

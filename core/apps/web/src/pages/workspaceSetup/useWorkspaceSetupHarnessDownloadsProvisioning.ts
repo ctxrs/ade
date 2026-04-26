@@ -20,7 +20,7 @@ import {
   upsertProviderInstallProgressForScope,
 } from "../../state/providerInstallProgressStore";
 import { providerDetailFlag } from "../../utils/boolish";
-import { HARNESS_CATALOG } from "../../utils/harnessCatalog";
+import { findHarnessCatalogEntry } from "../../utils/harnessCatalog";
 import {
   computeInstallPct,
   parseInstallTarget,
@@ -94,9 +94,6 @@ export function useWorkspaceSetupHarnessDownloadsProvisioning({
   const [harnessInstallRows, setHarnessInstallRows] = useState<Record<string, HarnessInstallRowState>>({});
 
   const harnessInstallObserversRef = useRef<Record<string, { installId: string; stop: () => void }>>({});
-  const harnessByProviderId = useMemo(() => {
-    return new Map(HARNESS_CATALOG.map((entry) => [entry.id, entry]));
-  }, []);
   const selectedHarnessInstallTarget: InstallTarget = installTargetForWorkspaceSetupContainerSelection(
     selections.container,
   );
@@ -135,7 +132,7 @@ export function useWorkspaceSetupHarnessDownloadsProvisioning({
     if (!isVisibleHarnessProviderStatus(provider)) return null;
     const installSupported = providerDetailFlag(provider.details, "install_supported");
     if (!installSupported) return null;
-    const harness = harnessByProviderId.get(provider.provider_id);
+    const harness = findHarnessCatalogEntry(provider.provider_id);
     const installTarget = parseInstallTarget(provider.details?.install_target) ?? fallbackInstallTarget;
     return {
       providerId: provider.provider_id,
@@ -149,7 +146,7 @@ export function useWorkspaceSetupHarnessDownloadsProvisioning({
       installTarget,
       installSizeBytes: providerInstallSizeBytes(provider),
     };
-  }, [harnessByProviderId, selectedHarnessInstallTarget]);
+  }, [selectedHarnessInstallTarget]);
 
   const attachHarnessInstall = useCallback(async (providerId: string, installId: string) => {
     if (!providerId || !installId) return;

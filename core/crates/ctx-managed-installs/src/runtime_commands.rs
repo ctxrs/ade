@@ -104,29 +104,13 @@ fn resolve_explicit_gemini_cli_paths(
     );
     core_entries.sort();
     anyhow::ensure!(
-        core_entries.len() == 1,
-        "Gemini ACP bundle must contain exactly one core entrypoint under {}; found: {}",
-        bundle_dir.display(),
-        core_entries
-            .iter()
-            .map(|path| path.display().to_string())
-            .collect::<Vec<_>>()
-            .join(", ")
-    );
-    let Some(core_entry_path) = core_entries.into_iter().next() else {
-        anyhow::bail!(
-            "Gemini ACP bundled core entrypoint is missing under {}",
-            bundle_dir.display()
-        );
-    };
-    anyhow::ensure!(
         cli_root.join("package.json").exists(),
         "Gemini ACP entrypoint must live under a node_modules/@google/gemini-cli install tree: {}",
         cli_entry_path.display()
     );
     Ok(ExplicitGeminiCliPaths {
         cli_entry_path,
-        core_entry_path,
+        core_entry_paths: core_entries,
     })
 }
 
@@ -145,8 +129,36 @@ fn maybe_wrap_gemini_acp_command(
             .with_context(|| format!("creating Gemini ACP wrapper dir {}", parent.display()))?;
     }
 
+    let core_imports = paths
+        .core_entry_paths
+        .iter()
+        .enumerate()
+        .map(|(index, path)| {
+            format!(
+                "import * as coreCandidate{index} from 'file://{}';",
+                path.to_string_lossy()
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let core_candidates = (0..paths.core_entry_paths.len())
+        .map(|index| format!("coreCandidate{index}"))
+        .collect::<Vec<_>>()
+        .join(", ");
     let wrapper_contents = format!(
-        "import {{ coreEvents, CoreEvent, writeToStdout, writeToStderr }} from 'file://{}';\n\
+        "{core_imports}\n\
+const coreCandidates = [{core_candidates}];\n\
+const core = coreCandidates.find((candidate) =>\n\
+  candidate &&\n\
+  candidate.coreEvents &&\n\
+  candidate.CoreEvent &&\n\
+  typeof candidate.writeToStdout === 'function' &&\n\
+  typeof candidate.writeToStderr === 'function'\n\
+);\n\
+if (!core) {{\n\
+  throw new Error('Gemini ACP core module exports are missing from bundled core entrypoints');\n\
+}}\n\
+const {{ coreEvents, CoreEvent, writeToStdout, writeToStderr }} = core;\n\
 coreEvents.on(CoreEvent.Output, (payload) => {{\n\
   if (payload.isStderr) {{\n\
     writeToStderr(payload.chunk, payload.encoding);\n\
@@ -168,7 +180,6 @@ if (!consentDisabled) {{\n\
 }}\n\
 process.env.GEMINI_CLI_NO_RELAUNCH ??= 'true';\n\
 await import('file://{}');\n",
-        paths.core_entry_path.to_string_lossy(),
         paths.cli_entry_path.to_string_lossy(),
     );
 
@@ -301,5 +312,5 @@ pub(crate) fn managed_provider_runtime_command(
 #[derive(Debug, Clone)]
 struct ExplicitGeminiCliPaths {
     cli_entry_path: PathBuf,
-    core_entry_path: PathBuf,
+    core_entry_paths: Vec<PathBuf>,
 }

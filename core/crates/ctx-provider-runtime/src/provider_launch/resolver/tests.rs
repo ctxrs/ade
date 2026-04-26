@@ -470,7 +470,7 @@ fn rejects_gemini_runtime_outside_node_modules_install_tree() {
 }
 
 #[test]
-fn rejects_gemini_runtime_when_bundle_has_multiple_core_entries() {
+fn accepts_gemini_runtime_when_bundle_has_multiple_core_entries() {
     let temp = tempdir().unwrap();
     let data_root = temp.path().join("data");
     let (node_bin, cli_entry, _, core_entry) = create_gemini_runtime_layout(temp.path());
@@ -492,11 +492,24 @@ fn rejects_gemini_runtime_when_bundle_has_multiple_core_entries() {
         managed: None,
     };
 
-    let err = normalize_acp_provider_command(&data_root, "gemini", input).unwrap_err();
-
-    assert!(err
-        .to_string()
-        .contains("Gemini ACP bundle must contain exactly one core entrypoint"));
+    normalize_acp_provider_command(&data_root, "gemini", input).expect("wrapped gemini");
+    let wrapper_path = data_root
+        .join("providers")
+        .join("agent-servers")
+        .join("gemini-acp-wrapper.mjs");
+    let wrapper = std::fs::read_to_string(&wrapper_path).expect("read Gemini wrapper");
+    assert!(
+        wrapper.contains(core_entry.to_string_lossy().as_ref()),
+        "wrapper should import the first bundled Gemini core candidate"
+    );
+    assert!(
+        wrapper.contains(extra_core_entry.to_string_lossy().as_ref()),
+        "wrapper should import the extra bundled Gemini core candidate"
+    );
+    assert!(
+        wrapper.contains("coreCandidates.find"),
+        "wrapper should select the compatible Gemini core module at runtime"
+    );
 }
 
 #[test]

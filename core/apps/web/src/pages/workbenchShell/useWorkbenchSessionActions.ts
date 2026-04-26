@@ -4,7 +4,7 @@ import { idToString } from "../../api/client";
 import { buildWorkbenchThreadViewModel } from "../workbenchViewModel";
 import type { SessionCacheEntry, SessionSupervisorSnapshot } from "../../state/sessionSupervisor";
 import type { TerminalPanelHandle } from "../../components/TerminalPanel";
-import { HARNESS_CATALOG } from "../../utils/harnessCatalog";
+import { findHarnessCatalogEntry } from "../../utils/harnessCatalog";
 import { describeClipboardCopyFailure, tryCopyTextToClipboard } from "../../utils/clipboard";
 import { errorMessage } from "../../utils/errorMessage";
 import { composeModelId, parseModelId } from "../../utils/modelEffort";
@@ -88,7 +88,7 @@ export function useWorkbenchSessionActions({
     if (!activeEntry?.session) return null;
     const session = activeEntry.session;
     const harness =
-      HARNESS_CATALOG.find((item) => item.id === (session.provider_id ?? ""))?.label ?? (session.provider_id ?? "Provider");
+      findHarnessCatalogEntry(session.provider_id)?.label ?? (session.provider_id ?? "Provider");
     const parsedModel = parseModelId(
       composeModelId(session.model_id ?? "", session.reasoning_effort ?? null),
     );

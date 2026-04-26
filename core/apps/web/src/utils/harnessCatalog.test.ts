@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { HARNESS_CATALOG } from "./harnessCatalog";
+import {
+  findHarnessCatalogEntry,
+  HARNESS_CATALOG,
+  resolveHarnessCatalogId,
+} from "./harnessCatalog";
 
 describe("harnessCatalog", () => {
   it("maps Pi to the official pi.dev logo asset", () => {
@@ -18,5 +22,13 @@ describe("harnessCatalog", () => {
     expect(ids.has("junie")).toBe(false);
     expect(ids.has("goose")).toBe(true);
     expect(ids.has("openhands")).toBe(true);
+  });
+
+  it("uses product identity for Codex adapter ids", () => {
+    expect(resolveHarnessCatalogId("codex-crp")).toBe("codex");
+    const codex = findHarnessCatalogEntry("codex-crp");
+    expect(codex?.id).toBe("codex");
+    expect(codex?.label).toBe("Codex");
+    expect(codex?.logoSrc).toContain("openai");
   });
 });

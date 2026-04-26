@@ -23,7 +23,7 @@ import {
   type ContextWindowInfo,
   type WorkbenchModeId,
 } from "../../components/WorkbenchComposer";
-import { HARNESS_CATALOG } from "../../utils/harnessCatalog";
+import { findHarnessCatalogEntry } from "../../utils/harnessCatalog";
 import type {
   DictationOnboardingCloudDraft,
   DictationOnboardingState,
@@ -300,7 +300,7 @@ export function SessionThreadSurface({
     );
   };
 
-  const harness = HARNESS_CATALOG.find((candidate) => candidate.id === (session?.provider_id ?? ""));
+  const harness = findHarnessCatalogEntry(session?.provider_id);
 
   return (
     <>

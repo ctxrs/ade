@@ -10,7 +10,7 @@ import {
 import { artifactPrefetcher } from "../../state/artifactPrefetch";
 import { type SessionSupervisor, useOpenSession, useSessionCacheSnapshot } from "../../state/sessionSupervisor";
 import type { WorkspaceActiveSnapshotItem, WorkspaceActiveSnapshotState } from "../../state/workspaceActiveSnapshotStore";
-import { HARNESS_CATALOG } from "../../utils/harnessCatalog";
+import { findHarnessCatalogEntry } from "../../utils/harnessCatalog";
 import { errorMessage } from "../../utils/errorMessage";
 import { composeModelId, parseModelId } from "../../utils/modelEffort";
 import { hasSessionActiveTurn } from "../../utils/sessionActivity";
@@ -400,7 +400,7 @@ export function useWorkbenchActiveTaskController({
       composeModelId(session?.model_id ?? "", session?.reasoning_effort ?? null),
     );
     const harness =
-      HARNESS_CATALOG.find((item) => item.id === (session?.provider_id ?? ""))?.label ??
+      findHarnessCatalogEntry(session?.provider_id)?.label ??
       (session?.provider_id ?? "Provider");
 
     const lastIso = (() => {

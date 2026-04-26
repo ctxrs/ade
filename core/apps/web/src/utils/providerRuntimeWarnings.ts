@@ -1,6 +1,6 @@
 import type { ProviderStatus } from "../api/client";
 import { providerDetailFlag } from "./boolish";
-import { HARNESS_CATALOG } from "./harnessCatalog";
+import { findHarnessCatalogEntry } from "./harnessCatalog";
 import { isVisibleHarnessProviderStatus, providerUsabilityReason } from "./providerInventory";
 import { formatProviderVersionDisplay, getMatrixVersionDisplay } from "./providerVersionLabel";
 
@@ -20,11 +20,10 @@ export type ProviderRuntimeWarning = {
   installableProviderIds: string[];
 };
 
-const HARNESS_LABELS = new Map(HARNESS_CATALOG.map((entry) => [entry.id, entry.label]));
 const ACKNOWLEDGED_WARNING_PROVIDER_IDS_STORAGE_KEY_PREFIX = "wb.provider_runtime_warning.acknowledged_provider_ids";
 
 const labelForProvider = (providerId: string): string =>
-  HARNESS_LABELS.get(providerId) ?? providerId;
+  findHarnessCatalogEntry(providerId)?.label ?? providerId;
 
 export const normalizeProviderRuntimeWarningIds = (providerIds: string[]): string[] =>
   Array.from(new Set(providerIds.map((providerId) => providerId.trim()).filter(Boolean))).sort();

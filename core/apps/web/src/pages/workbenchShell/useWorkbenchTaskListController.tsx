@@ -18,7 +18,7 @@ import type {
   WorkspaceActiveSnapshotState,
 } from "../../state/workspaceActiveSnapshotStore";
 import { useEnsureArchivedLoaded } from "../../state/useEnsureArchivedLoaded";
-import { HARNESS_CATALOG } from "../../utils/harnessCatalog";
+import { findHarnessCatalogEntry, HARNESS_CATALOG } from "../../utils/harnessCatalog";
 import { errorMessage } from "../../utils/errorMessage";
 import type { WorkbenchStore } from "../../workbench/store";
 import { TaskRow } from "./WorkbenchPage.taskRow";
@@ -476,7 +476,7 @@ export function useWorkbenchTaskListController({
           : summaryProviders;
       const providerCount = new Set(providerIds).size;
       const harnesses = providerIds
-        .map((providerId) => HARNESS_CATALOG.find((item) => item.id === providerId))
+        .map((providerId) => findHarnessCatalogEntry(providerId))
         .filter(Boolean)
         .slice(0, 3) as Array<(typeof HARNESS_CATALOG)[number]>;
       const allowActions = !optimistic;

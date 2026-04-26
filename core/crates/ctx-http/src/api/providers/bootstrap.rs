@@ -166,10 +166,6 @@ pub(crate) async fn get_workspace_providers_bootstrap(
                     options["probe_error"] = serde_json::json!(config_error);
                     options["config_error"] = serde_json::json!(config_error);
                 }
-                if let Some(source) = source_config.as_ref() {
-                    options["source"] =
-                        serde_json::to_value(source).unwrap_or(serde_json::Value::Null);
-                }
                 if let Some(endpoint) =
                     crate::api::provider_launch::selected_endpoint_record_from_harness_config(
                         source_config.as_ref(),
@@ -196,7 +192,16 @@ pub(crate) async fn get_workspace_providers_bootstrap(
                     options["preferred_model_id"] = serde_json::json!(preferred_model_id);
                 }
 
-                (provider_id, options, source_config)
+                let projected_source_config = source_config.clone().map(|mut config| {
+                    super::project_harness_config_for_response(&provider_id, &mut config);
+                    config
+                });
+                if let Some(source) = projected_source_config.as_ref() {
+                    options["source"] =
+                        serde_json::to_value(source).unwrap_or(serde_json::Value::Null);
+                }
+
+                (provider_id, options, projected_source_config)
             }
         }))
         .buffer_unordered(visible_provider_count_hint(providers.len()))

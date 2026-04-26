@@ -43,6 +43,22 @@ export const HARNESS_CATALOG: HarnessCatalogEntry[] = [
   { id: "kimi", label: "Kimi", logoSrc: kimiLogo },
 ];
 
+const HARNESS_CATALOG_ALIASES: Record<string, string> = {
+  "codex-crp": "codex",
+};
+
+export function resolveHarnessCatalogId(providerId: string | null | undefined): string {
+  const id = (providerId ?? "").trim();
+  return HARNESS_CATALOG_ALIASES[id] ?? id;
+}
+
+export function findHarnessCatalogEntry(
+  providerId: string | null | undefined,
+): HarnessCatalogEntry | undefined {
+  const catalogId = resolveHarnessCatalogId(providerId);
+  return HARNESS_CATALOG.find((entry) => entry.id === catalogId);
+}
+
 export const UNSUPPORTED_HARNESS_IDS = new Set([
   "codebuff",
   "charm",

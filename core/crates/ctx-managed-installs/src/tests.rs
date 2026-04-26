@@ -436,7 +436,7 @@ fn managed_provider_runtime_command_rejects_gemini_runtime_with_missing_core_ent
 }
 
 #[test]
-fn managed_provider_runtime_command_rejects_gemini_runtime_with_multiple_core_entries() {
+fn managed_provider_runtime_command_accepts_gemini_runtime_with_multiple_core_entries() {
     let data_root = tempfile::tempdir().expect("tempdir");
     let node_bin = data_root
         .path()
@@ -480,7 +480,7 @@ fn managed_provider_runtime_command_rejects_gemini_runtime_with_multiple_core_en
     )
     .expect("write package");
 
-    let err = managed_provider_runtime_command(
+    let runtime = managed_provider_runtime_command(
         data_root.path(),
         "gemini",
         AgentServerCommand {
@@ -499,11 +499,23 @@ fn managed_provider_runtime_command_rejects_gemini_runtime_with_multiple_core_en
             managed: None,
         }),
     )
-    .expect_err("multiple core entries should fail");
+    .expect("multiple core entries should be wrapped");
 
-    assert!(err
-        .to_string()
-        .contains("Gemini ACP bundle must contain exactly one core entrypoint"));
+    let acp_command = runtime
+        .args
+        .windows(2)
+        .find_map(|window| (window[0] == "--acp-command").then_some(window[1].as_str()))
+        .expect("missing --acp-command");
+    assert!(acp_command.contains("gemini-acp-wrapper.mjs"));
+    let wrapper_path = data_root
+        .path()
+        .join("providers")
+        .join("agent-servers")
+        .join("gemini-acp-wrapper.mjs");
+    let wrapper = std::fs::read_to_string(wrapper_path).expect("read Gemini wrapper");
+    assert!(wrapper.contains("core-alpha.js"));
+    assert!(wrapper.contains("core-beta.js"));
+    assert!(wrapper.contains("coreCandidates.find"));
 }
 
 #[test]
