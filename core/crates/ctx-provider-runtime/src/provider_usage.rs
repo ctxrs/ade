@@ -38,6 +38,22 @@ pub struct ProviderUsageSnapshot {
 
 const DEFAULT_POLL_INTERVAL: Duration = Duration::from_secs(60);
 
+async fn cache_usage_error<H>(state: &H, provider_id: &str, error: String)
+where
+    H: ProviderUsageHost,
+{
+    let provider_id = canonical_provider_id(provider_id);
+    let snapshot = ProviderUsageSnapshot {
+        provider_id: provider_id.to_string(),
+        source: "error".to_string(),
+        fetched_at: Utc::now(),
+        payload: None,
+        error: Some(error),
+    };
+    let mut cache = state.usage_cache().lock().await;
+    cache.insert(provider_id.to_string(), snapshot);
+}
+
 pub fn spawn_provider_usage_poller<H>(state: std::sync::Arc<H>)
 where
     H: ProviderUsageHost,
@@ -66,18 +82,28 @@ pub async fn refresh_provider_usage<H>(state: &H) -> Result<()>
 where
     H: ProviderUsageHost,
 {
-    let mut env = provider_accounts::codex_env_for_active_account(state.data_root()).await?;
-    let cfg = installer::load_agent_server_config(state.data_root())
-        .await
-        .context("loading agent server config")?;
-    installer::ensure_codex_cli_command_env_for_target(
-        &mut env,
-        &cfg,
-        "codex-crp",
-        Some(InstallTarget::Host),
-    )?;
-    refresh_provider_usage_for(state, "codex-crp", env).await?;
-    Ok(())
+    let result: Result<()> = async {
+        let mut env = provider_accounts::codex_env_for_active_account(state.data_root()).await?;
+        let cfg = installer::load_agent_server_config(state.data_root())
+            .await
+            .context("loading agent server config")?;
+        installer::ensure_codex_cli_command_env_for_target(
+            &mut env,
+            &cfg,
+            "codex-crp",
+            Some(InstallTarget::Host),
+        )?;
+        refresh_provider_usage_for(state, "codex-crp", env).await?;
+        Ok(())
+    }
+    .await;
+    match result {
+        Ok(()) => Ok(()),
+        Err(err) => {
+            cache_usage_error(state, CODEX_CRP_PROVIDER_ID, err.to_string()).await;
+            Err(err)
+        }
+    }
 }
 
 pub async fn refresh_provider_usage_for<H>(

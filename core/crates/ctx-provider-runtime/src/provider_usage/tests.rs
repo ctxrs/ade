@@ -79,3 +79,49 @@ async fn refresh_provider_usage_surfaces_agent_server_config_errors() {
         .expect_err("invalid managed config should fail usage refresh");
     assert!(err.to_string().contains("loading agent server config"));
 }
+
+#[tokio::test]
+async fn refresh_provider_usage_replaces_stale_cache_with_error_snapshot_on_config_error() {
+    let data_root = tempfile::tempdir().expect("tempdir");
+    let runtime_home = tempfile::tempdir().expect("runtime home");
+    let _codex_home = EnvVarGuard::set("CTX_CODEX_HOME", &runtime_home.path().to_string_lossy());
+
+    let config_path = data_root
+        .path()
+        .join("providers")
+        .join("agent-servers")
+        .join("agent_servers.json");
+    std::fs::create_dir_all(config_path.parent().expect("config parent")).expect("mkdir");
+    std::fs::write(&config_path, "{ not valid json").expect("write invalid config");
+
+    let host = TestUsageHost::new(data_root.path().to_path_buf());
+    host.usage_cache.lock().await.insert(
+        "codex-crp".to_string(),
+        ProviderUsageSnapshot {
+            provider_id: "codex-crp".to_string(),
+            source: "oauth".to_string(),
+            fetched_at: Utc::now(),
+            payload: Some(serde_json::json!({"cached": true})),
+            error: None,
+        },
+    );
+
+    let err = refresh_provider_usage(&host)
+        .await
+        .expect_err("invalid managed config should fail usage refresh");
+    assert!(err.to_string().contains("loading agent server config"));
+
+    let cache = host.usage_cache.lock().await;
+    let snapshot = cache
+        .get("codex-crp")
+        .expect("usage cache entry should be replaced with an error snapshot");
+    assert_eq!(snapshot.source, "error");
+    assert!(snapshot.payload.is_none());
+    assert!(
+        snapshot
+            .error
+            .as_deref()
+            .is_some_and(|value| value.contains("loading agent server config")),
+        "expected managed config error snapshot: {snapshot:?}"
+    );
+}
