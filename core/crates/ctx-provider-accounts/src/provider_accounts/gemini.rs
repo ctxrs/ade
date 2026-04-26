@@ -1,20 +1,31 @@
-use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{bail, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+
+mod runtime;
+mod secrets;
 
 use super::shared::{
     apply_email_update, apply_label_update, collect_secret_paths, ensure_account_exists,
     ensure_safe_account_id, load_json_registry, normalize_optional_email,
-    parse_optional_json_value, parse_required_json_object,
-    remove_projected_account_home_for_runtime_roots, save_json_registry, write_secure_file_atomic,
+    parse_required_json_object, remove_projected_account_home_for_runtime_roots,
+    save_json_registry,
 };
 use super::{
     gemini_account_home, gemini_registry_path, gemini_secret_path,
     GEMINI_AUTH_SELECTED_TYPE_OAUTH_PERSONAL, GEMINI_CREDENTIAL_KIND_OAUTH_PERSONAL,
     GEMINI_FORCE_FILE_STORAGE_ENV, GEMINI_SECRET_VERSION,
+};
+pub(crate) use runtime::gemini_env_for_active_account_with_runtime_root;
+pub use runtime::{
+    apply_gemini_api_key_runtime_auth_env, apply_gemini_vertex_runtime_auth_env,
+    gemini_env_for_account, gemini_env_for_active_account,
+};
+pub use secrets::write_gemini_auth_settings;
+use secrets::{
+    ensure_gemini_account_home, read_gemini_secret_for_ref, write_gemini_secret_for_account,
 };
 
 const GEMINI_RUNTIME_AUTH_ENV_KEYS: &[&str] = &[
@@ -226,194 +237,11 @@ pub async fn remove_gemini_account(
     Ok(registry)
 }
 
-pub(crate) fn clear_gemini_runtime_auth_env(env: &mut HashMap<String, String>) {
-    for key in GEMINI_RUNTIME_AUTH_ENV_KEYS {
-        env.insert((*key).to_string(), String::new());
-    }
-}
-
-pub fn apply_gemini_api_key_runtime_auth_env(env: &mut HashMap<String, String>, api_key: String) {
-    clear_gemini_runtime_auth_env(env);
-    env.insert("GEMINI_API_KEY".to_string(), api_key);
-}
-
-pub fn apply_gemini_vertex_runtime_auth_env(
-    env: &mut HashMap<String, String>,
-    credentials_path: PathBuf,
-    project_id: String,
-    location: String,
-) {
-    clear_gemini_runtime_auth_env(env);
-    env.insert(
-        "GOOGLE_APPLICATION_CREDENTIALS".to_string(),
-        credentials_path.to_string_lossy().to_string(),
-    );
-    env.insert("GOOGLE_CLOUD_PROJECT".to_string(), project_id.clone());
-    env.insert("GOOGLE_CLOUD_PROJECT_ID".to_string(), project_id);
-    env.insert("GOOGLE_CLOUD_LOCATION".to_string(), location);
-    env.insert("GOOGLE_GENAI_USE_VERTEXAI".to_string(), "true".to_string());
-}
-
-pub fn gemini_env_for_account(data_root: &Path, account_id: &str) -> HashMap<String, String> {
-    let mut env = HashMap::new();
-    clear_gemini_runtime_auth_env(&mut env);
-    env.insert(
-        "GEMINI_CLI_HOME".to_string(),
-        gemini_account_home(data_root, account_id)
-            .to_string_lossy()
-            .to_string(),
-    );
-    env.insert(
-        GEMINI_FORCE_FILE_STORAGE_ENV.to_string(),
-        "true".to_string(),
-    );
-    env
-}
-
-pub async fn gemini_env_for_active_account(data_root: &Path) -> Result<HashMap<String, String>> {
-    let registry = load_gemini_registry(data_root).await?;
-    let Some(active) = registry
-        .active_account_id
-        .as_deref()
-        .map(|s| s.trim())
-        .filter(|s| !s.is_empty())
-    else {
-        return Ok(HashMap::new());
-    };
-
-    let Some(entry) = registry.accounts.iter().find(|a| a.id == active) else {
-        return Ok(HashMap::new());
-    };
-
-    let Some(secret_ref) = entry.secret_ref.as_deref() else {
-        bail!("active gemini account has no secret reference");
-    };
-
-    let secret = read_gemini_secret_for_ref(data_root, secret_ref).await?;
-    let _ = ensure_gemini_account_home(data_root, active, &secret).await?;
-    Ok(gemini_env_for_account(data_root, active))
-}
-
-pub(crate) async fn gemini_env_for_active_account_with_runtime_root(
-    data_root: &Path,
-    runtime_root: &Path,
-) -> Result<HashMap<String, String>> {
-    let registry = load_gemini_registry(data_root).await?;
-    let Some(active) = registry
-        .active_account_id
-        .as_deref()
-        .map(|s| s.trim())
-        .filter(|s| !s.is_empty())
-    else {
-        return Ok(HashMap::new());
-    };
-
-    let Some(entry) = registry.accounts.iter().find(|a| a.id == active) else {
-        return Ok(HashMap::new());
-    };
-
-    let Some(secret_ref) = entry.secret_ref.as_deref() else {
-        bail!("active gemini account has no secret reference");
-    };
-
-    let secret = read_gemini_secret_for_ref(data_root, secret_ref).await?;
-    let _ = ensure_gemini_account_home(runtime_root, active, &secret).await?;
-    Ok(gemini_env_for_account(runtime_root, active))
-}
-
 pub fn normalize_gemini_label(label: Option<String>, account_id: &str) -> String {
     label
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| format!("Gemini Account {account_id}"))
-}
-
-async fn write_gemini_secret_for_account(
-    data_root: &Path,
-    account_id: &str,
-    oauth_creds_json: &str,
-    google_accounts_json: Option<&str>,
-) -> Result<String> {
-    let oauth_creds = parse_required_json_object(oauth_creds_json, "oauth_creds_json")?;
-    let google_accounts = parse_optional_json_value(google_accounts_json, "google_accounts_json")?;
-    let secret_ref = format!("{account_id}.json");
-    let path = gemini_secret_path(data_root, &secret_ref)?;
-    let envelope = GeminiSecretEnvelope {
-        version: GEMINI_SECRET_VERSION,
-        oauth_creds,
-        google_accounts,
-    };
-    write_secure_file_atomic(&path, &serde_json::to_vec_pretty(&envelope)?).await?;
-    Ok(secret_ref)
-}
-
-pub(crate) async fn read_gemini_secret_for_ref(
-    data_root: &Path,
-    secret_ref: &str,
-) -> Result<GeminiSecretEnvelope> {
-    let path = gemini_secret_path(data_root, secret_ref)?;
-    let payload = tokio::fs::read_to_string(&path)
-        .await
-        .with_context(|| format!("reading gemini secret {}", path.display()))?;
-    let parsed: GeminiSecretEnvelope = serde_json::from_str(&payload)
-        .with_context(|| format!("invalid gemini secret {}", path.display()))?;
-    if parsed.version != GEMINI_SECRET_VERSION {
-        bail!(
-            "unsupported gemini secret version {} at {}",
-            parsed.version,
-            path.display()
-        );
-    }
-    if !parsed.oauth_creds.is_object() {
-        bail!("gemini oauth_creds must be a JSON object");
-    }
-    Ok(parsed)
-}
-
-async fn ensure_gemini_account_home(
-    data_root: &Path,
-    account_id: &str,
-    secret: &GeminiSecretEnvelope,
-) -> Result<PathBuf> {
-    let home = gemini_account_home(data_root, account_id);
-    let gemini_dir = home.join(".gemini");
-    tokio::fs::create_dir_all(&gemini_dir).await?;
-    write_secure_file_atomic(
-        &gemini_dir.join("oauth_creds.json"),
-        &serde_json::to_vec_pretty(&secret.oauth_creds)?,
-    )
-    .await?;
-    if let Some(accounts) = secret.google_accounts.as_ref() {
-        write_secure_file_atomic(
-            &gemini_dir.join("google_accounts.json"),
-            &serde_json::to_vec_pretty(accounts)?,
-        )
-        .await?;
-    } else {
-        let accounts_path = gemini_dir.join("google_accounts.json");
-        match tokio::fs::remove_file(&accounts_path).await {
-            Ok(_) => {}
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-            Err(err) => return Err(err.into()),
-        }
-    }
-    write_gemini_auth_settings(&gemini_dir, GEMINI_AUTH_SELECTED_TYPE_OAUTH_PERSONAL).await?;
-    Ok(home)
-}
-
-pub async fn write_gemini_auth_settings(gemini_dir: &Path, selected_type: &str) -> Result<()> {
-    let settings = serde_json::json!({
-        "security": {
-            "auth": {
-                "selectedType": selected_type
-            }
-        }
-    });
-    write_secure_file_atomic(
-        &gemini_dir.join("settings.json"),
-        &serde_json::to_vec_pretty(&settings)?,
-    )
-    .await
 }
 
 #[cfg(test)]

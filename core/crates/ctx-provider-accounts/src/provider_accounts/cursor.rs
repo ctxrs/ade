@@ -1,9 +1,11 @@
-use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{bail, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+
+mod runtime;
+mod secrets;
 
 use super::shared::{
     apply_email_update, apply_label_update, collect_secret_paths, ensure_account_exists,
@@ -13,6 +15,13 @@ use super::shared::{
 use super::{
     cursor_account_home, cursor_registry_path, cursor_secret_path, CURSOR_CREDENTIAL_KIND_API_KEY,
     CURSOR_CREDENTIAL_KIND_OAUTH_TOKEN, CURSOR_SECRET_VERSION,
+};
+pub(crate) use runtime::cursor_env_for_active_account_with_runtime_root;
+pub use runtime::{
+    cursor_env_for_account, cursor_env_for_active_account, ensure_cursor_account_home,
+};
+use secrets::{
+    read_cursor_secret_for_ref, write_cursor_secret_for_account, write_cursor_secret_for_ref,
 };
 
 fn default_cursor_credential_kind() -> String {
@@ -78,12 +87,6 @@ pub async fn save_cursor_registry(
     registry: &CursorAccountRegistry,
 ) -> Result<()> {
     save_json_registry(&cursor_registry_path(data_root), registry).await
-}
-
-pub async fn ensure_cursor_account_home(data_root: &Path, account_id: &str) -> Result<PathBuf> {
-    let home = cursor_account_home(data_root, account_id);
-    tokio::fs::create_dir_all(&home).await?;
-    Ok(home)
 }
 
 pub async fn add_cursor_account(
@@ -279,85 +282,6 @@ pub async fn remove_cursor_account(
     Ok(registry)
 }
 
-pub fn cursor_env_for_account(
-    data_root: &Path,
-    account_id: &str,
-    auth_token: &str,
-    credential_kind: &str,
-) -> HashMap<String, String> {
-    let mut env = HashMap::new();
-    env.insert(
-        "CURSOR_CONFIG_DIR".to_string(),
-        cursor_account_home(data_root, account_id)
-            .to_string_lossy()
-            .to_string(),
-    );
-    match credential_kind {
-        CURSOR_CREDENTIAL_KIND_OAUTH_TOKEN => {
-            env.insert("CURSOR_AUTH_TOKEN".to_string(), auth_token.to_string());
-        }
-        _ => {
-            env.insert("CURSOR_API_KEY".to_string(), auth_token.to_string());
-        }
-    }
-    env
-}
-
-pub async fn cursor_env_for_active_account(data_root: &Path) -> Result<HashMap<String, String>> {
-    let registry = load_cursor_registry(data_root).await?;
-    let Some(active) = registry
-        .active_account_id
-        .as_deref()
-        .map(|s| s.trim())
-        .filter(|s| !s.is_empty())
-    else {
-        return Ok(HashMap::new());
-    };
-    let Some(entry) = registry.accounts.iter().find(|a| a.id == active) else {
-        return Ok(HashMap::new());
-    };
-    let Some(secret_ref) = entry.secret_ref.as_deref() else {
-        bail!("active cursor account has no secret reference");
-    };
-    let secret = read_cursor_secret_for_ref(data_root, secret_ref).await?;
-    let _ = ensure_cursor_account_home(data_root, active).await?;
-    Ok(cursor_env_for_account(
-        data_root,
-        active,
-        &secret.auth_token,
-        &entry.kind,
-    ))
-}
-
-pub(crate) async fn cursor_env_for_active_account_with_runtime_root(
-    data_root: &Path,
-    runtime_root: &Path,
-) -> Result<HashMap<String, String>> {
-    let registry = load_cursor_registry(data_root).await?;
-    let Some(active) = registry
-        .active_account_id
-        .as_deref()
-        .map(|s| s.trim())
-        .filter(|s| !s.is_empty())
-    else {
-        return Ok(HashMap::new());
-    };
-    let Some(entry) = registry.accounts.iter().find(|a| a.id == active) else {
-        return Ok(HashMap::new());
-    };
-    let Some(secret_ref) = entry.secret_ref.as_deref() else {
-        bail!("active cursor account has no secret reference");
-    };
-    let secret = read_cursor_secret_for_ref(data_root, secret_ref).await?;
-    let _ = ensure_cursor_account_home(runtime_root, active).await?;
-    Ok(cursor_env_for_account(
-        runtime_root,
-        active,
-        &secret.auth_token,
-        &entry.kind,
-    ))
-}
-
 pub fn normalize_cursor_label(label: Option<String>, account_id: &str) -> String {
     label
         .map(|s| s.trim().to_string())
@@ -378,59 +302,6 @@ fn normalize_optional_cursor_auth_token(token: Option<&str>) -> Result<Option<St
         Some(value) => normalize_cursor_auth_token(value).map(Some),
         None => Ok(None),
     }
-}
-
-async fn write_cursor_secret_for_account(
-    data_root: &Path,
-    account_id: &str,
-    auth_token: &str,
-    refresh_token: Option<&str>,
-) -> Result<String> {
-    let secret_ref = format!("{account_id}.json");
-    write_cursor_secret_for_ref(data_root, &secret_ref, auth_token, refresh_token).await?;
-    Ok(secret_ref)
-}
-
-async fn write_cursor_secret_for_ref(
-    data_root: &Path,
-    secret_ref: &str,
-    auth_token: &str,
-    refresh_token: Option<&str>,
-) -> Result<()> {
-    let auth_token = normalize_cursor_auth_token(auth_token)?;
-    let refresh_token =
-        normalize_optional_cursor_auth_token(refresh_token)?.filter(|token| token != &auth_token);
-    let path = cursor_secret_path(data_root, secret_ref)?;
-    let envelope = CursorSecretEnvelope {
-        version: CURSOR_SECRET_VERSION,
-        auth_token,
-        refresh_token,
-    };
-    write_secure_file_atomic(&path, &serde_json::to_vec_pretty(&envelope)?).await?;
-    Ok(())
-}
-
-async fn read_cursor_secret_for_ref(
-    data_root: &Path,
-    secret_ref: &str,
-) -> Result<CursorSecretRecord> {
-    let path = cursor_secret_path(data_root, secret_ref)?;
-    let payload = tokio::fs::read_to_string(&path)
-        .await
-        .with_context(|| format!("reading cursor secret {}", path.display()))?;
-    let parsed: CursorSecretEnvelope = serde_json::from_str(&payload)
-        .with_context(|| format!("invalid cursor secret {}", path.display()))?;
-    if parsed.version != CURSOR_SECRET_VERSION {
-        bail!(
-            "unsupported cursor secret version {} at {}",
-            parsed.version,
-            path.display()
-        );
-    }
-    Ok(CursorSecretRecord {
-        auth_token: normalize_cursor_auth_token(&parsed.auth_token)?,
-        refresh_token: normalize_optional_cursor_auth_token(parsed.refresh_token.as_deref())?,
-    })
 }
 
 #[cfg(test)]
