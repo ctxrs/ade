@@ -207,8 +207,26 @@ python_cmd_version_series() {
   "$python_cmd" -c 'import sys; print(f"{sys.version_info[0]}.{sys.version_info[1]}")'
 }
 
-resolve_host_python_cmd_for_series() {
-  local expected_series="$1"
+resolve_python_runtime_target() {
+  local os_name="$1"
+  local arch_name="$2"
+  case "${os_name}/${arch_name}" in
+    linux/x86_64) echo "x86_64-unknown-linux-gnu" ;;
+    linux/aarch64) echo "aarch64-unknown-linux-gnu" ;;
+    macos/x86_64) echo "x86_64-apple-darwin" ;;
+    macos/aarch64) echo "aarch64-apple-darwin" ;;
+    *)
+      echo "error: unsupported python runtime target for ${os_name}/${arch_name}" >&2
+      exit 2
+      ;;
+  esac
+}
+
+resolve_host_python_cmd_for_version() {
+  local python_version="$1"
+  local python_build_tag="$2"
+  local expected_series
+  expected_series="$(resolve_python_version_series "$python_version")"
   local candidate
   for candidate in "python${expected_series}" "$PYTHON_CMD"; do
     if ! command -v "$candidate" >/dev/null 2>&1; then
@@ -219,8 +237,24 @@ resolve_host_python_cmd_for_series() {
       return 0
     fi
   done
-  echo "error: cross-target python staging requires a host Python ${expected_series} interpreter on PATH" >&2
-  exit 1
+
+  local host_python_target
+  host_python_target="$(resolve_python_runtime_target "$HOST_OS" "$HOST_ARCH")"
+  local runtime_root
+  runtime_root="$(ensure_python_runtime_for_target "$python_version" "$python_build_tag" "$host_python_target" "host")"
+  local runtime_python="$runtime_root/bin/python3"
+  if [[ ! -x "$runtime_python" ]]; then
+    runtime_python="$runtime_root/bin/python"
+  fi
+  if [[ ! -x "$runtime_python" ]]; then
+    echo "error: managed host python runtime is missing an executable interpreter: $runtime_root" >&2
+    exit 1
+  fi
+  if [[ "$(python_cmd_version_series "$runtime_python")" != "$expected_series" ]]; then
+    echo "error: managed host python runtime did not provide Python ${expected_series}: $runtime_python" >&2
+    exit 1
+  fi
+  printf '%s\n' "$runtime_python"
 }
 
 resolve_npm_target_platform() {
@@ -573,10 +607,12 @@ process.stdout.write(`${out.join("\t")}\n`);
 NODE
 }
 
-ensure_python_runtime() {
+ensure_python_runtime_for_target() {
   local python_version="$1"
   local python_build_tag="$2"
-  local runtime_root="$OUT_DIR/.python-runtimes/cpython-${python_version}+${python_build_tag}-${PYTHON_TARGET}"
+  local python_target="$3"
+  local runtime_scope="$4"
+  local runtime_root="$OUT_DIR/.python-runtimes/${runtime_scope}/cpython-${python_version}+${python_build_tag}-${python_target}"
   local python_bin
   python_bin="$runtime_root/bin/python3"
   if [[ ! -f "$python_bin" ]]; then
@@ -590,7 +626,7 @@ ensure_python_runtime() {
   require_cmd tar
 
   mkdir -p "$(dirname "$runtime_root")"
-  local asset="cpython-${python_version}+${python_build_tag}-${PYTHON_TARGET}-install_only.tar.gz"
+  local asset="cpython-${python_version}+${python_build_tag}-${python_target}-install_only.tar.gz"
   local url="https://github.com/indygreg/python-build-standalone/releases/download/${python_build_tag}/${asset}"
   local archive_tmp
   archive_tmp="$(mktemp "$OUT_DIR/.python-runtime.XXXXXX")"
@@ -611,6 +647,10 @@ ensure_python_runtime() {
   mv "$extracted" "$runtime_root"
   rm -rf "$extract_dir"
   echo "$runtime_root"
+}
+
+ensure_python_runtime() {
+  ensure_python_runtime_for_target "$1" "$2" "$PYTHON_TARGET" "target"
 }
 
 stage_matrix_python_provider() {
@@ -682,7 +722,7 @@ stage_matrix_python_provider() {
     local python_series
     python_series="$(resolve_python_version_series "$python_version")"
     local host_python_cmd
-    host_python_cmd="$(resolve_host_python_cmd_for_series "$python_series")"
+    host_python_cmd="$(resolve_host_python_cmd_for_version "$python_version" "$python_build_tag")"
     echo "info: installing cross-target wheel set for ${TARGET_OS}/${TARGET_ARCH} via host ${HOST_OS}/${HOST_ARCH} pip" >&2
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PIP_NO_INPUT=1 \
