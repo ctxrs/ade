@@ -23,4 +23,7 @@ test("claude-crp exposes a Bazel-run provider archive target", () => {
 
 test("claude-crp archive staging uses TMPDIR-aware temp roots", () => {
   assert.match(stageScript, /mktemp -d "\$\{TMPDIR:-\/tmp\}\/ctx-claude-crp-stage\.XXXXXX"/);
+  assert.match(stageScript, /claude-crp staging requires one npm target tuple per invocation/);
+  assert.match(stageScript, /npm_config_platform="\$npm_target_platform"/);
+  assert.match(stageScript, /npm_config_arch="\$npm_target_arch"/);
 });

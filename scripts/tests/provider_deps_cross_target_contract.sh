@@ -27,6 +27,18 @@ PROVIDER_MATRIX_JSON="$MATRIX_JSON" \
 
 test -f "$SUCCESS_OUT/provider_deps_index.json"
 
+SUCCESS_OUT_X86_TO_ARM="$TMP_DIR/success-x86-to-arm"
+CTX_PROVIDER_DEPS_BUILD_HOST_OS="macos" \
+CTX_PROVIDER_DEPS_BUILD_HOST_ARCH="x86_64" \
+PROVIDER_MATRIX_JSON="$MATRIX_JSON" \
+  "$ROOT_DIR/scripts/provider_deps_build_staging.sh" \
+  --out-dir "$SUCCESS_OUT_X86_TO_ARM" \
+  --os macos \
+  --arch aarch64 \
+  --providers ""
+
+test -f "$SUCCESS_OUT_X86_TO_ARM/provider_deps_index.json"
+
 FAIL_LOG="$TMP_DIR/fail.log"
 set +e
 CTX_PROVIDER_DEPS_BUILD_HOST_OS="macos" \

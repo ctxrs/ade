@@ -14,8 +14,8 @@ Usage: scripts/provider_deps_build_staging.sh --out-dir <dir> [options]
 
 Options:
   --out-dir <dir>         Output staging directory (required)
-  --os <linux|macos>      Explicit target OS; must match host
-  --arch <x86_64|aarch64> Explicit target arch; must match host
+  --os <linux|macos>      Explicit target OS
+  --arch <x86_64|aarch64> Explicit target arch
   --providers <csv>       Provider IDs to stage
 
 Env:
@@ -83,6 +83,7 @@ detect_arch() {
 
 cross_target_allowed() {
   case "${HOST_OS}/${HOST_ARCH}->${TARGET_OS}/${TARGET_ARCH}" in
+    "macos/x86_64->macos/aarch64") return 0 ;;
     "macos/aarch64->macos/x86_64") return 0 ;;
     *) return 1 ;;
   esac
@@ -189,6 +190,83 @@ PYTHON_CMD="${PYTHON_CMD:-$(resolve_python_cmd)}"
 
 run_python() {
   "$PYTHON_CMD" "$@"
+}
+
+resolve_python_version_series() {
+  local version="$1"
+  local series="${version%.*}"
+  if [[ "$series" != *.* ]]; then
+    echo "error: unsupported python version '$version'" >&2
+    exit 2
+  fi
+  printf '%s\n' "$series"
+}
+
+python_cmd_version_series() {
+  local python_cmd="$1"
+  "$python_cmd" -c 'import sys; print(f"{sys.version_info[0]}.{sys.version_info[1]}")'
+}
+
+resolve_host_python_cmd_for_series() {
+  local expected_series="$1"
+  local candidate
+  for candidate in "python${expected_series}" "$PYTHON_CMD"; do
+    if ! command -v "$candidate" >/dev/null 2>&1; then
+      continue
+    fi
+    if [[ "$(python_cmd_version_series "$candidate")" == "$expected_series" ]]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+  echo "error: cross-target python staging requires a host Python ${expected_series} interpreter on PATH" >&2
+  exit 1
+}
+
+resolve_npm_target_platform() {
+  case "$TARGET_OS" in
+    macos) echo "darwin" ;;
+    linux) echo "linux" ;;
+    *)
+      echo "error: unsupported npm target platform for ${TARGET_OS}/${TARGET_ARCH}" >&2
+      exit 2
+      ;;
+  esac
+}
+
+resolve_npm_target_arch() {
+  case "$TARGET_ARCH" in
+    x86_64) echo "x64" ;;
+    aarch64) echo "arm64" ;;
+    *)
+      echo "error: unsupported npm target arch for ${TARGET_OS}/${TARGET_ARCH}" >&2
+      exit 2
+      ;;
+  esac
+}
+
+resolve_pip_target_platform() {
+  case "${TARGET_OS}/${TARGET_ARCH}" in
+    macos/aarch64) echo "macosx_11_0_arm64" ;;
+    macos/x86_64) echo "macosx_10_13_x86_64" ;;
+    *)
+      echo "error: unsupported pip target platform for ${TARGET_OS}/${TARGET_ARCH}" >&2
+      exit 2
+      ;;
+  esac
+}
+
+NPM_TARGET_PLATFORM="$(resolve_npm_target_platform)"
+NPM_TARGET_ARCH="$(resolve_npm_target_arch)"
+
+run_target_pnpm() {
+  env \
+    npm_config_arch="$NPM_TARGET_ARCH" \
+    npm_config_cpu="$NPM_TARGET_ARCH" \
+    npm_config_platform="$NPM_TARGET_PLATFORM" \
+    npm_config_target_arch="$NPM_TARGET_ARCH" \
+    npm_config_target_platform="$NPM_TARGET_PLATFORM" \
+    pnpm "$@"
 }
 
 path_hash() {
@@ -598,9 +676,30 @@ stage_matrix_python_provider() {
     exit 1
   fi
 
-  PIP_DISABLE_PIP_VERSION_CHECK=1 \
-  PIP_NO_INPUT=1 \
-  "$staged_python" -m pip install --disable-pip-version-check --no-input --target "$provider_root/site-packages" "${package}==${version}" >&2
+  if [[ "$HOST_OS" == "$TARGET_OS" && "$HOST_ARCH" != "$TARGET_ARCH" ]]; then
+    local pip_target_platform
+    pip_target_platform="$(resolve_pip_target_platform)"
+    local python_series
+    python_series="$(resolve_python_version_series "$python_version")"
+    local host_python_cmd
+    host_python_cmd="$(resolve_host_python_cmd_for_series "$python_series")"
+    echo "info: installing cross-target wheel set for ${TARGET_OS}/${TARGET_ARCH} via host ${HOST_OS}/${HOST_ARCH} pip" >&2
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_INPUT=1 \
+    "$host_python_cmd" -m pip install \
+      --disable-pip-version-check \
+      --no-input \
+      --only-binary=:all: \
+      --platform "$pip_target_platform" \
+      --python-version "$python_series" \
+      --implementation cp \
+      --target "$provider_root/site-packages" \
+      "${package}==${version}" >&2
+  else
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_INPUT=1 \
+    "$staged_python" -m pip install --disable-pip-version-check --no-input --target "$provider_root/site-packages" "${package}==${version}" >&2
+  fi
 
   local entrypoint_rel="bin/${entrypoint}"
   local entrypoint_path="$provider_root/$entrypoint_rel"
@@ -690,7 +789,7 @@ stage_matrix_npm_provider() {
 JSON
   (
     cd "$workspace_dir"
-    pnpm add --ignore-scripts "${package}@${version}"
+    run_target_pnpm add --ignore-scripts "${package}@${version}"
   ) >&2
   rm -f "$workspace_dir/node_modules/.pnpm-workspace-state-v1.json" || true
   rm -f "$workspace_dir/node_modules/.modules.yaml" || true
@@ -791,9 +890,9 @@ prepare_node_workspace() {
     fi
     (
       cd "$workspace_dir"
-      pnpm install --frozen-lockfile --ignore-scripts
-      pnpm run build
-      pnpm install --prod --frozen-lockfile --ignore-scripts
+      run_target_pnpm install --frozen-lockfile --ignore-scripts
+      run_target_pnpm run build
+      run_target_pnpm install --prod --frozen-lockfile --ignore-scripts
     ) >&2
     rm -f "$workspace_dir/node_modules/.pnpm-workspace-state-v1.json" || true
     rm -f "$workspace_dir/node_modules/.modules.yaml" || true
