@@ -169,12 +169,11 @@ async fn persist_codex_auth_tokens(
     auth: &CodexAuthFile,
     refreshed: &CodexAuthTokens,
 ) -> Result<()> {
-    let mut json = serde_json::json!({});
-    if let Ok(contents) = tokio::fs::read_to_string(auth_path).await {
-        if let Ok(existing) = serde_json::from_str::<serde_json::Value>(&contents) {
-            json = existing;
-        }
-    }
+    let contents = tokio::fs::read_to_string(auth_path)
+        .await
+        .with_context(|| format!("reading codex auth.json at {}", auth_path.display()))?;
+    let mut json = serde_json::from_str::<serde_json::Value>(&contents)
+        .with_context(|| format!("invalid codex auth.json at {}", auth_path.display()))?;
     if json.get("tokens").and_then(|v| v.as_object()).is_none() {
         json["tokens"] = serde_json::Value::Object(serde_json::Map::new());
     }
@@ -227,12 +226,20 @@ async fn load_codex_auth(auth_path: &Path) -> Result<CodexAuthFile> {
 async fn read_codex_base_url(env: &HashMap<String, String>) -> Result<String> {
     let codex_home = resolve_codex_home(env)?;
     let config_path = codex_home.join("config.toml");
-    if let Ok(contents) = tokio::fs::read_to_string(&config_path).await {
-        if let Ok(config) = toml::from_str::<CodexConfigFile>(&contents) {
-            if let Some(url) = config.chatgpt_base_url {
-                return Ok(url);
-            }
+    let contents = match tokio::fs::read_to_string(&config_path).await {
+        Ok(contents) => contents,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            return Ok("https://chatgpt.com/backend-api".to_string());
         }
+        Err(err) => {
+            return Err(err)
+                .with_context(|| format!("reading codex config.toml at {}", config_path.display()));
+        }
+    };
+    let config = toml::from_str::<CodexConfigFile>(&contents)
+        .with_context(|| format!("invalid codex config.toml at {}", config_path.display()))?;
+    if let Some(url) = config.chatgpt_base_url {
+        return Ok(url);
     }
     Ok("https://chatgpt.com/backend-api".to_string())
 }
@@ -255,4 +262,86 @@ fn resolve_codex_home(env: &HashMap<String, String>) -> Result<PathBuf> {
     }
     let base = directories::BaseDirs::new().ok_or_else(|| anyhow!("missing home dir"))?;
     Ok(base.home_dir().join(".codex"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn persist_codex_auth_tokens_fails_closed_on_malformed_auth_file() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let auth_path = temp.path().join("auth.json");
+        tokio::fs::write(&auth_path, "{ not valid json")
+            .await
+            .expect("write invalid auth.json");
+
+        let auth = CodexAuthFile {
+            openai_api_key: None,
+            tokens: Some(CodexAuthTokens {
+                access_token: "access-token".to_string(),
+                refresh_token: "refresh-token".to_string(),
+                id_token: None,
+                account_id: Some("acct-1".to_string()),
+            }),
+            last_refresh: None,
+        };
+        let refreshed = CodexAuthTokens {
+            access_token: "new-access-token".to_string(),
+            refresh_token: "new-refresh-token".to_string(),
+            id_token: None,
+            account_id: Some("acct-1".to_string()),
+        };
+
+        let err = persist_codex_auth_tokens(&auth_path, &auth, &refreshed)
+            .await
+            .expect_err("malformed codex auth.json should fail closed");
+        let message = format!("{err:#}");
+        assert!(
+            message.contains("invalid codex auth.json"),
+            "expected parse context in error: {message}"
+        );
+        assert!(
+            message.contains("auth.json"),
+            "expected auth path in error: {message}"
+        );
+    }
+
+    #[tokio::test]
+    async fn fetch_codex_usage_oauth_fails_closed_on_malformed_codex_config() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let auth_path = temp.path().join("auth.json");
+        tokio::fs::write(
+            &auth_path,
+            serde_json::json!({
+                "tokens": {
+                    "access_token": "access-token",
+                    "refresh_token": "refresh-token"
+                }
+            })
+            .to_string(),
+        )
+        .await
+        .expect("write auth.json");
+        tokio::fs::write(temp.path().join("config.toml"), "chatgpt_base_url = [")
+            .await
+            .expect("write invalid config.toml");
+
+        let env = HashMap::from([(
+            "CODEX_HOME".to_string(),
+            temp.path().to_string_lossy().to_string(),
+        )]);
+        let err = fetch_codex_usage_oauth(&env)
+            .await
+            .expect_err("malformed codex config.toml should fail closed");
+        let message = format!("{err:#}");
+        assert!(
+            message.contains("invalid codex config.toml"),
+            "expected parse context in error: {message}"
+        );
+        assert!(
+            message.contains("config.toml"),
+            "expected config path in error: {message}"
+        );
+    }
 }
