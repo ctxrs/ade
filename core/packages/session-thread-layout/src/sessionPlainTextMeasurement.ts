@@ -27,6 +27,11 @@ import {
   splitPlainTextWrapFragments,
   stripDiscretionaryBreakMarkers,
 } from "./sessionPlainTextMeasurementWrap";
+import {
+  resolveContinuedPlainTextPlacement,
+  resolveFreshPlainTextPlacement,
+  type PlainTextPlacement,
+} from "./sessionPlainTextMeasurementPlacement";
 
 type SessionPlainTextDebugWindow = Window & {
   __ctxForcePlainTextDebug?: boolean;
@@ -93,6 +98,22 @@ function measureCollapsedPlainTextLineHeight(params: {
   let wordIndex = 0;
   let remainder: string | null = null;
   let remainderFragments: string[] | null = null;
+  const applyPlacement = (placement: PlainTextPlacement) => {
+    remainingWidth = Math.max(0, remainingWidth - placement.consumedWidth);
+    lineHasContent = true;
+    appendLineText(placement.consumedText, placement.prependSpace);
+    remainder = placement.remainder;
+    remainderFragments = placement.remainderFragments;
+    if (placement.advanceWordIndex) {
+      wordIndex += 1;
+    }
+    if (placement.flushAfterPlacement && (wordIndex < words.length || remainder != null)) {
+      flushLine();
+      lineCount += 1;
+      lineHasContent = false;
+      remainingWidth = maxWidth;
+    }
+  };
 
   while (wordIndex < words.length || remainder != null) {
     const word: string = remainder ?? words[wordIndex]!;
@@ -125,344 +146,50 @@ function measureCollapsedPlainTextLineHeight(params: {
     if (lineHasContent) {
       const availableWidth = Math.max(0, remainingWidth - reservedWidth);
       const wordFitsFreshLine = wordWidth <= maxWidth + 0.01;
-      const isUrlLikeWord = word.includes("://");
-      const isAbsolutePathLikeWord = isAbsolutePathLikeDelimitedWord(word);
-      if (usesDelimitedWrapping) {
-        if ((isUrlLikeWord || isAbsolutePathLikeWord || !wordFitsFreshLine) && availableWidth > 0.01) {
-          const currentFit = snapDelimitedUrlContinuationFit({
-            cacheKeyPrefix: `${params.cacheKey}:word:${wordIndex}:continued`,
-            word,
-            font: params.font,
-            fit: measurePlainTextDelimitedTokenFit({
-              cacheKeyPrefix: `${params.cacheKey}:word:${wordIndex}:continued`,
-              text: word,
-              fragments: wordFragments,
-              font: params.font,
-              width: availableWidth,
-              allowPartialFragment: true,
-              allowPartialAfterConsumedText: true,
-            }),
-          });
-          const freshFit = measurePlainTextDelimitedTokenFit({
-            cacheKeyPrefix: `${params.cacheKey}:word:${wordIndex}:fresh`,
-            text: word,
-            fragments: wordFragments,
-            font: params.font,
-            width: maxWidth,
-            allowPartialFragment: true,
-            allowPartialAfterConsumedText: word.includes("://"),
-          });
-          const currentFitRatio =
-            freshFit.consumedWidth > 0 ? currentFit.consumedWidth / freshFit.consumedWidth : 1;
-          const startRatioThreshold = resolvePlainTextDelimitedStartRatioThreshold(word);
-          const blocksPathContinuationAfterQueryTail =
-            lineEndsWithUrlQueryPair(currentLineText) && isPathLikeDelimitedWord(word);
-          const acceptsCurrentDelimitedContinuation = blocksPathContinuationAfterQueryTail
-            ? false
-            : isUrlLikeWord
-              ? acceptsUrlContinuationOnCurrentLine({
-                  word,
-                  consumedText: currentFit.consumedText,
-                  currentFitRatio,
-                })
-              : isAbsolutePathLikeWord
-                ? acceptsAbsolutePathContinuationOnCurrentLine(currentFit.consumedText)
-                : currentFitRatio >= startRatioThreshold;
-          if (
-            currentFit.consumedText.length > 0 &&
-            acceptsCurrentDelimitedContinuation
-          ) {
-            remainingWidth = Math.max(0, availableWidth - currentFit.consumedWidth);
-            lineHasContent = true;
-            appendLineText(currentFit.consumedText, true);
-            remainder = currentFit.remainder.length > 0 ? currentFit.remainder : null;
-            remainderFragments = remainder != null ? splitPlainTextWrapFragments(remainder) : null;
-            if (remainder == null) {
-              wordIndex += 1;
-            }
-            if (wordIndex < words.length || remainder != null) {
-              flushLine();
-              lineCount += 1;
-              lineHasContent = false;
-              remainingWidth = maxWidth;
-            }
-            continue;
-          }
-        }
-      }
-      if (
-        !usesDelimitedWrapping &&
-        wordWidth > availableWidth + 0.01 &&
-        availableWidth > 0.01
-      ) {
-        const softHyphenFit =
-          wordContainsSoftHyphen
-            ? measureSoftHyphenBreakFit({
-                cacheKeyPrefix: `${params.cacheKey}:word:${wordIndex}:continued`,
-                text: word,
-                font: params.font,
-                width: Math.max(1, availableWidth - SOFT_HYPHEN_CURRENT_LINE_FIT_GUARD_PX),
-              })
-            : null;
-        if (softHyphenFit != null) {
-          remainingWidth = Math.max(0, availableWidth - softHyphenFit.consumedWidth);
-          lineHasContent = true;
-          appendLineText(softHyphenFit.consumedText, true);
-          remainder = softHyphenFit.remainder.length > 0 ? softHyphenFit.remainder : null;
-          remainderFragments = null;
-          if (remainder == null) {
-            wordIndex += 1;
-          }
-          if (wordIndex < words.length || remainder != null) {
-            flushLine();
-            lineCount += 1;
-            lineHasContent = false;
-            remainingWidth = maxWidth;
-          }
-          continue;
-        }
-        const zeroWidthBreakFit =
-          wordContainsZeroWidthBreak
-            ? measureZeroWidthSpaceBreakFit({
-                cacheKeyPrefix: `${params.cacheKey}:word:${wordIndex}:continued`,
-                text: word,
-                font: params.font,
-                width: availableWidth,
-              })
-            : null;
-        if (zeroWidthBreakFit != null) {
-          remainingWidth = Math.max(0, availableWidth - zeroWidthBreakFit.consumedWidth);
-          lineHasContent = true;
-          appendLineText(zeroWidthBreakFit.consumedText, true);
-          remainder = zeroWidthBreakFit.remainder.length > 0 ? zeroWidthBreakFit.remainder : null;
-          remainderFragments = null;
-          if (remainder == null) {
-            wordIndex += 1;
-          }
-          if (wordIndex < words.length || remainder != null) {
-            flushLine();
-            lineCount += 1;
-            lineHasContent = false;
-            remainingWidth = maxWidth;
-          }
-          continue;
-        }
-        if (!wordFitsFreshLine) {
-          const implicitWordBreakFit =
-            usesImplicitWordBreaking
-              ? measureImplicitWordBreakFit({
-                  cacheKeyPrefix: `${params.cacheKey}:word:${wordIndex}:continued`,
-                  segments: implicitWordBreakSegments,
-                  font: params.font,
-                  width: availableWidth,
-                })
-              : null;
-          if (implicitWordBreakFit != null) {
-            remainingWidth = Math.max(0, availableWidth - implicitWordBreakFit.consumedWidth);
-            lineHasContent = true;
-            appendLineText(implicitWordBreakFit.consumedText, true);
-            remainder = implicitWordBreakFit.remainder.length > 0 ? implicitWordBreakFit.remainder : null;
-            remainderFragments = null;
-            if (remainder == null) {
-              wordIndex += 1;
-            }
-            if (wordIndex < words.length || remainder != null) {
-              flushLine();
-              lineCount += 1;
-              lineHasContent = false;
-              remainingWidth = maxWidth;
-            }
-            continue;
-          }
-          const fittingPrefix = findLargestCollapsedPlainTextPrefixThatFits({
-            cacheKeyPrefix: `${params.cacheKey}:word:${wordIndex}:continued`,
-            text: displayWord,
-            font: params.font,
-            width: availableWidth,
-          });
-          if (fittingPrefix.prefixWidth > 0) {
-            remainingWidth = Math.max(0, availableWidth - fittingPrefix.prefixWidth);
-            lineHasContent = true;
-            appendLineText(
-              displayWord.slice(0, displayWord.length - fittingPrefix.remainder.length),
-              true,
-            );
-            remainder = fittingPrefix.remainder.length > 0 ? fittingPrefix.remainder : null;
-            remainderFragments = null;
-            if (remainder == null) {
-              wordIndex += 1;
-            }
-            if (wordIndex < words.length || remainder != null) {
-              flushLine();
-              lineCount += 1;
-              lineHasContent = false;
-              remainingWidth = maxWidth;
-            }
-            continue;
-          }
-        }
-      }
-      flushLine();
-      lineCount += 1;
-      lineHasContent = false;
-      remainingWidth = maxWidth;
-      continue;
-    }
-
-    if (usesDelimitedWrapping) {
-      const fittingPrefix = measurePlainTextDelimitedTokenFit({
-        cacheKeyPrefix: `${params.cacheKey}:word:${wordIndex}:fresh`,
-        text: word,
-        fragments: wordFragments,
+      const continuedPlacement = resolveContinuedPlainTextPlacement({
+        cacheKeyPrefix: `${params.cacheKey}:word:${wordIndex}`,
+        currentLineText,
+        word,
+        displayWord,
         font: params.font,
-        width: remainingWidth,
-        allowPartialFragment: true,
+        availableWidth,
+        maxWidth,
+        wordFitsFreshLine,
+        usesDelimitedWrapping,
+        wordFragments,
+        wordContainsSoftHyphen,
+        wordContainsZeroWidthBreak,
+        usesImplicitWordBreaking,
+        implicitWordBreakSegments,
       });
-      remainingWidth = Math.max(0, remainingWidth - fittingPrefix.consumedWidth);
-      lineHasContent = true;
-      appendLineText(fittingPrefix.consumedText, false);
-      remainder = fittingPrefix.remainder.length > 0 ? fittingPrefix.remainder : null;
-      remainderFragments = remainder != null ? splitPlainTextWrapFragments(remainder) : null;
-      if (remainder == null) {
-        wordIndex += 1;
+      if (continuedPlacement?.kind === "placed") {
+        applyPlacement(continuedPlacement.placement);
+        continue;
       }
-
-      const nextWord = remainder == null ? words[wordIndex] ?? null : null;
-      const nextWordWidth =
-        nextWord != null
-          ? measureSingleLineTextWidth({
-              cacheKey: buildPreparedContentKey(`${params.cacheKey}:word:${wordIndex}`, nextWord),
-              text: nextWord,
-              font: params.font,
-            })
-          : 0;
-
-      if (remainder != null) {
-        flushLine();
-        lineCount += 1;
-        lineHasContent = false;
-        remainingWidth = maxWidth;
-      }
-      continue;
-    }
-
-    if (wordWidth <= remainingWidth + 0.01) {
-      remainingWidth = Math.max(0, remainingWidth - wordWidth);
-      lineHasContent = true;
-      appendLineText(displayWord, false);
-      remainder = null;
-      remainderFragments = null;
-      wordIndex += 1;
-      continue;
-    }
-
-    const softHyphenFreshFit =
-      wordContainsSoftHyphen
-        ? measureSoftHyphenBreakFit({
-            cacheKeyPrefix: `${params.cacheKey}:word:${wordIndex}:fresh`,
-            text: word,
-            font: params.font,
-            width: remainingWidth,
-          })
-        : null;
-    if (softHyphenFreshFit != null) {
-      remainingWidth = Math.max(0, remainingWidth - softHyphenFreshFit.consumedWidth);
-      lineHasContent = true;
-      appendLineText(softHyphenFreshFit.consumedText, false);
-      remainder = softHyphenFreshFit.remainder.length > 0 ? softHyphenFreshFit.remainder : null;
-      remainderFragments = null;
-      if (remainder == null) {
-        wordIndex += 1;
-      }
-
-      if (wordIndex < words.length || remainder != null) {
-        flushLine();
-        lineCount += 1;
-        lineHasContent = false;
-        remainingWidth = maxWidth;
-      }
-      continue;
-    }
-    const zeroWidthFreshFit =
-      wordContainsZeroWidthBreak
-        ? measureZeroWidthSpaceBreakFit({
-            cacheKeyPrefix: `${params.cacheKey}:word:${wordIndex}:fresh`,
-            text: word,
-            font: params.font,
-            width: remainingWidth,
-          })
-        : null;
-    if (zeroWidthFreshFit != null) {
-      remainingWidth = Math.max(0, remainingWidth - zeroWidthFreshFit.consumedWidth);
-      lineHasContent = true;
-      appendLineText(zeroWidthFreshFit.consumedText, false);
-      remainder = zeroWidthFreshFit.remainder.length > 0 ? zeroWidthFreshFit.remainder : null;
-      remainderFragments = null;
-      if (remainder == null) {
-        wordIndex += 1;
-      }
-
-      if (wordIndex < words.length || remainder != null) {
-        flushLine();
-        lineCount += 1;
-        lineHasContent = false;
-        remainingWidth = maxWidth;
-      }
-      continue;
-    }
-    const implicitWordFreshFit =
-      usesImplicitWordBreaking
-        ? measureImplicitWordBreakFit({
-            cacheKeyPrefix: `${params.cacheKey}:word:${wordIndex}:fresh`,
-            segments: implicitWordBreakSegments,
-            font: params.font,
-            width: remainingWidth,
-          })
-        : null;
-    if (implicitWordFreshFit != null) {
-      remainingWidth = Math.max(0, remainingWidth - implicitWordFreshFit.consumedWidth);
-      lineHasContent = true;
-      appendLineText(implicitWordFreshFit.consumedText, false);
-      remainder = implicitWordFreshFit.remainder.length > 0 ? implicitWordFreshFit.remainder : null;
-      remainderFragments = null;
-      if (remainder == null) {
-        wordIndex += 1;
-      }
-
-      if (wordIndex < words.length || remainder != null) {
-        flushLine();
-        lineCount += 1;
-        lineHasContent = false;
-        remainingWidth = maxWidth;
-      }
-      continue;
-    }
-
-    const fittingPrefix = findLargestCollapsedPlainTextPrefixThatFits({
-      cacheKeyPrefix: `${params.cacheKey}:word:${wordIndex}`,
-      text: displayWord,
-      font: params.font,
-      width: remainingWidth,
-    });
-
-    remainingWidth = Math.max(0, remainingWidth - fittingPrefix.prefixWidth);
-    lineHasContent = true;
-    appendLineText(
-      displayWord.slice(0, displayWord.length - fittingPrefix.remainder.length),
-      false,
-    );
-    remainder = fittingPrefix.remainder.length > 0 ? fittingPrefix.remainder : null;
-    remainderFragments = null;
-    if (remainder == null) {
-      wordIndex += 1;
-    }
-
-    if (wordIndex < words.length || remainder != null) {
       flushLine();
       lineCount += 1;
       lineHasContent = false;
       remainingWidth = maxWidth;
+      continue;
     }
+
+    applyPlacement(
+      resolveFreshPlainTextPlacement({
+        cacheKeyPrefix: `${params.cacheKey}:word:${wordIndex}`,
+        wordIndex,
+        word,
+        displayWord,
+        font: params.font,
+        remainingWidth,
+        wordWidth,
+        usesDelimitedWrapping,
+        wordFragments,
+        wordContainsSoftHyphen,
+        wordContainsZeroWidthBreak,
+        usesImplicitWordBreaking,
+        implicitWordBreakSegments,
+      }),
+    );
   }
 
   flushLine();

@@ -22,6 +22,26 @@ export type InlineCodePlacementResult = {
   forcedFreshWholeCodeGroupIndex: number | null;
 };
 
+export type InlineCodePlacementParams = {
+  items: readonly PreparedInlineLayoutItem[];
+  item: Extract<PreparedInlineLayoutItem, { kind: "segment" }>;
+  state: InlineMeasurementLineState;
+  codeGroupId: number;
+  maxWidth: number;
+  reservedWidth: number;
+  wholeCodeGroupWidth: number;
+  forcedFreshWholeCodeGroupIndex: number | null;
+  currentLineCodeStartSeamGuardPx: number;
+  currentLineFitSlackPx: number;
+  currentLineWhitespaceContinuationGuardPx: number;
+  currentLineWeakProseStartContinuationGuardPx: number;
+  currentLineNearFitLeadingHangPx: number;
+  shouldLimitCurrentCodeGroupToFirstFragment: boolean;
+  shouldTrackWeakProseStartCodeGroup: boolean;
+  shouldForceSoftBreakWeakProseContinuationWrap: boolean;
+  debug: InlineCodePlacementDebug;
+};
+
 export function hasNonPunctuationTrailingTextAfterCodeGroup(params: {
   codeGroupId: number;
   itemIndex: number;

@@ -1,31 +1,38 @@
 import { layoutNextLine, type LayoutCursor, type LayoutLine } from "@chenglou/pretext";
-import { browserAllowsInlineCodeLeadingHang } from "./sessionMarkdownBrowserProfile";
-import { shouldApplyInlineCodeSoftBreakTextStartGuard } from "./sessionMarkdownInlineCodeFit";
 import type { PreparedInlineLayoutItem } from "./sessionMarkdownInlineLayout";
 import type { InlineMeasurementLineState } from "./sessionMarkdownInlineMeasurementState";
-import type { InlineTextPlacementDebug, InlineTextPlacementResult } from "./sessionMarkdownInlineMeasurementTextPlacementTypes";
-export type { InlineTextPlacementResult } from "./sessionMarkdownInlineMeasurementTextPlacementTypes";
+import type {
+  InlineTextPlacementDebug,
+  InlineTextPlacementParams,
+  InlineTextPlacementResult,
+} from "./sessionMarkdownInlineMeasurementTextPlacementTypes";
+export type {
+  InlineTextPlacementParams,
+  InlineTextPlacementResult,
+} from "./sessionMarkdownInlineMeasurementTextPlacementTypes";
 import {
-  STYLED_TEXT_BODY_START_CURRENT_LINE_RATIO_THRESHOLD,
   advancePreparedCursorOneGrapheme,
   isAtomicNonCodeTextSegment,
-  isPunctuationOnlySeamText,
   isWhitespaceOnlyLineSlice,
-  resolveInlineCodeSoftBreakTextStartGuardPx,
   slicePreparedTextBetweenCursors,
 } from "./sessionMarkdownInlineMeasurementContext";
-import {
-  LINE_START_CURSOR,
-  cursorsMatch,
-} from "./sessionMarkdownMeasurementCore";
+import { cursorsMatch } from "./sessionMarkdownMeasurementCore";
 
 import {
   backtrackBreakWordTokenContinuation,
   measureBreakWordLine,
-  resolveInlineCodeTailWholeSegmentFitAllowancePx,
   shouldBreakBeforePunctuationOnlyContinuationTail,
   shouldEmergencyBreakAtomicTextSegment,
 } from "./sessionMarkdownInlineMeasurementTextPlacementHelpers";
+import {
+  acceptMeasuredInlineTextLine,
+  acceptWholeInlineTextSegment,
+} from "./sessionMarkdownInlineTextPlacementAccept";
+import {
+  resolveInlineTextPlacementWidths,
+  resolveWholeInlineTextFastPath,
+  shouldBreakBeforeInlineTextSegment,
+} from "./sessionMarkdownInlineTextPlacementRules";
 
 export {
   backtrackBreakWordTokenContinuation,
@@ -35,27 +42,7 @@ export {
   shouldEmergencyBreakAtomicTextSegment,
 } from "./sessionMarkdownInlineMeasurementTextPlacementHelpers";
 
-const INLINE_CODE_TAIL_WHOLE_SEGMENT_FIT_TOLERANCE_PX = 0;
-
-export function placeInlineTextSegment(params: {
-  item: Extract<PreparedInlineLayoutItem, { kind: "segment" }>;
-  state: InlineMeasurementLineState;
-  startCursor: LayoutCursor;
-  sliceStartsAtItemStart: boolean;
-  reservedWidth: number;
-  guardedRemainingWidth: number;
-  currentLineWhitespaceContinuationGuardPx: number;
-  currentLineStyledSeamGuardPx: number;
-  currentLineStyledAfterInlineCodeClusterGuardPx: number;
-  currentLineStyledBodyStartGuardPx: number;
-  currentLineInlineCodeTailTextSeamGuardPx: number;
-  currentLineInlineCodeSoftBreakTextStartGuardPx: number;
-  currentLineFitSlackPx: number;
-  currentLineNearFitLeadingHangPx: number;
-  canDropLeadingCollapsedSpaceAtWrap: boolean;
-  maxWidth: number;
-  debug: InlineTextPlacementDebug;
-}): InlineTextPlacementResult {
+export function placeInlineTextSegment(params: InlineTextPlacementParams): InlineTextPlacementResult {
   const state = { ...params.state };
   const { item } = params;
   const codeGroupId = item.codeGroupId;
@@ -65,53 +52,7 @@ export function placeInlineTextSegment(params: {
   });
   const allowsBreakWord =
     item.allowsBreakWord || allowsEmergencyBreakWord;
-
-  if (
-    state.lineHasContent &&
-    state.remainingWidth < params.reservedWidth - 0.01 &&
-    !params.canDropLeadingCollapsedSpaceAtWrap
-  ) {
-    state.cursor = null;
-    return { action: "break", state };
-  }
-
-  const availableWidth = Math.max(
-    1,
-    state.remainingWidth -
-      params.reservedWidth -
-      params.currentLineWhitespaceContinuationGuardPx -
-      params.currentLineStyledSeamGuardPx -
-      params.currentLineStyledAfterInlineCodeClusterGuardPx -
-      params.currentLineStyledBodyStartGuardPx -
-      params.currentLineInlineCodeTailTextSeamGuardPx -
-      params.currentLineInlineCodeSoftBreakTextStartGuardPx,
-  );
-  const availableWidthWithoutLeadingSpace = params.canDropLeadingCollapsedSpaceAtWrap
-    ? Math.max(
-        1,
-        state.remainingWidth -
-          params.currentLineWhitespaceContinuationGuardPx -
-          params.currentLineStyledSeamGuardPx -
-          params.currentLineStyledAfterInlineCodeClusterGuardPx -
-          params.currentLineStyledBodyStartGuardPx -
-          params.currentLineInlineCodeTailTextSeamGuardPx -
-          params.currentLineInlineCodeSoftBreakTextStartGuardPx,
-      )
-    : availableWidth;
-  const inlineCodeTailWholeSegmentFitAllowancePx = resolveInlineCodeTailWholeSegmentFitAllowancePx({
-    lineStartedWithContinuedCode: state.lineStartedWithContinuedCode,
-    seamGuardPx: params.currentLineInlineCodeTailTextSeamGuardPx,
-  });
-  const wholeSegmentAvailableWidth = Math.max(
-    1,
-    availableWidth + inlineCodeTailWholeSegmentFitAllowancePx,
-  );
-  const wholeSegmentFitsCurrentLine =
-    item.fullWidth <= wholeSegmentAvailableWidth + INLINE_CODE_TAIL_WHOLE_SEGMENT_FIT_TOLERANCE_PX + 0.01;
-  const codeSegmentAvailableWidth =
-    codeGroupId != null && !item.isSealedInlineCodeFragment
-      ? Math.max(1, availableWidth + params.currentLineFitSlackPx + params.currentLineNearFitLeadingHangPx)
-      : availableWidth;
+  const widths = resolveInlineTextPlacementWidths(params);
 
   if (
     params.debug.enabled &&
@@ -126,7 +67,7 @@ export function placeInlineTextSegment(params: {
       reservedWidth: params.reservedWidth,
       remainingWidth: state.remainingWidth,
       guardedRemainingWidth: params.guardedRemainingWidth,
-      availableLineWidth: codeSegmentAvailableWidth,
+      availableLineWidth: widths.codeSegmentAvailableWidth,
       fullWidth: item.fullWidth,
       currentLineFitSlackPx: params.currentLineFitSlackPx,
       lineLastCodeFragmentText: state.lineLastCodeFragmentText,
@@ -140,100 +81,26 @@ export function placeInlineTextSegment(params: {
     state.lineHasContent &&
     state.cursor === null &&
     item.startsStyledTextAfterBodySeam &&
-    item.fullWidth > availableWidth + 0.01
-      ? layoutNextLine(item.prepared, params.startCursor, availableWidth)
+    item.fullWidth > widths.availableWidth + 0.01
+      ? layoutNextLine(item.prepared, params.startCursor, widths.availableWidth)
       : null;
 
   if (
-    codeGroupId == null &&
-    state.lineHasContent &&
-    state.cursor === null &&
-    allowsEmergencyBreakWord
+    shouldBreakBeforeInlineTextSegment({
+      placement: params,
+      widths,
+      allowsBreakWord,
+      allowsEmergencyBreakWord,
+      styledStartLine,
+    })
   ) {
     state.cursor = null;
     return { action: "break", state };
   }
-  if (
-    codeGroupId == null &&
-    state.lineHasContent &&
-    state.cursor === null &&
-    !allowsBreakWord &&
-    item.startsAfterInlineCodeSeam &&
-    !state.lineStartedWithContinuedCode &&
-    item.minStartTextWidth > availableWidth + 0.01 &&
-    item.minStartTextWidth <= params.maxWidth + 0.01
-  ) {
-    state.cursor = null;
-    return { action: "break", state };
-  }
-  if (
-    codeGroupId == null &&
-    state.lineHasContent &&
-    state.cursor === null &&
-    !allowsBreakWord &&
-    item.startsAfterStyledTextSeam &&
-    item.minStartTextWidth > availableWidth + 0.01 &&
-    item.minStartTextWidth <= params.maxWidth + 0.01
-  ) {
-    state.cursor = null;
-    return { action: "break", state };
-  }
-  if (
-    codeGroupId == null &&
-    state.lineHasContent &&
-    state.cursor === null &&
-    state.pendingSpaceWidth > 0 &&
-    !allowsBreakWord &&
-    item.minStartTextWidth > availableWidthWithoutLeadingSpace + 0.01 &&
-    item.minStartTextWidth <= params.maxWidth + 0.01
-  ) {
-    state.cursor = null;
-    return { action: "break", state };
-  }
-  if (
-    codeGroupId == null &&
-    state.lineHasContent &&
-    state.cursor === null &&
-    !allowsBreakWord &&
-    item.startsStyledTextAfterInlineCodeSeam &&
-    item.hasTrailingInlineCode &&
-    item.minStartTextWidth > availableWidth + 0.01 &&
-    item.minStartTextWidth <= params.maxWidth + 0.01
-  ) {
-    state.cursor = null;
-    return { action: "break", state };
-  }
-  if (
-    codeGroupId == null &&
-    state.lineHasContent &&
-    state.cursor === null &&
-    item.startsStyledTextAfterBodySeam &&
-    item.fullWidth > availableWidth + 0.01 &&
-    (styledStartLine == null ||
-      cursorsMatch(params.startCursor, styledStartLine.end) ||
-      styledStartLine.width / Math.max(1, item.fullWidth) <
-        STYLED_TEXT_BODY_START_CURRENT_LINE_RATIO_THRESHOLD)
-  ) {
-    state.cursor = null;
-    return { action: "break", state };
-  }
-
-  const allowWholeSegmentAfterContinuedInlineCode =
-    browserAllowsInlineCodeLeadingHang() &&
-    state.lineStartedWithContinuedCode &&
-    item.startsAfterPathLikeInlineCodeSeam &&
-    !item.startsAfterCollapsedSoftBreak &&
-    !item.startsStyledTextAfterInlineCodeSeam &&
-    wholeSegmentFitsCurrentLine;
-  const allowWholeSegmentFastPath =
-    codeGroupId == null &&
-    state.cursor === null &&
-    !item.startsAfterStyledTextSeam &&
-    (!item.startsAfterInlineCodeSeam ||
-      ((!state.lineStartedWithContinuedCode || allowWholeSegmentAfterContinuedInlineCode) &&
-        !item.startsAfterCollapsedSoftBreak &&
-        !item.startsStyledTextAfterInlineCodeSeam &&
-        wholeSegmentFitsCurrentLine));
+  const allowWholeSegmentFastPath = resolveWholeInlineTextFastPath({
+    placement: params,
+    widths,
+  });
 
   if (
     params.debug.enabled &&
@@ -246,9 +113,9 @@ export function placeInlineTextSegment(params: {
       lineHasContent: state.lineHasContent,
       text: item.text,
       reservedWidth: params.reservedWidth,
-      availableWidth,
-      wholeSegmentAvailableWidth,
-      inlineCodeTailWholeSegmentFitAllowancePx,
+      availableWidth: widths.availableWidth,
+      wholeSegmentAvailableWidth: widths.wholeSegmentAvailableWidth,
+      inlineCodeTailWholeSegmentFitAllowancePx: widths.inlineCodeTailWholeSegmentFitAllowancePx,
       fullWidth: item.fullWidth,
       lineStartedWithContinuedCode: state.lineStartedWithContinuedCode,
       startsAfterCollapsedSoftBreak: item.startsAfterCollapsedSoftBreak,
@@ -257,68 +124,20 @@ export function placeInlineTextSegment(params: {
     });
   }
 
-  if (allowWholeSegmentFastPath && wholeSegmentFitsCurrentLine) {
-    const lineWasEmpty = !state.lineHasContent;
-    state.remainingWidth = Math.max(0, state.remainingWidth - params.reservedWidth - item.fullWidth);
-    state.lineOnlyCodeGroupId = null;
-    state.lastAcceptedCodeGroupId = null;
-    state.lineCurrentCodeGroupStartFragmentText = null;
-    state.lineCurrentCodeGroupStartedNearFresh = false;
-    state.lineCurrentCodeGroupLimitToFirstFragment = false;
-    state.lineLastCodeFragmentText = null;
-    state.lineLastCodeFragmentEndedWithHyphen = false;
-    state.lineLastCodeFragmentEndedWithPathDelimiter = false;
-    state.lineHasContent = true;
-    if (item.isDecoratedText) {
-      state.lineDecoratedTextSegmentCount += 1;
-    }
-    state.lineHasSoftHyphenText ||= item.text.includes("\u00ad");
-    state.lineStartedWithCollapsedSoftBreakPlainText ||=
-      lineWasEmpty && item.startsAfterCollapsedSoftBreak;
-    state.lineTailAfterInlineCodeIsPunctuationOnly =
-      item.startsAfterInlineCodeSeam && isPunctuationOnlySeamText(item.text);
-    state.lineAcceptedPlainAfterContinuedCode ||= state.lineStartedWithContinuedCode;
-    state.lineAcceptedSoftBreakProseAfterInlineCode ||=
-      params.sliceStartsAtItemStart &&
-      shouldApplyInlineCodeSoftBreakTextStartGuard({
-        text: item.text,
-        startsAfterCollapsedSoftBreak: item.startsAfterCollapsedSoftBreak,
-        startsAfterPathLikeInlineCodeSeam: item.startsAfterPathLikeInlineCodeSeam,
-        startsAfterInlineCodeSeam: item.startsAfterInlineCodeSeam,
-        startsStyledTextAfterInlineCodeSeam: item.startsStyledTextAfterInlineCodeSeam,
-        lastFragmentEndedWithPathDelimiter: state.lineLastCodeFragmentEndedWithPathDelimiter,
-        lastFragmentEndedWithHyphen: state.lineLastCodeFragmentEndedWithHyphen,
-      });
-    if (
-      params.sliceStartsAtItemStart &&
-      shouldApplyInlineCodeSoftBreakTextStartGuard({
-        text: item.text,
-        startsAfterCollapsedSoftBreak: item.startsAfterCollapsedSoftBreak,
-        startsAfterPathLikeInlineCodeSeam: item.startsAfterPathLikeInlineCodeSeam,
-        startsAfterInlineCodeSeam: item.startsAfterInlineCodeSeam,
-        startsStyledTextAfterInlineCodeSeam: item.startsStyledTextAfterInlineCodeSeam,
-        lastFragmentEndedWithPathDelimiter: state.lineLastCodeFragmentEndedWithPathDelimiter,
-        lastFragmentEndedWithHyphen: state.lineLastCodeFragmentEndedWithHyphen,
-      })
-    ) {
-      state.lineSoftBreakProseAfterInlineCodeGuardPx = Math.max(
-        state.lineSoftBreakProseAfterInlineCodeGuardPx,
-        resolveInlineCodeSoftBreakTextStartGuardPx(item.minStartTextWidth),
-      );
-    }
-    state.pendingSpaceWidth = 0;
-    if (params.debug.enabled) {
-      params.debug.appendLineText(item.text);
-    }
-    state.itemIndex += 1;
-    return { action: "continue", state };
+  if (allowWholeSegmentFastPath && widths.wholeSegmentFitsCurrentLine) {
+    return acceptWholeInlineTextSegment(params);
   }
 
   const regularLineWithReservedSpace: LayoutLine | null =
-    styledStartLine ?? layoutNextLine(item.prepared, params.startCursor, codeSegmentAvailableWidth);
+    styledStartLine ?? layoutNextLine(item.prepared, params.startCursor, widths.codeSegmentAvailableWidth);
   const regularLineWithoutLeadingSpace: LayoutLine | null =
-    params.canDropLeadingCollapsedSpaceAtWrap && availableWidthWithoutLeadingSpace > availableWidth + 0.01
-      ? layoutNextLine(item.prepared, params.startCursor, availableWidthWithoutLeadingSpace)
+    params.canDropLeadingCollapsedSpaceAtWrap &&
+    widths.availableWidthWithoutLeadingSpace > widths.availableWidth + 0.01
+      ? layoutNextLine(
+          item.prepared,
+          params.startCursor,
+          widths.availableWidthWithoutLeadingSpace,
+        )
       : null;
   const lineWithReservedSpace: LayoutLine | null =
     allowsBreakWord &&
@@ -328,20 +147,20 @@ export function placeInlineTextSegment(params: {
       ? measureBreakWordLine({
           item,
           startCursor: params.startCursor,
-          availableWidth: codeSegmentAvailableWidth,
+          availableWidth: widths.codeSegmentAvailableWidth,
         })
       : regularLineWithReservedSpace;
   const lineWithoutLeadingSpace: LayoutLine | null =
     allowsBreakWord &&
     params.canDropLeadingCollapsedSpaceAtWrap &&
-    availableWidthWithoutLeadingSpace > availableWidth + 0.01 &&
+    widths.availableWidthWithoutLeadingSpace > widths.availableWidth + 0.01 &&
     (allowsEmergencyBreakWord ||
       regularLineWithoutLeadingSpace == null ||
       cursorsMatch(params.startCursor, regularLineWithoutLeadingSpace.end))
       ? measureBreakWordLine({
           item,
           startCursor: params.startCursor,
-          availableWidth: availableWidthWithoutLeadingSpace,
+          availableWidth: widths.availableWidthWithoutLeadingSpace,
         })
       : regularLineWithoutLeadingSpace;
   const useLineWithoutLeadingSpace = false;
@@ -370,7 +189,7 @@ export function placeInlineTextSegment(params: {
       reservedWidth: params.reservedWidth,
       remainingWidth: state.remainingWidth,
       guardedRemainingWidth: params.guardedRemainingWidth,
-      availableLineWidth: codeSegmentAvailableWidth,
+      availableLineWidth: widths.codeSegmentAvailableWidth,
       lineWidth: line?.width,
       fullWidth: item.fullWidth,
       currentLineFitSlackPx: params.currentLineFitSlackPx,
@@ -422,7 +241,7 @@ export function placeInlineTextSegment(params: {
       lineEndsAtItemEnd: cursorsMatch(line.end, item.endCursor),
       lineSegmentText,
       segmentFullWidth: item.fullWidth,
-      availableWidth,
+      availableWidth: widths.availableWidth,
     })
   ) {
     state.cursor = null;
@@ -476,95 +295,9 @@ export function placeInlineTextSegment(params: {
     state.cursor = null;
     return { action: "break", state };
   }
-
-  const consumedReservedWidth = params.reservedWidth;
-  const lineWasEmpty = !state.lineHasContent;
-  state.remainingWidth = Math.max(0, state.remainingWidth - consumedReservedWidth - line.width);
-  if (!state.lineHasContent) {
-    state.lineOnlyCodeGroupId = codeGroupId;
-    state.lineLastCodeFragmentEndedWithHyphen =
-      codeGroupId != null && cursorsMatch(line.end, item.endCursor) && item.text.endsWith("-");
-    state.lineLastCodeFragmentEndedWithPathDelimiter =
-      codeGroupId != null && cursorsMatch(line.end, item.endCursor) && /[\\/]+$/.test(item.text);
-    state.lineStartedWithContinuedCode =
-      codeGroupId != null &&
-      (!item.isFirstCodeGroupFragment || !cursorsMatch(params.startCursor, LINE_START_CURSOR));
-    state.lineSawInlineCode = codeGroupId != null;
-  } else if (state.lineOnlyCodeGroupId !== codeGroupId) {
-    state.lineOnlyCodeGroupId = null;
-  }
-  state.lineLastCodeFragmentEndedWithHyphen =
-    codeGroupId != null && cursorsMatch(line.end, item.endCursor) && item.text.endsWith("-");
-  state.lineLastCodeFragmentEndedWithPathDelimiter =
-    codeGroupId != null && cursorsMatch(line.end, item.endCursor) && /[\\/]+$/.test(item.text);
-  if (codeGroupId != null && state.lastAcceptedCodeGroupId !== codeGroupId) {
-    state.lineCurrentCodeGroupStartFragmentText = lineSegmentText;
-  }
-  state.lineLastCodeFragmentText = codeGroupId != null ? lineSegmentText : null;
-  state.lastAcceptedCodeGroupId = codeGroupId;
-  state.lineHasContent = true;
-
-  if (codeGroupId != null) {
-    state.chargedCodeGroups.add(codeGroupId);
-    if (state.lineAcceptedSoftBreakProseAfterInlineCode && state.lineSoftBreakProseGuardCodeGroupId == null) {
-      state.lineSoftBreakProseGuardCodeGroupId = codeGroupId;
-    }
-    state.lineSawInlineCode = true;
-    state.lineTailAfterInlineCodeIsPunctuationOnly = false;
-  } else {
-    state.lastAcceptedCodeGroupId = null;
-    state.lineLastCodeFragmentEndedWithHyphen = false;
-    state.lineLastCodeFragmentEndedWithPathDelimiter = false;
-    state.lineStartedWithCollapsedSoftBreakPlainText ||=
-      lineWasEmpty && item.startsAfterCollapsedSoftBreak;
-    if (item.isDecoratedText) {
-      state.lineDecoratedTextSegmentCount += 1;
-    }
-    state.lineHasSoftHyphenText ||= item.text.includes("\u00ad");
-    state.lineTailAfterInlineCodeIsPunctuationOnly =
-      item.startsAfterInlineCodeSeam && isPunctuationOnlySeamText(item.text);
-    state.lineAcceptedPlainAfterContinuedCode ||= state.lineStartedWithContinuedCode;
-    state.lineAcceptedSoftBreakProseAfterInlineCode ||=
-      params.sliceStartsAtItemStart &&
-      shouldApplyInlineCodeSoftBreakTextStartGuard({
-        text: item.text,
-        startsAfterCollapsedSoftBreak: item.startsAfterCollapsedSoftBreak,
-        startsAfterPathLikeInlineCodeSeam: item.startsAfterPathLikeInlineCodeSeam,
-        startsAfterInlineCodeSeam: item.startsAfterInlineCodeSeam,
-        startsStyledTextAfterInlineCodeSeam: item.startsStyledTextAfterInlineCodeSeam,
-        lastFragmentEndedWithPathDelimiter: state.lineLastCodeFragmentEndedWithPathDelimiter,
-        lastFragmentEndedWithHyphen: state.lineLastCodeFragmentEndedWithHyphen,
-      });
-    if (
-      params.sliceStartsAtItemStart &&
-      shouldApplyInlineCodeSoftBreakTextStartGuard({
-        text: item.text,
-        startsAfterCollapsedSoftBreak: item.startsAfterCollapsedSoftBreak,
-        startsAfterPathLikeInlineCodeSeam: item.startsAfterPathLikeInlineCodeSeam,
-        startsAfterInlineCodeSeam: item.startsAfterInlineCodeSeam,
-        startsStyledTextAfterInlineCodeSeam: item.startsStyledTextAfterInlineCodeSeam,
-        lastFragmentEndedWithPathDelimiter: state.lineLastCodeFragmentEndedWithPathDelimiter,
-        lastFragmentEndedWithHyphen: state.lineLastCodeFragmentEndedWithHyphen,
-      })
-    ) {
-      state.lineSoftBreakProseAfterInlineCodeGuardPx = Math.max(
-        state.lineSoftBreakProseAfterInlineCodeGuardPx,
-        resolveInlineCodeSoftBreakTextStartGuardPx(item.minStartTextWidth),
-      );
-    }
-  }
-
-  state.pendingSpaceWidth = 0;
-  if (params.debug.enabled) {
-    params.debug.appendLineText(lineSegmentText);
-  }
-
-  if (cursorsMatch(line.end, item.endCursor)) {
-    state.itemIndex += 1;
-    state.cursor = null;
-    return { action: "continue", state };
-  }
-
-  state.cursor = line.end;
-  return { action: "break", state };
+  return acceptMeasuredInlineTextLine({
+    placement: params,
+    line,
+    lineSegmentText,
+  });
 }

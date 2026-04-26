@@ -19,35 +19,23 @@ import type {
 } from "./sessionMarkdownInlineMeasurementDebug";
 import type { InlineMeasurementLineState } from "./sessionMarkdownInlineMeasurementState";
 import {
+  type InlineCodePlacementParams,
   acceptCodeFragmentState,
   hasNonPunctuationTrailingTextAfterCodeGroup,
   type InlineCodePlacementDebug,
   type InlineCodePlacementResult,
 } from "./sessionMarkdownInlineMeasurementCodePlacementShared";
+import { acceptWholeInlineCodeFragment } from "./sessionMarkdownInlineCodePlacementAccept";
+import { tryAcceptForcedFreshWholeCodeGroup } from "./sessionMarkdownInlineCodePlacementWholeGroup";
 import { placeSealedInlineCodeSegment } from "./sessionMarkdownInlineMeasurementCodePlacementSealed";
-export type { InlineCodePlacementResult } from "./sessionMarkdownInlineMeasurementCodePlacementShared";
+export type {
+  InlineCodePlacementParams,
+  InlineCodePlacementResult,
+} from "./sessionMarkdownInlineMeasurementCodePlacementShared";
 
 const INLINE_CODE_HYPHEN_CONTINUATION_GUARD_PX = 2;
 
-export function placeInlineCodeSegment(params: {
-  items: readonly PreparedInlineLayoutItem[];
-  item: Extract<PreparedInlineLayoutItem, { kind: "segment" }>;
-  state: InlineMeasurementLineState;
-  codeGroupId: number;
-  maxWidth: number;
-  reservedWidth: number;
-  wholeCodeGroupWidth: number;
-  forcedFreshWholeCodeGroupIndex: number | null;
-  currentLineCodeStartSeamGuardPx: number;
-  currentLineFitSlackPx: number;
-  currentLineWhitespaceContinuationGuardPx: number;
-  currentLineWeakProseStartContinuationGuardPx: number;
-  currentLineNearFitLeadingHangPx: number;
-  shouldLimitCurrentCodeGroupToFirstFragment: boolean;
-  shouldTrackWeakProseStartCodeGroup: boolean;
-  shouldForceSoftBreakWeakProseContinuationWrap: boolean;
-  debug: InlineCodePlacementDebug;
-}): InlineCodePlacementResult {
+export function placeInlineCodeSegment(params: InlineCodePlacementParams): InlineCodePlacementResult {
   const state = { ...params.state };
   const { item, codeGroupId } = params;
   const shouldLimitCurrentCodeGroupToFirstFragment =
@@ -59,60 +47,13 @@ export function placeInlineCodeSegment(params: {
       item.codeGroupStartsAfterText &&
       item.codeGroupHasDottedPath);
 
-  if (
-    params.forcedFreshWholeCodeGroupIndex === state.itemIndex &&
-    item.isFirstCodeGroupFragment &&
-    params.wholeCodeGroupWidth > 0 &&
-    params.wholeCodeGroupWidth <= params.maxWidth + 0.01
-  ) {
-    let scanIndex = state.itemIndex;
-    let lastCodeFragmentText = item.text;
-    while (scanIndex < params.items.length) {
-      const candidate = params.items[scanIndex]!;
-      if (candidate.kind === "hardBreak") {
-        break;
-      }
-      if (candidate.kind === "space") {
-        if (candidate.codeGroupId !== codeGroupId) {
-          break;
-        }
-        if (params.debug.enabled) {
-          params.debug.appendLineText(candidate.text);
-        }
-        scanIndex += 1;
-        continue;
-      }
-      if (candidate.codeGroupId !== codeGroupId) {
-        break;
-      }
-      if (params.debug.enabled) {
-        params.debug.appendLineText(candidate.text);
-      }
-      lastCodeFragmentText = candidate.text;
-      scanIndex += 1;
-    }
-    const remainingWidthBeforeWholeGroupAccept = state.remainingWidth;
-    acceptCodeFragmentState({
-      state,
-      item,
-      codeGroupId,
-      remainingWidthBeforeAccept: remainingWidthBeforeWholeGroupAccept,
-      remainingWidthAfterAccept: Math.max(0, state.remainingWidth - params.wholeCodeGroupWidth),
-      lastFragmentText: lastCodeFragmentText,
-      lastFragmentEndedWithHyphen: lastCodeFragmentText.endsWith("-"),
-      lastFragmentEndedWithPathDelimiter: /[\\/]+$/.test(lastCodeFragmentText),
-      shouldLimitCurrentCodeGroupToFirstFragment,
-      shouldTrackWeakProseStartCodeGroup: false,
-      shouldForceSoftBreakWeakProseContinuationWrap: false,
-      maxWidth: params.maxWidth,
-    });
-    state.itemIndex = scanIndex;
-    state.pendingSpaceWidth = 0;
-    return {
-      action: "continue",
-      state,
-      forcedFreshWholeCodeGroupIndex: null,
-    };
+  const forcedWholeCodeGroupResult = tryAcceptForcedFreshWholeCodeGroup({
+    ...params,
+    state,
+    shouldLimitCurrentCodeGroupToFirstFragment,
+  });
+  if (forcedWholeCodeGroupResult != null) {
+    return forcedWholeCodeGroupResult;
   }
 
   const fullWidth = params.reservedWidth + item.fullWidth;
@@ -425,46 +366,15 @@ export function placeInlineCodeSegment(params: {
   }
 
   if (shouldAcceptChromiumPathTailContinuation) {
-    const remainingWidthBeforeFragmentAccept = state.remainingWidth;
-    acceptCodeFragmentState({
+    return acceptWholeInlineCodeFragment({
+      placement: params,
       state,
-      item,
-      codeGroupId,
-      remainingWidthBeforeAccept: remainingWidthBeforeFragmentAccept,
-      remainingWidthAfterAccept: Math.max(
-        0,
-        state.remainingWidth - params.reservedWidth - item.fullWidth,
-      ),
-      lastFragmentText: item.text,
-      lastFragmentEndedWithHyphen: item.text.endsWith("-"),
-      lastFragmentEndedWithPathDelimiter: /[\\/]+$/.test(item.text),
+      fullWidth: params.reservedWidth + item.fullWidth,
+      guardedRemainingWidth,
       shouldLimitCurrentCodeGroupToFirstFragment,
       shouldTrackWeakProseStartCodeGroup: params.shouldTrackWeakProseStartCodeGroup,
       shouldForceSoftBreakWeakProseContinuationWrap: params.shouldForceSoftBreakWeakProseContinuationWrap,
-      maxWidth: params.maxWidth,
     });
-    state.itemIndex += 1;
-    state.pendingSpaceWidth = 0;
-    if (params.debug.enabled) {
-      params.debug.continuationDecisions.push({
-        text: item.text,
-        reservedWidth: params.reservedWidth,
-        remainingWidth: remainingWidthBeforeFragmentAccept,
-        guardedRemainingWidth,
-        fullWidth,
-        currentLineFitSlackPx: params.currentLineFitSlackPx,
-        lineLastCodeFragmentText: params.state.lineLastCodeFragmentText,
-        lineLastCodeFragmentEndedWithPathDelimiter: params.state.lineLastCodeFragmentEndedWithPathDelimiter,
-        lineLastCodeFragmentEndedWithHyphen: params.state.lineLastCodeFragmentEndedWithHyphen,
-        acceptedWholeFragment: true,
-      });
-      params.debug.appendLineText(item.text);
-    }
-    return {
-      action: "continue",
-      state,
-      forcedFreshWholeCodeGroupIndex: params.forcedFreshWholeCodeGroupIndex,
-    };
   }
 
   const sealedPlacementResult = placeSealedInlineCodeSegment({
@@ -493,45 +403,15 @@ export function placeInlineCodeSegment(params: {
   }
 
   if (fullWidth <= guardedRemainingWidth + wholeFragmentFitTolerancePx + 0.01) {
-    if (params.debug.enabled && state.lineHasContent && state.lastAcceptedCodeGroupId === codeGroupId) {
-      params.debug.continuationDecisions.push({
-        text: item.text,
-        reservedWidth: params.reservedWidth,
-        remainingWidth: state.remainingWidth,
-        guardedRemainingWidth,
-        fullWidth,
-        currentLineFitSlackPx: params.currentLineFitSlackPx,
-        lineLastCodeFragmentText: state.lineLastCodeFragmentText,
-        lineLastCodeFragmentEndedWithPathDelimiter: state.lineLastCodeFragmentEndedWithPathDelimiter,
-        lineLastCodeFragmentEndedWithHyphen: state.lineLastCodeFragmentEndedWithHyphen,
-        acceptedWholeFragment: true,
-      });
-    }
-    const remainingWidthBeforeFragmentAccept = state.remainingWidth;
-    acceptCodeFragmentState({
+    return acceptWholeInlineCodeFragment({
+      placement: params,
       state,
-      item,
-      codeGroupId,
-      remainingWidthBeforeAccept: remainingWidthBeforeFragmentAccept,
-      remainingWidthAfterAccept: Math.max(0, state.remainingWidth - fullWidth),
-      lastFragmentText: item.text,
-      lastFragmentEndedWithHyphen: item.text.endsWith("-"),
-      lastFragmentEndedWithPathDelimiter: /[\\/]+$/.test(item.text),
+      fullWidth,
+      guardedRemainingWidth,
       shouldLimitCurrentCodeGroupToFirstFragment,
       shouldTrackWeakProseStartCodeGroup: params.shouldTrackWeakProseStartCodeGroup,
       shouldForceSoftBreakWeakProseContinuationWrap: params.shouldForceSoftBreakWeakProseContinuationWrap,
-      maxWidth: params.maxWidth,
     });
-    state.itemIndex += 1;
-    state.pendingSpaceWidth = 0;
-    if (params.debug.enabled) {
-      params.debug.appendLineText(item.text);
-    }
-    return {
-      action: "continue",
-      state,
-      forcedFreshWholeCodeGroupIndex: params.forcedFreshWholeCodeGroupIndex,
-    };
   }
 
   const shouldBreakBeforePartialFreshLineFittingCodeGroup =
