@@ -117,6 +117,12 @@ function formatExecFailure(result, label, timeoutMs) {
   if (result?.error?.code === "ETIMEDOUT") {
     return `${label} timed out after ${timeoutMs}ms`;
   }
+  if (result?.error) {
+    const code = String(result.error.code || "").trim();
+    const message = String(result.error.message || result.error).trim();
+    const details = [code, message].filter(Boolean).join(": ");
+    return details ? `${label} failed to launch: ${details}` : `${label} failed to launch`;
+  }
   const stderr = String(result?.stderr || "").trim();
   const stdout = String(result?.stdout || "").trim();
   if (stderr) {
