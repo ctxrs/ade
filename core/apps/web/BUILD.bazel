@@ -373,7 +373,7 @@ NON_PRETEXT_WORKBENCH_SHELL_TESTS = glob([
     "src/pages/WorkspaceSetupPage.test.tsx",
 ], allow_empty = True)
 
-NON_PRETEXT_WORKBENCH_SURFACE_SESSION_TESTS = glob([
+NON_PRETEXT_WORKBENCH_SURFACE_SESSION_CORE_TESTS = glob([
     "src/pages/SessionPage*.test.ts",
     "src/pages/SessionPage*.test.tsx",
     "src/pages/session*.test.ts",
@@ -384,6 +384,9 @@ NON_PRETEXT_WORKBENCH_SURFACE_SESSION_TESTS = glob([
     "src/pages/sessionView/*.test.tsx",
     "src/pages/sessionView/**/*.test.ts",
     "src/pages/sessionView/**/*.test.tsx",
+], exclude = NON_PRETEXT_EXCLUDES, allow_empty = True)
+
+NON_PRETEXT_WORKBENCH_SURFACE_SESSION_THREAD_TESTS = glob([
     "src/pages/sessionThread/*.test.ts",
     "src/pages/sessionThread/*.test.tsx",
     "src/pages/sessionThread/**/*.test.ts",
@@ -743,10 +746,25 @@ vitest_bin.vitest_test(
 )
 
 vitest_bin.vitest_test(
-    name = "unit_tests_non_pretext_workbench_surface_session",
-    args = NON_PRETEXT_VITEST_ARGS + NON_PRETEXT_WORKBENCH_SURFACE_SESSION_TESTS,
+    name = "unit_tests_non_pretext_workbench_surface_session_core",
+    args = NON_PRETEXT_VITEST_ARGS + NON_PRETEXT_WORKBENCH_SURFACE_SESSION_CORE_TESTS,
     data = HERMETIC_WEB_CHECK_DATA,
     chdir = package_name(),
+)
+
+vitest_bin.vitest_test(
+    name = "unit_tests_non_pretext_workbench_surface_session_thread",
+    args = NON_PRETEXT_VITEST_ARGS + NON_PRETEXT_WORKBENCH_SURFACE_SESSION_THREAD_TESTS,
+    data = HERMETIC_WEB_CHECK_DATA,
+    chdir = package_name(),
+)
+
+test_suite(
+    name = "unit_tests_non_pretext_workbench_surface_session",
+    tests = [
+        ":unit_tests_non_pretext_workbench_surface_session_core",
+        ":unit_tests_non_pretext_workbench_surface_session_thread",
+    ],
 )
 
 test_suite(
