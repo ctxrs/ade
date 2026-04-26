@@ -163,15 +163,20 @@ esac
   );
   writeExecutable(
     path.join(stubDir, "ditto"),
-    `#!${NODE_EXEC_PATH}
-import fs from "node:fs";
-
-const [, , src, dest] = process.argv;
-if (!src || !dest) process.exit(2);
-const failMatch = process.env.CTX_TEST_FAIL_DITTO_DEST_MATCH ?? "";
-if (failMatch && dest.includes(failMatch)) process.exit(1);
-fs.rmSync(dest, { recursive: true, force: true });
-fs.cpSync(src, dest, { recursive: true });
+    `#!/bin/sh
+set -eu
+src="\${1:-}"
+dest="\${2:-}"
+[ -n "$src" ] || exit 2
+[ -n "$dest" ] || exit 2
+fail_match="\${CTX_TEST_FAIL_DITTO_DEST_MATCH:-}"
+if [ -n "$fail_match" ]; then
+  case "$dest" in
+    *"$fail_match"*) exit 1 ;;
+  esac
+fi
+rm -rf "$dest"
+cp -R "$src" "$dest"
 `,
   );
   for (const name of ["open", "xdg-open", "update-desktop-database"]) {
