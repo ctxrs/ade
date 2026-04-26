@@ -156,8 +156,12 @@ const resolveBundledRuntimeIds = (runtimeIds) => {
   return [...new Set(ids)].sort();
 };
 
-const shouldBundleLinuxCtxMcpRuntime = (platform = process.platform) =>
-  platform === "darwin" || platform === "linux";
+const shouldBundleLinuxCtxMcpRuntime = (platform = process.platform, env = process.env) => {
+  if (String(env.CTX_BUNDLE_LINUX_CTX_MCP_RUNTIME || "").trim() === "0") {
+    return false;
+  }
+  return platform === "darwin" || platform === "linux";
+};
 
 const readCargoPackageVersion = (cargoTomlPath) => {
   if (!fs.existsSync(cargoTomlPath)) {
@@ -1099,6 +1103,41 @@ const ensureCargoBinOnPath = (env) => {
   return resolvedEnv;
 };
 
+const resolveLinuxAppendBundleRequests = ({
+  requiredProviderIds,
+  bundledRuntimeIds,
+  requiredImageIds,
+  requiredProviderTargets,
+  requiredRuntimeTargets,
+  requiredImageTargets,
+  bundleHarnessImages,
+}) => {
+  const linuxProviderTargets = requiredProviderTargets.filter((target) => target.os === "linux");
+  const linuxRuntimeTargets = requiredRuntimeTargets.filter((target) => target.os === "linux");
+  const linuxImageTargets = requiredImageTargets.filter((target) => target.os === "linux");
+  const linuxArchSet = new Set([
+    ...(requiredProviderIds.length > 0 ? linuxProviderTargets.map((target) => target.arch) : []),
+    ...(bundledRuntimeIds.length > 0 ? linuxRuntimeTargets.map((target) => target.arch) : []),
+    ...(requiredImageIds.length > 0 ? linuxImageTargets.map((target) => target.arch) : []),
+  ]);
+  const linuxProviders = requiredProviderIds.length > 0 ? requiredProviderIds.join(",") : "__none__";
+  const includeBridge = requiredProviderIds.length > 0 ? "1" : "0";
+
+  return [...linuxArchSet].sort().map((arch) => {
+    const needsLinuxRuntime = bundledRuntimeIds.length > 0
+      && linuxRuntimeTargets.some((entry) => entry.arch === arch);
+    const needsLinuxImage = requiredImageIds.length > 0
+      && linuxImageTargets.some((entry) => entry.arch === arch);
+    return {
+      arch,
+      linuxProviders,
+      includeBridge,
+      needsLinuxRuntime,
+      shouldBundleLinuxImage: bundleHarnessImages && needsLinuxImage,
+    };
+  });
+};
+
 const syncBundles = () => {
   if (!fs.existsSync(bundleScript)) {
     throw new Error(`missing bundle script: ${bundleScript}`);
@@ -1147,35 +1186,29 @@ const syncBundles = () => {
   // Container mode runs Linux containers even on macOS/Windows. Bundle Linux provider
   // binaries too so "disk-isolated container" can work offline/out-of-box.
   if (process.platform === "darwin") {
-    const linuxProviderTargets = requiredProviderTargets.filter((target) => target.os === "linux");
-    const linuxRuntimeTargets = requiredRuntimeTargets.filter((target) => target.os === "linux");
-    const linuxImageTargets = requiredImageTargets.filter((target) => target.os === "linux");
-    const linuxArchSet = new Set([
-      ...(requiredProviderIds.length > 0 ? linuxProviderTargets.map((target) => target.arch) : []),
-      ...(bundledRuntimeIds.length > 0 ? linuxRuntimeTargets.map((target) => target.arch) : []),
-      ...(requiredImageIds.length > 0 ? linuxImageTargets.map((target) => target.arch) : []),
-    ]);
-    const linuxArchTargets = [...linuxArchSet].map((arch) => ({ arch }));
-    const linuxProviders = requiredProviderIds.length > 0 ? requiredProviderIds.join(",") : "__none__";
+    const linuxAppendRequests = resolveLinuxAppendBundleRequests({
+      requiredProviderIds,
+      bundledRuntimeIds,
+      requiredImageIds,
+      requiredProviderTargets,
+      requiredRuntimeTargets,
+      requiredImageTargets,
+      bundleHarnessImages,
+    });
 
-    for (const target of linuxArchTargets) {
-      const needsLinuxRuntime = bundledRuntimeIds.length > 0
-        && linuxRuntimeTargets.some((entry) => entry.arch === target.arch);
-      const needsLinuxImage = requiredImageIds.length > 0
-        && linuxImageTargets.some((entry) => entry.arch === target.arch);
-      const shouldBundleLinuxImage = bundleHarnessImages && needsLinuxImage;
+    for (const request of linuxAppendRequests) {
       const linuxEnv = {
         ...env,
         CTX_BUNDLE_APPEND: "1",
         CTX_BUNDLE_OS: "linux",
-        CTX_BUNDLE_ARCH: target.arch,
-        CTX_BUNDLE_ONLY_PROVIDERS: linuxProviders,
-        CTX_BUNDLE_SKIP_RUNTIMES: needsLinuxRuntime ? "0" : "1",
-        CTX_BUNDLE_SKIP_IMAGES: shouldBundleLinuxImage ? "0" : "1",
-        CTX_BUNDLE_INCLUDE_BRIDGE: "1",
+        CTX_BUNDLE_ARCH: request.arch,
+        CTX_BUNDLE_ONLY_PROVIDERS: request.linuxProviders,
+        CTX_BUNDLE_SKIP_RUNTIMES: request.needsLinuxRuntime ? "0" : "1",
+        CTX_BUNDLE_SKIP_IMAGES: request.shouldBundleLinuxImage ? "0" : "1",
+        CTX_BUNDLE_INCLUDE_BRIDGE: request.includeBridge,
         CTX_BUNDLE_LOCAL_ADAPTERS: "off",
         CTX_BUNDLE_BUILD_LOCAL_ADAPTERS: "0",
-        CTX_BUNDLE_HARNESS_IMAGE: shouldBundleLinuxImage ? "1" : "0",
+        CTX_BUNDLE_HARNESS_IMAGE: request.shouldBundleLinuxImage ? "1" : "0",
       };
       const linuxRes = childProcess.spawnSync(bundleScript, {
         env: linuxEnv,
@@ -1183,7 +1216,7 @@ const syncBundles = () => {
       });
       if (linuxRes.status !== 0) {
         throw new Error(
-          `bundle script failed for linux/${target.arch} (${linuxRes.status ?? "unknown"})`
+          `bundle script failed for linux/${request.arch} (${linuxRes.status ?? "unknown"})`
         );
       }
     }
@@ -1497,6 +1530,7 @@ if (require.main === module) {
       resolvePrimaryBundleTargetEnv,
       resolveBundleCacheRoot,
       resolveArtifactIdentityMode,
+      resolveLinuxAppendBundleRequests,
       shouldBundleLinuxCtxMcpRuntime,
       writeBundledProviderManifest,
       writePlaceholderBundleManifest,

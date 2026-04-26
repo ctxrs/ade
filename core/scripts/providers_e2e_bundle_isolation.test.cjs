@@ -78,6 +78,10 @@ test("linux-arm lanes source repo-owned local adapters from the workspace before
     script,
     /enforcing bundled-only runtime resolution for: \$\{CTX_E2E_BUNDLED_ONLY_PROVIDERS\}/,
   );
+  assert.doesNotMatch(
+    script,
+    /csv_remove_provider "\$\{bundled_only_provider_csv\}" "codex"/,
+  );
 });
 
 test("linux-arm lanes keep sandbox runtime bundling out of the default host-mode path", () => {
@@ -110,6 +114,26 @@ test("endpoint bundle defaults use the machine-local volatile root", () => {
   assert.match(
     script,
     /bundle_dir="\$\{CTX_E2E_BUNDLE_DIR:-\$\{cache_root\}\/bundles-\$\{cache_key\}\}"/,
+  );
+  assert.match(
+    script,
+    /export CTX_E2E_BUNDLE_DIR="\$\{bundle_dir\}"/,
+  );
+  assert.match(
+    script,
+    /rm -f "\$\{bundle_dir\}\/artifact_identity\.json"/,
+  );
+  assert.match(
+    script,
+    /rm -f "\$\{bundle_dir\}\/runtime_manifest\.effective\.json"/,
+  );
+  assert.match(
+    script,
+    /resolveDesktopBuildIdentity/,
+  );
+  assert.match(
+    script,
+    /path\.join\(bundleDir, "artifact_identity\.json"\)/,
   );
   assert.match(
     script,
@@ -179,7 +203,43 @@ test("endpoint-ui lane defaults to host-mode bundles and scopes focused reruns",
   );
   assert.match(
     script,
-    /local first_pass_providers="\$\{CTX_E2E_ENDPOINT_BUNDLE_PROVIDERS:-acp-crp-bridge,codex,cline,copilot,gemini,goose,openhands,qwen,pi,opencode,mistral,droid,kimi\}"/,
+    /local endpoint_bundle_providers_override="\$\{CTX_E2E_ENDPOINT_BUNDLE_PROVIDERS:-\$\{CTX_BUNDLE_ONLY_PROVIDERS:-\}\}"/,
+  );
+  assert.match(
+    script,
+    /local first_pass_providers="\$\{endpoint_bundle_providers_override:-acp-crp-bridge,codex-crp,cline,copilot,gemini,goose,openhands,qwen,pi,opencode,mistral,droid,kimi\}"/,
+  );
+  assert.match(
+    script,
+    /local bundle_build_codex_crp="\$\{CTX_BUNDLE_BUILD_CODEX_CRP:-\}"/,
+  );
+  assert.match(
+    script,
+    /if csv_contains_provider "\$\{first_pass_providers\}" "codex-crp"; then/,
+  );
+  assert.match(
+    script,
+    /bundle_build_codex_crp="1"/,
+  );
+  assert.match(
+    script,
+    /CTX_BUNDLE_BUILD_CODEX_CRP="\$\{bundle_build_codex_crp\}"/,
+  );
+  assert.match(
+    script,
+    /using CTX_E2E_BUNDLE_DIR=\$\{CTX_E2E_BUNDLE_DIR\}/,
+  );
+  assert.match(
+    script,
+    /if \[\[ -f "\$\{bundle_dir\}\/manifest\.json" \]\]; then/,
+  );
+  assert.match(
+    script,
+    /bundled_only_provider_csv="\$\(\s*node -e '/,
+  );
+  assert.match(
+    script,
+    /process\.stdout\.write\(ids\.join\(","\)\);/,
   );
   assert.match(
     script,

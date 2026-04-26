@@ -5,6 +5,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const { readDesktopVersion } = require("./desktop_version.cjs");
+const { resolveDesktopBuildIdentity } = require("./lib/desktop_build_identity.cjs");
 const {
   ensureWebDistArtifact,
   resolveDirectRunBazelVersion,
@@ -303,6 +304,22 @@ function buildDesktopSyncEnv({
   };
 }
 
+function buildDesktopSidecarIdentityEnv({ env = process.env, profile = DEFAULT_PROFILE } = {}) {
+  const { coreRoot } = repoRoots();
+  const identity = resolveDesktopBuildIdentity({
+    coreRoot,
+    env,
+    mode: profile === "debug" ? "packaged" : "",
+  });
+  return {
+    ...env,
+    CTX_RELEASE_EFFECTIVE_VERSION: identity.exactVersion,
+    CTX_BUILD_ID: identity.buildId,
+    CTX_COMPATIBILITY_TOKEN: identity.compatibilityToken,
+    CTX_DEV_INSTANCE_ID: identity.compatibilityToken,
+  };
+}
+
 function resolveDesktopWebDist({ env = process.env, profile } = {}) {
   const configured = String(env.CTX_DESKTOP_WEB_DIST || "").trim();
   if (configured) {
@@ -357,10 +374,14 @@ function syncDesktopResources({
 }
 
 function prepareDesktopSidecars({ env = process.env, profile = DEFAULT_PROFILE } = {}) {
+  const sidecarEnv = buildDesktopSidecarIdentityEnv({ env, profile });
   const targetKey = String(env.CTX_HTTP_BAZEL_TARGET_KEY || "").trim();
-  const { ctxBinPath, ctxMcpBinPath, avfLinuxHelperBinPath } = resolveDesktopSidecarPaths({ env, targetKey });
+  const { ctxBinPath, ctxMcpBinPath, avfLinuxHelperBinPath } = resolveDesktopSidecarPaths({
+    env: sidecarEnv,
+    targetKey,
+  });
   syncDesktopResources({
-    env,
+    env: sidecarEnv,
     profile,
     ctxBinPath,
     ctxMcpBinPath,
@@ -419,6 +440,7 @@ module.exports = {
   TARGET_SPECS,
   buildBazelPlatformArgs,
   buildBazelCommandContext,
+  buildDesktopSidecarIdentityEnv,
   buildDesktopSyncEnv,
   buildTargetsViaBazel,
   parseBazelOutputPaths,

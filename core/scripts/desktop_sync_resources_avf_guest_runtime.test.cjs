@@ -219,3 +219,60 @@ test("bundle reset preserves tracked lock files and recreates a placeholder mani
     fs.rmSync(tmpRoot, { recursive: true, force: true });
   }
 });
+
+test("linux append requests do not force ACP bridge when no providers are required", () => {
+  const requests = __desktopSyncResourcesTestHooks.resolveLinuxAppendBundleRequests({
+    requiredProviderIds: [],
+    bundledRuntimeIds: ["node"],
+    requiredImageIds: ["ctx-harness"],
+    requiredProviderTargets: [],
+    requiredRuntimeTargets: [
+      { os: "linux", arch: "aarch64" },
+      { os: "linux", arch: "x86_64" },
+    ],
+    requiredImageTargets: [
+      { os: "linux", arch: "aarch64" },
+      { os: "linux", arch: "x86_64" },
+    ],
+    bundleHarnessImages: true,
+  });
+
+  assert.deepEqual(requests, [
+    {
+      arch: "aarch64",
+      linuxProviders: "__none__",
+      includeBridge: "0",
+      needsLinuxRuntime: true,
+      shouldBundleLinuxImage: true,
+    },
+    {
+      arch: "x86_64",
+      linuxProviders: "__none__",
+      includeBridge: "0",
+      needsLinuxRuntime: true,
+      shouldBundleLinuxImage: true,
+    },
+  ]);
+});
+
+test("linux append requests keep ACP bridge enabled when providers are required", () => {
+  const requests = __desktopSyncResourcesTestHooks.resolveLinuxAppendBundleRequests({
+    requiredProviderIds: ["amp"],
+    bundledRuntimeIds: [],
+    requiredImageIds: [],
+    requiredProviderTargets: [{ os: "linux", arch: "aarch64" }],
+    requiredRuntimeTargets: [],
+    requiredImageTargets: [],
+    bundleHarnessImages: false,
+  });
+
+  assert.deepEqual(requests, [
+    {
+      arch: "aarch64",
+      linuxProviders: "amp",
+      includeBridge: "1",
+      needsLinuxRuntime: false,
+      shouldBundleLinuxImage: false,
+    },
+  ]);
+});

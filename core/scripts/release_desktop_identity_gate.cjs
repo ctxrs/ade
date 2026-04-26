@@ -10,6 +10,7 @@ const childProcess = require("node:child_process");
 const ARTIFACT_IDENTITY_FILENAME = "artifact_identity.json";
 const HEALTH_TIMEOUT_MS = parsePositiveIntegerEnv("CTX_DESKTOP_IDENTITY_GATE_HEALTH_TIMEOUT_MS", 45_000);
 const HEALTH_RETRY_MS = 250;
+const AUTH_FILENAME = "daemon_auth.json";
 const BUNDLED_COMMAND_TIMEOUT_MS = parsePositiveIntegerEnv(
   "CTX_DESKTOP_IDENTITY_GATE_COMMAND_TIMEOUT_MS",
   10_000,
@@ -240,9 +241,39 @@ function pickUnusedPort() {
   });
 }
 
-function requestJson(url) {
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function readDaemonAuthToken(dataDir, child, logPath) {
+  const pathName = path.join(dataDir, AUTH_FILENAME);
+  const deadline = Date.now() + HEALTH_TIMEOUT_MS;
+  let lastError = null;
+  while (Date.now() < deadline) {
+    try {
+      const auth = JSON.parse(fs.readFileSync(pathName, "utf8"));
+      const token = String(auth?.token || "").trim();
+      if (!token) {
+        throw new Error(`${AUTH_FILENAME} contains empty token`);
+      }
+      return token;
+    } catch (error) {
+      lastError = error;
+      const exit = child.exitCode;
+      if (exit !== null) {
+        const logs = fs.existsSync(logPath) ? fs.readFileSync(logPath, "utf8") : "";
+        throw new Error(`daemon exited (${exit}) before health check succeeded: ${logs || error.message}`);
+      }
+      await delay(HEALTH_RETRY_MS);
+    }
+  }
+  throw new Error(`daemon auth token did not become readable: ${lastError ? lastError.message : "unknown"}`);
+}
+
+function requestJson(url, authToken = "") {
   return new Promise((resolve, reject) => {
-    const req = http.get(url, (res) => {
+    const headers = authToken ? { Authorization: `Bearer ${authToken}` } : {};
+    const req = http.get(url, { headers }, (res) => {
       let raw = "";
       res.setEncoding("utf8");
       res.on("data", (chunk) => {
@@ -264,12 +295,12 @@ function requestJson(url) {
   });
 }
 
-async function waitForHealth(url, child, logPath) {
+async function waitForHealth(url, child, logPath, authToken) {
   const deadline = Date.now() + HEALTH_TIMEOUT_MS;
   let lastError = null;
   while (Date.now() < deadline) {
     try {
-      return await requestJson(url);
+      return await requestJson(url, authToken);
     } catch (error) {
       lastError = error;
       const exit = child.exitCode;
@@ -338,11 +369,12 @@ async function main() {
 
   let health;
   try {
-    health = await waitForHealth(`http://${bindAddr}/api/health`, child, logPath);
+    const authToken = await readDaemonAuthToken(dataDir, child, logPath);
+    health = await waitForHealth(`http://${bindAddr}/api/health`, child, logPath, authToken);
   } finally {
     await terminateDaemon(child);
-    logStream.end();
-    fs.rmSync(tempRoot, { recursive: true, force: true });
+    await new Promise((resolve) => logStream.end(resolve));
+    fs.rmSync(tempRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
   }
 
   const compatibility = health?.compatibility || {};

@@ -23,6 +23,7 @@ test("build_avf_linux_guest_agent.sh defaults guest helpers to the ctx cache tar
   const pathReport = path.join(tmpRoot, "path.txt");
   const rustupReport = path.join(tmpRoot, "rustup-report.txt");
   const rustcReport = path.join(tmpRoot, "rustc-path.txt");
+  const cargoHomeReport = path.join(tmpRoot, "cargo-home.txt");
 
   writeExecutable(
     path.join(cargoBinDir, "cargo"),
@@ -76,6 +77,7 @@ test("build_avf_linux_guest_agent.sh defaults guest helpers to the ctx cache tar
       "printf '%s' \"${CARGO_ENCODED_RUSTFLAGS:-}\" > \"$FAKE_ENCODED_RUSTFLAGS_REPORT\"",
       "printf '%s' \"${PATH:-}\" > \"$FAKE_PATH_REPORT\"",
       "printf '%s' \"${RUSTC:-}\" > \"$FAKE_RUSTC_REPORT\"",
+      "printf '%s' \"${CARGO_HOME:-}\" > \"$FAKE_CARGO_HOME_REPORT\"",
       "[ \"${1:-}\" = \"zigbuild\" ] || { echo \"expected zigbuild\" >&2; exit 1; }",
       "shift 1",
       "package=\"\"",
@@ -129,6 +131,7 @@ test("build_avf_linux_guest_agent.sh defaults guest helpers to the ctx cache tar
       FAKE_PATH_REPORT: pathReport,
       FAKE_RUSTUP_REPORT: rustupReport,
       FAKE_RUSTC_REPORT: rustcReport,
+      FAKE_CARGO_HOME_REPORT: cargoHomeReport,
       FAKE_TOOLCHAIN_CARGO: path.join(toolchainBinDir, "cargo"),
       FAKE_TOOLCHAIN_RUSTC: path.join(toolchainBinDir, "rustc"),
     },
@@ -151,6 +154,7 @@ test("build_avf_linux_guest_agent.sh defaults guest helpers to the ctx cache tar
   assert.match(rustupCalls, /which --toolchain 1\.94\.1 cargo/);
   assert.match(rustupCalls, /which --toolchain 1\.94\.1 rustc/);
   assert.equal(fs.readFileSync(rustcReport, "utf8"), path.join(toolchainBinDir, "rustc"));
+  assert.equal(fs.readFileSync(cargoHomeReport, "utf8"), path.join(volatileRoot, "cache", "cargo-home"));
 
   fs.rmSync(tmpRoot, { recursive: true, force: true });
 });

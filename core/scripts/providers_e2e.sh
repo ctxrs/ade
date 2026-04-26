@@ -152,7 +152,8 @@ ensure_endpoint_ui_bundles() {
   # Keep fresh E2E bundle dirs under a home/cache root so containerized validation
   # can see them reliably on macOS hosts.
   local bundle_dir="${CTX_E2E_BUNDLE_DIR:-${cache_root}/bundles-${cache_key}}"
-  local first_pass_providers="${CTX_E2E_ENDPOINT_BUNDLE_PROVIDERS:-acp-crp-bridge,codex,cline,copilot,gemini,goose,openhands,qwen,pi,opencode,mistral,droid,kimi}"
+  local endpoint_bundle_providers_override="${CTX_E2E_ENDPOINT_BUNDLE_PROVIDERS:-${CTX_BUNDLE_ONLY_PROVIDERS:-}}"
+  local first_pass_providers="${endpoint_bundle_providers_override:-acp-crp-bridge,codex-crp,cline,copilot,gemini,goose,openhands,qwen,pi,opencode,mistral,droid,kimi}"
   local matrix_json="${CTX_BUNDLE_MATRIX_JSON:-${repo_root}/crates/ctx-provider-accounts/src/provider_matrix.json}"
   local canonical_runtime_lock="${repo_root}/apps/desktop/src-tauri/bundles/runtime_lock.v2.json"
   local bundle_build_dir="${CTX_E2E_BUNDLE_BUILD_DIR:-${volatile_artifacts_dir}/ctx-e2e-build/${cache_key}}"
@@ -167,6 +168,14 @@ ensure_endpoint_ui_bundles() {
   local append_local_adapters="${CTX_E2E_ENDPOINT_BUNDLE_APPEND_LOCAL_ADAPTERS:-auto}"
   local append_build_local_adapters="${CTX_E2E_ENDPOINT_BUNDLE_APPEND_BUILD_LOCAL_ADAPTERS:-0}"
   local bundle_append_linux_targets="${CTX_E2E_ENDPOINT_APPEND_LINUX_TARGETS:-1}"
+  local bundle_build_codex_crp="${CTX_BUNDLE_BUILD_CODEX_CRP:-}"
+  if [[ -z "${bundle_build_codex_crp}" ]]; then
+    if csv_contains_provider "${first_pass_providers}" "codex-crp"; then
+      bundle_build_codex_crp="1"
+    else
+      bundle_build_codex_crp="0"
+    fi
+  fi
   if [[ "${bundle_dir}" == "${canonical_bundle_dir}" && "${CTX_E2E_ALLOW_CANONICAL_BUNDLES:-0}" != "1" ]]; then
     echo "refusing to use canonical desktop bundles dir for e2e: ${bundle_dir}" >&2
     echo "set CTX_E2E_BUNDLE_DIR to an isolated path (or CTX_E2E_ALLOW_CANONICAL_BUNDLES=1 to override intentionally)" >&2
@@ -177,6 +186,21 @@ ensure_endpoint_ui_bundles() {
   mkdir -p "${bundle_dir}"
   rm -rf "${bundle_dir}/providers" "${bundle_dir}/runtimes" "${bundle_dir}/images"
   rm -f "${bundle_dir}/manifest.json"
+  rm -f "${bundle_dir}/runtime_manifest.effective.json"
+  rm -f "${bundle_dir}/artifact_identity.json"
+
+  node - "${repo_root}" "${bundle_dir}" <<'NODE'
+const fs = require("node:fs");
+const path = require("node:path");
+const [repoRoot, bundleDir] = process.argv.slice(2);
+const { resolveDesktopBuildIdentity } = require(path.join(repoRoot, "scripts", "lib", "desktop_build_identity.cjs"));
+const identity = resolveDesktopBuildIdentity({ coreRoot: repoRoot, env: process.env, mode: "e2e" });
+fs.writeFileSync(
+  path.join(bundleDir, "artifact_identity.json"),
+  `${JSON.stringify(identity, null, 2)}\n`,
+  "utf8",
+);
+NODE
 
   echo "preparing bundled provider runtimes for endpoint-ui suite (providers: ${first_pass_providers})"
   CTX_BUNDLE_DIR="${bundle_dir}" \
@@ -188,6 +212,7 @@ ensure_endpoint_ui_bundles() {
   CTX_BUNDLE_INCLUDE_BRIDGE="${bundle_include_bridge}" \
   CTX_BUNDLE_LOCAL_ADAPTERS="${bundle_local_adapters}" \
   CTX_BUNDLE_BUILD_LOCAL_ADAPTERS="${bundle_build_local_adapters}" \
+  CTX_BUNDLE_BUILD_CODEX_CRP="${bundle_build_codex_crp}" \
   CTX_BUNDLE_USE_ACP_SHIMS="1" \
   CARGO_TARGET_DIR="${cargo_target_dir}" \
   CARGO_HOME="${cargo_home_dir}" \
@@ -225,6 +250,7 @@ ensure_endpoint_ui_bundles() {
       CTX_BUNDLE_INCLUDE_BRIDGE="${bundle_include_bridge}" \
       CTX_BUNDLE_LOCAL_ADAPTERS="${append_local_adapters}" \
       CTX_BUNDLE_BUILD_LOCAL_ADAPTERS="${append_build_local_adapters}" \
+      CTX_BUNDLE_BUILD_CODEX_CRP="${bundle_build_codex_crp}" \
       CTX_BUNDLE_USE_ACP_SHIMS="1" \
       CARGO_TARGET_DIR="${cargo_target_dir}" \
       CARGO_HOME="${cargo_home_dir}" \
@@ -244,6 +270,7 @@ ensure_endpoint_ui_bundles() {
       CTX_BUNDLE_INCLUDE_BRIDGE="0" \
       CTX_BUNDLE_LOCAL_ADAPTERS="off" \
       CTX_BUNDLE_BUILD_LOCAL_ADAPTERS="0" \
+      CTX_BUNDLE_BUILD_CODEX_CRP="${bundle_build_codex_crp}" \
       CTX_BUNDLE_USE_ACP_SHIMS="1" \
       CARGO_TARGET_DIR="${cargo_target_dir}" \
       CARGO_HOME="${cargo_home_dir}" \
@@ -303,8 +330,28 @@ if (changed) {
   fi
 
   export CTX_BUNDLE_DIR="${bundle_dir}"
+  export CTX_E2E_BUNDLE_DIR="${bundle_dir}"
   export CTX_E2E_BUNDLED_ONLY="1"
-  local bundled_only_provider_csv="${CTX_E2E_BUNDLED_ONLY_PROVIDERS:-${first_pass_providers}}"
+  local bundled_only_provider_csv="${CTX_E2E_BUNDLED_ONLY_PROVIDERS:-}"
+  if [[ -f "${bundle_dir}/manifest.json" ]]; then
+    bundled_only_provider_csv="$(
+      node -e '
+const fs = require("node:fs");
+const manifest = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+const providers = Array.isArray(manifest.providers) ? manifest.providers : [];
+const ids = [];
+for (const entry of providers) {
+  const id = String(entry && entry.id ? entry.id : "").trim();
+  if (!id || ids.includes(id)) continue;
+  ids.push(id);
+}
+process.stdout.write(ids.join(","));
+' "${bundle_dir}/manifest.json"
+    )"
+  fi
+  if [[ -z "${bundled_only_provider_csv}" ]]; then
+    bundled_only_provider_csv="${first_pass_providers}"
+  fi
   if [[ "${CTX_BUNDLE_BUILD_CODEX_CRP:-0}" == "0" ]]; then
     bundled_only_provider_csv="$(csv_remove_provider "${bundled_only_provider_csv}" "codex-crp")"
   fi
@@ -315,6 +362,7 @@ if (changed) {
   export CTX_BUNDLE_BUILD_DIR="${bundle_build_dir}"
   export CTX_BUNDLE_MATRIX_JSON="${matrix_json}"
   echo "using CTX_BUNDLE_DIR=${CTX_BUNDLE_DIR}"
+  echo "using CTX_E2E_BUNDLE_DIR=${CTX_E2E_BUNDLE_DIR}"
   echo "using CTX_BUNDLE_BUILD_DIR=${CTX_BUNDLE_BUILD_DIR}"
   echo "using CTX_BUNDLE_MATRIX_JSON=${CTX_BUNDLE_MATRIX_JSON}"
   echo "using CTX_E2E_CARGO_TARGET_DIR=${CTX_E2E_CARGO_TARGET_DIR}"
@@ -445,7 +493,6 @@ run_linux_arm_runtime_install_lane() {
   export CTX_E2E_ENDPOINT_BUNDLE_BUILD_LOCAL_ADAPTERS="${CTX_E2E_ENDPOINT_BUNDLE_BUILD_LOCAL_ADAPTERS:-1}"
   export CTX_E2E_ENDPOINT_BUNDLE_APPEND_LOCAL_ADAPTERS="${CTX_E2E_ENDPOINT_BUNDLE_APPEND_LOCAL_ADAPTERS:-off}"
   export CTX_E2E_ENDPOINT_BUNDLE_APPEND_BUILD_LOCAL_ADAPTERS="${CTX_E2E_ENDPOINT_BUNDLE_APPEND_BUILD_LOCAL_ADAPTERS:-0}"
-  export CTX_BUNDLE_BUILD_CODEX_CRP="${CTX_BUNDLE_BUILD_CODEX_CRP:-0}"
   ensure_endpoint_ui_bundles
 
   # Legacy selector name retained for the provider browser suite runner.

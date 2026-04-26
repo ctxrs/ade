@@ -19,6 +19,10 @@ test("prepare_avf_linux_guest_runtime.sh prefers the volatile tmp root for scrat
   assert.match(scriptText, /mktemp -d "\$\(preferred_tmp_root\)\/ctx-avf-linux-guest-runtime\.XXXXXX"/);
 });
 
+test("prepare_avf_linux_guest_runtime.sh resumes partial downloads on retry", () => {
+  assert.match(scriptText, /curl -fL --retry 3 --retry-delay 1 --retry-all-errors --continue-at - -o "\$dest" "\$url"/);
+});
+
 test("prepare_avf_linux_guest_runtime.sh resolves official Ubuntu inputs in dry-run mode", () => {
   const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-avf-runtime-"));
   const runtimeDir = path.join(tmpRoot, "runtime");

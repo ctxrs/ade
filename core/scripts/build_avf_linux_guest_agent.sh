@@ -52,7 +52,11 @@ if ! command -v cargo-zigbuild >/dev/null 2>&1; then
   exit 1
 fi
 
-eval "$(node "${repo_root}/scripts/print_ctx_cache_env.cjs" --mode workspace --cwd "${repo_root}" --format shell --mkdir)"
+ctx_use_volatile_cargo_home="${CTX_USE_VOLATILE_CARGO_HOME:-1}"
+eval "$(
+  CTX_USE_VOLATILE_CARGO_HOME="${ctx_use_volatile_cargo_home}" \
+    node "${repo_root}/scripts/print_ctx_cache_env.cjs" --mode workspace --cwd "${repo_root}" --format shell --mkdir
+)"
 
 if [[ -z "${target_root}" ]]; then
   target_root="${CARGO_TARGET_DIR:?missing CARGO_TARGET_DIR from ctx cache env}"

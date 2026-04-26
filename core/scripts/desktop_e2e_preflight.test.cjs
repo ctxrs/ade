@@ -119,6 +119,24 @@ test("preflight resolves codex oauth credentials from selected nightly matrix ce
   assert.match(result.stderr, /preflight failed/i);
 });
 
+test("preflight accepts the selected codex auth-import sandbox cell with only its required secret", () => {
+  const result = run([
+    "--suite",
+    "provider-auth-matrix-nightly",
+    "--platform",
+    "darwin",
+    "--cell",
+    "codex.auth_import.local.sandbox",
+  ], {
+    CN_API_KEY: "cn_secret_value_12345",
+    CTX_E2E_AUTH_IMPORT_CODEX_AUTH_JSON_B64: Buffer.from('{"provider":"codex"}', "utf8").toString("base64"),
+  });
+
+  assert.equal(result.status, 0, `stdout=${result.stdout}\nstderr=${result.stderr}`);
+  assert.match(result.stdout, /CTX_E2E_AUTH_IMPORT_CODEX_AUTH_JSON_B64: present via env/i);
+  assert.match(result.stdout, /preflight passed/i);
+});
+
 test("preflight trims newline-terminated deferred PATH-backed payloads before validation", () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-desktop-e2e-deferred-path-"));
   const oauthCredsPath = path.join(tempDir, "gemini-oauth.json");

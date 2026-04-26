@@ -12,6 +12,7 @@ const {
   TARGET_SPECS,
   buildBazelPlatformArgs,
   buildBazelCommandContext,
+  buildDesktopSidecarIdentityEnv,
   buildTargetsViaBazel,
   buildDesktopSyncEnv,
   parseBazelOutputPaths,
@@ -75,6 +76,24 @@ test("ctx_http_bazel sync env always injects Bazel-built sidecar paths", () => {
     ctxMcpBin: "//core/crates/ctx-mcp:ctx-mcp",
     avfLinuxHelperBin: "//core/apps/desktop/src-tauri/src:ctx-avf-linux-helper",
   });
+});
+
+test("ctx_http_bazel stamps release identity into sidecar build env", () => {
+  const env = buildDesktopSidecarIdentityEnv({
+    env: {
+      RELEASE_CHANNEL: "canary",
+      RELEASE_SOURCE_COMMIT: "a14656fea33485e21cbdc15a4b8254d020404fd3",
+      RELEASE_VERSION: "0.62.0",
+    },
+    profile: "release",
+  });
+  assert.equal(env.CTX_RELEASE_EFFECTIVE_VERSION, "0.62.0");
+  assert.equal(env.CTX_BUILD_ID, "a14656fea334");
+  assert.equal(
+    env.CTX_COMPATIBILITY_TOKEN,
+    "artifact-a14656fea33485e21cbdc15a4b8254d020404fd3",
+  );
+  assert.equal(env.CTX_DEV_INSTANCE_ID, env.CTX_COMPATIBILITY_TOKEN);
 });
 
 test("ctx_http_bazel maps explicit target keys to Bazel platform labels", () => {

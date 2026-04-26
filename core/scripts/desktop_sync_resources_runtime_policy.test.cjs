@@ -28,6 +28,21 @@ test("linux ctx-mcp runtime bundling stays enabled on desktop platforms with Lin
   assert.equal(__desktopSyncResourcesTestHooks.shouldBundleLinuxCtxMcpRuntime("win32"), false);
 });
 
+test("linux ctx-mcp runtime bundling can be disabled for host-only local prep", () => {
+  assert.equal(
+    __desktopSyncResourcesTestHooks.shouldBundleLinuxCtxMcpRuntime("darwin", {
+      CTX_BUNDLE_LINUX_CTX_MCP_RUNTIME: "0",
+    }),
+    false,
+  );
+  assert.equal(
+    __desktopSyncResourcesTestHooks.shouldBundleLinuxCtxMcpRuntime("linux", {
+      CTX_BUNDLE_LINUX_CTX_MCP_RUNTIME: "0",
+    }),
+    false,
+  );
+});
+
 test("desktop sync resources treats debug packaging as packaged artifact identity", () => {
   assert.equal(
     __desktopSyncResourcesTestHooks.resolveArtifactIdentityMode({}),

@@ -165,7 +165,7 @@ build_guest_helpers() {
 download_file() {
   local url="$1"
   local dest="$2"
-  curl -fL --retry 3 --retry-delay 1 -o "$dest" "$url"
+  curl -fL --retry 3 --retry-delay 1 --retry-all-errors --continue-at - -o "$dest" "$url"
 }
 
 sha256_file() {
