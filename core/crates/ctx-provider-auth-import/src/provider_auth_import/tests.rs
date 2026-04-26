@@ -345,6 +345,74 @@ async fn codex_import_dedupes_secret_backed_accounts() {
     assert_eq!(profiles[0].provider_id, "codex");
 }
 
+#[tokio::test]
+async fn codex_import_fails_closed_on_malformed_existing_account_auth() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let account_id = "acct-1";
+    provider_accounts::save_codex_registry(
+        root,
+        &provider_accounts::CodexAccountRegistry {
+            active_account_id: Some(account_id.to_string()),
+            accounts: vec![provider_accounts::CodexAccountEntry {
+                id: account_id.to_string(),
+                label: "Existing".to_string(),
+                kind: provider_accounts::CODEX_CREDENTIAL_KIND_API_KEY.to_string(),
+                email: None,
+                plan_type: None,
+                created_at: Utc::now(),
+                last_used_at: Some(Utc::now()),
+                secret_ref: None,
+                endpoint_profile: provider_accounts::CodexEndpointProfile::default(),
+            }],
+        },
+    )
+    .await
+    .unwrap();
+    let account_dir = provider_accounts::codex_account_dir(root, account_id);
+    tokio::fs::create_dir_all(&account_dir).await.unwrap();
+    tokio::fs::write(account_dir.join("auth.json"), "{ invalid json")
+        .await
+        .unwrap();
+
+    let auth_bytes = br#"{"OPENAI_API_KEY":"sk-test"}"#;
+    let material = CandidateMaterial {
+        candidate: ProviderAuthImportCandidate {
+            id: "codex-candidate".to_string(),
+            provider_id: "codex".to_string(),
+            provider_label: "Codex".to_string(),
+            kind: "json_file".to_string(),
+            path: "/tmp/.codex/auth.json".to_string(),
+            signal_strength: "strong".to_string(),
+            confidence: "high".to_string(),
+            parse_status: "parsed".to_string(),
+            unsupported_reason: None,
+            summary: None,
+            account_identity: None,
+            endpoint: None,
+            auth_type: Some("subscription".to_string()),
+            fingerprint: Some(sha256_hex(auth_bytes)),
+            last_modified: None,
+        },
+        importable: true,
+        secret_bytes: Some(auth_bytes.to_vec()),
+        label: Some("Imported Codex profile".to_string()),
+    };
+
+    let err = import_codex_candidate(root, &material)
+        .await
+        .expect_err("malformed existing codex auth should fail closed");
+    let message = format!("{err:#}");
+    assert!(
+        message.contains("invalid codex auth JSON"),
+        "expected parse context in error: {message}"
+    );
+    assert!(
+        message.contains("acct-1/auth.json"),
+        "expected existing auth path in error: {message}"
+    );
+}
+
 #[test]
 fn scan_detects_codex_auth_file() {
     let dir = tempfile::tempdir().unwrap();

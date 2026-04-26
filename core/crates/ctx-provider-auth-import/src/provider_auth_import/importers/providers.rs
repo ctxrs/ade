@@ -22,33 +22,42 @@ pub(crate) async fn import_codex_candidate(
     let mut registry = provider_accounts::load_codex_registry(data_root).await?;
 
     for account in &registry.accounts {
-        let _ =
-            provider_accounts::hydrate_codex_account_home_from_secret(data_root, &account.id).await;
+        provider_accounts::hydrate_codex_account_home_from_secret(data_root, &account.id).await?;
         let auth_path =
             provider_accounts::codex_account_dir(data_root, &account.id).join("auth.json");
-        if let Ok(existing) = tokio::fs::read(&auth_path).await {
-            let matches_auth = if let Some(imported_auth) = imported_auth.as_ref() {
-                serde_json::from_slice::<serde_json::Value>(&existing)
-                    .ok()
-                    .is_some_and(|existing_auth| existing_auth == *imported_auth)
-            } else {
-                catalog::sha256_hex(&existing) == imported_fingerprint
-            };
-            if matches_auth {
-                legacy::upsert_imported_profile_metadata(
-                    data_root,
-                    material,
-                    &account.id,
-                    None,
-                    Some(account.kind.clone()),
-                )
-                .await?;
-                return Ok(ProviderAuthImportResult {
-                    candidate_id: material.candidate.id.clone(),
-                    provider_id: "codex".to_string(),
-                    status: "already_imported".to_string(),
-                    profile_id: Some(account.id.clone()),
-                    message: Some("Matching Codex auth is already imported.".to_string()),
+        match tokio::fs::read(&auth_path).await {
+            Ok(existing) => {
+                let matches_auth = if let Some(imported_auth) = imported_auth.as_ref() {
+                    let existing_auth = serde_json::from_slice::<serde_json::Value>(&existing)
+                        .with_context(|| {
+                            format!("invalid codex auth JSON at {}", auth_path.display())
+                        })?;
+                    existing_auth == *imported_auth
+                } else {
+                    catalog::sha256_hex(&existing) == imported_fingerprint
+                };
+                if matches_auth {
+                    legacy::upsert_imported_profile_metadata(
+                        data_root,
+                        material,
+                        &account.id,
+                        None,
+                        Some(account.kind.clone()),
+                    )
+                    .await?;
+                    return Ok(ProviderAuthImportResult {
+                        candidate_id: material.candidate.id.clone(),
+                        provider_id: "codex".to_string(),
+                        status: "already_imported".to_string(),
+                        profile_id: Some(account.id.clone()),
+                        message: Some("Matching Codex auth is already imported.".to_string()),
+                    });
+                }
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(err) => {
+                return Err(err).with_context(|| {
+                    format!("reading existing codex auth at {}", auth_path.display())
                 });
             }
         }
