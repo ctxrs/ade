@@ -75,6 +75,58 @@ fn build_crp_session_config_can_disable_model_override() {
 }
 
 #[test]
+fn build_crp_session_config_sets_model_provider_from_env() {
+    let mut env = HashMap::new();
+    env.insert("CTX_MODEL_PROVIDER".to_string(), " openrouter ".to_string());
+    let workdir = PathBuf::from("/tmp/workdir");
+
+    let cfg = build_crp_session_config(&env, &workdir).expect("build session config");
+    assert_eq!(cfg.model_provider.as_deref(), Some("openrouter"));
+}
+
+#[test]
+fn build_crp_model_probe_config_sets_model_provider_from_env() {
+    let mut env = HashMap::new();
+    env.insert("CTX_MODEL_PROVIDER".to_string(), "openrouter".to_string());
+    let workdir = PathBuf::from("/tmp/workdir");
+
+    let cfg = build_crp_model_probe_config(&env, &workdir).expect("build model probe config");
+    assert_eq!(cfg.model_provider.as_deref(), Some("openrouter"));
+}
+
+#[test]
+fn build_crp_session_config_sets_openai_base_url_from_env() {
+    let mut env = HashMap::new();
+    env.insert(
+        "OPENAI_BASE_URL".to_string(),
+        " https://openrouter.ai/api/v1 ".to_string(),
+    );
+    let workdir = PathBuf::from("/tmp/workdir");
+
+    let cfg = build_crp_session_config(&env, &workdir).expect("build session config");
+    assert_eq!(
+        cfg.openai_base_url.as_deref(),
+        Some("https://openrouter.ai/api/v1")
+    );
+}
+
+#[test]
+fn build_crp_model_probe_config_sets_openai_base_url_from_env() {
+    let mut env = HashMap::new();
+    env.insert(
+        "OPENAI_BASE_URL".to_string(),
+        "https://openrouter.ai/api/v1".to_string(),
+    );
+    let workdir = PathBuf::from("/tmp/workdir");
+
+    let cfg = build_crp_model_probe_config(&env, &workdir).expect("build model probe config");
+    assert_eq!(
+        cfg.openai_base_url.as_deref(),
+        Some("https://openrouter.ai/api/v1")
+    );
+}
+
+#[test]
 fn build_crp_session_config_uses_default_ctx_mcp_for_container_when_override_is_host_only() {
     let mut env = HashMap::new();
     env.insert(
@@ -121,6 +173,61 @@ fn build_crp_session_config_preserves_existing_absolute_ctx_mcp_for_container() 
 }
 
 #[test]
+fn build_crp_session_config_preserves_shared_vm_ctx_mcp_command_for_container() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let data_root = tempdir.path().join("data-root");
+    let worktree = tempdir.path().join("repo");
+    fs::create_dir_all(&worktree).expect("mkdir worktree");
+    let mcp_path = data_root.join("bundles/runtimes/ctx-mcp/macos/aarch64/ctx-mcp");
+    fs::create_dir_all(mcp_path.parent().expect("parent")).expect("mkdir mcp parent");
+    fs::write(&mcp_path, b"#!/bin/sh\n").expect("write mcp");
+
+    let mut env = HashMap::new();
+    env.insert(
+        "CTX_HARNESS_RUNTIME_KIND".to_string(),
+        "shared_vm_container".to_string(),
+    );
+    env.insert(
+        "CTX_AVF_LINUX_HELPER_PATH".to_string(),
+        "/tmp/ctx-avf-linux-helper".to_string(),
+    );
+    env.insert(
+        "CTX_AVF_HOST_DATA_ROOT".to_string(),
+        data_root.to_string_lossy().to_string(),
+    );
+    env.insert("CTX_AVF_REAL_GUEST_EXEC".to_string(), "1".to_string());
+    env.insert(
+        "CTX_AVF_WORKSPACE_ID".to_string(),
+        "workspace-1".to_string(),
+    );
+    env.insert("CTX_AVF_WORKTREE_ID".to_string(), "worktree-1".to_string());
+    env.insert(
+        "CTX_AVF_HOST_WORKTREE_ROOT".to_string(),
+        worktree.to_string_lossy().to_string(),
+    );
+    env.insert(
+        "CTX_AVF_GUEST_WORKTREE_ROOT".to_string(),
+        "/ctx/ws/worktrees/worktree-1".to_string(),
+    );
+    env.insert(
+        "CTX_HARNESS_GUEST_WORKSPACE_ROOT".to_string(),
+        "/ctx/ws".to_string(),
+    );
+    env.insert(
+        "CTX_MCP_COMMAND".to_string(),
+        mcp_path.to_string_lossy().to_string(),
+    );
+
+    let cfg = build_crp_session_config(&env, &worktree).expect("build session config");
+    let command = cfg
+        .mcp_servers
+        .as_ref()
+        .and_then(|servers| servers.get("ctx"))
+        .and_then(|server| server.command.as_deref());
+    assert_eq!(command, Some(mcp_path.to_string_lossy().as_ref()));
+}
+
+#[test]
 fn build_crp_model_probe_config_forces_full_yolo_policy() {
     let workdir = PathBuf::from("/tmp/workdir");
 
@@ -156,6 +263,65 @@ fn build_crp_session_config_maps_container_thread_cwd_to_guest_worktree() {
 
     let cfg = build_crp_session_config(&env, &workdir).expect("build session config");
     assert_eq!(cfg.cwd, Some(PathBuf::from("/ctx/ws/worktrees/wt-123/src")));
+    assert_eq!(
+        cfg.spawn_cwd,
+        Some(PathBuf::from("/ctx/ws/worktrees/wt-123/src"))
+    );
+}
+
+#[test]
+fn build_crp_model_probe_config_maps_container_spawn_cwd_to_guest_worktree() {
+    let mut env = HashMap::new();
+    env.insert(
+        "CTX_HARNESS_CONTAINER_ID".to_string(),
+        "ctx-harness-123".to_string(),
+    );
+    env.insert(
+        "CTX_HARNESS_HOST_WORKTREE_ROOT".to_string(),
+        "/Users/example-user/code/repo".to_string(),
+    );
+    env.insert(
+        "CTX_HARNESS_GUEST_WORKTREE_ROOT".to_string(),
+        "/ctx/ws/worktrees/wt-123".to_string(),
+    );
+    env.insert(
+        "CTX_HARNESS_GUEST_WORKSPACE_ROOT".to_string(),
+        "/ctx/ws".to_string(),
+    );
+    let workdir = PathBuf::from("/Users/example-user/code/repo/src");
+
+    let cfg = build_crp_model_probe_config(&env, &workdir).expect("build model probe config");
+    assert_eq!(cfg.cwd, Some(PathBuf::from("/ctx/ws/worktrees/wt-123/src")));
+    assert_eq!(
+        cfg.spawn_cwd,
+        Some(PathBuf::from("/ctx/ws/worktrees/wt-123/src"))
+    );
+}
+
+#[test]
+fn build_crp_auth_session_config_omits_mcp_servers_but_preserves_other_fields() {
+    let mut env = HashMap::new();
+    env.insert("CTX_MODEL_ID".to_string(), "openai/gpt-5.5".to_string());
+    env.insert("CTX_MODEL_PROVIDER".to_string(), "openrouter".to_string());
+    env.insert(
+        "OPENAI_BASE_URL".to_string(),
+        "https://openrouter.ai/api/v1".to_string(),
+    );
+    env.insert(
+        "CTX_MCP_COMMAND".to_string(),
+        "/does/not/matter".to_string(),
+    );
+    let workdir = PathBuf::from("/tmp/workdir");
+
+    let cfg = build_crp_auth_session_config(&env, &workdir).expect("build auth config");
+    assert!(cfg.mcp_servers.is_none());
+    assert_eq!(cfg.model.as_deref(), Some("openai/gpt-5.5"));
+    assert_eq!(cfg.model_provider.as_deref(), Some("openrouter"));
+    assert_eq!(
+        cfg.openai_base_url.as_deref(),
+        Some("https://openrouter.ai/api/v1")
+    );
+    assert_eq!(cfg.cwd, Some(workdir.clone()));
     assert_eq!(cfg.spawn_cwd, Some(workdir));
 }
 

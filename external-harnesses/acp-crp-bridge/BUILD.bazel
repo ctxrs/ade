@@ -4,7 +4,7 @@ package(default_visibility = ["//visibility:public"])
 
 ACP_CRP_BRIDGE_RUSTC_ENV = {
     "CARGO_MANIFEST_DIR": "external-harnesses/acp-crp-bridge",
-    "CARGO_PKG_VERSION": "0.1.3",
+    "CARGO_PKG_VERSION": "0.1.4",
 }
 
 ACP_CRP_BRIDGE_DEPS = [

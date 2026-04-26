@@ -16,6 +16,12 @@ mod state;
 
 pub(super) use self::state::{session_shutdown_reason, CrpPromptRequest, CrpSession};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum AuthSessionOpenMode {
+    Standard,
+    OmitMcpThenDrain,
+}
+
 pub(super) struct CrpSessionPool {
     agent: CrpAgentConfig,
     sessions: Mutex<HashMap<String, Arc<CrpSession>>>,
@@ -24,12 +30,17 @@ pub(super) struct CrpSessionPool {
     pinned_sessions: Arc<StdMutex<HashSet<String>>>,
     default_sweep_config: ProviderSessionSweepConfig,
     supports_session_status: bool,
+    auth_session_open_mode: AuthSessionOpenMode,
     reap_in_flight: AtomicBool,
     reap_requested: AtomicBool,
 }
 
 impl CrpSessionPool {
-    pub(super) fn new(agent: CrpAgentConfig, supports_session_status: bool) -> Self {
+    pub(super) fn new(
+        agent: CrpAgentConfig,
+        supports_session_status: bool,
+        auth_session_open_mode: AuthSessionOpenMode,
+    ) -> Self {
         Self {
             agent,
             sessions: Mutex::new(HashMap::new()),
@@ -38,6 +49,7 @@ impl CrpSessionPool {
             pinned_sessions: Arc::new(StdMutex::new(HashSet::new())),
             default_sweep_config: ProviderSessionSweepConfig::from_env(),
             supports_session_status,
+            auth_session_open_mode,
             reap_in_flight: AtomicBool::new(false),
             reap_requested: AtomicBool::new(false),
         }

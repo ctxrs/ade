@@ -35,7 +35,7 @@ mod unknown_event;
 use self::runtime::{resolve_explicit_command_path, CrpAgentConfig};
 #[cfg(test)]
 use self::session_pool::session_shutdown_reason;
-use self::session_pool::{CrpPromptRequest, CrpSessionPool};
+use self::session_pool::{AuthSessionOpenMode, CrpPromptRequest, CrpSessionPool};
 
 pub use self::protocol::CrpModelsProbe;
 pub(crate) use self::runtime::rewrite_bundled_path_for_linux;
@@ -64,7 +64,13 @@ pub struct Tier1CrpAdapter {
 }
 
 impl Tier1CrpAdapter {
-    fn new(id: &str, command: &str, args: Vec<String>, supports_session_status: bool) -> Self {
+    fn new(
+        id: &str,
+        command: &str,
+        args: Vec<String>,
+        supports_session_status: bool,
+        auth_session_open_mode: AuthSessionOpenMode,
+    ) -> Self {
         let agent = CrpAgentConfig {
             provider_id: id.to_string(),
             command: command.to_string(),
@@ -73,16 +79,30 @@ impl Tier1CrpAdapter {
         Self {
             id: id.to_string(),
             command: command.to_string(),
-            pool: Arc::new(CrpSessionPool::new(agent, supports_session_status)),
+            pool: Arc::new(CrpSessionPool::new(
+                agent,
+                supports_session_status,
+                auth_session_open_mode,
+            )),
         }
     }
 
     pub fn from_raw(id: &str, command: String, args: Vec<String>) -> Self {
-        Self::new(id, &command, args, true)
+        Self::new(id, &command, args, true, AuthSessionOpenMode::Standard)
     }
 
     pub fn from_provider_runtime(id: &str, command: String, args: Vec<String>) -> Self {
-        Self::new(id, &command, args, false)
+        Self::new(id, &command, args, false, AuthSessionOpenMode::Standard)
+    }
+
+    pub fn from_provider_runtime_acp_bridge(id: &str, command: String, args: Vec<String>) -> Self {
+        Self::new(
+            id,
+            &command,
+            args,
+            false,
+            AuthSessionOpenMode::OmitMcpThenDrain,
+        )
     }
 
     pub fn from_raw_with_session_status(
@@ -91,7 +111,13 @@ impl Tier1CrpAdapter {
         args: Vec<String>,
         supports_session_status: bool,
     ) -> Self {
-        Self::new(id, &command, args, supports_session_status)
+        Self::new(
+            id,
+            &command,
+            args,
+            supports_session_status,
+            AuthSessionOpenMode::Standard,
+        )
     }
 
     pub fn codex() -> Self {

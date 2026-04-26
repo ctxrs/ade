@@ -67,6 +67,12 @@ pub fn build_app_server_config_overrides(config: &CrpSessionConfig) -> Option<Va
     if let Some(enabled) = config.reasoning_trace_enabled {
         out.insert("show_raw_agent_reasoning".to_string(), Value::Bool(enabled));
     }
+    if let Some(base_url) = config.openai_base_url.as_ref() {
+        out.insert(
+            "openai_base_url".to_string(),
+            Value::String(base_url.clone()),
+        );
+    }
     if let Some(mcp_servers) = &config.mcp_servers {
         for (name, server) in mcp_servers {
             if let Some(value) = mcp_server_to_value(server.clone()) {
@@ -311,6 +317,21 @@ mod tests {
         assert_eq!(
             build_current_model_id(Some(&config), &[], None, None),
             Some("gpt-5.4/high".to_string())
+        );
+    }
+
+    #[test]
+    fn build_app_server_config_overrides_includes_openai_base_url() {
+        let config = CrpSessionConfig {
+            openai_base_url: Some("https://openrouter.ai/api/v1".to_string()),
+            ..CrpSessionConfig::default()
+        };
+
+        assert_eq!(
+            build_app_server_config_overrides(&config),
+            Some(serde_json::json!({
+                "openai_base_url": "https://openrouter.ai/api/v1"
+            }))
         );
     }
 

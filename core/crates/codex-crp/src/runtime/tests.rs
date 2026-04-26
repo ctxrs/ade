@@ -1,9 +1,17 @@
+use super::commands::handle_parsed_command;
+use super::prompt_items::translate_prompt_items_for_app_server;
+use super::session::open_session;
 use super::status::{build_session_status_details, ThreadStatusSnapshot};
 use super::translate::{canonical_context_window_from_thread_usage, translate_notification};
 use super::*;
+use crate::app_server::AppServerClient;
+use crate::protocol::{CrpChannel, CrpCommand, CrpEvent};
 use pretty_assertions::assert_eq;
+use serde_json::{json, Value};
+use std::collections::HashMap;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
+use std::path::PathBuf;
 use tokio::sync::mpsc;
 
 #[derive(Debug, serde::Deserialize)]
@@ -74,6 +82,7 @@ fn replay_fixture(file: &str) -> SnapshotOutput {
         default_cwd: PathBuf::from("/tmp"),
         default_model: "gpt-5.4".to_string(),
         default_effort: Some("medium".to_string()),
+        turn_config_overrides: None,
         opened_commands: Vec::new(),
         opened_slash_commands: Vec::new(),
         turn_aliases: TurnAliasState::new(),
@@ -378,6 +387,7 @@ async fn session_authenticate_emits_explicit_unsupported_notice() {
         default_cwd: PathBuf::from("/tmp"),
         default_model: "gpt-5.4".to_string(),
         default_effort: Some("medium".to_string()),
+        turn_config_overrides: None,
         opened_commands: Vec::new(),
         opened_slash_commands: Vec::new(),
         turn_aliases: TurnAliasState::new(),
@@ -422,6 +432,125 @@ async fn session_authenticate_emits_explicit_unsupported_notice() {
             );
         }
         other => panic!("expected session notice, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn open_session_defers_mcp_overrides_until_turn_start() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let workdir = tempdir.path().to_path_buf();
+    let script_path = workdir.join("fake-codex.py");
+    let log_path = workdir.join("app-server.log");
+    fs::write(
+        &script_path,
+        format!(
+            r#"#!/usr/bin/env python3
+import json
+import sys
+from pathlib import Path
+
+log_path = Path("{}")
+for raw in sys.stdin:
+    line = raw.rstrip("\n")
+    log_path.write_text(log_path.read_text() + line + "\n" if log_path.exists() else line + "\n")
+    msg = json.loads(line)
+    method = msg.get("method")
+    ident = msg.get("id")
+    if method == "initialize":
+        resp = {{"jsonrpc":"2.0","id":ident,"result":{{"protocolVersion":"0.1","capabilities":{{}},"serverInfo":{{"name":"fake-codex","version":"test"}}}}}}
+        sys.stdout.write(json.dumps(resp) + "\n")
+        sys.stdout.flush()
+    elif method == "thread/start":
+        resp = {{"jsonrpc":"2.0","id":ident,"result":{{"thread":{{"id":"new-thread"}},"model":"gpt-5.4","cwd":"{}","approvalPolicy":{{}},"sandbox":{{}},"reasoningEffort":"medium"}}}}
+        sys.stdout.write(json.dumps(resp) + "\n")
+        sys.stdout.flush()
+    elif method == "turn/start":
+        resp = {{"jsonrpc":"2.0","id":ident,"result":{{"turn":{{"id":"turn-app-1"}}}}}}
+        sys.stdout.write(json.dumps(resp) + "\n")
+        sys.stdout.flush()
+"#,
+            log_path.display(),
+            workdir.display()
+        ),
+    )
+    .expect("write fake codex");
+    let mut permissions = fs::metadata(&script_path)
+        .expect("script metadata")
+        .permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&script_path, permissions).expect("script perms");
+
+    let _codex_bin = EnvGuard::set("CTX_CODEX_BIN_PATH", &script_path.to_string_lossy());
+    let (control_tx, _control_rx) = mpsc::unbounded_channel();
+    let (data_tx, _data_rx) = mpsc::channel(1);
+    let router = CrpEventRouter::new(control_tx, data_tx);
+    let mut session = None;
+
+    let mut mcp_servers = HashMap::new();
+    mcp_servers.insert(
+        "ctx".to_string(),
+        crate::protocol::CrpMcpServerConfig {
+            command: Some("ctx-mcp".to_string()),
+            args: Some(vec!["--stdio".to_string()]),
+            ..Default::default()
+        },
+    );
+
+    handle_parsed_command(
+        CrpCommand::SessionOpen {
+            session_id: Some("fixture-session".to_string()),
+            provider_session_id: None,
+            config: Some(crate::protocol::CrpSessionConfig {
+                cwd: Some(workdir.clone()),
+                mcp_servers: Some(mcp_servers),
+                ..Default::default()
+            }),
+        },
+        &mut session,
+        &router,
+        &RuntimeOptions::default(),
+    )
+    .await
+    .expect("session open should succeed");
+
+    handle_parsed_command(
+        CrpCommand::SessionPrompt {
+            session_id: Some("fixture-session".to_string()),
+            turn_id: Some("turn-crp-1".to_string()),
+            prompt: Some("hello".to_string()),
+            items: None,
+            model: None,
+            reasoning_effort: None,
+            cwd: None,
+        },
+        &mut session,
+        &router,
+        &RuntimeOptions::default(),
+    )
+    .await
+    .expect("session prompt should succeed");
+
+    let log = fs::read_to_string(&log_path).expect("read fake codex log");
+    let thread_start = log
+        .lines()
+        .find(|line| line.contains(r#""method":"thread/start""#))
+        .expect("thread/start request logged");
+    let turn_start = log
+        .lines()
+        .find(|line| line.contains(r#""method":"turn/start""#))
+        .expect("turn/start request logged");
+
+    assert!(
+        !thread_start.contains("mcp_servers.ctx"),
+        "thread/start must not bootstrap ctx MCP: {thread_start}"
+    );
+    assert!(
+        turn_start.contains("mcp_servers.ctx"),
+        "turn/start must include deferred ctx MCP config: {turn_start}"
+    );
+
+    if let Some(state) = session.as_mut() {
+        state.client.shutdown().await;
     }
 }
 

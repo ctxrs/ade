@@ -49,7 +49,7 @@ pub(super) fn patch_input_preview(changes: &[crate::app_server::FileUpdateChange
     })
 }
 
-pub(super) fn canonical_context_window_from_thread_usage(
+pub(in crate::runtime) fn canonical_context_window_from_thread_usage(
     token_usage: &crate::app_server::ThreadTokenUsage,
 ) -> Option<Value> {
     let context_window_tokens = token_usage.model_context_window?;
@@ -72,7 +72,7 @@ pub(super) fn canonical_context_window_from_thread_usage(
     }))
 }
 
-pub(super) fn emit_unsupported_server_request_notice(
+pub(in crate::runtime) fn emit_unsupported_server_request_notice(
     router: &CrpEventRouter,
     session_id: &str,
     turn_id: Option<String>,
@@ -96,7 +96,7 @@ pub(super) fn emit_unsupported_server_request_notice(
     );
 }
 
-pub(super) fn emit_turn_request_error(
+pub(in crate::runtime) fn emit_turn_request_error(
     router: &CrpEventRouter,
     session_id: &str,
     turn_id: Option<String>,

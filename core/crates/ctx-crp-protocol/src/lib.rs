@@ -111,6 +111,8 @@ pub struct CrpSessionConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_provider: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub openai_base_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning_trace_enabled: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub personality: Option<String>,

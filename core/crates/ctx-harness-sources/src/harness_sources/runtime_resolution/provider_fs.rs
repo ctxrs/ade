@@ -132,11 +132,13 @@ pub(crate) async fn prepare_goose_endpoint_path_root(path_root: &Path) -> Result
 pub(crate) async fn prepare_codex_home_with_api_key(
     codex_home: &Path,
     api_key: &str,
+    base_url: &str,
 ) -> Result<()> {
     tokio::fs::create_dir_all(codex_home).await?;
     let auth_path = codex_home.join("auth.json");
     let payload = serde_json::to_vec_pretty(&serde_json::json!({
         "OPENAI_API_KEY": api_key,
+        "OPENAI_BASE_URL": base_url,
     }))?;
     tokio::fs::write(&auth_path, payload).await?;
     #[cfg(unix)]

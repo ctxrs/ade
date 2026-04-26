@@ -76,7 +76,7 @@ pub async fn probe_crp_models(request: CrpModelsProbeRequest) -> Result<CrpModel
     let stderr = child.stderr.take().context("capturing CRP stderr")?;
 
     let stderr_tail: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
-    let _stderr_tail_task = spawn_probe_output_tail_reader(
+    let stderr_tail_task = spawn_probe_output_tail_reader(
         stderr,
         provider_id.clone(),
         "stderr",
@@ -100,7 +100,9 @@ pub async fn probe_crp_models(request: CrpModelsProbeRequest) -> Result<CrpModel
     let result = match timeout(probe_timeout, async {
         loop {
             let Some(line) = stdout_reader.next_line().await? else {
-                anyhow::bail!("crp runtime closed before models.list response");
+                let _ = tokio::time::timeout(Duration::from_millis(200), stderr_tail_task).await;
+                let stderr_tail = format_probe_output_tail("stderr", &stderr_tail).await;
+                anyhow::bail!("crp runtime closed before models.list response{stderr_tail}");
             };
             let trimmed = line.trim();
             if trimmed.is_empty() {
@@ -465,5 +467,32 @@ mod tests {
                     .display()
             )
         }));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn probe_crp_models_reports_stderr_tail_when_runtime_closes_early() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let script = write_probe_script(
+            &tmp,
+            "read _\necho 'codex auth import unreadable' >&2\nexit 23",
+        );
+
+        let err = probe_crp_models(CrpModelsProbeRequest {
+            provider_id: "codex".to_string(),
+            command: script.to_string_lossy().to_string(),
+            args: Vec::new(),
+            workdir: tmp.path().to_path_buf(),
+            env: HashMap::new(),
+            host_timeout: Duration::from_secs(10),
+            container_timeout: Duration::from_secs(45),
+            crp_version: 1,
+        })
+        .await
+        .expect_err("models probe should surface early runtime close");
+
+        let msg = err.to_string();
+        assert!(msg.contains("closed before models.list response"));
+        assert!(msg.contains("stderr_tail=codex auth import unreadable"));
     }
 }

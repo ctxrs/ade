@@ -1473,6 +1473,277 @@ done
 }
 
 #[tokio::test]
+async fn prompt_scrubs_ambient_provider_mode_when_request_env_omits_it() -> Result<()> {
+    let _env_guard = ENV_LOCK.lock().await;
+    let _provider_mode = ScopedEnvVar::set("CTX_PROVIDER_MODE", "full-access");
+    let tempdir = tempfile::tempdir()?;
+    let workdir = tempdir.path().to_path_buf();
+    let script_path = workdir.join("ambient-provider-mode-runtime.sh");
+    let log_path = workdir.join("ambient-provider-mode.log");
+
+    fs::write(
+        &script_path,
+        r#"#!/bin/sh
+printf 'provider_mode=%s\n' "${CTX_PROVIDER_MODE-}" >> "$LOG_FILE"
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$LOG_FILE"
+  if printf '%s' "$line" | grep -q '"type":"session.open"'; then
+    printf '{"v":1,"seq":1,"channel":"control","type":"session.opened","session_id":"ambient-provider-mode"}\n'
+  fi
+  if printf '%s' "$line" | grep -q '"type":"session.prompt"'; then
+    turn_id=$(printf '%s' "$line" | sed -n 's/.*"turn_id":"\([^"]*\)".*/\1/p')
+    printf '{"v":1,"seq":2,"channel":"control","type":"turn.completed","session_id":"ambient-provider-mode","turn_id":"%s","status":"success"}\n' "$turn_id"
+  fi
+done
+"#,
+    )?;
+    let mut permissions = fs::metadata(&script_path)?.permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&script_path, permissions)?;
+
+    let adapter = Tier1CrpAdapter::from_raw(
+        "fake-crp",
+        "/bin/sh".to_string(),
+        vec![script_path.to_string_lossy().to_string()],
+    );
+    let mut env = HashMap::new();
+    env.insert(
+        "LOG_FILE".to_string(),
+        log_path.to_string_lossy().to_string(),
+    );
+    let (event_tx, _event_rx) = mpsc::channel(8);
+    let (_cancel_tx, cancel_rx) = oneshot::channel();
+    let request = CrpPromptRequest {
+        session_key: "ambient-provider-mode".to_string(),
+        input: TurnInput {
+            content: "work".to_string(),
+            attachments: Vec::new(),
+            context_blocks: Vec::new(),
+            model_id: None,
+        },
+        workdir: workdir.clone(),
+        env,
+        event_sink: event_tx,
+        provider_session_ref_claim: None,
+        cancel_rx,
+    };
+
+    let outcome = tokio::time::timeout(Duration::from_secs(5), adapter.pool.prompt(request))
+        .await
+        .context("timed out waiting for prompt outcome")??;
+    assert_eq!(outcome.status, ProviderTurnStatus::Completed);
+
+    let log = fs::read_to_string(&log_path)?;
+    assert!(
+        log.lines().any(|line| line == "provider_mode="),
+        "expected runtime to observe a scrubbed CTX_PROVIDER_MODE, got log:\n{log}"
+    );
+    assert!(
+        !log.contains("provider_mode=full-access"),
+        "ambient CTX_PROVIDER_MODE leaked into child runtime:\n{log}"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn prompt_interrupts_for_auth_required_stderr_before_first_event() -> Result<()> {
+    let tempdir = tempfile::tempdir()?;
+    let workdir = tempdir.path().to_path_buf();
+    let script_path = workdir.join("auth-required-runtime.sh");
+
+    fs::write(
+        &script_path,
+        r#"#!/bin/sh
+printf 'Authentication required: https://auth.openai.com/oauth/authorize?token=secret\n' >&2
+while IFS= read -r _line; do
+  :
+done
+"#,
+    )?;
+    let mut permissions = fs::metadata(&script_path)?.permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&script_path, permissions)?;
+
+    let adapter = Tier1CrpAdapter::from_raw(
+        "codex",
+        "/bin/sh".to_string(),
+        vec![script_path.to_string_lossy().to_string()],
+    );
+    let session_key = "auth-required-before-first-event";
+    let mut env = HashMap::new();
+    env.insert(
+        "CTX_CRP_FIRST_EVENT_TIMEOUT_MS".to_string(),
+        "250".to_string(),
+    );
+
+    let (event_tx, mut event_rx) = mpsc::channel(8);
+    let (_cancel_tx, cancel_rx) = oneshot::channel();
+    let request = CrpPromptRequest {
+        session_key: session_key.to_string(),
+        input: TurnInput {
+            content: "work".to_string(),
+            attachments: Vec::new(),
+            context_blocks: Vec::new(),
+            model_id: None,
+        },
+        workdir: workdir.clone(),
+        env,
+        event_sink: event_tx,
+        cancel_rx,
+        provider_session_ref_claim: None,
+    };
+
+    let outcome = tokio::time::timeout(Duration::from_secs(5), adapter.pool.prompt(request))
+        .await
+        .context("timed out waiting for auth-required startup interruption")??;
+    assert_eq!(outcome.status, ProviderTurnStatus::Interrupted);
+    assert_eq!(outcome.reason.as_deref(), Some("auth_required"));
+
+    let notice_event = tokio::time::timeout(Duration::from_secs(5), event_rx.recv())
+        .await
+        .context("timed out waiting for auth-required notice")?
+        .context("missing auth-required notice event")?;
+    assert!(matches!(notice_event.event_type, SessionEventType::Notice));
+    assert_eq!(
+        notice_event.payload_json.get("kind"),
+        Some(&json!("auth_required"))
+    );
+    assert_eq!(
+        notice_event.payload_json.get("code"),
+        Some(&json!("auth_required"))
+    );
+    assert_eq!(
+        notice_event.payload_json.get("message"),
+        Some(&json!("Authentication required."))
+    );
+    assert_eq!(
+        notice_event.payload_json.get("source"),
+        Some(&json!("crp_stderr"))
+    );
+    assert_eq!(notice_event.payload_json.get("auth_url"), None);
+
+    let interrupted_event = tokio::time::timeout(Duration::from_secs(5), event_rx.recv())
+        .await
+        .context("timed out waiting for auth-required terminal event")?
+        .context("missing auth-required terminal event")?;
+    assert!(matches!(
+        interrupted_event.event_type,
+        SessionEventType::TurnInterrupted
+    ));
+    assert_eq!(
+        interrupted_event.payload_json.get("reason"),
+        Some(&json!("auth_required"))
+    );
+
+    let stats = adapter
+        .pool
+        .reap_idle_sessions(immediate_sweep_config())
+        .await;
+    assert_eq!(
+        stats,
+        ProviderSessionSweepStats {
+            dead_removed: 1,
+            ..ProviderSessionSweepStats::default()
+        }
+    );
+    assert!(!adapter.has_live_session(session_key).await);
+    Ok(())
+}
+
+#[tokio::test]
+async fn prompt_surfaces_auth_error_stderr_before_first_event() -> Result<()> {
+    let tempdir = tempfile::tempdir()?;
+    let workdir = tempdir.path().to_path_buf();
+    let script_path = workdir.join("auth-error-runtime.sh");
+
+    fs::write(
+        &script_path,
+        r#"#!/bin/sh
+printf "message: 'Interactive consent could not be obtained.'\n" >&2
+while IFS= read -r _line; do
+  :
+done
+"#,
+    )?;
+    let mut permissions = fs::metadata(&script_path)?.permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&script_path, permissions)?;
+
+    let adapter = Tier1CrpAdapter::from_raw(
+        "gemini",
+        "/bin/sh".to_string(),
+        vec![script_path.to_string_lossy().to_string()],
+    );
+    let session_key = "auth-error-before-first-event";
+    let mut env = HashMap::new();
+    env.insert(
+        "CTX_CRP_FIRST_EVENT_TIMEOUT_MS".to_string(),
+        "250".to_string(),
+    );
+
+    let (event_tx, mut event_rx) = mpsc::channel(8);
+    let (_cancel_tx, cancel_rx) = oneshot::channel();
+    let request = CrpPromptRequest {
+        session_key: session_key.to_string(),
+        input: TurnInput {
+            content: "work".to_string(),
+            attachments: Vec::new(),
+            context_blocks: Vec::new(),
+            model_id: None,
+        },
+        workdir: workdir.clone(),
+        env,
+        event_sink: event_tx,
+        cancel_rx,
+        provider_session_ref_claim: None,
+    };
+
+    let outcome = tokio::time::timeout(Duration::from_secs(5), adapter.pool.prompt(request))
+        .await
+        .context("timed out waiting for auth-error startup failure")??;
+    assert_eq!(outcome.status, ProviderTurnStatus::Failed);
+    assert_eq!(
+        outcome.message.as_deref(),
+        Some("Gemini CLI could not obtain interactive OAuth consent in this environment.")
+    );
+    assert_ne!(outcome.reason.as_deref(), Some("provider_startup_timeout"));
+
+    let error_event = tokio::time::timeout(Duration::from_secs(5), event_rx.recv())
+        .await
+        .context("timed out waiting for auth-error event")?
+        .context("missing auth-error event")?;
+    assert!(matches!(error_event.event_type, SessionEventType::Error));
+    assert_eq!(
+        error_event.payload_json.get("message"),
+        Some(&json!(
+            "Gemini CLI could not obtain interactive OAuth consent in this environment."
+        ))
+    );
+    assert_eq!(
+        error_event.payload_json.get("source"),
+        Some(&json!("crp_stderr"))
+    );
+    assert_ne!(
+        error_event.payload_json.get("reason"),
+        Some(&json!("provider_startup_timeout"))
+    );
+
+    let stats = adapter
+        .pool
+        .reap_idle_sessions(immediate_sweep_config())
+        .await;
+    assert_eq!(
+        stats,
+        ProviderSessionSweepStats {
+            dead_removed: 1,
+            ..ProviderSessionSweepStats::default()
+        }
+    );
+    assert!(!adapter.has_live_session(session_key).await);
+    Ok(())
+}
+
+#[tokio::test]
 async fn completed_prompt_reaps_oldest_idle_session_in_background() -> Result<()> {
     let _env_lock = ENV_LOCK.lock().await;
     let _max_idle_guard = ScopedEnvVar::set("CTX_PROVIDER_WORKER_MAX_IDLE_SESSIONS", "1");
@@ -2258,6 +2529,121 @@ async fn authenticate_session_runtime_exit_clears_unopened_session() -> Result<(
     }
 
     assert!(!adapter.has_live_session(session_key).await);
+    Ok(())
+}
+
+#[tokio::test]
+async fn authenticate_session_acp_auth_only_open_omits_mcp_servers_and_drains_session() -> Result<()>
+{
+    let tempdir = tempfile::tempdir()?;
+    let workdir = tempdir.path().to_path_buf();
+    let script_path = workdir.join("acp-auth-only-open.sh");
+    let log_path = workdir.join("stdin.log");
+
+    fs::write(
+        &script_path,
+        r#"#!/bin/sh
+seq=0
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$LOG_FILE"
+  case "$line" in
+    *'"type":"session.open"'*)
+      session_id=$(printf '%s' "$line" | sed -n 's/.*"session_id":"\([^"]*\)".*/\1/p')
+      seq=$((seq + 1))
+      printf '{"v":1,"seq":%s,"channel":"control","type":"session.opened","session_id":"%s","supports_session_status":true}\n' "$seq" "$session_id"
+      ;;
+    *'"type":"session.authenticate"'*)
+      session_id=$(printf '%s' "$line" | sed -n 's/.*"session_id":"\([^"]*\)".*/\1/p')
+      seq=$((seq + 1))
+      printf '{"v":1,"seq":%s,"channel":"control","type":"session.notice","session_id":"%s","code":"authenticated","severity":"info","message":"authenticated"}\n' "$seq" "$session_id"
+      ;;
+  esac
+done
+"#,
+    )?;
+    let mut permissions = fs::metadata(&script_path)?.permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&script_path, permissions)?;
+
+    let adapter = Tier1CrpAdapter::from_provider_runtime_acp_bridge(
+        "pi",
+        "/bin/sh".to_string(),
+        vec![script_path.to_string_lossy().to_string()],
+    );
+    let session_key = "acp-auth-open";
+    let mut env = HashMap::new();
+    env.insert(
+        "LOG_FILE".to_string(),
+        log_path.to_string_lossy().to_string(),
+    );
+    env.insert(
+        "CTX_DAEMON_URL".to_string(),
+        "http://127.0.0.1:4401".to_string(),
+    );
+    env.insert("CTX_AUTH_TOKEN".to_string(), "token-123".to_string());
+    let (event_tx, mut event_rx) = mpsc::channel(16);
+
+    adapter
+        .authenticate_session(
+            session_key.to_string(),
+            workdir.clone(),
+            env,
+            None,
+            event_tx,
+            crate::adapters::ProviderRunHooks::default(),
+        )
+        .await?;
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut events = Vec::new();
+    let mut saw_terminal = false;
+    while Instant::now() < deadline {
+        let recv = tokio::time::timeout(Duration::from_millis(250), event_rx.recv()).await;
+        let Some(event) = (match recv {
+            Ok(event) => event,
+            Err(_) => continue,
+        }) else {
+            continue;
+        };
+        saw_terminal = event.payload_json.get("code") == Some(&json!("authenticated"));
+        events.push(event);
+        if saw_terminal {
+            break;
+        }
+    }
+
+    assert!(saw_terminal, "timed out waiting for auth terminal event");
+    assert!(
+        events
+            .iter()
+            .all(|event| !matches!(&event.event_type, SessionEventType::Init)),
+        "auth-only ACP opens must not forward session init/open events"
+    );
+
+    let started = Instant::now();
+    while adapter.pool.session_count_for_test().await != 0 {
+        if started.elapsed() > Duration::from_secs(5) {
+            anyhow::bail!("timed out waiting for auth-only ACP session to leave the pool");
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+
+    assert!(!adapter.has_live_session(session_key).await);
+
+    let stdin_log = fs::read_to_string(&log_path)?;
+    let open_line = stdin_log
+        .lines()
+        .find(|line| line.contains(r#""type":"session.open""#))
+        .context("missing session.open line")?;
+    assert!(
+        !open_line.contains(r#""mcp_servers""#),
+        "auth-only ACP session.open must omit MCP bootstrap: {open_line}"
+    );
+    assert!(
+        stdin_log.contains(r#""type":"session.authenticate""#),
+        "authenticate command should still be sent: {stdin_log}"
+    );
+
     Ok(())
 }
 

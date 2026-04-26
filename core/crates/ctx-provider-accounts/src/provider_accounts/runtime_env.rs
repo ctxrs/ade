@@ -44,23 +44,72 @@ async fn codex_endpoint_api_key_from_provider_env(
     Ok(api_key.to_string())
 }
 
+async fn codex_endpoint_base_url_from_provider_env(
+    provider_env: &HashMap<String, String>,
+) -> Result<Option<String>> {
+    if let Some(base_url) = provider_env.get("OPENAI_BASE_URL") {
+        let trimmed = base_url.trim();
+        if !trimmed.is_empty() {
+            return Ok(Some(trimmed.to_string()));
+        }
+    }
+    let Some(endpoint_home) = provider_env
+        .get("CODEX_HOME")
+        .map(String::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(None);
+    };
+    let auth_path = Path::new(endpoint_home).join("auth.json");
+    let payload = match tokio::fs::read_to_string(&auth_path).await {
+        Ok(payload) => payload,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => {
+            return Err(err)
+                .with_context(|| format!("reading endpoint auth from {}", auth_path.display()));
+        }
+    };
+    let parsed: serde_json::Value = serde_json::from_str(&payload)
+        .with_context(|| format!("parsing endpoint auth JSON at {}", auth_path.display()))?;
+    Ok(parsed
+        .get("OPENAI_BASE_URL")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned))
+}
+
 pub async fn ensure_codex_endpoint_runtime_home_from_env(
     runtime_root: &Path,
     provider_env: &mut HashMap<String, String>,
 ) -> Result<()> {
     let api_key = codex_endpoint_api_key_from_provider_env(provider_env).await?;
+    let base_url = codex_endpoint_base_url_from_provider_env(provider_env).await?;
     let codex_home = codex_runtime_home(runtime_root);
     tokio::fs::create_dir_all(&codex_home)
         .await
         .context("creating CODEX_HOME for endpoint runtime")?;
-    let auth_payload = serde_json::to_vec_pretty(&serde_json::json!({
-        "OPENAI_API_KEY": api_key,
-    }))
-    .context("serializing endpoint auth payload")?;
+    let mut auth = serde_json::Map::new();
+    auth.insert(
+        "OPENAI_API_KEY".to_string(),
+        serde_json::Value::String(api_key.clone()),
+    );
+    if let Some(base_url) = base_url.clone() {
+        auth.insert(
+            "OPENAI_BASE_URL".to_string(),
+            serde_json::Value::String(base_url),
+        );
+    }
+    let auth_payload = serde_json::to_vec_pretty(&serde_json::Value::Object(auth))
+        .context("serializing endpoint auth payload")?;
     tokio::fs::write(codex_home.join("auth.json"), auth_payload)
         .await
         .context("writing endpoint CODEX_HOME auth.json")?;
     provider_env.insert("OPENAI_API_KEY".to_string(), api_key);
+    if let Some(base_url) = base_url {
+        provider_env.insert("OPENAI_BASE_URL".to_string(), base_url);
+    }
     provider_env.insert(
         "CODEX_HOME".to_string(),
         codex_home.to_string_lossy().to_string(),

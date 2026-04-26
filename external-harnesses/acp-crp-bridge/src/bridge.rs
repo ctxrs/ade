@@ -33,6 +33,8 @@ struct SessionState {
     translator: Translator,
     cwd: PathBuf,
     model_catalog: ModelCatalogState,
+    pending_session_mode_id: Option<String>,
+    pending_model_id: Option<String>,
     active_turn_id: Option<String>,
     last_turn_update_at: Option<Instant>,
     turn_update_count: u64,
@@ -529,10 +531,46 @@ async fn maybe_apply_requested_session_model(
     Ok(())
 }
 
+fn resolve_deferred_requested_session_mode(
+    modes: Option<&SessionModeState>,
+    requested_mode: Option<&str>,
+) -> (Option<String>, Option<String>) {
+    let Some(requested_mode) = requested_mode
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return (None, None);
+    };
+
+    match should_apply_requested_session_mode(modes, requested_mode) {
+        Ok(true) => (Some(requested_mode.to_string()), None),
+        Ok(false) => (None, None),
+        Err(err) => (None, Some(err.to_string())),
+    }
+}
+
+async fn apply_requested_session_mode(
+    acp: &ClientSideConnection,
+    acp_session_id: &str,
+    requested_mode: &str,
+) -> Result<()> {
+    acp.set_session_mode(SetSessionModeRequest::new(
+        acp_session_id.to_string(),
+        requested_mode.to_string(),
+    ))
+    .await
+    .map(|_| ())
+    .map_err(|err| anyhow!("acp set_session_mode '{}' failed: {err}", requested_mode))
+}
+
 fn should_apply_requested_session_model(
     model_catalog: &ModelCatalogState,
     requested_model: &str,
 ) -> Result<bool> {
+    if model_catalog.catalog_source.is_none() {
+        return Ok(false);
+    }
+
     if model_catalog.current_model_id.as_deref() == Some(requested_model) {
         return Ok(false);
     }
@@ -704,26 +742,13 @@ async fn handle_command(
                 }
             };
 
-            if let Some(mode_id) = requested_acp_session_mode() {
-                if should_apply_requested_session_mode(response.modes.as_ref(), &mode_id)? {
-                    acp.set_session_mode(SetSessionModeRequest::new(
-                        response.session_id.clone(),
-                        mode_id.clone(),
-                    ))
-                    .await
-                    .map_err(|err| anyhow!("acp set_session_mode '{}' failed: {err}", mode_id))?;
-                }
-            }
-
             let acp_session_id = response.session_id.to_string();
-            let mut model_catalog = acp_session_models_to_catalog(response.models.as_ref());
-            maybe_apply_requested_session_model(
-                acp,
-                &acp_session_id,
-                &mut model_catalog,
-                requested_model.as_deref(),
-            )
-            .await?;
+            let model_catalog = acp_session_models_to_catalog(response.models.as_ref());
+            let (pending_session_mode_id, session_mode_notice) =
+                resolve_deferred_requested_session_mode(
+                    response.modes.as_ref(),
+                    requested_acp_session_mode().as_deref(),
+                );
 
             let mut sessions_guard = sessions.lock().await;
             if sessions_guard.by_crp.contains_key(&crp_session_id) {
@@ -742,6 +767,8 @@ async fn handle_command(
                     translator,
                     cwd,
                     model_catalog: model_catalog.clone(),
+                    pending_session_mode_id,
+                    pending_model_id: requested_model.clone(),
                     active_turn_id: None,
                     last_turn_update_at: None,
                     turn_update_count: 0,
@@ -751,13 +778,31 @@ async fn handle_command(
             let opened = CrpEnvelope {
                 channel: CrpChannel::Control,
                 event: CrpEvent::SessionOpened {
-                    session_id: crp_session_id,
-                    provider_session_id: Some(acp_session_id),
+                    session_id: crp_session_id.clone(),
+                    provider_session_id: Some(acp_session_id.clone()),
                     models: model_catalog.payload,
                     current_model_id: model_catalog.current_model_id,
                 },
             };
             let _ = events_tx.send(opened).await;
+            if let Some(message) = session_mode_notice {
+                let _ = events_tx
+                    .send(CrpEnvelope {
+                        channel: CrpChannel::Control,
+                        event: CrpEvent::SessionNotice {
+                            session_id: crp_session_id,
+                            turn_id: None,
+                            code: "session_mode_pending_failed".to_string(),
+                            severity: Some("error".to_string()),
+                            message: Some(message),
+                            details: Some(json!({
+                                "provider_session_id": acp_session_id,
+                            })),
+                            transient: Some(false),
+                        },
+                    })
+                    .await;
+            }
         }
         CrpCommand::SessionPrompt {
             session_id,
@@ -791,6 +836,8 @@ async fn handle_command(
             }
             let prompt_cwd = state.cwd.clone();
             let mut prompt_model_catalog = state.model_catalog.clone();
+            let pending_session_mode_id = state.pending_session_mode_id.clone();
+            let pending_model_id = state.pending_model_id.clone();
 
             let turn_id = turn_id.unwrap_or_else(|| Uuid::new_v4().to_string());
             let message_id = Uuid::new_v4().to_string();
@@ -814,13 +861,12 @@ async fn handle_command(
 
             drop(sessions_guard);
 
-            maybe_apply_requested_session_model(
-                acp,
-                &acp_session_id,
-                &mut prompt_model_catalog,
-                model.as_deref(),
-            )
-            .await?;
+            if let Some(mode_id) = pending_session_mode_id.as_deref() {
+                apply_requested_session_mode(acp, &acp_session_id, mode_id).await?;
+            }
+            let effective_requested_model = model.as_deref().or(pending_model_id.as_deref());
+            maybe_apply_requested_session_model(acp, &acp_session_id, &mut prompt_model_catalog, effective_requested_model)
+                .await?;
 
             let mut sessions_guard = sessions.lock().await;
             let state = sessions_guard
@@ -828,6 +874,12 @@ async fn handle_command(
                 .get_mut(&acp_session_id)
                 .ok_or_else(|| anyhow!("unknown provider session: {acp_session_id}"))?;
             state.model_catalog = prompt_model_catalog.clone();
+            if pending_session_mode_id.is_some() {
+                state.pending_session_mode_id = None;
+            }
+            if pending_model_id.is_some() && model.is_none() {
+                state.pending_model_id = None;
+            }
             drop(sessions_guard);
 
             let (trace_enabled, prompt_image_supported) = {
@@ -1530,6 +1582,45 @@ mod tests {
     }
 
     #[test]
+    fn resolve_deferred_requested_session_mode_ignores_blank_requests() {
+        assert_eq!(
+            resolve_deferred_requested_session_mode(None, Some("   ")),
+            (None, None)
+        );
+        assert_eq!(resolve_deferred_requested_session_mode(None, None), (None, None));
+    }
+
+    #[test]
+    fn resolve_deferred_requested_session_mode_defers_supported_mode_change() {
+        let modes = session_mode_state("chat", &["chat", "plan"]);
+        assert_eq!(
+            resolve_deferred_requested_session_mode(Some(&modes), Some("plan")),
+            (Some("plan".to_string()), None)
+        );
+    }
+
+    #[test]
+    fn resolve_deferred_requested_session_mode_skips_current_mode() {
+        let modes = session_mode_state("chat", &["chat", "plan"]);
+        assert_eq!(
+            resolve_deferred_requested_session_mode(Some(&modes), Some("chat")),
+            (None, None)
+        );
+    }
+
+    #[test]
+    fn resolve_deferred_requested_session_mode_reports_invalid_request_without_blocking() {
+        let (pending_mode, notice) =
+            resolve_deferred_requested_session_mode(None, Some("plan"));
+        assert_eq!(pending_mode, None);
+        let notice = notice.expect("missing failure notice");
+        assert!(
+            notice.contains("did not advertise session modes"),
+            "unexpected notice: {notice}"
+        );
+    }
+
+    #[test]
     fn acp_session_models_are_converted_to_crp_catalog() {
         let catalog =
             acp_session_models_to_catalog(Some(&agent_client_protocol::SessionModelState::new(
@@ -1590,10 +1681,10 @@ mod tests {
     }
 
     #[test]
-    fn requested_session_model_allows_missing_advertised_models() {
+    fn requested_session_model_skips_when_agent_does_not_advertise_model_state() {
         assert!(
-            should_apply_requested_session_model(&ModelCatalogState::default(), "kimi-k2.5")
-                .expect("missing model catalog should still forward")
+            !should_apply_requested_session_model(&ModelCatalogState::default(), "kimi-k2.5")
+                .expect("missing model catalog should skip dynamic model update")
         );
     }
 

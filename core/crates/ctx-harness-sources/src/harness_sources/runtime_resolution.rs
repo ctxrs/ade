@@ -119,7 +119,7 @@ impl<'a> ProviderRuntimeContext<'a> {
                             )
                         })?;
                 }
-                prepare_codex_home_with_api_key(&codex_home, &api_key).await?;
+                prepare_codex_home_with_api_key(&codex_home, &api_key, &base_url).await?;
                 env.insert(
                     "CODEX_HOME".to_string(),
                     codex_home.to_string_lossy().to_string(),
@@ -475,8 +475,12 @@ impl<'a> ProviderRuntimeContext<'a> {
                 let provider =
                     model_catalog::infer_endpoint_model_provider_namespace(&endpoint.base_url)
                         .unwrap_or_else(|| "openai".to_string());
+                if provider == "openrouter" {
+                    env.insert("OPENROUTER_API_KEY".to_string(), api_key);
+                } else {
+                    env.insert("OPENAI_API_KEY".to_string(), api_key);
+                }
                 env.insert("PI_ACP_PROVIDER".to_string(), provider);
-                env.insert("OPENAI_API_KEY".to_string(), api_key);
                 let base_url = endpoint.base_url.trim().to_string();
                 if !base_url.is_empty() {
                     env.insert("OPENAI_BASE_URL".to_string(), base_url);

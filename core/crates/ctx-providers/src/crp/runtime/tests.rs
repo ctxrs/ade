@@ -12,6 +12,110 @@ fn container_exec_outer_process_env_skips_provider_home_and_xdg_keys() {
 }
 
 #[test]
+fn prepare_crp_spawn_env_projects_dump_paths_into_shared_vm_container_exec_env() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let data_root = tmp.path().join("data-root");
+    let host_worktree_root = data_root.join("worktrees/ws/wt");
+    fs::create_dir_all(&host_worktree_root).expect("mkdir host worktree");
+
+    let mut env = HashMap::new();
+    env.insert(
+        "CTX_DATA_ROOT_HOST".to_string(),
+        data_root.to_string_lossy().to_string(),
+    );
+    env.insert(
+        "CTX_HARNESS_RUNTIME_KIND".to_string(),
+        "shared_vm_container".to_string(),
+    );
+    env.insert(
+        "CTX_AVF_LINUX_HELPER_PATH".to_string(),
+        "/usr/local/bin/ctx-avf-linux-helper".to_string(),
+    );
+    env.insert(
+        "CTX_AVF_HOST_DATA_ROOT".to_string(),
+        data_root.to_string_lossy().to_string(),
+    );
+    env.insert("CTX_AVF_REAL_GUEST_EXEC".to_string(), "1".to_string());
+    env.insert(
+        "CTX_AVF_WORKSPACE_ID".to_string(),
+        "workspace-1".to_string(),
+    );
+    env.insert("CTX_AVF_WORKTREE_ID".to_string(), "worktree-1".to_string());
+    env.insert(
+        "CTX_AVF_HOST_WORKTREE_ROOT".to_string(),
+        host_worktree_root.to_string_lossy().to_string(),
+    );
+    env.insert(
+        "CTX_AVF_GUEST_WORKTREE_ROOT".to_string(),
+        "/ctx/ws/worktrees/worktree-1".to_string(),
+    );
+    env.insert(
+        "CTX_HARNESS_GUEST_WORKSPACE_ROOT".to_string(),
+        "/ctx/ws".to_string(),
+    );
+
+    let prepared = prepare_crp_spawn_env(&env, "codex-crp");
+    let codex_dump = prepared
+        .env
+        .get(CODEX_CRP_DUMP_CODEX_EVENTS_ENV)
+        .expect("codex dump path");
+    let crp_dump = prepared
+        .env
+        .get(CODEX_CRP_DUMP_CRP_EVENTS_ENV)
+        .expect("crp dump path");
+    assert!(
+        codex_dump.starts_with(&format!(
+            "{}/logs/providers/crp-codex-crp-",
+            data_root.display()
+        )),
+        "shared VM container child must receive container-visible dump path, got {codex_dump}"
+    );
+    assert!(
+        crp_dump.starts_with(&format!(
+            "{}/logs/providers/crp-codex-crp-",
+            data_root.display()
+        )),
+        "shared VM container child must receive container-visible dump path, got {crp_dump}"
+    );
+    assert!(
+        prepared.raw_stdout_log_path.is_some(),
+        "parent stdout pump should capture a host-side raw stdout log"
+    );
+    assert!(
+        prepared.stderr_log_path.is_some(),
+        "parent stderr pump should capture a host-side stderr log"
+    );
+
+    let spec = crate::container_exec::container_exec_spec(&prepared.env)
+        .expect("shared VM container exec spec");
+    let cmd = crate::container_exec::build_container_exec_command(
+        &spec,
+        &host_worktree_root,
+        &prepared.env,
+        "/usr/local/bin/codex-crp",
+        &[],
+    )
+    .expect("build shared VM exec command");
+    let args = cmd
+        .as_std()
+        .get_args()
+        .map(|arg| arg.to_string_lossy().to_string())
+        .collect::<Vec<_>>();
+    assert!(
+        args.windows(2).any(|window| {
+            window[0] == "--env" && window[1].starts_with(CODEX_CRP_DUMP_CODEX_EVENTS_ENV)
+        }),
+        "container exec env args must include Codex app-server dump path: {args:?}"
+    );
+    assert!(
+        args.windows(2).any(|window| {
+            window[0] == "--env" && window[1].starts_with(CODEX_CRP_DUMP_CRP_EVENTS_ENV)
+        }),
+        "container exec env args must include CRP dump path: {args:?}"
+    );
+}
+
+#[test]
 fn rewrite_bundled_path_for_linux_rewrites_provider_paths() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let host = tmp

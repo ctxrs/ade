@@ -40,8 +40,9 @@ impl CrpSessionPool {
         let mut stderr_rx = session.process.stderr_lines.subscribe();
         let mut shutdown_rx = session.process.shutdown.subscribe();
         let auth_session_key = session_key.clone();
+        let mut drain_after_auth = false;
         if !session.opened.load(Ordering::SeqCst) && !session.opening.load(Ordering::SeqCst) {
-            if let Err(err) = self
+            match self
                 .ensure_auth_session_open(
                     &session_key,
                     &session,
@@ -55,13 +56,18 @@ impl CrpSessionPool {
                 )
                 .await
             {
-                session.opening.store(false, Ordering::SeqCst);
-                session.draining.store(true, Ordering::SeqCst);
-                drop(busy_guard);
-                self.drain_session_if_needed(&auth_session_key, &session)
-                    .await;
-                self.trigger_background_reap();
-                return Err(err);
+                Ok(outcome) => {
+                    drain_after_auth = outcome.drain_after_auth;
+                }
+                Err(err) => {
+                    session.opening.store(false, Ordering::SeqCst);
+                    session.draining.store(true, Ordering::SeqCst);
+                    drop(busy_guard);
+                    self.drain_session_if_needed(&auth_session_key, &session)
+                        .await;
+                    self.trigger_background_reap();
+                    return Err(err);
+                }
             }
         }
         if let Err(err) = session
@@ -206,6 +212,9 @@ impl CrpSessionPool {
             }
             if !session_for_events.opened.load(Ordering::SeqCst) {
                 session_for_events.opening.store(false, Ordering::SeqCst);
+            }
+            if drain_after_auth {
+                session_for_events.draining.store(true, Ordering::SeqCst);
             }
             drop(_busy_guard);
             pool_for_reap

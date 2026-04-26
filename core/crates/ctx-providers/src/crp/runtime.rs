@@ -29,6 +29,7 @@ pub(crate) use self::path_rewrite::{
 
 const AMBIENT_PROVIDER_SESSION_ENV_DENYLIST: &[&str] = &[
     "CTX_PROVIDER_SESSION_REF",
+    "CTX_PROVIDER_MODE",
     "CODEX_THREAD_ID",
     "CODEX_SESSION_ID",
     "CLAUDE_SESSION_ID",
@@ -64,7 +65,14 @@ pub(super) struct CrpProcess {
 struct CrpLogPaths {
     codex_events: PathBuf,
     crp_events: PathBuf,
+    raw_stdout: PathBuf,
     stderr: PathBuf,
+}
+
+struct PreparedCrpSpawnEnv {
+    env: HashMap<String, String>,
+    raw_stdout_log_path: Option<PathBuf>,
+    stderr_log_path: Option<PathBuf>,
 }
 
 impl CrpProcess {
@@ -73,10 +81,17 @@ impl CrpProcess {
         workdir: &PathBuf,
         env: &HashMap<String, String>,
     ) -> Result<Arc<Self>> {
-        let mut cmd = if let Some(spec) = container_exec_spec(env) {
+        let prepared = prepare_crp_spawn_env(env, &agent.provider_id);
+        let mut cmd = if let Some(spec) = container_exec_spec(&prepared.env) {
             let (container_command, container_args) =
-                rewrite_container_command_for_linux(&agent.command, &agent.args, env)?;
-            build_container_exec_command(&spec, workdir, env, &container_command, &container_args)?
+                rewrite_container_command_for_linux(&agent.command, &agent.args, &prepared.env)?;
+            build_container_exec_command(
+                &spec,
+                workdir,
+                &prepared.env,
+                &container_command,
+                &container_args,
+            )?
         } else {
             let mut cmd = Command::new(&agent.command);
             cmd.args(&agent.args);
@@ -86,22 +101,8 @@ impl CrpProcess {
         cmd.stdin(std::process::Stdio::piped());
         cmd.stdout(std::process::Stdio::piped());
         cmd.stderr(std::process::Stdio::piped());
-        let mut stderr_log_path: Option<PathBuf> = None;
-        if let Some(paths) = crp_log_paths(env, &agent.provider_id) {
-            if let Some(parent) = paths.stderr.parent() {
-                if std::fs::create_dir_all(parent).is_ok() {
-                    if !env.contains_key(CODEX_CRP_DUMP_CODEX_EVENTS_ENV) {
-                        cmd.env(CODEX_CRP_DUMP_CODEX_EVENTS_ENV, &paths.codex_events);
-                    }
-                    if !env.contains_key(CODEX_CRP_DUMP_CRP_EVENTS_ENV) {
-                        cmd.env(CODEX_CRP_DUMP_CRP_EVENTS_ENV, &paths.crp_events);
-                    }
-                    stderr_log_path = Some(paths.stderr);
-                }
-            }
-        }
         scrub_ambient_provider_session_env(&mut cmd);
-        apply_outer_process_env(&mut cmd, env);
+        apply_outer_process_env(&mut cmd, &prepared.env);
 
         let mut child = cmd.spawn()?;
         let pid = child.id().unwrap_or(0);
@@ -138,10 +139,12 @@ impl CrpProcess {
         });
 
         let stdout_process = Arc::clone(&process);
+        let raw_stdout_log_path = prepared.raw_stdout_log_path;
         tokio::spawn(async move {
-            stdout_pump(stdout_process, stdout).await;
+            stdout_pump(stdout_process, stdout, raw_stdout_log_path).await;
         });
         let stderr_process = Arc::clone(&process);
+        let stderr_log_path = prepared.stderr_log_path;
         tokio::spawn(async move {
             stderr_pump(stderr_process, stderr, stderr_log_path).await;
         });
@@ -249,6 +252,50 @@ async fn monitor_crp_child_exit(process: Arc<CrpProcess>) {
     }
 }
 
+fn prepare_crp_spawn_env(env: &HashMap<String, String>, provider_id: &str) -> PreparedCrpSpawnEnv {
+    let mut prepared = PreparedCrpSpawnEnv {
+        env: env.clone(),
+        raw_stdout_log_path: None,
+        stderr_log_path: None,
+    };
+
+    let Some(paths) = crp_log_paths(env, provider_id) else {
+        return prepared;
+    };
+    let Some(parent) = paths.stderr.parent() else {
+        return prepared;
+    };
+    if std::fs::create_dir_all(parent).is_err() {
+        return prepared;
+    }
+
+    let codex_dump_path = diagnostic_path_for_child(&prepared.env, &paths.codex_events)
+        .to_string_lossy()
+        .to_string();
+    let crp_dump_path = diagnostic_path_for_child(&prepared.env, &paths.crp_events)
+        .to_string_lossy()
+        .to_string();
+    prepared
+        .env
+        .entry(CODEX_CRP_DUMP_CODEX_EVENTS_ENV.to_string())
+        .or_insert(codex_dump_path);
+    prepared
+        .env
+        .entry(CODEX_CRP_DUMP_CRP_EVENTS_ENV.to_string())
+        .or_insert(crp_dump_path);
+    prepared.raw_stdout_log_path = Some(paths.raw_stdout);
+    prepared.stderr_log_path = Some(paths.stderr);
+    prepared
+}
+
+fn diagnostic_path_for_child(_env: &HashMap<String, String>, host_path: &Path) -> PathBuf {
+    // CRP child processes run either on the host or inside the harness
+    // container. The shared-VM harness container bind-mounts the daemon data
+    // root at its original host path, so /mnt/ctx-host is not a child-visible
+    // path for these diagnostics.
+    host_path.to_path_buf()
+}
+
 fn crp_log_paths(env: &HashMap<String, String>, provider_id: &str) -> Option<CrpLogPaths> {
     let data_root = crate::env::data_root_for_host(env)?;
     let timestamp = Utc::now().format("%Y-%m-%dT%H-%M-%SZ");
@@ -258,18 +305,26 @@ fn crp_log_paths(env: &HashMap<String, String>, provider_id: &str) -> Option<Crp
     Some(CrpLogPaths {
         codex_events: dir.join(format!("{base}.codex-events.jsonl")),
         crp_events: dir.join(format!("{base}.crp-events.jsonl")),
+        raw_stdout: dir.join(format!("{base}.stdout.log")),
         stderr: dir.join(format!("{base}.stderr.log")),
     })
 }
 
-async fn stdout_pump(process: Arc<CrpProcess>, stdout: impl tokio::io::AsyncRead + Unpin) {
+async fn stdout_pump(
+    process: Arc<CrpProcess>,
+    stdout: impl tokio::io::AsyncRead + Unpin,
+    log_path: Option<PathBuf>,
+) {
     // Debugging aid: when set, dump raw CRP stdout lines from the runtime to this file.
     // This lets us confirm what the runtime emitted without involving storage/UI layers.
     let dump_path = std::env::var("CTX_CRP_DUMP_EVENTS_PATH")
         .ok()
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty());
-    let mut dump_file = dump_path.as_deref().and_then(|path| {
+    let dump_file_path = log_path
+        .as_deref()
+        .or_else(|| dump_path.as_deref().map(Path::new));
+    let mut dump_file = dump_file_path.and_then(|path| {
         std::fs::OpenOptions::new()
             .create(true)
             .append(true)
@@ -287,7 +342,7 @@ async fn stdout_pump(process: Arc<CrpProcess>, stdout: impl tokio::io::AsyncRead
                 }
                 if let Some(f) = dump_file.as_mut() {
                     // Best-effort only; never fail the pump because debug dumping failed.
-                    let _ = writeln!(f, "{trimmed}");
+                    let _ = writeln!(f, "{}", redact_sensitive(trimmed));
                 }
                 match serde_json::from_str::<CrpEventEnvelope>(trimmed) {
                     Ok(env) => {

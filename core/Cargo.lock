@@ -1568,7 +1568,7 @@ dependencies = [
 
 [[package]]
 name = "ctx-http"
-version = "0.61.0"
+version = "0.62.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1867,6 +1867,7 @@ dependencies = [
  "chrono",
  "ctx-core",
  "ctx-crp-protocol",
+ "ctx-sandbox-contract",
  "libc",
  "rand 0.8.5",
  "serde",

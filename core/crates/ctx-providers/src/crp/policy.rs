@@ -230,6 +230,7 @@ pub(super) fn validate_provider_slash_command_support(
 }
 
 pub(super) fn extract_auth_url_from_stderr_line(line: &str) -> Option<String> {
+    let lowered_line = line.to_ascii_lowercase();
     let mut search_from = 0usize;
     while search_from < line.len() {
         let haystack = &line[search_from..];
@@ -250,7 +251,35 @@ pub(super) fn extract_auth_url_from_stderr_line(line: &str) -> Option<String> {
             })
             .unwrap_or(line.len());
         let candidate = line[start..end].trim_end_matches(['.', ',', ';', ':']);
-        if candidate.starts_with("http://") || candidate.starts_with("https://") {
+        let lowered_candidate = candidate.to_ascii_lowercase();
+        let looks_like_auth_prompt = [
+            "auth required",
+            "authentication required",
+            "authenticate",
+            "authentication",
+            "oauth",
+            "consent",
+            "sign in",
+            "sign-in",
+            "signin",
+            "log in",
+            "login",
+        ]
+        .iter()
+        .any(|needle| lowered_line.contains(needle))
+            || [
+                "auth.openai.com",
+                "accounts.google.com/o/oauth2",
+                "/oauth",
+                "/authorize",
+                "/login",
+                "/signin",
+            ]
+            .iter()
+            .any(|needle| lowered_candidate.contains(needle));
+        if looks_like_auth_prompt
+            && (candidate.starts_with("http://") || candidate.starts_with("https://"))
+        {
             return Some(candidate.to_string());
         }
         search_from = end.saturating_add(1);
@@ -302,6 +331,12 @@ mod tests {
             extract_auth_url_from_stderr_line(line).as_deref(),
             Some("https://accounts.google.com/o/oauth2/v2/auth?client_id=abc")
         );
+    }
+
+    #[test]
+    fn extract_auth_url_from_stderr_line_ignores_generic_startup_urls() {
+        let line = "INFO docs: https://example.com/help/getting-started";
+        assert_eq!(extract_auth_url_from_stderr_line(line), None);
     }
 
     #[test]

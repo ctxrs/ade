@@ -149,6 +149,10 @@ async fn ensure_codex_endpoint_runtime_home_from_env_sets_container_accessible_c
     let mut env = HashMap::new();
     env.insert("OPENAI_API_KEY".to_string(), "endpoint-key".to_string());
     env.insert(
+        "OPENAI_BASE_URL".to_string(),
+        "https://openrouter.ai/api/v1".to_string(),
+    );
+    env.insert(
         "CODEX_HOME".to_string(),
         "/tmp/host/endpoint-homes/abc123".to_string(),
     );
@@ -163,6 +167,8 @@ async fn ensure_codex_endpoint_runtime_home_from_env_sets_container_accessible_c
     let auth = tokio::fs::read_to_string(auth_path).await.unwrap();
     assert!(auth.contains("OPENAI_API_KEY"));
     assert!(auth.contains("endpoint-key"));
+    assert!(auth.contains("OPENAI_BASE_URL"));
+    assert!(auth.contains("https://openrouter.ai/api/v1"));
 }
 
 #[tokio::test]
@@ -178,7 +184,7 @@ async fn ensure_codex_endpoint_runtime_home_from_env_uses_endpoint_home_auth_whe
     tokio::fs::create_dir_all(&endpoint_home).await.unwrap();
     tokio::fs::write(
         endpoint_home.join("auth.json"),
-        br#"{"OPENAI_API_KEY":"endpoint-home-key"}"#,
+        br#"{"OPENAI_API_KEY":"endpoint-home-key","OPENAI_BASE_URL":"https://openrouter.ai/api/v1"}"#,
     )
     .await
     .unwrap();
@@ -198,10 +204,15 @@ async fn ensure_codex_endpoint_runtime_home_from_env_uses_endpoint_home_auth_whe
         env.get("OPENAI_API_KEY").map(String::as_str),
         Some("endpoint-home-key")
     );
+    assert_eq!(
+        env.get("OPENAI_BASE_URL").map(String::as_str),
+        Some("https://openrouter.ai/api/v1")
+    );
     let auth = tokio::fs::read_to_string(Path::new(&codex_home).join("auth.json"))
         .await
         .unwrap();
     assert!(auth.contains("endpoint-home-key"));
+    assert!(auth.contains("https://openrouter.ai/api/v1"));
 }
 
 #[tokio::test]

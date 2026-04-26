@@ -8,7 +8,9 @@ use serde_json::{json, Value};
 use tokio::time::Duration;
 
 use crate::adapters::TurnInput;
-use crate::container_exec::{container_exec_spec, translate_thread_cwd_for_container};
+use crate::container_exec::{
+    container_exec_spec, rewrite_ctx_mcp_command_for_env, translate_thread_cwd_for_container,
+};
 
 use super::protocol::{CrpMcpServerConfig, CrpModelInfo, CrpModelsProbe, CrpSessionConfig};
 
@@ -24,6 +26,21 @@ pub(super) fn build_crp_session_config(
     env: &HashMap<String, String>,
     workdir: &Path,
 ) -> Result<CrpSessionConfig> {
+    build_crp_session_config_with_mcp(env, workdir, true)
+}
+
+pub(super) fn build_crp_auth_session_config(
+    env: &HashMap<String, String>,
+    workdir: &Path,
+) -> Result<CrpSessionConfig> {
+    build_crp_session_config_with_mcp(env, workdir, false)
+}
+
+fn build_crp_session_config_with_mcp(
+    env: &HashMap<String, String>,
+    workdir: &Path,
+    include_mcp_servers: bool,
+) -> Result<CrpSessionConfig> {
     let mcp_enabled = env
         .get("CTX_MCP_DISABLED")
         .and_then(|value| parse_boolish(value))
@@ -38,7 +55,7 @@ pub(super) fn build_crp_session_config(
             .unwrap_or((None, None))
     };
 
-    let mcp_servers = if mcp_enabled {
+    let mcp_servers = if mcp_enabled && include_mcp_servers {
         let mut mcp_env = HashMap::new();
         if let Some(url) = env.get("CTX_DAEMON_URL") {
             mcp_env.insert("CTX_DAEMON_URL".to_string(), url.clone());
@@ -82,14 +99,16 @@ pub(super) fn build_crp_session_config(
         None
     };
 
+    let container_cwd = translate_thread_cwd_for_container(env, workdir)?;
     Ok(CrpSessionConfig {
-        cwd: Some(translate_thread_cwd_for_container(env, workdir)?),
-        spawn_cwd: Some(workdir.to_path_buf()),
+        cwd: Some(container_cwd.clone()),
+        spawn_cwd: Some(container_cwd),
         model,
         reasoning_effort,
         approval_policy: Some(FULL_YOLO_APPROVAL_POLICY.to_string()),
         sandbox_mode: Some(FULL_YOLO_SANDBOX_MODE.to_string()),
-        model_provider: None,
+        model_provider: env_string(env, "CTX_MODEL_PROVIDER"),
+        openai_base_url: env_string(env, "OPENAI_BASE_URL"),
         reasoning_trace_enabled: Some(true),
         personality: env
             .get("CTX_PROVIDER_ID")
@@ -109,7 +128,15 @@ fn resolve_session_mcp_command(env: &HashMap<String, String>) -> String {
     let Some(command) = configured else {
         return "ctx-mcp".to_string();
     };
-    if container_exec_spec(env).is_none() || containerized_mcp_command_is_valid(command) {
+    if container_exec_spec(env).is_none() {
+        return command.to_string();
+    }
+    if let Ok(command) = rewrite_ctx_mcp_command_for_env(env, command) {
+        if containerized_mcp_command_is_valid(&command) {
+            return command;
+        }
+    }
+    if containerized_mcp_command_is_valid(command) {
         return command.to_string();
     }
     "ctx-mcp".to_string()
@@ -143,18 +170,27 @@ pub(super) fn build_crp_model_probe_config(
         .get("CTX_MODEL_ID")
         .map(|value| split_model_id_and_effort(value))
         .unwrap_or((None, None));
+    let container_cwd = translate_thread_cwd_for_container(env, workdir)?;
     Ok(CrpSessionConfig {
-        cwd: Some(translate_thread_cwd_for_container(env, workdir)?),
-        spawn_cwd: Some(workdir.to_path_buf()),
+        cwd: Some(container_cwd.clone()),
+        spawn_cwd: Some(container_cwd),
         model,
         reasoning_effort,
         approval_policy: Some(FULL_YOLO_APPROVAL_POLICY.to_string()),
         sandbox_mode: Some(FULL_YOLO_SANDBOX_MODE.to_string()),
-        model_provider: None,
+        model_provider: env_string(env, "CTX_MODEL_PROVIDER"),
+        openai_base_url: env_string(env, "OPENAI_BASE_URL"),
         reasoning_trace_enabled: None,
         personality: None,
         mcp_servers: None,
     })
+}
+
+fn env_string(env: &HashMap<String, String>, key: &str) -> Option<String> {
+    env.get(key)
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
 }
 
 pub(super) fn split_model_id_and_effort(model_id: &str) -> (Option<String>, Option<String>) {

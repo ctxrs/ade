@@ -9,13 +9,13 @@ use crate::adapters::{ProviderSessionRefClaim, ProviderSessionRefClaimHook};
 use crate::container_exec::container_exec_spec;
 use crate::events::NormalizedEvent;
 
-use super::super::config::build_crp_session_config;
+use super::super::config::{build_crp_auth_session_config, build_crp_session_config};
 use super::super::normalize::{event_matches_session, map_crp_event, CachedToolInput};
 use super::super::policy::extract_runtime_fatal_error_from_stderr_line;
 use super::super::protocol::{
     CrpCommand, CrpEvent, CrpEventEnvelope, CrpSessionConfig, KnownCrpEvent,
 };
-use super::{CrpSession, CrpSessionPool};
+use super::{AuthSessionOpenMode, CrpSession, CrpSessionPool};
 
 const CRP_FIRST_EVENT_TIMEOUT_HOST: std::time::Duration = std::time::Duration::from_secs(15);
 const CRP_FIRST_EVENT_TIMEOUT_CONTAINER: std::time::Duration = std::time::Duration::from_secs(45);
@@ -111,6 +111,10 @@ pub(super) fn duration_millis_u64(duration: std::time::Duration) -> u64 {
     duration.as_millis().min(u128::from(u64::MAX)) as u64
 }
 
+pub(in crate::crp::session_pool) struct AuthSessionOpenOutcome {
+    pub drain_after_auth: bool,
+}
+
 impl CrpSessionPool {
     pub(super) async fn send_session_open(
         &self,
@@ -146,8 +150,12 @@ impl CrpSessionPool {
         rx: &mut broadcast::Receiver<CrpEventEnvelope>,
         stderr_rx: &mut broadcast::Receiver<String>,
         shutdown_rx: &mut watch::Receiver<Option<String>>,
-    ) -> Result<()> {
-        let config = build_crp_session_config(env, workdir)?;
+    ) -> Result<AuthSessionOpenOutcome> {
+        let auth_session_open_mode = self.auth_session_open_mode;
+        let config = match auth_session_open_mode {
+            AuthSessionOpenMode::Standard => build_crp_session_config(env, workdir)?,
+            AuthSessionOpenMode::OmitMcpThenDrain => build_crp_auth_session_config(env, workdir)?,
+        };
         let provider_session_id = env
             .get("CTX_PROVIDER_SESSION_REF")
             .map(|value| value.trim().to_string())
@@ -206,39 +214,44 @@ impl CrpSessionPool {
                     if let Some(returned_provider_session_ref) =
                         session_opened_provider_session_id(&env.event)
                     {
-                        if let Err(err) = validate_provider_session_open(
-                            provider_session_id.as_deref(),
-                            returned_provider_session_ref,
-                            provider_session_ref_claim,
-                        )
-                        .await
-                        {
-                            session
-                                .process
-                                .shutdown("provider_session_open_validation_failed")
-                                .await;
-                            let _ = self.prune_dead_sessions().await;
-                            return Err(err);
-                        }
-                        apply_session_opened_state(session, &env.event);
-                        let mapped = map_crp_event(
-                            env.event,
-                            env.channel,
-                            env.seq,
-                            &mut tool_output_cache,
-                            &mut tool_input_cache,
-                        );
-                        for event in mapped.events {
-                            if event_sink.send(event).await.is_err() {
-                                break;
+                        if auth_session_open_mode == AuthSessionOpenMode::Standard {
+                            if let Err(err) = validate_provider_session_open(
+                                provider_session_id.as_deref(),
+                                returned_provider_session_ref,
+                                provider_session_ref_claim,
+                            )
+                            .await
+                            {
+                                session
+                                    .process
+                                    .shutdown("provider_session_open_validation_failed")
+                                    .await;
+                                let _ = self.prune_dead_sessions().await;
+                                return Err(err);
                             }
                         }
-                        break;
+                        apply_session_opened_state(session, &env.event);
+                        if auth_session_open_mode == AuthSessionOpenMode::Standard {
+                            let mapped = map_crp_event(
+                                env.event,
+                                env.channel,
+                                env.seq,
+                                &mut tool_output_cache,
+                                &mut tool_input_cache,
+                            );
+                            for event in mapped.events {
+                                if event_sink.send(event).await.is_err() {
+                                    break;
+                                }
+                            }
+                        }
+                        return Ok(AuthSessionOpenOutcome {
+                            drain_after_auth: auth_session_open_mode
+                                == AuthSessionOpenMode::OmitMcpThenDrain,
+                        });
                     }
                 }
             }
         }
-
-        Ok(())
     }
 }

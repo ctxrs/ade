@@ -2,7 +2,7 @@ use anyhow::Result;
 use reqwest::Method;
 use url::form_urlencoded;
 
-use ctx_core::ids::{SessionId, TaskId, TurnId};
+use ctx_core::ids::{SessionId, TaskId, TurnId, WorkspaceId};
 use ctx_core::models::{
     Message, Session, SessionEventsPage, SessionHeadSnapshot, SessionHistoryPage, SessionSnapshot,
     SessionState, SessionTurnTool,
@@ -172,7 +172,7 @@ impl Client {
     pub async fn list_turn_tools(
         &self,
         session_id: SessionId,
-        turn_id: ctx_core::ids::TurnId,
+        turn_id: TurnId,
     ) -> Result<Vec<SessionTurnTool>> {
         let path = format!("/api/sessions/{}/turns/{}/tools", session_id.0, turn_id.0);
         self.request_json(Method::GET, &path, None::<&()>).await

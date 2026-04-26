@@ -11,6 +11,7 @@ rust_library(
     deps = [
         "//core/crates/ctx-core:lib",
         "//core/crates/ctx-crp-protocol:lib",
+        "//core/crates/ctx-sandbox-contract:lib",
         "@crates//:anyhow",
         "@crates//:base64",
         "@crates//:chrono",
@@ -37,6 +38,7 @@ rust_library(
     deps = [
         "//core/crates/ctx-core:lib",
         "//core/crates/ctx-crp-protocol:lib",
+        "//core/crates/ctx-sandbox-contract:lib",
         "@crates//:anyhow",
         "@crates//:base64",
         "@crates//:chrono",

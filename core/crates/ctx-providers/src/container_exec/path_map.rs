@@ -74,10 +74,40 @@ pub(super) fn rewrite_container_env_value_for_linux(key: &str, value: &str) -> R
     if key == "PATH" {
         return rewrite_container_path_list_for_linux(value);
     }
+    if key == "CTX_MCP_COMMAND" {
+        return rewrite_bundled_path_for_linux(value);
+    }
     if key.ends_with("_PATH") {
         return rewrite_bundled_path_for_linux(value);
     }
     Ok(value.to_string())
+}
+
+pub(crate) fn rewrite_ctx_mcp_command_for_spec(
+    spec: Option<&ContainerExecSpec>,
+    value: &str,
+) -> Result<String> {
+    let rewritten = rewrite_bundled_path_for_linux(value)?;
+    let Some(ContainerExecSpec::SharedVmContainer { .. }) = spec else {
+        return Ok(rewritten);
+    };
+    let path = Path::new(&rewritten);
+    if !path.is_absolute() {
+        return Ok(rewritten);
+    }
+    // This command is consumed by the CRP process inside the harness container,
+    // not by a command run directly in the AVF guest. The container bind mounts
+    // the daemon data root at its original host path, so mapping to
+    // /mnt/ctx-host would make the command invisible to the child process.
+    Ok(rewritten)
+}
+
+pub(crate) fn rewrite_ctx_mcp_command_for_env(
+    env: &HashMap<String, String>,
+    value: &str,
+) -> Result<String> {
+    let spec = container_exec_spec(env);
+    rewrite_ctx_mcp_command_for_spec(spec.as_ref(), value)
 }
 
 fn join_guest_relative(root: &Path, relative: &Path) -> PathBuf {

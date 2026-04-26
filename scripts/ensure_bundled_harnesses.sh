@@ -903,6 +903,9 @@ build_local_adapters() {
 
   local id
   for id in droid; do
+    if ! provider_selected_for_bundle "$id"; then
+      continue
+    fi
     local dir
     dir="$(local_adapter_dir "$id")"
     local bin

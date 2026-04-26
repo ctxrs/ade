@@ -7,6 +7,52 @@ only_providers_raw="${only_providers_raw// /}"
 skip_providers_raw="${CTX_BUNDLE_SKIP_PROVIDERS:-}"
 skip_providers_raw="${skip_providers_raw// /}"
 
+if [[ -n "$only_providers_raw" ]]; then
+  only_providers_raw="$(
+    run_python - "$MATRIX_JSON" "$only_providers_raw" "$skip_providers_raw" <<'PY'
+import json
+import sys
+from collections import deque
+
+matrix_path = sys.argv[1]
+only_raw = sys.argv[2]
+skip_raw = sys.argv[3]
+
+only = [value for value in only_raw.split(",") if value]
+skip = {value for value in skip_raw.split(",") if value}
+if not only:
+    print("")
+    raise SystemExit(0)
+
+with open(matrix_path, "r", encoding="utf-8") as fh:
+    data = json.load(fh)
+
+providers = {
+    str(provider.get("id") or "").strip(): provider
+    for provider in data.get("providers", [])
+    if str(provider.get("id") or "").strip()
+}
+
+ordered = []
+seen = set()
+queue = deque(only)
+while queue:
+    provider_id = queue.popleft()
+    if not provider_id or provider_id in seen or provider_id in skip:
+        continue
+    seen.add(provider_id)
+    ordered.append(provider_id)
+    provider = providers.get(provider_id) or {}
+    for dependency in provider.get("provider_dependencies") or []:
+        dep_id = str(dependency.get("id") or "").strip()
+        if dep_id and dep_id not in seen and dep_id not in skip:
+            queue.append(dep_id)
+
+print(",".join(ordered))
+PY
+  )"
+fi
+
 provider_selected_for_bundle() {
   local provider_id="$1"
   if [[ -n "$only_providers_raw" ]]; then
