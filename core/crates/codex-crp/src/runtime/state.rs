@@ -5,7 +5,7 @@ use serde_json::Value;
 
 use crate::app_server::{AppServerClient, ThreadTokenUsage};
 
-use super::translate::canonical_context_window_from_thread_usage;
+use super::canonical_context_window_from_thread_usage;
 
 #[derive(Default)]
 pub(super) struct ReasoningSummaryState {

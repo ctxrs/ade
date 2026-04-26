@@ -7,11 +7,11 @@ use crate::builtins::split_model_and_effort;
 use crate::protocol::{CrpChannel, CrpCommand, CrpEvent, CrpTurnStatus};
 use crate::RuntimeOptions;
 
+use super::emit_turn_request_error;
 use super::io::{dispatch_event, CrpEventRouter};
 use super::prompt_items::translate_prompt_items_for_app_server;
 use super::session::{open_session, probe_models};
 use super::status::query_session_status;
-use super::translate::emit_turn_request_error;
 use super::{current_model_id, AppServerSessionState, RuntimeCommand};
 
 pub(super) async fn handle_command(

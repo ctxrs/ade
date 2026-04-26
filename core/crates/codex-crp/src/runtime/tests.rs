@@ -2,7 +2,7 @@ use super::commands::handle_parsed_command;
 use super::prompt_items::translate_prompt_items_for_app_server;
 use super::session::open_session;
 use super::status::{build_session_status_details, ThreadStatusSnapshot};
-use super::translate::{canonical_context_window_from_thread_usage, translate_notification};
+use super::translate::translate_notification;
 use super::*;
 use crate::app_server::AppServerClient;
 use crate::protocol::{CrpChannel, CrpCommand, CrpEvent};

@@ -18,6 +18,10 @@ use tracing::error;
 use self::commands::handle_command;
 use self::io::{read_commands, run_writer, CrpEventRouter, CrpWriter};
 use self::state::{current_model_id, AppServerSessionState, TurnAliasState, TurnTracker};
+use self::translate::{
+    canonical_context_window_from_thread_usage, emit_turn_request_error,
+    emit_unsupported_server_request_notice,
+};
 
 const DATA_PLANE_BUFFER_CAPACITY: usize = 256;
 

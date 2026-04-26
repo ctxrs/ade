@@ -3,8 +3,9 @@ use tracing::warn;
 
 use crate::app_server::{AppServerInbound, AppServerRequestId};
 
+use super::emit_unsupported_server_request_notice;
 use super::io::CrpEventRouter;
-use super::translate::{emit_unsupported_server_request_notice, translate_notification};
+use super::translate::translate_notification;
 use super::AppServerSessionState;
 
 pub(super) async fn handle_app_server_event(
