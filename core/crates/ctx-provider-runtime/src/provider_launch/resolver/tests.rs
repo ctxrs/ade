@@ -1,8 +1,53 @@
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use tempfile::tempdir;
+use tokio::sync::Mutex;
 
 use super::*;
+use crate::ProviderRuntimeHost;
+use ctx_providers::adapters::{ProviderAdapter, ProviderStatus};
+
+struct TestRuntimeHost {
+    data_root: PathBuf,
+    provider_adapters: Mutex<HashMap<String, Arc<dyn ProviderAdapter>>>,
+    target_provider_adapters: Mutex<HashMap<String, Arc<dyn ProviderAdapter>>>,
+    provider_statuses: Mutex<HashMap<String, ProviderStatus>>,
+}
+
+impl TestRuntimeHost {
+    fn new(data_root: PathBuf) -> Self {
+        Self {
+            data_root,
+            provider_adapters: Mutex::new(HashMap::new()),
+            target_provider_adapters: Mutex::new(HashMap::new()),
+            provider_statuses: Mutex::new(HashMap::new()),
+        }
+    }
+}
+
+impl ProviderRuntimeHost for TestRuntimeHost {
+    fn data_root(&self) -> &Path {
+        &self.data_root
+    }
+
+    fn current_ctx_version(&self) -> Option<String> {
+        None
+    }
+
+    fn provider_adapters(&self) -> &Mutex<HashMap<String, Arc<dyn ProviderAdapter>>> {
+        &self.provider_adapters
+    }
+
+    fn target_provider_adapters(&self) -> &Mutex<HashMap<String, Arc<dyn ProviderAdapter>>> {
+        &self.target_provider_adapters
+    }
+
+    fn provider_statuses(&self) -> &Mutex<HashMap<String, ProviderStatus>> {
+        &self.provider_statuses
+    }
+}
 
 #[test]
 fn normalizes_qwen_command_with_openai_auth_type() {
@@ -22,6 +67,40 @@ fn normalizes_qwen_command_with_openai_auth_type() {
             "--auth-type".to_string(),
             "openai".to_string(),
         ]
+    );
+}
+
+#[tokio::test]
+async fn ensure_provider_adapter_for_target_surfaces_agent_server_config_errors_without_caching() {
+    let data_root = tempfile::tempdir().expect("tempdir");
+    let config_path = installer::agent_server_config_path(data_root.path());
+    std::fs::create_dir_all(config_path.parent().expect("config parent")).expect("mkdir");
+    std::fs::write(&config_path, "{ not valid json").expect("write invalid config");
+
+    let host = TestRuntimeHost::new(data_root.path().to_path_buf());
+    let err = match ensure_provider_adapter_for_target(&host, "codex-crp", InstallTarget::Container)
+        .await
+    {
+        Ok(_) => panic!("invalid managed config should fail adapter resolution"),
+        Err(err) => err,
+    };
+
+    assert!(err.to_string().contains("loading agent server config"));
+    assert!(
+        host.target_provider_adapters
+            .lock()
+            .await
+            .get("codex-crp@container")
+            .is_none(),
+        "invalid managed config should not seed target adapter cache"
+    );
+    assert!(
+        host.provider_adapters
+            .lock()
+            .await
+            .get("codex-crp")
+            .is_none(),
+        "invalid managed config should not seed provider adapter cache"
     );
 }
 
