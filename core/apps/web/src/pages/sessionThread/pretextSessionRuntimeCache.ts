@@ -16,6 +16,7 @@ import {
   bindSessionPretextRuntime,
   type SessionPretextRuntimeBindings,
 } from "./pretextSessionRuntimeBindings";
+import { clearPretextRowMeasurementOverrides } from "./pretextRowMeasurementOverrides";
 import {
   buildSessionPretextRuntimeLayoutKey,
   buildSessionPretextRuntimeSourceKey,
@@ -360,6 +361,7 @@ export function getSessionPretextRuntimeCacheSize(): number {
 }
 
 export function resetSessionPretextRuntimeCache(): void {
+  clearPretextRowMeasurementOverrides();
   for (const record of sessionTranscriptCache.values()) {
     record.runtime = null;
     deleteSessionTranscriptCacheRecordIfEmpty(record);

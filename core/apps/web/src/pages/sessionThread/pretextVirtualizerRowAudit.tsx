@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useRef, type ReactNode, type Ref } from "react";
 import type { WorkbenchListItem } from "../sessionView";
 import { recordSessionMessageListRowSizeMismatch } from "../sessionMessageListDebug";
 
@@ -17,12 +17,14 @@ export function AuditedPretextRow({
   itemKind,
   itemKey,
   plannedHeight,
+  listItemRef,
   children,
 }: {
   id: string;
   itemKind: WorkbenchListItem["kind"];
   itemKey: string;
   plannedHeight: number;
+  listItemRef?: Ref<HTMLDivElement>;
   children: ReactNode;
 }) {
   const debugEnabled = isPretextVirtualizerDebugEnabled();
@@ -85,16 +87,21 @@ export function AuditedPretextRow({
     };
   }, [debugEnabled, id, itemKey, itemKind, plannedHeight]);
 
-  if (!debugEnabled) {
-    return (
-      <div role="listitem" data-thread-item-id={id}>
-        {children}
-      </div>
-    );
-  }
-
   return (
-    <div ref={rowRef} role="listitem" data-thread-item-id={id}>
+    <div
+      ref={(node) => {
+        rowRef.current = node;
+        if (typeof listItemRef === "function") {
+          listItemRef(node);
+          return;
+        }
+        if (listItemRef && "current" in listItemRef) {
+          listItemRef.current = node;
+        }
+      }}
+      role="listitem"
+      data-thread-item-id={id}
+    >
       {children}
     </div>
   );

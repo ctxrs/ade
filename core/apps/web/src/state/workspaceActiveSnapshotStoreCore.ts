@@ -135,7 +135,7 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
   private snapshotWaitTimer: ReturnType<typeof globalThis.setTimeout> | null = null;
   private cachePersistTimer: ReturnType<typeof globalThis.setTimeout> | null = null;
   private streamQueue: Promise<void> = Promise.resolve();
-  private destroyed = false;
+  destroyed = false;
 
   constructor(readonly workspaceId: string, opts?: WorkspaceActiveSnapshotStoreOptions) {
     this.state = new WorkspaceActiveSnapshotStoreState(workspaceId);

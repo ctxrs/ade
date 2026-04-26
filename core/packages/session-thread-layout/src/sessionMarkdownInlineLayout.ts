@@ -19,6 +19,7 @@ import {
 import {
   SESSION_THREAD_MARKDOWN_INLINE_CODE_FRAGMENT_CHROME_WIDTH_PX,
 } from "./sessionThreadLayoutTokens";
+import { isPathLikeOrDottedText } from "./sessionTextTokenClassifier";
 
 const INLINE_CODE_MIN_START_GRAPHEMES = 4;
 const INLINE_CODE_PATH_MIN_START_GRAPHEMES = 3;
@@ -176,7 +177,7 @@ export function prepareInlineLayoutItems(params: {
         break;
       }
       if (candidate.kind === "inlineCode") {
-        return candidate.text.includes("/") || candidate.text.includes("\\") || candidate.text.includes(".");
+        return isPathLikeOrDottedText(candidate.text);
       }
       if (runHasRenderableText(candidate)) {
         return false;

@@ -22,7 +22,7 @@ import {
   noteSessionTranscriptWarmViewport,
   resetSessionTranscriptWarmStateForTests,
 } from "./sessionThread/sessionTranscriptWarmState";
-import { defaultTranscriptLayoutPlanner } from "./sessionThread/transcriptLayoutPlanner";
+import { defaultTranscriptLayoutPlanner } from "./sessionThread/transcriptLayoutPlanner.app";
 import { getWorkbenchTurnHeaderLayoutState } from "./sessionThread/transcriptRowLayoutModel";
 
 const resizeObserverInstances: Array<{ callback: ResizeObserverCallback }> = [];

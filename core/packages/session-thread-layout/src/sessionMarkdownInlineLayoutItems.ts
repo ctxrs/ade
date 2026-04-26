@@ -13,6 +13,10 @@ import {
   SESSION_THREAD_MARKDOWN_INLINE_CODE_FONT_FAMILY,
   SESSION_THREAD_MARKDOWN_INLINE_CODE_FONT_SIZE_PX,
 } from "./sessionThreadLayoutTokens";
+import {
+  isHyphenatedTextBreakToken,
+  splitHyphenatedTextBreakToken,
+} from "./sessionTextTokenClassifier";
 
 const INLINE_CODE_MIN_START_GRAPHEMES = 4;
 
@@ -74,46 +78,6 @@ function isSlashDelimitedTextToken(text: string): boolean {
     return false;
   }
   return /\S\/\S/.test(trimmed);
-}
-
-function isHyphenatedTextBreakToken(text: string): boolean {
-  const trimmed = text.trim();
-  if (!trimmed.includes("-")) {
-    return false;
-  }
-  if (trimmed.includes("\\") || trimmed.includes("://")) {
-    return false;
-  }
-  if (isAbsolutePath(trimmed) || trimmed.startsWith("./") || trimmed.startsWith("../") || trimmed.startsWith("~/")) {
-    return false;
-  }
-  return /[\p{L}\p{N}]-[\p{L}\p{N}]/u.test(trimmed);
-}
-
-function splitHyphenatedTextBreakToken(text: string): string[] {
-  if (!isHyphenatedTextBreakToken(text)) {
-    return [text];
-  }
-  const parts: string[] = [];
-  const graphemes = Array.from(text);
-  let current = "";
-  for (let index = 0; index < graphemes.length; index += 1) {
-    const char = graphemes[index]!;
-    current += char;
-    if (char !== "-") {
-      continue;
-    }
-    const previous = graphemes[index - 1] ?? "";
-    const next = graphemes[index + 1] ?? "";
-    if (/[\p{L}\p{N}]/u.test(previous) && /[\p{L}\p{N}]/u.test(next)) {
-      parts.push(current);
-      current = "";
-    }
-  }
-  if (current.length > 0) {
-    parts.push(current);
-  }
-  return parts.length > 1 ? parts : [text];
 }
 
 function splitTextRunChunks(text: string, preserveSlashDelimitedTokens: boolean): string[] {

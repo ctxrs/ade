@@ -1,4 +1,4 @@
-#[path = "main/03_tools/web_sessions.rs"]
+#[path = "03_tools/web_sessions.rs"]
 mod web_sessions;
 use self::web_sessions::{
     session_close_call, session_create_call, session_info_call, session_list_call,
@@ -460,9 +460,9 @@ async fn set_artifacts(
 }
 
 #[cfg(test)]
-#[path = "main/03_tools/tests.rs"]
+#[path = "03_tools/tests.rs"]
 mod tests;
 
 #[cfg(all(test, feature = "fuzz_tests"))]
-#[path = "main/03_tools/fuzz_tests.rs"]
+#[path = "03_tools/fuzz_tests.rs"]
 mod fuzz_tests;

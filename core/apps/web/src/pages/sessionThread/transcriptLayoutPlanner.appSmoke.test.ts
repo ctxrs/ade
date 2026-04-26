@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { WorkbenchListItem } from "../sessionView";
-import { getPretextVirtualizerRowLayout } from "./pretextVirtualizerRowLayout";
+import { getPretextVirtualizerRowLayout } from "./pretextVirtualizerRowLayout.app";
 import {
   getTranscriptRowPlannedLayout,
   planTranscriptRowLayout,
-} from "./transcriptLayoutPlanner";
+} from "./transcriptLayoutPlanner.app";
 
 describe("transcriptLayoutPlanner app smoke", () => {
   const item: WorkbenchListItem = {

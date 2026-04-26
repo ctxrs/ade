@@ -32,6 +32,67 @@ export type PretextVirtualizerRowLayoutContext = {
   expandedTurnDetailsById?: Readonly<Record<string, boolean>>;
   expandedMessageById?: Readonly<Record<string, boolean>>;
   turnToolsLoading?: readonly string[];
+  measurementHooks?: PretextVirtualizerMeasurementHooks;
+};
+
+export type PretextVirtualizerMessageLayout = {
+  expanded: boolean;
+  expandable: boolean;
+  renderMode: "plain_text" | "markdown";
+  shownContent: string;
+};
+
+export type PretextVirtualizerRowMeasurementRequest =
+  | {
+      kind: "assistant-row";
+      item: Extract<WorkbenchListItem, { kind: "assistant" }>;
+      viewportWidth: number;
+    }
+  | {
+      kind: "message-row";
+      item: Extract<WorkbenchListItem, { kind: "message" }>;
+      viewportWidth: number;
+      layout: PretextVirtualizerMessageLayout;
+    };
+
+export type PretextVirtualizerTextMeasurementRequest =
+  | {
+      kind: "assistant-markdown-text";
+      content: string;
+      width: number;
+    }
+  | {
+      kind: "message-text";
+      itemId: string;
+      width: number;
+      layout: PretextVirtualizerMessageLayout;
+    }
+  | {
+      kind: "turn-header-preview-text";
+      cacheKey: string;
+      text: string;
+      width: number;
+      collapsedMaxHeightPx: number;
+      expanded: boolean;
+    };
+
+export type PretextVirtualizerMeasuredHeight =
+  | {
+      status: "measured";
+      height: number;
+    }
+  | {
+      status: "miss";
+    };
+
+export type PretextVirtualizerMeasurementHooks = {
+  resolveRowHeightOverride?: (request: PretextVirtualizerRowMeasurementRequest) => number | null;
+  measureRowHeight?: (
+    request: PretextVirtualizerRowMeasurementRequest,
+  ) => PretextVirtualizerMeasuredHeight;
+  measureTextHeight?: (
+    request: PretextVirtualizerTextMeasurementRequest,
+  ) => PretextVirtualizerMeasuredHeight;
 };
 
 type ThreadAttachment = WorkbenchTurnHeader["attachments"][number];
@@ -90,6 +151,20 @@ function measureTextHeight(params: {
   return measureSessionTextHeight(params);
 }
 
+function resolveMeasuredHeight(
+  measurement: PretextVirtualizerMeasuredHeight | null | undefined,
+  missCounter: string,
+): number | null {
+  if (measurement == null) {
+    return null;
+  }
+  if (measurement.status === "measured") {
+    return measurement.height;
+  }
+  incrementPretextPerfCounter(missCounter);
+  return null;
+}
+
 const countImageAttachments = (attachments: readonly ThreadAttachment[]): number =>
   attachments.filter((attachment) => attachment.kind === "image" || attachment.kind === "image_ref").length;
 
@@ -114,13 +189,26 @@ function measureTurnHeaderHeight(
     { kind: "turn_header", id: `turn-header-${header.id}`, header },
     context.expandedTurnHeaders ?? {},
   );
-  const collapsedTextHeight = measureTurnHeaderPreviewTextHeight({
+  const previewRequest: PretextVirtualizerTextMeasurementRequest = {
+    kind: "turn-header-preview-text",
     cacheKey: `turn-header:${contentRevision}:${expanded ? "expanded" : "collapsed"}`,
     text: displayPlainText,
     width: resolveSessionThreadTurnHeaderTextWidth(viewportWidth),
     collapsedMaxHeightPx: ROW_CONTRACT.turnHeader.collapsedMaxHeightPx,
     expanded,
-  });
+  };
+  const collapsedTextHeight =
+    resolveMeasuredHeight(
+      context.measurementHooks?.measureTextHeight?.(previewRequest),
+      "pretext_row_layout_turn_header_text_measurement_miss",
+    ) ??
+    measureTurnHeaderPreviewTextHeight({
+      cacheKey: previewRequest.cacheKey,
+      text: previewRequest.text,
+      width: previewRequest.width,
+      collapsedMaxHeightPx: previewRequest.collapsedMaxHeightPx,
+      expanded: previewRequest.expanded,
+    });
   const imageCount = expanded ? countImageAttachments(header.attachments) : 0;
   const perRow = Math.max(
     1,
@@ -175,13 +263,35 @@ function measureMessageHeight(
   context: PretextVirtualizerRowLayoutContext,
 ): number {
   const layout = getWorkbenchMessageLayoutState(item, context.expandedMessageById ?? {});
-  const textWidth = resolveSessionThreadMessageTextWidth(viewportWidth);
-  const textHeight = measureMessageLayoutTextHeight({
-    cacheKey: "message-layout",
-    itemId: item.id,
+  const rowRequest: PretextVirtualizerRowMeasurementRequest = {
+    kind: "message-row",
+    item,
+    viewportWidth,
     layout,
+  };
+  const overriddenHeight = context.measurementHooks?.resolveRowHeightOverride?.(rowRequest) ?? null;
+  if (overriddenHeight != null) {
+    incrementPretextPerfCounter("pretext_row_layout_message_override_hit");
+    return normalizeHeight(overriddenHeight);
+  }
+  const textWidth = resolveSessionThreadMessageTextWidth(viewportWidth);
+  const textRequest: PretextVirtualizerTextMeasurementRequest = {
+    kind: "message-text",
+    itemId: item.id,
     width: textWidth,
-  });
+    layout,
+  };
+  const textHeight =
+    resolveMeasuredHeight(
+      context.measurementHooks?.measureTextHeight?.(textRequest),
+      "pretext_row_layout_message_text_measurement_miss",
+    ) ??
+    measureMessageLayoutTextHeight({
+      cacheKey: "message-layout",
+      itemId: item.id,
+      layout,
+      width: textWidth,
+    });
   const attachmentsHeight = measureMessageAttachmentsHeight(item, viewportWidth);
   const toggleHeight = layout.expandable ? MESSAGE_TOGGLE_HEIGHT_PX : 0;
   return normalizeHeight(
@@ -197,12 +307,41 @@ function measureMessageHeight(
 function measureAssistantHeight(
   item: Extract<WorkbenchListItem, { kind: "assistant" }>,
   viewportWidth: number,
+  context: PretextVirtualizerRowLayoutContext,
 ): number {
   if (!item.is_complete && item.content.trim().length === 0) {
     return SPACER_HEIGHT_PX;
   }
+  const rowRequest: PretextVirtualizerRowMeasurementRequest = {
+    kind: "assistant-row",
+    item,
+    viewportWidth,
+  };
+  const overriddenHeight = context.measurementHooks?.resolveRowHeightOverride?.(rowRequest) ?? null;
+  if (overriddenHeight != null) {
+    incrementPretextPerfCounter("pretext_row_layout_assistant_override_hit");
+    return normalizeHeight(overriddenHeight);
+  }
+  const measuredRowHeight = resolveMeasuredHeight(
+    context.measurementHooks?.measureRowHeight?.(rowRequest),
+    "pretext_row_layout_assistant_row_measurement_miss",
+  );
+  if (measuredRowHeight != null) {
+    incrementPretextPerfCounter("pretext_row_layout_assistant_row_measurement_hit");
+    return normalizeHeight(measuredRowHeight);
+  }
   const textWidth = resolveSessionThreadAssistantTextWidth(viewportWidth);
-  const textHeight = measureAssistantMarkdownTextHeight({ content: item.content, width: textWidth });
+  const textRequest: PretextVirtualizerTextMeasurementRequest = {
+    kind: "assistant-markdown-text",
+    content: item.content,
+    width: textWidth,
+  };
+  const textHeight =
+    resolveMeasuredHeight(
+      context.measurementHooks?.measureTextHeight?.(textRequest),
+      "pretext_row_layout_assistant_text_measurement_miss",
+    ) ??
+    measureAssistantMarkdownTextHeight({ content: textRequest.content, width: textRequest.width });
   return normalizeHeight(ASSISTANT_VERTICAL_PADDING_PX + textHeight);
 }
 
@@ -278,7 +417,7 @@ export const getPretextVirtualizerRowLayout = (
     case "message":
       return { height: measureMessageHeight(item, viewportWidth, context) };
     case "assistant":
-      return { height: measureAssistantHeight(item, viewportWidth) };
+      return { height: measureAssistantHeight(item, viewportWidth, context) };
     case "tool":
       return { height: TOOL_ROW_HEIGHT_PX };
     case "tool_group":

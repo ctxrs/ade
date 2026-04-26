@@ -9,7 +9,10 @@ import {
 import type { PreparedInlineLayoutItem } from "./sessionMarkdownInlineLayout";
 import { resolveInlineCodeStartDecision } from "./sessionMarkdownInlineStartDecisions";
 import { segmentGraphemes } from "./sessionMarkdownMeasurementCore";
+import { isPunctuationOnlySeamText } from "./sessionTextTokenClassifier";
 import { SESSION_THREAD_MARKDOWN_INLINE_CODE_FRAGMENT_CHROME_WIDTH_PX } from "./sessionThreadLayoutTokens";
+
+export { isPunctuationOnlySeamText } from "./sessionTextTokenClassifier";
 
 const INLINE_CODE_FRAGMENT_FIT_SLACK_PX = 0;
 const INLINE_CODE_WHOLE_GROUP_FIT_SLACK_PX = 0;
@@ -43,11 +46,6 @@ export function shouldDropLeadingCollapsedSpaceAtWrap(params: {
     !params.item.startsStyledTextAfterInlineCodeSeam &&
     !params.item.startsStyledTextAfterBodySeam
   );
-}
-
-export function isPunctuationOnlySeamText(text: string): boolean {
-  const trimmed = text.trim();
-  return trimmed.length > 0 && /^[\p{P}\p{S}]+$/u.test(trimmed);
 }
 
 export function isAtomicNonCodeTextSegment(text: string): boolean {

@@ -1,6 +1,10 @@
 import { browserAllowsInlineCodeLeadingHang } from "./sessionMarkdownBrowserProfile";
 import type { InlineCodeBoundaryFit, InlineCodeTrailingPlainInfo } from "./sessionMarkdownInlineCodeFit";
 import type { PreparedInlineLayoutItem } from "./sessionMarkdownInlineLayout";
+import {
+  containsStrongRtlText,
+  isPunctuationOnlySeamText,
+} from "./sessionTextTokenClassifier";
 
 const INLINE_CODE_NEAR_WHOLE_GROUP_FRESH_LINE_THRESHOLD_PX = 0.5;
 const INLINE_CODE_SOFT_BREAK_PROSE_CODE_START_RATIO_THRESHOLD = 0.8;
@@ -8,7 +12,6 @@ const INLINE_CODE_FIRST_SLICE_ONLY_MIN_WIDTH_PX = 90;
 const INLINE_CODE_FIRST_SLICE_ONLY_START_RATIO_THRESHOLD = 0.4;
 const INLINE_CODE_FIRST_SLICE_ONLY_WITH_FOLLOWING_INLINE_CODE_START_RATIO_THRESHOLD = 0.55;
 const INLINE_CODE_WEBKIT_WEAK_FIRST_SLICE_FRESH_LINE_START_RATIO_THRESHOLD = 0.3;
-const STRONG_RTL_SCRIPT_PATTERN = /[\p{Script=Arabic}\p{Script=Hebrew}\p{Script=Syriac}\p{Script=Thaana}\p{Script=Nko}\p{Script=Adlam}]/u;
 
 type InlineSegmentItem = Extract<PreparedInlineLayoutItem, { kind: "segment" }>;
 
@@ -258,13 +261,4 @@ export function resolveInlineCodeStartDecision(params: {
     shouldBreakForAttachedTrailingPlainStart,
     shouldBreakForWeakFirstSliceFreshLineStart,
   };
-}
-
-function isPunctuationOnlySeamText(text: string): boolean {
-  const trimmed = text.trim();
-  return trimmed.length > 0 && /^[\p{P}\p{S}]+$/u.test(trimmed);
-}
-
-function containsStrongRtlText(text: string): boolean {
-  return STRONG_RTL_SCRIPT_PATTERN.test(text);
 }

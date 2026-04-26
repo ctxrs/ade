@@ -4,9 +4,9 @@ import { flushSync } from "react-dom";
 import { MemoMarkdown } from "../sessionView";
 import type { SessionMarkdownInlineCodeDebugPayload } from "../sessionThread/sessionMarkdownInlineMeasurementDebug";
 import {
-  clearSessionMarkdownMeasurementCaches,
-  measureSessionMarkdownDocument,
-} from "../sessionThread/sessionMarkdownMeasurement";
+  clearSessionTranscriptMeasurementAuthorities,
+  measureSessionMarkdownDocumentWithAuthorities,
+} from "../sessionThread/sessionTranscriptMeasurementAuthorities";
 import { SESSION_THREAD_LAYOUT_STYLE } from "../sessionThread/sessionThreadLayoutTokens";
 
 export type WorkbenchMarkdownParitySample = {
@@ -97,7 +97,7 @@ export async function measureWorkbenchMarkdownParity(
 ): Promise<WorkbenchMarkdownParityMeasurement[]> {
   const out: WorkbenchMarkdownParityMeasurement[] = [];
   for (const sample of samples) {
-    const planned = measureSessionMarkdownDocument(sample.markdown, width);
+    const planned = measureSessionMarkdownDocumentWithAuthorities(sample.markdown, width);
     const host = document.createElement("div");
     host.style.position = "fixed";
     host.style.left = "-10000px";
@@ -126,7 +126,7 @@ export async function measureWorkbenchMarkdownParityDebug(
   width: number,
   target = "*",
 ): Promise<WorkbenchMarkdownParityDebugMeasurement> {
-  clearSessionMarkdownMeasurementCaches();
+  clearSessionTranscriptMeasurementAuthorities();
   const debugWindow = window as WorkbenchMarkdownDebugWindow;
   debugWindow.__ctxForceInlineCodeDebug = true;
   debugWindow.__ctxInlineCodeDebugTarget = target;
@@ -138,7 +138,7 @@ export async function measureWorkbenchMarkdownParityDebug(
   debugWindow.__ctxPlainTextDebug = undefined;
 
   try {
-    const planned = measureSessionMarkdownDocument(markdown, width);
+    const planned = measureSessionMarkdownDocumentWithAuthorities(markdown, width);
     const host = document.createElement("div");
     host.style.position = "fixed";
     host.style.left = "-10000px";
@@ -172,7 +172,7 @@ export async function measureWorkbenchMarkdownParityDebug(
     debugWindow.__ctxPlainTextDebugTarget = undefined;
     debugWindow.__ctxPlainTextDebugWidth = undefined;
     debugWindow.__ctxPlainTextDebug = undefined;
-    clearSessionMarkdownMeasurementCaches();
+    clearSessionTranscriptMeasurementAuthorities();
   }
 }
 

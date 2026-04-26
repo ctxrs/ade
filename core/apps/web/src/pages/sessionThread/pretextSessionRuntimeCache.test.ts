@@ -15,6 +15,7 @@ import {
   resetSessionTranscriptWarmEntries,
   resetSessionPretextRuntimeCache,
 } from "./pretextSessionRuntimeCache";
+import { writePretextAssistantHeightOverride } from "./pretextRowMeasurementOverrides";
 
 const makeItems = (count = 2): WorkbenchListItem[] =>
   Array.from({ length: count }, (_, index) => ({
@@ -230,25 +231,54 @@ describe("pretextSessionRuntimeCache", () => {
     );
   });
 
+  it("passes the runtime session id through planned-layout measurement hooks", () => {
+    const sessionId = "session-override-hit";
+    const item: WorkbenchListItem = {
+      kind: "assistant",
+      id: "assistant-1",
+      turn_id: "turn-1",
+      content: "Assistant correction candidate",
+      thought: "",
+      is_complete: true,
+      created_at: "2026-04-25T00:00:00Z",
+    };
+    const runtime = getOrCreateSessionPretextRuntime(sessionId, {
+      uiState: createDefaultSessionTranscriptUiState(),
+    });
+
+    expect(
+      writePretextAssistantHeightOverride({
+        sessionId,
+        item,
+        viewportWidth: 640,
+        height: 123,
+      }),
+    ).toBe(true);
+
+    expect(runtime.callbacks.getPlannedLayout(item, { width: 640, widthBucket: "w10" }).height).toBe(123);
+  });
+
   it("keeps warm snapshots when pruning only the runtime slice", () => {
     const sessionId = "session-shared";
     persistSessionTranscriptWarmEntry(sessionId, {
       sourceKey: "source-1",
       layoutKey: "verbosity:default",
       warmKey: "warm-1",
-      projectionRevision: 1,
-      view: {
-        groups: [],
-        debugEvents: [],
-      },
-      listItems: [],
-      groupRanges: new Map(),
-      turnsLen: 0,
-      messagesLen: 0,
-      eventsLen: 0,
-      caches: {
-        messagesByTurnId: new Map(),
-        eventsByTurnId: new Map(),
+      snapshot: {
+        projectionRevision: 1,
+        view: {
+          groups: [],
+          debugEvents: [],
+        },
+        listItems: [],
+        groupRanges: new Map(),
+        turnsLen: 0,
+        messagesLen: 0,
+        eventsLen: 0,
+        caches: {
+          messagesByTurnId: new Map(),
+          eventsByTurnId: new Map(),
+        },
       },
       updatedAtMs: Date.now(),
     });

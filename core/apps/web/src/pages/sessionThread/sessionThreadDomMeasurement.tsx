@@ -1,5 +1,5 @@
-// Debug/test-only DOM parity audit helpers. Production transcript geometry must
-// not depend on this module.
+// Shared browser-authoritative measurement helpers for transcript parity,
+// exact text measurement, and mounted row correction.
 import React, { type ReactNode } from "react";
 import ReactDOMClient from "react-dom/client";
 import { flushSync } from "react-dom";
@@ -15,8 +15,13 @@ import { SessionThreadMeasurementFrame } from "./SessionThreadMeasurementFrame";
 import {
   SESSION_THREAD_LAYOUT_STYLE,
 } from "./sessionThreadLayoutTokens";
+import { SESSION_THREAD_ROW_MEASUREMENT_CONTRACT } from "./sessionThreadMeasurementContract";
 
 const MEASUREMENT_CACHE_LIMIT = 4000;
+const TURN_HEADER_PREVIEW_OUTER_WIDTH_CHROME_PX =
+  SESSION_THREAD_ROW_MEASUREMENT_CONTRACT.turnHeader.copyGutterPx +
+  SESSION_THREAD_ROW_MEASUREMENT_CONTRACT.turnHeader.bubblePaddingInlinePx * 2 +
+  SESSION_THREAD_ROW_MEASUREMENT_CONTRACT.turnHeader.bubbleBorderWidthPx * 2;
 
 type MeasurementSurfaceRecord = {
   container: HTMLDivElement;
@@ -234,6 +239,10 @@ export function clearSessionThreadDebugDomAuditCaches(): void {
   }
 }
 
+export function clearSessionThreadExactMeasurementCaches(): void {
+  clearSessionThreadDebugDomAuditCaches();
+}
+
 export function clearSessionThreadDebugDomAuditFallbacks(): void {
   pendingDomMeasurementFallbackItemIds.clear();
 }
@@ -263,6 +272,79 @@ export function measureDebugRenderedSessionMarkdownHeight(markdown: string, widt
       className: "wb-assistant-body",
       content: React.createElement(MemoMarkdown, { content: markdown }),
       measureSelector: ".wb-markdown-root",
+    }),
+  );
+}
+
+export function measureRenderedSessionMarkdownHeight(markdown: string, width: number): number | null {
+  return measureDebugRenderedSessionMarkdownHeight(markdown, width);
+}
+
+export function measureRenderedSessionPlainTextBlockHeight(text: string, width: number): number | null {
+  const normalizedWidth = Math.max(1, Math.round(width));
+  const cacheKey = `plain-text:${normalizedWidth}:${fingerprintString(text)}`;
+  return readCachedMeasurement(markdownHeightCache, cacheKey, () =>
+    renderIntoMeasurementSurface({
+      width: normalizedWidth,
+      content: React.createElement(
+        "div",
+        {
+          className: "wb-markdown-root wb-message-plain-text",
+        },
+        text,
+      ),
+      measureSelector: ".wb-message-plain-text",
+    }),
+  );
+}
+
+export function measureRenderedSessionTurnHeaderPreviewTextHeight(params: {
+  text: string;
+  width: number;
+  collapsedMaxHeightPx: number;
+  expanded: boolean;
+}): number | null {
+  const normalizedTextWidth = Math.max(1, Math.round(params.width));
+  const outerWidth = normalizedTextWidth + TURN_HEADER_PREVIEW_OUTER_WIDTH_CHROME_PX;
+  const cacheKey = [
+    "turn-header-preview",
+    outerWidth,
+    params.expanded ? "expanded" : "collapsed",
+    params.collapsedMaxHeightPx,
+    fingerprintString(params.text),
+  ].join(":");
+  return readCachedMeasurement(markdownHeightCache, cacheKey, () =>
+    renderIntoMeasurementSurface({
+      width: outerWidth,
+      content: React.createElement(
+        SessionThreadMeasurementFrame,
+        null,
+        React.createElement(
+          "div",
+          {
+            className: `wb-turn-header ${params.expanded ? "wb-turn-header-expanded" : "wb-turn-header-collapsed"}`,
+            style: {
+              ["--wb-turn-header-collapsed-max-height" as "--wb-turn-header-collapsed-max-height"]:
+                `${params.collapsedMaxHeightPx}px`,
+            } as React.CSSProperties,
+          },
+          React.createElement(
+            "div",
+            { className: "wb-turn-header-bubble" },
+            React.createElement(
+              "button",
+              {
+                type: "button",
+                className: "wb-turn-header-copy",
+                "aria-hidden": "true",
+                tabIndex: -1,
+              },
+            ),
+            React.createElement("div", { className: "wb-turn-header-content" }, params.text),
+          ),
+        ),
+      ),
+      measureSelector: ".wb-turn-header-content",
     }),
   );
 }
@@ -334,6 +416,13 @@ export function measureDebugRenderedSessionAssistantHeight(
     }
     return measured;
   });
+}
+
+export function measureRenderedSessionAssistantHeight(
+  item: Extract<WorkbenchListItem, { kind: "assistant" }>,
+  viewportWidth: number,
+): number | null {
+  return measureDebugRenderedSessionAssistantHeight(item, viewportWidth);
 }
 
 export function measureRenderedSessionTurnHeaderHeight(

@@ -18,7 +18,7 @@ import {
 import {
   resetSessionPretextRuntimeCache,
 } from "../sessionThread/pretextSessionRuntimeCache";
-import { clearTranscriptLayoutPlannerCaches } from "../sessionThread/transcriptLayoutPlanner";
+import { clearTranscriptLayoutPlannerCaches } from "../sessionThread/transcriptLayoutPlanner.app";
 import { getWorkbenchTurnHeaderLayoutState } from "../sessionThread/transcriptRowLayoutModel";
 import {
   SESSION_THREAD_LAYOUT_STYLE,

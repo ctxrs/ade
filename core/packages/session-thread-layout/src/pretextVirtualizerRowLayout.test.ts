@@ -1158,4 +1158,78 @@ describe("getPretextVirtualizerRowLayout", () => {
 
     expect(answered.height).toBe(pending.height);
   });
+
+  it("prefers an assistant row-height override over deterministic measurement", () => {
+    const item: WorkbenchListItem = {
+      kind: "assistant",
+      id: "assistant-override",
+      turn_id: "turn-1",
+      created_at: "2026-04-25T00:00:00Z",
+      content: "Long inline code follow-up with `ctx-main #42` and exact release notes.",
+      thought: "",
+      is_complete: true,
+    };
+
+    const result = getPretextVirtualizerRowLayout(item, 788, {
+      measurementHooks: {
+        resolveRowHeightOverride: () => 83,
+      },
+    });
+
+    expect(result.height).toBe(83);
+  });
+
+  it("uses assistant browser-authoritative row measurement when provided", () => {
+    const item: WorkbenchListItem = {
+      kind: "assistant",
+      id: "assistant-measured",
+      turn_id: "turn-1",
+      created_at: "2026-04-25T00:00:00Z",
+      content: "Release note with `origin/main` and more wrapping prose.",
+      thought: "",
+      is_complete: true,
+    };
+
+    const result = getPretextVirtualizerRowLayout(item, 788, {
+      measurementHooks: {
+        measureRowHeight: (request) =>
+          request.kind === "assistant-row"
+            ? { status: "measured", height: 117 }
+            : { status: "miss" },
+      },
+    });
+
+    expect(result.height).toBe(117);
+  });
+
+  it("uses text measurement hooks for plain-text message rows", () => {
+    const item: WorkbenchListItem = {
+      kind: "message",
+      id: "message-text-hook",
+      role: "user",
+      content: "Please continue with the rollout notes.",
+      attachments: [],
+      created_at: "2026-04-25T00:00:00Z",
+    };
+
+    const result = getPretextVirtualizerRowLayout(item, 788, {
+      measurementHooks: {
+        measureTextHeight: (request) =>
+          request.kind === "message-text"
+            ? { status: "measured", height: 73 }
+            : { status: "miss" },
+      },
+    });
+
+    expect(result.height).toBe(
+      Math.round(
+        (SESSION_THREAD_ROW_MEASUREMENT_CONTRACT.message.rowPaddingBlockPx * 2 +
+          SESSION_THREAD_ROW_MEASUREMENT_CONTRACT.message.roleLineHeightPx +
+          SESSION_THREAD_ROW_MEASUREMENT_CONTRACT.message.bubblePaddingBlockPx * 2 +
+          SESSION_THREAD_ROW_MEASUREMENT_CONTRACT.message.bubbleBorderWidthPx * 2 +
+          73) *
+          16,
+      ) / 16,
+    );
+  });
 });

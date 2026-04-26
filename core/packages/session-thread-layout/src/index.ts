@@ -36,7 +36,14 @@ export {
   recordPretextPerfEvent,
   resetPretextPerfDiagnostics,
 } from "./pretextPerfDiagnostics";
-export type { PretextVirtualizerRowLayoutContext } from "./pretextVirtualizerRowLayout";
+export type {
+  PretextVirtualizerMeasuredHeight,
+  PretextVirtualizerMeasurementHooks,
+  PretextVirtualizerMessageLayout,
+  PretextVirtualizerRowLayoutContext,
+  PretextVirtualizerRowMeasurementRequest,
+  PretextVirtualizerTextMeasurementRequest,
+} from "./pretextVirtualizerRowLayout";
 export {
   clearPretextVirtualizerRowLayoutCache,
   getPretextVirtualizerRowLayout,
@@ -209,6 +216,11 @@ export {
   clearSessionMarkdownMeasurementCaches,
   measureSessionMarkdownDocument,
 } from "./sessionMarkdownMeasurement";
+export {
+  shouldUseExactRenderedPlainTextMeasurement,
+  shouldUseRenderedAssistantRowMeasurement,
+  shouldUseRenderedMarkdownMeasurement,
+} from "./sessionMeasurementPolicy";
 export type { SessionMarkdownNode } from "./sessionMarkdownShared";
 export {
   parseSessionMarkdown,
@@ -303,6 +315,15 @@ export {
   segmentImplicitWordBreaks,
   segmentWords,
 } from "./sessionTextMeasurement";
+export {
+  containsStrongRtlText,
+  isCompactPathTailContinuationAnchor,
+  isCompactSlashDelimitedSeamAnchor,
+  isHyphenatedTextBreakToken,
+  isPathLikeOrDottedText,
+  isPunctuationOnlySeamText,
+  splitHyphenatedTextBreakToken,
+} from "./sessionTextTokenClassifier";
 export {
   clearSessionPlainTextMeasurementCaches,
   measureSessionPlainTextBlockHeight,

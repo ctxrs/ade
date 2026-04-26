@@ -22,10 +22,15 @@ import {
   SESSION_PRETEXT_BOTTOM_THRESHOLD_PX,
 } from "./sessionThread/pretextSessionRuntimeCache";
 import { createSessionThreadPretextVirtualizerMethods } from "./sessionThread/pretextVirtualizerMethods";
-import { AuditedPretextRow } from "./sessionThread/pretextVirtualizerRowAudit";
+import { MeasuredPretextRow } from "./sessionThread/pretextVirtualizerMeasuredRow";
+import {
+  writePretextAssistantHeightOverride,
+  writePretextMessageHeightOverride,
+} from "./sessionThread/pretextRowMeasurementOverrides";
 import { usePretextTranscriptScrollbar } from "./sessionThread/usePretextTranscriptScrollbar";
 import { useSessionThreadPretextLifecycleController } from "./sessionThread/useSessionThreadPretextLifecycleController";
 import { useSessionThreadPretextScrollController } from "./sessionThread/useSessionThreadPretextScrollController";
+import { getWorkbenchMessageLayoutState } from "./sessionThread/transcriptRowLayoutModel";
 import type { SessionThreadPretextVirtualizerListProps } from "./SessionThreadMessageList.pretextVirtualizer.types";
 import {
   createInitialSessionThreadPretextSnapshot,
@@ -77,6 +82,7 @@ export const SessionThreadPretextVirtualizerList = memo(function SessionThreadPr
   const pendingProgrammaticTopRef = useRef<number | null>(null);
   const pendingProgrammaticBehaviorRef = useRef<ScrollBehavior>("auto");
   const pendingRestoreRef = useRef(false);
+  const pendingHeightCorrectionKeysRef = useRef(new Set<string>());
   listItemsRef.current = listItems;
   onScrollRef.current = onScroll;
   onRenderedDataChangeRef.current = onRenderedDataChange;
@@ -251,6 +257,101 @@ export const SessionThreadPretextVirtualizerList = memo(function SessionThreadPr
     handleWheel,
   } = useSessionThreadPretextScrollController(scrollControllerParams);
 
+  const handleAssistantHeightMismatch = useCallback(
+    (item: Extract<WorkbenchListItem, { kind: "assistant" }>, actualHeight: number, plannedHeight: number) => {
+      if (Math.abs(actualHeight - plannedHeight) <= 1) return;
+      const scroller = containerRef.current;
+      if (!scroller) return;
+      const changed = writePretextAssistantHeightOverride({
+        sessionId,
+        item,
+        viewportWidth: scroller.clientWidth,
+        height: actualHeight,
+      });
+      if (!changed) return;
+
+      const correctionKey = `${item.id}:${Math.max(1, Math.round(scroller.clientWidth))}`;
+      if (pendingHeightCorrectionKeysRef.current.has(correctionKey)) return;
+      pendingHeightCorrectionKeysRef.current.add(correctionKey);
+
+      requestAnimationFrame(() => {
+        pendingHeightCorrectionKeysRef.current.delete(correctionKey);
+        const currentScroller = containerRef.current;
+        if (!currentScroller) return;
+        const currentItems = listItemsRef.current;
+        if (!currentItems.some((candidate) => candidate.id === item.id && candidate.kind === "assistant")) {
+          return;
+        }
+        const nextSnapshot = core.patchItems(
+          currentItems,
+          [item.id],
+          [item.id],
+          followBottomRef.current ? { kind: "bottom" } : null,
+        );
+        commitRuntimeSnapshot(nextSnapshot, currentItems);
+        applySnapshotToDom(nextSnapshot, {
+          behavior: "auto",
+          followBottom: followBottomRef.current,
+          nextItems: currentItems,
+        });
+        scheduleScrollbarUpdate();
+      });
+    },
+    [applySnapshotToDom, commitRuntimeSnapshot, core, scheduleScrollbarUpdate, sessionId],
+  );
+
+  const handleMessageHeightMismatch = useCallback(
+    (item: Extract<WorkbenchListItem, { kind: "message" }>, actualHeight: number, plannedHeight: number) => {
+      if (Math.abs(actualHeight - plannedHeight) <= 1) return;
+      const scroller = containerRef.current;
+      if (!scroller) return;
+      const layout = getWorkbenchMessageLayoutState(item, runtimeUiState.expandedMessageById);
+      const changed = writePretextMessageHeightOverride({
+        sessionId,
+        item,
+        viewportWidth: scroller.clientWidth,
+        layout,
+        height: actualHeight,
+      });
+      if (!changed) return;
+
+      const correctionKey = `${item.id}:${Math.max(1, Math.round(scroller.clientWidth))}`;
+      if (pendingHeightCorrectionKeysRef.current.has(correctionKey)) return;
+      pendingHeightCorrectionKeysRef.current.add(correctionKey);
+
+      requestAnimationFrame(() => {
+        pendingHeightCorrectionKeysRef.current.delete(correctionKey);
+        const currentScroller = containerRef.current;
+        if (!currentScroller) return;
+        const currentItems = listItemsRef.current;
+        if (!currentItems.some((candidate) => candidate.id === item.id && candidate.kind === "message")) {
+          return;
+        }
+        const nextSnapshot = core.patchItems(
+          currentItems,
+          [item.id],
+          [item.id],
+          followBottomRef.current ? { kind: "bottom" } : null,
+        );
+        commitRuntimeSnapshot(nextSnapshot, currentItems);
+        applySnapshotToDom(nextSnapshot, {
+          behavior: "auto",
+          followBottom: followBottomRef.current,
+          nextItems: currentItems,
+        });
+        scheduleScrollbarUpdate();
+      });
+    },
+    [
+      applySnapshotToDom,
+      commitRuntimeSnapshot,
+      core,
+      runtimeUiState.expandedMessageById,
+      scheduleScrollbarUpdate,
+      sessionId,
+    ],
+  );
+
   const handleWheelEvent = useCallback(
     (event: React.WheelEvent<HTMLDivElement>) => {
       handleWheel(event.deltaY);
@@ -393,14 +494,24 @@ export const SessionThreadPretextVirtualizerList = memo(function SessionThreadPr
                 data-pretext-virtualizer-item-id={currentItem.id}
                 data-pretext-virtualizer-planned-height={String(visibleItem.height)}
               >
-                <AuditedPretextRow
+                <MeasuredPretextRow
                   id={visibleItem.id}
                   itemKind={currentItem.kind}
                   itemKey={itemKey(currentItem)}
                   plannedHeight={visibleItem.height}
+                  onHeightMismatch={
+                    currentItem.kind === "assistant"
+                      ? ({ actualHeight, plannedHeight }) =>
+                          handleAssistantHeightMismatch(currentItem, actualHeight, plannedHeight)
+                      : currentItem.kind === "message" &&
+                          Boolean(runtimeUiState.expandedMessageById[currentItem.id])
+                        ? ({ actualHeight, plannedHeight }) =>
+                            handleMessageHeightMismatch(currentItem, actualHeight, plannedHeight)
+                        : undefined
+                  }
                 >
                   {itemContent(visibleItem.index, currentItem)}
-                </AuditedPretextRow>
+                </MeasuredPretextRow>
               </div>
             </div>
           );})}
