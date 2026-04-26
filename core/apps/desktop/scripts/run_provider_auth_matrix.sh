@@ -213,6 +213,60 @@ maybe_run_with_infisical() {
   "$@"
 }
 
+copy_daemon_diagnostics_for_report() {
+  local report_path="$1"
+  local cell_dir="$2"
+  local attempt="$3"
+  if [[ ! -f "${report_path}" ]]; then
+    return 0
+  fi
+
+  local data_root=""
+  data_root="$(node -e '
+const fs = require("node:fs");
+let report;
+try {
+  report = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+} catch {
+  process.exit(0);
+}
+const candidates = [
+  report?.artifacts?.daemon_diagnostics_on_failure?.daemon?.data_root,
+  report?.artifacts?.daemon_diagnostics?.daemon?.data_root,
+  report?.artifacts?.workspace?.daemon_data_root,
+  report?.extras?.daemon_diagnostics?.daemon?.data_root,
+];
+const value = candidates.find((candidate) => typeof candidate === "string" && candidate.trim());
+if (value) process.stdout.write(value.trim());
+' "${report_path}")"
+  if [[ -z "${data_root}" || ! -d "${data_root}" ]]; then
+    return 0
+  fi
+
+  local diagnostics_dir="${cell_dir}/diagnostics/attempt-${attempt}"
+  mkdir -p "${diagnostics_dir}"
+  printf "%s\n" "${data_root}" >"${diagnostics_dir}/daemon-data-root.txt"
+
+  if [[ -d "${data_root}/logs" ]]; then
+    mkdir -p "${diagnostics_dir}/daemon-logs"
+    cp -R "${data_root}/logs/." "${diagnostics_dir}/daemon-logs/" 2>/dev/null || true
+  fi
+
+  if [[ -d "${data_root}/managed/vms" ]]; then
+    mkdir -p "${diagnostics_dir}/avf"
+    find "${data_root}/managed/vms" -type f ! -path "*/.git/*" \( \
+        -path "*/logs/*" -o \
+        -name "shared-vm-state.json" -o \
+        -name "workspace-vm-state.json" \
+      \) -print 2>/dev/null | while IFS= read -r source_path; do
+      rel="${source_path#${data_root}/managed/vms/}"
+      dest="${diagnostics_dir}/avf/${rel}"
+      mkdir -p "$(dirname "${dest}")"
+      cp "${source_path}" "${dest}" 2>/dev/null || true
+    done
+  fi
+}
+
 case "${LANE}" in
   required)
     run_preflight "provider-auth-matrix-required"
@@ -436,6 +490,19 @@ process.stdout.write(missing.join(","));
     "CTX_PROVIDER_AUTH_MATRIX_REPORT=${report_path}"
   )
 
+  if [[ "${daemon_location}" == "local" ]]; then
+    env_kv+=(
+      "CTX_BUNDLE_REMOTE_DAEMONS=0"
+      "CTX_BUNDLE_LINUX_CTX_MCP_RUNTIME=0"
+    )
+  fi
+
+  if [[ "${execution_environment}" == "host" ]]; then
+    env_kv+=(
+      "CTX_DESKTOP_ALLOW_MANAGED_AVF_RUNTIME_MISSING_LOCAL_PAYLOAD=1"
+    )
+  fi
+
   if [[ "${auth_mode}" == "auth_import" ]]; then
     local import_root="${cell_dir}/auth-import-host"
     mkdir -p "${import_root}"
@@ -572,6 +639,7 @@ for (const [k, v] of Object.entries(extra)) {
         cd "${ROOT}"
         maybe_run_with_infisical \
           env "${env_kv[@]}" \
+            CTX_AUTOMATION_KEEP_TMPDIR="${CTX_PROVIDER_AUTH_MATRIX_KEEP_TMPDIR:-1}" \
             CTX_AUTOMATION_SCENARIOS="${scenarios}" \
             "${SMOKE_SCRIPT}" -- --spec "${spec}"
       ) 2>&1 | tee "${run_log}"
@@ -624,6 +692,7 @@ process.stdout.write(`${normalize(report.result)}\t${normalize(report.reason)}\n
           ;;
       esac
     fi
+    copy_daemon_diagnostics_for_report "${report_path}" "${cell_dir}" "${attempt}"
 
     if [[ "${status}" == "pass" ]]; then
       if [[ "${attempt}" -gt 1 ]]; then

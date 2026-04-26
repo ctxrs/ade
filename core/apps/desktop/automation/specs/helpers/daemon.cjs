@@ -20,6 +20,11 @@ const REMOTE_FIXTURE_PORT = Number.parseInt(
 let cachedConnection = null;
 const waitMs = (ms) => new Promise((resolve) => setTimeout(resolve, Math.max(0, Number(ms) || 0)));
 
+const shouldRefreshLocalDesktopConnection = (info) => {
+  if (!info || typeof info !== "object") return false;
+  return String(info.kind || "").trim().toLowerCase() === "local";
+};
+
 const connectionSignature = (connection) => JSON.stringify({
   kind: connection?.kind || null,
   base_url: connection?.base_url || null,
@@ -96,6 +101,15 @@ const getDesktopConnection = async () => {
   }
 
   if (info.base_url && info.token) {
+    if (shouldRefreshLocalDesktopConnection(info)) {
+      const refreshed = await invokeDesktop("desktop_connect_local");
+      if (refreshed && refreshed.base_url && refreshed.token) {
+        return maybeDirectRemoteDaemonConnection(refreshed);
+      }
+      throw new Error(
+        `desktop_connect_local returned no connection info after stale/local refresh: ${JSON.stringify(refreshed || info)}`,
+      );
+    }
     return maybeDirectRemoteDaemonConnection(info);
   }
 
@@ -270,4 +284,5 @@ module.exports = {
   getDesktopConnection,
   checkDaemonHealth,
   sampleDaemonHealth,
+  shouldRefreshLocalDesktopConnection,
 };

@@ -7,6 +7,12 @@ const childProcess = require("node:child_process");
 
 const scriptPath = path.join(__dirname, "validate_provider_auth_matrix.cjs");
 
+const testTmpRoot = () => {
+  const root = path.join(os.homedir(), ".ctx", "volatile", "tmp");
+  fs.mkdirSync(root, { recursive: true });
+  return root;
+};
+
 const run = (args, opts = {}) =>
   childProcess.spawnSync("node", [scriptPath, ...args], {
     encoding: "utf8",
@@ -60,7 +66,7 @@ const baseManifest = () => ({
 });
 
 test("validate script passes for a minimal valid manifest", () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-auth-matrix-pass-"));
+  const tmp = fs.mkdtempSync(path.join(testTmpRoot(), "ctx-auth-matrix-pass-"));
   const manifestPath = path.join(tmp, "provider_auth_matrix.json");
   const reportPath = path.join(tmp, "provider_auth_matrix.md");
   writeJson(manifestPath, baseManifest());
@@ -75,7 +81,7 @@ test("validate script passes for a minimal valid manifest", () => {
 });
 
 test("validate script fails when required cross-product cell is missing", () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-auth-matrix-fail-missing-"));
+  const tmp = fs.mkdtempSync(path.join(testTmpRoot(), "ctx-auth-matrix-fail-missing-"));
   const manifestPath = path.join(tmp, "provider_auth_matrix.json");
   const manifest = baseManifest();
   manifest.execution_environments.push({ id: "host", description: "host" });
@@ -87,7 +93,7 @@ test("validate script fails when required cross-product cell is missing", () => 
 });
 
 test("validate script fails when report content is out of date", () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-auth-matrix-fail-report-"));
+  const tmp = fs.mkdtempSync(path.join(testTmpRoot(), "ctx-auth-matrix-fail-report-"));
   const manifestPath = path.join(tmp, "provider_auth_matrix.json");
   const reportPath = path.join(tmp, "provider_auth_matrix.md");
   writeJson(manifestPath, baseManifest());
@@ -99,7 +105,7 @@ test("validate script fails when report content is out of date", () => {
 });
 
 test("validate script fails when a deferred concrete runner lacks an approved blocker reason", () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-auth-matrix-fail-blocker-"));
+  const tmp = fs.mkdtempSync(path.join(testTmpRoot(), "ctx-auth-matrix-fail-blocker-"));
   const manifestPath = path.join(tmp, "provider_auth_matrix.json");
   const manifest = baseManifest();
   manifest.cells[0].support = "deferred";
@@ -113,7 +119,7 @@ test("validate script fails when a deferred concrete runner lacks an approved bl
 });
 
 test("validate script fails when a required cell introduces a non-approved prerequisite", () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-auth-matrix-fail-required-secret-"));
+  const tmp = fs.mkdtempSync(path.join(testTmpRoot(), "ctx-auth-matrix-fail-required-secret-"));
   const manifestPath = path.join(tmp, "provider_auth_matrix.json");
   const manifest = baseManifest();
   manifest.cells[0].prerequisites = ["OPENROUTER_API_KEY", "CTX_E2E_CURSOR_API_KEY"];
@@ -125,7 +131,7 @@ test("validate script fails when a required cell introduces a non-approved prere
 });
 
 test("validate script fails when a required Codex container cell loses the container scenario token", () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-auth-matrix-fail-required-scenario-"));
+  const tmp = fs.mkdtempSync(path.join(testTmpRoot(), "ctx-auth-matrix-fail-required-scenario-"));
   const manifestPath = path.join(tmp, "provider_auth_matrix.json");
   const manifest = baseManifest();
   manifest.cells[0].runner.scenarios = "local-codex-host-smoke";

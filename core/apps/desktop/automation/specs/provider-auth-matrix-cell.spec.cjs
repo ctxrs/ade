@@ -11,6 +11,7 @@ const {
   assertLocalWorkspaceConfig,
   getWorkspaceTerminalCwd,
   runProviderFirstTurnApiSmoke,
+  runProviderFirstTurnApiExpectedFailure,
   runProviderFileEditApiSmoke,
 } = require("./helpers/workspace_wizard_flow.cjs");
 const {
@@ -44,12 +45,26 @@ const parsePositiveInt = (raw, fallback) => {
 };
 
 const waitMs = (ms) => new Promise((resolve) => setTimeout(resolve, Math.max(0, Number(ms) || 0)));
+const BLOCKED_NETWORK_ALLOWLIST = ["github.com"];
+const shouldAssertSandboxNetworkBlockFailure = ({
+  providerId,
+  authMode,
+  daemonLocation,
+  executionEnvironment,
+}) => (
+  providerId === "codex"
+  && daemonLocation === "local"
+  && executionEnvironment === "sandbox"
+  && (authMode === "endpoint_api_key" || authMode === "configure_later_then_connect")
+);
 
 const createWorkspaceAndLaunchExecution = async ({
   dest,
   name,
   daemonLocation,
   executionEnvironment,
+  networkMode = "",
+  allowlist = [],
   timeoutMs = 15 * 60_000,
   onLaunchStart = null,
 }) => {
@@ -74,12 +89,20 @@ const createWorkspaceAndLaunchExecution = async ({
   }
 
   const environment = executionEnvironment;
-  const networkMode = executionEnvironment === "sandbox" ? "llm_only" : "all";
-
-  const setExec = await daemonJson("POST", `/api/workspaces/${workspaceId}/execution_config`, {
+  const resolvedNetworkMode = normalizeText(networkMode) || (executionEnvironment === "sandbox" ? "llm_only" : "all");
+  const setExecutionConfigPayload = {
     environment,
-    network_mode: networkMode,
-  });
+    network_mode: resolvedNetworkMode,
+  };
+  if (resolvedNetworkMode === "allowlist") {
+    setExecutionConfigPayload.allowlist = Array.isArray(allowlist) ? allowlist : [];
+  }
+
+  const setExec = await daemonJson(
+    "POST",
+    `/api/workspaces/${workspaceId}/execution_config`,
+    setExecutionConfigPayload,
+  );
   if (setExec.status !== 200) {
     throw new Error(`execution config update failed (${setExec.status}): ${JSON.stringify(setExec.payload || null)}`);
   }
@@ -98,7 +121,8 @@ const createWorkspaceAndLaunchExecution = async ({
     await onLaunchStart({
       workspaceId,
       environment,
-      networkMode,
+      networkMode: resolvedNetworkMode,
+      allowlist: resolvedNetworkMode === "allowlist" ? setExecutionConfigPayload.allowlist : [],
       launchJobId: jobId,
       launchStart: launch.payload || null,
     });
@@ -119,7 +143,8 @@ const createWorkspaceAndLaunchExecution = async ({
         return {
           workspaceId,
           environment,
-          networkMode,
+          networkMode: resolvedNetworkMode,
+          allowlist: resolvedNetworkMode === "allowlist" ? setExecutionConfigPayload.allowlist : [],
           executionRoot,
           launchJobId: jobId,
           launchStatus: status.payload || null,
@@ -322,6 +347,48 @@ describe("provider auth matrix cell (desktop e2e)", () => {
       );
       recorder.recordArtifact("first_turn_result", turnResult);
       recorder.recordAssertion("first_turn_success", "pass", "first turn completed with assistant response");
+
+      if (shouldAssertSandboxNetworkBlockFailure({
+        providerId,
+        authMode,
+        daemonLocation,
+        executionEnvironment,
+      })) {
+        currentAssertion = "network_block_failure";
+        const blockedWorkspaceDest = path.join(localBase, `${cellId.replace(/\./g, "-")}-blocked-network`);
+        const blockedWorkspace = await createWorkspaceAndLaunchExecution({
+          dest: blockedWorkspaceDest,
+          name: `provider-auth-blocked-${providerId}-${Date.now()}`,
+          daemonLocation,
+          executionEnvironment: "sandbox",
+          networkMode: "allowlist",
+          allowlist: BLOCKED_NETWORK_ALLOWLIST,
+        });
+        recorder.recordArtifact("blocked_network_workspace", blockedWorkspace);
+        await assertLocalWorkspaceConfig(blockedWorkspace.workspaceId, {
+          environment: "sandbox",
+          networkMode: "allowlist",
+          allowlist: BLOCKED_NETWORK_ALLOWLIST,
+        });
+        const blockedTurnResult = await runProviderFirstTurnApiExpectedFailure(
+          blockedWorkspace.workspaceId,
+          {
+            providerId,
+            modelId,
+            executionEnvironment: "sandbox",
+            prompt: `provider-auth-matrix-${Date.now()}: reply with exactly pong`,
+            requiredErrorSubstrings: ["blocked by allowlist"],
+            forbiddenErrorSubstrings: ["provider_startup_timeout", "did not emit any events within"],
+          },
+          240_000,
+        );
+        recorder.recordArtifact("blocked_network_first_turn_result", blockedTurnResult);
+        recorder.recordAssertion(
+          "network_block_failure",
+          "pass",
+          `blocked sandbox turn failed fast with allowlist error: ${blockedTurnResult.errorMessage}`,
+        );
+      }
 
       currentAssertion = "file_edit_success";
       const fileEditResult = await runProviderFileEditApiSmoke(

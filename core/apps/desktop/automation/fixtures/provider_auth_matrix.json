@@ -109,6 +109,7 @@
     "model_list_population": "Provider options include at least one resolved model id after auth configuration.",
     "first_turn_success": "A first user turn reaches completed terminal status with non-empty assistant output.",
     "file_edit_success": "The provider can create a workspace file with exact requested contents during an end-to-end run.",
+    "network_block_failure": "A sandbox turn with the provider host removed from the allowlist fails fast with an explicit network-policy error, not a startup timeout.",
     "auth_import_success": "Auth import flow stores a usable managed credential profile and selects it active.",
     "configure_later_connect_success": "Configure-later path transitions from no-auth to verified/authenticated state before first turn.",
     "unsupported_contract": "Cell is intentionally unsupported and must be reported as unsupported (not silently skipped)."
@@ -249,6 +250,7 @@
         "probe_success",
         "model_list_population",
         "first_turn_success",
+        "network_block_failure",
         "file_edit_success"
       ],
       "owner": "provider-codex",
@@ -434,6 +436,7 @@
         "probe_success",
         "model_list_population",
         "first_turn_success",
+        "network_block_failure",
         "file_edit_success"
       ],
       "owner": "provider-codex",
@@ -606,7 +609,7 @@
       "auth_mode": "endpoint_api_key",
       "daemon_location": "local",
       "execution_environment": "sandbox",
-      "support": "deferred",
+      "support": "supported",
       "lane": "nightly",
       "required_assertions": [
         "install_success",
@@ -615,11 +618,15 @@
         "first_turn_success"
       ],
       "owner": "provider-claude",
-      "prerequisites": [],
+      "prerequisites": [
+        "OPENROUTER_API_KEY"
+      ],
       "runner": {
-        "kind": "none"
+        "kind": "desktop_wdio",
+        "spec": "automation/specs/provider-auth-matrix-cell.spec.cjs",
+        "scenarios": "provider,provider-auth-matrix"
       },
-      "skip_reason": "coverage_not_implemented_yet"
+      "skip_reason": null
     },
     {
       "id": "claude-crp.endpoint_api_key.remote.host",
@@ -4887,7 +4894,7 @@
       "auth_mode": "endpoint_api_key",
       "daemon_location": "local",
       "execution_environment": "sandbox",
-      "support": "deferred",
+      "support": "supported",
       "lane": "nightly",
       "required_assertions": [
         "install_success",
@@ -4896,11 +4903,15 @@
         "first_turn_success"
       ],
       "owner": "provider-pi",
-      "prerequisites": [],
+      "prerequisites": [
+        "OPENROUTER_API_KEY"
+      ],
       "runner": {
-        "kind": "none"
+        "kind": "desktop_wdio",
+        "spec": "automation/specs/provider-auth-matrix-cell.spec.cjs",
+        "scenarios": "provider,provider-auth-matrix"
       },
-      "skip_reason": "coverage_not_implemented_yet"
+      "skip_reason": null
     },
     {
       "id": "pi.endpoint_api_key.remote.host",

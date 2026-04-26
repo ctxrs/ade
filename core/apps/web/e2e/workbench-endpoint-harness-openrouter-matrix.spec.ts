@@ -7,18 +7,20 @@ import type { APIRequestContext, Page } from "playwright/test";
 import { parseBoolishString } from "../src/utils/boolish";
 import { waitForSessionWorkspaceFileContents } from "../src/testing/providerRuntime";
 import {
-  configureHarnessEndpointAuthViaModal,
-  selectHarnessForComposer,
-} from "./utils/harnessEndpointAuth";
-import {
   OPENROUTER_ENDPOINT_FOCUSED_DEFERRED_HARNESSES,
   OPENROUTER_ENDPOINT_FIRST_PASS_HARNESSES,
 } from "./utils/harnessEndpointMatrix";
+import { resolveEndpointModelOverrideTarget } from "./utils/openrouterEndpointConfig";
+import { ensureLocalLinuxSandboxPrepared } from "./utils/workspaceExecution";
 
 type Outcome = "pass" | "skip" | "fail";
+type ExecutionEnvironment = "host" | "sandbox";
+type NetworkMode = "all" | "llm_only" | "allowlist";
 
 type HarnessRunRecord = {
   provider_id: string;
+  execution_environment: ExecutionEnvironment;
+  network_mode: NetworkMode;
   menu_label: string;
   bundle_dir: string | null;
   provider_installed: boolean;
@@ -70,7 +72,7 @@ type ProviderModelSelectionResult =
   | { ok: false; detail: string };
 
 const DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
-  const DEFAULT_E2E_AUTH_TOKEN = "ctx-e2e-auth-token";
+const DEFAULT_E2E_AUTH_TOKEN = "ctx-e2e-auth-token";
 const TERMINAL_TURN_STATUSES = new Set(["completed", "failed", "interrupted"]);
 const DEFAULT_RUN_CONTEXT_TIMEOUT_MS = 30_000;
 const DEFAULT_TERMINAL_TIMEOUT_MS = 120_000;
@@ -79,6 +81,8 @@ const DEFAULT_OPENAI_OPENROUTER_MODEL_OVERRIDE = "openai/gpt-4.1-mini";
 const DEFAULT_QWEN_OPENROUTER_MODEL_OVERRIDE = "qwen/qwen3-coder";
 const DEFAULT_GEMINI_OPENROUTER_MODEL_OVERRIDE = "google/gemini-3-flash-preview";
 const WRITE_FILE_CONTENTS = "hi";
+const DEFAULT_ENDPOINT_EXECUTION_ENVIRONMENTS: ExecutionEnvironment[] = ["host"];
+const DEFAULT_ENDPOINT_SANDBOX_NETWORK_MODE: NetworkMode = "llm_only";
 
 const providerDefaultOpenRouterModelOverride = (providerId: string): string => {
   if (providerId === "qwen") {
@@ -90,14 +94,18 @@ const providerDefaultOpenRouterModelOverride = (providerId: string): string => {
   return DEFAULT_OPENAI_OPENROUTER_MODEL_OVERRIDE;
 };
 
-  const providerTerminalTimeoutForHarness = (providerId: string, fallbackTimeoutMs: number): number => {
+const providerTerminalTimeoutForHarness = (providerId: string, fallbackTimeoutMs: number): number => {
   if (providerId === "pi") {
     return Math.max(fallbackTimeoutMs, DEFAULT_PI_TERMINAL_TIMEOUT_MS);
   }
   return fallbackTimeoutMs;
 };
 
-const providerWriteFilePath = (providerId: string): string => `hello-${providerId}.md`;
+const providerWriteFilePath = (
+  providerId: string,
+  executionEnvironment: ExecutionEnvironment,
+  networkMode: NetworkMode,
+): string => `hello-${providerId}-${executionEnvironment}-${networkMode}.md`;
 
 const asRecord = (value: unknown): Record<string, unknown> => {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
@@ -113,6 +121,42 @@ const envTruthy = (value: string | undefined): boolean =>
 const envInt = (value: string | undefined, fallback: number): number => {
   const parsed = Number.parseInt((value ?? "").trim(), 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+};
+
+const parseCsv = (value: string | undefined): string[] =>
+  String(value ?? "")
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+
+const parseExecutionEnvironments = (value: string | undefined): ExecutionEnvironment[] => {
+  const requested = parseCsv(value);
+  if (requested.length === 0) {
+    return [...DEFAULT_ENDPOINT_EXECUTION_ENVIRONMENTS];
+  }
+
+  const resolved: ExecutionEnvironment[] = [];
+  for (const entry of requested) {
+    if (entry === "host" || entry === "sandbox") {
+      resolved.push(entry);
+      continue;
+    }
+    throw new Error(
+      `invalid CTX_E2E_ENDPOINT_EXECUTION_ENVIRONMENTS entry '${entry}' (expected host or sandbox)`,
+    );
+  }
+  return resolved;
+};
+
+const parseNetworkMode = (value: string | undefined, fallback: NetworkMode): NetworkMode => {
+  const normalized = firstText(value).toLowerCase();
+  if (!normalized) return fallback;
+  if (normalized === "all" || normalized === "llm_only" || normalized === "allowlist") {
+    return normalized;
+  }
+  throw new Error(
+    `invalid network mode '${normalized}' (expected all, llm_only, or allowlist)`,
+  );
 };
 
 const readStringMap = (value: unknown): Record<string, string> => {
@@ -255,40 +299,55 @@ async function ensureEndpointModelOverrideForProvider(opts: {
 
     config = asRecord(await configResp.json());
     endpoints = asArray(config.endpoints).map((entry) => asRecord(entry));
-    const selectedEndpointId = readString(config.selected_endpoint_id);
-    selectedEndpoint =
-      endpoints.find((entry) => readString(entry.id) === selectedEndpointId) ??
-      (endpoints.length === 1 ? endpoints[0] : asRecord({}));
+    ({ selectedEndpoint } = resolveEndpointModelOverrideTarget({
+      providerId,
+      endpoints,
+      selectedEndpointId: readString(config.selected_endpoint_id),
+      modelOverride: targetModel,
+      endpointBaseUrl,
+      endpointApiKey,
+    }));
     if (Object.keys(selectedEndpoint).length > 0) break;
     await new Promise((resolve) => setTimeout(resolve, 300));
   }
 
-  if (Object.keys(selectedEndpoint).length === 0 && endpoints.length > 0) {
+  if (!endpointBaseUrl && Object.keys(selectedEndpoint).length === 0 && endpoints.length > 0) {
     selectedEndpoint = endpoints[0] ?? asRecord({});
   }
 
-  if (
-    Object.keys(selectedEndpoint).length === 0
-    && endpointBaseUrl
-    && endpointApiKey
-  ) {
-    const createResp = await request.post(`/api/providers/${providerId}/harness_config/endpoints`, {
-      data: {
-        name: `${providerId}-openrouter`,
-        base_url: endpointBaseUrl,
-        auth_type: "api_key",
-        api_key: endpointApiKey,
-        model_override: targetModel,
-      },
+  const { upsertPayload } = resolveEndpointModelOverrideTarget({
+    providerId,
+    endpoints,
+    selectedEndpointId: readString(config.selected_endpoint_id),
+    modelOverride: targetModel,
+    endpointBaseUrl,
+    endpointApiKey,
+  });
+  if (upsertPayload) {
+    const upsertResp = await request.post(`/api/providers/${providerId}/harness_config/endpoints`, {
+      data: upsertPayload,
     });
-    if (createResp.ok()) {
-      config = asRecord(await createResp.json());
-      endpoints = asArray(config.endpoints).map((entry) => asRecord(entry));
-      selectedEndpoint =
-        endpoints.find((entry) => firstText(entry.name) === `${providerId}-openrouter`) ??
-        endpoints[0] ??
-        asRecord({});
+    if (!upsertResp.ok()) {
+      const body = asRecord(await upsertResp.json().catch(() => ({})));
+      return {
+        ok: false,
+        status: "error",
+        detail: normalizeErrorMessage(
+          firstText(body.error, body.message, `failed to set model override (${upsertResp.status()})`),
+        ),
+      };
     }
+
+    config = asRecord(await upsertResp.json());
+    endpoints = asArray(config.endpoints).map((entry) => asRecord(entry));
+    ({ selectedEndpoint } = resolveEndpointModelOverrideTarget({
+      providerId,
+      endpoints,
+      selectedEndpointId: readString(config.selected_endpoint_id),
+      modelOverride: targetModel,
+      endpointBaseUrl,
+      endpointApiKey,
+    }));
   }
 
   if (Object.keys(selectedEndpoint).length === 0) {
@@ -339,7 +398,7 @@ async function ensureEndpointModelOverrideForProvider(opts: {
   }
 
   const currentModelOverride = firstText(selectedEndpoint.model_override);
-  if (currentModelOverride === targetModel) {
+  if (!upsertPayload && currentModelOverride === targetModel) {
     return {
       ok: true,
       status: "ok",
@@ -347,36 +406,12 @@ async function ensureEndpointModelOverrideForProvider(opts: {
     };
   }
 
-  const payload: Record<string, unknown> = {
-    endpoint_id: selectedEndpointId,
-    name,
-    model_override: targetModel,
-  };
-  const baseUrl = firstText(selectedEndpoint.base_url);
-  if (baseUrl) payload.base_url = baseUrl;
-  const apiShape = firstText(selectedEndpoint.api_shape);
-  if (apiShape) payload.api_shape = apiShape;
-  const authType = firstText(selectedEndpoint.auth_type);
-  if (authType) payload.auth_type = authType;
-
-  const upsertResp = await request.post(`/api/providers/${providerId}/harness_config/endpoints`, {
-    data: payload,
-  });
-  if (!upsertResp.ok()) {
-    const body = asRecord(await upsertResp.json().catch(() => ({})));
-    return {
-      ok: false,
-      status: "error",
-      detail: normalizeErrorMessage(
-        firstText(body.error, body.message, `failed to set model override (${upsertResp.status()})`),
-      ),
-    };
-  }
-
   return {
     ok: true,
     status: "ok",
-    detail: `model override set to ${targetModel}`,
+    detail: upsertPayload
+      ? `endpoint configured for ${targetModel}`
+      : `model override set to ${targetModel}`,
   };
 }
 
@@ -545,13 +580,102 @@ async function verifyProviderForWorkspace(opts: {
 }
 
 function formatResultTable(results: HarnessRunRecord[]): string {
-  const header = "provider | auth | session | result | reason";
+  const header = "provider | env | network | auth | session | result | reason";
   const rows = results.map((row) => {
     const auth = row.auth_saved ? "ok" : "no";
     const session = row.session_started ? (row.terminal_status ?? "started") : "none";
-    return `${row.provider_id} | ${auth} | ${session} | ${row.result} | ${row.reason}`;
+    return [
+      row.provider_id,
+      row.execution_environment,
+      row.network_mode,
+      auth,
+      session,
+      row.result,
+      row.reason,
+    ].join(" | ");
   });
   return [header, ...rows].join("\n");
+}
+
+async function configureWorkspaceExecution(opts: {
+  request: APIRequestContext;
+  workspaceId: string;
+  executionEnvironment: ExecutionEnvironment;
+  networkMode: NetworkMode;
+  allowlist: string[];
+}): Promise<void> {
+  const { request, workspaceId, executionEnvironment, networkMode, allowlist } = opts;
+  if (executionEnvironment === "host") {
+    return;
+  }
+  const payload: Record<string, unknown> = {
+    environment: executionEnvironment,
+    network_mode: networkMode,
+  };
+  if (networkMode === "allowlist") {
+    payload.allowlist = allowlist;
+  }
+  const response = await request.post(`/api/workspaces/${workspaceId}/execution_config`, {
+    data: payload,
+  });
+  if (!response.ok()) {
+    const body = asRecord(await response.json().catch(() => ({})));
+    const message = firstText(body.error, body.message, `workspace execution config failed (${response.status()})`);
+    throw new Error(normalizeErrorMessage(message));
+  }
+}
+
+async function ensureWorkspaceExecutionLaunched(opts: {
+  request: APIRequestContext;
+  workspaceId: string;
+  executionEnvironment: ExecutionEnvironment;
+}): Promise<void> {
+  const { request, workspaceId, executionEnvironment } = opts;
+  if (executionEnvironment === "host") {
+    return;
+  }
+
+  await ensureLocalLinuxSandboxPrepared(request);
+
+  const start = await request.post("/api/execution/launch/start", {
+    data: {
+      kind: "workspace_launch",
+      workspace_id: workspaceId,
+    },
+  });
+  if (!start.ok()) {
+    const body = asRecord(await start.json().catch(() => ({})));
+    const message = firstText(body.error, body.message, `workspace execution launch failed (${start.status()})`);
+    throw new Error(normalizeErrorMessage(message));
+  }
+
+  const started = asRecord(await start.json());
+  const jobId = firstText(started.job_id);
+  if (!jobId) {
+    throw new Error(`workspace execution launch response missing job_id: ${JSON.stringify(started)}`);
+  }
+
+  await expect
+    .poll(
+      async () => {
+        const status = await request.get(`/api/execution/launch/status?job_id=${encodeURIComponent(jobId)}`);
+        if (!status.ok()) {
+          return "";
+        }
+        const snapshot = asRecord(await status.json());
+        const state = firstText(snapshot.state).toLowerCase();
+        if (state === "ready") {
+          return "ready";
+        }
+        if (state === "error") {
+          const detail = normalizeErrorMessage(firstText(snapshot.error, "unknown execution launch error"));
+          throw new Error(`workspace execution launch failed: ${detail}`);
+        }
+        return "";
+      },
+      { timeout: 10 * 60_000, intervals: [2_000, 2_000, 3_000] },
+    )
+    .toBe("ready");
 }
 
 test("workbench: endpoint harness OpenRouter matrix first pass", async ({ page, request }, testInfo) => {
@@ -580,10 +704,20 @@ test("workbench: endpoint harness OpenRouter matrix first pass", async ({ page, 
     process.env.CTX_E2E_PROVIDER_TERMINAL_TIMEOUT_MS,
     DEFAULT_TERMINAL_TIMEOUT_MS,
   );
-  const requestedProviderIds = (process.env.CTX_E2E_ENDPOINT_PROVIDERS ?? "")
-    .split(",")
-    .map((entry) => entry.trim())
-    .filter(Boolean);
+  const requestedProviderIds = parseCsv(process.env.CTX_E2E_ENDPOINT_PROVIDERS);
+  const executionEnvironments = parseExecutionEnvironments(
+    process.env.CTX_E2E_ENDPOINT_EXECUTION_ENVIRONMENTS,
+  );
+  const sandboxNetworkMode = parseNetworkMode(
+    process.env.CTX_E2E_ENDPOINT_SANDBOX_NETWORK_MODE,
+    DEFAULT_ENDPOINT_SANDBOX_NETWORK_MODE,
+  );
+  const sandboxAllowlist = parseCsv(process.env.CTX_E2E_ENDPOINT_SANDBOX_ALLOWLIST);
+  if (sandboxNetworkMode === "allowlist" && sandboxAllowlist.length === 0) {
+    throw new Error(
+      "CTX_E2E_ENDPOINT_SANDBOX_ALLOWLIST is required when CTX_E2E_ENDPOINT_SANDBOX_NETWORK_MODE=allowlist",
+    );
+  }
   const selectableMatrixEntries = [
     ...OPENROUTER_ENDPOINT_FIRST_PASS_HARNESSES,
     ...OPENROUTER_ENDPOINT_FOCUSED_DEFERRED_HARNESSES,
@@ -650,295 +784,354 @@ test("workbench: endpoint harness OpenRouter matrix first pass", async ({ page, 
     );
   }
 
-  for (const entry of matrixEntries) {
-    console.log(`endpoint matrix: starting provider ${entry.providerId}`);
-    const startMs = Date.now();
-    const provider = providers[entry.providerId] ?? {
-      installed: false,
-      health: "unknown",
-      diagnostics: ["provider not listed by /api/providers"],
-      details: {},
-      managedInstallDetected: false,
-      managedInstallDetail: null,
-    };
+  for (const executionEnvironment of executionEnvironments) {
+    const networkMode: NetworkMode = executionEnvironment === "sandbox" ? sandboxNetworkMode : "all";
+    const networkAllowlist = executionEnvironment === "sandbox" && networkMode === "allowlist"
+      ? sandboxAllowlist
+      : [];
 
-    const baseRecord: HarnessRunRecord = {
-      provider_id: entry.providerId,
-      menu_label: entry.menuLabel,
-      bundle_dir: bundleDir,
-      provider_installed: provider.installed,
-      provider_health: provider.health,
-      provider_diagnostics: provider.diagnostics,
-      managed_install_detected: provider.managedInstallDetected,
-      managed_install_detail: provider.managedInstallDetail,
-      auth_saved: false,
-      auth_detail: "",
-      harness_selected: false,
-      harness_detail: "",
-      session_started: false,
-      session_id: null,
-      model_id: null,
-      terminal_status: null,
-      assistant_messages: 0,
-      file_edit_success: false,
-      file_path: null,
-      result: "fail",
-      reason: "",
-      elapsed_ms: 0,
-    };
+    for (const entry of matrixEntries) {
+      console.log(`endpoint matrix: starting provider ${entry.providerId} (${executionEnvironment}/${networkMode})`);
+      const startMs = Date.now();
+      const provider = providers[entry.providerId] ?? {
+        installed: false,
+        health: "unknown",
+        diagnostics: ["provider not listed by /api/providers"],
+        details: {},
+        managedInstallDetected: false,
+        managedInstallDetail: null,
+      };
 
-    try {
-      await ensureNewTaskComposerVisible(page);
+      const baseRecord: HarnessRunRecord = {
+        provider_id: entry.providerId,
+        execution_environment: executionEnvironment,
+        network_mode: networkMode,
+        menu_label: entry.menuLabel,
+        bundle_dir: bundleDir,
+        provider_installed: provider.installed,
+        provider_health: provider.health,
+        provider_diagnostics: provider.diagnostics,
+        managed_install_detected: provider.managedInstallDetected,
+        managed_install_detail: provider.managedInstallDetail,
+        auth_saved: false,
+        auth_detail: "",
+        harness_selected: false,
+        harness_detail: "",
+        session_started: false,
+        session_id: null,
+        model_id: null,
+        terminal_status: null,
+        assistant_messages: 0,
+        file_edit_success: false,
+        file_path: null,
+        result: "fail",
+        reason: "",
+        elapsed_ms: 0,
+      };
 
-      if (strictBundledOnly && provider.managedInstallDetected) {
-        results.push({
-          ...baseRecord,
-          result: "fail",
-          reason: `managed install metadata detected in bundled-only mode: ${provider.managedInstallDetail}`,
-          elapsed_ms: Date.now() - startMs,
+      try {
+        await ensureNewTaskComposerVisible(page);
+        await configureWorkspaceExecution({
+          request,
+          workspaceId,
+          executionEnvironment,
+          networkMode,
+          allowlist: networkAllowlist,
         });
-        continue;
-      }
-
-      if (!provider.installed || provider.health !== "ok") {
-        const reason = firstText(provider.diagnostics[0], `provider health=${provider.health}`);
-        results.push({
-          ...baseRecord,
-          result: strictBundledOnly && !isLikelyRuntimeSkip(reason) ? "fail" : "skip",
-          reason: reason || "provider unavailable",
-          elapsed_ms: Date.now() - startMs,
+        await ensureWorkspaceExecutionLaunched({
+          request,
+          workspaceId,
+          executionEnvironment,
         });
-        continue;
-      }
 
-      const modelOverride = modelOverrideByProvider[entry.providerId] ?? "";
-      const authResult = await configureHarnessEndpointAuthViaModal(
-        page,
-        entry,
-        apiKey,
-        baseUrl,
-        modelOverride,
-      );
-      const authLikelyAlreadyConfigured =
-        !authResult.ok && authResult.detail.toLowerCase().includes("already be configured");
-      const authProbeFailureOnly =
-        !authResult.ok &&
-        (authResult.detail.toLowerCase().includes("models.list response")
-          || authResult.detail.toLowerCase().includes("models.list probe timed out")
-          || authResult.detail.toLowerCase().includes("requires openai_model")
-          || authResult.detail.toLowerCase().includes("configure a model override"));
-      const authSaved = authResult.ok || authLikelyAlreadyConfigured || authProbeFailureOnly;
-      console.log(`endpoint matrix: ${entry.providerId} auth result -> ${authSaved ? "ok" : "fail"}`);
-      if (!authSaved) {
-        results.push({
-          ...baseRecord,
-          auth_saved: false,
-          auth_detail: authResult.detail,
-          result: isLikelyRuntimeSkip(authResult.detail) ? "skip" : "fail",
-          reason: `auth save failed: ${authResult.detail}`,
-          elapsed_ms: Date.now() - startMs,
-        });
-        continue;
-      }
+        if (strictBundledOnly && provider.managedInstallDetected) {
+          results.push({
+            ...baseRecord,
+            result: "fail",
+            reason: `managed install metadata detected in bundled-only mode: ${provider.managedInstallDetail}`,
+            elapsed_ms: Date.now() - startMs,
+          });
+          continue;
+        }
 
-      if (modelOverride) {
-        const modelOverrideResult = await ensureEndpointModelOverrideForProvider({
+        if (!provider.installed || provider.health !== "ok") {
+          const reason = firstText(provider.diagnostics[0], `provider health=${provider.health}`);
+          results.push({
+            ...baseRecord,
+            result: strictBundledOnly && !isLikelyRuntimeSkip(reason) ? "fail" : "skip",
+            reason: reason || "provider unavailable",
+            elapsed_ms: Date.now() - startMs,
+          });
+          continue;
+        }
+
+        const modelOverride = modelOverrideByProvider[entry.providerId] ?? "";
+        const authResult = await ensureEndpointModelOverrideForProvider({
           request,
           providerId: entry.providerId,
           modelOverride,
           endpointBaseUrl: baseUrl,
           endpointApiKey: apiKey,
         });
-        console.log(
-          `endpoint matrix: ${entry.providerId} model override -> ${modelOverrideResult.ok ? "ok" : "fail"}`,
-        );
-        if (!modelOverrideResult.ok) {
+        const authSaved = authResult.ok;
+        console.log(`endpoint matrix: ${entry.providerId} auth result -> ${authSaved ? "ok" : "fail"}`);
+        if (!authSaved) {
           results.push({
             ...baseRecord,
-            auth_saved: true,
+            auth_saved: false,
             auth_detail: authResult.detail,
-            result: "fail",
-            reason: `model override failed: ${modelOverrideResult.detail}`,
+            result: isLikelyRuntimeSkip(authResult.detail) ? "skip" : "fail",
+            reason: `auth save failed: ${authResult.detail}`,
             elapsed_ms: Date.now() - startMs,
           });
           continue;
         }
-      }
 
-      const harnessSelect = await selectHarnessForComposer(page, entry);
-      console.log(
-        `endpoint matrix: ${entry.providerId} harness select -> ${harnessSelect.ok ? "ok" : "fail"}`,
-      );
-      if (!harnessSelect.ok) {
-        results.push({
-          ...baseRecord,
-          auth_saved: true,
-          auth_detail: authResult.detail,
-          harness_selected: false,
-          harness_detail: harnessSelect.detail,
-          result: "fail",
-          reason: `harness select failed: ${harnessSelect.detail}`,
-          elapsed_ms: Date.now() - startMs,
+        const harnessSelect = {
+          ok: true,
+          detail: "session is created through the API in this matrix",
+        };
+
+        const verify = await verifyProviderForWorkspace({
+          request,
+          workspaceId,
+          providerId: entry.providerId,
         });
-        continue;
-      }
+        console.log(`endpoint matrix: ${entry.providerId} verify -> ${verify.status}`);
+        const verifyProbeFailureOnly =
+          !verify.ok &&
+          (verify.detail.toLowerCase().includes("models.list response")
+            || verify.detail.toLowerCase().includes("models.list probe timed out"));
+        if (!verify.ok && !verifyProbeFailureOnly) {
+          const reason = `verify failed: ${verify.detail}`;
+          results.push({
+            ...baseRecord,
+            auth_saved: true,
+            auth_detail: authResult.detail,
+            harness_selected: true,
+            harness_detail: harnessSelect.detail,
+            result: isLikelyRuntimeSkip(verify.detail) ? "skip" : "fail",
+            reason,
+            elapsed_ms: Date.now() - startMs,
+          });
+          continue;
+        }
 
-      const verify = await verifyProviderForWorkspace({
-        request,
-        workspaceId,
-        providerId: entry.providerId,
-      });
-      console.log(`endpoint matrix: ${entry.providerId} verify -> ${verify.status}`);
-      const verifyProbeFailureOnly =
-        !verify.ok &&
-        (verify.detail.toLowerCase().includes("models.list response")
-          || verify.detail.toLowerCase().includes("models.list probe timed out"));
-      if (!verify.ok && !verifyProbeFailureOnly) {
-        const reason = `verify failed: ${verify.detail}`;
-        results.push({
-          ...baseRecord,
-          auth_saved: true,
-          auth_detail: authResult.detail,
-          harness_selected: true,
-          harness_detail: harnessSelect.detail,
-          result: isLikelyRuntimeSkip(verify.detail) ? "skip" : "fail",
-          reason,
-          elapsed_ms: Date.now() - startMs,
-        });
-        continue;
-      }
-
-      const promptMarker = `or-matrix-${entry.providerId}-${Date.now()}`;
-      const relativeFilePath = providerWriteFilePath(entry.providerId);
-      const prompt = [
-        "This is an end to end test, so it is very important that you do exactly what I ask.",
-        `Make a new file in the workspace root called ${relativeFilePath} and put exactly this text in it: ${WRITE_FILE_CONTENTS}. The file must contain exactly those two characters with no trailing newline or extra whitespace. If you use a shell command to write the file, use printf rather than echo -n, because echo -n is not portable and may write the literal text -n.`,
-        "Use only the current worktree root as the target directory. Do not write in a parent directory, and if your first attempt adds a trailing newline or uses the wrong directory, fix the file before replying.",
-        "That is all. Do it now without further deliberation.",
-        `After writing the file, reply with exactly: ${WRITE_FILE_CONTENTS}`,
-      ].join(" ");
-
-      const modelSelection = await resolveWorkspaceProviderModelId({
-        request,
-        workspaceId,
-        providerId: entry.providerId,
-      });
-      if (!modelSelection.ok) {
-        results.push({
-          ...baseRecord,
-          auth_saved: true,
-          auth_detail: authResult.detail,
-          harness_selected: true,
-          harness_detail: harnessSelect.detail,
-          result: "fail",
-          reason: `model selection failed: ${modelSelection.detail}`,
-          elapsed_ms: Date.now() - startMs,
-        });
-        continue;
-      }
-      console.log(`endpoint matrix: ${entry.providerId} run model -> ${modelSelection.modelId}`);
-
-      const createTaskResp = await request.post(`/api/workspaces/${workspaceId}/tasks`, {
-        data: {
-          title: promptMarker,
-          create_default_session: false,
-        },
-      });
-      if (!createTaskResp.ok()) {
-        const body = asRecord(await createTaskResp.json().catch(() => ({})));
-        const reason = normalizeErrorMessage(
-          firstText(body.error, body.message, `task create failed (${createTaskResp.status()})`),
+        const promptMarker = `or-matrix-${entry.providerId}-${executionEnvironment}-${Date.now()}`;
+        const relativeFilePath = providerWriteFilePath(
+          entry.providerId,
+          executionEnvironment,
+          networkMode,
         );
-        results.push({
-          ...baseRecord,
-          auth_saved: true,
-          auth_detail: authResult.detail,
-          harness_selected: true,
-          harness_detail: harnessSelect.detail,
-          result: "fail",
-          reason,
-          elapsed_ms: Date.now() - startMs,
-        });
-        continue;
-      }
-      const taskId = readString(asRecord(await createTaskResp.json()).id);
-      if (!taskId) {
-        results.push({
-          ...baseRecord,
-          auth_saved: true,
-          auth_detail: authResult.detail,
-          harness_selected: true,
-          harness_detail: harnessSelect.detail,
-          result: "fail",
-          reason: "task create returned empty task id",
-          elapsed_ms: Date.now() - startMs,
-        });
-        continue;
-      }
+        const prompt = [
+          "This is an end to end test, so it is very important that you do exactly what I ask.",
+          `Make a new file in the workspace root called ${relativeFilePath} and put exactly this text in it: ${WRITE_FILE_CONTENTS}. The file must contain exactly those two characters with no trailing newline or extra whitespace. If you use a shell command to write the file, use printf rather than echo -n, because echo -n is not portable and may write the literal text -n.`,
+          "Use only the current worktree root as the target directory. Do not write in a parent directory, and if your first attempt adds a trailing newline or uses the wrong directory, fix the file before replying.",
+          "That is all. Do it now without further deliberation.",
+          `After writing the file, reply with exactly: ${WRITE_FILE_CONTENTS}`,
+        ].join(" ");
 
-      const createSessionResp = await request.post(`/api/tasks/${taskId}/sessions`, {
-        data: {
-          provider_id: entry.providerId,
-          model_id: modelSelection.modelId,
-          execution_environment: "host",
-        },
-      });
-      if (!createSessionResp.ok()) {
-        const bodyText = normalizeErrorMessage(await createSessionResp.text().catch(() => ""));
-        let body: Record<string, unknown> = {};
-        if (bodyText) {
+        const modelSelection = await resolveWorkspaceProviderModelId({
+          request,
+          workspaceId,
+          providerId: entry.providerId,
+        });
+        if (!modelSelection.ok) {
+          results.push({
+            ...baseRecord,
+            auth_saved: true,
+            auth_detail: authResult.detail,
+            harness_selected: true,
+            harness_detail: harnessSelect.detail,
+            result: "fail",
+            reason: `model selection failed: ${modelSelection.detail}`,
+            elapsed_ms: Date.now() - startMs,
+          });
+          continue;
+        }
+        console.log(`endpoint matrix: ${entry.providerId} run model -> ${modelSelection.modelId}`);
+
+        const createTaskResp = await request.post(`/api/workspaces/${workspaceId}/tasks`, {
+          data: {
+            title: promptMarker,
+            create_default_session: false,
+          },
+        });
+        if (!createTaskResp.ok()) {
+          const body = asRecord(await createTaskResp.json().catch(() => ({})));
+          const reason = normalizeErrorMessage(
+            firstText(body.error, body.message, `task create failed (${createTaskResp.status()})`),
+          );
+          results.push({
+            ...baseRecord,
+            auth_saved: true,
+            auth_detail: authResult.detail,
+            harness_selected: true,
+            harness_detail: harnessSelect.detail,
+            result: "fail",
+            reason,
+            elapsed_ms: Date.now() - startMs,
+          });
+          continue;
+        }
+        const taskId = readString(asRecord(await createTaskResp.json()).id);
+        if (!taskId) {
+          results.push({
+            ...baseRecord,
+            auth_saved: true,
+            auth_detail: authResult.detail,
+            harness_selected: true,
+            harness_detail: harnessSelect.detail,
+            result: "fail",
+            reason: "task create returned empty task id",
+            elapsed_ms: Date.now() - startMs,
+          });
+          continue;
+        }
+
+        const createSessionResp = await request.post(`/api/tasks/${taskId}/sessions`, {
+          data: {
+            provider_id: entry.providerId,
+            model_id: modelSelection.modelId,
+            execution_environment: executionEnvironment,
+          },
+        });
+        if (!createSessionResp.ok()) {
+          const bodyText = normalizeErrorMessage(await createSessionResp.text().catch(() => ""));
+          let body: Record<string, unknown> = {};
+          if (bodyText) {
+            try {
+              body = asRecord(JSON.parse(bodyText));
+            } catch {
+              body = {};
+            }
+          }
+          const reason = normalizeErrorMessage(
+            firstText(
+              body.error,
+              body.message,
+              bodyText,
+              `session create failed (${createSessionResp.status()})`,
+            ),
+          );
+          results.push({
+            ...baseRecord,
+            auth_saved: true,
+            auth_detail: authResult.detail,
+            harness_selected: true,
+            harness_detail: harnessSelect.detail,
+            result: isLikelyRuntimeSkip(reason) ? "skip" : "fail",
+            reason,
+            elapsed_ms: Date.now() - startMs,
+          });
+          continue;
+        }
+        const sessionId = readString(asRecord(await createSessionResp.json()).id);
+        if (!sessionId) {
+          results.push({
+            ...baseRecord,
+            auth_saved: true,
+            auth_detail: authResult.detail,
+            harness_selected: true,
+            harness_detail: harnessSelect.detail,
+            result: "fail",
+            reason: "session create returned empty session id",
+            elapsed_ms: Date.now() - startMs,
+          });
+          continue;
+        }
+
+        const messageResp = await request.post(`/api/sessions/${sessionId}/messages`, {
+          data: {
+            content: prompt,
+            delivery: "immediate",
+          },
+        });
+        if (!messageResp.ok()) {
+          const body = asRecord(await messageResp.json().catch(() => ({})));
+          const reason = normalizeErrorMessage(
+            firstText(body.error, body.message, `session message failed (${messageResp.status()})`),
+          );
+          results.push({
+            ...baseRecord,
+            auth_saved: true,
+            auth_detail: authResult.detail,
+            harness_selected: true,
+            harness_detail: harnessSelect.detail,
+            session_started: true,
+            session_id: sessionId,
+            model_id: modelSelection.modelId,
+            result: isLikelyRuntimeSkip(reason) ? "skip" : "fail",
+            reason,
+            elapsed_ms: Date.now() - startMs,
+          });
+          continue;
+        }
+        console.log(`endpoint matrix: ${entry.providerId} session started -> ${sessionId}`);
+
+        let terminal: TerminalState;
+        try {
+          terminal = await waitForTerminalState({
+            request,
+            sessionId,
+            timeoutMs: providerTerminalTimeoutForHarness(entry.providerId, providerTerminalTimeoutMs),
+          });
+        } catch (error) {
+          const timeoutDetail = normalizeErrorMessage(error instanceof Error ? error.message : String(error));
+          const reason = verifyProbeFailureOnly ? verify.detail : timeoutDetail;
+          results.push({
+            ...baseRecord,
+            auth_saved: true,
+            auth_detail: authResult.detail,
+            harness_selected: true,
+            harness_detail: harnessSelect.detail,
+            session_started: true,
+            session_id: sessionId,
+            model_id: modelSelection.modelId,
+            result: verifyProbeFailureOnly || isLikelyRuntimeSkip(timeoutDetail) ? "skip" : "fail",
+            reason,
+            elapsed_ms: Date.now() - startMs,
+          });
+          continue;
+        }
+        console.log(
+          `endpoint matrix: ${entry.providerId} terminal -> ${firstText(terminal.terminalStatus, "unknown")}`,
+        );
+
+        let result: Outcome = "fail";
+        let reason = "session ended without assistant completion";
+        let fileEditSuccess = false;
+        let filePath: string | null = null;
+        if (terminal.terminalStatus === "completed" && terminal.assistantMessages > 0) {
           try {
-            body = asRecord(JSON.parse(bodyText));
-          } catch {
-            body = {};
+            filePath = await waitForSessionWorkspaceFileContents(
+              request,
+              sessionId,
+              relativeFilePath,
+              WRITE_FILE_CONTENTS,
+              {
+                timeoutMs: 30_000,
+                pollMs: 1_000,
+              },
+            );
+            fileEditSuccess = true;
+            result = "pass";
+            reason = `assistant completion observed and wrote ${relativeFilePath}`;
+          } catch (error) {
+            result = "fail";
+            reason = normalizeErrorMessage(error instanceof Error ? error.message : String(error));
+          }
+        } else {
+          const errorMessage = terminal.errorMessage || "session ended without explicit error payload";
+          if (isLikelyRuntimeSkip(errorMessage)) {
+            result = "skip";
+            reason = errorMessage;
+          } else {
+            result = "fail";
+            reason = errorMessage;
           }
         }
-        const reason = normalizeErrorMessage(
-          firstText(
-            body.error,
-            body.message,
-            bodyText,
-            `session create failed (${createSessionResp.status()})`,
-          ),
-        );
-        results.push({
-          ...baseRecord,
-          auth_saved: true,
-          auth_detail: authResult.detail,
-          harness_selected: true,
-          harness_detail: harnessSelect.detail,
-          result: isLikelyRuntimeSkip(reason) ? "skip" : "fail",
-          reason,
-          elapsed_ms: Date.now() - startMs,
-        });
-        continue;
-      }
-      const sessionId = readString(asRecord(await createSessionResp.json()).id);
-      if (!sessionId) {
-        results.push({
-          ...baseRecord,
-          auth_saved: true,
-          auth_detail: authResult.detail,
-          harness_selected: true,
-          harness_detail: harnessSelect.detail,
-          result: "fail",
-          reason: "session create returned empty session id",
-          elapsed_ms: Date.now() - startMs,
-        });
-        continue;
-      }
 
-      const messageResp = await request.post(`/api/sessions/${sessionId}/messages`, {
-        data: {
-          content: prompt,
-          delivery: "immediate",
-        },
-      });
-      if (!messageResp.ok()) {
-        const body = asRecord(await messageResp.json().catch(() => ({})));
-        const reason = normalizeErrorMessage(
-          firstText(body.error, body.message, `session message failed (${messageResp.status()})`),
-        );
         results.push({
           ...baseRecord,
           auth_saved: true,
@@ -947,97 +1140,24 @@ test("workbench: endpoint harness OpenRouter matrix first pass", async ({ page, 
           harness_detail: harnessSelect.detail,
           session_started: true,
           session_id: sessionId,
-          model_id: modelSelection.modelId,
-          result: isLikelyRuntimeSkip(reason) ? "skip" : "fail",
+          model_id: terminal.modelId ?? modelSelection.modelId,
+          terminal_status: terminal.terminalStatus,
+          assistant_messages: terminal.assistantMessages,
+          file_edit_success: fileEditSuccess,
+          file_path: filePath,
+          result,
           reason,
           elapsed_ms: Date.now() - startMs,
-        });
-        continue;
-      }
-      console.log(`endpoint matrix: ${entry.providerId} session started -> ${sessionId}`);
-
-      let terminal: TerminalState;
-      try {
-        terminal = await waitForTerminalState({
-          request,
-          sessionId,
-          timeoutMs: providerTerminalTimeoutForHarness(entry.providerId, providerTerminalTimeoutMs),
         });
       } catch (error) {
-        const timeoutDetail = normalizeErrorMessage(error instanceof Error ? error.message : String(error));
-        const reason = verifyProbeFailureOnly ? verify.detail : timeoutDetail;
+        const message = normalizeErrorMessage(error instanceof Error ? error.message : String(error));
         results.push({
           ...baseRecord,
-          auth_saved: true,
-          auth_detail: authResult.detail,
-          harness_selected: true,
-          harness_detail: harnessSelect.detail,
-          session_started: true,
-          session_id: sessionId,
-          model_id: modelSelection.modelId,
-          result: verifyProbeFailureOnly || isLikelyRuntimeSkip(timeoutDetail) ? "skip" : "fail",
-          reason,
+          result: isLikelyRuntimeSkip(message) ? "skip" : "fail",
+          reason: message,
           elapsed_ms: Date.now() - startMs,
         });
-        continue;
       }
-      console.log(
-        `endpoint matrix: ${entry.providerId} terminal -> ${firstText(terminal.terminalStatus, "unknown")}`,
-      );
-
-      let result: Outcome = "fail";
-      let reason = "session ended without assistant completion";
-      let fileEditSuccess = false;
-      let filePath: string | null = null;
-      if (terminal.terminalStatus === "completed" && terminal.assistantMessages > 0) {
-        try {
-          filePath = await waitForSessionWorkspaceFileContents(request, sessionId, relativeFilePath, WRITE_FILE_CONTENTS, {
-            timeoutMs: 30_000,
-            pollMs: 1_000,
-          });
-          fileEditSuccess = true;
-          result = "pass";
-          reason = `assistant completion observed and wrote ${relativeFilePath}`;
-        } catch (error) {
-          result = "fail";
-          reason = normalizeErrorMessage(error instanceof Error ? error.message : String(error));
-        }
-      } else {
-        const errorMessage = terminal.errorMessage || "session ended without explicit error payload";
-        if (isLikelyRuntimeSkip(errorMessage)) {
-          result = "skip";
-          reason = errorMessage;
-        } else {
-          result = "fail";
-          reason = errorMessage;
-        }
-      }
-
-      results.push({
-        ...baseRecord,
-        auth_saved: true,
-        auth_detail: authResult.detail,
-        harness_selected: true,
-        harness_detail: harnessSelect.detail,
-        session_started: true,
-        session_id: sessionId,
-        model_id: terminal.modelId ?? modelSelection.modelId,
-        terminal_status: terminal.terminalStatus,
-        assistant_messages: terminal.assistantMessages,
-        file_edit_success: fileEditSuccess,
-        file_path: filePath,
-        result,
-        reason,
-        elapsed_ms: Date.now() - startMs,
-      });
-    } catch (error) {
-      const message = normalizeErrorMessage(error instanceof Error ? error.message : String(error));
-      results.push({
-        ...baseRecord,
-        result: isLikelyRuntimeSkip(message) ? "skip" : "fail",
-        reason: message,
-        elapsed_ms: Date.now() - startMs,
-      });
     }
   }
 
@@ -1050,6 +1170,9 @@ test("workbench: endpoint harness OpenRouter matrix first pass", async ({ page, 
         base_url: baseUrl,
         model_preference: "session default (no CTX_TOKENS_MODEL override)",
         requested_provider_ids: requestedProviderIds,
+        requested_execution_environments: executionEnvironments,
+        sandbox_network_mode: sandboxNetworkMode,
+        sandbox_allowlist: sandboxAllowlist,
         provider_run_context_timeout_ms: providerRunContextTimeoutMs,
         provider_terminal_timeout_ms: providerTerminalTimeoutMs,
         results,

@@ -27,7 +27,9 @@ const restoreEnv = () => {
   delete process.env.CTX_E2E_TMPDIR;
   delete process.env.CTX_E2E_DATA_DIR;
   delete process.env.CTX_BUNDLE_DIR;
+  delete process.env.CTX_BUNDLE_MANIFEST;
   delete process.env.CTX_WEB_DIST;
+  delete process.env.CTX_E2E_BUNDLE_DIR;
   delete process.env.CTX_E2E_ALLOW_CONFIGURED_BUNDLE_DIR;
   delete process.env.CTX_E2E_BROWSER;
   delete process.env.CTX_E2E_REUSE_SERVER;
@@ -213,8 +215,10 @@ describe("createCtxPlaywrightConfig", () => {
 
     if (fs.existsSync(bundleManifestPath)) {
       expect(webServer?.env?.CTX_BUNDLE_DIR).toBe(expectedBundleDir);
+      expect(webServer?.env?.CTX_BUNDLE_MANIFEST).toBe(bundleManifestPath);
     } else {
       expect(webServer?.env?.CTX_BUNDLE_DIR).toBe("");
+      expect(webServer?.env?.CTX_BUNDLE_MANIFEST).toBeUndefined();
     }
   });
 
@@ -227,6 +231,7 @@ describe("createCtxPlaywrightConfig", () => {
     const webServer = Array.isArray(config.webServer) ? config.webServer[0] : config.webServer;
 
     expect(webServer?.env?.CTX_BUNDLE_DIR).toBe("/tmp/ctx-e2e-bundles");
+    expect(webServer?.env?.CTX_BUNDLE_MANIFEST).toBe("/tmp/ctx-e2e-bundles/manifest.json");
   });
 
   it("allows an explicit force-reuse override for required profiles", async () => {

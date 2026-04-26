@@ -1059,29 +1059,7 @@ const runCodexComposerSmoke = async (workspaceId, timeoutMs = 240000) => {
   }
 };
 
-const runProviderFirstTurnApiSmoke = async (
-  workspaceId,
-  {
-    providerId = "codex",
-    modelId = "default",
-    executionEnvironment = "",
-    prompt = "hello",
-  } = {},
-  timeoutMs = 240000,
-) => {
-  const taskResp = await daemonJson("POST", `/api/workspaces/${workspaceId}/tasks`, {
-    title: `${providerId}-smoke-${Date.now()}`,
-    description: `Desktop automation smoke task for ${providerId}`,
-    create_default_session: false,
-  });
-  if (taskResp.status !== 200) {
-    throw new Error(`task create failed (${taskResp.status}): ${JSON.stringify(taskResp.payload || null)}`);
-  }
-  const taskId = String(taskResp.payload?.id || "").trim();
-  if (!taskId) {
-    throw new Error(`task create response missing id: ${JSON.stringify(taskResp.payload || null)}`);
-  }
-
+const resolveProviderSessionExecutionEnvironment = async (workspaceId, executionEnvironment = "") => {
   let sessionExecutionEnvironment = normalizeText(executionEnvironment);
   if (!sessionExecutionEnvironment) {
     const executionConfigResp = await daemonJson("GET", `/api/workspaces/${workspaceId}/execution_config`);
@@ -1096,6 +1074,34 @@ const runProviderFirstTurnApiSmoke = async (
   if (sessionExecutionEnvironment !== "host" && sessionExecutionEnvironment !== "sandbox") {
     throw new Error(`unsupported execution environment for session create: ${sessionExecutionEnvironment || "<missing>"}`);
   }
+  return sessionExecutionEnvironment;
+};
+
+const createProviderTaskAndSession = async (
+  workspaceId,
+  {
+    providerId = "codex",
+    modelId = "default",
+    executionEnvironment = "",
+  } = {},
+) => {
+  const taskResp = await daemonJson("POST", `/api/workspaces/${workspaceId}/tasks`, {
+    title: `${providerId}-smoke-${Date.now()}`,
+    description: `Desktop automation smoke task for ${providerId}`,
+    create_default_session: false,
+  });
+  if (taskResp.status !== 200) {
+    throw new Error(`task create failed (${taskResp.status}): ${JSON.stringify(taskResp.payload || null)}`);
+  }
+  const taskId = String(taskResp.payload?.id || "").trim();
+  if (!taskId) {
+    throw new Error(`task create response missing id: ${JSON.stringify(taskResp.payload || null)}`);
+  }
+
+  const sessionExecutionEnvironment = await resolveProviderSessionExecutionEnvironment(
+    workspaceId,
+    executionEnvironment,
+  );
 
   const sessionResp = await daemonJson("POST", `/api/tasks/${taskId}/sessions`, {
     provider_id: providerId,
@@ -1110,15 +1116,47 @@ const runProviderFirstTurnApiSmoke = async (
     throw new Error(`session create response missing id: ${JSON.stringify(sessionResp.payload || null)}`);
   }
 
-  const postResp = await daemonJson("POST", `/api/sessions/${sessionId}/messages`, {
-    content: prompt,
-    delivery: "immediate",
-    attachments: [],
-  });
-  if (postResp.status !== 200) {
-    throw new Error(`message post failed (${postResp.status}): ${JSON.stringify(postResp.payload || null)}`);
-  }
+  return {
+    taskId,
+    sessionId,
+    executionEnvironment: sessionExecutionEnvironment,
+  };
+};
 
+const extractProviderTurnFailureMessage = async (sessionId, latestTurn) => {
+  const turnId = String(latestTurn?.turn_id || latestTurn?.id || "").trim();
+  const events = await safeDaemonJson("GET", `/api/sessions/${sessionId}/events?limit=200`);
+  const eventRows = Array.isArray(events.payload?.events)
+    ? events.payload.events
+    : Array.isArray(events.payload)
+      ? events.payload
+      : [];
+  const turnEvents = turnId
+    ? eventRows.filter((event) => String(event?.turn_id || "") === turnId)
+    : eventRows;
+  const terminalEvent = turnEvents
+    .slice()
+    .reverse()
+    .find((event) => {
+      const eventType = String(event?.event_type || "").toLowerCase();
+      return eventType === "error" || eventType === "turninterrupted";
+    });
+  const payload = terminalEvent?.payload_json && typeof terminalEvent.payload_json === "object"
+    ? terminalEvent.payload_json
+    : {};
+  return String(
+    payload.message
+      || payload.error
+      || payload.reason
+      || payload.details
+      || latestTurn?.error
+      || latestTurn?.error_message
+      || latestTurn?.status_reason
+      || "turn failed",
+  ).trim();
+};
+
+const waitForProviderTurnTerminalOutcome = async (sessionId, timeoutMs = 240000) => {
   const startedAt = Date.now();
   let lastHistory = null;
   while (Date.now() - startedAt < timeoutMs) {
@@ -1136,41 +1174,150 @@ const runProviderFirstTurnApiSmoke = async (
       const assistantMessage = assistantMessageRaw.trim();
       if (latestStatus === "completed" && assistantMessage) {
         return {
-          taskId,
-          sessionId,
+          terminalStatus: latestStatus,
           assistantMessageRaw,
           assistantMessage,
+          errorMessage: "",
+          lastHistory,
         };
       }
-      if (latestStatus === "failed" || latestStatus === "cancelled") {
-        const turnId = String(latestTurn?.turn_id || latestTurn?.id || "").trim();
-        const events = await safeDaemonJson("GET", `/api/sessions/${sessionId}/events?limit=200`);
-        const eventRows = Array.isArray(events.payload?.events) ? events.payload.events : [];
-        const turnEvents = turnId
-          ? eventRows.filter((event) => String(event?.turn_id || "") === turnId)
-          : eventRows;
-        const errorEvent = turnEvents
-          .slice()
-          .reverse()
-          .find((event) => String(event?.event_type || "").toLowerCase() === "error");
-        const errorMessage = String(
-          errorEvent?.payload_json?.message
-            || errorEvent?.payload_json?.details
-            || latestTurn?.error
-            || latestTurn?.error_message
-            || "turn failed",
-        ).trim();
-        throw new Error(
-          `${providerId} first turn failed (status=${latestStatus}, turn_id=${turnId || "unknown"}): ${errorMessage}`,
-        );
+      if (
+        latestStatus === "failed"
+        || latestStatus === "cancelled"
+        || latestStatus === "interrupted"
+      ) {
+        return {
+          terminalStatus: latestStatus,
+          assistantMessageRaw,
+          assistantMessage,
+          errorMessage: await extractProviderTurnFailureMessage(sessionId, latestTurn),
+          lastHistory,
+        };
       }
     }
     await sleep(500);
   }
 
   throw new Error(
-    `${providerId} first turn timed out (session=${sessionId}); last_history=${JSON.stringify(lastHistory)}`,
+    `provider first turn timed out (session=${sessionId}); last_history=${JSON.stringify(lastHistory)}`,
   );
+};
+
+const runProviderFirstTurnApiSmoke = async (
+  workspaceId,
+  {
+    providerId = "codex",
+    modelId = "default",
+    executionEnvironment = "",
+    prompt = "hello",
+  } = {},
+  timeoutMs = 240000,
+) => {
+  const { taskId, sessionId } = await createProviderTaskAndSession(
+    workspaceId,
+    {
+      providerId,
+      modelId,
+      executionEnvironment,
+    },
+  );
+
+  const postResp = await daemonJson("POST", `/api/sessions/${sessionId}/messages`, {
+    content: prompt,
+    delivery: "immediate",
+    attachments: [],
+  });
+  if (postResp.status !== 200) {
+    throw new Error(`message post failed (${postResp.status}): ${JSON.stringify(postResp.payload || null)}`);
+  }
+
+  const outcome = await waitForProviderTurnTerminalOutcome(sessionId, timeoutMs);
+  if (outcome.terminalStatus === "completed" && outcome.assistantMessage) {
+    return {
+      taskId,
+      sessionId,
+      assistantMessageRaw: outcome.assistantMessageRaw,
+      assistantMessage: outcome.assistantMessage,
+    };
+  }
+
+  throw new Error(
+    `${providerId} first turn failed (status=${outcome.terminalStatus || "unknown"}): ${outcome.errorMessage || "turn failed"}`,
+  );
+};
+
+const runProviderFirstTurnApiExpectedFailure = async (
+  workspaceId,
+  {
+    providerId = "codex",
+    modelId = "default",
+    executionEnvironment = "",
+    prompt = "hello",
+    requiredErrorSubstrings = [],
+    forbiddenErrorSubstrings = [],
+  } = {},
+  timeoutMs = 240000,
+) => {
+  const { taskId, sessionId } = await createProviderTaskAndSession(
+    workspaceId,
+    {
+      providerId,
+      modelId,
+      executionEnvironment,
+    },
+  );
+
+  const postResp = await daemonJson("POST", `/api/sessions/${sessionId}/messages`, {
+    content: prompt,
+    delivery: "immediate",
+    attachments: [],
+  });
+  if (postResp.status !== 200) {
+    throw new Error(`message post failed (${postResp.status}): ${JSON.stringify(postResp.payload || null)}`);
+  }
+
+  const outcome = await waitForProviderTurnTerminalOutcome(sessionId, timeoutMs);
+  if (outcome.terminalStatus === "completed" && outcome.assistantMessage) {
+    throw new Error(
+      `${providerId} first turn unexpectedly succeeded in expected-failure path (session=${sessionId})`,
+    );
+  }
+
+  const normalizedError = String(outcome.errorMessage || "").trim().toLowerCase();
+  if (!normalizedError) {
+    throw new Error(
+      `${providerId} expected-failure path produced no terminal error detail (status=${outcome.terminalStatus || "unknown"})`,
+    );
+  }
+
+  for (const forbidden of forbiddenErrorSubstrings) {
+    const needle = String(forbidden || "").trim().toLowerCase();
+    if (!needle) continue;
+    if (normalizedError.includes(needle)) {
+      throw new Error(
+        `${providerId} expected-failure path matched forbidden error substring '${forbidden}': ${outcome.errorMessage}`,
+      );
+    }
+  }
+
+  const requiredNeedles = requiredErrorSubstrings
+    .map((value) => String(value || "").trim().toLowerCase())
+    .filter(Boolean);
+  if (
+    requiredNeedles.length > 0
+    && !requiredNeedles.some((needle) => normalizedError.includes(needle))
+  ) {
+    throw new Error(
+      `${providerId} expected-failure path did not include any required error substring ${JSON.stringify(requiredErrorSubstrings)}: ${outcome.errorMessage}`,
+    );
+  }
+
+  return {
+    taskId,
+    sessionId,
+    terminalStatus: outcome.terminalStatus,
+    errorMessage: outcome.errorMessage,
+  };
 };
 
 const runCodexFirstTurnApiSmoke = async (workspaceId, options = {}, timeoutMs = 240000) => {
@@ -2534,6 +2681,7 @@ module.exports = {
   runCodexFirstTurnApiSmoke,
   runProviderFileEditApiSmoke,
   runProviderFirstTurnApiSmoke,
+  runProviderFirstTurnApiExpectedFailure,
   getWorkspace,
   getWorkspaceHarnessContainer,
   createWorkspaceTerminal,

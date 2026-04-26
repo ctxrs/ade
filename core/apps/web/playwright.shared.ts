@@ -287,6 +287,7 @@ export async function createCtxPlaywrightConfig(
     : null;
   if (resolvedBundleDir && webServerEnv) {
     webServerEnv.CTX_BUNDLE_DIR = resolvedBundleDir;
+    webServerEnv.CTX_BUNDLE_MANIFEST = path.join(resolvedBundleDir, "manifest.json");
     webServerEnv.CTX_E2E_BUNDLED_ONLY ??= "1";
   }
 

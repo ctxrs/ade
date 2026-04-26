@@ -4,6 +4,7 @@ import { tmpdir } from "os";
 import path from "path";
 import type { APIRequestContext, TestInfo } from "playwright/test";
 import { test, expect } from "./fixtures";
+import { ensureLocalLinuxSandboxPrepared } from "./utils/workspaceExecution";
 import {
   classifyInstallSmokeFailureCategory,
   envTruthy,
@@ -310,6 +311,8 @@ async function ensureWorkspaceExecutionLaunched(
   environment: ExecutionEnvironment,
 ): Promise<void> {
   if (environment === "host") return;
+
+  await ensureLocalLinuxSandboxPrepared(request);
 
   const start = await request.post("/api/execution/launch/start", {
     data: {

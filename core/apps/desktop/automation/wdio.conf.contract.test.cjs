@@ -15,6 +15,7 @@ test("wdio automation defaults route runtime and daemon scratch through the vola
   assert.match(script, /AUTOMATION_ARTIFACTS_ROOT = resolveVolatileSubdir\("CTX_VOLATILE_ARTIFACTS_DIR", \["artifacts"\]\)/);
   assert.match(script, /resolveAutomationTmpRoot = \(\) =>/);
   assert.match(script, /process\.env\.TMPDIR = automationTmpDir/);
+  assert.match(script, /process\.env\.TAURI_WEBVIEW_AUTOMATION = "true"/);
   assert.match(script, /return path\.join\(AUTOMATION_ARTIFACTS_ROOT, "ctx-desktop-e2e", "avf-linux-guest-runtime"\)/);
   assert.match(script, /fs\.mkdtempSync\(path\.join\(automationTmpDir, `ctx-desktop-e2e-\$\{daemonPort\}-`\)\)/);
   assert.match(script, /fs\.mkdtempSync\(path\.join\(automationTmpDir, "ctx-desktop-e2e-app-daemon-"\)\)/);
@@ -45,6 +46,35 @@ test("wdio remote-only prep on mac arm64 skips the managed AVF payload download"
     script,
     /process\.platform === "darwin"[\s\S]*process\.arch === "arm64"[\s\S]*RUNS_REMOTE_ONLY_SCENARIOS[\s\S]*CTX_DESKTOP_ALLOW_MANAGED_AVF_RUNTIME_MISSING_LOCAL_PAYLOAD = "1"/,
   );
+});
+
+test("wdio explicit local-only scenario prep disables bundled remote daemons", () => {
+  const script = fs.readFileSync(configPath, "utf8");
+
+  assert.match(script, /const RUNS_REMOTE_SCENARIOS = SCENARIO_FILTER\.length === 0/);
+  assert.match(script, /SCENARIO_FILTER\.some\(\(token\) => token\.startsWith\("remote"\)\)/);
+  assert.match(
+    script,
+    /if \(!RUNS_REMOTE_SCENARIOS && !String\(prepEnv\.CTX_BUNDLE_REMOTE_DAEMONS \|\| ""\)\.trim\(\)\) \{\s*prepEnv\.CTX_BUNDLE_REMOTE_DAEMONS = "0";\s*\}/s,
+  );
+});
+
+test("wdio pure host local scenario prep disables Linux ctx-mcp bundling", () => {
+  const script = fs.readFileSync(configPath, "utf8");
+
+  assert.match(script, /const RUNS_CONTAINER_SCENARIOS = SCENARIO_FILTER\.length === 0/);
+  assert.match(script, /SCENARIO_FILTER\.some\(\(token\) => CONTAINER_SCENARIO_TOKENS\.has\(token\)\)/);
+  assert.match(
+    script,
+    /if \(\s*!RUNS_CONTAINER_SCENARIOS\s*&& !RUNS_REMOTE_SCENARIOS\s*&& !String\(prepEnv\.CTX_BUNDLE_LINUX_CTX_MCP_RUNTIME \|\| ""\)\.trim\(\)\s*\) \{\s*prepEnv\.CTX_BUNDLE_LINUX_CTX_MCP_RUNTIME = "0";\s*\}/s,
+  );
+});
+
+test("wdio shared CrabNebula backend launch env includes webview automation enablement", () => {
+  const script = fs.readFileSync(configPath, "utf8");
+
+  assert.match(script, /const SHARED_CN_BACKEND_ENV_KEYS = new Set\(\[/);
+  assert.match(script, /"TAURI_WEBVIEW_AUTOMATION"/);
 });
 
 test("wdio connection retries are configurable for packaged mac app readiness", () => {

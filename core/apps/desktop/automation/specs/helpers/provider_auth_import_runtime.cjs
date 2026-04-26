@@ -125,6 +125,7 @@ const stageAmpImportFixture = () => {
 const stageProviderAuthImportFixture = (providerId) => {
   switch (normalizeText(providerId)) {
     case "codex":
+    case "codex-crp":
       return stageCodexImportFixture();
     case "gemini":
       return stageGeminiImportFixture();
@@ -227,7 +228,7 @@ const assertImportedProfileMetadata = ({ profiles, candidate, result }) => {
 
 const isAccountBackedImport = (providerId, candidateKind) => {
   const provider = normalizeText(providerId);
-  if (provider === "codex") return true;
+  if (provider === "codex" || provider === "codex-crp") return true;
   if (provider === "gemini" && normalizeText(candidateKind) === "auth_file") return true;
   return false;
 };
@@ -294,4 +295,5 @@ module.exports = {
   findStagedCandidate,
   assertImportedProfileMetadata,
   assertImportedProfileActive,
+  isAccountBackedImport,
 };

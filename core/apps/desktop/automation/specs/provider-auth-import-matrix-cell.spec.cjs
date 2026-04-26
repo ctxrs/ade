@@ -14,6 +14,9 @@ const {
   runProviderFileEditApiSmoke,
 } = require("./helpers/workspace_wizard_flow.cjs");
 const {
+  createProviderAuthImportWorkspaceAndLaunchExecution,
+} = require("./helpers/provider_auth_import_workspace_launch.cjs");
+const {
   getProviderStatus,
   installProviderAndWait,
   verifyProviderForWorkspace,
@@ -41,96 +44,27 @@ const parsePositiveInt = (raw, fallback) => {
 
 const waitMs = (ms) => new Promise((resolve) => setTimeout(resolve, Math.max(0, Number(ms) || 0)));
 
-const createWorkspaceAndLaunchExecution = async ({
-  dest,
-  name,
-  daemonLocation,
-  executionEnvironment,
-  timeoutMs = 15 * 60_000,
-  onLaunchStart = null,
-}) => {
-  initGitRepo(dest, name);
-  const create = await daemonJson("POST", "/api/workspaces", {
-    root_path: dest,
-    name,
-  });
-  if (create.status !== 200) {
-    throw new Error(`workspace create failed (${create.status}): ${JSON.stringify(create.payload || null)}`);
-  }
-  const workspaceId = normalizeText(create.payload?.id);
-  if (!workspaceId) {
-    throw new Error(`workspace create response missing id: ${JSON.stringify(create.payload || null)}`);
-  }
-
-  if (daemonLocation === "remote") {
-    throw new Error(`remote daemon location is not supported by this spec: ${daemonLocation}`);
-  }
-  if (executionEnvironment !== "host" && executionEnvironment !== "sandbox") {
-    throw new Error(`unsupported execution environment for this spec: ${executionEnvironment}`);
-  }
-
-  const environment = executionEnvironment;
-  const networkMode = executionEnvironment === "sandbox" ? "llm_only" : "all";
-
-  const setExec = await daemonJson("POST", `/api/workspaces/${workspaceId}/execution_config`, {
-    environment,
-    network_mode: networkMode,
-  });
-  if (setExec.status !== 200) {
-    throw new Error(`execution config update failed (${setExec.status}): ${JSON.stringify(setExec.payload || null)}`);
-  }
-
-  const launch = await daemonJson("POST", "/api/execution/launch/start", {
-    workspace_id: workspaceId,
-  });
-  if (launch.status !== 200) {
-    throw new Error(`execution launch start failed (${launch.status}): ${JSON.stringify(launch.payload || null)}`);
-  }
-  const jobId = normalizeText(launch.payload?.job_id);
-  if (!jobId) {
-    throw new Error(`execution launch response missing job_id: ${JSON.stringify(launch.payload || null)}`);
-  }
-  if (typeof onLaunchStart === "function") {
-    await onLaunchStart({
-      workspaceId,
-      environment,
-      networkMode,
-      launchJobId: jobId,
-      launchStart: launch.payload || null,
-    });
-  }
-
-  const startedAt = Date.now();
-  let lastPayload = null;
-  while (Date.now() - startedAt < timeoutMs) {
-    const status = await daemonJson("GET", `/api/execution/launch/status?job_id=${encodeURIComponent(jobId)}`);
-    if (status.status === 200) {
-      lastPayload = status.payload || null;
-      const state = normalizeText(status.payload?.state).toLowerCase();
-      if (state === "ready") {
-        const executionRoot = normalizeText(await getWorkspaceTerminalCwd(workspaceId));
-        if (!executionRoot) {
-          throw new Error(`workspace execution root missing for ${workspaceId}`);
-        }
-        return {
-          workspaceId,
-          environment,
-          networkMode,
-          executionRoot,
-          launchJobId: jobId,
-          launchStatus: status.payload || null,
-        };
-      }
-      if (state === "error") {
-        throw new Error(`execution launch failed: ${JSON.stringify(status.payload || null)}`);
-      }
+const ensureLocalLinuxSandboxReady = async () => {
+  const result = await browser.executeAsync(({ req }, done) => {
+    const tauriCoreInvoke = window.__TAURI__?.core?.invoke;
+    const tauriInternalsInvoke = window.__TAURI_INTERNALS__?.invoke;
+    const invoke = tauriInternalsInvoke || tauriCoreInvoke;
+    if (!invoke) {
+      done({ error: "Tauri invoke API not available" });
+      return;
     }
-    await waitMs(1000);
+    Promise.resolve()
+      .then(() => invoke("desktop_ensure_local_linux_sandbox_ready", { req }))
+      .then((value) => done({ value }))
+      .catch((error) => done({ error: String(error) }));
+  }, { req: { admin_password_once: null } });
+  if (result && typeof result === "object" && result.error) {
+    throw new Error(`local Linux sandbox ensure failed: ${result.error}`);
   }
-
-  throw new Error(
-    `execution launch timed out for workspace=${workspaceId} job=${jobId} last=${JSON.stringify(lastPayload)}`,
-  );
+  if (!result || typeof result !== "object" || !result.value || result.value.ready !== true) {
+    throw new Error(`local Linux sandbox ensure returned unexpected payload: ${JSON.stringify(result || null)}`);
+  }
+  return result.value;
 };
 
 describe("provider auth import matrix cell (desktop e2e)", () => {
@@ -198,15 +132,20 @@ describe("provider auth import matrix cell (desktop e2e)", () => {
       }
 
       const workspaceDest = path.join(localBase, cellId.replace(/\./g, "-"));
-      const workspace = await createWorkspaceAndLaunchExecution({
+      const workspace = await createProviderAuthImportWorkspaceAndLaunchExecution({
         dest: workspaceDest,
         name: `provider-auth-import-${providerId}-${Date.now()}`,
         daemonLocation,
         executionEnvironment,
+        platform: process.platform,
         onLaunchStart: async (launchInfo) => {
           workspaceLaunch = launchInfo;
           recorder.recordArtifact("workspace_launch_started", launchInfo);
         },
+        initGitRepo,
+        daemonJson,
+        ensureLocalLinuxSandboxReady,
+        getWorkspaceTerminalCwd,
       });
       recorder.recordArtifact("workspace", workspace);
       recorder.recordAssertion("candidate_detected", "pass", "staged auth import candidate was detected");

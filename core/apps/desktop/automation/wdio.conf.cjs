@@ -4,6 +4,7 @@ const crypto = require("crypto");
 const { spawnSync, spawn } = require("child_process");
 const os = require("os");
 const { resolveBoolishFlag } = require("../../../scripts/lib/boolish.cjs");
+const { buildNonDarwinTauriDriverLaunch } = require("./helpers/tauri_driver_launch.cjs");
 
 const resolveConfiguredPath = (rawValue) => {
   const configured = String(rawValue || "").trim();
@@ -32,6 +33,7 @@ fs.mkdirSync(automationTmpDir, { recursive: true });
 process.env.TMPDIR = automationTmpDir;
 process.env.TMP = automationTmpDir;
 process.env.TEMP = automationTmpDir;
+process.env.TAURI_WEBVIEW_AUTOMATION = "true";
 
 const waitTestRunnerBackendReady = (...args) =>
   require("@crabnebula/test-runner-backend").waitTestRunnerBackendReady(...args);
@@ -242,6 +244,8 @@ const CONTAINER_SCENARIO_TOKENS = new Set([
 ]);
 const RUNS_CONTAINER_SCENARIOS = SCENARIO_FILTER.length === 0
   || SCENARIO_FILTER.some((token) => CONTAINER_SCENARIO_TOKENS.has(token));
+const RUNS_REMOTE_SCENARIOS = SCENARIO_FILTER.length === 0
+  || SCENARIO_FILTER.some((token) => token.startsWith("remote"));
 const RUNS_REMOTE_ONLY_SCENARIOS = SCENARIO_FILTER.length > 0
   && SCENARIO_FILTER.every((token) => token.startsWith("remote"));
 const ALLOW_CN_PORT_REUSE = resolveBoolishFlag(
@@ -282,6 +286,7 @@ const SHARED_CN_BACKEND_ENV_PREFIXES = [
 const SHARED_CN_BACKEND_ENV_KEYS = new Set([
   "CTX_BUNDLE_DIR",
   "CTX_SEED_CODEX_AUTH_FROM_HOST",
+  "TAURI_WEBVIEW_AUTOMATION",
 ]);
 const ALLOW_STALE_HELPER_SWEEP = resolveBoolishFlag(
   process.env.CTX_AUTOMATION_ALLOW_STALE_HELPER_SWEEP,
@@ -1802,6 +1807,16 @@ exports.config = {
       ) {
         prepEnv.CTX_DESKTOP_ALLOW_MANAGED_AVF_RUNTIME_MISSING_LOCAL_PAYLOAD = "1";
       }
+      if (!RUNS_REMOTE_SCENARIOS && !String(prepEnv.CTX_BUNDLE_REMOTE_DAEMONS || "").trim()) {
+        prepEnv.CTX_BUNDLE_REMOTE_DAEMONS = "0";
+      }
+      if (
+        !RUNS_CONTAINER_SCENARIOS
+        && !RUNS_REMOTE_SCENARIOS
+        && !String(prepEnv.CTX_BUNDLE_LINUX_CTX_MCP_RUNTIME || "").trim()
+      ) {
+        prepEnv.CTX_BUNDLE_LINUX_CTX_MCP_RUNTIME = "0";
+      }
       delete prepEnv.NODE_OPTIONS;
       const prepRelease = spawnSync("pnpm", ["-C", CORE_ROOT, "desktop:prep:release"], {
         stdio: "inherit",
@@ -1999,11 +2014,13 @@ exports.config = {
       driverCmd = process.execPath;
       driverArgs = [driverAlias.cliPath, "--port", String(activeTauriDriverPort)];
     } else {
-      const useXvfbForDriver = process.platform === "linux" && !process.env.DISPLAY;
-      driverCmd = useXvfbForDriver ? "xvfb-run" : "pnpm";
-      driverArgs = useXvfbForDriver
-        ? ["-a", "pnpm", "exec", "tauri-driver"]
-        : ["exec", "tauri-driver"];
+      const nonDarwinLaunch = buildNonDarwinTauriDriverLaunch({
+        platform: process.platform,
+        hasDisplay: Boolean(process.env.DISPLAY),
+        port: activeTauriDriverPort,
+      });
+      driverCmd = nonDarwinLaunch.command;
+      driverArgs = nonDarwinLaunch.args;
     }
     const driverLogPath = String(process.env.CTX_AUTOMATION_CN_DRIVER_LOG || "").trim();
     let driverStdio = "inherit";

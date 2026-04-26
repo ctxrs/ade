@@ -93,7 +93,6 @@ async function resolveHarnessMenuButton(
 async function waitForHarnessRowReady(rowButton: Locator, timeout: number) {
   await expect(rowButton).toBeVisible({ timeout });
   await expect(rowButton).toBeEnabled({ timeout });
-  await expect(rowButton.locator(".wb-harness-auth-dot-active")).toBeVisible({ timeout });
 }
 
 async function chooseEndpointPreset(
@@ -345,6 +344,7 @@ export async function configureHarnessEndpointAuthViaModal(
 export async function selectHarnessForComposer(
   page: Page,
   entry: EndpointHarnessMatrixEntry,
+  options: { requireAuthDot?: boolean } = {},
 ): Promise<HarnessAuthConfigResult> {
   const triggerLabel = harnessTriggerLabel(page);
   await expect(triggerLabel).toBeVisible({ timeout: 10_000 });
@@ -360,6 +360,9 @@ export async function selectHarnessForComposer(
     return { ok: false, detail: "harness menu row not found" };
   }
   await waitForHarnessRowReady(rowButton, 20_000);
+  if (options.requireAuthDot !== false) {
+    await expect(rowButton.locator(".wb-harness-auth-dot-active")).toBeVisible({ timeout: 20_000 });
+  }
   await rowButton.click();
 
   await expect

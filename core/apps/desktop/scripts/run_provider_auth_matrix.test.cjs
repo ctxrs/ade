@@ -7,11 +7,24 @@ const childProcess = require("node:child_process");
 
 const scriptPath = path.join(__dirname, "run_provider_auth_matrix.sh");
 
+const testTmpRoot = () => {
+  const root = path.join(os.homedir(), ".ctx", "volatile", "tmp");
+  fs.mkdirSync(root, { recursive: true });
+  return root;
+};
+
 const writeExecutable = (filePath, contents) => {
   fs.writeFileSync(filePath, contents, { encoding: "utf8", mode: 0o755 });
 };
 
-const createFixture = (tmpDir) => {
+const createFixture = (
+  tmpDir,
+  {
+    id = "codex-crp.endpoint_api_key.local.sandbox",
+    executionEnvironment = "sandbox",
+    scenarios = "local-codex-smoke",
+  } = {},
+) => {
   const fixturePath = path.join(tmpDir, "provider_auth_matrix.json");
   fs.writeFileSync(
     fixturePath,
@@ -19,18 +32,18 @@ const createFixture = (tmpDir) => {
       {
         cells: [
           {
-            id: "codex-crp.endpoint_api_key.local.sandbox",
+            id,
             provider_id: "codex-crp",
             auth_mode: "endpoint_api_key",
             daemon_location: "local",
-            execution_environment: "sandbox",
+            execution_environment: executionEnvironment,
             support: "supported",
             lane: "required",
             prerequisites: ["OPENROUTER_API_KEY"],
             runner: {
               kind: "desktop_wdio",
               spec: "automation/specs/provider-auth-matrix-cell.spec.cjs",
-              scenarios: "local-codex-smoke",
+              scenarios,
             },
           },
         ],
@@ -110,13 +123,34 @@ const createSmokeScript = (tmpDir) => {
   const smokePath = path.join(tmpDir, "fake_smoke.sh");
   writeExecutable(
     smokePath,
-    `#!/usr/bin/env bash
+    `#!/bin/bash
 set -euo pipefail
 printf '%s\\n' "$([[ -n "\${OPENROUTER_API_KEY:-}" ]] && echo set || echo unset)" >"\${CTX_TEST_SMOKE_OUT:?}"
+if [[ -n "\${CTX_TEST_ENV_OUT:-}" ]]; then
+  {
+    printf 'CTX_BUNDLE_REMOTE_DAEMONS=%s\\n' "\${CTX_BUNDLE_REMOTE_DAEMONS:-}"
+    printf 'CTX_BUNDLE_LINUX_CTX_MCP_RUNTIME=%s\\n' "\${CTX_BUNDLE_LINUX_CTX_MCP_RUNTIME:-}"
+    printf 'CTX_DESKTOP_ALLOW_MANAGED_AVF_RUNTIME_MISSING_LOCAL_PAYLOAD=%s\\n' "\${CTX_DESKTOP_ALLOW_MANAGED_AVF_RUNTIME_MISSING_LOCAL_PAYLOAD:-}"
+    printf 'CTX_AUTOMATION_KEEP_TMPDIR=%s\\n' "\${CTX_AUTOMATION_KEEP_TMPDIR:-}"
+  } >"\${CTX_TEST_ENV_OUT}"
+fi
+if [[ -n "\${CTX_TEST_DAEMON_DATA_ROOT:-}" ]]; then
+  mkdir -p "\${CTX_TEST_DAEMON_DATA_ROOT}/logs/providers"
+  mkdir -p "\${CTX_TEST_DAEMON_DATA_ROOT}/managed/vms/avf-linux/shared/logs"
+  mkdir -p "\${CTX_TEST_DAEMON_DATA_ROOT}/managed/vms/avf-linux/shared/worktrees/wt/shadow-root/.git/logs"
+  printf 'stderr\\n' >"\${CTX_TEST_DAEMON_DATA_ROOT}/logs/providers/crp-codex.stderr.log"
+  printf 'vm\\n' >"\${CTX_TEST_DAEMON_DATA_ROOT}/managed/vms/avf-linux/shared/logs/shared-vm.log"
+  printf 'git\\n' >"\${CTX_TEST_DAEMON_DATA_ROOT}/managed/vms/avf-linux/shared/worktrees/wt/shadow-root/.git/logs/HEAD"
+  printf '{"state":"Running"}\\n' >"\${CTX_TEST_DAEMON_DATA_ROOT}/managed/vms/avf-linux/shared/shared-vm-state.json"
+  cat >"\${CTX_PROVIDER_AUTH_MATRIX_REPORT:?}" <<JSON
+{"result":"fail","reason":"cell failed","artifacts":{"daemon_diagnostics_on_failure":{"daemon":{"data_root":"\${CTX_TEST_DAEMON_DATA_ROOT}"}}}}
+JSON
+  exit 0
+fi
 cat >"\${CTX_PROVIDER_AUTH_MATRIX_REPORT:?}" <<'JSON'
 {"result":"pass","reason":"ok"}
 JSON
-`,
+	`,
   );
   return smokePath;
 };
@@ -127,7 +161,7 @@ const createInfisicalScript = (tmpDir) => {
   const infisicalPath = path.join(binDir, "infisical");
   writeExecutable(
     infisicalPath,
-    `#!/usr/bin/env bash
+    `#!/bin/bash
 set -euo pipefail
 while [[ "$#" -gt 0 ]]; do
   if [[ "$1" == "--" ]]; then
@@ -191,7 +225,7 @@ const runMatrixScript = ({
   });
 
 test("run_provider_auth_matrix hydrates preflight and runner through infisical when available", () => {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-run-provider-auth-matrix-"));
+  const tmpDir = fs.mkdtempSync(path.join(testTmpRoot(), "ctx-run-provider-auth-matrix-"));
   const fixturePath = createFixture(tmpDir);
   const preflightPath = createPreflightScript(tmpDir);
   const smokePath = createSmokeScript(tmpDir);
@@ -220,8 +254,46 @@ test("run_provider_auth_matrix hydrates preflight and runner through infisical w
   assert.match(summary, /codex-crp\.endpoint_api_key\.local\.sandbox\tpass\t0\t/);
 });
 
+test("run_provider_auth_matrix scopes local host desktop prep away from remote daemons and AVF payloads", () => {
+  const tmpDir = fs.mkdtempSync(path.join(testTmpRoot(), "ctx-run-provider-auth-matrix-host-"));
+  const fixturePath = createFixture(tmpDir, {
+    id: "codex.endpoint_api_key.local.host",
+    executionEnvironment: "host",
+    scenarios: "local-codex-host-smoke",
+  });
+  const preflightPath = createPassthroughPreflightScript(tmpDir);
+  const smokePath = createSmokeScript(tmpDir);
+  const artifactsDir = path.join(tmpDir, "artifacts");
+  const envOut = path.join(tmpDir, "env.out");
+
+  const result = runMatrixScript({
+    fixturePath,
+    preflightPath,
+    smokePath,
+    pathPrefix: process.env.PATH || "",
+    infisicalConfigPath: path.join(tmpDir, "missing-infisical.json"),
+    preflightOut: path.join(tmpDir, "preflight.out"),
+    smokeOut: path.join(tmpDir, "smoke.out"),
+    artifactsDir,
+    cellId: "codex.endpoint_api_key.local.host",
+    extraEnv: {
+      CTX_PROVIDER_AUTH_MATRIX_USE_INFISICAL: "0",
+      OPENROUTER_API_KEY: "test-openrouter-key",
+      CN_API_KEY: "test-cn-key",
+      CTX_TEST_ENV_OUT: envOut,
+    },
+  });
+
+  assert.equal(result.status, 0, `stdout=${result.stdout}\nstderr=${result.stderr}`);
+  const envText = fs.readFileSync(envOut, "utf8");
+  assert.match(envText, /^CTX_BUNDLE_REMOTE_DAEMONS=0$/m);
+  assert.match(envText, /^CTX_BUNDLE_LINUX_CTX_MCP_RUNTIME=0$/m);
+  assert.match(envText, /^CTX_DESKTOP_ALLOW_MANAGED_AVF_RUNTIME_MISSING_LOCAL_PAYLOAD=1$/m);
+  assert.match(envText, /^CTX_AUTOMATION_KEEP_TMPDIR=1$/m);
+});
+
 test("run_provider_auth_matrix leaves preflight strict when infisical auto-hydration is disabled", () => {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-run-provider-auth-matrix-no-infisical-"));
+  const tmpDir = fs.mkdtempSync(path.join(testTmpRoot(), "ctx-run-provider-auth-matrix-no-infisical-"));
   const fixturePath = createFixture(tmpDir);
   const preflightPath = createPreflightScript(tmpDir);
   const smokePath = createSmokeScript(tmpDir);
@@ -251,8 +323,53 @@ test("run_provider_auth_matrix leaves preflight strict when infisical auto-hydra
   assert.equal(fs.existsSync(smokeOut), false);
 });
 
+test("run_provider_auth_matrix copies daemon diagnostics from failed cell reports", () => {
+  const tmpDir = fs.mkdtempSync(path.join(testTmpRoot(), "ctx-run-provider-auth-matrix-diag-"));
+  const fixturePath = createFixture(tmpDir);
+  const preflightPath = createPassthroughPreflightScript(tmpDir);
+  const smokePath = createSmokeScript(tmpDir);
+  const artifactsDir = path.join(tmpDir, "artifacts");
+  const daemonDataRoot = path.join(tmpDir, "daemon-data");
+
+  const result = runMatrixScript({
+    fixturePath,
+    preflightPath,
+    smokePath,
+    pathPrefix: process.env.PATH || "",
+    infisicalConfigPath: path.join(tmpDir, "missing-infisical.json"),
+    preflightOut: path.join(tmpDir, "preflight.out"),
+    smokeOut: path.join(tmpDir, "smoke.out"),
+    artifactsDir,
+    extraEnv: {
+      CTX_PROVIDER_AUTH_MATRIX_USE_INFISICAL: "0",
+      CTX_PROVIDER_AUTH_MATRIX_RETRY_LIMIT: "0",
+      OPENROUTER_API_KEY: "test-openrouter-key",
+      CN_API_KEY: "test-cn-key",
+      CTX_TEST_DAEMON_DATA_ROOT: daemonDataRoot,
+    },
+  });
+
+  assert.notEqual(result.status, 0, `stdout=${result.stdout}\nstderr=${result.stderr}`);
+  const cellDir = path.join(artifactsDir, "codex-crp.endpoint_api_key.local.sandbox");
+  assert.equal(
+    fs.readFileSync(path.join(cellDir, "diagnostics", "attempt-1", "daemon-logs", "providers", "crp-codex.stderr.log"), "utf8"),
+    "stderr\n",
+  );
+  assert.equal(
+    fs.readFileSync(path.join(cellDir, "diagnostics", "attempt-1", "avf", "avf-linux", "shared", "logs", "shared-vm.log"), "utf8"),
+    "vm\n",
+  );
+  assert.equal(
+    fs.readFileSync(path.join(cellDir, "diagnostics", "attempt-1", "avf", "avf-linux", "shared", "shared-vm-state.json"), "utf8"),
+    '{"state":"Running"}\n',
+  );
+  assert.equal(
+    fs.existsSync(path.join(cellDir, "diagnostics", "attempt-1", "avf", "avf-linux", "shared", "worktrees", "wt", "shadow-root", ".git", "logs", "HEAD")),
+    false,
+  );
+});
 test("run_provider_auth_matrix accepts file-backed deferred oauth prerequisites during dry-run selection", () => {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-run-provider-auth-matrix-deferred-"));
+  const tmpDir = fs.mkdtempSync(path.join(testTmpRoot(), "ctx-run-provider-auth-matrix-deferred-"));
   const fixturePath = createDeferredGeminiFixture(tmpDir);
   const preflightPath = createPassthroughPreflightScript(tmpDir);
   const smokePath = createSmokeScript(tmpDir);
