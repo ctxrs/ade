@@ -56,6 +56,10 @@ async fn codex_endpoint_requires_verify_for_run_resolution() {
         resolved.env.get("OPENAI_BASE_URL"),
         Some(&"https://openrouter.ai/api/v1".to_string())
     );
+    assert_eq!(
+        resolved.env.get("CTX_MODEL_PROVIDER"),
+        Some(&"openrouter".to_string())
+    );
 }
 
 #[tokio::test]

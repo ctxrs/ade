@@ -378,7 +378,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn codex_endpoint_probe_runtime_preserves_openai_compatible_base_url_without_model_provider(
+    async fn codex_endpoint_probe_runtime_preserves_openrouter_base_url_and_model_provider(
     ) {
         let root = tempfile::tempdir().expect("tempdir");
         let data_root = root.path().join("data-root");
@@ -458,7 +458,7 @@ mod tests {
         assert_eq!(context.source.source_kind, HarnessSourceKind::Endpoint);
         assert_eq!(
             context.env.get("CTX_MODEL_PROVIDER").map(String::as_str),
-            None
+            Some("openrouter")
         );
         assert_eq!(
             context.env.get("OPENAI_BASE_URL").map(String::as_str),

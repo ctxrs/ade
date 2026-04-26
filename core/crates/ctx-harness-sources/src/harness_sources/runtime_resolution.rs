@@ -125,6 +125,11 @@ impl<'a> ProviderRuntimeContext<'a> {
                     codex_home.to_string_lossy().to_string(),
                 );
                 env.insert("OPENAI_API_KEY".to_string(), api_key);
+                if let Some(provider_namespace) =
+                    model_catalog::infer_endpoint_model_provider_namespace(&base_url)
+                {
+                    env.insert("CTX_MODEL_PROVIDER".to_string(), provider_namespace);
+                }
                 env.insert("OPENAI_BASE_URL".to_string(), base_url);
             }
             PROVIDER_CLINE => {
