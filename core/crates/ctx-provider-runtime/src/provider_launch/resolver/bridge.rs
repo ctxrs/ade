@@ -407,7 +407,7 @@ pub fn acp_bridge_adapter(
         None
     };
     let bridged = acp_bridge_command(bridge_cmd, acp_cmd);
-    let inner: Arc<dyn ProviderAdapter> = Arc::new(Tier1CrpAdapter::from_provider_runtime(
+    let inner: Arc<dyn ProviderAdapter> = Arc::new(Tier1CrpAdapter::from_provider_runtime_acp_bridge(
         id,
         bridged.command,
         bridged.args,
