@@ -17,6 +17,10 @@ pub(super) fn api_routes() -> axum::Router<Arc<AppState>> {
         .merge(session_routes())
 }
 
+fn utility_routes() -> axum::Router<Arc<AppState>> {
+    axum::Router::new()
+}
+
 fn core_routes() -> axum::Router<Arc<AppState>> {
     axum::Router::new()
         .route("/api/health", get(health))

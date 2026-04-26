@@ -30,6 +30,7 @@ pub(in super::super::super) fn resolve_shared_vm_memory_balloon_action(
     current_target_bytes: u64,
     ceiling_bytes: u64,
     floor_bytes: u64,
+    guest_probe_ready: bool,
     guest_available_bytes: Option<u64>,
     host_available_bytes: u64,
 ) -> SharedVmMemoryBalloonAction {
@@ -37,6 +38,10 @@ pub(in super::super::super) fn resolve_shared_vm_memory_balloon_action(
     let floor_bytes = align_down_to_mebibyte(floor_bytes.max(MEBIBYTE_BYTES)).min(ceiling_bytes);
     let current_target_bytes =
         align_down_to_mebibyte(current_target_bytes).clamp(floor_bytes, ceiling_bytes);
+
+    if !guest_probe_ready {
+        return SharedVmMemoryBalloonAction::NoAction;
+    }
 
     if host_available_bytes < SHARED_VM_HOST_MEMORY_EMERGENCY_BYTES {
         if current_target_bytes <= floor_bytes {

@@ -11,6 +11,39 @@ pub(super) fn map_state_response(
     let state = persisted
         .map(|state| state.state)
         .unwrap_or(AvfLinuxSharedVmLifecycleState::Missing);
+    let effective_transition_status = persisted.and_then(|state| {
+        if !state.simulated
+            && matches!(state.state, AvfLinuxSharedVmLifecycleState::Running)
+            && matches!(
+                state.transition_status,
+                Some(AvfLinuxSharedVmTransitionStatus::Ready)
+            )
+            && !shared_vm_owner_guest_probe_ready(data_root)
+        {
+            Some(AvfLinuxSharedVmTransitionStatus::Scaffolded)
+        } else {
+            state.transition_status
+        }
+    });
+    let effective_notes = persisted
+        .map(|state| {
+            let mut notes = state.notes.clone();
+            if !state.simulated
+                && matches!(state.state, AvfLinuxSharedVmLifecycleState::Running)
+                && matches!(
+                    state.transition_status,
+                    Some(AvfLinuxSharedVmTransitionStatus::Ready)
+                )
+                && !shared_vm_owner_guest_probe_ready(data_root)
+            {
+                notes.push(
+                    "real shared AVF Linux VM is still waiting for guest-control readiness; launch-ready marker is absent"
+                        .to_string(),
+                );
+            }
+            notes
+        })
+        .unwrap_or_else(|| vec!["shared VM state has not been initialized yet".to_string()]);
     let saved_state_path = shared_vm_saved_state_path(data_root);
     AvfLinuxSharedVmStateResponse {
         protocol_version: HELPER_PROTOCOL_VERSION,
@@ -34,7 +67,7 @@ pub(super) fn map_state_response(
         last_started_at: persisted.and_then(|state| state.last_started_at.clone()),
         last_saved_at: persisted.and_then(|state| state.last_saved_at.clone()),
         last_stopped_at: persisted.and_then(|state| state.last_stopped_at.clone()),
-        transition_status: persisted.and_then(|state| state.transition_status),
+        transition_status: effective_transition_status,
         last_start_outcome: persisted.and_then(|state| state.last_start_outcome),
         last_stop_outcome: persisted.and_then(|state| state.last_stop_outcome),
         last_restore_error: persisted.and_then(|state| state.last_restore_error.clone()),
@@ -42,9 +75,7 @@ pub(super) fn map_state_response(
         relay_pid: persisted.and_then(|state| state.relay_pid),
         guest_agent_pid: persisted.and_then(|state| state.guest_agent_pid),
         simulated: persisted.map(|state| state.simulated).unwrap_or(true),
-        notes: persisted
-            .map(|state| state.notes.clone())
-            .unwrap_or_else(|| vec!["shared VM state has not been initialized yet".to_string()]),
+        notes: effective_notes,
     }
 }
 

@@ -10,6 +10,7 @@ pub(super) fn prepare_guest_worktree(
 ) -> Result<AvfLinuxGuestWorktreeResponse> {
     let shared_vm = shared_vm_state(data_root)?;
     super::guest_exec::ensure_shared_vm_launch_ready_for_operation(
+        data_root,
         &shared_vm,
         "preparing guest worktrees",
     )?;

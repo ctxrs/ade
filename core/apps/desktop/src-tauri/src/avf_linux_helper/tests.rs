@@ -995,6 +995,7 @@ fn resolve_shared_vm_memory_balloon_action_reclaims_under_host_pressure() {
         gibibytes(16),
         gibibytes(16),
         gibibytes(4),
+        true,
         Some(gibibytes(8)),
         gibibytes(3),
     );
@@ -1010,6 +1011,20 @@ fn resolve_shared_vm_memory_balloon_action_reclaims_under_host_pressure() {
 }
 
 #[test]
+fn resolve_shared_vm_memory_balloon_action_holds_before_guest_probe_under_host_pressure() {
+    let action = resolve_shared_vm_memory_balloon_action(
+        gibibytes(16),
+        gibibytes(16),
+        gibibytes(4),
+        false,
+        None,
+        gibibytes(3),
+    );
+
+    assert_eq!(action, SharedVmMemoryBalloonAction::NoAction);
+}
+
+#[test]
 fn runtime_guest_exec_timeout_exceeds_readiness_timeout() {
     assert!(SHARED_VM_RUNTIME_GUEST_EXEC_IO_TIMEOUT > SHARED_VM_READINESS_GUEST_EXEC_IO_TIMEOUT);
 }
@@ -1020,6 +1035,7 @@ fn resolve_shared_vm_memory_balloon_action_grows_under_guest_pressure() {
         gibibytes(8),
         gibibytes(16),
         gibibytes(4),
+        true,
         Some(gibibytes(1)),
         gibibytes(10),
     );
@@ -1040,6 +1056,7 @@ fn resolve_shared_vm_memory_balloon_action_requests_emergency_stop_at_floor() {
         gibibytes(4),
         gibibytes(16),
         gibibytes(4),
+        true,
         Some(gibibytes(1)),
         gibibytes(0),
     );
@@ -1421,6 +1438,70 @@ fn shared_vm_state_surfaces_explicit_start_and_stop_outcomes() {
     fs::remove_dir_all(&temp).expect("cleanup tempdir");
 }
 
+#[test]
+fn shared_vm_state_downgrades_real_avf_ready_state_without_guest_probe_marker() {
+    let temp = PathBuf::from("/tmp").join(format!(
+        "ctxavf-ready-without-probe-marker-{}-{}",
+        std::process::id(),
+        now_timestamp_string()
+    ));
+    if temp.exists() {
+        fs::remove_dir_all(&temp).expect("clear tempdir");
+    }
+    prepare_runtime_layout(&temp).expect("prepare runtime layout");
+    let mut owner = std::process::Command::new("sleep")
+        .arg("60")
+        .spawn()
+        .expect("spawn owner placeholder");
+    persist_state(
+        &shared_vm_state_path(&temp),
+        &PersistedSharedVmState {
+            state: AvfLinuxSharedVmLifecycleState::Running,
+            guest_identity: supported_guest_identity(),
+            runtime_root: None,
+            rootfs_image: None,
+            kernel_path: None,
+            initrd_path: None,
+            runtime_version: None,
+            runtime_shape_digest: None,
+            writable_surface_contract_digest: None,
+            updated_at: Some(now_timestamp_string()),
+            last_started_at: Some(now_timestamp_string()),
+            last_saved_at: None,
+            last_stopped_at: None,
+            transition_status: Some(AvfLinuxSharedVmTransitionStatus::Ready),
+            last_start_outcome: Some(AvfLinuxSharedVmStartOutcome::ColdBoot),
+            last_stop_outcome: None,
+            last_restore_error: None,
+            last_save_error: None,
+            relay_pid: Some(owner.id()),
+            guest_agent_pid: None,
+            simulated: false,
+            notes: vec!["running".to_string()],
+        },
+    )
+    .expect("persist running state");
+
+    let response = shared_vm_state(&temp).expect("shared vm state");
+
+    assert!(matches!(
+        response.state,
+        AvfLinuxSharedVmLifecycleState::Running
+    ));
+    assert!(matches!(
+        response.transition_status,
+        Some(AvfLinuxSharedVmTransitionStatus::Scaffolded)
+    ));
+    assert!(response
+        .notes
+        .iter()
+        .any(|note| note.contains("waiting for guest-control readiness")));
+
+    owner.kill().expect("stop owner placeholder");
+    assert!(wait_for_child_exit(&mut owner, Duration::from_secs(5)));
+    fs::remove_dir_all(&temp).expect("cleanup tempdir");
+}
+
 #[cfg(target_os = "macos")]
 #[test]
 fn vm_save_restore_timeout_exceeds_guest_exec_connect_timeout() {
@@ -1717,6 +1798,100 @@ fn start_shared_vm_marks_already_running_path_explicitly() {
     let _ = guest.kill();
     let _ = relay.wait();
     let _ = guest.wait();
+    fs::remove_dir_all(&temp).expect("cleanup tempdir");
+}
+
+#[cfg(unix)]
+#[test]
+fn start_shared_vm_does_not_reuse_real_avf_without_guest_probe_marker() {
+    let temp = PathBuf::from("/tmp").join(format!(
+        "ctxavf-start-real-without-probe-marker-{}-{}",
+        std::process::id(),
+        now_timestamp_string()
+    ));
+    if temp.exists() {
+        fs::remove_dir_all(&temp).expect("clear tempdir");
+    }
+    prepare_runtime_layout(&temp).expect("prepare runtime layout");
+
+    let runtime_root = temp.join("runtime");
+    let helpers_root = runtime_root.join("helpers");
+    fs::create_dir_all(&helpers_root).expect("create helpers root");
+    let source_rootfs = temp.join("source-rootfs.raw");
+    fs::write(&source_rootfs, b"rootfs").expect("write rootfs");
+    let kernel_path = helpers_root.join("kernel");
+    fs::write(&kernel_path, b"kernel").expect("write kernel");
+    let initrd_path = helpers_root.join("initrd");
+    fs::write(&initrd_path, b"initrd").expect("write initrd");
+
+    let mut relay = std::process::Command::new("sleep")
+        .arg("60")
+        .spawn()
+        .expect("spawn relay placeholder");
+
+    persist_state(
+        &shared_vm_state_path(&temp),
+        &PersistedSharedVmState {
+            state: AvfLinuxSharedVmLifecycleState::Running,
+            guest_identity: supported_guest_identity(),
+            runtime_root: Some(runtime_root.clone()),
+            rootfs_image: Some(shared_vm_rootfs_path(&temp)),
+            kernel_path: Some(shared_vm_boot_kernel_path(&temp)),
+            initrd_path: Some(initrd_path.clone()),
+            runtime_version: Some("runtime-current".to_string()),
+            runtime_shape_digest: Some(shared_vm_runtime_shape_digest(
+                &runtime_root,
+                &source_rootfs,
+                &kernel_path,
+                &initrd_path,
+                "runtime-current",
+            )),
+            writable_surface_contract_digest: Some(
+                shared_vm_writable_surface_contract_digest(&temp)
+                    .expect("render writable-surface contract digest"),
+            ),
+            updated_at: Some(now_timestamp_string()),
+            last_started_at: Some(now_timestamp_string()),
+            last_saved_at: None,
+            last_stopped_at: None,
+            transition_status: Some(AvfLinuxSharedVmTransitionStatus::Ready),
+            last_start_outcome: Some(AvfLinuxSharedVmStartOutcome::AlreadyRunning),
+            last_stop_outcome: None,
+            last_restore_error: None,
+            last_save_error: None,
+            relay_pid: Some(relay.id()),
+            guest_agent_pid: None,
+            simulated: false,
+            notes: vec!["real avf owner state without guest probe marker".to_string()],
+        },
+    )
+    .expect("persist running real avf state");
+
+    let started = start_shared_vm(
+        &temp,
+        &runtime_root,
+        &source_rootfs,
+        &kernel_path,
+        &initrd_path,
+        "runtime-current".to_string(),
+    )
+    .expect("restart shared vm when guest probe marker is missing");
+
+    assert_eq!(
+        started.last_start_outcome,
+        Some(AvfLinuxSharedVmStartOutcome::ColdBoot)
+    );
+    assert!(!started
+        .notes
+        .iter()
+        .any(|note| note.contains("shared VM start reused an already-running")));
+    assert!(
+        wait_for_child_exit(&mut relay, Duration::from_secs(2)),
+        "missing guest probe marker should force the stale real AVF owner to stop"
+    );
+
+    let _ = relay.kill();
+    let _ = relay.wait();
     fs::remove_dir_all(&temp).expect("cleanup tempdir");
 }
 
@@ -3035,6 +3210,60 @@ fn shared_vm_exec_requires_launch_ready_transition() {
     assert!(err
         .to_string()
         .contains("must be launch-ready before shared-vm-exec"));
+    fs::remove_dir_all(&temp).expect("cleanup tempdir");
+}
+
+#[test]
+fn ensure_shared_vm_launch_ready_requires_guest_probe_marker_for_real_avf() {
+    let temp = std::env::temp_dir().join(format!(
+        "ctx-avf-shared-exec-probe-ready-{}-{}",
+        std::process::id(),
+        now_timestamp_string()
+    ));
+    if temp.exists() {
+        fs::remove_dir_all(&temp).expect("clear tempdir");
+    }
+    fs::create_dir_all(&temp).expect("create tempdir");
+
+    let err = ensure_shared_vm_launch_ready_for_operation(
+        &temp,
+        &AvfLinuxSharedVmStateResponse {
+            protocol_version: HELPER_PROTOCOL_VERSION,
+            protocol_schema: HELPER_PROTOCOL_SCHEMA,
+            state: AvfLinuxSharedVmLifecycleState::Running,
+            vm_root: temp.clone(),
+            logs_root: temp.join("logs"),
+            state_path: temp.join("shared-vm-state.json"),
+            log_path: Some(temp.join("logs/shared-vm.log")),
+            saved_state_path: Some(temp.join("saved-machine-state.vzvmsave")),
+            saved_state_exists: false,
+            runtime_root: None,
+            rootfs_image: None,
+            kernel_path: None,
+            initrd_path: None,
+            runtime_version: None,
+            runtime_shape_digest: None,
+            writable_surface_contract_digest: None,
+            updated_at: Some(now_timestamp_string()),
+            last_started_at: Some(now_timestamp_string()),
+            last_saved_at: None,
+            last_stopped_at: None,
+            transition_status: Some(AvfLinuxSharedVmTransitionStatus::Ready),
+            last_start_outcome: Some(AvfLinuxSharedVmStartOutcome::ColdBoot),
+            last_stop_outcome: None,
+            last_restore_error: None,
+            last_save_error: None,
+            relay_pid: Some(std::process::id()),
+            guest_agent_pid: None,
+            simulated: false,
+            notes: vec!["running".to_string()],
+        },
+        "shared-vm-exec",
+    )
+    .expect_err("real shared vm exec should require the guest probe marker");
+    assert!(err
+        .to_string()
+        .contains("guest-control ready marker before shared-vm-exec"));
     fs::remove_dir_all(&temp).expect("cleanup tempdir");
 }
 

@@ -1,4 +1,6 @@
 use super::*;
+const SHARED_VM_CLOUD_INIT_ISO_LABEL: &str = "CIDATA";
+const SHARED_VM_CLOUD_INIT_SOURCE_DIR: &str = "source";
 
 #[path = "cloud_init/disk_image.rs"]
 mod disk_image;
@@ -406,64 +408,97 @@ pub(super) fn stage_shared_vm_cloud_init_seed(
     fs::write(&seed_digest_path, format!("{seed_digest}\n"))
         .with_context(|| format!("writing {}", seed_digest_path.display()))?;
 
+    let source_dir = stage_shared_vm_cloud_init_source_dir(data_root)?;
     fs::remove_file(&image_path).ok();
-    let image = std::fs::OpenOptions::new()
-        .create(true)
-        .truncate(true)
-        .read(true)
-        .write(true)
-        .open(&image_path)
-        .with_context(|| format!("creating {}", image_path.display()))?;
-    image
-        .set_len(16 * 1024 * 1024)
-        .with_context(|| format!("sizing {}", image_path.display()))?;
-    drop(image);
-
-    let raw_device = attach_raw_disk_image_nomount(&image_path)?;
-    let mut raw_device_attached = true;
-    let mut mounted_device: Option<String> = None;
-    let result = (|| -> Result<()> {
-        run_command(
-            "diskutil",
-            &[
-                "partitionDisk",
-                &raw_device,
-                "MBR",
-                "MS-DOS",
-                "CIDATA",
-                "100%",
-            ],
-            "partitioning raw cloud-init image",
-        )?;
-        detach_disk_image_device(&raw_device)?;
-        raw_device_attached = false;
-        let (device, volume_path) = attach_raw_disk_image_with_mount(&image_path)?;
-        mounted_device = Some(device);
-        fs::copy(
-            shared_vm_cloud_init_meta_data_path(data_root),
-            volume_path.join("meta-data"),
-        )
-        .context("copying cloud-init meta-data into mounted seed volume")?;
-        fs::copy(
-            shared_vm_cloud_init_user_data_path(data_root),
-            volume_path.join("user-data"),
-        )
-        .context("copying cloud-init user-data into mounted seed volume")?;
-        fs::copy(
-            shared_vm_cloud_init_network_config_path(data_root),
-            volume_path.join("network-config"),
-        )
-        .context("copying cloud-init network-config into mounted seed volume")?;
-        Ok(())
-    })();
-
-    if let Some(device) = mounted_device.as_deref() {
-        let _ = detach_disk_image_device(device);
-    }
-    if raw_device_attached {
-        let _ = detach_disk_image_device(&raw_device);
-    }
-    result?;
+    create_cloud_init_seed_iso(&source_dir, &image_path)?;
 
     Ok(Some(image_path))
+}
+
+fn stage_shared_vm_cloud_init_source_dir(data_root: &Path) -> Result<PathBuf> {
+    let source_dir = shared_vm_cloud_init_root(data_root).join(SHARED_VM_CLOUD_INIT_SOURCE_DIR);
+    fs::remove_dir_all(&source_dir).ok();
+    fs::create_dir_all(&source_dir)
+        .with_context(|| format!("creating {}", source_dir.display()))?;
+    for (source, name) in [
+        (shared_vm_cloud_init_meta_data_path(data_root), "meta-data"),
+        (shared_vm_cloud_init_user_data_path(data_root), "user-data"),
+        (
+            shared_vm_cloud_init_network_config_path(data_root),
+            "network-config",
+        ),
+    ] {
+        fs::copy(&source, source_dir.join(name)).with_context(|| {
+            format!("staging {} into {}", source.display(), source_dir.display())
+        })?;
+    }
+    Ok(source_dir)
+}
+
+fn create_cloud_init_seed_iso(source_dir: &Path, image_path: &Path) -> Result<()> {
+    let source_dir_str = source_dir.display().to_string();
+    let image_path_str = image_path.display().to_string();
+    run_command(
+        "hdiutil",
+        &[
+            "makehybrid",
+            "-o",
+            &image_path_str,
+            "-iso",
+            "-joliet",
+            "-default-volume-name",
+            SHARED_VM_CLOUD_INIT_ISO_LABEL,
+            &source_dir_str,
+        ],
+        "creating cloud-init seed ISO",
+    )?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stage_shared_vm_cloud_init_source_dir_copies_only_seed_payloads() {
+        let temp = std::env::temp_dir().join(format!(
+            "ctx-avf-cloud-init-test-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(shared_vm_cloud_init_root(&temp)).unwrap();
+        fs::write(shared_vm_cloud_init_meta_data_path(&temp), "meta").unwrap();
+        fs::write(shared_vm_cloud_init_user_data_path(&temp), "user").unwrap();
+        fs::write(shared_vm_cloud_init_network_config_path(&temp), "net").unwrap();
+        fs::write(
+            shared_vm_cloud_init_root(&temp).join(".seed-digest"),
+            "digest",
+        )
+        .unwrap();
+        fs::write(shared_vm_cloud_init_image_path(&temp), "stale-image").unwrap();
+
+        let source_dir = stage_shared_vm_cloud_init_source_dir(&temp).unwrap();
+        let mut entries = fs::read_dir(&source_dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+            .collect::<Vec<_>>();
+        entries.sort();
+        assert_eq!(entries, vec!["meta-data", "network-config", "user-data"]);
+        assert_eq!(
+            fs::read_to_string(source_dir.join("meta-data")).unwrap(),
+            "meta"
+        );
+        assert_eq!(
+            fs::read_to_string(source_dir.join("user-data")).unwrap(),
+            "user"
+        );
+        assert_eq!(
+            fs::read_to_string(source_dir.join("network-config")).unwrap(),
+            "net"
+        );
+
+        fs::remove_dir_all(&temp).ok();
+    }
 }

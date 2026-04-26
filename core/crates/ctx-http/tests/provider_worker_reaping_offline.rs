@@ -172,7 +172,7 @@ async fn assert_provider_session_resume_after_idle_reap(provider_id: &str, model
     let _guard_scenario = EnvGuard::set("CTX_TEST_SCENARIO", "resume");
     let _guard_command_log =
         EnvGuard::set("CTX_TEST_CRP_COMMAND_LOG", &command_log.to_string_lossy());
-    let _codex_home = if matches!(provider_id, "codex-crp" | "codex-crp") {
+    let _codex_home = if matches!(provider_id, "codex-crp") {
         Some(configure_hermetic_codex_home().await)
     } else {
         None

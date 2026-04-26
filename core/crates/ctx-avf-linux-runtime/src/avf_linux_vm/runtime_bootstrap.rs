@@ -11,16 +11,7 @@ pub fn runtime_available() -> bool {
 
 pub fn runtime_state(data_root: &Path) -> Result<(bool, bool)> {
     let helper_ready = probe_helper().map(|probe| probe.supported).unwrap_or(false);
-    let runtime_ready = if let Some(runtime) = staged_avf_linux_guest_runtime()? {
-        avf_linux_runtime_is_ready(&runtime)
-    } else if let Some(runtime) = bundled_avf_linux_guest_runtime() {
-        avf_linux_runtime_is_ready(&runtime)
-    } else if let Some(source) = managed_avf_linux_guest_source() {
-        let runtime = AvfLinuxGuestRuntime::from_source(data_root, &source)?;
-        avf_linux_runtime_is_ready(&runtime)
-    } else {
-        false
-    };
+    let runtime_ready = runtime_ready(data_root)?;
     if !helper_ready || !runtime_ready {
         return Ok((false, runtime_ready));
     }
@@ -170,7 +161,21 @@ pub async fn ensure_workspace_vm_ready_with_observer(
             started.state,
         );
     }
-    Ok(started)
+    if shared_vm_is_launch_ready(&started) {
+        return Ok(started);
+    }
+
+    observe_log(
+        observer,
+        HarnessSetupPhase::MachineStartOrInit,
+        HarnessSetupLogLevel::Info,
+        &format!(
+            "AVF Linux workspace VM start for workspace {} returned running but not yet launch-ready (transition_status={:?}); waiting for readiness to finish",
+            workspace_id.0, started.transition_status
+        ),
+    );
+    wait_for_existing_workspace_vm_launch_ready_with_observer(data_root, workspace_id, observer)
+        .await
 }
 
 pub async fn ensure_shared_vm_ready_with_observer(

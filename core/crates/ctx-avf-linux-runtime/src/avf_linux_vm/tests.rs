@@ -375,6 +375,11 @@ def seed_state():
             "last_start_outcome": "cold_boot",
             "state_poll_count": 0,
         }
+    if scenario == "start_not_ready":
+        return {
+            "state": "stopped",
+            "saved_state_exists": False,
+        }
     if scenario in ("restore", "restore_failure"):
         return {
             "state": "stopped",
@@ -470,7 +475,7 @@ elif cmd == "prepare-runtime-layout":
 elif cmd == "shared-vm-state" or cmd == "workspace-vm-state":
     data_root = sys.argv[2]
     state = load_state(data_root)
-    if start_scenario() == "running_not_ready" and state.get("transition_status") == "scaffolded":
+    if start_scenario() in ("running_not_ready", "start_not_ready") and state.get("transition_status") == "scaffolded":
         poll_count = int(state.get("state_poll_count", 0)) + 1
         state["state_poll_count"] = poll_count
         if poll_count >= 2:
@@ -494,6 +499,9 @@ elif cmd == "start-shared-vm" or cmd == "start-workspace-vm":
     else:
         outcome = "cold_boot"
         restore_error = None
+    transition_status = "ready"
+    if scenario == "start_not_ready":
+        transition_status = "scaffolded"
     state.update({
         "state": "running",
         "saved_state_exists": False,
@@ -502,10 +510,12 @@ elif cmd == "start-shared-vm" or cmd == "start-workspace-vm":
         "kernel_path": kernel_path,
         "initrd_path": initrd_path,
         "runtime_version": runtime_version,
-        "transition_status": "ready",
+        "transition_status": transition_status,
         "last_start_outcome": outcome,
         "last_restore_error": restore_error,
     })
+    if scenario == "start_not_ready":
+        state["state_poll_count"] = 0
     save_state(data_root, state)
     print(json.dumps(payload(data_root, state)))
 elif cmd == "stop-shared-vm" or cmd == "stop-workspace-vm":
@@ -1359,6 +1369,30 @@ async fn shared_substrate_lifecycle_manager_joins_running_vm_until_launch_ready(
             .any(|line| line.starts_with("start-workspace-vm ")),
         "running-but-not-ready state should be joined instead of restarted:\n{log}"
     );
+    image_server.abort();
+}
+
+#[tokio::test]
+async fn ensure_shared_vm_ready_waits_for_fresh_start_to_become_launch_ready() {
+    let _process_env = process_env_test_lock().lock().await;
+    let _helper_lock = helper_env_test_lock().lock().await;
+    let temp = tempfile::tempdir().unwrap();
+    let (helper, _log_path) = write_stateful_lifecycle_helper(temp.path());
+    let sandbox_cli_path = write_ready_runtime_sandbox_cli_shim(temp.path());
+    let _helper_guard = EnvGuard::set(AVF_LINUX_HELPER_PATH_ENV, helper.to_str().unwrap());
+    let _sandbox_cli_guard = EnvGuard::set(
+        CTX_HARNESS_SANDBOX_CLI_PATH_ENV,
+        sandbox_cli_path.to_str().unwrap(),
+    );
+    let (_bundle_dir, _bundle_manifest, image_server) =
+        install_bundled_runtime_fixture(temp.path()).await;
+    let _start_scenario = EnvGuard::set("CTX_TEST_AVF_START_SCENARIO", "start_not_ready");
+
+    let state = ensure_shared_vm_ready_with_observer(temp.path(), &shared_vm_settings(), None)
+        .await
+        .unwrap();
+
+    assert!(shared_vm_is_launch_ready(&state));
     image_server.abort();
 }
 

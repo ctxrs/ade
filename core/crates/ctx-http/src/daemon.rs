@@ -113,6 +113,14 @@ async fn prune_archived_session_data_for_all_workspaces(
     Ok(())
 }
 
+fn spawn_startup_provider_status_refresh(state: Arc<AppState>) {
+    tokio::spawn(async move {
+        if let Err(err) = installer::refresh_provider_statuses(state.as_ref()).await {
+            tracing::warn!("startup provider status refresh failed: {err:#}");
+        }
+    });
+}
+
 pub async fn serve(bind: Vec<String>, data_dir: Option<String>) -> Result<()> {
     let data_root = match data_dir {
         Some(p) => PathBuf::from(p),
@@ -452,7 +460,7 @@ pub async fn serve(bind: Vec<String>, data_dir: Option<String>) -> Result<()> {
         });
     }
 
-    installer::refresh_provider_statuses(state.as_ref()).await?;
+    spawn_startup_provider_status_refresh(state.clone());
     let app: Router = api::router(state.clone());
 
     let bound_addrs = listeners

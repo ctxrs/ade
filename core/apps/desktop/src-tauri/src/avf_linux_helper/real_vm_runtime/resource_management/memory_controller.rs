@@ -285,6 +285,7 @@ pub(in super::super) fn maybe_adjust_shared_vm_memory(
         current_target_bytes,
         resource_state.memory.ceiling_bytes,
         resource_state.memory.floor_bytes,
+        guest_probe_ready,
         guest_available_bytes,
         host_available_bytes,
     );

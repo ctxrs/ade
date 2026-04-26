@@ -12,11 +12,39 @@ use ctx_harness_sources::{
     EndpointModelCatalogStatus, HarnessApiShape, HarnessEndpointRecord,
     HarnessEndpointVerificationStatus, HarnessSourceKind, ResolvedHarnessSource,
 };
+use ctx_provider_accounts::{
+    codex_env_for_active_account_with_runtime_root, codex_runtime_home, ensure_codex_account_dir,
+    save_codex_registry, CodexAccountEntry, CodexAccountRegistry, CodexEndpointProfile,
+    CODEX_CREDENTIAL_KIND_API_KEY,
+};
 use ctx_provider_install::install_state::InstallTarget;
 use ctx_workspace_config as workspace_config;
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tempfile::tempdir;
+
+struct EnvGuard {
+    key: &'static str,
+    prev: Option<String>,
+}
+
+impl EnvGuard {
+    fn without(key: &'static str) -> Self {
+        let prev = std::env::var(key).ok();
+        std::env::remove_var(key);
+        Self { key, prev }
+    }
+}
+
+impl Drop for EnvGuard {
+    fn drop(&mut self) {
+        if let Some(value) = self.prev.as_deref() {
+            std::env::set_var(self.key, value);
+        } else {
+            std::env::remove_var(self.key);
+        }
+    }
+}
 
 #[test]
 fn returns_full_when_no_emitted() {
@@ -465,5 +493,71 @@ fn codex_env_rejects_relative_explicit_codex_bin_path() {
         err.to_string()
             .contains("CTX_CODEX_BIN_PATH must be an absolute path"),
         "unexpected error: {err:#}"
+    );
+}
+
+#[tokio::test]
+async fn codex_subscription_env_for_sandbox_uses_runtime_root_projection() {
+    let _guard = EnvGuard::without("CTX_CODEX_HOME");
+    let data_dir = tempdir().expect("data dir");
+    let runtime_dir = tempdir().expect("runtime dir");
+    let root = data_dir.path();
+    let runtime_root = runtime_dir.path();
+
+    let host_home = codex_runtime_home(root);
+    std::fs::create_dir_all(&host_home).expect("host codex home");
+    std::fs::write(
+        host_home.join("auth.json"),
+        br#"{"OPENAI_API_KEY":"stale-host-key"}"#,
+    )
+    .expect("write stale host auth");
+
+    let registry = CodexAccountRegistry {
+        active_account_id: Some("acct-123".to_string()),
+        accounts: vec![CodexAccountEntry {
+            id: "acct-123".to_string(),
+            label: "Account".to_string(),
+            kind: CODEX_CREDENTIAL_KIND_API_KEY.to_string(),
+            email: None,
+            plan_type: None,
+            created_at: Utc::now(),
+            last_used_at: None,
+            secret_ref: None,
+            endpoint_profile: CodexEndpointProfile::default(),
+        }],
+    };
+    save_codex_registry(root, &registry)
+        .await
+        .expect("save codex registry");
+    let account_dir = ensure_codex_account_dir(root, "acct-123")
+        .await
+        .expect("account dir");
+    tokio::fs::write(
+        account_dir.join("auth.json"),
+        br#"{"OPENAI_API_KEY":"fresh-active-key"}"#,
+    )
+    .await
+    .expect("write account auth");
+
+    let env = codex_env_for_active_account_with_runtime_root(root, runtime_root)
+        .await
+        .expect("sandbox codex env");
+    let codex_home = env.get("CODEX_HOME").expect("CODEX_HOME");
+    assert_eq!(
+        Path::new(codex_home),
+        codex_runtime_home(runtime_root).as_path(),
+        "sandbox launch should use runtime-root Codex home, not host home",
+    );
+
+    let projected = tokio::fs::read_to_string(codex_runtime_home(runtime_root).join("auth.json"))
+        .await
+        .expect("read projected auth");
+    assert!(
+        projected.contains("fresh-active-key"),
+        "sandbox projection should use active account auth: {projected}"
+    );
+    assert!(
+        !projected.contains("stale-host-key"),
+        "sandbox projection must not reuse stale host auth: {projected}"
     );
 }

@@ -31,6 +31,20 @@ pub fn runtime_target_label() -> String {
         .unwrap_or_else(|| AVF_LINUX_GUEST_RUNTIME_ID.to_string())
 }
 
+pub(super) fn runtime_ready(data_root: &Path) -> Result<bool> {
+    if let Some(runtime) = staged_avf_linux_guest_runtime()? {
+        return Ok(avf_linux_runtime_is_ready(&runtime));
+    }
+    if let Some(runtime) = bundled_avf_linux_guest_runtime() {
+        return Ok(avf_linux_runtime_is_ready(&runtime));
+    }
+    if let Some(source) = managed_avf_linux_guest_source() {
+        let runtime = AvfLinuxGuestRuntime::from_source(data_root, &source)?;
+        return Ok(avf_linux_runtime_is_ready(&runtime));
+    }
+    Ok(false)
+}
+
 pub async fn ensure_managed_avf_linux_guest_runtime(
     data_root: &Path,
     observer: Option<&dyn HarnessSetupObserver>,

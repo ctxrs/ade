@@ -81,9 +81,8 @@ pub(super) async fn ensure_directory(
 ) -> Result<()> {
     let mut cmd = sandbox_container_command(data_root, mode)?;
     cmd.arg("exec")
-        .arg("--interactive")
         .arg("--user")
-        .arg("root")
+        .arg("0")
         .arg(container_id)
         .arg("mkdir")
         .arg("-p")
@@ -109,9 +108,8 @@ pub(super) async fn ensure_directory(
     let mut chown = sandbox_container_command(data_root, mode)?;
     chown
         .arg("exec")
-        .arg("--interactive")
         .arg("--user")
-        .arg("root")
+        .arg("0")
         .arg(container_id)
         .arg("chown")
         .arg(format!("{uid}:{gid}"))
@@ -141,9 +139,8 @@ pub(super) async fn ensure_empty_container_root(
     let mut normalize = sandbox_container_command(data_root, mode)?;
     normalize
         .arg("exec")
-        .arg("--interactive")
         .arg("--user")
-        .arg("root")
+        .arg("0")
         .arg(container_id)
         .arg("sh")
         .arg("-lc")
@@ -165,9 +162,8 @@ pub(super) async fn ensure_empty_container_root(
     let mut clear = sandbox_container_command(data_root, mode)?;
     clear
         .arg("exec")
-        .arg("--interactive")
         .arg("--user")
-        .arg("root")
+        .arg("0")
         .arg(container_id)
         .arg("sh")
         .arg("-lc")
@@ -195,9 +191,8 @@ pub(super) async fn ensure_empty_container_root(
     let mut chown = sandbox_container_command(data_root, mode)?;
     chown
         .arg("exec")
-        .arg("--interactive")
         .arg("--user")
-        .arg("root")
+        .arg("0")
         .arg(container_id)
         .arg("chown")
         .arg(format!("{uid}:{gid}"))

@@ -254,6 +254,7 @@ fn replay_shared_vm_controller_safety_step(
                     target_bytes_before,
                     ceiling_bytes,
                     floor_bytes,
+                    true,
                     guest_available_bytes,
                     step.host_available_bytes,
                 );

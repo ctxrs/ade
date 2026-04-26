@@ -33,7 +33,8 @@ use crate::logs;
 use crate::provider_launch::install as provider_launch_install;
 use crate::provider_launch::probe;
 use crate::provider_launch::resolver::{
-    is_acp_provider_id, runtime_probe_command_as_agent_command_for_target,
+    ensure_provider_adapter_for_target, is_acp_provider_id,
+    runtime_probe_command_as_agent_command_for_target,
 };
 use crate::provider_launch::status::{
     install_target_for_workspace, provider_status_for_target,

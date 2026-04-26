@@ -1,6 +1,7 @@
 use super::*;
 
 pub(crate) fn ensure_shared_vm_launch_ready_for_operation(
+    data_root: &Path,
     shared_vm: &AvfLinuxSharedVmStateResponse,
     operation: &str,
 ) -> Result<()> {
@@ -18,6 +19,11 @@ pub(crate) fn ensure_shared_vm_launch_ready_for_operation(
             "shared AVF Linux VM must be launch-ready before {operation} (state={:?}, transition_status={:?})",
             shared_vm.state,
             shared_vm.transition_status
+        );
+    }
+    if !shared_vm.simulated && !shared_vm_owner_guest_probe_ready(data_root) {
+        bail!(
+            "shared AVF Linux VM must publish the guest-control ready marker before {operation}"
         );
     }
     Ok(())
@@ -54,7 +60,7 @@ pub(crate) fn guest_exec(
     args: &[String],
 ) -> Result<i32> {
     let shared_vm = shared_vm_state(data_root)?;
-    ensure_shared_vm_launch_ready_for_operation(&shared_vm, "guest exec")?;
+    ensure_shared_vm_launch_ready_for_operation(data_root, &shared_vm, "guest exec")?;
 
     let metadata_path = shared_vm_worktree_metadata_path(data_root, workspace_id, worktree_id);
     let Some(worktree) = load_guest_worktree_state(&metadata_path)? else {
@@ -118,7 +124,7 @@ pub(crate) fn shared_vm_exec(
     args: &[String],
 ) -> Result<i32> {
     let shared_vm = shared_vm_state(data_root)?;
-    ensure_shared_vm_launch_ready_for_operation(&shared_vm, "shared-vm-exec")?;
+    ensure_shared_vm_launch_ready_for_operation(data_root, &shared_vm, "shared-vm-exec")?;
 
     let control_socket = shared_vm_control_socket_path(data_root);
     let guest_env = parse_guest_exec_env(env)?;

@@ -1,6 +1,6 @@
 use super::*;
 
-const MEBIBYTE_BYTES: u64 = 1024 * 1024;
+pub(super) const MEBIBYTE_BYTES: u64 = 1024 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ResolvedAvfVmSizing {

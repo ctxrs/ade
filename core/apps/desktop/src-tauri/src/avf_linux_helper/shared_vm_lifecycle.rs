@@ -67,7 +67,7 @@ pub(super) fn start_shared_vm(
     let mut already_running = if state.simulated {
         owner_alive && guest_alive
     } else {
-        owner_alive
+        owner_alive && shared_vm_owner_guest_probe_ready(data_root)
     };
     already_running &= launch_ready_for_reuse;
     if already_running && boot_contract_changed {
@@ -102,7 +102,7 @@ pub(super) fn start_shared_vm(
         already_running = if state.simulated {
             owner_alive && guest_alive
         } else {
-            owner_alive
+            owner_alive && shared_vm_owner_guest_probe_ready(data_root)
         };
         already_running &= launch_ready_for_reuse;
     }

@@ -50,7 +50,9 @@ fn configured_identity_path() -> Result<Option<PathBuf>> {
     if trimmed.is_empty() {
         anyhow::bail!("{BUNDLE_DIR_ENV} must not be empty when set");
     }
-    Ok(Some(PathBuf::from(trimmed).join(ARTIFACT_IDENTITY_FILENAME)))
+    Ok(Some(
+        PathBuf::from(trimmed).join(ARTIFACT_IDENTITY_FILENAME),
+    ))
 }
 
 pub(super) fn parse_build_identity(path: &Path) -> Result<HelperBuildIdentity> {
@@ -66,10 +68,16 @@ pub(super) fn parse_build_identity(path: &Path) -> Result<HelperBuildIdentity> {
         );
     }
     if identity.exact_version.trim().is_empty() {
-        anyhow::bail!("helper build identity missing exactVersion in {}", path.display());
+        anyhow::bail!(
+            "helper build identity missing exactVersion in {}",
+            path.display()
+        );
     }
     if identity.build_id.trim().is_empty() {
-        anyhow::bail!("helper build identity missing buildId in {}", path.display());
+        anyhow::bail!(
+            "helper build identity missing buildId in {}",
+            path.display()
+        );
     }
     if identity.compatibility_token.trim().is_empty() {
         anyhow::bail!(
@@ -90,7 +98,7 @@ pub(super) fn current_build_identity() -> Result<HelperBuildIdentity> {
 #[cfg(test)]
 mod tests {
     use super::{
-        current_build_identity, parse_build_identity, BUNDLE_DIR_ENV, BUILD_IDENTITY_PATH_ENV,
+        current_build_identity, parse_build_identity, BUILD_IDENTITY_PATH_ENV, BUNDLE_DIR_ENV,
     };
     use std::ffi::OsString;
     use std::fs;

@@ -205,7 +205,7 @@ pub(crate) fn discard_stale_saved_state_for_cold_stop(data_root: &Path) -> Optio
     }
 }
 
-fn clear_shared_vm_transient_artifacts(data_root: &Path) {
+pub(super) fn clear_shared_vm_transient_artifacts(data_root: &Path) {
     for path in [
         shared_vm_control_socket_path(data_root),
         shared_vm_guest_agent_socket_path(data_root),

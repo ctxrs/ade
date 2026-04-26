@@ -3,6 +3,7 @@ use async_trait::async_trait;
 use chrono::Utc;
 use ctx_core::ids::{RunId, TaskId, TurnId, WorkspaceId, WorktreeId};
 use ctx_core::models::{ExecutionEnvironment, SessionTurn, SessionTurnStatus, VcsKind};
+use ctx_managed_installs::ManagedInstallHost;
 use ctx_providers::adapters::{
     ProviderCapabilities, ProviderHealth, ProviderProcessInfo, ProviderRestartMode,
     ProviderSessionSweepConfig, ProviderSessionSweepStats, ProviderStatus, ProviderUsability,
@@ -15,6 +16,7 @@ use std::collections::HashMap;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex as StdMutex;
 use std::time::Instant;
 use tempfile::tempdir;
@@ -83,6 +85,12 @@ impl RecordingProviderAdapter {
             .expect("recording adapter pin lock")
             .clone()
     }
+}
+
+#[derive(Default)]
+struct BlockingInspectAdapter {
+    inspect_started: AtomicBool,
+    release_inspect: tokio::sync::Notify,
 }
 
 #[async_trait]
@@ -165,6 +173,44 @@ impl ProviderAdapter for RecordingProviderAdapter {
             .expect("recording adapter pin lock")
             .push((session_key, pinned));
         Ok(())
+    }
+}
+
+#[async_trait]
+impl ProviderAdapter for BlockingInspectAdapter {
+    async fn inspect(&self) -> Result<ProviderStatus> {
+        self.inspect_started.store(true, Ordering::SeqCst);
+        self.release_inspect.notified().await;
+        Ok(ProviderStatus {
+            provider_id: "blocking".into(),
+            installed: true,
+            detected_path: None,
+            version: Some("test".into()),
+            capabilities: None,
+            health: ProviderHealth::Ok,
+            diagnostics: Vec::new(),
+            details: HashMap::new(),
+            usability: ProviderUsability::default(),
+        })
+    }
+
+    async fn run(
+        &self,
+        _input: TurnInput,
+        _workdir: PathBuf,
+        _env: HashMap<String, String>,
+        _event_sink: tokio::sync::mpsc::Sender<ctx_providers::events::NormalizedEvent>,
+        _hooks: ctx_providers::adapters::ProviderRunHooks,
+    ) -> Result<RunHandle> {
+        anyhow::bail!("not used in test");
+    }
+
+    async fn cancel(&self, _handle: &mut RunHandle) -> Result<()> {
+        Ok(())
+    }
+
+    async fn list_processes(&self) -> Vec<ProviderProcessInfo> {
+        Vec::new()
     }
 }
 
@@ -271,6 +317,56 @@ async fn create_session_with_turn_status(
         .await
         .unwrap();
     (workspace.id, session.id)
+}
+
+#[tokio::test]
+async fn startup_provider_status_refresh_runs_in_background() {
+    let temp = tempdir().unwrap();
+    let stores = StoreManager::open(temp.path()).await.unwrap();
+    let adapter = Arc::new(BlockingInspectAdapter::default());
+    let mut providers: HashMap<String, Arc<dyn ProviderAdapter>> = HashMap::new();
+    providers.insert("blocking".into(), adapter.clone());
+    let state = Arc::new(AppState::new(
+        temp.path().to_path_buf(),
+        stores,
+        providers,
+        "http://localhost".to_string(),
+        None,
+    ));
+
+    spawn_startup_provider_status_refresh(state.clone());
+
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while !adapter.inspect_started.load(Ordering::SeqCst) {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("startup refresh should begin inspect work");
+
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert!(
+        state.provider_statuses().lock().await.is_empty(),
+        "provider status refresh should no longer block startup"
+    );
+
+    adapter.release_inspect.notify_waiters();
+
+    tokio::time::timeout(Duration::from_secs(1), async {
+        loop {
+            if state
+                .provider_statuses()
+                .lock()
+                .await
+                .contains_key("blocking")
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("background provider status refresh should complete after inspect unblocks");
 }
 
 #[cfg(target_os = "macos")]

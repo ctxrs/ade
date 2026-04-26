@@ -340,6 +340,10 @@ is_root_user_value() {
   [[ "\$1" == "0" || "\$1" == "0:0" ]]
 }
 
+is_safe_uid_gid_pair() {
+  [[ "\$1" =~ ^[0-9]+:[0-9]+$ ]]
+}
+
 is_safe_env_assignment() {
   [[ "\$1" =~ ^[A-Z0-9_]+= ]]
 }
@@ -356,13 +360,37 @@ is_allowed_root_exec_env_assignment() {
   esac
 }
 
+is_allowed_materialization_root_exec() {
+  if [[ "\${1:-}" == "mkdir" && "\${2:-}" == "-p" && "\${3:-}" == "--" && \$# -eq 4 ]]; then
+    is_absolute_path "\${4:-}" || return 1
+    return 0
+  fi
+
+  if [[ "\${1:-}" == "chown" && \$# -eq 3 ]]; then
+    is_safe_uid_gid_pair "\${2:-}" || return 1
+    is_absolute_path "\${3:-}" || return 1
+    return 0
+  fi
+
+  if [[ "\${1:-}" == "sh" && "\${2:-}" == "-lc" && "\${4:-}" == "sh" && \$# -eq 5 ]]; then
+    is_absolute_path "\${5:-}" || return 1
+    case "\${3:-}" in
+      'mkdir -p -- "\$1" && chmod 0777 "\$1"'|'find "\$1" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +')
+        return 0
+        ;;
+    esac
+  fi
+
+  return 1
+}
+
 canonical_owned_path() {
   local raw_path="\$1"
   local resolved
-  resolved="$(readlink -f -- "\$raw_path")"
+  resolved="\$(readlink -f -- "\$raw_path")"
   [[ -n "\$resolved" && -e "\$resolved" ]] || return 1
   local owner_uid
-  owner_uid="$(stat -c '%u' -- "\$resolved")"
+  owner_uid="\$(stat -c '%u' -- "\$resolved")"
   [[ "\$owner_uid" == "\${allowed_uid}" ]] || return 1
   printf '%s\n' "\$resolved"
 }
@@ -462,12 +490,14 @@ validate_exec() {
     if [[ "\${1:-}" == "/bin/sh" && "\${2:-}" == "-lc" && \$# -eq 3 ]]; then
       [[ "\${3:-}" == *'CTX_CONTAINER_TERMINAL_USER'* ]] || return 1
       [[ "\${3:-}" == *'__CTX_CONTAINER_TERMINAL_SUDO_MISSING__'* ]] || return 1
-      [[ "\${3:-}" == *'/etc/sudoers.d/$user'* ]] || return 1
+      [[ "\${3:-}" == *'/etc/sudoers.d/\$user'* ]] || return 1
+    elif is_allowed_materialization_root_exec "\$@"; then
+      :
     elif [[ "\${1:-}" == "sh" && "\${2:-}" == "-c" && \$# -eq 3 ]]; then
       local script="\${3:-}"
       if [[ "\${script}" == *"command -v iptables"* && "\${script}" == *"test -x '"* ]]; then
         :
-      elif [[ "\${script}" == *"ctx-egress-proxy.log"* && "\${script}" == *'echo $! > "$pid_file"'* ]]; then
+      elif [[ "\${script}" == *"ctx-egress-proxy.log"* && "\${script}" == *'echo \$! > "\$pid_file"'* ]]; then
         :
       elif [[ "\${script}" == *"failed to stop transparent proxy pid"* ]]; then
         :
@@ -630,7 +660,7 @@ validate_image() {
 validate_load() {
   [[ "\${2:-}" == "-i" ]] || return 1
   local archive_path
-  archive_path="$(canonical_owned_path "\${3:-}")" || return 1
+  archive_path="\$(canonical_owned_path "\${3:-}")" || return 1
   [[ \$# -eq 3 ]] || return 1
   exec "${managed_nerdctl_path}" --address "${system_containerd_address}" --namespace "${system_containerd_namespace}" load -i "\$archive_path"
 }

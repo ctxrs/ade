@@ -128,7 +128,7 @@ const SHARED_VM_CLOUD_INIT_DIR: &str = "cloud-init";
 const SHARED_VM_CLOUD_INIT_META_DATA_FILE: &str = "meta-data";
 const SHARED_VM_CLOUD_INIT_USER_DATA_FILE: &str = "user-data";
 const SHARED_VM_CLOUD_INIT_NETWORK_CONFIG_FILE: &str = "network-config";
-const SHARED_VM_CLOUD_INIT_IMAGE_FILE: &str = "cidata.img";
+const SHARED_VM_CLOUD_INIT_IMAGE_FILE: &str = "cidata.iso";
 const SHARED_VM_GUEST_AGENT_SERVICE_NAME: &str = "ctx-avf-linux-guest-agent.service";
 const SHARED_VM_ROOTFS_LABEL: &str = "cloudimg-rootfs";
 const SHARED_VM_BOOT_DIR: &str = "boot";
@@ -179,6 +179,8 @@ const SHARED_VM_GUEST_POLICY_MASKED_UNITS: &[&str] = &[
     "apt-daily.timer",
     "apt-daily-upgrade.service",
     "apt-daily-upgrade.timer",
+    "boot.mount",
+    "boot-efi.mount",
     "unattended-upgrades.service",
     "snapd.service",
     "snapd.socket",

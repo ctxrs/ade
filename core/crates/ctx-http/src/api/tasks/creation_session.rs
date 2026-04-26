@@ -38,7 +38,8 @@ async fn create_session_for_task_inner(
         .get("x-ctx-run-id")
         .and_then(|v| v.to_str().ok())
         .map(|v| v.to_string());
-    let provider_id = req.provider_id.clone();
+    let provider_id =
+        ctx_core::provider_ids::canonical_provider_id(req.provider_id.as_str()).to_string();
     if !state
         .providers
         .adapters

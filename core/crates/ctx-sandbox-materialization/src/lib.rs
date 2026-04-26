@@ -228,7 +228,7 @@ mod tests {
         fs::write(
             &cli_path,
             format!(
-                "#!/bin/sh\nset -eu\nprintf '%s\\n' \"$*\" >> '{log_path}'\ncmd=\"$1\"\nshift\nif [ \"$cmd\" = \"exec\" ]; then\n  requested_user=\"\"\n  while [ \"$#\" -gt 0 ]; do\n    case \"$1\" in\n      --interactive)\n        shift\n        ;;\n      --user)\n        requested_user=\"$2\"\n        shift 2\n        ;;\n      --workdir)\n        workdir=\"$2\"\n        shift 2\n        ;;\n      *)\n        break\n        ;;\n    esac\n  done\n  container_id=\"$1\"\n  shift\n  command=\"$1\"\n  shift\n  case \"$command\" in\n    sh)\n      if [ \"$1\" = \"-lc\" ] && printf '%s' \"$2\" | grep -q 'git rev-parse'; then\n        exit 1\n      fi\n      exit 0\n      ;;\n    id)\n      if [ \"$1\" = \"-u\" ]; then\n        printf '502\\n'\n        exit 0\n      fi\n      if [ \"$1\" = \"-g\" ]; then\n        printf '20\\n'\n        exit 0\n      fi\n      echo \"unexpected id args: $*\" >&2\n      exit 1\n      ;;\n    chown)\n      if [ \"$requested_user\" != \"root\" ]; then\n        echo \"expected root chown\" >&2\n        exit 1\n      fi\n      exit 0\n      ;;\n    mkdir)\n      exit 0\n      ;;\n    *)\n      echo \"unexpected exec command: $command\" >&2\n      exit 1\n      ;;\n  esac\nfi\nif [ \"$cmd\" = \"cp\" ]; then\n  echo \"unexpected container cp\" >&2\n  exit 1\nfi\necho \"unexpected sandbox cli command: $cmd\" >&2\nexit 1\n",
+                "#!/bin/sh\nset -eu\nprintf '%s\\n' \"$*\" >> '{log_path}'\ncmd=\"$1\"\nshift\nif [ \"$cmd\" = \"exec\" ]; then\n  requested_user=\"\"\n  while [ \"$#\" -gt 0 ]; do\n    case \"$1\" in\n      --interactive)\n        shift\n        ;;\n      --user)\n        requested_user=\"$2\"\n        shift 2\n        ;;\n      --workdir)\n        workdir=\"$2\"\n        shift 2\n        ;;\n      *)\n        break\n        ;;\n    esac\n  done\n  container_id=\"$1\"\n  shift\n  command=\"$1\"\n  shift\n  case \"$command\" in\n    sh)\n      if [ \"$1\" = \"-lc\" ] && printf '%s' \"$2\" | grep -q 'git rev-parse'; then\n        exit 1\n      fi\n      exit 0\n      ;;\n    id)\n      if [ \"$1\" = \"-u\" ]; then\n        printf '502\\n'\n        exit 0\n      fi\n      if [ \"$1\" = \"-g\" ]; then\n        printf '20\\n'\n        exit 0\n      fi\n      echo \"unexpected id args: $*\" >&2\n      exit 1\n      ;;\n    chown)\n      if [ \"$requested_user\" != \"0\" ]; then\n        echo \"expected root chown\" >&2\n        exit 1\n      fi\n      exit 0\n      ;;\n    mkdir)\n      exit 0\n      ;;\n    *)\n      echo \"unexpected exec command: $command\" >&2\n      exit 1\n      ;;\n  esac\nfi\nif [ \"$cmd\" = \"cp\" ]; then\n  echo \"unexpected container cp\" >&2\n  exit 1\nfi\necho \"unexpected sandbox cli command: $cmd\" >&2\nexit 1\n",
                 log_path = log_path.display(),
             ),
         )
@@ -269,7 +269,7 @@ mod tests {
         assert!(!log.contains("find \"$1\" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +"));
         assert!(!log.contains("id -u"));
         assert!(!log.contains("id -g"));
-        assert!(!log.contains("exec --interactive --user root"));
+        assert!(!log.contains("exec --interactive --user 0"));
         assert!(!log.contains("chown 502:20 /ctx/ws"));
         assert!(!log.contains(" cp "));
     }
@@ -370,21 +370,21 @@ mod tests {
         );
         assert!(
             log.contains(&format!(
-                "exec --interactive --user root {container_id} mkdir -p -- {}",
+                "exec --user 0 {container_id} mkdir -p -- {}",
                 Path::new(CTX_CONTAINER_WORKSPACE_ROOT).display()
             )),
             "worktree materialization should prime the shared workspace root before creating a live worktree: {log}"
         );
         assert!(
             log.contains(&format!(
-                "exec --interactive --user root {container_id} chown 502:20 {}",
+                "exec --user 0 {container_id} chown 502:20 {}",
                 Path::new(CTX_CONTAINER_WORKSPACE_ROOT).display()
             )),
             "worktree materialization should hand the shared workspace root back to the sandbox exec user: {log}"
         );
         assert!(
             log.contains(&format!(
-                "exec --interactive --user root {container_id} mkdir -p -- {}",
+                "exec --user 0 {container_id} mkdir -p -- {}",
                 container_worktree_root(worktree_id).display()
             )),
             "worktree creation should run mkdir as root so /ctx/ws itself need not be user-writable: {log}"
@@ -399,7 +399,7 @@ mod tests {
         );
         assert!(
             log.contains(&format!(
-                "exec --interactive --user root {container_id} chown 502:20 {}",
+                "exec --user 0 {container_id} chown 502:20 {}",
                 container_worktree_root(worktree_id).display()
             )),
             "worktree creation should hand the new root back to the sandbox exec user: {log}"
@@ -522,6 +522,172 @@ mod tests {
             dotgit.is_file(),
             "ensure_worktree_from_host_copy must not convert the host linked worktree \
              .git file to a standalone directory"
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn ensure_workspace_root_from_host_copy_avoids_interactive_root_exec_for_wrapper() {
+        let _env_lock = sandbox_cli_env_test_lock().lock().await;
+        let temp = tempfile::tempdir().expect("tempdir");
+        let log_path = temp.path().join("sandbox-cli.log");
+        let marker_path = temp.path().join("workspace-root-seeded");
+        let cli_path = temp.path().join("fake-sandbox-cli.sh");
+        let workspace = Workspace {
+            id: WorkspaceId(Uuid::new_v4()),
+            name: "wrapper-root-exec".to_string(),
+            root_path: temp.path().join("workspace").to_string_lossy().to_string(),
+            created_at: chrono::Utc::now(),
+            vcs_kind: Some(ctx_core::models::VcsKind::Git),
+        };
+        let container_id = workspace_container_name(workspace.id);
+        let workspace_root = PathBuf::from(&workspace.root_path);
+        fs::create_dir_all(workspace_root.join(".git")).expect("create git dir");
+        fs::write(
+            workspace_root.join(".git").join("HEAD"),
+            "ref: refs/heads/main\n",
+        )
+        .expect("write git head");
+        fs::write(workspace_root.join("README.md"), "hello\n").expect("write readme");
+
+        fs::write(
+            &cli_path,
+            format!(
+                concat!(
+                    "#!/bin/sh\nset -eu\n",
+                    "printf '%s\\n' \"$*\" >> '{log_path}'\n",
+                    "cmd=\"$1\"; shift\n",
+                    "[ \"$cmd\" = \"exec\" ] || {{ echo \"unexpected cmd: $cmd\" >&2; exit 1; }}\n",
+                    "interactive=0\n",
+                    "requested_user=''\n",
+                    "while [ \"$#\" -gt 0 ]; do\n",
+                    "  case \"$1\" in\n",
+                    "    --interactive) interactive=1; shift ;;\n",
+                    "    --user) requested_user=\"$2\"; shift 2 ;;\n",
+                    "    --workdir) shift 2 ;;\n",
+                    "    *) break ;;\n",
+                    "  esac\n",
+                    "done\n",
+                    "[ \"$1\" = \"{container_id}\" ] || {{ echo \"unexpected container: $1\" >&2; exit 1; }}\n",
+                    "shift\n",
+                    "if [ \"$requested_user\" = \"0\" ] && [ \"$interactive\" -eq 1 ]; then\n",
+                    "  echo 'wrapper rejected interactive root exec' >&2\n",
+                    "  exit 64\n",
+                    "fi\n",
+                    "command=\"$1\"; shift\n",
+                    "case \"$command\" in\n",
+                    "  df)\n",
+                    "    printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\\n'\n",
+                    "    printf 'overlay 10485760 1024 7340032 1%% /ctx/ws\\n'\n",
+                    "    exit 0\n",
+                    "    ;;\n",
+                    "  id)\n",
+                    "    if [ \"$1\" = \"-u\" ]; then printf '502\\n'; exit 0; fi\n",
+                    "    if [ \"$1\" = \"-g\" ]; then printf '20\\n'; exit 0; fi\n",
+                    "    echo \"unexpected id flag: $1\" >&2\n",
+                    "    exit 1\n",
+                    "    ;;\n",
+                    "  chown)\n",
+                    "    exit 0\n",
+                    "    ;;\n",
+                    "  tar)\n",
+                    "    cat >/dev/null\n",
+                    "    : > '{marker_path}'\n",
+                    "    exit 0\n",
+                    "    ;;\n",
+                    "  sh)\n",
+                    "    if [ \"$1\" = \"-lc\" ] && printf '%s' \"$2\" | grep -q 'git rev-parse'; then\n",
+                    "      if [ -f '{marker_path}' ]; then\n",
+                    "        printf 'true\\n'\n",
+                    "        exit 0\n",
+                    "      fi\n",
+                    "      exit 1\n",
+                    "    fi\n",
+                    "    exit 0\n",
+                    "    ;;\n",
+                    "  *)\n",
+                    "    echo \"unexpected exec command: $command\" >&2\n",
+                    "    exit 1\n",
+                    "    ;;\n",
+                    "esac\n"
+                ),
+                log_path = log_path.display(),
+                marker_path = marker_path.display(),
+                container_id = container_id,
+            ),
+        )
+        .expect("write fake sandbox cli");
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            let mut perms = fs::metadata(&cli_path).expect("metadata").permissions();
+            perms.set_mode(0o755);
+            fs::set_permissions(&cli_path, perms).expect("chmod fake sandbox cli");
+        }
+
+        let _cli = EnvGuard::set("CTX_HARNESS_SANDBOX_CLI_PATH", &cli_path);
+        let expected_container_id = container_id.clone();
+        let _storage_override = set_test_preflight_storage_samples_override(std::sync::Arc::new(
+            move |data_root,
+                  mode,
+                  observed_container_id,
+                  _estimated_copy_bytes,
+                  destination_probe_root,
+                  operation,
+                  required_bytes| {
+                assert!(matches!(
+                    mode,
+                    ctx_sandbox_container_runtime::SandboxCommandMode::NativeContainer
+                ));
+                assert_eq!(observed_container_id, expected_container_id);
+                assert_eq!(
+                    operation,
+                    StorageAdmissionOperation::DiskIsolatedWorkspaceMaterialization
+                );
+                assert_eq!(
+                    destination_probe_root,
+                    Path::new(CTX_CONTAINER_WORKSPACE_ROOT)
+                );
+                let total_bytes = required_bytes.saturating_add(2 * 1024 * 1024 * 1024);
+                Ok((
+                    ctx_storage_admission::StorageAdmissionSample {
+                        label: "CTX data root".to_string(),
+                        path: data_root.to_string_lossy().to_string(),
+                        mount_point: "/".to_string(),
+                        free_bytes: required_bytes.saturating_add(1024),
+                        total_bytes,
+                    },
+                    ctx_storage_admission::StorageAdmissionSample {
+                        label: "sandbox workspace volume".to_string(),
+                        path: destination_probe_root.to_string_lossy().to_string(),
+                        mount_point: CTX_CONTAINER_WORKSPACE_ROOT.to_string(),
+                        free_bytes: required_bytes.saturating_add(1024),
+                        total_bytes,
+                    },
+                ))
+            },
+        ));
+
+        let dest_root = ensure_workspace_root_from_host_copy(
+            temp.path(),
+            &ctx_sandbox_container_runtime::SandboxCommandMode::NativeContainer,
+            &workspace,
+        )
+        .await
+        .expect("materialize workspace root");
+        assert_eq!(dest_root, PathBuf::from(CTX_CONTAINER_WORKSPACE_ROOT));
+
+        let log = fs::read_to_string(&log_path).expect("read sandbox cli log");
+        assert!(
+            !log.contains(&format!("exec --interactive --user 0 {container_id}")),
+            "workspace root materialization should not rely on interactive root exec under the managed wrapper: {log}"
+        );
+        assert!(
+            log.contains(&format!("exec --user 0 {container_id} sh -lc")),
+            "workspace root materialization should still use root-owned prep commands: {log}"
+        );
+        assert!(
+            log.contains(&format!("exec --interactive --workdir /ctx/ws {container_id} tar -xf -")),
+            "workspace root materialization should still stream the staged tarball interactively: {log}"
         );
     }
 }
