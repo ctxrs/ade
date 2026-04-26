@@ -1817,6 +1817,15 @@ exports.config = {
       ) {
         prepEnv.CTX_BUNDLE_LINUX_CTX_MCP_RUNTIME = "0";
       }
+      if (
+        process.platform === "darwin"
+        && process.arch === "arm64"
+        && RUNS_CONTAINER_SCENARIOS
+        && String(prepEnv.CTX_AVF_LINUX_GUEST_RUNTIME_DIR || "").trim()
+        && !String(prepEnv.CTX_DESKTOP_STAGE_AVF_LINUX_GUEST_RUNTIME || "").trim()
+      ) {
+        prepEnv.CTX_DESKTOP_STAGE_AVF_LINUX_GUEST_RUNTIME = "0";
+      }
       delete prepEnv.NODE_OPTIONS;
       const prepRelease = spawnSync("pnpm", ["-C", CORE_ROOT, "desktop:prep:release"], {
         stdio: "inherit",

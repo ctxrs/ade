@@ -18,7 +18,6 @@ const allowManagedAvfRuntimeMissingLocalPayload = resolveBoolishFlag(
   false,
   "CTX_DESKTOP_ALLOW_MANAGED_AVF_RUNTIME_MISSING_LOCAL_PAYLOAD",
 );
-
 const coreRoot = path.resolve(__dirname, "..");
 const desktopTauriRoot = path.join(coreRoot, "apps", "desktop", "src-tauri");
 const destBinDir = path.join(desktopTauriRoot, "bin");
@@ -665,6 +664,29 @@ const stageAvfLinuxGuestRuntime = (bundleDir) => {
     hostManifestOs,
     hostManifestArch,
   );
+  const stageIntoBundle = resolveBoolishFlag(
+    process.env.CTX_DESKTOP_STAGE_AVF_LINUX_GUEST_RUNTIME,
+    true,
+    "CTX_DESKTOP_STAGE_AVF_LINUX_GUEST_RUNTIME",
+  );
+  if (!stageIntoBundle) {
+    console.log(
+      "desktop_sync_resources: using staged AVF Linux guest runtime from CTX_AVF_LINUX_GUEST_RUNTIME_DIR",
+    );
+    return {
+      sourceDir,
+      version,
+      runtimeRootDir: sourceDir,
+      rootfsPath,
+      kernelPath,
+      initrdPath,
+      guestAgentPath,
+      egressProxyPath,
+      containerStackPath,
+      copiedIntoBundle: false,
+    };
+  }
+
   const runtimeParentDir = path.join(bundleDir, runtimeParentRel);
   fs.rmSync(runtimeParentDir, { recursive: true, force: true });
 
@@ -715,6 +737,7 @@ const stageAvfLinuxGuestRuntime = (bundleDir) => {
     guestAgentPath: bundledGuestAgentPath,
     egressProxyPath: bundledEgressProxyPath,
     containerStackPath: bundledContainerStackPath,
+    copiedIntoBundle: true,
   };
 };
 

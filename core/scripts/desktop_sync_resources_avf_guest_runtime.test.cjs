@@ -97,6 +97,50 @@ test("stageAvfLinuxGuestRuntime copies local guest runtime into bundle manifest"
   fs.rmSync(tmpRoot, { recursive: true, force: true });
 });
 
+test("stageAvfLinuxGuestRuntime can use an explicit staged runtime without copying rootfs", () => {
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-avf-guest-runtime-external-"));
+  const sourceDir = path.join(tmpRoot, "source");
+  const bundleDir = path.join(tmpRoot, "bundle");
+
+  fs.mkdirSync(path.join(sourceDir, "helpers"), { recursive: true });
+  fs.writeFileSync(path.join(sourceDir, "rootfs.raw"), "rootfs\n", "utf8");
+  fs.writeFileSync(path.join(sourceDir, "helpers", "kernel"), "kernel\n", "utf8");
+  fs.writeFileSync(path.join(sourceDir, "helpers", "initrd"), "initrd\n", "utf8");
+  fs.writeFileSync(path.join(sourceDir, "helpers", "guest-agent"), "guest-agent\n", "utf8");
+  fs.writeFileSync(path.join(sourceDir, "helpers", "egress-proxy"), "egress-proxy\n", "utf8");
+  fs.writeFileSync(path.join(sourceDir, "helpers", "container-stack.tar.gz"), "container-stack\n", "utf8");
+  fs.writeFileSync(path.join(sourceDir, "version.txt"), "version=dev-runtime\n", "utf8");
+
+  fs.mkdirSync(bundleDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(bundleDir, "manifest.json"),
+    JSON.stringify({ version: 1, providers: [], runtimes: [], images: [], daemons: [] }, null, 2),
+    "utf8",
+  );
+
+  const staged = withEnv(
+    {
+      CTX_AVF_LINUX_GUEST_RUNTIME_DIR: sourceDir,
+      CTX_DESKTOP_STAGE_AVF_LINUX_GUEST_RUNTIME: "0",
+    },
+    () => stageAvfLinuxGuestRuntime(bundleDir),
+  );
+
+  assert.ok(staged, "expected staged runtime metadata");
+  assert.equal(staged.copiedIntoBundle, false);
+  assert.equal(staged.runtimeRootDir, path.resolve(sourceDir));
+  assert.equal(staged.rootfsPath, path.join(path.resolve(sourceDir), "rootfs.raw"));
+  assert.equal(
+    fs.existsSync(path.join(bundleDir, "runtimes", "avf-linux-guest")),
+    false,
+    "expected rootfs not to be copied into the desktop bundle",
+  );
+  const manifest = JSON.parse(fs.readFileSync(path.join(bundleDir, "manifest.json"), "utf8"));
+  assert.deepEqual(manifest.runtimes, []);
+
+  fs.rmSync(tmpRoot, { recursive: true, force: true });
+});
+
 test("stageAvfLinuxGuestRuntime hashes large staged rootfs without readFileSync", () => {
   const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-avf-guest-runtime-large-"));
   const sourceDir = path.join(tmpRoot, "source");

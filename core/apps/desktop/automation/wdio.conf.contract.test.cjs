@@ -70,6 +70,15 @@ test("wdio pure host local scenario prep disables Linux ctx-mcp bundling", () =>
   );
 });
 
+test("wdio container automation uses staged AVF runtime instead of copying it into the bundle", () => {
+  const script = fs.readFileSync(configPath, "utf8");
+
+  assert.match(
+    script,
+    /process\.platform === "darwin"[\s\S]*process\.arch === "arm64"[\s\S]*RUNS_CONTAINER_SCENARIOS[\s\S]*CTX_AVF_LINUX_GUEST_RUNTIME_DIR[\s\S]*CTX_DESKTOP_STAGE_AVF_LINUX_GUEST_RUNTIME = "0"/,
+  );
+});
+
 test("wdio shared CrabNebula backend launch env includes webview automation enablement", () => {
   const script = fs.readFileSync(configPath, "utf8");
 
