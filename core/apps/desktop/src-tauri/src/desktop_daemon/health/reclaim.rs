@@ -140,7 +140,6 @@ fn wait_for_daemon_reclaim_with_auth(
     anyhow::bail!("local daemon pid {pid} did not exit within {:?}", timeout);
 }
 
-#[cfg(test)]
 pub(super) fn reclaim_health_probe_timeout(
     remaining: Duration,
     max_probe_timeout: Duration,
@@ -151,7 +150,6 @@ pub(super) fn reclaim_health_probe_timeout(
     std::cmp::min(remaining, max_probe_timeout)
 }
 
-#[cfg(test)]
 pub(super) fn reclaim_complete(
     pid: u32,
     pid_alive: bool,
@@ -170,16 +168,7 @@ fn daemon_reports_expected_pid_with_auth(
     health_reports_expected_pid(pid, health.as_ref())
 }
 
-#[cfg(test)]
-pub(super) fn health_reports_expected_pid(
-    pid: u32,
-    health: Option<&DaemonHealthSummary>,
-) -> bool {
-    health.map(|h| h.pid == pid).unwrap_or(false)
-}
-
-#[cfg(not(test))]
-fn health_reports_expected_pid(pid: u32, health: Option<&DaemonHealthSummary>) -> bool {
+pub(super) fn health_reports_expected_pid(pid: u32, health: Option<&DaemonHealthSummary>) -> bool {
     health.map(|h| h.pid == pid).unwrap_or(false)
 }
 

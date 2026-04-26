@@ -1,11 +1,11 @@
 use ctx_desktop_ipc::{DesktopWebviewRecoveryHeartbeatReq, DesktopWebviewSurface};
 
+use super::super::policy::{HEARTBEAT_CONFIRMATION_MS, HEARTBEAT_TIMEOUT_MS, STARTUP_GRACE_MS};
 use super::model::{normalize_route, HeartbeatTimeoutEvaluation, RecoveryWindowState};
-use super::policy::{HEARTBEAT_CONFIRMATION_MS, HEARTBEAT_TIMEOUT_MS, STARTUP_GRACE_MS};
 use super::*;
 
 impl DesktopWebviewRecoveryController {
-    pub(super) fn register_window(
+    pub(in crate::desktop_webview_recovery) fn register_window(
         &self,
         window_label: &str,
         surface: DesktopWebviewSurface,
@@ -35,7 +35,7 @@ impl DesktopWebviewRecoveryController {
         entry.startup_completed_at_ms = None;
     }
 
-    pub(super) fn update_route(
+    pub(in crate::desktop_webview_recovery) fn update_route(
         &self,
         window_label: &str,
         surface: DesktopWebviewSurface,
@@ -54,7 +54,7 @@ impl DesktopWebviewRecoveryController {
         entry.exists = true;
     }
 
-    pub(super) fn note_window_destroyed(&self, window_label: &str) {
+    pub(in crate::desktop_webview_recovery) fn note_window_destroyed(&self, window_label: &str) {
         let Ok(mut guard) = self.inner.lock() else {
             return;
         };
@@ -67,7 +67,7 @@ impl DesktopWebviewRecoveryController {
         entry.stale_detected_at_ms = None;
     }
 
-    pub(super) fn note_heartbeat(
+    pub(in crate::desktop_webview_recovery) fn note_heartbeat(
         &self,
         window_label: &str,
         req: &DesktopWebviewRecoveryHeartbeatReq,
@@ -76,9 +76,17 @@ impl DesktopWebviewRecoveryController {
             return;
         };
         let now = now_ms();
-        let entry = guard.windows.entry(window_label.to_string()).or_insert_with(|| {
-            RecoveryWindowState::new(window_label, DesktopWebviewSurface::Unknown, &req.route, now)
-        });
+        let entry = guard
+            .windows
+            .entry(window_label.to_string())
+            .or_insert_with(|| {
+                RecoveryWindowState::new(
+                    window_label,
+                    DesktopWebviewSurface::Unknown,
+                    &req.route,
+                    now,
+                )
+            });
         entry.route = normalize_route(&req.route);
         entry.exists = true;
         entry.last_suppressed_at_ms = None;
@@ -105,7 +113,7 @@ impl DesktopWebviewRecoveryController {
         entry.stale_detected_at_ms = None;
     }
 
-    pub(super) fn evaluate_heartbeat_timeout(
+    pub(in crate::desktop_webview_recovery) fn evaluate_heartbeat_timeout(
         &self,
         window_label: &str,
         now_ms: u64,

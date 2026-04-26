@@ -345,7 +345,7 @@ fn schedule_startup_workspaces(app: tauri::AppHandle) {
         // responds.
         std::thread::sleep(Duration::from_millis(300));
 
-        let mut workspace_ids = Vec::new();
+        let mut workspace_ids: Vec<String> = Vec::new();
         for part in raw.split(';') {
             let part = part.trim();
             if part.is_empty() {
@@ -384,7 +384,7 @@ fn schedule_startup_workspaces(app: tauri::AppHandle) {
         let first = workspace_ids[0].clone();
         let tabs = workspace_ids
             .into_iter()
-            .map(|id| urlencoding::encode(&id).into_owned())
+            .map(|id: String| urlencoding::encode(&id).into_owned())
             .collect::<Vec<_>>()
             .join(",");
         let url = format!("/workspaces/{}?ctxTabs={tabs}", urlencoding::encode(&first));
@@ -457,26 +457,4 @@ fn schedule_force_launcher(app: tauri::AppHandle) {
             std::thread::sleep(Duration::from_millis(100));
         }
     });
-}
-#[tauri::command]
-fn desktop_trigger_menu_command(app: tauri::AppHandle, command_id: String) -> Result<(), String> {
-    #[cfg(feature = "automation")]
-    {
-        let command_id = command_id.trim().to_string();
-        if command_id.is_empty() {
-            return Err("command_id is required".to_string());
-        }
-        if !is_menu_command_id(&command_id) {
-            return Err(format!("unknown menu command id: {command_id}"));
-        }
-        handle_menu_command(&app, &command_id);
-        return Ok(());
-    }
-
-    #[cfg(not(feature = "automation"))]
-    {
-        let _ = app;
-        let _ = command_id;
-        Err("desktop_trigger_menu_command is automation-only".to_string())
-    }
 }

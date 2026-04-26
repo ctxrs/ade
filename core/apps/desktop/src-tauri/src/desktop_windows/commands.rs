@@ -1,7 +1,7 @@
 use super::*;
 
 #[tauri::command]
-pub(super) fn desktop_set_open_workspaces(
+pub(crate) fn desktop_set_open_workspaces(
     window: tauri::WebviewWindow,
     registry: tauri::State<WorkspaceWindowRegistry>,
     req: DesktopSetOpenWorkspacesReq,
@@ -11,7 +11,7 @@ pub(super) fn desktop_set_open_workspaces(
 }
 
 #[tauri::command]
-pub(super) fn desktop_open_workspace_in_new_window(
+pub(crate) fn desktop_open_workspace_in_new_window(
     app: tauri::AppHandle,
     registry: tauri::State<WorkspaceWindowRegistry>,
     req: DesktopOpenWorkspaceInNewWindowReq,
@@ -24,17 +24,19 @@ pub(super) fn desktop_open_workspace_in_new_window(
 }
 
 #[tauri::command]
-pub(super) fn desktop_open_launcher_in_new_window(app: tauri::AppHandle) -> Result<(), String> {
+pub(crate) fn desktop_open_launcher_in_new_window(app: tauri::AppHandle) -> Result<(), String> {
     open_launcher_window(&app).map_err(to_err)
 }
 
 #[tauri::command]
-pub(super) fn desktop_open_workspace_setup_in_new_window(app: tauri::AppHandle) -> Result<(), String> {
+pub(crate) fn desktop_open_workspace_setup_in_new_window(
+    app: tauri::AppHandle,
+) -> Result<(), String> {
     let label = format!("workspace-setup:{}", uuid::Uuid::new_v4());
     open_workspace_setup_window_with_label(&app, &label, "/workspace-setup").map_err(to_err)
 }
 
-pub(super) fn open_workspace_setup_window_with_label(
+pub(crate) fn open_workspace_setup_window_with_label(
     app: &tauri::AppHandle,
     label: &str,
     route: &str,
@@ -61,7 +63,7 @@ pub(super) fn open_workspace_setup_window_with_label(
 }
 
 #[tauri::command]
-pub(super) fn desktop_set_titlebar_color(
+pub(crate) fn desktop_set_titlebar_color(
     window: tauri::WebviewWindow,
     req: DesktopTitlebarColor,
 ) -> Result<(), String> {
@@ -90,7 +92,7 @@ pub(super) fn desktop_set_titlebar_color(
 }
 
 #[tauri::command]
-pub(super) fn desktop_set_window_title(
+pub(crate) fn desktop_set_window_title(
     window: tauri::WebviewWindow,
     req: DesktopSetWindowTitleReq,
 ) -> Result<(), String> {
@@ -111,7 +113,7 @@ pub(super) fn desktop_set_window_title(
 }
 
 #[tauri::command]
-pub(super) fn desktop_register_workspace_window(
+pub(crate) fn desktop_register_workspace_window(
     registry: tauri::State<WorkspaceWindowRegistry>,
     workspace_id: String,
     window_label: String,
@@ -129,7 +131,7 @@ pub(super) fn desktop_register_workspace_window(
 }
 
 #[tauri::command]
-pub(super) fn desktop_unregister_workspace_window(
+pub(crate) fn desktop_unregister_workspace_window(
     registry: tauri::State<WorkspaceWindowRegistry>,
     window_label: String,
 ) -> Result<(), String> {
@@ -142,7 +144,7 @@ pub(super) fn desktop_unregister_workspace_window(
 }
 
 #[tauri::command]
-pub(super) fn desktop_record_workspace_visit(
+pub(crate) fn desktop_record_workspace_visit(
     window: tauri::WebviewWindow,
     registry: tauri::State<WorkspaceWindowRegistry>,
     req: DesktopRecordWorkspaceVisitReq,
@@ -157,7 +159,7 @@ pub(super) fn desktop_record_workspace_visit(
 }
 
 #[tauri::command]
-pub(super) fn desktop_set_dock_recent_local_workspaces(
+pub(crate) fn desktop_set_dock_recent_local_workspaces(
     registry: tauri::State<WorkspaceWindowRegistry>,
     req: DesktopSetDockRecentLocalWorkspacesReq,
 ) -> Result<(), String> {

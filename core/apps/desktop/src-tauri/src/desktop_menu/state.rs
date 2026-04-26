@@ -3,19 +3,20 @@ use std::sync::Mutex;
 
 use serde::Serialize;
 use tauri::menu::{Menu, MenuItemKind, Submenu};
+use tauri::Manager;
 
 use super::{ids::is_menu_command_id, DesktopMenuItemStateUpdate, DesktopSetMenuStateReq};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub(super) struct DesktopMenuItemStateSnapshot {
+pub(crate) struct DesktopMenuItemStateSnapshot {
     pub id: String,
     pub enabled: bool,
     pub checked: Option<bool>,
 }
 
 #[derive(Default)]
-pub(super) struct DesktopMenuStateCache {
+pub(crate) struct DesktopMenuStateCache {
     by_window: Mutex<HashMap<String, Vec<DesktopMenuItemStateUpdate>>>,
     focused_window_label: Mutex<Option<String>>,
 }
@@ -63,7 +64,7 @@ impl DesktopMenuStateCache {
         }
     }
 
-    pub(super) fn get_focused_window(&self) -> Option<String> {
+    pub(crate) fn get_focused_window(&self) -> Option<String> {
         let guard = self
             .focused_window_label
             .lock()
@@ -228,7 +229,7 @@ fn read_state_from_menu(
     Ok(None)
 }
 
-pub(super) fn apply_cached_menu_state_for_window(
+pub(crate) fn apply_cached_menu_state_for_window(
     app: &tauri::AppHandle,
     window_label: &str,
 ) -> Result<(), String> {
@@ -239,19 +240,19 @@ pub(super) fn apply_cached_menu_state_for_window(
     apply_menu_state_updates(app, &items)
 }
 
-pub(super) fn clear_cached_menu_state_for_window(app: &tauri::AppHandle, window_label: &str) {
+pub(crate) fn clear_cached_menu_state_for_window(app: &tauri::AppHandle, window_label: &str) {
     let cache = app.state::<DesktopMenuStateCache>();
     cache.remove_state(window_label);
     cache.clear_focused_window_if_matches(window_label);
 }
 
-pub(super) fn mark_menu_state_window_focused(app: &tauri::AppHandle, window_label: &str) {
+pub(crate) fn mark_menu_state_window_focused(app: &tauri::AppHandle, window_label: &str) {
     let cache = app.state::<DesktopMenuStateCache>();
     cache.set_focused_window(window_label);
 }
 
 #[tauri::command]
-pub(super) fn desktop_set_menu_state(
+pub(crate) fn desktop_set_menu_state(
     app: tauri::AppHandle,
     webview_window: tauri::WebviewWindow,
     cache: tauri::State<'_, DesktopMenuStateCache>,
@@ -269,7 +270,7 @@ pub(super) fn desktop_set_menu_state(
 }
 
 #[tauri::command]
-pub(super) fn desktop_get_menu_item_state(
+pub(crate) fn desktop_get_menu_item_state(
     app: tauri::AppHandle,
     command_id: String,
 ) -> Result<DesktopMenuItemStateSnapshot, String> {

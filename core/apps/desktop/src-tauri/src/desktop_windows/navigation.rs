@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) fn desktop_startup_initialization_script(
+pub(crate) fn desktop_startup_initialization_script(
     window_label: &str,
     start_path: &str,
 ) -> String {
@@ -15,7 +15,7 @@ pub(super) fn desktop_startup_initialization_script(
     )
 }
 
-pub(super) fn log_window_created(window_label: &str, path: &str) {
+pub(crate) fn log_window_created(window_label: &str, path: &str) {
     log_desktop_startup(&format!(
         "desktop_startup: window_created label={} path={}",
         serde_json::to_string(window_label).unwrap_or_else(|_| "\"unknown\"".to_string()),
@@ -23,7 +23,7 @@ pub(super) fn log_window_created(window_label: &str, path: &str) {
     ));
 }
 
-pub(super) fn log_navigation_start(window_label: &str, path: &str, reason: &str) {
+pub(crate) fn log_navigation_start(window_label: &str, path: &str, reason: &str) {
     log_desktop_startup(&format!(
         "desktop_startup: navigation_start label={} path={} reason={}",
         serde_json::to_string(window_label).unwrap_or_else(|_| "\"unknown\"".to_string()),
@@ -56,13 +56,13 @@ fn build_workspace_url(
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct WorkspaceRouteTarget {
-    pub(super) workspace_id: String,
-    pub(super) task_id: Option<String>,
-    pub(super) session_id: Option<String>,
+pub(crate) struct WorkspaceRouteTarget {
+    pub(crate) workspace_id: String,
+    pub(crate) task_id: Option<String>,
+    pub(crate) session_id: Option<String>,
 }
 
-pub(super) fn workspace_registry_parse_target_route(route: &str) -> Result<WorkspaceRouteTarget> {
+pub(crate) fn workspace_registry_parse_target_route(route: &str) -> Result<WorkspaceRouteTarget> {
     let parsed = Url::parse(&format!("https://ctx.invalid{}", route.trim()))
         .with_context(|| format!("parsing workbench recovery route '{route}'"))?;
     let mut segments = parsed
@@ -123,7 +123,7 @@ fn navigate_window_to_workspace(
     let _ = window.emit("workspace:open", workspace_id.to_string());
 }
 
-pub(super) fn open_workspace_window(
+pub(crate) fn open_workspace_window(
     app: &tauri::AppHandle,
     registry: &WorkspaceWindowRegistry,
     workspace_id: &str,
@@ -131,7 +131,7 @@ pub(super) fn open_workspace_window(
     open_workspace_target(app, registry, workspace_id, None, None)
 }
 
-pub(super) fn open_workspace_target(
+pub(crate) fn open_workspace_target(
     app: &tauri::AppHandle,
     registry: &WorkspaceWindowRegistry,
     workspace_id: &str,
@@ -177,7 +177,7 @@ pub(super) fn open_workspace_target(
     Ok(())
 }
 
-pub(super) fn open_workspace_in_new_window(
+pub(crate) fn open_workspace_in_new_window(
     app: &tauri::AppHandle,
     registry: &WorkspaceWindowRegistry,
     workspace_id: &str,
@@ -185,7 +185,7 @@ pub(super) fn open_workspace_in_new_window(
     open_workspace_target_in_new_window(app, registry, workspace_id, None, None)
 }
 
-pub(super) fn open_workspace_target_in_new_window(
+pub(crate) fn open_workspace_target_in_new_window(
     app: &tauri::AppHandle,
     registry: &WorkspaceWindowRegistry,
     workspace_id: &str,
@@ -203,7 +203,7 @@ pub(super) fn open_workspace_target_in_new_window(
     )
 }
 
-pub(super) fn open_workspace_target_in_window_with_label(
+pub(crate) fn open_workspace_target_in_window_with_label(
     app: &tauri::AppHandle,
     registry: &WorkspaceWindowRegistry,
     label: &str,
@@ -239,7 +239,7 @@ pub(super) fn open_workspace_target_in_window_with_label(
     Ok(())
 }
 
-pub(super) fn focus_or_open_workspace_window(
+pub(crate) fn focus_or_open_workspace_window(
     app: &tauri::AppHandle,
     registry: &WorkspaceWindowRegistry,
     workspace_id: &str,
@@ -247,7 +247,7 @@ pub(super) fn focus_or_open_workspace_window(
     focus_or_open_workspace_target(app, registry, workspace_id, None, None)
 }
 
-pub(super) fn focus_or_open_workspace_target(
+pub(crate) fn focus_or_open_workspace_target(
     app: &tauri::AppHandle,
     registry: &WorkspaceWindowRegistry,
     workspace_id: &str,
@@ -280,12 +280,12 @@ pub(super) fn focus_or_open_workspace_target(
     open_workspace_target_in_new_window(app, registry, workspace_id, task_id, session_id)
 }
 
-pub(super) fn open_launcher_window(app: &tauri::AppHandle) -> Result<()> {
+pub(crate) fn open_launcher_window(app: &tauri::AppHandle) -> Result<()> {
     let label = format!("launcher:{}", uuid::Uuid::new_v4());
     open_launcher_window_with_label(app, &label, "/")
 }
 
-pub(super) fn open_launcher_window_with_label(
+pub(crate) fn open_launcher_window_with_label(
     app: &tauri::AppHandle,
     label: &str,
     start_path: &str,
@@ -311,7 +311,7 @@ pub(super) fn open_launcher_window_with_label(
     Ok(())
 }
 
-pub(super) fn focus_app_window(app: &tauri::AppHandle) {
+pub(crate) fn focus_app_window(app: &tauri::AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.show();
         let _ = window.set_focus();
@@ -323,7 +323,7 @@ pub(super) fn focus_app_window(app: &tauri::AppHandle) {
     }
 }
 
-pub(super) fn confirm_action(app: &tauri::AppHandle, message: &str) -> bool {
+pub(crate) fn confirm_action(app: &tauri::AppHandle, message: &str) -> bool {
     app.dialog()
         .message(message)
         .kind(MessageDialogKind::Warning)
@@ -334,7 +334,7 @@ pub(super) fn confirm_action(app: &tauri::AppHandle, message: &str) -> bool {
         .blocking_show()
 }
 
-pub(super) fn show_error_dialog(app: &tauri::AppHandle, message: &str) {
+pub(crate) fn show_error_dialog(app: &tauri::AppHandle, message: &str) {
     app.dialog()
         .message(message)
         .kind(MessageDialogKind::Error)
@@ -342,7 +342,7 @@ pub(super) fn show_error_dialog(app: &tauri::AppHandle, message: &str) {
         .show(|_| {});
 }
 
-pub(super) fn reveal_in_file_manager(path: &Path) -> Result<()> {
+pub(crate) fn reveal_in_file_manager(path: &Path) -> Result<()> {
     #[cfg(target_os = "macos")]
     {
         let status = Command::new("open").arg("-R").arg(path).status()?;
@@ -376,7 +376,7 @@ pub(super) fn reveal_in_file_manager(path: &Path) -> Result<()> {
     }
 }
 
-pub(super) fn open_main_window(app: &tauri::AppHandle) -> Result<()> {
+pub(crate) fn open_main_window(app: &tauri::AppHandle) -> Result<()> {
     let start_path = match std::env::var("CTX_DESKTOP_START_PATH") {
         Ok(v) if v.trim().starts_with('/') => v.trim().to_string(),
         _ => "/".to_string(),
@@ -384,7 +384,7 @@ pub(super) fn open_main_window(app: &tauri::AppHandle) -> Result<()> {
     open_main_window_at_route(app, &start_path)
 }
 
-pub(super) fn open_main_window_at_route(app: &tauri::AppHandle, start_path: &str) -> Result<()> {
+pub(crate) fn open_main_window_at_route(app: &tauri::AppHandle, start_path: &str) -> Result<()> {
     if app.get_webview_window("main").is_some() {
         return Ok(());
     }

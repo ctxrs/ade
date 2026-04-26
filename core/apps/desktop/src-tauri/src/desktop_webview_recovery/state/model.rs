@@ -6,42 +6,42 @@ use ctx_desktop_ipc::{
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum HeartbeatTimeoutEvaluation {
+pub(crate) enum HeartbeatTimeoutEvaluation {
     Skip,
     AwaitConfirmation,
     Ready,
 }
 
 #[derive(Debug, Clone)]
-pub(super) struct PreparedRecoveryIncident {
+pub(crate) struct PreparedRecoveryIncident {
     pub incident: DesktopWebviewRecoveryIncident,
     pub action: DesktopWebviewRecoveryAction,
 }
 
 #[derive(Debug, Default)]
-pub(super) struct DesktopWebviewRecoveryState {
-    pub(super) windows: HashMap<String, RecoveryWindowState>,
+pub(crate) struct DesktopWebviewRecoveryState {
+    pub(crate) windows: HashMap<String, RecoveryWindowState>,
 }
 
 #[derive(Debug, Clone)]
-pub(super) struct RecoveryWindowState {
-    pub(super) created_at_ms: u64,
-    pub(super) daemon_health: DesktopWebviewRecoveryDaemonHealth,
-    pub(super) exists: bool,
-    pub(super) last_suppressed_at_ms: Option<u64>,
-    pub(super) last_heartbeat_at_ms: Option<u64>,
-    pub(super) pending_heartbeat_timeout: bool,
-    pub(super) recent_incident_timestamps_ms: VecDeque<u64>,
-    pub(super) recovery_in_progress: bool,
-    pub(super) route: String,
-    pub(super) stale_detected_at_ms: Option<u64>,
-    pub(super) startup_completed_at_ms: Option<u64>,
-    pub(super) surface: DesktopWebviewSurface,
-    pub(super) window_label: String,
+pub(crate) struct RecoveryWindowState {
+    pub(crate) created_at_ms: u64,
+    pub(crate) daemon_health: DesktopWebviewRecoveryDaemonHealth,
+    pub(crate) exists: bool,
+    pub(crate) last_suppressed_at_ms: Option<u64>,
+    pub(crate) last_heartbeat_at_ms: Option<u64>,
+    pub(crate) pending_heartbeat_timeout: bool,
+    pub(crate) recent_incident_timestamps_ms: VecDeque<u64>,
+    pub(crate) recovery_in_progress: bool,
+    pub(crate) route: String,
+    pub(crate) stale_detected_at_ms: Option<u64>,
+    pub(crate) startup_completed_at_ms: Option<u64>,
+    pub(crate) surface: DesktopWebviewSurface,
+    pub(crate) window_label: String,
 }
 
 impl RecoveryWindowState {
-    pub(super) fn new(
+    pub(crate) fn new(
         window_label: &str,
         surface: DesktopWebviewSurface,
         route: &str,
@@ -65,7 +65,7 @@ impl RecoveryWindowState {
     }
 }
 
-pub(super) fn normalize_route(route: &str) -> String {
+pub(crate) fn normalize_route(route: &str) -> String {
     let trimmed = route.trim();
     if trimmed.is_empty() {
         "/".to_string()

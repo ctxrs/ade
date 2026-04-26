@@ -2,11 +2,13 @@ use ctx_desktop_ipc::{
     DesktopWebviewRecoveryAutomationSnapshot, DesktopWebviewRecoveryWindowAutomationSnapshot,
 };
 
-use super::policy::prune_recent_incidents;
+use super::super::policy::prune_recent_incidents;
 use super::*;
 
 impl DesktopWebviewRecoveryController {
-    pub(super) fn automation_snapshot(&self) -> DesktopWebviewRecoveryAutomationSnapshot {
+    pub(in crate::desktop_webview_recovery) fn automation_snapshot(
+        &self,
+    ) -> DesktopWebviewRecoveryAutomationSnapshot {
         let Ok(mut guard) = self.inner.lock() else {
             return DesktopWebviewRecoveryAutomationSnapshot {
                 windows: Vec::new(),

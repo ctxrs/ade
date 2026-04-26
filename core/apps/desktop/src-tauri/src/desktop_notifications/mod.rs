@@ -1,7 +1,6 @@
 use anyhow::Result;
-use ctx_desktop_ipc::{
-    DesktopNotificationPermission, DesktopShowSystemNotificationReq,
-};
+use ctx_desktop_ipc::{DesktopNotificationPermission, DesktopShowSystemNotificationReq};
+use tauri::Manager;
 
 mod automation;
 mod deep_links;

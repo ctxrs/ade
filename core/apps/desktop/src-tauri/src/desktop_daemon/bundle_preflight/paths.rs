@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-pub(super) fn bundle_manifest_path(bundle_dir: &Path) -> PathBuf {
+pub(crate) fn bundle_manifest_path(bundle_dir: &Path) -> PathBuf {
     if let Ok(raw) = std::env::var("CTX_BUNDLE_MANIFEST") {
         let trimmed = raw.trim();
         if !trimmed.is_empty() {
@@ -18,10 +18,10 @@ pub(super) fn bundle_manifest_path(bundle_dir: &Path) -> PathBuf {
     bundle_dir.join("manifest.json")
 }
 
-pub(super) fn bundled_artifact_identity_path(bundle_dir: &Path) -> PathBuf {
+pub(crate) fn bundled_artifact_identity_path(bundle_dir: &Path) -> PathBuf {
     bundle_dir.join("artifact_identity.json")
 }
 
-pub(super) fn bundled_provider_manifest_path(bundle_dir: &Path) -> PathBuf {
+pub(crate) fn bundled_provider_manifest_path(bundle_dir: &Path) -> PathBuf {
     bundle_dir.join("provider_matrix.json")
 }

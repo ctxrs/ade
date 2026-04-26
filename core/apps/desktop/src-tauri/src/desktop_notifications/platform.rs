@@ -97,7 +97,7 @@ impl MacosNotificationDelegate {
 }
 
 #[cfg(target_os = "macos")]
-pub(super) fn install_macos_notification_delegate(app: tauri::AppHandle) {
+pub(crate) fn install_macos_notification_delegate(app: tauri::AppHandle) {
     let _ = MACOS_NOTIFICATION_APP.set(app);
     let delegate = MACOS_NOTIFICATION_DELEGATE.get_or_init(MacosNotificationDelegate::new);
     let center = UNUserNotificationCenter::currentNotificationCenter();
@@ -105,7 +105,7 @@ pub(super) fn install_macos_notification_delegate(app: tauri::AppHandle) {
 }
 
 #[cfg(not(target_os = "macos"))]
-pub(super) fn install_macos_notification_delegate(_app: tauri::AppHandle) {}
+pub(crate) fn install_macos_notification_delegate(_app: tauri::AppHandle) {}
 
 #[cfg(target_os = "macos")]
 fn macos_response_is_default_action(response: &UNNotificationResponse) -> bool {
@@ -191,7 +191,9 @@ fn schedule_macos_notification(request: &UNNotificationRequest) -> anyhow::Resul
 }
 
 #[cfg(any(all(target_os = "macos", feature = "automation"), test))]
-fn normalize_delivered_notification_identifiers(identifiers: &[String]) -> anyhow::Result<Vec<String>> {
+fn normalize_delivered_notification_identifiers(
+    identifiers: &[String],
+) -> anyhow::Result<Vec<String>> {
     let mut normalized = Vec::new();
     for identifier in identifiers {
         let trimmed = identifier.trim();
@@ -212,7 +214,9 @@ fn normalize_delivered_notification_identifiers(identifiers: &[String]) -> anyho
 }
 
 #[cfg(all(target_os = "macos", feature = "automation"))]
-fn macos_delivered_notification_entry(notification: &UNNotification) -> DesktopDeliveredNotificationEntry {
+fn macos_delivered_notification_entry(
+    notification: &UNNotification,
+) -> DesktopDeliveredNotificationEntry {
     let request = notification.request();
     let identifier = request.identifier().to_string();
     let content = request.content();
@@ -232,7 +236,8 @@ fn macos_delivered_notification_entry(notification: &UNNotification) -> DesktopD
 }
 
 #[cfg(all(target_os = "macos", feature = "automation"))]
-fn macos_delivered_notification_entries() -> anyhow::Result<Vec<DesktopDeliveredNotificationEntry>> {
+fn macos_delivered_notification_entries() -> anyhow::Result<Vec<DesktopDeliveredNotificationEntry>>
+{
     let center = UNUserNotificationCenter::currentNotificationCenter();
     let (tx, rx) = mpsc::sync_channel(1);
     let completion = RcBlock::new(move |notifications: NonNull<NSArray<UNNotification>>| {
@@ -240,7 +245,7 @@ fn macos_delivered_notification_entries() -> anyhow::Result<Vec<DesktopDelivered
         let entries = notifications
             .to_vec()
             .iter()
-            .map(macos_delivered_notification_entry)
+            .map(|notification| macos_delivered_notification_entry(notification))
             .collect::<Vec<_>>();
         let _ = tx.send(entries);
     });
@@ -250,7 +255,9 @@ fn macos_delivered_notification_entries() -> anyhow::Result<Vec<DesktopDelivered
 }
 
 #[cfg(all(target_os = "macos", feature = "automation"))]
-fn macos_clear_delivered_notifications(req: DesktopClearDeliveredNotificationsReq) -> anyhow::Result<()> {
+fn macos_clear_delivered_notifications(
+    req: DesktopClearDeliveredNotificationsReq,
+) -> anyhow::Result<()> {
     let identifiers = normalize_delivered_notification_identifiers(&req.identifiers)?;
     let ns_identifiers = identifiers
         .iter()
@@ -333,7 +340,7 @@ fn show_windows_notification(
     Ok(())
 }
 
-pub(super) fn notification_permission() -> DesktopNotificationPermission {
+pub(crate) fn notification_permission() -> DesktopNotificationPermission {
     #[cfg(target_os = "macos")]
     {
         return macos_notification_permission();
@@ -345,7 +352,7 @@ pub(super) fn notification_permission() -> DesktopNotificationPermission {
     }
 }
 
-pub(super) fn request_notification_permission() -> DesktopNotificationPermission {
+pub(crate) fn request_notification_permission() -> DesktopNotificationPermission {
     #[cfg(target_os = "macos")]
     {
         return macos_request_notification_permission();
@@ -357,7 +364,7 @@ pub(super) fn request_notification_permission() -> DesktopNotificationPermission
     }
 }
 
-pub(super) fn show_system_notification(
+pub(crate) fn show_system_notification(
     app: &tauri::AppHandle,
     req: DesktopShowSystemNotificationReq,
     deep_link: String,
@@ -381,7 +388,7 @@ pub(super) fn show_system_notification(
     Ok(())
 }
 
-pub(super) fn desktop_get_delivered_notification_automation_snapshot(
+pub(crate) fn desktop_get_delivered_notification_automation_snapshot(
 ) -> Result<DesktopDeliveredNotificationSnapshot, String> {
     #[cfg(all(feature = "automation", target_os = "macos"))]
     {
@@ -401,7 +408,7 @@ pub(super) fn desktop_get_delivered_notification_automation_snapshot(
     }
 }
 
-pub(super) fn desktop_clear_delivered_notification_automation_snapshot(
+pub(crate) fn desktop_clear_delivered_notification_automation_snapshot(
     req: DesktopClearDeliveredNotificationsReq,
 ) -> Result<(), String> {
     #[cfg(all(feature = "automation", target_os = "macos"))]

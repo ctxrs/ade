@@ -439,7 +439,7 @@ fn build_app_submenu(app: &tauri::AppHandle) -> tauri::Result<Submenu<tauri::Wry
         .build()
 }
 
-pub(super) fn build_app_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
+pub(crate) fn build_app_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     let file = build_file_submenu(app)?;
     let edit = build_edit_submenu(app)?;
     let view = build_view_submenu(app)?;

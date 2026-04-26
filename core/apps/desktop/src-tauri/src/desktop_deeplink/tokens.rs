@@ -1,3 +1,8 @@
+use std::collections::HashMap;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+use ctx_desktop_ipc::DesktopDeepLinkToken;
+
 #[derive(Default)]
 pub(crate) struct DeepLinkTokenStore {
     tokens: std::sync::Mutex<HashMap<String, Instant>>,
@@ -40,8 +45,8 @@ impl DeepLinkTokenStore {
 }
 
 #[tauri::command]
-pub(super) fn desktop_get_deep_link_token(
-    store: tauri::State<DeepLinkTokenStore>,
-) -> Result<DesktopDeepLinkToken, String> {
-    Ok(store.mint())
+pub(crate) fn desktop_get_deep_link_token(
+    store: tauri::State<'_, DeepLinkTokenStore>,
+) -> DesktopDeepLinkToken {
+    store.mint()
 }

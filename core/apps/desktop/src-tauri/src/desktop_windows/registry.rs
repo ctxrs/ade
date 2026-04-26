@@ -16,8 +16,8 @@ pub(crate) const MAX_RECENT_WORKSPACES: usize = 8;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) struct RecentWorkspaceEntry {
-    workspace_id: String,
-    label: String,
+    pub(crate) workspace_id: String,
+    pub(crate) label: String,
 }
 
 impl WorkspaceWindowRegistry {

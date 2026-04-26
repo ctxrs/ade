@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) fn handle_open(
+pub(crate) fn handle_open(
     app: &tauri::AppHandle,
     state: &ConnectionManager,
     tokens: &DeepLinkTokenStore,
@@ -63,7 +63,7 @@ pub(super) fn handle_open(
     }
 }
 
-pub(super) fn handle_reveal(
+pub(crate) fn handle_reveal(
     app: &tauri::AppHandle,
     state: &ConnectionManager,
     tokens: &DeepLinkTokenStore,
@@ -96,7 +96,7 @@ pub(super) fn handle_reveal(
     reveal_in_file_manager(&path)
 }
 
-pub(super) fn handle_workspace(
+pub(crate) fn handle_workspace(
     app: &tauri::AppHandle,
     state: &ConnectionManager,
     registry: &WorkspaceWindowRegistry,
@@ -116,7 +116,7 @@ pub(super) fn handle_workspace(
     open_workspace_window(app, registry, &workspace_id)
 }
 
-pub(super) fn handle_task(
+pub(crate) fn handle_task(
     app: &tauri::AppHandle,
     state: &ConnectionManager,
     registry: &WorkspaceWindowRegistry,
@@ -135,7 +135,7 @@ pub(super) fn handle_task(
     )
 }
 
-pub(super) fn open_in_ctx(
+pub(crate) fn open_in_ctx(
     app: &tauri::AppHandle,
     target: &DeepLinkTarget,
     line: Option<u32>,
@@ -146,7 +146,7 @@ pub(super) fn open_in_ctx(
     open_file_preview_window_with_label(app, &label, &url)
 }
 
-pub(super) fn open_file_preview_window_with_label(
+pub(crate) fn open_file_preview_window_with_label(
     app: &tauri::AppHandle,
     label: &str,
     route: &str,
@@ -184,7 +184,7 @@ fn build_file_preview_url(target: &DeepLinkTarget, line: Option<u32>, col: Optio
     format!("/file?{}", serializer.finish())
 }
 
-pub(super) fn resolve_editor_target(
+pub(crate) fn resolve_editor_target(
     settings: &DesktopEditorSettings,
     override_target: Option<&DesktopEditorTarget>,
 ) -> Result<Option<DesktopEditorTarget>> {
@@ -205,7 +205,7 @@ pub(super) fn resolve_editor_target(
     Ok(Some(target))
 }
 
-pub(super) fn offer_editor_settings(app: &tauri::AppHandle) {
+pub(crate) fn offer_editor_settings(app: &tauri::AppHandle) {
     let should_open = app
         .dialog()
         .message("No editor is configured. Open Settings to pick one?")
@@ -220,11 +220,11 @@ pub(super) fn offer_editor_settings(app: &tauri::AppHandle) {
     }
 }
 
-pub(super) fn open_settings_window(app: &tauri::AppHandle) -> Result<()> {
+pub(crate) fn open_settings_window(app: &tauri::AppHandle) -> Result<()> {
     open_settings_window_at_route(app, "settings", "/settings")
 }
 
-pub(super) fn open_settings_window_at_route(
+pub(crate) fn open_settings_window_at_route(
     app: &tauri::AppHandle,
     label: &str,
     route: &str,

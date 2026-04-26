@@ -190,6 +190,22 @@ fn ensure_mode_needs_connect(
     }
 }
 
+fn current_local_connection_stale<ProbeHealthFn>(
+    info: &DesktopConnectionInfo,
+    probe_health: ProbeHealthFn,
+) -> bool
+where
+    ProbeHealthFn: Fn(&str) -> Result<()>,
+{
+    if !matches!(info.kind, DesktopConnectionKind::Local) {
+        return false;
+    }
+    let Some(url) = info.base_url.as_deref() else {
+        return true;
+    };
+    probe_health(url).is_err()
+}
+
 fn set_attached_local_for_ensure_mode(
     state: &ConnectionManager,
     mode: EnsureLocalConnectionMode,
@@ -276,7 +292,10 @@ fn ensure_local_connection_with_mode(
     mode: EnsureLocalConnectionMode,
 ) -> Result<()> {
     let result = (|| -> Result<()> {
-        if !ensure_mode_needs_connect(mode, &state.info()) {
+        let initial_info = state.info();
+        if !ensure_mode_needs_connect(mode, &initial_info)
+            && !current_local_connection_stale(&initial_info, probe_daemon_health)
+        {
             return Ok(());
         }
         if !ensure_mode_allows_connect(mode, state) {
@@ -286,7 +305,10 @@ fn ensure_local_connection_with_mode(
         // Serialize the "connect local" path so we don't concurrently spawn the daemon and trip the
         // daemon's lockfile, which can surface as spurious "daemon unavailable" errors in the UI.
         let _guard = lock_local_connect_gate()?;
-        if !ensure_mode_needs_connect(mode, &state.info()) {
+        let current_info = state.info();
+        if !ensure_mode_needs_connect(mode, &current_info)
+            && !current_local_connection_stale(&current_info, probe_daemon_health)
+        {
             return Ok(());
         }
         if !ensure_mode_allows_connect(mode, state) {
@@ -422,6 +444,45 @@ mod desktop_local_daemon_tests {
             EnsureLocalConnectionMode::AutoBootstrap,
             &connection_info_with_kind(DesktopConnectionKind::Ssh)
         ));
+    }
+
+    #[test]
+    fn local_connection_stale_when_health_probe_fails() {
+        let info = DesktopConnectionInfo {
+            kind: DesktopConnectionKind::Local,
+            base_url: Some("http://127.0.0.1:43535".to_string()),
+            intent: DesktopConnectionIntent::AutoLocalBootstrap,
+            local_auto_bootstrap_allowed: true,
+            token: Some("token".to_string()),
+            host: None,
+            user: None,
+            remote_port: None,
+            remote_data_dir: None,
+            remote_update_message: None,
+            remote_update_state: None,
+        };
+        assert!(current_local_connection_stale(&info, |_url| {
+            Err(anyhow!("connection refused"))
+        }));
+        assert!(!current_local_connection_stale(&info, |_url| Ok(())));
+    }
+
+    #[test]
+    fn local_connection_without_base_url_is_treated_as_stale() {
+        let info = DesktopConnectionInfo {
+            kind: DesktopConnectionKind::Local,
+            base_url: None,
+            intent: DesktopConnectionIntent::AutoLocalBootstrap,
+            local_auto_bootstrap_allowed: true,
+            token: Some("token".to_string()),
+            host: None,
+            user: None,
+            remote_port: None,
+            remote_data_dir: None,
+            remote_update_message: None,
+            remote_update_state: None,
+        };
+        assert!(current_local_connection_stale(&info, |_url| Ok(())));
     }
 
     #[cfg(unix)]

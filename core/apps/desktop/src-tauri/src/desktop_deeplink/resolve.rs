@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) fn resolve_target_path(
+pub(crate) fn resolve_target_path(
     state: &ConnectionManager,
     target: &DeepLinkTarget,
 ) -> Result<PathBuf> {
@@ -21,7 +21,7 @@ pub(super) fn resolve_target_path(
     }
 }
 
-pub(super) fn is_target_in_open_workspace(
+pub(crate) fn is_target_in_open_workspace(
     state: &ConnectionManager,
     registry: &WorkspaceWindowRegistry,
     target: &DeepLinkTarget,
@@ -50,7 +50,7 @@ pub(super) fn is_target_in_open_workspace(
     }
 }
 
-pub(super) fn resolve_or_create_workspace_id(
+pub(crate) fn resolve_or_create_workspace_id(
     state: &ConnectionManager,
     root_path: &str,
 ) -> Result<String> {
@@ -80,7 +80,7 @@ pub(super) fn resolve_or_create_workspace_id(
         .ok_or_else(|| anyhow!("workspace id missing"))
 }
 
-pub(super) fn resolve_workspace_id_by_path(
+pub(crate) fn resolve_workspace_id_by_path(
     state: &ConnectionManager,
     root_path: &str,
 ) -> Result<Option<String>> {
@@ -116,7 +116,7 @@ pub(super) fn resolve_workspace_id_by_path(
     Ok(None)
 }
 
-pub(super) fn resolve_workspace_root(
+pub(crate) fn resolve_workspace_root(
     state: &ConnectionManager,
     workspace_id: &str,
 ) -> Result<PathBuf> {
@@ -142,7 +142,7 @@ pub(super) fn resolve_workspace_root(
     Ok(PathBuf::from(root))
 }
 
-pub(super) fn resolve_worktree_info(
+pub(crate) fn resolve_worktree_info(
     state: &ConnectionManager,
     worktree_id: &str,
 ) -> Result<WorktreeInfo> {

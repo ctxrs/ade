@@ -4,12 +4,14 @@ use ctx_desktop_ipc::{
     DesktopWebviewRecoveryTriggerKind,
 };
 
+use super::super::policy::{
+    decide_recovery_action, prune_recent_incidents, HEARTBEAT_TIMEOUT_MS, STARTUP_GRACE_MS,
+};
 use super::model::PreparedRecoveryIncident;
-use super::policy::{decide_recovery_action, prune_recent_incidents, HEARTBEAT_TIMEOUT_MS, STARTUP_GRACE_MS};
 use super::*;
 
 impl DesktopWebviewRecoveryController {
-    pub(super) fn prepare_incident(
+    pub(in crate::desktop_webview_recovery) fn prepare_incident(
         &self,
         window_label: &str,
         trigger_kind: DesktopWebviewRecoveryTriggerKind,
@@ -79,7 +81,7 @@ impl DesktopWebviewRecoveryController {
         Some(PreparedRecoveryIncident { incident, action })
     }
 
-    pub(super) fn finish_recovery_action(
+    pub(in crate::desktop_webview_recovery) fn finish_recovery_action(
         &self,
         window_label: &str,
         trigger_kind: DesktopWebviewRecoveryTriggerKind,
@@ -113,7 +115,7 @@ impl DesktopWebviewRecoveryController {
         }
     }
 
-    pub(super) fn fail_recovery_action(&self, window_label: &str) {
+    pub(in crate::desktop_webview_recovery) fn fail_recovery_action(&self, window_label: &str) {
         let Ok(mut guard) = self.inner.lock() else {
             return;
         };
@@ -124,7 +126,7 @@ impl DesktopWebviewRecoveryController {
         entry.pending_heartbeat_timeout = false;
     }
 
-    pub(super) fn current_window_labels(&self) -> Vec<String> {
+    pub(in crate::desktop_webview_recovery) fn current_window_labels(&self) -> Vec<String> {
         let Ok(guard) = self.inner.lock() else {
             return Vec::new();
         };

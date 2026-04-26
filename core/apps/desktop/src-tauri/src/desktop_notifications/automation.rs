@@ -3,11 +3,11 @@ use std::sync::Mutex;
 use ctx_desktop_ipc::{DesktopNotificationKind, DesktopShowSystemNotificationReq};
 use serde::{Deserialize, Serialize};
 
-pub(super) const NOTIFICATION_IDENTIFIER_PREFIX: &str = "ctx-task-notification-";
+pub(crate) const NOTIFICATION_IDENTIFIER_PREFIX: &str = "ctx-task-notification-";
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub(super) struct DesktopNotificationAutomationSnapshot {
+pub(crate) struct DesktopNotificationAutomationSnapshot {
     #[serde(skip_serializing_if = "Option::is_none")]
     body: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -27,41 +27,41 @@ pub(super) struct DesktopNotificationAutomationSnapshot {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub(super) struct DesktopDeliveredNotificationSnapshot {
-    pub(super) delivered: Vec<DesktopDeliveredNotificationEntry>,
+pub(crate) struct DesktopDeliveredNotificationSnapshot {
+    pub(crate) delivered: Vec<DesktopDeliveredNotificationEntry>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub(super) struct DesktopDeliveredNotificationEntry {
+pub(crate) struct DesktopDeliveredNotificationEntry {
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(super) body: Option<String>,
+    pub(crate) body: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(super) deep_link: Option<String>,
-    pub(super) identifier: String,
-    pub(super) title: String,
+    pub(crate) deep_link: Option<String>,
+    pub(crate) identifier: String,
+    pub(crate) title: String,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub(super) struct DesktopClearDeliveredNotificationsReq {
-    pub(super) identifiers: Vec<String>,
+pub(crate) struct DesktopClearDeliveredNotificationsReq {
+    pub(crate) identifiers: Vec<String>,
 }
 
 #[derive(Debug, Default)]
-pub(super) struct DesktopNotificationAutomationState {
+pub(crate) struct DesktopNotificationAutomationState {
     snapshot: Mutex<DesktopNotificationAutomationSnapshot>,
 }
 
 impl DesktopNotificationAutomationState {
     #[cfg(any(feature = "automation", test))]
-    pub(super) fn clear(&self) {
+    pub(crate) fn clear(&self) {
         if let Ok(mut guard) = self.snapshot.lock() {
             *guard = DesktopNotificationAutomationSnapshot::default();
         }
     }
 
-    pub(super) fn record(&self, req: &DesktopShowSystemNotificationReq, deep_link: &str) {
+    pub(crate) fn record(&self, req: &DesktopShowSystemNotificationReq, deep_link: &str) {
         if let Ok(mut guard) = self.snapshot.lock() {
             let next_count = guard.shown_count.saturating_add(1);
             *guard = DesktopNotificationAutomationSnapshot {
@@ -78,7 +78,7 @@ impl DesktopNotificationAutomationState {
     }
 
     #[cfg(any(feature = "automation", test))]
-    pub(super) fn snapshot(&self) -> DesktopNotificationAutomationSnapshot {
+    pub(crate) fn snapshot(&self) -> DesktopNotificationAutomationSnapshot {
         match self.snapshot.lock() {
             Ok(guard) => guard.clone(),
             Err(_) => DesktopNotificationAutomationSnapshot::default(),
@@ -86,7 +86,7 @@ impl DesktopNotificationAutomationState {
     }
 
     #[cfg(feature = "automation")]
-    pub(super) fn last_deep_link(&self) -> Option<String> {
+    pub(crate) fn last_deep_link(&self) -> Option<String> {
         match self.snapshot.lock() {
             Ok(guard) => guard.deep_link.clone(),
             Err(_) => None,

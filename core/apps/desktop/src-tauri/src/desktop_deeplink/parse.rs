@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) fn parse_deep_link(url: &Url) -> Result<DeepLinkAction> {
+pub(crate) fn parse_deep_link(url: &Url) -> Result<DeepLinkAction> {
     let scheme = url.scheme();
     if scheme != "ctx" {
         anyhow::bail!("unsupported scheme: {scheme}");
@@ -30,7 +30,7 @@ pub(super) fn parse_deep_link(url: &Url) -> Result<DeepLinkAction> {
     }
 }
 
-pub(super) fn parse_open(params: &HashMap<String, String>) -> Result<DeepLinkOpen> {
+pub(crate) fn parse_open(params: &HashMap<String, String>) -> Result<DeepLinkOpen> {
     let target = parse_target(params)?;
     let line = parse_optional_positive(params.get("line"));
     let col = parse_optional_positive(params.get("col"));
@@ -50,13 +50,13 @@ pub(super) fn parse_open(params: &HashMap<String, String>) -> Result<DeepLinkOpe
     })
 }
 
-pub(super) fn parse_reveal(params: &HashMap<String, String>) -> Result<DeepLinkReveal> {
+pub(crate) fn parse_reveal(params: &HashMap<String, String>) -> Result<DeepLinkReveal> {
     let target = parse_target(params)?;
     let token = params.get("token").cloned();
     Ok(DeepLinkReveal { target, token })
 }
 
-pub(super) fn parse_workspace(params: &HashMap<String, String>) -> Result<DeepLinkWorkspace> {
+pub(crate) fn parse_workspace(params: &HashMap<String, String>) -> Result<DeepLinkWorkspace> {
     let workspace_id = params.get("workspaceId").cloned();
     let path = params.get("path").cloned();
     if workspace_id.is_none() && path.is_none() {
@@ -65,7 +65,7 @@ pub(super) fn parse_workspace(params: &HashMap<String, String>) -> Result<DeepLi
     Ok(DeepLinkWorkspace { workspace_id, path })
 }
 
-pub(super) fn parse_task(params: &HashMap<String, String>) -> Result<DeepLinkTask> {
+pub(crate) fn parse_task(params: &HashMap<String, String>) -> Result<DeepLinkTask> {
     let workspace_id = params
         .get("workspaceId")
         .map(String::as_str)
@@ -93,7 +93,7 @@ pub(super) fn parse_task(params: &HashMap<String, String>) -> Result<DeepLinkTas
     })
 }
 
-pub(super) fn parse_target(params: &HashMap<String, String>) -> Result<DeepLinkTarget> {
+pub(crate) fn parse_target(params: &HashMap<String, String>) -> Result<DeepLinkTarget> {
     let worktree_id = params.get("worktreeId").cloned();
     let file = params.get("file").cloned();
     let path = params.get("path").cloned();
@@ -109,7 +109,7 @@ pub(super) fn parse_target(params: &HashMap<String, String>) -> Result<DeepLinkT
     Ok(DeepLinkTarget::Path { path })
 }
 
-pub(super) fn parse_open_with(value: Option<&String>) -> Result<DeepLinkOpenWith> {
+pub(crate) fn parse_open_with(value: Option<&String>) -> Result<DeepLinkOpenWith> {
     match value.map(|v| v.trim().to_lowercase()) {
         None => Ok(DeepLinkOpenWith::Ctx),
         Some(v) if v == "ctx" => Ok(DeepLinkOpenWith::Ctx),
@@ -119,7 +119,7 @@ pub(super) fn parse_open_with(value: Option<&String>) -> Result<DeepLinkOpenWith
     }
 }
 
-pub(super) fn parse_editor_target(value: &str) -> Result<DesktopEditorTarget> {
+pub(crate) fn parse_editor_target(value: &str) -> Result<DesktopEditorTarget> {
     match value.trim().to_lowercase().as_str() {
         "vscode" => Ok(DesktopEditorTarget::VsCode),
         "vscode_insiders" => Ok(DesktopEditorTarget::VsCodeInsiders),
@@ -136,11 +136,11 @@ pub(super) fn parse_editor_target(value: &str) -> Result<DesktopEditorTarget> {
     }
 }
 
-pub(super) fn parse_optional_positive(value: Option<&String>) -> Option<u32> {
+pub(crate) fn parse_optional_positive(value: Option<&String>) -> Option<u32> {
     value.and_then(|v| v.parse::<u32>().ok()).filter(|v| *v > 0)
 }
 
-pub(super) fn validate_relative_file(path: &str) -> Result<String> {
+pub(crate) fn validate_relative_file(path: &str) -> Result<String> {
     if path.trim().is_empty() {
         anyhow::bail!("file is empty");
     }
@@ -160,7 +160,7 @@ pub(super) fn validate_relative_file(path: &str) -> Result<String> {
     Ok(path.to_string())
 }
 
-pub(super) fn validate_absolute_path(path: &str) -> Result<String> {
+pub(crate) fn validate_absolute_path(path: &str) -> Result<String> {
     if path.trim().is_empty() {
         anyhow::bail!("path is empty");
     }

@@ -1,5 +1,7 @@
+use super::*;
+
 #[derive(Debug)]
-pub(super) enum DeepLinkAction {
+pub(crate) enum DeepLinkAction {
     Open(DeepLinkOpen),
     Reveal(DeepLinkReveal),
     Workspace(DeepLinkWorkspace),
@@ -8,48 +10,48 @@ pub(super) enum DeepLinkAction {
 }
 
 #[derive(Debug)]
-pub(super) struct DeepLinkOpen {
-    pub(super) target: DeepLinkTarget,
-    pub(super) line: Option<u32>,
-    pub(super) col: Option<u32>,
-    pub(super) open_with: DeepLinkOpenWith,
-    pub(super) editor_override: Option<DesktopEditorTarget>,
-    pub(super) token: Option<String>,
+pub(crate) struct DeepLinkOpen {
+    pub(crate) target: DeepLinkTarget,
+    pub(crate) line: Option<u32>,
+    pub(crate) col: Option<u32>,
+    pub(crate) open_with: DeepLinkOpenWith,
+    pub(crate) editor_override: Option<DesktopEditorTarget>,
+    pub(crate) token: Option<String>,
 }
 
 #[derive(Debug)]
-pub(super) struct DeepLinkReveal {
-    pub(super) target: DeepLinkTarget,
-    pub(super) token: Option<String>,
+pub(crate) struct DeepLinkReveal {
+    pub(crate) target: DeepLinkTarget,
+    pub(crate) token: Option<String>,
 }
 
 #[derive(Debug)]
-pub(super) struct DeepLinkWorkspace {
-    pub(super) workspace_id: Option<String>,
-    pub(super) path: Option<String>,
+pub(crate) struct DeepLinkWorkspace {
+    pub(crate) workspace_id: Option<String>,
+    pub(crate) path: Option<String>,
 }
 
 #[derive(Debug)]
-pub(super) struct DeepLinkTask {
-    pub(super) session_id: Option<String>,
-    pub(super) task_id: String,
-    pub(super) workspace_id: String,
+pub(crate) struct DeepLinkTask {
+    pub(crate) session_id: Option<String>,
+    pub(crate) task_id: String,
+    pub(crate) workspace_id: String,
 }
 
 #[derive(Debug)]
-pub(super) enum DeepLinkTarget {
+pub(crate) enum DeepLinkTarget {
     WorktreeFile { worktree_id: String, file: String },
     Path { path: String },
 }
 
 #[derive(Debug)]
-pub(super) struct WorktreeInfo {
-    pub(super) root: PathBuf,
-    pub(super) workspace_id: String,
+pub(crate) struct WorktreeInfo {
+    pub(crate) root: PathBuf,
+    pub(crate) workspace_id: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum DeepLinkOpenWith {
+pub(crate) enum DeepLinkOpenWith {
     Ctx,
     Editor,
     System,

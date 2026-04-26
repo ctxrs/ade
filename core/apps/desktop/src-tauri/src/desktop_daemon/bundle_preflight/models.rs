@@ -4,80 +4,80 @@ use std::collections::{HashMap, HashSet};
 use super::RuntimeTarget;
 
 #[derive(Debug, Clone, Deserialize)]
-pub(super) struct DesktopBundledAssetsManifest {
+pub(crate) struct DesktopBundledAssetsManifest {
     #[allow(dead_code)]
     version: u32,
     #[serde(default)]
-    pub(super) providers: Vec<DesktopBundledProvider>,
+    pub(crate) providers: Vec<DesktopBundledProvider>,
     #[serde(default)]
-    pub(super) runtimes: Vec<DesktopBundledRuntime>,
+    pub(crate) runtimes: Vec<DesktopBundledRuntime>,
     #[serde(default)]
-    pub(super) images: Vec<DesktopBundledImage>,
+    pub(crate) images: Vec<DesktopBundledImage>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
-pub(super) struct DesktopBundledProviderManifest {
-    pub(super) version: u32,
+pub(crate) struct DesktopBundledProviderManifest {
+    pub(crate) version: u32,
     #[serde(default)]
-    pub(super) providers: Vec<serde_json::Value>,
+    pub(crate) providers: Vec<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
-pub(super) struct DesktopBundledProvider {
-    pub(super) id: String,
-    pub(super) os: String,
-    pub(super) arch: String,
-    pub(super) command: String,
+pub(crate) struct DesktopBundledProvider {
+    pub(crate) id: String,
+    pub(crate) os: String,
+    pub(crate) arch: String,
+    pub(crate) command: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
-pub(super) struct DesktopBundledRuntime {
-    pub(super) id: String,
-    pub(super) os: String,
-    pub(super) arch: String,
-    pub(super) root: String,
-    pub(super) bin: String,
+pub(crate) struct DesktopBundledRuntime {
+    pub(crate) id: String,
+    pub(crate) os: String,
+    pub(crate) arch: String,
+    pub(crate) root: String,
+    pub(crate) bin: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
-pub(super) struct DesktopBundledImage {
-    pub(super) id: String,
-    pub(super) os: String,
-    pub(super) arch: String,
-    pub(super) tar: String,
+pub(crate) struct DesktopBundledImage {
+    pub(crate) id: String,
+    pub(crate) os: String,
+    pub(crate) arch: String,
+    pub(crate) tar: String,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
-pub(super) struct RuntimeLockRequiredTargets {
+pub(crate) struct RuntimeLockRequiredTargets {
     #[serde(default)]
-    pub(super) provider: Vec<String>,
+    pub(crate) provider: Vec<String>,
     #[serde(default)]
-    pub(super) runtime: Vec<String>,
+    pub(crate) runtime: Vec<String>,
     #[serde(default)]
-    pub(super) image: Vec<String>,
+    pub(crate) image: Vec<String>,
     #[serde(default)]
-    pub(super) machine_cache: Vec<String>,
+    pub(crate) machine_cache: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
-pub(super) struct RuntimeLockRequired {
+pub(crate) struct RuntimeLockRequired {
     #[serde(default)]
-    pub(super) provider_ids: Vec<String>,
+    pub(crate) provider_ids: Vec<String>,
     #[serde(default)]
-    pub(super) runtime_ids: Vec<String>,
+    pub(crate) runtime_ids: Vec<String>,
     #[serde(default)]
-    pub(super) image_ids: Vec<String>,
+    pub(crate) image_ids: Vec<String>,
     #[serde(default)]
-    pub(super) machine_cache_ids: Vec<String>,
-    pub(super) targets: RuntimeLockRequiredTargets,
+    pub(crate) machine_cache_ids: Vec<String>,
+    pub(crate) targets: RuntimeLockRequiredTargets,
 }
 
 #[derive(Debug, Clone, Deserialize)]
-pub(super) struct RuntimeLockV2 {
-    pub(super) version: u32,
+pub(crate) struct RuntimeLockV2 {
+    pub(crate) version: u32,
     #[serde(default)]
     profiles: HashMap<String, RuntimeLockProfile>,
-    pub(super) required: RuntimeLockRequired,
+    pub(crate) required: RuntimeLockRequired,
     #[serde(default)]
     components: Vec<RuntimeLockComponent>,
 }
@@ -121,29 +121,32 @@ struct RuntimeLockComponentHelpers {
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
-pub(super) struct RuntimeLockComponent {
+pub(crate) struct RuntimeLockComponent {
     #[serde(default)]
-    pub(super) kind: String,
+    pub(crate) kind: String,
     #[serde(default)]
-    pub(super) id: String,
+    pub(crate) id: String,
     #[serde(default)]
-    pub(super) os: String,
+    pub(crate) os: String,
     #[serde(default)]
-    pub(super) arch: String,
+    pub(crate) arch: String,
     #[serde(default)]
-    pub(super) variant: Option<String>,
+    pub(crate) variant: Option<String>,
     #[serde(default)]
     sources: Vec<RuntimeLockComponentSource>,
     #[serde(default)]
     helpers: RuntimeLockComponentHelpers,
 }
 
-pub(super) fn allowed_source_types_for_profile(
+pub(crate) fn allowed_source_types_for_profile(
     lock: &RuntimeLockV2,
     profile: &str,
 ) -> HashSet<String> {
     let mut out = HashSet::new();
-    let cfg = lock.profiles.get(profile).or_else(|| lock.profiles.get("parity"));
+    let cfg = lock
+        .profiles
+        .get(profile)
+        .or_else(|| lock.profiles.get("parity"));
     if let Some(cfg) = cfg {
         for source_type in &cfg.allowed_source_types {
             let trimmed = source_type.trim();
@@ -194,7 +197,7 @@ fn lock_component_has_managed_source(
     })
 }
 
-pub(super) fn required_component_has_managed_source(
+pub(crate) fn required_component_has_managed_source(
     lock: &RuntimeLockV2,
     kind: &str,
     id: &str,
@@ -206,7 +209,7 @@ pub(super) fn required_component_has_managed_source(
         .unwrap_or(false)
 }
 
-pub(super) fn find_required_component<'a>(
+pub(crate) fn find_required_component<'a>(
     lock: &'a RuntimeLockV2,
     kind: &str,
     id: &str,
@@ -261,7 +264,7 @@ fn helper_metadata_complete(
     }
 }
 
-pub(super) fn avf_helper_names_and_paths() -> [(&'static str, &'static str); 5] {
+pub(crate) fn avf_helper_names_and_paths() -> [(&'static str, &'static str); 5] {
     [
         ("kernel", "helpers/kernel"),
         ("initrd", "helpers/initrd"),
@@ -271,7 +274,7 @@ pub(super) fn avf_helper_names_and_paths() -> [(&'static str, &'static str); 5] 
     ]
 }
 
-pub(super) fn avf_helper_metadata_complete(component: &RuntimeLockComponent) -> bool {
+pub(crate) fn avf_helper_metadata_complete(component: &RuntimeLockComponent) -> bool {
     helper_metadata_complete(component.helpers.kernel.as_ref(), true)
         && helper_metadata_complete(component.helpers.initrd.as_ref(), true)
         && helper_metadata_complete(component.helpers.guest_agent.as_ref(), true)

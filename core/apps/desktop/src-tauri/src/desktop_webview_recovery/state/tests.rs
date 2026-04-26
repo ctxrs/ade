@@ -4,8 +4,8 @@ use ctx_desktop_ipc::{
     DesktopWebviewRecoveryTriggerKind, DesktopWebviewSurface,
 };
 
+use super::super::policy::{HEARTBEAT_CONFIRMATION_MS, STARTUP_GRACE_MS};
 use super::model::HeartbeatTimeoutEvaluation;
-use super::policy::{HEARTBEAT_CONFIRMATION_MS, STARTUP_GRACE_MS};
 use super::*;
 
 #[test]
@@ -22,7 +22,8 @@ fn heartbeat_timeout_requires_confirmation_after_startup_grace() {
         HeartbeatTimeoutEvaluation::AwaitConfirmation
     );
     assert_eq!(
-        controller.evaluate_heartbeat_timeout("main", STARTUP_GRACE_MS + HEARTBEAT_CONFIRMATION_MS - 1),
+        controller
+            .evaluate_heartbeat_timeout("main", STARTUP_GRACE_MS + HEARTBEAT_CONFIRMATION_MS - 1),
         HeartbeatTimeoutEvaluation::AwaitConfirmation
     );
     assert_eq!(

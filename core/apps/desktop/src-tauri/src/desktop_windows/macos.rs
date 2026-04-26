@@ -1,9 +1,9 @@
 use super::*;
 
 #[cfg(target_os = "macos")]
-pub(super) static SETTINGS_BUTTON_APP: OnceLock<tauri::AppHandle> = OnceLock::new();
+pub(crate) static SETTINGS_BUTTON_APP: OnceLock<tauri::AppHandle> = OnceLock::new();
 #[cfg(target_os = "macos")]
-pub(super) static SETTINGS_BUTTON_CLASS: Once = Once::new();
+pub(crate) static SETTINGS_BUTTON_CLASS: Once = Once::new();
 
 #[cfg(target_os = "macos")]
 extern "C" fn settings_button_clicked(_this: &AnyObject, _cmd: Sel, _sender: *mut AnyObject) {
@@ -13,11 +13,11 @@ extern "C" fn settings_button_clicked(_this: &AnyObject, _cmd: Sel, _sender: *mu
 }
 
 #[cfg(target_os = "macos")]
-pub(super) fn emit_settings_inplace(app: &tauri::AppHandle, target: &AnyObject) {
+pub(crate) fn emit_settings_inplace(app: &tauri::AppHandle, target: &AnyObject) {
     const OPEN_SETTINGS_SCRIPT: &str = "(() => { let t = '/settings'; const p = window.location.pathname || '/'; \
         if (p.startsWith('/workspaces/')) { const ws = p.split('/')[2]; if (ws) { t = `/settings?ws=${encodeURIComponent(ws)}`; } } \
         window.dispatchEvent(new CustomEvent('ctx:open-settings', { detail: { target: t } })); })();";
-    const WINDOW_LABEL_IVAR: &[u8] = b\"ctxWindowLabel\\0\";
+    const WINDOW_LABEL_IVAR: &[u8] = b"ctxWindowLabel\0";
     let Some(class) = settings_button_target_class() else {
         return;
     };
@@ -49,9 +49,9 @@ pub(super) fn emit_settings_inplace(app: &tauri::AppHandle, target: &AnyObject) 
 }
 
 #[cfg(target_os = "macos")]
-pub(super) fn settings_button_target_class() -> Option<&'static AnyClass> {
-    const CLASS_NAME: &[u8] = b\"CtxSettingsButtonTarget\\0\";
-    const WINDOW_LABEL_IVAR: &[u8] = b\"ctxWindowLabel\\0\";
+pub(crate) fn settings_button_target_class() -> Option<&'static AnyClass> {
+    const CLASS_NAME: &[u8] = b"CtxSettingsButtonTarget\0";
+    const WINDOW_LABEL_IVAR: &[u8] = b"ctxWindowLabel\0";
     SETTINGS_BUTTON_CLASS.call_once(|| {
         let Some(class_name) = CStr::from_bytes_with_nul(CLASS_NAME).ok() else {
             eprintln!("failed to parse settings button class name");
@@ -78,7 +78,7 @@ pub(super) fn settings_button_target_class() -> Option<&'static AnyClass> {
 }
 
 #[cfg(target_os = "macos")]
-pub(super) fn install_macos_settings_button(
+pub(crate) fn install_macos_settings_button(
     app: &tauri::AppHandle,
     window: &tauri::WebviewWindow,
 ) -> Result<()> {
@@ -112,7 +112,7 @@ pub(super) fn install_macos_settings_button(
             return;
         };
         let label_ptr = label_cstr.into_raw();
-        let Some(ivar_name) = CStr::from_bytes_with_nul(b\"ctxWindowLabel\\0\").ok() else {
+        let Some(ivar_name) = CStr::from_bytes_with_nul(b"ctxWindowLabel\0").ok() else {
             return;
         };
         let Some(ivar) = cls.instance_variable(ivar_name) else {
@@ -153,14 +153,14 @@ pub(super) fn install_macos_settings_button(
 }
 
 #[cfg(target_os = "macos")]
-pub(super) fn load_lucide_settings_icon(icon_path: &str) -> Option<Retained<NSImage>> {
+pub(crate) fn load_lucide_settings_icon(icon_path: &str) -> Option<Retained<NSImage>> {
     let ns_path = NSString::from_str(icon_path);
     let image = NSImage::initWithContentsOfFile(NSImage::alloc(), &ns_path)?;
     image.setTemplate(true);
     Some(image)
 }
 
-pub(super) fn apply_workbench_titlebar<'a, R: tauri::Runtime, M: tauri::Manager<R>>(
+pub(crate) fn apply_workbench_titlebar<'a, R: tauri::Runtime, M: tauri::Manager<R>>(
     builder: tauri::WebviewWindowBuilder<'a, R, M>,
 ) -> tauri::WebviewWindowBuilder<'a, R, M> {
     #[cfg(target_os = "macos")]

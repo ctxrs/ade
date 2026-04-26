@@ -1,9 +1,9 @@
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct RuntimeTarget {
-    pub(super) os: String,
-    pub(super) arch: String,
+pub(crate) struct RuntimeTarget {
+    pub(crate) os: String,
+    pub(crate) arch: String,
 }
 
 fn normalize_target_token(raw: &str, host_value: &str) -> Option<String> {
@@ -17,7 +17,7 @@ fn normalize_target_token(raw: &str, host_value: &str) -> Option<String> {
     Some(trimmed.to_string())
 }
 
-pub(super) fn parse_target(raw: &str, host_os: &str, host_arch: &str) -> Option<RuntimeTarget> {
+pub(crate) fn parse_target(raw: &str, host_os: &str, host_arch: &str) -> Option<RuntimeTarget> {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
         return None;
@@ -28,7 +28,7 @@ pub(super) fn parse_target(raw: &str, host_os: &str, host_arch: &str) -> Option<
     Some(RuntimeTarget { os, arch })
 }
 
-pub(super) fn required_targets_or_default(
+pub(crate) fn required_targets_or_default(
     configured: &[String],
     fallback: &[RuntimeTarget],
     host_os: &str,
@@ -51,7 +51,7 @@ pub(super) fn required_targets_or_default(
     out
 }
 
-pub(super) fn host_default_provider_targets() -> Vec<RuntimeTarget> {
+pub(crate) fn host_default_provider_targets() -> Vec<RuntimeTarget> {
     let host_os = std::env::consts::OS.to_string();
     let host_arch = std::env::consts::ARCH.to_string();
     if host_os == "macos" && host_arch == "aarch64" {
@@ -84,11 +84,11 @@ pub(super) fn host_default_provider_targets() -> Vec<RuntimeTarget> {
     out
 }
 
-pub(super) fn host_default_runtime_targets() -> Vec<RuntimeTarget> {
+pub(crate) fn host_default_runtime_targets() -> Vec<RuntimeTarget> {
     host_default_provider_targets()
 }
 
-pub(super) fn host_default_image_targets() -> Vec<RuntimeTarget> {
+pub(crate) fn host_default_image_targets() -> Vec<RuntimeTarget> {
     let host_arch = std::env::consts::ARCH.to_string();
     if std::env::consts::OS == "macos" && host_arch == "aarch64" {
         return vec![
@@ -108,7 +108,7 @@ pub(super) fn host_default_image_targets() -> Vec<RuntimeTarget> {
     }]
 }
 
-pub(super) fn host_default_machine_cache_targets() -> Vec<RuntimeTarget> {
+pub(crate) fn host_default_machine_cache_targets() -> Vec<RuntimeTarget> {
     if std::env::consts::OS != "macos" {
         return Vec::new();
     }
@@ -118,7 +118,7 @@ pub(super) fn host_default_machine_cache_targets() -> Vec<RuntimeTarget> {
     }]
 }
 
-pub(super) fn host_relevant_targets(
+pub(crate) fn host_relevant_targets(
     all_targets: &[RuntimeTarget],
     fallback: &[RuntimeTarget],
 ) -> Vec<RuntimeTarget> {
