@@ -8,6 +8,7 @@ const buildFile = fs.readFileSync(path.join(repoRoot, "core", "apps", "web", "BU
 const e2eBuildFile = fs.readFileSync(path.join(repoRoot, "core", "apps", "web", "e2e", "BUILD.bazel"), "utf8");
 const e2eMacroFile = fs.readFileSync(path.join(repoRoot, "core", "apps", "web", "e2e", "web_e2e_test.bzl"), "utf8");
 const verifyAgentRemote = fs.readFileSync(path.join(repoRoot, "core", "scripts", "verify_agent_remote.cjs"), "utf8");
+const { WEB_SMOKE_BAZEL_TARGETS } = require("./lib/web_smoke_bazel_targets.cjs");
 
 function targetBlock(name) {
   const lines = buildFile.split(/\r?\n/u);
@@ -78,9 +79,12 @@ test("playwright runtime script tests use a dedicated node:test runner instead o
 });
 
 test("verify:agent-remote web profiles run Bazel web targets without dependency hydration", () => {
-  assert.match(verifyAgentRemote, /"web-smoke"[\s\S]*?\/\/core\/packages\/session-supervisor-core:unit_tests/u);
-  assert.match(verifyAgentRemote, /"web-smoke"[\s\S]*?\/\/core\/packages\/session-thread-layout:unit_smoke/u);
-  assert.match(verifyAgentRemote, /"web-smoke"[\s\S]*?\/\/core\/apps\/web:unit_smoke/u);
+  assert.deepEqual(WEB_SMOKE_BAZEL_TARGETS, [
+    "//core/packages/session-supervisor-core:unit_tests",
+    "//core/packages/session-thread-layout:unit_smoke",
+    "//core/apps/web:unit_smoke",
+  ]);
+  assert.match(verifyAgentRemote, /"web-smoke"[\s\S]*?targets: WEB_SMOKE_BAZEL_TARGETS/u);
   assert.match(verifyAgentRemote, /"web-unit"[\s\S]*?\/\/core\/packages\/session-supervisor-core:unit_tests/u);
   assert.match(verifyAgentRemote, /"web-unit"[\s\S]*?\/\/core\/apps\/web:unit_tests_non_pretext/u);
   assert.match(verifyAgentRemote, /"web-unit"[\s\S]*?\/\/core\/packages\/session-thread-layout:unit_tests/u);

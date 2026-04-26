@@ -573,6 +573,50 @@ test("bazel pilot linux remote execution keeps lib builds remote and host execut
   );
 });
 
+test("bazel pilot linux remote execution keeps web-smoke verification fully remote", () => {
+  const invocation = buildBazelPilotInvocation({
+    argv: [
+      "test",
+      "//core/packages/session-supervisor-core:unit_tests",
+      "//core/packages/session-thread-layout:unit_smoke",
+      "//core/apps/web:unit_smoke",
+    ],
+    env: {
+      ...process.env,
+      CTX_VOLATILE_ROOT: "/tmp/ctx-bazel-pilot-web-smoke-linux-rbe",
+      CTX_SESSION_ID: "bazel-web-smoke-linux-rbe-session",
+      CTX_BAZEL_REMOTE_EXECUTION: "linux",
+      BUILD_BUDDY_API_KEY: "buildbuddy-linux-key",
+    },
+  });
+
+  assert.equal(invocation.remoteExecutionMode, "linux");
+  assert.deepEqual(
+    invocation.phases.map((phase) => ({
+      name: phase.name,
+      targets: phase.targets,
+      hasBuildBuddyCache: phase.commandArgs.includes("--config=buildbuddy-cache"),
+      hasLinuxConfig: phase.commandArgs.includes("--config=buildbuddy-linux-rbe"),
+      hasBuildBuddyHeader: phase.commandArgs.includes(
+        "--remote_header=x-buildbuddy-api-key=buildbuddy-linux-key",
+      ),
+    })),
+    [
+      {
+        name: "linux-rbe",
+        targets: [
+          "//core/apps/web:unit_smoke",
+          "//core/packages/session-supervisor-core:unit_tests",
+          "//core/packages/session-thread-layout:unit_smoke",
+        ],
+        hasBuildBuddyCache: true,
+        hasLinuxConfig: true,
+        hasBuildBuddyHeader: true,
+      },
+    ],
+  );
+});
+
 test("BuildBuddy Linux RBE configs pin target and host platforms to Linux", () => {
   const bazelrc = fs.readFileSync(path.resolve(__dirname, "..", "..", ".bazelrc"), "utf8");
   for (const configName of ["buildbuddy-rbe", "buildbuddy-linux-rbe"]) {
@@ -599,6 +643,53 @@ test("BuildBuddy Linux RBE configs pin target and host platforms to Linux", () =
     bazelrc,
     /^common:buildbuddy-linux-arm64-rbe --host_platform=\/\/tools\/bazel\/platforms:linux_arm64$/mu,
   );
+});
+
+test("BuildBuddy Darwin RBE configs pin target and host platforms to Darwin", () => {
+  const bazelrc = fs.readFileSync(path.resolve(__dirname, "..", "..", ".bazelrc"), "utf8");
+  for (const [configName, platformLabel] of [
+    ["buildbuddy-darwin-rbe", "darwin_arm64"],
+    ["buildbuddy-darwin-amd64-rbe", "darwin_x86_64"],
+  ]) {
+    assert.match(
+      bazelrc,
+      new RegExp(`^common:${configName} --platforms=//tools/bazel/platforms:${platformLabel}$`, "mu"),
+    );
+    assert.match(
+      bazelrc,
+      new RegExp(
+        `^common:${configName} --host_platform=//tools/bazel/platforms:${platformLabel}$`,
+        "mu",
+      ),
+    );
+  }
+});
+
+test("BuildBuddy Linux amd64 RBE configs pin the executor container image and docker isolation", () => {
+  const bazelrc = fs.readFileSync(path.resolve(__dirname, "..", "..", ".bazelrc"), "utf8");
+  for (const configName of ["buildbuddy-rbe", "buildbuddy-linux-rbe"]) {
+    assert.match(
+      bazelrc,
+      new RegExp(
+        `^common:${configName} --remote_default_exec_properties=container-image=docker://localhost:5000/buildbuddy-executor:bookworm-amd64$`,
+        "mu",
+      ),
+    );
+    assert.match(
+      bazelrc,
+      new RegExp(
+        `^common:${configName} --remote_default_exec_properties=workload-isolation-type=docker$`,
+        "mu",
+      ),
+    );
+    assert.match(
+      bazelrc,
+      new RegExp(
+        `^common:${configName} --remote_default_exec_properties=dockerUser=root$`,
+        "mu",
+      ),
+    );
+  }
 });
 
 test("bazel pilot keeps run targets local even in linux remote execution mode", () => {

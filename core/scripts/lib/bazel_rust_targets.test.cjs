@@ -3,6 +3,7 @@ const test = require("node:test");
 const { getCtxHttpSuiteTargets } = require("./ctx_http_suites.cjs");
 
 const {
+  buildLinuxRbeSafeBazelTestTargets,
   getBazelBuildTargetsForCrates,
   getBazelCoveredCrates,
   getBazelTestTargetsForCrates,
@@ -231,4 +232,33 @@ test("linux RBE keeps Darwin-incompatible guest-agent tests local", () => {
       localTargets: ["//core/crates/ctx-avf-linux-guest-agent:unit_tests"],
     },
   );
+});
+
+test("linux RBE promotes web-smoke Bazel tests into the remote-safe partition", () => {
+  assert.deepEqual(
+    partitionBazelTargetsForLinuxRbe("test", [
+      "//core/packages/session-supervisor-core:unit_tests",
+      "//core/packages/session-thread-layout:unit_smoke",
+      "//core/apps/web:unit_smoke",
+    ]),
+    {
+      remoteTargets: [
+        "//core/apps/web:unit_smoke",
+        "//core/packages/session-supervisor-core:unit_tests",
+        "//core/packages/session-thread-layout:unit_smoke",
+      ],
+      localTargets: [],
+    },
+  );
+});
+
+test("linux RBE unsafe targets keep final precedence over manual promotions", () => {
+  const safeTargets = buildLinuxRbeSafeBazelTestTargets({
+    unsafeTargets: new Set([
+      "//core/apps/web:unit_smoke",
+    ]),
+  });
+
+  assert.equal(safeTargets.includes("//core/apps/web:unit_smoke"), false);
+  assert.equal(safeTargets.includes("//core/packages/session-supervisor-core:unit_tests"), true);
 });

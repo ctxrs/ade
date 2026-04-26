@@ -1,4 +1,5 @@
 const { getCtxHttpSuiteTargets } = require("./ctx_http_suites.cjs");
+const { WEB_SMOKE_BAZEL_TARGETS } = require("./web_smoke_bazel_targets.cjs");
 
 function sortUnique(values) {
   return [...new Set(values)].filter(Boolean).sort();
@@ -130,10 +131,18 @@ const LINUX_RBE_UNSAFE_BAZEL_TEST_TARGETS = Object.freeze(
   ]),
 );
 
+function buildLinuxRbeSafeBazelTestTargets({
+  unsafeTargets = LINUX_RBE_UNSAFE_BAZEL_TEST_TARGETS,
+} = {}) {
+  const unsafeTargetSet = unsafeTargets instanceof Set ? unsafeTargets : new Set(unsafeTargets || []);
+  return sortUnique([
+    ...flattenTargetMapping(BAZEL_TEST_TARGETS_BY_CRATE),
+    ...WEB_SMOKE_BAZEL_TARGETS,
+  ]).filter((target) => !unsafeTargetSet.has(target));
+}
+
 const LINUX_RBE_SAFE_BAZEL_TEST_TARGETS = Object.freeze(
-  flattenTargetMapping(BAZEL_TEST_TARGETS_BY_CRATE).filter(
-    (target) => !LINUX_RBE_UNSAFE_BAZEL_TEST_TARGETS.has(target),
-  ),
+  buildLinuxRbeSafeBazelTestTargets(),
 );
 
 // Keep Linux RBE build targets conservative on Mac hosts: libraries are safe to
@@ -197,6 +206,7 @@ function partitionBazelTargetsForLinuxRbe(command, targets) {
 module.exports = {
   BAZEL_BUILD_TARGETS_BY_CRATE,
   BAZEL_TEST_TARGETS_BY_CRATE,
+  buildLinuxRbeSafeBazelTestTargets,
   getBazelBuildTargetsForCrates,
   getBazelCoveredCrates,
   getLinuxRbeSafeBazelTargets,
