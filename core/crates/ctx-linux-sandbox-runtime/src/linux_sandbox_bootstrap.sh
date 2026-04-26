@@ -344,6 +344,15 @@ is_safe_uid_gid_pair() {
   [[ "\$1" =~ ^[0-9]+:[0-9]+$ ]]
 }
 
+is_materialization_workspace_path() {
+  case "\${1:-}" in
+    /ctx/ws|/ctx/ws/worktrees|/ctx/ws/worktrees/*)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
 is_safe_env_assignment() {
   [[ "\$1" =~ ^[A-Z0-9_]+= ]]
 }
@@ -362,18 +371,18 @@ is_allowed_root_exec_env_assignment() {
 
 is_allowed_materialization_root_exec() {
   if [[ "\${1:-}" == "mkdir" && "\${2:-}" == "-p" && "\${3:-}" == "--" && \$# -eq 4 ]]; then
-    is_absolute_path "\${4:-}" || return 1
+    is_materialization_workspace_path "\${4:-}" || return 1
     return 0
   fi
 
   if [[ "\${1:-}" == "chown" && \$# -eq 3 ]]; then
-    is_safe_uid_gid_pair "\${2:-}" || return 1
-    is_absolute_path "\${3:-}" || return 1
+    [[ "\${2:-}" == "\${allowed_uid}:\${allowed_gid}" ]] || return 1
+    is_materialization_workspace_path "\${3:-}" || return 1
     return 0
   fi
 
   if [[ "\${1:-}" == "sh" && "\${2:-}" == "-lc" && "\${4:-}" == "sh" && \$# -eq 5 ]]; then
-    is_absolute_path "\${5:-}" || return 1
+    is_materialization_workspace_path "\${5:-}" || return 1
     case "\${3:-}" in
       'mkdir -p -- "\$1" && chmod 0777 "\$1"'|'find "\$1" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +')
         return 0

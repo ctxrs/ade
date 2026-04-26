@@ -862,11 +862,40 @@ async fn handle_command(
             drop(sessions_guard);
 
             if let Some(mode_id) = pending_session_mode_id.as_deref() {
-                apply_requested_session_mode(acp, &acp_session_id, mode_id).await?;
+                if let Err(err) = apply_requested_session_mode(acp, &acp_session_id, mode_id).await
+                {
+                    fail_active_turn(
+                        events_tx,
+                        sessions,
+                        &crp_session_id,
+                        &acp_session_id,
+                        &turn_id,
+                        format!("acp session mode update failed: {err}"),
+                    )
+                    .await;
+                    return Ok(());
+                }
             }
             let effective_requested_model = model.as_deref().or(pending_model_id.as_deref());
-            maybe_apply_requested_session_model(acp, &acp_session_id, &mut prompt_model_catalog, effective_requested_model)
-                .await?;
+            if let Err(err) = maybe_apply_requested_session_model(
+                acp,
+                &acp_session_id,
+                &mut prompt_model_catalog,
+                effective_requested_model,
+            )
+            .await
+            {
+                fail_active_turn(
+                    events_tx,
+                    sessions,
+                    &crp_session_id,
+                    &acp_session_id,
+                    &turn_id,
+                    format!("acp session model update failed: {err}"),
+                )
+                .await;
+                return Ok(());
+            }
 
             let mut sessions_guard = sessions.lock().await;
             let state = sessions_guard
@@ -1587,7 +1616,10 @@ mod tests {
             resolve_deferred_requested_session_mode(None, Some("   ")),
             (None, None)
         );
-        assert_eq!(resolve_deferred_requested_session_mode(None, None), (None, None));
+        assert_eq!(
+            resolve_deferred_requested_session_mode(None, None),
+            (None, None)
+        );
     }
 
     #[test]
@@ -1610,8 +1642,7 @@ mod tests {
 
     #[test]
     fn resolve_deferred_requested_session_mode_reports_invalid_request_without_blocking() {
-        let (pending_mode, notice) =
-            resolve_deferred_requested_session_mode(None, Some("plan"));
+        let (pending_mode, notice) = resolve_deferred_requested_session_mode(None, Some("plan"));
         assert_eq!(pending_mode, None);
         let notice = notice.expect("missing failure notice");
         assert!(
@@ -1788,6 +1819,78 @@ mod tests {
             should_apply_requested_session_mode(Some(&modes), "auto_high")
                 .expect("advertised mode should be accepted")
         );
+    }
+
+    #[tokio::test]
+    async fn fail_active_turn_emits_terminal_event_and_clears_session_turn_state() {
+        let (events_tx, mut events_rx) = tokio::sync::mpsc::channel(4);
+        let sessions = Arc::new(Mutex::new(Sessions::default()));
+        let crp_session_id = "crp-session";
+        let acp_session_id = "acp-session";
+        let turn_id = "turn-1";
+        let mut translator = Translator::new(crp_session_id, crate::translate::ReasoningMode::Omit);
+        translator.start_turn(turn_id, "message-1");
+
+        {
+            let mut sessions_guard = sessions.lock().await;
+            sessions_guard
+                .by_crp
+                .insert(crp_session_id.to_string(), acp_session_id.to_string());
+            sessions_guard.by_acp.insert(
+                acp_session_id.to_string(),
+                SessionState {
+                    translator,
+                    cwd: PathBuf::from("/tmp"),
+                    model_catalog: ModelCatalogState::default(),
+                    pending_session_mode_id: Some("plan".to_string()),
+                    pending_model_id: Some("model".to_string()),
+                    active_turn_id: Some(turn_id.to_string()),
+                    last_turn_update_at: Some(Instant::now()),
+                    turn_update_count: 3,
+                },
+            );
+        }
+
+        fail_active_turn(
+            &events_tx,
+            &sessions,
+            crp_session_id,
+            acp_session_id,
+            turn_id,
+            "session setup failed".to_string(),
+        )
+        .await;
+
+        let event = events_rx
+            .recv()
+            .await
+            .expect("turn completion should be emitted");
+        match event.event {
+            CrpEvent::TurnCompleted {
+                session_id,
+                turn_id: completed_turn_id,
+                status,
+                error,
+            } => {
+                assert_eq!(session_id, crp_session_id);
+                assert_eq!(completed_turn_id, turn_id);
+                assert!(matches!(status, CrpTurnStatus::Error));
+                assert_eq!(
+                    error.as_ref().map(|err| err.message.as_str()),
+                    Some("session setup failed")
+                );
+            }
+            other => panic!("unexpected event: {other:?}"),
+        }
+
+        let sessions_guard = sessions.lock().await;
+        let state = sessions_guard
+            .by_acp
+            .get(acp_session_id)
+            .expect("session should remain tracked");
+        assert_eq!(state.active_turn_id, None);
+        assert_eq!(state.last_turn_update_at, None);
+        assert_eq!(state.turn_update_count, 0);
     }
 
     #[test]

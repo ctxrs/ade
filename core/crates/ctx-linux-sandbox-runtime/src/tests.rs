@@ -65,6 +65,16 @@ fn bootstrap_wrapper_forces_container_processes_to_run_as_allowed_uid_gid() {
 }
 
 #[test]
+fn bootstrap_wrapper_restricts_root_materialization_to_workspace_paths() {
+    assert!(BOOTSTRAP_SCRIPT.contains("is_materialization_workspace_path()"));
+    assert!(BOOTSTRAP_SCRIPT.contains("/ctx/ws|/ctx/ws/worktrees|/ctx/ws/worktrees/*"));
+    assert!(BOOTSTRAP_SCRIPT
+        .contains("[[ \"\\${2:-}\" == \"\\${allowed_uid}:\\${allowed_gid}\" ]] || return 1"));
+    assert!(BOOTSTRAP_SCRIPT.contains("is_materialization_workspace_path \"\\${4:-}\" || return 1"));
+    assert!(BOOTSTRAP_SCRIPT.contains("is_materialization_workspace_path \"\\${5:-}\" || return 1"));
+}
+
+#[test]
 fn bootstrap_script_prefers_verified_staged_debs_before_network_refresh() {
     let install_idx = BOOTSTRAP_SCRIPT
         .find("if [[ ${#verified_debs[@]} -eq 2 ]]; then")

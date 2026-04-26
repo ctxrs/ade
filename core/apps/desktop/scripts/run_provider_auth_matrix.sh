@@ -493,12 +493,12 @@ process.stdout.write(missing.join(","));
   if [[ "${daemon_location}" == "local" ]]; then
     env_kv+=(
       "CTX_BUNDLE_REMOTE_DAEMONS=0"
-      "CTX_BUNDLE_LINUX_CTX_MCP_RUNTIME=0"
     )
   fi
 
   if [[ "${execution_environment}" == "host" ]]; then
     env_kv+=(
+      "CTX_BUNDLE_LINUX_CTX_MCP_RUNTIME=0"
       "CTX_DESKTOP_ALLOW_MANAGED_AVF_RUNTIME_MISSING_LOCAL_PAYLOAD=1"
     )
   fi

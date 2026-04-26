@@ -292,6 +292,43 @@ test("run_provider_auth_matrix scopes local host desktop prep away from remote d
   assert.match(envText, /^CTX_AUTOMATION_KEEP_TMPDIR=1$/m);
 });
 
+test("run_provider_auth_matrix keeps Linux MCP runtime available for local sandbox cells", () => {
+  const tmpDir = fs.mkdtempSync(path.join(testTmpRoot(), "ctx-run-provider-auth-matrix-sandbox-mcp-"));
+  const fixturePath = createFixture(tmpDir, {
+    id: "codex-crp.endpoint_api_key.local.sandbox",
+    executionEnvironment: "sandbox",
+    scenarios: "local-codex-sandbox-smoke",
+  });
+  const preflightPath = createPassthroughPreflightScript(tmpDir);
+  const smokePath = createSmokeScript(tmpDir);
+  const artifactsDir = path.join(tmpDir, "artifacts");
+  const envOut = path.join(tmpDir, "env.out");
+
+  const result = runMatrixScript({
+    fixturePath,
+    preflightPath,
+    smokePath,
+    pathPrefix: process.env.PATH || "",
+    infisicalConfigPath: path.join(tmpDir, "missing-infisical.json"),
+    preflightOut: path.join(tmpDir, "preflight.out"),
+    smokeOut: path.join(tmpDir, "smoke.out"),
+    artifactsDir,
+    cellId: "codex-crp.endpoint_api_key.local.sandbox",
+    extraEnv: {
+      CTX_PROVIDER_AUTH_MATRIX_USE_INFISICAL: "0",
+      OPENROUTER_API_KEY: "test-openrouter-key",
+      CN_API_KEY: "test-cn-key",
+      CTX_TEST_ENV_OUT: envOut,
+    },
+  });
+
+  assert.equal(result.status, 0, `stdout=${result.stdout}\nstderr=${result.stderr}`);
+  const envText = fs.readFileSync(envOut, "utf8");
+  assert.match(envText, /^CTX_BUNDLE_REMOTE_DAEMONS=0$/m);
+  assert.match(envText, /^CTX_BUNDLE_LINUX_CTX_MCP_RUNTIME=$/m);
+  assert.match(envText, /^CTX_DESKTOP_ALLOW_MANAGED_AVF_RUNTIME_MISSING_LOCAL_PAYLOAD=$/m);
+});
+
 test("run_provider_auth_matrix leaves preflight strict when infisical auto-hydration is disabled", () => {
   const tmpDir = fs.mkdtempSync(path.join(testTmpRoot(), "ctx-run-provider-auth-matrix-no-infisical-"));
   const fixturePath = createFixture(tmpDir);
