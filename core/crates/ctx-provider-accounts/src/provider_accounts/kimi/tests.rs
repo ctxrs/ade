@@ -98,6 +98,57 @@ async fn adding_existing_kimi_account_updates_metadata_and_config_toml() {
 }
 
 #[tokio::test]
+async fn adding_existing_kimi_account_fails_closed_on_malformed_secret() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let secret_ref = "acct-1.json";
+    save_kimi_registry(
+        root,
+        &KimiAccountRegistry {
+            active_account_id: Some("acct-1".to_string()),
+            accounts: vec![KimiAccountEntry {
+                id: "acct-1".to_string(),
+                label: "Existing".to_string(),
+                kind: KIMI_CREDENTIAL_KIND_OAUTH.to_string(),
+                email: None,
+                created_at: Utc::now(),
+                last_used_at: Some(Utc::now()),
+                secret_ref: Some(secret_ref.to_string()),
+            }],
+        },
+    )
+    .await
+    .unwrap();
+    let secret_path = kimi_secret_path(root, secret_ref).unwrap();
+    tokio::fs::create_dir_all(secret_path.parent().unwrap())
+        .await
+        .unwrap();
+    tokio::fs::write(&secret_path, "{ invalid json")
+        .await
+        .unwrap();
+
+    let err = add_kimi_account(
+        root,
+        Some("Kimi Updated".to_string()),
+        None,
+        r#"{"access_token":"token-a"}"#.to_string(),
+        None,
+        None,
+    )
+    .await
+    .expect_err("malformed existing kimi secret should fail closed");
+    let message = format!("{err:#}");
+    assert!(
+        message.contains("invalid kimi secret"),
+        "expected parse context in error: {message}"
+    );
+    assert!(
+        message.contains("acct-1.json"),
+        "expected secret path in error: {message}"
+    );
+}
+
+#[tokio::test]
 async fn deleting_active_kimi_account_clears_projection() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();

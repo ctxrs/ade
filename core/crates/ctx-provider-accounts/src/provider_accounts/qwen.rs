@@ -83,11 +83,10 @@ pub async fn add_qwen_account(
         let Some(secret_ref) = existing.secret_ref.as_deref() else {
             continue;
         };
-        if let Ok(existing_secret) = read_qwen_secret_for_ref(data_root, secret_ref).await {
-            if existing_secret.oauth_creds == oauth_creds {
-                existing_account_id = Some(existing.id.clone());
-                break;
-            }
+        let existing_secret = read_qwen_secret_for_ref(data_root, secret_ref).await?;
+        if existing_secret.oauth_creds == oauth_creds {
+            existing_account_id = Some(existing.id.clone());
+            break;
         }
     }
 
@@ -345,5 +344,54 @@ mod tests {
         let settings_path = home.join(".qwen").join("settings.json");
         let settings = tokio::fs::read_to_string(settings_path).await.unwrap();
         assert!(settings.contains(QWEN_AUTH_SELECTED_TYPE_OAUTH));
+    }
+
+    #[tokio::test]
+    async fn adding_existing_qwen_account_fails_closed_on_malformed_secret() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let secret_ref = "acct-1.json";
+        save_qwen_registry(
+            root,
+            &QwenAccountRegistry {
+                active_account_id: Some("acct-1".to_string()),
+                accounts: vec![QwenAccountEntry {
+                    id: "acct-1".to_string(),
+                    label: "Existing".to_string(),
+                    kind: QWEN_CREDENTIAL_KIND_OAUTH.to_string(),
+                    email: None,
+                    created_at: Utc::now(),
+                    last_used_at: Some(Utc::now()),
+                    secret_ref: Some(secret_ref.to_string()),
+                }],
+            },
+        )
+        .await
+        .unwrap();
+        let secret_path = qwen_secret_path(root, secret_ref).unwrap();
+        tokio::fs::create_dir_all(secret_path.parent().unwrap())
+            .await
+            .unwrap();
+        tokio::fs::write(&secret_path, "{ invalid json")
+            .await
+            .unwrap();
+
+        let err = add_qwen_account(
+            root,
+            Some("Qwen Updated".to_string()),
+            r#"{"access_token":"token-a","refresh_token":"token-r","token_type":"Bearer","expiry_date":4102444800000}"#.to_string(),
+            None,
+        )
+        .await
+        .expect_err("malformed existing qwen secret should fail closed");
+        let message = format!("{err:#}");
+        assert!(
+            message.contains("invalid qwen secret"),
+            "expected parse context in error: {message}"
+        );
+        assert!(
+            message.contains("acct-1.json"),
+            "expected secret path in error: {message}"
+        );
     }
 }

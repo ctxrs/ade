@@ -132,34 +132,24 @@ async fn upsert_cursor_account_internal(
     let auth_token = normalize_cursor_auth_token(&auth_token)?;
     let refresh_token = normalize_optional_cursor_auth_token(refresh_token.as_deref())?;
     let mut registry = load_cursor_registry(data_root).await?;
-    let mut existing_account_id: Option<String> = None;
+    let mut existing_account: Option<(String, Option<String>, Option<String>)> = None;
 
     for existing in &registry.accounts {
         let Some(secret_ref) = existing.secret_ref.as_deref() else {
             continue;
         };
-        if let Ok(existing_secret) = read_cursor_secret_for_ref(data_root, secret_ref).await {
-            if existing_secret.auth_token == auth_token {
-                existing_account_id = Some(existing.id.clone());
-                break;
-            }
+        let existing_secret = read_cursor_secret_for_ref(data_root, secret_ref).await?;
+        if existing_secret.auth_token == auth_token {
+            existing_account = Some((
+                existing.id.clone(),
+                Some(secret_ref.to_string()),
+                existing_secret.refresh_token,
+            ));
+            break;
         }
     }
 
-    if let Some(account_id) = existing_account_id {
-        let existing_secret_ref = registry
-            .accounts
-            .iter()
-            .find(|entry| entry.id == account_id)
-            .and_then(|entry| entry.secret_ref.clone());
-        let existing_refresh_token = if let Some(secret_ref) = existing_secret_ref.as_deref() {
-            read_cursor_secret_for_ref(data_root, secret_ref)
-                .await
-                .ok()
-                .and_then(|secret| secret.refresh_token)
-        } else {
-            None
-        };
+    if let Some((account_id, existing_secret_ref, existing_refresh_token)) = existing_account {
         let next_refresh_token = refresh_token.clone().or(existing_refresh_token);
         if let Some(entry) = registry
             .accounts
@@ -543,6 +533,55 @@ mod tests {
         assert_eq!(
             second.accounts[0].email.as_deref(),
             Some("updated@example.com")
+        );
+    }
+
+    #[tokio::test]
+    async fn adding_existing_cursor_account_fails_closed_on_malformed_secret() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let secret_ref = "acct-1.json";
+        save_cursor_registry(
+            root,
+            &CursorAccountRegistry {
+                active_account_id: Some("acct-1".to_string()),
+                accounts: vec![CursorAccountEntry {
+                    id: "acct-1".to_string(),
+                    label: "Existing".to_string(),
+                    kind: CURSOR_CREDENTIAL_KIND_API_KEY.to_string(),
+                    email: None,
+                    created_at: Utc::now(),
+                    last_used_at: Some(Utc::now()),
+                    secret_ref: Some(secret_ref.to_string()),
+                }],
+            },
+        )
+        .await
+        .unwrap();
+        let secret_path = cursor_secret_path(root, secret_ref).unwrap();
+        tokio::fs::create_dir_all(secret_path.parent().unwrap())
+            .await
+            .unwrap();
+        tokio::fs::write(&secret_path, "{ invalid json")
+            .await
+            .unwrap();
+
+        let err = add_cursor_account(
+            root,
+            Some("Cursor Updated".to_string()),
+            "cursor-key".to_string(),
+            None,
+        )
+        .await
+        .expect_err("malformed existing cursor secret should fail closed");
+        let message = format!("{err:#}");
+        assert!(
+            message.contains("invalid cursor secret"),
+            "expected parse context in error: {message}"
+        );
+        assert!(
+            message.contains("acct-1.json"),
+            "expected secret path in error: {message}"
         );
     }
 

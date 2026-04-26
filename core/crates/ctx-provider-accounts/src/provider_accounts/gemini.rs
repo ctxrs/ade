@@ -100,11 +100,10 @@ pub async fn add_gemini_account(
         let Some(secret_ref) = existing.secret_ref.as_deref() else {
             continue;
         };
-        if let Ok(existing_secret) = read_gemini_secret_for_ref(data_root, secret_ref).await {
-            if existing_secret.oauth_creds == oauth_creds {
-                existing_account_id = Some(existing.id.clone());
-                break;
-            }
+        let existing_secret = read_gemini_secret_for_ref(data_root, secret_ref).await?;
+        if existing_secret.oauth_creds == oauth_creds {
+            existing_account_id = Some(existing.id.clone());
+            break;
         }
     }
 
@@ -565,5 +564,55 @@ mod tests {
 
         let _ = remove_gemini_account(root, &active_id).await.unwrap();
         assert!(!projected_home.exists());
+    }
+
+    #[tokio::test]
+    async fn adding_existing_gemini_account_fails_closed_on_malformed_secret() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let secret_ref = "acct-1.json";
+        save_gemini_registry(
+            root,
+            &GeminiAccountRegistry {
+                active_account_id: Some("acct-1".to_string()),
+                accounts: vec![GeminiAccountEntry {
+                    id: "acct-1".to_string(),
+                    label: "Existing".to_string(),
+                    kind: GEMINI_CREDENTIAL_KIND_OAUTH_PERSONAL.to_string(),
+                    email: None,
+                    created_at: Utc::now(),
+                    last_used_at: Some(Utc::now()),
+                    secret_ref: Some(secret_ref.to_string()),
+                }],
+            },
+        )
+        .await
+        .unwrap();
+        let secret_path = gemini_secret_path(root, secret_ref).unwrap();
+        tokio::fs::create_dir_all(secret_path.parent().unwrap())
+            .await
+            .unwrap();
+        tokio::fs::write(&secret_path, "{ invalid json")
+            .await
+            .unwrap();
+
+        let err = add_gemini_account(
+            root,
+            Some("Gemini Updated".to_string()),
+            r#"{"access_token":"token-a","refresh_token":"token-r"}"#.to_string(),
+            None,
+            None,
+        )
+        .await
+        .expect_err("malformed existing gemini secret should fail closed");
+        let message = format!("{err:#}");
+        assert!(
+            message.contains("invalid gemini secret"),
+            "expected parse context in error: {message}"
+        );
+        assert!(
+            message.contains("acct-1.json"),
+            "expected secret path in error: {message}"
+        );
     }
 }

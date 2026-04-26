@@ -132,13 +132,12 @@ async fn upsert_kimi_account(
         let Some(secret_ref) = existing.secret_ref.as_deref() else {
             continue;
         };
-        if let Ok(existing_secret) = read_kimi_secret_for_ref(data_root, secret_ref).await {
-            if existing_secret.provider == normalized_provider
-                && existing_secret.credentials == credentials
-            {
-                existing_account_id = Some(existing.id.clone());
-                break;
-            }
+        let existing_secret = read_kimi_secret_for_ref(data_root, secret_ref).await?;
+        if existing_secret.provider == normalized_provider
+            && existing_secret.credentials == credentials
+        {
+            existing_account_id = Some(existing.id.clone());
+            break;
         }
     }
 

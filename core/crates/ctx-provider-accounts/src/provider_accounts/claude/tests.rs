@@ -102,6 +102,55 @@ async fn adding_existing_claude_account_updates_metadata() {
 }
 
 #[tokio::test]
+async fn adding_existing_claude_account_fails_closed_on_malformed_secret() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let secret_ref = "acct-1.json";
+    save_claude_registry(
+        root,
+        &ClaudeAccountRegistry {
+            active_account_id: Some("acct-1".to_string()),
+            accounts: vec![ClaudeAccountEntry {
+                id: "acct-1".to_string(),
+                label: "Existing".to_string(),
+                kind: CLAUDE_CREDENTIAL_KIND_SETUP_TOKEN.to_string(),
+                email: None,
+                subscription_type: None,
+                created_at: Utc::now(),
+                last_used_at: Some(Utc::now()),
+                secret_ref: Some(secret_ref.to_string()),
+            }],
+        },
+    )
+    .await
+    .unwrap();
+    let secret_path = claude_secret_path(root, secret_ref).unwrap();
+    tokio::fs::create_dir_all(secret_path.parent().unwrap())
+        .await
+        .unwrap();
+    tokio::fs::write(&secret_path, "{ invalid json")
+        .await
+        .unwrap();
+
+    let err = add_claude_account(
+        root,
+        Some("Claude Updated".to_string()),
+        CLAUDE_TEST_SETUP_TOKEN.to_string(),
+    )
+    .await
+    .expect_err("malformed existing claude secret should fail closed");
+    let message = format!("{err:#}");
+    assert!(
+        message.contains("invalid claude secret"),
+        "expected parse context in error: {message}"
+    );
+    assert!(
+        message.contains("acct-1.json"),
+        "expected secret path in error: {message}"
+    );
+}
+
+#[tokio::test]
 async fn deleting_active_claude_account_clears_projection() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();

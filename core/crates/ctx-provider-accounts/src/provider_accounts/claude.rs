@@ -109,11 +109,8 @@ struct ClaudeSecretEnvelope {
 }
 
 pub async fn load_claude_registry(data_root: &Path) -> Result<ClaudeAccountRegistry> {
-    let mut registry: ClaudeAccountRegistry = load_json_registry(
-        &claude_registry_path(data_root),
-        "Claude account registry",
-    )
-    .await?;
+    let mut registry: ClaudeAccountRegistry =
+        load_json_registry(&claude_registry_path(data_root), "Claude account registry").await?;
     let legacy_account_ids: Vec<String> = registry
         .accounts
         .iter()
@@ -193,11 +190,10 @@ pub async fn add_claude_account(
         let Some(secret_ref) = existing.secret_ref.as_deref() else {
             continue;
         };
-        if let Ok(existing_secret) = read_claude_secret_for_ref(data_root, secret_ref).await {
-            if existing_secret.claude_code_oauth_token.as_deref() == Some(token.as_str()) {
-                existing_account_id = Some(existing.id.clone());
-                break;
-            }
+        let existing_secret = read_claude_secret_for_ref(data_root, secret_ref).await?;
+        if existing_secret.claude_code_oauth_token.as_deref() == Some(token.as_str()) {
+            existing_account_id = Some(existing.id.clone());
+            break;
         }
     }
 

@@ -157,6 +157,55 @@ async fn adding_existing_copilot_account_updates_metadata() {
 }
 
 #[tokio::test]
+async fn adding_existing_copilot_account_fails_closed_on_malformed_secret() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let secret_ref = "acct-1.json";
+    save_copilot_registry(
+        root,
+        &CopilotAccountRegistry {
+            active_account_id: Some("acct-1".to_string()),
+            accounts: vec![CopilotAccountEntry {
+                id: "acct-1".to_string(),
+                label: "Existing".to_string(),
+                kind: COPILOT_CREDENTIAL_KIND_GH_TOKEN.to_string(),
+                email: None,
+                created_at: Utc::now(),
+                last_used_at: Some(Utc::now()),
+                secret_ref: Some(secret_ref.to_string()),
+            }],
+        },
+    )
+    .await
+    .unwrap();
+    let secret_path = copilot_secret_path(root, secret_ref).unwrap();
+    tokio::fs::create_dir_all(secret_path.parent().unwrap())
+        .await
+        .unwrap();
+    tokio::fs::write(&secret_path, "{ invalid json")
+        .await
+        .unwrap();
+
+    let err = add_copilot_account(
+        root,
+        Some("Copilot Updated".to_string()),
+        "ghp_abc".to_string(),
+        None,
+    )
+    .await
+    .expect_err("malformed existing copilot secret should fail closed");
+    let message = format!("{err:#}");
+    assert!(
+        message.contains("invalid copilot secret"),
+        "expected parse context in error: {message}"
+    );
+    assert!(
+        message.contains("acct-1.json"),
+        "expected secret path in error: {message}"
+    );
+}
+
+#[tokio::test]
 async fn deleting_active_copilot_account_clears_projection() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();

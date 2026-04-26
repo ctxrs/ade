@@ -124,7 +124,11 @@ struct CopilotSecretEnvelope {
 }
 
 pub async fn load_copilot_registry(data_root: &Path) -> Result<CopilotAccountRegistry> {
-    load_json_registry(&copilot_registry_path(data_root), "Copilot account registry").await
+    load_json_registry(
+        &copilot_registry_path(data_root),
+        "Copilot account registry",
+    )
+    .await
 }
 
 pub async fn save_copilot_registry(
@@ -158,11 +162,10 @@ pub async fn add_copilot_account(
         let Some(secret_ref) = existing.secret_ref.as_deref() else {
             continue;
         };
-        if let Ok(existing_token) = read_copilot_secret_for_ref(data_root, secret_ref).await {
-            if existing_token == token {
-                existing_account_id = Some(existing.id.clone());
-                break;
-            }
+        let existing_token = read_copilot_secret_for_ref(data_root, secret_ref).await?;
+        if existing_token == token {
+            existing_account_id = Some(existing.id.clone());
+            break;
         }
     }
 
