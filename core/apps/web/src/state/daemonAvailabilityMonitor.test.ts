@@ -158,6 +158,7 @@ describe("daemonAvailabilityMonitor", () => {
       remoteUpdateMessage: "waiting for idle",
     });
     expect(syncDesktopDaemonConnectionFromBridgeMock).toHaveBeenCalledWith({
+      connectLocalWhenMissing: true,
       reason: "daemon_availability_poll",
     });
 

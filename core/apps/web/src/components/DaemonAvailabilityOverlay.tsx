@@ -12,6 +12,7 @@ import {
   desktopApplyAppUpdate,
   isDesktopApp,
   desktopRestartLocalDaemon,
+  desktopRestartApp,
   desktopUpdateRemoteDaemon,
   type DesktopConnectionInfo,
 } from "../utils/desktop";
@@ -23,13 +24,18 @@ const overlaySuppressed = (pathname: string): boolean => {
   return false;
 };
 
-const SUPPRESSED_AVAILABILITY = {
+const pollingSuppressed = (pathname: string): boolean => {
+  return pathname === "/__geometry_harness";
+};
+
+const INACTIVE_AVAILABILITY = {
   status: "unknown",
   checking: false,
   error: null,
   desktopKind: null,
   desktopVersion: null,
   mismatch: null,
+  updateRequired: null,
   remoteUpdateMessage: null,
   remoteUpdateState: null,
 } as const;
@@ -43,6 +49,7 @@ const trimError = (value: string): string => {
 export default function DaemonAvailabilityOverlay() {
   const location = useLocation();
   const suppressed = overlaySuppressed(location.pathname);
+  const suppressPolling = pollingSuppressed(location.pathname);
   const [restartBusy, setRestartBusy] = useState(false);
   const [remoteUpdateBusy, setRemoteUpdateBusy] = useState(false);
   const [desktopAppUpdateBusy, setDesktopAppUpdateBusy] = useState(false);
@@ -55,22 +62,23 @@ export default function DaemonAvailabilityOverlay() {
   const availability = useSyncExternalStore(
     useCallback(
       (listener: Parameters<typeof subscribeDaemonAvailability>[0]) =>
-        suppressed ? () => {} : subscribeDaemonAvailability(listener),
-      [suppressed],
+        suppressPolling ? () => {} : subscribeDaemonAvailability(listener),
+      [suppressPolling],
     ),
     useCallback(
-      () => (suppressed ? SUPPRESSED_AVAILABILITY : getDaemonAvailabilitySnapshot()),
-      [suppressed],
+      () => (suppressPolling ? INACTIVE_AVAILABILITY : getDaemonAvailabilitySnapshot()),
+      [suppressPolling],
     ),
     useCallback(
-      () => (suppressed ? SUPPRESSED_AVAILABILITY : getDaemonAvailabilitySnapshot()),
-      [suppressed],
+      () => (suppressPolling ? INACTIVE_AVAILABILITY : getDaemonAvailabilitySnapshot()),
+      [suppressPolling],
     ),
   );
   const checking = availability.checking;
   const status = availability.status;
   const desktopKind = availability.desktopKind;
   const mismatch = availability.mismatch;
+  const updateRequired = availability.updateRequired;
   const remoteUpdateState = availability.remoteUpdateState;
   const remoteUpdateMessage = availability.remoteUpdateMessage;
   const error =
@@ -175,13 +183,78 @@ export default function DaemonAvailabilityOverlay() {
     }
   }, [checkNow, desktopAppUpdateBusy, isDesktop]);
 
+  const onUpdateRequired = useCallback(async () => {
+    setDesktopAppUpdateBusy(true);
+    setActionError(null);
+    setNotice(null);
+    try {
+      if (!isDesktop) {
+        window.location.assign("https://ctx.rs/install");
+        return;
+      }
+      const resp = await desktopApplyAppUpdate();
+      if (resp.needs_restart || resp.applied) {
+        setNotice(trimError(resp.message || "Update installed. Relaunching ctx..."));
+        await desktopRestartApp();
+        return;
+      }
+      if (resp.up_to_date) {
+        setActionError(
+          "No compatible update was found. Install the latest ctx from ctx.rs/install, then reopen ctx.",
+        );
+        return;
+      }
+      setActionError(
+        "Update could not be started. Install the latest version from ctx.rs/install, then reopen ctx.",
+      );
+    } catch {
+      setActionError(
+        "Update could not be started. Install the latest version from ctx.rs/install, then reopen ctx.",
+      );
+    } finally {
+      setDesktopAppUpdateBusy(false);
+    }
+  }, [isDesktop]);
+
   const target = useMemo(() => {
     return daemonBaseUrl ?? "";
   }, [daemonBaseUrl]);
 
   const showOverlay =
-    (status === "down" || status === "mismatch") && !suppressed;
+    status === "update_required" || ((status === "down" || status === "mismatch") && !suppressed);
   if (!showOverlay) return null;
+
+  if (status === "update_required" && updateRequired) {
+    return (
+      <div
+        className="daemon-overlay"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Update required"
+        data-testid="daemon-update-required-overlay"
+      >
+        <div className="daemon-overlay-card">
+          <h2>Update Required</h2>
+          <p className="daemon-overlay-body">
+            Your ctx data on this machine was already migrated to a newer version. To protect your
+            data, this app version will not start. Please update ctx to continue.
+          </p>
+          {error && <div className="daemon-overlay-error">{error}</div>}
+          {displayNotice && <div className="daemon-overlay-notice">{displayNotice}</div>}
+          <div className="daemon-overlay-actions">
+            <button
+              type="button"
+              className="daemon-overlay-button"
+              onClick={onUpdateRequired}
+              disabled={desktopAppUpdateBusy}
+            >
+              {desktopAppUpdateBusy ? "Updating..." : "Update ctx"}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   const canRestart = isDesktop && (desktopKind === "local" || desktopKind === "none");
   const primaryAction = canRestart ? restartDaemon : checkNow;

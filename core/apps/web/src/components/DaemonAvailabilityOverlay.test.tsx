@@ -13,6 +13,7 @@ import {
   type DesktopConnectionInfo,
   desktopGetVersion,
   desktopRestartLocalDaemon,
+  desktopRestartApp,
   type DesktopAppUpdateApplyResp,
   desktopUpdateRemoteDaemon,
   isDesktopApp,
@@ -36,6 +37,7 @@ vi.mock("../utils/desktop", () => ({
   desktopConnectLocal: vi.fn(),
   desktopGetVersion: vi.fn(),
   desktopRestartLocalDaemon: vi.fn(),
+  desktopRestartApp: vi.fn(),
   desktopUpdateRemoteDaemon: vi.fn(),
   isDesktopApp: vi.fn(),
 }));
@@ -102,9 +104,102 @@ describe("DaemonAvailabilityOverlay", () => {
       makeDesktopSyncResult({ kind: "local" }),
     );
     vi.mocked(desktopRestartLocalDaemon).mockResolvedValue({ kind: "local" });
+    vi.mocked(desktopRestartApp).mockResolvedValue({
+      requested: true,
+      message: "restart requested",
+    });
     vi.mocked(desktopUpdateRemoteDaemon).mockResolvedValue({ updated: true, message: "ok" });
     vi.mocked(desktopApplyAppUpdate).mockResolvedValue(makeDesktopApplyResp());
     vi.spyOn(window, "confirm").mockReturnValue(true);
+  });
+
+  it("shows update-required copy when local data was migrated by a newer app", async () => {
+    vi.mocked(isDesktopApp).mockReturnValue(true);
+    vi.mocked(desktopGetVersion).mockResolvedValue("0.60.0");
+    vi.mocked(syncDesktopDaemonConnectionFromBridge).mockResolvedValue({
+      connection: {
+        baseUrl: null,
+        wsBaseUrl: null,
+        authToken: null,
+        runId: null,
+      },
+      info: null,
+      synced: false,
+      error: "Error: migration 64 was previously applied but is missing in the resolved migrations",
+    });
+
+    renderOverlay("/");
+
+    expect(await screen.findByRole("dialog", { name: "Update required" })).toBeInTheDocument();
+    expect(screen.getByText("Update Required")).toBeInTheDocument();
+    expect(screen.queryByText("Update required")).not.toBeInTheDocument();
+    expect(
+      screen.getByText(/Your ctx data on this machine was already migrated to a newer version/i),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Update ctx" })).toBeInTheDocument();
+    expect(screen.getAllByRole("button")).toHaveLength(1);
+    expect(screen.queryByText("Open launcher")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Retry" })).not.toBeInTheDocument();
+    expect(vi.mocked(daemonFetchRaw)).not.toHaveBeenCalled();
+  });
+
+  it("updates and relaunches from the update-required CTA", async () => {
+    vi.mocked(isDesktopApp).mockReturnValue(true);
+    vi.mocked(desktopGetVersion).mockResolvedValue("0.60.0");
+    vi.mocked(syncDesktopDaemonConnectionFromBridge).mockResolvedValue({
+      connection: {
+        baseUrl: null,
+        wsBaseUrl: null,
+        authToken: null,
+        runId: null,
+      },
+      info: null,
+      synced: false,
+      error: "Error: migration 64 was previously applied but is missing in the resolved migrations",
+    });
+
+    renderOverlay();
+    fireEvent.click(await screen.findByRole("button", { name: "Update ctx" }));
+
+    await waitFor(() => {
+      expect(vi.mocked(desktopApplyAppUpdate)).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(desktopApplyAppUpdate).mock.calls[0]).toEqual([]);
+      expect(vi.mocked(desktopRestartApp)).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("shows manual install guidance when no compatible update is found", async () => {
+    vi.mocked(isDesktopApp).mockReturnValue(true);
+    vi.mocked(desktopGetVersion).mockResolvedValue("0.60.0");
+    vi.mocked(syncDesktopDaemonConnectionFromBridge).mockResolvedValue({
+      connection: {
+        baseUrl: null,
+        wsBaseUrl: null,
+        authToken: null,
+        runId: null,
+      },
+      info: null,
+      synced: false,
+      error: "Error: migration 64 was previously applied but is missing in the resolved migrations",
+    });
+    vi.mocked(desktopApplyAppUpdate).mockResolvedValue(
+      makeDesktopApplyResp({
+        applied: false,
+        latest_version: "0.60.0",
+        message: "Already up to date.",
+        needs_restart: false,
+        up_to_date: true,
+      }),
+    );
+
+    renderOverlay();
+    fireEvent.click(await screen.findByRole("button", { name: "Update ctx" }));
+
+    expect(
+      await screen.findByText(/No compatible update was found\. Install the latest ctx/i),
+    ).toBeInTheDocument();
+    expect(vi.mocked(desktopRestartApp)).not.toHaveBeenCalled();
+    expect(vi.mocked(daemonFetchRaw)).not.toHaveBeenCalled();
   });
 
   it("shows mismatch when the daemon is older than the desktop app", async () => {
@@ -383,20 +478,21 @@ describe("DaemonAvailabilityOverlay", () => {
     expect(screen.queryByText("Open launcher")).not.toBeInTheDocument();
   });
 
-  it("does not poll daemon availability while the workspace setup route suppresses the overlay", async () => {
+  it("polls while the workspace setup route suppresses ordinary availability overlays", async () => {
     vi.mocked(isDesktopApp).mockReturnValue(true);
     vi.mocked(desktopGetVersion).mockResolvedValue("2.0.0");
     vi.mocked(daemonFetchRaw).mockResolvedValue({
-      status: 200,
-      body: JSON.stringify(baseHealth),
+      status: 503,
+      body: JSON.stringify({ error: "unavailable" }),
       content_type: "application/json",
     });
 
     renderOverlay("/workspace-setup");
-    await new Promise((resolve) => window.setTimeout(resolve, 25));
 
-    expect(vi.mocked(daemonFetchRaw)).not.toHaveBeenCalled();
-    expect(vi.mocked(syncDesktopDaemonConnectionFromBridge)).not.toHaveBeenCalled();
+    await waitFor(() => {
+      expect(vi.mocked(daemonFetchRaw)).toHaveBeenCalledWith("/api/health");
+    });
+    expect(vi.mocked(syncDesktopDaemonConnectionFromBridge)).toHaveBeenCalled();
     expect(screen.queryByText("ctx daemon unavailable")).not.toBeInTheDocument();
   });
 

@@ -7,7 +7,7 @@ import {
   type DesktopRemoteDaemonUpdateState,
 } from "../utils/desktop";
 
-export type DaemonStatus = "unknown" | "ok" | "down" | "mismatch";
+export type DaemonStatus = "unknown" | "ok" | "down" | "mismatch" | "update_required";
 export type VersionMismatchKind = "daemon_older" | "desktop_older" | "unknown";
 
 export type VersionMismatch = {
@@ -17,6 +17,10 @@ export type VersionMismatch = {
   kind: VersionMismatchKind;
 };
 
+export type DaemonUpdateRequired = {
+  reason: "local_data_newer";
+};
+
 export type DaemonAvailabilitySnapshot = {
   status: DaemonStatus;
   checking: boolean;
@@ -24,6 +28,7 @@ export type DaemonAvailabilitySnapshot = {
   desktopKind: DesktopConnectionKind | null;
   desktopVersion: string | null;
   mismatch: VersionMismatch | null;
+  updateRequired: DaemonUpdateRequired | null;
   remoteUpdateMessage: string | null;
   remoteUpdateState: DesktopRemoteDaemonUpdateState | null;
 };
@@ -42,6 +47,7 @@ let snapshot: DaemonAvailabilitySnapshot = {
   desktopKind: null,
   desktopVersion: null,
   mismatch: null,
+  updateRequired: null,
   remoteUpdateMessage: null,
   remoteUpdateState: null,
 };
@@ -72,6 +78,32 @@ const extractErrorMessage = (resp: { status: number; body: string }): string => 
     // Ignore parse errors and fall back to raw text.
   }
   return trimError(raw);
+};
+
+const classifyUpdateRequired = (
+  message: string | null | undefined,
+): DaemonUpdateRequired | null => {
+  const text = String(message ?? "").trim();
+  if (!text) return null;
+  if (
+    /migration\s+\d+\s+was previously applied but is missing in the resolved migrations/i.test(text)
+  ) {
+    return { reason: "local_data_newer" };
+  }
+  if (/data (?:on this machine|directory|dir).*newer version of ctx/i.test(text)) {
+    return { reason: "local_data_newer" };
+  }
+  if (/schema .*newer than.*(?:app|client|version)/i.test(text)) {
+    return { reason: "local_data_newer" };
+  }
+  return null;
+};
+
+const forcedUpdateRequiredFromDevFlag = (): DaemonUpdateRequired | null => {
+  if (!import.meta.env.DEV || typeof window === "undefined") return null;
+  const params = new URLSearchParams(window.location.search);
+  if (params.get("ctx_force_update_required") !== "1") return null;
+  return { reason: "local_data_newer" };
 };
 
 const normalizeVersionParts = (value: string): number[] | null => {
@@ -127,6 +159,7 @@ const sameSnapshot = (
   && left.desktopVersion === right.desktopVersion
   && left.remoteUpdateMessage === right.remoteUpdateMessage
   && left.remoteUpdateState === right.remoteUpdateState
+  && left.updateRequired?.reason === right.updateRequired?.reason
   && sameMismatch(left.mismatch, right.mismatch);
 
 const emitChange = (): void => {
@@ -167,6 +200,7 @@ const schedulePoll = (): void => {
 const syncDesktopMetadata = async (): Promise<{
   desktopKind: DesktopConnectionKind | null;
   desktopVersion: string | null;
+  desktopConnectionError: string | null;
   remoteUpdateMessage: string | null;
   remoteUpdateState: DesktopRemoteDaemonUpdateState | null;
 }> => {
@@ -174,19 +208,23 @@ const syncDesktopMetadata = async (): Promise<{
     return {
       desktopKind: null,
       desktopVersion: null,
+      desktopConnectionError: null,
       remoteUpdateMessage: null,
       remoteUpdateState: null,
     };
   }
   let desktopKind: DesktopConnectionKind | null = null;
   let desktopVersion: string | null = null;
+  let desktopConnectionError: string | null = null;
   let remoteUpdateMessage: string | null = null;
   let remoteUpdateState: DesktopRemoteDaemonUpdateState | null = null;
   try {
     const sync = await syncDesktopDaemonConnectionFromBridge({
+      connectLocalWhenMissing: true,
       reason: "daemon_availability_poll",
     });
     const info = sync.info;
+    desktopConnectionError = sync.error;
     desktopKind = info?.kind ?? snapshot.desktopKind ?? null;
     remoteUpdateMessage = typeof info?.remote_update_message === "string"
       ? info.remote_update_message
@@ -205,6 +243,7 @@ const syncDesktopMetadata = async (): Promise<{
   return {
     desktopKind,
     desktopVersion,
+    desktopConnectionError,
     remoteUpdateMessage,
     remoteUpdateState,
   };
@@ -226,6 +265,7 @@ export const checkDaemonAvailabilityNow = async (): Promise<DaemonAvailabilitySn
     const {
       desktopKind,
       desktopVersion,
+      desktopConnectionError,
       remoteUpdateMessage,
       remoteUpdateState,
     } = await syncDesktopMetadata();
@@ -233,55 +273,73 @@ export const checkDaemonAvailabilityNow = async (): Promise<DaemonAvailabilitySn
     let nextStatus: DaemonStatus = "down";
     let nextError: string | null = null;
     let nextMismatch: VersionMismatch | null = null;
+    let nextUpdateRequired: DaemonUpdateRequired | null =
+      forcedUpdateRequiredFromDevFlag() ?? classifyUpdateRequired(desktopConnectionError);
 
     try {
-      const resp = await daemonFetchRaw("/api/health");
-      if (resp.status >= 200 && resp.status < 300) {
-        let parsed: unknown = null;
-        if (resp.body) {
-          try {
-            parsed = JSON.parse(resp.body);
-          } catch {
-            parsed = null;
+      if (nextUpdateRequired) {
+        nextStatus = "update_required";
+      } else {
+        const resp = await daemonFetchRaw("/api/health");
+        if (resp.status >= 200 && resp.status < 300) {
+          let parsed: unknown = null;
+          if (resp.body) {
+            try {
+              parsed = JSON.parse(resp.body);
+            } catch {
+              parsed = null;
+            }
+          }
+          const parsedRecord = asRecord(parsed);
+          const compat = asRecord(parsedRecord.compatibility);
+          const daemonVersion = String(
+            parsedRecord.daemon_version ?? parsedRecord.version ?? "",
+          ).trim();
+          const expectedVersion = String(
+            compat.desktop_exact_version ?? daemonVersion ?? "",
+          ).trim();
+          const normalizedDesktopVersion = normalizeVersionString(desktopVersion ?? "");
+          const normalizedExpectedVersion = normalizeVersionString(expectedVersion);
+          const cmp = compareVersions(normalizedDesktopVersion, normalizedExpectedVersion);
+          const versionsMatch =
+            cmp === 0 || (cmp === null && normalizedDesktopVersion === normalizedExpectedVersion);
+          if (
+            isDesktopApp()
+            && normalizedDesktopVersion
+            && normalizedExpectedVersion
+            && !versionsMatch
+          ) {
+            const kind: VersionMismatchKind =
+              cmp === 1 ? "daemon_older" : cmp === -1 ? "desktop_older" : "unknown";
+            nextStatus = "mismatch";
+            nextMismatch = {
+              desktop_version: desktopVersion ?? "",
+              daemon_version: daemonVersion || expectedVersion,
+              expected_version: expectedVersion,
+              kind,
+            };
+          } else {
+            nextStatus = "ok";
+          }
+        } else {
+          nextStatus = "down";
+          nextError = extractErrorMessage(resp);
+          nextUpdateRequired = classifyUpdateRequired(nextError);
+          if (nextUpdateRequired) {
+            nextStatus = "update_required";
+            nextError = null;
           }
         }
-        const parsedRecord = asRecord(parsed);
-        const compat = asRecord(parsedRecord.compatibility);
-        const daemonVersion = String(parsedRecord.daemon_version ?? parsedRecord.version ?? "").trim();
-        const expectedVersion = String(
-          compat.desktop_exact_version ?? daemonVersion ?? "",
-        ).trim();
-        const normalizedDesktopVersion = normalizeVersionString(desktopVersion ?? "");
-        const normalizedExpectedVersion = normalizeVersionString(expectedVersion);
-        const cmp = compareVersions(normalizedDesktopVersion, normalizedExpectedVersion);
-        const versionsMatch =
-          cmp === 0 || (cmp === null && normalizedDesktopVersion === normalizedExpectedVersion);
-        if (
-          isDesktopApp()
-          && normalizedDesktopVersion
-          && normalizedExpectedVersion
-          && !versionsMatch
-        ) {
-          const kind: VersionMismatchKind =
-            cmp === 1 ? "daemon_older" : cmp === -1 ? "desktop_older" : "unknown";
-          nextStatus = "mismatch";
-          nextMismatch = {
-            desktop_version: desktopVersion ?? "",
-            daemon_version: daemonVersion || expectedVersion,
-            expected_version: expectedVersion,
-            kind,
-          };
-        } else {
-          nextStatus = "ok";
-        }
-      } else {
-        nextStatus = "down";
-        nextError = extractErrorMessage(resp);
       }
     } catch (err) {
       nextStatus = "down";
       const message = err instanceof Error ? err.message : String(err);
       nextError = trimError(message || "Unable to reach the ctx daemon.");
+      nextUpdateRequired = classifyUpdateRequired(nextError);
+      if (nextUpdateRequired) {
+        nextStatus = "update_required";
+        nextError = null;
+      }
     }
 
     const nextSnapshot: DaemonAvailabilitySnapshot = {
@@ -291,6 +349,7 @@ export const checkDaemonAvailabilityNow = async (): Promise<DaemonAvailabilitySn
       desktopKind,
       desktopVersion,
       mismatch: nextMismatch,
+      updateRequired: nextUpdateRequired,
       remoteUpdateMessage,
       remoteUpdateState,
     };
