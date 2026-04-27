@@ -11,10 +11,6 @@ fn daemon_health_clients() -> &'static DaemonHealthClientCache {
     DAEMON_HEALTH_CLIENTS.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
 }
 
-pub(crate) fn daemon_health(base_url: &str) -> Result<DaemonHealthSummary> {
-    daemon_health_with_auth(base_url, None)
-}
-
 pub(crate) fn daemon_health_with_auth(
     base_url: &str,
     auth_token: Option<&str>,

@@ -73,8 +73,10 @@ fn local_daemon_health_match_requires_expected_data_root_and_mode_specific_ident
 
 #[test]
 fn existing_local_daemon_match_errors_are_treated_as_absent() {
-    let expected_dir =
-        std::env::temp_dir().join(format!("ctx-daemon-existing-match-{}", uuid::Uuid::new_v4()));
+    let expected_dir = std::env::temp_dir().join(format!(
+        "ctx-daemon-existing-match-{}",
+        uuid::Uuid::new_v4()
+    ));
     std::fs::create_dir_all(&expected_dir).expect("create expected dir");
 
     assert!(!existing_local_daemon_matches_or_absent(
@@ -145,8 +147,10 @@ fn daemon_compatibility_classification_distinguishes_exact_compatible_and_incomp
 
 #[test]
 fn spawned_daemon_incompatibility_message_reports_expected_and_actual_values() {
-    let expected_dir =
-        std::env::temp_dir().join(format!("ctx-daemon-spawn-incompatible-{}", uuid::Uuid::new_v4()));
+    let expected_dir = std::env::temp_dir().join(format!(
+        "ctx-daemon-spawn-incompatible-{}",
+        uuid::Uuid::new_v4()
+    ));
     let health = DaemonHealthSummary {
         pid: 4242,
         data_root: "/tmp/ctx-daemon-other".to_string(),
@@ -193,15 +197,14 @@ fn daemon_health_reuses_cached_client_for_same_timeout() {
                 body.len(),
                 body,
             );
-            std::io::Write::write_all(&mut stream, response.as_bytes())
-                .expect("write response");
+            std::io::Write::write_all(&mut stream, response.as_bytes()).expect("write response");
         }
     });
 
     let base_url = format!("http://{}", addr);
     for _ in 0..2 {
-        let health =
-            daemon_health_with_timeout(&base_url, Duration::from_secs(5)).expect("daemon health succeeds");
+        let health = daemon_health_with_timeout(&base_url, Duration::from_secs(5))
+            .expect("daemon health succeeds");
         assert_eq!(health.pid, 1);
     }
 
@@ -223,6 +226,7 @@ fn daemon_health_with_auth_validates_a_protected_route() {
             let mut buf = [0_u8; 2048];
             let size = std::io::Read::read(&mut stream, &mut buf).expect("read request");
             let request = String::from_utf8_lossy(&buf[..size]).to_string();
+            let request_lower = request.to_ascii_lowercase();
             observed_server
                 .lock()
                 .expect("lock observed requests")
@@ -230,7 +234,7 @@ fn daemon_health_with_auth_validates_a_protected_route() {
             let (status_line, body) = if request.starts_with("GET /api/health ") {
                 ("HTTP/1.1 200 OK", health_body)
             } else if request.starts_with("GET /api/workspaces ")
-                && request.contains("Authorization: Bearer desktop-token")
+                && request_lower.contains("authorization: bearer desktop-token")
             {
                 ("HTTP/1.1 200 OK", "[]")
             } else {
@@ -241,14 +245,13 @@ fn daemon_health_with_auth_validates_a_protected_route() {
                 body.len(),
                 body,
             );
-            std::io::Write::write_all(&mut stream, response.as_bytes())
-                .expect("write response");
+            std::io::Write::write_all(&mut stream, response.as_bytes()).expect("write response");
         }
     });
 
     let base_url = format!("http://{}", addr);
-    let health =
-        daemon_health_with_auth(&base_url, Some("desktop-token")).expect("daemon auth health succeeds");
+    let health = daemon_health_with_auth(&base_url, Some("desktop-token"))
+        .expect("daemon auth health succeeds");
 
     server.join().expect("join test server");
     let requests = observed.lock().expect("lock observed requests");
@@ -256,7 +259,9 @@ fn daemon_health_with_auth_validates_a_protected_route() {
     assert_eq!(requests.len(), 2);
     assert!(requests[0].starts_with("GET /api/health "));
     assert!(requests[1].starts_with("GET /api/workspaces "));
-    assert!(requests[1].contains("Authorization: Bearer desktop-token"));
+    assert!(requests[1]
+        .to_ascii_lowercase()
+        .contains("authorization: bearer desktop-token"));
 }
 
 #[test]

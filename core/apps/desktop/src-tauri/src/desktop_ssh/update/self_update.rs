@@ -19,6 +19,7 @@ pub(crate) fn run_remote_daemon_self_update(
     remote_arch: &str,
     channel: &str,
     daemon_base_url: &str,
+    daemon_auth_token: &str,
     release_base_url: &str,
 ) -> Result<()> {
     let ctx_bin = validate_remote_ctx_bin(remote_ctx_bin)?;
@@ -61,7 +62,7 @@ pub(crate) fn run_remote_daemon_self_update(
             Some(release_base_url),
         )
         .context("starting remote daemon after self-update")?;
-        wait_for_remote_daemon_health(daemon_base_url)
+        wait_for_remote_daemon_health(daemon_base_url, daemon_auth_token)
             .context("waiting for restarted remote daemon health")?;
         Ok(())
     })();
@@ -85,6 +86,7 @@ pub(crate) fn run_remote_daemon_self_update(
                 &ctx_bin,
                 &backup_ctx_bin,
                 daemon_base_url,
+                daemon_auth_token,
                 bundle_synced,
             ) {
                 Ok(()) => Err(anyhow!(
@@ -257,6 +259,7 @@ fn rollback_remote_daemon_update_over_ssh(
     remote_ctx_bin: &str,
     backup_ctx_bin: &str,
     base_url: &str,
+    auth_token: &str,
     bundle_synced: bool,
 ) -> Result<()> {
     let _ = stop_remote_daemon_over_ssh(host, user, remote_port, remote_data_dir, remote_ctx_bin);
@@ -276,7 +279,7 @@ fn rollback_remote_daemon_update_over_ssh(
         None,
     )
     .context("restarting previous remote daemon binary after rollback")?;
-    wait_for_remote_daemon_health(base_url)
+    wait_for_remote_daemon_health(base_url, auth_token)
         .context("waiting for rolled back remote daemon health")?;
     if let Err(err) = cleanup_remote_update_backup_over_ssh(host, user, backup_ctx_bin) {
         eprintln!("failed to remove remote update backup {backup_ctx_bin}: {err:#}");
@@ -284,10 +287,10 @@ fn rollback_remote_daemon_update_over_ssh(
     Ok(())
 }
 
-fn wait_for_remote_daemon_health(base_url: &str) -> Result<()> {
+fn wait_for_remote_daemon_health(base_url: &str, auth_token: &str) -> Result<()> {
     let mut last_err: Option<anyhow::Error> = None;
     for attempt in 0..REMOTE_UPDATE_HEALTH_RETRIES {
-        match probe_daemon_health(base_url) {
+        match probe_daemon_health_with_auth(base_url, Some(auth_token)) {
             Ok(()) => return Ok(()),
             Err(err) => last_err = Some(err),
         }
@@ -313,5 +316,57 @@ mod tests {
         );
         assert!(cmd.contains("self-update --yes --channel 'canary' --base-url 'https://updates.example/functions/v1'"));
         assert!(cmd.contains("\"$HOME/.ctx/bin/ctx\""));
+    }
+
+    #[test]
+    fn remote_health_wait_validates_a_protected_route() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind test listener");
+        let addr = listener.local_addr().expect("listener addr");
+        let observed = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let observed_server = std::sync::Arc::clone(&observed);
+        let server = std::thread::spawn(move || {
+            let health_body =
+                "{\"pid\":1,\"data_root\":\"/tmp/test\",\"compatibility\":{\"desktop_exact_version\":\"1.0.0\",\"desktop_build_id\":\"build-a\",\"desktop_dev_instance_id\":\"dev\"}}";
+            for _ in 0..2 {
+                let (mut stream, _) = listener.accept().expect("accept request");
+                let mut buf = [0_u8; 2048];
+                let size = std::io::Read::read(&mut stream, &mut buf).expect("read request");
+                let request = String::from_utf8_lossy(&buf[..size]).to_string();
+                let request_lower = request.to_ascii_lowercase();
+                observed_server
+                    .lock()
+                    .expect("lock observed requests")
+                    .push(request.clone());
+                let (status_line, body) = if request.starts_with("GET /api/health ") {
+                    ("HTTP/1.1 200 OK", health_body)
+                } else if request.starts_with("GET /api/workspaces ")
+                    && request_lower.contains("authorization: bearer remote-token")
+                {
+                    ("HTTP/1.1 200 OK", "[]")
+                } else {
+                    ("HTTP/1.1 401 Unauthorized", "{\"error\":\"unauthorized\"}")
+                };
+                let response = format!(
+                    "{status_line}\r\nContent-Length: {}\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body,
+                );
+                std::io::Write::write_all(&mut stream, response.as_bytes())
+                    .expect("write response");
+            }
+        });
+
+        let base_url = format!("http://{}", addr);
+        wait_for_remote_daemon_health(&base_url, "remote-token")
+            .expect("remote daemon health wait succeeds");
+
+        server.join().expect("join test server");
+        let requests = observed.lock().expect("lock observed requests");
+        assert_eq!(requests.len(), 2);
+        assert!(requests[0].starts_with("GET /api/health "));
+        assert!(requests[1].starts_with("GET /api/workspaces "));
+        assert!(requests[1]
+            .to_ascii_lowercase()
+            .contains("authorization: bearer remote-token"));
     }
 }

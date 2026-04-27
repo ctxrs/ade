@@ -225,6 +225,62 @@ fn bootstrap_failure_cleanup_kills_ephemeral_tunnel() {
 }
 
 #[test]
+#[cfg(unix)]
+fn ssh_tunnel_health_probe_with_auth_validates_protected_route() {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind test listener");
+    let addr = listener.local_addr().expect("listener addr");
+    let observed = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let observed_server = std::sync::Arc::clone(&observed);
+    let server = std::thread::spawn(move || {
+        let health_body =
+            "{\"pid\":1,\"data_root\":\"/tmp/test\",\"compatibility\":{\"desktop_exact_version\":\"1.0.0\",\"desktop_build_id\":\"build-a\",\"desktop_dev_instance_id\":\"dev\"}}";
+        for _ in 0..2 {
+            let (mut stream, _) = listener.accept().expect("accept request");
+            let mut buf = [0_u8; 2048];
+            let size = std::io::Read::read(&mut stream, &mut buf).expect("read request");
+            let request = String::from_utf8_lossy(&buf[..size]).to_string();
+            let request_lower = request.to_ascii_lowercase();
+            observed_server
+                .lock()
+                .expect("lock observed requests")
+                .push(request.clone());
+            let (status_line, body) = if request.starts_with("GET /api/health ") {
+                ("HTTP/1.1 200 OK", health_body)
+            } else if request.starts_with("GET /api/workspaces ")
+                && request_lower.contains("authorization: bearer remote-token")
+            {
+                ("HTTP/1.1 200 OK", "[]")
+            } else {
+                ("HTTP/1.1 401 Unauthorized", "{\"error\":\"unauthorized\"}")
+            };
+            let response = format!(
+                "{status_line}\r\nContent-Length: {}\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body,
+            );
+            std::io::Write::write_all(&mut stream, response.as_bytes()).expect("write response");
+        }
+    });
+
+    let child = spawn_tokio_sleep_child();
+    let mut tunnel = TunnelHandle::from_child_for_test(addr.port(), child);
+    let base_url = format!("http://{}", addr);
+    tunnel
+        .probe_health_with_retry(&base_url, Some("remote-token"))
+        .expect("auth-aware health probe succeeds");
+    tunnel.kill().expect("kill test tunnel");
+
+    server.join().expect("join test server");
+    let requests = observed.lock().expect("lock observed requests");
+    assert_eq!(requests.len(), 2);
+    assert!(requests[0].starts_with("GET /api/health "));
+    assert!(requests[1].starts_with("GET /api/workspaces "));
+    assert!(requests[1]
+        .to_ascii_lowercase()
+        .contains("authorization: bearer remote-token"));
+}
+
+#[test]
 fn windows_detection_helpers_match_expected_tokens() {
     assert!(parse_remote_platform_probe_stdout(
         "welcome\n__CTX_PLATFORM_OS__Linux\n__CTX_PLATFORM_ARCH__x86_64\n"

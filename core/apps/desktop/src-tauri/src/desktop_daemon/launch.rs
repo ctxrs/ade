@@ -240,7 +240,10 @@ fn spawn_daemon_with_mode(
 
     let mut child = cmd.spawn().context("spawning ctx daemon")?;
     if wait_for_health {
-        if let Err(err) = probe_local_daemon_health_with_retry(&base_url) {
+        let auth = read_daemon_auth_with_retry(data_dir).context("reading spawned daemon auth")?;
+        if let Err(err) =
+            probe_local_daemon_health_with_retry_auth(&base_url, Some(auth.token.as_str()))
+        {
             if let Ok(Some(status)) = child.try_wait() {
                 let stderr = daemon_stderr_snippet(stderr_path.as_deref());
                 let mut msg = format!("{err:#}; daemon exited ({status})");
@@ -258,8 +261,25 @@ fn spawn_daemon_with_mode(
     } else {
         let base_url = base_url.clone();
         let stderr_path = stderr_path.clone();
+        let data_dir = data_dir.to_path_buf();
         std::thread::spawn(move || {
-            if let Err(err) = probe_local_daemon_health_with_retry(&base_url) {
+            let auth = match read_daemon_auth_with_retry(&data_dir) {
+                Ok(auth) => auth,
+                Err(err) => {
+                    let stderr = daemon_stderr_snippet(stderr_path.as_deref());
+                    if stderr.is_empty() {
+                        eprintln!("ctx daemon auth read failed after spawn: {err:#}");
+                    } else {
+                        eprintln!(
+                            "ctx daemon auth read failed after spawn: {err:#}; stderr: {stderr}"
+                        );
+                    }
+                    return;
+                }
+            };
+            if let Err(err) =
+                probe_local_daemon_health_with_retry_auth(&base_url, Some(auth.token.as_str()))
+            {
                 let stderr = daemon_stderr_snippet(stderr_path.as_deref());
                 if stderr.is_empty() {
                     eprintln!("ctx daemon health check failed after spawn: {err:#}");

@@ -357,6 +357,10 @@ pub(crate) fn update_current_remote_daemon_for_scope(
         .info_for_scope(scope)
         .base_url
         .ok_or_else(|| anyhow!("current SSH connection is missing a base_url"))?;
+    let daemon_auth_token = state
+        .info_for_scope(scope)
+        .token
+        .ok_or_else(|| anyhow!("current SSH connection is missing an auth token"))?;
     let release_base_url = bootstrap_download_base_url();
     let recorded_active_ctx_bin = target
         .runtime
@@ -404,6 +408,7 @@ pub(crate) fn update_current_remote_daemon_for_scope(
             remote_platform.arch,
             &channel_for_update,
             &daemon_base_url,
+            &daemon_auth_token,
             &release_base_url,
         )?;
         let auth =

@@ -36,14 +36,13 @@ pub(super) use auth::{
 pub(super) use commands::desktop_upload_blob;
 pub(super) use ctx_desktop_ipc::{DesktopDaemonRequest, DesktopHttpResponse};
 pub(super) use health::{
-    classify_daemon_compatibility, daemon_health, daemon_health_with_auth,
+    classify_daemon_compatibility, daemon_health_with_auth,
     existing_local_daemon_matches_or_absent, existing_local_daemon_matches_with_auth,
     local_daemon_health_matches_expected, normalize_daemon_pid, probe_daemon_health,
     probe_daemon_health_with_auth, probe_daemon_health_with_retry,
-    probe_local_daemon_health_with_retry, probe_local_daemon_health_with_retry_auth,
-    reclaim_incompatible_local_daemon, should_reclaim_incompatible_local_daemon,
-    spawned_local_daemon_incompatibility_message, terminate_pid, wait_for_daemon_reclaim,
-    DaemonCompatibilityState,
+    probe_local_daemon_health_with_retry_auth, reclaim_incompatible_local_daemon,
+    should_reclaim_incompatible_local_daemon, spawned_local_daemon_incompatibility_message,
+    terminate_pid, wait_for_daemon_reclaim, DaemonCompatibilityState,
 };
 pub(super) use launch::{spawn_and_validate_local_daemon, try_kill_child, SpawnedLocalDaemonReady};
 pub(super) use login_relay::desktop_start_codex_login_relay;

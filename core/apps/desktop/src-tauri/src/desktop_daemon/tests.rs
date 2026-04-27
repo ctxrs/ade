@@ -328,9 +328,9 @@ fn desktop_connect_local_spawn_failure_preserves_existing_owned_connection() {
     let resolve_existing_calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let err = connect_local_with_sources(
         &state,
-        |_| false,
+        |_, _| false,
         || Ok(None),
-        |_| Ok(()),
+        |_, _| Ok(()),
         {
             let resolve_existing_calls = std::sync::Arc::clone(&resolve_existing_calls);
             move || {
@@ -389,9 +389,9 @@ fn desktop_connect_local_spawn_race_reattaches_same_owned_local_daemon_without_k
     let resolve_existing_calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let info = connect_local_with_sources(
         &state,
-        |_| false,
+        |_, _| false,
         || Ok(None),
-        |_| Ok(()),
+        |_, _| Ok(()),
         {
             let resolve_existing_calls = std::sync::Arc::clone(&resolve_existing_calls);
             move || {
@@ -456,9 +456,9 @@ fn desktop_connect_local_spawn_race_switches_to_validated_local_daemon_over_exis
     let resolve_existing_calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let info = connect_local_with_sources(
         &state,
-        |_| false,
+        |_, _| false,
         || Ok(None),
-        |_| Ok(()),
+        |_, _| Ok(()),
         {
             let resolve_existing_calls = std::sync::Arc::clone(&resolve_existing_calls);
             move || {
@@ -525,9 +525,9 @@ fn desktop_connect_local_spawn_race_switches_to_validated_local_daemon_over_ssh_
     let resolve_existing_calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let info = connect_local_with_sources(
         &state,
-        |_| false,
+        |_, _| false,
         || Ok(None),
-        |_| Ok(()),
+        |_, _| Ok(()),
         {
             let resolve_existing_calls = std::sync::Arc::clone(&resolve_existing_calls);
             move || {

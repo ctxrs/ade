@@ -51,8 +51,7 @@ pub(crate) fn reclaim_incompatible_local_daemon(
     } else {
         None
     };
-    if wait_for_daemon_reclaim_with_auth(base_url, pid, Duration::from_secs(3), auth_token).is_ok()
-    {
+    if wait_for_daemon_reclaim(base_url, pid, Duration::from_secs(3), auth_token).is_ok() {
         return Ok(());
     }
     let force_revalidated = daemon_reports_expected_pid_with_auth(base_url, pid, auth_token);
@@ -61,8 +60,7 @@ pub(crate) fn reclaim_incompatible_local_daemon(
     } else {
         None
     };
-    if wait_for_daemon_reclaim_with_auth(base_url, pid, Duration::from_secs(2), auth_token).is_ok()
-    {
+    if wait_for_daemon_reclaim(base_url, pid, Duration::from_secs(2), auth_token).is_ok() {
         return Ok(());
     }
     let mut details = Vec::new();
@@ -121,11 +119,7 @@ fn wait_until_daemon_reclaimed(
     }
 }
 
-pub(crate) fn wait_for_daemon_reclaim(base_url: &str, pid: u32, timeout: Duration) -> Result<()> {
-    wait_for_daemon_reclaim_with_auth(base_url, pid, timeout, None)
-}
-
-fn wait_for_daemon_reclaim_with_auth(
+pub(crate) fn wait_for_daemon_reclaim(
     base_url: &str,
     pid: u32,
     timeout: Duration,

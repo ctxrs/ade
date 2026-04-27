@@ -81,12 +81,16 @@ impl TunnelHandle {
         format!("http://127.0.0.1:{}", self.local_port)
     }
 
-    pub(super) fn probe_health_quick_for_bootstrap(&mut self, base_url: &str) -> Result<()> {
+    pub(super) fn probe_health_quick_for_bootstrap(
+        &mut self,
+        base_url: &str,
+        auth_token: Option<&str>,
+    ) -> Result<()> {
         let stderr_log = std::sync::Arc::clone(&self.stderr_log);
         let child = self.child_mut()?;
         let mut last_err: Option<anyhow::Error> = None;
         for attempt in 0..SSH_TUNNEL_BOOTSTRAP_HEALTH_RETRIES {
-            match probe_daemon_health(base_url) {
+            match probe_daemon_health_with_auth(base_url, auth_token) {
                 Ok(()) => return Ok(()),
                 Err(err) => last_err = Some(err),
             }
@@ -117,11 +121,15 @@ impl TunnelHandle {
         Err(anyhow!("{err:#}; {details}"))
     }
 
-    pub(super) fn probe_health_with_retry(&mut self, base_url: &str) -> Result<()> {
+    pub(super) fn probe_health_with_retry(
+        &mut self,
+        base_url: &str,
+        auth_token: Option<&str>,
+    ) -> Result<()> {
         let local_port = self.local_port;
         let stderr_log = std::sync::Arc::clone(&self.stderr_log);
         let child = self.child_mut()?;
-        probe_daemon_health_with_retry(base_url, local_port, child, &stderr_log)
+        probe_daemon_health_with_retry(base_url, auth_token, local_port, child, &stderr_log)
     }
 
     pub(super) fn kill(mut self) -> Result<()> {

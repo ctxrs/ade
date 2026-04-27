@@ -3,6 +3,7 @@ use super::*;
 
 pub(super) fn stop_owned_local_daemon_child(
     base_url: &str,
+    auth_token: &str,
     mut child: Child,
     systemd_scope: bool,
 ) -> Result<()> {
@@ -15,7 +16,7 @@ pub(super) fn stop_owned_local_daemon_child(
 
     let pid = child.id();
     let graceful_err = terminate_pid(pid, false).err();
-    if wait_for_daemon_reclaim(base_url, pid, Duration::from_secs(3)).is_ok() {
+    if wait_for_daemon_reclaim(base_url, pid, Duration::from_secs(3), Some(auth_token)).is_ok() {
         let _ = child.wait();
         return Ok(());
     }
@@ -32,7 +33,7 @@ fn cleanup_active_connection_result(active: ActiveConnection) -> Result<()> {
             LocalConnectionOwnership::OwnedChild {
                 child,
                 systemd_scope,
-            } => stop_owned_local_daemon_child(&c.base_url, child, systemd_scope),
+            } => stop_owned_local_daemon_child(&c.base_url, &c.token, child, systemd_scope),
             LocalConnectionOwnership::UnownedExternal => Ok(()),
         },
         ActiveConnection::Ssh(c) => try_kill_child(c.tunnel),

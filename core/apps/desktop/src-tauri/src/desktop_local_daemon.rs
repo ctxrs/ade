@@ -1,6 +1,6 @@
 use super::*;
 use crate::desktop_daemon::{
-    daemon_data_dir, daemon_health, existing_local_daemon_matches_with_auth,
+    daemon_data_dir, daemon_health_with_auth, existing_local_daemon_matches_with_auth,
     normalize_daemon_pid, probe_daemon_health_with_auth, probe_local_daemon_health_with_retry_auth,
     read_daemon_auth_with_retry, resolve_env_local_daemon, resolve_existing_local_daemon,
     spawn_and_validate_local_daemon, SpawnedLocalDaemonReady,
@@ -484,7 +484,7 @@ fn ensure_local_connection_with_mode(
                         "spawning local daemon failed and existing daemon is incompatible (url={url})"
                     ));
                 }
-                let daemon_pid = daemon_health(url)
+                let daemon_pid = daemon_health_with_auth(url, Some(auth.token.as_str()))
                     .ok()
                     .and_then(|health| normalize_daemon_pid(health.pid));
                 set_attached_local_for_ensure_mode(

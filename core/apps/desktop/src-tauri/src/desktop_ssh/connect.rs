@@ -22,6 +22,26 @@ enum InitialConnectOutcome {
     Planned(BootstrapPlanContext),
 }
 
+fn read_and_validate_remote_daemon_auth(
+    target: &SshConnectTarget,
+    tunnel: &mut TunnelHandle,
+    base_url: &str,
+    quick_probe: bool,
+) -> Result<String> {
+    let auth = read_remote_daemon_auth_with_retry(
+        &target.host,
+        target.user.as_deref(),
+        target.remote_data_dir.as_deref(),
+    )?;
+    let auth_probe = if quick_probe {
+        tunnel.probe_health_quick_for_bootstrap(base_url, Some(auth.token.as_str()))
+    } else {
+        tunnel.probe_health_with_retry(base_url, Some(auth.token.as_str()))
+    };
+    auth_probe.context("validating remote daemon auth")?;
+    Ok(auth.token)
+}
+
 pub(super) fn cleanup_ephemeral_tunnel_on_error<T>(
     tunnel: TunnelHandle,
     err: anyhow::Error,
@@ -76,16 +96,28 @@ fn prepare_initial_connect(
     )?;
     let base_url = tunnel.base_url();
     let no_start_remote = env_bool("CTX_DESKTOP_SSH_NO_START_REMOTE", false);
-    let existing_daemon_reachable = if target.start_remote && !no_start_remote {
-        tunnel.probe_health_quick_for_bootstrap(&base_url).is_ok()
+    let quick_probe = target.start_remote && !no_start_remote;
+    let existing_daemon_reachable = if quick_probe {
+        tunnel
+            .probe_health_quick_for_bootstrap(&base_url, None)
+            .is_ok()
     } else {
-        tunnel.probe_health_with_retry(&base_url).is_ok()
+        tunnel.probe_health_with_retry(&base_url, None).is_ok()
+    };
+    let existing_daemon_auth = if existing_daemon_reachable {
+        set_job_phase(job_id.as_deref(), ConnectJobPhase::ReadingAuth);
+        match read_and_validate_remote_daemon_auth(&target, &mut tunnel, &base_url, quick_probe) {
+            Ok(token) => Some(token),
+            Err(err) => return cleanup_ephemeral_tunnel_on_error(tunnel, err),
+        }
+    } else {
+        None
     };
     let probe = RemoteProbe {
         platform,
         auth_bootstrap_used,
         managed_binary_present,
-        existing_daemon_reachable,
+        existing_daemon_reachable: existing_daemon_auth.is_some(),
     };
     set_job_phase(job_id.as_deref(), ConnectJobPhase::Planning);
     let decision = plan_remote_bootstrap(RemoteBootstrapPlannerInput {
@@ -96,21 +128,14 @@ fn prepare_initial_connect(
     });
     match decision {
         RemoteBootstrapPlan::ConnectToRunningDaemon => {
-            set_job_phase(job_id.as_deref(), ConnectJobPhase::ReadingAuth);
-            let auth = match read_remote_daemon_auth_with_retry(
-                &target.host,
-                target.user.as_deref(),
-                target.remote_data_dir.as_deref(),
-            ) {
-                Ok(auth) => auth,
-                Err(err) => return cleanup_ephemeral_tunnel_on_error(tunnel, err),
-            };
+            let token = existing_daemon_auth
+                .ok_or_else(|| anyhow!("running remote daemon was not auth-validated"))?;
             let active_ctx_bin = probe
                 .managed_binary_present
                 .then(|| MANAGED_REMOTE_CTX_BIN.to_string());
             Ok(InitialConnectOutcome::Connected(ConnectedRemoteDaemon {
                 base_url,
-                token: auth.token,
+                token,
                 tunnel,
                 runtime: SshRuntimeMetadata {
                     managed_ctx_bin: MANAGED_REMOTE_CTX_BIN.to_string(),
@@ -191,9 +216,6 @@ fn execute_bootstrap_plan(
         plan.target.remote_port,
     )?;
     let base_url = tunnel.base_url();
-    if let Err(err) = tunnel.probe_health_with_retry(&base_url) {
-        return cleanup_ephemeral_tunnel_on_error(tunnel, err);
-    }
     set_job_phase(job_id.as_deref(), ConnectJobPhase::ReadingAuth);
     let auth = match read_remote_daemon_auth_with_retry(
         &plan.target.host,
@@ -203,6 +225,9 @@ fn execute_bootstrap_plan(
         Ok(auth) => auth,
         Err(err) => return cleanup_ephemeral_tunnel_on_error(tunnel, err),
     };
+    if let Err(err) = tunnel.probe_health_with_retry(&base_url, Some(auth.token.as_str())) {
+        return cleanup_ephemeral_tunnel_on_error(tunnel, err);
+    }
     Ok(ConnectedRemoteDaemon {
         base_url,
         token: auth.token,
@@ -255,6 +280,7 @@ fn update_connected_remote_if_needed(
                 connected.platform.arch,
                 channel,
                 &connected.base_url,
+                &connected.token,
                 &release_base_url,
             );
             if let Err(err) = update_result {
@@ -287,6 +313,7 @@ fn update_connected_remote_if_needed(
                 connected.platform.arch,
                 channel,
                 &connected.base_url,
+                &connected.token,
                 &release_base_url,
             )?;
             let auth = read_remote_daemon_auth_with_retry(

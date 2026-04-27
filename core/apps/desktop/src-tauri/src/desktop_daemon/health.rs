@@ -12,7 +12,7 @@ pub(crate) use reclaim::{
     normalize_daemon_pid, reclaim_incompatible_local_daemon,
     should_reclaim_incompatible_local_daemon, terminate_pid, wait_for_daemon_reclaim,
 };
-pub(crate) use transport::{daemon_health, daemon_health_with_auth};
+pub(crate) use transport::daemon_health_with_auth;
 #[cfg(test)]
 use transport::{
     daemon_health_client_build_count, daemon_health_with_timeout,
@@ -190,10 +190,6 @@ pub(crate) fn probe_daemon_health_with_auth(
     Ok(())
 }
 
-pub(crate) fn probe_local_daemon_health_with_retry(base_url: &str) -> Result<()> {
-    probe_local_daemon_health_with_retry_auth(base_url, None)
-}
-
 pub(crate) fn probe_local_daemon_health_with_retry_auth(
     base_url: &str,
     auth_token: Option<&str>,
@@ -212,13 +208,14 @@ pub(crate) fn probe_local_daemon_health_with_retry_auth(
 
 pub(crate) fn probe_daemon_health_with_retry(
     base_url: &str,
+    auth_token: Option<&str>,
     local_port: u16,
     tunnel: &mut Child,
     stderr_log: &std::sync::Arc<std::sync::Mutex<String>>,
 ) -> Result<()> {
     let mut last_err: Option<anyhow::Error> = None;
     for attempt in 0..SSH_TUNNEL_HEALTH_RETRIES {
-        match probe_daemon_health(base_url) {
+        match probe_daemon_health_with_auth(base_url, auth_token) {
             Ok(()) => return Ok(()),
             Err(err) => {
                 last_err = Some(err);
