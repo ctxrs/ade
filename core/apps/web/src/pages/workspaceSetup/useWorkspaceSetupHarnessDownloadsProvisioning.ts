@@ -20,7 +20,10 @@ import {
   upsertProviderInstallProgressForScope,
 } from "../../state/providerInstallProgressStore";
 import { providerDetailFlag } from "../../utils/boolish";
-import { findHarnessCatalogEntry } from "../../utils/harnessCatalog";
+import {
+  buildHarnessCatalogEntryMap,
+  findHarnessCatalogEntry,
+} from "../../utils/harnessCatalog";
 import {
   computeInstallPct,
   parseInstallTarget,
@@ -94,6 +97,7 @@ export function useWorkspaceSetupHarnessDownloadsProvisioning({
   const [harnessInstallRows, setHarnessInstallRows] = useState<Record<string, HarnessInstallRowState>>({});
 
   const harnessInstallObserversRef = useRef<Record<string, { installId: string; stop: () => void }>>({});
+  const harnessByProviderId = useMemo(() => buildHarnessCatalogEntryMap(), []);
   const selectedHarnessInstallTarget: InstallTarget = installTargetForWorkspaceSetupContainerSelection(
     selections.container,
   );

@@ -59,6 +59,15 @@ export function findHarnessCatalogEntry(
   return HARNESS_CATALOG.find((entry) => entry.id === catalogId);
 }
 
+export function buildHarnessCatalogEntryMap(): Map<string, HarnessCatalogEntry> {
+  const entriesById = new Map(HARNESS_CATALOG.map((entry) => [entry.id, entry]));
+  for (const [providerId, catalogId] of Object.entries(HARNESS_CATALOG_ALIASES)) {
+    const entry = entriesById.get(catalogId);
+    if (entry) entriesById.set(providerId, entry);
+  }
+  return entriesById;
+}
+
 export const UNSUPPORTED_HARNESS_IDS = new Set([
   "codebuff",
   "charm",

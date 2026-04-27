@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildHarnessCatalogEntryMap,
   findHarnessCatalogEntry,
   HARNESS_CATALOG,
   resolveHarnessCatalogId,
@@ -30,5 +31,11 @@ describe("harnessCatalog", () => {
     expect(codex?.id).toBe("codex");
     expect(codex?.label).toBe("Codex");
     expect(codex?.logoSrc).toContain("openai");
+  });
+
+  it("indexes adapter aliases for UI lookup maps", () => {
+    const byProviderId = buildHarnessCatalogEntryMap();
+    expect(byProviderId.get("codex-crp")).toBe(byProviderId.get("codex"));
+    expect(byProviderId.get("codex-crp")?.logoSrc).toContain("openai");
   });
 });
