@@ -80,6 +80,14 @@ function targetTripleForPlatform(platform) {
   }
 }
 
+function shouldUseStaticOnlyValidation({
+  platform,
+  hostPlatform = process.platform,
+  hostArch = process.arch,
+} = {}) {
+  return platform === "macos-arm64" && hostPlatform === "darwin" && hostArch === "x64";
+}
+
 function resourcePaths(appPath, platform) {
   const resourcesRoot = path.join(appPath, "Contents", "Resources");
   const bundleDir = path.join(resourcesRoot, "bundles");
@@ -351,7 +359,19 @@ async function main() {
   if (!fs.existsSync(daemonBin)) {
     fail(`missing bundled daemon binary: ${daemonBin}`);
   }
+  if (!fs.existsSync(mcpBin)) {
+    fail(`missing bundled MCP binary: ${mcpBin}`);
+  }
+  if (!fs.existsSync(avfLinuxHelper)) {
+    fail(`missing bundled AVF helper binary: ${avfLinuxHelper}`);
+  }
   const identity = readArtifactIdentity(bundleDir);
+  if (shouldUseStaticOnlyValidation({ platform: args.platform })) {
+    console.log(
+      `release_desktop_identity_gate: OK (static_only=1 reason=host_cannot_execute_target version=${identity.exactVersion} build_id=${identity.buildId} compatibility_token=${identity.compatibilityToken})`,
+    );
+    return;
+  }
   const helperProbe = probeBundledHelper(avfLinuxHelper, bundleDir);
   const mcpVersion = initializeBundledMcp(mcpBin, bundleDir);
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-desktop-identity-gate-"));
@@ -417,6 +437,12 @@ async function main() {
   );
 }
 
-main().catch((error) => {
-  fail(error instanceof Error ? error.message : String(error));
-});
+if (require.main === module) {
+  main().catch((error) => {
+    fail(error instanceof Error ? error.message : String(error));
+  });
+}
+
+module.exports = {
+  shouldUseStaticOnlyValidation,
+};
