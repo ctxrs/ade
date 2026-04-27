@@ -5,6 +5,13 @@ const DEFAULT_ROWS: u16 = 24;
 const TERMINAL_PING_INTERVAL: Duration = Duration::from_secs(25);
 const TERMINAL_RECONNECT_BASE_MS: u64 = 500;
 const TERMINAL_RECONNECT_MAX_MS: u64 = 10_000;
+const DAEMON_AUTH_ENV_VARS: &[&str] = &["CTX_AUTH_TOKEN", "CTX_MCP_TOKEN"];
+
+fn scrub_daemon_auth_env(cmd: &mut CommandBuilder) {
+    for key in DAEMON_AUTH_ENV_VARS {
+        cmd.env_remove(key);
+    }
+}
 
 fn resolved_terminal_size(cols: u16, rows: u16) -> PtySize {
     PtySize {
@@ -204,6 +211,7 @@ async fn run_terminal_session(
 
     let mut cmd = CommandBuilder::new(spec.shell.clone());
     cmd.cwd(cwd);
+    scrub_daemon_auth_env(&mut cmd);
     cmd.env("TERM", "xterm-256color");
 
     let child = pair.slave.spawn_command(cmd).context("spawn terminal")?;
@@ -402,6 +410,33 @@ async fn run_terminal_session(
 mod terminal_tests {
     use super::*;
 
+    struct ScopedEnvVar {
+        key: &'static str,
+        previous: Option<String>,
+    }
+
+    impl ScopedEnvVar {
+        fn set(key: &'static str, value: &str) -> Self {
+            let previous = std::env::var(key).ok();
+            unsafe {
+                std::env::set_var(key, value);
+            }
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for ScopedEnvVar {
+        fn drop(&mut self) {
+            unsafe {
+                if let Some(value) = &self.previous {
+                    std::env::set_var(self.key, value);
+                } else {
+                    std::env::remove_var(self.key);
+                }
+            }
+        }
+    }
+
     fn test_dir(prefix: &str) -> std::path::PathBuf {
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -429,6 +464,19 @@ mod terminal_tests {
         let size = resolved_terminal_size(132, 48);
         assert_eq!(size.cols, 132);
         assert_eq!(size.rows, 48);
+    }
+
+    #[test]
+    fn shim_scrub_daemon_auth_env_removes_sensitive_tokens() {
+        let _auth = ScopedEnvVar::set("CTX_AUTH_TOKEN", "daemon-token");
+        let _mcp = ScopedEnvVar::set("CTX_MCP_TOKEN", "mcp-token");
+        let mut cmd = CommandBuilder::new("/bin/sh");
+
+        scrub_daemon_auth_env(&mut cmd);
+
+        for key in DAEMON_AUTH_ENV_VARS {
+            assert_eq!(cmd.get_env(key), None, "expected {key} to be removed");
+        }
     }
 
     #[test]

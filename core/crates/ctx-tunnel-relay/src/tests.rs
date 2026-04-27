@@ -1,9 +1,9 @@
 use super::*;
+use crate::http_proxy::{extract_forward_headers, extract_ws_forward_headers};
 
 fn test_tunnel() -> Arc<Tunnel> {
     Arc::new(Tunnel {
         inner: Mutex::new(TunnelInner {
-            secret: None,
             desktop: None,
             pending_http: HashMap::new(),
             pending_ws_open: HashMap::new(),
@@ -148,4 +148,10 @@ fn derive_secret_is_deterministic() {
     let third = derive_secret(b"master-secret", "tunnel-2").unwrap();
     assert_eq!(first, second);
     assert_ne!(first, third);
+}
+
+#[test]
+fn parse_master_secret_rejects_empty_values() {
+    assert!(parse_master_secret("").is_err());
+    assert!(parse_master_secret("   ").is_err());
 }

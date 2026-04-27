@@ -1,5 +1,9 @@
 use super::*;
 
+fn is_disallowed_forward_header(name: &str) -> bool {
+    name.trim().eq_ignore_ascii_case("authorization")
+}
+
 impl ConnectionManager {
     pub(crate) fn daemon_request(&self, req: DesktopDaemonRequest) -> Result<DesktopHttpResponse> {
         self.daemon_request_for_scope(DEFAULT_CONNECTION_SCOPE, req)
@@ -36,6 +40,15 @@ impl ConnectionManager {
                 ),
             }
         };
+        if token
+            .as_deref()
+            .map(|value| value.trim().is_empty())
+            .unwrap_or(true)
+        {
+            return Err(anyhow!(
+                "remote desktop daemon auth token is missing; reconnect the remote daemon"
+            ));
+        }
 
         let url = format!("{}{}", base_url.trim_end_matches('/'), req.path);
         let method = req.method.trim().to_uppercase();
@@ -55,6 +68,11 @@ impl ConnectionManager {
             }
         }
         for (k, v) in req.headers {
+            if is_disallowed_forward_header(&k) {
+                return Err(anyhow!(
+                    "desktop daemon request cannot override authorization header"
+                ));
+            }
             builder = builder.header(k, v);
         }
         if let Some(body) = req.body {
@@ -116,6 +134,15 @@ impl ConnectionManager {
                 ),
             }
         };
+        if token
+            .as_deref()
+            .map(|value| value.trim().is_empty())
+            .unwrap_or(true)
+        {
+            return Err(anyhow!(
+                "remote desktop daemon auth token is missing; reconnect the remote daemon"
+            ));
+        }
         let url = format!("{}/api/blobs", base_url.trim_end_matches('/'));
         let mut part = reqwest::blocking::multipart::Part::bytes(bytes);
         if let Some(n) = name.as_deref().filter(|s| !s.trim().is_empty()) {

@@ -24,7 +24,7 @@ async fn require_terminal_stream_access(
 ) -> Result<Arc<crate::terminals::TerminalSessionHandle>, StatusCode> {
     let provided_token = token.ok_or(StatusCode::UNAUTHORIZED)?;
     let handle = manager.get(id).await.ok_or(StatusCode::NOT_FOUND)?;
-    if !handle.matches_stream_token(provided_token) {
+    if !handle.consume_stream_token(provided_token) {
         return Err(StatusCode::UNAUTHORIZED);
     }
     Ok(handle)

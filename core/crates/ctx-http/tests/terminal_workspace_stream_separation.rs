@@ -16,8 +16,29 @@ mod common;
 type WsStream =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
-fn terminal_ws_url(base: &str, terminal: &TerminalSession) -> String {
-    format!("{base}{}", terminal.stream_path)
+async fn mint_terminal_stream_path(
+    client: &reqwest::Client,
+    base: &str,
+    terminal: &TerminalSession,
+) -> String {
+    client
+        .post(format!(
+            "{base}/api/terminals/{}/stream_token",
+            terminal.id.0
+        ))
+        .send()
+        .await
+        .unwrap()
+        .json::<serde_json::Value>()
+        .await
+        .unwrap()["stream_path"]
+        .as_str()
+        .unwrap()
+        .to_string()
+}
+
+fn terminal_ws_url(base: &str, stream_path: &str) -> String {
+    format!("{base}{stream_path}")
         .replacen("https://", "wss://", 1)
         .replacen("http://", "ws://", 1)
 }
@@ -230,7 +251,10 @@ async fn terminal_disconnect_and_reconnect_do_not_poison_workspace_control_plane
         .await
         .unwrap();
 
-    let terminal_ws_url = terminal_ws_url(base, &terminal);
+    let terminal_ws_url = terminal_ws_url(
+        base,
+        &mint_terminal_stream_path(client, base, &terminal).await,
+    );
     let (mut terminal_socket, _) = connect_async(&terminal_ws_url).await.unwrap();
     let (status, _) = read_terminal_status(&mut terminal_socket).await;
     assert!(matches!(status, TerminalStatus::Running));

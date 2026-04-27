@@ -3,9 +3,10 @@ use crate::api::shared::{path_resolves_within_root, store_for_existing_workspace
 
 pub(super) async fn submit_merge_queue_entry(
     State(state): State<Arc<AppState>>,
+    mcp_auth: Option<Extension<crate::daemon::McpAuthContext>>,
     Json(req): Json<MergeQueueSubmitReq>,
 ) -> Result<Json<MergeQueueEntry>, (StatusCode, Json<ApiErrorResp>)> {
-    let session_id = match req.session_id {
+    let mut session_id = match req.session_id {
         Some(id) => Some(SessionId(uuid::Uuid::parse_str(&id).map_err(|_| {
             (
                 StatusCode::BAD_REQUEST,
@@ -16,7 +17,7 @@ pub(super) async fn submit_merge_queue_entry(
         })?)),
         None => None,
     };
-    let worktree_id = match req.worktree_id {
+    let mut worktree_id = match req.worktree_id {
         Some(id) => Some(WorktreeId(uuid::Uuid::parse_str(&id).map_err(|_| {
             (
                 StatusCode::BAD_REQUEST,
@@ -35,6 +36,31 @@ pub(super) async fn submit_merge_queue_entry(
             Some(trimmed.to_string())
         }
     });
+    if let Some(Extension(mcp_auth)) = mcp_auth {
+        if worktree_root.is_some() {
+            return Err((
+                StatusCode::UNAUTHORIZED,
+                Json(ApiErrorResp {
+                    error: "scoped ctx-mcp merge queue submit cannot override worktree_root"
+                        .to_string(),
+                }),
+            ));
+        }
+        let scoped_session_id = session_id.unwrap_or(mcp_auth.session_id);
+        let scoped_worktree_id = worktree_id.unwrap_or(mcp_auth.worktree_id);
+        if !mcp_auth.allows_merge_queue_submit(scoped_session_id, scoped_worktree_id) {
+            return Err((
+                StatusCode::UNAUTHORIZED,
+                Json(ApiErrorResp {
+                    error:
+                        "scoped ctx-mcp merge queue submit is limited to the current session and worktree"
+                            .to_string(),
+                }),
+            ));
+        }
+        session_id = Some(scoped_session_id);
+        worktree_id = Some(scoped_worktree_id);
+    }
 
     let params = merge_queue::MergeQueueSubmitParams {
         session_id,

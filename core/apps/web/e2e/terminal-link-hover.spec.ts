@@ -204,7 +204,19 @@ async function terminalWsUrl(baseURL: string, token: string, terminalId: string)
     const terminals = (await terminalsResp.json()) as TerminalLookupRecord[];
     const terminal = terminals.find((candidate) => candidate.id === terminalId);
     if (terminal && typeof terminal.stream_path === "string" && terminal.stream_path) {
-      const url = new URL(terminal.stream_path, baseURL);
+      const streamResp = await fetch(
+        new URL(`/api/terminals/${terminal.id}/stream_token`, baseURL),
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        },
+      );
+      if (!streamResp.ok) continue;
+      const streamInfo = (await streamResp.json()) as { stream_path?: string };
+      if (!streamInfo.stream_path) continue;
+      const url = new URL(streamInfo.stream_path, baseURL);
       url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
       return url.toString();
     }

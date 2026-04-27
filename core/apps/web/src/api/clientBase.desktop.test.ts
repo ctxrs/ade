@@ -304,7 +304,7 @@ describe("clientBase desktop connection sync", () => {
     expect(mod.getDaemonClientConfig()).toMatchObject({
       baseUrl: "http://127.0.0.1:4399",
       wsBaseUrl: "ws://127.0.0.1:4399",
-      authToken: "token-old",
+      authToken: null,
     });
 
     const result = await mod.syncDesktopDaemonConnectionFromBridge({
@@ -322,7 +322,7 @@ describe("clientBase desktop connection sync", () => {
       v: 1,
       baseUrl: "http://127.0.0.1:4400",
       wsBaseUrl: "ws://127.0.0.1:4400",
-      authToken: "token-new",
+      authToken: null,
       source: "desktop",
     });
     expect(JSON.parse(localStorage.getItem(PERSISTED_BASE_KEY) ?? "{}")).toMatchObject({
@@ -355,7 +355,18 @@ describe("clientBase desktop connection sync", () => {
 
     expect(result.ok).toBe(true);
     expect(desktopGetConnectionMock).toHaveBeenCalledTimes(1);
-    expect(fetchMock).toHaveBeenCalledWith(
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      "http://127.0.0.1:4399/api/workspaces",
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          authorization: "Bearer abc",
+        }),
+        signal: expect.any(AbortSignal),
+      }),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
       "http://127.0.0.1:4399/api/health",
       expect.objectContaining({
         headers: expect.objectContaining({
@@ -366,6 +377,57 @@ describe("clientBase desktop connection sync", () => {
     expect(mod.getDaemonClientConfig()).toMatchObject({
       baseUrl: "http://127.0.0.1:4399",
       authToken: "abc",
+    });
+  });
+
+  it("repairs stale restored desktop auth before the first API request", async () => {
+    localStorage.setItem(PERSISTED_BASE_KEY, JSON.stringify({
+      v: 1,
+      baseUrl: "http://127.0.0.1:4399",
+      wsBaseUrl: "ws://127.0.0.1:4399",
+    }));
+    desktopGetConnectionMock.mockResolvedValue({
+      kind: "local",
+      base_url: "http://127.0.0.1:4399",
+      token: "stale-token",
+    });
+    desktopConnectLocalMock.mockResolvedValue({
+      kind: "local",
+      base_url: "http://127.0.0.1:4400",
+      token: "fresh-token",
+    });
+    fetchMock
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: "unauthorized" }), { status: 401 }))
+      .mockResolvedValueOnce(okJsonResponse({ ok: true }));
+
+    const mod = await import("./clientBase");
+    const result = await mod.apiAny<{ ok: boolean }>("/api/health");
+
+    expect(result.ok).toBe(true);
+    expect(desktopGetConnectionMock).toHaveBeenCalledTimes(1);
+    expect(desktopConnectLocalMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      "http://127.0.0.1:4399/api/workspaces",
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          authorization: "Bearer stale-token",
+        }),
+        signal: expect.any(AbortSignal),
+      }),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      "http://127.0.0.1:4400/api/health",
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          authorization: "Bearer fresh-token",
+        }),
+      }),
+    );
+    expect(mod.getDaemonClientConfig()).toMatchObject({
+      baseUrl: "http://127.0.0.1:4400",
+      authToken: "fresh-token",
     });
   });
 

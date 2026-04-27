@@ -139,7 +139,7 @@ fn is_websocket_upgrade(headers: &HeaderMap) -> bool {
     upgrade.eq_ignore_ascii_case("websocket")
 }
 
-fn extract_forward_headers(headers: &HeaderMap) -> Vec<(String, String)> {
+pub(crate) fn extract_forward_headers(headers: &HeaderMap) -> Vec<(String, String)> {
     const HOP_BY_HOP: &[axum::http::header::HeaderName] = &[
         axum::http::header::CONNECTION,
         axum::http::header::UPGRADE,
@@ -158,7 +158,7 @@ fn extract_forward_headers(headers: &HeaderMap) -> Vec<(String, String)> {
         .collect()
 }
 
-fn extract_ws_forward_headers(headers: &HeaderMap) -> Vec<(String, String)> {
+pub(crate) fn extract_ws_forward_headers(headers: &HeaderMap) -> Vec<(String, String)> {
     headers
         .iter()
         .filter(|(k, _)| k.as_str().eq_ignore_ascii_case("authorization"))

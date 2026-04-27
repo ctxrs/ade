@@ -431,6 +431,16 @@ export const createWorkspaceTerminal = (workspaceId: string, req: CreateTerminal
 export const deleteTerminal = (terminalId: string) =>
   apiAny<void>(`/api/terminals/${terminalId}`, { method: "DELETE" });
 
+export type TerminalStreamConnectInfo = {
+  stream_path: string;
+  expires_at: string;
+};
+
+export const mintTerminalStreamPath = (terminalId: string) =>
+  apiAny<TerminalStreamConnectInfo>(`/api/terminals/${terminalId}/stream_token`, {
+    method: "POST",
+  });
+
 export type WorkspaceActiveSnapshotParams = {
   limit?: number;
 };

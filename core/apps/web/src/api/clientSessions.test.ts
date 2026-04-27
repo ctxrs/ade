@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { deriveBrowserCapabilityToken } from "./browserCapabilityAuth";
 import type { DaemonConnection } from "./daemonConnection";
 
@@ -181,6 +181,11 @@ describe("browser download urls", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(getDaemonHttpUrl).mockImplementation((path: string) => `http://daemon.test${path}`);
+    vi.spyOn(Date, "now").mockReturnValue(1_761_600_000_000);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   it("builds blob urls with a scoped capability token instead of the raw daemon bearer", () => {
@@ -192,13 +197,14 @@ describe("browser download urls", () => {
       runId: null,
     });
 
+    const expectedExpiresAt = Math.floor((1_761_600_000_000 + 60 * 60 * 1000) / 1000);
     const expectedToken = deriveBrowserCapabilityToken("daemon-secret", {
       kind: "blob",
       blobId: "blob-1",
-    });
+    }, expectedExpiresAt);
 
     expect(blobUrl("blob-1")).toBe(
-      `http://daemon.test/api/blobs/blob-1?token=${expectedToken}`,
+      `http://daemon.test/api/blobs/blob-1?expires_at=${expectedExpiresAt}&token=${expectedToken}`,
     );
   });
 
@@ -211,14 +217,15 @@ describe("browser download urls", () => {
       runId: null,
     });
 
+    const expectedExpiresAt = Math.floor((1_761_600_000_000 + 60 * 60 * 1000) / 1000);
     const expectedToken = deriveBrowserCapabilityToken("daemon-secret", {
       kind: "session_artifact",
       sessionId: "session-1",
       artifactId: "artifact-1",
-    });
+    }, expectedExpiresAt);
 
     expect(artifactUrl("session-1", "artifact-1")).toBe(
-      `http://daemon.test/api/sessions/session-1/artifacts/artifact-1?token=${expectedToken}`,
+      `http://daemon.test/api/sessions/session-1/artifacts/artifact-1?expires_at=${expectedExpiresAt}&token=${expectedToken}`,
     );
   });
 });

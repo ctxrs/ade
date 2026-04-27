@@ -1,5 +1,6 @@
-import React, { useMemo } from "react";
-import type { WebSessionInfo } from "../api/client";
+import React, { useEffect, useMemo, useState } from "react";
+import { mintWebSessionStreamPath, type WebSessionInfo } from "../api/client";
+import { useDaemonConnection } from "../api/useDaemonConnection";
 
 type SessionSection = {
   key: string;
@@ -18,7 +19,10 @@ function sessionLabel(session: WebSessionInfo): string {
   }
 }
 
-function buildStreamUrl(session: WebSessionInfo, baseUrl: string): string | null {
+function buildStreamUrl(
+  session: { stream_url?: string | null; stream_path?: string | null },
+  baseUrl: string,
+): string | null {
   if (session.stream_url) return session.stream_url;
   if (!session.stream_path) return null;
   const base = baseUrl.replace(/\/$/, "");
@@ -46,6 +50,7 @@ export function SessionsPane({
   const visibleSections = sections.filter((section) => section.sessions.length > 0);
   const active = visibleSections.find((section) => section.key === activeSection) ?? visibleSections[0] ?? null;
   const sessions = active?.sessions ?? [];
+  const daemonAuthToken = useDaemonConnection().authToken;
 
   const selected = useMemo(() => {
     if (!sessions.length) return null;
@@ -56,7 +61,29 @@ export function SessionsPane({
     return sessions[0];
   }, [sessions, selectedSessionId]);
 
-  const streamUrl = selected ? buildStreamUrl(selected, daemonBaseUrl) : null;
+  const [streamUrl, setStreamUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!selected) {
+      setStreamUrl(null);
+      return;
+    }
+    let cancelled = false;
+    setStreamUrl(null);
+    void mintWebSessionStreamPath(selected.id)
+      .then((stream) => {
+        if (cancelled) return;
+        setStreamUrl(buildStreamUrl(stream, daemonBaseUrl));
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setStreamUrl(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [daemonAuthToken, daemonBaseUrl, selected?.id]);
+
   const hasTabs = sessions.length > 1;
 
   return (

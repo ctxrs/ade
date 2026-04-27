@@ -33,7 +33,7 @@ pub(super) use auth::{
     read_daemon_auth_with_retry, read_remote_daemon_auth_with_retry, resolve_env_local_daemon,
     resolve_existing_local_daemon,
 };
-pub(super) use commands::{desktop_daemon_request, desktop_upload_blob};
+pub(super) use commands::desktop_upload_blob;
 pub(super) use ctx_desktop_ipc::{DesktopDaemonRequest, DesktopHttpResponse};
 pub(super) use health::{
     classify_daemon_compatibility, daemon_health, daemon_health_with_auth,

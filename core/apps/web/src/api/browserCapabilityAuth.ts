@@ -2,6 +2,7 @@ export type BrowserCapabilityScope =
   | { kind: "blob"; blobId: string }
   | { kind: "session_artifact"; sessionId: string; artifactId: string };
 
+const BROWSER_CAPABILITY_TOKEN_TTL_MS = 60 * 60 * 1000;
 const encoder = new TextEncoder();
 
 const SHA256_K = new Uint32Array([
@@ -118,10 +119,11 @@ export const serializeBrowserCapabilityScope = (
 export const deriveBrowserCapabilityToken = (
   authToken: string,
   scope: BrowserCapabilityScope,
+  expiresAt: number,
 ): string =>
   sha256Hex(
     encoder.encode(
-      `ctx-browser-capability|${serializeBrowserCapabilityScope(scope)}|${authToken}`,
+      `ctx-browser-capability|${serializeBrowserCapabilityScope(scope)}|${expiresAt}|${authToken}`,
     ),
   );
 
@@ -131,5 +133,7 @@ export const setBrowserCapabilityQueryToken = (
   scope: BrowserCapabilityScope,
 ): void => {
   if (!authToken) return;
-  query.set("token", deriveBrowserCapabilityToken(authToken, scope));
+  const expiresAt = Math.floor((Date.now() + BROWSER_CAPABILITY_TOKEN_TTL_MS) / 1000);
+  query.set("expires_at", String(expiresAt));
+  query.set("token", deriveBrowserCapabilityToken(authToken, scope, expiresAt));
 };

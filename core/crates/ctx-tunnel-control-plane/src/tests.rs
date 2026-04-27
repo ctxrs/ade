@@ -49,6 +49,16 @@ fn derive_tunnel_secret_is_deterministic_and_distinct() {
     assert!(!first.contains('='));
 }
 
+#[test]
+fn parse_master_secret_trims_and_rejects_empty_values() {
+    assert_eq!(
+        parse_master_secret("  master-secret \n").unwrap(),
+        b"master-secret".to_vec()
+    );
+    assert!(parse_master_secret("").is_err());
+    assert!(parse_master_secret("   ").is_err());
+}
+
 #[derive(Clone)]
 struct MockDepsState {
     expected_token: String,

@@ -8,6 +8,7 @@ use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use tokio::io::AsyncWriteExt;
 use tokio::process::{Child, Command};
 use tokio::sync::Mutex;
 use uuid::Uuid;
@@ -17,6 +18,8 @@ const DEFAULT_HEIGHT: u32 = 720;
 const DEFAULT_FPS: u32 = 30;
 const DEFAULT_IDLE_SECS: u64 = 30 * 60;
 const REAPER_INTERVAL_SECS: u64 = 60;
+const WEB_SESSION_STREAM_TOKEN_TTL_SECS: i64 = 30;
+pub const WEB_SESSION_WORKER_AUTH_HEADER: &str = "x-ctx-worker-auth";
 
 mod runtime_support;
 mod view;
@@ -26,7 +29,8 @@ mod worker_bundle;
 mod tests;
 
 use runtime_support::{
-    allocate_port, build_run_payload, build_signal_path, build_stream_path, log_stream,
+    allocate_port, build_run_payload, build_signal_connect_path, build_stream_connect_path,
+    build_stream_path, log_stream,
 };
 pub use view::render_web_session_view;
 pub use worker_bundle::ensure_worker_bundle;
@@ -103,9 +107,22 @@ pub struct WorkerBundle {
 
 pub struct WebSessionHandle {
     info: WebSessionInfo,
-    stream_token: String,
+    stream_tokens: Arc<Mutex<HashMap<String, WebSessionStreamToken>>>,
+    worker_auth_secret: String,
     runtime: Arc<Mutex<WebSessionRuntime>>,
     run_lock: Arc<Mutex<()>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WebSessionStreamTokenKind {
+    View,
+    Signal,
+}
+
+#[derive(Debug, Clone)]
+struct WebSessionStreamToken {
+    kind: WebSessionStreamTokenKind,
+    expires_at: DateTime<Utc>,
 }
 
 struct WebSessionRuntime {
@@ -152,12 +169,59 @@ impl WebSessionHandle {
         runtime.work_dir.clone()
     }
 
-    pub fn matches_stream_token(&self, token: &str) -> bool {
-        self.stream_token == token
+    async fn issue_stream_connect_path(
+        &self,
+        kind: WebSessionStreamTokenKind,
+    ) -> (String, DateTime<Utc>) {
+        let now = Utc::now();
+        let expires_at = now + chrono::Duration::seconds(WEB_SESSION_STREAM_TOKEN_TTL_SECS);
+        let mut tokens = self.stream_tokens.lock().await;
+        tokens.retain(|_, access| access.expires_at > now);
+        let token = Uuid::new_v4().to_string();
+        tokens.insert(token.clone(), WebSessionStreamToken { kind, expires_at });
+        let path = match kind {
+            WebSessionStreamTokenKind::View => build_stream_connect_path(&self.info.id, &token),
+            WebSessionStreamTokenKind::Signal => build_signal_connect_path(&self.info.id, &token),
+        };
+        (path, expires_at)
     }
 
-    pub fn signal_path(&self) -> String {
-        build_signal_path(&self.info.id, &self.stream_token)
+    pub async fn issue_view_connect_path(&self) -> (String, DateTime<Utc>) {
+        self.issue_stream_connect_path(WebSessionStreamTokenKind::View)
+            .await
+    }
+
+    pub async fn issue_signal_connect_path(&self) -> (String, DateTime<Utc>) {
+        self.issue_stream_connect_path(WebSessionStreamTokenKind::Signal)
+            .await
+    }
+
+    async fn consume_stream_token(&self, token: &str, kind: WebSessionStreamTokenKind) -> bool {
+        let now = Utc::now();
+        let mut tokens = self.stream_tokens.lock().await;
+        tokens.retain(|_, access| access.expires_at > now);
+        let Some(access) = tokens.get(token).cloned() else {
+            return false;
+        };
+        if access.expires_at <= now || access.kind != kind {
+            return false;
+        }
+        tokens.remove(token);
+        true
+    }
+
+    pub async fn consume_view_token(&self, token: &str) -> bool {
+        self.consume_stream_token(token, WebSessionStreamTokenKind::View)
+            .await
+    }
+
+    pub async fn consume_signal_token(&self, token: &str) -> bool {
+        self.consume_stream_token(token, WebSessionStreamTokenKind::Signal)
+            .await
+    }
+
+    pub fn worker_auth_secret(&self) -> &str {
+        &self.worker_auth_secret
     }
 
     pub async fn close(&self) -> Result<()> {
@@ -247,7 +311,7 @@ impl WebSessionManager {
 
     pub async fn create(&self, req: WebSessionCreateRequest) -> Result<Arc<WebSessionHandle>> {
         let id = Uuid::new_v4().to_string();
-        let stream_token = Uuid::new_v4().to_string();
+        let worker_auth_secret = Uuid::new_v4().to_string();
         let viewport = req.viewport.clone().unwrap_or(WebSessionViewport {
             width: DEFAULT_WIDTH,
             height: DEFAULT_HEIGHT,
@@ -256,7 +320,7 @@ impl WebSessionManager {
         let display = self.next_display().await?;
         let worker_port = allocate_port()?;
 
-        let stream_path = build_stream_path(&id, &stream_token);
+        let stream_path = build_stream_path(&id);
         let created_at = Utc::now();
 
         let info = WebSessionInfo {
@@ -288,14 +352,16 @@ impl WebSessionManager {
 
         let handle = Arc::new(WebSessionHandle {
             info,
-            stream_token,
+            stream_tokens: Arc::new(Mutex::new(HashMap::new())),
+            worker_auth_secret,
             runtime: Arc::new(Mutex::new(runtime)),
             run_lock: Arc::new(Mutex::new(())),
         });
 
         self.spawn_worker(&handle, &req, worker_port, &display)
             .await?;
-        self.await_worker_ready(worker_port).await?;
+        self.await_worker_ready(worker_port, handle.worker_auth_secret())
+            .await?;
 
         let mut sessions = self.sessions.lock().await;
         sessions.insert(id.clone(), handle.clone());
@@ -314,6 +380,10 @@ impl WebSessionManager {
         let resp = self
             .client
             .post(&url)
+            .header(
+                WEB_SESSION_WORKER_AUTH_HEADER,
+                handle.worker_auth_secret().to_string(),
+            )
             .json(&payload)
             .send()
             .await
@@ -351,6 +421,10 @@ impl WebSessionManager {
         let resp = self
             .client
             .post(&url)
+            .header(
+                WEB_SESSION_WORKER_AUTH_HEADER,
+                handle.worker_auth_secret().to_string(),
+            )
             .json(&payload)
             .send()
             .await
@@ -529,10 +603,17 @@ impl WebSessionManager {
             cmd.current_dir(work_dir);
         }
 
+        cmd.stdin(std::process::Stdio::piped());
         cmd.stdout(std::process::Stdio::piped());
         cmd.stderr(std::process::Stdio::piped());
 
         let mut child = cmd.spawn().context("spawning web session worker")?;
+        if let Some(mut stdin) = child.stdin.take() {
+            stdin
+                .write_all(format!("{}\n", handle.worker_auth_secret()).as_bytes())
+                .await
+                .context("writing web session worker auth secret")?;
+        }
         if let Some(stdout) = child.stdout.take() {
             tokio::spawn(log_stream(stdout, "web-session"));
         }
@@ -545,13 +626,32 @@ impl WebSessionManager {
         Ok(())
     }
 
-    async fn await_worker_ready(&self, port: u16) -> Result<()> {
+    async fn await_worker_ready(&self, port: u16, worker_auth_secret: &str) -> Result<()> {
         let url = format!("http://127.0.0.1:{port}/health");
         for _ in 0..40 {
-            let resp = self.client.get(&url).send().await;
+            let resp = self
+                .client
+                .get(&url)
+                .header(WEB_SESSION_WORKER_AUTH_HEADER, worker_auth_secret)
+                .send()
+                .await;
             if let Ok(resp) = resp {
                 if resp.status().is_success() {
-                    return Ok(());
+                    let unauthenticated = self.client.get(&url).send().await;
+                    match unauthenticated {
+                        Ok(resp) if resp.status() == reqwest::StatusCode::UNAUTHORIZED => {
+                            return Ok(());
+                        }
+                        Ok(resp) => {
+                            anyhow::bail!(
+                                "worker health endpoint must reject unauthenticated loopback access (got {})",
+                                resp.status()
+                            );
+                        }
+                        Err(err) => {
+                            anyhow::bail!("worker health endpoint auth verification failed: {err}");
+                        }
+                    }
                 }
             }
             tokio::time::sleep(Duration::from_millis(250)).await;

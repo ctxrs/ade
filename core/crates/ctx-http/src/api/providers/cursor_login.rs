@@ -330,6 +330,7 @@ async fn monitor_cursor_login(state: Arc<AppState>, login_id: String, label: Opt
     };
 
     let mut cmd = Command::new(&cursor_runtime.command_abs_path);
+    crate::process_env::scrub_daemon_auth_env(&mut cmd);
     for arg in &cursor_runtime.args {
         cmd.arg(arg);
     }

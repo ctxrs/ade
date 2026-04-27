@@ -27,6 +27,7 @@ fn mcp_command() -> Command {
         "CTX_BUILD_IDENTITY_PATH",
         "CTX_DAEMON_URL",
         "CTX_MCP_DEV_MODE",
+        "CTX_MCP_TOKEN",
         "CTX_SESSION_ID",
         "CTX_WORKTREE_ID",
         "CTX_WORKTREE_ROOT",

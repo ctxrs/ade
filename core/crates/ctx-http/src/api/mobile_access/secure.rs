@@ -356,12 +356,11 @@ pub(super) async fn proxy_secure_request(
             "secure proxy path must be normalized",
         ));
     }
-    if mobile_secure_proxy_requires_desktop_auth(&path) {
-        return desktop_auth_required_secure_response();
-    }
-
     let method = axum::http::Method::from_bytes(payload.method.as_bytes())
         .map_err(|_| SecureProxyError::bad_request("invalid http method"))?;
+    if !mobile_secure_proxy_allows_request(&method, &path) {
+        return desktop_auth_required_secure_response();
+    }
     let mut uri = path;
     if let Some(query) = payload
         .query
@@ -445,8 +444,19 @@ impl SecureProxyError {
     }
 }
 
-fn mobile_secure_proxy_requires_desktop_auth(path: &str) -> bool {
-    path == "/api/providers" || path.starts_with("/api/providers/")
+fn mobile_secure_proxy_allows_request(method: &axum::http::Method, path: &str) -> bool {
+    if *method == axum::http::Method::GET && path == "/api/health" {
+        return true;
+    }
+    if *method == axum::http::Method::GET && path == "/api/workspaces" {
+        return true;
+    }
+    if *method == axum::http::Method::GET {
+        if let Some(workspace_id) = path.strip_prefix("/api/workspaces/") {
+            return !workspace_id.is_empty() && !workspace_id.contains('/');
+        }
+    }
+    false
 }
 
 fn secure_proxy_path_is_unnormalized(path: &str) -> bool {

@@ -10,6 +10,8 @@ use super::{NodeRuntimeSpec, WorkerBundle};
 const WORKER_PACKAGE_JSON: &str =
     include_str!("../../../../packages/web-session-worker/package.json");
 const WORKER_SCRIPT: &str = include_str!("../../../../packages/web-session-worker/bin/worker.mjs");
+const WORKER_AUTH_SCRIPT: &str =
+    include_str!("../../../../packages/web-session-worker/bin/auth.mjs");
 
 pub async fn ensure_worker_bundle(
     data_root: &Path,
@@ -20,8 +22,18 @@ pub async fn ensure_worker_bundle(
             .context("CTX_WEB_SESSION_NODE_PATH required with CTX_WEB_SESSION_WORKER")?;
         let worker_path = PathBuf::from(worker_path);
         let node_modules_path = PathBuf::from(node_modules_path);
+        let auth_helper_path = worker_path
+            .parent()
+            .context("web session worker override must have a parent directory")?
+            .join("auth.mjs");
         if !worker_path.exists() {
             anyhow::bail!("web session worker not found at {}", worker_path.display());
+        }
+        if !auth_helper_path.exists() {
+            anyhow::bail!(
+                "web session worker override must include auth.mjs at {}",
+                auth_helper_path.display()
+            );
         }
         if !node_modules_path.exists() {
             anyhow::bail!(
@@ -44,6 +56,7 @@ pub async fn ensure_worker_bundle(
     tokio::fs::create_dir_all(&bin_dir).await?;
     tokio::fs::write(root.join("package.json"), WORKER_PACKAGE_JSON).await?;
     tokio::fs::write(bin_dir.join("worker.mjs"), WORKER_SCRIPT).await?;
+    tokio::fs::write(bin_dir.join("auth.mjs"), WORKER_AUTH_SCRIPT).await?;
 
     let node_modules = root.join("node_modules");
     let deps_ready = node_modules.join("playwright").exists() && node_modules.join("wrtc").exists();
@@ -60,6 +73,37 @@ pub async fn ensure_worker_bundle(
         worker_path: bin_dir.join("worker.mjs"),
         node_modules_path: node_modules,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn ensure_worker_bundle_writes_auth_helper() {
+        let data_root = tempfile::tempdir().unwrap();
+        let version = worker_version().unwrap();
+        let node_modules = data_root
+            .path()
+            .join("tools")
+            .join("web-session-worker")
+            .join(&version)
+            .join("node_modules");
+        tokio::fs::create_dir_all(node_modules.join("playwright"))
+            .await
+            .unwrap();
+        tokio::fs::create_dir_all(node_modules.join("wrtc"))
+            .await
+            .unwrap();
+
+        let node = NodeRuntimeSpec {
+            node_bin: PathBuf::from("/usr/bin/node"),
+            npm_cli_js: PathBuf::from("/usr/bin/npm"),
+        };
+        let bundle = ensure_worker_bundle(data_root.path(), &node).await.unwrap();
+        let auth_path = bundle.worker_path.parent().unwrap().join("auth.mjs");
+        assert!(auth_path.exists(), "expected bundled auth helper");
+    }
 }
 
 fn worker_install_lock() -> &'static Mutex<()> {

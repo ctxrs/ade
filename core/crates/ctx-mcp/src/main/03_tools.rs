@@ -49,16 +49,81 @@ fn extract_error_message(body: &str) -> Option<String> {
     Some(trimmed.to_string())
 }
 
-fn bearer_token() -> Option<String> {
-    ctx_env_opt("AUTH_TOKEN")
+#[derive(Clone)]
+struct ResolvedDaemonAccess {
+    daemon_url: String,
+    auth_token: String,
 }
 
-async fn daemon_get_json(client: &reqwest::Client, daemon_url: &str, path: &str) -> Result<Value> {
-    let url = format!("{}{}", daemon_url.trim_end_matches('/'), path);
-    let mut req = client.get(url);
-    if let Some(token) = bearer_token() {
-        req = req.bearer_auth(token);
+fn explicit_mcp_token() -> Result<Option<String>> {
+    let Some(token) = ctx_env_opt("MCP_TOKEN") else {
+        return Ok(None);
+    };
+    let trimmed = token.trim();
+    if trimmed.is_empty() {
+        bail!("CTX_MCP_TOKEN is empty");
     }
+    Ok(Some(trimmed.to_string()))
+}
+
+fn explicit_auth_token() -> Result<Option<String>> {
+    let Some(token) = ctx_env_opt("AUTH_TOKEN") else {
+        return Ok(None);
+    };
+    let trimmed = token.trim();
+    if trimmed.is_empty() {
+        bail!("CTX_AUTH_TOKEN is empty");
+    }
+    Ok(Some(trimmed.to_string()))
+}
+
+fn scoped_mcp_mode() -> bool {
+    explicit_mcp_token().ok().flatten().is_some()
+}
+
+fn resolve_daemon_access() -> Result<ResolvedDaemonAccess> {
+    let override_url = ctx_env_opt("DAEMON_URL");
+    let explicit_mcp_token = explicit_mcp_token()?;
+    let explicit_token = explicit_auth_token()?;
+    if let Some(override_url) = override_url {
+        let daemon_url = override_url.trim().trim_end_matches('/').to_string();
+        if daemon_url.is_empty() {
+            bail!("CTX_DAEMON_URL is empty");
+        }
+        reqwest::Url::parse(&daemon_url)
+            .with_context(|| format!("invalid daemon URL: {daemon_url}"))?;
+        let auth_token = explicit_mcp_token.or(explicit_token).context(
+            "CTX_DAEMON_URL requires CTX_MCP_TOKEN or CTX_AUTH_TOKEN; refusing to reuse daemon_auth.json for an overridden daemon origin",
+        )?;
+        return Ok(ResolvedDaemonAccess {
+            daemon_url,
+            auth_token,
+        });
+    }
+
+    if let Some(auth_token) = explicit_mcp_token {
+        let daemon = ctx_client::resolve_daemon_config()?;
+        return Ok(ResolvedDaemonAccess {
+            daemon_url: daemon.base_url,
+            auth_token,
+        });
+    }
+
+    let daemon = ctx_client::resolve_daemon_config()?;
+    let auth_token = explicit_token
+        .or(daemon.auth_token)
+        .context("missing daemon auth token: set CTX_AUTH_TOKEN or provide daemon_auth.json")?;
+    Ok(ResolvedDaemonAccess {
+        daemon_url: daemon.base_url,
+        auth_token,
+    })
+}
+
+async fn daemon_get_json(client: &reqwest::Client, _daemon_url: &str, path: &str) -> Result<Value> {
+    let access = resolve_daemon_access()?;
+    let url = format!("{}{}", access.daemon_url.trim_end_matches('/'), path);
+    let mut req = client.get(url);
+    req = req.bearer_auth(access.auth_token);
     let res = req.send().await?;
     let status = res.status();
     let text = res.text().await?;
@@ -78,15 +143,14 @@ async fn daemon_get_json(client: &reqwest::Client, daemon_url: &str, path: &str)
 
 async fn daemon_post_json(
     client: &reqwest::Client,
-    daemon_url: &str,
+    _daemon_url: &str,
     path: &str,
     body: &Value,
 ) -> Result<Value> {
-    let url = format!("{}{}", daemon_url.trim_end_matches('/'), path);
+    let access = resolve_daemon_access()?;
+    let url = format!("{}{}", access.daemon_url.trim_end_matches('/'), path);
     let mut req = client.post(url);
-    if let Some(token) = bearer_token() {
-        req = req.bearer_auth(token);
-    }
+    req = req.bearer_auth(access.auth_token);
     let res = req.json(body).send().await?;
     let status = res.status();
     let text = res.text().await?;
@@ -202,9 +266,11 @@ async fn merge_queue_submit_call(
         if let Some(obj) = body.as_object_mut() {
             obj.insert("worktree_id".to_string(), Value::String(worktree_id));
         }
-    } else if let Some(worktree_root) = resolve_worktree_root() {
-        if let Some(obj) = body.as_object_mut() {
-            obj.insert("worktree_root".to_string(), Value::String(worktree_root));
+    } else if !scoped_mcp_mode() {
+        if let Some(worktree_root) = resolve_worktree_root() {
+            if let Some(obj) = body.as_object_mut() {
+                obj.insert("worktree_root".to_string(), Value::String(worktree_root));
+            }
         }
     }
     if let Some(target_branch) = target_branch {
@@ -380,11 +446,7 @@ async fn list_agents_call(client: &reqwest::Client, daemon_url: &str) -> Result<
     daemon_get_json(client, daemon_url, &path).await
 }
 
-async fn get_agent_call(
-    client: &reqwest::Client,
-    daemon_url: &str,
-    args: &Value,
-) -> Result<Value> {
+async fn get_agent_call(client: &reqwest::Client, daemon_url: &str, args: &Value) -> Result<Value> {
     let session_id = ctx_env_opt("SESSION_ID").context("missing session context")?;
     let path = format!("/api/mcp/sessions/{session_id}/get_agent");
     daemon_post_json(client, daemon_url, &path, args).await

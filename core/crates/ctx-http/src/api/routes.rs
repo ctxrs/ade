@@ -214,6 +214,10 @@ fn workspace_routes() -> axum::Router<Arc<AppState>> {
         .route("/api/tasks/:id/mark_read", post(mark_task_read))
         .route("/api/tasks/:id/mark_unread", post(mark_task_unread))
         .route("/api/terminals/:id", delete(delete_terminal))
+        .route(
+            "/api/terminals/:id/stream_token",
+            post(mint_terminal_stream_token),
+        )
         .route("/api/terminals/:id/stream", get(terminal_stream_ws))
         .route("/api/worktrees/:id", get(get_worktree))
         .route(
@@ -327,6 +331,10 @@ fn session_routes() -> axum::Router<Arc<AppState>> {
             post(create_web_session).get(list_web_sessions),
         )
         .route("/api/sessions/web/:id", get(get_web_session))
+        .route(
+            "/api/sessions/web/:id/stream_token",
+            post(mint_web_session_stream_token),
+        )
         .route("/api/sessions/web/:id/run", post(run_web_session))
         .route("/api/sessions/web/:id/eval", post(eval_web_session))
         .route("/api/sessions/web/:id/close", post(close_web_session))

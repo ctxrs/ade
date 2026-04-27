@@ -189,15 +189,22 @@ pub(crate) async fn start_turn(
         "CLAUDE_CODE_ENABLE_ASK_USER_QUESTION_TOOL".to_string(),
         "1".to_string(),
     );
-    if let Some(token) = state.core.auth_token.clone() {
-        provider_env.insert("CTX_AUTH_TOKEN".to_string(), token);
-    }
     if let Some(provider_ref) = session.provider_session_ref.clone() {
         provider_env.insert("CTX_PROVIDER_SESSION_REF".to_string(), provider_ref);
     }
     provider_env.insert("CTX_SESSION_ID".to_string(), session.id.0.to_string());
+    provider_env.insert(
+        "CTX_WORKTREE_ID".to_string(),
+        session.worktree_id.0.to_string(),
+    );
     provider_env.insert("CTX_MODEL_ID".to_string(), full_model_id.clone());
-    let mcp_token = uuid::Uuid::new_v4().to_string();
+    let mcp_token = crate::daemon::issue_provider_session_mcp_token(
+        state.as_ref(),
+        session.id,
+        session.workspace_id,
+        session.worktree_id,
+    )
+    .await;
     provider_env.insert("CTX_MCP_TOKEN".to_string(), mcp_token);
     let settings = settings::load_settings(state.global_store()).await?;
     let provider_control_mode = settings

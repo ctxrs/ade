@@ -7,10 +7,13 @@ use axum::response::Response;
 use futures::{SinkExt, StreamExt};
 use tokio_tungstenite::{
     connect_async,
-    tungstenite::{protocol::CloseFrame as TungsteniteCloseFrame, Message as TungsteniteMessage},
+    tungstenite::{
+        client::IntoClientRequest, protocol::CloseFrame as TungsteniteCloseFrame,
+        Message as TungsteniteMessage,
+    },
 };
 
-use super::super::web_sessions::{require_web_session_stream_access, WebSessionStreamAccessQuery};
+use super::super::web_sessions::{require_web_session_signal_access, WebSessionStreamAccessQuery};
 use crate::daemon::AppState;
 use crate::web_sessions::WebSessionManager;
 
@@ -20,7 +23,7 @@ pub(crate) async fn web_session_signal(
     Query(query): Query<WebSessionStreamAccessQuery>,
     ws: WebSocketUpgrade,
 ) -> Result<Response, StatusCode> {
-    require_web_session_stream_access(&state.transport.web_sessions, &id, query.token.as_deref())
+    require_web_session_signal_access(&state.transport.web_sessions, &id, query.token.as_deref())
         .await?;
     let manager = state.transport.web_sessions.clone();
     let session_id = id.clone();
@@ -45,7 +48,19 @@ async fn handle_web_session_socket(
     let url = format!("ws://127.0.0.1:{port}/signal");
     let _ = manager.bump_viewers(&session_id, 1).await;
 
-    let connect = connect_async(url).await;
+    let mut request = match url.into_client_request() {
+        Ok(request) => request,
+        Err(_) => {
+            let _ = manager.bump_viewers(&session_id, -1).await;
+            return;
+        }
+    };
+    if let Ok(value) = handle.worker_auth_secret().parse() {
+        request
+            .headers_mut()
+            .insert(crate::web_sessions::WEB_SESSION_WORKER_AUTH_HEADER, value);
+    }
+    let connect = connect_async(request).await;
     let upstream = match connect {
         Ok((stream, _)) => stream,
         Err(_) => {

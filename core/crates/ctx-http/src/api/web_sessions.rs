@@ -1,6 +1,8 @@
 use super::*;
 use crate::web_session_launch::WebSessionLaunchRequest;
 use crate::web_sessions::{WebSessionHandle, WebSessionManager};
+use chrono::{DateTime, Utc};
+use serde::Serialize;
 
 #[derive(Debug, Deserialize)]
 pub(super) struct WebSessionCreatePayload {
@@ -21,14 +23,27 @@ pub(super) struct WebSessionListQuery {
     session_id: Option<String>,
 }
 
-pub(crate) async fn require_web_session_stream_access(
+pub(crate) async fn require_web_session_view_access(
     manager: &Arc<WebSessionManager>,
     id: &str,
     token: Option<&str>,
 ) -> Result<Arc<WebSessionHandle>, StatusCode> {
     let provided_token = token.ok_or(StatusCode::UNAUTHORIZED)?;
     let handle = manager.get(id).await.ok_or(StatusCode::NOT_FOUND)?;
-    if !handle.matches_stream_token(provided_token) {
+    if !handle.consume_view_token(provided_token).await {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+    Ok(handle)
+}
+
+pub(crate) async fn require_web_session_signal_access(
+    manager: &Arc<WebSessionManager>,
+    id: &str,
+    token: Option<&str>,
+) -> Result<Arc<WebSessionHandle>, StatusCode> {
+    let provided_token = token.ok_or(StatusCode::UNAUTHORIZED)?;
+    let handle = manager.get(id).await.ok_or(StatusCode::NOT_FOUND)?;
+    if !handle.consume_signal_token(provided_token).await {
         return Err(StatusCode::UNAUTHORIZED);
     }
     Ok(handle)
@@ -44,7 +59,6 @@ async fn map_web_session_action_error(manager: &Arc<WebSessionManager>, id: &str
 
 pub(super) async fn create_web_session(
     State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
     Json(payload): Json<WebSessionCreatePayload>,
 ) -> Result<Json<WebSessionInfo>, (StatusCode, Json<ApiErrorResp>)> {
     if payload.url.trim().is_empty() {
@@ -85,7 +99,7 @@ pub(super) async fn create_web_session(
         })?
         .map(WorktreeId);
 
-    let mut info = crate::web_session_launch::create_web_session(
+    let info = crate::web_session_launch::create_web_session(
         &state,
         WebSessionLaunchRequest {
             session_id,
@@ -96,14 +110,11 @@ pub(super) async fn create_web_session(
         },
     )
     .await?;
-    info.stream_url = resolve_request_base_url(&headers, &state.core.daemon_url)
-        .map(|base_url| format!("{}{}", base_url, info.stream_path.clone()));
     Ok(Json(info))
 }
 
 pub(super) async fn list_web_sessions(
     State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
     Query(query): Query<WebSessionListQuery>,
 ) -> Result<Json<Vec<WebSessionInfo>>, StatusCode> {
     let mut sessions = state.transport.web_sessions.list().await;
@@ -111,16 +122,11 @@ pub(super) async fn list_web_sessions(
         uuid::Uuid::parse_str(session_id).map_err(|_| StatusCode::BAD_REQUEST)?;
         sessions.retain(|session| session.session_id.as_deref() == Some(session_id));
     }
-    for session in sessions.iter_mut() {
-        session.stream_url = resolve_request_base_url(&headers, &state.core.daemon_url)
-            .map(|base_url| format!("{}{}", base_url, session.stream_path.clone()));
-    }
     Ok(Json(sessions))
 }
 
 pub(super) async fn get_web_session(
     State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<Json<WebSessionInfo>, StatusCode> {
     let handle = state
@@ -129,10 +135,7 @@ pub(super) async fn get_web_session(
         .get(&id)
         .await
         .ok_or(StatusCode::NOT_FOUND)?;
-    let mut info = handle.snapshot().await;
-    info.stream_url = resolve_request_base_url(&headers, &state.core.daemon_url)
-        .map(|base_url| format!("{}{}", base_url, info.stream_path.clone()));
-    Ok(Json(info))
+    Ok(Json(handle.snapshot().await))
 }
 
 pub(super) async fn run_web_session(
@@ -179,18 +182,44 @@ pub(super) async fn close_web_session(
     Ok(StatusCode::NO_CONTENT)
 }
 
+#[derive(Debug, Serialize)]
+pub(super) struct WebSessionStreamConnectInfo {
+    stream_path: String,
+    stream_url: Option<String>,
+    expires_at: DateTime<Utc>,
+}
+
+pub(super) async fn mint_web_session_stream_token(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Json<WebSessionStreamConnectInfo>, StatusCode> {
+    let handle = state
+        .transport
+        .web_sessions
+        .get(&id)
+        .await
+        .ok_or(StatusCode::NOT_FOUND)?;
+    let (stream_path, expires_at) = handle.issue_view_connect_path().await;
+    let stream_url = resolve_request_base_url(&headers, &state.core.daemon_url)
+        .map(|base_url| format!("{}{}", base_url, stream_path.clone()));
+    Ok(Json(WebSessionStreamConnectInfo {
+        stream_path,
+        stream_url,
+        expires_at,
+    }))
+}
+
 pub(super) async fn web_session_view(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
     Query(query): Query<WebSessionStreamAccessQuery>,
 ) -> Result<Response, StatusCode> {
-    let handle = require_web_session_stream_access(
-        &state.transport.web_sessions,
-        &id,
-        query.token.as_deref(),
-    )
-    .await?;
+    let handle =
+        require_web_session_view_access(&state.transport.web_sessions, &id, query.token.as_deref())
+            .await?;
     let info = handle.snapshot().await;
-    let body = render_web_session_view(&info, &handle.signal_path());
+    let (signal_path, _) = handle.issue_signal_connect_path().await;
+    let body = render_web_session_view(&info, &signal_path);
     Ok(([(header::CONTENT_TYPE, "text/html; charset=utf-8")], body).into_response())
 }

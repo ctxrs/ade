@@ -473,6 +473,9 @@ pub(super) fn apply_outer_process_env(cmd: &mut Command, env: &HashMap<String, S
 }
 
 pub(super) fn should_skip_outer_process_env_key(key: &str, is_container_exec: bool) -> bool {
+    if matches!(key, "CTX_AUTH_TOKEN" | "CTX_MCP_TOKEN") {
+        return true;
+    }
     if !is_container_exec {
         return false;
     }

@@ -16,6 +16,7 @@ CTX_HTTP_RUSTC_ENV = {
 }
 
 CTX_HTTP_COMPILE_DATA = [
+    "//core/packages:web-session-worker/bin/auth.mjs",
     "//core/packages:web-session-worker/bin/worker.mjs",
     "//core/packages:web-session-worker/package.json",
 ]

@@ -20,6 +20,7 @@ mod ops_events;
 mod oracle;
 mod order_seq;
 mod perf_telemetry;
+mod process_env;
 pub mod process_limits;
 mod provider_child_reclassifier;
 pub mod provider_guard;

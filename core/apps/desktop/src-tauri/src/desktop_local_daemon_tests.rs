@@ -63,10 +63,14 @@ fn local_connection_stale_when_health_probe_fails() {
         remote_update_message: None,
         remote_update_state: None,
     };
-    assert!(current_local_connection_stale(&info, |_url| {
+    assert!(current_local_connection_stale(&info, |_url, token| {
+        assert_eq!(token, Some("token"));
         Err(anyhow!("connection refused"))
     }));
-    assert!(!current_local_connection_stale(&info, |_url| Ok(())));
+    assert!(!current_local_connection_stale(&info, |_url, token| {
+        assert_eq!(token, Some("token"));
+        Ok(())
+    }));
 }
 
 #[test]
@@ -84,7 +88,7 @@ fn local_connection_without_base_url_is_treated_as_stale() {
         remote_update_message: None,
         remote_update_state: None,
     };
-    assert!(current_local_connection_stale(&info, |_url| Ok(())));
+    assert!(current_local_connection_stale(&info, |_url, _token| Ok(())));
 }
 
 #[cfg(unix)]

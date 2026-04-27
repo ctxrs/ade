@@ -339,7 +339,18 @@ async fn disk_isolated_smoke_sandbox_volume_attachments_and_terminal() {
         .await
         .unwrap();
 
-    let ws_url = format!("http://{}{}", addr, term.stream_path)
+    let stream_path = client
+        .post(format!("{base}/api/terminals/{}/stream_token", term.id.0))
+        .send()
+        .await
+        .unwrap()
+        .json::<serde_json::Value>()
+        .await
+        .unwrap()["stream_path"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let ws_url = format!("http://{}{stream_path}", addr)
         .replacen("https://", "wss://", 1)
         .replacen("http://", "ws://", 1);
     let (mut ws_stream, _) = tokio_tungstenite::connect_async(ws_url).await.unwrap();

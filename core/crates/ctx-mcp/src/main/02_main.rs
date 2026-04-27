@@ -15,6 +15,33 @@ fn removed_lsp_tool_message(name: &str) -> Option<String> {
     None
 }
 
+fn scoped_tool_block_message(name: &str) -> Option<String> {
+    if !scoped_mcp_mode() {
+        return None;
+    }
+    if matches!(name, "list_workspaces" | "oracle") {
+        return Some(format!(
+            "tool disabled: {name} (scoped ctx-mcp sessions only expose session/worktree-local agent tools)"
+        ));
+    }
+    None
+}
+
+fn filter_scoped_tools(mut response: Value) -> Value {
+    if !scoped_mcp_mode() {
+        return response;
+    }
+    if let Some(tools) = response.get_mut("tools").and_then(Value::as_array_mut) {
+        tools.retain(|tool| {
+            !matches!(
+                tool.get("name").and_then(Value::as_str),
+                Some("list_workspaces" | "oracle")
+            )
+        });
+    }
+    response
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
@@ -25,11 +52,10 @@ async fn main() -> Result<()> {
     if !cli.stdio {
         anyhow::bail!("only --stdio transport is implemented");
     }
-    let server_version = build_identity::current_build_version()
-        .context("loading ctx-mcp build identity")?;
+    let server_version =
+        build_identity::current_build_version().context("loading ctx-mcp build identity")?;
 
     let daemon_url = ctx_env("DAEMON_URL").unwrap_or_else(|_| "http://127.0.0.1:4399".to_string());
-    let client = reqwest::Client::new();
 
     let stdin = tokio::io::stdin();
     let stdout = tokio::io::stdout();
@@ -76,8 +102,12 @@ async fn main() -> Result<()> {
                     }),
                 )
             }
-            "tools/list" => ok(id.clone(), tool_catalog::tools_list_response()),
+            "tools/list" => ok(
+                id.clone(),
+                filter_scoped_tools(tool_catalog::tools_list_response()),
+            ),
             "tools/call" => {
+                let client = reqwest::Client::new();
                 let params = msg.get("params").cloned().unwrap_or(json!({}));
                 let name = params.get("name").and_then(|v| v.as_str()).unwrap_or("");
                 let raw_name = name.to_string();
@@ -98,6 +128,8 @@ async fn main() -> Result<()> {
                             "tool disabled: {name} (ping is dev-only; set CTX_MCP_DEV_MODE=1 to enable)"
                         )),
                     )
+                } else if let Some(message) = scoped_tool_block_message(name.as_str()) {
+                    ok(id.clone(), tool_err(anyhow::anyhow!(message)))
                 } else if let Some(message) = removed_lsp_tool_message(name.as_str()) {
                     ok(id.clone(), tool_err(anyhow::anyhow!(message)))
                 } else {
@@ -176,7 +208,8 @@ async fn main() -> Result<()> {
                             Ok(val) => ok(id.clone(), tool_ok(val)),
                             Err(e) => ok(id.clone(), tool_err(e)),
                         },
-                        "get_agent" => match get_agent_call(&client, &daemon_url, &arguments).await {
+                        "get_agent" => match get_agent_call(&client, &daemon_url, &arguments).await
+                        {
                             Ok(val) => ok(id.clone(), tool_ok(val)),
                             Err(e) => ok(id.clone(), tool_err(e)),
                         },

@@ -111,6 +111,47 @@ fn build_crp_session_config_sets_openai_base_url_from_env() {
 }
 
 #[test]
+fn build_crp_session_config_scopes_auth_tokens_to_ctx_mcp_server() {
+    let mut env = HashMap::new();
+    env.insert(
+        "CTX_DAEMON_URL".to_string(),
+        "https://daemon.example.test".to_string(),
+    );
+    env.insert("CTX_MCP_TOKEN".to_string(), "mcp-token".to_string());
+    env.insert("CTX_SESSION_ID".to_string(), "session-123".to_string());
+    env.insert("CTX_WORKTREE_ID".to_string(), "worktree-123".to_string());
+    let workdir = PathBuf::from("/tmp/workdir");
+
+    let cfg = build_crp_session_config(&env, &workdir).expect("build session config");
+    let mcp_env = cfg
+        .mcp_servers
+        .as_ref()
+        .and_then(|servers| servers.get("ctx"))
+        .and_then(|server| server.env.as_ref())
+        .expect("ctx mcp env");
+    assert_eq!(
+        mcp_env.get("CTX_DAEMON_URL").map(String::as_str),
+        Some("https://daemon.example.test")
+    );
+    assert_eq!(
+        mcp_env.get("CTX_MCP_TOKEN").map(String::as_str),
+        Some("mcp-token")
+    );
+    assert!(
+        !mcp_env.contains_key("CTX_AUTH_TOKEN"),
+        "ctx-mcp env should not receive the daemon bearer"
+    );
+    assert_eq!(
+        mcp_env.get("CTX_SESSION_ID").map(String::as_str),
+        Some("session-123")
+    );
+    assert_eq!(
+        mcp_env.get("CTX_WORKTREE_ID").map(String::as_str),
+        Some("worktree-123")
+    );
+}
+
+#[test]
 fn build_crp_model_probe_config_sets_openai_base_url_from_env() {
     let mut env = HashMap::new();
     env.insert(

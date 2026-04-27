@@ -58,6 +58,26 @@ fn daemon_health_client(timeout: Duration) -> Result<reqwest::blocking::Client> 
     Ok(client)
 }
 
+fn validate_authenticated_daemon_session(
+    client: &reqwest::blocking::Client,
+    base_url: &str,
+    auth_token: Option<&str>,
+) -> Result<()> {
+    let Some(token) = auth_token.filter(|value| !value.trim().is_empty()) else {
+        return Ok(());
+    };
+    let url = format!("{}/api/workspaces", base_url.trim_end_matches('/'));
+    let res = client
+        .get(url)
+        .bearer_auth(token)
+        .send()
+        .context("requesting authenticated /api/workspaces")?;
+    let _ = res
+        .error_for_status()
+        .context("authenticated daemon session status")?;
+    Ok(())
+}
+
 #[cfg(test)]
 pub(super) fn daemon_health_with_timeout(
     base_url: &str,
@@ -80,8 +100,11 @@ pub(super) fn daemon_health_with_timeout_auth(
     };
     let res = request.send().context("requesting /api/health")?;
     let res = res.error_for_status().context("health status")?;
-    res.json::<DaemonHealthSummary>()
-        .context("parsing /api/health response")
+    let health = res
+        .json::<DaemonHealthSummary>()
+        .context("parsing /api/health response")?;
+    validate_authenticated_daemon_session(&client, base_url, auth_token)?;
+    Ok(health)
 }
 
 fn daemon_health_timeout() -> Duration {

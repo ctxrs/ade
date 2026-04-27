@@ -24,6 +24,8 @@ use uuid::Uuid;
 
 mod http_proxy;
 
+use crate::http_proxy::extract_forward_headers;
+
 #[derive(Parser, Debug)]
 #[command(name = "ctx-tunnel-relay", version)]
 struct Args {
@@ -34,7 +36,7 @@ struct Args {
 #[derive(Clone)]
 struct RelayState {
     tunnels: Arc<RwLock<HashMap<String, Arc<Tunnel>>>>,
-    master_secret: Option<Vec<u8>>,
+    master_secret: Vec<u8>,
 }
 
 struct Tunnel {
@@ -42,7 +44,6 @@ struct Tunnel {
 }
 
 struct TunnelInner {
-    secret: Option<String>,
     desktop: Option<DesktopHandle>,
     pending_http: HashMap<String, oneshot::Sender<HttpResponse>>,
     pending_ws_open: HashMap<String, oneshot::Sender<Result<(), String>>>,
@@ -134,9 +135,7 @@ async fn main() -> Result<()> {
         .init();
 
     let args = Args::parse();
-    let master_secret = std::env::var("CTX_TUNNEL_MASTER_SECRET")
-        .ok()
-        .map(|s| s.into_bytes());
+    let master_secret = load_master_secret()?;
     let state = RelayState {
         tunnels: Arc::new(RwLock::new(HashMap::new())),
         master_secret,
@@ -193,26 +192,16 @@ async fn handle_desktop_socket(
 
     {
         let mut inner = tunnel.inner.lock().await;
-        if let Some(master) = state.master_secret.as_ref() {
-            let expected = match derive_secret(master, &tunnel_id) {
-                Ok(value) => value,
-                Err(err) => {
-                    warn!("rejecting desktop connect for tunnel {tunnel_id}: unable to derive secret: {err:#}");
-                    return Ok(());
-                }
-            };
-            if secret.as_bytes().ct_eq(expected.as_bytes()).unwrap_u8() != 1 {
-                warn!("rejecting desktop connect for tunnel {tunnel_id}: secret mismatch");
+        let expected = match derive_secret(&state.master_secret, &tunnel_id) {
+            Ok(value) => value,
+            Err(err) => {
+                warn!("rejecting desktop connect for tunnel {tunnel_id}: unable to derive secret: {err:#}");
                 return Ok(());
             }
-            inner.secret = Some(expected);
-        } else if let Some(existing) = inner.secret.as_deref() {
-            if existing != secret {
-                warn!("rejecting desktop connect for tunnel {tunnel_id}: secret mismatch");
-                return Ok(());
-            }
-        } else {
-            inner.secret = Some(secret);
+        };
+        if secret.as_bytes().ct_eq(expected.as_bytes()).unwrap_u8() != 1 {
+            warn!("rejecting desktop connect for tunnel {tunnel_id}: secret mismatch");
+            return Ok(());
         }
 
         // Replace any existing desktop connection.
@@ -485,7 +474,6 @@ async fn get_or_create_tunnel(state: &RelayState, tunnel_id: &str) -> Arc<Tunnel
         .or_insert_with(|| {
             Arc::new(Tunnel {
                 inner: Mutex::new(TunnelInner {
-                    secret: None,
                     desktop: None,
                     pending_http: HashMap::new(),
                     pending_ws_open: HashMap::new(),
@@ -494,6 +482,20 @@ async fn get_or_create_tunnel(state: &RelayState, tunnel_id: &str) -> Arc<Tunnel
             })
         })
         .clone()
+}
+
+fn load_master_secret() -> Result<Vec<u8>> {
+    let raw = std::env::var("CTX_TUNNEL_MASTER_SECRET")
+        .context("CTX_TUNNEL_MASTER_SECRET must be set")?;
+    parse_master_secret(&raw)
+}
+
+fn parse_master_secret(raw: &str) -> Result<Vec<u8>> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Err(anyhow!("CTX_TUNNEL_MASTER_SECRET must not be empty"));
+    }
+    Ok(trimmed.as_bytes().to_vec())
 }
 
 fn derive_secret(master_secret: &[u8], tunnel_id: &str) -> Result<String> {

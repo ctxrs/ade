@@ -18,6 +18,7 @@ use super::WorkerDriver;
 
 #[path = "azure/provisioning.rs"]
 mod provisioning;
+use provisioning::CreateVmParams;
 
 pub struct AzureConfig {
     pub subscription_id: String,

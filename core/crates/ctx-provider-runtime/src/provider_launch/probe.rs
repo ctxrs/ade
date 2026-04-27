@@ -326,6 +326,7 @@ mod tests {
     struct TestProbeHost {
         data_root: PathBuf,
         daemon_url: String,
+        auth_token: Option<String>,
         workspace: Arc<Workspace>,
         runtime: PreparedWorkspaceProbeRuntime,
     }
@@ -341,7 +342,7 @@ mod tests {
         }
 
         fn auth_token(&self) -> Option<&String> {
-            None
+            self.auth_token.as_ref()
         }
 
         fn redact_sensitive(&self, input: &str) -> String {
@@ -437,6 +438,7 @@ mod tests {
         let host = TestProbeHost {
             data_root: data_root.clone(),
             daemon_url: "http://127.0.0.1:0".to_string(),
+            auth_token: Some("daemon-auth-token".to_string()),
             workspace: workspace.clone(),
             runtime: PreparedWorkspaceProbeRuntime {
                 cwd: workspace_root.clone(),
@@ -478,5 +480,75 @@ mod tests {
             .await
             .expect("runtime auth json");
         assert!(auth.contains("\"OPENAI_BASE_URL\": \"https://openrouter.ai/api/v1\""));
+    }
+
+    #[tokio::test]
+    async fn provider_probe_env_omits_daemon_auth_token() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let data_root = root.path().join("data-root");
+        let workspace_root = root.path().join("workspace");
+        tokio::fs::create_dir_all(&data_root)
+            .await
+            .expect("create data root");
+        tokio::fs::create_dir_all(&workspace_root)
+            .await
+            .expect("create workspace root");
+
+        let endpoint = upsert_provider_endpoint(
+            &data_root,
+            "codex",
+            HarnessEndpointUpsert {
+                endpoint_id: None,
+                name: "OpenAI".to_string(),
+                base_url: Some("https://api.openai.com/v1".to_string()),
+                api_shape: Some(HarnessApiShape::OpenaiResponses),
+                auth_type: None,
+                model_override: Some("gpt-5.4".to_string()),
+                api_key: Some("sk-test".to_string()),
+                service_account_json: None,
+                project_id: None,
+                location: None,
+            },
+        )
+        .await
+        .expect("upsert endpoint");
+        set_provider_source_selection(
+            &data_root,
+            "codex",
+            HarnessSourceKind::Endpoint,
+            Some(endpoint.id.clone()),
+        )
+        .await
+        .expect("select endpoint");
+
+        let workspace = Arc::new(Workspace {
+            id: WorkspaceId::new(),
+            name: "ws".to_string(),
+            root_path: workspace_root.to_string_lossy().to_string(),
+            created_at: Utc::now(),
+            vcs_kind: None,
+        });
+        let host = TestProbeHost {
+            data_root: data_root.clone(),
+            daemon_url: "http://127.0.0.1:4399".to_string(),
+            auth_token: Some("daemon-auth-token".to_string()),
+            workspace,
+            runtime: PreparedWorkspaceProbeRuntime {
+                cwd: workspace_root,
+                runtime_data_root: None,
+                env_overrides: HashMap::new(),
+            },
+        };
+
+        let (_, env) = provider_probe_env(&host, "codex")
+            .await
+            .expect("provider probe env");
+
+        assert_eq!(
+            env.get("CTX_DAEMON_URL").map(String::as_str),
+            Some("http://127.0.0.1:4399")
+        );
+        assert!(!env.contains_key("CTX_AUTH_TOKEN"));
+        assert_eq!(env.get("CTX_MCP_DISABLED").map(String::as_str), Some("1"));
     }
 }

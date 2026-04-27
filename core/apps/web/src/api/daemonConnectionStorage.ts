@@ -42,6 +42,15 @@ const inferLegacyDaemonTargetScope = (
   return createBrowserDaemonTargetScope(baseUrl);
 };
 
+const isDesktopTargetScope = (
+  scope: DaemonTargetScope | null | undefined,
+): boolean => scope?.kind === "desktop_local" || scope?.kind === "desktop_ssh";
+
+const shouldPersistSessionAuthToken = (
+  source: string | null | undefined,
+  targetScope: DaemonTargetScope | null | undefined,
+): boolean => source !== "desktop" && !isDesktopTargetScope(targetScope);
+
 const parseStoredTargetScope = (
   value: unknown,
   fallbackBaseUrl: string | null,
@@ -130,7 +139,7 @@ const parseStoredConnection = (value: string | null): ParsedStoredDaemonConnecti
     return {
       baseUrl,
       wsBaseUrl,
-      authToken,
+      authToken: shouldPersistSessionAuthToken(source, targetScope) ? authToken : null,
       source,
       targetScope,
     };
@@ -172,7 +181,12 @@ export const writeCanonicalSession = (connection: DaemonConnection) => {
     v: 1,
     baseUrl: connection.baseUrl,
     wsBaseUrl: connection.wsBaseUrl,
-    authToken: connection.authToken,
+    authToken: shouldPersistSessionAuthToken(
+      connection.source ?? null,
+      connection.targetScope ?? null,
+    )
+      ? connection.authToken
+      : null,
     source: connection.source ?? null,
     targetScope: connection.targetScope ? serializeDaemonTargetScope(connection.targetScope) : null,
   };

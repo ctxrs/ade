@@ -1,5 +1,6 @@
 use anyhow::Result;
 use reqwest::Method;
+use serde::Deserialize;
 use url::form_urlencoded;
 
 use ctx_core::ids::{TaskId, TerminalId, WorkspaceId};
@@ -137,10 +138,11 @@ impl Client {
         ))
     }
 
-    /// Terminal websocket URLs use the terminal-scoped `stream_path` minted by the daemon.
-    /// Append `tail=<bytes>` to the returned URL to cap the initial snapshot size.
-    pub fn terminal_stream_url(&self, terminal: &TerminalSession) -> Result<String> {
-        self.websocket_url_for_path(&terminal.stream_path)
+    pub async fn terminal_stream_url(&self, terminal: &TerminalSession) -> Result<String> {
+        let path = format!("/api/terminals/{}/stream_token", terminal.id.0);
+        let token: TerminalStreamConnectInfo =
+            self.request_json(Method::POST, &path, None::<&()>).await?;
+        self.websocket_url_for_path(&token.stream_path)
     }
 
     pub async fn list_workspace_terminals(
@@ -164,4 +166,9 @@ impl Client {
         let path = format!("/api/terminals/{}", terminal_id.0);
         self.request_empty(Method::DELETE, &path, None::<&()>).await
     }
+}
+
+#[derive(Deserialize)]
+struct TerminalStreamConnectInfo {
+    stream_path: String,
 }

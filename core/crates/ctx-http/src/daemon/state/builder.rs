@@ -118,6 +118,7 @@ impl AppState {
                 stores,
                 daemon_url,
                 auth_token,
+                mcp_auth: Mutex::new(HashMap::new()),
                 ask_user_question,
                 shutdown_tx,
                 update_drain: Arc::new(Mutex::new(None)),

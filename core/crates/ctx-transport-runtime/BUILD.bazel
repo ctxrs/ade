@@ -9,6 +9,7 @@ rust_library(
     edition = "2021",
     srcs = glob(["src/**/*.rs"]),
     compile_data = [
+        "//core/packages:web-session-worker/bin/auth.mjs",
         "//core/packages:web-session-worker/bin/worker.mjs",
         "//core/packages:web-session-worker/package.json",
     ],

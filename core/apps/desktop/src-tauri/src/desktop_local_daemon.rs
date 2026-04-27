@@ -1,8 +1,7 @@
 use super::*;
 use crate::desktop_daemon::{
-    daemon_data_dir, daemon_health, existing_local_daemon_matches_or_absent,
-    existing_local_daemon_matches_with_auth, normalize_daemon_pid, probe_daemon_health,
-    probe_daemon_health_with_auth, probe_local_daemon_health_with_retry_auth,
+    daemon_data_dir, daemon_health, existing_local_daemon_matches_with_auth,
+    normalize_daemon_pid, probe_daemon_health_with_auth, probe_local_daemon_health_with_retry_auth,
     read_daemon_auth_with_retry, resolve_env_local_daemon, resolve_existing_local_daemon,
     spawn_and_validate_local_daemon, SpawnedLocalDaemonReady,
 };
@@ -34,9 +33,17 @@ pub(super) async fn desktop_connect_local(
         let result = connect_local_with_sources_for_scope(
             state.inner(),
             &scope,
-            |url| existing_local_daemon_matches_or_absent(url, &data_dir, &desktop_identity),
+            |url, auth_token| {
+                existing_local_daemon_matches_with_auth(
+                    url,
+                    auth_token,
+                    &data_dir,
+                    &desktop_identity,
+                )
+                .unwrap_or(false)
+            },
             || resolve_env_local_daemon(&app),
-            probe_daemon_health,
+            probe_daemon_health_with_auth,
             || resolve_existing_local_daemon(&app, &data_dir),
             || spawn_and_validate_local_daemon(&app, &data_dir, &desktop_identity),
         );
@@ -69,9 +76,9 @@ pub(super) fn connect_local_with_sources<
     spawn_and_validate_local_daemon: SpawnFn,
 ) -> Result<DesktopConnectionInfo>
 where
-    CurrentLocalMatchesFn: Fn(&str) -> bool,
+    CurrentLocalMatchesFn: Fn(&str, Option<&str>) -> bool,
     ResolveEnvFn: FnOnce() -> Result<Option<(String, String)>>,
-    ProbeHealthFn: Fn(&str) -> Result<()>,
+    ProbeHealthFn: Fn(&str, Option<&str>) -> Result<()>,
     ResolveExistingFn: FnMut() -> Result<Option<(String, String, Option<u32>)>>,
     SpawnFn: FnOnce() -> Result<SpawnedLocalDaemonReady>,
 {
@@ -102,9 +109,9 @@ pub(super) fn connect_local_with_sources_for_scope<
     spawn_and_validate_local_daemon: SpawnFn,
 ) -> Result<DesktopConnectionInfo>
 where
-    CurrentLocalMatchesFn: Fn(&str) -> bool,
+    CurrentLocalMatchesFn: Fn(&str, Option<&str>) -> bool,
     ResolveEnvFn: FnOnce() -> Result<Option<(String, String)>>,
-    ProbeHealthFn: Fn(&str) -> Result<()>,
+    ProbeHealthFn: Fn(&str, Option<&str>) -> Result<()>,
     ResolveExistingFn: FnMut() -> Result<Option<(String, String, Option<u32>)>>,
     SpawnFn: FnOnce() -> Result<SpawnedLocalDaemonReady>,
 {
@@ -114,7 +121,7 @@ where
     let info = state.info_for_scope(scope);
     if matches!(info.kind, DesktopConnectionKind::Local) {
         if let Some(url) = info.base_url.as_deref() {
-            if current_local_matches_or_absent(url) {
+            if current_local_matches_or_absent(url, info.token.as_deref()) {
                 state.mark_explicit_local_intent_if_local_for_scope(scope);
                 return Ok(state.info_for_scope(scope));
             }
@@ -124,7 +131,7 @@ where
     // Keep any currently healthy connection active until a replacement has been validated.
     // ConnectionManager swaps and cleans up the old transport only after the new one is ready.
     if let Some((url, token)) = resolve_env_local_daemon()? {
-        probe_health(&url)?;
+        probe_health(&url, Some(token.as_str()))?;
         state.set_local_attached_for_scope(
             scope,
             url,
@@ -278,7 +285,7 @@ fn current_local_connection_stale<ProbeHealthFn>(
     probe_health: ProbeHealthFn,
 ) -> bool
 where
-    ProbeHealthFn: Fn(&str) -> Result<()>,
+    ProbeHealthFn: Fn(&str, Option<&str>) -> Result<()>,
 {
     if !matches!(info.kind, DesktopConnectionKind::Local) {
         return false;
@@ -286,7 +293,7 @@ where
     let Some(url) = info.base_url.as_deref() else {
         return true;
     };
-    probe_health(url).is_err()
+    probe_health(url, info.token.as_deref()).is_err()
 }
 
 fn set_attached_local_for_ensure_mode(
@@ -401,7 +408,7 @@ fn ensure_local_connection_with_mode(
     let result = (|| -> Result<()> {
         let initial_info = state.info_for_scope(scope);
         if !ensure_mode_needs_connect(mode, &initial_info)
-            && !current_local_connection_stale(&initial_info, probe_daemon_health)
+            && !current_local_connection_stale(&initial_info, probe_daemon_health_with_auth)
         {
             return Ok(());
         }
@@ -414,7 +421,7 @@ fn ensure_local_connection_with_mode(
         let _guard = lock_local_connect_gate()?;
         let current_info = state.info_for_scope(scope);
         if !ensure_mode_needs_connect(mode, &current_info)
-            && !current_local_connection_stale(&current_info, probe_daemon_health)
+            && !current_local_connection_stale(&current_info, probe_daemon_health_with_auth)
         {
             return Ok(());
         }

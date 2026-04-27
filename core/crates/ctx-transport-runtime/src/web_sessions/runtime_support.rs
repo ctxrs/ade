@@ -24,7 +24,10 @@ pub(super) async fn build_run_payload(
     Ok(serde_json::Value::Object(payload))
 }
 
-async fn resolve_script_path(handle: &WebSessionHandle, script_path: &str) -> Result<PathBuf> {
+pub(super) async fn resolve_script_path(
+    handle: &WebSessionHandle,
+    script_path: &str,
+) -> Result<PathBuf> {
     let candidate = PathBuf::from(script_path);
     let work_dir = handle.work_dir().await;
     if candidate.is_absolute() {
@@ -34,21 +37,28 @@ async fn resolve_script_path(handle: &WebSessionHandle, script_path: &str) -> Re
         anyhow::bail!("script_path must be relative to work_dir");
     }
     let work_dir = work_dir.context("script_path requires work_dir")?;
+    let canonical_work_dir = work_dir
+        .canonicalize()
+        .with_context(|| format!("failed to resolve work_dir {}", work_dir.display()))?;
     let joined = work_dir.join(candidate);
     let canonical = joined
         .canonicalize()
         .with_context(|| format!("failed to resolve script_path {script_path}"))?;
-    if !canonical.starts_with(&work_dir) {
+    if !canonical.starts_with(&canonical_work_dir) {
         anyhow::bail!("script_path must be inside work_dir");
     }
     Ok(canonical)
 }
 
-pub(super) fn build_stream_path(id: &str, stream_token: &str) -> String {
+pub(super) fn build_stream_path(id: &str) -> String {
+    format!("/sessions/web/{id}/view")
+}
+
+pub(super) fn build_stream_connect_path(id: &str, stream_token: &str) -> String {
     format!("/sessions/web/{id}/view?token={stream_token}")
 }
 
-pub(super) fn build_signal_path(id: &str, stream_token: &str) -> String {
+pub(super) fn build_signal_connect_path(id: &str, stream_token: &str) -> String {
     format!("/sessions/web/{id}/signal?token={stream_token}")
 }
 

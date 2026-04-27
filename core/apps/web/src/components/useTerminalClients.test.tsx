@@ -2,6 +2,7 @@ import { act, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useState } from "react";
 import type { TerminalSession } from "@ctx/types";
+import * as clientWorkspaces from "../api/clientWorkspaces";
 
 vi.mock("@xterm/xterm", () => {
   class MockTerminal {
@@ -42,6 +43,16 @@ vi.mock("@xterm/addon-fit", () => {
 });
 
 import { useTerminalClients, type TerminalClient } from "./useTerminalClients";
+
+vi.mock("../api/clientWorkspaces", async () => {
+  const actual = await vi.importActual<typeof import("../api/clientWorkspaces")>(
+    "../api/clientWorkspaces",
+  );
+  return {
+    ...actual,
+    mintTerminalStreamPath: vi.fn(),
+  };
+});
 
 type MockWebSocketListener = (event: unknown) => void;
 
@@ -110,7 +121,7 @@ const baseTerminal = (): TerminalSession => ({
   title: "bash",
   status: "running",
   exit_code: null,
-  stream_path: "/api/terminals/terminal-1/stream?token=terminal-secret",
+  stream_path: "/api/terminals/terminal-1/stream",
   created_at: new Date().toISOString(),
   updated_at: new Date().toISOString(),
 });
@@ -123,11 +134,23 @@ const Harness = () => {
   return <div data-testid="status">{client?.connectionStatus ?? "missing"}</div>;
 };
 
+async function renderHarness() {
+  const view = render(<Harness />);
+  await act(async () => {
+    await Promise.resolve();
+  });
+  return view;
+}
+
 beforeEach(() => {
   lastClient = null;
   MockWebSocket.instances = [];
   vi.useFakeTimers();
   vi.spyOn(Math, "random").mockReturnValue(0);
+  vi.mocked(clientWorkspaces.mintTerminalStreamPath).mockResolvedValue({
+    stream_path: "/api/terminals/terminal-1/stream?token=terminal-secret",
+    expires_at: new Date().toISOString(),
+  });
   originalWebSocket = window.WebSocket;
   Object.defineProperty(window, "WebSocket", {
     value: MockWebSocket,
@@ -149,7 +172,7 @@ afterEach(() => {
 
 describe("useTerminalClients", () => {
   it("reconnects after close and updates connection state", async () => {
-    render(<Harness />);
+    await renderHarness();
     expect(MockWebSocket.instances).toHaveLength(1);
 
     const first = MockWebSocket.instances[0];
@@ -176,7 +199,7 @@ describe("useTerminalClients", () => {
   });
 
   it("surfaces disconnected after repeated failures", async () => {
-    render(<Harness />);
+    await renderHarness();
     expect(MockWebSocket.instances).toHaveLength(1);
 
     for (let i = 0; i < 4; i += 1) {
@@ -193,7 +216,7 @@ describe("useTerminalClients", () => {
   });
 
   it("reconnects when keepalive stalls", async () => {
-    render(<Harness />);
+    await renderHarness();
     expect(MockWebSocket.instances).toHaveLength(1);
 
     const first = MockWebSocket.instances[0];
@@ -230,7 +253,7 @@ describe("useTerminalClients", () => {
     document.body.appendChild(el);
 
     try {
-      render(<Harness />);
+      await renderHarness();
       expect(MockWebSocket.instances).toHaveLength(1);
       const socket = MockWebSocket.instances[0];
       expect(lastClient).toBeTruthy();

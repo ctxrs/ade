@@ -4,6 +4,10 @@ import { spawn } from "child_process";
 import fs from "fs/promises";
 import { chromium } from "playwright";
 import wrtc from "wrtc";
+import {
+  isWorkerAuthValid,
+  readWorkerAuthSecret,
+} from "./auth.mjs";
 
 const PORT = Number(process.env.PORT || 0);
 const TARGET_URL = process.env.TARGET_URL || "https://www.google.com";
@@ -18,6 +22,7 @@ const ICE_SERVERS = [{ urls: "stun:stun.l.google.com:19302" }];
 const MAP_META_TO_CTRL = process.env.MAP_META_TO_CTRL !== "0";
 
 const { RTCVideoSource } = wrtc.nonstandard;
+const WORKER_AUTH_SECRET = await readWorkerAuthSecret();
 
 let browser = null;
 let context = null;
@@ -49,6 +54,12 @@ const videoTrack = videoSource.createTrack();
 let viewers = 0;
 
 const server = http.createServer(async (req, res) => {
+  if (!isWorkerAuthValid(req.headers, WORKER_AUTH_SECRET)) {
+    res.writeHead(401, { "content-type": "text/plain" });
+    res.end("unauthorized");
+    return;
+  }
+
   if (req.method === "GET" && req.url === "/health") {
     res.writeHead(200, { "content-type": "application/json" });
     res.end(JSON.stringify({ ok: true }));
@@ -98,6 +109,10 @@ const wss = new WebSocketServer({ noServer: true });
 
 server.on("upgrade", (req, socket, head) => {
   if (req.url !== "/signal") {
+    socket.destroy();
+    return;
+  }
+  if (!isWorkerAuthValid(req.headers, WORKER_AUTH_SECRET)) {
     socket.destroy();
     return;
   }

@@ -50,6 +50,12 @@ export type WebSessionInfo = {
   stream_url?: string | null;
 };
 
+export type WebSessionStreamConnectInfo = {
+  stream_path: string;
+  stream_url?: string | null;
+  expires_at: string;
+};
+
 export const createSession = (
   taskId: string,
   provider_id: string,
@@ -247,6 +253,11 @@ export const getSubagentInvocation = (sessionId: string, invocationId: string) =
   apiAny<SubagentInvocation>(`/api/sessions/${sessionId}/subagent_invocations/${invocationId}`);
 
 export const listWebSessions = () => apiAny<WebSessionInfo[]>("/api/sessions/web");
+
+export const mintWebSessionStreamPath = (sessionId: string) =>
+  apiAny<WebSessionStreamConnectInfo>(`/api/sessions/web/${sessionId}/stream_token`, {
+    method: "POST",
+  });
 
 export const getSessionEvents = (
   sessionId: string,

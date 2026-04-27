@@ -12,11 +12,18 @@ use sha2::Digest;
 use url::form_urlencoded;
 
 use crate::daemon::AppState;
-use ctx_core::ids::ConnectionProfileId;
+use ctx_core::ids::{ConnectionProfileId, SessionId};
 
 #[derive(Clone, Copy)]
 pub(super) struct MobileAuthContext {
     pub(super) profile_id: ConnectionProfileId,
+}
+
+#[derive(Clone, Copy)]
+enum ScopedMcpRoute {
+    SessionSubagents { session_id: SessionId },
+    SessionArtifacts { session_id: SessionId },
+    MergeQueueSubmit,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -163,6 +170,46 @@ fn browser_stream_scope(req: &Request<Body>) -> Option<BrowserStreamAuthScope> {
     }
 }
 
+fn parse_scoped_mcp_session_id(
+    path: &str,
+    prefix: &str,
+    allowed_suffixes: &[&str],
+) -> Option<SessionId> {
+    let remainder = path.strip_prefix(prefix)?;
+    let (raw_session_id, suffix) = remainder.split_once('/')?;
+    if !allowed_suffixes.contains(&suffix) {
+        return None;
+    }
+    let parsed = uuid::Uuid::parse_str(raw_session_id).ok()?;
+    Some(SessionId(parsed))
+}
+
+fn scoped_mcp_route(req: &Request<Body>) -> Option<ScopedMcpRoute> {
+    let path = req.uri().path();
+    if req.method() == Method::POST && path == "/api/merge-queue/entries" {
+        return Some(ScopedMcpRoute::MergeQueueSubmit);
+    }
+    if let Some(session_id) = parse_scoped_mcp_session_id(
+        path,
+        "/api/mcp/sessions/",
+        &[
+            "spawn_agent",
+            "send_input",
+            "archive_agent",
+            "interrupt_agent",
+            "list_agents",
+            "get_agent",
+            "wait_agent",
+        ],
+    ) {
+        return Some(ScopedMcpRoute::SessionSubagents { session_id });
+    }
+    if let Some(session_id) = parse_scoped_mcp_session_id(path, "/api/sessions/", &["artifacts"]) {
+        return Some(ScopedMcpRoute::SessionArtifacts { session_id });
+    }
+    None
+}
+
 pub(crate) fn derive_browser_stream_token(
     auth_token: &str,
     scope: &BrowserStreamAuthScope,
@@ -185,26 +232,48 @@ fn browser_stream_query_token_is_valid(req: &Request<Body>, auth_token: &str) ->
     query_token == derive_browser_stream_token(auth_token, &scope)
 }
 
+const BROWSER_CAPABILITY_TOKEN_TTL_SECS: i64 = 60 * 60;
+const BROWSER_CAPABILITY_TOKEN_MAX_FUTURE_SKEW_SECS: i64 = 60;
+
 pub(crate) fn derive_browser_capability_token(
     auth_token: &str,
     scope: &BrowserCapabilityAuthScope,
+    expires_at: i64,
 ) -> String {
     let mut hasher = sha2::Sha256::new();
     hasher.update(b"ctx-browser-capability|");
     hasher.update(scope.serialize().as_bytes());
+    hasher.update(b"|");
+    hasher.update(expires_at.to_string().as_bytes());
     hasher.update(b"|");
     hasher.update(auth_token.as_bytes());
     hex::encode(hasher.finalize())
 }
 
 fn browser_capability_query_token_is_valid(req: &Request<Body>, auth_token: &str) -> bool {
+    if req.method() != Method::GET && req.method() != Method::HEAD {
+        return false;
+    }
     let Some(scope) = browser_capability_scope(req) else {
         return false;
     };
     let Some(query_token) = query_param(req, "token") else {
         return false;
     };
-    query_token == derive_browser_capability_token(auth_token, &scope)
+    let Some(expires_at) = query_param(req, "expires_at").and_then(|value| value.parse().ok())
+    else {
+        return false;
+    };
+    let now = chrono::Utc::now().timestamp();
+    if expires_at < now {
+        return false;
+    }
+    if expires_at
+        > now + BROWSER_CAPABILITY_TOKEN_TTL_SECS + BROWSER_CAPABILITY_TOKEN_MAX_FUTURE_SKEW_SECS
+    {
+        return false;
+    }
+    query_token == derive_browser_capability_token(auth_token, &scope, expires_at)
 }
 
 pub(super) async fn auth_middleware(
@@ -251,6 +320,27 @@ pub(super) async fn auth_middleware(
         }
         if browser_capability_query_token_is_valid(&req, auth_token) {
             return Ok(next.run(req).await);
+        }
+    }
+    if let Some(token_value) = token.as_deref() {
+        if let Some(route) = scoped_mcp_route(&req) {
+            if let Some(mcp_auth) =
+                crate::daemon::verify_mcp_auth_token(&state, token_value).await
+            {
+                let allowed = match route {
+                    ScopedMcpRoute::SessionSubagents { session_id } => {
+                        mcp_auth.allows_subagents(session_id)
+                    }
+                    ScopedMcpRoute::SessionArtifacts { session_id } => {
+                        mcp_auth.allows_artifacts(session_id)
+                    }
+                    ScopedMcpRoute::MergeQueueSubmit => mcp_auth.capabilities.merge_queue_submit,
+                };
+                if allowed {
+                    req.extensions_mut().insert(mcp_auth);
+                    return Ok(next.run(req).await);
+                }
+            }
         }
     }
     if is_mobile_token_route {

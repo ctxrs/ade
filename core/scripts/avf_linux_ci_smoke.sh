@@ -273,9 +273,11 @@ const deleteTerminal = async (terminalId) => {
 };
 
 const runTerminalSmoke = async (terminalId, expectedWorktreeRoot) => {
-  const wsPath = new URL(`/api/terminals/${terminalId}/stream`, baseUrl);
-  wsPath.searchParams.set("token", authToken);
-  const wsUrl = toWsUrl(wsPath);
+  const streamResp = await request("POST", `/api/terminals/${terminalId}/stream_token`);
+  if (streamResp.status !== 200 || !streamResp.json || typeof streamResp.json.stream_path !== "string") {
+    throw new Error(`terminal stream token mint failed (${streamResp.status})`);
+  }
+  const wsUrl = toWsUrl(new URL(streamResp.json.stream_path, baseUrl));
   const ws = new WebSocket(wsUrl);
   const sentinel = `__CTX_AVF_DAEMON_${phase.replace(/[^a-z0-9]+/gi, "_").toUpperCase()}__`;
   const command = [

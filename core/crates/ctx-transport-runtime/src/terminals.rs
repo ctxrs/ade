@@ -27,6 +27,7 @@ use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{connect_async, connect_async_tls_with_config, Connector};
 use uuid::Uuid;
 
+use ctx_core::env::DAEMON_AUTH_ENV_VARS;
 use ctx_core::ids::{SessionId, TaskId, TerminalId, WorkspaceId, WorktreeId};
 use ctx_core::models::{TerminalSession, TerminalStatus};
 use terminals_gateway::connect_terminal_gateway;
@@ -38,7 +39,14 @@ const DEFAULT_COLS: u16 = 80;
 const DEFAULT_ROWS: u16 = 24;
 const MAX_OUTPUT_BYTES: usize = 1024 * 1024;
 pub const DEFAULT_OUTPUT_TAIL_BYTES: usize = 20 * 1024;
+
+fn scrub_daemon_auth_env(cmd: &mut CommandBuilder) {
+    for key in DAEMON_AUTH_ENV_VARS {
+        cmd.env_remove(key);
+    }
+}
 const TERMINAL_PING_INTERVAL: Duration = Duration::from_secs(25);
+const TERMINAL_STREAM_TOKEN_TTL_SECS: i64 = 30;
 const TERMINAL_RECONNECT_BASE_MS: u64 = 500;
 const TERMINAL_RECONNECT_MAX_MS: u64 = 10_000;
 const TERMINAL_REAPER_INTERVAL: Duration = Duration::from_secs(60);
@@ -160,7 +168,7 @@ enum TerminalBackend {
 
 pub struct TerminalSessionHandle {
     info: TerminalSession,
-    stream_token: String,
+    stream_tokens: Arc<Mutex<HashMap<String, chrono::DateTime<chrono::Utc>>>>,
     container_backed: bool,
     runtime: Arc<Mutex<TerminalRuntime>>,
     output_tx: broadcast::Sender<Vec<u8>>,
@@ -186,7 +194,7 @@ impl TerminalManager {
             })
             .context("open pty")?;
 
-        let cmd = if let Some(native_container) = &req.native_container {
+        let mut cmd = if let Some(native_container) = &req.native_container {
             let mut cmd = CommandBuilder::new(native_container.cli_bin.clone());
             for (key, value) in &native_container.cli_env {
                 cmd.env(key, value);
@@ -268,6 +276,7 @@ impl TerminalManager {
             cmd
         };
 
+        scrub_daemon_auth_env(&mut cmd);
         let child = pair.slave.spawn_command(cmd).context("spawn terminal")?;
         drop(pair.slave);
 
@@ -346,7 +355,6 @@ impl TerminalManager {
         });
 
         let id = TerminalId::new();
-        let stream_token = Uuid::new_v4().to_string();
         let title = PathBuf::from(&req.shell)
             .file_name()
             .and_then(|s| s.to_str())
@@ -364,14 +372,14 @@ impl TerminalManager {
             title,
             status: TerminalStatus::Running,
             exit_code: None,
-            stream_path: build_stream_path(id, &stream_token),
+            stream_path: build_stream_path(id),
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };
 
         let session = Arc::new(TerminalSessionHandle {
             info,
-            stream_token,
+            stream_tokens: Arc::new(Mutex::new(HashMap::new())),
             container_backed: req.native_container.is_some() || req.shared_vm_container.is_some(),
             runtime,
             output_tx,
@@ -395,7 +403,6 @@ impl TerminalManager {
         remote: RemoteTerminalRequest,
     ) -> Result<Arc<TerminalSessionHandle>> {
         let id = remote.terminal_id;
-        let stream_token = Uuid::new_v4().to_string();
         let title = PathBuf::from(&req.shell)
             .file_name()
             .and_then(|s| s.to_str())
@@ -427,14 +434,14 @@ impl TerminalManager {
             title,
             status: TerminalStatus::Running,
             exit_code: None,
-            stream_path: build_stream_path(id, &stream_token),
+            stream_path: build_stream_path(id),
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };
 
         let session = Arc::new(TerminalSessionHandle {
             info,
-            stream_token,
+            stream_tokens: Arc::new(Mutex::new(HashMap::new())),
             container_backed: false,
             runtime: runtime.clone(),
             output_tx: output_tx.clone(),
@@ -546,5 +553,50 @@ impl TerminalManager {
         let mut sessions = self.sessions.lock().await;
         sessions.insert(id, session.clone());
         Ok(session)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct ScopedEnvVar {
+        key: &'static str,
+        previous: Option<String>,
+    }
+
+    impl ScopedEnvVar {
+        fn set(key: &'static str, value: &str) -> Self {
+            let previous = std::env::var(key).ok();
+            unsafe {
+                std::env::set_var(key, value);
+            }
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for ScopedEnvVar {
+        fn drop(&mut self) {
+            unsafe {
+                if let Some(value) = &self.previous {
+                    std::env::set_var(self.key, value);
+                } else {
+                    std::env::remove_var(self.key);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn scrub_daemon_auth_env_removes_sensitive_tokens_from_pty_commands() {
+        let _auth = ScopedEnvVar::set("CTX_AUTH_TOKEN", "daemon-token");
+        let _mcp = ScopedEnvVar::set("CTX_MCP_TOKEN", "mcp-token");
+        let mut cmd = CommandBuilder::new("/bin/sh");
+
+        scrub_daemon_auth_env(&mut cmd);
+
+        for key in DAEMON_AUTH_ENV_VARS {
+            assert_eq!(cmd.get_env(key), None, "expected {key} to be removed");
+        }
     }
 }

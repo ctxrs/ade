@@ -181,7 +181,6 @@ fn main() {
             desktop_webview_recovery_consume_incidents,
             desktop_trigger_webview_recovery_fault,
             desktop_get_webview_recovery_automation_snapshot,
-            desktop_daemon_request,
             desktop_start_codex_login_relay,
             desktop_get_app_update_state,
             desktop_check_app_update,

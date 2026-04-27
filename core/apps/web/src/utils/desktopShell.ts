@@ -1,11 +1,9 @@
 import type {
   BlobUploadResp,
   DesktopCodexLoginRelayReq,
-  DesktopDaemonRequest,
   DesktopDeepLinkToken,
   DesktopDockRecentLocalWorkspace,
   DesktopEditorSettings,
-  DesktopHttpResponse,
   DesktopMenuItemStateUpdate,
   DesktopNotificationPermission,
   DesktopOpenFileReq,
@@ -77,9 +75,6 @@ export const desktopUpdateEditorSettings = async (
     "desktop_update_editor_settings",
     settings,
   );
-
-export const desktopDaemonRequest = async (req: DesktopDaemonRequest): Promise<DesktopHttpResponse> =>
-  invokeDesktopReq<DesktopDaemonRequest, DesktopHttpResponse>("desktop_daemon_request", req);
 
 export const desktopStartCodexLoginRelay = async (req: DesktopCodexLoginRelayReq): Promise<boolean> =>
   invokeDesktopReq<DesktopCodexLoginRelayReq, boolean>("desktop_start_codex_login_relay", req);

@@ -1,4 +1,5 @@
 use super::*;
+use crate::daemon::McpAuthContext;
 use ctx_execution_runtime::ExecutionSetupCoordinator;
 
 pub struct CoreState {
@@ -9,6 +10,7 @@ pub struct CoreState {
     pub stores: StoreManager,
     pub daemon_url: String,
     pub auth_token: Option<String>,
+    pub(crate) mcp_auth: Mutex<HashMap<String, TimedEntry<McpAuthContext>>>,
     pub ask_user_question: Arc<AskUserQuestionBroker>,
     pub shutdown_tx: broadcast::Sender<()>,
     pub update_drain: Arc<Mutex<Option<UpdateDrainState>>>,

@@ -137,6 +137,36 @@ describe("daemonConnection", () => {
     expect(localStorage.getItem(LOCAL_PERSISTED_BASE_KEY)).toBeNull();
   });
 
+  it("scrubs persisted desktop auth tokens during restore", async () => {
+    sessionStorage.setItem(
+      SESSION_CONNECTION_KEY,
+      JSON.stringify({
+        v: 1,
+        baseUrl: "http://127.0.0.1:4399",
+        wsBaseUrl: "ws://127.0.0.1:4399",
+        authToken: "stale-desktop-token",
+        source: "desktop",
+      }),
+    );
+
+    const mod = await import("./daemonConnection");
+    const connection = mod.getDaemonConnection();
+
+    expect(connection).toMatchObject({
+      baseUrl: "http://127.0.0.1:4399",
+      wsBaseUrl: "ws://127.0.0.1:4399",
+      authToken: null,
+      source: "desktop",
+    });
+    expect(JSON.parse(sessionStorage.getItem(SESSION_CONNECTION_KEY) ?? "{}")).toMatchObject({
+      v: 1,
+      baseUrl: "http://127.0.0.1:4399",
+      wsBaseUrl: "ws://127.0.0.1:4399",
+      authToken: null,
+      source: "desktop",
+    });
+  });
+
   it("treats desktop ssh metadata as part of connection identity even when baseUrl is reused", async () => {
     const mod = await import("./daemonConnection");
     const listener = vi.fn();
@@ -178,6 +208,7 @@ describe("daemonConnection", () => {
     expect(JSON.parse(sessionStorage.getItem(SESSION_CONNECTION_KEY) ?? "{}")).toMatchObject({
       v: 1,
       baseUrl: "http://127.0.0.1:4399",
+      authToken: null,
       source: "desktop",
     });
     expect(String(JSON.parse(sessionStorage.getItem(SESSION_CONNECTION_KEY) ?? "{}").targetScope)).toContain("host-b.example");

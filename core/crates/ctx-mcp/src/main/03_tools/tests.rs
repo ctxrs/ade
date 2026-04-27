@@ -1,9 +1,5 @@
 use super::*;
-use axum::{
-    extract::Query,
-    routing::get,
-    Json, Router,
-};
+use axum::{extract::Query, routing::get, Json, Router};
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 
@@ -125,12 +121,19 @@ async fn session_list_call_requests_current_session_scope() -> Result<()> {
     let sessions = response
         .as_array()
         .context("session_list response should be an array")?;
-    assert_eq!(sessions.len(), 1, "foreign web sessions leaked through ctx-mcp");
+    assert_eq!(
+        sessions.len(),
+        1,
+        "foreign web sessions leaked through ctx-mcp"
+    );
     let session = sessions[0]
         .as_object()
         .context("session entry should be an object")?;
     assert_eq!(session.get("url"), Some(&json!("https://own.example")));
-    assert!(session.get("session_ref").and_then(|v| v.as_str()).is_some());
+    assert!(session
+        .get("session_ref")
+        .and_then(|v| v.as_str())
+        .is_some());
     assert!(!session.contains_key("id"));
     assert!(!session.contains_key("session_id"));
     assert!(!session.contains_key("worktree_id"));

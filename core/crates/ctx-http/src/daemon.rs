@@ -36,6 +36,7 @@ use ctx_provider_install::install_state::InstallTarget;
 mod activity;
 mod auth;
 mod lifecycle;
+mod mcp_auth;
 mod provider_adapters;
 mod provider_bootstrap;
 pub(crate) mod sessions;
@@ -49,6 +50,9 @@ pub use activity::{
 };
 #[cfg(test)]
 pub(crate) use lifecycle::{collect_provider_adapters_for_shutdown, shutdown_provider_adapters};
+pub(crate) use mcp_auth::{
+    issue_provider_session_mcp_token, verify_mcp_auth_token, McpAuthContext,
+};
 #[cfg(test)]
 pub(crate) use provider_adapters::runtime_probe_command_as_agent_command;
 pub(crate) use provider_adapters::{acp_bridge_adapter, acp_bridge_command, is_acp_provider_id};

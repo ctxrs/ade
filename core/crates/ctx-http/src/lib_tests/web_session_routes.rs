@@ -50,6 +50,14 @@ async fn web_session_routes_are_registered() {
     );
 
     let req = Request::builder()
+        .method("POST")
+        .uri("/api/sessions/web/does-not-exist/stream_token")
+        .body(Body::empty())
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::NOT_FOUND);
+
+    let req = Request::builder()
         .method("GET")
         .uri("/sessions/web/does-not-exist/view")
         .body(Body::empty())
@@ -122,6 +130,14 @@ async fn missing_web_session_api_routes_return_not_found() {
 
     let req = Request::builder()
         .method("POST")
+        .uri("/api/sessions/web/does-not-exist/stream_token")
+        .body(Body::empty())
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+
+    let req = Request::builder()
+        .method("POST")
         .uri("/api/sessions/web/does-not-exist/run")
         .header(header::AUTHORIZATION, "Bearer daemon-secret")
         .header("content-type", "application/json")
@@ -143,6 +159,15 @@ async fn missing_web_session_api_routes_return_not_found() {
     let req = Request::builder()
         .method("POST")
         .uri("/api/sessions/web/does-not-exist/close")
+        .header(header::AUTHORIZATION, "Bearer daemon-secret")
+        .body(Body::empty())
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::NOT_FOUND);
+
+    let req = Request::builder()
+        .method("POST")
+        .uri("/api/sessions/web/does-not-exist/stream_token")
         .header(header::AUTHORIZATION, "Bearer daemon-secret")
         .body(Body::empty())
         .unwrap();

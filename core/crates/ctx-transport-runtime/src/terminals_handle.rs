@@ -11,8 +11,21 @@ impl TerminalSessionHandle {
         }
     }
 
-    pub fn matches_stream_token(&self, token: &str) -> bool {
-        self.stream_token == token
+    pub fn issue_stream_connect_path(&self) -> (String, chrono::DateTime<chrono::Utc>) {
+        let now = Utc::now();
+        let expires_at = now + chrono::Duration::seconds(TERMINAL_STREAM_TOKEN_TTL_SECS);
+        let mut tokens = lock_or_recover(self.stream_tokens.as_ref(), "terminal stream tokens");
+        tokens.retain(|_, expiry| *expiry > now);
+        let token = Uuid::new_v4().to_string();
+        tokens.insert(token.clone(), expires_at);
+        (build_stream_connect_path(self.info.id, &token), expires_at)
+    }
+
+    pub fn consume_stream_token(&self, token: &str) -> bool {
+        let now = Utc::now();
+        let mut tokens = lock_or_recover(self.stream_tokens.as_ref(), "terminal stream tokens");
+        tokens.retain(|_, expiry| *expiry > now);
+        matches!(tokens.remove(token), Some(expiry) if expiry > now)
     }
 
     fn touch_activity(&self) {
@@ -73,7 +86,6 @@ impl TerminalSessionHandle {
     pub fn test_handle_with_output(output: &[u8]) -> Arc<Self> {
         let now = Utc::now();
         let id = TerminalId::new();
-        let stream_token = Uuid::new_v4().to_string();
         let (output_tx, _) = broadcast::channel(16);
         let (status_tx, _) = broadcast::channel(16);
         let (_outbound_tx, outbound_rx) = mpsc::unbounded_channel();
@@ -91,11 +103,11 @@ impl TerminalSessionHandle {
                 title: "test-terminal".to_string(),
                 status: TerminalStatus::Running,
                 exit_code: None,
-                stream_path: build_stream_path(id, &stream_token),
+                stream_path: build_stream_path(id),
                 created_at: now,
                 updated_at: now,
             },
-            stream_token,
+            stream_tokens: Arc::new(Mutex::new(HashMap::new())),
             container_backed: false,
             runtime: Arc::new(Mutex::new(TerminalRuntime {
                 status: TerminalStatus::Running,
@@ -170,6 +182,10 @@ impl TerminalSessionHandle {
     }
 }
 
-pub(super) fn build_stream_path(id: TerminalId, stream_token: &str) -> String {
+pub(super) fn build_stream_path(id: TerminalId) -> String {
+    format!("/api/terminals/{}/stream", id.0)
+}
+
+pub(super) fn build_stream_connect_path(id: TerminalId, stream_token: &str) -> String {
     format!("/api/terminals/{}/stream?token={stream_token}", id.0)
 }

@@ -3,7 +3,9 @@ use std::sync::Arc;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::Json;
+use chrono::{DateTime, Utc};
 use serde::Deserialize;
+use serde::Serialize;
 
 use super::errors::ApiErrorResp;
 use crate::daemon::AppState;
@@ -31,8 +33,7 @@ pub(super) async fn list_workspace_terminals(
 ) -> Result<Json<Vec<TerminalSession>>, StatusCode> {
     let workspace_id =
         WorkspaceId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
-    let terminals = state.transport.terminals.list(workspace_id).await;
-    Ok(Json(terminals))
+    Ok(Json(state.transport.terminals.list(workspace_id).await))
 }
 
 pub(super) async fn create_workspace_terminal(
@@ -115,4 +116,28 @@ pub(super) async fn delete_terminal(
         return Ok(StatusCode::NO_CONTENT);
     }
     Err(StatusCode::NOT_FOUND)
+}
+
+#[derive(Debug, Serialize)]
+pub(super) struct TerminalStreamConnectInfo {
+    stream_path: String,
+    expires_at: DateTime<Utc>,
+}
+
+pub(super) async fn mint_terminal_stream_token(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<TerminalStreamConnectInfo>, StatusCode> {
+    let terminal_id = TerminalId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
+    let handle = state
+        .transport
+        .terminals
+        .get(terminal_id)
+        .await
+        .ok_or(StatusCode::NOT_FOUND)?;
+    let (stream_path, expires_at) = handle.issue_stream_connect_path();
+    Ok(Json(TerminalStreamConnectInfo {
+        stream_path,
+        expires_at,
+    }))
 }

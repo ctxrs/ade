@@ -3,6 +3,7 @@ import { Terminal } from "@xterm/xterm";
 import type { TerminalSession } from "@ctx/types";
 import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { idToString } from "../api/client";
+import { mintTerminalStreamPath } from "../api/clientWorkspaces";
 import { getDaemonWsUrl } from "../api/daemonConnection";
 import { useThemeVariant, type ThemeVariant } from "../utils/theme";
 import { terminalFontFamily, terminalTheme } from "./terminalClientTheme";
@@ -144,8 +145,9 @@ export function useTerminalClients(
   return clientsRef;
 }
 
-function buildTerminalWsUrl(terminal: TerminalSession): string {
-  return getDaemonWsUrl(terminal.stream_path);
+async function buildTerminalWsUrl(terminal: TerminalSession): Promise<string> {
+  const { stream_path } = await mintTerminalStreamPath(idToString(terminal.id));
+  return getDaemonWsUrl(stream_path);
 }
 
 const RECONNECT_BASE_MS = 500;
@@ -184,6 +186,7 @@ function createClient(
   let element: HTMLElement | null = null;
   let reconnectTimer: number | null = null;
   let keepaliveTimer: number | null = null;
+  let connectInFlight: Promise<void> | null = null;
   let reconnectAttempts = 0;
   let disposed = false;
   let connectionStatus: TerminalConnectionStatus = "disconnected";
@@ -356,73 +359,82 @@ function createClient(
     setConnectionStatus(nextState);
     reconnectTimer = window.setTimeout(() => {
       reconnectTimer = null;
-      connect();
+      void connect();
     }, delay);
   };
 
-  const connect = () => {
+  const connect = async () => {
     if (disposed) return;
+    if (connectInFlight) return;
     if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) {
       return;
     }
-    const nextState =
-      reconnectAttempts > DISCONNECTED_AFTER_ATTEMPTS ? "disconnected" : "reconnecting";
-    setConnectionStatus(nextState);
-    let wsUrl = "";
-    try {
-      wsUrl = buildTerminalWsUrl(terminal);
-    } catch {
-      scheduleReconnect();
-      return;
-    }
-    socket = new WebSocket(wsUrl);
-    socket.binaryType = "arraybuffer";
-    socket.addEventListener("open", () => {
-      reconnectAttempts = 0;
-      clearReconnectTimer();
-      lastServerMessageAt = Date.now();
-      setConnectionStatus("connected");
-      sendResize();
-      startKeepalive();
-    });
-    socket.addEventListener("close", () => {
-      socket = null;
-      clearKeepaliveTimer();
-      scheduleReconnect();
-    });
-    socket.addEventListener("message", (ev) => {
-      lastServerMessageAt = Date.now();
-      if (typeof ev.data === "string") {
-        try {
-          const msg = JSON.parse(ev.data) as TerminalControlMessage;
-          if (msg.type === "status") {
-            status = msg.status;
-            exitCode = msg.exit_code ?? null;
-            client.status = status;
-            client.exitCode = exitCode;
-            updateInputState();
-            onStatus(status, exitCode);
-            return;
+    connectInFlight = (async () => {
+      const nextState =
+        reconnectAttempts > DISCONNECTED_AFTER_ATTEMPTS ? "disconnected" : "reconnecting";
+      setConnectionStatus(nextState);
+      let wsUrl = "";
+      try {
+        wsUrl = await buildTerminalWsUrl(terminal);
+      } catch {
+        scheduleReconnect();
+        return;
+      }
+      if (disposed) return;
+      socket = new WebSocket(wsUrl);
+      socket.binaryType = "arraybuffer";
+      socket.addEventListener("open", () => {
+        reconnectAttempts = 0;
+        clearReconnectTimer();
+        lastServerMessageAt = Date.now();
+        setConnectionStatus("connected");
+        sendResize();
+        startKeepalive();
+      });
+      socket.addEventListener("close", () => {
+        socket = null;
+        clearKeepaliveTimer();
+        scheduleReconnect();
+      });
+      socket.addEventListener("message", (ev) => {
+        lastServerMessageAt = Date.now();
+        if (typeof ev.data === "string") {
+          try {
+            const msg = JSON.parse(ev.data) as TerminalControlMessage;
+            if (msg.type === "status") {
+              status = msg.status;
+              exitCode = msg.exit_code ?? null;
+              client.status = status;
+              client.exitCode = exitCode;
+              updateInputState();
+              onStatus(status, exitCode);
+              return;
+            }
+            if (msg.type === "pong") {
+              return;
+            }
+          } catch {
+            // ignore
           }
-          if (msg.type === "pong") {
-            return;
-          }
-        } catch {
-          // ignore
+          writeOrBufferOutput(ev.data);
+          return;
         }
-        writeOrBufferOutput(ev.data);
-        return;
-      }
-      if (ev.data instanceof ArrayBuffer) {
-        writeOrBufferOutput(new Uint8Array(ev.data));
-        return;
-      }
-      if (ev.data instanceof Blob) {
-        void ev.data.arrayBuffer().then((buf) => {
-          writeOrBufferOutput(new Uint8Array(buf));
-        });
-      }
-    });
+        if (ev.data instanceof ArrayBuffer) {
+          writeOrBufferOutput(new Uint8Array(ev.data));
+          return;
+        }
+        if (ev.data instanceof Blob) {
+          void ev.data.arrayBuffer().then((buf) => {
+            writeOrBufferOutput(new Uint8Array(buf));
+          });
+        }
+      });
+    })();
+    try {
+      await connectInFlight;
+    } finally {
+      connectInFlight = null;
+    }
   };
 
   term.onData((data) => {
@@ -476,7 +488,7 @@ function createClient(
   };
 
   updateInputState();
-  connect();
+  void connect();
 
   return client;
 }

@@ -44,7 +44,7 @@ const sameNullableTargetScope = (
 const initialConnection = (): DaemonConnection => {
   const canonical = readStoredDaemonConnection();
   if (canonical) {
-    return {
+    const restored: DaemonConnection = {
       baseUrl: canonical.baseUrl,
       wsBaseUrl: canonical.wsBaseUrl,
       authToken: canonical.authToken,
@@ -52,6 +52,8 @@ const initialConnection = (): DaemonConnection => {
       source: canonical.source ?? null,
       targetScope: cloneNullableTargetScope(canonical.targetScope),
     };
+    writeCanonicalSession(restored);
+    return restored;
   }
 
   const persisted = readStoredPersistedBase();

@@ -83,7 +83,7 @@ fn apply_outer_process_env_removes_inherited_ctx_auth_token() {
 }
 
 #[test]
-fn apply_outer_process_env_keeps_explicit_ctx_auth_token_override() {
+fn apply_outer_process_env_removes_explicit_ctx_auth_token_override() {
     let _guard = ScopedEnvVar::set("CTX_AUTH_TOKEN", "host-token");
     let mut cmd = tokio::process::Command::new("/usr/bin/env");
     let env = HashMap::from([("CTX_AUTH_TOKEN".to_string(), "explicit-token".to_string())]);
@@ -92,7 +92,24 @@ fn apply_outer_process_env_keeps_explicit_ctx_auth_token_override() {
     assert_eq!(
         envs.get(std::ffi::OsStr::new("CTX_AUTH_TOKEN"))
             .and_then(|value| value.as_deref()),
-        Some(std::ffi::OsStr::new("explicit-token"))
+        None
+    );
+}
+
+#[test]
+fn apply_outer_process_env_removes_explicit_ctx_mcp_token_override() {
+    let _guard = ScopedEnvVar::set("CTX_MCP_TOKEN", "host-mcp-token");
+    let mut cmd = tokio::process::Command::new("/usr/bin/env");
+    let env = HashMap::from([(
+        "CTX_MCP_TOKEN".to_string(),
+        "explicit-mcp-token".to_string(),
+    )]);
+    apply_outer_process_env(&mut cmd, &env);
+    let envs: HashMap<_, _> = cmd.as_std().get_envs().collect();
+    assert_eq!(
+        envs.get(std::ffi::OsStr::new("CTX_MCP_TOKEN"))
+            .and_then(|value| value.as_deref()),
+        None
     );
 }
 

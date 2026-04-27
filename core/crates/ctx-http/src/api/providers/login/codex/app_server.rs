@@ -12,6 +12,7 @@ pub(super) fn spawn_codex_app_server(
         anyhow::bail!("codex-cli runtime path must be absolute, got `{codex_bin}`");
     }
     let mut cmd = Command::new(codex_bin);
+    crate::process_env::scrub_daemon_auth_env(&mut cmd);
     cmd.args(CODEX_APP_SERVER_ARGS)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

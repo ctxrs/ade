@@ -120,7 +120,7 @@ pub(super) async fn session_run_call(
 #[allow(dead_code)]
 pub(super) async fn session_close_call(
     client: &reqwest::Client,
-    daemon_url: &str,
+    _daemon_url: &str,
     arguments: &Value,
 ) -> Result<Value> {
     let session_ref = arguments
@@ -128,15 +128,13 @@ pub(super) async fn session_close_call(
         .and_then(|v| v.as_str())
         .context("missing session_ref")?;
     let session_id = session_id_for_ref(session_ref).context("unknown session_ref")?;
+    let access = resolve_daemon_access()?;
     let url = format!(
         "{}/api/sessions/web/{}/close",
-        daemon_url.trim_end_matches('/'),
+        access.daemon_url.trim_end_matches('/'),
         session_id
     );
-    let mut req = client.post(url);
-    if let Some(token) = bearer_token() {
-        req = req.bearer_auth(token);
-    }
+    let req = client.post(url).bearer_auth(access.auth_token);
     let res = req.send().await?.error_for_status()?;
     if res.status().as_u16() == 204 {
         return Ok(json!({"closed": true}));

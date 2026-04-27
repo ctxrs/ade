@@ -21,6 +21,7 @@ export type DesktopDaemonConnectionSyncOptions = {
 };
 
 const DESKTOP_DAEMON_SYNC_THROTTLE_MS = 1000;
+const DESKTOP_LOCAL_AUTH_PROBE_TIMEOUT_MS = 5000;
 
 let desktopSyncInFlight: Promise<DesktopDaemonConnectionSyncResult> | null = null;
 let desktopLastSyncAtMs = 0;
@@ -45,6 +46,51 @@ const shouldConnectLocalWhenMissing = (
   return !info.base_url;
 };
 
+const shouldRepairExistingLocalDesktopTarget = (
+  current: DaemonConnection,
+  info: DesktopConnectionInfo | null,
+): info is DesktopConnectionInfo & { kind: "local"; base_url: string } => {
+  return Boolean(
+    info
+    && info.kind === "local"
+    && info.base_url
+    && current.targetScope?.kind === "desktop_local"
+    && current.baseUrl === info.base_url,
+  );
+};
+
+const shouldProbeExistingLocalDesktopAuth = (
+  current: DaemonConnection,
+  info: DesktopConnectionInfo | null,
+): info is DesktopConnectionInfo & { kind: "local"; base_url: string; token: string } => {
+  if (!shouldRepairExistingLocalDesktopTarget(current, info)) return false;
+  return Boolean(info.token);
+};
+
+const probeDesktopLocalDaemonAuth = async (
+  info: DesktopConnectionInfo & { base_url: string; token: string },
+): Promise<boolean> => {
+  const controller = new AbortController();
+  const timeoutId = globalThis.setTimeout(() => {
+    controller.abort();
+  }, DESKTOP_LOCAL_AUTH_PROBE_TIMEOUT_MS);
+  try {
+    const baseUrl = info.base_url.replace(/\/+$/, "");
+    const response = await fetch(`${baseUrl}/api/workspaces`, {
+      method: "GET",
+      headers: {
+        authorization: `Bearer ${info.token}`,
+      },
+      signal: controller.signal,
+    });
+    return response.ok;
+  } catch {
+    return false;
+  } finally {
+    globalThis.clearTimeout(timeoutId);
+  }
+};
+
 export const syncDesktopDaemonConnectionFromBridge = async (
   opts?: DesktopDaemonConnectionSyncOptions,
 ): Promise<DesktopDaemonConnectionSyncResult> => {
@@ -66,6 +112,13 @@ export const syncDesktopDaemonConnectionFromBridge = async (
       info = await desktopGetConnection();
       if (shouldConnectLocalWhenMissing(info, opts?.connectLocalWhenMissing ?? false)) {
         info = await desktopConnectLocal();
+      } else if (shouldRepairExistingLocalDesktopTarget(current, info) && !info.token) {
+        info = await desktopConnectLocal();
+      } else if (shouldProbeExistingLocalDesktopAuth(current, info)) {
+        const authOk = await probeDesktopLocalDaemonAuth(info);
+        if (!authOk) {
+          info = await desktopConnectLocal();
+        }
       }
       applyDesktopDaemonConnection(info);
     } catch (err) {

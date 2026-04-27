@@ -70,14 +70,28 @@ mod tests {
         assert!(!url.contains("token="));
     }
 
-    #[test]
-    fn terminal_stream_url_uses_terminal_scoped_stream_path() {
+    #[tokio::test]
+    async fn terminal_stream_url_uses_terminal_scoped_stream_path() {
+        let terminal_id = TerminalId::new();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let app = axum::Router::new().route(
+                &format!("/api/terminals/{}/stream_token", terminal_id.0),
+                axum::routing::post(|| async {
+                    axum::Json(serde_json::json!({
+                        "stream_path": format!("/api/terminals/{}/stream?token=terminal-secret", terminal_id.0),
+                        "expires_at": "2026-04-23T00:00:00Z"
+                    }))
+                }),
+            );
+            axum::serve(listener, app).await.unwrap();
+        });
         let client = Client::new(DaemonConfig {
-            base_url: "https://example.com/base/".to_string(),
+            base_url: format!("http://{addr}/base/"),
             auth_token: Some("secret-token".to_string()),
         })
         .unwrap();
-        let terminal_id = TerminalId::new();
         let terminal: TerminalSession = serde_json::from_value(serde_json::json!({
             "id": terminal_id.0,
             "workspace_id": WorkspaceId::new().0,
@@ -90,18 +104,18 @@ mod tests {
             "status": "running",
             "exit_code": null,
             "stream_path": format!(
-                "/api/terminals/{}/stream?token=terminal-secret",
+                "/api/terminals/{}/stream",
                 terminal_id.0
             ),
             "created_at": "2026-04-23T00:00:00Z",
             "updated_at": "2026-04-23T00:00:00Z"
         }))
         .unwrap();
-        let url = client.terminal_stream_url(&terminal).unwrap();
+        let url = client.terminal_stream_url(&terminal).await.unwrap();
         assert_eq!(
             url,
             format!(
-                "wss://example.com/base/api/terminals/{}/stream?token=terminal-secret",
+                "ws://{addr}/base/api/terminals/{}/stream?token=terminal-secret",
                 terminal_id.0
             )
         );
@@ -117,27 +131,6 @@ mod tests {
 
         let workspace_err = client.workspace_stream_url(WorkspaceId::new()).unwrap_err();
         assert!(workspace_err
-            .to_string()
-            .contains("unsupported base url scheme: ftp"));
-
-        let terminal: TerminalSession = serde_json::from_value(serde_json::json!({
-            "id": TerminalId::new().0,
-            "workspace_id": WorkspaceId::new().0,
-            "task_id": null,
-            "session_id": null,
-            "worktree_id": null,
-            "cwd": "/tmp",
-            "shell": "/bin/bash",
-            "title": "bash",
-            "status": "running",
-            "exit_code": null,
-            "stream_path": "/api/terminals/test/stream?token=terminal-secret",
-            "created_at": "2026-04-23T00:00:00Z",
-            "updated_at": "2026-04-23T00:00:00Z"
-        }))
-        .unwrap();
-        let terminal_err = client.terminal_stream_url(&terminal).unwrap_err();
-        assert!(terminal_err
             .to_string()
             .contains("unsupported base url scheme: ftp"));
     }

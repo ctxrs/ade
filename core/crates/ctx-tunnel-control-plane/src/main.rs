@@ -92,9 +92,7 @@ async fn main() -> Result<()> {
     if relay_base_urls.is_empty() {
         anyhow::bail!("MOBILE_TUNNEL_RELAY_BASE_URLS must include at least one URL");
     }
-    let master_secret = std::env::var("MOBILE_TUNNEL_MASTER_SECRET")
-        .context("missing MOBILE_TUNNEL_MASTER_SECRET")?
-        .into_bytes();
+    let master_secret = load_master_secret()?;
 
     let db = SqlitePoolOptions::new()
         .max_connections(10)
@@ -430,6 +428,20 @@ fn derive_tunnel_secret(master: &[u8], tunnel_id: &str) -> Result<String, (Statu
     let digest = mac.finalize().into_bytes();
     let encoded = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(digest);
     Ok(encoded)
+}
+
+fn load_master_secret() -> anyhow::Result<Vec<u8>> {
+    let raw = std::env::var("MOBILE_TUNNEL_MASTER_SECRET")
+        .context("missing MOBILE_TUNNEL_MASTER_SECRET")?;
+    parse_master_secret(&raw)
+}
+
+fn parse_master_secret(raw: &str) -> anyhow::Result<Vec<u8>> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        anyhow::bail!("MOBILE_TUNNEL_MASTER_SECRET must not be empty");
+    }
+    Ok(trimmed.as_bytes().to_vec())
 }
 
 async fn cache_tunnel(state: &AppState, tunnel_id: &str, resp: &EnableMobileAccessResp) {

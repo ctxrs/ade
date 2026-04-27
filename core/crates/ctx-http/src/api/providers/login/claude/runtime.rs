@@ -2,6 +2,12 @@ use super::*;
 
 pub(super) const CLAUDE_BROWSER_AUTH_TIER: &str = "provider-browser-auth";
 
+fn scrub_daemon_auth_env(cmd: &mut CommandBuilder) {
+    for key in ctx_core::env::DAEMON_AUTH_ENV_VARS {
+        cmd.env_remove(key);
+    }
+}
+
 pub(super) struct ClaudeLoginSpawn {
     pub(super) line_rx: mpsc::UnboundedReceiver<String>,
     pub(super) exit_rx: oneshot::Receiver<anyhow::Result<portable_pty::ExitStatus>>,
@@ -122,6 +128,7 @@ pub(super) fn spawn_claude_setup_token_command(
         cmd.arg(arg);
     }
     cmd.arg("setup-token");
+    scrub_daemon_auth_env(&mut cmd);
     cmd.env("NO_COLOR", "1");
     cmd.env("TERM", "xterm-256color");
     cmd.env("BROWSER", browser_open_shim_path);
@@ -189,5 +196,50 @@ where
     }
     if !pending.is_empty() {
         let _ = tx.send(normalize_claude_login_line(&pending));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct ScopedEnvVar {
+        key: &'static str,
+        previous: Option<String>,
+    }
+
+    impl ScopedEnvVar {
+        fn set(key: &'static str, value: &str) -> Self {
+            let previous = std::env::var(key).ok();
+            unsafe {
+                std::env::set_var(key, value);
+            }
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for ScopedEnvVar {
+        fn drop(&mut self) {
+            unsafe {
+                if let Some(value) = &self.previous {
+                    std::env::set_var(self.key, value);
+                } else {
+                    std::env::remove_var(self.key);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn scrub_daemon_auth_env_removes_sensitive_tokens_from_claude_login_command() {
+        let _auth = ScopedEnvVar::set("CTX_AUTH_TOKEN", "daemon-token");
+        let _mcp = ScopedEnvVar::set("CTX_MCP_TOKEN", "mcp-token");
+        let mut cmd = CommandBuilder::new("/bin/sh");
+
+        scrub_daemon_auth_env(&mut cmd);
+
+        for key in ctx_core::env::DAEMON_AUTH_ENV_VARS {
+            assert_eq!(cmd.get_env(key), None, "expected {key} to be removed");
+        }
     }
 }
