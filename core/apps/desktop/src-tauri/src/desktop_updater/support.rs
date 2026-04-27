@@ -211,8 +211,21 @@ pub(super) fn should_allow_remote_bootstrap_insecure_loopback_updater(
 }
 
 pub(super) fn remote_bootstrap_insecure_loopback_override_enabled() -> bool {
-    if cfg!(feature = "automation") {
+    remote_bootstrap_insecure_loopback_override_enabled_for_build(
+        cfg!(feature = "automation"),
+        cfg!(debug_assertions),
+    )
+}
+
+pub(super) fn remote_bootstrap_insecure_loopback_override_enabled_for_build(
+    is_automation_build: bool,
+    is_debug_build: bool,
+) -> bool {
+    if is_automation_build {
         return true;
+    }
+    if !is_debug_build {
+        return false;
     }
     std::env::var(REMOTE_BOOTSTRAP_INSECURE_LOOPBACK_UPDATER_ENV)
         .ok()
