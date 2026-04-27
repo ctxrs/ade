@@ -16,6 +16,14 @@ const DEFAULT_PROVIDER_MATRIX_RELATIVE_PATH = path.join(
   "src",
   "provider_matrix.json",
 );
+const DEFAULT_RUNTIME_LOCK_RELATIVE_PATH = path.join(
+  "core",
+  "apps",
+  "desktop",
+  "src-tauri",
+  "bundles",
+  "runtime_lock.v2.json",
+);
 const DEFAULT_PROVIDER_DEPS_PROVIDER_IDS = Object.freeze([
   "acp-crp-bridge",
   "amp",
@@ -59,6 +67,31 @@ function releaseScopeIncludesProviders(value) {
   return scope !== "ctx-only";
 }
 
+function readJsonAtCommit({
+  commitSha = "",
+  defaultRelativePath = "",
+  relativePath = "",
+  repoRoot,
+} = {}) {
+  const normalizedDefaultPath = String(defaultRelativePath || "").trim();
+  const normalizedRelativePath = String(relativePath || normalizedDefaultPath).trim();
+  if (!normalizedRelativePath) {
+    throw new Error("relative path is required");
+  }
+  if (!repoRoot) {
+    throw new Error("repoRoot is required");
+  }
+  const normalizedCommit = String(commitSha || "").trim();
+  if (!normalizedCommit) {
+    return JSON.parse(fs.readFileSync(path.join(repoRoot, normalizedRelativePath), "utf8"));
+  }
+  const raw = childProcess.execFileSync("git", ["show", `${normalizedCommit}:${normalizedRelativePath}`], {
+    cwd: repoRoot,
+    encoding: "utf8",
+  });
+  return JSON.parse(raw);
+}
+
 function readProviderMatrixAtCommit({
   commitSha = "",
   matrixRelativePath = DEFAULT_PROVIDER_MATRIX_RELATIVE_PATH,
@@ -68,18 +101,46 @@ function readProviderMatrixAtCommit({
   if (!relativePath) {
     throw new Error("provider matrix path is required");
   }
-  if (!repoRoot) {
-    throw new Error("repoRoot is required");
-  }
-  const normalizedCommit = String(commitSha || "").trim();
-  if (!normalizedCommit) {
-    return JSON.parse(fs.readFileSync(path.join(repoRoot, relativePath), "utf8"));
-  }
-  const raw = childProcess.execFileSync("git", ["show", `${normalizedCommit}:${relativePath}`], {
-    cwd: repoRoot,
-    encoding: "utf8",
+  return readJsonAtCommit({
+    commitSha,
+    defaultRelativePath: DEFAULT_PROVIDER_MATRIX_RELATIVE_PATH,
+    relativePath,
+    repoRoot,
   });
-  return JSON.parse(raw);
+}
+
+function readRuntimeLockAtCommit({
+  commitSha = "",
+  lockRelativePath = DEFAULT_RUNTIME_LOCK_RELATIVE_PATH,
+  repoRoot,
+} = {}) {
+  const relativePath = String(lockRelativePath || DEFAULT_RUNTIME_LOCK_RELATIVE_PATH).trim();
+  if (!relativePath) {
+    throw new Error("runtime lock path is required");
+  }
+  return readJsonAtCommit({
+    commitSha,
+    defaultRelativePath: DEFAULT_RUNTIME_LOCK_RELATIVE_PATH,
+    relativePath,
+    repoRoot,
+  });
+}
+
+function readRuntimeLockRequiredProviderIdsAtCommit({
+  commitSha = "",
+  lockRelativePath = DEFAULT_RUNTIME_LOCK_RELATIVE_PATH,
+  repoRoot,
+} = {}) {
+  const lock = readRuntimeLockAtCommit({
+    commitSha,
+    lockRelativePath,
+    repoRoot,
+  });
+  return [...new Set(
+    [...(Array.isArray(lock?.required?.provider_ids) ? lock.required.provider_ids : [])]
+      .map((entry) => String(entry || "").trim())
+      .filter(Boolean),
+  )];
 }
 
 function collectManagedArchiveProviderIdsFromMatrix(matrix) {
@@ -181,11 +242,13 @@ module.exports = {
   DEFAULT_PROVIDER_DEPS_PROVIDER_IDS,
   DEFAULT_PROVIDER_MATRIX_RELATIVE_PATH,
   DEFAULT_RELEASE_SCOPE,
+  DEFAULT_RUNTIME_LOCK_RELATIVE_PATH,
   formatManagedArchiveInspectionSummary,
   inspectManagedArchiveTargets,
   normalizeReleaseScope,
   readManagedArchiveProviderIdsAtCommit,
   readProviderMatrixAtCommit,
+  readRuntimeLockRequiredProviderIdsAtCommit,
   releaseScopeIncludesCtx,
   releaseScopeIncludesProviders,
 };
