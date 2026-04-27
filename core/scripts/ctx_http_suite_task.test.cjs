@@ -65,6 +65,7 @@ test("ctx-http suite task executes batched selections sequentially without widen
       `const capturePath = ${JSON.stringify(capturePath)};`,
       "fs.appendFileSync(capturePath, JSON.stringify({",
       "  args: process.argv.slice(2),",
+      "  bazelJobs: process.env.CTX_BAZEL_JOBS || '',",
       "  localTestJobs: process.env.CTX_BAZEL_LOCAL_TEST_JOBS || '',",
       "  rustTestThreads: process.env.RUST_TEST_THREADS || '',",
       "}) + '\\n');",
@@ -92,13 +93,57 @@ test("ctx-http suite task executes batched selections sequentially without widen
   assert.deepEqual(calls, [
     {
       args: ["scripts/run_bazel_pilot.cjs", "test", "//core/crates/ctx-http:base"],
+      bazelJobs: "1",
       localTestJobs: "",
       rustTestThreads: "1",
     },
     {
       args: ["scripts/run_bazel_pilot.cjs", "test", "//core/crates/ctx-http:provider-auth"],
+      bazelJobs: "1",
       localTestJobs: "",
       rustTestThreads: "1",
+    },
+  ]);
+});
+
+test("ctx-http suite task preserves an explicit Bazel job cap", () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-http-suite-task-"));
+  const capturePath = path.join(tempDir, "capture.jsonl");
+  const fakeNodePath = path.join(tempDir, "node");
+  fs.writeFileSync(
+    fakeNodePath,
+    [
+      `#!${process.execPath}`,
+      "const fs = require('node:fs');",
+      `const capturePath = ${JSON.stringify(capturePath)};`,
+      "fs.appendFileSync(capturePath, JSON.stringify({",
+      "  args: process.argv.slice(2),",
+      "  bazelJobs: process.env.CTX_BAZEL_JOBS || '',",
+      "}) + '\\n');",
+    ].join("\n"),
+    { mode: 0o755 },
+  );
+
+  const result = spawnSync(process.execPath, [scriptPath, "--suite", "base"], {
+    cwd: repoRoot,
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      CTX_BAZEL_JOBS: "3",
+      PATH: `${tempDir}:${process.env.PATH}`,
+    },
+    stdio: "pipe",
+  });
+
+  assert.equal(result.status, 0);
+  const calls = fs.readFileSync(capturePath, "utf8")
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line));
+  assert.deepEqual(calls, [
+    {
+      args: ["scripts/run_bazel_pilot.cjs", "test", "//core/crates/ctx-http:base"],
+      bazelJobs: "3",
     },
   ]);
 });

@@ -9,6 +9,8 @@ const {
   getCtxHttpSuiteNames,
 } = require("./lib/ctx_http_suites.cjs");
 
+const DEFAULT_CTX_HTTP_BAZEL_JOBS = "1";
+
 function parseArgs(argv) {
   const args = {
     list: false,
@@ -69,6 +71,9 @@ function main() {
   });
   if (!String(env.RUST_TEST_THREADS ?? "").trim()) {
     env.RUST_TEST_THREADS = "1";
+  }
+  if (!String(env.CTX_BAZEL_JOBS ?? "").trim()) {
+    env.CTX_BAZEL_JOBS = DEFAULT_CTX_HTTP_BAZEL_JOBS;
   }
   if (isBatchSelection) {
     process.stderr.write(`CTX_HTTP_SUITE_BATCH ${JSON.stringify({ suites: args.suites })}\n`);

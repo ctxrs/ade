@@ -13,9 +13,8 @@ use self::manifest::{
 };
 #[cfg(test)]
 use self::manifest::{
-    manifest_path, runtime_lock_path, RuntimeLockHelperSource, RuntimeLockProfile,
-    RuntimeLockSource, BUNDLE_ENV_MANIFEST, MANIFEST_FILENAME, MANIFEST_VERSION,
-    RUNTIME_LOCK_VERSION,
+    manifest_path, RuntimeLockHelperSource, RuntimeLockSource, BUNDLE_ENV_MANIFEST,
+    MANIFEST_FILENAME, MANIFEST_VERSION,
 };
 pub use self::manifest::{
     BundledAssetsManifest, BundledCommand, BundledImage, BundledProvider, BundledRuntime,
