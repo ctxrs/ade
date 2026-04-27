@@ -98,7 +98,6 @@ const CTX_HTTP_SUITES = [
       "codex_host_import_api",
       "codex_login_callback_api",
       "install_start_contract",
-      "legacy_codex_session_alias_http",
       "provider_current_ctx_version_regressions",
       "provider_target_scoped_installs",
       "subscription_accounts_api",

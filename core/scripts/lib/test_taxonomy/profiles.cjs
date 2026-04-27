@@ -6,6 +6,11 @@ const PROFILES = [
     title: "Agent Minimal",
     purpose: "Fast, mostly hermetic inner-loop confidence while editing.",
     selector: {
+      excludeEntryIds: [
+        "repo-contracts.source-file-size",
+        "repo-contracts.testing-taxonomy-check",
+        "web-workbench.web-typecheck",
+      ],
       includeSurfaces: ["contract", "compile"],
       includeWorlds: ["hermetic", "simulated"],
       includeCosts: ["tiny", "fast"],
@@ -30,6 +35,11 @@ const PROFILES = [
     title: "Agent Default",
     purpose: "Standard agent confidence loop for normal changes before pushing.",
     selector: {
+      excludeEntryIds: [
+        "repo-contracts.source-file-size",
+        "repo-contracts.testing-taxonomy-check",
+        "web-workbench.web-typecheck",
+      ],
       includeSurfaces: ["contract", "compile", "unit", "integration"],
       includeWorlds: ["hermetic", "simulated", "fake-provider"],
       includeCosts: ["tiny", "fast"],
@@ -55,6 +65,11 @@ const PROFILES = [
     title: "Agent Broader",
     purpose: "Voluntary broader validation for risky changes before or after a push.",
     selector: {
+      excludeEntryIds: [
+        "repo-contracts.source-file-size",
+        "repo-contracts.testing-taxonomy-check",
+        "web-workbench.web-typecheck",
+      ],
       includeSurfaces: ["contract", "compile", "unit", "integration", "system", "artifact"],
       includeWorlds: ["hermetic", "simulated", "fake-provider", "local-packaged-artifact"],
       includeCosts: ["tiny", "fast", "medium"],
@@ -76,39 +91,37 @@ const PROFILES = [
   {
     id: "checkin",
     title: "Checkin",
-    purpose: "Exact-SHA post-push confidence for direct-to-main.",
+    purpose: "Exact-SHA fast confidence profile used before dev promotes to main.",
     selector: {
-      includeEntryIds: [
-        "distribution-install.install-bootstrap-contracts",
-        "provider-auth.provider-auth-validate",
-        "build-graph.release-bundle-contracts-linux-x86_64",
-        "distribution-install.desktop-runtime-lock-matrix",
-        "distribution-install.desktop-runtime-lock-validate",
-        "distribution-install.desktop-version-check",
+      forceIncludeEntryIds: [
+        "repo-contracts.source-file-size",
+        "repo-contracts.testing-taxonomy-check",
+        "build-graph.rust-turbo-check",
+        "web-workbench.web-premerge-required",
       ],
-      includeSurfaces: ["contract"],
-      includeWorlds: ["hermetic"],
+      includeSurfaces: ["compile", "contract", "unit", "integration", "system"],
+      includeWorlds: ["hermetic", "simulated", "fake-provider"],
       includeCosts: ["tiny", "fast"],
       includeStabilities: ["stable"],
-      includeExecutions: ["bazel-addressable"],
+      includeExecutions: ["bazel-rbe-preferred", "bazel-addressable"],
+      excludeRequirements: ["browser", "mac", "network", "single-mac", "long-running"],
     },
     currentCommands: [
       "Buildkite pipeline: ctx-main",
-      "pnpm -C core testing:profile:run --profile install-bootstrap-contracts",
-      "pnpm -C core testing:profile:run --profile provider-auth-validate",
-      "pnpm -C core testing:profile:run --profile release-contracts",
+      "pnpm -C core testing:profile:run --profile checkin",
     ],
     pipelines: ["ctx-main"],
-    remoteStrategy: "Run deterministic Linux contract checks; the Mac install/bootstrap contract is path-gated.",
-    currentExecution: "This profile now matches the checked-in ctx-main step graph exactly instead of describing a broader not-yet-wired exact-SHA lane.",
+    remoteStrategy: "Run stable, hermetic, Bazel-addressable compile, contract, unit, narrow integration, and selected browser system truth on Linux/RBE; keep live services, single-Mac work, soak, and flaky evidence outside promotion.",
+    currentExecution: "The checked-in ctx-main pipeline executes this profile as the promotion gate for exact dev SHAs before the promoter fast-forwards main.",
     expansionRules: [
-      "If ctx-main grows beyond these contract gates, update this profile in the same change so the pipeline/profile mapping stays honest.",
+      "Add stable Bazel-cacheable checks here when they can fit the promotion wall-clock and flake budget.",
+      "The checkin selector excludes live-service, single-Mac, soak, and quarantined checks.",
     ],
   },
   {
     id: "mac-preview",
     title: "Mac Preview",
-    purpose: "Build a fast signed Apple Silicon preview app on push to main without DMG, notarization, or publish work.",
+    purpose: "Build a fast signed Apple Silicon preview app for promoted main SHAs without DMG, notarization, or publish work.",
     selector: {
       includeEntryIds: [
         "updates-release.mac-preview-macos-arm64",

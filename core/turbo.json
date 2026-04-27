@@ -4133,7 +4133,6 @@
         "crates/ctx-http/tests/codex_host_import_api.rs",
         "crates/ctx-http/tests/codex_login_callback_api.rs",
         "crates/ctx-http/tests/install_start_contract.rs",
-        "crates/ctx-http/tests/legacy_codex_session_alias_http.rs",
         "crates/ctx-http/tests/provider_current_ctx_version_regressions.rs",
         "crates/ctx-http/tests/provider_target_scoped_installs.rs",
         "crates/ctx-http/tests/subscription_accounts_api.rs",

@@ -479,3 +479,30 @@ test("direct pipeline helper profiles resolve to explicit package-script command
     ],
   );
 });
+
+test("checkin promotion gate includes broad stable cacheable basics", () => {
+  const plan = buildExecutionPlan({
+    profileId: "checkin",
+  });
+  const entryIds = new Set(plan.selectedEntries.map((entry) => entry.id));
+
+  for (const requiredEntryId of [
+    "repo-contracts.source-file-size",
+    "repo-contracts.testing-taxonomy-check",
+    "build-graph.rust-turbo-check",
+    "ctx-http.base",
+    "web-workbench.web-typecheck",
+    "web-workbench.session-supervisor-core-unit-tests",
+    "web-workbench.web-premerge-required",
+    "repo-contracts.buildkite-pipeline",
+  ]) {
+    assert.equal(entryIds.has(requiredEntryId), true, `missing checkin entry ${requiredEntryId}`);
+  }
+
+  assert.ok(plan.commands.includes("pnpm source:file-size:enforce"));
+  assert.ok(plan.commands.includes("pnpm testing:taxonomy:check"));
+  assert.ok(plan.commands.includes("pnpm rust:turbo:check"));
+  assert.ok(plan.commands.includes("pnpm bazel:web:typecheck"));
+  assert.ok(plan.commands.includes("pnpm bazel:web:e2e:premerge"));
+  assert.ok(plan.commands.includes("pnpm bazel:buildkite:pipeline:test"));
+});
