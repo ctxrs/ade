@@ -5,7 +5,7 @@ const { readDesktopVersion } = require("../desktop_version.cjs");
 const { assertValidVersion } = require("../desktop_set_version.cjs");
 
 const DEFAULT_CHANNEL = "stable";
-const RELEASE_CHANNELS = new Set(["stable", "canary", "canary2", "e2e"]);
+const RELEASE_CHANNELS = new Set(["stable", "canary", "e2e"]);
 const BUILD_MODES = new Set(["dev", "packaged", "release", "e2e"]);
 
 function trimmedEnv(env, name) {

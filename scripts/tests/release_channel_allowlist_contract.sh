@@ -53,7 +53,7 @@ if [[ $code -ne 2 ]]; then
 fi
 assert_contains "$out_path" "unsupported RELEASE_CHANNEL"
 
-for ch in stable canary canary2 e2e; do
+for ch in stable canary e2e; do
   echo "contract: valid channel '$ch' passes allowlist gate"
   out_path="$(run_verify "$ch")"
   code="$(cat "${out_path}.code")"
@@ -62,4 +62,4 @@ for ch in stable canary canary2 e2e; do
   assert_contains "$out_path" "unable to fetch release manifests"
 done
 
-echo "ok: release channel allowlist contract holds (stable, canary, canary2, e2e)"
+echo "ok: release channel allowlist contract holds (stable, canary, e2e)"

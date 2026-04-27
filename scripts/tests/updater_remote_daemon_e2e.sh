@@ -14,6 +14,7 @@ fi
 
 artifact_dir="${CTX_REMOTE_CI_ARTIFACT_DIR:-${ROOT}/core/apps/desktop/automation/artifacts/updater-remote-proof}"
 mkdir -p "${artifact_dir}"
+STRICT_PUBLISHED_ARTIFACTS="${CTX_UPDATER_REMOTE_E2E_STRICT_PUBLISHED_ARTIFACTS:-${CTX_UPDATER_E2E_STRICT_PUBLISHED_ARTIFACTS:-0}}"
 
 resolve_download_base_url() {
   if [[ -n "${CTX_UPDATER_E2E_DOWNLOAD_BASE_URL:-}" ]]; then
@@ -77,8 +78,18 @@ NODE
   printf '%s\n' "$app_path"
 }
 
+if [[ -n "${CTX_DESKTOP_APP_PATH:-}" && "$STRICT_PUBLISHED_ARTIFACTS" == "1" ]]; then
+  echo "error: strict published-artifact remote proof forbids CTX_DESKTOP_APP_PATH/local AppDir input" >&2
+  exit 2
+fi
+
 if [[ -z "${CTX_DESKTOP_APP_PATH:-}" ]]; then
-  if ! resolved_app_path="$(resolve_local_smoke_app_path "${ROOT}")"; then
+  if [[ "$STRICT_PUBLISHED_ARTIFACTS" == "1" ]]; then
+    download_base_url="$(resolve_download_base_url)"
+    target_channel="$(resolve_target_channel)"
+    echo "[updater-remote-proof] strict published-artifact mode; downloading controller AppImage for ${target_channel}" >&2
+    resolved_app_path="$(download_published_controller_app "$download_base_url" "$target_channel")"
+  elif ! resolved_app_path="$(resolve_local_smoke_app_path "${ROOT}")"; then
     download_base_url="$(resolve_download_base_url)"
     target_channel="$(resolve_target_channel)"
     echo "[updater-remote-proof] local AppDir unavailable; downloading published controller AppImage for ${target_channel}" >&2

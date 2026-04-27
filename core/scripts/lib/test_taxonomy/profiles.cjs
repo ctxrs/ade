@@ -376,6 +376,34 @@ const PROFILES = [
     ],
   },
   {
+    id: "canary-post-publish-smoke",
+    title: "Canary Post-Publish Smoke",
+    purpose: "Verify published canary/e2e artifacts and then run the real Linux app-update plus remote-daemon proof lanes without rebuilding.",
+    selector: {
+      includeEntryIds: [
+        "updates-release.updater-linux-proof",
+        "updates-release.updater-remote-daemon-proof",
+      ],
+      includeSurfaces: ["promotion"],
+      includeWorlds: ["external-service"],
+      includeCosts: ["slow"],
+      includeStabilities: ["stable"],
+      includeExecutions: ["artifact-tail"],
+      excludeRequirements: ["mac", "single-mac"],
+    },
+    currentCommands: [
+      "BuildBuddy job: Canary post-publish smoke",
+      "bash scripts/buildbuddy/run_canary_post_publish_smoke.sh",
+      "pnpm -C core testing:profile:run --profile canary-post-publish-smoke",
+    ],
+    pipelines: ["ctx-release", "buildbuddy-manual"],
+    remoteStrategy: "Reuse the existing published-artifact updater proof lanes, with the wrapper adding manifest/Linux artifact verification and strict no-local-AppDir/no-source-payload mode.",
+    currentExecution: "The checked-in wrapper first verifies published release manifests and host-matching Linux artifacts, then runs release-updater-proof under canary-smoke cloud labels.",
+    expansionRules: [
+      "Do not add a second remote updater proof lane; this profile is an orchestration alias over the existing updater proof entries.",
+    ],
+  },
+  {
     id: "release-stage-linux-x64",
     title: "Release Stage Linux X64",
     purpose: "Build the linux-x64 release stage archive and publish it as the step artifact boundary.",
@@ -529,7 +557,7 @@ const PROFILES = [
     ],
     pipelines: ["ctx-release"],
     remoteStrategy: "Consume the exact staged artifacts; keep publish and latest-manifest verification as the thin post-stage tail instead of re-running compile work.",
-    currentExecution: "The checked-in ctx-release finalize step now dispatches this profile for canary, canary2, e2e, and stable dry-run modes.",
+    currentExecution: "The checked-in ctx-release finalize step now dispatches this profile for canary, e2e, and stable dry-run modes.",
     expansionRules: [
       "Canary should never rebuild what releasetest already proved.",
     ],

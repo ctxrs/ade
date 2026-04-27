@@ -491,7 +491,8 @@
         "crates/ctx-client/**",
         "crates/ctx-core/**",
         "crates/ctx-crp-protocol/**",
-        "crates/ctx-providers/**"
+        "crates/ctx-providers/**",
+        "crates/ctx-sandbox-contract/**"
       ],
       "outputs": []
     },
@@ -516,7 +517,8 @@
         "crates/ctx-client/**",
         "crates/ctx-core/**",
         "crates/ctx-crp-protocol/**",
-        "crates/ctx-providers/**"
+        "crates/ctx-providers/**",
+        "crates/ctx-sandbox-contract/**"
       ],
       "outputs": []
     },
@@ -541,7 +543,8 @@
         "crates/ctx-client/**",
         "crates/ctx-core/**",
         "crates/ctx-crp-protocol/**",
-        "crates/ctx-providers/**"
+        "crates/ctx-providers/**",
+        "crates/ctx-sandbox-contract/**"
       ],
       "outputs": []
     },
@@ -699,7 +702,8 @@
         "crates/ctx-core/**",
         "crates/ctx-crp-protocol/**",
         "crates/ctx-desktop-ipc/**",
-        "crates/ctx-providers/**"
+        "crates/ctx-providers/**",
+        "crates/ctx-sandbox-contract/**"
       ],
       "outputs": []
     },
@@ -725,7 +729,8 @@
         "crates/ctx-core/**",
         "crates/ctx-crp-protocol/**",
         "crates/ctx-desktop-ipc/**",
-        "crates/ctx-providers/**"
+        "crates/ctx-providers/**",
+        "crates/ctx-sandbox-contract/**"
       ],
       "outputs": []
     },
@@ -751,7 +756,8 @@
         "crates/ctx-core/**",
         "crates/ctx-crp-protocol/**",
         "crates/ctx-desktop-ipc/**",
-        "crates/ctx-providers/**"
+        "crates/ctx-providers/**",
+        "crates/ctx-sandbox-contract/**"
       ],
       "outputs": []
     },
@@ -1620,7 +1626,8 @@
         "crates/ctx-core/**",
         "crates/ctx-crp-protocol/**",
         "tools/load-test/**",
-        "crates/ctx-providers/**"
+        "crates/ctx-providers/**",
+        "crates/ctx-sandbox-contract/**"
       ],
       "outputs": []
     },
@@ -1646,7 +1653,8 @@
         "crates/ctx-core/**",
         "crates/ctx-crp-protocol/**",
         "tools/load-test/**",
-        "crates/ctx-providers/**"
+        "crates/ctx-providers/**",
+        "crates/ctx-sandbox-contract/**"
       ],
       "outputs": []
     },
@@ -1672,7 +1680,8 @@
         "crates/ctx-core/**",
         "crates/ctx-crp-protocol/**",
         "tools/load-test/**",
-        "crates/ctx-providers/**"
+        "crates/ctx-providers/**",
+        "crates/ctx-sandbox-contract/**"
       ],
       "outputs": []
     },
@@ -2464,7 +2473,8 @@
         "scripts/sync_rust_turbo_tasks.cjs",
         "crates/ctx-core/**",
         "crates/ctx-crp-protocol/**",
-        "crates/ctx-providers/**"
+        "crates/ctx-providers/**",
+        "crates/ctx-sandbox-contract/**"
       ],
       "outputs": []
     },
@@ -2488,7 +2498,8 @@
         "scripts/sync_rust_turbo_tasks.cjs",
         "crates/ctx-core/**",
         "crates/ctx-crp-protocol/**",
-        "crates/ctx-providers/**"
+        "crates/ctx-providers/**",
+        "crates/ctx-sandbox-contract/**"
       ],
       "outputs": []
     },
@@ -2512,7 +2523,8 @@
         "scripts/sync_rust_turbo_tasks.cjs",
         "crates/ctx-core/**",
         "crates/ctx-crp-protocol/**",
-        "crates/ctx-providers/**"
+        "crates/ctx-providers/**",
+        "crates/ctx-sandbox-contract/**"
       ],
       "outputs": []
     },
@@ -4121,6 +4133,7 @@
         "crates/ctx-http/tests/codex_host_import_api.rs",
         "crates/ctx-http/tests/codex_login_callback_api.rs",
         "crates/ctx-http/tests/install_start_contract.rs",
+        "crates/ctx-http/tests/legacy_codex_session_alias_http.rs",
         "crates/ctx-http/tests/provider_current_ctx_version_regressions.rs",
         "crates/ctx-http/tests/provider_target_scoped_installs.rs",
         "crates/ctx-http/tests/subscription_accounts_api.rs",
@@ -4318,6 +4331,7 @@
         "crates/ctx-http/tests/repo_validate_destination.rs",
         "crates/ctx-http/tests/session_diff_unavailable.rs",
         "crates/ctx-http/tests/workspace_merge_queue_config_http.rs",
+        "crates/ctx-http/tests/workspace_execution_config_http.rs",
         "crates/ctx-http/tests/worktree_archive_http.rs",
         "crates/ctx-http/tests/worktree_vcs_snapshot.rs",
         "crates/ctx-core/**",
