@@ -13,6 +13,7 @@ use crate::settings::{
     ExecutionMode, ExecutionSettings, Settings,
 };
 use ctx_core::models::VcsKind;
+use ctx_providers::fake::FakeProviderAdapter;
 use ctx_sandbox_materialization::set_test_preflight_storage_samples_override;
 use ctx_storage_admission::{StorageAdmissionOperation, StorageAdmissionSample};
 use ctx_store::StoreManager;
@@ -39,10 +40,13 @@ fn init_git_workspace(root: &Path) {
 }
 
 async fn test_state(data_root: &Path) -> Arc<AppState> {
+    let mut providers: HashMap<String, Arc<dyn ctx_providers::adapters::ProviderAdapter>> =
+        HashMap::new();
+    providers.insert("fake".into(), Arc::new(FakeProviderAdapter::new()));
     Arc::new(AppState::new(
         data_root.to_path_buf(),
         StoreManager::open(data_root).await.expect("open stores"),
-        HashMap::new(),
+        providers,
         "http://127.0.0.1:4311".to_string(),
         None,
     ))

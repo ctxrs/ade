@@ -2,6 +2,7 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const path = require("node:path");
 
 const {
   createInvocation,
@@ -11,6 +12,9 @@ const {
   shouldSkipPrep,
 } = require("./desktop_tauri_entry.cjs");
 const { HOST_HEAVY_BUDGET_KEY } = require("./lib/host_job_budget.cjs");
+const { readDesktopVersion } = require("./desktop_version.cjs");
+
+const currentDesktopVersion = readDesktopVersion(path.resolve(__dirname, ".."));
 
 test("desktop_tauri_entry uses release prep for normal builds", () => {
   const invocation = createInvocation(["node", "desktop_tauri_entry", "build", "--bundles", "app"]);
@@ -22,7 +26,7 @@ test("desktop_tauri_entry uses release prep for normal builds", () => {
   assert.equal(invocation.tauriExecArgs[1], "--config");
   assert.match(invocation.tauriExecArgs[2], /tauri\.identity\.json$/);
   assert.deepEqual(invocation.tauriExecArgs.slice(3), ["--bundles", "app"]);
-  assert.equal(invocation.tauriEnv.CTX_RELEASE_EFFECTIVE_VERSION, "0.59.0");
+  assert.equal(invocation.tauriEnv.CTX_RELEASE_EFFECTIVE_VERSION, currentDesktopVersion);
 });
 
 test("desktop_tauri_entry strips only the outer pnpm separator", () => {
@@ -87,7 +91,7 @@ test("desktop_tauri_entry derives release identity for canary builds", () => {
   );
   assert.equal(
     invocation.tauriEnv.CTX_RELEASE_EFFECTIVE_VERSION,
-    "0.59.0-canary.deadbeefcafe",
+    `${currentDesktopVersion}-canary.deadbeefcafe`,
   );
   assert.equal(invocation.tauriEnv.CTX_BUILD_ID, "deadbeefcafe");
   assert.equal(

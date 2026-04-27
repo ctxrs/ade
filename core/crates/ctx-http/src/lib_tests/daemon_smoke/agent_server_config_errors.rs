@@ -21,6 +21,8 @@ async fn subagent_init_surfaces_agent_server_config_errors() {
         "http://127.0.0.1:4399".to_string(),
         None,
     ));
+    let app = api::router(state.clone());
+    let session = create_fake_session_via_api(&app, &git_repo.path().to_string_lossy()).await;
     {
         let mut statuses = HashMap::new();
         statuses.insert(
@@ -39,8 +41,6 @@ async fn subagent_init_surfaces_agent_server_config_errors() {
         );
         *state.providers.statuses.lock().await = statuses;
     }
-    let app = api::router(state.clone());
-    let session = create_fake_session_via_api(&app, &git_repo.path().to_string_lossy()).await;
     write_invalid_agent_server_config(data_dir.path());
 
     let req = Request::builder()

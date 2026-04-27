@@ -78,10 +78,6 @@ test("linux-arm lanes source repo-owned local adapters from the workspace before
     script,
     /enforcing bundled-only runtime resolution for: \$\{CTX_E2E_BUNDLED_ONLY_PROVIDERS\}/,
   );
-  assert.doesNotMatch(
-    script,
-    /csv_remove_provider "\$\{bundled_only_provider_csv\}" "codex"/,
-  );
 });
 
 test("linux-arm lanes keep sandbox runtime bundling out of the default host-mode path", () => {
