@@ -46,6 +46,8 @@ test("Bazel ignores workspace-local node_modules trees that would collide with i
   assert.match(bazelIgnore, /^core\/packages\/ctx-types\/node_modules$/m);
   assert.match(bazelIgnore, /^core\/packages\/pretext-virtualizer-core\/node_modules$/m);
   assert.match(bazelIgnore, /^core\/packages\/pretext-virtualizer-interface\/node_modules$/m);
+  assert.match(bazelIgnore, /^core\/packages\/session-supervisor-core\/node_modules$/m);
+  assert.match(bazelIgnore, /^core\/packages\/session-thread-layout\/node_modules$/m);
   assert.match(bazelIgnore, /^core\/packages\/web-session-worker\/node_modules$/m);
 });
 
@@ -99,6 +101,14 @@ test("Bazel web focused unit slices run as native vitest tests", () => {
   const nonPretextWorkbenchSurfaceBlock = targetBlock(buildFile, "unit_tests_non_pretext_workbench_surface");
   const nonPretextWorkbenchSurfaceAppBlock = targetBlock(buildFile, "unit_tests_non_pretext_workbench_surface_app");
   const nonPretextWorkbenchSurfaceSessionBlock = targetBlock(buildFile, "unit_tests_non_pretext_workbench_surface_session");
+  const nonPretextWorkbenchSurfaceSessionCoreBlock = targetBlock(
+    buildFile,
+    "unit_tests_non_pretext_workbench_surface_session_core",
+  );
+  const nonPretextWorkbenchSurfaceSessionThreadBlock = targetBlock(
+    buildFile,
+    "unit_tests_non_pretext_workbench_surface_session_thread",
+  );
   const nonPretextWorkbenchShellBlock = targetBlock(buildFile, "unit_tests_non_pretext_workbench_shell");
   const pretextBlock = targetBlock(buildFile, "pretext_measurement_unit_tests");
   const desktopIpcCorpusBlock = targetBlock(buildFile, "desktop_ipc_corpus");
@@ -168,7 +178,9 @@ test("Bazel web focused unit slices run as native vitest tests", () => {
   assert.match(nonPretextWorkbenchBlock, /^test_suite\(/m);
   assert.match(nonPretextWorkbenchSurfaceBlock, /^test_suite\(/m);
   assert.match(nonPretextWorkbenchSurfaceAppBlock, /^vitest_bin\.vitest_test\(/m);
-  assert.match(nonPretextWorkbenchSurfaceSessionBlock, /^vitest_bin\.vitest_test\(/m);
+  assert.match(nonPretextWorkbenchSurfaceSessionBlock, /^test_suite\(/m);
+  assert.match(nonPretextWorkbenchSurfaceSessionCoreBlock, /^vitest_bin\.vitest_test\(/m);
+  assert.match(nonPretextWorkbenchSurfaceSessionThreadBlock, /^vitest_bin\.vitest_test\(/m);
   assert.match(nonPretextWorkbenchShellBlock, /^vitest_bin\.vitest_test\(/m);
   assert.match(pretextBlock, /^vitest_bin\.vitest_test\(/m);
   assert.match(desktopIpcCorpusBlock, /^vitest_bin\.vitest_test\(/m);
@@ -180,6 +192,8 @@ test("Bazel web focused unit slices run as native vitest tests", () => {
   assert.match(nonPretextFoundationBlock, /unit_tests_non_pretext_foundation_state/);
   assert.match(nonPretextWorkbenchSurfaceBlock, /unit_tests_non_pretext_workbench_surface_app/);
   assert.match(nonPretextWorkbenchSurfaceBlock, /unit_tests_non_pretext_workbench_surface_session/);
+  assert.match(nonPretextWorkbenchSurfaceSessionBlock, /unit_tests_non_pretext_workbench_surface_session_core/);
+  assert.match(nonPretextWorkbenchSurfaceSessionBlock, /unit_tests_non_pretext_workbench_surface_session_thread/);
   assert.match(nonPretextWorkbenchBlock, /unit_tests_non_pretext_workbench_surface/);
   assert.match(nonPretextWorkbenchBlock, /unit_tests_non_pretext_workbench_shell/);
   assert.match(nonPretextFoundationSharedBlock, /data = HERMETIC_WEB_CHECK_DATA/);
@@ -187,7 +201,8 @@ test("Bazel web focused unit slices run as native vitest tests", () => {
   assert.match(nonPretextMiscBlock, /data = HERMETIC_WEB_CHECK_DATA/);
   assert.match(nonPretextSettingsSetupBlock, /data = HERMETIC_WEB_CHECK_DATA/);
   assert.match(nonPretextWorkbenchSurfaceAppBlock, /data = HERMETIC_WEB_CHECK_DATA/);
-  assert.match(nonPretextWorkbenchSurfaceSessionBlock, /data = HERMETIC_WEB_CHECK_DATA/);
+  assert.match(nonPretextWorkbenchSurfaceSessionCoreBlock, /data = HERMETIC_WEB_CHECK_DATA/);
+  assert.match(nonPretextWorkbenchSurfaceSessionThreadBlock, /data = HERMETIC_WEB_CHECK_DATA/);
   assert.match(nonPretextWorkbenchShellBlock, /data = HERMETIC_WEB_CHECK_DATA/);
   assert.match(pretextBlock, /data = HERMETIC_WEB_PRETEXT_APP_DATA/);
   assert.match(pretextBlock, /src\/pages\/sessionThread\/transcriptLayoutPlanner\.appSmoke\.test\.ts/);
@@ -199,6 +214,8 @@ test("Bazel web focused unit slices run as native vitest tests", () => {
   assert.doesNotMatch(nonPretextMiscBlock, /run_workspace_task\.sh/);
   assert.doesNotMatch(nonPretextSettingsSetupBlock, /run_workspace_task\.sh/);
   assert.doesNotMatch(nonPretextWorkbenchBlock, /run_workspace_task\.sh/);
+  assert.doesNotMatch(nonPretextWorkbenchSurfaceSessionCoreBlock, /run_workspace_task\.sh/);
+  assert.doesNotMatch(nonPretextWorkbenchSurfaceSessionThreadBlock, /run_workspace_task\.sh/);
   assert.doesNotMatch(pretextBlock, /run_workspace_task\.sh/);
   assert.doesNotMatch(desktopIpcCorpusBlock, /run_workspace_task\.sh/);
   assert.doesNotMatch(desktopIpcCorpusBlock, /\bpnpm\b/);
@@ -208,7 +225,11 @@ test("Bazel web focused unit slices run as native vitest tests", () => {
   );
   assert.match(
     buildFile,
-    /NON_PRETEXT_WORKBENCH_SURFACE_SESSION_TESTS = glob\(\[[\s\S]*?"src\/pages\/SessionPage\*\.test\.ts"[\s\S]*?"src\/pages\/sessionThread\/\*\*\/\*\.test\.tsx"/,
+    /NON_PRETEXT_WORKBENCH_SURFACE_SESSION_CORE_TESTS = glob\(\[[\s\S]*?"src\/pages\/SessionPage\*\.test\.ts"[\s\S]*?"src\/pages\/sessionView\/\*\*\/\*\.test\.tsx"/,
+  );
+  assert.match(
+    buildFile,
+    /NON_PRETEXT_WORKBENCH_SURFACE_SESSION_THREAD_TESTS = glob\(\[[\s\S]*?"src\/pages\/sessionThread\/\*\.test\.ts"[\s\S]*?"src\/pages\/sessionThread\/\*\*\/\*\.test\.tsx"/,
   );
   assert.match(
     buildFile,
