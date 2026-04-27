@@ -94,6 +94,12 @@ const initialConnection = (): DaemonConnection => {
 
 let state: DaemonConnection = initialConnection();
 
+export const resetDaemonConnectionStateForTests = (): DaemonConnection => {
+  listeners.clear();
+  state = initialConnection();
+  return getDaemonConnection();
+};
+
 const areSameConnection = (a: DaemonConnection, b: DaemonConnection): boolean =>
   a.baseUrl === b.baseUrl
   && a.wsBaseUrl === b.wsBaseUrl

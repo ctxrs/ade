@@ -23,6 +23,22 @@ let semanticTelemetryTimer: number | null = null;
 const semanticTelemetryQueue: SemanticTelemetryEvent[] = [];
 let semanticTelemetryRemoteEnabled = true;
 
+export const resetClientBaseTelemetryForTests = (): void => {
+  if (typeof window !== "undefined") {
+    if (clientTelemetryTimer !== null) {
+      window.clearTimeout(clientTelemetryTimer);
+    }
+    if (semanticTelemetryTimer !== null) {
+      window.clearTimeout(semanticTelemetryTimer);
+    }
+  }
+  clientTelemetryTimer = null;
+  clientTelemetryQueue.splice(0);
+  semanticTelemetryTimer = null;
+  semanticTelemetryQueue.splice(0);
+  semanticTelemetryRemoteEnabled = true;
+};
+
 const normalizePath = (path: string): string => {
   const uuid = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
   const numeric = /\/(\d+)(?=\/|$)/g;

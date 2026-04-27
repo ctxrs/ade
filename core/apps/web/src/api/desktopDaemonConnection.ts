@@ -26,6 +26,11 @@ const DESKTOP_LOCAL_AUTH_PROBE_TIMEOUT_MS = 5000;
 let desktopSyncInFlight: Promise<DesktopDaemonConnectionSyncResult> | null = null;
 let desktopLastSyncAtMs = 0;
 
+export const resetDesktopDaemonConnectionSyncForTests = (): void => {
+  desktopSyncInFlight = null;
+  desktopLastSyncAtMs = 0;
+};
+
 const makeDesktopSyncResult = (
   info: DesktopConnectionInfo | null,
   error: string | null,
