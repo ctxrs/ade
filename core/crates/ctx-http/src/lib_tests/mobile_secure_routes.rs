@@ -31,6 +31,7 @@ async fn build_mobile_access_app(
     WorkspaceId,
     String,
     ctx_transport_runtime::mobile_e2ee::E2eeKey,
+    tempfile::TempDir,
 ) {
     let git_repo = setup_git_repo().await;
     let data_dir = tempfile::tempdir().unwrap();
@@ -92,7 +93,7 @@ async fn build_mobile_access_app(
     )
     .unwrap();
 
-    (app, state, workspace.id, device_id, key)
+    (app, state, workspace.id, device_id, key, data_dir)
 }
 
 async fn build_mobile_secure_proxy_app(
@@ -102,6 +103,7 @@ async fn build_mobile_secure_proxy_app(
     Arc<AppState>,
     String,
     ctx_transport_runtime::mobile_e2ee::E2eeKey,
+    tempfile::TempDir,
 ) {
     let data_dir = tempfile::tempdir().unwrap();
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
@@ -159,7 +161,7 @@ async fn build_mobile_secure_proxy_app(
         &daemon_public_key,
     )
     .unwrap();
-    (api::router(state.clone()), state, device_id, key)
+    (api::router(state.clone()), state, device_id, key, data_dir)
 }
 
 async fn post_mobile_secure_request(

@@ -45,19 +45,15 @@ async fn subagent_init_surfaces_agent_server_config_errors() {
 
     let req = Request::builder()
         .method("POST")
-        .uri(format!("/api/mcp/sessions/{}/subagent_init", session.id.0))
+        .uri(format!("/api/mcp/sessions/{}/spawn_agent", session.id.0))
         .header("content-type", "application/json")
         .body(Body::from(
             json!({
                 "worktree": "inherit",
-                "agents": [
-                    {
-                        "label": "q1",
-                        "prompt": "test prompt",
-                        "harness": "qwen",
-                        "model": "qwen2.5-coder-32b-instruct"
-                    }
-                ]
+                "task_label": "q1",
+                "prompt": "test prompt",
+                "harness": "qwen",
+                "model": "qwen2.5-coder-32b-instruct"
             })
             .to_string(),
         ))

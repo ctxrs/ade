@@ -7,7 +7,7 @@ async fn mobile_secure_proxy_rejects_provider_login_routes() {
     let home = tempfile::tempdir().unwrap();
     let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
 
-    let (app, state, device_id, key) = build_mobile_secure_proxy_app(true).await;
+    let (app, state, device_id, key, _data_dir) = build_mobile_secure_proxy_app(true).await;
     let cases = [
         (
             "POST",
@@ -155,7 +155,7 @@ async fn mobile_secure_proxy_rejects_provider_management_routes() {
     let home = tempfile::tempdir().unwrap();
     let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
 
-    let (app, state, device_id, key) = build_mobile_secure_proxy_app(true).await;
+    let (app, state, device_id, key, _data_dir) = build_mobile_secure_proxy_app(true).await;
     let cases = [
         ("GET", "/api/providers", None),
         ("GET", "/api/providers/auth/import/candidates", None),

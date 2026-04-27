@@ -108,7 +108,7 @@ async fn mobile_secure_proxy_grants_mobile_auth_for_proxied_api_routes() {
     let home = tempfile::tempdir().unwrap();
     let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
 
-    let (app, _state, device_id, key) = build_mobile_secure_proxy_app(true).await;
+    let (app, _state, device_id, key, _data_dir) = build_mobile_secure_proxy_app(true).await;
     let res = post_mobile_secure_request(
         &app,
         &device_id,
@@ -138,7 +138,7 @@ async fn mobile_secure_proxy_rejects_mobile_management_paths_after_trimming() {
     let home = tempfile::tempdir().unwrap();
     let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
 
-    let (app, state, device_id, key) = build_mobile_secure_proxy_app(true).await;
+    let (app, state, device_id, key, _data_dir) = build_mobile_secure_proxy_app(true).await;
     let target_device_id = "55555555-5555-5555-5555-555555555555";
     let pairing_token = "pairing-token-through-secure-proxy";
     let mut hasher = sha2::Sha256::new();
@@ -242,7 +242,7 @@ async fn mobile_secure_proxy_rejects_repo_path_management_routes() {
     let home = tempfile::tempdir().unwrap();
     let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
 
-    let (app, state, device_id, key) = build_mobile_secure_proxy_app(true).await;
+    let (app, state, device_id, key, _data_dir) = build_mobile_secure_proxy_app(true).await;
     let sandbox = tempfile::tempdir().unwrap();
     let clone_parent = sandbox.path().join("mobile-clone-parent");
     let init_path = sandbox.path().join("mobile-init-target");
@@ -332,7 +332,7 @@ async fn mobile_secure_proxy_rejects_stale_sequence_without_rolling_back_counter
     let home = tempfile::tempdir().unwrap();
     let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
 
-    let (app, _state, device_id, key) = build_mobile_secure_proxy_app(true).await;
+    let (app, _state, device_id, key, _data_dir) = build_mobile_secure_proxy_app(true).await;
 
     let first = post_mobile_secure_request(
         &app,

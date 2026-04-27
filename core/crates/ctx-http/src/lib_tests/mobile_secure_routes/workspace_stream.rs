@@ -47,7 +47,8 @@ async fn mobile_secure_workspace_stream_returns_not_found_before_upgrade_for_aut
     let home = tempfile::tempdir().unwrap();
     let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
 
-    let (app, _state, _workspace_id, device_id, key) = build_mobile_access_app(true).await;
+    let (app, _state, _workspace_id, device_id, key, _data_dir) =
+        build_mobile_access_app(true).await;
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let server = tokio::spawn(async move {
@@ -125,7 +126,8 @@ async fn mobile_secure_workspace_stream_rejects_disabled_mobile_access_before_up
     let home = tempfile::tempdir().unwrap();
     let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
 
-    let (app, _state, workspace_id, device_id, key) = build_mobile_access_app(false).await;
+    let (app, _state, workspace_id, device_id, key, _data_dir) =
+        build_mobile_access_app(false).await;
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let server = tokio::spawn(async move {

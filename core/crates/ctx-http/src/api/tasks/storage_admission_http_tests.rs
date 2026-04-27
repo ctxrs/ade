@@ -216,7 +216,14 @@ async fn create_task_rejects_before_disk_isolated_copy_when_host_reserve_is_unre
     let (status, body) = post_json(
         &app,
         format!("/api/workspaces/{}/tasks", workspace.id.0),
-        json!({ "title": "storage admission" }),
+        json!({
+            "title": "storage admission",
+            "default_session": {
+                "provider_id": "fake",
+                "model_id": "fake-model",
+                "execution_environment": "sandbox"
+            }
+        }),
     )
     .await;
 
