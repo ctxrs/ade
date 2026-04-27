@@ -98,7 +98,8 @@ const normalizeUrl = ({ entry, artifactBaseUrl, indexDir }) => {
         `provider ${String(entry.provider_id || "<unknown>")} target ${String(entry.os || "<unknown>")}/${String(entry.arch || "<unknown>")} missing sha256`,
       );
     }
-    return `${prefix}/${entry.provider_id}/${entry.version}/${entry.os}/${entry.arch}/sha256/${sha256}/${entry.filename}`;
+    const artifactProviderId = String(entry.artifact_provider_id || entry.provider_id || "").trim();
+    return `${prefix}/${artifactProviderId}/${entry.version}/${entry.os}/${entry.arch}/sha256/${sha256}/${entry.filename}`;
   }
   const artifactPath = String(entry.artifact_path || "").trim();
   const artifactRelPath = String(entry.artifact_rel_path || "").trim();

@@ -13,10 +13,7 @@ async fn live_provider_parent_can_invoke_real_agent_via_ctx_mcp() {
     }
     let provider_id = provider_id.unwrap();
     let model_id = model_id.unwrap();
-    if !matches!(
-        provider_id.as_str(),
-        "codex" | "codex-crp" | "claude" | "claude-crp"
-    ) {
+    if !matches!(provider_id.as_str(), "codex" | "claude" | "claude-crp") {
         eprintln!("skipping: live subagent canary only supports codex/claude providers");
         return;
     }
@@ -32,7 +29,7 @@ async fn live_provider_parent_can_invoke_real_agent_via_ctx_mcp() {
     let base_url = format!("http://{addr}");
 
     let adapter: Arc<dyn ProviderAdapter> = match provider_id.as_str() {
-        "codex" | "codex-crp" => Arc::new(ctx_providers::crp::Tier1CrpAdapter::codex()),
+        "codex" => Arc::new(ctx_providers::crp::Tier1CrpAdapter::codex()),
         "claude" | "claude-crp" => Arc::new(ctx_providers::crp::Tier1CrpAdapter::claude()),
         _ => unreachable!(),
     };

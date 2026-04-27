@@ -62,7 +62,7 @@ async fn load_provider_model_catalog_reads_target_scoped_options_cache() {
     .expect("save settings");
 
     state.providers.options_cache.lock().await.insert(
-        format!("{}/container/codex-crp", workspace.id.0),
+        format!("{}/container/codex", workspace.id.0),
         crate::daemon::CachedProviderOptions {
             cached_at: std::time::Instant::now(),
             value: serde_json::json!({
@@ -82,7 +82,7 @@ async fn load_provider_model_catalog_reads_target_scoped_options_cache() {
         },
     );
 
-    let catalog = load_provider_model_catalog(&state, &workspace, "codex-crp")
+    let catalog = load_provider_model_catalog(&state, &workspace, "codex")
         .await
         .expect("load catalog")
         .expect("catalog");

@@ -114,7 +114,7 @@ impl<'a> ProviderRuntimeContext<'a> {
                         .await
                         .with_context(|| {
                             format!(
-                                "migrating legacy codex endpoint home to codex-crp for endpoint {}",
+                                "migrating adapter-keyed codex endpoint home to codex for endpoint {}",
                                 endpoint.id
                             )
                         })?;

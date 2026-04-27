@@ -76,11 +76,11 @@ async fn get_install_info_preserves_recent_running_install() {
     let state = test_state(&temp).await;
     let install_id = InstallId::new_v4();
     let now = chrono::Utc::now();
-    let mut install = InstallState::new("codex-crp".to_string(), Some(InstallTarget::Container));
+    let mut install = InstallState::new("codex".to_string(), Some(InstallTarget::Container));
     install.started_at = now - chrono::Duration::minutes(1);
     install.events.push_back(InstallProgressEvent {
         install_id,
-        provider_id: "codex-crp".to_string(),
+        provider_id: "codex".to_string(),
         target: Some(InstallTarget::Container),
         at: now - chrono::Duration::seconds(30),
         stage: "download".to_string(),

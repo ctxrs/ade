@@ -294,7 +294,7 @@ mod tests {
         );
 
         let probe = probe_crp_models(CrpModelsProbeRequest {
-            provider_id: "codex-crp".to_string(),
+            provider_id: "codex".to_string(),
             command: script.to_string_lossy().to_string(),
             args: Vec::new(),
             workdir: tmp.path().to_path_buf(),
@@ -317,7 +317,7 @@ mod tests {
     async fn probe_crp_runtime_launch_accepts_runtime_that_stays_alive() {
         let tmp = tempfile::tempdir().expect("tempdir");
         probe_crp_runtime_launch(
-            "codex-crp",
+            "codex",
             "/bin/sh".to_string(),
             vec!["-c".to_string(), "cat >/dev/null".to_string()],
             tmp.path().to_path_buf(),
@@ -394,7 +394,7 @@ mod tests {
         fs::create_dir_all(&host_workdir).expect("create host workdir");
 
         probe_crp_runtime_launch(
-            "codex-crp",
+            "codex",
             "/bin/sh".to_string(),
             vec!["-c".to_string(), "cat >/dev/null".to_string()],
             host_workdir,

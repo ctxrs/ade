@@ -43,13 +43,8 @@ export const HARNESS_CATALOG: HarnessCatalogEntry[] = [
   { id: "kimi", label: "Kimi", logoSrc: kimiLogo },
 ];
 
-const HARNESS_CATALOG_ALIASES: Record<string, string> = {
-  "codex-crp": "codex",
-};
-
 export function resolveHarnessCatalogId(providerId: string | null | undefined): string {
-  const id = (providerId ?? "").trim();
-  return HARNESS_CATALOG_ALIASES[id] ?? id;
+  return (providerId ?? "").trim();
 }
 
 export function findHarnessCatalogEntry(
@@ -60,12 +55,7 @@ export function findHarnessCatalogEntry(
 }
 
 export function buildHarnessCatalogEntryMap(): Map<string, HarnessCatalogEntry> {
-  const entriesById = new Map(HARNESS_CATALOG.map((entry) => [entry.id, entry]));
-  for (const [providerId, catalogId] of Object.entries(HARNESS_CATALOG_ALIASES)) {
-    const entry = entriesById.get(catalogId);
-    if (entry) entriesById.set(providerId, entry);
-  }
-  return entriesById;
+  return new Map(HARNESS_CATALOG.map((entry) => [entry.id, entry]));
 }
 
 export const UNSUPPORTED_HARNESS_IDS = new Set([

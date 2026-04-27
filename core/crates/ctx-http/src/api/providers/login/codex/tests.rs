@@ -44,7 +44,7 @@ struct RestartFailingAdapter;
 impl ProviderAdapter for RestartFailingAdapter {
     async fn inspect(&self) -> anyhow::Result<ProviderStatus> {
         Ok(ProviderStatus {
-            provider_id: "codex-crp".to_string(),
+            provider_id: "codex".to_string(),
             installed: true,
             detected_path: None,
             version: Some("test".to_string()),
@@ -88,7 +88,7 @@ async fn codex_login_persistence_rolls_back_when_restart_fails() {
         data_dir.path().to_path_buf(),
         stores,
         HashMap::from([(
-            "codex-crp".to_string(),
+            "codex".to_string(),
             Arc::new(RestartFailingAdapter) as Arc<dyn ProviderAdapter>,
         )]),
         "http://127.0.0.1:4399".to_string(),

@@ -8,12 +8,13 @@ use directories::BaseDirs;
 use serde::{Deserialize, Serialize};
 use url::Url;
 
+use ctx_core::provider_ids::CODEX_PROVIDER_ID;
 use ctx_provider_accounts::CODEX_AUTH_TYPE_BEARER;
 
 const REGISTRY_VERSION: u32 = 1;
 const SECRET_VERSION: u32 = 1;
 
-const PROVIDER_CODEX: &str = "codex-crp";
+const PROVIDER_CODEX: &str = CODEX_PROVIDER_ID;
 const PROVIDER_CLAUDE: &str = "claude-crp";
 const PROVIDER_GEMINI: &str = "gemini";
 const PROVIDER_KIMI: &str = "kimi";

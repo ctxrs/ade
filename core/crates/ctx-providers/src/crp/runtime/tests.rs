@@ -54,7 +54,7 @@ fn prepare_crp_spawn_env_projects_dump_paths_into_shared_vm_container_exec_env()
         "/ctx/ws".to_string(),
     );
 
-    let prepared = prepare_crp_spawn_env(&env, "codex-crp");
+    let prepared = prepare_crp_spawn_env(&env, "codex");
     let codex_dump = prepared
         .env
         .get(CODEX_CRP_DUMP_CODEX_EVENTS_ENV)
@@ -65,14 +65,14 @@ fn prepare_crp_spawn_env_projects_dump_paths_into_shared_vm_container_exec_env()
         .expect("crp dump path");
     assert!(
         codex_dump.starts_with(&format!(
-            "{}/logs/providers/crp-codex-crp-",
+            "{}/logs/providers/crp-codex-",
             data_root.display()
         )),
         "shared VM container child must receive container-visible dump path, got {codex_dump}"
     );
     assert!(
         crp_dump.starts_with(&format!(
-            "{}/logs/providers/crp-codex-crp-",
+            "{}/logs/providers/crp-codex-",
             data_root.display()
         )),
         "shared VM container child must receive container-visible dump path, got {crp_dump}"

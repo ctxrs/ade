@@ -20,7 +20,7 @@ const writeExecutable = (filePath, contents) => {
 const createFixture = (
   tmpDir,
   {
-    id = "codex-crp.endpoint_api_key.local.sandbox",
+    id = "codex.endpoint_api_key.local.sandbox",
     executionEnvironment = "sandbox",
     scenarios = "local-codex-smoke",
   } = {},
@@ -33,7 +33,7 @@ const createFixture = (
         cells: [
           {
             id,
-            provider_id: "codex-crp",
+            provider_id: "codex",
             auth_mode: "endpoint_api_key",
             daemon_location: "local",
             execution_environment: executionEnvironment,
@@ -193,7 +193,7 @@ const runMatrixScript = ({
   smokeOut,
   artifactsDir,
   lane = "required",
-  cellId = "codex-crp.endpoint_api_key.local.sandbox",
+  cellId = "codex.endpoint_api_key.local.sandbox",
   extraArgs = [],
   extraEnv = {},
 }) =>
@@ -251,7 +251,7 @@ test("run_provider_auth_matrix hydrates preflight and runner through infisical w
   assert.equal(fs.readFileSync(preflightOut, "utf8").trim(), "set");
   assert.equal(fs.readFileSync(smokeOut, "utf8").trim(), "set");
   const summary = fs.readFileSync(path.join(artifactsDir, "summary.tsv"), "utf8");
-  assert.match(summary, /codex-crp\.endpoint_api_key\.local\.sandbox\tpass\t0\t/);
+  assert.match(summary, /codex\.endpoint_api_key\.local\.sandbox\tpass\t0\t/);
 });
 
 test("run_provider_auth_matrix scopes local host desktop prep away from remote daemons and AVF payloads", () => {
@@ -295,7 +295,7 @@ test("run_provider_auth_matrix scopes local host desktop prep away from remote d
 test("run_provider_auth_matrix keeps Linux MCP runtime available for local sandbox cells", () => {
   const tmpDir = fs.mkdtempSync(path.join(testTmpRoot(), "ctx-run-provider-auth-matrix-sandbox-mcp-"));
   const fixturePath = createFixture(tmpDir, {
-    id: "codex-crp.endpoint_api_key.local.sandbox",
+    id: "codex.endpoint_api_key.local.sandbox",
     executionEnvironment: "sandbox",
     scenarios: "local-codex-sandbox-smoke",
   });
@@ -313,7 +313,7 @@ test("run_provider_auth_matrix keeps Linux MCP runtime available for local sandb
     preflightOut: path.join(tmpDir, "preflight.out"),
     smokeOut: path.join(tmpDir, "smoke.out"),
     artifactsDir,
-    cellId: "codex-crp.endpoint_api_key.local.sandbox",
+    cellId: "codex.endpoint_api_key.local.sandbox",
     extraEnv: {
       CTX_PROVIDER_AUTH_MATRIX_USE_INFISICAL: "0",
       OPENROUTER_API_KEY: "test-openrouter-key",
@@ -387,7 +387,7 @@ test("run_provider_auth_matrix copies daemon diagnostics from failed cell report
   });
 
   assert.notEqual(result.status, 0, `stdout=${result.stdout}\nstderr=${result.stderr}`);
-  const cellDir = path.join(artifactsDir, "codex-crp.endpoint_api_key.local.sandbox");
+  const cellDir = path.join(artifactsDir, "codex.endpoint_api_key.local.sandbox");
   assert.equal(
     fs.readFileSync(path.join(cellDir, "diagnostics", "attempt-1", "daemon-logs", "providers", "crp-codex.stderr.log"), "utf8"),
     "stderr\n",

@@ -195,7 +195,7 @@ async fn prepare_session_auth_runtime(
     if let Ok(value) = std::env::var("CTX_MCP_DISABLED") {
         provider_env.insert("CTX_MCP_DISABLED".to_string(), value);
     }
-    if session.provider_id == "codex-crp" && !provider_env.contains_key("CODEX_HOME") {
+    if session.provider_id == "codex" && !provider_env.contains_key("CODEX_HOME") {
         if let Ok(extra) =
             ctx_provider_accounts::codex_env_for_active_account(&state.core.data_root).await
         {

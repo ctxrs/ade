@@ -602,7 +602,7 @@ async fn reap_idle_sessions_reaps_quiescent_live_session() -> Result<()> {
     let workdir = tempdir.path().to_path_buf();
     let script_path = write_session_status_runtime(&workdir, "quiescent-status.sh", true)?;
     let adapter = Tier1CrpAdapter::from_raw(
-        "codex-crp",
+        "codex",
         "/bin/sh".to_string(),
         vec![script_path.to_string_lossy().to_string()],
     );
@@ -668,7 +668,7 @@ done
     fs::set_permissions(&script_path, permissions)?;
 
     let adapter = Tier1CrpAdapter::from_provider_runtime(
-        "codex-crp",
+        "codex",
         "/bin/sh".to_string(),
         vec![script_path.to_string_lossy().to_string()],
     );
@@ -954,7 +954,7 @@ async fn get_or_create_session_over_cap_does_not_probe_status_inline() -> Result
     fs::set_permissions(&script_path, permissions)?;
 
     let adapter = Tier1CrpAdapter::from_provider_runtime(
-        "codex-crp",
+        "codex",
         "/bin/sh".to_string(),
         vec![script_path.to_string_lossy().to_string()],
     );
@@ -1119,7 +1119,7 @@ done
     fs::set_permissions(&script_path, permissions)?;
 
     let adapter = Tier1CrpAdapter::from_raw(
-        "codex-crp",
+        "codex",
         "/bin/sh".to_string(),
         vec![script_path.to_string_lossy().to_string()],
     );
@@ -1779,7 +1779,7 @@ done
     fs::set_permissions(&script_path, permissions)?;
 
     let adapter = Tier1CrpAdapter::from_provider_runtime(
-        "codex-crp",
+        "codex",
         "/bin/sh".to_string(),
         vec![script_path.to_string_lossy().to_string()],
     );
@@ -1856,7 +1856,7 @@ done
     fs::set_permissions(&script_path, permissions)?;
 
     let adapter = Tier1CrpAdapter::from_raw(
-        "codex-crp",
+        "codex",
         "/bin/sh".to_string(),
         vec![script_path.to_string_lossy().to_string()],
     );
@@ -1936,7 +1936,7 @@ done
     fs::set_permissions(&script_path, permissions)?;
 
     let adapter = Tier1CrpAdapter::from_raw(
-        "codex-crp",
+        "codex",
         "/bin/sh".to_string(),
         vec![script_path.to_string_lossy().to_string()],
     );

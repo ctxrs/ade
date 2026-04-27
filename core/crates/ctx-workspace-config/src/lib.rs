@@ -3,7 +3,6 @@ use std::sync::OnceLock;
 
 use anyhow::{bail, Context, Result};
 pub use ctx_core::models::ExecutionEnvironment;
-use ctx_core::provider_ids::canonical_provider_id;
 use ctx_sandbox_contract::{ContainerNetworkMode, ExecutionMode, ExecutionSettings};
 use ctx_store::Store;
 use serde::{Deserialize, Deserializer, Serialize};
@@ -172,7 +171,7 @@ async fn save_workspace_settings_doc(
 }
 
 fn normalize_provider_preference_key(value: &str) -> Option<String> {
-    trimmed_nonempty(value).map(|trimmed| canonical_provider_id(&trimmed).to_string())
+    trimmed_nonempty(value)
 }
 
 fn deserialize_optional_string_map<'de, D>(

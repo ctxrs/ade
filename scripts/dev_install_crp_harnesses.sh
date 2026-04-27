@@ -91,12 +91,14 @@ if not isinstance(managed, dict):
     managed = {}
 
 if install_local_codex:
-    providers["codex-crp"] = {
+    providers.pop("codex-crp", None)
+    providers["codex"] = {
         "command": codex_bin,
         "args": [],
         "dependencies": ["codex-cli"],
     }
 else:
+    providers.pop("codex", None)
     providers.pop("codex-crp", None)
 providers["claude-crp"] = {
     "command": claude_bin,

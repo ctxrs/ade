@@ -24,7 +24,7 @@ const DEFAULT_PROVIDER_DEPS_PROVIDER_IDS = Object.freeze([
   "claude-crp",
   "cline",
   "codex-cli",
-  "codex-crp",
+  "codex",
   "copilot",
   "cursor",
   "droid",
@@ -37,7 +37,7 @@ const DEFAULT_PROVIDER_DEPS_PROVIDER_IDS = Object.freeze([
   "pi",
   "qwen",
 ]);
-const DEFAULT_CODEX_PROVIDER_IDS = Object.freeze(["codex-crp"]);
+const DEFAULT_CODEX_PROVIDER_IDS = Object.freeze(["codex"]);
 
 function normalizeReleaseScope(value) {
   const normalized = String(value || DEFAULT_RELEASE_SCOPE).trim().toLowerCase();

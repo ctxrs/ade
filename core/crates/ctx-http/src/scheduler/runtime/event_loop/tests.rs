@@ -1053,10 +1053,10 @@ async fn codex_done_metrics_use_runtime_codex_home_instead_of_home_dir_guess() {
     let data_dir = tempdir().expect("temp data dir");
 
     write_codex_rollout_log(codex_home.path(), session_ref).await;
-    let fixture = build_loop_fixture(data_dir.path(), "codex-crp", "gpt-5.4/medium").await;
+    let fixture = build_loop_fixture(data_dir.path(), "codex", "gpt-5.4/medium").await;
     let (_fixture, turn) = run_done_event_loop(
         fixture,
-        "codex-crp",
+        "codex",
         "gpt-5.4/medium",
         session_ref,
         Some(codex_home.path()),

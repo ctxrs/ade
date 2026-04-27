@@ -40,7 +40,6 @@ async fn load_provider_model_catalog_for_install_target(
     provider_id: &str,
     install_target: ctx_provider_install::install_state::InstallTarget,
 ) -> Result<Option<ModelCatalog>, String> {
-    let provider_id = canonical_provider_id(provider_id);
     let cache_key = format!(
         "{}/{}/{}",
         workspace.id.0,

@@ -10,7 +10,7 @@ test("summary computes pass/fail distributions", () => {
   const summary = computeSummary({
     generated_at: "2026-03-05T00:00:00Z",
     results: [
-      { provider_id: "codex-crp", result: "pass" },
+      { provider_id: "codex", result: "pass" },
       { provider_id: "goose", result: "fail", category: "external_outage", stage: "first_turn", error_code: "timeout", reason: "upstream timeout" },
       { provider_id: "opencode", result: "fail", category: "product_regression", stage: "verify", error_code: "health_check_failed", reason: "verify failed" },
     ],
@@ -33,7 +33,7 @@ test("markdown summary includes failing provider table", () => {
     failure_categories: { environment: 1 },
     failing_providers: [
       {
-        provider_id: "codex-crp",
+        provider_id: "codex",
         stage: "install",
         error_code: "download_failed",
         category: "environment",

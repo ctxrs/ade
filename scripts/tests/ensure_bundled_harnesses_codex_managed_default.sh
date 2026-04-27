@@ -78,7 +78,7 @@ cat > "$matrix_path" <<JSON
   "version": 2,
   "providers": [
     {
-      "id": "codex-crp",
+      "id": "codex",
       "display_name": "Codex",
       "tier": "tier2",
       "command": { "command": "codex-crp", "args": [] },
@@ -131,7 +131,7 @@ JSON
 PATH="$bin_dir:$PATH" \
 CTX_BUNDLE_DIR="$bundle_dir" \
 CTX_BUNDLE_MATRIX_JSON="$matrix_path" \
-CTX_BUNDLE_ONLY_PROVIDERS="codex-crp" \
+CTX_BUNDLE_ONLY_PROVIDERS="codex" \
 CTX_BUNDLE_SKIP_RUNTIMES=1 \
 CTX_BUNDLE_SKIP_IMAGES=1 \
 CTX_BUNDLE_INCLUDE_BRIDGE=0 \
@@ -155,11 +155,11 @@ entries = {
     str(entry.get("id") or ""): entry
     for entry in providers
 }
-if set(entries) != {"codex-crp", "codex-cli"}:
-    print(f"expected codex-crp and codex-cli provider entries, got {sorted(entries)}", file=sys.stderr)
+if set(entries) != {"codex", "codex-cli"}:
+    print(f"expected codex and codex-cli provider entries, got {sorted(entries)}", file=sys.stderr)
     raise SystemExit(1)
 
-entry = entries["codex-crp"]
+entry = entries["codex"]
 dep_entry = entries["codex-cli"]
 for current in (entry, dep_entry):
     if current.get("version") != "0.0.0-test":
@@ -171,8 +171,8 @@ if current.get("os") != os_name or current.get("arch") != arch:
 
 command_rel = str(entry.get("command") or "")
 dep_command_rel = str(dep_entry.get("command") or "")
-if not command_rel.startswith(f"providers/codex-crp/{os_name}/{arch}/"):
-    print(f"expected managed codex-crp bundle path, got {command_rel!r}", file=sys.stderr)
+if not command_rel.startswith(f"providers/codex/{os_name}/{arch}/"):
+    print(f"expected managed codex bundle path, got {command_rel!r}", file=sys.stderr)
     raise SystemExit(1)
 if not dep_command_rel.startswith(f"providers/codex-cli/{os_name}/{arch}/"):
     print(f"expected managed codex-cli bundle path, got {dep_command_rel!r}", file=sys.stderr)

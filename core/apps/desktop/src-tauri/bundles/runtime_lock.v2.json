@@ -447,7 +447,7 @@
     },
     {
       "kind": "provider",
-      "id": "codex-crp",
+      "id": "codex",
       "os": "macos",
       "arch": "aarch64",
       "variant": "default",
@@ -466,7 +466,7 @@
     },
     {
       "kind": "provider",
-      "id": "codex-crp",
+      "id": "codex",
       "os": "linux",
       "arch": "aarch64",
       "variant": "default",
@@ -485,7 +485,7 @@
     },
     {
       "kind": "provider",
-      "id": "codex-crp",
+      "id": "codex",
       "os": "linux",
       "arch": "x86_64",
       "variant": "default",

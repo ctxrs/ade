@@ -96,9 +96,9 @@ async fn refresh_provider_usage_replaces_stale_cache_with_error_snapshot_on_conf
 
     let host = TestUsageHost::new(data_root.path().to_path_buf());
     host.usage_cache.lock().await.insert(
-        "codex-crp".to_string(),
+        "codex".to_string(),
         ProviderUsageSnapshot {
-            provider_id: "codex-crp".to_string(),
+            provider_id: "codex".to_string(),
             source: "oauth".to_string(),
             fetched_at: Utc::now(),
             payload: Some(serde_json::json!({"cached": true})),
@@ -113,7 +113,7 @@ async fn refresh_provider_usage_replaces_stale_cache_with_error_snapshot_on_conf
 
     let cache = host.usage_cache.lock().await;
     let snapshot = cache
-        .get("codex-crp")
+        .get("codex")
         .expect("usage cache entry should be replaced with an error snapshot");
     assert_eq!(snapshot.source, "error");
     assert!(snapshot.payload.is_none());

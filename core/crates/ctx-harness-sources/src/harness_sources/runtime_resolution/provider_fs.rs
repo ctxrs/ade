@@ -13,7 +13,7 @@ pub(crate) fn droid_cli_model_id_for_endpoint_model(
 pub(crate) fn codex_endpoint_home(data_root: &Path, endpoint_id: &str) -> PathBuf {
     data_root
         .join("providers")
-        .join("codex-crp")
+        .join("codex")
         .join("endpoint-homes")
         .join(endpoint_id)
 }
@@ -21,7 +21,7 @@ pub(crate) fn codex_endpoint_home(data_root: &Path, endpoint_id: &str) -> PathBu
 pub(crate) fn legacy_codex_endpoint_home(data_root: &Path, endpoint_id: &str) -> PathBuf {
     data_root
         .join("providers")
-        .join("codex")
+        .join("codex-crp")
         .join("endpoint-homes")
         .join(endpoint_id)
 }

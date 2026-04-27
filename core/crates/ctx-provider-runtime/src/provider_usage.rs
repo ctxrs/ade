@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
-use ctx_core::provider_ids::{canonical_provider_id, CODEX_CRP_PROVIDER_ID};
+use ctx_core::provider_ids::CODEX_PROVIDER_ID;
 use ctx_managed_installs as installer;
 use ctx_provider_accounts as provider_accounts;
 use ctx_provider_install::install_state::InstallTarget;
@@ -42,7 +42,6 @@ async fn cache_usage_error<H>(state: &H, provider_id: &str, error: String)
 where
     H: ProviderUsageHost,
 {
-    let provider_id = canonical_provider_id(provider_id);
     let snapshot = ProviderUsageSnapshot {
         provider_id: provider_id.to_string(),
         source: "error".to_string(),
@@ -90,17 +89,17 @@ where
         installer::ensure_codex_cli_command_env_for_target(
             &mut env,
             &cfg,
-            "codex-crp",
+            CODEX_PROVIDER_ID,
             Some(InstallTarget::Host),
         )?;
-        refresh_provider_usage_for(state, "codex-crp", env).await?;
+        refresh_provider_usage_for(state, CODEX_PROVIDER_ID, env).await?;
         Ok(())
     }
     .await;
     match result {
         Ok(()) => Ok(()),
         Err(err) => {
-            cache_usage_error(state, CODEX_CRP_PROVIDER_ID, err.to_string()).await;
+            cache_usage_error(state, CODEX_PROVIDER_ID, err.to_string()).await;
             Err(err)
         }
     }
@@ -114,9 +113,8 @@ pub async fn refresh_provider_usage_for<H>(
 where
     H: ProviderUsageHost,
 {
-    let provider_id = canonical_provider_id(provider_id);
     let snapshot = match provider_id {
-        CODEX_CRP_PROVIDER_ID => fetch_codex_usage(env).await?,
+        CODEX_PROVIDER_ID => fetch_codex_usage(env).await?,
         _ => {
             return Ok(ProviderUsageSnapshot {
                 provider_id: provider_id.to_string(),
@@ -141,7 +139,7 @@ pub async fn fetch_codex_usage_snapshot(
 async fn fetch_codex_usage(env: HashMap<String, String>) -> Result<ProviderUsageSnapshot> {
     match oauth::fetch_codex_usage_oauth(&env).await {
         Ok(payload) => Ok(ProviderUsageSnapshot {
-            provider_id: CODEX_CRP_PROVIDER_ID.to_string(),
+            provider_id: CODEX_PROVIDER_ID.to_string(),
             source: "oauth".to_string(),
             fetched_at: Utc::now(),
             payload: Some(payload),
@@ -149,14 +147,14 @@ async fn fetch_codex_usage(env: HashMap<String, String>) -> Result<ProviderUsage
         }),
         Err(err) => match rpc::fetch_codex_usage_rpc(&env).await {
             Ok(payload) => Ok(ProviderUsageSnapshot {
-                provider_id: CODEX_CRP_PROVIDER_ID.to_string(),
+                provider_id: CODEX_PROVIDER_ID.to_string(),
                 source: "rpc".to_string(),
                 fetched_at: Utc::now(),
                 payload: Some(payload),
                 error: None,
             }),
             Err(rpc_err) => Ok(ProviderUsageSnapshot {
-                provider_id: CODEX_CRP_PROVIDER_ID.to_string(),
+                provider_id: CODEX_PROVIDER_ID.to_string(),
                 source: "error".to_string(),
                 fetched_at: Utc::now(),
                 payload: None,

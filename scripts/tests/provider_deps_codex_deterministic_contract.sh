@@ -13,7 +13,7 @@ cat >"$MATRIX_JSON" <<'JSON'
 {
   "providers": [
     {
-      "id": "codex-crp",
+      "id": "codex",
       "managed_install": {
         "version": "0.114.0-ctx.5"
       }

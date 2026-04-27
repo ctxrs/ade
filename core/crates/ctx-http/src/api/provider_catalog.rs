@@ -1,8 +1,6 @@
-use ctx_core::provider_ids::canonical_provider_id;
-
 const RUNTIME_MODEL_CATALOG_PROVIDER_IDS: &[&str] = &[
     "amp",
-    "codex-crp",
+    "codex",
     "claude-crp",
     "copilot",
     "cursor",
@@ -37,7 +35,7 @@ pub(crate) fn provider_models_payload_is_final(models: &serde_json::Value) -> bo
 }
 
 pub(crate) fn provider_supports_runtime_model_catalog(provider_id: &str) -> bool {
-    RUNTIME_MODEL_CATALOG_PROVIDER_IDS.contains(&canonical_provider_id(provider_id))
+    RUNTIME_MODEL_CATALOG_PROVIDER_IDS.contains(&provider_id)
 }
 
 fn provider_options_probe_failed(value: &serde_json::Value) -> bool {
@@ -118,7 +116,7 @@ mod tests {
     #[test]
     fn runtime_model_catalog_provider_set_matches_supported_live_discovery_paths() {
         assert!(provider_supports_runtime_model_catalog("amp"));
-        assert!(provider_supports_runtime_model_catalog("codex-crp"));
+        assert!(provider_supports_runtime_model_catalog("codex"));
         assert!(provider_supports_runtime_model_catalog("claude-crp"));
         assert!(provider_supports_runtime_model_catalog("copilot"));
         assert!(provider_supports_runtime_model_catalog("cursor"));
@@ -131,7 +129,7 @@ mod tests {
     #[test]
     fn pinned_subscription_catalog_is_not_authoritative_for_discovery_cache() {
         let cached = serde_json::json!({
-            "provider_id": "codex-crp",
+            "provider_id": "codex",
             "probe_ok": true,
             "models": {
                 "models": [{ "id": "gpt-5.4/medium" }],
@@ -145,8 +143,7 @@ mod tests {
         });
 
         assert!(!provider_options_cache_entry_is_authoritative(
-            "codex-crp",
-            &cached,
+            "codex", &cached,
         ));
     }
 
@@ -161,14 +158,13 @@ mod tests {
             catalog_source: Some("live_remote".to_string()),
         };
         let cached = serde_json::json!({
-            "provider_id": "codex-crp",
+            "provider_id": "codex",
             "probe_ok": true,
-            "models": runtime_probe_models_payload("codex-crp", &probe, None),
+            "models": runtime_probe_models_payload("codex", &probe, None),
         });
 
         assert!(provider_options_cache_entry_is_authoritative(
-            "codex-crp",
-            &cached,
+            "codex", &cached,
         ));
     }
 
@@ -209,7 +205,7 @@ mod tests {
             catalog_source: Some("local_bundle".to_string()),
         };
 
-        assert!(runtime_probe_models_payload("codex-crp", &probe, None).is_none());
+        assert!(runtime_probe_models_payload("codex", &probe, None).is_none());
     }
 
     #[test]
@@ -250,7 +246,7 @@ mod tests {
             catalog_source: None,
         };
 
-        assert!(runtime_probe_models_payload("codex-crp", &probe, None).is_none());
+        assert!(runtime_probe_models_payload("codex", &probe, None).is_none());
     }
 
     #[test]

@@ -92,7 +92,7 @@ test("codex bumps fail closed when provenance is missing", async () => {
     version: 3,
     providers: [
       {
-        id: "codex-crp",
+        id: "codex",
         managed_install: {
           kind: "archive",
           version: "0.124.0-ctx.1",
@@ -129,7 +129,7 @@ test("codex bumps fail closed when provenance is missing", async () => {
         repoRoot,
         updates: [
           {
-            id: "codex-crp",
+            id: "codex",
             version: "1.0.0",
             upstream_version: "0.124.0",
           },
@@ -148,7 +148,7 @@ test("codex bumps rewrite cargo version and provenance metadata", async () => {
     version: 3,
     providers: [
       {
-        id: "codex-crp",
+        id: "codex",
         managed_install: {
           kind: "archive",
           version: "0.124.0-ctx.1",
@@ -184,7 +184,7 @@ test("codex bumps rewrite cargo version and provenance metadata", async () => {
     repoRoot,
     updates: [
       {
-        id: "codex-crp",
+        id: "codex",
         version: "1.0.0",
         provenance: {
           upstream_release_tag: "rust-v0.124.0",

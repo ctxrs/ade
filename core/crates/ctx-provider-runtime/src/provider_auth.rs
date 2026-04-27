@@ -1,6 +1,6 @@
 use std::path::Path as StdPath;
 
-use ctx_core::provider_ids::{canonical_provider_id, CODEX_CRP_PROVIDER_ID};
+use ctx_core::provider_ids::CODEX_PROVIDER_ID;
 use ctx_harness_sources as harness_sources;
 use ctx_harness_sources::HarnessSourceKind;
 use ctx_provider_accounts as provider_accounts;
@@ -33,7 +33,6 @@ pub async fn provider_has_active_auth_config_with_runtime_root(
     provider_id: &str,
     source_config: Option<&harness_sources::HarnessProviderSourceConfig>,
 ) -> Result<bool, String> {
-    let provider_id = canonical_provider_id(provider_id);
     if provider_id == "fake" {
         return Ok(true);
     }
@@ -42,7 +41,7 @@ pub async fn provider_has_active_auth_config_with_runtime_root(
             return Ok(true);
         }
     }
-    if provider_id == CODEX_CRP_PROVIDER_ID {
+    if provider_id == CODEX_PROVIDER_ID {
         return match runtime_data_root {
             Some(runtime_root) => {
                 provider_accounts::codex_has_active_auth_with_runtime_root(data_root, runtime_root)
@@ -96,7 +95,7 @@ mod tests {
     fn sample_endpoint(has_api_key: bool) -> HarnessEndpointRecord {
         HarnessEndpointRecord {
             id: "endpoint-1".to_string(),
-            provider_id: "codex-crp".to_string(),
+            provider_id: CODEX_PROVIDER_ID.to_string(),
             name: "Codex endpoint".to_string(),
             base_url: Some("https://api.openai.com/v1".to_string()),
             api_shape: HarnessApiShape::OpenaiResponses,
@@ -120,7 +119,7 @@ mod tests {
     #[test]
     fn endpoint_selection_is_active_requires_credentialed_selected_endpoint() {
         let config = harness_sources::HarnessProviderSourceConfig {
-            provider_id: "codex-crp".to_string(),
+            provider_id: CODEX_PROVIDER_ID.to_string(),
             selected_source_kind: HarnessSourceKind::Endpoint,
             selected_endpoint_id: Some("endpoint-1".to_string()),
             endpoints: vec![sample_endpoint(false)],
@@ -132,7 +131,7 @@ mod tests {
     #[test]
     fn provider_auth_mode_falls_back_when_selected_endpoint_lacks_credentials() {
         let config = harness_sources::HarnessProviderSourceConfig {
-            provider_id: "codex-crp".to_string(),
+            provider_id: CODEX_PROVIDER_ID.to_string(),
             selected_source_kind: HarnessSourceKind::Endpoint,
             selected_endpoint_id: Some("endpoint-1".to_string()),
             endpoints: vec![sample_endpoint(false)],

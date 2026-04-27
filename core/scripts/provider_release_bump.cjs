@@ -13,7 +13,7 @@ const defaultMatrixPath = path.join(coreRoot, "crates", "ctx-provider-accounts",
 const workspaceVersionSources = {
   "acp-crp-bridge": { kind: "cargo", relPath: "external-harnesses/acp-crp-bridge/Cargo.toml" },
   amp: { kind: "package_json", relPath: "harness-adapters/example-acp/package.json" },
-  "codex-crp": { kind: "cargo", relPath: "core/crates/codex-crp/Cargo.toml" },
+  codex: { kind: "cargo", relPath: "core/crates/codex-crp/Cargo.toml" },
   "claude-crp": { kind: "package_json", relPath: "external-harnesses/claude-crp/package.json" },
   droid: { kind: "cargo", relPath: "harness-adapters/droid-acp/Cargo.toml" },
   pi: { kind: "package_json", relPath: "harness-adapters/pi-acp/package.json" },
@@ -97,7 +97,7 @@ function printHelp() {
       "Update spec shape:",
       '  { "providers": [',
       '      {',
-      '        "id": "codex-crp",',
+      '        "id": "codex",',
       '        "version": "1.0.0",',
       '        "upstream_version": "0.121.0",',
       '        "workspace_version": "1.0.0",',
@@ -428,7 +428,7 @@ async function applyProviderUpdate({ matrix, repoRoot, update, warnings, targetR
     release.notes = notes;
   }
 
-  if (providerId === "codex-crp") {
+  if (providerId === "codex") {
     applyCodexProvenance({ release, update, version });
   }
 

@@ -197,7 +197,7 @@ async fn run_turn_event_loop(mut ctx: TurnEventLoop) {
         if matches!(&ev.event_type, SessionEventType::Done) {
             if let Some(obj) = payload.as_object_mut() {
                 if obj.get("context_window").is_none() {
-                    let metrics = if ctx.provider_id == "codex-crp" {
+                    let metrics = if ctx.provider_id == "codex" {
                         ctx.codex_home
                             .as_deref()
                             .and_then(|home| {

@@ -24,7 +24,7 @@ pub(super) async fn prepare_provider_runtime_environment(
     adapter_cfg: &installer::AgentServerConfigFile,
     install_target: InstallTarget,
 ) -> Result<()> {
-    if runtime_provider_id == "codex-crp" && is_linux_sandbox && using_endpoint_source {
+    if runtime_provider_id == "codex" && is_linux_sandbox && using_endpoint_source {
         if let Some(root) = runtime_plan.env_overrides.get("CTX_DATA_ROOT") {
             provider_accounts::ensure_codex_endpoint_runtime_home_from_env(
                 Path::new(root),
@@ -34,7 +34,7 @@ pub(super) async fn prepare_provider_runtime_environment(
         }
     }
 
-    if runtime_provider_id == "codex-crp"
+    if runtime_provider_id == "codex"
         && !provider_env.contains_key("CODEX_HOME")
         && !using_endpoint_source
     {
@@ -56,7 +56,7 @@ pub(super) async fn prepare_provider_runtime_environment(
             }
         }
     }
-    if runtime_provider_id != "codex-crp" && !using_endpoint_source {
+    if runtime_provider_id != "codex" && !using_endpoint_source {
         let env = if is_linux_sandbox {
             if let Some(root) = runtime_plan.env_overrides.get("CTX_DATA_ROOT") {
                 provider_accounts::subscription_env_for_active_account_with_runtime_root(
@@ -83,7 +83,7 @@ pub(super) async fn prepare_provider_runtime_environment(
             provider_env.insert(key, value);
         }
     }
-    if runtime_provider_id == "codex-crp" {
+    if runtime_provider_id == "codex" {
         let codex_home = provider_env
             .get("CODEX_HOME")
             .cloned()

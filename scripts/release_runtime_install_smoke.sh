@@ -28,7 +28,7 @@ USAGE
 daemon_bin=""
 app_path=""
 bundle_dir=""
-provider_id="codex-crp"
+provider_id="codex"
 install_target="host"
 bind_addr=""
 all_providers="0"

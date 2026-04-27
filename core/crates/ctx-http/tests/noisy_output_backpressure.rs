@@ -123,11 +123,8 @@ async fn noisy_tool_output_stays_bounded_end_to_end() {
         vec![script_path.to_string_lossy().to_string()],
     )
     .await;
-    let providers = common::crp_fixture_runtime::build_crp_fixture_providers(
-        &["codex-crp"],
-        &python,
-        &script_path,
-    );
+    let providers =
+        common::crp_fixture_runtime::build_crp_fixture_providers(&["codex"], &python, &script_path);
     let state = Arc::new(AppState::new(
         data_dir.path().to_path_buf(),
         stores,
@@ -143,7 +140,7 @@ async fn noisy_tool_output_stays_bounded_end_to_end() {
         &app,
         workspace.id.0,
         "noisy-output",
-        "codex-crp",
+        "codex",
         "fake-model",
     )
     .await;

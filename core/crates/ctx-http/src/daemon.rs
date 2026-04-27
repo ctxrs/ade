@@ -202,7 +202,7 @@ pub async fn serve(bind: Vec<String>, data_dir: Option<String>) -> Result<()> {
         }
     };
 
-    for provider_id in ["codex-crp", "claude-crp"] {
+    for provider_id in ["codex", "claude-crp"] {
         let adapter: Arc<dyn ProviderAdapter> =
             match runtime_command_as_agent_command(&agent_cfg, provider_id) {
                 Ok(Some(cmd)) => Arc::new(Tier1CrpAdapter::from_provider_runtime(

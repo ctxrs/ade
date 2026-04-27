@@ -49,54 +49,26 @@ pub(super) fn provider_routes() -> axum::Router<Arc<AppState>> {
             "/api/providers/auth/import",
             post(import_provider_auth_candidates),
         )
-        .route(
-            "/api/providers/codex-crp/accounts",
-            get(list_codex_accounts),
-        )
         .route("/api/providers/codex/accounts", get(list_codex_accounts))
-        .route(
-            "/api/providers/codex-crp/import/host",
-            get(probe_host_codex_import).post(import_host_codex_auth),
-        )
         .route(
             "/api/providers/codex/import/host",
             get(probe_host_codex_import).post(import_host_codex_auth),
-        )
-        .route(
-            "/api/providers/codex-crp/accounts/usage",
-            get(get_codex_accounts_usage),
         )
         .route(
             "/api/providers/codex/accounts/usage",
             get(get_codex_accounts_usage),
         )
         .route(
-            "/api/providers/codex-crp/accounts/login/start",
-            post(start_codex_login),
-        )
-        .route(
             "/api/providers/codex/accounts/login/start",
             post(start_codex_login),
-        )
-        .route(
-            "/api/providers/codex-crp/accounts/login/:id",
-            get(get_codex_login).post(complete_codex_login),
         )
         .route(
             "/api/providers/codex/accounts/login/:id",
             get(get_codex_login).post(complete_codex_login),
         )
         .route(
-            "/api/providers/codex-crp/active-account",
-            put(set_codex_active_account),
-        )
-        .route(
             "/api/providers/codex/active-account",
             put(set_codex_active_account),
-        )
-        .route(
-            "/api/providers/codex-crp/accounts/:id",
-            delete(delete_codex_account),
         )
         .route(
             "/api/providers/codex/accounts/:id",

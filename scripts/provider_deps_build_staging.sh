@@ -6,7 +6,7 @@ MATRIX_JSON="${PROVIDER_MATRIX_JSON:-$ROOT/core/crates/ctx-provider-accounts/src
 OUT_DIR=""
 OS_OVERRIDE=""
 ARCH_OVERRIDE=""
-PROVIDERS_RAW="${CTX_PROVIDER_DEPS_BUILD_PROVIDERS:-acp-crp-bridge,amp,auggie,claude-cli,claude-crp,cline,codex-cli,codex-crp,copilot,cursor,droid,gemini,goose,kimi,mistral,opencode,openhands,pi,qwen}"
+PROVIDERS_RAW="${CTX_PROVIDER_DEPS_BUILD_PROVIDERS:-acp-crp-bridge,amp,auggie,claude-cli,claude-crp,cline,codex-cli,codex,copilot,cursor,droid,gemini,goose,kimi,mistral,opencode,openhands,pi,qwen}"
 
 usage() {
   cat <<'USAGE'
@@ -432,19 +432,21 @@ write_entry() {
   local artifact_path="$5"
   local sha256="$6"
   local size_bytes="$7"
+  local artifact_provider_id="${8:-$provider_id}"
   local filename
   filename="$(basename "$artifact_path")"
   local artifact_rel_path="$artifact_path"
   if [[ "$artifact_rel_path" == "$OUT_DIR/"* ]]; then
     artifact_rel_path="${artifact_rel_path#"$OUT_DIR/"}"
   fi
-  node - "$provider_id" "$version" "$archive_kind" "$bin_path" "$artifact_path" "$artifact_rel_path" "$sha256" "$filename" "$TARGET_OS" "$TARGET_ARCH" "$size_bytes" >> "$entries_ndjson" <<'NODE'
-const [providerId, version, archiveKind, binPath, artifactPath, artifactRelPath, sha256, filename, os, arch, sizeBytes] =
+  node - "$provider_id" "$artifact_provider_id" "$version" "$archive_kind" "$bin_path" "$artifact_path" "$artifact_rel_path" "$sha256" "$filename" "$TARGET_OS" "$TARGET_ARCH" "$size_bytes" >> "$entries_ndjson" <<'NODE'
+const [providerId, artifactProviderId, version, archiveKind, binPath, artifactPath, artifactRelPath, sha256, filename, os, arch, sizeBytes] =
   process.argv.slice(2);
 const parsedSize = Number(sizeBytes);
 process.stdout.write(
   `${JSON.stringify({
     provider_id: providerId,
+    artifact_provider_id: artifactProviderId || providerId,
     version,
     os,
     arch,
@@ -866,7 +868,7 @@ stage_archive_from_binary() {
 stage_codex_archive_from_binary() {
   local version="$1"
   local binary_path="$2"
-  local stage_dir="$OUT_DIR/providers/codex-crp/$version/$TARGET_OS/$TARGET_ARCH"
+  local stage_dir="$OUT_DIR/providers/codex/$version/$TARGET_OS/$TARGET_ARCH"
   mkdir -p "$stage_dir"
   local tmp_dir
   tmp_dir="$(mktemp -d "$OUT_DIR/.pkg-codex.XXXXXX")"
@@ -1171,7 +1173,7 @@ NODE
 }
 
 build_codex_crp_provider() {
-  local provider_id="codex-crp"
+  local provider_id="codex"
   local version="$1"
   local bin
   bin="$(resolve_prebuilt_rust_provider_binary "$provider_id" || true)"
@@ -1209,7 +1211,7 @@ build_codex_crp_provider() {
   sha="$(sha256_file "$archive_path")"
   local size_bytes
   size_bytes="$(file_size_bytes "$archive_path")"
-  write_entry "$provider_id" "$version" "tar_gz" "codex-crp" "$archive_path" "$sha" "$size_bytes"
+  write_entry "$provider_id" "$version" "tar_gz" "codex-crp" "$archive_path" "$sha" "$size_bytes" "codex-crp"
 }
 
 providers=()
@@ -1243,7 +1245,7 @@ if [[ -n "${providers[*]-}" ]]; then
       codex-cli|goose|opencode)
         stage_matrix_archive_provider "$provider" "$version"
         ;;
-      codex-crp)
+      codex)
         build_codex_crp_provider "$version"
         ;;
       claude-crp)

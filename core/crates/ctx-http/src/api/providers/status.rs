@@ -2,7 +2,7 @@ use super::*;
 
 use anyhow::Context;
 use ctx_core::ids::WorkspaceId;
-use ctx_core::provider_ids::CODEX_CRP_PROVIDER_ID;
+use ctx_core::provider_ids::CODEX_PROVIDER_ID;
 use ctx_providers::adapters::{
     ProviderHealth, ProviderRecommendedAction, ProviderUsability, ProviderUsabilityStatus,
 };
@@ -129,12 +129,6 @@ pub(crate) async fn providers_statuses_response(
         };
         out.push(status);
     }
-    let legacy_aliases = out
-        .iter()
-        .filter_map(super::legacy_codex_status_alias)
-        .collect::<Vec<_>>();
-    out.extend(legacy_aliases);
-
     let show_fake = std::env::var("CTX_SHOW_FAKE_PROVIDER")
         .ok()
         .as_deref()
@@ -146,9 +140,6 @@ pub(crate) async fn providers_statuses_response(
                 "ui_hidden".into(),
                 if show_fake { "false" } else { "true" }.into(),
             );
-        }
-        if status.provider_id == CODEX_CRP_PROVIDER_ID {
-            status.details.insert("ui_hidden".into(), "true".into());
         }
         status
             .details
@@ -291,7 +282,7 @@ async fn provider_usage_env_for_request(
     state: &Arc<AppState>,
     provider_id: &str,
 ) -> Result<HashMap<String, String>, (StatusCode, Json<serde_json::Value>)> {
-    if provider_id != CODEX_CRP_PROVIDER_ID {
+    if provider_id != CODEX_PROVIDER_ID {
         return Ok(HashMap::new());
     }
 
@@ -309,7 +300,7 @@ async fn provider_usage_env_for_request(
     crate::installer::ensure_codex_cli_command_env_for_target(
         &mut env,
         &cfg,
-        CODEX_CRP_PROVIDER_ID,
+        CODEX_PROVIDER_ID,
         Some(InstallTarget::Host),
     )
     .map_err(provider_usage_internal_error)?;

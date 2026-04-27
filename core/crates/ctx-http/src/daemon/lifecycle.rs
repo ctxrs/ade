@@ -4,8 +4,6 @@ use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use chrono::Utc;
-use ctx_core::provider_ids::canonical_provider_id;
-
 use ctx_providers::adapters::{
     ProviderAdapter, ProviderRestartMode, ProviderSessionSweepConfig, ProviderSessionSweepStats,
 };
@@ -224,10 +222,9 @@ pub(super) fn spawn_endpoint_model_catalog_sweeper(state: Arc<AppState>) {
 }
 
 fn cache_key_matches_provider(cache_key: &str, provider_id: &str) -> bool {
-    let provider_id = canonical_provider_id(provider_id);
     cache_key
         .rsplit_once('/')
-        .is_some_and(|(_, key_provider)| canonical_provider_id(key_provider) == provider_id)
+        .is_some_and(|(_, key_provider)| key_provider == provider_id)
 }
 
 #[cfg(test)]

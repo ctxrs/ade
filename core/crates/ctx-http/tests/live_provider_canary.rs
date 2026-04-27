@@ -164,7 +164,7 @@ async fn live_provider_canary_turn_invariants() {
     let model_id = model_id.unwrap();
 
     let adapter: Arc<dyn ProviderAdapter> = match provider_id.as_str() {
-        "codex-crp" => Arc::new(Tier1CrpAdapter::codex()),
+        "codex" => Arc::new(Tier1CrpAdapter::codex()),
         "claude" | "claude-crp" => Arc::new(Tier1CrpAdapter::claude()),
         _ => {
             eprintln!(
@@ -219,8 +219,8 @@ async fn live_provider_canary_turn_invariants() {
 async fn live_codex_canary_can_edit_workspace_file() {
     let provider_id = std::env::var("CTX_LIVE_PROVIDER_ID")
         .ok()
-        .filter(|value| matches!(value.as_str(), "codex-crp"))
-        .unwrap_or_else(|| "codex-crp".to_string());
+        .filter(|value| matches!(value.as_str(), "codex"))
+        .unwrap_or_else(|| "codex".to_string());
     let model_id = std::env::var("CTX_LIVE_MODEL_ID").ok();
     if model_id.is_none() {
         eprintln!("skipping: set CTX_LIVE_MODEL_ID to run the live Codex file-edit canary");

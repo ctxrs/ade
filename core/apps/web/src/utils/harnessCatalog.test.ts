@@ -25,17 +25,17 @@ describe("harnessCatalog", () => {
     expect(ids.has("openhands")).toBe(true);
   });
 
-  it("uses product identity for Codex adapter ids", () => {
-    expect(resolveHarnessCatalogId("codex-crp")).toBe("codex");
-    const codex = findHarnessCatalogEntry("codex-crp");
+  it("uses product identity for Codex", () => {
+    expect(resolveHarnessCatalogId("codex")).toBe("codex");
+    const codex = findHarnessCatalogEntry("codex");
     expect(codex?.id).toBe("codex");
     expect(codex?.label).toBe("Codex");
     expect(codex?.logoSrc).toContain("openai");
   });
 
-  it("indexes adapter aliases for UI lookup maps", () => {
+  it("does not alias adapter implementation ids into provider ids", () => {
     const byProviderId = buildHarnessCatalogEntryMap();
-    expect(byProviderId.get("codex-crp")).toBe(byProviderId.get("codex"));
-    expect(byProviderId.get("codex-crp")?.logoSrc).toContain("openai");
+    expect(byProviderId.get("codex-crp")).toBeUndefined();
+    expect(findHarnessCatalogEntry("codex-crp")).toBeUndefined();
   });
 });

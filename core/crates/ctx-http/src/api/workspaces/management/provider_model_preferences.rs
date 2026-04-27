@@ -1,5 +1,4 @@
 use super::*;
-use ctx_core::provider_ids::{canonical_provider_id, LEGACY_CODEX_PROVIDER_ID};
 
 #[derive(Debug, Deserialize)]
 pub(in crate::api) struct UpdateWorkspaceProviderModelPreferenceReq {
@@ -27,7 +26,6 @@ async fn require_known_provider(
             }),
         ));
     }
-    let provider_id = canonical_provider_id(provider_id);
     let matrix = crate::provider_matrix::load_matrix_cached(
         &state.core.data_root,
         &state.providers.matrix_cache,
@@ -94,15 +92,11 @@ pub(in crate::api) async fn get_workspace_provider_model_preference(
     let workspace_id = parse_workspace_id(&id)?;
     let workspace = require_workspace(&state, workspace_id).await?;
     require_known_provider(&state, &provider_id).await?;
-    let canonical_provider_id = canonical_provider_id(&provider_id).to_string();
+    let provider_id = provider_id.trim().to_string();
     let preferred_model_id =
-        load_effective_preferred_model_id(&state, &workspace, &canonical_provider_id).await?;
+        load_effective_preferred_model_id(&state, &workspace, &provider_id).await?;
     Ok(Json(WorkspaceProviderModelPreferenceResp {
-        provider_id: if provider_id == LEGACY_CODEX_PROVIDER_ID {
-            LEGACY_CODEX_PROVIDER_ID.to_string()
-        } else {
-            canonical_provider_id
-        },
+        provider_id,
         preferred_model_id,
     }))
 }
@@ -115,11 +109,11 @@ pub(in crate::api) async fn update_workspace_provider_model_preference(
     let workspace_id = parse_workspace_id(&id)?;
     let workspace = require_workspace(&state, workspace_id).await?;
     require_known_provider(&state, &provider_id).await?;
-    let canonical_provider_id = canonical_provider_id(&provider_id).to_string();
+    let provider_id = provider_id.trim().to_string();
     crate::workspace_provider_model_preferences::update_workspace_provider_preferred_model_id(
         &state,
         workspace_id,
-        &canonical_provider_id,
+        &provider_id,
         req.preferred_model_id,
     )
     .await
@@ -132,13 +126,9 @@ pub(in crate::api) async fn update_workspace_provider_model_preference(
         )
     })?;
     let preferred_model_id =
-        load_effective_preferred_model_id(&state, &workspace, &canonical_provider_id).await?;
+        load_effective_preferred_model_id(&state, &workspace, &provider_id).await?;
     Ok(Json(WorkspaceProviderModelPreferenceResp {
-        provider_id: if provider_id == LEGACY_CODEX_PROVIDER_ID {
-            LEGACY_CODEX_PROVIDER_ID.to_string()
-        } else {
-            canonical_provider_id
-        },
+        provider_id,
         preferred_model_id,
     }))
 }

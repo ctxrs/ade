@@ -51,12 +51,12 @@ async fn codex_subscription_selection_requires_real_auth() {
     );
     let root = tempfile::tempdir().expect("tempdir");
     let source = harness_sources::HarnessProviderSourceConfig {
-        provider_id: "codex-crp".to_string(),
+        provider_id: "codex".to_string(),
         selected_source_kind: HarnessSourceKind::Subscription,
         selected_endpoint_id: None,
         endpoints: vec![],
     };
-    let active = provider_has_active_auth_config(root.path(), "codex-crp", Some(&source))
+    let active = provider_has_active_auth_config(root.path(), "codex", Some(&source))
         .await
         .unwrap();
     assert!(!active);
@@ -81,12 +81,12 @@ async fn codex_subscription_selection_counts_host_auth_candidate_as_active_auth_
     );
     let root = tempfile::tempdir().expect("tempdir");
     let source = harness_sources::HarnessProviderSourceConfig {
-        provider_id: "codex-crp".to_string(),
+        provider_id: "codex".to_string(),
         selected_source_kind: HarnessSourceKind::Subscription,
         selected_endpoint_id: None,
         endpoints: vec![],
     };
-    let active = provider_has_active_auth_config(root.path(), "codex-crp", Some(&source))
+    let active = provider_has_active_auth_config(root.path(), "codex", Some(&source))
         .await
         .unwrap();
     assert!(active);

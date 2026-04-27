@@ -46,7 +46,7 @@ const parsePositiveInt = (raw, fallback) => {
 
 const waitMs = (ms) => new Promise((resolve) => setTimeout(resolve, Math.max(0, Number(ms) || 0)));
 const BLOCKED_NETWORK_ALLOWLIST = ["github.com"];
-const isCodexProviderId = (providerId) => providerId === "codex" || providerId === "codex-crp";
+const isCodexProviderId = (providerId) => providerId === "codex";
 const shouldAssertSandboxNetworkBlockFailure = ({
   providerId,
   authMode,

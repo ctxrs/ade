@@ -23,7 +23,7 @@ const PROVIDER_SPECS = Object.freeze({
     passTargetKeyToRun: true,
     targetLabel: "//external-harnesses/claude-crp:provider-stage-archive",
   }),
-  "codex-crp": Object.freeze({
+  codex: Object.freeze({
     artifactKind: "binary",
     resolver: "codex-crp-bazel",
   }),

@@ -78,28 +78,23 @@ async fn ensure_provider_adapter_for_target_surfaces_agent_server_config_errors_
     std::fs::write(&config_path, "{ not valid json").expect("write invalid config");
 
     let host = TestRuntimeHost::new(data_root.path().to_path_buf());
-    let err = match ensure_provider_adapter_for_target(&host, "codex-crp", InstallTarget::Container)
-        .await
-    {
-        Ok(_) => panic!("invalid managed config should fail adapter resolution"),
-        Err(err) => err,
-    };
+    let err =
+        match ensure_provider_adapter_for_target(&host, "codex", InstallTarget::Container).await {
+            Ok(_) => panic!("invalid managed config should fail adapter resolution"),
+            Err(err) => err,
+        };
 
     assert!(err.to_string().contains("loading agent server config"));
     assert!(
         host.target_provider_adapters
             .lock()
             .await
-            .get("codex-crp@container")
+            .get("codex@container")
             .is_none(),
         "invalid managed config should not seed target adapter cache"
     );
     assert!(
-        host.provider_adapters
-            .lock()
-            .await
-            .get("codex-crp")
-            .is_none(),
+        host.provider_adapters.lock().await.get("codex").is_none(),
         "invalid managed config should not seed provider adapter cache"
     );
 }

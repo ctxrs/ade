@@ -153,7 +153,7 @@ ensure_endpoint_ui_bundles() {
   # can see them reliably on macOS hosts.
   local bundle_dir="${CTX_E2E_BUNDLE_DIR:-${cache_root}/bundles-${cache_key}}"
   local endpoint_bundle_providers_override="${CTX_E2E_ENDPOINT_BUNDLE_PROVIDERS:-${CTX_BUNDLE_ONLY_PROVIDERS:-}}"
-  local first_pass_providers="${endpoint_bundle_providers_override:-acp-crp-bridge,codex-crp,cline,copilot,gemini,goose,openhands,qwen,pi,opencode,mistral,droid,kimi}"
+  local first_pass_providers="${endpoint_bundle_providers_override:-acp-crp-bridge,codex,cline,copilot,gemini,goose,openhands,qwen,pi,opencode,mistral,droid,kimi}"
   local matrix_json="${CTX_BUNDLE_MATRIX_JSON:-${repo_root}/crates/ctx-provider-accounts/src/provider_matrix.json}"
   local canonical_runtime_lock="${repo_root}/apps/desktop/src-tauri/bundles/runtime_lock.v2.json"
   local bundle_build_dir="${CTX_E2E_BUNDLE_BUILD_DIR:-${volatile_artifacts_dir}/ctx-e2e-build/${cache_key}}"
@@ -170,7 +170,7 @@ ensure_endpoint_ui_bundles() {
   local bundle_append_linux_targets="${CTX_E2E_ENDPOINT_APPEND_LINUX_TARGETS:-1}"
   local bundle_build_codex_crp="${CTX_BUNDLE_BUILD_CODEX_CRP:-}"
   if [[ -z "${bundle_build_codex_crp}" ]]; then
-    if csv_contains_provider "${first_pass_providers}" "codex-crp"; then
+    if csv_contains_provider "${first_pass_providers}" "codex"; then
       bundle_build_codex_crp="1"
     else
       bundle_build_codex_crp="0"
@@ -224,10 +224,10 @@ NODE
     local codex_append_fallback_arch=""
     if [[ "$(uname -m)" == "arm64" ]]; then
       linux_arch="aarch64"
-      if csv_contains_provider "${first_pass_providers}" "codex-crp"; then
-        if ! matrix_has_archive_target "${matrix_json}" "codex-crp" "linux-aarch64"; then
-          if matrix_has_archive_target "${matrix_json}" "codex-crp" "linux-x86_64"; then
-            append_providers="$(csv_remove_provider "${append_providers}" "codex-crp")"
+      if csv_contains_provider "${first_pass_providers}" "codex"; then
+        if ! matrix_has_archive_target "${matrix_json}" "codex" "linux-aarch64"; then
+          if matrix_has_archive_target "${matrix_json}" "codex" "linux-x86_64"; then
+            append_providers="$(csv_remove_provider "${append_providers}" "codex")"
             codex_append_fallback_arch="x86_64"
             echo "warn: codex missing linux/aarch64 target in matrix; appending codex from linux/x86_64 fallback" >&2
           else
@@ -264,7 +264,7 @@ NODE
       CTX_BUNDLE_APPEND="1" \
       CTX_BUNDLE_OS="linux" \
       CTX_BUNDLE_ARCH="${codex_append_fallback_arch}" \
-      CTX_BUNDLE_ONLY_PROVIDERS="codex-crp" \
+      CTX_BUNDLE_ONLY_PROVIDERS="codex" \
       CTX_BUNDLE_SKIP_IMAGES="1" \
       CTX_BUNDLE_HARNESS_IMAGE="0" \
       CTX_BUNDLE_INCLUDE_BRIDGE="0" \
@@ -353,7 +353,7 @@ process.stdout.write(ids.join(","));
     bundled_only_provider_csv="${first_pass_providers}"
   fi
   if [[ "${CTX_BUNDLE_BUILD_CODEX_CRP:-0}" == "0" ]]; then
-    bundled_only_provider_csv="$(csv_remove_provider "${bundled_only_provider_csv}" "codex-crp")"
+    bundled_only_provider_csv="$(csv_remove_provider "${bundled_only_provider_csv}" "codex")"
   fi
   export CTX_E2E_BUNDLED_ONLY_PROVIDERS="${bundled_only_provider_csv}"
   export CTX_E2E_CARGO_TARGET_DIR="${cargo_target_dir}"

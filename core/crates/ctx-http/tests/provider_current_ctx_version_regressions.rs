@@ -369,7 +369,7 @@ async fn host_provider_status_surfaces_stale_installs_for_current_ctx_build() {
             generated_at: None,
             providers: vec![
                 managed_npm_status_entry(
-                    "codex-crp",
+                    "codex",
                     "@openai/codex",
                     "0.124.0-ctx.1",
                     "1.0.0",
@@ -399,7 +399,7 @@ async fn host_provider_status_surfaces_stale_installs_for_current_ctx_build() {
     );
     save_managed_provider_target(
         data_dir.path(),
-        "codex-crp",
+        "codex",
         "@openai/codex",
         "0.124.0-ctx.1",
         InstallTarget::Host,
@@ -432,7 +432,7 @@ async fn host_provider_status_surfaces_stale_installs_for_current_ctx_build() {
     let app = common::router(state.clone());
 
     for (provider_id, version) in [
-        ("codex-crp", "0.124.0-ctx.1"),
+        ("codex", "0.124.0-ctx.1"),
         ("gemini", "0.33.1"),
         ("cursor", "0.7.1"),
     ] {
@@ -475,7 +475,7 @@ async fn host_provider_status_surfaces_stale_installs_for_current_ctx_build() {
             .unwrap_or_else(|| panic!("missing provider {provider_id} in {body:#?}"))
     };
 
-    for (provider_id, expected_version) in [("codex-crp", "1.0.0"), ("gemini", "0.38.2")] {
+    for (provider_id, expected_version) in [("codex", "1.0.0"), ("gemini", "0.38.2")] {
         let provider = find_provider(provider_id);
         assert_eq!(
             provider
@@ -493,7 +493,7 @@ async fn host_provider_status_surfaces_stale_installs_for_current_ctx_build() {
         );
     }
 
-    let codex = find_provider("codex-crp");
+    let codex = find_provider("codex");
     assert_eq!(
         codex
             .pointer("/details/install_supported")

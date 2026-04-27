@@ -50,7 +50,7 @@ pub(super) async fn restart_codex_providers_for_auth_change(
     state: &Arc<AppState>,
     reason: &str,
 ) -> anyhow::Result<()> {
-    restart_provider_for_auth_change(state, "codex-crp", reason).await
+    restart_provider_for_auth_change(state, CODEX_PROVIDER_ID, reason).await
 }
 
 pub(super) async fn restart_claude_providers_for_auth_change(

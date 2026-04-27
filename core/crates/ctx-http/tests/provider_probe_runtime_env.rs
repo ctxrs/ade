@@ -89,7 +89,7 @@ fn write_invalid_kimi_account_registry(data_root: &Path) {
 async fn write_stale_codex_endpoint_selection(data_root: &Path) {
     let endpoint = upsert_provider_endpoint(
         data_root,
-        "codex-crp",
+        "codex",
         HarnessEndpointUpsert {
             endpoint_id: None,
             name: "Codex endpoint".to_string(),
@@ -107,7 +107,7 @@ async fn write_stale_codex_endpoint_selection(data_root: &Path) {
     .expect("upsert codex endpoint");
     set_provider_source_selection(
         data_root,
-        "codex-crp",
+        "codex",
         HarnessSourceKind::Endpoint,
         Some(endpoint.id.clone()),
     )
@@ -124,7 +124,7 @@ async fn write_stale_codex_endpoint_selection(data_root: &Path) {
             .expect("read harness registry"),
     )
     .expect("parse harness registry");
-    registry["providers"]["codex-crp"]["endpoints"] = serde_json::json!([]);
+    registry["providers"]["codex"]["endpoints"] = serde_json::json!([]);
     tokio::fs::write(
         &registry_path,
         serde_json::to_vec_pretty(&registry).expect("serialize harness registry"),
@@ -393,7 +393,7 @@ async fn seed_runtime_and_status(
 async fn seed_managed_codex_cli_dependency(state: &Arc<AppState>, dep_bin_rel: &str) {
     let dep_bin_dir = state.core.data_root.join(dep_bin_rel);
     std::fs::create_dir_all(&dep_bin_dir).expect("create codex-cli dep bin dir");
-    let codex_cmd = dep_bin_dir.join("codex-crp");
+    let codex_cmd = dep_bin_dir.join("codex");
     write_executable(
         &codex_cmd,
         r#"#!/bin/sh
@@ -509,15 +509,15 @@ async fn provider_options_probe_uses_managed_dependency_path() {
     let app = api::router(state.clone());
 
     let (runtime_cmd, dep_bin_rel) =
-        setup_runtime_command_with_managed_interpreter(data_dir.path(), "codex-crp");
-    seed_runtime_and_status(&state, "codex-crp", runtime_cmd, dep_bin_rel).await;
+        setup_runtime_command_with_managed_interpreter(data_dir.path(), "codex");
+    seed_runtime_and_status(&state, "codex", runtime_cmd, dep_bin_rel).await;
     seed_managed_codex_cli_dependency(&state, "managed/runtime-node-codex/bin").await;
 
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
     let (status, body): (StatusCode, serde_json::Value) = common::json_request(
         &app,
         axum::http::Method::GET,
-        format!("/api/workspaces/{}/providers/codex-crp/options", ws.id.0),
+        format!("/api/workspaces/{}/providers/codex/options", ws.id.0),
         None,
     )
     .await;
@@ -548,10 +548,10 @@ async fn provider_options_preserve_live_runtime_catalog_for_preferred_models() {
 
     let (runtime_cmd, dep_bin_rel) = setup_runtime_command_with_managed_interpreter_response(
         data_dir.path(),
-        "codex-crp",
+        "codex",
         r#"{"seq":1,"channel":"control","type":"models.list","models":[{"id":"runtime-live"},{"id":"runtime-only"}],"current_model_id":"runtime-live","catalog_source":"live_remote"}"#,
     );
-    seed_runtime_and_status(&state, "codex-crp", runtime_cmd, dep_bin_rel).await;
+    seed_runtime_and_status(&state, "codex", runtime_cmd, dep_bin_rel).await;
     seed_managed_codex_cli_dependency(&state, "managed/runtime-node-codex/bin").await;
 
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
@@ -576,7 +576,7 @@ async fn provider_options_preserve_live_runtime_catalog_for_preferred_models() {
     let (status, body): (StatusCode, serde_json::Value) = common::json_request(
         &app,
         axum::http::Method::GET,
-        format!("/api/workspaces/{}/providers/codex-crp/options", ws.id.0),
+        format!("/api/workspaces/{}/providers/codex/options", ws.id.0),
         None,
     )
     .await;
@@ -797,9 +797,9 @@ async fn codex_provider_options_surface_stale_selected_endpoint_errors() {
 
     let state = app_state(data_dir.path()).await;
     state.providers.statuses.lock().await.insert(
-        "codex-crp".to_string(),
+        "codex".to_string(),
         ProviderStatus {
-            provider_id: "codex-crp".to_string(),
+            provider_id: "codex".to_string(),
             installed: true,
             detected_path: None,
             version: None,
@@ -815,7 +815,7 @@ async fn codex_provider_options_surface_stale_selected_endpoint_errors() {
     let (status, body): (StatusCode, serde_json::Value) = common::json_request(
         &app,
         axum::http::Method::GET,
-        format!("/api/workspaces/{}/providers/codex-crp/options", ws.id.0),
+        format!("/api/workspaces/{}/providers/codex/options", ws.id.0),
         None,
     )
     .await;
@@ -844,9 +844,9 @@ async fn provider_bootstrap_surfaces_stale_selected_endpoint_errors() {
 
     let state = app_state(data_dir.path()).await;
     state.providers.statuses.lock().await.insert(
-        "codex-crp".to_string(),
+        "codex".to_string(),
         ProviderStatus {
-            provider_id: "codex-crp".to_string(),
+            provider_id: "codex".to_string(),
             installed: true,
             detected_path: None,
             version: None,
@@ -1122,9 +1122,9 @@ async fn providers_bootstrap_includes_pinned_codex_claude_and_gemini_catalogs() 
     let app = api::router(state.clone());
 
     state.providers.statuses.lock().await.insert(
-        "codex-crp".to_string(),
+        "codex".to_string(),
         ProviderStatus {
-            provider_id: "codex-crp".to_string(),
+            provider_id: "codex".to_string(),
             installed: true,
             detected_path: None,
             version: Some("0.98.0".to_string()),
@@ -1454,15 +1454,15 @@ async fn provider_verify_probe_uses_managed_dependency_path() {
     let app = api::router(state.clone());
 
     let (runtime_cmd, dep_bin_rel) =
-        setup_runtime_command_with_managed_interpreter(data_dir.path(), "codex-crp");
-    seed_runtime_and_status(&state, "codex-crp", runtime_cmd, dep_bin_rel).await;
+        setup_runtime_command_with_managed_interpreter(data_dir.path(), "codex");
+    seed_runtime_and_status(&state, "codex", runtime_cmd, dep_bin_rel).await;
     seed_managed_codex_cli_dependency(&state, "managed/runtime-node-codex/bin").await;
 
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
     let (status, body): (StatusCode, serde_json::Value) = common::json_request(
         &app,
         axum::http::Method::POST,
-        format!("/api/workspaces/{}/providers/codex-crp/verify", ws.id.0),
+        format!("/api/workspaces/{}/providers/codex/verify", ws.id.0),
         Some(serde_json::json!({})),
     )
     .await;
@@ -1634,8 +1634,8 @@ async fn provider_options_probe_uses_workspace_runtime_context_for_container_mod
     );
 
     let (runtime_cmd, dep_bin_rel) =
-        setup_runtime_command_with_managed_interpreter(data_dir.path(), "codex-crp");
-    seed_runtime_and_status(&state, "codex-crp", runtime_cmd, dep_bin_rel).await;
+        setup_runtime_command_with_managed_interpreter(data_dir.path(), "codex");
+    seed_runtime_and_status(&state, "codex", runtime_cmd, dep_bin_rel).await;
     seed_managed_codex_cli_dependency(&state, "managed/runtime-node-codex/bin").await;
 
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
@@ -1658,7 +1658,7 @@ async fn provider_options_probe_uses_workspace_runtime_context_for_container_mod
     let (status, body): (StatusCode, serde_json::Value) = common::json_request(
         &app,
         axum::http::Method::GET,
-        format!("/api/workspaces/{}/providers/codex-crp/options", ws.id.0),
+        format!("/api/workspaces/{}/providers/codex/options", ws.id.0),
         None,
     )
     .await;

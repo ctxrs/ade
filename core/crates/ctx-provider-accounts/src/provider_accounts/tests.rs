@@ -178,7 +178,7 @@ async fn ensure_codex_endpoint_runtime_home_from_env_uses_endpoint_home_auth_whe
     let endpoint_home = dir
         .path()
         .join("providers")
-        .join("codex-crp")
+        .join("codex")
         .join("endpoint-homes")
         .join("ep-1");
     tokio::fs::create_dir_all(&endpoint_home).await.unwrap();
@@ -1111,7 +1111,7 @@ async fn subscription_env_runtime_root_projects_path_based_providers() {
     assert!(claude_dir.starts_with(runtime_root));
 
     let codex_env =
-        subscription_env_for_active_account_with_runtime_root(root, runtime_root, "codex-crp")
+        subscription_env_for_active_account_with_runtime_root(root, runtime_root, "codex")
             .await
             .unwrap();
     let codex_home = PathBuf::from(codex_env.get("CODEX_HOME").unwrap());

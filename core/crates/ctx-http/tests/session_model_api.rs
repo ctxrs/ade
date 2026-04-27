@@ -322,7 +322,7 @@ async fn set_session_model_updates_session_and_appends_init_event() {
 async fn live_crp_fixture_authenticate_session_emits_ready_signals_and_stays_live() {
     let _env_lock = lock_env().await;
 
-    let provider_id = "codex-crp";
+    let provider_id = "codex";
     let workdir = tempfile::tempdir().expect("workdir tempdir");
     let fixtures_dir = tempfile::tempdir().expect("fixtures tempdir");
     let fixture_provider_dir = fixtures_dir.path().join(provider_id);
@@ -902,7 +902,7 @@ async fn assert_live_crp_session_model_switch_case(
 async fn live_crp_supported_harnesses_session_model_switch_succeeds_end_to_end() {
     let _env_lock = lock_env().await;
 
-    assert_live_crp_session_model_switch_case("codex-crp", "gpt-5.4", "medium", "gpt-5.4", "xhigh")
+    assert_live_crp_session_model_switch_case("codex", "gpt-5.4", "medium", "gpt-5.4", "xhigh")
         .await;
     assert_live_crp_session_model_switch_case("claude-crp", "default", "medium", "default", "high")
         .await;

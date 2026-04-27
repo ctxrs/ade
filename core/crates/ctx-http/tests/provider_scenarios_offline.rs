@@ -70,7 +70,7 @@ async fn fixture_model_id_for_provider(
     provider_id: &str,
 ) -> String {
     let fallback_model_id = match provider_id {
-        "codex-crp" => Some("gpt-5.4/medium"),
+        "codex" => Some("gpt-5.4/medium"),
         "claude-crp" => Some("default/medium"),
         _ => None,
     };
@@ -336,7 +336,7 @@ async fn provider_scenarios_offline_crp_fixtures() {
     );
 
     let provider_ids: &[&str] = &[
-        "codex-crp",
+        "codex",
         "claude-crp",
         "claude",
         // ACP bridge providers
@@ -469,11 +469,8 @@ async fn provider_scenarios_offline_interleaved_assistant_tools_do_not_fragment_
         vec![script_path.to_string_lossy().to_string()],
     )
     .await;
-    let providers = common::crp_fixture_runtime::build_crp_fixture_providers(
-        &["codex-crp"],
-        &python,
-        &script_path,
-    );
+    let providers =
+        common::crp_fixture_runtime::build_crp_fixture_providers(&["codex"], &python, &script_path);
 
     let state = Arc::new(AppState::new(
         data_dir.path().to_path_buf(),
@@ -486,7 +483,7 @@ async fn provider_scenarios_offline_interleaved_assistant_tools_do_not_fragment_
 
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
     let (_task, session) =
-        common::create_task_with_session(&app, ws.id.0, "t1", "codex-crp", "fake-model").await;
+        common::create_task_with_session(&app, ws.id.0, "t1", "codex", "fake-model").await;
 
     post_message(&app, session.id.0, "hi").await;
     wait_for_done(&state, session.id).await;
@@ -576,7 +573,7 @@ async fn provider_scenarios_offline_crp_fixtures_persist_context_window_metrics(
         vec![script_path.to_string_lossy().to_string()],
     )
     .await;
-    let provider_ids: &[&str] = &["codex-crp", "claude-crp"];
+    let provider_ids: &[&str] = &["codex", "claude-crp"];
     let providers = common::crp_fixture_runtime::build_crp_fixture_providers(
         provider_ids,
         &python,

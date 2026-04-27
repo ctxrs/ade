@@ -198,7 +198,7 @@ mod tests {
     fn test_endpoint() -> HarnessEndpointRecord {
         HarnessEndpointRecord {
             id: "ep-1".to_string(),
-            provider_id: "codex-crp".to_string(),
+            provider_id: "codex".to_string(),
             name: "OpenRouter".to_string(),
             base_url: Some("https://openrouter.ai/api/v1".to_string()),
             api_shape: HarnessApiShape::OpenaiResponses,
@@ -239,7 +239,7 @@ mod tests {
             },
         });
 
-        supplement_models_payload_with_endpoint_metadata(&mut models, "codex-crp", &endpoint, now);
+        supplement_models_payload_with_endpoint_metadata(&mut models, "codex", &endpoint, now);
 
         let model_ids = models
             .get("models")
@@ -290,7 +290,7 @@ mod tests {
             },
         });
 
-        supplement_models_payload_with_endpoint_metadata(&mut models, "codex-crp", &endpoint, now);
+        supplement_models_payload_with_endpoint_metadata(&mut models, "codex", &endpoint, now);
 
         assert_eq!(
             models

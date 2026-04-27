@@ -28,7 +28,7 @@ fn probe_timeout_for_env_uses_container_timeout_when_container_exec_is_present()
 #[test]
 fn build_crp_session_config_sets_pragmatic_personality_for_codex() {
     let mut env = HashMap::new();
-    env.insert("CTX_PROVIDER_ID".to_string(), "codex-crp".to_string());
+    env.insert("CTX_PROVIDER_ID".to_string(), "codex".to_string());
     let workdir = PathBuf::from("/tmp/workdir");
 
     let cfg = build_crp_session_config(&env, &workdir).expect("build session config");

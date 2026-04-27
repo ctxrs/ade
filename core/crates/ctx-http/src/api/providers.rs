@@ -9,10 +9,6 @@ use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::Json;
 use chrono::{DateTime, Utc};
-use ctx_core::provider_ids::{
-    canonical_provider_id, legacy_provider_id_alias, CODEX_CRP_PROVIDER_ID,
-    LEGACY_CODEX_PROVIDER_ID,
-};
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use tokio::process::Command;
@@ -25,6 +21,7 @@ use crate::installer;
 use crate::logs;
 use crate::provider_usage;
 use ctx_core::ids::WorkspaceId;
+use ctx_core::provider_ids::CODEX_PROVIDER_ID;
 use ctx_harness_sources as harness_sources;
 use ctx_harness_sources::{HarnessApiShape, HarnessEndpointUpsert, HarnessSourceKind};
 use ctx_provider_accounts as provider_accounts;
@@ -97,27 +94,15 @@ use probe::*;
 use restarts::*;
 
 pub(super) fn canonicalize_provider_id(provider_id: &str) -> String {
-    canonical_provider_id(provider_id).to_string()
+    provider_id.to_string()
 }
 
 pub(super) fn project_provider_id_for_response(
     requested_provider_id: &str,
     canonical_provider_id_value: &str,
 ) -> String {
-    if requested_provider_id == LEGACY_CODEX_PROVIDER_ID
-        && canonical_provider_id_value == CODEX_CRP_PROVIDER_ID
-    {
-        LEGACY_CODEX_PROVIDER_ID.to_string()
-    } else {
-        canonical_provider_id_value.to_string()
-    }
-}
-
-pub(super) fn legacy_codex_status_alias(status: &ProviderStatus) -> Option<ProviderStatus> {
-    let legacy_alias = legacy_provider_id_alias(&status.provider_id)?;
-    let mut aliased = status.clone();
-    aliased.provider_id = legacy_alias.to_string();
-    Some(aliased)
+    let _ = requested_provider_id;
+    canonical_provider_id_value.to_string()
 }
 
 pub(super) fn project_harness_config_for_response(

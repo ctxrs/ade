@@ -1,5 +1,4 @@
 use super::*;
-use ctx_core::provider_ids::canonical_provider_id;
 use ctx_harness_sources as harness_sources;
 use ctx_provider_accounts as provider_accounts;
 

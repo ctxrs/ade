@@ -35,8 +35,8 @@ test("bundled dependency policy mode resolves current runtime constants without 
 
 test("bundled dependency policy ignores codex archive_unresolved when provenance is valid", () => {
   const issues = providerPolicyIssues({
-    providerId: "codex-crp",
-    entry: findProvider("codex-crp"),
+    providerId: "codex",
+    entry: findProvider("codex"),
     latestInfo: { resolver: "archive_unresolved" },
     upstreamInfo: null,
     currentUpstreamVersion: "rust-v0.114.0",
@@ -47,11 +47,11 @@ test("bundled dependency policy ignores codex archive_unresolved when provenance
 });
 
 test("bundled dependency policy still flags broken codex provenance", () => {
-  const entry = findProvider("codex-crp");
+  const entry = findProvider("codex");
   entry.releases[0].provenance.upstream_repo = "";
 
   const issues = providerPolicyIssues({
-    providerId: "codex-crp",
+    providerId: "codex",
     entry,
     latestInfo: { resolver: "archive_unresolved" },
     upstreamInfo: null,

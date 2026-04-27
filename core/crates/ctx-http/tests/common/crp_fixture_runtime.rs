@@ -44,8 +44,6 @@ try:
     if not FIXTURE_ROOT:
         raise RuntimeError("missing CTX_TEST_FIXTURES_DIR")
     fixture_path = os.path.join(FIXTURE_ROOT, PROVIDER_ID, SCENARIO + ".json")
-    if PROVIDER_ID == "codex-crp" and not os.path.exists(fixture_path):
-        fixture_path = os.path.join(FIXTURE_ROOT, "codex", SCENARIO + ".json")
     with open(fixture_path, "r") as f:
         scenario = json.load(f)
 except Exception as e:
@@ -55,7 +53,7 @@ except Exception as e:
 provider_session_id = PROVIDER_ID + "-thread"
 
 def default_models(provider_id):
-    if provider_id == "codex-crp":
+    if provider_id == "codex":
         return [
             {"id": "gpt-5.4/medium", "name": "GPT-5.4 (Medium)"},
             {"id": "gpt-5.4/xhigh", "name": "GPT-5.4 (Extra High)"},
@@ -94,8 +92,8 @@ def send(msg, channel="control"):
     sys.stdout.flush()
 
 def tool_output_delta_type():
-    # codex-crp currently emits the underscored tag in production logs.
-    if PROVIDER_ID == "codex-crp":
+    # Codex CRP currently emits the underscored tag in production logs.
+    if PROVIDER_ID == "codex":
         return "tool.output_delta"
     return "tool.output.delta"
 

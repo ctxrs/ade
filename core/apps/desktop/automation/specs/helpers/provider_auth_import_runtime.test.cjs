@@ -32,8 +32,8 @@ const withEnv = (updates, run) => {
   }
 };
 
-test("codex-crp auth import stages the canonical codex auth fixture", () => {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-codex-crp-auth-import-"));
+test("codex auth import stages the canonical codex auth fixture", () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-codex-auth-import-"));
   const authJson = JSON.stringify({ OPENAI_API_KEY: "test-key" });
   const staged = withEnv(
     {
@@ -41,7 +41,7 @@ test("codex-crp auth import stages the canonical codex auth fixture", () => {
       CTX_E2E_AUTH_IMPORT_CODEX_AUTH_JSON: undefined,
       CTX_PROVIDER_AUTH_IMPORT_CODEX_HOME: tempDir,
     },
-    () => stageProviderAuthImportFixture("codex-crp"),
+    () => stageProviderAuthImportFixture("codex"),
   );
 
   assert.equal(staged.providerId, "codex");
@@ -50,7 +50,7 @@ test("codex-crp auth import stages the canonical codex auth fixture", () => {
   assert.equal(fs.readFileSync(staged.expectedPath, "utf8"), authJson);
 });
 
-test("codex-crp auth import is account backed like codex", () => {
-  assert.equal(isAccountBackedImport("codex", "auth_file"), true);
-  assert.equal(isAccountBackedImport("codex-crp", "auth_file"), true);
+test("codex auth import is account backed", () => {
+    assert.equal(isAccountBackedImport("codex", "auth_file"), true);
+    assert.equal(isAccountBackedImport("codex-crp", "auth_file"), false);
 });

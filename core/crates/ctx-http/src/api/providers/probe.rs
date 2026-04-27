@@ -4,14 +4,12 @@ pub(super) use super::super::provider_probe_auth::provider_auth_mode;
 #[cfg(test)]
 pub(super) use super::super::provider_probe_auth::provider_has_active_auth_config;
 use super::*;
-use ctx_core::provider_ids::canonical_provider_id;
 
 pub(super) fn cache_key_matches_provider(cache_key: &str, provider_id: &str) -> bool {
-    let provider_id = canonical_provider_id(provider_id);
     cache_key
         .rsplit('/')
         .next()
-        .is_some_and(|key_provider| canonical_provider_id(key_provider) == provider_id)
+        .is_some_and(|key_provider| key_provider == provider_id)
 }
 
 pub(super) async fn invalidate_provider_probe_caches(state: &Arc<AppState>, provider_id: &str) {

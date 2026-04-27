@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use async_trait::async_trait;
 use ctx_core::ids::WorkspaceId;
 use ctx_core::models::{Workspace, Worktree};
-use ctx_core::provider_ids::{canonical_provider_id, CODEX_CRP_PROVIDER_ID};
+use ctx_core::provider_ids::CODEX_PROVIDER_ID;
 use ctx_harness_sources::{HarnessSourceKind, ResolvedHarnessSource};
 use ctx_provider_accounts as provider_accounts;
 
@@ -65,7 +65,6 @@ async fn provider_env_with_runtime_root<H>(
 where
     H: ProviderProbeHost,
 {
-    let provider_id = canonical_provider_id(provider_id);
     let source = ctx_harness_sources::resolve_provider_source_for_probe_with_runtime_root(
         state.data_root(),
         provider_id,
@@ -84,7 +83,7 @@ where
         env.insert("CTX_MCP_DISABLED".to_string(), "1".to_string());
     }
     if source.source_kind == HarnessSourceKind::Subscription {
-        if require_subscription_account_env && provider_id == CODEX_CRP_PROVIDER_ID {
+        if require_subscription_account_env && provider_id == CODEX_PROVIDER_ID {
             let has_auth = match runtime_data_root {
                 Some(runtime_root) => {
                     provider_accounts::codex_has_active_auth_with_runtime_root(
@@ -162,8 +161,7 @@ async fn finalize_workspace_probe_env<H>(
 where
     H: ProviderProbeHost,
 {
-    let provider_id = canonical_provider_id(provider_id);
-    if provider_id == CODEX_CRP_PROVIDER_ID && source.source_kind == HarnessSourceKind::Endpoint {
+    if provider_id == CODEX_PROVIDER_ID && source.source_kind == HarnessSourceKind::Endpoint {
         if let Some(root) = env.get("CTX_DATA_ROOT").cloned() {
             provider_accounts::ensure_codex_endpoint_runtime_home_from_env(Path::new(&root), env)
                 .await

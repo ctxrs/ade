@@ -4,9 +4,6 @@ use std::sync::OnceLock;
 
 use anyhow::{Context, Result};
 use ctx_bundled_assets as bundled_assets;
-use ctx_core::provider_ids::{
-    canonical_provider_id, CODEX_CRP_PROVIDER_ID, LEGACY_CODEX_PROVIDER_ID,
-};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
@@ -132,7 +129,6 @@ fn user_override_provider_command(
     cfg: &AgentServerConfigFile,
     provider_id: &str,
 ) -> Option<AgentServerCommand> {
-    let provider_id = canonical_provider_id(provider_id);
     let configured = cfg.providers.get(provider_id)?;
     configured.managed.is_none().then(|| configured.clone())
 }
@@ -141,7 +137,6 @@ fn configured_provider_login_command<'a>(
     cfg: &'a AgentServerConfigFile,
     provider_id: &str,
 ) -> Option<&'a ProviderLoginExecutable> {
-    let provider_id = canonical_provider_id(provider_id);
     cfg.provider_login_executables.get(provider_id)
 }
 
@@ -150,7 +145,6 @@ pub fn managed_install_metadata_for_target<'a>(
     provider_id: &str,
     requested_target: Option<InstallTarget>,
 ) -> Option<&'a ManagedInstallMetadata> {
-    let provider_id = canonical_provider_id(provider_id);
     target_bucket_lookup(&cfg.managed_install_targets, provider_id, requested_target)
         .or_else(|| {
             cfg.providers
@@ -170,7 +164,6 @@ pub fn managed_provider_install_metadata_for_target<'a>(
     provider_id: &str,
     requested_target: Option<InstallTarget>,
 ) -> Option<&'a ManagedInstallMetadata> {
-    let provider_id = canonical_provider_id(provider_id);
     target_bucket_lookup(&cfg.managed_install_targets, provider_id, requested_target)
 }
 
@@ -188,7 +181,6 @@ pub fn managed_provider_command_for_target(
     provider_id: &str,
     requested_target: Option<InstallTarget>,
 ) -> Option<AgentServerCommand> {
-    let provider_id = canonical_provider_id(provider_id);
     target_bucket_lookup(&cfg.managed_provider_targets, provider_id, requested_target).cloned()
 }
 
@@ -197,7 +189,7 @@ pub fn apply_managed_install_details_for_target(
     cfg: &AgentServerConfigFile,
     requested_target: Option<InstallTarget>,
 ) {
-    let provider_id = canonical_provider_id(&status.provider_id);
+    let provider_id = status.provider_id.as_str();
     let Some(meta) =
         managed_provider_install_metadata_for_target(cfg, provider_id, requested_target)
     else {
@@ -270,7 +262,6 @@ pub fn resolve_provider_command(
     cfg: &AgentServerConfigFile,
     provider_id: &str,
 ) -> Option<AgentServerCommand> {
-    let provider_id = canonical_provider_id(provider_id);
     if let Some(configured) = user_override_provider_command(cfg, provider_id) {
         return Some(configured.clone());
     }
@@ -293,7 +284,6 @@ fn runtime_command_candidate(
     provider_id: &str,
     requested_target: Option<InstallTarget>,
 ) -> Result<Option<(AgentServerCommand, ProviderRuntimeCommandSource)>> {
-    let provider_id = canonical_provider_id(provider_id);
     let allow_bundled_seed = matches!(
         requested_target_or_host(requested_target),
         InstallTarget::Host
@@ -409,7 +399,6 @@ pub fn resolve_provider_login_command(
     cfg: &AgentServerConfigFile,
     provider_id: &str,
 ) -> Result<Option<ProviderRuntimeCommand>> {
-    let provider_id = canonical_provider_id(provider_id);
     let Some(configured) = configured_provider_login_command(cfg, provider_id) else {
         return Ok(None);
     };
@@ -433,7 +422,6 @@ pub fn resolve_runtime_provider_command_for_target(
     provider_id: &str,
     requested_target: Option<InstallTarget>,
 ) -> Result<Option<ProviderRuntimeCommand>> {
-    let provider_id = canonical_provider_id(provider_id);
     let Some((candidate, source)) = runtime_command_candidate(cfg, provider_id, requested_target)?
     else {
         return Ok(None);
@@ -446,7 +434,6 @@ pub fn resolve_runtime_provider_command_for_target_repairable_managed(
     provider_id: &str,
     requested_target: Option<InstallTarget>,
 ) -> Result<Option<ProviderRuntimeCommand>> {
-    let provider_id = canonical_provider_id(provider_id);
     let Some((candidate, source)) = runtime_command_candidate(cfg, provider_id, requested_target)?
     else {
         return Ok(None);

@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 use chrono::{DateTime, Utc};
-use ctx_core::provider_ids::{canonical_provider_id, CODEX_CRP_PROVIDER_ID};
+use ctx_core::provider_ids::CODEX_PROVIDER_ID;
 use serde::{Deserialize, Serialize};
 
 mod amp;
@@ -374,8 +374,8 @@ pub async fn subscription_env_for_active_account(
     data_root: &Path,
     provider_id: &str,
 ) -> Result<HashMap<String, String>> {
-    match canonical_provider_id(provider_id) {
-        CODEX_CRP_PROVIDER_ID => codex_env_for_active_account(data_root).await,
+    match provider_id {
+        CODEX_PROVIDER_ID => codex_env_for_active_account(data_root).await,
         "claude-crp" => claude_env_for_active_account(data_root).await,
         "gemini" => gemini_env_for_active_account(data_root).await,
         "qwen" => qwen_env_for_active_account(data_root).await,
@@ -397,8 +397,8 @@ pub async fn subscription_env_for_active_account_with_runtime_root(
         return subscription_env_for_active_account(data_root, provider_id).await;
     }
 
-    match canonical_provider_id(provider_id) {
-        CODEX_CRP_PROVIDER_ID => {
+    match provider_id {
+        CODEX_PROVIDER_ID => {
             codex_env_for_active_account_with_runtime_root(data_root, runtime_root).await
         }
         "claude-crp" => {

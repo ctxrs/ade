@@ -4,7 +4,7 @@
   "summary": "Provider auth matrix contract for desktop/web e2e lane coverage. Support=covered now, deferred=known coverage gap, unsupported=explicitly out of product auth support.",
   "providers": [
     {
-      "id": "codex-crp",
+      "id": "codex",
       "owner": "provider-codex"
     },
     {
@@ -116,8 +116,8 @@
   },
   "cells": [
     {
-      "id": "codex-crp.subscription_oauth.local.host",
-      "provider_id": "codex-crp",
+      "id": "codex.subscription_oauth.local.host",
+      "provider_id": "codex",
       "auth_mode": "subscription_oauth",
       "daemon_location": "local",
       "execution_environment": "host",
@@ -144,8 +144,8 @@
       "skip_reason": null
     },
     {
-      "id": "codex-crp.subscription_oauth.local.sandbox",
-      "provider_id": "codex-crp",
+      "id": "codex.subscription_oauth.local.sandbox",
+      "provider_id": "codex",
       "auth_mode": "subscription_oauth",
       "daemon_location": "local",
       "execution_environment": "sandbox",
@@ -172,8 +172,8 @@
       "skip_reason": null
     },
     {
-      "id": "codex-crp.subscription_oauth.remote.host",
-      "provider_id": "codex-crp",
+      "id": "codex.subscription_oauth.remote.host",
+      "provider_id": "codex",
       "auth_mode": "subscription_oauth",
       "daemon_location": "remote",
       "execution_environment": "host",
@@ -192,8 +192,8 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "codex-crp.subscription_oauth.remote.sandbox",
-      "provider_id": "codex-crp",
+      "id": "codex.subscription_oauth.remote.sandbox",
+      "provider_id": "codex",
       "auth_mode": "subscription_oauth",
       "daemon_location": "remote",
       "execution_environment": "sandbox",
@@ -212,8 +212,8 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "codex-crp.endpoint_api_key.local.host",
-      "provider_id": "codex-crp",
+      "id": "codex.endpoint_api_key.local.host",
+      "provider_id": "codex",
       "auth_mode": "endpoint_api_key",
       "daemon_location": "local",
       "execution_environment": "host",
@@ -238,8 +238,8 @@
       "skip_reason": null
     },
     {
-      "id": "codex-crp.endpoint_api_key.local.sandbox",
-      "provider_id": "codex-crp",
+      "id": "codex.endpoint_api_key.local.sandbox",
+      "provider_id": "codex",
       "auth_mode": "endpoint_api_key",
       "daemon_location": "local",
       "execution_environment": "sandbox",
@@ -265,8 +265,8 @@
       "skip_reason": null
     },
     {
-      "id": "codex-crp.endpoint_api_key.remote.host",
-      "provider_id": "codex-crp",
+      "id": "codex.endpoint_api_key.remote.host",
+      "provider_id": "codex",
       "auth_mode": "endpoint_api_key",
       "daemon_location": "remote",
       "execution_environment": "host",
@@ -286,8 +286,8 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "codex-crp.endpoint_api_key.remote.sandbox",
-      "provider_id": "codex-crp",
+      "id": "codex.endpoint_api_key.remote.sandbox",
+      "provider_id": "codex",
       "auth_mode": "endpoint_api_key",
       "daemon_location": "remote",
       "execution_environment": "sandbox",
@@ -307,8 +307,8 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "codex-crp.auth_import.local.host",
-      "provider_id": "codex-crp",
+      "id": "codex.auth_import.local.host",
+      "provider_id": "codex",
       "auth_mode": "auth_import",
       "daemon_location": "local",
       "execution_environment": "host",
@@ -329,8 +329,8 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "codex-crp.auth_import.local.sandbox",
-      "provider_id": "codex-crp",
+      "id": "codex.auth_import.local.sandbox",
+      "provider_id": "codex",
       "auth_mode": "auth_import",
       "daemon_location": "local",
       "execution_environment": "sandbox",
@@ -354,8 +354,8 @@
       "skip_reason": null
     },
     {
-      "id": "codex-crp.auth_import.remote.host",
-      "provider_id": "codex-crp",
+      "id": "codex.auth_import.remote.host",
+      "provider_id": "codex",
       "auth_mode": "auth_import",
       "daemon_location": "remote",
       "execution_environment": "host",
@@ -375,8 +375,8 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "codex-crp.auth_import.remote.sandbox",
-      "provider_id": "codex-crp",
+      "id": "codex.auth_import.remote.sandbox",
+      "provider_id": "codex",
       "auth_mode": "auth_import",
       "daemon_location": "remote",
       "execution_environment": "sandbox",
@@ -396,8 +396,8 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "codex-crp.configure_later_then_connect.local.host",
-      "provider_id": "codex-crp",
+      "id": "codex.configure_later_then_connect.local.host",
+      "provider_id": "codex",
       "auth_mode": "configure_later_then_connect",
       "daemon_location": "local",
       "execution_environment": "host",
@@ -423,8 +423,8 @@
       "skip_reason": null
     },
     {
-      "id": "codex-crp.configure_later_then_connect.local.sandbox",
-      "provider_id": "codex-crp",
+      "id": "codex.configure_later_then_connect.local.sandbox",
+      "provider_id": "codex",
       "auth_mode": "configure_later_then_connect",
       "daemon_location": "local",
       "execution_environment": "sandbox",
@@ -451,8 +451,8 @@
       "skip_reason": null
     },
     {
-      "id": "codex-crp.configure_later_then_connect.remote.host",
-      "provider_id": "codex-crp",
+      "id": "codex.configure_later_then_connect.remote.host",
+      "provider_id": "codex",
       "auth_mode": "configure_later_then_connect",
       "daemon_location": "remote",
       "execution_environment": "host",
@@ -473,8 +473,8 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "codex-crp.configure_later_then_connect.remote.sandbox",
-      "provider_id": "codex-crp",
+      "id": "codex.configure_later_then_connect.remote.sandbox",
+      "provider_id": "codex",
       "auth_mode": "configure_later_then_connect",
       "daemon_location": "remote",
       "execution_environment": "sandbox",

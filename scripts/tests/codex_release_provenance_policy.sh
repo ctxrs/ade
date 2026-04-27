@@ -26,7 +26,7 @@ providers = matrix.get("providers") or []
 
 entry = None
 for provider in providers:
-    if str(provider.get("id") or "").strip() == "codex-crp":
+    if str(provider.get("id") or "").strip() == "codex":
         entry = provider
         break
 

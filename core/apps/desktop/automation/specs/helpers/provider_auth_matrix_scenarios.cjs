@@ -37,7 +37,7 @@ const providerAuthMatrixScenarioTags = ({
   }
 
   if (
-    normalizedProviderId === "codex-crp"
+    normalizedProviderId === "codex"
     && (
       normalizedAuthMode === "endpoint_api_key"
       || normalizedAuthMode === "configure_later_then_connect"

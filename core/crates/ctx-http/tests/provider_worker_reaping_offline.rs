@@ -177,7 +177,7 @@ async fn assert_provider_session_resume_after_idle_reap(provider_id: &str, model
         "CTX_CRP_FIRST_EVENT_TIMEOUT_MS",
         CRP_FIXTURE_FIRST_EVENT_TIMEOUT_MS,
     );
-    let _codex_home = if matches!(provider_id, "codex-crp") {
+    let _codex_home = if matches!(provider_id, "codex") {
         Some(configure_hermetic_codex_home().await)
     } else {
         None
@@ -185,7 +185,7 @@ async fn assert_provider_session_resume_after_idle_reap(provider_id: &str, model
 
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
     let script_path = common::crp_fixture_runtime::write_crp_fixture_runtime(data_dir.path());
-    if provider_id == "codex-crp" {
+    if provider_id == "codex" {
         common::seed_managed_codex_cli_host_runtime_with_args(
             data_dir.path(),
             &python,
@@ -260,6 +260,6 @@ async fn assert_provider_session_resume_after_idle_reap(provider_id: &str, model
 async fn idle_reaped_crp_workers_resume_via_provider_session_ref() {
     let _env_lock = lock_env();
 
-    assert_provider_session_resume_after_idle_reap("codex-crp", "gpt-5.4/medium").await;
+    assert_provider_session_resume_after_idle_reap("codex", "gpt-5.4/medium").await;
     assert_provider_session_resume_after_idle_reap("claude-crp", "default/medium").await;
 }

@@ -191,7 +191,7 @@ pub fn ensure_codex_cli_command_env_for_target(
     runtime_provider_id: &str,
     requested_target: Option<InstallTarget>,
 ) -> Result<()> {
-    if runtime_provider_id != "codex-crp" {
+    if runtime_provider_id != ctx_core::provider_ids::CODEX_PROVIDER_ID {
         return Ok(());
     }
     if let Some(configured) = provider_env.get("CTX_CODEX_BIN_PATH") {

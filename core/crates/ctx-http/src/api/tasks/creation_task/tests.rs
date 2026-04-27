@@ -32,7 +32,7 @@ fn selects_canonical_codex_crp_for_default_session_creation() {
 
     assert_eq!(
         select_default_provider_id(&statuses),
-        Some("codex-crp".to_string())
+        Some("codex".to_string())
     );
 }
 

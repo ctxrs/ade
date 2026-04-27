@@ -55,7 +55,7 @@ async fn preferred_new_session_model_round_trips_and_clears() {
         .expect("persist second preferred model");
 
     assert_eq!(
-        load_preferred_new_session_model_id(&store, "codex-crp")
+        load_preferred_new_session_model_id(&store, "codex")
             .await
             .expect("load codex pref"),
         Some("gpt-5.4/xhigh".to_string())
@@ -66,15 +66,15 @@ async fn preferred_new_session_model_round_trips_and_clears() {
             .expect("load pref map"),
         HashMap::from([
             ("claude-crp".to_string(), "opus/high".to_string()),
-            ("codex-crp".to_string(), "gpt-5.4/xhigh".to_string()),
+            ("codex".to_string(), "gpt-5.4/xhigh".to_string()),
         ])
     );
 
-    update_preferred_new_session_model_id(&store, "codex-crp", Some("   ".to_string()))
+    update_preferred_new_session_model_id(&store, "codex", Some("   ".to_string()))
         .await
         .expect("clear codex pref");
     assert_eq!(
-        load_preferred_new_session_model_id(&store, "codex-crp")
+        load_preferred_new_session_model_id(&store, "codex")
             .await
             .expect("load cleared codex pref"),
         None
@@ -130,7 +130,7 @@ async fn malformed_preferred_new_session_model_entries_are_ignored() {
             r#"{
   "new_session": {
     "preferred_model_by_provider": {
-      "codex-crp": 7,
+      "codex": 7,
       "claude-crp": " opus/high ",
       "empty": "   "
     }
@@ -147,7 +147,7 @@ async fn malformed_preferred_new_session_model_entries_are_ignored() {
         HashMap::from([("claude-crp".to_string(), "opus/high".to_string())])
     );
     assert_eq!(
-        load_preferred_new_session_model_id(&store, "codex-crp")
+        load_preferred_new_session_model_id(&store, "codex")
             .await
             .expect("load malformed codex preference"),
         None
@@ -179,7 +179,7 @@ async fn concurrent_workspace_settings_updates_do_not_clobber_each_other() {
     let second = tokio::spawn(async move {
         update_preferred_new_session_model_id(
             &second_store,
-            "codex-crp",
+            "codex",
             Some("gpt-5.4/xhigh".to_string()),
         )
         .await
@@ -211,7 +211,7 @@ async fn concurrent_workspace_settings_updates_do_not_clobber_each_other() {
         Some("main".to_string())
     );
     assert_eq!(
-        load_preferred_new_session_model_id(&store, "codex-crp")
+        load_preferred_new_session_model_id(&store, "codex")
             .await
             .expect("load preferred model"),
         Some("gpt-5.4/xhigh".to_string())

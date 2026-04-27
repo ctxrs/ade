@@ -51,9 +51,9 @@ async fn provider_usage_cache_hit_surfaces_agent_server_config_errors_for_codex(
         None,
     ));
     state.providers.usage_cache.lock().await.insert(
-        "codex-crp".to_string(),
+        "codex".to_string(),
         crate::provider_usage::ProviderUsageSnapshot {
-            provider_id: "codex-crp".to_string(),
+            provider_id: "codex".to_string(),
             source: "oauth".to_string(),
             fetched_at: chrono::Utc::now(),
             payload: Some(serde_json::json!({
@@ -86,7 +86,7 @@ async fn provider_usage_cache_hit_projects_requested_provider_alias_for_codex() 
     let codex_home = tempfile::tempdir().unwrap();
     let _codex_home = EnvVarGuard::set("CTX_CODEX_HOME", &codex_home.path().to_string_lossy());
     let codex_bin_dir = tempfile::tempdir().unwrap();
-    let codex_bin = codex_bin_dir.path().join("codex-crp");
+    let codex_bin = codex_bin_dir.path().join("codex");
     std::fs::write(&codex_bin, "#!/bin/sh\n").unwrap();
     #[cfg(unix)]
     {
@@ -119,9 +119,9 @@ async fn provider_usage_cache_hit_projects_requested_provider_alias_for_codex() 
         None,
     ));
     state.providers.usage_cache.lock().await.insert(
-        "codex-crp".to_string(),
+        "codex".to_string(),
         crate::provider_usage::ProviderUsageSnapshot {
-            provider_id: "codex-crp".to_string(),
+            provider_id: "codex".to_string(),
             source: "oauth".to_string(),
             fetched_at: chrono::Utc::now(),
             payload: Some(serde_json::json!({

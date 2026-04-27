@@ -11,7 +11,6 @@ fn env_flag_truthy(var_name: &str) -> bool {
 }
 
 pub(super) fn bundled_only_mode_applies_to_provider(provider_id: &str) -> bool {
-    let provider_id = canonical_provider_id(provider_id);
     if !env_flag_truthy("CTX_E2E_BUNDLED_ONLY") {
         return false;
     }
@@ -27,9 +26,7 @@ pub(super) fn bundled_only_mode_applies_to_provider(provider_id: &str) -> bool {
     if providers.is_empty() {
         return true;
     }
-    providers
-        .iter()
-        .any(|entry| canonical_provider_id(entry) == provider_id)
+    providers.iter().any(|entry| *entry == provider_id)
 }
 
 fn is_legacy_bundle_path(path: &str) -> bool {
@@ -46,12 +43,12 @@ fn is_legacy_bundle_rel(path: &str) -> bool {
         || normalized.contains("/bundles/")
 }
 
-fn migrate_provider_alias_map<T>(map: &mut HashMap<String, T>) -> bool {
-    let Some(legacy_value) = map.remove(LEGACY_CODEX_PROVIDER_ID) else {
+fn migrate_codex_adapter_key_to_provider_key<T>(map: &mut HashMap<String, T>) -> bool {
+    let Some(adapter_value) = map.remove(ctx_core::provider_ids::CODEX_CRP_ADAPTER_ID) else {
         return false;
     };
-    map.entry(CODEX_CRP_PROVIDER_ID.to_string())
-        .or_insert(legacy_value);
+    map.entry(ctx_core::provider_ids::CODEX_PROVIDER_ID.to_string())
+        .or_insert(adapter_value);
     true
 }
 
@@ -60,12 +57,12 @@ pub(super) fn migrate_agent_server_config(cfg: &mut AgentServerConfigFile) -> bo
     let mut drop_provider_entries = Vec::new();
     let mut drop_managed_entries = Vec::new();
 
-    changed |= migrate_provider_alias_map(&mut cfg.providers);
-    changed |= migrate_provider_alias_map(&mut cfg.provider_login_executables);
-    changed |= migrate_provider_alias_map(&mut cfg.provider_login_commands);
-    changed |= migrate_provider_alias_map(&mut cfg.managed_installs);
-    changed |= migrate_provider_alias_map(&mut cfg.managed_provider_targets);
-    changed |= migrate_provider_alias_map(&mut cfg.managed_install_targets);
+    changed |= migrate_codex_adapter_key_to_provider_key(&mut cfg.providers);
+    changed |= migrate_codex_adapter_key_to_provider_key(&mut cfg.provider_login_executables);
+    changed |= migrate_codex_adapter_key_to_provider_key(&mut cfg.provider_login_commands);
+    changed |= migrate_codex_adapter_key_to_provider_key(&mut cfg.managed_installs);
+    changed |= migrate_codex_adapter_key_to_provider_key(&mut cfg.managed_provider_targets);
+    changed |= migrate_codex_adapter_key_to_provider_key(&mut cfg.managed_install_targets);
 
     if !cfg.provider_login_commands.is_empty() {
         for (provider_id, legacy) in std::mem::take(&mut cfg.provider_login_commands) {

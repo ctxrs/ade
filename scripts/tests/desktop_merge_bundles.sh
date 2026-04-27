@@ -16,13 +16,13 @@ bundle_x64="$tmp_root/x64"
 bundle_arm64="$tmp_root/arm64"
 bundle_out="$tmp_root/out"
 bundle_out_single="$tmp_root/out-single"
-mkdir -p "$bundle_x64/providers/codex-crp/linux/x86_64"
-mkdir -p "$bundle_arm64/providers/codex-crp/linux/aarch64"
+mkdir -p "$bundle_x64/providers/codex/linux/x86_64"
+mkdir -p "$bundle_arm64/providers/codex/linux/aarch64"
 mkdir -p "$bundle_x64/images" "$bundle_arm64/images"
 mkdir -p "$bundle_x64/daemons" "$bundle_arm64/daemons"
 
-printf 'codex-x64' > "$bundle_x64/providers/codex-crp/linux/x86_64/codex-crp"
-printf 'codex-arm64' > "$bundle_arm64/providers/codex-crp/linux/aarch64/codex-crp"
+printf 'codex-x64' > "$bundle_x64/providers/codex/linux/x86_64/codex-crp"
+printf 'codex-arm64' > "$bundle_arm64/providers/codex/linux/aarch64/codex-crp"
 printf 'harness-x64' > "$bundle_x64/images/ctx-harness-linux-x86_64.tar"
 printf 'harness-arm64' > "$bundle_arm64/images/ctx-harness-linux-aarch64.tar"
 printf 'daemon-x64' > "$bundle_x64/daemons/ctx-daemon-linux-x86_64"
@@ -33,7 +33,7 @@ cat > "$bundle_x64/manifest.json" <<'JSON'
   "version": 1,
   "providers": [
     {
-      "id": "codex-crp",
+      "id": "codex",
       "protocol": "crp",
       "version": "0.0.0-ctx.3",
       "os": "linux",
@@ -72,7 +72,7 @@ cat > "$bundle_arm64/manifest.json" <<'JSON'
   "version": 1,
   "providers": [
     {
-      "id": "codex-crp",
+      "id": "codex",
       "protocol": "crp",
       "version": "0.0.0-ctx.3",
       "os": "linux",
@@ -110,8 +110,8 @@ node "$MERGE_SCRIPT" \
   --input "$bundle_x64" \
   --input "$bundle_arm64" \
   --output "$bundle_out" \
-  --require-provider codex-crp:linux:x86_64 \
-  --require-provider codex-crp:linux:aarch64 \
+  --require-provider codex:linux:x86_64 \
+  --require-provider codex:linux:aarch64 \
   --require-image ctx-harness:linux:x86_64 \
   --require-image ctx-harness:linux:aarch64 \
   --require-daemon ctx-daemon:linux:x86_64 \
@@ -138,7 +138,7 @@ PY
 node "$MERGE_SCRIPT" \
   --input "$bundle_x64" \
   --output "$bundle_out_single" \
-  --require-provider codex-crp:linux:x86_64 \
+  --require-provider codex:linux:x86_64 \
   --require-image ctx-harness:linux:x86_64 \
   --require-daemon ctx-daemon:linux:x86_64
 
@@ -161,20 +161,20 @@ if len(daemons) != 1:
 PY
 
 conflict_dir="$tmp_root/conflict"
-mkdir -p "$conflict_dir/providers/codex-crp/linux/x86_64"
-printf 'codex-x64-conflict' > "$conflict_dir/providers/codex-crp/linux/x86_64/codex-crp"
+mkdir -p "$conflict_dir/providers/codex/linux/x86_64"
+printf 'codex-x64-conflict' > "$conflict_dir/providers/codex/linux/x86_64/codex-crp"
 cat > "$conflict_dir/manifest.json" <<'JSON'
 {
   "version": 1,
   "providers": [
     {
-      "id": "codex-crp",
+      "id": "codex",
       "protocol": "crp",
       "version": "0.0.0-ctx.3",
       "os": "linux",
       "arch": "x86_64",
       "sha256": "different-sha",
-      "command": "providers/codex-crp/linux/x86_64/codex-crp",
+      "command": "providers/codex/linux/x86_64/codex-crp",
       "args": []
     }
   ],

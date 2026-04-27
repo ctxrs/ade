@@ -1,10 +1,10 @@
 use super::*;
 use crate::api::sessions;
-use ctx_core::provider_ids::{canonical_provider_id, CODEX_CRP_PROVIDER_ID};
+use ctx_core::provider_ids::CODEX_PROVIDER_ID;
 use ctx_provider_install::InstallTarget;
 
 const PREFERRED_DEFAULT_PROVIDER_IDS: &[&str] = &[
-    CODEX_CRP_PROVIDER_ID,
+    CODEX_PROVIDER_ID,
     "claude-crp",
     "gemini",
     "qwen",
@@ -26,15 +26,15 @@ pub(super) fn select_default_provider_id(
             && status.health == ctx_providers::adapters::ProviderHealth::Ok
             && status.is_usable()
     };
-    let mut canonical_statuses = std::collections::BTreeMap::new();
+    let mut provider_statuses = std::collections::BTreeMap::new();
     for status in statuses {
-        canonical_statuses
-            .entry(canonical_provider_id(&status.provider_id).to_string())
+        provider_statuses
+            .entry(status.provider_id.clone())
             .or_insert(status);
     }
 
     for preferred in PREFERRED_DEFAULT_PROVIDER_IDS {
-        if canonical_statuses
+        if provider_statuses
             .get(*preferred)
             .is_some_and(|status| is_visible(status) && is_ready(status))
         {
@@ -42,27 +42,27 @@ pub(super) fn select_default_provider_id(
         }
     }
 
-    canonical_statuses
+    provider_statuses
         .iter()
         .filter(|(_, status)| is_visible(status) && is_ready(status))
         .map(|(provider_id, _)| provider_id.clone())
         .next()
         .or_else(|| {
-            canonical_statuses
+            provider_statuses
                 .iter()
                 .filter(|(_, status)| is_ready(status))
                 .map(|(provider_id, _)| provider_id.clone())
                 .next()
         })
         .or_else(|| {
-            canonical_statuses
+            provider_statuses
                 .iter()
                 .filter(|(_, status)| is_visible(status) && is_installed(status))
                 .map(|(provider_id, _)| provider_id.clone())
                 .next()
         })
         .or_else(|| {
-            canonical_statuses
+            provider_statuses
                 .iter()
                 .filter(|(_, status)| is_installed(status))
                 .map(|(provider_id, _)| provider_id.clone())
@@ -173,7 +173,7 @@ async fn resolve_default_session_target(
     };
     let provider_status = statuses
         .iter()
-        .find(|status| canonical_provider_id(&status.provider_id) == provider_id);
+        .find(|status| status.provider_id == provider_id);
     let preferred_model_id =
         ctx_workspace_config::load_preferred_new_session_model_id(store, &provider_id)
             .await

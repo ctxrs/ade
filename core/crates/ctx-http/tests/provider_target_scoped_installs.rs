@@ -253,7 +253,7 @@ async fn seed_target_scoped_codex_runtime(data_root: &Path) -> SeededRuntime {
     let mut cfg = AgentServerConfigFile::default();
     seed_managed_node_runtime_metadata(&mut cfg, data_root);
     cfg.managed_provider_targets.insert(
-        "codex-crp".to_string(),
+        "codex".to_string(),
         HashMap::from([
             (
                 "host".to_string(),
@@ -304,7 +304,7 @@ async fn seed_target_scoped_codex_runtime(data_root: &Path) -> SeededRuntime {
         ]),
     );
     cfg.managed_install_targets.insert(
-        "codex-crp".to_string(),
+        "codex".to_string(),
         HashMap::from([
             (
                 "host".to_string(),
@@ -353,9 +353,9 @@ async fn build_state_with_host_codex(data_root: &Path, host_command: &str) -> Ar
     let stores = common::setup_store(data_root).await;
     let mut providers: HashMap<String, Arc<dyn ProviderAdapter>> = HashMap::new();
     providers.insert(
-        "codex-crp".to_string(),
+        "codex".to_string(),
         Arc::new(Tier1CrpAdapter::from_raw(
-            "codex-crp",
+            "codex",
             host_command.to_string(),
             Vec::new(),
         )),
@@ -3041,10 +3041,7 @@ async fn provider_target_scoped_installs_work_for_host_and_container_workspaces(
         common::json_request(
             &app,
             axum::http::Method::GET,
-            format!(
-                "/api/workspaces/{}/providers/codex-crp/options",
-                host_ws.id.0
-            ),
+            format!("/api/workspaces/{}/providers/codex/options", host_ws.id.0),
             None,
         )
         .await;
@@ -3065,7 +3062,7 @@ async fn provider_target_scoped_installs_work_for_host_and_container_workspaces(
             &app,
             axum::http::Method::GET,
             format!(
-                "/api/workspaces/{}/providers/codex-crp/options",
+                "/api/workspaces/{}/providers/codex/options",
                 container_ws.id.0
             ),
             None,
@@ -3084,19 +3081,14 @@ async fn provider_target_scoped_installs_work_for_host_and_container_workspaces(
         "unexpected container options body: {container_options:#?}"
     );
 
-    let (_host_task, host_session) = common::create_task_with_session(
-        &app,
-        host_ws.id.0,
-        "host-task",
-        "codex-crp",
-        "host-model",
-    )
-    .await;
+    let (_host_task, host_session) =
+        common::create_task_with_session(&app, host_ws.id.0, "host-task", "codex", "host-model")
+            .await;
     let (_container_task, container_session) = common::create_task_with_session(
         &app,
         container_ws.id.0,
         "container-task",
-        "codex-crp",
+        "codex",
         "container-model",
     )
     .await;

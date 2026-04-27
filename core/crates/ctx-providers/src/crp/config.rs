@@ -3,6 +3,7 @@ use std::path::Path;
 
 use anyhow::Result;
 use ctx_core::boolish::parse_boolish;
+use ctx_core::provider_ids::CODEX_PROVIDER_ID;
 use ctx_core::provider_policy::{FULL_YOLO_APPROVAL_POLICY, FULL_YOLO_SANDBOX_MODE};
 use serde_json::{json, Value};
 use tokio::time::Duration;
@@ -113,7 +114,7 @@ fn build_crp_session_config_with_mcp(
         personality: env
             .get("CTX_PROVIDER_ID")
             .map(|provider_id| provider_id.as_str())
-            .filter(|provider_id| *provider_id == "codex-crp")
+            .filter(|provider_id| *provider_id == CODEX_PROVIDER_ID)
             .map(|_| "pragmatic".to_string()),
         mcp_servers,
     })

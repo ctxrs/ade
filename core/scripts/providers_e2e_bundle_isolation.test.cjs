@@ -64,7 +64,7 @@ test("linux-arm lanes source repo-owned local adapters from the workspace before
   );
   assert.match(
     script,
-    /if \[\[ "\$\{CTX_BUNDLE_BUILD_CODEX_CRP:-0\}" == "0" \]\]; then[\s\S]*bundled_only_provider_csv="\$\(csv_remove_provider "\$\{bundled_only_provider_csv\}" "codex-crp"\)"/,
+    /if \[\[ "\$\{CTX_BUNDLE_BUILD_CODEX_CRP:-0\}" == "0" \]\]; then[\s\S]*bundled_only_provider_csv="\$\(csv_remove_provider "\$\{bundled_only_provider_csv\}" "codex"\)"/,
   );
   assert.match(
     script,
@@ -207,7 +207,7 @@ test("endpoint-ui lane defaults to host-mode bundles and scopes focused reruns",
   );
   assert.match(
     script,
-    /local first_pass_providers="\$\{endpoint_bundle_providers_override:-acp-crp-bridge,codex-crp,cline,copilot,gemini,goose,openhands,qwen,pi,opencode,mistral,droid,kimi\}"/,
+    /local first_pass_providers="\$\{endpoint_bundle_providers_override:-acp-crp-bridge,codex,cline,copilot,gemini,goose,openhands,qwen,pi,opencode,mistral,droid,kimi\}"/,
   );
   assert.match(
     script,
@@ -215,7 +215,7 @@ test("endpoint-ui lane defaults to host-mode bundles and scopes focused reruns",
   );
   assert.match(
     script,
-    /if csv_contains_provider "\$\{first_pass_providers\}" "codex-crp"; then/,
+    /if csv_contains_provider "\$\{first_pass_providers\}" "codex"; then/,
   );
   assert.match(
     script,

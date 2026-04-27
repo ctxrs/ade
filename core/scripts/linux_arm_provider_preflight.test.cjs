@@ -14,15 +14,15 @@ const mkFixtureDir = () => fs.mkdtempSync(path.join(os.tmpdir(), "ctx-linux-arm-
 
 const baseManifest = {
   version: 1,
-  critical_providers: [{ provider_id: "codex-crp" }],
-  full_nightly_providers: [{ provider_id: "codex-crp" }],
+  critical_providers: [{ provider_id: "codex" }],
+  full_nightly_providers: [{ provider_id: "codex" }],
 };
 
 const baseProviderMatrix = {
   version: 2,
   providers: [
     {
-      id: "codex-crp",
+      id: "codex",
       managed_install: {
         kind: "archive",
         targets: {
@@ -44,7 +44,7 @@ const baseRuntimeLock = {
   components: [
     {
       kind: "provider",
-      id: "codex-crp",
+      id: "codex",
       os: "linux",
       arch: "aarch64",
       sources: [{ source_type: "ci", uri: "locked://providers/codex-crp/linux/aarch64", sha256: "0".repeat(64) }],

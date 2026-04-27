@@ -86,7 +86,7 @@ fn write_fake_crp_script(root: &Path) -> PathBuf {
     let script_dir = root
         .join("providers")
         .join("agent-servers")
-        .join("codex-crp")
+        .join("codex")
         .join("fake");
     std::fs::create_dir_all(&script_dir).unwrap();
     let script_path = script_dir.join("fake_crp.py");
@@ -160,7 +160,7 @@ for line in sys.stdin:
 async fn configure_fake_provider(data_root: &Path, script_path: &Path) {
     let mut cfg = AgentServerConfigFile::default();
     cfg.providers.insert(
-        "codex-crp".to_string(),
+        "codex".to_string(),
         AgentServerCommand {
             command: "python3".to_string(),
             args: vec![script_path.to_string_lossy().to_string()],
@@ -371,9 +371,9 @@ async fn harness_container_sandbox_fake_acp() {
     let mut providers: HashMap<String, Arc<dyn ctx_providers::adapters::ProviderAdapter>> =
         HashMap::new();
     providers.insert(
-        "codex-crp".into(),
+        "codex".into(),
         Arc::new(Tier1CrpAdapter::from_raw(
-            "codex-crp",
+            "codex",
             "python3".to_string(),
             vec![script_path.to_string_lossy().to_string()],
         )),
@@ -387,7 +387,7 @@ async fn harness_container_sandbox_fake_acp() {
         None,
     ));
     let mut app = api::router(state.clone());
-    let session = create_session_with_provider(&mut app, git_repo.path(), "codex-crp").await;
+    let session = create_session_with_provider(&mut app, git_repo.path(), "codex").await;
 
     let session_id = session.id.0.to_string();
     post_message(&mut app, &session_id, PROMPT).await;
@@ -449,9 +449,9 @@ async fn harness_container_sandbox_egress_allowlist() {
     let mut providers: HashMap<String, Arc<dyn ctx_providers::adapters::ProviderAdapter>> =
         HashMap::new();
     providers.insert(
-        "codex-crp".into(),
+        "codex".into(),
         Arc::new(Tier1CrpAdapter::from_raw(
-            "codex-crp",
+            "codex",
             "python3".to_string(),
             vec![script_path.to_string_lossy().to_string()],
         )),
@@ -465,7 +465,7 @@ async fn harness_container_sandbox_egress_allowlist() {
         None,
     ));
     let mut app = api::router(state.clone());
-    let session = create_session_with_provider(&mut app, git_repo.path(), "codex-crp").await;
+    let session = create_session_with_provider(&mut app, git_repo.path(), "codex").await;
     let workspace = state
         .core
         .stores
@@ -595,9 +595,9 @@ async fn harness_container_sandbox_egress_allow_all() {
     let mut providers: HashMap<String, Arc<dyn ctx_providers::adapters::ProviderAdapter>> =
         HashMap::new();
     providers.insert(
-        "codex-crp".into(),
+        "codex".into(),
         Arc::new(Tier1CrpAdapter::from_raw(
-            "codex-crp",
+            "codex",
             "python3".to_string(),
             vec![script_path.to_string_lossy().to_string()],
         )),
@@ -611,7 +611,7 @@ async fn harness_container_sandbox_egress_allow_all() {
         None,
     ));
     let mut app = api::router(state.clone());
-    let session = create_session_with_provider(&mut app, git_repo.path(), "codex-crp").await;
+    let session = create_session_with_provider(&mut app, git_repo.path(), "codex").await;
     let workspace = state
         .core
         .stores
@@ -728,9 +728,9 @@ async fn harness_container_sandbox_egress_deny_all() {
     let mut providers: HashMap<String, Arc<dyn ctx_providers::adapters::ProviderAdapter>> =
         HashMap::new();
     providers.insert(
-        "codex-crp".into(),
+        "codex".into(),
         Arc::new(Tier1CrpAdapter::from_raw(
-            "codex-crp",
+            "codex",
             "python3".to_string(),
             vec![script_path.to_string_lossy().to_string()],
         )),
@@ -744,7 +744,7 @@ async fn harness_container_sandbox_egress_deny_all() {
         None,
     ));
     let mut app = api::router(state.clone());
-    let session = create_session_with_provider(&mut app, git_repo.path(), "codex-crp").await;
+    let session = create_session_with_provider(&mut app, git_repo.path(), "codex").await;
     let workspace = state
         .core
         .stores

@@ -208,7 +208,7 @@ pub fn pinned_subscription_models_value(
     provider_version: Option<&str>,
 ) -> Option<serde_json::Value> {
     match provider_id {
-        "codex-crp" => Some(pinned_reasoning_models_value(
+        "codex" => Some(pinned_reasoning_models_value(
             "codex_bundle_pinned",
             format!(
                 "{}/{}",
@@ -239,7 +239,7 @@ mod tests {
     #[test]
     fn codex_pinned_subscription_models_include_reasoning_variants() {
         let payload =
-            pinned_subscription_models_value("codex-crp", None).expect("codex pinned payload");
+            pinned_subscription_models_value("codex", None).expect("codex pinned payload");
         assert_eq!(
             payload
                 .get("current_model_id")

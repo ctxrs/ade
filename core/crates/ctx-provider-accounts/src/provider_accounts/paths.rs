@@ -3,21 +3,21 @@ use std::path::{Path, PathBuf};
 use super::shared::ensure_safe_secret_ref;
 use super::CODEX_RUNTIME_OWNER_FILE;
 use anyhow::Result;
-use ctx_core::provider_ids::LEGACY_CODEX_PROVIDER_ID;
+use ctx_core::provider_ids::{CODEX_CRP_ADAPTER_ID, CODEX_PROVIDER_ID};
 
-const CODEX_CRP_PROVIDER_ROOT: &str = "codex-crp";
+const CODEX_PROVIDER_ROOT: &str = CODEX_PROVIDER_ID;
 
 pub fn legacy_codex_accounts_root(data_root: &Path) -> PathBuf {
     data_root
         .join("providers")
-        .join(LEGACY_CODEX_PROVIDER_ID)
+        .join(CODEX_CRP_ADAPTER_ID)
         .join("accounts")
 }
 
 pub fn codex_accounts_root(data_root: &Path) -> PathBuf {
     data_root
         .join("providers")
-        .join(CODEX_CRP_PROVIDER_ROOT)
+        .join(CODEX_PROVIDER_ROOT)
         .join("accounts")
 }
 
@@ -57,11 +57,11 @@ pub fn amp_accounts_root(data_root: &Path) -> PathBuf {
 }
 
 pub fn legacy_codex_secrets_root(data_root: &Path) -> PathBuf {
-    data_root.join("secrets").join(LEGACY_CODEX_PROVIDER_ID)
+    data_root.join("secrets").join(CODEX_CRP_ADAPTER_ID)
 }
 
 pub fn codex_secrets_root(data_root: &Path) -> PathBuf {
-    data_root.join("secrets").join(CODEX_CRP_PROVIDER_ROOT)
+    data_root.join("secrets").join(CODEX_PROVIDER_ROOT)
 }
 
 pub fn claude_secrets_root(data_root: &Path) -> PathBuf {
@@ -126,14 +126,14 @@ pub(crate) fn cursor_secret_path(data_root: &Path, secret_ref: &str) -> Result<P
 pub fn legacy_codex_runtime_home(data_root: &Path) -> PathBuf {
     data_root
         .join("providers")
-        .join(LEGACY_CODEX_PROVIDER_ID)
+        .join(CODEX_CRP_ADAPTER_ID)
         .join("home")
 }
 
 pub fn codex_runtime_home(data_root: &Path) -> PathBuf {
     data_root
         .join("providers")
-        .join(CODEX_CRP_PROVIDER_ROOT)
+        .join(CODEX_PROVIDER_ROOT)
         .join("home")
 }
 

@@ -116,7 +116,7 @@ for provider_id in required:
                 "provider claude-cli entrypoint must be node_modules/@anthropic-ai/claude-code/cli-wrapper.cjs"
             )
 
-    if provider_id == "codex-crp":
+    if provider_id == "codex":
         releases = [r for r in releases if isinstance(r, dict)]
         release = releases[0] if releases else {}
         provenance = release.get("provenance") if isinstance(release, dict) else {}

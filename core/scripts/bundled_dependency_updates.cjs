@@ -521,7 +521,7 @@ const providerPolicyIssues = ({
   const primaryRelease = Array.isArray(entry?.releases) ? entry.releases[0] : null;
   const releaseStatus = String(primaryRelease?.status || "supported").trim();
   const releaseNotes = String(primaryRelease?.notes || "").trim().toLowerCase();
-  const codexIssues = providerId === "codex-crp" ? codexPolicyIssues(entry) : [];
+  const codexIssues = providerId === "codex" ? codexPolicyIssues(entry) : [];
 
   if (releaseStatus !== "supported") {
     issues.push(`release status '${releaseStatus}' (expected supported)`);
@@ -542,7 +542,7 @@ const providerPolicyIssues = ({
     }
   }
 
-  if (latestInfo.resolver === "archive_unresolved" && !(providerId === "codex-crp" && codexIssues.length === 0)) {
+  if (latestInfo.resolver === "archive_unresolved" && !(providerId === "codex" && codexIssues.length === 0)) {
     issues.push("archive source resolver is unresolved");
   }
 
@@ -650,7 +650,7 @@ const main = async () => {
       latestUpstreamVersion: upstreamInfo?.latestVersion || "",
       upstreamResolver: upstreamInfo?.resolver || "",
       upstreamSourcePath: upstreamInfo?.sourcePath || "",
-      codexProvenance: providerId === "codex-crp" ? codexProvenance(entry) : null,
+      codexProvenance: providerId === "codex" ? codexProvenance(entry) : null,
       policyIssues,
       updateTargets: latestInfo.updateTargets,
     });
@@ -698,7 +698,7 @@ const main = async () => {
         `provider-upstream:${upstreamStatus}\t${row.id}\t${row.currentUpstreamVersion || "<unset>"}\t${row.latestUpstreamVersion || "<unknown>"}\t${row.upstreamResolver}\t${row.upstreamSourcePath || "-"}`,
       );
     }
-    if (row.id === "codex-crp" && row.codexProvenance) {
+    if (row.id === "codex" && row.codexProvenance) {
       const p = row.codexProvenance;
       const provenanceStatus =
         p.upstreamRepo &&
@@ -808,7 +808,7 @@ const main = async () => {
       managed.targets = JSON.parse(JSON.stringify(row.updateTargets.targets || {}));
     }
 
-    if (row.id === "codex-crp" && row.currentVersion !== nextVersion) {
+    if (row.id === "codex" && row.currentVersion !== nextVersion) {
       throw new Error(
         `codex update requires manual provenance review (current=${row.currentVersion || "<unset>"}, next=${nextVersion || "<unset>"})`,
       );

@@ -24,7 +24,7 @@ use ctx_harness_sources::HarnessEndpointVerificationStatus;
 fn test_endpoint(id: &str) -> harness_sources::HarnessEndpointRecord {
     harness_sources::HarnessEndpointRecord {
         id: id.to_string(),
-        provider_id: "codex-crp".to_string(),
+        provider_id: "codex".to_string(),
         name: "Test endpoint".to_string(),
         base_url: Some("https://api.openai.com/v1".to_string()),
         api_shape: HarnessApiShape::OpenaiResponses,
@@ -278,13 +278,17 @@ async fn resolve_claude_login_runtime_prefers_configured_runtime_command_when_lo
 fn cache_key_provider_matcher_works() {
     assert!(cache_key_matches_provider(
         "7f72430e-4c43-499f-b54d-6ce2deaed4a0/host/codex",
+        "codex"
+    ));
+    assert!(!cache_key_matches_provider(
+        "7f72430e-4c43-499f-b54d-6ce2deaed4a0/host/codex",
         "codex-crp"
     ));
     assert!(!cache_key_matches_provider(
         "7f72430e-4c43-499f-b54d-6ce2deaed4a0/container/claude-crp",
-        "codex-crp"
+        "codex"
     ));
-    assert!(!cache_key_matches_provider("not-a-key", "codex-crp"));
+    assert!(!cache_key_matches_provider("not-a-key", "codex"));
 }
 
 #[test]
@@ -309,7 +313,7 @@ fn classify_probe_error_treats_models_list_protocol_failures_as_generic_errors()
 fn selected_endpoint_from_harness_config_prefers_endpoint_selection() {
     let endpoint =
         selected_endpoint_from_harness_config(Some(harness_sources::HarnessProviderSourceConfig {
-            provider_id: "codex-crp".to_string(),
+            provider_id: "codex".to_string(),
             selected_source_kind: HarnessSourceKind::Endpoint,
             selected_endpoint_id: Some("ep-123".to_string()),
             endpoints: Vec::new(),
@@ -318,7 +322,7 @@ fn selected_endpoint_from_harness_config_prefers_endpoint_selection() {
 
     let subscription =
         selected_endpoint_from_harness_config(Some(harness_sources::HarnessProviderSourceConfig {
-            provider_id: "codex-crp".to_string(),
+            provider_id: "codex".to_string(),
             selected_source_kind: HarnessSourceKind::Subscription,
             selected_endpoint_id: Some("ep-123".to_string()),
             endpoints: Vec::new(),
@@ -330,7 +334,7 @@ fn selected_endpoint_from_harness_config_prefers_endpoint_selection() {
 fn selected_endpoint_record_from_harness_config_returns_selected_record() {
     let selected = selected_endpoint_record_from_harness_config(Some(
         &harness_sources::HarnessProviderSourceConfig {
-            provider_id: "codex-crp".to_string(),
+            provider_id: "codex".to_string(),
             selected_source_kind: HarnessSourceKind::Endpoint,
             selected_endpoint_id: Some("ep-2".to_string()),
             endpoints: vec![test_endpoint("ep-1"), test_endpoint("ep-2")],
@@ -341,7 +345,7 @@ fn selected_endpoint_record_from_harness_config_returns_selected_record() {
 
     let missing = selected_endpoint_record_from_harness_config(Some(
         &harness_sources::HarnessProviderSourceConfig {
-            provider_id: "codex-crp".to_string(),
+            provider_id: "codex".to_string(),
             selected_source_kind: HarnessSourceKind::Endpoint,
             selected_endpoint_id: Some("ep-3".to_string()),
             endpoints: vec![test_endpoint("ep-1"), test_endpoint("ep-2")],
@@ -363,7 +367,7 @@ fn endpoint_models_payload_includes_models_and_meta() {
         name: Some("GPT-5.2".to_string()),
     }];
 
-    let payload = endpoint_models_payload("codex-crp", &endpoint, now);
+    let payload = endpoint_models_payload("codex", &endpoint, now);
     assert_eq!(
         payload
             .pointer("/models/0/id")
@@ -433,7 +437,7 @@ fn endpoint_models_payload_merges_manual_model_ids() {
     endpoint.model_catalog_source = Some("mixed".to_string());
     endpoint.model_catalog_status = harness_sources::EndpointModelCatalogStatus::Ready;
 
-    let payload = endpoint_models_payload("codex-crp", &endpoint, now);
+    let payload = endpoint_models_payload("codex", &endpoint, now);
     let models = payload
         .get("models")
         .and_then(serde_json::Value::as_array)
@@ -449,7 +453,7 @@ fn endpoint_models_payload_merges_manual_model_ids() {
 #[test]
 fn endpoint_selection_is_active_requires_selected_endpoint_record() {
     let active = harness_sources::HarnessProviderSourceConfig {
-        provider_id: "codex-crp".to_string(),
+        provider_id: "codex".to_string(),
         selected_source_kind: HarnessSourceKind::Endpoint,
         selected_endpoint_id: Some("ep-1".to_string()),
         endpoints: vec![test_endpoint("ep-1")],
@@ -457,7 +461,7 @@ fn endpoint_selection_is_active_requires_selected_endpoint_record() {
     assert!(endpoint_selection_is_active(&active));
 
     let missing = harness_sources::HarnessProviderSourceConfig {
-        provider_id: "codex-crp".to_string(),
+        provider_id: "codex".to_string(),
         selected_source_kind: HarnessSourceKind::Endpoint,
         selected_endpoint_id: Some("ep-2".to_string()),
         endpoints: vec![test_endpoint("ep-1")],
@@ -530,7 +534,7 @@ fn endpoint_catalog_runtime_probe_failure_preserves_endpoint_status() {
 #[test]
 fn provider_auth_mode_prefers_endpoint_for_active_endpoint_selection() {
     let endpoint = harness_sources::HarnessProviderSourceConfig {
-        provider_id: "codex-crp".to_string(),
+        provider_id: "codex".to_string(),
         selected_source_kind: HarnessSourceKind::Endpoint,
         selected_endpoint_id: Some("ep-1".to_string()),
         endpoints: vec![test_endpoint("ep-1")],
@@ -538,7 +542,7 @@ fn provider_auth_mode_prefers_endpoint_for_active_endpoint_selection() {
     assert_eq!(provider_auth_mode(true, Some(&endpoint)), "endpoint");
 
     let subscription = harness_sources::HarnessProviderSourceConfig {
-        provider_id: "codex-crp".to_string(),
+        provider_id: "codex".to_string(),
         selected_source_kind: HarnessSourceKind::Subscription,
         selected_endpoint_id: None,
         endpoints: vec![],
@@ -625,7 +629,7 @@ fn import_result_restart_filter_ignores_non_mutating_statuses() {
     };
     let error = provider_auth_import::ProviderAuthImportResult {
         candidate_id: "cand-3".to_string(),
-        provider_id: "codex-crp".to_string(),
+        provider_id: "codex".to_string(),
         status: "error".to_string(),
         profile_id: None,
         message: Some("failed".to_string()),
@@ -637,7 +641,7 @@ fn import_result_restart_filter_ignores_non_mutating_statuses() {
 #[test]
 fn apply_install_target_status_marks_mismatched_managed_target_missing() {
     let mut status = ctx_providers::adapters::ProviderStatus {
-        provider_id: "codex-crp".to_string(),
+        provider_id: "codex".to_string(),
         installed: true,
         detected_path: Some("/tmp/codex".to_string()),
         version: Some("1.0.0".to_string()),
@@ -664,7 +668,7 @@ fn apply_install_target_status_marks_mismatched_managed_target_missing() {
 #[test]
 fn apply_install_target_status_keeps_matching_managed_target_healthy() {
     let mut status = ctx_providers::adapters::ProviderStatus {
-        provider_id: "codex-crp".to_string(),
+        provider_id: "codex".to_string(),
         installed: true,
         detected_path: Some("/tmp/codex".to_string()),
         version: Some("1.0.0".to_string()),
@@ -688,7 +692,7 @@ fn apply_install_target_status_keeps_matching_managed_target_healthy() {
 #[test]
 fn apply_install_target_status_marks_host_detected_status_unverified_for_container() {
     let mut status = ctx_providers::adapters::ProviderStatus {
-        provider_id: "codex-crp".to_string(),
+        provider_id: "codex".to_string(),
         installed: true,
         detected_path: Some("/usr/local/bin/codex".to_string()),
         version: Some("1.0.0".to_string()),
@@ -715,7 +719,7 @@ fn apply_install_target_status_marks_host_detected_status_unverified_for_contain
 #[test]
 fn should_skip_install_for_healthy_provider_without_updates() {
     let status = ctx_providers::adapters::ProviderStatus {
-        provider_id: "codex-crp".to_string(),
+        provider_id: "codex".to_string(),
         installed: true,
         detected_path: None,
         version: Some("1.0.0".to_string()),
@@ -733,7 +737,7 @@ fn should_not_skip_install_for_healthy_provider_with_release_update() {
     let mut details = HashMap::new();
     details.insert("matrix_update_available".to_string(), "true".to_string());
     let status = ctx_providers::adapters::ProviderStatus {
-        provider_id: "codex-crp".to_string(),
+        provider_id: "codex".to_string(),
         installed: true,
         detected_path: None,
         version: Some("1.0.0".to_string()),
@@ -754,7 +758,7 @@ fn should_not_skip_install_for_healthy_provider_with_dependency_update() {
         "true".to_string(),
     );
     let status = ctx_providers::adapters::ProviderStatus {
-        provider_id: "codex-crp".to_string(),
+        provider_id: "codex".to_string(),
         installed: true,
         detected_path: None,
         version: Some("1.0.0".to_string()),
@@ -770,7 +774,7 @@ fn should_not_skip_install_for_healthy_provider_with_dependency_update() {
 #[test]
 fn target_aware_status_does_not_skip_container_install_for_host_only_status() {
     let mut status = ctx_providers::adapters::ProviderStatus {
-        provider_id: "codex-crp".to_string(),
+        provider_id: "codex".to_string(),
         installed: true,
         detected_path: Some("/usr/local/bin/codex".to_string()),
         version: Some("1.0.0".to_string()),
@@ -804,7 +808,7 @@ struct RestartTrackingAdapter {
 impl ProviderAdapter for RestartTrackingAdapter {
     async fn inspect(&self) -> anyhow::Result<ProviderStatus> {
         Ok(ProviderStatus {
-            provider_id: "codex-crp".to_string(),
+            provider_id: "codex".to_string(),
             installed: true,
             detected_path: None,
             version: Some("test".to_string()),
@@ -850,7 +854,7 @@ struct RestartFailingAdapter {
 impl ProviderAdapter for RestartFailingAdapter {
     async fn inspect(&self) -> anyhow::Result<ProviderStatus> {
         Ok(ProviderStatus {
-            provider_id: "codex-crp".to_string(),
+            provider_id: "codex".to_string(),
             installed: true,
             detected_path: None,
             version: Some("test".to_string()),
@@ -896,7 +900,7 @@ async fn restart_provider_for_auth_change_invalidates_only_matching_provider_pro
         temp.path().to_path_buf(),
         stores,
         HashMap::from([(
-            "codex-crp".to_string(),
+            "codex".to_string(),
             adapter.clone() as Arc<dyn ProviderAdapter>,
         )]),
         "http://127.0.0.1:4310".to_string(),
@@ -907,7 +911,7 @@ async fn restart_provider_for_auth_change_invalidates_only_matching_provider_pro
         "ws-a/host/codex".to_string(),
         crate::daemon::CachedProviderOptions {
             cached_at: std::time::Instant::now(),
-            value: serde_json::json!({ "provider_id": "codex-crp", "probe_ok": false }),
+            value: serde_json::json!({ "provider_id": "codex", "probe_ok": false }),
         },
     );
     state.providers.options_cache.lock().await.insert(
@@ -932,7 +936,7 @@ async fn restart_provider_for_auth_change_invalidates_only_matching_provider_pro
         },
     );
 
-    restart_provider_for_auth_change(&state, "codex-crp", "test auth updated")
+    restart_provider_for_auth_change(&state, "codex", "test auth updated")
         .await
         .expect("restart should succeed");
 
@@ -958,7 +962,7 @@ async fn restart_provider_for_auth_change_returns_error_when_adapter_restart_fai
         temp.path().to_path_buf(),
         stores,
         HashMap::from([(
-            "codex-crp".to_string(),
+            "codex".to_string(),
             adapter.clone() as Arc<dyn ProviderAdapter>,
         )]),
         "http://127.0.0.1:4310".to_string(),
@@ -969,16 +973,16 @@ async fn restart_provider_for_auth_change_returns_error_when_adapter_restart_fai
         "ws-a/host/codex".to_string(),
         crate::daemon::CachedProviderOptions {
             cached_at: std::time::Instant::now(),
-            value: serde_json::json!({ "provider_id": "codex-crp", "probe_ok": false }),
+            value: serde_json::json!({ "provider_id": "codex", "probe_ok": false }),
         },
     );
 
-    let err = restart_provider_for_auth_change(&state, "codex-crp", "test auth updated")
+    let err = restart_provider_for_auth_change(&state, "codex", "test auth updated")
         .await
         .expect_err("restart failure should bubble up");
     assert!(err
         .to_string()
-        .contains("provider auth updated but drain-restart failed for codex-crp"));
+        .contains("provider auth updated but drain-restart failed for codex"));
 
     let options_cache = state.providers.options_cache.lock().await;
     assert!(!options_cache.contains_key("ws-a/host/codex"));
@@ -995,7 +999,7 @@ async fn set_codex_active_account_returns_error_when_restart_fails() {
         temp.path().to_path_buf(),
         stores,
         HashMap::from([(
-            "codex-crp".to_string(),
+            "codex".to_string(),
             Arc::new(RestartFailingAdapter::default()) as Arc<dyn ProviderAdapter>,
         )]),
         "http://127.0.0.1:4310".to_string(),
@@ -1050,7 +1054,7 @@ async fn select_provider_harness_source_invalidates_only_matching_provider_probe
         "ws-a/host/codex".to_string(),
         crate::daemon::CachedProviderOptions {
             cached_at: std::time::Instant::now(),
-            value: serde_json::json!({ "provider_id": "codex-crp", "probe_ok": false }),
+            value: serde_json::json!({ "provider_id": "codex", "probe_ok": false }),
         },
     );
     state.providers.options_cache.lock().await.insert(
@@ -1077,7 +1081,7 @@ async fn select_provider_harness_source_invalidates_only_matching_provider_probe
 
     let Json(config) = select_provider_harness_source(
         State(Arc::clone(&state)),
-        Path("codex-crp".to_string()),
+        Path("codex".to_string()),
         Json(SelectHarnessSourceReq {
             source_kind: HarnessSourceKind::Subscription,
             endpoint_id: None,
@@ -1086,7 +1090,7 @@ async fn select_provider_harness_source_invalidates_only_matching_provider_probe
     .await
     .expect("select provider harness source");
 
-    assert_eq!(config.provider_id, "codex-crp");
+    assert_eq!(config.provider_id, "codex");
     assert_eq!(config.selected_source_kind, HarnessSourceKind::Subscription);
 
     let options_cache = state.providers.options_cache.lock().await;
@@ -1112,7 +1116,7 @@ async fn get_install_statuses_returns_known_and_missing_installs_in_request_orde
     ));
 
     let (install_id, started_new) = state
-        .start_install("codex-crp".to_string(), Some(InstallTarget::Container))
+        .start_install("codex".to_string(), Some(InstallTarget::Container))
         .await;
     assert!(started_new);
     state
@@ -1120,7 +1124,7 @@ async fn get_install_statuses_returns_known_and_missing_installs_in_request_orde
             install_id,
             InstallProgressEvent {
                 install_id,
-                provider_id: "codex-crp".to_string(),
+                provider_id: "codex".to_string(),
                 target: Some(InstallTarget::Container),
                 at: Utc::now(),
                 stage: "download".to_string(),
@@ -1150,7 +1154,7 @@ async fn get_install_statuses_returns_known_and_missing_installs_in_request_orde
         .info
         .as_ref()
         .expect("known install should return status");
-    assert_eq!(info.provider_id, "codex-crp");
+    assert_eq!(info.provider_id, "codex");
     assert_eq!(info.target, Some(InstallTarget::Container));
     assert!(matches!(
         info.state,
