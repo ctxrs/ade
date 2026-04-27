@@ -34,7 +34,12 @@ pub(super) fn build_mobile_connection_profile_from_row(
     let scopes_json: String = row.try_get("scopes_json")?;
     let created_at: String = row.try_get("created_at")?;
     let last_used_at: Option<String> = row.try_get("last_used_at")?;
-    let scopes: Vec<String> = serde_json::from_str(&scopes_json).unwrap_or_default();
+    let scopes: Vec<String> = serde_json::from_str(&scopes_json).map_err(|err| {
+        anyhow::anyhow!(
+            "invalid mobile profile scopes_json for profile {}: {err}",
+            id
+        )
+    })?;
     Ok(MobileConnectionProfile {
         id: ConnectionProfileId(uuid::Uuid::parse_str(&id)?),
         label: row.try_get("label")?,

@@ -21,78 +21,27 @@ const REAPER_INTERVAL_SECS: u64 = 60;
 const WEB_SESSION_STREAM_TOKEN_TTL_SECS: i64 = 30;
 pub const WEB_SESSION_WORKER_AUTH_HEADER: &str = "x-ctx-worker-auth";
 
+mod handle;
 mod runtime_support;
+mod types;
 mod view;
 mod worker_bundle;
 
 #[cfg(test)]
 mod tests;
 
+pub use handle::WebSessionHandle;
+use handle::WebSessionRuntime;
 use runtime_support::{
     allocate_port, build_run_payload, build_signal_connect_path, build_stream_connect_path,
     build_stream_path, log_stream,
 };
+pub use types::{
+    WebSessionCreateRequest, WebSessionInfo, WebSessionRunRequest, WebSessionRunResponse,
+    WebSessionStatus, WebSessionViewport,
+};
 pub use view::render_web_session_view;
 pub use worker_bundle::ensure_worker_bundle;
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum WebSessionStatus {
-    Running,
-    Closed,
-    Error,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WebSessionViewport {
-    pub width: u32,
-    pub height: u32,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WebSessionInfo {
-    pub id: String,
-    pub kind: String,
-    pub session_id: Option<String>,
-    pub worktree_id: Option<String>,
-    pub status: WebSessionStatus,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
-    pub last_activity: DateTime<Utc>,
-    pub url: String,
-    pub viewport: WebSessionViewport,
-    pub fps: u32,
-    pub viewers: u32,
-    pub stream_path: String,
-    pub stream_url: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WebSessionCreateRequest {
-    pub url: String,
-    pub viewport: Option<WebSessionViewport>,
-    pub fps: Option<u32>,
-    pub work_dir: Option<PathBuf>,
-    pub session_id: Option<String>,
-    pub worktree_id: Option<String>,
-    pub node_bin: PathBuf,
-    pub worker_path: PathBuf,
-    pub node_modules_path: PathBuf,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WebSessionRunRequest {
-    pub code: Option<String>,
-    pub script_path: Option<String>,
-    pub timeout_ms: Option<u64>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WebSessionRunResponse {
-    pub ok: bool,
-    pub result: Option<serde_json::Value>,
-    pub error: Option<String>,
-}
 
 #[derive(Debug, Clone)]
 pub struct NodeRuntimeSpec {
@@ -103,136 +52,6 @@ pub struct NodeRuntimeSpec {
 pub struct WorkerBundle {
     pub worker_path: PathBuf,
     pub node_modules_path: PathBuf,
-}
-
-pub struct WebSessionHandle {
-    info: WebSessionInfo,
-    stream_tokens: Arc<Mutex<HashMap<String, WebSessionStreamToken>>>,
-    worker_auth_secret: String,
-    runtime: Arc<Mutex<WebSessionRuntime>>,
-    run_lock: Arc<Mutex<()>>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum WebSessionStreamTokenKind {
-    View,
-    Signal,
-}
-
-#[derive(Debug, Clone)]
-struct WebSessionStreamToken {
-    kind: WebSessionStreamTokenKind,
-    expires_at: DateTime<Utc>,
-}
-
-struct WebSessionRuntime {
-    status: WebSessionStatus,
-    updated_at: DateTime<Utc>,
-    last_activity: DateTime<Utc>,
-    viewers: u32,
-    worker_port: u16,
-    child: Option<Child>,
-    work_dir: Option<PathBuf>,
-}
-
-impl WebSessionHandle {
-    pub async fn snapshot(&self) -> WebSessionInfo {
-        let runtime = self.runtime.lock().await;
-        WebSessionInfo {
-            status: runtime.status.clone(),
-            updated_at: runtime.updated_at,
-            last_activity: runtime.last_activity,
-            viewers: runtime.viewers,
-            ..self.info.clone()
-        }
-    }
-
-    pub async fn touch(&self) {
-        let mut runtime = self.runtime.lock().await;
-        runtime.last_activity = Utc::now();
-        runtime.updated_at = runtime.last_activity;
-    }
-
-    pub async fn set_viewers(&self, viewers: u32) {
-        let mut runtime = self.runtime.lock().await;
-        runtime.viewers = viewers;
-        runtime.updated_at = Utc::now();
-    }
-
-    pub async fn worker_port(&self) -> u16 {
-        let runtime = self.runtime.lock().await;
-        runtime.worker_port
-    }
-
-    pub async fn work_dir(&self) -> Option<PathBuf> {
-        let runtime = self.runtime.lock().await;
-        runtime.work_dir.clone()
-    }
-
-    async fn issue_stream_connect_path(
-        &self,
-        kind: WebSessionStreamTokenKind,
-    ) -> (String, DateTime<Utc>) {
-        let now = Utc::now();
-        let expires_at = now + chrono::Duration::seconds(WEB_SESSION_STREAM_TOKEN_TTL_SECS);
-        let mut tokens = self.stream_tokens.lock().await;
-        tokens.retain(|_, access| access.expires_at > now);
-        let token = Uuid::new_v4().to_string();
-        tokens.insert(token.clone(), WebSessionStreamToken { kind, expires_at });
-        let path = match kind {
-            WebSessionStreamTokenKind::View => build_stream_connect_path(&self.info.id, &token),
-            WebSessionStreamTokenKind::Signal => build_signal_connect_path(&self.info.id, &token),
-        };
-        (path, expires_at)
-    }
-
-    pub async fn issue_view_connect_path(&self) -> (String, DateTime<Utc>) {
-        self.issue_stream_connect_path(WebSessionStreamTokenKind::View)
-            .await
-    }
-
-    pub async fn issue_signal_connect_path(&self) -> (String, DateTime<Utc>) {
-        self.issue_stream_connect_path(WebSessionStreamTokenKind::Signal)
-            .await
-    }
-
-    async fn consume_stream_token(&self, token: &str, kind: WebSessionStreamTokenKind) -> bool {
-        let now = Utc::now();
-        let mut tokens = self.stream_tokens.lock().await;
-        tokens.retain(|_, access| access.expires_at > now);
-        let Some(access) = tokens.get(token).cloned() else {
-            return false;
-        };
-        if access.expires_at <= now || access.kind != kind {
-            return false;
-        }
-        tokens.remove(token);
-        true
-    }
-
-    pub async fn consume_view_token(&self, token: &str) -> bool {
-        self.consume_stream_token(token, WebSessionStreamTokenKind::View)
-            .await
-    }
-
-    pub async fn consume_signal_token(&self, token: &str) -> bool {
-        self.consume_stream_token(token, WebSessionStreamTokenKind::Signal)
-            .await
-    }
-
-    pub fn worker_auth_secret(&self) -> &str {
-        &self.worker_auth_secret
-    }
-
-    pub async fn close(&self) -> Result<()> {
-        let mut runtime = self.runtime.lock().await;
-        if let Some(mut child) = runtime.child.take() {
-            let _ = child.kill().await;
-        }
-        runtime.status = WebSessionStatus::Closed;
-        runtime.updated_at = Utc::now();
-        Ok(())
-    }
 }
 
 pub struct WebSessionManager {

@@ -27,7 +27,6 @@ pub(in crate::api) struct MergeQueueListParams {
 pub(in crate::api) struct CreateMobileConnectionProfileReq {
     pub(in crate::api) label: String,
     pub(in crate::api) base_url: String,
-    #[serde(default)]
     pub(in crate::api) scopes: Vec<String>,
 }
 

@@ -12,7 +12,10 @@ use ctx_core::models::*;
 
 use crate::daemon::AppState;
 
-use super::super::{MobileSecureEnvelope, MobileSecureStreamQuery};
+use super::super::{
+    load_mobile_auth_context_for_profile, MobileScope, MobileSecureEnvelope,
+    MobileSecureStreamQuery,
+};
 use super::common::{bump_latest_snapshot_rev, send_secure_ws, HEAD_BATCH_FLUSH_INTERVAL};
 use super::queue::{
     take_next_workspace_stream_item, workspace_stream_is_idle, NextWorkspaceStreamItem,
@@ -34,6 +37,13 @@ async fn require_mobile_secure_stream_access(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::UNAUTHORIZED)?;
     if !cfg.enabled {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+    let Some(mobile_auth) = load_mobile_auth_context_for_profile(state, cfg.profile_id).await?
+    else {
+        return Err(StatusCode::UNAUTHORIZED);
+    };
+    if !mobile_auth.allows(MobileScope::WorkspaceStream) {
         return Err(StatusCode::UNAUTHORIZED);
     }
     let device = state
@@ -110,6 +120,21 @@ async fn handle_mobile_secure_ws(
     let cfg = cfg.ok_or_else(|| anyhow::anyhow!("mobile access not configured"))?;
     if !cfg.enabled {
         return Err(anyhow::anyhow!("mobile access not enabled"));
+    }
+    let Some(mobile_auth) = load_mobile_auth_context_for_profile(&state, cfg.profile_id)
+        .await
+        .map_err(|status| anyhow::anyhow!("failed to load mobile access profile: {status}"))?
+    else {
+        return Err(anyhow::anyhow!(
+            "{}",
+            MobileScope::WorkspaceStream.missing_error()
+        ));
+    };
+    if !mobile_auth.allows(MobileScope::WorkspaceStream) {
+        return Err(anyhow::anyhow!(
+            "{}",
+            MobileScope::WorkspaceStream.missing_error()
+        ));
     }
     let device = state
         .global_store()

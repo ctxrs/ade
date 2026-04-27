@@ -172,6 +172,7 @@ mod daemon_smoke;
 mod execution_launch;
 mod health_diagnostics;
 mod log_path_boundaries;
+mod mobile_access_routes;
 mod mobile_profile_routes;
 mod mobile_secure_routes;
 mod provider_routes;

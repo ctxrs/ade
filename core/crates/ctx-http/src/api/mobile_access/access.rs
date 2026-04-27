@@ -144,12 +144,53 @@ pub(in crate::api) async fn enable_mobile_access(
                 }),
             )
         })? {
-        Some(cfg) => (
-            cfg.daemon_public_key,
-            cfg.daemon_private_key,
-            cfg.profile_id,
-            cfg.created_at,
-        ),
+        Some(cfg) => {
+            let profile = state
+                .global_store()
+                .get_mobile_connection_profile(cfg.profile_id)
+                .await
+                .map_err(|e| {
+                    tracing::error!("failed to read managed mobile profile: {e:?}");
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(ApiErrorResp {
+                            error: "failed to read managed profile".into(),
+                        }),
+                    )
+                })?
+                .ok_or_else(|| {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(ApiErrorResp {
+                            error: "managed mobile profile is missing".into(),
+                        }),
+                    )
+                })?;
+            if profile.scopes.is_empty() {
+                state
+                    .global_store()
+                    .update_mobile_connection_profile_scopes(
+                        profile.id,
+                        default_mobile_profile_scopes(),
+                    )
+                    .await
+                    .map_err(|e| {
+                        tracing::error!("failed to backfill managed mobile profile scopes: {e:?}");
+                        (
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            Json(ApiErrorResp {
+                                error: "failed to update managed profile".into(),
+                            }),
+                        )
+                    })?;
+            }
+            (
+                cfg.daemon_public_key,
+                cfg.daemon_private_key,
+                cfg.profile_id,
+                cfg.created_at,
+            )
+        }
         None => {
             let (public_key, private_key) = crate::mobile_e2ee::generate_keypair();
             let token = generate_mobile_api_token();
@@ -162,7 +203,7 @@ pub(in crate::api) async fn enable_mobile_access(
                     public_url.as_str().trim_end_matches('/').to_string(),
                     token_hash,
                     token_prefix,
-                    Vec::new(),
+                    default_mobile_profile_scopes(),
                 )
                 .await
                 .map_err(|e| {

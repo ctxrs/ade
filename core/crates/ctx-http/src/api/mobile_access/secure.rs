@@ -34,6 +34,32 @@ pub(in crate::api) async fn pair_mobile_device(
             }),
         ));
     }
+    let Some(mobile_auth) = load_mobile_auth_context_for_profile(&state, cfg.profile_id)
+        .await
+        .map_err(|status| {
+            (
+                status,
+                Json(ApiErrorResp {
+                    error: "failed to read mobile access profile".into(),
+                }),
+            )
+        })?
+    else {
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            Json(ApiErrorResp {
+                error: MobileScope::DeviceRegistration.missing_error().into(),
+            }),
+        ));
+    };
+    if !mobile_auth.allows(MobileScope::DeviceRegistration) {
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            Json(ApiErrorResp {
+                error: MobileScope::DeviceRegistration.missing_error().into(),
+            }),
+        ));
+    }
 
     let device_uuid = uuid::Uuid::parse_str(req.device_id.trim()).map_err(|_| {
         (
@@ -302,9 +328,24 @@ pub(in crate::api) async fn handle_mobile_secure(
         }
     }
 
-    let response_payload = proxy_secure_request(&state, device.profile_id, payload)
+    let response_payload = match load_mobile_auth_context_for_profile(&state, device.profile_id)
         .await
-        .map_err(|e| (e.status, Json(ApiErrorResp { error: e.message })))?;
+        .map_err(|status| {
+            (
+                status,
+                Json(ApiErrorResp {
+                    error: "failed to read mobile access profile".into(),
+                }),
+            )
+        })? {
+        Some(mobile_auth) if mobile_auth.allows(MobileScope::WorkspaceRead) => {
+            proxy_secure_request(&state, mobile_auth, payload)
+                .await
+                .map_err(|e| (e.status, Json(ApiErrorResp { error: e.message })))?
+        }
+        _ => mobile_scope_required_secure_response(MobileScope::WorkspaceRead)
+            .map_err(|e| (e.status, Json(ApiErrorResp { error: e.message })))?,
+    };
 
     let response_bytes = serde_json::to_vec(&response_payload).map_err(|_| {
         (
@@ -334,7 +375,7 @@ pub(in crate::api) async fn handle_mobile_secure(
 
 pub(super) async fn proxy_secure_request(
     state: &Arc<AppState>,
-    profile_id: ConnectionProfileId,
+    mobile_auth: MobileAuthContext,
     mut payload: SecureRequestPayload,
 ) -> Result<SecureResponsePayload, SecureProxyError> {
     if let Some((path, query)) = payload.path.split_once('?') {
@@ -360,6 +401,9 @@ pub(super) async fn proxy_secure_request(
         .map_err(|_| SecureProxyError::bad_request("invalid http method"))?;
     if !mobile_secure_proxy_allows_request(&method, &path) {
         return desktop_auth_required_secure_response();
+    }
+    if !mobile_auth.allows(MobileScope::WorkspaceRead) {
+        return mobile_scope_required_secure_response(MobileScope::WorkspaceRead);
     }
     let mut uri = path;
     if let Some(query) = payload
@@ -390,8 +434,7 @@ pub(super) async fn proxy_secure_request(
     let mut req = builder
         .body(Body::from(body))
         .map_err(|_| SecureProxyError::bad_request("failed to build proxied request"))?;
-    req.extensions_mut()
-        .insert(MobileAuthContext { profile_id });
+    req.extensions_mut().insert(mobile_auth);
 
     let app = router(state.clone());
     let resp = app
@@ -480,8 +523,18 @@ fn secure_proxy_path_is_unnormalized(path: &str) -> bool {
 }
 
 fn desktop_auth_required_secure_response() -> Result<SecureResponsePayload, SecureProxyError> {
+    secure_error_response("desktop auth required")
+}
+
+fn mobile_scope_required_secure_response(
+    scope: MobileScope,
+) -> Result<SecureResponsePayload, SecureProxyError> {
+    secure_error_response(scope.missing_error())
+}
+
+fn secure_error_response(message: &str) -> Result<SecureResponsePayload, SecureProxyError> {
     let body = serde_json::to_vec(&ApiErrorResp {
-        error: "desktop auth required".to_string(),
+        error: message.to_string(),
     })
     .map_err(|_| SecureProxyError::bad_gateway("failed to encode secure response"))?;
     Ok(SecureResponsePayload {

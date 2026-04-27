@@ -81,11 +81,14 @@ async fn mobile_secure_proxy_rejects_provider_login_routes() {
 
         let res =
             post_mobile_secure_request(&app, &device_id, &key, index as i64 + 1, payload).await;
-        assert_eq!(
-            res.status(),
-            StatusCode::OK,
-            "{method} {path} outer secure response"
-        );
+        if res.status() != StatusCode::OK {
+            let status = res.status();
+            let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+            panic!(
+                "{method} {path} outer secure response was {status}: {}",
+                String::from_utf8_lossy(&body)
+            );
+        }
 
         let payload = decode_mobile_secure_response(res, &device_id, &key).await;
         assert_eq!(payload["status"], 401, "{method} {path} proxied status");
@@ -119,34 +122,42 @@ async fn mobile_secure_proxy_rejects_provider_login_routes() {
     let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(payload["error"], "secure proxy path must be normalized");
 
-    assert!(state
-        .providers
-        .gemini_login_sessions
-        .lock()
-        .await
-        .is_empty());
+    assert!(
+        state
+            .providers
+            .gemini_login_sessions
+            .lock()
+            .await
+            .is_empty()
+    );
     assert!(state.providers.qwen_login_sessions.lock().await.is_empty());
     assert!(state.providers.amp_login_sessions.lock().await.is_empty());
-    assert!(state
-        .providers
-        .mistral_login_sessions
-        .lock()
-        .await
-        .is_empty());
+    assert!(
+        state
+            .providers
+            .mistral_login_sessions
+            .lock()
+            .await
+            .is_empty()
+    );
     assert!(state.providers.kimi_login_sessions.lock().await.is_empty());
-    assert!(state
-        .providers
-        .claude_login_sessions
-        .lock()
-        .await
-        .is_empty());
+    assert!(
+        state
+            .providers
+            .claude_login_sessions
+            .lock()
+            .await
+            .is_empty()
+    );
     assert!(state.providers.codex_login_sessions.lock().await.is_empty());
-    assert!(state
-        .providers
-        .cursor_login_sessions
-        .lock()
-        .await
-        .is_empty());
+    assert!(
+        state
+            .providers
+            .cursor_login_sessions
+            .lock()
+            .await
+            .is_empty()
+    );
 }
 
 #[tokio::test]
@@ -217,11 +228,14 @@ async fn mobile_secure_proxy_rejects_provider_management_routes() {
 
         let res =
             post_mobile_secure_request(&app, &device_id, &key, index as i64 + 1, payload).await;
-        assert_eq!(
-            res.status(),
-            StatusCode::OK,
-            "{method} {path} outer secure response"
-        );
+        if res.status() != StatusCode::OK {
+            let status = res.status();
+            let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+            panic!(
+                "{method} {path} outer secure response was {status}: {}",
+                String::from_utf8_lossy(&body)
+            );
+        }
 
         let payload = decode_mobile_secure_response(res, &device_id, &key).await;
         assert_eq!(payload["status"], 401, "{method} {path} proxied status");

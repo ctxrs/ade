@@ -1,8 +1,8 @@
 use super::*;
 
 #[tokio::test]
-async fn mobile_secure_workspace_stream_returns_unauthorized_before_upgrade_for_missing_workspace_without_mobile_access(
-) {
+async fn mobile_secure_workspace_stream_returns_unauthorized_before_upgrade_for_missing_workspace_without_mobile_access()
+ {
     let _serial = home_env_test_lock().lock().await;
     let home = tempfile::tempdir().unwrap();
     let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
@@ -41,8 +41,8 @@ async fn mobile_secure_workspace_stream_returns_unauthorized_before_upgrade_for_
 }
 
 #[tokio::test]
-async fn mobile_secure_workspace_stream_returns_not_found_before_upgrade_for_authorized_missing_workspace(
-) {
+async fn mobile_secure_workspace_stream_returns_not_found_before_upgrade_for_authorized_missing_workspace()
+ {
     let _serial = home_env_test_lock().lock().await;
     let home = tempfile::tempdir().unwrap();
     let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
@@ -128,6 +128,39 @@ async fn mobile_secure_workspace_stream_rejects_disabled_mobile_access_before_up
 
     let (app, _state, workspace_id, device_id, key, _data_dir) =
         build_mobile_access_app(false).await;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    let client = reqwest::Client::new();
+
+    let query = mobile_secure_stream_query(&device_id, &key, workspace_id);
+    let res = client
+        .get(format!(
+            "http://{addr}/api/mobile/secure/workspaces/{}/stream?{query}",
+            workspace_id.0
+        ))
+        .header("connection", "upgrade")
+        .header("upgrade", "websocket")
+        .header("sec-websocket-version", "13")
+        .header("sec-websocket-key", "dGhlIHNhbXBsZSBub25jZQ==")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+
+    server.abort();
+}
+
+#[tokio::test]
+async fn mobile_secure_workspace_stream_returns_unauthorized_without_workspace_stream_scope() {
+    let _serial = home_env_test_lock().lock().await;
+    let home = tempfile::tempdir().unwrap();
+    let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
+
+    let (app, _state, workspace_id, device_id, key, _data_dir) =
+        build_mobile_access_app_with_scopes(true, &["device_registration", "workspace_read"]).await;
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let server = tokio::spawn(async move {

@@ -4,8 +4,17 @@ use ctx_store::store::{MobileAccessConfig, MobileDeviceUpsert};
 use sha2::Digest;
 
 const TEST_MOBILE_API_TOKEN: &str = "ctxm_test_mobile_api_token";
+const TEST_MOBILE_DEFAULT_SCOPES: &[&str] =
+    &["device_registration", "workspace_read", "workspace_stream"];
 
 async fn insert_mobile_profile(state: &Arc<AppState>) -> ConnectionProfileId {
+    insert_mobile_profile_with_scopes(state, TEST_MOBILE_DEFAULT_SCOPES).await
+}
+
+async fn insert_mobile_profile_with_scopes(
+    state: &Arc<AppState>,
+    scopes: &[&str],
+) -> ConnectionProfileId {
     let mut hasher = sha2::Sha256::new();
     hasher.update(TEST_MOBILE_API_TOKEN.as_bytes());
     let token_hash = hex::encode(hasher.finalize());
@@ -16,7 +25,7 @@ async fn insert_mobile_profile(state: &Arc<AppState>) -> ConnectionProfileId {
             "https://example.com".to_string(),
             token_hash,
             "ctxm_tes".to_string(),
-            Vec::new(),
+            scopes.iter().map(|scope| (*scope).to_string()).collect(),
         )
         .await
         .unwrap()
@@ -25,6 +34,20 @@ async fn insert_mobile_profile(state: &Arc<AppState>) -> ConnectionProfileId {
 
 async fn build_mobile_access_app(
     enabled: bool,
+) -> (
+    axum::Router,
+    Arc<AppState>,
+    WorkspaceId,
+    String,
+    ctx_transport_runtime::mobile_e2ee::E2eeKey,
+    tempfile::TempDir,
+) {
+    build_mobile_access_app_with_scopes(enabled, TEST_MOBILE_DEFAULT_SCOPES).await
+}
+
+async fn build_mobile_access_app_with_scopes(
+    enabled: bool,
+    scopes: &[&str],
 ) -> (
     axum::Router,
     Arc<AppState>,
@@ -45,7 +68,7 @@ async fn build_mobile_access_app(
     ));
     let app = api::router(state.clone());
     let workspace = create_workspace_via_api(&app, &git_repo.path().to_string_lossy()).await;
-    let profile_id = insert_mobile_profile(&state).await;
+    let profile_id = insert_mobile_profile_with_scopes(&state, scopes).await;
     let device_id = "22222222-2222-2222-2222-222222222222".to_string();
     let (daemon_public_key, daemon_private_key) =
         ctx_transport_runtime::mobile_e2ee::generate_keypair();
@@ -105,6 +128,19 @@ async fn build_mobile_secure_proxy_app(
     ctx_transport_runtime::mobile_e2ee::E2eeKey,
     tempfile::TempDir,
 ) {
+    build_mobile_secure_proxy_app_with_scopes(enabled, TEST_MOBILE_DEFAULT_SCOPES).await
+}
+
+async fn build_mobile_secure_proxy_app_with_scopes(
+    enabled: bool,
+    scopes: &[&str],
+) -> (
+    axum::Router,
+    Arc<AppState>,
+    String,
+    ctx_transport_runtime::mobile_e2ee::E2eeKey,
+    tempfile::TempDir,
+) {
     let data_dir = tempfile::tempdir().unwrap();
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
     let state = Arc::new(AppState::new(
@@ -114,7 +150,7 @@ async fn build_mobile_secure_proxy_app(
         "http://127.0.0.1:4399".to_string(),
         Some("daemon-secret".to_string()),
     ));
-    let profile_id = insert_mobile_profile(&state).await;
+    let profile_id = insert_mobile_profile_with_scopes(&state, scopes).await;
 
     let device_id = "44444444-4444-4444-4444-444444444444".to_string();
     let (daemon_public_key, daemon_private_key) =

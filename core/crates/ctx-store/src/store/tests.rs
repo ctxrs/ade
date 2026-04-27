@@ -385,3 +385,44 @@ async fn subagent_label_is_unique_per_task() {
         .unwrap_err();
     assert!(err.to_string().to_lowercase().contains("unique"));
 }
+
+#[tokio::test]
+async fn malformed_mobile_profile_scopes_json_fails_closed() {
+    let (_dir, store) = setup_store().await;
+    let profile_id = ConnectionProfileId::new();
+    let token_hash = "ctxm_bad_scopes_hash";
+
+    sqlx::query(
+        r#"INSERT INTO mobile_connection_profiles
+           (id, label, base_url, token_hash, token_prefix, scopes_json, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)"#,
+    )
+    .bind(profile_id.0.to_string())
+    .bind("mobile")
+    .bind("https://example.com")
+    .bind(token_hash)
+    .bind("ctxm_bad")
+    .bind("{not-json")
+    .bind(Utc::now().to_rfc3339())
+    .execute(&store.pool)
+    .await
+    .unwrap();
+
+    let err = store
+        .get_mobile_connection_profile(profile_id)
+        .await
+        .expect_err("malformed scope JSON should fail closed");
+    assert!(
+        format!("{err:#}").contains("invalid mobile profile scopes_json"),
+        "unexpected error: {err:#}"
+    );
+
+    let err = store
+        .get_mobile_connection_profile_by_token_hash(token_hash)
+        .await
+        .expect_err("token lookup should also fail closed");
+    assert!(
+        format!("{err:#}").contains("invalid mobile profile scopes_json"),
+        "unexpected error: {err:#}"
+    );
+}

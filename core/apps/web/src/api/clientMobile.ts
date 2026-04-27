@@ -4,7 +4,7 @@ import { apiAny } from "./clientBase";
 export type CreateMobileProfileRequest = {
   label: string;
   base_url: string;
-  scopes?: string[];
+  scopes: string[];
 };
 
 export type CreateMobileProfileResponse = {

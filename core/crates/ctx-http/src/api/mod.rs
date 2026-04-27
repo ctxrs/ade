@@ -27,6 +27,7 @@ mod execution;
 mod extractors;
 mod merge_queue_api;
 mod mobile_access;
+mod mobile_scopes;
 mod provider_catalog;
 mod provider_launch;
 pub(crate) mod provider_probe_auth;
@@ -57,6 +58,7 @@ use artifacts::*;
 use execution::*;
 use merge_queue_api::*;
 use mobile_access::*;
+use mobile_scopes::*;
 use providers::*;
 use repo::*;
 use sessions::*;
@@ -71,7 +73,7 @@ use workspaces::*;
 
 use auth::{
     auth_middleware, generate_mobile_api_token, generate_pairing_token, hash_api_token,
-    hash_pairing_token, MobileAuthContext,
+    hash_pairing_token, load_mobile_auth_context_for_profile, MobileAuthContext,
 };
 use demo::*;
 use errors::ApiErrorResp;
@@ -224,7 +226,8 @@ fn public_route_url(base_url: &str, route_path: &str) -> Option<String> {
 }
 
 fn public_websocket_url(base_url: &str, route_path: &str) -> Option<String> {
-    let mut url = public_route_url(base_url, route_path).and_then(|joined| Url::parse(&joined).ok())?;
+    let mut url =
+        public_route_url(base_url, route_path).and_then(|joined| Url::parse(&joined).ok())?;
     match url.scheme() {
         "http" => {
             url.set_scheme("ws").ok()?;
@@ -428,8 +431,7 @@ mod tests {
                 "/sessions/web/sess-1/view?token=stream-token",
             ),
             Some(
-                "https://proxy.example/ctx/sessions/web/sess-1/view?token=stream-token"
-                    .to_string(),
+                "https://proxy.example/ctx/sessions/web/sess-1/view?token=stream-token".to_string(),
             )
         );
     }
@@ -442,8 +444,7 @@ mod tests {
                 "/sessions/web/sess-1/signal?token=signal-token",
             ),
             Some(
-                "wss://proxy.example/ctx/sessions/web/sess-1/signal?token=signal-token"
-                    .to_string(),
+                "wss://proxy.example/ctx/sessions/web/sess-1/signal?token=signal-token".to_string(),
             )
         );
     }

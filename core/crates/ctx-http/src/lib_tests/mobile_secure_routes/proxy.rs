@@ -133,6 +133,87 @@ async fn mobile_secure_proxy_grants_mobile_auth_for_proxied_api_routes() {
 }
 
 #[tokio::test]
+async fn mobile_secure_proxy_rejects_profiles_without_workspace_read_scope() {
+    let _serial = home_env_test_lock().lock().await;
+    let home = tempfile::tempdir().unwrap();
+    let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
+
+    let (app, _state, device_id, key, _data_dir) =
+        build_mobile_secure_proxy_app_with_scopes(true, &["device_registration"]).await;
+    let res = post_mobile_secure_request(
+        &app,
+        &device_id,
+        &key,
+        1,
+        json!({
+            "method": "GET",
+            "path": "/api/workspaces",
+            "headers": []
+        }),
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::OK);
+
+    let payload = decode_mobile_secure_response(res, &device_id, &key).await;
+    assert_eq!(payload["status"], 401);
+    let body_bytes = base64::engine::general_purpose::STANDARD
+        .decode(payload["body_b64"].as_str().unwrap())
+        .unwrap();
+    let body_json: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+    assert_eq!(
+        body_json["error"],
+        "mobile profile lacks workspace_read scope"
+    );
+}
+
+#[tokio::test]
+async fn mobile_secure_proxy_migrates_legacy_empty_scope_profiles() {
+    let _serial = home_env_test_lock().lock().await;
+    let home = tempfile::tempdir().unwrap();
+    let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
+
+    let (app, state, device_id, key, _data_dir) =
+        build_mobile_secure_proxy_app_with_scopes(true, &[]).await;
+    let res = post_mobile_secure_request(
+        &app,
+        &device_id,
+        &key,
+        1,
+        json!({
+            "method": "GET",
+            "path": "/api/workspaces",
+            "headers": []
+        }),
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::OK);
+
+    let payload = decode_mobile_secure_response(res, &device_id, &key).await;
+    assert_eq!(payload["status"], 200);
+
+    let cfg = state
+        .global_store()
+        .get_mobile_access_config()
+        .await
+        .unwrap()
+        .expect("mobile access config should exist");
+    let profile = state
+        .global_store()
+        .get_mobile_connection_profile(cfg.profile_id)
+        .await
+        .unwrap()
+        .expect("mobile profile should still exist");
+    assert_eq!(
+        profile.scopes,
+        vec![
+            "device_registration".to_string(),
+            "workspace_read".to_string(),
+            "workspace_stream".to_string(),
+        ]
+    );
+}
+
+#[tokio::test]
 async fn mobile_secure_proxy_rejects_mobile_management_paths_after_trimming() {
     let _serial = home_env_test_lock().lock().await;
     let home = tempfile::tempdir().unwrap();
@@ -332,7 +413,7 @@ async fn mobile_secure_proxy_rejects_daemon_maintenance_routes() {
     let home = tempfile::tempdir().unwrap();
     let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
 
-    let (app, _state, device_id, key) = build_mobile_secure_proxy_app(true).await;
+    let (app, _state, device_id, key, _data_dir) = build_mobile_secure_proxy_app(true).await;
 
     let cases = [
         ("POST", "/api/execution/linux_sandbox_runtime/prepare"),
@@ -353,11 +434,14 @@ async fn mobile_secure_proxy_rejects_daemon_maintenance_routes() {
             }),
         )
         .await;
-        assert_eq!(
-            res.status(),
-            StatusCode::OK,
-            "{method} {path} outer secure response"
-        );
+        if res.status() != StatusCode::OK {
+            let status = res.status();
+            let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+            panic!(
+                "{method} {path} outer secure response was {status}: {}",
+                String::from_utf8_lossy(&body)
+            );
+        }
 
         let payload = decode_mobile_secure_response(res, &device_id, &key).await;
         assert_eq!(payload["status"], 401, "{method} {path} proxied status");

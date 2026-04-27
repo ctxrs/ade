@@ -66,12 +66,9 @@ pub(in crate::api) async fn create_mobile_connection_profile(
         ));
     }
     let normalized_base = parsed.as_str().trim_end_matches('/').to_string();
-    let scopes: Vec<String> = req
-        .scopes
-        .into_iter()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .collect();
+    let scopes = mobile_scope_set_from_strings(&req.scopes)
+        .map(|scope_set| scope_set.to_strings())
+        .map_err(|error| (StatusCode::BAD_REQUEST, Json(ApiErrorResp { error })))?;
     let token = generate_mobile_api_token();
     let token_hash = hash_api_token(&token);
     let token_prefix: String = token.chars().take(8).collect();
@@ -181,6 +178,14 @@ pub(in crate::api) async fn register_mobile_device(
             }),
         ));
     };
+    if !mobile_auth.allows(MobileScope::DeviceRegistration) {
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            Json(ApiErrorResp {
+                error: MobileScope::DeviceRegistration.missing_error().into(),
+            }),
+        ));
+    }
     let device_uuid = uuid::Uuid::parse_str(req.device_id.trim()).map_err(|_| {
         (
             StatusCode::BAD_REQUEST,

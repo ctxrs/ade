@@ -131,6 +131,20 @@ impl Store {
         Ok(())
     }
 
+    pub async fn update_mobile_connection_profile_scopes(
+        &self,
+        id: ConnectionProfileId,
+        scopes: Vec<String>,
+    ) -> Result<()> {
+        let scopes_json = serde_json::to_string(&scopes)?;
+        self.query(r#"UPDATE mobile_connection_profiles SET scopes_json = ? WHERE id = ?"#)
+            .bind(scopes_json)
+            .bind(id.0.to_string())
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
     pub async fn delete_mobile_connection_profile(&self, id: ConnectionProfileId) -> Result<()> {
         self.query(r#"DELETE FROM mobile_connection_profiles WHERE id = ?"#)
             .bind(id.0.to_string())
