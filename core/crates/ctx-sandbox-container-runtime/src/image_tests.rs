@@ -1,12 +1,16 @@
 use flate2::write::GzEncoder;
 use flate2::Compression;
+use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::sync::Mutex as StdMutex;
+use tar::{Archive, Builder};
 
 use tempfile::tempdir;
 
+use super::archive::{normalize_oci_archive_to_docker_archive, write_directory_to_tar};
 use super::*;
 use crate::CTX_HARNESS_SANDBOX_CLI_PATH_ENV;
 

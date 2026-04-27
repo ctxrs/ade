@@ -1,5 +1,6 @@
 use super::*;
 
+#[cfg_attr(test, allow(dead_code))]
 pub(in crate::workspace_runtime) async fn ensure_sandbox_machine_running_with_observer(
     data_root: &Path,
     observer: Option<&dyn HarnessSetupObserver>,

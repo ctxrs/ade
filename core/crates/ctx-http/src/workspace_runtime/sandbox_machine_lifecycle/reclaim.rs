@@ -1,3 +1,4 @@
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 use super::*;
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]

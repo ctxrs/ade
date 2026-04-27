@@ -17,6 +17,7 @@ pub(in crate::workspace_runtime) use self::helper_cleanup::{
     is_ctx_managed_sandbox_helper_process_command, kill_ctx_managed_sandbox_helper_processes,
     literal_pkill_pattern,
 };
+#[cfg_attr(test, allow(unused_imports))]
 pub(in crate::workspace_runtime) use self::running::ensure_sandbox_machine_running_with_observer;
 
 use ctx_harness_setup::{
@@ -49,10 +50,12 @@ fn sandbox_machine_heartbeat_interval() -> Duration {
         Duration::from_secs(5)
     }
 }
+#[cfg_attr(test, allow(dead_code))]
 fn default_sandbox_machine_memory_mb() -> u32 {
     container_machine_memory_mb(&ContainerExecutionSettings::default())
 }
 
+#[cfg_attr(test, allow(dead_code))]
 async fn configured_sandbox_machine_memory_mb(
     data_root: &Path,
     observer: Option<&dyn HarnessSetupObserver>,

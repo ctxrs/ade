@@ -262,7 +262,7 @@ async fn prepare_container_image_tar_for_load(
     Ok(tar.to_path_buf())
 }
 
-fn normalize_oci_archive_to_docker_archive(source: &Path, dest: &Path) -> Result<bool> {
+pub(super) fn normalize_oci_archive_to_docker_archive(source: &Path, dest: &Path) -> Result<bool> {
     let Some(parent) = dest.parent() else {
         anyhow::bail!("normalized archive path has no parent: {}", dest.display());
     };
@@ -456,7 +456,7 @@ fn write_layer_tar_payload(source: &Path, dest: &Path) -> Result<()> {
     Ok(())
 }
 
-fn write_directory_to_tar(source_root: &Path, tar_path: &Path) -> Result<()> {
+pub(super) fn write_directory_to_tar(source_root: &Path, tar_path: &Path) -> Result<()> {
     let tar_file = stdfs::File::create(tar_path)
         .with_context(|| format!("creating {}", tar_path.display()))?;
     let mut builder = Builder::new(tar_file);

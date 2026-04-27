@@ -248,7 +248,7 @@ pub(super) async fn load_workspace_execution_config(
 }
 
 pub(super) async fn update_workspace_execution_config(
-    state: &Arc<AppState>,
+    _state: &Arc<AppState>,
     ctx: &WorkspaceRequestContext,
     req: UpdateExecutionConfigReq,
 ) -> WorkspaceApiResult<UpdateWorkspaceConfigResp> {
@@ -258,7 +258,7 @@ pub(super) async fn update_workspace_execution_config(
             #[cfg(target_os = "macos")]
             {
                 if !ctx_harness_runtime::local_runtime_available(
-                    &state.core.data_root,
+                    &_state.core.data_root,
                     &crate::settings::ContainerRuntimeKind::SharedVmContainer,
                 ) {
                     return Err((
