@@ -7,6 +7,9 @@ cleanup() {
   rm -rf "$TMP_DIR"
 }
 trap cleanup EXIT
+export CTX_VOLATILE_ROOT="$TMP_DIR/volatile"
+export CARGO_TARGET_DIR="$TMP_DIR/volatile/targets/cargo"
+export CTX_VERIFY_CARGO_TARGET_DIR="$CARGO_TARGET_DIR"
 
 MATRIX_JSON="$TMP_DIR/provider-matrix.json"
 cat >"$MATRIX_JSON" <<'EOF'
@@ -19,7 +22,7 @@ SUCCESS_OUT="$TMP_DIR/success"
 CTX_PROVIDER_DEPS_BUILD_HOST_OS="macos" \
 CTX_PROVIDER_DEPS_BUILD_HOST_ARCH="aarch64" \
 PROVIDER_MATRIX_JSON="$MATRIX_JSON" \
-  "$ROOT_DIR/scripts/provider_deps_build_staging.sh" \
+  bash "$ROOT_DIR/scripts/provider_deps_build_staging.sh" \
   --out-dir "$SUCCESS_OUT" \
   --os macos \
   --arch x86_64 \
@@ -31,7 +34,7 @@ SUCCESS_OUT_X86_TO_ARM="$TMP_DIR/success-x86-to-arm"
 CTX_PROVIDER_DEPS_BUILD_HOST_OS="macos" \
 CTX_PROVIDER_DEPS_BUILD_HOST_ARCH="x86_64" \
 PROVIDER_MATRIX_JSON="$MATRIX_JSON" \
-  "$ROOT_DIR/scripts/provider_deps_build_staging.sh" \
+  bash "$ROOT_DIR/scripts/provider_deps_build_staging.sh" \
   --out-dir "$SUCCESS_OUT_X86_TO_ARM" \
   --os macos \
   --arch aarch64 \
@@ -44,7 +47,7 @@ set +e
 CTX_PROVIDER_DEPS_BUILD_HOST_OS="macos" \
 CTX_PROVIDER_DEPS_BUILD_HOST_ARCH="aarch64" \
 PROVIDER_MATRIX_JSON="$MATRIX_JSON" \
-  "$ROOT_DIR/scripts/provider_deps_build_staging.sh" \
+  bash "$ROOT_DIR/scripts/provider_deps_build_staging.sh" \
   --out-dir "$TMP_DIR/fail" \
   --os linux \
   --arch x86_64 \
