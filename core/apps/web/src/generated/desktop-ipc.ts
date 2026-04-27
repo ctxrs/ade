@@ -8,7 +8,7 @@ export type DesktopConnectionIntent = "auto_local_bootstrap" | "explicit_local" 
 
 export type DesktopRemoteDaemonUpdateState = "pending" | "failed";
 
-export type DesktopConnectionInfo = { base_url?: string | null, intent?: DesktopConnectionIntent, kind: DesktopConnectionKind, local_auto_bootstrap_allowed?: boolean, host?: string | null, remote_data_dir?: string | null, remote_port?: number | null, remote_update_message?: string | null, remote_update_state?: DesktopRemoteDaemonUpdateState | null, token?: string | null, user?: string | null, };
+export type DesktopConnectionInfo = { base_url?: string | null, intent?: DesktopConnectionIntent, kind: DesktopConnectionKind, local_auto_bootstrap_allowed?: boolean, host?: string | null, remote_data_dir?: string | null, remote_port?: number | null, remote_update_message?: string | null, remote_update_state?: DesktopRemoteDaemonUpdateState | null, browser_query_secret?: string | null, token?: string | null, user?: string | null, };
 
 export type SshConnectReq = { host: string, password_once?: string | null, remote_data_dir?: string | null, remote_port?: number | null, start_remote: boolean, user?: string | null, };
 
@@ -139,4 +139,3 @@ export type DesktopNotificationKind = "turn_completed" | "turn_failed";
 export type DesktopShowSystemNotificationReq = { kind: DesktopNotificationKind, body?: string | null, session_id?: string | null, task_id: string, title: string, workspace_id: string, };
 
 export type DesktopSyncWorkspaceAttentionReq = { has_unread_error: boolean, unread_primary_task_count: number, workspace_id: string, };
-

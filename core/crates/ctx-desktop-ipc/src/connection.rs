@@ -52,6 +52,10 @@ pub struct DesktopConnectionInfo {
     pub remote_update_state: Option<DesktopRemoteDaemonUpdateState>,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional = nullable)]
+    pub browser_query_secret: Option<String>,
+    #[serde(skip_serializing)]
+    #[ts(skip)]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub token: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional = nullable)]

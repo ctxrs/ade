@@ -64,6 +64,7 @@ export type ParsedPersistedDaemonBase = {
 export type DesktopDaemonConnectionInfoLike = {
   kind?: DesktopConnectionInfo["kind"] | null;
   base_url?: string | null;
+  browser_query_secret?: string | null;
   token?: string | null;
   host?: string | null;
   user?: string | null;

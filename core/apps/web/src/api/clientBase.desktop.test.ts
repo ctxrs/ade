@@ -2,19 +2,31 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const desktopGetConnectionMock = vi.hoisted(() => vi.fn());
 const desktopConnectLocalMock = vi.hoisted(() => vi.fn());
+const desktopDaemonRequestMock = vi.hoisted(() => vi.fn());
 const fetchMock = vi.hoisted(() => vi.fn());
 const SESSION_CONNECTION_KEY = "ctxDaemonConnectionV1";
 const PERSISTED_BASE_KEY = "ctxDaemonConnectionBaseV1";
 
-const okJsonResponse = (body: unknown = { ok: true }): Response =>
-  new Response(JSON.stringify(body), {
-    status: 200,
-    headers: { "content-type": "application/json" },
-  });
+const okDesktopJsonResponse = (body: unknown = { ok: true }) => ({
+  status: 200,
+  body: JSON.stringify(body),
+  content_type: "application/json",
+});
+
+const errorDesktopJsonResponse = (status: number, body: unknown) => ({
+  status,
+  body: JSON.stringify(body),
+  content_type: "application/json",
+});
+
+const expectNoAuthorizationHeader = (headers: Array<[string, string]>) => {
+  expect(headers.some(([key]) => key.toLowerCase() === "authorization")).toBe(false);
+};
 
 vi.mock("../utils/desktop", () => ({
   isDesktopApp: () => true,
   desktopConnectLocal: desktopConnectLocalMock,
+  desktopDaemonRequest: desktopDaemonRequestMock,
   desktopGetConnection: desktopGetConnectionMock,
 }));
 
@@ -25,13 +37,10 @@ let clientBaseTelemetryMod: typeof import("./clientBaseTelemetry");
 
 describe("clientBase desktop connection sync", () => {
   beforeAll(async () => {
-    [clientBaseMod, daemonConnectionMod, desktopDaemonConnectionMod, clientBaseTelemetryMod] =
-      await Promise.all([
-        import("./clientBase"),
-        import("./daemonConnection"),
-        import("./desktopDaemonConnection"),
-        import("./clientBaseTelemetry"),
-      ]);
+    clientBaseMod = await import("./clientBase");
+    daemonConnectionMod = await import("./daemonConnection");
+    desktopDaemonConnectionMod = await import("./desktopDaemonConnection");
+    clientBaseTelemetryMod = await import("./clientBaseTelemetry");
   }, 60_000);
 
   beforeEach(() => {
@@ -57,7 +66,7 @@ describe("clientBase desktop connection sync", () => {
       intent: "explicit_local",
       local_auto_bootstrap_allowed: true,
       base_url: "http://127.0.0.1:4399",
-      token: "abc",
+      browser_query_secret: "browser-secret-abc",
     });
 
     const result = await clientBaseMod.syncDesktopDaemonConnectionFromBridge({
@@ -68,10 +77,11 @@ describe("clientBase desktop connection sync", () => {
 
     expect(desktopGetConnectionMock).toHaveBeenCalledTimes(1);
     expect(desktopConnectLocalMock).toHaveBeenCalledTimes(1);
+    expect(desktopDaemonRequestMock).not.toHaveBeenCalled();
     expect(fetchMock).not.toHaveBeenCalled();
     expect(result.config.baseUrl).toBe("http://127.0.0.1:4399");
     expect(result.config.wsBaseUrl).toBe("ws://127.0.0.1:4399");
-    expect(result.config.authToken).toBe("abc");
+    expect(result.config.authToken).toBe("browser-secret-abc");
   });
 
   it("does not auto-connect local after an explicit desktop disconnect", async () => {
@@ -99,16 +109,16 @@ describe("clientBase desktop connection sync", () => {
       intent: "explicit_disconnected",
       local_auto_bootstrap_allowed: false,
       base_url: null,
-      token: null,
+      browser_query_secret: null,
     });
 
     clientBaseMod.applyDaemonDesktopConnection({
       base_url: "http://127.0.0.1:4399",
-      token: "stale-token",
+      browser_query_secret: "stale-browser-secret",
     });
     expect(clientBaseMod.getDaemonClientConfig()).toMatchObject({
       baseUrl: "http://127.0.0.1:4399",
-      authToken: "stale-token",
+      authToken: "stale-browser-secret",
     });
 
     const result = await clientBaseMod.syncDesktopDaemonConnectionFromBridge({
@@ -131,13 +141,13 @@ describe("clientBase desktop connection sync", () => {
     });
   });
 
-  it("uses direct daemon fetches after one desktop bridge sync", async () => {
+  it("uses the desktop daemon proxy after one desktop bridge sync", async () => {
     desktopGetConnectionMock.mockResolvedValue({
       kind: "local",
       base_url: "http://127.0.0.1:4399",
-      token: "abc",
+      browser_query_secret: "browser-secret-abc",
     });
-    fetchMock.mockImplementation(() => Promise.resolve(okJsonResponse({ ok: true })));
+    desktopDaemonRequestMock.mockResolvedValue(okDesktopJsonResponse({ ok: true }));
 
     expect(clientBaseMod.getDaemonClientConfig().baseUrl).toBeNull();
 
@@ -150,16 +160,18 @@ describe("clientBase desktop connection sync", () => {
     expect(clientBaseMod.getDaemonClientConfig().wsBaseUrl).toBe("ws://127.0.0.1:4399");
     expect(desktopGetConnectionMock).toHaveBeenCalledTimes(1);
     expect(desktopConnectLocalMock).not.toHaveBeenCalled();
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(fetchMock).toHaveBeenNthCalledWith(
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(desktopDaemonRequestMock).toHaveBeenCalledTimes(2);
+    expect(desktopDaemonRequestMock).toHaveBeenNthCalledWith(
       1,
-      "http://127.0.0.1:4399/api/health",
       expect.objectContaining({
-        headers: expect.objectContaining({
-          authorization: "Bearer abc",
-        }),
+        method: "GET",
+        path: "/api/health",
+        body: null,
+        headers: expect.arrayContaining([["content-type", "application/json"]]),
       }),
     );
+    expectNoAuthorizationHeader(desktopDaemonRequestMock.mock.calls[0]?.[0]?.headers ?? []);
   });
 
   it("refreshes desktop bridge state before reuse after a later token rotation", async () => {
@@ -170,14 +182,14 @@ describe("clientBase desktop connection sync", () => {
       .mockResolvedValueOnce({
         kind: "local",
         base_url: "http://127.0.0.1:4399",
-        token: "token-old",
+        browser_query_secret: "browser-secret-old",
       })
       .mockResolvedValueOnce({
         kind: "local",
         base_url: "http://127.0.0.1:4400",
-        token: "token-new",
+        browser_query_secret: "browser-secret-new",
       });
-    fetchMock.mockImplementation(() => Promise.resolve(okJsonResponse({ ok: true })));
+    desktopDaemonRequestMock.mockResolvedValue(okDesktopJsonResponse({ ok: true }));
 
     try {
       await clientBaseMod.apiAny<{ ok: boolean }>("/api/health");
@@ -186,28 +198,27 @@ describe("clientBase desktop connection sync", () => {
       await clientBaseMod.apiAny<{ ok: boolean }>("/api/providers");
 
       expect(desktopGetConnectionMock).toHaveBeenCalledTimes(2);
-      expect(fetchMock).toHaveBeenNthCalledWith(
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(desktopDaemonRequestMock).toHaveBeenNthCalledWith(
         1,
-        "http://127.0.0.1:4399/api/health",
         expect.objectContaining({
-          headers: expect.objectContaining({
-            authorization: "Bearer token-old",
-          }),
+          method: "GET",
+          path: "/api/health",
         }),
       );
-      expect(fetchMock).toHaveBeenNthCalledWith(
+      expect(desktopDaemonRequestMock).toHaveBeenNthCalledWith(
         2,
-        "http://127.0.0.1:4400/api/providers",
         expect.objectContaining({
-          headers: expect.objectContaining({
-            authorization: "Bearer token-new",
-          }),
+          method: "GET",
+          path: "/api/providers",
         }),
       );
+      expectNoAuthorizationHeader(desktopDaemonRequestMock.mock.calls[0]?.[0]?.headers ?? []);
+      expectNoAuthorizationHeader(desktopDaemonRequestMock.mock.calls[1]?.[0]?.headers ?? []);
       expect(clientBaseMod.getDaemonClientConfig()).toMatchObject({
         baseUrl: "http://127.0.0.1:4400",
         wsBaseUrl: "ws://127.0.0.1:4400",
-        authToken: "token-new",
+        authToken: "browser-secret-new",
       });
     } finally {
       dateNowSpy.mockRestore();
@@ -222,7 +233,7 @@ describe("clientBase desktop connection sync", () => {
       .mockResolvedValueOnce({
         kind: "ssh",
         base_url: "http://127.0.0.1:4399",
-        token: "abc",
+        browser_query_secret: "browser-secret-ssh",
         host: "host-a.example",
         user: "user",
         remote_port: 4399,
@@ -231,13 +242,13 @@ describe("clientBase desktop connection sync", () => {
       .mockResolvedValueOnce({
         kind: "ssh",
         base_url: "http://127.0.0.1:4399",
-        token: "abc",
+        browser_query_secret: "browser-secret-ssh",
         host: "host-b.example",
         user: "user",
         remote_port: 4399,
         remote_data_dir: "/srv/ctx-a",
       });
-    fetchMock.mockImplementation(() => Promise.resolve(okJsonResponse({ ok: true })));
+    desktopDaemonRequestMock.mockResolvedValue(okDesktopJsonResponse({ ok: true }));
 
     try {
       await clientBaseMod.apiAny<{ ok: boolean }>("/api/health");
@@ -253,24 +264,23 @@ describe("clientBase desktop connection sync", () => {
       await clientBaseMod.apiAny<{ ok: boolean }>("/api/providers");
 
       expect(desktopGetConnectionMock).toHaveBeenCalledTimes(2);
-      expect(fetchMock).toHaveBeenNthCalledWith(
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(desktopDaemonRequestMock).toHaveBeenNthCalledWith(
         1,
-        "http://127.0.0.1:4399/api/health",
         expect.objectContaining({
-          headers: expect.objectContaining({
-            authorization: "Bearer abc",
-          }),
+          method: "GET",
+          path: "/api/health",
         }),
       );
-      expect(fetchMock).toHaveBeenNthCalledWith(
+      expect(desktopDaemonRequestMock).toHaveBeenNthCalledWith(
         2,
-        "http://127.0.0.1:4399/api/providers",
         expect.objectContaining({
-          headers: expect.objectContaining({
-            authorization: "Bearer abc",
-          }),
+          method: "GET",
+          path: "/api/providers",
         }),
       );
+      expectNoAuthorizationHeader(desktopDaemonRequestMock.mock.calls[0]?.[0]?.headers ?? []);
+      expectNoAuthorizationHeader(desktopDaemonRequestMock.mock.calls[1]?.[0]?.headers ?? []);
       expect(daemonConnectionMod.getDaemonConnection().targetScope).toMatchObject({
         kind: "desktop_ssh",
         host: "host-b.example",
@@ -308,7 +318,7 @@ describe("clientBase desktop connection sync", () => {
     desktopGetConnectionMock.mockResolvedValue({
       kind: "local",
       base_url: "http://127.0.0.1:4400",
-      token: "token-new",
+      browser_query_secret: "browser-secret-new",
     });
 
     expect(clientBaseMod.getDaemonClientConfig()).toMatchObject({
@@ -326,7 +336,7 @@ describe("clientBase desktop connection sync", () => {
     expect(result.config).toMatchObject({
       baseUrl: "http://127.0.0.1:4400",
       wsBaseUrl: "ws://127.0.0.1:4400",
-      authToken: "token-new",
+      authToken: "browser-secret-new",
     });
     expect(JSON.parse(sessionStorage.getItem(SESSION_CONNECTION_KEY) ?? "{}")).toMatchObject({
       v: 1,
@@ -352,9 +362,11 @@ describe("clientBase desktop connection sync", () => {
     desktopGetConnectionMock.mockResolvedValue({
       kind: "local",
       base_url: "http://127.0.0.1:4399",
-      token: "abc",
+      browser_query_secret: "browser-secret-abc",
     });
-    fetchMock.mockImplementation(() => Promise.resolve(okJsonResponse({ ok: true })));
+    desktopDaemonRequestMock
+      .mockResolvedValueOnce(okDesktopJsonResponse([]))
+      .mockResolvedValueOnce(okDesktopJsonResponse({ ok: true }));
 
     expect(clientBaseMod.getDaemonClientConfig()).toMatchObject({
       baseUrl: "http://127.0.0.1:4399",
@@ -365,28 +377,26 @@ describe("clientBase desktop connection sync", () => {
 
     expect(result.ok).toBe(true);
     expect(desktopGetConnectionMock).toHaveBeenCalledTimes(1);
-    expect(fetchMock).toHaveBeenNthCalledWith(
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(desktopDaemonRequestMock).toHaveBeenNthCalledWith(
       1,
-      "http://127.0.0.1:4399/api/workspaces",
       expect.objectContaining({
-        headers: expect.objectContaining({
-          authorization: "Bearer abc",
-        }),
-        signal: expect.any(AbortSignal),
+        method: "GET",
+        path: "/api/workspaces",
       }),
     );
-    expect(fetchMock).toHaveBeenNthCalledWith(
+    expect(desktopDaemonRequestMock).toHaveBeenNthCalledWith(
       2,
-      "http://127.0.0.1:4399/api/health",
       expect.objectContaining({
-        headers: expect.objectContaining({
-          authorization: "Bearer abc",
-        }),
+        method: "GET",
+        path: "/api/health",
       }),
     );
+    expectNoAuthorizationHeader(desktopDaemonRequestMock.mock.calls[0]?.[0]?.headers ?? []);
+    expectNoAuthorizationHeader(desktopDaemonRequestMock.mock.calls[1]?.[0]?.headers ?? []);
     expect(clientBaseMod.getDaemonClientConfig()).toMatchObject({
       baseUrl: "http://127.0.0.1:4399",
-      authToken: "abc",
+      authToken: "browser-secret-abc",
     });
   });
 
@@ -400,54 +410,52 @@ describe("clientBase desktop connection sync", () => {
     desktopGetConnectionMock.mockResolvedValue({
       kind: "local",
       base_url: "http://127.0.0.1:4399",
-      token: "stale-token",
+      browser_query_secret: "browser-secret-stale",
     });
     desktopConnectLocalMock.mockResolvedValue({
       kind: "local",
       base_url: "http://127.0.0.1:4400",
-      token: "fresh-token",
+      browser_query_secret: "browser-secret-fresh",
     });
-    fetchMock
-      .mockResolvedValueOnce(new Response(JSON.stringify({ error: "unauthorized" }), { status: 401 }))
-      .mockResolvedValueOnce(okJsonResponse({ ok: true }));
+    desktopDaemonRequestMock
+      .mockResolvedValueOnce(errorDesktopJsonResponse(401, { error: "unauthorized" }))
+      .mockResolvedValueOnce(okDesktopJsonResponse({ ok: true }));
 
     const result = await clientBaseMod.apiAny<{ ok: boolean }>("/api/health");
 
     expect(result.ok).toBe(true);
     expect(desktopGetConnectionMock).toHaveBeenCalledTimes(1);
     expect(desktopConnectLocalMock).toHaveBeenCalledTimes(1);
-    expect(fetchMock).toHaveBeenNthCalledWith(
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(desktopDaemonRequestMock).toHaveBeenNthCalledWith(
       1,
-      "http://127.0.0.1:4399/api/workspaces",
       expect.objectContaining({
-        headers: expect.objectContaining({
-          authorization: "Bearer stale-token",
-        }),
-        signal: expect.any(AbortSignal),
+        method: "GET",
+        path: "/api/workspaces",
       }),
     );
-    expect(fetchMock).toHaveBeenNthCalledWith(
+    expect(desktopDaemonRequestMock).toHaveBeenNthCalledWith(
       2,
-      "http://127.0.0.1:4400/api/health",
       expect.objectContaining({
-        headers: expect.objectContaining({
-          authorization: "Bearer fresh-token",
-        }),
+        method: "GET",
+        path: "/api/health",
       }),
     );
+    expectNoAuthorizationHeader(desktopDaemonRequestMock.mock.calls[0]?.[0]?.headers ?? []);
+    expectNoAuthorizationHeader(desktopDaemonRequestMock.mock.calls[1]?.[0]?.headers ?? []);
     expect(clientBaseMod.getDaemonClientConfig()).toMatchObject({
       baseUrl: "http://127.0.0.1:4400",
-      authToken: "fresh-token",
+      authToken: "browser-secret-fresh",
     });
   });
 
-  it("reads the desktop auth token after raw fetch preflight on cold start", async () => {
+  it("uses the desktop daemon proxy after raw fetch preflight on cold start", async () => {
     desktopGetConnectionMock.mockResolvedValue({
       kind: "local",
       base_url: "http://127.0.0.1:4399",
-      token: "abc",
+      browser_query_secret: "browser-secret-abc",
     });
-    fetchMock.mockImplementation(() => Promise.resolve(okJsonResponse({ ok: true })));
+    desktopDaemonRequestMock.mockResolvedValue(okDesktopJsonResponse({ ok: true }));
 
     const result = await clientBaseMod.daemonFetchRaw("/api/sessions/web", {
       method: "POST",
@@ -456,23 +464,24 @@ describe("clientBase desktop connection sync", () => {
 
     expect(result.status).toBe(200);
     expect(desktopGetConnectionMock).toHaveBeenCalledTimes(1);
-    expect(fetchMock).toHaveBeenCalledWith(
-      "http://127.0.0.1:4399/api/sessions/web",
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(desktopDaemonRequestMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        headers: expect.objectContaining({
-          authorization: "Bearer abc",
-        }),
+        method: "POST",
+        path: "/api/sessions/web",
+        body: JSON.stringify({ label: "preflight-check" }),
       }),
     );
+    expectNoAuthorizationHeader(desktopDaemonRequestMock.mock.calls[0]?.[0]?.headers ?? []);
   });
 
-  it("preserves merged auth and caller headers for raw desktop fetches", async () => {
+  it("preserves caller headers for raw desktop proxy requests", async () => {
     desktopGetConnectionMock.mockResolvedValue({
       kind: "local",
       base_url: "http://127.0.0.1:4399",
-      token: "abc",
+      browser_query_secret: "browser-secret-abc",
     });
-    fetchMock.mockImplementation(() => Promise.resolve(okJsonResponse({ ok: true })));
+    desktopDaemonRequestMock.mockResolvedValue(okDesktopJsonResponse({ ok: true }));
 
     const result = await clientBaseMod.daemonFetchRaw("/api/sessions/web", {
       method: "POST",
@@ -484,15 +493,52 @@ describe("clientBase desktop connection sync", () => {
     });
 
     expect(result.status).toBe(200);
-    expect(fetchMock).toHaveBeenCalledWith(
-      "http://127.0.0.1:4399/api/sessions/web",
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(desktopDaemonRequestMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        headers: expect.objectContaining({
-          authorization: "Bearer abc",
-          "content-type": "application/json",
-          "x-test-case": "raw-fetch-merge",
-        }),
+        method: "POST",
+        path: "/api/sessions/web",
+        body: JSON.stringify({ label: "header-merge" }),
+        headers: expect.arrayContaining([
+          ["content-type", "application/json"],
+          ["x-test-case", "raw-fetch-merge"],
+        ]),
       }),
     );
+    expectNoAuthorizationHeader(desktopDaemonRequestMock.mock.calls[0]?.[0]?.headers ?? []);
+  });
+
+  it("strips caller Authorization headers before desktop proxying", async () => {
+    desktopGetConnectionMock.mockResolvedValue({
+      kind: "local",
+      base_url: "http://127.0.0.1:4399",
+      browser_query_secret: "browser-secret-abc",
+    });
+    desktopDaemonRequestMock.mockResolvedValue(okDesktopJsonResponse({ ok: true }));
+
+    const result = await clientBaseMod.daemonFetchRaw("/api/sessions/web", {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer should-not-pass-through",
+        "content-type": "application/json",
+        "x-test-case": "strip-authorization",
+      },
+      body: JSON.stringify({ label: "strip-authorization" }),
+    });
+
+    expect(result.status).toBe(200);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(desktopDaemonRequestMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        method: "POST",
+        path: "/api/sessions/web",
+        body: JSON.stringify({ label: "strip-authorization" }),
+        headers: expect.arrayContaining([
+          ["content-type", "application/json"],
+          ["x-test-case", "strip-authorization"],
+        ]),
+      }),
+    );
+    expectNoAuthorizationHeader(desktopDaemonRequestMock.mock.calls[0]?.[0]?.headers ?? []);
   });
 });

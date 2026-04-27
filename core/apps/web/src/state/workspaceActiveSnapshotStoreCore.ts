@@ -12,6 +12,7 @@ import {
   recordClientCounterMetric,
   recordClientHistogramMetric,
 } from "../api/client";
+import { isDesktopApp } from "../utils/desktop";
 import { type PersistedWorkspaceActiveSnapshotV1 } from "./uiStateStore";
 import { emitUiDiagnostic, normalizeDiagnosticErrorMessage } from "./diagnosticsChannel";
 import type {
@@ -140,7 +141,7 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
   constructor(readonly workspaceId: string, opts?: WorkspaceActiveSnapshotStoreOptions) {
     this.state = new WorkspaceActiveSnapshotStoreState(workspaceId);
     this.disableCache = opts?.disableCache ?? false;
-    this.disableWorker = opts?.disableWorker ?? false;
+    this.disableWorker = Boolean(opts?.disableWorker) || isDesktopApp();
     this.e2eEnabled = opts?.e2eEnabled ?? false;
     this.persistNotifier = opts?.onPersistRequested ?? null;
     this.workerPatchEmitter = opts?.onPatch ?? null;

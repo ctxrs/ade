@@ -1,5 +1,7 @@
 use super::*;
-use crate::api::{derive_browser_stream_token, BrowserStreamAuthScope};
+use crate::api::{
+    derive_browser_query_secret, derive_browser_stream_token, BrowserStreamAuthScope,
+};
 
 #[tokio::test]
 async fn workspace_active_websocket_stream_requires_browser_scoped_query_token() {
@@ -43,6 +45,13 @@ async fn workspace_active_websocket_stream_requires_browser_scoped_query_token()
             workspace_id: workspace.id.0.to_string(),
         },
     );
+    let browser_query_secret = derive_browser_query_secret("daemon-secret");
+    let scoped_browser_secret_token = derive_browser_stream_token(
+        &browser_query_secret,
+        &BrowserStreamAuthScope::WorkspaceActiveSnapshot {
+            workspace_id: workspace.id.0.to_string(),
+        },
+    );
     let (addr, server) = serve_test_app(app).await;
     let client = reqwest::Client::new();
 
@@ -73,6 +82,18 @@ async fn workspace_active_websocket_stream_requires_browser_scoped_query_token()
             addr,
             &format!(
                 "/api/workspaces/{}/active_snapshot/stream?token={scoped_token}",
+                workspace.id.0
+            ),
+        )
+        .await,
+        StatusCode::SWITCHING_PROTOCOLS
+    );
+    assert_eq!(
+        websocket_upgrade_status(
+            &client,
+            addr,
+            &format!(
+                "/api/workspaces/{}/active_snapshot/stream?token={scoped_browser_secret_token}",
                 workspace.id.0
             ),
         )

@@ -1,5 +1,6 @@
 import type { ClientTelemetryBatch, SemanticTelemetryBatch, SemanticTelemetryEvent } from "@ctx/types";
 import { isDesktopApp } from "../utils/desktop";
+import { desktopDaemonRequest } from "../utils/desktop";
 import { ensureDesktopDaemonConnection } from "./desktopDaemonConnection";
 import { getDaemonConnection, getDaemonHttpUrl } from "./daemonConnection";
 
@@ -238,6 +239,13 @@ const postTelemetryBatch = async (
         connectLocalWhenMissing: false,
         reason,
       });
+      await desktopDaemonRequest({
+        method: "POST",
+        path,
+        headers: [["content-type", "application/json"]],
+        body: JSON.stringify(batch),
+      });
+      return;
     }
     if (typeof fetch === "undefined") return;
     await fetch(getDaemonHttpUrl(path), {

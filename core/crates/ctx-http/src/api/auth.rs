@@ -326,6 +326,13 @@ pub(crate) fn derive_browser_stream_token(
     hex::encode(hasher.finalize())
 }
 
+pub(crate) fn derive_browser_query_secret(auth_token: &str) -> String {
+    let mut hasher = sha2::Sha256::new();
+    hasher.update(b"ctx-desktop-browser-query-secret|");
+    hasher.update(auth_token.as_bytes());
+    hex::encode(hasher.finalize())
+}
+
 fn browser_stream_query_token_is_valid(req: &Request<Body>, auth_token: &str) -> bool {
     let Some(scope) = browser_stream_scope(req) else {
         return false;
@@ -334,6 +341,8 @@ fn browser_stream_query_token_is_valid(req: &Request<Body>, auth_token: &str) ->
         return false;
     };
     query_token == derive_browser_stream_token(auth_token, &scope)
+        || query_token
+            == derive_browser_stream_token(&derive_browser_query_secret(auth_token), &scope)
 }
 
 const BROWSER_CAPABILITY_TOKEN_TTL_SECS: i64 = 60 * 60;
@@ -378,6 +387,12 @@ fn browser_capability_query_token_is_valid(req: &Request<Body>, auth_token: &str
         return false;
     }
     query_token == derive_browser_capability_token(auth_token, &scope, expires_at)
+        || query_token
+            == derive_browser_capability_token(
+                &derive_browser_query_secret(auth_token),
+                &scope,
+                expires_at,
+            )
 }
 
 pub(super) async fn auth_middleware(

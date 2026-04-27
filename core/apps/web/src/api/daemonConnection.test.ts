@@ -175,7 +175,7 @@ describe("daemonConnection", () => {
     mod.applyDesktopDaemonConnection({
       kind: "ssh",
       base_url: "http://127.0.0.1:4399",
-      token: "abc",
+      browser_query_secret: "browser-secret-abc",
       host: "host-a.example",
       user: "user",
       remote_port: 4399,
@@ -184,7 +184,7 @@ describe("daemonConnection", () => {
     mod.applyDesktopDaemonConnection({
       kind: "ssh",
       base_url: "http://127.0.0.1:4399",
-      token: "abc",
+      browser_query_secret: "browser-secret-abc",
       host: "host-b.example",
       user: "user",
       remote_port: 4399,
@@ -195,7 +195,7 @@ describe("daemonConnection", () => {
     expect(listener).toHaveBeenCalledTimes(2);
     expect(connection).toMatchObject({
       baseUrl: "http://127.0.0.1:4399",
-      authToken: "abc",
+      authToken: "browser-secret-abc",
       source: "desktop",
       targetScope: {
         kind: "desktop_ssh",

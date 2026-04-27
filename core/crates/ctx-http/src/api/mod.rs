@@ -50,8 +50,8 @@ mod ws;
 pub(crate) use artifacts::open_canonical_session_artifact_file;
 #[cfg(test)]
 pub(crate) use auth::{
-    derive_browser_capability_token, derive_browser_stream_token, BrowserCapabilityAuthScope,
-    BrowserStreamAuthScope,
+    derive_browser_capability_token, derive_browser_query_secret, derive_browser_stream_token,
+    BrowserCapabilityAuthScope, BrowserStreamAuthScope,
 };
 
 use artifacts::*;

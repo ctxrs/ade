@@ -11,6 +11,7 @@ fn connection_info_with_kind(kind: DesktopConnectionKind) -> DesktopConnectionIn
         remote_port: None,
         remote_update_message: None,
         remote_update_state: None,
+        browser_query_secret: None,
         token: None,
         user: None,
     }
@@ -55,6 +56,7 @@ fn local_connection_stale_when_health_probe_fails() {
         base_url: Some("http://127.0.0.1:43535".to_string()),
         intent: DesktopConnectionIntent::AutoLocalBootstrap,
         local_auto_bootstrap_allowed: true,
+        browser_query_secret: None,
         token: Some("token".to_string()),
         host: None,
         user: None,
@@ -80,6 +82,7 @@ fn local_connection_without_base_url_is_treated_as_stale() {
         base_url: None,
         intent: DesktopConnectionIntent::AutoLocalBootstrap,
         local_auto_bootstrap_allowed: true,
+        browser_query_secret: None,
         token: Some("token".to_string()),
         host: None,
         user: None,

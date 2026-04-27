@@ -16,6 +16,17 @@ pub(crate) fn desktop_get_connection(
 }
 
 #[tauri::command]
+pub(crate) fn desktop_daemon_request(
+    state: tauri::State<ConnectionManager>,
+    window: tauri::Window,
+    req: DesktopDaemonRequest,
+) -> Result<DesktopHttpResponse, String> {
+    state
+        .daemon_request_for_scope(window.label(), req)
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
 pub(crate) fn desktop_disconnect(
     state: tauri::State<ConnectionManager>,
     window: tauri::Window,

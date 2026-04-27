@@ -5,6 +5,7 @@ import {
   getDaemonClientConfig,
   subscribeDaemonConfig,
 } from "../api/client";
+import { isDesktopApp } from "../utils/desktop";
 import { SessionReplicaCore } from "./sessionReplicaCore";
 import type {
   SessionReplicaCommand,
@@ -15,6 +16,7 @@ import type {
 
 const shouldUseWorker = (): boolean => {
   if (typeof Worker === "undefined") return false;
+  if (isDesktopApp()) return false;
   const metaEnv =
     typeof import.meta !== "undefined" ? (import.meta as { env?: { MODE?: string } }).env : undefined;
   if (metaEnv?.MODE === "test") return false;

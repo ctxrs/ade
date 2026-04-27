@@ -1,4 +1,10 @@
-import { desktopConnectLocal, desktopGetConnection, isDesktopApp, type DesktopConnectionInfo } from "../utils/desktop";
+import {
+  desktopConnectLocal,
+  desktopDaemonRequest,
+  desktopGetConnection,
+  isDesktopApp,
+  type DesktopConnectionInfo,
+} from "../utils/desktop";
 import { emitUiDiagnostic, normalizeDiagnosticErrorMessage } from "../state/diagnosticsChannel";
 import {
   applyDesktopDaemonConnection,
@@ -67,34 +73,39 @@ const shouldRepairExistingLocalDesktopTarget = (
 const shouldProbeExistingLocalDesktopAuth = (
   current: DaemonConnection,
   info: DesktopConnectionInfo | null,
-): info is DesktopConnectionInfo & { kind: "local"; base_url: string; token: string } => {
-  if (!shouldRepairExistingLocalDesktopTarget(current, info)) return false;
-  return Boolean(info.token);
-};
+): info is DesktopConnectionInfo & { kind: "local"; base_url: string } =>
+  shouldRepairExistingLocalDesktopTarget(current, info);
 
-const probeDesktopLocalDaemonAuth = async (
-  info: DesktopConnectionInfo & { base_url: string; token: string },
-): Promise<boolean> => {
-  const controller = new AbortController();
-  const timeoutId = globalThis.setTimeout(() => {
-    controller.abort();
-  }, DESKTOP_LOCAL_AUTH_PROBE_TIMEOUT_MS);
+const probeDesktopLocalDaemonAuth = async (): Promise<boolean> => {
+  let timeoutId: number | null = null;
   try {
-    const baseUrl = info.base_url.replace(/\/+$/, "");
-    const response = await fetch(`${baseUrl}/api/workspaces`, {
-      method: "GET",
-      headers: {
-        authorization: `Bearer ${info.token}`,
-      },
-      signal: controller.signal,
-    });
-    return response.ok;
+    const response = await Promise.race([
+      desktopDaemonRequest({
+        method: "GET",
+        path: "/api/workspaces",
+        headers: [],
+        body: null,
+      }),
+      new Promise<never>((_, reject) => {
+        timeoutId = globalThis.setTimeout(() => {
+          reject(new Error("desktop local auth probe timed out"));
+        }, DESKTOP_LOCAL_AUTH_PROBE_TIMEOUT_MS);
+      }),
+    ]);
+    return response.status >= 200 && response.status < 300;
   } catch {
     return false;
   } finally {
-    globalThis.clearTimeout(timeoutId);
+    if (timeoutId !== null) {
+      globalThis.clearTimeout(timeoutId);
+    }
   }
 };
+
+const hasBrowserQuerySecret = (
+  info: DesktopConnectionInfo | null,
+): info is DesktopConnectionInfo & { browser_query_secret: string } =>
+  Boolean(info?.browser_query_secret);
 
 export const syncDesktopDaemonConnectionFromBridge = async (
   opts?: DesktopDaemonConnectionSyncOptions,
@@ -117,10 +128,13 @@ export const syncDesktopDaemonConnectionFromBridge = async (
       info = await desktopGetConnection();
       if (shouldConnectLocalWhenMissing(info, opts?.connectLocalWhenMissing ?? false)) {
         info = await desktopConnectLocal();
-      } else if (shouldRepairExistingLocalDesktopTarget(current, info) && !info.token) {
+      } else if (
+        shouldRepairExistingLocalDesktopTarget(current, info)
+        && !hasBrowserQuerySecret(info)
+      ) {
         info = await desktopConnectLocal();
       } else if (shouldProbeExistingLocalDesktopAuth(current, info)) {
-        const authOk = await probeDesktopLocalDaemonAuth(info);
+        const authOk = await probeDesktopLocalDaemonAuth();
         if (!authOk) {
           info = await desktopConnectLocal();
         }

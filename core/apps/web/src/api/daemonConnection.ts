@@ -309,7 +309,7 @@ export const applyDesktopDaemonConnection = (
   return setDaemonConnection(
     {
       baseUrl: info?.base_url ?? null,
-      authToken: info?.token ?? null,
+      authToken: info?.browser_query_secret ?? null,
       source: "desktop",
       targetScope: daemonTargetScopeFromDesktopConnectionLike(info),
     },

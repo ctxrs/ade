@@ -1,5 +1,7 @@
 use super::*;
-use crate::api::{derive_browser_capability_token, BrowserCapabilityAuthScope};
+use crate::api::{
+    derive_browser_capability_token, derive_browser_query_secret, BrowserCapabilityAuthScope,
+};
 
 #[tokio::test]
 async fn blob_download_requires_browser_capability_query_token() {
@@ -43,10 +45,28 @@ async fn blob_download_requires_browser_capability_query_token() {
         },
         expires_at,
     );
+    let browser_query_secret = derive_browser_query_secret("daemon-secret");
+    let scoped_browser_secret_token = derive_browser_capability_token(
+        &browser_query_secret,
+        &BrowserCapabilityAuthScope::Blob {
+            blob_id: blob_id.to_string(),
+        },
+        expires_at,
+    );
     let req = Request::builder()
         .method("GET")
         .uri(format!(
             "/api/blobs/{blob_id}?expires_at={expires_at}&token={scoped_token}"
+        ))
+        .body(Body::empty())
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::NOT_FOUND);
+
+    let req = Request::builder()
+        .method("GET")
+        .uri(format!(
+            "/api/blobs/{blob_id}?expires_at={expires_at}&token={scoped_browser_secret_token}"
         ))
         .body(Body::empty())
         .unwrap();

@@ -1,4 +1,12 @@
 use super::*;
+use sha2::Digest;
+
+fn derive_browser_query_secret(token: &str) -> String {
+    let mut hasher = sha2::Sha256::new();
+    hasher.update(b"ctx-desktop-browser-query-secret|");
+    hasher.update(token.as_bytes());
+    hex::encode(hasher.finalize())
+}
 
 impl ConnectionManager {
     pub(crate) fn info(&self) -> DesktopConnectionInfo {
@@ -13,6 +21,7 @@ impl ConnectionManager {
                 base_url: None,
                 intent: ConnectionIntent::ExplicitDisconnected.as_ipc(),
                 local_auto_bootstrap_allowed: false,
+                browser_query_secret: None,
                 token: None,
                 host: None,
                 user: None,
@@ -31,6 +40,7 @@ impl ConnectionManager {
                 base_url: None,
                 intent,
                 local_auto_bootstrap_allowed,
+                browser_query_secret: None,
                 token: None,
                 host: None,
                 user: None,
@@ -44,6 +54,7 @@ impl ConnectionManager {
                 base_url: Some(c.base_url.clone()),
                 intent,
                 local_auto_bootstrap_allowed,
+                browser_query_secret: Some(derive_browser_query_secret(&c.token)),
                 token: Some(c.token.clone()),
                 host: None,
                 user: None,
@@ -57,6 +68,7 @@ impl ConnectionManager {
                 base_url: Some(c.base_url.clone()),
                 intent,
                 local_auto_bootstrap_allowed,
+                browser_query_secret: c.token.as_deref().map(derive_browser_query_secret),
                 token: c.token.clone(),
                 host: Some(c.host.clone()),
                 user: c.user.clone(),
