@@ -101,6 +101,16 @@ fn rendered_view_uses_tokenized_signal_path() {
 }
 
 #[test]
+fn rendered_view_accepts_absolute_signal_websocket_url() {
+    let html = render_web_session_view(
+        &test_session_info(),
+        "wss://proxy.example/ctx/sessions/web/sess-1/signal?token=stream-token",
+    );
+    assert!(html.contains("wss://proxy.example/ctx/sessions/web/sess-1/signal?token=stream-token"));
+    assert!(html.contains("signalEndpoint.startsWith('ws://')"));
+}
+
+#[test]
 fn web_session_handle_exposes_worker_auth_secret() {
     let handle = test_handle(None);
     assert_eq!(handle.worker_auth_secret(), "worker-secret");

@@ -9,6 +9,7 @@ pub struct CoreState {
     pub tool_output_spool_dir: PathBuf,
     pub stores: StoreManager,
     pub daemon_url: String,
+    pub public_base_url: Option<String>,
     pub auth_token: Option<String>,
     pub(crate) mcp_auth: Mutex<HashMap<String, TimedEntry<McpAuthContext>>>,
     pub ask_user_question: Arc<AskUserQuestionBroker>,

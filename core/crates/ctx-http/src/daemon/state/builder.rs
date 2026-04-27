@@ -8,11 +8,30 @@ impl AppState {
         daemon_url: String,
         auth_token: Option<String>,
     ) -> Self {
+        Self::new_with_public_base_url(
+            data_root,
+            stores,
+            providers,
+            daemon_url,
+            None,
+            auth_token,
+        )
+    }
+
+    pub fn new_with_public_base_url(
+        data_root: PathBuf,
+        stores: StoreManager,
+        providers: HashMap<String, Arc<dyn ProviderAdapter>>,
+        daemon_url: String,
+        public_base_url: Option<String>,
+        auth_token: Option<String>,
+    ) -> Self {
         Self::new_with_runtime_flags(
             data_root,
             stores,
             providers,
             daemon_url,
+            public_base_url,
             auth_token,
             AppRuntimeFlags {
                 worktree_vcs_enabled: worktree_vcs_enabled_from_env(),
@@ -25,6 +44,7 @@ impl AppState {
         stores: StoreManager,
         providers: HashMap<String, Arc<dyn ProviderAdapter>>,
         daemon_url: String,
+        public_base_url: Option<String>,
         auth_token: Option<String>,
         runtime_flags: AppRuntimeFlags,
     ) -> Self {
@@ -117,6 +137,7 @@ impl AppState {
                 tool_output_spool_dir,
                 stores,
                 daemon_url,
+                public_base_url,
                 auth_token,
                 mcp_auth: Mutex::new(HashMap::new()),
                 ask_user_question,

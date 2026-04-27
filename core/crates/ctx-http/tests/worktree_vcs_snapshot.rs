@@ -87,6 +87,7 @@ fn build_vcs_disabled_state(data_dir: &Path, stores: ctx_store::StoreManager) ->
         common::fake_providers(),
         "http://127.0.0.1:0".to_string(),
         None,
+        None,
         AppRuntimeFlags {
             worktree_vcs_enabled: false,
         },

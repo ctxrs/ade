@@ -201,8 +201,13 @@ pub(super) async fn mint_web_session_stream_token(
         .await
         .ok_or(StatusCode::NOT_FOUND)?;
     let (stream_path, expires_at) = handle.issue_view_connect_path().await;
-    let stream_url = resolve_request_base_url(&headers, &state.core.daemon_url)
-        .map(|base_url| format!("{}{}", base_url, stream_path.clone()));
+    let stream_url = match state.core.public_base_url.as_deref() {
+        Some(base_url) => {
+            Some(public_route_url(base_url, &stream_path).ok_or(StatusCode::INTERNAL_SERVER_ERROR)?)
+        }
+        None => resolve_request_base_url(&headers, &state.core.daemon_url, None)
+            .map(|base_url| format!("{base_url}{stream_path}")),
+    };
     Ok(Json(WebSessionStreamConnectInfo {
         stream_path,
         stream_url,
@@ -220,6 +225,12 @@ pub(super) async fn web_session_view(
             .await?;
     let info = handle.snapshot().await;
     let (signal_path, _) = handle.issue_signal_connect_path().await;
-    let body = render_web_session_view(&info, &signal_path);
+    let signal_endpoint = match state.core.public_base_url.as_deref() {
+        Some(base_url) => {
+            public_websocket_url(base_url, &signal_path).ok_or(StatusCode::INTERNAL_SERVER_ERROR)?
+        }
+        None => signal_path,
+    };
+    let body = render_web_session_view(&info, &signal_endpoint);
     Ok(([(header::CONTENT_TYPE, "text/html; charset=utf-8")], body).into_response())
 }

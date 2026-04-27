@@ -153,7 +153,17 @@ fn parse_forwarded_header(value: &str) -> (Option<String>, Option<String>) {
     (proto, host)
 }
 
-fn resolve_request_base_url(headers: &HeaderMap, fallback: &str) -> Option<String> {
+fn resolve_request_base_url(
+    headers: &HeaderMap,
+    fallback: &str,
+    public_base_url: Option<&str>,
+) -> Option<String> {
+    if let Some(public_base_url) = public_base_url {
+        let trimmed = public_base_url.trim().trim_end_matches('/');
+        if !trimmed.is_empty() {
+            return Some(trimmed.to_string());
+        }
+    }
     let fallback = fallback.trim_end_matches('/');
     let fallback_url = Url::parse(fallback).ok();
     let fallback_base = fallback_url.as_ref().and_then(|url| {
@@ -199,6 +209,32 @@ fn resolve_request_base_url(headers: &HeaderMap, fallback: &str) -> Option<Strin
         Some(_) => None,
         None => fallback_base,
     }
+}
+
+fn public_route_url(base_url: &str, route_path: &str) -> Option<String> {
+    let mut base = Url::parse(base_url).ok()?;
+    let normalized_base_path = match base.path().trim_end_matches('/') {
+        "" => "/".to_string(),
+        path => format!("{path}/"),
+    };
+    base.set_path(&normalized_base_path);
+    base.join(route_path.trim_start_matches('/'))
+        .ok()
+        .map(|url| url.to_string())
+}
+
+fn public_websocket_url(base_url: &str, route_path: &str) -> Option<String> {
+    let mut url = public_route_url(base_url, route_path).and_then(|joined| Url::parse(&joined).ok())?;
+    match url.scheme() {
+        "http" => {
+            url.set_scheme("ws").ok()?;
+        }
+        "https" => {
+            url.set_scheme("wss").ok()?;
+        }
+        _ => return None,
+    }
+    Some(url.to_string())
 }
 
 fn is_loopback_host(host: &str) -> bool {
@@ -316,7 +352,7 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert(header::HOST, HeaderValue::from_static("127.0.0.1:4455"));
         assert_eq!(
-            resolve_request_base_url(&headers, "http://127.0.0.1:4321"),
+            resolve_request_base_url(&headers, "http://127.0.0.1:4321", None),
             Some("http://127.0.0.1:4455".to_string())
         );
     }
@@ -326,7 +362,7 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert(header::HOST, HeaderValue::from_static("evil.example"));
         assert_eq!(
-            resolve_request_base_url(&headers, "http://127.0.0.1:4321"),
+            resolve_request_base_url(&headers, "http://127.0.0.1:4321", None),
             None
         );
     }
@@ -339,7 +375,7 @@ mod tests {
             HeaderValue::from_static("proto=javascript;host=127.0.0.1:4455"),
         );
         assert_eq!(
-            resolve_request_base_url(&headers, "http://127.0.0.1:4321"),
+            resolve_request_base_url(&headers, "http://127.0.0.1:4321", None),
             None
         );
     }
@@ -352,7 +388,7 @@ mod tests {
             HeaderValue::from_static("proto=https;host=tauri.localhost:3000"),
         );
         assert_eq!(
-            resolve_request_base_url(&headers, "http://127.0.0.1:4321"),
+            resolve_request_base_url(&headers, "http://127.0.0.1:4321", None),
             Some("https://tauri.localhost:3000".to_string())
         );
     }
@@ -361,8 +397,54 @@ mod tests {
     fn resolve_request_base_url_uses_loopback_fallback_without_request_host() {
         let headers = HeaderMap::new();
         assert_eq!(
-            resolve_request_base_url(&headers, "http://127.0.0.1:4321"),
+            resolve_request_base_url(&headers, "http://127.0.0.1:4321", None),
             Some("http://127.0.0.1:4321".to_string())
+        );
+    }
+
+    #[test]
+    fn resolve_request_base_url_prefers_configured_public_base_url() {
+        let mut headers = HeaderMap::new();
+        headers.insert(header::HOST, HeaderValue::from_static("127.0.0.1:4455"));
+        headers.insert(
+            header::FORWARDED,
+            HeaderValue::from_static("proto=https;host=proxy.example"),
+        );
+        assert_eq!(
+            resolve_request_base_url(
+                &headers,
+                "http://127.0.0.1:4321",
+                Some("https://proxy.example/ctx"),
+            ),
+            Some("https://proxy.example/ctx".to_string())
+        );
+    }
+
+    #[test]
+    fn public_route_url_preserves_path_prefix_and_query() {
+        assert_eq!(
+            public_route_url(
+                "https://proxy.example/ctx",
+                "/sessions/web/sess-1/view?token=stream-token",
+            ),
+            Some(
+                "https://proxy.example/ctx/sessions/web/sess-1/view?token=stream-token"
+                    .to_string(),
+            )
+        );
+    }
+
+    #[test]
+    fn public_websocket_url_preserves_path_prefix_and_query() {
+        assert_eq!(
+            public_websocket_url(
+                "https://proxy.example/ctx",
+                "/sessions/web/sess-1/signal?token=signal-token",
+            ),
+            Some(
+                "wss://proxy.example/ctx/sessions/web/sess-1/signal?token=signal-token"
+                    .to_string(),
+            )
         );
     }
 }

@@ -1,12 +1,21 @@
 use super::WebSessionInfo;
 
-pub fn render_web_session_view(session: &WebSessionInfo, signal_path: &str) -> String {
+pub fn render_web_session_view(session: &WebSessionInfo, signal_endpoint: &str) -> String {
     fn escape_html(s: &str) -> String {
         s.replace('&', "&amp;")
             .replace('<', "&lt;")
             .replace('>', "&gt;")
             .replace('\"', "&quot;")
             .replace('\'', "&#39;")
+    }
+
+    fn escape_js_single_quoted(s: &str) -> String {
+        s.replace('\\', "\\\\")
+            .replace('\'', "\\'")
+            .replace('\n', "\\n")
+            .replace('\r', "\\r")
+            .replace('\u{2028}', "\\u2028")
+            .replace('\u{2029}', "\\u2029")
     }
 
     const TEMPLATE: &str = r#"<!doctype html>
@@ -39,7 +48,10 @@ pub fn render_web_session_view(session: &WebSessionInfo, signal_path: &str) -> S
       let focused = false;
       let lastPoint = { x: VIEW_W / 2, y: VIEW_H / 2 };
 
-      const wsUrl = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '%%SIGNAL_PATH%%';
+      const signalEndpoint = '%%SIGNAL_ENDPOINT%%';
+      const wsUrl = signalEndpoint.startsWith('ws://') || signalEndpoint.startsWith('wss://')
+        ? signalEndpoint
+        : (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + signalEndpoint;
       const ws = new WebSocket(wsUrl);
       const pc = new RTCPeerConnection({ iceServers: [{urls: 'stun:stun.l.google.com:19302'}] });
 
@@ -186,5 +198,8 @@ pub fn render_web_session_view(session: &WebSessionInfo, signal_path: &str) -> S
         .replace("%%URL%%", &escape_html(&session.url))
         .replace("%%WIDTH%%", &session.viewport.width.to_string())
         .replace("%%HEIGHT%%", &session.viewport.height.to_string())
-        .replace("%%SIGNAL_PATH%%", signal_path)
+        .replace(
+            "%%SIGNAL_ENDPOINT%%",
+            &escape_js_single_quoted(signal_endpoint),
+        )
 }

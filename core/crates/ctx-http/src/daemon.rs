@@ -9,6 +9,7 @@ use chrono::Utc;
 use directories::BaseDirs;
 use serde::Serialize;
 use serde_json::json;
+use url::Url;
 
 use ctx_core::ids::WorkspaceId;
 use ctx_core::models::{ExecutionEnvironment, SessionTurn, SessionTurnStatus};
@@ -364,6 +365,7 @@ pub async fn serve(bind: Vec<String>, data_dir: Option<String>) -> Result<()> {
         ip => ip.to_string(),
     };
     let daemon_url = format!("http://{}:{}", host, primary_addr.port());
+    let public_base_url = daemon_public_base_url_from_env()?;
 
     let mut auth = auth::load_or_init_daemon_auth(&data_root)?;
     let auth_token = Some(auth.token.clone());
@@ -371,11 +373,12 @@ pub async fn serve(bind: Vec<String>, data_dir: Option<String>) -> Result<()> {
     auth.daemon_url = Some(daemon_url.clone());
     auth::write_daemon_auth_file(&auth::daemon_auth_path(&data_root), &auth)?;
 
-    let state = Arc::new(AppState::new(
+    let state = Arc::new(AppState::new_with_public_base_url(
         data_root,
         stores,
         providers,
         daemon_url.clone(),
+        public_base_url,
         auth_token,
     ));
     state.transport.web_sessions.clone().start_reaper().await;
@@ -490,6 +493,31 @@ pub async fn serve(bind: Vec<String>, data_dir: Option<String>) -> Result<()> {
         result.context("daemon listener task panicked")??;
     }
     Ok(())
+}
+
+fn daemon_public_base_url_from_env() -> Result<Option<String>> {
+    let Some(raw) = std::env::var("CTX_DAEMON_PUBLIC_BASE_URL").ok() else {
+        return Ok(None);
+    };
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        anyhow::bail!("CTX_DAEMON_PUBLIC_BASE_URL is empty");
+    }
+    let parsed = Url::parse(trimmed)
+        .with_context(|| format!("parsing CTX_DAEMON_PUBLIC_BASE_URL `{trimmed}`"))?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        anyhow::bail!("CTX_DAEMON_PUBLIC_BASE_URL must use http:// or https://");
+    }
+    if parsed.host_str().is_none() {
+        anyhow::bail!("CTX_DAEMON_PUBLIC_BASE_URL must include a host");
+    }
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        anyhow::bail!("CTX_DAEMON_PUBLIC_BASE_URL must not embed credentials");
+    }
+    if parsed.query().is_some() || parsed.fragment().is_some() {
+        anyhow::bail!("CTX_DAEMON_PUBLIC_BASE_URL must not include query or fragment");
+    }
+    Ok(Some(trimmed.trim_end_matches('/').to_string()))
 }
 
 pub async fn init_workspace(root: Option<String>) -> Result<()> {
