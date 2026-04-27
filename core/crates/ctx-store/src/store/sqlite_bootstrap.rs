@@ -1,4 +1,7 @@
-use super::migration_repairs::repair_historical_tool_order_seq_migration_version;
+use super::migration_repairs::{
+    repair_historical_tool_order_seq_migration_version,
+    repair_partial_session_subagent_archival_migration,
+};
 use super::*;
 
 const SESSION_REASONING_EFFORT_MIGRATION_VERSION: i64 = 46;
@@ -44,6 +47,7 @@ impl Store {
         ensure_sqlite_journal_mode_wal(&pool).await?;
         repair_duplicate_tool_display_migration_version(&pool).await?;
         repair_workspace_message_index_migration_versions(&pool).await?;
+        repair_partial_session_subagent_archival_migration(&pool).await?;
         STORE_MIGRATOR.run(&pool).await?;
         let event_log = Arc::new(EventLogRuntime::load(&pool).await?);
         let active_head_projection = Arc::new(ActiveHeadProjectionRuntime::new());

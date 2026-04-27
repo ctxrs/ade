@@ -17,6 +17,7 @@ const LOCK_CHILD_ENV: &str = "CTX_STORE_LOCK_CHILD";
 const LOCK_DB_PATH_ENV: &str = "CTX_STORE_LOCK_DB_PATH";
 const LOCK_READY_PATH_ENV: &str = "CTX_STORE_LOCK_READY_PATH";
 const LOCK_RELEASE_PATH_ENV: &str = "CTX_STORE_LOCK_RELEASE_PATH";
+const STABLE_0_60_LAST_MIGRATION_VERSION: i64 = 60;
 const LEGACY_DROP_WORKSPACE_MESSAGE_INDEX_SQL: &str = "\
 DROP INDEX IF EXISTS workspace_message_index_workspace_id_idx;\n\
 DROP TABLE IF EXISTS workspace_message_index;\n";
@@ -153,6 +154,65 @@ async fn migrations_upgrade_cleanly_from_every_historical_prefix() -> Result<()>
             "expected all migrations applied after upgrading prefix {prefix_len}"
         );
     }
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn open_upgrades_from_stable_0_60_migration_prefix() -> Result<()> {
+    let tempdir = tempfile::tempdir().context("creating tempdir for 0.60 upgrade")?;
+    let subset_dir = tempdir.path().join("stable-0-60-migrations");
+    fs::create_dir_all(&subset_dir).context("creating 0.60 migration dir")?;
+
+    let migrations = migration_files()?;
+    for migration in &migrations {
+        if migration_version(migration)? <= STABLE_0_60_LAST_MIGRATION_VERSION {
+            let filename = migration
+                .file_name()
+                .context("migration file missing name")?;
+            fs::copy(migration, subset_dir.join(filename))
+                .with_context(|| format!("copying {} into 0.60 subset", migration.display()))?;
+        }
+    }
+
+    let db_path = tempdir.path().join("db.sqlite");
+    fs::File::create(&db_path).context("creating sqlite file")?;
+    let sqlite_url = sqlite_url(&db_path);
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect(&sqlite_url)
+        .await
+        .context("connecting 0.60 prefix pool")?;
+    let subset_migrator = Migrator::new(subset_dir.clone())
+        .await
+        .context("loading 0.60 subset migrator")?;
+    subset_migrator
+        .run(&pool)
+        .await
+        .context("running 0.60 subset migrator")?;
+    pool.close().await;
+
+    let store = Store::open(&db_path)
+        .await
+        .context("opening store from stable 0.60 migration prefix")?;
+    store
+        .create_workspace(
+            "stable-0-60-upgrade".into(),
+            "/tmp/stable-0-60".into(),
+            VcsKind::Git,
+        )
+        .await
+        .context("creating workspace after 0.60 upgrade")?;
+    store.close().await;
+
+    assert_store_integrity(&db_path).await?;
+    assert_eq!(
+        applied_migration_count(&db_path).await?,
+        migrations.len() as i64,
+        "expected all migrations after 0.60 upgrade"
+    );
+    assert!(column_exists(&db_path, "sessions", "archived_at").await?);
+    assert!(index_exists(&db_path, "idx_sessions_parent_relationship_active").await?);
 
     Ok(())
 }
@@ -378,6 +438,83 @@ async fn open_repairs_historical_tool_order_seq_duplicate_version() -> Result<()
     assert!(applied
         .iter()
         .any(|(version, description)| *version == 55 && description == "tool order seq"));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn open_repairs_partially_applied_session_subagent_archival_migration() -> Result<()> {
+    let tempdir = tempfile::tempdir().context("creating tempdir for migration 64 repair")?;
+    let subset_dir = tempdir.path().join("pre-64-migrations");
+    fs::create_dir_all(&subset_dir).context("creating pre-64 migration dir")?;
+
+    let migrations = migration_files()?;
+    let migration_64 = migrations
+        .iter()
+        .find(|path| {
+            path.file_name()
+                .is_some_and(|name| name == "0064_session_subagent_archival.sql")
+        })
+        .cloned()
+        .context("finding session subagent archival migration")?;
+
+    for migration in &migrations {
+        if migration_version(migration)? <= 63 {
+            let filename = migration
+                .file_name()
+                .context("migration file missing name")?;
+            fs::copy(migration, subset_dir.join(filename))
+                .with_context(|| format!("copying {} into pre-64 subset", migration.display()))?;
+        }
+    }
+
+    let db_path = tempdir.path().join("db.sqlite");
+    fs::File::create(&db_path).context("creating sqlite file")?;
+    let sqlite_url = sqlite_url(&db_path);
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect(&sqlite_url)
+        .await
+        .context("connecting pre-64 pool")?;
+    let subset_migrator = Migrator::new(subset_dir.clone())
+        .await
+        .context("loading pre-64 subset migrator")?;
+    subset_migrator
+        .run(&pool)
+        .await
+        .context("running pre-64 subset migrator")?;
+    execute_migration_file_without_ledger(&pool, &migration_64)
+        .await
+        .context("applying migration 64 SQL without ledger row")?;
+
+    let migration_64_recorded: i64 =
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM _sqlx_migrations WHERE version = 64)")
+            .fetch_one(&pool)
+            .await
+            .context("checking pre-repair migration 64 ledger")?;
+    assert_eq!(
+        migration_64_recorded, 0,
+        "test setup should leave migration 64 schema applied but unrecorded"
+    );
+    pool.close().await;
+
+    let store = Store::open(&db_path)
+        .await
+        .context("opening store after partial migration 64 application")?;
+    store.close().await;
+
+    assert_store_integrity(&db_path).await?;
+    assert!(column_exists(&db_path, "sessions", "archived_at").await?);
+    assert!(index_exists(&db_path, "idx_sessions_task_title_subagent_unique").await?);
+    assert!(index_exists(&db_path, "idx_sessions_parent_relationship_active").await?);
+
+    let applied = applied_migrations(&db_path).await?;
+    assert!(applied.iter().any(|(version, description)| {
+        *version == 64 && description == "session subagent archival"
+    }));
+    assert!(applied.iter().any(|(version, description)| {
+        *version == 65 && description == "restore codex provider identity"
+    }));
 
     Ok(())
 }
@@ -673,6 +810,48 @@ async fn column_exists(db_path: &Path, table: &str, column: &str) -> Result<bool
         .with_context(|| format!("checking {table}.{column}"))?;
     pool.close().await;
     Ok(count > 0)
+}
+
+async fn index_exists(db_path: &Path, index: &str) -> Result<bool> {
+    let sqlite_url = sqlite_url(db_path);
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect(&sqlite_url)
+        .await
+        .with_context(|| format!("connecting index check pool for {}", db_path.display()))?;
+    let count = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = ?",
+    )
+    .bind(index)
+    .fetch_one(&pool)
+    .await
+    .with_context(|| format!("checking index {index}"))?;
+    pool.close().await;
+    Ok(count > 0)
+}
+
+async fn execute_migration_file_without_ledger(
+    pool: &sqlx::SqlitePool,
+    migration: &Path,
+) -> Result<()> {
+    let sql = fs::read_to_string(migration)
+        .with_context(|| format!("reading migration {}", migration.display()))?;
+    for statement in sql
+        .split(";\n\n")
+        .map(str::trim)
+        .filter(|statement| !statement.is_empty())
+    {
+        sqlx::query(statement)
+            .execute(pool)
+            .await
+            .with_context(|| {
+                format!(
+                    "executing statement from migration {}: {statement}",
+                    migration.display()
+                )
+            })?;
+    }
+    Ok(())
 }
 
 async fn assert_index_columns(

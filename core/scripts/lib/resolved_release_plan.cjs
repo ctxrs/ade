@@ -135,9 +135,9 @@ function validateResolvedReleasePlan(plan, {
 
   const inventory = plan.inventory || {};
   const providerArtifactPolicy = trimValue(inventory.provider_artifact_policy || "required");
-  if (!["required", "optional"].includes(providerArtifactPolicy)) {
+  if (providerArtifactPolicy !== "required") {
     throw new Error(
-      `resolved release plan inventory.provider_artifact_policy must be 'required' or 'optional' (got '${providerArtifactPolicy}')`,
+      `resolved release plan inventory.provider_artifact_policy must be 'required' (got '${providerArtifactPolicy}')`,
     );
   }
   const missingProviderIds = normalizeStringArray(inventory.missing_provider_ids);
@@ -151,7 +151,7 @@ function validateResolvedReleasePlan(plan, {
     );
   }
   const requiredTargets = normalizeRequiredTargets(inventory.required_targets);
-  if (requiredTargets.length === 0 && providerArtifactPolicy !== "optional") {
+  if (requiredTargets.length === 0) {
     throw new Error("resolved release plan must include at least one required provider target");
   }
   for (const target of requiredTargets) {
