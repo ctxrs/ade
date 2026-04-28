@@ -1,6 +1,5 @@
 import type { SemanticTelemetryEvent } from "@ctx/types";
 import { isDesktopApp } from "../utils/desktop";
-import { desktopDaemonRequest } from "../utils/desktop";
 import { emitUiDiagnostic, normalizeDiagnosticErrorMessage } from "../state/diagnosticsChannel";
 import {
   ensureDesktopDaemonConnection,
@@ -137,38 +136,19 @@ const trimForError = (text: string): string => {
   return `${s.slice(0, 800)}…`;
 };
 
-const toDesktopRequestHeaders = (
-  headers: HeadersInit | undefined,
-  traceparent: string | null,
-  runId: string | null,
-): [string, string][] => {
-  const merged = buildDaemonRequestHeaders({
-    headers,
-    token: null,
-    traceparent,
-    runId,
-  });
-  return Object.entries(merged).filter(([key]) => key.toLowerCase() !== "authorization");
+const daemonHtmlResponseMessage = (path: string, status?: number): string => {
+  const suffix = typeof status === "number" ? ` (${status})` : "";
+  if (isDesktopApp()) {
+    return `The daemon returned HTML for ${path}${suffix}. Restart/update the daemon.`;
+  }
+  return `The daemon returned HTML for ${path}${suffix}. Restart/update the daemon (and ensure Vite is proxying /api to it).`;
 };
 
-const parseDesktopJsonResponse = <T>(
-  path: string,
-  status: number,
-  contentType: string,
-  text: string,
-): T => {
-  if (status === 204) {
-    return undefined as T;
+const daemonUnreachableMessage = (): string => {
+  if (isDesktopApp()) {
+    return "Cannot reach the ctx daemon. Connect to a host from the launcher first.";
   }
-  if (!text) return undefined as T;
-  try {
-    return JSON.parse(text) as T;
-  } catch {
-    if ((contentType.includes("text/html") || looksLikeHtml(text)) && path.startsWith("/api/")) {
-      throw new Error(`The daemon returned HTML for ${path}. Restart/update the daemon.`);
-    }
-    throw new Error(`Unexpected non-JSON response from ${path}.`);
-  }
+  return "Cannot reach the ctx daemon via /api. If you're running the web dev server, start the daemon (default http://127.0.0.1:4399) or set CTX_DAEMON_URL before `pnpm dev`.";
 };
 
 export const api = async <T>(path: string, init?: RequestInit): Promise<T> => {
@@ -208,7 +188,7 @@ export const api = async <T>(path: string, init?: RequestInit): Promise<T> => {
     const contentType = res.headers.get("content-type") ?? "";
 
     if ((contentType.includes("text/html") || looksLikeHtml(text)) && path.startsWith("/api/")) {
-      const message = `The daemon returned HTML for ${path} (${res.status}). Restart/update the daemon (and ensure Vite is proxying /api to it).`;
+      const message = daemonHtmlResponseMessage(path, res.status);
       emitApiDiagnostic({
         path,
         method,
@@ -228,8 +208,7 @@ export const api = async <T>(path: string, init?: RequestInit): Promise<T> => {
         lowered.includes("connect econnrefused") ||
         lowered.includes("socket hang up"))
     ) {
-      const message =
-        "Cannot reach the ctx daemon via /api. If you're running the web dev server, start the daemon (default http://127.0.0.1:4399) or set CTX_DAEMON_URL before `pnpm dev`.";
+      const message = daemonUnreachableMessage();
       emitApiDiagnostic({
         path,
         method,
@@ -271,9 +250,7 @@ export const api = async <T>(path: string, init?: RequestInit): Promise<T> => {
   } catch {
     const contentType = res.headers.get("content-type") ?? "";
     if ((contentType.includes("text/html") || looksLikeHtml(text)) && path.startsWith("/api/")) {
-      throw new Error(
-        `The daemon returned HTML for ${path}. Restart/update the daemon (and ensure Vite is proxying /api to it).`,
-      );
+      throw new Error(daemonHtmlResponseMessage(path));
     }
     throw new Error(`Unexpected non-JSON response from ${path}.`);
   }
@@ -281,94 +258,11 @@ export const api = async <T>(path: string, init?: RequestInit): Promise<T> => {
 
 const desktopApi = async <T>(path: string, init?: RequestInit): Promise<T> => {
   await ensureDesktopDaemonConnection({
+    force: true,
     connectLocalWhenMissing: true,
     reason: "desktop_api_preflight",
   });
-  const traceparent = createTraceparent();
-  const runId = getTelemetryRunId();
-  const method = init?.method ? String(init.method) : "GET";
-  const start = typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
-  let res: DaemonRawResponse;
-  try {
-    res = await desktopDaemonRequest({
-      method,
-      path,
-      headers: toDesktopRequestHeaders(init?.headers, traceparent, runId),
-      body: typeof init?.body === "string" ? init.body : null,
-    });
-  } catch (err) {
-    const end = typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
-    recordClientApiError(path, method, end - start, runId);
-    emitApiDiagnostic({
-      path,
-      method,
-      code: "api.transport_error",
-      severity: "error",
-      message: normalizeDiagnosticErrorMessage(err, "Desktop daemon request failed."),
-    });
-    throw err;
-  }
-  const end = typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
-  recordClientApiMetric(path, method, res.status, res.status < 500, end - start, runId);
-
-  const contentType = String(res.content_type ?? "");
-  const text = String(res.body ?? "");
-  const ok = res.status >= 200 && res.status < 300;
-  if (!ok) {
-    if ((contentType.includes("text/html") || looksLikeHtml(text)) && path.startsWith("/api/")) {
-      const message = `The daemon returned HTML for ${path} (${res.status}). Restart/update the daemon.`;
-      emitApiDiagnostic({
-        path,
-        method,
-        status: res.status,
-        code: "api.http_error",
-        severity: "error",
-        message,
-      });
-      throw new Error(message);
-    }
-    const lowered = String(text || "").toLowerCase();
-    if (
-      res.status >= 500 &&
-      (lowered.includes("econnrefused") ||
-        lowered.includes("proxy error") ||
-        lowered.includes("connect econnrefused") ||
-        lowered.includes("socket hang up"))
-    ) {
-      const message = "Cannot reach the ctx daemon. Connect to a host from the launcher first.";
-      emitApiDiagnostic({
-        path,
-        method,
-        status: res.status,
-        code: "api.http_error",
-        severity: "error",
-        message,
-      });
-      throw new Error(message);
-    }
-    let parsedMessage: string | null = null;
-    try {
-      const parsed = text ? JSON.parse(text) : null;
-      const msg = parsed?.error ?? parsed?.message;
-      if (typeof msg === "string" && msg.length > 0) {
-        parsedMessage = msg;
-      }
-    } catch {
-      // ignore
-    }
-    const message = parsedMessage ?? (trimForError(text) || `${res.status}`);
-    emitApiDiagnostic({
-      path,
-      method,
-      status: res.status,
-      code: "api.http_error",
-      severity: res.status >= 500 ? "error" : "warning",
-      message,
-    });
-    throw new Error(message);
-  }
-
-  return parseDesktopJsonResponse<T>(path, res.status, contentType, text);
+  return api<T>(path, init);
 };
 
 export const apiAny = async <T>(path: string, init?: RequestInit): Promise<T> => {
@@ -382,45 +276,27 @@ export type DaemonRawResponse = {
   content_type: string;
 };
 
-export const daemonFetchRaw = async (path: string, init?: RequestInit): Promise<DaemonRawResponse> => {
+type DaemonFetchRawOptions = {
+  connectLocalWhenMissing?: boolean;
+};
+
+export const daemonFetchRaw = async (
+  path: string,
+  init?: RequestInit,
+  opts?: DaemonFetchRawOptions,
+): Promise<DaemonRawResponse> => {
+  if (isDesktopApp()) {
+    await ensureDesktopDaemonConnection({
+      force: true,
+      connectLocalWhenMissing: opts?.connectLocalWhenMissing ?? true,
+      reason: "daemon_fetch_raw_preflight",
+    });
+  }
   const method = init?.method ? String(init.method) : "GET";
   const traceparent = createTraceparent();
   const runId = getTelemetryRunId();
   const start =
     typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
-
-  if (isDesktopApp()) {
-    await ensureDesktopDaemonConnection({
-      connectLocalWhenMissing: true,
-      reason: "daemon_fetch_raw_preflight",
-    });
-    try {
-      const res = await desktopDaemonRequest({
-        method,
-        path,
-        headers: toDesktopRequestHeaders(init?.headers, traceparent, runId),
-        body: typeof init?.body === "string" ? init.body : null,
-      });
-      const end = typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
-      recordClientApiMetric(path, method, res.status, res.status < 500, end - start, runId);
-      return {
-        status: res.status,
-        body: res.body,
-        content_type: res.content_type ?? "",
-      };
-    } catch (err) {
-      const end = typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
-      recordClientApiError(path, method, end - start, runId);
-      emitApiDiagnostic({
-        path,
-        method,
-        code: "api.transport_error",
-        severity: "error",
-        message: normalizeDiagnosticErrorMessage(err, "Raw daemon fetch failed."),
-      });
-      throw err;
-    }
-  }
   const token = authToken();
 
   try {

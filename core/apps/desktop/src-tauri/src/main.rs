@@ -124,7 +124,6 @@ fn main() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             desktop_get_connection,
-            desktop_daemon_request,
             desktop_disconnect,
             desktop_set_demo_connection,
             desktop_connect_local,

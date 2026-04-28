@@ -6,8 +6,6 @@ import type {
   DesktopAppUpdateCheckReq,
   DesktopAppUpdateCheckResp,
   DesktopAppUpdateStateResp,
-  DesktopDaemonRequest,
-  DesktopHttpResponse,
   DesktopConnectionInfo,
   DesktopGitBranchReq,
   DesktopLinuxSandboxEnsureResp,
@@ -49,14 +47,6 @@ const consumeDesktopSshConnectJob = async (jobId: string) => {
 
 export const desktopGetConnection = async (): Promise<DesktopConnectionInfo> =>
   invoke<DesktopConnectionInfo>("desktop_get_connection");
-
-export const desktopDaemonRequest = async (
-  req: DesktopDaemonRequest,
-): Promise<DesktopHttpResponse> =>
-  invokeDesktopReq<DesktopDaemonRequest, DesktopHttpResponse>(
-    "desktop_daemon_request",
-    req,
-  );
 
 export const desktopDisconnect = async (): Promise<void> =>
   invoke<void>("desktop_disconnect");

@@ -158,8 +158,11 @@ describe("daemonAvailabilityMonitor", () => {
       remoteUpdateMessage: "waiting for idle",
     });
     expect(syncDesktopDaemonConnectionFromBridgeMock).toHaveBeenCalledWith({
-      connectLocalWhenMissing: true,
+      connectLocalWhenMissing: false,
       reason: "daemon_availability_poll",
+    });
+    expect(daemonFetchRawMock).toHaveBeenCalledWith("/api/health", undefined, {
+      connectLocalWhenMissing: false,
     });
 
     unsubscribe();

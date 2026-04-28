@@ -31,6 +31,11 @@ export const buildDaemonRequestHeaders = ({
   runId,
 }: DaemonRequestHeadersOptions): Record<string, string> => {
   const mergedHeaders = requestHeadersToRecord(headers);
+  for (const key of Object.keys(mergedHeaders)) {
+    if (key.toLowerCase() === "authorization") {
+      delete mergedHeaders[key];
+    }
+  }
   if (traceparent && !mergedHeaders.traceparent) {
     mergedHeaders.traceparent = traceparent;
   }

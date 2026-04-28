@@ -220,7 +220,7 @@ const syncDesktopMetadata = async (): Promise<{
   let remoteUpdateState: DesktopRemoteDaemonUpdateState | null = null;
   try {
     const sync = await syncDesktopDaemonConnectionFromBridge({
-      connectLocalWhenMissing: true,
+      connectLocalWhenMissing: false,
       reason: "daemon_availability_poll",
     });
     const info = sync.info;
@@ -280,7 +280,9 @@ export const checkDaemonAvailabilityNow = async (): Promise<DaemonAvailabilitySn
       if (nextUpdateRequired) {
         nextStatus = "update_required";
       } else {
-        const resp = await daemonFetchRaw("/api/health");
+        const resp = await daemonFetchRaw("/api/health", undefined, {
+          connectLocalWhenMissing: false,
+        });
         if (resp.status >= 200 && resp.status < 300) {
           let parsed: unknown = null;
           if (resp.body) {

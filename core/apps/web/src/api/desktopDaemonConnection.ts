@@ -1,6 +1,5 @@
 import {
   desktopConnectLocal,
-  desktopDaemonRequest,
   desktopGetConnection,
   isDesktopApp,
   type DesktopConnectionInfo,
@@ -9,9 +8,11 @@ import { emitUiDiagnostic, normalizeDiagnosticErrorMessage } from "../state/diag
 import {
   applyDesktopDaemonConnection,
   getDaemonConnection,
+  getDaemonHttpUrl,
   hasReadyDaemonConnection,
   type DaemonConnection,
 } from "./daemonConnection";
+import { buildDaemonRequestHeaders } from "./daemonRequestHeaders";
 
 export type DesktopDaemonConnectionSyncResult = {
   connection: DaemonConnection;
@@ -77,15 +78,18 @@ const shouldProbeExistingLocalDesktopAuth = (
   shouldRepairExistingLocalDesktopTarget(current, info);
 
 const probeDesktopLocalDaemonAuth = async (): Promise<boolean> => {
+  const current = getDaemonConnection();
+  if (!current.baseUrl || typeof fetch === "undefined") return false;
   let timeoutId: number | null = null;
   try {
-    const response = await Promise.race([
-      desktopDaemonRequest({
-        method: "GET",
-        path: "/api/workspaces",
-        headers: [],
-        body: null,
+    const request = fetch(getDaemonHttpUrl("/api/workspaces"), {
+      method: "GET",
+      headers: buildDaemonRequestHeaders({
+        token: current.authToken,
       }),
+    });
+    const response = await Promise.race([
+      request,
       new Promise<never>((_, reject) => {
         timeoutId = globalThis.setTimeout(() => {
           reject(new Error("desktop local auth probe timed out"));
@@ -167,12 +171,12 @@ export const syncDesktopDaemonConnectionFromBridge = async (
 };
 
 export const ensureDesktopDaemonConnection = async (
-  opts?: Omit<DesktopDaemonConnectionSyncOptions, "force">,
+  opts?: DesktopDaemonConnectionSyncOptions,
 ): Promise<DaemonConnection> => {
   const current = getDaemonConnection();
   if (!isDesktopApp()) return current;
   const synced = await syncDesktopDaemonConnectionFromBridge({
-    force: !hasReadyDaemonConnection(current),
+    force: opts?.force ?? !hasReadyDaemonConnection(current),
     connectLocalWhenMissing: opts?.connectLocalWhenMissing ?? true,
     reason: opts?.reason ?? "desktop_transport_bootstrap",
   });

@@ -336,6 +336,21 @@ pub(crate) fn derive_browser_query_secret(auth_token: &str) -> String {
     hex::encode(hasher.finalize())
 }
 
+fn browser_query_secret_bearer_route_allowed(req: &Request<Body>) -> bool {
+    let path = req.uri().path();
+    !path.starts_with("/api/mcp/") && path != "/api/mobile/register"
+}
+
+fn browser_query_secret_bearer_is_valid(req: &Request<Body>, auth_token: &str) -> bool {
+    browser_query_secret_bearer_route_allowed(req)
+        && req
+            .headers()
+            .get(axum::http::header::AUTHORIZATION)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.strip_prefix("Bearer "))
+            .is_some_and(|value| value == derive_browser_query_secret(auth_token))
+}
+
 fn browser_stream_query_token_is_valid(req: &Request<Body>, auth_token: &str) -> bool {
     if req.method() != Method::GET {
         return false;
@@ -467,6 +482,9 @@ pub(super) async fn auth_middleware(
         return Ok(next.run(req).await);
     }
     if let Some(auth_token) = state.core.auth_token.as_deref() {
+        if browser_query_secret_bearer_is_valid(&req, auth_token) {
+            return Ok(next.run(req).await);
+        }
         if browser_stream_query_token_is_valid(&req, auth_token) {
             return Ok(next.run(req).await);
         }
