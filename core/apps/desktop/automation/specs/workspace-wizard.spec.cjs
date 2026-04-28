@@ -2155,8 +2155,8 @@ describe("launcher workspace wizard (e2e)", () => {
 
   it("local sandbox can start Codex and respond", async function () {
     if (!scenarioEnabled("local-codex-smoke", ["local", "sandbox", "provider"])) this.skip();
-    // Sandbox startup + provider spin-up can take a while on a fresh machine (guest boot, artifact staging, etc).
-    this.timeout(420000);
+    // Keep the outer Mocha timeout above the nested provider install and first-turn waits.
+    this.timeout(960000);
 
     const dest = path.join(localBase, "codex-sandbox");
     const id = await runWizardScenario({
