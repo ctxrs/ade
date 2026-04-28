@@ -1,4 +1,145 @@
 use super::*;
+use serde::{Deserialize, Serialize};
+#[cfg(windows)]
+use std::os::windows::ffi::OsStrExt;
+use std::path::PathBuf;
+
+#[cfg(windows)]
+use windows_sys::Win32::{
+    Foundation::LocalFree,
+    Security::{
+        Authorization::{ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1},
+        SetFileSecurityW, DACL_SECURITY_INFORMATION, PROTECTED_DACL_SECURITY_INFORMATION,
+        PSECURITY_DESCRIPTOR,
+    },
+};
+
+const MOBILE_ACCESS_SECRET_VERSION: u32 = 1;
+#[cfg(windows)]
+const WINDOWS_SECRET_SDDL: &str = "D:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FA;;;OW)";
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct MobileAccessSecretEnvelope {
+    version: u32,
+    tunnel_secret: String,
+    daemon_private_key: String,
+}
+
+fn ensure_safe_mobile_access_config_id(id: &str) -> Result<()> {
+    if id.trim().is_empty() {
+        anyhow::bail!("mobile access config id is required");
+    }
+    let mut components = std::path::Path::new(id).components();
+    match (components.next(), components.next()) {
+        (Some(std::path::Component::Normal(_)), None) => Ok(()),
+        _ => anyhow::bail!("mobile access config id must be a single path segment"),
+    }
+}
+
+fn mobile_access_secret_root(db_path: &Path) -> PathBuf {
+    let db_namespace = db_path
+        .file_name()
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("store.sqlite"));
+    db_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join("mobile_access_secrets")
+        .join(db_namespace)
+}
+
+fn mobile_access_secret_path(db_path: &Path, id: &str) -> Result<PathBuf> {
+    ensure_safe_mobile_access_config_id(id)?;
+    Ok(mobile_access_secret_root(db_path).join(format!("{id}.json")))
+}
+
+async fn ensure_private_dir(path: &Path) -> Result<()> {
+    tokio::fs::create_dir_all(path).await?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        tokio::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700)).await?;
+    }
+    #[cfg(windows)]
+    apply_windows_secret_acl(path)?;
+    Ok(())
+}
+
+async fn write_secure_file_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("missing parent for {}", path.display()))?;
+    ensure_private_dir(parent).await?;
+    let tmp = path.with_extension(format!("tmp-{}", uuid::Uuid::new_v4()));
+    tokio::fs::write(&tmp, bytes).await?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        tokio::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600)).await?;
+    }
+    #[cfg(windows)]
+    apply_windows_secret_acl(&tmp)?;
+    tokio::fs::rename(&tmp, path).await?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        tokio::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).await?;
+    }
+    #[cfg(windows)]
+    apply_windows_secret_acl(path)?;
+    Ok(())
+}
+
+#[cfg(windows)]
+fn encode_windows_path(path: &Path) -> Vec<u16> {
+    path.as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect()
+}
+
+#[cfg(windows)]
+fn encode_windows_sddl(sddl: &str) -> Vec<u16> {
+    std::ffi::OsStr::new(sddl)
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect()
+}
+
+#[cfg(windows)]
+fn apply_windows_secret_acl(path: &Path) -> Result<()> {
+    let path_wide = encode_windows_path(path);
+    let sddl_wide = encode_windows_sddl(WINDOWS_SECRET_SDDL);
+    let mut security_descriptor: PSECURITY_DESCRIPTOR = std::ptr::null_mut();
+    let converted = unsafe {
+        ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            sddl_wide.as_ptr(),
+            SDDL_REVISION_1 as u32,
+            &mut security_descriptor,
+            std::ptr::null_mut(),
+        )
+    };
+    if converted == 0 {
+        anyhow::bail!("failed to build Windows secret ACL for {}", path.display());
+    }
+    let result = unsafe {
+        SetFileSecurityW(
+            path_wide.as_ptr(),
+            DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+            security_descriptor,
+        )
+    };
+    unsafe {
+        let _ = LocalFree(security_descriptor as isize);
+    }
+    if result == 0 {
+        anyhow::bail!("failed to apply Windows secret ACL to {}", path.display());
+    }
+    Ok(())
+}
 
 pub struct MobileDeviceUpsert {
     pub device_label: Option<String>,
@@ -9,6 +150,7 @@ pub struct MobileDeviceUpsert {
     pub app_version: Option<String>,
 }
 
+#[derive(Debug)]
 pub struct MobileAccessConfig {
     pub id: String,
     pub profile_id: ConnectionProfileId,
@@ -34,6 +176,104 @@ pub enum MobileDeviceSeqAdvance {
     Advanced,
     Stale { current: i64 },
     Missing,
+}
+
+impl Store {
+    fn mobile_access_secret_db_path(&self) -> Result<&Path> {
+        self.sqlite_path.as_deref().ok_or_else(|| {
+            anyhow::anyhow!(
+                "mobile access secret storage requires a filesystem-backed sqlite store"
+            )
+        })
+    }
+
+    async fn write_mobile_access_secrets(
+        &self,
+        id: &str,
+        tunnel_secret: &str,
+        daemon_private_key: &str,
+    ) -> Result<()> {
+        let path = mobile_access_secret_path(self.mobile_access_secret_db_path()?, id)?;
+        let payload = serde_json::to_vec_pretty(&MobileAccessSecretEnvelope {
+            version: MOBILE_ACCESS_SECRET_VERSION,
+            tunnel_secret: tunnel_secret.to_string(),
+            daemon_private_key: daemon_private_key.to_string(),
+        })?;
+        write_secure_file_atomic(&path, &payload).await
+    }
+
+    async fn read_mobile_access_secrets_if_present(
+        &self,
+        id: &str,
+    ) -> Result<Option<(String, String)>> {
+        let path = mobile_access_secret_path(self.mobile_access_secret_db_path()?, id)?;
+        let payload = match tokio::fs::read_to_string(&path).await {
+            Ok(payload) => payload,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(err) => {
+                return Err(err).with_context(|| {
+                    format!("reading mobile access secrets from {}", path.display())
+                });
+            }
+        };
+        let envelope: MobileAccessSecretEnvelope = serde_json::from_str(&payload)
+            .with_context(|| format!("parsing mobile access secrets from {}", path.display()))?;
+        if envelope.version != MOBILE_ACCESS_SECRET_VERSION {
+            anyhow::bail!(
+                "unsupported mobile access secret version {} at {}",
+                envelope.version,
+                path.display()
+            );
+        }
+        if envelope.tunnel_secret.trim().is_empty() || envelope.daemon_private_key.trim().is_empty()
+        {
+            anyhow::bail!(
+                "mobile access secrets at {} must include tunnel_secret and daemon_private_key",
+                path.display()
+            );
+        }
+        Ok(Some((envelope.tunnel_secret, envelope.daemon_private_key)))
+    }
+
+    async fn remove_mobile_access_secrets_if_present(&self, id: &str) -> Result<()> {
+        let path = mobile_access_secret_path(self.mobile_access_secret_db_path()?, id)?;
+        match tokio::fs::remove_file(&path).await {
+            Ok(_) => Ok(()),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(err) => Err(err)
+                .with_context(|| format!("removing mobile access secrets at {}", path.display())),
+        }
+    }
+
+    async fn migrate_legacy_mobile_access_secrets(
+        &self,
+        id: &str,
+        legacy_tunnel_secret: &str,
+        legacy_daemon_private_key: &str,
+    ) -> Result<Option<(String, String)>> {
+        if legacy_tunnel_secret.trim().is_empty() || legacy_daemon_private_key.trim().is_empty() {
+            return Ok(None);
+        }
+        self.write_mobile_access_secrets(id, legacy_tunnel_secret, legacy_daemon_private_key)
+            .await?;
+        self.clear_legacy_mobile_access_secrets(id).await?;
+        Ok(Some((
+            legacy_tunnel_secret.to_string(),
+            legacy_daemon_private_key.to_string(),
+        )))
+    }
+
+    async fn clear_legacy_mobile_access_secrets(&self, id: &str) -> Result<()> {
+        self.query(
+            r#"UPDATE mobile_access_config
+               SET tunnel_secret = '', daemon_private_key = ''
+               WHERE id = ?"#,
+        )
+        .bind(id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
 }
 
 impl Store {
@@ -216,17 +456,38 @@ impl Store {
         let Some(row) = row else {
             return Ok(None);
         };
+        let id: String = row.try_get("id")?;
+        let tunnel_secret: String = row.try_get("tunnel_secret")?;
+        let daemon_private_key: String = row.try_get("daemon_private_key")?;
+        let (tunnel_secret, daemon_private_key) =
+            match self.read_mobile_access_secrets_if_present(&id).await? {
+                Some(secrets) => {
+                    if !tunnel_secret.is_empty() || !daemon_private_key.is_empty() {
+                        self.clear_legacy_mobile_access_secrets(&id).await?;
+                    }
+                    secrets
+                }
+                None => self
+                    .migrate_legacy_mobile_access_secrets(&id, &tunnel_secret, &daemon_private_key)
+                    .await?
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "mobile access secrets are missing for config {} and no legacy secrets remain",
+                            id
+                        )
+                    })?,
+        };
         Ok(Some(MobileAccessConfig {
-            id: row.try_get("id")?,
+            id,
             profile_id: ConnectionProfileId(uuid::Uuid::parse_str(
                 &row.try_get::<String, _>("profile_id")?,
             )?),
             tunnel_id: row.try_get("tunnel_id")?,
             public_base_url: row.try_get("public_base_url")?,
             relay_base_url: row.try_get("relay_base_url")?,
-            tunnel_secret: row.try_get("tunnel_secret")?,
+            tunnel_secret,
             daemon_public_key: row.try_get("daemon_public_key")?,
-            daemon_private_key: row.try_get("daemon_private_key")?,
+            daemon_private_key,
             enabled: row.try_get::<i64, _>("enabled")? != 0,
             created_at: parse_dt(&row.try_get::<String, _>("created_at")?)?,
             updated_at: parse_dt(&row.try_get::<String, _>("updated_at")?)?,
@@ -254,19 +515,26 @@ impl Store {
                     enabled=excluded.enabled,
                     updated_at=excluded.updated_at"#,
         )
-        .bind(config.id)
+        .bind(&config.id)
         .bind(config.profile_id.0.to_string())
-        .bind(config.tunnel_id)
-        .bind(config.public_base_url)
-        .bind(config.relay_base_url)
-        .bind(config.tunnel_secret)
-        .bind(config.daemon_public_key)
-        .bind(config.daemon_private_key)
+        .bind(&config.tunnel_id)
+        .bind(&config.public_base_url)
+        .bind(&config.relay_base_url)
+        .bind(&config.tunnel_secret)
+        .bind(&config.daemon_public_key)
+        .bind(&config.daemon_private_key)
         .bind(if config.enabled { 1 } else { 0 })
         .bind(created_at)
         .bind(updated_at)
         .execute(&self.pool)
         .await?;
+        self.write_mobile_access_secrets(
+            &config.id,
+            &config.tunnel_secret,
+            &config.daemon_private_key,
+        )
+        .await?;
+        self.clear_legacy_mobile_access_secrets(&config.id).await?;
 
         self.get_mobile_access_config()
             .await?
@@ -287,6 +555,8 @@ impl Store {
         self.query(r#"DELETE FROM mobile_access_config WHERE id = ?"#)
             .bind("default")
             .execute(&self.pool)
+            .await?;
+        self.remove_mobile_access_secrets_if_present("default")
             .await?;
         Ok(())
     }

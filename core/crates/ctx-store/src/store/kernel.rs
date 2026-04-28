@@ -3,6 +3,7 @@ use super::*;
 #[derive(Clone)]
 pub struct Store {
     pub(super) pool: Pool<Sqlite>,
+    pub(super) sqlite_path: Option<std::path::PathBuf>,
     pub(super) event_log: Arc<EventLogRuntime>,
     pub(super) active_head_projection: Arc<ActiveHeadProjectionRuntime>,
     pub(super) write_gate: Arc<Mutex<()>>,

@@ -3,7 +3,9 @@ use chrono::Utc;
 use std::sync::Arc;
 use std::time::Duration;
 
-use ctx_core::ids::{MessageId, RunId, SessionId, TaskId, TurnId, WorkspaceId, WorktreeId};
+use ctx_core::ids::{
+    ConnectionProfileId, MessageId, RunId, SessionId, TaskId, TurnId, WorkspaceId, WorktreeId,
+};
 use ctx_core::models::{
     Message, MessageDelivery, MessageRole, SessionEventType, SessionTurn, SessionTurnStatus,
     SessionTurnTool, VcsKind,
@@ -77,6 +79,227 @@ async fn setup_session_fixture() -> SessionFixture {
         worktree_id: worktree.id,
         session_id: session.id,
     }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn mobile_access_config_upsert_persists_secrets_outside_sqlite() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("db.sqlite");
+    let store = Store::open(&db_path).await.unwrap();
+    let profile_id = ConnectionProfileId::new();
+    let config = crate::store::MobileAccessConfig {
+        id: "default".to_string(),
+        profile_id,
+        tunnel_id: "tunnel-1".to_string(),
+        public_base_url: "https://example.com".to_string(),
+        relay_base_url: "https://relay.example.com".to_string(),
+        tunnel_secret: "secret-1".to_string(),
+        daemon_public_key: "public-key".to_string(),
+        daemon_private_key: "private-key".to_string(),
+        enabled: true,
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+    };
+
+    let persisted = store.upsert_mobile_access_config(config).await.unwrap();
+    assert_eq!(persisted.tunnel_secret, "secret-1");
+    assert_eq!(persisted.daemon_private_key, "private-key");
+
+    let row = sqlx::query(
+        "SELECT tunnel_secret, daemon_private_key FROM mobile_access_config WHERE id = 'default'",
+    )
+    .fetch_one(store.pool())
+    .await
+    .unwrap();
+    let tunnel_secret: String = row.try_get("tunnel_secret").unwrap();
+    let daemon_private_key: String = row.try_get("daemon_private_key").unwrap();
+    assert!(tunnel_secret.is_empty());
+    assert!(daemon_private_key.is_empty());
+
+    let secret_path = dir
+        .path()
+        .join("mobile_access_secrets")
+        .join("db.sqlite")
+        .join("default.json");
+    let perms = tokio::fs::metadata(&secret_path)
+        .await
+        .unwrap()
+        .permissions();
+    assert_eq!(perms.mode() & 0o777, 0o600);
+}
+
+#[tokio::test]
+async fn mobile_access_config_get_migrates_legacy_sqlite_secrets() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("db.sqlite");
+    let store = Store::open(&db_path).await.unwrap();
+    let profile_id = ctx_core::ids::ConnectionProfileId::new();
+    let now = Utc::now().to_rfc3339();
+    sqlx::query(
+        r#"INSERT INTO mobile_access_config
+            (id, profile_id, tunnel_id, public_base_url, relay_base_url, tunnel_secret, daemon_public_key, daemon_private_key, enabled, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+    )
+    .bind("default")
+    .bind(profile_id.0.to_string())
+    .bind("tunnel-legacy")
+    .bind("https://example.com")
+    .bind("https://relay.example.com")
+    .bind("legacy-secret")
+    .bind("public-key")
+    .bind("legacy-private")
+    .bind(1)
+    .bind(&now)
+    .bind(&now)
+    .execute(store.pool())
+    .await
+    .unwrap();
+
+    let config = store.get_mobile_access_config().await.unwrap().unwrap();
+    assert_eq!(config.tunnel_secret, "legacy-secret");
+    assert_eq!(config.daemon_private_key, "legacy-private");
+
+    let row = sqlx::query(
+        "SELECT tunnel_secret, daemon_private_key FROM mobile_access_config WHERE id = 'default'",
+    )
+    .fetch_one(store.pool())
+    .await
+    .unwrap();
+    let tunnel_secret: String = row.try_get("tunnel_secret").unwrap();
+    let daemon_private_key: String = row.try_get("daemon_private_key").unwrap();
+    assert!(tunnel_secret.is_empty());
+    assert!(daemon_private_key.is_empty());
+    assert!(dir
+        .path()
+        .join("mobile_access_secrets")
+        .join("db.sqlite")
+        .join("default.json")
+        .exists());
+}
+
+#[tokio::test]
+async fn delete_mobile_access_config_removes_secret_sidecar() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("db.sqlite");
+    let store = Store::open(&db_path).await.unwrap();
+    let config = crate::store::MobileAccessConfig {
+        id: "default".to_string(),
+        profile_id: ctx_core::ids::ConnectionProfileId::new(),
+        tunnel_id: "tunnel-1".to_string(),
+        public_base_url: "https://example.com".to_string(),
+        relay_base_url: "https://relay.example.com".to_string(),
+        tunnel_secret: "secret-1".to_string(),
+        daemon_public_key: "public-key".to_string(),
+        daemon_private_key: "private-key".to_string(),
+        enabled: true,
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+    };
+    store.upsert_mobile_access_config(config).await.unwrap();
+    let secret_path = dir
+        .path()
+        .join("mobile_access_secrets")
+        .join("db.sqlite")
+        .join("default.json");
+    assert!(secret_path.exists());
+
+    store.delete_mobile_access_config().await.unwrap();
+    assert!(!secret_path.exists());
+}
+
+#[tokio::test]
+async fn mobile_access_config_get_fails_closed_on_corrupt_secret_sidecar() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("db.sqlite");
+    let store = Store::open(&db_path).await.unwrap();
+    let config = crate::store::MobileAccessConfig {
+        id: "default".to_string(),
+        profile_id: ConnectionProfileId::new(),
+        tunnel_id: "tunnel-1".to_string(),
+        public_base_url: "https://example.com".to_string(),
+        relay_base_url: "https://relay.example.com".to_string(),
+        tunnel_secret: "secret-1".to_string(),
+        daemon_public_key: "public-key".to_string(),
+        daemon_private_key: "private-key".to_string(),
+        enabled: true,
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+    };
+    store.upsert_mobile_access_config(config).await.unwrap();
+
+    let secret_path = dir
+        .path()
+        .join("mobile_access_secrets")
+        .join("db.sqlite")
+        .join("default.json");
+    tokio::fs::write(&secret_path, "{not-json").await.unwrap();
+
+    let err = store.get_mobile_access_config().await.unwrap_err();
+    assert!(err.to_string().contains("parsing mobile access secrets"));
+}
+
+#[tokio::test]
+async fn mobile_access_config_sidecars_are_namespaced_per_sqlite_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let store_a = Store::open(dir.path().join("a.sqlite")).await.unwrap();
+    let store_b = Store::open(dir.path().join("b.sqlite")).await.unwrap();
+    let config_a = crate::store::MobileAccessConfig {
+        id: "default".to_string(),
+        profile_id: ConnectionProfileId::new(),
+        tunnel_id: "tunnel-a".to_string(),
+        public_base_url: "https://a.example.com".to_string(),
+        relay_base_url: "https://relay-a.example.com".to_string(),
+        tunnel_secret: "secret-a".to_string(),
+        daemon_public_key: "public-a".to_string(),
+        daemon_private_key: "private-a".to_string(),
+        enabled: true,
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+    };
+    let config_b = crate::store::MobileAccessConfig {
+        id: "default".to_string(),
+        profile_id: ConnectionProfileId::new(),
+        tunnel_id: "tunnel-b".to_string(),
+        public_base_url: "https://b.example.com".to_string(),
+        relay_base_url: "https://relay-b.example.com".to_string(),
+        tunnel_secret: "secret-b".to_string(),
+        daemon_public_key: "public-b".to_string(),
+        daemon_private_key: "private-b".to_string(),
+        enabled: true,
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+    };
+
+    store_a.upsert_mobile_access_config(config_a).await.unwrap();
+    store_b.upsert_mobile_access_config(config_b).await.unwrap();
+
+    let loaded_a = store_a.get_mobile_access_config().await.unwrap().unwrap();
+    let loaded_b = store_b.get_mobile_access_config().await.unwrap().unwrap();
+    assert_eq!(loaded_a.tunnel_secret, "secret-a");
+    assert_eq!(loaded_b.tunnel_secret, "secret-b");
+    assert!(dir
+        .path()
+        .join("mobile_access_secrets")
+        .join("a.sqlite")
+        .join("default.json")
+        .exists());
+    assert!(dir
+        .path()
+        .join("mobile_access_secrets")
+        .join("b.sqlite")
+        .join("default.json")
+        .exists());
+
+    store_a.delete_mobile_access_config().await.unwrap();
+    assert!(dir
+        .path()
+        .join("mobile_access_secrets")
+        .join("b.sqlite")
+        .join("default.json")
+        .exists());
 }
 
 async fn create_peer_session(fixture: &SessionFixture) -> SessionId {

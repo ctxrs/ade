@@ -53,6 +53,7 @@ impl Store {
         let active_head_projection = Arc::new(ActiveHeadProjectionRuntime::new());
         let store = Self {
             pool,
+            sqlite_path: (path_str != ":memory:").then(|| path.to_path_buf()),
             event_log,
             active_head_projection,
             write_gate: Arc::new(Mutex::new(())),
