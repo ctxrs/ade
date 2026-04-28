@@ -134,7 +134,9 @@ fn should_skip_linux_exec_env_key(spec: &ContainerExecSpec, key: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::ffi::OsStr;
     use std::fs;
+    use std::path::PathBuf;
 
     #[test]
     fn build_container_exec_command_rewrites_bundled_path_envs_for_linux() {

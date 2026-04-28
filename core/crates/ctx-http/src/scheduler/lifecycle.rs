@@ -32,6 +32,7 @@ pub(crate) struct RunningTurn {
     pub(crate) events_done: Option<oneshot::Receiver<()>>,
     pub(crate) start_progress: watch::Receiver<TurnStartProgress>,
     pub(crate) start_deadline: TokioInstant,
+    pub(crate) mcp_token: Option<String>,
 }
 
 const PROVIDER_OUTCOME_WAIT_TIMEOUT: Duration = Duration::from_secs(2);
@@ -131,6 +132,12 @@ fn abort_provider(handle: &mut RunHandle) {
 
 fn provider_protocol_violation(reason: &str, message: &str) -> ProviderTurnOutcome {
     ProviderTurnOutcome::protocol_violation(reason, message)
+}
+
+async fn revoke_turn_mcp_token(state: &Arc<AppState>, token: &mut Option<String>) {
+    if let Some(token) = token.take() {
+        crate::daemon::revoke_provider_session_mcp_token(state.as_ref(), &token).await;
+    }
 }
 
 async fn wait_for_provider_outcome(
@@ -281,6 +288,7 @@ pub(crate) async fn stop_running_turn(
         )
         .await;
     }
+    revoke_turn_mcp_token(state, &mut turn.mcp_token).await;
     state.set_running(session_id, false).await;
     reason.suspend_queue()
 }
@@ -328,6 +336,7 @@ pub(crate) async fn handle_provider_exit(
         )
         .await;
     }
+    revoke_turn_mcp_token(state, &mut turn.mcp_token).await;
 }
 
 pub(crate) async fn handle_provider_stall(
@@ -368,6 +377,7 @@ pub(crate) async fn handle_provider_stall(
         outcome,
     )
     .await;
+    revoke_turn_mcp_token(state, &mut turn.mcp_token).await;
 }
 
 pub(crate) async fn fail_starting_turn(
@@ -405,6 +415,7 @@ pub(crate) async fn fail_starting_turn(
         },
     )
     .await;
+    revoke_turn_mcp_token(state, &mut turn.mcp_token).await;
 }
 
 fn has_terminal_event(event_type: &SessionEventType) -> bool {

@@ -738,6 +738,132 @@ done
 }
 
 #[tokio::test]
+async fn scoped_mcp_prompt_drains_crp_session_so_next_turn_reopens_with_fresh_bootstrap(
+) -> Result<()> {
+    let tempdir = tempfile::tempdir()?;
+    let workdir = tempdir.path().to_path_buf();
+    let script_path = workdir.join("mcp-refresh.sh");
+    let log_path = workdir.join("mcp-refresh.log");
+
+    fs::write(
+        &script_path,
+        r#"#!/bin/sh
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$LOG_FILE"
+  case "$line" in
+    *'"type":"session.open"'*)
+      session_id=$(printf '%s' "$line" | sed -n 's/.*"session_id":"\([^"]*\)".*/\1/p')
+      printf '{"v":1,"seq":1,"channel":"control","type":"session.opened","session_id":"%s"}\n' "$session_id"
+      ;;
+    *'"type":"session.prompt"'*)
+      session_id=$(printf '%s' "$line" | sed -n 's/.*"session_id":"\([^"]*\)".*/\1/p')
+      turn_id=$(printf '%s' "$line" | sed -n 's/.*"turn_id":"\([^"]*\)".*/\1/p')
+      printf '{"v":1,"seq":2,"channel":"control","type":"turn.completed","session_id":"%s","turn_id":"%s","status":"success"}\n' "$session_id" "$turn_id"
+      ;;
+  esac
+done
+"#,
+    )?;
+    let mut permissions = fs::metadata(&script_path)?.permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&script_path, permissions)?;
+
+    let adapter = Tier1CrpAdapter::from_provider_runtime(
+        "codex",
+        "/bin/sh".to_string(),
+        vec![script_path.to_string_lossy().to_string()],
+    );
+    let session_key = "mcp-refresh-session";
+
+    let mut unscoped_env = HashMap::new();
+    unscoped_env.insert("CTX_SESSION_ID".to_string(), session_key.to_string());
+    unscoped_env.insert(
+        "CTX_DAEMON_URL".to_string(),
+        "http://127.0.0.1:4399".to_string(),
+    );
+    unscoped_env.insert(
+        "LOG_FILE".to_string(),
+        log_path.to_string_lossy().to_string(),
+    );
+    let (event_sink, _event_rx) = mpsc::channel(8);
+    let handle = adapter
+        .run(
+            TurnInput {
+                content: "ping".to_string(),
+                attachments: Vec::new(),
+                context_blocks: Vec::new(),
+                model_id: None,
+            },
+            workdir.clone(),
+            unscoped_env,
+            event_sink,
+            crate::adapters::ProviderRunHooks::default(),
+        )
+        .await?;
+    tokio::time::timeout(Duration::from_secs(5), handle.done)
+        .await
+        .context("unscoped prompt run should finish")??;
+    assert!(
+        adapter.has_live_session(session_key).await,
+        "unscoped CRP prompt should leave the reusable session pooled"
+    );
+
+    for token in ["token-one", "token-two"] {
+        let mut env = HashMap::new();
+        env.insert("CTX_SESSION_ID".to_string(), session_key.to_string());
+        env.insert(
+            "CTX_DAEMON_URL".to_string(),
+            "http://127.0.0.1:4399".to_string(),
+        );
+        env.insert("CTX_MCP_TOKEN".to_string(), token.to_string());
+        env.insert(
+            "LOG_FILE".to_string(),
+            log_path.to_string_lossy().to_string(),
+        );
+        let (event_sink, _event_rx) = mpsc::channel(8);
+        let handle = adapter
+            .run(
+                TurnInput {
+                    content: "ping".to_string(),
+                    attachments: Vec::new(),
+                    context_blocks: Vec::new(),
+                    model_id: None,
+                },
+                workdir.clone(),
+                env,
+                event_sink,
+                crate::adapters::ProviderRunHooks::default(),
+            )
+            .await?;
+        tokio::time::timeout(Duration::from_secs(5), handle.done)
+            .await
+            .context("prompt run should finish")??;
+        assert!(
+            !adapter.has_live_session(session_key).await,
+            "scoped MCP runs must not keep a CRP session with a stale token"
+        );
+    }
+
+    let log_contents = fs::read_to_string(&log_path)?;
+    let open_count = log_contents
+        .lines()
+        .filter(|line| line.contains(r#""type":"session.open""#))
+        .count();
+    let prompt_count = log_contents
+        .lines()
+        .filter(|line| line.contains(r#""type":"session.prompt""#))
+        .count();
+    assert_eq!(
+        open_count, 3,
+        "each scoped MCP turn must reopen CRP so session.open carries the fresh token: {log_contents}"
+    );
+    assert_eq!(prompt_count, 3);
+    assert!(log_contents.contains("token-one"));
+    assert!(log_contents.contains("token-two"));
+    Ok(())
+}
+
+#[tokio::test]
 async fn reap_idle_sessions_reaps_unopened_session_without_status_probe() -> Result<()> {
     let tempdir = tempfile::tempdir()?;
     let workdir = tempdir.path().to_path_buf();

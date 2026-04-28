@@ -2,6 +2,18 @@ use super::*;
 use std::fs;
 
 #[test]
+fn redact_sensitive_covers_scoped_mcp_tokens() {
+    let redacted = redact_sensitive(
+        r#"stderr {"env":{"CTX_MCP_TOKEN":"ctxmcp_secret","ctx_mcp_token": "ctxmcp_lower"}} CTX_MCP_TOKEN=ctxmcp_env"#,
+    );
+
+    assert!(!redacted.contains("ctxmcp_secret"));
+    assert!(!redacted.contains("ctxmcp_lower"));
+    assert!(!redacted.contains("ctxmcp_env"));
+    assert_eq!(redacted.matches("[REDACTED]").count(), 3);
+}
+
+#[test]
 fn container_exec_outer_process_env_skips_provider_home_and_xdg_keys() {
     assert!(should_skip_outer_process_env_key("HOME", true));
     assert!(should_skip_outer_process_env_key("TMPDIR", true));

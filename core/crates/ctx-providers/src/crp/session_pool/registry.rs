@@ -10,6 +10,11 @@ use crate::adapters::ProviderProcessInfo;
 use super::super::runtime::CrpProcess;
 use super::{session_shutdown_reason, state::session_is_live, CrpSession, CrpSessionPool};
 
+fn env_has_scoped_mcp_token(env: &HashMap<String, String>) -> bool {
+    env.get("CTX_MCP_TOKEN")
+        .is_some_and(|value| !value.trim().is_empty())
+}
+
 pub(super) struct ActivePromptGuard {
     _busy_guard: BusySessionGuard,
     session_key: String,
@@ -248,11 +253,15 @@ impl CrpSessionPool {
         workdir: &PathBuf,
         env: &HashMap<String, String>,
     ) -> Result<Arc<CrpSession>> {
+        let needs_fresh_scoped_mcp_session = env_has_scoped_mcp_token(env);
         let replaced = {
             let mut sessions = self.sessions.lock().await;
             if let Some(existing) = sessions.get(session_key) {
                 let shutdown_reason = session_shutdown_reason(existing);
-                if !existing.draining.load(Ordering::SeqCst) && shutdown_reason.is_none() {
+                if !needs_fresh_scoped_mcp_session
+                    && !existing.draining.load(Ordering::SeqCst)
+                    && shutdown_reason.is_none()
+                {
                     existing.touch();
                     return Ok(Arc::clone(existing));
                 }
@@ -265,10 +274,12 @@ impl CrpSessionPool {
         };
         if let Some((existing, shutdown_reason)) = replaced {
             if shutdown_reason.is_none() {
-                existing
-                    .process
-                    .shutdown(&format!("drain replace ({session_key})"))
-                    .await;
+                let reason = if needs_fresh_scoped_mcp_session {
+                    format!("scoped MCP token refresh ({session_key})")
+                } else {
+                    format!("drain replace ({session_key})")
+                };
+                existing.process.shutdown(&reason).await;
             }
         }
 

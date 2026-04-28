@@ -198,14 +198,6 @@ pub(crate) async fn start_turn(
         session.worktree_id.0.to_string(),
     );
     provider_env.insert("CTX_MODEL_ID".to_string(), full_model_id.clone());
-    let mcp_token = crate::daemon::issue_provider_session_mcp_token(
-        state.as_ref(),
-        session.id,
-        session.workspace_id,
-        session.worktree_id,
-    )
-    .await;
-    provider_env.insert("CTX_MCP_TOKEN".to_string(), mcp_token);
     let settings = settings::load_settings(state.global_store()).await?;
     let provider_control_mode = settings
         .sandboxing
@@ -409,6 +401,23 @@ pub(crate) async fn start_turn(
         provider_env.insert("CTX_SYSTEM_PROMPT_APPEND".to_string(), append.to_string());
     }
     apply_provider_launch_overrides(runtime_provider_id, workdir, &mut provider_env).await?;
+    let mcp_disabled = provider_env
+        .get("CTX_MCP_DISABLED")
+        .and_then(|value| ctx_core::boolish::parse_boolish(value))
+        .unwrap_or(false);
+    let mcp_token = if mcp_disabled {
+        None
+    } else {
+        let token = crate::daemon::issue_provider_session_mcp_token(
+            state.as_ref(),
+            session.id,
+            session.workspace_id,
+            session.worktree_id,
+        )
+        .await;
+        provider_env.insert("CTX_MCP_TOKEN".to_string(), token.clone());
+        Some(token)
+    };
     let codex_home = provider_env
         .get("CODEX_HOME")
         .map(|value| PathBuf::from(value.as_str()));
@@ -478,6 +487,9 @@ pub(crate) async fn start_turn(
             handle
         }
         Err(err) => {
+            if let Some(token) = mcp_token.as_deref() {
+                crate::daemon::revoke_provider_session_mcp_token(state.as_ref(), token).await;
+            }
             let duration_ms = run_started_at.elapsed().as_millis() as u64;
             state
                 .telemetry
@@ -569,5 +581,6 @@ pub(crate) async fn start_turn(
         events_done: Some(events_done_rx),
         start_progress: start_progress_rx,
         start_deadline: TokioInstant::now() + turn_start_deadline(),
+        mcp_token,
     })
 }

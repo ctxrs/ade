@@ -56,6 +56,7 @@ pub fn redact_sensitive(input: &str) -> String {
     out = redact_after_marker(out, "token=");
     out = redact_after_marker(out, "TOKEN=");
     out = redact_after_marker(out, "CTX_AUTH_TOKEN=");
+    out = redact_after_marker(out, "CTX_MCP_TOKEN=");
     out = redact_after_marker(out, "CLAUDE_CODE_OAUTH_TOKEN=");
     out = redact_after_marker(out, "AUGMENT_SESSION_AUTH=");
     out = redact_after_marker(out, "AUGMENT_API_TOKEN=");
@@ -67,6 +68,12 @@ pub fn redact_sensitive(input: &str) -> String {
     out = redact_after_marker(out, "\"augment_api_token\":\"");
     out = redact_after_marker(out, "ctxAuthToken\":\"");
     out = redact_after_marker(out, "ctx_auth_token\":\"");
+    out = redact_after_marker(out, "\"CTX_MCP_TOKEN\":\"");
+    out = redact_after_marker(out, "\"CTX_MCP_TOKEN\": \"");
+    out = redact_after_marker(out, "\"ctx_mcp_token\":\"");
+    out = redact_after_marker(out, "\"ctx_mcp_token\": \"");
+    out = redact_after_marker(out, "ctxMcpToken\":\"");
+    out = redact_after_marker(out, "ctx_mcp_token\":\"");
     out
 }
 
@@ -90,6 +97,37 @@ pub async fn append_desktop_log_line(data_root: &Path, line: &str) -> Result<()>
     }
     file.flush().await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::redact_sensitive;
+
+    #[test]
+    fn redact_sensitive_covers_scoped_mcp_tokens() {
+        let input = concat!(
+            "CTX_MCP_TOKEN=env-secret ",
+            "{\"CTX_MCP_TOKEN\":\"json-secret\"} ",
+            "{\"CTX_MCP_TOKEN\": \"json-spaced-secret\"} ",
+            "{\"ctx_mcp_token\":\"lower-secret\"} ",
+            "{\"ctx_mcp_token\": \"lower-spaced-secret\"} ",
+            "{\"ctxMcpToken\":\"camel-secret\"}"
+        );
+
+        let redacted = redact_sensitive(input);
+
+        for secret in [
+            "env-secret",
+            "json-secret",
+            "json-spaced-secret",
+            "lower-secret",
+            "lower-spaced-secret",
+            "camel-secret",
+        ] {
+            assert!(!redacted.contains(secret), "{secret} leaked: {redacted}");
+        }
+        assert_eq!(redacted.matches("[REDACTED]").count(), 6);
+    }
 }
 
 pub async fn list_log_files(data_root: &Path) -> Vec<LogFileInfo> {

@@ -395,6 +395,7 @@ async fn start_deadline_failure_finalizes_starting_turn_as_failed() {
             events_done: None,
             start_progress: start_progress_rx,
             start_deadline: tokio::time::Instant::now(),
+            mcp_token: None,
         },
         "provider did not report turn start before deadline",
     )

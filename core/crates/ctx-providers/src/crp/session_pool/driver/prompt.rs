@@ -551,6 +551,13 @@ impl CrpSessionPool {
         }
         .await;
 
+        if req
+            .env
+            .get("CTX_MCP_TOKEN")
+            .is_some_and(|value| !value.trim().is_empty())
+        {
+            session.draining.store(true, Ordering::SeqCst);
+        }
         if !session.opened.load(Ordering::SeqCst) {
             session.opening.store(false, Ordering::SeqCst);
         }
