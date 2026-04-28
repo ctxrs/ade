@@ -705,6 +705,63 @@ async fn import_host_auth_dedupes_existing_account() {
 }
 
 #[tokio::test]
+async fn seed_host_auth_projects_valid_auth_into_private_runtime_home() {
+    let _env_lock = lock_env().await;
+    let host_dir = tempfile::tempdir().unwrap();
+    let runtime_dir = tempfile::tempdir().unwrap();
+    let auth_path = host_dir.path().join("auth.json");
+    tokio::fs::write(
+        &auth_path,
+        br#"{"tokens":{"access_token":"a","refresh_token":"b"}}"#,
+    )
+    .await
+    .unwrap();
+    let _seed_guard = EnvGuard::set(CTX_SEED_CODEX_AUTH_FROM_HOST_ENV, "1");
+    let _path_guard = EnvGuard::set(
+        CTX_CODEX_HOST_AUTH_PATH_ENV,
+        auth_path.to_string_lossy().as_ref(),
+    );
+
+    let wrote = seed_codex_auth_from_host(runtime_dir.path()).await.unwrap();
+    assert!(wrote);
+    ensure_codex_auth_ready(runtime_dir.path()).await.unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let perms = tokio::fs::metadata(runtime_dir.path().join("auth.json"))
+            .await
+            .unwrap()
+            .permissions();
+        assert_eq!(perms.mode() & 0o777, 0o600);
+    }
+}
+
+#[tokio::test]
+async fn seed_host_auth_fails_closed_on_invalid_host_json() {
+    let _env_lock = lock_env().await;
+    let host_dir = tempfile::tempdir().unwrap();
+    let runtime_dir = tempfile::tempdir().unwrap();
+    let auth_path = host_dir.path().join("auth.json");
+    tokio::fs::write(&auth_path, "{ invalid json")
+        .await
+        .unwrap();
+    let _seed_guard = EnvGuard::set(CTX_SEED_CODEX_AUTH_FROM_HOST_ENV, "1");
+    let _path_guard = EnvGuard::set(
+        CTX_CODEX_HOST_AUTH_PATH_ENV,
+        auth_path.to_string_lossy().as_ref(),
+    );
+
+    let err = seed_codex_auth_from_host(runtime_dir.path())
+        .await
+        .expect_err("invalid host auth should fail closed");
+    assert!(err.to_string().contains("invalid codex auth JSON"));
+    assert!(tokio::fs::metadata(runtime_dir.path().join("auth.json"))
+        .await
+        .is_err());
+}
+
+#[tokio::test]
 async fn import_host_auth_fails_closed_on_malformed_existing_account_auth() {
     let _env_lock = lock_env().await;
     let dir = tempfile::tempdir().unwrap();

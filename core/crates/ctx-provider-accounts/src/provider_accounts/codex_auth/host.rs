@@ -35,29 +35,24 @@ pub async fn seed_codex_auth_from_host(codex_home: &Path) -> Result<bool> {
             src.display()
         );
     }
-    let bytes = tokio::fs::read(&src).await?;
-    if bytes.is_empty() {
+    let payload = tokio::fs::read_to_string(&src)
+        .await
+        .with_context(|| format!("reading host codex auth at {}", src.display()))?;
+    if payload.trim().is_empty() {
         anyhow::bail!(
             "Codex auth seeding is enabled ({CTX_SEED_CODEX_AUTH_FROM_HOST_ENV}=1) but host auth file is empty at {}",
             src.display()
         );
     }
-    tokio::fs::create_dir_all(codex_home).await?;
-    let dest = codex_home.join("auth.json");
-    let write = match tokio::fs::read(&dest).await {
-        Ok(existing) => existing != bytes,
-        Err(_) => true,
-    };
-    if write {
-        tokio::fs::write(&dest, &bytes).await?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let perms = std::fs::Permissions::from_mode(0o600);
-            let _ = tokio::fs::set_permissions(&dest, perms).await;
-        }
+    let auth: serde_json::Value = serde_json::from_str(&payload)
+        .with_context(|| format!("invalid codex auth JSON at {}", src.display()))?;
+    if !codex_auth_has_supported_shape(&auth) {
+        anyhow::bail!(
+            "codex auth file at {} has no OPENAI_API_KEY or tokens.access_token/tokens.refresh_token",
+            src.display()
+        );
     }
-    Ok(write)
+    project_auth_value_to_home(codex_home, &auth).await
 }
 
 pub async fn probe_host_codex_auth_candidate() -> CodexHostImportProbe {
