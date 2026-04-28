@@ -360,7 +360,7 @@ CTX_HTTP_DIRECT_TEST_DEPS = [
     "//core/crates/ctx-store:lib",
     "//core/crates/ctx-transport-runtime:lib",
     "//core/crates/ctx-worker-protocol:lib",
-    "//core/crates/ctx-workspace-container:lib",
+    "//core/crates/ctx-workspace-container:lib_test_support",
     "//core/crates/ctx-workspace-config:lib",
     "//core/crates/ctx-workspace-runtime:lib_test_support",
     "@crates//:anyhow",
