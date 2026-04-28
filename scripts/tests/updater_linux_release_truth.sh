@@ -110,6 +110,14 @@ matches_log() {
   grep -Eqi "${pattern}" "${WIZARD_LOG}"
 }
 
+prepare_webkit_runtime() {
+  if ! bash "${ROOT}/scripts/install_desktop_deps_linux_ubuntu.sh" --check; then
+    bash "${ROOT}/scripts/install_desktop_deps_linux_ubuntu.sh" || return
+  fi
+  bash -lc 'source "$1"; release_prepare_webkit_browser' _ "${ROOT}/scripts/buildbuddy/release_job_lib.sh" || return
+  command -v WebKitWebDriver || return
+}
+
 if [[ "$(uname -s)" != "Linux" ]]; then
   write_report "skipped" "linux_only"
   echo "skip: updater Linux release truth only runs on Linux"
@@ -176,13 +184,7 @@ timeout "${CTX_UPDATER_LINUX_PROOF_INSTALL_TIMEOUT_SECS:-900}" sh "${INSTALL_SCR
 }
 
 echo "[updater-linux-proof] preparing linux WebKit webdriver runtime" >&2
-if ! {
-  if ! bash "${ROOT}/scripts/install_desktop_deps_linux_ubuntu.sh" --check; then
-    bash "${ROOT}/scripts/install_desktop_deps_linux_ubuntu.sh"
-  fi
-  bash -lc 'source "$1"; release_prepare_webkit_browser' _ "${ROOT}/scripts/buildbuddy/release_job_lib.sh"
-  command -v WebKitWebDriver
-} >"${WEBKIT_PREP_LOG}" 2>&1; then
+if ! prepare_webkit_runtime >"${WEBKIT_PREP_LOG}" 2>&1; then
   write_report "infra_unavailable" "webkit_prep_failed"
   tail -n 200 "${WEBKIT_PREP_LOG}" >&2 || true
   exit 1
@@ -205,6 +207,7 @@ if ! HOME="${home_dir}" \
   XDG_CONFIG_HOME="${home_dir}/.config" \
   XDG_CACHE_HOME="${home_dir}/.cache" \
   PATH="${home_dir}/.local/bin:${PATH}" \
+  APPIMAGE_EXTRACT_AND_RUN="${APPIMAGE_EXTRACT_AND_RUN:-1}" \
   CTX_VOLATILE_ROOT="${ARTIFACT_DIR}/volatile" \
   CTX_AUTOMATION_SKIP_DESKTOP_PREP_RELEASE=1 \
   CTX_AUTOMATION_SKIP_APP_BUILD=1 \
@@ -239,6 +242,7 @@ if ! HOME="${home_dir}" \
   XDG_CONFIG_HOME="${home_dir}/.config" \
   XDG_CACHE_HOME="${home_dir}/.cache" \
   PATH="${home_dir}/.local/bin:${PATH}" \
+  APPIMAGE_EXTRACT_AND_RUN="${APPIMAGE_EXTRACT_AND_RUN:-1}" \
   CTX_VOLATILE_ROOT="${ARTIFACT_DIR}/volatile" \
   CTX_AUTOMATION_SKIP_DESKTOP_PREP_RELEASE=1 \
   CTX_AUTOMATION_SKIP_APP_BUILD=1 \
@@ -311,6 +315,7 @@ XDG_DATA_HOME="${home_dir}/.local/share" \
 XDG_CONFIG_HOME="${home_dir}/.config" \
 XDG_CACHE_HOME="${home_dir}/.cache" \
 PATH="${home_dir}/.local/bin:${PATH}" \
+APPIMAGE_EXTRACT_AND_RUN="${APPIMAGE_EXTRACT_AND_RUN:-1}" \
 CTX_AUTOMATION_SHIPPED_APP=1 \
 CTX_AUTOMATION_SHIPPED_APP_BUNDLES_DIR="${bundle_dir}" \
 CTX_AUTOMATION_SKIP_APP_BUILD=1 \

@@ -115,6 +115,15 @@ test("updater Linux proof targets storage channel for stable dry-run proofs", ()
     script.match(/CTX_AUTOMATION_CONNECTION_RETRY_TIMEOUT_MS="\$\{CTX_AUTOMATION_CONNECTION_RETRY_TIMEOUT_MS:-\$\{WDIO_CONNECTION_RETRY_TIMEOUT_MS\}\}"/g)?.length,
     3,
   );
+  assert.equal(
+    script.match(/APPIMAGE_EXTRACT_AND_RUN="\$\{APPIMAGE_EXTRACT_AND_RUN:-1\}"/g)?.length,
+    3,
+  );
+  assert.match(script, /prepare_webkit_runtime\(\) \{/);
+  assert.match(
+    script,
+    /bash -lc 'source "\$1"; release_prepare_webkit_browser' _ "\$\{ROOT\}\/scripts\/buildbuddy\/release_job_lib\.sh" \|\| return/,
+  );
   assert.match(script, /buildkite-agent artifact upload "\$\{ARTIFACT_DIR\}\/\*\.json"/);
   assert.match(script, /buildkite-agent artifact upload "\$\{ARTIFACT_DIR\}\/volatile\/artifacts\/ctx-desktop-e2e\/\*\*\/\*\.log"/);
   assert.doesNotMatch(script, /buildkite-agent artifact upload "\$\{ARTIFACT_DIR\}\/\*\*\/\*"/);
