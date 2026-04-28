@@ -2,6 +2,7 @@ use std::time::Duration;
 
 use crate::settings::ProviderControlMode;
 use ctx_core::provider_ids::CODEX_PROVIDER_ID;
+use ctx_core::provider_policy::{CTX_CRP_LAUNCH_POLICY_ENV, CTX_CRP_LAUNCH_POLICY_FULL};
 
 pub(super) fn provider_mode_id_for(
     provider_id: &str,
@@ -15,6 +16,22 @@ pub(super) fn provider_mode_id_for(
             _ => None,
         },
         ProviderControlMode::HarnessNative | ProviderControlMode::CtxEnforced => None,
+    }
+}
+
+pub(super) fn apply_crp_launch_policy_env_for_control_mode(
+    provider_env: &mut std::collections::HashMap<String, String>,
+    control_mode: &ProviderControlMode,
+) {
+    provider_env.remove(CTX_CRP_LAUNCH_POLICY_ENV);
+    match control_mode {
+        ProviderControlMode::Full => {
+            provider_env.insert(
+                CTX_CRP_LAUNCH_POLICY_ENV.to_string(),
+                CTX_CRP_LAUNCH_POLICY_FULL.to_string(),
+            );
+        }
+        ProviderControlMode::HarnessNative | ProviderControlMode::CtxEnforced => {}
     }
 }
 

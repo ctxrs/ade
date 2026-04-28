@@ -53,7 +53,9 @@ use self::helpers::{
 };
 use self::provider_env::{emit_provider_run_env_ready_event, prepare_provider_runtime_environment};
 use self::tool_runtime::{cwd_outside_worktree, maybe_spool_tool_output};
-use self::turn_start::{provider_mode_id_for, turn_start_deadline};
+use self::turn_start::{
+    apply_crp_launch_policy_env_for_control_mode, provider_mode_id_for, turn_start_deadline,
+};
 use super::lifecycle::{RunningTurn, TurnStartProgress};
 use super::persistence::append_session_event_with_retry;
 use super::terminal::{finalize_failed_turn, FailedTurnTerminalization};
@@ -374,6 +376,7 @@ pub(crate) async fn start_turn(
         install_target,
     )
     .await?;
+    apply_crp_launch_policy_env_for_control_mode(&mut provider_env, &provider_control_mode);
 
     emit_provider_run_env_ready_event(
         state,

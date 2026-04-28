@@ -7,6 +7,9 @@ use std::time::Instant;
 
 use anyhow::{Context, Result};
 use base64::Engine as _;
+use ctx_core::provider_policy::{
+    CTX_CRP_LAUNCH_POLICY_ENV, CTX_CRP_LAUNCH_POLICY_FULL, FULL_YOLO_SANDBOX_MODE,
+};
 use serde_json::json;
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::Duration;
@@ -767,6 +770,174 @@ done
         .require_open_session("runtime-status-default")
         .await?;
     session.process.shutdown("test complete").await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn crp_rejects_unsupported_launch_policy_before_spawning_runtime() -> Result<()> {
+    let tempdir = tempfile::tempdir()?;
+    let workdir = tempdir.path().to_path_buf();
+    let script_path = workdir.join("unsupported-launch-policy.sh");
+    let log_path = workdir.join("unsupported-launch-policy.log");
+
+    fs::write(
+        &script_path,
+        r#"#!/bin/sh
+printf 'spawned\n' > "$LOG_FILE"
+while IFS= read -r _line; do
+  :
+done
+"#,
+    )?;
+    let mut permissions = fs::metadata(&script_path)?.permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&script_path, permissions)?;
+
+    let adapter = Tier1CrpAdapter::from_provider_runtime(
+        "codex",
+        "/bin/sh".to_string(),
+        vec![script_path.to_string_lossy().to_string()],
+    );
+    let session_key = "unsupported-launch-policy-session";
+    let mut env = HashMap::new();
+    env.insert("CTX_SESSION_ID".to_string(), session_key.to_string());
+    env.insert("CTX_MCP_DISABLED".to_string(), "1".to_string());
+    env.insert(
+        "LOG_FILE".to_string(),
+        log_path.to_string_lossy().to_string(),
+    );
+    env.insert(
+        CTX_CRP_LAUNCH_POLICY_ENV.to_string(),
+        "danger-full-access".to_string(),
+    );
+    let (event_sink, _event_rx) = mpsc::channel(8);
+
+    let handle = adapter
+        .run(
+            TurnInput {
+                content: "ping".to_string(),
+                attachments: Vec::new(),
+                context_blocks: Vec::new(),
+                model_id: None,
+            },
+            workdir,
+            env,
+            event_sink,
+            crate::adapters::ProviderRunHooks::default(),
+        )
+        .await?;
+
+    let outcome = tokio::time::timeout(Duration::from_secs(5), handle.outcome)
+        .await
+        .context("unsupported launch policy should finish promptly")??;
+    assert_eq!(outcome.status, ProviderTurnStatus::Failed);
+    assert!(outcome
+        .message
+        .as_deref()
+        .unwrap_or_default()
+        .contains("unsupported CTX_CRP_LAUNCH_POLICY"));
+    tokio::time::timeout(Duration::from_secs(5), handle.done)
+        .await
+        .context("unsupported launch policy done signal should finish promptly")??;
+    assert!(
+        !log_path.exists(),
+        "unsupported launch policy must fail before spawning CRP runtime"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn crp_launch_policy_change_reopens_pooled_session() -> Result<()> {
+    let tempdir = tempfile::tempdir()?;
+    let workdir = tempdir.path().to_path_buf();
+    let script_path = workdir.join("launch-policy-refresh.sh");
+    let log_path = workdir.join("launch-policy-refresh.log");
+
+    fs::write(
+        &script_path,
+        r#"#!/bin/sh
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$LOG_FILE"
+  case "$line" in
+    *'"type":"session.open"'*)
+      session_id=$(printf '%s' "$line" | sed -n 's/.*"session_id":"\([^"]*\)".*/\1/p')
+      printf '{"v":1,"seq":1,"channel":"control","type":"session.opened","session_id":"%s"}\n' "$session_id"
+      ;;
+    *'"type":"session.prompt"'*)
+      session_id=$(printf '%s' "$line" | sed -n 's/.*"session_id":"\([^"]*\)".*/\1/p')
+      turn_id=$(printf '%s' "$line" | sed -n 's/.*"turn_id":"\([^"]*\)".*/\1/p')
+      printf '{"v":1,"seq":2,"channel":"control","type":"turn.completed","session_id":"%s","turn_id":"%s","status":"success"}\n' "$session_id" "$turn_id"
+      ;;
+  esac
+done
+"#,
+    )?;
+    let mut permissions = fs::metadata(&script_path)?.permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&script_path, permissions)?;
+
+    let adapter = Tier1CrpAdapter::from_provider_runtime(
+        "codex",
+        "/bin/sh".to_string(),
+        vec![script_path.to_string_lossy().to_string()],
+    );
+    let session_key = "launch-policy-refresh-session";
+
+    for launch_policy in [
+        Some(CTX_CRP_LAUNCH_POLICY_FULL),
+        None,
+        Some(CTX_CRP_LAUNCH_POLICY_FULL),
+    ] {
+        let mut env = HashMap::new();
+        env.insert("CTX_SESSION_ID".to_string(), session_key.to_string());
+        env.insert("CTX_MCP_DISABLED".to_string(), "1".to_string());
+        env.insert(
+            "LOG_FILE".to_string(),
+            log_path.to_string_lossy().to_string(),
+        );
+        if let Some(launch_policy) = launch_policy {
+            env.insert(
+                CTX_CRP_LAUNCH_POLICY_ENV.to_string(),
+                launch_policy.to_string(),
+            );
+        }
+        let (event_sink, _event_rx) = mpsc::channel(8);
+        let handle = adapter
+            .run(
+                TurnInput {
+                    content: "ping".to_string(),
+                    attachments: Vec::new(),
+                    context_blocks: Vec::new(),
+                    model_id: None,
+                },
+                workdir.clone(),
+                env,
+                event_sink,
+                crate::adapters::ProviderRunHooks::default(),
+            )
+            .await?;
+        tokio::time::timeout(Duration::from_secs(5), handle.done)
+            .await
+            .context("prompt run should finish")??;
+        assert!(
+            adapter.has_live_session(session_key).await,
+            "launch-policy refresh should leave the replacement session reusable"
+        );
+    }
+
+    let log_contents = fs::read_to_string(&log_path)?;
+    let open_lines = log_contents
+        .lines()
+        .filter(|line| line.contains(r#""type":"session.open""#))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        open_lines.len(),
+        3,
+        "CRP must reopen whenever launch policy changes: {log_contents}"
+    );
+    assert!(open_lines[0].contains(FULL_YOLO_SANDBOX_MODE));
+    assert!(!open_lines[1].contains(FULL_YOLO_SANDBOX_MODE));
+    assert!(open_lines[2].contains(FULL_YOLO_SANDBOX_MODE));
     Ok(())
 }
 

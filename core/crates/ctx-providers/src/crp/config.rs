@@ -4,7 +4,10 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use ctx_core::boolish::parse_boolish;
 use ctx_core::provider_ids::CODEX_PROVIDER_ID;
-use ctx_core::provider_policy::{FULL_YOLO_APPROVAL_POLICY, FULL_YOLO_SANDBOX_MODE};
+use ctx_core::provider_policy::{
+    CTX_CRP_LAUNCH_POLICY_ENV, CTX_CRP_LAUNCH_POLICY_FULL, FULL_YOLO_APPROVAL_POLICY,
+    FULL_YOLO_SANDBOX_MODE,
+};
 use serde_json::{json, Value};
 use tokio::time::Duration;
 
@@ -101,13 +104,14 @@ fn build_crp_session_config_with_mcp(
     };
 
     let container_cwd = translate_thread_cwd_for_container(env, workdir)?;
+    let launch_policy = crp_launch_policy_from_env(env)?;
     Ok(CrpSessionConfig {
         cwd: Some(container_cwd.clone()),
         spawn_cwd: Some(container_cwd),
         model,
         reasoning_effort,
-        approval_policy: Some(FULL_YOLO_APPROVAL_POLICY.to_string()),
-        sandbox_mode: Some(FULL_YOLO_SANDBOX_MODE.to_string()),
+        approval_policy: launch_policy.approval_policy,
+        sandbox_mode: launch_policy.sandbox_mode,
         model_provider: env_string(env, "CTX_MODEL_PROVIDER"),
         openai_base_url: env_string(env, "OPENAI_BASE_URL"),
         reasoning_trace_enabled: Some(true),
@@ -166,13 +170,14 @@ pub(super) fn build_crp_model_probe_config(
         .map(|value| split_model_id_and_effort(value))
         .unwrap_or((None, None));
     let container_cwd = translate_thread_cwd_for_container(env, workdir)?;
+    let launch_policy = crp_launch_policy_from_env(env)?;
     Ok(CrpSessionConfig {
         cwd: Some(container_cwd.clone()),
         spawn_cwd: Some(container_cwd),
         model,
         reasoning_effort,
-        approval_policy: Some(FULL_YOLO_APPROVAL_POLICY.to_string()),
-        sandbox_mode: Some(FULL_YOLO_SANDBOX_MODE.to_string()),
+        approval_policy: launch_policy.approval_policy,
+        sandbox_mode: launch_policy.sandbox_mode,
         model_provider: env_string(env, "CTX_MODEL_PROVIDER"),
         openai_base_url: env_string(env, "OPENAI_BASE_URL"),
         reasoning_trace_enabled: None,
@@ -186,6 +191,25 @@ fn env_string(env: &HashMap<String, String>, key: &str) -> Option<String> {
         .map(|value| value.trim())
         .filter(|value| !value.is_empty())
         .map(str::to_string)
+}
+
+struct CrpLaunchPolicy {
+    approval_policy: Option<String>,
+    sandbox_mode: Option<String>,
+}
+
+fn crp_launch_policy_from_env(env: &HashMap<String, String>) -> Result<CrpLaunchPolicy> {
+    match env_string(env, CTX_CRP_LAUNCH_POLICY_ENV).as_deref() {
+        None => Ok(CrpLaunchPolicy {
+            approval_policy: None,
+            sandbox_mode: None,
+        }),
+        Some(CTX_CRP_LAUNCH_POLICY_FULL) => Ok(CrpLaunchPolicy {
+            approval_policy: Some(FULL_YOLO_APPROVAL_POLICY.to_string()),
+            sandbox_mode: Some(FULL_YOLO_SANDBOX_MODE.to_string()),
+        }),
+        Some(value) => anyhow::bail!("unsupported {CTX_CRP_LAUNCH_POLICY_ENV}: {value}"),
+    }
 }
 
 pub(super) fn split_model_id_and_effort(model_id: &str) -> (Option<String>, Option<String>) {

@@ -5,6 +5,7 @@ use async_trait::async_trait;
 use ctx_core::ids::WorkspaceId;
 use ctx_core::models::{Workspace, Worktree};
 use ctx_core::provider_ids::CODEX_PROVIDER_ID;
+use ctx_core::provider_policy::CTX_CRP_LAUNCH_POLICY_ENV;
 use ctx_harness_sources::{HarnessSourceKind, ResolvedHarnessSource};
 use ctx_provider_accounts as provider_accounts;
 
@@ -140,9 +141,21 @@ where
         }
     }
     for (key, value) in source.env.iter() {
-        env.insert(key.clone(), value.clone());
+        insert_probe_source_env(&mut env, key, value);
     }
+    strip_daemon_owned_probe_env(&mut env);
     Ok((source, env))
+}
+
+fn insert_probe_source_env(env: &mut HashMap<String, String>, key: &str, value: &str) {
+    if key == CTX_CRP_LAUNCH_POLICY_ENV {
+        return;
+    }
+    env.insert(key.to_string(), value.to_string());
+}
+
+fn strip_daemon_owned_probe_env(env: &mut HashMap<String, String>) {
+    env.remove(CTX_CRP_LAUNCH_POLICY_ENV);
 }
 
 fn subscription_probe_requires_account_env(provider_id: &str) -> bool {
@@ -209,6 +222,7 @@ where
         env.insert(key, value);
     }
     finalize_workspace_probe_env(state, &source, provider_id, &mut env).await?;
+    strip_daemon_owned_probe_env(&mut env);
     Ok(WorkspaceRuntimeProbeContext {
         source,
         env,
@@ -244,6 +258,7 @@ where
         env.insert(key, value);
     }
     finalize_workspace_probe_env(state, &source, provider_id, &mut env).await?;
+    strip_daemon_owned_probe_env(&mut env);
     Ok(WorkspaceRuntimeProbeContext {
         source,
         env,
@@ -315,6 +330,7 @@ mod tests {
     use super::*;
     use chrono::Utc;
     use ctx_core::ids::WorkspaceId;
+    use ctx_core::provider_policy::CTX_CRP_LAUNCH_POLICY_FULL;
     use ctx_harness_sources::{
         mark_endpoint_verification, set_provider_source_selection, upsert_provider_endpoint,
         HarnessApiShape, HarnessEndpointUpsert, HarnessEndpointVerificationStatus,
@@ -443,10 +459,16 @@ mod tests {
             runtime: PreparedWorkspaceProbeRuntime {
                 cwd: workspace_root.clone(),
                 runtime_data_root: Some(runtime_root.clone()),
-                env_overrides: HashMap::from([(
-                    "CTX_DATA_ROOT".to_string(),
-                    runtime_root.to_string_lossy().to_string(),
-                )]),
+                env_overrides: HashMap::from([
+                    (
+                        "CTX_DATA_ROOT".to_string(),
+                        runtime_root.to_string_lossy().to_string(),
+                    ),
+                    (
+                        CTX_CRP_LAUNCH_POLICY_ENV.to_string(),
+                        CTX_CRP_LAUNCH_POLICY_FULL.to_string(),
+                    ),
+                ]),
             },
         };
 
@@ -462,6 +484,10 @@ mod tests {
         assert_eq!(
             context.env.get("OPENAI_BASE_URL").map(String::as_str),
             Some("https://openrouter.ai/api/v1")
+        );
+        assert!(
+            !context.env.contains_key(CTX_CRP_LAUNCH_POLICY_ENV),
+            "probe runtime env must not be able to spoof daemon-owned CRP launch policy"
         );
 
         let codex_home = PathBuf::from(
@@ -550,5 +576,23 @@ mod tests {
         );
         assert!(!env.contains_key("CTX_AUTH_TOKEN"));
         assert_eq!(env.get("CTX_MCP_DISABLED").map(String::as_str), Some("1"));
+    }
+
+    #[test]
+    fn probe_source_env_drops_daemon_owned_crp_launch_policy() {
+        let mut env = HashMap::new();
+
+        insert_probe_source_env(&mut env, "OPENAI_BASE_URL", "https://example.com/v1");
+        insert_probe_source_env(
+            &mut env,
+            CTX_CRP_LAUNCH_POLICY_ENV,
+            CTX_CRP_LAUNCH_POLICY_FULL,
+        );
+
+        assert_eq!(
+            env.get("OPENAI_BASE_URL").map(String::as_str),
+            Some("https://example.com/v1")
+        );
+        assert!(!env.contains_key(CTX_CRP_LAUNCH_POLICY_ENV));
     }
 }

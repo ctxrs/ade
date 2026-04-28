@@ -1,6 +1,6 @@
 use super::helpers::strip_emitted_prefix;
-use super::provider_mode_id_for;
 use super::runtime_provider_id_for_session_provider;
+use super::{apply_crp_launch_policy_env_for_control_mode, provider_mode_id_for};
 use crate::installer;
 use crate::installer::{
     ensure_codex_cli_command_env_for_target, AgentServerCommand, AgentServerConfigFile,
@@ -8,6 +8,7 @@ use crate::installer::{
 };
 use crate::settings::ProviderControlMode;
 use chrono::Utc;
+use ctx_core::provider_policy::{CTX_CRP_LAUNCH_POLICY_ENV, CTX_CRP_LAUNCH_POLICY_FULL};
 use ctx_harness_sources::{
     EndpointModelCatalogStatus, HarnessApiShape, HarnessEndpointRecord,
     HarnessEndpointVerificationStatus, HarnessSourceKind, ResolvedHarnessSource,
@@ -76,6 +77,38 @@ fn non_full_provider_control_does_not_force_provider_modes() {
     assert_eq!(
         provider_mode_id_for("droid", &ProviderControlMode::CtxEnforced),
         None
+    );
+}
+
+#[test]
+fn full_provider_control_sets_crp_launch_policy_env() {
+    let mut provider_env = HashMap::new();
+
+    apply_crp_launch_policy_env_for_control_mode(&mut provider_env, &ProviderControlMode::Full);
+
+    assert_eq!(
+        provider_env
+            .get(CTX_CRP_LAUNCH_POLICY_ENV)
+            .map(String::as_str),
+        Some(CTX_CRP_LAUNCH_POLICY_FULL)
+    );
+}
+
+#[test]
+fn non_full_provider_control_removes_spoofed_crp_launch_policy_env() {
+    let mut provider_env = HashMap::from([(
+        CTX_CRP_LAUNCH_POLICY_ENV.to_string(),
+        CTX_CRP_LAUNCH_POLICY_FULL.to_string(),
+    )]);
+
+    apply_crp_launch_policy_env_for_control_mode(
+        &mut provider_env,
+        &ProviderControlMode::CtxEnforced,
+    );
+
+    assert!(
+        !provider_env.contains_key(CTX_CRP_LAUNCH_POLICY_ENV),
+        "daemon must strip externally supplied CRP launch policy when policy is unset"
     );
 }
 

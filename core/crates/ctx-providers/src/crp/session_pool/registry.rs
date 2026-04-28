@@ -4,6 +4,7 @@ use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex as StdMutex};
 
 use anyhow::{Context, Result};
+use ctx_core::provider_policy::{CTX_CRP_LAUNCH_POLICY_ENV, CTX_CRP_LAUNCH_POLICY_FULL};
 
 use crate::adapters::ProviderProcessInfo;
 
@@ -13,6 +14,20 @@ use super::{session_shutdown_reason, state::session_is_live, CrpSession, CrpSess
 fn env_has_scoped_mcp_token(env: &HashMap<String, String>) -> bool {
     env.get("CTX_MCP_TOKEN")
         .is_some_and(|value| !value.trim().is_empty())
+}
+
+fn env_launch_policy_signature(env: &HashMap<String, String>) -> Result<Option<String>> {
+    let Some(value) = env
+        .get(CTX_CRP_LAUNCH_POLICY_ENV)
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(None);
+    };
+    if value != CTX_CRP_LAUNCH_POLICY_FULL {
+        anyhow::bail!("unsupported {CTX_CRP_LAUNCH_POLICY_ENV}: {value}");
+    }
+    Ok(Some(value.to_string()))
 }
 
 pub(super) struct ActivePromptGuard {
@@ -254,11 +269,15 @@ impl CrpSessionPool {
         env: &HashMap<String, String>,
     ) -> Result<Arc<CrpSession>> {
         let needs_fresh_scoped_mcp_session = env_has_scoped_mcp_token(env);
+        let launch_policy_signature = env_launch_policy_signature(env)?;
         let replaced = {
             let mut sessions = self.sessions.lock().await;
             if let Some(existing) = sessions.get(session_key) {
                 let shutdown_reason = session_shutdown_reason(existing);
+                let launch_policy_changed =
+                    existing.launch_policy_signature != launch_policy_signature;
                 if !needs_fresh_scoped_mcp_session
+                    && !launch_policy_changed
                     && !existing.draining.load(Ordering::SeqCst)
                     && shutdown_reason.is_none()
                 {
@@ -276,6 +295,8 @@ impl CrpSessionPool {
             if shutdown_reason.is_none() {
                 let reason = if needs_fresh_scoped_mcp_session {
                     format!("scoped MCP token refresh ({session_key})")
+                } else if existing.launch_policy_signature != launch_policy_signature {
+                    format!("CRP launch policy refresh ({session_key})")
                 } else {
                     format!("drain replace ({session_key})")
                 };
@@ -290,7 +311,11 @@ impl CrpSessionPool {
         let process = CrpProcess::spawn(&self.agent, workdir, env)
             .await
             .with_context(|| format!("spawning CRP runtime {}", self.agent.command))?;
-        let session = Arc::new(CrpSession::new(process, self.supports_session_status));
+        let session = Arc::new(CrpSession::new(
+            process,
+            self.supports_session_status,
+            launch_policy_signature,
+        ));
         let mut sessions = self.sessions.lock().await;
         sessions.insert(session_key.to_string(), Arc::clone(&session));
         Ok(session)

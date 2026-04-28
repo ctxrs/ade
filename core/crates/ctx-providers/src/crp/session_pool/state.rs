@@ -39,6 +39,7 @@ pub(in crate::crp) struct CrpSession {
     pub(in crate::crp) opening: AtomicBool,
     pub(in crate::crp) status_supported: AtomicBool,
     pub(in crate::crp) draining: AtomicBool,
+    pub(in crate::crp) launch_policy_signature: Option<String>,
     last_used: StdMutex<Instant>,
 }
 
@@ -46,6 +47,7 @@ impl CrpSession {
     pub(in crate::crp::session_pool) fn new(
         process: Arc<CrpProcess>,
         supports_session_status: bool,
+        launch_policy_signature: Option<String>,
     ) -> Self {
         Self {
             process,
@@ -53,6 +55,7 @@ impl CrpSession {
             opening: AtomicBool::new(false),
             status_supported: AtomicBool::new(supports_session_status),
             draining: AtomicBool::new(false),
+            launch_policy_signature,
             last_used: StdMutex::new(Instant::now()),
         }
     }

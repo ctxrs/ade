@@ -43,11 +43,8 @@ fn build_crp_session_config_sets_pragmatic_personality_for_codex() {
     let workdir = PathBuf::from("/tmp/workdir");
 
     let cfg = build_crp_session_config(&env, &workdir).expect("build session config");
-    assert_eq!(
-        cfg.approval_policy.as_deref(),
-        Some(FULL_YOLO_APPROVAL_POLICY)
-    );
-    assert_eq!(cfg.sandbox_mode.as_deref(), Some(FULL_YOLO_SANDBOX_MODE));
+    assert_eq!(cfg.approval_policy, None);
+    assert_eq!(cfg.sandbox_mode, None);
     assert_eq!(cfg.reasoning_trace_enabled, Some(true));
     assert_eq!(cfg.personality.as_deref(), Some("pragmatic"));
 }
@@ -60,12 +57,43 @@ fn build_crp_session_config_omits_personality_for_non_codex() {
     let workdir = PathBuf::from("/tmp/workdir");
 
     let cfg = build_crp_session_config(&env, &workdir).expect("build session config");
+    assert_eq!(cfg.approval_policy, None);
+    assert_eq!(cfg.sandbox_mode, None);
+    assert_eq!(cfg.personality, None);
+}
+
+#[test]
+fn build_crp_session_config_uses_explicit_full_launch_policy_env() {
+    let mut env = HashMap::new();
+    disable_ctx_mcp(&mut env);
+    env.insert(
+        CTX_CRP_LAUNCH_POLICY_ENV.to_string(),
+        CTX_CRP_LAUNCH_POLICY_FULL.to_string(),
+    );
+    let workdir = PathBuf::from("/tmp/workdir");
+
+    let cfg = build_crp_session_config(&env, &workdir).expect("build session config");
     assert_eq!(
         cfg.approval_policy.as_deref(),
         Some(FULL_YOLO_APPROVAL_POLICY)
     );
     assert_eq!(cfg.sandbox_mode.as_deref(), Some(FULL_YOLO_SANDBOX_MODE));
-    assert_eq!(cfg.personality, None);
+}
+
+#[test]
+fn build_crp_session_config_rejects_unsupported_launch_policy_env() {
+    let mut env = HashMap::new();
+    disable_ctx_mcp(&mut env);
+    env.insert(
+        CTX_CRP_LAUNCH_POLICY_ENV.to_string(),
+        "danger-full-access".to_string(),
+    );
+
+    let err = build_crp_session_config(&env, Path::new("/tmp/workdir"))
+        .expect_err("unsupported launch policy should fail closed");
+    assert!(err
+        .to_string()
+        .contains("unsupported CTX_CRP_LAUNCH_POLICY"));
 }
 
 #[test]
@@ -309,11 +337,25 @@ fn build_crp_session_config_rewrites_shared_vm_ctx_mcp_command_for_container() {
 }
 
 #[test]
-fn build_crp_model_probe_config_forces_full_yolo_policy() {
+fn build_crp_model_probe_config_omits_launch_policy_when_unset() {
     let workdir = PathBuf::from("/tmp/workdir");
 
     let cfg =
         build_crp_model_probe_config(&HashMap::new(), &workdir).expect("build model probe config");
+    assert_eq!(cfg.approval_policy, None);
+    assert_eq!(cfg.sandbox_mode, None);
+}
+
+#[test]
+fn build_crp_model_probe_config_uses_explicit_full_launch_policy_env() {
+    let mut env = HashMap::new();
+    env.insert(
+        CTX_CRP_LAUNCH_POLICY_ENV.to_string(),
+        CTX_CRP_LAUNCH_POLICY_FULL.to_string(),
+    );
+    let workdir = PathBuf::from("/tmp/workdir");
+
+    let cfg = build_crp_model_probe_config(&env, &workdir).expect("build model probe config");
     assert_eq!(
         cfg.approval_policy.as_deref(),
         Some(FULL_YOLO_APPROVAL_POLICY)
@@ -397,6 +439,8 @@ fn build_crp_auth_session_config_omits_mcp_servers_but_preserves_other_fields() 
 
     let cfg = build_crp_auth_session_config(&env, &workdir).expect("build auth config");
     assert!(cfg.mcp_servers.is_none());
+    assert_eq!(cfg.approval_policy, None);
+    assert_eq!(cfg.sandbox_mode, None);
     assert_eq!(cfg.model.as_deref(), Some("openai/gpt-5.5"));
     assert_eq!(cfg.model_provider.as_deref(), Some("openrouter"));
     assert_eq!(
