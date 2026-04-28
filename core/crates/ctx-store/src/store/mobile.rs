@@ -581,6 +581,7 @@ impl Store {
         schema_version: i64,
         settings_json: &str,
     ) -> Result<RuntimeSettingsDocument> {
+        let _write_guard = self.write_gate.lock().await;
         let old_secret_ref = self.lookup_runtime_settings_secret_ref().await?;
         let updated_at = Utc::now().to_rfc3339();
         self.query(
@@ -614,6 +615,7 @@ impl Store {
         settings_json: &str,
         settings_secret_json: &str,
     ) -> Result<RuntimeSettingsDocument> {
+        let _write_guard = self.write_gate.lock().await;
         let old_secret_ref = self.lookup_runtime_settings_secret_ref().await?;
         let new_secret_ref = Self::next_runtime_settings_secret_ref();
         self.write_runtime_settings_secrets(&new_secret_ref, settings_secret_json)
@@ -735,6 +737,7 @@ impl Store {
         &self,
         config: MobileAccessConfig,
     ) -> Result<MobileAccessConfig> {
+        let _write_guard = self.write_gate.lock().await;
         let old_secret_ref = self.lookup_mobile_access_secret_ref(&config.id).await?;
         let new_secret_ref = Self::next_mobile_access_secret_ref();
         self.write_mobile_access_secrets(
