@@ -55,9 +55,7 @@ use self::provider_env::{emit_provider_run_env_ready_event, prepare_provider_run
 use self::tool_runtime::{cwd_outside_worktree, maybe_spool_tool_output};
 use self::turn_start::{provider_mode_id_for, turn_start_deadline};
 use super::lifecycle::{RunningTurn, TurnStartProgress};
-use super::persistence::{
-    append_session_event_with_retry, claim_session_provider_session_ref_with_retry,
-};
+use super::persistence::append_session_event_with_retry;
 use super::terminal::{finalize_failed_turn, FailedTurnTerminalization};
 use super::QueuedMessage;
 
@@ -416,13 +414,13 @@ pub(crate) async fn start_turn(
         let claim_store = claim_store.clone();
         Box::pin(async move {
             if let Some(returned_ref) = claim.returned_provider_session_ref {
-                claim_session_provider_session_ref_with_retry(
-                    &claim_store,
-                    claim_session_id,
-                    returned_ref,
-                    "provider.session_opened",
-                )
-                .await?;
+                claim_store
+                    .claim_session_provider_session_ref(
+                        claim_session_id,
+                        returned_ref,
+                        "provider.session_opened",
+                    )
+                    .await?;
             }
             Ok(())
         })

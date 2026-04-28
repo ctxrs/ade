@@ -154,6 +154,34 @@ async fn provider_session_ref_claim_is_idempotent_for_same_session() {
 }
 
 #[tokio::test]
+async fn provider_session_ref_claim_waits_for_external_writer() {
+    let fixture = setup_session_fixture().await;
+    let external_pool = SqlitePool::connect(&sqlite_url(&fixture.db_path))
+        .await
+        .unwrap();
+    let mut external_tx = external_pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
+    sqlx::query("UPDATE sessions SET updated_at = updated_at WHERE id = ?")
+        .bind(fixture.session_id.0.to_string())
+        .execute(&mut *external_tx)
+        .await
+        .unwrap();
+
+    let store = fixture.store.clone();
+    let session_id = fixture.session_id;
+    let claim = tokio::spawn(async move {
+        store
+            .claim_session_provider_session_ref(session_id, "provider-thread-1".into(), "test")
+            .await
+    });
+
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert!(!claim.is_finished());
+
+    external_tx.commit().await.unwrap();
+    claim.await.unwrap().unwrap();
+}
+
+#[tokio::test]
 async fn provider_session_ref_claim_rejects_duplicate_owner() {
     let fixture = setup_session_fixture().await;
     let peer_session_id = create_peer_session(&fixture).await;

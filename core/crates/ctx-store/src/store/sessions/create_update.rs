@@ -360,15 +360,15 @@ impl Store {
             anyhow::bail!("provider session ref claim requires a non-empty source");
         }
         let now = Utc::now().to_rfc3339();
-        let mut tx = self.pool.begin().await?;
+        let session_id = id.0.to_string();
 
         let session = sqlx::query(
             r#"SELECT id, provider_id, provider_session_ref, workspace_id, task_id, worktree_id
                FROM sessions
                WHERE id = ?"#,
         )
-        .bind(id.0.to_string())
-        .fetch_optional(&mut *tx)
+        .bind(&session_id)
+        .fetch_optional(&self.pool)
         .await?
         .ok_or_else(|| anyhow::anyhow!("session not found for provider ref claim: {}", id.0))?;
 
@@ -395,8 +395,8 @@ impl Store {
         )
         .bind(&provider_id)
         .bind(&provider_session_ref)
-        .bind(id.0.to_string())
-        .fetch_optional(&mut *tx)
+        .bind(&session_id)
+        .fetch_optional(&self.pool)
         .await?;
         if let Some(owner) = local_duplicate {
             anyhow::bail!(
@@ -408,6 +408,36 @@ impl Store {
             );
         }
 
+        let workspace_id: String = session.try_get("workspace_id")?;
+        let task_id: String = session.try_get("task_id")?;
+        let worktree_id: String = session.try_get("worktree_id")?;
+        sqlx::query(
+            r#"INSERT OR IGNORE INTO provider_session_bindings (
+                provider_id,
+                provider_account_scope,
+                provider_session_ref,
+                session_id,
+                workspace_id,
+                task_id,
+                worktree_id,
+                source,
+                created_at,
+                updated_at
+               )
+               VALUES (?, 'default', ?, ?, ?, ?, ?, ?, ?, ?)"#,
+        )
+        .bind(&provider_id)
+        .bind(&provider_session_ref)
+        .bind(&session_id)
+        .bind(workspace_id)
+        .bind(task_id)
+        .bind(worktree_id)
+        .bind(source)
+        .bind(&now)
+        .bind(&now)
+        .execute(&self.pool)
+        .await?;
+
         let binding_owner: Option<String> = sqlx::query_scalar(
             r#"SELECT session_id
                FROM provider_session_bindings
@@ -418,62 +448,60 @@ impl Store {
         )
         .bind(&provider_id)
         .bind(&provider_session_ref)
-        .fetch_optional(&mut *tx)
+        .fetch_optional(&self.pool)
         .await?;
-        if let Some(owner) = binding_owner {
-            if owner != id.0.to_string() {
-                anyhow::bail!(
-                    "provider session ref `{}` for provider `{}` is owned by session {}; refusing to attach it to session {}",
-                    provider_session_ref,
-                    provider_id,
-                    owner,
-                    id.0
-                );
-            }
-        } else {
-            let workspace_id: String = session.try_get("workspace_id")?;
-            let task_id: String = session.try_get("task_id")?;
-            let worktree_id: String = session.try_get("worktree_id")?;
-            sqlx::query(
-                r#"INSERT INTO provider_session_bindings (
-                    provider_id,
-                    provider_account_scope,
-                    provider_session_ref,
-                    session_id,
-                    workspace_id,
-                    task_id,
-                    worktree_id,
-                    source,
-                    created_at,
-                    updated_at
-                   )
-                   VALUES (?, 'default', ?, ?, ?, ?, ?, ?, ?, ?)"#,
-            )
-            .bind(&provider_id)
-            .bind(&provider_session_ref)
-            .bind(id.0.to_string())
-            .bind(workspace_id)
-            .bind(task_id)
-            .bind(worktree_id)
-            .bind(source)
-            .bind(&now)
-            .bind(&now)
-            .execute(&mut *tx)
-            .await?;
+        if binding_owner.as_deref() != Some(session_id.as_str()) {
+            let owner = binding_owner.unwrap_or_else(|| "<missing>".to_string());
+            anyhow::bail!(
+                "provider session ref `{}` for provider `{}` is owned by session {}; refusing to attach it to session {}",
+                provider_session_ref,
+                provider_id,
+                owner,
+                id.0
+            );
         }
 
-        sqlx::query(
+        let updated = sqlx::query(
             r#"UPDATE sessions
                SET provider_session_ref = ?, updated_at = ?
-               WHERE id = ?"#,
+               WHERE id = ?
+                 AND (
+                   provider_session_ref IS NULL
+                   OR trim(provider_session_ref) = ''
+                   OR provider_session_ref = ?
+                 )"#,
         )
         .bind(&provider_session_ref)
         .bind(&now)
-        .bind(id.0.to_string())
-        .execute(&mut *tx)
+        .bind(&session_id)
+        .bind(&provider_session_ref)
+        .execute(&self.pool)
         .await?;
-
-        tx.commit().await?;
+        if updated.rows_affected() == 0 {
+            if let Err(cleanup_err) = sqlx::query(
+                r#"DELETE FROM provider_session_bindings
+                   WHERE provider_id = ?
+                     AND provider_account_scope = 'default'
+                     AND provider_session_ref = ?
+                     AND session_id = ?"#,
+            )
+            .bind(&provider_id)
+            .bind(&provider_session_ref)
+            .bind(&session_id)
+            .execute(&self.pool)
+            .await
+            {
+                anyhow::bail!(
+                    "provider session ref substitution rejected for session {} and binding cleanup failed: {cleanup_err:#}",
+                    id.0
+                );
+            }
+            anyhow::bail!(
+                "provider session ref substitution rejected for session {}: existing ref changed before returned ref `{}` could be attached",
+                id.0,
+                provider_session_ref
+            );
+        }
         Ok(())
     }
 }
