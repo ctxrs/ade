@@ -98,7 +98,7 @@ impl Store {
                     workspace_id: WorkspaceId(uuid::Uuid::parse_str(&ws_id)?),
                     execution_environment: parse_execution_environment(
                         r.try_get::<String, _>("execution_environment")?.as_str(),
-                    ),
+                    )?,
                     parent_session_id: parse_optional_session_id(r.try_get("parent_session_id")?),
                     relationship: r.try_get("relationship")?,
                     provider_id: r.try_get("provider_id")?,

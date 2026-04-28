@@ -14,7 +14,7 @@ fn decode_active_head_snapshot_row(row: &sqlx::sqlite::SqliteRow) -> Result<Sess
         worktree_id: WorktreeId(uuid::Uuid::parse_str(&worktree_id)?),
         execution_environment: parse_execution_environment(
             row.try_get::<String, _>("execution_environment")?.as_str(),
-        ),
+        )?,
         parent_session_id: parse_optional_session_id(row.try_get("parent_session_id")?),
         relationship: row.try_get("relationship")?,
         provider_id: row.try_get("provider_id")?,

@@ -29,11 +29,12 @@ pub(super) fn execution_environment_to_str(
     execution_environment.as_str()
 }
 
-pub(super) fn parse_execution_environment(value: &str) -> ExecutionEnvironment {
+pub(super) fn parse_execution_environment(value: &str) -> Result<ExecutionEnvironment> {
     match value {
-        "sandbox" => ExecutionEnvironment::Sandbox,
-        value if value.starts_with("container_") => ExecutionEnvironment::Sandbox,
-        _ => ExecutionEnvironment::Host,
+        "host" => Ok(ExecutionEnvironment::Host),
+        "sandbox" => Ok(ExecutionEnvironment::Sandbox),
+        "container_host_mounted" | "container_disk_isolated" => Ok(ExecutionEnvironment::Sandbox),
+        _ => anyhow::bail!("invalid persisted execution_environment: {value:?}"),
     }
 }
 

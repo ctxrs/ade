@@ -13,32 +13,7 @@ impl Store {
 
         let mut out = Vec::with_capacity(rows.len());
         for r in rows {
-            let id: String = r.try_get("id")?;
-            let task_id: String = r.try_get("task_id")?;
-            let ws_id: String = r.try_get("workspace_id")?;
-            let wt_id: String = r.try_get("worktree_id")?;
-            let created_at: String = r.try_get("created_at")?;
-            let updated_at: String = r.try_get("updated_at")?;
-            out.push(Session {
-                id: SessionId(uuid::Uuid::parse_str(&id)?),
-                task_id: TaskId(uuid::Uuid::parse_str(&task_id)?),
-                workspace_id: WorkspaceId(uuid::Uuid::parse_str(&ws_id)?),
-                worktree_id: WorktreeId(uuid::Uuid::parse_str(&wt_id)?),
-                execution_environment: parse_execution_environment(
-                    r.try_get::<String, _>("execution_environment")?.as_str(),
-                ),
-                parent_session_id: parse_optional_session_id(r.try_get("parent_session_id")?),
-                relationship: r.try_get("relationship")?,
-                provider_id: r.try_get("provider_id")?,
-                model_id: r.try_get("model_id")?,
-                reasoning_effort: r.try_get("reasoning_effort")?,
-                title: r.try_get("title")?,
-                agent_role: r.try_get("agent_role")?,
-                status: parse_session_status(r.try_get::<String, _>("status")?.as_str()),
-                provider_session_ref: r.try_get("provider_session_ref")?,
-                created_at: parse_dt(&created_at)?,
-                updated_at: parse_dt(&updated_at)?,
-            });
+            out.push(decode_session_row(&r)?);
         }
         Ok(out)
     }
@@ -58,32 +33,7 @@ impl Store {
 
         let mut out = Vec::with_capacity(rows.len());
         for r in rows {
-            let id: String = r.try_get("id")?;
-            let task_id: String = r.try_get("task_id")?;
-            let ws_id: String = r.try_get("workspace_id")?;
-            let wt_id: String = r.try_get("worktree_id")?;
-            let created_at: String = r.try_get("created_at")?;
-            let updated_at: String = r.try_get("updated_at")?;
-            out.push(Session {
-                id: SessionId(uuid::Uuid::parse_str(&id)?),
-                task_id: TaskId(uuid::Uuid::parse_str(&task_id)?),
-                workspace_id: WorkspaceId(uuid::Uuid::parse_str(&ws_id)?),
-                worktree_id: WorktreeId(uuid::Uuid::parse_str(&wt_id)?),
-                execution_environment: parse_execution_environment(
-                    r.try_get::<String, _>("execution_environment")?.as_str(),
-                ),
-                parent_session_id: parse_optional_session_id(r.try_get("parent_session_id")?),
-                relationship: r.try_get("relationship")?,
-                provider_id: r.try_get("provider_id")?,
-                model_id: r.try_get("model_id")?,
-                reasoning_effort: r.try_get("reasoning_effort")?,
-                title: r.try_get("title")?,
-                agent_role: r.try_get("agent_role")?,
-                status: parse_session_status(r.try_get::<String, _>("status")?.as_str()),
-                provider_session_ref: r.try_get("provider_session_ref")?,
-                created_at: parse_dt(&created_at)?,
-                updated_at: parse_dt(&updated_at)?,
-            });
+            out.push(decode_session_row(&r)?);
         }
         Ok(out)
     }
@@ -109,32 +59,7 @@ impl Store {
 
         let mut out = Vec::with_capacity(rows.len());
         for r in rows {
-            let id: String = r.try_get("id")?;
-            let task_id: String = r.try_get("task_id")?;
-            let ws_id: String = r.try_get("workspace_id")?;
-            let wt_id: String = r.try_get("worktree_id")?;
-            let created_at: String = r.try_get("created_at")?;
-            let updated_at: String = r.try_get("updated_at")?;
-            out.push(Session {
-                id: SessionId(uuid::Uuid::parse_str(&id)?),
-                task_id: TaskId(uuid::Uuid::parse_str(&task_id)?),
-                workspace_id: WorkspaceId(uuid::Uuid::parse_str(&ws_id)?),
-                worktree_id: WorktreeId(uuid::Uuid::parse_str(&wt_id)?),
-                execution_environment: parse_execution_environment(
-                    r.try_get::<String, _>("execution_environment")?.as_str(),
-                ),
-                parent_session_id: parse_optional_session_id(r.try_get("parent_session_id")?),
-                relationship: r.try_get("relationship")?,
-                provider_id: r.try_get("provider_id")?,
-                model_id: r.try_get("model_id")?,
-                reasoning_effort: r.try_get("reasoning_effort")?,
-                title: r.try_get("title")?,
-                agent_role: r.try_get("agent_role")?,
-                status: parse_session_status(r.try_get::<String, _>("status")?.as_str()),
-                provider_session_ref: r.try_get("provider_session_ref")?,
-                created_at: parse_dt(&created_at)?,
-                updated_at: parse_dt(&updated_at)?,
-            });
+            out.push(decode_session_row(&r)?);
         }
         Ok(out)
     }
@@ -157,32 +82,7 @@ impl Store {
 
         let mut out = Vec::with_capacity(rows.len());
         for r in rows {
-            let id: String = r.try_get("id")?;
-            let task_id: String = r.try_get("task_id")?;
-            let ws_id: String = r.try_get("workspace_id")?;
-            let wt_id: String = r.try_get("worktree_id")?;
-            let created_at: String = r.try_get("created_at")?;
-            let updated_at: String = r.try_get("updated_at")?;
-            out.push(Session {
-                id: SessionId(uuid::Uuid::parse_str(&id)?),
-                task_id: TaskId(uuid::Uuid::parse_str(&task_id)?),
-                workspace_id: WorkspaceId(uuid::Uuid::parse_str(&ws_id)?),
-                worktree_id: WorktreeId(uuid::Uuid::parse_str(&wt_id)?),
-                execution_environment: parse_execution_environment(
-                    r.try_get::<String, _>("execution_environment")?.as_str(),
-                ),
-                parent_session_id: parse_optional_session_id(r.try_get("parent_session_id")?),
-                relationship: r.try_get("relationship")?,
-                provider_id: r.try_get("provider_id")?,
-                model_id: r.try_get("model_id")?,
-                reasoning_effort: r.try_get("reasoning_effort")?,
-                title: r.try_get("title")?,
-                agent_role: r.try_get("agent_role")?,
-                status: parse_session_status(r.try_get::<String, _>("status")?.as_str()),
-                provider_session_ref: r.try_get("provider_session_ref")?,
-                created_at: parse_dt(&created_at)?,
-                updated_at: parse_dt(&updated_at)?,
-            });
+            out.push(decode_session_row(&r)?);
         }
         Ok(out)
     }
@@ -229,7 +129,7 @@ impl Store {
                 workspace_id: WorkspaceId(uuid::Uuid::parse_str(&ws_id)?),
                 execution_environment: parse_execution_environment(
                     r.try_get::<String, _>("execution_environment")?.as_str(),
-                ),
+                )?,
                 parent_session_id: r
                     .try_get::<Option<String>, _>("parent_session_id")?
                     .and_then(|value| uuid::Uuid::parse_str(&value).ok())
@@ -265,36 +165,7 @@ impl Store {
             .fetch_optional(&self.pool)
             .await?;
 
-        Ok(row.and_then(|r| {
-            let id: String = r.try_get("id").ok()?;
-            let task_id: String = r.try_get("task_id").ok()?;
-            let ws_id: String = r.try_get("workspace_id").ok()?;
-            let wt_id: String = r.try_get("worktree_id").ok()?;
-            let created_at: String = r.try_get("created_at").ok()?;
-            let updated_at: String = r.try_get("updated_at").ok()?;
-            Some(Session {
-                id: SessionId(uuid::Uuid::parse_str(&id).ok()?),
-                task_id: TaskId(uuid::Uuid::parse_str(&task_id).ok()?),
-                workspace_id: WorkspaceId(uuid::Uuid::parse_str(&ws_id).ok()?),
-                worktree_id: WorktreeId(uuid::Uuid::parse_str(&wt_id).ok()?),
-                execution_environment: parse_execution_environment(
-                    r.try_get::<String, _>("execution_environment")
-                        .ok()?
-                        .as_str(),
-                ),
-                parent_session_id: parse_optional_session_id(r.try_get("parent_session_id").ok()?),
-                relationship: r.try_get("relationship").ok()?,
-                provider_id: r.try_get("provider_id").ok()?,
-                model_id: r.try_get("model_id").ok()?,
-                reasoning_effort: r.try_get("reasoning_effort").ok()?,
-                title: r.try_get("title").ok()?,
-                agent_role: r.try_get("agent_role").ok()?,
-                status: parse_session_status(r.try_get::<String, _>("status").ok()?.as_str()),
-                provider_session_ref: r.try_get("provider_session_ref").ok()?,
-                created_at: parse_dt(&created_at).ok()?,
-                updated_at: parse_dt(&updated_at).ok()?,
-            })
-        }))
+        row.map(|r| decode_session_row(&r)).transpose()
     }
 
     pub async fn get_active_subagent_session(
@@ -315,36 +186,7 @@ impl Store {
             .fetch_optional(&self.pool)
             .await?;
 
-        Ok(row.and_then(|r| {
-            let id: String = r.try_get("id").ok()?;
-            let task_id: String = r.try_get("task_id").ok()?;
-            let ws_id: String = r.try_get("workspace_id").ok()?;
-            let wt_id: String = r.try_get("worktree_id").ok()?;
-            let created_at: String = r.try_get("created_at").ok()?;
-            let updated_at: String = r.try_get("updated_at").ok()?;
-            Some(Session {
-                id: SessionId(uuid::Uuid::parse_str(&id).ok()?),
-                task_id: TaskId(uuid::Uuid::parse_str(&task_id).ok()?),
-                workspace_id: WorkspaceId(uuid::Uuid::parse_str(&ws_id).ok()?),
-                worktree_id: WorktreeId(uuid::Uuid::parse_str(&wt_id).ok()?),
-                execution_environment: parse_execution_environment(
-                    r.try_get::<String, _>("execution_environment")
-                        .ok()?
-                        .as_str(),
-                ),
-                parent_session_id: parse_optional_session_id(r.try_get("parent_session_id").ok()?),
-                relationship: r.try_get("relationship").ok()?,
-                provider_id: r.try_get("provider_id").ok()?,
-                model_id: r.try_get("model_id").ok()?,
-                reasoning_effort: r.try_get("reasoning_effort").ok()?,
-                title: r.try_get("title").ok()?,
-                agent_role: r.try_get("agent_role").ok()?,
-                status: parse_session_status(r.try_get::<String, _>("status").ok()?.as_str()),
-                provider_session_ref: r.try_get("provider_session_ref").ok()?,
-                created_at: parse_dt(&created_at).ok()?,
-                updated_at: parse_dt(&updated_at).ok()?,
-            })
-        }))
+        row.map(|r| decode_session_row(&r)).transpose()
     }
 
     pub async fn count_active_subagent_sessions(&self, parent_session_id: SessionId) -> Result<usize> {

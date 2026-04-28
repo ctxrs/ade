@@ -7,8 +7,8 @@ use ctx_core::ids::{
     ConnectionProfileId, MessageId, RunId, SessionId, TaskId, TurnId, WorkspaceId, WorktreeId,
 };
 use ctx_core::models::{
-    Message, MessageDelivery, MessageRole, SessionEventType, SessionTurn, SessionTurnStatus,
-    SessionTurnTool, VcsKind,
+    ExecutionEnvironment, Message, MessageDelivery, MessageRole, SessionEventType, SessionTurn,
+    SessionTurnStatus, SessionTurnTool, VcsKind,
 };
 use sqlx::{Row, SqlitePool};
 use tokio::sync::Barrier;
@@ -78,6 +78,85 @@ async fn setup_session_fixture() -> SessionFixture {
         workspace_id: ws.id,
         worktree_id: worktree.id,
         session_id: session.id,
+    }
+}
+
+#[tokio::test]
+async fn invalid_persisted_session_execution_environment_fails_closed() {
+    let fixture = setup_session_fixture().await;
+    sqlx::query("UPDATE sessions SET execution_environment = ? WHERE id = ?")
+        .bind("sand_box")
+        .bind(fixture.session_id.0.to_string())
+        .execute(fixture.store.pool())
+        .await
+        .unwrap();
+
+    let err = fixture
+        .store
+        .get_session(fixture.session_id)
+        .await
+        .expect_err("invalid execution_environment must not decode as host");
+    assert!(format!("{err:#}").contains("invalid persisted execution_environment"));
+}
+
+#[tokio::test]
+async fn whitespace_persisted_session_execution_environment_fails_closed() {
+    let fixture = setup_session_fixture().await;
+    sqlx::query("UPDATE sessions SET execution_environment = ? WHERE id = ?")
+        .bind(" sandbox ")
+        .bind(fixture.session_id.0.to_string())
+        .execute(fixture.store.pool())
+        .await
+        .unwrap();
+
+    let err = fixture
+        .store
+        .get_session(fixture.session_id)
+        .await
+        .expect_err("whitespace-mutated execution_environment must not decode as sandbox");
+    assert!(format!("{err:#}").contains("invalid persisted execution_environment"));
+}
+
+#[tokio::test]
+async fn unknown_container_session_execution_environment_fails_closed() {
+    let fixture = setup_session_fixture().await;
+    sqlx::query("UPDATE sessions SET execution_environment = ? WHERE id = ?")
+        .bind("container_future_mode")
+        .bind(fixture.session_id.0.to_string())
+        .execute(fixture.store.pool())
+        .await
+        .unwrap();
+
+    let err = fixture
+        .store
+        .get_session(fixture.session_id)
+        .await
+        .expect_err("unknown container execution_environment must not decode as sandbox");
+    assert!(format!("{err:#}").contains("invalid persisted execution_environment"));
+}
+
+#[tokio::test]
+async fn legacy_container_session_execution_environment_decodes_as_sandbox() {
+    for legacy_value in ["container_host_mounted", "container_disk_isolated"] {
+        let fixture = setup_session_fixture().await;
+        sqlx::query("UPDATE sessions SET execution_environment = ? WHERE id = ?")
+            .bind(legacy_value)
+            .bind(fixture.session_id.0.to_string())
+            .execute(fixture.store.pool())
+            .await
+            .unwrap();
+
+        let session = fixture
+            .store
+            .get_session(fixture.session_id)
+            .await
+            .unwrap()
+            .expect("fixture session should decode");
+        assert_eq!(
+            session.execution_environment,
+            ExecutionEnvironment::Sandbox,
+            "{legacy_value} should remain a sandbox compatibility alias"
+        );
     }
 }
 

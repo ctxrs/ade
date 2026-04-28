@@ -27,6 +27,35 @@ pub(super) fn parse_vcs_kind(raw: Option<String>) -> Option<VcsKind> {
     }
 }
 
+pub(super) fn decode_session_row(row: &SqliteRow) -> Result<Session> {
+    let id: String = row.try_get("id")?;
+    let task_id: String = row.try_get("task_id")?;
+    let ws_id: String = row.try_get("workspace_id")?;
+    let wt_id: String = row.try_get("worktree_id")?;
+    let created_at: String = row.try_get("created_at")?;
+    let updated_at: String = row.try_get("updated_at")?;
+    Ok(Session {
+        id: SessionId(uuid::Uuid::parse_str(&id)?),
+        task_id: TaskId(uuid::Uuid::parse_str(&task_id)?),
+        workspace_id: WorkspaceId(uuid::Uuid::parse_str(&ws_id)?),
+        worktree_id: WorktreeId(uuid::Uuid::parse_str(&wt_id)?),
+        execution_environment: parse_execution_environment(
+            row.try_get::<String, _>("execution_environment")?.as_str(),
+        )?,
+        parent_session_id: parse_optional_session_id(row.try_get("parent_session_id")?),
+        relationship: row.try_get("relationship")?,
+        provider_id: row.try_get("provider_id")?,
+        model_id: row.try_get("model_id")?,
+        reasoning_effort: row.try_get("reasoning_effort")?,
+        title: row.try_get("title")?,
+        agent_role: row.try_get("agent_role")?,
+        status: parse_session_status(row.try_get::<String, _>("status")?.as_str()),
+        provider_session_ref: row.try_get("provider_session_ref")?,
+        created_at: parse_dt(&created_at)?,
+        updated_at: parse_dt(&updated_at)?,
+    })
+}
+
 pub(super) fn build_mobile_connection_profile_from_row(
     row: SqliteRow,
 ) -> Result<MobileConnectionProfile> {
@@ -185,7 +214,7 @@ pub(super) fn decode_session_snapshot_summary_row(
         worktree_id: WorktreeId(uuid::Uuid::parse_str(&wt_id)?),
         execution_environment: parse_execution_environment(
             row.try_get::<String, _>("execution_environment")?.as_str(),
-        ),
+        )?,
         parent_session_id: parse_optional_session_id(row.try_get("parent_session_id")?),
         relationship: row.try_get("relationship")?,
         provider_id: row.try_get("provider_id")?,
