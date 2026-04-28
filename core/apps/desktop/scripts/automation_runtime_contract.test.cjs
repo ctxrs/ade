@@ -121,6 +121,13 @@ test("updater Linux proof targets storage channel for stable dry-run proofs", ()
   );
   assert.match(script, /extract_appimage_for_automation\(\) \{/);
   assert.match(script, /APPIMAGE_AUTOMATION_TARGETS_LOG="\$\{ARTIFACT_DIR\}\/appimage-automation-targets\.log"/);
+  assert.match(script, /DAEMON_CLEANUP_LOG="\$\{ARTIFACT_DIR\}\/daemon-cleanup\.log"/);
+  assert.match(script, /stop_proof_daemons\(\) \{/);
+  assert.match(script, /daemon\.lock/);
+  assert.equal(
+    script.match(/^stop_proof_daemons$/gm)?.length,
+    3,
+  );
   assert.match(script, /CTX_DESKTOP_APP_PATH="\$\{bootstrap_automation_app_path\}"/);
   assert.equal(
     script.match(/CTX_DESKTOP_APP_PATH="\$\{updated_automation_app_path\}"/g)?.length,

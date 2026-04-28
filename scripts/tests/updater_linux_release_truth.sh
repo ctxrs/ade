@@ -19,8 +19,10 @@ WEBKIT_PREP_LOG="${ARTIFACT_DIR}/webkit-prep.log"
 RUNTIME_INSTALL_LOG="${ARTIFACT_DIR}/runtime-install.log"
 WIZARD_LOG="${ARTIFACT_DIR}/workspace-wizard.log"
 APPIMAGE_AUTOMATION_TARGETS_LOG="${ARTIFACT_DIR}/appimage-automation-targets.log"
+DAEMON_CLEANUP_LOG="${ARTIFACT_DIR}/daemon-cleanup.log"
 EXTRACT_DIR="${ARTIFACT_DIR}/appimage-extract"
 WDIO_CONNECTION_RETRY_TIMEOUT_MS="${CTX_UPDATER_LINUX_PROOF_WDIO_CONNECTION_RETRY_TIMEOUT_MS:-300000}"
+home_dir=""
 
 mkdir -p "${ARTIFACT_DIR}"
 
@@ -34,7 +36,84 @@ upload_artifacts_on_buildkite() {
   buildkite-agent artifact upload "${ARTIFACT_DIR}/volatile/artifacts/ctx-desktop-e2e/**/*.png" >/dev/null 2>&1 || true
 }
 
-trap upload_artifacts_on_buildkite EXIT
+log_daemon_cleanup() {
+  printf '%s\n' "$*" >>"${DAEMON_CLEANUP_LOG}" 2>/dev/null || true
+  printf '%s\n' "$*" >&2
+}
+
+proof_daemon_command_matches() {
+  local cmd="$1"
+  local data_dir="$2"
+  if [[ -z "${cmd}" ]]; then
+    return 1
+  fi
+  if [[ "${cmd}" == *"${data_dir}"* ]]; then
+    return 0
+  fi
+  [[ "${cmd}" == *"ctx-daemon"* || "${cmd}" == *"/ctx serve"* || "${cmd}" == *" ctx serve"* ]]
+}
+
+stop_proof_daemons() {
+  local proof_home="${home_dir:-}"
+  if [[ -z "${proof_home}" ]]; then
+    return 0
+  fi
+  local data_dir="${proof_home}/.ctx"
+  local lock_file="${data_dir}/daemon.lock"
+  local pids=()
+
+  if [[ -f "${lock_file}" ]]; then
+    local lock_pid=""
+    lock_pid="$(head -n 1 "${lock_file}" 2>/dev/null | tr -cd '0-9' || true)"
+    if [[ "${lock_pid}" =~ ^[0-9]+$ && "${lock_pid}" != "$$" ]]; then
+      local lock_cmd=""
+      lock_cmd="$(ps -p "${lock_pid}" -o command= 2>/dev/null || true)"
+      if proof_daemon_command_matches "${lock_cmd}" "${data_dir}"; then
+        pids+=("${lock_pid}")
+      elif [[ -n "${lock_cmd}" ]]; then
+        log_daemon_cleanup "[updater-linux-proof] refusing to stop non-daemon lock pid=${lock_pid} cmd=${lock_cmd}"
+      fi
+    fi
+  fi
+
+  while IFS= read -r line; do
+    local pid="${line%% *}"
+    local cmd="${line#* }"
+    if [[ "${pid}" =~ ^[0-9]+$ && "${pid}" != "$$" && "${cmd}" == *"${data_dir}"* ]]; then
+      if proof_daemon_command_matches "${cmd}" "${data_dir}"; then
+        pids+=("${pid}")
+      fi
+    fi
+  done < <(ps -eo pid=,command= 2>/dev/null || true)
+
+  if [[ "${#pids[@]}" -eq 0 ]]; then
+    return 0
+  fi
+
+  log_daemon_cleanup "[updater-linux-proof] stopping proof daemon pids=${pids[*]} data_dir=${data_dir}"
+  kill "${pids[@]}" 2>/dev/null || true
+  for _ in {1..50}; do
+    local alive=0
+    for pid in "${pids[@]}"; do
+      if kill -0 "${pid}" 2>/dev/null; then
+        alive=1
+        break
+      fi
+    done
+    if [[ "${alive}" == "0" ]]; then
+      return 0
+    fi
+    sleep 0.1
+  done
+  kill -9 "${pids[@]}" 2>/dev/null || true
+}
+
+cleanup_on_exit() {
+  stop_proof_daemons || true
+  upload_artifacts_on_buildkite
+}
+
+trap cleanup_on_exit EXIT
 
 write_report() {
   local status="$1"
@@ -276,6 +355,7 @@ if ! HOME="${home_dir}" \
   write_report "failed" "native_update_smoke_failed"
   exit 1
 fi
+stop_proof_daemons
 
 before_version="$(jq -r '.initial.summary.current_version // empty' "${UPDATER_REPORT}" 2>/dev/null || true)"
 if [[ -z "${before_version}" ]]; then
@@ -320,6 +400,7 @@ if ! HOME="${home_dir}" \
   write_report "failed" "native_up_to_date_smoke_failed"
   exit 1
 fi
+stop_proof_daemons
 
 after_version="$(jq -r '.summary.current_version // empty' "${UP_TO_DATE_REPORT}" 2>/dev/null || true)"
 if [[ -z "${after_version}" ]]; then
@@ -370,6 +451,7 @@ if ! "${ROOT}/scripts/release_runtime_install_smoke.sh" \
 fi
 
 echo "[updater-linux-proof] proving updated app still launches a real local workspace flow" >&2
+stop_proof_daemons
 set +e
 HOME="${home_dir}" \
 XDG_DATA_HOME="${home_dir}/.local/share" \
