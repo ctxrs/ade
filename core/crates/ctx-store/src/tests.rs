@@ -81,6 +81,111 @@ async fn setup_session_fixture() -> SessionFixture {
     }
 }
 
+async fn load_mobile_access_secret_ref(store: &Store) -> String {
+    sqlx::query_scalar::<_, String>(
+        "SELECT secret_ref FROM mobile_access_config WHERE id = 'default'",
+    )
+    .fetch_one(store.pool())
+    .await
+    .unwrap()
+}
+
+fn mobile_access_secret_sidecar_path(
+    root: &std::path::Path,
+    db_file_name: &str,
+    secret_ref: &str,
+) -> std::path::PathBuf {
+    root.join("mobile_access_secrets")
+        .join(db_file_name)
+        .join(format!("{secret_ref}.json"))
+}
+
+fn sqlite_artifact_paths(db_path: &std::path::Path) -> Vec<std::path::PathBuf> {
+    vec![
+        db_path.to_path_buf(),
+        db_path.with_extension("sqlite-wal"),
+        db_path.with_extension("sqlite-shm"),
+        db_path.with_extension("sqlite-journal"),
+    ]
+}
+
+fn bytes_contain(haystack: &[u8], needle: &[u8]) -> bool {
+    if needle.is_empty() {
+        return false;
+    }
+    haystack
+        .windows(needle.len())
+        .any(|window| window == needle)
+}
+
+async fn assert_secret_absent_from_sqlite_artifacts(db_path: &std::path::Path, secret: &str) {
+    for artifact_path in sqlite_artifact_paths(db_path) {
+        let bytes = match tokio::fs::read(&artifact_path).await {
+            Ok(bytes) => bytes,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(err) => panic!(
+                "failed to read sqlite artifact {}: {err}",
+                artifact_path.display()
+            ),
+        };
+        assert!(
+            !bytes_contain(&bytes, secret.as_bytes()),
+            "found secret bytes in sqlite artifact {}",
+            artifact_path.display()
+        );
+    }
+}
+
+async fn write_legacy_mobile_access_sidecar(
+    root: &std::path::Path,
+    db_file_name: &str,
+    tunnel_secret: &str,
+    daemon_private_key: &str,
+) -> std::path::PathBuf {
+    let legacy_path = mobile_access_secret_sidecar_path(root, db_file_name, "default");
+    if let Some(parent) = legacy_path.parent() {
+        tokio::fs::create_dir_all(parent).await.unwrap();
+    }
+    let payload = serde_json::json!({
+        "version": 1,
+        "tunnel_secret": tunnel_secret,
+        "daemon_private_key": daemon_private_key,
+    });
+    tokio::fs::write(&legacy_path, serde_json::to_vec_pretty(&payload).unwrap())
+        .await
+        .unwrap();
+    legacy_path
+}
+
+async fn insert_pre_secret_ref_mobile_access_state(
+    store: &Store,
+    tunnel_secret: &str,
+    daemon_private_key: &str,
+) {
+    let now = Utc::now().to_rfc3339();
+    sqlx::query(
+        r#"INSERT INTO mobile_access_config
+            (id, profile_id, tunnel_id, public_base_url, relay_base_url, tunnel_secret, daemon_public_key, daemon_private_key, enabled, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+    )
+    .bind("default")
+    .bind(ConnectionProfileId::new().0.to_string())
+    .bind("legacy-tunnel")
+    .bind("https://legacy.example.com")
+    .bind("https://legacy-relay.example.com")
+    .bind("")
+    .bind("legacy-public-key")
+    .bind("")
+    .bind(1)
+    .bind(&now)
+    .bind(&now)
+    .execute(store.pool())
+    .await
+    .unwrap();
+    assert!(!tunnel_secret.is_empty());
+    assert!(!daemon_private_key.is_empty());
+}
+
 #[cfg(unix)]
 #[tokio::test]
 async fn mobile_access_config_upsert_persists_secrets_outside_sqlite() {
@@ -109,26 +214,26 @@ async fn mobile_access_config_upsert_persists_secrets_outside_sqlite() {
     assert_eq!(persisted.daemon_private_key, "private-key");
 
     let row = sqlx::query(
-        "SELECT tunnel_secret, daemon_private_key FROM mobile_access_config WHERE id = 'default'",
+        "SELECT secret_ref, tunnel_secret, daemon_private_key FROM mobile_access_config WHERE id = 'default'",
     )
     .fetch_one(store.pool())
     .await
     .unwrap();
+    let secret_ref: String = row.try_get("secret_ref").unwrap();
     let tunnel_secret: String = row.try_get("tunnel_secret").unwrap();
     let daemon_private_key: String = row.try_get("daemon_private_key").unwrap();
+    assert!(!secret_ref.is_empty());
     assert!(tunnel_secret.is_empty());
     assert!(daemon_private_key.is_empty());
 
-    let secret_path = dir
-        .path()
-        .join("mobile_access_secrets")
-        .join("db.sqlite")
-        .join("default.json");
+    let secret_path = mobile_access_secret_sidecar_path(dir.path(), "db.sqlite", &secret_ref);
     let perms = tokio::fs::metadata(&secret_path)
         .await
         .unwrap()
         .permissions();
     assert_eq!(perms.mode() & 0o777, 0o600);
+    assert_secret_absent_from_sqlite_artifacts(&db_path, "secret-1").await;
+    assert_secret_absent_from_sqlite_artifacts(&db_path, "private-key").await;
 }
 
 #[tokio::test]
@@ -163,21 +268,42 @@ async fn mobile_access_config_get_migrates_legacy_sqlite_secrets() {
     assert_eq!(config.daemon_private_key, "legacy-private");
 
     let row = sqlx::query(
-        "SELECT tunnel_secret, daemon_private_key FROM mobile_access_config WHERE id = 'default'",
+        "SELECT secret_ref, tunnel_secret, daemon_private_key FROM mobile_access_config WHERE id = 'default'",
     )
     .fetch_one(store.pool())
     .await
     .unwrap();
+    let secret_ref: String = row.try_get("secret_ref").unwrap();
     let tunnel_secret: String = row.try_get("tunnel_secret").unwrap();
     let daemon_private_key: String = row.try_get("daemon_private_key").unwrap();
+    assert!(!secret_ref.is_empty());
     assert!(tunnel_secret.is_empty());
     assert!(daemon_private_key.is_empty());
-    assert!(dir
-        .path()
-        .join("mobile_access_secrets")
-        .join("db.sqlite")
-        .join("default.json")
-        .exists());
+    assert!(mobile_access_secret_sidecar_path(dir.path(), "db.sqlite", &secret_ref).exists());
+}
+
+#[tokio::test]
+async fn mobile_access_config_get_migrates_legacy_id_keyed_sidecar() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("db.sqlite");
+    let store = Store::open(&db_path).await.unwrap();
+    insert_pre_secret_ref_mobile_access_state(&store, "legacy-secret", "legacy-private").await;
+    let legacy_path = write_legacy_mobile_access_sidecar(
+        dir.path(),
+        "db.sqlite",
+        "legacy-secret",
+        "legacy-private",
+    )
+    .await;
+
+    let config = store.get_mobile_access_config().await.unwrap().unwrap();
+    let secret_ref = load_mobile_access_secret_ref(&store).await;
+    let new_path = mobile_access_secret_sidecar_path(dir.path(), "db.sqlite", &secret_ref);
+    assert_eq!(config.tunnel_secret, "legacy-secret");
+    assert_eq!(config.daemon_private_key, "legacy-private");
+    assert_ne!(secret_ref, "default");
+    assert!(!legacy_path.exists());
+    assert!(new_path.exists());
 }
 
 #[tokio::test]
@@ -199,15 +325,31 @@ async fn delete_mobile_access_config_removes_secret_sidecar() {
         updated_at: Utc::now(),
     };
     store.upsert_mobile_access_config(config).await.unwrap();
-    let secret_path = dir
-        .path()
-        .join("mobile_access_secrets")
-        .join("db.sqlite")
-        .join("default.json");
+    let secret_ref = load_mobile_access_secret_ref(&store).await;
+    let secret_path = mobile_access_secret_sidecar_path(dir.path(), "db.sqlite", &secret_ref);
     assert!(secret_path.exists());
 
     store.delete_mobile_access_config().await.unwrap();
     assert!(!secret_path.exists());
+}
+
+#[tokio::test]
+async fn delete_mobile_access_config_removes_legacy_id_keyed_sidecar_without_secret_ref() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("db.sqlite");
+    let store = Store::open(&db_path).await.unwrap();
+    insert_pre_secret_ref_mobile_access_state(&store, "legacy-secret", "legacy-private").await;
+    let legacy_path = write_legacy_mobile_access_sidecar(
+        dir.path(),
+        "db.sqlite",
+        "legacy-secret",
+        "legacy-private",
+    )
+    .await;
+    assert!(legacy_path.exists());
+
+    store.delete_mobile_access_config().await.unwrap();
+    assert!(!legacy_path.exists());
 }
 
 #[tokio::test]
@@ -230,11 +372,8 @@ async fn mobile_access_config_get_fails_closed_on_corrupt_secret_sidecar() {
     };
     store.upsert_mobile_access_config(config).await.unwrap();
 
-    let secret_path = dir
-        .path()
-        .join("mobile_access_secrets")
-        .join("db.sqlite")
-        .join("default.json");
+    let secret_ref = load_mobile_access_secret_ref(&store).await;
+    let secret_path = mobile_access_secret_sidecar_path(dir.path(), "db.sqlite", &secret_ref);
     tokio::fs::write(&secret_path, "{not-json").await.unwrap();
 
     let err = store.get_mobile_access_config().await.unwrap_err();
@@ -278,28 +417,101 @@ async fn mobile_access_config_sidecars_are_namespaced_per_sqlite_file() {
 
     let loaded_a = store_a.get_mobile_access_config().await.unwrap().unwrap();
     let loaded_b = store_b.get_mobile_access_config().await.unwrap().unwrap();
+    let secret_ref_a = load_mobile_access_secret_ref(&store_a).await;
+    let secret_ref_b = load_mobile_access_secret_ref(&store_b).await;
     assert_eq!(loaded_a.tunnel_secret, "secret-a");
     assert_eq!(loaded_b.tunnel_secret, "secret-b");
-    assert!(dir
-        .path()
-        .join("mobile_access_secrets")
-        .join("a.sqlite")
-        .join("default.json")
-        .exists());
-    assert!(dir
-        .path()
-        .join("mobile_access_secrets")
-        .join("b.sqlite")
-        .join("default.json")
-        .exists());
+    assert!(mobile_access_secret_sidecar_path(dir.path(), "a.sqlite", &secret_ref_a).exists());
+    assert!(mobile_access_secret_sidecar_path(dir.path(), "b.sqlite", &secret_ref_b).exists());
 
     store_a.delete_mobile_access_config().await.unwrap();
-    assert!(dir
-        .path()
-        .join("mobile_access_secrets")
-        .join("b.sqlite")
-        .join("default.json")
-        .exists());
+    assert!(mobile_access_secret_sidecar_path(dir.path(), "b.sqlite", &secret_ref_b).exists());
+}
+
+#[tokio::test]
+async fn mobile_access_config_upsert_rotates_secret_ref_and_cleans_old_sidecar() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("db.sqlite");
+    let store = Store::open(&db_path).await.unwrap();
+    let first = crate::store::MobileAccessConfig {
+        id: "default".to_string(),
+        profile_id: ConnectionProfileId::new(),
+        tunnel_id: "tunnel-1".to_string(),
+        public_base_url: "https://example.com".to_string(),
+        relay_base_url: "https://relay.example.com".to_string(),
+        tunnel_secret: "secret-1".to_string(),
+        daemon_public_key: "public-key".to_string(),
+        daemon_private_key: "private-key".to_string(),
+        enabled: true,
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+    };
+    store.upsert_mobile_access_config(first).await.unwrap();
+    let first_ref = load_mobile_access_secret_ref(&store).await;
+    let first_path = mobile_access_secret_sidecar_path(dir.path(), "db.sqlite", &first_ref);
+    assert!(first_path.exists());
+
+    let second = crate::store::MobileAccessConfig {
+        id: "default".to_string(),
+        profile_id: ConnectionProfileId::new(),
+        tunnel_id: "tunnel-2".to_string(),
+        public_base_url: "https://example-2.com".to_string(),
+        relay_base_url: "https://relay-2.example.com".to_string(),
+        tunnel_secret: "secret-2".to_string(),
+        daemon_public_key: "public-key-2".to_string(),
+        daemon_private_key: "private-key-2".to_string(),
+        enabled: true,
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+    };
+    let persisted = store.upsert_mobile_access_config(second).await.unwrap();
+    let second_ref = load_mobile_access_secret_ref(&store).await;
+    let second_path = mobile_access_secret_sidecar_path(dir.path(), "db.sqlite", &second_ref);
+    assert_ne!(first_ref, second_ref);
+    assert!(!first_path.exists());
+    assert!(second_path.exists());
+    assert_eq!(persisted.tunnel_secret, "secret-2");
+    assert_eq!(persisted.daemon_private_key, "private-key-2");
+    assert_secret_absent_from_sqlite_artifacts(&db_path, "secret-2").await;
+    assert_secret_absent_from_sqlite_artifacts(&db_path, "private-key-2").await;
+}
+
+#[tokio::test]
+async fn mobile_access_config_upsert_cleans_legacy_id_keyed_sidecar_without_secret_ref() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("db.sqlite");
+    let store = Store::open(&db_path).await.unwrap();
+    insert_pre_secret_ref_mobile_access_state(&store, "legacy-secret", "legacy-private").await;
+    let legacy_path = write_legacy_mobile_access_sidecar(
+        dir.path(),
+        "db.sqlite",
+        "legacy-secret",
+        "legacy-private",
+    )
+    .await;
+
+    let updated = crate::store::MobileAccessConfig {
+        id: "default".to_string(),
+        profile_id: ConnectionProfileId::new(),
+        tunnel_id: "tunnel-new".to_string(),
+        public_base_url: "https://new.example.com".to_string(),
+        relay_base_url: "https://relay-new.example.com".to_string(),
+        tunnel_secret: "new-secret".to_string(),
+        daemon_public_key: "new-public-key".to_string(),
+        daemon_private_key: "new-private-key".to_string(),
+        enabled: true,
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+    };
+    let persisted = store.upsert_mobile_access_config(updated).await.unwrap();
+    let secret_ref = load_mobile_access_secret_ref(&store).await;
+    let new_path = mobile_access_secret_sidecar_path(dir.path(), "db.sqlite", &secret_ref);
+    assert_eq!(persisted.tunnel_secret, "new-secret");
+    assert_eq!(persisted.daemon_private_key, "new-private-key");
+    assert!(!legacy_path.exists());
+    assert!(new_path.exists());
+    assert_secret_absent_from_sqlite_artifacts(&db_path, "new-secret").await;
+    assert_secret_absent_from_sqlite_artifacts(&db_path, "new-private-key").await;
 }
 
 async fn create_peer_session(fixture: &SessionFixture) -> SessionId {

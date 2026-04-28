@@ -25,14 +25,14 @@ struct MobileAccessSecretEnvelope {
     daemon_private_key: String,
 }
 
-fn ensure_safe_mobile_access_config_id(id: &str) -> Result<()> {
-    if id.trim().is_empty() {
-        anyhow::bail!("mobile access config id is required");
+fn ensure_safe_mobile_access_secret_ref(secret_ref: &str) -> Result<()> {
+    if secret_ref.trim().is_empty() {
+        anyhow::bail!("mobile access secret_ref is required");
     }
-    let mut components = std::path::Path::new(id).components();
+    let mut components = std::path::Path::new(secret_ref).components();
     match (components.next(), components.next()) {
         (Some(std::path::Component::Normal(_)), None) => Ok(()),
-        _ => anyhow::bail!("mobile access config id must be a single path segment"),
+        _ => anyhow::bail!("mobile access secret_ref must be a single path segment"),
     }
 }
 
@@ -48,9 +48,9 @@ fn mobile_access_secret_root(db_path: &Path) -> PathBuf {
         .join(db_namespace)
 }
 
-fn mobile_access_secret_path(db_path: &Path, id: &str) -> Result<PathBuf> {
-    ensure_safe_mobile_access_config_id(id)?;
-    Ok(mobile_access_secret_root(db_path).join(format!("{id}.json")))
+fn mobile_access_secret_path(db_path: &Path, secret_ref: &str) -> Result<PathBuf> {
+    ensure_safe_mobile_access_secret_ref(secret_ref)?;
+    Ok(mobile_access_secret_root(db_path).join(format!("{secret_ref}.json")))
 }
 
 async fn ensure_private_dir(path: &Path) -> Result<()> {
@@ -179,6 +179,10 @@ pub enum MobileDeviceSeqAdvance {
 }
 
 impl Store {
+    fn next_mobile_access_secret_ref() -> String {
+        uuid::Uuid::new_v4().to_string()
+    }
+
     fn mobile_access_secret_db_path(&self) -> Result<&Path> {
         self.sqlite_path.as_deref().ok_or_else(|| {
             anyhow::anyhow!(
@@ -189,11 +193,11 @@ impl Store {
 
     async fn write_mobile_access_secrets(
         &self,
-        id: &str,
+        secret_ref: &str,
         tunnel_secret: &str,
         daemon_private_key: &str,
     ) -> Result<()> {
-        let path = mobile_access_secret_path(self.mobile_access_secret_db_path()?, id)?;
+        let path = mobile_access_secret_path(self.mobile_access_secret_db_path()?, secret_ref)?;
         let payload = serde_json::to_vec_pretty(&MobileAccessSecretEnvelope {
             version: MOBILE_ACCESS_SECRET_VERSION,
             tunnel_secret: tunnel_secret.to_string(),
@@ -204,9 +208,9 @@ impl Store {
 
     async fn read_mobile_access_secrets_if_present(
         &self,
-        id: &str,
+        secret_ref: &str,
     ) -> Result<Option<(String, String)>> {
-        let path = mobile_access_secret_path(self.mobile_access_secret_db_path()?, id)?;
+        let path = mobile_access_secret_path(self.mobile_access_secret_db_path()?, secret_ref)?;
         let payload = match tokio::fs::read_to_string(&path).await {
             Ok(payload) => payload,
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -235,8 +239,8 @@ impl Store {
         Ok(Some((envelope.tunnel_secret, envelope.daemon_private_key)))
     }
 
-    async fn remove_mobile_access_secrets_if_present(&self, id: &str) -> Result<()> {
-        let path = mobile_access_secret_path(self.mobile_access_secret_db_path()?, id)?;
+    async fn remove_mobile_access_secrets_if_present(&self, secret_ref: &str) -> Result<()> {
+        let path = mobile_access_secret_path(self.mobile_access_secret_db_path()?, secret_ref)?;
         match tokio::fs::remove_file(&path).await {
             Ok(_) => Ok(()),
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
@@ -254,13 +258,79 @@ impl Store {
         if legacy_tunnel_secret.trim().is_empty() || legacy_daemon_private_key.trim().is_empty() {
             return Ok(None);
         }
-        self.write_mobile_access_secrets(id, legacy_tunnel_secret, legacy_daemon_private_key)
-            .await?;
-        self.clear_legacy_mobile_access_secrets(id).await?;
+        let secret_ref = Self::next_mobile_access_secret_ref();
+        self.write_mobile_access_secrets(
+            &secret_ref,
+            legacy_tunnel_secret,
+            legacy_daemon_private_key,
+        )
+        .await?;
+        if let Err(err) = self
+            .finalize_legacy_mobile_access_secret_migration(id, &secret_ref)
+            .await
+        {
+            let _ = self
+                .remove_mobile_access_secrets_if_present(&secret_ref)
+                .await;
+            return Err(err);
+        }
         Ok(Some((
             legacy_tunnel_secret.to_string(),
             legacy_daemon_private_key.to_string(),
         )))
+    }
+
+    async fn migrate_legacy_mobile_access_sidecar(
+        &self,
+        id: &str,
+    ) -> Result<Option<(String, String)>> {
+        let Some((tunnel_secret, daemon_private_key)) =
+            self.read_mobile_access_secrets_if_present(id).await?
+        else {
+            return Ok(None);
+        };
+        let secret_ref = Self::next_mobile_access_secret_ref();
+        self.write_mobile_access_secrets(&secret_ref, &tunnel_secret, &daemon_private_key)
+            .await?;
+        if let Err(err) = self
+            .finalize_legacy_mobile_access_secret_migration(id, &secret_ref)
+            .await
+        {
+            let _ = self
+                .remove_mobile_access_secrets_if_present(&secret_ref)
+                .await;
+            return Err(err);
+        }
+        self.remove_mobile_access_secrets_if_present(id).await?;
+        Ok(Some((tunnel_secret, daemon_private_key)))
+    }
+
+    async fn lookup_mobile_access_secret_ref(&self, id: &str) -> Result<Option<String>> {
+        sqlx::query_scalar::<_, Option<String>>(
+            r#"SELECT secret_ref FROM mobile_access_config WHERE id = ?"#,
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await
+        .map(|value| value.flatten())
+        .map_err(Into::into)
+    }
+
+    async fn finalize_legacy_mobile_access_secret_migration(
+        &self,
+        id: &str,
+        secret_ref: &str,
+    ) -> Result<()> {
+        self.query(
+            r#"UPDATE mobile_access_config
+               SET secret_ref = ?, tunnel_secret = '', daemon_private_key = ''
+               WHERE id = ?"#,
+        )
+        .bind(secret_ref)
+        .bind(id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
     }
 
     async fn clear_legacy_mobile_access_secrets(&self, id: &str) -> Result<()> {
@@ -444,7 +514,7 @@ impl Store {
     pub async fn get_mobile_access_config(&self) -> Result<Option<MobileAccessConfig>> {
         let row = self
             .query(
-                r#"SELECT id, profile_id, tunnel_id, public_base_url, relay_base_url, tunnel_secret,
+                r#"SELECT id, profile_id, tunnel_id, public_base_url, relay_base_url, secret_ref, tunnel_secret,
                       daemon_public_key, daemon_private_key, enabled, created_at, updated_at
                FROM mobile_access_config
                WHERE id = ?"#,
@@ -457,25 +527,49 @@ impl Store {
             return Ok(None);
         };
         let id: String = row.try_get("id")?;
+        let secret_ref: Option<String> = row.try_get("secret_ref")?;
         let tunnel_secret: String = row.try_get("tunnel_secret")?;
         let daemon_private_key: String = row.try_get("daemon_private_key")?;
-        let (tunnel_secret, daemon_private_key) =
-            match self.read_mobile_access_secrets_if_present(&id).await? {
+        let (tunnel_secret, daemon_private_key) = match secret_ref {
+            Some(secret_ref) => match self
+                .read_mobile_access_secrets_if_present(&secret_ref)
+                .await?
+            {
                 Some(secrets) => {
                     if !tunnel_secret.is_empty() || !daemon_private_key.is_empty() {
                         self.clear_legacy_mobile_access_secrets(&id).await?;
                     }
+                    if id != secret_ref {
+                        self.remove_mobile_access_secrets_if_present(&id).await?;
+                    }
                     secrets
                 }
-                None => self
-                    .migrate_legacy_mobile_access_secrets(&id, &tunnel_secret, &daemon_private_key)
+                None => {
+                    return Err(anyhow::anyhow!(
+                        "mobile access secrets are missing for config {} (secret_ref={})",
+                        id,
+                        secret_ref
+                    ));
+                }
+            },
+            None => {
+                if let Some(secrets) = self.migrate_legacy_mobile_access_sidecar(&id).await? {
+                    secrets
+                } else {
+                    self.migrate_legacy_mobile_access_secrets(
+                        &id,
+                        &tunnel_secret,
+                        &daemon_private_key,
+                    )
                     .await?
                     .ok_or_else(|| {
                         anyhow::anyhow!(
                             "mobile access secrets are missing for config {} and no legacy secrets remain",
                             id
                         )
-                    })?,
+                    })?
+                }
+            }
         };
         Ok(Some(MobileAccessConfig {
             id,
@@ -498,43 +592,63 @@ impl Store {
         &self,
         config: MobileAccessConfig,
     ) -> Result<MobileAccessConfig> {
-        let created_at = config.created_at.to_rfc3339();
-        let updated_at = Utc::now().to_rfc3339();
-        self.query(
-            r#"INSERT INTO mobile_access_config
-                (id, profile_id, tunnel_id, public_base_url, relay_base_url, tunnel_secret, daemon_public_key, daemon_private_key, enabled, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-               ON CONFLICT(id) DO UPDATE SET
-                    profile_id=excluded.profile_id,
-                    tunnel_id=excluded.tunnel_id,
-                    public_base_url=excluded.public_base_url,
-                    relay_base_url=excluded.relay_base_url,
-                    tunnel_secret=excluded.tunnel_secret,
-                    daemon_public_key=excluded.daemon_public_key,
-                    daemon_private_key=excluded.daemon_private_key,
-                    enabled=excluded.enabled,
-                    updated_at=excluded.updated_at"#,
-        )
-        .bind(&config.id)
-        .bind(config.profile_id.0.to_string())
-        .bind(&config.tunnel_id)
-        .bind(&config.public_base_url)
-        .bind(&config.relay_base_url)
-        .bind(&config.tunnel_secret)
-        .bind(&config.daemon_public_key)
-        .bind(&config.daemon_private_key)
-        .bind(if config.enabled { 1 } else { 0 })
-        .bind(created_at)
-        .bind(updated_at)
-        .execute(&self.pool)
-        .await?;
+        let old_secret_ref = self.lookup_mobile_access_secret_ref(&config.id).await?;
+        let new_secret_ref = Self::next_mobile_access_secret_ref();
         self.write_mobile_access_secrets(
-            &config.id,
+            &new_secret_ref,
             &config.tunnel_secret,
             &config.daemon_private_key,
         )
         .await?;
-        self.clear_legacy_mobile_access_secrets(&config.id).await?;
+        let created_at = config.created_at.to_rfc3339();
+        let updated_at = Utc::now().to_rfc3339();
+        let upsert_result = self
+            .query(
+                r#"INSERT INTO mobile_access_config
+                    (id, profile_id, tunnel_id, public_base_url, relay_base_url, secret_ref, tunnel_secret, daemon_public_key, daemon_private_key, enabled, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(id) DO UPDATE SET
+                        profile_id=excluded.profile_id,
+                        tunnel_id=excluded.tunnel_id,
+                        public_base_url=excluded.public_base_url,
+                        relay_base_url=excluded.relay_base_url,
+                        secret_ref=excluded.secret_ref,
+                        tunnel_secret=excluded.tunnel_secret,
+                        daemon_public_key=excluded.daemon_public_key,
+                        daemon_private_key=excluded.daemon_private_key,
+                        enabled=excluded.enabled,
+                        updated_at=excluded.updated_at"#,
+            )
+            .bind(&config.id)
+            .bind(config.profile_id.0.to_string())
+            .bind(&config.tunnel_id)
+            .bind(&config.public_base_url)
+            .bind(&config.relay_base_url)
+            .bind(&new_secret_ref)
+            .bind("")
+            .bind(&config.daemon_public_key)
+            .bind("")
+            .bind(if config.enabled { 1 } else { 0 })
+            .bind(created_at)
+            .bind(updated_at)
+            .execute(&self.pool)
+            .await;
+        if let Err(err) = upsert_result {
+            let _ = self
+                .remove_mobile_access_secrets_if_present(&new_secret_ref)
+                .await;
+            return Err(err.into());
+        }
+        if let Some(old_secret_ref) = old_secret_ref {
+            if old_secret_ref != new_secret_ref {
+                self.remove_mobile_access_secrets_if_present(&old_secret_ref)
+                    .await?;
+            }
+        }
+        if config.id != new_secret_ref {
+            self.remove_mobile_access_secrets_if_present(&config.id)
+                .await?;
+        }
 
         self.get_mobile_access_config()
             .await?
@@ -552,10 +666,15 @@ impl Store {
     }
 
     pub async fn delete_mobile_access_config(&self) -> Result<()> {
+        let secret_ref = self.lookup_mobile_access_secret_ref("default").await?;
         self.query(r#"DELETE FROM mobile_access_config WHERE id = ?"#)
             .bind("default")
             .execute(&self.pool)
             .await?;
+        if let Some(secret_ref) = secret_ref {
+            self.remove_mobile_access_secrets_if_present(&secret_ref)
+                .await?;
+        }
         self.remove_mobile_access_secrets_if_present("default")
             .await?;
         Ok(())
