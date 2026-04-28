@@ -18,6 +18,7 @@ UP_TO_DATE_REPORT="${ARTIFACT_DIR}/native-up-to-date.json"
 WEBKIT_PREP_LOG="${ARTIFACT_DIR}/webkit-prep.log"
 RUNTIME_INSTALL_LOG="${ARTIFACT_DIR}/runtime-install.log"
 WIZARD_LOG="${ARTIFACT_DIR}/workspace-wizard.log"
+APPIMAGE_AUTOMATION_TARGETS_LOG="${ARTIFACT_DIR}/appimage-automation-targets.log"
 EXTRACT_DIR="${ARTIFACT_DIR}/appimage-extract"
 WDIO_CONNECTION_RETRY_TIMEOUT_MS="${CTX_UPDATER_LINUX_PROOF_WDIO_CONNECTION_RETRY_TIMEOUT_MS:-300000}"
 
@@ -51,6 +52,7 @@ write_report() {
   REPORT_UPDATER_REPORT="${UPDATER_REPORT}" \
   REPORT_UP_TO_DATE_REPORT="${UP_TO_DATE_REPORT}" \
   REPORT_WEBKIT_PREP_LOG="${WEBKIT_PREP_LOG}" \
+  REPORT_APPIMAGE_AUTOMATION_TARGETS_LOG="${APPIMAGE_AUTOMATION_TARGETS_LOG}" \
   REPORT_RUNTIME_INSTALL_LOG="${RUNTIME_INSTALL_LOG}" \
   REPORT_WIZARD_LOG="${WIZARD_LOG}" \
   REPORT_ARTIFACT_DIR="${ARTIFACT_DIR}" \
@@ -87,6 +89,7 @@ const payload = {
     install_stdout: process.env.REPORT_INSTALL_STDOUT || "",
     install_stderr: process.env.REPORT_INSTALL_STDERR || "",
     webkit_prep: process.env.REPORT_WEBKIT_PREP_LOG || "",
+    appimage_automation_targets: process.env.REPORT_APPIMAGE_AUTOMATION_TARGETS_LOG || "",
     runtime_install: process.env.REPORT_RUNTIME_INSTALL_LOG || "",
     workspace_wizard: process.env.REPORT_WIZARD_LOG || "",
   },
@@ -116,6 +119,42 @@ prepare_webkit_runtime() {
   fi
   bash -lc 'source "$1"; release_prepare_webkit_browser' _ "${ROOT}/scripts/buildbuddy/release_job_lib.sh" || return
   command -v WebKitWebDriver || return
+}
+
+AUTOMATION_APP_DIR=""
+AUTOMATION_APP_PATH=""
+
+# WebKitWebDriver must launch the real Tauri binary/AppRun, while the updater
+# must still target the installed AppImage path for in-place replacement.
+extract_appimage_for_automation() {
+  local app_path="$1"
+  local label="$2"
+  local target_dir="${EXTRACT_DIR}/${label}"
+  local app_dir="${target_dir}/squashfs-root"
+  rm -rf "${target_dir}"
+  mkdir -p "${target_dir}"
+  (
+    cd "${target_dir}"
+    "${app_path}" --appimage-extract >/dev/null
+  )
+  if [[ ! -d "${app_dir}" ]]; then
+    echo "error: AppImage extraction did not create ${app_dir}" >&2
+    return 1
+  fi
+  local candidate=""
+  for path in "${app_dir}/AppRun" "${app_dir}/usr/bin/ctx"; do
+    if [[ -x "${path}" ]]; then
+      candidate="${path}"
+      break
+    fi
+  done
+  if [[ -z "${candidate}" ]]; then
+    echo "error: extracted AppImage is missing an executable AppRun or usr/bin/ctx under ${app_dir}" >&2
+    return 1
+  fi
+  AUTOMATION_APP_DIR="${app_dir}"
+  AUTOMATION_APP_PATH="${candidate}"
+  printf '%s\n' "${label}: appimage=${app_path} appdir=${AUTOMATION_APP_DIR} automation_app=${AUTOMATION_APP_PATH}" >>"${APPIMAGE_AUTOMATION_TARGETS_LOG}"
 }
 
 if [[ "$(uname -s)" != "Linux" ]]; then
@@ -200,6 +239,12 @@ for required in "${app_path}" "${launcher_path}"; do
   fi
 done
 chmod +x "${app_path}"
+if ! extract_appimage_for_automation "${app_path}" "bootstrap"; then
+  write_report "failed" "bootstrap_appimage_automation_extract_failed"
+  exit 1
+fi
+bootstrap_automation_app_dir="${AUTOMATION_APP_DIR}"
+bootstrap_automation_app_path="${AUTOMATION_APP_PATH}"
 
 echo "[updater-linux-proof] proving auto/manual update path to channel=${TARGET_CHANNEL}" >&2
 if ! HOME="${home_dir}" \
@@ -208,6 +253,10 @@ if ! HOME="${home_dir}" \
   XDG_CACHE_HOME="${home_dir}/.cache" \
   PATH="${home_dir}/.local/bin:${PATH}" \
   APPIMAGE_EXTRACT_AND_RUN="${APPIMAGE_EXTRACT_AND_RUN:-1}" \
+  APPIMAGE="${app_path}" \
+  APPDIR="${bootstrap_automation_app_dir}" \
+  ARGV0="${app_path}" \
+  CTX_APPIMAGE_PATH="${app_path}" \
   CTX_VOLATILE_ROOT="${ARTIFACT_DIR}/volatile" \
   CTX_AUTOMATION_SKIP_DESKTOP_PREP_RELEASE=1 \
   CTX_AUTOMATION_SKIP_APP_BUILD=1 \
@@ -215,7 +264,7 @@ if ! HOME="${home_dir}" \
   CTX_AUTOMATION_CONNECTION_RETRY_TIMEOUT_MS="${CTX_AUTOMATION_CONNECTION_RETRY_TIMEOUT_MS:-${WDIO_CONNECTION_RETRY_TIMEOUT_MS}}" \
   CTX_AUTOMATION_KEEP_TMPDIR=1 \
   CTX_AUTOMATION_SHIPPED_APP=1 \
-  CTX_DESKTOP_APP_PATH="${app_path}" \
+  CTX_DESKTOP_APP_PATH="${bootstrap_automation_app_path}" \
   TAURI_DRIVER_PORT="${update_driver_port}" \
   TAURI_TEST_BACKEND_PORT="${update_backend_port}" \
   CTX_UPDATER_E2E_CHANNEL="${TARGET_CHANNEL}" \
@@ -236,6 +285,13 @@ if [[ -z "${before_version}" ]]; then
 fi
 echo "[updater-linux-proof] bootstrap app version=${before_version}" >&2
 
+if ! extract_appimage_for_automation "${app_path}" "updated-up-to-date"; then
+  write_report "failed" "updated_appimage_automation_extract_failed"
+  exit 1
+fi
+updated_automation_app_dir="${AUTOMATION_APP_DIR}"
+updated_automation_app_path="${AUTOMATION_APP_PATH}"
+
 echo "[updater-linux-proof] proving up-to-date manual check on updated app" >&2
 if ! HOME="${home_dir}" \
   XDG_DATA_HOME="${home_dir}/.local/share" \
@@ -243,6 +299,10 @@ if ! HOME="${home_dir}" \
   XDG_CACHE_HOME="${home_dir}/.cache" \
   PATH="${home_dir}/.local/bin:${PATH}" \
   APPIMAGE_EXTRACT_AND_RUN="${APPIMAGE_EXTRACT_AND_RUN:-1}" \
+  APPIMAGE="${app_path}" \
+  APPDIR="${updated_automation_app_dir}" \
+  ARGV0="${app_path}" \
+  CTX_APPIMAGE_PATH="${app_path}" \
   CTX_VOLATILE_ROOT="${ARTIFACT_DIR}/volatile" \
   CTX_AUTOMATION_SKIP_DESKTOP_PREP_RELEASE=1 \
   CTX_AUTOMATION_SKIP_APP_BUILD=1 \
@@ -250,7 +310,7 @@ if ! HOME="${home_dir}" \
   CTX_AUTOMATION_CONNECTION_RETRY_TIMEOUT_MS="${CTX_AUTOMATION_CONNECTION_RETRY_TIMEOUT_MS:-${WDIO_CONNECTION_RETRY_TIMEOUT_MS}}" \
   CTX_AUTOMATION_KEEP_TMPDIR=1 \
   CTX_AUTOMATION_SHIPPED_APP=1 \
-  CTX_DESKTOP_APP_PATH="${app_path}" \
+  CTX_DESKTOP_APP_PATH="${updated_automation_app_path}" \
   TAURI_DRIVER_PORT="${up_to_date_driver_port}" \
   TAURI_TEST_BACKEND_PORT="${up_to_date_backend_port}" \
   CTX_UPDATER_E2E_CHANNEL="${TARGET_CHANNEL}" \
@@ -275,13 +335,14 @@ if [[ "${REQUIRE_VERSION_CHANGE}" == "1" && "${before_version}" == "${after_vers
   exit 1
 fi
 
-rm -rf "${EXTRACT_DIR}/squashfs-root"
+rm -rf "${EXTRACT_DIR}/updated-bundle"
 (
-  cd "${EXTRACT_DIR}"
+  mkdir -p "${EXTRACT_DIR}/updated-bundle"
+  cd "${EXTRACT_DIR}/updated-bundle"
   "${app_path}" --appimage-extract >/dev/null
 )
 
-bundle_manifest="$(find "${EXTRACT_DIR}/squashfs-root" -type f -path '*/bundles/manifest.json' -print -quit)"
+bundle_manifest="$(find "${EXTRACT_DIR}/updated-bundle/squashfs-root" -type f -path '*/bundles/manifest.json' -print -quit)"
 if [[ -z "${bundle_manifest}" ]]; then
   write_report "failed" "updated_appimage_bundle_manifest_missing"
   echo "error: failed to locate bundled manifest.json inside updated AppImage" >&2
@@ -289,7 +350,7 @@ if [[ -z "${bundle_manifest}" ]]; then
 fi
 bundle_dir="$(dirname "${bundle_manifest}")"
 
-daemon_bin="$(find "${EXTRACT_DIR}/squashfs-root" -type f \( -path '*/usr/bin/ctx-daemon' -o -name 'ctx-daemon-linux-x86_64' -o -name 'ctx-daemon-linux-aarch64' \) -print -quit)"
+daemon_bin="$(find "${EXTRACT_DIR}/updated-bundle/squashfs-root" -type f \( -path '*/usr/bin/ctx-daemon' -o -name 'ctx-daemon-linux-x86_64' -o -name 'ctx-daemon-linux-aarch64' \) -print -quit)"
 if [[ -z "${daemon_bin}" ]]; then
   write_report "failed" "updated_appimage_daemon_missing"
   echo "error: failed to locate daemon binary inside updated AppImage" >&2
@@ -316,6 +377,10 @@ XDG_CONFIG_HOME="${home_dir}/.config" \
 XDG_CACHE_HOME="${home_dir}/.cache" \
 PATH="${home_dir}/.local/bin:${PATH}" \
 APPIMAGE_EXTRACT_AND_RUN="${APPIMAGE_EXTRACT_AND_RUN:-1}" \
+APPIMAGE="${app_path}" \
+APPDIR="${updated_automation_app_dir}" \
+ARGV0="${app_path}" \
+CTX_APPIMAGE_PATH="${app_path}" \
 CTX_AUTOMATION_SHIPPED_APP=1 \
 CTX_AUTOMATION_SHIPPED_APP_BUNDLES_DIR="${bundle_dir}" \
 CTX_AUTOMATION_SKIP_APP_BUILD=1 \
@@ -325,7 +390,7 @@ CTX_AUTOMATION_WDIO_LOG_LEVEL="${CTX_AUTOMATION_WDIO_LOG_LEVEL:-warn}" \
 CTX_AUTOMATION_CONNECTION_RETRY_TIMEOUT_MS="${CTX_AUTOMATION_CONNECTION_RETRY_TIMEOUT_MS:-${WDIO_CONNECTION_RETRY_TIMEOUT_MS}}" \
 CTX_AUTOMATION_KEEP_TMPDIR=1 \
 CTX_VOLATILE_ROOT="${ARTIFACT_DIR}/volatile" \
-CTX_DESKTOP_APP_PATH="${app_path}" \
+CTX_DESKTOP_APP_PATH="${updated_automation_app_path}" \
 TAURI_DRIVER_PORT="${wizard_driver_port}" \
 TAURI_TEST_BACKEND_PORT="${wizard_backend_port}" \
 "${ROOT}/scripts/desktop_smoke_with_infisical.sh" -- --spec automation/specs/workspace-wizard.spec.cjs >"${WIZARD_LOG}" 2>&1

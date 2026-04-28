@@ -119,6 +119,21 @@ test("updater Linux proof targets storage channel for stable dry-run proofs", ()
     script.match(/APPIMAGE_EXTRACT_AND_RUN="\$\{APPIMAGE_EXTRACT_AND_RUN:-1\}"/g)?.length,
     3,
   );
+  assert.match(script, /extract_appimage_for_automation\(\) \{/);
+  assert.match(script, /APPIMAGE_AUTOMATION_TARGETS_LOG="\$\{ARTIFACT_DIR\}\/appimage-automation-targets\.log"/);
+  assert.match(script, /CTX_DESKTOP_APP_PATH="\$\{bootstrap_automation_app_path\}"/);
+  assert.equal(
+    script.match(/CTX_DESKTOP_APP_PATH="\$\{updated_automation_app_path\}"/g)?.length,
+    2,
+  );
+  assert.equal(
+    script.match(/CTX_APPIMAGE_PATH="\$\{app_path\}"/g)?.length,
+    3,
+  );
+  assert.equal(
+    script.match(/APPIMAGE="\$\{app_path\}"/g)?.length,
+    3,
+  );
   assert.match(script, /prepare_webkit_runtime\(\) \{/);
   assert.match(
     script,
