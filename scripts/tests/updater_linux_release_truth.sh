@@ -187,7 +187,13 @@ done
 chmod +x "${app_path}"
 
 echo "[updater-linux-proof] proving auto/manual update path to channel=${TARGET_CHANNEL}" >&2
-if ! CTX_AUTOMATION_SKIP_DESKTOP_PREP_RELEASE=1 \
+if ! HOME="${home_dir}" \
+  XDG_DATA_HOME="${home_dir}/.local/share" \
+  XDG_CONFIG_HOME="${home_dir}/.config" \
+  XDG_CACHE_HOME="${home_dir}/.cache" \
+  PATH="${home_dir}/.local/bin:${PATH}" \
+  CTX_VOLATILE_ROOT="${ARTIFACT_DIR}/volatile" \
+  CTX_AUTOMATION_SKIP_DESKTOP_PREP_RELEASE=1 \
   CTX_AUTOMATION_SKIP_APP_BUILD=1 \
   CTX_AUTOMATION_WDIO_LOG_LEVEL="${CTX_AUTOMATION_WDIO_LOG_LEVEL:-warn}" \
   CTX_AUTOMATION_KEEP_TMPDIR=1 \
@@ -214,7 +220,13 @@ fi
 echo "[updater-linux-proof] bootstrap app version=${before_version}" >&2
 
 echo "[updater-linux-proof] proving up-to-date manual check on updated app" >&2
-if ! CTX_AUTOMATION_SKIP_DESKTOP_PREP_RELEASE=1 \
+if ! HOME="${home_dir}" \
+  XDG_DATA_HOME="${home_dir}/.local/share" \
+  XDG_CONFIG_HOME="${home_dir}/.config" \
+  XDG_CACHE_HOME="${home_dir}/.cache" \
+  PATH="${home_dir}/.local/bin:${PATH}" \
+  CTX_VOLATILE_ROOT="${ARTIFACT_DIR}/volatile" \
+  CTX_AUTOMATION_SKIP_DESKTOP_PREP_RELEASE=1 \
   CTX_AUTOMATION_SKIP_APP_BUILD=1 \
   CTX_AUTOMATION_WDIO_LOG_LEVEL="${CTX_AUTOMATION_WDIO_LOG_LEVEL:-warn}" \
   CTX_AUTOMATION_KEEP_TMPDIR=1 \
