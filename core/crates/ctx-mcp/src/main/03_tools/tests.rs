@@ -43,6 +43,7 @@ async fn session_list_call_requests_current_session_scope() -> Result<()> {
     let current_session_id = "00000000-0000-0000-0000-000000000111";
     let foreign_session_id = "00000000-0000-0000-0000-000000000222";
     let _session_id = ScopedEnvVar::set("CTX_SESSION_ID", current_session_id);
+    let _mcp_token = ScopedEnvVar::set("CTX_MCP_TOKEN", "scoped-mcp-token");
 
     let app = Router::new().route(
         "/api/sessions/web",
@@ -109,6 +110,7 @@ async fn session_list_call_requests_current_session_scope() -> Result<()> {
     );
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
     let addr = listener.local_addr()?;
+    let _daemon_url = ScopedEnvVar::set("CTX_DAEMON_URL", &format!("http://{addr}"));
     tokio::spawn(async move {
         axum::serve(listener, app).await.unwrap();
     });

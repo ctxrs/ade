@@ -17,7 +17,6 @@ mod merge_queue;
 mod mobile_e2ee;
 mod mobile_tunnel;
 mod ops_events;
-mod oracle;
 mod order_seq;
 mod perf_telemetry;
 mod process_env;

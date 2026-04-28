@@ -108,6 +108,7 @@ async fn mcp_agent_tools_call_daemon_http() {
     let mut child = mcp_command()
         .arg("--stdio")
         .env("CTX_DAEMON_URL", format!("http://{addr}"))
+        .env("CTX_MCP_TOKEN", "scoped-mcp-token")
         .env("CTX_SESSION_ID", parent_id)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())

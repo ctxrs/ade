@@ -90,6 +90,7 @@ async fn setup_daemon_backed_parent_session() -> (
     Arc<AppState>,
     String,
     String,
+    String,
 ) {
     let repo = init_git_repo().await;
     let data_dir = tempfile::tempdir().unwrap();
@@ -106,7 +107,7 @@ async fn setup_daemon_backed_parent_session() -> (
         stores.clone(),
         providers,
         base_url.clone(),
-        None,
+        Some("daemon-secret".to_string()),
     ));
     state.providers.statuses.lock().await.insert(
         "fake".into(),
@@ -173,8 +174,22 @@ async fn setup_daemon_backed_parent_session() -> (
         .upsert_workspace_task_index(task.id, workspace.id)
         .await
         .unwrap();
+    let mcp_token = ctx_http::daemon::issue_provider_session_mcp_token(
+        &state,
+        session.id,
+        workspace.id,
+        worktree.id,
+    )
+    .await;
 
-    (repo, data_dir, state, base_url, session.id.0.to_string())
+    (
+        repo,
+        data_dir,
+        state,
+        base_url,
+        session.id.0.to_string(),
+        mcp_token,
+    )
 }
 
 async fn wait_for_response(

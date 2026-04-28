@@ -10,12 +10,6 @@ pub(super) fn tools_list_response() -> Value {
                 "inputSchema": { "type": "object", "additionalProperties": false }
             },
             {
-                "name": "list_workspaces",
-                "title": "List Workspaces",
-                "description": "Lists ctx workspaces via the ctx daemon HTTP API.",
-                "inputSchema": { "type": "object", "additionalProperties": false }
-            },
-            {
                 "name": "merge_queue_submit",
                 "title": "Merge Queue Submit",
                 "description": "Submit the current worktree to the merge queue and wait for completion.",
@@ -148,24 +142,6 @@ pub(super) fn tools_list_response() -> Value {
                         }
                     },
                     "required": ["artifacts"],
-                    "additionalProperties": false
-                }
-            },
-            {
-                "name": "oracle",
-                "title": "Oracle (High-Reasoning Advice)",
-                "description": "Calls a high-reasoning model for architecture/strategy advice. The oracle has NO access to your repo, tools, or files; provide all relevant context in the prompt. Prefer a single comprehensive call; follow-ups are allowed but can be slow.",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "prompt_path": { "type": "string", "description": "Path to a file containing the full self-contained problem statement + the question for the oracle." },
-                        "response_path": { "type": "string", "description": "Optional file path to write the oracle response." },
-                        "model": { "type": "string", "description": "Optional model override (defaults to daemon oracle settings)." },
-                        "reasoning_effort": { "type": "string", "description": "Optional reasoning effort override (defaults to daemon oracle settings)." },
-                        "max_output_tokens": { "type": "integer", "minimum": 1, "description": "Optional output token cap (defaults to daemon oracle settings)." },
-                        "timeout_ms": { "type": "integer", "minimum": 1, "description": "Optional request timeout override (defaults to daemon oracle settings)." }
-                    },
-                    "required": ["prompt_path"],
                     "additionalProperties": false
                 }
             },

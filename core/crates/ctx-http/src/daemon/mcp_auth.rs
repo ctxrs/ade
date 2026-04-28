@@ -93,7 +93,7 @@ fn revoke_matching_provider_session_mcp_tokens(
     });
 }
 
-pub(crate) async fn issue_provider_session_mcp_token(
+pub async fn issue_provider_session_mcp_token(
     state: &AppState,
     session_id: SessionId,
     workspace_id: WorkspaceId,
@@ -109,10 +109,7 @@ pub(crate) async fn issue_provider_session_mcp_token(
     token
 }
 
-pub(crate) async fn verify_mcp_auth_token(
-    state: &AppState,
-    token: &str,
-) -> Option<McpAuthContext> {
+pub(crate) async fn verify_mcp_auth_token(state: &AppState, token: &str) -> Option<McpAuthContext> {
     let token_hash = mcp_token_hash(token);
     let mut registry = mcp_auth_registry_lock(state).await;
     prune_expired_mcp_auth_entries(&mut registry);

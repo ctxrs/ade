@@ -324,7 +324,6 @@ fn session_routes() -> axum::Router<Arc<AppState>> {
         )
         .route("/api/mcp/sessions/:id/list_agents", get(mcp_list_agents))
         .route("/api/mcp/sessions/:id/get_agent", post(mcp_get_agent))
-        .route("/api/mcp/sessions/:id/oracle", post(mcp_oracle))
         .route("/api/mcp/sessions/:id/wait_agent", post(mcp_wait_agent))
         .route(
             "/api/sessions/web",

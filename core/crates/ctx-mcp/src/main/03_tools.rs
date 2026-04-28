@@ -66,55 +66,19 @@ fn explicit_mcp_token() -> Result<Option<String>> {
     Ok(Some(trimmed.to_string()))
 }
 
-fn explicit_auth_token() -> Result<Option<String>> {
-    let Some(token) = ctx_env_opt("AUTH_TOKEN") else {
-        return Ok(None);
-    };
-    let trimmed = token.trim();
-    if trimmed.is_empty() {
-        bail!("CTX_AUTH_TOKEN is empty");
-    }
-    Ok(Some(trimmed.to_string()))
-}
-
-fn scoped_mcp_mode() -> bool {
-    explicit_mcp_token().ok().flatten().is_some()
-}
-
 fn resolve_daemon_access() -> Result<ResolvedDaemonAccess> {
-    let override_url = ctx_env_opt("DAEMON_URL");
-    let explicit_mcp_token = explicit_mcp_token()?;
-    let explicit_token = explicit_auth_token()?;
-    if let Some(override_url) = override_url {
-        let daemon_url = override_url.trim().trim_end_matches('/').to_string();
-        if daemon_url.is_empty() {
-            bail!("CTX_DAEMON_URL is empty");
-        }
-        reqwest::Url::parse(&daemon_url)
-            .with_context(|| format!("invalid daemon URL: {daemon_url}"))?;
-        let auth_token = explicit_mcp_token.or(explicit_token).context(
-            "CTX_DAEMON_URL requires CTX_MCP_TOKEN or CTX_AUTH_TOKEN; refusing to reuse daemon_auth.json for an overridden daemon origin",
+    let daemon_url = ctx_env_opt("DAEMON_URL")
+        .map(|value| value.trim().trim_end_matches('/').to_string())
+        .filter(|value| !value.is_empty())
+        .context(
+            "missing daemon URL: CTX_DAEMON_URL must be set by the daemon for agent MCP tools",
         )?;
-        return Ok(ResolvedDaemonAccess {
-            daemon_url,
-            auth_token,
-        });
-    }
-
-    if let Some(auth_token) = explicit_mcp_token {
-        let daemon = ctx_client::resolve_daemon_config()?;
-        return Ok(ResolvedDaemonAccess {
-            daemon_url: daemon.base_url,
-            auth_token,
-        });
-    }
-
-    let daemon = ctx_client::resolve_daemon_config()?;
-    let auth_token = explicit_token
-        .or(daemon.auth_token)
-        .context("missing daemon auth token: set CTX_AUTH_TOKEN or provide daemon_auth.json")?;
+    let auth_token = explicit_mcp_token()?.context(
+        "missing scoped ctx-mcp token: CTX_MCP_TOKEN must be set by the daemon for agent MCP tools",
+    )?;
+    reqwest::Url::parse(&daemon_url).with_context(|| format!("invalid daemon URL: {daemon_url}"))?;
     Ok(ResolvedDaemonAccess {
-        daemon_url: daemon.base_url,
+        daemon_url,
         auth_token,
     })
 }
@@ -197,50 +161,6 @@ fn tool_call_id_from_params(params: &Value) -> Option<String> {
         .map(|s| s.to_string())
 }
 
-async fn list_workspaces(client: &reqwest::Client, daemon_url: &str) -> Result<Value> {
-    let response = daemon_get_json(client, daemon_url, "/api/workspaces").await?;
-    let Some(items) = response.as_array() else {
-        return Ok(response);
-    };
-    let mapped: Vec<Value> = items
-        .iter()
-        .filter_map(|item| {
-            let obj = item.as_object()?;
-            let name = obj.get("name").cloned().unwrap_or(Value::Null);
-            let root_path = obj.get("root_path").cloned().unwrap_or(Value::Null);
-            Some(json!({
-                "name": name,
-                "root_path": root_path,
-            }))
-        })
-        .collect();
-    Ok(Value::Array(mapped))
-}
-
-fn find_repo_root(start: &Path) -> Option<PathBuf> {
-    let mut current = start.to_path_buf();
-    loop {
-        if current.join(".git").exists() || current.join(".jj").exists() {
-            return Some(current);
-        }
-        if !current.pop() {
-            return None;
-        }
-    }
-}
-
-fn resolve_worktree_root() -> Option<String> {
-    if let Some(root) = ctx_env_opt("WORKTREE_ROOT") {
-        let trimmed = root.trim();
-        if !trimmed.is_empty() {
-            return Some(trimmed.to_string());
-        }
-    }
-    let cwd = std::env::current_dir().ok()?;
-    let root = find_repo_root(&cwd)?;
-    Some(root.to_string_lossy().to_string())
-}
-
 async fn merge_queue_submit_call(
     client: &reqwest::Client,
     daemon_url: &str,
@@ -266,12 +186,6 @@ async fn merge_queue_submit_call(
         if let Some(obj) = body.as_object_mut() {
             obj.insert("worktree_id".to_string(), Value::String(worktree_id));
         }
-    } else if !scoped_mcp_mode() {
-        if let Some(worktree_root) = resolve_worktree_root() {
-            if let Some(obj) = body.as_object_mut() {
-                obj.insert("worktree_root".to_string(), Value::String(worktree_root));
-            }
-        }
     }
     if let Some(target_branch) = target_branch {
         if let Some(obj) = body.as_object_mut() {
@@ -290,124 +204,6 @@ async fn merge_queue_submit_call(
         obj.remove("id");
     }
     Ok(response)
-}
-
-async fn oracle_call(client: &reqwest::Client, daemon_url: &str, args: &Value) -> Result<Value> {
-    let session_id = ctx_env_opt("SESSION_ID").context("missing session context")?;
-    if args.get("prompt").is_some() {
-        bail!("inline prompt is not supported; use prompt_path");
-    }
-
-    let prompt_path = args
-        .get("prompt_path")
-        .and_then(|v| v.as_str())
-        .map(|v| v.trim())
-        .filter(|v| !v.is_empty())
-        .context("missing prompt_path")?;
-    let response_path = args
-        .get("response_path")
-        .and_then(|v| v.as_str())
-        .map(|v| v.trim())
-        .filter(|v| !v.is_empty());
-
-    let cwd = std::env::current_dir().context("resolve current dir")?;
-    let resolve_path = |path: &str| -> PathBuf {
-        let candidate = PathBuf::from(path);
-        if candidate.is_absolute() {
-            candidate
-        } else {
-            cwd.join(candidate)
-        }
-    };
-    let path_to_string = |path: &Path| path.to_string_lossy().to_string();
-
-    let prompt_path = resolve_path(prompt_path);
-    let prompt_bytes = tokio::fs::read(&prompt_path)
-        .await
-        .with_context(|| format!("reading prompt_path {}", prompt_path.display()))?;
-    let prompt = String::from_utf8(prompt_bytes.clone()).context("prompt_path must be utf-8")?;
-    if prompt.trim().is_empty() {
-        bail!("prompt file is empty");
-    }
-
-    let oracle_id = {
-        let timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis();
-        format!("{timestamp}-{session_id}")
-    };
-    let oracle_dir = cwd.join(".ctx/tmp/oracle").join(&oracle_id);
-    tokio::fs::create_dir_all(&oracle_dir)
-        .await
-        .context("creating oracle temp directory")?;
-    let input_copy_path = oracle_dir.join("input.md");
-    tokio::fs::write(&input_copy_path, &prompt_bytes)
-        .await
-        .context("writing oracle prompt copy")?;
-
-    let response_path = response_path
-        .map(resolve_path)
-        .unwrap_or_else(|| oracle_dir.join("output.md"));
-
-    let mut body = json!({ "prompt": prompt });
-    if let Some(model) = args
-        .get("model")
-        .and_then(|v| v.as_str())
-        .map(|v| v.trim())
-        .filter(|v| !v.is_empty())
-    {
-        if let Some(obj) = body.as_object_mut() {
-            obj.insert("model".to_string(), Value::String(model.to_string()));
-        }
-    }
-    if let Some(reasoning_effort) = args
-        .get("reasoning_effort")
-        .and_then(|v| v.as_str())
-        .map(|v| v.trim())
-        .filter(|v| !v.is_empty())
-    {
-        if let Some(obj) = body.as_object_mut() {
-            obj.insert(
-                "reasoning_effort".to_string(),
-                Value::String(reasoning_effort.to_string()),
-            );
-        }
-    }
-    if let Some(max_output_tokens) = args.get("max_output_tokens").and_then(|v| v.as_u64()) {
-        if let Some(obj) = body.as_object_mut() {
-            obj.insert(
-                "max_output_tokens".to_string(),
-                Value::Number(max_output_tokens.into()),
-            );
-        }
-    }
-    if let Some(timeout_ms) = args.get("timeout_ms").and_then(|v| v.as_u64()) {
-        if let Some(obj) = body.as_object_mut() {
-            obj.insert("timeout_ms".to_string(), Value::Number(timeout_ms.into()));
-        }
-    }
-
-    let path = format!("/api/mcp/sessions/{session_id}/oracle");
-    let response = daemon_post_json(client, daemon_url, &path, &body).await?;
-    let response_text = response
-        .get("text")
-        .and_then(|v| v.as_str())
-        .context("missing oracle response text")?;
-    tokio::fs::write(&response_path, response_text.as_bytes())
-        .await
-        .with_context(|| format!("writing oracle response {}", response_path.display()))?;
-
-    let response_bytes = response_text.len() as u64;
-    let prompt_bytes_len = prompt_bytes.len() as u64;
-
-    Ok(json!({
-        "prompt_path": path_to_string(&prompt_path),
-        "input_copy_path": path_to_string(&input_copy_path),
-        "response_path": path_to_string(&response_path),
-        "prompt_bytes": prompt_bytes_len,
-        "response_bytes": response_bytes
-    }))
 }
 
 async fn spawn_agent_call(

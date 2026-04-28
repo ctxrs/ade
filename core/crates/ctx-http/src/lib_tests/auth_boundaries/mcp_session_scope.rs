@@ -77,10 +77,9 @@ async fn scoped_mcp_token_is_limited_to_bound_session_routes() {
 
     let req = Request::builder()
         .method("POST")
-        .uri(format!("/api/mcp/sessions/{}/oracle", session_id.0))
+        .uri(format!("/api/sessions/{}/cancel", session_id.0))
         .header("authorization", format!("Bearer {token}"))
-        .header("content-type", "application/json")
-        .body(Body::from(json!({ "prompt": "hi" }).to_string()))
+        .body(Body::empty())
         .unwrap();
     let res = app.clone().oneshot(req).await.unwrap();
     assert_eq!(res.status(), StatusCode::UNAUTHORIZED);

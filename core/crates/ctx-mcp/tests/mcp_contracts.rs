@@ -1,6 +1,6 @@
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
-use axum::{extract::Path, http::HeaderMap, routing::get, routing::post, Json, Router};
+use axum::{http::HeaderMap, routing::post, Json, Router};
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
@@ -109,11 +109,10 @@ async fn mcp_tools_list_omits_removed_lsp_and_edit_plan_tools() {
 }
 
 #[tokio::test]
-async fn scoped_mcp_tools_list_omits_global_workspace_and_oracle_tools() {
+async fn mcp_tools_list_omits_global_workspace_and_oracle_tools() {
     let mut child = mcp_command()
         .arg("--stdio")
         .env("CTX_DAEMON_URL", "http://127.0.0.1:9")
-        .env("CTX_MCP_TOKEN", "scoped-mcp-token")
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .spawn()
@@ -143,15 +142,15 @@ async fn scoped_mcp_tools_list_omits_global_workspace_and_oracle_tools() {
         .collect();
     assert!(
         !names.contains(&"list_workspaces"),
-        "scoped ctx-mcp should hide list_workspaces"
+        "ctx-mcp should not expose cross-workspace discovery"
     );
     assert!(
         !names.contains(&"oracle"),
-        "scoped ctx-mcp should hide oracle"
+        "ctx-mcp should not expose global oracle authority"
     );
     assert!(
         names.contains(&"spawn_agent"),
-        "scoped ctx-mcp should keep session-local agent tools"
+        "ctx-mcp should keep session-local agent tools"
     );
     let _ = child.kill().await;
 }
@@ -261,40 +260,10 @@ async fn mcp_agent_tool_schemas_avoid_top_level_combinators() {
 }
 
 #[tokio::test]
-async fn mcp_list_workspaces_scrubs_internal_ids() {
-    let app = Router::new()
-        .route(
-            "/api/workspaces",
-            get(|headers: axum::http::HeaderMap| async move {
-                assert_eq!(
-                    headers
-                        .get(axum::http::header::AUTHORIZATION)
-                        .and_then(|value| value.to_str().ok()),
-                    Some("Bearer daemon-secret")
-                );
-                Json(json!([
-                    {
-                        "id": "ws-1",
-                        "host_id": "host-1",
-                        "name": "Alpha",
-                        "root_path": "/tmp/alpha",
-                        "created_at": "2026-01-01T00:00:00Z"
-                    }
-                ]))
-            }),
-        )
-        .layer(ServiceBuilder::new());
-
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
-
+async fn mcp_global_workspace_tool_call_returns_removed_error() {
     let mut child = mcp_command()
         .arg("--stdio")
-        .env("CTX_DAEMON_URL", format!("http://{addr}"))
-        .env("CTX_AUTH_TOKEN", "daemon-secret")
+        .env("CTX_DAEMON_URL", "http://127.0.0.1:9")
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .spawn()
@@ -321,38 +290,29 @@ async fn mcp_list_workspaces_scrubs_internal_ids() {
     }
     stdin.flush().await.unwrap();
 
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
-    let mut got_call = false;
-    while tokio::time::Instant::now() < deadline {
-        let Some(line) = reader.next_line().await.unwrap() else {
-            break;
-        };
-        let v: Value = serde_json::from_str(&line).unwrap();
-        if v.get("id").and_then(|id| id.as_i64()) == Some(2) {
-            let text = v["result"]["content"][0]["text"].as_str().unwrap_or("");
-            let payload: Value = serde_json::from_str(text).unwrap();
-            let items = payload.as_array().expect("expected workspace list");
-            let item = items.first().expect("expected workspace entry");
-            let obj = item.as_object().expect("workspace entry must be object");
-            assert_eq!(obj.get("name").and_then(|v| v.as_str()), Some("Alpha"));
-            assert_eq!(
-                obj.get("root_path").and_then(|v| v.as_str()),
-                Some("/tmp/alpha")
-            );
-            assert_eq!(obj.len(), 2, "expected only name + root_path");
-            got_call = true;
-            break;
-        }
-    }
-
-    assert!(got_call, "did not receive list_workspaces response");
+    let v = wait_for_response(&mut reader, 2, Duration::from_secs(15)).await;
+    assert_eq!(v["result"]["isError"].as_bool(), Some(true));
+    let text = v["result"]["content"][0]["text"]
+        .as_str()
+        .expect("tool error text");
+    assert!(
+        text.contains("tool removed: list_workspaces"),
+        "expected removed list_workspaces message, got: {text}"
+    );
+    assert!(
+        text.contains("session/worktree-local tools"),
+        "expected scoped-authority explanation, got: {text}"
+    );
     let _ = child.kill().await;
 }
 
 #[tokio::test]
-async fn mcp_override_daemon_url_requires_explicit_auth_token() {
+async fn mcp_daemon_access_requires_scoped_mcp_token() {
     let app = Router::new()
-        .route("/api/workspaces", get(|| async { Json(json!([])) }))
+        .route(
+            "/api/merge-queue/entries",
+            post(|| async { Json(json!({"status":"queued"})) }),
+        )
         .layer(ServiceBuilder::new());
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -377,6 +337,8 @@ async fn mcp_override_daemon_url_requires_explicit_auth_token() {
         .arg("--stdio")
         .env("CTX_DATA_DIR", temp_dir.path())
         .env("CTX_DAEMON_URL", format!("http://{addr}"))
+        .env("CTX_AUTH_TOKEN", "daemon-secret")
+        .env("CTX_SESSION_ID", "00000000-0000-0000-0000-000000000000")
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .spawn()
@@ -399,8 +361,11 @@ async fn mcp_override_daemon_url_requires_explicit_auth_token() {
             "id":2,
             "method":"tools/call",
             "params":{
-                "name":"ctx.list_workspaces",
-                "arguments":{}
+                "name":"ctx.merge_queue_submit",
+                "arguments":{
+                    "target_branch":"main",
+                    "message":"merge it"
+                }
             }
         }),
     )
@@ -412,8 +377,79 @@ async fn mcp_override_daemon_url_requires_explicit_auth_token() {
         .as_str()
         .expect("tool error text");
     assert!(
-        text.contains("CTX_DAEMON_URL requires CTX_MCP_TOKEN or CTX_AUTH_TOKEN"),
-        "expected explicit auth override error, got: {text}"
+        text.contains("missing scoped ctx-mcp token"),
+        "expected scoped MCP token requirement, got: {text}"
+    );
+    assert!(
+        text.contains("CTX_MCP_TOKEN"),
+        "expected CTX_MCP_TOKEN guidance, got: {text}"
+    );
+    let _ = child.kill().await;
+}
+
+#[tokio::test]
+async fn mcp_daemon_access_requires_explicit_daemon_url() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let daemon_auth = json!({
+        "token": "local-daemon-token",
+        "daemon_url": "http://127.0.0.1:4399"
+    });
+    tokio::fs::write(
+        temp_dir.path().join("daemon_auth.json"),
+        serde_json::to_vec(&daemon_auth).unwrap(),
+    )
+    .await
+    .unwrap();
+
+    let mut child = mcp_command()
+        .arg("--stdio")
+        .env("CTX_DATA_DIR", temp_dir.path())
+        .env("CTX_MCP_TOKEN", "scoped-mcp-token")
+        .env("CTX_SESSION_ID", "00000000-0000-0000-0000-000000000000")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    let mut stdin = child.stdin.take().unwrap();
+    let stdout = child.stdout.take().unwrap();
+    let mut reader = BufReader::new(stdout).lines();
+
+    write_mcp_message(
+        &mut stdin,
+        json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25"}}),
+    )
+    .await;
+    let _ = wait_for_response(&mut reader, 1, Duration::from_secs(15)).await;
+    write_mcp_message(
+        &mut stdin,
+        json!({
+            "jsonrpc":"2.0",
+            "id":2,
+            "method":"tools/call",
+            "params":{
+                "name":"ctx.merge_queue_submit",
+                "arguments":{
+                    "target_branch":"main",
+                    "message":"merge it"
+                }
+            }
+        }),
+    )
+    .await;
+
+    let v = wait_for_response(&mut reader, 2, Duration::from_secs(15)).await;
+    assert_eq!(v["result"]["isError"].as_bool(), Some(true));
+    let text = v["result"]["content"][0]["text"]
+        .as_str()
+        .expect("tool error text");
+    assert!(
+        text.contains("missing daemon URL"),
+        "expected daemon URL requirement, got: {text}"
+    );
+    assert!(
+        text.contains("CTX_DAEMON_URL"),
+        "expected CTX_DAEMON_URL guidance, got: {text}"
     );
     let _ = child.kill().await;
 }
@@ -458,7 +494,7 @@ async fn mcp_merge_queue_submit_scrubs_internal_ids() {
     let mut child = mcp_command()
         .arg("--stdio")
         .env("CTX_DAEMON_URL", format!("http://{addr}"))
-        .env("CTX_AUTH_TOKEN", "daemon-secret")
+        .env("CTX_MCP_TOKEN", "scoped-mcp-token")
         .env("CTX_SESSION_ID", "00000000-0000-0000-0000-000000000000")
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
@@ -644,52 +680,10 @@ async fn scoped_mcp_merge_queue_submit_uses_scoped_ids_instead_of_worktree_root(
 }
 
 #[tokio::test]
-async fn mcp_oracle_forwards_prompt_and_overrides() {
-    let body_tx = std::sync::Arc::new(tokio::sync::Mutex::new(None::<Value>));
-    let body_tx2 = body_tx.clone();
-    let unique_suffix = format!(
-        "{}-{}",
-        std::process::id(),
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    );
-    let temp_dir = std::env::temp_dir().join(format!("ctx-mcp-oracle-{unique_suffix}"));
-    tokio::fs::create_dir_all(&temp_dir).await.unwrap();
-    let prompt_path = temp_dir.join("prompt.txt");
-    let response_path = temp_dir.join("response.txt");
-    tokio::fs::write(&prompt_path, "hello").await.unwrap();
-    let prompt_path_str = prompt_path.to_string_lossy().to_string();
-    let response_path_str = response_path.to_string_lossy().to_string();
-
-    let app = Router::new()
-        .route(
-            "/api/mcp/sessions/:id/oracle",
-            post(move |Path(_id): Path<String>, Json(body): Json<Value>| {
-                let body_tx2 = body_tx2.clone();
-                async move {
-                    *body_tx2.lock().await = Some(body);
-                    Json(json!({
-                        "model":"gpt-5.2-pro",
-                        "reasoning_effort":"high",
-                        "text":"ok"
-                    }))
-                }
-            }),
-        )
-        .layer(ServiceBuilder::new());
-
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
-
+async fn mcp_oracle_tool_call_returns_removed_error() {
     let mut child = mcp_command()
         .arg("--stdio")
-        .env("CTX_DAEMON_URL", format!("http://{addr}"))
-        .env("CTX_AUTH_TOKEN", "daemon-secret")
+        .env("CTX_DAEMON_URL", "http://127.0.0.1:9")
         .env("CTX_SESSION_ID", "00000000-0000-0000-0000-000000000000")
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
@@ -709,12 +703,7 @@ async fn mcp_oracle_forwards_prompt_and_overrides() {
             "params":{
                 "name":"ctx.oracle",
                 "arguments":{
-                    "prompt_path": prompt_path_str.clone(),
-                    "response_path": response_path_str.clone(),
-                    "model":"gpt-5.2-pro",
-                    "reasoning_effort":"high",
-                    "max_output_tokens":123,
-                    "timeout_ms":4567
+                    "prompt_path":"prompt.txt"
                 }
             }
         }),
@@ -724,58 +713,19 @@ async fn mcp_oracle_forwards_prompt_and_overrides() {
     }
     stdin.flush().await.unwrap();
 
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
-    let mut got_call = false;
-    while tokio::time::Instant::now() < deadline {
-        let Some(line) = reader.next_line().await.unwrap() else {
-            break;
-        };
-        let v: Value = serde_json::from_str(&line).unwrap();
-        if v.get("id").and_then(|id| id.as_i64()) == Some(2) {
-            let text = v["result"]["content"][0]["text"].as_str().unwrap_or("");
-            let payload: Value = serde_json::from_str(text).unwrap();
-            let obj = payload.as_object().expect("response must be object");
-            assert_eq!(
-                obj.get("prompt_path").and_then(|v| v.as_str()),
-                Some(prompt_path_str.as_str())
-            );
-            assert_eq!(
-                obj.get("response_path").and_then(|v| v.as_str()),
-                Some(response_path_str.as_str())
-            );
-            assert_eq!(obj.get("prompt_bytes").and_then(|v| v.as_u64()), Some(5));
-            assert_eq!(obj.get("response_bytes").and_then(|v| v.as_u64()), Some(2));
-            let input_copy_path = obj
-                .get("input_copy_path")
-                .and_then(|v| v.as_str())
-                .expect("missing input_copy_path");
-            let copied_prompt = tokio::fs::read_to_string(input_copy_path).await.unwrap();
-            assert_eq!(copied_prompt, "hello");
-            let response_text = tokio::fs::read_to_string(&response_path).await.unwrap();
-            assert_eq!(response_text, "ok");
-            got_call = true;
-            break;
-        }
-    }
-
-    assert!(got_call, "did not receive oracle response");
-
-    let body = body_tx.lock().await.clone().expect("missing request body");
-    let obj = body.as_object().expect("oracle request must be object");
-    assert_eq!(obj.get("prompt").and_then(|v| v.as_str()), Some("hello"));
-    assert_eq!(
-        obj.get("model").and_then(|v| v.as_str()),
-        Some("gpt-5.2-pro")
+    let v = wait_for_response(&mut reader, 2, Duration::from_secs(15)).await;
+    assert_eq!(v["result"]["isError"].as_bool(), Some(true));
+    let text = v["result"]["content"][0]["text"]
+        .as_str()
+        .expect("tool error text");
+    assert!(
+        text.contains("tool removed: oracle"),
+        "expected removed oracle message, got: {text}"
     );
-    assert_eq!(
-        obj.get("reasoning_effort").and_then(|v| v.as_str()),
-        Some("high")
+    assert!(
+        text.contains("session/worktree-local tools"),
+        "expected scoped-authority explanation, got: {text}"
     );
-    assert_eq!(
-        obj.get("max_output_tokens").and_then(|v| v.as_i64()),
-        Some(123)
-    );
-    assert_eq!(obj.get("timeout_ms").and_then(|v| v.as_i64()), Some(4567));
 
     let _ = child.kill().await;
 }

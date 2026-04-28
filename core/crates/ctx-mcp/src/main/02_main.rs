@@ -15,31 +15,13 @@ fn removed_lsp_tool_message(name: &str) -> Option<String> {
     None
 }
 
-fn scoped_tool_block_message(name: &str) -> Option<String> {
-    if !scoped_mcp_mode() {
-        return None;
-    }
+fn agent_scoped_tool_block_message(name: &str) -> Option<String> {
     if matches!(name, "list_workspaces" | "oracle") {
         return Some(format!(
-            "tool disabled: {name} (scoped ctx-mcp sessions only expose session/worktree-local agent tools)"
+            "tool removed: {name} (ctx-mcp is agent-only and only exposes session/worktree-local tools)"
         ));
     }
     None
-}
-
-fn filter_scoped_tools(mut response: Value) -> Value {
-    if !scoped_mcp_mode() {
-        return response;
-    }
-    if let Some(tools) = response.get_mut("tools").and_then(Value::as_array_mut) {
-        tools.retain(|tool| {
-            !matches!(
-                tool.get("name").and_then(Value::as_str),
-                Some("list_workspaces" | "oracle")
-            )
-        });
-    }
-    response
 }
 
 #[tokio::main]
@@ -102,10 +84,7 @@ async fn main() -> Result<()> {
                     }),
                 )
             }
-            "tools/list" => ok(
-                id.clone(),
-                filter_scoped_tools(tool_catalog::tools_list_response()),
-            ),
+            "tools/list" => ok(id.clone(), tool_catalog::tools_list_response()),
             "tools/call" => {
                 let client = reqwest::Client::new();
                 let params = msg.get("params").cloned().unwrap_or(json!({}));
@@ -128,7 +107,7 @@ async fn main() -> Result<()> {
                             "tool disabled: {name} (ping is dev-only; set CTX_MCP_DEV_MODE=1 to enable)"
                         )),
                     )
-                } else if let Some(message) = scoped_tool_block_message(name.as_str()) {
+                } else if let Some(message) = agent_scoped_tool_block_message(name.as_str()) {
                     ok(id.clone(), tool_err(anyhow::anyhow!(message)))
                 } else if let Some(message) = removed_lsp_tool_message(name.as_str()) {
                     ok(id.clone(), tool_err(anyhow::anyhow!(message)))
@@ -149,25 +128,6 @@ async fn main() -> Result<()> {
                                 "isError": false
                             }),
                         ),
-                        "list_workspaces" => {
-                            let _ = arguments; // currently unused
-                            match list_workspaces(&client, &daemon_url).await {
-                                Ok(val) => ok(
-                                    id.clone(),
-                                    json!({
-                                        "content": [{"type":"text","text": serde_json::to_string_pretty(&val).unwrap_or_else(|_| "[]".into())}],
-                                        "isError": false
-                                    }),
-                                ),
-                                Err(e) => ok(
-                                    id.clone(),
-                                    json!({
-                                        "content": [{"type":"text","text": format!("error: {e}")}],
-                                        "isError": true
-                                    }),
-                                ),
-                            }
-                        }
                         "merge_queue_submit" => {
                             match merge_queue_submit_call(&client, &daemon_url, &arguments).await {
                                 Ok(val) => ok(id.clone(), tool_ok(val)),
@@ -301,10 +261,6 @@ async fn main() -> Result<()> {
                                 Err(err) => err,
                             }
                         }
-                        "oracle" => match oracle_call(&client, &daemon_url, &arguments).await {
-                            Ok(val) => ok(id.clone(), tool_ok(val)),
-                            Err(e) => ok(id.clone(), tool_err(e)),
-                        },
                         // TODO: Re-enable web session MCP tool handlers.
                         /*
                         "session_create" => {

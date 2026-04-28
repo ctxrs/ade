@@ -22,8 +22,8 @@ use crate::execution_effective;
 use crate::git_status::GitStatusEntry;
 use crate::installer;
 use crate::logs;
-use crate::oracle;
 use crate::scheduler::SchedulerCommand;
+#[cfg(test)]
 use crate::settings as user_settings;
 use ctx_core::ids::*;
 use ctx_core::models::*;
@@ -45,8 +45,8 @@ pub(crate) use subagents::{
 };
 pub(super) use subagents::{
     get_session_subagent_invocation, list_session_subagent_invocations, list_session_subagents,
-    mcp_archive_agent, mcp_get_agent, mcp_interrupt_agent, mcp_list_agents, mcp_oracle,
-    mcp_send_input, mcp_spawn_agent, mcp_wait_agent,
+    mcp_archive_agent, mcp_get_agent, mcp_interrupt_agent, mcp_list_agents, mcp_send_input,
+    mcp_spawn_agent, mcp_wait_agent,
 };
 mod diff_exec;
 pub(crate) use diff_exec::diff_worktree_summary_for_session;
