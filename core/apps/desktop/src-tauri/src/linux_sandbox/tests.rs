@@ -90,6 +90,15 @@ fn posix_safe_username_rejects_shell_metacharacters() {
 }
 
 #[test]
+fn local_activation_executes_bootstrap_payload_with_bash() {
+    let args = activation_args(Path::new("/tmp/ctx-data"), "ctx-user");
+    assert_eq!(args[0], "bash");
+    assert_eq!(args[1], "-s");
+    assert_eq!(args[2], "--");
+    assert_eq!(args[3], "activate");
+}
+
+#[test]
 fn persisting_remote_admin_password_keeps_latest_runtime_paths() {
     let updated = runtime_with_persisted_remote_admin_password(
         SshRuntimeMetadata {
