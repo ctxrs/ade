@@ -20,7 +20,6 @@ unsafe extern "C" {
 
 #[cfg(all(target_os = "macos", unix))]
 use self::guest_control::run_owner_guest_exec_capture;
-#[cfg(target_os = "macos")]
 pub(super) use self::guest_control::shared_vm_owner_guest_probe_ready;
 #[cfg(test)]
 pub(super) use self::guest_control::{
