@@ -434,6 +434,12 @@ async fn persist_successful_codex_login(
         if !ingested {
             anyhow::bail!("missing persisted codex auth file for account {account_id}");
         }
+        provider_accounts::remove_codex_account_home_auth_if_present(
+            &state.core.data_root,
+            account_id,
+        )
+        .await
+        .with_context(|| format!("removing account-home codex auth for account {account_id}"))?;
         provider_accounts::set_active_codex_account(
             &state.core.data_root,
             Some(account_id.to_string()),

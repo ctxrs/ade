@@ -140,10 +140,11 @@ async fn find_matching_codex_account(
     Ok(None)
 }
 
-async fn remove_codex_account_home_auth_if_present(
+pub async fn remove_codex_account_home_auth_if_present(
     data_root: &Path,
     account_id: &str,
 ) -> Result<()> {
+    ensure_safe_account_id(account_id)?;
     let auth_path = codex_account_dir(data_root, account_id).join("auth.json");
     match tokio::fs::remove_file(&auth_path).await {
         Ok(_) => Ok(()),
