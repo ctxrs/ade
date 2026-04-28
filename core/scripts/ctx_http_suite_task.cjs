@@ -9,7 +9,7 @@ const {
   getCtxHttpSuiteNames,
 } = require("./lib/ctx_http_suites.cjs");
 
-const DEFAULT_CTX_HTTP_BAZEL_JOBS = "1";
+const DEFAULT_CTX_HTTP_BAZEL_JOBS = "2";
 
 function parseArgs(argv) {
   const args = {

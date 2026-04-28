@@ -204,7 +204,7 @@ impl Store {
         }
 
         let preview_expr = session_snapshot_preview_sql("lm.content");
-        let mut session_sql = format!(
+        let mut session_sql = String::from(
             r#"
             WITH session_scope AS (
                 SELECT id

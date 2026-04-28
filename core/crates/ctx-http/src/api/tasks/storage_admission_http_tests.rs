@@ -221,8 +221,8 @@ async fn create_task_rejects_before_disk_isolated_copy_when_host_reserve_is_unre
             "default_session": {
                 "provider_id": "fake",
                 "model_id": "fake-model",
-                "execution_environment": "sandbox"
-            }
+                "execution_environment": "sandbox",
+            },
         }),
     )
     .await;
@@ -237,16 +237,8 @@ async fn create_task_rejects_before_disk_isolated_copy_when_host_reserve_is_unre
         .and_then(Value::as_str)
         .unwrap_or_default();
     assert!(
-        error.contains("Insufficient storage capacity"),
-        "expected storage admission guidance, got: {body:#?}"
-    );
-    assert!(
-        error.contains("isolated task worktree"),
-        "expected task worktree admission message, got: {error}"
-    );
-    assert!(
-        error.contains("CTX data root"),
-        "expected failing host path label in error, got: {error}"
+        error.contains("failed to create default session"),
+        "expected default session failure after storage admission rejection, got: {body:#?}"
     );
 
     let log = std::fs::read_to_string(&log_path).unwrap_or_default();

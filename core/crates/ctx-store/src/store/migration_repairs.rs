@@ -143,7 +143,7 @@ pub(super) async fn repair_historical_tool_order_seq_migration_version(
 }
 
 fn decode_hex(value: &str) -> Result<Vec<u8>> {
-    if value.len() % 2 != 0 {
+    if !value.len().is_multiple_of(2) {
         bail!("hex literal has odd length");
     }
 

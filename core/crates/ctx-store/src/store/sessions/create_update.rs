@@ -1,4 +1,5 @@
 impl Store {
+    #[allow(clippy::too_many_arguments)]
     pub async fn create_session(
         &self,
         task_id: TaskId,

@@ -53,7 +53,7 @@ async fn subagent_init_surfaces_agent_server_config_errors() {
                 "task_label": "q1",
                 "prompt": "test prompt",
                 "harness": "qwen",
-                "model": "qwen2.5-coder-32b-instruct"
+                "model": "qwen2.5-coder-32b-instruct",
             })
             .to_string(),
         ))

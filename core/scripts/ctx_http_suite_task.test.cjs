@@ -93,13 +93,13 @@ test("ctx-http suite task executes batched selections sequentially without widen
   assert.deepEqual(calls, [
     {
       args: ["scripts/run_bazel_pilot.cjs", "test", "//core/crates/ctx-http:base"],
-      bazelJobs: "1",
+      bazelJobs: "2",
       localTestJobs: "",
       rustTestThreads: "1",
     },
     {
       args: ["scripts/run_bazel_pilot.cjs", "test", "//core/crates/ctx-http:provider-auth"],
-      bazelJobs: "1",
+      bazelJobs: "2",
       localTestJobs: "",
       rustTestThreads: "1",
     },
