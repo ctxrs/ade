@@ -11,6 +11,7 @@ const APP_ENTITLEMENTS = path.join(ROOT, "src-tauri", "ctx.entitlements");
 const TAURI_MAIN = path.join(ROOT, "src-tauri", "src", "main.rs");
 const PACKAGE_JSON = path.join(ROOT, "package.json");
 const WDIO_CONF = path.join(ROOT, "automation", "wdio.conf.cjs");
+const LINUX_SANDBOX_LOCAL = path.join(ROOT, "src-tauri", "src", "linux_sandbox", "local.rs");
 const REMOTE_REAL_CI_WRAPPER = path.join(ROOT, "scripts", "test_remote_real_ci.sh");
 const REMOTE_DOCKER_WRAPPER = path.join(ROOT, "scripts", "test_remote_docker_contracts.sh");
 const DESKTOP_SMOKE_WRAPPER = path.join(REPO_ROOT, "scripts", "desktop_smoke_with_infisical.sh");
@@ -45,6 +46,14 @@ test("production desktop build disables macOS library validation for shipped-app
   const entitlements = fs.readFileSync(APP_ENTITLEMENTS, "utf8");
   assert.match(entitlements, /<key>com\.apple\.security\.cs\.disable-library-validation<\/key>/);
   assert.match(entitlements, /<true\/>/);
+});
+
+test("local Linux sandbox preparation restarts the invoking window daemon scope", () => {
+  const source = fs.readFileSync(LINUX_SANDBOX_LOCAL, "utf8");
+  assert.match(source, /pub\(crate\) async fn desktop_ensure_local_linux_sandbox_ready\(\s*app: tauri::AppHandle,\s*window: tauri::Window,/s);
+  assert.match(source, /let scope = window\.label\(\)\.to_string\(\);/);
+  assert.match(source, /restart_local_with_spawn_for_scope\(&scope, manager,/);
+  assert.doesNotMatch(source, /restart_local_with_spawn\(manager,/);
 });
 
 test("first-run local sandbox script defaults to isolated macOS CN backend", () => {

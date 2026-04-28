@@ -359,11 +359,13 @@ pub(crate) fn local_linux_platform_is_supported() -> bool {
 #[tauri::command]
 pub(crate) async fn desktop_ensure_local_linux_sandbox_ready(
     app: tauri::AppHandle,
+    window: tauri::Window,
     req: DesktopLocalLinuxSandboxEnsureReq,
 ) -> Result<DesktopLinuxSandboxEnsureResp, String> {
     if !local_linux_platform_is_supported() {
         return Ok(DesktopLinuxSandboxEnsureResp { ready: true });
     }
+    let scope = window.label().to_string();
     tauri::async_runtime::spawn_blocking(move || {
         let data_dir = daemon_data_dir(&app).map_err(to_err)?;
         write_local_bootstrap_script(&data_dir).map_err(to_err)?;
@@ -390,7 +392,7 @@ pub(crate) async fn desktop_ensure_local_linux_sandbox_ready(
                 let state = app.state::<ConnectionManager>();
                 let manager: &ConnectionManager = state.inner();
                 let desktop_identity = load_desktop_build_identity(&app).map_err(to_err)?;
-                restart_local_with_spawn(manager, || {
+                restart_local_with_spawn_for_scope(&scope, manager, || {
                     spawn_and_validate_local_daemon(&app, &data_dir, &desktop_identity)
                 })
                 .map_err(to_err)?;
