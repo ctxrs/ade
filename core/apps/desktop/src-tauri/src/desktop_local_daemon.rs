@@ -233,9 +233,7 @@ pub(super) fn restart_local_with_spawn_for_scope<SpawnFn>(
 where
     SpawnFn: FnOnce() -> Result<SpawnedLocalDaemonReady>,
 {
-    if state.should_disconnect_for_local_restart_for_scope(scope) {
-        state.disconnect_for_local_restart_for_scope(scope)?;
-    }
+    state.disconnect_owned_local_daemons_for_restart()?;
     let spawned = spawn_and_validate_local_daemon()?;
     state.set_local_for_scope(
         scope,

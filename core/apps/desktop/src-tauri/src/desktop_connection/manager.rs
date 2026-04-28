@@ -11,10 +11,10 @@ pub(super) use super::lifecycle::{
     should_preserve_local_handoff,
 };
 pub(super) use super::types::{
-    log_local_connection_established, log_ssh_connection_established, ActiveConnection,
-    ConnectionIntent, ConnectionState, LocalConnection, LocalConnectionOwnership,
-    LocalConnectionSource, SshConnection, SshConnectionTarget, SshRemoteUpdateStatus,
-    SshRuntimeMetadata, DEFAULT_CONNECTION_SCOPE,
+    log_local_connection_established, log_ssh_connection_established,
+    same_local_daemon_for_ownership, ActiveConnection, ConnectionIntent, ConnectionState,
+    LocalConnection, LocalConnectionOwnership, LocalConnectionSource, SshConnection,
+    SshConnectionTarget, SshRemoteUpdateStatus, SshRuntimeMetadata, DEFAULT_CONNECTION_SCOPE,
 };
 
 pub(crate) struct ConnectionManager(pub(super) std::sync::Mutex<ConnectionState>);

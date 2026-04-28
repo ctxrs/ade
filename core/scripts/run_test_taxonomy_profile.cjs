@@ -19,6 +19,7 @@ function parseArgs(argv) {
     changedFiles: [],
     checkNonEmpty: false,
     json: false,
+    keepGoing: false,
     list: false,
     listProfiles: false,
     profile: "",
@@ -49,6 +50,8 @@ function parseArgs(argv) {
       args.json = true;
     } else if (arg === "--run") {
       args.run = true;
+    } else if (arg === "--keep-going") {
+      args.keepGoing = true;
     } else if (arg === "--list") {
       args.list = true;
     } else if (arg === "--list-profiles") {
@@ -77,18 +80,71 @@ function resolveChangedFiles(args) {
   return [];
 }
 
-function runCommands(commands) {
-  for (const command of commands) {
-    const result = childProcess.spawnSync("bash", ["-lc", command], {
+function commandFailureExitStatus(failure) {
+  if (typeof failure.status === "number") {
+    return failure.status;
+  }
+  return 1;
+}
+
+function runCommands(commands, options = {}) {
+  const {
+    keepGoing = false,
+    spawnSyncImpl = childProcess.spawnSync,
+    stderr = process.stderr,
+  } = options;
+  const failures = [];
+
+  for (const [index, command] of commands.entries()) {
+    const result = spawnSyncImpl("bash", ["-lc", command], {
       stdio: "inherit",
     });
     if (result.error) {
-      throw result.error;
+      if (!keepGoing) {
+        throw result.error;
+      }
+      failures.push({
+        command,
+        error: result.error,
+        index,
+        status: 1,
+      });
+      stderr.write(
+        `taxonomy profile command ${index + 1}/${commands.length} failed to start: ${result.error.message}\n`,
+      );
+      continue;
     }
     if (result.status !== 0) {
-      process.exit(result.status ?? 1);
+      const status = result.status ?? 1;
+      if (!keepGoing) {
+        return status;
+      }
+      failures.push({
+        command,
+        index,
+        signal: result.signal,
+        status,
+      });
+      stderr.write(
+        `taxonomy profile command ${index + 1}/${commands.length} failed with status ${status}: ${command}\n`,
+      );
     }
   }
+
+  if (failures.length > 0) {
+    stderr.write("\nTaxonomy profile failures:\n");
+    for (const failure of failures) {
+      const status = commandFailureExitStatus(failure);
+      const signalSuffix = failure.signal ? ` signal=${failure.signal}` : "";
+      const errorSuffix = failure.error ? ` error=${failure.error.message}` : "";
+      stderr.write(
+        `- ${failure.index + 1}/${commands.length} status=${status}${signalSuffix}${errorSuffix}: ${failure.command}\n`,
+      );
+    }
+    return commandFailureExitStatus(failures[0]);
+  }
+
+  return 0;
 }
 
 function main() {
@@ -123,8 +179,7 @@ function main() {
     return;
   }
   if (args.run) {
-    runCommands(plan.commands);
-    return;
+    process.exit(runCommands(plan.commands, { keepGoing: args.keepGoing }));
   }
   if (args.list || true) {
     for (const command of plan.commands) {
@@ -132,6 +187,12 @@ function main() {
     }
   }
 }
+
+module.exports = {
+  parseArgs,
+  resolveChangedFiles,
+  runCommands,
+};
 
 if (require.main === module) {
   main();

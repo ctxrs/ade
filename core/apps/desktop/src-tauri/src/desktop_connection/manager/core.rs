@@ -238,6 +238,59 @@ impl ConnectionManager {
         Ok(())
     }
 
+    pub(crate) fn disconnect_owned_local_daemons_for_restart(&self) -> Result<()> {
+        let active = {
+            let mut guard = self
+                .0
+                .lock()
+                .map_err(|e| anyhow!("connection manager lock poisoned: {e}"))?;
+            let mut active = Vec::new();
+            let mut removed_locals = Vec::new();
+
+            for state in guard.scopes.values_mut() {
+                let Some(ActiveConnection::Local(local)) = state.active.as_ref() else {
+                    continue;
+                };
+                if !matches!(
+                    local.ownership,
+                    LocalConnectionOwnership::OwnedChild { .. }
+                ) {
+                    continue;
+                }
+                let Some(ActiveConnection::Local(local)) = state.active.take() else {
+                    continue;
+                };
+                removed_locals.push(LocalConnection {
+                    base_url: local.base_url.clone(),
+                    token: local.token.clone(),
+                    daemon_pid: local.daemon_pid,
+                    source: local.source,
+                    ownership: LocalConnectionOwnership::UnownedExternal,
+                    http_client: std::sync::OnceLock::new(),
+                });
+                active.push(ActiveConnection::Local(local));
+            }
+
+            for state in guard.scopes.values_mut() {
+                let Some(ActiveConnection::Local(local)) = state.active.as_ref() else {
+                    continue;
+                };
+                if removed_locals
+                    .iter()
+                    .any(|removed| same_local_daemon_for_ownership(removed, local))
+                {
+                    state.active.take();
+                }
+            }
+
+            active
+        };
+        for active in active {
+            cleanup_active_connection_result_for_restart(active)?;
+        }
+        Ok(())
+    }
+
     #[cfg(test)]
     pub(crate) fn should_disconnect_for_local_restart(&self) -> bool {
         self.should_disconnect_for_local_restart_for_scope(DEFAULT_CONNECTION_SCOPE)

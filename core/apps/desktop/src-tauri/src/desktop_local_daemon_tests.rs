@@ -244,3 +244,65 @@ fn desktop_restart_local_daemon_does_not_stop_attached_compatible_daemon() {
         .arg(previous_pid.to_string())
         .output();
 }
+
+#[test]
+#[cfg(unix)]
+fn desktop_restart_local_daemon_stops_owned_child_from_another_scope() {
+    let state = ConnectionManager::default();
+    let previous = spawn_tokio_sleep_child();
+    let previous_pid = previous.id();
+    assert!(
+        pid_is_alive(previous_pid),
+        "default-scope daemon should start alive before restart"
+    );
+    state.set_local(
+        "http://127.0.0.1:4318".to_string(),
+        "shared-token".to_string(),
+        previous,
+        false,
+    );
+    state.set_local_attached_for_scope(
+        "main",
+        "http://127.0.0.1:4318".to_string(),
+        "shared-token".to_string(),
+        Some(previous_pid),
+        LocalConnectionSource::ExistingCompatibleDaemon,
+    );
+
+    let replacement = spawn_tokio_sleep_child();
+    let replacement_pid = replacement.id();
+    let info = restart_local_with_spawn_for_scope("main", &state, || {
+        assert!(
+            wait_for_pid_exit(previous_pid, Duration::from_secs(3)),
+            "default-scope daemon child {previous_pid} should be stopped before replacement spawn"
+        );
+        Ok(SpawnedLocalDaemonReady {
+            url: "http://127.0.0.1:4319".to_string(),
+            token: "replacement-token".to_string(),
+            child: replacement,
+            systemd_scope: false,
+        })
+    })
+    .expect("restart should stop cross-scope owned daemon before spawning replacement");
+
+    assert!(matches!(info.kind, DesktopConnectionKind::Local));
+    assert_eq!(info.base_url.as_deref(), Some("http://127.0.0.1:4319"));
+    assert_eq!(info.token.as_deref(), Some("replacement-token"));
+    assert!(
+        matches!(
+            state.info_for_scope(DEFAULT_CONNECTION_SCOPE).kind,
+            DesktopConnectionKind::None
+        ),
+        "default scope should not keep a stale local connection after global restart"
+    );
+    assert!(
+        pid_is_alive(replacement_pid),
+        "replacement child {replacement_pid} should remain active after restart"
+    );
+
+    state.disconnect_for_scope("main");
+    assert!(
+        wait_for_pid_exit(replacement_pid, Duration::from_secs(3)),
+        "replacement child {replacement_pid} should terminate on disconnect"
+    );
+}
