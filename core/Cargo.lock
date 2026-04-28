@@ -530,7 +530,7 @@ dependencies = [
 
 [[package]]
 name = "aws-smithy-http"
-version = "0.62.7"
+version = "0.62.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "826141069295752372f8203c17f28e30c464d22899a43a0c9fd9c458d469c88b"
 dependencies = [
