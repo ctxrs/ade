@@ -10,7 +10,6 @@ import type {
   DesktopOpenPathReq,
   DesktopOpenWorkspaceInNewWindowReq,
   DesktopReadBinaryFileResp,
-  DesktopReadFileResp,
   DesktopRecordWorkspaceVisitReq,
   DesktopSaveTextFileReq,
   DesktopSetDockRecentLocalWorkspacesReq,
@@ -41,9 +40,6 @@ export const desktopGitClone = async (repo_url: string, dest_parent: string): Pr
 
 export const desktopSaveTextFile = async (args: DesktopSaveTextFileReq): Promise<string | null> =>
   invokeDesktopReq<DesktopSaveTextFileReq, string | null>("desktop_save_text_file", args);
-
-export const desktopReadFile = async (args: DesktopOpenPathReq): Promise<DesktopReadFileResp> =>
-  invokeDesktopReq<DesktopOpenPathReq, DesktopReadFileResp>("desktop_read_file", args);
 
 export const desktopReadBinaryFile = async (args: DesktopOpenPathReq): Promise<DesktopReadBinaryFileResp> =>
   invokeDesktopReq<DesktopOpenPathReq, DesktopReadBinaryFileResp>(

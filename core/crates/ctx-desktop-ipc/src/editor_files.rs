@@ -73,12 +73,6 @@ pub struct DesktopOpenPathReq {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-pub struct DesktopReadFileResp {
-    pub path: String,
-    pub text: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 pub struct DesktopReadBinaryFileResp {
     pub bytes: Vec<u8>,
     pub path: String,

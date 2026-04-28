@@ -1,7 +1,7 @@
 use super::*;
 pub(super) use ctx_desktop_ipc::{
     DesktopEditorSettings, DesktopEditorTarget, DesktopGitCloneReq, DesktopOpenFileReq,
-    DesktopOpenPathReq, DesktopReadBinaryFileResp, DesktopReadFileResp, DesktopSaveTextFileReq,
+    DesktopOpenPathReq, DesktopReadBinaryFileResp, DesktopSaveTextFileReq,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -132,43 +132,10 @@ pub(super) fn desktop_open_path(
 }
 
 #[tauri::command]
-pub(super) fn desktop_read_file(req: DesktopOpenPathReq) -> Result<DesktopReadFileResp, String> {
-    let path = req.path.trim();
-    if path.is_empty() {
-        return Err("path is required".to_string());
-    }
-    let path = PathBuf::from(path);
-    if !path.is_absolute() {
-        return Err("path must be absolute".to_string());
-    }
-    let resolved = std::fs::canonicalize(&path).map_err(|e| format!("invalid path: {e}"))?;
-    if !resolved.exists() {
-        return Err("path does not exist".to_string());
-    }
-    let text =
-        std::fs::read_to_string(&resolved).map_err(|e| format!("failed to read file: {e}"))?;
-    Ok(DesktopReadFileResp {
-        path: resolved.to_string_lossy().to_string(),
-        text,
-    })
-}
-
-#[tauri::command]
 pub(super) fn desktop_read_binary_file(
     req: DesktopOpenPathReq,
 ) -> Result<DesktopReadBinaryFileResp, String> {
-    let path = req.path.trim();
-    if path.is_empty() {
-        return Err("path is required".to_string());
-    }
-    let path = PathBuf::from(path);
-    if !path.is_absolute() {
-        return Err("path must be absolute".to_string());
-    }
-    let resolved = std::fs::canonicalize(&path).map_err(|e| format!("invalid path: {e}"))?;
-    if !resolved.exists() {
-        return Err("path does not exist".to_string());
-    }
+    let resolved = resolve_desktop_image_path(&req)?;
     let bytes = std::fs::read(&resolved).map_err(|e| format!("failed to read file: {e}"))?;
     Ok(DesktopReadBinaryFileResp {
         path: resolved.to_string_lossy().to_string(),
@@ -237,6 +204,90 @@ pub(super) fn load_desktop_settings(app: &tauri::AppHandle) -> DesktopSettings {
     serde_json::from_str::<DesktopSettings>(&data).unwrap_or_default()
 }
 
+fn resolve_desktop_image_path(req: &DesktopOpenPathReq) -> Result<PathBuf, String> {
+    const MAX_DESKTOP_IMAGE_BYTES: u64 = 25 * 1024 * 1024;
+    const ALLOWED_EXTENSIONS: &[&str] = &[
+        "png", "jpg", "jpeg", "gif", "webp", "bmp", "tif", "tiff", "ico", "avif", "heic", "heif",
+        "svg",
+    ];
+
+    let path = req.path.trim();
+    if path.is_empty() {
+        return Err("path is required".to_string());
+    }
+    let path = PathBuf::from(path);
+    if !path.is_absolute() {
+        return Err("path must be absolute".to_string());
+    }
+    let resolved = std::fs::canonicalize(&path).map_err(|e| format!("invalid path: {e}"))?;
+    if !resolved.exists() {
+        return Err("path does not exist".to_string());
+    }
+    let metadata = std::fs::metadata(&resolved).map_err(|e| format!("invalid path: {e}"))?;
+    if metadata.len() > MAX_DESKTOP_IMAGE_BYTES {
+        return Err("desktop binary reads are limited to images up to 25 MiB".to_string());
+    }
+    let extension = resolved
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(|value| value.to_ascii_lowercase())
+        .ok_or_else(|| "desktop binary reads are limited to image files".to_string())?;
+    if !ALLOWED_EXTENSIONS
+        .iter()
+        .any(|candidate| extension == *candidate)
+    {
+        return Err("desktop binary reads are limited to image files".to_string());
+    }
+    let bytes = std::fs::read(&resolved).map_err(|e| format!("failed to read file: {e}"))?;
+    if !bytes_match_supported_image_format(&bytes) {
+        return Err("desktop binary reads are limited to image files".to_string());
+    }
+    Ok(resolved)
+}
+
+fn bytes_match_supported_image_format(bytes: &[u8]) -> bool {
+    bytes.starts_with(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A])
+        || bytes.starts_with(&[0xFF, 0xD8, 0xFF])
+        || bytes.starts_with(b"GIF87a")
+        || bytes.starts_with(b"GIF89a")
+        || bytes.starts_with(b"BM")
+        || bytes.starts_with(&[0x49, 0x49, 0x2A, 0x00])
+        || bytes.starts_with(&[0x4D, 0x4D, 0x00, 0x2A])
+        || bytes.starts_with(&[0x00, 0x00, 0x01, 0x00])
+        || is_webp(bytes)
+        || is_supported_iso_bmff_image(bytes)
+        || is_svg(bytes)
+}
+
+fn is_webp(bytes: &[u8]) -> bool {
+    bytes.len() >= 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP"
+}
+
+fn is_supported_iso_bmff_image(bytes: &[u8]) -> bool {
+    const SUPPORTED_BRANDS: &[[u8; 4]] = &[
+        *b"avif", *b"avis", *b"heic", *b"heix", *b"hevc", *b"hevx", *b"heim", *b"heis",
+        *b"hevm", *b"hevs", *b"mif1", *b"msf1",
+    ];
+
+    if bytes.len() < 12 || &bytes[4..8] != b"ftyp" {
+        return false;
+    }
+
+    let mut brand = [0_u8; 4];
+    brand.copy_from_slice(&bytes[8..12]);
+    SUPPORTED_BRANDS.contains(&brand)
+}
+
+fn is_svg(bytes: &[u8]) -> bool {
+    const SVG_SNIFF_BYTES: usize = 4096;
+
+    let prefix = &bytes[..bytes.len().min(SVG_SNIFF_BYTES)];
+    let prefix = prefix.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(prefix);
+    let text = String::from_utf8_lossy(prefix);
+    let trimmed = text.trim_start_matches(char::is_whitespace);
+    trimmed.starts_with("<svg") || (trimmed.starts_with("<?xml") && trimmed.contains("<svg"))
+}
+
 fn save_desktop_settings(app: &tauri::AppHandle, settings: &DesktopSettings) -> Result<()> {
     let path = desktop_settings_path(app)?;
     if let Some(parent) = path.parent() {
@@ -247,6 +298,87 @@ fn save_desktop_settings(app: &tauri::AppHandle, settings: &DesktopSettings) -> 
     std::fs::write(&tmp, bytes)?;
     std::fs::rename(&tmp, &path)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_test_dir() -> PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("ctx-desktop-editor-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn resolve_desktop_image_path_accepts_supported_extensions() {
+        let dir = temp_test_dir();
+        let path = dir.join("photo.PNG");
+        std::fs::write(&path, [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]).unwrap();
+
+        let resolved = resolve_desktop_image_path(&DesktopOpenPathReq {
+            path: path.to_string_lossy().to_string(),
+            line: None,
+            col: None,
+        })
+        .unwrap();
+
+        assert_eq!(resolved, std::fs::canonicalize(&path).unwrap());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn resolve_desktop_image_path_rejects_non_image_extensions() {
+        let dir = temp_test_dir();
+        let path = dir.join("notes.txt");
+        std::fs::write(&path, [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]).unwrap();
+
+        let err = resolve_desktop_image_path(&DesktopOpenPathReq {
+            path: path.to_string_lossy().to_string(),
+            line: None,
+            col: None,
+        })
+        .unwrap_err();
+
+        assert!(err.contains("limited to image files"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn resolve_desktop_image_path_rejects_renamed_non_image_bytes() {
+        let dir = temp_test_dir();
+        let path = dir.join("notes.png");
+        std::fs::write(&path, b"not really a png").unwrap();
+
+        let err = resolve_desktop_image_path(&DesktopOpenPathReq {
+            path: path.to_string_lossy().to_string(),
+            line: None,
+            col: None,
+        })
+        .unwrap_err();
+
+        assert!(err.contains("limited to image files"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn resolve_desktop_image_path_rejects_oversized_images() {
+        let dir = temp_test_dir();
+        let path = dir.join("large.png");
+        let file = std::fs::File::create(&path).unwrap();
+        file.set_len((25 * 1024 * 1024 + 1) as u64).unwrap();
+
+        let err = resolve_desktop_image_path(&DesktopOpenPathReq {
+            path: path.to_string_lossy().to_string(),
+            line: None,
+            col: None,
+        })
+        .unwrap_err();
+
+        assert!(err.contains("25 MiB"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
 
 fn resolve_worktree_root(

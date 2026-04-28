@@ -56,7 +56,6 @@ pub fn typescript_declarations() -> String {
     push_decl::<DesktopEditorSettings>(&mut out);
     push_decl::<DesktopOpenFileReq>(&mut out);
     push_decl::<DesktopOpenPathReq>(&mut out);
-    push_decl::<DesktopReadFileResp>(&mut out);
     push_decl::<DesktopReadBinaryFileResp>(&mut out);
     push_decl::<DesktopSaveTextFileReq>(&mut out);
     push_decl::<DesktopRestartLocalDaemonReq>(&mut out);
