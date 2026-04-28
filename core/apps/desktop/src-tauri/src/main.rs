@@ -50,6 +50,7 @@ mod desktop_deeplink;
 mod desktop_dock_menu;
 mod desktop_editor;
 mod desktop_env;
+mod desktop_external_links;
 mod desktop_local_daemon;
 mod desktop_logs;
 mod desktop_menu;
@@ -70,6 +71,7 @@ use desktop_deeplink::*;
 use desktop_dock_menu::*;
 use desktop_editor::*;
 use desktop_env::*;
+use desktop_external_links::*;
 use desktop_local_daemon::*;
 use desktop_logs::*;
 use desktop_menu::*;
@@ -146,6 +148,7 @@ fn main() {
             desktop_update_editor_settings,
             desktop_open_file,
             desktop_open_path,
+            desktop_open_external_url,
             desktop_read_binary_file,
             desktop_get_deep_link_token,
             desktop_set_open_workspaces,

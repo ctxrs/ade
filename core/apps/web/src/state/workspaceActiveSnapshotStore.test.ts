@@ -2746,7 +2746,6 @@ describe("WorkspaceActiveSnapshotStore", () => {
     }
 
     try {
-      (globalThis as typeof globalThis & { __TAURI__?: unknown }).__TAURI__ = {};
       vi.stubGlobal("Worker", WorkerMock as unknown as typeof Worker);
       let currentConfig: MockDaemonClientConfig = {
         baseUrl: null,
@@ -2772,7 +2771,7 @@ describe("WorkspaceActiveSnapshotStore", () => {
           info: {
             kind: "local",
             base_url: "http://daemon.local",
-            token: "token-1",
+            browser_query_secret: "token-1",
           },
           synced: true,
           error: null,
@@ -2780,6 +2779,9 @@ describe("WorkspaceActiveSnapshotStore", () => {
       });
 
       const store = new WorkspaceActiveSnapshotStoreImpl("ws-1");
+      // Construct before setting desktop globals so this test exercises the
+      // worker auth resolver; production desktop stores disable workers.
+      (globalThis as typeof globalThis & { __TAURI__?: unknown }).__TAURI__ = {};
       store.init();
       await waitForCondition(() => WorkerMock.instances.length === 1);
       const initCall = WorkerMock.instances[0]?.postMessage.mock.calls.find(
@@ -2825,7 +2827,6 @@ describe("WorkspaceActiveSnapshotStore", () => {
     }
 
     try {
-      (globalThis as typeof globalThis & { __TAURI__?: unknown }).__TAURI__ = {};
       vi.stubGlobal("Worker", WorkerMock as unknown as typeof Worker);
       let currentConfig: MockDaemonClientConfig = {
         baseUrl: "http://daemon.local",
@@ -2851,7 +2852,7 @@ describe("WorkspaceActiveSnapshotStore", () => {
           info: {
             kind: "local",
             base_url: "http://daemon.local",
-            token: "token-1",
+            browser_query_secret: "token-1",
           },
           synced: true,
           error: null,
@@ -2859,6 +2860,9 @@ describe("WorkspaceActiveSnapshotStore", () => {
       });
 
       const store = new WorkspaceActiveSnapshotStoreImpl("ws-1");
+      // Construct before setting desktop globals so this test exercises the
+      // worker auth resolver; production desktop stores disable workers.
+      (globalThis as typeof globalThis & { __TAURI__?: unknown }).__TAURI__ = {};
       store.init();
       await waitForCondition(() => WorkerMock.instances.length === 1);
       const initCall = WorkerMock.instances[0]?.postMessage.mock.calls.find(
@@ -2907,7 +2911,7 @@ describe("WorkspaceActiveSnapshotStore", () => {
         info: {
           kind: "local",
           base_url: null,
-          token: null,
+          browser_query_secret: null,
         },
         synced: true,
         error: null,
@@ -2949,7 +2953,6 @@ describe("WorkspaceActiveSnapshotStore", () => {
     }
 
     try {
-      (globalThis as typeof globalThis & { __TAURI__?: unknown }).__TAURI__ = {};
       vi.stubGlobal("Worker", WorkerMock as unknown as typeof Worker);
       vi.mocked(getDaemonClientConfig).mockReturnValue({
         baseUrl: "http://daemon.local",
@@ -2967,13 +2970,16 @@ describe("WorkspaceActiveSnapshotStore", () => {
         info: {
           kind: "local",
           base_url: "http://daemon.local",
-          token: null,
+          browser_query_secret: null,
         },
         synced: true,
         error: null,
       });
 
       const store = new WorkspaceActiveSnapshotStoreImpl("ws-1");
+      // Construct before setting desktop globals so this test exercises the
+      // worker auth resolver; production desktop stores disable workers.
+      (globalThis as typeof globalThis & { __TAURI__?: unknown }).__TAURI__ = {};
       store.init();
       await waitForCondition(
         () => getUiDiagnostics().some((event) => event.code === "workspace.worker_desktop_bridge_missing_auth"),
@@ -3051,7 +3057,6 @@ describe("WorkspaceActiveSnapshotStore", () => {
     }
 
     try {
-      (globalThis as typeof globalThis & { __TAURI__?: unknown }).__TAURI__ = {};
       vi.stubGlobal("Worker", WorkerMock as unknown as typeof Worker);
       vi.mocked(getDaemonClientConfig).mockImplementation(() => daemonConfig);
       vi.mocked(subscribeDaemonConfig).mockImplementation((listener) => {
@@ -3065,13 +3070,16 @@ describe("WorkspaceActiveSnapshotStore", () => {
         info: {
           kind: "local",
           base_url: "http://daemon.local",
-          token: null,
+          browser_query_secret: null,
         },
         synced: true,
         error: null,
       });
 
       const store = new WorkspaceActiveSnapshotStoreImpl("ws-1");
+      // Construct before setting desktop globals so this test exercises the
+      // worker auth resolver; production desktop stores disable workers.
+      (globalThis as typeof globalThis & { __TAURI__?: unknown }).__TAURI__ = {};
       store.init();
 
       await waitForCondition(
@@ -3156,7 +3164,6 @@ describe("WorkspaceActiveSnapshotStore", () => {
     }
 
     try {
-      (globalThis as typeof globalThis & { __TAURI__?: unknown }).__TAURI__ = {};
       vi.stubGlobal("Worker", WorkerMock as unknown as typeof Worker);
       vi.mocked(getDaemonClientConfig).mockImplementation(() => daemonConfig);
       vi.mocked(subscribeDaemonConfig).mockImplementation((listener) => {
@@ -3167,6 +3174,9 @@ describe("WorkspaceActiveSnapshotStore", () => {
       });
 
       const store = new WorkspaceActiveSnapshotStoreImpl("ws-1");
+      // Construct before setting desktop globals so this test exercises the
+      // worker auth resolver; production desktop stores disable workers.
+      (globalThis as typeof globalThis & { __TAURI__?: unknown }).__TAURI__ = {};
       store.init();
 
       await waitForCondition(() => WorkerMock.instances.length === 1);
@@ -3237,7 +3247,7 @@ describe("WorkspaceActiveSnapshotStore", () => {
         intent: "auto_local_bootstrap" | "explicit_local" | "explicit_remote" | "explicit_disconnected";
         local_auto_bootstrap_allowed: boolean;
         base_url: string | null;
-        token: string | null;
+        browser_query_secret: string | null;
       } | null;
       synced: boolean;
       error: string | null;
@@ -3260,7 +3270,7 @@ describe("WorkspaceActiveSnapshotStore", () => {
         intent: "explicit_local",
         local_auto_bootstrap_allowed: true,
         base_url: "http://daemon.local",
-        token: "bridge-token",
+        browser_query_secret: "bridge-token",
       },
       synced: true,
       error: null,

@@ -107,7 +107,7 @@ describe("SessionsPane", () => {
       selectedSessionId: "web-1",
       onSelectSession: vi.fn(),
       daemonBaseUrl: "http://127.0.0.1:4399",
-    } as const;
+    };
 
     const { rerender } = render(<SessionsPane {...props} />);
 

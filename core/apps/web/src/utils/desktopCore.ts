@@ -1,3 +1,5 @@
+import type { DesktopOpenExternalUrlReq } from "../generated/desktop-ipc";
+
 export type DesktopPlatform = "macos" | "windows" | "linux" | "unknown";
 
 export type DesktopDragDropPosition = {
@@ -84,8 +86,8 @@ export const openExternalLink = async (href: string): Promise<boolean> => {
   if (!href) return false;
   if (isDesktopApp()) {
     try {
-      const mod = await import("@tauri-apps/plugin-shell");
-      await mod.open(href);
+      const req: DesktopOpenExternalUrlReq = { url: href };
+      await invoke<void>("desktop_open_external_url", { req });
       return true;
     } catch {
       return false;

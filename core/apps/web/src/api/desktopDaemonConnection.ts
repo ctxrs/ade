@@ -80,7 +80,7 @@ const shouldProbeExistingLocalDesktopAuth = (
 const probeDesktopLocalDaemonAuth = async (): Promise<boolean> => {
   const current = getDaemonConnection();
   if (!current.baseUrl || typeof fetch === "undefined") return false;
-  let timeoutId: number | null = null;
+  let timeoutId: ReturnType<typeof globalThis.setTimeout> | null = null;
   try {
     const request = fetch(getDaemonHttpUrl("/api/workspaces"), {
       method: "GET",

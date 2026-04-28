@@ -344,8 +344,16 @@ describe("DiagnosticsPage updates", () => {
   it("reapplies daemon client config after local daemon restart", async () => {
     vi.spyOn(window, "confirm").mockReturnValue(true);
     vi.mocked(desktopGetConnection)
-      .mockResolvedValueOnce({ kind: "local", base_url: "http://127.0.0.1:4399", token: "tok-old" })
-      .mockResolvedValueOnce({ kind: "local", base_url: "http://127.0.0.1:4401", token: "tok-new" });
+      .mockResolvedValueOnce({
+        kind: "local",
+        base_url: "http://127.0.0.1:4399",
+        browser_query_secret: "tok-old",
+      })
+      .mockResolvedValueOnce({
+        kind: "local",
+        base_url: "http://127.0.0.1:4401",
+        browser_query_secret: "tok-new",
+      });
     vi.mocked(desktopRestartLocalDaemon).mockResolvedValue({ kind: "local" });
     vi.mocked(checkUpdates).mockResolvedValue({
       channel: "stable",
@@ -367,7 +375,7 @@ describe("DiagnosticsPage updates", () => {
       expect(applyDaemonDesktopConnection).toHaveBeenCalledWith({
         kind: "local",
         base_url: "http://127.0.0.1:4401",
-        token: "tok-new",
+        browser_query_secret: "tok-new",
       });
     });
   });

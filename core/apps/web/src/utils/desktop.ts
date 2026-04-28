@@ -18,6 +18,7 @@ export type {
   DesktopMenuItemStateUpdate,
   DesktopNotificationKind,
   DesktopNotificationPermission,
+  DesktopOpenExternalUrlReq,
   DesktopOpenFileReq,
   DesktopOpenPathReq,
   DesktopReadBinaryFileResp,

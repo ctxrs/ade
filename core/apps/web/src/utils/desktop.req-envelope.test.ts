@@ -47,6 +47,7 @@ describe("desktop request envelopes", () => {
       has_unread_error: true,
     });
     await desktop.desktopUpdateEditorSettings({ target: "cursor" });
+    await desktop.openExternalLink("https://example.com/docs");
 
     expect(invokeMock.mock.calls).toEqual([
       ["desktop_git_clone", { req: { repo_url: "https://example.com/repo.git", dest_parent: "/tmp/workspaces" } }],
@@ -84,6 +85,7 @@ describe("desktop request envelopes", () => {
         },
       ],
       ["desktop_update_editor_settings", { req: { target: "cursor" } }],
+      ["desktop_open_external_url", { req: { url: "https://example.com/docs" } }],
     ]);
   });
 

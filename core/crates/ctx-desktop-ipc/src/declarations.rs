@@ -58,6 +58,7 @@ pub fn typescript_declarations() -> String {
     push_decl::<DesktopOpenPathReq>(&mut out);
     push_decl::<DesktopReadBinaryFileResp>(&mut out);
     push_decl::<DesktopSaveTextFileReq>(&mut out);
+    push_decl::<DesktopOpenExternalUrlReq>(&mut out);
     push_decl::<DesktopRestartLocalDaemonReq>(&mut out);
     push_decl::<DesktopUploadBlobReq>(&mut out);
     push_decl::<DesktopCodexLoginRelayReq>(&mut out);

@@ -7,9 +7,6 @@
   ],
   "permissions": [
     "core:default",
-    "os:default",
-    "shell:default",
-    "dialog:default",
-    "deep-link:default"
+    "os:default"
   ]
 }

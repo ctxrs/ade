@@ -106,6 +106,8 @@ export type DesktopReadBinaryFileResp = { bytes: Array<number>, path: string, };
 
 export type DesktopSaveTextFileReq = { contents: string, suggested_name?: string | null, };
 
+export type DesktopOpenExternalUrlReq = { url: string, };
+
 export type DesktopRestartLocalDaemonReq = { confirm: boolean, };
 
 export type DesktopUploadBlobReq = { bytes: Array<number>, mime_type: string, name?: string | null, };
