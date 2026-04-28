@@ -125,6 +125,7 @@ CTX_HTTP_SUITE_TESTS = {
         "updates_failure_safety_interrupted_transfer",
         "release_manifest_corpus",
         "updates_failure_safety_manifest_parse",
+        "updates_failure_safety_manifest_signature",
         "updates_failure_safety_missing_artifact",
     ],
     "sandbox-runtime-simulated": [

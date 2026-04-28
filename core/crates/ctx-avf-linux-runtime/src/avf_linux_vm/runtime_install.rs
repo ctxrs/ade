@@ -16,6 +16,11 @@ mod tests;
 
 use assets::*;
 pub(super) use assets::{avf_linux_runtime_is_ready, managed_avf_linux_guest_source};
+#[cfg(test)]
+pub(super) use assets::{
+    managed_avf_linux_archive_path, managed_avf_linux_runtime_ready_marker_path,
+    managed_avf_linux_runtime_source_identity,
+};
 use staged::*;
 pub(super) use staged::{bundled_avf_linux_guest_runtime, staged_avf_linux_guest_runtime};
 

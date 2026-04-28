@@ -397,6 +397,7 @@ const CTX_HTTP_SUITES = [
       "updates_failure_safety_checksum_mismatch",
       "updates_failure_safety_interrupted_transfer",
       "updates_failure_safety_manifest_parse",
+      "updates_failure_safety_manifest_signature",
       "updates_failure_safety_missing_artifact",
     ],
     type: "integration",

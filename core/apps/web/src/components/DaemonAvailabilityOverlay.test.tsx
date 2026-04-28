@@ -490,7 +490,11 @@ describe("DaemonAvailabilityOverlay", () => {
     renderOverlay("/workspace-setup");
 
     await waitFor(() => {
-      expect(vi.mocked(daemonFetchRaw)).toHaveBeenCalledWith("/api/health");
+      expect(vi.mocked(daemonFetchRaw)).toHaveBeenCalledWith(
+        "/api/health",
+        undefined,
+        expect.objectContaining({ connectLocalWhenMissing: false }),
+      );
     });
     expect(vi.mocked(syncDesktopDaemonConnectionFromBridge)).toHaveBeenCalled();
     expect(screen.queryByText("ctx daemon unavailable")).not.toBeInTheDocument();

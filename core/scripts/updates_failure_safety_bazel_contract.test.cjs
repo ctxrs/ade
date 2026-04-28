@@ -17,6 +17,7 @@ test("updates failure safety helper uses Bazel targets", () => {
   assert.match(scriptText, /node scripts\/run_bazel_pilot\.cjs test/);
   for (const target of [
     "updates_failure_safety_manifest_parse",
+    "updates_failure_safety_manifest_signature",
     "updates_failure_safety_checksum_mismatch",
     "updates_failure_safety_missing_artifact",
     "updates_failure_safety_interrupted_transfer",
@@ -29,6 +30,7 @@ test("ctx-http Bazel helper exports updater failure safety Bazel tests", () => {
   assert.match(buildText, /declare_ctx_http_integration_tests/);
   for (const target of [
     "updates_failure_safety_manifest_parse",
+    "updates_failure_safety_manifest_signature",
     "updates_failure_safety_checksum_mismatch",
     "updates_failure_safety_missing_artifact",
     "updates_failure_safety_interrupted_transfer",

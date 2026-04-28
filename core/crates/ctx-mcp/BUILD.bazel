@@ -8,6 +8,7 @@ CTX_MCP_RUSTC_ENV = {
 }
 
 CTX_MCP_DEPS = [
+    "//core/crates/ctx-client:lib",
     "//core/crates/ctx-core:lib",
     "@crates//:anyhow",
     "@crates//:clap",

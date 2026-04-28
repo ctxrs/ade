@@ -59,7 +59,7 @@ fn managed_artifact_extension(uri: &str) -> &'static str {
     }
 }
 
-pub(super) fn managed_avf_linux_archive_path(
+pub(in crate::avf_linux_vm) fn managed_avf_linux_archive_path(
     data_root: &Path,
     source: &bundled_assets::ManagedRuntimeSource,
 ) -> PathBuf {
@@ -78,7 +78,7 @@ pub(super) fn managed_avf_linux_archive_path(
         ))
 }
 
-pub(super) fn managed_avf_linux_runtime_source_identity(
+pub(in crate::avf_linux_vm) fn managed_avf_linux_runtime_source_identity(
     source: &bundled_assets::ManagedRuntimeSource,
 ) -> String {
     let mut hasher = sha2::Sha256::new();
@@ -137,7 +137,9 @@ pub(super) fn managed_avf_linux_helper_path(
     Some(runtime_root.join("helpers").join(file_name))
 }
 
-pub(super) fn managed_avf_linux_runtime_ready_marker_path(runtime_root: &Path) -> PathBuf {
+pub(in crate::avf_linux_vm) fn managed_avf_linux_runtime_ready_marker_path(
+    runtime_root: &Path,
+) -> PathBuf {
     runtime_root.join(AVF_LINUX_RUNTIME_READY_MARKER)
 }
 

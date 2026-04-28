@@ -8,6 +8,7 @@ eval "$(node scripts/print_ctx_cache_env.cjs --mode workspace --format shell --m
 
 node scripts/run_bazel_pilot.cjs test \
   //core/crates/ctx-http:updates_failure_safety_manifest_parse \
+  //core/crates/ctx-http:updates_failure_safety_manifest_signature \
   //core/crates/ctx-http:updates_failure_safety_checksum_mismatch \
   //core/crates/ctx-http:updates_failure_safety_missing_artifact \
   //core/crates/ctx-http:updates_failure_safety_interrupted_transfer

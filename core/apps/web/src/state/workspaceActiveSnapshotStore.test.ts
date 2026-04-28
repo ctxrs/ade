@@ -2728,25 +2728,14 @@ describe("WorkspaceActiveSnapshotStore", () => {
     expect(updated.activity?.last_turn_status).toBe("completed");
   });
 
-  it("rehydrates desktop connection before worker init when base URL is missing", async () => {
-    const { WorkspaceActiveSnapshotStoreImpl } = await import("./workspaceActiveSnapshotStoreCore");
+  it("rehydrates desktop connection before worker connection resolution when base URL is missing", async () => {
     const { getDaemonClientConfig, syncDesktopDaemonConnectionFromBridge } = await import("../api/client");
+    const { resolveWorkerConnectionState } = await import("./workspaceActiveSnapshot/workerConnection");
 
     const previousTauri = (globalThis as typeof globalThis & { __TAURI__?: unknown }).__TAURI__;
-    const previousWorker = globalThis.Worker;
-
-    class WorkerMock {
-      static instances: WorkerMock[] = [];
-      onmessage: ((event: MessageEvent<unknown>) => void) | null = null;
-      postMessage = vi.fn();
-      terminate = vi.fn();
-      constructor(..._args: unknown[]) {
-        WorkerMock.instances.push(this);
-      }
-    }
 
     try {
-      vi.stubGlobal("Worker", WorkerMock as unknown as typeof Worker);
+      (globalThis as typeof globalThis & { __TAURI__?: unknown }).__TAURI__ = {};
       let currentConfig: MockDaemonClientConfig = {
         baseUrl: null,
         wsBaseUrl: null,
@@ -2778,29 +2767,23 @@ describe("WorkspaceActiveSnapshotStore", () => {
         };
       });
 
-      const store = new WorkspaceActiveSnapshotStoreImpl("ws-1");
-      // Construct before setting desktop globals so this test exercises the
-      // worker auth resolver; production desktop stores disable workers.
-      (globalThis as typeof globalThis & { __TAURI__?: unknown }).__TAURI__ = {};
-      store.init();
-      await waitForCondition(() => WorkerMock.instances.length === 1);
-      const initCall = WorkerMock.instances[0]?.postMessage.mock.calls.find(
-        ([msg]) => asRecord(msg).type === "init",
-      );
-      expect(initCall).toBeTruthy();
-      expect(asRecord(initCall?.[0]).baseUrl).toBe("http://daemon.local");
-      expect(asRecord(initCall?.[0]).authToken).toBe("token-1");
-      expect(typeof asRecord(initCall?.[0]).connectionSeq).toBe("number");
+      const connection = await resolveWorkerConnectionState({
+        workspaceId: "ws-1",
+        phase: "worker_init",
+        authTokenOverride: null,
+        wsBaseUrlOverride: null,
+      });
+
+      expect(connection).toMatchObject({
+        baseUrl: "http://daemon.local",
+        wsBaseUrl: "ws://daemon.local",
+        authToken: "token-1",
+        runId: null,
+      });
       expect(syncDesktopDaemonConnectionFromBridge).toHaveBeenCalledTimes(1);
       const diagnostics = getUiDiagnostics().filter((event) => event.code === "workspace.worker_desktop_bridge_missing_base");
       expect(diagnostics).toHaveLength(0);
-      store.destroy();
     } finally {
-      if (previousWorker) {
-        vi.stubGlobal("Worker", previousWorker);
-      } else {
-        Reflect.deleteProperty(globalThis as unknown as Record<string, unknown>, "Worker");
-      }
       if (previousTauri === undefined) {
         delete (globalThis as typeof globalThis & { __TAURI__?: unknown }).__TAURI__;
       } else {
@@ -2809,25 +2792,14 @@ describe("WorkspaceActiveSnapshotStore", () => {
     }
   });
 
-  it("rehydrates desktop auth before worker init when only a persisted base is available", async () => {
-    const { WorkspaceActiveSnapshotStoreImpl } = await import("./workspaceActiveSnapshotStoreCore");
+  it("rehydrates desktop auth before worker connection resolution when only a persisted base is available", async () => {
     const { getDaemonClientConfig, syncDesktopDaemonConnectionFromBridge } = await import("../api/client");
+    const { resolveWorkerConnectionState } = await import("./workspaceActiveSnapshot/workerConnection");
 
     const previousTauri = (globalThis as typeof globalThis & { __TAURI__?: unknown }).__TAURI__;
-    const previousWorker = globalThis.Worker;
-
-    class WorkerMock {
-      static instances: WorkerMock[] = [];
-      onmessage: ((event: MessageEvent<unknown>) => void) | null = null;
-      postMessage = vi.fn();
-      terminate = vi.fn();
-      constructor(..._args: unknown[]) {
-        WorkerMock.instances.push(this);
-      }
-    }
 
     try {
-      vi.stubGlobal("Worker", WorkerMock as unknown as typeof Worker);
+      (globalThis as typeof globalThis & { __TAURI__?: unknown }).__TAURI__ = {};
       let currentConfig: MockDaemonClientConfig = {
         baseUrl: "http://daemon.local",
         wsBaseUrl: "ws://daemon.local",
@@ -2859,26 +2831,21 @@ describe("WorkspaceActiveSnapshotStore", () => {
         };
       });
 
-      const store = new WorkspaceActiveSnapshotStoreImpl("ws-1");
-      // Construct before setting desktop globals so this test exercises the
-      // worker auth resolver; production desktop stores disable workers.
-      (globalThis as typeof globalThis & { __TAURI__?: unknown }).__TAURI__ = {};
-      store.init();
-      await waitForCondition(() => WorkerMock.instances.length === 1);
-      const initCall = WorkerMock.instances[0]?.postMessage.mock.calls.find(
-        ([msg]) => asRecord(msg).type === "init",
-      );
-      expect(initCall).toBeTruthy();
-      expect(asRecord(initCall?.[0]).baseUrl).toBe("http://daemon.local");
-      expect(asRecord(initCall?.[0]).authToken).toBe("token-1");
+      const connection = await resolveWorkerConnectionState({
+        workspaceId: "ws-1",
+        phase: "worker_init",
+        authTokenOverride: null,
+        wsBaseUrlOverride: null,
+      });
+
+      expect(connection).toMatchObject({
+        baseUrl: "http://daemon.local",
+        wsBaseUrl: "ws://daemon.local",
+        authToken: "token-1",
+        runId: null,
+      });
       expect(syncDesktopDaemonConnectionFromBridge).toHaveBeenCalledTimes(1);
-      store.destroy();
     } finally {
-      if (previousWorker) {
-        vi.stubGlobal("Worker", previousWorker);
-      } else {
-        Reflect.deleteProperty(globalThis as unknown as Record<string, unknown>, "Worker");
-      }
       if (previousTauri === undefined) {
         delete (globalThis as typeof globalThis & { __TAURI__?: unknown }).__TAURI__;
       } else {
@@ -2935,25 +2902,14 @@ describe("WorkspaceActiveSnapshotStore", () => {
     }
   });
 
-  it("waits for desktop auth before starting the worker when bridge sync still lacks a token", async () => {
-    const { WorkspaceActiveSnapshotStoreImpl } = await import("./workspaceActiveSnapshotStoreCore");
+  it("emits a desktop bridge invariant diagnostic when worker auth stays missing", async () => {
     const { getDaemonClientConfig, syncDesktopDaemonConnectionFromBridge } = await import("../api/client");
+    const { resolveWorkerConnectionState } = await import("./workspaceActiveSnapshot/workerConnection");
 
     const previousTauri = (globalThis as typeof globalThis & { __TAURI__?: unknown }).__TAURI__;
-    const previousWorker = globalThis.Worker;
-
-    class WorkerMock {
-      static instances: WorkerMock[] = [];
-      onmessage: ((event: MessageEvent<unknown>) => void) | null = null;
-      postMessage = vi.fn();
-      terminate = vi.fn();
-      constructor(..._args: unknown[]) {
-        WorkerMock.instances.push(this);
-      }
-    }
 
     try {
-      vi.stubGlobal("Worker", WorkerMock as unknown as typeof Worker);
+      (globalThis as typeof globalThis & { __TAURI__?: unknown }).__TAURI__ = {};
       vi.mocked(getDaemonClientConfig).mockReturnValue({
         baseUrl: "http://daemon.local",
         wsBaseUrl: "ws://daemon.local",
@@ -2976,37 +2932,24 @@ describe("WorkspaceActiveSnapshotStore", () => {
         error: null,
       });
 
-      const store = new WorkspaceActiveSnapshotStoreImpl("ws-1");
-      // Construct before setting desktop globals so this test exercises the
-      // worker auth resolver; production desktop stores disable workers.
-      (globalThis as typeof globalThis & { __TAURI__?: unknown }).__TAURI__ = {};
-      store.init();
+      const connection = await resolveWorkerConnectionState({
+        workspaceId: "ws-1",
+        phase: "worker_init",
+        authTokenOverride: null,
+        wsBaseUrlOverride: null,
+      });
+
+      expect(connection).toMatchObject({
+        baseUrl: "http://daemon.local",
+        wsBaseUrl: "ws://daemon.local",
+        authToken: null,
+        runId: null,
+      });
       await waitForCondition(
         () => getUiDiagnostics().some((event) => event.code === "workspace.worker_desktop_bridge_missing_auth"),
       );
-      expect(WorkerMock.instances).toHaveLength(0);
-
-      store.updateAuthConfig({
-        authToken: "token-1",
-        wsBaseUrl: "ws://daemon.local",
-        baseUrl: "http://daemon.local",
-        runId: null,
-      });
-
-      await waitForCondition(() => WorkerMock.instances.length === 1);
-      const initCall = WorkerMock.instances[0]?.postMessage.mock.calls.find(
-        ([msg]) => asRecord(msg).type === "init",
-      );
-      expect(initCall).toBeTruthy();
-      expect(asRecord(initCall?.[0]).authToken).toBe("token-1");
       expect(syncDesktopDaemonConnectionFromBridge).toHaveBeenCalledTimes(1);
-      store.destroy();
     } finally {
-      if (previousWorker) {
-        vi.stubGlobal("Worker", previousWorker);
-      } else {
-        Reflect.deleteProperty(globalThis as unknown as Record<string, unknown>, "Worker");
-      }
       if (previousTauri === undefined) {
         delete (globalThis as typeof globalThis & { __TAURI__?: unknown }).__TAURI__;
       } else {
@@ -3015,13 +2958,12 @@ describe("WorkspaceActiveSnapshotStore", () => {
     }
   });
 
-  it("keeps the snapshot worker stopped until a canonical config update fills auth for a persisted base", async () => {
-    const { WorkspaceActiveSnapshotStoreImpl } = await import("./workspaceActiveSnapshotStoreCore");
+  it("resolves desktop auth after a canonical config update fills a persisted base", async () => {
     const {
       getDaemonClientConfig,
-      subscribeDaemonConfig,
       syncDesktopDaemonConnectionFromBridge,
     } = await import("../api/client");
+    const { resolveWorkerConnectionState } = await import("./workspaceActiveSnapshot/workerConnection");
 
     type DaemonConfig = {
       baseUrl: string | null;
@@ -3031,40 +2973,16 @@ describe("WorkspaceActiveSnapshotStore", () => {
     };
 
     const previousTauri = (globalThis as typeof globalThis & { __TAURI__?: unknown }).__TAURI__;
-    const previousWorker = globalThis.Worker;
     let daemonConfig: DaemonConfig = {
       baseUrl: "http://daemon.local",
       wsBaseUrl: "ws://daemon.local",
       authToken: null,
       runId: null,
     };
-    let configListener: unknown = null;
-    const emitConfigListener = (config: DaemonConfig) => {
-      if (typeof configListener !== "function") {
-        throw new Error("Expected subscribeDaemonConfig listener to be registered.");
-      }
-      (configListener as (value: DaemonConfig) => void)(config);
-    };
-
-    class WorkerMock {
-      static instances: WorkerMock[] = [];
-      onmessage: ((event: MessageEvent<unknown>) => void) | null = null;
-      postMessage = vi.fn();
-      terminate = vi.fn();
-      constructor(..._args: unknown[]) {
-        WorkerMock.instances.push(this);
-      }
-    }
 
     try {
-      vi.stubGlobal("Worker", WorkerMock as unknown as typeof Worker);
+      (globalThis as typeof globalThis & { __TAURI__?: unknown }).__TAURI__ = {};
       vi.mocked(getDaemonClientConfig).mockImplementation(() => daemonConfig);
-      vi.mocked(subscribeDaemonConfig).mockImplementation((listener) => {
-        configListener = listener as (config: DaemonConfig) => void;
-        return () => {
-          configListener = null;
-        };
-      });
       vi.mocked(syncDesktopDaemonConnectionFromBridge).mockResolvedValue({
         config: daemonConfig,
         info: {
@@ -3076,16 +2994,14 @@ describe("WorkspaceActiveSnapshotStore", () => {
         error: null,
       });
 
-      const store = new WorkspaceActiveSnapshotStoreImpl("ws-1");
-      // Construct before setting desktop globals so this test exercises the
-      // worker auth resolver; production desktop stores disable workers.
-      (globalThis as typeof globalThis & { __TAURI__?: unknown }).__TAURI__ = {};
-      store.init();
+      const missingConnection = await resolveWorkerConnectionState({
+        workspaceId: "ws-1",
+        phase: "worker_init",
+        authTokenOverride: null,
+        wsBaseUrlOverride: null,
+      });
 
-      await waitForCondition(
-        () => getUiDiagnostics().some((event) => event.code === "workspace.worker_desktop_bridge_missing_auth"),
-      );
-      expect(WorkerMock.instances).toHaveLength(0);
+      expect(missingConnection.authToken).toBeNull();
 
       daemonConfig = {
         baseUrl: "http://daemon.local",
@@ -3093,27 +3009,22 @@ describe("WorkspaceActiveSnapshotStore", () => {
         authToken: "token-1",
         runId: "run-1",
       };
-      emitConfigListener(daemonConfig);
 
-      await waitForCondition(() => WorkerMock.instances.length === 1);
-      const initCall = WorkerMock.instances[0]?.postMessage.mock.calls.find(
-        ([msg]) => asRecord(msg).type === "init",
-      );
-      expect(initCall).toBeTruthy();
-      expect(asRecord(initCall?.[0])).toMatchObject({
+      const readyConnection = await resolveWorkerConnectionState({
+        workspaceId: "ws-1",
+        phase: "worker_update_auth",
+        authTokenOverride: null,
+        wsBaseUrlOverride: null,
+      });
+
+      expect(readyConnection).toMatchObject({
         baseUrl: "http://daemon.local",
         wsBaseUrl: "ws://daemon.local",
         authToken: "token-1",
         runId: "run-1",
       });
       expect(syncDesktopDaemonConnectionFromBridge).toHaveBeenCalledTimes(1);
-      store.destroy();
     } finally {
-      if (previousWorker) {
-        vi.stubGlobal("Worker", previousWorker);
-      } else {
-        Reflect.deleteProperty(globalThis as unknown as Record<string, unknown>, "Worker");
-      }
       if (previousTauri === undefined) {
         delete (globalThis as typeof globalThis & { __TAURI__?: unknown }).__TAURI__;
       } else {
@@ -3137,7 +3048,6 @@ describe("WorkspaceActiveSnapshotStore", () => {
       runId: string | null;
     };
 
-    const previousTauri = (globalThis as typeof globalThis & { __TAURI__?: unknown }).__TAURI__;
     const previousWorker = globalThis.Worker;
     let daemonConfig: DaemonConfig = {
       baseUrl: "http://daemon.old",
@@ -3174,9 +3084,6 @@ describe("WorkspaceActiveSnapshotStore", () => {
       });
 
       const store = new WorkspaceActiveSnapshotStoreImpl("ws-1");
-      // Construct before setting desktop globals so this test exercises the
-      // worker auth resolver; production desktop stores disable workers.
-      (globalThis as typeof globalThis & { __TAURI__?: unknown }).__TAURI__ = {};
       store.init();
 
       await waitForCondition(() => WorkerMock.instances.length === 1);
@@ -3222,11 +3129,6 @@ describe("WorkspaceActiveSnapshotStore", () => {
         vi.stubGlobal("Worker", previousWorker);
       } else {
         Reflect.deleteProperty(globalThis as unknown as Record<string, unknown>, "Worker");
-      }
-      if (previousTauri === undefined) {
-        delete (globalThis as typeof globalThis & { __TAURI__?: unknown }).__TAURI__;
-      } else {
-        (globalThis as typeof globalThis & { __TAURI__?: unknown }).__TAURI__ = previousTauri;
       }
     }
   });
