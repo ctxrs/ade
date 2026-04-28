@@ -6,6 +6,7 @@
     "dev": "node ../../scripts/desktop_tauri_entry.cjs dev",
     "build": "node ../../scripts/desktop_tauri_entry.cjs build",
     "test:notifications:contracts": "bash scripts/test_notification_contracts.sh",
+    "test:renderer-capabilities:contracts": "bash scripts/test_renderer_capabilities_contracts.sh",
     "test:automation": "wdio run automation/wdio.conf.cjs",
     "test:automation:notifications-signed-smoke": "CTX_AUTOMATION_SCENARIOS=${CTX_AUTOMATION_SCENARIOS:-notification-signed-smoke} wdio run automation/wdio.conf.cjs --spec automation/specs/notification-signed-smoke.spec.cjs",
     "test:automation:image-paste": "../../../scripts/desktop_smoke_with_infisical.sh -- --spec automation/specs/workbench-image-paste.spec.cjs",
