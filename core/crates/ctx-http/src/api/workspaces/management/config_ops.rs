@@ -132,7 +132,7 @@ pub(super) async fn update_workspace_merge_queue_config(
     .await
     .map_err(|error| {
         (
-            StatusCode::BAD_REQUEST,
+            crate::api::shared::status_code_for_request_or_policy_error(&error),
             Json(ApiErrorResp {
                 error: logs::redact_sensitive(&error.to_string()),
             }),
@@ -213,7 +213,18 @@ pub(super) async fn load_workspace_execution_config(
     let mut source = "daemon_default".to_string();
     match workspace_config::load_execution_settings_override(&ctx.store).await {
         Ok(Some(override_config)) => {
-            workspace_config::apply_execution_settings_override(&mut effective, &override_config);
+            execution_effective::apply_workspace_execution_settings_override(
+                &mut effective,
+                &override_config,
+            )
+            .map_err(|error| {
+                (
+                    crate::api::shared::status_code_for_request_or_policy_error(&error),
+                    Json(ApiErrorResp {
+                        error: logs::redact_sensitive(&error.to_string()),
+                    }),
+                )
+            })?;
             source = "workspace".to_string();
         }
         Ok(None) => {}
@@ -248,7 +259,7 @@ pub(super) async fn load_workspace_execution_config(
 }
 
 pub(super) async fn update_workspace_execution_config(
-    _state: &Arc<AppState>,
+    state: &Arc<AppState>,
     ctx: &WorkspaceRequestContext,
     req: UpdateExecutionConfigReq,
 ) -> WorkspaceApiResult<UpdateWorkspaceConfigResp> {
@@ -258,7 +269,7 @@ pub(super) async fn update_workspace_execution_config(
             #[cfg(target_os = "macos")]
             {
                 if !ctx_harness_runtime::local_runtime_available(
-                    &_state.core.data_root,
+                    &state.core.data_root,
                     &crate::settings::ContainerRuntimeKind::SharedVmContainer,
                 ) {
                     return Err((
@@ -303,6 +314,45 @@ pub(super) async fn update_workspace_execution_config(
             .filter(|value| !value.is_empty())
             .collect::<Vec<String>>()
     });
+
+    let settings = crate::settings::load_settings(state.global_store())
+        .await
+        .map_err(|error| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&error.to_string()),
+                }),
+            )
+        })?;
+    let effective = settings.execution.clone().unwrap_or_default();
+    let requested_override = ctx_workspace_config::ExecutionSettingsOverride {
+        mode: Some(match environment {
+            ctx_workspace_config::ExecutionEnvironment::Host => {
+                crate::settings::ExecutionMode::Host
+            }
+            ctx_workspace_config::ExecutionEnvironment::Sandbox => {
+                crate::settings::ExecutionMode::Sandbox
+            }
+        }),
+        container: ctx_workspace_config::ContainerExecutionSettingsOverride {
+            network_mode: network_mode.clone(),
+            allowlist: allowlist.clone(),
+            image: None,
+        },
+    };
+    execution_effective::validate_workspace_execution_settings_override(
+        &effective,
+        &requested_override,
+    )
+    .map_err(|error| {
+        (
+            crate::api::shared::status_code_for_request_or_policy_error(&error),
+            Json(ApiErrorResp {
+                error: logs::redact_sensitive(&error.to_string()),
+            }),
+        )
+    })?;
 
     workspace_config::update_execution_config(
         &ctx.store,

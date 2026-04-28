@@ -20,13 +20,23 @@ use crate::worktree_data_plane::resolve_worktree_data_plane;
 use ctx_worktree_data_plane::apply_data_plane_to_execution_settings;
 
 pub(super) fn status_code_for_internal_error(err: &anyhow::Error) -> StatusCode {
-    if err
+    if crate::execution_policy::is_execution_policy_denial(err) {
+        StatusCode::FORBIDDEN
+    } else if err
         .chain()
         .any(|cause| crate::storage_guard::is_storage_exhaustion_error(&cause.to_string()))
     {
         StatusCode::INSUFFICIENT_STORAGE
     } else {
         StatusCode::INTERNAL_SERVER_ERROR
+    }
+}
+
+pub(crate) fn status_code_for_request_or_policy_error(err: &anyhow::Error) -> StatusCode {
+    if crate::execution_policy::is_execution_policy_denial(err) {
+        StatusCode::FORBIDDEN
+    } else {
+        StatusCode::BAD_REQUEST
     }
 }
 
@@ -88,6 +98,34 @@ mod tests {
     }
 
     #[test]
+    fn status_code_for_internal_error_maps_execution_policy_denials_to_forbidden() {
+        let err = crate::execution_policy::HostExecutionPolicy::SandboxOnly
+            .validate_execution_environment(ctx_core::models::ExecutionEnvironment::Host)
+            .expect_err("host execution should be denied");
+        assert_eq!(status_code_for_internal_error(&err), StatusCode::FORBIDDEN);
+    }
+
+    #[test]
+    fn status_code_for_request_or_policy_error_maps_policy_denials_to_forbidden() {
+        let err = crate::execution_policy::HostExecutionPolicy::SandboxOnly
+            .validate_execution_environment(ctx_core::models::ExecutionEnvironment::Host)
+            .expect_err("host execution should be denied");
+        assert_eq!(
+            status_code_for_request_or_policy_error(&err),
+            StatusCode::FORBIDDEN
+        );
+    }
+
+    #[test]
+    fn status_code_for_request_or_policy_error_preserves_bad_request_for_validation_errors() {
+        let err = anyhow::anyhow!("invalid request");
+        assert_eq!(
+            status_code_for_request_or_policy_error(&err),
+            StatusCode::BAD_REQUEST
+        );
+    }
+
+    #[test]
     fn map_internal_api_error_preserves_storage_guidance() {
         let err = anyhow::anyhow!("wrapper")
             .context("Insufficient storage capacity for creating an isolated task worktree");
@@ -97,6 +135,18 @@ mod tests {
             body.0.error,
             "Insufficient storage capacity for creating an isolated task worktree"
         );
+    }
+
+    #[test]
+    fn map_effective_execution_settings_error_maps_policy_denials_to_forbidden() {
+        let err = crate::execution_policy::HostExecutionPolicy::SandboxOnly
+            .validate_execution_environment(ctx_core::models::ExecutionEnvironment::Host)
+            .expect_err("host execution should be denied");
+        let (status, _) = map_effective_execution_settings_error(
+            execution_effective::EffectiveExecutionSettingsError::InvalidWorkspaceOverride(err),
+        );
+
+        assert_eq!(status, StatusCode::FORBIDDEN);
     }
 }
 
@@ -112,7 +162,7 @@ pub(super) fn map_effective_execution_settings_error(
 ) -> (StatusCode, Json<ApiErrorResp>) {
     let (status, error) = match err {
         execution_effective::EffectiveExecutionSettingsError::InvalidWorkspaceOverride(err) => {
-            (StatusCode::BAD_REQUEST, err)
+            (status_code_for_request_or_policy_error(&err), err)
         }
         execution_effective::EffectiveExecutionSettingsError::Internal(err) => {
             (StatusCode::INTERNAL_SERVER_ERROR, err)
@@ -213,7 +263,7 @@ async fn list_container_worktree_files(
         execution_environment,
     )
     .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .map_err(|err| status_code_for_internal_error(&err))?;
     let data_plane = resolve_worktree_data_plane(state, worktree)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;

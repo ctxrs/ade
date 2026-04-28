@@ -141,6 +141,9 @@ fn map_session_auth_error(
         crate::daemon::sessions::auth::SessionAuthError::BadRequest(error) => {
             (StatusCode::BAD_REQUEST, Json(ApiErrorResp { error }))
         }
+        crate::daemon::sessions::auth::SessionAuthError::Forbidden(error) => {
+            (StatusCode::FORBIDDEN, Json(ApiErrorResp { error }))
+        }
         crate::daemon::sessions::auth::SessionAuthError::Internal(error) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ApiErrorResp { error }),
@@ -156,6 +159,25 @@ fn map_session_auth_error(
                 }),
             )
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn map_session_auth_error_maps_policy_denials_to_forbidden() {
+        let (status, body) =
+            map_session_auth_error(crate::daemon::sessions::auth::SessionAuthError::Forbidden(
+                "host execution is disabled by daemon policy".to_string(),
+            ));
+
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert_eq!(
+            body.0.error,
+            "host execution is disabled by daemon policy".to_string()
+        );
     }
 }
 

@@ -122,7 +122,7 @@ pub(crate) async fn set_session_model(
             "set_session_model failed to load execution settings: {err:#}",
         );
         session_model_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
+            crate::api::shared::status_code_for_internal_error(&err),
             "failed to load execution settings",
         )
     })?;
@@ -331,7 +331,7 @@ pub(crate) async fn set_session_mode(
             workspace_id = %worktree.workspace_id.0,
             "set_session_mode failed to load execution settings: {err:#}",
         );
-        StatusCode::INTERNAL_SERVER_ERROR
+        crate::api::shared::status_code_for_internal_error(&err)
     })?;
 
     let adapter = crate::daemon::ensure_provider_adapter_for_target(

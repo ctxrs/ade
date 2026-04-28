@@ -7,6 +7,7 @@ mod container_builder;
 pub mod daemon;
 mod dictation_livekit;
 mod execution_effective;
+mod execution_policy;
 pub mod git_status;
 mod installer;
 mod llm;

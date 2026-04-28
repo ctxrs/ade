@@ -12,6 +12,7 @@ pub(crate) async fn install_provider_impl(
             "managed provider installs are disabled; provider '{provider_id}' must be shipped in bundled harness assets",
         );
     }
+    state.validate_install_target_allowed(target)?;
 
     let provider_id = provider_id.to_string();
     let _provider_install_lock = acquire_provider_install_lock(&provider_id, target).await;
@@ -49,6 +50,17 @@ pub(crate) async fn install_provider_impl(
         )
         .map_err(anyhow::Error::new)?;
         let resolved_target_key = install_contract.resolved_target_key;
+        for dependency in &install_contract.dependencies {
+            state
+                .validate_install_target_allowed(dependency.target)
+                .with_context(|| {
+                    format!(
+                        "provider install dependency '{}' target '{}' is not allowed",
+                        dependency.provider_id,
+                        dependency.target.as_str()
+                    )
+                })?;
+        }
         let blocking_dependencies = install_contract.dependencies_for_role(
             provider_install_contract::ProviderInstallDependencyRoleKind::Prerequisite,
         );

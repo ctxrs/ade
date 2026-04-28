@@ -16,6 +16,7 @@ use ctx_providers::events::NormalizedEvent;
 pub(crate) enum SessionAuthError {
     NotFound(&'static str),
     BadRequest(String),
+    Forbidden(String),
     Internal(String),
     AuthenticationFailed { redacted_message: String },
 }
@@ -173,9 +174,12 @@ async fn prepare_session_auth_runtime(
     )
     .await
     .map_err(|error| {
-        SessionAuthError::Internal(format!(
-            "failed to load workspace execution settings: {error:#}"
-        ))
+        let message = format!("failed to load workspace execution settings: {error:#}");
+        if crate::execution_policy::is_execution_policy_denial(&error) {
+            SessionAuthError::Forbidden(message)
+        } else {
+            SessionAuthError::Internal(message)
+        }
     })?;
     let adapter_cfg = crate::daemon::load_managed_agent_server_config_or_err(&state.core.data_root)
         .await

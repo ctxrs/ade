@@ -50,6 +50,10 @@ impl ctx_managed_installs::ManagedInstallHost for HttpAppState {
         &self.providers.statuses
     }
 
+    fn validate_install_target_allowed(&self, target: InstallTarget) -> Result<()> {
+        crate::execution_policy::HostExecutionPolicy::current()?.validate_install_target(target)
+    }
+
     async fn start_install(
         &self,
         provider_id: String,

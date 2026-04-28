@@ -7,6 +7,15 @@ pub(super) async fn install_provider_blocking_dependencies(
     install_id: Option<InstallId>,
 ) -> Result<()> {
     for dependency in dependencies {
+        state
+            .validate_install_target_allowed(dependency.target)
+            .with_context(|| {
+                format!(
+                    "provider prerequisite dependency '{}' target '{}' is not allowed",
+                    dependency.provider_id,
+                    dependency.target.as_str()
+                )
+            })?;
         ensure_install_not_cancelled(state, install_id).await?;
         let (prerequisite_install_id, started_new) = state
             .start_install(dependency.provider_id.clone(), Some(dependency.target))
@@ -103,6 +112,15 @@ pub(super) async fn wait_for_provider_readiness_dependencies(
         if dependency.satisfied {
             continue;
         }
+        state
+            .validate_install_target_allowed(dependency.target)
+            .with_context(|| {
+                format!(
+                    "provider readiness dependency '{}' target '{}' is not allowed",
+                    dependency.provider_id,
+                    dependency.target.as_str()
+                )
+            })?;
         ensure_install_not_cancelled(state, install_id).await?;
         let (dependency_install_id, started_new) = state
             .start_install(dependency.provider_id.clone(), Some(dependency.target))

@@ -127,6 +127,10 @@ pub trait ManagedInstallHost: Send + Sync + 'static {
 
     fn provider_statuses(&self) -> &Mutex<HashMap<String, ProviderStatus>>;
 
+    fn validate_install_target_allowed(&self, _target: InstallTarget) -> Result<()> {
+        Ok(())
+    }
+
     async fn start_install(
         &self,
         provider_id: String,

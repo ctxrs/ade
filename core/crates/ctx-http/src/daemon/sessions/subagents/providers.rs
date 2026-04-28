@@ -24,7 +24,7 @@ pub(super) async fn load_requested_model_catalogs(
         execution_environment,
     )
     .await
-    .map_err(internal_api_error)?;
+    .map_err(|error| crate::api::shared::map_internal_api_error(&error))?;
     let managed = crate::daemon::load_managed_agent_server_config_or_err(&state.core.data_root)
         .await
         .map_err(internal_api_error)?;

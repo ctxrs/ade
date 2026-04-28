@@ -2,6 +2,8 @@ use anyhow::Context;
 use ctx_store::Store;
 use serde::{Deserialize, Serialize};
 
+use crate::execution_policy::HostExecutionPolicy;
+
 mod defaults;
 mod model;
 mod overrides;
@@ -184,6 +186,8 @@ async fn load_runtime_settings_secret_envelope(
 }
 
 pub async fn load_settings(store: &Store) -> anyhow::Result<Settings> {
+    let host_execution_policy = HostExecutionPolicy::current()?;
+    host_execution_policy.validate_process_execution_mode_override()?;
     let mut settings = match store.get_runtime_settings_document().await? {
         Some(doc) => {
             let mut settings = serde_json::from_str::<Settings>(&doc.settings_json)
@@ -213,6 +217,9 @@ pub async fn load_settings(store: &Store) -> anyhow::Result<Settings> {
     normalize_settings_in_place(&mut settings);
 
     overrides::apply_env_overrides(&mut settings);
+    if let Some(execution) = settings.execution.as_mut() {
+        host_execution_policy.normalize_loaded_execution_settings(execution);
+    }
 
     Ok(settings)
 }

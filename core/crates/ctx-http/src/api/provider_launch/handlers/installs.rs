@@ -15,6 +15,24 @@ pub(in crate::api) async fn install_provider(
             })),
         )
     })?;
+    crate::execution_policy::HostExecutionPolicy::current()
+        .map_err(|error| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({
+                    "error": error.to_string()
+                })),
+            )
+        })?
+        .validate_install_target(target)
+        .map_err(|error| {
+            (
+                crate::api::shared::status_code_for_request_or_policy_error(&error),
+                Json(serde_json::json!({
+                    "error": error.to_string()
+                })),
+            )
+        })?;
 
     let (install_id, _) =
         provider_launch_install::start_provider_install(&state, &id, target).await?;
@@ -38,6 +56,24 @@ pub(in crate::api) async fn install_all_providers(
             })),
         )
     })?;
+    crate::execution_policy::HostExecutionPolicy::current()
+        .map_err(|error| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({
+                    "error": error.to_string()
+                })),
+            )
+        })?
+        .validate_install_target(target)
+        .map_err(|error| {
+            (
+                crate::api::shared::status_code_for_request_or_policy_error(&error),
+                Json(serde_json::json!({
+                    "error": error.to_string()
+                })),
+            )
+        })?;
     let installs = provider_launch_install::start_all_provider_installs(&state, target).await?;
     Ok(Json(
         installs

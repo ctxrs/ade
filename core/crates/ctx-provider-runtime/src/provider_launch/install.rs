@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use anyhow::Result as AnyhowResult;
 use async_trait::async_trait;
 use ctx_managed_installs as installer;
 use ctx_managed_installs::provider_install_contract;
@@ -10,6 +11,12 @@ use ctx_provider_matrix as provider_matrix;
 use super::resolver::is_acp_provider_id;
 use super::status::provider_status_for_target;
 use crate::ProviderRuntimeHost;
+
+#[derive(Debug, Clone)]
+pub struct StartProviderInstallError {
+    pub message: String,
+    pub code: Option<String>,
+}
 
 #[async_trait]
 pub trait ProviderInstallHost:
@@ -22,15 +29,59 @@ pub trait ProviderInstallHost:
     ) -> Option<InstallId>;
 }
 
-#[derive(Debug, Clone)]
-pub struct StartProviderInstallError {
-    pub message: String,
-    pub code: Option<String>,
-}
-
 struct DeferredBulkProviderInstall {
     provider_id: String,
     install_id: InstallId,
+}
+
+fn install_target_error(error: anyhow::Error) -> StartProviderInstallError {
+    StartProviderInstallError {
+        message: error.to_string(),
+        code: Some("install_target_disabled".to_string()),
+    }
+}
+
+fn validate_install_target_allowed<H>(
+    state: &Arc<H>,
+    target: InstallTarget,
+) -> std::result::Result<(), StartProviderInstallError>
+where
+    H: ProviderInstallHost,
+{
+    installer::ManagedInstallHost::validate_install_target_allowed(state.as_ref(), target)
+        .map_err(install_target_error)
+}
+
+fn validate_contract_dependency_targets<F>(
+    contract: &provider_install_contract::ProviderInstallContract,
+    mut validate: F,
+) -> std::result::Result<(), StartProviderInstallError>
+where
+    F: FnMut(InstallTarget) -> AnyhowResult<()>,
+{
+    for dependency in &contract.dependencies {
+        validate(dependency.target).map_err(|error| StartProviderInstallError {
+            message: format!(
+                "provider install dependency '{}' target '{}' is not allowed: {error}",
+                dependency.provider_id,
+                dependency.target.as_str()
+            ),
+            code: Some("install_target_disabled".to_string()),
+        })?;
+    }
+    Ok(())
+}
+
+fn validate_provider_contract_targets<H>(
+    state: &Arc<H>,
+    contract: &provider_install_contract::ProviderInstallContract,
+) -> std::result::Result<(), StartProviderInstallError>
+where
+    H: ProviderInstallHost,
+{
+    validate_contract_dependency_targets(contract, |target| {
+        installer::ManagedInstallHost::validate_install_target_allowed(state.as_ref(), target)
+    })
 }
 
 async fn start_contract_readiness_dependencies<H>(
@@ -57,6 +108,16 @@ async fn start_contract_readiness_dependencies<H>(
     for dependency in contract.dependencies_for_role(
         provider_install_contract::ProviderInstallDependencyRoleKind::Readiness,
     ) {
+        if let Err(error) = validate_install_target_allowed(state, dependency.target) {
+            tracing::error!(
+                provider_id,
+                dependency_provider_id = dependency.provider_id,
+                dependency_target = dependency.target.as_str(),
+                "provider readiness dependency target is disabled: {}",
+                error.message
+            );
+            continue;
+        }
         if dependency.satisfied {
             continue;
         }
@@ -96,6 +157,7 @@ pub async fn start_provider_install<H>(
 where
     H: ProviderInstallHost,
 {
+    validate_install_target_allowed(state, target)?;
     let matrix = provider_matrix::load_matrix_cached(
         installer::ManagedInstallHost::data_root(state.as_ref()),
         state.provider_matrix_cache(),
@@ -132,6 +194,19 @@ where
             code: Some(issue.code.to_string()),
         });
     }
+    let install_contract = provider_install_contract::resolve_provider_install_contract(
+        installer::ManagedInstallHost::data_root(state.as_ref()),
+        &managed,
+        &matrix,
+        provider_id,
+        target,
+        current_ctx_version.as_deref(),
+    )
+    .map_err(|err| StartProviderInstallError {
+        message: err.to_string(),
+        code: Some("install_contract_invalid".to_string()),
+    })?;
+    validate_provider_contract_targets(state, &install_contract)?;
 
     let (install_id, started_new) = state
         .start_install(provider_id.to_string(), Some(target))
@@ -181,6 +256,7 @@ pub async fn start_all_provider_installs<H>(
 where
     H: ProviderInstallHost,
 {
+    validate_install_target_allowed(state, target)?;
     let mut out = Vec::new();
     let matrix = provider_matrix::load_matrix_cached(
         installer::ManagedInstallHost::data_root(state.as_ref()),
@@ -395,6 +471,33 @@ where
     if should_skip_install_for_healthy_provider(&status) {
         return None;
     }
+    let current_ctx_version = installer::ManagedInstallHost::current_ctx_version(state.as_ref());
+    match provider_install_contract::resolve_provider_install_contract(
+        installer::ManagedInstallHost::data_root(state.as_ref()),
+        managed,
+        matrix,
+        provider_id,
+        target,
+        current_ctx_version.as_deref(),
+    )
+    .map_err(|error| StartProviderInstallError {
+        message: error.to_string(),
+        code: Some("install_contract_invalid".to_string()),
+    })
+    .and_then(|contract| validate_provider_contract_targets(state, &contract))
+    {
+        Ok(()) => {}
+        Err(error) => {
+            tracing::warn!(
+                provider_id,
+                target = target.as_str(),
+                code = error.code.as_deref(),
+                "skipping managed provider install because install target policy rejected it: {}",
+                error.message
+            );
+            return None;
+        }
+    }
 
     let (install_id, started_new) = state
         .start_install(provider_id.to_string(), Some(target))
@@ -553,5 +656,51 @@ where
             return;
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn contract_dependency_target_validation_rejects_host_dependencies() {
+        let contract = provider_install_contract::ProviderInstallContract {
+            resolved_target_key: "linux-x86_64",
+            dependencies: vec![provider_install_contract::ProviderInstallDependency {
+                provider_id: "claude-cli".to_string(),
+                role: provider_install_contract::ProviderInstallDependencyRoleKind::Readiness,
+                target: InstallTarget::Host,
+                satisfied: false,
+            }],
+        };
+
+        let err = validate_contract_dependency_targets(&contract, |target| {
+            if matches!(target, InstallTarget::Host) {
+                anyhow::bail!("host provider installs are disabled by daemon policy");
+            }
+            Ok(())
+        })
+        .expect_err("host dependency should be rejected");
+
+        assert_eq!(err.code.as_deref(), Some("install_target_disabled"));
+        assert!(err.message.contains("claude-cli"));
+        assert!(err.message.contains("target 'host'"));
+    }
+
+    #[test]
+    fn contract_dependency_target_validation_allows_container_dependencies() {
+        let contract = provider_install_contract::ProviderInstallContract {
+            resolved_target_key: "linux-x86_64",
+            dependencies: vec![provider_install_contract::ProviderInstallDependency {
+                provider_id: "runtime-node-container".to_string(),
+                role: provider_install_contract::ProviderInstallDependencyRoleKind::Prerequisite,
+                target: InstallTarget::Container,
+                satisfied: false,
+            }],
+        };
+
+        validate_contract_dependency_targets(&contract, |_target| Ok(()))
+            .expect("container dependency should be allowed");
     }
 }
