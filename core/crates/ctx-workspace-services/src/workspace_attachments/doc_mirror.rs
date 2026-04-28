@@ -31,17 +31,9 @@ async fn run_doc_mirror_script(
     attachment: &WorkspaceAttachment,
     dest: &Path,
 ) -> Result<()> {
-    if looks_like_url(&attachment.source) {
+    let Some(script_path) = resolve_doc_mirror_script_path(workspace, attachment)? else {
         return run_doc_mirror_cli(workspace, attachment, dest).await;
-    }
-    let script_path = resolve_workspace_local_source(
-        Path::new(&workspace.root_path),
-        &attachment.source,
-        "doc mirror script",
-    )?;
-    if !script_path.is_file() {
-        anyhow::bail!("doc mirror script not found: {}", script_path.display());
-    }
+    };
 
     let mut cmd = if script_path.extension().and_then(|value| value.to_str()) == Some("py") {
         let mut cmd = Command::new("python3");
@@ -68,6 +60,31 @@ async fn run_doc_mirror_script(
         );
     }
     Ok(())
+}
+
+pub(super) fn validate_doc_mirror_source(
+    workspace: &Workspace,
+    attachment: &WorkspaceAttachment,
+) -> Result<()> {
+    resolve_doc_mirror_script_path(workspace, attachment).map(|_| ())
+}
+
+fn resolve_doc_mirror_script_path(
+    workspace: &Workspace,
+    attachment: &WorkspaceAttachment,
+) -> Result<Option<PathBuf>> {
+    if looks_like_url(&attachment.source) {
+        return Ok(None);
+    }
+    let script_path = resolve_workspace_local_source(
+        Path::new(&workspace.root_path),
+        &attachment.source,
+        "doc mirror script",
+    )?;
+    if !script_path.is_file() {
+        anyhow::bail!("doc mirror script not found: {}", script_path.display());
+    }
+    Ok(Some(script_path))
 }
 
 fn docs_mirror_bin() -> PathBuf {

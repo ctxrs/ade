@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use tokio::process::Command;
 
 mod doc_mirror;
-use doc_mirror::materialize_doc_mirror;
+use doc_mirror::{materialize_doc_mirror, validate_doc_mirror_source};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AttachmentConfig {
@@ -110,13 +110,22 @@ where
             materialized_path_for_attachment(host.data_root(), &attachment).exists();
         let should_materialize = should_refresh || !materialized_exists;
         if should_materialize && attachment.status != WorkspaceAttachmentStatus::Syncing {
-            attachment.status = WorkspaceAttachmentStatus::Pending;
-            attachment.error_message = None;
-            attachment.updated_at = now;
-            plans.push(AttachmentSyncPlan {
-                id: attachment.id,
-                refresh: should_refresh,
-            });
+            match validate_attachment_source_before_materialization(workspace, &attachment) {
+                Ok(()) => {
+                    attachment.status = WorkspaceAttachmentStatus::Pending;
+                    attachment.error_message = None;
+                    attachment.updated_at = now;
+                    plans.push(AttachmentSyncPlan {
+                        id: attachment.id,
+                        refresh: should_refresh,
+                    });
+                }
+                Err(err) => {
+                    attachment.status = WorkspaceAttachmentStatus::Error;
+                    attachment.error_message = Some(err.to_string());
+                    attachment.updated_at = now;
+                }
+            }
         } else if !should_materialize && attachment.status != WorkspaceAttachmentStatus::Ready {
             attachment.status = WorkspaceAttachmentStatus::Ready;
             attachment.error_message = None;
@@ -130,6 +139,16 @@ where
     }
 
     Ok(WorkspaceAttachmentSyncResult { attachments, plans })
+}
+
+fn validate_attachment_source_before_materialization(
+    workspace: &Workspace,
+    attachment: &WorkspaceAttachment,
+) -> Result<()> {
+    match attachment.kind {
+        WorkspaceAttachmentKind::DocMirror => validate_doc_mirror_source(workspace, attachment),
+        WorkspaceAttachmentKind::ReferenceRepo => Ok(()),
+    }
 }
 
 pub async fn upsert_workspace_attachment<H>(
