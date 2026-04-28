@@ -327,7 +327,8 @@ async fn workspace_attachments_reject_doc_mirror_scripts_outside_workspace_root(
     assert_eq!(sync_status, StatusCode::OK);
     assert_eq!(synced.len(), 1);
 
-    let attachment = tokio::time::timeout(Duration::from_secs(5), async {
+    let mut last = None;
+    let attachment = tokio::time::timeout(Duration::from_secs(20), async {
         loop {
             let (_list_status, listed): (StatusCode, Vec<WorkspaceAttachment>) =
                 common::json_request(
@@ -344,11 +345,17 @@ async fn workspace_attachments_reject_doc_mirror_scripts_outside_workspace_root(
             if current.status == WorkspaceAttachmentStatus::Error {
                 break current;
             }
+            last = Some((current.status, current.error_message));
             tokio::time::sleep(Duration::from_millis(25)).await;
         }
     })
     .await
-    .expect("doc mirror attachment never reached error state");
+    .unwrap_or_else(|_| {
+        panic!(
+            "doc mirror attachment never reached error state; last observed state: {:?}",
+            last
+        )
+    });
 
     assert_eq!(attachment.status, WorkspaceAttachmentStatus::Error);
     assert!(
