@@ -29,6 +29,7 @@ mod provider_matrix;
 pub(crate) mod provider_model_preferences;
 pub mod provider_restart;
 mod provider_runtime;
+mod provider_unknown_events;
 pub(crate) mod provider_usability;
 mod provider_usage;
 pub mod resource_governance;

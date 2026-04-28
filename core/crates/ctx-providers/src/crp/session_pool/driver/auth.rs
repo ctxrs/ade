@@ -11,7 +11,9 @@ use ctx_core::models::SessionEventType;
 use crate::events::NormalizedEvent;
 
 use super::super::super::auth_required_notice_payload_from_stderr;
-use super::super::super::normalize::{event_matches_session, map_crp_event, CachedToolInput};
+use super::super::super::normalize::{
+    event_matches_session, map_crp_event, unknown_event_observation, CachedToolInput,
+};
 use super::super::super::policy::{
     extract_auth_error_from_stderr_line, extract_auth_url_from_stderr_line,
 };
@@ -30,6 +32,7 @@ impl CrpSessionPool {
         env: HashMap<String, String>,
         method_id: Option<String>,
         event_sink: tokio::sync::mpsc::Sender<NormalizedEvent>,
+        provider_unknown_event: Option<crate::adapters::ProviderUnknownEventHook>,
         provider_session_ref_claim: Option<crate::adapters::ProviderSessionRefClaimHook>,
     ) -> Result<()> {
         let busy_guard = self.session_busy_guard(session_key.clone());
@@ -140,6 +143,8 @@ impl CrpSessionPool {
                                 if auth_terminal_event {
                                     session_for_events.opening.store(false, Ordering::SeqCst);
                                 }
+                                let unknown_observation =
+                                    unknown_event_observation(&env.event, env.channel, env.seq);
                                 let mapped = map_crp_event(
                                     env.event,
                                     env.channel,
@@ -147,6 +152,11 @@ impl CrpSessionPool {
                                     &mut tool_output_cache,
                                     &mut tool_input_cache,
                                 );
+                                if let (Some(hook), Some(observation)) =
+                                    (&provider_unknown_event, unknown_observation)
+                                {
+                                    hook(observation).await;
+                                }
                                 for event in mapped.events {
                                     if event_sink.send(event).await.is_err() {
                                         break 'auth_forward;

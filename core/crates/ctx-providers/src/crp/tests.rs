@@ -11,7 +11,7 @@ use serde_json::json;
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::Duration;
 
-use super::normalize::{map_crp_event, CachedToolInput};
+use super::normalize::{map_crp_event, unknown_event_observation, CachedToolInput};
 use super::protocol::CrpEvent;
 use super::runtime::apply_outer_process_env;
 use super::*;
@@ -178,81 +178,113 @@ async fn set_session_model_writes_crp_command_for_live_session() -> Result<()> {
 }
 
 #[test]
-fn unknown_crp_event_maps_to_timeline_notice() {
+fn unknown_control_crp_event_maps_to_diagnostic_only_observation() {
     let mut tool_output_cache: HashMap<String, String> = HashMap::new();
     let mut tool_input_cache: HashMap<String, CachedToolInput> = HashMap::new();
 
+    let event = CrpEvent::Unknown {
+        event_type: "tool.progress".to_string(),
+        session_id: Some("session-1".to_string()),
+        turn_id: Some("turn-1".to_string()),
+        parse_error: "unknown variant `tool.progress`".to_string(),
+        raw: json!({
+            "type": "tool.progress",
+            "session_id": "session-1",
+            "turn_id": "turn-1",
+            "message": "Scanning files",
+            "percent": 50
+        }),
+    };
+
+    let observation = unknown_event_observation(&event, protocol::CrpChannel::Control, 11)
+        .expect("unknown control event should produce diagnostic observation");
     let mapped = map_crp_event(
-        CrpEvent::Unknown {
-            event_type: "tool.progress".to_string(),
-            session_id: Some("session-1".to_string()),
-            turn_id: Some("turn-1".to_string()),
-            parse_error: "unknown variant `tool.progress`".to_string(),
-            raw: json!({
-                "type": "tool.progress",
-                "session_id": "session-1",
-                "turn_id": "turn-1",
-                "message": "Scanning files",
-                "percent": 50
-            }),
-        },
-        protocol::CrpChannel::Data,
+        event,
+        protocol::CrpChannel::Control,
         11,
         &mut tool_output_cache,
         &mut tool_input_cache,
     );
 
-    assert_eq!(mapped.events.len(), 1);
-    assert!(matches!(
-        mapped.events[0].event_type,
-        SessionEventType::Notice
-    ));
-    let payload = &mapped.events[0].payload_json;
-    assert_eq!(payload.get("kind"), Some(&json!("crp_unknown_event")));
-    assert_eq!(payload.get("original_type"), Some(&json!("tool.progress")));
-    assert_eq!(payload.get("display_in_timeline"), Some(&json!(true)));
-    assert_eq!(payload.get("crp_seq"), Some(&json!(11)));
-    assert_eq!(payload.get("crp_channel"), Some(&json!("data")));
-    assert_eq!(payload.pointer("/raw/percent"), Some(&json!(50)));
+    assert!(mapped.events.is_empty());
+    assert!(!mapped.done);
+    assert_eq!(observation.protocol, "crp");
+    assert_eq!(observation.event_type, "tool.progress");
+    assert!(observation.crp_channel.is_none());
+    assert_eq!(observation.crp_seq, 11);
+    assert!(!observation.timeline_notice_emitted);
+    assert_eq!(observation.raw.pointer("/percent"), Some(&json!(50)));
 }
 
 #[test]
-fn unknown_crp_tool_event_preserves_tool_name_and_preview() {
+fn unknown_control_tool_event_keeps_raw_details_in_diagnostic_observation() {
     let mut tool_output_cache: HashMap<String, String> = HashMap::new();
     let mut tool_input_cache: HashMap<String, CachedToolInput> = HashMap::new();
 
+    let event = CrpEvent::Unknown {
+        event_type: "tool.progress".to_string(),
+        session_id: Some("session-1".to_string()),
+        turn_id: Some("turn-1".to_string()),
+        parse_error: "unknown variant `tool.progress`".to_string(),
+        raw: json!({
+            "type": "tool.progress",
+            "session_id": "session-1",
+            "turn_id": "turn-1",
+            "tool_name": "Bash",
+            "command": ["find", ".ctx/ctx-pack/agent-basics", "-type", "f"]
+        }),
+    };
+
+    let observation = unknown_event_observation(&event, protocol::CrpChannel::Control, 12)
+        .expect("unknown control event should produce diagnostic observation");
     let mapped = map_crp_event(
-        CrpEvent::Unknown {
-            event_type: "tool.progress".to_string(),
-            session_id: Some("session-1".to_string()),
-            turn_id: Some("turn-1".to_string()),
-            parse_error: "unknown variant `tool.progress`".to_string(),
-            raw: json!({
-                "type": "tool.progress",
-                "session_id": "session-1",
-                "turn_id": "turn-1",
-                "tool_name": "Bash",
-                "command": ["find", ".ctx/ctx-pack/agent-basics", "-type", "f"]
-            }),
-        },
-        protocol::CrpChannel::Data,
+        event,
+        protocol::CrpChannel::Control,
         12,
         &mut tool_output_cache,
         &mut tool_input_cache,
     );
 
-    let payload = &mapped.events[0].payload_json;
-    assert_eq!(payload.get("tool_name"), Some(&json!("Bash")));
-    assert_eq!(
-        payload.get("tool_preview"),
-        Some(&json!("find .ctx/ctx-pack/agent-basics -type f"))
+    assert!(mapped.events.is_empty());
+    assert_eq!(observation.raw.pointer("/command/0"), Some(&json!("find")));
+}
+
+#[test]
+fn unknown_data_crp_event_maps_to_diagnostic_only_observation() {
+    let mut tool_output_cache: HashMap<String, String> = HashMap::new();
+    let mut tool_input_cache: HashMap<String, CachedToolInput> = HashMap::new();
+    let event = CrpEvent::Unknown {
+        event_type: "tool.progress".to_string(),
+        session_id: Some("session-1".to_string()),
+        turn_id: Some("turn-1".to_string()),
+        parse_error: "unknown variant `tool.progress`".to_string(),
+        raw: json!({
+            "type": "tool.progress",
+            "session_id": "session-1",
+            "turn_id": "turn-1",
+            "message": "Scanning files",
+            "percent": 50
+        }),
+    };
+
+    let observation = unknown_event_observation(&event, protocol::CrpChannel::Data, 13)
+        .expect("unknown event should produce diagnostic observation");
+    let mapped = map_crp_event(
+        event,
+        protocol::CrpChannel::Data,
+        13,
+        &mut tool_output_cache,
+        &mut tool_input_cache,
     );
-    assert_eq!(
-        payload.get("message"),
-        Some(&json!(
-            "Unknown tool event: Bash · find .ctx/ctx-pack/agent-basics -type f"
-        ))
-    );
+
+    assert!(mapped.events.is_empty());
+    assert!(!mapped.done);
+    assert_eq!(observation.protocol, "crp");
+    assert_eq!(observation.event_type, "tool.progress");
+    assert_eq!(observation.crp_channel.as_deref(), Some("data"));
+    assert_eq!(observation.crp_seq, 13);
+    assert!(!observation.timeline_notice_emitted);
+    assert_eq!(observation.raw.pointer("/percent"), Some(&json!(50)));
 }
 
 #[tokio::test]
@@ -333,6 +365,7 @@ done
         workdir: workdir.clone(),
         env: env.clone(),
         event_sink: event_tx,
+        provider_unknown_event: None,
         provider_session_ref_claim: None,
         cancel_rx,
     };
@@ -1404,6 +1437,7 @@ done
         workdir: workdir.clone(),
         env: env.clone(),
         event_sink: event_tx,
+        provider_unknown_event: None,
         provider_session_ref_claim: None,
         cancel_rx,
     };
@@ -1497,6 +1531,7 @@ done
         workdir: workdir.clone(),
         env,
         event_sink: event_tx,
+        provider_unknown_event: None,
         provider_session_ref_claim: None,
         cancel_rx,
     };
@@ -1584,6 +1619,7 @@ done
         workdir: workdir.clone(),
         env,
         event_sink: event_tx,
+        provider_unknown_event: None,
         provider_session_ref_claim: None,
         cancel_rx,
     };
@@ -1672,6 +1708,7 @@ done
         workdir: workdir.clone(),
         env,
         event_sink: event_tx,
+        provider_unknown_event: None,
         provider_session_ref_claim: None,
         cancel_rx,
     };
@@ -1737,6 +1774,7 @@ done
         workdir: workdir.clone(),
         env,
         event_sink: event_tx,
+        provider_unknown_event: None,
         cancel_rx,
         provider_session_ref_claim: None,
     };
@@ -1842,6 +1880,7 @@ done
         workdir: workdir.clone(),
         env,
         event_sink: event_tx,
+        provider_unknown_event: None,
         cancel_rx,
         provider_session_ref_claim: None,
     };
@@ -2201,6 +2240,7 @@ done
         workdir: workdir.clone(),
         env: env.clone(),
         event_sink: event_tx,
+        provider_unknown_event: None,
         provider_session_ref_claim: None,
         cancel_rx,
     };
@@ -2332,6 +2372,7 @@ done
         workdir: workdir.clone(),
         env: env.clone(),
         event_sink: event_tx,
+        provider_unknown_event: None,
         provider_session_ref_claim: None,
         cancel_rx,
     };
@@ -2432,6 +2473,7 @@ done
         workdir: workdir.clone(),
         env: env.clone(),
         event_sink: event_tx,
+        provider_unknown_event: None,
         provider_session_ref_claim: None,
         cancel_rx,
     };
@@ -2523,6 +2565,7 @@ done
         workdir: workdir.clone(),
         env: env.clone(),
         event_sink: event_tx,
+        provider_unknown_event: None,
         provider_session_ref_claim: None,
         cancel_rx,
     };
@@ -2852,6 +2895,7 @@ done
             workdir: workdir.clone(),
             env,
             event_sink: event_tx,
+            provider_unknown_event: None,
             provider_session_ref_claim: None,
             cancel_rx,
         })
@@ -2933,6 +2977,7 @@ done
             workdir: workdir.clone(),
             env,
             event_sink: event_tx,
+            provider_unknown_event: None,
             provider_session_ref_claim: Some(Arc::new(|_claim| {
                 Box::pin(async { anyhow::bail!("claim rejected") })
             })),

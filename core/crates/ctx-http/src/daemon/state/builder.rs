@@ -70,6 +70,10 @@ impl AppState {
         let (shutdown_tx, _) = broadcast::channel(8);
         let ask_user_question = Arc::new(AskUserQuestionBroker::new());
         let telemetry = Telemetry::new(data_root.clone());
+        let provider_unknown_events = crate::provider_unknown_events::ProviderUnknownEvents::new(
+            data_root.clone(),
+            telemetry.clone(),
+        );
         let ops_events = OpsEvents::new(data_root.clone());
         let perf_telemetry = PerfTelemetry::new(data_root.clone());
         let runtime_events = Arc::new(CtxRuntimeEventSink::new(ops_events.clone()));
@@ -208,6 +212,7 @@ impl AppState {
                 telemetry,
                 ops_events,
                 perf_telemetry,
+                provider_unknown_events,
                 resource_governance: Mutex::new(ResourceGovernanceRuntime::default()),
                 resource_sampler: Mutex::new(ResourceSampler::new()),
             },

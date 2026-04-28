@@ -5,10 +5,6 @@ use ctx_core::models::SessionEventType;
 use crate::events::NormalizedEvent;
 
 use super::super::protocol::KnownCrpEvent;
-use super::super::unknown_event::{
-    bound_unknown_crp_payload, extract_unknown_crp_tool_name, extract_unknown_crp_tool_preview,
-    summarize_unknown_crp_event,
-};
 use super::MappedCrpEvent;
 
 fn is_auth_notice_code(code: &str) -> bool {
@@ -164,42 +160,14 @@ pub(super) fn map_known_event(event: KnownCrpEvent, seq: u64) -> MappedCrpEvent 
 }
 
 pub(super) fn map_unknown_event(
-    event_type: String,
-    parse_error: String,
-    raw: Value,
-    crp_channel: Option<&str>,
-    seq: u64,
+    _event_type: String,
+    _parse_error: String,
+    _raw: Value,
+    _crp_channel: Option<&str>,
+    _seq: u64,
 ) -> MappedCrpEvent {
-    let summary = summarize_unknown_crp_event(&raw)
-        .unwrap_or_else(|| format!("Unknown runtime event: {event_type}"));
-    let tool_name = extract_unknown_crp_tool_name(&raw);
-    let tool_preview = extract_unknown_crp_tool_preview(&raw);
-    let mut payload = serde_json::Map::new();
-    payload.insert("kind".to_string(), json!("crp_unknown_event"));
-    payload.insert("original_type".to_string(), json!(event_type));
-    payload.insert("message".to_string(), json!(summary));
-    payload.insert("parse_error".to_string(), json!(parse_error));
-    payload.insert("display_in_timeline".to_string(), json!(true));
-    if let Some(tool_name) = tool_name {
-        payload.insert("tool_name".to_string(), json!(tool_name));
-    }
-    if let Some(tool_preview) = tool_preview {
-        payload.insert("tool_preview".to_string(), json!(tool_preview));
-    }
-    let (bounded_raw, raw_truncated) = bound_unknown_crp_payload(raw);
-    payload.insert("raw".to_string(), bounded_raw);
-    if raw_truncated {
-        payload.insert("raw_truncated".to_string(), json!(true));
-    }
-    payload.insert("crp_seq".to_string(), json!(seq));
-    if let Some(channel) = crp_channel {
-        payload.insert("crp_channel".to_string(), json!(channel));
-    }
     MappedCrpEvent {
-        events: vec![NormalizedEvent {
-            event_type: SessionEventType::Notice,
-            payload_json: Value::Object(payload),
-        }],
+        events: Vec::new(),
         done: false,
     }
 }
@@ -210,7 +178,6 @@ mod tests {
 
     use crate::crp::normalize::CachedToolInput;
     use crate::crp::protocol::{CrpChannel, CrpEvent};
-
     use super::*;
 
     fn known(event: KnownCrpEvent) -> CrpEvent {
@@ -280,6 +247,34 @@ mod tests {
         assert!(!serialized.contains("https://auth.example.test/start"));
         assert!(!serialized.contains("token=secret"));
         assert!(!serialized.contains("raw provider payload"));
+    }
+
+    #[test]
+    fn unknown_data_channel_event_maps_to_no_events() {
+        let mut tool_output_cache: HashMap<String, String> = HashMap::new();
+        let mut tool_input_cache: HashMap<String, CachedToolInput> = HashMap::new();
+
+        let mapped = crate::crp::normalize::map_crp_event(
+            CrpEvent::Unknown {
+                event_type: "tool.progress".to_string(),
+                session_id: Some("session-1".to_string()),
+                turn_id: Some("turn-1".to_string()),
+                parse_error: "unknown variant `tool.progress`".to_string(),
+                raw: json!({
+                    "type": "tool.progress",
+                    "session_id": "session-1",
+                    "turn_id": "turn-1",
+                    "message": "chunk"
+                }),
+            },
+            CrpChannel::Data,
+            8,
+            &mut tool_output_cache,
+            &mut tool_input_cache,
+        );
+
+        assert!(mapped.events.is_empty());
+        assert!(!mapped.done);
     }
 
     #[test]

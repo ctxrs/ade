@@ -105,6 +105,7 @@ pub struct TelemetryRuntime {
     pub telemetry: Telemetry,
     pub ops_events: OpsEvents,
     pub perf_telemetry: PerfTelemetry,
+    pub(crate) provider_unknown_events: crate::provider_unknown_events::ProviderUnknownEvents,
     pub resource_governance: Mutex<ResourceGovernanceRuntime>,
     pub resource_sampler: Mutex<ResourceSampler>,
 }

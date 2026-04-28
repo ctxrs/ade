@@ -185,7 +185,6 @@ mod tests {
 
     use crate::crp::normalize::CachedToolInput;
     use crate::crp::protocol::{CrpChannel, CrpEvent};
-
     use super::*;
 
     fn known(event: KnownCrpEvent) -> CrpEvent {

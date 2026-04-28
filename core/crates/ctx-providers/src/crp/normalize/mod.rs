@@ -2,9 +2,10 @@ use std::collections::HashMap;
 
 use serde_json::Value;
 
-use crate::events::NormalizedEvent;
+use crate::events::{NormalizedEvent, ProviderUnknownEventObservation};
 
 use super::protocol::{CrpChannel, CrpEvent, KnownCrpEvent};
+use super::unknown_event::bound_unknown_crp_payload;
 
 mod ids;
 mod message_events;
@@ -66,6 +67,33 @@ pub(super) fn map_crp_event(
             ..
         } => notices::map_unknown_event(event_type, parse_error, raw, crp_channel, seq),
     }
+}
+
+pub(super) fn unknown_event_observation(
+    event: &CrpEvent,
+    channel: CrpChannel,
+    seq: u64,
+) -> Option<ProviderUnknownEventObservation> {
+    let CrpEvent::Unknown {
+        event_type,
+        parse_error,
+        raw,
+        ..
+    } = event
+    else {
+        return None;
+    };
+    let (raw, raw_truncated) = bound_unknown_crp_payload(raw.clone());
+    Some(ProviderUnknownEventObservation {
+        protocol: "crp",
+        event_type: event_type.clone(),
+        parse_error: parse_error.clone(),
+        raw,
+        raw_truncated,
+        crp_channel: crp_channel_value(channel).map(str::to_string),
+        crp_seq: seq,
+        timeline_notice_emitted: false,
+    })
 }
 
 pub(super) fn event_turn_id(event: &CrpEvent) -> Option<&str> {

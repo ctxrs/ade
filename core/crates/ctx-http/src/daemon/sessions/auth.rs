@@ -68,6 +68,15 @@ pub(crate) async fn run_session_authentication(
     )
     .await?;
 
+    let provider_unknown_event = crate::provider_unknown_events::provider_unknown_event_hook(
+        state.telemetry.provider_unknown_events.clone(),
+        crate::provider_unknown_events::ProviderUnknownEventContext {
+            provider_id: session.provider_id.clone(),
+            execution_environment: Some(session.execution_environment.as_str().to_string()),
+            session_root_kind: None,
+            operation: "auth".to_string(),
+        },
+    );
     let result = prepared
         .adapter
         .authenticate_session(
@@ -81,6 +90,7 @@ pub(crate) async fn run_session_authentication(
                     store.clone(),
                     session.id,
                 )),
+                provider_unknown_event: Some(provider_unknown_event),
             },
         )
         .await;

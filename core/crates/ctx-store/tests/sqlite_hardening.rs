@@ -368,6 +368,180 @@ async fn open_repairs_workspace_message_index_migration_version_conflict() -> Re
 }
 
 #[tokio::test]
+async fn unknown_data_cleanup_migration_deletes_noisy_notices() -> Result<()> {
+    let tempdir = tempfile::tempdir().context("creating tempdir for cleanup migration")?;
+    let db_path = tempdir.path().join("db.sqlite");
+    fs::File::create(&db_path).context("creating sqlite file")?;
+    let sqlite_url = sqlite_url(&db_path);
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect(&sqlite_url)
+        .await
+        .context("connecting cleanup migration pool")?;
+
+    execute_sql_script(
+        &pool,
+        r#"
+        CREATE TABLE session_events (
+            id TEXT PRIMARY KEY NOT NULL,
+            session_id TEXT NOT NULL,
+            event_type TEXT NOT NULL,
+            payload_json TEXT NOT NULL,
+            transient INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE TABLE session_head_materializations (
+            session_id TEXT PRIMARY KEY NOT NULL
+        );
+        CREATE TABLE session_active_snapshot_heads (
+            session_id TEXT PRIMARY KEY NOT NULL
+        );
+        CREATE TABLE session_snapshot_summaries (
+            session_id TEXT PRIMARY KEY NOT NULL,
+            projection_rev INTEGER NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        "#,
+    )
+    .await?;
+
+    insert_cleanup_event(
+        &pool,
+        "delete-tool-delta",
+        "session-delete",
+        "tool.output_delta",
+        Some("data"),
+        1,
+    )
+    .await?;
+    insert_cleanup_event(
+        &pool,
+        "keep-no-channel-delta",
+        "session-keep-no-channel",
+        "message_delta",
+        None,
+        1,
+    )
+    .await?;
+    insert_cleanup_event(
+        &pool,
+        "delete-progress",
+        "session-delete",
+        "tool.progress",
+        Some("data"),
+        1,
+    )
+    .await?;
+    insert_cleanup_event(
+        &pool,
+        "keep-control-delta",
+        "session-keep",
+        "tool.output_delta",
+        Some("control"),
+        0,
+    )
+    .await?;
+    insert_cleanup_event(
+        &pool,
+        "keep-nontransient-data",
+        "session-data-channel",
+        "tool.output-delta",
+        Some("data"),
+        0,
+    )
+    .await?;
+
+    for session_id in [
+        "session-delete",
+        "session-keep",
+        "session-data-channel",
+        "session-keep-no-channel",
+    ] {
+        sqlx::query("INSERT INTO session_head_materializations (session_id) VALUES (?)")
+            .bind(session_id)
+            .execute(&pool)
+            .await?;
+        sqlx::query("INSERT INTO session_active_snapshot_heads (session_id) VALUES (?)")
+            .bind(session_id)
+            .execute(&pool)
+            .await?;
+        sqlx::query(
+            "INSERT INTO session_snapshot_summaries (session_id, projection_rev, updated_at) VALUES (?, 7, 'before')",
+        )
+        .bind(session_id)
+        .execute(&pool)
+        .await?;
+    }
+
+    execute_sql_script(
+        &pool,
+        include_str!("../migrations/0066_cleanup_unknown_data_events.sql"),
+    )
+    .await?;
+
+    let remaining_events: Vec<String> =
+        sqlx::query_scalar("SELECT id FROM session_events ORDER BY id")
+            .fetch_all(&pool)
+            .await?;
+    assert_eq!(
+        remaining_events,
+        vec![
+            "keep-control-delta",
+            "keep-no-channel-delta",
+            "keep-nontransient-data",
+        ]
+    );
+
+    let remaining_materializations: Vec<String> = sqlx::query_scalar(
+        "SELECT session_id FROM session_head_materializations ORDER BY session_id",
+    )
+    .fetch_all(&pool)
+    .await?;
+    assert_eq!(
+        remaining_materializations,
+        vec![
+            "session-data-channel",
+            "session-keep",
+            "session-keep-no-channel",
+        ]
+    );
+
+    let remaining_active_heads: Vec<String> = sqlx::query_scalar(
+        "SELECT session_id FROM session_active_snapshot_heads ORDER BY session_id",
+    )
+    .fetch_all(&pool)
+    .await?;
+    assert_eq!(
+        remaining_active_heads,
+        vec![
+            "session-data-channel",
+            "session-keep",
+            "session-keep-no-channel",
+        ]
+    );
+
+    let projection_revs: Vec<(String, i64)> = sqlx::query(
+        "SELECT session_id, projection_rev FROM session_snapshot_summaries ORDER BY session_id",
+    )
+    .fetch_all(&pool)
+    .await?
+    .into_iter()
+    .map(|row| Ok((row.try_get("session_id")?, row.try_get("projection_rev")?)))
+    .collect::<Result<_>>()?;
+    assert_eq!(
+        projection_revs,
+        vec![
+            ("session-data-channel".to_string(), 7),
+            ("session-delete".to_string(), 8),
+            ("session-keep".to_string(), 7),
+            ("session-keep-no-channel".to_string(), 7),
+        ]
+    );
+
+    pool.close().await;
+    Ok(())
+}
+
+#[tokio::test]
 async fn open_repairs_historical_tool_order_seq_duplicate_version() -> Result<()> {
     let tempdir = tempfile::tempdir().context("creating tempdir for tool-order repair")?;
     let subset_dir = tempdir.path().join("subset-migrations");
@@ -715,6 +889,48 @@ async fn lock_holder_child() -> Result<()> {
         .await
         .context("committing child transaction")?;
     store.close().await;
+    Ok(())
+}
+
+async fn execute_sql_script(pool: &sqlx::SqlitePool, script: &str) -> Result<()> {
+    for statement in script.split(';') {
+        let statement = statement.trim();
+        if statement.is_empty() {
+            continue;
+        }
+        sqlx::query(statement)
+            .execute(pool)
+            .await
+            .with_context(|| format!("executing SQL statement: {statement}"))?;
+    }
+    Ok(())
+}
+
+async fn insert_cleanup_event(
+    pool: &sqlx::SqlitePool,
+    id: &str,
+    session_id: &str,
+    original_type: &str,
+    crp_channel: Option<&str>,
+    transient: i64,
+) -> Result<()> {
+    let mut payload = serde_json::json!({
+        "kind": "crp_unknown_event",
+        "original_type": original_type,
+    });
+    if let Some(channel) = crp_channel {
+        payload["crp_channel"] = serde_json::json!(channel);
+    }
+    sqlx::query(
+        r#"INSERT INTO session_events (id, session_id, event_type, payload_json, transient)
+           VALUES (?, ?, 'notice', ?, ?)"#,
+    )
+    .bind(id)
+    .bind(session_id)
+    .bind(payload.to_string())
+    .bind(transient)
+    .execute(pool)
+    .await?;
     Ok(())
 }
 

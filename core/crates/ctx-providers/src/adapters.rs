@@ -15,7 +15,7 @@ use tokio::task::AbortHandle;
 use ctx_core::boolish::parse_boolish;
 use ctx_core::models::MessageAttachment;
 
-use crate::events::NormalizedEvent;
+use crate::events::{NormalizedEvent, ProviderUnknownEventObservation};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderCapabilities {
@@ -154,9 +154,15 @@ pub type ProviderSessionRefClaimFuture = Pin<Box<dyn Future<Output = Result<()>>
 pub type ProviderSessionRefClaimHook =
     Arc<dyn Fn(ProviderSessionRefClaim) -> ProviderSessionRefClaimFuture + Send + Sync>;
 
+pub type ProviderUnknownEventFuture = Pin<Box<dyn Future<Output = ()> + Send>>;
+
+pub type ProviderUnknownEventHook =
+    Arc<dyn Fn(ProviderUnknownEventObservation) -> ProviderUnknownEventFuture + Send + Sync>;
+
 #[derive(Clone, Default)]
 pub struct ProviderRunHooks {
     pub provider_session_ref_claim: Option<ProviderSessionRefClaimHook>,
+    pub provider_unknown_event: Option<ProviderUnknownEventHook>,
 }
 
 impl std::fmt::Debug for ProviderRunHooks {
@@ -165,6 +171,10 @@ impl std::fmt::Debug for ProviderRunHooks {
             .field(
                 "provider_session_ref_claim",
                 &self.provider_session_ref_claim.is_some(),
+            )
+            .field(
+                "provider_unknown_event",
+                &self.provider_unknown_event.is_some(),
             )
             .finish()
     }

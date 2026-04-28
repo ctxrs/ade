@@ -10,6 +10,7 @@ use tokio::sync::{mpsc, oneshot};
 use crate::events::NormalizedEvent;
 
 use super::super::runtime::CrpProcess;
+use crate::adapters::ProviderUnknownEventHook;
 
 #[derive(Debug, Clone, Deserialize)]
 pub(in crate::crp::session_pool) struct CrpSessionStatusDetails {
@@ -76,6 +77,7 @@ pub(in crate::crp) struct CrpPromptRequest {
     pub(in crate::crp) workdir: PathBuf,
     pub(in crate::crp) env: HashMap<String, String>,
     pub(in crate::crp) event_sink: mpsc::Sender<NormalizedEvent>,
+    pub(in crate::crp) provider_unknown_event: Option<ProviderUnknownEventHook>,
     pub(in crate::crp) provider_session_ref_claim:
         Option<crate::adapters::ProviderSessionRefClaimHook>,
     pub(in crate::crp) cancel_rx: oneshot::Receiver<()>,

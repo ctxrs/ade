@@ -17,7 +17,7 @@ use super::super::super::config::{
     model_override_disabled, provider_requires_flattened_text_prompt, split_model_id_and_effort,
 };
 use super::super::super::normalize::{
-    event_matches_session, event_turn_id, map_crp_event, CachedToolInput,
+    event_matches_session, event_turn_id, map_crp_event, unknown_event_observation, CachedToolInput,
 };
 use super::super::super::policy::{
     parse_native_crp_slash_command_for_provider, validate_provider_slash_command_support,
@@ -222,6 +222,8 @@ impl CrpSessionPool {
                                     return Err(err);
                                 }
                                 apply_session_opened_state(&session, &env.event);
+                                let unknown_observation =
+                                    unknown_event_observation(&env.event, env.channel, env.seq);
                                 let mapped = map_crp_event(
                                     env.event,
                                     env.channel,
@@ -229,6 +231,11 @@ impl CrpSessionPool {
                                     &mut tool_output_cache,
                                     &mut tool_input_cache,
                                 );
+                                if let (Some(hook), Some(observation)) =
+                                    (&req.provider_unknown_event, unknown_observation)
+                                {
+                                    hook(observation).await;
+                                }
                                 update_terminal_outcome(&mut outcome, &mapped.events, mapped.done);
                                 for event in mapped.events {
                                     if let Some(file) = dump_norm_file.as_mut() {
@@ -468,6 +475,8 @@ impl CrpSessionPool {
                                 if auth_required {
                                     session.opening.store(false, Ordering::SeqCst);
                                 }
+                                let unknown_observation =
+                                    unknown_event_observation(&env.event, env.channel, env.seq);
                                 let mapped = map_crp_event(
                                     env.event,
                                     env.channel,
@@ -475,6 +484,11 @@ impl CrpSessionPool {
                                     &mut tool_output_cache,
                                     &mut tool_input_cache,
                                 );
+                                if let (Some(hook), Some(observation)) =
+                                    (&req.provider_unknown_event, unknown_observation)
+                                {
+                                    hook(observation).await;
+                                }
                                 update_terminal_outcome(&mut outcome, &mapped.events, mapped.done);
                                 for event in mapped.events {
                                     if let Some(file) = dump_norm_file.as_mut() {

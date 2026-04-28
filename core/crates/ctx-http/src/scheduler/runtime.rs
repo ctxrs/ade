@@ -441,6 +441,15 @@ pub(crate) async fn start_turn(
             Ok(())
         })
     });
+    let provider_unknown_event = crate::provider_unknown_events::provider_unknown_event_hook(
+        state.telemetry.provider_unknown_events.clone(),
+        crate::provider_unknown_events::ProviderUnknownEventContext {
+            provider_id: session.provider_id.clone(),
+            execution_environment: Some(execution_environment.as_str().to_string()),
+            session_root_kind: Some(session_root_kind.to_string()),
+            operation: "turn".to_string(),
+        },
+    );
     let handle = match adapter
         .run(
             TurnInput {
@@ -454,6 +463,7 @@ pub(crate) async fn start_turn(
             ev_tx,
             ProviderRunHooks {
                 provider_session_ref_claim: Some(provider_session_ref_claim),
+                provider_unknown_event: Some(provider_unknown_event),
             },
         )
         .await

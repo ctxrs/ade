@@ -193,6 +193,7 @@ impl ProviderAdapter for Tier1CrpAdapter {
                 workdir,
                 env,
                 event_sink,
+                provider_unknown_event: hooks.provider_unknown_event,
                 provider_session_ref_claim: hooks.provider_session_ref_claim,
                 cancel_rx,
             };
@@ -290,6 +291,7 @@ impl ProviderAdapter for Tier1CrpAdapter {
                 env,
                 method_id,
                 event_sink,
+                hooks.provider_unknown_event,
                 hooks.provider_session_ref_claim,
             )
             .await
