@@ -260,7 +260,7 @@ pub(crate) enum LocalActivationOutcome {
 
 pub(crate) fn activation_args(data_dir: &Path, allow_user: &str) -> Vec<String> {
     vec![
-        "/bin/sh".to_string(),
+        "bash".to_string(),
         "-s".to_string(),
         "--".to_string(),
         "activate".to_string(),
