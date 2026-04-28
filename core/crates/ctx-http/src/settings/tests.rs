@@ -3,7 +3,54 @@ use super::update::{
     UpdateTitleGenerationRemoteSettingsReq, UpdateTitleGenerationSettingsReq,
 };
 use super::*;
+use ctx_store::Store;
 use serde_json::json;
+
+fn runtime_settings_secret_sidecar_path(
+    root: &std::path::Path,
+    db_file_name: &str,
+    secret_ref: &str,
+) -> std::path::PathBuf {
+    root.join("runtime_settings_secrets")
+        .join(db_file_name)
+        .join(format!("{secret_ref}.json"))
+}
+
+fn sqlite_artifact_paths(db_path: &std::path::Path) -> Vec<std::path::PathBuf> {
+    vec![
+        db_path.to_path_buf(),
+        db_path.with_extension("sqlite-wal"),
+        db_path.with_extension("sqlite-shm"),
+        db_path.with_extension("sqlite-journal"),
+    ]
+}
+
+fn bytes_contain(haystack: &[u8], needle: &[u8]) -> bool {
+    if needle.is_empty() {
+        return false;
+    }
+    haystack
+        .windows(needle.len())
+        .any(|window| window == needle)
+}
+
+async fn assert_secret_absent_from_sqlite_artifacts(db_path: &std::path::Path, secret: &str) {
+    for artifact_path in sqlite_artifact_paths(db_path) {
+        let bytes = match tokio::fs::read(&artifact_path).await {
+            Ok(bytes) => bytes,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(err) => panic!(
+                "failed to read sqlite artifact {}: {err}",
+                artifact_path.display()
+            ),
+        };
+        assert!(
+            !bytes_contain(&bytes, secret.as_bytes()),
+            "found secret bytes in sqlite artifact {}",
+            artifact_path.display()
+        );
+    }
+}
 
 #[test]
 fn network_profiles_defaults_are_safe_for_system_tasks() {
@@ -196,6 +243,234 @@ fn to_public_redacts_secret_values() {
     );
     let oracle = public.oracle.as_ref().expect("oracle");
     assert!(oracle.api_key_set);
+}
+
+#[tokio::test]
+async fn save_settings_persists_runtime_secrets_outside_sqlite() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("db.sqlite");
+    let store = Store::open(&db_path).await.unwrap();
+    let settings = Settings {
+        dictation: Some(DictationSettings {
+            enabled: true,
+            provider: DictationProvider::LiveKitInference,
+            livekit: Some(LiveKitDictationSettings {
+                base_url: "https://livekit.example".to_string(),
+                api_key: "lk-key".to_string(),
+                api_secret: Some("lk-secret".to_string()),
+                model: "auto".to_string(),
+                language: "en".to_string(),
+            }),
+        }),
+        title_generation: Some(TitleGenerationSettings {
+            mode: TitleGenerationMode::Remote,
+            remote: TitleGenerationRemoteSettings {
+                base_url: "https://titles.example".to_string(),
+                api_key: "title-key".to_string(),
+                model: "gpt-test".to_string(),
+                use_json: true,
+            },
+            local: TitleGenerationLocalSettings::default(),
+        }),
+        oracle: Some(OracleSettings {
+            api_key: "oracle-key".to_string(),
+            ..OracleSettings::default()
+        }),
+        cloud_workers: Some(CloudWorkersSettings {
+            aws: Some(AwsCloudWorkersSettings {
+                access_key_id: "aws-access-key".to_string(),
+                secret_access_key: "aws-secret-key".to_string(),
+                region: "us-east-1".to_string(),
+                gateway_instance_type: "t3.small".to_string(),
+                worker_instance_type: "t3.small".to_string(),
+                ..AwsCloudWorkersSettings::default()
+            }),
+            ..CloudWorkersSettings::default()
+        }),
+        ..Settings::default()
+    };
+
+    save_settings(&store, &settings).await.unwrap();
+    let doc = store
+        .get_runtime_settings_document()
+        .await
+        .unwrap()
+        .expect("runtime settings document");
+    let settings_json = doc.settings_json;
+    let secret_ref = doc.secret_ref.expect("runtime settings secret_ref");
+    let secret_path = runtime_settings_secret_sidecar_path(dir.path(), "db.sqlite", &secret_ref);
+
+    assert!(!secret_ref.is_empty());
+    assert!(!settings_json.contains("lk-key"));
+    assert!(!settings_json.contains("lk-secret"));
+    assert!(!settings_json.contains("title-key"));
+    assert!(!settings_json.contains("oracle-key"));
+    assert!(!settings_json.contains("aws-access-key"));
+    assert!(!settings_json.contains("aws-secret-key"));
+    assert!(secret_path.exists());
+    assert_secret_absent_from_sqlite_artifacts(&db_path, "lk-key").await;
+    assert_secret_absent_from_sqlite_artifacts(&db_path, "lk-secret").await;
+    assert_secret_absent_from_sqlite_artifacts(&db_path, "title-key").await;
+    assert_secret_absent_from_sqlite_artifacts(&db_path, "oracle-key").await;
+    assert_secret_absent_from_sqlite_artifacts(&db_path, "aws-access-key").await;
+    assert_secret_absent_from_sqlite_artifacts(&db_path, "aws-secret-key").await;
+
+    let loaded = load_settings(&store).await.unwrap();
+    let livekit = loaded
+        .dictation
+        .as_ref()
+        .and_then(|dictation| dictation.livekit.as_ref())
+        .unwrap();
+    assert_eq!(livekit.api_key, "lk-key");
+    assert_eq!(livekit.api_secret.as_deref(), Some("lk-secret"));
+    assert_eq!(
+        loaded.title_generation.as_ref().unwrap().remote.api_key,
+        "title-key"
+    );
+    assert_eq!(loaded.oracle.as_ref().unwrap().api_key, "oracle-key");
+    let aws = loaded
+        .cloud_workers
+        .as_ref()
+        .and_then(|cloud_workers| cloud_workers.aws.as_ref())
+        .unwrap();
+    assert_eq!(aws.access_key_id, "aws-access-key");
+    assert_eq!(aws.secret_access_key, "aws-secret-key");
+}
+
+#[tokio::test]
+async fn load_settings_migrates_legacy_runtime_setting_secrets() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("db.sqlite");
+    let store = Store::open(&db_path).await.unwrap();
+    let legacy = Settings {
+        dictation: Some(DictationSettings {
+            enabled: true,
+            provider: DictationProvider::LiveKitInference,
+            livekit: Some(LiveKitDictationSettings {
+                base_url: "https://livekit.example".to_string(),
+                api_key: "lk-key".to_string(),
+                api_secret: Some("lk-secret".to_string()),
+                model: "auto".to_string(),
+                language: "en".to_string(),
+            }),
+        }),
+        title_generation: Some(TitleGenerationSettings {
+            mode: TitleGenerationMode::Remote,
+            remote: TitleGenerationRemoteSettings {
+                base_url: "https://titles.example".to_string(),
+                api_key: "title-key".to_string(),
+                model: "gpt-test".to_string(),
+                use_json: true,
+            },
+            local: TitleGenerationLocalSettings::default(),
+        }),
+        oracle: Some(OracleSettings {
+            api_key: "oracle-key".to_string(),
+            ..OracleSettings::default()
+        }),
+        cloud_workers: Some(CloudWorkersSettings {
+            aws: Some(AwsCloudWorkersSettings {
+                access_key_id: "aws-access-key".to_string(),
+                secret_access_key: "aws-secret-key".to_string(),
+                region: "us-east-1".to_string(),
+                gateway_instance_type: "t3.small".to_string(),
+                worker_instance_type: "t3.small".to_string(),
+                ..AwsCloudWorkersSettings::default()
+            }),
+            ..CloudWorkersSettings::default()
+        }),
+        ..Settings::default()
+    };
+    let legacy_json = serde_json::to_string_pretty(&legacy).unwrap();
+    store
+        .upsert_runtime_settings_document(1, &legacy_json)
+        .await
+        .unwrap();
+    store.close().await;
+
+    let store = Store::open(&db_path).await.unwrap();
+
+    let loaded = load_settings(&store).await.unwrap();
+    let livekit = loaded
+        .dictation
+        .as_ref()
+        .and_then(|dictation| dictation.livekit.as_ref())
+        .unwrap();
+    assert_eq!(livekit.api_key, "lk-key");
+    assert_eq!(livekit.api_secret.as_deref(), Some("lk-secret"));
+    assert_eq!(
+        loaded.title_generation.as_ref().unwrap().remote.api_key,
+        "title-key"
+    );
+    assert_eq!(loaded.oracle.as_ref().unwrap().api_key, "oracle-key");
+    let aws = loaded
+        .cloud_workers
+        .as_ref()
+        .and_then(|cloud_workers| cloud_workers.aws.as_ref())
+        .unwrap();
+    assert_eq!(aws.access_key_id, "aws-access-key");
+    assert_eq!(aws.secret_access_key, "aws-secret-key");
+
+    let doc = store
+        .get_runtime_settings_document()
+        .await
+        .unwrap()
+        .expect("runtime settings document");
+    let settings_json = doc.settings_json;
+    let secret_ref = doc.secret_ref.expect("runtime settings secret_ref");
+    let secret_path = runtime_settings_secret_sidecar_path(dir.path(), "db.sqlite", &secret_ref);
+
+    assert!(!settings_json.contains("lk-key"));
+    assert!(!settings_json.contains("lk-secret"));
+    assert!(!settings_json.contains("title-key"));
+    assert!(!settings_json.contains("oracle-key"));
+    assert!(!settings_json.contains("aws-access-key"));
+    assert!(!settings_json.contains("aws-secret-key"));
+    assert!(secret_path.exists());
+    assert_secret_absent_from_sqlite_artifacts(&db_path, "lk-key").await;
+    assert_secret_absent_from_sqlite_artifacts(&db_path, "lk-secret").await;
+    assert_secret_absent_from_sqlite_artifacts(&db_path, "title-key").await;
+    assert_secret_absent_from_sqlite_artifacts(&db_path, "oracle-key").await;
+    assert_secret_absent_from_sqlite_artifacts(&db_path, "aws-access-key").await;
+    assert_secret_absent_from_sqlite_artifacts(&db_path, "aws-secret-key").await;
+}
+
+#[tokio::test]
+async fn load_settings_fails_closed_on_corrupt_runtime_setting_secret_sidecar() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("db.sqlite");
+    let store = Store::open(&db_path).await.unwrap();
+    let settings = Settings {
+        dictation: Some(DictationSettings {
+            enabled: true,
+            provider: DictationProvider::LiveKitInference,
+            livekit: Some(LiveKitDictationSettings {
+                base_url: "https://livekit.example".to_string(),
+                api_key: "lk-key".to_string(),
+                api_secret: Some("lk-secret".to_string()),
+                model: "auto".to_string(),
+                language: "en".to_string(),
+            }),
+        }),
+        ..Settings::default()
+    };
+    save_settings(&store, &settings).await.unwrap();
+    let secret_ref = store
+        .get_runtime_settings_document()
+        .await
+        .unwrap()
+        .expect("runtime settings document")
+        .secret_ref
+        .expect("runtime settings secret_ref");
+    let secret_path = runtime_settings_secret_sidecar_path(dir.path(), "db.sqlite", &secret_ref);
+    tokio::fs::write(&secret_path, b"{not valid json")
+        .await
+        .unwrap();
+
+    let err = load_settings(&store).await.unwrap_err();
+    assert!(err
+        .to_string()
+        .contains("parsing runtime settings secret envelope"));
 }
 
 #[test]

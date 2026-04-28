@@ -90,12 +90,29 @@ async fn load_mobile_access_secret_ref(store: &Store) -> String {
     .unwrap()
 }
 
+async fn load_runtime_settings_secret_ref(store: &Store) -> String {
+    sqlx::query_scalar::<_, String>("SELECT secret_ref FROM runtime_settings WHERE id = 'default'")
+        .fetch_one(store.pool())
+        .await
+        .unwrap()
+}
+
 fn mobile_access_secret_sidecar_path(
     root: &std::path::Path,
     db_file_name: &str,
     secret_ref: &str,
 ) -> std::path::PathBuf {
     root.join("mobile_access_secrets")
+        .join(db_file_name)
+        .join(format!("{secret_ref}.json"))
+}
+
+fn runtime_settings_secret_sidecar_path(
+    root: &std::path::Path,
+    db_file_name: &str,
+    secret_ref: &str,
+) -> std::path::PathBuf {
+    root.join("runtime_settings_secrets")
         .join(db_file_name)
         .join(format!("{secret_ref}.json"))
 }
@@ -262,6 +279,9 @@ async fn mobile_access_config_get_migrates_legacy_sqlite_secrets() {
     .execute(store.pool())
     .await
     .unwrap();
+    store.close().await;
+
+    let store = Store::open(&db_path).await.unwrap();
 
     let config = store.get_mobile_access_config().await.unwrap().unwrap();
     assert_eq!(config.tunnel_secret, "legacy-secret");
@@ -280,6 +300,8 @@ async fn mobile_access_config_get_migrates_legacy_sqlite_secrets() {
     assert!(tunnel_secret.is_empty());
     assert!(daemon_private_key.is_empty());
     assert!(mobile_access_secret_sidecar_path(dir.path(), "db.sqlite", &secret_ref).exists());
+    assert_secret_absent_from_sqlite_artifacts(&db_path, "legacy-secret").await;
+    assert_secret_absent_from_sqlite_artifacts(&db_path, "legacy-private").await;
 }
 
 #[tokio::test]
@@ -512,6 +534,71 @@ async fn mobile_access_config_upsert_cleans_legacy_id_keyed_sidecar_without_secr
     assert!(new_path.exists());
     assert_secret_absent_from_sqlite_artifacts(&db_path, "new-secret").await;
     assert_secret_absent_from_sqlite_artifacts(&db_path, "new-private-key").await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn runtime_settings_upsert_with_secrets_persists_secret_blob_outside_sqlite() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("db.sqlite");
+    let store = Store::open(&db_path).await.unwrap();
+
+    let doc = store
+        .upsert_runtime_settings_document_with_secrets(
+            1,
+            "{\"dictation\":{}}",
+            "{\"api_key\":\"secret-1\",\"oracle\":\"secret-2\"}",
+        )
+        .await
+        .unwrap();
+    let secret_ref = load_runtime_settings_secret_ref(&store).await;
+    assert_eq!(doc.secret_ref.as_deref(), Some(secret_ref.as_str()));
+    let secret_path = runtime_settings_secret_sidecar_path(dir.path(), "db.sqlite", &secret_ref);
+    let sidecar = tokio::fs::read_to_string(&secret_path).await.unwrap();
+    let metadata = tokio::fs::metadata(&secret_path).await.unwrap();
+
+    assert_eq!(metadata.permissions().mode() & 0o777, 0o600);
+    assert!(sidecar.contains("secret-1"));
+    assert!(sidecar.contains("secret-2"));
+    assert_secret_absent_from_sqlite_artifacts(&db_path, "secret-1").await;
+    assert_secret_absent_from_sqlite_artifacts(&db_path, "secret-2").await;
+}
+
+#[tokio::test]
+async fn runtime_settings_upsert_with_secrets_rotates_secret_ref_and_cleans_old_sidecar() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("db.sqlite");
+    let store = Store::open(&db_path).await.unwrap();
+
+    store
+        .upsert_runtime_settings_document_with_secrets(
+            1,
+            "{\"dictation\":{}}",
+            "{\"api_key\":\"secret-1\"}",
+        )
+        .await
+        .unwrap();
+    let first_ref = load_runtime_settings_secret_ref(&store).await;
+    let first_path = runtime_settings_secret_sidecar_path(dir.path(), "db.sqlite", &first_ref);
+    assert!(first_path.exists());
+
+    store
+        .upsert_runtime_settings_document_with_secrets(
+            1,
+            "{\"dictation\":{}}",
+            "{\"api_key\":\"secret-2\"}",
+        )
+        .await
+        .unwrap();
+    let second_ref = load_runtime_settings_secret_ref(&store).await;
+    let second_path = runtime_settings_secret_sidecar_path(dir.path(), "db.sqlite", &second_ref);
+
+    assert_ne!(first_ref, second_ref);
+    assert!(!first_path.exists());
+    assert!(second_path.exists());
+    assert_secret_absent_from_sqlite_artifacts(&db_path, "secret-2").await;
 }
 
 async fn create_peer_session(fixture: &SessionFixture) -> SessionId {

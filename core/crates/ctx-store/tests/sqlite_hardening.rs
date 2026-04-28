@@ -601,6 +601,11 @@ async fn sqlite_pragmas_and_integrity_hold_after_reopen() -> Result<()> {
         .context("listing messages after reopen")?;
     assert_eq!(events.len(), 1, "event log should survive reopen");
     assert_eq!(messages.len(), 1, "message write should survive reopen");
+    let secure_delete_enabled: i64 = sqlx::query_scalar("PRAGMA secure_delete")
+        .fetch_one(reopened.pool())
+        .await
+        .context("querying secure_delete on reopened store")?;
+    assert_ne!(secure_delete_enabled, 0);
     reopened.close().await;
 
     assert_store_integrity(&db_path).await?;

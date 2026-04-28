@@ -53,6 +53,34 @@ fn mobile_access_secret_path(db_path: &Path, secret_ref: &str) -> Result<PathBuf
     Ok(mobile_access_secret_root(db_path).join(format!("{secret_ref}.json")))
 }
 
+fn ensure_safe_runtime_settings_secret_ref(secret_ref: &str) -> Result<()> {
+    if secret_ref.trim().is_empty() {
+        anyhow::bail!("runtime settings secret_ref is required");
+    }
+    let mut components = std::path::Path::new(secret_ref).components();
+    match (components.next(), components.next()) {
+        (Some(std::path::Component::Normal(_)), None) => Ok(()),
+        _ => anyhow::bail!("runtime settings secret_ref must be a single path segment"),
+    }
+}
+
+fn runtime_settings_secret_root(db_path: &Path) -> PathBuf {
+    let db_namespace = db_path
+        .file_name()
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("store.sqlite"));
+    db_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join("runtime_settings_secrets")
+        .join(db_namespace)
+}
+
+fn runtime_settings_secret_path(db_path: &Path, secret_ref: &str) -> Result<PathBuf> {
+    ensure_safe_runtime_settings_secret_ref(secret_ref)?;
+    Ok(runtime_settings_secret_root(db_path).join(format!("{secret_ref}.json")))
+}
+
 async fn ensure_private_dir(path: &Path) -> Result<()> {
     tokio::fs::create_dir_all(path).await?;
     #[cfg(unix)]
@@ -169,6 +197,7 @@ pub struct RuntimeSettingsDocument {
     pub id: String,
     pub schema_version: i64,
     pub settings_json: String,
+    pub secret_ref: Option<String>,
     pub updated_at: DateTime<Utc>,
 }
 
@@ -183,10 +212,22 @@ impl Store {
         uuid::Uuid::new_v4().to_string()
     }
 
+    fn next_runtime_settings_secret_ref() -> String {
+        uuid::Uuid::new_v4().to_string()
+    }
+
     fn mobile_access_secret_db_path(&self) -> Result<&Path> {
         self.sqlite_path.as_deref().ok_or_else(|| {
             anyhow::anyhow!(
                 "mobile access secret storage requires a filesystem-backed sqlite store"
+            )
+        })
+    }
+
+    fn runtime_settings_secret_db_path(&self) -> Result<&Path> {
+        self.sqlite_path.as_deref().ok_or_else(|| {
+            anyhow::anyhow!(
+                "runtime settings secret storage requires a filesystem-backed sqlite store"
             )
         })
     }
@@ -249,6 +290,42 @@ impl Store {
         }
     }
 
+    async fn write_runtime_settings_secrets(
+        &self,
+        secret_ref: &str,
+        settings_secret_json: &str,
+    ) -> Result<()> {
+        let path =
+            runtime_settings_secret_path(self.runtime_settings_secret_db_path()?, secret_ref)?;
+        write_secure_file_atomic(&path, settings_secret_json.as_bytes()).await
+    }
+
+    pub async fn read_runtime_settings_secrets_if_present(
+        &self,
+        secret_ref: &str,
+    ) -> Result<Option<String>> {
+        let path =
+            runtime_settings_secret_path(self.runtime_settings_secret_db_path()?, secret_ref)?;
+        match tokio::fs::read_to_string(&path).await {
+            Ok(payload) => Ok(Some(payload)),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(err) => Err(err)
+                .with_context(|| format!("reading runtime settings secrets at {}", path.display())),
+        }
+    }
+
+    async fn remove_runtime_settings_secrets_if_present(&self, secret_ref: &str) -> Result<()> {
+        let path =
+            runtime_settings_secret_path(self.runtime_settings_secret_db_path()?, secret_ref)?;
+        match tokio::fs::remove_file(&path).await {
+            Ok(_) => Ok(()),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(err) => Err(err).with_context(|| {
+                format!("removing runtime settings secrets at {}", path.display())
+            }),
+        }
+    }
+
     async fn migrate_legacy_mobile_access_secrets(
         &self,
         id: &str,
@@ -274,6 +351,7 @@ impl Store {
                 .await;
             return Err(err);
         }
+        self.checkpoint_wal_truncate().await?;
         Ok(Some((
             legacy_tunnel_secret.to_string(),
             legacy_daemon_private_key.to_string(),
@@ -316,6 +394,17 @@ impl Store {
         .map_err(Into::into)
     }
 
+    async fn lookup_runtime_settings_secret_ref(&self) -> Result<Option<String>> {
+        sqlx::query_scalar::<_, Option<String>>(
+            r#"SELECT secret_ref FROM runtime_settings WHERE id = ?"#,
+        )
+        .bind("default")
+        .fetch_optional(&self.pool)
+        .await
+        .map(|value| value.flatten())
+        .map_err(Into::into)
+    }
+
     async fn finalize_legacy_mobile_access_secret_migration(
         &self,
         id: &str,
@@ -342,6 +431,7 @@ impl Store {
         .bind(id)
         .execute(&self.pool)
         .await?;
+        self.checkpoint_wal_truncate().await?;
         Ok(())
     }
 }
@@ -466,7 +556,7 @@ impl Store {
     pub async fn get_runtime_settings_document(&self) -> Result<Option<RuntimeSettingsDocument>> {
         let row = self
             .query(
-                r#"SELECT id, schema_version, settings_json, updated_at
+                r#"SELECT id, schema_version, settings_json, secret_ref, updated_at
                FROM runtime_settings
                WHERE id = ?"#,
             )
@@ -481,6 +571,7 @@ impl Store {
             id: row.try_get("id")?,
             schema_version: row.try_get("schema_version")?,
             settings_json: row.try_get("settings_json")?,
+            secret_ref: row.try_get("secret_ref")?,
             updated_at: parse_dt(&row.try_get::<String, _>("updated_at")?)?,
         }))
     }
@@ -505,6 +596,52 @@ impl Store {
         .bind(&updated_at)
         .execute(&self.pool)
         .await?;
+
+        self.get_runtime_settings_document()
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("failed to read back runtime settings"))
+    }
+
+    pub async fn upsert_runtime_settings_document_with_secrets(
+        &self,
+        schema_version: i64,
+        settings_json: &str,
+        settings_secret_json: &str,
+    ) -> Result<RuntimeSettingsDocument> {
+        let old_secret_ref = self.lookup_runtime_settings_secret_ref().await?;
+        let new_secret_ref = Self::next_runtime_settings_secret_ref();
+        self.write_runtime_settings_secrets(&new_secret_ref, settings_secret_json)
+            .await?;
+        let updated_at = Utc::now().to_rfc3339();
+        let upsert_result = self
+            .query(
+                r#"INSERT INTO runtime_settings (id, schema_version, settings_json, secret_ref, updated_at)
+               VALUES (?, ?, ?, ?, ?)
+               ON CONFLICT(id) DO UPDATE SET
+                   schema_version = excluded.schema_version,
+                   settings_json = excluded.settings_json,
+                   secret_ref = excluded.secret_ref,
+                   updated_at = excluded.updated_at"#,
+            )
+            .bind("default")
+            .bind(schema_version)
+            .bind(settings_json)
+            .bind(&new_secret_ref)
+            .bind(&updated_at)
+            .execute(&self.pool)
+            .await;
+        if let Err(err) = upsert_result {
+            let _ = self
+                .remove_runtime_settings_secrets_if_present(&new_secret_ref)
+                .await;
+            return Err(err.into());
+        }
+        if let Some(old_secret_ref) = old_secret_ref {
+            if old_secret_ref != new_secret_ref {
+                self.remove_runtime_settings_secrets_if_present(&old_secret_ref)
+                    .await?;
+            }
+        }
 
         self.get_runtime_settings_document()
             .await?

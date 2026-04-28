@@ -38,6 +38,9 @@ impl Store {
                     sqlx::query("PRAGMA synchronous = NORMAL")
                         .execute(&mut *conn)
                         .await?;
+                    sqlx::query("PRAGMA secure_delete = ON")
+                        .execute(&mut *conn)
+                        .await?;
                     Ok(())
                 })
             })

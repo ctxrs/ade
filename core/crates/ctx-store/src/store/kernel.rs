@@ -55,6 +55,26 @@ impl Store {
         }
     }
 
+    pub async fn checkpoint_wal_truncate(&self) -> Result<()> {
+        if self.sqlite_path.is_none() {
+            return Ok(());
+        }
+        let _write_guard = self.write_gate.lock().await;
+        let (busy, log_frames, checkpointed_frames): (i64, i64, i64) =
+            sqlx::query_as("PRAGMA wal_checkpoint(TRUNCATE)")
+                .fetch_one(&self.pool)
+                .await?;
+        if busy != 0 {
+            anyhow::bail!(
+                "sqlite WAL truncate checkpoint failed (busy={}, log_frames={}, checkpointed_frames={})",
+                busy,
+                log_frames,
+                checkpointed_frames
+            );
+        }
+        Ok(())
+    }
+
     pub async fn close(&self) {
         if self._lease_guard.is_some() {
             tracing::debug!("ignoring close() on lease-backed store handle");

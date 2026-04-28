@@ -10,6 +10,19 @@ pub use public::*;
 pub(crate) use update::UpdateSettingsReq;
 
 const SETTINGS_SCHEMA_VERSION: i64 = 1;
+const RUNTIME_SETTINGS_SECRET_VERSION: u32 = 1;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct RuntimeSettingsSecretEnvelope {
+    version: u32,
+    dictation_livekit_api_key: String,
+    #[serde(default)]
+    dictation_livekit_api_secret: Option<String>,
+    title_generation_remote_api_key: String,
+    oracle_api_key: String,
+    aws_cloud_workers_access_key_id: String,
+    aws_cloud_workers_secret_access_key: String,
+}
 
 pub(crate) fn to_public(settings: &Settings) -> PublicSettings {
     public::to_public(settings)
@@ -557,10 +570,174 @@ impl Default for LiveKitDictationSettings {
     }
 }
 
+fn runtime_settings_secrets_from_settings(settings: &Settings) -> RuntimeSettingsSecretEnvelope {
+    RuntimeSettingsSecretEnvelope {
+        version: RUNTIME_SETTINGS_SECRET_VERSION,
+        dictation_livekit_api_key: settings
+            .dictation
+            .as_ref()
+            .and_then(|dictation| dictation.livekit.as_ref())
+            .map(|livekit| livekit.api_key.clone())
+            .unwrap_or_default(),
+        dictation_livekit_api_secret: settings
+            .dictation
+            .as_ref()
+            .and_then(|dictation| dictation.livekit.as_ref())
+            .and_then(|livekit| livekit.api_secret.clone()),
+        title_generation_remote_api_key: settings
+            .title_generation
+            .as_ref()
+            .map(|title_generation| title_generation.remote.api_key.clone())
+            .unwrap_or_default(),
+        oracle_api_key: settings
+            .oracle
+            .as_ref()
+            .map(|oracle| oracle.api_key.clone())
+            .unwrap_or_default(),
+        aws_cloud_workers_access_key_id: settings
+            .cloud_workers
+            .as_ref()
+            .and_then(|cloud_workers| cloud_workers.aws.as_ref())
+            .map(|aws| aws.access_key_id.clone())
+            .unwrap_or_default(),
+        aws_cloud_workers_secret_access_key: settings
+            .cloud_workers
+            .as_ref()
+            .and_then(|cloud_workers| cloud_workers.aws.as_ref())
+            .map(|aws| aws.secret_access_key.clone())
+            .unwrap_or_default(),
+    }
+}
+
+fn apply_runtime_settings_secrets(
+    settings: &mut Settings,
+    secrets: &RuntimeSettingsSecretEnvelope,
+) {
+    if let Some(livekit) = settings
+        .dictation
+        .as_mut()
+        .and_then(|dictation| dictation.livekit.as_mut())
+    {
+        livekit.api_key = secrets.dictation_livekit_api_key.clone();
+        livekit.api_secret = secrets.dictation_livekit_api_secret.clone();
+    }
+    if let Some(title_generation) = settings.title_generation.as_mut() {
+        title_generation.remote.api_key = secrets.title_generation_remote_api_key.clone();
+    }
+    if let Some(oracle) = settings.oracle.as_mut() {
+        oracle.api_key = secrets.oracle_api_key.clone();
+    }
+    if let Some(aws) = settings
+        .cloud_workers
+        .as_mut()
+        .and_then(|cloud_workers| cloud_workers.aws.as_mut())
+    {
+        aws.access_key_id = secrets.aws_cloud_workers_access_key_id.clone();
+        aws.secret_access_key = secrets.aws_cloud_workers_secret_access_key.clone();
+    }
+}
+
+fn strip_runtime_settings_secrets(settings: &mut Settings) {
+    if let Some(livekit) = settings
+        .dictation
+        .as_mut()
+        .and_then(|dictation| dictation.livekit.as_mut())
+    {
+        livekit.api_key.clear();
+        livekit.api_secret = None;
+    }
+    if let Some(title_generation) = settings.title_generation.as_mut() {
+        title_generation.remote.api_key.clear();
+    }
+    if let Some(oracle) = settings.oracle.as_mut() {
+        oracle.api_key.clear();
+    }
+    if let Some(aws) = settings
+        .cloud_workers
+        .as_mut()
+        .and_then(|cloud_workers| cloud_workers.aws.as_mut())
+    {
+        aws.access_key_id.clear();
+        aws.secret_access_key.clear();
+    }
+}
+
+fn settings_contain_runtime_secrets(settings: &Settings) -> bool {
+    settings
+        .dictation
+        .as_ref()
+        .and_then(|dictation| dictation.livekit.as_ref())
+        .is_some_and(|livekit| {
+            !livekit.api_key.trim().is_empty()
+                || livekit
+                    .api_secret
+                    .as_deref()
+                    .is_some_and(|secret| !secret.trim().is_empty())
+        })
+        || settings
+            .title_generation
+            .as_ref()
+            .is_some_and(|title_generation| !title_generation.remote.api_key.trim().is_empty())
+        || settings
+            .oracle
+            .as_ref()
+            .is_some_and(|oracle| !oracle.api_key.trim().is_empty())
+        || settings
+            .cloud_workers
+            .as_ref()
+            .and_then(|cloud_workers| cloud_workers.aws.as_ref())
+            .is_some_and(|aws| {
+                !aws.access_key_id.trim().is_empty() || !aws.secret_access_key.trim().is_empty()
+            })
+}
+
+async fn load_runtime_settings_secret_envelope(
+    store: &Store,
+    secret_ref: &str,
+) -> anyhow::Result<RuntimeSettingsSecretEnvelope> {
+    let payload = store
+        .read_runtime_settings_secrets_if_present(secret_ref)
+        .await?
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "runtime settings secrets are missing for settings document (secret_ref={secret_ref})"
+            )
+        })?;
+    let envelope = serde_json::from_str::<RuntimeSettingsSecretEnvelope>(&payload)
+        .context("parsing runtime settings secret envelope")?;
+    if envelope.version != RUNTIME_SETTINGS_SECRET_VERSION {
+        anyhow::bail!(
+            "unsupported runtime settings secret version {}",
+            envelope.version
+        );
+    }
+    Ok(envelope)
+}
+
 pub async fn load_settings(store: &Store) -> anyhow::Result<Settings> {
     let mut settings = match store.get_runtime_settings_document().await? {
-        Some(doc) => serde_json::from_str::<Settings>(&doc.settings_json)
-            .context("parsing runtime settings document")?,
+        Some(doc) => {
+            let mut settings = serde_json::from_str::<Settings>(&doc.settings_json)
+                .context("parsing runtime settings document")?;
+            let legacy_secrets_present = settings_contain_runtime_secrets(&settings);
+            match doc.secret_ref.as_deref() {
+                Some(secret_ref) => {
+                    let secrets = load_runtime_settings_secret_envelope(store, secret_ref).await?;
+                    apply_runtime_settings_secrets(&mut settings, &secrets);
+                    if legacy_secrets_present {
+                        save_settings(store, &settings).await?;
+                        store.checkpoint_wal_truncate().await?;
+                    }
+                }
+                None => {
+                    if legacy_secrets_present {
+                        save_settings(store, &settings).await?;
+                        store.checkpoint_wal_truncate().await?;
+                    }
+                }
+            }
+            settings
+        }
         None => Settings::default(),
     };
     defaults::ensure_settings_defaults(&mut settings);
@@ -574,9 +751,16 @@ pub async fn load_settings(store: &Store) -> anyhow::Result<Settings> {
 pub async fn save_settings(store: &Store, settings: &Settings) -> anyhow::Result<()> {
     let mut normalized = settings.clone();
     normalize_settings_in_place(&mut normalized);
+    let secrets_json =
+        serde_json::to_string_pretty(&runtime_settings_secrets_from_settings(&normalized))?;
+    strip_runtime_settings_secrets(&mut normalized);
     let settings_json = serde_json::to_string_pretty(&normalized)?;
     store
-        .upsert_runtime_settings_document(SETTINGS_SCHEMA_VERSION, &settings_json)
+        .upsert_runtime_settings_document_with_secrets(
+            SETTINGS_SCHEMA_VERSION,
+            &settings_json,
+            &secrets_json,
+        )
         .await?;
     Ok(())
 }
