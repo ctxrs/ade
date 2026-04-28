@@ -43,6 +43,45 @@ const sha256File = (filePath) => {
   return hash.digest("hex");
 };
 
+const b64UrlToBuffer = (value) => {
+  const normalized = String(value).replace(/-/g, "+").replace(/_/g, "/");
+  const padded = normalized + "=".repeat((4 - (normalized.length % 4)) % 4);
+  return Buffer.from(padded, "base64");
+};
+
+const generateManifestSignatureState = (manifestBody) => {
+  const { publicKey, privateKey } = crypto.generateKeyPairSync("ed25519");
+  const publicJwk = publicKey.export({ format: "jwk" });
+  const rawPublicKey = b64UrlToBuffer(publicJwk.x);
+  const keyId = Buffer.from("ctxsig01", "utf8");
+  const pubkeyText =
+    "untrusted comment: minisign public key: TESTKEY0\n" +
+    `${Buffer.concat([Buffer.from([0x45, 0x64]), keyId, rawPublicKey]).toString("base64")}\n`;
+  const trustedComment = "trusted comment: timestamp:1772585616\tfile:latest.json";
+  const signatureBytes = crypto.sign(
+    null,
+    crypto.createHash("blake2b512").update(Buffer.from(manifestBody, "utf8")).digest(),
+    privateKey,
+  );
+  const globalSignature = crypto.sign(
+    null,
+    Buffer.concat([
+      signatureBytes,
+      Buffer.from(trustedComment.slice("trusted comment: ".length), "utf8"),
+    ]),
+    privateKey,
+  );
+  const signatureText =
+    "untrusted comment: signature from minisign secret key\n" +
+    `${Buffer.concat([Buffer.from([0x45, 0x44]), keyId, signatureBytes]).toString("base64")}\n` +
+    `${trustedComment}\n` +
+    `${globalSignature.toString("base64")}\n`;
+  return {
+    manifestPubkeyB64: Buffer.from(pubkeyText, "utf8").toString("base64"),
+    manifestSignatureB64: Buffer.from(signatureText, "utf8").toString("base64"),
+  };
+};
+
 const discoverDaemonArtifacts = (bundleDir) => {
   const artifacts = {};
   for (const target of DAEMON_TARGETS) {
@@ -215,6 +254,9 @@ const artifactPathForRequest = (state, pathname) => {
   if (suffix === "latest.json") {
     return { type: "manifest" };
   }
+  if (suffix === "latest.json.sig") {
+    return { type: "manifest-signature" };
+  }
   if (suffix === "latest-tauri.json") {
     return { type: "tauri-manifest" };
   }
@@ -244,7 +286,12 @@ const serve = (stateFile) => {
     }
     if (match.type === "manifest") {
       res.setHeader("content-type", "application/json");
-      res.end(`${JSON.stringify(state.releaseManifest, null, 2)}\n`);
+      res.end(state.releaseManifestBody);
+      return;
+    }
+    if (match.type === "manifest-signature") {
+      res.setHeader("content-type", "text/plain");
+      res.end(`${state.releaseManifestSignatureB64}\n`);
       return;
     }
     if (match.type === "tauri-manifest") {
@@ -295,6 +342,8 @@ const start = (args) => {
     channel: args.channel,
     artifacts,
   });
+  const releaseManifestBody = `${JSON.stringify(releaseManifest)}\n`;
+  const manifestSignatureState = generateManifestSignatureState(releaseManifestBody);
   const desktopVersion = readDesktopVersion();
   const updaterTarget = desktopUpdaterTarget();
   const baseUrl = `http://${args.host}:${args.port || 0}`;
@@ -308,6 +357,9 @@ const start = (args) => {
     updaterTarget,
     expectedManagedVersion: releaseManifest.latest_version,
     releaseManifest,
+    releaseManifestBody,
+    releaseManifestSignatureB64: manifestSignatureState.manifestSignatureB64,
+    releaseManifestPubkeyB64: manifestSignatureState.manifestPubkeyB64,
     tauriManifest: buildTauriManifest({
       baseUrl,
       channel: args.channel,
@@ -329,6 +381,9 @@ const start = (args) => {
       const state = readState(args.stateFile);
       if (state.ready && state.baseUrl) {
         process.stdout.write(`export CTX_DOWNLOAD_BASE_URL=${shellQuote(`${state.baseUrl}/functions/v1`)}\n`);
+        process.stdout.write(
+          `export CTX_RELEASE_MANIFEST_PUBKEY=${shellQuote(state.releaseManifestPubkeyB64)}\n`,
+        );
         process.stdout.write(
           `export CTX_AUTOMATION_REMOTE_EXPECTED_MANAGED_VERSION=${shellQuote(resolveExpectedManagedVersion(state))}\n`,
         );

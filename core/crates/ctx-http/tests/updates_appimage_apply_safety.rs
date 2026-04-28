@@ -4,7 +4,6 @@ use std::sync::Arc;
 
 use axum::http::StatusCode;
 use axum::routing::get;
-use axum::Json;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
@@ -299,7 +298,29 @@ async fn appimage_apply_rejects_tampered_verified_candidate() {
                     let manifest = Arc::clone(&manifest);
                     move || {
                         let manifest = Arc::clone(&manifest);
-                        async move { Json((*manifest).clone()) }
+                        async move {
+                            (
+                                StatusCode::OK,
+                                [("content-type", "application/json")],
+                                manifest.manifest_body.clone(),
+                            )
+                        }
+                    }
+                }),
+            )
+            .route(
+                "/releases/stable/latest.json.sig",
+                get({
+                    let manifest = Arc::clone(&manifest);
+                    move || {
+                        let manifest = Arc::clone(&manifest);
+                        async move {
+                            (
+                                StatusCode::OK,
+                                [("content-type", "text/plain")],
+                                manifest.signature_b64.clone(),
+                            )
+                        }
                     }
                 }),
             )
@@ -316,6 +337,7 @@ async fn appimage_apply_rejects_tampered_verified_candidate() {
     )
     .await;
     let _download_base = EnvGuard::set("CTX_DOWNLOAD_BASE_URL", &fake_release_server.base_url);
+    let _manifest_pubkey = EnvGuard::set("CTX_RELEASE_MANIFEST_PUBKEY", &manifest.pubkey_b64);
     let data_dir = tempfile::tempdir().unwrap();
     let target_path = data_dir.path().join("ctx.AppImage");
     tokio::fs::write(&target_path, b"old-appimage")
@@ -383,7 +405,29 @@ async fn appimage_failed_redownload_invalidates_existing_verified_candidate() {
                     let manifest = Arc::clone(&manifest);
                     move || {
                         let manifest = Arc::clone(&manifest);
-                        async move { Json((*manifest).clone()) }
+                        async move {
+                            (
+                                StatusCode::OK,
+                                [("content-type", "application/json")],
+                                manifest.manifest_body.clone(),
+                            )
+                        }
+                    }
+                }),
+            )
+            .route(
+                "/releases/stable/latest.json.sig",
+                get({
+                    let manifest = Arc::clone(&manifest);
+                    move || {
+                        let manifest = Arc::clone(&manifest);
+                        async move {
+                            (
+                                StatusCode::OK,
+                                [("content-type", "text/plain")],
+                                manifest.signature_b64.clone(),
+                            )
+                        }
                     }
                 }),
             )
@@ -400,6 +444,7 @@ async fn appimage_failed_redownload_invalidates_existing_verified_candidate() {
     )
     .await;
     let _download_base = EnvGuard::set("CTX_DOWNLOAD_BASE_URL", &fake_release_server.base_url);
+    let _manifest_pubkey = EnvGuard::set("CTX_RELEASE_MANIFEST_PUBKEY", &manifest.pubkey_b64);
     let data_dir = tempfile::tempdir().unwrap();
     let target_path = data_dir.path().join("ctx.AppImage");
     tokio::fs::write(&target_path, b"old-appimage")
@@ -477,7 +522,29 @@ async fn appimage_apply_replaces_target_and_clears_candidate() {
                     let manifest = Arc::clone(&manifest);
                     move || {
                         let manifest = Arc::clone(&manifest);
-                        async move { Json((*manifest).clone()) }
+                        async move {
+                            (
+                                StatusCode::OK,
+                                [("content-type", "application/json")],
+                                manifest.manifest_body.clone(),
+                            )
+                        }
+                    }
+                }),
+            )
+            .route(
+                "/releases/stable/latest.json.sig",
+                get({
+                    let manifest = Arc::clone(&manifest);
+                    move || {
+                        let manifest = Arc::clone(&manifest);
+                        async move {
+                            (
+                                StatusCode::OK,
+                                [("content-type", "text/plain")],
+                                manifest.signature_b64.clone(),
+                            )
+                        }
                     }
                 }),
             )
@@ -494,6 +561,7 @@ async fn appimage_apply_replaces_target_and_clears_candidate() {
     )
     .await;
     let _download_base = EnvGuard::set("CTX_DOWNLOAD_BASE_URL", &fake_release_server.base_url);
+    let _manifest_pubkey = EnvGuard::set("CTX_RELEASE_MANIFEST_PUBKEY", &manifest.pubkey_b64);
     let data_dir = tempfile::tempdir().unwrap();
     let target_path = data_dir.path().join("ctx.AppImage");
     tokio::fs::write(&target_path, b"old-appimage")

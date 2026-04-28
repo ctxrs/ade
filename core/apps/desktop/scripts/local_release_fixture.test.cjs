@@ -63,8 +63,10 @@ test("local release fixture serves a managed daemon manifest and daemon bytes", 
       start.stdout,
       "CTX_AUTOMATION_REMOTE_EXPECTED_MANAGED_VERSION",
     );
+    const manifestPubkey = parseExport(start.stdout, "CTX_RELEASE_MANIFEST_PUBKEY");
     assert.match(baseUrl, /^http:\/\/127\.0\.0\.1:\d+\/functions\/v1$/);
     assert.equal(expectedManagedVersion, "automation-local");
+    assert.match(manifestPubkey, /^[A-Za-z0-9+/=]+$/);
 
     const manifestResp = await httpGet(`${baseUrl}/releases/stable/latest.json`);
     assert.equal(manifestResp.statusCode, 200);
@@ -75,6 +77,9 @@ test("local release fixture serves a managed daemon manifest and daemon bytes", 
       manifest.platforms["linux-arm64"].daemon.url_path,
       "/releases/stable/linux-arm64/ctx",
     );
+    const manifestSigResp = await httpGet(`${baseUrl}/releases/stable/latest.json.sig`);
+    assert.equal(manifestSigResp.statusCode, 200);
+    assert.match(manifestSigResp.body.toString("utf8").trim(), /^[A-Za-z0-9+/=]+$/);
 
     const tauriManifestResp = await httpGet(`${baseUrl}/releases/stable/latest-tauri.json`);
     assert.equal(tauriManifestResp.statusCode, 200);

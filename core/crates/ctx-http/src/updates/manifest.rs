@@ -1,5 +1,15 @@
 use super::appimage::{appimage_path_env, in_place_update_capability_with_appimage_path};
 use super::*;
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
+use base64::Engine as _;
+use minisign_verify::{PublicKey, Signature};
+use url::Url;
+
+const RELEASE_MANIFEST_PUBKEY_OVERRIDE_ENV: &str = "CTX_RELEASE_MANIFEST_PUBKEY";
+const EMBEDDED_RELEASE_MANIFEST_PUBKEY: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../apps/desktop/src-tauri/config/updater_pubkey.txt"
+));
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ReleaseArtifact {
@@ -106,6 +116,91 @@ pub fn normalize_version_str(s: &str) -> Option<Version> {
     Version::parse(trimmed).ok()
 }
 
+fn normalize_updater_pubkey(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if let Some(normalized_plain) = normalize_minisign_pubkey_text(trimmed) {
+        return Some(BASE64_STANDARD.encode(normalized_plain.as_bytes()));
+    }
+    let compact: String = trimmed
+        .chars()
+        .filter(|ch| !ch.is_ascii_whitespace())
+        .collect();
+    if let Some(decoded_plain) = decode_base64_minisign_pubkey(&compact) {
+        return Some(BASE64_STANDARD.encode(decoded_plain.as_bytes()));
+    }
+    None
+}
+
+fn decode_base64_minisign_pubkey(encoded: &str) -> Option<String> {
+    let decoded_bytes = BASE64_STANDARD.decode(encoded.as_bytes()).ok()?;
+    let decoded_text = String::from_utf8(decoded_bytes).ok()?;
+    normalize_minisign_pubkey_text(&decoded_text)
+}
+
+fn normalize_minisign_pubkey_text(raw: &str) -> Option<String> {
+    let normalized = raw.replace("\r\n", "\n");
+    let mut lines = normalized
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty());
+    let header = lines.next()?;
+    if !header.starts_with("untrusted comment: minisign public key:") {
+        return None;
+    }
+    let key_line = lines.next()?;
+    if key_line.is_empty() || lines.next().is_some() {
+        return None;
+    }
+    Some(format!("{header}\n{key_line}\n"))
+}
+
+fn resolve_release_manifest_pubkey() -> Result<String> {
+    let runtime_override = std::env::var(RELEASE_MANIFEST_PUBKEY_OVERRIDE_ENV).ok();
+    let runtime = runtime_override
+        .as_deref()
+        .and_then(normalize_updater_pubkey);
+    if let Some(pubkey) = runtime {
+        return Ok(pubkey);
+    }
+    normalize_updater_pubkey(EMBEDDED_RELEASE_MANIFEST_PUBKEY)
+        .context("embedded release manifest updater public key is invalid")
+}
+
+fn signature_url_for_manifest(manifest_url: &str) -> Result<String> {
+    let mut parsed =
+        Url::parse(manifest_url).with_context(|| format!("invalid release manifest url: {manifest_url}"))?;
+    let next_path = format!("{}.sig", parsed.path());
+    parsed.set_path(&next_path);
+    Ok(parsed.to_string())
+}
+
+fn base64_to_utf8_text(label: &str, encoded: &str) -> Result<String> {
+    let decoded = BASE64_STANDARD
+        .decode(encoded.trim().as_bytes())
+        .with_context(|| format!("decoding {label} from base64"))?;
+    std::str::from_utf8(&decoded)
+        .with_context(|| format!("{label} is not valid utf-8"))
+        .map(|value| value.to_string())
+}
+
+fn verify_release_manifest_signature(
+    manifest_body: &[u8],
+    signature_b64: &str,
+    pubkey_b64: &str,
+) -> Result<()> {
+    let pubkey_text = base64_to_utf8_text("release manifest public key", pubkey_b64)?;
+    let signature_text = base64_to_utf8_text("release manifest signature", signature_b64)?;
+    let public_key = PublicKey::decode(&pubkey_text).context("decoding release manifest public key")?;
+    let signature = Signature::decode(&signature_text).context("decoding release manifest signature")?;
+    public_key
+        .verify(manifest_body, &signature, true)
+        .context("verifying release manifest signature")?;
+    Ok(())
+}
+
 pub fn in_place_update_capability(
     manifest: &ReleaseManifest,
     platform_key: Option<&str>,
@@ -168,15 +263,27 @@ pub async fn fetch_latest_manifest_with_params(
             url.push_str(&qs);
         }
     }
-    let txt = reqwest::get(&url)
+    let signature_url = signature_url_for_manifest(&url)?;
+    let manifest_bytes = reqwest::get(&url)
         .await
         .with_context(|| format!("fetching release manifest: {url}"))?
         .error_for_status()
         .with_context(|| format!("release manifest http error: {url}"))?
-        .text()
+        .bytes()
         .await
         .context("reading release manifest body")?;
-    serde_json::from_str(&txt).context("parsing release manifest JSON")
+    let signature_b64 = reqwest::get(&signature_url)
+        .await
+        .with_context(|| format!("fetching release manifest signature: {signature_url}"))?
+        .error_for_status()
+        .with_context(|| format!("release manifest signature http error: {signature_url}"))?
+        .text()
+        .await
+        .context("reading release manifest signature body")?;
+    let manifest_pubkey = resolve_release_manifest_pubkey()?;
+    verify_release_manifest_signature(&manifest_bytes, &signature_b64, &manifest_pubkey)?;
+    let txt = std::str::from_utf8(&manifest_bytes).context("release manifest body is not valid utf-8")?;
+    serde_json::from_str(txt).context("parsing release manifest JSON")
 }
 
 pub fn join_url(base_url: &str, url_path: &str) -> String {
