@@ -1,7 +1,17 @@
 use super::*;
 use base64::Engine as _;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+
+fn disable_ctx_mcp(env: &mut HashMap<String, String>) {
+    env.insert("CTX_MCP_DISABLED".to_string(), "1".to_string());
+}
+
+fn write_test_ctx_mcp_command(root: &Path) -> String {
+    let command = root.join("ctx-mcp");
+    fs::write(&command, b"#!/bin/sh\n").expect("write ctx-mcp");
+    command.to_string_lossy().to_string()
+}
 
 #[test]
 fn probe_timeout_for_env_defaults_to_host_timeout() {
@@ -28,6 +38,7 @@ fn probe_timeout_for_env_uses_container_timeout_when_container_exec_is_present()
 #[test]
 fn build_crp_session_config_sets_pragmatic_personality_for_codex() {
     let mut env = HashMap::new();
+    disable_ctx_mcp(&mut env);
     env.insert("CTX_PROVIDER_ID".to_string(), "codex".to_string());
     let workdir = PathBuf::from("/tmp/workdir");
 
@@ -44,6 +55,7 @@ fn build_crp_session_config_sets_pragmatic_personality_for_codex() {
 #[test]
 fn build_crp_session_config_omits_personality_for_non_codex() {
     let mut env = HashMap::new();
+    disable_ctx_mcp(&mut env);
     env.insert("CTX_PROVIDER_ID".to_string(), "claude-crp".to_string());
     let workdir = PathBuf::from("/tmp/workdir");
 
@@ -59,6 +71,7 @@ fn build_crp_session_config_omits_personality_for_non_codex() {
 #[test]
 fn build_crp_session_config_can_disable_model_override() {
     let mut env = HashMap::new();
+    disable_ctx_mcp(&mut env);
     env.insert(
         "CTX_MODEL_ID".to_string(),
         "openai/gpt-4.1-mini".to_string(),
@@ -77,6 +90,7 @@ fn build_crp_session_config_can_disable_model_override() {
 #[test]
 fn build_crp_session_config_sets_model_provider_from_env() {
     let mut env = HashMap::new();
+    disable_ctx_mcp(&mut env);
     env.insert("CTX_MODEL_PROVIDER".to_string(), " openrouter ".to_string());
     let workdir = PathBuf::from("/tmp/workdir");
 
@@ -97,6 +111,7 @@ fn build_crp_model_probe_config_sets_model_provider_from_env() {
 #[test]
 fn build_crp_session_config_sets_openai_base_url_from_env() {
     let mut env = HashMap::new();
+    disable_ctx_mcp(&mut env);
     env.insert(
         "OPENAI_BASE_URL".to_string(),
         " https://openrouter.ai/api/v1 ".to_string(),
@@ -112,10 +127,15 @@ fn build_crp_session_config_sets_openai_base_url_from_env() {
 
 #[test]
 fn build_crp_session_config_scopes_auth_tokens_to_ctx_mcp_server() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
     let mut env = HashMap::new();
     env.insert(
         "CTX_DAEMON_URL".to_string(),
         "https://daemon.example.test".to_string(),
+    );
+    env.insert(
+        "CTX_MCP_COMMAND".to_string(),
+        write_test_ctx_mcp_command(tempdir.path()),
     );
     env.insert("CTX_MCP_TOKEN".to_string(), "mcp-token".to_string());
     env.insert("CTX_SESSION_ID".to_string(), "session-123".to_string());
@@ -168,7 +188,7 @@ fn build_crp_model_probe_config_sets_openai_base_url_from_env() {
 }
 
 #[test]
-fn build_crp_session_config_uses_default_ctx_mcp_for_container_when_override_is_host_only() {
+fn build_crp_session_config_rejects_missing_ctx_mcp_command_for_container() {
     let mut env = HashMap::new();
     env.insert(
         "CTX_HARNESS_CONTAINER_ID".to_string(),
@@ -176,16 +196,33 @@ fn build_crp_session_config_uses_default_ctx_mcp_for_container_when_override_is_
     );
     env.insert(
         "CTX_MCP_COMMAND".to_string(),
-        "/Users/example-user/.cache/cargo/ctx-monorepo/debug/ctx-mcp".to_string(),
+        "/definitely/missing/ctx-mcp".to_string(),
     );
 
-    let cfg = build_crp_session_config(&env, Path::new("/ctx/ws")).expect("build session config");
-    let command = cfg
-        .mcp_servers
-        .as_ref()
-        .and_then(|servers| servers.get("ctx"))
-        .and_then(|server| server.command.as_deref());
-    assert_eq!(command, Some("ctx-mcp"));
+    let err = build_crp_session_config(&env, Path::new("/ctx/ws"))
+        .expect_err("missing command should fail closed");
+    assert!(err.to_string().contains("path does not exist"));
+}
+
+#[test]
+fn build_crp_session_config_rejects_bare_ctx_mcp_command() {
+    let mut env = HashMap::new();
+    env.insert("CTX_MCP_COMMAND".to_string(), "ctx-mcp".to_string());
+
+    let err = build_crp_session_config(&env, Path::new("/tmp/workdir"))
+        .expect_err("bare command should fail closed");
+    assert!(err
+        .to_string()
+        .contains("must be an explicit absolute path"));
+}
+
+#[test]
+fn build_crp_session_config_requires_ctx_mcp_command_when_enabled() {
+    let env = HashMap::new();
+
+    let err = build_crp_session_config(&env, Path::new("/tmp/workdir"))
+        .expect_err("missing command should fail closed");
+    assert!(err.to_string().contains("CTX_MCP_COMMAND is required"));
 }
 
 #[test]
@@ -214,14 +251,17 @@ fn build_crp_session_config_preserves_existing_absolute_ctx_mcp_for_container() 
 }
 
 #[test]
-fn build_crp_session_config_preserves_shared_vm_ctx_mcp_command_for_container() {
+fn build_crp_session_config_rewrites_shared_vm_ctx_mcp_command_for_container() {
     let tempdir = tempfile::tempdir().expect("tempdir");
     let data_root = tempdir.path().join("data-root");
     let worktree = tempdir.path().join("repo");
     fs::create_dir_all(&worktree).expect("mkdir worktree");
     let mcp_path = data_root.join("bundles/runtimes/ctx-mcp/macos/aarch64/ctx-mcp");
+    let linux_mcp_path = data_root.join("bundles/runtimes/ctx-mcp/linux/aarch64/ctx-mcp");
     fs::create_dir_all(mcp_path.parent().expect("parent")).expect("mkdir mcp parent");
+    fs::create_dir_all(linux_mcp_path.parent().expect("parent")).expect("mkdir linux mcp parent");
     fs::write(&mcp_path, b"#!/bin/sh\n").expect("write mcp");
+    fs::write(&linux_mcp_path, b"#!/bin/sh\n").expect("write linux mcp");
 
     let mut env = HashMap::new();
     env.insert(
@@ -265,7 +305,7 @@ fn build_crp_session_config_preserves_shared_vm_ctx_mcp_command_for_container() 
         .as_ref()
         .and_then(|servers| servers.get("ctx"))
         .and_then(|server| server.command.as_deref());
-    assert_eq!(command, Some(mcp_path.to_string_lossy().as_ref()));
+    assert_eq!(command, Some(linux_mcp_path.to_string_lossy().as_ref()));
 }
 
 #[test]
@@ -284,6 +324,7 @@ fn build_crp_model_probe_config_forces_full_yolo_policy() {
 #[test]
 fn build_crp_session_config_maps_container_thread_cwd_to_guest_worktree() {
     let mut env = HashMap::new();
+    disable_ctx_mcp(&mut env);
     env.insert(
         "CTX_HARNESS_CONTAINER_ID".to_string(),
         "ctx-harness-123".to_string(),

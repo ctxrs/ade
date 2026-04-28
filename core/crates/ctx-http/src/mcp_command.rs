@@ -13,33 +13,77 @@ pub(crate) fn configure_runtime_mcp_command(
     provider_env: &mut HashMap<String, String>,
     data_root: &Path,
 ) -> Result<()> {
-    if !mcp_enabled(provider_env) || !provider_env_targets_linux_sandbox(provider_env) {
+    if !mcp_enabled(provider_env) {
         return Ok(());
     }
-    if provider_env
+
+    if provider_env_targets_linux_sandbox(provider_env) {
+        let bundled = bundled_assets::bundled_runtime_for(
+            CTX_MCP_RUNTIME_ID,
+            "linux",
+            std::env::consts::ARCH,
+        )
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "linux sandbox ctx-mcp runtime is unavailable for {}",
+                std::env::consts::ARCH
+            )
+        })?;
+
+        let staged_path = stage_linux_sandbox_mcp_runtime(data_root, &bundled)?;
+        provider_env.insert(
+            CTX_MCP_COMMAND_ENV.to_string(),
+            staged_path.to_string_lossy().to_string(),
+        );
+        return Ok(());
+    }
+
+    if let Some(command) = provider_env
         .get(CTX_MCP_COMMAND_ENV)
         .map(String::as_str)
         .map(str::trim)
-        .is_some_and(|value| !value.is_empty())
+        .filter(|value| !value.is_empty())
     {
+        validate_explicit_mcp_command(command)?;
         return Ok(());
     }
 
-    let bundled =
-        bundled_assets::bundled_runtime_for(CTX_MCP_RUNTIME_ID, "linux", std::env::consts::ARCH)
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "linux sandbox ctx-mcp runtime is unavailable for {}",
-                    std::env::consts::ARCH
-                )
-            })?;
-
-    let staged_path = stage_linux_sandbox_mcp_runtime(data_root, &bundled)?;
+    let bundled = bundled_assets::bundled_runtime_for(
+        CTX_MCP_RUNTIME_ID,
+        std::env::consts::OS,
+        std::env::consts::ARCH,
+    )
+    .ok_or_else(|| {
+        anyhow::anyhow!(
+            "host ctx-mcp runtime is unavailable for {}/{}",
+            std::env::consts::OS,
+            std::env::consts::ARCH
+        )
+    })?;
     provider_env.insert(
         CTX_MCP_COMMAND_ENV.to_string(),
-        staged_path.to_string_lossy().to_string(),
+        bundled.bin.to_string_lossy().to_string(),
     );
     Ok(())
+}
+
+fn validate_explicit_mcp_command(command: &str) -> Result<()> {
+    let path = Path::new(command);
+    if !path.is_absolute() && !looks_like_windows_absolute_path(command) {
+        anyhow::bail!("CTX_MCP_COMMAND must be an explicit absolute path, got `{command}`");
+    }
+    if !path.exists() {
+        anyhow::bail!("CTX_MCP_COMMAND path does not exist: {command}");
+    }
+    Ok(())
+}
+
+fn looks_like_windows_absolute_path(command: &str) -> bool {
+    let bytes = command.as_bytes();
+    bytes.len() >= 3
+        && bytes[1] == b':'
+        && bytes[0].is_ascii_alphabetic()
+        && (bytes[2] == b'\\' || bytes[2] == b'/')
 }
 
 fn mcp_enabled(provider_env: &HashMap<String, String>) -> bool {
@@ -144,21 +188,39 @@ mod tests {
         std::env::consts::ARCH
     }
 
+    fn bundled_runtime_entry(os: &str, arch: &str) -> BundledRuntime {
+        BundledRuntime {
+            id: "ctx-mcp".to_string(),
+            version: "0.1.0".to_string(),
+            os: os.to_string(),
+            arch: arch.to_string(),
+            sha256: "deadbeef".to_string(),
+            root: format!("runtimes/ctx-mcp/{os}/{arch}"),
+            bin: "ctx-mcp".to_string(),
+            npm_cli: None,
+        }
+    }
+
+    fn write_bundled_mcp(root: &Path, os: &str, arch: &str, contents: &[u8]) -> PathBuf {
+        let runtime_root = root.join("runtimes").join("ctx-mcp").join(os).join(arch);
+        std::fs::create_dir_all(&runtime_root).expect("mkdir runtime root");
+        let bundled_bin = runtime_root.join("ctx-mcp");
+        std::fs::write(&bundled_bin, contents).expect("write bundled ctx-mcp");
+        bundled_bin
+    }
+
     #[test]
     fn configure_runtime_mcp_command_stages_linux_runtime_for_sandbox_env() {
         let _guard = bundled_assets_manifest_test_lock()
             .lock()
             .expect("bundled assets manifest lock poisoned");
         let bundle_root = tempfile::tempdir().expect("bundle root");
-        let runtime_root = bundle_root
-            .path()
-            .join("runtimes")
-            .join("ctx-mcp")
-            .join("linux")
-            .join(current_linux_arch());
-        std::fs::create_dir_all(&runtime_root).expect("mkdir runtime root");
-        let bundled_bin = runtime_root.join("ctx-mcp");
-        std::fs::write(&bundled_bin, b"linux ctx-mcp").expect("write bundled ctx-mcp");
+        write_bundled_mcp(
+            bundle_root.path(),
+            "linux",
+            current_linux_arch(),
+            b"linux ctx-mcp",
+        );
 
         let _bundle_guard = override_bundled_assets_manifest_for_test(
             bundle_root.path().to_path_buf(),
@@ -166,16 +228,7 @@ mod tests {
                 version: 1,
                 generated_at: None,
                 providers: vec![],
-                runtimes: vec![BundledRuntime {
-                    id: "ctx-mcp".to_string(),
-                    version: "0.1.0".to_string(),
-                    os: "linux".to_string(),
-                    arch: current_linux_arch().to_string(),
-                    sha256: "deadbeef".to_string(),
-                    root: format!("runtimes/ctx-mcp/linux/{}", current_linux_arch()),
-                    bin: "ctx-mcp".to_string(),
-                    npm_cli: None,
-                }],
+                runtimes: vec![bundled_runtime_entry("linux", current_linux_arch())],
                 images: vec![],
             },
         );
@@ -203,6 +256,43 @@ mod tests {
     }
 
     #[test]
+    fn configure_runtime_mcp_command_uses_bundled_host_runtime() {
+        let _guard = bundled_assets_manifest_test_lock()
+            .lock()
+            .expect("bundled assets manifest lock poisoned");
+        let bundle_root = tempfile::tempdir().expect("bundle root");
+        let bundled_bin = write_bundled_mcp(
+            bundle_root.path(),
+            std::env::consts::OS,
+            std::env::consts::ARCH,
+            b"host ctx-mcp",
+        );
+        let _bundle_guard = override_bundled_assets_manifest_for_test(
+            bundle_root.path().to_path_buf(),
+            BundledAssetsManifest {
+                version: 1,
+                generated_at: None,
+                providers: vec![],
+                runtimes: vec![bundled_runtime_entry(
+                    std::env::consts::OS,
+                    std::env::consts::ARCH,
+                )],
+                images: vec![],
+            },
+        );
+        let data_root = tempfile::tempdir().expect("data root");
+        let mut provider_env = HashMap::new();
+
+        configure_runtime_mcp_command(&mut provider_env, data_root.path())
+            .expect("configure runtime mcp command");
+
+        assert_eq!(
+            provider_env.get(CTX_MCP_COMMAND_ENV).map(String::as_str),
+            Some(bundled_bin.to_string_lossy().as_ref())
+        );
+    }
+
+    #[test]
     fn configure_runtime_mcp_command_skips_when_disabled() {
         let _guard = bundled_assets_manifest_test_lock()
             .lock()
@@ -222,28 +312,66 @@ mod tests {
     }
 
     #[test]
-    fn configure_runtime_mcp_command_preserves_existing_command() {
+    fn configure_runtime_mcp_command_preserves_existing_explicit_host_command() {
         let _guard = bundled_assets_manifest_test_lock()
             .lock()
             .expect("bundled assets manifest lock poisoned");
         let data_root = tempfile::tempdir().expect("data root");
-        let mut provider_env = HashMap::from([
-            (
-                "CTX_HARNESS_CONTAINER_ID".to_string(),
-                "ctx-harness-123".to_string(),
-            ),
-            (
-                CTX_MCP_COMMAND_ENV.to_string(),
-                "/usr/local/bin/ctx-mcp".to_string(),
-            ),
-        ]);
+        let explicit = data_root.path().join("ctx-mcp");
+        std::fs::write(&explicit, b"host ctx-mcp").expect("write explicit ctx-mcp");
+        let mut provider_env = HashMap::from([(
+            CTX_MCP_COMMAND_ENV.to_string(),
+            explicit.to_string_lossy().to_string(),
+        )]);
 
         configure_runtime_mcp_command(&mut provider_env, data_root.path())
             .expect("existing ctx mcp command should be preserved");
         assert_eq!(
             provider_env.get(CTX_MCP_COMMAND_ENV).map(String::as_str),
-            Some("/usr/local/bin/ctx-mcp")
+            Some(explicit.to_string_lossy().as_ref())
         );
+    }
+
+    #[test]
+    fn configure_runtime_mcp_command_rejects_bare_existing_host_command() {
+        let _guard = bundled_assets_manifest_test_lock()
+            .lock()
+            .expect("bundled assets manifest lock poisoned");
+        let data_root = tempfile::tempdir().expect("data root");
+        let mut provider_env =
+            HashMap::from([(CTX_MCP_COMMAND_ENV.to_string(), "ctx-mcp".to_string())]);
+
+        let err = configure_runtime_mcp_command(&mut provider_env, data_root.path())
+            .expect_err("bare command should fail closed");
+        assert!(err
+            .to_string()
+            .contains("must be an explicit absolute path"));
+    }
+
+    #[test]
+    fn configure_runtime_mcp_command_fails_closed_without_host_runtime() {
+        let _guard = bundled_assets_manifest_test_lock()
+            .lock()
+            .expect("bundled assets manifest lock poisoned");
+        let bundle_root = tempfile::tempdir().expect("bundle root");
+        let _bundle_guard = override_bundled_assets_manifest_for_test(
+            bundle_root.path().to_path_buf(),
+            BundledAssetsManifest {
+                version: 1,
+                generated_at: None,
+                providers: vec![],
+                runtimes: vec![],
+                images: vec![],
+            },
+        );
+        let data_root = tempfile::tempdir().expect("data root");
+        let mut provider_env = HashMap::new();
+
+        let err = configure_runtime_mcp_command(&mut provider_env, data_root.path())
+            .expect_err("missing host runtime should fail");
+        assert!(err
+            .to_string()
+            .contains("host ctx-mcp runtime is unavailable"));
     }
 
     #[test]
@@ -251,6 +379,17 @@ mod tests {
         let _guard = bundled_assets_manifest_test_lock()
             .lock()
             .expect("bundled assets manifest lock poisoned");
+        let bundle_root = tempfile::tempdir().expect("bundle root");
+        let _bundle_guard = override_bundled_assets_manifest_for_test(
+            bundle_root.path().to_path_buf(),
+            BundledAssetsManifest {
+                version: 1,
+                generated_at: None,
+                providers: vec![],
+                runtimes: vec![],
+                images: vec![],
+            },
+        );
         let data_root = tempfile::tempdir().expect("data root");
         let mut provider_env = HashMap::from([(
             "CTX_HARNESS_CONTAINER_ID".to_string(),

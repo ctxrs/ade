@@ -781,6 +781,7 @@ done
         "CTX_DAEMON_URL".to_string(),
         "http://127.0.0.1:4399".to_string(),
     );
+    unscoped_env.insert("CTX_MCP_DISABLED".to_string(), "1".to_string());
     unscoped_env.insert(
         "LOG_FILE".to_string(),
         log_path.to_string_lossy().to_string(),
@@ -814,6 +815,10 @@ done
         env.insert(
             "CTX_DAEMON_URL".to_string(),
             "http://127.0.0.1:4399".to_string(),
+        );
+        env.insert(
+            "CTX_MCP_COMMAND".to_string(),
+            script_path.to_string_lossy().to_string(),
         );
         env.insert("CTX_MCP_TOKEN".to_string(), token.to_string());
         env.insert(

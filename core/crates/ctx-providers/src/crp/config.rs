@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use ctx_core::boolish::parse_boolish;
 use ctx_core::provider_ids::CODEX_PROVIDER_ID;
 use ctx_core::provider_policy::{FULL_YOLO_APPROVAL_POLICY, FULL_YOLO_SANDBOX_MODE};
@@ -71,7 +71,7 @@ fn build_crp_session_config_with_mcp(
             mcp_env.insert("CTX_MCP_TOKEN".to_string(), token.clone());
         }
 
-        let mcp_command = resolve_session_mcp_command(env);
+        let mcp_command = resolve_session_mcp_command(env)?;
         let tool_timeout_sec = env
             .get("CTX_MCP_TOOL_TIMEOUT_SEC")
             .and_then(|value| value.parse::<u64>().ok())
@@ -120,39 +120,33 @@ fn build_crp_session_config_with_mcp(
     })
 }
 
-fn resolve_session_mcp_command(env: &HashMap<String, String>) -> String {
+fn resolve_session_mcp_command(env: &HashMap<String, String>) -> Result<String> {
     let configured = env
         .get("CTX_MCP_COMMAND")
         .map(String::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty());
-    let Some(command) = configured else {
-        return "ctx-mcp".to_string();
-    };
+    let command = configured
+        .ok_or_else(|| anyhow::anyhow!("CTX_MCP_COMMAND is required when ctx MCP is enabled"))?;
     if container_exec_spec(env).is_none() {
-        return command.to_string();
+        validate_explicit_mcp_command(command)?;
+        return Ok(command.to_string());
     }
-    if let Ok(command) = rewrite_ctx_mcp_command_for_env(env, command) {
-        if containerized_mcp_command_is_valid(&command) {
-            return command;
-        }
-    }
-    if containerized_mcp_command_is_valid(command) {
-        return command.to_string();
-    }
-    "ctx-mcp".to_string()
+    let rewritten = rewrite_ctx_mcp_command_for_env(env, command)
+        .context("rewriting CTX_MCP_COMMAND for container execution")?;
+    validate_explicit_mcp_command(&rewritten)?;
+    Ok(rewritten)
 }
 
-fn containerized_mcp_command_is_valid(command: &str) -> bool {
-    let looks_like_path = command.contains('/') || command.contains('\\');
-    if !looks_like_path {
-        return true;
-    }
+fn validate_explicit_mcp_command(command: &str) -> Result<()> {
     let path = Path::new(command);
     if !path.is_absolute() && !looks_like_windows_absolute_path(command) {
-        return true;
+        anyhow::bail!("CTX_MCP_COMMAND must be an explicit absolute path, got `{command}`");
     }
-    path.exists()
+    if !path.exists() {
+        anyhow::bail!("CTX_MCP_COMMAND path does not exist: {command}");
+    }
+    Ok(())
 }
 
 fn looks_like_windows_absolute_path(command: &str) -> bool {
