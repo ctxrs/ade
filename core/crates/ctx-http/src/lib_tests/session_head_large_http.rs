@@ -11,6 +11,9 @@ use super::*;
 
 #[tokio::test]
 async fn large_session_head_http_responses_are_bounded() {
+    const SEEDED_TURNS: i64 = 65;
+    const HEAD_LIMIT: i64 = 60;
+
     let repo = setup_git_repo().await;
     let data_dir = tempfile::tempdir().unwrap();
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
@@ -54,7 +57,7 @@ async fn large_session_head_http_responses_are_bounded() {
         .expect("created task should list its default session");
 
     let store = state.store_for_session(session.id).await.unwrap();
-    seed_large_session(&store, session.id, task.id, 240).await;
+    seed_large_session(&store, session.id, task.id, SEEDED_TURNS).await;
 
     let (heads_status, heads_body): (StatusCode, serde_json::Value) = json_request(
         &app,
@@ -95,8 +98,14 @@ async fn large_session_head_http_responses_are_bounded() {
         Some(60)
     );
     assert_eq!(head_body["has_more_turns"], json!(true));
-    assert_eq!(head_body["messages"][0]["content"], json!("answer 180"));
-    assert_eq!(head_body["messages"][59]["content"], json!("answer 239"));
+    assert_eq!(
+        head_body["messages"][0]["content"],
+        json!(format!("answer {}", SEEDED_TURNS - HEAD_LIMIT))
+    );
+    assert_eq!(
+        head_body["messages"][59]["content"],
+        json!(format!("answer {}", SEEDED_TURNS - 1))
+    );
 }
 
 async fn json_request<T: DeserializeOwned>(

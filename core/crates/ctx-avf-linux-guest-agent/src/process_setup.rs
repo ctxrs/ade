@@ -8,6 +8,7 @@ use anyhow::{bail, Result};
 use portable_pty::CommandBuilder as PtyCommandBuilder;
 
 use crate::protocol::{AvfLinuxExecRequest, AVF_LINUX_EXEC_PROTOCOL_VERSION};
+#[cfg(target_os = "linux")]
 use crate::DEFAULT_PATH;
 
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]

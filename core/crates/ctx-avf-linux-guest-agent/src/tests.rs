@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::io::Cursor;
 
 use super::process_setup::prepare_exec_request;
+use super::protocol::{AvfLinuxExecRequest, AVF_LINUX_EXEC_PROTOCOL_VERSION};
 use super::*;
 
 #[test]

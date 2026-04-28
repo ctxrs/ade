@@ -28,7 +28,6 @@ use crate::protocol::AvfLinuxExecFrame;
 use crate::protocol::{read_exec_frame, write_exec_frame};
 #[cfg(target_os = "linux")]
 use crate::protocol::{AvfLinuxExecError, AvfLinuxExecExit};
-use crate::protocol::{AvfLinuxExecRequest, AVF_LINUX_EXEC_PROTOCOL_VERSION};
 #[cfg(target_os = "linux")]
 use process_setup::{
     configure_command_process_group, configure_command_user, lookup_user, prepare_exec_request,

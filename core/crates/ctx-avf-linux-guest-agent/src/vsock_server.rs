@@ -1,4 +1,4 @@
-use std::fs::{self, File};
+use std::fs;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::path::{Path, PathBuf};
 
