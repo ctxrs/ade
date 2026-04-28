@@ -7,6 +7,19 @@ function trimValue(value) {
   return String(value || "").trim();
 }
 
+function assertPlainReleaseVersion(value) {
+  const normalized = trimValue(value);
+  if (!normalized) {
+    throw new Error("resolved release plan release_version is required");
+  }
+  if (!/^\d+\.\d+\.\d+$/.test(normalized)) {
+    throw new Error(
+      `resolved release plan release_version must be plain semver x.y.z (got '${normalized}')`,
+    );
+  }
+  return normalized;
+}
+
 function normalizeObject(value) {
   if (Array.isArray(value)) {
     return value.map((entry) => normalizeObject(entry));
@@ -132,6 +145,7 @@ function validateResolvedReleasePlan(plan, {
       `resolved release plan source_commit mismatch: expected ${trimValue(expectedCommitSha)}, got ${sourceCommit}`,
     );
   }
+  assertPlainReleaseVersion(plan.release_version);
 
   const inventory = plan.inventory || {};
   const providerArtifactPolicy = trimValue(inventory.provider_artifact_policy || "required");
@@ -200,6 +214,7 @@ function writeResolvedReleasePlan(filePath, payload) {
 }
 
 module.exports = {
+  assertPlainReleaseVersion,
   buildResolvedReleasePlan,
   decodeResolvedReleasePlan,
   encodeResolvedReleasePlan,
