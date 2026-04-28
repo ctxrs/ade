@@ -20,6 +20,17 @@ const ctxHttpBazelTests = fs.readFileSync(
 );
 const escapeRegExp = (value) => String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
+function extractBuildStringList(name) {
+  const match = ctxHttpBuild.match(new RegExp(`${name}\\s*=\\s*(?:[^\\[]*\\+\\s*)?\\[([\\s\\S]*?)\\]`));
+  assert.ok(match, `expected ${name} list in ctx-http BUILD`);
+  return [...match[1].matchAll(/"([^"]+)"/g)].map((entry) => entry[1]);
+}
+
+function assertNoDuplicates(name, values) {
+  const duplicates = values.filter((value, index) => values.indexOf(value) !== index);
+  assert.deepEqual([...new Set(duplicates)].sort(), [], `${name} must not contain duplicate labels`);
+}
+
 test("ctx-http BUILD exposes Bazel-native base test targets", () => {
   assert.match(ctxHttpBuild, /rust_doc_test/);
   assert.match(ctxHttpBuild, /name = "lib_test_support"/);
@@ -283,6 +294,24 @@ test("ctx-http BUILD exposes Bazel-native base test targets", () => {
   );
   assert.match(ctxHttpBuild, /declare_ctx_http_integration_tests/);
   assert.match(ctxHttpBuild, new RegExp(`CARGO_PKG_VERSION": "${escapeRegExp(desktopVersion)}"`));
+});
+
+test("ctx-http Bazel dependency buckets do not duplicate labels", () => {
+  const sharedExternal = extractBuildStringList("CTX_HTTP_SHARED_EXTERNAL_DEPS");
+  const directTests = extractBuildStringList("CTX_HTTP_DIRECT_TEST_DEPS");
+  const integrationDirectTests = extractBuildStringList("CTX_HTTP_INTEGRATION_DIRECT_TEST_DEPS");
+
+  assertNoDuplicates("CTX_HTTP_SHARED_EXTERNAL_DEPS", sharedExternal);
+  assertNoDuplicates("CTX_HTTP_DIRECT_TEST_DEPS", directTests);
+  assertNoDuplicates("CTX_HTTP_INTEGRATION_DIRECT_TEST_DEPS", integrationDirectTests);
+
+  const directTestLabels = new Set(directTests);
+  const repeatedIntegrationLabels = integrationDirectTests.filter((label) => directTestLabels.has(label));
+  assert.deepEqual(
+    repeatedIntegrationLabels,
+    [],
+    "CTX_HTTP_INTEGRATION_DIRECT_TEST_DEPS is appended to CTX_HTTP_DIRECT_TEST_DEPS and must only list additional labels",
+  );
 });
 
 test("ctx-http Bazel helper keeps quick-path and manual-only suites explicit", () => {

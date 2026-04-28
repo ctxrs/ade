@@ -326,7 +326,6 @@ CTX_HTTP_SHARED_EXTERNAL_DEPS = [
     "@crates//:libc",
     "@crates//:minisign-verify",
     "@crates//:mime_guess",
-    "@crates//:minisign-verify",
     "@crates//:notify",
     "@crates//:opentelemetry",
     "@crates//:opentelemetry-otlp",
@@ -428,9 +427,6 @@ CTX_HTTP_DIRECT_TEST_DEPS = [
 
 CTX_HTTP_INTEGRATION_DIRECT_TEST_DEPS = CTX_HTTP_DIRECT_TEST_DEPS + [
     "//core/crates/ctx-workspace-container:lib",
-    "@crates//:blake2",
-    "@crates//:ed25519-dalek",
-    "@crates//:rand_core",
 ]
 
 CTX_HTTP_TEST_PROC_MACRO_DEPS = [
