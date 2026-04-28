@@ -10,10 +10,10 @@ use super::{
     codex_account_dir, codex_runtime_home, codex_runtime_owner_path, codex_secret_path,
     default_codex_api_shape, default_codex_auth_type, default_codex_credential_kind,
     load_codex_registry, normalize_label, save_codex_registry, set_active_codex_account,
-    upsert_codex_account, CodexAccountEntry, CodexAccountRegistry, CodexEndpointProfile,
-    CodexHostImportProbe, CODEX_AUTH_TYPE_BEARER, CODEX_CREDENTIAL_KIND_API_KEY,
-    CODEX_CREDENTIAL_KIND_OAUTH, CODEX_SECRET_VERSION, CTX_CODEX_HOST_AUTH_PATH_ENV,
-    CTX_SEED_CODEX_AUTH_FROM_HOST_ENV,
+    upsert_codex_account, CodexAccountEntry, CodexAccountRegistry, CodexAuthImportOutcome,
+    CodexEndpointProfile, CodexHostImportProbe, CODEX_AUTH_TYPE_BEARER,
+    CODEX_CREDENTIAL_KIND_API_KEY, CODEX_CREDENTIAL_KIND_OAUTH, CODEX_SECRET_VERSION,
+    CTX_CODEX_HOST_AUTH_PATH_ENV, CTX_SEED_CODEX_AUTH_FROM_HOST_ENV,
 };
 
 mod host;
@@ -33,8 +33,8 @@ pub use self::runtime::{
     ensure_codex_auth_ready,
 };
 pub use self::secret_store::{
-    hydrate_codex_account_home_from_secret, import_host_codex_auth_to_secret_store,
-    ingest_codex_account_auth_to_secret_store,
+    hydrate_codex_account_home_from_secret, import_codex_auth_value_to_secret_store,
+    import_host_codex_auth_to_secret_store, ingest_codex_account_auth_to_secret_store,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

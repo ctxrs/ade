@@ -346,6 +346,132 @@ async fn codex_import_dedupes_secret_backed_accounts() {
 }
 
 #[tokio::test]
+async fn codex_import_persists_secret_backed_account_without_raw_source_auth() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let auth_bytes = br#"{"OPENAI_API_KEY":"sk-test"}"#;
+    let material = CandidateMaterial {
+        candidate: ProviderAuthImportCandidate {
+            id: "codex-candidate".to_string(),
+            provider_id: "codex".to_string(),
+            provider_label: "Codex".to_string(),
+            kind: "json_file".to_string(),
+            path: "/tmp/.codex/auth.json".to_string(),
+            signal_strength: "strong".to_string(),
+            confidence: "high".to_string(),
+            parse_status: "parsed".to_string(),
+            unsupported_reason: None,
+            summary: None,
+            account_identity: None,
+            endpoint: None,
+            auth_type: Some("subscription".to_string()),
+            fingerprint: Some(sha256_hex(auth_bytes)),
+            last_modified: None,
+        },
+        importable: true,
+        secret_bytes: Some(auth_bytes.to_vec()),
+        label: Some("Imported Codex profile".to_string()),
+    };
+
+    let result = import_codex_candidate(root, &material).await.unwrap();
+    assert_eq!(result.status, "imported");
+
+    let registry = provider_accounts::load_codex_registry(root).await.unwrap();
+    let account_id = result.profile_id.as_deref().expect("profile id");
+    let entry = registry
+        .accounts
+        .iter()
+        .find(|account| account.id == account_id)
+        .expect("imported account");
+    let secret_ref = entry.secret_ref.as_deref().expect("secret_ref");
+    assert_eq!(entry.kind, provider_accounts::CODEX_CREDENTIAL_KIND_API_KEY);
+    assert!(provider_accounts::codex_secrets_root(root)
+        .join(secret_ref)
+        .exists());
+    assert!(tokio::fs::metadata(
+        provider_accounts::codex_account_dir(root, account_id).join("auth.json")
+    )
+    .await
+    .is_err());
+}
+
+#[tokio::test]
+async fn codex_import_migrates_matching_raw_only_account_into_secret_store() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let account_id = "acct-1";
+    let auth_bytes = br#"{"OPENAI_API_KEY":"sk-test"}"#;
+    provider_accounts::save_codex_registry(
+        root,
+        &provider_accounts::CodexAccountRegistry {
+            active_account_id: Some(account_id.to_string()),
+            accounts: vec![provider_accounts::CodexAccountEntry {
+                id: account_id.to_string(),
+                label: "Existing".to_string(),
+                kind: provider_accounts::CODEX_CREDENTIAL_KIND_API_KEY.to_string(),
+                email: None,
+                plan_type: None,
+                created_at: Utc::now(),
+                last_used_at: Some(Utc::now()),
+                secret_ref: None,
+                endpoint_profile: provider_accounts::CodexEndpointProfile::default(),
+            }],
+        },
+    )
+    .await
+    .unwrap();
+    let account_dir = provider_accounts::ensure_codex_account_dir(root, account_id)
+        .await
+        .unwrap();
+    tokio::fs::write(account_dir.join("auth.json"), auth_bytes)
+        .await
+        .unwrap();
+
+    let material = CandidateMaterial {
+        candidate: ProviderAuthImportCandidate {
+            id: "codex-candidate".to_string(),
+            provider_id: "codex".to_string(),
+            provider_label: "Codex".to_string(),
+            kind: "json_file".to_string(),
+            path: "/tmp/.codex/auth.json".to_string(),
+            signal_strength: "strong".to_string(),
+            confidence: "high".to_string(),
+            parse_status: "parsed".to_string(),
+            unsupported_reason: None,
+            summary: None,
+            account_identity: None,
+            endpoint: None,
+            auth_type: Some("subscription".to_string()),
+            fingerprint: Some(sha256_hex(auth_bytes)),
+            last_modified: None,
+        },
+        importable: true,
+        secret_bytes: Some(auth_bytes.to_vec()),
+        label: Some("Imported Codex profile".to_string()),
+    };
+
+    let result = import_codex_candidate(root, &material).await.unwrap();
+    assert_eq!(result.status, "already_imported");
+    assert_eq!(result.profile_id.as_deref(), Some(account_id));
+
+    let registry = provider_accounts::load_codex_registry(root).await.unwrap();
+    let entry = registry
+        .accounts
+        .iter()
+        .find(|account| account.id == account_id)
+        .expect("existing account");
+    let secret_ref = entry.secret_ref.as_deref().expect("secret_ref");
+    assert!(provider_accounts::codex_secrets_root(root)
+        .join(secret_ref)
+        .exists());
+    assert!(tokio::fs::metadata(
+        provider_accounts::codex_account_dir(root, account_id).join("auth.json")
+    )
+    .await
+    .is_err());
+}
+
+#[tokio::test]
 async fn codex_import_fails_closed_on_malformed_existing_account_auth() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
@@ -410,6 +536,47 @@ async fn codex_import_fails_closed_on_malformed_existing_account_auth() {
     assert!(
         message.contains("acct-1/auth.json"),
         "expected existing auth path in error: {message}"
+    );
+}
+
+#[tokio::test]
+async fn codex_import_fails_closed_on_malformed_candidate_auth_json() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let material = CandidateMaterial {
+        candidate: ProviderAuthImportCandidate {
+            id: "codex-candidate".to_string(),
+            provider_id: "codex".to_string(),
+            provider_label: "Codex".to_string(),
+            kind: "json_file".to_string(),
+            path: "/tmp/.codex/auth.json".to_string(),
+            signal_strength: "strong".to_string(),
+            confidence: "high".to_string(),
+            parse_status: "parsed".to_string(),
+            unsupported_reason: None,
+            summary: None,
+            account_identity: None,
+            endpoint: None,
+            auth_type: Some("subscription".to_string()),
+            fingerprint: None,
+            last_modified: None,
+        },
+        importable: true,
+        secret_bytes: Some(b"{ invalid json".to_vec()),
+        label: Some("Imported Codex profile".to_string()),
+    };
+
+    let err = import_codex_candidate(root, &material)
+        .await
+        .expect_err("malformed candidate auth should fail closed");
+    let message = format!("{err:#}");
+    assert!(
+        message.contains("must be valid JSON"),
+        "expected parse context in error: {message}"
+    );
+    assert!(
+        message.contains("/tmp/.codex/auth.json"),
+        "expected candidate path in error: {message}"
     );
 }
 

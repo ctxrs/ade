@@ -103,6 +103,100 @@ pub(super) async fn ingest_auth_value_for_account(
     Ok(true)
 }
 
+async fn find_matching_codex_account(
+    data_root: &Path,
+    auth: &serde_json::Value,
+) -> Result<Option<CodexAccountEntry>> {
+    let registry = load_codex_registry(data_root).await?;
+    for existing in &registry.accounts {
+        let existing_auth = if let Some(secret_ref) = existing.secret_ref.as_deref() {
+            load_codex_auth_from_secret_store(data_root, secret_ref).await?
+        } else {
+            let existing_auth_path = codex_account_dir(data_root, &existing.id).join("auth.json");
+            match tokio::fs::read_to_string(&existing_auth_path).await {
+                Ok(existing_payload) => {
+                    serde_json::from_str(&existing_payload).with_context(|| {
+                        format!(
+                            "invalid codex auth JSON at {}",
+                            existing_auth_path.display()
+                        )
+                    })?
+                }
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(err) => {
+                    return Err(err).with_context(|| {
+                        format!(
+                            "reading existing codex auth at {}",
+                            existing_auth_path.display()
+                        )
+                    });
+                }
+            }
+        };
+        if existing_auth == *auth {
+            return Ok(Some(existing.clone()));
+        }
+    }
+    Ok(None)
+}
+
+async fn remove_codex_account_home_auth_if_present(
+    data_root: &Path,
+    account_id: &str,
+) -> Result<()> {
+    let auth_path = codex_account_dir(data_root, account_id).join("auth.json");
+    match tokio::fs::remove_file(&auth_path).await {
+        Ok(_) => Ok(()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(err)
+            .with_context(|| format!("removing legacy codex auth at {}", auth_path.display())),
+    }
+}
+
+pub async fn import_codex_auth_value_to_secret_store(
+    data_root: &Path,
+    label: Option<String>,
+    auth: &serde_json::Value,
+) -> Result<CodexAuthImportOutcome> {
+    let kind = codex_auth_kind(auth).ok_or_else(|| {
+        anyhow!("codex auth has no OPENAI_API_KEY or tokens.access_token/tokens.refresh_token")
+    })?;
+
+    if let Some(existing) = find_matching_codex_account(data_root, auth).await? {
+        if existing.secret_ref.is_none() {
+            ingest_auth_value_for_account(data_root, &existing.id, auth).await?;
+            remove_codex_account_home_auth_if_present(data_root, &existing.id).await?;
+        }
+        let registry = set_active_codex_account(data_root, Some(existing.id.clone())).await?;
+        return Ok(CodexAuthImportOutcome {
+            registry,
+            account_id: existing.id,
+            created: false,
+        });
+    }
+
+    let account_id = uuid::Uuid::new_v4().to_string();
+    let secret_ref = write_codex_secret_for_account(data_root, &account_id, auth).await?;
+    let entry = CodexAccountEntry {
+        id: account_id.clone(),
+        label: normalize_label(label, &account_id),
+        kind,
+        email: None,
+        plan_type: None,
+        created_at: Utc::now(),
+        last_used_at: Some(Utc::now()),
+        secret_ref: Some(secret_ref),
+        endpoint_profile: CodexEndpointProfile::default(),
+    };
+    let _ = upsert_codex_account(data_root, entry).await?;
+    let registry = set_active_codex_account(data_root, Some(account_id.clone())).await?;
+    Ok(CodexAuthImportOutcome {
+        registry,
+        account_id,
+        created: true,
+    })
+}
+
 pub(super) async fn load_codex_auth_from_secret_store(
     data_root: &Path,
     secret_ref: &str,
@@ -156,57 +250,9 @@ pub async fn import_host_codex_auth_to_secret_store(
         .with_context(|| format!("missing host codex auth at {}", auth_path.display()))?;
     let auth: serde_json::Value = serde_json::from_str(&payload)
         .with_context(|| format!("invalid codex auth JSON at {}", auth_path.display()))?;
-    let kind = codex_auth_kind(&auth).ok_or_else(|| {
-        anyhow!(
-            "codex auth file at {} has no OPENAI_API_KEY or tokens.access_token/tokens.refresh_token",
-            auth_path.display()
-        )
-    })?;
-
-    let registry = load_codex_registry(data_root).await?;
-    for existing in &registry.accounts {
-        hydrate_codex_account_home_from_secret(data_root, &existing.id).await?;
-        let existing_auth_path = codex_account_dir(data_root, &existing.id).join("auth.json");
-        match tokio::fs::read_to_string(&existing_auth_path).await {
-            Ok(existing_payload) => {
-                let existing_auth: serde_json::Value = serde_json::from_str(&existing_payload)
-                    .with_context(|| {
-                        format!(
-                            "invalid codex auth JSON at {}",
-                            existing_auth_path.display()
-                        )
-                    })?;
-                if existing_auth == auth {
-                    return set_active_codex_account(data_root, Some(existing.id.clone())).await;
-                }
-            }
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-            Err(err) => {
-                return Err(err).with_context(|| {
-                    format!(
-                        "reading existing codex auth at {}",
-                        existing_auth_path.display()
-                    )
-                });
-            }
-        }
-    }
-
-    let account_id = uuid::Uuid::new_v4().to_string();
-    let secret_ref = write_codex_secret_for_account(data_root, &account_id, &auth).await?;
-    let entry = CodexAccountEntry {
-        id: account_id.clone(),
-        label: normalize_label(label, &account_id),
-        kind,
-        email: None,
-        plan_type: None,
-        created_at: Utc::now(),
-        last_used_at: Some(Utc::now()),
-        secret_ref: Some(secret_ref),
-        endpoint_profile: CodexEndpointProfile::default(),
-    };
-    let _ = upsert_codex_account(data_root, entry).await?;
-    set_active_codex_account(data_root, Some(account_id)).await
+    import_codex_auth_value_to_secret_store(data_root, label, &auth)
+        .await
+        .map(|outcome| outcome.registry)
 }
 
 pub async fn hydrate_codex_account_home_from_secret(
