@@ -581,13 +581,15 @@ impl Store {
         schema_version: i64,
         settings_json: &str,
     ) -> Result<RuntimeSettingsDocument> {
+        let old_secret_ref = self.lookup_runtime_settings_secret_ref().await?;
         let updated_at = Utc::now().to_rfc3339();
         self.query(
-            r#"INSERT INTO runtime_settings (id, schema_version, settings_json, updated_at)
-               VALUES (?, ?, ?, ?)
+            r#"INSERT INTO runtime_settings (id, schema_version, settings_json, secret_ref, updated_at)
+               VALUES (?, ?, ?, NULL, ?)
                ON CONFLICT(id) DO UPDATE SET
                    schema_version = excluded.schema_version,
                    settings_json = excluded.settings_json,
+                   secret_ref = excluded.secret_ref,
                    updated_at = excluded.updated_at"#,
         )
         .bind("default")
@@ -596,6 +598,10 @@ impl Store {
         .bind(&updated_at)
         .execute(&self.pool)
         .await?;
+        if let Some(old_secret_ref) = old_secret_ref {
+            self.remove_runtime_settings_secrets_if_present(&old_secret_ref)
+                .await?;
+        }
 
         self.get_runtime_settings_document()
             .await?

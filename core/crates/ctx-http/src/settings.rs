@@ -751,16 +751,23 @@ pub async fn load_settings(store: &Store) -> anyhow::Result<Settings> {
 pub async fn save_settings(store: &Store, settings: &Settings) -> anyhow::Result<()> {
     let mut normalized = settings.clone();
     normalize_settings_in_place(&mut normalized);
-    let secrets_json =
-        serde_json::to_string_pretty(&runtime_settings_secrets_from_settings(&normalized))?;
-    strip_runtime_settings_secrets(&mut normalized);
-    let settings_json = serde_json::to_string_pretty(&normalized)?;
-    store
-        .upsert_runtime_settings_document_with_secrets(
-            SETTINGS_SCHEMA_VERSION,
-            &settings_json,
-            &secrets_json,
-        )
-        .await?;
+    if settings_contain_runtime_secrets(&normalized) {
+        let secrets_json =
+            serde_json::to_string_pretty(&runtime_settings_secrets_from_settings(&normalized))?;
+        strip_runtime_settings_secrets(&mut normalized);
+        let settings_json = serde_json::to_string_pretty(&normalized)?;
+        store
+            .upsert_runtime_settings_document_with_secrets(
+                SETTINGS_SCHEMA_VERSION,
+                &settings_json,
+                &secrets_json,
+            )
+            .await?;
+    } else {
+        let settings_json = serde_json::to_string_pretty(&normalized)?;
+        store
+            .upsert_runtime_settings_document(SETTINGS_SCHEMA_VERSION, &settings_json)
+            .await?;
+    }
     Ok(())
 }

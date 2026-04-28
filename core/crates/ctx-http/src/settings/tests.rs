@@ -473,6 +473,73 @@ async fn load_settings_fails_closed_on_corrupt_runtime_setting_secret_sidecar() 
         .contains("parsing runtime settings secret envelope"));
 }
 
+#[tokio::test]
+async fn save_settings_without_runtime_secrets_clears_secret_ref_and_sidecar() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("db.sqlite");
+    let store = Store::open(&db_path).await.unwrap();
+    let secret_settings = Settings {
+        dictation: Some(DictationSettings {
+            enabled: true,
+            provider: DictationProvider::LiveKitInference,
+            livekit: Some(LiveKitDictationSettings {
+                base_url: "https://livekit.example".to_string(),
+                api_key: "lk-key".to_string(),
+                api_secret: Some("lk-secret".to_string()),
+                model: "auto".to_string(),
+                language: "en".to_string(),
+            }),
+        }),
+        cloud_workers: Some(CloudWorkersSettings {
+            aws: Some(AwsCloudWorkersSettings {
+                access_key_id: "aws-access-key".to_string(),
+                secret_access_key: "aws-secret-key".to_string(),
+                region: "us-east-1".to_string(),
+                gateway_instance_type: "t3.small".to_string(),
+                worker_instance_type: "t3.small".to_string(),
+                ..AwsCloudWorkersSettings::default()
+            }),
+            ..CloudWorkersSettings::default()
+        }),
+        ..Settings::default()
+    };
+    save_settings(&store, &secret_settings).await.unwrap();
+    let secret_ref = store
+        .get_runtime_settings_document()
+        .await
+        .unwrap()
+        .expect("runtime settings document")
+        .secret_ref
+        .expect("runtime settings secret_ref");
+    let secret_path = runtime_settings_secret_sidecar_path(dir.path(), "db.sqlite", &secret_ref);
+    assert!(secret_path.exists());
+
+    save_settings(&store, &Settings::default()).await.unwrap();
+
+    let doc = store
+        .get_runtime_settings_document()
+        .await
+        .unwrap()
+        .expect("runtime settings document");
+    assert!(doc.secret_ref.is_none());
+    assert!(!secret_path.exists());
+
+    let loaded = load_settings(&store).await.unwrap();
+    let livekit = loaded
+        .dictation
+        .as_ref()
+        .and_then(|dictation| dictation.livekit.as_ref());
+    assert!(livekit
+        .is_none_or(|livekit| { livekit.api_key.is_empty() && livekit.api_secret.is_none() }));
+    let aws = loaded
+        .cloud_workers
+        .as_ref()
+        .and_then(|cloud_workers| cloud_workers.aws.as_ref());
+    assert!(
+        aws.is_none_or(|aws| { aws.access_key_id.is_empty() && aws.secret_access_key.is_empty() })
+    );
+}
+
 #[test]
 fn apply_update_preserves_existing_secret_values_when_omitted() {
     let current = Settings {
