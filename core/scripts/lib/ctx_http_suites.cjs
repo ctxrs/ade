@@ -344,7 +344,6 @@ const CTX_HTTP_SUITES = [
       "crates/ctx-http/src/title_generation_local.rs",
     ],
     testFiles: [
-      "oracle_mcp_http",
       "subagent_mcp_http",
       "system_prompt_append_http",
       "title_generation_local",

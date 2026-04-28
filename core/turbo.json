@@ -4562,7 +4562,6 @@
         "crates/ctx-http/src/title_generation.rs",
         "crates/ctx-http/src/title_generation_local.rs",
         "crates/ctx-http/tests/common/**",
-        "crates/ctx-http/tests/oracle_mcp_http.rs",
         "crates/ctx-http/tests/subagent_mcp_http.rs",
         "crates/ctx-http/tests/system_prompt_append_http.rs",
         "crates/ctx-http/tests/title_generation_local.rs",

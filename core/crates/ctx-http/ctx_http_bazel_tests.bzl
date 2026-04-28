@@ -110,7 +110,6 @@ CTX_HTTP_SUITE_TESTS = {
         "workspace_attachments_local_canonical",
     ],
     "subagents-control": [
-        "oracle_mcp_http",
         "subagent_mcp_http",
         "system_prompt_append_http",
         "title_generation_local",
@@ -384,11 +383,6 @@ CTX_HTTP_CUSTOM_INTEGRATION_TARGETS = {
     },
     "terminal_workspace_stream_separation": {
         "source": "terminal_workspace_stream_separation",
-        "args": [],
-        "timeout": "eternal",
-    },
-    "oracle_mcp_http": {
-        "source": "oracle_mcp_http",
         "args": [],
         "timeout": "eternal",
     },
