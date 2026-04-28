@@ -136,6 +136,10 @@ crate.spec(
     version = "0.22",
 )
 crate.spec(
+    package = "blake2",
+    version = "0.10",
+)
+crate.spec(
     package = "block2",
     version = "0.6.2",
 )
@@ -172,6 +176,10 @@ crate.spec(
 crate.spec(
     package = "dispatch2",
     version = "0.3.1",
+)
+crate.spec(
+    package = "ed25519-dalek",
+    version = "2",
 )
 crate.spec(
     package = "flate2",
@@ -250,6 +258,10 @@ crate.spec(
 crate.spec(
     package = "mime_guess",
     version = "2",
+)
+crate.spec(
+    package = "minisign-verify",
+    version = "0.2",
 )
 crate.spec(
     package = "html2md",

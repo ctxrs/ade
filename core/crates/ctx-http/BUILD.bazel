@@ -16,6 +16,7 @@ CTX_HTTP_RUSTC_ENV = {
 }
 
 CTX_HTTP_COMPILE_DATA = [
+    "//core/apps/desktop/src-tauri/config:updater_pubkey.txt",
     "//core/packages:web-session-worker/bin/auth.mjs",
     "//core/packages:web-session-worker/bin/worker.mjs",
     "//core/packages:web-session-worker/package.json",
@@ -293,6 +294,7 @@ CTX_HTTP_SHARED_EXTERNAL_DEPS = [
     "@crates//:jsonwebtoken",
     "@crates//:libc",
     "@crates//:mime_guess",
+    "@crates//:minisign-verify",
     "@crates//:notify",
     "@crates//:opentelemetry",
     "@crates//:opentelemetry-otlp",
@@ -366,13 +368,16 @@ CTX_HTTP_DIRECT_TEST_DEPS = [
     "@crates//:azure_core",
     "@crates//:azure_identity",
     "@crates//:base64",
+    "@crates//:blake2",
     "@crates//:bytes",
     "@crates//:chrono",
+    "@crates//:ed25519-dalek",
     "@crates//:flate2",
     "@crates//:fs2",
     "@crates//:futures",
     "@crates//:gcp_auth",
     "@crates//:hex",
+    "@crates//:rand_core",
     "@crates//:reqwest",
     "@crates//:rustls",
     "@crates//:serde",

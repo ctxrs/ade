@@ -6,10 +6,8 @@ use minisign_verify::{PublicKey, Signature};
 use url::Url;
 
 const RELEASE_MANIFEST_PUBKEY_OVERRIDE_ENV: &str = "CTX_RELEASE_MANIFEST_PUBKEY";
-const EMBEDDED_RELEASE_MANIFEST_PUBKEY: &str = include_str!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../../apps/desktop/src-tauri/config/updater_pubkey.txt"
-));
+const EMBEDDED_RELEASE_MANIFEST_PUBKEY: &str =
+    include_str!("../../../../apps/desktop/src-tauri/config/updater_pubkey.txt");
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ReleaseArtifact {
@@ -170,8 +168,8 @@ fn resolve_release_manifest_pubkey() -> Result<String> {
 }
 
 fn signature_url_for_manifest(manifest_url: &str) -> Result<String> {
-    let mut parsed =
-        Url::parse(manifest_url).with_context(|| format!("invalid release manifest url: {manifest_url}"))?;
+    let mut parsed = Url::parse(manifest_url)
+        .with_context(|| format!("invalid release manifest url: {manifest_url}"))?;
     let next_path = format!("{}.sig", parsed.path());
     parsed.set_path(&next_path);
     Ok(parsed.to_string())
@@ -193,8 +191,10 @@ fn verify_release_manifest_signature(
 ) -> Result<()> {
     let pubkey_text = base64_to_utf8_text("release manifest public key", pubkey_b64)?;
     let signature_text = base64_to_utf8_text("release manifest signature", signature_b64)?;
-    let public_key = PublicKey::decode(&pubkey_text).context("decoding release manifest public key")?;
-    let signature = Signature::decode(&signature_text).context("decoding release manifest signature")?;
+    let public_key =
+        PublicKey::decode(&pubkey_text).context("decoding release manifest public key")?;
+    let signature =
+        Signature::decode(&signature_text).context("decoding release manifest signature")?;
     public_key
         .verify(manifest_body, &signature, true)
         .context("verifying release manifest signature")?;
@@ -282,7 +282,8 @@ pub async fn fetch_latest_manifest_with_params(
         .context("reading release manifest signature body")?;
     let manifest_pubkey = resolve_release_manifest_pubkey()?;
     verify_release_manifest_signature(&manifest_bytes, &signature_b64, &manifest_pubkey)?;
-    let txt = std::str::from_utf8(&manifest_bytes).context("release manifest body is not valid utf-8")?;
+    let txt =
+        std::str::from_utf8(&manifest_bytes).context("release manifest body is not valid utf-8")?;
     serde_json::from_str(txt).context("parsing release manifest JSON")
 }
 
