@@ -169,6 +169,16 @@ async fn ensure_codex_endpoint_runtime_home_from_env_sets_container_accessible_c
     assert!(auth.contains("endpoint-key"));
     assert!(auth.contains("OPENAI_BASE_URL"));
     assert!(auth.contains("https://openrouter.ai/api/v1"));
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let perms = tokio::fs::metadata(Path::new(&codex_home).join("auth.json"))
+            .await
+            .unwrap()
+            .permissions();
+        assert_eq!(perms.mode() & 0o777, 0o600);
+    }
 }
 
 #[tokio::test]

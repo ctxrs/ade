@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{anyhow, Context, Result};
 
 use super::codex_runtime_home;
+use super::shared::write_secure_file_atomic;
 
 async fn codex_endpoint_api_key_from_provider_env(
     provider_env: &HashMap<String, String>,
@@ -103,7 +104,7 @@ pub async fn ensure_codex_endpoint_runtime_home_from_env(
     }
     let auth_payload = serde_json::to_vec_pretty(&serde_json::Value::Object(auth))
         .context("serializing endpoint auth payload")?;
-    tokio::fs::write(codex_home.join("auth.json"), auth_payload)
+    write_secure_file_atomic(&codex_home.join("auth.json"), &auth_payload)
         .await
         .context("writing endpoint CODEX_HOME auth.json")?;
     provider_env.insert("OPENAI_API_KEY".to_string(), api_key);
