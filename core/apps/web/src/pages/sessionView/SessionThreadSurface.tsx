@@ -372,6 +372,7 @@ export function SessionThreadSurface({
           contextWindow={composer.contextWindow}
           recording={composer.dictationRecording}
           onToggleRecording={composer.onToggleRecording}
+          providerId={session?.provider_id ?? undefined}
           harnessLabel={harness?.label ?? (session?.provider_id ?? "Provider")}
           harnessLogoSrc={harness?.logoSrc}
           harnessLogoInvert={harness?.invertInDark}

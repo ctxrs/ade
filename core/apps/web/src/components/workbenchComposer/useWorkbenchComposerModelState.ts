@@ -6,9 +6,16 @@ import {
   deriveFullModelIdForBase,
   modelIdFromProviderOptions,
   nextAutoSeededModelId,
+  normalizeModelDisplayNamesForProvider,
   shouldShowLoadingProviderModels,
 } from "./WorkbenchComposer.utils";
 import type { ActiveSessionProps, NewSessionProps, WorkbenchComposerProps } from "./WorkbenchComposer.types";
+
+function activeSessionProviderId(activeProps: ActiveSessionProps): string {
+  const providerId = activeProps.providerId?.trim();
+  if (providerId) return providerId;
+  return activeProps.harnessLabel.trim().toLowerCase() === "codex" ? "codex" : "";
+}
 
 export function useWorkbenchComposerModelState({
   props,
@@ -24,7 +31,8 @@ export function useWorkbenchComposerModelState({
   const activeModelData = useMemo(() => {
     if (variant === "activeSession") {
       const activeProps = props as ActiveSessionProps;
-      const models = activeProps.availableModels;
+      const providerId = activeSessionProviderId(activeProps);
+      const models = normalizeModelDisplayNamesForProvider(providerId, activeProps.availableModels);
       const catalog = buildModelCatalog(models);
       const parsed = parseModelId(activeProps.currentModelId, catalog);
       return { models, catalog, parsed, loading: false, fromProviderOptions: false };
@@ -83,8 +91,10 @@ export function useWorkbenchComposerModelState({
   const effortOptions = activeModelData.catalog.effortsByBase[currentBase] ?? [];
   const currentModelLabel = useMemo(() => {
     if (variant === "activeSession") {
-      const displayLabel = (props as ActiveSessionProps).currentModelDisplayLabel?.trim();
-      if (displayLabel) return displayLabel;
+      const activeProps = props as ActiveSessionProps;
+      const displayLabel = activeProps.currentModelDisplayLabel?.trim();
+      const isCodex = activeSessionProviderId(activeProps).trim().toLowerCase() === "codex";
+      if (displayLabel && !isCodex) return displayLabel;
     }
     if (currentBase) {
       return activeModelData.catalog.displayNameByBase[currentBase] ?? currentBase;

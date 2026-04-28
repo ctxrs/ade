@@ -9,7 +9,10 @@ import {
   type SessionSupervisor,
 } from "../../state/sessionSupervisor";
 import { selectSessionThreadProjection } from "../../state/sessionThreadProjection/selectors";
-import { buildModelsFromProviderOptions } from "../../components/workbenchComposer/WorkbenchComposer.utils";
+import {
+  buildModelsForProvider,
+  normalizeModelDisplayNamesForProvider,
+} from "../../components/workbenchComposer/WorkbenchComposer.utils";
 import {
   deriveAuthUi,
   deriveProviderGuardNotice,
@@ -183,17 +186,19 @@ export function useSessionViewRuntimeController({
     () => composeModelId(String(session?.model_id ?? ""), session?.reasoning_effort ?? null),
     [session?.model_id, session?.reasoning_effort],
   );
+  const providerId = String(session?.provider_id ?? "").trim();
   const sharedProviderOptions = useSharedSessionProviderOptions(session);
-  const acpModelOptions = useMemo(
-    () => buildModelsFromAcpMeta(entry?.acpModels),
-    [entry?.acpModels],
-  );
+  const acpModelOptions = useMemo(() => (
+    normalizeModelDisplayNamesForProvider(providerId, buildModelsFromAcpMeta(entry?.acpModels))
+  ), [entry?.acpModels, providerId]);
   const availableModels = useMemo(() => {
-    const parsed = buildModelsFromProviderOptions(sharedProviderOptions);
+    const parsed = buildModelsForProvider(providerId, sharedProviderOptions);
     if (parsed.length > 0) return parsed;
     if (acpModelOptions.length > 0) return acpModelOptions;
-    return currentModelId ? [{ id: currentModelId, name: currentModelId }] : [];
-  }, [acpModelOptions, currentModelId, sharedProviderOptions]);
+    return currentModelId
+      ? normalizeModelDisplayNamesForProvider(providerId, [{ id: currentModelId, name: currentModelId }])
+      : [];
+  }, [acpModelOptions, currentModelId, providerId, sharedProviderOptions]);
   const displayedModelId = optimisticModelId ?? currentModelId;
   const currentModelDisplayLabel = useMemo(
     () =>

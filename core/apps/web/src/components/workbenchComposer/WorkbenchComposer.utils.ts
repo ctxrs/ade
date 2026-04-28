@@ -3,7 +3,7 @@ import type { SessionViewVerbosity } from "../../state/uiStateStore";
 import type { WorkbenchModeId } from "./WorkbenchComposer.types";
 import type { ContextWindowInfo } from "./WorkbenchComposer.types";
 import type { buildModelCatalog } from "../../utils/modelEffort";
-import { composeModelId } from "../../utils/modelEffort";
+import { composeModelId, parseModelId } from "../../utils/modelEffort";
 import {
   hasFailedProviderModelProbe,
   hasProviderModels,
@@ -151,8 +151,30 @@ export function buildModelsFromProviderOptions(opts?: ProviderOptions): Array<{ 
   return buildModelsFromCatalogPayload(opts?.models);
 }
 
-export function buildModelsForProvider(_providerId: string, opts?: ProviderOptions): Array<{ id: string; name?: string }> {
-  return buildModelsFromProviderOptions(opts);
+function codexSlugDisplayName(modelId: string): string | null {
+  const parsed = parseModelId(modelId);
+  const base = parsed.base || parsed.full;
+  if (!/^gpt-\d/i.test(base)) return null;
+  return base.toLowerCase();
+}
+
+export function normalizeModelDisplayNamesForProvider(
+  providerId: string,
+  models: Array<{ id: string; name?: string }>,
+): Array<{ id: string; name?: string }> {
+  if (providerId.trim().toLowerCase() !== "codex") return models;
+  return models.map((model) => {
+    const displayName = codexSlugDisplayName(model.id);
+    if (!displayName || model.name === displayName) return model;
+    return { ...model, name: displayName };
+  });
+}
+
+export function buildModelsForProvider(
+  providerId: string,
+  opts?: ProviderOptions,
+): Array<{ id: string; name?: string }> {
+  return normalizeModelDisplayNamesForProvider(providerId, buildModelsFromProviderOptions(opts));
 }
 
 export function shouldShowLoadingProviderModels(providerId: string, opts?: ProviderOptions): boolean {

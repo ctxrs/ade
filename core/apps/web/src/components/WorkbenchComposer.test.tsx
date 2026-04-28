@@ -838,6 +838,61 @@ describe("WorkbenchComposer textarea sizing", () => {
     expect(indicator).toHaveAttribute("title", "Context Window: 7% · 7/100");
   });
 
+  it("renders Codex model labels from lowercase slugs in the active composer", () => {
+    const ActiveHarness = () => {
+      const [value, setValue] = useState("");
+      const [attachments, setAttachments] = useState<MessageAttachment[]>([]);
+      const [modeId, setModeId] = useState<WorkbenchModeId>("default");
+
+      return (
+        <WorkbenchComposer
+          variant="activeSession"
+          value={value}
+          setValue={setValue}
+          placeholder="Ask follow-ups"
+          inputDisabled={false}
+          sessionIdForAutocomplete="session-1"
+          workspaceIdForAutocomplete="ws-1"
+          slashCommands={[]}
+          attachments={attachments}
+          setAttachments={setAttachments}
+          onSend={vi.fn()}
+          sendDisabled={false}
+          sendDisabledReason={null}
+          onInterrupt={null}
+          isWorking={false}
+          modeId={modeId}
+          setModeId={setModeId}
+          providerId="codex"
+          harnessLabel="Agents"
+          harnessLogoSrc=""
+          harnessLogoInvert={false}
+          harnessLogoInvertInLight={false}
+          verbosity="default"
+          onSetVerbosity={undefined}
+          contextWindow={null}
+          availableModels={[
+            { id: "gpt-5.5/medium", name: "GPT-5.5 (medium)" },
+            { id: "gpt-5.4-mini/medium", name: "GPT-5.4-Mini (medium)" },
+          ]}
+          currentModelId="gpt-5.5/medium"
+          currentModelDisplayLabel="GPT-5.5"
+          onSetModelId={vi.fn(async () => {})}
+        />
+      );
+    };
+
+    render(<ActiveHarness />);
+
+    const modelButton = screen.getByRole("button", { name: "gpt-5.5" });
+    expect(screen.queryByRole("button", { name: "GPT-5.5" })).toBeNull();
+
+    fireEvent.click(modelButton);
+    const modelMenu = screen.getByRole("menu", { hidden: true });
+    expect(within(modelMenu).getByText("gpt-5.4-mini")).toBeInTheDocument();
+    expect(within(modelMenu).queryByText("GPT-5.4-Mini")).toBeNull();
+  });
+
   it("keeps the stop action visible while a turn is active even if draft attachments remain", async () => {
     const onSend = vi.fn();
     const onInterrupt = vi.fn();

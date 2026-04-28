@@ -31,6 +31,46 @@ describe("buildModelsForProvider", () => {
       { id: "gemini-3-pro-preview", name: "Gemini 3 Pro Preview" },
     ]);
   });
+
+  it("renders Codex subscription model names from lowercase slugs", () => {
+    expect(buildModelsForProvider("codex", {
+      provider_id: "codex",
+      workspace_id: "ws-test",
+      supports_load: false,
+      auth_required: false,
+      probed_at: "2026-03-10T00:00:00.000Z",
+      models: {
+        models: [
+          { id: "gpt-5.5/medium", name: "GPT-5.5 (medium)" },
+          { id: "gpt-5.4-mini/xhigh", name: "GPT-5.4-Mini (xhigh)" },
+          { id: "gpt-5.3-codex-spark/high", name: "GPT-5.3-Codex-Spark (high)" },
+        ],
+      },
+    })).toEqual([
+      { id: "gpt-5.5/medium", name: "gpt-5.5" },
+      { id: "gpt-5.4-mini/xhigh", name: "gpt-5.4-mini" },
+      { id: "gpt-5.3-codex-spark/high", name: "gpt-5.3-codex-spark" },
+    ]);
+  });
+
+  it("leaves non-slug Codex endpoint model names alone", () => {
+    expect(buildModelsForProvider("codex", {
+      provider_id: "codex",
+      workspace_id: "ws-test",
+      supports_load: false,
+      auth_required: false,
+      probed_at: "2026-03-10T00:00:00.000Z",
+      models: {
+        models: [
+          { id: "openai/gpt-5.2", name: "GPT-5.2" },
+          { id: "anthropic/claude-sonnet-4.6", name: "Claude Sonnet 4.6" },
+        ],
+      },
+    })).toEqual([
+      { id: "openai/gpt-5.2", name: "GPT-5.2" },
+      { id: "anthropic/claude-sonnet-4.6", name: "Claude Sonnet 4.6" },
+    ]);
+  });
 });
 
 describe("buildModelsFromCatalogPayload", () => {

@@ -93,6 +93,7 @@ export type NewSessionProps = SharedProps & {
 
 export type ActiveSessionProps = SharedProps & {
   variant: "activeSession";
+  providerId?: string;
   harnessLabel: string;
   harnessLogoSrc?: string;
   harnessLogoInvert?: boolean;
