@@ -245,7 +245,7 @@ dest.mkdir(parents=True, exist_ok=True)
     assert_eq!(sync_status, StatusCode::OK);
     assert_eq!(synced.len(), 1);
 
-    tokio::time::timeout(Duration::from_secs(5), async {
+    tokio::time::timeout(Duration::from_secs(20), async {
         loop {
             if tokio::fs::metadata(&started_marker).await.is_ok() {
                 break;

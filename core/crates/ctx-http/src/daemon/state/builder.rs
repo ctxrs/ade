@@ -8,14 +8,7 @@ impl AppState {
         daemon_url: String,
         auth_token: Option<String>,
     ) -> Self {
-        Self::new_with_public_base_url(
-            data_root,
-            stores,
-            providers,
-            daemon_url,
-            None,
-            auth_token,
-        )
+        Self::new_with_public_base_url(data_root, stores, providers, daemon_url, None, auth_token)
     }
 
     pub fn new_with_public_base_url(

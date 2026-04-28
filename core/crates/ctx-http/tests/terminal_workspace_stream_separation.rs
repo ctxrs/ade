@@ -251,11 +251,11 @@ async fn terminal_disconnect_and_reconnect_do_not_poison_workspace_control_plane
         .await
         .unwrap();
 
-    let terminal_ws_url = terminal_ws_url(
+    let initial_terminal_ws_url = terminal_ws_url(
         base,
         &mint_terminal_stream_path(client, base, &terminal).await,
     );
-    let (mut terminal_socket, _) = connect_async(&terminal_ws_url).await.unwrap();
+    let (mut terminal_socket, _) = connect_async(&initial_terminal_ws_url).await.unwrap();
     let (status, _) = read_terminal_status(&mut terminal_socket).await;
     assert!(matches!(status, TerminalStatus::Running));
 
@@ -322,7 +322,11 @@ async fn terminal_disconnect_and_reconnect_do_not_poison_workspace_control_plane
         .expect("terminal should still exist after client disconnect");
     assert!(matches!(refreshed.status, TerminalStatus::Running));
 
-    let (mut terminal_socket, _) = connect_async(&terminal_ws_url).await.unwrap();
+    let reconnect_terminal_ws_url = terminal_ws_url(
+        base,
+        &mint_terminal_stream_path(client, base, refreshed).await,
+    );
+    let (mut terminal_socket, _) = connect_async(&reconnect_terminal_ws_url).await.unwrap();
     let (status, _) = read_terminal_status(&mut terminal_socket).await;
     assert!(matches!(status, TerminalStatus::Running));
 

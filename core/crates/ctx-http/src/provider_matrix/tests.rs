@@ -1062,11 +1062,9 @@ async fn apply_matrix_to_status_uses_target_scoped_dependency_metadata() {
 
     apply_matrix_to_status(temp.path(), &cfg, &entry, &mut status, CURRENT_CTX_VERSION).await;
 
-    assert!(
-        !status
-            .details
-            .contains_key("managed_dependency_update_available")
-    );
+    assert!(!status
+        .details
+        .contains_key("managed_dependency_update_available"));
     assert!(!status.details.contains_key("matrix_update_available"));
 }
 
@@ -1246,12 +1244,10 @@ async fn apply_matrix_to_status_flags_managed_archive_checksum_mismatch() {
             .map(String::as_str),
         Some(actual_sha256.as_str())
     );
-    assert!(
-        status
-            .diagnostics
-            .iter()
-            .any(|msg| msg.contains("checksum mismatch"))
-    );
+    assert!(status
+        .diagnostics
+        .iter()
+        .any(|msg| msg.contains("checksum mismatch")));
 }
 
 #[tokio::test]
@@ -1282,12 +1278,10 @@ async fn apply_matrix_to_status_accepts_matching_managed_archive_checksum() {
 
     assert!(status.installed);
     assert!(!status.details.contains_key("managed_checksum_mismatch"));
-    assert!(
-        status
-            .diagnostics
-            .iter()
-            .all(|msg| !msg.contains("checksum mismatch"))
-    );
+    assert!(status
+        .diagnostics
+        .iter()
+        .all(|msg| !msg.contains("checksum mismatch")));
 }
 
 #[tokio::test]
@@ -1348,18 +1342,14 @@ async fn apply_matrix_to_status_clears_stale_matrix_update_flags_when_runtime_is
             .map(String::as_str),
         Some("0.114.0-ctx.2")
     );
-    assert!(
-        !status
-            .details
-            .contains_key("managed_dependency_update_available")
-    );
+    assert!(!status
+        .details
+        .contains_key("managed_dependency_update_available"));
     assert!(!status.details.contains_key("managed_fingerprint_mismatch"));
     assert!(!status.details.contains_key("matrix_update_available"));
-    assert!(
-        !status
-            .details
-            .contains_key("matrix_update_requires_context")
-    );
+    assert!(!status
+        .details
+        .contains_key("matrix_update_requires_context"));
 }
 
 #[tokio::test]
@@ -1461,12 +1451,10 @@ async fn apply_matrix_to_status_marks_out_of_matrix_runtime_as_unsupported() {
         status.health,
         ctx_providers::adapters::ProviderHealth::UnsupportedVersion
     );
-    assert!(
-        status
-            .diagnostics
-            .iter()
-            .any(|msg| msg.contains("not in the support matrix"))
-    );
+    assert!(status
+        .diagnostics
+        .iter()
+        .any(|msg| msg.contains("not in the support matrix")));
 }
 
 #[tokio::test]

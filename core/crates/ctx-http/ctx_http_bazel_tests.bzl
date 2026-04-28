@@ -111,6 +111,7 @@ CTX_HTTP_SUITE_TESTS = {
     ],
     "subagents-control": [
         "subagent_mcp_http",
+        "subagent_mcp_http_archive_agent_reclaims_dedicated_child_worktree",
         "system_prompt_append_http",
         "title_generation_local",
     ],
@@ -388,7 +389,12 @@ CTX_HTTP_CUSTOM_INTEGRATION_TARGETS = {
     },
     "subagent_mcp_http": {
         "source": "subagent_mcp_http",
-        "args": [],
+        "args": ["--skip", "archive_agent_reclaims_dedicated_child_worktree"],
+        "timeout": "eternal",
+    },
+    "subagent_mcp_http_archive_agent_reclaims_dedicated_child_worktree": {
+        "source": "subagent_mcp_http",
+        "args": ["--exact", "archive_agent_reclaims_dedicated_child_worktree"],
         "timeout": "eternal",
     },
     "workspace_attachments_local_canonical": {
@@ -452,9 +458,11 @@ def _declare_ctx_http_test(name, source_name, common_srcs, compile_data, data, d
         **kwargs
     )
 
-def declare_ctx_http_rust_unit_test(name, args, compile_data, data, deps, proc_macro_deps, timeout = None):
+def declare_ctx_http_rust_unit_test(name, args, compile_data, data, deps, proc_macro_deps, timeout = None, tags = None):
     kwargs = {}
     kwargs["timeout"] = timeout if timeout != None else "long"
+    if tags != None:
+        kwargs["tags"] = tags
     rust_test(
         name = name,
         crate = ":lib_test_support",

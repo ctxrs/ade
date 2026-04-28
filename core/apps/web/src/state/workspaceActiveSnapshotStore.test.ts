@@ -3033,6 +3033,52 @@ describe("WorkspaceActiveSnapshotStore", () => {
     }
   });
 
+  it("keeps the snapshot worker stopped in desktop mode even when Worker exists", async () => {
+    const { WorkspaceActiveSnapshotStoreImpl } = await import("./workspaceActiveSnapshotStoreCore");
+    const { getDaemonClientConfig } = await import("../api/client");
+
+    const previousTauri = (globalThis as typeof globalThis & { __TAURI__?: unknown }).__TAURI__;
+    const previousWorker = globalThis.Worker;
+
+    class WorkerMock {
+      static instances: WorkerMock[] = [];
+      onmessage: ((event: MessageEvent<unknown>) => void) | null = null;
+      postMessage = vi.fn();
+      terminate = vi.fn();
+      constructor(..._args: unknown[]) {
+        WorkerMock.instances.push(this);
+      }
+    }
+
+    try {
+      (globalThis as typeof globalThis & { __TAURI__?: unknown }).__TAURI__ = {};
+      vi.stubGlobal("Worker", WorkerMock as unknown as typeof Worker);
+      vi.mocked(getDaemonClientConfig).mockReturnValue({
+        baseUrl: "http://daemon.local",
+        wsBaseUrl: "ws://daemon.local",
+        authToken: "token-1",
+        runId: "run-1",
+      });
+
+      const store = new WorkspaceActiveSnapshotStoreImpl("ws-1");
+      store.init();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(WorkerMock.instances).toHaveLength(0);
+      store.destroy();
+    } finally {
+      if (previousTauri === undefined) {
+        delete (globalThis as typeof globalThis & { __TAURI__?: unknown }).__TAURI__;
+      } else {
+        (globalThis as typeof globalThis & { __TAURI__?: unknown }).__TAURI__ = previousTauri;
+      }
+      if (previousWorker) {
+        vi.stubGlobal("Worker", previousWorker);
+      } else {
+        Reflect.deleteProperty(globalThis as unknown as Record<string, unknown>, "Worker");
+      }
+    }
+  });
+
   it("pushes later canonical base and token rotations into an already running worker", async () => {
     const { WorkspaceActiveSnapshotStoreImpl } = await import("./workspaceActiveSnapshotStoreCore");
     const {

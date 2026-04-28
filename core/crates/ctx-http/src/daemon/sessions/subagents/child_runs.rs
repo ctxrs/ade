@@ -116,6 +116,32 @@ pub(super) async fn wait_for_run_terminal_turn(
     }
 }
 
+pub(super) async fn wait_for_run_assistant_message(
+    state: &Arc<AppState>,
+    session_id: SessionId,
+    run_id: RunId,
+) -> Result<Option<String>, String> {
+    let store = state
+        .store_for_session(session_id)
+        .await
+        .map_err(|error| logs::redact_sensitive(&error.to_string()))?;
+    let deadline = Instant::now() + std::time::Duration::from_secs(2);
+
+    loop {
+        if let Some(message) = store
+            .get_last_assistant_message_for_run(session_id, run_id)
+            .await
+            .map_err(|error| logs::redact_sensitive(&error.to_string()))?
+        {
+            return Ok(Some(message.content));
+        }
+        if Instant::now() >= deadline {
+            return Ok(None);
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+}
+
 pub(super) async fn emit_subagent_invocation_notice(
     state: &Arc<AppState>,
     parent_session_id: SessionId,
@@ -152,7 +178,6 @@ pub(super) async fn run_subagent_child(
         .store_for_session(child.child_session_id)
         .await
         .map_err(|error| logs::redact_sensitive(&error.to_string()))?;
-    drop(state);
     let status = match wait_for_run_terminal_turn(
         state_weak,
         &store,

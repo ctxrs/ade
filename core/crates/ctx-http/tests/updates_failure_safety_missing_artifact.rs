@@ -27,39 +27,41 @@ async fn download_update_rejects_missing_artifact_and_api_stays_healthy() {
         "1111111111111111111111111111111111111111111111111111111111111111",
     ));
 
-    let fake_release_server = common::spawn_http_server(axum::Router::new()
-        .route(
-            "/releases/stable/latest.json",
-            get({
-                let manifest = Arc::clone(&manifest);
-                move || {
+    let fake_release_server = common::spawn_http_server(
+        axum::Router::new()
+            .route(
+                "/releases/stable/latest.json",
+                get({
                     let manifest = Arc::clone(&manifest);
-                    async move {
-                        (
-                            StatusCode::OK,
-                            [("content-type", "application/json")],
-                            manifest.manifest_body.clone(),
-                        )
+                    move || {
+                        let manifest = Arc::clone(&manifest);
+                        async move {
+                            (
+                                StatusCode::OK,
+                                [("content-type", "application/json")],
+                                manifest.manifest_body.clone(),
+                            )
+                        }
                     }
-                }
-            }),
-        )
-        .route(
-            "/releases/stable/latest.json.sig",
-            get({
-                let manifest = Arc::clone(&manifest);
-                move || {
+                }),
+            )
+            .route(
+                "/releases/stable/latest.json.sig",
+                get({
                     let manifest = Arc::clone(&manifest);
-                    async move {
-                        (
-                            StatusCode::OK,
-                            [("content-type", "text/plain")],
-                            manifest.signature_b64.clone(),
-                        )
+                    move || {
+                        let manifest = Arc::clone(&manifest);
+                        async move {
+                            (
+                                StatusCode::OK,
+                                [("content-type", "text/plain")],
+                                manifest.signature_b64.clone(),
+                            )
+                        }
                     }
-                }
-            }),
-        ))
+                }),
+            ),
+    )
     .await;
     let _download_base = EnvGuard::set("CTX_DOWNLOAD_BASE_URL", &fake_release_server.base_url);
     let _manifest_pubkey = EnvGuard::set("CTX_RELEASE_MANIFEST_PUBKEY", &manifest.pubkey_b64);

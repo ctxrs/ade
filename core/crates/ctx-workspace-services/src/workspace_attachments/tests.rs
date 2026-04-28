@@ -1,7 +1,7 @@
 use super::{
-    AttachmentConfig, default_mount_relpath, materialize_attachment, normalize_attachment_config,
+    default_mount_relpath, materialize_attachment, normalize_attachment_config,
     resolve_workspace_local_source, revision_key, sanitize_attachment_subpath,
-    sanitize_mount_relpath,
+    sanitize_mount_relpath, AttachmentConfig,
 };
 use chrono::Utc;
 use ctx_core::ids::WorkspaceId;

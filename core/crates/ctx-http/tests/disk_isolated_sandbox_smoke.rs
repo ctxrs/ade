@@ -460,11 +460,9 @@ async fn disk_isolated_smoke_sandbox_volume_attachments_and_terminal() {
         attachment_delete_target_ready,
         "attachment delete target did not become ready"
     );
-    assert!(
-        !host_root
-            .join(".ctx/attachments/refs/ref1/ref.txt")
-            .exists()
-    );
+    assert!(!host_root
+        .join(".ctx/attachments/refs/ref1/ref.txt")
+        .exists());
 
     // Terminal should run inside the container worktree.
     ws_stream

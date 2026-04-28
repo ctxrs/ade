@@ -254,7 +254,11 @@ async fn configure_mobile_secure_access(state: &Arc<AppState>) -> (String, mobil
             "https://example.test".to_string(),
             "test-token-hash".to_string(),
             "testtok".to_string(),
-            vec!["workspace".to_string()],
+            vec![
+                "device_registration".to_string(),
+                "workspace_read".to_string(),
+                "workspace_stream".to_string(),
+            ],
         )
         .await
         .unwrap()
@@ -3682,7 +3686,24 @@ async fn workspace_active_snapshot_stream_filters_session_head_deltas() {
         create_task_with_primary_worktree(client, &state, base, ws.id, repo.path(), "live").await;
 
     let session_a = create_primary_worktree_session(client, base, task.id).await;
-    let session_b = create_primary_worktree_session(client, base, task.id).await;
+    let session_b_worktree = insert_worktree(&state, ws.id, task.id, repo.path()).await;
+    let session_b = create_child_worktree_session_with_request(
+        client,
+        base,
+        task.id,
+        json!({
+            "provider_id": "fake",
+            "model_id": "fake-model",
+            "worktree_id": session_b_worktree.id.0.to_string(),
+            "parent_session_id": session_a.id.0.to_string(),
+            "relationship": "secondary",
+        }),
+    )
+    .await;
+    assert_ne!(
+        session_a.id, session_b.id,
+        "filter coverage requires a distinct unsubscribed session"
+    );
     let store = state.store_for_task(task.id).await.unwrap();
     let sessions = store.list_sessions_for_task(task.id).await.unwrap();
     assert!(

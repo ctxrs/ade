@@ -102,7 +102,11 @@ pub fn sign_release_manifest_body(manifest_body: &str) -> (String, String) {
     )
 }
 
-pub fn release_manifest_for(platform: &str, appimage_url_path: &str, sha256: &str) -> SignedReleaseManifest {
+pub fn release_manifest_for(
+    platform: &str,
+    appimage_url_path: &str,
+    sha256: &str,
+) -> SignedReleaseManifest {
     let manifest = json!({
       "channel": "stable",
       "latest_version": "9.9.9",

@@ -16,7 +16,7 @@ use ctx_core::ids::{ConnectionProfileId, SessionId};
 use ctx_core::models::MobileConnectionProfile;
 
 use super::{
-    MobileScope, MobileScopeSet, default_mobile_profile_scopes, mobile_scope_set_from_strings,
+    default_mobile_profile_scopes, mobile_scope_set_from_strings, MobileScope, MobileScopeSet,
 };
 
 #[derive(Clone, Copy)]

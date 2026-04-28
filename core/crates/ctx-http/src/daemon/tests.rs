@@ -79,11 +79,16 @@ fn daemon_public_base_url_from_env_rejects_credentials_and_query_fragments() {
     let _guard = daemon_public_base_url_env_test_lock()
         .lock()
         .expect("daemon public base url env test lock");
-    let _var = EnvVarGuard::set("CTX_DAEMON_PUBLIC_BASE_URL", "https://user@example.com/ctx?a=1");
+    let _var = EnvVarGuard::set(
+        "CTX_DAEMON_PUBLIC_BASE_URL",
+        "https://user@example.com/ctx?a=1",
+    );
     let err = daemon_public_base_url_from_env().unwrap_err();
     assert!(
         err.to_string().contains("must not embed credentials")
-            || err.to_string().contains("must not include query or fragment")
+            || err
+                .to_string()
+                .contains("must not include query or fragment")
     );
 }
 
@@ -1218,9 +1223,7 @@ async fn sweep_provider_workers_once_dedupes_shared_adapters_and_aggregates_stat
 #[cfg(target_os = "macos")]
 #[tokio::test]
 async fn shutdown_shared_substrate_requests_save_or_stop_when_shared_backend_available() {
-    let _serial = crate::test_support::sandbox_cli_env_test_lock()
-        .lock()
-        .await;
+    let _serial = sandbox_cli_env_test_lock().lock().await;
     let temp = tempdir().unwrap();
     let stores = StoreManager::open(temp.path()).await.unwrap();
     let providers: HashMap<String, Arc<dyn ProviderAdapter>> = HashMap::new();

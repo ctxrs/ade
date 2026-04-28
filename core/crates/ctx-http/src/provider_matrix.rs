@@ -10,9 +10,9 @@ use std::path::PathBuf;
 mod status;
 
 pub(crate) use ctx_provider_matrix::{
-    ProviderMatrix, ProviderMatrixCache, ProviderMatrixEntryKind, get_entry,
-    invalidate_matrix_cache, is_user_facing_harness_id, load_bundled_matrix_from_env,
-    load_explicit_matrix_from_env, load_matrix_cached, replace_matrix_cache,
+    get_entry, invalidate_matrix_cache, is_user_facing_harness_id, load_bundled_matrix_from_env,
+    load_explicit_matrix_from_env, load_matrix_cached, replace_matrix_cache, ProviderMatrix,
+    ProviderMatrixCache, ProviderMatrixEntryKind,
 };
 
 #[cfg(test)]
@@ -20,12 +20,12 @@ pub(crate) use ctx_provider_matrix::load_matrix;
 
 #[cfg(test)]
 pub(crate) use ctx_provider_matrix::{
-    DependencyInstall, ProviderArchiveKind, ProviderArchiveTarget, ProviderCommand,
-    ProviderDependency, ProviderInstall, ProviderInstallDependencyRole,
+    builtin_matrix, extract_version, latest_release, normalize_version, parse_version_loose,
+    recommended_release, release_for_version, release_matches_context, select_latest_release,
+    version_matches, DependencyInstall, ProviderArchiveKind, ProviderArchiveTarget,
+    ProviderCommand, ProviderDependency, ProviderInstall, ProviderInstallDependencyRole,
     ProviderInstallDependencyTarget, ProviderMatrixEntry, ProviderRelease, ProviderReleaseStatus,
-    VersionProbe, builtin_matrix, extract_version, latest_release, normalize_version,
-    parse_version_loose, recommended_release, release_for_version, release_matches_context,
-    select_latest_release, version_matches,
+    VersionProbe,
 };
 #[cfg(test)]
 pub(crate) use status::apply_matrix_to_status;

@@ -199,7 +199,7 @@ if [ -n "${{CTX_AUTH_TOKEN:-}}" ]; then
 fi
 while IFS= read -r line; do
   case "$line" in
-    *'"type":"models.list"'*)
+    *models.list*)
       cat '{}'
       exit 0
       ;;
@@ -278,7 +278,7 @@ if [ -n "${{CTX_AUTH_TOKEN:-}}" ]; then
 fi
 while IFS= read -r line; do
   case "$line" in
-    *'"type":"models.list"'*)
+    *models.list*)
       cat '{}'
       exit 0
       ;;

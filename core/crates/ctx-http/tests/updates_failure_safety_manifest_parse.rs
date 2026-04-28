@@ -6,23 +6,35 @@ use serde_json::Value;
 
 mod common;
 
-use common::updates_failure_safety::{lock_env, sign_release_manifest_body, test_app_router, EnvGuard};
+use common::updates_failure_safety::{
+    lock_env, sign_release_manifest_body, test_app_router, EnvGuard,
+};
 
 #[tokio::test]
 async fn updates_check_rejects_malformed_manifest_metadata() {
     let _env_lock = lock_env();
     let (signature_b64, pubkey_b64) = sign_release_manifest_body("{");
 
-    let malformed_manifest_server = common::spawn_http_server(axum::Router::new().route(
-        "/releases/stable/latest.json",
-        get(|| async { (StatusCode::OK, [("content-type", "application/json")], "{") }),
-    ).route(
-        "/releases/stable/latest.json.sig",
-        get(move || {
-            let signature_b64 = signature_b64.clone();
-            async move { (StatusCode::OK, [("content-type", "text/plain")], signature_b64) }
-        }),
-    ))
+    let malformed_manifest_server = common::spawn_http_server(
+        axum::Router::new()
+            .route(
+                "/releases/stable/latest.json",
+                get(|| async { (StatusCode::OK, [("content-type", "application/json")], "{") }),
+            )
+            .route(
+                "/releases/stable/latest.json.sig",
+                get(move || {
+                    let signature_b64 = signature_b64.clone();
+                    async move {
+                        (
+                            StatusCode::OK,
+                            [("content-type", "text/plain")],
+                            signature_b64,
+                        )
+                    }
+                }),
+            ),
+    )
     .await;
     let _download_base =
         EnvGuard::set("CTX_DOWNLOAD_BASE_URL", &malformed_manifest_server.base_url);

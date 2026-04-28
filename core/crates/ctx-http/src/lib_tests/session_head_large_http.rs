@@ -13,8 +13,11 @@ use super::*;
 async fn large_session_head_http_responses_are_bounded() {
     const SEEDED_TURNS: i64 = 65;
     const HEAD_LIMIT: i64 = 60;
+    let step_timeout = std::time::Duration::from_secs(120);
+    let _serial = home_env_test_lock().lock().await;
 
     let repo = setup_git_repo().await;
+    let _projection_flush_ms = EnvVarGuard::set("CTX_ACTIVE_HEAD_PROJECTION_FLUSH_MS", "600000");
     let data_dir = tempfile::tempdir().unwrap();
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
     let mut providers: HashMap<String, Arc<dyn ProviderAdapter>> = HashMap::new();
@@ -58,14 +61,34 @@ async fn large_session_head_http_responses_are_bounded() {
 
     let store = state.store_for_session(session.id).await.unwrap();
     seed_large_session(&store, session.id, task.id, SEEDED_TURNS).await;
-
-    let (heads_status, heads_body): (StatusCode, serde_json::Value) = json_request(
-        &app,
-        Method::GET,
-        format!("/api/workspaces/{}/active_heads", workspace.id.0),
-        None,
+    // Keep the bulk seed deterministic without waiting for unrelated queued
+    // projection work from background refresh scheduling.
+    tokio::time::timeout(
+        step_timeout,
+        store.refresh_active_session_head_projection(session.id),
     )
-    .await;
+    .await
+    .unwrap_or_else(|_| panic!("timed out refreshing active session head projection"))
+    .unwrap();
+    tokio::time::timeout(
+        step_timeout,
+        state.ensure_workspace_active_snapshot_hydrated(workspace.id),
+    )
+    .await
+    .unwrap_or_else(|_| panic!("timed out hydrating workspace active snapshot"))
+    .unwrap();
+
+    let (heads_status, heads_body): (StatusCode, serde_json::Value) = tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        json_request(
+            &app,
+            Method::GET,
+            format!("/api/workspaces/{}/active_heads", workspace.id.0),
+            None,
+        ),
+    )
+    .await
+    .unwrap_or_else(|_| panic!("timed out requesting workspace active heads"));
     assert_eq!(heads_status, StatusCode::OK, "{heads_body:#?}");
     let active_head = heads_body["heads"]
         .as_array()
@@ -80,16 +103,20 @@ async fn large_session_head_http_responses_are_bounded() {
     );
     assert_eq!(active_head["has_more_turns"], json!(true));
 
-    let (head_status, head_body): (StatusCode, serde_json::Value) = json_request(
-        &app,
-        Method::GET,
-        format!(
-            "/api/sessions/{}/head?limit=60&include_events=true",
-            session.id.0
+    let (head_status, head_body): (StatusCode, serde_json::Value) = tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        json_request(
+            &app,
+            Method::GET,
+            format!(
+                "/api/sessions/{}/head?limit=60&include_events=true",
+                session.id.0
+            ),
+            None,
         ),
-        None,
     )
-    .await;
+    .await
+    .unwrap_or_else(|_| panic!("timed out requesting session head"));
     assert_eq!(head_status, StatusCode::OK, "{head_body:#?}");
     assert_eq!(head_body["turns"].as_array().map(Vec::len), Some(60));
     assert_eq!(head_body["messages"].as_array().map(Vec::len), Some(60));

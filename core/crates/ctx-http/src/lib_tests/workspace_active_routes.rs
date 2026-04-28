@@ -23,19 +23,26 @@ async fn workspace_active_snapshot_stream_returns_not_found_before_upgrade() {
     });
     let client = reqwest::Client::new();
 
-    let res = client
-        .get(format!(
-            "http://{addr}/api/workspaces/11111111-1111-1111-1111-111111111111/active_snapshot/stream"
-        ))
-        .header("authorization", "Bearer daemon-secret")
-        .header("connection", "upgrade")
-        .header("upgrade", "websocket")
-        .header("sec-websocket-version", "13")
-        .header("sec-websocket-key", "dGhlIHNhbXBsZSBub25jZQ==")
-        .send()
-        .await
-        .unwrap();
+    let res = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        client
+            .get(format!(
+                "http://{addr}/api/workspaces/11111111-1111-1111-1111-111111111111/active_snapshot/stream"
+            ))
+            .header("authorization", "Bearer daemon-secret")
+            .header("connection", "upgrade")
+            .header("upgrade", "websocket")
+            .header("sec-websocket-version", "13")
+            .header("sec-websocket-key", "dGhlIHNhbXBsZSBub25jZQ==")
+            .send(),
+    )
+    .await
+    .expect("workspace active route request timed out")
+    .unwrap();
     assert_eq!(res.status(), StatusCode::NOT_FOUND);
 
     server.abort();
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(5), server)
+        .await
+        .expect("workspace active route server shutdown timed out");
 }

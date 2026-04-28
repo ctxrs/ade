@@ -202,9 +202,9 @@ pub(super) async fn mint_web_session_stream_token(
         .ok_or(StatusCode::NOT_FOUND)?;
     let (stream_path, expires_at) = handle.issue_view_connect_path().await;
     let stream_url = match state.core.public_base_url.as_deref() {
-        Some(base_url) => {
-            Some(public_route_url(base_url, &stream_path).ok_or(StatusCode::INTERNAL_SERVER_ERROR)?)
-        }
+        Some(base_url) => Some(
+            public_route_url(base_url, &stream_path).ok_or(StatusCode::INTERNAL_SERVER_ERROR)?,
+        ),
         None => resolve_request_base_url(&headers, &state.core.daemon_url, None)
             .map(|base_url| format!("{base_url}{stream_path}")),
     };

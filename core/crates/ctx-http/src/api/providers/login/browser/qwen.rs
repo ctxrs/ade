@@ -161,24 +161,26 @@ async fn monitor_qwen_login(state: Arc<AppState>, login_id: String, label: Optio
             .await;
             match added {
                 Ok(registry) => {
-                    if let Err(err) = restarts::restart_qwen_providers_for_auth_change(
+                    let restart_result = restarts::restart_qwen_providers_for_auth_change(
                         &state,
                         "qwen auth updated",
                     )
-                    .await
-                    {
-                        let mut map = state.providers.qwen_login_sessions.lock().await;
-                        if let Some(entry) = map.get_mut(&login_id) {
-                            entry.status = "failed".to_string();
-                            entry.error = Some(logs::redact_sensitive(&err.to_string()));
-                        }
-                        return;
-                    }
+                    .await;
                     let mut map = state.providers.qwen_login_sessions.lock().await;
                     if let Some(entry) = map.get_mut(&login_id) {
-                        entry.status = "success".to_string();
                         entry.account_id = registry.active_account_id.clone();
-                        entry.error = None;
+                        match restart_result {
+                            Ok(()) => {
+                                entry.status = "success".to_string();
+                                entry.error = None;
+                            }
+                            Err(err) => {
+                                entry.status = "failed".to_string();
+                                entry.error = Some(logs::redact_sensitive(&format!(
+                                    "auth saved but provider restart failed: {err:#}"
+                                )));
+                            }
+                        }
                     }
                 }
                 Err(err) => {

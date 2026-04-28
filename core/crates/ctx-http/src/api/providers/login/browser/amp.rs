@@ -186,23 +186,24 @@ async fn monitor_amp_login(state: Arc<AppState>, login_id: String, label: Option
                     let _ = tokio::fs::remove_dir_all(&login_home).await;
                     return;
                 }
-                if let Err(err) =
+                let restart_result =
                     restarts::restart_amp_providers_for_auth_change(&state, "amp auth updated")
-                        .await
-                {
-                    let mut map = state.providers.amp_login_sessions.lock().await;
-                    if let Some(entry) = map.get_mut(&login_id) {
-                        entry.status = "failed".to_string();
-                        entry.error = Some(logs::redact_sensitive(&err.to_string()));
-                    }
-                    let _ = tokio::fs::remove_dir_all(&login_home).await;
-                    return;
-                }
+                        .await;
                 let mut map = state.providers.amp_login_sessions.lock().await;
                 if let Some(entry) = map.get_mut(&login_id) {
-                    entry.status = "success".to_string();
                     entry.auth_url = None;
-                    entry.error = None;
+                    match restart_result {
+                        Ok(()) => {
+                            entry.status = "success".to_string();
+                            entry.error = None;
+                        }
+                        Err(err) => {
+                            entry.status = "failed".to_string();
+                            entry.error = Some(logs::redact_sensitive(&format!(
+                                "auth saved but provider restart failed: {err:#}"
+                            )));
+                        }
+                    }
                 }
                 let _ = tokio::fs::remove_dir_all(&login_home).await;
                 return;

@@ -1,7 +1,7 @@
 use super::*;
 
 #[tokio::test]
-async fn subagent_init_surfaces_agent_server_config_errors() {
+async fn spawn_agent_surfaces_agent_server_config_errors() {
     let _serial = home_env_test_lock().lock().await;
     let git_repo = setup_git_repo().await;
     let home = tempfile::tempdir().unwrap();
@@ -53,7 +53,7 @@ async fn subagent_init_surfaces_agent_server_config_errors() {
                 "task_label": "q1",
                 "prompt": "test prompt",
                 "harness": "qwen",
-                "model": "qwen2.5-coder-32b-instruct",
+                "model": "qwen2.5-coder-32b-instruct"
             })
             .to_string(),
         ))

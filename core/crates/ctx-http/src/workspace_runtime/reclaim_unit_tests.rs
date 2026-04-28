@@ -66,6 +66,7 @@ async fn idle_runtime_reclaim_stops_machine_even_with_running_ctx_harness_contai
             idle_shutdown_seconds: 60,
             ..crate::settings::ContainerMachineSettings::default()
         },
+        runtime: crate::settings::ContainerRuntimeKind::NativeContainer,
         ..ContainerExecutionSettings::default()
     };
     let stores = StoreManager::open(temp.path()).await.expect("open stores");
@@ -89,7 +90,12 @@ async fn idle_runtime_reclaim_stops_machine_even_with_running_ctx_harness_contai
             &terminals,
         )
         .await
-        .expect("idle reclaim should not be blocked by parked workspace containers");
+        .unwrap_or_else(|err| {
+            let log = std::fs::read_to_string(&log_path).unwrap_or_default();
+            panic!(
+                "idle reclaim should not be blocked by parked workspace containers: {err:#}\ninvocation log:\n{log}"
+            );
+        });
 
     let log = std::fs::read_to_string(&log_path).expect("read invocation log");
     assert!(stopped);
@@ -128,6 +134,7 @@ async fn active_prewarm_artifact_activity_suppresses_reclaim() {
             idle_shutdown_seconds: 60,
             ..crate::settings::ContainerMachineSettings::default()
         },
+        runtime: crate::settings::ContainerRuntimeKind::NativeContainer,
         ..ContainerExecutionSettings::default()
     };
     let stores = StoreManager::open(temp.path()).await.expect("open stores");

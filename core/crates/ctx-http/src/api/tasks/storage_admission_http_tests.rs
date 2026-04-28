@@ -117,6 +117,7 @@ async fn post_json(
 #[cfg(unix)]
 #[tokio::test]
 async fn create_task_rejects_before_disk_isolated_copy_when_host_reserve_is_unreleased() {
+    let _process_env = crate::test_support::process_env_test_lock().lock().await;
     let _serial = crate::test_support::sandbox_cli_env_test_lock()
         .lock()
         .await;

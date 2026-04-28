@@ -32,7 +32,8 @@ pub(crate) use self::agent_control::{
 };
 use self::child_runs::{
     dispatch_subagent_prompt, emit_subagent_invocation_notice, finalize_subagent_invocation,
-    persist_subagent_prompt, run_subagent_child, PersistedSubagentPrompt,
+    persist_subagent_prompt, run_subagent_child, wait_for_run_assistant_message,
+    PersistedSubagentPrompt,
 };
 use self::errors::{api_error, internal_api_error, load_parent_session, ApiResult};
 use self::providers::load_requested_model_catalogs;
@@ -292,11 +293,17 @@ async fn build_agent_detail(
     let latest_result = if let Some(turn) = latest_turn.as_ref() {
         if let Some(status) = agent_terminal_result_status(turn.status.clone()) {
             let content = if let Some(run_id) = turn.run_id {
-                store
-                    .get_last_assistant_message_for_run(session.id, run_id)
-                    .await
-                    .map_err(internal_api_error)?
-                    .map(|message| message.content)
+                if status == "completed" {
+                    wait_for_run_assistant_message(state, session.id, run_id)
+                        .await
+                        .map_err(internal_api_error)?
+                } else {
+                    store
+                        .get_last_assistant_message_for_run(session.id, run_id)
+                        .await
+                        .map_err(internal_api_error)?
+                        .map(|message| message.content)
+                }
             } else {
                 None
             };

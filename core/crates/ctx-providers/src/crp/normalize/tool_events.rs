@@ -120,8 +120,8 @@ pub(super) fn map_known_event(
 
 #[cfg(test)]
 mod tests {
-    use crate::crp::protocol::{CrpChannel, CrpEvent, CrpToolStatus};
     use super::*;
+    use crate::crp::protocol::{CrpChannel, CrpEvent, CrpToolStatus};
 
     fn known(event: KnownCrpEvent) -> CrpEvent {
         CrpEvent::Known(Box::new(event))

@@ -1156,7 +1156,10 @@ async fn startup_prewarm_backfills_metadata_when_runtime_is_already_ready() {
 
     let snapshot = coordinator.startup_status().await;
     assert_eq!(snapshot.state, StartupPrewarmState::Ready);
-    assert!(!snapshot.needs_prewarm);
+    assert!(
+        !snapshot.needs_prewarm,
+        "expected already-ready runtime to report no startup prewarm gap: {snapshot:#?}"
+    );
     assert!(snapshot.machine_ready);
     assert!(snapshot.image_present);
     assert_eq!(ops.runtime_runs.load(Ordering::SeqCst), 0);
@@ -1204,7 +1207,10 @@ async fn startup_prewarm_preserves_existing_ready_timestamp_when_reusing_ready_r
 
     let snapshot = coordinator.startup_status().await;
     assert_eq!(snapshot.state, StartupPrewarmState::Ready);
-    assert!(!snapshot.needs_prewarm);
+    assert!(
+        !snapshot.needs_prewarm,
+        "expected reused ready runtime to preserve a no-gap startup snapshot: {snapshot:#?}"
+    );
     assert_eq!(
         snapshot.last_success_at.as_deref(),
         Some("2026-03-20T00:00:00Z")
@@ -2775,6 +2781,8 @@ async fn runtime_prewarm_launch_ready_scope_starts_native_runtime_before_loading
     let image_present = data_dir.path().join("image-present");
     let log_path = data_dir.path().join("sandbox-cli.log");
     let sandbox_cli_path = data_dir.path().join("sandbox-cli.sh");
+    let (_cache_guard, _cache_server) =
+        install_test_managed_machine_cache_source(vec![1, 2, 3]).await;
     std::fs::write(
         &sandbox_cli_path,
         format!(

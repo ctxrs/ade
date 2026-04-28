@@ -56,7 +56,7 @@ rust_test(
     name = "subagent_tools",
     crate_root = "tests/subagent_tools.rs",
     edition = "2021",
-    srcs = ["tests/subagent_tools.rs"],
+    srcs = ["tests/subagent_tools.rs"] + glob(["tests/subagent_tools/**/*.rs"]),
     args = ["--test-threads=1"],
     data = [":ctx-mcp"],
     rustc_env = CTX_MCP_TEST_RUSTC_ENV,

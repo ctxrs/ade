@@ -1217,7 +1217,7 @@ async fn prepare_starts_cached_workspace_container_when_sandbox_cli_reports_it_s
     std::fs::write(
             &sandbox_cli_path,
             format!(
-                "#!/bin/sh\nLOG=\"{log}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"info\" ]; then\n  printf '{{}}\\n'\n  exit 0\nfi\nif [ \"$1\" = \"volume\" ] && [ \"$2\" = \"inspect\" ]; then\n  exit 1\nfi\nif [ \"$1\" = \"volume\" ] && [ \"$2\" = \"create\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"inspect\" ] && [ \"$3\" = \"{container}\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"inspect\" ] && [ \"$5\" = \"{container}\" ]; then\n  printf 'false\\n'\n  exit 0\nfi\nif [ \"$1\" = \"inspect\" ] && [ \"$2\" = \"{container}\" ]; then\n  printf '[{{\"Mounts\":[{{\"Type\":\"volume\",\"Name\":\"{volume}\",\"Destination\":\"{workspace_root}\"}}]}}]\\n'\n  exit 0\nfi\nif [ \"$1\" = \"start\" ] && [ \"$2\" = \"{container}\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"exec\" ]; then\n  exit 0\nfi\necho \"unexpected sandbox CLI invocation: $*\" >&2\nexit 1\n",
+                "#!/bin/sh\nLOG=\"{log}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"info\" ]; then\n  printf '{{}}\\n'\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"inspect\" ]; then\n  printf '[]\\n'\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"start\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"volume\" ] && [ \"$2\" = \"inspect\" ]; then\n  exit 1\nfi\nif [ \"$1\" = \"volume\" ] && [ \"$2\" = \"create\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"inspect\" ] && [ \"$3\" = \"{container}\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"inspect\" ] && [ \"$5\" = \"{container}\" ]; then\n  printf 'false\\n'\n  exit 0\nfi\nif [ \"$1\" = \"inspect\" ] && [ \"$2\" = \"{container}\" ]; then\n  printf '[{{\"Mounts\":[{{\"Type\":\"volume\",\"Name\":\"{volume}\",\"Destination\":\"{workspace_root}\"}}]}}]\\n'\n  exit 0\nfi\nif [ \"$1\" = \"start\" ] && [ \"$2\" = \"{container}\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"exec\" ]; then\n  exit 0\nfi\necho \"unexpected sandbox CLI invocation: $*\" >&2\nexit 1\n",
                 log = log_path.display(),
                 container = container_name,
                 volume = volume_name,
@@ -2272,7 +2272,10 @@ async fn maybe_reclaim_sandbox_machine_clamps_short_idle_timeout() {
             &terminals,
         )
         .await
-        .expect("reclaim check should succeed");
+        .unwrap_or_else(|err| {
+            let log = std::fs::read_to_string(&log_path).unwrap_or_default();
+            panic!("reclaim check should succeed: {err:#}\ninvocation log:\n{log}");
+        });
 
     assert!(!stopped);
     let log = std::fs::read_to_string(&log_path).unwrap_or_default();
@@ -3167,11 +3170,22 @@ async fn unrestricted_network_transition_surfaces_teardown_failures() {
     .expect_err("teardown failure should be explicit");
 
     let message = format!("{err:#}");
-    assert!(message.contains("failed to tear down restricted container network policy"));
-    assert!(message.contains("stop transparent proxy"));
-    assert!(message.contains("failed to remove proxy pid file"));
-    assert!(message.contains("clear egress guard"));
-    assert!(message.contains("failed to reset output policy"));
+    assert!(
+        message.contains("failed to tear down restricted container network policy"),
+        "unexpected teardown error: {message}"
+    );
+    assert!(
+        message.contains("stop transparent proxy"),
+        "unexpected teardown error: {message}"
+    );
+    assert!(
+        message.contains("clear egress guard"),
+        "unexpected teardown error: {message}"
+    );
+    assert!(
+        message.contains("failed to reset output policy"),
+        "unexpected teardown error: {message}"
+    );
 
     let log = std::fs::read_to_string(&log_path).expect("read invocation log");
     assert_eq!(

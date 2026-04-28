@@ -74,7 +74,6 @@ pub(crate) async fn get_session_head(
     if state.core.stores.is_workspace_deleting(workspace_id).await {
         return Err(StatusCode::NOT_FOUND);
     }
-    let store = store_for_existing_session_status_allow_archived(&state, session_id).await?;
     if let Some(head) = state
         .workspaces
         .workspace_active_snapshot
@@ -83,6 +82,7 @@ pub(crate) async fn get_session_head(
     {
         return Ok(Json(head));
     }
+    let store = store_for_existing_session_status_allow_archived(&state, session_id).await?;
     state.emit_cache_miss("session_head").await;
     match store
         .get_session_head_snapshot(session_id, limit, include_events)

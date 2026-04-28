@@ -1,7 +1,7 @@
 use super::*;
 
-mod browser_http_bearers;
 mod browser_capability_tokens;
+mod browser_http_bearers;
 mod browser_stream_tokens;
 mod daemon_http;
 mod mcp_session_scope;

@@ -183,9 +183,9 @@ pub(super) fn map_known_event(
 mod tests {
     use std::collections::HashMap;
 
+    use super::*;
     use crate::crp::normalize::CachedToolInput;
     use crate::crp::protocol::{CrpChannel, CrpEvent};
-    use super::*;
 
     fn known(event: KnownCrpEvent) -> CrpEvent {
         CrpEvent::Known(Box::new(event))

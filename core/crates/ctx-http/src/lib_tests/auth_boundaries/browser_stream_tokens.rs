@@ -1,6 +1,6 @@
 use super::*;
 use crate::api::{
-    BrowserStreamAuthScope, derive_browser_query_secret, derive_browser_stream_token,
+    derive_browser_query_secret, derive_browser_stream_token, BrowserStreamAuthScope,
 };
 
 const STREAM_TOKEN_TTL_SECS: i64 = 5 * 60;

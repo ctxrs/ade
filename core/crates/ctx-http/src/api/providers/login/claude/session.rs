@@ -435,6 +435,7 @@ async fn monitor_claude_login(
                     .await
                     {
                         Ok(registry) => {
+                            final_account_id = registry.active_account_id;
                             match restarts::restart_claude_providers_for_auth_change(
                                 &state,
                                 "claude auth updated",
@@ -443,10 +444,11 @@ async fn monitor_claude_login(
                             {
                                 Ok(()) => {
                                     final_status = "success".to_string();
-                                    final_account_id = registry.active_account_id;
                                 }
                                 Err(err) => {
-                                    final_error = Some(logs::redact_sensitive(&err.to_string()));
+                                    final_error = Some(logs::redact_sensitive(&format!(
+                                        "auth saved but provider restart failed: {err:#}"
+                                    )));
                                 }
                             }
                         }

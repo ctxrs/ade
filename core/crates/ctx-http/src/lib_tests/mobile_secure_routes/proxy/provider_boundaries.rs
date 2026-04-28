@@ -122,42 +122,34 @@ async fn mobile_secure_proxy_rejects_provider_login_routes() {
     let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(payload["error"], "secure proxy path must be normalized");
 
-    assert!(
-        state
-            .providers
-            .gemini_login_sessions
-            .lock()
-            .await
-            .is_empty()
-    );
+    assert!(state
+        .providers
+        .gemini_login_sessions
+        .lock()
+        .await
+        .is_empty());
     assert!(state.providers.qwen_login_sessions.lock().await.is_empty());
     assert!(state.providers.amp_login_sessions.lock().await.is_empty());
-    assert!(
-        state
-            .providers
-            .mistral_login_sessions
-            .lock()
-            .await
-            .is_empty()
-    );
+    assert!(state
+        .providers
+        .mistral_login_sessions
+        .lock()
+        .await
+        .is_empty());
     assert!(state.providers.kimi_login_sessions.lock().await.is_empty());
-    assert!(
-        state
-            .providers
-            .claude_login_sessions
-            .lock()
-            .await
-            .is_empty()
-    );
+    assert!(state
+        .providers
+        .claude_login_sessions
+        .lock()
+        .await
+        .is_empty());
     assert!(state.providers.codex_login_sessions.lock().await.is_empty());
-    assert!(
-        state
-            .providers
-            .cursor_login_sessions
-            .lock()
-            .await
-            .is_empty()
-    );
+    assert!(state
+        .providers
+        .cursor_login_sessions
+        .lock()
+        .await
+        .is_empty());
 }
 
 #[tokio::test]
