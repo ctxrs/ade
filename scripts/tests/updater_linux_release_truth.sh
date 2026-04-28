@@ -19,8 +19,21 @@ WEBKIT_PREP_LOG="${ARTIFACT_DIR}/webkit-prep.log"
 RUNTIME_INSTALL_LOG="${ARTIFACT_DIR}/runtime-install.log"
 WIZARD_LOG="${ARTIFACT_DIR}/workspace-wizard.log"
 EXTRACT_DIR="${ARTIFACT_DIR}/appimage-extract"
+WDIO_CONNECTION_RETRY_TIMEOUT_MS="${CTX_UPDATER_LINUX_PROOF_WDIO_CONNECTION_RETRY_TIMEOUT_MS:-300000}"
 
 mkdir -p "${ARTIFACT_DIR}"
+
+upload_artifacts_on_buildkite() {
+  if [[ -z "${BUILDKITE:-}" ]] || ! command -v buildkite-agent >/dev/null 2>&1; then
+    return
+  fi
+  buildkite-agent artifact upload "${ARTIFACT_DIR}/*.json" >/dev/null 2>&1 || true
+  buildkite-agent artifact upload "${ARTIFACT_DIR}/*.log" >/dev/null 2>&1 || true
+  buildkite-agent artifact upload "${ARTIFACT_DIR}/volatile/artifacts/ctx-desktop-e2e/**/*.log" >/dev/null 2>&1 || true
+  buildkite-agent artifact upload "${ARTIFACT_DIR}/volatile/artifacts/ctx-desktop-e2e/**/*.png" >/dev/null 2>&1 || true
+}
+
+trap upload_artifacts_on_buildkite EXIT
 
 write_report() {
   local status="$1"
@@ -196,6 +209,7 @@ if ! HOME="${home_dir}" \
   CTX_AUTOMATION_SKIP_DESKTOP_PREP_RELEASE=1 \
   CTX_AUTOMATION_SKIP_APP_BUILD=1 \
   CTX_AUTOMATION_WDIO_LOG_LEVEL="${CTX_AUTOMATION_WDIO_LOG_LEVEL:-warn}" \
+  CTX_AUTOMATION_CONNECTION_RETRY_TIMEOUT_MS="${CTX_AUTOMATION_CONNECTION_RETRY_TIMEOUT_MS:-${WDIO_CONNECTION_RETRY_TIMEOUT_MS}}" \
   CTX_AUTOMATION_KEEP_TMPDIR=1 \
   CTX_AUTOMATION_SHIPPED_APP=1 \
   CTX_DESKTOP_APP_PATH="${app_path}" \
@@ -229,6 +243,7 @@ if ! HOME="${home_dir}" \
   CTX_AUTOMATION_SKIP_DESKTOP_PREP_RELEASE=1 \
   CTX_AUTOMATION_SKIP_APP_BUILD=1 \
   CTX_AUTOMATION_WDIO_LOG_LEVEL="${CTX_AUTOMATION_WDIO_LOG_LEVEL:-warn}" \
+  CTX_AUTOMATION_CONNECTION_RETRY_TIMEOUT_MS="${CTX_AUTOMATION_CONNECTION_RETRY_TIMEOUT_MS:-${WDIO_CONNECTION_RETRY_TIMEOUT_MS}}" \
   CTX_AUTOMATION_KEEP_TMPDIR=1 \
   CTX_AUTOMATION_SHIPPED_APP=1 \
   CTX_DESKTOP_APP_PATH="${app_path}" \
@@ -302,6 +317,7 @@ CTX_AUTOMATION_SKIP_APP_BUILD=1 \
 CTX_AUTOMATION_SKIP_DESKTOP_PREP_RELEASE=1 \
 CTX_AUTOMATION_SCENARIOS="${CTX_AUTOMATION_SCENARIOS:-local-codex-smoke}" \
 CTX_AUTOMATION_WDIO_LOG_LEVEL="${CTX_AUTOMATION_WDIO_LOG_LEVEL:-warn}" \
+CTX_AUTOMATION_CONNECTION_RETRY_TIMEOUT_MS="${CTX_AUTOMATION_CONNECTION_RETRY_TIMEOUT_MS:-${WDIO_CONNECTION_RETRY_TIMEOUT_MS}}" \
 CTX_AUTOMATION_KEEP_TMPDIR=1 \
 CTX_VOLATILE_ROOT="${ARTIFACT_DIR}/volatile" \
 CTX_DESKTOP_APP_PATH="${app_path}" \

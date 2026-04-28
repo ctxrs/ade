@@ -107,6 +107,17 @@ test("updater remote wrapper uses shipped app without source-side provisioning",
 test("updater Linux proof targets storage channel for stable dry-run proofs", () => {
   const script = fs.readFileSync(UPDATER_LINUX_PROOF_WRAPPER, "utf8");
   assert.match(script, /TARGET_CHANNEL="\$\{CTX_UPDATER_LINUX_PROOF_TARGET_CHANNEL:-\$\{RELEASE_STORAGE_CHANNEL:-\$\{RELEASE_CHANNEL:-e2e\}\}\}"/);
+  assert.match(
+    script,
+    /WDIO_CONNECTION_RETRY_TIMEOUT_MS="\$\{CTX_UPDATER_LINUX_PROOF_WDIO_CONNECTION_RETRY_TIMEOUT_MS:-300000\}"/,
+  );
+  assert.equal(
+    script.match(/CTX_AUTOMATION_CONNECTION_RETRY_TIMEOUT_MS="\$\{CTX_AUTOMATION_CONNECTION_RETRY_TIMEOUT_MS:-\$\{WDIO_CONNECTION_RETRY_TIMEOUT_MS\}\}"/g)?.length,
+    3,
+  );
+  assert.match(script, /buildkite-agent artifact upload "\$\{ARTIFACT_DIR\}\/\*\.json"/);
+  assert.match(script, /buildkite-agent artifact upload "\$\{ARTIFACT_DIR\}\/volatile\/artifacts\/ctx-desktop-e2e\/\*\*\/\*\.log"/);
+  assert.doesNotMatch(script, /buildkite-agent artifact upload "\$\{ARTIFACT_DIR\}\/\*\*\/\*"/);
 });
 
 test("desktop smoke cleanup unmounts AppImage FUSE mounts even when logs are preserved", () => {
