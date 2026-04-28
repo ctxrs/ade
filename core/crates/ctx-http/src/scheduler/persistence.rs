@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{anyhow, Result};
-use ctx_core::ids::{RunId, TurnId};
+use ctx_core::ids::{RunId, SessionId, TurnId};
 use ctx_core::models::{Message, MessageDelivery, MessageRole, SessionEvent, SessionEventType};
 
 use crate::daemon::AppState;
@@ -47,6 +47,31 @@ pub(crate) async fn append_session_event_with_retry(
             .await
         {
             Ok(event) => return Ok(event),
+            Err(err) => {
+                if !is_transient_store_error(&err) || attempt >= STORE_WRITE_RETRY_LIMIT {
+                    return Err(err);
+                }
+                attempt += 1;
+                let backoff_ms = STORE_WRITE_RETRY_BASE_MS.saturating_mul(attempt as u64);
+                tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
+            }
+        }
+    }
+}
+
+pub(crate) async fn claim_session_provider_session_ref_with_retry(
+    store: &ctx_store::Store,
+    session_id: SessionId,
+    provider_session_ref: String,
+    source: &str,
+) -> Result<()> {
+    let mut attempt = 0usize;
+    loop {
+        match store
+            .claim_session_provider_session_ref(session_id, provider_session_ref.clone(), source)
+            .await
+        {
+            Ok(()) => return Ok(()),
             Err(err) => {
                 if !is_transient_store_error(&err) || attempt >= STORE_WRITE_RETRY_LIMIT {
                     return Err(err);

@@ -166,14 +166,13 @@ async fn run_turn_event_loop(mut ctx: TurnEventLoop) {
             }
             let provider_session_id = payload.get("provider_session_id").and_then(Value::as_str);
             if let Some(ps) = provider_session_id {
-                match ctx
-                    .store
-                    .claim_session_provider_session_ref(
-                        ctx.session_id,
-                        ps.to_string(),
-                        "scheduler.init_event",
-                    )
-                    .await
+                match claim_session_provider_session_ref_with_retry(
+                    &ctx.store,
+                    ctx.session_id,
+                    ps.to_string(),
+                    "scheduler.init_event",
+                )
+                .await
                 {
                     Ok(()) => {
                         ctx.provider_session_ref = Some(ps.to_string());
