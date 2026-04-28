@@ -800,6 +800,7 @@ describe("WorkspaceActiveSnapshotStore", () => {
   it("uses one canonical websocket url per connect cycle", async () => {
     const { WorkspaceActiveSnapshotStoreImpl } = await import("./workspaceActiveSnapshotStoreCore");
     const { getDaemonClientConfig } = await import("../api/client");
+    vi.spyOn(Date, "now").mockReturnValueOnce(1_700_000_000_000);
     vi.mocked(getDaemonClientConfig).mockReturnValue({
       baseUrl: "http://daemon.local",
       wsBaseUrl: "ws://daemon.local",
@@ -810,16 +811,17 @@ describe("WorkspaceActiveSnapshotStore", () => {
     const internals = asStoreInternals(store);
     const openSpy = vi.spyOn(internals, "openWebSocket").mockResolvedValueOnce(undefined);
     const reconnectSpy = vi.spyOn(internals, "scheduleReconnect").mockImplementation(() => {});
+    const expectedExpiresAt = Math.floor((1_700_000_000_000 + 5 * 60 * 1000) / 1000);
     const expectedToken = await deriveBrowserStreamToken("token-1", {
       kind: "workspace_active_snapshot",
       workspaceId: "ws-1",
-    });
+    }, expectedExpiresAt);
 
     await internals.connectStream();
 
     expect(openSpy).toHaveBeenCalledTimes(1);
     expect(openSpy).toHaveBeenCalledWith(
-      `ws://daemon.local/api/workspaces/ws-1/active_snapshot/stream?token=${expectedToken}`,
+      `ws://daemon.local/api/workspaces/ws-1/active_snapshot/stream?expires_at=${expectedExpiresAt}&token=${expectedToken}`,
     );
     expect(reconnectSpy).not.toHaveBeenCalled();
     const diagnostics = getUiDiagnostics().filter((event) => event.code === "workspace.stream_connect_failed");

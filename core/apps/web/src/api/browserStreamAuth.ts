@@ -5,6 +5,7 @@ export type BrowserStreamScope =
   | { kind: "dictation_livekit" }
   | { kind: "provider_install"; installId: string };
 
+const BROWSER_STREAM_TOKEN_TTL_MS = 5 * 60 * 1000;
 const encoder = new TextEncoder();
 
 export const serializeBrowserStreamScope = (scope: BrowserStreamScope): string => {
@@ -36,10 +37,11 @@ const hexEncode = (bytes: Uint8Array): string =>
 export const deriveBrowserStreamToken = async (
   authToken: string,
   scope: BrowserStreamScope,
+  expiresAt: number,
 ): Promise<string> => {
   const subtle = requireSubtleCrypto();
   const payload = encoder.encode(
-    `ctx-browser-stream|${serializeBrowserStreamScope(scope)}|${authToken}`,
+    `ctx-browser-stream|${serializeBrowserStreamScope(scope)}|${expiresAt}|${authToken}`,
   );
   const digest = await subtle.digest("SHA-256", payload);
   return hexEncode(new Uint8Array(digest));
@@ -51,5 +53,7 @@ export const setBrowserStreamQueryToken = async (
   scope: BrowserStreamScope,
 ): Promise<void> => {
   if (!authToken) return;
-  query.set("token", await deriveBrowserStreamToken(authToken, scope));
+  const expiresAt = Math.floor((Date.now() + BROWSER_STREAM_TOKEN_TTL_MS) / 1000);
+  query.set("expires_at", String(expiresAt));
+  query.set("token", await deriveBrowserStreamToken(authToken, scope, expiresAt));
 };

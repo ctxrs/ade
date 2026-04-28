@@ -16,7 +16,7 @@ use ctx_core::ids::{ConnectionProfileId, SessionId};
 use ctx_core::models::MobileConnectionProfile;
 
 use super::{
-    default_mobile_profile_scopes, mobile_scope_set_from_strings, MobileScope, MobileScopeSet,
+    MobileScope, MobileScopeSet, default_mobile_profile_scopes, mobile_scope_set_from_strings,
 };
 
 #[derive(Clone, Copy)]
@@ -317,10 +317,13 @@ fn scoped_mcp_route(req: &Request<Body>) -> Option<ScopedMcpRoute> {
 pub(crate) fn derive_browser_stream_token(
     auth_token: &str,
     scope: &BrowserStreamAuthScope,
+    expires_at: i64,
 ) -> String {
     let mut hasher = sha2::Sha256::new();
     hasher.update(b"ctx-browser-stream|");
     hasher.update(scope.serialize().as_bytes());
+    hasher.update(b"|");
+    hasher.update(expires_at.to_string().as_bytes());
     hasher.update(b"|");
     hasher.update(auth_token.as_bytes());
     hex::encode(hasher.finalize())
@@ -334,19 +337,54 @@ pub(crate) fn derive_browser_query_secret(auth_token: &str) -> String {
 }
 
 fn browser_stream_query_token_is_valid(req: &Request<Body>, auth_token: &str) -> bool {
+    if req.method() != Method::GET {
+        return false;
+    }
     let Some(scope) = browser_stream_scope(req) else {
         return false;
     };
     let Some(query_token) = query_param(req, "token") else {
         return false;
     };
-    query_token == derive_browser_stream_token(auth_token, &scope)
+    let Some(expires_at) = query_expires_at_within_window(
+        req,
+        BROWSER_STREAM_TOKEN_TTL_SECS,
+        BROWSER_STREAM_TOKEN_MAX_PAST_SKEW_SECS,
+        BROWSER_STREAM_TOKEN_MAX_FUTURE_SKEW_SECS,
+    ) else {
+        return false;
+    };
+    query_token == derive_browser_stream_token(auth_token, &scope, expires_at)
         || query_token
-            == derive_browser_stream_token(&derive_browser_query_secret(auth_token), &scope)
+            == derive_browser_stream_token(
+                &derive_browser_query_secret(auth_token),
+                &scope,
+                expires_at,
+            )
 }
 
+const BROWSER_STREAM_TOKEN_TTL_SECS: i64 = 5 * 60;
+const BROWSER_STREAM_TOKEN_MAX_PAST_SKEW_SECS: i64 = 10 * 60;
+const BROWSER_STREAM_TOKEN_MAX_FUTURE_SKEW_SECS: i64 = 10 * 60;
 const BROWSER_CAPABILITY_TOKEN_TTL_SECS: i64 = 60 * 60;
 const BROWSER_CAPABILITY_TOKEN_MAX_FUTURE_SKEW_SECS: i64 = 60;
+
+fn query_expires_at_within_window(
+    req: &Request<Body>,
+    ttl_secs: i64,
+    max_past_skew_secs: i64,
+    max_future_skew_secs: i64,
+) -> Option<i64> {
+    let expires_at = query_param(req, "expires_at").and_then(|value| value.parse().ok())?;
+    let now = chrono::Utc::now().timestamp();
+    if expires_at < now - max_past_skew_secs {
+        return None;
+    }
+    if expires_at > now + ttl_secs + max_future_skew_secs {
+        return None;
+    }
+    Some(expires_at)
+}
 
 pub(crate) fn derive_browser_capability_token(
     auth_token: &str,
@@ -373,19 +411,14 @@ fn browser_capability_query_token_is_valid(req: &Request<Body>, auth_token: &str
     let Some(query_token) = query_param(req, "token") else {
         return false;
     };
-    let Some(expires_at) = query_param(req, "expires_at").and_then(|value| value.parse().ok())
-    else {
+    let Some(expires_at) = query_expires_at_within_window(
+        req,
+        BROWSER_CAPABILITY_TOKEN_TTL_SECS,
+        0,
+        BROWSER_CAPABILITY_TOKEN_MAX_FUTURE_SKEW_SECS,
+    ) else {
         return false;
     };
-    let now = chrono::Utc::now().timestamp();
-    if expires_at < now {
-        return false;
-    }
-    if expires_at
-        > now + BROWSER_CAPABILITY_TOKEN_TTL_SECS + BROWSER_CAPABILITY_TOKEN_MAX_FUTURE_SKEW_SECS
-    {
-        return false;
-    }
     query_token == derive_browser_capability_token(auth_token, &scope, expires_at)
         || query_token
             == derive_browser_capability_token(

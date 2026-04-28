@@ -28,6 +28,7 @@ describe("clientWorkspaces websocket urls", () => {
   });
 
   it("builds execution launch stream URL on canonical daemon host with a scoped query token", async () => {
+    vi.spyOn(Date, "now").mockReturnValueOnce(1_700_000_000_000);
     vi.mocked(getDaemonConnection).mockReturnValueOnce({
       baseUrl: null,
       wsBaseUrl: null,
@@ -36,19 +37,21 @@ describe("clientWorkspaces websocket urls", () => {
       source: null,
     });
 
+    const expectedExpiresAt = Math.floor((1_700_000_000_000 + 5 * 60 * 1000) / 1000);
     const expectedToken = await deriveBrowserStreamToken("token-1", {
       kind: "execution_launch",
       jobId: "job-1",
-    });
+    }, expectedExpiresAt);
     const url = await buildExecutionLaunchWsUrl("job-1");
     expect(url).toBe(
-      `ws://daemon.test/api/execution/launch/stream?job_id=job-1&token=${expectedToken}`,
+      `ws://daemon.test/api/execution/launch/stream?job_id=job-1&expires_at=${expectedExpiresAt}&token=${expectedToken}`,
     );
     expect(url).not.toContain("token=token-1");
     expect(vi.mocked(getDaemonWsUrl)).toHaveBeenCalledTimes(1);
   });
 
   it("builds execution launch stream URL without token when auth is absent", async () => {
+    vi.spyOn(Date, "now").mockReturnValueOnce(1_700_000_000_000);
     vi.mocked(getDaemonConnection).mockReturnValueOnce({
       baseUrl: null,
       wsBaseUrl: null,
