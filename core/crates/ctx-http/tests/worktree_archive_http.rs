@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -120,7 +120,7 @@ async fn archive_and_unarchive_recreates_managed_worktrees() {
         .primary_session_id
         .expect("task creation should create a primary session");
 
-    client
+    let resp = client
         .post(format!("{base}/api/tasks/{}/sessions", task.id.0))
         .json(&json!({
             "provider_id":"fake",
@@ -132,8 +132,13 @@ async fn archive_and_unarchive_recreates_managed_worktrees() {
         .send()
         .await
         .unwrap();
+    assert!(
+        resp.status().is_success(),
+        "first subagent session creation failed: {}",
+        resp.status()
+    );
 
-    client
+    let resp = client
         .post(format!("{base}/api/tasks/{}/sessions", task.id.0))
         .json(&json!({
             "provider_id":"fake",
@@ -145,23 +150,35 @@ async fn archive_and_unarchive_recreates_managed_worktrees() {
         .send()
         .await
         .unwrap();
+    assert!(
+        resp.status().is_success(),
+        "second subagent session creation failed: {}",
+        resp.status()
+    );
 
     let store = state.store_for_task(task.id).await.unwrap();
     let sessions = store.list_sessions_for_task(task.id).await.unwrap();
+    assert_eq!(sessions.len(), 3);
+    let task = store
+        .get_task(task.id)
+        .await
+        .unwrap()
+        .expect("task should still exist");
+    let mut worktree_ids: HashSet<_> = sessions.iter().map(|session| session.worktree_id).collect();
+    if let Some(primary_worktree_id) = task.primary_worktree_id {
+        worktree_ids.insert(primary_worktree_id);
+    }
+    let expected_managed_count = worktree_ids.len();
     let mut managed = Vec::new();
-    for session in sessions {
-        let worktree = store
-            .get_worktree(session.worktree_id)
-            .await
-            .unwrap()
-            .unwrap();
+    for worktree_id in worktree_ids {
+        let worktree = store.get_worktree(worktree_id).await.unwrap().unwrap();
         let root = PathBuf::from(&worktree.root_path);
         let expected = managed_worktree_path(data_dir.path(), ws.id, worktree.id);
         if root == expected {
             managed.push(worktree);
         }
     }
-    assert_eq!(managed.len(), 4);
+    assert_eq!(managed.len(), expected_managed_count);
 
     let managed_roots: Vec<PathBuf> = managed
         .iter()

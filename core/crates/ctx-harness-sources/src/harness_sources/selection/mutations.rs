@@ -27,10 +27,7 @@ pub async fn upsert_provider_endpoint(
         .filter(|value| !value.is_empty());
     let _registry_write_guard = REGISTRY_WRITE_LOCK.lock().await;
     let mut registry = registry::load_registry(data_root).await?;
-    let provider = registry
-        .providers
-        .entry(canonical.to_string())
-        .or_insert_with(HarnessProviderConfigInternal::default);
+    let provider = registry.providers.entry(canonical.to_string()).or_default();
 
     let now = Utc::now();
     let endpoint_id = match input
@@ -124,10 +121,7 @@ pub async fn delete_provider_endpoint(
     }
     let _registry_write_guard = REGISTRY_WRITE_LOCK.lock().await;
     let mut registry = registry::load_registry(data_root).await?;
-    let provider = registry
-        .providers
-        .entry(canonical.to_string())
-        .or_insert_with(HarnessProviderConfigInternal::default);
+    let provider = registry.providers.entry(canonical.to_string()).or_default();
 
     let before = provider.endpoints.len();
     let removed: Vec<(String, String)> = provider
@@ -198,10 +192,7 @@ pub async fn set_provider_source_selection(
 
     let _registry_write_guard = REGISTRY_WRITE_LOCK.lock().await;
     let mut registry = registry::load_registry(data_root).await?;
-    let provider = registry
-        .providers
-        .entry(canonical.to_string())
-        .or_insert_with(HarnessProviderConfigInternal::default);
+    let provider = registry.providers.entry(canonical.to_string()).or_default();
 
     match source_kind {
         HarnessSourceKind::Subscription => {

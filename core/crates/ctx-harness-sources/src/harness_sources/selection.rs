@@ -71,7 +71,7 @@ pub(crate) async fn load_provider_internal(
     let provider = registry
         .providers
         .entry(canonical.to_string())
-        .or_insert_with(HarnessProviderConfigInternal::default)
+        .or_default()
         .clone();
     validate_provider_selection(&provider, canonical, endpoint_supported)?;
     Ok(provider)

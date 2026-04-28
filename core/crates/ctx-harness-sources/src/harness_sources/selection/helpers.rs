@@ -34,7 +34,7 @@ pub(super) async fn get_provider_source_config_locked(
     let config = registry
         .providers
         .entry(canonical.to_string())
-        .or_insert_with(HarnessProviderConfigInternal::default)
+        .or_default()
         .clone();
     super::validate_provider_selection(&config, canonical, endpoint_supported)?;
     Ok(
