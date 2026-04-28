@@ -274,3 +274,90 @@ dest.mkdir(parents=True, exist_ok=True)
     assert!(!materialized_root.exists());
     assert!(!mount_path.exists());
 }
+
+#[tokio::test]
+async fn workspace_attachments_reject_doc_mirror_scripts_outside_workspace_root() {
+    let repo = common::init_git_repo(&[("README.md", "hello\n")]).await;
+    let outside = tempfile::tempdir().unwrap();
+    let marker = outside.path().join("ran.txt");
+    let script_path = outside.path().join("outside-docs.py");
+    tokio::fs::write(
+        &script_path,
+        format!(
+            "from pathlib import Path\nPath({:?}).write_text('ran', encoding='utf-8')\n",
+            marker.to_string_lossy()
+        ),
+    )
+    .await
+    .unwrap();
+
+    let data_root = tempfile::tempdir().unwrap();
+    let stores = common::setup_store(data_root.path()).await;
+    let state = common::build_state(
+        data_root.path(),
+        stores,
+        common::fake_providers(),
+        "http://127.0.0.1:0",
+    );
+    let app = common::router(state);
+
+    let workspace = common::create_workspace(&app, repo.path(), "ws").await;
+
+    let (create_status, created): (StatusCode, Vec<WorkspaceAttachment>) = common::json_request(
+        &app,
+        Method::POST,
+        format!("/api/workspaces/{}/attachments", workspace.id.0),
+        Some(json!({
+            "kind": "doc_mirror",
+            "name": "outside-docs",
+            "source": script_path.to_string_lossy().to_string()
+        })),
+    )
+    .await;
+    assert_eq!(create_status, StatusCode::OK);
+    assert_eq!(created.len(), 1);
+
+    let (sync_status, synced): (StatusCode, Vec<WorkspaceAttachment>) = common::json_request(
+        &app,
+        Method::POST,
+        format!("/api/workspaces/{}/attachments/sync", workspace.id.0),
+        Some(json!({ "refresh": true })),
+    )
+    .await;
+    assert_eq!(sync_status, StatusCode::OK);
+    assert_eq!(synced.len(), 1);
+
+    let attachment = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let (_list_status, listed): (StatusCode, Vec<WorkspaceAttachment>) = common::json_request(
+                &app,
+                Method::GET,
+                format!("/api/workspaces/{}/attachments", workspace.id.0),
+                None,
+            )
+            .await;
+            let current = listed
+                .into_iter()
+                .find(|entry| entry.name == "outside-docs")
+                .expect("attachment should still exist");
+            if current.status == WorkspaceAttachmentStatus::Error {
+                break current;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    })
+    .await
+    .expect("doc mirror attachment never reached error state");
+
+    assert_eq!(attachment.status, WorkspaceAttachmentStatus::Error);
+    assert!(
+        attachment
+            .error_message
+            .as_deref()
+            .unwrap_or_default()
+            .contains("must stay within workspace root"),
+        "expected workspace-root error, got {:?}",
+        attachment.error_message
+    );
+    assert!(!marker.exists(), "outside script should never execute");
+}

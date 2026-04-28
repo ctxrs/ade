@@ -71,7 +71,7 @@ fn version_matches_suffix_release() {
 }
 
 #[tokio::test]
-async fn load_matrix_returns_cached_when_present() {
+async fn load_matrix_ignores_disk_cache_when_no_local_override_exists() {
     let dir = tempdir().expect("tempdir");
     let data_root = dir.path();
 
@@ -118,9 +118,9 @@ async fn load_matrix_returns_cached_when_present() {
             std::env::remove_var("CTX_BUNDLE_MATRIX_JSON");
         },
     }
-    assert_eq!(loaded.version, MATRIX_SCHEMA_VERSION);
-    assert_eq!(loaded.providers.len(), 1);
-    assert_eq!(loaded.providers[0].id, "cached-provider");
+    let builtin = builtin_matrix();
+    assert_eq!(loaded.version, builtin.version);
+    assert_eq!(loaded.providers.len(), builtin.providers.len());
 }
 
 #[tokio::test]
@@ -133,7 +133,7 @@ async fn load_matrix_returns_builtin_when_cache_missing() {
 }
 
 #[tokio::test]
-async fn load_matrix_prefers_explicit_bundle_manifest_over_cache() {
+async fn load_matrix_prefers_bundled_matrix_over_disk_cache() {
     let dir = tempdir().expect("tempdir");
     let bundle_dir = tempdir().expect("bundle tempdir");
     let bundle_matrix = ProviderMatrix {

@@ -140,10 +140,6 @@ function resolveProviderMatrixPath(env = process.env) {
   if (explicitPath) {
     return path.resolve(explicitPath);
   }
-  const cachedPath = path.join(env.HOME || path.join(coreRoot, ".."), ".ctx", "providers", "provider_matrix.json");
-  if (fs.existsSync(cachedPath)) {
-    return cachedPath;
-  }
   return path.join(coreRoot, "crates", "ctx-provider-accounts", "src", "provider_matrix.json");
 }
 

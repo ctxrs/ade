@@ -63,14 +63,11 @@ pub fn builtin_matrix() -> ProviderMatrix {
     ProviderMatrix::default()
 }
 
-pub async fn load_matrix(data_root: &Path) -> ProviderMatrix {
+pub async fn load_matrix(_data_root: &Path) -> ProviderMatrix {
     if let Ok(Some(matrix)) = load_explicit_matrix_from_env() {
         return matrix;
     }
     if let Some(matrix) = load_bundled_matrix_from_env() {
-        return matrix;
-    }
-    if let Some(matrix) = load_cached_matrix(data_root) {
         return matrix;
     }
     builtin_matrix()

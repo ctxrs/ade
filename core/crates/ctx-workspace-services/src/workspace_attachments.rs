@@ -317,6 +317,13 @@ fn normalize_attachment_config(
     existing: Option<WorkspaceAttachment>,
 ) -> Result<WorkspaceAttachment> {
     let name = cfg.name.trim().to_string();
+    let source = cfg.source.trim().to_string();
+    if source.is_empty() {
+        anyhow::bail!("source must not be empty");
+    }
+    if cfg.kind == WorkspaceAttachmentKind::ReferenceRepo {
+        validate_reference_repo_source(&source)?;
+    }
     let now = Utc::now();
     let (id, created_at, status, last_sync_at, error_message) = match existing {
         Some(existing) => (
@@ -352,7 +359,7 @@ fn normalize_attachment_config(
         workspace_id,
         kind: cfg.kind,
         name,
-        source: cfg.source.trim().to_string(),
+        source,
         revision: cfg
             .revision
             .map(|value| value.trim().to_string())
@@ -492,6 +499,62 @@ fn looks_like_sha(value: &str) -> bool {
         return false;
     }
     value.chars().all(|c| c.is_ascii_hexdigit())
+}
+
+fn looks_like_remote_repo_source(source: &str) -> bool {
+    if source.contains("://") {
+        return true;
+    }
+    let Some((user_host, path)) = source.split_once(':') else {
+        return false;
+    };
+    if path.is_empty() {
+        return false;
+    }
+    if user_host.contains('/') || user_host.contains('\\') {
+        return false;
+    }
+    if user_host == "." || user_host == ".." {
+        return false;
+    }
+    if user_host.len() == 1 && user_host.chars().all(|ch| ch.is_ascii_alphabetic()) {
+        return false;
+    }
+    true
+}
+
+fn validate_reference_repo_source(source: &str) -> Result<()> {
+    if looks_like_remote_repo_source(source) || Path::new(source).is_absolute() {
+        return Ok(());
+    }
+    anyhow::bail!(
+        "reference_repo local source must be an absolute path or repository URL: {source}"
+    );
+}
+
+fn resolve_workspace_local_source(
+    workspace_root: &Path,
+    raw_source: &str,
+    label: &str,
+) -> Result<PathBuf> {
+    let candidate = PathBuf::from(raw_source.trim());
+    let absolute_candidate = if candidate.is_absolute() {
+        candidate
+    } else {
+        workspace_root.join(candidate)
+    };
+    let canonical_root = std::fs::canonicalize(workspace_root)
+        .with_context(|| format!("canonicalizing workspace root {}", workspace_root.display()))?;
+    let canonical_candidate = std::fs::canonicalize(&absolute_candidate)
+        .with_context(|| format!("canonicalizing {label} {}", absolute_candidate.display()))?;
+    if !canonical_candidate.starts_with(&canonical_root) {
+        anyhow::bail!(
+            "{label} must stay within workspace root {}: {}",
+            canonical_root.display(),
+            canonical_candidate.display()
+        );
+    }
+    Ok(canonical_candidate)
 }
 
 #[cfg(test)]

@@ -34,8 +34,12 @@ async fn run_doc_mirror_script(
     if looks_like_url(&attachment.source) {
         return run_doc_mirror_cli(workspace, attachment, dest).await;
     }
-    let script_path = resolve_workspace_path(&workspace.root_path, &attachment.source);
-    if !script_path.exists() {
+    let script_path = resolve_workspace_local_source(
+        Path::new(&workspace.root_path),
+        &attachment.source,
+        "doc mirror script",
+    )?;
+    if !script_path.is_file() {
         anyhow::bail!("doc mirror script not found: {}", script_path.display());
     }
 
@@ -114,13 +118,4 @@ async fn run_doc_mirror_cli(
         );
     }
     Ok(())
-}
-
-fn resolve_workspace_path(workspace_root: &str, raw: &str) -> PathBuf {
-    let path = PathBuf::from(raw);
-    if path.is_absolute() {
-        path
-    } else {
-        Path::new(workspace_root).join(path)
-    }
 }

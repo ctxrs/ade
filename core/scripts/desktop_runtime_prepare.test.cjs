@@ -11,6 +11,7 @@ const {
   buildPrepareFingerprint,
   canReusePreparedParity,
   resolveDesktopPrepareLockPath,
+  resolveProviderMatrixPath,
 } = require("./desktop_runtime_prepare.cjs");
 
 function writeFixtureFile(rootDir, relativePath, contents = "") {
@@ -164,4 +165,20 @@ test("desktop runtime prepare lock path lives under the shared volatile cache ro
     cacheDir: "/tmp/ctx-volatile/cache",
   });
   assert.equal(lockPath.startsWith("/tmp/ctx-volatile/cache/locks/desktop-runtime-prepare/"), true);
+});
+
+test("desktop runtime prepare ignores home provider-matrix cache by default", () => {
+  const { rootDir } = createPrepareFixture();
+  const cachedPath = writeFixtureFile(
+    rootDir,
+    ".ctx/providers/provider_matrix.json",
+    "{\n  \"providers\": []\n}\n",
+  );
+
+  const resolved = resolveProviderMatrixPath({
+    HOME: rootDir,
+  });
+
+  assert.equal(resolved.endsWith("/core/crates/ctx-provider-accounts/src/provider_matrix.json"), true);
+  assert.notEqual(resolved, cachedPath);
 });
