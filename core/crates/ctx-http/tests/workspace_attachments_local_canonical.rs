@@ -329,13 +329,14 @@ async fn workspace_attachments_reject_doc_mirror_scripts_outside_workspace_root(
 
     let attachment = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
-            let (_list_status, listed): (StatusCode, Vec<WorkspaceAttachment>) = common::json_request(
-                &app,
-                Method::GET,
-                format!("/api/workspaces/{}/attachments", workspace.id.0),
-                None,
-            )
-            .await;
+            let (_list_status, listed): (StatusCode, Vec<WorkspaceAttachment>) =
+                common::json_request(
+                    &app,
+                    Method::GET,
+                    format!("/api/workspaces/{}/attachments", workspace.id.0),
+                    None,
+                )
+                .await;
             let current = listed
                 .into_iter()
                 .find(|entry| entry.name == "outside-docs")

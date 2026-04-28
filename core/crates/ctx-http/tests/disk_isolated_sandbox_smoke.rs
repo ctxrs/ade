@@ -422,9 +422,49 @@ async fn disk_isolated_smoke_sandbox_volume_attachments_and_terminal() {
     .await
     .unwrap_or(false);
     assert!(attachment_ready, "attachment did not become ready");
-    assert!(!host_root
-        .join(".ctx/attachments/refs/ref1/ref.txt")
-        .exists());
+    let _attachment_delete_target: serde_json::Value = client
+        .post(format!("{base}/api/workspaces/{}/attachments", ws.id.0))
+        .json(&json!({
+            "kind": "reference_repo",
+            "name": "ref2",
+            "source": ref_repo.path().to_string_lossy(),
+        }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let attachment_delete_target_ready = tokio::time::timeout(Duration::from_secs(20), async {
+        loop {
+            let listed: Vec<WorkspaceAttachmentResp> = client
+                .get(format!("{base}/api/workspaces/{}/attachments", ws.id.0))
+                .send()
+                .await
+                .unwrap()
+                .json()
+                .await
+                .unwrap();
+            if listed
+                .iter()
+                .any(|a| a.name == "ref2" && a.status == "ready")
+            {
+                return true;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    })
+    .await
+    .unwrap_or(false);
+    assert!(
+        attachment_delete_target_ready,
+        "attachment delete target did not become ready"
+    );
+    assert!(
+        !host_root
+            .join(".ctx/attachments/refs/ref1/ref.txt")
+            .exists()
+    );
 
     // Terminal should run inside the container worktree.
     ws_stream
@@ -473,8 +513,138 @@ async fn disk_isolated_smoke_sandbox_volume_attachments_and_terminal() {
         "terminal output did not include container file hash and attachment contents"
     );
 
+    ws_stream
+        .send(tokio_tungstenite::tungstenite::Message::Text(
+            "if printf 'mutated\\n' > .ctx/attachments/refs/ref1/ref.txt; then echo ATTACHMENT_WRITE_SUCCEEDED; else echo ATTACHMENT_WRITE_BLOCKED; fi\ncat .ctx/attachments/refs/ref1/ref.txt\n".into(),
+        ))
+        .await
+        .unwrap();
+
+    let saw_attachment_write_blocked = tokio::time::timeout(Duration::from_secs(15), async {
+        let mut saw_blocked = false;
+        let mut saw_refdata = false;
+        while let Some(Ok(frame)) = ws_stream.next().await {
+            if let tokio_tungstenite::tungstenite::Message::Binary(bytes) = frame {
+                let txt = String::from_utf8_lossy(&bytes);
+                if txt.contains("ATTACHMENT_WRITE_BLOCKED") {
+                    saw_blocked = true;
+                }
+                if txt.contains("refdata") {
+                    saw_refdata = true;
+                }
+                if txt.contains("ATTACHMENT_WRITE_SUCCEEDED") {
+                    return false;
+                }
+                if saw_blocked && saw_refdata {
+                    return true;
+                }
+            }
+        }
+        false
+    })
+    .await
+    .unwrap_or(false);
+    assert!(
+        saw_attachment_write_blocked,
+        "sandbox attachment mount allowed a write or hid the original contents"
+    );
+    let _deleted_attachment: serde_json::Value = client
+        .delete(format!("{base}/api/workspaces/{}/attachments", ws.id.0))
+        .json(&json!({
+            "kind": "reference_repo",
+            "name": "ref2",
+        }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    ws_stream
+        .send(tokio_tungstenite::tungstenite::Message::Text(
+            "if [ -e .ctx/attachments/refs/ref2/ref.txt ]; then echo ATTACHMENT_DELETE_LEFT_STALE; else echo ATTACHMENT_DELETE_CLEAN; fi\n".into(),
+        ))
+        .await
+        .unwrap();
+    let saw_attachment_delete_clean = wait_for_terminal_output(
+        &mut ws_stream,
+        "ATTACHMENT_DELETE_CLEAN",
+        Duration::from_secs(15),
+    )
+    .await;
+    assert!(
+        saw_attachment_delete_clean,
+        "deleting a read-only sandbox attachment left a stale mount behind"
+    );
+
+    let _updated_attachment: serde_json::Value = client
+        .post(format!("{base}/api/workspaces/{}/attachments", ws.id.0))
+        .json(&json!({
+            "kind": "reference_repo",
+            "name": "ref1",
+            "source": ref_repo.path().to_string_lossy(),
+            "mode": "rw",
+        }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let _synced_attachments: serde_json::Value = client
+        .post(format!(
+            "{base}/api/workspaces/{}/attachments/sync",
+            ws.id.0
+        ))
+        .json(&json!({ "refresh": true }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    ws_stream
+        .send(tokio_tungstenite::tungstenite::Message::Text(
+            "if printf 'rw-mutated\\n' > .ctx/attachments/refs/ref1/ref.txt; then echo ATTACHMENT_RW_WRITE_SUCCEEDED; else echo ATTACHMENT_RW_WRITE_BLOCKED; fi\ncat .ctx/attachments/refs/ref1/ref.txt\n".into(),
+        ))
+        .await
+        .unwrap();
+
+    let saw_attachment_rw_write = tokio::time::timeout(Duration::from_secs(15), async {
+        let mut saw_success = false;
+        let mut saw_mutated = false;
+        while let Some(Ok(frame)) = ws_stream.next().await {
+            if let tokio_tungstenite::tungstenite::Message::Binary(bytes) = frame {
+                let txt = String::from_utf8_lossy(&bytes);
+                if txt.contains("ATTACHMENT_RW_WRITE_SUCCEEDED") {
+                    saw_success = true;
+                }
+                if txt.contains("rw-mutated") {
+                    saw_mutated = true;
+                }
+                if txt.contains("ATTACHMENT_RW_WRITE_BLOCKED") {
+                    return false;
+                }
+                if saw_success && saw_mutated {
+                    return true;
+                }
+            }
+        }
+        false
+    })
+    .await
+    .unwrap_or(false);
+    assert!(
+        saw_attachment_rw_write,
+        "sandbox attachment mount did not remount writable after mode update"
+    );
+
     let host_text_after = fs::read_to_string(&host_file_path).unwrap();
     assert_eq!(host_text_after, host_text_before);
+    let host_attachment_after = fs::read_to_string(ref_repo.path().join("ref.txt")).unwrap();
+    assert_eq!(host_attachment_after, "refdata\n");
 
     // Terminal write should affect container FS, and git status should reflect it.
     ws_stream

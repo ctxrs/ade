@@ -12,7 +12,8 @@ pub(crate) use self::container_mounts::{
 
 use ctx_core::ids::{WorkspaceId, WorktreeId};
 use ctx_core::models::{
-    Workspace, WorkspaceAttachment, WorkspaceAttachmentKind, Worktree, WorktreeAttachmentMount,
+    AttachmentMode, Workspace, WorkspaceAttachment, WorkspaceAttachmentKind, Worktree,
+    WorktreeAttachmentMount,
 };
 use ctx_workspace_services::workspace_attachments::{self, MaterializationResult};
 
@@ -218,40 +219,62 @@ async fn resolve_common_git_dir(git_dir: &Path) -> Result<PathBuf> {
 pub(crate) async fn remove_mount_path(target: &Path) -> Result<()> {
     if let Ok(meta) = tokio::fs::symlink_metadata(target).await {
         if meta.file_type().is_symlink() || meta.is_file() {
+            let target = target.to_path_buf();
+            let target_for_clear = target.clone();
+            tokio::task::spawn_blocking(move || clear_read_only_mode(&target_for_clear)).await??;
             tokio::fs::remove_file(target).await?;
         } else if meta.is_dir() {
+            let target = target.to_path_buf();
+            let target_for_clear = target.clone();
+            tokio::task::spawn_blocking(move || clear_read_only_mode(&target_for_clear)).await??;
             tokio::fs::remove_dir_all(target).await?;
         }
     }
     Ok(())
 }
 
-pub(crate) async fn ensure_mount(target: &Path, source: &Path) -> Result<()> {
+pub(crate) async fn ensure_mount(target: &Path, source: &Path, mode: AttachmentMode) -> Result<()> {
     if let Ok(meta) = tokio::fs::symlink_metadata(target).await {
         if meta.file_type().is_symlink() {
             if let Ok(current) = tokio::fs::read_link(target).await {
-                if current == source {
+                if current == source && mode == AttachmentMode::Rw {
                     return Ok(());
                 }
             }
             tokio::fs::remove_file(target).await?;
         } else if meta.is_dir() {
+            let target = target.to_path_buf();
+            let target_for_clear = target.clone();
+            tokio::task::spawn_blocking(move || clear_read_only_mode(&target_for_clear)).await??;
             tokio::fs::remove_dir_all(target).await?;
         } else {
+            let target = target.to_path_buf();
+            let target_for_clear = target.clone();
+            tokio::task::spawn_blocking(move || clear_read_only_mode(&target_for_clear)).await??;
             tokio::fs::remove_file(target).await?;
         }
     }
 
-    if let Err(err) = try_symlink_dir(source, target).await {
+    if mode == AttachmentMode::Ro {
+        let source = source.to_path_buf();
+        let target = target.to_path_buf();
+        let target_for_copy = target.clone();
+        tokio::task::spawn_blocking(move || copy_path_recursive(&source, &target_for_copy))
+            .await??;
+        tokio::task::spawn_blocking(move || apply_read_only_mode(&target)).await??;
+        return Ok(());
+    }
+
+    if let Err(err) = try_symlink_path(source, target).await {
         tracing::debug!("symlink failed ({err}); falling back to copy");
         let source = source.to_path_buf();
         let target = target.to_path_buf();
-        tokio::task::spawn_blocking(move || copy_dir_recursive(&source, &target)).await??;
+        tokio::task::spawn_blocking(move || copy_path_recursive(&source, &target)).await??;
     }
     Ok(())
 }
 
-async fn try_symlink_dir(source: &Path, target: &Path) -> Result<()> {
+async fn try_symlink_path(source: &Path, target: &Path) -> Result<()> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::symlink;
@@ -265,27 +288,144 @@ async fn try_symlink_dir(source: &Path, target: &Path) -> Result<()> {
     }
     #[cfg(windows)]
     {
-        use std::os::windows::fs::symlink_dir;
+        use std::os::windows::fs::{symlink_dir, symlink_file};
+        let source_meta = tokio::fs::metadata(source)
+            .await
+            .with_context(|| format!("stat attachment source {}", source.display()))?;
         tokio::task::spawn_blocking({
             let source = source.to_path_buf();
             let target = target.to_path_buf();
-            move || symlink_dir(source, target)
+            move || {
+                if source_meta.is_dir() {
+                    symlink_dir(source, target)
+                } else {
+                    symlink_file(source, target)
+                }
+            }
         })
         .await??;
         Ok(())
     }
 }
 
-fn copy_dir_recursive(source: &Path, target: &Path) -> Result<()> {
-    std::fs::create_dir_all(target)?;
-    for entry in std::fs::read_dir(source)? {
-        let entry = entry?;
-        let file_type = entry.file_type()?;
-        let dest = target.join(entry.file_name());
-        if file_type.is_dir() {
-            copy_dir_recursive(&entry.path(), &dest)?;
-        } else if file_type.is_file() {
-            std::fs::copy(entry.path(), dest)?;
+fn copy_path_recursive(source: &Path, target: &Path) -> Result<()> {
+    let metadata = std::fs::symlink_metadata(source)
+        .with_context(|| format!("reading attachment source metadata {}", source.display()))?;
+    if metadata.file_type().is_symlink() {
+        copy_symlink(source, target)?;
+        return Ok(());
+    }
+    if metadata.is_dir() {
+        std::fs::create_dir_all(target)?;
+        for entry in std::fs::read_dir(source)? {
+            let entry = entry?;
+            let dest = target.join(entry.file_name());
+            copy_path_recursive(&entry.path(), &dest)?;
+        }
+        return Ok(());
+    }
+    if let Some(parent) = target.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::copy(source, target)
+        .with_context(|| format!("copying attachment file {}", source.display()))?;
+    Ok(())
+}
+
+fn apply_read_only_mode(path: &Path) -> Result<()> {
+    apply_read_only_mode_recursive(path)
+}
+
+fn clear_read_only_mode(path: &Path) -> Result<()> {
+    clear_read_only_mode_recursive(path)
+}
+
+fn apply_read_only_mode_recursive(path: &Path) -> Result<()> {
+    let metadata = std::fs::symlink_metadata(path)
+        .with_context(|| format!("reading attachment metadata {}", path.display()))?;
+    if metadata.file_type().is_symlink() {
+        return Ok(());
+    }
+    if metadata.is_dir() {
+        for entry in std::fs::read_dir(path)
+            .with_context(|| format!("reading attachment dir {}", path.display()))?
+        {
+            let entry = entry?;
+            apply_read_only_mode_recursive(&entry.path())?;
+        }
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut permissions = metadata.permissions();
+        permissions.set_mode(permissions.mode() & !0o222);
+        std::fs::set_permissions(path, permissions)
+            .with_context(|| format!("setting read-only permissions on {}", path.display()))?;
+    }
+    #[cfg(not(unix))]
+    {
+        let mut permissions = metadata.permissions();
+        permissions.set_readonly(true);
+        std::fs::set_permissions(path, permissions)
+            .with_context(|| format!("setting read-only permissions on {}", path.display()))?;
+    }
+    Ok(())
+}
+
+fn clear_read_only_mode_recursive(path: &Path) -> Result<()> {
+    let metadata = std::fs::symlink_metadata(path)
+        .with_context(|| format!("reading attachment metadata {}", path.display()))?;
+    if metadata.file_type().is_symlink() {
+        return Ok(());
+    }
+    if metadata.is_dir() {
+        for entry in std::fs::read_dir(path)
+            .with_context(|| format!("reading attachment dir {}", path.display()))?
+        {
+            let entry = entry?;
+            clear_read_only_mode_recursive(&entry.path())?;
+        }
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut permissions = metadata.permissions();
+        permissions.set_mode(permissions.mode() | 0o200);
+        std::fs::set_permissions(path, permissions)
+            .with_context(|| format!("setting writable permissions on {}", path.display()))?;
+    }
+    #[cfg(not(unix))]
+    {
+        let mut permissions = metadata.permissions();
+        permissions.set_readonly(false);
+        std::fs::set_permissions(path, permissions)
+            .with_context(|| format!("setting writable permissions on {}", path.display()))?;
+    }
+    Ok(())
+}
+
+fn copy_symlink(source: &Path, target: &Path) -> Result<()> {
+    let link_target = std::fs::read_link(source)
+        .with_context(|| format!("reading attachment symlink {}", source.display()))?;
+    if let Some(parent) = target.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(&link_target, target)
+            .with_context(|| format!("copying attachment symlink {}", source.display()))?;
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::{symlink_dir, symlink_file};
+        let target_metadata = std::fs::metadata(source)
+            .with_context(|| format!("reading attachment symlink target {}", source.display()))?;
+        if target_metadata.is_dir() {
+            symlink_dir(&link_target, target)
+                .with_context(|| format!("copying attachment symlink {}", source.display()))?;
+        } else {
+            symlink_file(&link_target, target)
+                .with_context(|| format!("copying attachment symlink {}", source.display()))?;
         }
     }
     Ok(())
@@ -365,5 +505,78 @@ mod tests {
         assert_ne!(git_dir, common_git_dir);
         assert!(common_git_dir.join("info").is_dir());
         assert!(common_git_dir.join("objects").exists());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn ensure_mount_applies_read_only_mode() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let source = temp.path().join("source");
+        let target = temp.path().join("target");
+        std::fs::create_dir_all(&source).expect("create source");
+        std::fs::write(source.join("notes.txt"), "hello\n").expect("write source file");
+
+        ensure_mount(&target, &source, AttachmentMode::Ro)
+            .await
+            .expect("mount ro attachment");
+
+        let err = std::fs::write(target.join("notes.txt"), "mutated\n")
+            .expect_err("ro attachment mount should reject writes");
+        assert_eq!(err.kind(), std::io::ErrorKind::PermissionDenied);
+        std::fs::write(source.join("source-writable.txt"), "still writable\n")
+            .expect("ro attachment mount should not mutate source writability");
+    }
+
+    #[tokio::test]
+    async fn ensure_mount_switches_from_ro_copy_to_rw_mount() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let source = temp.path().join("source");
+        let target = temp.path().join("target");
+        std::fs::create_dir_all(&source).expect("create source");
+        std::fs::write(source.join("notes.txt"), "hello\n").expect("write source file");
+
+        ensure_mount(&target, &source, AttachmentMode::Ro)
+            .await
+            .expect("mount ro attachment");
+        ensure_mount(&target, &source, AttachmentMode::Rw)
+            .await
+            .expect("remount rw attachment");
+
+        std::fs::write(target.join("notes.txt"), "mutated\n")
+            .expect("rw attachment remount should allow writes");
+    }
+
+    #[tokio::test]
+    async fn remove_mount_path_deletes_read_only_mount_copy() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let source = temp.path().join("source");
+        let target = temp.path().join("target");
+        std::fs::create_dir_all(&source).expect("create source");
+        std::fs::write(source.join("notes.txt"), "hello\n").expect("write source file");
+
+        ensure_mount(&target, &source, AttachmentMode::Ro)
+            .await
+            .expect("mount ro attachment");
+        remove_mount_path(&target)
+            .await
+            .expect("remove ro attachment mount");
+
+        assert!(!target.exists(), "ro attachment mount should be removed");
+    }
+
+    #[tokio::test]
+    async fn ensure_mount_leaves_rw_mounts_writable() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let source = temp.path().join("source");
+        let target = temp.path().join("target");
+        std::fs::create_dir_all(&source).expect("create source");
+        std::fs::write(source.join("notes.txt"), "hello\n").expect("write source file");
+
+        ensure_mount(&target, &source, AttachmentMode::Rw)
+            .await
+            .expect("mount rw attachment");
+
+        std::fs::write(target.join("notes.txt"), "mutated\n")
+            .expect("rw attachment mount should allow writes");
     }
 }

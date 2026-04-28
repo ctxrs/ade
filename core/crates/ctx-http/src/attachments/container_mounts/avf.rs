@@ -107,6 +107,31 @@ async fn avf_mkdir_p(
     .await
 }
 
+pub(super) async fn avf_prepare_for_removal(
+    state: &AppState,
+    workspace_id: WorkspaceId,
+    worktree_id: WorktreeId,
+    worktree_root: &Path,
+    path: &Path,
+) -> Result<()> {
+    let rel = avf_guest_rel_path(worktree_root, path)?;
+    avf_run_success(
+        state,
+        workspace_id,
+        worktree_id,
+        worktree_root,
+        "sh",
+        &[
+            "-lc".to_string(),
+            "if [ -L \"$1\" ]; then exit 0; fi; if [ -e \"$1\" ]; then chmod -R u+w -- \"$1\"; fi"
+                .to_string(),
+            "--".to_string(),
+            rel,
+        ],
+    )
+    .await
+}
+
 async fn import_dir_to_avf_worktree(
     state: &AppState,
     workspace_id: WorkspaceId,
@@ -231,10 +256,12 @@ pub(super) async fn avf_copy_source_to_mount(
     worktree_root: &Path,
     source: &Path,
     target: &Path,
+    mode: AttachmentMode,
 ) -> Result<()> {
     if let Some(parent) = target.parent() {
         avf_mkdir_p(state, workspace_id, worktree_id, worktree_root, parent).await?;
     }
+    let _ = avf_prepare_for_removal(state, workspace_id, worktree_id, worktree_root, target).await;
     let _ = avf_rm_rf(state, workspace_id, worktree_id, worktree_root, target).await;
     let metadata = tokio::fs::metadata(source)
         .await
@@ -249,7 +276,7 @@ pub(super) async fn avf_copy_source_to_mount(
             source,
             target,
         )
-        .await
+        .await?;
     } else {
         import_file_to_avf_worktree(
             state,
@@ -259,6 +286,19 @@ pub(super) async fn avf_copy_source_to_mount(
             source,
             target,
         )
-        .await
+        .await?;
     }
+    if mode == AttachmentMode::Ro {
+        let rel = avf_guest_rel_path(worktree_root, target)?;
+        avf_run_success(
+            state,
+            workspace_id,
+            worktree_id,
+            worktree_root,
+            "chmod",
+            &["-R".to_string(), "a-w".to_string(), "--".to_string(), rel],
+        )
+        .await?;
+    }
+    Ok(())
 }

@@ -70,6 +70,35 @@ pub(super) async fn container_mkdir_p(
     }
 }
 
+pub(super) async fn container_prepare_for_removal(
+    state: &AppState,
+    container_id: &str,
+    path: &Path,
+) -> Result<()> {
+    let mut cmd = sandbox_container_command(&state.core.data_root)?;
+    cmd.arg("exec")
+        .arg("--interactive")
+        .arg(container_id)
+        .arg("sh")
+        .arg("-lc")
+        .arg("if [ -L \"$1\" ]; then exit 0; fi; if [ -e \"$1\" ]; then chmod -R u+w -- \"$1\"; fi")
+        .arg("--")
+        .arg(path);
+    let out = cmd
+        .output()
+        .await
+        .context("sandbox exec prepare attachment removal")?;
+    if out.status.success() {
+        Ok(())
+    } else {
+        anyhow::bail!(
+            "container attachment removal prep failed (status {}): {}",
+            out.status,
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
+    }
+}
+
 async fn import_dir_to_container(
     state: &AppState,
     container_id: &str,
@@ -154,12 +183,54 @@ pub(super) async fn container_ensure_mount(
     container_id: &str,
     target: &Path,
     source: &Path,
+    mode: AttachmentMode,
 ) -> Result<()> {
     if let Some(parent) = target.parent() {
         container_mkdir_p(state, container_id, parent).await?;
     }
     // Remove any existing mount path (file/dir/symlink).
+    let _ = container_prepare_for_removal(state, container_id, target).await;
     let _ = container_rm_rf(state, container_id, target).await;
+
+    if mode == AttachmentMode::Ro {
+        let mut cp = sandbox_container_command(&state.core.data_root)?;
+        cp.arg("exec")
+            .arg("--interactive")
+            .arg(container_id)
+            .arg("cp")
+            .arg("-a")
+            .arg("--")
+            .arg(source)
+            .arg(target);
+        let out = cp.output().await.context("sandbox exec cp -a")?;
+        if !out.status.success() {
+            anyhow::bail!(
+                "container read-only mount copy failed (status {}): {}",
+                out.status,
+                String::from_utf8_lossy(&out.stderr).trim()
+            );
+        }
+
+        let mut chmod = sandbox_container_command(&state.core.data_root)?;
+        chmod
+            .arg("exec")
+            .arg("--interactive")
+            .arg(container_id)
+            .arg("chmod")
+            .arg("-R")
+            .arg("a-w")
+            .arg("--")
+            .arg(target);
+        let out = chmod.output().await.context("sandbox exec chmod -R a-w")?;
+        if out.status.success() {
+            return Ok(());
+        }
+        anyhow::bail!(
+            "container read-only mount chmod failed (status {}): {}",
+            out.status,
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
+    }
 
     // Prefer symlink; if unavailable, fall back to a recursive copy.
     let mut ln = sandbox_container_command(&state.core.data_root)?;
