@@ -474,7 +474,7 @@ async fn unknown_data_cleanup_migration_deletes_noisy_notices() -> Result<()> {
 
     execute_sql_script(
         &pool,
-        include_str!("../migrations/0066_cleanup_unknown_data_events.sql"),
+        include_str!("../migrations/0068_cleanup_unknown_data_events.sql"),
     )
     .await?;
 
