@@ -118,11 +118,57 @@ fn lexical_dest_path_from_canonical_parent(root: &Path, dest: &Path) -> Result<P
     Ok(canonical_parent.join(file_name))
 }
 
-fn paths_equal_ascii_case_insensitive(left: &Path, right: &Path) -> bool {
-    left == right
-        || left
-            .to_string_lossy()
-            .eq_ignore_ascii_case(&right.to_string_lossy())
+fn root_filesystem_is_ascii_case_insensitive(root: &Path) -> Result<bool> {
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    for attempt in 0..16 {
+        let base = format!(
+            ".ctx-case-probe-{}-{timestamp}-{attempt}",
+            std::process::id()
+        );
+        let upper = root.join(format!("{base}-A"));
+        let lower = root.join(format!("{base}-a"));
+        if upper.exists() || lower.exists() {
+            continue;
+        }
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&upper)
+        {
+            Ok(_) => {
+                let is_case_insensitive = std::fs::metadata(&lower).is_ok();
+                std::fs::remove_file(&upper).with_context(|| {
+                    format!("remove case-sensitivity probe {}", upper.display())
+                })?;
+                return Ok(is_case_insensitive);
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(err) => {
+                return Err(err)
+                    .with_context(|| format!("create case-sensitivity probe {}", upper.display()));
+            }
+        }
+    }
+    anyhow::bail!(
+        "failed to create case-sensitivity probe under {}",
+        root.display()
+    );
+}
+
+fn paths_equal_for_extraction_root(root: &Path, left: &Path, right: &Path) -> Result<bool> {
+    if left == right {
+        return Ok(true);
+    }
+    if !left
+        .to_string_lossy()
+        .eq_ignore_ascii_case(&right.to_string_lossy())
+    {
+        return Ok(false);
+    }
+    root_filesystem_is_ascii_case_insensitive(root)
 }
 
 fn prepare_existing_symlink_for_file_write(root: &Path, path: &Path) -> Result<()> {
@@ -136,7 +182,7 @@ fn prepare_existing_symlink_for_file_write(root: &Path, path: &Path) -> Result<(
                 return Ok(());
             }
             let dest_resolved = lexical_dest_path_from_canonical_parent(root, path)?;
-            if paths_equal_ascii_case_insensitive(&target_resolved, &dest_resolved) {
+            if paths_equal_for_extraction_root(root, &target_resolved, &dest_resolved)? {
                 std::fs::remove_file(path).with_context(|| {
                     format!("remove self-referential symlink {}", path.display())
                 })?;
@@ -303,7 +349,7 @@ pub(super) fn create_archive_symlink(
             let existing_resolved = validate_symlink_target(root, dest, &existing_target)?;
             let target_resolved = validate_symlink_target(root, dest, target)?;
             if existing_target == target
-                || paths_equal_ascii_case_insensitive(&existing_resolved, &target_resolved)
+                || paths_equal_for_extraction_root(root, &existing_resolved, &target_resolved)?
                 || symlink_targets_resolve_to_same_existing_path(
                     &existing_resolved,
                     &target_resolved,

@@ -23,6 +23,19 @@ fn write_tar_gz(
     Ok(())
 }
 
+#[cfg(unix)]
+fn path_is_ascii_case_insensitive(path: &Path) -> bool {
+    let upper = path.join(format!(".ctx-test-case-probe-{}-A", std::process::id()));
+    let lower = path.join(format!(".ctx-test-case-probe-{}-a", std::process::id()));
+    if upper.exists() || lower.exists() {
+        return false;
+    }
+    std::fs::File::create(&upper).expect("create case sensitivity probe");
+    let is_case_insensitive = lower.exists();
+    std::fs::remove_file(&upper).expect("remove case sensitivity probe");
+    is_case_insensitive
+}
+
 fn patch_zip_entry_unix_mode(zip_path: &Path, entry_name: &str, mode: u32) {
     let mut bytes = std::fs::read(zip_path).expect("read zip for patching");
     let mut offset = 0usize;
@@ -567,6 +580,48 @@ fn archive_extraction_tar_gz_rejects_duplicate_symlink_with_different_target() {
     let out_dir = temp.path().join("out");
     let err = extract_tar_gz_to_dir(&tar_path, &out_dir)
         .expect_err("different duplicate target should fail");
+    assert!(
+        err.to_string()
+            .contains("refused to replace existing path with symlink"),
+        "unexpected error: {err:#}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn archive_extraction_tar_gz_rejects_case_only_duplicate_symlink_targets_on_case_sensitive_root() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    if path_is_ascii_case_insensitive(temp.path()) {
+        return;
+    }
+    let tar_path = temp
+        .path()
+        .join("duplicate-symlink-case-only-target.tar.gz");
+    write_tar_gz(&tar_path, |builder| {
+        for target in ["A", "a"] {
+            let mut symlink_header = tar::Header::new_gnu();
+            symlink_header.set_entry_type(tar::EntryType::Symlink);
+            symlink_header.set_mode(0o777);
+            symlink_header.set_size(0);
+            symlink_header.set_path("x")?;
+            symlink_header.set_link_name(target)?;
+            symlink_header.set_cksum();
+            builder.append(&symlink_header, std::io::empty())?;
+        }
+
+        let data = b"target";
+        let mut file_header = tar::Header::new_gnu();
+        file_header.set_mode(0o644);
+        file_header.set_size(data.len() as u64);
+        file_header.set_cksum();
+        builder.append_data(&mut file_header, "a", &data[..])?;
+        Ok(())
+    })
+    .expect("write tar.gz");
+
+    let out_dir = temp.path().join("out");
+    let err = extract_tar_gz_to_dir(&tar_path, &out_dir)
+        .expect_err("case-only duplicate symlink targets should fail");
     assert!(
         err.to_string()
             .contains("refused to replace existing path with symlink"),
