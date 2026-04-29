@@ -290,6 +290,64 @@ resolve_pip_target_platform() {
   esac
 }
 
+cross_target_pure_python_wheel_specs() {
+  local provider_id="$1"
+  case "$provider_id" in
+    openhands)
+      printf '%s\n' "func-timeout==4.3.5"
+      ;;
+  esac
+}
+
+prepare_cross_target_pure_python_wheelhouse() {
+  local provider_id="$1"
+  local host_python_cmd="$2"
+  local specs
+  specs="$(cross_target_pure_python_wheel_specs "$provider_id")"
+  if [[ -z "$specs" ]]; then
+    return 0
+  fi
+
+  local wheelhouse
+  wheelhouse="$(mktemp -d "$OUT_DIR/.python-pure-wheels-${provider_id}.XXXXXX")"
+  local spec
+  while IFS= read -r spec; do
+    if [[ -z "$spec" ]]; then
+      continue
+    fi
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_INPUT=1 \
+    "$host_python_cmd" -m pip wheel \
+      --disable-pip-version-check \
+      --no-input \
+      --no-deps \
+      --wheel-dir "$wheelhouse" \
+      "$spec" >&2
+  done <<< "$specs"
+
+  local wheel
+  local wheel_count=0
+  for wheel in "$wheelhouse"/*.whl; do
+    if [[ ! -e "$wheel" ]]; then
+      continue
+    fi
+    wheel_count=$((wheel_count + 1))
+    case "$(basename "$wheel")" in
+      *-none-any.whl) ;;
+      *)
+        echo "error: cross-target pure-python wheel override produced a platform-specific wheel: $wheel" >&2
+        exit 1
+        ;;
+    esac
+  done
+  if [[ "$wheel_count" -eq 0 ]]; then
+    echo "error: cross-target pure-python wheel override produced no wheels for $provider_id" >&2
+    exit 1
+  fi
+
+  printf '%s\n' "$wheelhouse"
+}
+
 NPM_TARGET_PLATFORM="$(resolve_npm_target_platform)"
 NPM_TARGET_ARCH="$(resolve_npm_target_arch)"
 
@@ -725,18 +783,28 @@ stage_matrix_python_provider() {
     python_series="$(resolve_python_version_series "$python_version")"
     local host_python_cmd
     host_python_cmd="$(resolve_host_python_cmd_for_version "$python_version" "$python_build_tag")"
+    local pure_python_wheelhouse
+    pure_python_wheelhouse="$(prepare_cross_target_pure_python_wheelhouse "$provider_id" "$host_python_cmd")"
+    local -a pure_python_wheelhouse_args=()
+    if [[ -n "$pure_python_wheelhouse" ]]; then
+      pure_python_wheelhouse_args=(--find-links "$pure_python_wheelhouse")
+    fi
     echo "info: installing cross-target wheel set for ${TARGET_OS}/${TARGET_ARCH} via host ${HOST_OS}/${HOST_ARCH} pip" >&2
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PIP_NO_INPUT=1 \
     "$host_python_cmd" -m pip install \
       --disable-pip-version-check \
       --no-input \
+      "${pure_python_wheelhouse_args[@]}" \
       --only-binary=:all: \
       --platform "$pip_target_platform" \
       --python-version "$python_series" \
       --implementation cp \
       --target "$provider_root/site-packages" \
       "${package}==${version}" >&2
+    if [[ -n "$pure_python_wheelhouse" ]]; then
+      rm -rf "$pure_python_wheelhouse"
+    fi
   else
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PIP_NO_INPUT=1 \

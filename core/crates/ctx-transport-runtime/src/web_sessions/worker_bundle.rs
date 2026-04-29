@@ -75,37 +75,6 @@ pub async fn ensure_worker_bundle(
     })
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn ensure_worker_bundle_writes_auth_helper() {
-        let data_root = tempfile::tempdir().unwrap();
-        let version = worker_version().unwrap();
-        let node_modules = data_root
-            .path()
-            .join("tools")
-            .join("web-session-worker")
-            .join(&version)
-            .join("node_modules");
-        tokio::fs::create_dir_all(node_modules.join("playwright"))
-            .await
-            .unwrap();
-        tokio::fs::create_dir_all(node_modules.join("wrtc"))
-            .await
-            .unwrap();
-
-        let node = NodeRuntimeSpec {
-            node_bin: PathBuf::from("/usr/bin/node"),
-            npm_cli_js: PathBuf::from("/usr/bin/npm"),
-        };
-        let bundle = ensure_worker_bundle(data_root.path(), &node).await.unwrap();
-        let auth_path = bundle.worker_path.parent().unwrap().join("auth.mjs");
-        assert!(auth_path.exists(), "expected bundled auth helper");
-    }
-}
-
 fn worker_install_lock() -> &'static Mutex<()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
     LOCK.get_or_init(|| Mutex::new(()))
@@ -157,4 +126,35 @@ async fn install_worker_deps(node: &NodeRuntimeSpec, root: &Path) -> Result<()> 
         anyhow::bail!("package install failed: {}", stderr.trim());
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn ensure_worker_bundle_writes_auth_helper() {
+        let data_root = tempfile::tempdir().unwrap();
+        let version = worker_version().unwrap();
+        let node_modules = data_root
+            .path()
+            .join("tools")
+            .join("web-session-worker")
+            .join(&version)
+            .join("node_modules");
+        tokio::fs::create_dir_all(node_modules.join("playwright"))
+            .await
+            .unwrap();
+        tokio::fs::create_dir_all(node_modules.join("wrtc"))
+            .await
+            .unwrap();
+
+        let node = NodeRuntimeSpec {
+            node_bin: PathBuf::from("/usr/bin/node"),
+            npm_cli_js: PathBuf::from("/usr/bin/npm"),
+        };
+        let bundle = ensure_worker_bundle(data_root.path(), &node).await.unwrap();
+        let auth_path = bundle.worker_path.parent().unwrap().join("auth.mjs");
+        assert!(auth_path.exists(), "expected bundled auth helper");
+    }
 }
