@@ -249,6 +249,7 @@ fn sandbox_guest_mount_scripts_create_and_verify_without_mkdir_p_preflight() {
         avf_remove_mount_path_script(),
     ];
     for script in scripts {
+        assert!(script.contains("set -eu"));
         assert!(script.contains("ensure_mount_parent_chain"));
         assert!(script.contains("mkdir \"$current\""));
         assert!(
@@ -256,4 +257,58 @@ fn sandbox_guest_mount_scripts_create_and_verify_without_mkdir_p_preflight() {
             "guest mount mutation scripts must not use split validation plus mkdir -p"
         );
     }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn native_ro_mount_script_propagates_copy_failure_before_chmod_success() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp = tempfile::tempdir().unwrap();
+    let worktree = temp.path().join("worktree");
+    let source = temp.path().join("source");
+    let target = worktree.join(".ctx/attachments/docs/docs");
+    let fake_bin = temp.path().join("bin");
+    std::fs::create_dir_all(&worktree).unwrap();
+    std::fs::create_dir_all(&source).unwrap();
+    std::fs::create_dir_all(&fake_bin).unwrap();
+    std::fs::write(source.join("notes.txt"), b"notes").unwrap();
+
+    let fake_cp = fake_bin.join("cp");
+    std::fs::write(
+        &fake_cp,
+        "#!/bin/sh\nmkdir -p \"$4\"\nprintf partial > \"$4/partial.txt\"\nexit 7\n",
+    )
+    .unwrap();
+    let mut cp_permissions = std::fs::metadata(&fake_cp).unwrap().permissions();
+    cp_permissions.set_mode(0o755);
+    std::fs::set_permissions(&fake_cp, cp_permissions).unwrap();
+
+    let fake_chmod = fake_bin.join("chmod");
+    std::fs::write(&fake_chmod, "#!/bin/sh\nexit 0\n").unwrap();
+    let mut chmod_permissions = std::fs::metadata(&fake_chmod).unwrap().permissions();
+    chmod_permissions.set_mode(0o755);
+    std::fs::set_permissions(&fake_chmod, chmod_permissions).unwrap();
+
+    let path = format!(
+        "{}:{}",
+        fake_bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    let output = std::process::Command::new("sh")
+        .env("PATH", path)
+        .arg("-lc")
+        .arg(container_mount_script())
+        .arg("--")
+        .arg(&worktree)
+        .arg(&target)
+        .arg(&source)
+        .arg("ro")
+        .output()
+        .unwrap();
+
+    assert!(
+        !output.status.success(),
+        "ro mount script must fail when cp fails even if chmod succeeds"
+    );
 }

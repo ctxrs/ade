@@ -80,14 +80,15 @@ fn avf_guest_target_arg(worktree_root: &Path, target: &Path) -> Result<String> {
 
 pub(super) fn avf_remove_mount_path_script() -> String {
     format!(
-        "{}\nremove_mount_path_if_parent_safe \"$1\" \"$2\"\n",
+        "set -eu\n{}\nremove_mount_path_if_parent_safe \"$1\" \"$2\"\n",
         sandbox_mount_parent_chain_functions_script()
     )
 }
 
 pub(super) fn avf_import_dir_script() -> String {
     format!(
-        r#"{}
+        r#"set -eu
+{}
 target="$1"
 ensure_mount_parent_chain "." "$target"
 if [ -L "$target" ] || [ -e "$target" ]; then
@@ -107,7 +108,8 @@ tar -C "$target" -xf -
 
 pub(super) fn avf_import_file_script() -> String {
     format!(
-        r#"{}
+        r#"set -eu
+{}
 target="$1"
 ensure_mount_parent_chain "." "$target"
 if [ -L "$target" ] || [ -e "$target" ]; then

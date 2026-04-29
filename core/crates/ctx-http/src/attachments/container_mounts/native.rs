@@ -72,7 +72,8 @@ pub(super) async fn container_mkdir_p(
 
 pub(super) fn container_mount_script() -> String {
     format!(
-        r#"{}
+        r#"set -eu
+{}
 ensure_mount_parent_chain "$1" "$2"
 root="$1"
 target="$2"
@@ -108,7 +109,7 @@ fi
 
 pub(super) fn container_remove_mount_path_script() -> String {
     format!(
-        "{}\nremove_mount_path_if_parent_safe \"$1\" \"$2\"\n",
+        "set -eu\n{}\nremove_mount_path_if_parent_safe \"$1\" \"$2\"\n",
         sandbox_mount_parent_chain_functions_script()
     )
 }
