@@ -10,6 +10,14 @@ fn write_invalid_agent_server_config(data_root: &std::path::Path) {
     std::fs::write(path, "{ not valid json").unwrap();
 }
 
+fn fake_default_session_payload() -> serde_json::Value {
+    json!({
+        "provider_id": "fake",
+        "model_id": "fake-model",
+        "execution_environment": "host",
+    })
+}
+
 async fn create_fake_session_via_api(
     app: &axum::Router,
     git_repo_path: &str,
@@ -36,7 +44,12 @@ async fn create_fake_session_via_api(
         .uri(format!("/api/workspaces/{}/tasks", ws.id.0))
         .header("content-type", "application/json")
         .body(Body::from(
-            json!({"title":"t1","description":null}).to_string(),
+            json!({
+                "title": "t1",
+                "description": null,
+                "default_session": fake_default_session_payload(),
+            })
+            .to_string(),
         ))
         .unwrap();
     let res = app.clone().oneshot(req).await.unwrap();
@@ -94,7 +107,12 @@ async fn daemon_golden_path_with_fake_provider() {
         .uri(format!("/api/workspaces/{}/tasks", ws.id.0))
         .header("content-type", "application/json")
         .body(Body::from(
-            json!({"title":"t1","description":null}).to_string(),
+            json!({
+                "title": "t1",
+                "description": null,
+                "default_session": fake_default_session_payload(),
+            })
+            .to_string(),
         ))
         .unwrap();
     let res = app.clone().oneshot(req).await.unwrap();
@@ -214,7 +232,10 @@ async fn daemon_http_and_ws_streaming() {
     // create task
     let task: ctx_core::models::Task = client
         .post(format!("{base}/api/workspaces/{}/tasks", ws.id.0))
-        .json(&json!({"title":"t1"}))
+        .json(&json!({
+            "title": "t1",
+            "default_session": fake_default_session_payload(),
+        }))
         .send()
         .await
         .unwrap()
@@ -431,7 +452,13 @@ async fn create_session_rejects_unknown_provider_id() {
         .method("POST")
         .uri(format!("/api/workspaces/{}/tasks", ws.id.0))
         .header("content-type", "application/json")
-        .body(Body::from(json!({"title":"t1"}).to_string()))
+        .body(Body::from(
+            json!({
+                "title": "t1",
+                "default_session": fake_default_session_payload(),
+            })
+            .to_string(),
+        ))
         .unwrap();
     let res = app.clone().oneshot(req).await.unwrap();
     assert_eq!(res.status(), StatusCode::OK);
