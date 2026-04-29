@@ -6,7 +6,7 @@ use std::time::Duration;
 use anyhow::{anyhow, Context, Result};
 use axum::body::Bytes;
 use axum::extract::ws::{Message, WebSocket};
-use axum::extract::{FromRequestParts, Path, Query, State};
+use axum::extract::{FromRequestParts, Path, State};
 use axum::http::{HeaderMap, Method, Request, StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
@@ -60,10 +60,7 @@ struct WsStreamHandle {
     mobile_tx: mpsc::UnboundedSender<Message>,
 }
 
-#[derive(Debug, Deserialize)]
-struct ConnectQuery {
-    secret: String,
-}
+const TUNNEL_SECRET_HEADER: &str = "x-ctx-tunnel-secret";
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -172,14 +169,31 @@ async fn health() -> impl IntoResponse {
 async fn desktop_connect_ws(
     State(state): State<RelayState>,
     Path(tunnel_id): Path<String>,
-    Query(q): Query<ConnectQuery>,
+    headers: HeaderMap,
     ws: axum::extract::ws::WebSocketUpgrade,
 ) -> impl IntoResponse {
+    let secret = match extract_desktop_secret(&headers) {
+        Ok(secret) => secret,
+        Err(status) => return status.into_response(),
+    };
+
     ws.on_upgrade(move |socket| async move {
-        if let Err(err) = handle_desktop_socket(state, tunnel_id, q.secret, socket).await {
+        if let Err(err) = handle_desktop_socket(state, tunnel_id, secret, socket).await {
             warn!("desktop ws ended with error: {err:#}");
         }
     })
+    .into_response()
+}
+
+fn extract_desktop_secret(headers: &HeaderMap) -> std::result::Result<String, StatusCode> {
+    let Some(value) = headers.get(TUNNEL_SECRET_HEADER) else {
+        return Err(StatusCode::UNAUTHORIZED);
+    };
+    let value = value.to_str().map_err(|_| StatusCode::UNAUTHORIZED)?;
+    if value.is_empty() {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+    Ok(value.to_string())
 }
 
 async fn handle_desktop_socket(
@@ -195,7 +209,9 @@ async fn handle_desktop_socket(
         let expected = match derive_secret(&state.master_secret, &tunnel_id) {
             Ok(value) => value,
             Err(err) => {
-                warn!("rejecting desktop connect for tunnel {tunnel_id}: unable to derive secret: {err:#}");
+                warn!(
+                    "rejecting desktop connect for tunnel {tunnel_id}: unable to derive secret: {err:#}"
+                );
                 return Ok(());
             }
         };
@@ -203,6 +219,7 @@ async fn handle_desktop_socket(
             warn!("rejecting desktop connect for tunnel {tunnel_id}: secret mismatch");
             return Ok(());
         }
+        inner.secret = Some(expected);
 
         // Replace any existing desktop connection.
         inner.desktop = None;
@@ -509,6 +526,5 @@ fn derive_secret(master_secret: &[u8], tunnel_id: &str) -> Result<String> {
 static BASE64: base64::engine::general_purpose::GeneralPurpose =
     base64::engine::general_purpose::STANDARD;
 
-#[cfg(test)]
 #[cfg(test)]
 mod tests;

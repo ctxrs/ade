@@ -1,5 +1,8 @@
 use super::*;
 use crate::http_proxy::{extract_forward_headers, extract_ws_forward_headers};
+use std::sync::Mutex as StdMutex;
+
+static ENV_LOCK: StdMutex<()> = StdMutex::new(());
 
 fn test_tunnel() -> Arc<Tunnel> {
     Arc::new(Tunnel {
@@ -124,7 +127,7 @@ fn relay_header_helpers_strip_hop_by_hop_headers() {
     );
     headers.insert("x-custom", "value".parse().unwrap());
 
-    let forwarded = extract_forward_headers(&headers);
+    let forwarded = http_proxy::extract_forward_headers(&headers);
     assert!(forwarded.contains(&(String::from("authorization"), String::from("Bearer secret"))));
     assert!(forwarded.contains(&(String::from("x-custom"), String::from("value"))));
     assert!(!forwarded
@@ -134,10 +137,25 @@ fn relay_header_helpers_strip_hop_by_hop_headers() {
         .iter()
         .any(|(name, _)| name.eq_ignore_ascii_case("connection")));
 
-    let ws_forwarded = extract_ws_forward_headers(&headers);
+    let ws_forwarded = http_proxy::extract_ws_forward_headers(&headers);
     assert_eq!(
         ws_forwarded,
         vec![(String::from("authorization"), String::from("Bearer secret"))]
+    );
+}
+
+#[test]
+fn desktop_connect_secret_comes_from_header_only() {
+    let mut headers = HeaderMap::new();
+    assert_eq!(
+        extract_desktop_secret(&headers),
+        Err(StatusCode::UNAUTHORIZED)
+    );
+
+    headers.insert(TUNNEL_SECRET_HEADER, "relay-secret".parse().unwrap());
+    assert_eq!(
+        extract_desktop_secret(&headers).expect("secret header"),
+        "relay-secret"
     );
 }
 
@@ -154,4 +172,20 @@ fn derive_secret_is_deterministic() {
 fn parse_master_secret_rejects_empty_values() {
     assert!(parse_master_secret("").is_err());
     assert!(parse_master_secret("   ").is_err());
+}
+
+#[test]
+fn load_master_secret_requires_canonical_env() {
+    let _guard = ENV_LOCK.lock().expect("env lock");
+    let previous = std::env::var("CTX_TUNNEL_MASTER_SECRET").ok();
+    std::env::remove_var("CTX_TUNNEL_MASTER_SECRET");
+    assert!(load_master_secret().is_err());
+
+    std::env::set_var("CTX_TUNNEL_MASTER_SECRET", "secret-1");
+    assert_eq!(load_master_secret().unwrap(), b"secret-1");
+
+    match previous {
+        Some(value) => std::env::set_var("CTX_TUNNEL_MASTER_SECRET", value),
+        None => std::env::remove_var("CTX_TUNNEL_MASTER_SECRET"),
+    }
 }

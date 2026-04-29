@@ -8,6 +8,8 @@ use sha2::{Digest, Sha256};
 use x25519_dalek::{PublicKey, StaticSecret};
 
 const HKDF_INFO: &[u8] = b"ctx-mobile-e2ee-v1";
+pub const PAIRING_REQUEST_ENCRYPTION: &str = "x25519-hkdf-sha256-xchacha20poly1305-v1";
+const PAIRING_REQUEST_AAD_CONTEXT: &[u8] = b"ctx-mobile-pair-request-v1|POST /api/mobile/pair|";
 
 #[derive(Debug, Clone)]
 pub struct E2eeKey(pub(crate) [u8; 32]);
@@ -77,10 +79,30 @@ pub fn derive_stream_token(key: &E2eeKey, workspace_id: &str) -> String {
 }
 
 pub fn encrypt(key: &E2eeKey, device_id: &str, seq: i64, plaintext: &[u8]) -> Result<Envelope> {
+    encrypt_with_aad(key, device_id, seq, &[], plaintext)
+}
+
+pub fn encrypt_pairing_request(
+    key: &E2eeKey,
+    device_id: &str,
+    device_public_b64: &str,
+    plaintext: &[u8],
+) -> Result<Envelope> {
+    let aad_context = build_pairing_request_aad_context(device_public_b64);
+    encrypt_with_aad(key, device_id, 0, &aad_context, plaintext)
+}
+
+fn encrypt_with_aad(
+    key: &E2eeKey,
+    device_id: &str,
+    seq: i64,
+    aad_context: &[u8],
+    plaintext: &[u8],
+) -> Result<Envelope> {
     let mut nonce = [0u8; 24];
     rand_core::OsRng.fill_bytes(&mut nonce);
     let cipher = XChaCha20Poly1305::new(Key::from_slice(&key.0));
-    let aad = build_aad(device_id, seq);
+    let aad = build_aad(device_id, seq, aad_context);
     let ciphertext = cipher
         .encrypt(
             XNonce::from_slice(&nonce),
@@ -99,10 +121,32 @@ pub fn encrypt(key: &E2eeKey, device_id: &str, seq: i64, plaintext: &[u8]) -> Re
     })
 }
 
+pub fn decrypt_pairing_request(
+    key: &E2eeKey,
+    device_id: &str,
+    device_public_b64: &str,
+    nonce_b64: &str,
+    ciphertext_b64: &str,
+) -> Result<Vec<u8>> {
+    let aad_context = build_pairing_request_aad_context(device_public_b64);
+    decrypt_with_aad(key, device_id, 0, &aad_context, nonce_b64, ciphertext_b64)
+}
+
 pub fn decrypt(
     key: &E2eeKey,
     device_id: &str,
     seq: i64,
+    nonce_b64: &str,
+    ciphertext_b64: &str,
+) -> Result<Vec<u8>> {
+    decrypt_with_aad(key, device_id, seq, &[], nonce_b64, ciphertext_b64)
+}
+
+fn decrypt_with_aad(
+    key: &E2eeKey,
+    device_id: &str,
+    seq: i64,
+    aad_context: &[u8],
     nonce_b64: &str,
     ciphertext_b64: &str,
 ) -> Result<Vec<u8>> {
@@ -112,7 +156,7 @@ pub fn decrypt(
         return Err(anyhow!("invalid nonce length"));
     }
     let cipher = XChaCha20Poly1305::new(Key::from_slice(&key.0));
-    let aad = build_aad(device_id, seq);
+    let aad = build_aad(device_id, seq, aad_context);
     cipher
         .decrypt(
             XNonce::from_slice(&nonce),
@@ -144,6 +188,19 @@ fn decode_bytes(value: &str) -> Result<Vec<u8>> {
         .map_err(|_| anyhow!("invalid base64"))
 }
 
-fn build_aad(device_id: &str, seq: i64) -> Vec<u8> {
-    format!("{device_id}:{seq}").into_bytes()
+fn build_pairing_request_aad_context(device_public_b64: &str) -> Vec<u8> {
+    let mut context =
+        Vec::with_capacity(PAIRING_REQUEST_AAD_CONTEXT.len() + device_public_b64.len());
+    context.extend_from_slice(PAIRING_REQUEST_AAD_CONTEXT);
+    context.extend_from_slice(device_public_b64.trim().as_bytes());
+    context
+}
+
+fn build_aad(device_id: &str, seq: i64, aad_context: &[u8]) -> Vec<u8> {
+    let mut aad = format!("{device_id}:{seq}").into_bytes();
+    if !aad_context.is_empty() {
+        aad.extend_from_slice(b":");
+        aad.extend_from_slice(aad_context);
+    }
+    aad
 }

@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use axum::routing::post;
+use axum::routing::{get, post};
 use axum::{Json, Router};
 use base64::Engine;
 use clap::Parser;
@@ -18,6 +18,8 @@ use tracing::{info, warn};
 use url::Url;
 use uuid::Uuid;
 
+static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
+
 #[derive(Parser, Debug)]
 #[command(name = "ctx-tunnel-control-plane", version)]
 struct Args {
@@ -30,7 +32,6 @@ struct AppState {
     db: Pool<Sqlite>,
     client: reqwest::Client,
     config: ControlPlaneConfig,
-    redis: Option<redis::aio::ConnectionManager>,
 }
 
 #[derive(Clone)]
@@ -99,20 +100,7 @@ async fn main() -> Result<()> {
         .connect(&database_url)
         .await
         .context("connecting to database")?;
-    let migrator = sqlx::migrate::Migrator::new(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations"),
-    )
-    .await
-    .context("loading migrations")?;
-    migrator.run(&db).await.context("running migrations")?;
-
-    let redis = match std::env::var("CONTROL_PLANE_REDIS_URL") {
-        Ok(url) if !url.trim().is_empty() => {
-            let client = redis::Client::open(url)?;
-            Some(redis::aio::ConnectionManager::new(client).await?)
-        }
-        _ => None,
-    };
+    MIGRATOR.run(&db).await.context("running migrations")?;
 
     let state = AppState {
         db,
@@ -125,10 +113,10 @@ async fn main() -> Result<()> {
             public_base_url,
             relay_base_urls,
         },
-        redis,
     };
 
     let app = Router::new()
+        .route("/health", get(health))
         .route("/v1/mobile/enable", post(enable_mobile_access))
         .route("/v1/mobile/revoke", post(revoke_mobile_access))
         .with_state(state);
@@ -142,6 +130,10 @@ async fn main() -> Result<()> {
         .await
         .context("serving control plane")?;
     Ok(())
+}
+
+async fn health() -> impl IntoResponse {
+    Json(serde_json::json!({ "ok": true }))
 }
 
 async fn enable_mobile_access(
@@ -202,8 +194,6 @@ async fn enable_mobile_access_inner(
         relay_base_url,
         tunnel_secret: tunnel_secret.clone(),
     };
-
-    cache_tunnel(&state, &tunnel_id, &resp).await;
 
     Ok(resp)
 }
@@ -465,6 +455,5 @@ struct TunnelCacheEntry {
     public_base_url: String,
 }
 
-#[cfg(test)]
 #[cfg(test)]
 mod tests;

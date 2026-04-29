@@ -12,11 +12,13 @@ function clampSidebarWidth(width: number) {
 export function useWorkbenchShellLayout({
   workspaceId,
   focusNewTask,
+  mobileMode = false,
 }: {
   workspaceId: string;
   focusNewTask: () => void;
+  mobileMode?: boolean;
 }) {
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(mobileMode);
   const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_DEFAULT_WIDTH);
   const [sidebarResizing, setSidebarResizing] = useState(false);
 
@@ -30,14 +32,16 @@ export function useWorkbenchShellLayout({
   }, []);
 
   useEffect(() => {
+    if (mobileMode) return;
     const onResize = () => {
       setSidebarWidth((width) => clampSidebarWidth(width));
     };
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
-  }, []);
+  }, [mobileMode]);
 
   useLayoutEffect(() => {
+    if (mobileMode) return;
     if (!workspaceId) return;
     const key = `wb.sidebarWidth.${workspaceId}`;
     try {
@@ -48,18 +52,20 @@ export function useWorkbenchShellLayout({
     } catch {
       // ignore
     }
-  }, [workspaceId]);
+  }, [mobileMode, workspaceId]);
 
   useEffect(() => {
+    if (mobileMode) return;
     if (!workspaceId) return;
     try {
       localStorage.setItem(`wb.sidebarWidth.${workspaceId}`, String(clampSidebarWidth(sidebarWidth)));
     } catch {
       // ignore
     }
-  }, [sidebarWidth, workspaceId]);
+  }, [mobileMode, sidebarWidth, workspaceId]);
 
   useEffect(() => {
+    if (mobileMode) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.altKey || event.shiftKey) return;
       const hasModifier = event.metaKey || event.ctrlKey;
@@ -75,7 +81,7 @@ export function useWorkbenchShellLayout({
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [focusNewTask]);
+  }, [focusNewTask, mobileMode]);
 
   const onSidebarResizerMouseDown = useCallback(
     (event: ReactMouseEvent) => {

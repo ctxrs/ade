@@ -38,11 +38,18 @@ struct SecureEnvelope {
 
 #[derive(Debug, Serialize)]
 struct PairMobileDeviceReq {
-    pairing_token: String,
     device_id: String,
+    public_key: String,
+    seq: i64,
+    nonce: String,
+    ciphertext: String,
+}
+
+#[derive(Debug, Serialize)]
+struct PairMobileDevicePayload {
+    pairing_token: String,
     device_label: Option<String>,
     platform: Option<String>,
-    public_key: String,
     app_version: Option<String>,
 }
 
@@ -130,28 +137,32 @@ async fn run_e2e(
         .await?;
 
     let (base_url, pairing_token, daemon_public_key) = parse_qr_payload(&enable_resp.qr_payload)?;
+    wait_for_public_tunnel(&client, &base_url).await?;
 
     let (device_public, device_secret) = mobile_e2ee::generate_keypair();
     let device_id = Uuid::new_v4().to_string();
+    let key = mobile_e2ee::derive_client_key(&device_id, &device_secret, &daemon_public_key)?;
+    let pair_req = encrypt_pairing_request(
+        &key,
+        &device_id,
+        &device_public,
+        PairMobileDevicePayload {
+            pairing_token,
+            device_label: Some("e2e-harness".to_string()),
+            platform: Some("harness".to_string()),
+            app_version: Some("0.0.0".to_string()),
+        },
+    )?;
 
     let pair_env = client
         .post(format!("{base_url}/api/mobile/pair"))
-        .json(&PairMobileDeviceReq {
-            pairing_token,
-            device_id: device_id.clone(),
-            device_label: Some("e2e-harness".to_string()),
-            platform: Some("harness".to_string()),
-            public_key: device_public,
-            app_version: Some("0.0.0".to_string()),
-        })
+        .json(&pair_req)
         .send()
         .await?
         .error_for_status()
         .context("pair device")?
         .json::<SecureEnvelope>()
         .await?;
-
-    let key = mobile_e2ee::derive_client_key(&device_id, &device_secret, &daemon_public_key)?;
 
     let pair_payload = mobile_e2ee::decrypt(
         &key,
@@ -192,8 +203,8 @@ async fn run_e2e(
     }
     let body = decode_body_b64(&secure_resp_payload.body_b64)?;
     let health: serde_json::Value = serde_json::from_slice(&body)?;
-    if health.get("daemon_url").is_none() {
-        return Err(anyhow!("secure response missing daemon_url"));
+    if !health.is_object() {
+        return Err(anyhow!("secure response health body is not a JSON object"));
     }
 
     let ws_url = build_ws_url(&base_url, &expected_workspace_id, &device_id, &key)?;
@@ -247,6 +258,15 @@ fn parse_qr_payload(payload: &serde_json::Value) -> Result<(String, String, Stri
         .and_then(|v| v.as_str())
         .context("qr payload missing daemon_public_key")?
         .to_string();
+    let encryption = payload
+        .get("pairing_request_encryption")
+        .and_then(|v| v.as_str())
+        .context("qr payload missing pairing_request_encryption")?;
+    if encryption != mobile_e2ee::PAIRING_REQUEST_ENCRYPTION {
+        return Err(anyhow!(
+            "unsupported pairing request encryption: {encryption}"
+        ));
+    }
     Ok((base_url, pairing_token, daemon_public_key))
 }
 
@@ -270,6 +290,23 @@ async fn create_workspace(
         .json::<WorkspaceSummary>()
         .await?;
     Ok(resp.id)
+}
+
+fn encrypt_pairing_request(
+    key: &mobile_e2ee::E2eeKey,
+    device_id: &str,
+    device_public: &str,
+    payload: PairMobileDevicePayload,
+) -> Result<PairMobileDeviceReq> {
+    let plaintext = serde_json::to_vec(&payload)?;
+    let enc = mobile_e2ee::encrypt_pairing_request(key, device_id, device_public, &plaintext)?;
+    Ok(PairMobileDeviceReq {
+        device_id: enc.device_id,
+        public_key: device_public.to_string(),
+        seq: enc.seq,
+        nonce: enc.nonce_b64,
+        ciphertext: enc.ciphertext_b64,
+    })
 }
 
 fn encrypt_secure_request(
@@ -345,9 +382,32 @@ async fn wait_for_health(client: &reqwest::Client, daemon_url: &str) -> Result<(
     Err(anyhow!("timed out waiting for daemon health"))
 }
 
+async fn wait_for_public_tunnel(client: &reqwest::Client, base_url: &str) -> Result<()> {
+    let health_url = format!("{base_url}/api/health");
+    let deadline = Instant::now() + Duration::from_secs(45);
+    let mut last_status = None::<reqwest::StatusCode>;
+
+    loop {
+        match client.get(&health_url).send().await {
+            Ok(resp) if resp.status().is_success() => return Ok(()),
+            Ok(resp) => last_status = Some(resp.status()),
+            Err(_) => {}
+        }
+        if Instant::now() > deadline {
+            let detail = last_status
+                .map(|status| format!("last status {status}"))
+                .unwrap_or_else(|| "no HTTP response".to_string());
+            return Err(anyhow!(
+                "timed out waiting for public tunnel health at {health_url}: {detail}"
+            ));
+        }
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+}
+
 async fn read_daemon_auth_token(data_dir: &Path) -> Result<String> {
     let path = data_dir.join("daemon_auth.json");
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + Duration::from_secs(30);
     loop {
         match tokio::fs::read(&path).await {
             Ok(bytes) => {

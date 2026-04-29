@@ -13,6 +13,11 @@ import {
 } from "../../api/client";
 import { setBrowserStreamQueryToken } from "../../api/browserStreamAuth";
 import {
+  decryptManagedMobileStreamEnvelope,
+  deriveManagedMobileStreamQuery,
+  managedMobileStreamPath,
+} from "../../api/mobileSecureClient";
+import {
   emitUiDiagnostic,
   normalizeDiagnosticErrorMessage,
 } from "../diagnosticsChannel";
@@ -157,14 +162,20 @@ export const connectStream = async (host: WorkspaceActiveSnapshotStreamHost): Pr
       }
       return;
     }
-    const query = new URLSearchParams();
-    await setBrowserStreamQueryToken(query, token, {
-      kind: "workspace_active_snapshot",
-      workspaceId: host.workspaceId,
-    });
+    const managedMobileQuery = await deriveManagedMobileStreamQuery(host.workspaceId);
+    const query = managedMobileQuery ?? new URLSearchParams();
+    if (!managedMobileQuery) {
+      await setBrowserStreamQueryToken(query, token, {
+        kind: "workspace_active_snapshot",
+        workspaceId: host.workspaceId,
+      });
+    }
     const serializedQuery = query.toString();
     const qs = serializedQuery ? `?${serializedQuery}` : "";
-    const url = `${wsBaseUrl.replace(/\/+$/, "")}/api/workspaces/${host.workspaceId}/active_snapshot/stream${qs}`;
+    const streamPath = managedMobileQuery
+      ? managedMobileStreamPath(host.workspaceId)
+      : `/api/workspaces/${host.workspaceId}/active_snapshot/stream`;
+    const url = `${wsBaseUrl.replace(/\/+$/, "")}${streamPath}${qs}`;
     host.canonicalStreamUrl = url;
     if (host.destroyed) return;
     const openConnection =
@@ -303,7 +314,8 @@ export const handleStreamMessage = async (
     typeof (input as { receivedAtMs?: unknown }).receivedAtMs === "number"
       ? (input as { data: unknown; receivedAtMs: number })
       : { data: input, receivedAtMs: nowMs() };
-  const parsed = await parseWsJson(payload.data);
+  const parsedEnvelope = await parseWsJson(payload.data);
+  const parsed = await decryptManagedMobileStreamEnvelope(parsedEnvelope);
   if (!parsed || typeof parsed !== "object") return;
   const streamRev = readWorkspaceStreamRev(parsed);
   if (typeof streamRev === "number") {

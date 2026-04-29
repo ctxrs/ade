@@ -7,8 +7,10 @@ import {
   cloneNullableTargetScope,
   daemonTargetScopeFromDesktopConnectionLike,
   persistBaseIfRequested,
+  persistMobileConnectionIfRequested,
   readRunId,
   readStoredDaemonConnection,
+  readStoredMobileDaemonConnection,
   readStoredPersistedBase,
   writeCanonicalSession,
 } from "./daemonConnectionStorage";
@@ -17,6 +19,7 @@ import {
   type DaemonConnectionReadiness,
   type DaemonConnectionUpdate,
   type DesktopDaemonConnectionInfoLike,
+  type MobileSecureConnection,
   type SetDaemonConnectionOptions,
 } from "./daemonConnection.types";
 import {
@@ -27,6 +30,7 @@ import {
   normalizeRunId,
   normalizeToken,
 } from "./daemonConnectionUrl";
+import { isMobileShellApp } from "../utils/runtime";
 
 type DaemonConnectionListener = (connection: DaemonConnection) => void;
 
@@ -41,6 +45,33 @@ const sameNullableTargetScope = (
   return sameDaemonTargetScope(lhs, rhs);
 };
 
+const cloneMobileSecureConnection = (
+  connection: MobileSecureConnection | null | undefined,
+): MobileSecureConnection | null => connection ? { ...connection } : null;
+
+const sameMobileSecureConnection = (
+  lhs: MobileSecureConnection | null | undefined,
+  rhs: MobileSecureConnection | null | undefined,
+): boolean => {
+  if (lhs === rhs) return true;
+  if (!lhs || !rhs) return false;
+  return lhs.kind === rhs.kind
+    && lhs.deviceId === rhs.deviceId
+    && lhs.daemonPublicKey === rhs.daemonPublicKey
+    && lhs.pairingRequestEncryption === rhs.pairingRequestEncryption
+    && lhs.nextSeq === rhs.nextSeq;
+};
+
+export const isMobileSecureConnection = (
+  connection: MobileSecureConnection | null | undefined,
+): connection is MobileSecureConnection =>
+  connection?.kind === "managed_tunnel"
+  && Boolean(connection.deviceId)
+  && Boolean(connection.daemonPublicKey)
+  && Boolean(connection.pairingRequestEncryption)
+  && Number.isInteger(connection.nextSeq)
+  && connection.nextSeq >= 1;
+
 const initialConnection = (): DaemonConnection => {
   const canonical = readStoredDaemonConnection();
   if (canonical) {
@@ -51,9 +82,27 @@ const initialConnection = (): DaemonConnection => {
       runId: readRunId(),
       source: canonical.source ?? null,
       targetScope: cloneNullableTargetScope(canonical.targetScope),
+      mobileSecure: cloneMobileSecureConnection(canonical.mobileSecure),
     };
     writeCanonicalSession(restored);
     return restored;
+  }
+
+  if (isMobileShellApp()) {
+    const mobilePersisted = readStoredMobileDaemonConnection();
+    if (mobilePersisted?.baseUrl && mobilePersisted.authToken) {
+      const restored: DaemonConnection = {
+        baseUrl: mobilePersisted.baseUrl,
+        wsBaseUrl: mobilePersisted.wsBaseUrl,
+        authToken: mobilePersisted.authToken,
+        runId: readRunId(),
+        source: mobilePersisted.source ?? "mobile_persisted",
+        targetScope: cloneNullableTargetScope(mobilePersisted.targetScope),
+        mobileSecure: cloneMobileSecureConnection(mobilePersisted.mobileSecure),
+      };
+      writeCanonicalSession(restored);
+      return restored;
+    }
   }
 
   const persisted = readStoredPersistedBase();
@@ -66,6 +115,7 @@ const initialConnection = (): DaemonConnection => {
     runId: readRunId(),
     source: baseUrl ? "persisted_base" : null,
     targetScope: cloneNullableTargetScope(persisted?.targetScope ?? null),
+    mobileSecure: null,
   };
   if (baseUrl) {
     writeCanonicalSession(restored);
@@ -83,6 +133,7 @@ const initialConnection = (): DaemonConnection => {
           runId: readRunId(),
           source: "same_origin_bootstrap",
           targetScope: createBrowserDaemonTargetScope(sameOrigin),
+          mobileSecure: null,
         };
         writeCanonicalSession(seeded);
         return seeded;
@@ -106,6 +157,7 @@ const areSameConnection = (a: DaemonConnection, b: DaemonConnection): boolean =>
   && a.authToken === b.authToken
   && a.runId === b.runId
   && (a.source ?? null) === (b.source ?? null)
+  && sameMobileSecureConnection(a.mobileSecure, b.mobileSecure)
   && sameNullableTargetScope(a.targetScope, b.targetScope);
 
 const notifyListeners = () => {
@@ -124,24 +176,27 @@ export const getDaemonConnection = (): DaemonConnection => {
   return {
     ...state,
     targetScope: cloneNullableTargetScope(state.targetScope),
+    mobileSecure: cloneMobileSecureConnection(state.mobileSecure),
   };
 };
 
 export const getDaemonConnectionReadiness = (
-  connection: Pick<DaemonConnection, "baseUrl" | "authToken"> = getDaemonConnection(),
+  connection: Pick<DaemonConnection, "baseUrl" | "authToken" | "mobileSecure"> = getDaemonConnection(),
 ): DaemonConnectionReadiness => {
   const hasBaseUrl = Boolean(connection.baseUrl);
   const hasAuthToken = Boolean(connection.authToken);
+  const hasMobileSecure = isMobileSecureConnection(connection.mobileSecure);
   return {
     hasBaseUrl,
     hasAuthToken,
-    isReady: hasBaseUrl && hasAuthToken,
-    missing: !hasBaseUrl ? "base" : !hasAuthToken ? "auth" : null,
+    hasMobileSecure,
+    isReady: hasBaseUrl && (hasAuthToken || hasMobileSecure),
+    missing: !hasBaseUrl ? "base" : !hasAuthToken && !hasMobileSecure ? "auth" : null,
   };
 };
 
 export const hasReadyDaemonConnection = (
-  connection: Pick<DaemonConnection, "baseUrl" | "authToken"> = getDaemonConnection(),
+  connection: Pick<DaemonConnection, "baseUrl" | "authToken" | "mobileSecure"> = getDaemonConnection(),
 ): boolean => getDaemonConnectionReadiness(connection).isReady;
 
 export const subscribeDaemonConnection = (listener: DaemonConnectionListener): (() => void) => {
@@ -180,9 +235,15 @@ export const setDaemonConnection = (
     runId: update.runId !== undefined ? normalizeRunId(update.runId) : current.runId,
     source: update.source !== undefined ? normalizeToken(update.source) : current.source ?? null,
     targetScope: nextTargetScope,
+    mobileSecure: update.mobileSecure !== undefined
+      ? cloneMobileSecureConnection(update.mobileSecure)
+      : nextBase
+        ? cloneMobileSecureConnection(current.mobileSecure)
+        : null,
   };
 
   writeCanonicalSession(next);
+  persistMobileConnectionIfRequested(next, opts);
   persistBaseIfRequested(next, opts);
 
   if (!areSameConnection(current, next)) {
@@ -200,10 +261,13 @@ export const clearDaemonConnection = (opts?: SetDaemonConnectionOptions): Daemon
       authToken: null,
       source: "cleared",
       targetScope: null,
+      mobileSecure: null,
     },
     {
       persistBaseUrl: opts?.persistBaseUrl,
       clearPersistedBaseUrl: opts?.clearPersistedBaseUrl ?? true,
+      persistAuthToken: opts?.persistAuthToken,
+      clearPersistedAuthToken: opts?.clearPersistedAuthToken ?? true,
     },
   );
 };

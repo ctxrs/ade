@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { type ReactNode, useEffect, useRef } from "react";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { appendDesktopLog } from "./api/client";
 import { useDaemonConnection } from "./api/useDaemonConnection";
@@ -12,6 +12,8 @@ import ProvidersPage from "./pages/ProvidersPage";
 import DiagnosticsPage from "./pages/DiagnosticsPage";
 import SettingsPage from "./pages/SettingsPage";
 import WorkspaceSetupPage from "./pages/WorkspaceSetupPage";
+import { MobileConnectPage } from "./pages/mobile/MobileConnectPage";
+import { MobileHomePage } from "./pages/mobile/MobileHomePage";
 import { SessionSupervisorProvider } from "./state/sessionSupervisor";
 import { SettingsStoreProvider } from "./state/settingsStore";
 import { setUiDiagnosticPersistenceSink, type UiDiagnosticEvent } from "./state/diagnosticsChannel";
@@ -26,6 +28,7 @@ import { DesktopWebviewRecoveryBridge } from "./state/desktopWebviewRecoveryBrid
 import { getDaemonConnectionReadiness } from "./api/client";
 import { initAnalytics } from "./utils/analytics";
 import { isDesktopApp } from "./utils/desktop";
+import { getAppShellKind } from "./utils/runtime";
 import {
   AnalyticsSettingsBridge,
   AppForegroundBootstrap,
@@ -83,11 +86,20 @@ const buildUiDiagnosticLogLine = (event: UiDiagnosticEvent): string => {
   return `${event.source}: code=${event.code} severity=${event.severity} message=${event.message}${context}`;
 };
 
+function MobileReadyRoute({ children }: { children: ReactNode }) {
+  const connection = useDaemonConnection();
+  if (!getDaemonConnectionReadiness(connection).isReady) {
+    return <Navigate replace to="/mobile/connect" />;
+  }
+  return <>{children}</>;
+}
+
 export default function App() {
   const runtimeLogDedupRef = useRef<Map<string, number>>(new Map());
   const desktopFirstPaintLoggedRef = useRef(false);
   const desktopDaemonReadyLoggedRef = useRef(false);
   const daemonConnection = useDaemonConnection();
+  const mobileShell = getAppShellKind() === "mobile";
 
   useEffect(() => {
     appendDesktopLog("ui: app loaded").catch(() => {});
@@ -195,13 +207,39 @@ export default function App() {
           <DesktopWebviewRecoveryBridge />
           <GlobalUpdateNotice />
           <Routes>
-            <Route path="/" element={<LauncherPage />} />
+            <Route
+              path="/"
+              element={
+                mobileShell ? (
+                  <MobileReadyRoute>
+                    <MobileHomePage />
+                  </MobileReadyRoute>
+                ) : (
+                  <LauncherPage />
+                )
+              }
+            />
             <Route path="/index.html" element={<Navigate replace to="/" />} />
-            <Route path="/workspace-setup" element={<WorkspaceSetupPage />} />
-            <Route path="/settings" element={<SettingsPage />} />
-            <Route path="/providers" element={<ProvidersPage />} />
-            <Route path="/diagnostics" element={<DiagnosticsPage />} />
-            <Route path="/workspaces/:id" element={<WorkbenchPage />} />
+            <Route
+              path="/mobile/connect"
+              element={mobileShell ? <MobileConnectPage /> : <Navigate replace to="/settings" />}
+            />
+            <Route path="/workspace-setup" element={mobileShell ? <Navigate replace to="/" /> : <WorkspaceSetupPage />} />
+            <Route path="/settings" element={mobileShell ? <Navigate replace to="/mobile/connect" /> : <SettingsPage />} />
+            <Route path="/providers" element={mobileShell ? <Navigate replace to="/" /> : <ProvidersPage />} />
+            <Route path="/diagnostics" element={mobileShell ? <Navigate replace to="/mobile/connect" /> : <DiagnosticsPage />} />
+            <Route
+              path="/workspaces/:id"
+              element={
+                mobileShell ? (
+                  <MobileReadyRoute>
+                    <WorkbenchPage />
+                  </MobileReadyRoute>
+                ) : (
+                  <WorkbenchPage />
+                )
+              }
+            />
             <Route path="/__cursor_diff_demo" element={<CursorDiffDemoPage />} />
             <Route path="/__geometry_harness" element={<GeometryHarnessPage />} />
           </Routes>

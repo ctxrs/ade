@@ -5,8 +5,8 @@
   "identifier": "rs.ctx.tauri.mobile",
   "build": {
     "frontendDist": "../../web/dist",
-    "beforeDevCommand": "pnpm -C ../../web dev",
-    "beforeBuildCommand": "pnpm -C ../../web build"
+    "beforeDevCommand": "pnpm -C ../web dev",
+    "beforeBuildCommand": "pnpm -C ../web build"
   },
   "app": {
     "windows": [
@@ -15,7 +15,8 @@
         "width": 800,
         "height": 600,
         "resizable": true,
-        "fullscreen": false
+        "fullscreen": false,
+        "disableInputAccessoryView": true
       }
     ],
     "security": {

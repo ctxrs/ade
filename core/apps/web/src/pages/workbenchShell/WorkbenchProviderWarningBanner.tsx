@@ -12,6 +12,7 @@ import {
 type WorkbenchProviderWarningBannerProps = {
   acknowledgementScopeId: string;
   providersById: Record<string, ProviderStatus>;
+  mobileShell?: boolean;
   updateAllBusy?: boolean;
   onUpdateProviders: (providerIds: string[]) => Promise<void> | void;
   onOpenSettings: () => void;
@@ -22,6 +23,7 @@ export type WorkbenchProviderWarning = ProviderRuntimeWarning;
 export function WorkbenchProviderWarningBanner({
   acknowledgementScopeId,
   providersById,
+  mobileShell = false,
   updateAllBusy = false,
   onUpdateProviders,
   onOpenSettings,
@@ -85,7 +87,7 @@ export function WorkbenchProviderWarningBanner({
 
   return (
     <div
-      className="wb-snackbar wb-provider-warning-snackbar"
+      className={`wb-snackbar wb-provider-warning-snackbar${mobileShell ? " wb-provider-warning-snackbar-mobile" : ""}`}
       role="status"
       aria-live="polite"
       aria-labelledby="wb-provider-warning-title"

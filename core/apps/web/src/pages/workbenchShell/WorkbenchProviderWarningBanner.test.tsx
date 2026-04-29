@@ -53,6 +53,29 @@ describe("WorkbenchProviderWarningBanner", () => {
     expect(container.firstChild).toBeNull();
   });
 
+  it("uses the mobile placement class when rendered in the mobile shell", () => {
+    render(
+      <WorkbenchProviderWarningBanner
+        acknowledgementScopeId="scope-ws-1"
+        mobileShell
+        providersById={{
+          codex: providerStatus("codex", {
+            details: {
+              install_supported: "true",
+              matrix_update_available: "true",
+              matrix_recommended_version: "0.114.0-ctx.2",
+            },
+            version: "0.114.0-ctx.1",
+          }),
+        }}
+        onUpdateProviders={() => Promise.resolve()}
+        onOpenSettings={() => {}}
+      />,
+    );
+
+    expect(screen.getByTestId("workbench-provider-warning")).toHaveClass("wb-provider-warning-snackbar-mobile");
+  });
+
   it("surfaces all stale installed providers while omitting current installs from update actions", () => {
     const onUpdateProviders = vi.fn(() => Promise.resolve());
 

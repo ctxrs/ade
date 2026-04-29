@@ -1,15 +1,7 @@
-type TauriGlobals = {
-  __TAURI_INTERNALS__?: unknown;
-  __TAURI__?: unknown;
-};
+import { isDesktopShellApp } from "../utils/runtime";
 
 export const isDesktopWindow = (): boolean => {
-  try {
-    const g = globalThis as typeof globalThis & TauriGlobals;
-    return Boolean(g.__TAURI_INTERNALS__ || g.__TAURI__);
-  } catch {
-    return false;
-  }
+  return isDesktopShellApp();
 };
 
 export const normalizeToken = (value: string | null | undefined): string | null => {

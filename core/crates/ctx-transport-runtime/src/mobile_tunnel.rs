@@ -12,6 +12,8 @@ use tokio_tungstenite::tungstenite::Message;
 use tracing::{info, warn};
 use url::Url;
 
+const TUNNEL_SECRET_HEADER: &str = "x-ctx-tunnel-secret";
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MobileTunnelState {
@@ -184,8 +186,12 @@ async fn tunnel_client(
     cfg: StartMobileTunnelConfig,
     mut stop_rx: oneshot::Receiver<()>,
 ) -> Result<()> {
-    let relay_ws_url = build_relay_ws_url(&cfg.relay_base_url, &cfg.tunnel_id, &cfg.tunnel_secret)
-        .context("building relay ws url")?;
+    ensure_rustls_crypto_provider();
+
+    let relay_ws_url =
+        build_relay_ws_url(&cfg.relay_base_url, &cfg.tunnel_id).context("building relay ws url")?;
+    let relay_secret_header =
+        http::HeaderValue::from_str(&cfg.tunnel_secret).context("building relay secret header")?;
 
     let local_http = reqwest::Client::builder()
         .timeout(Duration::from_secs(60))
@@ -197,7 +203,13 @@ async fn tunnel_client(
 
     loop {
         info!("mobile tunnel connecting to {relay_ws_url}");
-        let connect = tokio_tungstenite::connect_async(relay_ws_url.clone());
+        let mut req = match relay_ws_url.as_str().into_client_request() {
+            Ok(req) => req,
+            Err(err) => return Err(err).context("building relay ws request"),
+        };
+        req.headers_mut()
+            .insert(TUNNEL_SECRET_HEADER, relay_secret_header.clone());
+        let connect = tokio_tungstenite::connect_async(req);
         let connected = tokio::select! {
             res = connect => res,
             _ = &mut stop_rx => return Ok(()),
@@ -483,7 +495,7 @@ async fn proxy_ws_open(
     Ok(())
 }
 
-fn build_relay_ws_url(relay_base_url: &str, tunnel_id: &str, secret: &str) -> Result<String> {
+fn build_relay_ws_url(relay_base_url: &str, tunnel_id: &str) -> Result<String> {
     let mut base = Url::parse(relay_base_url).context("relay_base_url must be a valid URL")?;
     let scheme = match base.scheme() {
         "https" => "wss",
@@ -492,8 +504,14 @@ fn build_relay_ws_url(relay_base_url: &str, tunnel_id: &str, secret: &str) -> Re
     };
     base.set_scheme(scheme).ok();
     base.set_path(&format!("/connect/{tunnel_id}"));
-    base.set_query(Some(&format!("secret={}", urlencoding::encode(secret))));
+    base.set_query(None);
     Ok(base.to_string())
+}
+
+fn ensure_rustls_crypto_provider() {
+    if let Err(err) = rustls::crypto::aws_lc_rs::default_provider().install_default() {
+        tracing::debug!("rustls crypto provider already installed or unavailable: {err:?}");
+    }
 }
 
 fn build_local_ws_url(local_daemon_url: &str, path: &str) -> Result<Url> {
@@ -509,6 +527,19 @@ fn build_local_ws_url(local_daemon_url: &str, path: &str) -> Result<Url> {
 
     let joined = base.join(path.trim_start_matches('/'))?;
     Ok(joined)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn relay_ws_url_does_not_include_secret_query() {
+        let url = build_relay_ws_url("https://relay.example.test", "tunnel-1")
+            .expect("relay websocket url");
+        assert_eq!(url, "wss://relay.example.test/connect/tunnel-1");
+        assert!(!url.contains("secret"));
+    }
 }
 
 static BASE64: base64::engine::general_purpose::GeneralPurpose =

@@ -8,6 +8,7 @@ export type DaemonConnection = {
   runId: string | null;
   source?: string | null;
   targetScope?: DaemonTargetScope | null;
+  mobileSecure?: MobileSecureConnection | null;
 };
 
 export type DaemonConnectionUpdate = {
@@ -17,18 +18,38 @@ export type DaemonConnectionUpdate = {
   runId?: string | null;
   source?: string | null;
   targetScope?: DaemonTargetScope | null;
+  mobileSecure?: MobileSecureConnection | null;
 };
 
 export type SetDaemonConnectionOptions = {
   persistBaseUrl?: boolean;
   clearPersistedBaseUrl?: boolean;
+  persistAuthToken?: boolean;
+  clearPersistedAuthToken?: boolean;
 };
 
 export type DaemonConnectionReadiness = {
   hasBaseUrl: boolean;
   hasAuthToken: boolean;
+  hasMobileSecure: boolean;
   isReady: boolean;
   missing: "base" | "auth" | null;
+};
+
+export type MobileSecureConnection = {
+  kind: "managed_tunnel";
+  deviceId: string;
+  daemonPublicKey: string;
+  pairingRequestEncryption: string;
+  nextSeq: number;
+};
+
+export type StoredMobileSecureConnectionV1 = {
+  kind: "managed_tunnel";
+  deviceId: string;
+  daemonPublicKey: string;
+  pairingRequestEncryption: string;
+  nextSeq: number;
 };
 
 export type StoredDaemonConnectionV1 = {
@@ -38,6 +59,7 @@ export type StoredDaemonConnectionV1 = {
   authToken: string | null;
   source?: string | null;
   targetScope?: string | null;
+  mobileSecure?: StoredMobileSecureConnectionV1 | null;
 };
 
 export type PersistedDaemonBaseV1 = {
@@ -53,6 +75,7 @@ export type ParsedStoredDaemonConnection = {
   authToken: string | null;
   source: string | null;
   targetScope: DaemonTargetScope | null;
+  mobileSecure: MobileSecureConnection | null;
 };
 
 export type ParsedPersistedDaemonBase = {

@@ -1,7 +1,5 @@
-use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use axum::body::{Body, Bytes};
@@ -13,10 +11,8 @@ use axum::routing::get;
 use axum::{Json, Router};
 use clap::Parser;
 use futures::{SinkExt, StreamExt};
-use redis::aio::ConnectionManager;
 use serde::{Deserialize, Serialize};
 use sqlx::{sqlite::SqlitePoolOptions, Pool, Row, Sqlite};
-use tokio::sync::RwLock;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::Message as TungsteniteMessage;
 use tracing::{info, warn};
@@ -27,8 +23,6 @@ use url::Url;
 struct Args {
     #[arg(long, default_value = "0.0.0.0:8790")]
     listen: String,
-    #[arg(long, default_value = "30")]
-    cache_ttl_secs: u64,
 }
 
 #[derive(Clone)]
@@ -43,16 +37,8 @@ struct TunnelTarget {
     public_base_url: String,
 }
 
-struct CachedTarget {
-    target: TunnelTarget,
-    expires_at: Instant,
-}
-
 struct TunnelStore {
     db: Pool<Sqlite>,
-    redis: Option<ConnectionManager>,
-    cache: RwLock<HashMap<String, CachedTarget>>,
-    cache_ttl: Duration,
 }
 
 #[tokio::main]
@@ -64,7 +50,6 @@ async fn main() -> Result<()> {
     let args = Args::parse();
     let database_url = std::env::var("CONTROL_PLANE_DATABASE_URL")
         .context("missing CONTROL_PLANE_DATABASE_URL")?;
-    let redis_url = std::env::var("CONTROL_PLANE_REDIS_URL").ok();
 
     let db = SqlitePoolOptions::new()
         .max_connections(10)
@@ -72,20 +57,7 @@ async fn main() -> Result<()> {
         .await
         .context("connecting to database")?;
 
-    let redis = match redis_url {
-        Some(url) if !url.trim().is_empty() => {
-            let client = redis::Client::open(url)?;
-            Some(ConnectionManager::new(client).await?)
-        }
-        _ => None,
-    };
-
-    let store = Arc::new(TunnelStore {
-        db,
-        redis,
-        cache: RwLock::new(HashMap::new()),
-        cache_ttl: Duration::from_secs(args.cache_ttl_secs),
-    });
+    let store = Arc::new(TunnelStore { db });
 
     let state = RouterState {
         store,
@@ -359,13 +331,6 @@ fn extract_ws_forward_headers(
 
 impl TunnelStore {
     async fn resolve_target(&self, tunnel_id: &str) -> Option<TunnelTarget> {
-        if let Some(entry) = self.get_cached(tunnel_id).await {
-            return Some(entry);
-        }
-        if let Some(target) = self.get_redis(tunnel_id).await {
-            self.set_cache(tunnel_id, &target).await;
-            return Some(target);
-        }
         let row = sqlx::query(
             r#"SELECT relay_base_url, public_base_url, disabled_at IS NOT NULL AS disabled
                FROM mobile_tunnels
@@ -387,53 +352,7 @@ impl TunnelStore {
             relay_base_url,
             public_base_url,
         };
-        self.set_cache(tunnel_id, &target).await;
-        self.set_redis(tunnel_id, &target).await;
         Some(target)
-    }
-
-    async fn get_cached(&self, tunnel_id: &str) -> Option<TunnelTarget> {
-        let now = Instant::now();
-        let cache = self.cache.read().await;
-        cache.get(tunnel_id).and_then(|entry| {
-            if entry.expires_at > now {
-                Some(entry.target.clone())
-            } else {
-                None
-            }
-        })
-    }
-
-    async fn set_cache(&self, tunnel_id: &str, target: &TunnelTarget) {
-        let expires_at = Instant::now() + self.cache_ttl;
-        let mut cache = self.cache.write().await;
-        cache.insert(
-            tunnel_id.to_string(),
-            CachedTarget {
-                target: target.clone(),
-                expires_at,
-            },
-        );
-    }
-
-    async fn get_redis(&self, tunnel_id: &str) -> Option<TunnelTarget> {
-        let mut conn = self.redis.clone()?;
-        let key = format!("tunnel:{tunnel_id}");
-        let data: Option<String> = redis::AsyncCommands::get(&mut conn, key).await.ok();
-        let json = data?;
-        serde_json::from_str(&json).ok()
-    }
-
-    async fn set_redis(&self, tunnel_id: &str, target: &TunnelTarget) {
-        let Some(mut conn) = self.redis.clone() else {
-            return;
-        };
-        let Ok(json) = serde_json::to_string(target) else {
-            return;
-        };
-        let key = format!("tunnel:{tunnel_id}");
-        let _: redis::RedisResult<()> =
-            redis::AsyncCommands::set_ex(&mut conn, key, json, self.cache_ttl.as_secs()).await;
     }
 }
 

@@ -2,6 +2,21 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const SESSION_CONNECTION_KEY = "ctxDaemonConnectionV1";
 const LOCAL_PERSISTED_BASE_KEY = "ctxDaemonConnectionBaseV1";
+const MOBILE_PERSISTED_CONNECTION_KEY = "ctxMobileDaemonConnectionV1";
+
+const setUserAgent = (value: string) => {
+  Object.defineProperty(window.navigator, "userAgent", {
+    configurable: true,
+    value,
+  });
+};
+
+const setPlatform = (value: string) => {
+  Object.defineProperty(window.navigator, "platform", {
+    configurable: true,
+    value,
+  });
+};
 
 describe("daemonConnection", () => {
   beforeEach(() => {
@@ -15,6 +30,8 @@ describe("daemonConnection", () => {
     const g = globalThis as typeof globalThis & { __TAURI_INTERNALS__?: unknown; __TAURI__?: unknown };
     delete g.__TAURI_INTERNALS__;
     delete g.__TAURI__;
+    setUserAgent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)");
+    setPlatform("MacIntel");
   });
 
   it("normalizes base/ws urls consistently", async () => {
@@ -251,6 +268,124 @@ describe("daemonConnection", () => {
     expect(connection.baseUrl).toBeNull();
     expect(connection.wsBaseUrl).toBeNull();
     expect(connection.targetScope).toBeNull();
+  });
+
+  it("restores a fully persisted mobile daemon connection in tauri mobile shells", async () => {
+    const g = globalThis as typeof globalThis & { __TAURI__?: unknown };
+    g.__TAURI__ = {};
+    setUserAgent("Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)");
+    setPlatform("iPhone");
+    localStorage.setItem(
+      MOBILE_PERSISTED_CONNECTION_KEY,
+      JSON.stringify({
+        v: 1,
+        baseUrl: "http://192.168.1.50:4399",
+        wsBaseUrl: "ws://192.168.1.50:4399",
+        authToken: "mobile-token",
+        source: "mobile_manual_connect",
+      }),
+    );
+
+    const mod = await import("./daemonConnection");
+    const connection = mod.getDaemonConnection();
+
+    expect(connection).toMatchObject({
+      baseUrl: "http://192.168.1.50:4399",
+      wsBaseUrl: "ws://192.168.1.50:4399",
+      authToken: "mobile-token",
+      source: "mobile_manual_connect",
+      targetScope: {
+        kind: "browser",
+        baseUrl: "http://192.168.1.50:4399",
+      },
+    });
+  });
+
+  it("persists and clears mobile daemon auth when requested from tauri mobile shells", async () => {
+    const g = globalThis as typeof globalThis & { __TAURI_INTERNALS__?: unknown };
+    g.__TAURI_INTERNALS__ = {};
+    setUserAgent("Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)");
+    setPlatform("iPhone");
+    const mod = await import("./daemonConnection");
+
+    mod.setDaemonConnection(
+      {
+        baseUrl: "http://192.168.1.50:4399",
+        authToken: "mobile-token",
+        source: "mobile_manual_connect",
+      },
+      { persistBaseUrl: true, persistAuthToken: true },
+    );
+
+    expect(JSON.parse(localStorage.getItem(MOBILE_PERSISTED_CONNECTION_KEY) ?? "{}")).toMatchObject({
+      v: 1,
+      baseUrl: "http://192.168.1.50:4399",
+      authToken: "mobile-token",
+    });
+    expect(JSON.parse(localStorage.getItem(LOCAL_PERSISTED_BASE_KEY) ?? "{}")).toMatchObject({
+      v: 1,
+      baseUrl: "http://192.168.1.50:4399",
+    });
+
+    mod.clearDaemonConnection({
+      persistBaseUrl: true,
+      clearPersistedBaseUrl: true,
+      clearPersistedAuthToken: true,
+    });
+
+    expect(localStorage.getItem(MOBILE_PERSISTED_CONNECTION_KEY)).toBeNull();
+    expect(localStorage.getItem(LOCAL_PERSISTED_BASE_KEY)).toBeNull();
+  });
+
+  it("persists managed mobile secure connections in tauri mobile shells", async () => {
+    const g = globalThis as typeof globalThis & { __TAURI_INTERNALS__?: unknown };
+    g.__TAURI_INTERNALS__ = {};
+    setUserAgent("Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)");
+    setPlatform("iPhone");
+    const mod = await import("./daemonConnection");
+
+    mod.setDaemonConnection(
+      {
+        baseUrl: "https://tunnel.ctx.rs/t/tunnel-1",
+        authToken: null,
+        source: "mobile_managed_qr",
+        mobileSecure: {
+          kind: "managed_tunnel",
+          deviceId: "33333333-3333-3333-3333-333333333333",
+          daemonPublicKey: "daemon-public-key",
+          pairingRequestEncryption: "x25519-hkdf-sha256-xchacha20poly1305-v1",
+          nextSeq: 1,
+        },
+      },
+      { persistBaseUrl: true, persistAuthToken: true },
+    );
+
+    expect(mod.getDaemonConnection()).toMatchObject({
+      baseUrl: "https://tunnel.ctx.rs/t/tunnel-1",
+      wsBaseUrl: "wss://tunnel.ctx.rs/t/tunnel-1",
+      authToken: null,
+      source: "mobile_managed_qr",
+      mobileSecure: {
+        kind: "managed_tunnel",
+        deviceId: "33333333-3333-3333-3333-333333333333",
+        nextSeq: 1,
+      },
+      targetScope: {
+        kind: "browser",
+        baseUrl: "https://tunnel.ctx.rs/t/tunnel-1",
+      },
+    });
+    expect(JSON.parse(localStorage.getItem(MOBILE_PERSISTED_CONNECTION_KEY) ?? "{}")).toMatchObject({
+      v: 1,
+      baseUrl: "https://tunnel.ctx.rs/t/tunnel-1",
+      authToken: null,
+      source: "mobile_managed_qr",
+      mobileSecure: {
+        kind: "managed_tunnel",
+        deviceId: "33333333-3333-3333-3333-333333333333",
+        nextSeq: 1,
+      },
+    });
   });
 
   it("applies dev env daemon url even after same-origin preseed", async () => {

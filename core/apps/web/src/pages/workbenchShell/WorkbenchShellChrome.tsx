@@ -1,11 +1,21 @@
+import { useRef, type TouchEvent as ReactTouchEvent } from "react";
 import type React from "react";
 import { Virtuoso, type ListRange } from "react-virtuoso";
 import { Link } from "react-router-dom";
-import { ChevronsLeft, ChevronsRight, Settings, SquarePen } from "lucide-react";
+import { ChevronsLeft, ChevronsRight, Menu, Settings, SquarePen } from "lucide-react";
 
 import { TextInput } from "../../components/ui/text-input";
 import { TASK_LIST_COMPONENTS } from "./WorkbenchPage.taskList";
 import type { AnchorRect, TaskListContext, TaskListItem } from "./WorkbenchPage.types";
+import {
+  shouldCloseMobileSidebarSwipe,
+  type MobileSidebarSwipePoint,
+} from "./mobileSidebarGesture";
+
+type TouchPointLike = {
+  clientX: number;
+  clientY: number;
+};
 
 type WorkbenchTopbarProps = {
   workspaceId: string;
@@ -13,6 +23,9 @@ type WorkbenchTopbarProps = {
   showDebugIds: boolean;
   debugIdLabel: string;
   onCopyDebugIds: () => void;
+  settingsHref?: string;
+  onToggleSidebar?: () => void;
+  sidebarOpen?: boolean;
 };
 
 export function WorkbenchTopbar({
@@ -21,10 +34,28 @@ export function WorkbenchTopbar({
   showDebugIds,
   debugIdLabel,
   onCopyDebugIds,
+  settingsHref,
+  onToggleSidebar,
+  sidebarOpen = false,
 }: WorkbenchTopbarProps) {
+  const taskListToggleLabel = sidebarOpen ? "Close task list" : "Open task list";
+
   return (
     <div className="wb-topbar">
-      <div className="wb-topbar-left" />
+      <div className="wb-topbar-left" data-tauri-drag-region={false}>
+        {onToggleSidebar ? (
+          <button
+            type="button"
+            className="wb-topbar-icon wb-topbar-menu-button"
+            onClick={onToggleSidebar}
+            aria-label={taskListToggleLabel}
+            title={taskListToggleLabel}
+            data-tauri-drag-region={false}
+          >
+            <Menu size={18} strokeWidth={2.4} aria-hidden="true" />
+          </button>
+        ) : null}
+      </div>
       <div className="wb-topbar-center">
         {workspaceTitle ? <div className="wb-topbar-title">{workspaceTitle}</div> : null}
       </div>
@@ -42,7 +73,7 @@ export function WorkbenchTopbar({
         ) : null}
         <Link
           className="wb-topbar-icon"
-          to={`/settings?ws=${encodeURIComponent(String(workspaceId))}`}
+          to={settingsHref ?? `/settings?ws=${encodeURIComponent(String(workspaceId))}`}
           title="Settings"
           aria-label="Settings"
           data-tauri-drag-region={false}
@@ -71,6 +102,8 @@ type WorkbenchSidebarProps = {
   onCollapseSidebar: () => void;
   onSidebarResizerMouseDown: (event: React.MouseEvent<HTMLDivElement>) => void;
   onResetSidebarWidth: () => void;
+  mobileMode?: boolean;
+  onSwipeClose?: () => void;
 };
 
 export function WorkbenchSidebar({
@@ -90,7 +123,56 @@ export function WorkbenchSidebar({
   onCollapseSidebar,
   onSidebarResizerMouseDown,
   onResetSidebarWidth,
+  mobileMode = false,
+  onSwipeClose,
 }: WorkbenchSidebarProps) {
+  const swipeStartRef = useRef<MobileSidebarSwipePoint | null>(null);
+  const swipeLatestRef = useRef<MobileSidebarSwipePoint | null>(null);
+
+  const resetSwipe = () => {
+    swipeStartRef.current = null;
+    swipeLatestRef.current = null;
+  };
+
+  const recordSwipePoint = (touch: TouchPointLike): MobileSidebarSwipePoint => ({
+    clientX: touch.clientX,
+    clientY: touch.clientY,
+  });
+
+  const onTouchStart = (event: ReactTouchEvent<HTMLDivElement>) => {
+    if (!mobileMode || collapsed || !onSwipeClose) return;
+    if (event.touches.length !== 1) {
+      resetSwipe();
+      return;
+    }
+    const point = recordSwipePoint(event.touches[0]);
+    swipeStartRef.current = point;
+    swipeLatestRef.current = point;
+  };
+
+  const onTouchMove = (event: ReactTouchEvent<HTMLDivElement>) => {
+    if (!mobileMode || collapsed || !onSwipeClose || !swipeStartRef.current) return;
+    if (event.touches.length !== 1) {
+      resetSwipe();
+      return;
+    }
+    swipeLatestRef.current = recordSwipePoint(event.touches[0]);
+  };
+
+  const onTouchEnd = (event: ReactTouchEvent<HTMLDivElement>) => {
+    if (!mobileMode || collapsed || !onSwipeClose || !swipeStartRef.current) {
+      resetSwipe();
+      return;
+    }
+    const endTouch = event.changedTouches[0] ?? null;
+    const endPoint = endTouch ? recordSwipePoint(endTouch) : swipeLatestRef.current;
+    const shouldClose = endPoint
+      ? shouldCloseMobileSidebarSwipe(swipeStartRef.current, endPoint)
+      : false;
+    resetSwipe();
+    if (shouldClose) onSwipeClose();
+  };
+
   return (
     <>
       {collapsed ? (
@@ -115,7 +197,14 @@ export function WorkbenchSidebar({
         </button>
       )}
 
-      <div className="wb-sidebar" aria-hidden={collapsed}>
+      <div
+        className="wb-sidebar"
+        aria-hidden={collapsed}
+        onTouchStart={onTouchStart}
+        onTouchMove={onTouchMove}
+        onTouchEnd={onTouchEnd}
+        onTouchCancel={resetSwipe}
+      >
         <div className="wb-sidebar-top">
           <div className="wb-sidebar-header">
             <TextInput

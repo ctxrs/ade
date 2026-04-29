@@ -7,9 +7,11 @@ import {
   serializeDaemonTargetScope,
   type DaemonTargetScope,
 } from "../state/scopeIdentity";
+import { isMobileShellApp } from "../utils/runtime";
 import {
   type DaemonConnection,
   type DesktopDaemonConnectionInfoLike,
+  type MobileSecureConnection,
   type ParsedPersistedDaemonBase,
   type ParsedStoredDaemonConnection,
   type PersistedDaemonBaseV1,
@@ -26,6 +28,7 @@ import {
 
 const SESSION_CONNECTION_KEY = "ctxDaemonConnectionV1";
 const LOCAL_PERSISTED_BASE_KEY = "ctxDaemonConnectionBaseV1";
+const MOBILE_PERSISTED_CONNECTION_KEY = "ctxMobileDaemonConnectionV1";
 const RUN_ID_KEY = "ctxRunId";
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -135,17 +138,47 @@ const parseStoredConnection = (value: string | null): ParsedStoredDaemonConnecti
     const authToken = normalizeToken(parsed.authToken as string | null | undefined);
     const source = normalizeToken(parsed.source as string | null | undefined);
     const targetScope = parseStoredTargetScope(parsed.targetScope, baseUrl, source);
+    const mobileSecure = parseStoredMobileSecureConnection(parsed.mobileSecure);
     if (targetScope === undefined) return null;
+    if (mobileSecure === undefined) return null;
     return {
       baseUrl,
       wsBaseUrl,
       authToken: shouldPersistSessionAuthToken(source, targetScope) ? authToken : null,
       source,
       targetScope,
+      mobileSecure,
     };
   } catch {
     return null;
   }
+};
+
+const parseStoredMobileSecureConnection = (
+  value: unknown,
+): MobileSecureConnection | null | undefined => {
+  if (value === undefined || value === null) return null;
+  if (!isRecord(value)) return undefined;
+  if (value.kind !== "managed_tunnel") return undefined;
+  const deviceId = normalizeToken(typeof value.deviceId === "string" ? value.deviceId : null);
+  const daemonPublicKey = normalizeToken(
+    typeof value.daemonPublicKey === "string" ? value.daemonPublicKey : null,
+  );
+  const pairingRequestEncryption = normalizeToken(
+    typeof value.pairingRequestEncryption === "string" ? value.pairingRequestEncryption : null,
+  );
+  const nextSeq = value.nextSeq;
+  if (!deviceId || !daemonPublicKey || !pairingRequestEncryption) return undefined;
+  if (typeof nextSeq !== "number" || !Number.isInteger(nextSeq) || nextSeq < 1) {
+    return undefined;
+  }
+  return {
+    kind: "managed_tunnel",
+    deviceId,
+    daemonPublicKey,
+    pairingRequestEncryption,
+    nextSeq,
+  };
 };
 
 const parsePersistedBase = (value: string | null): ParsedPersistedDaemonBase | null => {
@@ -174,6 +207,9 @@ export const readStoredDaemonConnection = (): ParsedStoredDaemonConnection | nul
 export const readStoredPersistedBase = (): ParsedPersistedDaemonBase | null =>
   parsePersistedBase(readLocal(LOCAL_PERSISTED_BASE_KEY));
 
+export const readStoredMobileDaemonConnection = (): ParsedStoredDaemonConnection | null =>
+  parseStoredConnection(readLocal(MOBILE_PERSISTED_CONNECTION_KEY));
+
 export const readRunId = (): string | null => normalizeRunId(readSession(RUN_ID_KEY));
 
 export const writeCanonicalSession = (connection: DaemonConnection) => {
@@ -189,6 +225,7 @@ export const writeCanonicalSession = (connection: DaemonConnection) => {
       : null,
     source: connection.source ?? null,
     targetScope: connection.targetScope ? serializeDaemonTargetScope(connection.targetScope) : null,
+    mobileSecure: connection.mobileSecure ?? null,
   };
   writeSession(SESSION_CONNECTION_KEY, JSON.stringify(serialized));
 };
@@ -213,6 +250,31 @@ export const persistBaseIfRequested = (
     targetScope: connection.targetScope ? serializeDaemonTargetScope(connection.targetScope) : null,
   };
   writeLocal(LOCAL_PERSISTED_BASE_KEY, JSON.stringify(persisted));
+};
+
+export const persistMobileConnectionIfRequested = (
+  connection: DaemonConnection,
+  opts?: SetDaemonConnectionOptions,
+) => {
+  if (opts?.clearPersistedAuthToken) {
+    writeLocal(MOBILE_PERSISTED_CONNECTION_KEY, null);
+    return;
+  }
+  if (!opts?.persistAuthToken || !isMobileShellApp()) return;
+  if (!connection.baseUrl || (!connection.authToken && !connection.mobileSecure)) {
+    writeLocal(MOBILE_PERSISTED_CONNECTION_KEY, null);
+    return;
+  }
+  const persisted: StoredDaemonConnectionV1 = {
+    v: 1,
+    baseUrl: connection.baseUrl,
+    wsBaseUrl: connection.wsBaseUrl,
+    authToken: connection.authToken,
+    source: connection.source ?? null,
+    targetScope: connection.targetScope ? serializeDaemonTargetScope(connection.targetScope) : null,
+    mobileSecure: connection.mobileSecure ?? null,
+  };
+  writeLocal(MOBILE_PERSISTED_CONNECTION_KEY, JSON.stringify(persisted));
 };
 
 export const cloneNullableTargetScope = (scope: DaemonTargetScope | null | undefined): DaemonTargetScope | null =>

@@ -1,6 +1,6 @@
 import { getAnalyticsEnvironment } from "./config";
 import type { AnalyticsProperties, AnalyticsSurface } from "./types";
-import { isDesktopApp } from "../desktop";
+import { getAppShellKind } from "../runtime";
 
 declare const __CTX_APP_VERSION__: string;
 
@@ -26,15 +26,15 @@ const detectArch = (): string => {
   return UNKNOWN;
 };
 
-const isMobileUserAgent = (): boolean => {
-  if (typeof navigator === "undefined") return false;
-  const ua = navigator.userAgent.toLowerCase();
-  return ua.includes("iphone") || ua.includes("ipad") || ua.includes("android");
-};
-
 const detectSurface = (): AnalyticsSurface => {
-  if (!isDesktopApp()) return "web";
-  return isMobileUserAgent() ? "mobile_shell" : "desktop";
+  switch (getAppShellKind()) {
+    case "desktop":
+      return "desktop";
+    case "mobile":
+      return "mobile_shell";
+    default:
+      return "web";
+  }
 };
 
 export const getAnalyticsSurface = (): AnalyticsSurface => detectSurface();

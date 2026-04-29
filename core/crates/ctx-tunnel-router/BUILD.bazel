@@ -7,7 +7,6 @@ CTX_TUNNEL_ROUTER_DEPS = [
     "@crates//:axum",
     "@crates//:clap",
     "@crates//:futures",
-    "@crates//:redis",
     "@crates//:reqwest",
     "@crates//:serde",
     "@crates//:serde_json",

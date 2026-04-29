@@ -14,7 +14,6 @@ CTX_TUNNEL_CONTROL_PLANE_DEPS = [
     "@crates//:base64",
     "@crates//:clap",
     "@crates//:hmac",
-    "@crates//:redis",
     "@crates//:reqwest",
     "@crates//:serde",
     "@crates//:serde_json",

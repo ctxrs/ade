@@ -60,6 +60,7 @@ type WorkbenchActiveTaskViewProps = {
   artifactsLoading: boolean;
   artifactsError: string | null;
   onRetryArtifactsLoad: () => void;
+  mobileMode?: boolean;
 };
 
 export function WorkbenchActiveTaskView({
@@ -108,6 +109,7 @@ export function WorkbenchActiveTaskView({
   artifactsLoading,
   artifactsError,
   onRetryArtifactsLoad,
+  mobileMode = false,
 }: WorkbenchActiveTaskViewProps) {
   const [stickyRenderableSessionId, setStickyRenderableSessionId] = useState<string | null>(null);
 
@@ -147,6 +149,7 @@ export function WorkbenchActiveTaskView({
             onToggleDiffPane={onToggleDiffPane}
             onToggleTerminalPanel={onToggleTerminalPanel}
             onOpenConvoMenu={onOpenConvoMenu}
+            showAuxiliaryActions={!mobileMode}
           />
         ) : null}
 
@@ -173,7 +176,7 @@ export function WorkbenchActiveTaskView({
         </div>
       </div>
 
-      {rightPaneOpen ? (
+      {!mobileMode && rightPaneOpen ? (
         <>
           <div className="wb-splitter" onMouseDown={onSplitterMouseDown} />
           <div className="wb-right" style={{ width: diffWidth, maxWidth: "100%" }}>

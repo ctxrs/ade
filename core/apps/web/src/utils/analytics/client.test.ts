@@ -45,8 +45,8 @@ vi.mock("./identity", () => ({
   getInstallId: () => "install-test",
 }));
 
-vi.mock("../desktop", () => ({
-  isDesktopApp: () => true,
+vi.mock("../runtime", () => ({
+  getAppShellKind: () => "desktop",
 }));
 
 describe("analytics client", () => {

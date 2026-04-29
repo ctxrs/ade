@@ -1,4 +1,5 @@
 import type { DesktopOpenExternalUrlReq } from "../generated/desktop-ipc";
+import { isDesktopShellApp } from "./runtime";
 
 export type DesktopPlatform = "macos" | "windows" | "linux" | "unknown";
 
@@ -45,21 +46,10 @@ export type DesktopDragDropEvent =
   | {
       type: "leave";
     };
-
 const DESKTOP_DRAG_DROP_TEST_EVENT = "ctx:desktop-drag-drop-test";
 
-type TauriGlobals = {
-  __TAURI_INTERNALS__?: unknown;
-  __TAURI__?: unknown;
-};
-
 export const isDesktopApp = (): boolean => {
-  try {
-    const g = globalThis as typeof globalThis & TauriGlobals;
-    return Boolean(g.__TAURI_INTERNALS__ || g.__TAURI__);
-  } catch {
-    return false;
-  }
+  return isDesktopShellApp();
 };
 
 export const getDesktopPlatform = async (): Promise<DesktopPlatform> => {

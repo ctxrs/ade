@@ -9,12 +9,12 @@ import { WorkbenchEmptyState } from "./WorkbenchEmptyState";
 import { WorkbenchSidebar, WorkbenchTopbar } from "./WorkbenchShellChrome";
 import { WorkbenchPageMenus } from "./WorkbenchPageMenus";
 import { WorkbenchProviderWarningBanner } from "./WorkbenchProviderWarningBanner";
+import {
+  getWorkbenchRootStyleVars,
+  type WorkbenchRootStyleVars,
+} from "./workbenchLayoutVars";
 
-type RootStyle = React.CSSProperties & {
-  "--wb-sidebar-width": string;
-  "--wb-terminal-offset": string;
-  "--wb-topbar-height": string;
-};
+type RootStyle = React.CSSProperties & WorkbenchRootStyleVars;
 
 type WorkbenchPageShellViewProps = {
   workspaceId: string;
@@ -23,6 +23,7 @@ type WorkbenchPageShellViewProps = {
   sidebarCollapsed: boolean;
   sidebarResizing: boolean;
   sidebarWidth: number;
+  mobileShell: boolean;
   desktopUi: boolean;
   useHtmlTopbar: boolean;
   desktopStorageNoticeReason: string | null;
@@ -48,6 +49,7 @@ export function WorkbenchPageShellView({
   sidebarCollapsed,
   sidebarResizing,
   sidebarWidth,
+  mobileShell,
   desktopUi,
   useHtmlTopbar,
   desktopStorageNoticeReason,
@@ -66,17 +68,18 @@ export function WorkbenchPageShellView({
   activeTaskViewProps,
 }: WorkbenchPageShellViewProps) {
   const rootStyle = useMemo<RootStyle>(() => {
-    const max = Math.max(170, window.innerWidth - 240);
-    const clamped = Math.min(max, Math.max(170, Math.round(sidebarWidth)));
-    const terminalOffset = activeTaskController.terminalOpen ? activeTaskController.terminalHeight : 0;
-    return {
-      "--wb-sidebar-width": `${clamped}px`,
-      "--wb-terminal-offset": `${terminalOffset}px`,
-      "--wb-topbar-height": useHtmlTopbar ? "46px" : "0px",
-    };
+    return getWorkbenchRootStyleVars({
+      mobileShell,
+      sidebarWidth,
+      terminalHeight: activeTaskController.terminalHeight,
+      terminalOpen: activeTaskController.terminalOpen,
+      useHtmlTopbar,
+      viewportWidth: window.innerWidth,
+    });
   }, [
     activeTaskController.terminalHeight,
     activeTaskController.terminalOpen,
+    mobileShell,
     sidebarWidth,
     useHtmlTopbar,
   ]);
@@ -144,7 +147,7 @@ export function WorkbenchPageShellView({
     </div>
   ) : null;
 
-  const rootClassName = `wb-root ${sidebarCollapsed ? "wb-root-collapsed" : ""} ${sidebarResizing ? "wb-root-resizing" : ""} ${activeTaskController.diffResizing ? "wb-root-diff-resizing" : ""} ${activeTaskController.terminalResizing ? "wb-root-terminal-resizing" : ""} ${!useHtmlTopbar ? "wb-root-native-titlebar" : ""}`;
+  const rootClassName = `wb-root ${mobileShell ? "wb-root-mobile" : ""} ${sidebarCollapsed ? "wb-root-collapsed" : ""} ${sidebarResizing ? "wb-root-resizing" : ""} ${activeTaskController.diffResizing ? "wb-root-diff-resizing" : ""} ${activeTaskController.terminalResizing ? "wb-root-terminal-resizing" : ""} ${!useHtmlTopbar ? "wb-root-native-titlebar" : ""}`;
   const sharedChrome = (
     <>
       <WorktreeBootstrapSnackbar />
@@ -214,6 +217,14 @@ export function WorkbenchPageShellView({
         </div>
       )}
       <WorkbenchProviderWarningBanner {...providerWarningProps} />
+      {mobileShell && !sidebarCollapsed ? (
+        <button
+          type="button"
+          className="wb-sidebar-backdrop"
+          aria-label="Hide task list"
+          onClick={sidebarProps.onCollapseSidebar}
+        />
+      ) : null}
       <WorkbenchSidebar {...sidebarProps} />
 
       <div className="wb-main">
@@ -221,29 +232,31 @@ export function WorkbenchPageShellView({
         {activeTaskId && activeTaskViewProps ? <WorkbenchActiveTaskView {...activeTaskViewProps} /> : null}
       </div>
 
-      <div className="wb-terminal-shell" aria-hidden={!activeTaskController.terminalOpen}>
-        {activeTaskController.terminalOpen && (
-          <div className="wb-terminal-resizer" onMouseDown={activeTaskController.onTerminalResizerMouseDown} />
-        )}
-        <div
-          className="wb-terminal-panel"
-          style={{
-            height: activeTaskController.terminalOpen ? activeTaskController.terminalHeight : 0,
-            pointerEvents: activeTaskController.terminalOpen ? "auto" : "none",
-          }}
-          aria-hidden={!activeTaskController.terminalOpen}
-        >
-          <TerminalPanel
-            ref={activeTaskController.terminalPanelRef}
-            workspaceId={workspaceId}
-            activeTaskId={activeTaskId}
-            activeSessionId={activeSessionId}
-            open={activeTaskController.terminalOpen}
-            height={activeTaskController.terminalHeight}
-            onRequestClose={activeTaskController.closeTerminalPanel}
-          />
+      {!mobileShell ? (
+        <div className="wb-terminal-shell" aria-hidden={!activeTaskController.terminalOpen}>
+          {activeTaskController.terminalOpen && (
+            <div className="wb-terminal-resizer" onMouseDown={activeTaskController.onTerminalResizerMouseDown} />
+          )}
+          <div
+            className="wb-terminal-panel"
+            style={{
+              height: activeTaskController.terminalOpen ? activeTaskController.terminalHeight : 0,
+              pointerEvents: activeTaskController.terminalOpen ? "auto" : "none",
+            }}
+            aria-hidden={!activeTaskController.terminalOpen}
+          >
+            <TerminalPanel
+              ref={activeTaskController.terminalPanelRef}
+              workspaceId={workspaceId}
+              activeTaskId={activeTaskId}
+              activeSessionId={activeSessionId}
+              open={activeTaskController.terminalOpen}
+              height={activeTaskController.terminalHeight}
+              onRequestClose={activeTaskController.closeTerminalPanel}
+            />
+          </div>
         </div>
-      </div>
+      ) : null}
 
       <WorkbenchPageMenus
         activeTaskController={activeTaskController}

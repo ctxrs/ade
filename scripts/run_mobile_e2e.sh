@@ -74,7 +74,13 @@ if [ -z "$USER_ID" ] || [ "$USER_ID" = "null" ]; then
   exit 1
 fi
 
-PERIOD_END="$(date -u -d '+30 days' +%Y-%m-%dT%H:%M:%SZ)"
+PERIOD_END="$(
+  python3 - <<'PY'
+from datetime import datetime, timedelta, timezone
+
+print((datetime.now(timezone.utc) + timedelta(days=30)).strftime("%Y-%m-%dT%H:%M:%SZ"))
+PY
+)"
 SUBSCRIPTION_PAYLOAD="$(jq -nc --arg plan "pro" --arg status "active" --arg end "$PERIOD_END" '{
   plan_type: $plan,
   status: $status,
@@ -104,7 +110,7 @@ if [ -z "$USER_TOKEN" ] || [ "$USER_TOKEN" = "null" ]; then
   exit 1
 fi
 
-CONTROL_PLANE_URL="${CTX_TUNNEL_CONTROL_PLANE_URL:?set CTX_TUNNEL_CONTROL_PLANE_URL}"
+CONTROL_PLANE_URL="${CTX_TUNNEL_CONTROL_PLANE_URL:-https://tunnel.ctx.rs}"
 
 echo "Running mobile e2e..."
 CTX_TUNNEL_CONTROL_PLANE_URL="$CONTROL_PLANE_URL" \

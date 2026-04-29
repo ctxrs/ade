@@ -23,6 +23,7 @@ type WorkbenchSessionHeaderProps = {
   onToggleDiffPane: () => void;
   onToggleTerminalPanel: () => void;
   onOpenConvoMenu: (triggerEl: HTMLElement) => void;
+  showAuxiliaryActions?: boolean;
 };
 
 export function WorkbenchSessionHeader({
@@ -41,6 +42,7 @@ export function WorkbenchSessionHeader({
   onToggleDiffPane,
   onToggleTerminalPanel,
   onOpenConvoMenu,
+  showAuxiliaryActions = true,
 }: WorkbenchSessionHeaderProps) {
   return (
     <div className="wb-single-track-header" aria-busy={busy ? "true" : undefined}>
@@ -86,38 +88,42 @@ export function WorkbenchSessionHeader({
           )}
         </div>
         <div className="wb-icon-row">
-          <button
-            type="button"
-            className={`wb-icon ${showArtifactsPane ? "wb-icon-active" : ""}`}
-            aria-label="Toggle artifacts"
-            aria-pressed={showArtifactsPane}
-            title={showArtifactsPane ? "Hide artifacts" : "Show artifacts"}
-            onClick={onToggleArtifactsPane}
-          >
-            <Image size={14} />
-            {artifactsCount > 0 && <span className="wb-icon-badge">{artifactsCount}</span>}
-          </button>
-          <button
-            type="button"
-            className={`wb-icon ${showReviewPane ? "wb-icon-active" : ""}`}
-            aria-label="Toggle diff view"
-            aria-pressed={showReviewPane}
-            title={showReviewPane ? "Hide diff view" : "Show diff view"}
-            onClick={onToggleDiffPane}
-          >
-            <GitBranch size={14} />
-            {diffBadgeCount > 0 && <span className="wb-icon-badge">{diffBadgeCount}</span>}
-          </button>
-          <button
-            type="button"
-            className={`wb-icon ${terminalOpen ? "wb-icon-active" : ""}`}
-            aria-label="Toggle terminal panel"
-            aria-pressed={terminalOpen}
-            title={terminalOpen ? "Hide terminal" : "Show terminal"}
-            onClick={onToggleTerminalPanel}
-          >
-            <Terminal size={14} />
-          </button>
+          {showAuxiliaryActions ? (
+            <>
+              <button
+                type="button"
+                className={`wb-icon ${showArtifactsPane ? "wb-icon-active" : ""}`}
+                aria-label="Toggle artifacts"
+                aria-pressed={showArtifactsPane}
+                title={showArtifactsPane ? "Hide artifacts" : "Show artifacts"}
+                onClick={onToggleArtifactsPane}
+              >
+                <Image size={14} />
+                {artifactsCount > 0 && <span className="wb-icon-badge">{artifactsCount}</span>}
+              </button>
+              <button
+                type="button"
+                className={`wb-icon ${showReviewPane ? "wb-icon-active" : ""}`}
+                aria-label="Toggle diff view"
+                aria-pressed={showReviewPane}
+                title={showReviewPane ? "Hide diff view" : "Show diff view"}
+                onClick={onToggleDiffPane}
+              >
+                <GitBranch size={14} />
+                {diffBadgeCount > 0 && <span className="wb-icon-badge">{diffBadgeCount}</span>}
+              </button>
+              <button
+                type="button"
+                className={`wb-icon ${terminalOpen ? "wb-icon-active" : ""}`}
+                aria-label="Toggle terminal panel"
+                aria-pressed={terminalOpen}
+                title={terminalOpen ? "Hide terminal" : "Show terminal"}
+                onClick={onToggleTerminalPanel}
+              >
+                <Terminal size={14} />
+              </button>
+            </>
+          ) : null}
           <button
             type="button"
             className="wb-icon wb-convo-menu-trigger"

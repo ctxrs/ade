@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import {
   MessageAttachment,
   interruptSession,
@@ -8,6 +8,7 @@ import { useSessionCacheSnapshot, useSessionSupervisor } from "../../state/sessi
 import { type DraftHarness, type WorkbenchModeId } from "../../components/WorkbenchComposer";
 import type { SlashCommandDescriptor } from "../../state/useComposerAutocomplete";
 import { isDesktopApp } from "../../utils/desktop";
+import { isMobileShellApp } from "../../utils/runtime";
 import { useDictationController } from "../../utils/useDictationController";
 import { NEW_TASK_DRAFT_KEY, useActiveWorkbenchIds, useNewTaskDraft, useWorkbenchShellSnapshot, useWorkbenchStore } from "../../workbench/store";
 import { useWorkspaceActiveSnapshotSnapshot, useWorkspaceActiveSnapshotStore } from "../../state/workspaceActiveSnapshotStore";
@@ -28,20 +29,16 @@ import { useWorkbenchComposerHarnessAuth } from "./useWorkbenchComposerHarnessAu
 import { useWorkbenchDebugIds } from "./useWorkbenchDebugIds";
 import { useWorkbenchDraftHarnessSelection } from "./useWorkbenchDraftHarnessSelection";
 import { useWorkbenchE2EFocusBridge } from "./useWorkbenchE2EFocusBridge";
+import { useWorkbenchNavigationTarget } from "./useWorkbenchNavigationTarget";
 import { useWorkbenchShellIntegrations } from "./useWorkbenchShellIntegrations";
 import type { OptimisticFocus } from "./WorkbenchPage.types";
 import { appendSegment } from "./WorkbenchPage.utils";
 import { useWorkbenchTaskReadActions } from "./useWorkbenchTaskReadActions";
 import { useWorkbenchWorkspaceMetadata } from "./useWorkbenchWorkspaceMetadata";
-import {
-  readWorkbenchNavigationTarget,
-  stripWorkbenchNavigationTarget,
-} from "./workbenchNavigationQuery";
 import { resolveWorkspaceBootstrapGateState } from "../workspaceBootstrapGate";
 import { getProviderOwnerScopeKeyOrNull } from "../../state/providerScopeAdapters";
 
 export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
-  const location = useLocation();
   const navigate = useNavigate();
   const supervisor = useSessionSupervisor();
   const sessionSnap = useSessionCacheSnapshot();
@@ -50,6 +47,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const workspaceSnapshot = useWorkspaceActiveSnapshotSnapshot();
   const tasksById = workspaceSnapshot.tasksById;
   const workbenchSnap = useWorkbenchShellSnapshot();
+  const mobileShell = isMobileShellApp();
 
   const [optimisticFocus, setOptimisticFocus] = useState<OptimisticFocus | null>(null);
   const { taskId: activeTaskIdFromTab, sessionId: activeSessionIdFromTab } = useActiveWorkbenchIds();
@@ -111,6 +109,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   } = useWorkbenchShellLayout({
     workspaceId,
     focusNewTask,
+    mobileMode: mobileShell,
   });
 
   const clearDraftHarness = useCallback(() => {
@@ -120,30 +119,15 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const focusTask = useCallback(
     (taskId: string, sessionId?: string | null) => {
       workbenchStore.focusTask(taskId, sessionId);
+      if (mobileShell) {
+        setSidebarCollapsed(true);
+      }
       return true;
     },
-    [workbenchStore],
+    [mobileShell, setSidebarCollapsed, workbenchStore],
   );
 
-  useEffect(() => {
-    const target = readWorkbenchNavigationTarget(location.search);
-    if (!target) return;
-    const navToken = workbenchStore.getNavToken();
-    const didFocus = workbenchStore.focusTask(target.taskId, target.sessionId, {
-      navToken,
-      source: "system",
-    });
-    if (!didFocus) return;
-    const nextSearch = stripWorkbenchNavigationTarget(location.search);
-    navigate(
-      {
-        pathname: location.pathname,
-        search: nextSearch ? `?${nextSearch}` : "",
-        hash: location.hash,
-      },
-      { replace: true },
-    );
-  }, [location.hash, location.pathname, location.search, navigate, workbenchStore]);
+  useWorkbenchNavigationTarget();
 
   const {
     optimisticTasks,
@@ -440,6 +424,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       sidebarCollapsed={sidebarCollapsed}
       sidebarResizing={sidebarResizing}
       sidebarWidth={sidebarWidth}
+      mobileShell={mobileShell}
       desktopUi={desktopUi}
       useHtmlTopbar={useHtmlTopbar}
       desktopStorageNoticeReason={desktopStorageNotice?.reason ?? null}
@@ -459,10 +444,14 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
         showDebugIds,
         debugIdLabel,
         onCopyDebugIds: copyDebugIds,
+        settingsHref: mobileShell ? "/mobile/connect" : undefined,
+        onToggleSidebar: mobileShell ? () => setSidebarCollapsed((prev) => !prev) : undefined,
+        sidebarOpen: mobileShell ? !sidebarCollapsed : false,
       }}
       providerWarningProps={{
         acknowledgementScopeId: getProviderOwnerScopeKeyOrNull(workspaceId) ?? workspaceId,
         providersById,
+        mobileShell,
         updateAllBusy: installAllBusy,
         onUpdateProviders: updateProvidersFromMenu,
         onOpenSettings: openProviderSettings,
@@ -472,7 +461,12 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
         taskSearchRef: taskListController.taskSearchRef,
         taskQuery: taskListController.taskQuery,
         onTaskQueryChange: taskListController.setTaskQuery,
-        onNewTask: focusNewTask,
+        onNewTask: mobileShell
+          ? () => {
+              focusNewTask();
+              setSidebarCollapsed(true);
+            }
+          : focusNewTask,
         taskListVirtuosoKey: taskListController.taskListVirtuosoKey,
         taskListItems: taskListController.taskListItems,
         initialTaskListItemCount: taskListController.initialTaskListItemCount,
@@ -484,6 +478,8 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
         onCollapseSidebar: () => setSidebarCollapsed(true),
         onSidebarResizerMouseDown,
         onResetSidebarWidth: () => setSidebarWidth(260),
+        mobileMode: mobileShell,
+        onSwipeClose: mobileShell ? () => setSidebarCollapsed(true) : undefined,
       }}
       emptyStateProps={{
         newComposerRef: setNewComposerElement,
@@ -581,6 +577,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
               artifactsLoading: activeTaskController.artifactsLoading,
               artifactsError: activeTaskController.artifactsError,
               onRetryArtifactsLoad: activeTaskController.retryArtifactsLoad,
+              mobileMode: mobileShell,
             }
           : null
       }

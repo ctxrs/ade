@@ -276,6 +276,20 @@ body,
   overscroll-behavior: none;
 }
 
+html.ctx-mobile-shell-viewport,
+html.ctx-mobile-shell-viewport body,
+html.ctx-mobile-shell-viewport #root {
+  width: 100%;
+  height: var(--ctx-app-height, 100dvh);
+  min-height: var(--ctx-app-height, 100dvh);
+  overflow: hidden;
+}
+
+html.ctx-mobile-shell-viewport body {
+  position: fixed;
+  inset: 0;
+}
+
 
 .page {
   padding: 16px;

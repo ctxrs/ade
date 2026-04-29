@@ -61,7 +61,9 @@ pub(in crate::api) async fn pair_mobile_device(
         ));
     }
 
-    let device_uuid = uuid::Uuid::parse_str(req.device_id.trim()).map_err(|_| {
+    let device_id = req.device_id.trim().to_string();
+    let device_public_key = req.public_key.trim().to_string();
+    let device_uuid = uuid::Uuid::parse_str(&device_id).map_err(|_| {
         (
             StatusCode::BAD_REQUEST,
             Json(ApiErrorResp {
@@ -70,20 +72,48 @@ pub(in crate::api) async fn pair_mobile_device(
         )
     })?;
 
-    let token_hash = hash_pairing_token(req.pairing_token.trim());
-    let key = crate::mobile_e2ee::derive_key(
-        &req.device_id,
-        req.public_key.trim(),
-        &cfg.daemon_private_key,
+    let key =
+        crate::mobile_e2ee::derive_key(&device_id, &device_public_key, &cfg.daemon_private_key)
+            .map_err(|_| {
+                (
+                    StatusCode::BAD_REQUEST,
+                    Json(ApiErrorResp {
+                        error: "failed to derive pairing key".into(),
+                    }),
+                )
+            })?;
+    if req.seq != 0 {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "pairing seq must be 0".into(),
+            }),
+        ));
+    }
+    let decrypted = crate::mobile_e2ee::decrypt_pairing_request(
+        &key,
+        &device_id,
+        &device_public_key,
+        &req.nonce,
+        &req.ciphertext,
     )
     .map_err(|_| {
         (
             StatusCode::BAD_REQUEST,
             Json(ApiErrorResp {
-                error: "failed to derive pairing key".into(),
+                error: "failed to decrypt pairing request".into(),
             }),
         )
     })?;
+    let payload: PairMobileDevicePayload = serde_json::from_slice(&decrypted).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "invalid pairing request payload".into(),
+            }),
+        )
+    })?;
+    let token_hash = hash_pairing_token(payload.pairing_token.trim());
     let allowed = state
         .global_store()
         .consume_mobile_pairing_token(&token_hash)
@@ -111,18 +141,18 @@ pub(in crate::api) async fn pair_mobile_device(
             MobileDeviceId(device_uuid),
             cfg.profile_id,
             MobileDeviceUpsert {
-                device_label: req
+                device_label: payload
                     .device_label
                     .map(|s| s.trim().to_string())
                     .filter(|s| !s.is_empty()),
-                platform: req
+                platform: payload
                     .platform
                     .map(|s| s.trim().to_string())
                     .filter(|s| !s.is_empty()),
                 push_token: None,
                 push_provider: None,
-                public_key: Some(req.public_key.trim().to_string()),
-                app_version: req
+                public_key: Some(device_public_key),
+                app_version: payload
                     .app_version
                     .map(|s| s.trim().to_string())
                     .filter(|s| !s.is_empty()),
@@ -141,7 +171,7 @@ pub(in crate::api) async fn pair_mobile_device(
 
     let payload = serde_json::json!({
         "paired": true,
-        "device_id": req.device_id,
+        "device_id": device_id.clone(),
         "daemon_public_key": cfg.daemon_public_key,
         "paired_at": chrono::Utc::now().to_rfc3339(),
     });
@@ -153,15 +183,14 @@ pub(in crate::api) async fn pair_mobile_device(
             }),
         )
     })?;
-    let envelope =
-        crate::mobile_e2ee::encrypt(&key, &req.device_id, 0, &plaintext).map_err(|_| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: "failed to encrypt pairing response".into(),
-                }),
-            )
-        })?;
+    let envelope = crate::mobile_e2ee::encrypt(&key, &device_id, 0, &plaintext).map_err(|_| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiErrorResp {
+                error: "failed to encrypt pairing response".into(),
+            }),
+        )
+    })?;
 
     Ok(Json(SecureEnvelope {
         device_id: envelope.device_id,

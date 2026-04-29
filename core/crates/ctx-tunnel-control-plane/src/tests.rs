@@ -2,7 +2,10 @@ use super::*;
 use axum::routing::get;
 use axum::Router;
 use std::net::{Ipv4Addr, SocketAddr};
+use std::sync::Mutex as StdMutex;
 use tokio::sync::oneshot;
+
+static ENV_LOCK: StdMutex<()> = StdMutex::new(());
 
 #[test]
 fn extract_bearer_trims_and_rejects_invalid_values() {
@@ -57,6 +60,28 @@ fn parse_master_secret_trims_and_rejects_empty_values() {
     );
     assert!(parse_master_secret("").is_err());
     assert!(parse_master_secret("   ").is_err());
+}
+
+#[test]
+fn load_master_secret_requires_canonical_env() {
+    let _guard = ENV_LOCK.lock().expect("env lock");
+    let previous = std::env::var("CTX_TUNNEL_MASTER_SECRET").ok();
+    std::env::remove_var("CTX_TUNNEL_MASTER_SECRET");
+    assert!(load_master_secret().is_err());
+
+    std::env::set_var("CTX_TUNNEL_MASTER_SECRET", "secret-1");
+    assert_eq!(load_master_secret().unwrap(), b"secret-1");
+
+    match previous {
+        Some(value) => std::env::set_var("CTX_TUNNEL_MASTER_SECRET", value),
+        None => std::env::remove_var("CTX_TUNNEL_MASTER_SECRET"),
+    }
+}
+
+#[tokio::test]
+async fn health_reports_ok_without_auth() {
+    let resp = health().await.into_response();
+    assert_eq!(resp.status(), StatusCode::OK);
 }
 
 #[derive(Clone)]
@@ -145,12 +170,7 @@ async fn setup_state(entitled: bool) -> (AppState, oneshot::Sender<()>) {
         .connect("sqlite::memory:")
         .await
         .expect("connect in-memory sqlite");
-    let migrator = sqlx::migrate::Migrator::new(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations"),
-    )
-    .await
-    .expect("load migrations");
-    migrator.run(&db).await.expect("run migrations");
+    MIGRATOR.run(&db).await.expect("run migrations");
 
     let state = AppState {
         db,
@@ -163,7 +183,6 @@ async fn setup_state(entitled: bool) -> (AppState, oneshot::Sender<()>) {
             public_base_url: "https://public.example".to_string(),
             relay_base_urls: vec!["https://relay.example".to_string()],
         },
-        redis: None,
     };
     (state, mock.shutdown)
 }

@@ -33,12 +33,21 @@ pub(in crate::api) struct ControlPlaneEnableResp {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(in crate::api) struct PairMobileDeviceReq {
-    pub(in crate::api) pairing_token: String,
     pub(in crate::api) device_id: String,
+    pub(in crate::api) public_key: String,
+    pub(in crate::api) seq: i64,
+    pub(in crate::api) nonce: String,
+    pub(in crate::api) ciphertext: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(in crate::api) struct PairMobileDevicePayload {
+    pub(in crate::api) pairing_token: String,
     pub(in crate::api) device_label: Option<String>,
     pub(in crate::api) platform: Option<String>,
-    pub(in crate::api) public_key: String,
     pub(in crate::api) app_version: Option<String>,
 }
 

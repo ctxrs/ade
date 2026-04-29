@@ -1,8 +1,30 @@
 import React from "react";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
 
-import { WorkbenchConversationMenu, WorkbenchSidebar } from "./WorkbenchShellChrome";
+import { WorkbenchConversationMenu, WorkbenchSidebar, WorkbenchTopbar } from "./WorkbenchShellChrome";
+
+describe("WorkbenchTopbar", () => {
+  it("renders a visible hamburger trigger for mobile task navigation", () => {
+    render(
+      <MemoryRouter>
+        <WorkbenchTopbar
+          workspaceId="workspace-1"
+          workspaceTitle="ctx-monorepo"
+          showDebugIds={false}
+          debugIdLabel=""
+          onCopyDebugIds={vi.fn()}
+          onToggleSidebar={vi.fn()}
+          sidebarOpen={false}
+        />
+      </MemoryRouter>,
+    );
+
+    const trigger = screen.getByRole("button", { name: "Open task list" });
+    expect(trigger.querySelector("svg")).not.toBeNull();
+  });
+});
 
 describe("WorkbenchConversationMenu", () => {
   it("renders Copy Task ID immediately after Copy Worktree Location", () => {
@@ -36,37 +58,63 @@ describe("WorkbenchConversationMenu", () => {
 });
 
 describe("WorkbenchSidebar", () => {
+  const renderSidebar = (overrides: Partial<React.ComponentProps<typeof WorkbenchSidebar>> = {}) => {
+    const props: React.ComponentProps<typeof WorkbenchSidebar> = {
+      collapsed: false,
+      taskSearchRef: { current: null },
+      taskQuery: "",
+      onTaskQueryChange: vi.fn(),
+      onNewTask: vi.fn(),
+      taskListVirtuosoKey: "tasks",
+      taskListItems: [],
+      initialTaskListItemCount: undefined,
+      computeTaskListItemKey: () => "task",
+      renderTaskListItem: () => null,
+      taskListContext: {
+        archivedCollapsed: false,
+        archivedFetchState: "idle",
+        hasMoreArchived: false,
+        onLoadMoreArchived: vi.fn(),
+      },
+      onTaskListRangeChanged: vi.fn(),
+      onExpandSidebar: vi.fn(),
+      onCollapseSidebar: vi.fn(),
+      onSidebarResizerMouseDown: vi.fn(),
+      onResetSidebarWidth: vi.fn(),
+      ...overrides,
+    };
+
+    render(<WorkbenchSidebar {...props} />);
+  };
+
   it("disables browser text assistance on task search", () => {
-    render(
-      <WorkbenchSidebar
-        collapsed={false}
-        taskSearchRef={{ current: null }}
-        taskQuery=""
-        onTaskQueryChange={vi.fn()}
-        onNewTask={vi.fn()}
-        taskListVirtuosoKey="tasks"
-        taskListItems={[]}
-        initialTaskListItemCount={undefined}
-        computeTaskListItemKey={() => "task"}
-        renderTaskListItem={() => null}
-        taskListContext={{
-          archivedCollapsed: false,
-          archivedFetchState: "idle",
-          hasMoreArchived: false,
-          onLoadMoreArchived: vi.fn(),
-        }}
-        onTaskListRangeChanged={vi.fn()}
-        onExpandSidebar={vi.fn()}
-        onCollapseSidebar={vi.fn()}
-        onSidebarResizerMouseDown={vi.fn()}
-        onResetSidebarWidth={vi.fn()}
-      />,
-    );
+    renderSidebar();
 
     const input = screen.getByTestId("workbench-task-search");
     expect(input).toHaveAttribute("autocomplete", "off");
     expect(input).toHaveAttribute("autocorrect", "off");
     expect(input).toHaveAttribute("autocapitalize", "none");
     expect(input).toHaveAttribute("spellcheck", "false");
+  });
+
+  it("closes the mobile task drawer on a left swipe", () => {
+    const onSwipeClose = vi.fn();
+    renderSidebar({ mobileMode: true, onSwipeClose });
+
+    const sidebar = document.querySelector(".wb-sidebar");
+    expect(sidebar).not.toBeNull();
+    if (!sidebar) throw new Error("sidebar missing");
+
+    fireEvent.touchStart(sidebar, {
+      touches: [{ clientX: 340, clientY: 120 }],
+    });
+    fireEvent.touchMove(sidebar, {
+      touches: [{ clientX: 250, clientY: 130 }],
+    });
+    fireEvent.touchEnd(sidebar, {
+      changedTouches: [{ clientX: 250, clientY: 130 }],
+    });
+
+    expect(onSwipeClose).toHaveBeenCalledTimes(1);
   });
 });

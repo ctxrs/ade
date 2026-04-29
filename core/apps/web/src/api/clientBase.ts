@@ -15,6 +15,7 @@ import {
   setDaemonConnection,
   subscribeDaemonConnection,
 } from "./daemonConnection";
+import { mobileSecureFetchRaw } from "./mobileSecureClient";
 import { buildDaemonRequestHeaders } from "./daemonRequestHeaders";
 import {
   createTraceparent,
@@ -267,6 +268,18 @@ const desktopApi = async <T>(path: string, init?: RequestInit): Promise<T> => {
 
 export const apiAny = async <T>(path: string, init?: RequestInit): Promise<T> => {
   if (isDesktopApp()) return desktopApi<T>(path, init);
+  if (getDaemonConnection().mobileSecure) {
+    const resp = await mobileSecureFetchRaw(path, init);
+    if (resp.status < 200 || resp.status >= 300) {
+      throw new Error(resp.body || `${resp.status}`);
+    }
+    if (resp.status === 204 || !resp.body) return undefined as T;
+    try {
+      return JSON.parse(resp.body) as T;
+    } catch {
+      throw new Error(`Unexpected non-JSON response from ${path}.`);
+    }
+  }
   return api<T>(path, init);
 };
 
@@ -297,6 +310,9 @@ export const daemonFetchRaw = async (
   const runId = getTelemetryRunId();
   const start =
     typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
+  if (!isDesktopApp() && getDaemonConnection().mobileSecure) {
+    return mobileSecureFetchRaw(path, init);
+  }
   const token = authToken();
 
   try {
