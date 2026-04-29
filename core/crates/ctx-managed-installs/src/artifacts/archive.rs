@@ -162,7 +162,7 @@ fn create_archive_symlink(out_dir: &Path, dest: &Path, target: &Path) -> Result<
         std::os::unix::fs::symlink(target, dest).with_context(|| {
             format!("create symlink {} -> {}", dest.display(), target.display())
         })?;
-        return Ok(());
+        Ok(())
     }
     #[cfg(not(unix))]
     {
