@@ -6,6 +6,7 @@ use ctx_provider_accounts::{
 };
 mod provider_env;
 mod provider_fs;
+mod provider_relay;
 
 use self::provider_fs::{
     amp_subscription_home, endpoint_preferred_model_id, goose_subscription_path_root,
@@ -21,6 +22,7 @@ pub(super) use self::provider_fs::{
 };
 #[cfg(test)]
 pub(crate) use self::provider_fs::{openhands_endpoint_home, seed_droid_auth_from_host_path};
+use self::provider_relay::ctx_managed_relay_env;
 
 pub fn droid_cli_model_id_for_endpoint_model(
     model_id: Option<&str>,
@@ -576,10 +578,18 @@ async fn resolve_internal(
         );
     }
 
+    let public = selection::public_endpoint_from_internal(data_root, &endpoint).await;
+    if public.route_backend() == HarnessRouteBackend::CtxManagedRelay {
+        let env = ctx_managed_relay_env(canonical, &endpoint)?;
+        return Ok(ResolvedHarnessSource {
+            source_kind: HarnessSourceKind::Endpoint,
+            endpoint: Some(public),
+            env,
+        });
+    }
+
     let secret = secrets::read_endpoint_secret(data_root, &endpoint.secret_ref).await?;
     let env = runtime.endpoint_env(&endpoint, &secret).await?;
-
-    let public = selection::public_endpoint_from_internal(data_root, &endpoint).await;
     Ok(ResolvedHarnessSource {
         source_kind: HarnessSourceKind::Endpoint,
         endpoint: Some(public),

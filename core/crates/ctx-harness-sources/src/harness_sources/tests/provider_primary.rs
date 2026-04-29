@@ -51,6 +51,17 @@ async fn codex_endpoint_requires_verify_for_run_resolution() {
         .await
         .expect("resolve run");
     assert_eq!(resolved.source_kind, HarnessSourceKind::Endpoint);
+    assert_eq!(
+        resolved.runtime_source_mode(),
+        HarnessRuntimeSourceMode::Endpoint(HarnessRouteBackend::UserManaged)
+    );
+    assert_eq!(
+        resolved
+            .endpoint
+            .as_ref()
+            .map(|endpoint| endpoint.provider_id.as_str()),
+        Some(PROVIDER_CODEX)
+    );
     assert!(resolved.env.contains_key("CODEX_HOME"));
     assert_eq!(
         resolved.env.get("OPENAI_BASE_URL"),
@@ -60,6 +71,136 @@ async fn codex_endpoint_requires_verify_for_run_resolution() {
         resolved.env.get("CTX_MODEL_PROVIDER"),
         Some(&"openrouter".to_string())
     );
+}
+
+#[tokio::test]
+async fn codex_ctx_managed_relay_endpoint_keeps_provider_id_and_marks_runtime_backend() {
+    let root = tempfile::tempdir().expect("tempdir");
+    let endpoint = upsert_provider_endpoint(
+        root.path(),
+        PROVIDER_CODEX,
+        HarnessEndpointUpsert {
+            endpoint_id: None,
+            name: "ctx relay".to_string(),
+            base_url: Some("https://api.ctx.rs/relay/openai/v1".to_string()),
+            api_shape: Some(HarnessApiShape::OpenaiResponses),
+            auth_type: None,
+            model_override: Some("gpt-5.4".to_string()),
+            api_key: Some("relay-test-token".to_string()),
+            service_account_json: None,
+            project_id: None,
+            location: None,
+        },
+    )
+    .await
+    .expect("upsert");
+
+    set_provider_source_selection(
+        root.path(),
+        PROVIDER_CODEX,
+        HarnessSourceKind::Endpoint,
+        Some(endpoint.id.clone()),
+    )
+    .await
+    .expect("select");
+    mark_endpoint_verification(
+        root.path(),
+        PROVIDER_CODEX,
+        &endpoint.id,
+        HarnessEndpointVerificationStatus::Valid,
+        None,
+    )
+    .await
+    .expect("mark verified");
+
+    let resolved = resolve_provider_source_for_run(root.path(), PROVIDER_CODEX)
+        .await
+        .expect("resolve run");
+    assert_eq!(resolved.source_kind, HarnessSourceKind::Endpoint);
+    assert_eq!(
+        resolved.runtime_source_mode(),
+        HarnessRuntimeSourceMode::Endpoint(HarnessRouteBackend::CtxManagedRelay)
+    );
+    assert_eq!(
+        resolved
+            .endpoint
+            .as_ref()
+            .map(|endpoint| endpoint.provider_id.as_str()),
+        Some(PROVIDER_CODEX)
+    );
+    assert_eq!(
+        resolved
+            .env
+            .get(CTX_PROVIDER_ROUTE_BACKEND_ENV)
+            .map(String::as_str),
+        Some("ctx_managed")
+    );
+    assert_eq!(
+        resolved.env.get("OPENAI_BASE_URL").map(String::as_str),
+        None
+    );
+    assert_eq!(resolved.env.get("OPENAI_API_KEY").map(String::as_str), None);
+    assert_eq!(resolved.env.get("CODEX_HOME").map(String::as_str), None);
+    assert_eq!(
+        resolved
+            .env
+            .get(CTX_LLM_RELAY_BASE_URL_ENV)
+            .map(String::as_str),
+        Some("https://api.ctx.rs/relay/openai/v1")
+    );
+    assert_eq!(
+        resolved
+            .env
+            .get(CTX_LLM_RELAY_MODEL_ENV)
+            .map(String::as_str),
+        Some("gpt-5.4")
+    );
+}
+
+#[tokio::test]
+async fn codex_ctx_managed_relay_endpoint_requires_model_id() {
+    let root = tempfile::tempdir().expect("tempdir");
+    let endpoint = upsert_provider_endpoint(
+        root.path(),
+        PROVIDER_CODEX,
+        HarnessEndpointUpsert {
+            endpoint_id: None,
+            name: "ctx relay".to_string(),
+            base_url: Some("https://api.ctx.rs/relay/openai/v1".to_string()),
+            api_shape: Some(HarnessApiShape::OpenaiResponses),
+            auth_type: None,
+            model_override: None,
+            api_key: Some("relay-test-token".to_string()),
+            service_account_json: None,
+            project_id: None,
+            location: None,
+        },
+    )
+    .await
+    .expect("upsert");
+
+    set_provider_source_selection(
+        root.path(),
+        PROVIDER_CODEX,
+        HarnessSourceKind::Endpoint,
+        Some(endpoint.id.clone()),
+    )
+    .await
+    .expect("select");
+    mark_endpoint_verification(
+        root.path(),
+        PROVIDER_CODEX,
+        &endpoint.id,
+        HarnessEndpointVerificationStatus::Valid,
+        None,
+    )
+    .await
+    .expect("mark verified");
+
+    let err = resolve_provider_source_for_run(root.path(), PROVIDER_CODEX)
+        .await
+        .expect_err("ctx-managed relay should require a model id");
+    assert!(err.to_string().contains("missing a concrete model id"));
 }
 
 #[tokio::test]

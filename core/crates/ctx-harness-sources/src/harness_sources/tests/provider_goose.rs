@@ -8,6 +8,10 @@ async fn amp_subscription_sets_persistent_home_env() {
         .await
         .expect("resolved");
     assert_eq!(resolved.source_kind, HarnessSourceKind::Subscription);
+    assert_eq!(
+        resolved.runtime_source_mode(),
+        HarnessRuntimeSourceMode::Subscription
+    );
     let expected_home = root.path().join("providers").join("amp").join("home");
     assert_eq!(
         resolved.env.get("HOME"),

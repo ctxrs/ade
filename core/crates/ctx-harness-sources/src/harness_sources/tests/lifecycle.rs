@@ -1,4 +1,6 @@
-use super::runtime_resolution::{codex_endpoint_home, droid_endpoint_home, qwen_endpoint_home};
+use super::runtime_resolution::{
+    codex_endpoint_home, droid_endpoint_home, legacy_codex_endpoint_home, qwen_endpoint_home,
+};
 use super::*;
 
 #[tokio::test]
@@ -68,12 +70,7 @@ async fn codex_endpoint_resolution_migrates_legacy_endpoint_home() {
     .await
     .expect("upsert");
 
-    let legacy_endpoint_home = root
-        .path()
-        .join("providers")
-        .join("codex")
-        .join("endpoint-homes")
-        .join(&endpoint.id);
+    let legacy_endpoint_home = legacy_codex_endpoint_home(root.path(), &endpoint.id);
     tokio::fs::create_dir_all(&legacy_endpoint_home)
         .await
         .expect("mkdir legacy endpoint home");

@@ -8,6 +8,7 @@ use serde_json::json;
 use ctx_core::ids::{RunId, TurnId};
 use ctx_core::models::Session;
 use ctx_core::provider_ids::CODEX_PROVIDER_ID;
+use ctx_harness_sources::{HarnessRouteBackend, HarnessRuntimeSourceMode};
 use ctx_provider_accounts as provider_accounts;
 use ctx_provider_install::install_state::InstallTarget;
 
@@ -21,9 +22,30 @@ pub(super) struct ProviderRuntimeEnvironmentRequest<'a> {
     pub(super) runtime_provider_id: &'a str,
     pub(super) runtime_plan: &'a ctx_harness_runtime::HarnessExecutionPlan,
     pub(super) is_linux_sandbox: bool,
-    pub(super) using_endpoint_source: bool,
+    pub(super) runtime_source_mode: HarnessRuntimeSourceMode,
     pub(super) adapter_cfg: &'a installer::AgentServerConfigFile,
     pub(super) install_target: InstallTarget,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ProviderRuntimeCredentialMode {
+    Subscription,
+    UserManagedEndpoint,
+    CtxManagedRelay,
+}
+
+fn provider_runtime_credential_mode(
+    runtime_source_mode: HarnessRuntimeSourceMode,
+) -> ProviderRuntimeCredentialMode {
+    match runtime_source_mode {
+        HarnessRuntimeSourceMode::Subscription => ProviderRuntimeCredentialMode::Subscription,
+        HarnessRuntimeSourceMode::Endpoint(HarnessRouteBackend::UserManaged) => {
+            ProviderRuntimeCredentialMode::UserManagedEndpoint
+        }
+        HarnessRuntimeSourceMode::Endpoint(HarnessRouteBackend::CtxManagedRelay) => {
+            ProviderRuntimeCredentialMode::CtxManagedRelay
+        }
+    }
 }
 
 pub(super) async fn prepare_provider_runtime_environment(
@@ -35,11 +57,20 @@ pub(super) async fn prepare_provider_runtime_environment(
         runtime_provider_id,
         runtime_plan,
         is_linux_sandbox,
-        using_endpoint_source,
+        runtime_source_mode,
         adapter_cfg,
         install_target,
     } = request;
-    if runtime_provider_id == CODEX_PROVIDER_ID && is_linux_sandbox && using_endpoint_source {
+    let credential_mode = provider_runtime_credential_mode(runtime_source_mode);
+    let using_user_managed_endpoint_source =
+        credential_mode == ProviderRuntimeCredentialMode::UserManagedEndpoint;
+    let using_ctx_managed_relay = credential_mode == ProviderRuntimeCredentialMode::CtxManagedRelay;
+    let using_subscription_source = credential_mode == ProviderRuntimeCredentialMode::Subscription;
+
+    if runtime_provider_id == CODEX_PROVIDER_ID
+        && is_linux_sandbox
+        && using_user_managed_endpoint_source
+    {
         if let Some(root) = runtime_plan.env_overrides.get("CTX_DATA_ROOT") {
             provider_accounts::ensure_codex_endpoint_runtime_home_from_env(
                 Path::new(root),
@@ -51,7 +82,7 @@ pub(super) async fn prepare_provider_runtime_environment(
 
     if runtime_provider_id == CODEX_PROVIDER_ID
         && !provider_env.contains_key("CODEX_HOME")
-        && !using_endpoint_source
+        && using_subscription_source
     {
         if is_linux_sandbox {
             if let Some(root) = runtime_plan.env_overrides.get("CTX_DATA_ROOT") {
@@ -71,7 +102,7 @@ pub(super) async fn prepare_provider_runtime_environment(
             }
         }
     }
-    if runtime_provider_id != CODEX_PROVIDER_ID && !using_endpoint_source {
+    if runtime_provider_id != CODEX_PROVIDER_ID && using_subscription_source {
         let env = if is_linux_sandbox {
             if let Some(root) = runtime_plan.env_overrides.get("CTX_DATA_ROOT") {
                 provider_accounts::subscription_env_for_active_account_with_runtime_root(
@@ -98,7 +129,7 @@ pub(super) async fn prepare_provider_runtime_environment(
             provider_env.insert(key, value);
         }
     }
-    if runtime_provider_id == CODEX_PROVIDER_ID {
+    if runtime_provider_id == CODEX_PROVIDER_ID && !using_ctx_managed_relay {
         let codex_home = provider_env
             .get("CODEX_HOME")
             .cloned()
@@ -106,7 +137,7 @@ pub(super) async fn prepare_provider_runtime_environment(
         provider_accounts::ensure_codex_auth_ready(Path::new(&codex_home))
         .await
         .map_err(|err| {
-            if using_endpoint_source {
+            if using_user_managed_endpoint_source {
                 anyhow!(
                     "Codex endpoint credentials are not configured correctly. Open Settings -> Agent Harnesses and verify the selected endpoint. Details: {err}"
                 )
@@ -116,7 +147,7 @@ pub(super) async fn prepare_provider_runtime_environment(
                 )
             }
         })?;
-        if is_linux_sandbox && using_endpoint_source {
+        if is_linux_sandbox && using_user_managed_endpoint_source {
             let openai_api_key_present = provider_env
                 .get("OPENAI_API_KEY")
                 .is_some_and(|value| !value.trim().is_empty());
@@ -231,4 +262,29 @@ pub(super) fn emit_provider_run_env_ready_event(event: ProviderRunEnvReadyEvent<
             .and_then(|parsed| parsed.host_str().map(|host| host.to_string())),
     }));
     state.telemetry.ops_events.emit(run_env_event);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ctx_managed_relay_does_not_use_subscription_or_endpoint_credentials() {
+        assert_eq!(
+            provider_runtime_credential_mode(HarnessRuntimeSourceMode::Endpoint(
+                HarnessRouteBackend::CtxManagedRelay
+            )),
+            ProviderRuntimeCredentialMode::CtxManagedRelay
+        );
+        assert_eq!(
+            provider_runtime_credential_mode(HarnessRuntimeSourceMode::Endpoint(
+                HarnessRouteBackend::UserManaged
+            )),
+            ProviderRuntimeCredentialMode::UserManagedEndpoint
+        );
+        assert_eq!(
+            provider_runtime_credential_mode(HarnessRuntimeSourceMode::Subscription),
+            ProviderRuntimeCredentialMode::Subscription
+        );
+    }
 }

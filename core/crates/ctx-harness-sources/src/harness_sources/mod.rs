@@ -31,6 +31,14 @@ const PROVIDER_PI: &str = "pi";
 const PROVIDER_CURSOR: &str = "cursor";
 const PROVIDER_CLINE: &str = "cline";
 const CTX_DROID_HOST_AUTH_PATH_ENV: &str = "CTX_DROID_HOST_AUTH_PATH";
+pub const CTX_PROVIDER_ROUTE_BACKEND_ENV: &str = "CTX_PROVIDER_ROUTE_BACKEND";
+pub const CTX_LLM_RELAY_BASE_URL_ENV: &str = "CTX_LLM_RELAY_BASE_URL";
+pub const CTX_LLM_RELAY_MODEL_ENV: &str = "CTX_LLM_RELAY_MODEL";
+const BUILT_IN_CTX_MANAGED_RELAY_PREFIXES: &[&str] = &[
+    "https://api.ctx.rs/relay",
+    "https://relay.ctx.rs/relay",
+    "https://llm.ctx.rs/relay",
+];
 
 const CLAUDE_AUTH_TYPE_API_KEY: &str = "api_key";
 const GEMINI_AUTH_TYPE_GEMINI_API_KEY: &str = "gemini_api_key";
@@ -84,6 +92,55 @@ pub enum HarnessSourceKind {
     #[default]
     Subscription,
     Endpoint,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HarnessRouteBackend {
+    UserManaged,
+    CtxManagedRelay,
+}
+
+impl HarnessRouteBackend {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::UserManaged => "user_managed",
+            Self::CtxManagedRelay => "ctx_managed",
+        }
+    }
+
+    pub fn from_runtime_marker(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "user_managed" | "direct" => Some(Self::UserManaged),
+            "ctx_managed" | "ctx_managed_relay" | "relay" => Some(Self::CtxManagedRelay),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HarnessRuntimeSourceMode {
+    Subscription,
+    Endpoint(HarnessRouteBackend),
+}
+
+impl HarnessRuntimeSourceMode {
+    pub fn source_kind(self) -> HarnessSourceKind {
+        match self {
+            Self::Subscription => HarnessSourceKind::Subscription,
+            Self::Endpoint(_) => HarnessSourceKind::Endpoint,
+        }
+    }
+
+    pub fn route_backend(self) -> HarnessRouteBackend {
+        match self {
+            Self::Subscription => HarnessRouteBackend::UserManaged,
+            Self::Endpoint(backend) => backend,
+        }
+    }
+
+    pub fn is_ctx_managed(self) -> bool {
+        self.route_backend() == HarnessRouteBackend::CtxManagedRelay
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -163,6 +220,12 @@ pub struct HarnessEndpointRecord {
     pub model_catalog_source: Option<String>,
 }
 
+impl HarnessEndpointRecord {
+    pub fn route_backend(&self) -> HarnessRouteBackend {
+        route_backend_for_base_url(self.base_url.as_deref())
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HarnessProviderSourceConfig {
     pub provider_id: String,
@@ -173,11 +236,49 @@ pub struct HarnessProviderSourceConfig {
     pub endpoints: Vec<HarnessEndpointRecord>,
 }
 
+impl HarnessProviderSourceConfig {
+    pub fn selected_runtime_source_mode(&self) -> HarnessRuntimeSourceMode {
+        if self.selected_source_kind != HarnessSourceKind::Endpoint {
+            return HarnessRuntimeSourceMode::Subscription;
+        }
+        let backend = self
+            .selected_endpoint_id
+            .as_deref()
+            .and_then(|selected_endpoint_id| {
+                self.endpoints
+                    .iter()
+                    .find(|endpoint| endpoint.id == selected_endpoint_id)
+            })
+            .map(HarnessEndpointRecord::route_backend)
+            .unwrap_or(HarnessRouteBackend::UserManaged);
+        HarnessRuntimeSourceMode::Endpoint(backend)
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct ResolvedHarnessSource {
     pub source_kind: HarnessSourceKind,
     pub endpoint: Option<HarnessEndpointRecord>,
     pub env: HashMap<String, String>,
+}
+
+impl ResolvedHarnessSource {
+    pub fn runtime_source_mode(&self) -> HarnessRuntimeSourceMode {
+        if self.source_kind != HarnessSourceKind::Endpoint {
+            return HarnessRuntimeSourceMode::Subscription;
+        }
+        let backend = self
+            .env
+            .get(CTX_PROVIDER_ROUTE_BACKEND_ENV)
+            .and_then(|value| HarnessRouteBackend::from_runtime_marker(value))
+            .or_else(|| {
+                self.endpoint
+                    .as_ref()
+                    .map(HarnessEndpointRecord::route_backend)
+            })
+            .unwrap_or(HarnessRouteBackend::UserManaged);
+        HarnessRuntimeSourceMode::Endpoint(backend)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -253,6 +354,68 @@ struct HarnessSourceRegistryInternal {
     version: u32,
     #[serde(default)]
     providers: BTreeMap<String, HarnessProviderConfigInternal>,
+}
+
+fn route_backend_for_base_url(base_url: Option<&str>) -> HarnessRouteBackend {
+    if base_url.is_some_and(base_url_uses_ctx_managed_relay) {
+        HarnessRouteBackend::CtxManagedRelay
+    } else {
+        HarnessRouteBackend::UserManaged
+    }
+}
+
+fn base_url_uses_ctx_managed_relay(base_url: &str) -> bool {
+    let trimmed = base_url.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+
+    let Ok(parsed) = Url::parse(trimmed) else {
+        return false;
+    };
+
+    if let Ok(prefix) = std::env::var("CTX_MANAGED_RELAY_BASE_URL") {
+        let prefix = prefix.trim().trim_end_matches('/');
+        if !prefix.is_empty()
+            && Url::parse(prefix).is_ok_and(|parsed_prefix| {
+                base_url_matches_ctx_managed_prefix(&parsed, &parsed_prefix)
+            })
+        {
+            return true;
+        }
+    }
+
+    BUILT_IN_CTX_MANAGED_RELAY_PREFIXES.iter().any(|prefix| {
+        Url::parse(prefix)
+            .is_ok_and(|parsed_prefix| base_url_matches_ctx_managed_prefix(&parsed, &parsed_prefix))
+    })
+}
+
+fn base_url_matches_ctx_managed_prefix(base_url: &Url, prefix: &Url) -> bool {
+    let same_host = base_url
+        .host_str()
+        .zip(prefix.host_str())
+        .is_some_and(|(base_host, prefix_host)| base_host.eq_ignore_ascii_case(prefix_host));
+    if base_url.scheme() != prefix.scheme()
+        || !same_host
+        || base_url.port_or_known_default() != prefix.port_or_known_default()
+    {
+        return false;
+    }
+
+    path_matches_prefix_boundary(base_url.path(), prefix.path())
+}
+
+fn path_matches_prefix_boundary(path: &str, prefix: &str) -> bool {
+    let normalized_path = path.trim_end_matches('/');
+    let normalized_prefix = prefix.trim_end_matches('/');
+    if normalized_prefix.is_empty() {
+        return false;
+    }
+    normalized_path == normalized_prefix
+        || normalized_path
+            .strip_prefix(normalized_prefix)
+            .is_some_and(|suffix| suffix.starts_with('/'))
 }
 
 impl Default for HarnessSourceRegistryInternal {

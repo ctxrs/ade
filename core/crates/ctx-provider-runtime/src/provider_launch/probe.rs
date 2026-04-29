@@ -7,7 +7,9 @@ use ctx_core::ids::WorkspaceId;
 use ctx_core::models::{Workspace, Worktree};
 use ctx_core::provider_ids::CODEX_PROVIDER_ID;
 use ctx_core::provider_policy::CTX_CRP_LAUNCH_POLICY_ENV;
-use ctx_harness_sources::{HarnessSourceKind, ResolvedHarnessSource};
+use ctx_harness_sources::{
+    HarnessRouteBackend, HarnessRuntimeSourceMode, HarnessSourceKind, ResolvedHarnessSource,
+};
 use ctx_provider_accounts as provider_accounts;
 
 use crate::provider_auth::provider_has_active_auth_config_with_runtime_root;
@@ -84,7 +86,7 @@ where
     if disable_mcp {
         env.insert("CTX_MCP_DISABLED".to_string(), "1".to_string());
     }
-    if source.source_kind == HarnessSourceKind::Subscription {
+    if source.runtime_source_mode().source_kind() == HarnessSourceKind::Subscription {
         if require_subscription_account_env && provider_id == CODEX_PROVIDER_ID {
             let has_auth = match runtime_data_root {
                 Some(runtime_root) => {
@@ -178,7 +180,10 @@ async fn finalize_workspace_probe_env<H>(
 where
     H: ProviderProbeHost,
 {
-    if provider_id == CODEX_PROVIDER_ID && source.source_kind == HarnessSourceKind::Endpoint {
+    if provider_id == CODEX_PROVIDER_ID
+        && source.runtime_source_mode()
+            == HarnessRuntimeSourceMode::Endpoint(HarnessRouteBackend::UserManaged)
+    {
         if let Some(root) = env.get("CTX_DATA_ROOT").cloned() {
             provider_accounts::ensure_codex_endpoint_runtime_home_from_env(Path::new(&root), env)
                 .await
@@ -338,7 +343,7 @@ mod tests {
     use ctx_harness_sources::{
         mark_endpoint_verification, set_provider_source_selection, upsert_provider_endpoint,
         HarnessApiShape, HarnessEndpointUpsert, HarnessEndpointVerificationStatus,
-        HarnessSourceKind,
+        HarnessRouteBackend, HarnessRuntimeSourceMode, HarnessSourceKind,
     };
     use std::sync::Arc;
 
@@ -482,6 +487,10 @@ mod tests {
 
         assert_eq!(context.source.source_kind, HarnessSourceKind::Endpoint);
         assert_eq!(
+            context.source.runtime_source_mode(),
+            HarnessRuntimeSourceMode::Endpoint(HarnessRouteBackend::UserManaged)
+        );
+        assert_eq!(
             context.env.get("CTX_MODEL_PROVIDER").map(String::as_str),
             Some("openrouter")
         );
@@ -605,5 +614,115 @@ mod tests {
         for key in DAEMON_AUTH_ENV_VARS {
             assert!(!env.contains_key(*key), "{key} must not reach probe env");
         }
+    }
+
+    #[tokio::test]
+    async fn codex_ctx_managed_endpoint_probe_runtime_marks_ctx_managed_source_mode() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let data_root = root.path().join("data-root");
+        let runtime_root = root.path().join("runtime-root");
+        let workspace_root = root.path().join("workspace");
+        tokio::fs::create_dir_all(&data_root)
+            .await
+            .expect("create data root");
+        tokio::fs::create_dir_all(&runtime_root)
+            .await
+            .expect("create runtime root");
+        tokio::fs::create_dir_all(&workspace_root)
+            .await
+            .expect("create workspace root");
+
+        let endpoint = upsert_provider_endpoint(
+            &data_root,
+            "codex",
+            HarnessEndpointUpsert {
+                endpoint_id: None,
+                name: "ctx relay".to_string(),
+                base_url: Some("https://api.ctx.rs/relay/openai/v1".to_string()),
+                api_shape: Some(HarnessApiShape::OpenaiResponses),
+                auth_type: None,
+                model_override: Some("gpt-5.4".to_string()),
+                api_key: Some("relay-test-token".to_string()),
+                service_account_json: None,
+                project_id: None,
+                location: None,
+            },
+        )
+        .await
+        .expect("upsert endpoint");
+        set_provider_source_selection(
+            &data_root,
+            "codex",
+            HarnessSourceKind::Endpoint,
+            Some(endpoint.id.clone()),
+        )
+        .await
+        .expect("select endpoint");
+        mark_endpoint_verification(
+            &data_root,
+            "codex",
+            &endpoint.id,
+            HarnessEndpointVerificationStatus::Valid,
+            None,
+        )
+        .await
+        .expect("mark verified");
+
+        let workspace = Arc::new(Workspace {
+            id: WorkspaceId::new(),
+            name: "ws".to_string(),
+            root_path: workspace_root.to_string_lossy().to_string(),
+            created_at: Utc::now(),
+            vcs_kind: None,
+        });
+        let host = TestProbeHost {
+            data_root: data_root.clone(),
+            daemon_url: "http://127.0.0.1:0".to_string(),
+            auth_token: Some("daemon-auth-token".to_string()),
+            workspace: workspace.clone(),
+            runtime: PreparedWorkspaceProbeRuntime {
+                cwd: workspace_root.clone(),
+                runtime_data_root: Some(runtime_root.clone()),
+                env_overrides: HashMap::from([(
+                    "CTX_DATA_ROOT".to_string(),
+                    runtime_root.to_string_lossy().to_string(),
+                )]),
+            },
+        };
+
+        let context = provider_auth_context_for_workspace_runtime(&host, &workspace, "codex")
+            .await
+            .expect("probe context");
+
+        assert_eq!(context.source.source_kind, HarnessSourceKind::Endpoint);
+        assert_eq!(
+            context.source.runtime_source_mode(),
+            HarnessRuntimeSourceMode::Endpoint(HarnessRouteBackend::CtxManagedRelay)
+        );
+        assert_eq!(
+            context
+                .source
+                .endpoint
+                .as_ref()
+                .map(|endpoint| endpoint.provider_id.as_str()),
+            Some("codex")
+        );
+        assert_eq!(
+            context
+                .env
+                .get(ctx_harness_sources::CTX_PROVIDER_ROUTE_BACKEND_ENV)
+                .map(String::as_str),
+            Some("ctx_managed")
+        );
+        assert_eq!(context.env.get("OPENAI_API_KEY").map(String::as_str), None);
+        assert_eq!(context.env.get("OPENAI_BASE_URL").map(String::as_str), None);
+        assert_eq!(context.env.get("CODEX_HOME").map(String::as_str), None);
+        assert_eq!(
+            context
+                .env
+                .get(ctx_harness_sources::CTX_LLM_RELAY_BASE_URL_ENV)
+                .map(String::as_str),
+            Some("https://api.ctx.rs/relay/openai/v1")
+        );
     }
 }

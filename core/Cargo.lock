@@ -1695,6 +1695,40 @@ dependencies = [
 ]
 
 [[package]]
+name = "ctx-llm-relay-authority"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "axum 0.7.9",
+ "base64 0.22.1",
+ "chrono",
+ "clap",
+ "ctx-llm-relay-contract",
+ "jsonwebtoken",
+ "ring",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "thiserror 1.0.69",
+ "tokio",
+ "tower 0.5.3",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
+name = "ctx-llm-relay-contract"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "ctx-load-test"
 version = "0.1.0"
 dependencies = [

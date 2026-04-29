@@ -291,7 +291,8 @@ pub(crate) async fn start_turn(
                 return Err(err);
             }
         };
-    let using_endpoint_source = resolved_source.source_kind == HarnessSourceKind::Endpoint;
+    let runtime_source_mode = resolved_source.runtime_source_mode();
+    let using_endpoint_source = runtime_source_mode.source_kind() == HarnessSourceKind::Endpoint;
     provider_env.insert(
         "CTX_PROVIDER_SOURCE_KIND".to_string(),
         match resolved_source.source_kind {
@@ -382,7 +383,7 @@ pub(crate) async fn start_turn(
         runtime_provider_id,
         runtime_plan: &runtime_plan,
         is_linux_sandbox,
-        using_endpoint_source,
+        runtime_source_mode,
         adapter_cfg: &adapter_cfg,
         install_target,
     })

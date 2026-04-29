@@ -2,8 +2,33 @@ use std::path::Path as StdPath;
 
 use ctx_core::provider_ids::CODEX_PROVIDER_ID;
 use ctx_harness_sources as harness_sources;
-use ctx_harness_sources::HarnessSourceKind;
+use ctx_harness_sources::{HarnessRouteBackend, HarnessRuntimeSourceMode, HarnessSourceKind};
 use ctx_provider_accounts as provider_accounts;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProviderAuthMode {
+    None,
+    Subscription,
+    Endpoint(HarnessRouteBackend),
+}
+
+impl ProviderAuthMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Subscription => "subscription",
+            Self::Endpoint(_) => "endpoint",
+        }
+    }
+
+    pub fn runtime_source_mode(self) -> Option<HarnessRuntimeSourceMode> {
+        match self {
+            Self::None => None,
+            Self::Subscription => Some(HarnessRuntimeSourceMode::Subscription),
+            Self::Endpoint(backend) => Some(HarnessRuntimeSourceMode::Endpoint(backend)),
+        }
+    }
+}
 
 pub fn endpoint_selection_is_active(config: &harness_sources::HarnessProviderSourceConfig) -> bool {
     if config.selected_source_kind != HarnessSourceKind::Endpoint {
@@ -12,10 +37,11 @@ pub fn endpoint_selection_is_active(config: &harness_sources::HarnessProviderSou
     let Some(selected_endpoint_id) = config.selected_endpoint_id.as_deref() else {
         return false;
     };
-    config
-        .endpoints
-        .iter()
-        .any(|endpoint| endpoint.id == selected_endpoint_id && endpoint.has_api_key)
+    config.endpoints.iter().any(|endpoint| {
+        endpoint.id == selected_endpoint_id
+            && (endpoint.has_api_key
+                || endpoint.route_backend() == HarnessRouteBackend::CtxManagedRelay)
+    })
 }
 
 pub async fn provider_has_active_auth_config(
@@ -72,15 +98,25 @@ pub fn provider_auth_mode(
     has_active_auth: bool,
     source_config: Option<&harness_sources::HarnessProviderSourceConfig>,
 ) -> &'static str {
+    provider_auth_mode_detail(has_active_auth, source_config).as_str()
+}
+
+pub fn provider_auth_mode_detail(
+    has_active_auth: bool,
+    source_config: Option<&harness_sources::HarnessProviderSourceConfig>,
+) -> ProviderAuthMode {
     if !has_active_auth {
-        return "none";
+        return ProviderAuthMode::None;
     }
     if let Some(config) = source_config {
         if endpoint_selection_is_active(config) {
-            return "endpoint";
+            return match config.selected_runtime_source_mode() {
+                HarnessRuntimeSourceMode::Subscription => ProviderAuthMode::Subscription,
+                HarnessRuntimeSourceMode::Endpoint(backend) => ProviderAuthMode::Endpoint(backend),
+            };
         }
     }
-    "subscription"
+    ProviderAuthMode::Subscription
 }
 
 #[cfg(test)]
@@ -138,5 +174,41 @@ mod tests {
         };
 
         assert_eq!(provider_auth_mode(true, Some(&config)), "subscription");
+        assert_eq!(
+            provider_auth_mode_detail(true, Some(&config)),
+            ProviderAuthMode::Subscription
+        );
+    }
+
+    #[test]
+    fn provider_auth_mode_detail_marks_direct_endpoint_selection_as_user_managed() {
+        let config = harness_sources::HarnessProviderSourceConfig {
+            provider_id: CODEX_PROVIDER_ID.to_string(),
+            selected_source_kind: HarnessSourceKind::Endpoint,
+            selected_endpoint_id: Some("endpoint-1".to_string()),
+            endpoints: vec![sample_endpoint(true)],
+        };
+
+        assert_eq!(
+            provider_auth_mode_detail(true, Some(&config)),
+            ProviderAuthMode::Endpoint(HarnessRouteBackend::UserManaged)
+        );
+    }
+
+    #[test]
+    fn provider_auth_mode_detail_marks_ctx_managed_endpoint_selection() {
+        let mut endpoint = sample_endpoint(false);
+        endpoint.base_url = Some("https://api.ctx.rs/relay/openai/v1".to_string());
+        let config = harness_sources::HarnessProviderSourceConfig {
+            provider_id: CODEX_PROVIDER_ID.to_string(),
+            selected_source_kind: HarnessSourceKind::Endpoint,
+            selected_endpoint_id: Some("endpoint-1".to_string()),
+            endpoints: vec![endpoint],
+        };
+
+        assert_eq!(
+            provider_auth_mode_detail(true, Some(&config)),
+            ProviderAuthMode::Endpoint(HarnessRouteBackend::CtxManagedRelay)
+        );
     }
 }

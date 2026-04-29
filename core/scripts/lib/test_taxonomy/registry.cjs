@@ -141,6 +141,8 @@ const RUST_FAMILY_BY_CRATE = {
   "ctx-harness-setup": "toolchain-bootstrap",
   "ctx-harness-sources": "toolchain-bootstrap",
   "ctx-linux-sandbox-runtime": "sandbox-runtime",
+  "ctx-llm-relay-authority": "provider-runtime",
+  "ctx-llm-relay-contract": "provider-runtime",
   "ctx-load-test": "resilience-performance",
   "ctx-managed-installs": "distribution-install",
   "ctx-mcp": "subagents-orchestration",

@@ -86,6 +86,41 @@ fn infer_endpoint_model_provider_namespace_prefers_non_generic_host_label() {
 }
 
 #[test]
+fn ctx_managed_relay_url_matching_respects_origin_and_path_boundaries() {
+    let prefix = Url::parse("https://relay.ctx.rs/relay").expect("prefix url");
+    let matching_child =
+        Url::parse("https://relay.ctx.rs/relay/openai/v1").expect("matching child url");
+    let matching_exact = Url::parse("https://relay.ctx.rs/relay").expect("matching exact url");
+    let bad_host =
+        Url::parse("https://relay.ctx.rs.evil.example/relay/openai/v1").expect("bad host url");
+    let bad_path = Url::parse("https://relay.ctx.rs/relayx/openai/v1").expect("bad path url");
+
+    assert!(base_url_matches_ctx_managed_prefix(
+        &matching_child,
+        &prefix
+    ));
+    assert!(base_url_matches_ctx_managed_prefix(
+        &matching_exact,
+        &prefix
+    ));
+    assert!(!base_url_matches_ctx_managed_prefix(&bad_host, &prefix));
+    assert!(!base_url_matches_ctx_managed_prefix(&bad_path, &prefix));
+    assert!(!base_url_matches_ctx_managed_prefix(
+        &matching_child,
+        &Url::parse("https://relay.ctx.rs").expect("origin-only prefix url")
+    ));
+    assert!(base_url_uses_ctx_managed_relay(
+        "https://api.ctx.rs/relay/openai/v1"
+    ));
+    assert!(!base_url_uses_ctx_managed_relay(
+        "https://api.ctx.rs/functions/v1/openai"
+    ));
+    assert!(!base_url_uses_ctx_managed_relay(
+        "https://api.ctx.rs/relayx/openai/v1"
+    ));
+}
+
+#[test]
 fn normalize_namespaced_model_override_always_prefixes_namespace() {
     assert_eq!(
         normalize_namespaced_model_override("openai/gpt-5.2-codex", Some("openrouter")),

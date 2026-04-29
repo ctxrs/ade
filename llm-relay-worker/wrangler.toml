@@ -1,0 +1,19 @@
+name = "ctx-llm-relay"
+main = "src/worker.ts"
+compatibility_date = "2026-04-28"
+
+[vars]
+ENVIRONMENT = "dev"
+GRANT_VERIFICATION_MODE = "hmac"
+AUTHORITY_BASE_URL = "http://127.0.0.1:8792"
+OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses"
+
+[env.staging.vars]
+ENVIRONMENT = "staging"
+GRANT_VERIFICATION_MODE = "signed_chain"
+# Set CONTROL_PLANE_JWKS as a Cloudflare variable or secret for staging.
+
+[env.prod.vars]
+ENVIRONMENT = "prod"
+GRANT_VERIFICATION_MODE = "signed_chain"
+# Set CONTROL_PLANE_JWKS as a Cloudflare variable or secret for prod.

@@ -1718,6 +1718,141 @@
       ],
       "outputs": []
     },
+    "rust:crate:clippy:ctx-llm-relay-authority": {
+      "inputs": [
+        "Cargo.toml",
+        "Cargo.lock",
+        "rust-toolchain.toml",
+        "rustfmt.toml",
+        "clippy.toml",
+        ".cargo/config.toml",
+        "scripts/lib/cache_roots.cjs",
+        "scripts/lib/ctx_http_suites.cjs",
+        "scripts/lib/turbo_runner.cjs",
+        "scripts/lib/rust_workspace_graph.cjs",
+        "scripts/lib/rust_gate_plan.cjs",
+        "scripts/ctx_http_suite_task.cjs",
+        "scripts/rust_crate_task.cjs",
+        "scripts/run_rust_gate.cjs",
+        "scripts/run_rust_turbo.cjs",
+        "scripts/sync_rust_turbo_tasks.cjs",
+        "crates/ctx-llm-relay-authority/**",
+        "crates/ctx-llm-relay-contract/**"
+      ],
+      "outputs": []
+    },
+    "rust:crate:test:ctx-llm-relay-authority": {
+      "inputs": [
+        "Cargo.toml",
+        "Cargo.lock",
+        "rust-toolchain.toml",
+        "rustfmt.toml",
+        "clippy.toml",
+        ".cargo/config.toml",
+        "scripts/lib/cache_roots.cjs",
+        "scripts/lib/ctx_http_suites.cjs",
+        "scripts/lib/turbo_runner.cjs",
+        "scripts/lib/rust_workspace_graph.cjs",
+        "scripts/lib/rust_gate_plan.cjs",
+        "scripts/ctx_http_suite_task.cjs",
+        "scripts/rust_crate_task.cjs",
+        "scripts/run_rust_gate.cjs",
+        "scripts/run_rust_turbo.cjs",
+        "scripts/sync_rust_turbo_tasks.cjs",
+        "crates/ctx-llm-relay-authority/**",
+        "crates/ctx-llm-relay-contract/**"
+      ],
+      "outputs": []
+    },
+    "rust:crate:nextest:ctx-llm-relay-authority": {
+      "inputs": [
+        "Cargo.toml",
+        "Cargo.lock",
+        "rust-toolchain.toml",
+        "rustfmt.toml",
+        "clippy.toml",
+        ".cargo/config.toml",
+        "scripts/lib/cache_roots.cjs",
+        "scripts/lib/ctx_http_suites.cjs",
+        "scripts/lib/turbo_runner.cjs",
+        "scripts/lib/rust_workspace_graph.cjs",
+        "scripts/lib/rust_gate_plan.cjs",
+        "scripts/ctx_http_suite_task.cjs",
+        "scripts/rust_crate_task.cjs",
+        "scripts/run_rust_gate.cjs",
+        "scripts/run_rust_turbo.cjs",
+        "scripts/sync_rust_turbo_tasks.cjs",
+        "crates/ctx-llm-relay-authority/**",
+        "crates/ctx-llm-relay-contract/**"
+      ],
+      "outputs": []
+    },
+    "rust:crate:clippy:ctx-llm-relay-contract": {
+      "inputs": [
+        "Cargo.toml",
+        "Cargo.lock",
+        "rust-toolchain.toml",
+        "rustfmt.toml",
+        "clippy.toml",
+        ".cargo/config.toml",
+        "scripts/lib/cache_roots.cjs",
+        "scripts/lib/ctx_http_suites.cjs",
+        "scripts/lib/turbo_runner.cjs",
+        "scripts/lib/rust_workspace_graph.cjs",
+        "scripts/lib/rust_gate_plan.cjs",
+        "scripts/ctx_http_suite_task.cjs",
+        "scripts/rust_crate_task.cjs",
+        "scripts/run_rust_gate.cjs",
+        "scripts/run_rust_turbo.cjs",
+        "scripts/sync_rust_turbo_tasks.cjs",
+        "crates/ctx-llm-relay-contract/**"
+      ],
+      "outputs": []
+    },
+    "rust:crate:test:ctx-llm-relay-contract": {
+      "inputs": [
+        "Cargo.toml",
+        "Cargo.lock",
+        "rust-toolchain.toml",
+        "rustfmt.toml",
+        "clippy.toml",
+        ".cargo/config.toml",
+        "scripts/lib/cache_roots.cjs",
+        "scripts/lib/ctx_http_suites.cjs",
+        "scripts/lib/turbo_runner.cjs",
+        "scripts/lib/rust_workspace_graph.cjs",
+        "scripts/lib/rust_gate_plan.cjs",
+        "scripts/ctx_http_suite_task.cjs",
+        "scripts/rust_crate_task.cjs",
+        "scripts/run_rust_gate.cjs",
+        "scripts/run_rust_turbo.cjs",
+        "scripts/sync_rust_turbo_tasks.cjs",
+        "crates/ctx-llm-relay-contract/**"
+      ],
+      "outputs": []
+    },
+    "rust:crate:nextest:ctx-llm-relay-contract": {
+      "inputs": [
+        "Cargo.toml",
+        "Cargo.lock",
+        "rust-toolchain.toml",
+        "rustfmt.toml",
+        "clippy.toml",
+        ".cargo/config.toml",
+        "scripts/lib/cache_roots.cjs",
+        "scripts/lib/ctx_http_suites.cjs",
+        "scripts/lib/turbo_runner.cjs",
+        "scripts/lib/rust_workspace_graph.cjs",
+        "scripts/lib/rust_gate_plan.cjs",
+        "scripts/ctx_http_suite_task.cjs",
+        "scripts/rust_crate_task.cjs",
+        "scripts/run_rust_gate.cjs",
+        "scripts/run_rust_turbo.cjs",
+        "scripts/sync_rust_turbo_tasks.cjs",
+        "crates/ctx-llm-relay-contract/**"
+      ],
+      "outputs": []
+    },
     "rust:crate:clippy:ctx-load-test": {
       "inputs": [
         "Cargo.toml",
