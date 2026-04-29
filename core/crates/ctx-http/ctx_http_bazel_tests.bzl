@@ -25,33 +25,10 @@ CTX_HTTP_SUITE_TESTS = {
         "hot_endpoints_no_db",
         "replay_properties",
         "task_default_session_http",
-        "workspace_active_snapshot_http_workspace_active_hydration_returns_500_for_store_open_failures_and_404_for_missing_workspaces",
-        "workspace_active_snapshot_http_workspace_active_snapshot_includes_sessions",
-        "workspace_active_snapshot_http_create_session_rejects_initial_prompt_without_client_ids",
-        "workspace_active_snapshot_http_workspace_active_snapshot_includes_worktree_vcs_for_active_tasks_only",
-        "workspace_active_snapshot_http_workspace_active_heads_batch_strips_partials",
-        "workspace_active_snapshot_http_session_snapshot_returns_summary_only",
-        "workspace_active_snapshot_http_session_head_returns_head",
-        "workspace_active_snapshot_http_workspace_stream_replays_from_after_seq",
-        "workspace_active_snapshot_http_workspace_stream_reset_replay_waits_for_fresh_resume_cursor",
-        "workspace_active_snapshot_http_workspace_stream_replays_tool_events",
-        "workspace_active_snapshot_http_workspace_stream_under_load_no_gap_or_reset",
-        "workspace_active_snapshot_http_workspace_stream_emits_git_status_snapshot_on_change",
-        "workspace_active_snapshot_http_workspace_stream_emits_git_status_snapshot_for_new_subscriber",
-        "workspace_active_snapshot_http_workspace_stream_delivers_snapshot_before_worktree_vcs_summary_refresh",
-        "workspace_active_snapshot_http_workspace_stream_repeat_subscribe_preserves_ready_worktree_vcs_state",
-        "workspace_active_snapshot_http_workspace_stream_replay_only_subscribe_reseeds_cached_worktree_vcs_snapshot",
-        "workspace_active_snapshot_http_mobile_secure_workspace_stream_replay_only_subscribe_reseeds_cached_worktree_vcs_snapshot",
+        "workspace_active_snapshot_http",
         "workspace_active_snapshot_http_workspace_stream_repeat_subscribe_rescans_fresh_unavailable_worktree_vcs",
-        "workspace_active_snapshot_http_workspace_stream_initial_snapshot_includes_worktree_vcs_for_explicit_archived_session",
-        "workspace_active_snapshot_http_workspace_stream_initial_snapshot_preserves_secondary_worktree_vcs_for_active_task",
-        "workspace_active_snapshot_http_workspace_stream_active_subscribe_keeps_secondary_worktree_vcs_publishable",
-        "workspace_active_snapshot_http_mobile_secure_workspace_stream_active_subscribe_keeps_secondary_worktree_vcs_publishable",
-        "workspace_active_snapshot_http_workspace_stream_emits_worktree_vcs_snapshot_on_activation",
-        "workspace_active_snapshot_http_workspace_stream_emits_gap_on_large_replay",
-        "workspace_active_snapshot_http_workspace_active_snapshot_stream_pushes_updates",
-        "workspace_active_snapshot_http_workspace_stream_archived_task_upsert_has_no_snapshot_payload",
-        "workspace_active_snapshot_http_workspace_active_snapshot_stream_filters_session_head_deltas",
+        "workspace_active_snapshot_http_workspace_stream_subscribe_does_not_reemit_when_worktree_vcs_is_already_computing",
+        "workspace_active_snapshot_http_worktree_vcs_summary_refresh_reloads_live_inventory_before_ready_publish",
         "workspace_stream_context_window_metrics",
         "workspace_stream_no_gaps_under_activity",
         "workspace_stream_stress_active_heads_lag",
@@ -167,89 +144,16 @@ CTX_HTTP_SUITE_EXTRA_TARGETS = {
 }
 
 CTX_HTTP_CUSTOM_INTEGRATION_TARGETS = {
-    "workspace_active_snapshot_http_workspace_active_hydration_returns_500_for_store_open_failures_and_404_for_missing_workspaces": {
+    "workspace_active_snapshot_http": {
         "source": "workspace_active_snapshot_http",
-        "args": ["--exact", "workspace_active_hydration_returns_500_for_store_open_failures_and_404_for_missing_workspaces"],
-        "timeout": "long",
-    },
-    "workspace_active_snapshot_http_workspace_active_snapshot_includes_sessions": {
-        "source": "workspace_active_snapshot_http",
-        "args": ["--exact", "workspace_active_snapshot_includes_sessions"],
-        "timeout": "long",
-    },
-    "workspace_active_snapshot_http_create_session_rejects_initial_prompt_without_client_ids": {
-        "source": "workspace_active_snapshot_http",
-        "args": ["--exact", "create_session_rejects_initial_prompt_without_client_ids"],
-        "timeout": "long",
-    },
-    "workspace_active_snapshot_http_workspace_active_snapshot_includes_worktree_vcs_for_active_tasks_only": {
-        "source": "workspace_active_snapshot_http",
-        "args": ["--exact", "workspace_active_snapshot_includes_worktree_vcs_for_active_tasks_only"],
-        "timeout": "long",
-    },
-    "workspace_active_snapshot_http_workspace_active_heads_batch_strips_partials": {
-        "source": "workspace_active_snapshot_http",
-        "args": ["--exact", "workspace_active_heads_batch_strips_partials"],
-        "timeout": "long",
-    },
-    "workspace_active_snapshot_http_session_snapshot_returns_summary_only": {
-        "source": "workspace_active_snapshot_http",
-        "args": ["--exact", "session_snapshot_returns_summary_only"],
-        "timeout": "long",
-    },
-    "workspace_active_snapshot_http_session_head_returns_head": {
-        "source": "workspace_active_snapshot_http",
-        "args": ["--exact", "session_head_returns_head"],
-        "timeout": "long",
-    },
-    "workspace_active_snapshot_http_workspace_stream_replays_from_after_seq": {
-        "source": "workspace_active_snapshot_http",
-        "args": ["--exact", "workspace_stream_replays_from_after_seq"],
-        "timeout": "long",
-    },
-    "workspace_active_snapshot_http_workspace_stream_reset_replay_waits_for_fresh_resume_cursor": {
-        "source": "workspace_active_snapshot_http",
-        "args": ["--exact", "workspace_stream_reset_replay_waits_for_fresh_resume_cursor"],
-        "timeout": "long",
-    },
-    "workspace_active_snapshot_http_workspace_stream_replays_tool_events": {
-        "source": "workspace_active_snapshot_http",
-        "args": ["--exact", "workspace_stream_replays_tool_events"],
-        "timeout": "long",
-    },
-    "workspace_active_snapshot_http_workspace_stream_under_load_no_gap_or_reset": {
-        "source": "workspace_active_snapshot_http",
-        "args": ["--exact", "workspace_stream_under_load_no_gap_or_reset"],
-        "timeout": "long",
-    },
-    "workspace_active_snapshot_http_workspace_stream_emits_git_status_snapshot_on_change": {
-        "source": "workspace_active_snapshot_http",
-        "args": ["--exact", "workspace_stream_emits_git_status_snapshot_on_change"],
-        "timeout": "long",
-    },
-    "workspace_active_snapshot_http_workspace_stream_emits_git_status_snapshot_for_new_subscriber": {
-        "source": "workspace_active_snapshot_http",
-        "args": ["--exact", "workspace_stream_emits_git_status_snapshot_for_new_subscriber"],
-        "timeout": "long",
-    },
-    "workspace_active_snapshot_http_workspace_stream_delivers_snapshot_before_worktree_vcs_summary_refresh": {
-        "source": "workspace_active_snapshot_http",
-        "args": ["--exact", "workspace_stream_delivers_snapshot_before_worktree_vcs_summary_refresh"],
-        "timeout": "long",
-    },
-    "workspace_active_snapshot_http_workspace_stream_repeat_subscribe_preserves_ready_worktree_vcs_state": {
-        "source": "workspace_active_snapshot_http",
-        "args": ["--exact", "workspace_stream_repeat_subscribe_preserves_ready_worktree_vcs_state"],
-        "timeout": "long",
-    },
-    "workspace_active_snapshot_http_workspace_stream_replay_only_subscribe_reseeds_cached_worktree_vcs_snapshot": {
-        "source": "workspace_active_snapshot_http",
-        "args": ["--exact", "workspace_stream_replay_only_subscribe_reseeds_cached_worktree_vcs_snapshot"],
-        "timeout": "long",
-    },
-    "workspace_active_snapshot_http_mobile_secure_workspace_stream_replay_only_subscribe_reseeds_cached_worktree_vcs_snapshot": {
-        "source": "workspace_active_snapshot_http",
-        "args": ["--exact", "mobile_secure_workspace_stream_replay_only_subscribe_reseeds_cached_worktree_vcs_snapshot"],
+        "args": [
+            "--skip",
+            "workspace_stream_repeat_subscribe_rescans_fresh_unavailable_worktree_vcs",
+            "--skip",
+            "workspace_stream_subscribe_does_not_reemit_when_worktree_vcs_is_already_computing",
+            "--skip",
+            "worktree_vcs_summary_refresh_reloads_live_inventory_before_ready_publish",
+        ],
         "timeout": "long",
     },
     "workspace_active_snapshot_http_workspace_stream_repeat_subscribe_rescans_fresh_unavailable_worktree_vcs": {
@@ -257,49 +161,14 @@ CTX_HTTP_CUSTOM_INTEGRATION_TARGETS = {
         "args": ["--exact", "workspace_stream_repeat_subscribe_rescans_fresh_unavailable_worktree_vcs"],
         "timeout": "long",
     },
-    "workspace_active_snapshot_http_workspace_stream_initial_snapshot_includes_worktree_vcs_for_explicit_archived_session": {
+    "workspace_active_snapshot_http_workspace_stream_subscribe_does_not_reemit_when_worktree_vcs_is_already_computing": {
         "source": "workspace_active_snapshot_http",
-        "args": ["--exact", "workspace_stream_initial_snapshot_includes_worktree_vcs_for_explicit_archived_session"],
+        "args": ["--exact", "workspace_stream_subscribe_does_not_reemit_when_worktree_vcs_is_already_computing"],
         "timeout": "long",
     },
-    "workspace_active_snapshot_http_workspace_stream_initial_snapshot_preserves_secondary_worktree_vcs_for_active_task": {
+    "workspace_active_snapshot_http_worktree_vcs_summary_refresh_reloads_live_inventory_before_ready_publish": {
         "source": "workspace_active_snapshot_http",
-        "args": ["--exact", "workspace_stream_initial_snapshot_preserves_secondary_worktree_vcs_for_active_task"],
-        "timeout": "long",
-    },
-    "workspace_active_snapshot_http_workspace_stream_active_subscribe_keeps_secondary_worktree_vcs_publishable": {
-        "source": "workspace_active_snapshot_http",
-        "args": ["--exact", "workspace_stream_active_subscribe_keeps_secondary_worktree_vcs_publishable"],
-        "timeout": "long",
-    },
-    "workspace_active_snapshot_http_mobile_secure_workspace_stream_active_subscribe_keeps_secondary_worktree_vcs_publishable": {
-        "source": "workspace_active_snapshot_http",
-        "args": ["--exact", "mobile_secure_workspace_stream_active_subscribe_keeps_secondary_worktree_vcs_publishable"],
-        "timeout": "long",
-    },
-    "workspace_active_snapshot_http_workspace_stream_emits_worktree_vcs_snapshot_on_activation": {
-        "source": "workspace_active_snapshot_http",
-        "args": ["--exact", "workspace_stream_emits_worktree_vcs_snapshot_on_activation"],
-        "timeout": "long",
-    },
-    "workspace_active_snapshot_http_workspace_stream_emits_gap_on_large_replay": {
-        "source": "workspace_active_snapshot_http",
-        "args": ["--exact", "workspace_stream_emits_gap_on_large_replay"],
-        "timeout": "long",
-    },
-    "workspace_active_snapshot_http_workspace_active_snapshot_stream_pushes_updates": {
-        "source": "workspace_active_snapshot_http",
-        "args": ["--exact", "workspace_active_snapshot_stream_pushes_updates"],
-        "timeout": "long",
-    },
-    "workspace_active_snapshot_http_workspace_stream_archived_task_upsert_has_no_snapshot_payload": {
-        "source": "workspace_active_snapshot_http",
-        "args": ["--exact", "workspace_stream_archived_task_upsert_has_no_snapshot_payload"],
-        "timeout": "long",
-    },
-    "workspace_active_snapshot_http_workspace_active_snapshot_stream_filters_session_head_deltas": {
-        "source": "workspace_active_snapshot_http",
-        "args": ["--exact", "workspace_active_snapshot_stream_filters_session_head_deltas"],
+        "args": ["--exact", "worktree_vcs_summary_refresh_reloads_live_inventory_before_ready_publish"],
         "timeout": "long",
     },
     "message_idempotency_post_message_idempotent_same_payload": {

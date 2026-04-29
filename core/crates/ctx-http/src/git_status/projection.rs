@@ -114,8 +114,19 @@ pub(super) async fn upsert_worktree_vcs_snapshot(
     }
     let since_change = now.duration_since(entry.value.last_change_at);
     let since_emit = now.duration_since(entry.value.emitted_at);
+    let previous_snapshot = &entry.value.snapshot;
+    let must_publish_state_transition = previous_snapshot.available != snapshot.available
+        || previous_snapshot.unavailable_reason != snapshot.unavailable_reason
+        || previous_snapshot.compute_state != snapshot.compute_state
+        || previous_snapshot.freshness != snapshot.freshness
+        || previous_snapshot.touched_files_state != snapshot.touched_files_state
+        || (matches!(
+            snapshot.touched_files_state,
+            WorktreeVcsTouchedFilesState::Ready
+        ) && previous_snapshot.touched_files != snapshot.touched_files);
     if !force_emit
         && !is_first
+        && !must_publish_state_transition
         && since_emit < Duration::from_millis(GIT_STATUS_MAX_INTERVAL_MS)
         && since_change < Duration::from_millis(GIT_STATUS_DEBOUNCE_MS)
     {

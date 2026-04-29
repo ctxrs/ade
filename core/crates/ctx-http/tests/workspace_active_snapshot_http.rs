@@ -23,7 +23,6 @@ use ctx_core::models::{
 use ctx_http::daemon::AppState;
 use ctx_store::store::{MobileAccessConfig, MobileDeviceUpsert};
 use ctx_transport_runtime::mobile_e2ee;
-use tokio::process::Command;
 
 mod common;
 
@@ -76,22 +75,6 @@ fn git_status_untracked_from_message(
         .map(|snapshot| snapshot.git_status.untracked)
 }
 
-async fn run_git(root: &Path, args: &[&str]) {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(root)
-        .args(args)
-        .output()
-        .await
-        .expect("run git command");
-    assert!(
-        output.status.success(),
-        "git {:?} failed: {}",
-        args,
-        String::from_utf8_lossy(&output.stderr)
-    );
-}
-
 async fn remove_git_marker(root: &Path) {
     let git_path = root.join(".git");
     let Ok(metadata) = tokio::fs::metadata(&git_path).await else {
@@ -106,16 +89,6 @@ async fn remove_git_marker(root: &Path) {
             .await
             .expect("remove .git file");
     }
-}
-
-async fn poison_worktree_git_marker(worktree_root: &Path) {
-    remove_git_marker(worktree_root).await;
-    tokio::fs::write(
-        worktree_root.join(".git"),
-        "gitdir: /definitely/missing/ctx-test-gitdir\n",
-    )
-    .await
-    .expect("write poisoned .git marker");
 }
 
 async fn setup_with_root(
@@ -2039,6 +2012,14 @@ async fn workspace_stream_subscribe_does_not_reemit_when_worktree_vcs_is_already
         .unwrap()
         .expect("missing worktree");
 
+    let mut next = HashSet::new();
+    next.insert(worktree.id);
+    state
+        .update_worktree_vcs_activity(&HashSet::new(), &next)
+        .await;
+    ctx_http::git_status::refresh_worktree_vcs_summary(state.clone(), worktree.clone())
+        .await
+        .unwrap();
     tokio::fs::write(
         Path::new(&worktree.root_path).join("file.txt"),
         "hello\nchanged\n",
@@ -2046,12 +2027,9 @@ async fn workspace_stream_subscribe_does_not_reemit_when_worktree_vcs_is_already
     .await
     .unwrap();
 
-    let mut next = HashSet::new();
-    next.insert(worktree.id);
-    state
-        .update_worktree_vcs_activity(&HashSet::new(), &next)
-        .await;
-    ctx_http::git_status::emit_worktree_vcs_snapshot_for_worktree(&state, &worktree, true)
+    let refresh_lock = state.worktree_vcs_refresh_lock(worktree.id).await;
+    let _refresh_guard = refresh_lock.lock().await;
+    ctx_http::git_status::request_worktree_vcs_refresh(&state, &worktree, true, false)
         .await
         .unwrap();
 
@@ -2059,7 +2037,7 @@ async fn workspace_stream_subscribe_does_not_reemit_when_worktree_vcs_is_already
         .get_worktree_vcs_snapshot(worktree.id)
         .await
         .expect("expected seeded worktree vcs snapshot");
-    assert_eq!(seeded.freshness, WorktreeVcsFreshness::Refreshing);
+    assert_eq!(seeded.freshness, WorktreeVcsFreshness::Stale);
     let seeded_rev = seeded.rev;
 
     let ws_url = format!("{base}/api/workspaces/{}/stream", ws.id.0).replace("http://", "ws://");
@@ -2093,7 +2071,7 @@ async fn workspace_stream_subscribe_does_not_reemit_when_worktree_vcs_is_already
         serde_json::from_str(&first_text).unwrap();
     let initial_worktree =
         worktree_vcs_snapshot_from_message(first_message, worktree.id).expect("missing worktree");
-    assert_eq!(initial_worktree.freshness, WorktreeVcsFreshness::Refreshing);
+    assert_eq!(initial_worktree.freshness, WorktreeVcsFreshness::Stale);
     assert_eq!(
         initial_worktree.rev, seeded_rev,
         "subscribe should reuse the in-flight computing snapshot instead of force-emitting again"
@@ -2155,12 +2133,18 @@ async fn worktree_vcs_summary_refresh_reloads_live_inventory_before_ready_publis
     state
         .update_worktree_vcs_activity(&HashSet::new(), &next)
         .await;
+    state
+        .update_worktree_vcs_open_panes(&HashSet::new(), &next)
+        .await;
     ctx_http::git_status::emit_worktree_vcs_snapshot_for_worktree(&state, &worktree, true)
         .await
         .unwrap();
 
     tokio::fs::remove_file(&first_path).await.unwrap();
     tokio::fs::write(&second_path, "second\n").await.unwrap();
+    ctx_http::git_status::request_worktree_vcs_refresh(&state, &worktree, true, true)
+        .await
+        .unwrap();
 
     let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
     while tokio::time::Instant::now() < deadline {
@@ -2556,7 +2540,16 @@ async fn workspace_stream_repeat_subscribe_rescans_fresh_unavailable_worktree_vc
         .await;
 
     let worktree_root = Path::new(&worktree.root_path);
-    poison_worktree_git_marker(worktree_root).await;
+    let saved_git_marker = worktree_root.join(".git.ctx-test-saved");
+    tokio::fs::rename(worktree_root.join(".git"), &saved_git_marker)
+        .await
+        .expect("save original .git marker");
+    tokio::fs::write(
+        worktree_root.join(".git"),
+        "gitdir: /definitely/missing/ctx-test-gitdir\n",
+    )
+    .await
+    .expect("write poisoned .git marker");
     ctx_http::git_status::emit_worktree_vcs_snapshot_for_worktree(&state, &worktree, true)
         .await
         .unwrap();
@@ -2619,11 +2612,9 @@ async fn workspace_stream_repeat_subscribe_rescans_fresh_unavailable_worktree_vc
     );
 
     remove_git_marker(worktree_root).await;
-    run_git(worktree_root, &["init"]).await;
-    run_git(worktree_root, &["config", "user.email", "test@example.com"]).await;
-    run_git(worktree_root, &["config", "user.name", "Test"]).await;
-    run_git(worktree_root, &["add", "."]).await;
-    run_git(worktree_root, &["commit", "-m", "restore"]).await;
+    tokio::fs::rename(&saved_git_marker, worktree_root.join(".git"))
+        .await
+        .expect("restore original .git marker");
 
     socket
         .send(WsMessage::Text(subscribe.into()))

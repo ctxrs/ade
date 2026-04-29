@@ -67,7 +67,7 @@ pub struct WorktreeVcsSummary {
     pub line_count: Option<i64>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct WorktreeVcsTouchedFile {
     pub path: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -78,7 +78,7 @@ pub struct WorktreeVcsTouchedFile {
     pub worktree_status: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct WorktreeVcsTouchedFiles {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub items: Vec<WorktreeVcsTouchedFile>,

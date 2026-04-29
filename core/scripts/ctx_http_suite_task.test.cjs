@@ -16,7 +16,7 @@ for (const key of PARENT_BAZEL_ENV_KEYS) {
   delete process.env[key];
 }
 
-test("ctx-http suite task lists one Bazel command per suite for multi-suite batches", () => {
+test("ctx-http suite task lists one batched Bazel command for multi-suite batches", () => {
   const result = spawnSync("node", [scriptPath, "--list", "--suite", "base", "--suite", "provider-auth"], {
     cwd: repoRoot,
     encoding: "utf8",
@@ -26,10 +26,7 @@ test("ctx-http suite task lists one Bazel command per suite for multi-suite batc
   assert.equal(result.status, 0);
   assert.equal(
     result.stdout.trim(),
-    [
-      "node scripts/run_bazel_pilot.cjs test //core/crates/ctx-http:base",
-      "node scripts/run_bazel_pilot.cjs test //core/crates/ctx-http:provider-auth",
-    ].join("\n"),
+    "node scripts/run_bazel_pilot.cjs test //core/crates/ctx-http:base //core/crates/ctx-http:provider-auth",
   );
 });
 
@@ -44,7 +41,7 @@ test("ctx-http suite task rejects a trailing --suite without a value", () => {
   assert.match(result.stderr, /--suite requires a suite name/u);
 });
 
-test("ctx-http suite task lists the all meta-suite as suite-scoped Bazel commands", () => {
+test("ctx-http suite task lists the all meta-suite as one batched Bazel command", () => {
   const result = spawnSync("node", [scriptPath, "--list", "--suite", "all"], {
     cwd: repoRoot,
     encoding: "utf8",
@@ -53,10 +50,10 @@ test("ctx-http suite task lists the all meta-suite as suite-scoped Bazel command
 
   assert.equal(result.status, 0);
   const stdoutLines = result.stdout.trim().split("\n");
-  assert.equal(stdoutLines.length > 2, true);
-  assert.equal(stdoutLines[0], "node scripts/run_bazel_pilot.cjs test //core/crates/ctx-http:base");
+  assert.equal(stdoutLines.length, 1);
+  assert.equal(stdoutLines[0].startsWith("node scripts/run_bazel_pilot.cjs test //core/crates/ctx-http:base"), true);
   assert.equal(
-    stdoutLines.includes("node scripts/run_bazel_pilot.cjs test //core/crates/ctx-http:workspace-stream"),
+    stdoutLines[0].includes("//core/crates/ctx-http:workspace-stream"),
     true,
   );
 });
@@ -74,11 +71,7 @@ test("ctx-http suite task executes batched selections per suite without forcing 
   assert.equal(plan.isBatchSelection, true);
   assert.deepEqual(plan.commands, [
     {
-      args: ["scripts/run_bazel_pilot.cjs", "test", "//core/crates/ctx-http:base"],
-      command: "node",
-    },
-    {
-      args: ["scripts/run_bazel_pilot.cjs", "test", "//core/crates/ctx-http:provider-auth"],
+      args: ["scripts/run_bazel_pilot.cjs", "test", "//core/crates/ctx-http:base", "//core/crates/ctx-http:provider-auth"],
       command: "node",
     },
   ]);

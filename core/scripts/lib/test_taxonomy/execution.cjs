@@ -345,7 +345,7 @@ function buildExecutionPlan({ profileId, changedFiles = [], touchedOnly = false,
   const commands = dedupeCommands(buildCommandsForEntries({
     selectedEntries,
     changedContext,
-    coalesceCtxHttpSuites: profile.id !== "checkin",
+    coalesceCtxHttpSuites: true,
     selectionMode: resolvedSelectionMode,
   }));
 

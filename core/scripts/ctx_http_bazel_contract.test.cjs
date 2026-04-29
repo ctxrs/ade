@@ -20,9 +20,23 @@ const ctxHttpBazelTests = fs.readFileSync(
 );
 const escapeRegExp = (value) => String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-function extractBuildStringList(name) {
+function extractBuildStringList(name, seen = new Set()) {
+  assert.equal(seen.has(name), false, `cyclic BUILD list alias while resolving ${name}`);
+  seen.add(name);
   const match = ctxHttpBuild.match(new RegExp(`${name}\\s*=\\s*(?:[^\\[]*\\+\\s*)?\\[([\\s\\S]*?)\\]`));
-  assert.ok(match, `expected ${name} list in ctx-http BUILD`);
+  if (match) {
+    return [...match[1].matchAll(/"([^"]+)"/g)].map((entry) => entry[1]);
+  }
+  const alias = ctxHttpBuild.match(new RegExp(`${name}\\s*=\\s*([A-Z0-9_]+)\\s*$`, "m"));
+  if (alias) {
+    return extractBuildStringList(alias[1], seen);
+  }
+  assert.fail(`expected ${name} list in ctx-http BUILD`);
+}
+
+function extractCtxHttpSuiteTestList(suiteName) {
+  const match = ctxHttpBazelTests.match(new RegExp(`"${escapeRegExp(suiteName)}"\\s*:\\s*\\[([\\s\\S]*?)\\],`));
+  assert.ok(match, `expected ${suiteName} suite in ctx_http_bazel_tests.bzl`);
   return [...match[1].matchAll(/"([^"]+)"/g)].map((entry) => entry[1]);
 }
 
@@ -301,18 +315,24 @@ test("ctx-http Bazel dependency buckets do not duplicate labels", () => {
   const sharedExternal = extractBuildStringList("CTX_HTTP_SHARED_EXTERNAL_DEPS");
   const directTests = extractBuildStringList("CTX_HTTP_DIRECT_TEST_DEPS");
   const integrationDirectTests = extractBuildStringList("CTX_HTTP_INTEGRATION_DIRECT_TEST_DEPS");
+  const integrationDirectTestsAliasDirect = /^CTX_HTTP_INTEGRATION_DIRECT_TEST_DEPS = CTX_HTTP_DIRECT_TEST_DEPS$/m
+    .test(ctxHttpBuild);
 
   assertNoDuplicates("CTX_HTTP_SHARED_EXTERNAL_DEPS", sharedExternal);
   assertNoDuplicates("CTX_HTTP_DIRECT_TEST_DEPS", directTests);
   assertNoDuplicates("CTX_HTTP_INTEGRATION_DIRECT_TEST_DEPS", integrationDirectTests);
 
-  const directTestLabels = new Set(directTests);
-  const repeatedIntegrationLabels = integrationDirectTests.filter((label) => directTestLabels.has(label));
-  assert.deepEqual(
-    repeatedIntegrationLabels,
-    [],
-    "CTX_HTTP_INTEGRATION_DIRECT_TEST_DEPS is appended to CTX_HTTP_DIRECT_TEST_DEPS and must only list additional labels",
-  );
+  if (integrationDirectTestsAliasDirect) {
+    assert.deepEqual(integrationDirectTests, directTests);
+  } else {
+    const directTestLabels = new Set(directTests);
+    const repeatedIntegrationLabels = integrationDirectTests.filter((label) => directTestLabels.has(label));
+    assert.deepEqual(
+      repeatedIntegrationLabels,
+      [],
+      "CTX_HTTP_INTEGRATION_DIRECT_TEST_DEPS is appended to CTX_HTTP_DIRECT_TEST_DEPS and must only list additional labels",
+    );
+  }
 });
 
 test("ctx-http Bazel helper keeps quick-path and manual-only suites explicit", () => {
@@ -324,9 +344,19 @@ test("ctx-http Bazel helper keeps quick-path and manual-only suites explicit", (
   assert.match(ctxHttpBazelTests, /"updates_failure_safety_missing_artifact"/);
   assert.match(ctxHttpBazelTests, /"updates_failure_safety_interrupted_transfer"/);
   assert.match(ctxHttpBazelTests, /"provider_current_ctx_version_regressions"/);
+  const workspaceStreamTargets = extractCtxHttpSuiteTestList("workspace-stream");
+  assert.equal(workspaceStreamTargets.includes("workspace_active_snapshot_http"), true);
+  assert.deepEqual(
+    workspaceStreamTargets.filter((target) => target.startsWith("workspace_active_snapshot_http_")),
+    [
+      "workspace_active_snapshot_http_workspace_stream_repeat_subscribe_rescans_fresh_unavailable_worktree_vcs",
+      "workspace_active_snapshot_http_workspace_stream_subscribe_does_not_reemit_when_worktree_vcs_is_already_computing",
+      "workspace_active_snapshot_http_worktree_vcs_summary_refresh_reloads_live_inventory_before_ready_publish",
+    ],
+  );
   assert.match(
     ctxHttpBazelTests,
-    /"workspace_active_snapshot_http_workspace_stream_under_load_no_gap_or_reset"/,
+    /"workspace_active_snapshot_http": \{[\s\S]*"--skip",[\s\S]*"workspace_stream_repeat_subscribe_rescans_fresh_unavailable_worktree_vcs"[\s\S]*"timeout": "long"/,
   );
   assert.match(
     ctxHttpBazelTests,
