@@ -1406,6 +1406,7 @@
         "scripts/run_rust_turbo.cjs",
         "scripts/sync_rust_turbo_tasks.cjs",
         "crates/ctx-core/**",
+        "crates/ctx-fs/**",
         "crates/ctx-harness-sources/**",
         "crates/ctx-provider-accounts/**"
       ],
@@ -1432,6 +1433,7 @@
         "scripts/run_rust_turbo.cjs",
         "scripts/sync_rust_turbo_tasks.cjs",
         "crates/ctx-core/**",
+        "crates/ctx-fs/**",
         "crates/ctx-harness-sources/**",
         "crates/ctx-provider-accounts/**"
       ],
@@ -1458,6 +1460,7 @@
         "scripts/run_rust_turbo.cjs",
         "scripts/sync_rust_turbo_tasks.cjs",
         "crates/ctx-core/**",
+        "crates/ctx-fs/**",
         "crates/ctx-harness-sources/**",
         "crates/ctx-provider-accounts/**"
       ],
@@ -1657,6 +1660,7 @@
         "scripts/run_rust_gate.cjs",
         "scripts/run_rust_turbo.cjs",
         "scripts/sync_rust_turbo_tasks.cjs",
+        "crates/ctx-core/**",
         "crates/ctx-harness-setup/**",
         "crates/ctx-linux-sandbox-runtime/**"
       ],
@@ -1682,6 +1686,7 @@
         "scripts/run_rust_gate.cjs",
         "scripts/run_rust_turbo.cjs",
         "scripts/sync_rust_turbo_tasks.cjs",
+        "crates/ctx-core/**",
         "crates/ctx-harness-setup/**",
         "crates/ctx-linux-sandbox-runtime/**"
       ],
@@ -1707,6 +1712,7 @@
         "scripts/run_rust_gate.cjs",
         "scripts/run_rust_turbo.cjs",
         "scripts/sync_rust_turbo_tasks.cjs",
+        "crates/ctx-core/**",
         "crates/ctx-harness-setup/**",
         "crates/ctx-linux-sandbox-runtime/**"
       ],
@@ -2204,6 +2210,7 @@
         "scripts/run_rust_turbo.cjs",
         "scripts/sync_rust_turbo_tasks.cjs",
         "crates/ctx-core/**",
+        "crates/ctx-fs/**",
         "crates/ctx-provider-accounts/**"
       ],
       "outputs": []
@@ -2229,6 +2236,7 @@
         "scripts/run_rust_turbo.cjs",
         "scripts/sync_rust_turbo_tasks.cjs",
         "crates/ctx-core/**",
+        "crates/ctx-fs/**",
         "crates/ctx-provider-accounts/**"
       ],
       "outputs": []
@@ -2254,6 +2262,7 @@
         "scripts/run_rust_turbo.cjs",
         "scripts/sync_rust_turbo_tasks.cjs",
         "crates/ctx-core/**",
+        "crates/ctx-fs/**",
         "crates/ctx-provider-accounts/**"
       ],
       "outputs": []
@@ -2279,6 +2288,7 @@
         "scripts/run_rust_turbo.cjs",
         "scripts/sync_rust_turbo_tasks.cjs",
         "crates/ctx-core/**",
+        "crates/ctx-fs/**",
         "crates/ctx-harness-sources/**",
         "crates/ctx-provider-accounts/**",
         "crates/ctx-provider-auth-import/**"
@@ -2306,6 +2316,7 @@
         "scripts/run_rust_turbo.cjs",
         "scripts/sync_rust_turbo_tasks.cjs",
         "crates/ctx-core/**",
+        "crates/ctx-fs/**",
         "crates/ctx-harness-sources/**",
         "crates/ctx-provider-accounts/**",
         "crates/ctx-provider-auth-import/**"
@@ -2333,6 +2344,7 @@
         "scripts/run_rust_turbo.cjs",
         "scripts/sync_rust_turbo_tasks.cjs",
         "crates/ctx-core/**",
+        "crates/ctx-fs/**",
         "crates/ctx-harness-sources/**",
         "crates/ctx-provider-accounts/**",
         "crates/ctx-provider-auth-import/**"
@@ -2432,6 +2444,7 @@
         "scripts/run_rust_turbo.cjs",
         "scripts/sync_rust_turbo_tasks.cjs",
         "crates/ctx-core/**",
+        "crates/ctx-fs/**",
         "crates/ctx-provider-accounts/**",
         "crates/ctx-provider-matrix/**"
       ],
@@ -2458,6 +2471,7 @@
         "scripts/run_rust_turbo.cjs",
         "scripts/sync_rust_turbo_tasks.cjs",
         "crates/ctx-core/**",
+        "crates/ctx-fs/**",
         "crates/ctx-provider-accounts/**",
         "crates/ctx-provider-matrix/**"
       ],
@@ -2484,6 +2498,7 @@
         "scripts/run_rust_turbo.cjs",
         "scripts/sync_rust_turbo_tasks.cjs",
         "crates/ctx-core/**",
+        "crates/ctx-fs/**",
         "crates/ctx-provider-accounts/**",
         "crates/ctx-provider-matrix/**"
       ],
@@ -3206,6 +3221,7 @@
         "scripts/run_rust_turbo.cjs",
         "scripts/sync_rust_turbo_tasks.cjs",
         "crates/ctx-core/**",
+        "crates/ctx-fs/**",
         "crates/ctx-store/**"
       ],
       "outputs": []
@@ -3231,6 +3247,7 @@
         "scripts/run_rust_turbo.cjs",
         "scripts/sync_rust_turbo_tasks.cjs",
         "crates/ctx-core/**",
+        "crates/ctx-fs/**",
         "crates/ctx-store/**"
       ],
       "outputs": []
@@ -3256,6 +3273,7 @@
         "scripts/run_rust_turbo.cjs",
         "scripts/sync_rust_turbo_tasks.cjs",
         "crates/ctx-core/**",
+        "crates/ctx-fs/**",
         "crates/ctx-store/**"
       ],
       "outputs": []
@@ -3818,6 +3836,7 @@
         "scripts/run_rust_turbo.cjs",
         "scripts/sync_rust_turbo_tasks.cjs",
         "crates/ctx-core/**",
+        "crates/ctx-fs/**",
         "crates/ctx-sandbox-contract/**",
         "crates/ctx-store/**",
         "crates/ctx-workspace-config/**"
@@ -3845,6 +3864,7 @@
         "scripts/run_rust_turbo.cjs",
         "scripts/sync_rust_turbo_tasks.cjs",
         "crates/ctx-core/**",
+        "crates/ctx-fs/**",
         "crates/ctx-sandbox-contract/**",
         "crates/ctx-store/**",
         "crates/ctx-workspace-config/**"
@@ -3872,6 +3892,7 @@
         "scripts/run_rust_turbo.cjs",
         "scripts/sync_rust_turbo_tasks.cjs",
         "crates/ctx-core/**",
+        "crates/ctx-fs/**",
         "crates/ctx-sandbox-contract/**",
         "crates/ctx-store/**",
         "crates/ctx-workspace-config/**"
@@ -4190,6 +4211,7 @@
         "scripts/run_rust_turbo.cjs",
         "scripts/sync_rust_turbo_tasks.cjs",
         "crates/ctx-core/**",
+        "crates/ctx-fs/**",
         "crates/ctx-sandbox-contract/**",
         "crates/ctx-store/**",
         "crates/ctx-worktree-data-plane/**"
@@ -4217,6 +4239,7 @@
         "scripts/run_rust_turbo.cjs",
         "scripts/sync_rust_turbo_tasks.cjs",
         "crates/ctx-core/**",
+        "crates/ctx-fs/**",
         "crates/ctx-sandbox-contract/**",
         "crates/ctx-store/**",
         "crates/ctx-worktree-data-plane/**"
@@ -4244,6 +4267,7 @@
         "scripts/run_rust_turbo.cjs",
         "scripts/sync_rust_turbo_tasks.cjs",
         "crates/ctx-core/**",
+        "crates/ctx-fs/**",
         "crates/ctx-sandbox-contract/**",
         "crates/ctx-store/**",
         "crates/ctx-worktree-data-plane/**"
