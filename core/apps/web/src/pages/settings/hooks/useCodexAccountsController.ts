@@ -14,7 +14,12 @@ import {
   type CodexHostImportProbe,
   type ProviderStatus,
 } from "../../../api/client";
-import { desktopStartCodexLoginRelay, isDesktopApp, openExternalLink } from "../../../utils/desktop";
+import {
+  desktopGetConnection,
+  desktopStartCodexLoginRelay,
+  isDesktopApp,
+  openExternalLink,
+} from "../../../utils/desktop";
 
 type CodexAccountsController = {
   providers: ProviderStatus[];
@@ -133,15 +138,32 @@ export function useCodexAccountsController(enabled: boolean): CodexAccountsContr
     completionToken?: string | null;
   }) => {
     if (!isDesktopApp()) return false;
-    if (!params.expectedCallbackUrl) return false;
-    if (!params.completionToken) return false;
+    const connection = await desktopGetConnection().catch(() => null);
+    const relayRequired = connection?.kind === "ssh";
+    if (!params.expectedCallbackUrl || !params.completionToken) {
+      if (relayRequired) {
+        throw new Error(
+          "Codex sign-in is missing remote callback metadata. Update the remote daemon and retry.",
+        );
+      }
+      return false;
+    }
     try {
-      return await desktopStartCodexLoginRelay({
+      const started = await desktopStartCodexLoginRelay({
         login_id: params.accountId,
         callback_url: params.expectedCallbackUrl,
         completion_token: params.completionToken,
       });
-    } catch {
+      if (!started && relayRequired) {
+        throw new Error(
+          "Codex sign-in could not start the remote callback relay. Reconnect the remote daemon and retry.",
+        );
+      }
+      return started;
+    } catch (error) {
+      if (relayRequired) {
+        throw error;
+      }
       return false;
     }
   }, []);

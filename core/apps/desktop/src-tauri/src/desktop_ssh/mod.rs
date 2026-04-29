@@ -31,7 +31,7 @@ pub(crate) use commands::{
 };
 pub(crate) use connect::{desktop_connect_ssh, desktop_connect_ssh_begin};
 pub(crate) use jobs::desktop_connect_ssh_poll;
-pub(crate) use model::normalize_update_channel;
+pub(crate) use model::normalize_update_channel_with_identity;
 #[cfg(test)]
 pub(crate) use transport::normalized_ssh_config_override;
 pub(crate) use transport::{new_ssh_command, remote_path_expr, shell_escape};

@@ -34,7 +34,9 @@ pub(super) fn probe_remote_linux_platform_with_optional_password(
         Ok(platform) => Ok((platform, RemoteAuthBootstrap::None)),
         Err(err) => {
             let Some(password_once) = password_once else {
-                return Err(err.context("password_once not provided for platform probe retry"));
+                return Err(err.context(
+                    "SSH key probe failed and no one-time password was provided for bootstrap retry",
+                ));
             };
             let err_text = err.to_string();
             if err_text.contains(WINDOWS_REMOTE_UNSUPPORTED_MSG) {

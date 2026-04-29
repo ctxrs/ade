@@ -1,7 +1,14 @@
+const fs = require("node:fs");
+const path = require("node:path");
+
 const { daemonJson } = require("./daemon.cjs");
 const { providerStatusPath } = require("../../../../../test-support/provider_status_path.cjs");
 const { stringMapFlag } = require("../../../../../scripts/lib/boolish.cjs");
 
+const PROVIDER_MATRIX_PATH = path.resolve(
+  __dirname,
+  "../../../../../crates/ctx-provider-accounts/src/provider_matrix.json",
+);
 const DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 const DEFAULT_OPENAI_OPENROUTER_MODEL_OVERRIDE = "openai/gpt-4.1-mini";
 const DEFAULT_CLAUDE_OPENROUTER_MODEL_OVERRIDE = "anthropic/claude-3.5-haiku";
@@ -40,6 +47,28 @@ const readStringMap = (value) => {
     }
   }
   return out;
+};
+
+const parseProviderIdsCsv = (value) =>
+  String(value || "")
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+
+const managedProviderIdsFromMatrix = () => {
+  const matrix = JSON.parse(fs.readFileSync(PROVIDER_MATRIX_PATH, "utf8"));
+  return asArray(matrix.providers)
+    .map((entry) => asRecord(entry))
+    .filter((entry) => asRecord(entry.managed_install).kind)
+    .map((entry) => readString(entry.id).trim())
+    .filter(Boolean)
+    .sort();
+};
+
+const resolveManagedProviderInstallIds = ({ env = process.env } = {}) => {
+  const explicit = parseProviderIdsCsv(env.CTX_REMOTE_WORKSPACE_E2E_PROVIDER_IDS);
+  if (explicit.length > 0) return explicit;
+  return managedProviderIdsFromMatrix();
 };
 
 const getProviderStatus = async (providerId, target = "host") => {
@@ -119,6 +148,53 @@ const waitForProviderInstallCompletion = async (
     await browser.pause(pollMs);
   }
   throw new Error(`provider '${providerId}' install did not finish for target=${target}: ${JSON.stringify(lastStatus)}`);
+};
+
+const installManagedProvidersAndAssertInstalled = async (
+  target,
+  {
+    providerIds = resolveManagedProviderInstallIds(),
+    timeoutMs = 10 * 60_000,
+    pollMs = 2000,
+    recorder = null,
+    artifactPrefix = "",
+  } = {},
+) => {
+  const results = [];
+  for (const providerId of providerIds) {
+    const before = await getProviderStatus(providerId, target);
+    const installRunningBefore = stringMapFlag(before.details, "install_running");
+    if (!before.installed) {
+      await installProviderAndWait(providerId, target, { timeoutMs, pollMs });
+    } else if (installRunningBefore) {
+      await waitForProviderInstallCompletion(providerId, target, { timeoutMs, pollMs });
+    }
+    const after = await getProviderStatus(providerId, target);
+    const installRunningAfter = stringMapFlag(after.details, "install_running");
+    const result = {
+      provider_id: providerId,
+      target,
+      before,
+      after,
+    };
+    results.push(result);
+    recorder?.recordArtifact?.(
+      `${artifactPrefix || target}_managed_provider_${providerId}`,
+      result,
+    );
+    if (!after.installed) {
+      throw new Error(`${target}: managed provider '${providerId}' is not installed after install flow`);
+    }
+    if (installRunningAfter) {
+      throw new Error(`${target}: managed provider '${providerId}' still reports install_running after install flow`);
+    }
+  }
+  recorder?.recordAssertion?.(
+    `${artifactPrefix || target}_managed_provider_installs`,
+    "pass",
+    `installed ${providerIds.length} managed providers for target=${target}`,
+  );
+  return results;
 };
 
 const configureOpenRouterEndpoint = async ({
@@ -317,6 +393,8 @@ module.exports = {
   getProviderStatus,
   installProviderAndWait,
   waitForProviderInstallCompletion,
+  resolveManagedProviderInstallIds,
+  installManagedProvidersAndAssertInstalled,
   configureOpenRouterEndpoint,
   selectHarnessSource,
   selectSubscriptionSource,

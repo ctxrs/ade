@@ -378,15 +378,24 @@ fn update_channel_validation() {
         "stable"
     );
     assert_eq!(
-        super::model::normalize_update_channel_with_env(None, Some("canary")).expect("env"),
+        super::model::normalize_update_channel_with_sources(None, None, Some("e2e"))
+            .expect("identity"),
+        "e2e"
+    );
+    assert_eq!(
+        super::model::normalize_update_channel_with_sources(None, Some("canary"), Some("e2e"))
+            .expect("env"),
         "canary"
     );
     assert_eq!(
-        super::model::normalize_update_channel_with_env(Some("beta"), Some("canary"))
+        super::model::normalize_update_channel_with_sources(Some("beta"), Some("canary"), Some("e2e"))
             .expect("explicit"),
         "beta"
     );
-    assert!(super::model::normalize_update_channel_with_env(Some("bad channel"), None).is_err());
+    assert!(
+        super::model::normalize_update_channel_with_sources(Some("bad channel"), None, None)
+            .is_err()
+    );
 }
 
 #[test]

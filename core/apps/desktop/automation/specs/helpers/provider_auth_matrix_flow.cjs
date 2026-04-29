@@ -476,13 +476,6 @@ const prepareSubscriptionAuth = async ({ providerId, daemonLocation, executionEn
     },
   };
 
-  if (daemonLocation !== "local") {
-    return {
-      status: "skip",
-      reason: `subscription auth matrix automation currently supports local daemon locations only (got ${daemonLocation})`,
-      artifacts,
-    };
-  }
   if (executionEnvironment !== "host" && executionEnvironment !== "sandbox") {
     return {
       status: "skip",
@@ -511,10 +504,24 @@ const prepareSubscriptionAuth = async ({ providerId, daemonLocation, executionEn
       };
     }
   } else if (plan.strategy === "stage_amp_home" || plan.strategy === "stage_amp_secrets") {
+    if (daemonLocation !== "local") {
+      return {
+        status: "skip",
+        reason: `subscription auth matrix filesystem staging requires local daemon locations (got ${daemonLocation})`,
+        artifacts,
+      };
+    }
     const dataRoot = ensureLocalDaemonDataDir();
     artifacts.runtime_stage = stageAmpRuntimeAuth(plan, dataRoot);
     artifacts.account_response = await postJson(plan.endpoint, plan.body);
   } else if (plan.strategy === "stage_mistral_home") {
+    if (daemonLocation !== "local") {
+      return {
+        status: "skip",
+        reason: `subscription auth matrix filesystem staging requires local daemon locations (got ${daemonLocation})`,
+        artifacts,
+      };
+    }
     const dataRoot = ensureLocalDaemonDataDir();
     artifacts.runtime_stage = stageMistralRuntimeHome(plan, dataRoot);
     artifacts.account_response = await postJson(plan.endpoint, plan.body);

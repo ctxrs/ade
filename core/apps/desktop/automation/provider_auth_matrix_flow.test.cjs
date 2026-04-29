@@ -141,6 +141,46 @@ test("prepareSubscriptionAuth returns skip with blocker artifacts when codex oau
   assert.equal(subscriptionSourceCalled, false);
 });
 
+test("prepareSubscriptionAuth runs Codex OAuth against a remote daemon location", async () => {
+  process.env.CTX_E2E_CODEX_OAUTH_EMAIL = "user@example.com";
+  process.env.CTX_E2E_CODEX_OAUTH_PASSWORD = "super-secret-password";
+  process.env.CTX_E2E_CODEX_OAUTH_TOTP_SECRET = "JBSWY3DPEHPK3PXP";
+
+  const oauthCalls = [];
+  let subscriptionSourceCalled = false;
+  const { prepareSubscriptionAuth } = loadHelper({
+    completeCodexOauthWithBrowserCredentials: async (args) => {
+      oauthCalls.push(args);
+      return {
+        status: "success",
+        providerId: "codex",
+        loginId: "acct-codex",
+        activeAccount: { account_id: "acct-codex" },
+      };
+    },
+    selectSubscriptionSource: async () => {
+      subscriptionSourceCalled = true;
+      return { source: "subscription" };
+    },
+    daemonJson: async (method, requestPath) => {
+      assert.equal(method, "GET");
+      assert.equal(requestPath, "/api/providers/codex/accounts");
+      return { status: 200, payload: { accounts: [] } };
+    },
+  });
+
+  const result = await prepareSubscriptionAuth({
+    providerId: "codex",
+    daemonLocation: "remote",
+    executionEnvironment: "host",
+  });
+
+  assert.equal(result.status, "ready");
+  assert.equal(oauthCalls.length, 1);
+  assert.equal(oauthCalls[0].email, "user@example.com");
+  assert.equal(subscriptionSourceCalled, true);
+});
+
 test("cursor plan skips because matrix coverage moved to the dedicated cursor oauth spec", () => {
   const { resolveSubscriptionAuthPlan } = loadHelper();
   const result = resolveSubscriptionAuthPlan("cursor", {});

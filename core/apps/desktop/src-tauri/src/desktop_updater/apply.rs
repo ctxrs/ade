@@ -17,7 +17,7 @@ pub(super) async fn apply_app_update(
     {
         return Err("Desktop background update apply is not supported on Windows yet.".to_string());
     }
-    let channel = resolve_app_update_channel(req.channel.as_deref())?;
+    let channel = resolve_app_update_channel(&app, req.channel.as_deref())?;
     let download_id = support::normalize_download_id(req.download_id.as_deref());
     let pre_state = recovery::resolve_desktop_update_state(&app, &channel).await?;
 

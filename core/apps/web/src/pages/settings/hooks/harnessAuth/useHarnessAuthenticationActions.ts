@@ -13,7 +13,6 @@ import {
   type ProviderStatus,
   type QwenAccountsResponse,
 } from "../../../../api/client";
-import { desktopStartCodexLoginRelay, isDesktopApp, openExternalLink } from "../../../../utils/desktop";
 import { trackFeatureUsed } from "../../../../utils/analytics";
 import {
   deleteProviderAccount as executeDeleteProviderAccount,
@@ -44,6 +43,7 @@ import {
 } from "../harnessAuth/capabilities";
 import { runHarnessSubscriptionFlow } from "../harnessAuth/subscriptionFlow";
 import { acknowledgeProviderRuntimeWarnings, getProviderRuntimeWarningIds } from "../../../../utils/providerRuntimeWarnings";
+import { openCodexAuthUrlWithDesktopRelay } from "./codexDesktopRelay";
 import type { HarnessAuthModalOperation } from "./useHarnessAuthModalController";
 
 type StateSetter<T> = Dispatch<SetStateAction<T>>;
@@ -389,37 +389,14 @@ export function useHarnessAuthenticationActions(args: HarnessAuthenticationActio
     }
   }, [args, selectSubscriptionSourceIfSupported]);
 
-  const tryStartCodexDesktopRelay = useCallback(async (params: {
-    accountId: string;
-    expectedCallbackUrl?: string | null;
-    completionToken?: string | null;
-  }) => {
-    if (!isDesktopApp()) return false;
-    if (!params.expectedCallbackUrl) return false;
-    if (!params.completionToken) return false;
-    try {
-      return await desktopStartCodexLoginRelay({
-        login_id: params.accountId,
-        callback_url: params.expectedCallbackUrl,
-        completion_token: params.completionToken,
-      });
-    } catch {
-      return false;
-    }
-  }, []);
-
   const openCodexAuthUrl = useCallback(
     async (
       url: string,
       params?: { accountId: string; expectedCallbackUrl: string | null; completionToken: string | null },
     ) => {
-      if (!url) return;
-      if (params) {
-        await tryStartCodexDesktopRelay(params);
-      }
-      await openExternalLink(url);
+      await openCodexAuthUrlWithDesktopRelay(url, params);
     },
-    [tryStartCodexDesktopRelay],
+    [],
   );
 
   const submitHarnessSubscriptionModal = useCallback(async () => {

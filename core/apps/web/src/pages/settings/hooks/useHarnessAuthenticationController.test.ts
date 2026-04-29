@@ -66,7 +66,12 @@ import { resetProviderOnboardingCoordinatorForTests } from "../../../state/provi
 import { createDesktopLocalDaemonTargetScope } from "../../../state/scopeIdentity";
 import { getProviderOwnerScopeKeyOrNull } from "../../../state/providerScopeAdapters";
 import type { HarnessAuthRow } from "../harnessAuthRows";
-import { openExternalLink } from "../../../utils/desktop";
+import {
+  desktopGetConnection,
+  desktopStartCodexLoginRelay,
+  isDesktopApp,
+  openExternalLink,
+} from "../../../utils/desktop";
 import { readAcknowledgedProviderRuntimeWarningIds } from "../../../utils/providerRuntimeWarnings";
 
 const trackFeatureUsed = vi.hoisted(() => vi.fn());
@@ -306,6 +311,7 @@ vi.mock("../../../utils/desktop", async (importOriginal) => {
   const original = await importOriginal<typeof import("../../../utils/desktop")>();
   return {
     ...original,
+    desktopGetConnection: vi.fn(),
     desktopStartCodexLoginRelay: vi.fn(),
     isDesktopApp: vi.fn(() => false),
     openExternalLink: vi.fn(),
@@ -484,6 +490,14 @@ beforeEach(() => {
   vi.mocked(refreshHostProvidersBootstrap).mockReset();
   vi.mocked(refreshProvidersBootstrap).mockReset();
   vi.mocked(refreshProvidersBootstrapForScope).mockReset();
+  vi.mocked(desktopGetConnection).mockReset();
+  vi.mocked(desktopGetConnection).mockResolvedValue({
+    kind: "local",
+  } as Awaited<ReturnType<typeof desktopGetConnection>>);
+  vi.mocked(desktopStartCodexLoginRelay).mockReset();
+  vi.mocked(desktopStartCodexLoginRelay).mockResolvedValue(true);
+  vi.mocked(isDesktopApp).mockReset();
+  vi.mocked(isDesktopApp).mockReturnValue(false);
   vi.mocked(openExternalLink).mockReset();
   setBootstrapSnapshot("ws-test", makeBootstrap());
   setHostBootstrapSnapshot(makeBootstrap());
@@ -1588,6 +1602,51 @@ describe("useHarnessAuthenticationController", () => {
     expect(requireController(controller).harnessAuthModal).toBeNull();
     expect(vi.mocked(selectProviderHarnessSource)).not.toHaveBeenCalled();
     expect(requireController(controller).providerError).toBeNull();
+  });
+
+  it("does not open remote Codex OAuth when the desktop callback relay fails to start", async () => {
+    let controller: Controller | null = null;
+
+    vi.mocked(isDesktopApp).mockReturnValue(true);
+    vi.mocked(desktopGetConnection).mockResolvedValue({
+      kind: "ssh",
+      host: "devbox.example",
+      remote_port: 4399,
+    } as Awaited<ReturnType<typeof desktopGetConnection>>);
+    vi.mocked(desktopStartCodexLoginRelay).mockResolvedValue(false);
+    vi.mocked(startCodexLogin).mockResolvedValue({
+      account_id: "codex-login-remote",
+      auth_url: "https://example.com/codex-login",
+      expected_callback_url: "http://localhost:1455/auth/callback",
+      completion_token: "completion-token",
+    });
+
+    render(createElement(ControllerHarness, {
+      onChange: (next) => {
+        controller = next;
+      },
+    }));
+
+    await waitFor(() => {
+      expect(controller).not.toBeNull();
+    });
+
+    await act(async () => {
+      controller?.openHarnessAuthModal("codex");
+      controller?.patchHarnessAuthModal({ stage: "subscription" });
+    });
+
+    await act(async () => {
+      await controller?.submitHarnessSubscriptionModal();
+    });
+
+    expect(vi.mocked(desktopStartCodexLoginRelay)).toHaveBeenCalledWith({
+      login_id: "codex-login-remote",
+      callback_url: "http://localhost:1455/auth/callback",
+      completion_token: "completion-token",
+    });
+    expect(vi.mocked(openExternalLink)).not.toHaveBeenCalled();
+    expect(requireController(controller).providerError).toContain("remote callback relay");
   });
 
   it("suppresses stale subscription completion after switching providers", async () => {

@@ -177,7 +177,7 @@
       "auth_mode": "subscription_oauth",
       "daemon_location": "remote",
       "execution_environment": "host",
-      "support": "deferred",
+      "support": "supported",
       "lane": "nightly",
       "required_assertions": [
         "probe_success",
@@ -187,9 +187,11 @@
       "owner": "provider-codex",
       "prerequisites": [],
       "runner": {
-        "kind": "none"
+        "kind": "desktop_wdio",
+        "spec": "automation/specs/provider-auth-matrix-cell.spec.cjs",
+        "scenarios": "provider,provider-auth-matrix"
       },
-      "skip_reason": "coverage_not_implemented_yet"
+      "skip_reason": null
     },
     {
       "id": "codex.subscription_oauth.remote.sandbox",
@@ -197,7 +199,7 @@
       "auth_mode": "subscription_oauth",
       "daemon_location": "remote",
       "execution_environment": "sandbox",
-      "support": "deferred",
+      "support": "supported",
       "lane": "nightly",
       "required_assertions": [
         "probe_success",
@@ -207,9 +209,11 @@
       "owner": "provider-codex",
       "prerequisites": [],
       "runner": {
-        "kind": "none"
+        "kind": "desktop_wdio",
+        "spec": "automation/specs/provider-auth-matrix-cell.spec.cjs",
+        "scenarios": "provider,provider-auth-matrix"
       },
-      "skip_reason": "coverage_not_implemented_yet"
+      "skip_reason": null
     },
     {
       "id": "codex.endpoint_api_key.local.host",

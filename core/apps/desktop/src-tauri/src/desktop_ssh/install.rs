@@ -92,11 +92,10 @@ pub(super) fn install_remote_daemon_over_ssh(
     user: Option<&str>,
     remote_platform: RemoteLinuxPlatform,
     remote_ctx_bin: &str,
+    channel: &str,
 ) -> Result<()> {
     let target = ssh_target(host, user);
-    let channel = normalize_update_channel(std::env::var("CTX_DESKTOP_CHANNEL").ok().as_deref())
-        .map_err(anyhow::Error::msg)?;
-    let artifact = resolve_managed_remote_daemon_artifact(remote_platform.arch, &channel)?;
+    let artifact = resolve_managed_remote_daemon_artifact(remote_platform.arch, channel)?;
     let parent_dir = remote_ctx_bin_parent_dir(remote_ctx_bin)?;
     let remote_ctx_bin = validate_remote_ctx_bin(remote_ctx_bin)?;
     let temp_remote_path = format!("{remote_ctx_bin}.tmp-{}", std::process::id());

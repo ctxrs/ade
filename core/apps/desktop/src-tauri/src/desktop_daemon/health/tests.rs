@@ -10,6 +10,7 @@ fn expected_identity(
         exact_version: exact_version.to_string(),
         build_id: build_id.to_string(),
         compatibility_token: compatibility_token.to_string(),
+        channel: Some("stable".to_string()),
     }
 }
 

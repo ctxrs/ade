@@ -183,6 +183,7 @@ fn execute_bootstrap_plan(
             plan.target.user.as_deref(),
             plan.platform,
             MANAGED_REMOTE_CTX_BIN,
+            &channel,
         )
         .map_err(|install_err| install_err.context(REMOTE_BOOTSTRAP_CAPABILITY_MSG))?;
     }
@@ -343,7 +344,10 @@ async fn desktop_connect_ssh_inner(
         let state = app.state::<ConnectionManager>();
         state.mark_explicit_remote_intent_for_scope(&scope);
     }
-    let channel = normalize_update_channel(std::env::var("CTX_DESKTOP_CHANNEL").ok().as_deref())?;
+    let expected_identity = load_desktop_build_identity(&app)
+        .map_err(|err| format!("failed to load desktop identity: {err:#}"))?;
+    let channel =
+        normalize_update_channel_with_identity(None, expected_identity.channel.as_deref())?;
     let prepared = tauri::async_runtime::spawn_blocking({
         let target = target.clone();
         let job_id = job_id.clone();
@@ -355,12 +359,11 @@ async fn desktop_connect_ssh_inner(
 
     let connected = match prepared {
         InitialConnectOutcome::Connected(connected) => {
-            let expected_identity = load_desktop_build_identity(&app)
-                .map_err(|err| format!("failed to load desktop identity: {err:#}"))?;
             tauri::async_runtime::spawn_blocking({
                 let app = app.clone();
                 let target = target.clone();
                 let channel = channel.clone();
+                let expected_identity = expected_identity.clone();
                 move || {
                     update_connected_remote_if_needed(
                         &app,
@@ -378,7 +381,7 @@ async fn desktop_connect_ssh_inner(
         InitialConnectOutcome::Planned(plan) => {
             desktop_updater::ensure_desktop_app_current_for_remote_bootstrap(&app, &channel)
                 .await?;
-            tauri::async_runtime::spawn_blocking({
+            let connected = tauri::async_runtime::spawn_blocking({
                 let app = app.clone();
                 let channel = channel.clone();
                 let job_id = job_id.clone();
@@ -386,7 +389,25 @@ async fn desktop_connect_ssh_inner(
             })
             .await
             .map_err(|e| format!("failed to reach remote daemon: {e}"))?
-            .map_err(|e| format!("failed to reach remote daemon: {e:#}"))?
+            .map_err(|e| format!("failed to reach remote daemon: {e:#}"))?;
+            tauri::async_runtime::spawn_blocking({
+                let app = app.clone();
+                let target = target.clone();
+                let channel = channel.clone();
+                let expected_identity = expected_identity.clone();
+                move || {
+                    update_connected_remote_if_needed(
+                        &app,
+                        &target,
+                        connected,
+                        &channel,
+                        &expected_identity,
+                    )
+                }
+            })
+            .await
+            .map_err(|e| format!("failed to update remote daemon: {e}"))?
+            .map_err(|e| format!("failed to update remote daemon: {e:#}"))?
         }
     };
 

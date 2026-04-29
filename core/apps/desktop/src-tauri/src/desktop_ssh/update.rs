@@ -18,6 +18,24 @@ const REMOTE_PENDING_UPDATE_RETRY_MS: u64 = 5_000;
 
 type RemoteUpdateKeySet = std::sync::Mutex<std::collections::HashSet<String>>;
 
+fn load_identity_channel_if_needed(
+    app: &tauri::AppHandle,
+    requested_channel: Option<&str>,
+) -> Result<Option<String>> {
+    let requested_present = requested_channel
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .is_some();
+    let env_present = std::env::var("CTX_DESKTOP_CHANNEL")
+        .ok()
+        .map(|value| !value.trim().is_empty())
+        .unwrap_or(false);
+    if requested_present || env_present {
+        return Ok(None);
+    }
+    Ok(load_desktop_build_identity(app)?.channel)
+}
+
 fn pending_remote_update_workers() -> &'static RemoteUpdateKeySet {
     static WORKERS: std::sync::OnceLock<RemoteUpdateKeySet> = std::sync::OnceLock::new();
     WORKERS.get_or_init(|| std::sync::Mutex::new(std::collections::HashSet::new()))
@@ -214,7 +232,8 @@ fn run_pending_remote_daemon_update_worker(
             continue;
         }
 
-        match update_current_remote_daemon_for_scope(app, state.inner(), scope, Some(channel)) {
+        match update_current_remote_daemon_for_scope(app, state.inner(), scope, Some(channel), None)
+        {
             Ok(_) => return Ok(()),
             Err(err) => {
                 release_remote_update_drain(&base_url, &token);
@@ -305,6 +324,8 @@ pub(crate) async fn desktop_update_remote_daemon(
     }
     let channel = req.channel.clone();
     let app_for_update = app.clone();
+    let identity_channel =
+        load_identity_channel_if_needed(&app, channel.as_deref()).map_err(to_err)?;
     let scope = window.label().to_string();
     tauri::async_runtime::spawn_blocking(move || {
         let state = app_for_update.state::<ConnectionManager>();
@@ -313,6 +334,7 @@ pub(crate) async fn desktop_update_remote_daemon(
             state.inner(),
             &scope,
             channel.as_deref(),
+            identity_channel.as_deref(),
         )
     })
     .await
@@ -326,7 +348,14 @@ pub(crate) fn update_current_remote_daemon(
     state: &ConnectionManager,
     requested_channel: Option<&str>,
 ) -> Result<DesktopRemoteDaemonUpdateResp> {
-    update_current_remote_daemon_for_scope(app, state, DEFAULT_CONNECTION_SCOPE, requested_channel)
+    let identity_channel = load_identity_channel_if_needed(app, requested_channel)?;
+    update_current_remote_daemon_for_scope(
+        app,
+        state,
+        DEFAULT_CONNECTION_SCOPE,
+        requested_channel,
+        identity_channel.as_deref(),
+    )
 }
 
 pub(crate) fn update_current_remote_daemon_for_scope(
@@ -334,8 +363,10 @@ pub(crate) fn update_current_remote_daemon_for_scope(
     state: &ConnectionManager,
     scope: &str,
     requested_channel: Option<&str>,
+    identity_channel: Option<&str>,
 ) -> Result<DesktopRemoteDaemonUpdateResp> {
-    let channel = normalize_update_channel(requested_channel).map_err(anyhow::Error::msg)?;
+    let channel = normalize_update_channel_with_identity(requested_channel, identity_channel)
+        .map_err(anyhow::Error::msg)?;
     let target = state.ssh_target_for_scope(scope)?;
     let target_key = remote_update_target_key_for_target(&target);
     let _singleflight = acquire_remote_update_singleflight(&target_key)
@@ -394,6 +425,7 @@ pub(crate) fn update_current_remote_daemon_for_scope(
                 user.as_deref(),
                 remote_platform,
                 &managed_remote_ctx_bin,
+                &channel,
             )
             .map_err(|install_err| install_err.context(REMOTE_BOOTSTRAP_CAPABILITY_MSG))?;
         }

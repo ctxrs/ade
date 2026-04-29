@@ -9,6 +9,8 @@ const { assertWorkspaceTerminalCwdPrefix } = require("./helpers/workspace_wizard
 const {
   ensureCodexOpenRouterWorkspaceReady,
   getProviderStatus,
+  installManagedProvidersAndAssertInstalled,
+  resolveManagedProviderInstallIds,
   verifyProviderForWorkspace,
 } = require("./helpers/provider_runtime.cjs");
 const { runDeterministicFirstTurnOutcome } = require("./helpers/first_turn_contract.cjs");
@@ -29,6 +31,7 @@ const CONTRACT_REPORT_PATH = String(
 ).trim();
 const REQUIRE_FIRST_TURN_SUCCESS = parseBoolean(process.env.CTX_AUTOMATION_REMOTE_REQUIRE_FIRST_TURN_SUCCESS || "0");
 const SKIP_MANAGED_BINARY_RESET = parseBoolean(process.env.CTX_AUTOMATION_REMOTE_SKIP_MANAGED_BINARY_RESET || "0");
+const REQUIRE_ALL_HARNESS_INSTALLS = parseBoolean(process.env.CTX_REMOTE_WORKSPACE_E2E_REQUIRE_ALL_HARNESS_INSTALLS || "0");
 const fixture = resolveRemoteFixtureEnv({ lane: "host" });
 const perfBudgets = resolveRemotePerformanceBudgets({ fixture });
 
@@ -458,7 +461,7 @@ const collectFailureArtifacts = async (stage) => {
 
 describe("remote bootstrap install e2e", () => {
   it("connects over SSH and validates managed remote daemon bootstrap contracts", async function () {
-    this.timeout(12 * 60_000);
+    this.timeout(REQUIRE_ALL_HARNESS_INSTALLS ? 45 * 60_000 : 12 * 60_000);
 
     contractRecorder = createRemoteContractRecorder({
       outputPath: CONTRACT_REPORT_PATH,
@@ -487,6 +490,8 @@ describe("remote bootstrap install e2e", () => {
       expect_connect_failure: EXPECT_CONNECT_FAILURE,
       require_first_turn_success: REQUIRE_FIRST_TURN_SUCCESS,
       skip_managed_binary_reset: SKIP_MANAGED_BINARY_RESET,
+      require_all_harness_installs: REQUIRE_ALL_HARNESS_INSTALLS,
+      managed_provider_ids: REQUIRE_ALL_HARNESS_INSTALLS ? resolveManagedProviderInstallIds() : [],
       contract_report_path: CONTRACT_REPORT_PATH,
       first_turn_report_path: FIRST_TURN_REPORT_PATH || null,
       perf_budgets: perfBudgets,
@@ -619,6 +624,14 @@ describe("remote bootstrap install e2e", () => {
       });
       if (REQUIRE_FIRST_TURN_SUCCESS && firstTurn.status !== "success") {
         throw new Error(`expected first turn success, got ${JSON.stringify(firstTurn)}`);
+      }
+
+      if (REQUIRE_ALL_HARNESS_INSTALLS) {
+        const managedProviderInstalls = await installManagedProvidersAndAssertInstalled("host", {
+          recorder: contractRecorder,
+          artifactPrefix: "host_acceptance",
+        });
+        contractRecorder.recordArtifact("host_acceptance_managed_provider_installs", managedProviderInstalls);
       }
 
       const postBootstrapState = collectRemoteRuntimeState("remote_state_after_bootstrap");

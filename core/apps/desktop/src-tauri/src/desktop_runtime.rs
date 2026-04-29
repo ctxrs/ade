@@ -12,6 +12,8 @@ pub(crate) struct DesktopBuildIdentity {
     pub(crate) build_id: String,
     #[serde(rename = "compatibilityToken")]
     pub(crate) compatibility_token: String,
+    #[serde(default)]
+    pub(crate) channel: Option<String>,
 }
 
 pub(super) fn desktop_dev_instance_id() -> &'static str {

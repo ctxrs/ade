@@ -34,11 +34,26 @@ const REMOTE_BOOTSTRAP_FRESHNESS_UNVERIFIED_PREFIX: &str =
 static STAGING_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
 static APPLY_IN_PROGRESS: OnceLock<AsyncMutex<()>> = OnceLock::new();
 
-fn resolve_app_update_channel(requested: Option<&str>) -> Result<String, String> {
-    let channel = requested
-        .map(str::to_string)
-        .or_else(|| std::env::var("CTX_DESKTOP_CHANNEL").ok());
-    desktop_ssh::normalize_update_channel(channel.as_deref())
+fn resolve_app_update_channel(
+    app: &tauri::AppHandle,
+    requested: Option<&str>,
+) -> Result<String, String> {
+    let requested_present = requested
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .is_some();
+    let env_present = std::env::var("CTX_DESKTOP_CHANNEL")
+        .ok()
+        .map(|value| !value.trim().is_empty())
+        .unwrap_or(false);
+    let identity_channel = if requested_present || env_present {
+        None
+    } else {
+        load_desktop_build_identity(app)
+            .map_err(|err| format!("failed to load desktop identity: {err:#}"))?
+            .channel
+    };
+    desktop_ssh::normalize_update_channel_with_identity(requested, identity_channel.as_deref())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -186,7 +201,7 @@ pub(super) async fn desktop_get_app_update_state(
     app: tauri::AppHandle,
     req: DesktopAppUpdateCheckReq,
 ) -> Result<DesktopAppUpdateStateResp, String> {
-    let channel = resolve_app_update_channel(req.channel.as_deref())?;
+    let channel = resolve_app_update_channel(&app, req.channel.as_deref())?;
     recovery::resolve_desktop_update_state(&app, &channel).await
 }
 

@@ -133,8 +133,7 @@ fn process_codex_login_relay_connection(
 
     let state = app.state::<ConnectionManager>();
     let manager: &ConnectionManager = state.inner();
-    ensure_local_connection_for_user_action_for_scope(app, manager, scope)
-        .context("ensuring daemon connection")?;
+    ensure_local_connection_for_scope(app, manager, scope).context("ensuring daemon connection")?;
     let body = serde_json::json!({
         "callback_url": callback_url,
         "completion_token": completion_token,

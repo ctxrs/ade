@@ -16,6 +16,8 @@ const {
 const {
   ensureCodexOpenRouterWorkspaceReady,
   getProviderStatus,
+  installManagedProvidersAndAssertInstalled,
+  resolveManagedProviderInstallIds,
   verifyProviderForWorkspace,
 } = require("./helpers/provider_runtime.cjs");
 const { runDeterministicFirstTurnOutcome } = require("./helpers/first_turn_contract.cjs");
@@ -32,6 +34,8 @@ const reportPath = String(
   process.env.CTX_REMOTE_CONTAINER_CONTRACT_REPORT || path.join("/tmp", "ctx-remote-container-contract.json"),
 ).trim();
 const REQUIRE_FIRST_TURN_SUCCESS = parseBoolean(process.env.CTX_AUTOMATION_REMOTE_REQUIRE_FIRST_TURN_SUCCESS || "0");
+const REQUIRE_ALL_HARNESS_INSTALLS = parseBoolean(process.env.CTX_REMOTE_WORKSPACE_E2E_REQUIRE_ALL_HARNESS_INSTALLS || "0");
+const SKIP_MANAGED_BINARY_RESET = parseBoolean(process.env.CTX_AUTOMATION_REMOTE_SKIP_MANAGED_BINARY_RESET || "0");
 const fixture = resolveRemoteFixtureEnv({ lane: "sandbox" });
 const perfBudgets = resolveRemotePerformanceBudgets({ fixture });
 const scenarioFilter = new Set(
@@ -386,6 +390,13 @@ describe("remote sandbox contract (env-gated desktop e2e)", () => {
   };
 
   const resetRemoteBootstrapState = () => {
+    if (SKIP_MANAGED_BINARY_RESET) {
+      remoteSsh(`set -euo pipefail; mkdir -p ${JSON.stringify(remoteBase)}`, {
+        auth: remoteAuthMode,
+        label: "remote-bootstrap-preserve",
+      });
+      return;
+    }
     remoteSsh(
       [
         "set -euo pipefail",
@@ -422,7 +433,7 @@ describe("remote sandbox contract (env-gated desktop e2e)", () => {
   });
 
   it("creates remote sandbox workspace when remote env is present", async function () {
-    this.timeout(12 * 60_000);
+    this.timeout(REQUIRE_ALL_HARNESS_INSTALLS ? 45 * 60_000 : 12 * 60_000);
 
     contractRecorder = createRemoteContractRecorder({
       outputPath: reportPath,
@@ -450,6 +461,9 @@ describe("remote sandbox contract (env-gated desktop e2e)", () => {
     contractRecorder.recordArtifact("fixture_preflight", {
       report_path: reportPath,
       require_first_turn_success: REQUIRE_FIRST_TURN_SUCCESS,
+      require_all_harness_installs: REQUIRE_ALL_HARNESS_INSTALLS,
+      skip_managed_binary_reset: SKIP_MANAGED_BINARY_RESET,
+      managed_provider_ids: REQUIRE_ALL_HARNESS_INSTALLS ? resolveManagedProviderInstallIds() : [],
       perf_budgets: perfBudgets,
       scenario_filter: Array.from(scenarioFilter.values()),
       fixture,
@@ -480,7 +494,7 @@ describe("remote sandbox contract (env-gated desktop e2e)", () => {
       resetRemoteBootstrapState();
       const beforeState = managedBinaryState();
       contractRecorder.recordArtifact("managed_binary_state_before_connect", { state: beforeState });
-      if (beforeState !== "missing") {
+      if (!SKIP_MANAGED_BINARY_RESET && beforeState !== "missing") {
         throw new Error(`expected managed binary to be missing before connect, got '${beforeState}'`);
       }
 
@@ -591,6 +605,14 @@ describe("remote sandbox contract (env-gated desktop e2e)", () => {
         firstTurn.status === "success" ? "pass" : "warn",
         firstTurn.status === "success" ? "remote sandbox first turn succeeded" : JSON.stringify(firstTurn),
       );
+
+      if (REQUIRE_ALL_HARNESS_INSTALLS) {
+        const managedProviderInstalls = await installManagedProvidersAndAssertInstalled("container", {
+          recorder: contractRecorder,
+          artifactPrefix: "sandbox_acceptance",
+        });
+        contractRecorder.recordArtifact("sandbox_acceptance_managed_provider_installs", managedProviderInstalls);
+      }
 
       const postLaunchState = collectRemoteRuntimeState(remoteAuthMode, "remote_state_after_initial_launch");
       await assertProviderInstalledNoInstallRunning("container", "post_launch");

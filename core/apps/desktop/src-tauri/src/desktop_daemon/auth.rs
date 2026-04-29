@@ -146,9 +146,15 @@ fn read_remote_daemon_auth(
         .context("reading daemon auth file over ssh")?;
 
     if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if stderr.contains(DAEMON_AUTH_FILENAME) && stderr.contains("No such file") {
+            return Err(anyhow!(
+                "remote daemon auth file is missing at {auth_path}; the remote daemon is not ready or was started outside managed ctx bootstrap. Reconnect with remote start enabled so ctx can start the managed daemon."
+            ));
+        }
         return Err(anyhow!(
             "ssh read failed: {}",
-            String::from_utf8_lossy(&output.stderr)
+            stderr
         ));
     }
 
