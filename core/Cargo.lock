@@ -1525,6 +1525,7 @@ dependencies = [
  "anyhow",
  "ctx-core",
  "directories",
+ "libc",
  "tempfile",
  "tokio",
  "windows-sys 0.59.0",

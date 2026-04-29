@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
@@ -293,16 +293,25 @@ pub fn materialized_path_for_attachment(
 }
 
 pub fn sanitize_mount_relpath(value: &str) -> Result<PathBuf> {
-    if value.trim().is_empty() {
+    let value = value.trim();
+    if value.is_empty() {
         anyhow::bail!("mount_relpath must not be empty");
+    }
+    if value.contains('\\') {
+        anyhow::bail!("mount_relpath must use '/' separators: {value}");
+    }
+    for segment in value.split('/') {
+        if segment.is_empty() || segment == "." || segment == ".." {
+            anyhow::bail!("mount_relpath contains unsupported component: {value}");
+        }
     }
     let path = PathBuf::from(value);
     if path.is_absolute() {
         anyhow::bail!("mount_relpath must be relative: {value}");
     }
     for part in path.components() {
-        if matches!(part, std::path::Component::ParentDir) {
-            anyhow::bail!("mount_relpath must not contain '..': {value}");
+        if !matches!(part, Component::Normal(_)) {
+            anyhow::bail!("mount_relpath contains unsupported component: {value}");
         }
     }
     Ok(path)
@@ -373,6 +382,9 @@ fn normalize_attachment_config(
         .mount_relpath
         .clone()
         .unwrap_or_else(|| default_mount_relpath(&cfg.kind, &name));
+    let mount_relpath = sanitize_mount_relpath(&mount_relpath)?
+        .to_string_lossy()
+        .to_string();
     let subpath = cfg
         .subpath
         .map(|value| value.trim().to_string())
@@ -412,13 +424,11 @@ async fn materialize_reference_repo(
     let dest = materialized_path_for_attachment(data_root, attachment);
     let should_update = refresh || !dest.exists();
     if should_update {
-        if dest.exists() {
-            tokio::fs::remove_dir_all(&dest).await?;
-        }
-        if let Some(parent) = dest.parent() {
-            tokio::fs::create_dir_all(parent).await?;
-        }
+        remove_materialized_path_if_exists(data_root, &dest).await?;
+        ensure_materialized_parent(data_root, &dest).await?;
         clone_reference_repo(&attachment.source, attachment.revision.as_deref(), &dest).await?;
+    } else {
+        validate_materialized_path(data_root, attachment).await?;
     }
     Ok(MaterializationResult {
         path: dest,
@@ -490,6 +500,250 @@ async fn clone_reference_repo(source: &str, revision: Option<&str>, dest: &Path)
 
 fn attachment_store_root(data_root: &Path) -> PathBuf {
     data_root.join("attachments")
+}
+
+pub async fn remove_materialized_root_if_exists(
+    data_root: &Path,
+    attachment: &WorkspaceAttachment,
+) -> Result<()> {
+    let root = materialized_root_for_attachment(data_root, attachment);
+    remove_materialized_path_if_exists(data_root, &root).await
+}
+
+pub async fn validate_materialized_path(
+    data_root: &Path,
+    attachment: &WorkspaceAttachment,
+) -> Result<()> {
+    let path = materialized_path_for_attachment(data_root, attachment);
+    let data_root = data_root.to_path_buf();
+    tokio::task::spawn_blocking(move || validate_materialized_path_sync(&data_root, &path))
+        .await
+        .context("joining attachment materialization validation task")?
+}
+
+pub(crate) async fn ensure_materialized_revision_parent(
+    data_root: &Path,
+    attachment: &WorkspaceAttachment,
+) -> Result<()> {
+    let dest = materialized_path_for_attachment(data_root, attachment);
+    ensure_materialized_parent(data_root, &dest).await
+}
+
+pub(crate) async fn remove_materialized_revision_if_exists(
+    data_root: &Path,
+    attachment: &WorkspaceAttachment,
+) -> Result<()> {
+    let dest = materialized_path_for_attachment(data_root, attachment);
+    remove_materialized_path_if_exists(data_root, &dest).await
+}
+
+async fn remove_materialized_path_if_exists(data_root: &Path, path: &Path) -> Result<()> {
+    let data_root = data_root.to_path_buf();
+    let path = path.to_path_buf();
+    tokio::task::spawn_blocking(move || remove_materialized_path_if_exists_sync(&data_root, &path))
+        .await
+        .context("joining attachment materialization cleanup task")?
+}
+
+async fn ensure_materialized_parent(data_root: &Path, path: &Path) -> Result<()> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("attachment materialization path missing parent"))?
+        .to_path_buf();
+    let data_root = data_root.to_path_buf();
+    tokio::task::spawn_blocking(move || ensure_materialized_dir_chain_sync(&data_root, &parent))
+        .await
+        .context("joining attachment materialization parent task")?
+}
+
+fn remove_materialized_path_if_exists_sync(data_root: &Path, path: &Path) -> Result<()> {
+    validate_materialized_child_path(data_root, path)?;
+    if let Some(parent) = path.parent() {
+        ensure_materialized_existing_chain_sync(data_root, parent)?;
+    }
+    match std::fs::symlink_metadata(path) {
+        Ok(meta) => {
+            if meta.file_type().is_symlink() {
+                anyhow::bail!(
+                    "attachment materialization path must not be a symlink: {}",
+                    path.display()
+                );
+            }
+            if !meta.is_dir() {
+                anyhow::bail!(
+                    "attachment materialization path must be a directory: {}",
+                    path.display()
+                );
+            }
+            std::fs::remove_dir_all(path)
+                .with_context(|| format!("removing attachment materialization {}", path.display()))
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(err)
+            .with_context(|| format!("reading attachment materialization {}", path.display())),
+    }
+}
+
+fn validate_materialized_path_sync(data_root: &Path, path: &Path) -> Result<()> {
+    validate_materialized_child_path(data_root, path)?;
+    if let Some(parent) = path.parent() {
+        ensure_materialized_existing_chain_sync(data_root, parent)?;
+    }
+    let meta = std::fs::symlink_metadata(path)
+        .with_context(|| format!("reading attachment materialization {}", path.display()))?;
+    if meta.file_type().is_symlink() {
+        anyhow::bail!(
+            "attachment materialization path must not be a symlink: {}",
+            path.display()
+        );
+    }
+    if !meta.is_dir() {
+        anyhow::bail!(
+            "attachment materialization path must be a directory: {}",
+            path.display()
+        );
+    }
+    Ok(())
+}
+
+fn ensure_materialized_dir_chain_sync(data_root: &Path, path: &Path) -> Result<()> {
+    validate_materialized_child_path(data_root, path)?;
+    let rel = path.strip_prefix(data_root).with_context(|| {
+        format!(
+            "attachment materialization path {} is outside data root {}",
+            path.display(),
+            data_root.display()
+        )
+    })?;
+    let mut current = data_root.to_path_buf();
+    for component in rel.components() {
+        let Component::Normal(segment) = component else {
+            anyhow::bail!(
+                "attachment materialization path contains unsupported component: {}",
+                path.display()
+            );
+        };
+        current.push(segment);
+        match std::fs::symlink_metadata(&current) {
+            Ok(meta) => {
+                if meta.file_type().is_symlink() {
+                    anyhow::bail!(
+                        "attachment materialization parent must not be a symlink: {}",
+                        current.display()
+                    );
+                }
+                if !meta.is_dir() {
+                    anyhow::bail!(
+                        "attachment materialization parent must be a directory: {}",
+                        current.display()
+                    );
+                }
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                std::fs::create_dir(&current).with_context(|| {
+                    format!(
+                        "creating attachment materialization parent {}",
+                        current.display()
+                    )
+                })?;
+                let meta = std::fs::symlink_metadata(&current).with_context(|| {
+                    format!(
+                        "verifying attachment materialization parent {}",
+                        current.display()
+                    )
+                })?;
+                if meta.file_type().is_symlink() || !meta.is_dir() {
+                    anyhow::bail!(
+                        "attachment materialization parent was not created as a directory: {}",
+                        current.display()
+                    );
+                }
+            }
+            Err(err) => {
+                return Err(err).with_context(|| {
+                    format!(
+                        "reading attachment materialization parent {}",
+                        current.display()
+                    )
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
+fn ensure_materialized_existing_chain_sync(data_root: &Path, path: &Path) -> Result<()> {
+    validate_materialized_child_path(data_root, path)?;
+    let rel = path.strip_prefix(data_root).with_context(|| {
+        format!(
+            "attachment materialization path {} is outside data root {}",
+            path.display(),
+            data_root.display()
+        )
+    })?;
+    let mut current = data_root.to_path_buf();
+    for component in rel.components() {
+        let Component::Normal(segment) = component else {
+            anyhow::bail!(
+                "attachment materialization path contains unsupported component: {}",
+                path.display()
+            );
+        };
+        current.push(segment);
+        match std::fs::symlink_metadata(&current) {
+            Ok(meta) => {
+                if meta.file_type().is_symlink() {
+                    anyhow::bail!(
+                        "attachment materialization parent must not be a symlink: {}",
+                        current.display()
+                    );
+                }
+                if !meta.is_dir() {
+                    anyhow::bail!(
+                        "attachment materialization parent must be a directory: {}",
+                        current.display()
+                    );
+                }
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(err) => {
+                return Err(err).with_context(|| {
+                    format!(
+                        "reading attachment materialization parent {}",
+                        current.display()
+                    )
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_materialized_child_path(data_root: &Path, path: &Path) -> Result<()> {
+    let store_root = attachment_store_root(data_root);
+    if !path.starts_with(&store_root) {
+        anyhow::bail!(
+            "attachment materialization path {} is outside attachment store {}",
+            path.display(),
+            store_root.display()
+        );
+    }
+    let rel = path.strip_prefix(data_root).with_context(|| {
+        format!(
+            "attachment materialization path {} is outside data root {}",
+            path.display(),
+            data_root.display()
+        )
+    })?;
+    for component in rel.components() {
+        if !matches!(component, Component::Normal(_)) {
+            anyhow::bail!(
+                "attachment materialization path contains unsupported component: {}",
+                path.display()
+            );
+        }
+    }
+    Ok(())
 }
 
 fn default_mount_relpath(kind: &WorkspaceAttachmentKind, name: &str) -> String {

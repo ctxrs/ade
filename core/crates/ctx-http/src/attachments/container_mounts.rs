@@ -343,6 +343,8 @@ pub(crate) async fn ensure_attachment_mount(
         if !path.exists() {
             anyhow::bail!("attachment materialization not found at {}", path.display());
         }
+        workspace_attachments::validate_materialized_path(&state.core.data_root, attachment)
+            .await?;
         MaterializationResult {
             path,
             materialized_id: revision_key(attachment),
@@ -350,6 +352,7 @@ pub(crate) async fn ensure_attachment_mount(
     };
     let mount_rel = sanitize_mount_relpath(&attachment.mount_relpath)?;
     let mount_abs = worktree_root.join(&mount_rel);
+    validate_mount_path_in_worktree(worktree_root, &mount_abs)?;
     let worktree = state
         .global_store()
         .get_worktree(worktree_id)
@@ -468,6 +471,13 @@ pub(crate) async fn cleanup_removed_attachment(
                 .is_some(),
         };
         if container_mode {
+            let Some(worktree) = worktree.as_ref() else {
+                anyhow::bail!(
+                    "cannot safely remove sandbox attachment mount without worktree metadata"
+                );
+            };
+            let data_plane = resolve_worktree_data_plane(state, worktree).await?;
+            validate_mount_path_in_worktree(&data_plane.live_worktree_root, &path)?;
             let _ = container_remove_mount_path(
                 state,
                 attachment.workspace_id,
@@ -488,10 +498,8 @@ pub(crate) async fn cleanup_removed_attachment(
     store
         .delete_worktree_attachment_mounts_for_attachment(attachment.id)
         .await?;
-    let root = materialized_root_for_attachment(state, attachment);
-    if root.exists() {
-        tokio::fs::remove_dir_all(root).await?;
-    }
+    workspace_attachments::remove_materialized_root_if_exists(&state.core.data_root, attachment)
+        .await?;
     let _ =
         container_remove_attachment_data_best_effort(state, attachment.workspace_id, attachment)
             .await;

@@ -20,25 +20,47 @@ impl DesktopStorage {
         self.pool
             .get_or_try_init(|| async {
                 let path = desktop_storage_path(app)?;
-                if let Some(parent) = path.parent() {
-                    std::fs::create_dir_all(parent).ok();
-                }
-                let options = SqliteConnectOptions::new()
-                    .filename(&path)
-                    .create_if_missing(true)
-                    .journal_mode(SqliteJournalMode::Wal)
-                    .synchronous(SqliteSynchronous::Normal)
-                    .busy_timeout(Duration::from_secs(5));
-                let pool = SqlitePoolOptions::new()
-                    .max_connections(1)
-                    .connect_with(options)
-                    .await
-                    .context("opening desktop storage sqlite db")?;
-                ensure_ui_kv_schema(&pool).await?;
-                Ok(pool)
+                open_desktop_storage_pool_at_path(&path).await
             })
             .await
     }
+}
+
+async fn open_desktop_storage_pool_at_path(path: &Path) -> Result<SqlitePool> {
+    if let Some(parent) = path.parent() {
+        ctx_fs::permissions::ensure_private_dir_sync(parent)?;
+    }
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_symlink() => {
+            anyhow::bail!(
+                "desktop storage sqlite path must not be a symlink: {}",
+                path.display()
+            );
+        }
+        Ok(_) => {}
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            ctx_fs::permissions::write_private_file_atomic_sync(path, b"")?;
+        }
+        Err(err) => {
+            return Err(err).with_context(|| {
+                format!("reading desktop storage sqlite path {}", path.display())
+            });
+        }
+    }
+    let options = SqliteConnectOptions::new()
+        .filename(path)
+        .create_if_missing(false)
+        .journal_mode(SqliteJournalMode::Wal)
+        .synchronous(SqliteSynchronous::Normal)
+        .busy_timeout(Duration::from_secs(5));
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(options)
+        .await
+        .context("opening desktop storage sqlite db")?;
+    ensure_ui_kv_schema(&pool).await?;
+    ctx_fs::permissions::harden_sqlite_file_family(path).await?;
+    Ok(pool)
 }
 
 fn now_ms_i64() -> i64 {
@@ -316,6 +338,29 @@ mod desktop_storage_tests {
 
         let notice = consume_desktop_storage_notice(&pool).await.unwrap();
         assert!(notice.is_none(), "corrupt-key self-heal must stay log-only");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test(flavor = "current_thread")]
+    async fn desktop_storage_file_pool_uses_private_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir =
+            std::env::temp_dir().join(format!("ctx-desktop-storage-{}", uuid::Uuid::new_v4()));
+        let path = dir.join("ui").join("desktop-ui-state.sqlite");
+
+        let pool = open_desktop_storage_pool_at_path(&path).await.unwrap();
+        pool.close().await;
+
+        let dir_mode = std::fs::metadata(path.parent().unwrap())
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777;
+        let file_mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(dir_mode, 0o700);
+        assert_eq!(file_mode, 0o600);
+        let _ = std::fs::remove_dir_all(dir);
     }
 }
 

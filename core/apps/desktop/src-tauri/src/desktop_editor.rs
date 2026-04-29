@@ -334,14 +334,12 @@ fn is_supported_iso_bmff_image(bytes: &[u8]) -> bool {
 
 fn save_desktop_settings(app: &tauri::AppHandle, settings: &DesktopSettings) -> Result<()> {
     let path = desktop_settings_path(app)?;
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).ok();
-    }
-    let tmp = path.with_extension("json.tmp");
+    save_desktop_settings_to_path(&path, settings)
+}
+
+fn save_desktop_settings_to_path(path: &Path, settings: &DesktopSettings) -> Result<()> {
     let bytes = serde_json::to_vec_pretty(settings)?;
-    std::fs::write(&tmp, bytes)?;
-    std::fs::rename(&tmp, &path)?;
-    Ok(())
+    ctx_fs::permissions::write_private_file_atomic_sync(path, &bytes)
 }
 
 #[cfg(test)]
@@ -353,6 +351,27 @@ mod tests {
             std::env::temp_dir().join(format!("ctx-desktop-editor-test-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn save_desktop_settings_writes_private_file() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = temp_test_dir();
+        let path = dir.join("ui").join("desktop-settings.json");
+
+        save_desktop_settings_to_path(&path, &DesktopSettings::default()).unwrap();
+
+        let dir_mode = std::fs::metadata(path.parent().unwrap())
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777;
+        let file_mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(dir_mode, 0o700);
+        assert_eq!(file_mode, 0o600);
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

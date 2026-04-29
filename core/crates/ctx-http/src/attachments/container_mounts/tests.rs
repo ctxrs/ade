@@ -1,3 +1,5 @@
+use crate::attachments::validate_mount_path_in_worktree;
+
 use super::resolve_attachment_source_path;
 
 #[tokio::test]
@@ -57,5 +59,62 @@ async fn resolve_attachment_source_path_allows_internal_symlinks() {
             .await
             .unwrap();
         assert_eq!(resolved, root.path().canonicalize().unwrap());
+    }
+}
+
+#[tokio::test]
+async fn sandbox_mount_validation_rejects_symlinked_ctx_parent() {
+    #[cfg(unix)]
+    {
+        let temp = tempfile::tempdir().unwrap();
+        let worktree = temp.path().join("worktree");
+        let outside = temp.path().join("outside");
+        std::fs::create_dir_all(&worktree).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::os::unix::fs::symlink(&outside, worktree.join(".ctx")).unwrap();
+
+        let target = worktree.join(".ctx/attachments/docs/docs");
+        let err = validate_mount_path_in_worktree(&worktree, &target)
+            .expect_err("sandbox mount validation should reject symlinked .ctx");
+
+        assert!(format!("{err:#}").contains("must not be a symlink"));
+    }
+}
+
+#[tokio::test]
+async fn sandbox_mount_validation_rejects_symlinked_attachments_parent() {
+    #[cfg(unix)]
+    {
+        let temp = tempfile::tempdir().unwrap();
+        let worktree = temp.path().join("worktree");
+        let outside = temp.path().join("outside");
+        std::fs::create_dir_all(worktree.join(".ctx")).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::os::unix::fs::symlink(&outside, worktree.join(".ctx").join("attachments")).unwrap();
+
+        let target = worktree.join(".ctx/attachments/docs/docs");
+        let err = validate_mount_path_in_worktree(&worktree, &target)
+            .expect_err("sandbox mount validation should reject symlinked attachments parent");
+
+        assert!(format!("{err:#}").contains("must not be a symlink"));
+    }
+}
+
+#[tokio::test]
+async fn sandbox_mount_validation_rejects_symlinked_docs_parent() {
+    #[cfg(unix)]
+    {
+        let temp = tempfile::tempdir().unwrap();
+        let worktree = temp.path().join("worktree");
+        let outside = temp.path().join("outside");
+        std::fs::create_dir_all(worktree.join(".ctx/attachments")).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::os::unix::fs::symlink(&outside, worktree.join(".ctx/attachments/docs")).unwrap();
+
+        let target = worktree.join(".ctx/attachments/docs/docs");
+        let err = validate_mount_path_in_worktree(&worktree, &target)
+            .expect_err("sandbox mount validation should reject symlinked docs parent");
+
+        assert!(format!("{err:#}").contains("must not be a symlink"));
     }
 }

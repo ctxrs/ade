@@ -1,6 +1,8 @@
 use super::{
-    default_mount_relpath, normalize_attachment_config, revision_key, sanitize_attachment_subpath,
-    sanitize_mount_relpath, AttachmentConfig,
+    default_mount_relpath, ensure_materialized_revision_parent, materialized_root_for_attachment,
+    normalize_attachment_config, remove_materialized_root_if_exists, revision_key,
+    sanitize_attachment_subpath, sanitize_mount_relpath, validate_materialized_path,
+    AttachmentConfig,
 };
 use ctx_core::ids::WorkspaceId;
 use ctx_core::models::{
@@ -23,8 +25,13 @@ fn default_mount_relpath_uses_kind_specific_roots() {
 fn sanitize_mount_relpath_rejects_invalid_paths() {
     assert!(sanitize_mount_relpath(".ctx/attachments/docs/api-guide").is_ok());
     assert!(sanitize_mount_relpath("").is_err());
+    assert!(sanitize_mount_relpath(".").is_err());
+    assert!(sanitize_mount_relpath("./x").is_err());
+    assert!(sanitize_mount_relpath("x/.").is_err());
+    assert!(sanitize_mount_relpath("x//y").is_err());
     assert!(sanitize_mount_relpath("/absolute/path").is_err());
     assert!(sanitize_mount_relpath("../escape").is_err());
+    assert!(sanitize_mount_relpath("safe\\escape").is_err());
 }
 
 #[test]
@@ -143,6 +150,27 @@ fn normalize_reference_repo_local_source_requires_absolute_path() {
 }
 
 #[test]
+fn normalize_attachment_config_rejects_invalid_mount_relpath() {
+    let err = normalize_attachment_config(
+        WorkspaceId::new(),
+        AttachmentConfig {
+            kind: WorkspaceAttachmentKind::ReferenceRepo,
+            name: "Docs".to_string(),
+            source: "https://example.com/repo.git".to_string(),
+            revision: None,
+            subpath: None,
+            mount_relpath: Some(".".to_string()),
+            mode: None,
+            update_policy: None,
+        },
+        None,
+    )
+    .expect_err("dot mount_relpath should fail");
+
+    assert!(format!("{err:#}").contains("mount_relpath"));
+}
+
+#[test]
 fn normalize_reference_repo_accepts_scp_style_ssh_urls() {
     let attachment = normalize_attachment_config(
         WorkspaceId::new(),
@@ -225,4 +253,108 @@ fn normalize_doc_mirror_rejects_rw_mode() {
     .expect_err("rw doc mirror should fail closed");
 
     assert!(format!("{err:#}").contains("read-only"));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn materialized_parent_creation_rejects_symlinked_attachment_store_parent() {
+    let data_root = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    let attachment = normalize_attachment_config(
+        WorkspaceId::new(),
+        AttachmentConfig {
+            kind: WorkspaceAttachmentKind::ReferenceRepo,
+            name: "Docs".to_string(),
+            source: "https://example.com/repo.git".to_string(),
+            revision: None,
+            subpath: None,
+            mount_relpath: None,
+            mode: None,
+            update_policy: None,
+        },
+        None,
+    )
+    .unwrap();
+    std::fs::create_dir_all(data_root.path().join("attachments/reference-repos")).unwrap();
+    std::os::unix::fs::symlink(
+        outside.path(),
+        data_root
+            .path()
+            .join("attachments/reference-repos/checkouts"),
+    )
+    .unwrap();
+
+    let err = ensure_materialized_revision_parent(data_root.path(), &attachment)
+        .await
+        .expect_err("symlinked materialization parent should fail");
+
+    assert!(format!("{err:#}").contains("must not be a symlink"));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn materialized_root_removal_rejects_symlinked_root_without_touching_target() {
+    let data_root = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    std::fs::write(outside.path().join("keep.txt"), b"keep").unwrap();
+    let attachment = normalize_attachment_config(
+        WorkspaceId::new(),
+        AttachmentConfig {
+            kind: WorkspaceAttachmentKind::ReferenceRepo,
+            name: "Docs".to_string(),
+            source: "https://example.com/repo.git".to_string(),
+            revision: None,
+            subpath: None,
+            mount_relpath: None,
+            mode: None,
+            update_policy: None,
+        },
+        None,
+    )
+    .unwrap();
+    let root = materialized_root_for_attachment(data_root.path(), &attachment);
+    std::fs::create_dir_all(root.parent().unwrap()).unwrap();
+    std::os::unix::fs::symlink(outside.path(), &root).unwrap();
+
+    let err = remove_materialized_root_if_exists(data_root.path(), &attachment)
+        .await
+        .expect_err("symlinked materialization root should fail");
+
+    assert!(format!("{err:#}").contains("must not be a symlink"));
+    assert!(
+        outside.path().join("keep.txt").exists(),
+        "cleanup must not delete through materialized root symlink"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn materialized_path_validation_rejects_symlinked_revision_path() {
+    let data_root = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    let attachment = normalize_attachment_config(
+        WorkspaceId::new(),
+        AttachmentConfig {
+            kind: WorkspaceAttachmentKind::ReferenceRepo,
+            name: "Docs".to_string(),
+            source: "https://example.com/repo.git".to_string(),
+            revision: Some("main".to_string()),
+            subpath: None,
+            mount_relpath: None,
+            mode: None,
+            update_policy: None,
+        },
+        None,
+    )
+    .unwrap();
+    let root = materialized_root_for_attachment(data_root.path(), &attachment);
+    let revision_path = root.join(revision_key(&attachment));
+    std::fs::create_dir_all(&root).unwrap();
+    std::os::unix::fs::symlink(outside.path(), &revision_path).unwrap();
+
+    let err = validate_materialized_path(data_root.path(), &attachment)
+        .await
+        .expect_err("symlinked revision path should fail");
+
+    assert!(format!("{err:#}").contains("must not be a symlink"));
 }

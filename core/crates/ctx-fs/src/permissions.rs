@@ -1,5 +1,5 @@
 use std::fs::{self, File, OpenOptions};
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -15,6 +15,7 @@ use windows_sys::Win32::{
         SetFileSecurityW, DACL_SECURITY_INFORMATION, PROTECTED_DACL_SECURITY_INFORMATION,
         PSECURITY_DESCRIPTOR,
     },
+    Storage::FileSystem::FILE_FLAG_OPEN_REPARSE_POINT,
 };
 
 pub const PRIVATE_DIR_MODE: u32 = 0o700;
@@ -61,6 +62,57 @@ pub fn harden_private_file_sync(path: &Path) -> Result<()> {
     #[cfg(windows)]
     apply_windows_private_acl(path)?;
     Ok(())
+}
+
+pub fn reject_symlink_sync(path: &Path) -> Result<bool> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) => {
+            if metadata.file_type().is_symlink() {
+                anyhow::bail!("private path must not be a symlink: {}", path.display());
+            }
+            Ok(true)
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(err) => Err(err).with_context(|| format!("reading private path {}", path.display())),
+    }
+}
+
+pub fn read_private_file_to_string_sync(path: &Path) -> Result<Option<String>> {
+    if !reject_symlink_sync(path)? {
+        return Ok(None);
+    }
+    let mut options = OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+
+        options.custom_flags(libc::O_NOFOLLOW);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+
+        options.custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+    }
+    let mut file = match options.open(path) {
+        Ok(file) => file,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => {
+            return Err(err).with_context(|| format!("opening private file {}", path.display()));
+        }
+    };
+    let metadata = file
+        .metadata()
+        .with_context(|| format!("reading private file metadata {}", path.display()))?;
+    if !metadata.is_file() {
+        anyhow::bail!("private path must be a regular file: {}", path.display());
+    }
+    harden_private_open_file_sync(&file, path)?;
+    let mut contents = String::new();
+    file.read_to_string(&mut contents)
+        .with_context(|| format!("reading private file {}", path.display()))?;
+    Ok(Some(contents))
 }
 
 pub async fn harden_private_file_if_exists(path: &Path) -> Result<()> {
@@ -138,10 +190,11 @@ pub fn open_private_append_sync(path: &Path) -> Result<File> {
         .parent()
         .with_context(|| format!("missing parent directory for {}", path.display()))?;
     ensure_private_dir_sync(parent)?;
+    reject_symlink_sync(path)?;
     let file = open_private_append_options()
         .open(path)
         .with_context(|| format!("opening private append file {}", path.display()))?;
-    harden_private_file_sync(path)?;
+    harden_private_open_file_sync(&file, path)?;
     Ok(file)
 }
 
@@ -227,7 +280,11 @@ fn open_private_append_options() -> OpenOptions {
     use std::os::unix::fs::OpenOptionsExt;
 
     let mut options = OpenOptions::new();
-    options.create(true).append(true).mode(PRIVATE_FILE_MODE);
+    options
+        .create(true)
+        .append(true)
+        .mode(PRIVATE_FILE_MODE)
+        .custom_flags(libc::O_NOFOLLOW);
     options
 }
 
@@ -235,7 +292,26 @@ fn open_private_append_options() -> OpenOptions {
 fn open_private_append_options() -> OpenOptions {
     let mut options = OpenOptions::new();
     options.create(true).append(true);
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+
+        options.custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+    }
     options
+}
+
+fn harden_private_open_file_sync(file: &File, path: &Path) -> Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        file.set_permissions(fs::Permissions::from_mode(PRIVATE_FILE_MODE))
+            .with_context(|| format!("chmod 0600 open file {}", path.display()))?;
+    }
+    #[cfg(windows)]
+    apply_windows_private_acl(path)?;
+    Ok(())
 }
 
 #[cfg(windows)]
@@ -293,8 +369,8 @@ mod tests {
     use std::os::unix::fs::PermissionsExt;
 
     use super::{
-        ensure_private_dir_sync, open_private_append_sync, write_private_file_atomic_sync,
-        PRIVATE_DIR_MODE, PRIVATE_FILE_MODE,
+        ensure_private_dir_sync, open_private_append_sync, read_private_file_to_string_sync,
+        write_private_file_atomic_sync, PRIVATE_DIR_MODE, PRIVATE_FILE_MODE,
     };
 
     #[test]
@@ -331,5 +407,48 @@ mod tests {
 
         let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, PRIVATE_FILE_MODE);
+    }
+
+    #[test]
+    fn private_append_rejects_symlink() {
+        let dir = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let target = outside.path().join("target.log");
+        let link = dir.path().join("daemon.log");
+        std::fs::write(&target, b"outside").unwrap();
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        let err = open_private_append_sync(&link).unwrap_err();
+
+        assert!(format!("{err:#}").contains("must not be a symlink"));
+        assert_eq!(std::fs::read(&target).unwrap(), b"outside");
+    }
+
+    #[test]
+    fn private_read_repairs_permissions_without_reopening() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("secret.json");
+        std::fs::write(&path, "secret").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        let contents = read_private_file_to_string_sync(&path).unwrap().unwrap();
+
+        assert_eq!(contents, "secret");
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, PRIVATE_FILE_MODE);
+    }
+
+    #[test]
+    fn private_read_rejects_symlink() {
+        let dir = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let target = outside.path().join("secret.json");
+        let link = dir.path().join("secret.json");
+        std::fs::write(&target, "outside").unwrap();
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        let err = read_private_file_to_string_sync(&link).unwrap_err();
+
+        assert!(format!("{err:#}").contains("must not be a symlink"));
     }
 }

@@ -1,7 +1,5 @@
 use super::*;
 
-use std::fs::OpenOptions;
-
 use super::diagnostics::daemon_stderr_snippet;
 use super::path_env::{resolve_daemon_path_env, resolve_local_daemon_path_env};
 use super::resources::{
@@ -224,7 +222,7 @@ fn spawn_daemon_with_mode(
         cmd.stderr(Stdio::inherit());
     } else {
         let log_dir = data_dir.join("logs");
-        if let Err(err) = std::fs::create_dir_all(&log_dir) {
+        if let Err(err) = ctx_fs::permissions::ensure_private_dir_sync(&log_dir) {
             eprintln!(
                 "failed to create daemon log dir {}: {err}",
                 log_dir.display()
@@ -232,7 +230,7 @@ fn spawn_daemon_with_mode(
             cmd.stderr(Stdio::inherit());
         } else {
             let path = log_dir.join("desktop-daemon-stderr.log");
-            match OpenOptions::new().create(true).append(true).open(&path) {
+            match ctx_fs::permissions::open_private_append_sync(&path) {
                 Ok(file) => {
                     stderr_path = Some(path);
                     cmd.stderr(file);

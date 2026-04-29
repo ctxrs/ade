@@ -207,6 +207,20 @@ fn sqlite_artifact_paths(db_path: &std::path::Path) -> Vec<std::path::PathBuf> {
     ]
 }
 
+#[cfg(unix)]
+fn file_mode(path: &std::path::Path) -> u32 {
+    use std::os::unix::fs::PermissionsExt;
+
+    std::fs::metadata(path).unwrap().permissions().mode() & 0o777
+}
+
+#[cfg(unix)]
+fn set_file_mode(path: &std::path::Path, mode: u32) {
+    use std::os::unix::fs::PermissionsExt;
+
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).unwrap();
+}
+
 fn bytes_contain(haystack: &[u8], needle: &[u8]) -> bool {
     if needle.is_empty() {
         return false;
@@ -483,6 +497,70 @@ async fn mobile_access_config_get_fails_closed_on_corrupt_secret_sidecar() {
     assert!(err.to_string().contains("parsing mobile access secrets"));
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn mobile_access_config_get_repairs_existing_secret_sidecar_permissions() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("db.sqlite");
+    let store = Store::open(&db_path).await.unwrap();
+    let config = crate::store::MobileAccessConfig {
+        id: "default".to_string(),
+        profile_id: ConnectionProfileId::new(),
+        tunnel_id: "tunnel-1".to_string(),
+        public_base_url: "https://example.com".to_string(),
+        relay_base_url: "https://relay.example.com".to_string(),
+        tunnel_secret: "secret-1".to_string(),
+        daemon_public_key: "public-key".to_string(),
+        daemon_private_key: "private-key".to_string(),
+        enabled: true,
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+    };
+    store.upsert_mobile_access_config(config).await.unwrap();
+    let secret_ref = load_mobile_access_secret_ref(&store).await;
+    let secret_path = mobile_access_secret_sidecar_path(dir.path(), "db.sqlite", &secret_ref);
+    set_file_mode(&secret_path, 0o644);
+
+    let loaded = store.get_mobile_access_config().await.unwrap().unwrap();
+
+    assert_eq!(loaded.tunnel_secret, "secret-1");
+    assert_eq!(loaded.daemon_private_key, "private-key");
+    assert_eq!(file_mode(&secret_path), 0o600);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn mobile_access_config_get_rejects_symlinked_secret_sidecar() {
+    let dir = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("db.sqlite");
+    let store = Store::open(&db_path).await.unwrap();
+    let config = crate::store::MobileAccessConfig {
+        id: "default".to_string(),
+        profile_id: ConnectionProfileId::new(),
+        tunnel_id: "tunnel-1".to_string(),
+        public_base_url: "https://example.com".to_string(),
+        relay_base_url: "https://relay.example.com".to_string(),
+        tunnel_secret: "secret-1".to_string(),
+        daemon_public_key: "public-key".to_string(),
+        daemon_private_key: "private-key".to_string(),
+        enabled: true,
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+    };
+    store.upsert_mobile_access_config(config).await.unwrap();
+    let secret_ref = load_mobile_access_secret_ref(&store).await;
+    let secret_path = mobile_access_secret_sidecar_path(dir.path(), "db.sqlite", &secret_ref);
+    let outside_secret = outside.path().join("outside.json");
+    std::fs::write(&outside_secret, "{}").unwrap();
+    std::fs::remove_file(&secret_path).unwrap();
+    std::os::unix::fs::symlink(&outside_secret, &secret_path).unwrap();
+
+    let err = store.get_mobile_access_config().await.unwrap_err();
+
+    assert!(format!("{err:#}").contains("must not be a symlink"));
+}
+
 #[tokio::test]
 async fn mobile_access_config_sidecars_are_namespaced_per_sqlite_file() {
     let dir = tempfile::tempdir().unwrap();
@@ -680,6 +758,64 @@ async fn runtime_settings_upsert_with_secrets_rotates_secret_ref_and_cleans_old_
     assert!(!first_path.exists());
     assert!(second_path.exists());
     assert_secret_absent_from_sqlite_artifacts(&db_path, "secret-2").await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn runtime_settings_secret_read_repairs_existing_sidecar_permissions() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("db.sqlite");
+    let store = Store::open(&db_path).await.unwrap();
+    store
+        .upsert_runtime_settings_document_with_secrets(
+            1,
+            "{\"dictation\":{}}",
+            "{\"api_key\":\"secret-1\"}",
+        )
+        .await
+        .unwrap();
+    let secret_ref = load_runtime_settings_secret_ref(&store).await;
+    let secret_path = runtime_settings_secret_sidecar_path(dir.path(), "db.sqlite", &secret_ref);
+    set_file_mode(&secret_path, 0o644);
+
+    let payload = store
+        .read_runtime_settings_secrets_if_present(&secret_ref)
+        .await
+        .unwrap()
+        .unwrap();
+
+    assert!(payload.contains("secret-1"));
+    assert_eq!(file_mode(&secret_path), 0o600);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn runtime_settings_secret_read_rejects_symlinked_sidecar() {
+    let dir = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("db.sqlite");
+    let store = Store::open(&db_path).await.unwrap();
+    store
+        .upsert_runtime_settings_document_with_secrets(
+            1,
+            "{\"dictation\":{}}",
+            "{\"api_key\":\"secret-1\"}",
+        )
+        .await
+        .unwrap();
+    let secret_ref = load_runtime_settings_secret_ref(&store).await;
+    let secret_path = runtime_settings_secret_sidecar_path(dir.path(), "db.sqlite", &secret_ref);
+    let outside_secret = outside.path().join("outside.json");
+    std::fs::write(&outside_secret, "{}").unwrap();
+    std::fs::remove_file(&secret_path).unwrap();
+    std::os::unix::fs::symlink(&outside_secret, &secret_path).unwrap();
+
+    let err = store
+        .read_runtime_settings_secrets_if_present(&secret_ref)
+        .await
+        .unwrap_err();
+
+    assert!(format!("{err:#}").contains("must not be a symlink"));
 }
 
 async fn create_peer_session(fixture: &SessionFixture) -> SessionId {

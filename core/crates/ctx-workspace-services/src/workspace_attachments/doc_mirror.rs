@@ -14,11 +14,12 @@ pub(super) async fn materialize_doc_mirror(
     let dest = materialized_path_for_attachment(data_root, attachment);
     let should_update = refresh || !dest.exists();
     if should_update {
-        if dest.exists() {
-            tokio::fs::remove_dir_all(&dest).await?;
-        }
-        tokio::fs::create_dir_all(&dest).await?;
+        super::remove_materialized_revision_if_exists(data_root, attachment).await?;
+        super::ensure_materialized_revision_parent(data_root, attachment).await?;
+        tokio::fs::create_dir(&dest).await?;
         run_doc_mirror_cli(workspace, attachment, &dest).await?;
+    } else {
+        super::validate_materialized_path(data_root, attachment).await?;
     }
     Ok(MaterializationResult {
         path: dest,

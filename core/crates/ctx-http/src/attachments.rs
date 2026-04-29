@@ -11,8 +11,8 @@ pub(crate) use self::container_mounts::{
     cleanup_removed_attachment as cleanup_removed_attachment_mounts, ensure_attachment_mount,
 };
 pub(crate) use self::mount_files::{
-    ensure_mount_in_worktree, materialized_path_for_attachment, materialized_root_for_attachment,
-    remove_mount_path_in_worktree, revision_key, sanitize_mount_relpath,
+    ensure_mount_in_worktree, materialized_path_for_attachment, remove_mount_path_in_worktree,
+    revision_key, sanitize_mount_relpath, validate_mount_path_in_worktree,
 };
 
 use ctx_core::ids::{WorkspaceId, WorktreeId};
