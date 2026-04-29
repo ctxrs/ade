@@ -9,6 +9,8 @@ const {
   getCtxHttpSuiteNames,
 } = require("./lib/ctx_http_suites.cjs");
 
+const DEFAULT_CTX_HTTP_LOCAL_TEST_JOBS = "1";
+
 function parseArgs(argv) {
   const args = {
     list: false,
@@ -74,6 +76,9 @@ function buildTaskPlan({
   });
   if (!String(env.RUST_TEST_THREADS ?? "").trim()) {
     env.RUST_TEST_THREADS = "1";
+  }
+  if (!String(env.CTX_BAZEL_LOCAL_TEST_JOBS ?? "").trim()) {
+    env.CTX_BAZEL_LOCAL_TEST_JOBS = DEFAULT_CTX_HTTP_LOCAL_TEST_JOBS;
   }
   return {
     args,

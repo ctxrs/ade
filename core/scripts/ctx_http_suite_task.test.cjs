@@ -52,7 +52,7 @@ test("ctx-http suite task lists the all meta-suite as suite-scoped Bazel command
   );
 });
 
-test("ctx-http suite task executes batched selections per suite without forcing a job cap", () => {
+test("ctx-http suite task executes batched selections per suite without forcing a global job cap", () => {
   const plan = buildTaskPlan({
     argv: ["--suite", "base", "--suite", "provider-auth"],
     cwd: repoRoot,
@@ -74,16 +74,17 @@ test("ctx-http suite task executes batched selections per suite without forcing 
     },
   ]);
   assert.equal(String(plan.env.CTX_BAZEL_JOBS ?? ""), "");
-  assert.equal(String(plan.env.CTX_BAZEL_LOCAL_TEST_JOBS ?? ""), "");
+  assert.equal(plan.env.CTX_BAZEL_LOCAL_TEST_JOBS, "1");
   assert.equal(plan.env.RUST_TEST_THREADS, "1");
 });
 
-test("ctx-http suite task preserves an explicit Bazel job cap", () => {
+test("ctx-http suite task preserves explicit Bazel job caps", () => {
   const plan = buildTaskPlan({
     argv: ["--suite", "base"],
     cwd: repoRoot,
     env: {
       CTX_BAZEL_JOBS: "3",
+      CTX_BAZEL_LOCAL_TEST_JOBS: "2",
       PATH: process.env.PATH ?? "",
     },
     mkdir: false,
@@ -97,5 +98,6 @@ test("ctx-http suite task preserves an explicit Bazel job cap", () => {
   ]);
   assert.equal(plan.isBatchSelection, false);
   assert.equal(plan.env.CTX_BAZEL_JOBS, "3");
+  assert.equal(plan.env.CTX_BAZEL_LOCAL_TEST_JOBS, "2");
   assert.equal(plan.env.RUST_TEST_THREADS, "1");
 });
