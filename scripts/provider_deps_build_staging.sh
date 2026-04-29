@@ -173,6 +173,39 @@ download_with_retry() {
     --output "$output_path"
 }
 
+download_tar_gz_with_retry() {
+  local url="$1"
+  local output_path="$2"
+  local max_attempts="${CTX_PROVIDER_DEPS_ARCHIVE_DOWNLOAD_ATTEMPTS:-3}"
+  case "$max_attempts" in
+    ""|*[!0-9]*)
+      echo "error: CTX_PROVIDER_DEPS_ARCHIVE_DOWNLOAD_ATTEMPTS must be a positive integer" >&2
+      exit 2
+      ;;
+  esac
+  if [[ "$max_attempts" -lt 1 ]]; then
+    echo "error: CTX_PROVIDER_DEPS_ARCHIVE_DOWNLOAD_ATTEMPTS must be a positive integer" >&2
+    exit 2
+  fi
+
+  local attempt=1
+  while [[ "$attempt" -le "$max_attempts" ]]; do
+    rm -f "$output_path"
+    if download_with_retry "$url" "$output_path" && tar -tzf "$output_path" >/dev/null 2>&1; then
+      return 0
+    fi
+    rm -f "$output_path"
+    if [[ "$attempt" -lt "$max_attempts" ]]; then
+      echo "warn: downloaded tar.gz failed validation for $url; retrying ($attempt/$max_attempts)" >&2
+      sleep "${CTX_PROVIDER_DEPS_CURL_RETRY_DELAY_SECONDS:-2}"
+    fi
+    attempt=$((attempt + 1))
+  done
+
+  echo "error: failed to download a valid tar.gz archive after $max_attempts attempts: $url" >&2
+  exit 1
+}
+
 resolve_python_cmd() {
   if command -v python3 >/dev/null 2>&1; then
     echo "python3"
@@ -297,6 +330,9 @@ python_provider_uses_explicit_platform_install() {
 python_provider_pure_python_wheel_specs() {
   local provider_id="$1"
   case "$provider_id" in
+    kimi)
+      printf '%s\n' "ripgrepy==2.2.0"
+      ;;
     openhands)
       printf '%s\n' "func-timeout==4.3.5"
       ;;
@@ -694,7 +730,7 @@ ensure_python_runtime_for_target() {
   local url="https://github.com/indygreg/python-build-standalone/releases/download/${python_build_tag}/${asset}"
   local archive_tmp
   archive_tmp="$(mktemp "$OUT_DIR/.python-runtime.XXXXXX")"
-  download_with_retry "$url" "$archive_tmp"
+  download_tar_gz_with_retry "$url" "$archive_tmp"
 
   local extract_dir
   extract_dir="$(mktemp -d "$OUT_DIR/.python-runtime-extract.XXXXXX")"

@@ -78,6 +78,17 @@ cat >"$PYTHON_PROVIDER_MATRIX_JSON" <<'EOF'
       }
     },
     {
+      "id": "kimi",
+      "managed_install": {
+        "kind": "python",
+        "package": "kimi-cli",
+        "entrypoint": "kimi",
+        "version": "1.38.0",
+        "python_version": "3.12.13",
+        "python_build_tag": "20260303"
+      }
+    },
+    {
       "id": "mistral",
       "managed_install": {
         "kind": "python",
@@ -108,6 +119,7 @@ fi
 
 if [[ "${1:-}" == "-m" && "${2:-}" == "pip" && "${3:-}" == "wheel" ]]; then
   wheel_dir=""
+  spec=""
   shift 3
   while [[ "$#" -gt 0 ]]; do
     case "$1" in
@@ -116,12 +128,24 @@ if [[ "${1:-}" == "-m" && "${2:-}" == "pip" && "${3:-}" == "wheel" ]]; then
         shift 2
         ;;
       *)
+        spec="$1"
         shift
         ;;
     esac
   done
   mkdir -p "$wheel_dir"
-  : >"$wheel_dir/func_timeout-4.3.5-py3-none-any.whl"
+  case "$spec" in
+    func-timeout==4.3.5)
+      : >"$wheel_dir/func_timeout-4.3.5-py3-none-any.whl"
+      ;;
+    ripgrepy==2.2.0)
+      : >"$wheel_dir/ripgrepy-2.2.0-py3-none-any.whl"
+      ;;
+    *)
+      echo "unexpected fake wheel spec: $spec" >&2
+      exit 2
+      ;;
+  esac
   exit 0
 fi
 
@@ -175,6 +199,33 @@ grep -q -- "func-timeout==4.3.5" "$FAKE_PYTHON_LOG"
 grep -q -- "--find-links" "$FAKE_PYTHON_LOG"
 grep -q -- "--only-binary=:all:" "$FAKE_PYTHON_LOG"
 grep -q -- "--platform macosx_10_15_x86_64" "$FAKE_PYTHON_LOG"
+
+KIMI_PYTHON_LOG="$TMP_DIR/kimi-python.log"
+KIMI_PROVIDER_OUT="$TMP_DIR/python-provider-kimi"
+KIMI_TARGET_RUNTIME="$KIMI_PROVIDER_OUT/.python-runtimes/target/cpython-3.12.13+20260303-x86_64-apple-darwin"
+mkdir -p "$KIMI_TARGET_RUNTIME/bin"
+cat >"$KIMI_TARGET_RUNTIME/bin/python3" <<'EOF'
+#!/usr/bin/env bash
+echo "target python should not run during kimi explicit macOS wheel staging" >&2
+exit 2
+EOF
+chmod +x "$KIMI_TARGET_RUNTIME/bin/python3"
+
+CTX_PROVIDER_DEPS_BUILD_HOST_OS="macos" \
+CTX_PROVIDER_DEPS_BUILD_HOST_ARCH="aarch64" \
+FAKE_PYTHON_LOG="$KIMI_PYTHON_LOG" \
+PATH="$FAKE_BIN:$PATH" \
+PROVIDER_MATRIX_JSON="$PYTHON_PROVIDER_MATRIX_JSON" \
+  bash "$ROOT_DIR/scripts/provider_deps_build_staging.sh" \
+  --out-dir "$KIMI_PROVIDER_OUT" \
+  --os macos \
+  --arch x86_64 \
+  --providers "kimi"
+
+test -f "$KIMI_PROVIDER_OUT/provider_deps_index.json"
+grep -q -- "pip wheel" "$KIMI_PYTHON_LOG"
+grep -q -- "ripgrepy==2.2.0" "$KIMI_PYTHON_LOG"
+grep -q -- "--find-links" "$KIMI_PYTHON_LOG"
 
 NO_PURE_WHEEL_LOG="$TMP_DIR/no-pure-wheel-python.log"
 NO_PURE_WHEEL_OUT="$TMP_DIR/python-provider-no-pure-wheel"
