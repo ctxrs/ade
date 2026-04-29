@@ -282,7 +282,7 @@ resolve_npm_target_arch() {
 resolve_pip_target_platform() {
   case "${TARGET_OS}/${TARGET_ARCH}" in
     macos/aarch64) echo "macosx_11_0_arm64" ;;
-    macos/x86_64) echo "macosx_10_13_x86_64" ;;
+    macos/x86_64) echo "macosx_10_15_x86_64" ;;
     *)
       echo "error: unsupported pip target platform for ${TARGET_OS}/${TARGET_ARCH}" >&2
       exit 2
@@ -290,7 +290,11 @@ resolve_pip_target_platform() {
   esac
 }
 
-cross_target_pure_python_wheel_specs() {
+python_provider_uses_explicit_platform_install() {
+  [[ "$TARGET_OS" == "macos" ]]
+}
+
+python_provider_pure_python_wheel_specs() {
   local provider_id="$1"
   case "$provider_id" in
     openhands)
@@ -299,11 +303,11 @@ cross_target_pure_python_wheel_specs() {
   esac
 }
 
-prepare_cross_target_pure_python_wheelhouse() {
+prepare_python_provider_pure_wheelhouse() {
   local provider_id="$1"
   local host_python_cmd="$2"
   local specs
-  specs="$(cross_target_pure_python_wheel_specs "$provider_id")"
+  specs="$(python_provider_pure_python_wheel_specs "$provider_id")"
   if [[ -z "$specs" ]]; then
     return 0
   fi
@@ -335,13 +339,13 @@ prepare_cross_target_pure_python_wheelhouse() {
     case "$(basename "$wheel")" in
       *-none-any.whl) ;;
       *)
-        echo "error: cross-target pure-python wheel override produced a platform-specific wheel: $wheel" >&2
+        echo "error: python provider pure-python wheel override produced a platform-specific wheel: $wheel" >&2
         exit 1
         ;;
     esac
   done
   if [[ "$wheel_count" -eq 0 ]]; then
-    echo "error: cross-target pure-python wheel override produced no wheels for $provider_id" >&2
+    echo "error: python provider pure-python wheel override produced no wheels for $provider_id" >&2
     exit 1
   fi
 
@@ -776,7 +780,7 @@ stage_matrix_python_provider() {
     exit 1
   fi
 
-  if [[ "$HOST_OS" == "$TARGET_OS" && "$HOST_ARCH" != "$TARGET_ARCH" ]]; then
+  if python_provider_uses_explicit_platform_install; then
     local pip_target_platform
     pip_target_platform="$(resolve_pip_target_platform)"
     local python_series
@@ -784,12 +788,12 @@ stage_matrix_python_provider() {
     local host_python_cmd
     host_python_cmd="$(resolve_host_python_cmd_for_version "$python_version" "$python_build_tag")"
     local pure_python_wheelhouse
-    pure_python_wheelhouse="$(prepare_cross_target_pure_python_wheelhouse "$provider_id" "$host_python_cmd")"
+    pure_python_wheelhouse="$(prepare_python_provider_pure_wheelhouse "$provider_id" "$host_python_cmd")"
     local -a pure_python_wheelhouse_args=()
     if [[ -n "$pure_python_wheelhouse" ]]; then
       pure_python_wheelhouse_args=(--find-links "$pure_python_wheelhouse")
     fi
-    echo "info: installing cross-target wheel set for ${TARGET_OS}/${TARGET_ARCH} via host ${HOST_OS}/${HOST_ARCH} pip" >&2
+    echo "info: installing macOS wheel set for ${TARGET_OS}/${TARGET_ARCH} via host ${HOST_OS}/${HOST_ARCH} pip" >&2
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PIP_NO_INPUT=1 \
     "$host_python_cmd" -m pip install \

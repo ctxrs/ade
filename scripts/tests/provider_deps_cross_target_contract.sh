@@ -163,4 +163,28 @@ grep -q -- "pip wheel" "$FAKE_PYTHON_LOG"
 grep -q -- "func-timeout==4.3.5" "$FAKE_PYTHON_LOG"
 grep -q -- "--find-links" "$FAKE_PYTHON_LOG"
 grep -q -- "--only-binary=:all:" "$FAKE_PYTHON_LOG"
-grep -q -- "--platform macosx_10_13_x86_64" "$FAKE_PYTHON_LOG"
+grep -q -- "--platform macosx_10_15_x86_64" "$FAKE_PYTHON_LOG"
+
+NATIVE_PYTHON_PROVIDER_OUT="$TMP_DIR/python-provider-native"
+NATIVE_TARGET_RUNTIME="$NATIVE_PYTHON_PROVIDER_OUT/.python-runtimes/target/cpython-3.12.13+20260303-x86_64-apple-darwin"
+mkdir -p "$NATIVE_TARGET_RUNTIME/bin"
+cat >"$NATIVE_TARGET_RUNTIME/bin/python3" <<'EOF'
+#!/usr/bin/env bash
+echo "native target python should not resolve macOS wheels implicitly" >&2
+exit 2
+EOF
+chmod +x "$NATIVE_TARGET_RUNTIME/bin/python3"
+
+CTX_PROVIDER_DEPS_BUILD_HOST_OS="macos" \
+CTX_PROVIDER_DEPS_BUILD_HOST_ARCH="x86_64" \
+FAKE_PYTHON_LOG="$FAKE_PYTHON_LOG" \
+PATH="$FAKE_BIN:$PATH" \
+PROVIDER_MATRIX_JSON="$PYTHON_PROVIDER_MATRIX_JSON" \
+  bash "$ROOT_DIR/scripts/provider_deps_build_staging.sh" \
+  --out-dir "$NATIVE_PYTHON_PROVIDER_OUT" \
+  --os macos \
+  --arch x86_64 \
+  --providers "openhands"
+
+test -f "$NATIVE_PYTHON_PROVIDER_OUT/provider_deps_index.json"
+grep -q -- "--platform macosx_10_15_x86_64" "$FAKE_PYTHON_LOG"
