@@ -7,6 +7,7 @@ const test = require("node:test");
 const {
   GUIDANCE_MESSAGE,
   MAX_LINES,
+  REPORT_ONLY_MESSAGE,
   classifySourceFile,
   collectSourceFileStats,
   countLines,
@@ -85,6 +86,30 @@ test("run emits the architectural guidance and exits nonzero when enforcement fa
   assert.equal(exitCode, 1);
   assert.match(output, /HugePage\.tsx is \d+ lines/);
   assert.match(output, new RegExp(GUIDANCE_MESSAGE.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")));
+  assert.doesNotMatch(output, new RegExp(REPORT_ONLY_MESSAGE.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")));
+});
+
+test("run report mode keeps oversized-file debt visible without failing", () => {
+  const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "source-file-size-report-"));
+  writeFile(rootDir, "core/apps/web/src/pages/HugePage.tsx", MAX_LINES + 5);
+  let output = "";
+  const stream = {
+    write(chunk) {
+      output += String(chunk);
+    },
+  };
+
+  const exitCode = run({
+    rootDir,
+    enforce: false,
+    stdout: stream,
+    stderr: stream,
+  });
+
+  assert.equal(exitCode, 0);
+  assert.match(output, /HugePage\.tsx is \d+ lines/);
+  assert.match(output, new RegExp(REPORT_ONLY_MESSAGE.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")));
+  assert.doesNotMatch(output, /No production-source exceptions are allowed/);
 });
 
 test("run ignores oversized test and automation files", () => {

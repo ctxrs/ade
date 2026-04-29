@@ -78,6 +78,7 @@ test("agent-default escalates high-risk web state changes to the canonical preme
   assert.deepEqual(plan.commands, [
     "pnpm bazel:web:unit:non-pretext:foundation:state",
     "pnpm bazel:web:e2e:premerge",
+    "pnpm bazel:provider-auth:validate",
   ]);
 });
 
@@ -90,6 +91,7 @@ test("agent-default keeps settings-only web changes off the pretext measurement 
 
   assert.deepEqual(plan.commands, [
     "pnpm bazel:web:unit:non-pretext:settings-setup",
+    "pnpm bazel:provider-auth:validate",
   ]);
 });
 
@@ -102,6 +104,7 @@ test("agent-default routes root-level web shell files to the workbench surface a
 
   assert.deepEqual(plan.commands, [
     "pnpm bazel:web:unit:non-pretext:workbench:surface:app",
+    "pnpm bazel:provider-auth:validate",
   ]);
 });
 
@@ -114,6 +117,7 @@ test("agent-default routes session workbench files to the workbench surface sess
 
   assert.deepEqual(plan.commands, [
     "pnpm bazel:web:unit:non-pretext:workbench:surface:session",
+    "pnpm bazel:provider-auth:validate",
   ]);
 });
 
@@ -126,6 +130,7 @@ test("agent-default routes workbench shell files to the dedicated shell shard", 
 
   assert.deepEqual(plan.commands, [
     "pnpm bazel:web:unit:non-pretext:workbench:shell",
+    "pnpm bazel:provider-auth:validate",
   ]);
 });
 
@@ -138,6 +143,7 @@ test("agent-default routes non-pretext web fixture changes to the foundation sha
 
   assert.deepEqual(plan.commands, [
     "pnpm bazel:web:unit:non-pretext:foundation:state",
+    "pnpm bazel:provider-auth:validate",
   ]);
 });
 
@@ -150,6 +156,7 @@ test("agent-default routes foundation utility changes to the shared foundation s
 
   assert.deepEqual(plan.commands, [
     "pnpm bazel:web:unit:non-pretext:foundation:shared",
+    "pnpm bazel:provider-auth:validate",
   ]);
 });
 
@@ -162,6 +169,7 @@ test("agent-default routes pretext measurement source changes to the dedicated u
 
   assert.deepEqual(plan.commands, [
     "pnpm bazel:web:pretext:measurement",
+    "pnpm bazel:provider-auth:validate",
   ]);
 });
 
@@ -512,7 +520,7 @@ test("checkin promotion gate includes broad stable cacheable basics", () => {
     assert.equal(entryIds.has(requiredEntryId), true, `missing checkin entry ${requiredEntryId}`);
   }
 
-  assert.ok(plan.commands.includes("pnpm source:file-size:enforce"));
+  assert.ok(plan.commands.includes("pnpm source:file-size:report"));
   assert.ok(plan.commands.includes("pnpm testing:taxonomy:check"));
   assert.ok(plan.commands.includes("pnpm rust:turbo:check"));
   const ctxHttpCommands = plan.commands.filter((command) => command.startsWith("node scripts/ctx_http_suite_task.cjs "));

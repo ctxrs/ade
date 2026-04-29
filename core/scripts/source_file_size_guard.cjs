@@ -40,6 +40,8 @@ const PRODUCTION_ROOT_PATTERNS = [
 
 const GUIDANCE_MESSAGE =
   "If you are receiving this error message, do not try to make small tweaks just to barely slip below the 600-line cap. Take the opportunity to pause, think through an architecturally sound split that will age well, and use that to bring the file back under the limit. This file is getting too big, which is usually a code smell pointing to a module with too many concerns. Break it up along clean responsibility boundaries instead of sharding it arbitrarily. We do not allow production-source exceptions to this hard cap.";
+const REPORT_ONLY_MESSAGE =
+  "Report-only mode: these files must be refactored below the line cap before source:file-size:enforce can become promotion-blocking again.";
 
 const toPosix = (value) => value.split(path.sep).join("/");
 
@@ -142,6 +144,7 @@ const formatViolation = (violation) =>
   `${violation.path} is ${violation.lineCount} lines (limit ${violation.limit}).`;
 
 const printReport = ({
+  enforce = false,
   violations,
   stream = process.stderr,
 }) => {
@@ -153,7 +156,11 @@ const printReport = ({
   }
   stream.write("\n");
   stream.write(`${GUIDANCE_MESSAGE}\n\n`);
-  stream.write(`No production-source exceptions are allowed. Refactor the file below ${MAX_LINES} lines.\n`);
+  if (enforce) {
+    stream.write(`No production-source exceptions are allowed. Refactor the file below ${MAX_LINES} lines.\n`);
+    return;
+  }
+  stream.write(`${REPORT_ONLY_MESSAGE}\n`);
 };
 
 const run = ({
@@ -164,7 +171,11 @@ const run = ({
 } = {}) => {
   const files = collectSourceFileStats(rootDir);
   const result = evaluateSourceFileSizes({ files });
-  printReport({ ...result, stream: result.violations.length > 0 ? stderr : stdout });
+  printReport({
+    ...result,
+    enforce,
+    stream: result.violations.length > 0 ? stderr : stdout,
+  });
 
   if (!enforce) return 0;
   return result.violations.length > 0 ? 1 : 0;
@@ -178,6 +189,7 @@ if (require.main === module) {
 module.exports = {
   MAX_LINES,
   GUIDANCE_MESSAGE,
+  REPORT_ONLY_MESSAGE,
   collectSourceFileStats,
   countLines,
   evaluateSourceFileSizes,

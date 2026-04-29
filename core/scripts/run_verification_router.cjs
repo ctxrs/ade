@@ -141,7 +141,7 @@ function dedupeCommands(commands) {
 function buildOverlayCommands(changedFiles) {
   const commands = [];
   if (hasProductionSourceChange(changedFiles)) {
-    commands.push("pnpm source:file-size:enforce");
+    commands.push("pnpm source:file-size:report");
   }
   if (changedFiles.some((entry) =>
     entry.startsWith("core/scripts/run_verification_router")

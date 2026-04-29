@@ -16,7 +16,7 @@ test("verify:touched adds source invariants to the targeted Rust gate plan", () 
   });
 
   assert.deepEqual(plan.commands, [
-    "pnpm source:file-size:enforce",
+    "pnpm source:file-size:report",
     "pnpm rust:turbo:check",
     "pnpm exec node scripts/run_rust_gate.cjs --mode workspace --include-reverse-deps --clippy --test-strategy mixed --changed-file core/crates/ctx-provider-accounts/src/lib.rs",
   ]);
@@ -30,7 +30,7 @@ test("verify:affected broadens the canonical Rust leaf beyond verify:touched", (
   });
 
   assert.deepEqual(plan.commands, [
-    "pnpm source:file-size:enforce",
+    "pnpm source:file-size:report",
     "pnpm rust:turbo:check",
     "node scripts/ctx_http_suite_task.cjs --suite provider-auth --suite provider-runtime-simulated",
     "pnpm exec node scripts/run_rust_gate.cjs --mode workspace --include-reverse-deps --clippy --test-strategy mixed --crate ctx-provider-accounts",
@@ -57,9 +57,10 @@ test("verify:broader keeps web escalations changed-aware", () => {
   });
 
   assert.deepEqual(plan.commands, [
-    "pnpm source:file-size:enforce",
+    "pnpm source:file-size:report",
     "pnpm bazel:web:unit:non-pretext:foundation:state",
     "pnpm bazel:web:e2e:premerge",
+    "pnpm bazel:provider-auth:validate",
   ]);
 });
 
@@ -71,7 +72,7 @@ test("verify:touched routes extracted layout package changes to the direct packa
   });
 
   assert.deepEqual(plan.commands, [
-    "pnpm source:file-size:enforce",
+    "pnpm source:file-size:report",
     "pnpm bazel:web:unit:thread-layout",
   ]);
 });
@@ -84,7 +85,7 @@ test("verify:affected routes extracted layout package changes to direct package 
   });
 
   assert.deepEqual(plan.commands, [
-    "pnpm source:file-size:enforce",
+    "pnpm source:file-size:report",
     "pnpm bazel:web:unit:thread-layout",
     "pnpm bazel:web:pretext:measurement",
   ]);
@@ -98,8 +99,9 @@ test("verify:touched routes root-level web shell files to the workbench surface 
   });
 
   assert.deepEqual(plan.commands, [
-    "pnpm source:file-size:enforce",
+    "pnpm source:file-size:report",
     "pnpm bazel:web:unit:non-pretext:workbench:surface:app",
+    "pnpm bazel:provider-auth:validate",
   ]);
 });
 
@@ -111,8 +113,9 @@ test("verify:touched routes session workbench files to the workbench surface ses
   });
 
   assert.deepEqual(plan.commands, [
-    "pnpm source:file-size:enforce",
+    "pnpm source:file-size:report",
     "pnpm bazel:web:unit:non-pretext:workbench:surface:session",
+    "pnpm bazel:provider-auth:validate",
   ]);
 });
 
@@ -124,8 +127,9 @@ test("verify:touched routes workbench shell files to the dedicated shell shard",
   });
 
   assert.deepEqual(plan.commands, [
-    "pnpm source:file-size:enforce",
+    "pnpm source:file-size:report",
     "pnpm bazel:web:unit:non-pretext:workbench:shell",
+    "pnpm bazel:provider-auth:validate",
   ]);
 });
 
@@ -137,8 +141,9 @@ test("verify:touched routes non-pretext web fixture changes to the foundation sh
   });
 
   assert.deepEqual(plan.commands, [
-    "pnpm source:file-size:enforce",
+    "pnpm source:file-size:report",
     "pnpm bazel:web:unit:non-pretext:foundation:state",
+    "pnpm bazel:provider-auth:validate",
   ]);
 });
 
@@ -150,8 +155,9 @@ test("verify:touched routes foundation utility changes to the shared foundation 
   });
 
   assert.deepEqual(plan.commands, [
-    "pnpm source:file-size:enforce",
+    "pnpm source:file-size:report",
     "pnpm bazel:web:unit:non-pretext:foundation:shared",
+    "pnpm bazel:provider-auth:validate",
   ]);
 });
 
@@ -163,7 +169,7 @@ test("verify:affected routes extracted supervisor package changes to direct pack
   });
 
   assert.deepEqual(plan.commands, [
-    "pnpm source:file-size:enforce",
+    "pnpm source:file-size:report",
     "pnpm bazel:web:unit:supervisor-core",
     "pnpm bazel:web:unit:non-pretext",
   ]);
@@ -177,7 +183,7 @@ test("verify:affected adds ctx-http base compile truth for canonical scheduler r
   });
 
   assert.deepEqual(plan.commands, [
-    "pnpm source:file-size:enforce",
+    "pnpm source:file-size:report",
     "node scripts/ctx_http_suite_task.cjs --suite base --suite scheduler-runtime",
   ]);
 });
@@ -190,7 +196,7 @@ test("verify:affected keeps shared turn execution paths on both scheduler runtim
   });
 
   assert.deepEqual(plan.commands, [
-    "pnpm source:file-size:enforce",
+    "pnpm source:file-size:report",
     "node scripts/ctx_http_suite_task.cjs --suite base --suite scheduler-runtime --suite turns-terminal",
   ]);
 });

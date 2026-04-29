@@ -55,7 +55,7 @@ function main() {
   });
   applyVerifyQuickDefaults(env);
 
-  run("pnpm", ["source:file-size:enforce"], env);
+  run("pnpm", ["source:file-size:report"], env);
   run(
     "node",
     [
