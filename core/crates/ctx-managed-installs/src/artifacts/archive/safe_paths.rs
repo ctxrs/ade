@@ -1,4 +1,3 @@
-use std::ffi::OsString;
 use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 
@@ -7,7 +6,10 @@ use anyhow::{Context, Result};
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
-fn normalize_archive_entry_path(raw_path: &Path, label: &str) -> Result<PathBuf> {
+pub(super) fn normalize_archive_entry_path_allowing_empty(
+    raw_path: &Path,
+    label: &str,
+) -> Result<PathBuf> {
     let raw_display = raw_path.display().to_string();
     if raw_display.contains('\\') {
         anyhow::bail!("{label} must not contain backslashes: {raw_display}");
@@ -26,6 +28,11 @@ fn normalize_archive_entry_path(raw_path: &Path, label: &str) -> Result<PathBuf>
             }
         }
     }
+    Ok(normalized)
+}
+
+fn normalize_archive_entry_path(raw_path: &Path, label: &str) -> Result<PathBuf> {
+    let normalized = normalize_archive_entry_path_allowing_empty(raw_path, label)?;
     if normalized.as_os_str().is_empty() {
         anyhow::bail!("{label} is empty");
     }
@@ -54,6 +61,30 @@ fn ensure_canonical_path_inside_root(root: &Path, path: &Path, label: &str) -> R
     Ok(())
 }
 
+fn canonical_path_if_exists(path: &Path) -> Result<Option<PathBuf>> {
+    match std::fs::canonicalize(path) {
+        Ok(canonical) => Ok(Some(canonical)),
+        Err(err)
+            if err.kind() == std::io::ErrorKind::NotFound || is_filesystem_loop_error(&err) =>
+        {
+            Ok(None)
+        }
+        Err(err) => Err(err).with_context(|| format!("canonicalize {}", path.display())),
+    }
+}
+
+fn is_filesystem_loop_error(err: &std::io::Error) -> bool {
+    #[cfg(unix)]
+    {
+        matches!(err.raw_os_error(), Some(40) | Some(62))
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = err;
+        false
+    }
+}
+
 fn reject_existing_symlink(path: &Path) -> Result<()> {
     match std::fs::symlink_metadata(path) {
         Ok(metadata) if metadata.file_type().is_symlink() => {
@@ -61,6 +92,56 @@ fn reject_existing_symlink(path: &Path) -> Result<()> {
                 "archive extraction refused to write through symlink: {}",
                 path.display()
             )
+        }
+        Ok(_) => Ok(()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(err).with_context(|| format!("stat {}", path.display())),
+    }
+}
+
+fn lexical_dest_path_from_canonical_parent(root: &Path, dest: &Path) -> Result<PathBuf> {
+    let parent = dest
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("archive destination has no parent: {}", dest.display()))?;
+    let canonical_parent = std::fs::canonicalize(parent)
+        .with_context(|| format!("canonicalize destination parent {}", parent.display()))?;
+    if !canonical_parent.starts_with(root) {
+        anyhow::bail!(
+            "archive destination parent escaped extraction root: {} -> {}",
+            parent.display(),
+            canonical_parent.display()
+        );
+    }
+    let file_name = dest.file_name().ok_or_else(|| {
+        anyhow::anyhow!("archive destination has no file name: {}", dest.display())
+    })?;
+    Ok(canonical_parent.join(file_name))
+}
+
+fn paths_equal_ascii_case_insensitive(left: &Path, right: &Path) -> bool {
+    left == right
+        || left
+            .to_string_lossy()
+            .eq_ignore_ascii_case(&right.to_string_lossy())
+}
+
+fn prepare_existing_symlink_for_file_write(root: &Path, path: &Path) -> Result<()> {
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_symlink() => {
+            let target = std::fs::read_link(path)
+                .with_context(|| format!("read symlink target {}", path.display()))?;
+            let target_resolved = validate_symlink_target(root, path, &target)?;
+            if canonical_path_if_exists(path)?.is_some() {
+                ensure_canonical_path_inside_root(root, path, "archive file symlink target")?;
+                return Ok(());
+            }
+            let dest_resolved = lexical_dest_path_from_canonical_parent(root, path)?;
+            if paths_equal_ascii_case_insensitive(&target_resolved, &dest_resolved) {
+                std::fs::remove_file(path).with_context(|| {
+                    format!("remove self-referential symlink {}", path.display())
+                })?;
+            }
+            Ok(())
         }
         Ok(_) => Ok(()),
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
@@ -120,7 +201,7 @@ pub(super) fn create_archive_dir(root: &Path, out_dir: &Path, dest: &Path) -> Re
     Ok(())
 }
 
-fn validate_symlink_target(out_dir: &Path, dest: &Path, target: &Path) -> Result<()> {
+fn validate_symlink_target(root: &Path, dest: &Path, target: &Path) -> Result<PathBuf> {
     let target_display = target.display().to_string();
     if target_display.is_empty() {
         anyhow::bail!("archive symlink target is empty for {}", dest.display());
@@ -129,31 +210,45 @@ fn validate_symlink_target(out_dir: &Path, dest: &Path, target: &Path) -> Result
         anyhow::bail!("archive symlink target must not contain backslashes: {target_display}");
     }
 
-    let dest_rel = dest.strip_prefix(out_dir).with_context(|| {
+    let parent = dest
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("archive symlink has no parent: {}", dest.display()))?;
+    let canonical_parent = std::fs::canonicalize(parent)
+        .with_context(|| format!("canonicalize symlink parent {}", parent.display()))?;
+    if !canonical_parent.starts_with(root) {
+        anyhow::bail!(
+            "archive symlink parent escaped extraction root: {} -> {}",
+            parent.display(),
+            canonical_parent.display()
+        );
+    }
+
+    let parent_rel = canonical_parent.strip_prefix(root).with_context(|| {
         format!(
-            "archive symlink destination escaped root: {}",
-            dest.display()
+            "archive symlink parent escaped extraction root: {}",
+            canonical_parent.display()
         )
     })?;
-    let mut stack: Vec<OsString> = dest_rel
-        .parent()
-        .map(|parent| {
-            parent
-                .components()
-                .filter_map(|component| match component {
-                    Component::Normal(segment) => Some(segment.to_os_string()),
-                    _ => None,
-                })
-                .collect()
-        })
-        .unwrap_or_default();
+    let mut resolved = root.to_path_buf();
+    for component in parent_rel.components() {
+        match component {
+            Component::Normal(segment) => resolved.push(segment),
+            Component::CurDir => {}
+            Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
+                anyhow::bail!(
+                    "archive symlink parent escaped extraction root: {}",
+                    canonical_parent.display()
+                );
+            }
+        }
+    }
 
     for component in target.components() {
         match component {
-            Component::Normal(segment) => stack.push(segment.to_os_string()),
+            Component::Normal(segment) => resolved.push(segment),
             Component::CurDir => {}
             Component::ParentDir => {
-                if stack.pop().is_none() {
+                if resolved == root || !resolved.pop() || !resolved.starts_with(root) {
                     anyhow::bail!(
                         "archive symlink target escapes extraction root: {} -> {}",
                         dest.display(),
@@ -170,7 +265,28 @@ fn validate_symlink_target(out_dir: &Path, dest: &Path, target: &Path) -> Result
             }
         }
     }
-    Ok(())
+    if !resolved.starts_with(root) {
+        anyhow::bail!(
+            "archive symlink target escapes extraction root: {} -> {}",
+            dest.display(),
+            target.display()
+        );
+    }
+    ensure_existing_ancestors_inside_root(root, root, &resolved)?;
+    if canonical_path_if_exists(&resolved)?.is_some() {
+        ensure_canonical_path_inside_root(root, &resolved, "archive symlink target")?;
+    }
+    Ok(resolved)
+}
+
+fn symlink_targets_resolve_to_same_existing_path(left: &Path, right: &Path) -> Result<bool> {
+    let Some(left) = canonical_path_if_exists(left)? else {
+        return Ok(false);
+    };
+    let Some(right) = canonical_path_if_exists(right)? else {
+        return Ok(false);
+    };
+    Ok(left == right)
 }
 
 pub(super) fn create_archive_symlink(
@@ -180,20 +296,34 @@ pub(super) fn create_archive_symlink(
     target: &Path,
 ) -> Result<()> {
     prepare_archive_entry_parent(root, out_dir, dest)?;
-    reject_existing_symlink(dest)?;
-    if std::fs::symlink_metadata(dest).is_ok() {
+    if let Ok(metadata) = std::fs::symlink_metadata(dest) {
+        if metadata.file_type().is_symlink() {
+            let existing_target = std::fs::read_link(dest)
+                .with_context(|| format!("read symlink target {}", dest.display()))?;
+            let existing_resolved = validate_symlink_target(root, dest, &existing_target)?;
+            let target_resolved = validate_symlink_target(root, dest, target)?;
+            if existing_target == target
+                || paths_equal_ascii_case_insensitive(&existing_resolved, &target_resolved)
+                || symlink_targets_resolve_to_same_existing_path(
+                    &existing_resolved,
+                    &target_resolved,
+                )?
+            {
+                return Ok(());
+            }
+        }
         anyhow::bail!(
             "archive extraction refused to replace existing path with symlink: {}",
             dest.display()
         );
     }
-    validate_symlink_target(out_dir, dest, target)?;
+    validate_symlink_target(root, dest, target)?;
     #[cfg(unix)]
     {
         std::os::unix::fs::symlink(target, dest).with_context(|| {
             format!("create symlink {} -> {}", dest.display(), target.display())
         })?;
-        if std::fs::canonicalize(dest).is_ok() {
+        if canonical_path_if_exists(dest)?.is_some() {
             ensure_canonical_path_inside_root(root, dest, "archive symlink target")?;
         }
         Ok(())
@@ -213,7 +343,7 @@ pub(super) fn create_archive_file<R: Read>(
     mode: Option<u32>,
 ) -> Result<()> {
     prepare_archive_entry_parent(root, out_dir, dest)?;
-    reject_existing_symlink(dest)?;
+    prepare_existing_symlink_for_file_write(root, dest)?;
     let mut out =
         std::fs::File::create(dest).with_context(|| format!("create {}", dest.display()))?;
     std::io::copy(reader, &mut out).context("extract archive entry")?;

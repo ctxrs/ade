@@ -236,6 +236,38 @@ fn archive_extraction_tar_gz_skips_global_pax_header_with_empty_path() {
     );
 }
 
+#[test]
+fn archive_extraction_tar_gz_skips_archive_root_directory_entry() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let tar_path = temp.path().join("root-dir.tar.gz");
+    write_tar_gz(&tar_path, |builder| {
+        let mut root_header = tar::Header::new_gnu();
+        root_header.set_entry_type(tar::EntryType::Directory);
+        root_header.set_mode(0o755);
+        root_header.set_size(0);
+        root_header.set_path("./")?;
+        root_header.set_cksum();
+        builder.append(&root_header, std::io::empty())?;
+
+        let data = b"ok";
+        let mut file_header = tar::Header::new_gnu();
+        file_header.set_mode(0o755);
+        file_header.set_size(data.len() as u64);
+        file_header.set_path("./goose")?;
+        file_header.set_cksum();
+        builder.append(&file_header, &data[..])?;
+        Ok(())
+    })
+    .expect("write tar.gz");
+
+    let out_dir = temp.path().join("out");
+    extract_tar_gz_to_dir(&tar_path, &out_dir).expect("extract root directory entry");
+    assert_eq!(
+        std::fs::read(out_dir.join("goose")).expect("read file"),
+        b"ok"
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn archive_extraction_tar_gz_allows_in_root_symlink() {
@@ -309,6 +341,284 @@ fn archive_extraction_tar_gz_allows_safe_symlink_ancestor() {
 
 #[cfg(unix)]
 #[test]
+fn archive_extraction_tar_gz_allows_file_write_through_safe_symlink() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let tar_path = temp.path().join("safe-final-symlink.tar.gz");
+    write_tar_gz(&tar_path, |builder| {
+        let mut target_dir_header = tar::Header::new_gnu();
+        target_dir_header.set_entry_type(tar::EntryType::Directory);
+        target_dir_header.set_mode(0o755);
+        target_dir_header.set_size(0);
+        target_dir_header.set_cksum();
+        builder.append_data(&mut target_dir_header, "terminfo/32", std::io::empty())?;
+
+        let mut ancestor_symlink = tar::Header::new_gnu();
+        ancestor_symlink.set_entry_type(tar::EntryType::Symlink);
+        ancestor_symlink.set_mode(0o777);
+        ancestor_symlink.set_size(0);
+        ancestor_symlink.set_path("terminfo/2")?;
+        ancestor_symlink.set_link_name("32")?;
+        ancestor_symlink.set_cksum();
+        builder.append(&ancestor_symlink, std::io::empty())?;
+
+        let mut final_symlink = tar::Header::new_gnu();
+        final_symlink.set_entry_type(tar::EntryType::Symlink);
+        final_symlink.set_mode(0o777);
+        final_symlink.set_size(0);
+        final_symlink.set_path("terminfo/32/2621a")?;
+        final_symlink.set_link_name("target")?;
+        final_symlink.set_cksum();
+        builder.append(&final_symlink, std::io::empty())?;
+
+        let data = b"entry";
+        let mut file_header = tar::Header::new_gnu();
+        file_header.set_mode(0o644);
+        file_header.set_size(data.len() as u64);
+        file_header.set_cksum();
+        builder.append_data(&mut file_header, "terminfo/2/2621a", &data[..])?;
+        Ok(())
+    })
+    .expect("write tar.gz");
+
+    let out_dir = temp.path().join("out");
+    extract_tar_gz_to_dir(&tar_path, &out_dir).expect("extract safe final symlink");
+    assert_eq!(
+        std::fs::read(out_dir.join("terminfo/32/target")).expect("read symlink target file"),
+        b"entry"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn archive_extraction_tar_gz_replaces_self_referential_symlink_with_file() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let tar_path = temp.path().join("self-symlink-file.tar.gz");
+    write_tar_gz(&tar_path, |builder| {
+        let mut symlink_header = tar::Header::new_gnu();
+        symlink_header.set_entry_type(tar::EntryType::Symlink);
+        symlink_header.set_mode(0o777);
+        symlink_header.set_size(0);
+        symlink_header.set_path("terminfo/n/ncr260vt300wpp")?;
+        symlink_header.set_link_name("ncr260vt300wpp")?;
+        symlink_header.set_cksum();
+        builder.append(&symlink_header, std::io::empty())?;
+
+        let data = b"entry";
+        let mut file_header = tar::Header::new_gnu();
+        file_header.set_mode(0o644);
+        file_header.set_size(data.len() as u64);
+        file_header.set_cksum();
+        builder.append_data(&mut file_header, "terminfo/n/ncr260vt300wpp", &data[..])?;
+        Ok(())
+    })
+    .expect("write tar.gz");
+
+    let out_dir = temp.path().join("out");
+    extract_tar_gz_to_dir(&tar_path, &out_dir).expect("extract self symlink then file");
+    assert_eq!(
+        std::fs::read(out_dir.join("terminfo/n/ncr260vt300wpp")).expect("read file"),
+        b"entry"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn archive_extraction_tar_gz_allows_duplicate_symlink_with_same_target() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let tar_path = temp.path().join("duplicate-symlink.tar.gz");
+    write_tar_gz(&tar_path, |builder| {
+        for _ in 0..2 {
+            let mut symlink_header = tar::Header::new_gnu();
+            symlink_header.set_entry_type(tar::EntryType::Symlink);
+            symlink_header.set_mode(0o777);
+            symlink_header.set_size(0);
+            symlink_header.set_path("terminfo/2/2621a")?;
+            symlink_header.set_link_name("../h/hp2621")?;
+            symlink_header.set_cksum();
+            builder.append(&symlink_header, std::io::empty())?;
+        }
+        Ok(())
+    })
+    .expect("write tar.gz");
+
+    let out_dir = temp.path().join("out");
+    extract_tar_gz_to_dir(&tar_path, &out_dir).expect("extract duplicate symlink");
+    assert_eq!(
+        std::fs::read_link(out_dir.join("terminfo/2/2621a")).expect("read symlink"),
+        Path::new("../h/hp2621")
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn archive_extraction_tar_gz_allows_duplicate_symlink_with_same_resolved_target() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let tar_path = temp
+        .path()
+        .join("duplicate-symlink-same-resolved-target.tar.gz");
+    write_tar_gz(&tar_path, |builder| {
+        let data = b"target";
+        let mut file_header = tar::Header::new_gnu();
+        file_header.set_mode(0o644);
+        file_header.set_size(data.len() as u64);
+        file_header.set_cksum();
+        builder.append_data(&mut file_header, "terminfo/l/lft", &data[..])?;
+
+        for target in ["lft", "../l/lft"] {
+            let mut symlink_header = tar::Header::new_gnu();
+            symlink_header.set_entry_type(tar::EntryType::Symlink);
+            symlink_header.set_mode(0o777);
+            symlink_header.set_size(0);
+            symlink_header.set_path("terminfo/l/lft-pc850")?;
+            symlink_header.set_link_name(target)?;
+            symlink_header.set_cksum();
+            builder.append(&symlink_header, std::io::empty())?;
+        }
+        Ok(())
+    })
+    .expect("write tar.gz");
+
+    let out_dir = temp.path().join("out");
+    extract_tar_gz_to_dir(&tar_path, &out_dir).expect("extract duplicate symlink");
+    assert_eq!(
+        std::fs::read(out_dir.join("terminfo/l/lft-pc850")).expect("read symlink target"),
+        b"target"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn archive_extraction_tar_gz_allows_duplicate_symlink_with_same_missing_target() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let tar_path = temp
+        .path()
+        .join("duplicate-symlink-same-missing-target.tar.gz");
+    write_tar_gz(&tar_path, |builder| {
+        for target in ["prism12", "./prism12"] {
+            let mut symlink_header = tar::Header::new_gnu();
+            symlink_header.set_entry_type(tar::EntryType::Symlink);
+            symlink_header.set_mode(0o777);
+            symlink_header.set_size(0);
+            symlink_header.set_path("terminfo/p/p12")?;
+            symlink_header.set_link_name(target)?;
+            symlink_header.set_cksum();
+            builder.append(&symlink_header, std::io::empty())?;
+        }
+        Ok(())
+    })
+    .expect("write tar.gz");
+
+    let out_dir = temp.path().join("out");
+    extract_tar_gz_to_dir(&tar_path, &out_dir).expect("extract duplicate symlink");
+    assert_eq!(
+        std::fs::read_link(out_dir.join("terminfo/p/p12")).expect("read symlink"),
+        Path::new("prism12")
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn archive_extraction_tar_gz_allows_in_root_symlink_loop() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let tar_path = temp.path().join("symlink-loop.tar.gz");
+    write_tar_gz(&tar_path, |builder| {
+        let mut symlink_header = tar::Header::new_gnu();
+        symlink_header.set_entry_type(tar::EntryType::Symlink);
+        symlink_header.set_mode(0o777);
+        symlink_header.set_size(0);
+        symlink_header.set_path("terminfo/N/NCR260VT300WPP")?;
+        symlink_header.set_link_name("NCR260VT300WPP")?;
+        symlink_header.set_cksum();
+        builder.append(&symlink_header, std::io::empty())?;
+        Ok(())
+    })
+    .expect("write tar.gz");
+
+    let out_dir = temp.path().join("out");
+    extract_tar_gz_to_dir(&tar_path, &out_dir).expect("extract symlink loop");
+    assert_eq!(
+        std::fs::read_link(out_dir.join("terminfo/N/NCR260VT300WPP")).expect("read symlink"),
+        Path::new("NCR260VT300WPP")
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn archive_extraction_tar_gz_rejects_duplicate_symlink_with_different_target() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let tar_path = temp
+        .path()
+        .join("duplicate-symlink-different-target.tar.gz");
+    write_tar_gz(&tar_path, |builder| {
+        for target in ["../h/hp2621", "../h/other"] {
+            let mut symlink_header = tar::Header::new_gnu();
+            symlink_header.set_entry_type(tar::EntryType::Symlink);
+            symlink_header.set_mode(0o777);
+            symlink_header.set_size(0);
+            symlink_header.set_path("terminfo/2/2621a")?;
+            symlink_header.set_link_name(target)?;
+            symlink_header.set_cksum();
+            builder.append(&symlink_header, std::io::empty())?;
+        }
+        Ok(())
+    })
+    .expect("write tar.gz");
+
+    let out_dir = temp.path().join("out");
+    let err = extract_tar_gz_to_dir(&tar_path, &out_dir)
+        .expect_err("different duplicate target should fail");
+    assert!(
+        err.to_string()
+            .contains("refused to replace existing path with symlink"),
+        "unexpected error: {err:#}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn archive_extraction_tar_gz_rejects_symlink_escape_under_canonical_parent() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let tar_path = temp.path().join("canonical-parent-symlink-escape.tar.gz");
+    write_tar_gz(&tar_path, |builder| {
+        let mut target_dir_header = tar::Header::new_gnu();
+        target_dir_header.set_entry_type(tar::EntryType::Directory);
+        target_dir_header.set_mode(0o755);
+        target_dir_header.set_size(0);
+        target_dir_header.set_cksum();
+        builder.append_data(&mut target_dir_header, "d", std::io::empty())?;
+
+        let mut ancestor_symlink = tar::Header::new_gnu();
+        ancestor_symlink.set_entry_type(tar::EntryType::Symlink);
+        ancestor_symlink.set_mode(0o777);
+        ancestor_symlink.set_size(0);
+        ancestor_symlink.set_path("a/b/c")?;
+        ancestor_symlink.set_link_name("../../d")?;
+        ancestor_symlink.set_cksum();
+        builder.append(&ancestor_symlink, std::io::empty())?;
+
+        let mut escaping_symlink = tar::Header::new_gnu();
+        escaping_symlink.set_entry_type(tar::EntryType::Symlink);
+        escaping_symlink.set_mode(0o777);
+        escaping_symlink.set_size(0);
+        escaping_symlink.set_path("a/b/c/escape")?;
+        escaping_symlink.set_link_name("../../outside")?;
+        escaping_symlink.set_cksum();
+        builder.append(&escaping_symlink, std::io::empty())?;
+        Ok(())
+    })
+    .expect("write tar.gz");
+
+    let out_dir = temp.path().join("out");
+    let err = extract_tar_gz_to_dir(&tar_path, &out_dir).expect_err("symlink escape should fail");
+    assert!(
+        err.to_string().contains("escapes extraction root"),
+        "unexpected error: {err:#}"
+    );
+    assert!(!out_dir.join("d/escape").exists());
+}
+
+#[cfg(unix)]
+#[test]
 fn archive_extraction_tar_gz_rejects_existing_symlink_ancestor_escape() {
     let temp = tempfile::tempdir().expect("tempdir");
     let tar_path = temp.path().join("existing-symlink-ancestor.tar.gz");
@@ -336,4 +646,37 @@ fn archive_extraction_tar_gz_rejects_existing_symlink_ancestor_escape() {
         "unexpected error: {err:#}"
     );
     assert!(!outside.join("file").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn archive_extraction_tar_gz_rejects_existing_final_symlink_escape() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let tar_path = temp.path().join("existing-final-symlink.tar.gz");
+    write_tar_gz(&tar_path, |builder| {
+        let data = b"escape";
+        let mut file_header = tar::Header::new_gnu();
+        file_header.set_mode(0o644);
+        file_header.set_size(data.len() as u64);
+        file_header.set_cksum();
+        builder.append_data(&mut file_header, "link", &data[..])?;
+        Ok(())
+    })
+    .expect("write tar.gz");
+
+    let out_dir = temp.path().join("out");
+    let outside = temp.path().join("outside");
+    std::fs::create_dir_all(&outside).expect("create outside");
+    std::fs::create_dir_all(&out_dir).expect("create out");
+    std::os::unix::fs::symlink(&outside, out_dir.join("link")).expect("create symlink");
+
+    let err =
+        extract_tar_gz_to_dir(&tar_path, &out_dir).expect_err("final symlink escape should fail");
+    assert!(
+        err.to_string().contains("escaped extraction root")
+            || err.to_string().contains("escapes extraction root")
+            || err.to_string().contains("must be relative"),
+        "unexpected error: {err:#}"
+    );
+    assert!(!outside.join("link").exists());
 }

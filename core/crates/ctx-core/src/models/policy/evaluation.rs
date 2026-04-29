@@ -62,16 +62,11 @@ pub fn is_network_profile_allowed(
     allowed_network_profiles: &[NetworkProfile],
     requested_network_profile: NetworkProfile,
 ) -> bool {
-    allowed_network_profiles
-        .iter()
-        .any(|profile| *profile == requested_network_profile)
+    allowed_network_profiles.contains(&requested_network_profile)
 }
 
 pub fn is_route_allowed(route_policy: &RoutePolicy, route_type: RouteType) -> bool {
-    route_policy
-        .allowed_route_types
-        .iter()
-        .any(|candidate| *candidate == route_type)
+    route_policy.allowed_route_types.contains(&route_type)
 }
 
 pub fn is_personal_route_allowed(route_policy: &RoutePolicy, route_type: RouteType) -> bool {

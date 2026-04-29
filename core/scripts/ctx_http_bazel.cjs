@@ -185,7 +185,7 @@ function buildTargetsViaBazel(
   });
 }
 
-function parseBazelOutputPaths(stdout, { repoRoot, targets }) {
+function parseBazelOutputPaths(stdout, { executionRoot = "", repoRoot, targets }) {
   const lines = String(stdout || "")
     .split(/\r?\n/)
     .map((line) => line.trim())
@@ -205,7 +205,8 @@ function parseBazelOutputPaths(stdout, { repoRoot, targets }) {
     if (resolved.has(label)) {
       throw new Error(`expected exactly one Bazel output for ${label}, got multiple`);
     }
-    resolved.set(label, path.resolve(repoRoot, outputPath));
+    const outputRoot = String(executionRoot || "").trim() || repoRoot;
+    resolved.set(label, path.resolve(outputRoot, outputPath));
   }
 
   for (const target of targets) {
@@ -217,6 +218,53 @@ function parseBazelOutputPaths(stdout, { repoRoot, targets }) {
   return resolved;
 }
 
+function resolveBazelExecutionRoot(
+  {
+    env = process.env,
+    spawnSyncImpl = childProcess.spawnSync,
+    withHostJobBudgetImpl = withHostJobBudget,
+  } = {},
+) {
+  const {
+    bazelBinary,
+    bazelCommandArgs,
+    env: bazelEnv,
+    repoRoot,
+    startupArgs,
+  } = buildBazelCommandContext(env);
+  let result = null;
+  withHostJobBudgetImpl({
+    budgetKey: HOST_HEAVY_BUDGET_KEY,
+    command: "bazel info execution_root",
+    cwd: repoRoot,
+    env: bazelEnv,
+  }, () => {
+    result = runChecked(
+      bazelBinary,
+      [
+        ...startupArgs,
+        "info",
+        ...bazelCommandArgs,
+        ...buildBuildBuddyAuthArgs(bazelEnv),
+        "execution_root",
+      ],
+      {
+        cwd: repoRoot,
+        env: bazelEnv,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+      "bazel info execution_root failed",
+      spawnSyncImpl,
+    );
+  });
+  const executionRoot = String(result.stdout || "").trim();
+  if (!executionRoot) {
+    throw new Error("bazel info execution_root returned an empty path");
+  }
+  return executionRoot;
+}
+
 function resolveBazelOutputPaths(
   targets,
   {
@@ -226,6 +274,7 @@ function resolveBazelOutputPaths(
     withHostJobBudgetImpl = withHostJobBudget,
   } = {},
 ) {
+  const executionRoot = resolveBazelExecutionRoot({ env, spawnSyncImpl, withHostJobBudgetImpl });
   const {
     bazelBinary,
     bazelCommandArgs,
@@ -263,7 +312,7 @@ function resolveBazelOutputPaths(
       spawnSyncImpl,
     );
   });
-  return parseBazelOutputPaths(result.stdout, { repoRoot, targets });
+  return parseBazelOutputPaths(result.stdout, { executionRoot, repoRoot, targets });
 }
 
 function resolveDesktopSidecarPaths({ env = process.env, targetKey = "" } = {}) {
@@ -448,6 +497,7 @@ module.exports = {
   prepareDesktopSidecars,
   renderDesktopSidecarEnv,
   resolveDesktopWebDist,
+  resolveBazelExecutionRoot,
   resolveBazelOutputPaths,
   resolveDesktopSidecarPaths,
   repoRoots,

@@ -18,6 +18,7 @@ const {
   parseBazelOutputPaths,
   parseArgs,
   renderDesktopSidecarEnv,
+  resolveBazelExecutionRoot,
   resolveBazelOutputPaths,
   syncDesktopResources,
   shouldResolveAvfLinuxHelper,
@@ -124,6 +125,7 @@ test("ctx_http_bazel resolves multiple Bazel output paths from a single cquery p
       "@@//core/crates/ctx-mcp:ctx-mcp|bazel-out/k8-fastbuild/bin/core/crates/ctx-mcp/ctx-mcp",
     ].join("\n"),
     {
+      executionRoot: "/execroot",
       repoRoot: "/repo",
       targets: [
         "//core/crates/ctx-http:ctx",
@@ -131,8 +133,8 @@ test("ctx_http_bazel resolves multiple Bazel output paths from a single cquery p
       ],
     },
   );
-  assert.equal(outputs.get("//core/crates/ctx-http:ctx"), "/repo/bazel-out/k8-fastbuild/bin/core/crates/ctx-http/ctx");
-  assert.equal(outputs.get("//core/crates/ctx-mcp:ctx-mcp"), "/repo/bazel-out/k8-fastbuild/bin/core/crates/ctx-mcp/ctx-mcp");
+  assert.equal(outputs.get("//core/crates/ctx-http:ctx"), "/execroot/bazel-out/k8-fastbuild/bin/core/crates/ctx-http/ctx");
+  assert.equal(outputs.get("//core/crates/ctx-mcp:ctx-mcp"), "/execroot/bazel-out/k8-fastbuild/bin/core/crates/ctx-mcp/ctx-mcp");
 });
 
 test("ctx_http_bazel rejects missing Bazel output lines", () => {
@@ -196,25 +198,46 @@ test("ctx_http_bazel budgets direct Bazel builds under host-heavy", () => {
 
 test("ctx_http_bazel budgets direct Bazel cquery lookups under host-heavy", () => {
   const budgetCalls = [];
-  const repoRoot = require("node:path").resolve(__dirname, "..", "..");
+  const spawnCalls = [];
 
   const outputs = resolveBazelOutputPaths(["//core/crates/ctx-http:ctx"], {
     env: process.env,
-    spawnSyncImpl: () => ({
-      status: 0,
-      stdout: "@@//core/crates/ctx-http:ctx|bazel-out/k8-fastbuild/bin/core/crates/ctx-http/ctx\n",
-    }),
+    spawnSyncImpl: (command, args, options) => {
+      spawnCalls.push({ command, args, options });
+      if (args.includes("info")) {
+        return { status: 0, stdout: "/execroot\n" };
+      }
+      return {
+        status: 0,
+        stdout: "@@//core/crates/ctx-http:ctx|bazel-out/k8-fastbuild/bin/core/crates/ctx-http/ctx\n",
+      };
+    },
     withHostJobBudgetImpl: (options, fn) => {
       budgetCalls.push(options);
       return fn();
     },
   });
 
-  assert.equal(budgetCalls.length, 1);
+  assert.equal(budgetCalls.length, 2);
   assert.equal(budgetCalls[0].budgetKey, HOST_HEAVY_BUDGET_KEY);
+  assert.equal(budgetCalls[0].command, "bazel info execution_root");
+  assert.equal(budgetCalls[1].budgetKey, HOST_HEAVY_BUDGET_KEY);
+  assert.match(budgetCalls[1].command, /^bazel cquery /);
+  assert.equal(spawnCalls.length, 2);
   assert.equal(
     outputs.get("//core/crates/ctx-http:ctx"),
-    `${repoRoot}/bazel-out/k8-fastbuild/bin/core/crates/ctx-http/ctx`,
+    "/execroot/bazel-out/k8-fastbuild/bin/core/crates/ctx-http/ctx",
+  );
+});
+
+test("ctx_http_bazel rejects empty Bazel execution root", () => {
+  assert.throws(
+    () => resolveBazelExecutionRoot({
+      env: process.env,
+      spawnSyncImpl: () => ({ status: 0, stdout: "\n" }),
+      withHostJobBudgetImpl: (_options, fn) => fn(),
+    }),
+    /execution_root returned an empty path/,
   );
 });
 

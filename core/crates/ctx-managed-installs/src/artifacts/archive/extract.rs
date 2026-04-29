@@ -5,7 +5,7 @@ use anyhow::{Context, Result};
 
 use super::safe_paths::{
     create_archive_dir, create_archive_file, create_archive_hardlink, create_archive_symlink,
-    ensure_archive_root, safe_archive_dest,
+    ensure_archive_root, normalize_archive_entry_path_allowing_empty, safe_archive_dest,
 };
 
 pub(crate) fn extract_zip_to_dir(zip_path: &Path, out_dir: &Path) -> Result<()> {
@@ -70,7 +70,15 @@ fn extract_tar_stream_to_dir<R: Read>(reader: R, out_dir: &Path, label: &str) ->
             .path()
             .with_context(|| format!("read {label} entry path"))?
             .into_owned();
-        let dest = safe_archive_dest(out_dir, &raw_path, "tar entry path")?;
+        let normalized_path =
+            normalize_archive_entry_path_allowing_empty(&raw_path, "tar entry path")?;
+        if normalized_path.as_os_str().is_empty() {
+            if entry_type.is_dir() {
+                continue;
+            }
+            anyhow::bail!("tar entry path is empty");
+        }
+        let dest = out_dir.join(normalized_path);
 
         if entry_type.is_dir() {
             create_archive_dir(&root, out_dir, &dest)?;
