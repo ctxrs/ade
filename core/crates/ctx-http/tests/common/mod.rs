@@ -120,6 +120,51 @@ pub fn resolve_cargo_bin_exe(raw_path: &str) -> PathBuf {
     maybe_copy_test_binary(&resolve_test_path(Path::new(raw_path), "test binary"))
 }
 
+pub fn resolve_ctx_mcp_command_for_test() -> PathBuf {
+    let raw_path = option_env!("CARGO_BIN_EXE_ctx-mcp").unwrap_or_else(|| {
+        panic!(
+            "ctx-http CRP integration tests require CARGO_BIN_EXE_ctx-mcp; run them through the Bazel ctx-http test targets"
+        )
+    });
+    resolve_cargo_bin_exe(raw_path)
+}
+
+pub fn ctx_mcp_command_env_pair() -> (String, String) {
+    (
+        "CTX_MCP_COMMAND".to_string(),
+        resolve_ctx_mcp_command_for_test()
+            .to_string_lossy()
+            .to_string(),
+    )
+}
+
+pub struct TestEnvGuard {
+    key: &'static str,
+    prev: Option<std::ffi::OsString>,
+}
+
+impl TestEnvGuard {
+    pub fn set(key: &'static str, value: impl AsRef<std::ffi::OsStr>) -> Self {
+        let prev = std::env::var_os(key);
+        std::env::set_var(key, value);
+        Self { key, prev }
+    }
+}
+
+impl Drop for TestEnvGuard {
+    fn drop(&mut self) {
+        if let Some(value) = self.prev.take() {
+            std::env::set_var(self.key, value);
+        } else {
+            std::env::remove_var(self.key);
+        }
+    }
+}
+
+pub fn set_ctx_mcp_command_env_for_test() -> TestEnvGuard {
+    TestEnvGuard::set("CTX_MCP_COMMAND", resolve_ctx_mcp_command_for_test())
+}
+
 pub fn resolve_manifest_dir() -> PathBuf {
     resolve_test_path(Path::new(env!("CARGO_MANIFEST_DIR")), "manifest dir")
 }

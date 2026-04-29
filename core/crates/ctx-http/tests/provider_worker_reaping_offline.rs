@@ -177,6 +177,7 @@ async fn assert_provider_session_resume_after_idle_reap(provider_id: &str, model
         "CTX_CRP_FIRST_EVENT_TIMEOUT_MS",
         CRP_FIXTURE_FIRST_EVENT_TIMEOUT_MS,
     );
+    let _guard_ctx_mcp = common::set_ctx_mcp_command_env_for_test();
     let _codex_home = if matches!(provider_id, "codex") {
         Some(configure_hermetic_codex_home().await)
     } else {

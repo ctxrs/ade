@@ -334,6 +334,7 @@ async fn provider_scenarios_offline_crp_fixtures() {
         "CTX_CRP_FIRST_EVENT_TIMEOUT_MS",
         CRP_FIXTURE_FIRST_EVENT_TIMEOUT_MS,
     );
+    let _guard_ctx_mcp = common::set_ctx_mcp_command_env_for_test();
 
     let provider_ids: &[&str] = &[
         "codex",
@@ -453,6 +454,7 @@ async fn provider_scenarios_offline_interleaved_assistant_tools_do_not_fragment_
         "CTX_CRP_FIRST_EVENT_TIMEOUT_MS",
         CRP_FIXTURE_FIRST_EVENT_TIMEOUT_MS,
     );
+    let _guard_ctx_mcp = common::set_ctx_mcp_command_env_for_test();
 
     let repo = common::init_git_repo(&[("note.txt", "hello\n")]).await;
     let data_dir = tempfile::tempdir().unwrap();
@@ -557,6 +559,7 @@ async fn provider_scenarios_offline_crp_fixtures_persist_context_window_metrics(
         "CTX_CRP_FIRST_EVENT_TIMEOUT_MS",
         CRP_FIXTURE_FIRST_EVENT_TIMEOUT_MS,
     );
+    let _guard_ctx_mcp = common::set_ctx_mcp_command_env_for_test();
 
     let repo = common::init_git_repo(&[("note.txt", "hello\n")]).await;
     let data_dir = tempfile::tempdir().unwrap();

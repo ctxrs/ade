@@ -292,6 +292,7 @@ test("ctx-http BUILD exposes Bazel-native base test targets", () => {
     ctxHttpBuild,
     /CTX_HTTP_INTEGRATION_TEST_DATA = CTX_HTTP_COMPILE_DATA \+ CTX_HTTP_TEST_CORPUS_DATA \+ CTX_HTTP_TEST_FIXTURE_DATA/,
   );
+  assert.match(ctxHttpBuild, /"\/\/core\/crates\/ctx-mcp:ctx-mcp"/);
   assert.match(ctxHttpBuild, /declare_ctx_http_integration_tests/);
   assert.match(ctxHttpBuild, new RegExp(`CARGO_PKG_VERSION": "${escapeRegExp(desktopVersion)}"`));
 });
@@ -337,6 +338,8 @@ test("ctx-http Bazel helper keeps quick-path and manual-only suites explicit", (
   );
   assert.match(ctxHttpBazelTests, /CARGO_BIN_EXE_llama_server_mock/);
   assert.match(ctxHttpBazelTests, /CARGO_BIN_EXE_ctx/);
+  assert.match(ctxHttpBazelTests, /CARGO_BIN_EXE_ctx-mcp/);
+  assert.match(ctxHttpBazelTests, /\$\(rootpath \/\/core\/crates\/ctx-mcp:ctx-mcp\)/);
 });
 
 test("ctx-http Bazel rust mapping covers the non-manual suite labels only", () => {

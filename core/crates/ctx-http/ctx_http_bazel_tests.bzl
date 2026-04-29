@@ -434,6 +434,7 @@ def _integration_rustc_env(rustc_env):
     for key, value in rustc_env.items():
         merged[key] = value
     merged["CARGO_BIN_EXE_ctx"] = "$(rootpath :ctx)"
+    merged["CARGO_BIN_EXE_ctx-mcp"] = "$(rootpath //core/crates/ctx-mcp:ctx-mcp)"
     merged["CARGO_BIN_EXE_llama_server_mock"] = "$(rootpath :llama_server_mock)"
     return merged
 

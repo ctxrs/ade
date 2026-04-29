@@ -73,16 +73,23 @@ mod tests {
     #[tokio::test]
     async fn terminal_stream_url_uses_terminal_scoped_stream_path() {
         let terminal_id = TerminalId::new();
+        let stream_path = format!(
+            "/api/terminals/{}/stream?token=terminal-secret",
+            terminal_id.0
+        );
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move {
             let app = axum::Router::new().route(
                 &format!("/api/terminals/{}/stream_token", terminal_id.0),
-                axum::routing::post(|| async {
-                    axum::Json(serde_json::json!({
-                        "stream_path": format!("/api/terminals/{}/stream?token=terminal-secret", terminal_id.0),
-                        "expires_at": "2026-04-23T00:00:00Z"
-                    }))
+                axum::routing::post(move || {
+                    let stream_path = stream_path.clone();
+                    async move {
+                        axum::Json(serde_json::json!({
+                            "stream_path": stream_path,
+                            "expires_at": "2026-04-23T00:00:00Z"
+                        }))
+                    }
                 }),
             );
             axum::serve(listener, app).await.unwrap();

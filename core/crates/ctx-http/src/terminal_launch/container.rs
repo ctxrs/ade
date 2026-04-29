@@ -189,7 +189,7 @@ async fn canonicalize_container_terminal_cwd(
     validate_canonical_container_terminal_cwd(live_root, &canonical)
 }
 
-fn validate_canonical_container_terminal_cwd(
+pub(super) fn validate_canonical_container_terminal_cwd(
     live_root: &FsPath,
     canonical: &FsPath,
 ) -> Result<PathBuf, (StatusCode, Json<ApiErrorResp>)> {

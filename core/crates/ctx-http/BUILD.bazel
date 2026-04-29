@@ -28,6 +28,7 @@ CTX_HTTP_TEST_FIXTURE_DATA = glob(["tests/fixtures/**"])
 CTX_HTTP_INTEGRATION_TEST_DATA = CTX_HTTP_COMPILE_DATA + CTX_HTTP_TEST_CORPUS_DATA + CTX_HTTP_TEST_FIXTURE_DATA + [
     ":ctx",
     ":llama_server_mock",
+    "//core/crates/ctx-mcp:ctx-mcp",
 ]
 
 CTX_HTTP_TEST_ARGS = []

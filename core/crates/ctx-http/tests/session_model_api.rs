@@ -354,7 +354,10 @@ async fn live_crp_fixture_authenticate_session_emits_ready_signals_and_stays_liv
         vec![script_path.to_string_lossy().to_string()],
     );
     let session_key = "fixture-auth-live-session".to_string();
-    let auth_env = HashMap::from([("CTX_PROVIDER_ID".to_string(), provider_id.to_string())]);
+    let auth_env = HashMap::from([
+        ("CTX_PROVIDER_ID".to_string(), provider_id.to_string()),
+        common::ctx_mcp_command_env_pair(),
+    ]);
     let (event_tx, mut event_rx) = mpsc::channel::<NormalizedEvent>(16);
 
     adapter
@@ -816,7 +819,10 @@ async fn assert_live_crp_session_model_switch_case(
     );
 
     let (event_tx, mut event_rx) = mpsc::channel::<NormalizedEvent>(8);
-    let auth_env = HashMap::from([("CTX_PROVIDER_ID".to_string(), provider_id.to_string())]);
+    let auth_env = HashMap::from([
+        ("CTX_PROVIDER_ID".to_string(), provider_id.to_string()),
+        common::ctx_mcp_command_env_pair(),
+    ]);
     adapter
         .authenticate_session(
             session.id.0.to_string(),
