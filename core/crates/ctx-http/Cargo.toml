@@ -119,9 +119,6 @@ fault_injection = ["ctx-store/fault_injection"]
 property_tests = []
 daemon-heap-prof = ["dep:tikv-jemalloc-ctl", "dep:tikv-jemallocator"]
 
-[target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.59", features = ["Win32_Storage_FileSystem"] }
-
 [[bin]]
 name = "ctx"
 path = "src/main.rs"
