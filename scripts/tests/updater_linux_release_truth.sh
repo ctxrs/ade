@@ -32,6 +32,8 @@ upload_artifacts_on_buildkite() {
   fi
   buildkite-agent artifact upload "${ARTIFACT_DIR}/*.json" >/dev/null 2>&1 || true
   buildkite-agent artifact upload "${ARTIFACT_DIR}/*.log" >/dev/null 2>&1 || true
+  buildkite-agent artifact upload "${ARTIFACT_DIR}/harness-install-matrix/**/*.json" >/dev/null 2>&1 || true
+  buildkite-agent artifact upload "${ARTIFACT_DIR}/harness-install-matrix/**/*.log" >/dev/null 2>&1 || true
   buildkite-agent artifact upload "${ARTIFACT_DIR}/volatile/artifacts/ctx-desktop-e2e/**/*.log" >/dev/null 2>&1 || true
   buildkite-agent artifact upload "${ARTIFACT_DIR}/volatile/artifacts/ctx-desktop-e2e/**/*.png" >/dev/null 2>&1 || true
 }
@@ -472,11 +474,13 @@ fi
 chmod +x "${daemon_bin}"
 
 echo "[updater-linux-proof] proving provider/runtime installs from updated daemon bundles" >&2
-if ! "${ROOT}/scripts/release_runtime_install_smoke.sh" \
-  --daemon-bin "${daemon_bin}" \
-  --bundle-dir "${bundle_dir}" \
-  --provider "${CTX_UPDATER_RUNTIME_PROVIDER:-qwen}" \
-  --complete >"${RUNTIME_INSTALL_LOG}" 2>&1; then
+if ! CTX_HARNESS_INSTALL_MATRIX_DAEMON_BIN="${daemon_bin}" \
+  CTX_HARNESS_INSTALL_MATRIX_BUNDLE_DIR="${bundle_dir}" \
+  CTX_HARNESS_INSTALL_MATRIX_ARTIFACTS_DIR="${ARTIFACT_DIR}/harness-install-matrix/linux-release" \
+  "${ROOT}/core/apps/desktop/scripts/run_harness_install_matrix.sh" \
+    --lane release \
+    --platform linux \
+    --target all >"${RUNTIME_INSTALL_LOG}" 2>&1; then
   write_report "failed" "runtime_install_smoke_failed"
   tail -n 200 "${RUNTIME_INSTALL_LOG}" >&2 || true
   exit 1

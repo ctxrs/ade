@@ -125,6 +125,7 @@ const PROFILES = [
     selector: {
       includeEntryIds: [
         "updates-release.mac-preview-macos-arm64",
+        "distribution-install.harness-install-matrix-preview-macos",
       ],
       includeSurfaces: ["artifact"],
       includeWorlds: ["local-packaged-artifact"],
@@ -206,6 +207,7 @@ const PROFILES = [
         "desktop-shell.desktop-launch-mode-contracts",
         "distribution-install.desktop-bundle-contracts",
         "distribution-install.bundled-harness-dependency-contracts",
+        "distribution-install.harness-install-matrix-validate",
         "provider-auth.provider-auth-validate",
         "provider-auth.desktop-e2e-preflight-contracts",
         "sandbox-runtime.desktop-sync-resources-contracts",
@@ -659,6 +661,30 @@ const PROFILES = [
     currentExecution: "Scheduled updater proof uses external services and is separate from nightly-breadth.",
     expansionRules: [
       "This external-service updater profile is separate from the hermetic and simulated nightly-breadth checks.",
+    ],
+  },
+  {
+    id: "nightly-harness-install-matrix",
+    title: "Nightly Harness Install Matrix",
+    purpose: "Run broad live harness installability proof outside the default nightly union.",
+    selector: {
+      includeEntryIds: [
+        "distribution-install.harness-install-matrix-nightly",
+      ],
+      includeSurfaces: ["system"],
+      includeWorlds: ["live-provider"],
+      includeCosts: ["slow"],
+      includeStabilities: ["quarantined"],
+      includeExecutions: ["script-local"],
+    },
+    currentCommands: [
+      "pnpm -C core testing:profile:run --profile nightly-harness-install-matrix",
+    ],
+    pipelines: ["ctx-nightly"],
+    remoteStrategy: "Run only when a nightly app artifact source and Mac/Linux worker capacity are explicitly provided.",
+    currentExecution: "The checked-in ctx-nightly pipeline has a guarded harness-install step; enable it with CTX_HARNESS_INSTALL_MATRIX_ENABLE_NIGHTLY=1 and app artifact inputs.",
+    expansionRules: [
+      "This profile selects the nightly harness install matrix.",
     ],
   },
   {

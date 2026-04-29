@@ -198,7 +198,8 @@ if [[ "$all_providers" == "1" ]]; then
   done < <(jq -r '.[] | select(.details.install_supported == "true") | .provider_id' <<<"$providers_json" | sort -u)
 else
   if ! jq -e --arg id "$provider_id" '.[] | select(.provider_id == $id)' <<<"$providers_json" >/dev/null; then
-    provider_id="$(jq -r '.[] | select(.details.install_supported == "true") | .provider_id' <<<"$providers_json" | head -n 1)"
+    echo "error: requested provider '$provider_id' was not returned by provider catalog for target=$install_target" >&2
+    exit 1
   fi
   [[ -n "$provider_id" ]] && provider_ids+=("$provider_id")
 fi
@@ -248,6 +249,33 @@ for current_provider_id in "${provider_ids[@]}"; do
     if [[ "$state" != "succeeded" ]]; then
       echo "error: provider install did not succeed (provider=$current_provider_id target=$install_target state=$state error_code=${error_code:-none})" >&2
       echo "$info_json" >&2
+      exit 1
+    fi
+
+    provider_status_url="http://$bind_addr/api/providers/$current_provider_id?target=$install_target"
+    provider_status_json="$(curl -fsS "${auth_header[@]}" "$provider_status_url")"
+    returned_provider_id="$(jq -r '.provider_id // ""' <<<"$provider_status_json")"
+    if [[ "$returned_provider_id" != "$current_provider_id" ]]; then
+      echo "error: provider status returned wrong provider id after install (requested=$current_provider_id returned=${returned_provider_id:-none})" >&2
+      echo "$provider_status_json" >&2
+      exit 1
+    fi
+    installed="$(jq -r '.installed // false' <<<"$provider_status_json")"
+    if [[ "$installed" != "true" ]]; then
+      echo "error: provider status is not installed after successful install (provider=$current_provider_id target=$install_target)" >&2
+      echo "$provider_status_json" >&2
+      exit 1
+    fi
+    install_running="$(jq -r '.details.install_running // "false"' <<<"$provider_status_json")"
+    if [[ "$install_running" == "true" ]]; then
+      echo "error: provider still reports install_running after successful install (provider=$current_provider_id target=$install_target)" >&2
+      echo "$provider_status_json" >&2
+      exit 1
+    fi
+    detected_path="$(jq -r '.detected_path // ""' <<<"$provider_status_json")"
+    if [[ -z "$detected_path" || "$detected_path" == "null" ]]; then
+      echo "error: provider status missing detected_path after successful install (provider=$current_provider_id target=$install_target)" >&2
+      echo "$provider_status_json" >&2
       exit 1
     fi
   else

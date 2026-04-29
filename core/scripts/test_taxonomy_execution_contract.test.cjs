@@ -377,6 +377,18 @@ test("mac-preview touched-only selection resolves to the dedicated Apple Silicon
   ]);
 });
 
+test("mac-preview full profile includes the harness install matrix", () => {
+  const plan = buildExecutionPlan({
+    profileId: "mac-preview",
+    selectionMode: "all",
+  });
+
+  assert.deepEqual(plan.commands, [
+    "bash ../scripts/buildkite/run_mac_preview_build.sh",
+    "bash ../scripts/buildkite/run_harness_install_matrix_macos.sh",
+  ]);
+});
+
 test("nightly-breadth is the explicit scheduled anomaly and fuzz union", () => {
   const plan = buildExecutionPlan({
     profileId: "nightly-breadth",
@@ -457,6 +469,7 @@ test("direct pipeline helper profiles resolve to explicit package-script command
       "pnpm bazel:desktop:launch-mode:contracts",
       "pnpm bazel:desktop:bundle:contracts",
       "pnpm bazel:bundled-harness:dependency:contracts",
+      "pnpm bazel:harness-install-matrix:validate",
       "pnpm bazel:provider-auth:validate",
       "pnpm bazel:desktop:e2e:preflight:contracts",
       "pnpm bazel:desktop:sync-resources:contracts",

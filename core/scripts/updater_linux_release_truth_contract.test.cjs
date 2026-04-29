@@ -20,3 +20,11 @@ test("Linux updater proof removes only stale proof daemon locks between automati
   assert.ok(workspaceProofIndex > 0, "workspace proof phase should stay present");
   assert.ok(lastCleanupBeforeWorkspace > 0, "workspace proof should clean updater daemons first");
 });
+
+test("Linux updater proof runs the release harness install matrix against updated bundles", () => {
+  assert.match(scriptText, /core\/apps\/desktop\/scripts\/run_harness_install_matrix\.sh/);
+  assert.match(scriptText, /CTX_HARNESS_INSTALL_MATRIX_DAEMON_BIN="\$\{daemon_bin\}"/);
+  assert.match(scriptText, /CTX_HARNESS_INSTALL_MATRIX_BUNDLE_DIR="\$\{bundle_dir\}"/);
+  assert.match(scriptText, /--lane release\s+\\\n\s+--platform linux\s+\\\n\s+--target all/);
+  assert.doesNotMatch(scriptText, /CTX_UPDATER_RUNTIME_PROVIDER/);
+});

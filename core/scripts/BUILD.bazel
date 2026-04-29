@@ -65,6 +65,13 @@ sh_binary(
 )
 
 sh_binary(
+    name = "harness_install_matrix_validate",
+    srcs = ["//tools/bazel:run_node_task.sh"],
+    args = ["core", "scripts/harness_install_matrix_validate_bazel.cjs"],
+    data = DESKTOP_PARITY_CONTRACT_DATA,
+)
+
+sh_binary(
     name = "desktop_version_check",
     srcs = ["//tools/bazel:run_node_task.sh"],
     args = ["core", "scripts/desktop_check_versions.cjs"],

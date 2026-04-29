@@ -26,6 +26,8 @@ const packageJsonPath = path.join(coreRoot, "package.json");
 const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"));
 const providerMatrixPath = path.join(coreRoot, "apps", "desktop", "automation", "fixtures", "provider_auth_matrix.json");
 const providerMatrix = JSON.parse(fs.readFileSync(providerMatrixPath, "utf8"));
+const harnessInstallMatrixPath = path.join(coreRoot, "apps", "desktop", "automation", "fixtures", "harness_install_matrix.json");
+const harnessInstallMatrix = JSON.parse(fs.readFileSync(harnessInstallMatrixPath, "utf8"));
 const webRoot = path.join(coreRoot, "apps", "web");
 const webE2ERoot = path.join(webRoot, "e2e");
 const webSuiteRoot = path.join(webE2ERoot, "suites");
@@ -71,6 +73,22 @@ const PROVIDER_AUTH_VALIDATE_GLOBS = [
   "core/scripts/validate_provider_auth_matrix.cjs",
   "core/scripts/validate_provider_auth_matrix.test.cjs",
   "scripts/buildbuddy/run_provider_auth_matrix.sh",
+];
+const HARNESS_INSTALL_MATRIX_GLOBS = [
+  ".buildkite/**",
+  "buildbuddy.yaml",
+  "core/apps/desktop/automation/fixtures/harness_install_matrix.json",
+  "core/apps/desktop/automation/docs/harness_install_matrix.md",
+  "core/apps/desktop/scripts/run_harness_install_matrix.sh",
+  "core/apps/desktop/scripts/run_harness_install_matrix.test.cjs",
+  "core/package.json",
+  "core/scripts/harness_install_matrix_validate_bazel.cjs",
+  "core/scripts/release_runtime_install_smoke_contract.test.cjs",
+  "core/scripts/validate_harness_install_matrix.cjs",
+  "core/scripts/validate_harness_install_matrix.test.cjs",
+  "scripts/buildkite/run_harness_install_matrix_macos.sh",
+  "scripts/release_runtime_install_smoke.sh",
+  "scripts/tests/updater_linux_release_truth.sh",
 ];
 const INSTALL_BOOTSTRAP_GLOBS = [
   ".buildkite/**",
@@ -526,6 +544,101 @@ function buildProviderMatrixEntries() {
       dependencyCrates: [],
       notes: `${nightlyAuthModeCount("auth_import")} supported nightly auth-import cells currently live in the matrix.`,
       exception: "Intentional live-provider nightly matrix slice on the shared Mac/browser host; keep script-local and quarantined.",
+    },
+  ];
+}
+
+function countHarnessInstallCellsForLane(lane) {
+  let count = 0;
+  for (const provider of Array.isArray(harnessInstallMatrix.providers) ? harnessInstallMatrix.providers : []) {
+    for (const cell of Object.values(provider.cells || {})) {
+      const lanes = Array.isArray(cell.lanes) ? cell.lanes : [];
+      if (cell.support === "supported" && lanes.includes(lane)) count += 1;
+    }
+  }
+  return count;
+}
+
+function buildHarnessInstallMatrixEntries() {
+  const releaseCount = countHarnessInstallCellsForLane("release");
+  const previewCount = countHarnessInstallCellsForLane("preview");
+  const nightlyCount = countHarnessInstallCellsForLane("nightly");
+  return [
+    {
+      id: "distribution-install.harness-install-matrix-validate",
+      title: "Harness install matrix validation",
+      family: "distribution-install",
+      entrypointType: "core-package-script",
+      entrypoint: "bazel:harness-install-matrix:validate",
+      surface: "contract",
+      oracle: "static-contract",
+      world: "hermetic",
+      cost: "tiny",
+      requirements: ["linux"],
+      stability: "stable",
+      execution: "bazel-addressable",
+      owner: "distribution",
+      sourceGlobs: HARNESS_INSTALL_MATRIX_GLOBS,
+      dependencyCrates: [],
+      notes: "Static contract proving every installable harness provider has macOS/Linux host/sandbox matrix coverage.",
+      exception: "",
+    },
+    {
+      id: "distribution-install.harness-install-matrix-preview-macos",
+      title: "Harness install matrix preview macOS",
+      family: "distribution-install",
+      entrypointType: "repo-shell-script",
+      entrypoint: "scripts/buildkite/run_harness_install_matrix_macos.sh",
+      surface: "artifact",
+      oracle: "golden-flow",
+      world: "local-packaged-artifact",
+      cost: "slow",
+      requirements: ["mac", "network", "single-mac", "long-running"],
+      stability: "stable",
+      execution: "script-local",
+      owner: "distribution",
+      sourceGlobs: HARNESS_INSTALL_MATRIX_GLOBS,
+      dependencyCrates: [],
+      notes: `${previewCount} preview cells install all managed harness providers from the produced macOS preview app.`,
+      exception: "Intentional packaged-app install truth on the shared Mac; this consumes signed app artifacts and live provider downloads, so it is not Bazel-addressable.",
+    },
+    {
+      id: "distribution-install.harness-install-matrix-release",
+      title: "Harness install matrix release proof",
+      family: "distribution-install",
+      entrypointType: "core-package-script",
+      entrypoint: "verify:desktop:harness-install-matrix:release",
+      surface: "system",
+      oracle: "golden-flow",
+      world: "local-packaged-artifact",
+      cost: "slow",
+      requirements: ["mac", "linux", "network", "single-mac", "long-running"],
+      stability: "stable",
+      execution: "script-local",
+      owner: "distribution",
+      sourceGlobs: HARNESS_INSTALL_MATRIX_GLOBS,
+      dependencyCrates: [],
+      notes: `${releaseCount} release cells are required across macOS/Linux and host/sandbox before stable promotion. Linux release proof is executed by updater_linux_release_truth; macOS proof is an explicit release pipeline step.`,
+      exception: "Intentional packaged-app install truth on real OS workers; Buildkite supplies exact app and daemon artifacts.",
+    },
+    {
+      id: "distribution-install.harness-install-matrix-nightly",
+      title: "Harness install matrix nightly",
+      family: "distribution-install",
+      entrypointType: "core-package-script",
+      entrypoint: "verify:desktop:harness-install-matrix:nightly",
+      surface: "system",
+      oracle: "golden-flow",
+      world: "live-provider",
+      cost: "slow",
+      requirements: ["mac", "linux", "network", "single-mac", "long-running"],
+      stability: "quarantined",
+      execution: "script-local",
+      owner: "distribution",
+      sourceGlobs: HARNESS_INSTALL_MATRIX_GLOBS,
+      dependencyCrates: [],
+      notes: `${nightlyCount} nightly cells repeat installability and are the expansion point for launch/probe/first-turn breadth.`,
+      exception: "Intentional live-provider breadth outside the default nightly union until queue capacity and app-artifact source are explicit.",
     },
   ];
 }
@@ -2211,6 +2324,7 @@ function buildTaxonomyRegistry() {
     ...buildCtxHttpEntries(),
     ...buildRustEntries(),
     ...buildProviderMatrixEntries(),
+    ...buildHarnessInstallMatrixEntries(),
     ...buildWebE2EEntries(),
   ].map((entry) => validateEntry(entry, familiesById)));
 
@@ -2261,6 +2375,7 @@ module.exports = {
   FAMILIES,
   buildTaxonomyRegistry,
   getCorePackageScripts,
+  harnessInstallMatrix,
   providerMatrix,
   readWebSuiteMap,
   validateTaxonomyRegistry,

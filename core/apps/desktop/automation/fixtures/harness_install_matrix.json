@@ -1,0 +1,1627 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-04-29",
+  "summary": "Harness provider installability contract across platform and execution target. Provider ids are product ids; adapter/runtime ids are not provider aliases.",
+  "source_provider_matrix": "core/crates/ctx-provider-accounts/src/provider_matrix.json",
+  "platform_targets": [
+    {
+      "id": "macos.host",
+      "platform": "macos",
+      "execution_target": "host",
+      "install_target": "host"
+    },
+    {
+      "id": "macos.sandbox",
+      "platform": "macos",
+      "execution_target": "sandbox",
+      "install_target": "container"
+    },
+    {
+      "id": "linux.host",
+      "platform": "linux",
+      "execution_target": "host",
+      "install_target": "host"
+    },
+    {
+      "id": "linux.sandbox",
+      "platform": "linux",
+      "execution_target": "sandbox",
+      "install_target": "container"
+    }
+  ],
+  "assertion_definitions": {
+    "canonical_provider_id": "The cell uses the product provider id from provider_matrix.json, never an adapter/runtime alias.",
+    "catalog_install_supported": "The provider catalog reports install support for the requested target.",
+    "install_started": "The install API returns an install id for the requested provider/target.",
+    "install_succeeded": "The install reaches succeeded before timeout.",
+    "status_installed": "Post-install status reports installed=true and install_running=false.",
+    "runtime_command_configured": "The installed provider has a configured runtime command for the canonical provider id.",
+    "no_alias_or_fallback": "No fallback provider id, adapter id, or alternate install path is accepted as success."
+  },
+  "providers": [
+    {
+      "id": "amp",
+      "display_name": "Amp",
+      "owner": "provider-amp",
+      "install_kind": "archive",
+      "command": "amp-acp",
+      "cells": {
+        "macos.host": {
+          "support": "supported",
+          "lanes": [
+            "preview",
+            "release",
+            "nightly"
+          ],
+          "install_target": "host",
+          "required_assertions": [
+            "canonical_provider_id",
+            "catalog_install_supported",
+            "install_started",
+            "install_succeeded",
+            "status_installed",
+            "runtime_command_configured",
+            "no_alias_or_fallback"
+          ],
+          "runner": {
+            "kind": "release_runtime_install_smoke",
+            "script": "scripts/release_runtime_install_smoke.sh"
+          },
+          "product_reason": ""
+        },
+        "macos.sandbox": {
+          "support": "supported",
+          "lanes": [
+            "preview",
+            "release",
+            "nightly"
+          ],
+          "install_target": "container",
+          "required_assertions": [
+            "canonical_provider_id",
+            "catalog_install_supported",
+            "install_started",
+            "install_succeeded",
+            "status_installed",
+            "runtime_command_configured",
+            "no_alias_or_fallback"
+          ],
+          "runner": {
+            "kind": "release_runtime_install_smoke",
+            "script": "scripts/release_runtime_install_smoke.sh"
+          },
+          "product_reason": ""
+        },
+        "linux.host": {
+          "support": "supported",
+          "lanes": [
+            "release",
+            "nightly"
+          ],
+          "install_target": "host",
+          "required_assertions": [
+            "canonical_provider_id",
+            "catalog_install_supported",
+            "install_started",
+            "install_succeeded",
+            "status_installed",
+            "runtime_command_configured",
+            "no_alias_or_fallback"
+          ],
+          "runner": {
+            "kind": "release_runtime_install_smoke",
+            "script": "scripts/release_runtime_install_smoke.sh"
+          },
+          "product_reason": ""
+        },
+        "linux.sandbox": {
+          "support": "supported",
+          "lanes": [
+            "release",
+            "nightly"
+          ],
+          "install_target": "container",
+          "required_assertions": [
+            "canonical_provider_id",
+            "catalog_install_supported",
+            "install_started",
+            "install_succeeded",
+            "status_installed",
+            "runtime_command_configured",
+            "no_alias_or_fallback"
+          ],
+          "runner": {
+            "kind": "release_runtime_install_smoke",
+            "script": "scripts/release_runtime_install_smoke.sh"
+          },
+          "product_reason": ""
+        }
+      }
+    },
+    {
+      "id": "auggie",
+      "display_name": "Auggie",
+      "owner": "provider-auggie",
+      "install_kind": "npm",
+      "command": "auggie",
+      "cells": {
+        "macos.host": {
+          "support": "supported",
+          "lanes": [
+            "preview",
+            "release",
+            "nightly"
+          ],
+          "install_target": "host",
+          "required_assertions": [
+            "canonical_provider_id",
+            "catalog_install_supported",
+            "install_started",
+            "install_succeeded",
+            "status_installed",
+            "runtime_command_configured",
+            "no_alias_or_fallback"
+          ],
+          "runner": {
+            "kind": "release_runtime_install_smoke",
+            "script": "scripts/release_runtime_install_smoke.sh"
+          },
+          "product_reason": ""
+        },
+        "macos.sandbox": {
+          "support": "supported",
+          "lanes": [
+            "preview",
+            "release",
+            "nightly"
+          ],
+          "install_target": "container",
+          "required_assertions": [
+            "canonical_provider_id",
+            "catalog_install_supported",
+            "install_started",
+            "install_succeeded",
+            "status_installed",
+            "runtime_command_configured",
+            "no_alias_or_fallback"
+          ],
+          "runner": {
+            "kind": "release_runtime_install_smoke",
+            "script": "scripts/release_runtime_install_smoke.sh"
+          },
+          "product_reason": ""
+        },
+        "linux.host": {
+          "support": "supported",
+          "lanes": [
+            "release",
+            "nightly"
+          ],
+          "install_target": "host",
+          "required_assertions": [
+            "canonical_provider_id",
+            "catalog_install_supported",
+            "install_started",
+            "install_succeeded",
+            "status_installed",
+            "runtime_command_configured",
+            "no_alias_or_fallback"
+          ],
+          "runner": {
+            "kind": "release_runtime_install_smoke",
+            "script": "scripts/release_runtime_install_smoke.sh"
+          },
+          "product_reason": ""
+        },
+        "linux.sandbox": {
+          "support": "supported",
+          "lanes": [
+            "release",
+            "nightly"
+          ],
+          "install_target": "container",
+          "required_assertions": [
+            "canonical_provider_id",
+            "catalog_install_supported",
+            "install_started",
+            "install_succeeded",
+            "status_installed",
+            "runtime_command_configured",
+            "no_alias_or_fallback"
+          ],
+          "runner": {
+            "kind": "release_runtime_install_smoke",
+            "script": "scripts/release_runtime_install_smoke.sh"
+          },
+          "product_reason": ""
+        }
+      }
+    },
+    {
+      "id": "claude-crp",
+      "display_name": "Claude",
+      "owner": "provider-claude-crp",
+      "install_kind": "archive",
+      "command": "claude-crp",
+      "cells": {
+        "macos.host": {
+          "support": "supported",
+          "lanes": [
+            "preview",
+            "release",
+            "nightly"
+          ],
+          "install_target": "host",
+          "required_assertions": [
+            "canonical_provider_id",
+            "catalog_install_supported",
+            "install_started",
+            "install_succeeded",
+            "status_installed",
+            "runtime_command_configured",
+            "no_alias_or_fallback"
+          ],
+          "runner": {
+            "kind": "release_runtime_install_smoke",
+            "script": "scripts/release_runtime_install_smoke.sh"
+          },
+          "product_reason": ""
+        },
+        "macos.sandbox": {
+          "support": "supported",
+          "lanes": [
+            "preview",
+            "release",
+            "nightly"
+          ],
+          "install_target": "container",
+          "required_assertions": [
+            "canonical_provider_id",
+            "catalog_install_supported",
+            "install_started",
+            "install_succeeded",
+            "status_installed",
+            "runtime_command_configured",
+            "no_alias_or_fallback"
+          ],
+          "runner": {
+            "kind": "release_runtime_install_smoke",
+            "script": "scripts/release_runtime_install_smoke.sh"
+          },
+          "product_reason": ""
+        },
+        "linux.host": {
+          "support": "supported",
+          "lanes": [
+            "release",
+            "nightly"
+          ],
+          "install_target": "host",
+          "required_assertions": [
+            "canonical_provider_id",
+            "catalog_install_supported",
+            "install_started",
+            "install_succeeded",
+            "status_installed",
+            "runtime_command_configured",
+            "no_alias_or_fallback"
+          ],
+          "runner": {
+            "kind": "release_runtime_install_smoke",
+            "script": "scripts/release_runtime_install_smoke.sh"
+          },
+          "product_reason": ""
+        },
+        "linux.sandbox": {
+          "support": "supported",
+          "lanes": [
+            "release",
+            "nightly"
+          ],
+          "install_target": "container",
+          "required_assertions": [
+            "canonical_provider_id",
+            "catalog_install_supported",
+            "install_started",
+            "install_succeeded",
+            "status_installed",
+            "runtime_command_configured",
+            "no_alias_or_fallback"
+          ],
+          "runner": {
+            "kind": "release_runtime_install_smoke",
+            "script": "scripts/release_runtime_install_smoke.sh"
+          },
+          "product_reason": ""
+        }
+      }
+    },
+    {
+      "id": "cline",
+      "display_name": "Cline",
+      "owner": "provider-cline",
+      "install_kind": "npm",
+      "command": "cline",
+      "cells": {
+        "macos.host": {
+          "support": "supported",
+          "lanes": [
+            "preview",
+            "release",
+            "nightly"
+          ],
+          "install_target": "host",
+          "required_assertions": [
+            "canonical_provider_id",
+            "catalog_install_supported",
+            "install_started",
+            "install_succeeded",
+            "status_installed",
+            "runtime_command_configured",
+            "no_alias_or_fallback"
+          ],
+          "runner": {
+            "kind": "release_runtime_install_smoke",
+            "script": "scripts/release_runtime_install_smoke.sh"
+          },
+          "product_reason": ""
+        },
+        "macos.sandbox": {
+          "support": "supported",
+          "lanes": [
+            "preview",
+            "release",
+            "nightly"
+          ],
+          "install_target": "container",
+          "required_assertions": [
+            "canonical_provider_id",
+            "catalog_install_supported",
+            "install_started",
+            "install_succeeded",
+            "status_installed",
+            "runtime_command_configured",
+            "no_alias_or_fallback"
+          ],
+          "runner": {
+            "kind": "release_runtime_install_smoke",
+            "script": "scripts/release_runtime_install_smoke.sh"
+          },
+          "product_reason": ""
+        },
+        "linux.host": {
+          "support": "supported",
+          "lanes": [
+            "release",
+            "nightly"
+          ],
+          "install_target": "host",
+          "required_assertions": [
+            "canonical_provider_id",
+            "catalog_install_supported",
+            "install_started",
+            "install_succeeded",
+            "status_installed",
+            "runtime_command_configured",
+            "no_alias_or_fallback"
+          ],
+          "runner": {
+            "kind": "release_runtime_install_smoke",
+            "script": "scripts/release_runtime_install_smoke.sh"
+          },
+          "product_reason": ""
+        },
+        "linux.sandbox": {
+          "support": "supported",
+          "lanes": [
+            "release",
+            "nightly"
+          ],
+          "install_target": "container",
+          "required_assertions": [
+            "canonical_provider_id",
+            "catalog_install_supported",
+            "install_started",
+            "install_succeeded",
+            "status_installed",
+            "runtime_command_configured",
+            "no_alias_or_fallback"
+          ],
+          "runner": {
+            "kind": "release_runtime_install_smoke",
+            "script": "scripts/release_runtime_install_smoke.sh"
+          },
+          "product_reason": ""
+        }
+      }
+    },
+    {
+      "id": "codex",
+      "display_name": "Codex",
+      "owner": "provider-codex",
+      "install_kind": "archive",
+      "command": "codex-crp",
+      "cells": {
+        "macos.host": {
+          "support": "supported",
+          "lanes": [
+            "preview",
+            "release",
+            "nightly"
+          ],
+          "install_target": "host",
+          "required_assertions": [
+            "canonical_provider_id",
+            "catalog_install_supported",
+            "install_started",
+            "install_succeeded",
+            "status_installed",
+            "runtime_command_configured",
+            "no_alias_or_fallback"
+          ],
+          "runner": {
+            "kind": "release_runtime_install_smoke",
+            "script": "scripts/release_runtime_install_smoke.sh"
+          },
+          "product_reason": ""
+        },
+        "macos.sandbox": {
+          "support": "supported",
+          "lanes": [
+            "preview",
+            "release",
+            "nightly"
+          ],
+          "install_target": "container",
+          "required_assertions": [
+            "canonical_provider_id",
+            "catalog_install_supported",
+            "install_started",
+            "install_succeeded",
+            "status_installed",
+            "runtime_command_configured",
+            "no_alias_or_fallback"
+          ],
+          "runner": {
+            "kind": "release_runtime_install_smoke",
+            "script": "scripts/release_runtime_install_smoke.sh"
+          },
+          "product_reason": ""
+        },
+        "linux.host": {
+          "support": "supported",
+          "lanes": [
+            "release",
+            "nightly"
+          ],
+          "install_target": "host",
+          "required_assertions": [
+            "canonical_provider_id",
+            "catalog_install_supported",
+            "install_started",
+            "install_succeeded",
+            "status_installed",
+            "runtime_command_configured",
+            "no_alias_or_fallback"
+          ],
+          "runner": {
+            "kind": "release_runtime_install_smoke",
+            "script": "scripts/release_runtime_install_smoke.sh"
+          },
+          "product_reason": ""
+        },
+        "linux.sandbox": {
+          "support": "supported",
+          "lanes": [
+            "release",
+            "nightly"
+          ],
+          "install_target": "container",
+          "required_assertions": [
+            "canonical_provider_id",
+            "catalog_install_supported",
+            "install_started",
+            "install_succeeded",
+            "status_installed",
+            "runtime_command_configured",
+            "no_alias_or_fallback"
+          ],
+          "runner": {
+            "kind": "release_runtime_install_smoke",
+            "script": "scripts/release_runtime_install_smoke.sh"
+          },
+          "product_reason": ""
+        }
+      }
+    },
+    {
+      "id": "copilot",
+      "display_name": "Copilot",
+      "owner": "provider-copilot",
+      "install_kind": "npm",
+      "command": "copilot",
+      "cells": {
+        "macos.host": {
+          "support": "supported",
+          "lanes": [
+            "preview",
+            "release",
+            "nightly"
+          ],
+          "install_target": "host",
+          "required_assertions": [
+            "canonical_provider_id",
+            "catalog_install_supported",
+            "install_started",
+            "install_succeeded",
+            "status_installed",
+            "runtime_command_configured",
+            "no_alias_or_fallback"
+          ],
+          "runner": {
+            "kind": "release_runtime_install_smoke",
+            "script": "scripts/release_runtime_install_smoke.sh"
+          },
+          "product_reason": ""
+        },
+        "macos.sandbox": {
+          "support": "supported",
+          "lanes": [
+            "preview",
+            "release",
+            "nightly"
+          ],
+          "install_target": "container",
+          "required_assertions": [
+            "canonical_provider_id",
+            "catalog_install_supported",
+            "install_started",
+            "install_succeeded",
+            "status_installed",
+            "runtime_command_configured",
+            "no_alias_or_fallback"
+          ],
+          "runner": {
+            "kind": "release_runtime_install_smoke",
+            "script": "scripts/release_runtime_install_smoke.sh"
+          },
+          "product_reason": ""
+        },
+        "linux.host": {
+          "support": "supported",
+          "lanes": [
+            "release",
+            "nightly"
+          ],
+          "install_target": "host",
+          "required_assertions": [
+            "canonical_provider_id",
+            "catalog_install_supported",
+            "install_started",
+            "install_succeeded",
+            "status_installed",
+            "runtime_command_configured",
+            "no_alias_or_fallback"
+          ],
+          "runner": {
+            "kind": "release_runtime_install_smoke",
+            "script": "scripts/release_runtime_install_smoke.sh"
+          },
+          "product_reason": ""
+        },
+        "linux.sandbox": {
+          "support": "supported",
+          "lanes": [
+            "release",
+            "nightly"
+          ],
+          "install_target": "container",
+          "required_assertions": [
+            "canonical_provider_id",
+            "catalog_install_supported",
+            "install_started",
+            "install_succeeded",
+            "status_installed",
+            "runtime_command_configured",
+            "no_alias_or_fallback"
+          ],
+          "runner": {
+            "kind": "release_runtime_install_smoke",
+            "script": "scripts/release_runtime_install_smoke.sh"
+          },
+          "product_reason": ""
+        }
+      }
+    },
+    {
+      "id": "cursor",
+      "display_name": "Cursor",
+      "owner": "provider-cursor",
+      "install_kind": "npm",
+      "command": "cursor-agent-acp",
+      "cells": {
+        "macos.host": {
+          "support": "supported",
+          "lanes": [
+            "preview",
+            "release",
+            "nightly"
+          ],
+          "install_target": "host",
+          "required_assertions": [
+            "canonical_provider_id",
+            "catalog_install_supported",
+            "install_started",
+            "install_succeeded",
+            "status_installed",
+            "runtime_command_configured",
+            "no_alias_or_fallback"
+          ],
+          "runner": {
+            "kind": "release_runtime_install_smoke",
+            "script": "scripts/release_runtime_install_smoke.sh"
+          },
+          "product_reason": ""
+        },
+        "macos.sandbox": {
+          "support": "supported",
+          "lanes": [
+            "preview",
+            "release",
+            "nightly"
+          ],
+          "install_target": "container",
+          "required_assertions": [
+            "canonical_provider_id",
+            "catalog_install_supported",
+            "install_started",
+            "install_succeeded",
+            "status_installed",
+            "runtime_command_configured",
+            "no_alias_or_fallback"
+          ],
+          "runner": {
+            "kind": "release_runtime_install_smoke",
+            "script": "scripts/release_runtime_install_smoke.sh"
+          },
+          "product_reason": ""
+        },
+        "linux.host": {
+          "support": "supported",
+          "lanes": [
+            "release",
+            "nightly"
+          ],
+          "install_target": "host",
+          "required_assertions": [
+            "canonical_provider_id",
+            "catalog_install_supported",
+            "install_started",
+            "install_succeeded",
+            "status_installed",
+            "runtime_command_configured",
+            "no_alias_or_fallback"
+          ],
+          "runner": {
+            "kind": "release_runtime_install_smoke",
+            "script": "scripts/release_runtime_install_smoke.sh"
+          },
+          "product_reason": ""
+        },
+        "linux.sandbox": {
+          "support": "supported",
+          "lanes": [
+            "release",
+            "nightly"
+          ],
+          "install_target": "container",
+          "required_assertions": [
+            "canonical_provider_id",
+            "catalog_install_supported",
+            "install_started",
+            "install_succeeded",
+            "status_installed",
+            "runtime_command_configured",
+            "no_alias_or_fallback"
+          ],
+          "runner": {
+            "kind": "release_runtime_install_smoke",
+            "script": "scripts/release_runtime_install_smoke.sh"
+          },
+          "product_reason": ""
+        }
+      }
+    },
+    {
+      "id": "droid",
+      "display_name": "Droid",
+      "owner": "provider-droid",
+      "install_kind": "archive",
+      "command": "droid-acp",
+      "cells": {
+        "macos.host": {
+          "support": "supported",
+          "lanes": [
+            "preview",
+            "release",
+            "nightly"
+          ],
+          "install_target": "host",
+          "required_assertions": [
+            "canonical_provider_id",
+            "catalog_install_supported",
+            "install_started",
+            "install_succeeded",
+            "status_installed",
+            "runtime_command_configured",
+            "no_alias_or_fallback"
+          ],
+          "runner": {
+            "kind": "release_runtime_install_smoke",
+            "script": "scripts/release_runtime_install_smoke.sh"
+          },
+          "product_reason": ""
+        },
+        "macos.sandbox": {
+          "support": "supported",
+          "lanes": [
+            "preview",
+            "release",
+            "nightly"
+          ],
+          "install_target": "container",
+          "required_assertions": [
+            "canonical_provider_id",
+            "catalog_install_supported",
+            "install_started",
+            "install_succeeded",
+            "status_installed",
+            "runtime_command_configured",
+            "no_alias_or_fallback"
+          ],
+          "runner": {
+            "kind": "release_runtime_install_smoke",
+            "script": "scripts/release_runtime_install_smoke.sh"
+          },
+          "product_reason": ""
+        },
+        "linux.host": {
+          "support": "supported",
+          "lanes": [
+            "release",
+            "nightly"
+          ],
+          "install_target": "host",
+          "required_assertions": [
+            "canonical_provider_id",
+            "catalog_install_supported",
+            "install_started",
+            "install_succeeded",
+            "status_installed",
+            "runtime_command_configured",
+            "no_alias_or_fallback"
+          ],
+          "runner": {
+            "kind": "release_runtime_install_smoke",
+            "script": "scripts/release_runtime_install_smoke.sh"
+          },
+          "product_reason": ""
+        },
+        "linux.sandbox": {
+          "support": "supported",
+          "lanes": [
+            "release",
+            "nightly"
+          ],
+          "install_target": "container",
+          "required_assertions": [
+            "canonical_provider_id",
+            "catalog_install_supported",
+            "install_started",
+            "install_succeeded",
+            "status_installed",
+            "runtime_command_configured",
+            "no_alias_or_fallback"
+          ],
+          "runner": {
+            "kind": "release_runtime_install_smoke",
+            "script": "scripts/release_runtime_install_smoke.sh"
+          },
+          "product_reason": ""
+        }
+      }
+    },
+    {
+      "id": "gemini",
+      "display_name": "Gemini",
+      "owner": "provider-gemini",
+      "install_kind": "npm",
+      "command": "",
+      "cells": {
+        "macos.host": {
+          "support": "supported",
+          "lanes": [
+            "preview",
+            "release",
+            "nightly"
+          ],
+          "install_target": "host",
+          "required_assertions": [
+            "canonical_provider_id",
+            "catalog_install_supported",
+            "install_started",
+            "install_succeeded",
+            "status_installed",
+            "runtime_command_configured",
+            "no_alias_or_fallback"
+          ],
+          "runner": {
+            "kind": "release_runtime_install_smoke",
+            "script": "scripts/release_runtime_install_smoke.sh"
+          },
+          "product_reason": ""
+        },
+        "macos.sandbox": {
+          "support": "supported",
+          "lanes": [
+            "preview",
+            "release",
+            "nightly"
+          ],
+          "install_target": "container",
+          "required_assertions": [
+            "canonical_provider_id",
+            "catalog_install_supported",
+            "install_started",
+            "install_succeeded",
+            "status_installed",
+            "runtime_command_configured",
+            "no_alias_or_fallback"
+          ],
+          "runner": {
+            "kind": "release_runtime_install_smoke",
+            "script": "scripts/release_runtime_install_smoke.sh"
+          },
+          "product_reason": ""
+        },
+        "linux.host": {
+          "support": "supported",
+          "lanes": [
+            "release",
+            "nightly"
+          ],
+          "install_target": "host",
+          "required_assertions": [
+            "canonical_provider_id",
+            "catalog_install_supported",
+            "install_started",
+            "install_succeeded",
+            "status_installed",
+            "runtime_command_configured",
+            "no_alias_or_fallback"
+          ],
+          "runner": {
+            "kind": "release_runtime_install_smoke",
+            "script": "scripts/release_runtime_install_smoke.sh"
+          },
+          "product_reason": ""
+        },
+        "linux.sandbox": {
+          "support": "supported",
+          "lanes": [
+            "release",
+            "nightly"
+          ],
+          "install_target": "container",
+          "required_assertions": [
+            "canonical_provider_id",
+            "catalog_install_supported",
+            "install_started",
+            "install_succeeded",
+            "status_installed",
+            "runtime_command_configured",
+            "no_alias_or_fallback"
+          ],
+          "runner": {
+            "kind": "release_runtime_install_smoke",
+            "script": "scripts/release_runtime_install_smoke.sh"
+          },
+          "product_reason": ""
+        }
+      }
+    },
+    {
+      "id": "goose",
+      "display_name": "Goose",
+      "owner": "provider-goose",
+      "install_kind": "archive",
+      "command": "goose",
+      "cells": {
+        "macos.host": {
+          "support": "supported",
+          "lanes": [
+            "preview",
+            "release",
+            "nightly"
+          ],
+          "install_target": "host",
+          "required_assertions": [
+            "canonical_provider_id",
+            "catalog_install_supported",
+            "install_started",
+            "install_succeeded",
+            "status_installed",
+            "runtime_command_configured",
+            "no_alias_or_fallback"
+          ],
+          "runner": {
+            "kind": "release_runtime_install_smoke",
+            "script": "scripts/release_runtime_install_smoke.sh"
+          },
+          "product_reason": ""
+        },
+        "macos.sandbox": {
+          "support": "supported",
+          "lanes": [
+            "preview",
+            "release",
+            "nightly"
+          ],
+          "install_target": "container",
+          "required_assertions": [
+            "canonical_provider_id",
+            "catalog_install_supported",
+            "install_started",
+            "install_succeeded",
+            "status_installed",
+            "runtime_command_configured",
+            "no_alias_or_fallback"
+          ],
+          "runner": {
+            "kind": "release_runtime_install_smoke",
+            "script": "scripts/release_runtime_install_smoke.sh"
+          },
+          "product_reason": ""
+        },
+        "linux.host": {
+          "support": "supported",
+          "lanes": [
+            "release",
+            "nightly"
+          ],
+          "install_target": "host",
+          "required_assertions": [
+            "canonical_provider_id",
+            "catalog_install_supported",
+            "install_started",
+            "install_succeeded",
+            "status_installed",
+            "runtime_command_configured",
+            "no_alias_or_fallback"
+          ],
+          "runner": {
+            "kind": "release_runtime_install_smoke",
+            "script": "scripts/release_runtime_install_smoke.sh"
+          },
+          "product_reason": ""
+        },
+        "linux.sandbox": {
+          "support": "supported",
+          "lanes": [
+            "release",
+            "nightly"
+          ],
+          "install_target": "container",
+          "required_assertions": [
+            "canonical_provider_id",
+            "catalog_install_supported",
+            "install_started",
+            "install_succeeded",
+            "status_installed",
+            "runtime_command_configured",
+            "no_alias_or_fallback"
+          ],
+          "runner": {
+            "kind": "release_runtime_install_smoke",
+            "script": "scripts/release_runtime_install_smoke.sh"
+          },
+          "product_reason": ""
+        }
+      }
+    },
+    {
+      "id": "kimi",
+      "display_name": "Kimi",
+      "owner": "provider-kimi",
+      "install_kind": "python",
+      "command": "kimi",
+      "cells": {
+        "macos.host": {
+          "support": "supported",
+          "lanes": [
+            "preview",
+            "release",
+            "nightly"
+          ],
+          "install_target": "host",
+          "required_assertions": [
+            "canonical_provider_id",
+            "catalog_install_supported",
+            "install_started",
+            "install_succeeded",
+            "status_installed",
+            "runtime_command_configured",
+            "no_alias_or_fallback"
+          ],
+          "runner": {
+            "kind": "release_runtime_install_smoke",
+            "script": "scripts/release_runtime_install_smoke.sh"
+          },
+          "product_reason": ""
+        },
+        "macos.sandbox": {
+          "support": "supported",
+          "lanes": [
+            "preview",
+            "release",
+            "nightly"
+          ],
+          "install_target": "container",
+          "required_assertions": [
+            "canonical_provider_id",
+            "catalog_install_supported",
+            "install_started",
+            "install_succeeded",
+            "status_installed",
+            "runtime_command_configured",
+            "no_alias_or_fallback"
+          ],
+          "runner": {
+            "kind": "release_runtime_install_smoke",
+            "script": "scripts/release_runtime_install_smoke.sh"
+          },
+          "product_reason": ""
+        },
+        "linux.host": {
+          "support": "supported",
+          "lanes": [
+            "release",
+            "nightly"
+          ],
+          "install_target": "host",
+          "required_assertions": [
+            "canonical_provider_id",
+            "catalog_install_supported",
+            "install_started",
+            "install_succeeded",
+            "status_installed",
+            "runtime_command_configured",
+            "no_alias_or_fallback"
+          ],
+          "runner": {
+            "kind": "release_runtime_install_smoke",
+            "script": "scripts/release_runtime_install_smoke.sh"
+          },
+          "product_reason": ""
+        },
+        "linux.sandbox": {
+          "support": "supported",
+          "lanes": [
+            "release",
+            "nightly"
+          ],
+          "install_target": "container",
+          "required_assertions": [
+            "canonical_provider_id",
+            "catalog_install_supported",
+            "install_started",
+            "install_succeeded",
+            "status_installed",
+            "runtime_command_configured",
+            "no_alias_or_fallback"
+          ],
+          "runner": {
+            "kind": "release_runtime_install_smoke",
+            "script": "scripts/release_runtime_install_smoke.sh"
+          },
+          "product_reason": ""
+        }
+      }
+    },
+    {
+      "id": "mistral",
+      "display_name": "Mistral",
+      "owner": "provider-mistral",
+      "install_kind": "python",
+      "command": "vibe-acp",
+      "cells": {
+        "macos.host": {
+          "support": "supported",
+          "lanes": [
+            "preview",
+            "release",
+            "nightly"
+          ],
+          "install_target": "host",
+          "required_assertions": [
+            "canonical_provider_id",
+            "catalog_install_supported",
+            "install_started",
+            "install_succeeded",
+            "status_installed",
+            "runtime_command_configured",
+            "no_alias_or_fallback"
+          ],
+          "runner": {
+            "kind": "release_runtime_install_smoke",
+            "script": "scripts/release_runtime_install_smoke.sh"
+          },
+          "product_reason": ""
+        },
+        "macos.sandbox": {
+          "support": "supported",
+          "lanes": [
+            "preview",
+            "release",
+            "nightly"
+          ],
+          "install_target": "container",
+          "required_assertions": [
+            "canonical_provider_id",
+            "catalog_install_supported",
+            "install_started",
+            "install_succeeded",
+            "status_installed",
+            "runtime_command_configured",
+            "no_alias_or_fallback"
+          ],
+          "runner": {
+            "kind": "release_runtime_install_smoke",
+            "script": "scripts/release_runtime_install_smoke.sh"
+          },
+          "product_reason": ""
+        },
+        "linux.host": {
+          "support": "supported",
+          "lanes": [
+            "release",
+            "nightly"
+          ],
+          "install_target": "host",
+          "required_assertions": [
+            "canonical_provider_id",
+            "catalog_install_supported",
+            "install_started",
+            "install_succeeded",
+            "status_installed",
+            "runtime_command_configured",
+            "no_alias_or_fallback"
+          ],
+          "runner": {
+            "kind": "release_runtime_install_smoke",
+            "script": "scripts/release_runtime_install_smoke.sh"
+          },
+          "product_reason": ""
+        },
+        "linux.sandbox": {
+          "support": "supported",
+          "lanes": [
+            "release",
+            "nightly"
+          ],
+          "install_target": "container",
+          "required_assertions": [
+            "canonical_provider_id",
+            "catalog_install_supported",
+            "install_started",
+            "install_succeeded",
+            "status_installed",
+            "runtime_command_configured",
+            "no_alias_or_fallback"
+          ],
+          "runner": {
+            "kind": "release_runtime_install_smoke",
+            "script": "scripts/release_runtime_install_smoke.sh"
+          },
+          "product_reason": ""
+        }
+      }
+    },
+    {
+      "id": "opencode",
+      "display_name": "OpenCode",
+      "owner": "provider-opencode",
+      "install_kind": "archive",
+      "command": "opencode",
+      "cells": {
+        "macos.host": {
+          "support": "supported",
+          "lanes": [
+            "preview",
+            "release",
+            "nightly"
+          ],
+          "install_target": "host",
+          "required_assertions": [
+            "canonical_provider_id",
+            "catalog_install_supported",
+            "install_started",
+            "install_succeeded",
+            "status_installed",
+            "runtime_command_configured",
+            "no_alias_or_fallback"
+          ],
+          "runner": {
+            "kind": "release_runtime_install_smoke",
+            "script": "scripts/release_runtime_install_smoke.sh"
+          },
+          "product_reason": ""
+        },
+        "macos.sandbox": {
+          "support": "supported",
+          "lanes": [
+            "preview",
+            "release",
+            "nightly"
+          ],
+          "install_target": "container",
+          "required_assertions": [
+            "canonical_provider_id",
+            "catalog_install_supported",
+            "install_started",
+            "install_succeeded",
+            "status_installed",
+            "runtime_command_configured",
+            "no_alias_or_fallback"
+          ],
+          "runner": {
+            "kind": "release_runtime_install_smoke",
+            "script": "scripts/release_runtime_install_smoke.sh"
+          },
+          "product_reason": ""
+        },
+        "linux.host": {
+          "support": "supported",
+          "lanes": [
+            "release",
+            "nightly"
+          ],
+          "install_target": "host",
+          "required_assertions": [
+            "canonical_provider_id",
+            "catalog_install_supported",
+            "install_started",
+            "install_succeeded",
+            "status_installed",
+            "runtime_command_configured",
+            "no_alias_or_fallback"
+          ],
+          "runner": {
+            "kind": "release_runtime_install_smoke",
+            "script": "scripts/release_runtime_install_smoke.sh"
+          },
+          "product_reason": ""
+        },
+        "linux.sandbox": {
+          "support": "supported",
+          "lanes": [
+            "release",
+            "nightly"
+          ],
+          "install_target": "container",
+          "required_assertions": [
+            "canonical_provider_id",
+            "catalog_install_supported",
+            "install_started",
+            "install_succeeded",
+            "status_installed",
+            "runtime_command_configured",
+            "no_alias_or_fallback"
+          ],
+          "runner": {
+            "kind": "release_runtime_install_smoke",
+            "script": "scripts/release_runtime_install_smoke.sh"
+          },
+          "product_reason": ""
+        }
+      }
+    },
+    {
+      "id": "openhands",
+      "display_name": "OpenHands",
+      "owner": "provider-openhands",
+      "install_kind": "python",
+      "command": "openhands",
+      "cells": {
+        "macos.host": {
+          "support": "supported",
+          "lanes": [
+            "preview",
+            "release",
+            "nightly"
+          ],
+          "install_target": "host",
+          "required_assertions": [
+            "canonical_provider_id",
+            "catalog_install_supported",
+            "install_started",
+            "install_succeeded",
+            "status_installed",
+            "runtime_command_configured",
+            "no_alias_or_fallback"
+          ],
+          "runner": {
+            "kind": "release_runtime_install_smoke",
+            "script": "scripts/release_runtime_install_smoke.sh"
+          },
+          "product_reason": ""
+        },
+        "macos.sandbox": {
+          "support": "supported",
+          "lanes": [
+            "preview",
+            "release",
+            "nightly"
+          ],
+          "install_target": "container",
+          "required_assertions": [
+            "canonical_provider_id",
+            "catalog_install_supported",
+            "install_started",
+            "install_succeeded",
+            "status_installed",
+            "runtime_command_configured",
+            "no_alias_or_fallback"
+          ],
+          "runner": {
+            "kind": "release_runtime_install_smoke",
+            "script": "scripts/release_runtime_install_smoke.sh"
+          },
+          "product_reason": ""
+        },
+        "linux.host": {
+          "support": "supported",
+          "lanes": [
+            "release",
+            "nightly"
+          ],
+          "install_target": "host",
+          "required_assertions": [
+            "canonical_provider_id",
+            "catalog_install_supported",
+            "install_started",
+            "install_succeeded",
+            "status_installed",
+            "runtime_command_configured",
+            "no_alias_or_fallback"
+          ],
+          "runner": {
+            "kind": "release_runtime_install_smoke",
+            "script": "scripts/release_runtime_install_smoke.sh"
+          },
+          "product_reason": ""
+        },
+        "linux.sandbox": {
+          "support": "supported",
+          "lanes": [
+            "release",
+            "nightly"
+          ],
+          "install_target": "container",
+          "required_assertions": [
+            "canonical_provider_id",
+            "catalog_install_supported",
+            "install_started",
+            "install_succeeded",
+            "status_installed",
+            "runtime_command_configured",
+            "no_alias_or_fallback"
+          ],
+          "runner": {
+            "kind": "release_runtime_install_smoke",
+            "script": "scripts/release_runtime_install_smoke.sh"
+          },
+          "product_reason": ""
+        }
+      }
+    },
+    {
+      "id": "pi",
+      "display_name": "Pi",
+      "owner": "provider-pi",
+      "install_kind": "archive",
+      "command": "pi-acp",
+      "cells": {
+        "macos.host": {
+          "support": "supported",
+          "lanes": [
+            "preview",
+            "release",
+            "nightly"
+          ],
+          "install_target": "host",
+          "required_assertions": [
+            "canonical_provider_id",
+            "catalog_install_supported",
+            "install_started",
+            "install_succeeded",
+            "status_installed",
+            "runtime_command_configured",
+            "no_alias_or_fallback"
+          ],
+          "runner": {
+            "kind": "release_runtime_install_smoke",
+            "script": "scripts/release_runtime_install_smoke.sh"
+          },
+          "product_reason": ""
+        },
+        "macos.sandbox": {
+          "support": "supported",
+          "lanes": [
+            "preview",
+            "release",
+            "nightly"
+          ],
+          "install_target": "container",
+          "required_assertions": [
+            "canonical_provider_id",
+            "catalog_install_supported",
+            "install_started",
+            "install_succeeded",
+            "status_installed",
+            "runtime_command_configured",
+            "no_alias_or_fallback"
+          ],
+          "runner": {
+            "kind": "release_runtime_install_smoke",
+            "script": "scripts/release_runtime_install_smoke.sh"
+          },
+          "product_reason": ""
+        },
+        "linux.host": {
+          "support": "supported",
+          "lanes": [
+            "release",
+            "nightly"
+          ],
+          "install_target": "host",
+          "required_assertions": [
+            "canonical_provider_id",
+            "catalog_install_supported",
+            "install_started",
+            "install_succeeded",
+            "status_installed",
+            "runtime_command_configured",
+            "no_alias_or_fallback"
+          ],
+          "runner": {
+            "kind": "release_runtime_install_smoke",
+            "script": "scripts/release_runtime_install_smoke.sh"
+          },
+          "product_reason": ""
+        },
+        "linux.sandbox": {
+          "support": "supported",
+          "lanes": [
+            "release",
+            "nightly"
+          ],
+          "install_target": "container",
+          "required_assertions": [
+            "canonical_provider_id",
+            "catalog_install_supported",
+            "install_started",
+            "install_succeeded",
+            "status_installed",
+            "runtime_command_configured",
+            "no_alias_or_fallback"
+          ],
+          "runner": {
+            "kind": "release_runtime_install_smoke",
+            "script": "scripts/release_runtime_install_smoke.sh"
+          },
+          "product_reason": ""
+        }
+      }
+    },
+    {
+      "id": "qwen",
+      "display_name": "Qwen",
+      "owner": "provider-qwen",
+      "install_kind": "npm",
+      "command": "qwen",
+      "cells": {
+        "macos.host": {
+          "support": "supported",
+          "lanes": [
+            "preview",
+            "release",
+            "nightly"
+          ],
+          "install_target": "host",
+          "required_assertions": [
+            "canonical_provider_id",
+            "catalog_install_supported",
+            "install_started",
+            "install_succeeded",
+            "status_installed",
+            "runtime_command_configured",
+            "no_alias_or_fallback"
+          ],
+          "runner": {
+            "kind": "release_runtime_install_smoke",
+            "script": "scripts/release_runtime_install_smoke.sh"
+          },
+          "product_reason": ""
+        },
+        "macos.sandbox": {
+          "support": "supported",
+          "lanes": [
+            "preview",
+            "release",
+            "nightly"
+          ],
+          "install_target": "container",
+          "required_assertions": [
+            "canonical_provider_id",
+            "catalog_install_supported",
+            "install_started",
+            "install_succeeded",
+            "status_installed",
+            "runtime_command_configured",
+            "no_alias_or_fallback"
+          ],
+          "runner": {
+            "kind": "release_runtime_install_smoke",
+            "script": "scripts/release_runtime_install_smoke.sh"
+          },
+          "product_reason": ""
+        },
+        "linux.host": {
+          "support": "supported",
+          "lanes": [
+            "release",
+            "nightly"
+          ],
+          "install_target": "host",
+          "required_assertions": [
+            "canonical_provider_id",
+            "catalog_install_supported",
+            "install_started",
+            "install_succeeded",
+            "status_installed",
+            "runtime_command_configured",
+            "no_alias_or_fallback"
+          ],
+          "runner": {
+            "kind": "release_runtime_install_smoke",
+            "script": "scripts/release_runtime_install_smoke.sh"
+          },
+          "product_reason": ""
+        },
+        "linux.sandbox": {
+          "support": "supported",
+          "lanes": [
+            "release",
+            "nightly"
+          ],
+          "install_target": "container",
+          "required_assertions": [
+            "canonical_provider_id",
+            "catalog_install_supported",
+            "install_started",
+            "install_succeeded",
+            "status_installed",
+            "runtime_command_configured",
+            "no_alias_or_fallback"
+          ],
+          "runner": {
+            "kind": "release_runtime_install_smoke",
+            "script": "scripts/release_runtime_install_smoke.sh"
+          },
+          "product_reason": ""
+        }
+      }
+    }
+  ]
+}
