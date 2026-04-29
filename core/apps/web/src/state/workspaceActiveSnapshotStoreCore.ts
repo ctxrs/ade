@@ -31,6 +31,7 @@ import {
   closeActiveSnapshotStream,
   flushSubscriptions as flushActiveSnapshotSubscriptions,
   getCanonicalStreamUrl,
+  injectActiveSnapshotStreamMessage,
   notifyEventListeners,
   setDropActiveSnapshotMessages,
   setE2EEnabled,
@@ -200,6 +201,9 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
 
   e2eSetDropActiveSnapshotMessages = (drop: boolean) =>
     setDropActiveSnapshotMessages(this, drop);
+
+  e2eInjectActiveSnapshotStreamMessage = (data: unknown): boolean =>
+    injectActiveSnapshotStreamMessage(this, data);
 
   e2eGetCanonicalStreamUrl = (): string | null => getCanonicalStreamUrl(this);
 

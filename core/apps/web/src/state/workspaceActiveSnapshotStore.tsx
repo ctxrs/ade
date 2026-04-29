@@ -16,6 +16,7 @@ type CtxE2EWorkspaceStream = {
   getConnectionState?: () => WorkspaceActiveSnapshotState["connection"];
   close?: () => void;
   setDropMessages?: (drop: boolean) => void;
+  injectMessage?: (data: unknown) => boolean;
   getCanonicalUrl?: () => string | null;
 };
 
@@ -23,6 +24,7 @@ type CtxE2EBridge = {
   getSessionHeadMessages?: (sessionId: string) => string[];
   getSessionHeadUserMessages?: (sessionId: string) => string[];
   getSessionLastEventSeq?: (sessionId: string) => number | null;
+  getSessionProjectionRev?: (sessionId: string) => number | null;
   getWorkspaceSnapshot?: () => WorkspaceActiveSnapshotState | null;
   getDiagnostics?: () => ReturnType<typeof getUiDiagnostics>;
   clearDiagnostics?: () => void;
@@ -87,12 +89,18 @@ export function WorkspaceActiveSnapshotProvider({
       const head = storeRef.current?.getSessionHeadSnapshot(sessionId);
       return head?.last_event_seq ?? null;
     };
+    win.__ctxE2E.getSessionProjectionRev = (sessionId: string) => {
+      const head = storeRef.current?.getSessionHeadSnapshot(sessionId);
+      return head?.projection_rev ?? null;
+    };
     win.__ctxE2E.getWorkspaceSnapshot = () => storeRef.current?.getSnapshot() ?? null;
     win.__ctxE2E.workspaceStream ??= {};
     win.__ctxE2E.workspaceStream.getConnectionState = () => storeRef.current?.getSnapshot().connection ?? "idle";
     win.__ctxE2E.workspaceStream.close = () => storeRef.current?.e2eCloseActiveSnapshotStream();
     win.__ctxE2E.workspaceStream.setDropMessages = (drop: boolean) =>
       storeRef.current?.e2eSetDropActiveSnapshotMessages(Boolean(drop));
+    win.__ctxE2E.workspaceStream.injectMessage = (data: unknown) =>
+      storeRef.current?.e2eInjectActiveSnapshotStreamMessage(data) ?? false;
     win.__ctxE2E.workspaceStream.getCanonicalUrl = () => storeRef.current?.e2eGetCanonicalStreamUrl?.() ?? null;
     win.__ctxE2E.getDiagnostics = () => getUiDiagnostics();
     win.__ctxE2E.clearDiagnostics = () => clearUiDiagnostics();
@@ -101,6 +109,7 @@ export function WorkspaceActiveSnapshotProvider({
       delete win.__ctxE2E.getSessionHeadMessages;
       delete win.__ctxE2E.getSessionHeadUserMessages;
       delete win.__ctxE2E.getSessionLastEventSeq;
+      delete win.__ctxE2E.getSessionProjectionRev;
       delete win.__ctxE2E.getWorkspaceSnapshot;
       delete win.__ctxE2E.getDiagnostics;
       delete win.__ctxE2E.clearDiagnostics;
@@ -108,6 +117,7 @@ export function WorkspaceActiveSnapshotProvider({
         delete win.__ctxE2E.workspaceStream.getConnectionState;
         delete win.__ctxE2E.workspaceStream.close;
         delete win.__ctxE2E.workspaceStream.setDropMessages;
+        delete win.__ctxE2E.workspaceStream.injectMessage;
         delete win.__ctxE2E.workspaceStream.getCanonicalUrl;
       }
     };

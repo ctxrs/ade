@@ -45,6 +45,7 @@ export type WorkspaceActiveSnapshotCommand =
   | { type: "e2e_set_enabled"; enabled: boolean }
   | { type: "e2e_close_stream" }
   | { type: "e2e_set_drop_messages"; drop: boolean }
+  | { type: "e2e_inject_stream_message"; data: unknown }
   | { type: "heartbeat_ack"; token: string };
 
 export type WorkspaceActiveSnapshotPatch = {

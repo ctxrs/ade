@@ -185,6 +185,19 @@ export function setDropActiveSnapshotMessages(
   host.e2eDropStreamMessages = drop;
 }
 
+export function injectActiveSnapshotStreamMessage(
+  host: WorkspaceActiveSnapshotControlHost,
+  data: unknown,
+): boolean {
+  if (!host.e2eEnabled) return false;
+  if (host.worker) {
+    host.postWorkerCommand({ type: "e2e_inject_stream_message", data });
+    return true;
+  }
+  host.enqueueStreamMessage(data);
+  return true;
+}
+
 export function getCanonicalStreamUrl(
   host: WorkspaceActiveSnapshotControlHost,
 ): string | null {

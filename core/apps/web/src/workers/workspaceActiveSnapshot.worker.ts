@@ -204,6 +204,9 @@ self.onmessage = (event: MessageEvent<WorkspaceActiveSnapshotCommand>) => {
     case "e2e_set_drop_messages":
       store?.e2eSetDropActiveSnapshotMessages(cmd.drop);
       return;
+    case "e2e_inject_stream_message":
+      store?.e2eInjectActiveSnapshotStreamMessage(cmd.data);
+      return;
     case "heartbeat_ack":
       pendingHeartbeatSentAtByToken.delete(cmd.token);
       evaluateHeartbeat();
