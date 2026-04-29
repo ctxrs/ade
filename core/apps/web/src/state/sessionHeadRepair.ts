@@ -62,7 +62,7 @@ const hasOmittedNonTerminalTurns = (
   return entry.turns.some((turn) => {
     const turnId = normalizeId(turn.turn_id);
     if (!turnId || headTurnIds.has(turnId)) return false;
-    return turn.status === "queued" || turn.status === "running";
+    return turn.status === "starting" || turn.status === "running";
   });
 };
 

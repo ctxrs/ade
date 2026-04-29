@@ -5,7 +5,11 @@ const DEFAULT_ROWS: u16 = 24;
 const TERMINAL_PING_INTERVAL: Duration = Duration::from_secs(25);
 const TERMINAL_RECONNECT_BASE_MS: u64 = 500;
 const TERMINAL_RECONNECT_MAX_MS: u64 = 10_000;
-const DAEMON_AUTH_ENV_VARS: &[&str] = &["CTX_AUTH_TOKEN", "CTX_MCP_TOKEN"];
+const DAEMON_AUTH_ENV_VARS: &[&str] = &[
+    "CTX_AUTH_TOKEN",
+    "CTX_MCP_TOKEN",
+    "CTX_LOCAL_DAEMON_SHUTDOWN_TOKEN",
+];
 
 fn scrub_daemon_auth_env(cmd: &mut CommandBuilder) {
     for key in DAEMON_AUTH_ENV_VARS {
@@ -470,6 +474,8 @@ mod terminal_tests {
     fn shim_scrub_daemon_auth_env_removes_sensitive_tokens() {
         let _auth = ScopedEnvVar::set("CTX_AUTH_TOKEN", "daemon-token");
         let _mcp = ScopedEnvVar::set("CTX_MCP_TOKEN", "mcp-token");
+        let _shutdown =
+            ScopedEnvVar::set("CTX_LOCAL_DAEMON_SHUTDOWN_TOKEN", "shutdown-token");
         let mut cmd = CommandBuilder::new("/bin/sh");
 
         scrub_daemon_auth_env(&mut cmd);

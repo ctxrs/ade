@@ -410,6 +410,7 @@ pub(super) async fn detect_provider_version(
 
 pub(super) async fn probe_command_version(command: &str, args: &[String]) -> Option<String> {
     let mut cmd = Command::new(command);
+    scrub_daemon_auth_env(&mut cmd);
     cmd.args(args)
         .kill_on_drop(true)
         .env("NO_COLOR", "1")
@@ -489,4 +490,10 @@ fn resolve_explicit_node_package_script_path(command: &ProviderCommand) -> Optio
 fn resolve_existing_absolute_path(raw: &str) -> Option<PathBuf> {
     let path = PathBuf::from(raw);
     (path.is_absolute() && path.exists()).then_some(path)
+}
+
+fn scrub_daemon_auth_env(cmd: &mut Command) {
+    for key in ctx_core::env::DAEMON_AUTH_ENV_VARS {
+        cmd.env_remove(key);
+    }
 }

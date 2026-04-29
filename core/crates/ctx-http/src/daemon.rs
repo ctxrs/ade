@@ -45,10 +45,12 @@ mod state;
 pub(crate) mod workspaces;
 
 use activity::reconcile_running_turns;
+pub(crate) use activity::reconcile_running_turns_with_reason;
 pub use activity::{
     daemon_sandbox_work_activity_summary, daemon_turn_activity_summary, ActiveTurnRecord,
     DaemonSandboxWorkActivitySummary, DaemonTurnActivitySummary,
 };
+pub(crate) use lifecycle::spawn_deferred_daemon_shutdown;
 #[cfg(test)]
 pub(crate) use lifecycle::{collect_provider_adapters_for_shutdown, shutdown_provider_adapters};
 pub use mcp_auth::issue_provider_session_mcp_token;

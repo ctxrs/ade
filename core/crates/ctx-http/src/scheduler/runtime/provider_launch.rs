@@ -37,8 +37,9 @@ fn strip_unused_daemon_auth_from_provider_env(provider_env: &mut HashMap<String,
     if !mcp_disabled {
         return;
     }
-    provider_env.remove("CTX_AUTH_TOKEN");
-    provider_env.remove("CTX_MCP_TOKEN");
+    for key in ctx_core::env::DAEMON_AUTH_ENV_VARS {
+        provider_env.remove(*key);
+    }
 }
 
 async fn apply_openhands_launch_overrides(
@@ -180,6 +181,10 @@ mod tests {
         let mut env = HashMap::from([
             ("CTX_AUTH_TOKEN".to_string(), "daemon-secret".to_string()),
             ("CTX_MCP_TOKEN".to_string(), "mcp-secret".to_string()),
+            (
+                "CTX_LOCAL_DAEMON_SHUTDOWN_TOKEN".to_string(),
+                "shutdown-secret".to_string(),
+            ),
         ]);
 
         apply_provider_launch_overrides("opencode", temp.path(), &mut env)
@@ -187,8 +192,9 @@ mod tests {
             .expect("apply overrides");
 
         assert_eq!(env.get("CTX_MCP_DISABLED").map(String::as_str), Some("1"));
-        assert!(!env.contains_key("CTX_AUTH_TOKEN"));
-        assert!(!env.contains_key("CTX_MCP_TOKEN"));
+        for key in ctx_core::env::DAEMON_AUTH_ENV_VARS {
+            assert!(!env.contains_key(*key), "{key} should be stripped");
+        }
         assert!(!env.contains_key("ACP_CWD"));
     }
 
@@ -198,6 +204,10 @@ mod tests {
         let mut env = HashMap::from([
             ("CTX_AUTH_TOKEN".to_string(), "daemon-secret".to_string()),
             ("CTX_MCP_TOKEN".to_string(), "mcp-secret".to_string()),
+            (
+                "CTX_LOCAL_DAEMON_SHUTDOWN_TOKEN".to_string(),
+                "shutdown-secret".to_string(),
+            ),
         ]);
 
         apply_provider_launch_overrides("kimi", temp.path(), &mut env)
@@ -205,8 +215,9 @@ mod tests {
             .expect("apply overrides");
 
         assert_eq!(env.get("CTX_MCP_DISABLED").map(String::as_str), Some("1"));
-        assert!(!env.contains_key("CTX_AUTH_TOKEN"));
-        assert!(!env.contains_key("CTX_MCP_TOKEN"));
+        for key in ctx_core::env::DAEMON_AUTH_ENV_VARS {
+            assert!(!env.contains_key(*key), "{key} should be stripped");
+        }
         assert!(!env.contains_key("ACP_CWD"));
     }
 
@@ -248,6 +259,10 @@ mod tests {
             ("CTX_MCP_DISABLED".to_string(), "1".to_string()),
             ("CTX_AUTH_TOKEN".to_string(), "daemon-secret".to_string()),
             ("CTX_MCP_TOKEN".to_string(), "mcp-secret".to_string()),
+            (
+                "CTX_LOCAL_DAEMON_SHUTDOWN_TOKEN".to_string(),
+                "shutdown-secret".to_string(),
+            ),
         ]);
 
         apply_provider_launch_overrides("codex", temp.path(), &mut env)
@@ -255,8 +270,9 @@ mod tests {
             .expect("apply overrides");
 
         assert_eq!(env.get("CTX_MCP_DISABLED").map(String::as_str), Some("1"));
-        assert!(!env.contains_key("CTX_AUTH_TOKEN"));
-        assert!(!env.contains_key("CTX_MCP_TOKEN"));
+        for key in ctx_core::env::DAEMON_AUTH_ENV_VARS {
+            assert!(!env.contains_key(*key), "{key} should be stripped");
+        }
     }
 
     #[tokio::test]

@@ -418,6 +418,7 @@ pub(super) async fn detect_provider_version(
 
 pub(super) async fn probe_command_version(command: &str, args: &[String]) -> Option<String> {
     let mut cmd = Command::new(command);
+    crate::process_env::scrub_daemon_auth_env(&mut cmd);
     cmd.args(args)
         .kill_on_drop(true)
         .env("NO_COLOR", "1")
@@ -508,4 +509,68 @@ fn resolve_explicit_node_package_script_path(command: &ProviderCommand) -> Optio
 fn resolve_existing_absolute_path(raw: &str) -> Option<PathBuf> {
     let path = PathBuf::from(raw);
     (path.is_absolute() && path.exists()).then_some(path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ctx_core::env::DAEMON_AUTH_ENV_VARS;
+
+    struct ScopedEnvVar {
+        key: &'static str,
+        old: Option<String>,
+    }
+
+    impl ScopedEnvVar {
+        fn set(key: &'static str, value: &str) -> Self {
+            let old = std::env::var(key).ok();
+            std::env::set_var(key, value);
+            Self { key, old }
+        }
+    }
+
+    impl Drop for ScopedEnvVar {
+        fn drop(&mut self) {
+            match &self.old {
+                Some(value) => std::env::set_var(self.key, value),
+                None => std::env::remove_var(self.key),
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn version_probe_scrubs_daemon_auth_env() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let script = dir.path().join("version-probe");
+        std::fs::write(
+            &script,
+            r#"#!/bin/sh
+for key in CTX_AUTH_TOKEN CTX_MCP_TOKEN CTX_LOCAL_DAEMON_SHUTDOWN_TOKEN; do
+  eval "value=\${$key:-}"
+  if [ -n "$value" ]; then
+    echo "unexpected $key" >&2
+    exit 91
+  fi
+done
+echo "provider 1.2.3"
+"#,
+        )
+        .expect("write probe script");
+        let mut perms = std::fs::metadata(&script)
+            .expect("probe script metadata")
+            .permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&script, perms).expect("chmod probe script");
+
+        let _guards: Vec<_> = DAEMON_AUTH_ENV_VARS
+            .iter()
+            .map(|key| ScopedEnvVar::set(key, "daemon-secret"))
+            .collect();
+        let version = probe_command_version(script.to_str().expect("utf8 path"), &[]).await;
+
+        assert_eq!(version.as_deref(), Some("1.2.3"));
+    }
 }

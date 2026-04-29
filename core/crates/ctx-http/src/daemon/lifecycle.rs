@@ -285,11 +285,26 @@ pub(crate) async fn shutdown_shared_substrate(
 
 async fn trigger_daemon_shutdown(state: Arc<AppState>, reason: &str) {
     tracing::info!("daemon shutdown requested: {reason}");
+    let _ = state.acquire_update_drain(reason, "daemon_shutdown").await;
+    if let Err(err) = crate::daemon::reconcile_running_turns_with_reason(&state, reason).await {
+        tracing::warn!("failed to reconcile running turns during daemon shutdown: {err:#}");
+    }
     shutdown_provider_adapters(&state, reason).await;
     if let Err(err) = shutdown_shared_substrate(&state, reason).await {
         tracing::warn!("failed to save-or-stop shared substrate during daemon shutdown: {err:#}");
     }
     let _ = state.core.shutdown_tx.send(());
+}
+
+pub(crate) fn spawn_deferred_daemon_shutdown(
+    state: Arc<AppState>,
+    reason: String,
+    delay: Duration,
+) {
+    tokio::spawn(async move {
+        tokio::time::sleep(delay).await;
+        trigger_daemon_shutdown(state, &reason).await;
+    });
 }
 
 pub(super) fn spawn_process_shutdown_listener(state: Arc<AppState>) {

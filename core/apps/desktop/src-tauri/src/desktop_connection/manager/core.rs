@@ -83,6 +83,15 @@ impl ConnectionManager {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn local_shutdown_token_for_scope(&self, scope: &str) -> Option<String> {
+        let guard = self.0.lock().ok()?;
+        match guard.scope(scope).active? {
+            ActiveConnection::Local(local) => local.local_shutdown_token.clone(),
+            ActiveConnection::Ssh(_) => None,
+        }
+    }
+
     pub(crate) fn is_remote(&self) -> bool {
         self.is_remote_for_scope(DEFAULT_CONNECTION_SCOPE)
     }
@@ -263,6 +272,7 @@ impl ConnectionManager {
                 removed_locals.push(LocalConnection {
                     base_url: local.base_url.clone(),
                     token: local.token.clone(),
+                    local_shutdown_token: local.local_shutdown_token.clone(),
                     daemon_pid: local.daemon_pid,
                     source: local.source,
                     ownership: LocalConnectionOwnership::UnownedExternal,

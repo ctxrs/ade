@@ -71,6 +71,7 @@ fn core_routes() -> axum::Router<Arc<AppState>> {
         .route("/api/blobs/:id", get(get_blob))
         .route("/api/logs/open", post(open_logs_folder))
         .route("/api/desktop/log", post(append_desktop_log))
+        .route("/api/daemon/shutdown", post(shutdown_daemon))
         .route("/api/updates/check", get(check_updates))
         .route("/api/updates/activity", get(update_activity))
         .route("/api/updates/drain/begin", post(begin_update_drain))

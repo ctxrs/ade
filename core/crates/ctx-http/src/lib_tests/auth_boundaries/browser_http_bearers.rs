@@ -128,6 +128,7 @@ async fn desktop_browser_query_secret_authorizes_high_risk_owner_routes() {
             "/api/providers/codex/harness_config/endpoints".to_string(),
             json!({"base_url": "https://example.invalid"}),
         ),
+        ("POST", "/api/daemon/shutdown".to_string(), json!({})),
         ("POST", "/api/updates/drain/begin".to_string(), json!({})),
         ("POST", "/api/updates/appimage/apply".to_string(), json!({})),
     ];

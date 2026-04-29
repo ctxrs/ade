@@ -8,8 +8,7 @@ use ctx_core::models::{SessionEventType, SessionTurnStatus};
 use ctx_core::session_projection::resolve_turn_terminal_state;
 
 use crate::daemon::AppState;
-
-use super::persistence::{emit_event, flush_session_events};
+use crate::scheduler::persistence::{emit_event, flush_session_events};
 
 pub async fn reconcile_turn_terminal_state(
     state: &Arc<AppState>,
@@ -30,6 +29,7 @@ pub async fn reconcile_turn_terminal_state(
             | SessionTurnStatus::Failed
             | SessionTurnStatus::Interrupted
     ) {
+        state.set_running(session_id, false).await;
         return Ok(());
     }
 
@@ -40,42 +40,40 @@ pub async fn reconcile_turn_terminal_state(
         let _ = store
             .repair_session_turn_projection_from_events(session_id, turn_id)
             .await;
+        state.set_running(session_id, false).await;
         return Ok(());
     }
 
-    let _event = emit_event(
-        state,
-        session_id,
-        run_id,
-        Some(turn_id),
-        SessionEventType::TurnInterrupted,
-        json!({
-            "reason": fallback_reason,
-            "provider_cancelled": false,
-            "status": "interrupted",
-        }),
-    )
-    .await?;
-    let _ = store
-        .repair_session_turn_projection_from_events(session_id, turn_id)
-        .await;
-    let _ = emit_event(
-        state,
-        session_id,
-        run_id,
-        Some(turn_id),
-        SessionEventType::TurnFinished,
-        json!({
-            "message_id": turn.user_message_id.map(|id| id.0),
-            "status": "interrupted",
-            "reason": fallback_reason,
-        }),
-    )
-    .await;
-    flush_session_events(&store, session_id, "reconcile_turn_terminal_state").await;
-    let _ = store
-        .repair_session_turn_projection_from_events(session_id, turn_id)
-        .await;
+    let persisted = store
+        .persist_turn_terminal_events(
+            session_id,
+            run_id,
+            turn_id,
+            vec![
+                (
+                    SessionEventType::TurnInterrupted,
+                    json!({
+                        "reason": fallback_reason,
+                        "provider_cancelled": false,
+                        "status": "interrupted",
+                    }),
+                ),
+                (
+                    SessionEventType::TurnFinished,
+                    json!({
+                        "message_id": turn.user_message_id.map(|id| id.0),
+                        "status": "interrupted",
+                        "reason": fallback_reason,
+                        "provider_cancelled": false,
+                    }),
+                ),
+            ],
+        )
+        .await?;
+    for event in persisted {
+        state.publish_event(event).await;
+    }
+    state.set_running(session_id, false).await;
     Ok(())
 }
 

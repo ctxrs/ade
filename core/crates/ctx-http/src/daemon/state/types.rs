@@ -11,6 +11,7 @@ pub struct CoreState {
     pub daemon_url: String,
     pub public_base_url: Option<String>,
     pub auth_token: Option<String>,
+    pub local_shutdown_token: Option<String>,
     pub(crate) mcp_auth: Mutex<HashMap<String, TimedEntry<McpAuthContext>>>,
     pub ask_user_question: Arc<AskUserQuestionBroker>,
     pub shutdown_tx: broadcast::Sender<()>,

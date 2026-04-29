@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
+use ctx_core::env::DAEMON_AUTH_ENV_VARS;
 use ctx_core::ids::WorkspaceId;
 use ctx_core::models::{Workspace, Worktree};
 use ctx_core::provider_ids::CODEX_PROVIDER_ID;
@@ -156,6 +157,9 @@ fn insert_probe_source_env(env: &mut HashMap<String, String>, key: &str, value: 
 
 fn strip_daemon_owned_probe_env(env: &mut HashMap<String, String>) {
     env.remove(CTX_CRP_LAUNCH_POLICY_ENV);
+    for key in DAEMON_AUTH_ENV_VARS {
+        env.remove(*key);
+    }
 }
 
 fn subscription_probe_requires_account_env(provider_id: &str) -> bool {
@@ -579,7 +583,7 @@ mod tests {
     }
 
     #[test]
-    fn probe_source_env_drops_daemon_owned_crp_launch_policy() {
+    fn probe_source_env_drops_daemon_owned_values() {
         let mut env = HashMap::new();
 
         insert_probe_source_env(&mut env, "OPENAI_BASE_URL", "https://example.com/v1");
@@ -588,11 +592,18 @@ mod tests {
             CTX_CRP_LAUNCH_POLICY_ENV,
             CTX_CRP_LAUNCH_POLICY_FULL,
         );
+        for key in DAEMON_AUTH_ENV_VARS {
+            env.insert((*key).to_string(), "daemon-secret".to_string());
+        }
+        strip_daemon_owned_probe_env(&mut env);
 
         assert_eq!(
             env.get("OPENAI_BASE_URL").map(String::as_str),
             Some("https://example.com/v1")
         );
         assert!(!env.contains_key(CTX_CRP_LAUNCH_POLICY_ENV));
+        for key in DAEMON_AUTH_ENV_VARS {
+            assert!(!env.contains_key(*key), "{key} must not reach probe env");
+        }
     }
 }

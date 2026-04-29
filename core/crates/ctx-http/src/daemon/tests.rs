@@ -2,7 +2,9 @@ use super::*;
 use async_trait::async_trait;
 use chrono::Utc;
 use ctx_core::ids::{RunId, TaskId, TurnId, WorkspaceId, WorktreeId};
-use ctx_core::models::{ExecutionEnvironment, SessionTurn, SessionTurnStatus, VcsKind};
+use ctx_core::models::{
+    ExecutionEnvironment, SessionEventType, SessionTurn, SessionTurnStatus, VcsKind,
+};
 use ctx_managed_installs::ManagedInstallHost;
 use ctx_providers::adapters::{
     ProviderCapabilities, ProviderHealth, ProviderProcessInfo, ProviderRestartMode,
@@ -1304,8 +1306,9 @@ fn runtime_probe_command_keeps_native_crp_provider_unwrapped() {
     assert_eq!(resolved.dependencies, vec!["codex-dep".to_string()]);
 }
 
-/// Queued turns must remain queued after a daemon restart; reconcile_running_turns
-/// should only interrupt turns that were actually Running.
+/// Queued turns must remain queued after a daemon restart, but they are not
+/// executing work. Reconcile should only interrupt turns that were actually
+/// running or starting.
 #[tokio::test]
 async fn reconcile_running_turns_leaves_queued_turns_queued() {
     let temp = tempdir().unwrap();
@@ -1411,7 +1414,7 @@ async fn reconcile_running_turns_leaves_queued_turns_queued() {
 
     let activity = daemon_turn_activity_summary(&state).await.unwrap();
     assert!(!activity.idle);
-    assert_eq!(activity.active_turn_count, 2);
+    assert_eq!(activity.active_turn_count, 1);
     assert_eq!(activity.queued_turn_count, 1);
     assert_eq!(activity.running_turn_count, 1);
 
@@ -1438,10 +1441,31 @@ async fn reconcile_running_turns_leaves_queued_turns_queued() {
         SessionTurnStatus::Interrupted,
         "running turn must be interrupted after reconcile_running_turns"
     );
+    let terminal_events = store
+        .list_session_events_for_turn(session.id, running_turn_id, false)
+        .await
+        .unwrap();
+    assert!(
+        terminal_events
+            .iter()
+            .any(|event| matches!(&event.event_type, SessionEventType::TurnInterrupted)),
+        "interrupted reconcile should persist a turn_interrupted event"
+    );
+    assert!(
+        terminal_events.iter().any(|event| {
+            matches!(&event.event_type, SessionEventType::TurnFinished)
+                && event
+                    .payload_json
+                    .get("status")
+                    .and_then(serde_json::Value::as_str)
+                    == Some("interrupted")
+        }),
+        "interrupted reconcile should persist terminal turn_finished event"
+    );
 
     let activity_after = daemon_turn_activity_summary(&state).await.unwrap();
-    assert!(!activity_after.idle);
-    assert_eq!(activity_after.active_turn_count, 1);
+    assert!(activity_after.idle);
+    assert_eq!(activity_after.active_turn_count, 0);
     assert_eq!(activity_after.queued_turn_count, 1);
     assert_eq!(activity_after.running_turn_count, 0);
 }

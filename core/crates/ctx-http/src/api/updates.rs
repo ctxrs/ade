@@ -1,4 +1,7 @@
 use super::*;
+use crate::scheduler::{InterruptTelemetryContext, SchedulerCommand};
+
+const LOCAL_DAEMON_SHUTDOWN_TOKEN_HEADER: &str = "x-ctx-local-daemon-shutdown-token";
 
 #[derive(Debug, Serialize)]
 pub(super) struct UpdateCheckResp {
@@ -122,6 +125,119 @@ pub(super) async fn update_activity(
     Ok(Json(UpdateActivityResp {
         activity,
         managed_daemon_auto_update,
+    }))
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct ShutdownDaemonReq {
+    confirm: bool,
+    #[serde(default)]
+    reason: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub(super) struct ShutdownDaemonResp {
+    accepted: bool,
+    activity: crate::daemon::DaemonTurnActivitySummary,
+}
+
+fn internal_error_response(err: impl std::fmt::Display) -> (StatusCode, Json<ApiErrorResp>) {
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(ApiErrorResp {
+            error: logs::redact_sensitive(&err.to_string()),
+        }),
+    )
+}
+
+fn local_shutdown_token_authorized(state: &AppState, headers: &HeaderMap) -> bool {
+    let Some(expected) = state.core.local_shutdown_token.as_deref() else {
+        return false;
+    };
+    headers
+        .get(LOCAL_DAEMON_SHUTDOWN_TOKEN_HEADER)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value == expected)
+}
+
+pub(super) async fn shutdown_daemon(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(req): Json<ShutdownDaemonReq>,
+) -> Result<Json<ShutdownDaemonResp>, (StatusCode, Json<ApiErrorResp>)> {
+    if !req.confirm {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "confirm required".to_string(),
+            }),
+        ));
+    }
+    if !local_shutdown_token_authorized(&state, &headers) {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(ApiErrorResp {
+                error: "local desktop shutdown token required".to_string(),
+            }),
+        ));
+    }
+
+    let reason = req
+        .reason
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "desktop_quit".to_string());
+    let acquired_drain = state
+        .acquire_update_drain(&reason, "daemon_shutdown")
+        .await
+        .is_some();
+
+    for session_id in state.list_running_sessions().await {
+        if let Some(tx) = state.scheduler_sender(session_id).await {
+            let interrupt = InterruptTelemetryContext::new(uuid::Uuid::new_v4().to_string());
+            let _ = tx.send(SchedulerCommand::Interrupt(interrupt)).await;
+        }
+    }
+
+    for _ in 0..10 {
+        let activity = match crate::daemon::daemon_turn_activity_summary(&state).await {
+            Ok(activity) => activity,
+            Err(err) => {
+                if acquired_drain {
+                    let _ = state.release_update_drain().await;
+                }
+                return Err(internal_error_response(err));
+            }
+        };
+        if activity.running_turn_count == 0 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+
+    if let Err(err) = crate::daemon::reconcile_running_turns_with_reason(&state, &reason).await {
+        if acquired_drain {
+            let _ = state.release_update_drain().await;
+        }
+        return Err(internal_error_response(err));
+    }
+    let activity = match crate::daemon::daemon_turn_activity_summary(&state).await {
+        Ok(activity) => activity,
+        Err(err) => {
+            if acquired_drain {
+                let _ = state.release_update_drain().await;
+            }
+            return Err(internal_error_response(err));
+        }
+    };
+
+    crate::daemon::spawn_deferred_daemon_shutdown(
+        state,
+        reason,
+        std::time::Duration::from_millis(100),
+    );
+    Ok(Json(ShutdownDaemonResp {
+        accepted: true,
+        activity,
     }))
 }
 

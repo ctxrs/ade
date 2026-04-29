@@ -4,13 +4,15 @@ use std::fs;
 #[test]
 fn redact_sensitive_covers_scoped_mcp_tokens() {
     let redacted = redact_sensitive(
-        r#"stderr {"env":{"CTX_MCP_TOKEN":"ctxmcp_secret","ctx_mcp_token": "ctxmcp_lower"}} CTX_MCP_TOKEN=ctxmcp_env"#,
+        r#"stderr {"env":{"CTX_MCP_TOKEN":"ctxmcp_secret","ctx_mcp_token": "ctxmcp_lower","CTX_LOCAL_DAEMON_SHUTDOWN_TOKEN":"shutdown_json"}} CTX_MCP_TOKEN=ctxmcp_env CTX_LOCAL_DAEMON_SHUTDOWN_TOKEN=shutdown_env"#,
     );
 
     assert!(!redacted.contains("ctxmcp_secret"));
     assert!(!redacted.contains("ctxmcp_lower"));
     assert!(!redacted.contains("ctxmcp_env"));
-    assert_eq!(redacted.matches("[REDACTED]").count(), 3);
+    assert!(!redacted.contains("shutdown_json"));
+    assert!(!redacted.contains("shutdown_env"));
+    assert_eq!(redacted.matches("[REDACTED]").count(), 5);
 }
 
 #[test]

@@ -9,7 +9,11 @@ use ctx_worker_protocol::{RepoSpec, StartWorkerRequest};
 
 use super::WorkerDriver;
 
-const DAEMON_AUTH_ENV_VARS: &[&str] = &["CTX_AUTH_TOKEN", "CTX_MCP_TOKEN"];
+const DAEMON_AUTH_ENV_VARS: &[&str] = &[
+    "CTX_AUTH_TOKEN",
+    "CTX_MCP_TOKEN",
+    "CTX_LOCAL_DAEMON_SHUTDOWN_TOKEN",
+];
 
 fn scrub_daemon_auth_env(cmd: &mut Command) {
     for key in DAEMON_AUTH_ENV_VARS {
@@ -98,15 +102,14 @@ mod tests {
         let mut cmd = Command::new("ctx-worker-shim");
         cmd.env("CTX_AUTH_TOKEN", "daemon-token");
         cmd.env("CTX_MCP_TOKEN", "mcp-token");
+        cmd.env("CTX_LOCAL_DAEMON_SHUTDOWN_TOKEN", "shutdown-token");
         cmd.env("CTX_WORKER_GATEWAY_TOKEN", "gateway-token");
         scrub_daemon_auth_env(&mut cmd);
 
         let envs: HashMap<_, _> = cmd.as_std().get_envs().collect();
-        assert_eq!(
-            envs.get(std::ffi::OsStr::new("CTX_AUTH_TOKEN")),
-            Some(&None)
-        );
-        assert_eq!(envs.get(std::ffi::OsStr::new("CTX_MCP_TOKEN")), Some(&None));
+        for key in DAEMON_AUTH_ENV_VARS {
+            assert_eq!(envs.get(std::ffi::OsStr::new(key)), Some(&None));
+        }
         assert_eq!(
             envs.get(std::ffi::OsStr::new("CTX_WORKER_GATEWAY_TOKEN")),
             Some(&Some(std::ffi::OsStr::new("gateway-token")))

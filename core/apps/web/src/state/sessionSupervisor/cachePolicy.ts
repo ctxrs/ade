@@ -130,7 +130,7 @@ export const reconcileActivityInterruptedFromTurns = (
 };
 
 const isWorkingTurnStatus = (status: SessionTurn["status"] | null | undefined): boolean =>
-  status === "queued" || status === "starting" || status === "running";
+  status === "starting" || status === "running";
 
 export const reconcileActivityFromTurns = (
   activity: SessionActivityState | null | undefined,

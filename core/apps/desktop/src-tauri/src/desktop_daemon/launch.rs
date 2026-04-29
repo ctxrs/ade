@@ -11,6 +11,8 @@ use super::systemd::{
     should_use_systemd_scope, stop_systemd_scope, systemd_scope_for_local_daemon_url,
 };
 
+const LOCAL_DAEMON_SHUTDOWN_TOKEN_ENV: &str = "CTX_LOCAL_DAEMON_SHUTDOWN_TOKEN";
+
 fn avf_guest_gateway_bind(local_port: u16) -> Option<String> {
     if !cfg!(target_os = "macos") {
         return None;
@@ -44,7 +46,7 @@ pub(super) fn spawn_daemon(
     app: &tauri::AppHandle,
     data_dir: &Path,
     wait_for_health: bool,
-) -> Result<(String, Child, bool)> {
+) -> Result<(String, Child, bool, String)> {
     let prefer_systemd_scope = should_use_systemd_scope();
     if prefer_systemd_scope {
         match spawn_daemon_with_mode(app, data_dir, true, wait_for_health) {
@@ -65,7 +67,7 @@ fn spawn_daemon_with_mode(
     data_dir: &Path,
     use_systemd_scope: bool,
     wait_for_health: bool,
-) -> Result<(String, Child, bool)> {
+) -> Result<(String, Child, bool, String)> {
     let ctx_bin = resolve_daemon_bin(app)?;
     let avf_linux_helper_bin = resolve_optional_bin(app, "ctx-avf-linux-helper");
     let mcp_bin = resolve_optional_bin(app, "ctx-mcp");
@@ -95,6 +97,7 @@ fn spawn_daemon_with_mode(
     let local_port = pick_unused_local_port()?;
     let base_url = format!("http://127.0.0.1:{local_port}");
     let systemd_unit = format!("ctx-daemon-{local_port}");
+    let local_shutdown_token = uuid::Uuid::new_v4().to_string();
 
     if use_systemd_scope {
         stop_systemd_scope("ctx-daemon");
@@ -107,6 +110,9 @@ fn spawn_daemon_with_mode(
             .arg("--unit")
             .arg(&systemd_unit)
             .arg("--same-dir");
+        cmd.arg("--setenv").arg(format!(
+            "{LOCAL_DAEMON_SHUTDOWN_TOKEN_ENV}={local_shutdown_token}"
+        ));
         if let Some(path_env) = resolved_path_env.as_ref() {
             cmd.arg("--setenv").arg(format!("PATH={path_env}"));
         }
@@ -163,6 +169,7 @@ fn spawn_daemon_with_mode(
     } else {
         let mut cmd = Command::new(&ctx_bin);
         strip_automation_env(&mut cmd);
+        cmd.env(LOCAL_DAEMON_SHUTDOWN_TOKEN_ENV, &local_shutdown_token);
         if let Some(path_env) = resolved_path_env.as_ref() {
             cmd.env("PATH", path_env);
         }
@@ -291,7 +298,7 @@ fn spawn_daemon_with_mode(
             }
         });
     }
-    Ok((base_url, child, use_systemd_scope))
+    Ok((base_url, child, use_systemd_scope, local_shutdown_token))
 }
 
 #[allow(dead_code)]
@@ -308,6 +315,7 @@ pub(in super::super) fn try_kill_child(mut child: Child) -> Result<()> {
 pub(in super::super) struct SpawnedLocalDaemonReady {
     pub(in super::super) url: String,
     pub(in super::super) token: String,
+    pub(in super::super) local_shutdown_token: String,
     pub(in super::super) child: Child,
     pub(in super::super) systemd_scope: bool,
 }
@@ -354,7 +362,7 @@ pub(in super::super) fn spawn_and_validate_local_daemon(
     data_dir: &Path,
     desktop_identity: &DesktopBuildIdentity,
 ) -> Result<SpawnedLocalDaemonReady> {
-    let (url, child, systemd_scope) = spawn_daemon(app, data_dir, true)?;
+    let (url, child, systemd_scope, local_shutdown_token) = spawn_daemon(app, data_dir, true)?;
     let pending = PendingSpawnedLocalDaemon::new(url, child, systemd_scope);
     let auth = read_daemon_auth_with_retry(data_dir)?;
     let health = daemon_health_with_auth(pending.url(), Some(auth.token.as_str()))
@@ -375,6 +383,7 @@ pub(in super::super) fn spawn_and_validate_local_daemon(
     Ok(SpawnedLocalDaemonReady {
         url,
         token: auth.token,
+        local_shutdown_token,
         child,
         systemd_scope,
     })

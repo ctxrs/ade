@@ -116,6 +116,23 @@ fn apply_outer_process_env_removes_explicit_ctx_mcp_token_override() {
     );
 }
 
+#[test]
+fn apply_outer_process_env_removes_local_shutdown_token() {
+    let _guard = ScopedEnvVar::set("CTX_LOCAL_DAEMON_SHUTDOWN_TOKEN", "host-shutdown-token");
+    let mut cmd = tokio::process::Command::new("/usr/bin/env");
+    let env = HashMap::from([(
+        "CTX_LOCAL_DAEMON_SHUTDOWN_TOKEN".to_string(),
+        "explicit-shutdown-token".to_string(),
+    )]);
+    apply_outer_process_env(&mut cmd, &env);
+    let envs: HashMap<_, _> = cmd.as_std().get_envs().collect();
+    assert_eq!(
+        envs.get(std::ffi::OsStr::new("CTX_LOCAL_DAEMON_SHUTDOWN_TOKEN"))
+            .and_then(|value| value.as_deref()),
+        None
+    );
+}
+
 #[tokio::test]
 async fn set_session_model_writes_crp_command_for_live_session() -> Result<()> {
     let tempdir = tempfile::tempdir()?;

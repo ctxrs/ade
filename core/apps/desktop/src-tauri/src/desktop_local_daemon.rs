@@ -186,10 +186,11 @@ pub(super) fn apply_validated_local_connection_for_scope(
 ) -> Result<DesktopConnectionInfo> {
     match spawned {
         Ok(spawned) => {
-            state.set_local_for_scope(
+            state.set_local_for_scope_with_shutdown_token(
                 scope,
                 spawned.url,
                 spawned.token,
+                Some(spawned.local_shutdown_token),
                 spawned.child,
                 spawned.systemd_scope,
             );
@@ -235,10 +236,11 @@ where
 {
     state.disconnect_owned_local_daemons_for_restart()?;
     let spawned = spawn_and_validate_local_daemon()?;
-    state.set_local_for_scope(
+    state.set_local_for_scope_with_shutdown_token(
         scope,
         spawned.url,
         spawned.token,
+        Some(spawned.local_shutdown_token),
         spawned.child,
         spawned.systemd_scope,
     );
@@ -322,19 +324,21 @@ fn set_spawned_local_for_ensure_mode(
 ) {
     match mode {
         EnsureLocalConnectionMode::AutoBootstrap => {
-            state.set_local_auto_bootstrap_for_scope(
+            state.set_local_auto_bootstrap_for_scope_with_shutdown_token(
                 scope,
                 spawned.url,
                 spawned.token,
+                Some(spawned.local_shutdown_token),
                 spawned.child,
                 spawned.systemd_scope,
             );
         }
         EnsureLocalConnectionMode::ExplicitLocal => {
-            state.set_local_for_scope(
+            state.set_local_for_scope_with_shutdown_token(
                 scope,
                 spawned.url,
                 spawned.token,
+                Some(spawned.local_shutdown_token),
                 spawned.child,
                 spawned.systemd_scope,
             );

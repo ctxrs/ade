@@ -741,7 +741,7 @@ describe("useWorkbenchTaskActivity helpers", () => {
     });
   });
 
-  it("treats canonical is_working summaries as working, including queued follow-ups", () => {
+  it("treats only executing canonical summaries as working", () => {
     const primarySession = makeSession("session-1", "task-1", "active");
 
     expect(
@@ -758,7 +758,7 @@ describe("useWorkbenchTaskActivity helpers", () => {
           activity: { is_working: true, last_turn_status: "queued" },
         }),
       }),
-    ).toBe(true);
+    ).toBe(false);
 
     expect(
       isPrimarySessionRunning({
@@ -1082,7 +1082,7 @@ describe("useWorkbenchTaskActivity helpers", () => {
     expect(taskLiveInfo.workingByTask.has("task-1")).toBe(true);
   });
 
-  it("keeps queued canonical activity working", () => {
+  it("does not keep queued canonical activity working", () => {
     const primarySession = makeSession("session-1", "task-1", "active");
     const taskLiveInfo = deriveTaskLiveInfo({
       tasksById: {
@@ -1105,7 +1105,7 @@ describe("useWorkbenchTaskActivity helpers", () => {
       },
     });
 
-    expect(taskLiveInfo.workingByTask.has("task-1")).toBe(true);
+    expect(taskLiveInfo.workingByTask.has("task-1")).toBe(false);
   });
 
   it("does not let summary activity override a terminal live turn", () => {

@@ -182,6 +182,7 @@ pub(crate) enum LocalConnectionSource {
 pub(super) struct LocalConnection {
     pub(super) base_url: String,
     pub(super) token: String,
+    pub(super) local_shutdown_token: Option<String>,
     pub(super) daemon_pid: Option<u32>,
     pub(super) source: LocalConnectionSource,
     pub(super) ownership: LocalConnectionOwnership,

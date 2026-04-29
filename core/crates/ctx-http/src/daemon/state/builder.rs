@@ -83,6 +83,9 @@ impl AppState {
         let storage_guard = crate::storage_guard::StorageGuardRuntime::new(&data_root);
         let running_sessions = Arc::new(Mutex::new(HashSet::new()));
         let terminals = Arc::new(TerminalManager::default());
+        let local_shutdown_token = std::env::var("CTX_LOCAL_DAEMON_SHUTDOWN_TOKEN")
+            .ok()
+            .filter(|value| !value.trim().is_empty());
         let execution_setup = Arc::new(ExecutionSetupCoordinator::new_with_operations(
             data_root.clone(),
             execution_harness,
@@ -136,6 +139,7 @@ impl AppState {
                 daemon_url,
                 public_base_url,
                 auth_token,
+                local_shutdown_token,
                 mcp_auth: Mutex::new(HashMap::new()),
                 ask_user_question,
                 shutdown_tx,

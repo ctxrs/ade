@@ -10,14 +10,36 @@ use ctx_providers::adapters::{ProviderHealth, ProviderStatus, ProviderUsability}
 use sha2::{Digest, Sha256};
 
 use crate::{
-    provider_status_matrix::apply_matrix_to_status, AgentServerCommand, AgentServerConfigFile,
-    ManagedInstallMetadata,
+    provider_status_matrix::{apply_matrix_to_status, probe_command_version},
+    AgentServerCommand, AgentServerConfigFile, ManagedInstallMetadata,
 };
 
 const CURRENT_CTX_VERSION: Option<&str> = Some("0.59.0-canary.deadbeefcafe");
 
 fn sha256_hex(bytes: &[u8]) -> String {
     hex::encode(Sha256::digest(bytes))
+}
+
+struct ScopedEnvVar {
+    key: &'static str,
+    old: Option<String>,
+}
+
+impl ScopedEnvVar {
+    fn set(key: &'static str, value: &str) -> Self {
+        let old = std::env::var(key).ok();
+        std::env::set_var(key, value);
+        Self { key, old }
+    }
+}
+
+impl Drop for ScopedEnvVar {
+    fn drop(&mut self) {
+        match &self.old {
+            Some(value) => std::env::set_var(self.key, value),
+            None => std::env::remove_var(self.key),
+        }
+    }
 }
 
 fn release(
@@ -66,6 +88,42 @@ fn codex_archive_entry(
         version_probe: None,
         releases,
     }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn provider_version_probe_scrubs_daemon_auth_env() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let script = dir.path().join("version-probe");
+    std::fs::write(
+        &script,
+        r#"#!/bin/sh
+for key in CTX_AUTH_TOKEN CTX_MCP_TOKEN CTX_LOCAL_DAEMON_SHUTDOWN_TOKEN; do
+  eval "value=\${$key:-}"
+  if [ -n "$value" ]; then
+    echo "unexpected $key" >&2
+    exit 91
+  fi
+done
+echo "provider 1.2.3"
+"#,
+    )
+    .expect("write probe script");
+    let mut perms = std::fs::metadata(&script)
+        .expect("probe script metadata")
+        .permissions();
+    perms.set_mode(0o755);
+    std::fs::set_permissions(&script, perms).expect("chmod probe script");
+
+    let _guards: Vec<_> = ctx_core::env::DAEMON_AUTH_ENV_VARS
+        .iter()
+        .map(|key| ScopedEnvVar::set(key, "daemon-secret"))
+        .collect();
+    let version = probe_command_version(script.to_str().expect("utf8 path"), &[]).await;
+
+    assert_eq!(version.as_deref(), Some("1.2.3"));
 }
 
 fn codex_npm_entry(releases: Vec<ProviderRelease>) -> ProviderMatrixEntry {

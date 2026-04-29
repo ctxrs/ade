@@ -54,9 +54,28 @@ async fn collect_turns_by_statuses(
     let workspace_count = workspaces.len();
     let mut matching_turns = Vec::new();
     for workspace in workspaces {
-        let store = state.core.stores.workspace_transient(workspace.id).await?;
-        let mut turns = store.list_session_turns_by_statuses(statuses).await?;
+        let store = state
+            .core
+            .stores
+            .workspace_transient(workspace.id)
+            .await
+            .with_context(|| {
+                format!(
+                    "failed to open workspace {} while collecting turns by status",
+                    workspace.id.0
+                )
+            })?;
+        let turns = store
+            .list_session_turns_by_statuses(statuses)
+            .await
+            .with_context(|| {
+                format!(
+                    "failed to list workspace {} turns by status",
+                    workspace.id.0
+                )
+            });
         store.close().await;
+        let mut turns = turns?;
         matching_turns.extend(turns.drain(..).map(|turn| (workspace.id, turn)));
     }
     Ok((workspace_count, matching_turns))
@@ -115,9 +134,9 @@ pub async fn daemon_turn_activity_summary(
             status: turn_status_name(&turn.status).to_string(),
         })
         .collect::<Vec<_>>();
-    let active_turn_count = queued_turn_count + running_turn_count;
+    let active_turn_count = running_turn_count;
     Ok(DaemonTurnActivitySummary {
-        idle: active_turn_count == 0,
+        idle: running_turn_count == 0,
         active_turn_count,
         queued_turn_count,
         running_turn_count,
@@ -201,7 +220,10 @@ pub async fn daemon_sandbox_work_activity_summary(
     })
 }
 
-pub(super) async fn reconcile_running_turns(state: &Arc<AppState>) -> Result<()> {
+pub(crate) async fn reconcile_running_turns_with_reason(
+    state: &Arc<AppState>,
+    fallback_reason: &str,
+) -> Result<()> {
     let (_, running_turns) = collect_turns_by_statuses(
         state,
         &[SessionTurnStatus::Starting, SessionTurnStatus::Running],
@@ -214,7 +236,7 @@ pub(super) async fn reconcile_running_turns(state: &Arc<AppState>) -> Result<()>
             turn.session_id,
             turn.run_id,
             turn.turn_id,
-            "daemon_restart",
+            fallback_reason,
         )
         .await
         {
@@ -228,4 +250,8 @@ pub(super) async fn reconcile_running_turns(state: &Arc<AppState>) -> Result<()>
     }
 
     Ok(())
+}
+
+pub(super) async fn reconcile_running_turns(state: &Arc<AppState>) -> Result<()> {
+    reconcile_running_turns_with_reason(state, "daemon_restart").await
 }

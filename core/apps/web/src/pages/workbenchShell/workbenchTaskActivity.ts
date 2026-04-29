@@ -360,7 +360,6 @@ export const selectWorkbenchTaskLiveState = ({
 
   return {
     working:
-      canonicalTurnStatus === "queued" ||
       canonicalTurnStatus === "starting" ||
       canonicalTurnStatus === "running",
     hasError: primaryStatus === "failed" || primaryStatus === "cancelled",

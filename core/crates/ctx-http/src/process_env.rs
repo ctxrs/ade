@@ -43,6 +43,7 @@ mod tests {
     fn scrub_daemon_auth_env_removes_sensitive_tokens() {
         let _auth = ScopedEnvVar::set("CTX_AUTH_TOKEN", "daemon-token");
         let _mcp = ScopedEnvVar::set("CTX_MCP_TOKEN", "mcp-token");
+        let _shutdown = ScopedEnvVar::set("CTX_LOCAL_DAEMON_SHUTDOWN_TOKEN", "shutdown-token");
         let mut cmd = Command::new("/usr/bin/env");
 
         scrub_daemon_auth_env(&mut cmd);

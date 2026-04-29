@@ -448,10 +448,13 @@ fn redact_sensitive(input: &str) -> String {
     out = redact_after_marker(out, "TOKEN=");
     out = redact_after_marker(out, "CTX_AUTH_TOKEN=");
     out = redact_after_marker(out, "CTX_MCP_TOKEN=");
+    out = redact_after_marker(out, "CTX_LOCAL_DAEMON_SHUTDOWN_TOKEN=");
     out = redact_after_marker(out, "ctxAuthToken\":\"");
     out = redact_after_marker(out, "ctx_auth_token\":\"");
     out = redact_after_marker(out, "\"CTX_MCP_TOKEN\":\"");
     out = redact_after_marker(out, "\"CTX_MCP_TOKEN\": \"");
+    out = redact_after_marker(out, "\"CTX_LOCAL_DAEMON_SHUTDOWN_TOKEN\":\"");
+    out = redact_after_marker(out, "\"CTX_LOCAL_DAEMON_SHUTDOWN_TOKEN\": \"");
     out = redact_after_marker(out, "\"ctx_mcp_token\":\"");
     out = redact_after_marker(out, "\"ctx_mcp_token\": \"");
     out
@@ -461,6 +464,7 @@ pub(super) fn apply_outer_process_env(cmd: &mut Command, env: &HashMap<String, S
     for key in [
         "CTX_AUTH_TOKEN",
         "CTX_MCP_TOKEN",
+        "CTX_LOCAL_DAEMON_SHUTDOWN_TOKEN",
         "CTX_SESSION_ID",
         "CTX_PROVIDER_SESSION_REF",
         "CTX_MCP_DISABLED",
@@ -478,7 +482,10 @@ pub(super) fn apply_outer_process_env(cmd: &mut Command, env: &HashMap<String, S
 }
 
 pub(super) fn should_skip_outer_process_env_key(key: &str, is_container_exec: bool) -> bool {
-    if matches!(key, "CTX_AUTH_TOKEN" | "CTX_MCP_TOKEN") {
+    if matches!(
+        key,
+        "CTX_AUTH_TOKEN" | "CTX_MCP_TOKEN" | "CTX_LOCAL_DAEMON_SHUTDOWN_TOKEN"
+    ) {
         return true;
     }
     if !is_container_exec {

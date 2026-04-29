@@ -18,6 +18,7 @@ impl ConnectionManager {
         );
     }
 
+    #[cfg(test)]
     pub(crate) fn set_local_for_scope(
         &self,
         scope: &str,
@@ -26,10 +27,30 @@ impl ConnectionManager {
         child: Child,
         systemd_scope: bool,
     ) {
+        self.set_local_for_scope_with_shutdown_token(
+            scope,
+            base_url,
+            token,
+            None,
+            child,
+            systemd_scope,
+        );
+    }
+
+    pub(crate) fn set_local_for_scope_with_shutdown_token(
+        &self,
+        scope: &str,
+        base_url: String,
+        token: String,
+        local_shutdown_token: Option<String>,
+        child: Child,
+        systemd_scope: bool,
+    ) {
         self.set_local_with_intent(
             scope,
             base_url,
             token,
+            local_shutdown_token,
             child,
             systemd_scope,
             ConnectionIntent::ExplicitLocal,
@@ -53,6 +74,7 @@ impl ConnectionManager {
         )
     }
 
+    #[cfg(test)]
     pub(crate) fn set_local_auto_bootstrap_for_scope(
         &self,
         scope: &str,
@@ -61,7 +83,33 @@ impl ConnectionManager {
         child: Child,
         systemd_scope: bool,
     ) -> bool {
-        self.set_local_with_auto_bootstrap_gate(scope, base_url, token, child, systemd_scope)
+        self.set_local_auto_bootstrap_for_scope_with_shutdown_token(
+            scope,
+            base_url,
+            token,
+            None,
+            child,
+            systemd_scope,
+        )
+    }
+
+    pub(crate) fn set_local_auto_bootstrap_for_scope_with_shutdown_token(
+        &self,
+        scope: &str,
+        base_url: String,
+        token: String,
+        local_shutdown_token: Option<String>,
+        child: Child,
+        systemd_scope: bool,
+    ) -> bool {
+        self.set_local_with_auto_bootstrap_gate(
+            scope,
+            base_url,
+            token,
+            local_shutdown_token,
+            child,
+            systemd_scope,
+        )
     }
 
     fn set_local_with_auto_bootstrap_gate(
@@ -69,6 +117,7 @@ impl ConnectionManager {
         scope: &str,
         base_url: String,
         token: String,
+        local_shutdown_token: Option<String>,
         child: Child,
         systemd_scope: bool,
     ) -> bool {
@@ -76,6 +125,7 @@ impl ConnectionManager {
         let next = ActiveConnection::Local(LocalConnection {
             base_url,
             token,
+            local_shutdown_token,
             daemon_pid,
             source: LocalConnectionSource::SpawnedByDesktop,
             ownership: LocalConnectionOwnership::OwnedChild {
@@ -110,6 +160,7 @@ impl ConnectionManager {
         scope: &str,
         base_url: String,
         token: String,
+        local_shutdown_token: Option<String>,
         child: Child,
         systemd_scope: bool,
         intent: ConnectionIntent,
@@ -130,6 +181,7 @@ impl ConnectionManager {
                 .replace(ActiveConnection::Local(LocalConnection {
                     base_url,
                     token,
+                    local_shutdown_token,
                     daemon_pid,
                     source: LocalConnectionSource::SpawnedByDesktop,
                     ownership: LocalConnectionOwnership::OwnedChild {
@@ -238,6 +290,7 @@ impl ConnectionManager {
         scoped.active = Some(ActiveConnection::Local(LocalConnection {
             base_url,
             token,
+            local_shutdown_token: None,
             daemon_pid,
             source,
             ownership: LocalConnectionOwnership::UnownedExternal,
@@ -261,6 +314,7 @@ impl ConnectionManager {
             let mut next = LocalConnection {
                 base_url,
                 token,
+                local_shutdown_token: None,
                 daemon_pid,
                 source,
                 ownership: LocalConnectionOwnership::UnownedExternal,
@@ -286,6 +340,7 @@ impl ConnectionManager {
                     next.ownership = c.ownership;
                     next.source = c.source;
                     next.http_client = c.http_client;
+                    next.local_shutdown_token = c.local_shutdown_token;
                     scoped.intent = intent;
                     None
                 }

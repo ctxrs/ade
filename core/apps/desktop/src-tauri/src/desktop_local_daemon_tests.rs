@@ -148,6 +148,39 @@ fn spawn_tokio_sleep_child() -> Child {
 
 #[test]
 #[cfg(unix)]
+fn apply_validated_local_connection_preserves_spawned_shutdown_token() {
+    let state = ConnectionManager::default();
+    let child = spawn_tokio_sleep_child();
+    let child_pid = child.id();
+
+    let info = apply_validated_local_connection(
+        &state,
+        Ok(SpawnedLocalDaemonReady {
+            url: "http://127.0.0.1:4313".to_string(),
+            token: "daemon-token".to_string(),
+            local_shutdown_token: "shutdown-token".to_string(),
+            child,
+            systemd_scope: false,
+        }),
+        None,
+    )
+    .expect("validated spawned daemon should install local connection");
+
+    assert!(matches!(info.kind, DesktopConnectionKind::Local));
+    assert_eq!(
+        state.local_shutdown_token_for_scope(DEFAULT_CONNECTION_SCOPE),
+        Some("shutdown-token".to_string())
+    );
+
+    state.disconnect();
+    assert!(
+        wait_for_pid_exit(child_pid, Duration::from_secs(3)),
+        "spawned local daemon child {child_pid} should terminate during test teardown"
+    );
+}
+
+#[test]
+#[cfg(unix)]
 fn desktop_restart_local_daemon_spawn_failure_preserves_env_override_local_connection() {
     let state = ConnectionManager::default();
     let daemon_pid = spawn_detached_sleep_pid();
@@ -212,6 +245,7 @@ fn desktop_restart_local_daemon_does_not_stop_attached_compatible_daemon() {
         Ok(SpawnedLocalDaemonReady {
             url: "http://127.0.0.1:4317".to_string(),
             token: "replacement-token".to_string(),
+            local_shutdown_token: "replacement-shutdown-token".to_string(),
             child: replacement,
             systemd_scope: false,
         })
@@ -221,6 +255,10 @@ fn desktop_restart_local_daemon_does_not_stop_attached_compatible_daemon() {
     assert!(matches!(info.kind, DesktopConnectionKind::Local));
     assert_eq!(info.base_url.as_deref(), Some("http://127.0.0.1:4317"));
     assert_eq!(info.token.as_deref(), Some("replacement-token"));
+    assert_eq!(
+        state.local_shutdown_token_for_scope(DEFAULT_CONNECTION_SCOPE),
+        Some("replacement-shutdown-token".to_string())
+    );
     assert!(
         pid_is_alive(replacement_pid),
         "replacement child {replacement_pid} should remain active after restart"
@@ -279,6 +317,7 @@ fn desktop_restart_local_daemon_stops_owned_child_from_another_scope() {
         Ok(SpawnedLocalDaemonReady {
             url: "http://127.0.0.1:4319".to_string(),
             token: "replacement-token".to_string(),
+            local_shutdown_token: "replacement-shutdown-token".to_string(),
             child: replacement,
             systemd_scope: false,
         })
@@ -288,6 +327,10 @@ fn desktop_restart_local_daemon_stops_owned_child_from_another_scope() {
     assert!(matches!(info.kind, DesktopConnectionKind::Local));
     assert_eq!(info.base_url.as_deref(), Some("http://127.0.0.1:4319"));
     assert_eq!(info.token.as_deref(), Some("replacement-token"));
+    assert_eq!(
+        state.local_shutdown_token_for_scope("main"),
+        Some("replacement-shutdown-token".to_string())
+    );
     assert!(
         matches!(
             state.info_for_scope(DEFAULT_CONNECTION_SCOPE).kind,

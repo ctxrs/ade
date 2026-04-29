@@ -862,7 +862,7 @@ describe("WorkbenchPage session boundary remount", () => {
 });
 
 describe("WorkbenchPage nav status indicator", () => {
-  it("shows spinner for canonical primary working activity, including queued follow-ups, and ignores subagent activity", async () => {
+  it("shows spinner for canonical primary running activity, but not queued follow-ups or subagent activity", async () => {
     const starterSummary = workspaceSnapshotSnap.tasksById[taskId] as {
       task: Record<string, unknown>;
       sessions: Array<Record<string, unknown>>;
@@ -1010,7 +1010,7 @@ describe("WorkbenchPage nav status indicator", () => {
           ...(workspaceSnapshotSnap.tasksById[taskId] as Record<string, unknown>),
           task: {
             ...((workspaceSnapshotSnap.tasksById[taskId] as { task: Record<string, unknown> }).task ?? {}),
-            assistant_seen_at: baseIso,
+            assistant_seen_at: "2024-01-01T00:00:03.000Z",
             last_assistant_message_at: "2024-01-01T00:00:03.000Z",
           },
           sessions: [
@@ -1037,7 +1037,7 @@ describe("WorkbenchPage nav status indicator", () => {
 
     await waitFor(() => {
       const rerenderedRow = getTaskRow("Starter task");
-      expect(rerenderedRow.querySelector(".wb-task-spinner")).not.toBeNull();
+      expect(rerenderedRow.querySelector(".wb-task-spinner")).toBeNull();
       expect(rerenderedRow.querySelector(".wb-task-status-dot-unread")).toBeNull();
     });
   });
