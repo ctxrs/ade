@@ -14,6 +14,8 @@ type SeedOptions = {
   repoRoot?: string;
   throttleMs?: number;
   messageBytes?: number | NumberRange;
+  messageBodyLines?: number | NumberRange;
+  messageLinePrefix?: string;
   messagePrefix?: string;
   includeToolSummaries?: boolean;
   toolSummariesPerTurn?: number;
@@ -25,6 +27,7 @@ type SeedOptions = {
   }>;
   awaitTurnCompletion?: boolean;
   completionTimeoutMs?: number;
+  seedTranscriptDirect?: boolean;
   sessionSource?: {
     providerId: string;
     modelId: string;
@@ -108,6 +111,23 @@ const buildPaddedMessage = (base: string, targetBytes?: number): string => {
   return `${base} ${"x".repeat(padding - 1)}`;
 };
 
+const buildMultilineMessage = (
+  base: string,
+  linePrefix: string,
+  lineCount: number,
+  taskIndex: number,
+  sessionIndex: number,
+  turnIndex: number,
+): string => {
+  if (lineCount <= 0) return base;
+  const lines = Array.from(
+    { length: lineCount },
+    (_, lineIndex) =>
+      `${linePrefix} ${taskIndex + 1}.${sessionIndex + 1}.${turnIndex + 1}.${lineIndex + 1}`,
+  );
+  return `${base}\n${lines.join("\n")}`;
+};
+
 function initRepo(): string {
   const repo = mkdtempSync(path.join(tmpdir(), "ctx-e2e-fixture-"));
   execSync("git init", { cwd: repo });
@@ -154,7 +174,13 @@ export async function seedDummyWorkspace(
   const toolSummaryFixtures = opts.toolSummaryFixtures ?? DEFAULT_TOOL_FIXTURES;
   const messagePrefix = opts.messagePrefix ?? "fixture msg";
   const messageBytes = opts.messageBytes;
+  const messageBodyLines = opts.messageBodyLines;
+  const messageLinePrefix = opts.messageLinePrefix ?? `${messagePrefix} body`;
   const awaitTurnCompletion = Boolean(opts.awaitTurnCompletion);
+  const seedTranscriptDirect = Boolean(opts.seedTranscriptDirect);
+  if (awaitTurnCompletion && seedTranscriptDirect) {
+    throw new Error("seedDummyWorkspace requires either awaitTurnCompletion or seedTranscriptDirect, not both");
+  }
   const completionTimeoutMs = opts.completionTimeoutMs ?? 15_000;
   const sessionSource = opts.sessionSource ?? {
     providerId: "fake",
@@ -197,43 +223,91 @@ export async function seedDummyWorkspace(
 
       if (s >= requestedSessionCount) continue;
 
+      if (seedTranscriptDirect && opts.turnsPerSession > 0) {
+        const turns = [];
+        for (let t = 0; t < opts.turnsPerSession; t++) {
+          const toolFixtures = includeToolSummaries
+            ? chunkFixtures(toolSummaryFixtures, toolSummariesPerTurn, t * toolSummariesPerTurn)
+            : [];
+          const toolMarker = includeToolSummaries ? buildToolMarker(toolFixtures) : "";
+          const baseMessage = `${messagePrefix} ${i + 1}.${s + 1}.${t + 1}`;
+          const multilineMessage = buildMultilineMessage(
+            baseMessage,
+            messageLinePrefix,
+            messageBodyLines ? parseCount(messageBodyLines, t) : 0,
+            i,
+            s,
+            t,
+          );
+          const paddedMessage = buildPaddedMessage(
+            multilineMessage,
+            messageBytes ? parseCount(messageBytes, t) : undefined,
+          );
+          const assistantMessage = buildMultilineMessage(
+            `assistant ${baseMessage}`,
+            `${messageLinePrefix} assistant`,
+            messageBodyLines ? parseCount(messageBodyLines, t) : 0,
+            i,
+            s,
+            t,
+          );
+          turns.push({
+            user: `${paddedMessage}${toolMarker}`,
+            assistant: assistantMessage,
+          });
+        }
+        await apiPost(request, `/api/dev/sessions/${sessionId}/seed_transcript`, { turns });
+        if (throttle > 0) {
+          await sleep(throttle);
+        }
+        continue;
+      }
+
       for (let t = 0; t < opts.turnsPerSession; t++) {
         const toolFixtures = includeToolSummaries
           ? chunkFixtures(toolSummaryFixtures, toolSummariesPerTurn, t * toolSummariesPerTurn)
           : [];
         const toolMarker = includeToolSummaries ? buildToolMarker(toolFixtures) : "";
         const baseMessage = `${messagePrefix} ${i + 1}.${s + 1}.${t + 1}`;
-        const paddedMessage = buildPaddedMessage(
+        const multilineMessage = buildMultilineMessage(
           baseMessage,
+          messageLinePrefix,
+          messageBodyLines ? parseCount(messageBodyLines, t) : 0,
+          i,
+          s,
+          t,
+        );
+        const paddedMessage = buildPaddedMessage(
+          multilineMessage,
           messageBytes ? parseCount(messageBytes, t) : undefined,
         );
-        await apiPost(request, `/api/sessions/${sessionId}/messages`, {
+        const savedMessage = await apiPost<{ id: string }>(request, `/api/sessions/${sessionId}/messages`, {
           content: `${paddedMessage}${toolMarker}`,
           delivery: "immediate",
         });
+        if (!savedMessage.id) {
+          throw new Error(`seeded message for session ${sessionId} did not include an id`);
+        }
         if (awaitTurnCompletion) {
           const start = Date.now();
           while (true) {
-            const snapshot = await apiGet<{
-              head: {
-                turns: Array<{ status: string; tool_total?: number | null }>;
-                tool_summaries?: unknown[];
-              };
-            }>(request, `/api/sessions/${sessionId}/snapshot?limit=1`);
-            const head = snapshot?.head;
+            const head = await apiGet<{
+              turns: Array<{ status: string; tool_total?: number | null; user_message_id?: string | null }>;
+              tool_summaries?: unknown[];
+            }>(request, `/api/sessions/${sessionId}/head`);
             const turns = Array.isArray(head?.turns) ? head.turns : [];
-            if (turns.length === 0) {
+            const turn = turns.find((entry) => entry.user_message_id === savedMessage.id);
+            if (!turn) {
               if (Date.now() - start > completionTimeoutMs) {
-                throw new Error(`turn completion timeout for session ${sessionId}`);
+                throw new Error(`turn completion timeout for session ${sessionId} message ${savedMessage.id}`);
               }
               await sleep(50);
               continue;
             }
-            const last = turns[turns.length - 1];
-            const done = last?.status === "completed" || last?.status === "done";
+            const done = turn.status === "completed" || turn.status === "done";
             if (done) break;
             if (Date.now() - start > completionTimeoutMs) {
-              throw new Error(`turn completion timeout for session ${sessionId}`);
+              throw new Error(`turn completion timeout for session ${sessionId} message ${savedMessage.id}`);
             }
             await sleep(50);
           }

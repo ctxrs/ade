@@ -10,6 +10,8 @@ const {
 
 const ROOT_RUST_INPUTS = [
   "Cargo.toml",
+  "Cargo.Bazel.Cargo.lock",
+  "Cargo.Bazel.lock",
   "Cargo.lock",
   "rust-toolchain.toml",
   "rustfmt.toml",

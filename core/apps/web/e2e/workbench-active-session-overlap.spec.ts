@@ -1,34 +1,19 @@
-import { writeFile } from "node:fs/promises";
-import type { Page, TestInfo } from "playwright/test";
+import type { APIRequestContext, Page, TestInfo } from "playwright/test";
 import { test, expect } from "./fixtures";
 import { seedDummyWorkspace } from "./utils/seedDummyWorkspace";
+import {
+  assertNoVisibleRowOverlap,
+  failWithThreadDiagnostics,
+  requireThreadOverflow,
+  requireVisibleSession,
+  waitForStreamingObserved,
+} from "./utils/workbenchRowOverlapDiagnostics";
 
-const visibleSessionSelector = '.wb-session-slot [data-testid="session-view"]';
-const visibleScrollerSelector = `${visibleSessionSelector} .wb-thread-scroller`;
-const visibleStatusSelector = `${visibleSessionSelector} .wb-turn-status-label`;
+const longBody = Array.from({ length: 160 }, (_, index) => `overlap fixture line ${index + 1}`).join("\n");
 
-type GeometrySnapshot = {
-  overlaps: Array<{
-    previousId: string;
-    nextId: string;
-    previousBottom: number;
-    nextTop: number;
-    previousText: string;
-    nextText: string;
-  }>;
-  visibleRows: Array<{
-    id: string;
-    top: number;
-    bottom: number;
-    height: number;
-    text: string;
-    knownSize: string | null;
-    dataIndex: string | null;
-  }>;
-  sessionId: string | null;
+type SessionHeadResponse = {
+  turns?: Array<{ status?: unknown; user_message_id?: unknown }>;
 };
-
-const longBody = Array.from({ length: 140 }, (_, index) => `overlap fixture line ${index + 1}`).join("\n");
 
 const buildSlowPrompt = (marker: string, index: number) => {
   const toolCalls = Array.from({ length: 4 }, (_, toolIndex) => ({
@@ -44,130 +29,130 @@ ${JSON.stringify(toolCalls)}
 [[/tool_calls]]`;
 };
 
-async function waitForVisibleSession(page: Page, sessionId: string) {
-  await expect(page.locator(visibleSessionSelector).first()).toHaveAttribute("data-session-id", sessionId, {
-    timeout: 20_000,
+async function sendStreamingPrompt(
+  request: APIRequestContext,
+  sessionId: string,
+  marker: string,
+  index: number,
+): Promise<string> {
+  const response = await request.post(`/api/sessions/${sessionId}/messages`, {
+    data: { content: buildSlowPrompt(marker, index), delivery: "immediate" },
   });
-  await expect(page.locator(visibleScrollerSelector).first()).toBeVisible({ timeout: 20_000 });
+  expect(response.ok(), `failed to send streaming prompt ${marker} ${index}`).toBeTruthy();
+  const payload = (await response.json()) as { id?: unknown };
+  const messageId = typeof payload.id === "string" ? payload.id : "";
+  expect(messageId, `streaming prompt ${marker} ${index} response did not include a message id`).toBeTruthy();
+  return messageId;
 }
 
-async function waitForVisiblePendingAssistantRow(page: Page) {
-  const pendingAssistant = page
-    .locator(`${visibleSessionSelector} [data-thread-item-id^="assistant-"][data-thread-item-id$="-pending"]`)
-    .first();
-  await expect(pendingAssistant).toBeVisible({ timeout: 20_000 });
-}
-
-async function readVisibleThreadGeometry(page: Page): Promise<GeometrySnapshot> {
-  const sessionView = page.locator(visibleSessionSelector).first();
-  return sessionView.evaluate((root) => {
-    const scroller = root.querySelector(".wb-thread-scroller") as HTMLElement | null;
-    const scrollerRect = scroller?.getBoundingClientRect() ?? null;
-    const visibleRows = Array.from(
-      root.querySelectorAll('.wb-thread-scroller [role="listitem"][data-thread-item-id]'),
-    )
-      .map((node) => {
-        const el = node as HTMLElement;
-        const rect = el.getBoundingClientRect();
-        const parent = el.parentElement as HTMLElement | null;
-        return {
-          id: el.getAttribute("data-thread-item-id") ?? "",
-          top: rect.top,
-          bottom: rect.bottom,
-          height: rect.height,
-          text: (el.innerText || "").slice(0, 180),
-          knownSize: parent?.getAttribute("data-known-size") ?? null,
-          dataIndex: parent?.getAttribute("data-index") ?? null,
-        };
-      })
-      .filter((row) => {
-        if (!scrollerRect) return row.height > 1;
-        return row.height > 1 && row.bottom > scrollerRect.top + 1 && row.top < scrollerRect.bottom - 1;
-      })
-      .sort((left, right) => left.top - right.top);
-
-    const overlaps: GeometrySnapshot["overlaps"] = [];
-    for (let index = 1; index < visibleRows.length; index += 1) {
-      const previous = visibleRows[index - 1];
-      const next = visibleRows[index];
-      if (next.top < previous.bottom - 1) {
-        overlaps.push({
-          previousId: previous.id,
-          nextId: next.id,
-          previousBottom: previous.bottom,
-          nextTop: next.top,
-          previousText: previous.text,
-          nextText: next.text,
-        });
-      }
-    }
-
-    return {
-      overlaps,
-      visibleRows,
-      sessionId: root.getAttribute("data-session-id"),
-    };
-  });
-}
-
-async function assertNoVisibleOverlap(
-  page: Page,
-  testInfo: TestInfo,
-  step: string,
-  expectedSessionId: string,
-  debugLogs: string[],
-) {
-  const geometry = await readVisibleThreadGeometry(page);
-  if (geometry.sessionId === expectedSessionId && geometry.overlaps.length === 0) return;
-
-  const sessionMessageListDebug = await page.evaluate((sessionId) => {
-    const store = window.__wbSessionMessageListDebug;
-    if (!store) return [];
-    return store.entries.filter((entry) => entry.sessionId === sessionId).slice(-60);
-  }, expectedSessionId);
-  const screenshotPath = testInfo.outputPath(`active-overlap-${step}.png`);
-  const detailsPath = testInfo.outputPath(`active-overlap-${step}.json`);
-  await page.screenshot({ path: screenshotPath, fullPage: true });
-  await writeFile(detailsPath, JSON.stringify({ geometry, debugLogs, sessionMessageListDebug }, null, 2), "utf8");
-  await testInfo.attach(`active-overlap-${step}.png`, {
-    path: screenshotPath,
-    contentType: "image/png",
-  });
-  await testInfo.attach(`active-overlap-${step}.json`, {
-    path: detailsPath,
-    contentType: "application/json",
-  });
-  throw new Error(
-    `active-session overlap at ${step}: expectedSession=${expectedSessionId} actualSession=${geometry.sessionId} visibleOverlaps=${geometry.overlaps.length}`,
-  );
-}
-
-async function monitorNoOverlap(
+async function monitorNoOverlapUntilCompleted(
+  request: APIRequestContext,
   page: Page,
   testInfo: TestInfo,
   sessionId: string,
+  userMessageId: string,
   debugLogs: string[],
   prefix: string,
-  samples = 20,
-) {
-  for (let index = 0; index < samples; index += 1) {
-    await page.waitForTimeout(300);
-    await assertNoVisibleOverlap(page, testInfo, `${prefix}-${index + 1}`, sessionId, debugLogs);
+  timeoutMs = 70_000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  let samples = 0;
+  let lastHeadError = "";
+  let lastTurnStatus = "";
+  while (Date.now() < deadline) {
+    samples += 1;
+    await assertNoVisibleRowOverlap(page, {
+      debugLogs,
+      expectedSessionId: sessionId,
+      prefix: "active-overlap",
+      step: `${prefix}-${samples}`,
+      testInfo,
+    });
+
+    try {
+      const response = await request.get(`/api/sessions/${sessionId}/head`);
+      if (!response.ok()) {
+        lastHeadError = `head request failed with status ${response.status()}`;
+      } else {
+        const payload = (await response.json()) as SessionHeadResponse;
+        const turns = Array.isArray(payload.turns) ? payload.turns : [];
+        const turn = turns.find((entry) => entry.user_message_id === userMessageId);
+        lastTurnStatus = typeof turn?.status === "string" ? turn.status : "";
+        if (lastTurnStatus === "completed" || lastTurnStatus === "done") {
+          return;
+        }
+      }
+    } catch (error) {
+      lastHeadError = error instanceof Error ? error.message : String(error);
+    }
+
+    await page.waitForTimeout(250);
   }
+  await failWithThreadDiagnostics(page, {
+    debugLogs,
+    expectedSessionId: sessionId,
+    prefix: "active-overlap",
+    step: `${prefix}-completion-timeout`,
+    extra: {
+      lastHeadError,
+      lastTurnStatus,
+      userMessageId,
+    },
+    testInfo,
+    message: `active-session streaming did not complete during ${prefix}`,
+  });
+}
+
+async function runStreamingOverlapCheck(
+  page: Page,
+  request: APIRequestContext,
+  testInfo: TestInfo,
+  sessionId: string,
+  debugLogs: string[],
+  marker: string,
+  index: number,
+): Promise<void> {
+  const userMessageId = await sendStreamingPrompt(request, sessionId, marker, index);
+  await waitForStreamingObserved(page, {
+    debugLogs,
+    expectedSessionId: sessionId,
+    prefix: "active-overlap",
+    step: `${marker.toLowerCase()}-${index}-streaming`,
+    testInfo,
+  });
+  await monitorNoOverlapUntilCompleted(
+    request,
+    page,
+    testInfo,
+    sessionId,
+    userMessageId,
+    debugLogs,
+    `${marker.toLowerCase()}-${index}`,
+  );
+  await assertNoVisibleRowOverlap(page, {
+    debugLogs,
+    expectedSessionId: sessionId,
+    prefix: "active-overlap",
+    step: `${marker.toLowerCase()}-${index}-complete`,
+    testInfo,
+  });
 }
 
 test("workbench: active session streaming never overlaps visible rows", async ({ page, request }, testInfo) => {
   test.setTimeout(180_000);
+  await page.setViewportSize({ width: 1000, height: 650 });
 
   const seed = await seedDummyWorkspace(request, {
     tasks: 1,
     sessionsPerTask: 1,
-    turnsPerSession: 8,
-    throttleMs: 5,
-    messageBytes: 2200,
+    turnsPerSession: 6,
+    throttleMs: 0,
     messagePrefix: "overlap seed",
+    messageBodyLines: 64,
+    messageLinePrefix: "overlap seed deterministic line",
     includeToolSummaries: true,
     toolSummariesPerTurn: 3,
+    seedTranscriptDirect: true,
   });
 
   const taskId = seed.taskIds[0];
@@ -188,23 +173,29 @@ test("workbench: active session streaming never overlaps visible rows", async ({
   const task = page.locator(".wb-task-row").filter({ hasText: "fixture task 1" }).first();
   await expect(task).toBeVisible({ timeout: 30_000 });
   await task.click();
-  await waitForVisibleSession(page, sessionId!);
-
-  await request.post(`/api/sessions/${sessionId}/messages`, {
-    data: { content: buildSlowPrompt("ACTIVE-OVERLAP", 1), delivery: "immediate" },
+  await requireVisibleSession(page, {
+    debugLogs,
+    expectedSessionId: sessionId!,
+    prefix: "active-overlap",
+    step: "initial-session",
+    testInfo,
   });
-  await waitForVisiblePendingAssistantRow(page);
-  await monitorNoOverlap(page, testInfo, sessionId!, debugLogs, "first");
-
-  await expect(page.locator(visibleStatusSelector).last()).toHaveText(/Completed/i, { timeout: 60_000 });
-  await assertNoVisibleOverlap(page, testInfo, "first-complete", sessionId!, debugLogs);
-
-  await request.post(`/api/sessions/${sessionId}/messages`, {
-    data: { content: buildSlowPrompt("ACTIVE-OVERLAP", 2), delivery: "immediate" },
+  await requireThreadOverflow(page, {
+    debugLogs,
+    expectedSessionId: sessionId!,
+    minOverflow: 300,
+    prefix: "active-overlap",
+    step: "initial-overflow",
+    testInfo,
   });
-  await waitForVisiblePendingAssistantRow(page);
-  await monitorNoOverlap(page, testInfo, sessionId!, debugLogs, "second");
+  await assertNoVisibleRowOverlap(page, {
+    debugLogs,
+    expectedSessionId: sessionId!,
+    prefix: "active-overlap",
+    step: "initial",
+    testInfo,
+  });
 
-  await expect(page.locator(visibleStatusSelector).last()).toHaveText(/Completed/i, { timeout: 60_000 });
-  await assertNoVisibleOverlap(page, testInfo, "second-complete", sessionId!, debugLogs);
+  await runStreamingOverlapCheck(page, request, testInfo, sessionId!, debugLogs, "ACTIVE-OVERLAP", 1);
+  await runStreamingOverlapCheck(page, request, testInfo, sessionId!, debugLogs, "ACTIVE-OVERLAP", 2);
 });

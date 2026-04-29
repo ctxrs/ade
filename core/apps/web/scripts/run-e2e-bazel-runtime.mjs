@@ -256,7 +256,7 @@ export const buildPlaywrightEnv = ({
   webDistDir,
 }) => {
   const e2eTmpDir = path.join(tempRoot, `ctx-e2e-${runtimeProfile}-tmp-${process.pid}`);
-  const e2eDataDir = path.join(tempRoot, `ctx-e2e-${runtimeProfile}-data-${process.pid}`);
+  const e2eDataDir = path.join(e2eTmpDir, `ctx-e2e-${runtimeProfile}-data-${process.pid}`);
   const nextEnv = {
     ...env,
     CI: env.CI ?? "1",

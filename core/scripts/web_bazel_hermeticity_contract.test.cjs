@@ -4,9 +4,11 @@ const path = require("node:path");
 const test = require("node:test");
 
 const repoRoot = path.resolve(__dirname, "..", "..");
+const moduleFile = fs.readFileSync(path.join(repoRoot, "MODULE.bazel"), "utf8");
 const buildFile = fs.readFileSync(path.join(repoRoot, "core", "apps", "web", "BUILD.bazel"), "utf8");
 const e2eBuildFile = fs.readFileSync(path.join(repoRoot, "core", "apps", "web", "e2e", "BUILD.bazel"), "utf8");
 const e2eMacroFile = fs.readFileSync(path.join(repoRoot, "core", "apps", "web", "e2e", "web_e2e_test.bzl"), "utf8");
+const coreBuildFile = fs.readFileSync(path.join(repoRoot, "core", "BUILD.bazel"), "utf8");
 const verifyAgentRemote = fs.readFileSync(path.join(repoRoot, "core", "scripts", "verify_agent_remote.cjs"), "utf8");
 const { WEB_SMOKE_BAZEL_TARGETS } = require("./lib/web_smoke_bazel_targets.cjs");
 
@@ -47,6 +49,16 @@ test("browser e2e targets route through the dedicated Bazel runtime instead of w
     assert.match(e2eBuildFile, new RegExp(`name = "${targetName}"`));
   }
   assert.doesNotMatch(e2eBuildFile, /run_workspace_task\.sh/u);
+});
+
+test("rust crate universe is pinned to the checked-in Cargo lock for browser e2e analysis", () => {
+  const fromSpecsBlock = moduleFile.match(/crate\.from_specs\(\n[\s\S]*?\n\)/u);
+  assert.ok(fromSpecsBlock, "MODULE.bazel should configure crate.from_specs");
+  assert.match(fromSpecsBlock[0], /cargo_lockfile = "\/\/core:Cargo\.Bazel\.Cargo\.lock"/u);
+  assert.match(fromSpecsBlock[0], /lockfile = "\/\/core:Cargo\.Bazel\.lock"/u);
+  assert.ok(coreBuildFile.includes('"Cargo.Bazel.Cargo.lock"'));
+  assert.ok(coreBuildFile.includes('"Cargo.Bazel.lock"'));
+  assert.ok(coreBuildFile.includes('"Cargo.lock"'));
 });
 
 test("playwright browser runtimes are Bazel-owned inputs instead of ambient cache state", () => {

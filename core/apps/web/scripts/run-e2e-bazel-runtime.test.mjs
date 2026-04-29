@@ -89,6 +89,22 @@ describe("run-e2e-bazel-runtime", () => {
     expect(env.CTX_E2E_CTX_MCP_BIN).toBe("/tmp/ctx-mcp");
   });
 
+  it("roots the Bazel data dir inside the Bazel tmp dir for server cleanup safety", () => {
+    const env = buildPlaywrightEnv({
+      ctxHttpBin: "/tmp/ctx",
+      env: {},
+      runtimeProfile: "workbench-lite",
+      tempRoot: "/tmp/ctx-e2e-bazel-root",
+      webDistDir: "/tmp/dist",
+    });
+    const relative = path.relative(env.CTX_E2E_TMPDIR, env.CTX_E2E_DATA_DIR);
+
+    expect(relative).not.toBe("");
+    expect(relative.startsWith("..")).toBe(false);
+    expect(path.isAbsolute(relative)).toBe(false);
+    expect(path.basename(env.CTX_E2E_DATA_DIR)).toMatch(/^ctx-e2e-workbench-lite-data-/);
+  });
+
   it("builds Playwright args without broad suite fallback", () => {
     expect(buildPlaywrightArgs({
       config: "playwright.premerge.config.ts",

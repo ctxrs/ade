@@ -571,6 +571,8 @@ crate.spec(
 )
 crate.from_specs(
     name = "crates",
+    cargo_lockfile = "//core:Cargo.Bazel.Cargo.lock",
+    lockfile = "//core:Cargo.Bazel.lock",
     supported_platform_triples = [
         "aarch64-apple-darwin",
         "x86_64-apple-darwin",
