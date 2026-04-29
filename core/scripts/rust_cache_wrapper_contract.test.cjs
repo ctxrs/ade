@@ -369,11 +369,6 @@ test("automation cargo invocations are wrapper-managed or explicitly isolated", 
       rationale: "bundle builds export per-bundle CARGO_TARGET_DIR or container /target",
     },
     {
-      path: "scripts/lib/bundled_harnesses_providers.sh",
-      pattern: /cargo (zigbuild|build|\+stable build)/,
-      rationale: "provider bundle builds pass per-target CARGO_TARGET_DIR",
-    },
-    {
       path: "scripts/publish_adapter_supabase.sh",
       pattern: /CARGO_TARGET_DIR="\$target_dir" cargo build --release/,
       rationale: "legacy adapter publish stages into a temp target under STAGING",
@@ -387,6 +382,11 @@ test("automation cargo invocations are wrapper-managed or explicitly isolated", 
       path: "core/scripts/avf_linux_ci_smoke.sh",
       pattern: /cargo metadata --manifest-path/,
       rationale: "metadata lookup discovers Cargo target directories and does not build targets",
+    },
+    {
+      path: "scripts/tests/macos_agent_pre_command_cleanup_tolerates_failure.sh",
+      pattern: /cargo --version >/,
+      rationale: "macOS cleanup smoke only probes whether cargo is installed before continuing",
     },
   ];
 
