@@ -1,13 +1,17 @@
 use crate::attachments::validate_mount_path_in_worktree;
 
-use super::resolve_attachment_source_path;
+use super::{resolve_attachment_source_path, AttachmentSourceSymlinkPolicy};
 
 #[tokio::test]
 async fn resolve_attachment_source_path_rejects_parent_traversal() {
     let root = tempfile::tempdir().unwrap();
-    let err = resolve_attachment_source_path(root.path(), Some("../escape.txt"))
-        .await
-        .unwrap_err();
+    let err = resolve_attachment_source_path(
+        root.path(),
+        Some("../escape.txt"),
+        AttachmentSourceSymlinkPolicy::AllowInternal,
+    )
+    .await
+    .unwrap_err();
     assert!(err.to_string().contains("attachment source not found"));
 }
 
@@ -20,9 +24,13 @@ async fn resolve_attachment_source_path_rejects_symlink_escape() {
         std::fs::write(outside.path().join("escape.txt"), b"escape").unwrap();
         std::os::unix::fs::symlink(outside.path(), root.path().join("link")).unwrap();
 
-        let err = resolve_attachment_source_path(root.path(), Some("link/escape.txt"))
-            .await
-            .unwrap_err();
+        let err = resolve_attachment_source_path(
+            root.path(),
+            Some("link/escape.txt"),
+            AttachmentSourceSymlinkPolicy::AllowInternal,
+        )
+        .await
+        .unwrap_err();
         assert!(err.to_string().contains("escapes the materialized root"));
     }
 }
@@ -38,9 +46,13 @@ async fn resolve_attachment_source_path_rejects_nested_symlink_escape() {
         std::fs::write(outside.path().join("escape.txt"), b"escape").unwrap();
         std::os::unix::fs::symlink(outside.path().join("escape.txt"), docs.join("leak")).unwrap();
 
-        let err = resolve_attachment_source_path(root.path(), None)
-            .await
-            .unwrap_err();
+        let err = resolve_attachment_source_path(
+            root.path(),
+            None,
+            AttachmentSourceSymlinkPolicy::AllowInternal,
+        )
+        .await
+        .unwrap_err();
         assert!(err.to_string().contains("escapes the materialized root"));
     }
 }
@@ -55,10 +67,36 @@ async fn resolve_attachment_source_path_allows_internal_symlinks() {
         std::fs::write(docs.join("guide.md"), b"guide").unwrap();
         std::os::unix::fs::symlink("guide.md", docs.join("guide-link")).unwrap();
 
-        let resolved = resolve_attachment_source_path(root.path(), None)
-            .await
-            .unwrap();
+        let resolved = resolve_attachment_source_path(
+            root.path(),
+            None,
+            AttachmentSourceSymlinkPolicy::AllowInternal,
+        )
+        .await
+        .unwrap();
         assert_eq!(resolved, root.path().canonicalize().unwrap());
+    }
+}
+
+#[tokio::test]
+async fn resolve_attachment_source_path_rejects_internal_symlinks_for_read_only_copy() {
+    #[cfg(unix)]
+    {
+        let root = tempfile::tempdir().unwrap();
+        let docs = root.path().join("docs");
+        std::fs::create_dir_all(&docs).unwrap();
+        std::fs::write(docs.join("guide.md"), b"guide").unwrap();
+        std::os::unix::fs::symlink("guide.md", docs.join("guide-link")).unwrap();
+
+        let err = resolve_attachment_source_path(
+            root.path(),
+            None,
+            AttachmentSourceSymlinkPolicy::Reject,
+        )
+        .await
+        .unwrap_err();
+
+        assert!(format!("{err:#}").contains("refuses symlink"));
     }
 }
 

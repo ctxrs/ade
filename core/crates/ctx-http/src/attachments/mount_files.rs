@@ -1,4 +1,6 @@
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
 use ctx_core::models::{AttachmentMode, WorkspaceAttachment};
@@ -203,12 +205,8 @@ pub(crate) async fn ensure_mount(target: &Path, source: &Path, mode: AttachmentM
     if mode == AttachmentMode::Ro {
         let source = source.to_path_buf();
         let target = target.to_path_buf();
-        let target_for_copy = target.clone();
-        tokio::task::spawn_blocking(move || {
-            copy_path_recursive(&source, &target_for_copy, SymlinkCopyMode::Reject)
-        })
-        .await??;
-        tokio::task::spawn_blocking(move || apply_read_only_mode(&target)).await??;
+        tokio::task::spawn_blocking(move || copy_path_recursive_read_only_atomic(&source, &target))
+            .await??;
         return Ok(());
     }
 
@@ -262,6 +260,67 @@ fn copy_path_recursive(source: &Path, target: &Path, symlink_mode: SymlinkCopyMo
     copy_path_recursive_inner(source, target, symlink_mode)
 }
 
+fn copy_path_recursive_read_only_atomic(source: &Path, target: &Path) -> Result<()> {
+    let temp = unique_copy_temp_path(target)?;
+    if let Err(err) = copy_path_recursive(source, &temp, SymlinkCopyMode::Reject) {
+        remove_path_after_failed_copy(&temp);
+        return Err(err);
+    }
+    if let Err(err) = (|| {
+        std::fs::rename(&temp, target).with_context(|| {
+            format!("installing read-only attachment copy {}", target.display())
+        })?;
+        Ok(())
+    })() {
+        remove_path_after_failed_copy(&temp);
+        return Err(err);
+    }
+    if let Err(err) = apply_read_only_mode(target) {
+        remove_path_after_failed_copy(target);
+        return Err(err);
+    }
+    Ok(())
+}
+
+fn unique_copy_temp_path(target: &Path) -> Result<PathBuf> {
+    let parent = target
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("attachment mount target must have a parent"))?;
+    std::fs::create_dir_all(parent)
+        .with_context(|| format!("creating attachment mount parent {}", parent.display()))?;
+    let file_name = target
+        .file_name()
+        .ok_or_else(|| anyhow::anyhow!("attachment mount target must have a file name"))?;
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    for attempt in 0..100 {
+        let mut temp_name = OsString::from(".");
+        temp_name.push(file_name);
+        temp_name.push(format!(
+            ".copy-tmp.{}.{}.{}",
+            std::process::id(),
+            nanos,
+            attempt
+        ));
+        let candidate = parent.join(temp_name);
+        match std::fs::symlink_metadata(&candidate) {
+            Ok(_) => continue,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(candidate),
+            Err(err) => {
+                return Err(err).with_context(|| {
+                    format!("checking attachment copy temp {}", candidate.display())
+                });
+            }
+        }
+    }
+    anyhow::bail!(
+        "unable to allocate temporary attachment copy path for {}",
+        target.display()
+    );
+}
+
 fn copy_path_recursive_inner(
     source: &Path,
     target: &Path,
@@ -296,6 +355,18 @@ fn copy_path_recursive_inner(
     std::fs::copy(source, target)
         .with_context(|| format!("copying attachment file {}", source.display()))?;
     Ok(())
+}
+
+fn remove_path_after_failed_copy(path: &Path) {
+    let Ok(metadata) = std::fs::symlink_metadata(path) else {
+        return;
+    };
+    let _ = clear_read_only_mode(path);
+    if metadata.file_type().is_symlink() || metadata.is_file() {
+        let _ = std::fs::remove_file(path);
+    } else if metadata.is_dir() {
+        let _ = std::fs::remove_dir_all(path);
+    }
 }
 
 fn apply_read_only_mode(path: &Path) -> Result<()> {
@@ -452,7 +523,10 @@ mod tests {
             .expect_err("file symlink should fail closed for ro copies");
 
         assert!(format!("{err:#}").contains("refuses symlink"));
-        assert!(!target.join("guide-link").exists());
+        assert!(
+            !target.exists(),
+            "failed ro copy must not leave a partial writable mount tree"
+        );
     }
 
     #[cfg(unix)]
@@ -470,6 +544,10 @@ mod tests {
             .expect_err("directory symlink should fail closed for ro copies");
 
         assert!(format!("{err:#}").contains("refuses symlink"));
+        assert!(
+            !target.exists(),
+            "failed ro copy must not leave a partial writable mount tree"
+        );
     }
 
     #[cfg(unix)]
@@ -489,7 +567,10 @@ mod tests {
             .expect_err("external file symlink should fail closed for ro copies");
 
         assert!(format!("{err:#}").contains("refuses symlink"));
-        assert!(!target.join("secret-link").exists());
+        assert!(
+            !target.exists(),
+            "failed ro copy must not leave a partial writable mount tree"
+        );
     }
 
     #[tokio::test]

@@ -15,6 +15,19 @@ use native::{
     ensure_attachment_imported_to_container,
 };
 
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+enum AttachmentSourceSymlinkPolicy {
+    AllowInternal,
+    Reject,
+}
+
+fn symlink_policy_for_mode(mode: &AttachmentMode) -> AttachmentSourceSymlinkPolicy {
+    match mode {
+        AttachmentMode::Ro => AttachmentSourceSymlinkPolicy::Reject,
+        AttachmentMode::Rw => AttachmentSourceSymlinkPolicy::AllowInternal,
+    }
+}
+
 fn command_failure_detail(output: &std::process::Output) -> String {
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
     let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
@@ -219,7 +232,11 @@ async fn container_remove_attachment_data_best_effort(
     Ok(())
 }
 
-async fn resolve_attachment_source_path(root: &Path, subpath: Option<&str>) -> Result<PathBuf> {
+async fn resolve_attachment_source_path(
+    root: &Path,
+    subpath: Option<&str>,
+    symlink_policy: AttachmentSourceSymlinkPolicy,
+) -> Result<PathBuf> {
     let root_canonical = tokio::fs::canonicalize(root)
         .await
         .unwrap_or_else(|_| root.to_path_buf());
@@ -233,25 +250,44 @@ async fn resolve_attachment_source_path(root: &Path, subpath: Option<&str>) -> R
     if !candidate_canonical.starts_with(&root_canonical) {
         anyhow::bail!("attachment subpath escapes the materialized root");
     }
-    validate_attachment_tree_within_root(&root_canonical, &candidate_canonical).await?;
+    validate_attachment_tree_within_root(&root_canonical, &candidate_canonical, symlink_policy)
+        .await?;
     Ok(candidate_canonical)
 }
 
-async fn validate_attachment_tree_within_root(root: &Path, candidate: &Path) -> Result<()> {
+async fn validate_attachment_tree_within_root(
+    root: &Path,
+    candidate: &Path,
+    symlink_policy: AttachmentSourceSymlinkPolicy,
+) -> Result<()> {
     let root = root.to_path_buf();
     let candidate = candidate.to_path_buf();
     tokio::task::spawn_blocking(move || {
-        validate_attachment_tree_within_root_blocking(&root, &candidate)
+        validate_attachment_tree_within_root_blocking(&root, &candidate, symlink_policy)
     })
     .await??;
     Ok(())
 }
 
-fn validate_attachment_tree_within_root_blocking(root: &Path, candidate: &Path) -> Result<()> {
+fn validate_attachment_tree_within_root_blocking(
+    root: &Path,
+    candidate: &Path,
+    symlink_policy: AttachmentSourceSymlinkPolicy,
+) -> Result<()> {
     let metadata = std::fs::symlink_metadata(candidate)
         .with_context(|| format!("reading attachment metadata {}", candidate.display()))?;
     if metadata.file_type().is_symlink() {
-        validate_attachment_symlink_target(root, candidate)?;
+        match symlink_policy {
+            AttachmentSourceSymlinkPolicy::AllowInternal => {
+                validate_attachment_symlink_target(root, candidate)?;
+            }
+            AttachmentSourceSymlinkPolicy::Reject => {
+                anyhow::bail!(
+                    "read-only attachment copy refuses symlink: {}",
+                    candidate.display()
+                );
+            }
+        }
         return Ok(());
     }
     if metadata.is_dir() {
@@ -259,10 +295,37 @@ fn validate_attachment_tree_within_root_blocking(root: &Path, candidate: &Path) 
             .with_context(|| format!("reading attachment dir {}", candidate.display()))?
         {
             let entry = entry?;
-            validate_attachment_tree_within_root_blocking(root, &entry.path())?;
+            validate_attachment_tree_within_root_blocking(root, &entry.path(), symlink_policy)?;
         }
     }
     Ok(())
+}
+
+fn container_path_for_resolved_source(
+    materialized_root: &Path,
+    resolved_source: &Path,
+    imported_root: &Path,
+) -> Result<PathBuf> {
+    let root_canonical = std::fs::canonicalize(materialized_root).with_context(|| {
+        format!(
+            "canonicalizing attachment materialized root {}",
+            materialized_root.display()
+        )
+    })?;
+    let relative = resolved_source
+        .strip_prefix(&root_canonical)
+        .with_context(|| {
+            format!(
+                "resolved attachment source {} is outside materialized root {}",
+                resolved_source.display(),
+                root_canonical.display()
+            )
+        })?;
+    if relative.as_os_str().is_empty() {
+        Ok(imported_root.to_path_buf())
+    } else {
+        Ok(imported_root.join(relative))
+    }
 }
 
 fn validate_attachment_symlink_target(root: &Path, path: &Path) -> Result<()> {
@@ -353,6 +416,7 @@ pub(crate) async fn ensure_attachment_mount(
     let mount_rel = sanitize_mount_relpath(&attachment.mount_relpath)?;
     let mount_abs = worktree_root.join(&mount_rel);
     validate_mount_path_in_worktree(worktree_root, &mount_abs)?;
+    let symlink_policy = symlink_policy_for_mode(&attachment.mode);
     let worktree = state
         .global_store()
         .get_worktree(worktree_id)
@@ -368,6 +432,12 @@ pub(crate) async fn ensure_attachment_mount(
             attachment_runtime_for_worktree(state, workspace, worktree_id, worktree_root).await?;
         match runtime {
             AttachmentRuntime::NativeContainer { container_id } => {
+                let host_source_path = resolve_attachment_source_path(
+                    &materialized.path,
+                    attachment.subpath.as_deref(),
+                    symlink_policy,
+                )
+                .await?;
                 let should_refresh =
                     refresh || attachment.update_policy != AttachmentUpdatePolicy::Manual;
                 let imported = ensure_attachment_imported_to_container(
@@ -378,9 +448,11 @@ pub(crate) async fn ensure_attachment_mount(
                     should_refresh,
                 )
                 .await?;
-                let source_path =
-                    resolve_attachment_source_path(&imported, attachment.subpath.as_deref())
-                        .await?;
+                let source_path = container_path_for_resolved_source(
+                    &materialized.path,
+                    &host_source_path,
+                    &imported,
+                )?;
                 container_ensure_mount(
                     state,
                     &container_id,
@@ -398,6 +470,7 @@ pub(crate) async fn ensure_attachment_mount(
                 let source_path = resolve_attachment_source_path(
                     &materialized.path,
                     attachment.subpath.as_deref(),
+                    symlink_policy,
                 )
                 .await?;
                 avf_copy_source_to_mount(
@@ -413,9 +486,12 @@ pub(crate) async fn ensure_attachment_mount(
             }
         }
     } else {
-        let source_path =
-            resolve_attachment_source_path(&materialized.path, attachment.subpath.as_deref())
-                .await?;
+        let source_path = resolve_attachment_source_path(
+            &materialized.path,
+            attachment.subpath.as_deref(),
+            symlink_policy,
+        )
+        .await?;
         let checked_mount_abs = ensure_mount_in_worktree(
             worktree_root,
             &mount_rel,

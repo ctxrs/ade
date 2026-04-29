@@ -263,6 +263,10 @@ pub(super) async fn avf_copy_source_to_mount(
     }
     let _ = avf_prepare_for_removal(state, workspace_id, worktree_id, worktree_root, target).await;
     let _ = avf_rm_rf(state, workspace_id, worktree_id, worktree_root, target).await;
+    if mode == AttachmentMode::Ro {
+        validate_attachment_tree_within_root(source, source, AttachmentSourceSymlinkPolicy::Reject)
+            .await?;
+    }
     let metadata = tokio::fs::metadata(source)
         .await
         .with_context(|| format!("stat attachment source {}", source.display()))?;

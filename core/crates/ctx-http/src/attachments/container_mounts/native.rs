@@ -70,6 +70,49 @@ pub(super) async fn container_mkdir_p(
     }
 }
 
+async fn container_reject_source_symlinks(
+    state: &AppState,
+    container_id: &str,
+    source: &Path,
+) -> Result<()> {
+    let script = r#"
+set -eu
+if [ -L "$1" ]; then
+  printf 'read-only attachment copy refuses symlink: %s\n' "$1" >&2
+  exit 2
+fi
+if [ -d "$1" ]; then
+  link="$(find "$1" -type l -print -quit)"
+  if [ -n "$link" ]; then
+    printf 'read-only attachment copy refuses symlink: %s\n' "$link" >&2
+    exit 2
+  fi
+fi
+"#;
+    let mut cmd = sandbox_container_command(&state.core.data_root)?;
+    cmd.arg("exec")
+        .arg("--interactive")
+        .arg(container_id)
+        .arg("sh")
+        .arg("-lc")
+        .arg(script)
+        .arg("--")
+        .arg(source);
+    let out = cmd
+        .output()
+        .await
+        .context("sandbox exec reject read-only attachment symlinks")?;
+    if out.status.success() {
+        Ok(())
+    } else {
+        anyhow::bail!(
+            "container read-only source validation failed (status {}): {}",
+            out.status,
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
+    }
+}
+
 pub(super) async fn container_prepare_for_removal(
     state: &AppState,
     container_id: &str,
@@ -193,6 +236,8 @@ pub(super) async fn container_ensure_mount(
     let _ = container_rm_rf(state, container_id, target).await;
 
     if mode == AttachmentMode::Ro {
+        container_reject_source_symlinks(state, container_id, source).await?;
+
         let mut cp = sandbox_container_command(&state.core.data_root)?;
         cp.arg("exec")
             .arg("--interactive")
