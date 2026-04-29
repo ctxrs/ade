@@ -280,9 +280,11 @@ pub(crate) async fn start_turn(
     for (key, value) in runtime_plan.env_overrides.iter() {
         provider_env.insert(key.clone(), value.clone());
     }
-    if let Err(err) =
-        crate::mcp_command::configure_runtime_mcp_command(&mut provider_env, &state.core.data_root)
-    {
+    if let Err(err) = crate::mcp_command::configure_runtime_mcp_command(
+        &session.provider_id,
+        &mut provider_env,
+        &state.core.data_root,
+    ) {
         emit_turn_start_failed(state, session, run_id, turn_id, message_id, &err).await;
         return Err(err);
     }

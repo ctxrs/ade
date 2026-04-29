@@ -578,6 +578,15 @@ declare_ctx_http_rust_unit_test(
 )
 
 declare_ctx_http_rust_unit_test(
+    name = "unit_tests_mcp_command",
+    args = CTX_HTTP_TEST_ARGS + ["mcp_command::"],
+    compile_data = CTX_HTTP_COMPILE_DATA,
+    data = CTX_HTTP_COMPILE_DATA,
+    deps = CTX_HTTP_DIRECT_TEST_DEPS,
+    proc_macro_deps = CTX_HTTP_TEST_PROC_MACRO_DEPS,
+)
+
+declare_ctx_http_rust_unit_test(
     name = "unit_tests_lib",
     args = CTX_HTTP_LIB_UNIT_TEST_ARGS,
     compile_data = CTX_HTTP_COMPILE_DATA,
@@ -1053,6 +1062,7 @@ test_suite(
         ":unit_tests_execution_setup_workspace_launch_not_blocked_by_background_runtime_prewarm",
         ":unit_tests_execution_setup_successful_workspace_launch_writes_missing_prewarm_metadata",
         ":unit_tests_installer",
+        ":unit_tests_mcp_command",
         ":unit_tests_lib",
         ":unit_tests_lib_mobile_secure_routes",
         ":unit_tests_lib_provider_routes",

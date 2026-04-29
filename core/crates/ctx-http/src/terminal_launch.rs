@@ -19,10 +19,7 @@ use ctx_worktree_data_plane::{
 
 mod container;
 
-use self::container::{
-    container_terminal_env, prepare_terminal_container_launch,
-    validate_canonical_container_terminal_cwd,
-};
+use self::container::{container_terminal_env, prepare_terminal_container_launch};
 
 pub(crate) struct CreateTerminalLaunchRequest {
     pub(crate) workspace_id: WorkspaceId,

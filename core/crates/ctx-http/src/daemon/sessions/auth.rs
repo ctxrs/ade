@@ -229,10 +229,14 @@ async fn prepare_session_auth_runtime(
             "failed to resolve codex-cli runtime path: {error:#}"
         ))
     })?;
-    crate::mcp_command::configure_runtime_mcp_command(&mut provider_env, &state.core.data_root)
-        .map_err(|error| {
-            SessionAuthError::Internal(format!("failed to prepare sandbox MCP runtime: {error:#}"))
-        })?;
+    crate::mcp_command::configure_runtime_mcp_command(
+        &session.provider_id,
+        &mut provider_env,
+        &state.core.data_root,
+    )
+    .map_err(|error| {
+        SessionAuthError::Internal(format!("failed to prepare sandbox MCP runtime: {error:#}"))
+    })?;
 
     Ok(PreparedSessionAuth {
         adapter,

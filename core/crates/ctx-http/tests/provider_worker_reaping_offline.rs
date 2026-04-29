@@ -177,7 +177,7 @@ async fn assert_provider_session_resume_after_idle_reap(provider_id: &str, model
         "CTX_CRP_FIRST_EVENT_TIMEOUT_MS",
         CRP_FIXTURE_FIRST_EVENT_TIMEOUT_MS,
     );
-    let _guard_ctx_mcp = common::set_ctx_mcp_command_env_for_test();
+    let _guard_mcp_disabled = EnvGuard::set("CTX_MCP_DISABLED", "1");
     let _codex_home = if matches!(provider_id, "codex") {
         Some(configure_hermetic_codex_home().await)
     } else {
@@ -258,7 +258,7 @@ async fn assert_provider_session_resume_after_idle_reap(provider_id: &str, model
 
 #[allow(clippy::await_holding_lock)]
 #[tokio::test]
-async fn idle_reaped_crp_workers_resume_via_provider_session_ref() {
+async fn idle_reaped_unscoped_crp_workers_resume_via_provider_session_ref() {
     let _env_lock = lock_env();
 
     assert_provider_session_resume_after_idle_reap("codex", "gpt-5.4/medium").await;

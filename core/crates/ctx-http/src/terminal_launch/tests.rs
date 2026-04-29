@@ -1,7 +1,7 @@
+use super::container::validate_canonical_container_terminal_cwd;
 use super::{
     container_terminal_env, infer_terminal_worktree, resolve_container_terminal_cwd,
     resolve_host_terminal_cwd, resolve_terminal_host_root,
-    validate_canonical_container_terminal_cwd,
 };
 use crate::daemon::AppState;
 use crate::settings::ExecutionMode;
