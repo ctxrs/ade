@@ -19,6 +19,12 @@ filegroup(
 )
 
 filegroup(
+    name = "desktop_script_files",
+    srcs = glob(["apps/desktop/scripts/**"]),
+    visibility = ["//visibility:public"],
+)
+
+filegroup(
     name = "desktop_bundle_files",
     srcs = glob(["apps/desktop/src-tauri/bundles/**"]),
     visibility = ["//visibility:public"],

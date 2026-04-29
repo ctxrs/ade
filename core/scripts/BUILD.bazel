@@ -39,6 +39,7 @@ DESKTOP_PARITY_CONTRACT_DATA = COMMON_CORE_DATA + [
     "//core:desktop_automation_files",
     "//core:desktop_bundle_files",
     "//core:desktop_release_metadata_files",
+    "//core:desktop_script_files",
     "//core:provider_matrix_sources",
 ]
 
