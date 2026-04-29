@@ -17,6 +17,11 @@ const {
 const coreRoot = path.resolve(__dirname, "..", "..", "..");
 const repoRoot = path.resolve(coreRoot, "..");
 const workspaceGraph = buildWorkspaceGraph(coreRoot);
+const CHECKIN_BUILDKITE_RUST_GATE_CHUNK_SIZE = 12;
+const CHECKIN_BUILDKITE_EXECUTION_OPTIONS = Object.freeze({
+  coalesceCtxHttpSuites: false,
+  rustGateChunkSize: CHECKIN_BUILDKITE_RUST_GATE_CHUNK_SIZE,
+});
 
 function normalizeRepoRelativePath(value) {
   return String(value || "")
@@ -169,6 +174,26 @@ function buildCommandForEntry(entry) {
   throw new Error(`unsupported entrypoint type for command mapping: ${entry.entrypointType}`);
 }
 
+function buildRustGateCommandForCrates(crateNames) {
+  const args = [
+    "exec",
+    "node",
+    "scripts/run_rust_gate.cjs",
+    "--mode",
+    "workspace",
+    "--include-reverse-deps",
+    "--clippy",
+    "--test-strategy",
+    "mixed",
+  ];
+
+  for (const crateName of crateNames) {
+    args.push("--crate", crateName);
+  }
+
+  return shellJoin("pnpm", args);
+}
+
 function buildRustGateCommand({ rustGateEntries, changedContext, selectionMode }) {
   const args = [
     "exec",
@@ -195,13 +220,21 @@ function buildRustGateCommand({ rustGateEntries, changedContext, selectionMode }
       }
     }
   } else {
-    const crateNames = [...new Set(rustGateEntries.map((entry) => entry.entrypoint))].sort();
-    for (const crateName of crateNames) {
-      args.push("--crate", crateName);
-    }
+    return buildRustGateCommandForCrates([...new Set(rustGateEntries.map((entry) => entry.entrypoint))].sort());
   }
 
   return shellJoin("pnpm", args);
+}
+
+function chunkArray(values, chunkSize) {
+  if (!Number.isInteger(chunkSize) || chunkSize <= 0 || values.length <= chunkSize) {
+    return [values];
+  }
+  const chunks = [];
+  for (let index = 0; index < values.length; index += chunkSize) {
+    chunks.push(values.slice(index, index + chunkSize));
+  }
+  return chunks;
 }
 
 function buildCommandsForEntries({
@@ -209,6 +242,7 @@ function buildCommandsForEntries({
   changedContext,
   selectionMode,
   coalesceCtxHttpSuites = true,
+  rustGateChunkSize = 0,
 }) {
   const commands = [];
   const ctxHttpSuites = [];
@@ -237,11 +271,18 @@ function buildCommandsForEntries({
   flushCtxHttpSuites();
 
   if (rustGateEntries.length > 0) {
-    commands.push(buildRustGateCommand({
-      rustGateEntries,
-      changedContext,
-      selectionMode,
-    }));
+    if (selectionMode === "all" && rustGateChunkSize > 0) {
+      const crateNames = [...new Set(rustGateEntries.map((entry) => entry.entrypoint))].sort();
+      for (const crateChunk of chunkArray(crateNames, rustGateChunkSize)) {
+        commands.push(buildRustGateCommandForCrates(crateChunk));
+      }
+    } else {
+      commands.push(buildRustGateCommand({
+        rustGateEntries,
+        changedContext,
+        selectionMode,
+      }));
+    }
   }
 
   return commands;
@@ -321,7 +362,14 @@ function orderSelectedEntries(entries, profile) {
     .map(({ entry }) => entry);
 }
 
-function buildExecutionPlan({ profileId, changedFiles = [], touchedOnly = false, selectionMode = "" }) {
+function buildExecutionPlan({
+  profileId,
+  changedFiles = [],
+  touchedOnly = false,
+  selectionMode = "",
+  coalesceCtxHttpSuites = true,
+  rustGateChunkSize = 0,
+} = {}) {
   const registry = buildTaxonomyRegistry();
   const profile = getProfileById(profileId);
   const resolvedSelectionMode = normalizeSelectionMode({ selectionMode, touchedOnly });
@@ -345,7 +393,8 @@ function buildExecutionPlan({ profileId, changedFiles = [], touchedOnly = false,
   const commands = dedupeCommands(buildCommandsForEntries({
     selectedEntries,
     changedContext,
-    coalesceCtxHttpSuites: true,
+    coalesceCtxHttpSuites,
+    rustGateChunkSize,
     selectionMode: resolvedSelectionMode,
   }));
 
@@ -357,6 +406,23 @@ function buildExecutionPlan({ profileId, changedFiles = [], touchedOnly = false,
   };
 }
 
+function buildCheckinBuildkiteExecutionPlan({ profileId = "checkin" } = {}) {
+  return buildExecutionPlan({
+    changedFiles: [],
+    profileId,
+    ...CHECKIN_BUILDKITE_EXECUTION_OPTIONS,
+  });
+}
+
+function buildExecutionPlanArtifact(plan, { changedFiles = [] } = {}) {
+  return {
+    changedFiles,
+    commands: plan.commands,
+    entries: plan.selectedEntries.map((entry) => entry.id),
+    profile: plan.profile.id,
+  };
+}
+
 function resolveChangedFilesFromGit(baseRef) {
   if (baseRef) {
     return resolveMergeBaseFiles(baseRef, { cwd: repoRoot }).changedFiles;
@@ -365,7 +431,11 @@ function resolveChangedFilesFromGit(baseRef) {
 }
 
 module.exports = {
+  CHECKIN_BUILDKITE_EXECUTION_OPTIONS,
+  CHECKIN_BUILDKITE_RUST_GATE_CHUNK_SIZE,
+  buildCheckinBuildkiteExecutionPlan,
   buildExecutionPlan,
+  buildExecutionPlanArtifact,
   buildCommandForEntry,
   buildChangedContext,
   entryMatchesChangedFiles,

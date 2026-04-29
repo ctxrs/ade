@@ -3,7 +3,15 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
-const { buildExecutionPlan } = require("./lib/test_taxonomy/execution.cjs");
+const {
+  CHECKIN_BUILDKITE_RUST_GATE_CHUNK_SIZE,
+  buildCheckinBuildkiteExecutionPlan,
+  buildExecutionPlan,
+} = require("./lib/test_taxonomy/execution.cjs");
+
+function rustGateCrates(command) {
+  return [...String(command || "").matchAll(/--crate ([^ ]+)/g)].map((match) => match[1]);
+}
 
 test("agent-default fans out ctx-http shared changes into suite-level commands", () => {
   const plan = buildExecutionPlan({
@@ -531,4 +539,54 @@ test("checkin promotion gate includes broad stable cacheable basics", () => {
   assert.ok(plan.commands.includes("pnpm bazel:web:typecheck"));
   assert.ok(plan.commands.includes("pnpm bazel:web:e2e:premerge"));
   assert.ok(plan.commands.includes("pnpm bazel:buildkite:pipeline:test"));
+});
+
+test("Buildkite checkin plan splits ctx-http suites and Rust crate gates without changing default semantics", () => {
+  const defaultPlan = buildExecutionPlan({
+    profileId: "checkin",
+  });
+  const buildkitePlan = buildCheckinBuildkiteExecutionPlan();
+
+  assert.equal(
+    defaultPlan.commands.filter((command) => command.startsWith("node scripts/ctx_http_suite_task.cjs ")).length,
+    1,
+  );
+  assert.equal(
+    defaultPlan.commands.filter((command) => command.startsWith("pnpm exec node scripts/run_rust_gate.cjs ")).length,
+    1,
+  );
+
+  const selectedCtxHttpSuites = buildkitePlan.selectedEntries
+    .filter((entry) => entry.entrypointType === "ctx-http-suite")
+    .map((entry) => entry.entrypoint)
+    .sort();
+  const ctxHttpCommands = buildkitePlan.commands
+    .filter((command) => command.startsWith("node scripts/ctx_http_suite_task.cjs "));
+  assert.equal(ctxHttpCommands.length, selectedCtxHttpSuites.length);
+  assert.deepEqual(
+    ctxHttpCommands.map((command) => command.match(/--suite ([^ ]+)/)?.[1]).sort(),
+    selectedCtxHttpSuites,
+  );
+  for (const command of ctxHttpCommands) {
+    assert.equal([...command.matchAll(/--suite /g)].length, 1, command);
+  }
+
+  const selectedRustCrates = buildkitePlan.selectedEntries
+    .filter((entry) => entry.entrypointType === "rust-crate-gate")
+    .map((entry) => entry.entrypoint)
+    .sort();
+  const rustGateCommands = buildkitePlan.commands
+    .filter((command) => command.startsWith("pnpm exec node scripts/run_rust_gate.cjs "));
+  assert.ok(rustGateCommands.length > 1, "expected Buildkite checkin to split the Rust gate");
+
+  const seenCrates = [];
+  for (const command of rustGateCommands) {
+    assert.match(command, /--mode workspace --include-reverse-deps --clippy --test-strategy mixed/);
+    const commandCrates = rustGateCrates(command);
+    assert.ok(commandCrates.length > 0, command);
+    assert.ok(commandCrates.length <= CHECKIN_BUILDKITE_RUST_GATE_CHUNK_SIZE, command);
+    seenCrates.push(...commandCrates);
+  }
+  assert.equal(new Set(seenCrates).size, seenCrates.length, "each input Rust crate appears in one chunk");
+  assert.deepEqual([...seenCrates].sort(), selectedRustCrates);
 });
