@@ -97,7 +97,7 @@ fn looks_like_windows_absolute_path(command: &str) -> bool {
 fn provider_supports_ctx_mcp(provider_id: &str) -> bool {
     match provider_id {
         "codex" | "claude-crp" => true,
-        "fake" | "opencode" | "kimi" => false,
+        "fake" | "broken" | "opencode" | "kimi" => false,
         id => crate::daemon::is_acp_provider_id(id),
     }
 }

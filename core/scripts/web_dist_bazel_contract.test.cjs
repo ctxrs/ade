@@ -94,6 +94,22 @@ test("Bazel web focused unit slices run as native vitest tests", () => {
   const nonPretextBlock = targetBlock(buildFile, "unit_tests_non_pretext");
   const nonPretextFoundationBlock = targetBlock(buildFile, "unit_tests_non_pretext_foundation");
   const nonPretextFoundationSharedBlock = targetBlock(buildFile, "unit_tests_non_pretext_foundation_shared");
+  const nonPretextFoundationSharedApiBlock = targetBlock(
+    buildFile,
+    "unit_tests_non_pretext_foundation_shared_api",
+  );
+  const nonPretextFoundationSharedSupportBlock = targetBlock(
+    buildFile,
+    "unit_tests_non_pretext_foundation_shared_support",
+  );
+  const nonPretextFoundationSharedUtilsBlock = targetBlock(
+    buildFile,
+    "unit_tests_non_pretext_foundation_shared_utils",
+  );
+  const nonPretextFoundationSharedUtilsAnalyticsBlock = targetBlock(
+    buildFile,
+    "unit_tests_non_pretext_foundation_shared_utils_analytics",
+  );
   const nonPretextFoundationStateBlock = targetBlock(buildFile, "unit_tests_non_pretext_foundation_state");
   const nonPretextMiscBlock = targetBlock(buildFile, "unit_tests_non_pretext_misc");
   const nonPretextSettingsSetupBlock = targetBlock(buildFile, "unit_tests_non_pretext_settings_setup");
@@ -131,7 +147,12 @@ test("Bazel web focused unit slices run as native vitest tests", () => {
   );
   assert.equal(
     corePackageJson.scripts["bazel:web:unit:non-pretext:foundation:shared"],
-    "node scripts/run_bazel_pilot.cjs test //core/apps/web:unit_tests_non_pretext_foundation_shared",
+    [
+      "node scripts/run_bazel_pilot.cjs test //core/apps/web:unit_tests_non_pretext_foundation_shared_api",
+      "node scripts/run_bazel_pilot.cjs test //core/apps/web:unit_tests_non_pretext_foundation_shared_support",
+      "node scripts/run_bazel_pilot.cjs test //core/apps/web:unit_tests_non_pretext_foundation_shared_utils",
+      "node scripts/run_bazel_pilot.cjs test //core/apps/web:unit_tests_non_pretext_foundation_shared_utils_analytics",
+    ].join(" && "),
   );
   assert.equal(
     corePackageJson.scripts["bazel:web:unit:non-pretext:foundation:state"],
@@ -171,7 +192,11 @@ test("Bazel web focused unit slices run as native vitest tests", () => {
   );
   assert.match(nonPretextBlock, /^test_suite\(/m);
   assert.match(nonPretextFoundationBlock, /^test_suite\(/m);
-  assert.match(nonPretextFoundationSharedBlock, /^vitest_bin\.vitest_test\(/m);
+  assert.match(nonPretextFoundationSharedBlock, /^test_suite\(/m);
+  assert.match(nonPretextFoundationSharedApiBlock, /^vitest_bin\.vitest_test\(/m);
+  assert.match(nonPretextFoundationSharedSupportBlock, /^vitest_bin\.vitest_test\(/m);
+  assert.match(nonPretextFoundationSharedUtilsBlock, /^vitest_bin\.vitest_test\(/m);
+  assert.match(nonPretextFoundationSharedUtilsAnalyticsBlock, /^vitest_bin\.vitest_test\(/m);
   assert.match(nonPretextFoundationStateBlock, /^vitest_bin\.vitest_test\(/m);
   assert.match(nonPretextMiscBlock, /^vitest_bin\.vitest_test\(/m);
   assert.match(nonPretextSettingsSetupBlock, /^vitest_bin\.vitest_test\(/m);
@@ -190,13 +215,24 @@ test("Bazel web focused unit slices run as native vitest tests", () => {
   assert.match(nonPretextBlock, /unit_tests_non_pretext_workbench/);
   assert.match(nonPretextFoundationBlock, /unit_tests_non_pretext_foundation_shared/);
   assert.match(nonPretextFoundationBlock, /unit_tests_non_pretext_foundation_state/);
+  assert.match(nonPretextFoundationSharedBlock, /unit_tests_non_pretext_foundation_shared_api/);
+  assert.match(nonPretextFoundationSharedBlock, /unit_tests_non_pretext_foundation_shared_support/);
+  assert.match(nonPretextFoundationSharedBlock, /unit_tests_non_pretext_foundation_shared_utils/);
+  assert.match(nonPretextFoundationSharedBlock, /unit_tests_non_pretext_foundation_shared_utils_analytics/);
   assert.match(nonPretextWorkbenchSurfaceBlock, /unit_tests_non_pretext_workbench_surface_app/);
   assert.match(nonPretextWorkbenchSurfaceBlock, /unit_tests_non_pretext_workbench_surface_session/);
   assert.match(nonPretextWorkbenchSurfaceSessionBlock, /unit_tests_non_pretext_workbench_surface_session_core/);
   assert.match(nonPretextWorkbenchSurfaceSessionBlock, /unit_tests_non_pretext_workbench_surface_session_thread/);
   assert.match(nonPretextWorkbenchBlock, /unit_tests_non_pretext_workbench_surface/);
   assert.match(nonPretextWorkbenchBlock, /unit_tests_non_pretext_workbench_shell/);
-  assert.match(nonPretextFoundationSharedBlock, /data = HERMETIC_WEB_CHECK_DATA/);
+  assert.match(nonPretextFoundationSharedApiBlock, /data = HERMETIC_WEB_CHECK_DATA/);
+  assert.match(nonPretextFoundationSharedSupportBlock, /data = HERMETIC_WEB_CHECK_DATA/);
+  assert.match(nonPretextFoundationSharedUtilsBlock, /data = HERMETIC_WEB_CHECK_DATA/);
+  assert.match(nonPretextFoundationSharedUtilsAnalyticsBlock, /data = HERMETIC_WEB_CHECK_DATA/);
+  assert.match(nonPretextFoundationSharedApiBlock, /timeout = "long"/);
+  assert.match(nonPretextFoundationSharedSupportBlock, /timeout = "long"/);
+  assert.match(nonPretextFoundationSharedUtilsBlock, /timeout = "long"/);
+  assert.match(nonPretextFoundationSharedUtilsAnalyticsBlock, /timeout = "long"/);
   assert.match(nonPretextFoundationStateBlock, /data = HERMETIC_WEB_CHECK_DATA/);
   assert.match(nonPretextMiscBlock, /data = HERMETIC_WEB_CHECK_DATA/);
   assert.match(nonPretextSettingsSetupBlock, /data = HERMETIC_WEB_CHECK_DATA/);

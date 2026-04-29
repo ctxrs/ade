@@ -121,6 +121,12 @@ crate.spec(
     package = "azure_core",
     version = "0.21",
 )
+crate.annotation(
+    crate = "azure_core",
+    patch_args = ["-p1"],
+    patches = ["//tools/bazel:patches/azure_core-0.21.0-rules-rust-paste.patch"],
+    version = "0.21.0",
+)
 crate.spec(
     default_features = False,
     features = [

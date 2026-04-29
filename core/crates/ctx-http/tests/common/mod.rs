@@ -5,6 +5,7 @@ use std::hash::{Hash, Hasher};
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
+use std::time::Duration;
 
 use axum::body::{to_bytes, Body};
 use axum::http::{Method, Request, StatusCode};
@@ -31,6 +32,7 @@ pub mod openai_responses_stub;
 pub mod updates_failure_safety;
 
 const JJ_MIN_VERSION: (u64, u64, u64) = (0, 25, 0);
+const TEST_VCS_COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
 
 fn copied_test_binary_dir() -> &'static tempfile::TempDir {
     static DIR: OnceLock<tempfile::TempDir> = OnceLock::new();
@@ -590,12 +592,9 @@ pub fn fixed_utc(offset_seconds: i64) -> chrono::DateTime<chrono::Utc> {
 
 pub async fn run_git(root: &Path, args: &[&str]) {
     let _permit = vcs_command_gate().acquire().await.unwrap();
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(root)
-        .args(args)
-        .output()
+    let output = tokio::time::timeout(TEST_VCS_COMMAND_TIMEOUT, git_command(root, args).output())
         .await
+        .unwrap_or_else(|_| panic!("git {args:?} timed out after {TEST_VCS_COMMAND_TIMEOUT:?}"))
         .unwrap();
     assert!(
         output.status.success(),
@@ -607,12 +606,9 @@ pub async fn run_git(root: &Path, args: &[&str]) {
 
 pub async fn run_git_output(root: &Path, args: &[&str]) -> String {
     let _permit = vcs_command_gate().acquire().await.unwrap();
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(root)
-        .args(args)
-        .output()
+    let output = tokio::time::timeout(TEST_VCS_COMMAND_TIMEOUT, git_command(root, args).output())
         .await
+        .unwrap_or_else(|_| panic!("git {args:?} timed out after {TEST_VCS_COMMAND_TIMEOUT:?}"))
         .unwrap();
     assert!(
         output.status.success(),
@@ -621,6 +617,20 @@ pub async fn run_git_output(root: &Path, args: &[&str]) -> String {
         String::from_utf8_lossy(&output.stderr)
     );
     String::from_utf8_lossy(&output.stdout).to_string()
+}
+
+fn git_command(root: &Path, args: &[&str]) -> Command {
+    let mut command = Command::new("git");
+    command
+        .kill_on_drop(true)
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GIT_OPTIONAL_LOCKS", "0")
+        .arg("-C")
+        .arg(root)
+        .args(args);
+    command
 }
 
 pub async fn run_jj_output(root: &Path, args: &[&str]) -> String {

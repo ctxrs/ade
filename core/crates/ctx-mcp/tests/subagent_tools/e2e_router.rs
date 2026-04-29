@@ -99,8 +99,8 @@ async fn mcp_agent_tools_work_end_to_end_against_real_daemon_router() {
         "Audit FooAPI"
     );
     assert_eq!(
-        wait_payload["results"][0]["agent"]["latest_result_status"],
-        "completed"
+        wait_payload["results"][0]["agent"]["latest_result_status"], "completed",
+        "wait payload: {wait_payload:#}"
     );
     assert!(wait_payload["results"][0]["latest_result"]["content"]
         .as_str()

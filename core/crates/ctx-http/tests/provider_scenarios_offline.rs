@@ -365,6 +365,7 @@ async fn provider_scenarios_offline_crp_fixtures() {
         return;
     }
     let (_codex_home, _guard_codex_home) = configure_hermetic_codex_home().await;
+    let _guard_mcp_disabled = EnvGuard::set("CTX_MCP_DISABLED", "1");
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
     let script_path = common::crp_fixture_runtime::write_crp_fixture_runtime(data_dir.path());
     common::seed_managed_codex_cli_host_runtime_with_args(
@@ -463,6 +464,7 @@ async fn provider_scenarios_offline_interleaved_assistant_tools_do_not_fragment_
         return;
     }
     let (_codex_home, _guard_codex_home) = configure_hermetic_codex_home().await;
+    let _guard_mcp_disabled = EnvGuard::set("CTX_MCP_DISABLED", "1");
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
     let script_path = common::crp_fixture_runtime::write_crp_fixture_runtime(data_dir.path());
     common::seed_managed_codex_cli_host_runtime_with_args(
@@ -568,6 +570,7 @@ async fn provider_scenarios_offline_crp_fixtures_persist_context_window_metrics(
         return;
     }
     let (_codex_home, _guard_codex_home) = configure_hermetic_codex_home().await;
+    let _guard_mcp_disabled = EnvGuard::set("CTX_MCP_DISABLED", "1");
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
     let script_path = common::crp_fixture_runtime::write_crp_fixture_runtime(data_dir.path());
     common::seed_managed_codex_cli_host_runtime_with_args(

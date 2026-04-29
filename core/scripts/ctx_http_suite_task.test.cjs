@@ -6,6 +6,15 @@ const { buildTaskPlan } = require("./ctx_http_suite_task.cjs");
 
 const repoRoot = path.resolve(__dirname, "..", "..");
 const scriptPath = path.join(__dirname, "ctx_http_suite_task.cjs");
+const PARENT_BAZEL_ENV_KEYS = [
+  "CTX_BAZEL_JOBS",
+  "CTX_BAZEL_LOCAL_TEST_JOBS",
+  "RUST_TEST_THREADS",
+];
+
+for (const key of PARENT_BAZEL_ENV_KEYS) {
+  delete process.env[key];
+}
 
 test("ctx-http suite task lists one Bazel command per suite for multi-suite batches", () => {
   const result = spawnSync("node", [scriptPath, "--list", "--suite", "base", "--suite", "provider-auth"], {

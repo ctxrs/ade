@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 6fb2867..98d48f5 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -98,6 +98,8 @@ where
+     }
+ }
+
++extern crate paste;
++
+ #[doc(hidden)]
+ /// Used by macros as an implementation detail
+ pub mod __private {

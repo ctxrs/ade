@@ -36,7 +36,9 @@ mod unknown_event;
 use self::runtime::{resolve_explicit_command_path, CrpAgentConfig};
 #[cfg(test)]
 use self::session_pool::session_shutdown_reason;
-use self::session_pool::{AuthSessionOpenMode, CrpPromptRequest, CrpSessionPool};
+use self::session_pool::{
+    AuthSessionOpenMode, CrpAuthenticateSessionRequest, CrpPromptRequest, CrpSessionPool,
+};
 
 pub use self::protocol::CrpModelsProbe;
 pub(crate) use self::runtime::rewrite_bundled_path_for_linux;
@@ -285,17 +287,15 @@ impl ProviderAdapter for Tier1CrpAdapter {
         hooks: crate::adapters::ProviderRunHooks,
     ) -> Result<()> {
         self.pool
-            .authenticate_session(
+            .authenticate_session(CrpAuthenticateSessionRequest {
                 session_key,
                 workdir,
                 env,
                 method_id,
                 event_sink,
-                crate::crp::session_pool::AuthSessionHooks {
-                    provider_unknown_event: hooks.provider_unknown_event,
-                    provider_session_ref_claim: hooks.provider_session_ref_claim,
-                },
-            )
+                provider_unknown_event: hooks.provider_unknown_event,
+                provider_session_ref_claim: hooks.provider_session_ref_claim,
+            })
             .await
     }
 

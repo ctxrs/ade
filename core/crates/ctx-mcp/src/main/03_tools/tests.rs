@@ -1,7 +1,8 @@
 use super::*;
 use axum::{extract::Query, routing::get, Json, Router};
 use std::collections::HashMap;
-use std::sync::{Mutex, OnceLock};
+use std::sync::OnceLock;
+use tokio::sync::Mutex;
 
 struct ScopedEnvVar {
     key: &'static str,
@@ -39,7 +40,7 @@ fn env_lock() -> &'static Mutex<()> {
 
 #[tokio::test]
 async fn session_list_call_requests_current_session_scope() -> Result<()> {
-    let _guard = env_lock().lock().unwrap();
+    let _guard = env_lock().lock().await;
     let current_session_id = "00000000-0000-0000-0000-000000000111";
     let foreign_session_id = "00000000-0000-0000-0000-000000000222";
     let _session_id = ScopedEnvVar::set("CTX_SESSION_ID", current_session_id);

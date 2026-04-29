@@ -24,6 +24,18 @@ const {
   runBazelPilotInvocationPhases,
 } = require("./run_bazel_pilot.cjs");
 const { HOST_HEAVY_BUDGET_KEY } = require("./lib/host_job_budget.cjs");
+const PARENT_BAZEL_ENV_KEYS = [
+  "CTX_BAZEL_DISK_CACHE_DIR",
+  "CTX_BAZEL_JOBS",
+  "CTX_BAZEL_OUTPUT_USER_ROOT",
+  "CTX_BAZEL_REMOTE_EXECUTION",
+  "CTX_BAZEL_REPOSITORY_CACHE_DIR",
+  "CTX_CACHE_SCOPE_KEY",
+];
+
+for (const key of PARENT_BAZEL_ENV_KEYS) {
+  delete process.env[key];
+}
 
 test("bazel pilot defaults to the expanded Rust slice test targets", () => {
   assert.deepEqual(parseArgs([]), {

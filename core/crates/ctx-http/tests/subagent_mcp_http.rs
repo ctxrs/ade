@@ -66,6 +66,20 @@ impl ProviderAdapter for BrokenOutcomeProviderAdapter {
         let (outcome_tx, outcome_rx) = oneshot::channel();
         let omit_abort_handle = input.content.contains("no-abort");
         let join = tokio::spawn(async move {
+            if input.content.contains("cancel-") {
+                let _ = event_sink
+                    .send(NormalizedEvent {
+                        event_type: SessionEventType::AssistantChunk,
+                        payload_json: json!({
+                            "content": "started",
+                            "content_fragment": "started",
+                            "message_id": Uuid::new_v4().to_string(),
+                            "order_seq": 1,
+                        }),
+                    })
+                    .await;
+            }
+
             if input.content.contains("done-without-outcome") {
                 let _ = done_tx.send(());
                 let _keep_event_sink = event_sink;
@@ -248,6 +262,34 @@ fn spawned_agent_id(body: &serde_json::Value) -> String {
         .as_str()
         .expect("spawned agent_id")
         .to_string()
+}
+
+async fn wait_for_agent_current_run(
+    client: &reqwest::Client,
+    base: &str,
+    parent_id: &str,
+    agent_id: &str,
+) {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        let resp = client
+            .post(format!("{base}/api/mcp/sessions/{parent_id}/get_agent"))
+            .json(&json!({ "agent_id": agent_id }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body: serde_json::Value = resp.json().await.unwrap();
+        let agent = &body["agent"]["agent"];
+        if agent["state"] == "running" && agent["current_run_id"].is_string() {
+            return;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "timed out waiting for agent run to start: {body:#?}"
+        );
+        sleep(Duration::from_millis(25)).await;
+    }
 }
 
 async fn git_branch_exists(root: &Path, branch: &str) -> bool {
@@ -2019,6 +2061,7 @@ async fn subagent_interrupt_falls_back_to_interrupted_when_child_never_reports_o
     )
     .await;
     let agent_id = spawned_agent_id(&spawned);
+    wait_for_agent_current_run(client, base, &parent_id, &agent_id).await;
 
     let interrupt_resp = client
         .post(format!(
@@ -2101,6 +2144,7 @@ async fn subagent_interrupt_falls_back_to_interrupted_when_child_closes_outcome(
     )
     .await;
     let agent_id = spawned_agent_id(&spawned);
+    wait_for_agent_current_run(client, base, &parent_id, &agent_id).await;
 
     let interrupt_resp = client
         .post(format!(

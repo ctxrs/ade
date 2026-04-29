@@ -116,12 +116,6 @@ pub(in crate::crp::session_pool) struct AuthSessionOpenOutcome {
     pub drain_after_auth: bool,
 }
 
-pub(in crate::crp::session_pool) struct AuthSessionOpenReceivers<'a> {
-    pub rx: &'a mut broadcast::Receiver<CrpEventEnvelope>,
-    pub stderr_rx: &'a mut broadcast::Receiver<String>,
-    pub shutdown_rx: &'a mut watch::Receiver<Option<String>>,
-}
-
 pub(in crate::crp::session_pool) struct AuthSessionOpenRequest<'a> {
     pub session_key: &'a str,
     pub session: &'a Arc<CrpSession>,
@@ -129,7 +123,9 @@ pub(in crate::crp::session_pool) struct AuthSessionOpenRequest<'a> {
     pub env: &'a HashMap<String, String>,
     pub event_sink: &'a mpsc::Sender<NormalizedEvent>,
     pub provider_session_ref_claim: Option<&'a ProviderSessionRefClaimHook>,
-    pub receivers: AuthSessionOpenReceivers<'a>,
+    pub rx: &'a mut broadcast::Receiver<CrpEventEnvelope>,
+    pub stderr_rx: &'a mut broadcast::Receiver<String>,
+    pub shutdown_rx: &'a mut watch::Receiver<Option<String>>,
 }
 
 impl CrpSessionPool {
@@ -167,13 +163,10 @@ impl CrpSessionPool {
             env,
             event_sink,
             provider_session_ref_claim,
-            receivers,
-        } = request;
-        let AuthSessionOpenReceivers {
             rx,
             stderr_rx,
             shutdown_rx,
-        } = receivers;
+        } = request;
         let auth_session_open_mode = self.auth_session_open_mode;
         let config = match auth_session_open_mode {
             AuthSessionOpenMode::Standard => build_crp_session_config(env, workdir)?,

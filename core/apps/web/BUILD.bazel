@@ -285,11 +285,14 @@ NON_PRETEXT_VITEST_ARGS = [
     "--testTimeout=60000",
 ]
 
-NON_PRETEXT_FOUNDATION_SHARED_TESTS = glob([
+NON_PRETEXT_FOUNDATION_API_TESTS = glob([
     "src/api/*.test.ts",
     "src/api/*.test.tsx",
     "src/api/**/*.test.ts",
     "src/api/**/*.test.tsx",
+], exclude = NON_PRETEXT_EXCLUDES, allow_empty = True)
+
+NON_PRETEXT_FOUNDATION_SUPPORT_TESTS = glob([
     "src/eslint/*.test.ts",
     "src/eslint/*.test.tsx",
     "src/eslint/**/*.test.ts",
@@ -302,15 +305,30 @@ NON_PRETEXT_FOUNDATION_SHARED_TESTS = glob([
     "src/testing/*.test.tsx",
     "src/testing/**/*.test.ts",
     "src/testing/**/*.test.tsx",
-    "src/utils/*.test.ts",
-    "src/utils/*.test.tsx",
-    "src/utils/**/*.test.ts",
-    "src/utils/**/*.test.tsx",
     "src/workbench/*.test.ts",
     "src/workbench/*.test.tsx",
     "src/workbench/**/*.test.ts",
     "src/workbench/**/*.test.tsx",
 ], exclude = NON_PRETEXT_EXCLUDES, allow_empty = True)
+
+NON_PRETEXT_FOUNDATION_UTILS_ANALYTICS_TESTS = glob([
+    "src/utils/analytics/*.test.ts",
+    "src/utils/analytics/*.test.tsx",
+    "src/utils/analytics/**/*.test.ts",
+    "src/utils/analytics/**/*.test.tsx",
+], exclude = NON_PRETEXT_EXCLUDES, allow_empty = True)
+
+NON_PRETEXT_FOUNDATION_UTILS_SHARED_TESTS = glob([
+    "src/utils/*.test.ts",
+    "src/utils/*.test.tsx",
+    "src/utils/**/*.test.ts",
+    "src/utils/**/*.test.tsx",
+], exclude = NON_PRETEXT_EXCLUDES + [
+    "src/utils/analytics/*.test.ts",
+    "src/utils/analytics/*.test.tsx",
+    "src/utils/analytics/**/*.test.ts",
+    "src/utils/analytics/**/*.test.tsx",
+], allow_empty = True)
 
 NON_PRETEXT_FOUNDATION_STATE_TESTS = glob([
     "src/state/*.test.ts",
@@ -707,10 +725,45 @@ vitest_bin.vitest_test(
 )
 
 vitest_bin.vitest_test(
-    name = "unit_tests_non_pretext_foundation_shared",
-    args = NON_PRETEXT_VITEST_ARGS + NON_PRETEXT_FOUNDATION_SHARED_TESTS,
+    name = "unit_tests_non_pretext_foundation_shared_api",
+    args = NON_PRETEXT_VITEST_ARGS + NON_PRETEXT_FOUNDATION_API_TESTS,
     data = HERMETIC_WEB_CHECK_DATA,
     chdir = package_name(),
+    timeout = "long",
+)
+
+vitest_bin.vitest_test(
+    name = "unit_tests_non_pretext_foundation_shared_support",
+    args = NON_PRETEXT_VITEST_ARGS + NON_PRETEXT_FOUNDATION_SUPPORT_TESTS,
+    data = HERMETIC_WEB_CHECK_DATA,
+    chdir = package_name(),
+    timeout = "long",
+)
+
+vitest_bin.vitest_test(
+    name = "unit_tests_non_pretext_foundation_shared_utils_analytics",
+    args = NON_PRETEXT_VITEST_ARGS + NON_PRETEXT_FOUNDATION_UTILS_ANALYTICS_TESTS,
+    data = HERMETIC_WEB_CHECK_DATA,
+    chdir = package_name(),
+    timeout = "long",
+)
+
+vitest_bin.vitest_test(
+    name = "unit_tests_non_pretext_foundation_shared_utils",
+    args = NON_PRETEXT_VITEST_ARGS + NON_PRETEXT_FOUNDATION_UTILS_SHARED_TESTS,
+    data = HERMETIC_WEB_CHECK_DATA,
+    chdir = package_name(),
+    timeout = "long",
+)
+
+test_suite(
+    name = "unit_tests_non_pretext_foundation_shared",
+    tests = [
+        ":unit_tests_non_pretext_foundation_shared_api",
+        ":unit_tests_non_pretext_foundation_shared_support",
+        ":unit_tests_non_pretext_foundation_shared_utils",
+        ":unit_tests_non_pretext_foundation_shared_utils_analytics",
+    ],
 )
 
 vitest_bin.vitest_test(

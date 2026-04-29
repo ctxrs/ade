@@ -150,6 +150,16 @@ CTX_HTTP_MANUAL_ONLY_TESTS = [
     "cloud_gateway_gcp_e2e",
 ]
 
+CTX_HTTP_INTEGRATION_SOURCE_DEPS = {
+    "cloud_gateway_azure_e2e": [
+        "@crates//:azure_core",
+        "@crates//:azure_identity",
+    ],
+    "cloud_gateway_gcp_e2e": [
+        "@crates//:gcp_auth",
+    ],
+}
+
 CTX_HTTP_SUITE_EXTRA_TARGETS = {
     "scheduler-runtime": [
         ":unit_tests_scheduler",
@@ -440,6 +450,7 @@ def _integration_rustc_env(rustc_env):
 
 def _declare_ctx_http_test(name, source_name, common_srcs, compile_data, data, deps, proc_macro_deps, rustc_env, test_args, timeout = None):
     tags = ["manual"] if name in CTX_HTTP_MANUAL_ONLY_TESTS else []
+    test_deps = deps + CTX_HTTP_INTEGRATION_SOURCE_DEPS.get(source_name, [])
     kwargs = {}
     if timeout != None:
         kwargs["timeout"] = timeout
@@ -453,7 +464,7 @@ def _declare_ctx_http_test(name, source_name, common_srcs, compile_data, data, d
         data = data,
         edition = "2021",
         rustc_env = _integration_rustc_env(rustc_env),
-        deps = deps,
+        deps = test_deps,
         proc_macro_deps = proc_macro_deps,
         tags = tags,
         **kwargs

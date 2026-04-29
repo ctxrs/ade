@@ -9,7 +9,7 @@ use serde_json::{json, Value};
 use tokio::sync::{mpsc, oneshot, watch, Mutex};
 use tokio::time::Instant as TokioInstant;
 
-use ctx_core::ids::{MessageId, RunId, TurnId};
+use ctx_core::ids::{RunId, TurnId};
 use ctx_core::models::{
     MessageDelivery, MessageRole, Session, SessionEventType, SessionTurnStatus, SessionTurnTool,
 };
@@ -40,6 +40,7 @@ use crate::worktree_data_plane::resolve_worktree_data_plane;
 mod event_loop;
 mod helpers;
 mod provider_env;
+mod provider_launch;
 #[cfg(test)]
 mod tests;
 mod tool_runtime;
@@ -47,18 +48,19 @@ mod turn_start;
 
 use self::event_loop::{spawn_turn_event_loop, TurnEventLoop};
 use self::helpers::{
-    apply_provider_launch_overrides, compute_context_window_metrics,
-    load_system_prompt_append_for_relationship, normalize_session_model_id,
-    provider_supports_system_prompt_append, runtime_provider_id_for_session_provider,
+    compute_context_window_metrics, load_system_prompt_append_for_relationship,
+    normalize_session_model_id, provider_supports_system_prompt_append,
+    runtime_provider_id_for_session_provider,
 };
 use self::provider_env::{
     emit_provider_run_env_ready_event, prepare_provider_runtime_environment,
     ProviderRunEnvReadyEvent, ProviderRuntimeEnvironmentRequest,
 };
+use self::provider_launch::apply_provider_launch_overrides;
 use self::tool_runtime::{cwd_outside_worktree, maybe_spool_tool_output};
 use self::turn_start::{
-    apply_crp_launch_policy_env_for_control_mode, provider_mode_id_for, record_queue_wait_metric,
-    turn_start_deadline,
+    apply_crp_launch_policy_env_for_control_mode, emit_turn_start_failed, provider_mode_id_for,
+    record_queue_wait_metric, turn_start_deadline,
 };
 use super::lifecycle::{RunningTurn, TurnStartProgress};
 use super::persistence::append_session_event_with_retry;
@@ -85,6 +87,9 @@ pub(crate) async fn start_turn(
     let execution_environment = session.execution_environment;
     let full_model_id = compose_model_id(&session.model_id, session.reasoning_effort.as_deref());
 
+    let mut message = queued.message;
+    let message_id = message.id;
+    let perf_run_id = queued.run_id.clone();
     let queue_wait_ms = queued.enqueued_at.elapsed().as_millis() as u64;
     record_queue_wait_metric(
         state,
@@ -92,13 +97,10 @@ pub(crate) async fn start_turn(
         &full_model_id,
         execution_environment.as_str(),
         session_root_kind,
-        queued.run_id.clone(),
+        perf_run_id.clone(),
         queue_wait_ms,
     )
     .await;
-    let mut message = queued.message;
-    let message_id = message.id;
-    let perf_run_id = queued.run_id.clone();
     let run_id = message.run_id.get_or_insert_with(RunId::new).to_owned();
     let turn_id = message.turn_id.get_or_insert_with(TurnId::new).to_owned();
 
@@ -133,32 +135,6 @@ pub(crate) async fn start_turn(
             Utc::now(),
         )
         .await?;
-
-    async fn emit_turn_start_failed(
-        state: &Arc<AppState>,
-        session: &Session,
-        run_id: RunId,
-        turn_id: TurnId,
-        message_id: MessageId,
-        err: &anyhow::Error,
-    ) {
-        let error_message = err.to_string();
-        let _ = finalize_failed_turn(
-            state,
-            session.id,
-            Some(run_id),
-            turn_id,
-            message_id,
-            FailedTurnTerminalization {
-                message: &error_message,
-                reason: Some("start_failed"),
-                details: None,
-                kind: Some(json!("start_failed")),
-                emit_error_event: true,
-            },
-        )
-        .await;
-    }
 
     let prompt = message.content.clone();
     let provider_session_ref = session.provider_session_ref.clone();

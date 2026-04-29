@@ -183,6 +183,7 @@ async fn assert_provider_session_resume_after_idle_reap(provider_id: &str, model
     } else {
         None
     };
+    let _guard_mcp_disabled = EnvGuard::set("CTX_MCP_DISABLED", "1");
 
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
     let script_path = common::crp_fixture_runtime::write_crp_fixture_runtime(data_dir.path());

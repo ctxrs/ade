@@ -115,6 +115,7 @@ async fn noisy_tool_output_stays_bounded_end_to_end() {
     .await
     .unwrap();
     let _guard_codex_home = EnvGuard::set("CTX_CODEX_HOME", &codex_home.path().to_string_lossy());
+    let _guard_mcp_disabled = EnvGuard::set("CTX_MCP_DISABLED", "1");
 
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
     let script_path = common::crp_fixture_runtime::write_crp_fixture_runtime(data_dir.path());

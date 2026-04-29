@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
@@ -19,22 +18,37 @@ use super::super::super::policy::{
     extract_auth_error_from_stderr_line, extract_auth_url_from_stderr_line,
 };
 use super::super::super::protocol::{CrpCommand, CrpEvent, KnownCrpEvent};
-use super::super::open_handshake::apply_session_opened_state;
-use super::super::{AuthSessionHooks, CrpSessionPool};
+use super::super::open_handshake::{apply_session_opened_state, AuthSessionOpenRequest};
+use super::super::CrpSessionPool;
 use super::terminal::is_sweep_only_status_notice;
 
 const CRP_AUTH_EVENT_FORWARD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60 * 10);
 
+pub(in crate::crp) struct CrpAuthenticateSessionRequest {
+    pub(in crate::crp) session_key: String,
+    pub(in crate::crp) workdir: std::path::PathBuf,
+    pub(in crate::crp) env: HashMap<String, String>,
+    pub(in crate::crp) method_id: Option<String>,
+    pub(in crate::crp) event_sink: tokio::sync::mpsc::Sender<NormalizedEvent>,
+    pub(in crate::crp) provider_unknown_event: Option<crate::adapters::ProviderUnknownEventHook>,
+    pub(in crate::crp) provider_session_ref_claim:
+        Option<crate::adapters::ProviderSessionRefClaimHook>,
+}
+
 impl CrpSessionPool {
     pub(in crate::crp) async fn authenticate_session(
         self: &Arc<Self>,
-        session_key: String,
-        workdir: PathBuf,
-        env: HashMap<String, String>,
-        method_id: Option<String>,
-        event_sink: tokio::sync::mpsc::Sender<NormalizedEvent>,
-        hooks: AuthSessionHooks,
+        request: CrpAuthenticateSessionRequest,
     ) -> Result<()> {
+        let CrpAuthenticateSessionRequest {
+            session_key,
+            workdir,
+            env,
+            method_id,
+            event_sink,
+            provider_unknown_event,
+            provider_session_ref_claim,
+        } = request;
         let busy_guard = self.session_busy_guard(session_key.clone());
         let session = self
             .get_or_create_session(&session_key, &workdir, &env)
@@ -46,18 +60,16 @@ impl CrpSessionPool {
         let mut drain_after_auth = false;
         if !session.opened.load(Ordering::SeqCst) && !session.opening.load(Ordering::SeqCst) {
             match self
-                .ensure_auth_session_open(super::super::open_handshake::AuthSessionOpenRequest {
+                .ensure_auth_session_open(AuthSessionOpenRequest {
                     session_key: &session_key,
                     session: &session,
                     workdir: &workdir,
                     env: &env,
                     event_sink: &event_sink,
-                    provider_session_ref_claim: hooks.provider_session_ref_claim.as_ref(),
-                    receivers: super::super::open_handshake::AuthSessionOpenReceivers {
-                        rx: &mut rx,
-                        stderr_rx: &mut stderr_rx,
-                        shutdown_rx: &mut shutdown_rx,
-                    },
+                    provider_session_ref_claim: provider_session_ref_claim.as_ref(),
+                    rx: &mut rx,
+                    stderr_rx: &mut stderr_rx,
+                    shutdown_rx: &mut shutdown_rx,
                 })
                 .await
             {
@@ -155,7 +167,7 @@ impl CrpSessionPool {
                                     &mut tool_input_cache,
                                 );
                                 if let (Some(hook), Some(observation)) =
-                                    (&hooks.provider_unknown_event, unknown_observation)
+                                    (&provider_unknown_event, unknown_observation)
                                 {
                                     hook(observation).await;
                                 }

@@ -342,17 +342,19 @@ fn configure_runtime_mcp_command_disables_non_mcp_provider_without_runtime() {
         },
     );
     let data_root = tempfile::tempdir().expect("data root");
-    let mut provider_env = HashMap::from([(
-        CTX_MCP_COMMAND_ENV.to_string(),
-        "/should/not/leak".to_string(),
-    )]);
+    for provider_id in ["fake", "broken"] {
+        let mut provider_env = HashMap::from([(
+            CTX_MCP_COMMAND_ENV.to_string(),
+            "/should/not/leak".to_string(),
+        )]);
 
-    configure_runtime_mcp_command("fake", &mut provider_env, data_root.path())
-        .expect("fake provider should not require ctx-mcp runtime assets");
+        configure_runtime_mcp_command(provider_id, &mut provider_env, data_root.path())
+            .expect("non-MCP provider should not require ctx-mcp runtime assets");
 
-    assert_eq!(
-        provider_env.get(CTX_MCP_DISABLED_ENV).map(String::as_str),
-        Some("1")
-    );
-    assert!(!provider_env.contains_key(CTX_MCP_COMMAND_ENV));
+        assert_eq!(
+            provider_env.get(CTX_MCP_DISABLED_ENV).map(String::as_str),
+            Some("1")
+        );
+        assert!(!provider_env.contains_key(CTX_MCP_COMMAND_ENV));
+    }
 }

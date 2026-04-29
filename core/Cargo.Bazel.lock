@@ -1,5 +1,5 @@
 {
-  "checksum": "5f91e43b4913216219710951fbf89a1a1ec3ad935cf02ea0dcaa81627511d6d6",
+  "checksum": "949e7d3b7bb67bfbd9457c0326eb4bac52c9d3e5d492dbde0008ce6b6616803f",
   "crates": {
     "adler2 2.0.1": {
       "name": "adler2",
@@ -2939,7 +2939,13 @@
       "repository": {
         "Http": {
           "url": "https://static.crates.io/crates/azure_core/0.21.0/download",
-          "sha256": "7b552ad43a45a746461ec3d3a51dfb6466b4759209414b439c165eb6a6b7729e"
+          "sha256": "7b552ad43a45a746461ec3d3a51dfb6466b4759209414b439c165eb6a6b7729e",
+          "patch_args": [
+            "-p1"
+          ],
+          "patches": [
+            "//tools/bazel:patches/azure_core-0.21.0-rules-rust-paste.patch"
+          ]
         }
       },
       "targets": [

@@ -16,14 +16,14 @@ use crate::installer;
 use crate::ops_events::OpsEvent;
 
 pub(super) struct ProviderRuntimeEnvironmentRequest<'a> {
-    pub state: &'a Arc<AppState>,
-    pub provider_env: &'a mut HashMap<String, String>,
-    pub runtime_provider_id: &'a str,
-    pub runtime_plan: &'a ctx_harness_runtime::HarnessExecutionPlan,
-    pub is_linux_sandbox: bool,
-    pub using_endpoint_source: bool,
-    pub adapter_cfg: &'a installer::AgentServerConfigFile,
-    pub install_target: InstallTarget,
+    pub(super) state: &'a Arc<AppState>,
+    pub(super) provider_env: &'a mut HashMap<String, String>,
+    pub(super) runtime_provider_id: &'a str,
+    pub(super) runtime_plan: &'a ctx_harness_runtime::HarnessExecutionPlan,
+    pub(super) is_linux_sandbox: bool,
+    pub(super) using_endpoint_source: bool,
+    pub(super) adapter_cfg: &'a installer::AgentServerConfigFile,
+    pub(super) install_target: InstallTarget,
 }
 
 pub(super) async fn prepare_provider_runtime_environment(
@@ -167,19 +167,19 @@ pub(super) async fn prepare_provider_runtime_environment(
 }
 
 pub(super) struct ProviderRunEnvReadyEvent<'a> {
-    pub state: &'a Arc<AppState>,
-    pub session: &'a Session,
-    pub run_id: RunId,
-    pub turn_id: TurnId,
-    pub workdir_str: &'a str,
-    pub full_model_id: &'a str,
-    pub execution_environment: &'a str,
-    pub session_root_kind: &'a str,
-    pub runtime_provider_id: &'a str,
-    pub using_endpoint_source: bool,
-    pub is_linux_sandbox: bool,
-    pub runtime_plan: &'a ctx_harness_runtime::HarnessExecutionPlan,
-    pub provider_env: &'a HashMap<String, String>,
+    pub(super) state: &'a Arc<AppState>,
+    pub(super) session: &'a Session,
+    pub(super) run_id: RunId,
+    pub(super) turn_id: TurnId,
+    pub(super) workdir_str: &'a str,
+    pub(super) full_model_id: &'a str,
+    pub(super) execution_environment: &'a str,
+    pub(super) session_root_kind: &'a str,
+    pub(super) runtime_provider_id: &'a str,
+    pub(super) using_endpoint_source: bool,
+    pub(super) is_linux_sandbox: bool,
+    pub(super) runtime_plan: &'a ctx_harness_runtime::HarnessExecutionPlan,
+    pub(super) provider_env: &'a HashMap<String, String>,
 }
 
 pub(super) fn emit_provider_run_env_ready_event(event: ProviderRunEnvReadyEvent<'_>) {
