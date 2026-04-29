@@ -5,8 +5,10 @@ use self::terminal::{
 };
 use super::helpers::{read_codex_context_window_metrics, should_track_thought_chunk};
 use super::*;
+use crate::perf_telemetry::{PerfMetric, PerfMetricKind};
 use crate::scheduler::TurnStartProgress;
 use ctx_core::ids::MessageId;
+use std::collections::HashMap;
 use std::sync::Weak;
 
 mod assistant;
