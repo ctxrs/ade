@@ -419,7 +419,12 @@ test("repo-owned automation rust callers use ctx cache wrappers instead of naked
   const cases = [
     {
       path: "core/Makefile",
-      required: [/CTX_MAKE_SESSION_ID/, /print_ctx_cache_env\.cjs/, /run_with_ctx_cache_env\.cjs/],
+      required: [
+        /CTX_MAKE_SESSION_ID/,
+        /CTX_CACHE_SCOPE_KEY/,
+        /print_ctx_cache_env\.cjs/,
+        /run_with_ctx_cache_env\.cjs/,
+      ],
     },
     {
       path: "scripts/buildbuddy/run_agent_gate.sh",
@@ -526,6 +531,20 @@ test("repo-owned automation rust callers use ctx cache wrappers instead of naked
       `${entry.path} should not invoke cargo directly from the script body`,
     );
   }
+});
+
+test("core Makefile uses the make session for both cache scope keys", () => {
+  const makefile = read("core/Makefile");
+
+  assert.match(
+    makefile,
+    /CTX_CACHE_EXPORT_CMD = export CTX_SESSION_ID="\$\(CTX_MAKE_SESSION_ID\)"; export CTX_CACHE_SCOPE_KEY="\$\(CTX_MAKE_SESSION_ID\)"; eval/,
+  );
+  assert.match(makefile, /--setenv CTX_SESSION_ID="\$\(CTX_MAKE_SESSION_ID\)" \\\n\s*--setenv CTX_CACHE_SCOPE_KEY="\$\(CTX_MAKE_SESSION_ID\)"/);
+  assert.match(
+    makefile,
+    /CTX_SESSION_ID="\$\(CTX_MAKE_SESSION_ID\)" CTX_CACHE_SCOPE_KEY="\$\(CTX_MAKE_SESSION_ID\)" CTX_BUNDLE_DIR/,
+  );
 });
 
 test("bundled harness helper scripts wrap host-side rust builds and leave container builds explicit", () => {

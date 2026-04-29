@@ -5,7 +5,7 @@ CTX_MAKE_SESSION_ID := make-$(shell date +%s%N 2>/dev/null || date +%s)
 else
 CTX_MAKE_SESSION_ID := $(CTX_MAKE_SESSION_ID)
 endif
-CTX_CACHE_EXPORT_CMD = export CTX_SESSION_ID="$(CTX_MAKE_SESSION_ID)"; eval "$$(node scripts/print_ctx_cache_env.cjs --mode workspace --cwd "$(CURDIR)" --format shell --mkdir)"
+CTX_CACHE_EXPORT_CMD = export CTX_SESSION_ID="$(CTX_MAKE_SESSION_ID)"; export CTX_CACHE_SCOPE_KEY="$(CTX_MAKE_SESSION_ID)"; eval "$$(node scripts/print_ctx_cache_env.cjs --mode workspace --cwd "$(CURDIR)" --format shell --mkdir)"
 CTX_CACHE_RUN = node scripts/run_with_ctx_cache_env.cjs --mode workspace --cwd "$(CURDIR)" --
 CTX_MCP_COMMAND ?=
 CTX_CRP_PROFILE ?= debug
@@ -120,6 +120,7 @@ ifeq ($(shell uname -s),Linux)
 			$(DEV_MISC_SETENV) \
 			$(DEV_MALLOC_CONF_SETENV) \
 			--setenv CTX_SESSION_ID="$(CTX_MAKE_SESSION_ID)" \
+			--setenv CTX_CACHE_SCOPE_KEY="$(CTX_MAKE_SESSION_ID)" \
 			--setenv CTX_MCP_COMMAND="$$ctx_mcp_command" \
 			--setenv CTX_BUNDLE_DIR="$$bundle_dir" \
 			node scripts/run_with_ctx_cache_env.cjs --mode workspace --cwd "$(CURDIR)" -- cargo run -p ctx-http $(DEV_DAEMON_FEATURES) --bin ctx -- serve --bind $(CTX_DAEMON_BIND) $(if $(CTX_DATA_DIR),--data-dir $(CTX_DATA_DIR),); \
@@ -127,13 +128,13 @@ ifeq ($(shell uname -s),Linux)
 		$(CTX_CACHE_EXPORT_CMD); \
 		bundle_dir="$$(../scripts/ensure_bundled_harnesses.sh)"; \
 		ctx_mcp_command="$${CTX_MCP_COMMAND:-$${CARGO_TARGET_DIR}/debug/ctx-mcp}"; \
-		$(DEV_LOG_ENV) $(DEV_DEBUG_ENV) $(DEV_CRP_ENV) $(DEV_MISC_ENV) $(DEV_MALLOC_CONF_ENV) CTX_SESSION_ID="$(CTX_MAKE_SESSION_ID)" CTX_BUNDLE_DIR="$$bundle_dir" CTX_MCP_COMMAND="$$ctx_mcp_command" node scripts/run_with_ctx_cache_env.cjs --mode workspace --cwd "$(CURDIR)" -- cargo run -p ctx-http $(DEV_DAEMON_FEATURES) --bin ctx -- serve --bind $(CTX_DAEMON_BIND) $(if $(CTX_DATA_DIR),--data-dir $(CTX_DATA_DIR),); \
+		$(DEV_LOG_ENV) $(DEV_DEBUG_ENV) $(DEV_CRP_ENV) $(DEV_MISC_ENV) $(DEV_MALLOC_CONF_ENV) CTX_SESSION_ID="$(CTX_MAKE_SESSION_ID)" CTX_CACHE_SCOPE_KEY="$(CTX_MAKE_SESSION_ID)" CTX_BUNDLE_DIR="$$bundle_dir" CTX_MCP_COMMAND="$$ctx_mcp_command" node scripts/run_with_ctx_cache_env.cjs --mode workspace --cwd "$(CURDIR)" -- cargo run -p ctx-http $(DEV_DAEMON_FEATURES) --bin ctx -- serve --bind $(CTX_DAEMON_BIND) $(if $(CTX_DATA_DIR),--data-dir $(CTX_DATA_DIR),); \
 	fi
 else
 	@$(CTX_CACHE_EXPORT_CMD); \
 	bundle_dir="$$(../scripts/ensure_bundled_harnesses.sh)"; \
 	ctx_mcp_command="$${CTX_MCP_COMMAND:-$${CARGO_TARGET_DIR}/debug/ctx-mcp}"; \
-	$(DEV_LOG_ENV) $(DEV_DEBUG_ENV) $(DEV_CRP_ENV) $(DEV_MISC_ENV) $(DEV_MALLOC_CONF_ENV) CTX_SESSION_ID="$(CTX_MAKE_SESSION_ID)" CTX_BUNDLE_DIR="$$bundle_dir" CTX_MCP_COMMAND="$$ctx_mcp_command" node scripts/run_with_ctx_cache_env.cjs --mode workspace --cwd "$(CURDIR)" -- cargo run -p ctx-http $(DEV_DAEMON_FEATURES) --bin ctx -- serve --bind $(CTX_DAEMON_BIND) $(if $(CTX_DATA_DIR),--data-dir $(CTX_DATA_DIR),)
+	$(DEV_LOG_ENV) $(DEV_DEBUG_ENV) $(DEV_CRP_ENV) $(DEV_MISC_ENV) $(DEV_MALLOC_CONF_ENV) CTX_SESSION_ID="$(CTX_MAKE_SESSION_ID)" CTX_CACHE_SCOPE_KEY="$(CTX_MAKE_SESSION_ID)" CTX_BUNDLE_DIR="$$bundle_dir" CTX_MCP_COMMAND="$$ctx_mcp_command" node scripts/run_with_ctx_cache_env.cjs --mode workspace --cwd "$(CURDIR)" -- cargo run -p ctx-http $(DEV_DAEMON_FEATURES) --bin ctx -- serve --bind $(CTX_DAEMON_BIND) $(if $(CTX_DATA_DIR),--data-dir $(CTX_DATA_DIR),)
 endif
 
 dev-codex-crp-local: CTX_INSTALL_LOCAL_CODEX_CRP=1
