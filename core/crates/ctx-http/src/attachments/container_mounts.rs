@@ -9,13 +9,10 @@ use ctx_worktree_data_plane::apply_data_plane_to_execution_settings;
 mod avf;
 mod native;
 
-use avf::{
-    avf_copy_source_to_mount, avf_prepare_for_removal, avf_rm_rf, avf_run_success,
-    avf_validate_mount_parent_chain,
-};
+use avf::{avf_copy_source_to_mount, avf_remove_mount_path_in_worktree, avf_run_success};
 use native::{
-    container_ensure_mount, container_prepare_for_removal, container_rm_rf,
-    container_validate_mount_parent_chain, ensure_attachment_imported_to_container,
+    container_ensure_mount, container_remove_mount_path_in_worktree, container_rm_rf,
+    ensure_attachment_imported_to_container,
 };
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -31,54 +28,124 @@ fn symlink_policy_for_mode(mode: &AttachmentMode) -> AttachmentSourceSymlinkPoli
     }
 }
 
-fn sandbox_mount_parent_chain_validation_script() -> &'static str {
+fn sandbox_mount_parent_chain_functions_script() -> &'static str {
     r#"
-set -eu
-root="$1"
-target="$2"
-if [ -L "$root" ]; then
-  printf 'attachment mount worktree root must not be a symlink: %s\n' "$root" >&2
-  exit 2
-fi
-if [ ! -d "$root" ]; then
-  printf 'attachment mount worktree root must be a directory: %s\n' "$root" >&2
-  exit 2
-fi
-case "$target" in
-  "$root"/*) rel="${target#"$root"/}" ;;
-  *)
-    printf 'attachment mount path escapes sandbox worktree: %s\n' "$target" >&2
-    exit 2
-    ;;
-esac
-parent="${rel%/*}"
-if [ "$parent" = "$rel" ]; then
-  exit 0
-fi
-current="$root"
-remaining="$parent"
-while [ -n "$remaining" ]; do
-  segment="${remaining%%/*}"
-  if [ "$remaining" = "$segment" ]; then
-    remaining=""
-  else
-    remaining="${remaining#*/}"
-  fi
-  if [ -z "$segment" ] || [ "$segment" = "." ] || [ "$segment" = ".." ]; then
-    printf 'attachment mount path contains unsupported component: %s\n' "$target" >&2
+ensure_mount_parent_chain() {
+  root="$1"
+  target="$2"
+  if [ -L "$root" ]; then
+    printf 'attachment mount worktree root must not be a symlink: %s\n' "$root" >&2
     exit 2
   fi
-  current="$current/$segment"
-  if [ -L "$current" ]; then
-    printf 'attachment mount parent must not be a symlink: %s\n' "$current" >&2
+  if [ ! -d "$root" ]; then
+    printf 'attachment mount worktree root must be a directory: %s\n' "$root" >&2
     exit 2
   fi
-  if [ -e "$current" ] && [ ! -d "$current" ]; then
-    printf 'attachment mount parent must be a directory: %s\n' "$current" >&2
+  case "$target" in
+    "$root"/*) rel="${target#"$root"/}" ;;
+    *)
+      printf 'attachment mount path escapes sandbox worktree: %s\n' "$target" >&2
+      exit 2
+      ;;
+  esac
+  parent="${rel%/*}"
+  if [ "$parent" = "$rel" ]; then
+    return 0
+  fi
+  current="$root"
+  remaining="$parent"
+  while [ -n "$remaining" ]; do
+    segment="${remaining%%/*}"
+    if [ "$remaining" = "$segment" ]; then
+      remaining=""
+    else
+      remaining="${remaining#*/}"
+    fi
+    if [ -z "$segment" ] || [ "$segment" = "." ] || [ "$segment" = ".." ]; then
+      printf 'attachment mount path contains unsupported component: %s\n' "$target" >&2
+      exit 2
+    fi
+    current="$current/$segment"
+    if [ -L "$current" ]; then
+      printf 'attachment mount parent must not be a symlink: %s\n' "$current" >&2
+      exit 2
+    fi
+    if [ ! -e "$current" ]; then
+      mkdir "$current" 2>/dev/null || true
+    fi
+    if [ -L "$current" ]; then
+      printf 'attachment mount parent must not be a symlink: %s\n' "$current" >&2
+      exit 2
+    fi
+    if [ ! -d "$current" ]; then
+      printf 'attachment mount parent must be a directory: %s\n' "$current" >&2
+      exit 2
+    fi
+  done
+}
+
+remove_mount_path_if_parent_safe() {
+  root="$1"
+  target="$2"
+  if [ -L "$root" ]; then
+    printf 'attachment mount worktree root must not be a symlink: %s\n' "$root" >&2
     exit 2
   fi
-done
+  if [ ! -d "$root" ]; then
+    exit 0
+  fi
+  case "$target" in
+    "$root"/*) rel="${target#"$root"/}" ;;
+    *)
+      printf 'attachment mount path escapes sandbox worktree: %s\n' "$target" >&2
+      exit 2
+      ;;
+  esac
+  parent="${rel%/*}"
+  if [ "$parent" != "$rel" ]; then
+    current="$root"
+    remaining="$parent"
+    while [ -n "$remaining" ]; do
+      segment="${remaining%%/*}"
+      if [ "$remaining" = "$segment" ]; then
+        remaining=""
+      else
+        remaining="${remaining#*/}"
+      fi
+      if [ -z "$segment" ] || [ "$segment" = "." ] || [ "$segment" = ".." ]; then
+        printf 'attachment mount path contains unsupported component: %s\n' "$target" >&2
+        exit 2
+      fi
+      current="$current/$segment"
+      if [ -L "$current" ]; then
+        printf 'attachment mount parent must not be a symlink: %s\n' "$current" >&2
+        exit 2
+      fi
+      if [ ! -e "$current" ]; then
+        exit 0
+      fi
+      if [ ! -d "$current" ]; then
+        printf 'attachment mount parent must be a directory: %s\n' "$current" >&2
+        exit 2
+      fi
+    done
+  fi
+  if [ -L "$target" ]; then
+    :
+  elif [ -e "$target" ]; then
+    chmod -R u+w -- "$target"
+  fi
+  rm -rf -- "$target"
+}
 "#
+}
+
+#[cfg(test)]
+fn sandbox_mount_parent_chain_ensure_test_script() -> String {
+    format!(
+        "{}\nensure_mount_parent_chain \"$1\" \"$2\"\n",
+        sandbox_mount_parent_chain_functions_script()
+    )
 }
 
 fn command_failure_detail(output: &std::process::Output) -> String {
@@ -246,20 +313,18 @@ async fn container_remove_mount_path(
             if !out.status.success() {
                 return Ok(());
             }
-            container_validate_mount_parent_chain(
+            container_remove_mount_path_in_worktree(
                 state,
                 &container_id,
                 &data_plane.live_worktree_root,
                 target,
             )
             .await?;
-            let _ = container_prepare_for_removal(state, &container_id, target).await;
-            let _ = container_rm_rf(state, &container_id, target).await;
             Ok(())
         }
         ContainerRuntimeKind::SharedVmContainer => {
             let worktree_root = data_plane.live_worktree_root;
-            avf_validate_mount_parent_chain(
+            avf_remove_mount_path_in_worktree(
                 state,
                 workspace_id,
                 worktree_id,
@@ -267,10 +332,6 @@ async fn container_remove_mount_path(
                 target,
             )
             .await?;
-            let _ =
-                avf_prepare_for_removal(state, workspace_id, worktree_id, &worktree_root, target)
-                    .await;
-            let _ = avf_rm_rf(state, workspace_id, worktree_id, &worktree_root, target).await;
             Ok(())
         }
     }

@@ -69,57 +69,65 @@ pub(super) async fn avf_run_success(
     }
 }
 
-pub(super) async fn avf_rm_rf(
-    state: &AppState,
-    workspace_id: WorkspaceId,
-    worktree_id: WorktreeId,
-    worktree_root: &Path,
-    path: &Path,
-) -> Result<()> {
-    let rel = avf_guest_rel_path(worktree_root, path)?;
-    avf_run_success(
-        state,
-        workspace_id,
-        worktree_id,
-        worktree_root,
-        "rm",
-        &["-rf".to_string(), "--".to_string(), rel],
-    )
-    .await
+fn avf_guest_target_arg(worktree_root: &Path, target: &Path) -> Result<String> {
+    let rel = avf_guest_rel_path(worktree_root, target)?;
+    if rel == "." {
+        Ok(".".to_string())
+    } else {
+        Ok(format!("./{rel}"))
+    }
 }
 
-async fn avf_mkdir_p(
-    state: &AppState,
-    workspace_id: WorkspaceId,
-    worktree_id: WorktreeId,
-    worktree_root: &Path,
-    path: &Path,
-) -> Result<()> {
-    let rel = avf_guest_rel_path(worktree_root, path)?;
-    avf_run_success(
-        state,
-        workspace_id,
-        worktree_id,
-        worktree_root,
-        "mkdir",
-        &["-p".to_string(), "--".to_string(), rel],
+pub(super) fn avf_remove_mount_path_script() -> String {
+    format!(
+        "{}\nremove_mount_path_if_parent_safe \"$1\" \"$2\"\n",
+        sandbox_mount_parent_chain_functions_script()
     )
-    .await
 }
 
-pub(super) async fn avf_validate_mount_parent_chain(
+pub(super) fn avf_import_dir_script() -> String {
+    format!(
+        r#"{}
+target="$1"
+ensure_mount_parent_chain "." "$target"
+if [ -L "$target" ] || [ -e "$target" ]; then
+  printf 'attachment mount target already exists before import: %s\n' "$target" >&2
+  exit 2
+fi
+mkdir "$target" 2>/dev/null || true
+if [ -L "$target" ] || [ ! -d "$target" ]; then
+  printf 'attachment mount target must be a directory: %s\n' "$target" >&2
+  exit 2
+fi
+tar -C "$target" -xf -
+"#,
+        sandbox_mount_parent_chain_functions_script()
+    )
+}
+
+pub(super) fn avf_import_file_script() -> String {
+    format!(
+        r#"{}
+target="$1"
+ensure_mount_parent_chain "." "$target"
+if [ -L "$target" ] || [ -e "$target" ]; then
+  printf 'attachment mount target already exists before import: %s\n' "$target" >&2
+  exit 2
+fi
+cat > "$target"
+"#,
+        sandbox_mount_parent_chain_functions_script()
+    )
+}
+
+pub(super) async fn avf_remove_mount_path_in_worktree(
     state: &AppState,
     workspace_id: WorkspaceId,
     worktree_id: WorktreeId,
     worktree_root: &Path,
     target: &Path,
 ) -> Result<()> {
-    let rel = avf_guest_rel_path(worktree_root, target)?;
-    let guest_target = if rel == "." {
-        ".".to_string()
-    } else {
-        format!("./{rel}")
-    };
+    let guest_target = avf_guest_target_arg(worktree_root, target)?;
     avf_run_success(
         state,
         workspace_id,
@@ -128,35 +136,10 @@ pub(super) async fn avf_validate_mount_parent_chain(
         "sh",
         &[
             "-lc".to_string(),
-            sandbox_mount_parent_chain_validation_script().to_string(),
+            avf_remove_mount_path_script(),
             "--".to_string(),
             ".".to_string(),
             guest_target,
-        ],
-    )
-    .await
-}
-
-pub(super) async fn avf_prepare_for_removal(
-    state: &AppState,
-    workspace_id: WorkspaceId,
-    worktree_id: WorktreeId,
-    worktree_root: &Path,
-    path: &Path,
-) -> Result<()> {
-    let rel = avf_guest_rel_path(worktree_root, path)?;
-    avf_run_success(
-        state,
-        workspace_id,
-        worktree_id,
-        worktree_root,
-        "sh",
-        &[
-            "-lc".to_string(),
-            "if [ -L \"$1\" ]; then exit 0; fi; if [ -e \"$1\" ]; then chmod -R u+w -- \"$1\"; fi"
-                .to_string(),
-            "--".to_string(),
-            rel,
         ],
     )
     .await
@@ -170,7 +153,7 @@ async fn import_dir_to_avf_worktree(
     src: &Path,
     dest: &Path,
 ) -> Result<()> {
-    let dest_rel = avf_guest_rel_path(worktree_root, dest)?;
+    let dest_rel = avf_guest_target_arg(worktree_root, dest)?;
     let mut tar_cmd = Command::new("tar");
     tar_cmd.arg("-C").arg(src).arg("-cf").arg("-").arg(".");
     tar_cmd.stdout(Stdio::piped());
@@ -184,12 +167,12 @@ async fn import_dir_to_avf_worktree(
         workspace_id,
         worktree_id,
         worktree_root,
-        "tar",
+        "sh",
         &[
-            "-C".to_string(),
+            "-lc".to_string(),
+            avf_import_dir_script(),
+            "--".to_string(),
             dest_rel,
-            "-xf".to_string(),
-            "-".to_string(),
         ],
         &std::collections::HashMap::new(),
         None,
@@ -235,7 +218,7 @@ async fn import_file_to_avf_worktree(
     src: &Path,
     dest: &Path,
 ) -> Result<()> {
-    let dest_rel = avf_guest_rel_path(worktree_root, dest)?;
+    let dest_rel = avf_guest_target_arg(worktree_root, dest)?;
     let mut guest_cmd = ctx_avf_linux_runtime::build_guest_exec_command(
         &state.core.data_root,
         workspace_id,
@@ -244,7 +227,7 @@ async fn import_file_to_avf_worktree(
         "sh",
         &[
             "-lc".to_string(),
-            "set -eu; cat > \"$1\"".to_string(),
+            avf_import_file_script(),
             "--".to_string(),
             dest_rel,
         ],
@@ -288,13 +271,8 @@ pub(super) async fn avf_copy_source_to_mount(
     target: &Path,
     mode: AttachmentMode,
 ) -> Result<()> {
-    avf_validate_mount_parent_chain(state, workspace_id, worktree_id, worktree_root, target)
+    avf_remove_mount_path_in_worktree(state, workspace_id, worktree_id, worktree_root, target)
         .await?;
-    if let Some(parent) = target.parent() {
-        avf_mkdir_p(state, workspace_id, worktree_id, worktree_root, parent).await?;
-    }
-    let _ = avf_prepare_for_removal(state, workspace_id, worktree_id, worktree_root, target).await;
-    let _ = avf_rm_rf(state, workspace_id, worktree_id, worktree_root, target).await;
     if mode == AttachmentMode::Ro {
         validate_attachment_tree_within_root(source, source, AttachmentSourceSymlinkPolicy::Reject)
             .await?;
@@ -303,7 +281,6 @@ pub(super) async fn avf_copy_source_to_mount(
         .await
         .with_context(|| format!("stat attachment source {}", source.display()))?;
     if metadata.is_dir() {
-        avf_mkdir_p(state, workspace_id, worktree_id, worktree_root, target).await?;
         import_dir_to_avf_worktree(
             state,
             workspace_id,

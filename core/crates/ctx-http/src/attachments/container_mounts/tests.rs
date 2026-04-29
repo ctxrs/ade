@@ -1,7 +1,9 @@
 use crate::attachments::validate_mount_path_in_worktree;
 
+use super::avf::{avf_import_dir_script, avf_import_file_script, avf_remove_mount_path_script};
+use super::native::{container_mount_script, container_remove_mount_path_script};
 use super::{
-    resolve_attachment_source_path, sandbox_mount_parent_chain_validation_script,
+    resolve_attachment_source_path, sandbox_mount_parent_chain_ensure_test_script,
     AttachmentSourceSymlinkPolicy,
 };
 
@@ -173,7 +175,7 @@ async fn sandbox_guest_parent_chain_script_rejects_symlinked_ctx_parent() {
     let target = worktree.join(".ctx/attachments/docs/docs");
     let output = std::process::Command::new("sh")
         .arg("-lc")
-        .arg(sandbox_mount_parent_chain_validation_script())
+        .arg(sandbox_mount_parent_chain_ensure_test_script())
         .arg("--")
         .arg(&worktree)
         .arg(&target)
@@ -194,7 +196,7 @@ async fn sandbox_guest_parent_chain_script_rejects_symlinked_ctx_parent() {
     let relative_output = std::process::Command::new("sh")
         .current_dir(&worktree)
         .arg("-lc")
-        .arg(sandbox_mount_parent_chain_validation_script())
+        .arg(sandbox_mount_parent_chain_ensure_test_script())
         .arg("--")
         .arg(".")
         .arg("./.ctx/attachments/docs/docs")
@@ -211,7 +213,7 @@ async fn sandbox_guest_parent_chain_script_rejects_symlinked_ctx_parent() {
 
 #[cfg(unix)]
 #[tokio::test]
-async fn sandbox_guest_parent_chain_script_allows_missing_safe_parents() {
+async fn sandbox_guest_parent_chain_script_creates_and_verifies_missing_safe_parents() {
     let temp = tempfile::tempdir().unwrap();
     let worktree = temp.path().join("worktree");
     std::fs::create_dir_all(&worktree).unwrap();
@@ -219,7 +221,7 @@ async fn sandbox_guest_parent_chain_script_allows_missing_safe_parents() {
     let target = worktree.join(".ctx/attachments/docs/docs");
     let output = std::process::Command::new("sh")
         .arg("-lc")
-        .arg(sandbox_mount_parent_chain_validation_script())
+        .arg(sandbox_mount_parent_chain_ensure_test_script())
         .arg("--")
         .arg(&worktree)
         .arg(&target)
@@ -232,7 +234,26 @@ async fn sandbox_guest_parent_chain_script_allows_missing_safe_parents() {
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(
-        !worktree.join(".ctx").exists(),
-        "validation should not create missing safe parents"
+        worktree.join(".ctx/attachments/docs").is_dir(),
+        "parent chain should be created one component at a time"
     );
+}
+
+#[test]
+fn sandbox_guest_mount_scripts_create_and_verify_without_mkdir_p_preflight() {
+    let scripts = [
+        container_mount_script(),
+        container_remove_mount_path_script(),
+        avf_import_dir_script(),
+        avf_import_file_script(),
+        avf_remove_mount_path_script(),
+    ];
+    for script in scripts {
+        assert!(script.contains("ensure_mount_parent_chain"));
+        assert!(script.contains("mkdir \"$current\""));
+        assert!(
+            !script.contains("mkdir -p"),
+            "guest mount mutation scripts must not use split validation plus mkdir -p"
+        );
+    }
 }

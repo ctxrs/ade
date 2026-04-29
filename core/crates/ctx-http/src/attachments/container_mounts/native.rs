@@ -70,7 +70,50 @@ pub(super) async fn container_mkdir_p(
     }
 }
 
-pub(super) async fn container_validate_mount_parent_chain(
+pub(super) fn container_mount_script() -> String {
+    format!(
+        r#"{}
+ensure_mount_parent_chain "$1" "$2"
+root="$1"
+target="$2"
+source="$3"
+mode="$4"
+if [ -L "$target" ]; then
+  :
+elif [ -e "$target" ]; then
+  chmod -R u+w -- "$target"
+fi
+rm -rf -- "$target"
+if [ "$mode" = "ro" ]; then
+  if [ -L "$source" ]; then
+    printf 'read-only attachment copy refuses symlink: %s\n' "$source" >&2
+    exit 2
+  fi
+  if [ -d "$source" ]; then
+    link="$(find "$source" -type l -print -quit)"
+    if [ -n "$link" ]; then
+      printf 'read-only attachment copy refuses symlink: %s\n' "$link" >&2
+      exit 2
+    fi
+  fi
+  cp -a -- "$source" "$target"
+  chmod -R a-w -- "$target"
+else
+  ln -s -- "$source" "$target" || cp -a -- "$source" "$target"
+fi
+"#,
+        sandbox_mount_parent_chain_functions_script()
+    )
+}
+
+pub(super) fn container_remove_mount_path_script() -> String {
+    format!(
+        "{}\nremove_mount_path_if_parent_safe \"$1\" \"$2\"\n",
+        sandbox_mount_parent_chain_functions_script()
+    )
+}
+
+pub(super) async fn container_remove_mount_path_in_worktree(
     state: &AppState,
     container_id: &str,
     worktree_root: &Path,
@@ -82,91 +125,19 @@ pub(super) async fn container_validate_mount_parent_chain(
         .arg(container_id)
         .arg("sh")
         .arg("-lc")
-        .arg(sandbox_mount_parent_chain_validation_script())
+        .arg(container_remove_mount_path_script())
         .arg("--")
         .arg(worktree_root)
         .arg(target);
     let out = cmd
         .output()
         .await
-        .context("sandbox exec validate attachment mount parent chain")?;
+        .context("sandbox exec remove attachment mount path")?;
     if out.status.success() {
         Ok(())
     } else {
         anyhow::bail!(
-            "container attachment mount parent validation failed (status {}): {}",
-            out.status,
-            String::from_utf8_lossy(&out.stderr).trim()
-        );
-    }
-}
-
-async fn container_reject_source_symlinks(
-    state: &AppState,
-    container_id: &str,
-    source: &Path,
-) -> Result<()> {
-    let script = r#"
-set -eu
-if [ -L "$1" ]; then
-  printf 'read-only attachment copy refuses symlink: %s\n' "$1" >&2
-  exit 2
-fi
-if [ -d "$1" ]; then
-  link="$(find "$1" -type l -print -quit)"
-  if [ -n "$link" ]; then
-    printf 'read-only attachment copy refuses symlink: %s\n' "$link" >&2
-    exit 2
-  fi
-fi
-"#;
-    let mut cmd = sandbox_container_command(&state.core.data_root)?;
-    cmd.arg("exec")
-        .arg("--interactive")
-        .arg(container_id)
-        .arg("sh")
-        .arg("-lc")
-        .arg(script)
-        .arg("--")
-        .arg(source);
-    let out = cmd
-        .output()
-        .await
-        .context("sandbox exec reject read-only attachment symlinks")?;
-    if out.status.success() {
-        Ok(())
-    } else {
-        anyhow::bail!(
-            "container read-only source validation failed (status {}): {}",
-            out.status,
-            String::from_utf8_lossy(&out.stderr).trim()
-        );
-    }
-}
-
-pub(super) async fn container_prepare_for_removal(
-    state: &AppState,
-    container_id: &str,
-    path: &Path,
-) -> Result<()> {
-    let mut cmd = sandbox_container_command(&state.core.data_root)?;
-    cmd.arg("exec")
-        .arg("--interactive")
-        .arg(container_id)
-        .arg("sh")
-        .arg("-lc")
-        .arg("if [ -L \"$1\" ]; then exit 0; fi; if [ -e \"$1\" ]; then chmod -R u+w -- \"$1\"; fi")
-        .arg("--")
-        .arg(path);
-    let out = cmd
-        .output()
-        .await
-        .context("sandbox exec prepare attachment removal")?;
-    if out.status.success() {
-        Ok(())
-    } else {
-        anyhow::bail!(
-            "container attachment removal prep failed (status {}): {}",
+            "container attachment mount removal failed (status {}): {}",
             out.status,
             String::from_utf8_lossy(&out.stderr).trim()
         );
@@ -260,86 +231,31 @@ pub(super) async fn container_ensure_mount(
     source: &Path,
     mode: AttachmentMode,
 ) -> Result<()> {
-    container_validate_mount_parent_chain(state, container_id, worktree_root, target).await?;
-    if let Some(parent) = target.parent() {
-        container_mkdir_p(state, container_id, parent).await?;
-    }
-    // Remove any existing mount path (file/dir/symlink).
-    let _ = container_prepare_for_removal(state, container_id, target).await;
-    let _ = container_rm_rf(state, container_id, target).await;
-
-    if mode == AttachmentMode::Ro {
-        container_reject_source_symlinks(state, container_id, source).await?;
-
-        let mut cp = sandbox_container_command(&state.core.data_root)?;
-        cp.arg("exec")
-            .arg("--interactive")
-            .arg(container_id)
-            .arg("cp")
-            .arg("-a")
-            .arg("--")
-            .arg(source)
-            .arg(target);
-        let out = cp.output().await.context("sandbox exec cp -a")?;
-        if !out.status.success() {
-            anyhow::bail!(
-                "container read-only mount copy failed (status {}): {}",
-                out.status,
-                String::from_utf8_lossy(&out.stderr).trim()
-            );
-        }
-
-        let mut chmod = sandbox_container_command(&state.core.data_root)?;
-        chmod
-            .arg("exec")
-            .arg("--interactive")
-            .arg(container_id)
-            .arg("chmod")
-            .arg("-R")
-            .arg("a-w")
-            .arg("--")
-            .arg(target);
-        let out = chmod.output().await.context("sandbox exec chmod -R a-w")?;
-        if out.status.success() {
-            return Ok(());
-        }
-        anyhow::bail!(
-            "container read-only mount chmod failed (status {}): {}",
-            out.status,
-            String::from_utf8_lossy(&out.stderr).trim()
-        );
-    }
-
-    // Prefer symlink; if unavailable, fall back to a recursive copy.
-    let mut ln = sandbox_container_command(&state.core.data_root)?;
-    ln.arg("exec")
+    let mode_arg = match mode {
+        AttachmentMode::Ro => "ro",
+        AttachmentMode::Rw => "rw",
+    };
+    let mut cmd = sandbox_container_command(&state.core.data_root)?;
+    cmd.arg("exec")
         .arg("--interactive")
         .arg(container_id)
-        .arg("ln")
-        .arg("-s")
+        .arg("sh")
+        .arg("-lc")
+        .arg(container_mount_script())
         .arg("--")
+        .arg(worktree_root)
+        .arg(target)
         .arg(source)
-        .arg(target);
-    let out = ln.output().await.context("sandbox exec ln -s")?;
-    if out.status.success() {
-        return Ok(());
-    }
-
-    let mut cp = sandbox_container_command(&state.core.data_root)?;
-    cp.arg("exec")
-        .arg("--interactive")
-        .arg(container_id)
-        .arg("cp")
-        .arg("-a")
-        .arg("--")
-        .arg(source)
-        .arg(target);
-    let out = cp.output().await.context("sandbox exec cp -a")?;
+        .arg(mode_arg);
+    let out = cmd
+        .output()
+        .await
+        .context("sandbox exec attachment mount")?;
     if out.status.success() {
         Ok(())
     } else {
         anyhow::bail!(
-            "container mount failed (ln+cp) (status {}): {}",
+            "container mount failed (status {}): {}",
             out.status,
             String::from_utf8_lossy(&out.stderr).trim()
         );
