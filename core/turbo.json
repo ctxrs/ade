@@ -185,6 +185,8 @@
     "rust:crate:clippy:codex-crp": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -208,6 +210,8 @@
     "rust:crate:test:codex-crp": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -231,6 +235,8 @@
     "rust:crate:nextest:codex-crp": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -254,6 +260,8 @@
     "rust:crate:clippy:ctx-avf-linux-guest-agent": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -276,6 +284,8 @@
     "rust:crate:test:ctx-avf-linux-guest-agent": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -298,6 +308,8 @@
     "rust:crate:nextest:ctx-avf-linux-guest-agent": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -320,6 +332,8 @@
     "rust:crate:clippy:ctx-avf-linux-runtime": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -349,6 +363,8 @@
     "rust:crate:test:ctx-avf-linux-runtime": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -378,6 +394,8 @@
     "rust:crate:nextest:ctx-avf-linux-runtime": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -407,6 +425,8 @@
     "rust:crate:clippy:ctx-bundled-assets": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -429,6 +449,8 @@
     "rust:crate:test:ctx-bundled-assets": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -451,6 +473,8 @@
     "rust:crate:nextest:ctx-bundled-assets": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -473,6 +497,8 @@
     "rust:crate:clippy:ctx-client": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -499,6 +525,8 @@
     "rust:crate:test:ctx-client": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -525,6 +553,8 @@
     "rust:crate:nextest:ctx-client": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -551,6 +581,8 @@
     "rust:crate:clippy:ctx-core": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -573,6 +605,8 @@
     "rust:crate:test:ctx-core": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -595,6 +629,8 @@
     "rust:crate:nextest:ctx-core": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -617,6 +653,8 @@
     "rust:crate:clippy:ctx-crp-protocol": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -639,6 +677,8 @@
     "rust:crate:test:ctx-crp-protocol": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -661,6 +701,8 @@
     "rust:crate:nextest:ctx-crp-protocol": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -683,6 +725,8 @@
     "rust:crate:clippy:ctx-desktop-ipc": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -710,6 +754,8 @@
     "rust:crate:test:ctx-desktop-ipc": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -737,6 +783,8 @@
     "rust:crate:nextest:ctx-desktop-ipc": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -764,6 +812,8 @@
     "rust:crate:clippy:ctx-docs-mirror": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -786,6 +836,8 @@
     "rust:crate:test:ctx-docs-mirror": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -808,6 +860,8 @@
     "rust:crate:nextest:ctx-docs-mirror": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -830,6 +884,8 @@
     "rust:crate:clippy:ctx-egress-proxy": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -852,6 +908,8 @@
     "rust:crate:test:ctx-egress-proxy": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -874,6 +932,8 @@
     "rust:crate:nextest:ctx-egress-proxy": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -896,6 +956,8 @@
     "rust:crate:clippy:ctx-events": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -918,6 +980,8 @@
     "rust:crate:test:ctx-events": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -940,6 +1004,8 @@
     "rust:crate:nextest:ctx-events": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -962,6 +1028,8 @@
     "rust:crate:clippy:ctx-execution-runtime": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -997,6 +1065,8 @@
     "rust:crate:test:ctx-execution-runtime": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -1032,6 +1102,8 @@
     "rust:crate:nextest:ctx-execution-runtime": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -1067,6 +1139,8 @@
     "rust:crate:clippy:ctx-fs": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -1090,6 +1164,8 @@
     "rust:crate:test:ctx-fs": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -1113,6 +1189,8 @@
     "rust:crate:nextest:ctx-fs": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -1136,6 +1214,8 @@
     "rust:crate:clippy:ctx-harness-runtime": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -1168,6 +1248,8 @@
     "rust:crate:test:ctx-harness-runtime": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -1200,6 +1282,8 @@
     "rust:crate:nextest:ctx-harness-runtime": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -1232,6 +1316,8 @@
     "rust:crate:clippy:ctx-harness-setup": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -1254,6 +1340,8 @@
     "rust:crate:test:ctx-harness-setup": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -1276,6 +1364,8 @@
     "rust:crate:nextest:ctx-harness-setup": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -1298,6 +1388,8 @@
     "rust:crate:clippy:ctx-harness-sources": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -1322,6 +1414,8 @@
     "rust:crate:test:ctx-harness-sources": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -1346,6 +1440,8 @@
     "rust:crate:nextest:ctx-harness-sources": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -1370,6 +1466,8 @@
     "rust:crate:clippy:ctx-http": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -1426,6 +1524,8 @@
     "rust:crate:test:ctx-http": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -1482,6 +1582,8 @@
     "rust:crate:nextest:ctx-http": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -1538,6 +1640,8 @@
     "rust:crate:clippy:ctx-linux-sandbox-runtime": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -1561,6 +1665,8 @@
     "rust:crate:test:ctx-linux-sandbox-runtime": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -1584,6 +1690,8 @@
     "rust:crate:nextest:ctx-linux-sandbox-runtime": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -1607,6 +1715,8 @@
     "rust:crate:clippy:ctx-load-test": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -1634,6 +1744,8 @@
     "rust:crate:test:ctx-load-test": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -1661,6 +1773,8 @@
     "rust:crate:nextest:ctx-load-test": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -1688,6 +1802,8 @@
     "rust:crate:clippy:ctx-managed-installs": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -1726,6 +1842,8 @@
     "rust:crate:test:ctx-managed-installs": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -1764,6 +1882,8 @@
     "rust:crate:nextest:ctx-managed-installs": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -1802,6 +1922,8 @@
     "rust:crate:clippy:ctx-mcp": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -1859,6 +1981,8 @@
     "rust:crate:test:ctx-mcp": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -1916,6 +2040,8 @@
     "rust:crate:nextest:ctx-mcp": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -1973,6 +2099,8 @@
     "rust:crate:clippy:ctx-merge-queue": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -2000,6 +2128,8 @@
     "rust:crate:test:ctx-merge-queue": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -2027,6 +2157,8 @@
     "rust:crate:nextest:ctx-merge-queue": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -2054,6 +2186,8 @@
     "rust:crate:clippy:ctx-provider-accounts": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -2077,6 +2211,8 @@
     "rust:crate:test:ctx-provider-accounts": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -2100,6 +2236,8 @@
     "rust:crate:nextest:ctx-provider-accounts": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -2123,6 +2261,8 @@
     "rust:crate:clippy:ctx-provider-auth-import": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -2148,6 +2288,8 @@
     "rust:crate:test:ctx-provider-auth-import": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -2173,6 +2315,8 @@
     "rust:crate:nextest:ctx-provider-auth-import": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -2198,6 +2342,8 @@
     "rust:crate:clippy:ctx-provider-install": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -2220,6 +2366,8 @@
     "rust:crate:test:ctx-provider-install": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -2242,6 +2390,8 @@
     "rust:crate:nextest:ctx-provider-install": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -2264,6 +2414,8 @@
     "rust:crate:clippy:ctx-provider-matrix": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -2288,6 +2440,8 @@
     "rust:crate:test:ctx-provider-matrix": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -2312,6 +2466,8 @@
     "rust:crate:nextest:ctx-provider-matrix": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -2336,6 +2492,8 @@
     "rust:crate:clippy:ctx-provider-runtime": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -2376,6 +2534,8 @@
     "rust:crate:test:ctx-provider-runtime": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -2416,6 +2576,8 @@
     "rust:crate:nextest:ctx-provider-runtime": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -2456,6 +2618,8 @@
     "rust:crate:clippy:ctx-providers": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -2481,6 +2645,8 @@
     "rust:crate:test:ctx-providers": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -2506,6 +2672,8 @@
     "rust:crate:nextest:ctx-providers": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -2531,6 +2699,8 @@
     "rust:crate:clippy:ctx-runtime-assets": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -2554,6 +2724,8 @@
     "rust:crate:test:ctx-runtime-assets": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -2577,6 +2749,8 @@
     "rust:crate:nextest:ctx-runtime-assets": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -2600,6 +2774,8 @@
     "rust:crate:clippy:ctx-sandbox-container-runtime": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -2628,6 +2804,8 @@
     "rust:crate:test:ctx-sandbox-container-runtime": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -2656,6 +2834,8 @@
     "rust:crate:nextest:ctx-sandbox-container-runtime": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -2684,6 +2864,8 @@
     "rust:crate:clippy:ctx-sandbox-contract": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -2707,6 +2889,8 @@
     "rust:crate:test:ctx-sandbox-contract": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -2730,6 +2914,8 @@
     "rust:crate:nextest:ctx-sandbox-contract": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -2753,6 +2939,8 @@
     "rust:crate:clippy:ctx-sandbox-materialization": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -2785,6 +2973,8 @@
     "rust:crate:test:ctx-sandbox-materialization": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -2817,6 +3007,8 @@
     "rust:crate:nextest:ctx-sandbox-materialization": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -2849,6 +3041,8 @@
     "rust:crate:clippy:ctx-session-tools": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -2872,6 +3066,8 @@
     "rust:crate:test:ctx-session-tools": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -2895,6 +3091,8 @@
     "rust:crate:nextest:ctx-session-tools": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -2918,6 +3116,8 @@
     "rust:crate:clippy:ctx-storage-admission": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -2940,6 +3140,8 @@
     "rust:crate:test:ctx-storage-admission": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -2962,6 +3164,8 @@
     "rust:crate:nextest:ctx-storage-admission": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -2984,6 +3188,8 @@
     "rust:crate:clippy:ctx-store": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -3007,6 +3213,8 @@
     "rust:crate:test:ctx-store": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -3030,6 +3238,8 @@
     "rust:crate:nextest:ctx-store": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -3053,6 +3263,8 @@
     "rust:crate:clippy:ctx-transport-runtime": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -3082,6 +3294,8 @@
     "rust:crate:test:ctx-transport-runtime": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -3111,6 +3325,8 @@
     "rust:crate:nextest:ctx-transport-runtime": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -3140,6 +3356,8 @@
     "rust:crate:clippy:ctx-tunnel-control-plane": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -3162,6 +3380,8 @@
     "rust:crate:test:ctx-tunnel-control-plane": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -3184,6 +3404,8 @@
     "rust:crate:nextest:ctx-tunnel-control-plane": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -3206,6 +3428,8 @@
     "rust:crate:clippy:ctx-tunnel-relay": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -3228,6 +3452,8 @@
     "rust:crate:test:ctx-tunnel-relay": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -3250,6 +3476,8 @@
     "rust:crate:nextest:ctx-tunnel-relay": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -3272,6 +3500,8 @@
     "rust:crate:clippy:ctx-tunnel-router": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -3294,6 +3524,8 @@
     "rust:crate:test:ctx-tunnel-router": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -3316,6 +3548,8 @@
     "rust:crate:nextest:ctx-tunnel-router": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -3338,6 +3572,8 @@
     "rust:crate:clippy:ctx-worker-protocol": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -3360,6 +3596,8 @@
     "rust:crate:test:ctx-worker-protocol": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -3382,6 +3620,8 @@
     "rust:crate:nextest:ctx-worker-protocol": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -3404,6 +3644,8 @@
     "rust:crate:clippy:ctx-worker-shim": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -3429,6 +3671,8 @@
     "rust:crate:test:ctx-worker-shim": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -3454,6 +3698,8 @@
     "rust:crate:nextest:ctx-worker-shim": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -3479,6 +3725,8 @@
     "rust:crate:clippy:ctx-workspace-active-snapshot": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -3502,6 +3750,8 @@
     "rust:crate:test:ctx-workspace-active-snapshot": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -3525,6 +3775,8 @@
     "rust:crate:nextest:ctx-workspace-active-snapshot": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -3548,6 +3800,8 @@
     "rust:crate:clippy:ctx-workspace-config": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -3573,6 +3827,8 @@
     "rust:crate:test:ctx-workspace-config": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -3598,6 +3854,8 @@
     "rust:crate:nextest:ctx-workspace-config": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -3623,6 +3881,8 @@
     "rust:crate:clippy:ctx-workspace-container": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -3653,6 +3913,8 @@
     "rust:crate:test:ctx-workspace-container": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -3683,6 +3945,8 @@
     "rust:crate:nextest:ctx-workspace-container": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -3713,6 +3977,8 @@
     "rust:crate:clippy:ctx-workspace-runtime": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -3751,6 +4017,8 @@
     "rust:crate:test:ctx-workspace-runtime": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -3789,6 +4057,8 @@
     "rust:crate:nextest:ctx-workspace-runtime": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -3827,6 +4097,8 @@
     "rust:crate:clippy:ctx-workspace-services": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -3850,6 +4122,8 @@
     "rust:crate:test:ctx-workspace-services": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -3873,6 +4147,8 @@
     "rust:crate:nextest:ctx-workspace-services": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -3896,6 +4172,8 @@
     "rust:crate:clippy:ctx-worktree-data-plane": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -3921,6 +4199,8 @@
     "rust:crate:test:ctx-worktree-data-plane": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -3946,6 +4226,8 @@
     "rust:crate:nextest:ctx-worktree-data-plane": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -3971,6 +4253,8 @@
     "rust:ctx-http:test:base": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -4029,6 +4313,8 @@
     "rust:ctx-http:test:workspace-stream": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -4086,6 +4372,8 @@
     "rust:ctx-http:test:provider-auth": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -4150,6 +4438,8 @@
     "rust:ctx-http:test:provider-runtime-simulated": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -4216,6 +4506,8 @@
     "rust:ctx-http:test:provider-runtime-live": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -4280,6 +4572,8 @@
     "rust:ctx-http:test:repo-vcs": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -4347,6 +4641,8 @@
     "rust:ctx-http:test:scheduler-runtime": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -4405,6 +4701,8 @@
     "rust:ctx-http:test:turns-terminal": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -4468,6 +4766,8 @@
     "rust:ctx-http:test:attachments-routing": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -4522,6 +4822,8 @@
     "rust:ctx-http:test:subagents-control": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -4578,6 +4880,8 @@
     "rust:ctx-http:test:subagents-local-runtime": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -4625,6 +4929,8 @@
     "rust:ctx-http:test:updates-release": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -4681,6 +4987,8 @@
     "rust:ctx-http:test:sandbox-runtime-simulated": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -4743,6 +5051,8 @@
     "rust:ctx-http:test:sandbox-runtime-container-e2e": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -4802,6 +5112,8 @@
     "rust:ctx-http:test:sandbox-runtime-resource-governance": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -4853,6 +5165,8 @@
     "rust:ctx-http:test:sandbox-runtime-memory-leak": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
@@ -4904,6 +5218,8 @@
     "rust:ctx-http:test:all": {
       "inputs": [
         "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
         "Cargo.lock",
         "rust-toolchain.toml",
         "rustfmt.toml",
