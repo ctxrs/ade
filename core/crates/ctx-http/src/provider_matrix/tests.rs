@@ -130,6 +130,8 @@ fn version_matches_suffix_release() {
 
 #[tokio::test]
 async fn load_matrix_ignores_disk_cache_when_no_local_override_exists() {
+    let _env_lock = ENV_LOCK.lock().await;
+    let _env = clear_provider_matrix_env();
     let dir = tempdir().expect("tempdir");
     let data_root = dir.path();
 
@@ -153,29 +155,7 @@ async fn load_matrix_ignores_disk_cache_when_no_local_override_exists() {
         .await
         .expect("save cached matrix");
 
-    let previous_bundle_dir = std::env::var("CTX_BUNDLE_DIR").ok();
-    let previous_bundle_matrix = std::env::var("CTX_BUNDLE_MATRIX_JSON").ok();
-    unsafe {
-        std::env::remove_var("CTX_BUNDLE_DIR");
-        std::env::remove_var("CTX_BUNDLE_MATRIX_JSON");
-    }
     let loaded = load_matrix(data_root).await;
-    match previous_bundle_dir {
-        Some(value) => unsafe {
-            std::env::set_var("CTX_BUNDLE_DIR", value);
-        },
-        None => unsafe {
-            std::env::remove_var("CTX_BUNDLE_DIR");
-        },
-    }
-    match previous_bundle_matrix {
-        Some(value) => unsafe {
-            std::env::set_var("CTX_BUNDLE_MATRIX_JSON", value);
-        },
-        None => unsafe {
-            std::env::remove_var("CTX_BUNDLE_MATRIX_JSON");
-        },
-    }
     let builtin = builtin_matrix();
     assert_eq!(loaded.version, builtin.version);
     assert_eq!(loaded.providers.len(), builtin.providers.len());
@@ -183,6 +163,8 @@ async fn load_matrix_ignores_disk_cache_when_no_local_override_exists() {
 
 #[tokio::test]
 async fn load_matrix_returns_builtin_when_cache_missing() {
+    let _env_lock = ENV_LOCK.lock().await;
+    let _env = clear_provider_matrix_env();
     let dir = tempdir().expect("tempdir");
     let loaded = load_matrix(dir.path()).await;
     let builtin = builtin_matrix();

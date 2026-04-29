@@ -426,9 +426,7 @@ CTX_HTTP_DIRECT_TEST_DEPS = [
     "@crates//:which",
 ]
 
-CTX_HTTP_INTEGRATION_DIRECT_TEST_DEPS = CTX_HTTP_DIRECT_TEST_DEPS + [
-    "//core/crates/ctx-workspace-container:lib",
-]
+CTX_HTTP_INTEGRATION_DIRECT_TEST_DEPS = CTX_HTTP_DIRECT_TEST_DEPS
 
 CTX_HTTP_TEST_PROC_MACRO_DEPS = [
     "@crates//:async-trait",

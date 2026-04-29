@@ -210,6 +210,22 @@ pub(crate) async fn run_ws_replay_once(
     Ok(())
 }
 
+fn extract_event_content(event_type: &SessionEventType, payload: &Value) -> Option<String> {
+    match event_type {
+        SessionEventType::AssistantChunk | SessionEventType::AssistantComplete => payload
+            .get("content")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .or_else(|| {
+                payload
+                    .get("content_fragment")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+            }),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -245,21 +261,5 @@ mod tests {
             workspace_active_snapshot_query_token(auth_token, workspace_a),
             workspace_active_snapshot_query_token(auth_token, workspace_b)
         );
-    }
-}
-
-fn extract_event_content(event_type: &SessionEventType, payload: &Value) -> Option<String> {
-    match event_type {
-        SessionEventType::AssistantChunk | SessionEventType::AssistantComplete => payload
-            .get("content")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string())
-            .or_else(|| {
-                payload
-                    .get("content_fragment")
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string())
-            }),
-        _ => None,
     }
 }

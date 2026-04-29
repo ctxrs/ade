@@ -90,6 +90,7 @@ async fn noisy_tool_output_stays_bounded_end_to_end() {
         "CTX_CRP_FIRST_EVENT_TIMEOUT_MS",
         CRP_FIXTURE_FIRST_EVENT_TIMEOUT_MS,
     );
+    let _guard_ctx_mcp = common::set_ctx_mcp_command_env_for_test();
 
     let repo = common::init_git_repo(&[("note.txt", "hello\n")]).await;
     let data_dir = tempfile::tempdir().unwrap();

@@ -119,7 +119,7 @@ pub fn release_manifest_for(
           },
           "daemon": {
             "url_path": "/download/stable/9.9.9/ctx-daemon",
-            "sha256": "deadbeef"
+            "sha256": "2222222222222222222222222222222222222222222222222222222222222222"
           }
         }
       }
