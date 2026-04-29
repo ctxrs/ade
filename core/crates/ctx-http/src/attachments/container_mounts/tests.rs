@@ -1,7 +1,9 @@
 use crate::attachments::validate_mount_path_in_worktree;
 
 use super::avf::{avf_import_dir_script, avf_import_file_script, avf_remove_mount_path_script};
-use super::native::{container_mount_script, container_remove_mount_path_script};
+use super::native::{
+    container_import_dir_script, container_mount_script, container_remove_mount_path_script,
+};
 use super::{
     resolve_attachment_source_path, sandbox_mount_parent_chain_ensure_test_script,
     AttachmentSourceSymlinkPolicy,
@@ -242,6 +244,7 @@ async fn sandbox_guest_parent_chain_script_creates_and_verifies_missing_safe_par
 #[test]
 fn sandbox_guest_mount_scripts_create_and_verify_without_mkdir_p_preflight() {
     let scripts = [
+        container_import_dir_script(),
         container_mount_script(),
         container_remove_mount_path_script(),
         avf_import_dir_script(),
@@ -259,6 +262,7 @@ fn sandbox_guest_mount_scripts_create_and_verify_without_mkdir_p_preflight() {
     }
 
     let staging_scripts = [
+        container_import_dir_script(),
         container_mount_script(),
         avf_import_dir_script(),
         avf_import_file_script(),
@@ -267,7 +271,10 @@ fn sandbox_guest_mount_scripts_create_and_verify_without_mkdir_p_preflight() {
         assert!(script.contains("cleanup_stage"));
         assert!(script.contains("trap cleanup_stage EXIT"));
         assert!(script.contains("mktemp -d"));
-        assert!(script.contains("mv -- \"$temp\" \"$target\""));
+        assert!(
+            script.contains("mv -- \"$temp\" \"$target\"")
+                || script.contains("mv -- \"$temp\" \"$dest\"")
+        );
     }
 
     let avf_dir_script = avf_import_dir_script();
@@ -275,10 +282,71 @@ fn sandbox_guest_mount_scripts_create_and_verify_without_mkdir_p_preflight() {
         !avf_dir_script.contains("tar -C \"$target\""),
         "AVF directory import must extract into staged temp, not final target"
     );
+    let container_import_script = container_import_dir_script();
+    assert!(
+        !container_import_script.contains("tar -C \"$dest\""),
+        "native container materialization import must extract into staged temp, not final dest"
+    );
     let avf_file_script = avf_import_file_script();
     assert!(
         !avf_file_script.contains("cat > \"$target\""),
         "AVF file import must write into staged temp, not final target"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn native_container_import_script_cleans_temp_and_leaves_no_dest_on_tar_failure() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("container-root");
+    let dest = root.join("attachments/attachment/revision");
+    let fake_bin = temp.path().join("bin");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::create_dir_all(&fake_bin).unwrap();
+
+    let fake_tar = fake_bin.join("tar");
+    std::fs::write(
+        &fake_tar,
+        "#!/bin/sh\nmkdir -p \"$2\"\nprintf partial > \"$2/partial.txt\"\nexit 7\n",
+    )
+    .unwrap();
+    let mut permissions = std::fs::metadata(&fake_tar).unwrap().permissions();
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(&fake_tar, permissions).unwrap();
+
+    let path = format!(
+        "{}:{}",
+        fake_bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    let output = std::process::Command::new("sh")
+        .env("PATH", path)
+        .stdin(std::process::Stdio::null())
+        .arg("-c")
+        .arg(container_import_dir_script())
+        .arg("--")
+        .arg(&root)
+        .arg(&dest)
+        .output()
+        .unwrap();
+
+    assert!(
+        !output.status.success(),
+        "native container materialization import must fail when tar extraction fails"
+    );
+    assert!(
+        !dest.exists(),
+        "failed native container import must not leave a final materialized root"
+    );
+    let leftovers = std::fs::read_dir(dest.parent().unwrap())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().to_string())
+        .collect::<Vec<_>>();
+    assert!(
+        leftovers.is_empty(),
+        "failed native container import left staged or partial entries: {leftovers:?}"
     );
 }
 

@@ -261,8 +261,30 @@ fn copy_path_recursive(source: &Path, target: &Path, symlink_mode: SymlinkCopyMo
 }
 
 fn copy_path_recursive_read_only_atomic(source: &Path, target: &Path) -> Result<()> {
+    copy_path_recursive_read_only_atomic_with(
+        source,
+        target,
+        apply_read_only_mode_before_rename,
+        apply_read_only_mode_root,
+    )
+}
+
+fn copy_path_recursive_read_only_atomic_with<F, G>(
+    source: &Path,
+    target: &Path,
+    apply_before_rename: F,
+    apply_after_rename: G,
+) -> Result<()>
+where
+    F: FnOnce(&Path) -> Result<()>,
+    G: FnOnce(&Path) -> Result<()>,
+{
     let temp = unique_copy_temp_path(target)?;
     if let Err(err) = copy_path_recursive(source, &temp, SymlinkCopyMode::Reject) {
+        remove_path_after_failed_copy(&temp);
+        return Err(err);
+    }
+    if let Err(err) = apply_before_rename(&temp) {
         remove_path_after_failed_copy(&temp);
         return Err(err);
     }
@@ -275,7 +297,7 @@ fn copy_path_recursive_read_only_atomic(source: &Path, target: &Path) -> Result<
         remove_path_after_failed_copy(&temp);
         return Err(err);
     }
-    if let Err(err) = apply_read_only_mode(target) {
+    if let Err(err) = apply_after_rename(target) {
         remove_path_after_failed_copy(target);
         return Err(err);
     }
@@ -369,8 +391,31 @@ fn remove_path_after_failed_copy(path: &Path) {
     }
 }
 
-fn apply_read_only_mode(path: &Path) -> Result<()> {
-    apply_read_only_mode_recursive(path)
+fn apply_read_only_mode_before_rename(path: &Path) -> Result<()> {
+    let metadata = std::fs::symlink_metadata(path)
+        .with_context(|| format!("reading attachment metadata {}", path.display()))?;
+    if metadata.file_type().is_symlink() {
+        return Ok(());
+    }
+    if metadata.is_dir() {
+        for entry in std::fs::read_dir(path)
+            .with_context(|| format!("reading attachment dir {}", path.display()))?
+        {
+            let entry = entry?;
+            apply_read_only_mode_recursive(&entry.path())?;
+        }
+        return Ok(());
+    }
+    set_read_only_permissions(path, &metadata)
+}
+
+fn apply_read_only_mode_root(path: &Path) -> Result<()> {
+    let metadata = std::fs::symlink_metadata(path)
+        .with_context(|| format!("reading attachment metadata {}", path.display()))?;
+    if metadata.file_type().is_symlink() {
+        return Ok(());
+    }
+    set_read_only_permissions(path, &metadata)
 }
 
 fn clear_read_only_mode(path: &Path) -> Result<()> {
@@ -391,6 +436,10 @@ fn apply_read_only_mode_recursive(path: &Path) -> Result<()> {
             apply_read_only_mode_recursive(&entry.path())?;
         }
     }
+    set_read_only_permissions(path, &metadata)
+}
+
+fn set_read_only_permissions(path: &Path, metadata: &std::fs::Metadata) -> Result<()> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -503,8 +552,59 @@ mod tests {
         let err = std::fs::write(target.join("notes.txt"), "mutated\n")
             .expect_err("ro attachment mount should reject writes");
         assert_eq!(err.kind(), std::io::ErrorKind::PermissionDenied);
+        let err = std::fs::write(target.join("new.txt"), "new\n")
+            .expect_err("ro attachment mount root should reject new files");
+        assert_eq!(err.kind(), std::io::ErrorKind::PermissionDenied);
         std::fs::write(source.join("source-writable.txt"), "still writable\n")
             .expect("ro attachment mount should not mutate source writability");
+    }
+
+    #[test]
+    fn ro_copy_applies_read_only_to_temp_before_final_rename() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let source = temp.path().join("source");
+        let target = temp.path().join("target");
+        std::fs::create_dir_all(&source).expect("create source");
+        std::fs::write(source.join("notes.txt"), "hello\n").expect("write source file");
+
+        let mut chmod_path = None;
+        let err = copy_path_recursive_read_only_atomic_with(
+            &source,
+            &target,
+            |path| {
+                chmod_path = Some(path.to_path_buf());
+                assert_ne!(
+                    path,
+                    target.as_path(),
+                    "chmod must happen before final rename"
+                );
+                assert!(path.exists(), "staged copy must exist before chmod");
+                anyhow::bail!("injected read-only failure");
+            },
+            |_| Ok(()),
+        )
+        .expect_err("injected chmod failure should fail the copy");
+
+        assert!(format!("{err:#}").contains("injected read-only failure"));
+        let chmod_path = chmod_path.expect("chmod hook should be called");
+        assert!(
+            !target.exists(),
+            "failed read-only chmod must not leave final mount target visible"
+        );
+        assert!(
+            !chmod_path.exists(),
+            "failed read-only chmod must clean staged temp copy"
+        );
+        let leftovers = std::fs::read_dir(temp.path())
+            .expect("read temp root")
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().to_string())
+            .collect::<Vec<_>>();
+        assert!(
+            !leftovers
+                .iter()
+                .any(|name| name == "target" || name.starts_with(".target.copy-tmp.")),
+            "failed read-only chmod left target or staged copy entries: {leftovers:?}"
+        );
     }
 
     #[cfg(unix)]

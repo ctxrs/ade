@@ -45,31 +45,6 @@ pub(super) async fn container_rm_rf(
     }
 }
 
-pub(super) async fn container_mkdir_p(
-    state: &AppState,
-    container_id: &str,
-    path: &Path,
-) -> Result<()> {
-    let mut cmd = sandbox_container_command(&state.core.data_root)?;
-    cmd.arg("exec")
-        .arg("--interactive")
-        .arg(container_id)
-        .arg("mkdir")
-        .arg("-p")
-        .arg("--")
-        .arg(path);
-    let out = cmd.output().await.context("sandbox exec mkdir -p")?;
-    if out.status.success() {
-        Ok(())
-    } else {
-        anyhow::bail!(
-            "container mkdir -p failed (status {}): {}",
-            out.status,
-            String::from_utf8_lossy(&out.stderr).trim()
-        );
-    }
-}
-
 pub(super) fn container_mount_script() -> String {
     format!(
         r#"set -eu
@@ -136,6 +111,51 @@ trap - EXIT
     )
 }
 
+pub(super) fn container_import_dir_script() -> String {
+    format!(
+        r#"set -eu
+{}
+root="$1"
+dest="$2"
+ensure_mount_parent_chain "$root" "$dest"
+dest_parent="${{dest%/*}}"
+dest_name="${{dest##*/}}"
+stage=""
+temp=""
+cleanup_stage() {{
+  if [ -n "${{stage:-}}" ] && {{ [ -L "$stage" ] || [ -e "$stage" ]; }}; then
+    if [ ! -L "$stage" ]; then
+      chmod -R u+w -- "$stage" 2>/dev/null || true
+    fi
+    rm -rf -- "$stage"
+  fi
+}}
+make_stage() {{
+  stage="$(mktemp -d "$dest_parent/.${{dest_name}}.import-tmp.XXXXXX")"
+  temp="$stage/payload"
+}}
+finish_stage() {{
+  mv -- "$temp" "$dest"
+  rmdir -- "$stage"
+  stage=""
+}}
+trap cleanup_stage EXIT
+if [ -L "$dest" ]; then
+  :
+elif [ -e "$dest" ]; then
+  chmod -R u+w -- "$dest"
+fi
+rm -rf -- "$dest"
+make_stage
+mkdir "$temp"
+tar -C "$temp" -xf -
+finish_stage
+trap - EXIT
+"#,
+        sandbox_mount_parent_chain_functions_script()
+    )
+}
+
 pub(super) fn container_remove_mount_path_script() -> String {
     format!(
         "set -eu\n{}\nremove_mount_path_if_parent_safe \"$1\" \"$2\"\n",
@@ -181,7 +201,8 @@ async fn import_dir_to_container(
     dest: &Path,
 ) -> Result<()> {
     // Stream a tar archive into the container so extracted files are writable by the execution
-    // user (avoids `container cp` ownership quirks).
+    // user (avoids `container cp` ownership quirks). The guest script stages the extract before
+    // replacing the materialized root so failed streams are not mistaken for ready imports.
     let mut tar_cmd = Command::new("tar");
     tar_cmd.arg("-C").arg(src).arg("-cf").arg("-").arg(".");
     tar_cmd.stdout(Stdio::piped());
@@ -192,12 +213,13 @@ async fn import_dir_to_container(
     pod_cmd
         .arg("exec")
         .arg("--interactive")
-        .arg("--workdir")
-        .arg(dest)
         .arg(container_id)
-        .arg("tar")
-        .arg("-xf")
-        .arg("-");
+        .arg("sh")
+        .arg("-lc")
+        .arg(container_import_dir_script())
+        .arg("--")
+        .arg(CTX_CONTAINER_WORKSPACE_ROOT)
+        .arg(dest);
     pod_cmd.stdin(Stdio::piped());
     let mut pod_child = pod_cmd.spawn().context("spawning sandbox exec tar")?;
     let mut pod_in = pod_child
@@ -205,15 +227,13 @@ async fn import_dir_to_container(
         .take()
         .context("taking sandbox exec stdin")?;
 
-    tokio::io::copy(&mut tar_out, &mut pod_in)
+    let copy_result = tokio::io::copy(&mut tar_out, &mut pod_in)
         .await
-        .context("streaming tar to sandbox exec")?;
+        .context("streaming tar to sandbox exec");
+    drop(tar_out);
     drop(pod_in);
 
     let tar_status = tar_child.wait().await.context("waiting on tar")?;
-    if !tar_status.success() {
-        anyhow::bail!("tar failed with status {tar_status}");
-    }
     let out = pod_child
         .wait_with_output()
         .await
@@ -224,6 +244,14 @@ async fn import_dir_to_container(
             out.status,
             String::from_utf8_lossy(&out.stderr).trim()
         );
+    }
+    if let Err(err) = copy_result {
+        let _ = container_rm_rf(state, container_id, dest).await;
+        return Err(err);
+    }
+    if !tar_status.success() {
+        let _ = container_rm_rf(state, container_id, dest).await;
+        anyhow::bail!("tar failed with status {tar_status}");
     }
     Ok(())
 }
@@ -247,8 +275,6 @@ pub(super) async fn ensure_attachment_imported_to_container(
         return Ok(dest);
     }
     // Reset and re-import.
-    let _ = container_rm_rf(state, container_id, &dest).await;
-    container_mkdir_p(state, container_id, &dest).await?;
     import_dir_to_container(state, container_id, src_dir, &dest).await?;
     Ok(dest)
 }
