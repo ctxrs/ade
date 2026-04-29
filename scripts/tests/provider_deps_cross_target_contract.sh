@@ -76,6 +76,17 @@ cat >"$PYTHON_PROVIDER_MATRIX_JSON" <<'EOF'
         "python_version": "3.12.13",
         "python_build_tag": "20260303"
       }
+    },
+    {
+      "id": "mistral",
+      "managed_install": {
+        "kind": "python",
+        "package": "mistral",
+        "entrypoint": "mistral",
+        "version": "1.0.0",
+        "python_version": "3.12.13",
+        "python_build_tag": "20260303"
+      }
     }
   ]
 }
@@ -164,6 +175,36 @@ grep -q -- "func-timeout==4.3.5" "$FAKE_PYTHON_LOG"
 grep -q -- "--find-links" "$FAKE_PYTHON_LOG"
 grep -q -- "--only-binary=:all:" "$FAKE_PYTHON_LOG"
 grep -q -- "--platform macosx_10_15_x86_64" "$FAKE_PYTHON_LOG"
+
+NO_PURE_WHEEL_LOG="$TMP_DIR/no-pure-wheel-python.log"
+NO_PURE_WHEEL_OUT="$TMP_DIR/python-provider-no-pure-wheel"
+NO_PURE_WHEEL_TARGET_RUNTIME="$NO_PURE_WHEEL_OUT/.python-runtimes/target/cpython-3.12.13+20260303-x86_64-apple-darwin"
+mkdir -p "$NO_PURE_WHEEL_TARGET_RUNTIME/bin"
+cat >"$NO_PURE_WHEEL_TARGET_RUNTIME/bin/python3" <<'EOF'
+#!/usr/bin/env bash
+echo "target python should not run during explicit macOS wheel staging" >&2
+exit 2
+EOF
+chmod +x "$NO_PURE_WHEEL_TARGET_RUNTIME/bin/python3"
+
+CTX_PROVIDER_DEPS_BUILD_HOST_OS="macos" \
+CTX_PROVIDER_DEPS_BUILD_HOST_ARCH="aarch64" \
+FAKE_PYTHON_LOG="$NO_PURE_WHEEL_LOG" \
+PATH="$FAKE_BIN:$PATH" \
+PROVIDER_MATRIX_JSON="$PYTHON_PROVIDER_MATRIX_JSON" \
+  bash "$ROOT_DIR/scripts/provider_deps_build_staging.sh" \
+  --out-dir "$NO_PURE_WHEEL_OUT" \
+  --os macos \
+  --arch x86_64 \
+  --providers "mistral"
+
+test -f "$NO_PURE_WHEEL_OUT/provider_deps_index.json"
+grep -q -- "--only-binary=:all:" "$NO_PURE_WHEEL_LOG"
+grep -q -- "--platform macosx_10_15_x86_64" "$NO_PURE_WHEEL_LOG"
+if grep -q -- "--find-links" "$NO_PURE_WHEEL_LOG"; then
+  echo "python providers without pure-python wheel overrides must not pass --find-links" >&2
+  exit 1
+fi
 
 NATIVE_PYTHON_PROVIDER_OUT="$TMP_DIR/python-provider-native"
 NATIVE_TARGET_RUNTIME="$NATIVE_PYTHON_PROVIDER_OUT/.python-runtimes/target/cpython-3.12.13+20260303-x86_64-apple-darwin"

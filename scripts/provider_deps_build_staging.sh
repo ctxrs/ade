@@ -789,23 +789,33 @@ stage_matrix_python_provider() {
     host_python_cmd="$(resolve_host_python_cmd_for_version "$python_version" "$python_build_tag")"
     local pure_python_wheelhouse
     pure_python_wheelhouse="$(prepare_python_provider_pure_wheelhouse "$provider_id" "$host_python_cmd")"
-    local -a pure_python_wheelhouse_args=()
-    if [[ -n "$pure_python_wheelhouse" ]]; then
-      pure_python_wheelhouse_args=(--find-links "$pure_python_wheelhouse")
-    fi
     echo "info: installing macOS wheel set for ${TARGET_OS}/${TARGET_ARCH} via host ${HOST_OS}/${HOST_ARCH} pip" >&2
-    PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    PIP_NO_INPUT=1 \
-    "$host_python_cmd" -m pip install \
-      --disable-pip-version-check \
-      --no-input \
-      "${pure_python_wheelhouse_args[@]}" \
-      --only-binary=:all: \
-      --platform "$pip_target_platform" \
-      --python-version "$python_series" \
-      --implementation cp \
-      --target "$provider_root/site-packages" \
-      "${package}==${version}" >&2
+    if [[ -n "$pure_python_wheelhouse" ]]; then
+      PIP_DISABLE_PIP_VERSION_CHECK=1 \
+      PIP_NO_INPUT=1 \
+      "$host_python_cmd" -m pip install \
+        --disable-pip-version-check \
+        --no-input \
+        --find-links "$pure_python_wheelhouse" \
+        --only-binary=:all: \
+        --platform "$pip_target_platform" \
+        --python-version "$python_series" \
+        --implementation cp \
+        --target "$provider_root/site-packages" \
+        "${package}==${version}" >&2
+    else
+      PIP_DISABLE_PIP_VERSION_CHECK=1 \
+      PIP_NO_INPUT=1 \
+      "$host_python_cmd" -m pip install \
+        --disable-pip-version-check \
+        --no-input \
+        --only-binary=:all: \
+        --platform "$pip_target_platform" \
+        --python-version "$python_series" \
+        --implementation cp \
+        --target "$provider_root/site-packages" \
+        "${package}==${version}" >&2
+    fi
     if [[ -n "$pure_python_wheelhouse" ]]; then
       rm -rf "$pure_python_wheelhouse"
     fi
