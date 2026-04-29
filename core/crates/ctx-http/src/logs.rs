@@ -99,37 +99,6 @@ pub async fn append_desktop_log_line(data_root: &Path, line: &str) -> Result<()>
     Ok(())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::redact_sensitive;
-
-    #[test]
-    fn redact_sensitive_covers_scoped_mcp_tokens() {
-        let input = concat!(
-            "CTX_MCP_TOKEN=env-secret ",
-            "{\"CTX_MCP_TOKEN\":\"json-secret\"} ",
-            "{\"CTX_MCP_TOKEN\": \"json-spaced-secret\"} ",
-            "{\"ctx_mcp_token\":\"lower-secret\"} ",
-            "{\"ctx_mcp_token\": \"lower-spaced-secret\"} ",
-            "{\"ctxMcpToken\":\"camel-secret\"}"
-        );
-
-        let redacted = redact_sensitive(input);
-
-        for secret in [
-            "env-secret",
-            "json-secret",
-            "json-spaced-secret",
-            "lower-secret",
-            "lower-spaced-secret",
-            "camel-secret",
-        ] {
-            assert!(!redacted.contains(secret), "{secret} leaked: {redacted}");
-        }
-        assert_eq!(redacted.matches("[REDACTED]").count(), 6);
-    }
-}
-
 pub async fn list_log_files(data_root: &Path) -> Vec<LogFileInfo> {
     let dir = logs_dir(data_root);
     let mut entries = Vec::new();
@@ -188,4 +157,35 @@ pub async fn open_logs_folder(data_root: &Path) -> Result<()> {
         anyhow::bail!("failed to open logs folder (exit={status})");
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::redact_sensitive;
+
+    #[test]
+    fn redact_sensitive_covers_scoped_mcp_tokens() {
+        let input = concat!(
+            "CTX_MCP_TOKEN=env-secret ",
+            "{\"CTX_MCP_TOKEN\":\"json-secret\"} ",
+            "{\"CTX_MCP_TOKEN\": \"json-spaced-secret\"} ",
+            "{\"ctx_mcp_token\":\"lower-secret\"} ",
+            "{\"ctx_mcp_token\": \"lower-spaced-secret\"} ",
+            "{\"ctxMcpToken\":\"camel-secret\"}"
+        );
+
+        let redacted = redact_sensitive(input);
+
+        for secret in [
+            "env-secret",
+            "json-secret",
+            "json-spaced-secret",
+            "lower-secret",
+            "lower-spaced-secret",
+            "camel-secret",
+        ] {
+            assert!(!redacted.contains(secret), "{secret} leaked: {redacted}");
+        }
+        assert_eq!(redacted.matches("[REDACTED]").count(), 6);
+    }
 }

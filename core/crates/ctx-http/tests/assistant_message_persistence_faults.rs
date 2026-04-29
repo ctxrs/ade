@@ -83,7 +83,7 @@ async fn assistant_message_persistence_faults_recover_or_fail_honestly() {
         ctx_http::fault_injection::set_failpoint("ctx_http.persist_assistant_message.transient", 1);
 
         let ws = common::create_workspace(&app, repo.path(), "ws").await;
-        let (task, session) =
+        let (_task, session) =
             common::create_task_with_session(&app, ws.id.0, "t1", "fake", "fake-model").await;
         let user_message = post_message(&app, session.id.0, "retry me").await;
         let turn_id = user_message.turn_id.expect("turn id");
@@ -155,7 +155,7 @@ async fn assistant_message_persistence_faults_recover_or_fail_honestly() {
         let app = common::router(state.clone());
 
         let ws = common::create_workspace(&app, repo.path(), "ws").await;
-        let (task, session) =
+        let (_task, session) =
             common::create_task_with_session(&app, ws.id.0, "t1", "fake", "fake-model").await;
         let user_message = post_message(&app, session.id.0, "retry after partial write").await;
         ctx_store::fault_injection::set_failpoint("ctx_store.insert_message.after_insert", 1);
@@ -219,7 +219,7 @@ async fn assistant_message_persistence_faults_recover_or_fail_honestly() {
         ctx_http::fault_injection::set_failpoint("ctx_http.persist_assistant_message.fatal", 1);
 
         let ws = common::create_workspace(&app, repo.path(), "ws").await;
-        let (task, session) =
+        let (_task, session) =
             common::create_task_with_session(&app, ws.id.0, "t1", "fake", "fake-model").await;
         let user_message = post_message(&app, session.id.0, "fail me").await;
         let turn_id = user_message.turn_id.expect("turn id");

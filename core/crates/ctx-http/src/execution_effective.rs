@@ -10,10 +10,8 @@ use ctx_provider_install::install_state::InstallTarget;
 mod environment;
 mod override_settings;
 
-pub(crate) use environment::validate_execution_environment_against_settings;
 pub use environment::{
-    apply_execution_environment, effective_execution_settings_for_environment,
-    effective_install_target_for_environment,
+    effective_execution_settings_for_environment, effective_install_target_for_environment,
 };
 pub(crate) use override_settings::{
     apply_workspace_execution_settings_override, validate_workspace_execution_settings_override,

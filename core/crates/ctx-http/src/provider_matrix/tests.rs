@@ -2,11 +2,11 @@ use super::*;
 use crate::installer::{AgentServerCommand, AgentServerConfigFile, ManagedInstallMetadata};
 use ctx_provider_install::install_state::InstallTarget;
 use sha2::{Digest, Sha256};
-use std::sync::Mutex;
 use tempfile::tempdir;
+use tokio::sync::Mutex;
 
 const CURRENT_CTX_VERSION: Option<&str> = Some("0.59.0-canary.deadbeefcafe");
-static ENV_LOCK: Mutex<()> = Mutex::new(());
+static ENV_LOCK: Mutex<()> = Mutex::const_new(());
 
 struct EnvGuard {
     key: &'static str,
@@ -192,7 +192,7 @@ async fn load_matrix_returns_builtin_when_cache_missing() {
 
 #[tokio::test]
 async fn refresh_matrix_uses_bundled_matrix_without_remote_fetch() {
-    let _env_lock = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+    let _env_lock = ENV_LOCK.lock().await;
     let _env = clear_provider_matrix_env();
     let dir = tempdir().expect("tempdir");
     let bundle_dir = dir.path().join("bundle");
@@ -216,7 +216,7 @@ async fn refresh_matrix_uses_bundled_matrix_without_remote_fetch() {
 
 #[tokio::test]
 async fn refresh_matrix_ignores_disk_cache_when_bundle_is_unavailable() {
-    let _env_lock = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+    let _env_lock = ENV_LOCK.lock().await;
     let _env = clear_provider_matrix_env();
     let dir = tempdir().expect("tempdir");
     ctx_provider_matrix::save_cached_matrix(dir.path(), &test_matrix("cached-provider"))
@@ -237,7 +237,7 @@ async fn refresh_matrix_ignores_disk_cache_when_bundle_is_unavailable() {
 
 #[tokio::test]
 async fn refresh_matrix_uses_builtin_as_visible_degraded_fallback_without_bundle() {
-    let _env_lock = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+    let _env_lock = ENV_LOCK.lock().await;
     let _env = clear_provider_matrix_env();
     let dir = tempdir().expect("tempdir");
     let cache = tokio::sync::Mutex::new(ProviderMatrixCache::default());
@@ -255,7 +255,7 @@ async fn refresh_matrix_uses_builtin_as_visible_degraded_fallback_without_bundle
 
 #[tokio::test]
 async fn refresh_matrix_explicit_bundle_matrix_suppresses_bundle() {
-    let _env_lock = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+    let _env_lock = ENV_LOCK.lock().await;
     let _env = clear_provider_matrix_env();
     let dir = tempdir().expect("tempdir");
     let bundle_dir = dir.path().join("bundle");
@@ -286,7 +286,7 @@ async fn refresh_matrix_explicit_bundle_matrix_suppresses_bundle() {
 
 #[tokio::test]
 async fn refresh_matrix_ignores_disk_cache_when_bundle_dir_exists() {
-    let _env_lock = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+    let _env_lock = ENV_LOCK.lock().await;
     let _env = clear_provider_matrix_env();
     let dir = tempdir().expect("tempdir");
     let bundle_dir = dir.path().join("bundle");
@@ -312,7 +312,7 @@ async fn refresh_matrix_ignores_disk_cache_when_bundle_dir_exists() {
 
 #[tokio::test]
 async fn refresh_matrix_invalid_explicit_override_reports_degraded_bundled_fallback() {
-    let _env_lock = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+    let _env_lock = ENV_LOCK.lock().await;
     let _env = clear_provider_matrix_env();
     let dir = tempdir().expect("tempdir");
     let bundle_dir = dir.path().join("bundle");
@@ -340,7 +340,7 @@ async fn refresh_matrix_invalid_explicit_override_reports_degraded_bundled_fallb
 #[tokio::test]
 async fn refresh_matrix_invalid_explicit_override_reports_degraded_builtin_fallback_without_bundle()
 {
-    let _env_lock = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+    let _env_lock = ENV_LOCK.lock().await;
     let _env = clear_provider_matrix_env();
     let dir = tempdir().expect("tempdir");
     let explicit_path = dir.path().join("missing-provider-matrix.json");

@@ -15,16 +15,30 @@ use crate::daemon::AppState;
 use crate::installer;
 use crate::ops_events::OpsEvent;
 
+pub(super) struct ProviderRuntimeEnvironmentRequest<'a> {
+    pub state: &'a Arc<AppState>,
+    pub provider_env: &'a mut HashMap<String, String>,
+    pub runtime_provider_id: &'a str,
+    pub runtime_plan: &'a ctx_harness_runtime::HarnessExecutionPlan,
+    pub is_linux_sandbox: bool,
+    pub using_endpoint_source: bool,
+    pub adapter_cfg: &'a installer::AgentServerConfigFile,
+    pub install_target: InstallTarget,
+}
+
 pub(super) async fn prepare_provider_runtime_environment(
-    state: &Arc<AppState>,
-    provider_env: &mut HashMap<String, String>,
-    runtime_provider_id: &str,
-    runtime_plan: &ctx_harness_runtime::HarnessExecutionPlan,
-    is_linux_sandbox: bool,
-    using_endpoint_source: bool,
-    adapter_cfg: &installer::AgentServerConfigFile,
-    install_target: InstallTarget,
+    request: ProviderRuntimeEnvironmentRequest<'_>,
 ) -> Result<()> {
+    let ProviderRuntimeEnvironmentRequest {
+        state,
+        provider_env,
+        runtime_provider_id,
+        runtime_plan,
+        is_linux_sandbox,
+        using_endpoint_source,
+        adapter_cfg,
+        install_target,
+    } = request;
     if runtime_provider_id == CODEX_PROVIDER_ID && is_linux_sandbox && using_endpoint_source {
         if let Some(root) = runtime_plan.env_overrides.get("CTX_DATA_ROOT") {
             provider_accounts::ensure_codex_endpoint_runtime_home_from_env(
@@ -152,21 +166,38 @@ pub(super) async fn prepare_provider_runtime_environment(
     Ok(())
 }
 
-pub(super) fn emit_provider_run_env_ready_event(
-    state: &Arc<AppState>,
-    session: &Session,
-    run_id: RunId,
-    turn_id: TurnId,
-    workdir_str: &str,
-    full_model_id: &str,
-    execution_environment: &str,
-    session_root_kind: &str,
-    runtime_provider_id: &str,
-    using_endpoint_source: bool,
-    is_linux_sandbox: bool,
-    runtime_plan: &ctx_harness_runtime::HarnessExecutionPlan,
-    provider_env: &HashMap<String, String>,
-) {
+pub(super) struct ProviderRunEnvReadyEvent<'a> {
+    pub state: &'a Arc<AppState>,
+    pub session: &'a Session,
+    pub run_id: RunId,
+    pub turn_id: TurnId,
+    pub workdir_str: &'a str,
+    pub full_model_id: &'a str,
+    pub execution_environment: &'a str,
+    pub session_root_kind: &'a str,
+    pub runtime_provider_id: &'a str,
+    pub using_endpoint_source: bool,
+    pub is_linux_sandbox: bool,
+    pub runtime_plan: &'a ctx_harness_runtime::HarnessExecutionPlan,
+    pub provider_env: &'a HashMap<String, String>,
+}
+
+pub(super) fn emit_provider_run_env_ready_event(event: ProviderRunEnvReadyEvent<'_>) {
+    let ProviderRunEnvReadyEvent {
+        state,
+        session,
+        run_id,
+        turn_id,
+        workdir_str,
+        full_model_id,
+        execution_environment,
+        session_root_kind,
+        runtime_provider_id,
+        using_endpoint_source,
+        is_linux_sandbox,
+        runtime_plan,
+        provider_env,
+    } = event;
     let mut run_env_event = OpsEvent::new("info", "provider_run_env_ready");
     run_env_event.session_id = Some(session.id.0.to_string());
     run_env_event.worktree_id = Some(session.worktree_id.0.to_string());

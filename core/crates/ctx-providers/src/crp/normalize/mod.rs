@@ -119,6 +119,6 @@ fn crp_channel_value(channel: CrpChannel) -> Option<&'static str> {
     }
 }
 
-#[cfg(feature = "fuzz_tests")]
+#[cfg(all(test, feature = "fuzz_tests"))]
 #[path = "tests/fuzz_tests.rs"]
 mod fuzz_tests;

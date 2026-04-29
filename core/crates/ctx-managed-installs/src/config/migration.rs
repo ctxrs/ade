@@ -26,7 +26,7 @@ pub(super) fn bundled_only_mode_applies_to_provider(provider_id: &str) -> bool {
     if providers.is_empty() {
         return true;
     }
-    providers.iter().any(|entry| *entry == provider_id)
+    providers.contains(&provider_id)
 }
 
 fn is_legacy_bundle_path(path: &str) -> bool {

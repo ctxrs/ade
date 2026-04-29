@@ -16,6 +16,12 @@ mod state;
 
 pub(super) use self::state::{session_shutdown_reason, CrpPromptRequest, CrpSession};
 
+#[derive(Default)]
+pub(in crate::crp) struct AuthSessionHooks {
+    pub provider_unknown_event: Option<crate::adapters::ProviderUnknownEventHook>,
+    pub provider_session_ref_claim: Option<crate::adapters::ProviderSessionRefClaimHook>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum AuthSessionOpenMode {
     Standard,

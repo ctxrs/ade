@@ -71,7 +71,7 @@ pub(in crate::api) async fn delete_loaded_task_with_cleanup(
             }
         };
         cleanup_targets.push(TaskWorktreeCleanupTarget {
-            managed_root: managed_worktree_root(&state, &workspace, &worktree),
+            managed_root: managed_worktree_root(state, workspace, &worktree),
             sandbox_binding,
             worktree,
             destroy_worktree_on_cleanup: !other_tasks,

@@ -146,8 +146,8 @@ async fn create_task_creates_default_session_without_prewarmed_provider_statuses
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(task.primary_session_id.is_some(), true);
-    assert_eq!(task.primary_worktree_id.is_some(), true);
+    assert!(task.primary_session_id.is_some());
+    assert!(task.primary_worktree_id.is_some());
 
     let store = state.store_for_workspace(workspace.id).await.unwrap();
     let sessions = store.list_sessions_for_task(task.id).await.unwrap();

@@ -51,7 +51,10 @@ use self::helpers::{
     load_system_prompt_append_for_relationship, normalize_session_model_id,
     provider_supports_system_prompt_append, runtime_provider_id_for_session_provider,
 };
-use self::provider_env::{emit_provider_run_env_ready_event, prepare_provider_runtime_environment};
+use self::provider_env::{
+    emit_provider_run_env_ready_event, prepare_provider_runtime_environment,
+    ProviderRunEnvReadyEvent, ProviderRuntimeEnvironmentRequest,
+};
 use self::tool_runtime::{cwd_outside_worktree, maybe_spool_tool_output};
 use self::turn_start::{
     apply_crp_launch_policy_env_for_control_mode, provider_mode_id_for, turn_start_deadline,
@@ -365,34 +368,34 @@ pub(crate) async fn start_turn(
     )
     .await;
 
-    prepare_provider_runtime_environment(
+    prepare_provider_runtime_environment(ProviderRuntimeEnvironmentRequest {
         state,
-        &mut provider_env,
+        provider_env: &mut provider_env,
         runtime_provider_id,
-        &runtime_plan,
+        runtime_plan: &runtime_plan,
         is_linux_sandbox,
         using_endpoint_source,
-        &adapter_cfg,
+        adapter_cfg: &adapter_cfg,
         install_target,
-    )
+    })
     .await?;
     apply_crp_launch_policy_env_for_control_mode(&mut provider_env, &provider_control_mode);
 
-    emit_provider_run_env_ready_event(
+    emit_provider_run_env_ready_event(ProviderRunEnvReadyEvent {
         state,
         session,
         run_id,
         turn_id,
-        &workdir_str,
-        &full_model_id,
-        execution_environment.as_str(),
+        workdir_str: &workdir_str,
+        full_model_id: &full_model_id,
+        execution_environment: execution_environment.as_str(),
         session_root_kind,
         runtime_provider_id,
         using_endpoint_source,
         is_linux_sandbox,
-        &runtime_plan,
-        &provider_env,
-    );
+        runtime_plan: &runtime_plan,
+        provider_env: &provider_env,
+    });
 
     let system_prompt_append =
         load_system_prompt_append_for_relationship(&store, session.relationship.as_deref()).await?;

@@ -319,10 +319,12 @@ pub(in crate::api) async fn create_task(
             store.clone(),
             task.clone(),
             ws.clone(),
-            provider_id,
-            model_id,
-            reasoning_effort,
-            execution_environment,
+            DefaultSessionSeed {
+                provider_id,
+                model_id,
+                reasoning_effort,
+                execution_environment,
+            },
         )
         .await
     };

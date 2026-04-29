@@ -1,5 +1,7 @@
 #![cfg(feature = "fault_injection")]
 
+mod common;
+
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -110,7 +112,7 @@ async fn setup_server() -> (
         .await
         .unwrap();
 
-    let session = common::load_primary_session_http(client, &base, &task).await;
+    let session = common::load_primary_session_http(&client, &base, &task).await;
     let store = state.store_for_task(task.id).await.unwrap();
     let sessions = store.list_sessions_for_task(task.id).await.unwrap();
     assert!(

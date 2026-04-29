@@ -83,7 +83,7 @@ pub(super) async fn wait_for_run_terminal_turn(
     session_id: SessionId,
     run_id: RunId,
 ) -> Result<Option<SessionTurn>, String> {
-    if let Some(turn) = latest_terminal_turn_for_run(&store, session_id, run_id).await? {
+    if let Some(turn) = latest_terminal_turn_for_run(store, session_id, run_id).await? {
         return Ok(Some(turn));
     }
     let Some(state) = state_weak.upgrade() else {
@@ -101,13 +101,13 @@ pub(super) async fn wait_for_run_terminal_turn(
                     };
                     rx = state.subscribe_session_event_head(session_id).await;
                 }
-                if let Some(turn) = latest_terminal_turn_for_run(&store, session_id, run_id).await?
+                if let Some(turn) = latest_terminal_turn_for_run(store, session_id, run_id).await?
                 {
                     return Ok(Some(turn));
                 }
             }
             _ = tokio::time::sleep(std::time::Duration::from_millis(250)) => {
-                if let Some(turn) = latest_terminal_turn_for_run(&store, session_id, run_id).await?
+                if let Some(turn) = latest_terminal_turn_for_run(store, session_id, run_id).await?
                 {
                     return Ok(Some(turn));
                 }
@@ -301,23 +301,18 @@ pub(super) async fn persist_subagent_prompt(
         let mut order_seq_state = order_seq_state.lock().await;
         order_seq_state.get_or_assign(format!("message:{}", message_id.0), None)
     };
-    let has_backlog = if state.is_running(session.id).await {
-        true
-    } else if !store
-        .list_queued_messages_for_session(session.id)
-        .await
-        .map_err(internal_api_error)?
-        .is_empty()
-    {
-        true
-    } else {
-        store
+    let has_backlog = state.is_running(session.id).await
+        || !store
+            .list_queued_messages_for_session(session.id)
+            .await
+            .map_err(internal_api_error)?
+            .is_empty()
+        || store
             .get_latest_turn_for_session(session.id)
             .await
             .map_err(internal_api_error)?
             .as_ref()
-            .is_some_and(|turn| turn_status_has_input_backlog(&turn.status))
-    };
+            .is_some_and(|turn| turn_status_has_input_backlog(&turn.status));
     let delivery = if has_backlog {
         MessageDelivery::Queued
     } else {

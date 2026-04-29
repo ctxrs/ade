@@ -63,7 +63,7 @@ pub(in crate::api) async fn health(
     let include_sensitive = health_request_is_authorized(&state, &headers);
     Ok(Json(build_health_response(
         &state,
-        &identity,
+        identity,
         include_sensitive,
     )))
 }
@@ -193,7 +193,7 @@ pub(in crate::api) async fn diagnostics(
     let identity = crate::build_identity::current_build_identity()
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(DiagnosticsResp {
-        daemon: build_health_response(&state, &identity, true),
+        daemon: build_health_response(&state, identity, true),
         platform: serde_json::json!({
             "os": std::env::consts::OS,
             "arch": std::env::consts::ARCH,
@@ -228,9 +228,11 @@ fn build_health_response(
     include_sensitive: bool,
 ) -> HealthResp {
     let version = identity.exact_version.clone();
-    let compatibility_token = include_sensitive
-        .then(|| identity.compatibility_token.clone())
-        .unwrap_or_default();
+    let compatibility_token = if include_sensitive {
+        identity.compatibility_token.clone()
+    } else {
+        String::new()
+    };
     HealthResp {
         version: version.clone(),
         daemon_version: version.clone(),

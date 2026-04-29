@@ -200,7 +200,7 @@ async fn create_session_for_loaded_task_inner(
         match req.execution_environment {
             Some(requested) => {
                 if requested != effective_execution_environment {
-                    if let Some(created_worktree_id) = created_worktree_id.clone() {
+                    if let Some(created_worktree_id) = created_worktree_id {
                         cleanup_orphaned_provisioned_worktree(
                             &state,
                             &store,
@@ -233,7 +233,7 @@ async fn create_session_for_loaded_task_inner(
                 execution_environment = execution_environment.as_str(),
                 "failed to load provider model catalog while creating session: {error}"
             );
-            if let Some(created_worktree_id) = created_worktree_id.clone() {
+            if let Some(created_worktree_id) = created_worktree_id {
                 cleanup_orphaned_provisioned_worktree(
                     &state,
                     &store,
@@ -254,7 +254,7 @@ async fn create_session_for_loaded_task_inner(
     ) {
         Ok(model) => model,
         Err(_) => {
-            if let Some(created_worktree_id) = created_worktree_id.clone() {
+            if let Some(created_worktree_id) = created_worktree_id {
                 cleanup_orphaned_provisioned_worktree(
                     &state,
                     &store,
@@ -279,7 +279,7 @@ async fn create_session_for_loaded_task_inner(
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
         if let Some(existing_ws) = existing_ws {
             if existing_ws != task.workspace_id {
-                if let Some(created_worktree_id) = created_worktree_id.clone() {
+                if let Some(created_worktree_id) = created_worktree_id {
                     cleanup_orphaned_provisioned_worktree(
                         &state,
                         &store,
@@ -306,7 +306,7 @@ async fn create_session_for_loaded_task_inner(
                     || existing.parent_session_id != parent_session_id
                     || existing.relationship != relationship
                 {
-                    if let Some(created_worktree_id) = created_worktree_id.clone() {
+                    if let Some(created_worktree_id) = created_worktree_id {
                         cleanup_orphaned_provisioned_worktree(
                             &state,
                             &store,
@@ -339,7 +339,7 @@ async fn create_session_for_loaded_task_inner(
                 }
                 return Ok(Json(existing));
             }
-            if let Some(created_worktree_id) = created_worktree_id.clone() {
+            if let Some(created_worktree_id) = created_worktree_id {
                 cleanup_orphaned_provisioned_worktree(
                     &state,
                     &store,
@@ -386,7 +386,7 @@ async fn create_session_for_loaded_task_inner(
         {
             Ok(session) => session,
             Err(_) => {
-                if let Some(created_worktree_id) = created_worktree_id.clone() {
+                if let Some(created_worktree_id) = created_worktree_id {
                     cleanup_orphaned_provisioned_worktree(
                         &state,
                         &store,
@@ -418,7 +418,7 @@ async fn create_session_for_loaded_task_inner(
         {
             Ok(session) => session,
             Err(_) => {
-                if let Some(created_worktree_id) = created_worktree_id.clone() {
+                if let Some(created_worktree_id) = created_worktree_id {
                     cleanup_orphaned_provisioned_worktree(
                         &state,
                         &store,
@@ -545,15 +545,19 @@ pub(in crate::api) async fn create_session_for_task(
     create_session_for_task_inner(state, task_id, headers, req).await
 }
 
+pub(in crate::api) struct DefaultSessionSeed {
+    pub provider_id: String,
+    pub model_id: String,
+    pub reasoning_effort: Option<String>,
+    pub execution_environment: ExecutionEnvironment,
+}
+
 pub(in crate::api) async fn create_default_session_for_task(
     state: Arc<AppState>,
     store: Store,
     task: Task,
     workspace: Workspace,
-    provider_id: String,
-    model_id: String,
-    reasoning_effort: Option<String>,
-    execution_environment: ExecutionEnvironment,
+    seed: DefaultSessionSeed,
 ) -> Result<Session, StatusCode> {
     let Json(session) = create_session_for_loaded_task_inner(
         state,
@@ -563,9 +567,9 @@ pub(in crate::api) async fn create_default_session_for_task(
         HeaderMap::new(),
         CreateSessionReq {
             id: None,
-            provider_id,
-            model_id,
-            reasoning_effort,
+            provider_id: seed.provider_id,
+            model_id: seed.model_id,
+            reasoning_effort: seed.reasoning_effort,
             remember_model_preference: false,
             parent_session_id: None,
             relationship: None,
@@ -573,7 +577,7 @@ pub(in crate::api) async fn create_default_session_for_task(
             initial_message_id: None,
             initial_turn_id: None,
             worktree_id: None,
-            execution_environment: Some(execution_environment),
+            execution_environment: Some(seed.execution_environment),
         },
     )
     .await?;
