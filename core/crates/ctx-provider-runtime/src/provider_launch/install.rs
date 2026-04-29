@@ -12,6 +12,12 @@ use super::resolver::is_acp_provider_id;
 use super::status::provider_status_for_target;
 use crate::ProviderRuntimeHost;
 
+mod dependencies;
+#[cfg(test)]
+mod tests;
+
+use dependencies::{seed_running_prerequisite_progress, start_contract_readiness_dependencies};
+
 #[derive(Debug, Clone)]
 pub struct StartProviderInstallError {
     pub message: String,
@@ -82,71 +88,6 @@ where
     validate_contract_dependency_targets(contract, |target| {
         installer::ManagedInstallHost::validate_install_target_allowed(state.as_ref(), target)
     })
-}
-
-async fn start_contract_readiness_dependencies<H>(
-    state: &Arc<H>,
-    managed: &installer::AgentServerConfigFile,
-    matrix: &provider_matrix::ProviderMatrix,
-    provider_id: &str,
-    target: InstallTarget,
-    install_id: InstallId,
-) where
-    H: ProviderInstallHost,
-{
-    let current_ctx_version = installer::ManagedInstallHost::current_ctx_version(state.as_ref());
-    let Ok(contract) = provider_install_contract::resolve_provider_install_contract(
-        installer::ManagedInstallHost::data_root(state.as_ref()),
-        managed,
-        matrix,
-        provider_id,
-        target,
-        current_ctx_version.as_deref(),
-    ) else {
-        return;
-    };
-    for dependency in contract.dependencies_for_role(
-        provider_install_contract::ProviderInstallDependencyRoleKind::Readiness,
-    ) {
-        if let Err(error) = validate_install_target_allowed(state, dependency.target) {
-            tracing::error!(
-                provider_id,
-                dependency_provider_id = dependency.provider_id,
-                dependency_target = dependency.target.as_str(),
-                "provider readiness dependency target is disabled: {}",
-                error.message
-            );
-            continue;
-        }
-        if dependency.satisfied {
-            continue;
-        }
-        let (dependency_install_id, started_new) = state
-            .start_install(dependency.provider_id.clone(), Some(dependency.target))
-            .await;
-        let _ = state
-            .register_install_progress_mirror(dependency_install_id, install_id)
-            .await;
-        if !started_new {
-            continue;
-        }
-        let state2 = state.clone();
-        let dependency_provider_id = dependency.provider_id.clone();
-        tokio::spawn(async move {
-            if let Err(error) = installer::install_provider_with_progress(
-                state2.clone(),
-                dependency_install_id,
-                dependency_provider_id.clone(),
-                dependency.target,
-            )
-            .await
-            {
-                tracing::error!(
-                    "provider dependency install failed ({dependency_provider_id}): {error:#}"
-                );
-            }
-        });
-    }
 }
 
 pub async fn start_provider_install<H>(
@@ -396,43 +337,6 @@ where
     Ok(out)
 }
 
-async fn seed_running_prerequisite_progress<H>(
-    state: &Arc<H>,
-    managed: &installer::AgentServerConfigFile,
-    matrix: &provider_matrix::ProviderMatrix,
-    provider_id: &str,
-    target: InstallTarget,
-    install_id: InstallId,
-) where
-    H: ProviderInstallHost,
-{
-    let current_ctx_version = installer::ManagedInstallHost::current_ctx_version(state.as_ref());
-    let Ok(contract) = provider_install_contract::resolve_provider_install_contract(
-        installer::ManagedInstallHost::data_root(state.as_ref()),
-        managed,
-        matrix,
-        provider_id,
-        target,
-        current_ctx_version.as_deref(),
-    ) else {
-        return;
-    };
-    for dependency in &contract.dependencies {
-        if dependency.satisfied {
-            continue;
-        }
-        let Some(prerequisite_install_id) = state
-            .find_running_install(&dependency.provider_id, Some(dependency.target))
-            .await
-        else {
-            continue;
-        };
-        let _ = state
-            .register_install_progress_mirror(prerequisite_install_id, install_id)
-            .await;
-    }
-}
-
 fn has_provider_update_available(status: &ctx_providers::adapters::ProviderStatus) -> bool {
     let matrix_update = status
         .detail_flag("matrix_update_available")
@@ -656,51 +560,5 @@ where
             return;
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn contract_dependency_target_validation_rejects_host_dependencies() {
-        let contract = provider_install_contract::ProviderInstallContract {
-            resolved_target_key: "linux-x86_64",
-            dependencies: vec![provider_install_contract::ProviderInstallDependency {
-                provider_id: "claude-cli".to_string(),
-                role: provider_install_contract::ProviderInstallDependencyRoleKind::Readiness,
-                target: InstallTarget::Host,
-                satisfied: false,
-            }],
-        };
-
-        let err = validate_contract_dependency_targets(&contract, |target| {
-            if matches!(target, InstallTarget::Host) {
-                anyhow::bail!("host provider installs are disabled by daemon policy");
-            }
-            Ok(())
-        })
-        .expect_err("host dependency should be rejected");
-
-        assert_eq!(err.code.as_deref(), Some("install_target_disabled"));
-        assert!(err.message.contains("claude-cli"));
-        assert!(err.message.contains("target 'host'"));
-    }
-
-    #[test]
-    fn contract_dependency_target_validation_allows_container_dependencies() {
-        let contract = provider_install_contract::ProviderInstallContract {
-            resolved_target_key: "linux-x86_64",
-            dependencies: vec![provider_install_contract::ProviderInstallDependency {
-                provider_id: "runtime-node-container".to_string(),
-                role: provider_install_contract::ProviderInstallDependencyRoleKind::Prerequisite,
-                target: InstallTarget::Container,
-                satisfied: false,
-            }],
-        };
-
-        validate_contract_dependency_targets(&contract, |_target| Ok(()))
-            .expect("container dependency should be allowed");
     }
 }

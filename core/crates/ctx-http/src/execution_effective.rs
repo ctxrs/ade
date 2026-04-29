@@ -1,13 +1,23 @@
 use ctx_core::ids::WorkspaceId;
-use ctx_core::models::ExecutionEnvironment as SessionExecutionEnvironment;
 use ctx_workspace_config as workspace_config;
 
 use crate::daemon::AppState;
-use crate::execution_policy::{ExecutionPolicyDenied, HostExecutionPolicy};
+use crate::execution_policy::HostExecutionPolicy;
 use crate::settings;
 use crate::settings::ExecutionSettings;
-use crate::settings::{ContainerNetworkMode, ExecutionMode};
 use ctx_provider_install::install_state::InstallTarget;
+
+mod environment;
+mod override_settings;
+
+pub(crate) use environment::validate_execution_environment_against_settings;
+pub use environment::{
+    apply_execution_environment, effective_execution_settings_for_environment,
+    effective_install_target_for_environment,
+};
+pub(crate) use override_settings::{
+    apply_workspace_execution_settings_override, validate_workspace_execution_settings_override,
+};
 
 #[derive(Debug)]
 pub enum EffectiveExecutionSettingsError {
@@ -48,123 +58,6 @@ pub async fn effective_execution_settings_classified(
     Ok(effective)
 }
 
-pub(crate) fn apply_workspace_execution_settings_override(
-    settings: &mut ExecutionSettings,
-    ov: &workspace_config::ExecutionSettingsOverride,
-) -> anyhow::Result<()> {
-    let ov = normalize_persisted_workspace_execution_settings_override(settings, ov)?;
-    validate_workspace_execution_settings_override(settings, &ov)?;
-    workspace_config::apply_execution_settings_override(settings, &ov);
-    Ok(())
-}
-
-fn normalize_persisted_workspace_execution_settings_override(
-    _settings: &ExecutionSettings,
-    ov: &workspace_config::ExecutionSettingsOverride,
-) -> anyhow::Result<workspace_config::ExecutionSettingsOverride> {
-    let mut normalized = ov.clone();
-    // Persisted host overrides predate the daemon-owned sandbox-only gate. Treat them as stale
-    // reads; new host writes still go through strict validation before persistence.
-    if matches!(
-        HostExecutionPolicy::current()?,
-        HostExecutionPolicy::SandboxOnly
-    ) && matches!(normalized.mode, Some(ExecutionMode::Host))
-    {
-        normalized.mode = Some(ExecutionMode::Sandbox);
-        normalized.container = workspace_config::ContainerExecutionSettingsOverride::default();
-    }
-    Ok(normalized)
-}
-
-pub(crate) fn validate_workspace_execution_settings_override(
-    settings: &ExecutionSettings,
-    ov: &workspace_config::ExecutionSettingsOverride,
-) -> anyhow::Result<()> {
-    if matches!(settings.mode, ExecutionMode::Sandbox) {
-        if matches!(ov.mode, Some(ExecutionMode::Host)) {
-            return Err(ExecutionPolicyDenied::new(
-                "workspace execution override cannot select host when daemon execution mode is sandbox"
-            )
-            .into());
-        }
-        validate_sandbox_network_override(settings, ov)?;
-    }
-    let mut effective = settings.clone();
-    workspace_config::apply_execution_settings_override(&mut effective, ov);
-    HostExecutionPolicy::current()?.validate_execution_settings(&effective)?;
-    Ok(())
-}
-
-fn validate_sandbox_network_override(
-    settings: &ExecutionSettings,
-    ov: &workspace_config::ExecutionSettingsOverride,
-) -> anyhow::Result<()> {
-    let requested_network = ov
-        .container
-        .network_mode
-        .as_ref()
-        .unwrap_or(&settings.container.network_mode);
-    match (&settings.container.network_mode, requested_network) {
-        (ContainerNetworkMode::LlmOnly, ContainerNetworkMode::LlmOnly) => Ok(()),
-        (ContainerNetworkMode::LlmOnly, requested) => {
-            Err(ExecutionPolicyDenied::new(format!(
-                "workspace execution override cannot broaden sandbox network mode from llm_only to {}",
-                network_mode_label(requested)
-            ))
-            .into())
-        }
-        (ContainerNetworkMode::Allowlist, ContainerNetworkMode::All) => {
-            Err(ExecutionPolicyDenied::new(
-                "workspace execution override cannot broaden sandbox network mode from allowlist to all"
-            )
-            .into())
-        }
-        (ContainerNetworkMode::Allowlist, ContainerNetworkMode::Allowlist) => {
-            validate_allowlist_subset(&settings.container.allowlist, &ov.container.allowlist)
-        }
-        (ContainerNetworkMode::Allowlist, ContainerNetworkMode::LlmOnly) => Ok(()),
-        (ContainerNetworkMode::All, _) => Ok(()),
-    }
-}
-
-fn validate_allowlist_subset(
-    daemon_allowlist: &[String],
-    workspace_allowlist: &Option<Vec<String>>,
-) -> anyhow::Result<()> {
-    let Some(workspace_allowlist) = workspace_allowlist else {
-        return Ok(());
-    };
-    let allowed = daemon_allowlist
-        .iter()
-        .filter_map(|value| trimmed_nonempty(value))
-        .collect::<std::collections::BTreeSet<_>>();
-    for entry in workspace_allowlist
-        .iter()
-        .filter_map(|value| trimmed_nonempty(value))
-    {
-        if !allowed.contains(&entry) {
-            return Err(ExecutionPolicyDenied::new(format!(
-                "workspace execution allowlist entry `{entry}` is not allowed by daemon sandbox allowlist"
-            ))
-            .into());
-        }
-    }
-    Ok(())
-}
-
-fn trimmed_nonempty(value: &str) -> Option<String> {
-    let trimmed = value.trim();
-    (!trimmed.is_empty()).then(|| trimmed.to_string())
-}
-
-fn network_mode_label(mode: &ContainerNetworkMode) -> &'static str {
-    match mode {
-        ContainerNetworkMode::LlmOnly => "llm_only",
-        ContainerNetworkMode::Allowlist => "allowlist",
-        ContainerNetworkMode::All => "all",
-    }
-}
-
 /// Compute effective execution settings for a workspace, combining daemon defaults with any
 /// workspace runtime override.
 pub async fn effective_execution_settings(
@@ -192,71 +85,20 @@ pub async fn effective_install_target(
     Ok(install_target_for_settings(&effective))
 }
 
-pub fn apply_execution_environment(
-    settings: &mut ExecutionSettings,
-    execution_environment: SessionExecutionEnvironment,
-) {
-    match execution_environment {
-        SessionExecutionEnvironment::Host => {
-            settings.mode = crate::settings::ExecutionMode::Host;
-        }
-        SessionExecutionEnvironment::Sandbox => {
-            settings.mode = crate::settings::ExecutionMode::Sandbox;
-            settings.container.mount_mode = crate::settings::ContainerMountMode::DiskIsolated;
-        }
-    }
-}
-
-pub(crate) fn validate_execution_environment_against_settings(
-    settings: &ExecutionSettings,
-    execution_environment: SessionExecutionEnvironment,
-) -> anyhow::Result<()> {
-    HostExecutionPolicy::current()?.validate_execution_environment(execution_environment)?;
-    if matches!(settings.mode, ExecutionMode::Sandbox)
-        && matches!(execution_environment, SessionExecutionEnvironment::Host)
-    {
-        return Err(ExecutionPolicyDenied::new(
-            "session execution environment host is not allowed when effective daemon execution mode is sandbox"
-        )
-        .into());
-    }
-    Ok(())
-}
-
-pub async fn effective_execution_settings_for_environment(
-    state: &AppState,
-    workspace_id: WorkspaceId,
-    execution_environment: SessionExecutionEnvironment,
-) -> anyhow::Result<ExecutionSettings> {
-    let mut effective = effective_execution_settings(state, workspace_id).await?;
-    validate_execution_environment_against_settings(&effective, execution_environment)?;
-    apply_execution_environment(&mut effective, execution_environment);
-    Ok(effective)
-}
-
-pub async fn effective_install_target_for_environment(
-    state: &AppState,
-    workspace_id: WorkspaceId,
-    execution_environment: SessionExecutionEnvironment,
-) -> anyhow::Result<InstallTarget> {
-    let effective =
-        effective_execution_settings_for_environment(state, workspace_id, execution_environment)
-            .await?;
-    Ok(install_target_for_settings(&effective))
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
         effective_execution_settings, effective_execution_settings_classified,
-        effective_install_target, install_target_for_settings, SessionExecutionEnvironment,
+        effective_install_target, install_target_for_settings,
     };
 
     use std::collections::HashMap;
     use std::path::Path;
 
     use ctx_core::ids::WorkspaceId;
-    use ctx_core::models::{VcsKind, Workspace};
+    use ctx_core::models::{
+        ExecutionEnvironment as SessionExecutionEnvironment, VcsKind, Workspace,
+    };
     use ctx_store::StoreManager;
     use ctx_workspace_config::{ExecutionConfigUpdate, ExecutionEnvironment};
 
