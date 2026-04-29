@@ -20,6 +20,7 @@
     "verify:broader:linux-rbe": "CTX_BAZEL_REMOTE_EXECUTION=linux node scripts/run_verification_router.cjs broader",
     "verify:merge-ready": "node scripts/run_verification_router.cjs merge-ready",
     "buildkite:promote-main": "node scripts/promote_dev_to_main.cjs",
+    "buildkite:promotion-scheduler": "node scripts/run_dev_promotion_scheduler.cjs",
     "buildkite:sync": "node scripts/sync_buildkite.cjs",
     "buildkite:trigger": "node scripts/trigger_buildkite_build.cjs",
     "buildkite:preview": "node scripts/trigger_buildkite_preview.cjs",
