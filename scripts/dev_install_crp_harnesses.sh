@@ -10,6 +10,7 @@ WORKSPACE_MANIFEST="${ROOT_DIR}/core/Cargo.toml"
 # shellcheck source=lib/codex_crp_build_env.sh
 source "${ROOT_DIR}/scripts/lib/codex_crp_build_env.sh"
 
+codex_crp_export_cache_env "${ROOT_DIR}" "codex-crp-dev-install-harnesses"
 CODEX_TARGET_DIR="$(codex_crp_target_dir "${ROOT_DIR}")"
 CODEX_BIN_SRC="${CODEX_TARGET_DIR}/${PROFILE}/codex-crp"
 CODEX_INSTALL_DIR="${DATA_DIR}/providers/agent-servers/codex-crp/dev"

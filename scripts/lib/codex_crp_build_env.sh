@@ -5,28 +5,28 @@ codex_crp_session_id() {
   local scope="${2:-codex-crp}"
   local root_basename
 
-  if [[ -n "${CTX_SESSION_ID:-}" ]]; then
-    printf '%s' "${CTX_SESSION_ID}"
-    return
-  fi
-
   root_basename="$(basename "${root_dir}")"
-  printf '%s' "${scope}-${root_basename}-$$"
+  printf '%s' "${scope}-${root_basename}"
 }
 
 codex_crp_export_cache_env() {
   local root_dir="$1"
   local scope="${2:-codex-crp}"
   local core_dir="${root_dir}/core"
+  local scope_key
+  local target_dir
 
-  export CTX_SESSION_ID
-  CTX_SESSION_ID="$(codex_crp_session_id "${root_dir}" "${scope}")"
+  scope_key="$(codex_crp_session_id "${root_dir}" "${scope}")"
+  export CTX_SESSION_ID="${scope_key}"
+  export CTX_CACHE_SCOPE_KEY="${scope_key}"
   eval "$(node "${core_dir}/scripts/print_ctx_cache_env.cjs" --mode workspace --cwd "${core_dir}" --format shell --mkdir)"
 
-  if [[ -n "${CTX_CRP_TARGET_DIR:-}" ]]; then
-    export CARGO_TARGET_DIR="${CTX_CRP_TARGET_DIR}"
-    mkdir -p "${CARGO_TARGET_DIR}"
-  fi
+  target_dir="$(codex_crp_target_dir "${root_dir}")"
+  export CARGO_TARGET_DIR="${target_dir}"
+  export CTX_VERIFY_CARGO_TARGET_DIR="${target_dir}"
+  export CTX_RUST_CACHE_TARGET_DIR="${target_dir}"
+  export CTX_RUST_CACHE_VERIFY_TARGET_DIR="${target_dir}"
+  mkdir -p "${CARGO_TARGET_DIR}"
 }
 
 codex_crp_target_dir() {
@@ -34,11 +34,6 @@ codex_crp_target_dir() {
 
   if [[ -n "${CTX_CRP_TARGET_DIR:-}" ]]; then
     printf '%s' "${CTX_CRP_TARGET_DIR}"
-    return
-  fi
-
-  if [[ -n "${CARGO_TARGET_DIR:-}" ]]; then
-    printf '%s' "${CARGO_TARGET_DIR}"
     return
   fi
 
