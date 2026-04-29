@@ -29,7 +29,9 @@ DESKTOP_RELEASE_CONTRACT_DATA = COMMON_CORE_DATA + [
 
 PROVIDER_AUTH_CONTRACT_DATA = COMMON_CORE_DATA + [
     "//core:desktop_automation_files",
+    "//core:ctx_http_auth_sources",
     "//core:provider_matrix_sources",
+    "//core:web_client_api_sources",
 ]
 
 DESKTOP_PARITY_CONTRACT_DATA = COMMON_CORE_DATA + [

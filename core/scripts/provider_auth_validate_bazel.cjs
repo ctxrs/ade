@@ -6,6 +6,8 @@ const path = require("node:path");
 const coreRoot = path.resolve(__dirname, "..");
 
 const checks = [
+  ["scripts/desktop_browser_route_contract.cjs"],
+  ["--test", "scripts/desktop_browser_route_contract.test.cjs"],
   ["scripts/validate_provider_auth_matrix.cjs", "--check-report"],
   ["scripts/desktop_e2e_secret_contract.cjs", "--check-report"],
 ];

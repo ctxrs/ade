@@ -40,3 +40,15 @@ filegroup(
     srcs = ["//core/crates/ctx-provider-accounts:src/provider_matrix.json"],
     visibility = ["//visibility:public"],
 )
+
+filegroup(
+    name = "web_client_api_sources",
+    srcs = glob(["apps/web/src/**"], allow_empty = True),
+    visibility = ["//visibility:public"],
+)
+
+filegroup(
+    name = "ctx_http_auth_sources",
+    srcs = glob(["crates/ctx-http/src/api/auth/**"], allow_empty = True),
+    visibility = ["//visibility:public"],
+)
