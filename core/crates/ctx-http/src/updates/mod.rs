@@ -31,9 +31,10 @@ pub use managed_daemon::{
 };
 pub use manifest::{
     default_download_base_url, fetch_latest_manifest, fetch_latest_manifest_with_params,
-    in_place_update_capability, is_update_available, join_url, normalize_release_channel,
-    normalize_version_str, platform_key, platform_supported, release_manifest_url,
-    resolve_release_artifact_url, ReleaseArtifact, ReleaseManifest, ReleasePlatform,
+    in_place_update_capability, is_update_available, join_url, normalize_release_artifact_sha256,
+    normalize_release_channel, normalize_version_str, platform_key, platform_supported,
+    release_manifest_url, resolve_release_artifact_url, ReleaseArtifact, ReleaseManifest,
+    ReleasePlatform,
 };
 pub use self_update::self_update_daemon;
 
@@ -320,6 +321,25 @@ mod tests {
             url,
             "https://api.ctx.rs/functions/v1/download/stable/9.9.9/ctx.AppImage"
         );
+    }
+
+    #[test]
+    fn release_artifact_url_rejects_same_origin_paths_outside_configured_base_path() {
+        let err = resolve_release_artifact_url(
+            "https://api.ctx.rs/functions/v1",
+            "https://api.ctx.rs/download/stable/9.9.9/ctx.AppImage",
+        )
+        .expect_err("same-origin artifact outside release base path should fail");
+        assert!(err.to_string().contains("base path"));
+    }
+
+    #[test]
+    fn normalize_release_artifact_sha256_rejects_path_material() {
+        let err = normalize_release_artifact_sha256(
+            "../aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        )
+        .expect_err("invalid digest should fail");
+        assert!(err.to_string().contains("64-character hex"));
     }
 
     #[test]

@@ -30,9 +30,6 @@ async fn install_title_generation_local_impl(
         anyhow::bail!("llama.cpp runtime not available for this platform");
     };
 
-    let runtime_dir = title_generation_local::runtime_dir(state.data_root());
-    tokio::fs::create_dir_all(&runtime_dir).await.ok();
-
     let runtime_bin = title_generation_local::find_runtime_binary(state.data_root());
     if runtime_bin.is_none() {
         emit_install(
@@ -97,17 +94,56 @@ async fn install_title_generation_local_impl(
         )
         .await;
 
-        match runtime_spec.archive_kind {
+        let runtime_dir = title_generation_local::runtime_dir(state.data_root());
+        let staging_dir = prepare_atomic_install_dir(&runtime_dir).await?;
+        let extract_result = match runtime_spec.archive_kind {
             title_generation_local::RuntimeArchiveKind::TarGz => {
-                extract_tar_gz_to_dir(&tmp, &runtime_dir).context("extract runtime tar.gz")?;
+                extract_tar_gz_to_dir(&tmp, &staging_dir).context("extract runtime tar.gz")
             }
             title_generation_local::RuntimeArchiveKind::Zip => {
-                extract_zip_to_dir(&tmp, &runtime_dir)?;
+                extract_zip_to_dir(&tmp, &staging_dir)
             }
+        };
+        if let Err(error) = extract_result {
+            tokio::fs::remove_dir_all(&staging_dir).await.ok();
+            return Err(error);
         }
 
-        let runtime_bin = title_generation_local::find_runtime_binary(state.data_root())
-            .ok_or_else(|| anyhow::anyhow!("llama-server binary not found after extraction"))?;
+        let staged_runtime_bin = match find_unique_path_ending_with(
+            &staging_dir,
+            title_generation_local::runtime_binary_name(),
+        )
+        .with_context(|| {
+            format!(
+                "llama-server binary not found after extracting {}",
+                runtime_dir.display()
+            )
+        }) {
+            Ok(path) => path,
+            Err(error) => {
+                tokio::fs::remove_dir_all(&staging_dir).await.ok();
+                return Err(error);
+            }
+        };
+        if let Err(error) = ensure_executable(&staged_runtime_bin) {
+            tokio::fs::remove_dir_all(&staging_dir).await.ok();
+            return Err(error);
+        }
+        let relative_runtime_bin = match staged_runtime_bin.strip_prefix(&staging_dir) {
+            Ok(path) => path.to_path_buf(),
+            Err(_) => {
+                tokio::fs::remove_dir_all(&staging_dir).await.ok();
+                anyhow::bail!(
+                    "extracted runtime binary escaped staging dir: {}",
+                    staged_runtime_bin.display()
+                );
+            }
+        };
+        if let Err(error) = commit_atomic_install_dir(&staging_dir, &runtime_dir).await {
+            tokio::fs::remove_dir_all(&staging_dir).await.ok();
+            return Err(error);
+        }
+        let runtime_bin = runtime_dir.join(relative_runtime_bin);
         ensure_executable(&runtime_bin)?;
         tokio::fs::remove_file(&tmp).await.ok();
     }

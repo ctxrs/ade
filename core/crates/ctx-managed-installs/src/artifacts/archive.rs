@@ -293,6 +293,13 @@ mod archive_extraction_tests {
     use super::*;
     use std::io::Write;
 
+    fn set_raw_tar_path(header: &mut tar::Header, raw_path: &[u8]) {
+        assert!(raw_path.len() < 100, "test tar path must fit old header");
+        let bytes = header.as_mut_bytes();
+        bytes[0..100].fill(0);
+        bytes[0..raw_path.len()].copy_from_slice(raw_path);
+    }
+
     fn write_tar_gz(
         path: &Path,
         write_entries: impl FnOnce(
@@ -306,6 +313,36 @@ mod archive_extraction_tests {
         let encoder = builder.into_inner()?;
         encoder.finish()?;
         Ok(())
+    }
+
+    fn patch_zip_entry_unix_mode(zip_path: &Path, entry_name: &str, mode: u32) {
+        let mut bytes = std::fs::read(zip_path).expect("read zip for patching");
+        let mut offset = 0usize;
+        while offset + 46 <= bytes.len() {
+            let relative = bytes[offset..]
+                .windows(4)
+                .position(|window| window == b"PK\x01\x02")
+                .expect("central directory header");
+            let start = offset + relative;
+            assert!(
+                start + 46 <= bytes.len(),
+                "central directory header truncated"
+            );
+            let name_len = u16::from_le_bytes([bytes[start + 28], bytes[start + 29]]) as usize;
+            let extra_len = u16::from_le_bytes([bytes[start + 30], bytes[start + 31]]) as usize;
+            let comment_len = u16::from_le_bytes([bytes[start + 32], bytes[start + 33]]) as usize;
+            let name_start = start + 46;
+            let name_end = name_start + name_len;
+            assert!(name_end <= bytes.len(), "central directory name truncated");
+            if &bytes[name_start..name_end] == entry_name.as_bytes() {
+                bytes[start + 5] = 3;
+                bytes[start + 38..start + 42].copy_from_slice(&(mode << 16).to_le_bytes());
+                std::fs::write(zip_path, bytes).expect("write patched zip");
+                return;
+            }
+            offset = name_end + extra_len + comment_len;
+        }
+        panic!("zip entry not found: {entry_name}");
     }
 
     #[test]
@@ -338,7 +375,7 @@ mod archive_extraction_tests {
             let mut header = tar::Header::new_gnu();
             header.set_mode(0o644);
             header.set_size(data.len() as u64);
-            header.as_gnu_mut().expect("gnu header").name[..13].copy_from_slice(b"../escape.txt");
+            set_raw_tar_path(&mut header, b"../escape.txt");
             header.set_cksum();
             builder.append(&header, &data[..])?;
             Ok(())
@@ -388,10 +425,12 @@ mod archive_extraction_tests {
         let zip_path = temp.path().join("symlink-escape.zip");
         let file = std::fs::File::create(&zip_path).expect("create zip");
         let mut zip = zip::ZipWriter::new(file);
-        let options = zip::write::SimpleFileOptions::default().unix_permissions(0o777);
-        zip.add_symlink("bin/ctx", "../../outside", options)
-            .expect("write zip symlink");
+        let options = zip::write::SimpleFileOptions::default().unix_permissions(0o120777);
+        zip.start_file("bin/ctx", options)
+            .expect("start zip symlink");
+        zip.write_all(b"../../outside").expect("write zip symlink");
         zip.finish().expect("finish zip");
+        patch_zip_entry_unix_mode(&zip_path, "bin/ctx", 0o120777);
 
         let out_dir = temp.path().join("out");
         let err = extract_zip_to_dir(&zip_path, &out_dir).expect_err("symlink escape should fail");
@@ -400,6 +439,31 @@ mod archive_extraction_tests {
             "unexpected error: {err:#}"
         );
         assert!(!temp.path().join("outside").exists());
+    }
+
+    #[test]
+    fn archive_extraction_tar_gz_rejects_hardlinks() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let tar_path = temp.path().join("hardlink.tar.gz");
+        write_tar_gz(&tar_path, |builder| {
+            let mut header = tar::Header::new_gnu();
+            header.set_entry_type(tar::EntryType::Link);
+            header.set_mode(0o777);
+            header.set_size(0);
+            header.set_path("bin/ctx")?;
+            header.set_link_name("bin/other")?;
+            header.set_cksum();
+            builder.append(&header, std::io::empty())?;
+            Ok(())
+        })
+        .expect("write tar.gz");
+
+        let out_dir = temp.path().join("out");
+        let err = extract_tar_gz_to_dir(&tar_path, &out_dir).expect_err("hardlink should fail");
+        assert!(
+            err.to_string().contains("hardlinks are not supported"),
+            "unexpected error: {err:#}"
+        );
     }
 
     #[cfg(unix)]

@@ -119,9 +119,10 @@ async fn download_verified_artifact_to_cache(
     artifact: &ReleaseArtifact,
     final_path: &Path,
 ) -> Result<()> {
+    let expected_sha256 = normalize_release_artifact_sha256(&artifact.sha256)?;
     if final_path.exists() {
         let got = sha256_hex_file(final_path).await?;
-        if got.eq_ignore_ascii_case(artifact.sha256.trim()) {
+        if got == expected_sha256 {
             return Ok(());
         }
         let _ = tokio::fs::remove_file(final_path).await;
@@ -139,12 +140,12 @@ async fn download_verified_artifact_to_cache(
     let url = resolve_release_artifact_url(base_url, &artifact.url_path)?;
     download_to_path(&url, &partial).await?;
     let got = sha256_hex_file(&partial).await?;
-    if !got.eq_ignore_ascii_case(artifact.sha256.trim()) {
+    if got != expected_sha256 {
         let _ = tokio::fs::remove_file(&partial).await;
         anyhow::bail!(
             "checksum mismatch for downloaded artifact {}: expected {}, got {}",
             artifact.url_path,
-            artifact.sha256,
+            expected_sha256,
             got
         );
     }
@@ -177,7 +178,7 @@ async fn download_daemon_update_candidate(
         .join("daemon")
         .join(&source.channel)
         .join(platform)
-        .join(artifact.sha256.trim().to_ascii_lowercase())
+        .join(normalize_release_artifact_sha256(&artifact.sha256)?)
         .join("ctx.new");
     download_verified_artifact_to_cache(&source.base_url, artifact, &final_path).await?;
     Ok(final_path)
@@ -259,7 +260,7 @@ async fn stage_managed_daemon_bundle_update(
         .join("bundles")
         .join(&source.channel)
         .join(platform)
-        .join(artifact.sha256.trim().to_ascii_lowercase());
+        .join(normalize_release_artifact_sha256(&artifact.sha256)?);
     let appimage_path = update_root.join("ctx.AppImage");
     download_verified_artifact_to_cache(&source.base_url, artifact, &appimage_path).await?;
 

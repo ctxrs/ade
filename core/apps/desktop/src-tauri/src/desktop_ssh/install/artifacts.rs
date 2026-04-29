@@ -218,10 +218,27 @@ fn validate_remote_artifact_url(base: &Url, raw: &str) -> Result<String> {
             resolved
         );
     }
+    let base_path = base.path().trim_end_matches('/');
+    if !base_path.is_empty() && base_path != "/" {
+        let resolved_path = resolved.path();
+        if resolved_path != base_path
+            && !resolved_path
+                .strip_prefix(base_path)
+                .is_some_and(|suffix| suffix.starts_with('/'))
+        {
+            anyhow::bail!(
+                "managed remote artifact URL must stay under release base path {base_path}: {}",
+                resolved
+            );
+        }
+    }
     Ok(resolved.to_string())
 }
 
 fn fetch_release_manifest_for_channel(channel: &str, base_url: &str) -> Result<ReleaseManifest> {
+    let channel =
+        crate::desktop_ssh::model::normalize_update_channel_with_sources(Some(channel), None, None)
+            .map_err(|err| anyhow::anyhow!(err))?;
     let url = format!(
         "{}/releases/{}/latest.json",
         base_url.trim_end_matches('/'),
@@ -324,15 +341,98 @@ pub(crate) fn resolve_managed_remote_bundle_appimage_artifact(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use blake2::{Blake2b512, Digest};
+    use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
+    use rand_core::{OsRng, RngCore};
     use std::io::{Read, Write};
     use std::net::TcpListener;
+    use std::sync::Mutex;
     use std::thread;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    struct EnvGuard {
+        key: &'static str,
+        previous: Option<String>,
+    }
+
+    impl EnvGuard {
+        fn set(key: &'static str, value: &str) -> Self {
+            let previous = std::env::var(key).ok();
+            std::env::set_var(key, value);
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            if let Some(value) = self.previous.take() {
+                std::env::set_var(self.key, value);
+            } else {
+                std::env::remove_var(self.key);
+            }
+        }
+    }
 
     fn test_artifact(url_path: &str) -> ReleaseArtifact {
         ReleaseArtifact {
             url_path: url_path.to_string(),
             sha256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string(),
         }
+    }
+
+    fn minisign_pubkey_b64(verifying_key: &VerifyingKey, key_id: [u8; 8]) -> String {
+        let mut payload = Vec::with_capacity(42);
+        payload.extend_from_slice(&[0x45, 0x64]);
+        payload.extend_from_slice(&key_id);
+        payload.extend_from_slice(verifying_key.as_bytes());
+        let key_text = format!(
+            "untrusted comment: minisign public key: TESTKEY0\n{}\n",
+            BASE64_STANDARD.encode(payload)
+        );
+        BASE64_STANDARD.encode(key_text.as_bytes())
+    }
+
+    fn minisign_signature_b64(signing_key: &SigningKey, key_id: [u8; 8], payload: &[u8]) -> String {
+        let trusted_comment = "trusted comment: timestamp:1772585616\tfile:latest.json";
+        let digest = Blake2b512::digest(payload);
+        let signature_bytes = signing_key.sign(digest.as_ref()).to_bytes();
+        let mut encoded_signature = Vec::with_capacity(74);
+        encoded_signature.extend_from_slice(&[0x45, 0x44]);
+        encoded_signature.extend_from_slice(&key_id);
+        encoded_signature.extend_from_slice(&signature_bytes);
+
+        let mut trusted_comment_bytes = Vec::with_capacity(
+            signature_bytes.len() + trusted_comment.len() - "trusted comment: ".len(),
+        );
+        trusted_comment_bytes.extend_from_slice(&signature_bytes);
+        trusted_comment_bytes.extend_from_slice(
+            trusted_comment
+                .strip_prefix("trusted comment: ")
+                .unwrap_or(trusted_comment)
+                .as_bytes(),
+        );
+        let global_signature = signing_key.sign(&trusted_comment_bytes).to_bytes();
+
+        let signature_text = format!(
+            "untrusted comment: signature from minisign secret key\n{}\n{}\n{}\n",
+            BASE64_STANDARD.encode(encoded_signature),
+            trusted_comment,
+            BASE64_STANDARD.encode(global_signature)
+        );
+        BASE64_STANDARD.encode(signature_text.as_bytes())
+    }
+
+    fn sign_release_manifest_body(manifest_body: &str) -> (String, String) {
+        let mut secret_key = [0u8; 32];
+        OsRng.fill_bytes(&mut secret_key);
+        let signing_key = SigningKey::from_bytes(&secret_key);
+        let verifying_key = signing_key.verifying_key();
+        let key_id = *b"ctxsig01";
+        (
+            minisign_signature_b64(&signing_key, key_id, manifest_body.as_bytes()),
+            minisign_pubkey_b64(&verifying_key, key_id),
+        )
     }
 
     fn spawn_unsigned_manifest_server(manifest_body: &'static str) -> String {
@@ -372,6 +472,42 @@ mod tests {
         format!("http://{addr}")
     }
 
+    fn spawn_signed_manifest_server(manifest_body: String, signature_b64: String) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind test server");
+        let addr = listener.local_addr().expect("test server addr");
+        thread::spawn(move || {
+            for stream in listener.incoming().take(2) {
+                let Ok(mut stream) = stream else {
+                    continue;
+                };
+                let mut buf = [0u8; 2048];
+                let n = stream.read(&mut buf).unwrap_or(0);
+                let request = String::from_utf8_lossy(&buf[..n]);
+                let path = request
+                    .lines()
+                    .next()
+                    .and_then(|line| line.split_whitespace().nth(1))
+                    .unwrap_or("/");
+                let (status, content_type, body) = match path {
+                    "/releases/stable/latest.json" => {
+                        ("200 OK", "application/json", manifest_body.as_str())
+                    }
+                    "/releases/stable/latest.json.sig" => {
+                        ("200 OK", "text/plain", signature_b64.as_str())
+                    }
+                    _ => ("404 Not Found", "text/plain", "not found"),
+                };
+                let response = format!(
+                    "HTTP/1.1 {status}\r\ncontent-type: {content_type}\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                let _ = stream.write_all(response.as_bytes());
+            }
+        });
+        format!("http://{addr}")
+    }
+
     #[test]
     fn remote_release_artifact_rejects_third_party_absolute_url() {
         let err = resolved_release_artifact(
@@ -399,6 +535,19 @@ mod tests {
     }
 
     #[test]
+    fn remote_release_artifact_rejects_same_origin_absolute_url_outside_base_path() {
+        let err = resolved_release_artifact(
+            "https://api.ctx.rs/functions/v1",
+            &test_artifact("https://api.ctx.rs/download/stable/1.2.3/ctx.AppImage"),
+        )
+        .expect_err("same-origin artifact outside base path should fail");
+        assert!(
+            err.to_string().contains("base path"),
+            "unexpected error: {err:#}"
+        );
+    }
+
+    #[test]
     fn remote_release_artifact_rejects_path_traversal() {
         let err = resolved_release_artifact(
             "https://api.ctx.rs/functions/v1",
@@ -420,6 +569,24 @@ mod tests {
         assert!(
             err.to_string().contains("signature"),
             "unexpected error: {err:#}"
+        );
+    }
+
+    #[test]
+    fn remote_release_manifest_rejects_tampered_signed_body() {
+        let _env_lock = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+        let signed_manifest = r#"{"platforms":{"linux-x64":{"daemon":{"url_path":"/download/stable/9.9.9/ctx","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}}}"#;
+        let tampered_manifest = r#"{"platforms":{"linux-x64":{"daemon":{"url_path":"/download/stable/9.9.9/ctx-tampered","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}}}"#;
+        let (signature_b64, pubkey_b64) = sign_release_manifest_body(signed_manifest);
+        let _pubkey = EnvGuard::set(RELEASE_MANIFEST_PUBKEY_OVERRIDE_ENV, &pubkey_b64);
+        let base_url = spawn_signed_manifest_server(tampered_manifest.to_string(), signature_b64);
+
+        let err = fetch_release_manifest_for_channel("stable", &base_url)
+            .expect_err("tampered signed manifest should fail");
+        let message = format!("{err:#}");
+        assert!(
+            message.contains("verifying release manifest signature"),
+            "unexpected error: {message}"
         );
     }
 }

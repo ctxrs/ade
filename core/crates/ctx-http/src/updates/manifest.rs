@@ -96,6 +96,14 @@ pub fn normalize_release_channel(channel: &str) -> Result<String> {
     Ok(trimmed.to_string())
 }
 
+pub fn normalize_release_artifact_sha256(raw: &str) -> Result<String> {
+    let normalized = raw.trim().to_ascii_lowercase();
+    if normalized.len() != 64 || !normalized.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        anyhow::bail!("release manifest artifact sha256 must be a 64-character hex digest");
+    }
+    Ok(normalized)
+}
+
 pub fn platform_key() -> Option<&'static str> {
     let os = std::env::consts::OS;
     let arch = std::env::consts::ARCH;
@@ -315,6 +323,20 @@ fn validate_release_artifact_ref(base: &Url, raw_ref: &str) -> Result<Url> {
             resolved
         );
     }
+    let base_path = base.path().trim_end_matches('/');
+    if !base_path.is_empty() && base_path != "/" {
+        let resolved_path = resolved.path();
+        if resolved_path != base_path
+            && !resolved_path
+                .strip_prefix(base_path)
+                .is_some_and(|suffix| suffix.starts_with('/'))
+        {
+            anyhow::bail!(
+                "release manifest artifact URL must stay under release base path {base_path}: {}",
+                resolved
+            );
+        }
+    }
     Ok(resolved)
 }
 
@@ -334,6 +356,9 @@ fn validate_release_manifest_artifact_references(
         for (artifact_key, artifact) in release_artifacts_for_platform(platform) {
             validate_release_artifact_ref(&base, &artifact.url_path).with_context(|| {
                 format!("validating release manifest artifact {platform_key}/{artifact_key}")
+            })?;
+            normalize_release_artifact_sha256(&artifact.sha256).with_context(|| {
+                format!("validating release manifest artifact {platform_key}/{artifact_key} sha256")
             })?;
         }
     }

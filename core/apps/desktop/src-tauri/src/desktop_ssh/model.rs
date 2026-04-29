@@ -120,6 +120,12 @@ pub(super) fn normalize_update_channel_with_sources(
         .or_else(|| env_channel.map(str::trim).filter(|v| !v.is_empty()))
         .or_else(|| identity_channel.map(str::trim).filter(|v| !v.is_empty()))
         .unwrap_or("stable");
+    if channel.len() > 64 {
+        return Err("invalid channel (must be 64 characters or fewer)".to_string());
+    }
+    if matches!(channel, "." | "..") {
+        return Err("invalid channel (must not be '.' or '..')".to_string());
+    }
     let valid = channel
         .chars()
         .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' || ch == '.');
