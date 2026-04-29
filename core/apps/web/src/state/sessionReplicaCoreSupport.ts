@@ -16,7 +16,7 @@ import type {
 import type { AssistantStreamingState } from "./assistantStreaming";
 import { mergeTurnStatus } from "./sessionSupervisor/cachePolicy";
 import type {
-  SessionReplicaAppendMode,
+  SessionReplicaCanonicalAppendMode,
   SessionReplicaData,
   SessionReplicaFreshnessState,
   SessionReplicaReplaceMode,
@@ -61,7 +61,7 @@ export type SessionReplicaEntry = {
 };
 
 export type SessionReplicaApplyHeadOptions = {
-  appendMode?: SessionReplicaAppendMode;
+  appendMode?: SessionReplicaCanonicalAppendMode;
   replaceMode?: SessionReplicaReplaceMode;
   freshness?: SessionReplicaFreshnessState;
 };

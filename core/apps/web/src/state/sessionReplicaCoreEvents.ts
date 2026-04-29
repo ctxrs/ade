@@ -5,8 +5,10 @@ import type {
   SessionHeadDelta,
   SessionHeadSnapshot,
   SessionTurn,
+  SessionTurnToolSummary,
   WorkspaceActiveSnapshotEvent,
 } from "@ctx/types";
+import { idToString } from "../api/client";
 import { clearSessionHeadV1, clearSessionHistoryPagesV1 } from "./uiStateStore";
 import {
   applyReplicaTranscriptEvent,
@@ -34,6 +36,7 @@ import type {
 } from "./sessionReplicaProtocol";
 import {
   buildCanonicalReplicaPatch,
+  buildStreamDeltaReplicaPatch,
   buildStreamingOverlayReplicaPatch,
 } from "./sessionReplicaPatches";
 import type {
@@ -51,6 +54,48 @@ type SessionReplicaHydrateOptions = {
   silent?: boolean;
   emitOp?: "append" | "replace";
 };
+
+const changedItemsById = <T>(
+  previous: readonly T[],
+  next: readonly T[],
+  getId: (item: T) => string,
+): T[] => {
+  const previousById = new Map<string, T>();
+  for (const item of previous) {
+    const id = getId(item);
+    if (id) previousById.set(id, item);
+  }
+  return next.filter((item) => {
+    const id = getId(item);
+    return !id || previousById.get(id) !== item;
+  });
+};
+
+const changedTurnsById = (
+  previous: readonly SessionTurn[],
+  next: readonly SessionTurn[],
+): SessionTurn[] => changedItemsById(previous, next, (turn) => idToString(turn.turn_id));
+
+const changedMessagesById = (
+  previous: readonly Message[],
+  next: readonly Message[],
+): Message[] => changedItemsById(previous, next, (message) => idToString(message.id));
+
+const removedMessageIdsById = (
+  previous: readonly Message[],
+  next: readonly Message[],
+): string[] => {
+  const nextIds = new Set(next.map((message) => idToString(message.id)).filter(Boolean));
+  return previous
+    .map((message) => idToString(message.id))
+    .filter((id) => id && !nextIds.has(id));
+};
+
+const changedToolSummariesById = (
+  previous: readonly SessionTurnToolSummary[],
+  next: readonly SessionTurnToolSummary[],
+): SessionTurnToolSummary[] =>
+  changedItemsById(previous, next, (summary) => String(summary.tool_call_id ?? "").trim());
 
 export type SessionReplicaEventHost = {
   entries: Map<string, SessionReplicaEntry>;
@@ -187,6 +232,11 @@ const applySessionReplicaHeadDelta = (
   if (streamOnlyCandidate && !existingEntry) return;
 
   const entry = existingEntry ?? host.ensureEntry(sessionId);
+  const previousSession = entry.session;
+  const previousActivity = entry.activity;
+  const previousTurns = entry.turns.slice();
+  const previousMessages = entry.messages.slice();
+  const previousToolSummaries = entry.toolSummaries.slice();
   const previousAssistantStreamingRev = entry.assistantStreamingRev;
   const turns: SessionTurn[] = [];
   const messages: Message[] = [];
@@ -202,7 +252,7 @@ const applySessionReplicaHeadDelta = (
   if (event && !streamOnlyAssistantChunk) events.push(event);
 
   if (turns.length > 0) {
-    mergeReplicaTurnsIntoEntry(entry, turns);
+    mergeReplicaTurnsIntoEntry(entry, turns, { authoritative: true });
   }
   if (messages.length > 0) {
     mergeReplicaMessagesIntoEntry(entry, messages);
@@ -293,8 +343,15 @@ const applySessionReplicaHeadDelta = (
   }
   entry.activity = reconcileActivityInterruptedFromTurns(entry.activity, entry.turns);
   entry.hydrated = true;
-  host.emitAppendPatch(sessionId, buildCanonicalReplicaPatch(entry, {
-    appendMode: "stream_delta",
+  host.emitAppendPatch(sessionId, buildStreamDeltaReplicaPatch(entry, {
+    turns: changedTurnsById(previousTurns, entry.turns),
+    messages: changedMessagesById(previousMessages, entry.messages),
+    removedMessageIds: removedMessageIdsById(previousMessages, entry.messages),
+    events: newEvents,
+    toolSummaries: changedToolSummariesById(previousToolSummaries, entry.toolSummaries),
+    includeSession: Boolean(delta.session && entry.session !== previousSession),
+    includeActivity: delta.activity !== undefined || entry.activity !== previousActivity,
+    includeAssistantStreaming: entry.assistantStreamingRev !== previousAssistantStreamingRev,
   }));
   void host.persistHead(entry);
 };

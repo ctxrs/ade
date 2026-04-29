@@ -1341,10 +1341,10 @@ describe("SessionReplicaCore", () => {
       throw new Error("expected appended message patch");
     }
     expect(latest.data.activity).toEqual({ is_working: false, last_turn_status: "interrupted" });
-    expect(latest.data.turns?.at(-1)?.status).toBe("interrupted");
+    expect(latest.data.turns).toBeUndefined();
   });
 
-  it("emits canonical merged transcript state for streamed event-only deltas", () => {
+  it("emits reduced transcript changes for streamed event-only deltas", () => {
     const sessionId = "session-canonical-stream-delta";
     const patches: SessionReplicaPatch[] = [];
     const core = new SessionReplicaCore({
@@ -1431,16 +1431,15 @@ describe("SessionReplicaCore", () => {
     const latest = [...patches].reverse().find(
       (patch) => patch.sessionId === sessionId && patch.op === "append" && Array.isArray(patch.data.turns),
     );
-    if (!latest || latest.op === "evict" || !latest.data.turns || !latest.data.messages || !latest.data.events) {
-      throw new Error("expected canonical append patch");
+    if (!latest || latest.op === "evict" || !latest.data.turns || !latest.data.events) {
+      throw new Error("expected reduced append patch");
     }
 
     expect(latest.data.turnsRev).toBeTypeOf("number");
-    expect(latest.data.messagesRev).toBeTypeOf("number");
     expect(latest.data.eventsRev).toBeTypeOf("number");
     expect(latest.data.turns[0]?.status).toBe("completed");
-    expect(latest.data.messages[0]?.delivery).toBe("immediate");
-    expect(latest.data.events.map((event) => event.id)).toContain("event-done");
+    expect(latest.data.messages).toBeUndefined();
+    expect(latest.data.events.map((event) => event.id)).toEqual(["event-done"]);
     expect(latest.data.lastEventSeq).toBe(2);
   });
 
@@ -1814,6 +1813,296 @@ describe("SessionReplicaCore", () => {
       throw new Error("expected stream delta patch");
     }
     expect(latest.data.assistantStreamingByTurnId?.["turn-1"]?.content).toBe(fragments.join(""));
+  });
+
+  it("emits live stream deltas with only new transcript data from a large canonical buffer", () => {
+    const sessionId = "session-large-buffer-live-delta";
+    const patches: SessionReplicaPatch[] = [];
+    const core = new SessionReplicaCore({
+      api: { getSessionHead: vi.fn() },
+      emit: (next) => patches.push(...next),
+    });
+    const createdAt = new Date().toISOString();
+    const bufferedEvents = Array.from({ length: 100 }, (_, index): SessionEvent => ({
+      seq: index + 1,
+      id: `event-buffered-${index + 1}`,
+      session_id: sessionId,
+      run_id: "run-1",
+      turn_id: "turn-1",
+      event_type: "notice",
+      payload_json: { index },
+      created_at: createdAt,
+    }));
+    const bufferedMessages = Array.from({ length: 25 }, (_, index): Message => ({
+      id: `message-buffered-${index + 1}`,
+      session_id: sessionId,
+      task_id: "task-1",
+      turn_id: "turn-1",
+      role: index % 2 === 0 ? "user" : "assistant",
+      content: `buffered ${index + 1}`,
+      delivery: "immediate",
+      created_at: createdAt,
+    }));
+
+    core.handleCommand({ type: "init", config: { eventBufferLimit: 200, headLimit: 50 } });
+    core.handleCommand({
+      type: "seed_head",
+      sessionId,
+      head: {
+        session: mkSession(sessionId),
+        turns: [{
+          turn_id: "turn-1",
+          session_id: sessionId,
+          run_id: "run-1",
+          user_message_id: "message-buffered-1",
+          status: "running",
+          start_seq: 1,
+          end_seq: null,
+          started_at: createdAt,
+          updated_at: createdAt,
+          assistant_partial: null,
+          thought_partial: "",
+          metrics_json: null,
+          tool_total: 0,
+          tool_pending: 0,
+          tool_running: 0,
+          tool_completed: 0,
+          tool_failed: 0,
+        }],
+        events: bufferedEvents,
+        messages: bufferedMessages,
+        last_event_seq: 100,
+        state_rev: 100,
+        has_more_turns: false,
+        has_more_history: false,
+        history_cursor: null,
+      },
+      mode: "bootstrap_seed",
+    });
+    patches.length = 0;
+
+    const liveMessage: Message = {
+      id: "message-live-101",
+      session_id: sessionId,
+      task_id: "task-1",
+      turn_id: "turn-1",
+      role: "assistant",
+      content: "live answer",
+      delivery: "immediate",
+      created_at: createdAt,
+    };
+    core.handleCommand({
+      type: "workspace_event",
+      event: {
+        type: "session_head_delta",
+        workspace_id: "ws-1",
+        snapshot_rev: 101,
+        delta: {
+          session_id: sessionId,
+          last_event_seq: 101,
+          projection_rev: 101,
+          state_rev: 101,
+          event: {
+            seq: 101,
+            id: "event-live-101",
+            session_id: sessionId,
+            run_id: "run-1",
+            turn_id: "turn-1",
+            event_type: "assistant_message_inserted",
+            payload_json: {
+              message_id: liveMessage.id,
+              content: liveMessage.content,
+              delivery: liveMessage.delivery,
+            },
+            created_at: createdAt,
+          },
+          message: liveMessage,
+        },
+      },
+    });
+
+    const latest = [...patches].reverse().find(
+      (patch) =>
+        patch.sessionId === sessionId &&
+        patch.op === "append" &&
+        patch.data.appendMode === "stream_delta",
+    );
+    if (!latest || latest.op === "evict") {
+      throw new Error("expected stream delta patch");
+    }
+    expect(latest.data.events?.map((event) => event.id)).toEqual(["event-live-101"]);
+    expect(latest.data.messages?.map((message) => message.id)).toEqual(["message-live-101"]);
+    expect(JSON.stringify(latest.data).length).toBeLessThan(8_000);
+  });
+
+  it("emits authoritative live turn counter clears in stream deltas", () => {
+    const sessionId = "session-live-tool-counter-clear";
+    const patches: SessionReplicaPatch[] = [];
+    const core = new SessionReplicaCore({
+      api: { getSessionHead: vi.fn() },
+      emit: (next) => patches.push(...next),
+    });
+    const createdAt = new Date().toISOString();
+
+    core.handleCommand({ type: "init", config: { eventBufferLimit: 100, headLimit: 50 } });
+    core.handleCommand({
+      type: "seed_head",
+      sessionId,
+      head: {
+        session: mkSession(sessionId),
+        turns: [{
+          turn_id: "turn-1",
+          session_id: sessionId,
+          run_id: "run-1",
+          user_message_id: "message-1",
+          status: "running",
+          start_seq: 1,
+          end_seq: null,
+          started_at: createdAt,
+          updated_at: createdAt,
+          assistant_partial: null,
+          thought_partial: "",
+          metrics_json: null,
+          tool_total: 1,
+          tool_pending: 1,
+          tool_running: 1,
+          tool_completed: 0,
+          tool_failed: 0,
+        }],
+        events: [],
+        messages: [],
+        last_event_seq: 1,
+        state_rev: 1,
+        has_more_turns: false,
+        has_more_history: false,
+        history_cursor: null,
+      },
+      mode: "bootstrap_seed",
+    });
+    patches.length = 0;
+
+    core.handleCommand({
+      type: "workspace_event",
+      event: {
+        type: "session_head_delta",
+        workspace_id: "ws-1",
+        snapshot_rev: 2,
+        delta: {
+          session_id: sessionId,
+          last_event_seq: 2,
+          projection_rev: 2,
+          state_rev: 2,
+          turn: {
+            turn_id: "turn-1",
+            session_id: sessionId,
+            run_id: "run-1",
+            user_message_id: "message-1",
+            status: "running",
+            start_seq: 1,
+            end_seq: null,
+            started_at: createdAt,
+            updated_at: createdAt,
+            assistant_partial: null,
+            thought_partial: "",
+            metrics_json: null,
+            tool_total: 1,
+            tool_pending: 0,
+            tool_running: 0,
+            tool_completed: 1,
+            tool_failed: 0,
+          },
+        },
+      },
+    });
+
+    const latest = [...patches].reverse().find(
+      (patch) =>
+        patch.sessionId === sessionId &&
+        patch.op === "append" &&
+        patch.data.appendMode === "stream_delta",
+    );
+    if (!latest || latest.op === "evict") {
+      throw new Error("expected stream delta patch");
+    }
+    expect(latest.data.turns?.[0]?.tool_pending).toBe(0);
+    expect(latest.data.turns?.[0]?.tool_running).toBe(0);
+    expect(latest.data.turns?.[0]?.tool_completed).toBe(1);
+  });
+
+  it("emits live message removals as stream delta tombstones", () => {
+    const sessionId = "session-live-message-removal";
+    const patches: SessionReplicaPatch[] = [];
+    const core = new SessionReplicaCore({
+      api: { getSessionHead: vi.fn() },
+      emit: (next) => patches.push(...next),
+    });
+    const createdAt = new Date().toISOString();
+
+    core.handleCommand({ type: "init", config: { eventBufferLimit: 100, headLimit: 50 } });
+    core.handleCommand({
+      type: "seed_head",
+      sessionId,
+      head: {
+        session: mkSession(sessionId),
+        turns: [],
+        events: [],
+        messages: [{
+          id: "message-queued-1",
+          session_id: sessionId,
+          task_id: "task-1",
+          turn_id: "turn-1",
+          role: "user",
+          content: "queued draft",
+          delivery: "queued",
+          created_at: createdAt,
+        }],
+        last_event_seq: 1,
+        state_rev: 1,
+        has_more_turns: false,
+        has_more_history: false,
+        history_cursor: null,
+      },
+      mode: "bootstrap_seed",
+    });
+    patches.length = 0;
+
+    core.handleCommand({
+      type: "workspace_event",
+      event: {
+        type: "session_head_delta",
+        workspace_id: "ws-1",
+        snapshot_rev: 2,
+        delta: {
+          session_id: sessionId,
+          last_event_seq: 2,
+          projection_rev: 2,
+          state_rev: 2,
+          event: {
+            seq: 2,
+            id: "event-remove-message-2",
+            session_id: sessionId,
+            run_id: "run-1",
+            turn_id: "turn-1",
+            event_type: "message_queue_removed",
+            payload_json: { message_id: "message-queued-1" },
+            created_at: createdAt,
+          },
+        },
+      },
+    });
+
+    const latest = [...patches].reverse().find(
+      (patch) =>
+        patch.sessionId === sessionId &&
+        patch.op === "append" &&
+        patch.data.appendMode === "stream_delta",
+    );
+    if (!latest || latest.op === "evict") {
+      throw new Error("expected stream delta patch");
+    }
+    expect(latest.data.removedMessageIds).toEqual(["message-queued-1"]);
+    expect(latest.data.messages).toBeUndefined();
+    expect(latest.data.messagesRev).toBeTypeOf("number");
   });
 
   it("does not restore dropped sessions from stream-only assistant chunks", () => {

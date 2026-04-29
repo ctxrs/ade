@@ -31,6 +31,8 @@ export type SessionReplicaAppendMode =
   | "head_refresh"
   | "metadata_update";
 
+export type SessionReplicaCanonicalAppendMode = Exclude<SessionReplicaAppendMode, "stream_delta">;
+
 export const isAuthoritativeSessionReplicaReplace = (
   mode: SessionReplicaReplaceMode | null | undefined,
 ): boolean => mode === "authoritative_replace" || mode === "repair_replace";
@@ -83,6 +85,7 @@ export type SessionReplicaData = {
   assistantStreamingByTurnId?: Record<string, AssistantStreamingState>;
   assistantStreamingRev?: number;
   messages?: Message[];
+  removedMessageIds?: string[];
   messagesRev?: number;
   events?: SessionEvent[];
   eventsRev?: number;

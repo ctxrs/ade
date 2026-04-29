@@ -64,6 +64,20 @@ const mergeTurns = (base: SessionTurn[], incoming: SessionTurn[]): SessionTurn[]
   return Array.from(byId.values()).sort(compareSessionTurnOrder);
 };
 
+const upsertTurns = (base: SessionTurn[], incoming: SessionTurn[]): SessionTurn[] => {
+  if (incoming.length === 0) return base;
+  const byId = new Map<string, SessionTurn>();
+  for (const turn of base) {
+    const turnId = idToString(turn.turn_id);
+    if (turnId) byId.set(turnId, turn);
+  }
+  for (const turn of incoming) {
+    const turnId = idToString(turn.turn_id);
+    if (turnId) byId.set(turnId, turn);
+  }
+  return Array.from(byId.values()).sort(compareSessionTurnOrder);
+};
+
 const mergeEvents = (base: SessionEvent[], incoming: SessionEvent[]): SessionEvent[] => {
   if (incoming.length === 0) return base;
   const bySeq = new Map<number, SessionEvent>();
@@ -354,6 +368,7 @@ const applyQueueEvent = (
 export const mergeReplicaTurnsIntoEntry = (
   entry: Pick<SessionReplicaTranscriptEntry, "turns" | "turnsRev" | "startedTurnIds">,
   incoming: SessionTurn[],
+  opts?: { authoritative?: boolean },
 ) => {
   if (incoming.length === 0) return;
   for (const turn of incoming) {
@@ -363,7 +378,7 @@ export const mergeReplicaTurnsIntoEntry = (
       entry.startedTurnIds.add(turnId);
     }
   }
-  entry.turns = mergeTurns(entry.turns, incoming);
+  entry.turns = opts?.authoritative ? upsertTurns(entry.turns, incoming) : mergeTurns(entry.turns, incoming);
   bumpTurnsRev(entry);
 };
 

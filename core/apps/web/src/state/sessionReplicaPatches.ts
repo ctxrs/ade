@@ -11,6 +11,7 @@ import type {
 import type { AssistantStreamingState } from "./assistantStreaming";
 import type {
   SessionReplicaAppendMode,
+  SessionReplicaCanonicalAppendMode,
   SessionReplicaData,
   SessionReplicaFreshnessState,
   SessionReplicaReplaceMode,
@@ -41,10 +42,10 @@ type SessionReplicaPatchEntry = {
 export function buildCanonicalReplicaPatch(
   entry: SessionReplicaPatchEntry,
   opts: {
-    appendMode: SessionReplicaAppendMode;
+    appendMode: SessionReplicaCanonicalAppendMode;
     replaceMode?: SessionReplicaReplaceMode;
   },
-): SessionReplicaData & { appendMode: SessionReplicaAppendMode };
+): SessionReplicaData & { appendMode: SessionReplicaCanonicalAppendMode };
 export function buildCanonicalReplicaPatch(
   entry: SessionReplicaPatchEntry,
   opts?: {
@@ -56,7 +57,7 @@ export function buildCanonicalReplicaPatch(
   entry: SessionReplicaPatchEntry,
   opts?: {
     replaceMode?: SessionReplicaReplaceMode;
-    appendMode?: SessionReplicaAppendMode;
+    appendMode?: SessionReplicaCanonicalAppendMode;
   },
 ): SessionReplicaData {
   const patch: SessionReplicaData & { appendMode?: SessionReplicaAppendMode } = {
@@ -87,6 +88,61 @@ export function buildCanonicalReplicaPatch(
   }
   if (opts?.appendMode) {
     patch.appendMode = opts.appendMode;
+  }
+  return patch;
+}
+
+export function buildStreamDeltaReplicaPatch(
+  entry: SessionReplicaPatchEntry,
+  opts: {
+    turns?: SessionTurn[];
+    messages?: Message[];
+    removedMessageIds?: string[];
+    events?: SessionEvent[];
+    toolSummaries?: SessionTurnToolSummary[];
+    includeSession?: boolean;
+    includeActivity?: boolean;
+    includeAssistantStreaming?: boolean;
+  },
+): SessionReplicaData & { appendMode: "stream_delta" } {
+  const patch: SessionReplicaData & { appendMode: "stream_delta" } = {
+    appendMode: "stream_delta",
+    freshness: entry.freshness,
+    lastEventSeq: entry.lastEventSeq,
+    projectionRev: entry.projectionRev,
+    turnsHydrated: entry.hydrated,
+  };
+  if (entry.stateRev !== undefined) {
+    patch.stateRev = entry.stateRev;
+  }
+  if (opts.includeSession && entry.session) {
+    patch.session = entry.session;
+  }
+  if (opts.includeActivity) {
+    patch.activity = entry.activity ?? null;
+  }
+  if (opts.turns && opts.turns.length > 0) {
+    patch.turns = opts.turns;
+    patch.turnsRev = entry.turnsRev;
+  }
+  if (opts.messages && opts.messages.length > 0) {
+    patch.messages = opts.messages;
+    patch.messagesRev = entry.messagesRev;
+  }
+  if (opts.removedMessageIds && opts.removedMessageIds.length > 0) {
+    patch.removedMessageIds = opts.removedMessageIds;
+    patch.messagesRev = entry.messagesRev;
+  }
+  if (opts.events && opts.events.length > 0) {
+    patch.events = opts.events;
+    patch.eventsRev = entry.eventsRev;
+  }
+  if (opts.toolSummaries && opts.toolSummaries.length > 0) {
+    patch.toolSummaries = opts.toolSummaries;
+  }
+  if (opts.includeAssistantStreaming) {
+    patch.assistantStreamingByTurnId = entry.assistantStreamingByTurnId;
+    patch.assistantStreamingRev = entry.assistantStreamingRev;
   }
   return patch;
 }

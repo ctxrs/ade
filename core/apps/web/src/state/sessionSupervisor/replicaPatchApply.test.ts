@@ -113,6 +113,233 @@ describe("replicaPatchApply", () => {
     expect(ensureEntry).not.toHaveBeenCalled();
   });
 
+  it("merges live stream delta transcript arrays into the existing canonical window", () => {
+    const entry = createInternalEntry("session-1", { transientSeqStart: 1, warmTtlMs: 60_000 });
+    entry.turnsHydrated = true;
+    entry.turns = [{
+      turn_id: "turn-1",
+      session_id: "session-1",
+      run_id: "run-1",
+      user_message_id: "message-1",
+      status: "running",
+      start_seq: 1,
+      end_seq: null,
+      started_at: "2026-04-29T00:00:00.000Z",
+      updated_at: "2026-04-29T00:00:00.000Z",
+      assistant_partial: null,
+      thought_partial: null,
+      metrics_json: null,
+      tool_total: 0,
+      tool_pending: 0,
+      tool_running: 0,
+      tool_completed: 0,
+      tool_failed: 0,
+    }];
+    entry.messages = [{
+      id: "message-1",
+      session_id: "session-1",
+      task_id: "task-1",
+      turn_id: "turn-1",
+      role: "user",
+      content: "hello",
+      delivery: "immediate",
+      created_at: "2026-04-29T00:00:00.000Z",
+    }];
+    entry.events = [{
+      seq: 1,
+      id: "event-1",
+      session_id: "session-1",
+      run_id: "run-1",
+      turn_id: "turn-1",
+      event_type: "turn_started",
+      payload_json: {},
+      created_at: "2026-04-29T00:00:00.000Z",
+    }];
+
+    const host = createReplicaHost(entry);
+    const result = applyReplicaPatches(host, [{
+      sessionId: "session-1",
+      op: "append",
+      data: {
+        appendMode: "stream_delta",
+        freshness: "authoritative",
+        lastEventSeq: 2,
+        turns: [{
+          ...entry.turns[0]!,
+          status: "completed",
+          end_seq: 2,
+          updated_at: "2026-04-29T00:00:01.000Z",
+        }],
+        messages: [{
+          id: "message-2",
+          session_id: "session-1",
+          task_id: "task-1",
+          turn_id: "turn-1",
+          role: "assistant",
+          content: "done",
+          delivery: "immediate",
+          created_at: "2026-04-29T00:00:01.000Z",
+        }],
+        events: [{
+          seq: 2,
+          id: "event-2",
+          session_id: "session-1",
+          run_id: "run-1",
+          turn_id: "turn-1",
+          event_type: "assistant_message_inserted",
+          payload_json: { message_id: "message-2" },
+          created_at: "2026-04-29T00:00:01.000Z",
+        }],
+      },
+    }]);
+
+    expect(result.changed).toBe(true);
+    expect(entry.turns.map((turn) => [turn.turn_id, turn.status])).toEqual([["turn-1", "completed"]]);
+    expect(entry.messages.map((message) => message.id)).toEqual(["message-1", "message-2"]);
+    expect(entry.events.map((event) => event.id)).toEqual(["event-1", "event-2"]);
+    expect(entry.lastEventSeq).toBe(2);
+  });
+
+  it("lets live stream delta turn updates clear non-cumulative tool counters", () => {
+    const entry = createInternalEntry("session-1", { transientSeqStart: 1, warmTtlMs: 60_000 });
+    entry.turnsHydrated = true;
+    entry.turns = [{
+      turn_id: "turn-1",
+      session_id: "session-1",
+      run_id: "run-1",
+      user_message_id: "message-1",
+      status: "running",
+      start_seq: 1,
+      end_seq: null,
+      started_at: "2026-04-29T00:00:00.000Z",
+      updated_at: "2026-04-29T00:00:00.000Z",
+      assistant_partial: null,
+      thought_partial: null,
+      metrics_json: null,
+      tool_total: 1,
+      tool_pending: 1,
+      tool_running: 1,
+      tool_completed: 0,
+      tool_failed: 0,
+    }];
+
+    const host = createReplicaHost(entry);
+    const result = applyReplicaPatches(host, [{
+      sessionId: "session-1",
+      op: "append",
+      data: {
+        appendMode: "stream_delta",
+        freshness: "authoritative",
+        lastEventSeq: 2,
+        turns: [{
+          ...entry.turns[0]!,
+          updated_at: "2026-04-29T00:00:01.000Z",
+          tool_pending: 0,
+          tool_running: 0,
+          tool_completed: 1,
+        }],
+      },
+    }]);
+
+    expect(result.changed).toBe(true);
+    expect(entry.turns[0]?.tool_total).toBe(1);
+    expect(entry.turns[0]?.tool_pending).toBe(0);
+    expect(entry.turns[0]?.tool_running).toBe(0);
+    expect(entry.turns[0]?.tool_completed).toBe(1);
+  });
+
+  it("applies live stream delta message removals without a full message window", () => {
+    const entry = createInternalEntry("session-1", { transientSeqStart: 1, warmTtlMs: 60_000 });
+    entry.messages = [{
+      id: "message-1",
+      session_id: "session-1",
+      task_id: "task-1",
+      turn_id: "turn-1",
+      role: "user",
+      content: "queued",
+      delivery: "queued",
+      created_at: "2026-04-29T00:00:00.000Z",
+    }];
+    entry.queue = entry.messages;
+
+    const host = createReplicaHost(entry);
+    const result = applyReplicaPatches(host, [{
+      sessionId: "session-1",
+      op: "append",
+      data: {
+        appendMode: "stream_delta",
+        freshness: "authoritative",
+        lastEventSeq: 2,
+        removedMessageIds: ["message-1"],
+        messagesRev: 2,
+      },
+    }]);
+
+    expect(result.changed).toBe(true);
+    expect(entry.messages).toEqual([]);
+    expect(entry.queue).toEqual([]);
+    expect(entry.messagesRev).toBe(2);
+  });
+
+  it("does not re-anchor tombstoned messages from combined live stream deltas", () => {
+    const entry = createInternalEntry("session-1", { transientSeqStart: 1, warmTtlMs: 60_000 });
+    entry.turnsHydrated = true;
+    entry.turns = [{
+      turn_id: "turn-1",
+      session_id: "session-1",
+      run_id: "run-1",
+      user_message_id: "message-1",
+      status: "running",
+      start_seq: 1,
+      end_seq: null,
+      started_at: "2026-04-29T00:00:00.000Z",
+      updated_at: "2026-04-29T00:00:00.000Z",
+      assistant_partial: null,
+      thought_partial: null,
+      metrics_json: null,
+      tool_total: 0,
+      tool_pending: 0,
+      tool_running: 0,
+      tool_completed: 0,
+      tool_failed: 0,
+    }];
+    entry.messages = [{
+      id: "message-1",
+      session_id: "session-1",
+      task_id: "task-1",
+      turn_id: "turn-1",
+      role: "user",
+      content: "queued",
+      delivery: "queued",
+      created_at: "2026-04-29T00:00:00.000Z",
+    }];
+    entry.queue = entry.messages;
+
+    const host = createReplicaHost(entry);
+    const result = applyReplicaPatches(host, [{
+      sessionId: "session-1",
+      op: "append",
+      data: {
+        appendMode: "stream_delta",
+        freshness: "authoritative",
+        lastEventSeq: 2,
+        removedMessageIds: ["message-1"],
+        turns: [{
+          ...entry.turns[0]!,
+          status: "completed",
+          end_seq: 2,
+          updated_at: "2026-04-29T00:00:01.000Z",
+        }],
+        messagesRev: 2,
+      },
+    }]);
+
+    expect(result.changed).toBe(true);
+    expect(entry.messages).toEqual([]);
+    expect(entry.queue).toEqual([]);
+    expect(entry.turns[0]?.status).toBe("completed");
+  });
+
   it("does not republish duplicate tool summaries", () => {
     const entry = createInternalEntry("session-1", { transientSeqStart: 1, warmTtlMs: 60_000 });
     const summaries = [{

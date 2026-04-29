@@ -6,6 +6,7 @@ import {
   type SessionTurnTool,
 } from "../../api/client";
 import {
+  compareSessionTurnOrder,
   mergeSessionEvents,
   mergeSessionMessages,
   mergeSessionToolSummaries,
@@ -202,6 +203,7 @@ const preserveLocalUserMessageAnchors = (
   previousMessages: Message[],
   nextTurns: SessionTurn[],
   nextMessages: Message[],
+  opts?: { excludedMessageIds?: ReadonlySet<string> },
 ): { turns: SessionTurn[]; messages: Message[] } => {
   if (previousTurns.length === 0 || previousMessages.length === 0 || nextTurns.length === 0) {
     return { turns: nextTurns, messages: nextMessages };
@@ -240,6 +242,7 @@ const preserveLocalUserMessageAnchors = (
     const previousTurn = previousTurnById.get(turnId);
     const previousUserMessageId = idToString(previousTurn?.user_message_id ?? "");
     if (!previousTurn || !previousUserMessageId) return;
+    if (opts?.excludedMessageIds?.has(previousUserMessageId)) return;
 
     const previousUserMessage = previousMessageById.get(previousUserMessageId);
     if (!previousUserMessage || previousUserMessage.role !== "user") return;
@@ -317,6 +320,31 @@ const preserveMonotonicTurns = (
   return changed ? merged : nextTurns;
 };
 
+const mergeStreamDeltaTurns = (
+  previousTurns: SessionTurn[],
+  deltaTurns: SessionTurn[],
+): SessionTurn[] => {
+  if (deltaTurns.length === 0) return previousTurns;
+  const byId = new Map<string, SessionTurn>();
+  for (const turn of previousTurns) {
+    const turnId = idToString(turn.turn_id);
+    if (turnId) byId.set(turnId, turn);
+  }
+  for (const turn of deltaTurns) {
+    const turnId = idToString(turn.turn_id);
+    if (turnId) byId.set(turnId, turn);
+  }
+  return Array.from(byId.values()).sort(compareSessionTurnOrder);
+};
+
+const removeMessagesById = (
+  messages: Message[],
+  removedIds: ReadonlySet<string>,
+): Message[] => {
+  if (removedIds.size === 0) return messages;
+  return messages.filter((message) => !removedIds.has(idToString(message.id)));
+};
+
 export const applyCanonicalTranscriptPatch = (
   host: SessionSupervisorReplicaPatchHost,
   entry: InternalEntry,
@@ -335,8 +363,14 @@ export const applyCanonicalTranscriptPatch = (
     patch.op === "replace" &&
     repairReplaceShouldPreserveEntryTranscript(entry, data) &&
     (entry.historyExtended || replaceMode === "repair_replace");
+  const mergeAppendStreamDelta = patch.op === "append" && data.appendMode === "stream_delta";
+  const removedMessageIds = mergeAppendStreamDelta
+    ? new Set((data.removedMessageIds ?? []).map((id) => idToString(id)).filter(Boolean))
+    : new Set<string>();
   const localQueuedMessages =
-    Array.isArray(data.messages) ? preserveLocalQueuedMessages(entry.messages, data.messages) : [];
+    Array.isArray(data.messages)
+      ? preserveLocalQueuedMessages(removeMessagesById(entry.messages, removedMessageIds), data.messages)
+      : [];
   const previousTurns = entry.turns;
   const previousMessages = entry.messages;
   let nextTurnsForAnalytics: SessionTurn[] | null = null;
@@ -352,14 +386,23 @@ export const applyCanonicalTranscriptPatch = (
   if (shouldCopyCanonicalTranscript && !preserveCoveredHistoryOnReplace) {
     let nextTurns = entry.turns;
     if (Array.isArray(data.turns)) {
-      nextTurns = preserveMonotonicTurns(previousTurns, data.turns);
+      nextTurns = preserveMonotonicTurns(
+        previousTurns,
+        mergeAppendStreamDelta ? mergeStreamDeltaTurns(entry.turns, data.turns) : data.turns,
+      );
     }
-    let nextMessages = entry.messages;
+    let nextMessages = removeMessagesById(entry.messages, removedMessageIds);
     if (Array.isArray(data.messages)) {
-      nextMessages = mergeSessionMessages(data.messages, localQueuedMessages);
+      const incomingMessages = mergeSessionMessages(data.messages, localQueuedMessages);
+      nextMessages = mergeAppendStreamDelta
+        ? mergeSessionMessages(entry.messages, incomingMessages)
+        : incomingMessages;
+      nextMessages = removeMessagesById(nextMessages, removedMessageIds);
     }
     if (Array.isArray(data.turns) || Array.isArray(data.messages)) {
-      const repaired = preserveLocalUserMessageAnchors(previousTurns, previousMessages, nextTurns, nextMessages);
+      const repaired = preserveLocalUserMessageAnchors(previousTurns, previousMessages, nextTurns, nextMessages, {
+        excludedMessageIds: removedMessageIds,
+      });
       nextTurns = repaired.turns;
       nextMessages = repaired.messages;
     }
@@ -376,8 +419,11 @@ export const applyCanonicalTranscriptPatch = (
       changed = true;
     }
     if (Array.isArray(data.events)) {
-      if (!haveSameArrayRefs(entry.events, data.events)) {
-        entry.events = data.events;
+      const nextEvents = mergeAppendStreamDelta
+        ? mergeSessionEvents(entry.events, data.events)
+        : data.events;
+      if (!haveSameArrayRefs(entry.events, nextEvents)) {
+        entry.events = nextEvents;
         entry.eventsRev = data.eventsRev ?? (entry.eventsRev + 1);
         changed = true;
       }
@@ -395,9 +441,12 @@ export const applyCanonicalTranscriptPatch = (
       changed = true;
     }
     if (Array.isArray(data.toolSummaries)) {
+      const nextSummaries = mergeAppendStreamDelta
+        ? mergeSessionToolSummaries(entry.toolSummaries, data.toolSummaries, entry.turns)
+        : data.toolSummaries;
       changed =
-        applyCanonicalToolSummaries(entry, data.toolSummaries, {
-          resetByTurn: patch.op === "replace",
+        applyCanonicalToolSummaries(entry, nextSummaries, {
+          resetByTurn: patch.op === "replace" && !mergeAppendStreamDelta,
         }) || changed;
     }
   } else if (shouldCopyCanonicalTranscript && preserveCoveredHistoryOnReplace) {
