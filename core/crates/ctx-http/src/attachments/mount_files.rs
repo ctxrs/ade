@@ -312,7 +312,9 @@ fn copy_dereferenced_symlink_file(source_root: &Path, source: &Path, target: &Pa
             canonical_target.display()
         );
     }
-    let metadata = std::fs::metadata(source)
+    let mut source_file = open_dereferenced_symlink_target(&canonical_target, source)?;
+    let metadata = source_file
+        .metadata()
         .with_context(|| format!("reading attachment symlink target {}", source.display()))?;
     if metadata.is_dir() {
         anyhow::bail!(
@@ -326,16 +328,84 @@ fn copy_dereferenced_symlink_file(source_root: &Path, source: &Path, target: &Pa
             source.display()
         );
     }
+    #[cfg(test)]
+    run_after_dereferenced_symlink_target_opened_hook(source);
     if let Some(parent) = target.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    std::fs::copy(source, target).with_context(|| {
+    let mut target_file = std::fs::File::create(target)
+        .with_context(|| format!("creating dereferenced attachment copy {}", target.display()))?;
+    std::io::copy(&mut source_file, &mut target_file).with_context(|| {
         format!(
             "copying dereferenced attachment symlink {}",
             source.display()
         )
     })?;
     Ok(())
+}
+
+fn open_dereferenced_symlink_target(
+    canonical_target: &Path,
+    source: &Path,
+) -> Result<std::fs::File> {
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        use windows_sys::Win32::Storage::FileSystem::FILE_FLAG_OPEN_REPARSE_POINT;
+
+        options.custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+    }
+    options.open(canonical_target).with_context(|| {
+        format!(
+            "opening dereferenced attachment symlink target {}",
+            source.display()
+        )
+    })
+}
+
+#[cfg(test)]
+thread_local! {
+    static AFTER_DEREFERENCED_SYMLINK_TARGET_OPENED_HOOK:
+        std::cell::RefCell<Option<fn(&Path)>> = std::cell::RefCell::new(None);
+}
+
+#[cfg(test)]
+fn run_after_dereferenced_symlink_target_opened_hook(source: &Path) {
+    AFTER_DEREFERENCED_SYMLINK_TARGET_OPENED_HOOK.with(|hook| {
+        if let Some(hook) = *hook.borrow() {
+            hook(source);
+        }
+    });
+}
+
+#[cfg(test)]
+fn set_after_dereferenced_symlink_target_opened_hook(
+    hook: fn(&Path),
+) -> DereferencedSymlinkTargetOpenedHookGuard {
+    AFTER_DEREFERENCED_SYMLINK_TARGET_OPENED_HOOK.with(|current| {
+        *current.borrow_mut() = Some(hook);
+    });
+    DereferencedSymlinkTargetOpenedHookGuard
+}
+
+#[cfg(test)]
+struct DereferencedSymlinkTargetOpenedHookGuard;
+
+#[cfg(test)]
+impl Drop for DereferencedSymlinkTargetOpenedHookGuard {
+    fn drop(&mut self) {
+        AFTER_DEREFERENCED_SYMLINK_TARGET_OPENED_HOOK.with(|hook| {
+            *hook.borrow_mut() = None;
+        });
+    }
 }
 
 fn apply_read_only_mode(path: &Path) -> Result<()> {
@@ -502,6 +572,47 @@ mod tests {
             std::fs::read_to_string(source.join("guide.md")).expect("read source"),
             "guide\n",
             "writes through copied ro symlink path must not mutate source materialization"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ensure_mount_ro_copy_dereferenced_symlink_uses_validated_open_file() {
+        fn swap_race_link_to_outside(source: &Path) {
+            if source.file_name() != Some(std::ffi::OsStr::new("race-link")) {
+                return;
+            }
+            let source_dir = source.parent().expect("source symlink parent");
+            let outside = source_dir
+                .parent()
+                .expect("tempdir parent")
+                .join("outside-secret.txt");
+            std::fs::remove_file(source).expect("replace race symlink");
+            std::os::unix::fs::symlink(&outside, source).expect("swap symlink outside");
+        }
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let source = temp.path().join("source");
+        let target = temp.path().join("target");
+        let outside = temp.path().join("outside-secret.txt");
+        std::fs::create_dir_all(&source).expect("create source");
+        std::fs::write(source.join("good.txt"), "good\n").expect("write internal source file");
+        std::fs::write(&outside, "outside\n").expect("write outside file");
+        std::os::unix::fs::symlink(source.join("good.txt"), source.join("race-link"))
+            .expect("symlink internal file");
+
+        let _hook = set_after_dereferenced_symlink_target_opened_hook(swap_race_link_to_outside);
+        copy_path_recursive(&source, &target, SymlinkCopyMode::DereferenceFiles)
+            .expect("copy ro attachment tree");
+
+        assert_eq!(
+            std::fs::read_to_string(target.join("race-link")).expect("read copied link"),
+            "good\n",
+            "ro copy must use the validated opened file, not refollow the swapped symlink path"
+        );
+        assert_eq!(
+            std::fs::read_link(source.join("race-link")).expect("read swapped link"),
+            outside
         );
     }
 
