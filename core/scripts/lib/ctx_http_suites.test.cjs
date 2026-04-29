@@ -55,13 +55,12 @@ test("ctx-http suite command builder expands base and meta suites predictably", 
   ]);
 
   const allCommands = buildCtxHttpSuiteCommands("all");
-  assert.deepEqual(
-    allCommands,
-    getCtxHttpSuiteTargets("all").map((target) => ({
-      args: ["scripts/run_bazel_pilot.cjs", "test", target],
+  assert.deepEqual(allCommands, [
+    {
+      args: ["scripts/run_bazel_pilot.cjs", "test", ...getCtxHttpSuiteTargets("all")],
       command: "node",
-    })),
-  );
+    },
+  ]);
   assert.deepEqual(
     getCtxHttpSuiteTargets("all"),
     canonicalSuiteNames.map((suiteName) => `${CTX_HTTP_BAZEL_PACKAGE}:${suiteName}`),
@@ -87,11 +86,12 @@ test("ctx-http suite command builder expands base and meta suites predictably", 
 test("ctx-http suite command builder accepts explicit multi-suite selections", () => {
   assert.deepEqual(buildCtxHttpSuiteCommands(["base", "provider-auth"]), [
     {
-      args: ["scripts/run_bazel_pilot.cjs", "test", "//core/crates/ctx-http:base"],
-      command: "node",
-    },
-    {
-      args: ["scripts/run_bazel_pilot.cjs", "test", "//core/crates/ctx-http:provider-auth"],
+      args: [
+        "scripts/run_bazel_pilot.cjs",
+        "test",
+        "//core/crates/ctx-http:base",
+        "//core/crates/ctx-http:provider-auth",
+      ],
       command: "node",
     },
   ]);

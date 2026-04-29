@@ -9,8 +9,6 @@ const {
   getCtxHttpSuiteNames,
 } = require("./lib/ctx_http_suites.cjs");
 
-const DEFAULT_CTX_HTTP_BAZEL_JOBS = "1";
-
 function parseArgs(argv) {
   const args = {
     list: false,
@@ -51,40 +49,71 @@ function run(command, args, options) {
   }
 }
 
-function main() {
-  const args = parseArgs(process.argv.slice(2));
+function buildTaskPlan({
+  argv,
+  cwd,
+  env: sourceEnv,
+  mkdir,
+}) {
+  const args = parseArgs(argv);
   const commands = buildCtxHttpSuiteCommands(args.suites);
-  const isBatchSelection = commands.length > 1;
+  const isBatchSelection = args.suites.length > 1 || args.suites.includes("all");
   if (args.list) {
-    for (const command of commands) {
-      console.log([command.command, ...command.args].join(" "));
-    }
-    return;
+    return {
+      args,
+      commands,
+      env: null,
+      isBatchSelection,
+    };
   }
-
-  const coreRoot = path.resolve(__dirname, "..");
   const { env } = buildCtxCacheEnv({
-    cwd: coreRoot,
-    env: process.env,
+    cwd,
+    env: sourceEnv,
     mode: "workspace",
-    mkdir: true,
+    mkdir,
   });
   if (!String(env.RUST_TEST_THREADS ?? "").trim()) {
     env.RUST_TEST_THREADS = "1";
   }
-  if (!String(env.CTX_BAZEL_JOBS ?? "").trim()) {
-    env.CTX_BAZEL_JOBS = DEFAULT_CTX_HTTP_BAZEL_JOBS;
+  return {
+    args,
+    commands,
+    env,
+    isBatchSelection,
+  };
+}
+
+function main() {
+  const coreRoot = path.resolve(__dirname, "..");
+  const plan = buildTaskPlan({
+    argv: process.argv.slice(2),
+    cwd: coreRoot,
+    env: process.env,
+    mkdir: true,
+  });
+  if (plan.args.list) {
+    for (const command of plan.commands) {
+      console.log([command.command, ...command.args].join(" "));
+    }
+    return;
   }
-  if (isBatchSelection) {
-    process.stderr.write(`CTX_HTTP_SUITE_BATCH ${JSON.stringify({ suites: args.suites })}\n`);
+  if (plan.isBatchSelection) {
+    process.stderr.write(`CTX_HTTP_SUITE_BATCH ${JSON.stringify({ suites: plan.args.suites })}\n`);
   }
 
-  for (const command of commands) {
+  for (const command of plan.commands) {
     run(command.command, command.args, {
       cwd: coreRoot,
-      env,
+      env: plan.env,
     });
   }
 }
 
-main();
+if (require.main === module) {
+  main();
+}
+
+module.exports = {
+  buildTaskPlan,
+  parseArgs,
+};

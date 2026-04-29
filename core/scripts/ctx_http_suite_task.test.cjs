@@ -1,14 +1,13 @@
 const assert = require("node:assert/strict");
-const fs = require("node:fs");
-const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
 const { spawnSync } = require("node:child_process");
+const { buildTaskPlan } = require("./ctx_http_suite_task.cjs");
 
 const repoRoot = path.resolve(__dirname, "..", "..");
 const scriptPath = path.join(__dirname, "ctx_http_suite_task.cjs");
 
-test("ctx-http suite task lists sequential Bazel commands for multi-suite batches", () => {
+test("ctx-http suite task lists one Bazel command for multi-suite batches", () => {
   const result = spawnSync("node", [scriptPath, "--list", "--suite", "base", "--suite", "provider-auth"], {
     cwd: repoRoot,
     encoding: "utf8",
@@ -18,10 +17,7 @@ test("ctx-http suite task lists sequential Bazel commands for multi-suite batche
   assert.equal(result.status, 0);
   assert.equal(
     result.stdout.trim(),
-    [
-      "node scripts/run_bazel_pilot.cjs test //core/crates/ctx-http:base",
-      "node scripts/run_bazel_pilot.cjs test //core/crates/ctx-http:provider-auth",
-    ].join("\n"),
+    "node scripts/run_bazel_pilot.cjs test //core/crates/ctx-http:base //core/crates/ctx-http:provider-auth",
   );
 });
 
@@ -36,7 +32,7 @@ test("ctx-http suite task rejects a trailing --suite without a value", () => {
   assert.match(result.stderr, /--suite requires a suite name/u);
 });
 
-test("ctx-http suite task lists the all meta-suite as sequential Bazel commands", () => {
+test("ctx-http suite task lists the all meta-suite as one Bazel command", () => {
   const result = spawnSync("node", [scriptPath, "--list", "--suite", "all"], {
     cwd: repoRoot,
     encoding: "utf8",
@@ -45,105 +41,59 @@ test("ctx-http suite task lists the all meta-suite as sequential Bazel commands"
 
   assert.equal(result.status, 0);
   const stdoutLines = result.stdout.trim().split("\n");
-  assert.equal(stdoutLines.length > 2, true);
-  assert.equal(stdoutLines[0], "node scripts/run_bazel_pilot.cjs test //core/crates/ctx-http:base");
+  assert.equal(stdoutLines.length, 1);
+  assert.match(stdoutLines[0], /^node scripts\/run_bazel_pilot\.cjs test \/\/core\/crates\/ctx-http:base/u);
   assert.equal(
-    stdoutLines.includes("node scripts/run_bazel_pilot.cjs test //core/crates/ctx-http:workspace-stream"),
+    stdoutLines[0].includes("//core/crates/ctx-http:workspace-stream"),
     true,
   );
 });
 
-test("ctx-http suite task executes batched selections sequentially without widening local test fanout", () => {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-http-suite-task-"));
-  const capturePath = path.join(tempDir, "capture.jsonl");
-  const fakeNodePath = path.join(tempDir, "node");
-  fs.writeFileSync(
-    fakeNodePath,
-    [
-      `#!${process.execPath}`,
-      "const fs = require('node:fs');",
-      `const capturePath = ${JSON.stringify(capturePath)};`,
-      "fs.appendFileSync(capturePath, JSON.stringify({",
-      "  args: process.argv.slice(2),",
-      "  bazelJobs: process.env.CTX_BAZEL_JOBS || '',",
-      "  localTestJobs: process.env.CTX_BAZEL_LOCAL_TEST_JOBS || '',",
-      "  rustTestThreads: process.env.RUST_TEST_THREADS || '',",
-      "}) + '\\n');",
-    ].join("\n"),
-    { mode: 0o755 },
-  );
-
-  const result = spawnSync(process.execPath, [scriptPath, "--suite", "base", "--suite", "provider-auth"], {
+test("ctx-http suite task executes batched selections as one Bazel invocation without forcing a job cap", () => {
+  const plan = buildTaskPlan({
+    argv: ["--suite", "base", "--suite", "provider-auth"],
     cwd: repoRoot,
-    encoding: "utf8",
     env: {
-      ...process.env,
-      PATH: `${tempDir}:${process.env.PATH}`,
+      PATH: process.env.PATH ?? "",
     },
-    stdio: "pipe",
+    mkdir: false,
   });
 
-  assert.equal(result.status, 0);
-  assert.match(result.stderr, /CTX_HTTP_SUITE_BATCH/u);
-
-  const calls = fs.readFileSync(capturePath, "utf8")
-    .trim()
-    .split("\n")
-    .map((line) => JSON.parse(line));
-  assert.deepEqual(calls, [
+  assert.equal(plan.isBatchSelection, true);
+  assert.deepEqual(plan.commands, [
     {
-      args: ["scripts/run_bazel_pilot.cjs", "test", "//core/crates/ctx-http:base"],
-      bazelJobs: "1",
-      localTestJobs: "",
-      rustTestThreads: "1",
-    },
-    {
-      args: ["scripts/run_bazel_pilot.cjs", "test", "//core/crates/ctx-http:provider-auth"],
-      bazelJobs: "1",
-      localTestJobs: "",
-      rustTestThreads: "1",
+      args: [
+        "scripts/run_bazel_pilot.cjs",
+        "test",
+        "//core/crates/ctx-http:base",
+        "//core/crates/ctx-http:provider-auth",
+      ],
+      command: "node",
     },
   ]);
+  assert.equal(String(plan.env.CTX_BAZEL_JOBS ?? ""), "");
+  assert.equal(String(plan.env.CTX_BAZEL_LOCAL_TEST_JOBS ?? ""), "");
+  assert.equal(plan.env.RUST_TEST_THREADS, "1");
 });
 
 test("ctx-http suite task preserves an explicit Bazel job cap", () => {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-http-suite-task-"));
-  const capturePath = path.join(tempDir, "capture.jsonl");
-  const fakeNodePath = path.join(tempDir, "node");
-  fs.writeFileSync(
-    fakeNodePath,
-    [
-      `#!${process.execPath}`,
-      "const fs = require('node:fs');",
-      `const capturePath = ${JSON.stringify(capturePath)};`,
-      "fs.appendFileSync(capturePath, JSON.stringify({",
-      "  args: process.argv.slice(2),",
-      "  bazelJobs: process.env.CTX_BAZEL_JOBS || '',",
-      "}) + '\\n');",
-    ].join("\n"),
-    { mode: 0o755 },
-  );
-
-  const result = spawnSync(process.execPath, [scriptPath, "--suite", "base"], {
+  const plan = buildTaskPlan({
+    argv: ["--suite", "base"],
     cwd: repoRoot,
-    encoding: "utf8",
     env: {
-      ...process.env,
       CTX_BAZEL_JOBS: "3",
-      PATH: `${tempDir}:${process.env.PATH}`,
+      PATH: process.env.PATH ?? "",
     },
-    stdio: "pipe",
+    mkdir: false,
   });
 
-  assert.equal(result.status, 0);
-  const calls = fs.readFileSync(capturePath, "utf8")
-    .trim()
-    .split("\n")
-    .map((line) => JSON.parse(line));
-  assert.deepEqual(calls, [
+  assert.deepEqual(plan.commands, [
     {
       args: ["scripts/run_bazel_pilot.cjs", "test", "//core/crates/ctx-http:base"],
-      bazelJobs: "3",
+      command: "node",
     },
   ]);
+  assert.equal(plan.isBatchSelection, false);
+  assert.equal(plan.env.CTX_BAZEL_JOBS, "3");
+  assert.equal(plan.env.RUST_TEST_THREADS, "1");
 });
