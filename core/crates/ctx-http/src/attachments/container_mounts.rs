@@ -337,7 +337,7 @@ async fn container_remove_mount_path(
     }
 }
 
-async fn container_remove_attachment_data_best_effort(
+async fn container_remove_attachment_data_if_present(
     state: &AppState,
     workspace_id: WorkspaceId,
     attachment: &WorkspaceAttachment,
@@ -357,8 +357,7 @@ async fn container_remove_attachment_data_best_effort(
         return Ok(());
     }
     let root = container_attachment_root(attachment);
-    let _ = container_rm_rf(state, &container_id, &root).await;
-    Ok(())
+    container_rm_rf(state, &container_id, &root).await
 }
 
 async fn resolve_attachment_source_path(
@@ -696,14 +695,12 @@ pub(crate) async fn cleanup_removed_attachment(
             remove_mount_path_in_worktree(&data_plane.live_worktree_root, &path).await?;
         }
     }
+    container_remove_attachment_data_if_present(state, attachment.workspace_id, attachment).await?;
     store
         .delete_worktree_attachment_mounts_for_attachment(attachment.id)
         .await?;
     workspace_attachments::remove_materialized_root_if_exists(&state.core.data_root, attachment)
         .await?;
-    let _ =
-        container_remove_attachment_data_best_effort(state, attachment.workspace_id, attachment)
-            .await;
     Ok(())
 }
 

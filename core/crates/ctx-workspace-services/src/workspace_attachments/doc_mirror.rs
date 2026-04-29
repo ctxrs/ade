@@ -15,7 +15,6 @@ pub(super) async fn materialize_doc_mirror(
     let should_update = refresh || !dest.exists();
     if should_update {
         let temp = super::unique_materialized_temp_path(&dest)?;
-        super::remove_materialized_revision_if_exists(data_root, attachment).await?;
         super::ensure_materialized_revision_parent(data_root, attachment).await?;
         tokio::fs::create_dir(&temp).await?;
         if let Err(err) = run_doc_mirror_cli(workspace, attachment, &temp).await {
@@ -160,7 +159,6 @@ exit 7
 
         std::env::set_var("CTX_DOCS_MIRROR_BIN", &bin);
         let result = materialize_doc_mirror(data_root.path(), &workspace, &attachment, true).await;
-        std::env::remove_var("CTX_DOCS_MIRROR_BIN");
         let err = result.expect_err("failing docs mirror CLI should fail materialization");
 
         assert!(format!("{err:#}").contains("ctx-docs-mirror failed"));
@@ -178,6 +176,30 @@ exit 7
                 .iter()
                 .any(|name| name.contains("materialize-tmp")),
             "failed doc mirror materialization left temp entries: {leftovers:?}"
+        );
+
+        std::fs::create_dir_all(&dest).unwrap();
+        std::fs::write(dest.join("existing.txt"), "existing\n").unwrap();
+        let refresh_result =
+            materialize_doc_mirror(data_root.path(), &workspace, &attachment, true).await;
+        std::env::remove_var("CTX_DOCS_MIRROR_BIN");
+        let refresh_err = refresh_result.expect_err("failing docs mirror CLI should fail refresh");
+
+        assert!(format!("{refresh_err:#}").contains("ctx-docs-mirror failed"));
+        assert_eq!(
+            std::fs::read_to_string(dest.join("existing.txt")).unwrap(),
+            "existing\n",
+            "failed doc mirror refresh must preserve the previous materialization"
+        );
+        let refresh_leftovers = std::fs::read_dir(dest.parent().unwrap())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().to_string())
+            .collect::<Vec<_>>();
+        assert!(
+            !refresh_leftovers
+                .iter()
+                .any(|name| name.contains("materialize-tmp")),
+            "failed doc mirror refresh left temp entries: {refresh_leftovers:?}"
         );
     }
 }

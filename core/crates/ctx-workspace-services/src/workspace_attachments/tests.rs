@@ -363,6 +363,93 @@ async fn materialized_path_validation_rejects_symlinked_revision_path() {
 #[tokio::test]
 async fn reference_repo_materialization_cleans_temp_and_final_on_checkout_failure() {
     let data_root = tempfile::tempdir().unwrap();
+    let (_source_parent, source) = create_reference_repo();
+
+    let attachment = normalize_attachment_config(
+        WorkspaceId::new(),
+        AttachmentConfig {
+            kind: WorkspaceAttachmentKind::ReferenceRepo,
+            name: "Docs".to_string(),
+            source: source.to_string_lossy().to_string(),
+            revision: Some("deadbee".to_string()),
+            subpath: None,
+            mount_relpath: None,
+            mode: None,
+            update_policy: None,
+        },
+        None,
+    )
+    .unwrap();
+
+    let err = materialize_reference_repo(data_root.path(), &attachment, true)
+        .await
+        .expect_err("invalid checkout revision should fail");
+
+    assert!(format!("{err:#}").contains("git fetch failed"));
+    let dest = materialized_path_for_attachment(data_root.path(), &attachment);
+    assert!(
+        !dest.exists(),
+        "failed reference repo materialization must not leave final revision path"
+    );
+    let leftovers = std::fs::read_dir(dest.parent().unwrap())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().to_string())
+        .collect::<Vec<_>>();
+    assert!(
+        !leftovers
+            .iter()
+            .any(|name| name.contains("materialize-tmp")),
+        "failed reference repo materialization left temp entries: {leftovers:?}"
+    );
+}
+
+#[tokio::test]
+async fn reference_repo_refresh_failure_preserves_existing_materialization() {
+    let data_root = tempfile::tempdir().unwrap();
+    let (_source_parent, source) = create_reference_repo();
+
+    let attachment = normalize_attachment_config(
+        WorkspaceId::new(),
+        AttachmentConfig {
+            kind: WorkspaceAttachmentKind::ReferenceRepo,
+            name: "Docs".to_string(),
+            source: source.to_string_lossy().to_string(),
+            revision: Some("deadbee".to_string()),
+            subpath: None,
+            mount_relpath: None,
+            mode: None,
+            update_policy: None,
+        },
+        None,
+    )
+    .unwrap();
+    let dest = materialized_path_for_attachment(data_root.path(), &attachment);
+    std::fs::create_dir_all(&dest).unwrap();
+    std::fs::write(dest.join("existing.txt"), "existing\n").unwrap();
+
+    let err = materialize_reference_repo(data_root.path(), &attachment, true)
+        .await
+        .expect_err("invalid checkout revision should fail refresh");
+
+    assert!(format!("{err:#}").contains("git fetch failed"));
+    assert_eq!(
+        std::fs::read_to_string(dest.join("existing.txt")).unwrap(),
+        "existing\n",
+        "failed refresh must preserve the previous materialization"
+    );
+    let leftovers = std::fs::read_dir(dest.parent().unwrap())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().to_string())
+        .collect::<Vec<_>>();
+    assert!(
+        !leftovers
+            .iter()
+            .any(|name| name.contains("materialize-tmp")),
+        "failed reference repo refresh left temp entries: {leftovers:?}"
+    );
+}
+
+fn create_reference_repo() -> (tempfile::TempDir, std::path::PathBuf) {
     let source_parent = tempfile::tempdir().unwrap();
     let source = source_parent.path().join("repo");
     std::fs::create_dir_all(&source).unwrap();
@@ -407,41 +494,5 @@ async fn reference_repo_materialization_cleans_temp_and_final_on_checkout_failur
         "git commit failed: {}",
         String::from_utf8_lossy(&commit.stderr)
     );
-
-    let attachment = normalize_attachment_config(
-        WorkspaceId::new(),
-        AttachmentConfig {
-            kind: WorkspaceAttachmentKind::ReferenceRepo,
-            name: "Docs".to_string(),
-            source: source.to_string_lossy().to_string(),
-            revision: Some("deadbee".to_string()),
-            subpath: None,
-            mount_relpath: None,
-            mode: None,
-            update_policy: None,
-        },
-        None,
-    )
-    .unwrap();
-
-    let err = materialize_reference_repo(data_root.path(), &attachment, true)
-        .await
-        .expect_err("invalid checkout revision should fail");
-
-    assert!(format!("{err:#}").contains("git fetch failed"));
-    let dest = materialized_path_for_attachment(data_root.path(), &attachment);
-    assert!(
-        !dest.exists(),
-        "failed reference repo materialization must not leave final revision path"
-    );
-    let leftovers = std::fs::read_dir(dest.parent().unwrap())
-        .unwrap()
-        .map(|entry| entry.unwrap().file_name().to_string_lossy().to_string())
-        .collect::<Vec<_>>();
-    assert!(
-        !leftovers
-            .iter()
-            .any(|name| name.contains("materialize-tmp")),
-        "failed reference repo materialization left temp entries: {leftovers:?}"
-    );
+    (source_parent, source)
 }

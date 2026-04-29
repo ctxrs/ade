@@ -427,7 +427,6 @@ async fn materialize_reference_repo(
     let should_update = refresh || !dest.exists();
     if should_update {
         let temp = unique_materialized_temp_path(&dest)?;
-        remove_materialized_path_if_exists(data_root, &dest).await?;
         ensure_materialized_parent(data_root, &dest).await?;
         if let Err(err) =
             clone_reference_repo(&attachment.source, attachment.revision.as_deref(), &temp).await
@@ -538,14 +537,6 @@ pub(crate) async fn ensure_materialized_revision_parent(
     ensure_materialized_parent(data_root, &dest).await
 }
 
-pub(crate) async fn remove_materialized_revision_if_exists(
-    data_root: &Path,
-    attachment: &WorkspaceAttachment,
-) -> Result<()> {
-    let dest = materialized_path_for_attachment(data_root, attachment);
-    remove_materialized_path_if_exists(data_root, &dest).await
-}
-
 pub(super) async fn remove_materialized_path_if_exists(
     data_root: &Path,
     path: &Path,
@@ -602,6 +593,10 @@ pub(super) async fn install_materialized_temp(
     temp: &Path,
     dest: &Path,
 ) -> Result<()> {
+    if let Err(err) = remove_materialized_path_if_exists(data_root, dest).await {
+        cleanup_materialized_temp(data_root, temp).await;
+        return Err(err);
+    }
     if let Err(err) = tokio::fs::rename(temp, dest)
         .await
         .with_context(|| format!("installing attachment materialization {}", dest.display()))
