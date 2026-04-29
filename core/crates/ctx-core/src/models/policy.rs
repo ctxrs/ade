@@ -343,16 +343,11 @@ pub fn is_network_profile_allowed(
     allowed_network_profiles: &[NetworkProfile],
     requested_network_profile: NetworkProfile,
 ) -> bool {
-    allowed_network_profiles
-        .iter()
-        .any(|profile| *profile == requested_network_profile)
+    allowed_network_profiles.contains(&requested_network_profile)
 }
 
 pub fn is_route_allowed(route_policy: &RoutePolicy, route_type: RouteType) -> bool {
-    route_policy
-        .allowed_route_types
-        .iter()
-        .any(|candidate| *candidate == route_type)
+    route_policy.allowed_route_types.contains(&route_type)
 }
 
 pub fn is_personal_route_allowed(route_policy: &RoutePolicy, route_type: RouteType) -> bool {
@@ -431,43 +426,53 @@ pub fn merge_org_policy_with_overlay(
     }
 }
 
+pub struct OrgPolicyRunRequest<'a> {
+    pub provider_id: &'a str,
+    pub model_id: &'a str,
+    pub execution_environment: ExecutionEnvironment,
+    pub network_profile: NetworkProfile,
+    pub route_type: Option<RouteType>,
+    pub now: DateTime<Utc>,
+}
+
 pub fn org_policy_allows_run(
     snapshot: &OrgPolicySnapshot,
     overlay: Option<&WorkspacePolicyOverlay>,
-    provider_id: &str,
-    model_id: &str,
-    execution_environment: ExecutionEnvironment,
-    network_profile: NetworkProfile,
-    route_type: Option<RouteType>,
-    now: DateTime<Utc>,
+    request: OrgPolicyRunRequest<'_>,
 ) -> Result<PolicyWindowState, PolicyDenyReason> {
-    let window_state = policy_window_state(snapshot, now);
+    let window_state = policy_window_state(snapshot, request.now);
     if !window_state.permits_org_run() {
         return Err(PolicyDenyReason::PolicyHardExpired);
     }
 
     let effective_policy = merge_org_policy_with_overlay(snapshot, overlay);
-    if !is_provider_allowed(effective_policy.allowed_providers.as_deref(), provider_id) {
+    if !is_provider_allowed(
+        effective_policy.allowed_providers.as_deref(),
+        request.provider_id,
+    ) {
         return Err(PolicyDenyReason::ProviderNotAllowed);
     }
     if !is_provider_model_allowed(
         effective_policy.allowed_providers.as_deref(),
         &effective_policy.allowed_models,
-        provider_id,
-        model_id,
+        request.provider_id,
+        request.model_id,
     ) {
         return Err(PolicyDenyReason::ModelNotAllowed);
     }
     if !execution_environment_satisfies_requirement(
         effective_policy.required_execution_environment,
-        execution_environment,
+        request.execution_environment,
     ) {
         return Err(PolicyDenyReason::ExecutionEnvironmentNotAllowed);
     }
-    if !is_network_profile_allowed(&effective_policy.allowed_network_profiles, network_profile) {
+    if !is_network_profile_allowed(
+        &effective_policy.allowed_network_profiles,
+        request.network_profile,
+    ) {
         return Err(PolicyDenyReason::NetworkProfileNotAllowed);
     }
-    if let Some(route_type) = route_type {
+    if let Some(route_type) = request.route_type {
         if !is_route_allowed(&effective_policy.route_policy, route_type) {
             if route_type.is_personal() {
                 return Err(PolicyDenyReason::PersonalRouteNotAllowed);
@@ -707,24 +712,28 @@ mod tests {
         let grace_result = org_policy_allows_run(
             &snapshot,
             None,
-            "anthropic",
-            "claude-sonnet-4",
-            ExecutionEnvironment::Sandbox,
-            NetworkProfile::LlmOnly,
-            Some(RouteType::CtxManaged),
-            now + Duration::minutes(45),
+            OrgPolicyRunRequest {
+                provider_id: "anthropic",
+                model_id: "claude-sonnet-4",
+                execution_environment: ExecutionEnvironment::Sandbox,
+                network_profile: NetworkProfile::LlmOnly,
+                route_type: Some(RouteType::CtxManaged),
+                now: now + Duration::minutes(45),
+            },
         );
         assert_eq!(grace_result, Ok(PolicyWindowState::Grace));
 
         let expired_result = org_policy_allows_run(
             &snapshot,
             None,
-            "anthropic",
-            "claude-sonnet-4",
-            ExecutionEnvironment::Sandbox,
-            NetworkProfile::LlmOnly,
-            Some(RouteType::CtxManaged),
-            now + Duration::minutes(61),
+            OrgPolicyRunRequest {
+                provider_id: "anthropic",
+                model_id: "claude-sonnet-4",
+                execution_environment: ExecutionEnvironment::Sandbox,
+                network_profile: NetworkProfile::LlmOnly,
+                route_type: Some(RouteType::CtxManaged),
+                now: now + Duration::minutes(61),
+            },
         );
         assert_eq!(expired_result, Err(PolicyDenyReason::PolicyHardExpired));
     }
@@ -738,12 +747,14 @@ mod tests {
         let result = org_policy_allows_run(
             &snapshot,
             None,
-            "anthropic",
-            "claude-sonnet-4",
-            ExecutionEnvironment::Host,
-            NetworkProfile::LlmOnly,
-            Some(RouteType::CtxManaged),
-            now,
+            OrgPolicyRunRequest {
+                provider_id: "anthropic",
+                model_id: "claude-sonnet-4",
+                execution_environment: ExecutionEnvironment::Host,
+                network_profile: NetworkProfile::LlmOnly,
+                route_type: Some(RouteType::CtxManaged),
+                now,
+            },
         );
 
         assert_eq!(
@@ -772,12 +783,14 @@ mod tests {
         let result = org_policy_allows_run(
             &snapshot,
             None,
-            "anthropic",
-            "claude-sonnet-4",
-            ExecutionEnvironment::Sandbox,
-            NetworkProfile::LlmOnly,
-            Some(RouteType::UserApiKey),
-            now,
+            OrgPolicyRunRequest {
+                provider_id: "anthropic",
+                model_id: "claude-sonnet-4",
+                execution_environment: ExecutionEnvironment::Sandbox,
+                network_profile: NetworkProfile::LlmOnly,
+                route_type: Some(RouteType::UserApiKey),
+                now,
+            },
         );
         assert_eq!(result, Err(PolicyDenyReason::PersonalRouteNotAllowed));
     }

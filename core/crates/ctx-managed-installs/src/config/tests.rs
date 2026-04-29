@@ -93,7 +93,7 @@ fn bundled_only_provider_scope_requires_exact_codex_provider_id() {
     let _strict = EnvVarGuard::set("CTX_E2E_BUNDLED_ONLY", "1");
     let _providers = EnvVarGuard::set("CTX_E2E_BUNDLED_ONLY_PROVIDERS", "codex");
     assert!(bundled_only_mode_applies_to_provider("codex"));
-    assert!(!bundled_only_mode_applies_to_provider("codex"));
+    assert!(!bundled_only_mode_applies_to_provider("codex-crp"));
 }
 
 #[test]
@@ -217,7 +217,7 @@ fn migration_moves_legacy_managed_provider_entries_into_target_buckets() {
 fn migration_moves_adapter_keyed_codex_entries_to_provider_id() {
     let mut cfg = AgentServerConfigFile::default();
     cfg.providers.insert(
-        "codex".to_string(),
+        "codex-crp".to_string(),
         AgentServerCommand {
             command: "/tmp/codex-host".to_string(),
             args: Vec::new(),
@@ -226,13 +226,13 @@ fn migration_moves_adapter_keyed_codex_entries_to_provider_id() {
         },
     );
     cfg.provider_login_executables.insert(
-        "codex".to_string(),
+        "codex-crp".to_string(),
         ProviderLoginExecutable {
             executable_path: "/tmp/codex-login".to_string(),
         },
     );
     cfg.managed_provider_targets.insert(
-        "codex".to_string(),
+        "codex-crp".to_string(),
         HashMap::from([(
             "host".to_string(),
             AgentServerCommand {
@@ -244,7 +244,7 @@ fn migration_moves_adapter_keyed_codex_entries_to_provider_id() {
         )]),
     );
     cfg.managed_install_targets.insert(
-        "codex".to_string(),
+        "codex-crp".to_string(),
         HashMap::from([(
             "host".to_string(),
             ManagedInstallMetadata {
@@ -262,10 +262,10 @@ fn migration_moves_adapter_keyed_codex_entries_to_provider_id() {
     );
 
     assert!(migrate_agent_server_config(&mut cfg));
-    assert!(!cfg.providers.contains_key("codex"));
-    assert!(!cfg.provider_login_executables.contains_key("codex"));
-    assert!(!cfg.managed_provider_targets.contains_key("codex"));
-    assert!(!cfg.managed_install_targets.contains_key("codex"));
+    assert!(!cfg.providers.contains_key("codex-crp"));
+    assert!(!cfg.provider_login_executables.contains_key("codex-crp"));
+    assert!(!cfg.managed_provider_targets.contains_key("codex-crp"));
+    assert!(!cfg.managed_install_targets.contains_key("codex-crp"));
     assert!(cfg.providers.contains_key("codex"));
     assert!(cfg.provider_login_executables.contains_key("codex"));
     assert!(cfg.managed_provider_targets.contains_key("codex"));

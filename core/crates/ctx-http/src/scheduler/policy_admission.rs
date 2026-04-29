@@ -260,12 +260,14 @@ pub(super) async fn admit_turn(
     if let Err(reason) = ctx_core::models::org_policy_allows_run(
         &snapshot,
         Some(&overlay),
-        request.provider_id,
-        request.model_id,
-        request.execution_environment,
-        request.network_profile,
-        Some(request.route_type),
-        Utc::now(),
+        ctx_core::models::OrgPolicyRunRequest {
+            provider_id: request.provider_id,
+            model_id: request.model_id,
+            execution_environment: request.execution_environment,
+            network_profile: request.network_profile,
+            route_type: Some(request.route_type),
+            now: Utc::now(),
+        },
     ) {
         return deny_org_run(
             store,

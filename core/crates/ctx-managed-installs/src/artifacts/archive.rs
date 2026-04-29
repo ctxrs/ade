@@ -36,6 +36,24 @@ fn safe_archive_dest(out_dir: &Path, raw_path: &Path, label: &str) -> Result<Pat
     Ok(out_dir.join(normalize_archive_entry_path(raw_path, label)?))
 }
 
+fn ensure_archive_root(out_dir: &Path) -> Result<PathBuf> {
+    std::fs::create_dir_all(out_dir).with_context(|| format!("create {}", out_dir.display()))?;
+    std::fs::canonicalize(out_dir).with_context(|| format!("canonicalize {}", out_dir.display()))
+}
+
+fn ensure_canonical_path_inside_root(root: &Path, path: &Path, label: &str) -> Result<()> {
+    let canonical =
+        std::fs::canonicalize(path).with_context(|| format!("canonicalize {}", path.display()))?;
+    if !canonical.starts_with(root) {
+        anyhow::bail!(
+            "{label} escaped extraction root: {} -> {}",
+            path.display(),
+            canonical.display()
+        );
+    }
+    Ok(())
+}
+
 fn reject_existing_symlink(path: &Path) -> Result<()> {
     match std::fs::symlink_metadata(path) {
         Ok(metadata) if metadata.file_type().is_symlink() => {
@@ -50,7 +68,7 @@ fn reject_existing_symlink(path: &Path) -> Result<()> {
     }
 }
 
-fn ensure_no_symlink_ancestors(out_dir: &Path, dest: &Path) -> Result<()> {
+fn ensure_existing_ancestors_inside_root(root: &Path, out_dir: &Path, dest: &Path) -> Result<()> {
     let rel = dest
         .strip_prefix(out_dir)
         .with_context(|| format!("archive destination escaped root: {}", dest.display()))?;
@@ -63,7 +81,13 @@ fn ensure_no_symlink_ancestors(out_dir: &Path, dest: &Path) -> Result<()> {
         match component {
             Component::Normal(segment) => {
                 current.push(segment);
-                reject_existing_symlink(&current)?;
+                match std::fs::symlink_metadata(&current) {
+                    Ok(_) => ensure_canonical_path_inside_root(root, &current, "archive ancestor")?,
+                    Err(err) if err.kind() == std::io::ErrorKind::NotFound => break,
+                    Err(err) => {
+                        return Err(err).with_context(|| format!("stat {}", current.display()))
+                    }
+                }
             }
             Component::CurDir => {}
             Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
@@ -77,20 +101,22 @@ fn ensure_no_symlink_ancestors(out_dir: &Path, dest: &Path) -> Result<()> {
     Ok(())
 }
 
-fn prepare_archive_entry_parent(out_dir: &Path, dest: &Path) -> Result<()> {
-    ensure_no_symlink_ancestors(out_dir, dest)?;
+fn prepare_archive_entry_parent(root: &Path, out_dir: &Path, dest: &Path) -> Result<()> {
+    ensure_existing_ancestors_inside_root(root, out_dir, dest)?;
     if let Some(parent) = dest.parent() {
         std::fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
+        ensure_canonical_path_inside_root(root, parent, "archive parent")?;
     }
-    ensure_no_symlink_ancestors(out_dir, dest)?;
+    ensure_existing_ancestors_inside_root(root, out_dir, dest)?;
     Ok(())
 }
 
-fn create_archive_dir(out_dir: &Path, dest: &Path) -> Result<()> {
-    prepare_archive_entry_parent(out_dir, dest)?;
+fn create_archive_dir(root: &Path, out_dir: &Path, dest: &Path) -> Result<()> {
+    prepare_archive_entry_parent(root, out_dir, dest)?;
     reject_existing_symlink(dest)?;
     std::fs::create_dir_all(dest).with_context(|| format!("create {}", dest.display()))?;
     reject_existing_symlink(dest)?;
+    ensure_canonical_path_inside_root(root, dest, "archive directory")?;
     Ok(())
 }
 
@@ -147,8 +173,8 @@ fn validate_symlink_target(out_dir: &Path, dest: &Path, target: &Path) -> Result
     Ok(())
 }
 
-fn create_archive_symlink(out_dir: &Path, dest: &Path, target: &Path) -> Result<()> {
-    prepare_archive_entry_parent(out_dir, dest)?;
+fn create_archive_symlink(root: &Path, out_dir: &Path, dest: &Path, target: &Path) -> Result<()> {
+    prepare_archive_entry_parent(root, out_dir, dest)?;
     reject_existing_symlink(dest)?;
     if std::fs::symlink_metadata(dest).is_ok() {
         anyhow::bail!(
@@ -162,6 +188,9 @@ fn create_archive_symlink(out_dir: &Path, dest: &Path, target: &Path) -> Result<
         std::os::unix::fs::symlink(target, dest).with_context(|| {
             format!("create symlink {} -> {}", dest.display(), target.display())
         })?;
+        if std::fs::canonicalize(dest).is_ok() {
+            ensure_canonical_path_inside_root(root, dest, "archive symlink target")?;
+        }
         Ok(())
     }
     #[cfg(not(unix))]
@@ -172,12 +201,13 @@ fn create_archive_symlink(out_dir: &Path, dest: &Path, target: &Path) -> Result<
 }
 
 fn create_archive_file<R: Read>(
+    root: &Path,
     out_dir: &Path,
     dest: &Path,
     reader: &mut R,
     mode: Option<u32>,
 ) -> Result<()> {
-    prepare_archive_entry_parent(out_dir, dest)?;
+    prepare_archive_entry_parent(root, out_dir, dest)?;
     reject_existing_symlink(dest)?;
     let mut out =
         std::fs::File::create(dest).with_context(|| format!("create {}", dest.display()))?;
@@ -190,7 +220,44 @@ fn create_archive_file<R: Read>(
     Ok(())
 }
 
+fn create_archive_hardlink(root: &Path, out_dir: &Path, dest: &Path, target: &Path) -> Result<()> {
+    let target_dest = safe_archive_dest(out_dir, target, "tar hardlink target")?;
+    ensure_canonical_path_inside_root(root, &target_dest, "tar hardlink target")?;
+    let target_metadata = std::fs::symlink_metadata(&target_dest)
+        .with_context(|| format!("stat tar hardlink target {}", target_dest.display()))?;
+    if target_metadata.file_type().is_symlink() {
+        anyhow::bail!(
+            "archive hardlink target must not be a symlink: {}",
+            target.display()
+        );
+    }
+    if !target_metadata.file_type().is_file() {
+        anyhow::bail!(
+            "archive hardlink target must be a file: {}",
+            target.display()
+        );
+    }
+
+    prepare_archive_entry_parent(root, out_dir, dest)?;
+    reject_existing_symlink(dest)?;
+    if std::fs::symlink_metadata(dest).is_ok() {
+        anyhow::bail!(
+            "archive extraction refused to replace existing path with hardlink: {}",
+            dest.display()
+        );
+    }
+    std::fs::hard_link(&target_dest, dest).with_context(|| {
+        format!(
+            "create hardlink {} -> {}",
+            dest.display(),
+            target_dest.display()
+        )
+    })?;
+    Ok(())
+}
+
 pub(crate) fn extract_zip_to_dir(zip_path: &Path, out_dir: &Path) -> Result<()> {
+    let root = ensure_archive_root(out_dir)?;
     let file =
         std::fs::File::open(zip_path).with_context(|| format!("open {}", zip_path.display()))?;
     let mut archive = zip::ZipArchive::new(file).context("parsing zip")?;
@@ -201,7 +268,7 @@ pub(crate) fn extract_zip_to_dir(zip_path: &Path, out_dir: &Path) -> Result<()> 
         let mode = f.unix_mode();
         let file_type = mode.unwrap_or(0) & 0o170000;
         if f.is_dir() || file_type == 0o040000 {
-            create_archive_dir(out_dir, &dest)?;
+            create_archive_dir(&root, out_dir, &dest)?;
             continue;
         }
 
@@ -209,14 +276,14 @@ pub(crate) fn extract_zip_to_dir(zip_path: &Path, out_dir: &Path) -> Result<()> 
             let mut target = String::new();
             f.read_to_string(&mut target)
                 .context("read zip symlink target")?;
-            create_archive_symlink(out_dir, &dest, Path::new(&target))?;
+            create_archive_symlink(&root, out_dir, &dest, Path::new(&target))?;
             continue;
         }
 
         if file_type != 0 && file_type != 0o100000 {
             anyhow::bail!("unsupported zip entry type for {}", entry_name);
         }
-        create_archive_file(out_dir, &dest, &mut f, mode)?;
+        create_archive_file(&root, out_dir, &dest, &mut f, mode)?;
     }
     Ok(())
 }
@@ -236,26 +303,30 @@ pub(crate) fn extract_tar_bz2_to_dir(tar_bz2_path: &Path, out_dir: &Path) -> Res
 }
 
 fn extract_tar_stream_to_dir<R: Read>(reader: R, out_dir: &Path, label: &str) -> Result<()> {
+    let root = ensure_archive_root(out_dir)?;
     let mut archive = tar::Archive::new(reader);
     for entry in archive
         .entries()
         .with_context(|| format!("read {label} entries"))?
     {
         let mut entry = entry.with_context(|| format!("read {label} entry"))?;
+        let entry_type = entry.header().entry_type();
+        if is_tar_metadata_entry(&entry_type) {
+            continue;
+        }
         let raw_path = entry
             .path()
             .with_context(|| format!("read {label} entry path"))?
             .into_owned();
         let dest = safe_archive_dest(out_dir, &raw_path, "tar entry path")?;
-        let entry_type = entry.header().entry_type();
 
         if entry_type.is_dir() {
-            create_archive_dir(out_dir, &dest)?;
+            create_archive_dir(&root, out_dir, &dest)?;
             continue;
         }
         if entry_type.is_file() {
             let mode = entry.header().mode().ok();
-            create_archive_file(out_dir, &dest, &mut entry, mode)?;
+            create_archive_file(&root, out_dir, &dest, &mut entry, mode)?;
             continue;
         }
         if entry_type.is_symlink() {
@@ -266,26 +337,35 @@ fn extract_tar_stream_to_dir<R: Read>(reader: R, out_dir: &Path, label: &str) ->
                     anyhow::anyhow!("tar symlink missing target: {}", raw_path.display())
                 })?
                 .into_owned();
-            create_archive_symlink(out_dir, &dest, &target)?;
+            create_archive_symlink(&root, out_dir, &dest, &target)?;
             continue;
         }
         if entry_type.is_hard_link() {
-            anyhow::bail!(
-                "archive hardlinks are not supported: {}",
-                raw_path.display()
-            );
+            let target = entry
+                .link_name()
+                .with_context(|| format!("read {label} hardlink target"))?
+                .ok_or_else(|| {
+                    anyhow::anyhow!("tar hardlink missing target: {}", raw_path.display())
+                })?
+                .into_owned();
+            create_archive_hardlink(&root, out_dir, &dest, &target)?;
+            continue;
         }
 
-        match entry_type.as_byte() {
-            b'g' | b'x' | b'L' | b'K' => {}
-            kind => anyhow::bail!(
-                "unsupported tar entry type {} for {}",
-                kind,
-                raw_path.display()
-            ),
-        }
+        anyhow::bail!(
+            "unsupported tar entry type {} for {}",
+            entry_type.as_byte(),
+            raw_path.display()
+        );
     }
     Ok(())
+}
+
+fn is_tar_metadata_entry(entry_type: &tar::EntryType) -> bool {
+    entry_type.is_pax_global_extensions()
+        || entry_type.is_pax_local_extensions()
+        || entry_type.is_gnu_longname()
+        || entry_type.is_gnu_longlink()
 }
 
 #[cfg(test)]
@@ -442,16 +522,23 @@ mod archive_extraction_tests {
     }
 
     #[test]
-    fn archive_extraction_tar_gz_rejects_hardlinks() {
+    fn archive_extraction_tar_gz_allows_in_root_hardlinks() {
         let temp = tempfile::tempdir().expect("tempdir");
         let tar_path = temp.path().join("hardlink.tar.gz");
         write_tar_gz(&tar_path, |builder| {
+            let data = b"linked";
+            let mut file_header = tar::Header::new_gnu();
+            file_header.set_mode(0o755);
+            file_header.set_size(data.len() as u64);
+            file_header.set_cksum();
+            builder.append_data(&mut file_header, "bin/source", &data[..])?;
+
             let mut header = tar::Header::new_gnu();
             header.set_entry_type(tar::EntryType::Link);
             header.set_mode(0o777);
             header.set_size(0);
             header.set_path("bin/ctx")?;
-            header.set_link_name("bin/other")?;
+            header.set_link_name("bin/source")?;
             header.set_cksum();
             builder.append(&header, std::io::empty())?;
             Ok(())
@@ -459,10 +546,68 @@ mod archive_extraction_tests {
         .expect("write tar.gz");
 
         let out_dir = temp.path().join("out");
-        let err = extract_tar_gz_to_dir(&tar_path, &out_dir).expect_err("hardlink should fail");
+        extract_tar_gz_to_dir(&tar_path, &out_dir).expect("extract hardlink");
+        assert_eq!(
+            std::fs::read(out_dir.join("bin/ctx")).expect("read hardlink"),
+            b"linked"
+        );
+    }
+
+    #[test]
+    fn archive_extraction_tar_gz_rejects_escaping_hardlink_target() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let tar_path = temp.path().join("hardlink-escape.tar.gz");
+        write_tar_gz(&tar_path, |builder| {
+            let mut header = tar::Header::new_gnu();
+            header.set_entry_type(tar::EntryType::Link);
+            header.set_mode(0o777);
+            header.set_size(0);
+            header.set_path("bin/ctx")?;
+            header.set_link_name("../outside")?;
+            header.set_cksum();
+            builder.append(&header, std::io::empty())?;
+            Ok(())
+        })
+        .expect("write tar.gz");
+
+        let out_dir = temp.path().join("out");
+        let err =
+            extract_tar_gz_to_dir(&tar_path, &out_dir).expect_err("hardlink escape should fail");
         assert!(
-            err.to_string().contains("hardlinks are not supported"),
+            err.to_string().contains("parent directory"),
             "unexpected error: {err:#}"
+        );
+    }
+
+    #[test]
+    fn archive_extraction_tar_gz_skips_global_pax_header_with_empty_path() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let tar_path = temp.path().join("pax-global.tar.gz");
+        write_tar_gz(&tar_path, |builder| {
+            let pax_data = b"10 comment=x\n";
+            let mut pax_header = tar::Header::new_gnu();
+            pax_header.set_entry_type(tar::EntryType::XGlobalHeader);
+            pax_header.set_mode(0o644);
+            pax_header.set_size(pax_data.len() as u64);
+            set_raw_tar_path(&mut pax_header, b"");
+            pax_header.set_cksum();
+            builder.append(&pax_header, &pax_data[..])?;
+
+            let data = b"ok";
+            let mut file_header = tar::Header::new_gnu();
+            file_header.set_mode(0o644);
+            file_header.set_size(data.len() as u64);
+            file_header.set_cksum();
+            builder.append_data(&mut file_header, "bin/goose", &data[..])?;
+            Ok(())
+        })
+        .expect("write tar.gz");
+
+        let out_dir = temp.path().join("out");
+        extract_tar_gz_to_dir(&tar_path, &out_dir).expect("extract pax global header");
+        assert_eq!(
+            std::fs::read(out_dir.join("bin/goose")).expect("read file"),
+            b"ok"
         );
     }
 
@@ -495,5 +640,76 @@ mod archive_extraction_tests {
         extract_tar_gz_to_dir(&tar_path, &out_dir).expect("extract safe symlink");
         let target = std::fs::read_link(out_dir.join("bin/npm")).expect("read symlink");
         assert_eq!(target, Path::new("../lib/node_modules/npm/bin/npm-cli.js"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn archive_extraction_tar_gz_allows_safe_symlink_ancestor() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let tar_path = temp.path().join("safe-symlink-ancestor.tar.gz");
+        write_tar_gz(&tar_path, |builder| {
+            let mut target_dir_header = tar::Header::new_gnu();
+            target_dir_header.set_entry_type(tar::EntryType::Directory);
+            target_dir_header.set_mode(0o755);
+            target_dir_header.set_size(0);
+            target_dir_header.set_cksum();
+            builder.append_data(&mut target_dir_header, "terminfo/32", std::io::empty())?;
+
+            let mut symlink_header = tar::Header::new_gnu();
+            symlink_header.set_entry_type(tar::EntryType::Symlink);
+            symlink_header.set_mode(0o777);
+            symlink_header.set_size(0);
+            symlink_header.set_path("terminfo/2")?;
+            symlink_header.set_link_name("32")?;
+            symlink_header.set_cksum();
+            builder.append(&symlink_header, std::io::empty())?;
+
+            let data = b"entry";
+            let mut file_header = tar::Header::new_gnu();
+            file_header.set_mode(0o644);
+            file_header.set_size(data.len() as u64);
+            file_header.set_cksum();
+            builder.append_data(&mut file_header, "terminfo/2/2621a", &data[..])?;
+            Ok(())
+        })
+        .expect("write tar.gz");
+
+        let out_dir = temp.path().join("out");
+        extract_tar_gz_to_dir(&tar_path, &out_dir).expect("extract safe symlink ancestor");
+        assert_eq!(
+            std::fs::read(out_dir.join("terminfo/32/2621a")).expect("read symlink target file"),
+            b"entry"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn archive_extraction_tar_gz_rejects_existing_symlink_ancestor_escape() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let tar_path = temp.path().join("existing-symlink-ancestor.tar.gz");
+        write_tar_gz(&tar_path, |builder| {
+            let data = b"escape";
+            let mut file_header = tar::Header::new_gnu();
+            file_header.set_mode(0o644);
+            file_header.set_size(data.len() as u64);
+            file_header.set_cksum();
+            builder.append_data(&mut file_header, "link/file", &data[..])?;
+            Ok(())
+        })
+        .expect("write tar.gz");
+
+        let out_dir = temp.path().join("out");
+        let outside = temp.path().join("outside");
+        std::fs::create_dir_all(&outside).expect("create outside");
+        std::fs::create_dir_all(&out_dir).expect("create out");
+        std::os::unix::fs::symlink(&outside, out_dir.join("link")).expect("create symlink");
+
+        let err = extract_tar_gz_to_dir(&tar_path, &out_dir)
+            .expect_err("symlink ancestor escape should fail");
+        assert!(
+            err.to_string().contains("escaped extraction root"),
+            "unexpected error: {err:#}"
+        );
+        assert!(!outside.join("file").exists());
     }
 }
