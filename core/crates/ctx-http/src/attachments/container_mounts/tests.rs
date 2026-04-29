@@ -1,6 +1,9 @@
 use crate::attachments::validate_mount_path_in_worktree;
 
-use super::{resolve_attachment_source_path, AttachmentSourceSymlinkPolicy};
+use super::{
+    resolve_attachment_source_path, sandbox_mount_parent_chain_validation_script,
+    AttachmentSourceSymlinkPolicy,
+};
 
 #[tokio::test]
 async fn resolve_attachment_source_path_rejects_parent_traversal() {
@@ -155,4 +158,81 @@ async fn sandbox_mount_validation_rejects_symlinked_docs_parent() {
 
         assert!(format!("{err:#}").contains("must not be a symlink"));
     }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn sandbox_guest_parent_chain_script_rejects_symlinked_ctx_parent() {
+    let temp = tempfile::tempdir().unwrap();
+    let worktree = temp.path().join("worktree");
+    let outside = temp.path().join("outside");
+    std::fs::create_dir_all(&worktree).unwrap();
+    std::fs::create_dir_all(&outside).unwrap();
+    std::os::unix::fs::symlink(&outside, worktree.join(".ctx")).unwrap();
+
+    let target = worktree.join(".ctx/attachments/docs/docs");
+    let output = std::process::Command::new("sh")
+        .arg("-lc")
+        .arg(sandbox_mount_parent_chain_validation_script())
+        .arg("--")
+        .arg(&worktree)
+        .arg(&target)
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("must not be a symlink"),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        !outside.join("attachments").exists(),
+        "validation must not create through a symlinked guest parent"
+    );
+
+    let relative_output = std::process::Command::new("sh")
+        .current_dir(&worktree)
+        .arg("-lc")
+        .arg(sandbox_mount_parent_chain_validation_script())
+        .arg("--")
+        .arg(".")
+        .arg("./.ctx/attachments/docs/docs")
+        .output()
+        .unwrap();
+
+    assert!(!relative_output.status.success());
+    assert!(
+        String::from_utf8_lossy(&relative_output.stderr).contains("must not be a symlink"),
+        "stderr: {}",
+        String::from_utf8_lossy(&relative_output.stderr)
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn sandbox_guest_parent_chain_script_allows_missing_safe_parents() {
+    let temp = tempfile::tempdir().unwrap();
+    let worktree = temp.path().join("worktree");
+    std::fs::create_dir_all(&worktree).unwrap();
+
+    let target = worktree.join(".ctx/attachments/docs/docs");
+    let output = std::process::Command::new("sh")
+        .arg("-lc")
+        .arg(sandbox_mount_parent_chain_validation_script())
+        .arg("--")
+        .arg(&worktree)
+        .arg(&target)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        !worktree.join(".ctx").exists(),
+        "validation should not create missing safe parents"
+    );
 }

@@ -9,10 +9,13 @@ use ctx_worktree_data_plane::apply_data_plane_to_execution_settings;
 mod avf;
 mod native;
 
-use avf::{avf_copy_source_to_mount, avf_prepare_for_removal, avf_rm_rf, avf_run_success};
+use avf::{
+    avf_copy_source_to_mount, avf_prepare_for_removal, avf_rm_rf, avf_run_success,
+    avf_validate_mount_parent_chain,
+};
 use native::{
     container_ensure_mount, container_prepare_for_removal, container_rm_rf,
-    ensure_attachment_imported_to_container,
+    container_validate_mount_parent_chain, ensure_attachment_imported_to_container,
 };
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -26,6 +29,56 @@ fn symlink_policy_for_mode(mode: &AttachmentMode) -> AttachmentSourceSymlinkPoli
         AttachmentMode::Ro => AttachmentSourceSymlinkPolicy::Reject,
         AttachmentMode::Rw => AttachmentSourceSymlinkPolicy::AllowInternal,
     }
+}
+
+fn sandbox_mount_parent_chain_validation_script() -> &'static str {
+    r#"
+set -eu
+root="$1"
+target="$2"
+if [ -L "$root" ]; then
+  printf 'attachment mount worktree root must not be a symlink: %s\n' "$root" >&2
+  exit 2
+fi
+if [ ! -d "$root" ]; then
+  printf 'attachment mount worktree root must be a directory: %s\n' "$root" >&2
+  exit 2
+fi
+case "$target" in
+  "$root"/*) rel="${target#"$root"/}" ;;
+  *)
+    printf 'attachment mount path escapes sandbox worktree: %s\n' "$target" >&2
+    exit 2
+    ;;
+esac
+parent="${rel%/*}"
+if [ "$parent" = "$rel" ]; then
+  exit 0
+fi
+current="$root"
+remaining="$parent"
+while [ -n "$remaining" ]; do
+  segment="${remaining%%/*}"
+  if [ "$remaining" = "$segment" ]; then
+    remaining=""
+  else
+    remaining="${remaining#*/}"
+  fi
+  if [ -z "$segment" ] || [ "$segment" = "." ] || [ "$segment" = ".." ]; then
+    printf 'attachment mount path contains unsupported component: %s\n' "$target" >&2
+    exit 2
+  fi
+  current="$current/$segment"
+  if [ -L "$current" ]; then
+    printf 'attachment mount parent must not be a symlink: %s\n' "$current" >&2
+    exit 2
+  fi
+  if [ -e "$current" ] && [ ! -d "$current" ]; then
+    printf 'attachment mount parent must be a directory: %s\n' "$current" >&2
+    exit 2
+  fi
+done
+"#
 }
 
 fn command_failure_detail(output: &std::process::Output) -> String {
@@ -193,12 +246,27 @@ async fn container_remove_mount_path(
             if !out.status.success() {
                 return Ok(());
             }
+            container_validate_mount_parent_chain(
+                state,
+                &container_id,
+                &data_plane.live_worktree_root,
+                target,
+            )
+            .await?;
             let _ = container_prepare_for_removal(state, &container_id, target).await;
             let _ = container_rm_rf(state, &container_id, target).await;
             Ok(())
         }
         ContainerRuntimeKind::SharedVmContainer => {
-            let worktree_root = PathBuf::from(worktree.root_path);
+            let worktree_root = data_plane.live_worktree_root;
+            avf_validate_mount_parent_chain(
+                state,
+                workspace_id,
+                worktree_id,
+                &worktree_root,
+                target,
+            )
+            .await?;
             let _ =
                 avf_prepare_for_removal(state, workspace_id, worktree_id, &worktree_root, target)
                     .await;
@@ -456,6 +524,7 @@ pub(crate) async fn ensure_attachment_mount(
                 container_ensure_mount(
                     state,
                     &container_id,
+                    worktree_root,
                     &mount_abs,
                     &source_path,
                     attachment.mode.clone(),

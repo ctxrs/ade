@@ -70,6 +70,37 @@ pub(super) async fn container_mkdir_p(
     }
 }
 
+pub(super) async fn container_validate_mount_parent_chain(
+    state: &AppState,
+    container_id: &str,
+    worktree_root: &Path,
+    target: &Path,
+) -> Result<()> {
+    let mut cmd = sandbox_container_command(&state.core.data_root)?;
+    cmd.arg("exec")
+        .arg("--interactive")
+        .arg(container_id)
+        .arg("sh")
+        .arg("-lc")
+        .arg(sandbox_mount_parent_chain_validation_script())
+        .arg("--")
+        .arg(worktree_root)
+        .arg(target);
+    let out = cmd
+        .output()
+        .await
+        .context("sandbox exec validate attachment mount parent chain")?;
+    if out.status.success() {
+        Ok(())
+    } else {
+        anyhow::bail!(
+            "container attachment mount parent validation failed (status {}): {}",
+            out.status,
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
+    }
+}
+
 async fn container_reject_source_symlinks(
     state: &AppState,
     container_id: &str,
@@ -224,10 +255,12 @@ pub(super) async fn ensure_attachment_imported_to_container(
 pub(super) async fn container_ensure_mount(
     state: &AppState,
     container_id: &str,
+    worktree_root: &Path,
     target: &Path,
     source: &Path,
     mode: AttachmentMode,
 ) -> Result<()> {
+    container_validate_mount_parent_chain(state, container_id, worktree_root, target).await?;
     if let Some(parent) = target.parent() {
         container_mkdir_p(state, container_id, parent).await?;
     }

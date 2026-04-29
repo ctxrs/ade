@@ -107,6 +107,36 @@ async fn avf_mkdir_p(
     .await
 }
 
+pub(super) async fn avf_validate_mount_parent_chain(
+    state: &AppState,
+    workspace_id: WorkspaceId,
+    worktree_id: WorktreeId,
+    worktree_root: &Path,
+    target: &Path,
+) -> Result<()> {
+    let rel = avf_guest_rel_path(worktree_root, target)?;
+    let guest_target = if rel == "." {
+        ".".to_string()
+    } else {
+        format!("./{rel}")
+    };
+    avf_run_success(
+        state,
+        workspace_id,
+        worktree_id,
+        worktree_root,
+        "sh",
+        &[
+            "-lc".to_string(),
+            sandbox_mount_parent_chain_validation_script().to_string(),
+            "--".to_string(),
+            ".".to_string(),
+            guest_target,
+        ],
+    )
+    .await
+}
+
 pub(super) async fn avf_prepare_for_removal(
     state: &AppState,
     workspace_id: WorkspaceId,
@@ -258,6 +288,8 @@ pub(super) async fn avf_copy_source_to_mount(
     target: &Path,
     mode: AttachmentMode,
 ) -> Result<()> {
+    avf_validate_mount_parent_chain(state, workspace_id, worktree_id, worktree_root, target)
+        .await?;
     if let Some(parent) = target.parent() {
         avf_mkdir_p(state, workspace_id, worktree_id, worktree_root, parent).await?;
     }
