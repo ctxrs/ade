@@ -148,6 +148,7 @@ fn main() {
             desktop_update_editor_settings,
             desktop_open_file,
             desktop_open_path,
+            desktop_open_deep_link,
             desktop_open_external_url,
             desktop_read_binary_file,
             desktop_get_deep_link_token,

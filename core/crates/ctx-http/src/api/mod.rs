@@ -100,12 +100,7 @@ use ctx_provider_install::install_state::InstallId;
 use ctx_providers::adapters::ProviderStatus;
 
 pub(super) fn is_sensitive_key(key: &str) -> bool {
-    let key = key.to_ascii_lowercase();
-    key.contains("token")
-        || key.contains("secret")
-        || key.contains("password")
-        || key.contains("authorization")
-        || (key.contains("api") && key.contains("key"))
+    ctx_core::redaction::is_sensitive_key(key)
 }
 
 pub(super) fn redact_json_value(value: serde_json::Value) -> serde_json::Value {

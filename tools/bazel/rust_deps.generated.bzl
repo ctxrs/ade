@@ -74,6 +74,7 @@ RUST_BAZEL_DEPS = {
         build_deps = [],
         deps = [
             "//core/crates/ctx-core:lib",
+            "//core/crates/ctx-fs:lib",
             "@crates//:anyhow",
             "@crates//:chrono",
             "@crates//:directories",

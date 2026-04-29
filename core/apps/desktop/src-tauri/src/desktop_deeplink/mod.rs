@@ -80,3 +80,52 @@ pub(super) fn handle_deep_link_inner(app: &tauri::AppHandle, url: &Url) -> Resul
         }
     }
 }
+
+#[tauri::command]
+pub(super) fn desktop_open_deep_link(
+    app: tauri::AppHandle,
+    req: ctx_desktop_ipc::DesktopOpenExternalUrlReq,
+) -> Result<(), String> {
+    let url = Url::parse(req.url.trim()).map_err(|_| "deep link must be absolute".to_string())?;
+    if url.scheme() != "ctx" {
+        return Err("deep link scheme is not allowed".to_string());
+    }
+    let req = parse_renderer_open_deep_link(&url).map_err(to_err)?;
+    let state = app.state::<ConnectionManager>();
+    let tokens = app.state::<DeepLinkTokenStore>();
+    let registry = app.state::<WorkspaceWindowRegistry>();
+    handle_open(&app, &state, &tokens, &registry, req).map_err(to_err)
+}
+
+fn parse_renderer_open_deep_link(url: &Url) -> Result<DeepLinkOpen> {
+    let action = parse_deep_link(url)?;
+    let DeepLinkAction::Open(req) = action else {
+        anyhow::bail!("renderer deep links may only open files");
+    };
+    if req.open_with == DeepLinkOpenWith::System {
+        anyhow::bail!("renderer deep links may not open files with the system handler");
+    }
+    Ok(req)
+}
+
+#[cfg(test)]
+mod renderer_deep_link_tests {
+    use super::parse_renderer_open_deep_link;
+    use url::Url;
+
+    #[test]
+    fn renderer_deep_link_allows_file_open_only() {
+        let open = Url::parse("ctx://open?path=%2Ftmp%2Fdemo.txt&openWith=editor").unwrap();
+        assert!(parse_renderer_open_deep_link(&open).is_ok());
+
+        for denied in [
+            "ctx://workspace?path=%2Ftmp%2Fdemo",
+            "ctx://task?workspaceId=workspace-1&taskId=task-1",
+            "ctx://focus",
+            "ctx://open?path=%2Ftmp%2Fdemo.txt&openWith=system",
+        ] {
+            let url = Url::parse(denied).unwrap();
+            assert!(parse_renderer_open_deep_link(&url).is_err(), "{denied}");
+        }
+    }
+}

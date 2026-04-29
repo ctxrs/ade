@@ -7,6 +7,7 @@ vi.mock("../../utils/desktop", () => ({
   isDesktopApp: vi.fn(() => false),
   openExternalLink: vi.fn(async () => true),
   desktopOpenFile: vi.fn(async () => true),
+  desktopOpenDeepLink: vi.fn(async () => true),
   desktopOpenPath: vi.fn(async () => true),
 }));
 
@@ -38,6 +39,22 @@ describe("MemoMarkdown", () => {
     const link = screen.getByRole("link", { name: "file" });
     expect(link.className).toContain("ctx-markdown-link");
     expect(link.className).toContain("ctx-file-link");
+  });
+
+  it("routes ctx file links through the desktop deep-link handler on modifier click", () => {
+    vi.mocked(desktop.isDesktopApp).mockReturnValue(true);
+    render(<MemoMarkdown content="[file](ctx://open?path=/tmp/demo.txt&openWith=editor)" />);
+
+    const link = screen.getByRole("link", { name: "file" });
+    fireEvent.click(link);
+    expect(desktop.desktopOpenDeepLink).not.toHaveBeenCalled();
+
+    fireEvent.click(link, { metaKey: true });
+    expect(desktop.desktopOpenDeepLink).toHaveBeenCalledWith(
+      "ctx://open?path=/tmp/demo.txt&openWith=editor",
+    );
+    expect(desktop.desktopOpenFile).not.toHaveBeenCalled();
+    expect(desktop.desktopOpenPath).not.toHaveBeenCalled();
   });
 
   it("tokenizes assistant file paths as neutral code tokens before modifier hover", () => {
@@ -132,6 +149,15 @@ describe("MemoMarkdown", () => {
     const blockquote = document.querySelector("blockquote.wb-md-blockquote");
     expect(blockquote).not.toBeNull();
     expect(blockquote?.textContent).toContain("Quoted transcript guidance");
+  });
+
+  it("omits markdown images instead of fetching remote image URLs", () => {
+    render(<MemoMarkdown content={'![tracker](https://tracker.example/pixel.svg "pixel")'} />);
+
+    expect(screen.queryByRole("img")).toBeNull();
+    expect(screen.getByRole("note", { name: "Markdown image omitted: tracker" })).toHaveTextContent(
+      "Image omitted: tracker",
+    );
   });
 
   it("renders explicit list-marker columns and preserves markers in selection text", () => {

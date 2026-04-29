@@ -3817,6 +3817,30 @@
   background: var(--surface-soft);
 }
 
+.wb-turn-header-content :where(.wb-md-image-placeholder),
+.wb-tool-markdown :where(.wb-md-image-placeholder),
+.wb-assistant-body :where(.wb-md-image-placeholder),
+.msg :where(.wb-md-image-placeholder) {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  border-radius: 8px;
+  border: 1px dashed var(--surface-active);
+  background: var(--surface-soft);
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.35;
+  padding: 8px 10px;
+  overflow-wrap: anywhere;
+}
+
+.wb-turn-header-content :where(.wb-md-block--image .wb-md-image-placeholder),
+.wb-tool-markdown :where(.wb-md-block--image .wb-md-image-placeholder),
+.wb-assistant-body :where(.wb-md-block--image .wb-md-image-placeholder),
+.msg :where(.wb-md-block--image .wb-md-image-placeholder) {
+  min-height: 40px;
+}
+
 .wb-composer {
   border-radius: 12px;
   border: 1px solid var(--border);

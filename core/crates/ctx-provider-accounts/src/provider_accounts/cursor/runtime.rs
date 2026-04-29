@@ -10,7 +10,7 @@ use super::{
 
 pub async fn ensure_cursor_account_home(data_root: &Path, account_id: &str) -> Result<PathBuf> {
     let home = cursor_account_home(data_root, account_id);
-    tokio::fs::create_dir_all(&home).await?;
+    ctx_fs::permissions::ensure_private_dir(&home).await?;
     Ok(home)
 }
 

@@ -26,7 +26,10 @@ use self::amp::amp_env_for_active_account_with_runtime_root;
 use self::claude::claude_env_for_active_account_with_runtime_root;
 #[cfg(test)]
 use self::codex_auth::write_runtime_owner_marker;
-use self::codex_auth::{clear_runtime_auth_projection, normalize_endpoint_profile};
+use self::codex_auth::{
+    clear_runtime_auth_projection, clear_runtime_auth_projection_for_runtime_roots,
+    normalize_endpoint_profile,
+};
 use self::copilot::copilot_env_for_active_account_with_runtime_root;
 use self::cursor::cursor_env_for_active_account_with_runtime_root;
 use self::gemini::gemini_env_for_active_account_with_runtime_root;
@@ -325,9 +328,7 @@ pub async fn remove_codex_account(
         registry.active_account_id = None;
     }
     save_codex_registry(data_root, &registry).await?;
-    if was_active {
-        clear_runtime_auth_projection(data_root).await?;
-    }
+    clear_runtime_auth_projection_for_runtime_roots(data_root, account_id).await?;
     for secret_path in secret_paths {
         if secret_path.exists() {
             let _ = tokio::fs::remove_file(secret_path).await;
@@ -345,6 +346,7 @@ pub async fn set_active_codex_account(
     account_id: Option<String>,
 ) -> Result<CodexAccountRegistry> {
     let mut registry = load_codex_registry(data_root).await?;
+    let previous_active = registry.active_account_id.clone();
     if let Some(active_id) = account_id.as_deref() {
         let Some(entry) = registry.accounts.iter().find(|a| a.id == active_id) else {
             anyhow::bail!("unknown account");
@@ -359,6 +361,11 @@ pub async fn set_active_codex_account(
         }
     }
     save_codex_registry(data_root, &registry).await?;
+    if previous_active.as_deref() != registry.active_account_id.as_deref() {
+        if let Some(previous_active) = previous_active.as_deref() {
+            clear_runtime_auth_projection_for_runtime_roots(data_root, previous_active).await?;
+        }
+    }
     if registry.active_account_id.is_none() {
         clear_runtime_auth_projection(data_root).await?;
     }
@@ -367,7 +374,7 @@ pub async fn set_active_codex_account(
 
 pub async fn ensure_codex_account_dir(data_root: &Path, account_id: &str) -> Result<PathBuf> {
     let dir = codex_account_dir(data_root, account_id);
-    tokio::fs::create_dir_all(&dir).await?;
+    ctx_fs::permissions::ensure_private_dir(&dir).await?;
     Ok(dir)
 }
 

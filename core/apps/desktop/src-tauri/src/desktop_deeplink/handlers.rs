@@ -191,16 +191,11 @@ pub(crate) fn resolve_editor_target(
     let target = override_target
         .cloned()
         .unwrap_or_else(|| settings.target.clone());
-    let has_custom = settings
-        .custom_command
-        .as_ref()
-        .map(|s| !s.trim().is_empty())
-        .unwrap_or(false);
     if matches!(target, DesktopEditorTarget::System) {
         return Ok(None);
     }
-    if matches!(target, DesktopEditorTarget::Custom) && !has_custom {
-        return Ok(None);
+    if matches!(target, DesktopEditorTarget::Custom) {
+        anyhow::bail!("custom editor commands are disabled");
     }
     Ok(Some(target))
 }

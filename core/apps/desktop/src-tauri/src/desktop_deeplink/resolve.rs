@@ -40,6 +40,7 @@ pub(crate) fn is_target_in_open_workspace(
             let candidate = std::fs::canonicalize(PathBuf::from(path))?;
             for ws_id in workspace_ids {
                 if let Ok(root) = resolve_workspace_root(state, &ws_id) {
+                    let root = std::fs::canonicalize(root)?;
                     if candidate.starts_with(&root) {
                         return Ok(true);
                     }

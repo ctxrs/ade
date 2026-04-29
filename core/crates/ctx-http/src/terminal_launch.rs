@@ -17,8 +17,7 @@ use crate::worktree_data_plane::resolve_worktree_data_plane;
 use ctx_core::ids::{SessionId, TaskId, WorkspaceId, WorktreeId};
 use ctx_core::models::{TerminalSession, Workspace, Worktree};
 use ctx_worktree_data_plane::{
-    apply_data_plane_to_execution_settings, map_host_or_live_path_to_live_path,
-    workspace_data_plane, WorktreeDataPlane,
+    apply_data_plane_to_execution_settings, workspace_data_plane, WorktreeDataPlane,
 };
 
 pub(crate) struct CreateTerminalLaunchRequest {
@@ -120,22 +119,8 @@ pub(crate) async fn create_workspace_terminal(
             requested_cwd.as_deref(),
         )?
     } else {
-        let fallback_cwd = worktree_root
-            .clone()
-            .unwrap_or_else(|| workspace_root.clone());
-        let cwd = requested_cwd.unwrap_or(fallback_cwd);
-        let cwd = tokio::fs::canonicalize(&cwd)
-            .await
-            .map_err(|_| bad_request("cwd does not exist"))?;
-        let allowed = worktree_root
-            .as_ref()
-            .map(|root| cwd.starts_with(root))
-            .unwrap_or(false)
-            || cwd.starts_with(&workspace_root);
-        if !allowed {
-            return Err(bad_request("cwd must be within the workspace or worktree"));
-        }
-        cwd
+        let bound_root = worktree_root.as_deref().unwrap_or(&workspace_root);
+        resolve_host_terminal_cwd(bound_root, requested_cwd.as_deref()).await?
     };
 
     let requested_shell = req.shell.as_deref().and_then(|value| {
@@ -172,7 +157,7 @@ pub(crate) async fn create_workspace_terminal(
             workspace_id,
             task_id: req.task_id,
             session_id: req.session_id,
-            worktree_id: req.worktree_id,
+            worktree_id: worktree.as_ref().map(|wt| wt.id),
             cwd,
             shell,
             cols: None,
@@ -393,30 +378,59 @@ pub(crate) fn resolve_container_terminal_cwd(
     host_worktree_root: Option<&FsPath>,
     requested_cwd: Option<&FsPath>,
 ) -> Result<PathBuf, (StatusCode, Json<ApiErrorResp>)> {
-    let fallback = data_plane.live_worktree_root.clone();
+    let live_root = if host_worktree_root.is_some() {
+        &data_plane.live_worktree_root
+    } else {
+        &data_plane.live_workspace_root
+    };
+    let host_root = host_worktree_root.unwrap_or(host_workspace_root);
 
     let Some(requested) = requested_cwd else {
-        return Ok(fallback);
+        return Ok(live_root.clone());
     };
 
     let requested_str = requested.to_string_lossy().to_string();
     if requested.is_relative() {
-        return resolve_path_lexical_within_root(&fallback, &requested_str)
+        return resolve_path_lexical_within_root(live_root, &requested_str)
             .map_err(|_| bad_request("cwd must be within the container worktree/workspace root"));
     }
 
-    if let Some(mapped) = map_host_or_live_path_to_live_path(
-        data_plane,
-        host_workspace_root,
-        host_worktree_root,
-        requested,
-    ) {
-        return Ok(mapped);
+    if let Ok(cwd) = resolve_path_lexical_within_root(live_root, &requested_str) {
+        return Ok(cwd);
+    }
+
+    if let Ok(host_cwd) = resolve_path_lexical_within_root(host_root, &requested_str) {
+        let relative = host_cwd
+            .strip_prefix(host_root)
+            .map_err(|_| bad_request("cwd must be within the container worktree/workspace root"))?;
+        return Ok(live_root.join(relative));
     }
 
     Err(bad_request(
         "cwd must be within the container worktree/workspace root",
     ))
+}
+
+pub(crate) async fn resolve_host_terminal_cwd(
+    bound_root: &FsPath,
+    requested_cwd: Option<&FsPath>,
+) -> Result<PathBuf, (StatusCode, Json<ApiErrorResp>)> {
+    let candidate = requested_cwd
+        .map(|requested| {
+            if requested.is_relative() {
+                bound_root.join(requested)
+            } else {
+                requested.to_path_buf()
+            }
+        })
+        .unwrap_or_else(|| bound_root.to_path_buf());
+    let cwd = tokio::fs::canonicalize(&candidate)
+        .await
+        .map_err(|_| bad_request("cwd does not exist"))?;
+    if !cwd.starts_with(bound_root) {
+        return Err(bad_request("cwd must be within the terminal root"));
+    }
+    Ok(cwd)
 }
 
 pub(crate) async fn resolve_terminal_host_root(

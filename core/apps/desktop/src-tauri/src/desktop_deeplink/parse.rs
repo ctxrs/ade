@@ -130,7 +130,7 @@ pub(crate) fn parse_editor_target(value: &str) -> Result<DesktopEditorTarget> {
         "pycharm" => Ok(DesktopEditorTarget::Pycharm),
         "xcode" => Ok(DesktopEditorTarget::Xcode),
         "android_studio" => Ok(DesktopEditorTarget::AndroidStudio),
-        "custom" => Ok(DesktopEditorTarget::Custom),
+        "custom" => anyhow::bail!("custom editor commands are disabled"),
         "system" => Ok(DesktopEditorTarget::System),
         other => anyhow::bail!("unknown editor: {other}"),
     }

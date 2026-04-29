@@ -30,7 +30,6 @@ export const EDITOR_OPTIONS: Array<{ value: DesktopEditorSettings["target"]; lab
   { value: "pycharm", label: "PyCharm" },
   { value: "xcode", label: "Xcode" },
   { value: "android_studio", label: "Android Studio" },
-  { value: "custom", label: "Custom command" },
 ];
 
 export const SECTIONS: Array<{

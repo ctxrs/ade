@@ -10,7 +10,7 @@ use super::*;
 
 pub async fn codex_env_for_runtime_home(state_root: &Path) -> Result<HashMap<String, String>> {
     let runtime_home = codex_runtime_home(state_root);
-    tokio::fs::create_dir_all(&runtime_home).await?;
+    ctx_fs::permissions::ensure_private_dir(&runtime_home).await?;
     let mut env = HashMap::new();
     env.insert(
         "CODEX_HOME".to_string(),
@@ -81,6 +81,28 @@ pub(crate) async fn clear_runtime_auth_projection(data_root: &Path) -> Result<()
         Ok(_) => {}
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
         Err(err) => return Err(err.into()),
+    }
+    Ok(())
+}
+
+pub(crate) async fn clear_runtime_auth_projection_for_runtime_roots(
+    data_root: &Path,
+    account_id: &str,
+) -> Result<()> {
+    clear_runtime_auth_projection_if_owned_by(data_root, account_id).await?;
+    for runtime_root in container_runtime_data_roots(data_root).await {
+        clear_runtime_auth_projection_if_owned_by(&runtime_root, account_id).await?;
+    }
+    Ok(())
+}
+
+async fn clear_runtime_auth_projection_if_owned_by(
+    data_root: &Path,
+    account_id: &str,
+) -> Result<()> {
+    let owner = read_runtime_owner_marker(data_root).await?;
+    if owner.as_deref() == Some(account_id) {
+        clear_runtime_auth_projection(data_root).await?;
     }
     Ok(())
 }
@@ -158,7 +180,7 @@ async fn prepare_codex_runtime_auth_with_runtime_root(
         let trimmed = value.trim();
         if !trimmed.is_empty() {
             let dir = PathBuf::from(trimmed);
-            tokio::fs::create_dir_all(&dir).await?;
+            ctx_fs::permissions::ensure_private_dir(&dir).await?;
             return Ok(ensure_codex_auth_ready(&dir).await.is_ok());
         }
     }
@@ -234,7 +256,7 @@ pub async fn codex_env_for_active_account(data_root: &Path) -> Result<HashMap<St
         let trimmed = value.trim();
         if !trimmed.is_empty() {
             let dir = PathBuf::from(trimmed);
-            tokio::fs::create_dir_all(&dir).await?;
+            ctx_fs::permissions::ensure_private_dir(&dir).await?;
             let mut env = HashMap::new();
             env.insert("CODEX_HOME".to_string(), dir.to_string_lossy().to_string());
             return Ok(env);

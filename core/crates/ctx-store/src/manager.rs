@@ -12,6 +12,7 @@ use tokio::sync::Mutex;
 
 use ctx_core::ids::{SessionId, TaskId, WorkspaceId, WorktreeId};
 use ctx_core::models::Workspace;
+use ctx_fs::permissions::ensure_private_dir;
 
 use crate::Store;
 
@@ -121,8 +122,9 @@ impl StoreManager {
         mut config: StoreManagerConfig,
     ) -> Result<Self> {
         let data_root = data_root.as_ref().to_path_buf();
+        ensure_private_dir(&data_root).await?;
         let db_dir = data_root.join("db");
-        tokio::fs::create_dir_all(&db_dir).await?;
+        ensure_private_dir(&db_dir).await?;
         let global_db_path = db_dir.join("db.sqlite");
         config.max_cached_workspaces = config.max_cached_workspaces.max(1);
         let global = Store::open_sqlite(&global_db_path, config.max_connections).await?;
@@ -544,7 +546,7 @@ impl StoreManager {
     async fn open_workspace_store(&self, workspace: &Workspace) -> Result<Store> {
         let path = self.workspace_db_path(workspace.id);
         if let Some(parent) = path.parent() {
-            tokio::fs::create_dir_all(parent).await?;
+            ensure_private_dir(parent).await?;
         }
         let workspace_max_connections = self
             .config

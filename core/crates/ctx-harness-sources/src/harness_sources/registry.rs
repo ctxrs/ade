@@ -20,22 +20,10 @@ pub(super) async fn save_registry(
 ) -> Result<()> {
     let path = registry_path(data_root);
     if let Some(parent) = path.parent() {
-        tokio::fs::create_dir_all(parent).await?;
+        ctx_fs::permissions::ensure_private_dir(parent).await?;
     }
     let payload = serde_json::to_vec_pretty(registry)?;
-    let tmp_path = path.with_extension(format!("json.tmp.{}", uuid::Uuid::new_v4()));
-    tokio::fs::write(&tmp_path, payload).await?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = tokio::fs::set_permissions(&tmp_path, std::fs::Permissions::from_mode(0o600)).await;
-    }
-    tokio::fs::rename(&tmp_path, &path).await?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = tokio::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).await;
-    }
+    ctx_fs::permissions::write_private_file_atomic(&path, &payload).await?;
     Ok(())
 }
 

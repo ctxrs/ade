@@ -136,7 +136,7 @@ async fn download_verified_artifact_to_cache(
         .await
         .with_context(|| format!("creating {}", parent.display()))?;
     let partial = final_path.with_extension(format!("partial-{}", std::process::id()));
-    let url = join_url(base_url, &artifact.url_path);
+    let url = resolve_release_artifact_url(base_url, &artifact.url_path)?;
     download_to_path(&url, &partial).await?;
     let got = sha256_hex_file(&partial).await?;
     if !got.eq_ignore_ascii_case(artifact.sha256.trim()) {

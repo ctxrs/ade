@@ -1,5 +1,7 @@
 use super::*;
 use serde::{Deserialize, Serialize};
+use std::fs::OpenOptions;
+use std::io::Write;
 #[cfg(windows)]
 use std::os::windows::ffi::OsStrExt;
 use std::path::PathBuf;
@@ -99,26 +101,58 @@ async fn write_secure_file_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
         .parent()
         .ok_or_else(|| anyhow::anyhow!("missing parent for {}", path.display()))?;
     ensure_private_dir(parent).await?;
+    let path = path.to_path_buf();
     let tmp = path.with_extension(format!("tmp-{}", uuid::Uuid::new_v4()));
-    tokio::fs::write(&tmp, bytes).await?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
+    let bytes = bytes.to_vec();
+    tokio::task::spawn_blocking(move || {
+        let result = write_secure_file_atomic_sync(&path, &tmp, &bytes);
+        if result.is_err() {
+            let _ = std::fs::remove_file(&tmp);
+        }
+        result
+    })
+    .await
+    .context("joining mobile secret write task")??;
+    Ok(())
+}
 
-        tokio::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600)).await?;
-    }
+fn write_secure_file_atomic_sync(path: &Path, tmp: &Path, bytes: &[u8]) -> Result<()> {
+    let mut file = create_private_secret_file(tmp)
+        .with_context(|| format!("creating private temp file {}", tmp.display()))?;
     #[cfg(windows)]
-    apply_windows_secret_acl(&tmp)?;
-    tokio::fs::rename(&tmp, path).await?;
+    apply_windows_secret_acl(tmp)?;
+    file.write_all(bytes)
+        .with_context(|| format!("writing private temp file {}", tmp.display()))?;
+    file.sync_data()
+        .with_context(|| format!("syncing private temp file {}", tmp.display()))?;
+    drop(file);
+    std::fs::rename(tmp, path)
+        .with_context(|| format!("renaming {} to {}", tmp.display(), path.display()))?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
 
-        tokio::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).await?;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
     }
     #[cfg(windows)]
     apply_windows_secret_acl(path)?;
     Ok(())
+}
+
+#[cfg(unix)]
+fn create_private_secret_file(path: &Path) -> std::io::Result<std::fs::File> {
+    use std::os::unix::fs::OpenOptionsExt;
+
+    OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .mode(0o600)
+        .open(path)
+}
+
+#[cfg(not(unix))]
+fn create_private_secret_file(path: &Path) -> std::io::Result<std::fs::File> {
+    OpenOptions::new().create_new(true).write(true).open(path)
 }
 
 #[cfg(windows)]

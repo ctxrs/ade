@@ -7,6 +7,7 @@ edition.workspace = true
 anyhow.workspace = true
 chrono.workspace = true
 ctx-core = { path = "../ctx-core" }
+ctx-fs = { path = "../ctx-fs" }
 directories.workspace = true
 serde.workspace = true
 serde_json.workspace = true

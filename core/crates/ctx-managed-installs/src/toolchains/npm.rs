@@ -9,6 +9,7 @@ pub async fn npm_install(
     package_spec: &str,
     target: InstallTarget,
 ) -> Result<()> {
+    let managed_registry = crate::install_policy::validate_npm_install_policy(package_spec)?;
     let cache_dir = install_dir.join(".npm-cache");
     tokio::fs::create_dir_all(&cache_dir).await.ok();
     let node_bin_dir = node.node_bin.parent().unwrap_or(node.node_root.as_path());
@@ -57,7 +58,7 @@ pub async fn npm_install(
             argv.push("--silent".to_string());
             argv.push("--ignore-scripts".to_string());
             argv.push(package_spec.to_string());
-            let env = vec![
+            let mut env = vec![
                 (
                     "PATH".to_string(),
                     combined_path.to_string_lossy().to_string(),
@@ -75,6 +76,9 @@ pub async fn npm_install(
                 ),
                 ("npm_config_ignore_scripts".to_string(), "true".to_string()),
             ];
+            if let Some(registry) = managed_registry.as_ref() {
+                env.push(("npm_config_registry".to_string(), registry.clone()));
+            }
             state
                 .run_builder_command(install_dir, &env, &argv, NPM_INSTALL_TIMEOUT)
                 .await
@@ -89,6 +93,9 @@ pub async fn npm_install(
                     .arg("--reporter")
                     .arg("silent")
                     .arg(package_spec);
+                if let Some(registry) = managed_registry.as_ref() {
+                    cmd.arg("--registry").arg(registry);
+                }
                 cmd
             } else {
                 let mut cmd = Command::new(&node.node_bin);
@@ -109,6 +116,9 @@ pub async fn npm_install(
                     .env("npm_config_ignore_scripts", "true");
                 cmd
             };
+            if let Some(registry) = managed_registry.as_ref() {
+                cmd.env("npm_config_registry", registry);
+            }
             cmd.env("PATH", combined_path.clone()).kill_on_drop(true);
             run_command_with_timeout(cmd, NPM_INSTALL_TIMEOUT).await
         };

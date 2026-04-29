@@ -21,6 +21,7 @@ const EGRESS_PROXY_BINARY: &str = "ctx-egress-proxy";
 const EGRESS_PROXY_CONFIG_NAME: &str = "egress-proxy.json";
 const EGRESS_PROXY_CONTAINER_PATH: &str = "/usr/local/bin/ctx-egress-proxy";
 const TRANSPARENT_PROXY_PORT: u16 = 15001;
+const EGRESS_PROXY_BYPASS_MARK: u32 = 0x4354_5801;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AppliedContainerNetworkPolicy {
@@ -359,30 +360,7 @@ async fn configure_transparent_egress_guard(
     daemon_host: &str,
     daemon_port: u16,
 ) -> Result<bool> {
-    let daemon_ip_resolution = daemon_ip_resolution_script(daemon_host);
-    let script = format!(
-        r#"
-set -e
-if ! command -v iptables >/dev/null 2>&1; then
-  exit 43
-fi
-{daemon_ip_resolution}
-iptables -t nat -F OUTPUT || true
-iptables -F OUTPUT || true
-iptables -P OUTPUT DROP
-iptables -A OUTPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
-iptables -A OUTPUT -d 127.0.0.1/8 -j ACCEPT
-iptables -A OUTPUT -o lo -j ACCEPT
-iptables -A OUTPUT -p udp --dport 53 -j ACCEPT
-iptables -A OUTPUT -p tcp --dport 53 -j ACCEPT
-iptables -A OUTPUT -d "$daemon_ip" -p tcp --dport {daemon_port} -j ACCEPT
-iptables -A OUTPUT -m owner --uid-owner 0 -j ACCEPT
-iptables -t nat -A OUTPUT -m owner --uid-owner 0 -j RETURN
-iptables -t nat -A OUTPUT -p tcp --dport 80 -j REDIRECT --to-ports {proxy_port}
-iptables -t nat -A OUTPUT -p tcp --dport 443 -j REDIRECT --to-ports {proxy_port}
-exit 0
-"#
-    );
+    let script = transparent_egress_guard_script(proxy_port, daemon_host, daemon_port);
     let mut cmd = sandbox_container_command(data_root, mode)?;
     cmd.arg("exec")
         .arg("--user")
@@ -411,6 +389,34 @@ exit 0
         );
     }
     anyhow::bail!("failed to configure egress guard: {combined}");
+}
+
+fn transparent_egress_guard_script(proxy_port: u16, daemon_host: &str, daemon_port: u16) -> String {
+    let daemon_ip_resolution = daemon_ip_resolution_script(daemon_host);
+    format!(
+        r#"
+set -e
+if ! command -v iptables >/dev/null 2>&1; then
+  exit 43
+fi
+{daemon_ip_resolution}
+iptables -t nat -F OUTPUT || true
+iptables -F OUTPUT || true
+iptables -P OUTPUT DROP
+iptables -A OUTPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+iptables -A OUTPUT -d 127.0.0.1/8 -j ACCEPT
+iptables -A OUTPUT -o lo -j ACCEPT
+iptables -A OUTPUT -p udp --dport 53 -j ACCEPT
+iptables -A OUTPUT -p tcp --dport 53 -j ACCEPT
+iptables -A OUTPUT -d "$daemon_ip" -p tcp --dport {daemon_port} -j ACCEPT
+iptables -A OUTPUT -m mark --mark {bypass_mark:#x} -j ACCEPT
+iptables -t nat -A OUTPUT -m mark --mark {bypass_mark:#x} -j RETURN
+iptables -t nat -A OUTPUT -p tcp --dport 80 -j REDIRECT --to-ports {proxy_port}
+iptables -t nat -A OUTPUT -p tcp --dport 443 -j REDIRECT --to-ports {proxy_port}
+exit 0
+"#,
+        bypass_mark = EGRESS_PROXY_BYPASS_MARK,
+    )
 }
 
 async fn clear_egress_guard(data_root: &Path, mode: &SandboxCommandMode, name: &str) -> Result<()> {
@@ -482,5 +488,41 @@ mod tests {
         let (mode, allowlist) = transparent_proxy_policy(&settings);
         assert_eq!(mode, ContainerNetworkMode::Allowlist);
         assert_eq!(allowlist, settings.allowlist);
+    }
+
+    #[test]
+    fn restricted_egress_guard_does_not_grant_uid0_network_bypass() {
+        let script = transparent_egress_guard_script(
+            TRANSPARENT_PROXY_PORT,
+            "host.containers.internal",
+            4310,
+        );
+
+        assert!(!script.contains("--uid-owner 0"));
+        assert!(!script.contains("-m owner"));
+        assert!(!script.contains("uid-owner"));
+    }
+
+    #[test]
+    fn restricted_egress_guard_uses_proxy_mark_bypass_and_redirects() {
+        let script = transparent_egress_guard_script(
+            TRANSPARENT_PROXY_PORT,
+            "host.containers.internal",
+            4310,
+        );
+        let mark = format!("{EGRESS_PROXY_BYPASS_MARK:#x}");
+
+        assert!(script.contains(&format!(
+            "iptables -A OUTPUT -m mark --mark {mark} -j ACCEPT"
+        )));
+        assert!(script.contains(&format!(
+            "iptables -t nat -A OUTPUT -m mark --mark {mark} -j RETURN"
+        )));
+        assert!(script.contains(&format!(
+            "iptables -t nat -A OUTPUT -p tcp --dport 80 -j REDIRECT --to-ports {TRANSPARENT_PROXY_PORT}"
+        )));
+        assert!(script.contains(&format!(
+            "iptables -t nat -A OUTPUT -p tcp --dport 443 -j REDIRECT --to-ports {TRANSPARENT_PROXY_PORT}"
+        )));
     }
 }

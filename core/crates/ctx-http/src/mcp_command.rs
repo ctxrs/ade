@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use ctx_bundled_assets as bundled_assets;
 use ctx_core::boolish::parse_boolish;
+use sha2::Digest;
 
 const CTX_MCP_COMMAND_ENV: &str = "CTX_MCP_COMMAND";
 const CTX_MCP_DISABLED_ENV: &str = "CTX_MCP_DISABLED";
@@ -105,6 +106,7 @@ fn stage_linux_sandbox_mcp_runtime(
     data_root: &Path,
     bundled: &bundled_assets::BundledRuntimePaths,
 ) -> Result<PathBuf> {
+    let expected_sha256 = validate_runtime_sha256_metadata(&bundled.sha256)?;
     let runtime_dir = data_root
         .join("runtimes")
         .join(CTX_MCP_RUNTIME_ID)
@@ -122,7 +124,32 @@ fn stage_linux_sandbox_mcp_runtime(
         .context("bundled ctx-mcp runtime missing binary file name")?;
     let staged_path = runtime_dir.join(file_name);
     if staged_path.exists() {
-        return Ok(staged_path);
+        let digest = sha256_file(&staged_path).with_context(|| {
+            format!("verifying staged ctx-mcp runtime {}", staged_path.display())
+        })?;
+        if digest.eq_ignore_ascii_case(&expected_sha256) {
+            return Ok(staged_path);
+        }
+        std::fs::remove_file(&staged_path).with_context(|| {
+            format!(
+                "removing checksum-mismatched staged ctx-mcp runtime {}",
+                staged_path.display()
+            )
+        })?;
+    }
+
+    let bundled_digest = sha256_file(&bundled.bin).with_context(|| {
+        format!(
+            "verifying bundled linux sandbox ctx-mcp runtime {}",
+            bundled.bin.display()
+        )
+    })?;
+    if !bundled_digest.eq_ignore_ascii_case(&expected_sha256) {
+        anyhow::bail!(
+            "bundled linux sandbox ctx-mcp runtime checksum mismatch: expected {}, got {}",
+            expected_sha256,
+            bundled_digest
+        );
     }
 
     let staged_tmp = runtime_dir.join(format!(
@@ -158,8 +185,37 @@ fn stage_linux_sandbox_mcp_runtime(
         })?;
     }
 
+    let staged_tmp_digest = sha256_file(&staged_tmp).with_context(|| {
+        format!(
+            "verifying staged linux sandbox ctx-mcp runtime {}",
+            staged_tmp.display()
+        )
+    })?;
+    if !staged_tmp_digest.eq_ignore_ascii_case(&expected_sha256) {
+        let _ = std::fs::remove_file(&staged_tmp);
+        anyhow::bail!(
+            "staged linux sandbox ctx-mcp runtime checksum mismatch: expected {}, got {}",
+            expected_sha256,
+            staged_tmp_digest
+        );
+    }
+
     if let Err(err) = std::fs::rename(&staged_tmp, &staged_path) {
         if staged_path.exists() {
+            let digest = sha256_file(&staged_path).with_context(|| {
+                format!(
+                    "verifying concurrently staged ctx-mcp runtime {}",
+                    staged_path.display()
+                )
+            })?;
+            if !digest.eq_ignore_ascii_case(&expected_sha256) {
+                let _ = std::fs::remove_file(&staged_tmp);
+                anyhow::bail!(
+                    "concurrently staged linux sandbox ctx-mcp runtime checksum mismatch: expected {}, got {}",
+                    expected_sha256,
+                    digest
+                );
+            }
             let _ = std::fs::remove_file(&staged_tmp);
             return Ok(staged_path);
         }
@@ -172,7 +228,38 @@ fn stage_linux_sandbox_mcp_runtime(
         });
     }
 
+    let final_digest = sha256_file(&staged_path).with_context(|| {
+        format!(
+            "verifying finalized linux sandbox ctx-mcp runtime {}",
+            staged_path.display()
+        )
+    })?;
+    if !final_digest.eq_ignore_ascii_case(&expected_sha256) {
+        let _ = std::fs::remove_file(&staged_path);
+        anyhow::bail!(
+            "finalized linux sandbox ctx-mcp runtime checksum mismatch: expected {}, got {}",
+            expected_sha256,
+            final_digest
+        );
+    }
+
     Ok(staged_path)
+}
+
+fn validate_runtime_sha256_metadata(raw: &str) -> Result<String> {
+    let trimmed = raw.trim().to_ascii_lowercase();
+    if trimmed.len() != 64 || !trimmed.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        anyhow::bail!("linux sandbox ctx-mcp runtime is missing valid sha256 metadata");
+    }
+    Ok(trimmed)
+}
+
+fn sha256_file(path: &Path) -> Result<String> {
+    let bytes = std::fs::read(path)
+        .with_context(|| format!("reading file for sha256 {}", path.display()))?;
+    let mut hasher = sha2::Sha256::new();
+    hasher.update(bytes);
+    Ok(hex::encode(hasher.finalize()))
 }
 
 #[cfg(test)]
@@ -188,13 +275,19 @@ mod tests {
         std::env::consts::ARCH
     }
 
-    fn bundled_runtime_entry(os: &str, arch: &str) -> BundledRuntime {
+    fn sha256_hex(bytes: &[u8]) -> String {
+        let mut hasher = sha2::Sha256::new();
+        hasher.update(bytes);
+        hex::encode(hasher.finalize())
+    }
+
+    fn bundled_runtime_entry(os: &str, arch: &str, sha256: String) -> BundledRuntime {
         BundledRuntime {
             id: "ctx-mcp".to_string(),
             version: "0.1.0".to_string(),
             os: os.to_string(),
             arch: arch.to_string(),
-            sha256: "deadbeef".to_string(),
+            sha256,
             root: format!("runtimes/ctx-mcp/{os}/{arch}"),
             bin: "ctx-mcp".to_string(),
             npm_cli: None,
@@ -228,7 +321,11 @@ mod tests {
                 version: 1,
                 generated_at: None,
                 providers: vec![],
-                runtimes: vec![bundled_runtime_entry("linux", current_linux_arch())],
+                runtimes: vec![bundled_runtime_entry(
+                    "linux",
+                    current_linux_arch(),
+                    sha256_hex(b"linux ctx-mcp"),
+                )],
                 images: vec![],
             },
         );
@@ -256,6 +353,97 @@ mod tests {
     }
 
     #[test]
+    fn configure_runtime_mcp_command_replaces_checksum_mismatched_staged_linux_runtime() {
+        let _guard = bundled_assets_manifest_test_lock()
+            .lock()
+            .expect("bundled assets manifest lock poisoned");
+        let bundle_root = tempfile::tempdir().expect("bundle root");
+        write_bundled_mcp(
+            bundle_root.path(),
+            "linux",
+            current_linux_arch(),
+            b"fresh linux ctx-mcp",
+        );
+
+        let _bundle_guard = override_bundled_assets_manifest_for_test(
+            bundle_root.path().to_path_buf(),
+            BundledAssetsManifest {
+                version: 1,
+                generated_at: None,
+                providers: vec![],
+                runtimes: vec![bundled_runtime_entry(
+                    "linux",
+                    current_linux_arch(),
+                    sha256_hex(b"fresh linux ctx-mcp"),
+                )],
+                images: vec![],
+            },
+        );
+
+        let data_root = tempfile::tempdir().expect("data root");
+        let staged = data_root
+            .path()
+            .join("runtimes")
+            .join("ctx-mcp")
+            .join("0.1.0")
+            .join("ctx-mcp");
+        std::fs::create_dir_all(staged.parent().expect("staged parent"))
+            .expect("mkdir staged parent");
+        std::fs::write(&staged, b"stale linux ctx-mcp").expect("write stale staged runtime");
+        let mut provider_env = HashMap::from([(
+            "CTX_HARNESS_CONTAINER_ID".to_string(),
+            "ctx-harness-123".to_string(),
+        )]);
+
+        configure_runtime_mcp_command(&mut provider_env, data_root.path())
+            .expect("configure runtime mcp command");
+
+        assert_eq!(
+            std::fs::read(&staged).expect("read staged ctx-mcp"),
+            b"fresh linux ctx-mcp"
+        );
+    }
+
+    #[test]
+    fn configure_runtime_mcp_command_fails_closed_with_invalid_linux_runtime_checksum_metadata() {
+        let _guard = bundled_assets_manifest_test_lock()
+            .lock()
+            .expect("bundled assets manifest lock poisoned");
+        let bundle_root = tempfile::tempdir().expect("bundle root");
+        write_bundled_mcp(
+            bundle_root.path(),
+            "linux",
+            current_linux_arch(),
+            b"linux ctx-mcp",
+        );
+
+        let _bundle_guard = override_bundled_assets_manifest_for_test(
+            bundle_root.path().to_path_buf(),
+            BundledAssetsManifest {
+                version: 1,
+                generated_at: None,
+                providers: vec![],
+                runtimes: vec![bundled_runtime_entry(
+                    "linux",
+                    current_linux_arch(),
+                    "deadbeef".to_string(),
+                )],
+                images: vec![],
+            },
+        );
+
+        let data_root = tempfile::tempdir().expect("data root");
+        let mut provider_env = HashMap::from([(
+            "CTX_HARNESS_CONTAINER_ID".to_string(),
+            "ctx-harness-123".to_string(),
+        )]);
+
+        let err = configure_runtime_mcp_command(&mut provider_env, data_root.path())
+            .expect_err("invalid checksum metadata should fail closed");
+        assert!(err.to_string().contains("valid sha256 metadata"));
+    }
+
+    #[test]
     fn configure_runtime_mcp_command_uses_bundled_host_runtime() {
         let _guard = bundled_assets_manifest_test_lock()
             .lock()
@@ -276,6 +464,7 @@ mod tests {
                 runtimes: vec![bundled_runtime_entry(
                     std::env::consts::OS,
                     std::env::consts::ARCH,
+                    sha256_hex(b"host ctx-mcp"),
                 )],
                 images: vec![],
             },

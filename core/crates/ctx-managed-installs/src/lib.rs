@@ -23,6 +23,7 @@ use tokio::time::timeout;
 mod artifacts;
 mod config;
 mod dependencies;
+mod install_policy;
 mod managed_installers;
 mod provider_install;
 pub mod provider_install_contract;
@@ -39,8 +40,9 @@ mod provider_status_matrix_tests;
 mod test_support;
 
 pub(crate) use self::artifacts::{
-    download_to_file, ensure_executable, extract_zip_to_dir, find_unique_path_ending_with,
-    install_agent_server_url_binary, run_command_with_timeout, validate_expected_sha256,
+    download_to_file, ensure_executable, extract_tar_gz_to_dir, extract_zip_to_dir,
+    find_unique_path_ending_with, install_agent_server_url_binary, run_command_with_timeout,
+    validate_expected_sha256,
 };
 use self::dependencies::{
     install_managed_archive_dependency, install_managed_npm_dependency, map_archive_kind,

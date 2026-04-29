@@ -39,8 +39,9 @@ export function useDesktopEditorSettingsController(enabled: boolean): DesktopEdi
     desktopGetEditorSettings()
       .then((settings) => {
         if (cancelled) return;
-        setEditorSettings(settings);
-        lastSavedEditorSettingsRef.current = normalizeDesktopEditorSettings(settings);
+        const normalized = normalizeDesktopEditorSettings(settings);
+        setEditorSettings(normalized);
+        lastSavedEditorSettingsRef.current = normalized;
         setEditorLoaded(true);
       })
       .catch((error: unknown) => {

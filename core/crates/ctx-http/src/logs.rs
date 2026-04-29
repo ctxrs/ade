@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
+use ctx_fs::permissions::{ensure_private_dir, open_private_append};
 use serde::Serialize;
 
 #[derive(Debug, Clone, Serialize)]
@@ -20,73 +21,16 @@ pub fn desktop_log_path(data_root: &Path) -> PathBuf {
 }
 
 pub fn redact_sensitive(input: &str) -> String {
-    fn redact_after_marker(mut s: String, marker: &str) -> String {
-        let redacted = "[REDACTED]";
-        let mut search_from = 0usize;
-        while let Some(rel) = s[search_from..].find(marker) {
-            let marker_start = search_from + rel;
-            let start = marker_start + marker.len();
-            if start >= s.len() {
-                break;
-            }
-            if s[start..].starts_with(redacted) {
-                search_from = start + redacted.len();
-                continue;
-            }
-
-            let mut end = s.len();
-            for (i, ch) in s[start..].char_indices() {
-                if ch.is_whitespace() || ch == '"' || ch == '\'' || ch == '&' {
-                    end = start + i;
-                    break;
-                }
-            }
-
-            s.replace_range(start..end, redacted);
-            search_from = start + redacted.len();
-        }
-        s
-    }
-
-    let mut out = input.to_string();
-    out = redact_after_marker(out, "Bearer ");
-    out = redact_after_marker(out, "bearer ");
-    out = redact_after_marker(out, "Authorization: Bearer ");
-    out = redact_after_marker(out, "authorization: Bearer ");
-    out = redact_after_marker(out, "token=");
-    out = redact_after_marker(out, "TOKEN=");
-    out = redact_after_marker(out, "CTX_AUTH_TOKEN=");
-    out = redact_after_marker(out, "CTX_MCP_TOKEN=");
-    out = redact_after_marker(out, "CLAUDE_CODE_OAUTH_TOKEN=");
-    out = redact_after_marker(out, "AUGMENT_SESSION_AUTH=");
-    out = redact_after_marker(out, "AUGMENT_API_TOKEN=");
-    out = redact_after_marker(out, "\"CLAUDE_CODE_OAUTH_TOKEN\":\"");
-    out = redact_after_marker(out, "\"claude_code_oauth_token\":\"");
-    out = redact_after_marker(out, "\"AUGMENT_SESSION_AUTH\":\"");
-    out = redact_after_marker(out, "\"augment_session_auth\":\"");
-    out = redact_after_marker(out, "\"AUGMENT_API_TOKEN\":\"");
-    out = redact_after_marker(out, "\"augment_api_token\":\"");
-    out = redact_after_marker(out, "ctxAuthToken\":\"");
-    out = redact_after_marker(out, "ctx_auth_token\":\"");
-    out = redact_after_marker(out, "\"CTX_MCP_TOKEN\":\"");
-    out = redact_after_marker(out, "\"CTX_MCP_TOKEN\": \"");
-    out = redact_after_marker(out, "\"ctx_mcp_token\":\"");
-    out = redact_after_marker(out, "\"ctx_mcp_token\": \"");
-    out = redact_after_marker(out, "ctxMcpToken\":\"");
-    out = redact_after_marker(out, "ctx_mcp_token\":\"");
-    out
+    ctx_core::redaction::redact_sensitive(input)
 }
 
 pub async fn append_desktop_log_line(data_root: &Path, line: &str) -> Result<()> {
     let log_dir = logs_dir(data_root);
-    tokio::fs::create_dir_all(&log_dir).await.ok();
+    ensure_private_dir(&log_dir).await.ok();
 
     let redacted = redact_sensitive(line);
     let path = desktop_log_path(data_root);
-    let mut file = tokio::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)
+    let mut file = open_private_append(&path)
         .await
         .with_context(|| format!("opening desktop log at {}", path.display()))?;
 
@@ -137,7 +81,7 @@ pub async fn list_log_files(data_root: &Path) -> Vec<LogFileInfo> {
 
 pub async fn open_logs_folder(data_root: &Path) -> Result<()> {
     let dir = logs_dir(data_root);
-    tokio::fs::create_dir_all(&dir).await.ok();
+    ensure_private_dir(&dir).await.ok();
 
     #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
     {

@@ -644,6 +644,7 @@ fn bundled_seed_js_runtime_prepends_bundled_node_bin_dir() {
         bin: node_bin.clone(),
         npm_cli: None,
         version: "1".to_string(),
+        sha256: "0".repeat(64),
     };
 
     let mut bin_dirs = vec![script.parent().expect("script dir").to_path_buf()];

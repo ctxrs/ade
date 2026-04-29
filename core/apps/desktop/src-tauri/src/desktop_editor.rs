@@ -89,7 +89,7 @@ pub(super) fn desktop_update_editor_settings(
     req: DesktopEditorSettings,
 ) -> Result<DesktopEditorSettings, String> {
     let mut current = load_desktop_settings(&app);
-    current.editor = req;
+    current.editor = validate_renderer_editor_settings(req).map_err(to_err)?;
     save_desktop_settings(&app, &current).map_err(to_err)?;
     Ok(current.editor)
 }
@@ -132,20 +132,12 @@ pub(super) fn desktop_open_path(
     app: tauri::AppHandle,
     req: DesktopOpenPathReq,
 ) -> Result<(), String> {
-    let raw = req.path.trim();
-    if raw.is_empty() {
-        return Err("path is required".to_string());
-    }
-    let mut path = expand_tilde(raw).unwrap_or_else(|| PathBuf::from(raw));
-    if !path.is_absolute() {
-        return Err("path must be absolute".to_string());
-    }
-    path = normalize_path(&path);
-    let line = req.line.filter(|v| *v > 0);
-    let col = req.col.filter(|v| *v > 0);
-    let editor_settings = load_desktop_settings(&app).editor;
-    open_in_editor(&editor_settings, &path, line, col, false).map_err(to_err)?;
-    Ok(())
+    let _ = app;
+    let _ = req;
+    Err(
+        "desktop_open_path is disabled; use worktree-scoped desktop_open_file or the ctx deep-link prompt flow"
+            .to_string(),
+    )
 }
 
 #[tauri::command]
@@ -218,14 +210,60 @@ pub(super) fn load_desktop_settings(app: &tauri::AppHandle) -> DesktopSettings {
         Ok(data) => data,
         Err(_) => return DesktopSettings::default(),
     };
-    serde_json::from_str::<DesktopSettings>(&data).unwrap_or_default()
+    serde_json::from_str::<DesktopSettings>(&data)
+        .map(sanitize_persisted_desktop_settings)
+        .unwrap_or_default()
+}
+
+fn sanitize_persisted_desktop_settings(mut settings: DesktopSettings) -> DesktopSettings {
+    settings.editor = sanitize_persisted_editor_settings(settings.editor);
+    settings
+}
+
+fn sanitize_persisted_editor_settings(
+    mut settings: DesktopEditorSettings,
+) -> DesktopEditorSettings {
+    if matches!(settings.target, DesktopEditorTarget::Custom) {
+        settings.target = DesktopEditorTarget::System;
+    }
+    settings.custom_command = None;
+    settings.remote_authority = settings
+        .remote_authority
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    settings
+}
+
+fn validate_renderer_editor_settings(
+    mut settings: DesktopEditorSettings,
+) -> Result<DesktopEditorSettings> {
+    if matches!(settings.target, DesktopEditorTarget::Custom) {
+        anyhow::bail!("custom editor commands cannot be configured from the renderer");
+    }
+    if settings
+        .custom_command
+        .as_deref()
+        .map(str::trim)
+        .is_some_and(|value| !value.is_empty())
+    {
+        anyhow::bail!("custom editor commands cannot be configured from the renderer");
+    }
+    settings.custom_command = None;
+    settings.remote_authority = settings
+        .remote_authority
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    Ok(settings)
 }
 
 fn resolve_desktop_image_path(req: &DesktopOpenPathReq) -> Result<PathBuf, String> {
     const MAX_DESKTOP_IMAGE_BYTES: u64 = 25 * 1024 * 1024;
     const ALLOWED_EXTENSIONS: &[&str] = &[
         "png", "jpg", "jpeg", "gif", "webp", "bmp", "tif", "tiff", "ico", "avif", "heic", "heif",
-        "svg",
     ];
 
     let path = req.path.trim();
@@ -273,7 +311,6 @@ fn bytes_match_supported_image_format(bytes: &[u8]) -> bool {
         || bytes.starts_with(&[0x00, 0x00, 0x01, 0x00])
         || is_webp(bytes)
         || is_supported_iso_bmff_image(bytes)
-        || is_svg(bytes)
 }
 
 fn is_webp(bytes: &[u8]) -> bool {
@@ -293,16 +330,6 @@ fn is_supported_iso_bmff_image(bytes: &[u8]) -> bool {
     let mut brand = [0_u8; 4];
     brand.copy_from_slice(&bytes[8..12]);
     SUPPORTED_BRANDS.contains(&brand)
-}
-
-fn is_svg(bytes: &[u8]) -> bool {
-    const SVG_SNIFF_BYTES: usize = 4096;
-
-    let prefix = &bytes[..bytes.len().min(SVG_SNIFF_BYTES)];
-    let prefix = prefix.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(prefix);
-    let text = String::from_utf8_lossy(prefix);
-    let trimmed = text.trim_start_matches(char::is_whitespace);
-    trimmed.starts_with("<svg") || (trimmed.starts_with("<?xml") && trimmed.contains("<svg"))
 }
 
 fn save_desktop_settings(app: &tauri::AppHandle, settings: &DesktopSettings) -> Result<()> {
@@ -363,6 +390,23 @@ mod tests {
     }
 
     #[test]
+    fn resolve_desktop_image_path_rejects_svg_files() {
+        let dir = temp_test_dir();
+        let path = dir.join("icon.svg");
+        std::fs::write(&path, b"<svg xmlns=\"http://www.w3.org/2000/svg\"></svg>").unwrap();
+
+        let err = resolve_desktop_image_path(&DesktopOpenPathReq {
+            path: path.to_string_lossy().to_string(),
+            line: None,
+            col: None,
+        })
+        .unwrap_err();
+
+        assert!(err.contains("limited to image files"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn resolve_desktop_image_path_rejects_renamed_non_image_bytes() {
         let dir = temp_test_dir();
         let path = dir.join("notes.png");
@@ -395,6 +439,79 @@ mod tests {
 
         assert!(err.contains("25 MiB"));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn renderer_editor_settings_reject_custom_target_and_command() {
+        let custom_target = validate_renderer_editor_settings(DesktopEditorSettings {
+            target: DesktopEditorTarget::Custom,
+            custom_command: Some("code --goto {path}:{line}:{col}".to_string()),
+            remote_authority: None,
+        })
+        .unwrap_err();
+        assert!(
+            format!("{custom_target:#}").contains("custom editor commands"),
+            "unexpected error: {custom_target:#}"
+        );
+
+        let custom_command = validate_renderer_editor_settings(DesktopEditorSettings {
+            target: DesktopEditorTarget::Cursor,
+            custom_command: Some("cursor {path}".to_string()),
+            remote_authority: None,
+        })
+        .unwrap_err();
+        assert!(
+            format!("{custom_command:#}").contains("custom editor commands"),
+            "unexpected error: {custom_command:#}"
+        );
+    }
+
+    #[test]
+    fn persisted_editor_settings_drop_legacy_custom_command() {
+        let sanitized = sanitize_persisted_editor_settings(DesktopEditorSettings {
+            target: DesktopEditorTarget::Custom,
+            custom_command: Some("code {path}".to_string()),
+            remote_authority: Some(" ssh-remote+devbox ".to_string()),
+        });
+        assert_eq!(sanitized.target, DesktopEditorTarget::System);
+        assert_eq!(sanitized.custom_command, None);
+        assert_eq!(
+            sanitized.remote_authority.as_deref(),
+            Some("ssh-remote+devbox")
+        );
+    }
+
+    #[test]
+    fn resolve_worktree_path_accepts_canonical_inside_path() {
+        let dir = temp_test_dir();
+        let nested = dir.join("src");
+        std::fs::create_dir_all(&nested).unwrap();
+        let file = nested.join("main.rs");
+        std::fs::write(&file, b"fn main() {}\n").unwrap();
+
+        let resolved = resolve_worktree_path(&dir, "src/main.rs").unwrap();
+        assert_eq!(resolved, std::fs::canonicalize(&file).unwrap());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn resolve_worktree_path_rejects_symlink_escape() {
+        use std::os::unix::fs::symlink;
+
+        let dir = temp_test_dir();
+        let outside = temp_test_dir();
+        let outside_file = outside.join("secret.txt");
+        std::fs::write(&outside_file, b"secret").unwrap();
+        symlink(&outside_file, dir.join("escape.txt")).unwrap();
+
+        let err = resolve_worktree_path(&dir, "escape.txt").unwrap_err();
+        assert!(
+            format!("{err:#}").contains("outside the worktree root"),
+            "unexpected error: {err:#}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(&outside);
     }
 }
 
@@ -435,7 +552,8 @@ pub(super) fn resolve_worktree_path(worktree_root: &Path, raw_path: &str) -> Res
     if !candidate.is_absolute() {
         candidate = root.join(candidate);
     }
-    let candidate = normalize_path(&candidate);
+    let candidate = std::fs::canonicalize(normalize_path(&candidate))
+        .with_context(|| format!("canonicalizing {}", candidate.display()))?;
     if !candidate.starts_with(&root) {
         return Err(anyhow!("path is outside the worktree root"));
     }

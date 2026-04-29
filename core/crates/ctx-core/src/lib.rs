@@ -4,6 +4,7 @@ pub mod ids;
 pub mod models;
 pub mod provider_ids;
 pub mod provider_policy;
+pub mod redaction;
 pub mod session_projection;
 
 #[cfg(test)]

@@ -38,4 +38,15 @@ describe("messageAttachments", () => {
     );
     expect(uploadBlobMock).not.toHaveBeenCalled();
   });
+
+  it("rejects svg image attachments", async () => {
+    const { imageFilesToBlobRefAttachments, isImageFile } = await import("./messageAttachments");
+    const svg = new File(["<svg></svg>"], "icon.svg", { type: "image/svg+xml" });
+    const mislabeledSvg = new File(["<svg></svg>"], "mislabeled.png", { type: "image/png" });
+
+    expect(isImageFile(svg)).toBe(false);
+    expect(isImageFile(mislabeledSvg)).toBe(true);
+    await expect(imageFilesToBlobRefAttachments([svg, mislabeledSvg])).resolves.toEqual([]);
+    expect(uploadBlobMock).not.toHaveBeenCalled();
+  });
 });

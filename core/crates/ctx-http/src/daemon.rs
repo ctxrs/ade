@@ -53,7 +53,8 @@ pub use activity::{
 pub(crate) use lifecycle::{collect_provider_adapters_for_shutdown, shutdown_provider_adapters};
 pub use mcp_auth::issue_provider_session_mcp_token;
 pub(crate) use mcp_auth::{
-    revoke_provider_session_mcp_token, verify_mcp_auth_token, McpAuthContext,
+    issue_provider_session_mcp_token_with_capabilities, revoke_provider_session_mcp_token,
+    verify_mcp_auth_token, McpAuthCapabilities, McpAuthContext,
 };
 #[cfg(test)]
 pub(crate) use provider_adapters::runtime_probe_command_as_agent_command;
@@ -135,13 +136,16 @@ pub async fn serve(bind: Vec<String>, data_dir: Option<String>) -> Result<()> {
             base.home_dir().join(".ctx")
         }
     };
-    tokio::fs::create_dir_all(&data_root).await?;
+    ctx_fs::permissions::ensure_private_dir(&data_root).await?;
     // Canonicalize so legacy machine mount sources resolve under shared roots on macOS
     // (e.g. /tmp -> /private/tmp). This also reduces accidental duplicate state roots.
     let data_root = tokio::fs::canonicalize(&data_root)
         .await
         .unwrap_or(data_root);
-    tokio::fs::create_dir_all(data_root.join("logs")).await.ok();
+    ctx_fs::permissions::ensure_private_dir(&data_root).await?;
+    ctx_fs::permissions::ensure_private_dir(&data_root.join("logs"))
+        .await
+        .ok();
 
     let _daemon_lock = auth::acquire_daemon_lock(&data_root)?;
 

@@ -7,6 +7,7 @@ edition.workspace = true
 anyhow.workspace = true
 chrono.workspace = true
 ctx-core = { path = "../ctx-core" }
+ctx-fs = { path = "../ctx-fs" }
 ctx-provider-accounts = { path = "../ctx-provider-accounts" }
 directories.workspace = true
 reqwest.workspace = true

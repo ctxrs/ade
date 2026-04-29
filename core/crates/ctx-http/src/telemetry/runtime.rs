@@ -3,6 +3,10 @@ use std::time::Duration;
 
 use anyhow::Result;
 use chrono::{DateTime, Utc};
+use ctx_fs::permissions::{
+    ensure_private_dir, harden_private_file_if_exists, open_private_append,
+    write_private_file_atomic,
+};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::timeout;
@@ -77,7 +81,10 @@ pub(crate) async fn load_or_create_install_id(data_root: &Path) -> Option<String
     let path = telemetry_state_path(data_root);
     match tokio::fs::read_to_string(&path).await {
         Ok(raw) => match serde_json::from_str::<TelemetryStateFile>(&raw) {
-            Ok(state) if !state.install_id.trim().is_empty() => return Some(state.install_id),
+            Ok(state) if !state.install_id.trim().is_empty() => {
+                let _ = harden_private_file_if_exists(&path).await;
+                return Some(state.install_id);
+            }
             Ok(_) => {
                 tracing::warn!("telemetry install id missing from {}", path.display());
                 return None;
@@ -106,7 +113,7 @@ pub(crate) async fn load_or_create_install_id(data_root: &Path) -> Option<String
         tracing::warn!("telemetry state path has no parent: {}", path.display());
         return None;
     };
-    if let Err(err) = tokio::fs::create_dir_all(parent).await {
+    if let Err(err) = ensure_private_dir(parent).await {
         tracing::warn!(
             "failed to create telemetry state directory {}: {err:#}",
             parent.display()
@@ -117,7 +124,7 @@ pub(crate) async fn load_or_create_install_id(data_root: &Path) -> Option<String
         tracing::warn!("failed to serialize telemetry state for {}", path.display());
         return None;
     };
-    if let Err(err) = tokio::fs::write(&path, bytes).await {
+    if let Err(err) = write_private_file_atomic(&path, &bytes).await {
         tracing::warn!(
             "failed to write telemetry state {}: {err:#}",
             path.display()
@@ -150,7 +157,7 @@ async fn append_local_log_with_root(
 ) -> Result<()> {
     let path = telemetry_log_path(data_root);
     if let Some(parent) = path.parent() {
-        tokio::fs::create_dir_all(parent).await.ok();
+        ensure_private_dir(parent).await.ok();
     }
 
     let line = TelemetryLogLine {
@@ -161,12 +168,8 @@ async fn append_local_log_with_root(
         broker_arch: &runtime.arch,
         event,
     };
-    let payload = serde_json::to_string(&line)?;
-    let mut file = tokio::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)
-        .await?;
+    let payload = logs::redact_sensitive(&serde_json::to_string(&line)?);
+    let mut file = open_private_append(&path).await?;
     use tokio::io::AsyncWriteExt;
     file.write_all(payload.as_bytes()).await?;
     file.write_all(b"\n").await?;

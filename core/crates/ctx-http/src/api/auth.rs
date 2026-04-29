@@ -338,7 +338,185 @@ pub(crate) fn derive_browser_query_secret(auth_token: &str) -> String {
 
 fn browser_query_secret_bearer_route_allowed(req: &Request<Body>) -> bool {
     let path = req.uri().path();
-    !path.starts_with("/api/mcp/") && path != "/api/mobile/register"
+    if path.starts_with("/api/mcp/") || path == "/api/mobile/register" {
+        return false;
+    }
+
+    match *req.method() {
+        Method::GET | Method::HEAD => browser_query_secret_read_route_allowed(path),
+        Method::POST => browser_query_secret_post_route_allowed(path),
+        Method::PUT => browser_query_secret_put_route_allowed(path),
+        Method::DELETE => browser_query_secret_delete_route_allowed(path),
+        _ => false,
+    }
+}
+
+fn browser_query_secret_read_route_allowed(path: &str) -> bool {
+    if path.starts_with("/api/providers/") || path == "/api/providers" {
+        return true;
+    }
+
+    const READ_ROUTE_PATTERNS: &[&[&str]] = &[
+        &["api", "settings"],
+        &["api", "execution", "launch", "status"],
+        &["api", "execution", "launch", "stream"],
+        &["api", "execution", "linux_sandbox_runtime", "status"],
+        &["api", "title_generation", "local", "status"],
+        &["api", "repo", "validate_destination"],
+        &["api", "repo", "staging_path"],
+        &["api", "diagnostics"],
+        &["api", "resource_utilization"],
+        &["api", "telemetry", "summary"],
+        &["api", "updates", "check"],
+        &["api", "updates", "activity"],
+        &["api", "merge-queue", "entries"],
+        &["api", "dictation", "livekit", "stream"],
+        &["api", "blobs", "*"],
+        &["api", "workspaces"],
+        &["api", "workspaces", "*"],
+        &["api", "workspaces", "*", "harness_container"],
+        &["api", "workspaces", "*", "active_snapshot"],
+        &["api", "workspaces", "*", "active_heads"],
+        &["api", "workspaces", "*", "terminals"],
+        &["api", "workspaces", "*", "active_snapshot", "stream"],
+        &["api", "workspaces", "*", "stream"],
+        &["api", "workspaces", "*", "completions", "files"],
+        &["api", "workspaces", "*", "providers", "*", "options"],
+        &["api", "workspaces", "*", "providers", "bootstrap"],
+        &["api", "workspaces", "*", "attachments"],
+        &["api", "workspaces", "*", "agent_system_prompt"],
+        &["api", "workspaces", "*", "subagent_system_prompt"],
+        &["api", "workspaces", "*", "provider_model_preferences", "*"],
+        &["api", "workspaces", "*", "primary_branch"],
+        &["api", "workspaces", "*", "merge_queue_config"],
+        &[
+            "api",
+            "workspaces",
+            "*",
+            "merge_queue",
+            "entries",
+            "*",
+            "logs",
+        ],
+        &["api", "workspaces", "*", "execution_config"],
+        &["api", "workspaces", "*", "worktree_bootstrap_config"],
+        &["api", "workspaces", "*", "tasks"],
+        &["api", "workspaces", "*", "archived_task_summaries"],
+        &["api", "worktrees", "*"],
+        &["api", "worktrees", "*", "bootstrap", "logs"],
+        &["api", "mobile", "connection_profiles"],
+        &["api", "mobile", "access", "status"],
+        &["api", "mobile", "connection_profiles", "*", "devices"],
+        &["api", "tasks", "*", "sessions"],
+        &["api", "sessions", "*", "artifacts", "*"],
+        &["api", "sessions", "*", "subagents"],
+        &["api", "sessions", "*", "subagent_invocations"],
+        &["api", "sessions", "*", "subagent_invocations", "*"],
+        &["api", "sessions", "*", "artifacts"],
+        &["api", "sessions", "*", "snapshot"],
+        &["api", "sessions", "*", "head"],
+        &["api", "sessions", "*", "state"],
+        &["api", "sessions", "*", "diff"],
+        &["api", "sessions", "*", "diff", "summary"],
+        &["api", "sessions", "*", "git", "status"],
+        &["api", "sessions", "*", "events"],
+        &["api", "sessions", "*", "history"],
+        &["api", "sessions", "*", "turns", "*", "tools"],
+        &["api", "sessions", "*", "completions", "files"],
+        &["api", "sessions", "web"],
+        &["api", "sessions", "web", "*"],
+        &["api", "terminals", "*", "stream"],
+    ];
+
+    route_allowed_by_patterns(path, READ_ROUTE_PATTERNS)
+}
+
+fn browser_query_secret_post_route_allowed(path: &str) -> bool {
+    const POST_ROUTE_PATTERNS: &[&[&str]] = &[
+        &["api", "telemetry", "client"],
+        &["api", "telemetry", "events"],
+        &["api", "desktop", "log"],
+        &["api", "settings"],
+        &["api", "blobs"],
+        &["api", "repo", "validate_destination"],
+        &["api", "workspaces"],
+        &["api", "workspaces", "*", "tasks"],
+        &["api", "workspaces", "*", "terminals"],
+        &["api", "workspaces", "*", "agent_system_prompt"],
+        &["api", "workspaces", "*", "subagent_system_prompt"],
+        &["api", "workspaces", "*", "provider_model_preferences", "*"],
+        &["api", "workspaces", "*", "primary_branch"],
+        &["api", "workspaces", "*", "execution_config"],
+        &["api", "workspaces", "*", "worktree_bootstrap_config"],
+        &["api", "tasks", "*", "sessions"],
+        &["api", "tasks", "*", "title"],
+        &["api", "tasks", "*", "archive"],
+        &["api", "tasks", "*", "unarchive"],
+        &["api", "tasks", "*", "mark_read"],
+        &["api", "tasks", "*", "mark_unread"],
+        &["api", "sessions", "*", "messages"],
+        &["api", "sessions", "*", "artifacts"],
+        &["api", "sessions", "*", "model"],
+        &["api", "sessions", "*", "mode"],
+        &["api", "sessions", "*", "title", "generate"],
+        &["api", "sessions", "*", "cancel"],
+        &["api", "sessions", "*", "interrupt"],
+        &["api", "sessions", "*", "authenticate"],
+        &["api", "sessions", "*", "ask_user_question"],
+        &["api", "sessions", "web"],
+        &["api", "sessions", "web", "*", "stream_token"],
+        &["api", "sessions", "web", "*", "run"],
+        &["api", "sessions", "web", "*", "eval"],
+        &["api", "sessions", "web", "*", "close"],
+        &["api", "terminals", "*", "stream_token"],
+        &["api", "providers", "auth", "import"],
+        &["api", "providers", "codex", "import", "host"],
+        &["api", "providers", "codex", "accounts", "login", "start"],
+        &["api", "providers", "codex", "accounts", "login", "*"],
+        &["api", "providers", "*", "accounts"],
+        &["api", "providers", "*", "accounts", "login", "start"],
+        &["api", "providers", "*", "accounts", "login", "*"],
+    ];
+
+    route_allowed_by_patterns(path, POST_ROUTE_PATTERNS)
+}
+
+fn browser_query_secret_put_route_allowed(path: &str) -> bool {
+    const PUT_ROUTE_PATTERNS: &[&[&str]] = &[&["api", "providers", "*", "active-account"]];
+
+    route_allowed_by_patterns(path, PUT_ROUTE_PATTERNS)
+}
+
+fn browser_query_secret_delete_route_allowed(path: &str) -> bool {
+    const DELETE_ROUTE_PATTERNS: &[&[&str]] = &[
+        &["api", "workspaces", "*"],
+        &["api", "tasks", "*"],
+        &["api", "terminals", "*"],
+        &["api", "sessions", "*", "messages", "*"],
+        &["api", "mobile", "connection_profiles", "*"],
+        &["api", "providers", "*", "accounts", "*"],
+    ];
+
+    route_allowed_by_patterns(path, DELETE_ROUTE_PATTERNS)
+}
+
+fn route_allowed_by_patterns(path: &str, patterns: &[&[&str]]) -> bool {
+    let segments: Vec<&str> = path
+        .trim_matches('/')
+        .split('/')
+        .filter(|segment| !segment.is_empty())
+        .collect();
+    patterns
+        .iter()
+        .any(|pattern| route_segments_match(&segments, pattern))
+}
+
+fn route_segments_match(segments: &[&str], pattern: &[&str]) -> bool {
+    segments.len() == pattern.len()
+        && segments
+            .iter()
+            .zip(pattern.iter())
+            .all(|(segment, pattern)| *pattern == "*" || *segment == *pattern)
 }
 
 fn browser_query_secret_bearer_is_valid(req: &Request<Body>, auth_token: &str) -> bool {

@@ -462,7 +462,9 @@ async fn ensure_kimi_account_home(
     let home = kimi_account_home(data_root, account_id);
     let share_dir = home.join(".kimi");
     let credentials_dir = share_dir.join("credentials");
-    tokio::fs::create_dir_all(&credentials_dir).await?;
+    ctx_fs::permissions::ensure_private_dir(&home).await?;
+    ctx_fs::permissions::ensure_private_dir(&share_dir).await?;
+    ctx_fs::permissions::ensure_private_dir(&credentials_dir).await?;
     let provider = normalize_kimi_provider(Some(secret.provider.clone()))?;
     let credentials_payload = serde_json::to_vec_pretty(&secret.credentials)?;
     for stem in projected_kimi_credential_stems(&provider, secret.config_toml.as_deref()) {

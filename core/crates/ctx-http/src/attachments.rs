@@ -233,6 +233,151 @@ pub(crate) async fn remove_mount_path(target: &Path) -> Result<()> {
     Ok(())
 }
 
+pub(crate) async fn remove_mount_path_in_worktree(
+    worktree_root: &Path,
+    target: &Path,
+) -> Result<()> {
+    validate_mount_parent_chain(worktree_root, target, true)?;
+    remove_mount_path(target).await
+}
+
+pub(crate) async fn ensure_mount_in_worktree(
+    worktree_root: &Path,
+    mount_relpath: &Path,
+    source: &Path,
+    mode: AttachmentMode,
+) -> Result<PathBuf> {
+    let target = ensure_mount_parent_chain(worktree_root, mount_relpath)?;
+    ensure_mount(&target, source, mode).await?;
+    Ok(target)
+}
+
+fn ensure_mount_parent_chain(worktree_root: &Path, mount_relpath: &Path) -> Result<PathBuf> {
+    validate_safe_relative_mount_path(mount_relpath)?;
+    let target = worktree_root.join(mount_relpath);
+    let parent = mount_relpath
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("attachment mount path must have a parent"))?;
+    let mut current = worktree_root.to_path_buf();
+    for component in parent.components() {
+        let std::path::Component::Normal(segment) = component else {
+            anyhow::bail!(
+                "attachment mount path contains unsupported component: {}",
+                mount_relpath.display()
+            );
+        };
+        current.push(segment);
+        match std::fs::symlink_metadata(&current) {
+            Ok(meta) => {
+                if meta.file_type().is_symlink() {
+                    anyhow::bail!(
+                        "attachment mount parent must not be a symlink: {}",
+                        current.display()
+                    );
+                }
+                if !meta.is_dir() {
+                    anyhow::bail!(
+                        "attachment mount parent must be a directory: {}",
+                        current.display()
+                    );
+                }
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                std::fs::create_dir(&current).with_context(|| {
+                    format!("creating attachment mount parent {}", current.display())
+                })?;
+                let meta = std::fs::symlink_metadata(&current).with_context(|| {
+                    format!("verifying attachment mount parent {}", current.display())
+                })?;
+                if meta.file_type().is_symlink() || !meta.is_dir() {
+                    anyhow::bail!(
+                        "attachment mount parent was not created as a directory: {}",
+                        current.display()
+                    );
+                }
+            }
+            Err(err) => {
+                return Err(err).with_context(|| {
+                    format!("reading attachment mount parent {}", current.display())
+                });
+            }
+        }
+    }
+    Ok(target)
+}
+
+fn validate_mount_parent_chain(
+    worktree_root: &Path,
+    target: &Path,
+    allow_missing: bool,
+) -> Result<()> {
+    let mount_relpath = target.strip_prefix(worktree_root).with_context(|| {
+        format!(
+            "attachment mount path {} is outside worktree {}",
+            target.display(),
+            worktree_root.display()
+        )
+    })?;
+    validate_safe_relative_mount_path(mount_relpath)?;
+    let parent = mount_relpath
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("attachment mount path must have a parent"))?;
+    let mut current = worktree_root.to_path_buf();
+    for component in parent.components() {
+        let std::path::Component::Normal(segment) = component else {
+            anyhow::bail!(
+                "attachment mount path contains unsupported component: {}",
+                mount_relpath.display()
+            );
+        };
+        current.push(segment);
+        match std::fs::symlink_metadata(&current) {
+            Ok(meta) => {
+                if meta.file_type().is_symlink() {
+                    anyhow::bail!(
+                        "attachment mount parent must not be a symlink: {}",
+                        current.display()
+                    );
+                }
+                if !meta.is_dir() {
+                    anyhow::bail!(
+                        "attachment mount parent must be a directory: {}",
+                        current.display()
+                    );
+                }
+            }
+            Err(err) if allow_missing && err.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(());
+            }
+            Err(err) => {
+                return Err(err).with_context(|| {
+                    format!("reading attachment mount parent {}", current.display())
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_safe_relative_mount_path(path: &Path) -> Result<()> {
+    if path.as_os_str().is_empty() {
+        anyhow::bail!("attachment mount path must not be empty");
+    }
+    if path.is_absolute() {
+        anyhow::bail!("attachment mount path must be relative: {}", path.display());
+    }
+    for component in path.components() {
+        match component {
+            std::path::Component::Normal(_) => {}
+            _ => anyhow::bail!(
+                "attachment mount path contains unsupported component: {}",
+                path.display()
+            ),
+        }
+    }
+    Ok(())
+}
+
 pub(crate) async fn ensure_mount(target: &Path, source: &Path, mode: AttachmentMode) -> Result<()> {
     if let Ok(meta) = tokio::fs::symlink_metadata(target).await {
         if meta.file_type().is_symlink() {
@@ -562,6 +707,63 @@ mod tests {
             .expect("remove ro attachment mount");
 
         assert!(!target.exists(), "ro attachment mount should be removed");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn ensure_mount_in_worktree_rejects_symlinked_ctx_parent() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let worktree = temp.path().join("worktree");
+        let outside = temp.path().join("outside");
+        let source = temp.path().join("source");
+        std::fs::create_dir_all(&worktree).expect("create worktree");
+        std::fs::create_dir_all(&outside).expect("create outside");
+        std::fs::create_dir_all(&source).expect("create source");
+        std::fs::write(source.join("notes.txt"), "hello\n").expect("write source file");
+        std::os::unix::fs::symlink(&outside, worktree.join(".ctx")).expect("symlink .ctx");
+
+        let err = ensure_mount_in_worktree(
+            &worktree,
+            Path::new(".ctx/attachments/docs/docs"),
+            &source,
+            AttachmentMode::Ro,
+        )
+        .await
+        .expect_err("symlinked .ctx parent should fail closed");
+
+        assert!(format!("{err:#}").contains("must not be a symlink"));
+        assert!(
+            !outside.join("attachments").exists(),
+            "mount creation must not follow .ctx symlink outside the worktree"
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn remove_mount_path_in_worktree_rejects_symlinked_attachments_parent() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let worktree = temp.path().join("worktree");
+        let outside = temp.path().join("outside");
+        std::fs::create_dir_all(worktree.join(".ctx")).expect("create .ctx");
+        std::fs::create_dir_all(outside.join("docs").join("docs")).expect("create outside mount");
+        std::fs::write(
+            outside.join("docs").join("docs").join("notes.txt"),
+            "keep\n",
+        )
+        .expect("write outside file");
+        std::os::unix::fs::symlink(&outside, worktree.join(".ctx").join("attachments"))
+            .expect("symlink attachments");
+
+        let target = worktree.join(".ctx/attachments/docs/docs");
+        let err = remove_mount_path_in_worktree(&worktree, &target)
+            .await
+            .expect_err("symlinked .ctx/attachments parent should fail closed");
+
+        assert!(format!("{err:#}").contains("must not be a symlink"));
+        assert!(
+            outside.join("docs").join("docs").join("notes.txt").exists(),
+            "mount cleanup must not delete through .ctx/attachments symlink"
+        );
     }
 
     #[tokio::test]

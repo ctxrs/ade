@@ -7,8 +7,8 @@ mod incidents;
 mod model;
 mod snapshot;
 
-pub(super) use model::{HeartbeatTimeoutEvaluation, PreparedRecoveryIncident};
 use model::DesktopWebviewRecoveryState;
+pub(super) use model::{HeartbeatTimeoutEvaluation, PreparedRecoveryIncident};
 
 #[derive(Debug, Default)]
 pub(crate) struct DesktopWebviewRecoveryController {

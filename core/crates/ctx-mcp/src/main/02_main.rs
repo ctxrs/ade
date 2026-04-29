@@ -84,7 +84,10 @@ async fn main() -> Result<()> {
                     }),
                 )
             }
-            "tools/list" => ok(id.clone(), tool_catalog::tools_list_response()),
+            "tools/list" => ok(
+                id.clone(),
+                tool_catalog::tools_list_response(tool_catalog::capabilities_from_env()),
+            ),
             "tools/call" => {
                 let client = reqwest::Client::new();
                 let params = msg.get("params").cloned().unwrap_or(json!({}));
@@ -100,11 +103,21 @@ async fn main() -> Result<()> {
                     raw_name
                 };
 
+                let tool_capabilities = tool_catalog::capabilities_from_env();
                 if !dev_tools_enabled() && name.as_str() == "ping" {
                     ok(
                         id.clone(),
                         tool_err(anyhow::anyhow!(
                             "tool disabled: {name} (ping is dev-only; set CTX_MCP_DEV_MODE=1 to enable)"
+                        )),
+                    )
+                } else if name.as_str() == "merge_queue_submit"
+                    && !tool_capabilities.merge_queue_submit
+                {
+                    ok(
+                        id.clone(),
+                        tool_err(anyhow::anyhow!(
+                            "tool disabled: merge_queue_submit requires an explicit scoped MCP capability"
                         )),
                     )
                 } else if let Some(message) = agent_scoped_tool_block_message(name.as_str()) {

@@ -22,9 +22,7 @@ pub(crate) fn ensure_shared_vm_launch_ready_for_operation(
         );
     }
     if !shared_vm.simulated && !shared_vm_owner_guest_probe_ready(data_root) {
-        bail!(
-            "shared AVF Linux VM must publish the guest-control ready marker before {operation}"
-        );
+        bail!("shared AVF Linux VM must publish the guest-control ready marker before {operation}");
     }
     Ok(())
 }

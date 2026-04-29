@@ -159,6 +159,15 @@ fn daemon_log_path_for_date(logs_dir: &Path, date: &str) -> std::path::PathBuf {
 }
 
 async fn cleanup_daemon_logs(logs_dir: &Path, retention_days: u64) -> Result<()> {
+    let _ = tokio::task::spawn_blocking({
+        let logs_dir = logs_dir.to_path_buf();
+        move || {
+            ctx_fs::permissions::harden_private_directory_files_sync(&logs_dir, |name| {
+                name == "daemon.log" || name.starts_with(DAEMON_LOG_PREFIX)
+            })
+        }
+    })
+    .await;
     let cutoff = Utc::now() - chrono::Duration::days(retention_days as i64);
     let mut entries = tokio::fs::read_dir(logs_dir).await?;
     while let Some(entry) = entries.next_entry().await? {
@@ -310,9 +319,13 @@ async fn main() -> Result<()> {
     };
 
     if let Some(logs_dir) = &logs_dir {
-        std::fs::create_dir_all(logs_dir).ok();
+        ctx_fs::permissions::ensure_private_dir_sync(logs_dir).ok();
         let daemon_log_config = DaemonLogConfig::from_env();
         let file_blocked = Arc::new(AtomicBool::new(false));
+        let today = Utc::now().format("%Y-%m-%d").to_string();
+        let _ = ctx_fs::permissions::open_private_append_sync(&daemon_log_path_for_date(
+            logs_dir, &today,
+        ));
         let appender = tracing_appender::rolling::daily(logs_dir, "daemon.log");
         let (file_writer, file_guard) = tracing_appender::non_blocking(appender);
         _file_guard = Some(file_guard);

@@ -3,6 +3,7 @@ use std::io::{ErrorKind, Write};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
+use ctx_fs::permissions::{harden_private_file_sync, write_private_file_atomic_sync};
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 
@@ -10,13 +11,18 @@ const DAEMON_AUTH_FILENAME: &str = "daemon_auth.json";
 
 pub(super) fn acquire_daemon_lock(data_root: &Path) -> Result<std::fs::File> {
     let path = data_root.join("daemon.lock");
-    let mut file = OpenOptions::new()
-        .create(true)
-        .read(true)
-        .write(true)
-        .truncate(true)
+    let mut options = OpenOptions::new();
+    options.create(true).read(true).write(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+
+        options.mode(0o600);
+    }
+    let mut file = options
         .open(&path)
         .with_context(|| format!("opening daemon lockfile {}", path.display()))?;
+    let _ = harden_private_file_sync(&path);
 
     match file.try_lock_exclusive() {
         Ok(()) => {
@@ -63,17 +69,8 @@ fn read_daemon_auth_file(path: &Path) -> Result<Option<DaemonAuthFile>> {
 pub(super) fn write_daemon_auth_file(path: &Path, auth: &DaemonAuthFile) -> Result<()> {
     let tmp = path.with_extension("json.tmp");
     let bytes = serde_json::to_vec_pretty(auth)?;
-    std::fs::write(&tmp, bytes)?;
-    if path.exists() {
-        let _ = std::fs::remove_file(path);
-    }
-    std::fs::rename(&tmp, path)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let perms = std::fs::Permissions::from_mode(0o600);
-        let _ = std::fs::set_permissions(path, perms);
-    }
+    let _ = std::fs::remove_file(&tmp);
+    write_private_file_atomic_sync(path, &bytes)?;
     Ok(())
 }
 

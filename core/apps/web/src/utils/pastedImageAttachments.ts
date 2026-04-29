@@ -11,7 +11,6 @@ const MIME_EXTENSION_BY_TYPE: Record<string, string> = {
   "image/gif": "gif",
   "image/jpeg": "jpg",
   "image/png": "png",
-  "image/svg+xml": "svg",
   "image/tiff": "tiff",
   "image/webp": "webp",
 };

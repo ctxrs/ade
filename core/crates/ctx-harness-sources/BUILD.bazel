@@ -10,6 +10,7 @@ rust_library(
     srcs = glob(["src/**/*.rs"]),
     deps = [
         "//core/crates/ctx-core:lib",
+        "//core/crates/ctx-fs:lib",
         "//core/crates/ctx-provider-accounts:lib",
         "@crates//:anyhow",
         "@crates//:chrono",

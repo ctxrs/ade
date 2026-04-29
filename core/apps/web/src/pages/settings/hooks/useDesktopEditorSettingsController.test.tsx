@@ -106,13 +106,13 @@ describe("useDesktopEditorSettingsController", () => {
 
   it("does not clobber newer local edits with an older save response", async () => {
     desktopGetEditorSettingsMock.mockResolvedValue({
-      target: "custom",
-      custom_command: "code --goto {path}:{line}:{col}",
-      remote_authority: null,
+      target: "cursor",
+      custom_command: null,
+      remote_authority: "ssh-remote+old",
     });
 
     let resolveSave: ((value: {
-      target: "custom";
+      target: "cursor";
       custom_command: string | null;
       remote_authority: string | null;
     }) => void) | null = null;
@@ -136,7 +136,7 @@ describe("useDesktopEditorSettingsController", () => {
     act(() => {
       controllerRef.current?.setEditorSettings((prev) => ({
         ...prev,
-        custom_command: "cursor {path}",
+        remote_authority: "ssh-remote+first",
       }));
     });
 
@@ -148,19 +148,48 @@ describe("useDesktopEditorSettingsController", () => {
     act(() => {
       controllerRef.current?.setEditorSettings((prev) => ({
         ...prev,
-        custom_command: "windsurf {path}",
+        remote_authority: "ssh-remote+second",
       }));
     });
 
     await act(async () => {
       resolveSave?.({
-        target: "custom",
-        custom_command: "cursor {path}",
-        remote_authority: null,
+        target: "cursor",
+        custom_command: null,
+        remote_authority: "ssh-remote+first",
       });
       await Promise.resolve();
     });
 
-    expect(controllerRef.current?.editorSettings.custom_command).toBe("windsurf {path}");
+    expect(controllerRef.current?.editorSettings.remote_authority).toBe("ssh-remote+second");
+  });
+
+  it("normalizes legacy custom settings loaded from desktop storage", async () => {
+    desktopGetEditorSettingsMock.mockResolvedValue({
+      target: "custom",
+      custom_command: "code --goto {path}:{line}:{col}",
+      remote_authority: " ssh-remote+ctx ",
+    });
+    desktopUpdateEditorSettingsMock.mockResolvedValue({
+      target: "system",
+      custom_command: null,
+      remote_authority: "ssh-remote+ctx",
+    });
+
+    const controllerRef: { current: DesktopEditorSettingsControllerRef | null } = { current: null };
+    render(<Harness enabled onReady={(controller) => {
+      controllerRef.current = controller;
+    }} />);
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(controllerRef.current?.editorSettings).toEqual({
+      target: "system",
+      custom_command: null,
+      remote_authority: "ssh-remote+ctx",
+    });
+    expect(desktopUpdateEditorSettingsMock).not.toHaveBeenCalled();
   });
 });

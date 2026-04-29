@@ -401,14 +401,18 @@ pub(crate) async fn start_turn(
     let mcp_token = if mcp_disabled {
         None
     } else {
-        let token = crate::daemon::issue_provider_session_mcp_token(
+        let capabilities =
+            crate::daemon::McpAuthCapabilities::provider_session().with_merge_queue_submit();
+        let token = crate::daemon::issue_provider_session_mcp_token_with_capabilities(
             state.as_ref(),
             session.id,
             session.workspace_id,
             session.worktree_id,
+            capabilities,
         )
         .await;
         provider_env.insert("CTX_MCP_TOKEN".to_string(), token.clone());
+        provider_env.insert("CTX_MCP_CAPABILITIES".to_string(), capabilities.env_value());
         Some(token)
     };
     let codex_home = provider_env

@@ -18,7 +18,7 @@ pub(super) async fn materialize_doc_mirror(
             tokio::fs::remove_dir_all(&dest).await?;
         }
         tokio::fs::create_dir_all(&dest).await?;
-        run_doc_mirror_script(workspace, attachment, &dest).await?;
+        run_doc_mirror_cli(workspace, attachment, &dest).await?;
     }
     Ok(MaterializationResult {
         path: dest,
@@ -26,65 +26,20 @@ pub(super) async fn materialize_doc_mirror(
     })
 }
 
-async fn run_doc_mirror_script(
-    workspace: &Workspace,
-    attachment: &WorkspaceAttachment,
-    dest: &Path,
-) -> Result<()> {
-    let Some(script_path) = resolve_doc_mirror_script_path(workspace, attachment)? else {
-        return run_doc_mirror_cli(workspace, attachment, dest).await;
-    };
-
-    let mut cmd = if script_path.extension().and_then(|value| value.to_str()) == Some("py") {
-        let mut cmd = Command::new("python3");
-        cmd.arg(&script_path);
-        cmd
-    } else if script_path.extension().and_then(|value| value.to_str()) == Some("sh") {
-        let mut cmd = Command::new("bash");
-        cmd.arg(&script_path);
-        cmd
-    } else {
-        Command::new(&script_path)
-    };
-
-    cmd.arg(dest)
-        .current_dir(&workspace.root_path)
-        .env("CTX_DOCS_OUTPUT_DIR", dest)
-        .env("CTX_DOCS_OUTPUT_DIR", dest)
-        .kill_on_drop(true);
-    let output = cmd.output().await.context("running doc mirror script")?;
-    if !output.status.success() {
-        anyhow::bail!(
-            "doc mirror script failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
-    Ok(())
-}
-
 pub(super) fn validate_doc_mirror_source(
-    workspace: &Workspace,
+    _workspace: &Workspace,
     attachment: &WorkspaceAttachment,
 ) -> Result<()> {
-    resolve_doc_mirror_script_path(workspace, attachment).map(|_| ())
+    validate_doc_mirror_source_value(&attachment.source)
 }
 
-fn resolve_doc_mirror_script_path(
-    workspace: &Workspace,
-    attachment: &WorkspaceAttachment,
-) -> Result<Option<PathBuf>> {
-    if looks_like_url(&attachment.source) {
-        return Ok(None);
+pub(super) fn validate_doc_mirror_source_value(source: &str) -> Result<()> {
+    if looks_like_url(source) {
+        return Ok(());
     }
-    let script_path = resolve_workspace_local_source(
-        Path::new(&workspace.root_path),
-        &attachment.source,
-        "doc mirror script",
-    )?;
-    if !script_path.is_file() {
-        anyhow::bail!("doc mirror script not found: {}", script_path.display());
-    }
-    Ok(Some(script_path))
+    anyhow::bail!(
+        "doc_mirror source must be an http(s) URL; executable local doc mirror scripts are not supported"
+    )
 }
 
 fn docs_mirror_bin() -> PathBuf {
@@ -126,6 +81,7 @@ async fn run_doc_mirror_cli(
         .arg("--out")
         .arg(dest)
         .current_dir(&workspace.root_path)
+        .env("CTX_DOCS_OUTPUT_DIR", dest)
         .kill_on_drop(true);
     let output = cmd.output().await.context("running ctx-docs-mirror")?;
     if !output.status.success() {

@@ -298,7 +298,8 @@ async fn ensure_qwen_account_home(
 ) -> Result<PathBuf> {
     let home = qwen_account_home(data_root, account_id);
     let qwen_dir = home.join(".qwen");
-    tokio::fs::create_dir_all(&qwen_dir).await?;
+    ctx_fs::permissions::ensure_private_dir(&home).await?;
+    ctx_fs::permissions::ensure_private_dir(&qwen_dir).await?;
     write_secure_file_atomic(
         &qwen_dir.join("oauth_creds.json"),
         &serde_json::to_vec_pretty(&secret.oauth_creds)?,

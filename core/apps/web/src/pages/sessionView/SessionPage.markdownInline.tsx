@@ -19,16 +19,8 @@ import {
   parseUrlToken,
   splitWhitespaceTokens,
 } from "../../utils/codeTokenLinks";
-import { desktopOpenFile, desktopOpenPath, isDesktopApp, openExternalLink } from "../../utils/desktop";
+import { desktopOpenDeepLink, desktopOpenFile, isDesktopApp, openExternalLink } from "../../utils/desktop";
 import { isSealedInlineCodeFragment, splitInlineCodeFragments } from "../../utils/inlineCodeFragments";
-
-type ParsedContextOpen = {
-  worktreeId?: string;
-  file?: string;
-  path?: string;
-  line?: number;
-  col?: number;
-};
 
 type CodeTokenOptions = {
   enableLinks: boolean;
@@ -42,34 +34,6 @@ export type MarkdownRenderOptions = {
   worktreeId: string | null;
   onFileOpenError?: (message: string | null) => void;
 };
-
-function parseContextOpenUrl(href: string): ParsedContextOpen | null {
-  try {
-    const url = new URL(href);
-    if (url.protocol !== "ctx:") return null;
-    if (url.hostname !== "open") return null;
-    const worktreeId = url.searchParams.get("worktreeId") ?? "";
-    const file = url.searchParams.get("file") ?? "";
-    const path = url.searchParams.get("path") ?? "";
-    if (!worktreeId && !path) return null;
-    if (worktreeId && !file) return null;
-    const line = url.searchParams.get("line");
-    const col = url.searchParams.get("col");
-    const parsedLine = line ? Number.parseInt(line, 10) : undefined;
-    const parsedCol = col ? Number.parseInt(col, 10) : undefined;
-    const normalizedLine = parsedLine && parsedLine > 0 ? parsedLine : undefined;
-    const normalizedCol = parsedCol && parsedCol > 0 ? parsedCol : undefined;
-    return {
-      worktreeId: worktreeId || undefined,
-      file: file || undefined,
-      path: path || undefined,
-      line: Number.isFinite(normalizedLine ?? NaN) ? normalizedLine : undefined,
-      col: Number.isFinite(normalizedCol ?? NaN) ? normalizedCol : undefined,
-    };
-  } catch {
-    return null;
-  }
-}
 
 export function forwardVerticalWheelToTranscript(event: WheelEvent<HTMLElement>) {
   if (Math.abs(event.deltaY) <= Math.abs(event.deltaX)) return;
@@ -222,6 +186,15 @@ function ModifierAwareCodePath({
   );
 }
 
+function buildAbsolutePathDeepLink(ref: FileRef): string {
+  const url = new URL("ctx://open");
+  url.searchParams.set("path", ref.path);
+  url.searchParams.set("openWith", "editor");
+  if (ref.line && ref.line > 0) url.searchParams.set("line", String(ref.line));
+  if (ref.col && ref.col > 0) url.searchParams.set("col", String(ref.col));
+  return url.toString();
+}
+
 const handleCodeTokenClick = async (
   event: MouseEvent<HTMLElement>,
   ref: FileRef,
@@ -236,11 +209,7 @@ const handleCodeTokenClick = async (
 
   try {
     if (isAbsolutePath(ref.path)) {
-      await desktopOpenPath({
-        path: ref.path,
-        line: ref.line ?? null,
-        col: ref.col ?? null,
-      });
+      await desktopOpenDeepLink(buildAbsolutePathDeepLink(ref));
     } else {
       await desktopOpenFile({
         worktree_id: worktreeId ?? "",
@@ -460,28 +429,12 @@ export function renderMarkdownLink(
   }
 
   const handleClick = async (event: MouseEvent<HTMLAnchorElement>) => {
+    event.preventDefault();
     if (!isDesktopApp()) return;
     if (!event.metaKey && !event.ctrlKey) return;
-    event.preventDefault();
-    const parsed = parseContextOpenUrl(normalizedHref);
-    if (!parsed) return;
+    event.stopPropagation();
     try {
-      if (parsed.worktreeId && parsed.file) {
-        await desktopOpenFile({
-          worktree_id: parsed.worktreeId,
-          path: parsed.file,
-          line: parsed.line ?? null,
-          col: parsed.col ?? null,
-        });
-      } else if (parsed.path) {
-        await desktopOpenPath({
-          path: parsed.path,
-          line: parsed.line ?? null,
-          col: parsed.col ?? null,
-        });
-      } else {
-        return;
-      }
+      await desktopOpenDeepLink(normalizedHref);
       opts.onFileOpenError?.(null);
     } catch {
       // Ignore failures to keep interaction silent.

@@ -59,6 +59,20 @@ describe("normalizeDesktopEditorSettings", () => {
       remote_authority: "ssh-remote+ctx",
     });
   });
+
+  it("maps legacy custom settings to system without a command", () => {
+    expect(
+      normalizeDesktopEditorSettings({
+        target: "custom",
+        custom_command: " code --goto {path}:{line}:{col} ",
+        remote_authority: " ssh-remote+ctx ",
+      }),
+    ).toEqual({
+      target: "system",
+      custom_command: null,
+      remote_authority: "ssh-remote+ctx",
+    });
+  });
 });
 
 describe("desktopEditorSettingsEqual", () => {

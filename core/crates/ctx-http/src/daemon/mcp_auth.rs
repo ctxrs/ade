@@ -15,12 +15,31 @@ pub(crate) struct McpAuthCapabilities {
 }
 
 impl McpAuthCapabilities {
-    fn provider_session() -> Self {
+    pub(crate) fn provider_session() -> Self {
         Self {
             subagents: true,
             artifacts: true,
-            merge_queue_submit: true,
+            merge_queue_submit: false,
         }
+    }
+
+    pub(crate) fn with_merge_queue_submit(mut self) -> Self {
+        self.merge_queue_submit = true;
+        self
+    }
+
+    pub(crate) fn env_value(self) -> String {
+        let mut values = Vec::new();
+        if self.subagents {
+            values.push("subagents");
+        }
+        if self.artifacts {
+            values.push("artifacts");
+        }
+        if self.merge_queue_submit {
+            values.push("merge_queue_submit");
+        }
+        values.join(",")
     }
 }
 
@@ -37,12 +56,13 @@ impl McpAuthContext {
         session_id: SessionId,
         workspace_id: WorkspaceId,
         worktree_id: WorktreeId,
+        capabilities: McpAuthCapabilities,
     ) -> Self {
         Self {
             session_id,
             workspace_id,
             worktree_id,
-            capabilities: McpAuthCapabilities::provider_session(),
+            capabilities,
         }
     }
 
@@ -99,9 +119,26 @@ pub async fn issue_provider_session_mcp_token(
     workspace_id: WorkspaceId,
     worktree_id: WorktreeId,
 ) -> String {
+    issue_provider_session_mcp_token_with_capabilities(
+        state,
+        session_id,
+        workspace_id,
+        worktree_id,
+        McpAuthCapabilities::provider_session(),
+    )
+    .await
+}
+
+pub(crate) async fn issue_provider_session_mcp_token_with_capabilities(
+    state: &AppState,
+    session_id: SessionId,
+    workspace_id: WorkspaceId,
+    worktree_id: WorktreeId,
+    capabilities: McpAuthCapabilities,
+) -> String {
     let token = format!("ctxmcp_{}", uuid::Uuid::new_v4().simple());
     let token_hash = mcp_token_hash(&token);
-    let ctx = McpAuthContext::provider_session(session_id, workspace_id, worktree_id);
+    let ctx = McpAuthContext::provider_session(session_id, workspace_id, worktree_id, capabilities);
     let mut registry = mcp_auth_registry_lock(state).await;
     prune_expired_mcp_auth_entries(&mut registry);
     revoke_matching_provider_session_mcp_tokens(&mut registry, ctx);

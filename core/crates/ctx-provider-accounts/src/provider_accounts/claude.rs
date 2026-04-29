@@ -173,7 +173,7 @@ pub async fn save_claude_registry(
 
 pub async fn ensure_claude_account_dir(data_root: &Path, account_id: &str) -> Result<PathBuf> {
     let dir = claude_account_dir(data_root, account_id);
-    tokio::fs::create_dir_all(&dir).await?;
+    ctx_fs::permissions::ensure_private_dir(&dir).await?;
     Ok(dir)
 }
 
@@ -307,7 +307,7 @@ pub(crate) fn claude_security_shim_dir(home: &Path) -> PathBuf {
 
 pub(crate) async fn ensure_claude_security_shim(home: &Path) -> Result<PathBuf> {
     let dir = claude_security_shim_dir(home);
-    tokio::fs::create_dir_all(&dir)
+    ctx_fs::permissions::ensure_private_dir(&dir)
         .await
         .with_context(|| format!("creating claude shim dir {}", dir.display()))?;
     let path = dir.join(CLAUDE_SECURITY_SHIM_FILENAME);

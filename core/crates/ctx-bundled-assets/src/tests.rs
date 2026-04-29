@@ -120,6 +120,7 @@ fn bundled_runtime_for_can_select_explicit_linux_target() {
 
     let bundled = bundled_runtime_for("ctx-mcp", "linux", "aarch64").expect("bundled runtime");
     assert_eq!(bundled.version, "0.1.0");
+    assert_eq!(bundled.sha256, "sha");
     assert_eq!(bundled.bin, runtime_root.join("ctx-mcp"));
 }
 

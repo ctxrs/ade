@@ -99,13 +99,7 @@ async fn install_title_generation_local_impl(
 
         match runtime_spec.archive_kind {
             title_generation_local::RuntimeArchiveKind::TarGz => {
-                let tar_gz =
-                    std::fs::File::open(&tmp).with_context(|| format!("open {}", tmp.display()))?;
-                let decompressor = flate2::read::GzDecoder::new(tar_gz);
-                let mut archive = tar::Archive::new(decompressor);
-                archive
-                    .unpack(&runtime_dir)
-                    .context("extract runtime tar.gz")?;
+                extract_tar_gz_to_dir(&tmp, &runtime_dir).context("extract runtime tar.gz")?;
             }
             title_generation_local::RuntimeArchiveKind::Zip => {
                 extract_zip_to_dir(&tmp, &runtime_dir)?;

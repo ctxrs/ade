@@ -82,6 +82,7 @@ pub struct BundledRuntimePaths {
     pub bin: PathBuf,
     pub npm_cli: Option<PathBuf>,
     pub version: String,
+    pub sha256: String,
 }
 
 #[derive(Debug, Clone)]

@@ -95,6 +95,14 @@ describe("droppedImageAttachments", () => {
     expect(attachments).toEqual([]);
   });
 
+  it("rejects svg desktop paths without reading local bytes", async () => {
+    const mod = await import("./droppedImageAttachments");
+    const attachments = await mod.imageAttachmentsFromPaths(["/tmp/icon.svg"]);
+
+    expect(desktopReadBinaryFileMock).not.toHaveBeenCalled();
+    expect(attachments).toEqual([]);
+  });
+
   it("reads desktop image bytes through the desktop command path", async () => {
     const globalConvertFileSrc = vi.fn((path: string) => `asset://global/${encodeURIComponent(path)}`);
     Object.assign(globalThis as typeof globalThis & { __TAURI__?: unknown }, {

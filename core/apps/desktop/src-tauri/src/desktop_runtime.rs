@@ -28,10 +28,18 @@ fn artifact_identity_path(app: &tauri::AppHandle) -> Result<PathBuf> {
 
 pub(crate) fn load_desktop_build_identity(app: &tauri::AppHandle) -> Result<DesktopBuildIdentity> {
     let artifact_path = artifact_identity_path(app)?;
-    let raw = std::fs::read_to_string(&artifact_path)
-        .with_context(|| format!("reading desktop artifact identity {}", artifact_path.display()))?;
-    let identity: DesktopBuildIdentity = serde_json::from_str(&raw)
-        .with_context(|| format!("parsing desktop artifact identity {}", artifact_path.display()))?;
+    let raw = std::fs::read_to_string(&artifact_path).with_context(|| {
+        format!(
+            "reading desktop artifact identity {}",
+            artifact_path.display()
+        )
+    })?;
+    let identity: DesktopBuildIdentity = serde_json::from_str(&raw).with_context(|| {
+        format!(
+            "parsing desktop artifact identity {}",
+            artifact_path.display()
+        )
+    })?;
     if identity.schema_version != 1 {
         anyhow::bail!(
             "unsupported desktop artifact identity schema {} in {}",

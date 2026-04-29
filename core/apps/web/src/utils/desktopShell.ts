@@ -6,6 +6,7 @@ import type {
   DesktopEditorSettings,
   DesktopMenuItemStateUpdate,
   DesktopNotificationPermission,
+  DesktopOpenExternalUrlReq,
   DesktopOpenFileReq,
   DesktopOpenPathReq,
   DesktopOpenWorkspaceInNewWindowReq,
@@ -60,6 +61,9 @@ export const desktopOpenFile = async (req: DesktopOpenFileReq): Promise<void> =>
 
 export const desktopOpenPath = async (req: DesktopOpenPathReq): Promise<void> =>
   invokeDesktopReq<DesktopOpenPathReq, void>("desktop_open_path", req);
+
+export const desktopOpenDeepLink = async (url: string): Promise<void> =>
+  invokeDesktopReq<DesktopOpenExternalUrlReq, void>("desktop_open_deep_link", { url });
 
 export const desktopGetEditorSettings = async (): Promise<DesktopEditorSettings> =>
   invoke<DesktopEditorSettings>("desktop_get_editor_settings");

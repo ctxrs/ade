@@ -1,6 +1,6 @@
 use super::{
     container_terminal_env, infer_terminal_worktree, resolve_container_terminal_cwd,
-    resolve_terminal_host_root,
+    resolve_host_terminal_cwd, resolve_terminal_host_root,
 };
 use crate::daemon::AppState;
 use crate::settings::ExecutionMode;
@@ -108,21 +108,25 @@ fn resolve_container_terminal_cwd_maps_host_subdir_into_managed_container_worktr
 }
 
 #[test]
-fn resolve_container_terminal_cwd_maps_workspace_root_paths_into_container_workspace_root() {
+fn resolve_container_terminal_cwd_rejects_workspace_root_for_bound_worktree() {
     let workspace = sample_workspace("/host/ws");
-    let worktree = sample_worktree(&workspace, PathBuf::from("/host/ws"));
+    let worktree = sample_worktree(&workspace, PathBuf::from("/host/ws/worktrees/wt"));
     let requested = PathBuf::from("/host/ws/subdir");
     let data_plane = sandbox_data_plane(&workspace, &worktree);
 
-    let cwd = resolve_container_terminal_cwd(
+    let err = resolve_container_terminal_cwd(
         &data_plane,
         &PathBuf::from(&workspace.root_path),
         Some(&PathBuf::from(&worktree.root_path)),
         Some(&requested),
     )
-    .unwrap();
+    .expect_err("bound worktree terminal must not map workspace root");
 
-    assert_eq!(cwd, PathBuf::from("/ctx/ws/subdir"));
+    assert_eq!(err.0, axum::http::StatusCode::BAD_REQUEST);
+    assert_eq!(
+        err.1 .0.error,
+        "cwd must be within the container worktree/workspace root"
+    );
 }
 
 #[test]
@@ -168,6 +172,35 @@ fn resolve_container_terminal_cwd_maps_relative_paths_within_live_root() {
 }
 
 #[test]
+fn resolve_container_terminal_cwd_rejects_live_sibling_worktree_for_bound_worktree() {
+    let workspace = sample_workspace("/host/ws");
+    let worktree_id = WorktreeId(uuid::Uuid::new_v4());
+    let sibling_worktree_id = WorktreeId(uuid::Uuid::new_v4());
+    let worktree = sample_worktree(&workspace, PathBuf::from("/host/ws/worktrees/wt"));
+    let data_plane = WorktreeDataPlane {
+        binding: None,
+        workspace,
+        execution_mode: ExecutionMode::Sandbox,
+        live_workspace_root: PathBuf::from("/ctx/ws"),
+        live_worktree_root: container_worktree_root(worktree_id),
+    };
+
+    let err = resolve_container_terminal_cwd(
+        &data_plane,
+        &PathBuf::from("/host/ws"),
+        Some(&PathBuf::from(&worktree.root_path)),
+        Some(&container_worktree_root(sibling_worktree_id).join("src")),
+    )
+    .expect_err("bound worktree terminal must reject sibling live roots");
+
+    assert_eq!(err.0, axum::http::StatusCode::BAD_REQUEST);
+    assert_eq!(
+        err.1 .0.error,
+        "cwd must be within the container worktree/workspace root"
+    );
+}
+
+#[test]
 fn resolve_container_terminal_cwd_rejects_relative_parent_escape() {
     let workspace = sample_workspace("/host/ws");
     let worktree_id = WorktreeId(uuid::Uuid::new_v4());
@@ -193,6 +226,76 @@ fn resolve_container_terminal_cwd_rejects_relative_parent_escape() {
         err.1 .0.error,
         "cwd must be within the container worktree/workspace root"
     );
+}
+
+#[tokio::test]
+async fn resolve_host_terminal_cwd_rejects_workspace_root_for_bound_worktree() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let workspace_root = temp.path().join("workspace");
+    let worktree_root = workspace_root.join("worktrees").join("wt");
+    let workspace_subdir = workspace_root.join("src");
+    tokio::fs::create_dir_all(&worktree_root)
+        .await
+        .expect("create worktree root");
+    tokio::fs::create_dir_all(&workspace_subdir)
+        .await
+        .expect("create workspace subdir");
+    let bound_root = tokio::fs::canonicalize(&worktree_root)
+        .await
+        .expect("canonical worktree root");
+
+    let err = resolve_host_terminal_cwd(&bound_root, Some(&workspace_subdir))
+        .await
+        .expect_err("host worktree terminal must reject workspace root");
+
+    assert_eq!(err.0, axum::http::StatusCode::BAD_REQUEST);
+    assert_eq!(err.1 .0.error, "cwd must be within the terminal root");
+}
+
+#[tokio::test]
+async fn resolve_host_terminal_cwd_rejects_sibling_worktree_for_bound_worktree() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let workspace_root = temp.path().join("workspace");
+    let worktree_root = workspace_root.join("worktrees").join("wt");
+    let sibling_root = workspace_root.join("worktrees").join("sibling");
+    tokio::fs::create_dir_all(&worktree_root)
+        .await
+        .expect("create worktree root");
+    tokio::fs::create_dir_all(&sibling_root)
+        .await
+        .expect("create sibling root");
+    let bound_root = tokio::fs::canonicalize(&worktree_root)
+        .await
+        .expect("canonical worktree root");
+
+    let err = resolve_host_terminal_cwd(&bound_root, Some(&sibling_root))
+        .await
+        .expect_err("host worktree terminal must reject sibling worktree");
+
+    assert_eq!(err.0, axum::http::StatusCode::BAD_REQUEST);
+    assert_eq!(err.1 .0.error, "cwd must be within the terminal root");
+}
+
+#[tokio::test]
+async fn resolve_host_terminal_cwd_maps_relative_paths_inside_bound_root() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let worktree_root = temp.path().join("workspace").join("worktrees").join("wt");
+    let src_root = worktree_root.join("src");
+    tokio::fs::create_dir_all(&src_root)
+        .await
+        .expect("create src root");
+    let bound_root = tokio::fs::canonicalize(&worktree_root)
+        .await
+        .expect("canonical worktree root");
+    let expected = tokio::fs::canonicalize(&src_root)
+        .await
+        .expect("canonical src root");
+
+    let cwd = resolve_host_terminal_cwd(&bound_root, Some(&PathBuf::from("src")))
+        .await
+        .expect("relative cwd inside bound root should be allowed");
+
+    assert_eq!(cwd, expected);
 }
 
 #[tokio::test]

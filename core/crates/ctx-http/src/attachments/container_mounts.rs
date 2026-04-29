@@ -410,13 +410,17 @@ pub(crate) async fn ensure_attachment_mount(
             }
         }
     } else {
-        if let Some(parent) = mount_abs.parent() {
-            tokio::fs::create_dir_all(parent).await?;
-        }
         let source_path =
             resolve_attachment_source_path(&materialized.path, attachment.subpath.as_deref())
                 .await?;
-        ensure_mount(&mount_abs, &source_path, attachment.mode.clone()).await?;
+        let checked_mount_abs = ensure_mount_in_worktree(
+            worktree_root,
+            &mount_rel,
+            &source_path,
+            attachment.mode.clone(),
+        )
+        .await?;
+        debug_assert_eq!(checked_mount_abs, mount_abs);
     }
 
     let now = Utc::now();
@@ -450,9 +454,9 @@ pub(crate) async fn cleanup_removed_attachment(
     for mount in mounts {
         let path = PathBuf::from(&mount.mount_abs_path);
         let worktree = state.global_store().get_worktree(mount.worktree_id).await?;
-        let container_mode = match worktree {
+        let container_mode = match &worktree {
             Some(worktree) => {
-                let data_plane = resolve_worktree_data_plane(state, &worktree).await?;
+                let data_plane = resolve_worktree_data_plane(state, worktree).await?;
                 matches!(
                     data_plane.execution_mode,
                     crate::settings::ExecutionMode::Sandbox
@@ -472,7 +476,13 @@ pub(crate) async fn cleanup_removed_attachment(
             )
             .await;
         } else {
-            remove_mount_path(&path).await?;
+            let Some(worktree) = worktree.as_ref() else {
+                anyhow::bail!(
+                    "cannot safely remove host attachment mount without worktree metadata"
+                );
+            };
+            let data_plane = resolve_worktree_data_plane(state, worktree).await?;
+            remove_mount_path_in_worktree(&data_plane.live_worktree_root, &path).await?;
         }
     }
     store

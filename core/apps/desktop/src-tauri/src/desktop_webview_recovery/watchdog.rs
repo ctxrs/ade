@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use tauri::Manager;
 
-use super::policy::{WATCHDOG_INTERVAL_MS, now_ms};
+use super::policy::{now_ms, WATCHDOG_INTERVAL_MS};
 use super::state::{DesktopWebviewRecoveryController, HeartbeatTimeoutEvaluation};
 
 pub(super) fn start_watchdog(app: tauri::AppHandle) {

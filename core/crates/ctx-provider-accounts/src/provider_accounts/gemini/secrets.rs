@@ -59,7 +59,8 @@ pub(super) async fn ensure_gemini_account_home(
 ) -> Result<PathBuf> {
     let home = gemini_account_home(data_root, account_id);
     let gemini_dir = home.join(".gemini");
-    tokio::fs::create_dir_all(&gemini_dir).await?;
+    ctx_fs::permissions::ensure_private_dir(&home).await?;
+    ctx_fs::permissions::ensure_private_dir(&gemini_dir).await?;
     write_secure_file_atomic(
         &gemini_dir.join("oauth_creds.json"),
         &serde_json::to_vec_pretty(&secret.oauth_creds)?,

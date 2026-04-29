@@ -5,7 +5,6 @@ const IMAGE_EXTENSION_MIME_TYPES: Record<string, string> = {
   jpeg: "image/jpeg",
   jpg: "image/jpeg",
   png: "image/png",
-  svg: "image/svg+xml",
   tif: "image/tiff",
   tiff: "image/tiff",
   webp: "image/webp",
@@ -17,7 +16,8 @@ export function inferImageMimeTypeFromName(name: string): string | null {
 }
 
 export function resolveImageMimeType(type?: string | null, name?: string | null): string {
-  const normalized = (type ?? "").trim().toLowerCase();
+  const normalized = (type ?? "").trim().toLowerCase().split(";")[0]?.trim() ?? "";
+  if (normalized === "image/svg+xml") return "";
   if (normalized.startsWith("image/")) return normalized;
   return inferImageMimeTypeFromName(name ?? "") ?? "";
 }

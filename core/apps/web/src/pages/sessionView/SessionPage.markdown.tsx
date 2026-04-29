@@ -25,6 +25,24 @@ import {
   type MarkdownRenderOptions,
 } from "./SessionPage.markdownInline";
 
+function renderMarkdownImagePlaceholder(
+  alt: string,
+  title: string | null | undefined,
+  key?: string,
+): ReactNode {
+  const label = (alt || title || "").trim();
+  return (
+    <span
+      key={key}
+      className="wb-md-image-placeholder"
+      role="note"
+      aria-label={label ? `Markdown image omitted: ${label}` : "Markdown image omitted"}
+    >
+      {label ? `Image omitted: ${label}` : "Image omitted"}
+    </span>
+  );
+}
+
 function renderInlineNodes(
   nodes: readonly SessionMarkdownInlineNode[],
   opts: MarkdownRenderOptions,
@@ -62,7 +80,7 @@ function renderInlineNodes(
           key,
         );
       case "image":
-        return <img key={key} src={node.src} alt={node.alt} title={node.title ?? undefined} />;
+        return renderMarkdownImagePlaceholder(node.alt, node.title, key);
       default:
         return null;
     }
@@ -93,7 +111,7 @@ function renderTableCellContent(
             return <h4 key={key}>{renderInlineNodes(block.inlines, opts, `${key}-heading`)}</h4>;
         }
       case "image":
-        return <img key={key} src={block.src} alt={block.alt} title={block.title ?? undefined} />;
+        return renderMarkdownImagePlaceholder(block.alt, block.title, key);
       case "thematicBreak":
         return <Fragment key={key}>{isHeader ? "—" : "—"}</Fragment>;
       case "code":
@@ -176,7 +194,7 @@ function renderBlock(
     case "image":
       return (
         <div key={keyPrefix} className="wb-md-block wb-md-block--image" style={shellStyle}>
-          <img src={block.src} alt={block.alt} title={block.title ?? undefined} />
+          {renderMarkdownImagePlaceholder(block.alt, block.title)}
         </div>
       );
     case "heading":

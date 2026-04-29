@@ -25,7 +25,7 @@ async fn scoped_mcp_token_is_limited_to_bound_session_routes() {
         WorktreeId::new(),
     )
     .await;
-    let app = api::router(state);
+    let app = api::router(state.clone());
 
     let req = Request::builder()
         .method("GET")
@@ -111,7 +111,36 @@ async fn scoped_mcp_merge_queue_submit_is_bound_to_current_session_worktree() {
         worktree_id,
     )
     .await;
-    let app = api::router(state);
+    let app = api::router(state.clone());
+
+    let req = Request::builder()
+        .method("POST")
+        .uri("/api/merge-queue/entries")
+        .header("authorization", format!("Bearer {token}"))
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "session_id": session_id.0.to_string(),
+                "worktree_id": worktree_id.0.to_string()
+            })
+            .to_string(),
+        ))
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(
+        res.status(),
+        StatusCode::UNAUTHORIZED,
+        "provider-session MCP tokens must not include merge queue submit by default"
+    );
+
+    let token = crate::daemon::issue_provider_session_mcp_token_with_capabilities(
+        state.as_ref(),
+        session_id,
+        WorkspaceId::new(),
+        worktree_id,
+        crate::daemon::McpAuthCapabilities::provider_session().with_merge_queue_submit(),
+    )
+    .await;
 
     let req = Request::builder()
         .method("POST")

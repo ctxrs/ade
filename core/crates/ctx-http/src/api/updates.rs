@@ -305,7 +305,16 @@ pub(super) async fn download_appimage_update(
                 }),
             )
         })?;
-    let url = crate::updates::join_url(&base_url, &appimage.url_path);
+    let url = crate::updates::resolve_release_artifact_url(&base_url, &appimage.url_path).map_err(
+        |e| {
+            (
+                StatusCode::BAD_GATEWAY,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        },
+    )?;
     let manifest_url = crate::updates::release_manifest_url(&base_url, &channel);
     let meta = crate::updates::download_verified_appimage_candidate(
         crate::updates::AppImageCandidateRequest {

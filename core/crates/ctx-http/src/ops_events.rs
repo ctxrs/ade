@@ -8,6 +8,7 @@ use tokio::sync::mpsc;
 use tokio::time::MissedTickBehavior;
 
 use ctx_avf_linux_runtime::SubstrateLifecycleRecord;
+use ctx_fs::permissions::{ensure_private_dir, open_private_append};
 
 use crate::logs;
 
@@ -178,7 +179,7 @@ async fn ops_events_worker(
 
 async fn append_local_log(data_root: &Path, event: &OpsEvent, cfg: &OpsEventsConfig) -> Result<()> {
     let dir = logs::logs_dir(data_root);
-    tokio::fs::create_dir_all(&dir).await.ok();
+    ensure_private_dir(&dir).await.ok();
     let date = event.ts.format("%Y-%m-%d").to_string();
     let path = dir.join(format!("{OPS_LOG_PREFIX}{date}{OPS_LOG_SUFFIX}"));
 
@@ -192,11 +193,7 @@ async fn append_local_log(data_root: &Path, event: &OpsEvent, cfg: &OpsEventsCon
 
     let line = serde_json::to_string(event)?;
     let redacted = logs::redact_sensitive(&line);
-    let mut file = tokio::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)
-        .await?;
+    let mut file = open_private_append(&path).await?;
     use tokio::io::AsyncWriteExt;
     file.write_all(redacted.as_bytes()).await?;
     file.write_all(b"\n").await?;

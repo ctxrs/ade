@@ -64,7 +64,7 @@ pub(super) async fn write_endpoint_secret(
         anyhow::bail!("endpoint secret must include api_key or service_account_json");
     }
     let dir = endpoint_secret_dir(data_root);
-    tokio::fs::create_dir_all(&dir).await?;
+    ctx_fs::permissions::ensure_private_dir(&dir).await?;
     let path = endpoint_secret_path(data_root, secret_ref)?;
     let payload = serde_json::to_vec_pretty(&EndpointSecretEnvelope {
         version: SECRET_VERSION,
@@ -73,12 +73,7 @@ pub(super) async fn write_endpoint_secret(
         project_id: secret.project_id.clone(),
         location: secret.location.clone(),
     })?;
-    tokio::fs::write(&path, payload).await?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = tokio::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).await;
-    }
+    ctx_fs::permissions::write_private_file_atomic(&path, &payload).await?;
     Ok(())
 }
 

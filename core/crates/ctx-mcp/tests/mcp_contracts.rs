@@ -20,6 +20,7 @@ fn mcp_command() -> Command {
         "CTX_BUILD_IDENTITY_PATH",
         "CTX_DATA_DIR",
         "CTX_DAEMON_URL",
+        "CTX_MCP_CAPABILITIES",
         "CTX_MCP_DEV_MODE",
         "CTX_MCP_TOKEN",
         "CTX_SESSION_ID",
@@ -32,8 +33,14 @@ fn mcp_command() -> Command {
 }
 
 async fn write_mcp_message(stdin: &mut tokio::process::ChildStdin, msg: Value) {
+    let is_initialize = msg.get("method").and_then(Value::as_str) == Some("initialize");
     stdin.write_all(msg.to_string().as_bytes()).await.unwrap();
     stdin.write_all(b"\n").await.unwrap();
+    if is_initialize {
+        // The child-process stdio harness can leave a single initialize line
+        // pending under cargo test on macOS. The server ignores blank lines.
+        stdin.write_all(b"\n").await.unwrap();
+    }
     stdin.flush().await.unwrap();
 }
 
@@ -42,6 +49,7 @@ async fn wait_for_response(
     response_id: i64,
     timeout: Duration,
 ) -> Value {
+    let timeout = std::cmp::max(timeout, Duration::from_secs(60));
     let deadline = tokio::time::Instant::now() + timeout;
     loop {
         let next_line = tokio::time::timeout_at(deadline, reader.next_line())
@@ -77,7 +85,6 @@ async fn mcp_tools_list_omits_removed_lsp_and_edit_plan_tools() {
         json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25"}}),
     )
     .await;
-    let _ = wait_for_response(&mut reader, 1, Duration::from_secs(15)).await;
     write_mcp_message(
         &mut stdin,
         json!({"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}),
@@ -151,6 +158,104 @@ async fn mcp_tools_list_omits_global_workspace_and_oracle_tools() {
     assert!(
         names.contains(&"spawn_agent"),
         "ctx-mcp should keep session-local agent tools"
+    );
+    assert!(
+        !names.contains(&"merge_queue_submit"),
+        "ctx-mcp should not expose merge queue submit without an explicit capability"
+    );
+    let _ = child.kill().await;
+}
+
+#[tokio::test]
+async fn mcp_tools_list_includes_merge_queue_submit_with_explicit_capability() {
+    let mut child = mcp_command()
+        .arg("--stdio")
+        .env("CTX_DAEMON_URL", "http://127.0.0.1:9")
+        .env(
+            "CTX_MCP_CAPABILITIES",
+            "subagents,artifacts,merge_queue_submit",
+        )
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    let mut stdin = child.stdin.take().unwrap();
+    let stdout = child.stdout.take().unwrap();
+    let mut reader = BufReader::new(stdout).lines();
+
+    write_mcp_message(
+        &mut stdin,
+        json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25"}}),
+    )
+    .await;
+    let _ = wait_for_response(&mut reader, 1, Duration::from_secs(15)).await;
+    write_mcp_message(
+        &mut stdin,
+        json!({"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}),
+    )
+    .await;
+
+    let v = wait_for_response(&mut reader, 2, Duration::from_secs(15)).await;
+    let tools = v["result"]["tools"].as_array().expect("tools array");
+    let names: Vec<&str> = tools
+        .iter()
+        .filter_map(|tool| tool.get("name").and_then(Value::as_str))
+        .collect();
+    assert!(
+        names.contains(&"merge_queue_submit"),
+        "merge queue submit should be advertised only when explicitly scoped"
+    );
+    let _ = child.kill().await;
+}
+
+#[tokio::test]
+async fn mcp_merge_queue_submit_call_requires_explicit_capability() {
+    let mut child = mcp_command()
+        .arg("--stdio")
+        .env("CTX_DAEMON_URL", "http://127.0.0.1:9")
+        .env("CTX_MCP_TOKEN", "scoped-mcp-token")
+        .env("CTX_SESSION_ID", "00000000-0000-0000-0000-000000000000")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    let mut stdin = child.stdin.take().unwrap();
+    let stdout = child.stdout.take().unwrap();
+    let mut reader = BufReader::new(stdout).lines();
+
+    write_mcp_message(
+        &mut stdin,
+        json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25"}}),
+    )
+    .await;
+    let _ = wait_for_response(&mut reader, 1, Duration::from_secs(15)).await;
+    write_mcp_message(
+        &mut stdin,
+        json!({
+            "jsonrpc":"2.0",
+            "id":2,
+            "method":"tools/call",
+            "params":{
+                "name":"ctx.merge_queue_submit",
+                "arguments":{
+                    "target_branch":"main",
+                    "message":"merge it"
+                }
+            }
+        }),
+    )
+    .await;
+
+    let v = wait_for_response(&mut reader, 2, Duration::from_secs(15)).await;
+    assert_eq!(v["result"]["isError"].as_bool(), Some(true));
+    let text = v["result"]["content"][0]["text"]
+        .as_str()
+        .expect("tool error text");
+    assert!(
+        text.contains("requires an explicit scoped MCP capability"),
+        "expected capability error, got: {text}"
     );
     let _ = child.kill().await;
 }
@@ -338,6 +443,7 @@ async fn mcp_daemon_access_requires_scoped_mcp_token() {
         .env("CTX_DATA_DIR", temp_dir.path())
         .env("CTX_DAEMON_URL", format!("http://{addr}"))
         .env("CTX_AUTH_TOKEN", "daemon-secret")
+        .env("CTX_MCP_CAPABILITIES", "merge_queue_submit")
         .env("CTX_SESSION_ID", "00000000-0000-0000-0000-000000000000")
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
@@ -404,6 +510,7 @@ async fn mcp_daemon_access_requires_explicit_daemon_url() {
     let mut child = mcp_command()
         .arg("--stdio")
         .env("CTX_DATA_DIR", temp_dir.path())
+        .env("CTX_MCP_CAPABILITIES", "merge_queue_submit")
         .env("CTX_MCP_TOKEN", "scoped-mcp-token")
         .env("CTX_SESSION_ID", "00000000-0000-0000-0000-000000000000")
         .stdin(std::process::Stdio::piped())
@@ -494,6 +601,7 @@ async fn mcp_merge_queue_submit_scrubs_internal_ids() {
     let mut child = mcp_command()
         .arg("--stdio")
         .env("CTX_DAEMON_URL", format!("http://{addr}"))
+        .env("CTX_MCP_CAPABILITIES", "merge_queue_submit")
         .env("CTX_MCP_TOKEN", "scoped-mcp-token")
         .env("CTX_SESSION_ID", "00000000-0000-0000-0000-000000000000")
         .stdin(std::process::Stdio::piped())
@@ -625,6 +733,7 @@ async fn scoped_mcp_merge_queue_submit_uses_scoped_ids_instead_of_worktree_root(
     let mut child = mcp_command()
         .arg("--stdio")
         .env("CTX_DAEMON_URL", format!("http://{addr}"))
+        .env("CTX_MCP_CAPABILITIES", "merge_queue_submit")
         .env("CTX_MCP_TOKEN", "scoped-mcp-token")
         .env("CTX_SESSION_ID", "00000000-0000-0000-0000-000000000000")
         .stdin(std::process::Stdio::piped())

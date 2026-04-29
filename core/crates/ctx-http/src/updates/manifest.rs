@@ -201,6 +201,145 @@ fn verify_release_manifest_signature(
     Ok(())
 }
 
+fn release_artifacts_for_platform(
+    platform: &ReleasePlatform,
+) -> Vec<(&'static str, &ReleaseArtifact)> {
+    let mut artifacts = Vec::new();
+    if let Some(artifact) = platform.desktop.as_ref() {
+        artifacts.push(("desktop", artifact));
+    }
+    if let Some(artifact) = platform.appimage.as_ref() {
+        artifacts.push(("appimage", artifact));
+    }
+    if let Some(artifact) = platform.deb.as_ref() {
+        artifacts.push(("deb", artifact));
+    }
+    if let Some(artifact) = platform.dmg.as_ref() {
+        artifacts.push(("dmg", artifact));
+    }
+    if let Some(artifact) = platform.msi.as_ref() {
+        artifacts.push(("msi", artifact));
+    }
+    if let Some(artifact) = platform.nsis.as_ref() {
+        artifacts.push(("nsis", artifact));
+    }
+    if let Some(artifact) = platform.exe.as_ref() {
+        artifacts.push(("exe", artifact));
+    }
+    if let Some(artifact) = platform.zip.as_ref() {
+        artifacts.push(("zip", artifact));
+    }
+    if let Some(artifact) = platform.daemon.as_ref() {
+        artifacts.push(("daemon", artifact));
+    }
+    artifacts
+}
+
+fn contains_dot_segment(path: &str) -> bool {
+    path.split('/').any(|segment| matches!(segment, "." | ".."))
+}
+
+fn resolve_base_path_relative_artifact_ref(base: &Url, artifact_ref: &str) -> Result<Url> {
+    let mut resolved = base.clone();
+    resolved.set_query(None);
+    resolved.set_fragment(None);
+
+    let base_path = base.path().trim_end_matches('/');
+    let artifact_path = artifact_ref.trim_start_matches('/');
+    let joined_path = if base_path.is_empty() || base_path == "/" {
+        format!("/{artifact_path}")
+    } else {
+        format!("{base_path}/{artifact_path}")
+    };
+    resolved.set_path(&joined_path);
+    Ok(resolved)
+}
+
+fn validate_release_artifact_ref(base: &Url, raw_ref: &str) -> Result<Url> {
+    let trimmed = raw_ref.trim();
+    if trimmed.is_empty() {
+        anyhow::bail!("release manifest artifact url_path is empty");
+    }
+    if trimmed.contains('\\') {
+        anyhow::bail!("release manifest artifact url_path must not contain backslashes: {trimmed}");
+    }
+    if trimmed.contains('?') || trimmed.contains('#') {
+        anyhow::bail!(
+            "release manifest artifact url_path must not contain query or fragment: {trimmed}"
+        );
+    }
+
+    let decoded = urlencoding::decode(trimmed)
+        .with_context(|| format!("decoding release manifest artifact url_path: {trimmed}"))?;
+    if decoded.contains('\\') || contains_dot_segment(&decoded) {
+        anyhow::bail!(
+            "release manifest artifact url_path contains an unsafe path segment: {trimmed}"
+        );
+    }
+
+    let resolved = match Url::parse(trimmed) {
+        Ok(absolute) => absolute,
+        Err(url::ParseError::RelativeUrlWithoutBase) => {
+            if trimmed.starts_with("//") {
+                anyhow::bail!(
+                    "release manifest artifact url_path must not be scheme-relative: {trimmed}"
+                );
+            }
+            if !trimmed.starts_with('/') {
+                anyhow::bail!(
+                    "release manifest artifact url_path must be root-relative or same-origin absolute: {trimmed}"
+                );
+            }
+            resolve_base_path_relative_artifact_ref(base, trimmed).with_context(|| {
+                format!("resolving release manifest artifact url_path: {trimmed}")
+            })?
+        }
+        Err(err) => {
+            anyhow::bail!("invalid release manifest artifact url_path '{trimmed}': {err}");
+        }
+    };
+
+    if !matches!(resolved.scheme(), "http" | "https") {
+        anyhow::bail!(
+            "release manifest artifact URL must use http or https: {}",
+            resolved
+        );
+    }
+    if resolved.scheme() != base.scheme()
+        || resolved.host_str() != base.host_str()
+        || resolved.port_or_known_default() != base.port_or_known_default()
+    {
+        anyhow::bail!(
+            "release manifest artifact URL must stay on release base origin {}: {}",
+            base.origin().ascii_serialization(),
+            resolved
+        );
+    }
+    Ok(resolved)
+}
+
+pub fn resolve_release_artifact_url(base_url: &str, url_path: &str) -> Result<String> {
+    let base = Url::parse(base_url)
+        .with_context(|| format!("invalid release download base URL: {base_url}"))?;
+    Ok(validate_release_artifact_ref(&base, url_path)?.to_string())
+}
+
+fn validate_release_manifest_artifact_references(
+    manifest: &ReleaseManifest,
+    base_url: &str,
+) -> Result<()> {
+    let base = Url::parse(base_url)
+        .with_context(|| format!("invalid release download base URL: {base_url}"))?;
+    for (platform_key, platform) in &manifest.platforms {
+        for (artifact_key, artifact) in release_artifacts_for_platform(platform) {
+            validate_release_artifact_ref(&base, &artifact.url_path).with_context(|| {
+                format!("validating release manifest artifact {platform_key}/{artifact_key}")
+            })?;
+        }
+    }
+    Ok(())
+}
+
 pub fn in_place_update_capability(
     manifest: &ReleaseManifest,
     platform_key: Option<&str>,
@@ -284,7 +423,10 @@ pub async fn fetch_latest_manifest_with_params(
     verify_release_manifest_signature(&manifest_bytes, &signature_b64, &manifest_pubkey)?;
     let txt =
         std::str::from_utf8(&manifest_bytes).context("release manifest body is not valid utf-8")?;
-    serde_json::from_str(txt).context("parsing release manifest JSON")
+    let manifest: ReleaseManifest =
+        serde_json::from_str(txt).context("parsing release manifest JSON")?;
+    validate_release_manifest_artifact_references(&manifest, base_url)?;
+    Ok(manifest)
 }
 
 pub fn join_url(base_url: &str, url_path: &str) -> String {

@@ -4,6 +4,7 @@ use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::Result;
 use chrono::{DateTime, Utc};
+use ctx_fs::permissions::{ensure_private_dir, open_private_append};
 use opentelemetry::trace::{Span, SpanBuilder, SpanKind, TraceId, Tracer};
 use opentelemetry::{Context as OtelContext, KeyValue};
 use opentelemetry_sdk::trace::Span as SdkSpan;
@@ -436,17 +437,14 @@ fn env_bool(key: &str) -> Option<bool> {
 
 async fn append_local_log(data_root: &std::path::Path, event: &PerfEvent) -> Result<()> {
     let dir = logs::logs_dir(data_root);
-    tokio::fs::create_dir_all(&dir).await.ok();
+    ensure_private_dir(&dir).await.ok();
     let date = event.occurred_at.format("%Y-%m-%d").to_string();
     let path = dir.join(format!("{PERF_LOG_PREFIX}{date}{PERF_LOG_SUFFIX}"));
     let line = serde_json::to_string(event)?;
-    let mut file = tokio::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)
-        .await?;
+    let redacted = logs::redact_sensitive(&line);
+    let mut file = open_private_append(&path).await?;
     use tokio::io::AsyncWriteExt;
-    file.write_all(line.as_bytes()).await?;
+    file.write_all(redacted.as_bytes()).await?;
     file.write_all(b"\n").await?;
     file.flush().await?;
     Ok(())

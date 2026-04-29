@@ -88,7 +88,7 @@ pub async fn ensure_codex_endpoint_runtime_home_from_env(
     let api_key = codex_endpoint_api_key_from_provider_env(provider_env).await?;
     let base_url = codex_endpoint_base_url_from_provider_env(provider_env).await?;
     let codex_home = codex_runtime_home(runtime_root);
-    tokio::fs::create_dir_all(&codex_home)
+    ctx_fs::permissions::ensure_private_dir(&codex_home)
         .await
         .context("creating CODEX_HOME for endpoint runtime")?;
     let mut auth = serde_json::Map::new();
@@ -139,7 +139,10 @@ pub async fn ensure_provider_runtime_home_env(
     let cache_home = home.join(".cache");
     let data_home = home.join(".local").join("share");
     let state_home = home.join(".local").join("state");
-    tokio::fs::create_dir_all(&config_home)
+    ctx_fs::permissions::ensure_private_dir(&home)
+        .await
+        .with_context(|| format!("creating provider runtime home {}", home.display()))?;
+    ctx_fs::permissions::ensure_private_dir(&config_home)
         .await
         .with_context(|| {
             format!(
@@ -147,7 +150,7 @@ pub async fn ensure_provider_runtime_home_env(
                 config_home.display()
             )
         })?;
-    tokio::fs::create_dir_all(&cache_home)
+    ctx_fs::permissions::ensure_private_dir(&cache_home)
         .await
         .with_context(|| {
             format!(
@@ -155,10 +158,10 @@ pub async fn ensure_provider_runtime_home_env(
                 cache_home.display()
             )
         })?;
-    tokio::fs::create_dir_all(&data_home)
+    ctx_fs::permissions::ensure_private_dir(&data_home)
         .await
         .with_context(|| format!("creating provider runtime data dir {}", data_home.display()))?;
-    tokio::fs::create_dir_all(&state_home)
+    ctx_fs::permissions::ensure_private_dir(&state_home)
         .await
         .with_context(|| {
             format!(

@@ -1,25 +1,11 @@
 use super::{
-    default_mount_relpath, materialize_attachment, normalize_attachment_config,
-    resolve_workspace_local_source, revision_key, sanitize_attachment_subpath,
+    default_mount_relpath, normalize_attachment_config, revision_key, sanitize_attachment_subpath,
     sanitize_mount_relpath, AttachmentConfig,
 };
-use chrono::Utc;
 use ctx_core::ids::WorkspaceId;
 use ctx_core::models::{
-    AttachmentMode, AttachmentUpdatePolicy, Workspace, WorkspaceAttachmentKind,
-    WorkspaceAttachmentStatus,
+    AttachmentMode, AttachmentUpdatePolicy, WorkspaceAttachmentKind, WorkspaceAttachmentStatus,
 };
-use std::path::Path;
-
-fn test_workspace(root: &Path) -> Workspace {
-    Workspace {
-        id: WorkspaceId::new(),
-        name: "ws".to_string(),
-        root_path: root.to_string_lossy().to_string(),
-        created_at: Utc::now(),
-        vcs_kind: None,
-    }
-}
 
 #[test]
 fn default_mount_relpath_uses_kind_specific_roots() {
@@ -199,65 +185,13 @@ fn normalize_reference_repo_accepts_host_alias_scp_urls() {
 }
 
 #[test]
-fn resolve_workspace_local_source_allows_workspace_absolute_paths() {
-    let workspace = tempfile::tempdir().unwrap();
-    let nested = workspace
-        .path()
-        .join(".ctx")
-        .join("scripts")
-        .join("docs.py");
-    std::fs::create_dir_all(nested.parent().unwrap()).unwrap();
-    std::fs::write(&nested, "print('ok')\n").unwrap();
-
-    let resolved = resolve_workspace_local_source(
-        workspace.path(),
-        &nested.to_string_lossy(),
-        "doc mirror script",
-    )
-    .expect("workspace-local absolute path should resolve");
-
-    assert_eq!(resolved, std::fs::canonicalize(nested).unwrap());
-}
-
-#[test]
-fn resolve_workspace_local_source_rejects_paths_outside_workspace() {
-    let workspace = tempfile::tempdir().unwrap();
-    let outside = tempfile::tempdir().unwrap();
-    let outside_script = outside.path().join("docs.py");
-    std::fs::write(&outside_script, "print('bad')\n").unwrap();
-
-    let err = resolve_workspace_local_source(
-        workspace.path(),
-        &outside_script.to_string_lossy(),
-        "doc mirror script",
-    )
-    .expect_err("outside path should fail");
-
-    assert!(format!("{err:#}").contains("must stay within workspace root"));
-}
-
-#[tokio::test]
-async fn materialize_doc_mirror_rejects_script_outside_workspace_without_executing() {
-    let workspace_dir = tempfile::tempdir().unwrap();
-    let workspace = test_workspace(workspace_dir.path());
-    let outside = tempfile::tempdir().unwrap();
-    let marker = outside.path().join("ran.txt");
-    let script_path = outside.path().join("docs.py");
-    std::fs::write(
-        &script_path,
-        format!(
-            "from pathlib import Path\nPath({:?}).write_text('ran', encoding='utf-8')\n",
-            marker.to_string_lossy()
-        ),
-    )
-    .unwrap();
-    let data_root = tempfile::tempdir().unwrap();
-    let attachment = normalize_attachment_config(
-        workspace.id,
+fn normalize_doc_mirror_rejects_local_script_source() {
+    let err = normalize_attachment_config(
+        WorkspaceId::new(),
         AttachmentConfig {
             kind: WorkspaceAttachmentKind::DocMirror,
             name: "Docs".to_string(),
-            source: script_path.to_string_lossy().to_string(),
+            source: ".ctx/scripts/docs.py".to_string(),
             revision: None,
             subpath: None,
             mount_relpath: None,
@@ -266,12 +200,29 @@ async fn materialize_doc_mirror_rejects_script_outside_workspace_without_executi
         },
         None,
     )
-    .unwrap();
+    .expect_err("local doc mirror scripts should fail closed");
 
-    let err = materialize_attachment(data_root.path(), &workspace, &attachment, true)
-        .await
-        .expect_err("outside doc mirror script should fail");
+    assert!(format!("{err:#}").contains("http(s) URL"));
+    assert!(format!("{err:#}").contains("not supported"));
+}
 
-    assert!(format!("{err:#}").contains("must stay within workspace root"));
-    assert!(!marker.exists(), "outside script should not have executed");
+#[test]
+fn normalize_doc_mirror_rejects_rw_mode() {
+    let err = normalize_attachment_config(
+        WorkspaceId::new(),
+        AttachmentConfig {
+            kind: WorkspaceAttachmentKind::DocMirror,
+            name: "Docs".to_string(),
+            source: "https://example.com/docs".to_string(),
+            revision: None,
+            subpath: None,
+            mount_relpath: None,
+            mode: Some(AttachmentMode::Rw),
+            update_policy: None,
+        },
+        None,
+    )
+    .expect_err("rw doc mirror should fail closed");
+
+    assert!(format!("{err:#}").contains("read-only"));
 }

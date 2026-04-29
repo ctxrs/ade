@@ -5,7 +5,7 @@ use anyhow::{anyhow, Context, Result};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
-use super::shared::write_secure_file_atomic;
+use super::shared::{container_runtime_data_roots, write_secure_file_atomic};
 use super::{
     codex_account_dir, codex_runtime_home, codex_runtime_owner_path, codex_secret_path,
     default_codex_api_shape, default_codex_auth_type, default_codex_credential_kind,
@@ -24,9 +24,11 @@ pub use self::host::{
     host_codex_auth_path, probe_host_codex_auth_candidate, seed_codex_auth_from_host,
     seeding_codex_auth_from_host_enabled,
 };
-pub(crate) use self::runtime::clear_runtime_auth_projection;
 #[cfg(test)]
 pub(crate) use self::runtime::write_runtime_owner_marker;
+pub(crate) use self::runtime::{
+    clear_runtime_auth_projection, clear_runtime_auth_projection_for_runtime_roots,
+};
 pub use self::runtime::{
     codex_env_for_active_account, codex_env_for_active_account_with_runtime_root,
     codex_env_for_runtime_home, codex_has_active_auth, codex_has_active_auth_with_runtime_root,

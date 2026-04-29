@@ -68,7 +68,7 @@ pub async fn self_update_daemon(
         }
     }
 
-    let download_url = join_url(base_url, &artifact.url_path);
+    let download_url = resolve_release_artifact_url(base_url, &artifact.url_path)?;
     let tmp_dir = std::env::temp_dir().join("ctx-self-update");
     tokio::fs::create_dir_all(&tmp_dir).await.ok();
     let tmp_path = tmp_dir.join("ctx.new");

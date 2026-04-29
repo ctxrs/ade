@@ -32,8 +32,8 @@ pub use managed_daemon::{
 pub use manifest::{
     default_download_base_url, fetch_latest_manifest, fetch_latest_manifest_with_params,
     in_place_update_capability, is_update_available, join_url, normalize_release_channel,
-    normalize_version_str, platform_key, platform_supported, release_manifest_url, ReleaseArtifact,
-    ReleaseManifest, ReleasePlatform,
+    normalize_version_str, platform_key, platform_supported, release_manifest_url,
+    resolve_release_artifact_url, ReleaseArtifact, ReleaseManifest, ReleasePlatform,
 };
 pub use self_update::self_update_daemon;
 
@@ -307,6 +307,19 @@ mod tests {
             .expect("explicit release source should enable managed daemon auto-update");
         assert_eq!(source.channel, "canary");
         assert_eq!(source.base_url, "https://updates.example/functions/v1");
+    }
+
+    #[test]
+    fn release_artifact_url_preserves_configured_base_path_for_root_relative_refs() {
+        let url = resolve_release_artifact_url(
+            "https://api.ctx.rs/functions/v1",
+            "/download/stable/9.9.9/ctx.AppImage",
+        )
+        .expect("artifact URL");
+        assert_eq!(
+            url,
+            "https://api.ctx.rs/functions/v1/download/stable/9.9.9/ctx.AppImage"
+        );
     }
 
     #[test]

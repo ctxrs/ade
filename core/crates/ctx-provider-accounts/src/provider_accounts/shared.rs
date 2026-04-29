@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
 
 use anyhow::{anyhow, bail, Context, Result};
+use ctx_fs::permissions::{ensure_private_dir, write_private_file_atomic};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 
@@ -142,34 +143,18 @@ pub(crate) async fn load_json_registry<T: DeserializeOwned + Default>(
 
 pub(crate) async fn save_json_registry<T: Serialize>(path: &Path, registry: &T) -> Result<()> {
     if let Some(parent) = path.parent() {
-        tokio::fs::create_dir_all(parent).await?;
+        ensure_private_dir(parent).await?;
     }
     let payload = serde_json::to_vec_pretty(registry)?;
-    tokio::fs::write(path, payload).await?;
+    write_private_file_atomic(path, &payload).await?;
     Ok(())
 }
 
 pub(crate) async fn write_secure_file_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
-    let parent = path
+    let _ = path
         .parent()
         .ok_or_else(|| anyhow!("missing parent dir for {}", path.display()))?;
-    tokio::fs::create_dir_all(parent).await?;
-    let tmp = parent.join(format!(".tmp-{}", uuid::Uuid::new_v4()));
-    tokio::fs::write(&tmp, bytes).await?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let perms = std::fs::Permissions::from_mode(0o600);
-        let _ = tokio::fs::set_permissions(&tmp, perms).await;
-    }
-    tokio::fs::rename(&tmp, path).await?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let perms = std::fs::Permissions::from_mode(0o600);
-        let _ = tokio::fs::set_permissions(path, perms).await;
-    }
-    Ok(())
+    write_private_file_atomic(path, bytes).await
 }
 
 pub(crate) fn home_config_cache_env(home: &Path) -> HashMap<String, String> {
@@ -196,8 +181,9 @@ pub(crate) fn prepend_dir_to_path_env(dir: &Path) -> Result<String> {
 }
 
 pub(crate) async fn ensure_home_config_cache_dirs(home: &Path) -> Result<()> {
-    tokio::fs::create_dir_all(home.join(".config")).await?;
-    tokio::fs::create_dir_all(home.join(".cache")).await?;
+    ensure_private_dir(home).await?;
+    ensure_private_dir(&home.join(".config")).await?;
+    ensure_private_dir(&home.join(".cache")).await?;
     Ok(())
 }
 
@@ -213,7 +199,7 @@ fn container_workspaces_root(data_root: &Path) -> PathBuf {
     data_root.join("containers").join("workspaces")
 }
 
-async fn container_runtime_data_roots(data_root: &Path) -> Vec<PathBuf> {
+pub(crate) async fn container_runtime_data_roots(data_root: &Path) -> Vec<PathBuf> {
     let mut roots = Vec::new();
     let mut entries = match tokio::fs::read_dir(container_workspaces_root(data_root)).await {
         Ok(entries) => entries,

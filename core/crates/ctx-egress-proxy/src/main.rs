@@ -11,12 +11,14 @@ use anyhow::{Context, Result};
 use clap::{Parser, ValueEnum};
 use serde::Deserialize;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::{TcpListener, TcpStream};
+use tokio::net::{TcpListener, TcpSocket, TcpStream};
 use tokio::time::{timeout, Duration};
 
 const DEFAULT_LISTEN: &str = "127.0.0.1:15001";
 const DEFAULT_MAX_PEEK_BYTES: usize = 16 * 1024;
 const READ_TIMEOUT: Duration = Duration::from_secs(5);
+#[cfg(any(target_os = "linux", test))]
+const EGRESS_PROXY_BYPASS_MARK: u32 = 0x4354_5801;
 
 // Keep this list in sync with ctx's policy allowlist.
 const LLM_ALLOWLIST: &[&str] = &[
@@ -164,12 +166,48 @@ async fn handle_stream(mut stream: TcpStream, config: ProxyConfig) -> Result<()>
         anyhow::bail!("host {host} blocked by allowlist");
     }
 
-    let mut upstream = TcpStream::connect(original)
+    let mut upstream = connect_upstream(original)
         .await
         .with_context(|| format!("connecting to upstream {original}"))?;
     upstream.write_all(&buf[..n]).await?;
 
     let _ = tokio::io::copy_bidirectional(&mut stream, &mut upstream).await?;
+    Ok(())
+}
+
+async fn connect_upstream(addr: SocketAddr) -> Result<TcpStream> {
+    let socket = match addr {
+        SocketAddr::V4(_) => TcpSocket::new_v4(),
+        SocketAddr::V6(_) => TcpSocket::new_v6(),
+    }
+    .context("creating upstream socket")?;
+    configure_upstream_socket(&socket)?;
+    socket
+        .connect(addr)
+        .await
+        .context("connecting marked socket")
+}
+
+#[cfg(target_os = "linux")]
+fn configure_upstream_socket(socket: &TcpSocket) -> Result<()> {
+    let mark = EGRESS_PROXY_BYPASS_MARK as libc::c_int;
+    let ret = unsafe {
+        libc::setsockopt(
+            socket.as_raw_fd(),
+            libc::SOL_SOCKET,
+            libc::SO_MARK,
+            &mark as *const _ as *const _,
+            std::mem::size_of_val(&mark) as libc::socklen_t,
+        )
+    };
+    if ret != 0 {
+        return Err(io::Error::last_os_error()).context("setsockopt(SO_MARK)");
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn configure_upstream_socket(_socket: &TcpSocket) -> Result<()> {
     Ok(())
 }
 
@@ -404,5 +442,10 @@ mod tests {
     #[test]
     fn llm_only_blocks_unlisted_hosts() {
         assert!(!allowed_host("example.com", ProxyMode::LlmOnly, &[]));
+    }
+
+    #[test]
+    fn egress_proxy_bypass_mark_matches_container_policy_contract() {
+        assert_eq!(EGRESS_PROXY_BYPASS_MARK, 0x4354_5801);
     }
 }

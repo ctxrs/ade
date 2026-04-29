@@ -280,15 +280,9 @@ fn remote_bootstrap_insecure_loopback_override_honors_explicit_env_in_debug_buil
 #[test]
 fn remote_bootstrap_insecure_loopback_override_ignores_env_for_release_like_builds() {
     let _guard = EnvVarGuard::set(support::REMOTE_BOOTSTRAP_INSECURE_LOOPBACK_UPDATER_ENV, "1");
-    assert!(!support::remote_bootstrap_insecure_loopback_override_enabled_for_build(
-        false, false
-    ));
-    assert!(support::remote_bootstrap_insecure_loopback_override_enabled_for_build(
-        false, true
-    ));
-    assert!(support::remote_bootstrap_insecure_loopback_override_enabled_for_build(
-        true, false
-    ));
+    assert!(!support::remote_bootstrap_insecure_loopback_override_enabled_for_build(false, false));
+    assert!(support::remote_bootstrap_insecure_loopback_override_enabled_for_build(false, true));
+    assert!(support::remote_bootstrap_insecure_loopback_override_enabled_for_build(true, false));
 }
 
 #[test]

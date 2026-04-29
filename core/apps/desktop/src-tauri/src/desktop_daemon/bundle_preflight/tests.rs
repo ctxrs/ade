@@ -109,12 +109,8 @@ fn explicit_runtime_targets_do_not_fall_back_to_unconfigured_host_defaults() {
             arch: "x86_64".to_string(),
         },
     ];
-    let configured = required_targets_or_default(
-        &["macos/aarch64".to_string()],
-        &fallback,
-        "macos",
-        "x86_64",
-    );
+    let configured =
+        required_targets_or_default(&["macos/aarch64".to_string()], &fallback, "macos", "x86_64");
 
     assert_eq!(
         configured,

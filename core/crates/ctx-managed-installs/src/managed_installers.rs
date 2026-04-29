@@ -260,6 +260,7 @@ pub(super) async fn install_managed_python_provider(
     } else {
         format!("{package}=={version}")
     };
+    let pip_policy = crate::install_policy::validate_pip_install_policy(&package_spec)?;
 
     *stage = "pip_install";
     emit_install(
@@ -285,7 +286,10 @@ pub(super) async fn install_managed_python_provider(
             "--no-input".to_string(),
             package_spec.clone(),
         ];
-        let env = vec![("PIP_DISABLE_PIP_VERSION_CHECK".to_string(), "1".to_string())];
+        let mut env = vec![("PIP_DISABLE_PIP_VERSION_CHECK".to_string(), "1".to_string())];
+        if let Some(index_url) = pip_policy.index_url.as_ref() {
+            env.push(("PIP_INDEX_URL".to_string(), index_url.clone()));
+        }
         state
             .run_builder_command(&install_dir, &env, &argv, PIP_INSTALL_TIMEOUT)
             .await
@@ -300,6 +304,9 @@ pub(super) async fn install_managed_python_provider(
             .arg(&package_spec)
             .env("PIP_DISABLE_PIP_VERSION_CHECK", "1")
             .kill_on_drop(true);
+        if let Some(index_url) = pip_policy.index_url.as_ref() {
+            pip_cmd.env("PIP_INDEX_URL", index_url);
+        }
         run_command_with_timeout(pip_cmd, PIP_INSTALL_TIMEOUT).await
     }
     .context("running pip install")?;

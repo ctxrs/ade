@@ -15,7 +15,9 @@ pub(super) fn notification_deep_link_from_payload_value(value: Option<&str>) -> 
     Some(url.to_string())
 }
 
-pub(super) fn build_notification_deep_link(req: &DesktopShowSystemNotificationReq) -> Result<String> {
+pub(super) fn build_notification_deep_link(
+    req: &DesktopShowSystemNotificationReq,
+) -> Result<String> {
     let workspace_id = req.workspace_id.trim();
     if workspace_id.is_empty() {
         anyhow::bail!("workspace_id is required");

@@ -103,12 +103,14 @@ impl<'a> ProviderRuntimeContext<'a> {
                 let legacy_codex_home = legacy_codex_endpoint_home(self.data_root, &endpoint.id);
                 if !codex_home.exists() && legacy_codex_home.exists() {
                     if let Some(parent) = codex_home.parent() {
-                        tokio::fs::create_dir_all(parent).await.with_context(|| {
-                            format!(
-                                "creating canonical codex endpoint parent for endpoint {}",
-                                endpoint.id
-                            )
-                        })?;
+                        ctx_fs::permissions::ensure_private_dir(parent)
+                            .await
+                            .with_context(|| {
+                                format!(
+                                    "creating canonical codex endpoint parent for endpoint {}",
+                                    endpoint.id
+                                )
+                            })?;
                     }
                     tokio::fs::rename(&legacy_codex_home, &codex_home)
                         .await
@@ -175,7 +177,12 @@ impl<'a> ProviderRuntimeContext<'a> {
                 validation::ensure_safe_endpoint_id(&endpoint.id)?;
                 let gemini_home = gemini_endpoint_home(self.runtime_data_root(), &endpoint.id);
                 let gemini_dir = gemini_home.join(".gemini");
-                tokio::fs::create_dir_all(&gemini_dir)
+                ctx_fs::permissions::ensure_private_dir(&gemini_home)
+                    .await
+                    .with_context(|| {
+                        format!("creating gemini endpoint home for endpoint {}", endpoint.id)
+                    })?;
+                ctx_fs::permissions::ensure_private_dir(&gemini_dir)
                     .await
                     .with_context(|| {
                         format!("creating gemini endpoint home for endpoint {}", endpoint.id)
@@ -193,7 +200,7 @@ impl<'a> ProviderRuntimeContext<'a> {
                     GEMINI_AUTH_TYPE_VERTEX_AI => {
                         let vertex_secret = secrets::endpoint_secret_gemini_vertex(secret)?;
                         let credentials_path = gemini_dir.join("vertex-service-account.json");
-                        tokio::fs::write(
+                        ctx_fs::permissions::write_private_file_atomic(
                             &credentials_path,
                             vertex_secret.service_account_json.as_bytes(),
                         )
@@ -204,15 +211,6 @@ impl<'a> ProviderRuntimeContext<'a> {
                                 credentials_path.display()
                             )
                         })?;
-                        #[cfg(unix)]
-                        {
-                            use std::os::unix::fs::PermissionsExt;
-                            let _ = tokio::fs::set_permissions(
-                                &credentials_path,
-                                std::fs::Permissions::from_mode(0o600),
-                            )
-                            .await;
-                        }
                         apply_gemini_vertex_runtime_auth_env(
                             &mut env,
                             credentials_path,

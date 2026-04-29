@@ -3,12 +3,13 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
 use chrono::{DateTime, Utc};
+use ctx_fs::permissions::ensure_private_dir;
 use serde::{Deserialize, Serialize};
 
 use super::shared::{
     apply_email_update, apply_label_update, collect_secret_paths, ensure_account_exists,
-    ensure_safe_account_id, load_json_registry, normalize_optional_email, save_json_registry,
-    write_secure_file_atomic,
+    ensure_safe_account_id, load_json_registry, normalize_optional_email,
+    remove_projected_account_home_for_runtime_roots, save_json_registry, write_secure_file_atomic,
 };
 use super::{
     copilot_account_dir, copilot_registry_path, copilot_secret_path,
@@ -140,11 +141,11 @@ pub async fn save_copilot_registry(
 
 pub async fn ensure_copilot_account_dir(data_root: &Path, account_id: &str) -> Result<PathBuf> {
     let dir = copilot_account_dir(data_root, account_id);
-    tokio::fs::create_dir_all(&dir).await?;
-    tokio::fs::create_dir_all(dir.join(".config")).await?;
-    tokio::fs::create_dir_all(dir.join(".cache")).await?;
-    tokio::fs::create_dir_all(dir.join(".local").join("share")).await?;
-    tokio::fs::create_dir_all(dir.join(".local").join("state")).await?;
+    ensure_private_dir(&dir).await?;
+    ensure_private_dir(&dir.join(".config")).await?;
+    ensure_private_dir(&dir.join(".cache")).await?;
+    ensure_private_dir(&dir.join(".local").join("share")).await?;
+    ensure_private_dir(&dir.join(".local").join("state")).await?;
     Ok(dir)
 }
 
@@ -206,6 +207,7 @@ pub async fn set_active_copilot_account(
     account_id: Option<String>,
 ) -> Result<CopilotAccountRegistry> {
     let mut registry = load_copilot_registry(data_root).await?;
+    let previous_active = registry.active_account_id.clone();
     if let Some(active_id) = account_id.as_deref() {
         let Some(entry) = registry.accounts.iter().find(|a| a.id == active_id) else {
             bail!("unknown account");
@@ -222,6 +224,17 @@ pub async fn set_active_copilot_account(
         }
     }
     save_copilot_registry(data_root, &registry).await?;
+    if previous_active.as_deref() != registry.active_account_id.as_deref() {
+        if let Some(previous_active) = previous_active.as_deref() {
+            remove_projected_account_home_for_runtime_roots(
+                data_root,
+                previous_active,
+                copilot_account_dir,
+                "copilot",
+            )
+            .await?;
+        }
+    }
     Ok(registry)
 }
 
@@ -251,6 +264,13 @@ pub async fn remove_copilot_account(
         registry.active_account_id = None;
     }
     save_copilot_registry(data_root, &registry).await?;
+    remove_projected_account_home_for_runtime_roots(
+        data_root,
+        account_id,
+        copilot_account_dir,
+        "copilot",
+    )
+    .await?;
     for secret_path in secret_paths {
         if secret_path.exists() {
             let _ = tokio::fs::remove_file(secret_path).await;

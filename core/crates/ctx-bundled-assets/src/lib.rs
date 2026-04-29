@@ -255,6 +255,7 @@ fn bundled_runtime_from_manifest_for_target(
         bin,
         npm_cli,
         version: entry.version.clone(),
+        sha256: entry.sha256.clone(),
     })
 }
 

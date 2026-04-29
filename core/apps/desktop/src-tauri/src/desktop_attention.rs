@@ -177,10 +177,8 @@ impl DesktopAttentionRegistry {
             return self.clear_applied_attention(app, snapshot);
         };
         let previous_host_window_label = self.last_host_window_label();
-        if should_clear_previous_host(
-            previous_host_window_label.as_deref(),
-            window_label.as_str(),
-        ) {
+        if should_clear_previous_host(previous_host_window_label.as_deref(), window_label.as_str())
+        {
             if let Some(previous_host_window_label) = previous_host_window_label {
                 if let Some(previous_window) = webview_windows.get(&previous_host_window_label) {
                     clear_attention_on_window(previous_window)?;
@@ -465,8 +463,14 @@ mod tests {
     #[test]
     fn should_clear_previous_host_only_when_window_changes() {
         assert!(!should_clear_previous_host(None, "workspace-a"));
-        assert!(!should_clear_previous_host(Some("workspace-a"), "workspace-a"));
-        assert!(should_clear_previous_host(Some("workspace-a"), "workspace-b"));
+        assert!(!should_clear_previous_host(
+            Some("workspace-a"),
+            "workspace-a"
+        ));
+        assert!(should_clear_previous_host(
+            Some("workspace-a"),
+            "workspace-b"
+        ));
     }
 
     #[test]

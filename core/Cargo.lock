@@ -1531,6 +1531,7 @@ dependencies = [
  "directories",
  "tempfile",
  "tokio",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -1564,6 +1565,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "ctx-core",
+ "ctx-fs",
  "ctx-provider-accounts",
  "directories",
  "reqwest 0.12.28",
@@ -1688,6 +1690,7 @@ name = "ctx-linux-sandbox-runtime"
 version = "0.34.0"
 dependencies = [
  "anyhow",
+ "ctx-core",
  "ctx-harness-setup",
  "serde",
  "serde_json",
@@ -1793,6 +1796,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "ctx-core",
+ "ctx-fs",
  "directories",
  "serde",
  "serde_json",
@@ -1989,6 +1993,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "ctx-core",
+ "ctx-fs",
  "futures",
  "serde",
  "serde_json",

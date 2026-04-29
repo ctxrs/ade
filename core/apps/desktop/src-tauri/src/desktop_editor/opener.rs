@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) fn open_in_editor(
+pub(crate) fn open_in_editor(
     settings: &DesktopEditorSettings,
     path: &Path,
     line: Option<u32>,
@@ -52,15 +52,7 @@ pub(super) fn open_in_editor(
                     col,
                 ))
             }
-            DesktopEditorTarget::Custom => {
-                let cmd = settings
-                    .custom_command
-                    .as_ref()
-                    .map(|s| s.trim())
-                    .filter(|s| !s.is_empty())
-                    .ok_or_else(|| anyhow!("custom command is not configured"))?;
-                open_custom_command(cmd, path, line, col)
-            }
+            DesktopEditorTarget::Custom => anyhow::bail!("custom editor commands are disabled"),
             _ => anyhow::bail!("remote editor target does not support remote paths"),
         }
     } else {
@@ -81,20 +73,12 @@ pub(super) fn open_in_editor(
             DesktopEditorTarget::Pycharm => open_with_system(&jetbrains_uri("pycharm", path, line)),
             DesktopEditorTarget::Xcode => open_xcode(path, line),
             DesktopEditorTarget::AndroidStudio => open_android_studio(path, line),
-            DesktopEditorTarget::Custom => {
-                let cmd = settings
-                    .custom_command
-                    .as_ref()
-                    .map(|s| s.trim())
-                    .filter(|s| !s.is_empty())
-                    .ok_or_else(|| anyhow!("custom command is not configured"))?;
-                open_custom_command(cmd, path, line, col)
-            }
+            DesktopEditorTarget::Custom => anyhow::bail!("custom editor commands are disabled"),
         }
     }
 }
 
-pub(super) fn open_with_system(target: &str) -> Result<()> {
+pub(crate) fn open_with_system(target: &str) -> Result<()> {
     #[cfg(target_os = "macos")]
     let mut cmd = Command::new("open");
     #[cfg(target_os = "linux")]
@@ -147,34 +131,6 @@ fn open_android_studio(path: &Path, _line: Option<u32>) -> Result<()> {
         .context("launching Android Studio")?;
     if !status.success() {
         anyhow::bail!("studio command failed (exit={status})");
-    }
-    Ok(())
-}
-
-fn open_custom_command(
-    command: &str,
-    path: &Path,
-    line: Option<u32>,
-    col: Option<u32>,
-) -> Result<()> {
-    let path_str = path.to_string_lossy();
-    let line_str = line.map(|v| v.to_string()).unwrap_or_default();
-    let col_str = col.map(|v| v.to_string()).unwrap_or_default();
-    let rendered = command
-        .replace("{path}", &path_str)
-        .replace("{line}", &line_str)
-        .replace("{col}", &col_str);
-    let parts = shell_words::split(&rendered).context("parsing custom command")?;
-    if parts.is_empty() {
-        anyhow::bail!("custom command is empty");
-    }
-    let mut cmd = Command::new(&parts[0]);
-    if parts.len() > 1 {
-        cmd.args(&parts[1..]);
-    }
-    let status = cmd.status().context("launching custom command")?;
-    if !status.success() {
-        anyhow::bail!("custom command failed (exit={status})");
     }
     Ok(())
 }

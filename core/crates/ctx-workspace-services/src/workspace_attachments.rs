@@ -12,7 +12,9 @@ use serde::{Deserialize, Serialize};
 use tokio::process::Command;
 
 mod doc_mirror;
-use doc_mirror::{materialize_doc_mirror, validate_doc_mirror_source};
+use doc_mirror::{
+    materialize_doc_mirror, validate_doc_mirror_source, validate_doc_mirror_source_value,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AttachmentConfig {
@@ -340,8 +342,14 @@ fn normalize_attachment_config(
     if source.is_empty() {
         anyhow::bail!("source must not be empty");
     }
-    if cfg.kind == WorkspaceAttachmentKind::ReferenceRepo {
-        validate_reference_repo_source(&source)?;
+    match &cfg.kind {
+        WorkspaceAttachmentKind::ReferenceRepo => validate_reference_repo_source(&source)?,
+        WorkspaceAttachmentKind::DocMirror => {
+            validate_doc_mirror_source_value(&source)?;
+            if cfg.mode == Some(AttachmentMode::Rw) {
+                anyhow::bail!("doc_mirror attachments are read-only; mode=rw is not supported");
+            }
+        }
     }
     let now = Utc::now();
     let (id, created_at, status, last_sync_at, error_message) = match existing {
@@ -551,31 +559,5 @@ fn validate_reference_repo_source(source: &str) -> Result<()> {
     );
 }
 
-fn resolve_workspace_local_source(
-    workspace_root: &Path,
-    raw_source: &str,
-    label: &str,
-) -> Result<PathBuf> {
-    let candidate = PathBuf::from(raw_source.trim());
-    let absolute_candidate = if candidate.is_absolute() {
-        candidate
-    } else {
-        workspace_root.join(candidate)
-    };
-    let canonical_root = std::fs::canonicalize(workspace_root)
-        .with_context(|| format!("canonicalizing workspace root {}", workspace_root.display()))?;
-    let canonical_candidate = std::fs::canonicalize(&absolute_candidate)
-        .with_context(|| format!("canonicalizing {label} {}", absolute_candidate.display()))?;
-    if !canonical_candidate.starts_with(&canonical_root) {
-        anyhow::bail!(
-            "{label} must stay within workspace root {}: {}",
-            canonical_root.display(),
-            canonical_candidate.display()
-        );
-    }
-    Ok(canonical_candidate)
-}
-
-#[cfg(test)]
 #[cfg(test)]
 mod tests;

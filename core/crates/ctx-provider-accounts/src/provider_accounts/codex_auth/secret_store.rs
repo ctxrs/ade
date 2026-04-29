@@ -229,7 +229,7 @@ pub(super) async fn project_auth_value_to_home(
     auth: &serde_json::Value,
 ) -> Result<bool> {
     let payload = serde_json::to_vec_pretty(auth)?;
-    tokio::fs::create_dir_all(home).await?;
+    ctx_fs::permissions::ensure_private_dir(home).await?;
     let dest = home.join("auth.json");
     let write = match tokio::fs::read(&dest).await {
         Ok(existing) => existing != payload,

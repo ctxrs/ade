@@ -231,10 +231,7 @@ pub async fn ensure_node_runtime(
         if archive_label == "zip" {
             extract_zip_to_dir(&tmp2, &extract_root2)?;
         } else {
-            let tar_gz = std::fs::File::open(&tmp2)?;
-            let dec = flate2::read::GzDecoder::new(tar_gz);
-            let mut archive = tar::Archive::new(dec);
-            archive.unpack(&extract_root2)?;
+            extract_tar_gz_to_dir(&tmp2, &extract_root2)?;
         }
         Ok(())
     })

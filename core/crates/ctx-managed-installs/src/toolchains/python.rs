@@ -140,10 +140,7 @@ pub async fn ensure_python_runtime_versioned(
     let tmp2 = tmp.clone();
     let extract_root2 = extract_root.clone();
     tokio::task::spawn_blocking(move || -> Result<()> {
-        let tar_gz = std::fs::File::open(&tmp2)?;
-        let dec = flate2::read::GzDecoder::new(tar_gz);
-        let mut archive = tar::Archive::new(dec);
-        archive.unpack(&extract_root2)?;
+        extract_tar_gz_to_dir(&tmp2, &extract_root2)?;
         Ok(())
     })
     .await??;

@@ -1,6 +1,24 @@
 use serde_json::{json, Value};
 
-pub(super) fn tools_list_response() -> Value {
+const CTX_MCP_CAPABILITIES_ENV: &str = "CTX_MCP_CAPABILITIES";
+
+#[derive(Clone, Copy, Debug, Default)]
+pub(super) struct ToolCatalogCapabilities {
+    pub(super) merge_queue_submit: bool,
+}
+
+pub(super) fn capabilities_from_env() -> ToolCatalogCapabilities {
+    let raw = std::env::var(CTX_MCP_CAPABILITIES_ENV).unwrap_or_default();
+    let mut capabilities = ToolCatalogCapabilities::default();
+    for part in raw.split([',', ' ', ';']) {
+        if part.trim() == "merge_queue_submit" {
+            capabilities.merge_queue_submit = true;
+        }
+    }
+    capabilities
+}
+
+pub(super) fn tools_list_response(capabilities: ToolCatalogCapabilities) -> Value {
     let mut resp = json!({
         "tools": [
             {
@@ -256,6 +274,14 @@ pub(super) fn tools_list_response() -> Value {
             tools.retain(|tool| {
                 let name = tool.get("name").and_then(|v| v.as_str()).unwrap_or("");
                 name != "ping"
+            });
+        }
+    }
+
+    if !capabilities.merge_queue_submit {
+        if let Some(tools) = resp.get_mut("tools").and_then(|v| v.as_array_mut()) {
+            tools.retain(|tool| {
+                tool.get("name").and_then(|v| v.as_str()) != Some("merge_queue_submit")
             });
         }
     }

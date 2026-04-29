@@ -18,10 +18,12 @@ impl Store {
         let path_str = path.to_string_lossy();
         if path_str != ":memory:" {
             if let Some(parent) = path.parent() {
-                tokio::fs::create_dir_all(parent).await?;
+                ctx_fs::permissions::ensure_private_dir(parent).await?;
             }
             if !path.exists() {
-                let _ = tokio::fs::File::create(path).await?;
+                ctx_fs::permissions::write_private_file_atomic(path, b"").await?;
+            } else {
+                ctx_fs::permissions::harden_private_file_if_exists(path).await?;
             }
         }
         let sqlite_url = format!("sqlite://{}", path.to_string_lossy());
@@ -52,6 +54,9 @@ impl Store {
         repair_workspace_message_index_migration_versions(&pool).await?;
         repair_partial_session_subagent_archival_migration(&pool).await?;
         STORE_MIGRATOR.run(&pool).await?;
+        if path_str != ":memory:" {
+            ctx_fs::permissions::harden_sqlite_file_family(path).await?;
+        }
         let event_log = Arc::new(EventLogRuntime::load(&pool).await?);
         let active_head_projection = Arc::new(ActiveHeadProjectionRuntime::new());
         let store = Self {

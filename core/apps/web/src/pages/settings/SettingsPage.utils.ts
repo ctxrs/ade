@@ -53,9 +53,10 @@ export function worktreeBootstrapFormFromConfig(
 }
 
 export function normalizeDesktopEditorSettings(settings: DesktopEditorSettings): DesktopEditorSettings {
+  const target = settings.target === "custom" ? "system" : settings.target;
   return {
-    target: settings.target,
-    custom_command: settings.target === "custom" ? settings.custom_command?.trim() || null : null,
+    target,
+    custom_command: null,
     remote_authority: settings.remote_authority?.trim() || null,
   };
 }

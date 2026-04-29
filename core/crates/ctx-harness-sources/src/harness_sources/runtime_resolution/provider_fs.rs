@@ -103,7 +103,8 @@ pub(crate) fn goose_endpoint_path_root(data_root: &Path, endpoint_id: &str) -> P
 
 pub(crate) async fn prepare_goose_endpoint_path_root(path_root: &Path) -> Result<PathBuf> {
     let config_dir = path_root.join("config");
-    tokio::fs::create_dir_all(&config_dir).await?;
+    ctx_fs::permissions::ensure_private_dir(path_root).await?;
+    ctx_fs::permissions::ensure_private_dir(&config_dir).await?;
     let config_path = config_dir.join("config.yaml");
     let config = r#"extensions:
   analyze:
@@ -125,7 +126,7 @@ pub(crate) async fn prepare_goose_endpoint_path_root(path_root: &Path) -> Result
   apps:
     enabled: false
 "#;
-    tokio::fs::write(&config_path, config).await?;
+    ctx_fs::permissions::write_private_file_atomic(&config_path, config.as_bytes()).await?;
     Ok(path_root.to_path_buf())
 }
 
@@ -134,18 +135,13 @@ pub(crate) async fn prepare_codex_home_with_api_key(
     api_key: &str,
     base_url: &str,
 ) -> Result<()> {
-    tokio::fs::create_dir_all(codex_home).await?;
+    ctx_fs::permissions::ensure_private_dir(codex_home).await?;
     let auth_path = codex_home.join("auth.json");
     let payload = serde_json::to_vec_pretty(&serde_json::json!({
         "OPENAI_API_KEY": api_key,
         "OPENAI_BASE_URL": base_url,
     }))?;
-    tokio::fs::write(&auth_path, payload).await?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = tokio::fs::set_permissions(auth_path, std::fs::Permissions::from_mode(0o600)).await;
-    }
+    ctx_fs::permissions::write_private_file_atomic(&auth_path, &payload).await?;
     Ok(())
 }
 
@@ -157,7 +153,9 @@ pub(crate) async fn prepare_cline_home_with_endpoint_settings(
 ) -> Result<PathBuf> {
     let data_dir = cline_home.join("data");
     let settings_dir = data_dir.join("settings");
-    tokio::fs::create_dir_all(&settings_dir).await?;
+    ctx_fs::permissions::ensure_private_dir(cline_home).await?;
+    ctx_fs::permissions::ensure_private_dir(&data_dir).await?;
+    ctx_fs::permissions::ensure_private_dir(&settings_dir).await?;
 
     let provider_namespace = model_catalog::infer_endpoint_model_provider_namespace(base_url)
         .unwrap_or_else(|| "endpoint".to_string());
@@ -180,7 +178,7 @@ pub(crate) async fn prepare_cline_home_with_endpoint_settings(
             "welcomeViewCompleted": true,
         }))?
     };
-    tokio::fs::write(&global_state_path, global_state).await?;
+    ctx_fs::permissions::write_private_file_atomic(&global_state_path, &global_state).await?;
 
     let secrets_path = data_dir.join("secrets.json");
     let secrets = if provider_namespace == "openrouter" {
@@ -192,20 +190,13 @@ pub(crate) async fn prepare_cline_home_with_endpoint_settings(
             "openAiNativeApiKey": api_key,
         }))?
     };
-    tokio::fs::write(&secrets_path, secrets).await?;
+    ctx_fs::permissions::write_private_file_atomic(&secrets_path, &secrets).await?;
 
     let mcp_settings_path = settings_dir.join("cline_mcp_settings.json");
     let mcp_settings = serde_json::to_vec_pretty(&serde_json::json!({
         "mcpServers": {},
     }))?;
-    tokio::fs::write(&mcp_settings_path, mcp_settings).await?;
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ =
-            tokio::fs::set_permissions(&secrets_path, std::fs::Permissions::from_mode(0o600)).await;
-    }
+    ctx_fs::permissions::write_private_file_atomic(&mcp_settings_path, &mcp_settings).await?;
 
     Ok(cline_home.to_path_buf())
 }
@@ -226,7 +217,7 @@ pub(crate) async fn prepare_openhands_persistence_dir(
     model_id: &str,
     base_url: &str,
 ) -> Result<PathBuf> {
-    tokio::fs::create_dir_all(persistence_dir).await?;
+    ctx_fs::permissions::ensure_private_dir(persistence_dir).await?;
     let agent_settings_path = persistence_dir.join("agent_settings.json");
     let payload = serde_json::to_vec_pretty(&serde_json::json!({
         "llm": {
@@ -241,22 +232,13 @@ pub(crate) async fn prepare_openhands_persistence_dir(
         "mcp_config": {},
         "kind": "Agent",
     }))?;
-    tokio::fs::write(&agent_settings_path, payload).await?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = tokio::fs::set_permissions(
-            &agent_settings_path,
-            std::fs::Permissions::from_mode(0o600),
-        )
-        .await;
-    }
+    ctx_fs::permissions::write_private_file_atomic(&agent_settings_path, &payload).await?;
     Ok(persistence_dir.to_path_buf())
 }
 
 pub(crate) async fn prepare_openhands_python_hook_dir(persistence_dir: &Path) -> Result<PathBuf> {
     let hook_dir = persistence_dir.join("pyhooks");
-    tokio::fs::create_dir_all(&hook_dir).await?;
+    ctx_fs::permissions::ensure_private_dir(&hook_dir).await?;
     let hook_path = hook_dir.join("sitecustomize.py");
     let hook = r#"import os
 
@@ -278,7 +260,7 @@ if os.environ.get("OPENHANDS_PERSISTENCE_DIR"):
 
     AgentStore._resolve_tools = _ctx_resolve_tools
 "#;
-    tokio::fs::write(&hook_path, hook).await?;
+    ctx_fs::permissions::write_private_file_atomic(&hook_path, hook.as_bytes()).await?;
     Ok(hook_dir)
 }
 
@@ -292,7 +274,8 @@ pub(crate) fn prepend_pythonpath(path: &Path) -> Result<std::ffi::OsString> {
 
 pub(crate) async fn prepare_qwen_home_with_openai_settings(qwen_home: &Path) -> Result<()> {
     let qwen_config = qwen_home.join(".qwen");
-    tokio::fs::create_dir_all(&qwen_config).await?;
+    ctx_fs::permissions::ensure_private_dir(qwen_home).await?;
+    ctx_fs::permissions::ensure_private_dir(&qwen_config).await?;
     let payload = serde_json::to_vec_pretty(&serde_json::json!({
         "$version": 2,
         "security": {
@@ -301,7 +284,8 @@ pub(crate) async fn prepare_qwen_home_with_openai_settings(qwen_home: &Path) -> 
             }
         }
     }))?;
-    tokio::fs::write(qwen_config.join("settings.json"), payload).await?;
+    ctx_fs::permissions::write_private_file_atomic(&qwen_config.join("settings.json"), &payload)
+        .await?;
     Ok(())
 }
 
@@ -311,7 +295,8 @@ pub(crate) async fn prepare_kimi_share_dir(
 ) -> Result<PathBuf> {
     let share_dir = kimi_endpoint_home(runtime_data_root, endpoint_id).join(".kimi");
     let credentials_dir = share_dir.join("credentials");
-    tokio::fs::create_dir_all(&credentials_dir).await?;
+    ctx_fs::permissions::ensure_private_dir(&share_dir).await?;
+    ctx_fs::permissions::ensure_private_dir(&credentials_dir).await?;
     // Kimi currently refuses endpoint/API-key sessions unless a file-backed token exists.
     // Seed a benign token in the isolated endpoint runtime home so the CLI reaches the
     // actual endpoint-auth path instead of aborting with auth_required before turn start.
@@ -323,13 +308,8 @@ pub(crate) async fn prepare_kimi_share_dir(
         "scope": "openid profile",
         "token_type": "Bearer",
     });
-    tokio::fs::write(&token_path, token.to_string()).await?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ =
-            tokio::fs::set_permissions(&token_path, std::fs::Permissions::from_mode(0o600)).await;
-    }
+    let token_payload = token.to_string();
+    ctx_fs::permissions::write_private_file_atomic(&token_path, token_payload.as_bytes()).await?;
     Ok(share_dir)
 }
 
@@ -430,19 +410,15 @@ pub(crate) async fn seed_droid_auth_from_host_path(
     }
 
     let droid_config = droid_home.join(".factory");
-    tokio::fs::create_dir_all(&droid_config).await?;
+    ctx_fs::permissions::ensure_private_dir(droid_home).await?;
+    ctx_fs::permissions::ensure_private_dir(&droid_config).await?;
     let dest = droid_config.join("auth.encrypted");
     let should_write = match tokio::fs::read(&dest).await {
         Ok(existing) => existing != bytes,
         Err(_) => true,
     };
     if should_write {
-        tokio::fs::write(&dest, &bytes).await?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = tokio::fs::set_permissions(&dest, std::fs::Permissions::from_mode(0o600)).await;
-        }
+        ctx_fs::permissions::write_private_file_atomic(&dest, &bytes).await?;
     }
 
     Ok(should_write)
@@ -466,7 +442,8 @@ pub(crate) async fn prepare_droid_home_with_endpoint_settings(
         return Ok(None);
     };
     let droid_config = droid_home.join(".factory");
-    tokio::fs::create_dir_all(&droid_config).await?;
+    ctx_fs::permissions::ensure_private_dir(droid_home).await?;
+    ctx_fs::permissions::ensure_private_dir(&droid_config).await?;
     let payload = serde_json::to_vec_pretty(&serde_json::json!({
         "customModels": [
             {
@@ -479,13 +456,7 @@ pub(crate) async fn prepare_droid_home_with_endpoint_settings(
         ]
     }))?;
     let settings_path = droid_config.join("settings.json");
-    tokio::fs::write(&settings_path, payload).await?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = tokio::fs::set_permissions(&settings_path, std::fs::Permissions::from_mode(0o600))
-            .await;
-    }
+    ctx_fs::permissions::write_private_file_atomic(&settings_path, &payload).await?;
     let _ = maybe_seed_droid_auth_from_host(droid_home).await?;
     Ok(droid_cli_model_id_from_display_name(&display_name))
 }

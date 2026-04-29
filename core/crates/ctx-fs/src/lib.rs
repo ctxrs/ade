@@ -2,6 +2,7 @@ pub mod git;
 mod git_counts;
 pub mod patch;
 pub mod paths;
+pub mod permissions;
 pub mod vcs;
 pub mod worktrees;
 
