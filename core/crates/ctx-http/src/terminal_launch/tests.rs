@@ -1,6 +1,7 @@
 use super::{
     container_terminal_env, infer_terminal_worktree, resolve_container_terminal_cwd,
     resolve_host_terminal_cwd, resolve_terminal_host_root,
+    validate_canonical_container_terminal_cwd,
 };
 use crate::daemon::AppState;
 use crate::settings::ExecutionMode;
@@ -226,6 +227,50 @@ fn resolve_container_terminal_cwd_rejects_relative_parent_escape() {
         err.1 .0.error,
         "cwd must be within the container worktree/workspace root"
     );
+}
+
+#[test]
+fn validate_canonical_container_terminal_cwd_rejects_symlink_to_workspace_root() {
+    let live_root = PathBuf::from("/ctx/ws/worktrees/wt");
+
+    let err = validate_canonical_container_terminal_cwd(&live_root, &PathBuf::from("/ctx/ws"))
+        .expect_err("canonicalized symlink target outside bound worktree must reject");
+
+    assert_eq!(err.0, axum::http::StatusCode::BAD_REQUEST);
+    assert_eq!(
+        err.1 .0.error,
+        "cwd must be within the container worktree/workspace root"
+    );
+}
+
+#[test]
+fn validate_canonical_container_terminal_cwd_rejects_symlink_to_sibling_worktree() {
+    let live_root = PathBuf::from("/ctx/ws/worktrees/wt");
+
+    let err = validate_canonical_container_terminal_cwd(
+        &live_root,
+        &PathBuf::from("/ctx/ws/worktrees/sibling/src"),
+    )
+    .expect_err("canonicalized symlink target in sibling worktree must reject");
+
+    assert_eq!(err.0, axum::http::StatusCode::BAD_REQUEST);
+    assert_eq!(
+        err.1 .0.error,
+        "cwd must be within the container worktree/workspace root"
+    );
+}
+
+#[test]
+fn validate_canonical_container_terminal_cwd_accepts_canonical_child() {
+    let live_root = PathBuf::from("/ctx/ws/worktrees/wt");
+
+    let cwd = validate_canonical_container_terminal_cwd(
+        &live_root,
+        &PathBuf::from("/ctx/ws/worktrees/wt/src"),
+    )
+    .expect("canonicalized path inside bound worktree should be accepted");
+
+    assert_eq!(cwd, PathBuf::from("/ctx/ws/worktrees/wt/src"));
 }
 
 #[tokio::test]
