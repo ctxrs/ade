@@ -44,6 +44,16 @@ BUNDLED_HARNESS_CONTRACT_DATA = DESKTOP_PARITY_CONTRACT_DATA + [
     "//core/crates/ctx-managed-installs:src/lib.rs",
 ]
 
+sh_binary(
+    name = "buildkite_pipeline_contracts",
+    srcs = ["//tools/bazel:run_node_task.sh"],
+    args = [
+        "core",
+        "--test",
+        "scripts/updater_linux_release_truth_contract.test.cjs",
+    ],
+    data = BUILDKITE_CONTRACT_DATA,
+)
 
 sh_binary(
     name = "provider_auth_validate",
