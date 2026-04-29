@@ -53,6 +53,22 @@ proof_daemon_command_matches() {
   [[ "${cmd}" == *"ctx-daemon"* || "${cmd}" == *"/ctx serve"* || "${cmd}" == *" ctx serve"* ]]
 }
 
+remove_stale_proof_lock_if_dead() {
+  local lock_file="$1"
+  local lock_pid=""
+  if [[ ! -f "${lock_file}" ]]; then
+    return 0
+  fi
+  lock_pid="$(head -n 1 "${lock_file}" 2>/dev/null | tr -cd '0-9' || true)"
+  if [[ -n "${lock_pid}" && "${lock_pid}" =~ ^[0-9]+$ ]]; then
+    if kill -0 "${lock_pid}" 2>/dev/null; then
+      return 0
+    fi
+  fi
+  log_daemon_cleanup "[updater-linux-proof] removing stale proof daemon lock ${lock_file}"
+  rm -f "${lock_file}"
+}
+
 stop_proof_daemons() {
   local proof_home="${home_dir:-}"
   if [[ -z "${proof_home}" ]]; then
@@ -87,6 +103,7 @@ stop_proof_daemons() {
   done < <(ps -eo pid=,command= 2>/dev/null || true)
 
   if [[ "${#pids[@]}" -eq 0 ]]; then
+    remove_stale_proof_lock_if_dead "${lock_file}"
     return 0
   fi
 
@@ -101,11 +118,26 @@ stop_proof_daemons() {
       fi
     done
     if [[ "${alive}" == "0" ]]; then
+      remove_stale_proof_lock_if_dead "${lock_file}"
       return 0
     fi
     sleep 0.1
   done
   kill -9 "${pids[@]}" 2>/dev/null || true
+  for _ in {1..20}; do
+    local alive=0
+    for pid in "${pids[@]}"; do
+      if kill -0 "${pid}" 2>/dev/null; then
+        alive=1
+        break
+      fi
+    done
+    if [[ "${alive}" == "0" ]]; then
+      break
+    fi
+    sleep 0.1
+  done
+  remove_stale_proof_lock_if_dead "${lock_file}"
 }
 
 cleanup_on_exit() {
