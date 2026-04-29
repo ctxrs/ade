@@ -2,11 +2,24 @@ use super::*;
 
 #[path = "desktop_editor/opener.rs"]
 mod opener;
-use self::opener::open_in_editor;
 pub(super) use ctx_desktop_ipc::{
     DesktopEditorSettings, DesktopEditorTarget, DesktopGitCloneReq, DesktopOpenFileReq,
     DesktopOpenPathReq, DesktopReadBinaryFileResp, DesktopSaveTextFileReq,
 };
+
+pub(super) fn open_in_editor(
+    settings: &DesktopEditorSettings,
+    path: &Path,
+    line: Option<u32>,
+    col: Option<u32>,
+    remote: bool,
+) -> Result<()> {
+    opener::open_in_editor(settings, path, line, col, remote)
+}
+
+pub(super) fn open_with_system(target: &str) -> Result<()> {
+    opener::open_with_system(target)
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub(super) struct DesktopSettings {
