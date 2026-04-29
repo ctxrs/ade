@@ -16,6 +16,10 @@ const readDesktopVersion = (coreRoot = resolveCoreRoot()) => {
   return version;
 };
 
+module.exports = {
+  readDesktopVersion,
+};
+
 if (require.main === module) {
   try {
     const { resolveEffectiveReleaseVersion } = require("./release_version.cjs");
@@ -26,7 +30,3 @@ if (require.main === module) {
     process.exit(1);
   }
 }
-
-module.exports = {
-  readDesktopVersion,
-};
