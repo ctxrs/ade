@@ -7,7 +7,7 @@ const { buildTaskPlan } = require("./ctx_http_suite_task.cjs");
 const repoRoot = path.resolve(__dirname, "..", "..");
 const scriptPath = path.join(__dirname, "ctx_http_suite_task.cjs");
 
-test("ctx-http suite task lists one Bazel command for multi-suite batches", () => {
+test("ctx-http suite task lists one Bazel command per suite for multi-suite batches", () => {
   const result = spawnSync("node", [scriptPath, "--list", "--suite", "base", "--suite", "provider-auth"], {
     cwd: repoRoot,
     encoding: "utf8",
@@ -17,7 +17,10 @@ test("ctx-http suite task lists one Bazel command for multi-suite batches", () =
   assert.equal(result.status, 0);
   assert.equal(
     result.stdout.trim(),
-    "node scripts/run_bazel_pilot.cjs test //core/crates/ctx-http:base //core/crates/ctx-http:provider-auth",
+    [
+      "node scripts/run_bazel_pilot.cjs test //core/crates/ctx-http:base",
+      "node scripts/run_bazel_pilot.cjs test //core/crates/ctx-http:provider-auth",
+    ].join("\n"),
   );
 });
 
@@ -32,7 +35,7 @@ test("ctx-http suite task rejects a trailing --suite without a value", () => {
   assert.match(result.stderr, /--suite requires a suite name/u);
 });
 
-test("ctx-http suite task lists the all meta-suite as one Bazel command", () => {
+test("ctx-http suite task lists the all meta-suite as suite-scoped Bazel commands", () => {
   const result = spawnSync("node", [scriptPath, "--list", "--suite", "all"], {
     cwd: repoRoot,
     encoding: "utf8",
@@ -41,15 +44,15 @@ test("ctx-http suite task lists the all meta-suite as one Bazel command", () => 
 
   assert.equal(result.status, 0);
   const stdoutLines = result.stdout.trim().split("\n");
-  assert.equal(stdoutLines.length, 1);
-  assert.match(stdoutLines[0], /^node scripts\/run_bazel_pilot\.cjs test \/\/core\/crates\/ctx-http:base/u);
+  assert.equal(stdoutLines.length > 2, true);
+  assert.equal(stdoutLines[0], "node scripts/run_bazel_pilot.cjs test //core/crates/ctx-http:base");
   assert.equal(
-    stdoutLines[0].includes("//core/crates/ctx-http:workspace-stream"),
+    stdoutLines.includes("node scripts/run_bazel_pilot.cjs test //core/crates/ctx-http:workspace-stream"),
     true,
   );
 });
 
-test("ctx-http suite task executes batched selections as one Bazel invocation without forcing a job cap", () => {
+test("ctx-http suite task executes batched selections per suite without forcing a job cap", () => {
   const plan = buildTaskPlan({
     argv: ["--suite", "base", "--suite", "provider-auth"],
     cwd: repoRoot,
@@ -62,12 +65,11 @@ test("ctx-http suite task executes batched selections as one Bazel invocation wi
   assert.equal(plan.isBatchSelection, true);
   assert.deepEqual(plan.commands, [
     {
-      args: [
-        "scripts/run_bazel_pilot.cjs",
-        "test",
-        "//core/crates/ctx-http:base",
-        "//core/crates/ctx-http:provider-auth",
-      ],
+      args: ["scripts/run_bazel_pilot.cjs", "test", "//core/crates/ctx-http:base"],
+      command: "node",
+    },
+    {
+      args: ["scripts/run_bazel_pilot.cjs", "test", "//core/crates/ctx-http:provider-auth"],
       command: "node",
     },
   ]);

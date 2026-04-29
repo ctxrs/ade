@@ -610,11 +610,10 @@ function normalizeCtxHttpSuiteSelection(suiteSelection) {
 }
 
 function buildCtxHttpSuiteCommands(suiteName) {
-  const targets = getCtxHttpSuiteTargets(suiteName);
-  return [{
-    args: ["scripts/run_bazel_pilot.cjs", "test", ...targets],
+  return getCtxHttpSuiteTargets(suiteName).map((target) => ({
+    args: ["scripts/run_bazel_pilot.cjs", "test", target],
     command: "node",
-  }];
+  }));
 }
 
 function getCtxHttpSuiteTarget(suiteName) {
