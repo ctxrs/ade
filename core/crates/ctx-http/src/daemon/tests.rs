@@ -279,6 +279,12 @@ impl EnvGuard {
         std::env::set_var(key, value);
         Self { key, prev }
     }
+
+    fn remove(key: &'static str) -> Self {
+        let prev = std::env::var(key).ok();
+        std::env::remove_var(key);
+        Self { key, prev }
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -1239,6 +1245,7 @@ async fn shutdown_shared_substrate_requests_save_or_stop_when_shared_backend_ava
         ctx_avf_linux_runtime::AVF_LINUX_HELPER_PATH_ENV,
         &helper_path.to_string_lossy(),
     );
+    let _sandbox_cli_override = EnvGuard::remove(CTX_HARNESS_SANDBOX_CLI_PATH_ENV);
 
     let record = crate::daemon::lifecycle::shutdown_shared_substrate(&state, "test shutdown")
         .await

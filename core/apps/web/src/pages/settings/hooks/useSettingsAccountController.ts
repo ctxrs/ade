@@ -20,14 +20,16 @@ import { getSupabaseClient } from "../../../utils/supabaseClient";
 import { runBillingCheckoutFlow } from "../billingCheckoutFlow";
 import { type PlanType, shouldTrackEntitlementActivated } from "../entitlementAnalytics";
 import type { SectionId } from "../SettingsPage.types";
+import { fetchEntitlementsSnapshot, type EntitlementsSnapshot } from "../teamEnterpriseSettingsApi";
+import {
+  readStoredTeamEnterpriseActiveOrgId,
+  teamEnterpriseEntitlementsCacheKey,
+} from "../teamEnterpriseSettingsStorage";
 import { useMobileAccessController } from "./useMobileAccessController";
-
-type EntitlementsSnapshot = {
-  plan_type: PlanType;
-  features: Record<string, "enabled" | "disabled">;
-  expires_at?: string | null;
-  grace_expires_at?: string | null;
-};
+import {
+  type SettingsTeamEnterpriseController,
+  useTeamEnterpriseSettingsController,
+} from "./useTeamEnterpriseSettingsController";
 
 type SettingsBillingController = {
   checkoutStatus: string | null;
@@ -66,6 +68,7 @@ type SettingsAccountController = {
   supabaseConfigured: boolean;
   billing: SettingsBillingController;
   mobileAccess: SettingsMobileAccessController;
+  teamEnterprise: SettingsTeamEnterpriseController;
 };
 
 type Params = {
@@ -91,9 +94,15 @@ export function useSettingsAccountController({
   const [billingError, setBillingError] = useState<string | null>(null);
   const [entitlementsBusy, setEntitlementsBusy] = useState(false);
   const billingViewTrackedRef = useRef(false);
+  const [teamRequestedActiveOrgId, setTeamRequestedActiveOrgId] = useState<string | null>(() =>
+    readStoredTeamEnterpriseActiveOrgId(),
+  );
   const [entitlements, setEntitlements] = useState<EntitlementsSnapshot | null>(() => {
     try {
-      const cached = readCachedValue<EntitlementsSnapshot>(window.localStorage, ENTITLEMENTS_CACHE_KEY);
+      const cached = readCachedValue<EntitlementsSnapshot>(
+        window.localStorage,
+        teamEnterpriseEntitlementsCacheKey(readStoredTeamEnterpriseActiveOrgId()),
+      );
       return cached?.value ?? null;
     } catch {
       return null;
@@ -123,9 +132,11 @@ export function useSettingsAccountController({
     };
   }, [supabase]);
 
-  const refreshEntitlements = useCallback(async (opts?: { force?: boolean; silent?: boolean }) => {
+  const refreshEntitlements = useCallback(async (opts?: { force?: boolean; silent?: boolean; activeOrgId?: string | null }) => {
     if (!supabase) return null;
-    const cached = readCachedValue<EntitlementsSnapshot>(window.localStorage, ENTITLEMENTS_CACHE_KEY);
+    const activeOrgId = opts && "activeOrgId" in opts ? (opts.activeOrgId ?? null) : teamRequestedActiveOrgId;
+    const cacheKey = teamEnterpriseEntitlementsCacheKey(activeOrgId);
+    const cached = readCachedValue<EntitlementsSnapshot>(window.localStorage, cacheKey);
     if (!opts?.force && cached && shouldUseCachedValue(cached, ENTITLEMENTS_CACHE_TTL_MS)) {
       setEntitlements(cached.value);
       if (!opts?.silent) {
@@ -138,12 +149,10 @@ export function useSettingsAccountController({
       setBillingError(null);
     }
     try {
-      const response = await supabase.functions.invoke("entitlements", { method: "GET" });
-      if (response.error) throw response.error;
-      const next = (response.data ?? null) as EntitlementsSnapshot | null;
+      const next = await fetchEntitlementsSnapshot({ client: supabase, activeOrgId });
       setEntitlements(next);
       if (next) {
-        writeCachedValue(window.localStorage, ENTITLEMENTS_CACHE_KEY, next);
+        writeCachedValue(window.localStorage, cacheKey, next);
       }
       return next;
     } catch (error: unknown) {
@@ -156,7 +165,7 @@ export function useSettingsAccountController({
         setEntitlementsBusy(false);
       }
     }
-  }, [supabase]);
+  }, [supabase, teamRequestedActiveOrgId]);
 
   useEffect(() => {
     if (!supabase) return;
@@ -366,7 +375,21 @@ export function useSettingsAccountController({
   }, [billingReturnPath, supabase]);
 
   const plan = entitlements?.plan_type ?? "free_local";
-  const proEnabled = entitlements?.features?.remote_mobile_access === "enabled";
+  const proEnabled =
+    entitlements?.features?.remote_mobile_access === "enabled" ||
+    entitlements?.features?.mobile_relay === "enabled";
+  const teamEnterprise = useTeamEnterpriseSettingsController({
+    active,
+    supabase,
+    billingUser,
+    billingReturnPath,
+    entitlementsBusy,
+    plan,
+    entitlements,
+    requestedActiveOrgId: teamRequestedActiveOrgId,
+    setRequestedActiveOrgId: setTeamRequestedActiveOrgId,
+    refreshEntitlements,
+  });
 
   return {
     supabaseConfigured: Boolean(supabase),
@@ -401,12 +424,13 @@ export function useSettingsAccountController({
       onEnable: handleEnableMobile,
       onDisable: handleDisableMobile,
     },
+    teamEnterprise,
   };
 }
 
 export type {
-  EntitlementsSnapshot,
   SettingsAccountController,
   SettingsBillingController,
   SettingsMobileAccessController,
+  SettingsTeamEnterpriseController,
 };

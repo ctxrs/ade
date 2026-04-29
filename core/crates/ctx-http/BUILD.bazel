@@ -178,6 +178,7 @@ CTX_HTTP_WORKSPACE_LAUNCH_PREWARM_TEST_ARGS = CTX_HTTP_TEST_ARGS + [
 ]
 CTX_HTTP_WORKSPACE_RUNTIME_UNIT_TEST_ARGS = CTX_HTTP_UNIT_TEST_SERIAL_ARGS + [
     "workspace_runtime::",
+    "--skip=workspace_runtime::reclaim_unit_tests::idle_runtime_reclaim_stops_machine_even_with_running_ctx_harness_container",
     "--skip=workspace_runtime::tests::prepare_reuses_running_workspace_container_without_front_loading_image_readiness",
     "--skip=workspace_runtime::tests::prepare_starts_cached_workspace_container_when_sandbox_cli_reports_it_stopped",
     "--skip=workspace_runtime::tests::maybe_reclaim_sandbox_machine_stops_idle_machine",
@@ -189,6 +190,10 @@ CTX_HTTP_WORKSPACE_RUNTIME_UNIT_TEST_ARGS = CTX_HTTP_UNIT_TEST_SERIAL_ARGS + [
     "--skip=workspace_runtime::tests::ensure_sandbox_machine_materialized_defers_reconfiguration_when_machine_state_is_unknown_and_engine_unreachable",
     "--skip=workspace_runtime::tests::ensure_sandbox_machine_materialized_defers_reconfiguration_when_machine_is_running_but_engine_unreachable",
     "--skip=workspace_runtime::tests::ensure_sandbox_machine_materialized_recreates_machine_for_memory_profile_change_when_engine_is_down",
+]
+CTX_HTTP_WORKSPACE_RUNTIME_RECLAIM_IDLE_RUNTIME_WITH_PARKED_CONTAINERS_TEST_ARGS = CTX_HTTP_TEST_ARGS + [
+    "--exact",
+    "workspace_runtime::reclaim_unit_tests::idle_runtime_reclaim_stops_machine_even_with_running_ctx_harness_container",
 ]
 CTX_HTTP_WORKSPACE_RUNTIME_REUSES_RUNNING_CONTAINER_TEST_ARGS = CTX_HTTP_TEST_ARGS + [
     "--exact",
@@ -737,6 +742,18 @@ declare_ctx_http_rust_unit_test(
 )
 
 rust_test(
+    name = "unit_tests_workspace_runtime_reclaim_idle_runtime_with_parked_containers",
+    crate = ":lib_test_support",
+    args = CTX_HTTP_WORKSPACE_RUNTIME_RECLAIM_IDLE_RUNTIME_WITH_PARKED_CONTAINERS_TEST_ARGS,
+    compile_data = CTX_HTTP_COMPILE_DATA,
+    data = CTX_HTTP_COMPILE_DATA,
+    deps = CTX_HTTP_DIRECT_TEST_DEPS,
+    proc_macro_deps = CTX_HTTP_TEST_PROC_MACRO_DEPS,
+    tags = CTX_HTTP_TIMING_SENSITIVE_EXACT_TEST_TAGS,
+    timeout = "long",
+)
+
+rust_test(
     name = "unit_tests_workspace_runtime_reuses_running_container",
     crate = ":lib_test_support",
     args = CTX_HTTP_WORKSPACE_RUNTIME_REUSES_RUNNING_CONTAINER_TEST_ARGS,
@@ -1075,6 +1092,7 @@ test_suite(
         ":unit_tests_scheduler",
         ":unit_tests_settings",
         ":unit_tests_workspace_runtime",
+        ":unit_tests_workspace_runtime_reclaim_idle_runtime_with_parked_containers",
         ":unit_tests_workspace_runtime_reuses_running_container",
         ":unit_tests_workspace_runtime_prepare_starts_cached_container",
         ":unit_tests_workspace_runtime_reclaim_idle_machine",

@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2.49.1";
+import type Stripe from "https://esm.sh/stripe@17.5.0?target=deno";
 import { corsHeaders } from "../_shared/cors.ts";
 import {
   ensureBillingProfile,
@@ -27,7 +28,18 @@ function requiredEnv(name: string): string {
 
 function asBearerToken(req: Request): string {
   const authHeader = req.headers.get("authorization") ?? "";
-  return authHeader.toLowerCase().startsWith("bearer ") ? authHeader.slice(7).trim() : "";
+  return authHeader.toLowerCase().startsWith("bearer ")
+    ? authHeader.slice(7).trim()
+    : "";
+}
+
+function isOrgCheckoutSession(session: Stripe.Checkout.Session): boolean {
+  const planType = String(session?.metadata?.plan_type ?? "").trim();
+  const billingSubjectId = String(
+    session?.metadata?.ctx_billing_subject_id ?? "",
+  ).trim();
+  return Boolean(billingSubjectId) || planType === "team" ||
+    planType === "enterprise";
 }
 
 serve(async (req) => {
@@ -73,7 +85,7 @@ serve(async (req) => {
   let stripeSubscriptionId = "";
 
   if (sessionId) {
-    let session: any;
+    let session: Stripe.Checkout.Session;
     try {
       session = await stripe.checkout.sessions.retrieve(sessionId);
     } catch (err) {
@@ -94,7 +106,7 @@ serve(async (req) => {
     }
     stripeCustomerId = stripeId(session?.customer);
     stripeSubscriptionId = stripeId(session?.subscription);
-    if (stripeCustomerId) {
+    if (stripeCustomerId && !isOrgCheckoutSession(session)) {
       await ensureBillingProfile(supabase, userId, stripeCustomerId);
     }
   }
@@ -105,7 +117,9 @@ serve(async (req) => {
       .select("stripe_customer_id")
       .eq("user_id", userId)
       .maybeSingle();
-    stripeCustomerId = profile?.stripe_customer_id ? String(profile.stripe_customer_id) : "";
+    stripeCustomerId = profile?.stripe_customer_id
+      ? String(profile.stripe_customer_id)
+      : "";
   }
 
   if (!stripeCustomerId) {
@@ -116,7 +130,13 @@ serve(async (req) => {
   }
 
   if (stripeSubscriptionId) {
-    await syncSubscriptionFromStripe(supabase, stripe, stripeSubscriptionId, undefined, userId);
+    await syncSubscriptionFromStripe(
+      supabase,
+      stripe,
+      stripeSubscriptionId,
+      undefined,
+      userId,
+    );
     return new Response(JSON.stringify({ ok: true }), {
       status: 200,
       headers: { "content-type": "application/json", ...corsHeaders(origin) },
@@ -130,7 +150,13 @@ serve(async (req) => {
   });
   const preferred = pickPreferredSubscription(subs.data ?? []);
   if (preferred?.id) {
-    await syncSubscriptionFromStripe(supabase, stripe, String(preferred.id), undefined, userId);
+    await syncSubscriptionFromStripe(
+      supabase,
+      stripe,
+      String(preferred.id),
+      undefined,
+      userId,
+    );
   } else {
     await setSubscriptionFreeLocal(supabase, userId);
   }

@@ -55,6 +55,13 @@ macro_rules! id_type {
 }
 
 id_type!(WorkspaceId);
+id_type!(AccountId);
+id_type!(OrgId);
+id_type!(OrgMembershipId);
+id_type!(DaemonEnrollmentId);
+id_type!(OrgPolicySnapshotId);
+id_type!(RunGrantId);
+id_type!(PolicyDecisionEventId);
 id_type!(SandboxInstanceId);
 id_type!(TaskId);
 id_type!(WorktreeId);

@@ -4,7 +4,7 @@ use anyhow::Result;
 use serde_json::{json, Value};
 
 use ctx_core::ids::{MessageId, RunId, SessionId, TurnId};
-use ctx_core::models::SessionEventType;
+use ctx_core::models::{RunStatus, SessionEventType};
 use ctx_providers::adapters::{ProviderTurnOutcome, ProviderTurnStatus};
 
 use crate::daemon::AppState;
@@ -44,6 +44,7 @@ async fn persist_terminal_events(
     session_id: SessionId,
     run_id: Option<RunId>,
     turn_id: TurnId,
+    run_status: RunStatus,
     cleanup_types: &[SessionEventType],
     events: Vec<(SessionEventType, Value)>,
 ) -> Result<()> {
@@ -52,6 +53,7 @@ async fn persist_terminal_events(
     let persisted = store
         .persist_turn_terminal_events(session_id, run_id, turn_id, events)
         .await?;
+    super::policy_admission::update_run_terminal_status(&store, run_id, run_status).await;
     publish_persisted_events(state, persisted).await;
     Ok(())
 }
@@ -82,6 +84,7 @@ pub(crate) async fn finalize_completed_turn(
         session_id,
         run_id,
         turn_id,
+        RunStatus::Completed,
         &[
             SessionEventType::ThoughtChunk,
             SessionEventType::ContextWindowUpdate,
@@ -131,6 +134,7 @@ pub(crate) async fn finalize_interrupted_turn(
         session_id,
         run_id,
         turn_id,
+        RunStatus::Cancelled,
         &[
             SessionEventType::AssistantChunk,
             SessionEventType::ThoughtChunk,
@@ -194,6 +198,7 @@ pub(crate) async fn finalize_failed_turn(
         session_id,
         run_id,
         turn_id,
+        RunStatus::Failed,
         &[
             SessionEventType::AssistantChunk,
             SessionEventType::ThoughtChunk,

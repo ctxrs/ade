@@ -20,6 +20,7 @@ mod mobile_tunnel;
 mod ops_events;
 mod order_seq;
 mod perf_telemetry;
+mod policy_signature;
 mod process_env;
 pub mod process_limits;
 mod provider_child_reclassifier;

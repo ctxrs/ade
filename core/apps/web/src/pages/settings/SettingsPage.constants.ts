@@ -55,7 +55,7 @@ export const SECTIONS: Array<{
   { id: "dictation", label: "Dictation", group: "advanced", navHidden: true },
   { id: "title_generation", label: "Title Generation", group: "advanced" },
   { id: "billing", label: "Billing", group: "advanced", navHidden: true },
-  { id: "team_enterprise", label: "Team & Enterprise", group: "advanced", navHidden: true },
+  { id: "team_enterprise", label: "Team & Enterprise", group: "advanced" },
   { id: "usage_analytics", label: "Usage Analytics", group: "advanced", navHidden: true },
   { id: "dev_tools", label: "Dev Tools", group: "advanced" },
 ];

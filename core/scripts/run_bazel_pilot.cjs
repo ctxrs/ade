@@ -159,6 +159,23 @@ function parsePositiveIntegerEnv(value) {
   return parsed > 0 ? parsed : null;
 }
 
+function parseBazelTestTimeoutSeconds(env = process.env) {
+  const rawValue = String(env?.CTX_BAZEL_TEST_TIMEOUT_SECONDS ?? "").trim();
+  if (rawValue) {
+    const normalized = rawValue.toLowerCase();
+    if (["0", "false", "no", "off"].includes(normalized)) {
+      return null;
+    }
+    if (!/^[1-9]\d*$/.test(rawValue)) {
+      throw new Error(
+        "error: CTX_BAZEL_TEST_TIMEOUT_SECONDS must be a positive integer number of seconds, or 0/off to disable.",
+      );
+    }
+    return Number.parseInt(rawValue, 10);
+  }
+  return String(env?.CTX_VERIFY_PARENT_ENTRYPOINT || "").trim() ? 1200 : null;
+}
+
 function parseArgs(argv) {
   const [command = "test", ...rawArgs] = argv;
   if (!["build", "run", "test"].includes(command)) {
@@ -190,7 +207,13 @@ function ensureDir(dir) {
   return dir;
 }
 
-function buildPhaseCommandArgs({ command, layout, extraConfigArgs = [], bazelJobs = null }) {
+function buildPhaseCommandArgs({
+  command,
+  layout,
+  extraConfigArgs = [],
+  bazelJobs = null,
+  bazelTestTimeoutSeconds = null,
+}) {
   const commandArgs = [
     command,
     `--disk_cache=${layout.bazelDiskCacheDir}`,
@@ -202,6 +225,9 @@ function buildPhaseCommandArgs({ command, layout, extraConfigArgs = [], bazelJob
   }
   if (command === "test") {
     commandArgs.push("--test_output=errors");
+    if (bazelTestTimeoutSeconds != null) {
+      commandArgs.push(`--test_timeout=${bazelTestTimeoutSeconds}`);
+    }
   }
   return commandArgs;
 }
@@ -325,6 +351,7 @@ function buildInvocationPhases({
   env,
 }) {
   const bazelJobs = parsePositiveInteger(env?.CTX_BAZEL_JOBS);
+  const bazelTestTimeoutSeconds = parseBazelTestTimeoutSeconds(env);
   if (targets.length === 0) {
     return [];
   }
@@ -337,6 +364,7 @@ function buildInvocationPhases({
           layout,
           extraConfigArgs: buildBuddyConfigArgs,
           bazelJobs,
+          bazelTestTimeoutSeconds,
         }),
         targets,
       },
@@ -351,6 +379,7 @@ function buildInvocationPhases({
           layout,
           extraConfigArgs: [...buildBuddyConfigArgs, "--config=buildbuddy-rbe"],
           bazelJobs,
+          bazelTestTimeoutSeconds,
         }),
         targets,
       },
@@ -365,6 +394,7 @@ function buildInvocationPhases({
           layout,
           extraConfigArgs: [...buildBuddyConfigArgs, "--config=buildbuddy-darwin-rbe"],
           bazelJobs,
+          bazelTestTimeoutSeconds,
         }),
         targets,
       },
@@ -380,6 +410,7 @@ function buildInvocationPhases({
         layout,
         extraConfigArgs: [...buildBuddyConfigArgs, "--config=buildbuddy-linux-rbe"],
         bazelJobs,
+        bazelTestTimeoutSeconds,
       }),
       targets: remoteTargets,
     });
@@ -392,6 +423,7 @@ function buildInvocationPhases({
         layout,
         extraConfigArgs: buildBuddyConfigArgs,
         bazelJobs,
+        bazelTestTimeoutSeconds,
       }),
       targets: localTargets,
     });
@@ -452,6 +484,7 @@ function buildBazelPilotInvocation({
     }
   }
   const localTestJobs = parsePositiveIntegerEnv(env.CTX_BAZEL_LOCAL_TEST_JOBS);
+  const bazelTestTimeoutSeconds = parseBazelTestTimeoutSeconds(env);
   const buildBuddyAuthArgs = buildBuildBuddyAuthArgs(resolvedEnv);
   const buildBuddyEnabled = remoteExecutionMode !== "off";
   const buildBuddyApiBaseUrl = resolveBuildBuddyApiBaseUrl(resolvedEnv);
@@ -491,6 +524,7 @@ function buildBazelPilotInvocation({
     phases,
     buildBuddyApiBaseUrl,
     buildBuddyEnabled,
+    bazelTestTimeoutSeconds,
     remoteExecutionMode,
     repoRoot,
     runArgs: parsed.runArgs || [],
@@ -618,6 +652,7 @@ function buildBazelPilotSummary(invocation, phaseResults, exitCode) {
     entrypoint: "run_bazel_pilot",
     exitCode,
     kind: "bazel",
+    bazelTestTimeoutSeconds: invocation.bazelTestTimeoutSeconds ?? null,
     localPhaseCount: localPhases.length,
     localTargetCount: summarizeTargets("local"),
     localSpill: ["all", "linux", "darwin"].includes(String(invocation.remoteExecutionMode || "")) && localPhases.length > 0,
@@ -673,6 +708,7 @@ function runBazelPilotInvocationPhases(invocation, {
         durationMs: phaseResults.reduce((total, phase) => total + Number(phase.durationMs || 0), 0),
         success: exitCode === 0,
         bazelCommand: invocation.command,
+        bazelTestTimeoutSeconds: invocation.bazelTestTimeoutSeconds ?? null,
         buildBuddyApiBaseUrl: invocation.buildBuddyApiBaseUrl,
         buildBuddyEnabled: invocation.buildBuddyEnabled,
         buildBuddyInvocations: phaseResults
@@ -869,6 +905,7 @@ module.exports = {
   buildPhaseCommandArgs,
   formatSpawnFailureMessage,
   parseArgs,
+  parseBazelTestTimeoutSeconds,
   parsePositiveIntegerEnv,
   parseBatchMode,
   parseRemoteExecutionMode,

@@ -981,7 +981,6 @@ async fn concurrent_launch_start_is_deduplicated() {
         &sandbox_cli_path.to_string_lossy(),
     );
     let ops = Arc::new(UnexpectedRuntimeWarmupOperations::default());
-    let coordinator = test_coordinator_with_operations(data_dir.path().to_path_buf(), ops.clone());
     let settings = ExecutionSettings {
         mode: ExecutionMode::Sandbox,
         container: crate::settings::ContainerExecutionSettings {
@@ -989,6 +988,17 @@ async fn concurrent_launch_start_is_deduplicated() {
             ..sandbox_container_settings()
         },
     };
+    write_prewarm_metadata(
+        data_dir.path(),
+        &StartupPrewarmMetadata {
+            image_ref: ctx_harness_runtime::runtime_prewarm_target(&settings.container),
+            bundled_image_fingerprint: None,
+            ready_at: "2026-03-20T00:00:00Z".to_string(),
+        },
+    )
+    .await
+    .expect("seed matching prewarm metadata");
+    let coordinator = test_coordinator_with_operations(data_dir.path().to_path_buf(), ops.clone());
     let barrier = Arc::new(Barrier::new(3));
 
     let coordinator_a = Arc::clone(&coordinator);

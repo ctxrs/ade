@@ -2,12 +2,10 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "$ROOT"
+source "$ROOT/scripts/supabase_local_common.sh"
 
-if ! command -v supabase >/dev/null 2>&1; then
-  echo "warning: supabase CLI not found; skipping local Supabase start." >&2
-  exit 0
-fi
+supabase_warn_missing_cli
+supabase_prepare_local_project
 
 status_json="$(supabase status --output json 2>/dev/null || true)"
 if [ -n "$status_json" ]; then
@@ -25,5 +23,5 @@ supabase start
 
 if [ "${SUPABASE_RESET:-}" = "1" ]; then
   echo "Applying migrations (db reset)..."
-  supabase db reset
+  supabase db reset --no-seed
 fi

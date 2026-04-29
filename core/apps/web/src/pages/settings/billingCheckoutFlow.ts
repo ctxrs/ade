@@ -8,11 +8,15 @@ export type BillingCheckoutInvokeResult = {
 export type BillingCheckoutInvoke = (args: {
   interval: BillingInterval;
   returnPath: string;
+  planType?: "pro" | "team";
+  organizationId?: string;
 }) => Promise<BillingCheckoutInvokeResult>;
 
 type BillingCheckoutFlowOptions = {
   interval: BillingInterval;
   returnPath: string;
+  planType?: "pro" | "team";
+  organizationId?: string;
   invokeCheckout: BillingCheckoutInvoke;
   trackSubscribeCtaClicked: (interval: BillingInterval) => void;
   trackCheckoutStarted: (interval: BillingInterval) => void;
@@ -41,6 +45,8 @@ export const runBillingCheckoutFlow = async (
   const result = await options.invokeCheckout({
     interval: options.interval,
     returnPath: options.returnPath,
+    planType: options.planType,
+    organizationId: options.organizationId,
   });
   if (result.error) {
     throw new Error(readErrorMessage(result.error));

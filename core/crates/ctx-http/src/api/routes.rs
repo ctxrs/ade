@@ -21,6 +21,15 @@ fn core_routes() -> axum::Router<Arc<AppState>> {
     axum::Router::new()
         .route("/api/health", get(health))
         .route("/api/settings", get(get_settings).post(update_settings))
+        .route("/api/orgs/daemon_enrollments", get(list_daemon_enrollments))
+        .route(
+            "/api/orgs/:org_id/daemon_enrollment",
+            put(upsert_daemon_enrollment),
+        )
+        .route(
+            "/api/orgs/:org_id/policy_snapshots",
+            post(cache_org_policy_snapshot),
+        )
         .route("/api/execution/launch/start", post(launch_start))
         .route("/api/execution/launch/status", get(launch_status))
         .route("/api/execution/launch/stream", get(launch_stream_ws))
@@ -178,6 +187,18 @@ fn workspace_routes() -> axum::Router<Arc<AppState>> {
         .route(
             "/api/workspaces/:id/merge_queue_config",
             get(get_merge_queue_config).post(update_merge_queue_config),
+        )
+        .route(
+            "/api/workspaces/:id/org_policy",
+            get(get_workspace_org_policy).put(upsert_workspace_org_policy),
+        )
+        .route(
+            "/api/workspaces/:workspace_id/runs/:run_id/archive/ingest_batch",
+            get(build_workspace_run_archive_ingest_batch),
+        )
+        .route(
+            "/api/workspaces/:workspace_id/runs/:run_id/archive/ingest_ack",
+            post(acknowledge_workspace_run_archive_ingest_batch),
         )
         .route(
             "/api/workspaces/:workspace_id/merge_queue/entries/:id/cancel",

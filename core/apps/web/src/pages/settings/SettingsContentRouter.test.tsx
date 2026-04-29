@@ -54,6 +54,13 @@ vi.mock("./sections/TitleGenerationSection", () => ({
 vi.mock("./sections/BillingSection", () => ({
   BillingSection: sectionComponent("billing", (props) => String(props.plan)),
 }));
+vi.mock("./sections/TeamEnterpriseSection", () => ({
+  TeamEnterpriseSection: sectionComponent(
+    "team_enterprise",
+    (props) =>
+      `${String(props.plan)}:${String((props.entitlements as { org_id?: string | null } | null)?.org_id ?? "none")}`,
+  ),
+}));
 vi.mock("./sections/HarnessAuthenticationSection", () => ({
   HarnessAuthenticationSection: sectionComponent("harness_authentication"),
 }));
@@ -192,6 +199,58 @@ const makeProps = (): ComponentProps<typeof SettingsContentRouter> => ({
       onEnable: vi.fn(async () => {}),
       onDisable: vi.fn(async () => {}),
     },
+    teamEnterprise: {
+      billingUser: null,
+      entitlementsBusy: false,
+      plan: "pro",
+      entitlements: {
+        plan_type: "pro",
+        org_id: "org-1",
+        features: {},
+      },
+      cloudState: {
+        orgs: [],
+        activeOrgId: null,
+        activeOrg: null,
+        billingSubjectId: null,
+        invites: [],
+        subscriptions: [],
+        featureGrants: [],
+        adminState: null,
+        memberDirectoryAvailable: false,
+      },
+      cloudBusy: false,
+      cloudError: null,
+      actionBusy: false,
+      actionError: null,
+      actionNotice: null,
+      orgName: "",
+      setOrgName: vi.fn(),
+      inviteEmail: "",
+      setInviteEmail: vi.fn(),
+      inviteRole: "member",
+      setInviteRole: vi.fn(),
+      seatTarget: "",
+      setSeatTarget: vi.fn(),
+      policyDraft: {
+        providers: "openai, anthropic",
+        models: "",
+        allowPersonalRoutes: false,
+        sandboxProfile: "sandbox_required",
+        networkProfile: "default",
+        archiveVisibility: "org_summary",
+      },
+      setPolicyDraft: vi.fn(),
+      onRefresh: vi.fn(async () => {}),
+      onSelectOrg: vi.fn(async () => {}),
+      onCreateOrg: vi.fn(async () => {}),
+      onInviteMember: vi.fn(async () => {}),
+      onAcceptInvite: vi.fn(async () => {}),
+      onUpdateSeats: vi.fn(async () => {}),
+      onSavePolicy: vi.fn(async () => {}),
+      onStartTeamCheckout: vi.fn(async () => {}),
+      onRequestEnterpriseSetup: vi.fn(async () => {}),
+    },
   },
   mobileQrFgColor: "#fff",
   resourceUtilization: {
@@ -274,10 +333,13 @@ describe("SettingsContentRouter", () => {
     expect(screen.getByTestId("container_network")).toBeInTheDocument();
   });
 
-  it("routes account and dev tool branches explicitly", () => {
+  it("routes account, team, and dev tool branches explicitly", () => {
     const props = makeProps();
     const { rerender } = render(<SettingsContentRouter {...props} active="billing" />);
     expect(screen.getByTestId("billing")).toHaveTextContent("pro");
+
+    rerender(<SettingsContentRouter {...props} active="team_enterprise" />);
+    expect(screen.getByTestId("team_enterprise")).toHaveTextContent("pro:org-1");
 
     rerender(<SettingsContentRouter {...props} active="dev_tools" />);
     expect(screen.getByTestId("dev_tools")).toBeInTheDocument();

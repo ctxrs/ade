@@ -11,7 +11,8 @@ use tokio::time::Instant as TokioInstant;
 
 use ctx_core::ids::{RunId, TurnId};
 use ctx_core::models::{
-    MessageDelivery, MessageRole, Session, SessionEventType, SessionTurnStatus, SessionTurnTool,
+    ExecutionEnvironment, MessageDelivery, MessageRole, NetworkProfile, Session, SessionEventType,
+    SessionTurnStatus, SessionTurnTool,
 };
 use ctx_providers::adapters::{ProviderRunHooks, ProviderSessionRefClaimHook, TurnInput};
 use ctx_providers::events::NormalizedEvent;
@@ -44,6 +45,7 @@ mod provider_launch;
 #[cfg(test)]
 mod tests;
 mod tool_runtime;
+mod turn_failure;
 mod turn_start;
 
 use self::event_loop::{spawn_turn_event_loop, TurnEventLoop};
@@ -58,12 +60,17 @@ use self::provider_env::{
 };
 use self::provider_launch::apply_provider_launch_overrides;
 use self::tool_runtime::{cwd_outside_worktree, maybe_spool_tool_output};
+use self::turn_failure::emit_turn_start_failed;
 use self::turn_start::{
-    apply_crp_launch_policy_env_for_control_mode, emit_turn_start_failed, provider_mode_id_for,
-    record_queue_wait_metric, turn_start_deadline,
+    apply_crp_launch_policy_env_for_control_mode, provider_mode_id_for, record_queue_wait_metric,
+    turn_start_deadline,
 };
 use super::lifecycle::{RunningTurn, TurnStartProgress};
 use super::persistence::append_session_event_with_retry;
+use super::policy_admission::{
+    admit_turn, network_profile_for_container_mode, route_type_for_source, AdmissionRouteSource,
+    TurnAdmission, TurnAdmissionRequest,
+};
 use super::terminal::{finalize_failed_turn, FailedTurnTerminalization};
 use super::QueuedMessage;
 
@@ -301,6 +308,42 @@ pub(crate) async fn start_turn(
     }
     for (key, value) in resolved_source.env.iter() {
         provider_env.insert(key.clone(), value.clone());
+    }
+
+    let route_type = route_type_for_source(AdmissionRouteSource::from(resolved_source.source_kind));
+    let network_profile = if matches!(execution_environment, ExecutionEnvironment::Sandbox) {
+        network_profile_for_container_mode(execution_settings.container.network_mode.clone())
+    } else {
+        NetworkProfile::All
+    };
+    let admission = match admit_turn(
+        state,
+        &store,
+        TurnAdmissionRequest {
+            session,
+            run_id,
+            provider_id: &session.provider_id,
+            model_id: &full_model_id,
+            execution_environment,
+            network_profile,
+            route_type,
+        },
+    )
+    .await
+    {
+        Ok(admission) => admission,
+        Err(err) => {
+            emit_turn_start_failed(state, session, run_id, turn_id, message_id, &err).await;
+            return Err(err);
+        }
+    };
+    if let TurnAdmission::OrgManaged { run_grant } = &admission {
+        provider_env.insert("CTX_RUN_GRANT_ID".to_string(), run_grant.id.0.to_string());
+        provider_env.insert("CTX_ORG_ID".to_string(), run_grant.org_id.0.to_string());
+        provider_env.insert(
+            "CTX_POLICY_VERSION".to_string(),
+            run_grant.policy_version.clone(),
+        );
     }
 
     let runtime_provider_id =

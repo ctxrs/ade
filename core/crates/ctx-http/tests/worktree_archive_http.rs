@@ -120,7 +120,7 @@ async fn archive_and_unarchive_recreates_managed_worktrees() {
         .primary_session_id
         .expect("task creation should create a primary session");
 
-    let resp = client
+    let first_child_resp = client
         .post(format!("{base}/api/tasks/{}/sessions", task.id.0))
         .json(&json!({
             "provider_id":"fake",
@@ -133,12 +133,12 @@ async fn archive_and_unarchive_recreates_managed_worktrees() {
         .await
         .unwrap();
     assert!(
-        resp.status().is_success(),
-        "first subagent session creation failed: {}",
-        resp.status()
+        first_child_resp.status().is_success(),
+        "first child session creation failed: {}",
+        first_child_resp.status()
     );
 
-    let resp = client
+    let second_child_resp = client
         .post(format!("{base}/api/tasks/{}/sessions", task.id.0))
         .json(&json!({
             "provider_id":"fake",
@@ -151,9 +151,9 @@ async fn archive_and_unarchive_recreates_managed_worktrees() {
         .await
         .unwrap();
     assert!(
-        resp.status().is_success(),
-        "second subagent session creation failed: {}",
-        resp.status()
+        second_child_resp.status().is_success(),
+        "second child session creation failed: {}",
+        second_child_resp.status()
     );
 
     let store = state.store_for_task(task.id).await.unwrap();
@@ -180,14 +180,18 @@ async fn archive_and_unarchive_recreates_managed_worktrees() {
     }
     assert_eq!(managed.len(), expected_managed_count);
 
-    let managed_roots: Vec<PathBuf> = managed
+    let mut managed_roots: Vec<PathBuf> = managed
         .iter()
         .map(|worktree| PathBuf::from(&worktree.root_path))
         .collect();
-    let managed_branches: Vec<String> = managed
+    managed_roots.sort();
+    managed_roots.dedup();
+    let mut managed_branches: Vec<String> = managed
         .iter()
         .map(|worktree| worktree.git_branch.clone().unwrap())
         .collect();
+    managed_branches.sort();
+    managed_branches.dedup();
 
     tokio::fs::write(managed_roots[0].join("dirty.txt"), "dirty")
         .await

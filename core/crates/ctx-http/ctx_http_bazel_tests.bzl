@@ -430,6 +430,7 @@ CTX_HTTP_CUSTOM_INTEGRATION_TARGETS = {
     "turn_lifecycle_events": {
         "source": "turn_lifecycle_events",
         "args": [],
+        "tags": ["exclusive"],
         "timeout": "eternal",
     },
 }
@@ -448,8 +449,10 @@ def _integration_rustc_env(rustc_env):
     merged["CARGO_BIN_EXE_llama_server_mock"] = "$(rootpath :llama_server_mock)"
     return merged
 
-def _declare_ctx_http_test(name, source_name, common_srcs, compile_data, data, deps, proc_macro_deps, rustc_env, test_args, timeout = None):
+def _declare_ctx_http_test(name, source_name, common_srcs, compile_data, data, deps, proc_macro_deps, rustc_env, test_args, timeout = None, extra_tags = None):
     tags = ["manual"] if name in CTX_HTTP_MANUAL_ONLY_TESTS else []
+    if extra_tags:
+        tags = tags + extra_tags
     test_deps = deps + CTX_HTTP_INTEGRATION_SOURCE_DEPS.get(source_name, [])
     kwargs = {}
     if timeout != None:
@@ -504,6 +507,7 @@ def declare_ctx_http_integration_tests(common_srcs, compile_data, data, deps, pr
                     rustc_env = rustc_env,
                     test_args = test_args + custom["args"] if custom else test_args,
                     timeout = custom.get("timeout") if custom else None,
+                    extra_tags = custom.get("tags") if custom else None,
                 )
                 declared[test_name] = True
             test_labels.append(_as_label(test_name))

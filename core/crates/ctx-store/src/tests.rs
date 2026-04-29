@@ -13,6 +13,8 @@ use ctx_core::models::{
 use sqlx::{Row, SqlitePool};
 use tokio::sync::Barrier;
 
+mod team_enterprise_policy_runs_archive;
+
 struct SessionFixture {
     _dir: tempfile::TempDir,
     db_path: std::path::PathBuf,

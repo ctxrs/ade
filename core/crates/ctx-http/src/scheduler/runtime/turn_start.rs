@@ -2,17 +2,12 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use serde_json::json;
-
 use crate::daemon::AppState;
 use crate::perf_telemetry::{PerfMetric, PerfMetricKind};
 use crate::settings::ProviderControlMode;
-use ctx_core::ids::{MessageId, RunId, TurnId};
 use ctx_core::models::Session;
 use ctx_core::provider_ids::CODEX_PROVIDER_ID;
 use ctx_core::provider_policy::{CTX_CRP_LAUNCH_POLICY_ENV, CTX_CRP_LAUNCH_POLICY_FULL};
-
-use super::super::terminal::{finalize_failed_turn, FailedTurnTerminalization};
 
 pub(super) fn provider_mode_id_for(
     provider_id: &str,
@@ -89,30 +84,4 @@ pub(super) async fn record_queue_wait_metric(
         .perf_telemetry
         .record_metric(queue_metric, perf_run_id, None, None)
         .await;
-}
-
-pub(super) async fn emit_turn_start_failed(
-    state: &std::sync::Arc<AppState>,
-    session: &Session,
-    run_id: RunId,
-    turn_id: TurnId,
-    message_id: MessageId,
-    err: &anyhow::Error,
-) {
-    let error_message = err.to_string();
-    let _ = finalize_failed_turn(
-        state,
-        session.id,
-        Some(run_id),
-        turn_id,
-        message_id,
-        FailedTurnTerminalization {
-            message: &error_message,
-            reason: Some("start_failed"),
-            details: None,
-            kind: Some(json!("start_failed")),
-            emit_error_event: true,
-        },
-    )
-    .await;
 }

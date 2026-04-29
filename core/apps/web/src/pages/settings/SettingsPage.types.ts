@@ -54,6 +54,7 @@ export type SettingsSectionComponentId =
   | "merge_queue"
   | "dictation"
   | "title_generation"
+  | "team_enterprise"
   | "dev_tools"
   | "legacy";
 

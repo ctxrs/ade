@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2.49.1";
+import type Stripe from "https://esm.sh/stripe@17.5.0?target=deno";
 import { corsHeaders } from "../_shared/cors.ts";
 import {
   ensureBillingProfile,
@@ -10,7 +11,10 @@ import {
 import { getStripe } from "../_shared/stripe.ts";
 
 function toArrayBuffer(data: Uint8Array): ArrayBuffer {
-  return data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) as ArrayBuffer;
+  return data.buffer.slice(
+    data.byteOffset,
+    data.byteOffset + data.byteLength,
+  ) as ArrayBuffer;
 }
 
 async function sha256Hex(data: Uint8Array): Promise<string> {
@@ -20,7 +24,10 @@ async function sha256Hex(data: Uint8Array): Promise<string> {
     .join("");
 }
 
-async function hmacSha256Hex(key: Uint8Array, msg: Uint8Array): Promise<string> {
+async function hmacSha256Hex(
+  key: Uint8Array,
+  msg: Uint8Array,
+): Promise<string> {
   const cryptoKey = await crypto.subtle.importKey(
     "raw",
     toArrayBuffer(key),
@@ -38,6 +45,15 @@ function requiredEnv(name: string): string {
   const v = Deno.env.get(name) ?? "";
   if (!v) throw new Error(`Missing ${name}`);
   return v;
+}
+
+function isOrgCheckoutSession(session: Stripe.Checkout.Session): boolean {
+  const planType = String(session?.metadata?.plan_type ?? "").trim();
+  const billingSubjectId = String(
+    session?.metadata?.ctx_billing_subject_id ?? "",
+  ).trim();
+  return Boolean(billingSubjectId) || planType === "team" ||
+    planType === "enterprise";
 }
 
 serve(async (req) => {
@@ -59,17 +75,21 @@ serve(async (req) => {
   const bodyText = new TextDecoder().decode(bodyBuf);
 
   const stripe = getStripe();
-  let evt: any;
+  let evt: Stripe.Event;
   try {
-    evt = await stripe.webhooks.constructEventAsync(bodyText, sig, webhookSecret);
+    evt = await stripe.webhooks.constructEventAsync(
+      bodyText,
+      sig,
+      webhookSecret,
+    );
   } catch (e) {
     const debug = Deno.env.get("CTX_DEBUG_STRIPE_WEBHOOKS") === "1";
     if (debug) {
       const errorMessage = e instanceof Error ? e.message : String(e);
       const sigParts = sig.split(",").map((p) => p.trim());
       const tStr = sigParts.find((p) => p.startsWith("t="))?.slice(2) ?? "";
-      const v1 =
-        sigParts.find((p) => p.startsWith("v1="))?.slice(3).trim() ?? "";
+      const v1 = sigParts.find((p) => p.startsWith("v1="))?.slice(3).trim() ??
+        "";
 
       const msg = new Uint8Array(
         [
@@ -97,7 +117,9 @@ serve(async (req) => {
             parsed_t: tStr || null,
             provided_v1_prefix: v1 ? v1.slice(0, 8) : null,
             expected_v1_prefix: expectedV1 ? expectedV1.slice(0, 8) : null,
-            provided_matches_expected: Boolean(v1 && expectedV1 && v1 === expectedV1),
+            provided_matches_expected: Boolean(
+              v1 && expectedV1 && v1 === expectedV1,
+            ),
           },
         }),
         {
@@ -128,10 +150,12 @@ serve(async (req) => {
       : undefined;
 
   if (type === "checkout.session.completed") {
-    const obj = evt.data?.object as any;
+    const obj = evt.data.object as Stripe.Checkout.Session;
     const stripeCustomerId = stripeId(obj?.customer);
-    const userId = String(obj?.client_reference_id ?? obj?.metadata?.supabase_user_id ?? "").trim();
-    if (stripeCustomerId && userId) {
+    const userId = String(
+      obj?.client_reference_id ?? obj?.metadata?.supabase_user_id ?? "",
+    ).trim();
+    if (stripeCustomerId && userId && !isOrgCheckoutSession(obj)) {
       await ensureBillingProfile(supabase, userId, stripeCustomerId);
     }
     const stripeSubscriptionId = stripeId(obj?.subscription);
@@ -147,19 +171,31 @@ serve(async (req) => {
   }
 
   if (type.startsWith("customer.subscription.")) {
-    const sub = evt.data?.object as any;
+    const sub = evt.data.object as Stripe.Subscription;
     const stripeSubscriptionId = stripeId(sub?.id);
     if (stripeSubscriptionId) {
-      const fallbackUserId = String(sub?.metadata?.supabase_user_id ?? "").trim() || undefined;
-      await syncSubscriptionFromStripe(supabase, stripe, stripeSubscriptionId, eventMeta, fallbackUserId);
+      const fallbackUserId =
+        String(sub?.metadata?.supabase_user_id ?? "").trim() || undefined;
+      await syncSubscriptionFromStripe(
+        supabase,
+        stripe,
+        stripeSubscriptionId,
+        eventMeta,
+        fallbackUserId,
+      );
     }
   }
 
   if (type.startsWith("invoice.")) {
-    const obj = evt.data?.object as any;
+    const obj = evt.data.object as Stripe.Invoice;
     const stripeSubscriptionId = stripeId(obj?.subscription);
     if (stripeSubscriptionId) {
-      await syncSubscriptionFromStripe(supabase, stripe, stripeSubscriptionId, eventMeta);
+      await syncSubscriptionFromStripe(
+        supabase,
+        stripe,
+        stripeSubscriptionId,
+        eventMeta,
+      );
     }
   }
 

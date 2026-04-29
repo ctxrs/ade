@@ -19,7 +19,7 @@ export const SETTINGS_SECTION_COMPONENTS: Record<SectionId, SettingsSectionCompo
   dictation: "dictation",
   title_generation: "title_generation",
   billing: "legacy",
-  team_enterprise: "legacy",
+  team_enterprise: "team_enterprise",
   usage_analytics: "legacy",
   dev_tools: "dev_tools",
 };

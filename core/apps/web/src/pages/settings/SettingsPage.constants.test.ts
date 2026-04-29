@@ -24,4 +24,12 @@ describe("Settings sections", () => {
     expect(sandboxAndNetworking?.navHidden).not.toBe(true);
     expect(sectionIds).not.toContain("sandboxing");
   });
+
+  it("surfaces team and enterprise navigation now that the admin scaffold exists", () => {
+    const teamEnterprise = SECTIONS.find((section) => section.id === "team_enterprise");
+
+    expect(teamEnterprise).toBeDefined();
+    expect(teamEnterprise?.label).toBe("Team & Enterprise");
+    expect(teamEnterprise?.navHidden).not.toBe(true);
+  });
 });

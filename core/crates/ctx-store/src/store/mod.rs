@@ -39,6 +39,8 @@ mod messages_workspace_index;
 mod metrics_and_runtime;
 mod migration_repairs;
 mod mobile;
+mod policy;
+mod runs;
 mod sandbox_bindings;
 mod session_head_policy;
 mod sessions;

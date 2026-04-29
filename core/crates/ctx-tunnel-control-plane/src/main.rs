@@ -431,8 +431,8 @@ fn derive_tunnel_secret(master: &[u8], tunnel_id: &str) -> Result<String, (Statu
 }
 
 fn load_master_secret() -> anyhow::Result<Vec<u8>> {
-    let raw = std::env::var("CTX_TUNNEL_MASTER_SECRET")
-        .context("missing CTX_TUNNEL_MASTER_SECRET")?;
+    let raw =
+        std::env::var("CTX_TUNNEL_MASTER_SECRET").context("missing CTX_TUNNEL_MASTER_SECRET")?;
     parse_master_secret(&raw)
 }
 

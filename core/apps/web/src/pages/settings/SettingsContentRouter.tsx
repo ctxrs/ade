@@ -15,6 +15,7 @@ import { BillingSection } from "./sections/BillingSection";
 import { HarnessAuthenticationSection } from "./sections/HarnessAuthenticationSection";
 import { CodexAccountsSection } from "./sections/CodexAccountsSection";
 import { DevToolsSection } from "./sections/DevToolsSection";
+import { TeamEnterpriseSection } from "./sections/TeamEnterpriseSection";
 import type { SettingsAccountController } from "./hooks/useSettingsAccountController";
 import type { SettingsDaemonDocumentController } from "./hooks/useSettingsDaemonDocumentController";
 import type { SettingsDevToolsController } from "./hooks/useSettingsDevToolsController";
@@ -233,6 +234,43 @@ export function SettingsContentRouter(props: {
     );
   }
 
+  if (active === "team_enterprise") {
+    return (
+      <TeamEnterpriseSection
+        supabaseConfigured={account.supabaseConfigured}
+        billingUser={account.teamEnterprise.billingUser}
+        entitlementsBusy={account.teamEnterprise.entitlementsBusy}
+        plan={account.teamEnterprise.plan}
+        entitlements={account.teamEnterprise.entitlements}
+        cloudState={account.teamEnterprise.cloudState}
+        cloudBusy={account.teamEnterprise.cloudBusy}
+        cloudError={account.teamEnterprise.cloudError}
+        actionBusy={account.teamEnterprise.actionBusy}
+        actionError={account.teamEnterprise.actionError}
+        actionNotice={account.teamEnterprise.actionNotice}
+        orgName={account.teamEnterprise.orgName}
+        onOrgNameChange={account.teamEnterprise.setOrgName}
+        inviteEmail={account.teamEnterprise.inviteEmail}
+        onInviteEmailChange={account.teamEnterprise.setInviteEmail}
+        inviteRole={account.teamEnterprise.inviteRole}
+        onInviteRoleChange={account.teamEnterprise.setInviteRole}
+        seatTarget={account.teamEnterprise.seatTarget}
+        onSeatTargetChange={account.teamEnterprise.setSeatTarget}
+        policyDraft={account.teamEnterprise.policyDraft}
+        onPolicyDraftChange={account.teamEnterprise.setPolicyDraft}
+        onRefresh={account.teamEnterprise.onRefresh}
+        onSelectOrg={account.teamEnterprise.onSelectOrg}
+        onCreateOrg={account.teamEnterprise.onCreateOrg}
+        onInviteMember={account.teamEnterprise.onInviteMember}
+        onAcceptInvite={account.teamEnterprise.onAcceptInvite}
+        onUpdateSeats={account.teamEnterprise.onUpdateSeats}
+        onSavePolicy={account.teamEnterprise.onSavePolicy}
+        onStartTeamCheckout={account.teamEnterprise.onStartTeamCheckout}
+        onRequestEnterpriseSetup={account.teamEnterprise.onRequestEnterpriseSetup}
+      />
+    );
+  }
+
   if (active === "agent_harnesses") {
     return <HarnessAuthenticationSection workspaceId={workspaceId} active />;
   }
@@ -253,7 +291,7 @@ export function SettingsContentRouter(props: {
     );
   }
 
-  if (active === "models_routing" || active === "context_pack" || active === "team_enterprise" || active === "usage_analytics") {
+  if (active === "models_routing" || active === "context_pack" || active === "usage_analytics") {
     return null;
   }
 

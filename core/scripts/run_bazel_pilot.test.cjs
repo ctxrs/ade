@@ -17,6 +17,7 @@ const {
   formatSpawnFailureMessage,
   parseArgs,
   parseBatchMode,
+  parseBazelTestTimeoutSeconds,
   parsePositiveIntegerEnv,
   parseRemoteExecutionMode,
   resolvePhaseBudgetKey,
@@ -185,6 +186,80 @@ test("bazel pilot forwards local test job caps for test invocations", () => {
 
   assert.equal(invocation.commandArgs.includes("--local_test_jobs=3"), true);
   assert.equal(invocation.phases[0].commandArgs.includes("--local_test_jobs=3"), true);
+});
+
+test("bazel pilot applies a bounded Bazel test timeout for verification parent runs", () => {
+  const invocation = buildBazelPilotInvocation({
+    argv: ["test", "//core/apps/web:unit_tests_non_pretext_settings_setup"],
+    env: {
+      ...process.env,
+      CTX_BAZEL_REMOTE_EXECUTION: "off",
+      CTX_VOLATILE_ROOT: "/tmp/ctx-bazel-pilot-verify-timeout",
+      CTX_SESSION_ID: "bazel-verify-timeout-session",
+      CTX_VERIFY_PARENT_ENTRYPOINT: "verify:affected",
+    },
+  });
+
+  assert.equal(parseBazelTestTimeoutSeconds(invocation.env), 1200);
+  assert.equal(invocation.bazelTestTimeoutSeconds, 1200);
+  assert.equal(invocation.commandArgs.includes("--test_timeout=1200"), true);
+  assert.equal(invocation.phases[0].commandArgs.includes("--test_timeout=1200"), true);
+});
+
+test("bazel pilot leaves direct Bazel test commands unbounded by default", () => {
+  const invocation = buildBazelPilotInvocation({
+    argv: ["test", "//core/apps/web:unit_tests_non_pretext_settings_setup"],
+    env: {
+      ...process.env,
+      CTX_BAZEL_REMOTE_EXECUTION: "off",
+      CTX_VOLATILE_ROOT: "/tmp/ctx-bazel-pilot-direct-timeout",
+      CTX_SESSION_ID: "bazel-direct-timeout-session",
+      CTX_BAZEL_TEST_TIMEOUT_SECONDS: "",
+      CTX_VERIFY_PARENT_ENTRYPOINT: "",
+    },
+  });
+
+  assert.equal(invocation.bazelTestTimeoutSeconds, null);
+  assert.equal(invocation.commandArgs.some((entry) => entry.startsWith("--test_timeout=")), false);
+});
+
+test("bazel pilot accepts explicit Bazel test timeout overrides and disables", () => {
+  assert.equal(parseBazelTestTimeoutSeconds({ CTX_BAZEL_TEST_TIMEOUT_SECONDS: "45" }), 45);
+  assert.equal(parseBazelTestTimeoutSeconds({ CTX_BAZEL_TEST_TIMEOUT_SECONDS: "0" }), null);
+  assert.equal(parseBazelTestTimeoutSeconds({ CTX_BAZEL_TEST_TIMEOUT_SECONDS: "off" }), null);
+
+  const invocation = buildBazelPilotInvocation({
+    argv: ["test", "//core/apps/web:unit_tests_non_pretext_settings_setup"],
+    env: {
+      ...process.env,
+      CTX_BAZEL_REMOTE_EXECUTION: "off",
+      CTX_VOLATILE_ROOT: "/tmp/ctx-bazel-pilot-explicit-timeout",
+      CTX_SESSION_ID: "bazel-explicit-timeout-session",
+      CTX_BAZEL_TEST_TIMEOUT_SECONDS: "45",
+      CTX_VERIFY_PARENT_ENTRYPOINT: "",
+    },
+  });
+
+  assert.equal(invocation.commandArgs.includes("--test_timeout=45"), true);
+});
+
+test("bazel pilot rejects invalid Bazel test timeout overrides", () => {
+  assert.throws(
+    () => parseBazelTestTimeoutSeconds({ CTX_BAZEL_TEST_TIMEOUT_SECONDS: "soon" }),
+    /CTX_BAZEL_TEST_TIMEOUT_SECONDS/u,
+  );
+  assert.throws(
+    () =>
+      buildBazelPilotInvocation({
+        argv: ["test", "//core/apps/web:unit_tests_non_pretext_settings_setup"],
+        env: {
+          ...process.env,
+          CTX_BAZEL_REMOTE_EXECUTION: "off",
+          CTX_BAZEL_TEST_TIMEOUT_SECONDS: "1.5",
+        },
+      }),
+    /positive integer/u,
+  );
 });
 
 test("bazel pilot marks only local phases as host-budgeted work", () => {
@@ -756,6 +831,7 @@ test("bazel pilot defaults to cache-only on darwin and linux RBE on linux", () =
     argv: ["build", "//core/crates/ctx-core:lib"],
     env: {
       ...process.env,
+      CTX_BAZEL_REMOTE_EXECUTION: "",
       CTX_VOLATILE_ROOT: "/tmp/ctx-bazel-pilot-default-rbe",
       CTX_SESSION_ID: "bazel-default-rbe-session",
       BUILD_BUDDY_API_KEY: "buildbuddy-default-key",
@@ -883,6 +959,7 @@ test("bazel pilot uses the resolved Bazelisk command in the spawn contract", () 
     env: {
       ...process.env,
       CTX_BAZEL_REMOTE_EXECUTION: "off",
+      CTX_BAZEL_JOBS: "",
       CTX_VOLATILE_ROOT: "/tmp/ctx-bazel-pilot-binary",
       CTX_SESSION_ID: "bazel-binary-session",
     },

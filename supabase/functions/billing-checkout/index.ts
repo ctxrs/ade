@@ -3,9 +3,19 @@ import { createClient } from "npm:@supabase/supabase-js@2.49.1";
 import { corsHeaders } from "../_shared/cors.ts";
 import { resolveLocalOrigin } from "../_shared/origin.ts";
 import { getStripe } from "../_shared/stripe.ts";
+import {
+  CommercialOrgError,
+  recordTeamCheckoutPending,
+  resolveTeamCheckoutContext,
+  SupabaseCommercialOrgStore,
+} from "../_shared/commercial_orgs.ts";
 
 type CheckoutRequest = {
   interval: "month" | "year";
+  plan_type?: "pro" | "team";
+  organization_id?: string;
+  org_id?: string;
+  seat_count?: number;
   return_path?: string;
 };
 
@@ -80,7 +90,9 @@ function appendQueryParam(url: string, key: string, value: string): string {
 
 function asBearerToken(req: Request): string {
   const authHeader = req.headers.get("authorization") ?? "";
-  return authHeader.toLowerCase().startsWith("bearer ") ? authHeader.slice(7).trim() : "";
+  return authHeader.toLowerCase().startsWith("bearer ")
+    ? authHeader.slice(7).trim()
+    : "";
 }
 
 serve(async (req) => {
@@ -105,12 +117,22 @@ serve(async (req) => {
 
   const payload = await parseJson<CheckoutRequest>(req);
   const interval = payload?.interval === "year" ? "year" : "month";
+  const planType = payload?.plan_type === "team" ? "team" : "pro";
   const returnPath = payload?.return_path ?? null;
 
   const supabaseUrl = requiredEnv("SUPABASE_URL");
   const serviceRoleKey = requiredEnv("SUPABASE_SERVICE_ROLE_KEY");
-  const priceMonthly = requiredEnv("STRIPE_PRICE_ID_MONTHLY");
-  const priceYearly = requiredEnv("STRIPE_PRICE_ID_YEARLY");
+  const priceId = planType === "team"
+    ? requiredEnv(
+      interval === "year"
+        ? "STRIPE_TEAM_PRICE_ID_YEARLY"
+        : "STRIPE_TEAM_PRICE_ID_MONTHLY",
+    )
+    : requiredEnv(
+      interval === "year"
+        ? "STRIPE_PRICE_ID_YEARLY"
+        : "STRIPE_PRICE_ID_MONTHLY",
+    );
 
   const supabase = createClient(supabaseUrl, serviceRoleKey, {
     auth: { persistSession: false },
@@ -125,6 +147,106 @@ serve(async (req) => {
 
   const userId = userRes.user.id;
   const email = userRes.user.email ?? null;
+  const stripe = getStripe();
+
+  if (planType === "team") {
+    try {
+      const store = new SupabaseCommercialOrgStore(supabase);
+      const checkoutContext = await resolveTeamCheckoutContext(
+        store,
+        userId,
+        {
+          organizationId: payload?.organization_id ?? payload?.org_id,
+          interval,
+          seatCount: payload?.seat_count,
+        },
+      );
+      let stripeCustomerId = checkoutContext.stripeCustomerId ?? "";
+      if (!stripeCustomerId) {
+        const customer = await stripe.customers.create({
+          email: email ?? checkoutContext.account.primaryEmail ?? undefined,
+          name: checkoutContext.organization.name,
+          metadata: {
+            supabase_user_id: userId,
+            ctx_account_id: checkoutContext.account.id,
+            ctx_organization_id: checkoutContext.organization.id,
+            ctx_billing_subject_id: checkoutContext.billingSubjectId,
+            plan_type: "team",
+          },
+        });
+        stripeCustomerId = customer.id;
+      }
+
+      await recordTeamCheckoutPending(store, {
+        billingSubjectId: checkoutContext.billingSubjectId,
+        stripeCustomerId,
+        providerPriceId: priceId,
+        seatCount: checkoutContext.seatCount,
+      });
+
+      const baseSuccessUrl = buildReturnUrl(
+        "checkout_success",
+        origin,
+        returnPath,
+      );
+      const successUrl = appendQueryParam(
+        baseSuccessUrl,
+        "session_id",
+        "{CHECKOUT_SESSION_ID}",
+      );
+      const checkoutMetadata = {
+        supabase_user_id: userId,
+        ctx_account_id: checkoutContext.account.id,
+        ctx_organization_id: checkoutContext.organization.id,
+        ctx_billing_subject_id: checkoutContext.billingSubjectId,
+        plan_type: "team",
+        billing_interval: interval,
+      };
+      const session = await stripe.checkout.sessions.create({
+        mode: "subscription",
+        customer: stripeCustomerId,
+        client_reference_id: userId,
+        line_items: [{ price: priceId, quantity: checkoutContext.seatCount }],
+        allow_promotion_codes: true,
+        subscription_data: {
+          metadata: checkoutMetadata,
+        },
+        success_url: successUrl,
+        cancel_url: buildReturnUrl("checkout_cancel", origin, returnPath),
+        metadata: checkoutMetadata,
+      });
+
+      return new Response(
+        JSON.stringify({
+          url: session.url,
+          organization_id: checkoutContext.organization.id,
+          billing_subject_id: checkoutContext.billingSubjectId,
+          seat_count: checkoutContext.seatCount,
+        }),
+        {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+            ...corsHeaders(origin),
+          },
+        },
+      );
+    } catch (error: unknown) {
+      if (error instanceof CommercialOrgError) {
+        return new Response(
+          JSON.stringify({ error: error.code, message: error.message }),
+          {
+            status: error.status,
+            headers: {
+              "content-type": "application/json",
+              ...corsHeaders(origin),
+            },
+          },
+        );
+      }
+      throw error;
+    }
+  }
 
   const { data: profile, error: profErr } = await supabase
     .from("billing_profile")
@@ -139,8 +261,9 @@ serve(async (req) => {
     });
   }
 
-  const stripe = getStripe();
-  let stripeCustomerId = profile?.stripe_customer_id ? String(profile.stripe_customer_id) : "";
+  let stripeCustomerId = profile?.stripe_customer_id
+    ? String(profile.stripe_customer_id)
+    : "";
   if (!stripeCustomerId) {
     const customer = await stripe.customers.create({
       email: email ?? undefined,
@@ -149,13 +272,28 @@ serve(async (req) => {
     stripeCustomerId = customer.id;
     await supabase
       .from("billing_profile")
-      .update({ stripe_customer_id: stripeCustomerId, updated_at: new Date().toISOString() })
-      .eq("user_id", userId);
+      .upsert(
+        {
+          user_id: userId,
+          email,
+          stripe_customer_id: stripeCustomerId,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "user_id" },
+      );
   }
 
-  const priceId = interval === "year" ? priceYearly : priceMonthly;
   const baseSuccessUrl = buildReturnUrl("checkout_success", origin, returnPath);
-  const successUrl = appendQueryParam(baseSuccessUrl, "session_id", "{CHECKOUT_SESSION_ID}");
+  const successUrl = appendQueryParam(
+    baseSuccessUrl,
+    "session_id",
+    "{CHECKOUT_SESSION_ID}",
+  );
+  const checkoutMetadata = {
+    supabase_user_id: userId,
+    plan_type: "pro",
+    billing_interval: interval,
+  };
   const session = await stripe.checkout.sessions.create({
     mode: "subscription",
     customer: stripeCustomerId,
@@ -163,11 +301,11 @@ serve(async (req) => {
     line_items: [{ price: priceId, quantity: 1 }],
     allow_promotion_codes: true,
     subscription_data: {
-      metadata: { supabase_user_id: userId },
+      metadata: checkoutMetadata,
     },
     success_url: successUrl,
     cancel_url: buildReturnUrl("checkout_cancel", origin, returnPath),
-    metadata: { supabase_user_id: userId, plan_type: "pro", billing_interval: interval },
+    metadata: checkoutMetadata,
   });
 
   return new Response(JSON.stringify({ url: session.url }), {
