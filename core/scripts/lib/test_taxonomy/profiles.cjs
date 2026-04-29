@@ -736,7 +736,7 @@ const PROFILES = [
     },
     currentCommands: [
       "Buildkite step: Nightly benchmark evidence",
-      "pnpm -C core testing:profile:run --profile nightly-benchmark-evidence",
+      "bash ./scripts/buildkite/run_nightly_benchmark_evidence.sh",
     ],
     pipelines: ["ctx-nightly"],
     remoteStrategy: "Keep host-budget evidence on Linux and outside the main landing loop; the value is drift detection, not build graph reuse.",
