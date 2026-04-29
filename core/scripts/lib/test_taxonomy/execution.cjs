@@ -204,7 +204,12 @@ function buildRustGateCommand({ rustGateEntries, changedContext, selectionMode }
   return shellJoin("pnpm", args);
 }
 
-function buildCommandsForEntries({ selectedEntries, changedContext, selectionMode }) {
+function buildCommandsForEntries({
+  selectedEntries,
+  changedContext,
+  selectionMode,
+  coalesceCtxHttpSuites = true,
+}) {
   const commands = [];
   const ctxHttpSuites = [];
   const rustGateEntries = [];
@@ -222,7 +227,7 @@ function buildCommandsForEntries({ selectedEntries, changedContext, selectionMod
       rustGateEntries.push(entry);
       continue;
     }
-    if (entry.entrypointType === "ctx-http-suite") {
+    if (entry.entrypointType === "ctx-http-suite" && coalesceCtxHttpSuites) {
       ctxHttpSuites.push(entry.entrypoint);
       continue;
     }
@@ -340,6 +345,7 @@ function buildExecutionPlan({ profileId, changedFiles = [], touchedOnly = false,
   const commands = dedupeCommands(buildCommandsForEntries({
     selectedEntries,
     changedContext,
+    coalesceCtxHttpSuites: profile.id !== "checkin",
     selectionMode: resolvedSelectionMode,
   }));
 

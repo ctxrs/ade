@@ -16,5 +16,6 @@ ts-rs = { version = "10.1.0", features = ["no-serde-warnings"] }
 url = "2.5"
 
 [dev-dependencies]
+axum = { workspace = true }
 tempfile = "3.10"
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

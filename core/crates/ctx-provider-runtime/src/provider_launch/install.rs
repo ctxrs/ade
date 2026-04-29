@@ -13,7 +13,7 @@ mod dependencies;
 #[cfg(test)]
 mod tests;
 
-pub use bulk::start_all_provider_installs;
+pub use bulk::{should_skip_install_for_healthy_provider, start_all_provider_installs};
 
 use dependencies::{seed_running_prerequisite_progress, start_contract_readiness_dependencies};
 

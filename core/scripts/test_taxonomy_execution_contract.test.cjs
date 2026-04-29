@@ -502,6 +502,13 @@ test("checkin promotion gate includes broad stable cacheable basics", () => {
   assert.ok(plan.commands.includes("pnpm source:file-size:enforce"));
   assert.ok(plan.commands.includes("pnpm testing:taxonomy:check"));
   assert.ok(plan.commands.includes("pnpm rust:turbo:check"));
+  assert.ok(plan.commands.includes("node scripts/ctx_http_suite_task.cjs --suite attachments-routing"));
+  assert.ok(plan.commands.includes("node scripts/ctx_http_suite_task.cjs --suite base"));
+  assert.ok(plan.commands.includes("node scripts/ctx_http_suite_task.cjs --suite provider-auth"));
+  assert.equal(
+    plan.commands.some((command) => command.includes("--suite attachments-routing --suite base")),
+    false,
+  );
   assert.ok(plan.commands.includes("pnpm bazel:web:typecheck"));
   assert.ok(plan.commands.includes("pnpm bazel:web:e2e:premerge"));
   assert.ok(plan.commands.includes("pnpm bazel:buildkite:pipeline:test"));
