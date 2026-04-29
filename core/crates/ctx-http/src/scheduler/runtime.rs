@@ -57,7 +57,8 @@ use self::provider_env::{
 };
 use self::tool_runtime::{cwd_outside_worktree, maybe_spool_tool_output};
 use self::turn_start::{
-    apply_crp_launch_policy_env_for_control_mode, provider_mode_id_for, turn_start_deadline,
+    apply_crp_launch_policy_env_for_control_mode, provider_mode_id_for, record_queue_wait_metric,
+    turn_start_deadline,
 };
 use super::lifecycle::{RunningTurn, TurnStartProgress};
 use super::persistence::append_session_event_with_retry;
@@ -84,34 +85,20 @@ pub(crate) async fn start_turn(
     let execution_environment = session.execution_environment;
     let full_model_id = compose_model_id(&session.model_id, session.reasoning_effort.as_deref());
 
+    let queue_wait_ms = queued.enqueued_at.elapsed().as_millis() as u64;
+    record_queue_wait_metric(
+        state,
+        session,
+        &full_model_id,
+        execution_environment.as_str(),
+        session_root_kind,
+        queued.run_id.clone(),
+        queue_wait_ms,
+    )
+    .await;
     let mut message = queued.message;
     let message_id = message.id;
     let perf_run_id = queued.run_id.clone();
-    let queue_wait_ms = queued.enqueued_at.elapsed().as_millis() as u64;
-    let mut queue_labels = HashMap::new();
-    queue_labels.insert("provider_id".to_string(), session.provider_id.clone());
-    queue_labels.insert("model_id".to_string(), full_model_id.clone());
-    queue_labels.insert(
-        "execution_environment".to_string(),
-        execution_environment.as_str().to_string(),
-    );
-    queue_labels.insert(
-        "session_root_kind".to_string(),
-        session_root_kind.to_string(),
-    );
-    queue_labels.insert("event".to_string(), "queue_wait".to_string());
-    let queue_metric = PerfMetric {
-        name: "scheduler.queue_wait_ms".to_string(),
-        kind: PerfMetricKind::Histogram,
-        unit: "ms".to_string(),
-        value: queue_wait_ms as f64,
-        labels: queue_labels,
-    };
-    state
-        .telemetry
-        .perf_telemetry
-        .record_metric(queue_metric, perf_run_id.clone(), None, None)
-        .await;
     let run_id = message.run_id.get_or_insert_with(RunId::new).to_owned();
     let turn_id = message.turn_id.get_or_insert_with(TurnId::new).to_owned();
 
