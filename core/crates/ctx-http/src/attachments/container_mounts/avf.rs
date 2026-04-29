@@ -90,17 +90,50 @@ pub(super) fn avf_import_dir_script() -> String {
         r#"set -eu
 {}
 target="$1"
+mode="$2"
+if [ "$mode" != "ro" ] && [ "$mode" != "rw" ]; then
+  printf 'unsupported attachment mount mode: %s\n' "$mode" >&2
+  exit 2
+fi
 ensure_mount_parent_chain "." "$target"
+target_parent="${{target%/*}}"
+target_name="${{target##*/}}"
+stage=""
+temp=""
+cleanup_stage() {{
+  if [ -n "${{stage:-}}" ] && {{ [ -L "$stage" ] || [ -e "$stage" ]; }}; then
+    if [ ! -L "$stage" ]; then
+      chmod -R u+w -- "$stage" 2>/dev/null || true
+    fi
+    rm -rf -- "$stage"
+  fi
+}}
+make_stage() {{
+  stage="$(mktemp -d "$target_parent/.${{target_name}}.tmp.XXXXXX")"
+  temp="$stage/payload"
+}}
+finish_stage() {{
+  mv -- "$temp" "$target"
+  rmdir -- "$stage"
+  stage=""
+}}
+trap cleanup_stage EXIT
 if [ -L "$target" ] || [ -e "$target" ]; then
   printf 'attachment mount target already exists before import: %s\n' "$target" >&2
   exit 2
 fi
-mkdir "$target" 2>/dev/null || true
-if [ -L "$target" ] || [ ! -d "$target" ]; then
-  printf 'attachment mount target must be a directory: %s\n' "$target" >&2
+make_stage
+mkdir "$temp"
+if [ -L "$temp" ] || [ ! -d "$temp" ]; then
+  printf 'attachment mount temp target must be a directory: %s\n' "$temp" >&2
   exit 2
 fi
-tar -C "$target" -xf -
+tar -C "$temp" -xf -
+if [ "$mode" = "ro" ]; then
+  chmod -R a-w -- "$temp"
+fi
+finish_stage
+trap - EXIT
 "#,
         sandbox_mount_parent_chain_functions_script()
     )
@@ -111,12 +144,45 @@ pub(super) fn avf_import_file_script() -> String {
         r#"set -eu
 {}
 target="$1"
+mode="$2"
+if [ "$mode" != "ro" ] && [ "$mode" != "rw" ]; then
+  printf 'unsupported attachment mount mode: %s\n' "$mode" >&2
+  exit 2
+fi
 ensure_mount_parent_chain "." "$target"
+target_parent="${{target%/*}}"
+target_name="${{target##*/}}"
+stage=""
+temp=""
+cleanup_stage() {{
+  if [ -n "${{stage:-}}" ] && {{ [ -L "$stage" ] || [ -e "$stage" ]; }}; then
+    if [ ! -L "$stage" ]; then
+      chmod -R u+w -- "$stage" 2>/dev/null || true
+    fi
+    rm -rf -- "$stage"
+  fi
+}}
+make_stage() {{
+  stage="$(mktemp -d "$target_parent/.${{target_name}}.tmp.XXXXXX")"
+  temp="$stage/payload"
+}}
+finish_stage() {{
+  mv -- "$temp" "$target"
+  rmdir -- "$stage"
+  stage=""
+}}
+trap cleanup_stage EXIT
 if [ -L "$target" ] || [ -e "$target" ]; then
   printf 'attachment mount target already exists before import: %s\n' "$target" >&2
   exit 2
 fi
-cat > "$target"
+make_stage
+cat > "$temp"
+if [ "$mode" = "ro" ]; then
+  chmod -R a-w -- "$temp"
+fi
+finish_stage
+trap - EXIT
 "#,
         sandbox_mount_parent_chain_functions_script()
     )
@@ -154,8 +220,13 @@ async fn import_dir_to_avf_worktree(
     worktree_root: &Path,
     src: &Path,
     dest: &Path,
+    mode: AttachmentMode,
 ) -> Result<()> {
     let dest_rel = avf_guest_target_arg(worktree_root, dest)?;
+    let mode_arg = match mode {
+        AttachmentMode::Ro => "ro",
+        AttachmentMode::Rw => "rw",
+    };
     let mut tar_cmd = Command::new("tar");
     tar_cmd.arg("-C").arg(src).arg("-cf").arg("-").arg(".");
     tar_cmd.stdout(Stdio::piped());
@@ -175,6 +246,7 @@ async fn import_dir_to_avf_worktree(
             avf_import_dir_script(),
             "--".to_string(),
             dest_rel,
+            mode_arg.to_string(),
         ],
         &std::collections::HashMap::new(),
         None,
@@ -219,8 +291,13 @@ async fn import_file_to_avf_worktree(
     worktree_root: &Path,
     src: &Path,
     dest: &Path,
+    mode: AttachmentMode,
 ) -> Result<()> {
     let dest_rel = avf_guest_target_arg(worktree_root, dest)?;
+    let mode_arg = match mode {
+        AttachmentMode::Ro => "ro",
+        AttachmentMode::Rw => "rw",
+    };
     let mut guest_cmd = ctx_avf_linux_runtime::build_guest_exec_command(
         &state.core.data_root,
         workspace_id,
@@ -232,6 +309,7 @@ async fn import_file_to_avf_worktree(
             avf_import_file_script(),
             "--".to_string(),
             dest_rel,
+            mode_arg.to_string(),
         ],
         &std::collections::HashMap::new(),
         None,
@@ -290,6 +368,7 @@ pub(super) async fn avf_copy_source_to_mount(
             worktree_root,
             source,
             target,
+            mode,
         )
         .await?;
     } else {
@@ -300,18 +379,7 @@ pub(super) async fn avf_copy_source_to_mount(
             worktree_root,
             source,
             target,
-        )
-        .await?;
-    }
-    if mode == AttachmentMode::Ro {
-        let rel = avf_guest_rel_path(worktree_root, target)?;
-        avf_run_success(
-            state,
-            workspace_id,
-            worktree_id,
-            worktree_root,
-            "chmod",
-            &["-R".to_string(), "a-w".to_string(), "--".to_string(), rel],
+            mode,
         )
         .await?;
     }

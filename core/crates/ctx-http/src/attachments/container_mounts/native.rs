@@ -79,6 +79,28 @@ root="$1"
 target="$2"
 source="$3"
 mode="$4"
+target_parent="${{target%/*}}"
+target_name="${{target##*/}}"
+stage=""
+temp=""
+cleanup_stage() {{
+  if [ -n "${{stage:-}}" ] && {{ [ -L "$stage" ] || [ -e "$stage" ]; }}; then
+    if [ ! -L "$stage" ]; then
+      chmod -R u+w -- "$stage" 2>/dev/null || true
+    fi
+    rm -rf -- "$stage"
+  fi
+}}
+make_stage() {{
+  stage="$(mktemp -d "$target_parent/.${{target_name}}.tmp.XXXXXX")"
+  temp="$stage/payload"
+}}
+finish_stage() {{
+  mv -- "$temp" "$target"
+  rmdir -- "$stage"
+  stage=""
+}}
+trap cleanup_stage EXIT
 if [ -L "$target" ]; then
   :
 elif [ -e "$target" ]; then
@@ -97,11 +119,18 @@ if [ "$mode" = "ro" ]; then
       exit 2
     fi
   fi
-  cp -a -- "$source" "$target"
-  chmod -R a-w -- "$target"
+  make_stage
+  cp -a -- "$source" "$temp"
+  chmod -R a-w -- "$temp"
+  finish_stage
 else
-  ln -s -- "$source" "$target" || cp -a -- "$source" "$target"
+  ln -s -- "$source" "$target" || {{
+    make_stage
+    cp -a -- "$source" "$temp"
+    finish_stage
+  }}
 fi
+trap - EXIT
 "#,
         sandbox_mount_parent_chain_functions_script()
     )

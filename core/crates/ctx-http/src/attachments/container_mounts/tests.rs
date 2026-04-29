@@ -257,6 +257,29 @@ fn sandbox_guest_mount_scripts_create_and_verify_without_mkdir_p_preflight() {
             "guest mount mutation scripts must not use split validation plus mkdir -p"
         );
     }
+
+    let staging_scripts = [
+        container_mount_script(),
+        avf_import_dir_script(),
+        avf_import_file_script(),
+    ];
+    for script in staging_scripts {
+        assert!(script.contains("cleanup_stage"));
+        assert!(script.contains("trap cleanup_stage EXIT"));
+        assert!(script.contains("mktemp -d"));
+        assert!(script.contains("mv -- \"$temp\" \"$target\""));
+    }
+
+    let avf_dir_script = avf_import_dir_script();
+    assert!(
+        !avf_dir_script.contains("tar -C \"$target\""),
+        "AVF directory import must extract into staged temp, not final target"
+    );
+    let avf_file_script = avf_import_file_script();
+    assert!(
+        !avf_file_script.contains("cat > \"$target\""),
+        "AVF file import must write into staged temp, not final target"
+    );
 }
 
 #[cfg(unix)]
@@ -310,5 +333,132 @@ async fn native_ro_mount_script_propagates_copy_failure_before_chmod_success() {
     assert!(
         !output.status.success(),
         "ro mount script must fail when cp fails even if chmod succeeds"
+    );
+    assert!(
+        !target.exists(),
+        "failed native ro copy must not leave a final mount target"
+    );
+    let leftovers = std::fs::read_dir(target.parent().unwrap())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().to_string())
+        .collect::<Vec<_>>();
+    assert!(
+        leftovers.is_empty(),
+        "failed native ro copy left staged or partial entries: {leftovers:?}"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn avf_dir_import_script_cleans_temp_and_leaves_no_target_on_tar_failure() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp = tempfile::tempdir().unwrap();
+    let worktree = temp.path().join("worktree");
+    let target = worktree.join(".ctx/attachments/docs/docs");
+    let fake_bin = temp.path().join("bin");
+    std::fs::create_dir_all(&worktree).unwrap();
+    std::fs::create_dir_all(&fake_bin).unwrap();
+
+    let fake_tar = fake_bin.join("tar");
+    std::fs::write(
+        &fake_tar,
+        "#!/bin/sh\nmkdir -p \"$2\"\nprintf partial > \"$2/partial.txt\"\nexit 7\n",
+    )
+    .unwrap();
+    let mut permissions = std::fs::metadata(&fake_tar).unwrap().permissions();
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(&fake_tar, permissions).unwrap();
+
+    let path = format!(
+        "{}:{}",
+        fake_bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    let output = std::process::Command::new("sh")
+        .current_dir(&worktree)
+        .env("PATH", path)
+        .stdin(std::process::Stdio::null())
+        .arg("-lc")
+        .arg(avf_import_dir_script())
+        .arg("--")
+        .arg("./.ctx/attachments/docs/docs")
+        .arg("ro")
+        .output()
+        .unwrap();
+
+    assert!(
+        !output.status.success(),
+        "AVF directory import must fail when tar extraction fails"
+    );
+    assert!(
+        !target.exists(),
+        "failed AVF directory import must not leave a final mount target"
+    );
+    let leftovers = std::fs::read_dir(target.parent().unwrap())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().to_string())
+        .collect::<Vec<_>>();
+    assert!(
+        leftovers.is_empty(),
+        "failed AVF directory import left staged or partial entries: {leftovers:?}"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn avf_file_import_script_cleans_temp_and_leaves_no_target_on_chmod_failure() {
+    use std::io::Write;
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp = tempfile::tempdir().unwrap();
+    let worktree = temp.path().join("worktree");
+    let target = worktree.join(".ctx/attachments/docs/readme.md");
+    let fake_bin = temp.path().join("bin");
+    std::fs::create_dir_all(&worktree).unwrap();
+    std::fs::create_dir_all(&fake_bin).unwrap();
+
+    let fake_chmod = fake_bin.join("chmod");
+    std::fs::write(&fake_chmod, "#!/bin/sh\nexit 9\n").unwrap();
+    let mut permissions = std::fs::metadata(&fake_chmod).unwrap().permissions();
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(&fake_chmod, permissions).unwrap();
+
+    let path = format!(
+        "{}:{}",
+        fake_bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    let mut child = std::process::Command::new("sh")
+        .current_dir(&worktree)
+        .env("PATH", path)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .arg("-lc")
+        .arg(avf_import_file_script())
+        .arg("--")
+        .arg("./.ctx/attachments/docs/readme.md")
+        .arg("ro")
+        .spawn()
+        .unwrap();
+    child.stdin.take().unwrap().write_all(b"payload").unwrap();
+    let output = child.wait_with_output().unwrap();
+
+    assert!(
+        !output.status.success(),
+        "AVF file import must fail when read-only chmod fails"
+    );
+    assert!(
+        !target.exists(),
+        "failed AVF file import must not leave a final mount target"
+    );
+    let leftovers = std::fs::read_dir(target.parent().unwrap())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().to_string())
+        .collect::<Vec<_>>();
+    assert!(
+        leftovers.is_empty(),
+        "failed AVF file import left staged or partial entries: {leftovers:?}"
     );
 }
