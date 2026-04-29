@@ -14,10 +14,15 @@ pub(super) async fn materialize_doc_mirror(
     let dest = materialized_path_for_attachment(data_root, attachment);
     let should_update = refresh || !dest.exists();
     if should_update {
+        let temp = super::unique_materialized_temp_path(&dest)?;
         super::remove_materialized_revision_if_exists(data_root, attachment).await?;
         super::ensure_materialized_revision_parent(data_root, attachment).await?;
-        tokio::fs::create_dir(&dest).await?;
-        run_doc_mirror_cli(workspace, attachment, &dest).await?;
+        tokio::fs::create_dir(&temp).await?;
+        if let Err(err) = run_doc_mirror_cli(workspace, attachment, &temp).await {
+            super::cleanup_materialized_temp(data_root, &temp).await;
+            return Err(err);
+        }
+        super::install_materialized_temp(data_root, &temp, &dest).await?;
     } else {
         super::validate_materialized_path(data_root, attachment).await?;
     }
@@ -92,4 +97,87 @@ async fn run_doc_mirror_cli(
         );
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Utc;
+    use ctx_core::ids::WorkspaceId;
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn doc_mirror_materialization_cleans_temp_and_final_on_cli_failure() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let data_root = tempfile::tempdir().unwrap();
+        let workspace_root = tempfile::tempdir().unwrap();
+        let bin_dir = tempfile::tempdir().unwrap();
+        let bin = bin_dir.path().join("ctx-docs-mirror-fail");
+        std::fs::write(
+            &bin,
+            r#"#!/bin/sh
+out=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "--out" ]; then
+    shift
+    out="$1"
+  fi
+  shift
+done
+mkdir -p "$out"
+printf partial > "$out/partial.txt"
+exit 7
+"#,
+        )
+        .unwrap();
+        let mut permissions = std::fs::metadata(&bin).unwrap().permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&bin, permissions).unwrap();
+
+        let workspace = Workspace {
+            id: WorkspaceId::new(),
+            name: "workspace".to_string(),
+            root_path: workspace_root.path().to_string_lossy().to_string(),
+            created_at: Utc::now(),
+            vcs_kind: None,
+        };
+        let attachment = normalize_attachment_config(
+            workspace.id,
+            AttachmentConfig {
+                kind: WorkspaceAttachmentKind::DocMirror,
+                name: "Docs".to_string(),
+                source: "https://example.com/docs".to_string(),
+                revision: Some("main".to_string()),
+                subpath: None,
+                mount_relpath: None,
+                mode: None,
+                update_policy: None,
+            },
+            None,
+        )
+        .unwrap();
+
+        std::env::set_var("CTX_DOCS_MIRROR_BIN", &bin);
+        let result = materialize_doc_mirror(data_root.path(), &workspace, &attachment, true).await;
+        std::env::remove_var("CTX_DOCS_MIRROR_BIN");
+        let err = result.expect_err("failing docs mirror CLI should fail materialization");
+
+        assert!(format!("{err:#}").contains("ctx-docs-mirror failed"));
+        let dest = materialized_path_for_attachment(data_root.path(), &attachment);
+        assert!(
+            !dest.exists(),
+            "failed doc mirror materialization must not leave final revision path"
+        );
+        let leftovers = std::fs::read_dir(dest.parent().unwrap())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().to_string())
+            .collect::<Vec<_>>();
+        assert!(
+            !leftovers
+                .iter()
+                .any(|name| name.contains("materialize-tmp")),
+            "failed doc mirror materialization left temp entries: {leftovers:?}"
+        );
+    }
 }

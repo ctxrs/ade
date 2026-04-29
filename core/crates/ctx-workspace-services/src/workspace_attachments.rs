@@ -1,4 +1,6 @@
+use std::ffi::OsString;
 use std::path::{Component, Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
@@ -424,9 +426,16 @@ async fn materialize_reference_repo(
     let dest = materialized_path_for_attachment(data_root, attachment);
     let should_update = refresh || !dest.exists();
     if should_update {
+        let temp = unique_materialized_temp_path(&dest)?;
         remove_materialized_path_if_exists(data_root, &dest).await?;
         ensure_materialized_parent(data_root, &dest).await?;
-        clone_reference_repo(&attachment.source, attachment.revision.as_deref(), &dest).await?;
+        if let Err(err) =
+            clone_reference_repo(&attachment.source, attachment.revision.as_deref(), &temp).await
+        {
+            cleanup_materialized_temp(data_root, &temp).await;
+            return Err(err);
+        }
+        install_materialized_temp(data_root, &temp, &dest).await?;
     } else {
         validate_materialized_path(data_root, attachment).await?;
     }
@@ -537,12 +546,74 @@ pub(crate) async fn remove_materialized_revision_if_exists(
     remove_materialized_path_if_exists(data_root, &dest).await
 }
 
-async fn remove_materialized_path_if_exists(data_root: &Path, path: &Path) -> Result<()> {
+pub(super) async fn remove_materialized_path_if_exists(
+    data_root: &Path,
+    path: &Path,
+) -> Result<()> {
     let data_root = data_root.to_path_buf();
     let path = path.to_path_buf();
     tokio::task::spawn_blocking(move || remove_materialized_path_if_exists_sync(&data_root, &path))
         .await
         .context("joining attachment materialization cleanup task")?
+}
+
+pub(super) fn unique_materialized_temp_path(dest: &Path) -> Result<PathBuf> {
+    let parent = dest
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("attachment materialization path missing parent"))?;
+    let file_name = dest
+        .file_name()
+        .ok_or_else(|| anyhow::anyhow!("attachment materialization path missing file name"))?;
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    for attempt in 0..100 {
+        let mut temp_name = OsString::from(".");
+        temp_name.push(file_name);
+        temp_name.push(format!(
+            ".materialize-tmp.{}.{}.{}",
+            std::process::id(),
+            nanos,
+            attempt
+        ));
+        let candidate = parent.join(temp_name);
+        match std::fs::symlink_metadata(&candidate) {
+            Ok(_) => continue,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(candidate),
+            Err(err) => {
+                return Err(err).with_context(|| {
+                    format!(
+                        "checking attachment materialization temp {}",
+                        candidate.display()
+                    )
+                });
+            }
+        }
+    }
+    anyhow::bail!(
+        "unable to allocate temporary attachment materialization path for {}",
+        dest.display()
+    );
+}
+
+pub(super) async fn install_materialized_temp(
+    data_root: &Path,
+    temp: &Path,
+    dest: &Path,
+) -> Result<()> {
+    if let Err(err) = tokio::fs::rename(temp, dest)
+        .await
+        .with_context(|| format!("installing attachment materialization {}", dest.display()))
+    {
+        cleanup_materialized_temp(data_root, temp).await;
+        return Err(err);
+    }
+    Ok(())
+}
+
+pub(super) async fn cleanup_materialized_temp(data_root: &Path, temp: &Path) {
+    let _ = remove_materialized_path_if_exists(data_root, temp).await;
 }
 
 async fn ensure_materialized_parent(data_root: &Path, path: &Path) -> Result<()> {

@@ -1,5 +1,6 @@
 use super::{
-    default_mount_relpath, ensure_materialized_revision_parent, materialized_root_for_attachment,
+    default_mount_relpath, ensure_materialized_revision_parent, materialize_reference_repo,
+    materialized_path_for_attachment, materialized_root_for_attachment,
     normalize_attachment_config, remove_materialized_root_if_exists, revision_key,
     sanitize_attachment_subpath, sanitize_mount_relpath, validate_materialized_path,
     AttachmentConfig,
@@ -357,4 +358,90 @@ async fn materialized_path_validation_rejects_symlinked_revision_path() {
         .expect_err("symlinked revision path should fail");
 
     assert!(format!("{err:#}").contains("must not be a symlink"));
+}
+
+#[tokio::test]
+async fn reference_repo_materialization_cleans_temp_and_final_on_checkout_failure() {
+    let data_root = tempfile::tempdir().unwrap();
+    let source_parent = tempfile::tempdir().unwrap();
+    let source = source_parent.path().join("repo");
+    std::fs::create_dir_all(&source).unwrap();
+
+    let init = std::process::Command::new("git")
+        .arg("init")
+        .arg(&source)
+        .output()
+        .unwrap();
+    assert!(
+        init.status.success(),
+        "git init failed: {}",
+        String::from_utf8_lossy(&init.stderr)
+    );
+    std::fs::write(source.join("README.md"), "docs\n").unwrap();
+    let add = std::process::Command::new("git")
+        .arg("-C")
+        .arg(&source)
+        .arg("add")
+        .arg("README.md")
+        .output()
+        .unwrap();
+    assert!(
+        add.status.success(),
+        "git add failed: {}",
+        String::from_utf8_lossy(&add.stderr)
+    );
+    let commit = std::process::Command::new("git")
+        .arg("-C")
+        .arg(&source)
+        .arg("-c")
+        .arg("user.email=test@example.com")
+        .arg("-c")
+        .arg("user.name=Test User")
+        .arg("commit")
+        .arg("-m")
+        .arg("init")
+        .output()
+        .unwrap();
+    assert!(
+        commit.status.success(),
+        "git commit failed: {}",
+        String::from_utf8_lossy(&commit.stderr)
+    );
+
+    let attachment = normalize_attachment_config(
+        WorkspaceId::new(),
+        AttachmentConfig {
+            kind: WorkspaceAttachmentKind::ReferenceRepo,
+            name: "Docs".to_string(),
+            source: source.to_string_lossy().to_string(),
+            revision: Some("deadbee".to_string()),
+            subpath: None,
+            mount_relpath: None,
+            mode: None,
+            update_policy: None,
+        },
+        None,
+    )
+    .unwrap();
+
+    let err = materialize_reference_repo(data_root.path(), &attachment, true)
+        .await
+        .expect_err("invalid checkout revision should fail");
+
+    assert!(format!("{err:#}").contains("git fetch failed"));
+    let dest = materialized_path_for_attachment(data_root.path(), &attachment);
+    assert!(
+        !dest.exists(),
+        "failed reference repo materialization must not leave final revision path"
+    );
+    let leftovers = std::fs::read_dir(dest.parent().unwrap())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().to_string())
+        .collect::<Vec<_>>();
+    assert!(
+        !leftovers
+            .iter()
+            .any(|name| name.contains("materialize-tmp")),
+        "failed reference repo materialization left temp entries: {leftovers:?}"
+    );
 }

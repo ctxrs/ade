@@ -684,13 +684,8 @@ pub(crate) async fn cleanup_removed_attachment(
             };
             let data_plane = resolve_worktree_data_plane(state, worktree).await?;
             validate_mount_path_in_worktree(&data_plane.live_worktree_root, &path)?;
-            let _ = container_remove_mount_path(
-                state,
-                attachment.workspace_id,
-                mount.worktree_id,
-                &path,
-            )
-            .await;
+            container_remove_mount_path(state, attachment.workspace_id, mount.worktree_id, &path)
+                .await?;
         } else {
             let Some(worktree) = worktree.as_ref() else {
                 anyhow::bail!(
