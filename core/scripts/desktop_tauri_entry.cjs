@@ -10,6 +10,7 @@ const { resolveDesktopBuildIdentity } = require("./lib/desktop_build_identity.cj
 
 const coreRoot = path.resolve(__dirname, "..");
 const desktopAppRoot = path.join(coreRoot, "apps", "desktop");
+const desktopTauriConfigPath = path.join(desktopAppRoot, "src-tauri", "tauri.conf.json");
 const localTauriBin = path.join(desktopAppRoot, "node_modules", ".bin", "tauri");
 
 function fail(message) {
@@ -61,12 +62,72 @@ function createTauriIdentityOverride({ command, prepMode, env = process.env }) {
   });
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-tauri-identity-"));
   const configPath = path.join(tempDir, "tauri.identity.json");
-  fs.writeFileSync(configPath, `${JSON.stringify({ version: identity.exactVersion }, null, 2)}\n`, "utf8");
+  const config = {
+    version: identity.exactVersion,
+    ...createExtraBundleResourcesConfig(env),
+  };
+  fs.writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
   return {
     configPath,
     tempDir,
     identity,
   };
+}
+
+function createExtraBundleResourcesConfig(env = process.env) {
+  const extraResources = parseExtraBundleResources(env);
+  if (extraResources.length === 0) {
+    return {};
+  }
+  return {
+    bundle: {
+      resources: mergeBundleResources(readBaseBundleResources(), extraResources),
+    },
+  };
+}
+
+function parseExtraBundleResources(env = process.env) {
+  const raw = String(env.CTX_TAURI_EXTRA_BUNDLE_RESOURCES_JSON || "").trim();
+  if (!raw) {
+    return [];
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    throw new Error(
+      `CTX_TAURI_EXTRA_BUNDLE_RESOURCES_JSON must be a JSON string array: ${err?.message ?? err}`,
+    );
+  }
+  if (!Array.isArray(parsed)) {
+    throw new Error("CTX_TAURI_EXTRA_BUNDLE_RESOURCES_JSON must be a JSON string array");
+  }
+  return parsed.map((entry, index) => {
+    const value = String(entry || "").trim();
+    if (!value) {
+      throw new Error(`CTX_TAURI_EXTRA_BUNDLE_RESOURCES_JSON[${index}] must not be empty`);
+    }
+    return value;
+  });
+}
+
+function readBaseBundleResources() {
+  const config = JSON.parse(fs.readFileSync(desktopTauriConfigPath, "utf8"));
+  const resources = config?.bundle?.resources;
+  if (!Array.isArray(resources)) {
+    throw new Error("tauri.conf.json bundle.resources must be an array");
+  }
+  return resources.map((entry, index) => {
+    const value = String(entry || "").trim();
+    if (!value) {
+      throw new Error(`tauri.conf.json bundle.resources[${index}] must not be empty`);
+    }
+    return value;
+  });
+}
+
+function mergeBundleResources(baseResources, extraResources) {
+  return [...new Set([...baseResources, ...extraResources])];
 }
 
 function createInvocation(argv = process.argv, env = process.env) {
@@ -185,8 +246,10 @@ if (require.main === module) {
 
 module.exports = {
   createInvocation,
+  mergeBundleResources,
   main,
   normalizeTauriCliEnv,
+  parseExtraBundleResources,
   parseArgs,
   resolvePrepMode,
   resolveTauriBudgetKey,

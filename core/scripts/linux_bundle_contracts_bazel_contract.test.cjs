@@ -8,6 +8,10 @@ const path = require("node:path");
 const repoRoot = path.resolve(__dirname, "..", "..");
 const toolsBuild = fs.readFileSync(path.join(repoRoot, "tools", "bazel", "BUILD.bazel"), "utf8");
 const helperScript = fs.readFileSync(path.join(repoRoot, "tools", "bazel", "linux_bundle_contracts.sh"), "utf8");
+const linuxTauriBundleScript = fs.readFileSync(
+  path.join(repoRoot, "scripts", "release_linux_tauri_bundle_in_container.sh"),
+  "utf8",
+);
 const releaseVerifier = fs.readFileSync(path.join(repoRoot, "scripts", "release_verify_supabase.sh"), "utf8");
 const tauriConfig = JSON.parse(
   fs.readFileSync(
@@ -28,8 +32,14 @@ test("linux bundle contracts expose a Bazel-owned release wrapper", () => {
 });
 
 test("linux AppImage packaging includes manifest-declared ctx-mcp runtime payloads", () => {
-  assert.ok(
+  assert.equal(
     tauriConfig.bundle.resources.includes("bundles/runtimes/ctx-mcp/**/*"),
+    false,
+    "The ctx-mcp runtime resource is Linux-only; the global macOS Tauri config must stay thin",
+  );
+  assert.match(
+    linuxTauriBundleScript,
+    /CTX_TAURI_EXTRA_BUNDLE_RESOURCES_JSON='\["bundles\/runtimes\/ctx-mcp\/\*\*\/\*"\]'/,
     "Linux AppImages must package the ctx-mcp runtime path declared in bundles/manifest.json",
   );
   assert.match(

@@ -153,6 +153,7 @@ if ! \
   CI=true \
   CTX_DESKTOP_SYNC_BUNDLES=0 \
   CTX_BUNDLE_REMOTE_DAEMONS=0 \
+  CTX_TAURI_EXTRA_BUNDLE_RESOURCES_JSON='["bundles/runtimes/ctx-mcp/**/*"]' \
   CTX_HTTP_BAZEL_TARGET_KEY="$ctx_http_bazel_target" \
   RUST_LOG=tauri_bundler=debug \
   node core/scripts/desktop_tauri_entry.cjs build -- --bundles appimage; then

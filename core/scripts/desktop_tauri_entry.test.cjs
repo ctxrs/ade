@@ -6,7 +6,9 @@ const path = require("node:path");
 
 const {
   createInvocation,
+  mergeBundleResources,
   normalizeTauriCliEnv,
+  parseExtraBundleResources,
   resolvePrepMode,
   resolveTauriBudgetKey,
   shouldSkipPrep,
@@ -107,6 +109,33 @@ test("desktop_tauri_entry normalizes CI=1 for the tauri CLI", () => {
   });
   assert.equal(normalized.CI, "true");
   assert.equal(normalized.OTHER, "value");
+});
+
+test("desktop_tauri_entry can inject Linux-only bundle resources into the generated config", () => {
+  const invocation = createInvocation(
+    ["node", "desktop_tauri_entry", "build", "--bundles", "appimage"],
+    {
+      CTX_TAURI_EXTRA_BUNDLE_RESOURCES_JSON: JSON.stringify(["bundles/runtimes/ctx-mcp/**/*"]),
+    },
+  );
+  const generatedConfig = require(invocation.tauriExecArgs[2]);
+  assert.equal(generatedConfig.version, currentDesktopVersion);
+  assert.ok(generatedConfig.bundle.resources.includes("bundles/manifest.json"));
+  assert.ok(generatedConfig.bundle.resources.includes("bundles/runtimes/ctx-mcp/**/*"));
+});
+
+test("desktop_tauri_entry validates extra resource configuration", () => {
+  assert.deepEqual(
+    parseExtraBundleResources({
+      CTX_TAURI_EXTRA_BUNDLE_RESOURCES_JSON: JSON.stringify(["bundles/runtimes/ctx-mcp/**/*"]),
+    }),
+    ["bundles/runtimes/ctx-mcp/**/*"],
+  );
+  assert.throws(
+    () => parseExtraBundleResources({ CTX_TAURI_EXTRA_BUNDLE_RESOURCES_JSON: "{}" }),
+    /JSON string array/,
+  );
+  assert.deepEqual(mergeBundleResources(["a", "b"], ["b", "c"]), ["a", "b", "c"]);
 });
 
 test("desktop_tauri_entry only budgets build commands", () => {
