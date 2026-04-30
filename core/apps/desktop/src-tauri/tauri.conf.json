@@ -38,6 +38,7 @@
       "bundles/artifact_identity.json",
       "bundles/runtime_lock.v1.json",
       "bundles/runtime_lock.v2.json",
+      "bundles/runtimes/ctx-mcp/**/*",
       "bundles/lucide-settings.svg"
     ],
     "externalBin": ["bin/ctx-daemon", "bin/ctx-mcp"],

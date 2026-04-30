@@ -8,6 +8,13 @@ const path = require("node:path");
 const repoRoot = path.resolve(__dirname, "..", "..");
 const toolsBuild = fs.readFileSync(path.join(repoRoot, "tools", "bazel", "BUILD.bazel"), "utf8");
 const helperScript = fs.readFileSync(path.join(repoRoot, "tools", "bazel", "linux_bundle_contracts.sh"), "utf8");
+const releaseVerifier = fs.readFileSync(path.join(repoRoot, "scripts", "release_verify_supabase.sh"), "utf8");
+const tauriConfig = JSON.parse(
+  fs.readFileSync(
+    path.join(repoRoot, "core", "apps", "desktop", "src-tauri", "tauri.conf.json"),
+    "utf8",
+  ),
+);
 
 test("linux bundle contracts expose a Bazel-owned release wrapper", () => {
   assert.match(toolsBuild, /"linux_bundle_contracts\.sh"/);
@@ -18,6 +25,18 @@ test("linux bundle contracts expose a Bazel-owned release wrapper", () => {
   assert.match(helperScript, /--bundles-dir "\$bundles_dir" --mode both/);
   assert.match(helperScript, /--platform "\$platform"/);
   assert.match(helperScript, /--prune-glibc/);
+});
+
+test("linux AppImage packaging includes manifest-declared ctx-mcp runtime payloads", () => {
+  assert.ok(
+    tauriConfig.bundle.resources.includes("bundles/runtimes/ctx-mcp/**/*"),
+    "Linux AppImages must package the ctx-mcp runtime path declared in bundles/manifest.json",
+  );
+  assert.match(
+    releaseVerifier,
+    /verify_bundle_manifest_closure\.cjs/,
+    "Supabase verification must reject AppImages with manifest-declared files missing from the packaged bundle",
+  );
 });
 
 test("linux bundle gate requires ctx-mcp runtime for the release platform", () => {
