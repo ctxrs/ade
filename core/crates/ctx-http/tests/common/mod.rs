@@ -32,7 +32,9 @@ pub mod openai_responses_stub;
 pub mod updates_failure_safety;
 
 const JJ_MIN_VERSION: (u64, u64, u64) = (0, 25, 0);
-const TEST_VCS_COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
+// Loaded Bazel slices can starve tiny VCS subprocesses on macOS.
+// Keep the helper bounded above observed sandbox latency.
+const TEST_VCS_COMMAND_TIMEOUT: Duration = Duration::from_secs(180);
 
 fn copied_test_binary_dir() -> &'static tempfile::TempDir {
     static DIR: OnceLock<tempfile::TempDir> = OnceLock::new();

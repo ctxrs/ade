@@ -325,6 +325,14 @@ async fn worktree_vcs_snapshot_recovers_when_repo_is_reinitialized() {
     let app = common::router(state.clone());
 
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
+    let workspace_store = state
+        .store_for_workspace(ws.id)
+        .await
+        .expect("workspace store should open");
+    let primary_branch = ctx_workspace_config::load_primary_branch(&workspace_store)
+        .await
+        .expect("loading primary branch should succeed")
+        .expect("workspace primary branch should be configured");
     let (_task, session) =
         common::create_task_with_session(&app, ws.id.0, "snapshot-recovery", "fake", "fake-model")
             .await;
@@ -363,6 +371,8 @@ async fn worktree_vcs_snapshot_recovers_when_repo_is_reinitialized() {
 
     remove_git_marker(worktree_root).await;
     run_git(worktree_root, &["init"]).await;
+    let primary_ref = format!("refs/heads/{primary_branch}");
+    run_git(worktree_root, &["symbolic-ref", "HEAD", primary_ref.as_str()]).await;
     run_git(worktree_root, &["config", "user.email", "test@example.com"]).await;
     run_git(worktree_root, &["config", "user.name", "Test"]).await;
     run_git(worktree_root, &["add", "."]).await;
@@ -397,7 +407,9 @@ async fn worktree_vcs_snapshot_recovers_when_repo_is_reinitialized() {
         }
 
         if start.elapsed() > Duration::from_secs(5) {
-            panic!("timed out waiting for recovered vcs snapshot to become available");
+            panic!(
+                "timed out waiting for recovered vcs snapshot to become available: {recovered:?}"
+            );
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }

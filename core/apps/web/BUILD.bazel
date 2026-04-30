@@ -103,6 +103,7 @@ WEB_PRETEXT_APP_SOURCES = [
     "src/utils/modelEffort.ts",
     "src/utils/pretextPerfDiagnostics.ts",
     "src/utils/randomUuid.ts",
+    "src/utils/runtime.ts",
     "src/utils/useRelativeNowMs.ts",
 ], allow_empty = True)
 

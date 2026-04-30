@@ -57,7 +57,7 @@ test("ctx-http changes fan out into suite-level commands", () => {
   const commands = runScenario(["core/crates/ctx-http/src/api/mod.rs"]);
 
   assert.deepEqual(commands, [
-    "bash -lc node scripts/ctx_http_suite_task.cjs --suite attachments-routing --suite base --suite provider-auth --suite provider-runtime-simulated --suite repo-vcs --suite sandbox-runtime-simulated --suite scheduler-runtime --suite subagents-control --suite turns-terminal --suite updates-release --suite workspace-stream",
+    "bash -lc node scripts/ctx_http_suite_task.cjs --suite attachments-routing --suite provider-auth --suite provider-runtime-simulated --suite repo-vcs --suite sandbox-runtime-simulated --suite scheduler-runtime --suite subagents-control --suite turns-terminal --suite unit-tests-api --suite unit-tests-lib --suite updates-release --suite workspace-stream",
   ]);
 });
 
@@ -77,19 +77,26 @@ test("web high-risk changes escalate to the canonical premerge browser suite", (
   assert.deepEqual(commands, [
     "bash -lc pnpm bazel:web:unit:non-pretext:foundation:state",
     "bash -lc pnpm bazel:web:e2e:premerge",
+    "bash -lc pnpm bazel:provider-auth:validate",
   ]);
 });
 
 test("web settings-only changes stay off the dedicated pretext measurement slice", () => {
   const commands = runScenario(["core/apps/web/src/pages/settings/SettingsPage.tsx"]);
 
-  assert.deepEqual(commands, ["bash -lc pnpm bazel:web:unit:non-pretext:settings-setup"]);
+  assert.deepEqual(commands, [
+    "bash -lc pnpm bazel:web:unit:non-pretext:settings-setup",
+    "bash -lc pnpm bazel:provider-auth:validate",
+  ]);
 });
 
 test("pretext measurement changes route to the dedicated pretext unit slice", () => {
   const commands = runScenario(["core/apps/web/src/pages/sessionThread/sessionMarkdownInlineMeasurement.ts"]);
 
-  assert.deepEqual(commands, ["bash -lc pnpm bazel:web:pretext:measurement"]);
+  assert.deepEqual(commands, [
+    "bash -lc pnpm bazel:web:pretext:measurement",
+    "bash -lc pnpm bazel:provider-auth:validate",
+  ]);
 });
 
 test("extracted layout package changes route to direct package truth plus app coverage", () => {
@@ -130,6 +137,7 @@ test("session workbench changes stay on the dedicated session surface shard", ()
 
   assert.deepEqual(commands, [
     "bash -lc pnpm bazel:web:unit:non-pretext:workbench:surface:session",
+    "bash -lc pnpm bazel:provider-auth:validate",
   ]);
 });
 
@@ -138,6 +146,7 @@ test("workbench shell changes stay on the dedicated shell shard", () => {
 
   assert.deepEqual(commands, [
     "bash -lc pnpm bazel:web:unit:non-pretext:workbench:shell",
+    "bash -lc pnpm bazel:provider-auth:validate",
   ]);
 });
 
@@ -146,29 +155,32 @@ test("foundation utility changes stay on the shared foundation shard", () => {
 
   assert.deepEqual(commands, [
     "bash -lc pnpm bazel:web:unit:non-pretext:foundation:shared",
+    "bash -lc pnpm bazel:provider-auth:validate",
   ]);
 });
 
 test("root-level Rust config changes expand to the affected workspace Rust gate set", () => {
   const commands = runScenario(["core/Cargo.lock"]);
 
-  assert.equal(commands[0], "bash -lc pnpm rust:turbo:check");
-  assert.equal(commands.length, 2);
-  assert.match(commands[1], /^bash -lc pnpm exec node scripts\/run_rust_gate\.cjs --mode workspace --include-reverse-deps --clippy --test-strategy mixed /u);
-  assert.match(commands[1], /--crate ctx-core/u);
-  assert.match(commands[1], /--crate ctx-provider-accounts/u);
-  assert.doesNotMatch(commands[1], /--changed-file/u);
+  assert.equal(commands[0], "bash -lc pnpm rust:bazel-deps:check");
+  assert.equal(commands[1], "bash -lc pnpm rust:turbo:check");
+  assert.equal(commands.length, 3);
+  assert.match(commands[2], /^bash -lc pnpm exec node scripts\/run_rust_gate\.cjs --mode workspace --include-reverse-deps --clippy --test-strategy mixed /u);
+  assert.match(commands[2], /--crate ctx-core/u);
+  assert.match(commands[2], /--crate ctx-provider-accounts/u);
+  assert.doesNotMatch(commands[2], /--changed-file/u);
 });
 
 test("root-level Rust toolchain changes expand to the affected workspace Rust gate set", () => {
   const commands = runScenario(["core/rust-toolchain.toml"]);
 
-  assert.equal(commands[0], "bash -lc pnpm rust:turbo:check");
-  assert.equal(commands.length, 2);
-  assert.match(commands[1], /^bash -lc pnpm exec node scripts\/run_rust_gate\.cjs --mode workspace --include-reverse-deps --clippy --test-strategy mixed /u);
-  assert.match(commands[1], /--crate ctx-core/u);
-  assert.match(commands[1], /--crate ctx-provider-accounts/u);
-  assert.doesNotMatch(commands[1], /--changed-file/u);
+  assert.equal(commands[0], "bash -lc pnpm rust:bazel-deps:check");
+  assert.equal(commands[1], "bash -lc pnpm rust:turbo:check");
+  assert.equal(commands.length, 3);
+  assert.match(commands[2], /^bash -lc pnpm exec node scripts\/run_rust_gate\.cjs --mode workspace --include-reverse-deps --clippy --test-strategy mixed /u);
+  assert.match(commands[2], /--crate ctx-core/u);
+  assert.match(commands[2], /--crate ctx-provider-accounts/u);
+  assert.doesNotMatch(commands[2], /--changed-file/u);
 });
 
 test("combined root-level Rust and crate changes expand to the affected workspace Rust gate and dependent suites", () => {
@@ -177,13 +189,14 @@ test("combined root-level Rust and crate changes expand to the affected workspac
     "core/crates/ctx-provider-accounts/src/lib.rs",
   ]);
 
-  assert.equal(commands[0], "bash -lc pnpm rust:turbo:check");
-  assert.equal(commands[1], "bash -lc node scripts/ctx_http_suite_task.cjs --suite provider-auth --suite provider-runtime-simulated");
-  assert.equal(commands.length, 3);
-  assert.match(commands[2], /^bash -lc pnpm exec node scripts\/run_rust_gate\.cjs --mode workspace --include-reverse-deps --clippy --test-strategy mixed /u);
-  assert.match(commands[2], /--crate ctx-core/u);
-  assert.match(commands[2], /--crate ctx-provider-accounts/u);
-  assert.doesNotMatch(commands[2], /--changed-file/u);
+  assert.equal(commands[0], "bash -lc pnpm rust:bazel-deps:check");
+  assert.equal(commands[1], "bash -lc pnpm rust:turbo:check");
+  assert.equal(commands[2], "bash -lc node scripts/ctx_http_suite_task.cjs --suite provider-auth --suite provider-runtime-simulated");
+  assert.equal(commands.length, 4);
+  assert.match(commands[3], /^bash -lc pnpm exec node scripts\/run_rust_gate\.cjs --mode workspace --include-reverse-deps --clippy --test-strategy mixed /u);
+  assert.match(commands[3], /--crate ctx-core/u);
+  assert.match(commands[3], /--crate ctx-provider-accounts/u);
+  assert.doesNotMatch(commands[3], /--changed-file/u);
 });
 
 test("no-change path uses the platform-aware fast gate", () => {
