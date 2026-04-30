@@ -28,7 +28,7 @@ const shouldRefreshLocalDesktopConnection = (info) => {
 const connectionSignature = (connection) => JSON.stringify({
   kind: connection?.kind || null,
   base_url: connection?.base_url || null,
-  token: connection?.token || null,
+  browser_query_secret: connection?.browser_query_secret || null,
   host: connection?.host || null,
   user: connection?.user || null,
   remote_port: connection?.remote_port ?? null,
@@ -100,14 +100,14 @@ const getDesktopConnection = async () => {
     throw new Error("desktop_get_connection returned no connection info");
   }
 
-  if (info.base_url && info.token) {
+  if (info.base_url && info.browser_query_secret) {
     if (shouldRefreshLocalDesktopConnection(info)) {
       const refreshed = await invokeDesktop("desktop_connect_local");
-      if (refreshed && refreshed.base_url && refreshed.token) {
+      if (refreshed && refreshed.base_url && refreshed.browser_query_secret) {
         return maybeDirectRemoteDaemonConnection(refreshed);
       }
       throw new Error(
-        `desktop_connect_local returned no connection info after stale/local refresh: ${JSON.stringify(refreshed || info)}`,
+        `desktop_connect_local returned no browser-scoped connection info after stale/local refresh: ${JSON.stringify(refreshed || info)}`,
       );
     }
     return maybeDirectRemoteDaemonConnection(info);
@@ -116,15 +116,15 @@ const getDesktopConnection = async () => {
   if (info.kind === "none" || info.kind === "local") {
     await invokeDesktop("desktop_connect_local");
     const refreshed = await invokeDesktop("desktop_get_connection");
-    if (refreshed && refreshed.base_url && refreshed.token) {
+    if (refreshed && refreshed.base_url && refreshed.browser_query_secret) {
       return maybeDirectRemoteDaemonConnection(refreshed);
     }
     throw new Error(
-      `desktop connection missing base_url/token after desktop_connect_local: ${JSON.stringify(refreshed || info)}`,
+      `desktop connection missing base_url/browser_query_secret after desktop_connect_local: ${JSON.stringify(refreshed || info)}`,
     );
   }
 
-  throw new Error(`desktop_get_connection missing base_url/token: ${JSON.stringify(info)}`);
+  throw new Error(`desktop_get_connection missing base_url/browser_query_secret: ${JSON.stringify(info)}`);
 };
 
 const getCachedDesktopConnection = async () => {
@@ -138,16 +138,16 @@ const getCachedDesktopConnection = async () => {
 
 const daemonHttpJson = async (connection, method, apiPath, body) => {
   const base = String(connection.base_url || "");
-  const token = String(connection.token || "");
-  if (!base || !token) {
-    throw new Error(`daemon connection missing base_url/token: ${JSON.stringify(connection || null)}`);
+  const browserQuerySecret = String(connection.browser_query_secret || "");
+  if (!base || !browserQuerySecret) {
+    throw new Error(`daemon connection missing base_url/browser_query_secret: ${JSON.stringify(connection || null)}`);
   }
   if (typeof fetch !== "function") {
     throw new Error("global fetch is not available in this Node runtime");
   }
   const url = new URL(apiPath, base).toString();
   const headers = {
-    authorization: `Bearer ${token}`,
+    authorization: `Bearer ${browserQuerySecret}`,
     "content-type": "application/json",
   };
   const controller = new AbortController();

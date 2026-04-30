@@ -31,7 +31,7 @@ test("daemonJson uses host-side fetch and reuses the cached desktop connection",
         info: {
           kind: "local",
           base_url: "http://127.0.0.1:4399",
-          token: "token-one",
+          browser_query_secret: "browser-secret-one",
         },
       };
     },
@@ -58,15 +58,15 @@ test("daemonJson uses host-side fetch and reuses the cached desktop connection",
     {
       url: "http://127.0.0.1:4399/api/health",
       method: "GET",
-      authorization: "Bearer token-one",
+      authorization: "Bearer browser-secret-one",
     },
     {
       url: "http://127.0.0.1:4399/api/providers",
       method: "GET",
-      authorization: "Bearer token-one",
+      authorization: "Bearer browser-secret-one",
     },
   ]);
-  assert.deepEqual(executeCalls, ["desktop_get_connection"]);
+  assert.deepEqual(executeCalls, ["desktop_get_connection", "desktop_connect_local"]);
 });
 
 test("daemonJson refreshes the desktop connection after an auth failure", async () => {
@@ -75,14 +75,14 @@ test("daemonJson refreshes the desktop connection after an auth failure", async 
   let connectionIndex = 0;
   const connections = [
     {
-      kind: "local",
+      kind: "ssh",
       base_url: "http://127.0.0.1:4400",
-      token: "token-old",
+      browser_query_secret: "browser-secret-old",
     },
     {
-      kind: "local",
+      kind: "ssh",
       base_url: "http://127.0.0.1:4400",
-      token: "token-new",
+      browser_query_secret: "browser-secret-new",
     },
   ];
 
@@ -115,11 +115,11 @@ test("daemonJson refreshes the desktop connection after an auth failure", async 
   assert.deepEqual(fetchCalls, [
     {
       url: "http://127.0.0.1:4400/api/workspaces",
-      authorization: "Bearer token-old",
+      authorization: "Bearer browser-secret-old",
     },
     {
       url: "http://127.0.0.1:4400/api/workspaces",
-      authorization: "Bearer token-new",
+      authorization: "Bearer browser-secret-new",
     },
   ]);
   assert.deepEqual(executeCalls, ["desktop_get_connection", "desktop_get_connection"]);
@@ -131,14 +131,14 @@ test("daemonJsonOnce performs a single transport attempt while still refreshing 
   let connectionIndex = 0;
   const connections = [
     {
-      kind: "local",
+      kind: "ssh",
       base_url: "http://127.0.0.1:4401",
-      token: "token-old",
+      browser_query_secret: "browser-secret-old",
     },
     {
-      kind: "local",
+      kind: "ssh",
       base_url: "http://127.0.0.1:4401",
-      token: "token-new",
+      browser_query_secret: "browser-secret-new",
     },
   ];
 
@@ -171,11 +171,11 @@ test("daemonJsonOnce performs a single transport attempt while still refreshing 
   assert.deepEqual(fetchCalls, [
     {
       url: "http://127.0.0.1:4401/api/health",
-      authorization: "Bearer token-old",
+      authorization: "Bearer browser-secret-old",
     },
     {
       url: "http://127.0.0.1:4401/api/health",
-      authorization: "Bearer token-new",
+      authorization: "Bearer browser-secret-new",
     },
   ]);
   assert.deepEqual(executeCalls, ["desktop_get_connection", "desktop_get_connection"]);
@@ -195,7 +195,7 @@ test("daemonJson uses the direct remote daemon URL for ssh connections when expl
         info: {
           kind: "ssh",
           base_url: "http://127.0.0.1:51575",
-          token: "token-one",
+          browser_query_secret: "browser-secret-one",
           host: "127.0.0.1",
           remote_port: 44099,
           user: "ctxfixture",
@@ -223,7 +223,7 @@ test("daemonJson uses the direct remote daemon URL for ssh connections when expl
     {
       url: "http://127.0.0.1:44099/api/health",
       method: "GET",
-      authorization: "Bearer token-one",
+      authorization: "Bearer browser-secret-one",
     },
   ]);
   assert.deepEqual(executeCalls, ["desktop_get_connection"]);
@@ -239,7 +239,7 @@ test("daemonJson prefers an explicit direct remote daemon URL over the desktop t
       info: {
         kind: "ssh",
         base_url: "http://127.0.0.1:51575",
-        token: "token-two",
+        browser_query_secret: "browser-secret-two",
       },
     }),
   };
@@ -261,7 +261,28 @@ test("daemonJson prefers an explicit direct remote daemon URL over the desktop t
   assert.deepEqual(fetchCalls, [
     {
       url: "http://127.0.0.1:47123/api/health",
-      authorization: "Bearer token-two",
+      authorization: "Bearer browser-secret-two",
     },
   ]);
+});
+
+test("daemonJson requires browser_query_secret rather than the raw desktop token", async () => {
+  global.browser = {
+    execute: async () => ({
+      info: {
+        kind: "ssh",
+        base_url: "http://127.0.0.1:51575",
+        token: "raw-token-must-not-be-used",
+      },
+    }),
+  };
+  global.fetch = async () => {
+    throw new Error("fetch should not run without browser_query_secret");
+  };
+
+  const { daemonJson } = loadDaemonHelper();
+  await assert.rejects(
+    () => daemonJson("GET", "/api/health"),
+    /desktop_get_connection missing base_url\/browser_query_secret/,
+  );
 });
