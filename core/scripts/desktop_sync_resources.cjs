@@ -12,6 +12,7 @@ const { validateRuntimeLock } = require("./runtime_lock_validate.cjs");
 const args = process.argv.slice(2);
 const profileIdx = args.indexOf("--profile");
 const profile = profileIdx !== -1 ? args[profileIdx + 1] : "debug";
+const bundleLinuxCtxMcpRuntimeOnly = args.includes("--bundle-linux-ctx-mcp-runtime-only");
 const syncBundlesEnabled = resolveBoolishFlag(process.env.CTX_DESKTOP_SYNC_BUNDLES, true, "CTX_DESKTOP_SYNC_BUNDLES");
 const allowManagedAvfRuntimeMissingLocalPayload = resolveBoolishFlag(
   process.env.CTX_DESKTOP_ALLOW_MANAGED_AVF_RUNTIME_MISSING_LOCAL_PAYLOAD,
@@ -1507,6 +1508,20 @@ const main = () => {
   }
   if (!fs.existsSync(desktopTauriRoot)) {
     throw new Error(`missing desktop tauri project dir: ${desktopTauriRoot}`);
+  }
+
+  if (bundleLinuxCtxMcpRuntimeOnly) {
+    bundleLinuxCtxMcpRuntime(destBundleDir);
+    const effectiveManifestPath = writeEffectiveBundleManifest(destBundleDir);
+    const artifactIdentity = writeArtifactIdentity(destBundleDir);
+    const bundledProviderManifestPath = writeBundledProviderManifest(destBundleDir, process.env);
+    console.log("desktop_sync_resources: bundled linux ctx-mcp runtime", {
+      bundleDir: destBundleDir,
+      effectiveManifestPath,
+      artifactIdentity,
+      bundledProviderManifestPath,
+    });
+    return;
   }
 
   // Ensure deterministic contents.

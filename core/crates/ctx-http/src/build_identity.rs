@@ -3,9 +3,7 @@ use serde::Deserialize;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
-const ARTIFACT_IDENTITY_FILENAME: &str = "artifact_identity.json";
 const BUILD_IDENTITY_PATH_ENV: &str = "CTX_BUILD_IDENTITY_PATH";
-const BUNDLE_DIR_ENV: &str = "CTX_BUNDLE_DIR";
 
 #[derive(Clone, Debug, Deserialize)]
 pub(crate) struct BuildIdentity {
@@ -45,17 +43,7 @@ fn configured_identity_path() -> Result<Option<PathBuf>> {
         }
         return Ok(Some(PathBuf::from(trimmed)));
     }
-    let bundle_dir = std::env::var(BUNDLE_DIR_ENV).ok();
-    let Some(raw) = bundle_dir else {
-        return Ok(None);
-    };
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        anyhow::bail!("{BUNDLE_DIR_ENV} must not be empty when set");
-    }
-    Ok(Some(
-        PathBuf::from(trimmed).join(ARTIFACT_IDENTITY_FILENAME),
-    ))
+    Ok(None)
 }
 
 fn parse_build_identity(path: &Path) -> Result<BuildIdentity> {
@@ -103,10 +91,49 @@ pub(crate) fn current_build_identity() -> Result<&'static BuildIdentity> {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_build_identity;
+    use super::{configured_identity_path, load_build_identity, parse_build_identity};
     use std::fs;
     use std::path::PathBuf;
+    use std::sync::{Mutex, MutexGuard};
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    struct EnvGuard {
+        _lock: MutexGuard<'static, ()>,
+        build_identity_path: Option<String>,
+        bundle_dir: Option<String>,
+    }
+
+    impl EnvGuard {
+        fn new() -> Self {
+            let lock = ENV_LOCK.lock().expect("build identity env lock poisoned");
+            let build_identity_path = std::env::var(super::BUILD_IDENTITY_PATH_ENV).ok();
+            let bundle_dir = std::env::var("CTX_BUNDLE_DIR").ok();
+            std::env::remove_var(super::BUILD_IDENTITY_PATH_ENV);
+            std::env::remove_var("CTX_BUNDLE_DIR");
+            Self {
+                _lock: lock,
+                build_identity_path,
+                bundle_dir,
+            }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            if let Some(value) = self.build_identity_path.take() {
+                std::env::set_var(super::BUILD_IDENTITY_PATH_ENV, value);
+            } else {
+                std::env::remove_var(super::BUILD_IDENTITY_PATH_ENV);
+            }
+            if let Some(value) = self.bundle_dir.take() {
+                std::env::set_var("CTX_BUNDLE_DIR", value);
+            } else {
+                std::env::remove_var("CTX_BUNDLE_DIR");
+            }
+        }
+    }
 
     fn temp_identity_path(name: &str) -> PathBuf {
         let unique = SystemTime::now()
@@ -160,6 +187,59 @@ mod tests {
         .expect("write identity");
         let error = parse_build_identity(&path).expect_err("missing buildId should fail");
         assert!(error.to_string().contains("missing buildId"));
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn build_identity_does_not_implicitly_follow_bundle_metadata() {
+        let _env = EnvGuard::new();
+        let bundle_dir = tempfile::tempdir().expect("bundle tempdir");
+        fs::write(
+            bundle_dir.path().join("artifact_identity.json"),
+            r#"{
+  "schemaVersion": 1,
+  "exactVersion": "9.9.9-preview.bundle",
+  "buildId": "bundle-build",
+  "compatibilityToken": "artifact-bundle"
+}
+"#,
+        )
+        .expect("write bundle identity");
+        std::env::set_var("CTX_BUNDLE_DIR", bundle_dir.path());
+
+        assert!(
+            configured_identity_path()
+                .expect("resolve identity path")
+                .is_none(),
+            "daemon build identity must not be inferred from CTX_BUNDLE_DIR"
+        );
+        let identity = load_build_identity().expect("load compile-time identity");
+        assert_ne!(identity.exact_version, "9.9.9-preview.bundle");
+        assert_ne!(identity.build_id, "bundle-build");
+        assert_ne!(identity.compatibility_token, "artifact-bundle");
+    }
+
+    #[test]
+    fn build_identity_allows_explicit_identity_path_override() {
+        let _env = EnvGuard::new();
+        let path = temp_identity_path("explicit-path");
+        fs::write(
+            &path,
+            r#"{
+  "schemaVersion": 1,
+  "exactVersion": "1.2.3-explicit",
+  "buildId": "explicit-build",
+  "compatibilityToken": "artifact-explicit"
+}
+"#,
+        )
+        .expect("write identity");
+        std::env::set_var(super::BUILD_IDENTITY_PATH_ENV, &path);
+
+        let identity = load_build_identity().expect("load explicit identity");
+        assert_eq!(identity.exact_version, "1.2.3-explicit");
+        assert_eq!(identity.build_id, "explicit-build");
+        assert_eq!(identity.compatibility_token, "artifact-explicit");
         let _ = fs::remove_file(path);
     }
 }

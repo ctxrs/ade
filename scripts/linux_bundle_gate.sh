@@ -68,6 +68,7 @@ case "$release_platform" in
 esac
 
 required_tools=(find file readelf ldd grep)
+required_tools+=(node)
 if [[ "$mode" == "normalize" || "$mode" == "both" ]]; then
   required_tools+=(patchelf)
 fi
@@ -78,6 +79,37 @@ for cmd in "${required_tools[@]}"; do
     exit 1
   fi
 done
+
+node - "$bundles_dir" "$release_platform" <<'NODE'
+const fs = require("node:fs");
+const path = require("node:path");
+
+const [bundleDir, releasePlatform] = process.argv.slice(2);
+const archByPlatform = new Map([
+  ["linux-x64", "x86_64"],
+  ["linux-arm64", "aarch64"],
+]);
+const arch = archByPlatform.get(releasePlatform);
+if (!arch) {
+  throw new Error(`unsupported linux release platform: ${releasePlatform}`);
+}
+const manifestPath = path.join(bundleDir, "manifest.json");
+const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+const runtime = (Array.isArray(manifest.runtimes) ? manifest.runtimes : []).find(
+  (entry) => entry?.id === "ctx-mcp" && entry?.os === "linux" && entry?.arch === arch,
+);
+if (!runtime) {
+  throw new Error(`bundle manifest missing ctx-mcp runtime for linux/${arch}`);
+}
+const runtimeRoot = path.resolve(bundleDir, String(runtime.root || ""));
+const runtimeBin = path.isAbsolute(String(runtime.bin || ""))
+  ? String(runtime.bin)
+  : path.join(runtimeRoot, String(runtime.bin || ""));
+if (!fs.existsSync(runtimeBin)) {
+  throw new Error(`bundle manifest ctx-mcp runtime binary is missing: ${runtimeBin}`);
+}
+fs.accessSync(runtimeBin, fs.constants.X_OK);
+NODE
 
 candidate_stream() {
   find "$bundles_dir" -type f \
