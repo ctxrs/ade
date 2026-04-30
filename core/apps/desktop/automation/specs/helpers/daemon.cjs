@@ -190,7 +190,19 @@ const shouldRetryDaemonHttpError = (error) => {
 
 const daemonJsonOnce = async (method, apiPath, body) => {
   let connection = await getCachedDesktopConnection();
-  const response = await daemonHttpJson(connection, method, apiPath, body);
+  let response;
+  try {
+    response = await daemonHttpJson(connection, method, apiPath, body);
+  } catch (error) {
+    const retryableTransport =
+      shouldRetryWebdriverTransportError(error) || shouldRetryDaemonHttpError(error);
+    if (!retryableTransport) {
+      throw error;
+    }
+    cachedConnection = null;
+    connection = await getCachedDesktopConnection();
+    return await daemonHttpJson(connection, method, apiPath, body);
+  }
   if (Number(response.status) === 401 || Number(response.status) === 403) {
     cachedConnection = null;
     connection = await getCachedDesktopConnection();

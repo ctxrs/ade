@@ -125,7 +125,7 @@ test("daemonJson refreshes the desktop connection after an auth failure", async 
   assert.deepEqual(executeCalls, ["desktop_get_connection", "desktop_get_connection"]);
 });
 
-test("daemonJsonOnce performs a single transport attempt while still refreshing auth once", async () => {
+test("daemonJsonOnce refreshes the desktop connection once after auth failure", async () => {
   const executeCalls = [];
   const fetchCalls = [];
   let connectionIndex = 0;
@@ -179,6 +179,77 @@ test("daemonJsonOnce performs a single transport attempt while still refreshing 
     },
   ]);
   assert.deepEqual(executeCalls, ["desktop_get_connection", "desktop_get_connection"]);
+});
+
+test("daemonJsonOnce refreshes the desktop connection once after transport failure", async () => {
+  const executeCalls = [];
+  const fetchCalls = [];
+  let connectionIndex = 0;
+  const connections = [
+    {
+      kind: "local",
+      base_url: "http://127.0.0.1:4402",
+      browser_query_secret: "browser-secret-old",
+    },
+    {
+      kind: "local",
+      base_url: "http://127.0.0.1:4402",
+      browser_query_secret: "browser-secret-old",
+    },
+    {
+      kind: "local",
+      base_url: "http://127.0.0.1:4403",
+      browser_query_secret: "browser-secret-new",
+    },
+    {
+      kind: "local",
+      base_url: "http://127.0.0.1:4403",
+      browser_query_secret: "browser-secret-new",
+    },
+  ];
+
+  global.browser = {
+    execute: async (_fn, command) => {
+      executeCalls.push(command || "desktop_get_connection");
+      const current = connections[Math.min(connectionIndex, connections.length - 1)];
+      connectionIndex += 1;
+      return { info: current };
+    },
+  };
+  global.fetch = async (url, options) => {
+    fetchCalls.push({
+      url: String(url),
+      authorization: options?.headers?.authorization || "",
+    });
+    if (fetchCalls.length === 1) {
+      throw new TypeError("fetch failed");
+    }
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+
+  const { daemonJsonOnce } = loadDaemonHelper();
+  const resp = await daemonJsonOnce("GET", "/api/health");
+
+  assert.equal(resp.status, 200);
+  assert.deepEqual(fetchCalls, [
+    {
+      url: "http://127.0.0.1:4402/api/health",
+      authorization: "Bearer browser-secret-old",
+    },
+    {
+      url: "http://127.0.0.1:4403/api/health",
+      authorization: "Bearer browser-secret-new",
+    },
+  ]);
+  assert.deepEqual(executeCalls, [
+    "desktop_get_connection",
+    "desktop_connect_local",
+    "desktop_get_connection",
+    "desktop_connect_local",
+  ]);
 });
 
 test("daemonJson uses the direct remote daemon URL for ssh connections when explicitly enabled", async () => {
