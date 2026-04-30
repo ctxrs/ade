@@ -19,6 +19,7 @@ PORT_BASE="${CTX_UPDATER_REMOTE_E2E_PORT_BASE:-$((34000 + RANDOM % 20000))}"
 TAURI_DRIVER_PORT_VALUE="${CTX_UPDATER_REMOTE_E2E_DRIVER_PORT:-${TAURI_DRIVER_PORT:-${PORT_BASE}}}"
 TAURI_TEST_BACKEND_PORT_VALUE="${CTX_UPDATER_REMOTE_E2E_BACKEND_PORT:-${TAURI_TEST_BACKEND_PORT:-$((PORT_BASE + 1))}}"
 WDIO_CONNECTION_RETRY_TIMEOUT_MS="${CTX_UPDATER_REMOTE_E2E_WDIO_CONNECTION_RETRY_TIMEOUT_MS:-300000}"
+RESOLVED_CONTROLLER_AUTOMATION_APP_PATH=""
 
 resolve_download_base_url() {
   if [[ -n "${CTX_UPDATER_E2E_DOWNLOAD_BASE_URL:-}" ]]; then
@@ -85,7 +86,7 @@ NODE
 resolve_controller_app_for_automation() {
   local app_path="$1"
   if [[ "$(uname -s)" != "Linux" || "${app_path}" != *.AppImage ]]; then
-    printf '%s\n' "${app_path}"
+    RESOLVED_CONTROLLER_AUTOMATION_APP_PATH="${app_path}"
     return 0
   fi
 
@@ -116,7 +117,7 @@ resolve_controller_app_for_automation() {
   export ARGV0="${app_path}"
   export CTX_APPIMAGE_PATH="${app_path}"
   export CTX_AUTOMATION_SHIPPED_APP_BUNDLES_DIR="$(dirname "${bundle_manifest}")"
-  printf '%s\n' "${app_run}"
+  RESOLVED_CONTROLLER_AUTOMATION_APP_PATH="${app_run}"
 }
 
 if [[ -n "${CTX_DESKTOP_APP_PATH:-}" && "$STRICT_PUBLISHED_ARTIFACTS" == "1" ]]; then
@@ -138,8 +139,8 @@ if [[ -z "${CTX_DESKTOP_APP_PATH:-}" ]]; then
   fi
   export CTX_DESKTOP_APP_PATH="${resolved_app_path}"
 fi
-resolved_automation_app_path="$(resolve_controller_app_for_automation "${CTX_DESKTOP_APP_PATH}")"
-export CTX_DESKTOP_APP_PATH="${resolved_automation_app_path}"
+resolve_controller_app_for_automation "${CTX_DESKTOP_APP_PATH}"
+export CTX_DESKTOP_APP_PATH="${RESOLVED_CONTROLLER_AUTOMATION_APP_PATH}"
 normalize_local_smoke_app_permissions "${CTX_DESKTOP_APP_PATH}"
 
 export CTX_UPDATER_REMOTE_E2E_REPORT="${CTX_UPDATER_REMOTE_E2E_REPORT:-${artifact_dir}/remote-proof.json}"

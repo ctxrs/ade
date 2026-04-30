@@ -34,6 +34,10 @@ test("remote updater proof extracts Linux AppImages before handing them to tauri
   assert.match(scriptText, /export ARGV0="\$\{app_path\}"/);
   assert.match(scriptText, /export CTX_APPIMAGE_PATH="\$\{app_path\}"/);
   assert.match(scriptText, /export CTX_AUTOMATION_SHIPPED_APP_BUNDLES_DIR="\$\(dirname "\$\{bundle_manifest\}"\)"/);
-  assert.match(scriptText, /resolved_automation_app_path="\$\(resolve_controller_app_for_automation "\$\{CTX_DESKTOP_APP_PATH\}"\)"/);
-  assert.match(scriptText, /export CTX_DESKTOP_APP_PATH="\$\{resolved_automation_app_path\}"/);
+  assert.match(scriptText, /RESOLVED_CONTROLLER_AUTOMATION_APP_PATH=""/);
+  assert.match(scriptText, /RESOLVED_CONTROLLER_AUTOMATION_APP_PATH="\$\{app_path\}"/);
+  assert.match(scriptText, /RESOLVED_CONTROLLER_AUTOMATION_APP_PATH="\$\{app_run\}"/);
+  assert.match(scriptText, /resolve_controller_app_for_automation "\$\{CTX_DESKTOP_APP_PATH\}"/);
+  assert.doesNotMatch(scriptText, /resolve_controller_app_for_automation "\$\{CTX_DESKTOP_APP_PATH\}"\)/);
+  assert.match(scriptText, /export CTX_DESKTOP_APP_PATH="\$\{RESOLVED_CONTROLLER_AUTOMATION_APP_PATH\}"/);
 });
