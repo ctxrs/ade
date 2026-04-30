@@ -6,19 +6,15 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use base64::Engine;
 use clap::Parser;
+use ctx_tunnel_store::{CreateTunnelRequest, TunnelStore, TunnelStoreError};
 use hmac::{Hmac, Mac};
 use reqwest::header::AUTHORIZATION;
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
-use sqlx::{sqlite::SqlitePoolOptions, Pool, Row, Sqlite};
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
 use std::net::SocketAddr;
 use tracing::{info, warn};
 use url::Url;
 use uuid::Uuid;
-
-static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
 
 #[derive(Parser, Debug)]
 #[command(name = "ctx-tunnel-control-plane", version)]
@@ -29,7 +25,7 @@ struct Args {
 
 #[derive(Clone)]
 struct AppState {
-    db: Pool<Sqlite>,
+    store: TunnelStore,
     client: reqwest::Client,
     config: ControlPlaneConfig,
 }
@@ -41,7 +37,7 @@ struct ControlPlaneConfig {
     entitlements_url: String,
     master_secret: Vec<u8>,
     public_base_url: String,
-    relay_base_urls: Vec<String>,
+    relay_region: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -71,8 +67,8 @@ async fn main() -> Result<()> {
         .init();
 
     let args = Args::parse();
-    let database_url = std::env::var("CONTROL_PLANE_DATABASE_URL")
-        .context("missing CONTROL_PLANE_DATABASE_URL")?;
+    let database_url = std::env::var("MOBILE_TUNNEL_DATABASE_URL")
+        .context("missing MOBILE_TUNNEL_DATABASE_URL")?;
     let supabase_url = std::env::var("SUPABASE_URL").context("missing SUPABASE_URL")?;
     let supabase_anon_key =
         std::env::var("SUPABASE_ANON_KEY").context("missing SUPABASE_ANON_KEY")?;
@@ -84,26 +80,16 @@ async fn main() -> Result<()> {
     });
     let public_base_url = std::env::var("MOBILE_TUNNEL_PUBLIC_BASE_URL")
         .context("missing MOBILE_TUNNEL_PUBLIC_BASE_URL")?;
-    let relay_base_urls = std::env::var("MOBILE_TUNNEL_RELAY_BASE_URLS")
-        .context("missing MOBILE_TUNNEL_RELAY_BASE_URLS")?
-        .split(',')
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .collect::<Vec<_>>();
-    if relay_base_urls.is_empty() {
-        anyhow::bail!("MOBILE_TUNNEL_RELAY_BASE_URLS must include at least one URL");
-    }
+    let relay_region = std::env::var("MOBILE_TUNNEL_RELAY_REGION")
+        .context("missing MOBILE_TUNNEL_RELAY_REGION")?;
     let master_secret = load_master_secret()?;
 
-    let db = SqlitePoolOptions::new()
-        .max_connections(10)
-        .connect(&database_url)
+    let store = TunnelStore::connect(&database_url)
         .await
-        .context("connecting to database")?;
-    MIGRATOR.run(&db).await.context("running migrations")?;
+        .context("connecting to mobile tunnel database")?;
 
     let state = AppState {
-        db,
+        store,
         client: reqwest::Client::new(),
         config: ControlPlaneConfig {
             supabase_url,
@@ -111,7 +97,7 @@ async fn main() -> Result<()> {
             entitlements_url,
             master_secret,
             public_base_url,
-            relay_base_urls,
+            relay_region,
         },
     };
 
@@ -132,8 +118,26 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn health() -> impl IntoResponse {
-    Json(serde_json::json!({ "ok": true }))
+async fn health(State(state): State<AppState>) -> Response {
+    match state.store.health_snapshot().await {
+        Ok(snapshot) => (
+            StatusCode::OK,
+            Json(serde_json::json!({
+                "ok": true,
+                "relay_count": snapshot.relay_count,
+                "healthy_relay_count": snapshot.healthy_relay_count,
+            })),
+        )
+            .into_response(),
+        Err(err) => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({
+                "ok": false,
+                "error": err.to_string(),
+            })),
+        )
+            .into_response(),
+    }
 }
 
 async fn enable_mobile_access(
@@ -160,42 +164,35 @@ async fn enable_mobile_access_inner(
     let user_id = fetch_user_id(&state, &token).await?;
     ensure_entitled(&state, &token).await?;
 
-    if let Some(existing) = load_existing_tunnel(&state, &user_id).await? {
-        return Ok(existing);
+    if let Some(existing) = state
+        .store
+        .load_active_tunnel_for_user(&user_id)
+        .await
+        .map_err(store_api_error)?
+    {
+        return tunnel_assignment_to_response(&state, existing);
     }
 
     let tunnel_id = Uuid::new_v4().to_string();
-    let relay_base_url = assign_relay(&state.config.relay_base_urls, &user_id);
+    let relay = state
+        .store
+        .assign_relay(&state.config.relay_region)
+        .await
+        .map_err(store_api_error)?;
     let public_base_url = normalize_public_base_url(&state.config.public_base_url, &tunnel_id);
 
-    sqlx::query(
-        r#"INSERT INTO mobile_tunnels
-           (tunnel_id, user_id, relay_base_url, public_base_url, created_at)
-           VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)"#,
-    )
-    .bind(&tunnel_id)
-    .bind(&user_id)
-    .bind(&relay_base_url)
-    .bind(&public_base_url)
-    .execute(&state.db)
-    .await
-    .map_err(|e| {
-        warn!("failed to insert tunnel: {e}");
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "failed to create tunnel".to_string(),
-        )
-    })?;
-
-    let tunnel_secret = derive_tunnel_secret(&state.config.master_secret, &tunnel_id)?;
-    let resp = EnableMobileAccessResp {
-        tunnel_id: tunnel_id.clone(),
-        public_base_url,
-        relay_base_url,
-        tunnel_secret: tunnel_secret.clone(),
-    };
-
-    Ok(resp)
+    let assignment = state
+        .store
+        .create_tunnel(CreateTunnelRequest {
+            tunnel_id,
+            user_id,
+            billing_subject_id: None,
+            relay_id: relay.relay_id,
+            public_base_url,
+        })
+        .await
+        .map_err(store_api_error)?;
+    tunnel_assignment_to_response(&state, assignment)
 }
 
 async fn revoke_mobile_access(
@@ -220,14 +217,7 @@ async fn revoke_mobile_access(
         Err((status, msg)) => return (status, Json(ApiErrorResp { error: msg })).into_response(),
     };
 
-    let result = sqlx::query(
-        r#"UPDATE mobile_tunnels
-           SET disabled_at = CURRENT_TIMESTAMP
-           WHERE user_id = ? AND disabled_at IS NULL"#,
-    )
-    .bind(&user_id)
-    .execute(&state.db)
-    .await;
+    let result = state.store.revoke_active_tunnels_for_user(&user_id).await;
 
     match result {
         Ok(_) => StatusCode::NO_CONTENT.into_response(),
@@ -244,57 +234,19 @@ async fn revoke_mobile_access(
     }
 }
 
-async fn load_existing_tunnel(
+fn tunnel_assignment_to_response(
     state: &AppState,
-    user_id: &str,
-) -> Result<Option<EnableMobileAccessResp>, (StatusCode, String)> {
-    let row = sqlx::query(
-        r#"SELECT tunnel_id, relay_base_url, public_base_url
-           FROM mobile_tunnels
-           WHERE user_id = ? AND disabled_at IS NULL
-           ORDER BY created_at DESC
-           LIMIT 1"#,
-    )
-    .bind(user_id)
-    .fetch_optional(&state.db)
-    .await
-    .map_err(|e| {
-        warn!("failed to load tunnel: {e}");
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "failed to load tunnel".to_string(),
-        )
-    })?;
-
-    let Some(row) = row else {
-        return Ok(None);
-    };
-    let tunnel_id: String = row.try_get("tunnel_id").map_err(|_| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "invalid tunnel record".to_string(),
-        )
-    })?;
-    let relay_base_url: String = row.try_get("relay_base_url").map_err(|_| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "invalid tunnel record".to_string(),
-        )
-    })?;
-    let public_base_url: String = row.try_get("public_base_url").map_err(|_| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "invalid tunnel record".to_string(),
-        )
-    })?;
-    let public_base_url = normalize_public_base_url(&public_base_url, &tunnel_id);
+    assignment: ctx_tunnel_store::TunnelAssignment,
+) -> Result<EnableMobileAccessResp, (StatusCode, String)> {
+    let tunnel_id = assignment.tunnel_id;
+    let public_base_url = normalize_public_base_url(&assignment.public_base_url, &tunnel_id);
     let tunnel_secret = derive_tunnel_secret(&state.config.master_secret, &tunnel_id)?;
-    Ok(Some(EnableMobileAccessResp {
+    Ok(EnableMobileAccessResp {
         tunnel_id,
-        relay_base_url,
+        relay_base_url: assignment.relay_public_base_url,
         public_base_url,
         tunnel_secret,
-    }))
+    })
 }
 
 async fn fetch_user_id(state: &AppState, token: &str) -> Result<String, (StatusCode, String)> {
@@ -391,13 +343,6 @@ fn extract_bearer(headers: &axum::http::HeaderMap) -> Option<String> {
     value.strip_prefix("Bearer ").map(|v| v.trim().to_string())
 }
 
-fn assign_relay(relays: &[String], user_id: &str) -> String {
-    let mut hasher = DefaultHasher::new();
-    user_id.hash(&mut hasher);
-    let idx = (hasher.finish() as usize) % relays.len();
-    relays[idx].clone()
-}
-
 fn normalize_public_base_url(base: &str, tunnel_id: &str) -> String {
     let trimmed = base.trim_end_matches('/');
     if trimmed.contains("/t/") {
@@ -434,25 +379,23 @@ fn parse_master_secret(raw: &str) -> anyhow::Result<Vec<u8>> {
     Ok(trimmed.as_bytes().to_vec())
 }
 
-async fn cache_tunnel(state: &AppState, tunnel_id: &str, resp: &EnableMobileAccessResp) {
-    let Some(mut conn) = state.redis.clone() else {
-        return;
-    };
-    let json = match serde_json::to_string(&TunnelCacheEntry {
-        relay_base_url: resp.relay_base_url.clone(),
-        public_base_url: resp.public_base_url.clone(),
-    }) {
-        Ok(json) => json,
-        Err(_) => return,
-    };
-    let key = format!("tunnel:{tunnel_id}");
-    let _: redis::RedisResult<()> = redis::AsyncCommands::set_ex(&mut conn, key, json, 300).await;
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct TunnelCacheEntry {
-    relay_base_url: String,
-    public_base_url: String,
+fn store_api_error(err: TunnelStoreError) -> (StatusCode, String) {
+    match err {
+        TunnelStoreError::NoHealthyRelay { .. } => {
+            warn!("no healthy relay available: {err}");
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "no healthy relay available".to_string(),
+            )
+        }
+        _ => {
+            warn!("mobile tunnel store error: {err}");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "mobile tunnel store unavailable".to_string(),
+            )
+        }
+    }
 }
 
 #[cfg(test)]

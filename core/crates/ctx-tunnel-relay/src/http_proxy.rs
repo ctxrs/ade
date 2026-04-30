@@ -85,6 +85,9 @@ pub(super) async fn proxy_http_message(
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
+    if let Err(status) = validate_tunnel_for_relay(&state, &tunnel_id).await {
+        return status.into_response();
+    }
     let tunnel = get_or_create_tunnel(&state, &tunnel_id).await;
 
     let desktop = {

@@ -1,5 +1,4 @@
 use super::*;
-use crate::http_proxy::{extract_forward_headers, extract_ws_forward_headers};
 use std::sync::Mutex as StdMutex;
 
 static ENV_LOCK: StdMutex<()> = StdMutex::new(());

@@ -1,5 +1,4 @@
 use std::net::SocketAddr;
-use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use axum::body::{Body, Bytes};
@@ -10,9 +9,8 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::{Json, Router};
 use clap::Parser;
+use ctx_tunnel_store::{ResolvedTunnelTarget, TunnelResolveResult, TunnelStore};
 use futures::{SinkExt, StreamExt};
-use serde::{Deserialize, Serialize};
-use sqlx::{sqlite::SqlitePoolOptions, Pool, Row, Sqlite};
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::Message as TungsteniteMessage;
 use tracing::{info, warn};
@@ -27,18 +25,8 @@ struct Args {
 
 #[derive(Clone)]
 struct RouterState {
-    store: Arc<TunnelStore>,
+    store: TunnelStore,
     client: reqwest::Client,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-struct TunnelTarget {
-    relay_base_url: String,
-    public_base_url: String,
-}
-
-struct TunnelStore {
-    db: Pool<Sqlite>,
 }
 
 #[tokio::main]
@@ -48,16 +36,12 @@ async fn main() -> Result<()> {
         .init();
 
     let args = Args::parse();
-    let database_url = std::env::var("CONTROL_PLANE_DATABASE_URL")
-        .context("missing CONTROL_PLANE_DATABASE_URL")?;
+    let database_url = std::env::var("MOBILE_TUNNEL_DATABASE_URL")
+        .context("missing MOBILE_TUNNEL_DATABASE_URL")?;
 
-    let db = SqlitePoolOptions::new()
-        .max_connections(10)
-        .connect(&database_url)
+    let store = TunnelStore::connect(&database_url)
         .await
-        .context("connecting to database")?;
-
-    let store = Arc::new(TunnelStore { db });
+        .context("connecting to mobile tunnel database")?;
 
     let state = RouterState {
         store,
@@ -87,8 +71,26 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn health() -> impl IntoResponse {
-    Json(serde_json::json!({ "ok": true }))
+async fn health(State(state): State<RouterState>) -> Response {
+    match state.store.health_snapshot().await {
+        Ok(snapshot) => (
+            StatusCode::OK,
+            Json(serde_json::json!({
+                "ok": true,
+                "relay_count": snapshot.relay_count,
+                "healthy_relay_count": snapshot.healthy_relay_count,
+            })),
+        )
+            .into_response(),
+        Err(err) => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({
+                "ok": false,
+                "error": err.to_string(),
+            })),
+        )
+            .into_response(),
+    }
 }
 
 async fn proxy_get(
@@ -176,12 +178,17 @@ async fn proxy_http_message(
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    let Some(target) = state.store.resolve_target(&tunnel_id).await else {
-        return StatusCode::NOT_FOUND.into_response();
+    let target = match resolve_target_for_request(&state, &tunnel_id).await {
+        Ok(target) => target,
+        Err(response) => return response,
     };
 
-    let upstream_url =
-        build_upstream_url(&target.relay_base_url, &tunnel_id, &path, query.as_deref());
+    let upstream_url = build_upstream_url(
+        &target.relay_internal_base_url,
+        &tunnel_id,
+        &path,
+        query.as_deref(),
+    );
     let mut req = state.client.request(method, upstream_url).body(body);
 
     for (name, value) in headers.iter() {
@@ -225,11 +232,29 @@ async fn handle_ws_proxy(
     headers: HeaderMap,
     socket: WebSocket,
 ) -> Result<()> {
-    let Some(target) = state.store.resolve_target(&tunnel_id).await else {
-        return Ok(());
+    let target = match state.store.resolve_tunnel_target(&tunnel_id).await {
+        Ok(TunnelResolveResult::Resolved(target)) => target,
+        Ok(TunnelResolveResult::UnknownTunnel | TunnelResolveResult::TunnelDisabled) => {
+            return Ok(())
+        }
+        Ok(TunnelResolveResult::RelayUnavailable) => {
+            warn!(tunnel_id, "relay unavailable for websocket tunnel");
+            return Ok(());
+        }
+        Err(err) => return Err(anyhow::anyhow!("failed to resolve tunnel target: {err}")),
     };
+    state
+        .store
+        .mark_tunnel_accessed(&tunnel_id)
+        .await
+        .context("marking tunnel accessed")?;
 
-    let upstream = build_upstream_url(&target.relay_base_url, &tunnel_id, &path, query.as_deref());
+    let upstream = build_upstream_url(
+        &target.relay_internal_base_url,
+        &tunnel_id,
+        &path,
+        query.as_deref(),
+    );
     let ws_url = to_ws_url(&upstream)?;
 
     let mut req = ws_url.as_str().into_client_request()?;
@@ -329,30 +354,29 @@ fn extract_ws_forward_headers(
         .collect()
 }
 
-impl TunnelStore {
-    async fn resolve_target(&self, tunnel_id: &str) -> Option<TunnelTarget> {
-        let row = sqlx::query(
-            r#"SELECT relay_base_url, public_base_url, disabled_at IS NOT NULL AS disabled
-               FROM mobile_tunnels
-               WHERE tunnel_id = ?"#,
-        )
-        .bind(tunnel_id)
-        .fetch_optional(&self.db)
-        .await
-        .ok()??;
-
-        let disabled: bool = row.try_get("disabled").ok()?;
-        if disabled {
-            return None;
+async fn resolve_target_for_request(
+    state: &RouterState,
+    tunnel_id: &str,
+) -> Result<ResolvedTunnelTarget, Response> {
+    match state.store.resolve_tunnel_target(tunnel_id).await {
+        Ok(TunnelResolveResult::Resolved(target)) => {
+            if let Err(err) = state.store.mark_tunnel_accessed(tunnel_id).await {
+                warn!("failed to mark tunnel accessed: {err}");
+                return Err(StatusCode::SERVICE_UNAVAILABLE.into_response());
+            }
+            Ok(target)
         }
-
-        let relay_base_url: String = row.try_get("relay_base_url").ok()?;
-        let public_base_url: String = row.try_get("public_base_url").ok()?;
-        let target = TunnelTarget {
-            relay_base_url,
-            public_base_url,
-        };
-        Some(target)
+        Ok(TunnelResolveResult::UnknownTunnel | TunnelResolveResult::TunnelDisabled) => {
+            Err(StatusCode::NOT_FOUND.into_response())
+        }
+        Ok(TunnelResolveResult::RelayUnavailable) => {
+            warn!(tunnel_id, "relay unavailable for tunnel");
+            Err(StatusCode::SERVICE_UNAVAILABLE.into_response())
+        }
+        Err(err) => {
+            warn!("failed to resolve tunnel target: {err}");
+            Err(StatusCode::SERVICE_UNAVAILABLE.into_response())
+        }
     }
 }
 

@@ -8,6 +8,7 @@ anyhow.workspace = true
 axum.workspace = true
 base64 = "0.22"
 clap.workspace = true
+ctx-tunnel-store = { path = "../ctx-tunnel-store" }
 hmac = "0.12"
 reqwest.workspace = true
 serde.workspace = true
@@ -18,7 +19,6 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 uuid.workspace = true
 
-sqlx = { workspace = true, features = ["sqlite"] }
 url = "2"
 
 [dev-dependencies]

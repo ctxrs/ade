@@ -12,7 +12,9 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::{Json, Router};
 use base64::Engine;
+use chrono::Utc;
 use clap::Parser;
+use ctx_tunnel_store::{RelayAssignmentValidation, RelayHeartbeat, RelayRegistration, TunnelStore};
 use futures::{SinkExt, StreamExt};
 use hmac::{Hmac, Mac};
 use serde::{Deserialize, Serialize};
@@ -37,6 +39,8 @@ struct Args {
 struct RelayState {
     tunnels: Arc<RwLock<HashMap<String, Arc<Tunnel>>>>,
     master_secret: Vec<u8>,
+    store: TunnelStore,
+    relay_id: String,
 }
 
 struct Tunnel {
@@ -61,6 +65,7 @@ struct WsStreamHandle {
 }
 
 const TUNNEL_SECRET_HEADER: &str = "x-ctx-tunnel-secret";
+const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(15);
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -133,9 +138,36 @@ async fn main() -> Result<()> {
 
     let args = Args::parse();
     let master_secret = load_master_secret()?;
+    let config = load_relay_config()?;
+    let store = TunnelStore::connect(&config.database_url)
+        .await
+        .context("connecting to mobile tunnel database")?;
+    store
+        .register_relay(RelayRegistration {
+            relay_id: config.relay_id.clone(),
+            region: config.region.clone(),
+            public_base_url: config.public_base_url.clone(),
+            internal_base_url: config.internal_base_url.clone(),
+            max_active_tunnels: config.max_active_tunnels,
+        })
+        .await
+        .context("registering relay node")?;
+
+    let tunnels = Arc::new(RwLock::new(HashMap::new()));
+    send_relay_heartbeat(&store, &config.relay_id, tunnels.clone())
+        .await
+        .context("recording initial relay heartbeat")?;
+    tokio::spawn(relay_heartbeat_loop(
+        store.clone(),
+        config.relay_id.clone(),
+        tunnels.clone(),
+    ));
+
     let state = RelayState {
-        tunnels: Arc::new(RwLock::new(HashMap::new())),
+        tunnels,
         master_secret,
+        store,
+        relay_id: config.relay_id,
     };
 
     let app = Router::new()
@@ -162,8 +194,26 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn health() -> impl IntoResponse {
-    Json(serde_json::json!({ "ok": true }))
+async fn health(State(state): State<RelayState>) -> Response {
+    match state.store.health_snapshot().await {
+        Ok(snapshot) => (
+            StatusCode::OK,
+            Json(serde_json::json!({
+                "ok": true,
+                "relay_count": snapshot.relay_count,
+                "healthy_relay_count": snapshot.healthy_relay_count,
+            })),
+        )
+            .into_response(),
+        Err(err) => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({
+                "ok": false,
+                "error": err.to_string(),
+            })),
+        )
+            .into_response(),
+    }
 }
 
 async fn desktop_connect_ws(
@@ -172,6 +222,9 @@ async fn desktop_connect_ws(
     headers: HeaderMap,
     ws: axum::extract::ws::WebSocketUpgrade,
 ) -> impl IntoResponse {
+    if let Err(status) = validate_tunnel_for_relay(&state, &tunnel_id).await {
+        return status.into_response();
+    }
     let secret = match extract_desktop_secret(&headers) {
         Ok(secret) => secret,
         Err(status) => return status.into_response(),
@@ -219,13 +272,17 @@ async fn handle_desktop_socket(
             warn!("rejecting desktop connect for tunnel {tunnel_id}: secret mismatch");
             return Ok(());
         }
-        inner.secret = Some(expected);
 
         // Replace any existing desktop connection.
         inner.desktop = None;
         inner.pending_http.clear();
         inner.pending_ws_open.clear();
     }
+    state
+        .store
+        .record_desktop_connected(&tunnel_id, &state.relay_id)
+        .await
+        .context("recording desktop tunnel connection")?;
 
     let (mut ws_tx, mut ws_rx) = socket.split();
     let (out_tx, mut out_rx) = mpsc::unbounded_channel::<RelayToClient>();
@@ -276,6 +333,13 @@ async fn handle_desktop_socket(
         inner.pending_http.clear();
         inner.pending_ws_open.clear();
         inner.ws_streams.clear();
+    }
+    if let Err(err) = state
+        .store
+        .record_desktop_disconnected(&tunnel_id, &state.relay_id)
+        .await
+    {
+        warn!("failed to record desktop tunnel disconnect: {err}");
     }
 
     Ok(())
@@ -364,6 +428,9 @@ async fn handle_mobile_ws(
     headers: HeaderMap,
     mut socket: WebSocket,
 ) -> Result<()> {
+    validate_tunnel_for_relay(&state, &tunnel_id)
+        .await
+        .map_err(|status| anyhow!("relay rejected tunnel assignment with status {status}"))?;
     let tunnel = get_or_create_tunnel(&state, &tunnel_id).await;
 
     let desktop = {
@@ -505,6 +572,104 @@ fn load_master_secret() -> Result<Vec<u8>> {
     let raw = std::env::var("CTX_TUNNEL_MASTER_SECRET")
         .context("CTX_TUNNEL_MASTER_SECRET must be set")?;
     parse_master_secret(&raw)
+}
+
+struct RelayConfig {
+    database_url: String,
+    relay_id: String,
+    region: String,
+    public_base_url: String,
+    internal_base_url: String,
+    max_active_tunnels: i32,
+}
+
+fn load_relay_config() -> Result<RelayConfig> {
+    let max_active_tunnels = std::env::var("CTX_TUNNEL_RELAY_MAX_ACTIVE_TUNNELS")
+        .context("CTX_TUNNEL_RELAY_MAX_ACTIVE_TUNNELS must be set")?
+        .parse::<i32>()
+        .context("CTX_TUNNEL_RELAY_MAX_ACTIVE_TUNNELS must be an integer")?;
+    if max_active_tunnels <= 0 {
+        anyhow::bail!("CTX_TUNNEL_RELAY_MAX_ACTIVE_TUNNELS must be positive");
+    }
+    Ok(RelayConfig {
+        database_url: std::env::var("MOBILE_TUNNEL_DATABASE_URL")
+            .context("MOBILE_TUNNEL_DATABASE_URL must be set")?,
+        relay_id: std::env::var("CTX_TUNNEL_RELAY_ID")
+            .context("CTX_TUNNEL_RELAY_ID must be set")?,
+        region: std::env::var("CTX_TUNNEL_RELAY_REGION")
+            .context("CTX_TUNNEL_RELAY_REGION must be set")?,
+        public_base_url: std::env::var("CTX_TUNNEL_RELAY_PUBLIC_BASE_URL")
+            .context("CTX_TUNNEL_RELAY_PUBLIC_BASE_URL must be set")?,
+        internal_base_url: std::env::var("CTX_TUNNEL_RELAY_INTERNAL_BASE_URL")
+            .context("CTX_TUNNEL_RELAY_INTERNAL_BASE_URL must be set")?,
+        max_active_tunnels,
+    })
+}
+
+async fn validate_tunnel_for_relay(
+    state: &RelayState,
+    tunnel_id: &str,
+) -> std::result::Result<(), StatusCode> {
+    match state
+        .store
+        .validate_tunnel_relay_assignment(tunnel_id, &state.relay_id)
+        .await
+    {
+        Ok(RelayAssignmentValidation::Valid) => Ok(()),
+        Ok(
+            RelayAssignmentValidation::UnknownTunnel
+            | RelayAssignmentValidation::TunnelDisabled
+            | RelayAssignmentValidation::WrongRelay { .. },
+        ) => Err(StatusCode::NOT_FOUND),
+        Err(err) => {
+            warn!("failed to validate relay assignment: {err}");
+            Err(StatusCode::SERVICE_UNAVAILABLE)
+        }
+    }
+}
+
+async fn relay_heartbeat_loop(
+    store: TunnelStore,
+    relay_id: String,
+    tunnels: Arc<RwLock<HashMap<String, Arc<Tunnel>>>>,
+) {
+    let mut interval = tokio::time::interval(HEARTBEAT_INTERVAL);
+    loop {
+        interval.tick().await;
+        if let Err(err) = send_relay_heartbeat(&store, &relay_id, tunnels.clone()).await {
+            warn!("failed to record relay heartbeat: {err}");
+        }
+    }
+}
+
+async fn send_relay_heartbeat(
+    store: &TunnelStore,
+    relay_id: &str,
+    tunnels: Arc<RwLock<HashMap<String, Arc<Tunnel>>>>,
+) -> Result<()> {
+    let count = active_connected_tunnel_count(tunnels).await;
+    store
+        .heartbeat_relay(RelayHeartbeat {
+            relay_id: relay_id.to_string(),
+            active_tunnel_count: count,
+            observed_at: Utc::now(),
+        })
+        .await
+        .context("recording relay heartbeat")
+}
+
+async fn active_connected_tunnel_count(tunnels: Arc<RwLock<HashMap<String, Arc<Tunnel>>>>) -> i32 {
+    let snapshot = {
+        let map = tunnels.read().await;
+        map.values().cloned().collect::<Vec<_>>()
+    };
+    let mut count: i32 = 0;
+    for tunnel in snapshot {
+        if tunnel.inner.lock().await.desktop.is_some() && count < i32::MAX {
+            count += 1;
+        }
+    }
+    count
 }
 
 fn parse_master_secret(raw: &str) -> Result<Vec<u8>> {

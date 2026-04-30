@@ -5,6 +5,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CORE_DIR="$ROOT/core"
 TMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/ctx-mobile-tunnel-local.XXXXXX")"
 PIDS=()
+POSTGRES_CONTAINER=""
 
 dump_logs() {
   local log
@@ -24,6 +25,9 @@ cleanup() {
       kill "$pid" >/dev/null 2>&1 || true
     fi
   done
+  if [[ -n "$POSTGRES_CONTAINER" ]]; then
+    docker rm -f "$POSTGRES_CONTAINER" >/dev/null 2>&1 || true
+  fi
   rm -rf "$TMP_ROOT"
 }
 on_exit() {
@@ -72,6 +76,7 @@ wait_for_http() {
 
 require_command cargo
 require_command curl
+require_command docker
 require_command git
 require_command node
 
@@ -79,8 +84,10 @@ AUTH_PORT="$(pick_port)"
 CONTROL_PORT="$(pick_port)"
 ROUTER_PORT="$(pick_port)"
 RELAY_PORT="$(pick_port)"
-DB_PATH="$TMP_ROOT/control-plane.sqlite"
+PG_PORT="$(pick_port)"
 MASTER_SECRET="local-mobile-tunnel-secret-${RANDOM}-${RANDOM}"
+POSTGRES_CONTAINER="ctx-mobile-tunnel-pg-${RANDOM}-${RANDOM}"
+DATABASE_URL="postgresql://ctx_tunnel_service:ctx_tunnel_local@127.0.0.1:${PG_PORT}/postgres?sslmode=disable"
 
 cat >"$TMP_ROOT/mock_auth.js" <<'NODE'
 const http = require("node:http");
@@ -125,14 +132,45 @@ PORT="$AUTH_PORT" EXPECTED_TOKEN="local-token" node "$TMP_ROOT/mock_auth.js" &
 PIDS+=("$!")
 wait_for_http "mock auth" "http://127.0.0.1:${AUTH_PORT}/health"
 
+docker run --rm -d \
+  --name "$POSTGRES_CONTAINER" \
+  -e POSTGRES_PASSWORD=postgres \
+  -p "127.0.0.1:${PG_PORT}:5432" \
+  postgres:16-alpine >/dev/null
+
+until docker exec "$POSTGRES_CONTAINER" pg_isready -U postgres >/dev/null 2>&1; do
+  sleep 0.5
+done
+
+docker exec -i "$POSTGRES_CONTAINER" psql -U postgres -d postgres \
+  < "$ROOT/supabase/migrations/20260430000100_mobile_tunnel_control_plane.sql" >/dev/null
+docker exec "$POSTGRES_CONTAINER" psql -U postgres -d postgres \
+  -c "alter role ctx_tunnel_service with password 'ctx_tunnel_local';" >/dev/null
+echo "ok: postgres 127.0.0.1:${PG_PORT}"
+
 (
   cd "$CORE_DIR"
-  CONTROL_PLANE_DATABASE_URL="sqlite://${DB_PATH}?mode=rwc" \
+  MOBILE_TUNNEL_DATABASE_URL="$DATABASE_URL" \
+  CTX_TUNNEL_RELAY_ID="relay-1" \
+  CTX_TUNNEL_RELAY_REGION="us" \
+  CTX_TUNNEL_RELAY_PUBLIC_BASE_URL="http://127.0.0.1:${RELAY_PORT}" \
+  CTX_TUNNEL_RELAY_INTERNAL_BASE_URL="http://127.0.0.1:${RELAY_PORT}" \
+  CTX_TUNNEL_RELAY_MAX_ACTIVE_TUNNELS=100 \
+  CTX_TUNNEL_MASTER_SECRET="$MASTER_SECRET" \
+  cargo run -p ctx-tunnel-relay -- --listen "127.0.0.1:${RELAY_PORT}"
+) >"$TMP_ROOT/relay.log" 2>&1 &
+PIDS+=("$!")
+
+wait_for_http "relay" "http://127.0.0.1:${RELAY_PORT}/health"
+
+(
+  cd "$CORE_DIR"
+  MOBILE_TUNNEL_DATABASE_URL="$DATABASE_URL" \
   SUPABASE_URL="http://127.0.0.1:${AUTH_PORT}" \
   SUPABASE_ANON_KEY="local-anon" \
   CONTROL_PLANE_ENTITLEMENTS_URL="http://127.0.0.1:${AUTH_PORT}/functions/v1/entitlements" \
   MOBILE_TUNNEL_PUBLIC_BASE_URL="http://127.0.0.1:${ROUTER_PORT}" \
-  MOBILE_TUNNEL_RELAY_BASE_URLS="http://127.0.0.1:${RELAY_PORT}" \
+  MOBILE_TUNNEL_RELAY_REGION="us" \
   CTX_TUNNEL_MASTER_SECRET="$MASTER_SECRET" \
   cargo run -p ctx-tunnel-control-plane -- --listen "127.0.0.1:${CONTROL_PORT}"
 ) >"$TMP_ROOT/control-plane.log" 2>&1 &
@@ -142,20 +180,12 @@ wait_for_http "control-plane" "http://127.0.0.1:${CONTROL_PORT}/health"
 
 (
   cd "$CORE_DIR"
-  CONTROL_PLANE_DATABASE_URL="sqlite://${DB_PATH}?mode=rwc" \
+  MOBILE_TUNNEL_DATABASE_URL="$DATABASE_URL" \
   cargo run -p ctx-tunnel-router -- --listen "127.0.0.1:${ROUTER_PORT}"
 ) >"$TMP_ROOT/router.log" 2>&1 &
 PIDS+=("$!")
 
-(
-  cd "$CORE_DIR"
-  CTX_TUNNEL_MASTER_SECRET="$MASTER_SECRET" \
-  cargo run -p ctx-tunnel-relay -- --listen "127.0.0.1:${RELAY_PORT}"
-) >"$TMP_ROOT/relay.log" 2>&1 &
-PIDS+=("$!")
-
 wait_for_http "router" "http://127.0.0.1:${ROUTER_PORT}/health"
-wait_for_http "relay" "http://127.0.0.1:${RELAY_PORT}/health"
 
 (
   cd "$CORE_DIR"

@@ -47,6 +47,7 @@ members = [
   "crates/ctx-worker-gateway",
   "crates/ctx-worker-shim",
   "crates/ctx-tunnel-relay",
+  "crates/ctx-tunnel-store",
   "crates/ctx-tunnel-router",
   "crates/ctx-tunnel-control-plane",
   "tools/load-test",

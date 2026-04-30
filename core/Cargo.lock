@@ -2075,12 +2075,12 @@ dependencies = [
  "axum 0.7.9",
  "base64 0.22.1",
  "clap",
+ "ctx-tunnel-store",
  "hmac",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
  "sha2",
- "sqlx",
  "tokio",
  "tower 0.5.3",
  "tracing",
@@ -2096,7 +2096,9 @@ dependencies = [
  "anyhow",
  "axum 0.7.9",
  "base64 0.22.1",
+ "chrono",
  "clap",
+ "ctx-tunnel-store",
  "futures",
  "hmac",
  "serde",
@@ -2116,16 +2118,28 @@ dependencies = [
  "anyhow",
  "axum 0.7.9",
  "clap",
+ "ctx-tunnel-store",
  "futures",
  "reqwest 0.12.28",
- "serde",
  "serde_json",
- "sqlx",
  "tokio",
  "tokio-tungstenite 0.26.2",
  "tower 0.5.3",
  "tracing",
  "tracing-subscriber",
+ "url",
+]
+
+[[package]]
+name = "ctx-tunnel-store"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "thiserror 1.0.69",
+ "tokio",
  "url",
 ]
 
@@ -5281,6 +5295,7 @@ dependencies = [
  "memchr",
  "once_cell",
  "percent-encoding",
+ "rustls 0.23.36",
  "serde",
  "serde_json",
  "sha2",
@@ -5291,6 +5306,7 @@ dependencies = [
  "tracing",
  "url",
  "uuid",
+ "webpki-roots 0.26.11",
 ]
 
 [[package]]

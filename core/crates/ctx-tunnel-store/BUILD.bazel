@@ -1,0 +1,31 @@
+load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
+
+package(default_visibility = ["//visibility:public"])
+
+CTX_TUNNEL_STORE_DEPS = [
+    "@crates//:chrono",
+    "@crates//:serde",
+    "@crates//:serde_json",
+    "@crates//:sqlx",
+    "@crates//:thiserror",
+    "@crates//:url",
+]
+
+CTX_TUNNEL_STORE_DEV_DEPS = [
+    "@crates//:tokio",
+]
+
+rust_library(
+    name = "lib",
+    crate_name = "ctx_tunnel_store",
+    crate_root = "src/lib.rs",
+    edition = "2021",
+    srcs = glob(["src/**/*.rs"]),
+    deps = CTX_TUNNEL_STORE_DEPS,
+)
+
+rust_test(
+    name = "unit_tests",
+    crate = ":lib",
+    deps = CTX_TUNNEL_STORE_DEV_DEPS,
+)
