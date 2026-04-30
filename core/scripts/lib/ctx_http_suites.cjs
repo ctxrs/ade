@@ -19,6 +19,18 @@ const MANUAL_ONLY_CTX_HTTP_TEST_FILES = new Set([
   "cloud_gateway_gcp_e2e",
 ]);
 const CTX_HTTP_MANUAL_ONLY_BAZEL_TARGETS = [`${CTX_HTTP_BAZEL_PACKAGE}:manual-only`];
+const CTX_HTTP_BASE_CHILD_SUITE_NAMES = [
+  "unit-tests-api",
+  "unit-tests-execution-setup",
+  "unit-tests-lib",
+  "unit-tests-lib-session-head-large",
+  "unit-tests-workspace-runtime",
+  "unit-tests-daemon-and-scheduler",
+  "unit-tests-provider-and-settings",
+  "unit-tests-merge-queue",
+  "bin-tests",
+  "doc-tests",
+];
 const CTX_HTTP_SHARED_SOURCE_GLOBS = [
   "crates/ctx-http/src/api/auth.rs",
   "crates/ctx-http/src/api/errors.rs",
@@ -132,7 +144,6 @@ const CTX_HTTP_UNIT_SUITES = [
   concurrencyClass: "serialized",
   dependencyCrates: [],
   execution: "bazel-rbe-preferred",
-  includeInAll: false,
   oracle: "direct-assertion",
   requirements: ["linux", "buildbuddy-rbe"],
   stability: "stable",
@@ -154,17 +165,72 @@ const CTX_HTTP_SUITES = [
   {
     concurrencyClass: "serialized",
     dependencyCrates: ["ctx-http"],
+    includeInAll: false,
     name: "base",
     description: "ctx-http lib, bins, and doc tests",
     sourceGlobs: [],
     testFiles: [],
     type: "base",
   },
+  {
+    concurrencyClass: "serialized",
+    dependencyCrates: [],
+    execution: "bazel-rbe-preferred",
+    family: "build-graph",
+    name: "bin-tests",
+    description: "ctx-http binary smoke tests",
+    oracle: "direct-assertion",
+    requirements: ["linux", "buildbuddy-rbe"],
+    stability: "stable",
+    surface: "unit",
+    targetName: "bin_tests",
+    sourceGlobs: [
+      "crates/ctx-http/src/bin/**",
+      "crates/ctx-http/tests/bin_smoke.sh",
+    ],
+    testFiles: [],
+    type: "unit",
+    world: "hermetic",
+  },
+  {
+    concurrencyClass: "serialized",
+    dependencyCrates: [],
+    execution: "bazel-rbe-preferred",
+    family: "build-graph",
+    name: "doc-tests",
+    description: "ctx-http rustdoc examples and docs",
+    oracle: "compiler",
+    requirements: ["linux", "buildbuddy-rbe"],
+    stability: "stable",
+    surface: "compile",
+    targetName: "doc_tests",
+    sourceGlobs: [
+      "crates/ctx-http/src/lib.rs",
+    ],
+    testFiles: [],
+    type: "unit",
+    world: "hermetic",
+  },
   ...CTX_HTTP_UNIT_SUITES,
   {
     dependencyCrates: ["ctx-core", "ctx-events", "ctx-store", "ctx-workspace-active-snapshot"],
     name: "workspace-stream",
     description: "workspace snapshot, stream, cache, and replay behavior",
+    expandTestFilesToTargets: true,
+    directTargets: [
+      "cache_rehydration",
+      "fault_matrix",
+      "hot_endpoints_no_db",
+      "replay_properties",
+      "task_default_session_http",
+      "workspace_active_snapshot_http",
+      "workspace_active_snapshot_http_workspace_stream_repeat_subscribe_rescans_fresh_unavailable_worktree_vcs",
+      "workspace_active_snapshot_http_workspace_stream_subscribe_does_not_reemit_when_worktree_vcs_is_already_computing",
+      "workspace_active_snapshot_http_worktree_vcs_summary_refresh_reloads_live_inventory_before_ready_publish",
+      "workspace_stream_context_window_metrics",
+      "workspace_stream_no_gaps_under_activity",
+      "workspace_stream_stress_active_heads_lag",
+    ],
     sourceGlobs: [
       "crates/ctx-http/src/api/sessions/snapshot.rs",
       "crates/ctx-http/src/api/tasks/snapshot_state.rs",
@@ -316,6 +382,18 @@ const CTX_HTTP_SUITES = [
     ],
     name: "repo-vcs",
     description: "repo initialization, worktree state, merge queue, and VCS snapshots",
+    expandTestFilesToTargets: true,
+    directTargets: [
+      "jj_merge_queue_basics",
+      "merge_queue_isolation",
+      "repo_clone_branch_and_safety",
+      "repo_init_initial_commit",
+      "repo_validate_destination",
+      "session_diff_unavailable",
+      "workspace_merge_queue_config_http",
+      "worktree_archive_http",
+      "worktree_vcs_snapshot",
+    ],
     sourceGlobs: [
       "crates/ctx-http/src/api/merge_queue_api.rs",
       "crates/ctx-http/src/api/repo.rs",
@@ -425,6 +503,12 @@ const CTX_HTTP_SUITES = [
     ],
     name: "attachments-routing",
     description: "artifact uploads, attachment materialization, and route-scoping coverage",
+    expandTestFilesToTargets: true,
+    directTargets: [
+      "global_id_routing_http",
+      "image_attachments_http_e2e",
+      "workspace_attachments_local_canonical",
+    ],
     sourceGlobs: [
       "crates/ctx-http/src/api/artifacts.rs",
       "crates/ctx-http/src/api/demo.rs",
@@ -673,6 +757,10 @@ function getCtxHttpSuiteByName(suiteName) {
   return CTX_HTTP_SUITES.find((suite) => suite.name === suiteName) || null;
 }
 
+function expandCtxHttpSuiteForPlanner(suiteName) {
+  return suiteName === "base" ? [...CTX_HTTP_BASE_CHILD_SUITE_NAMES] : [suiteName];
+}
+
 function getCtxHttpSuiteConcurrencyClass(suiteName) {
   const suite = getCtxHttpSuiteByName(suiteName);
   if (!suite || suite.name === "all") {
@@ -768,15 +856,27 @@ function getCtxHttpSuiteTarget(suiteName) {
   if (!suite) {
     throw new Error(`unknown ctx-http suite: ${suiteName}`);
   }
-  return `${CTX_HTTP_BAZEL_PACKAGE}:${suite.name}`;
+  return `${CTX_HTTP_BAZEL_PACKAGE}:${suite.targetName || suite.name}`;
+}
+
+function getCtxHttpSuiteDirectTargets(suiteName) {
+  const suite = getCtxHttpSuiteByName(suiteName);
+  if (!suite) {
+    throw new Error(`unknown ctx-http suite: ${suiteName}`);
+  }
+  if (suite.expandTestFilesToTargets) {
+    return (suite.directTargets || suite.testFiles)
+      .map((targetName) => `${CTX_HTTP_BAZEL_PACKAGE}:${targetName}`);
+  }
+  return [getCtxHttpSuiteTarget(suiteName)];
 }
 
 function getCtxHttpSuiteTargets(suiteName) {
   const suiteNames = normalizeCtxHttpSuiteSelection(suiteName);
   if (suiteNames.length === 1 && suiteNames[0] === "all") {
-    return getCtxHttpSuiteNamesForAllTarget().map((entry) => getCtxHttpSuiteTarget(entry));
+    return getCtxHttpSuiteNamesForAllTarget().flatMap((entry) => getCtxHttpSuiteDirectTargets(entry));
   }
-  return suiteNames.map((entry) => getCtxHttpSuiteTarget(entry));
+  return suiteNames.flatMap((entry) => getCtxHttpSuiteDirectTargets(entry));
 }
 
 function buildCtxHttpSuiteTaskArgs(suiteName) {
@@ -786,6 +886,7 @@ function buildCtxHttpSuiteTaskArgs(suiteName) {
 
 module.exports = {
   CTX_HTTP_BAZEL_PACKAGE,
+  CTX_HTTP_BASE_CHILD_SUITE_NAMES,
   CTX_HTTP_MANUAL_ONLY_BAZEL_TARGETS,
   CTX_HTTP_SAFE_CONCURRENT_SUITES,
   CTX_HTTP_SUITES,
@@ -796,6 +897,7 @@ module.exports = {
   MANUAL_ONLY_CTX_HTTP_TEST_FILES,
   buildCtxHttpSuiteCommands,
   buildCtxHttpSuiteTaskArgs,
+  expandCtxHttpSuiteForPlanner,
   getCtxHttpSuiteTarget,
   getCtxHttpSuiteTargets,
   getCtxHttpSuiteByName,

@@ -51,11 +51,15 @@ test("ctx-http suite task lists the all meta-suite as one batched Bazel command"
   assert.equal(result.status, 0);
   const stdoutLines = result.stdout.trim().split("\n");
   assert.equal(stdoutLines.length, 1);
-  assert.equal(stdoutLines[0].startsWith("node scripts/run_bazel_pilot.cjs test //core/crates/ctx-http:base"), true);
+  assert.equal(stdoutLines[0].includes("//core/crates/ctx-http:base"), false);
+  assert.equal(stdoutLines[0].includes("//core/crates/ctx-http:unit-tests-api"), true);
+  assert.equal(stdoutLines[0].includes("//core/crates/ctx-http:bin_tests"), true);
+  assert.equal(stdoutLines[0].includes("//core/crates/ctx-http:doc_tests"), true);
   assert.equal(
-    stdoutLines[0].includes("//core/crates/ctx-http:workspace-stream"),
+    stdoutLines[0].includes("//core/crates/ctx-http:workspace_active_snapshot_http"),
     true,
   );
+  assert.equal(stdoutLines[0].includes("//core/crates/ctx-http:workspace-stream"), false);
 });
 
 test("ctx-http suite task executes batched selections per suite without forcing a global job cap", () => {

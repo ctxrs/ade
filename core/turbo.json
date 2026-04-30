@@ -3883,7 +3883,8 @@
         "scripts/run_rust_turbo.cjs",
         "scripts/sync_rust_bazel_deps.cjs",
         "scripts/sync_rust_turbo_tasks.cjs",
-        "crates/ctx-tunnel-control-plane/**"
+        "crates/ctx-tunnel-control-plane/**",
+        "crates/ctx-tunnel-store/**"
       ],
       "outputs": []
     },
@@ -3910,7 +3911,8 @@
         "scripts/run_rust_turbo.cjs",
         "scripts/sync_rust_bazel_deps.cjs",
         "scripts/sync_rust_turbo_tasks.cjs",
-        "crates/ctx-tunnel-control-plane/**"
+        "crates/ctx-tunnel-control-plane/**",
+        "crates/ctx-tunnel-store/**"
       ],
       "outputs": []
     },
@@ -3937,7 +3939,8 @@
         "scripts/run_rust_turbo.cjs",
         "scripts/sync_rust_bazel_deps.cjs",
         "scripts/sync_rust_turbo_tasks.cjs",
-        "crates/ctx-tunnel-control-plane/**"
+        "crates/ctx-tunnel-control-plane/**",
+        "crates/ctx-tunnel-store/**"
       ],
       "outputs": []
     },
@@ -3964,7 +3967,8 @@
         "scripts/run_rust_turbo.cjs",
         "scripts/sync_rust_bazel_deps.cjs",
         "scripts/sync_rust_turbo_tasks.cjs",
-        "crates/ctx-tunnel-relay/**"
+        "crates/ctx-tunnel-relay/**",
+        "crates/ctx-tunnel-store/**"
       ],
       "outputs": []
     },
@@ -3991,7 +3995,8 @@
         "scripts/run_rust_turbo.cjs",
         "scripts/sync_rust_bazel_deps.cjs",
         "scripts/sync_rust_turbo_tasks.cjs",
-        "crates/ctx-tunnel-relay/**"
+        "crates/ctx-tunnel-relay/**",
+        "crates/ctx-tunnel-store/**"
       ],
       "outputs": []
     },
@@ -4018,7 +4023,8 @@
         "scripts/run_rust_turbo.cjs",
         "scripts/sync_rust_bazel_deps.cjs",
         "scripts/sync_rust_turbo_tasks.cjs",
-        "crates/ctx-tunnel-relay/**"
+        "crates/ctx-tunnel-relay/**",
+        "crates/ctx-tunnel-store/**"
       ],
       "outputs": []
     },
@@ -4045,7 +4051,8 @@
         "scripts/run_rust_turbo.cjs",
         "scripts/sync_rust_bazel_deps.cjs",
         "scripts/sync_rust_turbo_tasks.cjs",
-        "crates/ctx-tunnel-router/**"
+        "crates/ctx-tunnel-router/**",
+        "crates/ctx-tunnel-store/**"
       ],
       "outputs": []
     },
@@ -4072,7 +4079,8 @@
         "scripts/run_rust_turbo.cjs",
         "scripts/sync_rust_bazel_deps.cjs",
         "scripts/sync_rust_turbo_tasks.cjs",
-        "crates/ctx-tunnel-router/**"
+        "crates/ctx-tunnel-router/**",
+        "crates/ctx-tunnel-store/**"
       ],
       "outputs": []
     },
@@ -4099,7 +4107,89 @@
         "scripts/run_rust_turbo.cjs",
         "scripts/sync_rust_bazel_deps.cjs",
         "scripts/sync_rust_turbo_tasks.cjs",
-        "crates/ctx-tunnel-router/**"
+        "crates/ctx-tunnel-router/**",
+        "crates/ctx-tunnel-store/**"
+      ],
+      "outputs": []
+    },
+    "rust:crate:clippy:ctx-tunnel-store": {
+      "inputs": [
+        "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
+        "Cargo.lock",
+        "rust-toolchain.toml",
+        "rustfmt.toml",
+        "clippy.toml",
+        ".cargo/config.toml",
+        "scripts/lib/bazel_rust_targets.cjs",
+        "scripts/lib/cache_roots.cjs",
+        "scripts/lib/ctx_http_suites.cjs",
+        "scripts/lib/turbo_runner.cjs",
+        "scripts/lib/rust_workspace_graph.cjs",
+        "scripts/lib/rust_gate_plan.cjs",
+        "scripts/ctx_http_suite_task.cjs",
+        "scripts/rust_bazel_deps.config.cjs",
+        "scripts/rust_crate_task.cjs",
+        "scripts/run_rust_gate.cjs",
+        "scripts/run_rust_turbo.cjs",
+        "scripts/sync_rust_bazel_deps.cjs",
+        "scripts/sync_rust_turbo_tasks.cjs",
+        "crates/ctx-tunnel-store/**"
+      ],
+      "outputs": []
+    },
+    "rust:crate:test:ctx-tunnel-store": {
+      "inputs": [
+        "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
+        "Cargo.lock",
+        "rust-toolchain.toml",
+        "rustfmt.toml",
+        "clippy.toml",
+        ".cargo/config.toml",
+        "scripts/lib/bazel_rust_targets.cjs",
+        "scripts/lib/cache_roots.cjs",
+        "scripts/lib/ctx_http_suites.cjs",
+        "scripts/lib/turbo_runner.cjs",
+        "scripts/lib/rust_workspace_graph.cjs",
+        "scripts/lib/rust_gate_plan.cjs",
+        "scripts/ctx_http_suite_task.cjs",
+        "scripts/rust_bazel_deps.config.cjs",
+        "scripts/rust_crate_task.cjs",
+        "scripts/run_rust_gate.cjs",
+        "scripts/run_rust_turbo.cjs",
+        "scripts/sync_rust_bazel_deps.cjs",
+        "scripts/sync_rust_turbo_tasks.cjs",
+        "crates/ctx-tunnel-store/**"
+      ],
+      "outputs": []
+    },
+    "rust:crate:nextest:ctx-tunnel-store": {
+      "inputs": [
+        "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
+        "Cargo.lock",
+        "rust-toolchain.toml",
+        "rustfmt.toml",
+        "clippy.toml",
+        ".cargo/config.toml",
+        "scripts/lib/bazel_rust_targets.cjs",
+        "scripts/lib/cache_roots.cjs",
+        "scripts/lib/ctx_http_suites.cjs",
+        "scripts/lib/turbo_runner.cjs",
+        "scripts/lib/rust_workspace_graph.cjs",
+        "scripts/lib/rust_gate_plan.cjs",
+        "scripts/ctx_http_suite_task.cjs",
+        "scripts/rust_bazel_deps.config.cjs",
+        "scripts/rust_crate_task.cjs",
+        "scripts/run_rust_gate.cjs",
+        "scripts/run_rust_turbo.cjs",
+        "scripts/sync_rust_bazel_deps.cjs",
+        "scripts/sync_rust_turbo_tasks.cjs",
+        "crates/ctx-tunnel-store/**"
       ],
       "outputs": []
     },
@@ -4922,6 +5012,92 @@
         "crates/ctx-http/BUILD.bazel",
         "crates/ctx-http/ctx_http_bazel_tests.bzl",
         "crates/ctx-http/src/**"
+      ],
+      "outputs": []
+    },
+    "rust:ctx-http:test:bin-tests": {
+      "inputs": [
+        "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
+        "Cargo.lock",
+        "rust-toolchain.toml",
+        "rustfmt.toml",
+        "clippy.toml",
+        ".cargo/config.toml",
+        "scripts/lib/bazel_rust_targets.cjs",
+        "scripts/lib/cache_roots.cjs",
+        "scripts/lib/ctx_http_suites.cjs",
+        "scripts/lib/turbo_runner.cjs",
+        "scripts/lib/rust_workspace_graph.cjs",
+        "scripts/lib/rust_gate_plan.cjs",
+        "scripts/ctx_http_suite_task.cjs",
+        "scripts/rust_bazel_deps.config.cjs",
+        "scripts/rust_crate_task.cjs",
+        "scripts/run_rust_gate.cjs",
+        "scripts/run_rust_turbo.cjs",
+        "scripts/sync_rust_bazel_deps.cjs",
+        "scripts/sync_rust_turbo_tasks.cjs",
+        "crates/ctx-http/BUILD.bazel",
+        "crates/ctx-http/ctx_http_bazel_tests.bzl",
+        "crates/ctx-http/src/api/auth.rs",
+        "crates/ctx-http/src/api/errors.rs",
+        "crates/ctx-http/src/api/mod.rs",
+        "crates/ctx-http/src/api/routes.rs",
+        "crates/ctx-http/src/api/shared.rs",
+        "crates/ctx-http/src/api/types.rs",
+        "crates/ctx-http/src/async_util.rs",
+        "crates/ctx-http/src/daemon.rs",
+        "crates/ctx-http/src/daemon/**",
+        "crates/ctx-http/src/lib.rs",
+        "crates/ctx-http/src/logs.rs",
+        "crates/ctx-http/src/telemetry.rs",
+        "crates/ctx-http/src/test_support.rs",
+        "crates/ctx-http/src/bin/**",
+        "crates/ctx-http/tests/bin_smoke.sh",
+        "crates/ctx-http/tests/common/**"
+      ],
+      "outputs": []
+    },
+    "rust:ctx-http:test:doc-tests": {
+      "inputs": [
+        "Cargo.toml",
+        "Cargo.Bazel.Cargo.lock",
+        "Cargo.Bazel.lock",
+        "Cargo.lock",
+        "rust-toolchain.toml",
+        "rustfmt.toml",
+        "clippy.toml",
+        ".cargo/config.toml",
+        "scripts/lib/bazel_rust_targets.cjs",
+        "scripts/lib/cache_roots.cjs",
+        "scripts/lib/ctx_http_suites.cjs",
+        "scripts/lib/turbo_runner.cjs",
+        "scripts/lib/rust_workspace_graph.cjs",
+        "scripts/lib/rust_gate_plan.cjs",
+        "scripts/ctx_http_suite_task.cjs",
+        "scripts/rust_bazel_deps.config.cjs",
+        "scripts/rust_crate_task.cjs",
+        "scripts/run_rust_gate.cjs",
+        "scripts/run_rust_turbo.cjs",
+        "scripts/sync_rust_bazel_deps.cjs",
+        "scripts/sync_rust_turbo_tasks.cjs",
+        "crates/ctx-http/BUILD.bazel",
+        "crates/ctx-http/ctx_http_bazel_tests.bzl",
+        "crates/ctx-http/src/api/auth.rs",
+        "crates/ctx-http/src/api/errors.rs",
+        "crates/ctx-http/src/api/mod.rs",
+        "crates/ctx-http/src/api/routes.rs",
+        "crates/ctx-http/src/api/shared.rs",
+        "crates/ctx-http/src/api/types.rs",
+        "crates/ctx-http/src/async_util.rs",
+        "crates/ctx-http/src/daemon.rs",
+        "crates/ctx-http/src/daemon/**",
+        "crates/ctx-http/src/lib.rs",
+        "crates/ctx-http/src/logs.rs",
+        "crates/ctx-http/src/telemetry.rs",
+        "crates/ctx-http/src/test_support.rs",
+        "crates/ctx-http/tests/common/**"
       ],
       "outputs": []
     },

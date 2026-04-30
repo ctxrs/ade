@@ -3,7 +3,10 @@ const path = require("node:path");
 const { buildTaxonomyRegistry } = require("./registry.cjs");
 const { getFamiliesById } = require("./families.cjs");
 const { getProfiles, profileMatchesEntry } = require("./profiles.cjs");
-const { buildCtxHttpSuiteTaskArgs } = require("../ctx_http_suites.cjs");
+const {
+  buildCtxHttpSuiteTaskArgs,
+  expandCtxHttpSuiteForPlanner,
+} = require("../ctx_http_suites.cjs");
 const {
   resolveMergeBaseFiles,
   resolveWorkingTreeFiles,
@@ -162,7 +165,10 @@ function buildCommandForEntry(entry) {
     return shellJoin("node", ["--test", path.relative(coreRoot, path.join(repoRoot, entry.entrypoint)).replace(/\\/gu, "/")]);
   }
   if (entry.entrypointType === "ctx-http-suite") {
-    return shellJoin("node", ["scripts/ctx_http_suite_task.cjs", "--suite", entry.entrypoint]);
+    return shellJoin("node", [
+      "scripts/ctx_http_suite_task.cjs",
+      ...buildCtxHttpSuiteTaskArgs(expandCtxHttpSuiteForPlanner(entry.entrypoint)),
+    ]);
   }
   if (entry.entrypointType === "provider-matrix-lane") {
     const lane = String(entry.entrypoint).split("#")[1];
@@ -296,7 +302,7 @@ function buildCommandsForEntries({
       continue;
     }
     if (entry.entrypointType === "ctx-http-suite" && coalesceCtxHttpSuites) {
-      ctxHttpSuites.push(entry.entrypoint);
+      ctxHttpSuites.push(...expandCtxHttpSuiteForPlanner(entry.entrypoint));
       continue;
     }
     flushCtxHttpSuites();

@@ -297,7 +297,7 @@ test("agent-default affected selection keeps direct ctx-http suite test edits on
   ]);
 });
 
-test("agent-default affected selection keeps ctx-http base for unmatched ctx-http source edits", () => {
+test("agent-default affected selection expands ctx-http base for unmatched ctx-http source edits", () => {
   const plan = buildExecutionPlan({
     profileId: "agent-default",
     changedFiles: ["core/crates/ctx-http/src/main.rs"],
@@ -305,8 +305,9 @@ test("agent-default affected selection keeps ctx-http base for unmatched ctx-htt
   });
 
   assert.deepEqual(plan.commands, [
-    "node scripts/ctx_http_suite_task.cjs --suite base",
+    "node scripts/ctx_http_suite_task.cjs --suite unit-tests-api --suite unit-tests-execution-setup --suite unit-tests-lib --suite unit-tests-lib-session-head-large --suite unit-tests-workspace-runtime --suite unit-tests-daemon-and-scheduler --suite unit-tests-provider-and-settings --suite unit-tests-merge-queue --suite bin-tests --suite doc-tests",
   ]);
+  assert.equal(plan.commands.some((command) => command.includes("--suite base")), false);
 });
 
 test("agent-default selects a narrow web E2E Bazel label for touched browser specs", () => {
