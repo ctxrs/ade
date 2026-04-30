@@ -86,12 +86,38 @@ SUBSCRIPTION_PAYLOAD="$(jq -nc --arg plan "pro" --arg status "active" --arg end 
   status: $status,
   current_period_end: $end
 }')"
-curl -sS -X PATCH "$SUPABASE_URL/rest/v1/billing_subscription?user_id=eq.$USER_ID" \
+ACCOUNT_RESP="$(
+  curl -sS "$SUPABASE_URL/rest/v1/external_identity_link?provider=eq.supabase_auth&external_subject=eq.$USER_ID&select=account_id" \
+    -H "apikey: $SERVICE_ROLE_KEY" \
+    -H "Authorization: Bearer $SERVICE_ROLE_KEY"
+)"
+ACCOUNT_ID="$(echo "$ACCOUNT_RESP" | jq -r '.[0].account_id // empty')"
+if [ -z "$ACCOUNT_ID" ]; then
+  echo "error: failed to resolve ctx account for mobile e2e user" >&2
+  exit 1
+fi
+
+BILLING_SUBJECT_RESP="$(
+  curl -sS "$SUPABASE_URL/rest/v1/billing_subject?subject_type=eq.account&account_id=eq.$ACCOUNT_ID&select=id" \
+    -H "apikey: $SERVICE_ROLE_KEY" \
+    -H "Authorization: Bearer $SERVICE_ROLE_KEY"
+)"
+BILLING_SUBJECT_ID="$(echo "$BILLING_SUBJECT_RESP" | jq -r '.[0].id // empty')"
+if [ -z "$BILLING_SUBJECT_ID" ]; then
+  echo "error: failed to resolve billing subject for mobile e2e user" >&2
+  exit 1
+fi
+
+COMMERCE_SUBSCRIPTION_PAYLOAD="$(echo "$SUBSCRIPTION_PAYLOAD" | jq --arg billing_subject_id "$BILLING_SUBJECT_ID" '. + {
+  billing_subject_id: $billing_subject_id,
+  provider: "mobile_e2e"
+}')"
+curl -sS -X POST "$SUPABASE_URL/rest/v1/commerce_subscription?on_conflict=billing_subject_id,provider" \
   -H "apikey: $SERVICE_ROLE_KEY" \
   -H "Authorization: Bearer $SERVICE_ROLE_KEY" \
   -H "Content-Type: application/json" \
-  -H "Prefer: return=minimal" \
-  -d "$SUBSCRIPTION_PAYLOAD" >/dev/null
+  -H "Prefer: resolution=merge-duplicates,return=minimal" \
+  -d "$COMMERCE_SUBSCRIPTION_PAYLOAD" >/dev/null
 
 TOKEN_PAYLOAD="$(jq -nc --arg email "$EMAIL" --arg password "$PASSWORD" '{
   email: $email,
