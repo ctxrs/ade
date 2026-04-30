@@ -56,13 +56,25 @@ test("remote updater proof keeps HTTP secrets out of curl argv", () => {
 test("remote updater proof normalizes home-relative remote ctx paths", () => {
   const source = fs.readFileSync(HELPER_PATH, "utf8");
   assert.match(source, /const REMOTE_CTX_BIN = String\([^]*"\$HOME\/\.ctx\/bin\/ctx"\)/);
+  assert.match(source, /const REMOTE_MANAGED_CTX_BIN = "\$HOME\/\.ctx\/bin\/ctx"/);
   assert.match(source, /normalize_remote_path\(\)/);
-  assert.match(source, /ctx_bin="\$\(normalize_remote_path \$\{shellQuote\(REMOTE_CTX_BIN\)\}\)"/);
+  assert.match(source, /ctx_bin="\$\(normalize_remote_path \$\{shellQuote\(REMOTE_MANAGED_CTX_BIN\)\}\)"/);
+});
+
+test("remote updater proof refuses to launch non-headless bootstrap daemon artifacts", () => {
+  const source = fs.readFileSync(HELPER_PATH, "utf8");
+  assert.match(source, /class BootstrapDaemonUnsupportedError extends Error/);
+  assert.match(source, /"\$tmp_dir\/ctx" serve --help/);
+  assert.match(source, /__CTX_BOOTSTRAP_DAEMON_UNSUPPORTED__/);
+  assert.match(source, /install -m 755 "\$tmp_dir\/ctx" "\$ctx_bin"/);
 });
 
 test("remote updater proof requires version changes and checks busy-turn outcomes", () => {
   const source = fs.readFileSync(SPEC_PATH, "utf8");
   assert.match(source, /process\.env\.CTX_UPDATER_E2E_EXPECT_VERSION_CHANGE,\s*\n\s*true,/);
+  assert.match(source, /isBootstrapDaemonUnsupportedError\(error\)/);
+  assert.match(source, /invalid_managed_remote_binary_reinstall/);
+  assert.match(source, /running previous-daemon scenarios skipped because the bootstrap channel daemon artifact cannot run ctx serve/);
   assert.match(source, /assertTurnStatus\(terminalTurn, \["completed"\], "pending restart-on-idle"\)/);
   assert.match(source, /assertTurnStatus\(terminalTurn, \["failed", "cancelled"\], "pending restart-now"\)/);
   assert.match(source, /assertTurnStatus\(terminalTurn, \["failed", "cancelled"\], "incompatible reconnect"\)/);

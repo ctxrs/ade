@@ -10,6 +10,7 @@ const REMOTE_USER = String(process.env.CTX_AUTOMATION_REMOTE_USER || process.env
 const REMOTE_PORT = Number.parseInt(String(process.env.CTX_AUTOMATION_REMOTE_PORT || "44099"), 10) || 44099;
 const REMOTE_DATA_DIR = String(process.env.CTX_AUTOMATION_REMOTE_DATA_DIR || "").trim() || "/tmp/ctx-updater-proof/daemon";
 const REMOTE_CTX_BIN = String(process.env.CTX_AUTOMATION_REMOTE_CTX_BIN || process.env.CTX_UPDATER_E2E_REMOTE_CTX_BIN || "$HOME/.ctx/bin/ctx").trim();
+const REMOTE_MANAGED_CTX_BIN = "$HOME/.ctx/bin/ctx";
 const SSH_KEY_PATH = String(
   process.env.CTX_UPDATER_E2E_SSH_KEY_PATH || process.env.CTX_AUTOMATION_REMOTE_SSH_KEY_PATH || "",
 ).trim();
@@ -36,6 +37,17 @@ const remoteAuthFile = `${REMOTE_DATA_DIR.replace(/\/+$/u, "")}/daemon_auth.json
 const remoteProofRoot = `${REMOTE_DATA_DIR.replace(/\/+$/u, "")}/updater-proof`;
 
 const trimText = (value) => String(value || "").trim();
+
+class BootstrapDaemonUnsupportedError extends Error {
+  constructor(message, details = {}) {
+    super(message);
+    this.name = "BootstrapDaemonUnsupportedError";
+    this.details = details;
+  }
+}
+
+const isBootstrapDaemonUnsupportedError = (error) =>
+  error instanceof BootstrapDaemonUnsupportedError || String(error?.name || "") === "BootstrapDaemonUnsupportedError";
 
 const assertRemoteConfigured = () => {
   if (!REMOTE_HOST) {
@@ -319,7 +331,7 @@ const bootstrapRemoteDaemon = async ({
 set -euo pipefail
 ${remotePathPrelude}
 data_dir=${shellQuote(REMOTE_DATA_DIR)}
-ctx_bin="$(normalize_remote_path ${shellQuote(REMOTE_CTX_BIN)})"
+ctx_bin="$(normalize_remote_path ${shellQuote(REMOTE_MANAGED_CTX_BIN)})"
 bundle_dir=${shellQuote(remoteBundleDir)}
 proof_root=${shellQuote(remoteProofRoot)}
 pid_file=${shellQuote(remoteDaemonPidFile)}
@@ -363,6 +375,13 @@ fi
 rm -rf "$data_dir" "$bundle_dir"
 mkdir -p "$(dirname "$ctx_bin")" "$data_dir" "$bundle_dir"
 download_checked daemon ${shellQuote(daemonUrl)} "$tmp_dir/ctx" ${shellQuote(platform.daemon.sha256)}
+if ! "$tmp_dir/ctx" serve --help >/dev/null 2>"$tmp_dir/ctx-serve-help.err"; then
+  install -m 755 "$tmp_dir/ctx" "$ctx_bin"
+  echo "__CTX_BOOTSTRAP_DAEMON_UNSUPPORTED__" >&2
+  echo "bootstrap daemon artifact for ${shellQuote(bootstrapChannel)} is not a headless ctx daemon" >&2
+  cat "$tmp_dir/ctx-serve-help.err" >&2 || true
+  exit 86
+fi
 install -m 755 "$tmp_dir/ctx" "$ctx_bin"
 download_checked appimage ${shellQuote(appImageUrl)} "$tmp_dir/ctx.AppImage" ${shellQuote(platform.appimage.sha256)}
 chmod +x "$tmp_dir/ctx.AppImage"
@@ -385,7 +404,22 @@ nohup env \
   "$ctx_bin" serve --bind 127.0.0.1:${REMOTE_PORT} --data-dir "$data_dir" >"$log_file" 2>&1 < /dev/null &
 echo $! >"$pid_file"
 `;
-  remoteSh(script);
+  try {
+    remoteSh(script);
+  } catch (error) {
+    if (String(error?.message || error).includes("__CTX_BOOTSTRAP_DAEMON_UNSUPPORTED__")) {
+      throw new BootstrapDaemonUnsupportedError(
+        `bootstrap daemon artifact for ${bootstrapChannel} cannot run ctx serve`,
+        {
+          bootstrap_channel: bootstrapChannel,
+          target_channel: updateChannel,
+          bootstrap_version: bootstrapVersion,
+          platform: platform.platform,
+        },
+      );
+    }
+    throw error;
+  }
   try {
     await waitForRemoteHealth({ timeoutMs: 120000 });
   } catch (error) {
@@ -646,8 +680,11 @@ module.exports = {
   REMOTE_PORT,
   REMOTE_DATA_DIR,
   REMOTE_CTX_BIN,
+  REMOTE_MANAGED_CTX_BIN,
   BOOTSTRAP_CHANNEL,
   TARGET_CHANNEL,
+  BootstrapDaemonUnsupportedError,
+  isBootstrapDaemonUnsupportedError,
   remoteBundleDir,
   remoteDaemonLog,
   shellQuote,

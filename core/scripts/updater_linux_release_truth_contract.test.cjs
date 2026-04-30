@@ -30,6 +30,7 @@ test("Linux updater proof runs final workspace flow in a separate home", () => {
   assert.ok(scriptText.includes('XDG_DATA_HOME="${workspace_home_dir}/.local/share" \\'));
   assert.ok(scriptText.includes('XDG_CONFIG_HOME="${workspace_home_dir}/.config" \\'));
   assert.ok(scriptText.includes('XDG_CACHE_HOME="${workspace_home_dir}/.cache" \\'));
+  assert.ok(scriptText.includes('CTX_AUTOMATION_SHIPPED_APP_DAEMON_DATA_DIR="${workspace_home_dir}/.ctx" \\'));
   assert.match(
     scriptText,
     /if \[\[ -n "\$\{workspace_home_dir:-\}" \]\]; then\s+stop_proof_daemons "\$\{workspace_home_dir\}" \|\| true\s+fi/,

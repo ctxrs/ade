@@ -25,8 +25,13 @@ test("wdio shipped-app mode is cross-platform and supports an explicit bundle di
   const script = fs.readFileSync(configPath, "utf8");
 
   assert.match(script, /const SHIPPED_APP_BUNDLES_DIR_OVERRIDE = resolveConfiguredPath\(\s*process\.env\.CTX_AUTOMATION_SHIPPED_APP_BUNDLES_DIR,\s*\)/);
+  assert.match(script, /const SHIPPED_APP_DAEMON_DATA_DIR_OVERRIDE = resolveConfiguredPath\(\s*process\.env\.CTX_AUTOMATION_SHIPPED_APP_DAEMON_DATA_DIR,\s*\)/);
   assert.match(script, /const USING_SHIPPED_APP_MODE = SHIPPED_APP_MODE;/);
   assert.match(script, /if \(USING_SHIPPED_APP_MODE\) \{\s*if \(SHIPPED_APP_BUNDLES_DIR_OVERRIDE\) \{\s*return SHIPPED_APP_BUNDLES_DIR_OVERRIDE;/s);
+  assert.match(
+    script,
+    /if \(USING_SHIPPED_APP_MODE\) \{\s*if \(SHIPPED_APP_DAEMON_DATA_DIR_OVERRIDE\) \{\s*fs\.mkdirSync\(SHIPPED_APP_DAEMON_DATA_DIR_OVERRIDE, \{ recursive: true \}\);\s*internalDaemonDataDir = canonicalPath\(SHIPPED_APP_DAEMON_DATA_DIR_OVERRIDE\);/s,
+  );
   assert.match(
     script,
     /CTX_AUTOMATION_SHIPPED_APP=1 requires CTX_AUTOMATION_SHIPPED_APP_BUNDLES_DIR for Linux\/Windows container scenarios/,

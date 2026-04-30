@@ -81,7 +81,7 @@ fn prepare_initial_connect(
         target.user.as_deref(),
         target.password_once.as_deref(),
     )?;
-    let managed_binary_present = remote_ctx_bin_exists_over_ssh(
+    let managed_binary_usable = remote_ctx_bin_usable_over_ssh(
         &target.host,
         target.user.as_deref(),
         MANAGED_REMOTE_CTX_BIN,
@@ -116,7 +116,7 @@ fn prepare_initial_connect(
     let probe = RemoteProbe {
         platform,
         auth_bootstrap_used,
-        managed_binary_present,
+        managed_binary_present: managed_binary_usable,
         existing_daemon_reachable: existing_daemon_auth.is_some(),
     };
     set_job_phase(job_id.as_deref(), ConnectJobPhase::Planning);

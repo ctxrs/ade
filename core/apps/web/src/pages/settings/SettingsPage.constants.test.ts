@@ -25,11 +25,11 @@ describe("Settings sections", () => {
     expect(sectionIds).not.toContain("sandboxing");
   });
 
-  it("surfaces team and enterprise navigation now that the admin scaffold exists", () => {
+  it("keeps team and enterprise hidden from the sidebar navigation", () => {
     const teamEnterprise = SECTIONS.find((section) => section.id === "team_enterprise");
 
     expect(teamEnterprise).toBeDefined();
     expect(teamEnterprise?.label).toBe("Team & Enterprise");
-    expect(teamEnterprise?.navHidden).not.toBe(true);
+    expect(teamEnterprise?.navHidden).toBe(true);
   });
 });

@@ -306,6 +306,9 @@ const SHIPPED_APP_MODE = resolveBoolishFlag(
 const SHIPPED_APP_BUNDLES_DIR_OVERRIDE = resolveConfiguredPath(
   process.env.CTX_AUTOMATION_SHIPPED_APP_BUNDLES_DIR,
 );
+const SHIPPED_APP_DAEMON_DATA_DIR_OVERRIDE = resolveConfiguredPath(
+  process.env.CTX_AUTOMATION_SHIPPED_APP_DAEMON_DATA_DIR,
+);
 
 let daemonProcess = null;
 let daemonDataDir = null;
@@ -1922,8 +1925,13 @@ exports.config = {
       delete process.env.CTX_DESKTOP_DAEMON_URL;
       delete process.env.CTX_DESKTOP_DAEMON_TOKEN;
       if (USING_SHIPPED_APP_MODE) {
-        delete process.env.CTX_DESKTOP_DAEMON_DATA_DIR;
-        internalDaemonDataDir = null;
+        if (SHIPPED_APP_DAEMON_DATA_DIR_OVERRIDE) {
+          fs.mkdirSync(SHIPPED_APP_DAEMON_DATA_DIR_OVERRIDE, { recursive: true });
+          internalDaemonDataDir = canonicalPath(SHIPPED_APP_DAEMON_DATA_DIR_OVERRIDE);
+        } else {
+          delete process.env.CTX_DESKTOP_DAEMON_DATA_DIR;
+          internalDaemonDataDir = null;
+        }
       } else if (INTERNAL_DAEMON_DATA_DIR_OVERRIDE) {
         internalDaemonDataDir = path.resolve(INTERNAL_DAEMON_DATA_DIR_OVERRIDE);
         fs.mkdirSync(internalDaemonDataDir, { recursive: true });

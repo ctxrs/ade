@@ -42,6 +42,16 @@ if ! $validator {tmp} serve --help >/dev/null 2>&1; then echo 'managed remote da
     )
 }
 
+fn render_remote_ctx_bin_usable_check_cmd(remote_ctx_bin: &str) -> Result<String> {
+    let ctx_bin = validate_remote_ctx_bin(remote_ctx_bin)?;
+    Ok(format!(
+        "if [ ! -x {ctx_bin} ]; then exit 1; fi; \
+if command -v timeout >/dev/null 2>&1; then validator='timeout 20s'; else validator=''; fi; \
+if ! $validator {ctx_bin} serve --help >/dev/null 2>&1; then echo 'remote managed ctx binary is not a headless daemon: serve --help failed' >&2; exit 1; fi",
+        ctx_bin = remote_path_expr(&ctx_bin),
+    ))
+}
+
 fn render_remote_bundle_sync_cmd(
     artifact: &ResolvedRemoteReleaseArtifact,
     remote_data_dir: &str,
@@ -327,6 +337,16 @@ mod tests {
         assert!(cmd.contains("timeout 20s"));
         assert!(cmd.contains("managed remote daemon artifact is not a headless ctx daemon"));
     }
+
+    #[test]
+    fn remote_existing_managed_binary_check_requires_headless_daemon() {
+        let cmd =
+            render_remote_ctx_bin_usable_check_cmd("~/.ctx/bin/ctx").expect("valid remote path");
+        assert!(cmd.contains("if [ ! -x \"$HOME/.ctx/bin/ctx\" ]; then exit 1; fi"));
+        assert!(cmd.contains("timeout 20s"));
+        assert!(cmd.contains("\"$HOME/.ctx/bin/ctx\" serve --help"));
+        assert!(cmd.contains("remote managed ctx binary is not a headless daemon"));
+    }
 }
 
 pub(super) fn remote_ctx_bin_exists_over_ssh(
@@ -351,6 +371,26 @@ pub(super) fn remote_ctx_bin_exists_over_ssh(
     let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
     let detail = if !stderr.is_empty() { stderr } else { stdout };
     anyhow::bail!("checking remote managed daemon binary failed: {detail}");
+}
+
+pub(super) fn remote_ctx_bin_usable_over_ssh(
+    host: &str,
+    user: Option<&str>,
+    remote_ctx_bin: &str,
+) -> Result<bool> {
+    let check_cmd = render_remote_ctx_bin_usable_check_cmd(remote_ctx_bin)?;
+    let output = run_remote_ssh_shell(host, user, &check_cmd)
+        .context("validating remote managed daemon binary")?;
+    if output.status.success() {
+        return Ok(true);
+    }
+    if output.status.code() == Some(1) {
+        return Ok(false);
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let detail = if !stderr.is_empty() { stderr } else { stdout };
+    anyhow::bail!("validating remote managed daemon binary failed: {detail}");
 }
 
 pub(super) fn start_remote_daemon_over_ssh(

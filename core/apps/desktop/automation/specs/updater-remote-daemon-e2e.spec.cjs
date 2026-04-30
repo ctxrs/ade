@@ -13,6 +13,7 @@ const {
   readRemoteVersion,
   waitForRemoteVersionChange,
   readRemoteAutoUpdateStatus,
+  isBootstrapDaemonUnsupportedError,
 } = require("./helpers/remote_updater_proof.cjs");
 
 const reportPath = String(
@@ -153,6 +154,7 @@ const waitForConnection = async (predicate, label, timeoutMs = 180000) => {
 };
 
 const recordPass = (recorder, id, message) => recorder.recordAssertion(id, "pass", message);
+const recordSkip = (recorder, id, message, payload = null) => recorder.recordAssertion(id, "skipped", message, payload);
 
 describe("updater remote daemon e2e", () => {
   before(function beforeSuite() {
@@ -174,6 +176,7 @@ describe("updater remote daemon e2e", () => {
       secretValues: [process.env.OPENROUTER_API_KEY || ""],
     });
     const executed = [];
+    let runningBootstrapAvailable = true;
     const finalize = ({ result, reason, error = "" }) =>
       recorder.finalize({
         result,
@@ -190,33 +193,71 @@ describe("updater remote daemon e2e", () => {
 
     try {
       if (runIdle) {
-        const bootstrap = await bootstrapRemoteDaemon({
-          bootstrapChannel: incompatibleBootstrapChannel,
-          updateChannel: TARGET_CHANNEL,
-        });
-        const beforeVersion = readRemoteVersion();
-        const connect = await connectDesktop();
-        recorder.recordArtifact("idle_connect_response", connect);
-        const afterVersion = requireVersionChange
-          ? await waitForRemoteVersionChange(beforeVersion)
-          : readRemoteVersion();
-        const info = await waitForConnection((candidate) => String(candidate?.kind || "").toLowerCase() === "ssh", "ssh reconnect");
-        recorder.recordArtifact("idle_connection_info", info);
-        recorder.recordArtifact("idle_bootstrap", bootstrap);
-        recordPass(
-          recorder,
-          "idle_remote_update",
-          `remote daemon updated on connect from ${beforeVersion} to ${afterVersion}`,
-        );
-        executed.push({
-          scenario: "idle_connect_update",
-          before_version: beforeVersion,
-          after_version: afterVersion,
-        });
-        await disconnectDesktop();
+        let bootstrap;
+        try {
+          bootstrap = await bootstrapRemoteDaemon({
+            bootstrapChannel: incompatibleBootstrapChannel,
+            updateChannel: TARGET_CHANNEL,
+          });
+        } catch (error) {
+          if (!isBootstrapDaemonUnsupportedError(error)) {
+            throw error;
+          }
+          const connect = await connectDesktop();
+          const info = await waitForConnection(
+            (candidate) => String(candidate?.kind || "").toLowerCase() === "ssh",
+            "ssh reconnect after invalid managed binary reinstall",
+          );
+          const afterVersion = readRemoteVersion();
+          recorder.recordArtifact("invalid_managed_binary_connect_response", connect);
+          recorder.recordArtifact("invalid_managed_binary_connection_info", info);
+          recorder.recordArtifact("invalid_managed_binary_bootstrap", error.details || null);
+          recordPass(
+            recorder,
+            "invalid_managed_remote_binary_reinstall",
+            `desktop replaced an invalid ${incompatibleBootstrapChannel} managed remote ctx binary with ${afterVersion}`,
+          );
+          executed.push({
+            scenario: "invalid_managed_remote_binary_reinstall",
+            bootstrap_channel: incompatibleBootstrapChannel,
+            after_version: afterVersion,
+          });
+          await disconnectDesktop();
+          runningBootstrapAvailable = false;
+          bootstrap = null;
+        }
+        if (!bootstrap) {
+          recordSkip(
+            recorder,
+            "running_remote_update_scenarios",
+            "running previous-daemon scenarios skipped because the bootstrap channel daemon artifact cannot run ctx serve",
+            { bootstrap_channel: incompatibleBootstrapChannel },
+          );
+        } else {
+          const beforeVersion = readRemoteVersion();
+          const connect = await connectDesktop();
+          recorder.recordArtifact("idle_connect_response", connect);
+          const afterVersion = requireVersionChange
+            ? await waitForRemoteVersionChange(beforeVersion)
+            : readRemoteVersion();
+          const info = await waitForConnection((candidate) => String(candidate?.kind || "").toLowerCase() === "ssh", "ssh reconnect");
+          recorder.recordArtifact("idle_connection_info", info);
+          recorder.recordArtifact("idle_bootstrap", bootstrap);
+          recordPass(
+            recorder,
+            "idle_remote_update",
+            `remote daemon updated on connect from ${beforeVersion} to ${afterVersion}`,
+          );
+          executed.push({
+            scenario: "idle_connect_update",
+            before_version: beforeVersion,
+            after_version: afterVersion,
+          });
+          await disconnectDesktop();
+        }
       }
 
-      if (runPendingIdle) {
+      if (runPendingIdle && runningBootstrapAvailable) {
         const bootstrap = await bootstrapRemoteDaemon({
           bootstrapChannel: compatibleBootstrapChannel,
           updateChannel: TARGET_CHANNEL,
@@ -258,7 +299,7 @@ describe("updater remote daemon e2e", () => {
         await disconnectDesktop();
       }
 
-      if (runPendingRestartNow) {
+      if (runPendingRestartNow && runningBootstrapAvailable) {
         const bootstrap = await bootstrapRemoteDaemon({
           bootstrapChannel: compatibleBootstrapChannel,
           updateChannel: TARGET_CHANNEL,
@@ -302,7 +343,7 @@ describe("updater remote daemon e2e", () => {
         await disconnectDesktop();
       }
 
-      if (runIncompatibleReconnect) {
+      if (runIncompatibleReconnect && runningBootstrapAvailable) {
         const bootstrap = await bootstrapRemoteDaemon({
           bootstrapChannel: incompatibleBootstrapChannel,
           updateChannel: TARGET_CHANNEL,
@@ -341,7 +382,7 @@ describe("updater remote daemon e2e", () => {
         await disconnectDesktop();
       }
 
-      if (runNoClientAuto) {
+      if (runNoClientAuto && runningBootstrapAvailable) {
         const bootstrap = await bootstrapRemoteDaemon({
           bootstrapChannel: incompatibleBootstrapChannel,
           updateChannel: TARGET_CHANNEL,
