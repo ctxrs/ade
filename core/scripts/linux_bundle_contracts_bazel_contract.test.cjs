@@ -43,6 +43,16 @@ test("linux AppImage packaging includes manifest-declared ctx-mcp runtime payloa
     "Linux AppImages must package the ctx-mcp runtime path declared in bundles/manifest.json",
   );
   assert.match(
+    linuxTauriBundleScript,
+    /verify_bundle_manifest_closure\.cjs --rewrite-digests/,
+    "Linux AppImages must rewrite manifest digests from the post-linuxdeploy AppDir",
+  );
+  assert.match(
+    linuxTauriBundleScript,
+    /verify_appimage_bundle_manifest_closure/,
+    "Linux AppImages must be extracted and verified before staging for publish",
+  );
+  assert.match(
     releaseVerifier,
     /verify_bundle_manifest_closure\.cjs/,
     "Supabase verification must reject AppImages with manifest-declared files missing from the packaged bundle",

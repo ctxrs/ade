@@ -132,3 +132,46 @@ test("bundle manifest closure fails when a declared runtime binary is missing", 
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("bundle manifest closure rewrite mode updates packaged digests", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-bundle-closure-rewrite-"));
+  try {
+    const runtimePayload = Buffer.from("#!/bin/sh\nexit 0\n");
+    const runtimeBin = path.join(root, "runtimes", "ctx-mcp", "linux", "x86_64", "0.1.0", "ctx-mcp");
+    writeExecutable(runtimeBin, runtimePayload);
+    fs.writeFileSync(
+      path.join(root, "manifest.json"),
+      `${JSON.stringify(
+        {
+          version: 1,
+          providers: [],
+          runtimes: [
+            {
+              id: "ctx-mcp",
+              version: "0.1.0",
+              os: "linux",
+              arch: "x86_64",
+              sha256: "0".repeat(64),
+              root: "runtimes/ctx-mcp/linux/x86_64/0.1.0",
+              bin: "ctx-mcp",
+            },
+          ],
+          images: [],
+          daemons: [],
+        },
+        null,
+        2,
+      )}\n`,
+    );
+
+    const result = childProcess.spawnSync("node", [scriptPath, "--rewrite-digests", root], {
+      encoding: "utf8",
+    });
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    assert.match(result.stdout, /rewritten and verified/);
+    const manifest = JSON.parse(fs.readFileSync(path.join(root, "manifest.json"), "utf8"));
+    assert.equal(manifest.runtimes[0].sha256, sha256(runtimePayload));
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});

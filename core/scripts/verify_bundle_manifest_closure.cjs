@@ -32,10 +32,14 @@ function resolveInside(rootDir, rawPath, label) {
 }
 
 function validateSha256(filePath, expected, label) {
-  const digest = crypto.createHash("sha256").update(fs.readFileSync(filePath)).digest("hex");
+  const digest = sha256File(filePath);
   if (digest !== expected) {
     fail(`${label} sha256 mismatch: expected ${expected}, got ${digest}`);
   }
+}
+
+function sha256File(filePath) {
+  return crypto.createHash("sha256").update(fs.readFileSync(filePath)).digest("hex");
 }
 
 function validateFile(filePath, label, options = {}) {
@@ -125,16 +129,67 @@ function validateBundleManifestClosure(bundleDir) {
   };
 }
 
+function rewriteBundleManifestDigests(bundleDir) {
+  const resolvedBundleDir = path.resolve(bundleDir);
+  const manifestPath = path.join(resolvedBundleDir, "manifest.json");
+  const manifest = readJson(manifestPath, "bundle manifest");
+  if (manifest.version !== 1) {
+    fail(`bundle manifest version must be 1, got ${manifest.version}`);
+  }
+  const providers = Array.isArray(manifest.providers) ? manifest.providers : [];
+  const runtimes = Array.isArray(manifest.runtimes) ? manifest.runtimes : [];
+  const images = Array.isArray(manifest.images) ? manifest.images : [];
+  const daemons = Array.isArray(manifest.daemons) ? manifest.daemons : [];
+
+  providers.forEach((provider, index) => {
+    const command = resolveInside(resolvedBundleDir, provider?.command, `manifest.providers[${index}].command`);
+    validateFile(command, `manifest.providers[${index}].command`, { executable: true });
+    provider.sha256 = sha256File(command);
+  });
+  runtimes.forEach((runtime, index) => {
+    const label = `manifest.runtimes[${index}]`;
+    const root = resolveInside(resolvedBundleDir, runtime?.root, `${label}.root`);
+    if (!fs.existsSync(root) || !fs.statSync(root).isDirectory()) {
+      fail(`${label}.root is missing or not a directory: ${root}`);
+    }
+    const bin = resolveInside(root, runtime?.bin, `${label}.bin`);
+    validateFile(bin, `${label}.bin`, { executable: true });
+    runtime.sha256 = sha256File(bin);
+    const npmCli = String(runtime?.npm_cli || "").trim();
+    if (npmCli) {
+      validateFile(resolveInside(root, npmCli, `${label}.npm_cli`), `${label}.npm_cli`);
+    }
+  });
+  images.forEach((image, index) => {
+    const tar = resolveInside(resolvedBundleDir, image?.tar, `manifest.images[${index}].tar`);
+    validateFile(tar, `manifest.images[${index}].tar`);
+    image.sha256 = sha256File(tar);
+  });
+  daemons.forEach((daemon, index) => {
+    const bin = resolveInside(resolvedBundleDir, daemon?.bin, `manifest.daemons[${index}].bin`);
+    validateFile(bin, `manifest.daemons[${index}].bin`, { executable: true });
+    daemon.sha256 = sha256File(bin);
+  });
+
+  fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+  return validateBundleManifestClosure(resolvedBundleDir);
+}
+
 function main() {
-  const bundleDir = process.argv[2];
+  const args = process.argv.slice(2);
+  const rewriteDigests = args.includes("--rewrite-digests");
+  const bundleDir = args.find((arg) => arg !== "--rewrite-digests");
   if (!bundleDir) {
-    console.error("usage: verify_bundle_manifest_closure.cjs <bundle-dir>");
+    console.error("usage: verify_bundle_manifest_closure.cjs [--rewrite-digests] <bundle-dir>");
     process.exit(2);
   }
   try {
-    const result = validateBundleManifestClosure(bundleDir);
+    const result = rewriteDigests
+      ? rewriteBundleManifestDigests(bundleDir)
+      : validateBundleManifestClosure(bundleDir);
+    const verb = rewriteDigests ? "rewritten and verified" : "verified";
     console.log(
-      `ok: bundle manifest closure verified providers=${result.providers} runtimes=${result.runtimes} images=${result.images} daemons=${result.daemons}`,
+      `ok: bundle manifest closure ${verb} providers=${result.providers} runtimes=${result.runtimes} images=${result.images} daemons=${result.daemons}`,
     );
   } catch (err) {
     console.error(`error: ${err?.message ?? err}`);
@@ -147,5 +202,6 @@ if (require.main === module) {
 }
 
 module.exports = {
+  rewriteBundleManifestDigests,
   validateBundleManifestClosure,
 };
