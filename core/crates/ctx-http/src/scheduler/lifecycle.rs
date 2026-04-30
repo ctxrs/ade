@@ -37,6 +37,8 @@ pub(crate) struct RunningTurn {
 
 const PROVIDER_OUTCOME_WAIT_TIMEOUT: Duration = Duration::from_secs(2);
 const TURN_EVENT_LOOP_DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
+const TURN_TERMINALIZATION_RETRY_LIMIT: usize = 3;
+const TURN_TERMINALIZATION_RETRY_BASE_MS: u64 = 50;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum TurnStartProgress {
@@ -165,6 +167,85 @@ fn interrupted_fallback_outcome(reason: &str, provider_cancelled: bool) -> Provi
     }
 }
 
+async fn turn_finished_persisted(
+    state: &Arc<AppState>,
+    session_id: SessionId,
+    turn_id: TurnId,
+) -> bool {
+    let Ok(store) = state.store_for_session(session_id).await else {
+        return false;
+    };
+    match store
+        .list_session_events_for_turn(session_id, turn_id, false)
+        .await
+    {
+        Ok(events) => events
+            .iter()
+            .any(|event| matches!(event.event_type, SessionEventType::TurnFinished)),
+        Err(err) => {
+            tracing::warn!(
+                session_id = %session_id.0,
+                turn_id = %turn_id.0,
+                "failed to verify durable TurnFinished after terminalization: {err:#}"
+            );
+            false
+        }
+    }
+}
+
+async fn finalize_provider_outcome_required(
+    state: &Arc<AppState>,
+    session_id: SessionId,
+    run_id: Option<RunId>,
+    turn_id: TurnId,
+    message_id: MessageId,
+    outcome: ProviderTurnOutcome,
+) -> bool {
+    for attempt in 0..=TURN_TERMINALIZATION_RETRY_LIMIT {
+        match finalize_provider_outcome(
+            state,
+            session_id,
+            run_id,
+            turn_id,
+            message_id,
+            outcome.clone(),
+        )
+        .await
+        {
+            Ok(()) if turn_finished_persisted(state, session_id, turn_id).await => return true,
+            Ok(()) => {
+                tracing::warn!(
+                    session_id = %session_id.0,
+                    turn_id = %turn_id.0,
+                    attempt,
+                    "turn terminalization completed without durable TurnFinished"
+                );
+            }
+            Err(err) => {
+                tracing::warn!(
+                    session_id = %session_id.0,
+                    turn_id = %turn_id.0,
+                    attempt,
+                    "turn terminalization failed: {err:#}"
+                );
+            }
+        }
+
+        if attempt < TURN_TERMINALIZATION_RETRY_LIMIT {
+            let backoff_ms =
+                TURN_TERMINALIZATION_RETRY_BASE_MS.saturating_mul((attempt + 1) as u64);
+            tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
+        }
+    }
+
+    tracing::error!(
+        session_id = %session_id.0,
+        turn_id = %turn_id.0,
+        "turn terminalization exhausted retries without durable TurnFinished"
+    );
+    false
+}
+
 pub(crate) async fn stop_running_turn(
     state: &Arc<AppState>,
     session_id: SessionId,
@@ -266,9 +347,9 @@ pub(crate) async fn stop_running_turn(
     )
     .await;
     drop(turn.event_tx);
-    if let Some(events_done) = turn.events_done.take() {
+    let finalized = if let Some(events_done) = turn.events_done.take() {
         wait_for_turn_event_loop(session_id, run_id, turn_id, events_done).await;
-        let _ = finalize_provider_outcome(
+        finalize_provider_outcome_required(
             state,
             session_id,
             Some(run_id),
@@ -276,9 +357,9 @@ pub(crate) async fn stop_running_turn(
             turn.message_id,
             outcome,
         )
-        .await;
+        .await
     } else {
-        let _ = finalize_provider_outcome(
+        finalize_provider_outcome_required(
             state,
             session_id,
             Some(run_id),
@@ -286,18 +367,18 @@ pub(crate) async fn stop_running_turn(
             turn.message_id,
             outcome,
         )
-        .await;
-    }
+        .await
+    };
     revoke_turn_mcp_token(state, &mut turn.mcp_token).await;
     state.set_running(session_id, false).await;
-    reason.suspend_queue()
+    reason.suspend_queue() || !finalized
 }
 
 pub(crate) async fn handle_provider_exit(
     state: &Arc<AppState>,
     session_id: SessionId,
     mut turn: RunningTurn,
-) {
+) -> bool {
     let run_id = turn.run_id;
     let turn_id = turn.turn_id;
     let message_id = turn.message_id;
@@ -314,9 +395,9 @@ pub(crate) async fn handle_provider_exit(
     )
     .await;
     drop(turn.event_tx);
-    if let Some(events_done) = turn.events_done.take() {
+    let finalized = if let Some(events_done) = turn.events_done.take() {
         wait_for_turn_event_loop(session_id, run_id, turn_id, events_done).await;
-        let _ = finalize_provider_outcome(
+        finalize_provider_outcome_required(
             state,
             session_id,
             Some(run_id),
@@ -324,9 +405,9 @@ pub(crate) async fn handle_provider_exit(
             message_id,
             outcome,
         )
-        .await;
+        .await
     } else {
-        let _ = finalize_provider_outcome(
+        finalize_provider_outcome_required(
             state,
             session_id,
             Some(run_id),
@@ -334,16 +415,17 @@ pub(crate) async fn handle_provider_exit(
             message_id,
             outcome,
         )
-        .await;
-    }
+        .await
+    };
     revoke_turn_mcp_token(state, &mut turn.mcp_token).await;
+    finalized
 }
 
 pub(crate) async fn handle_provider_stall(
     state: &Arc<AppState>,
     session_id: SessionId,
     mut turn: RunningTurn,
-) {
+) -> bool {
     let run_id = turn.run_id;
     let turn_id = turn.turn_id;
     let message_id = turn.message_id;
@@ -368,7 +450,7 @@ pub(crate) async fn handle_provider_stall(
         "provider_protocol_violation_inactivity_timeout",
         "provider stalled without reporting a terminal outcome before timeout",
     );
-    let _ = finalize_provider_outcome(
+    let finalized = finalize_provider_outcome_required(
         state,
         session_id,
         Some(run_id),
@@ -378,6 +460,7 @@ pub(crate) async fn handle_provider_stall(
     )
     .await;
     revoke_turn_mcp_token(state, &mut turn.mcp_token).await;
+    finalized
 }
 
 pub(crate) async fn fail_starting_turn(

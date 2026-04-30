@@ -271,6 +271,86 @@ async fn raw_provider_terminal_events_do_not_complete_turn_until_turn_finished_p
 }
 
 #[tokio::test]
+async fn terminal_projection_without_turn_finished_persists_missing_turn_finished() {
+    let (_dir, store) = setup_store().await;
+    let (session, turn_id) = create_session_with_turn(&store, None).await;
+
+    let interrupted = store
+        .append_session_event(
+            session.id,
+            None,
+            Some(turn_id),
+            SessionEventType::TurnInterrupted,
+            json!({"reason": "cancelled", "provider_cancelled": true}),
+        )
+        .await
+        .unwrap();
+    store.flush_session_event_log().await.unwrap();
+    store
+        .update_session_turn_status(
+            session.id,
+            turn_id,
+            SessionTurnStatus::Interrupted,
+            Some(interrupted.seq),
+            None,
+            Utc::now(),
+        )
+        .await
+        .unwrap();
+
+    let persisted = store
+        .persist_turn_terminal_events(
+            session.id,
+            None,
+            turn_id,
+            vec![(
+                SessionEventType::TurnFinished,
+                json!({"status": "interrupted", "reason": "cancelled"}),
+            )],
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(persisted.len(), 1);
+    assert!(matches!(
+        persisted[0].event_type,
+        SessionEventType::TurnFinished
+    ));
+    assert!(persisted[0].seq > interrupted.seq);
+
+    let repaired_turn = store
+        .get_session_turn(session.id, turn_id)
+        .await
+        .unwrap()
+        .expect("repaired turn");
+    assert_eq!(repaired_turn.status, SessionTurnStatus::Interrupted);
+    assert_eq!(repaired_turn.end_seq, Some(persisted[0].seq));
+
+    let duplicate = store
+        .persist_turn_terminal_events(
+            session.id,
+            None,
+            turn_id,
+            vec![(
+                SessionEventType::TurnFinished,
+                json!({"status": "interrupted", "reason": "cancelled"}),
+            )],
+        )
+        .await
+        .unwrap();
+    assert!(duplicate.is_empty());
+
+    let finished_count = store
+        .list_session_events_for_turn(session.id, turn_id, false)
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|event| matches!(event.event_type, SessionEventType::TurnFinished))
+        .count();
+    assert_eq!(finished_count, 1);
+}
+
+#[tokio::test]
 async fn get_terminal_event_for_run_flushes_buffered_events_before_reading() {
     let (_dir, store) = setup_store().await;
     let (session, turn_id) = create_session_with_turn(&store, None).await;

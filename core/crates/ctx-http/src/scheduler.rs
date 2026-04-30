@@ -210,7 +210,7 @@ pub async fn session_worker(
                             let Some(state) = state_weak.upgrade() else {
                                 break;
                             };
-                            let _ = stop_running_turn(
+                            suspend_queue = stop_running_turn(
                                 &state,
                                 session.id,
                                 turn,
@@ -265,7 +265,8 @@ pub async fn session_worker(
                     let Some(state) = state_weak.upgrade() else {
                         break;
                     };
-                    handle_provider_exit(&state, session.id, turn).await;
+                    let finalized = handle_provider_exit(&state, session.id, turn).await;
+                    suspend_queue = !finalized;
                     state.set_running(session.id, false).await;
                 } else if let Some(state) = state_weak.upgrade() {
                     state.set_running(session.id, false).await;
@@ -323,7 +324,8 @@ pub async fn session_worker(
                     let Some(state) = state_weak.upgrade() else {
                         break;
                     };
-                    handle_provider_stall(&state, session.id, turn).await;
+                    let finalized = handle_provider_stall(&state, session.id, turn).await;
+                    suspend_queue = !finalized;
                     state.set_running(session.id, false).await;
                 } else if let Some(state) = state_weak.upgrade() {
                     state.set_running(session.id, false).await;
