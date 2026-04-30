@@ -6,10 +6,16 @@ use ctx_core::models::{
     WorkspaceAttachmentStatus,
 };
 use ctx_http::attachments;
+use ctx_http::settings::{
+    ContainerExecutionSettings, ContainerRuntimeKind, ExecutionMode, ExecutionSettings, Settings,
+};
 use serde_json::json;
 
 #[tokio::test]
 async fn workspace_attachments_are_db_canonical_and_ignore_repo_file() {
+    let _sandbox_cli_available = common::TestEnvGuard::set("CTX_TEST_SANDBOX_CLI_AVAILABLE", "0");
+    let _sandbox_cli_path =
+        common::TestEnvGuard::set("CTX_HARNESS_SANDBOX_CLI_PATH", "/no/such/sandbox-cli");
     let repo = common::init_git_repo(&[("README.md", "hello\n")]).await;
     let cfg_path = repo.path().join(".ctx").join("attachments.toml");
     tokio::fs::create_dir_all(cfg_path.parent().unwrap())
@@ -28,6 +34,21 @@ async fn workspace_attachments_are_db_canonical_and_ignore_repo_file() {
         common::fake_providers(),
         "http://127.0.0.1:0",
     );
+    ctx_http::settings::save_settings(
+        state.global_store(),
+        &Settings {
+            execution: Some(ExecutionSettings {
+                mode: ExecutionMode::Host,
+                container: ContainerExecutionSettings {
+                    runtime: ContainerRuntimeKind::NativeContainer,
+                    ..ContainerExecutionSettings::default()
+                },
+            }),
+            ..Settings::default()
+        },
+    )
+    .await
+    .unwrap();
     let app = common::router(state);
 
     let workspace = common::create_workspace(&app, repo.path(), "ws").await;

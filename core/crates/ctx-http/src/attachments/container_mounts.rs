@@ -1,6 +1,6 @@
 use super::*;
 use crate::execution_effective;
-use crate::settings::ContainerRuntimeKind;
+use crate::settings::{ContainerRuntimeKind, ExecutionMode};
 use crate::worktree_data_plane::resolve_worktree_data_plane;
 use chrono::Utc;
 use ctx_core::models::{AttachmentMode, AttachmentUpdatePolicy, WorktreeAttachmentStatus};
@@ -343,6 +343,9 @@ async fn container_remove_attachment_data_if_present(
     attachment: &WorkspaceAttachment,
 ) -> Result<()> {
     let effective = execution_effective::effective_execution_settings(state, workspace_id).await?;
+    if matches!(effective.mode, ExecutionMode::Host) {
+        return Ok(());
+    }
     if matches!(
         effective.container.runtime,
         ContainerRuntimeKind::SharedVmContainer
