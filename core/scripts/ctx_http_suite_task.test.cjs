@@ -62,7 +62,7 @@ test("ctx-http suite task lists the all meta-suite as one batched Bazel command"
   assert.equal(stdoutLines[0].includes("//core/crates/ctx-http:workspace-stream"), false);
 });
 
-test("ctx-http suite task executes batched selections per suite without forcing a global job cap", () => {
+test("ctx-http suite task caps per-suite Bazel fanout without serializing Buildkite", () => {
   const plan = buildTaskPlan({
     argv: ["--suite", "base", "--suite", "provider-auth"],
     cwd: repoRoot,
@@ -79,7 +79,7 @@ test("ctx-http suite task executes batched selections per suite without forcing 
       command: "node",
     },
   ]);
-  assert.equal(String(plan.env.CTX_BAZEL_JOBS ?? ""), "");
+  assert.equal(plan.env.CTX_BAZEL_JOBS, "2");
   assert.equal(plan.env.CTX_BAZEL_LOCAL_TEST_JOBS, "1");
   assert.equal(plan.env.RUST_TEST_THREADS, "1");
 });

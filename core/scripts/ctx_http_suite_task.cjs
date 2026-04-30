@@ -10,6 +10,7 @@ const {
 } = require("./lib/ctx_http_suites.cjs");
 
 const DEFAULT_CTX_HTTP_LOCAL_TEST_JOBS = "1";
+const DEFAULT_CTX_HTTP_BAZEL_JOBS = "2";
 
 function parseArgs(argv) {
   const args = {
@@ -79,6 +80,9 @@ function buildTaskPlan({
   }
   if (!String(env.CTX_BAZEL_LOCAL_TEST_JOBS ?? "").trim()) {
     env.CTX_BAZEL_LOCAL_TEST_JOBS = DEFAULT_CTX_HTTP_LOCAL_TEST_JOBS;
+  }
+  if (!String(env.CTX_BAZEL_JOBS ?? "").trim()) {
+    env.CTX_BAZEL_JOBS = DEFAULT_CTX_HTTP_BAZEL_JOBS;
   }
   return {
     args,

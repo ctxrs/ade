@@ -429,7 +429,7 @@ async fn cancel_promotes_queued_turns_in_fifo_order_across_multiple_cancels() {
             break;
         }
         if tokio::time::Instant::now() >= deadline {
-            panic!("timed out waiting for first cancel promotion");
+            panic!("timed out waiting for first cancel promotion: {events:#?}");
         }
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
@@ -461,7 +461,7 @@ async fn cancel_promotes_queued_turns_in_fifo_order_across_multiple_cancels() {
             break;
         }
         if tokio::time::Instant::now() >= deadline {
-            panic!("timed out waiting for second cancel promotion");
+            panic!("timed out waiting for second cancel promotion: {events:#?}");
         }
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
