@@ -2115,7 +2115,7 @@ const waitForLaunchLogsOrWorkspaceRoute = async (timeoutMs = 15000) => {
 const connectionSignature = (info) => JSON.stringify({
   kind: info?.kind || null,
   base_url: info?.base_url || null,
-  token: info?.token || null,
+  browser_query_secret: info?.browser_query_secret || null,
   host: info?.host || null,
   user: info?.user || null,
   remote_port: info?.remote_port ?? null,
@@ -2248,11 +2248,11 @@ const connectLocalDesktop = async () => {
 
 const assertConnectedLocalAndListening = async () => {
   let info = await getConnectionInfo();
-  if (!info || info.kind !== "local" || !info.base_url || !info.token) {
+  if (!info || info.kind !== "local" || !info.base_url || !info.browser_query_secret) {
     await connectLocalDesktop();
     await browser.waitUntil(async () => {
       const refreshed = await getConnectionInfo();
-      return Boolean(refreshed && refreshed.kind === "local" && refreshed.base_url && refreshed.token);
+      return Boolean(refreshed && refreshed.kind === "local" && refreshed.base_url && refreshed.browser_query_secret);
     }, {
       timeout: 30000,
       timeoutMsg: `expected local daemon connection after desktop_connect_local, got: ${JSON.stringify(info || null)}`,
@@ -2262,8 +2262,8 @@ const assertConnectedLocalAndListening = async () => {
   if (!info || info.kind !== "local") {
     throw new Error(`expected local daemon connection, got: ${JSON.stringify(info || null)}`);
   }
-  if (!info.base_url || !info.token) {
-    throw new Error(`expected base_url+token in connection info, got: ${JSON.stringify(info || null)}`);
+  if (!info.base_url || !info.browser_query_secret) {
+    throw new Error(`expected base_url+browser_query_secret in connection info, got: ${JSON.stringify(info || null)}`);
   }
   // Sanity: confirm something is actually listening on the connected port.
   const u = new URL(info.base_url);

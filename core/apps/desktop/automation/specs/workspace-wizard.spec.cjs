@@ -1559,8 +1559,8 @@ const assertConnectedLocalAndListening = async () => {
   if (!info || info.kind !== "local") {
     throw new Error(`expected local daemon connection, got: ${JSON.stringify(info)}`);
   }
-  if (!info.base_url || !info.token) {
-    throw new Error(`expected base_url+token in connection info, got: ${JSON.stringify(info)}`);
+  if (!info.base_url || !info.browser_query_secret) {
+    throw new Error(`expected base_url+browser_query_secret in connection info, got: ${JSON.stringify(info)}`);
   }
   // Sanity: confirm something is actually listening on the connected port.
   const u = new URL(info.base_url);
@@ -1577,7 +1577,7 @@ const assertConnectedLocalAndListening = async () => {
 const connectionSignature = (info) => JSON.stringify({
   kind: info?.kind || null,
   base_url: info?.base_url || null,
-  token: info?.token || null,
+  browser_query_secret: info?.browser_query_secret || null,
   host: info?.host || null,
   user: info?.user || null,
   remote_port: info?.remote_port ?? null,

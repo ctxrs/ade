@@ -11,6 +11,10 @@ const APP_ENTITLEMENTS = path.join(ROOT, "src-tauri", "ctx.entitlements");
 const TAURI_MAIN = path.join(ROOT, "src-tauri", "src", "main.rs");
 const PACKAGE_JSON = path.join(ROOT, "package.json");
 const WDIO_CONF = path.join(ROOT, "automation", "wdio.conf.cjs");
+const WORKSPACE_WIZARD_SPEC = path.join(ROOT, "automation", "specs", "workspace-wizard.spec.cjs");
+const WORKSPACE_WIZARD_FLOW_HELPER = path.join(ROOT, "automation", "specs", "helpers", "workspace_wizard_flow.cjs");
+const DAEMON_RECONNECT_SPEC = path.join(ROOT, "automation", "specs", "daemon-reconnect.spec.cjs");
+const RECENT_WORKSPACE_SPEC = path.join(ROOT, "automation", "specs", "recent-workspace-open.spec.cjs");
 const LINUX_SANDBOX_LOCAL = path.join(ROOT, "src-tauri", "src", "linux_sandbox", "local.rs");
 const DESKTOP_LOCAL_DAEMON = path.join(ROOT, "src-tauri", "src", "desktop_local_daemon.rs");
 const REMOTE_REAL_CI_WRAPPER = path.join(ROOT, "scripts", "test_remote_real_ci.sh");
@@ -68,6 +72,22 @@ test("local daemon restart shares the connect gate", () => {
   assert.match(source, /fn lock_local_connect_gate\(\) -> Result<std::sync::MutexGuard<'static, \(\)>>/);
 });
 
+test("desktop automation asserts browser-scoped daemon connection info", () => {
+  for (const file of [
+    WORKSPACE_WIZARD_SPEC,
+    WORKSPACE_WIZARD_FLOW_HELPER,
+    DAEMON_RECONNECT_SPEC,
+    RECENT_WORKSPACE_SPEC,
+  ]) {
+    const source = fs.readFileSync(file, "utf8");
+    assert.match(source, /browser_query_secret/);
+    assert.doesNotMatch(source, /base_url\+token|base_url \+ token/);
+    assert.doesNotMatch(source, /info\.base_url && info\.token/);
+    assert.doesNotMatch(source, /refreshed\.base_url && refreshed\.token/);
+    assert.doesNotMatch(source, /connection\.token/);
+  }
+});
+
 test("first-run local sandbox script defaults to isolated macOS CN backend", () => {
   const pkg = JSON.parse(fs.readFileSync(PACKAGE_JSON, "utf8"));
   assert.match(
@@ -122,6 +142,8 @@ test("updater remote wrapper uses shipped app without source-side provisioning",
   assert.match(script, /CTX_AUTOMATION_SHIPPED_APP="\$\{CTX_AUTOMATION_SHIPPED_APP:-1\}"/);
   assert.match(script, /CTX_AUTOMATION_SKIP_APP_BUILD="\$\{CTX_AUTOMATION_SKIP_APP_BUILD:-1\}"/);
   assert.match(script, /CTX_AUTOMATION_SKIP_REMOTE_CTX_PROVISION="\$\{CTX_AUTOMATION_SKIP_REMOTE_CTX_PROVISION:-1\}"/);
+  assert.match(script, /CTX_AUTOMATION_ALLOW_PREP_APP_PROCESS_SWEEP="\$\{CTX_AUTOMATION_ALLOW_PREP_APP_PROCESS_SWEEP:-1\}"/);
+  assert.match(script, /CTX_AUTOMATION_ALLOW_STALE_HELPER_SWEEP="\$\{CTX_AUTOMATION_ALLOW_STALE_HELPER_SWEEP:-1\}"/);
   assert.match(script, /unset CTX_BUNDLE_DIR/);
 });
 

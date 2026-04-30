@@ -83,8 +83,8 @@ describe("desktop daemon reconnect + deep-link token", () => {
     if (!afterReconnect || afterReconnect.kind !== "local") {
       throw new Error(`expected auto-reconnected local state, got: ${JSON.stringify(afterReconnect)}`);
     }
-    if (!afterReconnect.base_url || !afterReconnect.token) {
-      throw new Error(`expected base_url + token after reconnect, got: ${JSON.stringify(afterReconnect)}`);
+    if (!afterReconnect.base_url || !afterReconnect.browser_query_secret) {
+      throw new Error(`expected base_url + browser_query_secret after reconnect, got: ${JSON.stringify(afterReconnect)}`);
     }
 
     for (let attempt = 0; attempt < 3; attempt += 1) {

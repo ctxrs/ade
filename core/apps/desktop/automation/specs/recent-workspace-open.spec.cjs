@@ -80,7 +80,7 @@ const tauriInvoke = async (command, args) => {
 
 const getDesktopConnection = async () => {
   const info = await tauriInvoke("desktop_get_connection");
-  if (info && info.base_url && info.token) return info;
+  if (info && info.base_url && info.browser_query_secret) return info;
   throw new Error(`desktop_get_connection returned no daemon details: ${JSON.stringify(info || null)}`);
 };
 
@@ -90,7 +90,7 @@ const daemonJson = async (method, apiPath, body) => {
   const response = await fetch(url, {
     method,
     headers: {
-      authorization: `Bearer ${String(connection.token || "")}`,
+      authorization: `Bearer ${String(connection.browser_query_secret || "")}`,
       "content-type": "application/json",
     },
     body: typeof body === "undefined" ? undefined : JSON.stringify(body),
