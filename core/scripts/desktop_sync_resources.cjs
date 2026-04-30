@@ -751,6 +751,7 @@ const buildRemoteDaemonContainerArgs = ({
   cargoHome,
   rustupHome,
   target,
+  identity = {},
   hostOs = hostManifestOs,
 }) => {
   const preparedDaemonsDir = ensureContainerCacheDir(daemonsDir, hostOs);
@@ -789,12 +790,25 @@ const buildRemoteDaemonContainerArgs = ({
       "CARGO_HOME=/cargo-home",
       "-e",
       "RUSTUP_HOME=/rustup-home",
+      ...containerBuildIdentityEnvArgs(identity),
       builderImage,
       "bash",
       "-lc",
       buildCmd,
     ],
   ];
+};
+
+const containerBuildIdentityEnvArgs = (identity = {}) => {
+  const entries = [
+    ["CTX_RELEASE_EFFECTIVE_VERSION", identity.exactVersion],
+    ["CTX_BUILD_ID", identity.buildId],
+    ["CTX_COMPATIBILITY_TOKEN", identity.compatibilityToken],
+  ];
+  return entries.flatMap(([name, value]) => {
+    const normalized = String(value || "").trim();
+    return normalized ? ["-e", `${name}=${normalized}`] : [];
+  });
 };
 
 const linuxBundleTargetForArch = (arch) => {
@@ -826,6 +840,7 @@ const buildLinuxCtxMcpContainerArgs = ({
   rustupHome,
   target,
   runtimeVersion,
+  identity = {},
   hostOs = hostManifestOs,
 }) => {
   const preparedRuntimesDir = ensureContainerCacheDir(runtimesDir, hostOs);
@@ -873,6 +888,7 @@ const buildLinuxCtxMcpContainerArgs = ({
       "CARGO_HOME=/cargo-home",
       "-e",
       "RUSTUP_HOME=/rustup-home",
+      ...containerBuildIdentityEnvArgs(identity),
       builderImage,
       "bash",
       "-lc",
@@ -884,6 +900,11 @@ const buildLinuxCtxMcpContainerArgs = ({
 const bundleRemoteDaemons = (bundleDir) => {
   const runtime = resolveContainerRuntime();
   const builderImage = resolveRemoteDaemonBuilderImage();
+  const identity = resolveDesktopBuildIdentity({
+    coreRoot,
+    env: process.env,
+    mode: resolveArtifactIdentityMode(process.env),
+  });
   const daemonsDir = path.join(bundleDir, "daemons");
   fs.mkdirSync(daemonsDir, { recursive: true });
   const cacheRoot = resolveBundleCacheRoot("desktop-remote-daemons");
@@ -918,6 +939,7 @@ const bundleRemoteDaemons = (bundleDir) => {
       cargoHome,
       rustupHome,
       target,
+      identity,
     });
     const res = childProcess.spawnSync(spawnCmd, args, { stdio: "inherit" });
     if (res.status !== 0) {
@@ -941,6 +963,11 @@ const bundleRemoteDaemons = (bundleDir) => {
 const bundleLinuxCtxMcpRuntime = (bundleDir) => {
   const runtime = resolveContainerRuntime();
   const builderImage = resolveRemoteDaemonBuilderImage();
+  const identity = resolveDesktopBuildIdentity({
+    coreRoot,
+    env: process.env,
+    mode: resolveArtifactIdentityMode(process.env),
+  });
   const runtimesDir = bundleDir;
   fs.mkdirSync(runtimesDir, { recursive: true });
   const runtimeVersion = readCargoPackageVersion(ctxMcpCargoTomlPath);
@@ -963,6 +990,7 @@ const bundleLinuxCtxMcpRuntime = (bundleDir) => {
     rustupHome,
     target,
     runtimeVersion,
+    identity,
   });
   const res = childProcess.spawnSync(spawnCmd, args, { stdio: "inherit" });
   if (res.status !== 0) {

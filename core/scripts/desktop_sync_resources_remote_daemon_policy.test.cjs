@@ -50,6 +50,11 @@ test("remote daemon container build command creates /out before install", () => 
       rustTarget: "x86_64-unknown-linux-gnu",
       fileName: "ctx-daemon-linux-x86_64",
     },
+    identity: {
+      exactVersion: "0.62.22-preview.deadbeef",
+      buildId: "deadbeef",
+      compatibilityToken: "artifact-deadbeef",
+    },
   });
 
   assert.equal(spawnCmd, "docker");
@@ -61,6 +66,9 @@ test("remote daemon container build command creates /out before install", () => 
   assert.match(args.join(" "), /-v \/rustup-home-host:\/rustup-home/);
   assert.match(args.join(" "), /-e CARGO_HOME=\/cargo-home/);
   assert.match(args.join(" "), /-e RUSTUP_HOME=\/rustup-home/);
+  assert.match(args.join(" "), /-e CTX_RELEASE_EFFECTIVE_VERSION=0\.62\.22-preview\.deadbeef/);
+  assert.match(args.join(" "), /-e CTX_BUILD_ID=deadbeef/);
+  assert.match(args.join(" "), /-e CTX_COMPATIBILITY_TOKEN=artifact-deadbeef/);
   assert.match(args.join(" "), /install -Dm0755 .* \/out\/ctx-daemon-linux-x86_64/);
   assert.doesNotMatch(args.join(" "), /\/usr\/local\/cargo\/registry/);
   assert.doesNotMatch(args.join(" "), /\/usr\/local\/cargo\/git/);
@@ -85,6 +93,11 @@ test("linux ctx-mcp container build command stages runtime into bundle tree", ()
       rustTarget: "aarch64-unknown-linux-gnu",
     },
     runtimeVersion: "0.1.0",
+    identity: {
+      exactVersion: "0.62.22-preview.deadbeef",
+      buildId: "deadbeef",
+      compatibilityToken: "artifact-deadbeef",
+    },
   });
 
   assert.equal(spawnCmd, "docker");
@@ -97,6 +110,9 @@ test("linux ctx-mcp container build command stages runtime into bundle tree", ()
   assert.match(args.join(" "), /-v \/rustup-home-host:\/rustup-home/);
   assert.match(args.join(" "), /-e CARGO_HOME=\/cargo-home/);
   assert.match(args.join(" "), /-e RUSTUP_HOME=\/rustup-home/);
+  assert.match(args.join(" "), /-e CTX_RELEASE_EFFECTIVE_VERSION=0\.62\.22-preview\.deadbeef/);
+  assert.match(args.join(" "), /-e CTX_BUILD_ID=deadbeef/);
+  assert.match(args.join(" "), /-e CTX_COMPATIBILITY_TOKEN=artifact-deadbeef/);
   assert.match(
     args.join(" "),
     /install -Dm0755 .* \/out\/runtimes\/ctx-mcp\/linux\/aarch64\/0\.1\.0\/ctx-mcp/,

@@ -85,6 +85,10 @@ fn spawn_daemon_with_mode(
         })
         .or_else(dev_web_dist);
     let bundle_dir = desktop_bundle_dir(app);
+    let build_identity_path = bundle_dir
+        .as_ref()
+        .map(|bundle| bundle.join("artifact_identity.json"))
+        .filter(|path| path.exists());
     let resolved_path_env = resolve_local_daemon_path_env();
 
     let seed_codex_auth = std::env::var_os("HOME")
@@ -131,6 +135,12 @@ fn spawn_daemon_with_mode(
         if let Some(bundle) = bundle_dir.as_ref() {
             cmd.arg("--setenv")
                 .arg(format!("CTX_BUNDLE_DIR={}", bundle.to_string_lossy()));
+        }
+        if let Some(identity_path) = build_identity_path.as_ref() {
+            cmd.arg("--setenv").arg(format!(
+                "{DESKTOP_BUILD_IDENTITY_PATH_ENV}={}",
+                identity_path.to_string_lossy()
+            ));
         }
         if local_linux_sandbox_runtime_ready(data_dir) {
             cmd.arg("--setenv")
@@ -185,6 +195,12 @@ fn spawn_daemon_with_mode(
         }
         if let Some(bundle) = bundle_dir.as_ref() {
             cmd.env("CTX_BUNDLE_DIR", bundle.to_string_lossy().to_string());
+        }
+        if let Some(identity_path) = build_identity_path.as_ref() {
+            cmd.env(
+                DESKTOP_BUILD_IDENTITY_PATH_ENV,
+                identity_path.to_string_lossy().to_string(),
+            );
         }
         configure_local_linux_sandbox_daemon_env(&mut cmd, data_dir);
         if seed_codex_auth {

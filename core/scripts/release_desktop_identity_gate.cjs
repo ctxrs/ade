@@ -203,6 +203,7 @@ function probeBundledHelper(helperPath, bundleDir) {
     env: {
       ...process.env,
       CTX_BUNDLE_DIR: bundleDir,
+      CTX_BUILD_IDENTITY_PATH: path.join(bundleDir, "artifact_identity.json"),
     },
     label: "bundled helper probe",
   });
@@ -226,6 +227,7 @@ function initializeBundledMcp(mcpBin, bundleDir) {
     env: {
       ...process.env,
       CTX_BUNDLE_DIR: bundleDir,
+      CTX_BUILD_IDENTITY_PATH: path.join(bundleDir, "artifact_identity.json"),
     },
     label: "bundled MCP initialize",
     input: `${JSON.stringify(request)}\n`,
@@ -259,6 +261,15 @@ function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+async function readDaemonLogAfterExit(logPath) {
+  let logs = fs.existsSync(logPath) ? fs.readFileSync(logPath, "utf8") : "";
+  if (!logs.trim()) {
+    await delay(25);
+    logs = fs.existsSync(logPath) ? fs.readFileSync(logPath, "utf8") : "";
+  }
+  return logs;
+}
+
 async function readDaemonAuthToken(dataDir, child, logPath) {
   const pathName = path.join(dataDir, AUTH_FILENAME);
   const deadline = Date.now() + HEALTH_TIMEOUT_MS;
@@ -275,7 +286,7 @@ async function readDaemonAuthToken(dataDir, child, logPath) {
       lastError = error;
       const exit = child.exitCode;
       if (exit !== null) {
-        const logs = fs.existsSync(logPath) ? fs.readFileSync(logPath, "utf8") : "";
+        const logs = await readDaemonLogAfterExit(logPath);
         throw new Error(`daemon exited (${exit}) before health check succeeded: ${logs || error.message}`);
       }
       await delay(HEALTH_RETRY_MS);
@@ -319,7 +330,7 @@ async function waitForHealth(url, child, logPath, authToken) {
       lastError = error;
       const exit = child.exitCode;
       if (exit !== null) {
-        const logs = fs.existsSync(logPath) ? fs.readFileSync(logPath, "utf8") : "";
+        const logs = await readDaemonLogAfterExit(logPath);
         throw new Error(`daemon exited (${exit}) before health check succeeded: ${logs || error.message}`);
       }
       await new Promise((resolve) => setTimeout(resolve, HEALTH_RETRY_MS));
@@ -383,6 +394,7 @@ async function main() {
   const daemonEnv = {
     ...process.env,
     CTX_BUNDLE_DIR: bundleDir,
+    CTX_BUILD_IDENTITY_PATH: path.join(bundleDir, "artifact_identity.json"),
     ...(fs.existsSync(mcpBin) ? { CTX_MCP_COMMAND: mcpBin } : {}),
     ...(fs.existsSync(avfLinuxHelper) ? { CTX_AVF_LINUX_HELPER_PATH: avfLinuxHelper } : {}),
   };

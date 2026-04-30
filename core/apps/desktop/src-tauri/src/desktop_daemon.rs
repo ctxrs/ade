@@ -14,6 +14,7 @@ mod systemd;
 mod tests;
 
 pub(super) const AVF_LINUX_HELPER_PATH_ENV: &str = "CTX_AVF_LINUX_HELPER_PATH";
+pub(super) const DESKTOP_BUILD_IDENTITY_PATH_ENV: &str = "CTX_BUILD_IDENTITY_PATH";
 pub(super) const DESKTOP_BUNDLE_DIR_ENV: &str = "CTX_BUNDLE_DIR";
 const DESKTOP_DAEMON_BIN_NAME: &str = "ctx-daemon";
 const AVF_GUEST_GATEWAY_HOST: &str = "192.168.64.1";
