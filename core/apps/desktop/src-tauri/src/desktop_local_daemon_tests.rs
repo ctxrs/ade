@@ -215,6 +215,41 @@ fn desktop_restart_local_daemon_spawn_failure_preserves_env_override_local_conne
 }
 
 #[test]
+fn desktop_restart_local_daemon_uses_local_connect_gate() {
+    let first_guard = lock_local_connect_gate().expect("lock first gate holder");
+    let ready = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let spawn_entered = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let ready_for_thread = std::sync::Arc::clone(&ready);
+    let spawn_entered_for_thread = std::sync::Arc::clone(&spawn_entered);
+    let handle = std::thread::spawn(move || {
+        let state = ConnectionManager::default();
+        ready_for_thread.store(true, std::sync::atomic::Ordering::SeqCst);
+        let err = restart_local_with_spawn(&state, || {
+            spawn_entered_for_thread.store(true, std::sync::atomic::Ordering::SeqCst);
+            Err(anyhow!("restart reached spawn"))
+        })
+        .expect_err("spawn failure should surface after the restart acquires the gate");
+        assert!(format!("{err:#}").contains("restart reached spawn"));
+    });
+
+    while !ready.load(std::sync::atomic::Ordering::SeqCst) {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    std::thread::sleep(Duration::from_millis(80));
+    assert!(
+        !spawn_entered.load(std::sync::atomic::Ordering::SeqCst),
+        "restart spawn should not start while the local-connect gate is held"
+    );
+
+    drop(first_guard);
+    handle.join().expect("join restart waiter");
+    assert!(
+        spawn_entered.load(std::sync::atomic::Ordering::SeqCst),
+        "restart spawn should proceed once the local-connect gate is released"
+    );
+}
+
+#[test]
 #[cfg(unix)]
 fn desktop_restart_local_daemon_does_not_stop_attached_compatible_daemon() {
     let state = ConnectionManager::default();
