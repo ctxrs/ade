@@ -2,10 +2,13 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const { execFileSync } = require("node:child_process");
 const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
 
 const configPath = path.join(__dirname, "wdio.conf.cjs");
+const escapeRegExp = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 test("wdio automation defaults route runtime and daemon scratch through the volatile root", () => {
   const script = fs.readFileSync(configPath, "utf8");
@@ -40,6 +43,48 @@ test("wdio shipped-app mode is cross-platform and supports an explicit bundle di
     script,
     /delete process\.env\.CTX_DESKTOP_DEV_BIN_DIR;[\s\S]*delete process\.env\.CTX_DESKTOP_START_PATH;/,
   );
+});
+
+test("wdio shipped-app launches through a wrapper with exact app env", () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-wdio-launch-env-"));
+  try {
+    const appPath = path.join(tmp, "ctx-real");
+    const bundlesDir = path.join(tmp, "bundles");
+    const daemonDataDir = path.join(tmp, "workspace-home", ".ctx");
+    fs.writeFileSync(appPath, "#!/bin/sh\nexit 0\n", { mode: 0o700 });
+    fs.mkdirSync(bundlesDir, { recursive: true });
+
+    const nodeScript = [
+      `const cfg = require(${JSON.stringify(configPath)});`,
+      `process.stdout.write(cfg.config.capabilities[0]["tauri:options"].application);`,
+    ].join("\n");
+    const wrapperPath = execFileSync(process.execPath, ["-e", nodeScript], {
+      cwd: path.resolve(__dirname, "..", "..", ".."),
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        CTX_AUTOMATION_TMPDIR: tmp,
+        CTX_DESKTOP_APP_PATH: appPath,
+        CTX_AUTOMATION_SHIPPED_APP: "1",
+        CTX_AUTOMATION_SHIPPED_APP_BUNDLES_DIR: bundlesDir,
+        CTX_AUTOMATION_SHIPPED_APP_DAEMON_DATA_DIR: daemonDataDir,
+        CTX_AUTOMATION_SSH_NO_START_REMOTE: "0",
+      },
+    });
+    assert.notEqual(wrapperPath, appPath);
+    assert.equal(path.dirname(wrapperPath), path.join(tmp, "desktop-app-launchers"));
+    const wrapper = fs.readFileSync(wrapperPath, "utf8");
+    assert.match(wrapper, new RegExp(`export CTX_BUNDLE_DIR='${escapeRegExp(bundlesDir)}'`));
+    assert.match(
+      wrapper,
+      new RegExp(`export CTX_DESKTOP_DAEMON_DATA_DIR='${escapeRegExp(daemonDataDir)}'`),
+    );
+    assert.match(wrapper, /export CTX_DESKTOP_SSH_NO_START_REMOTE='0'/);
+    assert.match(wrapper, /export CTX_DESKTOP_SSH_START_REMOTE='1'/);
+    assert.match(wrapper, new RegExp(`exec '${escapeRegExp(appPath)}' "\\$@"`));
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
 });
 
 test("wdio remote-only prep on mac arm64 skips the managed AVF payload download", () => {

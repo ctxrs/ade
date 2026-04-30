@@ -754,6 +754,54 @@ const stopStaleSystemdScope = () => {
 
 const shellQuote = (value) => `'${String(value).replace(/'/g, `'\"'\"'`)}'`;
 
+const buildDesktopAppLaunchEnv = () => {
+  const env = {};
+  if (SSH_NO_START_REMOTE) {
+    env.CTX_DESKTOP_SSH_NO_START_REMOTE = "1";
+    env.CTX_DESKTOP_SSH_START_REMOTE = "0";
+  } else {
+    env.CTX_DESKTOP_SSH_NO_START_REMOTE = "0";
+    env.CTX_DESKTOP_SSH_START_REMOTE = "1";
+  }
+  if (USING_SHIPPED_APP_MODE) {
+    if (SHIPPED_APP_BUNDLES_DIR_OVERRIDE) {
+      env.CTX_BUNDLE_DIR = SHIPPED_APP_BUNDLES_DIR_OVERRIDE;
+    }
+    if (!USE_EXTERNAL_DAEMON && SHIPPED_APP_DAEMON_DATA_DIR_OVERRIDE) {
+      env.CTX_DESKTOP_DAEMON_DATA_DIR = SHIPPED_APP_DAEMON_DATA_DIR_OVERRIDE;
+    }
+  }
+  return env;
+};
+
+const createDesktopAppLaunchWrapper = (appExecutablePath, env) => {
+  const entries = Object.entries(env).filter(([, value]) => String(value || "").trim());
+  if (process.platform === "win32" || entries.length === 0) return appExecutablePath;
+  const signature = crypto
+    .createHash("sha256")
+    .update(JSON.stringify({ appExecutablePath, env }))
+    .digest("hex")
+    .slice(0, 16);
+  const wrapperDir = path.join(automationTmpDir, "desktop-app-launchers");
+  fs.mkdirSync(wrapperDir, { recursive: true });
+  const wrapperPath = path.join(wrapperDir, `ctx-app-${signature}.sh`);
+  const lines = [
+    "#!/bin/sh",
+    "set -eu",
+    ...entries.map(([key, value]) => `export ${key}=${shellQuote(value)}`),
+    `exec ${shellQuote(appExecutablePath)} "$@"`,
+    "",
+  ];
+  fs.writeFileSync(wrapperPath, lines.join("\n"), { mode: 0o700 });
+  fs.chmodSync(wrapperPath, 0o700);
+  return wrapperPath;
+};
+
+const resolveAutomationApplicationPath = (appPath) => {
+  const appExecutablePath = resolveWdioApplicationPath(appPath);
+  return createDesktopAppLaunchWrapper(appExecutablePath, DESKTOP_APP_LAUNCH_ENV);
+};
+
 const runChecked = (cmd, args, opts = {}) => {
   const result = spawnSync(cmd, args, { encoding: "utf8", ...opts });
   if (result.status === 0) return result;
@@ -1712,6 +1760,9 @@ const cnSharedBackendTestHooks = {
   },
 };
 
+const DESKTOP_APP_LAUNCH_ENV = buildDesktopAppLaunchEnv();
+const WDIO_APPLICATION_PATH = resolveAutomationApplicationPath(APP_PATH);
+
 exports.config = {
   runner: "local",
   framework: "mocha",
@@ -1734,7 +1785,7 @@ exports.config = {
         implicit: 0,
       },
       "tauri:options": {
-        application: resolveWdioApplicationPath(APP_PATH),
+        application: WDIO_APPLICATION_PATH,
       },
     },
   ],
