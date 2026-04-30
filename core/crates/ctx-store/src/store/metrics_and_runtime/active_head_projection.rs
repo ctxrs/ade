@@ -134,7 +134,12 @@ impl ActiveHeadProjectionProjector {
         store_background_runtime()?.spawn(async move {
             let mut dirty: HashMap<SessionId, Option<i64>> = HashMap::new();
             let mut flush_waiters: Vec<oneshot::Sender<Result<()>>> = Vec::new();
-            let mut flush_interval = tokio::time::interval(config.flush_interval);
+            // The configured interval is a debounce window; an immediate first tick defeats
+            // bulk writers that temporarily lengthen it to keep projection refresh explicit.
+            let mut flush_interval = tokio::time::interval_at(
+                tokio::time::Instant::now() + config.flush_interval,
+                config.flush_interval,
+            );
 
             loop {
                 tokio::select! {
@@ -412,4 +417,3 @@ fn record_active_head_projection_flush(flushed_sessions: u64, errored: bool) {
         metrics.errors.fetch_add(1, Ordering::Relaxed);
     }
 }
-
