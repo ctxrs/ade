@@ -383,6 +383,27 @@ async fn resolve_attachment_source_path(
     Ok(candidate_canonical)
 }
 
+async fn validate_read_only_attachment_import_tree(root: &Path) -> Result<()> {
+    let root_canonical = tokio::fs::canonicalize(root).await.with_context(|| {
+        format!(
+            "canonicalizing attachment materialized root {}",
+            root.display()
+        )
+    })?;
+    validate_attachment_tree_within_root(
+        &root_canonical,
+        &root_canonical,
+        AttachmentSourceSymlinkPolicy::Reject,
+    )
+    .await
+    .with_context(|| {
+        format!(
+            "validating read-only attachment import tree {}",
+            root.display()
+        )
+    })
+}
+
 async fn validate_attachment_tree_within_root(
     root: &Path,
     candidate: &Path,
@@ -566,6 +587,9 @@ pub(crate) async fn ensure_attachment_mount(
                     symlink_policy,
                 )
                 .await?;
+                if matches!(&attachment.mode, AttachmentMode::Ro) {
+                    validate_read_only_attachment_import_tree(&materialized.path).await?;
+                }
                 let should_refresh =
                     refresh || attachment.update_policy != AttachmentUpdatePolicy::Manual;
                 let imported = ensure_attachment_imported_to_container(

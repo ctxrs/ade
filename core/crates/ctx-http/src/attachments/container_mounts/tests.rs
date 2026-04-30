@@ -6,7 +6,7 @@ use super::native::{
 };
 use super::{
     resolve_attachment_source_path, sandbox_mount_parent_chain_ensure_test_script,
-    AttachmentSourceSymlinkPolicy,
+    validate_read_only_attachment_import_tree, AttachmentSourceSymlinkPolicy,
 };
 
 #[tokio::test]
@@ -102,6 +102,34 @@ async fn resolve_attachment_source_path_rejects_internal_symlinks_for_read_only_
         )
         .await
         .unwrap_err();
+
+        assert!(format!("{err:#}").contains("refuses symlink"));
+    }
+}
+
+#[tokio::test]
+async fn native_read_only_import_tree_rejects_symlink_outside_selected_subpath() {
+    #[cfg(unix)]
+    {
+        let root = tempfile::tempdir().unwrap();
+        let docs = root.path().join("docs");
+        std::fs::create_dir_all(&docs).unwrap();
+        std::fs::write(docs.join("guide.md"), b"guide").unwrap();
+        std::fs::write(root.path().join("secret.txt"), b"secret").unwrap();
+        std::os::unix::fs::symlink("secret.txt", root.path().join("secret-link")).unwrap();
+
+        let selected = resolve_attachment_source_path(
+            root.path(),
+            Some("docs"),
+            AttachmentSourceSymlinkPolicy::Reject,
+        )
+        .await
+        .unwrap();
+        assert_eq!(selected, docs.canonicalize().unwrap());
+
+        let err = validate_read_only_attachment_import_tree(root.path())
+            .await
+            .unwrap_err();
 
         assert!(format!("{err:#}").contains("refuses symlink"));
     }

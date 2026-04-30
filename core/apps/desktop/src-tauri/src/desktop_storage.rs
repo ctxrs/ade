@@ -27,26 +27,7 @@ impl DesktopStorage {
 }
 
 async fn open_desktop_storage_pool_at_path(path: &Path) -> Result<SqlitePool> {
-    if let Some(parent) = path.parent() {
-        ctx_fs::permissions::ensure_private_dir_sync(parent)?;
-    }
-    match std::fs::symlink_metadata(path) {
-        Ok(metadata) if metadata.file_type().is_symlink() => {
-            anyhow::bail!(
-                "desktop storage sqlite path must not be a symlink: {}",
-                path.display()
-            );
-        }
-        Ok(_) => {}
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-            ctx_fs::permissions::write_private_file_atomic_sync(path, b"")?;
-        }
-        Err(err) => {
-            return Err(err).with_context(|| {
-                format!("reading desktop storage sqlite path {}", path.display())
-            });
-        }
-    }
+    prepare_desktop_storage_sqlite_file_family(path)?;
     let options = SqliteConnectOptions::new()
         .filename(path)
         .create_if_missing(false)
@@ -59,8 +40,76 @@ async fn open_desktop_storage_pool_at_path(path: &Path) -> Result<SqlitePool> {
         .await
         .context("opening desktop storage sqlite db")?;
     ensure_ui_kv_schema(&pool).await?;
-    ctx_fs::permissions::harden_sqlite_file_family(path).await?;
+    harden_existing_desktop_storage_sqlite_file_family(path)?;
     Ok(pool)
+}
+
+fn prepare_desktop_storage_sqlite_file_family(path: &Path) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        ctx_fs::permissions::ensure_private_dir_sync(parent)?;
+    }
+    let mut main_exists = false;
+    for member in desktop_storage_sqlite_file_family(path) {
+        let exists = validate_desktop_storage_sqlite_file_member(&member)?;
+        if member == path {
+            main_exists = exists;
+        }
+    }
+    if !main_exists {
+        ctx_fs::permissions::write_private_file_atomic_sync(path, b"")?;
+    }
+    harden_existing_desktop_storage_sqlite_file_family(path)
+}
+
+fn harden_existing_desktop_storage_sqlite_file_family(path: &Path) -> Result<()> {
+    for member in desktop_storage_sqlite_file_family(path) {
+        if validate_desktop_storage_sqlite_file_member(&member)? {
+            ctx_fs::permissions::harden_private_file_sync(&member)?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_desktop_storage_sqlite_file_member(path: &Path) -> Result<bool> {
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) if desktop_storage_metadata_is_link_or_reparse_point(&metadata) => {
+            anyhow::bail!(
+                "desktop storage sqlite path must not be a symlink or reparse point: {}",
+                path.display()
+            );
+        }
+        Ok(metadata) if !metadata.is_file() => {
+            anyhow::bail!(
+                "desktop storage sqlite path must be a regular file: {}",
+                path.display()
+            );
+        }
+        Ok(_) => Ok(true),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(err) => Err(err)
+            .with_context(|| format!("reading desktop storage sqlite path {}", path.display())),
+    }
+}
+
+fn desktop_storage_sqlite_file_family(path: &Path) -> [PathBuf; 3] {
+    [
+        path.to_path_buf(),
+        PathBuf::from(format!("{}-wal", path.to_string_lossy())),
+        PathBuf::from(format!("{}-shm", path.to_string_lossy())),
+    ]
+}
+
+#[cfg(windows)]
+fn desktop_storage_metadata_is_link_or_reparse_point(metadata: &std::fs::Metadata) -> bool {
+    use std::os::windows::fs::MetadataExt;
+
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+    metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+}
+
+#[cfg(not(windows))]
+fn desktop_storage_metadata_is_link_or_reparse_point(metadata: &std::fs::Metadata) -> bool {
+    metadata.file_type().is_symlink()
 }
 
 fn now_ms_i64() -> i64 {
@@ -361,6 +410,32 @@ mod desktop_storage_tests {
         assert_eq!(dir_mode, 0o700);
         assert_eq!(file_mode, 0o600);
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test(flavor = "current_thread")]
+    async fn desktop_storage_file_pool_rejects_symlinked_sqlite_sidecar_before_open() {
+        for suffix in ["-wal", "-shm"] {
+            let dir =
+                std::env::temp_dir().join(format!("ctx-desktop-storage-{}", uuid::Uuid::new_v4()));
+            let ui_dir = dir.join("ui");
+            let path = ui_dir.join("desktop-ui-state.sqlite");
+            let sidecar = PathBuf::from(format!("{}{suffix}", path.to_string_lossy()));
+            let outside = dir.join("outside-sidecar");
+            std::fs::create_dir_all(&ui_dir).unwrap();
+            std::fs::write(&outside, b"outside").unwrap();
+            std::os::unix::fs::symlink(&outside, &sidecar).unwrap();
+
+            let err = open_desktop_storage_pool_at_path(&path).await.unwrap_err();
+
+            assert!(format!("{err:#}").contains("symlink or reparse point"));
+            assert_eq!(std::fs::read(&outside).unwrap(), b"outside");
+            assert!(
+                !path.exists(),
+                "sqlite main file should not be created after sidecar rejection"
+            );
+            let _ = std::fs::remove_dir_all(dir);
+        }
     }
 }
 
