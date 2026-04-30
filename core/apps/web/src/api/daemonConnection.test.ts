@@ -279,8 +279,8 @@ describe("daemonConnection", () => {
       MOBILE_PERSISTED_CONNECTION_KEY,
       JSON.stringify({
         v: 1,
-        baseUrl: "http://192.168.1.50:4399",
-        wsBaseUrl: "ws://192.168.1.50:4399",
+        baseUrl: "https://daemon.example.com",
+        wsBaseUrl: "wss://daemon.example.com",
         authToken: "mobile-token",
         source: "mobile_manual_connect",
       }),
@@ -290,13 +290,57 @@ describe("daemonConnection", () => {
     const connection = mod.getDaemonConnection();
 
     expect(connection).toMatchObject({
-      baseUrl: "http://192.168.1.50:4399",
-      wsBaseUrl: "ws://192.168.1.50:4399",
+      baseUrl: "https://daemon.example.com",
+      wsBaseUrl: "wss://daemon.example.com",
       authToken: "mobile-token",
       source: "mobile_manual_connect",
       targetScope: {
         kind: "browser",
-        baseUrl: "http://192.168.1.50:4399",
+        baseUrl: "https://daemon.example.com",
+      },
+    });
+  });
+
+  it("restores a persisted managed mobile secure connection in tauri mobile shells", async () => {
+    const g = globalThis as typeof globalThis & { __TAURI__?: unknown };
+    g.__TAURI__ = {};
+    setUserAgent("Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)");
+    setPlatform("iPhone");
+    localStorage.setItem(
+      MOBILE_PERSISTED_CONNECTION_KEY,
+      JSON.stringify({
+        v: 1,
+        baseUrl: "https://tunnel.ctx.rs/t/tunnel-1",
+        wsBaseUrl: "wss://tunnel.ctx.rs/t/tunnel-1",
+        authToken: null,
+        source: "mobile_managed_qr",
+        targetScope: JSON.stringify(["browser", "https://tunnel.ctx.rs/t/tunnel-1"]),
+        mobileSecure: {
+          kind: "managed_tunnel",
+          deviceId: "33333333-3333-3333-3333-333333333333",
+          daemonPublicKey: "daemon-public-key",
+          pairingRequestEncryption: "x25519-hkdf-sha256-xchacha20poly1305-v1",
+          nextSeq: 7,
+        },
+      }),
+    );
+
+    const mod = await import("./daemonConnection");
+    const connection = mod.getDaemonConnection();
+
+    expect(connection).toMatchObject({
+      baseUrl: "https://tunnel.ctx.rs/t/tunnel-1",
+      wsBaseUrl: "wss://tunnel.ctx.rs/t/tunnel-1",
+      authToken: null,
+      source: "mobile_managed_qr",
+      mobileSecure: {
+        kind: "managed_tunnel",
+        deviceId: "33333333-3333-3333-3333-333333333333",
+        nextSeq: 7,
+      },
+      targetScope: {
+        kind: "browser",
+        baseUrl: "https://tunnel.ctx.rs/t/tunnel-1",
       },
     });
   });
@@ -310,7 +354,7 @@ describe("daemonConnection", () => {
 
     mod.setDaemonConnection(
       {
-        baseUrl: "http://192.168.1.50:4399",
+        baseUrl: "https://daemon.example.com",
         authToken: "mobile-token",
         source: "mobile_manual_connect",
       },
@@ -319,12 +363,12 @@ describe("daemonConnection", () => {
 
     expect(JSON.parse(localStorage.getItem(MOBILE_PERSISTED_CONNECTION_KEY) ?? "{}")).toMatchObject({
       v: 1,
-      baseUrl: "http://192.168.1.50:4399",
+      baseUrl: "https://daemon.example.com",
       authToken: "mobile-token",
     });
     expect(JSON.parse(localStorage.getItem(LOCAL_PERSISTED_BASE_KEY) ?? "{}")).toMatchObject({
       v: 1,
-      baseUrl: "http://192.168.1.50:4399",
+      baseUrl: "https://daemon.example.com",
     });
 
     mod.clearDaemonConnection({

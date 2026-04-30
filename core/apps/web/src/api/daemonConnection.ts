@@ -90,7 +90,10 @@ const initialConnection = (): DaemonConnection => {
 
   if (isMobileShellApp()) {
     const mobilePersisted = readStoredMobileDaemonConnection();
-    if (mobilePersisted?.baseUrl && mobilePersisted.authToken) {
+    if (
+      mobilePersisted?.baseUrl
+      && (mobilePersisted.authToken || isMobileSecureConnection(mobilePersisted.mobileSecure))
+    ) {
       const restored: DaemonConnection = {
         baseUrl: mobilePersisted.baseUrl,
         wsBaseUrl: mobilePersisted.wsBaseUrl,

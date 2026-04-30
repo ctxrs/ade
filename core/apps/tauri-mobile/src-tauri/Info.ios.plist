@@ -2,14 +2,7 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>NSAppTransportSecurity</key>
-  <dict>
-    <key>NSAllowsArbitraryLoadsInWebContent</key>
-    <true/>
-    <key>NSAllowsLocalNetworking</key>
-    <true/>
-  </dict>
-  <key>NSLocalNetworkUsageDescription</key>
-  <string>ctx connects to a daemon running on your local network during dogfooding.</string>
+  <key>NSCameraUsageDescription</key>
+  <string>ctx uses the camera to scan a desktop pairing QR code.</string>
 </dict>
 </plist>

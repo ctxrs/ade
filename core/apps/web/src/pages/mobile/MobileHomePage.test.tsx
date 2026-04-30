@@ -13,7 +13,7 @@ const buildConnection = (overrides?: Partial<{
   source: string | null;
   targetScope: { kind: string; baseUrl?: string | null } | null;
 }>) => ({
-  baseUrl: "http://192.168.1.50:4399",
+  baseUrl: "https://daemon.example.com",
   wsBaseUrl: null,
   authToken: "mobile-token",
   runId: null,

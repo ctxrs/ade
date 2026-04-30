@@ -1,4 +1,4 @@
-load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_test")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -8,11 +8,8 @@ CTX_TUNNEL_STORE_DEPS = [
     "@crates//:serde_json",
     "@crates//:sqlx",
     "@crates//:thiserror",
-    "@crates//:url",
-]
-
-CTX_TUNNEL_STORE_DEV_DEPS = [
     "@crates//:tokio",
+    "@crates//:url",
 ]
 
 rust_library(
@@ -24,8 +21,20 @@ rust_library(
     deps = CTX_TUNNEL_STORE_DEPS,
 )
 
+rust_binary(
+    name = "ctx-tunnel-cleanup",
+    crate_root = "src/bin/ctx-tunnel-cleanup.rs",
+    edition = "2021",
+    srcs = ["src/bin/ctx-tunnel-cleanup.rs"],
+    deps = [
+        ":lib",
+        "@crates//:chrono",
+        "@crates//:serde_json",
+        "@crates//:tokio",
+    ],
+)
+
 rust_test(
     name = "unit_tests",
     crate = ":lib",
-    deps = CTX_TUNNEL_STORE_DEV_DEPS,
 )

@@ -82,6 +82,7 @@
     "@radix-ui/react-switch": "^1.2.6",
     "@supabase/supabase-js": "^2.49.1",
     "@tauri-apps/api": "^2.9.1",
+    "@tauri-apps/plugin-barcode-scanner": "2.4.4",
     "@tauri-apps/plugin-os": "2.3.2",
     "@virtuoso.dev/message-list": "^1.15.2",
     "@xterm/addon-fit": "^0.10.0",

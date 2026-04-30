@@ -134,6 +134,9 @@ export const parseMobilePairingQrPayload = (input: string): MobilePairingQrPaylo
   if (!tunnelId || !baseUrl || !pairingToken || !daemonPublicKey) {
     throw new Error("Mobile pairing QR payload is missing required fields.");
   }
+  if (new URL(baseUrl).protocol !== "https:") {
+    throw new Error("Mobile pairing QR payload must use HTTPS.");
+  }
   if (pairingRequestEncryption !== PAIRING_REQUEST_ENCRYPTION) {
     throw new Error("Unsupported mobile pairing encryption.");
   }

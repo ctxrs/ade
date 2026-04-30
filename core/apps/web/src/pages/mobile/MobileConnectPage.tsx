@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link2, QrCode, Server, Unplug } from "lucide-react";
+import { Camera, Link2, QrCode, Server, Unplug } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
 import {
   clearDaemonConnection,
@@ -12,6 +12,18 @@ import { pairManagedMobileQrPayload } from "../../api/mobileSecureClient";
 import { useDaemonConnection } from "../../api/useDaemonConnection";
 import { errorMessage } from "../../utils/errorMessage";
 import { MobileShellChrome } from "./MobileShellChrome";
+import { canUseQrCameraScanner, MobileQrScanner } from "./MobileQrScanner";
+
+const requireProductionDirectHttpsBaseUrl = (input: string): string | null => {
+  const normalized = normalizeDaemonBaseUrl(input);
+  if (!normalized) return null;
+  try {
+    const url = new URL(normalized);
+    return url.protocol === "https:" ? normalized : null;
+  } catch {
+    return null;
+  }
+};
 
 export function MobileConnectPage() {
   const navigate = useNavigate();
@@ -21,6 +33,7 @@ export function MobileConnectPage() {
   const [token, setToken] = useState(connection.authToken ?? "");
   const [busy, setBusy] = useState(false);
   const [pairingBusy, setPairingBusy] = useState(false);
+  const [scannerOpen, setScannerOpen] = useState(false);
   const [qrPayload, setQrPayload] = useState("");
   const [error, setError] = useState<string | null>(null);
 
@@ -30,9 +43,9 @@ export function MobileConnectPage() {
   }, [connection.authToken, connection.baseUrl]);
 
   const connect = async () => {
-    const normalizedBaseUrl = normalizeDaemonBaseUrl(baseUrl);
+    const normalizedBaseUrl = requireProductionDirectHttpsBaseUrl(baseUrl);
     if (!normalizedBaseUrl) {
-      setError("Enter a valid daemon URL including http:// or https://.");
+      setError("Enter a reachable HTTPS daemon URL.");
       return;
     }
     const trimmedToken = token.trim();
@@ -47,6 +60,7 @@ export function MobileConnectPage() {
       {
         baseUrl: normalizedBaseUrl,
         authToken: trimmedToken,
+        mobileSecure: null,
         source: "mobile_manual_connect",
       },
       { persistBaseUrl: true, persistAuthToken: true },
@@ -78,8 +92,8 @@ export function MobileConnectPage() {
     setError(null);
   };
 
-  const pairQrPayload = async () => {
-    const trimmed = qrPayload.trim();
+  const pairQrPayload = async (payload = qrPayload) => {
+    const trimmed = payload.trim();
     if (!trimmed) {
       setError("Paste the mobile pairing QR payload.");
       return;
@@ -118,6 +132,40 @@ export function MobileConnectPage() {
             <h2>Pair from QR</h2>
           </div>
         </div>
+
+        {scannerOpen ? (
+          <MobileQrScanner
+            onCancel={() => {
+              setScannerOpen(false);
+              setError(null);
+            }}
+            onDetected={(payload) => {
+              setScannerOpen(false);
+              setQrPayload(payload);
+              void pairQrPayload(payload);
+            }}
+            onError={(message) => {
+              setScannerOpen(false);
+              setError(message);
+            }}
+          />
+        ) : (
+          <button
+            type="button"
+            className="mobile-shell-scan-button"
+            onClick={() => {
+              if (!canUseQrCameraScanner()) {
+                setError("Camera QR scanning is unavailable here. Paste the QR payload instead.");
+                return;
+              }
+              setError(null);
+              setScannerOpen(true);
+            }}
+          >
+            <Camera size={18} aria-hidden="true" />
+            Scan QR
+          </button>
+        )}
 
         <label className="mobile-shell-field">
           <span>QR payload</span>
@@ -165,7 +213,7 @@ export function MobileConnectPage() {
             autoCapitalize="none"
             autoCorrect="off"
             spellCheck={false}
-            placeholder="http://192.168.1.20:4399"
+            placeholder="https://daemon.example.com"
             value={baseUrl}
             onChange={(event) => setBaseUrl(event.target.value)}
           />

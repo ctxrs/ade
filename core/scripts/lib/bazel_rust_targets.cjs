@@ -121,7 +121,10 @@ const BAZEL_BUILD_TARGETS_BY_CRATE = Object.freeze({
   "ctx-tunnel-control-plane": ["//core/crates/ctx-tunnel-control-plane:ctx-tunnel-control-plane"],
   "ctx-tunnel-relay": ["//core/crates/ctx-tunnel-relay:ctx-tunnel-relay"],
   "ctx-tunnel-router": ["//core/crates/ctx-tunnel-router:ctx-tunnel-router"],
-  "ctx-tunnel-store": ["//core/crates/ctx-tunnel-store:lib"],
+  "ctx-tunnel-store": [
+    "//core/crates/ctx-tunnel-store:ctx-tunnel-cleanup",
+    "//core/crates/ctx-tunnel-store:lib",
+  ],
   "ctx-worker-protocol": ["//core/crates/ctx-worker-protocol:lib"],
   "ctx-worker-shim": ["//core/crates/ctx-worker-shim:ctx-worker-shim"],
   "ctx-workspace-config": ["//core/crates/ctx-workspace-config:lib"],

@@ -365,7 +365,11 @@ mod secure_store {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    if let Err(err) = tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    #[cfg(mobile)]
+    let builder = builder.plugin(tauri_plugin_barcode_scanner::init());
+
+    if let Err(err) = builder
         .invoke_handler(tauri::generate_handler![
             mobile_prepare_pairing_request,
             mobile_decrypt_pairing_response,

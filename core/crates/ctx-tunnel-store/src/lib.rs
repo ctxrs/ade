@@ -1,9 +1,19 @@
 use chrono::{DateTime, Duration, Utc};
-use serde::{Deserialize, Serialize};
 use sqlx::postgres::PgPoolOptions;
 use sqlx::{Pool, Postgres, Row};
 use thiserror::Error;
 use url::Url;
+
+mod models;
+mod retention;
+pub use models::*;
+pub use retention::{
+    RetentionCleanupOutcome, RetentionCleanupPolicy, DEFAULT_INACTIVE_TUNNEL_RETENTION_DAYS,
+    DEFAULT_TUNNEL_EVENT_RETENTION_DAYS,
+};
+
+#[cfg(test)]
+mod tests;
 
 const HEALTHY_RELAY_WINDOW_SECS: i64 = 60;
 const REGISTER_RELAY_SQL: &str = r#"
@@ -39,86 +49,6 @@ pub enum TunnelStoreError {
 #[derive(Clone, Debug)]
 pub struct TunnelStore {
     pool: Pool<Postgres>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RelayRegistration {
-    pub relay_id: String,
-    pub region: String,
-    pub public_base_url: String,
-    pub internal_base_url: String,
-    pub max_active_tunnels: i32,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RelayHeartbeat {
-    pub relay_id: String,
-    pub active_tunnel_count: i32,
-    pub observed_at: DateTime<Utc>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RelayRecord {
-    pub relay_id: String,
-    pub region: String,
-    pub public_base_url: String,
-    pub internal_base_url: String,
-    pub active_tunnel_count: i32,
-    pub max_active_tunnels: i32,
-    pub last_heartbeat_at: Option<DateTime<Utc>>,
-    pub heartbeat_expires_at: Option<DateTime<Utc>>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CreateTunnelRequest {
-    pub tunnel_id: String,
-    pub user_id: String,
-    pub billing_subject_id: Option<String>,
-    pub relay_id: String,
-    pub public_base_url: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TunnelAssignment {
-    pub tunnel_id: String,
-    pub user_id: String,
-    pub billing_subject_id: Option<String>,
-    pub relay_id: String,
-    pub relay_public_base_url: String,
-    pub relay_internal_base_url: String,
-    pub public_base_url: String,
-    pub created_at: DateTime<Utc>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ResolvedTunnelTarget {
-    pub tunnel_id: String,
-    pub relay_id: String,
-    pub relay_public_base_url: String,
-    pub relay_internal_base_url: String,
-    pub public_base_url: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum TunnelResolveResult {
-    Resolved(ResolvedTunnelTarget),
-    UnknownTunnel,
-    TunnelDisabled,
-    RelayUnavailable,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum RelayAssignmentValidation {
-    Valid,
-    UnknownTunnel,
-    TunnelDisabled,
-    WrongRelay { expected_relay_id: String },
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct HealthSnapshot {
-    pub relay_count: i64,
-    pub healthy_relay_count: i64,
 }
 
 impl TunnelStore {
@@ -547,34 +477,6 @@ impl TunnelStore {
     }
 }
 
-impl RelayRegistration {
-    fn validate(&self) -> Result<(), TunnelStoreError> {
-        ensure_non_empty("relay_id", &self.relay_id)?;
-        ensure_non_empty("region", &self.region)?;
-        validate_url("public_base_url", &self.public_base_url)?;
-        validate_url("internal_base_url", &self.internal_base_url)?;
-        if self.max_active_tunnels <= 0 {
-            return Err(TunnelStoreError::InvalidInput(
-                "max_active_tunnels must be positive".to_string(),
-            ));
-        }
-        Ok(())
-    }
-}
-
-impl CreateTunnelRequest {
-    fn validate(&self) -> Result<(), TunnelStoreError> {
-        ensure_non_empty("tunnel_id", &self.tunnel_id)?;
-        ensure_non_empty("user_id", &self.user_id)?;
-        ensure_non_empty("relay_id", &self.relay_id)?;
-        validate_url("public_base_url", &self.public_base_url)?;
-        if let Some(subject) = self.billing_subject_id.as_ref() {
-            ensure_non_empty("billing_subject_id", subject)?;
-        }
-        Ok(())
-    }
-}
-
 fn tunnel_assignment_from_row(
     row: &sqlx::postgres::PgRow,
 ) -> Result<TunnelAssignment, TunnelStoreError> {
@@ -617,7 +519,7 @@ fn validate_postgres_database_url(database_url: &str) -> Result<(), TunnelStoreE
     }
 }
 
-fn validate_url(field: &'static str, value: &str) -> Result<(), TunnelStoreError> {
+pub(crate) fn validate_url(field: &'static str, value: &str) -> Result<(), TunnelStoreError> {
     ensure_non_empty(field, value)?;
     let parsed = Url::parse(value).map_err(|_| TunnelStoreError::InvalidUrl {
         field,
@@ -632,7 +534,7 @@ fn validate_url(field: &'static str, value: &str) -> Result<(), TunnelStoreError
     }
 }
 
-fn ensure_non_empty(field: &str, value: &str) -> Result<(), TunnelStoreError> {
+pub(crate) fn ensure_non_empty(field: &str, value: &str) -> Result<(), TunnelStoreError> {
     if value.trim().is_empty() {
         return Err(TunnelStoreError::InvalidInput(format!(
             "{field} must not be empty"
@@ -649,74 +551,4 @@ fn is_unique_violation(err: &sqlx::Error) -> bool {
     err.as_database_error()
         .and_then(|db| db.code())
         .is_some_and(|code| code.as_ref() == "23505")
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn rejects_non_postgres_database_urls() {
-        assert!(matches!(
-            validate_postgres_database_url("sqlite:///tmp/control-plane.sqlite"),
-            Err(TunnelStoreError::InvalidDatabaseUrl)
-        ));
-        assert!(validate_postgres_database_url("postgres://user:pw@example/db").is_ok());
-        assert!(validate_postgres_database_url("postgresql://user:pw@example/db").is_ok());
-    }
-
-    #[test]
-    fn validates_relay_registration_urls_and_capacity() {
-        let valid = RelayRegistration {
-            relay_id: "relay-1".to_string(),
-            region: "us".to_string(),
-            public_base_url: "https://relay-1.tunnel.ctx.rs".to_string(),
-            internal_base_url: "http://127.0.0.1:8787".to_string(),
-            max_active_tunnels: 100,
-        };
-        assert!(valid.validate().is_ok());
-
-        let mut invalid = valid.clone();
-        invalid.public_base_url = "not-url".to_string();
-        assert!(matches!(
-            invalid.validate(),
-            Err(TunnelStoreError::InvalidUrl {
-                field: "public_base_url",
-                ..
-            })
-        ));
-
-        let mut invalid = valid;
-        invalid.max_active_tunnels = 0;
-        assert!(matches!(
-            invalid.validate(),
-            Err(TunnelStoreError::InvalidInput(_))
-        ));
-    }
-
-    #[test]
-    fn register_relay_preserves_ops_disabled_and_draining_statuses() {
-        assert!(REGISTER_RELAY_SQL
-            .contains("public.mobile_tunnel_relay_node.status in ('disabled', 'draining')"));
-        assert!(REGISTER_RELAY_SQL.contains("then public.mobile_tunnel_relay_node.status"));
-    }
-
-    #[test]
-    fn validates_create_tunnel_request() {
-        let valid = CreateTunnelRequest {
-            tunnel_id: "tun_1".to_string(),
-            user_id: "user_1".to_string(),
-            billing_subject_id: None,
-            relay_id: "relay-1".to_string(),
-            public_base_url: "https://tunnel.ctx.rs/t/tun_1".to_string(),
-        };
-        assert!(valid.validate().is_ok());
-
-        let mut invalid = valid;
-        invalid.user_id = " ".to_string();
-        assert!(matches!(
-            invalid.validate(),
-            Err(TunnelStoreError::InvalidInput(_))
-        ));
-    }
 }

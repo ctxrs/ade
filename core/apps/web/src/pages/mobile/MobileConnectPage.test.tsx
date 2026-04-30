@@ -7,6 +7,10 @@ const clearDaemonConnectionMock = vi.fn();
 const listWorkspacesMock = vi.fn();
 const normalizeDaemonBaseUrlMock = vi.fn();
 const pairManagedMobileQrPayloadMock = vi.fn();
+const scannerMocks = vi.hoisted(() => ({
+  canUseQrCameraScanner: vi.fn(),
+  detectedPayload: '{"type":"context_mobile_e2ee","source":"scan"}',
+}));
 
 const buildConnection = (overrides?: Partial<{
   baseUrl: string | null;
@@ -51,6 +55,26 @@ vi.mock("../../api/mobileSecureClient", () => ({
   pairManagedMobileQrPayload: (...args: unknown[]) => pairManagedMobileQrPayloadMock(...args),
 }));
 
+vi.mock("./MobileQrScanner", () => ({
+  canUseQrCameraScanner: (...args: unknown[]) => scannerMocks.canUseQrCameraScanner(...args),
+  MobileQrScanner: ({
+    onDetected,
+    onCancel,
+  }: {
+    onDetected: (payload: string) => void;
+    onCancel: () => void;
+  }) => (
+    <div role="group" aria-label="QR scanner">
+      <button type="button" onClick={() => onDetected(scannerMocks.detectedPayload)}>
+        Mock detected QR
+      </button>
+      <button type="button" onClick={onCancel}>
+        Mock cancel scan
+      </button>
+    </div>
+  ),
+}));
+
 import { MobileConnectPage } from "./MobileConnectPage";
 
 describe("MobileConnectPage", () => {
@@ -65,6 +89,8 @@ describe("MobileConnectPage", () => {
       const trimmed = String(value ?? "").trim();
       return trimmed.startsWith("http://") || trimmed.startsWith("https://") ? trimmed : null;
     });
+    scannerMocks.canUseQrCameraScanner.mockReset();
+    scannerMocks.canUseQrCameraScanner.mockReturnValue(true);
   });
 
   it("pairs from a pasted managed tunnel QR payload", async () => {
@@ -90,6 +116,44 @@ describe("MobileConnectPage", () => {
     expect(await screen.findByText("Home")).toBeInTheDocument();
   });
 
+  it("pairs from a scanned managed tunnel QR payload", async () => {
+    pairManagedMobileQrPayloadMock.mockResolvedValue(undefined);
+
+    render(
+      <MemoryRouter initialEntries={["/mobile/connect"]}>
+        <Routes>
+          <Route path="/mobile/connect" element={<MobileConnectPage />} />
+          <Route path="/" element={<div>Home</div>} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Scan QR" }));
+    fireEvent.click(screen.getByRole("button", { name: "Mock detected QR" }));
+
+    await waitFor(() => {
+      expect(pairManagedMobileQrPayloadMock).toHaveBeenCalledWith(scannerMocks.detectedPayload);
+    });
+    expect(await screen.findByText("Home")).toBeInTheDocument();
+  });
+
+  it("falls back to paste when camera scanning is unavailable", async () => {
+    scannerMocks.canUseQrCameraScanner.mockReturnValue(false);
+
+    render(
+      <MemoryRouter initialEntries={["/mobile/connect"]}>
+        <Routes>
+          <Route path="/mobile/connect" element={<MobileConnectPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Scan QR" }));
+
+    expect(await screen.findByText("Camera QR scanning is unavailable here. Paste the QR payload instead.")).toBeInTheDocument();
+    expect(pairManagedMobileQrPayloadMock).not.toHaveBeenCalled();
+  });
+
   it("connects and navigates to the workspace list when validation succeeds", async () => {
     listWorkspacesMock.mockResolvedValue([]);
 
@@ -102,8 +166,8 @@ describe("MobileConnectPage", () => {
       </MemoryRouter>,
     );
 
-    fireEvent.change(screen.getByPlaceholderText("http://192.168.1.20:4399"), {
-      target: { value: "http://192.168.1.50:4399" },
+    fireEvent.change(screen.getByPlaceholderText("https://daemon.example.com"), {
+      target: { value: "https://daemon.example.com" },
     });
     fireEvent.change(screen.getByPlaceholderText("ctx daemon token"), {
       target: { value: "mobile-token" },
@@ -113,8 +177,9 @@ describe("MobileConnectPage", () => {
     await waitFor(() => {
       expect(setDaemonConnectionMock).toHaveBeenCalledWith(
         {
-          baseUrl: "http://192.168.1.50:4399",
+          baseUrl: "https://daemon.example.com",
           authToken: "mobile-token",
+          mobileSecure: null,
           source: "mobile_manual_connect",
         },
         { persistBaseUrl: true, persistAuthToken: true },
@@ -132,7 +197,7 @@ describe("MobileConnectPage", () => {
       </MemoryRouter>,
     );
 
-    fireEvent.change(screen.getByPlaceholderText("http://192.168.1.20:4399"), {
+    fireEvent.change(screen.getByPlaceholderText("https://daemon.example.com"), {
       target: { value: "192.168.1.50:4399" },
     });
     fireEvent.change(screen.getByPlaceholderText("ctx daemon token"), {
@@ -140,11 +205,11 @@ describe("MobileConnectPage", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Connect" }));
 
-    expect(await screen.findByText("Enter a valid daemon URL including http:// or https://.")).toBeInTheDocument();
+    expect(await screen.findByText("Enter a reachable HTTPS daemon URL.")).toBeInTheDocument();
     expect(setDaemonConnectionMock).not.toHaveBeenCalled();
   });
 
-  it("does not render the retired LAN dogfood helper block", () => {
+  it("rejects cleartext direct daemon urls in the production mobile form", async () => {
     render(
       <MemoryRouter initialEntries={["/mobile/connect"]}>
         <Routes>
@@ -153,12 +218,33 @@ describe("MobileConnectPage", () => {
       </MemoryRouter>,
     );
 
-    expect(screen.queryByText("LAN dogfood path")).not.toBeInTheDocument();
+    fireEvent.change(screen.getByPlaceholderText("https://daemon.example.com"), {
+      target: { value: "http://daemon.example.com" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("ctx daemon token"), {
+      target: { value: "mobile-token" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Connect" }));
+
+    expect(await screen.findByText("Enter a reachable HTTPS daemon URL.")).toBeInTheDocument();
+    expect(setDaemonConnectionMock).not.toHaveBeenCalled();
+  });
+
+  it("does not render the retired LAN helper block", () => {
+    render(
+      <MemoryRouter initialEntries={["/mobile/connect"]}>
+        <Routes>
+          <Route path="/mobile/connect" element={<MobileConnectPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    expect(screen.queryByText("LAN helper path")).not.toBeInTheDocument();
   });
 
   it("clears the persisted connection when disconnecting", async () => {
     connection = buildConnection({
-      baseUrl: "http://192.168.1.50:4399",
+      baseUrl: "https://daemon.example.com",
       authToken: "mobile-token",
     });
 
