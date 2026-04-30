@@ -8,6 +8,7 @@ INSTALL_URL="${CTX_UPDATER_LINUX_PROOF_INSTALL_URL:-https://ctx.rs/install}"
 BOOTSTRAP_CHANNEL="${CTX_UPDATER_LINUX_PROOF_BOOTSTRAP_CHANNEL:-stable}"
 TARGET_CHANNEL="${CTX_UPDATER_LINUX_PROOF_TARGET_CHANNEL:-${RELEASE_STORAGE_CHANNEL:-${RELEASE_CHANNEL:-e2e}}}"
 REQUIRE_VERSION_CHANGE="${CTX_UPDATER_LINUX_PROOF_REQUIRE_VERSION_CHANGE:-1}"
+PHASES_RAW="${CTX_UPDATER_LINUX_PROOF_PHASES:-all}"
 REPORT_PATH="${ARTIFACT_DIR}/summary.json"
 INSTALL_SCRIPT="${ARTIFACT_DIR}/install.sh"
 INSTALL_DOWNLOAD_LOG="${ARTIFACT_DIR}/install-download.log"
@@ -26,6 +27,54 @@ home_dir=""
 workspace_home_dir=""
 
 mkdir -p "${ARTIFACT_DIR}"
+
+phase_requested() {
+  local requested="$1"
+  local phase=""
+  IFS=',' read -r -a phases <<<"${PHASES_RAW}"
+  for phase in "${phases[@]}"; do
+    phase="${phase#"${phase%%[![:space:]]*}"}"
+    phase="${phase%"${phase##*[![:space:]]}"}"
+    case "${phase}" in
+      all)
+        return 0
+        ;;
+      updater|updater-smoke)
+        [[ "${requested}" == "updater" ]] && return 0
+        ;;
+      provider-matrix|linux-provider-matrix)
+        [[ "${requested}" == "provider-matrix" ]] && return 0
+        ;;
+      clean-workspace|workspace|linux-clean-workspace)
+        [[ "${requested}" == "clean-workspace" ]] && return 0
+        ;;
+      "")
+        ;;
+      *)
+        echo "error: unknown CTX_UPDATER_LINUX_PROOF_PHASES token: ${phase}" >&2
+        exit 2
+        ;;
+    esac
+  done
+  return 1
+}
+
+RUN_UPDATER_PHASE=0
+RUN_PROVIDER_MATRIX_PHASE=0
+RUN_CLEAN_WORKSPACE_PHASE=0
+if phase_requested updater; then
+  RUN_UPDATER_PHASE=1
+fi
+if phase_requested provider-matrix; then
+  RUN_PROVIDER_MATRIX_PHASE=1
+fi
+if phase_requested clean-workspace; then
+  RUN_CLEAN_WORKSPACE_PHASE=1
+fi
+if [[ "${RUN_UPDATER_PHASE}" == "0" && "${RUN_PROVIDER_MATRIX_PHASE}" == "0" && "${RUN_CLEAN_WORKSPACE_PHASE}" == "0" ]]; then
+  echo "error: CTX_UPDATER_LINUX_PROOF_PHASES selected no phases: ${PHASES_RAW}" >&2
+  exit 2
+fi
 
 upload_artifacts_on_buildkite() {
   if [[ -z "${BUILDKITE:-}" ]] || ! command -v buildkite-agent >/dev/null 2>&1; then
@@ -288,7 +337,7 @@ for cmd in curl node git timeout; do
   }
 done
 
-if [[ -z "${OPENROUTER_API_KEY:-}" ]]; then
+if [[ "${RUN_CLEAN_WORKSPACE_PHASE}" == "1" && -z "${OPENROUTER_API_KEY:-}" ]]; then
   write_report "infra_unavailable" "missing_openrouter_api_key"
   echo "error: OPENROUTER_API_KEY is required for updater Linux release truth" >&2
   exit 1
@@ -348,11 +397,13 @@ timeout "${CTX_UPDATER_LINUX_PROOF_INSTALL_TIMEOUT_SECS:-900}" sh "${INSTALL_SCR
   exit "${status}"
 }
 
-echo "[updater-linux-proof] preparing linux WebKit webdriver runtime" >&2
-if ! prepare_webkit_runtime >"${WEBKIT_PREP_LOG}" 2>&1; then
-  write_report "infra_unavailable" "webkit_prep_failed"
-  tail -n 200 "${WEBKIT_PREP_LOG}" >&2 || true
-  exit 1
+if [[ "${RUN_UPDATER_PHASE}" == "1" || "${RUN_CLEAN_WORKSPACE_PHASE}" == "1" ]]; then
+  echo "[updater-linux-proof] preparing linux WebKit webdriver runtime" >&2
+  if ! prepare_webkit_runtime >"${WEBKIT_PREP_LOG}" 2>&1; then
+    write_report "infra_unavailable" "webkit_prep_failed"
+    tail -n 200 "${WEBKIT_PREP_LOG}" >&2 || true
+    exit 1
+  fi
 fi
 
 app_path="${home_dir}/.local/share/ctx/ctx.AppImage"
@@ -372,8 +423,12 @@ fi
 bootstrap_automation_app_dir="${AUTOMATION_APP_DIR}"
 bootstrap_automation_app_path="${AUTOMATION_APP_PATH}"
 
-echo "[updater-linux-proof] proving auto/manual update path to channel=${TARGET_CHANNEL}" >&2
-if ! HOME="${home_dir}" \
+updated_automation_app_dir="${bootstrap_automation_app_dir}"
+updated_automation_app_path="${bootstrap_automation_app_path}"
+
+if [[ "${RUN_UPDATER_PHASE}" == "1" ]]; then
+  echo "[updater-linux-proof] proving auto/manual update path to channel=${TARGET_CHANNEL}" >&2
+  if ! HOME="${home_dir}" \
   XDG_DATA_HOME="${home_dir}/.local/share" \
   XDG_CONFIG_HOME="${home_dir}/.config" \
   XDG_CACHE_HOME="${home_dir}/.cache" \
@@ -399,28 +454,28 @@ if ! HOME="${home_dir}" \
   CTX_UPDATER_PROOF_EXPECT_UPDATE_AVAILABLE=1 \
   CTX_UPDATER_PROOF_APPLY_UPDATE=1 \
   pnpm -C "${ROOT}/core/apps/desktop" test:automation:updater-native-smoke; then
-  write_report "failed" "native_update_smoke_failed"
-  exit 1
-fi
-stop_proof_daemons
+    write_report "failed" "native_update_smoke_failed"
+    exit 1
+  fi
+  stop_proof_daemons
 
-before_version="$(jq -r '.initial.summary.current_version // empty' "${UPDATER_REPORT}" 2>/dev/null || true)"
-if [[ -z "${before_version}" ]]; then
-  write_report "failed" "missing_bootstrap_version"
-  echo "error: updater report did not capture bootstrap version" >&2
-  exit 1
-fi
-echo "[updater-linux-proof] bootstrap app version=${before_version}" >&2
+  before_version="$(jq -r '.initial.summary.current_version // empty' "${UPDATER_REPORT}" 2>/dev/null || true)"
+  if [[ -z "${before_version}" ]]; then
+    write_report "failed" "missing_bootstrap_version"
+    echo "error: updater report did not capture bootstrap version" >&2
+    exit 1
+  fi
+  echo "[updater-linux-proof] bootstrap app version=${before_version}" >&2
 
-if ! extract_appimage_for_automation "${app_path}" "updated-up-to-date"; then
-  write_report "failed" "updated_appimage_automation_extract_failed"
-  exit 1
-fi
-updated_automation_app_dir="${AUTOMATION_APP_DIR}"
-updated_automation_app_path="${AUTOMATION_APP_PATH}"
+  if ! extract_appimage_for_automation "${app_path}" "updated-up-to-date"; then
+    write_report "failed" "updated_appimage_automation_extract_failed"
+    exit 1
+  fi
+  updated_automation_app_dir="${AUTOMATION_APP_DIR}"
+  updated_automation_app_path="${AUTOMATION_APP_PATH}"
 
-echo "[updater-linux-proof] proving up-to-date manual check on updated app" >&2
-if ! HOME="${home_dir}" \
+  echo "[updater-linux-proof] proving up-to-date manual check on updated app" >&2
+  if ! HOME="${home_dir}" \
   XDG_DATA_HOME="${home_dir}/.local/share" \
   XDG_CONFIG_HOME="${home_dir}/.config" \
   XDG_CACHE_HOME="${home_dir}/.cache" \
@@ -444,66 +499,79 @@ if ! HOME="${home_dir}" \
   CTX_UPDATER_NATIVE_SMOKE_REPORT="${UP_TO_DATE_REPORT}" \
   CTX_UPDATER_PROOF_EXPECT_UP_TO_DATE=1 \
   pnpm -C "${ROOT}/core/apps/desktop" test:automation:updater-native-smoke; then
-  write_report "failed" "native_up_to_date_smoke_failed"
-  exit 1
+    write_report "failed" "native_up_to_date_smoke_failed"
+    exit 1
+  fi
+  stop_proof_daemons
+
+  after_version="$(jq -r '.summary.current_version // empty' "${UP_TO_DATE_REPORT}" 2>/dev/null || true)"
+  if [[ -z "${after_version}" ]]; then
+    write_report "failed" "missing_updated_version"
+    echo "error: updater report did not capture updated version" >&2
+    exit 1
+  fi
+  echo "[updater-linux-proof] updated app version=${after_version}" >&2
+
+  if [[ "${REQUIRE_VERSION_CHANGE}" == "1" && "${before_version}" == "${after_version}" ]]; then
+    write_report "failed" "version_did_not_change"
+    echo "error: expected app version to change after update (before=${before_version} after=${after_version})" >&2
+    exit 1
+  fi
+elif [[ "${RUN_PROVIDER_MATRIX_PHASE}" == "1" || "${RUN_CLEAN_WORKSPACE_PHASE}" == "1" ]]; then
+  if [[ "${BOOTSTRAP_CHANNEL}" != "${TARGET_CHANNEL}" ]]; then
+    write_report "failed" "target_channel_not_installed"
+    echo "error: proof phases without updater smoke require CTX_UPDATER_LINUX_PROOF_BOOTSTRAP_CHANNEL=${TARGET_CHANNEL} (got ${BOOTSTRAP_CHANNEL})" >&2
+    exit 2
+  fi
+  echo "[updater-linux-proof] updater phase skipped; using directly installed target channel=${TARGET_CHANNEL}" >&2
 fi
-stop_proof_daemons
 
-after_version="$(jq -r '.summary.current_version // empty' "${UP_TO_DATE_REPORT}" 2>/dev/null || true)"
-if [[ -z "${after_version}" ]]; then
-  write_report "failed" "missing_updated_version"
-  echo "error: updater report did not capture updated version" >&2
-  exit 1
+if [[ "${RUN_PROVIDER_MATRIX_PHASE}" == "1" || "${RUN_CLEAN_WORKSPACE_PHASE}" == "1" ]]; then
+  rm -rf "${EXTRACT_DIR}/updated-bundle"
+  (
+    mkdir -p "${EXTRACT_DIR}/updated-bundle"
+    cd "${EXTRACT_DIR}/updated-bundle"
+    "${app_path}" --appimage-extract >/dev/null
+  )
+
+  bundle_manifest="$(find "${EXTRACT_DIR}/updated-bundle/squashfs-root" -type f -path '*/bundles/manifest.json' -print -quit)"
+  if [[ -z "${bundle_manifest}" ]]; then
+    write_report "failed" "updated_appimage_bundle_manifest_missing"
+    echo "error: failed to locate bundled manifest.json inside updated AppImage" >&2
+    exit 1
+  fi
+  bundle_dir="$(dirname "${bundle_manifest}")"
+
+  daemon_bin="$(find "${EXTRACT_DIR}/updated-bundle/squashfs-root" -type f \( -path '*/usr/bin/ctx-daemon' -o -name 'ctx-daemon-linux-x86_64' -o -name 'ctx-daemon-linux-aarch64' \) -print -quit)"
+  if [[ -z "${daemon_bin}" ]]; then
+    write_report "failed" "updated_appimage_daemon_missing"
+    echo "error: failed to locate daemon binary inside updated AppImage" >&2
+    exit 1
+  fi
+  chmod +x "${daemon_bin}"
 fi
-echo "[updater-linux-proof] updated app version=${after_version}" >&2
 
-if [[ "${REQUIRE_VERSION_CHANGE}" == "1" && "${before_version}" == "${after_version}" ]]; then
-  write_report "failed" "version_did_not_change"
-  echo "error: expected app version to change after update (before=${before_version} after=${after_version})" >&2
-  exit 1
-fi
-
-rm -rf "${EXTRACT_DIR}/updated-bundle"
-(
-  mkdir -p "${EXTRACT_DIR}/updated-bundle"
-  cd "${EXTRACT_DIR}/updated-bundle"
-  "${app_path}" --appimage-extract >/dev/null
-)
-
-bundle_manifest="$(find "${EXTRACT_DIR}/updated-bundle/squashfs-root" -type f -path '*/bundles/manifest.json' -print -quit)"
-if [[ -z "${bundle_manifest}" ]]; then
-  write_report "failed" "updated_appimage_bundle_manifest_missing"
-  echo "error: failed to locate bundled manifest.json inside updated AppImage" >&2
-  exit 1
-fi
-bundle_dir="$(dirname "${bundle_manifest}")"
-
-daemon_bin="$(find "${EXTRACT_DIR}/updated-bundle/squashfs-root" -type f \( -path '*/usr/bin/ctx-daemon' -o -name 'ctx-daemon-linux-x86_64' -o -name 'ctx-daemon-linux-aarch64' \) -print -quit)"
-if [[ -z "${daemon_bin}" ]]; then
-  write_report "failed" "updated_appimage_daemon_missing"
-  echo "error: failed to locate daemon binary inside updated AppImage" >&2
-  exit 1
-fi
-chmod +x "${daemon_bin}"
-
-echo "[updater-linux-proof] proving provider/runtime installs from updated daemon bundles" >&2
-if ! CTX_HARNESS_INSTALL_MATRIX_DAEMON_BIN="${daemon_bin}" \
+if [[ "${RUN_PROVIDER_MATRIX_PHASE}" == "1" ]]; then
+  echo "[updater-linux-proof] proving provider/runtime installs from updated daemon bundles" >&2
+  if ! CTX_HARNESS_INSTALL_MATRIX_DAEMON_BIN="${daemon_bin}" \
   CTX_HARNESS_INSTALL_MATRIX_BUNDLE_DIR="${bundle_dir}" \
   CTX_HARNESS_INSTALL_MATRIX_ARTIFACTS_DIR="${ARTIFACT_DIR}/harness-install-matrix/linux-release" \
   "${ROOT}/core/apps/desktop/scripts/run_harness_install_matrix.sh" \
     --lane release \
     --platform linux \
     --target all >"${RUNTIME_INSTALL_LOG}" 2>&1; then
-  write_report "failed" "runtime_install_smoke_failed"
-  tail -n 200 "${RUNTIME_INSTALL_LOG}" >&2 || true
-  exit 1
+    write_report "failed" "runtime_install_smoke_failed"
+    tail -n 200 "${RUNTIME_INSTALL_LOG}" >&2 || true
+    exit 1
+  fi
 fi
 
-echo "[updater-linux-proof] proving updated app still launches a real local workspace flow" >&2
-stop_proof_daemons
-stop_proof_daemons "${workspace_home_dir}"
-set +e
-HOME="${workspace_home_dir}" \
+if [[ "${RUN_CLEAN_WORKSPACE_PHASE}" == "1" ]]; then
+  echo "[updater-linux-proof] proving updated app still launches a real local workspace flow" >&2
+  stop_proof_daemons
+  stop_proof_daemons "${workspace_home_dir}"
+  set +e
+  HOME="${workspace_home_dir}" \
 XDG_DATA_HOME="${workspace_home_dir}/.local/share" \
 XDG_CONFIG_HOME="${workspace_home_dir}/.config" \
 XDG_CACHE_HOME="${workspace_home_dir}/.cache" \
@@ -527,17 +595,18 @@ CTX_DESKTOP_APP_PATH="${updated_automation_app_path}" \
 TAURI_DRIVER_PORT="${wizard_driver_port}" \
 TAURI_TEST_BACKEND_PORT="${wizard_backend_port}" \
 "${ROOT}/scripts/desktop_smoke_with_infisical.sh" -- --spec automation/specs/workspace-wizard.spec.cjs >"${WIZARD_LOG}" 2>&1
-wizard_status=$?
-set -e
+  wizard_status=$?
+  set -e
 
-if [[ "${wizard_status}" -ne 0 ]]; then
-  failure_reason="workspace_wizard_failed"
-  if [[ -f "${WIZARD_LOG}" ]] && matches_log "local sandbox runtime is unavailable|install nerdctl|CTX_HARNESS_SANDBOX_CLI_PATH"; then
-    failure_reason="runtime_bootstrap_missing"
+  if [[ "${wizard_status}" -ne 0 ]]; then
+    failure_reason="workspace_wizard_failed"
+    if [[ -f "${WIZARD_LOG}" ]] && matches_log "local sandbox runtime is unavailable|install nerdctl|CTX_HARNESS_SANDBOX_CLI_PATH"; then
+      failure_reason="runtime_bootstrap_missing"
+    fi
+    write_report "failed" "${failure_reason}"
+    tail -n 200 "${WIZARD_LOG}" >&2 || true
+    exit "${wizard_status}"
   fi
-  write_report "failed" "${failure_reason}"
-  tail -n 200 "${WIZARD_LOG}" >&2 || true
-  exit "${wizard_status}"
 fi
 
 write_report "passed" "linux_updater_truth_passed"

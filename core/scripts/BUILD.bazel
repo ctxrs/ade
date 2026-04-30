@@ -129,7 +129,13 @@ sh_binary(
 sh_binary(
     name = "desktop_e2e_preflight_contracts",
     srcs = ["//tools/bazel:run_node_task.sh"],
-    args = ["core", "--test", "scripts/desktop_e2e_preflight.test.cjs"],
+    args = [
+        "core",
+        "--test",
+        "scripts/desktop_e2e_preflight.test.cjs",
+        "apps/desktop/automation/daemon.node-http.test.cjs",
+        "apps/desktop/scripts/automation_runtime_contract.test.cjs",
+    ],
     data = DESKTOP_PARITY_CONTRACT_DATA,
 )
 

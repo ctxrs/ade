@@ -559,9 +559,17 @@ const PROFILES = [
     selector: {
       excludeEntryIds: [
         "updates-release.stable-promotion",
+        "updates-release.updater-linux-proof",
+        "updates-release.updater-remote-daemon-proof",
       ],
       forceIncludeEntryIds: [
         "updates-release.release-finalize",
+      ],
+      includeEntryIds: [
+        "updates-release.release-proof-linux-updater-smoke",
+        "updates-release.release-proof-linux-provider-matrix",
+        "updates-release.release-proof-linux-clean-workspace",
+        "updates-release.release-proof-remote-updater",
       ],
       includeSurfaces: ["promotion"],
       includeWorlds: ["external-service"],
@@ -570,14 +578,15 @@ const PROFILES = [
       includeExecutions: ["artifact-tail"],
     },
     currentCommands: [
-      "Buildkite step: Release finalize (non-stable-publish modes)",
+      "Buildkite step: Release finalize plus split post-publish proof jobs (non-stable-publish modes)",
       "pnpm -C core testing:profile:run --profile canary-proof",
     ],
     pipelines: ["ctx-release"],
-    remoteStrategy: "Consume the exact staged artifacts; keep publish and latest-manifest verification as the thin post-stage tail instead of re-running compile work.",
-    currentExecution: "The checked-in ctx-release finalize step now dispatches this profile for canary, e2e, and stable dry-run modes.",
+    remoteStrategy: "Consume the exact staged artifacts; keep publish and latest-manifest verification thin, then fan out updater smoke, Linux provider matrix, Linux clean workspace, remote updater, and macOS provider matrix proof as separate jobs.",
+    currentExecution: "The checked-in ctx-release graph runs release-finalize first, then runs the proof wrappers as independent Buildkite steps so all failures surface in one run.",
     expansionRules: [
       "Canary should never rebuild what releasetest already proved.",
+      "Post-publish proof lanes must remain separate failure domains; do not collapse them back into one serial shell script.",
     ],
   },
   {

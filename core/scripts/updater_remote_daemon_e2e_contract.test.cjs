@@ -6,6 +6,10 @@ const test = require("node:test");
 const repoRoot = path.resolve(__dirname, "..", "..");
 const scriptPath = path.join(repoRoot, "scripts", "tests", "updater_remote_daemon_e2e.sh");
 const scriptText = fs.readFileSync(scriptPath, "utf8");
+const releaseWrapperText = fs.readFileSync(
+  path.join(repoRoot, "scripts", "buildkite", "run_release_proof_remote_updater.sh"),
+  "utf8",
+);
 
 test("remote updater proof uses isolated WebDriver ports", () => {
   assert.match(scriptText, /PORT_BASE="\$\{CTX_UPDATER_REMOTE_E2E_PORT_BASE:-\$\(\(34000 \+ RANDOM % 20000\)\)\}"/);
@@ -40,4 +44,11 @@ test("remote updater proof extracts Linux AppImages before handing them to tauri
   assert.match(scriptText, /resolve_controller_app_for_automation "\$\{CTX_DESKTOP_APP_PATH\}"/);
   assert.doesNotMatch(scriptText, /resolve_controller_app_for_automation "\$\{CTX_DESKTOP_APP_PATH\}"\)/);
   assert.match(scriptText, /export CTX_DESKTOP_APP_PATH="\$\{RESOLVED_CONTROLLER_AUTOMATION_APP_PATH\}"/);
+});
+
+test("release remote updater proof consumes strict published artifacts", () => {
+  assert.match(releaseWrapperText, /CTX_UPDATER_E2E_STRICT_PUBLISHED_ARTIFACTS=1/);
+  assert.match(releaseWrapperText, /CTX_UPDATER_REMOTE_E2E_STRICT_PUBLISHED_ARTIFACTS=1/);
+  assert.match(releaseWrapperText, /CTX_UPDATER_E2E_BOOTSTRAP_REMOTE_MIGRATIONS=0/);
+  assert.match(releaseWrapperText, /bash \.\/scripts\/tests\/updater_remote_daemon_e2e\.sh/);
 });

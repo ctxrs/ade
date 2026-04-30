@@ -481,8 +481,10 @@ test("release publish-mode profiles stay on the artifact-only finalize boundary"
     buildExecutionPlan({ profileId: "canary-proof", touchedOnly: false, changedFiles: [] }).commands,
     [
       "bash ../scripts/buildkite/run_release_finalize.sh",
-      "bash ../scripts/tests/updater_linux_release_truth.sh",
-      "bash ../scripts/tests/updater_remote_daemon_e2e.sh",
+      "bash ../scripts/buildkite/run_release_proof_linux_updater_smoke.sh",
+      "bash ../scripts/buildkite/run_release_proof_linux_provider_matrix.sh",
+      "bash ../scripts/buildkite/run_release_proof_linux_clean_workspace.sh",
+      "bash ../scripts/buildkite/run_release_proof_remote_updater.sh",
     ],
   );
   assert.deepEqual(

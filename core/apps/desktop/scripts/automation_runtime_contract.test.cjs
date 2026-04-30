@@ -12,6 +12,7 @@ const TAURI_MAIN = path.join(ROOT, "src-tauri", "src", "main.rs");
 const PACKAGE_JSON = path.join(ROOT, "package.json");
 const WDIO_CONF = path.join(ROOT, "automation", "wdio.conf.cjs");
 const LINUX_SANDBOX_LOCAL = path.join(ROOT, "src-tauri", "src", "linux_sandbox", "local.rs");
+const DESKTOP_LOCAL_DAEMON = path.join(ROOT, "src-tauri", "src", "desktop_local_daemon.rs");
 const REMOTE_REAL_CI_WRAPPER = path.join(ROOT, "scripts", "test_remote_real_ci.sh");
 const REMOTE_DOCKER_WRAPPER = path.join(ROOT, "scripts", "test_remote_docker_contracts.sh");
 const DESKTOP_SMOKE_WRAPPER = path.join(REPO_ROOT, "scripts", "desktop_smoke_with_infisical.sh");
@@ -54,6 +55,17 @@ test("local Linux sandbox preparation restarts the invoking window daemon scope"
   assert.match(source, /let scope = window\.label\(\)\.to_string\(\);/);
   assert.match(source, /restart_local_with_spawn_for_scope\(&scope, manager,/);
   assert.doesNotMatch(source, /restart_local_with_spawn\(manager,/);
+});
+
+test("local daemon restart shares the connect gate", () => {
+  const source = fs.readFileSync(DESKTOP_LOCAL_DAEMON, "utf8");
+  const functionStart = source.indexOf("pub(super) fn restart_local_with_spawn_for_scope");
+  const gateIndex = source.indexOf("let _guard = lock_local_connect_gate()?;", functionStart);
+  const disconnectIndex = source.indexOf("disconnect_owned_local_daemons_for_restart", functionStart);
+  assert.ok(functionStart > 0, "restart helper should stay present");
+  assert.ok(gateIndex > functionStart, "restart helper should acquire the local connect gate");
+  assert.ok(disconnectIndex > gateIndex, "restart helper should acquire the gate before disconnecting daemons");
+  assert.match(source, /fn lock_local_connect_gate\(\) -> Result<std::sync::MutexGuard<'static, \(\)>>/);
 });
 
 test("first-run local sandbox script defaults to isolated macOS CN backend", () => {
@@ -134,7 +146,7 @@ test("updater Linux proof targets storage channel for stable dry-run proofs", ()
   assert.match(script, /stop_proof_daemons\(\) \{/);
   assert.match(script, /daemon\.lock/);
   assert.equal(
-    script.match(/^stop_proof_daemons$/gm)?.length,
+    script.match(/^\s*stop_proof_daemons$/gm)?.length,
     3,
   );
   assert.match(script, /CTX_DESKTOP_APP_PATH="\$\{bootstrap_automation_app_path\}"/);
@@ -179,9 +191,11 @@ test("desktop smoke cleanup unmounts AppImage FUSE mounts even when logs are pre
 test("mac WDIO automation targets the app executable and performs a real session readiness probe", () => {
   const wdio = fs.readFileSync(WDIO_CONF, "utf8");
   assert.match(wdio, /const resolveWdioApplicationPath = \(appPath\) => \{/);
+  assert.match(wdio, /const resolveAutomationApplicationPath = \(appPath\) => \{\s+const appExecutablePath = resolveWdioApplicationPath\(appPath\);/);
+  assert.match(wdio, /const WDIO_APPLICATION_PATH = resolveAutomationApplicationPath\(APP_PATH\);/);
   assert.match(
     wdio,
-    /"tauri:options":\s*\{[\s\S]*application:\s*resolveWdioApplicationPath\(APP_PATH\)/,
+    /"tauri:options":\s*\{[\s\S]*application:\s*WDIO_APPLICATION_PATH/,
   );
   assert.match(
     wdio,

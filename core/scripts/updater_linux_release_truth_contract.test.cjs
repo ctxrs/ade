@@ -7,6 +7,10 @@ const repoRoot = path.resolve(__dirname, "..", "..");
 const scriptPath = path.join(repoRoot, "scripts", "tests", "updater_linux_release_truth.sh");
 const scriptText = fs.readFileSync(scriptPath, "utf8");
 
+function read(relativePath) {
+  return fs.readFileSync(path.join(repoRoot, relativePath), "utf8");
+}
+
 test("Linux updater proof removes only stale proof daemon locks between automation phases", () => {
   assert.match(scriptText, /remove_stale_proof_lock_if_dead\(\) \{/);
   assert.match(
@@ -44,3 +48,19 @@ test("Linux updater proof runs the release harness install matrix against update
   assert.match(scriptText, /--lane release\s+\\\n\s+--platform linux\s+\\\n\s+--target all/);
   assert.doesNotMatch(scriptText, /CTX_UPDATER_RUNTIME_PROVIDER/);
 });
+
+test("Linux updater proof exposes explicit phases for split release proof jobs", () => {
+  assert.match(scriptText, /PHASES_RAW="\$\{CTX_UPDATER_LINUX_PROOF_PHASES:-all\}"/);
+  assert.match(scriptText, /phase_requested\(\) \{/);
+  assert.match(scriptText, /updater\|updater-smoke/);
+  assert.match(scriptText, /provider-matrix\|linux-provider-matrix/);
+  assert.match(scriptText, /clean-workspace\|workspace\|linux-clean-workspace/);
+  assert.match(scriptText, /RUN_UPDATER_PHASE=1/);
+  assert.match(scriptText, /RUN_PROVIDER_MATRIX_PHASE=1/);
+  assert.match(scriptText, /RUN_CLEAN_WORKSPACE_PHASE=1/);
+  assert.match(scriptText, /if \[\[ "\$\{RUN_UPDATER_PHASE\}" == "1" \]\]; then/);
+  assert.match(scriptText, /if \[\[ "\$\{RUN_PROVIDER_MATRIX_PHASE\}" == "1" \]\]; then/);
+  assert.match(scriptText, /if \[\[ "\$\{RUN_CLEAN_WORKSPACE_PHASE\}" == "1" \]\]; then/);
+  assert.match(scriptText, /target_channel_not_installed/);
+});
+
