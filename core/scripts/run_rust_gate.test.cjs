@@ -179,6 +179,16 @@ test("resolveCrates runs the full workspace graph for root-level Rust inputs", (
     }),
     ["ctx-core", "ctx-http"],
   );
+  assert.deepEqual(
+    resolveCrates(graph, {
+      agentGate: false,
+      all: false,
+      changedFiles: ["MODULE.bazel"],
+      crates: [],
+      includeReverseDeps: true,
+    }),
+    ["ctx-core", "ctx-http"],
+  );
 });
 
 test("resolveCrates excludes manual-only crates from default CI selection", () => {

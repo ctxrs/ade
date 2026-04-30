@@ -1078,14 +1078,19 @@ rust_test(
 )
 
 test_suite(
-    name = "unit_tests",
+    name = "unit-tests-api",
     tests = [
         ":unit_tests_api",
         ":unit_tests_api_cleanup_lifecycle",
         ":unit_tests_api_task_lifecycle",
         ":unit_tests_api_storage_admission",
         ":unit_tests_api_workspaces",
-        ":unit_tests_daemon",
+    ],
+)
+
+test_suite(
+    name = "unit-tests-execution-setup",
+    tests = [
         ":unit_tests_execution_setup",
         ":unit_tests_execution_setup_concurrent_launch_start_is_deduplicated",
         ":unit_tests_execution_setup_startup_prewarm_runtime_warmup",
@@ -1097,24 +1102,35 @@ test_suite(
         ":unit_tests_execution_setup_builder_prewarm_shared_all_job",
         ":unit_tests_execution_setup_workspace_launch_not_blocked_by_background_runtime_prewarm",
         ":unit_tests_execution_setup_successful_workspace_launch_writes_missing_prewarm_metadata",
-        ":unit_tests_installer",
-        ":unit_tests_mcp_command",
+        ":unit_tests_workspace_launch_reuses_startup_prewarm",
+    ],
+)
+
+test_suite(
+    name = "unit-tests-lib",
+    tests = [
         ":unit_tests_lib",
         ":unit_tests_lib_mobile_secure_routes",
         ":unit_tests_lib_provider_routes",
         ":unit_tests_lib_session_artifacts",
-        ":unit_tests_lib_session_head_large",
         ":unit_tests_lib_telemetry_export",
         ":unit_tests_lib_update_boundaries",
         ":unit_tests_lib_web_session_routes",
         ":unit_tests_lib_workspace_active_routes",
         ":unit_tests_lib_execution_launch_startup_prewarm_kind_supported",
-        ":unit_tests_merge_queue",
-        ":unit_tests_merge_queue_enabled_workspace_resume_after_open",
-        ":unit_tests_provider_launch",
-        ":unit_tests_provider_matrix",
-        ":unit_tests_scheduler",
-        ":unit_tests_settings",
+    ],
+)
+
+test_suite(
+    name = "unit-tests-lib-session-head-large",
+    tests = [
+        ":unit_tests_lib_session_head_large",
+    ],
+)
+
+test_suite(
+    name = "unit-tests-workspace-runtime",
+    tests = [
         ":unit_tests_workspace_runtime",
         ":unit_tests_workspace_runtime_reclaim_idle_runtime_with_parked_containers",
         ":unit_tests_workspace_runtime_reuses_running_container",
@@ -1128,9 +1144,49 @@ test_suite(
         ":unit_tests_workspace_runtime_unknown_machine_state_engine_unreachable",
         ":unit_tests_workspace_runtime_running_unreachable_machine_reconfiguration",
         ":unit_tests_workspace_runtime_recreates_machine_for_memory_profile_change",
+    ],
+)
+
+test_suite(
+    name = "unit-tests-daemon-and-scheduler",
+    tests = [
+        ":unit_tests_daemon",
+        ":unit_tests_mcp_command",
+        ":unit_tests_scheduler",
         ":unit_tests_daemon_golden_path_with_fake_provider",
         ":unit_tests_daemon_http_and_ws_streaming",
-        ":unit_tests_workspace_launch_reuses_startup_prewarm",
+    ],
+)
+
+test_suite(
+    name = "unit-tests-provider-and-settings",
+    tests = [
+        ":unit_tests_installer",
+        ":unit_tests_provider_launch",
+        ":unit_tests_provider_matrix",
+        ":unit_tests_settings",
+    ],
+)
+
+test_suite(
+    name = "unit-tests-merge-queue",
+    tests = [
+        ":unit_tests_merge_queue",
+        ":unit_tests_merge_queue_enabled_workspace_resume_after_open",
+    ],
+)
+
+test_suite(
+    name = "unit_tests",
+    tests = [
+        ":unit-tests-api",
+        ":unit-tests-daemon-and-scheduler",
+        ":unit-tests-execution-setup",
+        ":unit-tests-lib",
+        ":unit-tests-lib-session-head-large",
+        ":unit-tests-merge-queue",
+        ":unit-tests-provider-and-settings",
+        ":unit-tests-workspace-runtime",
     ],
 )
 

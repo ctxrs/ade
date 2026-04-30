@@ -38,6 +38,36 @@ test("verify:affected broadens the canonical Rust leaf beyond verify:touched", (
   ]);
 });
 
+test("verify:touched routes root Bazel graph changes through Rust build graph checks", () => {
+  const plan = buildVerificationPlan({
+    intent: "touched",
+    base: "origin/main",
+    changedFiles: ["MODULE.bazel"],
+  });
+
+  assert.equal(plan.commands[0], "pnpm rust:bazel-deps:check");
+  assert.equal(plan.commands[1], "pnpm rust:turbo:check");
+  assert.equal(
+    plan.commands[2],
+    "pnpm exec node scripts/run_rust_gate.cjs --mode workspace --include-reverse-deps --clippy --test-strategy mixed --changed-file MODULE.bazel",
+  );
+});
+
+test("verify:affected routes root Bazel graph changes through generated deps and Rust gate coverage", () => {
+  const plan = buildVerificationPlan({
+    intent: "affected",
+    base: "origin/main",
+    changedFiles: [".bazelrc"],
+  });
+
+  assert.equal(plan.commands[0], "pnpm rust:bazel-deps:check");
+  assert.equal(plan.commands[1], "pnpm rust:turbo:check");
+  assert.match(
+    plan.commands[2],
+    /^pnpm exec node scripts\/run_rust_gate\.cjs --mode workspace --include-reverse-deps --clippy --test-strategy mixed --crate /u,
+  );
+});
+
 test("verify:affected routes supabase migrations through the dedicated invariant check", () => {
   const plan = buildVerificationPlan({
     intent: "affected",
@@ -176,7 +206,7 @@ test("verify:affected routes extracted supervisor package changes to direct pack
   ]);
 });
 
-test("verify:affected adds ctx-http base compile truth for canonical scheduler runtime changes", () => {
+test("verify:affected adds ctx-http unit-family truth for canonical scheduler runtime changes", () => {
   const plan = buildVerificationPlan({
     intent: "affected",
     base: "origin/main",
@@ -185,8 +215,8 @@ test("verify:affected adds ctx-http base compile truth for canonical scheduler r
 
   assert.deepEqual(plan.commands, [
     "pnpm source:file-size:report",
-    "node scripts/ctx_http_suite_task.cjs --suite base",
     "node scripts/ctx_http_suite_task.cjs --suite scheduler-runtime",
+    "node scripts/ctx_http_suite_task.cjs --suite unit-tests-daemon-and-scheduler",
   ]);
 });
 
@@ -199,13 +229,14 @@ test("verify:affected keeps shared turn execution paths on both scheduler runtim
 
   assert.deepEqual(plan.commands, [
     "pnpm source:file-size:report",
-    "node scripts/ctx_http_suite_task.cjs --suite base",
     "node scripts/ctx_http_suite_task.cjs --suite scheduler-runtime",
     "node scripts/ctx_http_suite_task.cjs --suite turns-terminal",
+    "node scripts/ctx_http_suite_task.cjs --suite unit-tests-api",
+    "node scripts/ctx_http_suite_task.cjs --suite unit-tests-lib",
   ]);
 });
 
-test("verify:affected keeps direct ctx-http suite test edits on suite truth plus base compile truth", () => {
+test("verify:affected keeps direct ctx-http suite test edits on suite truth", () => {
   const plan = buildVerificationPlan({
     intent: "affected",
     base: "origin/main",
@@ -213,8 +244,20 @@ test("verify:affected keeps direct ctx-http suite test edits on suite truth plus
   });
 
   assert.deepEqual(plan.commands, [
-    "node scripts/ctx_http_suite_task.cjs --suite base",
     "node scripts/ctx_http_suite_task.cjs --suite provider-auth",
+  ]);
+});
+
+test("verify:affected keeps ctx-http base for unmatched ctx-http source edits", () => {
+  const plan = buildVerificationPlan({
+    intent: "affected",
+    base: "origin/main",
+    changedFiles: ["core/crates/ctx-http/src/main.rs"],
+  });
+
+  assert.deepEqual(plan.commands, [
+    "pnpm source:file-size:report",
+    "node scripts/ctx_http_suite_task.cjs --suite base",
   ]);
 });
 
@@ -266,6 +309,28 @@ test("verify:touched routes verification-tooling edits through the local tooling
   ]);
 });
 
+test("verify:affected routes taxonomy source edits through generated-doc freshness", () => {
+  const plan = buildVerificationPlan({
+    intent: "affected",
+    base: "origin/main",
+    changedFiles: ["core/scripts/lib/test_taxonomy/execution.cjs"],
+  });
+
+  assert.equal(plan.commands.at(-1), "pnpm testing:taxonomy:check");
+});
+
+test("verify:affected routes generated taxonomy docs through the taxonomy freshness check", () => {
+  const plan = buildVerificationPlan({
+    intent: "affected",
+    base: "origin/main",
+    changedFiles: [".ctx/docs/testing_inventory.generated.md"],
+  });
+
+  assert.deepEqual(plan.commands, [
+    "pnpm testing:taxonomy:check",
+  ]);
+});
+
 test("verify:affected routes ctx-http suite runner edits through tooling coverage plus ctx-http truth", () => {
   const plan = buildVerificationPlan({
     intent: "affected",
@@ -274,10 +339,10 @@ test("verify:affected routes ctx-http suite runner edits through tooling coverag
   });
 
   assert.equal(plan.commands[0], "node --test scripts/verification_git_changes.test.cjs scripts/verification_router_contract.test.cjs scripts/verification_run_store.test.cjs scripts/sdlc_verify_metrics_report.test.cjs scripts/run_bazel_pilot.test.cjs scripts/ctx_http_suite_task.test.cjs scripts/lib/ctx_http_suites.test.cjs scripts/ctx_http_bazel_contract.test.cjs scripts/testing_tiers_contract.test.cjs scripts/test_taxonomy_execution_contract.test.cjs scripts/affected_tests_contract.test.cjs");
-  assert.equal(plan.commands[1], "pnpm rust:turbo:check");
-  assert.deepEqual(plan.commands.slice(2, 13), [
+  assert.equal(plan.commands[1], "pnpm rust:bazel-deps:check");
+  assert.equal(plan.commands[2], "pnpm rust:turbo:check");
+  assert.deepEqual(plan.commands.slice(3, 21), [
     "node scripts/ctx_http_suite_task.cjs --suite attachments-routing",
-    "node scripts/ctx_http_suite_task.cjs --suite base",
     "node scripts/ctx_http_suite_task.cjs --suite provider-auth",
     "node scripts/ctx_http_suite_task.cjs --suite provider-runtime-simulated",
     "node scripts/ctx_http_suite_task.cjs --suite repo-vcs",
@@ -285,10 +350,18 @@ test("verify:affected routes ctx-http suite runner edits through tooling coverag
     "node scripts/ctx_http_suite_task.cjs --suite scheduler-runtime",
     "node scripts/ctx_http_suite_task.cjs --suite subagents-control",
     "node scripts/ctx_http_suite_task.cjs --suite turns-terminal",
+    "node scripts/ctx_http_suite_task.cjs --suite unit-tests-api",
+    "node scripts/ctx_http_suite_task.cjs --suite unit-tests-daemon-and-scheduler",
+    "node scripts/ctx_http_suite_task.cjs --suite unit-tests-execution-setup",
+    "node scripts/ctx_http_suite_task.cjs --suite unit-tests-lib",
+    "node scripts/ctx_http_suite_task.cjs --suite unit-tests-lib-session-head-large",
+    "node scripts/ctx_http_suite_task.cjs --suite unit-tests-merge-queue",
+    "node scripts/ctx_http_suite_task.cjs --suite unit-tests-provider-and-settings",
+    "node scripts/ctx_http_suite_task.cjs --suite unit-tests-workspace-runtime",
     "node scripts/ctx_http_suite_task.cjs --suite updates-release",
     "node scripts/ctx_http_suite_task.cjs --suite workspace-stream",
   ]);
-  assert.match(plan.commands[13], /^pnpm exec node scripts\/run_rust_gate\.cjs --mode workspace --include-reverse-deps --clippy --test-strategy mixed /u);
+  assert.match(plan.commands[21], /^pnpm exec node scripts\/run_rust_gate\.cjs --mode workspace --include-reverse-deps --clippy --test-strategy mixed /u);
 });
 
 test("verify router telemetry honors CTX_DISABLE_VERIFICATION_TELEMETRY and still runs commands", () => {

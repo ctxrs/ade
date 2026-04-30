@@ -37,7 +37,6 @@ const PROFILES = [
     selector: {
       excludeEntryIds: [
         "repo-contracts.source-file-size",
-        "repo-contracts.testing-taxonomy-check",
         "web-workbench.web-typecheck",
       ],
       includeSurfaces: ["contract", "compile", "unit", "integration"],
@@ -93,9 +92,13 @@ const PROFILES = [
     title: "Checkin",
     purpose: "Exact-SHA fast confidence profile used before dev promotes to main.",
     selector: {
+      excludeEntryIds: [
+        "ctx-http.base",
+      ],
       forceIncludeEntryIds: [
         "repo-contracts.source-file-size",
         "repo-contracts.testing-taxonomy-check",
+        "build-graph.rust-bazel-deps-check",
         "build-graph.rust-turbo-check",
         "web-workbench.web-premerge-required",
       ],

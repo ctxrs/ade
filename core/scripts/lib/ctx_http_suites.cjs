@@ -3,6 +3,10 @@ const path = require("node:path");
 
 const CTX_HTTP_SUITE_PREFIX = "rust:ctx-http:test:";
 const CTX_HTTP_BAZEL_PACKAGE = "//core/crates/ctx-http";
+const CTX_HTTP_SUITE_CONCURRENCY_CLASSES = Object.freeze({
+  SAFE: "safe",
+  SERIALIZED: "serialized",
+});
 const CTX_HTTP_SUITE_SCRIPT_INPUTS = [
   "crates/ctx-http/BUILD.bazel",
   "crates/ctx-http/ctx_http_bazel_tests.bzl",
@@ -31,8 +35,124 @@ const CTX_HTTP_SHARED_SOURCE_GLOBS = [
   "crates/ctx-http/src/test_support.rs",
 ];
 
+const CTX_HTTP_UNIT_SUITES = [
+  {
+    family: "workspace-stream",
+    name: "unit-tests-api",
+    description: "ctx-http API unit test family",
+    sourceGlobs: [
+      "crates/ctx-http/src/api/**",
+    ],
+  },
+  {
+    family: "sandbox-runtime",
+    name: "unit-tests-execution-setup",
+    description: "ctx-http execution setup and startup prewarm unit family",
+    sourceGlobs: [
+      "crates/ctx-http/src/execution_effective.rs",
+      "crates/ctx-http/src/execution_setup.rs",
+      "crates/ctx-http/src/execution_setup/**",
+      "crates/ctx-http/src/workspace_runtime/**",
+    ],
+  },
+  {
+    family: "workspace-stream",
+    name: "unit-tests-lib",
+    description: "ctx-http lib route and shared helper unit family",
+    sourceGlobs: [
+      "crates/ctx-http/src/api/**",
+      "crates/ctx-http/src/daemon/**",
+      "crates/ctx-http/src/lib.rs",
+      "crates/ctx-http/src/test_support.rs",
+    ],
+  },
+  {
+    family: "workspace-stream",
+    name: "unit-tests-lib-session-head-large",
+    description: "ctx-http large session-head response-boundary unit family",
+    sourceGlobs: [
+      "crates/ctx-http/src/api/sessions/**",
+      "crates/ctx-http/src/api/workspaces.rs",
+      "crates/ctx-http/src/daemon/workspaces/**",
+      "crates/ctx-http/src/test_support.rs",
+    ],
+  },
+  {
+    family: "workspace-stream",
+    name: "unit-tests-workspace-runtime",
+    description: "ctx-http workspace runtime unit family",
+    sourceGlobs: [
+      "crates/ctx-http/src/container_builder.rs",
+      "crates/ctx-http/src/container_fs.rs",
+      "crates/ctx-http/src/disk_isolated.rs",
+      "crates/ctx-http/src/disk_isolated_copy.rs",
+      "crates/ctx-http/src/disk_isolated_sandbox.rs",
+      "crates/ctx-http/src/workspace_runtime/**",
+    ],
+  },
+  {
+    family: "turns-terminal",
+    name: "unit-tests-daemon-and-scheduler",
+    description: "ctx-http daemon, scheduler, and MCP command unit family",
+    sourceGlobs: [
+      "crates/ctx-http/src/daemon.rs",
+      "crates/ctx-http/src/daemon/**",
+      "crates/ctx-http/src/mcp_command.rs",
+      "crates/ctx-http/src/scheduler.rs",
+      "crates/ctx-http/src/scheduler/**",
+    ],
+  },
+  {
+    family: "provider-runtime",
+    name: "unit-tests-provider-and-settings",
+    description: "ctx-http provider launch, provider matrix, installer, and settings unit family",
+    sourceGlobs: [
+      "crates/ctx-http/src/api/providers/**",
+      "crates/ctx-http/src/installer.rs",
+      "crates/ctx-http/src/installer/**",
+      "crates/ctx-http/src/provider_launch.rs",
+      "crates/ctx-http/src/provider_launch/**",
+      "crates/ctx-http/src/provider_matrix.rs",
+      "crates/ctx-http/src/provider_matrix/**",
+      "crates/ctx-http/src/settings.rs",
+      "crates/ctx-http/src/settings/**",
+    ],
+  },
+  {
+    family: "repo-vcs",
+    name: "unit-tests-merge-queue",
+    description: "ctx-http merge queue unit family",
+    sourceGlobs: [
+      "crates/ctx-http/src/api/merge_queue_api.rs",
+      "crates/ctx-http/src/merge_queue.rs",
+      "crates/ctx-http/src/merge_queue/**",
+    ],
+  },
+].map((suite) => ({
+  concurrencyClass: "serialized",
+  dependencyCrates: [],
+  execution: "bazel-rbe-preferred",
+  includeInAll: false,
+  oracle: "direct-assertion",
+  requirements: ["linux", "buildbuddy-rbe"],
+  stability: "stable",
+  surface: "unit",
+  testFiles: [],
+  type: "unit",
+  world: "hermetic",
+  ...suite,
+}));
+
+const CTX_HTTP_SAFE_CONCURRENT_SUITES = new Set([
+  "attachments-routing",
+  "provider-auth",
+  "provider-runtime-simulated",
+  "updates-release",
+]);
+
 const CTX_HTTP_SUITES = [
   {
+    concurrencyClass: "serialized",
     dependencyCrates: ["ctx-http"],
     name: "base",
     description: "ctx-http lib, bins, and doc tests",
@@ -40,6 +160,7 @@ const CTX_HTTP_SUITES = [
     testFiles: [],
     type: "base",
   },
+  ...CTX_HTTP_UNIT_SUITES,
   {
     dependencyCrates: ["ctx-core", "ctx-events", "ctx-store", "ctx-workspace-active-snapshot"],
     name: "workspace-stream",
@@ -530,6 +651,12 @@ function getCtxHttpSuiteNames(options = {}) {
   return names;
 }
 
+function getCtxHttpSuiteNamesForAllTarget() {
+  return CTX_HTTP_SUITES
+    .filter((suite) => suite.includeInAll !== false)
+    .map((suite) => suite.name);
+}
+
 function getCtxHttpSuiteTaskName(suiteName) {
   return `${CTX_HTTP_SUITE_PREFIX}${suiteName}`;
 }
@@ -544,6 +671,20 @@ function getCtxHttpSuiteByName(suiteName) {
     };
   }
   return CTX_HTTP_SUITES.find((suite) => suite.name === suiteName) || null;
+}
+
+function getCtxHttpSuiteConcurrencyClass(suiteName) {
+  const suite = getCtxHttpSuiteByName(suiteName);
+  if (!suite || suite.name === "all") {
+    throw new Error(`unknown ctx-http suite for concurrency: ${suiteName}`);
+  }
+  if (suite.concurrencyClass) {
+    return suite.concurrencyClass;
+  }
+  if (CTX_HTTP_SAFE_CONCURRENT_SUITES.has(suite.name)) {
+    return CTX_HTTP_SUITE_CONCURRENCY_CLASSES.SAFE;
+  }
+  return CTX_HTTP_SUITE_CONCURRENCY_CLASSES.SERIALIZED;
 }
 
 function listCtxHttpIntegrationTests(coreRoot) {
@@ -633,7 +774,7 @@ function getCtxHttpSuiteTarget(suiteName) {
 function getCtxHttpSuiteTargets(suiteName) {
   const suiteNames = normalizeCtxHttpSuiteSelection(suiteName);
   if (suiteNames.length === 1 && suiteNames[0] === "all") {
-    return CTX_HTTP_SUITES.map((suite) => getCtxHttpSuiteTarget(suite.name));
+    return getCtxHttpSuiteNamesForAllTarget().map((entry) => getCtxHttpSuiteTarget(entry));
   }
   return suiteNames.map((entry) => getCtxHttpSuiteTarget(entry));
 }
@@ -646,9 +787,11 @@ function buildCtxHttpSuiteTaskArgs(suiteName) {
 module.exports = {
   CTX_HTTP_BAZEL_PACKAGE,
   CTX_HTTP_MANUAL_ONLY_BAZEL_TARGETS,
+  CTX_HTTP_SAFE_CONCURRENT_SUITES,
   CTX_HTTP_SUITES,
   CTX_HTTP_SHARED_SOURCE_GLOBS,
   CTX_HTTP_SUITE_PREFIX,
+  CTX_HTTP_SUITE_CONCURRENCY_CLASSES,
   CTX_HTTP_SUITE_SCRIPT_INPUTS,
   MANUAL_ONLY_CTX_HTTP_TEST_FILES,
   buildCtxHttpSuiteCommands,
@@ -656,7 +799,9 @@ module.exports = {
   getCtxHttpSuiteTarget,
   getCtxHttpSuiteTargets,
   getCtxHttpSuiteByName,
+  getCtxHttpSuiteConcurrencyClass,
   getCtxHttpSuiteNames,
+  getCtxHttpSuiteNamesForAllTarget,
   getCtxHttpSuiteTaskName,
   listCtxHttpIntegrationTests,
   validateCtxHttpSuites,

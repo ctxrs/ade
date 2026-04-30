@@ -9,11 +9,11 @@ const {
   resolveWorkingTreeFiles,
 } = require("../verification_git_changes.cjs");
 const {
-  ROOT_RUST_INPUTS,
   buildWorkspaceGraph,
   collectChangedCrates,
   expandReverseDependencies,
   filterGateManagedCrateNames,
+  isRustWorkspaceLevelInput,
 } = require("../rust_workspace_graph.cjs");
 
 const coreRoot = path.resolve(__dirname, "..", "..", "..");
@@ -76,10 +76,7 @@ function matchesGlob(filePath, glob) {
 function buildChangedContext(changedFiles) {
   const normalizedChangedFiles = [...new Set(changedFiles.map(normalizeRepoRelativePath).filter(Boolean))];
   const changedCrates = collectChangedCrates(workspaceGraph, normalizedChangedFiles);
-  const workspaceLevelRustChange = normalizedChangedFiles.some((changedFile) => {
-    const normalized = changedFile.replace(/^core\//u, "");
-    return ROOT_RUST_INPUTS.includes(normalized);
-  });
+  const workspaceLevelRustChange = normalizedChangedFiles.some(isRustWorkspaceLevelInput);
   return {
     normalizedChangedFiles,
     changedCrates,
@@ -409,6 +406,18 @@ function orderSelectedEntries(entries, profile) {
     .map(({ entry }) => entry);
 }
 
+function removeRedundantCtxHttpBaseEntry(entries) {
+  const hasSpecificCtxHttpSuite = entries.some((entry) =>
+    entry.entrypointType === "ctx-http-suite" && entry.entrypoint !== "base",
+  );
+  if (!hasSpecificCtxHttpSuite) {
+    return entries;
+  }
+  return entries.filter((entry) =>
+    !(entry.entrypointType === "ctx-http-suite" && entry.entrypoint === "base"),
+  );
+}
+
 function buildExecutionPlan({
   profileId,
   changedFiles = [],
@@ -434,6 +443,7 @@ function buildExecutionPlan({
         selectionMode: resolvedSelectionMode,
       }),
     );
+    selectedEntries = removeRedundantCtxHttpBaseEntry(selectedEntries);
   }
   selectedEntries = orderSelectedEntries(selectedEntries, profile);
 
@@ -490,6 +500,7 @@ module.exports = {
   entryMatchesChangedFiles,
   normalizeSelectionMode,
   normalizeRepoRelativePath,
+  removeRedundantCtxHttpBaseEntry,
   resolveChangedFilesFromGit,
   shellJoin,
 };

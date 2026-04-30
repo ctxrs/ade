@@ -28,7 +28,7 @@ test("agent-default fans out ctx-http shared changes into suite-level commands",
   ));
 
   assert.deepEqual(plan.commands, [
-    "node scripts/ctx_http_suite_task.cjs --suite attachments-routing --suite provider-auth --suite provider-runtime-simulated --suite repo-vcs --suite sandbox-runtime-simulated --suite scheduler-runtime --suite subagents-control --suite turns-terminal --suite updates-release --suite workspace-stream",
+    "node scripts/ctx_http_suite_task.cjs --suite attachments-routing --suite provider-auth --suite provider-runtime-simulated --suite repo-vcs --suite sandbox-runtime-simulated --suite scheduler-runtime --suite subagents-control --suite turns-terminal --suite unit-tests-api --suite unit-tests-lib --suite updates-release --suite workspace-stream",
   ]);
 });
 
@@ -74,8 +74,23 @@ test("agent-default workspace-level Rust inputs select the taxonomy-backed Rust 
   assert.ok(plan.selectedEntries.some((entry) => entry.id === "repo-vcs.rust-gate.ctx-merge-queue"));
 
   assert.deepEqual(plan.commands, [
+    "pnpm rust:bazel-deps:check",
     "pnpm rust:turbo:check",
     "pnpm exec node scripts/run_rust_gate.cjs --mode workspace --include-reverse-deps --clippy --test-strategy mixed --changed-file core/Cargo.lock",
+  ]);
+});
+
+test("agent-default root Bazel graph inputs select generated deps and Rust gate coverage", () => {
+  const plan = buildExecutionPlan({
+    profileId: "agent-default",
+    changedFiles: ["MODULE.bazel"],
+    touchedOnly: true,
+  });
+
+  assert.deepEqual(plan.commands, [
+    "pnpm rust:bazel-deps:check",
+    "pnpm rust:turbo:check",
+    "pnpm exec node scripts/run_rust_gate.cjs --mode workspace --include-reverse-deps --clippy --test-strategy mixed --changed-file MODULE.bazel",
   ]);
 });
 
@@ -246,7 +261,7 @@ test("agent-default selects narrow pretext E2E Bazel labels for touched parity s
   ]);
 });
 
-test("agent-default affected selection adds ctx-http base compile truth for scheduler runtime changes", () => {
+test("agent-default affected selection adds ctx-http unit-family truth for scheduler runtime changes", () => {
   const plan = buildExecutionPlan({
     profileId: "agent-default",
     changedFiles: ["core/crates/ctx-http/src/scheduler/runtime/event_loop.rs"],
@@ -254,7 +269,7 @@ test("agent-default affected selection adds ctx-http base compile truth for sche
   });
 
   assert.deepEqual(plan.commands, [
-    "node scripts/ctx_http_suite_task.cjs --suite base --suite scheduler-runtime",
+    "node scripts/ctx_http_suite_task.cjs --suite scheduler-runtime --suite unit-tests-daemon-and-scheduler",
   ]);
 });
 
@@ -266,11 +281,11 @@ test("agent-default affected selection keeps shared turn execution paths on both
   });
 
   assert.deepEqual(plan.commands, [
-    "node scripts/ctx_http_suite_task.cjs --suite base --suite scheduler-runtime --suite turns-terminal",
+    "node scripts/ctx_http_suite_task.cjs --suite scheduler-runtime --suite turns-terminal --suite unit-tests-api --suite unit-tests-lib",
   ]);
 });
 
-test("agent-default affected selection keeps direct ctx-http suite test edits on suite truth plus base compile truth", () => {
+test("agent-default affected selection keeps direct ctx-http suite test edits on suite truth", () => {
   const plan = buildExecutionPlan({
     profileId: "agent-default",
     changedFiles: ["core/crates/ctx-http/tests/subscription_accounts_api.rs"],
@@ -278,7 +293,19 @@ test("agent-default affected selection keeps direct ctx-http suite test edits on
   });
 
   assert.deepEqual(plan.commands, [
-    "node scripts/ctx_http_suite_task.cjs --suite base --suite provider-auth",
+    "node scripts/ctx_http_suite_task.cjs --suite provider-auth",
+  ]);
+});
+
+test("agent-default affected selection keeps ctx-http base for unmatched ctx-http source edits", () => {
+  const plan = buildExecutionPlan({
+    profileId: "agent-default",
+    changedFiles: ["core/crates/ctx-http/src/main.rs"],
+    selectionMode: "affected",
+  });
+
+  assert.deepEqual(plan.commands, [
+    "node scripts/ctx_http_suite_task.cjs --suite base",
   ]);
 });
 
@@ -521,8 +548,10 @@ test("checkin promotion gate includes broad stable cacheable basics", () => {
   for (const requiredEntryId of [
     "repo-contracts.source-file-size",
     "repo-contracts.testing-taxonomy-check",
+    "build-graph.rust-bazel-deps-check",
     "build-graph.rust-turbo-check",
-    "ctx-http.base",
+    "ctx-http.unit-tests-api",
+    "ctx-http.unit-tests-lib",
     "provider-runtime.rust-gate.ctx-crp-protocol",
     "provider-runtime.rust-gate.ctx-llm-relay-authority",
     "provider-runtime.rust-gate.ctx-llm-relay-contract",
@@ -536,12 +565,15 @@ test("checkin promotion gate includes broad stable cacheable basics", () => {
 
   assert.ok(plan.commands.includes("pnpm source:file-size:report"));
   assert.ok(plan.commands.includes("pnpm testing:taxonomy:check"));
+  assert.ok(plan.commands.includes("pnpm rust:bazel-deps:check"));
   assert.ok(plan.commands.includes("pnpm rust:turbo:check"));
   const ctxHttpCommands = plan.commands.filter((command) => command.startsWith("node scripts/ctx_http_suite_task.cjs "));
   assert.equal(ctxHttpCommands.length, 1);
   assert.equal(ctxHttpCommands[0].includes("--suite attachments-routing"), true);
-  assert.equal(ctxHttpCommands[0].includes("--suite base"), true);
+  assert.equal(ctxHttpCommands[0].includes("--suite base"), false);
   assert.equal(ctxHttpCommands[0].includes("--suite provider-auth"), true);
+  assert.equal(ctxHttpCommands[0].includes("--suite unit-tests-api"), true);
+  assert.equal(ctxHttpCommands[0].includes("--suite unit-tests-lib"), true);
   assert.ok(plan.commands.includes("pnpm bazel:web:typecheck"));
   assert.ok(plan.commands.includes("pnpm bazel:web:e2e:premerge"));
   assert.ok(plan.commands.includes("pnpm bazel:buildkite:pipeline:test"));
@@ -569,6 +601,9 @@ test("Buildkite checkin plan splits ctx-http suites and Rust crate gates without
   const ctxHttpCommands = buildkitePlan.commands
     .filter((command) => command.startsWith("node scripts/ctx_http_suite_task.cjs "));
   assert.equal(ctxHttpCommands.length, selectedCtxHttpSuites.length);
+  assert.equal(selectedCtxHttpSuites.includes("base"), false);
+  assert.equal(selectedCtxHttpSuites.includes("unit-tests-api"), true);
+  assert.equal(selectedCtxHttpSuites.includes("unit-tests-lib"), true);
   assert.deepEqual(
     ctxHttpCommands.map((command) => command.match(/--suite ([^ ]+)/)?.[1]).sort(),
     selectedCtxHttpSuites,

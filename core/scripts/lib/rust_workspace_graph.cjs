@@ -5,6 +5,7 @@ const {
   CTX_HTTP_SHARED_SOURCE_GLOBS,
   CTX_HTTP_SUITE_SCRIPT_INPUTS,
   getCtxHttpSuiteNames,
+  getCtxHttpSuiteNamesForAllTarget,
   getCtxHttpSuiteTaskName,
 } = require("./ctx_http_suites.cjs");
 
@@ -17,16 +18,34 @@ const ROOT_RUST_INPUTS = [
   "rustfmt.toml",
   "clippy.toml",
   ".cargo/config.toml",
+  "scripts/lib/bazel_rust_targets.cjs",
   "scripts/lib/cache_roots.cjs",
   "scripts/lib/ctx_http_suites.cjs",
   "scripts/lib/turbo_runner.cjs",
   "scripts/lib/rust_workspace_graph.cjs",
   "scripts/lib/rust_gate_plan.cjs",
   "scripts/ctx_http_suite_task.cjs",
+  "scripts/rust_bazel_deps.config.cjs",
   "scripts/rust_crate_task.cjs",
   "scripts/run_rust_gate.cjs",
   "scripts/run_rust_turbo.cjs",
+  "scripts/sync_rust_bazel_deps.cjs",
   "scripts/sync_rust_turbo_tasks.cjs",
+];
+
+const REPO_RUST_BUILD_GRAPH_INPUTS = [
+  ".bazelignore",
+  ".bazelrc",
+  ".bazelversion",
+  "BUILD.bazel",
+  "MODULE.bazel",
+  "MODULE.bazel.lock",
+  "buildbuddy.yaml",
+  "user.bazelrc.example",
+];
+
+const REPO_RUST_BUILD_GRAPH_INPUT_PREFIXES = [
+  "tools/bazel/",
 ];
 
 const GENERATED_PACKAGE_SCRIPT_PREFIXES = [
@@ -78,6 +97,25 @@ function getGateManagedCrates(graph) {
 
 function normalizePathForMatch(value) {
   return String(value).replace(/\\/g, "/").replace(/\/+$/, "");
+}
+
+function normalizeRepoRelativePath(value) {
+  return normalizePathForMatch(value).replace(/^\.\//u, "").replace(/^\/+/u, "");
+}
+
+function isRustWorkspaceLevelInput(changedFile) {
+  const normalized = normalizeRepoRelativePath(changedFile);
+  if (!normalized) {
+    return false;
+  }
+  if (REPO_RUST_BUILD_GRAPH_INPUTS.includes(normalized)) {
+    return true;
+  }
+  if (REPO_RUST_BUILD_GRAPH_INPUT_PREFIXES.some((prefix) => normalized.startsWith(prefix))) {
+    return true;
+  }
+  const coreRelative = normalized.replace(/^core\//u, "");
+  return ROOT_RUST_INPUTS.includes(coreRelative);
 }
 
 function buildWorkspaceGraph(coreRoot, metadata = runCargoMetadata(coreRoot)) {
@@ -324,7 +362,9 @@ function getTurboTaskNamesForCrates(crateNames, taskKinds) {
         taskNames.push(getTurboClippyTaskName(crateName));
       } else if (taskKind === "test") {
         if (crateName === "ctx-http") {
-          taskNames.push(...getCtxHttpSuiteNames().map((suiteName) => getCtxHttpSuiteTaskName(suiteName)));
+          const suiteTaskNames = getCtxHttpSuiteNamesForAllTarget()
+            .map((suiteName) => getCtxHttpSuiteTaskName(suiteName));
+          taskNames.push(...suiteTaskNames);
         } else {
           taskNames.push(getTurboTestTaskName(crateName));
         }
@@ -343,6 +383,8 @@ module.exports = {
   GENERATED_PACKAGE_SCRIPT_PREFIXES,
   GENERATED_TURBO_TASK_PREFIXES,
   MANUAL_ONLY_RUST_CRATES,
+  REPO_RUST_BUILD_GRAPH_INPUT_PREFIXES,
+  REPO_RUST_BUILD_GRAPH_INPUTS,
   ROOT_RUST_INPUTS,
   buildGeneratedPackageScripts,
   buildGeneratedTurboTasks,
@@ -359,6 +401,7 @@ module.exports = {
   getTurboNextestTaskName,
   getTurboTaskNamesForCrates,
   getTurboTestTaskName,
+  isRustWorkspaceLevelInput,
   normalizePathForMatch,
   runCargoMetadata,
 };

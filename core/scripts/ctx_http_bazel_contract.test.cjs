@@ -40,6 +40,14 @@ function extractCtxHttpSuiteTestList(suiteName) {
   return [...match[1].matchAll(/"([^"]+)"/g)].map((entry) => entry[1]);
 }
 
+function extractTestSuiteLabels(suiteName) {
+  const match = ctxHttpBuild.match(
+    new RegExp(`test_suite\\(\\s*name = "${escapeRegExp(suiteName)}",[\\s\\S]*?tests = \\[([\\s\\S]*?)\\],\\s*\\)`),
+  );
+  assert.ok(match, `expected ${suiteName} test_suite in ctx-http BUILD`);
+  return [...match[1].matchAll(/"([^"]+)"/g)].map((entry) => entry[1]);
+}
+
 function assertNoDuplicates(name, values) {
   const duplicates = values.filter((value, index) => values.indexOf(value) !== index);
   assert.deepEqual([...new Set(duplicates)].sort(), [], `${name} must not contain duplicate labels`);
@@ -259,6 +267,14 @@ test("ctx-http BUILD exposes Bazel-native base test targets", () => {
   assert.match(ctxHttpBuild, /name = "bin_tests"/);
   assert.match(ctxHttpBuild, /name = "doc_tests"/);
   assert.match(ctxHttpBuild, /name = "base"/);
+  assert.match(ctxHttpBuild, /name = "unit-tests-api"/);
+  assert.match(ctxHttpBuild, /name = "unit-tests-daemon-and-scheduler"/);
+  assert.match(ctxHttpBuild, /name = "unit-tests-execution-setup"/);
+  assert.match(ctxHttpBuild, /name = "unit-tests-lib"/);
+  assert.match(ctxHttpBuild, /name = "unit-tests-lib-session-head-large"/);
+  assert.match(ctxHttpBuild, /name = "unit-tests-merge-queue"/);
+  assert.match(ctxHttpBuild, /name = "unit-tests-provider-and-settings"/);
+  assert.match(ctxHttpBuild, /name = "unit-tests-workspace-runtime"/);
   assert.match(
     ctxHttpBuild,
     /":unit_tests_execution_setup_concurrent_launch_start_is_deduplicated"/,
@@ -316,6 +332,32 @@ test("ctx-http BUILD exposes Bazel-native base test targets", () => {
   assert.match(ctxHttpBuild, /"CARGO_BIN_EXE_llama_server_mock": "\$\(rootpath :llama_server_mock\)"/);
   assert.match(ctxHttpBuild, /declare_ctx_http_integration_tests/);
   assert.match(ctxHttpBuild, new RegExp(`CARGO_PKG_VERSION": "${escapeRegExp(desktopVersion)}"`));
+});
+
+test("ctx-http unit-family suites cover every unit test target exactly once", () => {
+  const unitFamilySuites = [
+    "unit-tests-api",
+    "unit-tests-daemon-and-scheduler",
+    "unit-tests-execution-setup",
+    "unit-tests-lib",
+    "unit-tests-lib-session-head-large",
+    "unit-tests-merge-queue",
+    "unit-tests-provider-and-settings",
+    "unit-tests-workspace-runtime",
+  ];
+  const declaredUnitTargets = [...ctxHttpBuild.matchAll(/name = "(unit_tests_[^"]+)"/g)]
+    .map((match) => `:${match[1]}`)
+    .sort();
+  const familyTargets = unitFamilySuites
+    .flatMap((suiteName) => extractTestSuiteLabels(suiteName))
+    .sort();
+
+  assertNoDuplicates("ctx-http unit-family suite targets", familyTargets);
+  assert.deepEqual(familyTargets, declaredUnitTargets);
+  assert.deepEqual(
+    extractTestSuiteLabels("unit_tests").sort(),
+    unitFamilySuites.map((suiteName) => `:${suiteName}`).sort(),
+  );
 });
 
 test("ctx-http Bazel dependency buckets do not duplicate labels", () => {

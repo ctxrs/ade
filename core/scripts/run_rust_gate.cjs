@@ -13,11 +13,11 @@ const {
 } = require("./lib/rust_gate_plan.cjs");
 const {
   buildWorkspaceGraph,
-  ROOT_RUST_INPUTS,
   collectChangedCrates,
   expandReverseDependencies,
   filterGateManagedCrateNames,
   getTurboTaskNamesForCrates,
+  isRustWorkspaceLevelInput,
 } = require("./lib/rust_workspace_graph.cjs");
 const { HOST_HEAVY_BUDGET_KEY, withHostJobBudget } = require("./lib/host_job_budget.cjs");
 const { runTurbo } = require("./lib/turbo_runner.cjs");
@@ -99,10 +99,7 @@ function resolveCrates(graph, args) {
     return filterGateManagedCrateNames(graph.crates.map((crate) => crate.crateName));
   }
 
-  const workspaceLevelChange = args.changedFiles.some((changedFile) => {
-    const normalized = String(changedFile).replace(/\\/g, "/").replace(/^core\//, "");
-    return ROOT_RUST_INPUTS.includes(normalized);
-  });
+  const workspaceLevelChange = args.changedFiles.some(isRustWorkspaceLevelInput);
   if (workspaceLevelChange) {
     return filterGateManagedCrateNames(graph.crates.map((crate) => crate.crateName));
   }

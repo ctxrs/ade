@@ -7,6 +7,8 @@ const {
   validateCtxHttpSuites,
 } = require("../ctx_http_suites.cjs");
 const {
+  REPO_RUST_BUILD_GRAPH_INPUT_PREFIXES,
+  REPO_RUST_BUILD_GRAPH_INPUTS,
   ROOT_RUST_INPUTS,
   buildWorkspaceGraph,
   getGateManagedCrates,
@@ -122,7 +124,11 @@ const PRETEXT_MEASUREMENT_SOURCE_GLOBS = [
   "core/apps/web/package.json",
   "core/package.json",
 ];
-const RUST_ROOT_SOURCE_GLOBS = ROOT_RUST_INPUTS.map((input) => `core/${input}`);
+const RUST_ROOT_SOURCE_GLOBS = [
+  ...ROOT_RUST_INPUTS.map((input) => `core/${input}`),
+  ...REPO_RUST_BUILD_GRAPH_INPUTS,
+  ...REPO_RUST_BUILD_GRAPH_INPUT_PREFIXES.map((prefix) => `${prefix}**`),
+];
 const RUST_FAMILY_BY_CRATE = {
   "codex-crp": "artifacts-provenance",
   "ctx-avf-linux-guest-agent": "sandbox-runtime",
@@ -347,20 +353,20 @@ function buildCtxHttpEntries() {
       "sandbox-runtime-resource-governance": "bazel-addressable",
       "sandbox-runtime-memory-leak": "bazel-addressable",
     };
-    const world = worldBySuite[suite.name];
+    const world = suite.world || worldBySuite[suite.name];
     const entry = {
       id: `ctx-http.${suite.name}`,
       title: `ctx-http: ${suite.name}`,
-      family: familyBySuite[suite.name],
+      family: suite.family || familyBySuite[suite.name],
       entrypointType: "ctx-http-suite",
       entrypoint: suite.name,
-      surface: surfaceBySuite[suite.name] || (suite.type === "base" ? "compile" : "integration"),
-      oracle: oracleBySuite[suite.name] || (suite.type === "base" ? "compiler" : "direct-assertion"),
+      surface: suite.surface || surfaceBySuite[suite.name] || (suite.type === "base" ? "compile" : "integration"),
+      oracle: suite.oracle || oracleBySuite[suite.name] || (suite.type === "base" ? "compiler" : "direct-assertion"),
       world,
-      cost: costBySuite[suite.name] || (suite.type === "base" ? "fast" : "fast"),
-      requirements: requirementsBySuite[suite.name] || ["linux", "buildbuddy-rbe"],
-      stability: stabilityBySuite[suite.name] || (world === "external-service" ? "quarantined" : "stable"),
-      execution: executionBySuite[suite.name],
+      cost: suite.cost || costBySuite[suite.name] || (suite.type === "base" ? "fast" : "fast"),
+      requirements: suite.requirements || requirementsBySuite[suite.name] || ["linux", "buildbuddy-rbe"],
+      stability: suite.stability || stabilityBySuite[suite.name] || (world === "external-service" ? "quarantined" : "stable"),
+      execution: suite.execution || executionBySuite[suite.name],
       owner: "ctx-http",
       sourceGlobs: [
         "core/scripts/ctx_http_suite_task.cjs",
@@ -668,6 +674,28 @@ function buildRustEntries() {
       notes: "Shared Rust compile/task preflight for non-ctx-http workspace crates.",
       exception: "Intentional host-local Rust workspace preflight until a measured wall-clock bottleneck justifies deeper Bazel decomposition.",
     },
+    {
+      id: "build-graph.rust-bazel-deps-check",
+      title: "Rust Bazel deps generated config check",
+      family: "build-graph",
+      entrypointType: "core-package-script",
+      entrypoint: "rust:bazel-deps:check",
+      surface: "contract",
+      oracle: "static-contract",
+      world: "hermetic",
+      cost: "tiny",
+      requirements: ["linux"],
+      stability: "stable",
+      execution: "script-local",
+      owner: "rust-workspace",
+      sourceGlobs: [
+        ...RUST_ROOT_SOURCE_GLOBS,
+        "core/scripts/rust_bazel_deps_contract.sh",
+      ],
+      dependencyCrates: [],
+      notes: "Freshness check for generated Bazel Rust dependency metadata and root Bazel graph inputs.",
+      exception: "Intentional script-local generated-deps guard until the Rust deps generator is Bazel-addressable.",
+    },
   ];
 
   for (const crate of crates) {
@@ -751,8 +779,12 @@ function buildStaticEntries() {
       owner: "repo-contracts",
       sourceGlobs: [
         "core/scripts/generate_test_taxonomy_docs.cjs",
+        "core/scripts/test_taxonomy_execution_contract.test.cjs",
+        "core/scripts/verification_router_contract.test.cjs",
         "core/scripts/lib/test_taxonomy/**",
         ".ctx/docs/testing_taxonomy.md",
+        ".ctx/docs/testing_exceptions.generated.md",
+        ".ctx/docs/testing_inventory.generated.md",
         ".ctx/docs/testing_profiles.generated.md",
       ],
       dependencyCrates: [],
