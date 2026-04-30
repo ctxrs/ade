@@ -24,6 +24,7 @@
     "buildkite:sync": "node scripts/sync_buildkite.cjs",
     "buildkite:trigger": "node scripts/trigger_buildkite_build.cjs",
     "buildkite:preview": "node scripts/trigger_buildkite_preview.cjs",
+    "buildkite:linux-preview": "node scripts/trigger_buildkite_linux_preview.cjs",
     "buildkite:mac-nightly": "node scripts/trigger_buildkite_mac_nightly.cjs",
     "buildkite:mac-provider-auth": "node scripts/trigger_buildkite_mac_provider_auth.cjs",
     "release:buildkite": "node scripts/run_buildkite_release_controller.cjs",
