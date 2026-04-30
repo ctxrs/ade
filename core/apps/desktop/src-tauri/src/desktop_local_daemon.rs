@@ -13,6 +13,10 @@ fn local_connect_mutex() -> &'static std::sync::Mutex<()> {
     LOCAL_CONNECT_MUTEX.get_or_init(|| std::sync::Mutex::new(()))
 }
 
+const LOCAL_SPAWN_LOCK_RACE_RETRY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+const LOCAL_SPAWN_LOCK_RACE_RETRY_DELAY: std::time::Duration =
+    std::time::Duration::from_millis(200);
+
 pub(super) fn lock_local_connect_gate() -> Result<std::sync::MutexGuard<'static, ()>> {
     local_connect_mutex()
         .lock()
@@ -156,12 +160,45 @@ where
     // applies the connection and navigates immediately after `desktop_connect_local` resolves;
     // returning early causes the workbench to briefly render a "daemon unavailable" overlay.
     let spawned = spawn_and_validate_local_daemon();
-    let fallback_existing = if spawned.is_err() {
-        resolve_existing_local_daemon().ok().flatten()
-    } else {
-        None
+    let fallback_existing = match &spawned {
+        Ok(_) => None,
+        Err(err) => {
+            resolve_existing_local_after_spawn_failure(&mut resolve_existing_local_daemon, err)
+        }
     };
     apply_validated_local_connection_for_scope(state, scope, spawned, fallback_existing)
+}
+
+fn spawn_failure_may_be_local_lock_race(err: &anyhow::Error) -> bool {
+    let text = format!("{err:#}");
+    text.contains("daemon already running")
+        || text.contains("ctx daemon already running")
+        || text.contains("daemon.lock")
+        || text.contains("lockfile")
+}
+
+fn resolve_existing_local_after_spawn_failure<ResolveExistingFn>(
+    resolve_existing_local_daemon: &mut ResolveExistingFn,
+    spawn_err: &anyhow::Error,
+) -> Option<(String, String, Option<u32>)>
+where
+    ResolveExistingFn: FnMut() -> Result<Option<(String, String, Option<u32>)>>,
+{
+    if let Some(existing) = resolve_existing_local_daemon().ok().flatten() {
+        return Some(existing);
+    }
+    if !spawn_failure_may_be_local_lock_race(spawn_err) {
+        return None;
+    }
+
+    let deadline = std::time::Instant::now() + LOCAL_SPAWN_LOCK_RACE_RETRY_TIMEOUT;
+    while std::time::Instant::now() < deadline {
+        std::thread::sleep(LOCAL_SPAWN_LOCK_RACE_RETRY_DELAY);
+        if let Some(existing) = resolve_existing_local_daemon().ok().flatten() {
+            return Some(existing);
+        }
+    }
+    None
 }
 
 #[cfg(test)]

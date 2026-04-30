@@ -366,6 +366,47 @@ fn desktop_connect_local_spawn_failure_preserves_existing_owned_connection() {
 }
 
 #[test]
+fn desktop_connect_local_lock_race_waits_for_existing_daemon_to_become_visible() {
+    let state = ConnectionManager::default();
+    let resolve_existing_calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let info = connect_local_with_sources(
+        &state,
+        |_, _| false,
+        || Ok(None),
+        |_, _| Ok(()),
+        {
+            let resolve_existing_calls = std::sync::Arc::clone(&resolve_existing_calls);
+            move || {
+                let call_index =
+                    resolve_existing_calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                if call_index < 2 {
+                    return Ok(None);
+                }
+                Ok(Some((
+                    "http://127.0.0.1:4401".to_string(),
+                    "lock-race-token".to_string(),
+                    None,
+                )))
+            }
+        },
+        || {
+            Err(anyhow!(
+                "ctx daemon already running (lockfile /tmp/ctx/daemon.lock)"
+            ))
+        },
+    )
+    .expect("lock race should attach to the daemon that won startup");
+
+    assert!(
+        resolve_existing_calls.load(std::sync::atomic::Ordering::SeqCst) >= 3,
+        "spawn lock race should wait for existing daemon auth/health to become visible"
+    );
+    assert!(matches!(info.kind, DesktopConnectionKind::Local));
+    assert_eq!(info.base_url.as_deref(), Some("http://127.0.0.1:4401"));
+    assert_eq!(info.token.as_deref(), Some("lock-race-token"));
+}
+
+#[test]
 #[cfg(unix)]
 fn desktop_connect_local_spawn_race_reattaches_same_owned_local_daemon_without_killing_it() {
     let state = ConnectionManager::default();
