@@ -419,6 +419,7 @@ async fn native_container_import_script_restores_existing_dest_on_final_mv_failu
     let fake_bin = temp.path().join("bin");
     std::fs::create_dir_all(&dest).unwrap();
     std::fs::write(dest.join("existing.txt"), b"existing").unwrap();
+    set_tree_read_only(&dest);
     std::fs::create_dir_all(&fake_bin).unwrap();
     write_fake_mv_failing_payload(&fake_bin);
 
@@ -457,6 +458,7 @@ async fn native_container_import_script_restores_existing_dest_on_final_mv_failu
         "existing",
         "failed native container final install must restore existing materialization"
     );
+    assert_tree_read_only(&dest);
     let leftovers = std::fs::read_dir(dest.parent().unwrap())
         .unwrap()
         .map(|entry| entry.unwrap().file_name().to_string_lossy().to_string())
@@ -467,6 +469,7 @@ async fn native_container_import_script_restores_existing_dest_on_final_mv_failu
             .any(|name| name.contains("import-tmp") || name.contains(".old.")),
         "failed native container final install left staged entries: {leftovers:?}"
     );
+    set_tree_writable(&dest);
 }
 
 #[cfg(unix)]
@@ -549,6 +552,7 @@ async fn native_ro_mount_script_restores_existing_target_on_final_mv_failure() {
     std::fs::create_dir_all(&fake_bin).unwrap();
     std::fs::write(source.join("notes.txt"), b"replacement").unwrap();
     std::fs::write(target.join("existing.txt"), b"existing").unwrap();
+    set_tree_read_only(&target);
     write_fake_mv_failing_payload(&fake_bin);
 
     let path = format!(
@@ -577,6 +581,7 @@ async fn native_ro_mount_script_restores_existing_target_on_final_mv_failure() {
         "existing",
         "failed native ro final install must restore existing mount target"
     );
+    assert_tree_read_only(&target);
     let leftovers = std::fs::read_dir(target.parent().unwrap())
         .unwrap()
         .map(|entry| entry.unwrap().file_name().to_string_lossy().to_string())
@@ -587,6 +592,7 @@ async fn native_ro_mount_script_restores_existing_target_on_final_mv_failure() {
             .any(|name| name.contains(".tmp.") || name.contains(".old.")),
         "failed native ro final install left staged entries: {leftovers:?}"
     );
+    set_tree_writable(&target);
 }
 
 #[cfg(unix)]
@@ -760,6 +766,7 @@ async fn avf_dir_import_script_restores_existing_target_on_final_mv_failure() {
     let fake_bin = temp.path().join("bin");
     std::fs::create_dir_all(&target).unwrap();
     std::fs::write(target.join("existing.txt"), b"existing").unwrap();
+    set_tree_read_only(&target);
     std::fs::create_dir_all(&fake_bin).unwrap();
     write_fake_mv_failing_payload(&fake_bin);
 
@@ -799,6 +806,7 @@ async fn avf_dir_import_script_restores_existing_target_on_final_mv_failure() {
         "existing",
         "failed AVF directory final install must restore existing mount target"
     );
+    assert_tree_read_only(&target);
     let leftovers = std::fs::read_dir(target.parent().unwrap())
         .unwrap()
         .map(|entry| entry.unwrap().file_name().to_string_lossy().to_string())
@@ -809,6 +817,7 @@ async fn avf_dir_import_script_restores_existing_target_on_final_mv_failure() {
             .any(|name| name.contains(".tmp.") || name.contains(".old.")),
         "failed AVF directory final install left staged entries: {leftovers:?}"
     );
+    set_tree_writable(&target);
 }
 
 #[cfg(unix)]
@@ -940,6 +949,7 @@ async fn avf_file_import_script_restores_existing_target_on_final_mv_failure() {
     let fake_bin = temp.path().join("bin");
     std::fs::create_dir_all(target.parent().unwrap()).unwrap();
     std::fs::write(&target, b"existing").unwrap();
+    set_tree_read_only(&target);
     std::fs::create_dir_all(&fake_bin).unwrap();
     write_fake_mv_failing_payload(&fake_bin);
 
@@ -973,6 +983,7 @@ async fn avf_file_import_script_restores_existing_target_on_final_mv_failure() {
         "existing",
         "failed AVF file final install must restore existing mount target"
     );
+    assert_tree_read_only(&target);
     let leftovers = std::fs::read_dir(target.parent().unwrap())
         .unwrap()
         .map(|entry| entry.unwrap().file_name().to_string_lossy().to_string())
@@ -983,6 +994,7 @@ async fn avf_file_import_script_restores_existing_target_on_final_mv_failure() {
             .any(|name| name.contains(".tmp.") || name.contains(".old.")),
         "failed AVF file final install left staged entries: {leftovers:?}"
     );
+    set_tree_writable(&target);
 }
 
 #[cfg(unix)]
@@ -998,4 +1010,52 @@ fn write_fake_mv_failing_payload(fake_bin: &std::path::Path) {
     let mut permissions = std::fs::metadata(&fake_mv).unwrap().permissions();
     permissions.set_mode(0o755);
     std::fs::set_permissions(&fake_mv, permissions).unwrap();
+}
+
+#[cfg(unix)]
+fn set_tree_read_only(path: &std::path::Path) {
+    use std::os::unix::fs::PermissionsExt;
+
+    let metadata = std::fs::symlink_metadata(path).unwrap();
+    if metadata.is_dir() {
+        for entry in std::fs::read_dir(path).unwrap() {
+            set_tree_read_only(&entry.unwrap().path());
+        }
+    }
+    let mut permissions = metadata.permissions();
+    permissions.set_mode(permissions.mode() & !0o222);
+    std::fs::set_permissions(path, permissions).unwrap();
+}
+
+#[cfg(unix)]
+fn set_tree_writable(path: &std::path::Path) {
+    use std::os::unix::fs::PermissionsExt;
+
+    let metadata = std::fs::symlink_metadata(path).unwrap();
+    let mut permissions = metadata.permissions();
+    permissions.set_mode(permissions.mode() | 0o700);
+    std::fs::set_permissions(path, permissions).unwrap();
+    if metadata.is_dir() {
+        for entry in std::fs::read_dir(path).unwrap() {
+            set_tree_writable(&entry.unwrap().path());
+        }
+    }
+}
+
+#[cfg(unix)]
+fn assert_tree_read_only(path: &std::path::Path) {
+    use std::os::unix::fs::PermissionsExt;
+
+    let metadata = std::fs::symlink_metadata(path).unwrap();
+    assert_eq!(
+        metadata.permissions().mode() & 0o222,
+        0,
+        "path retained write bits: {}",
+        path.display()
+    );
+    if metadata.is_dir() {
+        for entry in std::fs::read_dir(path).unwrap() {
+            assert_tree_read_only(&entry.unwrap().path());
+        }
+    }
 }

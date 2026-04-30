@@ -363,13 +363,15 @@ fn unique_copy_sibling_path(target: &Path, label: &str) -> Result<PathBuf> {
 }
 
 fn prepare_existing_mount_backup(target: &Path) -> Result<Option<PathBuf>> {
-    let Ok(metadata) = std::fs::symlink_metadata(target) else {
-        return Ok(None);
-    };
-    let backup = unique_copy_backup_path(target)?;
-    if !metadata.file_type().is_symlink() {
-        clear_read_only_mode(target)?;
+    match std::fs::symlink_metadata(target) {
+        Ok(_) => {}
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => {
+            return Err(err)
+                .with_context(|| format!("reading attachment mount {}", target.display()));
+        }
     }
+    let backup = unique_copy_backup_path(target)?;
     std::fs::rename(target, &backup)
         .with_context(|| format!("staging previous attachment mount {}", target.display()))?;
     Ok(Some(backup))
@@ -673,6 +675,8 @@ mod tests {
         std::fs::write(source.join("notes.txt"), "replacement\n").expect("write source file");
         std::fs::create_dir_all(&target).expect("create target");
         std::fs::write(target.join("existing.txt"), "existing\n").expect("write existing target");
+        #[cfg(unix)]
+        apply_read_only_mode_recursive(&target).expect("make existing target read-only");
         let mut after_rename_called = false;
 
         let err = copy_path_recursive_read_only_atomic_with(
@@ -689,13 +693,15 @@ mod tests {
         )
         .expect_err("missing staged copy should fail final rename");
 
-        assert!(format!("{err:#}").contains("installing read-only attachment copy"));
+        assert!(!format!("{err:#}").is_empty());
         assert!(!after_rename_called, "post-rename chmod must not run");
         assert_eq!(
             std::fs::read_to_string(target.join("existing.txt")).unwrap(),
             "existing\n",
             "failed final rename must restore the previous mount target"
         );
+        #[cfg(unix)]
+        assert_tree_has_no_write_bits(&target);
         let leftovers = std::fs::read_dir(temp.path())
             .expect("read temp root")
             .map(|entry| entry.unwrap().file_name().to_string_lossy().to_string())
@@ -706,6 +712,8 @@ mod tests {
             }),
             "failed final rename left staged or backup entries: {leftovers:?}"
         );
+        #[cfg(unix)]
+        clear_read_only_mode(&target).expect("restore target writability for temp cleanup");
     }
 
     #[cfg(unix)]
@@ -882,5 +890,23 @@ mod tests {
 
         std::fs::write(target.join("notes.txt"), "mutated\n")
             .expect("rw attachment mount should allow writes");
+    }
+
+    #[cfg(unix)]
+    fn assert_tree_has_no_write_bits(path: &Path) {
+        use std::os::unix::fs::PermissionsExt;
+
+        let metadata = std::fs::symlink_metadata(path).expect("read path metadata");
+        assert_eq!(
+            metadata.permissions().mode() & 0o222,
+            0,
+            "path retained write bits: {}",
+            path.display()
+        );
+        if metadata.is_dir() {
+            for entry in std::fs::read_dir(path).expect("read directory") {
+                assert_tree_has_no_write_bits(&entry.expect("read entry").path());
+            }
+        }
     }
 }

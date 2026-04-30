@@ -118,9 +118,6 @@ finish_stage() {{
   if [ -L "$target" ] || [ -e "$target" ]; then
     backup="$(mktemp -d "$target_parent/.${{target_name}}.old.XXXXXX")"
     rmdir -- "$backup"
-    if [ ! -L "$target" ]; then
-      chmod -R u+w -- "$target"
-    fi
     mv -- "$target" "$backup"
   fi
   if mv -- "$temp" "$target"; then
@@ -192,9 +189,6 @@ finish_stage() {{
   if [ -L "$target" ] || [ -e "$target" ]; then
     backup="$(mktemp -d "$target_parent/.${{target_name}}.old.XXXXXX")"
     rmdir -- "$backup"
-    if [ ! -L "$target" ]; then
-      chmod -R u+w -- "$target"
-    fi
     mv -- "$target" "$backup"
   fi
   if mv -- "$temp" "$target"; then
