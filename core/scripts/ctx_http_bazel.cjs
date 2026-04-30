@@ -133,6 +133,18 @@ function buildBazelPlatformArgs(targetKey = "") {
   return [`--platforms=${targetSpec.platformLabel}`];
 }
 
+function buildBazelIdentityActionEnvArgs(env = process.env) {
+  return [
+    "CTX_RELEASE_EFFECTIVE_VERSION",
+    "CTX_BUILD_ID",
+    "CTX_COMPATIBILITY_TOKEN",
+    "CTX_DEV_INSTANCE_ID",
+  ].flatMap((name) => {
+    const value = String(env[name] || "").trim();
+    return value ? [`--action_env=${name}=${value}`] : [];
+  });
+}
+
 function shouldResolveAvfLinuxHelper(targetKey = "", platform = process.platform) {
   const normalizedTargetKey = String(targetKey || "").trim();
   if (normalizedTargetKey) {
@@ -171,6 +183,7 @@ function buildTargetsViaBazel(
         "build",
         ...bazelCommandArgs,
         ...buildBazelPlatformArgs(targetKey),
+        ...buildBazelIdentityActionEnvArgs(bazelEnv),
         ...buildBuildBuddyAuthArgs(bazelEnv),
         ...targets,
       ],
@@ -297,6 +310,7 @@ function resolveBazelOutputPaths(
         "cquery",
         ...bazelCommandArgs,
         ...buildBazelPlatformArgs(targetKey),
+        ...buildBazelIdentityActionEnvArgs(bazelEnv),
         "--output=starlark",
         "--starlark:expr=str(target.label) + \"|\" + \"\\n\".join([f.path for f in target.files.to_list()])",
         ...buildBuildBuddyAuthArgs(bazelEnv),
@@ -489,6 +503,7 @@ module.exports = {
   TARGET_SPECS,
   buildBazelPlatformArgs,
   buildBazelCommandContext,
+  buildBazelIdentityActionEnvArgs,
   buildDesktopSidecarIdentityEnv,
   buildDesktopSyncEnv,
   buildTargetsViaBazel,

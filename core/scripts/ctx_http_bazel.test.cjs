@@ -10,6 +10,7 @@ const {
   PREPARE_DESKTOP_SIDECARS_COMMAND,
   PRINT_DESKTOP_SIDECAR_ENV_COMMAND,
   TARGET_SPECS,
+  buildBazelIdentityActionEnvArgs,
   buildBazelPlatformArgs,
   buildBazelCommandContext,
   buildDesktopSidecarIdentityEnv,
@@ -97,6 +98,21 @@ test("ctx_http_bazel stamps release identity into sidecar build env", () => {
   assert.equal(env.CTX_DEV_INSTANCE_ID, env.CTX_COMPATIBILITY_TOKEN);
 });
 
+test("ctx_http_bazel forwards release identity into Bazel action env", () => {
+  const args = buildBazelIdentityActionEnvArgs({
+    CTX_RELEASE_EFFECTIVE_VERSION: "0.62.22-preview.deadbeef",
+    CTX_BUILD_ID: "deadbeef",
+    CTX_COMPATIBILITY_TOKEN: "artifact-deadbeef",
+    CTX_DEV_INSTANCE_ID: "artifact-deadbeef",
+  });
+  assert.deepEqual(args, [
+    "--action_env=CTX_RELEASE_EFFECTIVE_VERSION=0.62.22-preview.deadbeef",
+    "--action_env=CTX_BUILD_ID=deadbeef",
+    "--action_env=CTX_COMPATIBILITY_TOKEN=artifact-deadbeef",
+    "--action_env=CTX_DEV_INSTANCE_ID=artifact-deadbeef",
+  ]);
+});
+
 test("ctx_http_bazel maps explicit target keys to Bazel platform labels", () => {
   assert.deepEqual(buildBazelPlatformArgs(""), []);
   assert.deepEqual(buildBazelPlatformArgs("darwin-aarch64"), ["--platforms=//tools/bazel/platforms:darwin_arm64"]);
@@ -179,7 +195,13 @@ test("ctx_http_bazel budgets direct Bazel builds under host-heavy", () => {
   const spawnCalls = [];
 
   buildTargetsViaBazel(["//core/crates/ctx-http:ctx"], {
-    env: process.env,
+    env: {
+      ...process.env,
+      CTX_RELEASE_EFFECTIVE_VERSION: "0.62.22-preview.deadbeef",
+      CTX_BUILD_ID: "deadbeef",
+      CTX_COMPATIBILITY_TOKEN: "artifact-deadbeef",
+      CTX_DEV_INSTANCE_ID: "artifact-deadbeef",
+    },
     quietStdout: true,
     spawnSyncImpl: (command, args, options) => {
       spawnCalls.push({ command, args, options });
@@ -194,6 +216,8 @@ test("ctx_http_bazel budgets direct Bazel builds under host-heavy", () => {
   assert.equal(budgetCalls.length, 1);
   assert.equal(budgetCalls[0].budgetKey, HOST_HEAVY_BUDGET_KEY);
   assert.equal(spawnCalls.length, 1);
+  assert.equal(spawnCalls[0].args.includes("--action_env=CTX_RELEASE_EFFECTIVE_VERSION=0.62.22-preview.deadbeef"), true);
+  assert.equal(spawnCalls[0].args.includes("--action_env=CTX_BUILD_ID=deadbeef"), true);
 });
 
 test("ctx_http_bazel budgets direct Bazel cquery lookups under host-heavy", () => {
