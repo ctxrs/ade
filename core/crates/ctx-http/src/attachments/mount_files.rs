@@ -188,16 +188,24 @@ pub(crate) async fn ensure_mount(target: &Path, source: &Path, mode: AttachmentM
                     return Ok(());
                 }
             }
-            tokio::fs::remove_file(target).await?;
         } else if meta.is_dir() {
-            let target = target.to_path_buf();
-            let target_for_clear = target.clone();
-            tokio::task::spawn_blocking(move || clear_read_only_mode(&target_for_clear)).await??;
-            tokio::fs::remove_dir_all(target).await?;
+            if mode == AttachmentMode::Rw {
+                let target = target.to_path_buf();
+                let target_for_clear = target.clone();
+                tokio::task::spawn_blocking(move || clear_read_only_mode(&target_for_clear))
+                    .await??;
+                tokio::fs::remove_dir_all(target).await?;
+            }
         } else {
-            let target = target.to_path_buf();
-            let target_for_clear = target.clone();
-            tokio::task::spawn_blocking(move || clear_read_only_mode(&target_for_clear)).await??;
+            if mode == AttachmentMode::Rw {
+                let target = target.to_path_buf();
+                let target_for_clear = target.clone();
+                tokio::task::spawn_blocking(move || clear_read_only_mode(&target_for_clear))
+                    .await??;
+                tokio::fs::remove_file(target).await?;
+            }
+        }
+        if meta.file_type().is_symlink() && mode == AttachmentMode::Rw {
             tokio::fs::remove_file(target).await?;
         }
     }
@@ -288,23 +296,34 @@ where
         remove_path_after_failed_copy(&temp);
         return Err(err);
     }
-    if let Err(err) = (|| {
-        std::fs::rename(&temp, target).with_context(|| {
-            format!("installing read-only attachment copy {}", target.display())
-        })?;
-        Ok(())
-    })() {
+    let backup = prepare_existing_mount_backup(target)?;
+    if let Err(err) = std::fs::rename(&temp, target)
+        .with_context(|| format!("installing read-only attachment copy {}", target.display()))
+    {
         remove_path_after_failed_copy(&temp);
+        restore_mount_backup(target, backup.as_deref(), &err)?;
         return Err(err);
     }
     if let Err(err) = apply_after_rename(target) {
         remove_path_after_failed_copy(target);
+        restore_mount_backup(target, backup.as_deref(), &err)?;
         return Err(err);
+    }
+    if let Some(backup) = backup.as_ref() {
+        remove_path_for_swap(backup)?;
     }
     Ok(())
 }
 
 fn unique_copy_temp_path(target: &Path) -> Result<PathBuf> {
+    unique_copy_sibling_path(target, "copy-tmp")
+}
+
+fn unique_copy_backup_path(target: &Path) -> Result<PathBuf> {
+    unique_copy_sibling_path(target, "copy-old")
+}
+
+fn unique_copy_sibling_path(target: &Path, label: &str) -> Result<PathBuf> {
     let parent = target
         .parent()
         .ok_or_else(|| anyhow::anyhow!("attachment mount target must have a parent"))?;
@@ -321,7 +340,7 @@ fn unique_copy_temp_path(target: &Path) -> Result<PathBuf> {
         let mut temp_name = OsString::from(".");
         temp_name.push(file_name);
         temp_name.push(format!(
-            ".copy-tmp.{}.{}.{}",
+            ".{label}.{}.{}.{}",
             std::process::id(),
             nanos,
             attempt
@@ -338,9 +357,40 @@ fn unique_copy_temp_path(target: &Path) -> Result<PathBuf> {
         }
     }
     anyhow::bail!(
-        "unable to allocate temporary attachment copy path for {}",
+        "unable to allocate sibling attachment copy path for {}",
         target.display()
     );
+}
+
+fn prepare_existing_mount_backup(target: &Path) -> Result<Option<PathBuf>> {
+    let Ok(metadata) = std::fs::symlink_metadata(target) else {
+        return Ok(None);
+    };
+    let backup = unique_copy_backup_path(target)?;
+    if !metadata.file_type().is_symlink() {
+        clear_read_only_mode(target)?;
+    }
+    std::fs::rename(target, &backup)
+        .with_context(|| format!("staging previous attachment mount {}", target.display()))?;
+    Ok(Some(backup))
+}
+
+fn restore_mount_backup(
+    target: &Path,
+    backup: Option<&Path>,
+    install_err: &anyhow::Error,
+) -> Result<()> {
+    let Some(backup) = backup else {
+        return Ok(());
+    };
+    if let Err(restore_err) = std::fs::rename(backup, target)
+        .with_context(|| format!("restoring previous attachment mount {}", target.display()))
+    {
+        return Err(anyhow::anyhow!("{install_err:#}")).context(format!(
+            "failed to restore previous attachment mount after install failure: {restore_err:#}"
+        ));
+    }
+    Ok(())
 }
 
 fn copy_path_recursive_inner(
@@ -380,15 +430,22 @@ fn copy_path_recursive_inner(
 }
 
 fn remove_path_after_failed_copy(path: &Path) {
+    let _ = remove_path_for_swap(path);
+}
+
+fn remove_path_for_swap(path: &Path) -> Result<()> {
     let Ok(metadata) = std::fs::symlink_metadata(path) else {
-        return;
+        return Ok(());
     };
-    let _ = clear_read_only_mode(path);
+    clear_read_only_mode(path)?;
     if metadata.file_type().is_symlink() || metadata.is_file() {
-        let _ = std::fs::remove_file(path);
+        std::fs::remove_file(path)
+            .with_context(|| format!("removing attachment path {}", path.display()))?;
     } else if metadata.is_dir() {
-        let _ = std::fs::remove_dir_all(path);
+        std::fs::remove_dir_all(path)
+            .with_context(|| format!("removing attachment path {}", path.display()))?;
     }
+    Ok(())
 }
 
 fn apply_read_only_mode_before_rename(path: &Path) -> Result<()> {
@@ -604,6 +661,50 @@ mod tests {
                 .iter()
                 .any(|name| name == "target" || name.starts_with(".target.copy-tmp.")),
             "failed read-only chmod left target or staged copy entries: {leftovers:?}"
+        );
+    }
+
+    #[test]
+    fn ro_copy_restores_existing_target_when_final_rename_fails() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let source = temp.path().join("source");
+        let target = temp.path().join("target");
+        std::fs::create_dir_all(&source).expect("create source");
+        std::fs::write(source.join("notes.txt"), "replacement\n").expect("write source file");
+        std::fs::create_dir_all(&target).expect("create target");
+        std::fs::write(target.join("existing.txt"), "existing\n").expect("write existing target");
+        let mut after_rename_called = false;
+
+        let err = copy_path_recursive_read_only_atomic_with(
+            &source,
+            &target,
+            |path| {
+                std::fs::remove_dir_all(path).expect("remove staged copy before final rename");
+                Ok(())
+            },
+            |_| {
+                after_rename_called = true;
+                Ok(())
+            },
+        )
+        .expect_err("missing staged copy should fail final rename");
+
+        assert!(format!("{err:#}").contains("installing read-only attachment copy"));
+        assert!(!after_rename_called, "post-rename chmod must not run");
+        assert_eq!(
+            std::fs::read_to_string(target.join("existing.txt")).unwrap(),
+            "existing\n",
+            "failed final rename must restore the previous mount target"
+        );
+        let leftovers = std::fs::read_dir(temp.path())
+            .expect("read temp root")
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().to_string())
+            .collect::<Vec<_>>();
+        assert!(
+            !leftovers.iter().any(|name| {
+                name.starts_with(".target.copy-tmp.") || name.starts_with(".target.copy-old.")
+            }),
+            "failed final rename left staged or backup entries: {leftovers:?}"
         );
     }
 

@@ -100,6 +100,7 @@ target_parent="${{target%/*}}"
 target_name="${{target##*/}}"
 stage=""
 temp=""
+backup=""
 cleanup_stage() {{
   if [ -n "${{stage:-}}" ] && {{ [ -L "$stage" ] || [ -e "$stage" ]; }}; then
     if [ ! -L "$stage" ]; then
@@ -113,13 +114,30 @@ make_stage() {{
   temp="$stage/payload"
 }}
 finish_stage() {{
-  if [ -L "$target" ]; then
-    :
-  elif [ -e "$target" ]; then
-    chmod -R u+w -- "$target"
+  backup=""
+  if [ -L "$target" ] || [ -e "$target" ]; then
+    backup="$(mktemp -d "$target_parent/.${{target_name}}.old.XXXXXX")"
+    rmdir -- "$backup"
+    if [ ! -L "$target" ]; then
+      chmod -R u+w -- "$target"
+    fi
+    mv -- "$target" "$backup"
   fi
-  rm -rf -- "$target"
-  mv -- "$temp" "$target"
+  if mv -- "$temp" "$target"; then
+    :
+  else
+    status="$?"
+    if [ -n "$backup" ]; then
+      mv -- "$backup" "$target" || printf 'failed to restore previous AVF attachment mount: %s\n' "$target" >&2
+    fi
+    return "$status"
+  fi
+  if [ -n "$backup" ]; then
+    if [ ! -L "$backup" ]; then
+      chmod -R u+w -- "$backup" 2>/dev/null || true
+    fi
+    rm -rf -- "$backup"
+  fi
   rmdir -- "$stage"
   stage=""
 }}
@@ -156,6 +174,7 @@ target_parent="${{target%/*}}"
 target_name="${{target##*/}}"
 stage=""
 temp=""
+backup=""
 cleanup_stage() {{
   if [ -n "${{stage:-}}" ] && {{ [ -L "$stage" ] || [ -e "$stage" ]; }}; then
     if [ ! -L "$stage" ]; then
@@ -169,13 +188,30 @@ make_stage() {{
   temp="$stage/payload"
 }}
 finish_stage() {{
-  if [ -L "$target" ]; then
-    :
-  elif [ -e "$target" ]; then
-    chmod -R u+w -- "$target"
+  backup=""
+  if [ -L "$target" ] || [ -e "$target" ]; then
+    backup="$(mktemp -d "$target_parent/.${{target_name}}.old.XXXXXX")"
+    rmdir -- "$backup"
+    if [ ! -L "$target" ]; then
+      chmod -R u+w -- "$target"
+    fi
+    mv -- "$target" "$backup"
   fi
-  rm -rf -- "$target"
-  mv -- "$temp" "$target"
+  if mv -- "$temp" "$target"; then
+    :
+  else
+    status="$?"
+    if [ -n "$backup" ]; then
+      mv -- "$backup" "$target" || printf 'failed to restore previous AVF attachment mount: %s\n' "$target" >&2
+    fi
+    return "$status"
+  fi
+  if [ -n "$backup" ]; then
+    if [ ! -L "$backup" ]; then
+      chmod -R u+w -- "$backup" 2>/dev/null || true
+    fi
+    rm -rf -- "$backup"
+  fi
   rmdir -- "$stage"
   stage=""
 }}
