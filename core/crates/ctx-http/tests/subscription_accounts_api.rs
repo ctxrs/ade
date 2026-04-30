@@ -23,7 +23,7 @@ use ctx_providers::adapters::{
 };
 use ctx_providers::events::NormalizedEvent;
 
-const PROVIDER_LOGIN_STATUS_TIMEOUT: Duration = Duration::from_secs(15);
+const PROVIDER_LOGIN_STATUS_TIMEOUT: Duration = Duration::from_secs(60);
 
 #[derive(Debug, Deserialize)]
 struct SubscriptionAccountEntry {

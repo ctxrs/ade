@@ -138,7 +138,7 @@ pub(super) async fn install_managed_python_provider(
 ) -> Result<ManagedProviderInstall> {
     *stage = "python";
     let python_runtime = managed_python_runtime_spec(python_version, python_build_tag);
-    let python = ensure_python_runtime_versioned(
+    let python_runtime_install = ensure_python_runtime_versioned(
         state,
         install_id,
         provider_id,
@@ -148,8 +148,8 @@ pub(super) async fn install_managed_python_provider(
         &python_runtime.build_tag,
     )
     .await
-    .context("ensuring managed Python runtime")?
-    .python_bin;
+    .context("ensuring managed Python runtime")?;
+    let python = python_runtime_install.python_bin.clone();
     let data_root = state.data_root().to_path_buf();
     let install_dir = install_dir_for_provider(&data_root, provider_id, version, target);
     let install_dir_rel = install_dir_rel(&data_root, &install_dir);
@@ -335,8 +335,9 @@ pub(super) async fn install_managed_python_provider(
         artifact_fingerprint: python_artifact_fingerprint(
             package,
             version,
-            python_version,
-            python_build_tag,
+            Some(&python_runtime.version),
+            Some(&python_runtime.build_tag),
+            python_runtime_install.archive_sha256.as_deref(),
         ),
         archive_sha256: None,
         target: Some(target),

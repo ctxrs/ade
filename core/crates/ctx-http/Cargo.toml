@@ -113,6 +113,7 @@ ed25519-dalek = "2"
 gcp_auth = "0.12"
 tempfile = "3"
 reqwest.workspace = true
+sqlx.workspace = true
 
 [features]
 fault_injection = ["ctx-store/fault_injection"]

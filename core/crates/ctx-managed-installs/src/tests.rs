@@ -1,13 +1,14 @@
 use super::artifacts::{
     agent_server_download_tmp_name, commit_atomic_install_dir, prepare_atomic_install_dir,
-    resolve_download_resume, validate_expected_sha256, validate_sha256_digest,
+    reject_download_redirect, resolve_download_resume, validate_expected_sha256,
+    validate_sha256_digest, DownloadRedirectPolicy,
 };
 use super::toolchains::{
     node_runtime_target_for_install_target, python_target_can_use_bundled_runtime,
     resolve_python_bin,
 };
 use super::*;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -136,6 +137,196 @@ fn provider_archive_sha256_validation_requires_full_hex_digest() {
 }
 
 #[test]
+fn managed_runtime_lock_uses_ctx_mirror_only() {
+    for spec in runtime_lock::all_runtime_archive_specs() {
+        runtime_lock::validate_runtime_archive_spec(spec).expect("valid runtime lock entry");
+        assert!(
+            spec.mirror_url
+                .starts_with("https://api.ctx.rs/functions/v1/download/managed-runtimes/"),
+            "runtime URL must use ctx mirror: {}",
+            spec.mirror_url
+        );
+        assert!(
+            !spec.mirror_url.contains("nodejs.org")
+                && !spec.mirror_url.contains("github.com")
+                && !spec.mirror_url.contains("python-build-standalone"),
+            "runtime URL must not point at upstream: {}",
+            spec.mirror_url
+        );
+    }
+}
+
+#[test]
+fn managed_runtime_lock_covers_supported_node_targets() {
+    let targets = [
+        (
+            "darwin-arm64",
+            runtime_lock::ManagedRuntimeArchiveKind::TarGz,
+        ),
+        ("darwin-x64", runtime_lock::ManagedRuntimeArchiveKind::TarGz),
+        (
+            "linux-arm64",
+            runtime_lock::ManagedRuntimeArchiveKind::TarGz,
+        ),
+        ("linux-x64", runtime_lock::ManagedRuntimeArchiveKind::TarGz),
+        ("win-arm64", runtime_lock::ManagedRuntimeArchiveKind::Zip),
+        ("win-x64", runtime_lock::ManagedRuntimeArchiveKind::Zip),
+    ];
+    for (target, archive_kind) in targets {
+        let spec = runtime_lock::resolve_node_runtime_archive(NODE_VERSION, target, archive_kind)
+            .expect("node target must be locked");
+        assert_eq!(spec.kind, runtime_lock::ManagedRuntimeKind::Node);
+        assert_eq!(spec.version, NODE_VERSION);
+        assert_eq!(spec.target, target);
+        assert!(spec
+            .content_scoped_install_dir_name()
+            .contains(&format!("sha256-{}", spec.sha256_prefix())));
+    }
+}
+
+#[test]
+fn managed_runtime_lock_covers_python_defaults_and_provider_overrides() {
+    let mut tuples = HashSet::from([(PYTHON_VERSION.to_string(), PYTHON_BUILD_TAG.to_string())]);
+    let matrix = provider_matrix::builtin_matrix();
+    for entry in matrix.providers {
+        let Some(provider_matrix::ProviderInstall::Python {
+            python_version,
+            python_build_tag,
+            ..
+        }) = entry.managed_install
+        else {
+            continue;
+        };
+        let runtime =
+            managed_python_runtime_spec(python_version.as_deref(), python_build_tag.as_deref());
+        tuples.insert((runtime.version, runtime.build_tag));
+    }
+
+    assert!(
+        tuples.contains(&("3.12.13".to_string(), "20260303".to_string())),
+        "provider-matrix Python override must stay covered"
+    );
+
+    let targets = [
+        "aarch64-apple-darwin",
+        "x86_64-apple-darwin",
+        "aarch64-unknown-linux-gnu",
+        "x86_64-unknown-linux-gnu",
+        "aarch64-pc-windows-msvc",
+        "x86_64-pc-windows-msvc",
+    ];
+    for (version, build_tag) in tuples {
+        for target in targets {
+            let spec = runtime_lock::resolve_python_runtime_archive(&version, &build_tag, target)
+                .expect("python target must be locked");
+            assert_eq!(spec.kind, runtime_lock::ManagedRuntimeKind::Python);
+            assert_eq!(spec.version, version);
+            assert_eq!(spec.build_tag, Some(build_tag.as_str()));
+            assert_eq!(spec.target, target);
+        }
+    }
+}
+
+#[test]
+fn managed_runtime_lock_rejects_upstream_hosts_and_invalid_sha() {
+    let valid = *runtime_lock::resolve_node_runtime_archive(
+        NODE_VERSION,
+        "linux-x64",
+        runtime_lock::ManagedRuntimeArchiveKind::TarGz,
+    )
+    .expect("node lock entry");
+
+    let mut upstream = valid;
+    upstream.mirror_url = "https://nodejs.org/dist/v24.15.0/node-v24.15.0-linux-x64.tar.gz";
+    let upstream_error = runtime_lock::validate_runtime_archive_spec(&upstream)
+        .expect_err("upstream host must fail");
+    assert!(upstream_error.to_string().contains("api.ctx.rs"));
+
+    let mut invalid_sha = valid;
+    invalid_sha.sha256 = "abc123";
+    assert!(runtime_lock::validate_runtime_archive_spec(&invalid_sha).is_err());
+}
+
+#[tokio::test]
+async fn managed_runtime_ready_metadata_requires_matching_lock_entry() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let root = temp.path().join("node-runtime");
+    tokio::fs::create_dir_all(&root)
+        .await
+        .expect("mkdir runtime");
+    let spec = *runtime_lock::resolve_node_runtime_archive(
+        NODE_VERSION,
+        "linux-x64",
+        runtime_lock::ManagedRuntimeArchiveKind::TarGz,
+    )
+    .expect("node lock entry");
+
+    assert!(!runtime_lock::runtime_ready_metadata_matches(&root, &spec).await);
+    runtime_lock::write_runtime_ready_metadata(&root, &spec)
+        .await
+        .expect("write ready metadata");
+    assert!(runtime_lock::runtime_ready_metadata_matches(&root, &spec).await);
+
+    let mut changed = spec;
+    changed.sha256 = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
+    assert!(
+        !runtime_lock::runtime_ready_metadata_matches(&root, &changed).await,
+        "same root must not be ready for a changed runtime hash"
+    );
+}
+
+#[test]
+fn managed_runtime_download_rejects_redirect_responses() {
+    let mut headers = reqwest::header::HeaderMap::new();
+    headers.insert(
+        reqwest::header::LOCATION,
+        reqwest::header::HeaderValue::from_static(
+            "https://nodejs.org/dist/v24.15.0/node-v24.15.0-linux-x64.tar.gz",
+        ),
+    );
+
+    let error = reject_download_redirect(
+        DownloadRedirectPolicy::ManagedRuntimeMirrorOnly,
+        reqwest::StatusCode::FOUND,
+        &headers,
+    )
+    .expect_err("managed runtime redirect must fail");
+    assert!(error.to_string().contains("redirected"));
+
+    reject_download_redirect(
+        DownloadRedirectPolicy::Follow,
+        reqwest::StatusCode::FOUND,
+        &headers,
+    )
+    .expect("default downloader may follow redirects");
+    reject_download_redirect(
+        DownloadRedirectPolicy::ManagedRuntimeMirrorOnly,
+        reqwest::StatusCode::OK,
+        &headers,
+    )
+    .expect("non-redirect response is allowed");
+}
+
+#[test]
+fn managed_runtime_download_allows_only_ctx_mirror_storage_urls() {
+    let api_url = url::Url::parse(
+        "https://api.ctx.rs/functions/v1/download/managed-runtimes/node/24.15.0/node-v24.15.0-linux-x64.tar.gz",
+    )
+    .expect("api url");
+    let storage_url = url::Url::parse(
+        "https://api.ctx.rs/storage/v1/object/public/releases/artifacts/managed-runtimes/node/24.15.0/node-v24.15.0-linux-x64.tar.gz",
+    )
+    .expect("storage url");
+    let upstream_url =
+        url::Url::parse("https://nodejs.org/dist/v24.15.0/node-v24.15.0-linux-x64.tar.gz")
+            .expect("upstream url");
+
+    assert!(runtime_lock::runtime_download_url_allowed(&api_url));
+    assert!(runtime_lock::runtime_download_url_allowed(&storage_url));
+    assert!(!runtime_lock::runtime_download_url_allowed(&upstream_url));
+}
+
+#[test]
 fn node_runtime_dependency_id_is_target_specific() {
     assert_eq!(
         node_runtime_dependency_id(InstallTarget::Host),
@@ -148,6 +339,28 @@ fn node_runtime_dependency_id_is_target_specific() {
     assert_eq!(
         node_runtime_dependency_id(InstallTarget::LinuxAarch64),
         "runtime-node-linux-aarch64"
+    );
+}
+
+#[test]
+fn node_runtime_dependency_metadata_records_runtime_sha() {
+    let data_root = tempfile::tempdir().expect("tempdir");
+    let sha256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    let node_root = data_root.path().join("runtimes/node/node-v24.15.0-test");
+    let node = NodeRuntime {
+        node_root: node_root.clone(),
+        node_bin: node_root.join("bin/node"),
+        npm_cli_js: node_root.join("lib/node_modules/npm/bin/npm-cli.js"),
+        archive_sha256: Some(sha256.to_string()),
+    };
+
+    let metadata = node_runtime_dependency_metadata(data_root.path(), &node, InstallTarget::Host);
+
+    assert_eq!(metadata.archive_sha256.as_deref(), Some(sha256));
+    let expected_fingerprint = format!("runtime:node:{NODE_VERSION}:sha256:{sha256}");
+    assert_eq!(
+        metadata.artifact_fingerprint.as_deref(),
+        Some(expected_fingerprint.as_str())
     );
 }
 
@@ -989,6 +1202,27 @@ fn expected_managed_dependency_version_detects_runtime_dependencies() {
         Some(PYTHON_VERSION)
     );
     assert_eq!(expected_managed_dependency_version("codex"), None);
+}
+
+#[test]
+fn python_provider_expected_fingerprint_includes_runtime_sha() {
+    let matrix = provider_matrix::builtin_matrix();
+    let entry = matrix
+        .providers
+        .iter()
+        .find(|entry| entry.id == "kimi")
+        .expect("kimi provider");
+
+    let fingerprint =
+        expected_managed_provider_artifact_fingerprint(entry, "1.38.0", InstallTarget::Host)
+            .expect("expected fingerprint");
+
+    assert!(fingerprint.contains("python=3.12.13"));
+    assert!(fingerprint.contains("build=20260303"));
+    assert!(
+        fingerprint.contains("runtime_sha256="),
+        "Python provider fingerprint must be bound to runtime content"
+    );
 }
 
 #[test]

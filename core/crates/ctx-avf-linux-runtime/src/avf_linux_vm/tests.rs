@@ -200,7 +200,7 @@ elif cmd == "shared-vm-state" or cmd == "workspace-vm-state":
         }))
 elif cmd == "start-shared-vm" or cmd == "start-workspace-vm":
     data_root = sys.argv[2]
-    write_state(data_root, "running")
+    write_state(data_root, "running", "ready")
     print(state_path(data_root).read_text(encoding="utf-8"))
 elif cmd == "stop-shared-vm" or cmd == "stop-workspace-vm":
     data_root = sys.argv[2]

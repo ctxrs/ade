@@ -285,12 +285,16 @@ pub(super) fn managed_dependency_update_available(
             Some(_) | None => return true,
         }
 
-        let Some(dependency) = dependency else {
-            return false;
-        };
-        let dependency_target = meta.target.unwrap_or(InstallTarget::Host);
+        let dependency_target = crate::config::managed_dependency_target_from_id(dependency_id)
+            .or(meta.target)
+            .or(requested_target)
+            .unwrap_or(InstallTarget::Host);
         let Some(expected_fingerprint) =
-            crate::expected_managed_dependency_artifact_fingerprint(dependency, dependency_target)
+            crate::expected_managed_dependency_artifact_fingerprint_for_id(
+                dependency_id,
+                dependency,
+                dependency_target,
+            )
         else {
             return false;
         };

@@ -458,15 +458,29 @@ pub(super) async fn initialize_sandbox_machine(
     } else {
         None
     };
-    let init_outcome = run_sandbox_machine_init(
+    initialize_sandbox_machine_with_image(
         data_root,
         machine_name,
         machine_image.as_deref(),
         memory_mb,
         observer,
+        last_err,
     )
     .await
-    .context("sandbox machine init")?;
+}
+
+pub(in crate::workspace_runtime) async fn initialize_sandbox_machine_with_image(
+    data_root: &Path,
+    machine_name: &str,
+    machine_image: Option<&Path>,
+    memory_mb: Option<u32>,
+    observer: Option<&dyn HarnessSetupObserver>,
+    last_err: &mut String,
+) -> Result<()> {
+    let init_outcome =
+        run_sandbox_machine_init(data_root, machine_name, machine_image, memory_mb, observer)
+            .await
+            .context("sandbox machine init")?;
     let out = init_outcome.output;
     let combined = command_output_message(&out);
     if init_outcome.continued_after_machine_present {

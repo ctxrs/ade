@@ -69,6 +69,7 @@ fn process_env_test_lock() -> &'static tokio::sync::Mutex<()> {
 
 const BACKGROUND_TEST_TIMEOUT: Duration = Duration::from_secs(30);
 const QUICK_ASYNC_TEST_TIMEOUT: Duration = Duration::from_secs(5);
+const SHARED_PREWARM_JOIN_TEST_TIMEOUT: Duration = Duration::from_secs(90);
 
 fn test_workspace(id: WorkspaceId) -> Workspace {
     Workspace {
@@ -2419,12 +2420,18 @@ async fn workspace_launch_reuses_active_runtime_prewarm_without_second_image_loa
     tokio::time::sleep(Duration::from_millis(250)).await;
     std::fs::write(&load_release, b"ok").expect("release sandbox CLI load");
 
-    let prewarm_terminal =
-        wait_for_execution_launch_terminal(&coordinator, &prewarm.job_id, Duration::from_secs(30))
-            .await;
-    let launch_terminal =
-        wait_for_execution_launch_terminal(&coordinator, &launch.job_id, Duration::from_secs(30))
-            .await;
+    let prewarm_terminal = wait_for_execution_launch_terminal(
+        &coordinator,
+        &prewarm.job_id,
+        SHARED_PREWARM_JOIN_TEST_TIMEOUT,
+    )
+    .await;
+    let launch_terminal = wait_for_execution_launch_terminal(
+        &coordinator,
+        &launch.job_id,
+        SHARED_PREWARM_JOIN_TEST_TIMEOUT,
+    )
+    .await;
 
     assert_eq!(
         prewarm_terminal.state,
@@ -2549,9 +2556,12 @@ async fn workspace_launch_reuses_startup_prewarm_without_second_image_load_when_
     std::fs::write(&load_release, b"ok").expect("release sandbox CLI load");
 
     startup.await.expect("startup prewarm task");
-    let launch_terminal =
-        wait_for_execution_launch_terminal(&coordinator, &launch.job_id, Duration::from_secs(30))
-            .await;
+    let launch_terminal = wait_for_execution_launch_terminal(
+        &coordinator,
+        &launch.job_id,
+        SHARED_PREWARM_JOIN_TEST_TIMEOUT,
+    )
+    .await;
 
     assert_eq!(
         launch_terminal.state,

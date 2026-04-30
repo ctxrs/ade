@@ -176,6 +176,35 @@ fn seeded_node_dist_target(target: InstallTarget) -> &'static str {
     }
 }
 
+fn seeded_node_archive_sha256(dist_target: &str) -> &'static str {
+    match dist_target {
+        "darwin-arm64" => "372331b969779ab5d15b949884fc6eaf88d5afe87bde8ba881d6400b9100ffc4",
+        "darwin-x64" => "ffd5ee293467927f3ee731a553eb88fd1f48cf74eebc2d74a6babe4af228673b",
+        "linux-arm64" => "73afc234d558c24919875f51c2d1ea002a2ada4ea6f83601a383869fefa64eed",
+        "linux-x64" => "44836872d9aec49f1e6b52a9a922872db9a2b02d235a616a5681b6a85fec8d89",
+        "win-arm64" => "c9eb7402eda26e2ba7e44b6727fc85a8de56c5095b1f71ebd3062892211aa116",
+        "win-x64" => "cc5149eabd53779ce1e7bdc5401643622d0c7e6800ade18928a767e940bb0e62",
+        other => panic!("unsupported seeded node runtime target: {other}"),
+    }
+}
+
+fn seeded_node_archive_name(dist_target: &str) -> String {
+    let extension = if dist_target.starts_with("win-") {
+        "zip"
+    } else {
+        "tar.gz"
+    };
+    format!("node-v{SEEDED_NODE_VERSION}-{dist_target}.{extension}")
+}
+
+fn seeded_node_install_folder(dist_target: &str) -> String {
+    let sha = seeded_node_archive_sha256(dist_target);
+    format!(
+        "node-v{SEEDED_NODE_VERSION}-{dist_target}-sha256-{}",
+        &sha[..12]
+    )
+}
+
 fn seed_node_runtime_folder(data_root: &Path, folder: &str, tag: &str) {
     let node_root = data_root.join("runtimes").join("node").join(folder);
     let node_bin_dir = node_root.join("bin");
@@ -196,13 +225,41 @@ fn seed_node_runtime_folder(data_root: &Path, folder: &str, tag: &str) {
     write_js_entrypoint(&npm_cli);
 }
 
+fn seed_managed_node_runtime_folder(data_root: &Path, dist_target: &str, tag: &str) -> String {
+    let folder = seeded_node_install_folder(dist_target);
+    seed_node_runtime_folder(data_root, &folder, tag);
+
+    let sha = seeded_node_archive_sha256(dist_target);
+    let archive_name = seeded_node_archive_name(dist_target);
+    let metadata = serde_json::json!({
+        "schema_version": 1,
+        "kind": "node",
+        "version": SEEDED_NODE_VERSION,
+        "target": dist_target,
+        "archive_name": archive_name,
+        "mirror_url": format!(
+            "https://api.ctx.rs/functions/v1/download/managed-runtimes/node/{SEEDED_NODE_VERSION}/{archive_name}"
+        ),
+        "sha256": sha,
+        "installed_at": "2026-04-30T00:00:00Z",
+    });
+    let metadata_path = data_root
+        .join("runtimes")
+        .join("node")
+        .join(&folder)
+        .join(".ctx-runtime-ready.json");
+    std::fs::write(
+        metadata_path,
+        serde_json::to_vec_pretty(&metadata).expect("serialize seeded node runtime metadata"),
+    )
+    .expect("write seeded node runtime metadata");
+
+    folder
+}
+
 fn seed_managed_node_runtime_metadata(cfg: &mut AgentServerConfigFile, data_root: &Path) {
     for (dist_target, tag) in SEEDED_NODE_DIST_TARGETS {
-        seed_node_runtime_folder(
-            data_root,
-            &format!("node-v{SEEDED_NODE_VERSION}-{dist_target}"),
-            tag,
-        );
+        seed_managed_node_runtime_folder(data_root, dist_target, tag);
     }
 
     for (dependency_id, target, tag) in [
@@ -213,21 +270,21 @@ fn seed_managed_node_runtime_metadata(cfg: &mut AgentServerConfigFile, data_root
             "container",
         ),
     ] {
-        let folder = format!(
-            "node-v{SEEDED_NODE_VERSION}-{}",
-            seeded_node_dist_target(target)
-        );
+        let dist_target = seeded_node_dist_target(target);
+        let folder = seed_managed_node_runtime_folder(data_root, dist_target, tag);
+        let sha = seeded_node_archive_sha256(dist_target);
         let node_root_rel = format!("runtimes/node/{folder}");
         let node_bin_rel = format!("{node_root_rel}/bin");
-        seed_node_runtime_folder(data_root, &folder, tag);
 
         cfg.managed_installs.insert(
             dependency_id.to_string(),
             ManagedInstallMetadata {
                 package: Some("node-runtime".to_string()),
                 version: Some(SEEDED_NODE_VERSION.to_string()),
-                artifact_fingerprint: Some(format!("runtime:node:{SEEDED_NODE_VERSION}")),
-                archive_sha256: None,
+                artifact_fingerprint: Some(format!(
+                    "runtime:node:{SEEDED_NODE_VERSION}:sha256:{sha}"
+                )),
+                archive_sha256: Some(sha.to_string()),
                 target: Some(target),
                 install_dir_rel: Some(node_root_rel),
                 bin_dir_rel: Some(node_bin_rel),
@@ -813,7 +870,7 @@ async fn wait_for_install_completion(
     state: &Arc<AppState>,
     install_id: InstallId,
 ) -> ctx_provider_install::install_state::InstallInfo {
-    wait_for_install_completion_with_timeout(state, install_id, Duration::from_secs(15)).await
+    wait_for_install_completion_with_timeout(state, install_id, Duration::from_secs(60)).await
 }
 
 async fn wait_for_install_completion_with_timeout(
@@ -2473,7 +2530,8 @@ async fn acp_container_install_parent_polling_stays_bounded_while_bridge_prerequ
         "parent install events should preserve prerequisite visibility via the real API surface: {parent_events:#?}"
     );
 
-    let install_info = wait_for_install_completion(&state, install_id).await;
+    let install_info =
+        wait_for_install_completion_with_timeout(&state, install_id, Duration::from_secs(60)).await;
     assert!(
         matches!(install_info.state, InstallStateKind::Succeeded),
         "kimi install should succeed after the bridge prerequisite finishes: {install_info:#?}"

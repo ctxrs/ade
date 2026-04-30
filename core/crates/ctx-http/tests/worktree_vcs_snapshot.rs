@@ -18,6 +18,11 @@ use tokio::process::Command;
 
 async fn run_git(root: &Path, args: &[&str]) {
     let output = Command::new("git")
+        .kill_on_drop(true)
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GIT_OPTIONAL_LOCKS", "0")
         .arg("-C")
         .arg(root)
         .args(args)
@@ -34,6 +39,11 @@ async fn run_git(root: &Path, args: &[&str]) {
 
 async fn git_stdout(root: &Path, args: &[&str]) -> String {
     let output = Command::new("git")
+        .kill_on_drop(true)
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GIT_OPTIONAL_LOCKS", "0")
         .arg("-C")
         .arg(root)
         .args(args)
@@ -372,7 +382,11 @@ async fn worktree_vcs_snapshot_recovers_when_repo_is_reinitialized() {
     remove_git_marker(worktree_root).await;
     run_git(worktree_root, &["init"]).await;
     let primary_ref = format!("refs/heads/{primary_branch}");
-    run_git(worktree_root, &["symbolic-ref", "HEAD", primary_ref.as_str()]).await;
+    run_git(
+        worktree_root,
+        &["symbolic-ref", "HEAD", primary_ref.as_str()],
+    )
+    .await;
     run_git(worktree_root, &["config", "user.email", "test@example.com"]).await;
     run_git(worktree_root, &["config", "user.name", "Test"]).await;
     run_git(worktree_root, &["add", "."]).await;

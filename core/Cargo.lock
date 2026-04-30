@@ -1657,6 +1657,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "similar",
+ "sqlx",
  "sysinfo",
  "tar",
  "tempfile",

@@ -93,13 +93,8 @@ fn codex_archive_entry(
 #[cfg(unix)]
 #[tokio::test]
 async fn provider_version_probe_scrubs_daemon_auth_env() {
-    use std::os::unix::fs::PermissionsExt;
-
-    let dir = tempfile::tempdir().expect("tempdir");
-    let script = dir.path().join("version-probe");
-    std::fs::write(
-        &script,
-        r#"#!/bin/sh
+    let _env_guard = crate::test_support::process_env_test_lock().lock().await;
+    let script = r#"
 for key in CTX_AUTH_TOKEN CTX_MCP_TOKEN CTX_LOCAL_DAEMON_SHUTDOWN_TOKEN; do
   eval "value=\${$key:-}"
   if [ -n "$value" ]; then
@@ -108,20 +103,13 @@ for key in CTX_AUTH_TOKEN CTX_MCP_TOKEN CTX_LOCAL_DAEMON_SHUTDOWN_TOKEN; do
   fi
 done
 echo "provider 1.2.3"
-"#,
-    )
-    .expect("write probe script");
-    let mut perms = std::fs::metadata(&script)
-        .expect("probe script metadata")
-        .permissions();
-    perms.set_mode(0o755);
-    std::fs::set_permissions(&script, perms).expect("chmod probe script");
+"#;
 
     let _guards: Vec<_> = ctx_core::env::DAEMON_AUTH_ENV_VARS
         .iter()
         .map(|key| ScopedEnvVar::set(key, "daemon-secret"))
         .collect();
-    let version = probe_command_version(script.to_str().expect("utf8 path"), &[]).await;
+    let version = probe_command_version("/bin/sh", &["-c".to_string(), script.to_string()]).await;
 
     assert_eq!(version.as_deref(), Some("1.2.3"));
 }
@@ -352,6 +340,124 @@ async fn provider_status_matrix_marks_missing_runtime_dependency_updateable() {
             .get("matrix_update_available")
             .map(String::as_str),
         Some("true")
+    );
+}
+
+#[tokio::test]
+async fn provider_status_matrix_marks_stale_implicit_node_runtime_updateable() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let runtime = temp.path().join("codex");
+    std::fs::write(&runtime, b"matching-runtime").expect("write runtime");
+
+    let sha = sha256_hex(b"matching-archive");
+    let entry = codex_archive_entry(
+        "1.0.1",
+        &sha,
+        vec![release("1.0.1", ProviderReleaseStatus::Supported, None)],
+    );
+    let mut cfg = managed_archive_cfg(&runtime, "1.0.1", &sha);
+    let dependency_id = "runtime-node-linux-x86_64";
+    cfg.managed_provider_targets
+        .get_mut("codex")
+        .and_then(|targets| targets.get_mut(InstallTarget::LinuxX8664.as_str()))
+        .expect("codex linux target")
+        .dependencies = vec![dependency_id.to_string()];
+    cfg.managed_install_targets.insert(
+        dependency_id.to_string(),
+        HashMap::from([(
+            InstallTarget::LinuxX8664.as_str().to_string(),
+            ManagedInstallMetadata {
+                package: Some("node-runtime".to_string()),
+                version: Some(crate::NODE_VERSION.to_string()),
+                artifact_fingerprint: Some(format!(
+                    "runtime:node:{}:sha256:{}",
+                    crate::NODE_VERSION,
+                    "0".repeat(64)
+                )),
+                archive_sha256: Some("0".repeat(64)),
+                target: Some(InstallTarget::LinuxX8664),
+                install_dir_rel: Some("runtimes/node/stale".to_string()),
+                bin_dir_rel: Some("runtimes/node/stale/bin".to_string()),
+                last_success_at: None,
+                last_error: None,
+            },
+        )]),
+    );
+    let mut status = installed_status("codex", InstallTarget::LinuxX8664);
+
+    apply_matrix_to_status(temp.path(), &cfg, &entry, &mut status, CURRENT_CTX_VERSION).await;
+
+    assert!(matches!(status.health, ProviderHealth::Ok));
+    assert_eq!(
+        status
+            .details
+            .get("managed_dependency_update_available")
+            .map(String::as_str),
+        Some("true")
+    );
+    assert_eq!(
+        status
+            .details
+            .get("matrix_update_available")
+            .map(String::as_str),
+        Some("true")
+    );
+}
+
+#[tokio::test]
+async fn provider_status_matrix_uses_dependency_id_target_for_implicit_node_runtime() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let runtime = temp.path().join("codex");
+    std::fs::write(&runtime, b"matching-runtime").expect("write runtime");
+
+    let sha = sha256_hex(b"matching-archive");
+    let entry = codex_archive_entry(
+        "1.0.1",
+        &sha,
+        vec![release("1.0.1", ProviderReleaseStatus::Supported, None)],
+    );
+    let mut cfg = managed_archive_cfg(&runtime, "1.0.1", &sha);
+    let dependency_id = "runtime-node-linux-x86_64";
+    let linux_runtime_sha = "44836872d9aec49f1e6b52a9a922872db9a2b02d235a616a5681b6a85fec8d89";
+    cfg.managed_provider_targets
+        .get_mut("codex")
+        .and_then(|targets| targets.get_mut(InstallTarget::LinuxX8664.as_str()))
+        .expect("codex linux target")
+        .dependencies = vec![dependency_id.to_string()];
+    cfg.managed_install_targets.insert(
+        dependency_id.to_string(),
+        HashMap::from([(
+            InstallTarget::LinuxX8664.as_str().to_string(),
+            ManagedInstallMetadata {
+                package: Some("node-runtime".to_string()),
+                version: Some(crate::NODE_VERSION.to_string()),
+                artifact_fingerprint: Some(format!(
+                    "runtime:node:{}:sha256:{linux_runtime_sha}",
+                    crate::NODE_VERSION
+                )),
+                archive_sha256: Some(linux_runtime_sha.to_string()),
+                target: None,
+                install_dir_rel: Some("runtimes/node/linux".to_string()),
+                bin_dir_rel: Some("runtimes/node/linux/bin".to_string()),
+                last_success_at: None,
+                last_error: None,
+            },
+        )]),
+    );
+    let mut status = installed_status("codex", InstallTarget::LinuxX8664);
+
+    apply_matrix_to_status(temp.path(), &cfg, &entry, &mut status, CURRENT_CTX_VERSION).await;
+
+    assert!(matches!(status.health, ProviderHealth::Ok));
+    assert!(
+        !status
+            .details
+            .contains_key("managed_dependency_update_available"),
+        "matching linux runtime metadata with missing target must not be compared as host"
+    );
+    assert!(
+        !status.details.contains_key("matrix_update_available"),
+        "matching implicit runtime dependency should not mark matrix update available"
     );
 }
 

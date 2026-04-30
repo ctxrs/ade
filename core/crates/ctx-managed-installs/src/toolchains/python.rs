@@ -28,6 +28,7 @@ pub async fn ensure_python_runtime_versioned(
                 return Ok(PythonRuntime {
                     python_root: bundled.root,
                     python_bin: bundled.bin,
+                    archive_sha256: Some(bundled.sha256),
                 });
             } else {
                 tracing::warn!(
@@ -38,11 +39,21 @@ pub async fn ensure_python_runtime_versioned(
             }
         }
     }
-    let folder = format!("cpython-{python_version}+{python_build_tag}-{target_triple}");
-    let python_root = data_root.join("runtimes").join("python").join(&folder);
+    let archive = *runtime_lock::resolve_python_runtime_archive(
+        python_version,
+        python_build_tag,
+        target_triple,
+    )?;
+    let install_folder = archive.content_scoped_install_dir_name();
+    let python_root = data_root
+        .join("runtimes")
+        .join("python")
+        .join(&install_folder);
     let python_bin = resolve_python_bin(&python_root, target);
 
-    if python_bin.exists() {
+    if python_bin.exists()
+        && runtime_lock::runtime_ready_metadata_matches(&python_root, &archive).await
+    {
         emit_install(
             state,
             install_id,
@@ -58,12 +69,15 @@ pub async fn ensure_python_runtime_versioned(
         return Ok(PythonRuntime {
             python_root,
             python_bin,
+            archive_sha256: Some(archive.sha256.to_string()),
         });
     }
 
     let _lock = python_runtime_install_lock().lock().await;
     let python_bin = resolve_python_bin(&python_root, target);
-    if python_bin.exists() {
+    if python_bin.exists()
+        && runtime_lock::runtime_ready_metadata_matches(&python_root, &archive).await
+    {
         emit_install(
             state,
             install_id,
@@ -79,19 +93,22 @@ pub async fn ensure_python_runtime_versioned(
         return Ok(PythonRuntime {
             python_root,
             python_bin,
+            archive_sha256: Some(archive.sha256.to_string()),
         });
+    }
+    if python_root.exists() {
+        tokio::fs::remove_dir_all(&python_root).await.ok();
     }
 
     if let Some(parent) = python_root.parent() {
         tokio::fs::create_dir_all(parent).await?;
     }
 
-    let asset =
-        format!("cpython-{python_version}+{python_build_tag}-{target_triple}-install_only.tar.gz");
-    let url = format!(
-        "https://github.com/indygreg/python-build-standalone/releases/download/{python_build_tag}/{asset}"
-    );
-    let tmp = data_root.join("runtimes").join("python").join(&asset);
+    let tmp = data_root.join("runtimes").join("python").join(format!(
+        "{}.sha256-{}.download",
+        archive.archive_name,
+        archive.sha256_prefix()
+    ));
 
     emit_install(
         state,
@@ -99,26 +116,44 @@ pub async fn ensure_python_runtime_versioned(
         provider_id,
         InstallEventLevel::Info,
         "python_download",
-        format!("Downloading Python runtime from {url}"),
+        "Downloading Python runtime from ctx mirror".to_string(),
         None,
         None,
         None,
     )
     .await;
-    download_to_file(
+    download_to_file_with_managed_runtime_redirects(
         state,
         install_id,
         provider_id,
         "python_download",
-        &url,
+        archive.mirror_url,
         &tmp,
     )
     .await?;
 
+    emit_install(
+        state,
+        install_id,
+        provider_id,
+        InstallEventLevel::Info,
+        "python_verify",
+        "Verifying Python runtime checksum".to_string(),
+        None,
+        None,
+        None,
+    )
+    .await;
+    let digest = sha256_file(&tmp).await?;
+    if let Err(error) = validate_sha256_digest(archive.sha256, &digest) {
+        tokio::fs::remove_file(&tmp).await.ok();
+        return Err(error);
+    }
+
     let extract_root = data_root
         .join("runtimes")
         .join("python")
-        .join(format!("{folder}.extract"));
+        .join(format!("{install_folder}.extract"));
     if extract_root.exists() {
         tokio::fs::remove_dir_all(&extract_root).await.ok();
     }
@@ -139,8 +174,16 @@ pub async fn ensure_python_runtime_versioned(
 
     let tmp2 = tmp.clone();
     let extract_root2 = extract_root.clone();
+    let archive_kind = archive.archive_kind;
     tokio::task::spawn_blocking(move || -> Result<()> {
-        extract_tar_gz_to_dir(&tmp2, &extract_root2)?;
+        match archive_kind {
+            runtime_lock::ManagedRuntimeArchiveKind::TarGz => {
+                extract_tar_gz_to_dir(&tmp2, &extract_root2)?;
+            }
+            runtime_lock::ManagedRuntimeArchiveKind::Zip => {
+                extract_zip_to_dir(&tmp2, &extract_root2)?;
+            }
+        }
         Ok(())
     })
     .await??;
@@ -152,6 +195,14 @@ pub async fn ensure_python_runtime_versioned(
             extract_root.display()
         );
     }
+    let extracted_python_bin = resolve_python_bin(&extracted, target);
+    if !extracted_python_bin.exists() {
+        anyhow::bail!(
+            "python runtime incomplete after extraction (python: {})",
+            extracted_python_bin.display()
+        );
+    }
+    runtime_lock::write_runtime_ready_metadata(&extracted, &archive).await?;
 
     if python_root.exists() {
         tokio::fs::remove_dir_all(&python_root).await.ok();
@@ -184,6 +235,7 @@ pub async fn ensure_python_runtime_versioned(
     Ok(PythonRuntime {
         python_root,
         python_bin,
+        archive_sha256: Some(archive.sha256.to_string()),
     })
 }
 
@@ -191,7 +243,9 @@ pub(crate) fn python_target_can_use_bundled_runtime(target: InstallTarget) -> bo
     matches!(target, InstallTarget::Host)
 }
 
-fn python_target_triple_for_install_target(target: InstallTarget) -> Result<&'static str> {
+pub(crate) fn python_target_triple_for_install_target(
+    target: InstallTarget,
+) -> Result<&'static str> {
     match target {
         InstallTarget::Host => {
             python_target_triple_for_os_arch(std::env::consts::OS, std::env::consts::ARCH)

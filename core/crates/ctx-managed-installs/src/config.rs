@@ -167,6 +167,10 @@ pub fn managed_provider_install_metadata_for_target<'a>(
     target_bucket_lookup(&cfg.managed_install_targets, provider_id, requested_target)
 }
 
+pub(crate) fn managed_dependency_target_from_id(dependency_id: &str) -> Option<InstallTarget> {
+    targeting::managed_dependency_target_from_id(dependency_id)
+}
+
 pub fn managed_dependency_install_metadata_for_target<'a>(
     cfg: &'a AgentServerConfigFile,
     dependency_id: &str,

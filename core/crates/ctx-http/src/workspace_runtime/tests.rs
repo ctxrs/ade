@@ -3,9 +3,9 @@ use super::sandbox_machine_recovery::ensure_sandbox_machine_running_with_observe
 use super::sandbox_machine_recovery::{
     collect_ctx_managed_sandbox_helper_pids,
     collect_ctx_managed_sandbox_helper_pids_from_ps_output, initialize_sandbox_machine,
-    is_ctx_managed_sandbox_helper_process_command, kill_ctx_managed_sandbox_helper_processes,
-    literal_pkill_pattern, looks_like_missing_machine_error,
-    looks_like_recoverable_machine_start_error,
+    initialize_sandbox_machine_with_image, is_ctx_managed_sandbox_helper_process_command,
+    kill_ctx_managed_sandbox_helper_processes, literal_pkill_pattern,
+    looks_like_missing_machine_error, looks_like_recoverable_machine_start_error,
     looks_like_running_but_unreachable_machine_start_error, sandbox_machine_temp_state_paths,
 };
 use super::*;
@@ -1974,15 +1974,19 @@ async fn initialize_sandbox_machine_terminates_stuck_init_when_machine_is_presen
         "CTX_HARNESS_SANDBOX_CLI_PATH",
         &sandbox_cli_path.to_string_lossy(),
     );
-    let (_machine_cache_guard, machine_cache_server) =
-        install_test_managed_machine_cache_source(b"machine-cache".to_vec()).await;
-
     let mut last_err = String::new();
     // Keep the outer test timeout comfortably above a single inspect timeout so the test
     // validates the kill-and-continue recovery path instead of host scheduling variance.
     let result = tokio::time::timeout(
         Duration::from_secs(15),
-        initialize_sandbox_machine(temp.path(), "ctx-test-machine", None, None, &mut last_err),
+        initialize_sandbox_machine_with_image(
+            temp.path(),
+            "ctx-test-machine",
+            None,
+            None,
+            None,
+            &mut last_err,
+        ),
     )
     .await;
     let log = std::fs::read_to_string(&log_path).unwrap_or_default();
@@ -1994,7 +1998,6 @@ async fn initialize_sandbox_machine_terminates_stuck_init_when_machine_is_presen
     assert!(log.contains("machine inspect ctx-test-machine"));
     assert!(log.contains("machine start ctx-test-machine"));
     assert!(!log.contains("--now"));
-    machine_cache_server.abort();
 }
 
 #[cfg(target_os = "macos")]

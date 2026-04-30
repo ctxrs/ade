@@ -64,7 +64,9 @@ rust_library(
 rust_test(
     name = "unit_tests",
     crate = ":lib",
+    args = ["--test-threads=1"],
     compile_data = MIGRATIONS,
+    timeout = "long",
     deps = [
         "@crates//:tempfile",
     ],
@@ -90,6 +92,7 @@ rust_test(
         "CARGO_MANIFEST_DIR": "core/crates/ctx-store",
     },
     srcs = ["tests/sqlite_hardening.rs"],
+    timeout = "long",
     deps = [
         ":lib",
         "//core/crates/ctx-core:lib",

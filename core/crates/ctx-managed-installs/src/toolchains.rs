@@ -9,9 +9,12 @@ pub use npm::{
     npm_dependency_matches, npm_install, npm_install_one, resolve_node_package_bin,
     sanitize_npm_package_for_path,
 };
-pub use python::{ensure_python_pip, ensure_python_runtime_versioned};
 #[cfg(test)]
-pub(crate) use python::{python_target_can_use_bundled_runtime, resolve_python_bin};
+pub(crate) use python::resolve_python_bin;
+pub use python::{ensure_python_pip, ensure_python_runtime_versioned};
+pub(crate) use python::{
+    python_target_can_use_bundled_runtime, python_target_triple_for_install_target,
+};
 
 pub(crate) fn target_uses_windows_layout(target: InstallTarget) -> bool {
     match target {
@@ -41,6 +44,7 @@ pub struct NodeRuntime {
     pub node_root: PathBuf,
     pub node_bin: PathBuf,
     pub npm_cli_js: PathBuf,
+    pub archive_sha256: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -54,6 +58,7 @@ pub struct PythonRuntime {
     #[allow(dead_code)]
     pub python_root: PathBuf,
     pub python_bin: PathBuf,
+    pub archive_sha256: Option<String>,
 }
 
 pub fn install_dir_rel(data_root: &Path, install_dir: &Path) -> String {
@@ -118,6 +123,7 @@ pub async fn ensure_node_runtime(
                         node_root: bundled.root,
                         node_bin: bundled.bin,
                         npm_cli_js,
+                        archive_sha256: Some(bundled.sha256),
                     });
                 }
             } else {
@@ -129,11 +135,28 @@ pub async fn ensure_node_runtime(
             }
         }
     }
-    let folder = format!("node-v{NODE_VERSION}-{}", node_target.dist_target);
-    let node_root = data_root.join("runtimes").join("node").join(&folder);
+    let archive_kind = if node_target.is_windows {
+        runtime_lock::ManagedRuntimeArchiveKind::Zip
+    } else {
+        runtime_lock::ManagedRuntimeArchiveKind::TarGz
+    };
+    let archive = *runtime_lock::resolve_node_runtime_archive(
+        NODE_VERSION,
+        node_target.dist_target,
+        archive_kind,
+    )?;
+    let extracted_folder = archive.expected_extract_root();
+    let install_folder = archive.content_scoped_install_dir_name();
+    let node_root = data_root
+        .join("runtimes")
+        .join("node")
+        .join(&install_folder);
     let (node_bin, npm_cli_js) = node_runtime_paths(&node_root, node_target.is_windows);
 
-    if node_bin.exists() && npm_cli_js.exists() {
+    if node_bin.exists()
+        && npm_cli_js.exists()
+        && runtime_lock::runtime_ready_metadata_matches(&node_root, &archive).await
+    {
         emit_install(
             state,
             install_id,
@@ -150,12 +173,16 @@ pub async fn ensure_node_runtime(
             node_root,
             node_bin,
             npm_cli_js,
+            archive_sha256: Some(archive.sha256.to_string()),
         });
     }
 
     let _lock = node_runtime_install_lock().lock().await;
 
-    if node_bin.exists() && npm_cli_js.exists() {
+    if node_bin.exists()
+        && npm_cli_js.exists()
+        && runtime_lock::runtime_ready_metadata_matches(&node_root, &archive).await
+    {
         emit_install(
             state,
             install_id,
@@ -172,41 +199,66 @@ pub async fn ensure_node_runtime(
             node_root,
             node_bin,
             npm_cli_js,
+            archive_sha256: Some(archive.sha256.to_string()),
         });
+    }
+    if node_root.exists() {
+        tokio::fs::remove_dir_all(&node_root).await.ok();
     }
 
     if let Some(parent) = node_root.parent() {
         tokio::fs::create_dir_all(parent).await?;
     }
 
-    let (archive_ext, archive_label) = if node_target.is_windows {
-        ("zip", "zip")
-    } else {
-        ("tar.gz", "tar_gz")
-    };
-    let url = format!("https://nodejs.org/dist/v{NODE_VERSION}/{folder}.{archive_ext}");
-    let tmp = data_root
-        .join("runtimes")
-        .join("node")
-        .join(format!("{folder}.{archive_ext}"));
+    let tmp = data_root.join("runtimes").join("node").join(format!(
+        "{}.sha256-{}.download",
+        archive.archive_name,
+        archive.sha256_prefix()
+    ));
     emit_install(
         state,
         install_id,
         provider_id,
         InstallEventLevel::Info,
         "node_download",
-        format!("Downloading Node runtime from {url}"),
+        "Downloading Node runtime from ctx mirror".to_string(),
         None,
         None,
         None,
     )
     .await;
-    download_to_file(state, install_id, provider_id, "node_download", &url, &tmp).await?;
+    download_to_file_with_managed_runtime_redirects(
+        state,
+        install_id,
+        provider_id,
+        "node_download",
+        archive.mirror_url,
+        &tmp,
+    )
+    .await?;
+
+    emit_install(
+        state,
+        install_id,
+        provider_id,
+        InstallEventLevel::Info,
+        "node_verify",
+        "Verifying Node runtime checksum".to_string(),
+        None,
+        None,
+        None,
+    )
+    .await;
+    let digest = sha256_file(&tmp).await?;
+    if let Err(error) = validate_sha256_digest(archive.sha256, &digest) {
+        tokio::fs::remove_file(&tmp).await.ok();
+        return Err(error);
+    }
 
     let extract_root = data_root
         .join("runtimes")
         .join("node")
-        .join(format!("{folder}.extract"));
+        .join(format!("{install_folder}.extract"));
     if extract_root.exists() {
         tokio::fs::remove_dir_all(&extract_root).await.ok();
     }
@@ -228,7 +280,7 @@ pub async fn ensure_node_runtime(
     let tmp2 = tmp.clone();
     let extract_root2 = extract_root.clone();
     tokio::task::spawn_blocking(move || -> Result<()> {
-        if archive_label == "zip" {
+        if archive_kind == runtime_lock::ManagedRuntimeArchiveKind::Zip {
             extract_zip_to_dir(&tmp2, &extract_root2)?;
         } else {
             extract_tar_gz_to_dir(&tmp2, &extract_root2)?;
@@ -237,13 +289,23 @@ pub async fn ensure_node_runtime(
     })
     .await??;
 
-    let extracted = extract_root.join(&folder);
+    let extracted = extract_root.join(&extracted_folder);
     if !extracted.exists() {
         anyhow::bail!(
-            "node extraction failed: missing {folder} in {}",
+            "node extraction failed: missing {extracted_folder} in {}",
             extract_root.display()
         );
     }
+    let (extracted_node_bin, extracted_npm_cli_js) =
+        node_runtime_paths(&extracted, node_target.is_windows);
+    if !extracted_node_bin.exists() || !extracted_npm_cli_js.exists() {
+        anyhow::bail!(
+            "node runtime incomplete after extraction (node: {}, npm: {})",
+            extracted_node_bin.display(),
+            extracted_npm_cli_js.display()
+        );
+    }
+    runtime_lock::write_runtime_ready_metadata(&extracted, &archive).await?;
 
     if node_root.exists() {
         tokio::fs::remove_dir_all(&node_root).await.ok();
@@ -277,6 +339,7 @@ pub async fn ensure_node_runtime(
         node_root,
         node_bin,
         npm_cli_js,
+        archive_sha256: Some(archive.sha256.to_string()),
     })
 }
 
@@ -378,8 +441,13 @@ pub fn node_runtime_dependency_metadata(
     ManagedInstallMetadata {
         package: Some("node-runtime".to_string()),
         version: Some(NODE_VERSION.to_string()),
-        artifact_fingerprint: Some(format!("runtime:node:{NODE_VERSION}")),
-        archive_sha256: None,
+        artifact_fingerprint: Some(
+            node.archive_sha256
+                .as_ref()
+                .map(|sha256| format!("runtime:node:{NODE_VERSION}:sha256:{sha256}"))
+                .unwrap_or_else(|| format!("runtime:node:{NODE_VERSION}")),
+        ),
+        archive_sha256: node.archive_sha256.clone(),
         target: Some(target),
         install_dir_rel: Some(install_dir_rel(data_root, &node.node_root)),
         bin_dir_rel: Some(install_dir_rel(data_root, &bin_dir)),

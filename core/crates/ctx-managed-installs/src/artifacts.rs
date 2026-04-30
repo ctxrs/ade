@@ -275,6 +275,53 @@ pub(crate) async fn download_to_file(
     url: &str,
     path: &Path,
 ) -> Result<()> {
+    download_to_file_with_redirect_policy(
+        state,
+        install_id,
+        provider_id,
+        stage,
+        url,
+        path,
+        DownloadRedirectPolicy::Follow,
+    )
+    .await
+}
+
+pub(crate) async fn download_to_file_with_managed_runtime_redirects(
+    state: &AppState,
+    install_id: Option<InstallId>,
+    provider_id: &str,
+    stage: &str,
+    url: &str,
+    path: &Path,
+) -> Result<()> {
+    download_to_file_with_redirect_policy(
+        state,
+        install_id,
+        provider_id,
+        stage,
+        url,
+        path,
+        DownloadRedirectPolicy::ManagedRuntimeMirrorOnly,
+    )
+    .await
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DownloadRedirectPolicy {
+    Follow,
+    ManagedRuntimeMirrorOnly,
+}
+
+async fn download_to_file_with_redirect_policy(
+    state: &AppState,
+    install_id: Option<InstallId>,
+    provider_id: &str,
+    stage: &str,
+    url: &str,
+    path: &Path,
+    redirect_policy: DownloadRedirectPolicy,
+) -> Result<()> {
     for attempt in 1..=RETRY_COUNT {
         ensure_install_not_cancelled(state, install_id).await?;
         let attempt_res: Result<()> = async {
@@ -291,11 +338,22 @@ pub(crate) async fn download_to_file(
                     .await
                     .with_context(|| format!("copying {} -> {}", src.display(), path.display()))?;
             } else {
-                let client = reqwest::Client::builder()
+                let mut client_builder = reqwest::Client::builder()
                     .connect_timeout(Duration::from_secs(15))
-                    .timeout(DOWNLOAD_TIMEOUT)
-                    .build()
-                    .context("building http client")?;
+                    .timeout(DOWNLOAD_TIMEOUT);
+                if redirect_policy == DownloadRedirectPolicy::ManagedRuntimeMirrorOnly {
+                    client_builder =
+                        client_builder.redirect(reqwest::redirect::Policy::custom(|attempt| {
+                            if attempt.previous().len() < 10
+                                && crate::runtime_lock::runtime_download_url_allowed(attempt.url())
+                            {
+                                attempt.follow()
+                            } else {
+                                attempt.stop()
+                            }
+                        }));
+                }
+                let client = client_builder.build().context("building http client")?;
                 let existing_len = tokio::fs::metadata(path)
                     .await
                     .map(|meta| meta.len())
@@ -324,6 +382,7 @@ pub(crate) async fn download_to_file(
                     tokio::fs::remove_file(path).await.ok();
                     anyhow::bail!("server rejected ranged resume request");
                 }
+                reject_download_redirect(redirect_policy, status, resp.headers())?;
                 let resp = resp.error_for_status().context("http error")?;
 
                 let (resumed, total) =
@@ -425,6 +484,25 @@ pub(crate) async fn download_to_file(
         }
     }
 
+    Ok(())
+}
+
+pub(crate) fn reject_download_redirect(
+    redirect_policy: DownloadRedirectPolicy,
+    status: reqwest::StatusCode,
+    headers: &reqwest::header::HeaderMap,
+) -> Result<()> {
+    if redirect_policy == DownloadRedirectPolicy::ManagedRuntimeMirrorOnly
+        && status.is_redirection()
+    {
+        let location = headers
+            .get(reqwest::header::LOCATION)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or("<missing Location header>");
+        anyhow::bail!(
+            "managed runtime mirror redirected to disallowed location {location}; only ctx mirror storage redirects are allowed"
+        );
+    }
     Ok(())
 }
 

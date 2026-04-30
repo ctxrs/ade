@@ -29,6 +29,7 @@ mod provider_install;
 pub mod provider_install_contract;
 pub mod provider_status_matrix;
 mod runtime_commands;
+mod runtime_lock;
 mod targets;
 pub mod title_generation;
 pub mod title_generation_local;
@@ -40,9 +41,10 @@ mod provider_status_matrix_tests;
 mod test_support;
 
 pub(crate) use self::artifacts::{
-    commit_atomic_install_dir, download_to_file, ensure_executable, extract_tar_gz_to_dir,
-    extract_zip_to_dir, find_unique_path_ending_with, install_agent_server_url_binary,
-    prepare_atomic_install_dir, run_command_with_timeout, validate_expected_sha256,
+    commit_atomic_install_dir, download_to_file, download_to_file_with_managed_runtime_redirects,
+    ensure_executable, extract_tar_gz_to_dir, extract_zip_to_dir, find_unique_path_ending_with,
+    install_agent_server_url_binary, prepare_atomic_install_dir, run_command_with_timeout,
+    sha256_file, validate_expected_sha256, validate_sha256_digest,
 };
 use self::dependencies::{
     install_managed_archive_dependency, install_managed_npm_dependency, map_archive_kind,
@@ -236,6 +238,7 @@ fn python_artifact_fingerprint(
     version: &str,
     python_version: Option<&str>,
     python_build_tag: Option<&str>,
+    python_runtime_sha256: Option<&str>,
 ) -> Option<String> {
     let package = package.trim();
     let version = version.trim();
@@ -249,7 +252,52 @@ fn python_artifact_fingerprint(
     if let Some(python_build_tag) = trimmed_non_empty(python_build_tag) {
         fingerprint.push_str(&format!("|build={python_build_tag}"));
     }
+    if let Some(python_runtime_sha256) = trimmed_non_empty(python_runtime_sha256) {
+        fingerprint.push_str(&format!("|runtime_sha256={python_runtime_sha256}"));
+    }
     Some(fingerprint)
+}
+
+fn expected_python_runtime_sha256_for_target(
+    python_version: &str,
+    python_build_tag: &str,
+    target: InstallTarget,
+) -> Option<String> {
+    if toolchains::python_target_can_use_bundled_runtime(target) {
+        if let Some(bundled) = bundled_assets::bundled_python_runtime_version(python_version) {
+            if bundled.version == python_version {
+                return Some(bundled.sha256);
+            }
+        }
+    }
+    let target_triple = toolchains::python_target_triple_for_install_target(target).ok()?;
+    runtime_lock::resolve_python_runtime_archive(python_version, python_build_tag, target_triple)
+        .ok()
+        .map(|spec| spec.sha256.to_string())
+}
+
+fn expected_node_runtime_sha256_for_target(target: InstallTarget) -> Option<String> {
+    if matches!(target, InstallTarget::Host) {
+        if let Some(bundled) = bundled_assets::bundled_node_runtime() {
+            if bundled.version == NODE_VERSION && bundled.npm_cli.is_some() {
+                return Some(bundled.sha256);
+            }
+        }
+    }
+    let node_target = toolchains::node_runtime_target_for_install_target(target).ok()?;
+    let archive_kind = if node_target.is_windows {
+        runtime_lock::ManagedRuntimeArchiveKind::Zip
+    } else {
+        runtime_lock::ManagedRuntimeArchiveKind::TarGz
+    };
+    runtime_lock::resolve_node_runtime_archive(NODE_VERSION, node_target.dist_target, archive_kind)
+        .ok()
+        .map(|spec| spec.sha256.to_string())
+}
+
+fn expected_node_runtime_artifact_fingerprint(target: InstallTarget) -> Option<String> {
+    expected_node_runtime_sha256_for_target(target)
+        .map(|sha256| format!("runtime:node:{NODE_VERSION}:sha256:{sha256}"))
 }
 
 pub fn expected_managed_provider_artifact_fingerprint(
@@ -312,11 +360,21 @@ pub fn expected_managed_provider_artifact_fingerprint(
                 .and_then(|target_entry| trimmed_non_empty(target_entry.sha256.as_deref()))
                 .or_else(|| {
                     if matches!(target, InstallTarget::Host) {
+                        let runtime_spec = managed_python_runtime_spec(
+                            python_version.as_deref(),
+                            python_build_tag.as_deref(),
+                        );
+                        let runtime_sha256 = expected_python_runtime_sha256_for_target(
+                            &runtime_spec.version,
+                            &runtime_spec.build_tag,
+                            target,
+                        );
                         python_artifact_fingerprint(
                             package,
                             install_version,
-                            python_version.as_deref(),
-                            python_build_tag.as_deref(),
+                            Some(&runtime_spec.version),
+                            Some(&runtime_spec.build_tag),
+                            runtime_sha256.as_deref(),
                         )
                     } else {
                         None
@@ -342,6 +400,19 @@ pub fn expected_managed_dependency_artifact_fingerprint(
             trimmed_non_empty(targets.get(target_key)?.sha256.as_deref())
         }
     }
+}
+
+pub fn expected_managed_dependency_artifact_fingerprint_for_id(
+    dependency_id: &str,
+    dependency: Option<&provider_matrix::ProviderDependency>,
+    target: InstallTarget,
+) -> Option<String> {
+    let normalized = dependency_id.trim().to_ascii_lowercase();
+    if normalized.starts_with("runtime-node-") {
+        return expected_node_runtime_artifact_fingerprint(target);
+    }
+    dependency
+        .and_then(|dependency| expected_managed_dependency_artifact_fingerprint(dependency, target))
 }
 
 fn node_runtime_install_lock() -> &'static Mutex<()> {

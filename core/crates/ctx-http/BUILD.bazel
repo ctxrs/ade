@@ -12,7 +12,7 @@ exports_files(["Cargo.toml"])
 
 CTX_HTTP_RUSTC_ENV = {
     "CARGO_MANIFEST_DIR": "core/crates/ctx-http",
-    "CARGO_PKG_VERSION": "0.62.22",
+    "CARGO_PKG_VERSION": "0.62.26",
 }
 
 CTX_HTTP_COMPILE_DATA = [
@@ -403,6 +403,7 @@ CTX_HTTP_LIB_TEST_SUPPORT_DEPS = [
     "//core/crates/ctx-avf-linux-runtime:lib_test_support",
     "//core/crates/ctx-bundled-assets:lib_test_support",
     "//core/crates/ctx-workspace-runtime:lib_test_support",
+    "@crates//:sqlx",
 ] + CTX_HTTP_SHARED_INTERNAL_TEST_SUPPORT_DEPS + CTX_HTTP_SHARED_EXTERNAL_DEPS
 
 CTX_HTTP_DIRECT_TEST_DEPS = [
