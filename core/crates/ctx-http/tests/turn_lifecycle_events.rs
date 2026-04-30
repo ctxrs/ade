@@ -1,3 +1,4 @@
+use std::path::Path;
 use std::time::Duration;
 
 use axum::body::Body;
@@ -9,11 +10,29 @@ use ctx_core::models::SessionEventType;
 mod common;
 
 const LIFECYCLE_EVENT_TIMEOUT: Duration = Duration::from_secs(120);
+const STORAGE_GUARD_EMERGENCY_FREE_BYTES: u64 = 1024 * 1024 * 1024;
+
+fn storage_guard_would_trip(repo_path: &Path, data_root: &Path) -> bool {
+    [
+        fs2::available_space(repo_path).ok(),
+        fs2::available_space(data_root).ok(),
+        fs2::available_space(std::env::temp_dir()).ok(),
+    ]
+    .into_iter()
+    .flatten()
+    .min()
+    .unwrap_or(u64::MAX)
+        <= STORAGE_GUARD_EMERGENCY_FREE_BYTES
+}
 
 #[tokio::test]
 async fn queued_message_emits_lifecycle_events_in_order_with_interrupt() {
     let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
     let data_dir = tempfile::tempdir().unwrap();
+    if storage_guard_would_trip(repo.path(), data_dir.path()) {
+        eprintln!("skipping: storage guard would trip on low-disk test host");
+        return;
+    }
     let stores = common::setup_store(data_dir.path()).await;
     let state = common::build_state(
         data_dir.path().to_path_buf(),
@@ -151,6 +170,10 @@ async fn queued_message_emits_lifecycle_events_in_order_with_interrupt() {
 async fn cancel_promotes_next_queued_turn_after_interrupted_finish() {
     let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
     let data_dir = tempfile::tempdir().unwrap();
+    if storage_guard_would_trip(repo.path(), data_dir.path()) {
+        eprintln!("skipping: storage guard would trip on low-disk test host");
+        return;
+    }
     let stores = common::setup_store(data_dir.path()).await;
     let state = common::build_state(
         data_dir.path().to_path_buf(),
@@ -265,6 +288,10 @@ async fn cancel_promotes_next_queued_turn_after_interrupted_finish() {
 async fn cancel_promotes_queued_turns_in_fifo_order_across_multiple_cancels() {
     let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
     let data_dir = tempfile::tempdir().unwrap();
+    if storage_guard_would_trip(repo.path(), data_dir.path()) {
+        eprintln!("skipping: storage guard would trip on low-disk test host");
+        return;
+    }
     let stores = common::setup_store(data_dir.path()).await;
     let state = common::build_state(
         data_dir.path().to_path_buf(),
