@@ -1,9 +1,9 @@
 use super::{
-    default_mount_relpath, ensure_materialized_revision_parent, materialize_reference_repo,
-    materialized_path_for_attachment, materialized_root_for_attachment,
+    default_mount_relpath, ensure_materialized_revision_parent, install_materialized_temp,
+    materialize_reference_repo, materialized_path_for_attachment, materialized_root_for_attachment,
     normalize_attachment_config, remove_materialized_root_if_exists, revision_key,
-    sanitize_attachment_subpath, sanitize_mount_relpath, validate_materialized_path,
-    AttachmentConfig,
+    sanitize_attachment_subpath, sanitize_mount_relpath, unique_materialized_temp_path,
+    validate_materialized_path, AttachmentConfig,
 };
 use ctx_core::ids::WorkspaceId;
 use ctx_core::models::{
@@ -446,6 +446,51 @@ async fn reference_repo_refresh_failure_preserves_existing_materialization() {
             .iter()
             .any(|name| name.contains("materialize-tmp")),
         "failed reference repo refresh left temp entries: {leftovers:?}"
+    );
+}
+
+#[tokio::test]
+async fn materialized_temp_install_restores_existing_materialization_on_rename_failure() {
+    let data_root = tempfile::tempdir().unwrap();
+    let attachment = normalize_attachment_config(
+        WorkspaceId::new(),
+        AttachmentConfig {
+            kind: WorkspaceAttachmentKind::ReferenceRepo,
+            name: "Docs".to_string(),
+            source: "https://example.com/repo.git".to_string(),
+            revision: Some("main".to_string()),
+            subpath: None,
+            mount_relpath: None,
+            mode: None,
+            update_policy: None,
+        },
+        None,
+    )
+    .unwrap();
+    let dest = materialized_path_for_attachment(data_root.path(), &attachment);
+    std::fs::create_dir_all(&dest).unwrap();
+    std::fs::write(dest.join("existing.txt"), "existing\n").unwrap();
+    let missing_temp = unique_materialized_temp_path(&dest).unwrap();
+
+    let err = install_materialized_temp(data_root.path(), &missing_temp, &dest)
+        .await
+        .expect_err("missing staged temp should fail install");
+
+    assert!(format!("{err:#}").contains("installing attachment materialization"));
+    assert_eq!(
+        std::fs::read_to_string(dest.join("existing.txt")).unwrap(),
+        "existing\n",
+        "failed install must restore the previous materialization"
+    );
+    let leftovers = std::fs::read_dir(dest.parent().unwrap())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().to_string())
+        .collect::<Vec<_>>();
+    assert!(
+        !leftovers
+            .iter()
+            .any(|name| name.contains("materialize-old") || name.contains("materialize-tmp")),
+        "failed install left temp or backup entries: {leftovers:?}"
     );
 }
 

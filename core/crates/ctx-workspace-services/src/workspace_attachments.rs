@@ -549,6 +549,14 @@ pub(super) async fn remove_materialized_path_if_exists(
 }
 
 pub(super) fn unique_materialized_temp_path(dest: &Path) -> Result<PathBuf> {
+    unique_materialized_sibling_path(dest, "materialize-tmp")
+}
+
+fn unique_materialized_backup_path(dest: &Path) -> Result<PathBuf> {
+    unique_materialized_sibling_path(dest, "materialize-old")
+}
+
+fn unique_materialized_sibling_path(dest: &Path, label: &str) -> Result<PathBuf> {
     let parent = dest
         .parent()
         .ok_or_else(|| anyhow::anyhow!("attachment materialization path missing parent"))?;
@@ -563,7 +571,7 @@ pub(super) fn unique_materialized_temp_path(dest: &Path) -> Result<PathBuf> {
         let mut temp_name = OsString::from(".");
         temp_name.push(file_name);
         temp_name.push(format!(
-            ".materialize-tmp.{}.{}.{}",
+            ".{label}.{}.{}.{}",
             std::process::id(),
             nanos,
             attempt
@@ -583,7 +591,7 @@ pub(super) fn unique_materialized_temp_path(dest: &Path) -> Result<PathBuf> {
         }
     }
     anyhow::bail!(
-        "unable to allocate temporary attachment materialization path for {}",
+        "unable to allocate sibling attachment materialization path for {}",
         dest.display()
     );
 }
@@ -593,16 +601,49 @@ pub(super) async fn install_materialized_temp(
     temp: &Path,
     dest: &Path,
 ) -> Result<()> {
-    if let Err(err) = remove_materialized_path_if_exists(data_root, dest).await {
-        cleanup_materialized_temp(data_root, temp).await;
-        return Err(err);
+    let backup = match materialized_path_exists_for_replace(data_root, dest).await {
+        Ok(true) => Some(unique_materialized_backup_path(dest)?),
+        Ok(false) => None,
+        Err(err) => {
+            cleanup_materialized_temp(data_root, temp).await;
+            return Err(err);
+        }
+    };
+
+    if let Some(backup) = backup.as_ref() {
+        if let Err(err) = tokio::fs::rename(dest, backup).await.with_context(|| {
+            format!(
+                "staging previous attachment materialization {}",
+                dest.display()
+            )
+        }) {
+            cleanup_materialized_temp(data_root, temp).await;
+            return Err(err);
+        }
     }
+
     if let Err(err) = tokio::fs::rename(temp, dest)
         .await
         .with_context(|| format!("installing attachment materialization {}", dest.display()))
     {
         cleanup_materialized_temp(data_root, temp).await;
+        if let Some(backup) = backup.as_ref() {
+            if let Err(restore_err) = tokio::fs::rename(backup, dest).await.with_context(|| {
+                format!(
+                    "restoring previous attachment materialization {}",
+                    dest.display()
+                )
+            }) {
+                return Err(err).context(format!(
+                    "failed to restore previous attachment materialization after install failure: {restore_err:#}"
+                ));
+            }
+        }
         return Err(err);
+    }
+
+    if let Some(backup) = backup.as_ref() {
+        remove_materialized_path_if_exists(data_root, backup).await?;
     }
     Ok(())
 }
@@ -670,6 +711,39 @@ fn validate_materialized_path_sync(data_root: &Path, path: &Path) -> Result<()> 
         );
     }
     Ok(())
+}
+
+async fn materialized_path_exists_for_replace(data_root: &Path, path: &Path) -> Result<bool> {
+    let data_root = data_root.to_path_buf();
+    let path = path.to_path_buf();
+    tokio::task::spawn_blocking(move || {
+        validate_materialized_child_path(&data_root, &path)?;
+        if let Some(parent) = path.parent() {
+            ensure_materialized_existing_chain_sync(&data_root, parent)?;
+        }
+        match std::fs::symlink_metadata(&path) {
+            Ok(meta) => {
+                if meta.file_type().is_symlink() {
+                    anyhow::bail!(
+                        "attachment materialization path must not be a symlink: {}",
+                        path.display()
+                    );
+                }
+                if !meta.is_dir() {
+                    anyhow::bail!(
+                        "attachment materialization path must be a directory: {}",
+                        path.display()
+                    );
+                }
+                Ok(true)
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(err) => Err(err)
+                .with_context(|| format!("reading attachment materialization {}", path.display())),
+        }
+    })
+    .await
+    .context("joining attachment materialization replacement validation task")?
 }
 
 fn ensure_materialized_dir_chain_sync(data_root: &Path, path: &Path) -> Result<()> {

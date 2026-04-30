@@ -113,15 +113,17 @@ make_stage() {{
   temp="$stage/payload"
 }}
 finish_stage() {{
+  if [ -L "$target" ]; then
+    :
+  elif [ -e "$target" ]; then
+    chmod -R u+w -- "$target"
+  fi
+  rm -rf -- "$target"
   mv -- "$temp" "$target"
   rmdir -- "$stage"
   stage=""
 }}
 trap cleanup_stage EXIT
-if [ -L "$target" ] || [ -e "$target" ]; then
-  printf 'attachment mount target already exists before import: %s\n' "$target" >&2
-  exit 2
-fi
 make_stage
 mkdir "$temp"
 if [ -L "$temp" ] || [ ! -d "$temp" ]; then
@@ -167,15 +169,17 @@ make_stage() {{
   temp="$stage/payload"
 }}
 finish_stage() {{
+  if [ -L "$target" ]; then
+    :
+  elif [ -e "$target" ]; then
+    chmod -R u+w -- "$target"
+  fi
+  rm -rf -- "$target"
   mv -- "$temp" "$target"
   rmdir -- "$stage"
   stage=""
 }}
 trap cleanup_stage EXIT
-if [ -L "$target" ] || [ -e "$target" ]; then
-  printf 'attachment mount target already exists before import: %s\n' "$target" >&2
-  exit 2
-fi
 make_stage
 cat > "$temp"
 if [ "$mode" = "ro" ]; then
@@ -351,8 +355,6 @@ pub(super) async fn avf_copy_source_to_mount(
     target: &Path,
     mode: AttachmentMode,
 ) -> Result<()> {
-    avf_remove_mount_path_in_worktree(state, workspace_id, worktree_id, worktree_root, target)
-        .await?;
     if mode == AttachmentMode::Ro {
         validate_attachment_tree_within_root(source, source, AttachmentSourceSymlinkPolicy::Reject)
             .await?;

@@ -71,17 +71,17 @@ make_stage() {{
   temp="$stage/payload"
 }}
 finish_stage() {{
+  if [ -L "$target" ]; then
+    :
+  elif [ -e "$target" ]; then
+    chmod -R u+w -- "$target"
+  fi
+  rm -rf -- "$target"
   mv -- "$temp" "$target"
   rmdir -- "$stage"
   stage=""
 }}
 trap cleanup_stage EXIT
-if [ -L "$target" ]; then
-  :
-elif [ -e "$target" ]; then
-  chmod -R u+w -- "$target"
-fi
-rm -rf -- "$target"
 if [ "$mode" = "ro" ]; then
   if [ -L "$source" ]; then
     printf 'read-only attachment copy refuses symlink: %s\n' "$source" >&2
@@ -99,11 +99,9 @@ if [ "$mode" = "ro" ]; then
   chmod -R a-w -- "$temp"
   finish_stage
 else
-  ln -s -- "$source" "$target" || {{
-    make_stage
-    cp -a -- "$source" "$temp"
-    finish_stage
-  }}
+  make_stage
+  ln -s -- "$source" "$temp" || cp -a -- "$source" "$temp"
+  finish_stage
 fi
 trap - EXIT
 "#,
@@ -135,17 +133,17 @@ make_stage() {{
   temp="$stage/payload"
 }}
 finish_stage() {{
+  if [ -L "$dest" ]; then
+    :
+  elif [ -e "$dest" ]; then
+    chmod -R u+w -- "$dest"
+  fi
+  rm -rf -- "$dest"
   mv -- "$temp" "$dest"
   rmdir -- "$stage"
   stage=""
 }}
 trap cleanup_stage EXIT
-if [ -L "$dest" ]; then
-  :
-elif [ -e "$dest" ]; then
-  chmod -R u+w -- "$dest"
-fi
-rm -rf -- "$dest"
 make_stage
 mkdir "$temp"
 tar -C "$temp" -xf -
@@ -246,11 +244,9 @@ async fn import_dir_to_container(
         );
     }
     if let Err(err) = copy_result {
-        let _ = container_rm_rf(state, container_id, dest).await;
         return Err(err);
     }
     if !tar_status.success() {
-        let _ = container_rm_rf(state, container_id, dest).await;
         anyhow::bail!("tar failed with status {tar_status}");
     }
     Ok(())

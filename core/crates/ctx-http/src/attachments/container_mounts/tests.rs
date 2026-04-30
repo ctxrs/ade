@@ -352,6 +352,64 @@ async fn native_container_import_script_cleans_temp_and_leaves_no_dest_on_tar_fa
 
 #[cfg(unix)]
 #[tokio::test]
+async fn native_container_import_script_preserves_existing_dest_on_tar_failure() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("container-root");
+    let dest = root.join("attachments/attachment/revision");
+    let fake_bin = temp.path().join("bin");
+    std::fs::create_dir_all(&dest).unwrap();
+    std::fs::write(dest.join("existing.txt"), b"existing").unwrap();
+    std::fs::create_dir_all(&fake_bin).unwrap();
+
+    let fake_tar = fake_bin.join("tar");
+    std::fs::write(
+        &fake_tar,
+        "#!/bin/sh\nmkdir -p \"$2\"\nprintf partial > \"$2/partial.txt\"\nexit 7\n",
+    )
+    .unwrap();
+    let mut permissions = std::fs::metadata(&fake_tar).unwrap().permissions();
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(&fake_tar, permissions).unwrap();
+
+    let path = format!(
+        "{}:{}",
+        fake_bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    let output = std::process::Command::new("sh")
+        .env("PATH", path)
+        .stdin(std::process::Stdio::null())
+        .arg("-c")
+        .arg(container_import_dir_script())
+        .arg("--")
+        .arg(&root)
+        .arg(&dest)
+        .output()
+        .unwrap();
+
+    assert!(
+        !output.status.success(),
+        "native container import must fail when staged tar extraction fails"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dest.join("existing.txt")).unwrap(),
+        "existing",
+        "failed native container import refresh must preserve existing materialization"
+    );
+    let leftovers = std::fs::read_dir(dest.parent().unwrap())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().to_string())
+        .collect::<Vec<_>>();
+    assert!(
+        !leftovers.iter().any(|name| name.contains("import-tmp")),
+        "failed native container import left staged entries: {leftovers:?}"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
 async fn native_ro_mount_script_propagates_copy_failure_before_chmod_success() {
     use std::os::unix::fs::PermissionsExt;
 
@@ -418,6 +476,50 @@ async fn native_ro_mount_script_propagates_copy_failure_before_chmod_success() {
 
 #[cfg(unix)]
 #[tokio::test]
+async fn native_ro_mount_script_preserves_existing_target_on_symlink_rejection() {
+    let temp = tempfile::tempdir().unwrap();
+    let worktree = temp.path().join("worktree");
+    let source = temp.path().join("source");
+    let target = worktree.join(".ctx/attachments/docs/docs");
+    std::fs::create_dir_all(&worktree).unwrap();
+    std::fs::create_dir_all(&source).unwrap();
+    std::fs::create_dir_all(&target).unwrap();
+    std::fs::write(source.join("notes.txt"), b"notes").unwrap();
+    std::os::unix::fs::symlink("notes.txt", source.join("notes-link")).unwrap();
+    std::fs::write(target.join("existing.txt"), b"existing").unwrap();
+
+    let output = std::process::Command::new("sh")
+        .arg("-lc")
+        .arg(container_mount_script())
+        .arg("--")
+        .arg(&worktree)
+        .arg(&target)
+        .arg(&source)
+        .arg("ro")
+        .output()
+        .unwrap();
+
+    assert!(
+        !output.status.success(),
+        "native ro mount refresh must reject symlinked source"
+    );
+    assert_eq!(
+        std::fs::read_to_string(target.join("existing.txt")).unwrap(),
+        "existing",
+        "failed native ro refresh must preserve existing mount target"
+    );
+    let leftovers = std::fs::read_dir(target.parent().unwrap())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().to_string())
+        .collect::<Vec<_>>();
+    assert!(
+        !leftovers.iter().any(|name| name.contains(".tmp.")),
+        "failed native ro refresh left staged entries: {leftovers:?}"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
 async fn avf_dir_import_script_cleans_temp_and_leaves_no_target_on_tar_failure() {
     use std::os::unix::fs::PermissionsExt;
 
@@ -470,6 +572,65 @@ async fn avf_dir_import_script_cleans_temp_and_leaves_no_target_on_tar_failure()
     assert!(
         leftovers.is_empty(),
         "failed AVF directory import left staged or partial entries: {leftovers:?}"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn avf_dir_import_script_preserves_existing_target_on_tar_failure() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp = tempfile::tempdir().unwrap();
+    let worktree = temp.path().join("worktree");
+    let target = worktree.join(".ctx/attachments/docs/docs");
+    let fake_bin = temp.path().join("bin");
+    std::fs::create_dir_all(&target).unwrap();
+    std::fs::write(target.join("existing.txt"), b"existing").unwrap();
+    std::fs::create_dir_all(&fake_bin).unwrap();
+
+    let fake_tar = fake_bin.join("tar");
+    std::fs::write(
+        &fake_tar,
+        "#!/bin/sh\nmkdir -p \"$2\"\nprintf partial > \"$2/partial.txt\"\nexit 7\n",
+    )
+    .unwrap();
+    let mut permissions = std::fs::metadata(&fake_tar).unwrap().permissions();
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(&fake_tar, permissions).unwrap();
+
+    let path = format!(
+        "{}:{}",
+        fake_bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    let output = std::process::Command::new("sh")
+        .current_dir(&worktree)
+        .env("PATH", path)
+        .stdin(std::process::Stdio::null())
+        .arg("-lc")
+        .arg(avf_import_dir_script())
+        .arg("--")
+        .arg("./.ctx/attachments/docs/docs")
+        .arg("ro")
+        .output()
+        .unwrap();
+
+    assert!(
+        !output.status.success(),
+        "AVF directory import refresh must fail when staged tar extraction fails"
+    );
+    assert_eq!(
+        std::fs::read_to_string(target.join("existing.txt")).unwrap(),
+        "existing",
+        "failed AVF directory refresh must preserve existing mount target"
+    );
+    let leftovers = std::fs::read_dir(target.parent().unwrap())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().to_string())
+        .collect::<Vec<_>>();
+    assert!(
+        !leftovers.iter().any(|name| name.contains(".tmp.")),
+        "failed AVF directory refresh left staged entries: {leftovers:?}"
     );
 }
 
@@ -528,5 +689,65 @@ async fn avf_file_import_script_cleans_temp_and_leaves_no_target_on_chmod_failur
     assert!(
         leftovers.is_empty(),
         "failed AVF file import left staged or partial entries: {leftovers:?}"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn avf_file_import_script_preserves_existing_target_on_chmod_failure() {
+    use std::io::Write;
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp = tempfile::tempdir().unwrap();
+    let worktree = temp.path().join("worktree");
+    let target = worktree.join(".ctx/attachments/docs/readme.md");
+    let fake_bin = temp.path().join("bin");
+    std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+    std::fs::write(&target, b"existing").unwrap();
+    std::fs::create_dir_all(&fake_bin).unwrap();
+
+    let fake_chmod = fake_bin.join("chmod");
+    std::fs::write(&fake_chmod, "#!/bin/sh\nexit 9\n").unwrap();
+    let mut permissions = std::fs::metadata(&fake_chmod).unwrap().permissions();
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(&fake_chmod, permissions).unwrap();
+
+    let path = format!(
+        "{}:{}",
+        fake_bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    let mut child = std::process::Command::new("sh")
+        .current_dir(&worktree)
+        .env("PATH", path)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .arg("-lc")
+        .arg(avf_import_file_script())
+        .arg("--")
+        .arg("./.ctx/attachments/docs/readme.md")
+        .arg("ro")
+        .spawn()
+        .unwrap();
+    child.stdin.take().unwrap().write_all(b"payload").unwrap();
+    let output = child.wait_with_output().unwrap();
+
+    assert!(
+        !output.status.success(),
+        "AVF file import refresh must fail when read-only chmod fails"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&target).unwrap(),
+        "existing",
+        "failed AVF file refresh must preserve existing mount target"
+    );
+    let leftovers = std::fs::read_dir(target.parent().unwrap())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().to_string())
+        .collect::<Vec<_>>();
+    assert!(
+        !leftovers.iter().any(|name| name.contains(".tmp.")),
+        "failed AVF file refresh left staged entries: {leftovers:?}"
     );
 }
