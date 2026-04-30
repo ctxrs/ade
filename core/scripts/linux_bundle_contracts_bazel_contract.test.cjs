@@ -49,6 +49,16 @@ test("linux AppImage packaging includes manifest-declared ctx-mcp runtime payloa
   );
   assert.match(
     linuxTauriBundleScript,
+    /--appimage-offset/,
+    "Linux AppImages must reuse the original AppImage runtime when repacking the patched AppDir",
+  );
+  assert.match(
+    linuxTauriBundleScript,
+    /mksquashfs "\$appdir" "\$tmp_squashfs"/,
+    "Linux AppImages must repack the patched AppDir without rerunning linuxdeploy",
+  );
+  assert.match(
+    linuxTauriBundleScript,
     /verify_appimage_bundle_manifest_closure/,
     "Linux AppImages must be extracted and verified before staging for publish",
   );

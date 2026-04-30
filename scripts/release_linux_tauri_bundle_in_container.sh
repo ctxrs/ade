@@ -137,23 +137,6 @@ pick_latest_bundle_artifact_from_candidates() {
   return 0
 }
 
-normalize_rebuilt_appimage_path() {
-  local candidate="$1"
-  if [[ -z "$candidate" || ! -f "$candidate" ]]; then
-    return 1
-  fi
-  if [[ "$candidate" == "$appimage_bundle_dir/"* ]]; then
-    printf '%s' "$candidate"
-    return 0
-  fi
-  local basename normalized
-  basename="$(basename "$candidate")"
-  normalized="$appimage_bundle_dir/$basename"
-  mkdir -p "$appimage_bundle_dir"
-  mv -f "$candidate" "$normalized"
-  printf '%s' "$normalized"
-}
-
 find_appdir_path() {
   find "$appimage_bundle_dir" "$fallback_appimage_bundle_dir" -maxdepth 1 -type d -name '*.AppDir' 2>/dev/null | head -n 1 || true
 }
@@ -170,30 +153,25 @@ rewrite_appdir_bundle_manifest_digests() {
   node core/scripts/verify_bundle_manifest_closure.cjs --rewrite-digests "$bundle_dir"
 }
 
-rebuild_appimage_from_appdir() {
-  local appdir="$1"
-  local tauri_cache_dir linuxdeploy_path plugin_path rebuilt
-  tauri_cache_dir="$(select_tauri_cache_dir)"
-  linuxdeploy_path="$tauri_cache_dir/linuxdeploy-${tauri_arch}.AppImage"
-  plugin_path="$tauri_cache_dir/linuxdeploy-plugin-appimage-${tauri_arch}.AppImage"
-  if [[ ! -f "$plugin_path" ]]; then
-    plugin_path="$tauri_cache_dir/linuxdeploy-plugin-appimage.AppImage"
-  fi
-  if [[ ! -f "$linuxdeploy_path" ]]; then
-    echo "error: linuxdeploy binary is unavailable at: $linuxdeploy_path" >&2
+repack_appimage_from_appdir() {
+  local appimage="$1"
+  local appdir="$2"
+  local offset tmp_squashfs tmp_out
+  offset="$("$appimage" --appimage-offset)"
+  if ! [[ "$offset" =~ ^[0-9]+$ ]]; then
+    echo "error: unable to determine AppImage runtime offset for $appimage: $offset" >&2
     return 1
   fi
-  chmod +x "$linuxdeploy_path"
-  if [[ -f "$plugin_path" ]]; then
-    chmod +x "$plugin_path"
-  fi
-  export LINUXDEPLOY_PLUGIN_DIR="$tauri_cache_dir"
-  if ! "$linuxdeploy_path" --appimage-extract-and-run --verbosity 3 --appdir "$appdir" --plugin gtk --output appimage >&2; then
-    echo "error: failed to rebuild AppImage after bundle manifest digest rewrite" >&2
-    return 1
-  fi
-  rebuilt="$(pick_latest_bundle_artifact_from_candidates '*.AppImage' "$appimage_bundle_dir" ".")"
-  normalize_rebuilt_appimage_path "$rebuilt"
+  tmp_squashfs="/tmp/ctx-repacked-appimage-${platform}-$$.squashfs"
+  tmp_out="${appimage}.repacked-$$"
+  rm -f "$tmp_squashfs" "$tmp_out"
+  head -c "$offset" "$appimage" >"$tmp_out"
+  mksquashfs "$appdir" "$tmp_squashfs" -root-owned -noappend >/dev/null
+  cat "$tmp_squashfs" >>"$tmp_out"
+  chmod --reference="$appimage" "$tmp_out" 2>/dev/null || chmod 755 "$tmp_out"
+  mv -f "$tmp_out" "$appimage"
+  rm -f "$tmp_squashfs"
+  printf '%s' "$appimage"
 }
 
 verify_appimage_bundle_manifest_closure() {
@@ -342,6 +320,5 @@ if [[ -z "$appdir_path" || ! -d "$appdir_path" ]]; then
 fi
 
 rewrite_appdir_bundle_manifest_digests "$appdir_path"
-rm -f "$appimage_bundle"
-appimage_bundle="$(rebuild_appimage_from_appdir "$appdir_path")"
+appimage_bundle="$(repack_appimage_from_appdir "$appimage_bundle" "$appdir_path")"
 verify_appimage_bundle_manifest_closure "$appimage_bundle" "/tmp/ctx-rebuilt-appimage-verify-${platform}-$$"
