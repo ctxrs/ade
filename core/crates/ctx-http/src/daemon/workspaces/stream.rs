@@ -410,7 +410,9 @@ pub(crate) async fn refresh_worktree_vcs_for_sessions(
                             ctx_core::models::WorktreeVcsTouchedFilesState::Ready
                         )) => {}
             Some(_) => {
-                if let Err(err) = crate::git_status::request_worktree_vcs_refresh(
+                // Subscription warm-up should not downgrade an already-published ready snapshot.
+                // Real filesystem invalidations still use the transient stale path.
+                if let Err(err) = crate::git_status::request_worktree_vcs_refresh_without_transient(
                     state, &worktree, true, open_pane,
                 )
                 .await
@@ -422,7 +424,7 @@ pub(crate) async fn refresh_worktree_vcs_for_sessions(
                 }
             }
             None => {
-                if let Err(err) = crate::git_status::request_worktree_vcs_refresh(
+                if let Err(err) = crate::git_status::request_worktree_vcs_refresh_without_transient(
                     state, &worktree, true, open_pane,
                 )
                 .await

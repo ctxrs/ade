@@ -474,6 +474,25 @@ pub async fn request_worktree_vcs_refresh(
     summary: bool,
     touched_files: bool,
 ) -> Result<()> {
+    request_worktree_vcs_refresh_inner(state, worktree, summary, touched_files, true).await
+}
+
+pub(crate) async fn request_worktree_vcs_refresh_without_transient(
+    state: &Arc<AppState>,
+    worktree: &Worktree,
+    summary: bool,
+    touched_files: bool,
+) -> Result<()> {
+    request_worktree_vcs_refresh_inner(state, worktree, summary, touched_files, false).await
+}
+
+async fn request_worktree_vcs_refresh_inner(
+    state: &Arc<AppState>,
+    worktree: &Worktree,
+    summary: bool,
+    touched_files: bool,
+    publish_transient: bool,
+) -> Result<()> {
     if !state.worktree_vcs_enabled() {
         return Ok(());
     }
@@ -489,22 +508,24 @@ pub async fn request_worktree_vcs_refresh(
         entry.pending_touched_files |= touched_files;
     }
 
-    if let Some(mut snapshot) = state.get_worktree_vcs_snapshot(worktree.id).await {
-        if summary {
-            snapshot.compute_state = WorktreeVcsComputeState::Computing;
-            snapshot.freshness = derive_worktree_vcs_freshness(
-                &WorktreeVcsComputeState::Computing,
-                &snapshot.summary,
-            );
+    if publish_transient {
+        if let Some(mut snapshot) = state.get_worktree_vcs_snapshot(worktree.id).await {
+            if summary {
+                snapshot.compute_state = WorktreeVcsComputeState::Computing;
+                snapshot.freshness = derive_worktree_vcs_freshness(
+                    &WorktreeVcsComputeState::Computing,
+                    &snapshot.summary,
+                );
+            }
+            if touched_files {
+                snapshot.touched_files_state = match snapshot.touched_files_state {
+                    WorktreeVcsTouchedFilesState::Ready => WorktreeVcsTouchedFilesState::Stale,
+                    WorktreeVcsTouchedFilesState::Stale => WorktreeVcsTouchedFilesState::Stale,
+                    _ => WorktreeVcsTouchedFilesState::Loading,
+                };
+            }
+            publish_transient_worktree_vcs_snapshot(state, worktree, snapshot).await;
         }
-        if touched_files {
-            snapshot.touched_files_state = match snapshot.touched_files_state {
-                WorktreeVcsTouchedFilesState::Ready => WorktreeVcsTouchedFilesState::Stale,
-                WorktreeVcsTouchedFilesState::Stale => WorktreeVcsTouchedFilesState::Stale,
-                _ => WorktreeVcsTouchedFilesState::Loading,
-            };
-        }
-        publish_transient_worktree_vcs_snapshot(state, worktree, snapshot).await;
     }
 
     state.workspaces.worktree_vcs_scheduler.notify.notify_one();
