@@ -26,9 +26,8 @@ const WINDOWS_PRIVATE_SDDL: &str = "D:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FA;;;OW)";
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 pub fn ensure_private_dir_sync(path: &Path) -> Result<()> {
-    fs::create_dir_all(path)
-        .with_context(|| format!("creating private directory {}", path.display()))?;
-    harden_private_dir_sync(path)
+    ensure_private_dir_chain_sync(path, true)?;
+    apply_private_dir_permissions_sync(path)
 }
 
 pub async fn ensure_private_dir(path: &Path) -> Result<()> {
@@ -39,6 +38,26 @@ pub async fn ensure_private_dir(path: &Path) -> Result<()> {
 }
 
 pub fn harden_private_dir_sync(path: &Path) -> Result<()> {
+    if !ensure_private_dir_chain_sync(path, false)? {
+        anyhow::bail!("private directory path not found: {}", path.display());
+    }
+    apply_private_dir_permissions_sync(path)
+}
+
+pub fn harden_private_file_sync(path: &Path) -> Result<()> {
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        ensure_private_dir_chain_sync(parent, false)?;
+    }
+    if !reject_symlink_sync(path)? {
+        anyhow::bail!("private file path not found: {}", path.display());
+    }
+    apply_private_file_permissions_sync(path)
+}
+
+fn apply_private_dir_permissions_sync(path: &Path) -> Result<()> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -51,7 +70,7 @@ pub fn harden_private_dir_sync(path: &Path) -> Result<()> {
     Ok(())
 }
 
-pub fn harden_private_file_sync(path: &Path) -> Result<()> {
+fn apply_private_file_permissions_sync(path: &Path) -> Result<()> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -67,8 +86,11 @@ pub fn harden_private_file_sync(path: &Path) -> Result<()> {
 pub fn reject_symlink_sync(path: &Path) -> Result<bool> {
     match fs::symlink_metadata(path) {
         Ok(metadata) => {
-            if metadata.file_type().is_symlink() {
-                anyhow::bail!("private path must not be a symlink: {}", path.display());
+            if metadata_is_link_or_reparse_point(&metadata) {
+                anyhow::bail!(
+                    "private path must not be a symlink or reparse point: {}",
+                    path.display()
+                );
             }
             Ok(true)
         }
@@ -78,6 +100,14 @@ pub fn reject_symlink_sync(path: &Path) -> Result<bool> {
 }
 
 pub fn read_private_file_to_string_sync(path: &Path) -> Result<Option<String>> {
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        if !ensure_private_dir_chain_sync(parent, false)? {
+            return Ok(None);
+        }
+    }
     if !reject_symlink_sync(path)? {
         return Ok(None);
     }
@@ -118,8 +148,16 @@ pub fn read_private_file_to_string_sync(path: &Path) -> Result<Option<String>> {
 pub async fn harden_private_file_if_exists(path: &Path) -> Result<()> {
     let path = path.to_path_buf();
     tokio::task::spawn_blocking(move || {
-        if path.exists() {
-            harden_private_file_sync(&path)?;
+        if let Some(parent) = path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+        {
+            if !ensure_private_dir_chain_sync(parent, false)? {
+                return Ok(());
+            }
+        }
+        if reject_symlink_sync(&path)? {
+            apply_private_file_permissions_sync(&path)?;
         }
         Ok(())
     })
@@ -217,6 +255,9 @@ pub fn harden_private_directory_files_sync(
     dir: &Path,
     should_harden: impl Fn(&str) -> bool,
 ) -> Result<()> {
+    if !ensure_private_dir_chain_sync(dir, false)? {
+        return Ok(());
+    }
     let entries = match fs::read_dir(dir) {
         Ok(entries) => entries,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
@@ -237,6 +278,159 @@ pub fn harden_private_directory_files_sync(
         }
     }
     Ok(())
+}
+
+struct PrivateDirChainEntry {
+    path: PathBuf,
+    exists: bool,
+    is_dir: bool,
+    is_link_or_reparse_point: bool,
+    is_private_boundary: bool,
+}
+
+fn ensure_private_dir_chain_sync(path: &Path, create_missing: bool) -> Result<bool> {
+    let entries = collect_private_dir_chain(path)?;
+    if entries.is_empty() {
+        return Ok(true);
+    }
+
+    let validate_through = entries
+        .iter()
+        .rposition(|entry| entry.is_private_boundary)
+        .unwrap_or(entries.len() - 1);
+    for entry in entries.iter().take(validate_through + 1) {
+        validate_private_dir_chain_entry(entry)?;
+    }
+
+    let mut all_exist = true;
+    for entry in entries.iter().take(validate_through + 1).rev() {
+        match fs::symlink_metadata(&entry.path) {
+            Ok(metadata) => {
+                validate_private_dir_metadata(&entry.path, &metadata)?;
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                all_exist = false;
+                if !create_missing {
+                    continue;
+                }
+                fs::create_dir(&entry.path).with_context(|| {
+                    format!("creating private directory {}", entry.path.display())
+                })?;
+                let metadata = fs::symlink_metadata(&entry.path).with_context(|| {
+                    format!("reading private directory {}", entry.path.display())
+                })?;
+                validate_private_dir_metadata(&entry.path, &metadata)?;
+                apply_private_dir_permissions_sync(&entry.path)?;
+            }
+            Err(err) => {
+                return Err(err).with_context(|| {
+                    format!("reading private directory {}", entry.path.display())
+                });
+            }
+        }
+    }
+    Ok(all_exist)
+}
+
+fn collect_private_dir_chain(path: &Path) -> Result<Vec<PrivateDirChainEntry>> {
+    let mut entries = Vec::new();
+    let mut current = path.to_path_buf();
+    loop {
+        if current.as_os_str().is_empty() {
+            break;
+        }
+        let entry = match fs::symlink_metadata(&current) {
+            Ok(metadata) => PrivateDirChainEntry {
+                path: current.clone(),
+                exists: true,
+                is_dir: metadata.is_dir(),
+                is_link_or_reparse_point: metadata_is_link_or_reparse_point(&metadata),
+                is_private_boundary: is_private_dir_boundary(&metadata),
+            },
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => PrivateDirChainEntry {
+                path: current.clone(),
+                exists: false,
+                is_dir: false,
+                is_link_or_reparse_point: false,
+                is_private_boundary: false,
+            },
+            Err(err) => {
+                return Err(err)
+                    .with_context(|| format!("reading private directory {}", current.display()));
+            }
+        };
+        entries.push(entry);
+        let Some(parent) = current.parent() else {
+            break;
+        };
+        if parent == current || parent.as_os_str().is_empty() {
+            break;
+        }
+        current = parent.to_path_buf();
+    }
+    Ok(entries)
+}
+
+fn validate_private_dir_chain_entry(entry: &PrivateDirChainEntry) -> Result<()> {
+    if !entry.exists {
+        return Ok(());
+    }
+    if entry.is_link_or_reparse_point {
+        anyhow::bail!(
+            "private directory path must not contain a symlink or reparse point: {}",
+            entry.path.display()
+        );
+    }
+    if !entry.is_dir {
+        anyhow::bail!(
+            "private directory path must be a directory: {}",
+            entry.path.display()
+        );
+    }
+    Ok(())
+}
+
+fn validate_private_dir_metadata(path: &Path, metadata: &fs::Metadata) -> Result<()> {
+    if metadata_is_link_or_reparse_point(metadata) {
+        anyhow::bail!(
+            "private directory path must not contain a symlink or reparse point: {}",
+            path.display()
+        );
+    }
+    if !metadata.is_dir() {
+        anyhow::bail!(
+            "private directory path must be a directory: {}",
+            path.display()
+        );
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn is_private_dir_boundary(metadata: &fs::Metadata) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+
+    metadata.is_dir()
+        && !metadata_is_link_or_reparse_point(metadata)
+        && metadata.permissions().mode() & 0o777 == PRIVATE_DIR_MODE
+}
+
+#[cfg(not(unix))]
+fn is_private_dir_boundary(_metadata: &fs::Metadata) -> bool {
+    false
+}
+
+#[cfg(windows)]
+fn metadata_is_link_or_reparse_point(metadata: &fs::Metadata) -> bool {
+    use std::os::windows::fs::MetadataExt;
+
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+    metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+}
+
+#[cfg(not(windows))]
+fn metadata_is_link_or_reparse_point(metadata: &fs::Metadata) -> bool {
+    metadata.file_type().is_symlink()
 }
 
 fn sqlite_file_family(path: &Path) -> [PathBuf; 3] {
@@ -450,5 +644,37 @@ mod tests {
         let err = read_private_file_to_string_sync(&link).unwrap_err();
 
         assert!(format!("{err:#}").contains("must not be a symlink"));
+    }
+
+    #[test]
+    fn private_atomic_write_rejects_symlinked_parent_chain() {
+        let dir = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let data_root = dir.path().join("data");
+        std::fs::create_dir_all(&data_root).unwrap();
+        std::fs::create_dir_all(outside.path().join("nested")).unwrap();
+        std::os::unix::fs::symlink(outside.path(), data_root.join("link")).unwrap();
+        let path = data_root.join("link").join("nested").join("secret.json");
+
+        let err = write_private_file_atomic_sync(&path, b"secret").unwrap_err();
+
+        assert!(format!("{err:#}").contains("symlink or reparse point"));
+        assert!(!outside.path().join("nested").join("secret.json").exists());
+    }
+
+    #[test]
+    fn private_read_rejects_symlinked_parent_chain() {
+        let dir = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let data_root = dir.path().join("data");
+        std::fs::create_dir_all(&data_root).unwrap();
+        std::fs::create_dir_all(outside.path().join("nested")).unwrap();
+        std::fs::write(outside.path().join("nested").join("secret.json"), "outside").unwrap();
+        std::os::unix::fs::symlink(outside.path(), data_root.join("link")).unwrap();
+        let path = data_root.join("link").join("nested").join("secret.json");
+
+        let err = read_private_file_to_string_sync(&path).unwrap_err();
+
+        assert!(format!("{err:#}").contains("symlink or reparse point"));
     }
 }

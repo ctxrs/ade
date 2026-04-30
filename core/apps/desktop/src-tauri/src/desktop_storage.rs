@@ -48,15 +48,14 @@ fn prepare_desktop_storage_sqlite_file_family(path: &Path) -> Result<()> {
     if let Some(parent) = path.parent() {
         ctx_fs::permissions::ensure_private_dir_sync(parent)?;
     }
-    let mut main_exists = false;
+    let mut missing = Vec::new();
     for member in desktop_storage_sqlite_file_family(path) {
-        let exists = validate_desktop_storage_sqlite_file_member(&member)?;
-        if member == path {
-            main_exists = exists;
+        if !validate_desktop_storage_sqlite_file_member(&member)? {
+            missing.push(member);
         }
     }
-    if !main_exists {
-        ctx_fs::permissions::write_private_file_atomic_sync(path, b"")?;
+    for member in missing {
+        ctx_fs::permissions::write_private_file_atomic_sync(&member, b"")?;
     }
     harden_existing_desktop_storage_sqlite_file_family(path)
 }
@@ -409,6 +408,34 @@ mod desktop_storage_tests {
         let file_mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
         assert_eq!(dir_mode, 0o700);
         assert_eq!(file_mode, 0o600);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn desktop_storage_prepare_reserves_sqlite_sidecars_before_open() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir =
+            std::env::temp_dir().join(format!("ctx-desktop-storage-{}", uuid::Uuid::new_v4()));
+        let path = dir.join("ui").join("desktop-ui-state.sqlite");
+
+        prepare_desktop_storage_sqlite_file_family(&path).unwrap();
+
+        for member in desktop_storage_sqlite_file_family(&path) {
+            let metadata = std::fs::symlink_metadata(&member).unwrap();
+            assert!(
+                metadata.is_file(),
+                "sqlite family member must be a regular file: {}",
+                member.display()
+            );
+            assert!(
+                !metadata.file_type().is_symlink(),
+                "sqlite family member must not be a symlink: {}",
+                member.display()
+            );
+            assert_eq!(metadata.permissions().mode() & 0o777, 0o600);
+        }
         let _ = std::fs::remove_dir_all(dir);
     }
 
