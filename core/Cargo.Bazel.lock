@@ -1,5 +1,5 @@
 {
-  "checksum": "949e7d3b7bb67bfbd9457c0326eb4bac52c9d3e5d492dbde0008ce6b6616803f",
+  "checksum": "d38964f605328ca98b31d1ceb2bde87275fe9a53bcb872d3f75474dc5eff2dc9",
   "crates": {
     "adler2 2.0.1": {
       "name": "adler2",
@@ -2944,7 +2944,7 @@
             "-p1"
           ],
           "patches": [
-            "//tools/bazel:patches/azure_core-0.21.0-rules-rust-paste.patch"
+            "@@//tools/bazel:patches/azure_core-0.21.0-rules-rust-paste.patch"
           ]
         }
       },
@@ -7115,6 +7115,10 @@
               "target": "reqwest"
             },
             {
+              "id": "ring 0.17.14",
+              "target": "ring"
+            },
+            {
               "id": "rustls 0.23.36",
               "target": "rustls"
             },
@@ -7165,6 +7169,10 @@
             {
               "id": "tempfile 3.24.0",
               "target": "tempfile"
+            },
+            {
+              "id": "thiserror 1.0.69",
+              "target": "thiserror"
             },
             {
               "id": "tokio 1.49.0",
@@ -26102,7 +26110,17 @@
         "crate_features": {
           "common": [
             "const_generics",
-            "const_new"
+            "const_new",
+            "serde"
+          ],
+          "selects": {}
+        },
+        "deps": {
+          "common": [
+            {
+              "id": "serde 1.0.228",
+              "target": "serde"
+            }
           ],
           "selects": {}
         },
@@ -26387,9 +26405,11 @@
             "derive",
             "macros",
             "migrate",
+            "postgres",
             "runtime-tokio",
             "sqlite",
             "sqlx-macros",
+            "sqlx-postgres",
             "sqlx-sqlite",
             "uuid"
           ],
@@ -26400,6 +26420,10 @@
             {
               "id": "sqlx-core 0.8.6",
               "target": "sqlx_core"
+            },
+            {
+              "id": "sqlx-postgres 0.8.6",
+              "target": "sqlx_postgres"
             },
             {
               "id": "sqlx-sqlite 0.8.6",
@@ -26462,9 +26486,11 @@
             "chrono",
             "crc",
             "default",
+            "json",
             "migrate",
             "offline",
             "serde",
+            "serde_json",
             "sha2",
             "tokio",
             "tokio-stream",
@@ -26570,6 +26596,10 @@
               "target": "serde"
             },
             {
+              "id": "serde_json 1.0.149",
+              "target": "serde_json"
+            },
+            {
               "id": "sha2 0.10.9",
               "target": "sha2"
             },
@@ -26651,6 +26681,7 @@
             "derive",
             "macros",
             "migrate",
+            "postgres",
             "sqlite",
             "uuid"
           ],
@@ -26729,7 +26760,9 @@
             "derive",
             "macros",
             "migrate",
+            "postgres",
             "sqlite",
+            "sqlx-postgres",
             "sqlx-sqlite",
             "tokio",
             "uuid"
@@ -26781,6 +26814,10 @@
             {
               "id": "sqlx-core 0.8.6",
               "target": "sqlx_core"
+            },
+            {
+              "id": "sqlx-postgres 0.8.6",
+              "target": "sqlx_postgres"
             },
             {
               "id": "sqlx-sqlite 0.8.6",
@@ -27016,6 +27053,33 @@
         "compile_data_glob": [
           "**"
         ],
+        "crate_features": {
+          "common": [
+            "chrono",
+            "migrate",
+            "uuid"
+          ],
+          "selects": {
+            "aarch64-apple-darwin": [
+              "offline"
+            ],
+            "aarch64-unknown-linux-gnu": [
+              "offline"
+            ],
+            "x86_64-apple-darwin": [
+              "offline"
+            ],
+            "x86_64-pc-windows-msvc": [
+              "offline"
+            ],
+            "x86_64-unknown-linux-gnu": [
+              "offline"
+            ],
+            "x86_64-unknown-nixos-gnu": [
+              "offline"
+            ]
+          }
+        },
         "deps": {
           "common": [
             {
@@ -27033,6 +27097,10 @@
             {
               "id": "byteorder 1.5.0",
               "target": "byteorder"
+            },
+            {
+              "id": "chrono 0.4.43",
+              "target": "chrono"
             },
             {
               "id": "crc 3.4.0",
@@ -27125,6 +27193,10 @@
             {
               "id": "tracing 0.1.44",
               "target": "tracing"
+            },
+            {
+              "id": "uuid 1.19.0",
+              "target": "uuid"
             },
             {
               "id": "whoami 1.6.1",
@@ -29192,6 +29264,23 @@
         "compile_data_glob": [
           "**"
         ],
+        "crate_features": {
+          "common": [
+            "alloc",
+            "default",
+            "tinyvec_macros"
+          ],
+          "selects": {}
+        },
+        "deps": {
+          "common": [
+            {
+              "id": "tinyvec_macros 0.1.1",
+              "target": "tinyvec_macros"
+            }
+          ],
+          "selects": {}
+        },
         "edition": "2018",
         "version": "1.10.0"
       },
@@ -32019,6 +32108,14 @@
         "compile_data_glob": [
           "**"
         ],
+        "crate_features": {
+          "common": [
+            "default",
+            "hardcoded-data",
+            "std"
+          ],
+          "selects": {}
+        },
         "edition": "2018",
         "version": "0.3.18"
       },
@@ -32098,6 +32195,13 @@
         "compile_data_glob": [
           "**"
         ],
+        "crate_features": {
+          "common": [
+            "default",
+            "std"
+          ],
+          "selects": {}
+        },
         "deps": {
           "common": [
             {
@@ -32146,6 +32250,14 @@
         "compile_data_glob": [
           "**"
         ],
+        "crate_features": {
+          "common": [
+            "default",
+            "emoji",
+            "general-category"
+          ],
+          "selects": {}
+        },
         "edition": "2021",
         "version": "0.1.4"
       },
@@ -34985,6 +35097,7 @@
             "Win32_Storage",
             "Win32_Storage_FileSystem",
             "Win32_System",
+            "Win32_System_Com",
             "Win32_System_Console",
             "Win32_System_Diagnostics",
             "Win32_System_Diagnostics_Debug",
@@ -34996,6 +35109,8 @@
             "Win32_System_SystemServices",
             "Win32_System_Threading",
             "Win32_System_WindowsProgramming",
+            "Win32_UI",
+            "Win32_UI_Shell",
             "default"
           ],
           "selects": {}
@@ -39188,6 +39303,7 @@
     "redis 0.25.4",
     "regex 1.12.2",
     "reqwest 0.12.28",
+    "ring 0.17.14",
     "rustls 0.23.36",
     "semver 1.0.27",
     "serde 1.0.228",
@@ -39201,6 +39317,7 @@
     "sysinfo 0.30.13",
     "tar 0.4.44",
     "tempfile 3.24.0",
+    "thiserror 1.0.69",
     "tokio 1.49.0",
     "tokio-stream 0.1.18",
     "tokio-tungstenite 0.26.2",

@@ -30,7 +30,9 @@ function parseArgs(argv) {
     crates: [],
     includeReverseDeps: false,
     mode: "workspace",
+    resolvedCrates: false,
     runClippy: false,
+    skipTests: false,
     testStrategy: "mixed",
   };
 
@@ -48,6 +50,10 @@ function parseArgs(argv) {
       index += 1;
     } else if (arg === "--include-reverse-deps") {
       args.includeReverseDeps = true;
+    } else if (arg === "--resolved-crates") {
+      args.resolvedCrates = true;
+    } else if (arg === "--skip-tests") {
+      args.skipTests = true;
     } else if (arg === "--mode") {
       args.mode = argv[index + 1] || args.mode;
       index += 1;
@@ -64,8 +70,17 @@ function parseArgs(argv) {
   if (args.agentGate && (args.all || args.changedFiles.length > 0 || args.crates.length > 0)) {
     throw new Error("--agent-gate cannot be combined with --all, --crate, or --changed-file");
   }
+  if (
+    args.resolvedCrates
+    && (args.agentGate || args.all || args.changedFiles.length > 0 || args.includeReverseDeps)
+  ) {
+    throw new Error("--resolved-crates can only be combined with explicit --crate selections");
+  }
   if (!args.agentGate && !args.all && args.changedFiles.length === 0 && args.crates.length === 0) {
     throw new Error("one of --all, --crate, or --changed-file is required");
+  }
+  if (args.skipTests && !args.runClippy) {
+    throw new Error("--skip-tests requires --clippy so the Rust gate still performs work");
   }
   if (!new Set(["cargo", "mixed", "nextest"]).has(args.testStrategy)) {
     throw new Error(`unsupported test strategy: ${args.testStrategy}`);
@@ -74,6 +89,9 @@ function parseArgs(argv) {
 }
 
 function resolveCrates(graph, args) {
+  if (args.resolvedCrates) {
+    return filterGateManagedCrateNames(args.crates);
+  }
   if (args.agentGate) {
     return [...AGENT_GATE_CRATES];
   }
@@ -222,37 +240,39 @@ function main() {
         taskKind: "clippy",
       });
     }
-    runBazelPhase({
-      coreRoot,
-      env,
-      crateNames: bazelTestCrates,
-    });
-    runTaskPhase({
-      coreRoot,
-      env,
-      crateNames: nextestCrates,
-      taskKind: "nextest",
-    });
-    const parallelCargoTestCrates = cargoTestCrates.filter(
-      (crateName) => !ISOLATED_CARGO_TEST_CRATES.has(crateName),
-    );
-    const isolatedCargoTestCrates = cargoTestCrates.filter((crateName) =>
-      ISOLATED_CARGO_TEST_CRATES.has(crateName),
-    );
-    runTaskPhase({
-      coreRoot,
-      env,
-      crateNames: parallelCargoTestCrates,
-      taskKind: "test",
-    });
-    for (const crateName of isolatedCargoTestCrates) {
+    if (!args.skipTests) {
+      runBazelPhase({
+        coreRoot,
+        env,
+        crateNames: bazelTestCrates,
+      });
       runTaskPhase({
         coreRoot,
         env,
-        crateNames: [crateName],
-        taskKind: "test",
-        turboConcurrency: 1,
+        crateNames: nextestCrates,
+        taskKind: "nextest",
       });
+      const parallelCargoTestCrates = cargoTestCrates.filter(
+        (crateName) => !ISOLATED_CARGO_TEST_CRATES.has(crateName),
+      );
+      const isolatedCargoTestCrates = cargoTestCrates.filter((crateName) =>
+        ISOLATED_CARGO_TEST_CRATES.has(crateName),
+      );
+      runTaskPhase({
+        coreRoot,
+        env,
+        crateNames: parallelCargoTestCrates,
+        taskKind: "test",
+      });
+      for (const crateName of isolatedCargoTestCrates) {
+        runTaskPhase({
+          coreRoot,
+          env,
+          crateNames: [crateName],
+          taskKind: "test",
+          turboConcurrency: 1,
+        });
+      }
     }
   });
 }

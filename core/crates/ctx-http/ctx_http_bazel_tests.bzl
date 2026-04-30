@@ -309,20 +309,20 @@ CTX_HTTP_BAZEL_MANUAL_ONLY_TARGET = "manual-only"
 def _as_label(name):
     return ":" + name
 
-def _integration_rustc_env(rustc_env):
+def _integration_rustc_env(rustc_env, binary_rustc_env):
     merged = {}
     for key, value in rustc_env.items():
         merged[key] = value
-    merged["CARGO_BIN_EXE_ctx"] = "$(rootpath :ctx)"
-    merged["CARGO_BIN_EXE_ctx-mcp"] = "$(rootpath //core/crates/ctx-mcp:ctx-mcp)"
-    merged["CARGO_BIN_EXE_llama_server_mock"] = "$(rootpath :llama_server_mock)"
+    for key, value in binary_rustc_env.items():
+        merged[key] = value
     return merged
 
-def _declare_ctx_http_test(name, source_name, common_srcs, compile_data, data, deps, proc_macro_deps, rustc_env, test_args, timeout = None, extra_tags = None):
+def _declare_ctx_http_test(name, source_name, binary_data, binary_rustc_env, common_srcs, compile_data, data, deps, proc_macro_deps, rustc_env, test_args, timeout = None, extra_tags = None):
     tags = ["manual"] if name in CTX_HTTP_MANUAL_ONLY_TESTS else []
     if extra_tags:
         tags = tags + extra_tags
     test_deps = deps + CTX_HTTP_INTEGRATION_SOURCE_DEPS.get(source_name, [])
+    test_data = data + binary_data.get(source_name, [])
     kwargs = {}
     if timeout != None:
         kwargs["timeout"] = timeout
@@ -333,9 +333,9 @@ def _declare_ctx_http_test(name, source_name, common_srcs, compile_data, data, d
         srcs = ["tests/{}.rs".format(source_name)] + common_srcs,
         args = test_args,
         compile_data = compile_data,
-        data = data,
+        data = test_data,
         edition = "2021",
-        rustc_env = _integration_rustc_env(rustc_env),
+        rustc_env = _integration_rustc_env(rustc_env, binary_rustc_env.get(source_name, {})),
         deps = test_deps,
         proc_macro_deps = proc_macro_deps,
         tags = tags,
@@ -358,7 +358,7 @@ def declare_ctx_http_rust_unit_test(name, args, compile_data, data, deps, proc_m
         **kwargs
     )
 
-def declare_ctx_http_integration_tests(common_srcs, compile_data, data, deps, proc_macro_deps, rustc_env, test_args):
+def declare_ctx_http_integration_tests(binary_data, binary_rustc_env, common_srcs, compile_data, data, deps, proc_macro_deps, rustc_env, test_args):
     declared = {}
     for suite_name in CTX_HTTP_SUITE_ORDER:
         test_labels = []
@@ -368,6 +368,8 @@ def declare_ctx_http_integration_tests(common_srcs, compile_data, data, deps, pr
                 _declare_ctx_http_test(
                     name = test_name,
                     source_name = custom["source"] if custom else test_name,
+                    binary_data = binary_data,
+                    binary_rustc_env = binary_rustc_env,
                     common_srcs = common_srcs,
                     compile_data = compile_data,
                     data = data,
@@ -392,6 +394,8 @@ def declare_ctx_http_integration_tests(common_srcs, compile_data, data, deps, pr
             _declare_ctx_http_test(
                 name = test_name,
                 source_name = test_name,
+                binary_data = binary_data,
+                binary_rustc_env = binary_rustc_env,
                 common_srcs = common_srcs,
                 compile_data = compile_data,
                 data = data,

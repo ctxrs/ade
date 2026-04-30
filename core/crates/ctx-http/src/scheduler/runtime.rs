@@ -59,7 +59,7 @@ use self::provider_env::{
 use self::provider_launch::apply_provider_launch_overrides;
 use self::provider_spawn::{
     build_provider_run_hooks, handle_provider_start_failure, issue_mcp_token_if_enabled,
-    record_provider_spawn_metric,
+    record_provider_spawn_metric, ProviderStartFailure,
 };
 use self::tool_runtime::{cwd_outside_worktree, maybe_spool_tool_output};
 use self::turn_failure::emit_turn_start_failed;
@@ -467,17 +467,19 @@ pub(crate) async fn start_turn(
         Err(err) => {
             handle_provider_start_failure(
                 state,
-                session,
-                run_id,
-                turn_id,
-                message_id,
-                mcp_token.as_deref(),
-                run_started_at,
-                &workdir_str,
-                &full_model_id,
-                execution_environment,
-                session_root_kind,
-                &err,
+                ProviderStartFailure {
+                    session,
+                    run_id,
+                    turn_id,
+                    message_id,
+                    mcp_token: mcp_token.as_deref(),
+                    run_started_at,
+                    workdir_str: &workdir_str,
+                    full_model_id: &full_model_id,
+                    execution_environment,
+                    session_root_kind,
+                    err: &err,
+                },
             )
             .await;
             return Err(err);

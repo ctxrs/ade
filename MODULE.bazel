@@ -417,6 +417,10 @@ crate.spec(
     version = "1",
 )
 crate.spec(
+    package = "ring",
+    version = "0.17",
+)
+crate.spec(
     package = "rustls",
     version = "0.23",
 )
@@ -458,6 +462,7 @@ crate.spec(
         "uuid",
         "migrate",
         "macros",
+        "postgres",
     ],
     package = "sqlx",
     version = "0.8",
@@ -477,6 +482,10 @@ crate.spec(
 crate.spec(
     package = "tar",
     version = "0.4",
+)
+crate.spec(
+    package = "thiserror",
+    version = "1",
 )
 crate.spec(
     features = ["full"],

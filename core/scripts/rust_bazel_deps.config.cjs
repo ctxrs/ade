@@ -5,6 +5,8 @@ const GENERATED_DEP_CONSUMER_CRATES = Object.freeze([
   "ctx-events",
   "ctx-fs",
   "ctx-harness-setup",
+  "ctx-llm-relay-authority",
+  "ctx-llm-relay-contract",
   "ctx-provider-install",
   "ctx-provider-accounts",
   "ctx-provider-matrix",

@@ -306,7 +306,14 @@ test("ctx-http BUILD exposes Bazel-native base test targets", () => {
     ctxHttpBuild,
     /CTX_HTTP_INTEGRATION_TEST_DATA = CTX_HTTP_COMPILE_DATA \+ CTX_HTTP_TEST_CORPUS_DATA \+ CTX_HTTP_TEST_FIXTURE_DATA/,
   );
-  assert.match(ctxHttpBuild, /"\/\/core\/crates\/ctx-mcp:ctx-mcp"/);
+  assert.match(ctxHttpBuild, /CTX_HTTP_INTEGRATION_BINARY_DATA = \{/);
+  assert.match(ctxHttpBuild, /"provider_scenarios_offline": \["\/\/core\/crates\/ctx-mcp:ctx-mcp"\]/);
+  assert.match(ctxHttpBuild, /"noisy_output_backpressure": \["\/\/core\/crates\/ctx-mcp:ctx-mcp"\]/);
+  assert.match(ctxHttpBuild, /"session_model_api": \["\/\/core\/crates\/ctx-mcp:ctx-mcp"\]/);
+  assert.match(ctxHttpBuild, /"title_generation_local": \[":llama_server_mock"\]/);
+  assert.match(ctxHttpBuild, /"cloud_gateway_azure_e2e": \[":ctx"\]/);
+  assert.match(ctxHttpBuild, /"CARGO_BIN_EXE_ctx-mcp": "\$\(rootpath \/\/core\/crates\/ctx-mcp:ctx-mcp\)"/);
+  assert.match(ctxHttpBuild, /"CARGO_BIN_EXE_llama_server_mock": "\$\(rootpath :llama_server_mock\)"/);
   assert.match(ctxHttpBuild, /declare_ctx_http_integration_tests/);
   assert.match(ctxHttpBuild, new RegExp(`CARGO_PKG_VERSION": "${escapeRegExp(desktopVersion)}"`));
 });
@@ -366,10 +373,9 @@ test("ctx-http Bazel helper keeps quick-path and manual-only suites explicit", (
     ctxHttpBazelTests,
     /"global_id_routing_http_message_delete_route_is_session_scoped"/,
   );
-  assert.match(ctxHttpBazelTests, /CARGO_BIN_EXE_llama_server_mock/);
-  assert.match(ctxHttpBazelTests, /CARGO_BIN_EXE_ctx/);
-  assert.match(ctxHttpBazelTests, /CARGO_BIN_EXE_ctx-mcp/);
-  assert.match(ctxHttpBazelTests, /\$\(rootpath \/\/core\/crates\/ctx-mcp:ctx-mcp\)/);
+  assert.match(ctxHttpBazelTests, /binary_data\.get\(source_name, \[\]\)/);
+  assert.match(ctxHttpBazelTests, /binary_rustc_env\.get\(source_name, \{\}\)/);
+  assert.doesNotMatch(ctxHttpBazelTests, /merged\["CARGO_BIN_EXE_ctx-mcp"\]/);
 });
 
 test("ctx-http Bazel rust mapping covers the non-manual suite labels only", () => {

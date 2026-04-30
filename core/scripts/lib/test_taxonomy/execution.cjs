@@ -12,12 +12,15 @@ const {
   ROOT_RUST_INPUTS,
   buildWorkspaceGraph,
   collectChangedCrates,
+  expandReverseDependencies,
+  filterGateManagedCrateNames,
 } = require("../rust_workspace_graph.cjs");
 
 const coreRoot = path.resolve(__dirname, "..", "..", "..");
 const repoRoot = path.resolve(coreRoot, "..");
 const workspaceGraph = buildWorkspaceGraph(coreRoot);
 const CHECKIN_BUILDKITE_RUST_GATE_CHUNK_SIZE = 12;
+const CHECKIN_RUST_GATE_TEST_EXCLUDED_RESOLVED_CRATES = new Set(["ctx-http"]);
 const CHECKIN_BUILDKITE_EXECUTION_OPTIONS = Object.freeze({
   coalesceCtxHttpSuites: false,
   rustGateChunkSize: CHECKIN_BUILDKITE_RUST_GATE_CHUNK_SIZE,
@@ -174,18 +177,28 @@ function buildCommandForEntry(entry) {
   throw new Error(`unsupported entrypoint type for command mapping: ${entry.entrypointType}`);
 }
 
-function buildRustGateCommandForCrates(crateNames) {
+function buildRustGateCommandForCrates(crateNames, {
+  includeReverseDeps = true,
+  resolvedCrates = false,
+  skipTests = false,
+} = {}) {
   const args = [
     "exec",
     "node",
     "scripts/run_rust_gate.cjs",
     "--mode",
     "workspace",
-    "--include-reverse-deps",
-    "--clippy",
-    "--test-strategy",
-    "mixed",
   ];
+  if (includeReverseDeps) {
+    args.push("--include-reverse-deps");
+  }
+  args.push("--clippy", "--test-strategy", "mixed");
+  if (resolvedCrates) {
+    args.push("--resolved-crates");
+  }
+  if (skipTests) {
+    args.push("--skip-tests");
+  }
 
   for (const crateName of crateNames) {
     args.push("--crate", crateName);
@@ -227,6 +240,9 @@ function buildRustGateCommand({ rustGateEntries, changedContext, selectionMode }
 }
 
 function chunkArray(values, chunkSize) {
+  if (values.length === 0) {
+    return [];
+  }
   if (!Number.isInteger(chunkSize) || chunkSize <= 0 || values.length <= chunkSize) {
     return [values];
   }
@@ -235,6 +251,27 @@ function chunkArray(values, chunkSize) {
     chunks.push(values.slice(index, index + chunkSize));
   }
   return chunks;
+}
+
+function buildResolvedRustGateCrates(rustGateEntries) {
+  const inputCrates = [...new Set(rustGateEntries.map((entry) => entry.entrypoint))].sort();
+  return filterGateManagedCrateNames(expandReverseDependencies(workspaceGraph, inputCrates));
+}
+
+function buildResolvedRustGateChunks(rustGateEntries, {
+  chunkSize = 0,
+  testExcludedCrates = CHECKIN_RUST_GATE_TEST_EXCLUDED_RESOLVED_CRATES,
+} = {}) {
+  const testCrates = buildResolvedRustGateCrates(rustGateEntries)
+    .filter((crateName) => !testExcludedCrates.has(crateName));
+  return chunkArray(testCrates, chunkSize);
+}
+
+function buildResolvedRustGateClippyOnlyCrates(rustGateEntries, {
+  clippyOnlyCrates = CHECKIN_RUST_GATE_TEST_EXCLUDED_RESOLVED_CRATES,
+} = {}) {
+  return buildResolvedRustGateCrates(rustGateEntries)
+    .filter((crateName) => clippyOnlyCrates.has(crateName));
 }
 
 function buildCommandsForEntries({
@@ -272,9 +309,19 @@ function buildCommandsForEntries({
 
   if (rustGateEntries.length > 0) {
     if (selectionMode === "all" && rustGateChunkSize > 0) {
-      const crateNames = [...new Set(rustGateEntries.map((entry) => entry.entrypoint))].sort();
-      for (const crateChunk of chunkArray(crateNames, rustGateChunkSize)) {
-        commands.push(buildRustGateCommandForCrates(crateChunk));
+      for (const crateChunk of buildResolvedRustGateChunks(rustGateEntries, { chunkSize: rustGateChunkSize })) {
+        commands.push(buildRustGateCommandForCrates(crateChunk, {
+          includeReverseDeps: false,
+          resolvedCrates: true,
+        }));
+      }
+      const clippyOnlyCrates = buildResolvedRustGateClippyOnlyCrates(rustGateEntries);
+      if (clippyOnlyCrates.length > 0) {
+        commands.push(buildRustGateCommandForCrates(clippyOnlyCrates, {
+          includeReverseDeps: false,
+          resolvedCrates: true,
+          skipTests: true,
+        }));
       }
     } else {
       commands.push(buildRustGateCommand({
@@ -433,6 +480,8 @@ function resolveChangedFilesFromGit(baseRef) {
 module.exports = {
   CHECKIN_BUILDKITE_EXECUTION_OPTIONS,
   CHECKIN_BUILDKITE_RUST_GATE_CHUNK_SIZE,
+  buildResolvedRustGateClippyOnlyCrates,
+  buildResolvedRustGateChunks,
   buildCheckinBuildkiteExecutionPlan,
   buildExecutionPlan,
   buildExecutionPlanArtifact,

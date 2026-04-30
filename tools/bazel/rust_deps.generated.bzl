@@ -70,6 +70,46 @@ RUST_BAZEL_DEPS = {
         dev_proc_macro_deps = [],
         proc_macro_deps = [],
     ),
+    "ctx-llm-relay-authority": struct(
+        build_deps = [],
+        deps = [
+            "//core/crates/ctx-llm-relay-contract:lib",
+            "@crates//:anyhow",
+            "@crates//:axum",
+            "@crates//:base64",
+            "@crates//:chrono",
+            "@crates//:clap",
+            "@crates//:jsonwebtoken",
+            "@crates//:ring",
+            "@crates//:serde",
+            "@crates//:serde_json",
+            "@crates//:sqlx",
+            "@crates//:thiserror",
+            "@crates//:tokio",
+            "@crates//:tracing",
+            "@crates//:tracing-subscriber",
+            "@crates//:uuid",
+        ],
+        dev_deps = [
+            "@crates//:tower",
+        ],
+        dev_proc_macro_deps = [],
+        proc_macro_deps = [
+            "@crates//:async-trait",
+        ],
+    ),
+    "ctx-llm-relay-contract": struct(
+        build_deps = [],
+        deps = [
+            "@crates//:chrono",
+            "@crates//:serde",
+            "@crates//:serde_json",
+            "@crates//:thiserror",
+        ],
+        dev_deps = [],
+        dev_proc_macro_deps = [],
+        proc_macro_deps = [],
+    ),
     "ctx-provider-accounts": struct(
         build_deps = [],
         deps = [

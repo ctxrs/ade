@@ -19,7 +19,9 @@ test("parseArgs accepts --agent-gate without additional selection flags", () => 
     crates: [],
     includeReverseDeps: false,
     mode: "workspace",
+    resolvedCrates: false,
     runClippy: false,
+    skipTests: false,
     testStrategy: "mixed",
   });
 });
@@ -28,6 +30,44 @@ test("parseArgs rejects mixing --agent-gate with other selectors", () => {
   assert.throws(
     () => parseArgs(["--agent-gate", "--crate", "ctx-http"]),
     /--agent-gate cannot be combined/,
+  );
+});
+
+test("parseArgs supports pre-resolved crate selections for checkin chunking", () => {
+  assert.deepEqual(parseArgs(["--resolved-crates", "--crate", "ctx-core", "--clippy"]), {
+    agentGate: false,
+    all: false,
+    changedFiles: [],
+    crates: ["ctx-core"],
+    includeReverseDeps: false,
+    mode: "workspace",
+    resolvedCrates: true,
+    runClippy: true,
+    skipTests: false,
+    testStrategy: "mixed",
+  });
+  assert.throws(
+    () => parseArgs(["--resolved-crates", "--include-reverse-deps", "--crate", "ctx-core"]),
+    /--resolved-crates can only be combined/,
+  );
+});
+
+test("parseArgs supports clippy-only pre-resolved gates", () => {
+  assert.deepEqual(parseArgs(["--resolved-crates", "--skip-tests", "--crate", "ctx-http", "--clippy"]), {
+    agentGate: false,
+    all: false,
+    changedFiles: [],
+    crates: ["ctx-http"],
+    includeReverseDeps: false,
+    mode: "workspace",
+    resolvedCrates: true,
+    runClippy: true,
+    skipTests: true,
+    testStrategy: "mixed",
+  });
+  assert.throws(
+    () => parseArgs(["--resolved-crates", "--skip-tests", "--crate", "ctx-http"]),
+    /--skip-tests requires --clippy/,
   );
 });
 
@@ -70,6 +110,42 @@ test("resolveCrates expands reverse deps automatically for ctx-execution-runtime
       includeReverseDeps: false,
     }),
     ["ctx-execution-runtime", "ctx-http", "ctx-mcp"],
+  );
+});
+
+test("resolveCrates does not apply forced reverse deps for pre-resolved chunks", () => {
+  const crates = [
+    {
+      crateName: "ctx-execution-runtime",
+      deps: [],
+      reverseDeps: ["ctx-http"],
+    },
+    {
+      crateName: "ctx-http",
+      deps: ["ctx-execution-runtime"],
+      reverseDeps: ["ctx-mcp"],
+    },
+    {
+      crateName: "ctx-mcp",
+      deps: ["ctx-http"],
+      reverseDeps: [],
+    },
+  ];
+  const graph = {
+    crates,
+    cratesByName: new Map(crates.map((crate) => [crate.crateName, crate])),
+  };
+
+  assert.deepEqual(
+    resolveCrates(graph, {
+      agentGate: false,
+      all: false,
+      changedFiles: [],
+      crates: ["ctx-execution-runtime"],
+      includeReverseDeps: false,
+      resolvedCrates: true,
+    }),
+    ["ctx-execution-runtime"],
   );
 });
 

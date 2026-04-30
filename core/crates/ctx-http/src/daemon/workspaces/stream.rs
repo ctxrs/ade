@@ -478,11 +478,7 @@ pub(crate) async fn resolve_worktree_vcs_publish_worktree_ids(
         return HashSet::new();
     }
     let mut worktree_ids = resolve_worktree_ids_for_sessions(state, summary_session_ids).await;
-    worktree_ids.extend(
-        resolve_worktree_ids_for_sessions(state, open_session_ids)
-            .await
-            .into_iter(),
-    );
+    worktree_ids.extend(resolve_worktree_ids_for_sessions(state, open_session_ids).await);
     worktree_ids
 }
 

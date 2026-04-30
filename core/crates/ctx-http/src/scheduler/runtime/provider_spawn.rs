@@ -116,20 +116,37 @@ pub(super) async fn record_provider_spawn_metric(
         .await;
 }
 
+pub(super) struct ProviderStartFailure<'a> {
+    pub(super) session: &'a Session,
+    pub(super) run_id: RunId,
+    pub(super) turn_id: TurnId,
+    pub(super) message_id: MessageId,
+    pub(super) mcp_token: Option<&'a str>,
+    pub(super) run_started_at: Instant,
+    pub(super) workdir_str: &'a str,
+    pub(super) full_model_id: &'a str,
+    pub(super) execution_environment: ExecutionEnvironment,
+    pub(super) session_root_kind: &'a str,
+    pub(super) err: &'a Error,
+}
+
 pub(super) async fn handle_provider_start_failure(
     state: &Arc<AppState>,
-    session: &Session,
-    run_id: RunId,
-    turn_id: TurnId,
-    message_id: MessageId,
-    mcp_token: Option<&str>,
-    run_started_at: Instant,
-    workdir_str: &str,
-    full_model_id: &str,
-    execution_environment: ExecutionEnvironment,
-    session_root_kind: &str,
-    err: &Error,
+    failure: ProviderStartFailure<'_>,
 ) {
+    let ProviderStartFailure {
+        session,
+        run_id,
+        turn_id,
+        message_id,
+        mcp_token,
+        run_started_at,
+        workdir_str,
+        full_model_id,
+        execution_environment,
+        session_root_kind,
+        err,
+    } = failure;
     if let Some(token) = mcp_token {
         crate::daemon::revoke_provider_session_mcp_token(state.as_ref(), token).await;
     }

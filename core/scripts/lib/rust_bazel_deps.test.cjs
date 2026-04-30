@@ -282,6 +282,36 @@ test("real workspace model covers migrated crates and skips manual crates", () =
     dev_proc_macro_deps: [],
     proc_macro_deps: [],
   });
+  assert.deepEqual(model.entries["ctx-llm-relay-contract"].deps, [
+    "@crates//:chrono",
+    "@crates//:serde",
+    "@crates//:serde_json",
+    "@crates//:thiserror",
+  ]);
+  assert.deepEqual(model.entries["ctx-llm-relay-authority"].deps, [
+    "//core/crates/ctx-llm-relay-contract:lib",
+    "@crates//:anyhow",
+    "@crates//:axum",
+    "@crates//:base64",
+    "@crates//:chrono",
+    "@crates//:clap",
+    "@crates//:jsonwebtoken",
+    "@crates//:ring",
+    "@crates//:serde",
+    "@crates//:serde_json",
+    "@crates//:sqlx",
+    "@crates//:thiserror",
+    "@crates//:tokio",
+    "@crates//:tracing",
+    "@crates//:tracing-subscriber",
+    "@crates//:uuid",
+  ]);
+  assert.deepEqual(model.entries["ctx-llm-relay-authority"].dev_deps, [
+    "@crates//:tower",
+  ]);
+  assert.deepEqual(model.entries["ctx-llm-relay-authority"].proc_macro_deps, [
+    "@crates//:async-trait",
+  ]);
   assert.deepEqual(model.entries["ctx-sandbox-contract"].dev_deps, [
     "@crates//:chrono",
     "@crates//:uuid",

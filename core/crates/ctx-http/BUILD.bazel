@@ -25,11 +25,35 @@ CTX_HTTP_COMPILE_DATA = [
 CTX_HTTP_TEST_COMMON_SRCS = glob(["tests/common/**/*.rs"])
 CTX_HTTP_TEST_CORPUS_DATA = glob(["tests/corpus/**"])
 CTX_HTTP_TEST_FIXTURE_DATA = glob(["tests/fixtures/**"])
-CTX_HTTP_INTEGRATION_TEST_DATA = CTX_HTTP_COMPILE_DATA + CTX_HTTP_TEST_CORPUS_DATA + CTX_HTTP_TEST_FIXTURE_DATA + [
-    ":ctx",
-    ":llama_server_mock",
-    "//core/crates/ctx-mcp:ctx-mcp",
-]
+CTX_HTTP_INTEGRATION_TEST_DATA = CTX_HTTP_COMPILE_DATA + CTX_HTTP_TEST_CORPUS_DATA + CTX_HTTP_TEST_FIXTURE_DATA
+CTX_HTTP_INTEGRATION_BINARY_DATA = {
+    "cloud_gateway_azure_e2e": [":ctx"],
+    "cloud_gateway_gcp_e2e": [":ctx"],
+    "noisy_output_backpressure": ["//core/crates/ctx-mcp:ctx-mcp"],
+    "provider_scenarios_offline": ["//core/crates/ctx-mcp:ctx-mcp"],
+    "session_model_api": ["//core/crates/ctx-mcp:ctx-mcp"],
+    "title_generation_local": [":llama_server_mock"],
+}
+CTX_HTTP_INTEGRATION_BINARY_RUSTC_ENV = {
+    "cloud_gateway_azure_e2e": {
+        "CARGO_BIN_EXE_ctx": "$(rootpath :ctx)",
+    },
+    "cloud_gateway_gcp_e2e": {
+        "CARGO_BIN_EXE_ctx": "$(rootpath :ctx)",
+    },
+    "noisy_output_backpressure": {
+        "CARGO_BIN_EXE_ctx-mcp": "$(rootpath //core/crates/ctx-mcp:ctx-mcp)",
+    },
+    "provider_scenarios_offline": {
+        "CARGO_BIN_EXE_ctx-mcp": "$(rootpath //core/crates/ctx-mcp:ctx-mcp)",
+    },
+    "session_model_api": {
+        "CARGO_BIN_EXE_ctx-mcp": "$(rootpath //core/crates/ctx-mcp:ctx-mcp)",
+    },
+    "title_generation_local": {
+        "CARGO_BIN_EXE_llama_server_mock": "$(rootpath :llama_server_mock)",
+    },
+}
 
 CTX_HTTP_TEST_ARGS = []
 CTX_HTTP_TIMING_SENSITIVE_TEST_TAGS = ["exclusive"]
@@ -1134,6 +1158,8 @@ test_suite(
 )
 
 declare_ctx_http_integration_tests(
+    binary_data = CTX_HTTP_INTEGRATION_BINARY_DATA,
+    binary_rustc_env = CTX_HTTP_INTEGRATION_BINARY_RUSTC_ENV,
     common_srcs = CTX_HTTP_TEST_COMMON_SRCS,
     compile_data = CTX_HTTP_COMPILE_DATA,
     data = CTX_HTTP_INTEGRATION_TEST_DATA,

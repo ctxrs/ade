@@ -5,9 +5,12 @@ const assert = require("node:assert/strict");
 
 const {
   CHECKIN_BUILDKITE_RUST_GATE_CHUNK_SIZE,
+  buildResolvedRustGateClippyOnlyCrates,
+  buildResolvedRustGateChunks,
   buildCheckinBuildkiteExecutionPlan,
   buildExecutionPlan,
 } = require("./lib/test_taxonomy/execution.cjs");
+const { getBazelTestTargetsForCrates } = require("./lib/bazel_rust_targets.cjs");
 
 function rustGateCrates(command) {
   return [...String(command || "").matchAll(/--crate ([^ ]+)/g)].map((match) => match[1]);
@@ -520,6 +523,9 @@ test("checkin promotion gate includes broad stable cacheable basics", () => {
     "repo-contracts.testing-taxonomy-check",
     "build-graph.rust-turbo-check",
     "ctx-http.base",
+    "provider-runtime.rust-gate.ctx-crp-protocol",
+    "provider-runtime.rust-gate.ctx-llm-relay-authority",
+    "provider-runtime.rust-gate.ctx-llm-relay-contract",
     "web-workbench.web-typecheck",
     "web-workbench.session-supervisor-core-unit-tests",
     "web-workbench.web-premerge-required",
@@ -575,18 +581,57 @@ test("Buildkite checkin plan splits ctx-http suites and Rust crate gates without
     .filter((entry) => entry.entrypointType === "rust-crate-gate")
     .map((entry) => entry.entrypoint)
     .sort();
+  const resolvedRustChunks = buildResolvedRustGateChunks(
+    buildkitePlan.selectedEntries.filter((entry) => entry.entrypointType === "rust-crate-gate"),
+    { chunkSize: CHECKIN_BUILDKITE_RUST_GATE_CHUNK_SIZE },
+  );
+  const expectedResolvedRustCrates = resolvedRustChunks.flat();
   const rustGateCommands = buildkitePlan.commands
     .filter((command) => command.startsWith("pnpm exec node scripts/run_rust_gate.cjs "));
+  const rustGateTestCommands = rustGateCommands.filter((command) => !command.includes(" --skip-tests"));
+  const rustGateClippyOnlyCommands = rustGateCommands.filter((command) => command.includes(" --skip-tests"));
+  const expectedClippyOnlyCrates = buildResolvedRustGateClippyOnlyCrates(
+    buildkitePlan.selectedEntries.filter((entry) => entry.entrypointType === "rust-crate-gate"),
+  );
   assert.ok(rustGateCommands.length > 1, "expected Buildkite checkin to split the Rust gate");
+  assert.equal(rustGateTestCommands.length, resolvedRustChunks.length);
+  assert.equal(rustGateClippyOnlyCommands.length, expectedClippyOnlyCrates.length > 0 ? 1 : 0);
 
   const seenCrates = [];
-  for (const command of rustGateCommands) {
-    assert.match(command, /--mode workspace --include-reverse-deps --clippy --test-strategy mixed/);
+  const seenBazelTargets = [];
+  for (const [index, command] of rustGateTestCommands.entries()) {
+    assert.match(command, /--mode workspace --clippy --test-strategy mixed --resolved-crates/);
+    assert.doesNotMatch(command, /--include-reverse-deps/);
+    assert.doesNotMatch(command, /--skip-tests/);
     const commandCrates = rustGateCrates(command);
     assert.ok(commandCrates.length > 0, command);
     assert.ok(commandCrates.length <= CHECKIN_BUILDKITE_RUST_GATE_CHUNK_SIZE, command);
+    assert.deepEqual(commandCrates, resolvedRustChunks[index]);
+    assert.equal(commandCrates.includes("ctx-http"), false, "ctx-http is covered by explicit ctx-http suite steps");
     seenCrates.push(...commandCrates);
+    const commandTargets = getBazelTestTargetsForCrates(commandCrates);
+    assert.equal(
+      commandTargets.some((target) => target.startsWith("//core/crates/ctx-http:")),
+      false,
+      "ctx-http Bazel targets must not be repeated in Rust chunks",
+    );
+    seenBazelTargets.push(...commandTargets);
+  }
+  for (const command of rustGateClippyOnlyCommands) {
+    assert.match(command, /--mode workspace --clippy --test-strategy mixed --resolved-crates --skip-tests/);
+    assert.doesNotMatch(command, /--include-reverse-deps/);
+    assert.deepEqual(rustGateCrates(command), expectedClippyOnlyCrates);
   }
   assert.equal(new Set(seenCrates).size, seenCrates.length, "each input Rust crate appears in one chunk");
-  assert.deepEqual([...seenCrates].sort(), selectedRustCrates);
+  assert.deepEqual([...seenCrates].sort(), expectedResolvedRustCrates);
+  assert.deepEqual(
+    selectedRustCrates.filter((crateName) => crateName !== "ctx-http"),
+    expectedResolvedRustCrates,
+  );
+  assert.deepEqual(expectedClippyOnlyCrates, ["ctx-http"]);
+  assert.equal(
+    new Set(seenBazelTargets).size,
+    seenBazelTargets.length,
+    "each Bazel Rust test target appears in one checkin Rust chunk",
+  );
 });
