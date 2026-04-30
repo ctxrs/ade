@@ -133,6 +133,7 @@ HERMETIC_WEB_CHECK_DATA = WEB_CHECK_SOURCES + [
     ":node_modules/@radix-ui/react-switch",
     ":node_modules/@supabase/supabase-js",
     ":node_modules/@tauri-apps/api",
+    ":node_modules/@tauri-apps/plugin-barcode-scanner",
     ":node_modules/@tauri-apps/plugin-os",
     ":node_modules/@testing-library/jest-dom",
     ":node_modules/@testing-library/react",
