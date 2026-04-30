@@ -23,6 +23,7 @@ DAEMON_CLEANUP_LOG="${ARTIFACT_DIR}/daemon-cleanup.log"
 EXTRACT_DIR="${ARTIFACT_DIR}/appimage-extract"
 WDIO_CONNECTION_RETRY_TIMEOUT_MS="${CTX_UPDATER_LINUX_PROOF_WDIO_CONNECTION_RETRY_TIMEOUT_MS:-300000}"
 home_dir=""
+workspace_home_dir=""
 
 mkdir -p "${ARTIFACT_DIR}"
 
@@ -72,7 +73,7 @@ remove_stale_proof_lock_if_dead() {
 }
 
 stop_proof_daemons() {
-  local proof_home="${home_dir:-}"
+  local proof_home="${1:-${home_dir:-}}"
   if [[ -z "${proof_home}" ]]; then
     return 0
   fi
@@ -144,6 +145,9 @@ stop_proof_daemons() {
 
 cleanup_on_exit() {
   stop_proof_daemons || true
+  if [[ -n "${workspace_home_dir:-}" ]]; then
+    stop_proof_daemons "${workspace_home_dir}" || true
+  fi
   upload_artifacts_on_buildkite
 }
 
@@ -291,6 +295,7 @@ if [[ -z "${OPENROUTER_API_KEY:-}" ]]; then
 fi
 
 home_dir="${ARTIFACT_DIR}/home"
+workspace_home_dir="${ARTIFACT_DIR}/workspace-home"
 repo_dir="${ARTIFACT_DIR}/workspace"
 port_base="${CTX_UPDATER_LINUX_PROOF_PORT_BASE:-$((30000 + RANDOM % 20000))}"
 update_driver_port="${CTX_UPDATER_LINUX_PROOF_UPDATE_DRIVER_PORT:-${port_base}}"
@@ -299,7 +304,15 @@ up_to_date_driver_port="${CTX_UPDATER_LINUX_PROOF_UP_TO_DATE_DRIVER_PORT:-$((por
 up_to_date_backend_port="${CTX_UPDATER_LINUX_PROOF_UP_TO_DATE_BACKEND_PORT:-$((port_base + 3))}"
 wizard_driver_port="${CTX_UPDATER_LINUX_PROOF_WIZARD_DRIVER_PORT:-$((port_base + 4))}"
 wizard_backend_port="${CTX_UPDATER_LINUX_PROOF_WIZARD_BACKEND_PORT:-$((port_base + 5))}"
-mkdir -p "${home_dir}/.local/share" "${home_dir}/.config" "${home_dir}/.cache" "${repo_dir}" "${EXTRACT_DIR}"
+mkdir -p \
+  "${home_dir}/.local/share" \
+  "${home_dir}/.config" \
+  "${home_dir}/.cache" \
+  "${workspace_home_dir}/.local/share" \
+  "${workspace_home_dir}/.config" \
+  "${workspace_home_dir}/.cache" \
+  "${repo_dir}" \
+  "${EXTRACT_DIR}"
 git init "${repo_dir}" >/dev/null 2>&1
 git -C "${repo_dir}" config user.email updater-proof@example.com
 git -C "${repo_dir}" config user.name UpdaterProof
@@ -488,11 +501,12 @@ fi
 
 echo "[updater-linux-proof] proving updated app still launches a real local workspace flow" >&2
 stop_proof_daemons
+stop_proof_daemons "${workspace_home_dir}"
 set +e
-HOME="${home_dir}" \
-XDG_DATA_HOME="${home_dir}/.local/share" \
-XDG_CONFIG_HOME="${home_dir}/.config" \
-XDG_CACHE_HOME="${home_dir}/.cache" \
+HOME="${workspace_home_dir}" \
+XDG_DATA_HOME="${workspace_home_dir}/.local/share" \
+XDG_CONFIG_HOME="${workspace_home_dir}/.config" \
+XDG_CACHE_HOME="${workspace_home_dir}/.cache" \
 PATH="${home_dir}/.local/bin:${PATH}" \
 APPIMAGE_EXTRACT_AND_RUN="${APPIMAGE_EXTRACT_AND_RUN:-1}" \
 APPIMAGE="${app_path}" \

@@ -21,6 +21,21 @@ test("Linux updater proof removes only stale proof daemon locks between automati
   assert.ok(lastCleanupBeforeWorkspace > 0, "workspace proof should clean updater daemons first");
 });
 
+test("Linux updater proof runs final workspace flow in a separate home", () => {
+  assert.match(scriptText, /workspace_home_dir=""/);
+  assert.match(scriptText, /workspace_home_dir="\$\{ARTIFACT_DIR\}\/workspace-home"/);
+  assert.match(scriptText, /stop_proof_daemons\(\) \{\s+local proof_home="\$\{1:-\$\{home_dir:-\}\}"/);
+  assert.match(scriptText, /stop_proof_daemons "\$\{workspace_home_dir\}"/);
+  assert.ok(scriptText.includes('HOME="${workspace_home_dir}" \\'));
+  assert.ok(scriptText.includes('XDG_DATA_HOME="${workspace_home_dir}/.local/share" \\'));
+  assert.ok(scriptText.includes('XDG_CONFIG_HOME="${workspace_home_dir}/.config" \\'));
+  assert.ok(scriptText.includes('XDG_CACHE_HOME="${workspace_home_dir}/.cache" \\'));
+  assert.match(
+    scriptText,
+    /if \[\[ -n "\$\{workspace_home_dir:-\}" \]\]; then\s+stop_proof_daemons "\$\{workspace_home_dir\}" \|\| true\s+fi/,
+  );
+});
+
 test("Linux updater proof runs the release harness install matrix against updated bundles", () => {
   assert.match(scriptText, /core\/apps\/desktop\/scripts\/run_harness_install_matrix\.sh/);
   assert.match(scriptText, /CTX_HARNESS_INSTALL_MATRIX_DAEMON_BIN="\$\{daemon_bin\}"/);

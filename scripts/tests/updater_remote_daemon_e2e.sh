@@ -82,6 +82,43 @@ NODE
   printf '%s\n' "$app_path"
 }
 
+resolve_controller_app_for_automation() {
+  local app_path="$1"
+  if [[ "$(uname -s)" != "Linux" || "${app_path}" != *.AppImage ]]; then
+    printf '%s\n' "${app_path}"
+    return 0
+  fi
+
+  local extract_dir="${artifact_dir}/controller-appimage-extract"
+  local app_dir="${extract_dir}/squashfs-root"
+  local app_run="${app_dir}/AppRun"
+  rm -rf "${extract_dir}"
+  mkdir -p "${extract_dir}"
+  (
+    cd "${extract_dir}"
+    "${app_path}" --appimage-extract >/dev/null
+  )
+  if [[ ! -x "${app_run}" ]]; then
+    echo "error: downloaded controller AppImage did not extract an executable AppRun at ${app_run}" >&2
+    return 1
+  fi
+
+  local bundle_manifest=""
+  bundle_manifest="$(find "${app_dir}" -type f -path '*/bundles/manifest.json' -print -quit)"
+  if [[ -z "${bundle_manifest}" ]]; then
+    echo "error: downloaded controller AppImage is missing bundled manifest.json under ${app_dir}" >&2
+    return 1
+  fi
+
+  export APPIMAGE_EXTRACT_AND_RUN="${APPIMAGE_EXTRACT_AND_RUN:-1}"
+  export APPIMAGE="${app_path}"
+  export APPDIR="${app_dir}"
+  export ARGV0="${app_path}"
+  export CTX_APPIMAGE_PATH="${app_path}"
+  export CTX_AUTOMATION_SHIPPED_APP_BUNDLES_DIR="$(dirname "${bundle_manifest}")"
+  printf '%s\n' "${app_run}"
+}
+
 if [[ -n "${CTX_DESKTOP_APP_PATH:-}" && "$STRICT_PUBLISHED_ARTIFACTS" == "1" ]]; then
   echo "error: strict published-artifact remote proof forbids CTX_DESKTOP_APP_PATH/local AppDir input" >&2
   exit 2
@@ -101,6 +138,8 @@ if [[ -z "${CTX_DESKTOP_APP_PATH:-}" ]]; then
   fi
   export CTX_DESKTOP_APP_PATH="${resolved_app_path}"
 fi
+resolved_automation_app_path="$(resolve_controller_app_for_automation "${CTX_DESKTOP_APP_PATH}")"
+export CTX_DESKTOP_APP_PATH="${resolved_automation_app_path}"
 normalize_local_smoke_app_permissions "${CTX_DESKTOP_APP_PATH}"
 
 export CTX_UPDATER_REMOTE_E2E_REPORT="${CTX_UPDATER_REMOTE_E2E_REPORT:-${artifact_dir}/remote-proof.json}"
