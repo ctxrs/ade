@@ -124,7 +124,7 @@ const PROFILES = [
   {
     id: "mac-preview",
     title: "Mac Preview",
-    purpose: "Build a fast signed Apple Silicon preview app for promoted main SHAs without DMG, notarization, or publish work.",
+    purpose: "Build a fast signed Apple Silicon preview app for promoted main SHAs without DMG or notarization, and publish the preview macos-arm64 updater entry when the preview channel is selected.",
     selector: {
       includeEntryIds: [
         "updates-release.mac-preview-macos-arm64",
@@ -144,7 +144,7 @@ const PROFILES = [
     remoteStrategy: "Path-gate on Linux before building and validating the signed arm64 app on macOS.",
     currentExecution: "The pipeline uploads the Mac build step after a touched-files gate and produces a signed .app artifact.",
     expansionRules: [
-      "Do not add DMG creation, notarization, updater packaging, or publish/promote work to this profile.",
+      "Do not add DMG creation or notarization to this profile; preview manifest publishing is limited to the macos-arm64 updater entry required for remote-bootstrap freshness.",
     ],
   },
   {

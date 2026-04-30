@@ -1929,8 +1929,8 @@ function buildStaticEntries() {
         ...RELEASE_RELEVANT_GLOBS,
       ],
       dependencyCrates: [],
-      notes: "Fast Apple Silicon preview app boundary for promoted main desktop feedback.",
-      exception: "Intentional script-local shared-Mac preview boundary; it reuses the release-stage signing path but stops at a signed .app so preview feedback stays much faster than full canary.",
+      notes: "Fast Apple Silicon preview app boundary for promoted main desktop feedback, plus the preview macos-arm64 updater manifest entry required by remote bootstrap freshness.",
+      exception: "Intentional script-local shared-Mac preview boundary; it reuses the release-stage signing path and publishes only lightweight preview updater metadata so preview feedback stays much faster than full canary.",
     },
     {
       id: "updates-release.release-stage-macos",
