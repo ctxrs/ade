@@ -6,6 +6,8 @@ cd "$ROOT_DIR"
 
 eval "$(node scripts/print_ctx_cache_env.cjs --mode workspace --format shell --mkdir)"
 
+export CTX_BAZEL_JOBS="${CTX_BAZEL_JOBS:-1}"
+
 node scripts/run_bazel_pilot.cjs test \
   //core/crates/ctx-http:updates_failure_safety_manifest_parse \
   //core/crates/ctx-http:updates_failure_safety_manifest_signature \

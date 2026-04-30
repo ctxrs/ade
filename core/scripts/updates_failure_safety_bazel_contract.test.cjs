@@ -14,6 +14,7 @@ const suiteText = fs.readFileSync(
 test("updates failure safety helper uses Bazel targets", () => {
   assert.match(scriptText, /ROOT_DIR="\$\(cd "\$\(dirname "\$\{BASH_SOURCE\[0\]\}"\)\/\.\." && pwd\)"/);
   assert.match(scriptText, /cd "\$ROOT_DIR"/);
+  assert.match(scriptText, /export CTX_BAZEL_JOBS="\$\{CTX_BAZEL_JOBS:-1\}"/);
   assert.match(scriptText, /node scripts\/run_bazel_pilot\.cjs test/);
   for (const target of [
     "updates_failure_safety_manifest_parse",
