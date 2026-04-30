@@ -1,7 +1,6 @@
 use ctx_core::ids::{MessageId, RunId, SessionId, TaskId, TurnId};
 use ctx_core::models::{
-    Message, MessageDelivery, MessageRole, SessionEventType, SessionTurn, SessionTurnStatus,
-    SessionTurnTool,
+    Message, MessageDelivery, MessageRole, SessionTurn, SessionTurnStatus, SessionTurnTool,
 };
 use ctx_providers::adapters::ProviderAdapter;
 use ctx_store::Store;
@@ -190,19 +189,6 @@ async fn seed_large_session(store: &Store, session_id: SessionId, task_id: TaskI
             })
             .await
             .unwrap();
-        let event = store
-            .append_session_event(
-                session_id,
-                Some(run_id),
-                Some(turn_id),
-                SessionEventType::Notice,
-                json!({
-                    "kind": "large_head_checkpoint",
-                    "turn_index": index,
-                }),
-            )
-            .await
-            .unwrap();
         store
             .insert_message(Message {
                 id: MessageId::new(),
@@ -234,7 +220,7 @@ async fn seed_large_session(store: &Store, session_id: SessionId, task_id: TaskI
                 input_json: Some(json!({ "cmd": format!("echo {index}") })),
                 output_text: Some(format!("output {index}")),
                 order_seq: 1,
-                first_event_seq: Some(event.seq),
+                first_event_seq: None,
                 input_truncated: Some(false),
                 input_original_bytes: None,
                 output_truncated: Some(false),

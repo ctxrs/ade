@@ -398,6 +398,7 @@ test("ctx-http Bazel helper keeps quick-path and manual-only suites explicit", (
   assert.deepEqual(
     workspaceStreamTargets.filter((target) => target.startsWith("workspace_active_snapshot_http_")),
     [
+      "workspace_active_snapshot_http_workspace_stream_repeat_subscribe_preserves_ready_worktree_vcs_state",
       "workspace_active_snapshot_http_workspace_stream_repeat_subscribe_rescans_fresh_unavailable_worktree_vcs",
       "workspace_active_snapshot_http_workspace_stream_subscribe_does_not_reemit_when_worktree_vcs_is_already_computing",
       "workspace_active_snapshot_http_worktree_vcs_summary_refresh_reloads_live_inventory_before_ready_publish",

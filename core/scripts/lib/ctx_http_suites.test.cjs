@@ -130,6 +130,7 @@ test("ctx-http long suites expand to direct Bazel test targets", () => {
     `${CTX_HTTP_BAZEL_PACKAGE}:replay_properties`,
     `${CTX_HTTP_BAZEL_PACKAGE}:task_default_session_http`,
     `${CTX_HTTP_BAZEL_PACKAGE}:workspace_active_snapshot_http`,
+    `${CTX_HTTP_BAZEL_PACKAGE}:workspace_active_snapshot_http_workspace_stream_repeat_subscribe_preserves_ready_worktree_vcs_state`,
     `${CTX_HTTP_BAZEL_PACKAGE}:workspace_active_snapshot_http_workspace_stream_repeat_subscribe_rescans_fresh_unavailable_worktree_vcs`,
     `${CTX_HTTP_BAZEL_PACKAGE}:workspace_active_snapshot_http_workspace_stream_subscribe_does_not_reemit_when_worktree_vcs_is_already_computing`,
     `${CTX_HTTP_BAZEL_PACKAGE}:workspace_active_snapshot_http_worktree_vcs_summary_refresh_reloads_live_inventory_before_ready_publish`,

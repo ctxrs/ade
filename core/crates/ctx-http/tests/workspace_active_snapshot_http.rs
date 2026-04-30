@@ -1958,7 +1958,26 @@ async fn workspace_stream_repeat_subscribe_preserves_ready_worktree_vcs_state() 
         worktree_vcs_snapshot_from_message(first_message, worktree.id).expect("missing worktree");
     assert_eq!(initial_worktree.freshness, WorktreeVcsFreshness::Fresh);
 
-    let deadline = tokio::time::Instant::now() + Duration::from_millis(750);
+    let watcher_deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+    loop {
+        {
+            let watchers = state.workspaces.git_status_watchers.lock().await;
+            if watchers.contains(&worktree.id) {
+                break;
+            }
+        }
+        assert!(
+            tokio::time::Instant::now() < watcher_deadline,
+            "repeat subscribe should register the worktree VCS watcher"
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+
+    // The regression this test guards is subscription warm-up downgrading an
+    // already-ready snapshot. Keep the stability window shorter than the
+    // filesystem watcher debounce so Linux watcher startup noise is tested by
+    // watcher-specific coverage instead of this subscribe contract.
+    let deadline = tokio::time::Instant::now() + Duration::from_millis(250);
     while tokio::time::Instant::now() < deadline {
         let snapshot = state
             .workspaces
