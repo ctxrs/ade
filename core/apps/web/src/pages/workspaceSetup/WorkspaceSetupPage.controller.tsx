@@ -42,6 +42,9 @@ export function WorkspaceSetupPageController() {
   const infoStep = openInfoKey
     ? workflow.flow.steps.find((step) => step.key === openInfoKey) ?? null
     : null;
+  const harnessDownloadsAdminPromptActive =
+    workflow.flow.currentStepKey === "harness-downloads"
+    && workflow.provisioning.localAdminPasswordPromptVisible;
 
   const updateHarnessDownloadsScrollState = useCallback(() => {
     const node = harnessDownloadsScrollRef.current;
@@ -164,15 +167,15 @@ export function WorkspaceSetupPageController() {
       onRemoteDataDirInputChange={workflow.remote.onRemoteDataDirInputChange}
       localAdminPasswordPromptVisible={
         workflow.create.localAdminPasswordPromptVisible
-        || workflow.provisioning.localAdminPasswordPromptVisible
+        || harnessDownloadsAdminPromptActive
       }
       localAdminPasswordInput={
-        workflow.provisioning.localAdminPasswordPromptVisible
+        harnessDownloadsAdminPromptActive
           ? workflow.provisioning.localAdminPasswordInput
           : workflow.create.localAdminPasswordInput
       }
       setLocalAdminPasswordInput={(value) => {
-        if (workflow.provisioning.localAdminPasswordPromptVisible) {
+        if (harnessDownloadsAdminPromptActive) {
           workflow.provisioning.setLocalAdminPasswordInput(value);
           return;
         }

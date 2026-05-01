@@ -266,7 +266,6 @@ const createWorkspaceAndTask = async (rootPath) => {
 
   const taskResp = await daemonJson("POST", `/api/workspaces/${workspaceId}/tasks`, {
     title: "Automation menu task",
-    create_default_session: true,
   });
   if (taskResp.status !== 200 && taskResp.status !== 201) {
     throw new Error(`task creation failed: ${JSON.stringify(taskResp)}`);

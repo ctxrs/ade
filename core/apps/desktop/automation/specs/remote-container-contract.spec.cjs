@@ -262,7 +262,6 @@ const createTaskSmoke = async (workspaceId, label) => {
   const resp = await daemonJson("POST", `/api/workspaces/${workspaceId}/tasks`, {
     title: `${label}-${Date.now()}`,
     description: `Remote sandbox warm task smoke for ${label}`,
-    create_default_session: false,
   });
   if (resp.status !== 200 && resp.status !== 201) {
     throw new Error(`task create failed (${resp.status}): ${JSON.stringify(resp.payload || null)}`);

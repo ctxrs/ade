@@ -133,6 +133,7 @@ sh_binary(
         "core",
         "--test",
         "scripts/desktop_e2e_preflight.test.cjs",
+        "scripts/desktop_automation_task_api_contract.test.cjs",
         "apps/desktop/automation/daemon.node-http.test.cjs",
         "apps/desktop/scripts/automation_runtime_contract.test.cjs",
     ],

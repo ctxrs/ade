@@ -588,7 +588,11 @@ const createBusyRemoteTurn = async ({ label, providerId = "codex" } = {}) => {
   const taskResp = remoteHttpJson("POST", `/api/workspaces/${workspaceId}/tasks`, {
     title: `updater-proof-${label}`,
     description: "Remote updater proof long-running task",
-    create_default_session: false,
+    default_session: {
+      provider_id: providerId,
+      model_id: configured.model_id,
+      execution_environment: "host",
+    },
   }, { token });
   if (taskResp.status !== 200) {
     throw new Error(`remote task create failed (${taskResp.status}): ${JSON.stringify(taskResp.payload || null)}`);
@@ -597,17 +601,9 @@ const createBusyRemoteTurn = async ({ label, providerId = "codex" } = {}) => {
   if (!taskId) {
     throw new Error(`remote task create missing id: ${JSON.stringify(taskResp.payload || null)}`);
   }
-  const sessionResp = remoteHttpJson("POST", `/api/tasks/${taskId}/sessions`, {
-    provider_id: providerId,
-    model_id: configured.model_id,
-    execution_environment: "host",
-  }, { token });
-  if (sessionResp.status !== 200) {
-    throw new Error(`remote session create failed (${sessionResp.status}): ${JSON.stringify(sessionResp.payload || null)}`);
-  }
-  const sessionId = trimText(sessionResp.payload?.id);
+  const sessionId = trimText(taskResp.payload?.primary_session_id);
   if (!sessionId) {
-    throw new Error(`remote session create missing id: ${JSON.stringify(sessionResp.payload || null)}`);
+    throw new Error(`remote task create missing primary_session_id: ${JSON.stringify(taskResp.payload || null)}`);
   }
   const prompt = "Write 350 numbered one-line status bullets about release update verification. Do not stop early.";
   const postResp = remoteHttpJson("POST", `/api/sessions/${sessionId}/messages`, {

@@ -86,17 +86,6 @@ const resolveSessionProvider = async (workspaceId) => {
 };
 
 const createTaskWithSession = async (workspaceId, title) => {
-  const resp = await daemonJson("POST", `/api/workspaces/${workspaceId}/tasks`, {
-    title,
-    description: "desktop paste fake task",
-    create_default_session: false,
-  });
-  if (resp.status !== 200 && resp.status !== 201) {
-    throw new Error(`fake task creation failed: ${JSON.stringify(resp)}`);
-  }
-  const taskId = String(resp.payload?.id || "").trim();
-  if (!taskId) throw new Error("fake task creation returned no id");
-
   const executionConfigResp = await daemonJson("GET", `/api/workspaces/${workspaceId}/execution_config`);
   if (executionConfigResp.status !== 200) {
     throw new Error(`execution config read failed: ${JSON.stringify(executionConfigResp)}`);
@@ -108,16 +97,22 @@ const createTaskWithSession = async (workspaceId, title) => {
   }
 
   const { providerId, modelId } = await resolveSessionProvider(workspaceId);
-  const sessionResp = await daemonJson("POST", `/api/tasks/${taskId}/sessions`, {
-    provider_id: providerId,
-    model_id: modelId,
-    execution_environment: executionEnvironment,
+  const resp = await daemonJson("POST", `/api/workspaces/${workspaceId}/tasks`, {
+    title,
+    description: "desktop paste fake task",
+    default_session: {
+      provider_id: providerId,
+      model_id: modelId,
+      execution_environment: executionEnvironment,
+    },
   });
-  if (sessionResp.status !== 200 && sessionResp.status !== 201) {
-    throw new Error(`session creation failed (${providerId}/${modelId}): ${JSON.stringify(sessionResp)}`);
+  if (resp.status !== 200 && resp.status !== 201) {
+    throw new Error(`fake task creation failed (${providerId}/${modelId}): ${JSON.stringify(resp)}`);
   }
-  const sessionId = String(sessionResp.payload?.id || "").trim();
-  if (!sessionId) throw new Error("fake session creation returned no id");
+  const taskId = String(resp.payload?.id || "").trim();
+  if (!taskId) throw new Error("fake task creation returned no id");
+  const sessionId = String(resp.payload?.primary_session_id || "").trim();
+  if (!sessionId) throw new Error("fake task creation returned no primary_session_id");
 
   return { taskId, sessionId };
 };

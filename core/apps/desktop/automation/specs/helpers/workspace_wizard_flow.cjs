@@ -1085,10 +1085,19 @@ const createProviderTaskAndSession = async (
     executionEnvironment = "",
   } = {},
 ) => {
+  const sessionExecutionEnvironment = await resolveProviderSessionExecutionEnvironment(
+    workspaceId,
+    executionEnvironment,
+  );
+
   const taskResp = await daemonJson("POST", `/api/workspaces/${workspaceId}/tasks`, {
     title: `${providerId}-smoke-${Date.now()}`,
     description: `Desktop automation smoke task for ${providerId}`,
-    create_default_session: false,
+    default_session: {
+      provider_id: providerId,
+      model_id: modelId,
+      execution_environment: sessionExecutionEnvironment,
+    },
   });
   if (taskResp.status !== 200) {
     throw new Error(`task create failed (${taskResp.status}): ${JSON.stringify(taskResp.payload || null)}`);
@@ -1097,23 +1106,9 @@ const createProviderTaskAndSession = async (
   if (!taskId) {
     throw new Error(`task create response missing id: ${JSON.stringify(taskResp.payload || null)}`);
   }
-
-  const sessionExecutionEnvironment = await resolveProviderSessionExecutionEnvironment(
-    workspaceId,
-    executionEnvironment,
-  );
-
-  const sessionResp = await daemonJson("POST", `/api/tasks/${taskId}/sessions`, {
-    provider_id: providerId,
-    model_id: modelId,
-    execution_environment: sessionExecutionEnvironment,
-  });
-  if (sessionResp.status !== 200) {
-    throw new Error(`session create failed (${sessionResp.status}): ${JSON.stringify(sessionResp.payload || null)}`);
-  }
-  const sessionId = String(sessionResp.payload?.id || "").trim();
+  const sessionId = String(taskResp.payload?.primary_session_id || "").trim();
   if (!sessionId) {
-    throw new Error(`session create response missing id: ${JSON.stringify(sessionResp.payload || null)}`);
+    throw new Error(`task create response missing primary_session_id: ${JSON.stringify(taskResp.payload || null)}`);
   }
 
   return {
