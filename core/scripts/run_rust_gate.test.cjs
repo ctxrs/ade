@@ -287,23 +287,25 @@ test("applyBazelTestEnv caps ctx-http local bazel fanout without overwriting exp
   });
 });
 
-test("buildBazelTargetBatches isolates ctx-http suite aliases into sequential bazel phases", () => {
-  assert.deepEqual(buildBazelTargetBatches(["ctx-http"]), [
-    ["//core/crates/ctx-http:attachments-routing"],
-    ["//core/crates/ctx-http:base"],
-    ["//core/crates/ctx-http:provider-auth"],
-    ["//core/crates/ctx-http:provider-runtime-live"],
-    ["//core/crates/ctx-http:provider-runtime-simulated"],
-    ["//core/crates/ctx-http:repo-vcs"],
-    ["//core/crates/ctx-http:sandbox-runtime-container-e2e"],
-    ["//core/crates/ctx-http:sandbox-runtime-memory-leak"],
-    ["//core/crates/ctx-http:sandbox-runtime-resource-governance"],
-    ["//core/crates/ctx-http:sandbox-runtime-simulated"],
-    ["//core/crates/ctx-http:scheduler-runtime"],
-    ["//core/crates/ctx-http:subagents-control"],
-    ["//core/crates/ctx-http:subagents-local-runtime"],
-    ["//core/crates/ctx-http:turns-terminal"],
-    ["//core/crates/ctx-http:updates-release"],
-    ["//core/crates/ctx-http:workspace-stream"],
-  ]);
+test("buildBazelTargetBatches isolates flattened ctx-http targets into sequential bazel phases", () => {
+  const batches = buildBazelTargetBatches(["ctx-http"]);
+  assert.ok(batches.length > 16);
+  assert.equal(
+    batches.every((batch) => batch.length === 1),
+    true,
+    "ctx-http targets should stay one per Bazel phase so one slow suite cannot hide a wider batch",
+  );
+  const targets = batches.map(([target]) => target);
+  assert.deepEqual(targets, [...targets].sort());
+  for (const expectedTarget of [
+    "//core/crates/ctx-http:provider-auth",
+    "//core/crates/ctx-http:provider-runtime-live",
+    "//core/crates/ctx-http:sandbox-runtime-container-e2e",
+    "//core/crates/ctx-http:subagents-control",
+    "//core/crates/ctx-http:unit-tests-api",
+    "//core/crates/ctx-http:unit-tests-lib",
+    "//core/crates/ctx-http:workspace_stream_context_window_metrics",
+  ]) {
+    assert.equal(targets.includes(expectedTarget), true, `${expectedTarget} should be isolated`);
+  }
 });

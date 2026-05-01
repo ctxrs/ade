@@ -24,6 +24,23 @@ const repoRoot = path.resolve(coreRoot, "..");
 const workspaceGraph = buildWorkspaceGraph(coreRoot);
 const CHECKIN_BUILDKITE_RUST_GATE_CHUNK_SIZE = 12;
 const CHECKIN_RUST_GATE_TEST_EXCLUDED_RESOLVED_CRATES = new Set(["ctx-http"]);
+const CHECKIN_RUST_GATE_CRATE_WEIGHTS = Object.freeze({
+  "ctx-avf-linux-runtime": 3,
+  "ctx-client": 2,
+  "ctx-execution-runtime": 2,
+  "ctx-harness-runtime": 2,
+  "ctx-harness-setup": 2,
+  "ctx-linux-sandbox-runtime": 3,
+  "ctx-managed-installs": 5,
+  "ctx-mcp": 5,
+  "ctx-provider-matrix": 2,
+  "ctx-provider-runtime": 2,
+  "ctx-providers": 3,
+  "ctx-store": 4,
+  "ctx-workspace-active-snapshot": 2,
+  "ctx-workspace-container": 2,
+  "ctx-workspace-runtime": 3,
+});
 const CHECKIN_BUILDKITE_EXECUTION_OPTIONS = Object.freeze({
   coalesceCtxHttpSuites: false,
   rustGateChunkSize: CHECKIN_BUILDKITE_RUST_GATE_CHUNK_SIZE,
@@ -242,18 +259,50 @@ function buildRustGateCommand({ rustGateEntries, changedContext, selectionMode }
   return shellJoin("pnpm", args);
 }
 
-function chunkArray(values, chunkSize) {
+function resolveRustGateCrateWeight(crateName, weightMap = CHECKIN_RUST_GATE_CRATE_WEIGHTS) {
+  const weight = Number(weightMap[String(crateName || "")]);
+  return Number.isFinite(weight) && weight > 0 ? weight : 1;
+}
+
+function buildWeightedChunks(values, {
+  chunkSize = 0,
+  weightForValue = resolveRustGateCrateWeight,
+} = {}) {
   if (values.length === 0) {
     return [];
   }
   if (!Number.isInteger(chunkSize) || chunkSize <= 0 || values.length <= chunkSize) {
     return [values];
   }
-  const chunks = [];
-  for (let index = 0; index < values.length; index += chunkSize) {
-    chunks.push(values.slice(index, index + chunkSize));
+
+  const chunkCount = Math.ceil(values.length / chunkSize);
+  const chunks = Array.from({ length: chunkCount }, (_, index) => ({
+    index,
+    items: [],
+    weight: 0,
+  }));
+  const weightedValues = [...values].sort((left, right) => {
+    const weightDelta = weightForValue(right) - weightForValue(left);
+    return weightDelta || left.localeCompare(right);
+  });
+
+  for (const value of weightedValues) {
+    const valueWeight = weightForValue(value);
+    const targetChunk = chunks
+      .filter((chunk) => chunk.items.length < chunkSize)
+      .sort((left, right) =>
+        left.weight - right.weight
+        || left.items.length - right.items.length
+        || left.index - right.index,
+      )[0];
+    targetChunk.items.push(value);
+    targetChunk.weight += valueWeight;
   }
-  return chunks;
+
+  return chunks
+    .map((chunk) => chunk.items.sort())
+    .filter((items) => items.length > 0)
+    .sort((left, right) => left[0].localeCompare(right[0]));
 }
 
 function buildResolvedRustGateCrates(rustGateEntries) {
@@ -267,7 +316,7 @@ function buildResolvedRustGateChunks(rustGateEntries, {
 } = {}) {
   const testCrates = buildResolvedRustGateCrates(rustGateEntries)
     .filter((crateName) => !testExcludedCrates.has(crateName));
-  return chunkArray(testCrates, chunkSize);
+  return buildWeightedChunks(testCrates, { chunkSize });
 }
 
 function buildResolvedRustGateClippyOnlyCrates(rustGateEntries, {
@@ -496,6 +545,7 @@ function resolveChangedFilesFromGit(baseRef) {
 module.exports = {
   CHECKIN_BUILDKITE_EXECUTION_OPTIONS,
   CHECKIN_BUILDKITE_RUST_GATE_CHUNK_SIZE,
+  CHECKIN_RUST_GATE_CRATE_WEIGHTS,
   buildResolvedRustGateClippyOnlyCrates,
   buildResolvedRustGateChunks,
   buildCheckinBuildkiteExecutionPlan,
@@ -503,10 +553,12 @@ module.exports = {
   buildExecutionPlanArtifact,
   buildCommandForEntry,
   buildChangedContext,
+  buildWeightedChunks,
   entryMatchesChangedFiles,
   normalizeSelectionMode,
   normalizeRepoRelativePath,
   removeRedundantCtxHttpBaseEntry,
+  resolveRustGateCrateWeight,
   resolveChangedFilesFromGit,
   shellJoin,
 };
