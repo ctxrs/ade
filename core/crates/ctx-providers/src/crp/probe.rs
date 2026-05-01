@@ -76,12 +76,12 @@ pub async fn probe_crp_models(request: CrpModelsProbeRequest) -> Result<CrpModel
     let stderr = child.stderr.take().context("capturing CRP stderr")?;
 
     let stderr_tail: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
-    let stderr_tail_task = spawn_probe_output_tail_reader(
+    let mut stderr_tail_task = Some(spawn_probe_output_tail_reader(
         stderr,
         provider_id.clone(),
         "stderr",
         Arc::clone(&stderr_tail),
-    );
+    ));
 
     let mut stdin = BufWriter::new(stdin);
     let mut stdout_reader = BufReader::new(stdout).lines();
@@ -93,14 +93,24 @@ pub async fn probe_crp_models(request: CrpModelsProbeRequest) -> Result<CrpModel
         },
     };
     let line = serde_json::to_string(&envelope)?;
-    stdin.write_all(line.as_bytes()).await?;
-    stdin.write_all(b"\n").await?;
-    stdin.flush().await?;
+    if let Err(err) = async {
+        stdin.write_all(line.as_bytes()).await?;
+        stdin.write_all(b"\n").await?;
+        stdin.flush().await
+    }
+    .await
+    {
+        wait_for_probe_output_tail_reader(&mut stderr_tail_task).await;
+        let stderr_tail = format_probe_output_tail("stderr", &stderr_tail).await;
+        anyhow::bail!(
+            "crp runtime closed before models.list response while writing request: {err}{stderr_tail}"
+        );
+    }
 
     let result = match timeout(probe_timeout, async {
         loop {
             let Some(line) = stdout_reader.next_line().await? else {
-                let _ = tokio::time::timeout(Duration::from_millis(200), stderr_tail_task).await;
+                wait_for_probe_output_tail_reader(&mut stderr_tail_task).await;
                 let stderr_tail = format_probe_output_tail("stderr", &stderr_tail).await;
                 anyhow::bail!("crp runtime closed before models.list response{stderr_tail}");
             };
@@ -255,6 +265,12 @@ where
             tail.push(trimmed.to_string());
         }
     })
+}
+
+async fn wait_for_probe_output_tail_reader(task: &mut Option<tokio::task::JoinHandle<()>>) {
+    if let Some(task) = task.take() {
+        let _ = tokio::time::timeout(Duration::from_millis(200), task).await;
+    }
 }
 
 async fn format_probe_output_tail(label: &str, tail: &Arc<Mutex<Vec<String>>>) -> String {
@@ -492,7 +508,10 @@ mod tests {
         .expect_err("models probe should surface early runtime close");
 
         let msg = err.to_string();
-        assert!(msg.contains("closed before models.list response"));
-        assert!(msg.contains("stderr_tail=codex auth import unreadable"));
+        assert!(msg.contains("closed before models.list response"), "{msg}");
+        assert!(
+            msg.contains("stderr_tail=codex auth import unreadable"),
+            "{msg}"
+        );
     }
 }
