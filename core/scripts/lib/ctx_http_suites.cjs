@@ -31,6 +31,72 @@ const CTX_HTTP_BASE_CHILD_SUITE_NAMES = [
   "bin-tests",
   "doc-tests",
 ];
+const CTX_HTTP_CHECKIN_FANOUT_TARGETS_BY_SUITE = Object.freeze({
+  "unit-tests-api": [
+    "unit_tests_api",
+    "unit_tests_api_cleanup_lifecycle",
+    "unit_tests_api_task_lifecycle",
+    "unit_tests_api_storage_admission",
+    "unit_tests_api_workspaces",
+  ],
+  "unit-tests-execution-setup": [
+    "unit_tests_execution_setup",
+    "unit_tests_execution_setup_concurrent_launch_start_is_deduplicated",
+    "unit_tests_execution_setup_startup_prewarm_runtime_warmup",
+    "unit_tests_execution_setup_refresh_clears_stale_prewarm_metadata",
+    "unit_tests_execution_setup_reuses_active_runtime_prewarm",
+    "unit_tests_execution_setup_startup_prewarm_runtime_probe_reuse",
+    "unit_tests_execution_setup_runtime_launch_ready_promotion",
+    "unit_tests_execution_setup_runtime_launch_ready_scope_starts_shared_vm",
+    "unit_tests_execution_setup_builder_prewarm_shared_all_job",
+    "unit_tests_execution_setup_workspace_launch_not_blocked_by_background_runtime_prewarm",
+    "unit_tests_execution_setup_successful_workspace_launch_writes_missing_prewarm_metadata",
+    "unit_tests_workspace_launch_reuses_startup_prewarm",
+  ],
+  "unit-tests-lib": [
+    "unit_tests_lib",
+    "unit_tests_lib_mobile_secure_routes",
+    "unit_tests_lib_provider_routes",
+    "unit_tests_lib_session_artifacts",
+    "unit_tests_lib_telemetry_export",
+    "unit_tests_lib_update_boundaries",
+    "unit_tests_lib_web_session_routes",
+    "unit_tests_lib_workspace_active_routes",
+    "unit_tests_lib_execution_launch_startup_prewarm_kind_supported",
+  ],
+  "unit-tests-workspace-runtime": [
+    "unit_tests_workspace_runtime",
+    "unit_tests_workspace_runtime_reclaim_idle_runtime_with_parked_containers",
+    "unit_tests_workspace_runtime_reuses_running_container",
+    "unit_tests_workspace_runtime_prepare_starts_cached_container",
+    "unit_tests_workspace_runtime_reclaim_idle_machine",
+    "unit_tests_workspace_runtime_reclaim_idle_runtime_with_containers",
+    "unit_tests_workspace_runtime_reclaim_ctx_harness_container",
+    "unit_tests_workspace_runtime_container_status_avf",
+    "unit_tests_workspace_runtime_starts_avf_workspace_vm",
+    "unit_tests_workspace_runtime_keeps_avf_workspace_container_ready",
+    "unit_tests_workspace_runtime_unknown_machine_state_engine_unreachable",
+    "unit_tests_workspace_runtime_running_unreachable_machine_reconfiguration",
+    "unit_tests_workspace_runtime_recreates_machine_for_memory_profile_change",
+  ],
+  "unit-tests-daemon-and-scheduler": [
+    "unit_tests_daemon",
+    "unit_tests_mcp_command",
+    "unit_tests_scheduler",
+    "unit_tests_daemon_golden_path_with_fake_provider",
+    "unit_tests_daemon_http_and_ws_streaming",
+  ],
+  "unit-tests-provider-and-settings": [
+    "unit_tests_installer",
+    "unit_tests_provider_launch",
+    "unit_tests_provider_matrix",
+    "unit_tests_settings",
+  ],
+  "unit-tests-merge-queue": [
+    "unit_tests_merge_queue",
+    "unit_tests_merge_queue_enabled_workspace_resume_after_open",
+  ],
+});
 const CTX_HTTP_SHARED_SOURCE_GLOBS = [
   "crates/ctx-http/src/api/auth.rs",
   "crates/ctx-http/src/api/errors.rs",
@@ -880,6 +946,18 @@ function getCtxHttpSuiteTargets(suiteName) {
   return suiteNames.flatMap((entry) => getCtxHttpSuiteDirectTargets(entry));
 }
 
+function getCtxHttpSuiteCheckinFanoutTargets(suiteName) {
+  const suite = getCtxHttpSuiteByName(suiteName);
+  if (!suite) {
+    throw new Error(`unknown ctx-http suite: ${suiteName}`);
+  }
+  const targetNames = CTX_HTTP_CHECKIN_FANOUT_TARGETS_BY_SUITE[suite.name];
+  if (!targetNames) {
+    return [getCtxHttpSuiteTarget(suite.name)];
+  }
+  return targetNames.map((targetName) => `${CTX_HTTP_BAZEL_PACKAGE}:${targetName}`);
+}
+
 function buildCtxHttpSuiteTaskArgs(suiteName) {
   return normalizeCtxHttpSuiteSelection(suiteName)
     .flatMap((entry) => ["--suite", entry]);
@@ -888,6 +966,7 @@ function buildCtxHttpSuiteTaskArgs(suiteName) {
 module.exports = {
   CTX_HTTP_BAZEL_PACKAGE,
   CTX_HTTP_BASE_CHILD_SUITE_NAMES,
+  CTX_HTTP_CHECKIN_FANOUT_TARGETS_BY_SUITE,
   CTX_HTTP_MANUAL_ONLY_BAZEL_TARGETS,
   CTX_HTTP_SAFE_CONCURRENT_SUITES,
   CTX_HTTP_SUITES,
@@ -901,6 +980,7 @@ module.exports = {
   expandCtxHttpSuiteForPlanner,
   getCtxHttpSuiteTarget,
   getCtxHttpSuiteTargets,
+  getCtxHttpSuiteCheckinFanoutTargets,
   getCtxHttpSuiteByName,
   getCtxHttpSuiteConcurrencyClass,
   getCtxHttpSuiteNames,

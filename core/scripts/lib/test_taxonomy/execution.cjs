@@ -6,6 +6,7 @@ const { getProfiles, profileMatchesEntry } = require("./profiles.cjs");
 const {
   buildCtxHttpSuiteTaskArgs,
   expandCtxHttpSuiteForPlanner,
+  getCtxHttpSuiteCheckinFanoutTargets,
 } = require("../ctx_http_suites.cjs");
 const {
   resolveMergeBaseFiles,
@@ -43,6 +44,7 @@ const CHECKIN_RUST_GATE_CRATE_WEIGHTS = Object.freeze({
 });
 const CHECKIN_BUILDKITE_EXECUTION_OPTIONS = Object.freeze({
   coalesceCtxHttpSuites: false,
+  fanoutCtxHttpSuiteTargets: true,
   rustGateChunkSize: CHECKIN_BUILDKITE_RUST_GATE_CHUNK_SIZE,
 });
 
@@ -197,6 +199,12 @@ function buildCommandForEntry(entry) {
   throw new Error(`unsupported entrypoint type for command mapping: ${entry.entrypointType}`);
 }
 
+function buildCtxHttpSuiteFanoutCommands(suiteName) {
+  return expandCtxHttpSuiteForPlanner(suiteName)
+    .flatMap((entry) => getCtxHttpSuiteCheckinFanoutTargets(entry))
+    .map((target) => shellJoin("node", ["scripts/run_bazel_pilot.cjs", "test", target]));
+}
+
 function buildRustGateCommandForCrates(crateNames, {
   includeReverseDeps = true,
   resolvedCrates = false,
@@ -331,6 +339,7 @@ function buildCommandsForEntries({
   changedContext,
   selectionMode,
   coalesceCtxHttpSuites = true,
+  fanoutCtxHttpSuiteTargets = false,
   rustGateChunkSize = 0,
 }) {
   const commands = [];
@@ -355,6 +364,10 @@ function buildCommandsForEntries({
       continue;
     }
     flushCtxHttpSuites();
+    if (entry.entrypointType === "ctx-http-suite" && fanoutCtxHttpSuiteTargets) {
+      commands.push(...buildCtxHttpSuiteFanoutCommands(entry.entrypoint));
+      continue;
+    }
     commands.push(buildCommandForEntry(entry));
   }
   flushCtxHttpSuites();
@@ -479,6 +492,7 @@ function buildExecutionPlan({
   touchedOnly = false,
   selectionMode = "",
   coalesceCtxHttpSuites = true,
+  fanoutCtxHttpSuiteTargets = false,
   rustGateChunkSize = 0,
 } = {}) {
   const registry = buildTaxonomyRegistry();
@@ -506,6 +520,7 @@ function buildExecutionPlan({
     selectedEntries,
     changedContext,
     coalesceCtxHttpSuites,
+    fanoutCtxHttpSuiteTargets,
     rustGateChunkSize,
     selectionMode: resolvedSelectionMode,
   }));
@@ -546,6 +561,7 @@ module.exports = {
   CHECKIN_BUILDKITE_EXECUTION_OPTIONS,
   CHECKIN_BUILDKITE_RUST_GATE_CHUNK_SIZE,
   CHECKIN_RUST_GATE_CRATE_WEIGHTS,
+  buildCtxHttpSuiteFanoutCommands,
   buildResolvedRustGateClippyOnlyCrates,
   buildResolvedRustGateChunks,
   buildCheckinBuildkiteExecutionPlan,

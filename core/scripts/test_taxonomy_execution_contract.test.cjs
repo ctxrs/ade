@@ -5,6 +5,7 @@ const assert = require("node:assert/strict");
 
 const {
   CHECKIN_BUILDKITE_RUST_GATE_CHUNK_SIZE,
+  buildCtxHttpSuiteFanoutCommands,
   buildResolvedRustGateClippyOnlyCrates,
   buildResolvedRustGateChunks,
   buildCheckinBuildkiteExecutionPlan,
@@ -14,6 +15,10 @@ const { getBazelTestTargetsForCrates } = require("./lib/bazel_rust_targets.cjs")
 
 function rustGateCrates(command) {
   return [...String(command || "").matchAll(/--crate ([^ ]+)/g)].map((match) => match[1]);
+}
+
+function isCtxHttpBazelTargetCommand(command) {
+  return String(command || "").startsWith("node scripts/run_bazel_pilot.cjs test //core/crates/ctx-http:");
 }
 
 test("agent-default fans out ctx-http shared changes into suite-level commands", () => {
@@ -599,21 +604,29 @@ test("Buildkite checkin plan splits ctx-http suites and Rust crate gates without
 
   const selectedCtxHttpSuites = buildkitePlan.selectedEntries
     .filter((entry) => entry.entrypointType === "ctx-http-suite")
-    .map((entry) => entry.entrypoint)
-    .sort();
-  const ctxHttpCommands = buildkitePlan.commands
+    .map((entry) => entry.entrypoint);
+  const ctxHttpSuiteCommands = buildkitePlan.commands
     .filter((command) => command.startsWith("node scripts/ctx_http_suite_task.cjs "));
-  assert.equal(ctxHttpCommands.length, selectedCtxHttpSuites.length);
+  const ctxHttpCommands = buildkitePlan.commands.filter(isCtxHttpBazelTargetCommand);
+  const expectedCtxHttpCommands = selectedCtxHttpSuites.flatMap(buildCtxHttpSuiteFanoutCommands);
+  assert.equal(ctxHttpSuiteCommands.length, 0);
   assert.equal(selectedCtxHttpSuites.includes("base"), false);
   assert.equal(selectedCtxHttpSuites.includes("unit-tests-api"), true);
   assert.equal(selectedCtxHttpSuites.includes("unit-tests-lib"), true);
-  assert.deepEqual(
-    ctxHttpCommands.map((command) => command.match(/--suite ([^ ]+)/)?.[1]).sort(),
-    selectedCtxHttpSuites,
+  assert.deepEqual(ctxHttpCommands, expectedCtxHttpCommands);
+  assert.ok(ctxHttpCommands.includes(
+    "node scripts/run_bazel_pilot.cjs test //core/crates/ctx-http:unit_tests_workspace_runtime",
+  ));
+  assert.ok(ctxHttpCommands.includes(
+    "node scripts/run_bazel_pilot.cjs test //core/crates/ctx-http:unit_tests_execution_setup",
+  ));
+  assert.ok(ctxHttpCommands.includes(
+    "node scripts/run_bazel_pilot.cjs test //core/crates/ctx-http:unit_tests_lib",
+  ));
+  assert.equal(
+    ctxHttpCommands.some((command) => command.includes("//core/crates/ctx-http:unit-tests-workspace-runtime")),
+    false,
   );
-  for (const command of ctxHttpCommands) {
-    assert.equal([...command.matchAll(/--suite /g)].length, 1, command);
-  }
 
   const selectedRustCrates = buildkitePlan.selectedEntries
     .filter((entry) => entry.entrypointType === "rust-crate-gate")
@@ -661,10 +674,10 @@ test("Buildkite checkin plan splits ctx-http suites and Rust crate gates without
     assert.deepEqual(rustGateCrates(command), expectedClippyOnlyCrates);
   }
   assert.equal(new Set(seenCrates).size, seenCrates.length, "each input Rust crate appears in one chunk");
-  assert.deepEqual([...seenCrates].sort(), expectedResolvedRustCrates);
+  assert.deepEqual([...seenCrates].sort(), [...expectedResolvedRustCrates].sort());
   assert.deepEqual(
     selectedRustCrates.filter((crateName) => crateName !== "ctx-http"),
-    expectedResolvedRustCrates,
+    [...expectedResolvedRustCrates].sort(),
   );
   assert.deepEqual(expectedClippyOnlyCrates, ["ctx-http"]);
   assert.equal(

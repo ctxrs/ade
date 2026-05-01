@@ -5,6 +5,7 @@ const test = require("node:test");
 const {
   CTX_HTTP_BAZEL_PACKAGE,
   CTX_HTTP_BASE_CHILD_SUITE_NAMES,
+  CTX_HTTP_CHECKIN_FANOUT_TARGETS_BY_SUITE,
   CTX_HTTP_MANUAL_ONLY_BAZEL_TARGETS,
   CTX_HTTP_SAFE_CONCURRENT_SUITES,
   CTX_HTTP_SHARED_SOURCE_GLOBS,
@@ -14,6 +15,7 @@ const {
   MANUAL_ONLY_CTX_HTTP_TEST_FILES,
   buildCtxHttpSuiteCommands,
   buildCtxHttpSuiteTaskArgs,
+  getCtxHttpSuiteCheckinFanoutTargets,
   getCtxHttpSuiteConcurrencyClass,
   getCtxHttpSuiteNames,
   getCtxHttpSuiteTargets,
@@ -148,6 +150,36 @@ test("ctx-http long suites expand to direct Bazel test targets", () => {
     `${CTX_HTTP_BAZEL_PACKAGE}:workspace_merge_queue_config_http`,
     `${CTX_HTTP_BAZEL_PACKAGE}:worktree_archive_http`,
     `${CTX_HTTP_BAZEL_PACKAGE}:worktree_vcs_snapshot`,
+  ]);
+});
+
+test("ctx-http checkin fanout exposes split unit suite targets without changing suite aliases", () => {
+  assert.deepEqual(getCtxHttpSuiteTargets("unit-tests-workspace-runtime"), [
+    `${CTX_HTTP_BAZEL_PACKAGE}:unit-tests-workspace-runtime`,
+  ]);
+  assert.deepEqual(getCtxHttpSuiteCheckinFanoutTargets("unit-tests-workspace-runtime"), [
+    `${CTX_HTTP_BAZEL_PACKAGE}:unit_tests_workspace_runtime`,
+    `${CTX_HTTP_BAZEL_PACKAGE}:unit_tests_workspace_runtime_reclaim_idle_runtime_with_parked_containers`,
+    `${CTX_HTTP_BAZEL_PACKAGE}:unit_tests_workspace_runtime_reuses_running_container`,
+    `${CTX_HTTP_BAZEL_PACKAGE}:unit_tests_workspace_runtime_prepare_starts_cached_container`,
+    `${CTX_HTTP_BAZEL_PACKAGE}:unit_tests_workspace_runtime_reclaim_idle_machine`,
+    `${CTX_HTTP_BAZEL_PACKAGE}:unit_tests_workspace_runtime_reclaim_idle_runtime_with_containers`,
+    `${CTX_HTTP_BAZEL_PACKAGE}:unit_tests_workspace_runtime_reclaim_ctx_harness_container`,
+    `${CTX_HTTP_BAZEL_PACKAGE}:unit_tests_workspace_runtime_container_status_avf`,
+    `${CTX_HTTP_BAZEL_PACKAGE}:unit_tests_workspace_runtime_starts_avf_workspace_vm`,
+    `${CTX_HTTP_BAZEL_PACKAGE}:unit_tests_workspace_runtime_keeps_avf_workspace_container_ready`,
+    `${CTX_HTTP_BAZEL_PACKAGE}:unit_tests_workspace_runtime_unknown_machine_state_engine_unreachable`,
+    `${CTX_HTTP_BAZEL_PACKAGE}:unit_tests_workspace_runtime_running_unreachable_machine_reconfiguration`,
+    `${CTX_HTTP_BAZEL_PACKAGE}:unit_tests_workspace_runtime_recreates_machine_for_memory_profile_change`,
+  ]);
+  assert.equal(
+    CTX_HTTP_CHECKIN_FANOUT_TARGETS_BY_SUITE["unit-tests-execution-setup"].includes(
+      "unit_tests_execution_setup_successful_workspace_launch_writes_missing_prewarm_metadata",
+    ),
+    true,
+  );
+  assert.deepEqual(getCtxHttpSuiteCheckinFanoutTargets("workspace-stream"), [
+    `${CTX_HTTP_BAZEL_PACKAGE}:workspace-stream`,
   ]);
 });
 
