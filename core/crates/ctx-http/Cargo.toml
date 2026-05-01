@@ -1,6 +1,6 @@
 [package]
 name = "ctx-http"
-version = "0.62.30"
+version = "0.62.31"
 edition.workspace = true
 build = "build.rs"
 
