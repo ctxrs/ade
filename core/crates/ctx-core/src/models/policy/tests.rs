@@ -71,7 +71,7 @@ fn workspace_overlay_only_narrows_org_policy() {
         merged.allowed_models.get("anthropic"),
         Some(&vec!["claude-sonnet-4".to_string()])
     );
-    assert!(merged.allowed_models.get("openai").is_none());
+    assert!(!merged.allowed_models.contains_key("openai"));
     assert_eq!(
         merged.required_execution_environment,
         Some(RequiredExecutionEnvironment::Sandbox)

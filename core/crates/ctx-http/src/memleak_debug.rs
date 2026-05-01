@@ -513,7 +513,7 @@ mod tests {
 
     #[test]
     fn glibc_mallinfo_reads_symbol_when_present() {
-        let symbol = fake_mallinfo2 as usize as *mut libc::c_void;
+        let symbol = fake_mallinfo2 as *const () as usize as *mut libc::c_void;
         let mapped = match mallinfo_from_symbol(symbol) {
             Some(mapped) => mapped,
             None => panic!("mallinfo2 symbol should resolve"),

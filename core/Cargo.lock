@@ -1577,7 +1577,7 @@ dependencies = [
 
 [[package]]
 name = "ctx-http"
-version = "0.62.22"
+version = "0.62.25"
 dependencies = [
  "anyhow",
  "async-trait",

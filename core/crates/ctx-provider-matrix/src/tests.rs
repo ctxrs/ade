@@ -362,7 +362,7 @@ fn builtin_matrix_uses_goose_upstream_acp_archive() {
             args,
             targets,
         } => {
-            assert_eq!(version, "1.31.1");
+            assert_eq!(version, "1.32.0");
             assert_eq!(args, &vec!["acp".to_string()]);
 
             let darwin = targets
@@ -372,19 +372,19 @@ fn builtin_matrix_uses_goose_upstream_acp_archive() {
             assert_eq!(darwin.bin_path, "goose");
             assert_eq!(
                 darwin.url,
-                "https://github.com/aaif-goose/goose/releases/download/v1.31.1/goose-aarch64-apple-darwin.tar.bz2"
+                "https://github.com/aaif-goose/goose/releases/download/v1.32.0/goose-aarch64-apple-darwin.tar.bz2"
             );
             assert_eq!(
                 darwin.sha256.as_deref(),
-                Some("fd7cad6b0405fbea267d6ae3a7e5b17a096a28d33a8019779c242a290ec1e16e")
+                Some("917ac8ab1ae9a1d63b3b2785ccc42c171f6ef97c1ca4447afbe7694e7a9a6f00")
             );
         }
         other => panic!("expected goose archive managed install, got {other:?}"),
     }
 
     let release = goose.releases.first().expect("goose release");
-    assert_eq!(release.version, "1.31.1");
-    assert_eq!(release.upstream_version.as_deref(), Some("1.31.1"));
+    assert_eq!(release.version, "1.32.0");
+    assert_eq!(release.upstream_version.as_deref(), Some("1.32.0"));
 }
 
 #[test]
@@ -404,7 +404,7 @@ fn builtin_matrix_tracks_target_specific_codex_cli_archive_binaries() {
         ProviderInstall::Archive {
             version, targets, ..
         } => {
-            assert_eq!(version, "rust-v0.121.0");
+            assert_eq!(version, "rust-v0.125.0");
             assert_eq!(
                 targets
                     .get("darwin-aarch64")

@@ -45,6 +45,10 @@ impl Drop for ScopedEnvVar {
     }
 }
 
+fn crp_test_env() -> HashMap<String, String> {
+    HashMap::from([("CTX_MCP_DISABLED".to_string(), "1".to_string())])
+}
+
 fn immediate_sweep_config() -> ProviderSessionSweepConfig {
     ProviderSessionSweepConfig {
         idle_ttl: Duration::ZERO,
@@ -154,7 +158,7 @@ async fn set_session_model_writes_crp_command_for_live_session() -> Result<()> {
         vec![script_path.to_string_lossy().to_string()],
     );
     let session_key = "session-set-model";
-    let mut env = HashMap::new();
+    let mut env = crp_test_env();
     env.insert(
         "LOG_FILE".to_string(),
         log_path.to_string_lossy().to_string(),
@@ -360,7 +364,7 @@ done
         vec![script_path.to_string_lossy().to_string()],
     );
     let session_key = "cancel-drain";
-    let mut env = HashMap::new();
+    let mut env = crp_test_env();
     env.insert(
         "LOG_FILE".to_string(),
         log_path.to_string_lossy().to_string(),
@@ -453,7 +457,7 @@ async fn prompt_fails_fast_on_fatal_startup_stderr_and_shuts_down_runtime() -> R
         vec![script_path.to_string_lossy().to_string()],
     );
     let session_key = "session-fatal-startup";
-    let mut env = HashMap::new();
+    let mut env = crp_test_env();
     env.insert("CTX_SESSION_ID".to_string(), session_key.to_string());
 
     let (event_sink, mut event_rx) = tokio::sync::mpsc::channel(8);
@@ -527,7 +531,7 @@ async fn opencode_flattens_prompt_items_into_single_prompt_field() -> Result<()>
         "/bin/sh".to_string(),
         vec![script_path.to_string_lossy().to_string()],
     );
-    let mut env = HashMap::new();
+    let mut env = crp_test_env();
     env.insert(
         "LOG_FILE".to_string(),
         log_path.to_string_lossy().to_string(),
@@ -587,7 +591,7 @@ async fn prompt_model_override_can_be_disabled_via_env() -> Result<()> {
         "/bin/sh".to_string(),
         vec![script_path.to_string_lossy().to_string()],
     );
-    let mut env = HashMap::new();
+    let mut env = crp_test_env();
     env.insert(
         "LOG_FILE".to_string(),
         log_path.to_string_lossy().to_string(),
@@ -639,7 +643,7 @@ async fn shutdown_cached_session_is_not_live_and_gets_replaced() -> Result<()> {
         "/bin/sh".to_string(),
         vec!["-c".into(), "cat >/dev/null".into()],
     );
-    let env = HashMap::new();
+    let env = crp_test_env();
     let session_key = "session-restart-after-shutdown";
 
     let first = adapter
@@ -677,7 +681,7 @@ async fn reap_idle_sessions_reaps_quiescent_live_session() -> Result<()> {
         vec![script_path.to_string_lossy().to_string()],
     );
     let session_key = "quiescent-reap";
-    let env = HashMap::new();
+    let env = crp_test_env();
 
     let _session = adapter
         .pool
@@ -742,7 +746,7 @@ done
         "/bin/sh".to_string(),
         vec![script_path.to_string_lossy().to_string()],
     );
-    let mut env = HashMap::new();
+    let mut env = crp_test_env();
     env.insert(
         "CTX_SESSION_ID".to_string(),
         "runtime-status-default".to_string(),
@@ -816,9 +820,8 @@ done
         vec![script_path.to_string_lossy().to_string()],
     );
     let session_key = "unsupported-launch-policy-session";
-    let mut env = HashMap::new();
+    let mut env = crp_test_env();
     env.insert("CTX_SESSION_ID".to_string(), session_key.to_string());
-    env.insert("CTX_MCP_DISABLED".to_string(), "1".to_string());
     env.insert(
         "LOG_FILE".to_string(),
         log_path.to_string_lossy().to_string(),
@@ -905,9 +908,8 @@ done
         None,
         Some(CTX_CRP_LAUNCH_POLICY_FULL),
     ] {
-        let mut env = HashMap::new();
+        let mut env = crp_test_env();
         env.insert("CTX_SESSION_ID".to_string(), session_key.to_string());
-        env.insert("CTX_MCP_DISABLED".to_string(), "1".to_string());
         env.insert(
             "LOG_FILE".to_string(),
             log_path.to_string_lossy().to_string(),
@@ -1111,7 +1113,7 @@ async fn reap_idle_sessions_reaps_unopened_session_without_status_probe() -> Res
         vec![script_path.to_string_lossy().to_string()],
     );
     let session_key = "unopened-reap";
-    let mut env = HashMap::new();
+    let mut env = crp_test_env();
     env.insert(
         "LOG_FILE".to_string(),
         log_path.to_string_lossy().to_string(),
@@ -1154,7 +1156,7 @@ async fn reap_idle_sessions_keeps_busy_session() -> Result<()> {
         vec![script_path.to_string_lossy().to_string()],
     );
     let session_key = "busy-reap";
-    let env = HashMap::new();
+    let env = crp_test_env();
 
     let session = adapter
         .pool
@@ -1191,7 +1193,7 @@ async fn reap_idle_sessions_keeps_pinned_session() -> Result<()> {
         vec![script_path.to_string_lossy().to_string()],
     );
     let session_key = "pinned-reap";
-    let env = HashMap::new();
+    let env = crp_test_env();
 
     let session = adapter
         .pool
@@ -1227,7 +1229,7 @@ async fn reap_idle_sessions_removes_dead_sessions_without_status_probe() -> Resu
         vec!["-c".into(), "cat >/dev/null".into()],
     );
     let session_key = "dead-reap";
-    let env = HashMap::new();
+    let env = crp_test_env();
 
     let session = adapter
         .pool
@@ -1274,7 +1276,7 @@ async fn reap_idle_sessions_skips_probe_for_runtimes_without_session_status() ->
         false,
     );
     let session_key = "unsupported-probe";
-    let mut env = HashMap::new();
+    let mut env = crp_test_env();
     env.insert(
         "LOG_FILE".to_string(),
         log_path.to_string_lossy().to_string(),
@@ -1327,7 +1329,7 @@ async fn get_or_create_session_over_cap_does_not_probe_status_inline() -> Result
         "/bin/sh".to_string(),
         vec![script_path.to_string_lossy().to_string()],
     );
-    let mut env = HashMap::new();
+    let mut env = crp_test_env();
     env.insert(
         "LOG_FILE".to_string(),
         log_path.to_string_lossy().to_string(),
@@ -1401,7 +1403,7 @@ done
         vec![script_path.to_string_lossy().to_string()],
     );
     let session_key = "busy-model-update";
-    let mut env = HashMap::new();
+    let mut env = crp_test_env();
     env.insert(
         "LOG_FILE".to_string(),
         log_path.to_string_lossy().to_string(),
@@ -1493,7 +1495,7 @@ done
         vec![script_path.to_string_lossy().to_string()],
     );
     let session_key = "draining-model-update";
-    let mut env = HashMap::new();
+    let mut env = crp_test_env();
     env.insert(
         "LOG_FILE".to_string(),
         log_path.to_string_lossy().to_string(),
@@ -1563,7 +1565,7 @@ async fn draining_model_update_send_failure_shuts_down_session() -> Result<()> {
         vec![script_path.to_string_lossy().to_string()],
     );
     let session_key = "draining-model-send-failure";
-    let env = HashMap::new();
+    let env = crp_test_env();
 
     let session = adapter
         .pool
@@ -1606,7 +1608,7 @@ done
         vec![script_path.to_string_lossy().to_string()],
     );
     let session_key = "opening-cancel";
-    let mut env = HashMap::new();
+    let mut env = crp_test_env();
     env.insert(
         "LOG_FILE".to_string(),
         log_path.to_string_lossy().to_string(),
@@ -1696,7 +1698,7 @@ done
         vec![script_path.to_string_lossy().to_string()],
     );
     let session_key = "opening-setup-error";
-    let mut env = HashMap::new();
+    let mut env = crp_test_env();
     env.insert(
         "LOG_FILE".to_string(),
         log_path.to_string_lossy().to_string(),
@@ -1784,7 +1786,7 @@ done
         vec![script_path.to_string_lossy().to_string()],
     );
     let session_key = "silent-runtime";
-    let mut env = HashMap::new();
+    let mut env = crp_test_env();
     env.insert(
         "LOG_FILE".to_string(),
         log_path.to_string_lossy().to_string(),
@@ -1878,7 +1880,7 @@ done
         "/bin/sh".to_string(),
         vec![script_path.to_string_lossy().to_string()],
     );
-    let mut env = HashMap::new();
+    let mut env = crp_test_env();
     env.insert(
         "LOG_FILE".to_string(),
         log_path.to_string_lossy().to_string(),
@@ -1943,7 +1945,7 @@ done
         vec![script_path.to_string_lossy().to_string()],
     );
     let session_key = "auth-required-before-first-event";
-    let mut env = HashMap::new();
+    let mut env = crp_test_env();
     env.insert(
         "CTX_CRP_FIRST_EVENT_TIMEOUT_MS".to_string(),
         "250".to_string(),
@@ -2049,7 +2051,7 @@ done
         vec![script_path.to_string_lossy().to_string()],
     );
     let session_key = "auth-error-before-first-event";
-    let mut env = HashMap::new();
+    let mut env = crp_test_env();
     env.insert(
         "CTX_CRP_FIRST_EVENT_TIMEOUT_MS".to_string(),
         "250".to_string(),
@@ -2160,7 +2162,7 @@ done
     );
 
     for session_key in ["first-idle", "second-idle"] {
-        let mut env = HashMap::new();
+        let mut env = crp_test_env();
         env.insert("CTX_SESSION_ID".to_string(), session_key.to_string());
         let (event_sink, _event_rx) = mpsc::channel(8);
         let handle = adapter
@@ -2235,7 +2237,7 @@ done
         "/bin/sh".to_string(),
         vec![script_path.to_string_lossy().to_string()],
     );
-    let env = HashMap::new();
+    let env = crp_test_env();
 
     let oldest = adapter
         .pool
@@ -2315,7 +2317,7 @@ done
         "/bin/sh".to_string(),
         vec![script_path.to_string_lossy().to_string()],
     );
-    let mut env = HashMap::new();
+    let mut env = crp_test_env();
     env.insert(
         "LOG_FILE".to_string(),
         log_path.to_string_lossy().to_string(),
@@ -2403,7 +2405,7 @@ done
         vec![script_path.to_string_lossy().to_string()],
     );
     let session_key = "active-reap";
-    let mut env = HashMap::new();
+    let mut env = crp_test_env();
     env.insert(
         "LOG_FILE".to_string(),
         log_path.to_string_lossy().to_string(),
@@ -2514,7 +2516,7 @@ done
         vec![script_path.to_string_lossy().to_string()],
     );
     let session_key = "status-race-reap";
-    let mut env = HashMap::new();
+    let mut env = crp_test_env();
     env.insert(
         "LOG_FILE".to_string(),
         log_path.to_string_lossy().to_string(),
@@ -2636,7 +2638,7 @@ done
         vec![script_path.to_string_lossy().to_string()],
     );
     let session_key = "draining-reap";
-    let mut env = HashMap::new();
+    let mut env = crp_test_env();
     env.insert(
         "LOG_FILE".to_string(),
         log_path.to_string_lossy().to_string(),
@@ -2738,7 +2740,7 @@ done
         vec![script_path.to_string_lossy().to_string()],
     );
     let session_key = "touch-after-prompt";
-    let env = HashMap::new();
+    let env = crp_test_env();
 
     let (event_tx, _event_rx) = mpsc::channel(8);
     let (_cancel_tx, cancel_rx) = oneshot::channel();
@@ -2817,7 +2819,7 @@ done
         .authenticate_session(
             session_key.to_string(),
             workdir.clone(),
-            HashMap::new(),
+            crp_test_env(),
             None,
             event_tx,
             crate::adapters::ProviderRunHooks::default(),
@@ -2874,7 +2876,7 @@ async fn authenticate_session_runtime_exit_clears_unopened_session() -> Result<(
     let session_key = "auth-open-send-failure";
     let (event_tx, _event_rx) = mpsc::channel(8);
 
-    let mut env = HashMap::new();
+    let mut env = crp_test_env();
     env.insert(
         "CTX_CRP_FIRST_EVENT_TIMEOUT_MS".to_string(),
         "50".to_string(),
@@ -2960,6 +2962,10 @@ done
         "http://127.0.0.1:4401".to_string(),
     );
     env.insert("CTX_AUTH_TOKEN".to_string(), "token-123".to_string());
+    env.insert(
+        "CTX_MCP_COMMAND".to_string(),
+        script_path.to_string_lossy().to_string(),
+    );
     let (event_tx, mut event_rx) = mpsc::channel(16);
 
     adapter
@@ -3059,7 +3065,7 @@ done
         "/bin/sh".to_string(),
         vec![script_path.to_string_lossy().to_string()],
     );
-    let mut env = HashMap::new();
+    let mut env = crp_test_env();
     env.insert(
         "LOG_FILE".to_string(),
         log_path.to_string_lossy().to_string(),
@@ -3141,7 +3147,7 @@ done
         "/bin/sh".to_string(),
         vec![script_path.to_string_lossy().to_string()],
     );
-    let mut env = HashMap::new();
+    let mut env = crp_test_env();
     env.insert(
         "LOG_FILE".to_string(),
         log_path.to_string_lossy().to_string(),
@@ -3225,7 +3231,7 @@ done
         "/bin/sh".to_string(),
         vec![script_path.to_string_lossy().to_string()],
     );
-    let mut env = HashMap::new();
+    let mut env = crp_test_env();
     env.insert(
         "LOG_FILE".to_string(),
         log_path.to_string_lossy().to_string(),

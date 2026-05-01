@@ -529,6 +529,9 @@ fn build_local_ws_url(local_daemon_url: &str, path: &str) -> Result<Url> {
     Ok(joined)
 }
 
+static BASE64: base64::engine::general_purpose::GeneralPurpose =
+    base64::engine::general_purpose::STANDARD;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -541,6 +544,3 @@ mod tests {
         assert!(!url.contains("secret"));
     }
 }
-
-static BASE64: base64::engine::general_purpose::GeneralPurpose =
-    base64::engine::general_purpose::STANDARD;

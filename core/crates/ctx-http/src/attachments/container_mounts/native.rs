@@ -273,9 +273,7 @@ async fn import_dir_to_container(
             String::from_utf8_lossy(&out.stderr).trim()
         );
     }
-    if let Err(err) = copy_result {
-        return Err(err);
-    }
+    copy_result?;
     if !tar_status.success() {
         anyhow::bail!("tar failed with status {tar_status}");
     }
