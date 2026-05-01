@@ -361,6 +361,11 @@ fn resolve_runtime_provider_command_keeps_invalid_managed_commands_invalid_by_de
 #[test]
 fn resolve_runtime_provider_command_repairable_managed_treats_invalid_managed_commands_as_missing()
 {
+    let _guard = env_lock().blocking_lock();
+    let _bundle_dir = EnvVarGuard::unset("CTX_BUNDLE_DIR");
+    let _strict = EnvVarGuard::unset("CTX_E2E_BUNDLED_ONLY");
+    let _providers = EnvVarGuard::unset("CTX_E2E_BUNDLED_ONLY_PROVIDERS");
+
     let mut cfg = AgentServerConfigFile::default();
     cfg.managed_provider_targets.insert(
         "codex".to_string(),

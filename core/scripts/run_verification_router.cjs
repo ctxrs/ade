@@ -37,6 +37,7 @@ const VERIFICATION_TOOLING_COMMAND = [
   "scripts/ctx_http_bazel_contract.test.cjs",
   "scripts/testing_tiers_contract.test.cjs",
   "scripts/test_taxonomy_execution_contract.test.cjs",
+  "scripts/managed_runtime_mirror.test.cjs",
   "scripts/affected_tests_contract.test.cjs",
 ].join(" ");
 
@@ -145,6 +146,7 @@ function buildOverlayCommands(changedFiles) {
   }
   if (changedFiles.some((entry) =>
     entry.startsWith("core/scripts/run_verification_router")
+    || entry.startsWith("core/scripts/managed_runtime_mirror")
     || entry.startsWith("core/scripts/sdlc_verify_metrics_report")
     || entry.startsWith("core/scripts/verification_")
     || entry.startsWith("core/scripts/ctx_http_suite_task")

@@ -238,7 +238,7 @@ fn seed_managed_node_runtime_folder(data_root: &Path, dist_target: &str, tag: &s
         "target": dist_target,
         "archive_name": archive_name,
         "mirror_url": format!(
-            "https://api.ctx.rs/functions/v1/download/managed-runtimes/node/{SEEDED_NODE_VERSION}/{archive_name}"
+            "https://api.ctx.rs/storage/v1/object/public/releases/artifacts/managed-runtimes/node/{SEEDED_NODE_VERSION}/{archive_name}"
         ),
         "sha256": sha,
         "installed_at": "2026-04-30T00:00:00Z",
