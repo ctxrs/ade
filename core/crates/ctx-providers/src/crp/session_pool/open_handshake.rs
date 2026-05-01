@@ -19,7 +19,7 @@ use super::super::protocol::{
 use super::{AuthSessionOpenMode, CrpSession, CrpSessionPool};
 
 const CRP_FIRST_EVENT_TIMEOUT_HOST: std::time::Duration = std::time::Duration::from_secs(15);
-const CRP_FIRST_EVENT_TIMEOUT_CONTAINER: std::time::Duration = std::time::Duration::from_secs(45);
+const CRP_FIRST_EVENT_TIMEOUT_CONTAINER: std::time::Duration = std::time::Duration::from_secs(120);
 const CRP_FIRST_EVENT_TIMEOUT_ENV: &str = "CTX_CRP_FIRST_EVENT_TIMEOUT_MS";
 
 pub(super) fn apply_session_opened_state(session: &CrpSession, event: &CrpEvent) {
@@ -110,6 +110,57 @@ pub(super) fn crp_runtime_label(env: &HashMap<String, String>) -> &'static str {
 
 pub(super) fn duration_millis_u64(duration: std::time::Duration) -> u64 {
     duration.as_millis().min(u128::from(u64::MAX)) as u64
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn crp_first_event_timeout_uses_container_cold_start_budget() {
+        let mut env = HashMap::new();
+        assert_eq!(crp_first_event_timeout(&env), CRP_FIRST_EVENT_TIMEOUT_HOST);
+
+        env.insert(
+            "CTX_HARNESS_CONTAINER_ID".to_string(),
+            "ctx-harness-test".to_string(),
+        );
+        assert_eq!(
+            crp_first_event_timeout(&env),
+            CRP_FIRST_EVENT_TIMEOUT_CONTAINER
+        );
+        assert_eq!(
+            CRP_FIRST_EVENT_TIMEOUT_CONTAINER,
+            std::time::Duration::from_secs(120)
+        );
+    }
+
+    #[test]
+    fn crp_first_event_timeout_env_override_still_wins() {
+        let mut env = HashMap::from([
+            (
+                "CTX_HARNESS_CONTAINER_ID".to_string(),
+                "ctx-harness-test".to_string(),
+            ),
+            (
+                "CTX_CRP_FIRST_EVENT_TIMEOUT_MS".to_string(),
+                "2500".to_string(),
+            ),
+        ]);
+        assert_eq!(
+            crp_first_event_timeout(&env),
+            std::time::Duration::from_millis(2500)
+        );
+
+        env.insert(
+            "CTX_CRP_FIRST_EVENT_TIMEOUT_MS".to_string(),
+            "0".to_string(),
+        );
+        assert_eq!(
+            crp_first_event_timeout(&env),
+            CRP_FIRST_EVENT_TIMEOUT_CONTAINER
+        );
+    }
 }
 
 pub(in crate::crp::session_pool) struct AuthSessionOpenOutcome {
