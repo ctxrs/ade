@@ -63,6 +63,16 @@ test("linux AppImage packaging includes manifest-declared ctx-mcp runtime payloa
     "Linux AppImages must be extracted and verified before staging for publish",
   );
   assert.match(
+    linuxTauriBundleScript,
+    /appimage_abs="\$\(cd "\$\(dirname "\$appimage"\)" && pwd\)\/\$\(basename "\$appimage"\)"/,
+    "Linux AppImage verification must resolve the bundle path before changing into the extraction directory",
+  );
+  assert.match(
+    linuxTauriBundleScript,
+    /cd "\$extract_parent" && "\$appimage_abs" --appimage-extract/,
+    "Linux AppImage extraction must execute the resolved bundle path from the temporary extraction directory",
+  );
+  assert.match(
     releaseVerifier,
     /verify_bundle_manifest_closure\.cjs/,
     "Supabase verification must reject AppImages with manifest-declared files missing from the packaged bundle",

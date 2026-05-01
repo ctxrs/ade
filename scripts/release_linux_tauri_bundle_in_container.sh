@@ -177,10 +177,11 @@ repack_appimage_from_appdir() {
 verify_appimage_bundle_manifest_closure() {
   local appimage="$1"
   local extract_parent="$2"
-  local manifest_path
+  local appimage_abs manifest_path
+  appimage_abs="$(cd "$(dirname "$appimage")" && pwd)/$(basename "$appimage")"
   rm -rf "$extract_parent"
   mkdir -p "$extract_parent"
-  if ! (cd "$extract_parent" && "$appimage" --appimage-extract >/dev/null 2>&1); then
+  if ! (cd "$extract_parent" && "$appimage_abs" --appimage-extract >/dev/null 2>&1); then
     echo "error: rebuilt AppImage failed --appimage-extract: $appimage" >&2
     return 1
   fi
