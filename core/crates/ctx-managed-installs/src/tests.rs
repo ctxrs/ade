@@ -141,15 +141,17 @@ fn managed_runtime_lock_uses_ctx_mirror_only() {
     for spec in runtime_lock::all_runtime_archive_specs() {
         runtime_lock::validate_runtime_archive_spec(spec).expect("valid runtime lock entry");
         assert!(
-            spec.mirror_url
-                .starts_with("https://api.ctx.rs/functions/v1/download/managed-runtimes/"),
-            "runtime URL must use ctx mirror: {}",
+            spec.mirror_url.starts_with(
+                "https://api.ctx.rs/storage/v1/object/public/releases/artifacts/managed-runtimes/"
+            ),
+            "runtime URL must use ctx storage mirror: {}",
             spec.mirror_url
         );
         assert!(
             !spec.mirror_url.contains("nodejs.org")
                 && !spec.mirror_url.contains("github.com")
-                && !spec.mirror_url.contains("python-build-standalone"),
+                && !spec.mirror_url.contains("python-build-standalone")
+                && !spec.mirror_url.contains("supabase.co"),
             "runtime URL must not point at upstream: {}",
             spec.mirror_url
         );
@@ -309,20 +311,27 @@ fn managed_runtime_download_rejects_redirect_responses() {
 
 #[test]
 fn managed_runtime_download_allows_only_ctx_mirror_storage_urls() {
-    let api_url = url::Url::parse(
-        "https://api.ctx.rs/functions/v1/download/managed-runtimes/node/24.15.0/node-v24.15.0-linux-x64.tar.gz",
-    )
-    .expect("api url");
     let storage_url = url::Url::parse(
         "https://api.ctx.rs/storage/v1/object/public/releases/artifacts/managed-runtimes/node/24.15.0/node-v24.15.0-linux-x64.tar.gz",
     )
     .expect("storage url");
+    let function_url = url::Url::parse(
+        "https://api.ctx.rs/functions/v1/download/managed-runtimes/node/24.15.0/node-v24.15.0-linux-x64.tar.gz",
+    )
+    .expect("function url");
+    let raw_supabase_storage_url = url::Url::parse(
+        "https://supabase.example.test/storage/v1/object/public/releases/artifacts/managed-runtimes/node/24.15.0/node-v24.15.0-linux-x64.tar.gz",
+    )
+    .expect("raw supabase storage url");
     let upstream_url =
         url::Url::parse("https://nodejs.org/dist/v24.15.0/node-v24.15.0-linux-x64.tar.gz")
             .expect("upstream url");
 
-    assert!(runtime_lock::runtime_download_url_allowed(&api_url));
     assert!(runtime_lock::runtime_download_url_allowed(&storage_url));
+    assert!(!runtime_lock::runtime_download_url_allowed(&function_url));
+    assert!(!runtime_lock::runtime_download_url_allowed(
+        &raw_supabase_storage_url
+    ));
     assert!(!runtime_lock::runtime_download_url_allowed(&upstream_url));
 }
 

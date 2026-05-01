@@ -500,7 +500,7 @@ pub(crate) fn reject_download_redirect(
             .and_then(|value| value.to_str().ok())
             .unwrap_or("<missing Location header>");
         anyhow::bail!(
-            "managed runtime mirror redirected to disallowed location {location}; only ctx mirror storage redirects are allowed"
+            "managed runtime mirror redirected to disallowed location {location}; only ctx managed-runtime storage URLs are allowed"
         );
     }
     Ok(())
