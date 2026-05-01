@@ -37,7 +37,7 @@ test("readOpenRouterEnv uses provider-specific cheap defaults for write smoke", 
   const qwenEnv = readOpenRouterEnv("qwen");
   const piEnv = readOpenRouterEnv("pi");
 
-  assert.equal(codexEnv.modelOverride, "openai/gpt-4.1-mini");
+  assert.equal(codexEnv.modelOverride, "openai/gpt-4.1-nano");
   assert.equal(qwenEnv.modelOverride, "openai/gpt-4.1-nano");
   assert.equal(piEnv.modelOverride, "google/gemini-3-flash-preview");
 });
@@ -127,7 +127,7 @@ test("ensureCodexOpenRouterWorkspaceReady checks install status against the requ
         status: 200,
         payload: {
           models: {
-            current_model_id: "openai/gpt-4.1-mini",
+            current_model_id: "openai/gpt-4.1-nano",
           },
         },
       };
@@ -140,7 +140,7 @@ test("ensureCodexOpenRouterWorkspaceReady checks install status against the requ
   });
 
   assert.equal(result.endpointId, "endpoint-1");
-  assert.equal(result.modelId, "openai/gpt-4.1-mini");
+  assert.equal(result.modelId, "openai/gpt-4.1-nano");
   assert.equal(calls[0].requestPath, "/api/providers/codex?target=container");
   assert.equal(
     calls.some((entry) => entry.requestPath.includes("/api/providers/codex/install?target=")),

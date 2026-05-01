@@ -464,11 +464,11 @@ const remoteProviderInstallAndConfigure = ({
     throw new Error("OPENROUTER_API_KEY is required for remote updater proof");
   }
   const baseUrl = trimText(process.env.OPENROUTER_BASE_URL) || "https://openrouter.ai/api/v1";
-  const modelOverride = providerId === "qwen"
+  const modelOverride = trimText(process.env.CTX_E2E_OPENROUTER_MODEL_OVERRIDE) || (providerId === "qwen"
     ? "openai/gpt-4.1-nano"
     : providerId === "pi"
       ? "google/gemini-3-flash-preview"
-      : "openai/gpt-4.1-mini";
+      : "openai/gpt-4.1-nano");
 
   const startInstall = remoteHttpJson("POST", `/api/providers/${providerId}/install?target=${installTarget}`, {}, { token });
   if (startInstall.status !== 200) {

@@ -1097,7 +1097,10 @@ const waitForSelectedHarnessInstallsToKickOff = async (providerIds, target = "ho
 const waitForWizardAdvanceWhileSelectedHarnessInstallsRun = async (
   providerIds,
   target = "host",
-  timeoutMs = 30000,
+  // Container harness starts can include first-run local Linux sandbox prep before
+  // the daemon install session appears. The assertion still requires the wizard
+  // to advance before the selected install completes.
+  timeoutMs = 120000,
 ) => {
   const selected = Array.from(new Set((providerIds || []).map((value) => String(value || "").trim()).filter(Boolean)));
   if (selected.length === 0) {
@@ -1253,7 +1256,7 @@ const ensureReadyForSourceSelection = async (
             await waitForWizardAdvanceWhileSelectedHarnessInstallsRun(
               expectedKickoffProviderIds,
               installTarget,
-              30000,
+              120000,
             );
           } else if (expectedKickoffProviderIds.length > 0) {
             await waitForSelectedHarnessInstallsToKickOff(
