@@ -233,7 +233,9 @@ export function WorkspaceSetupPageStepBody(props: WorkspaceSetupPageViewProps) {
           )}
         </div>
       )}
-      {step.key === "location" && selections.location === "local" && localAdminPasswordPromptVisible && (
+      {(step.key === "location" || step.key === "harness-downloads")
+        && selections.location === "local"
+        && localAdminPasswordPromptVisible && (
         <div className="wizard-remote">
           <div className="wizard-input">
             <label>

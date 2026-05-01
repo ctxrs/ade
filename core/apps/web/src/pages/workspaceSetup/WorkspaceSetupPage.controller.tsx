@@ -162,9 +162,19 @@ export function WorkspaceSetupPageController() {
       onRemotePortInputChange={workflow.remote.onRemotePortInputChange}
       remoteDataDirInput={workflow.remote.remoteDataDirInput}
       onRemoteDataDirInputChange={workflow.remote.onRemoteDataDirInputChange}
-      localAdminPasswordPromptVisible={workflow.create.localAdminPasswordPromptVisible}
-      localAdminPasswordInput={workflow.create.localAdminPasswordInput}
-      setLocalAdminPasswordInput={workflow.create.setLocalAdminPasswordInput}
+      localAdminPasswordPromptVisible={
+        workflow.create.localAdminPasswordPromptVisible
+        || workflow.provisioning.localAdminPasswordPromptVisible
+      }
+      localAdminPasswordInput={
+        workflow.provisioning.localAdminPasswordPromptVisible
+          ? workflow.provisioning.localAdminPasswordInput
+          : workflow.create.localAdminPasswordInput
+      }
+      setLocalAdminPasswordInput={(value) => {
+        workflow.create.setLocalAdminPasswordInput(value);
+        workflow.provisioning.setLocalAdminPasswordInput(value);
+      }}
       remotePasswordPromptVisible={workflow.remote.remotePasswordPromptVisible}
       remotePasswordPromptMode={workflow.remote.remotePasswordPromptMode}
       remotePasswordInput={workflow.remote.remotePasswordInput}

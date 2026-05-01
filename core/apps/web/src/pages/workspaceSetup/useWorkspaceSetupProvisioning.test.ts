@@ -1252,9 +1252,120 @@ describe("useWorkspaceSetupProvisioning", () => {
 
     expect(nextPlan).toBeNull();
     expect(installProvider).not.toHaveBeenCalled();
+    expect(latest!.localAdminPasswordPromptVisible).toBe(false);
+    expect(latest!.localAdminPasswordInput).toBe("");
     expect(latest!.harnessInstallError).toContain(
       "Could not prepare sandbox for selected downloads: sandbox activation failed",
     );
+  });
+
+  it("retries local sandbox preparation with the one-time admin password before starting downloads", async () => {
+    vi.mocked(listProviderAuthImportCandidates)
+      .mockResolvedValue({ candidates: [] } as never);
+    vi.mocked(listProviders)
+      .mockResolvedValue([
+        {
+          provider_id: "codex",
+          installed: false,
+          health: "error",
+          diagnostics: [],
+          usability: blockedInstallUsability,
+          details: {
+            install_supported: "true",
+            install_target: "container",
+          },
+        },
+      ] as never);
+    vi.mocked(getSettings)
+      .mockResolvedValue(configuredTitlingSettings as never);
+    vi.mocked(desktopEnsureLocalLinuxSandboxReady)
+      .mockRejectedValueOnce(
+        new Error("CTX_LOCAL_ADMIN_PASSWORD_REQUIRED: Local admin password required."),
+      )
+      .mockResolvedValueOnce({ ready: true } as never);
+    vi.mocked(installProvider)
+      .mockResolvedValue({
+        install_id: "install-codex",
+        provider_id: "codex",
+        target: "container",
+      } as never);
+
+    const currentStepKeyRef = { current: "harness-downloads" as const };
+    const setRoutePlan = vi.fn();
+    const setRoutePlanningBusy = vi.fn();
+    const invalidateRoutePlan = vi.fn();
+    const connectDaemonForImport = vi.fn(async () => {});
+    const effectiveTarget = deriveWorkspaceSetupEffectiveTarget("local", {
+      remoteHostInput: "",
+      remotePortInput: "4399",
+      remoteDataDirInput: "",
+    });
+    if (!effectiveTarget) {
+      throw new Error("Expected a local workspace setup target.");
+    }
+
+    let latest: ReturnType<typeof useWorkspaceSetupProvisioning> | null = null;
+
+    const Harness = () => {
+      latest = useWorkspaceSetupProvisioning({
+        currentStepKeyRef,
+        selections: {
+          location: "local",
+          container: "sandbox",
+        },
+        routePlan: {
+          targetKey: "local-route",
+          containerSelection: "sandbox",
+          includeHarnessDownloads: true,
+          includeAuthImport: false,
+          includeTitling: false,
+        },
+        setRoutePlan,
+        setRoutePlanningBusy,
+        invalidateRoutePlan,
+        desktopApp: true,
+        effectiveTarget,
+        remoteStatus: "connected",
+        remoteStatusRef: { current: "connected" },
+        connectDaemonForImport,
+      });
+      return null;
+    };
+
+    render(createElement(Harness));
+
+    await act(async () => {
+      await latest!.ensureRoutePlanForSelection("sandbox");
+    });
+
+    await act(async () => {
+      latest!.setHarnessInstallSelected({ codex: true });
+    });
+
+    await act(async () => {
+      await latest!.advanceFromHarnessDownloadsStep();
+    });
+
+    expect(latest!.localAdminPasswordPromptVisible).toBe(true);
+    expect(installProvider).not.toHaveBeenCalled();
+
+    await act(async () => {
+      latest!.setLocalAdminPasswordInput("local-admin");
+    });
+
+    await act(async () => {
+      await latest!.advanceFromHarnessDownloadsStep();
+    });
+
+    expect(desktopEnsureLocalLinuxSandboxReady).toHaveBeenNthCalledWith(1, {
+      admin_password_once: null,
+    });
+    expect(desktopEnsureLocalLinuxSandboxReady).toHaveBeenNthCalledWith(2, {
+      admin_password_once: "local-admin",
+    });
+    expect(latest!.localAdminPasswordPromptVisible).toBe(false);
+    expect(latest!.localAdminPasswordInput).toBe("");
+    expect(installProvider).toHaveBeenCalledWith("codex", "container");
   });
 
   it("keeps repairable dependency-blocked harnesses visible and startable in workspace setup", async () => {
