@@ -9,6 +9,7 @@ import {
   listProviders,
   startRuntimePrewarm,
 } from "../../api/client";
+import { desktopEnsureLocalLinuxSandboxReady } from "../../utils/desktop";
 import {
   type ProviderInstallProgressSession,
   type ProviderInstallProgressSnapshot,
@@ -46,6 +47,10 @@ vi.mock("../../state/providerInstallProgressStore", () => ({
   resolveProviderInstallProgressSession: vi.fn(() => null),
   subscribeProviderInstallProgressForScope: vi.fn(() => () => {}),
   upsertProviderInstallProgressForScope: vi.fn(),
+}));
+
+vi.mock("../../utils/desktop", () => ({
+  desktopEnsureLocalLinuxSandboxReady: vi.fn(),
 }));
 
 type Deferred<T> = {
@@ -124,6 +129,7 @@ describe("useWorkspaceSetupProvisioning", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(desktopEnsureLocalLinuxSandboxReady).mockResolvedValue({ ready: true } as never);
     providerProgressSnapshot = {};
     providerProgressListeners = new Set();
     vi.mocked(subscribeProviderInstallProgressForScope).mockImplementation((_ownerScope, listener) => {
@@ -1050,6 +1056,204 @@ describe("useWorkspaceSetupProvisioning", () => {
         state: "running",
         target: "container",
       }),
+    );
+  });
+
+  it("prepares the local sandbox before starting selected container harness installs", async () => {
+    vi.mocked(listProviderAuthImportCandidates)
+      .mockResolvedValue({ candidates: [] } as never);
+    vi.mocked(listProviders)
+      .mockResolvedValue([
+        {
+          provider_id: "codex",
+          installed: false,
+          health: "error",
+          diagnostics: [],
+          usability: blockedInstallUsability,
+          details: {
+            install_supported: "true",
+            install_target: "container",
+          },
+        },
+      ] as never);
+    vi.mocked(getSettings)
+      .mockResolvedValue(configuredTitlingSettings as never);
+
+    const callTrace: string[] = [];
+    vi.mocked(desktopEnsureLocalLinuxSandboxReady)
+      .mockImplementation(async () => {
+        callTrace.push("ensure-sandbox");
+        return { ready: true } as never;
+      });
+    vi.mocked(installProvider)
+      .mockImplementation(async () => {
+        callTrace.push("install-provider");
+        return {
+          install_id: "install-codex",
+          provider_id: "codex",
+          target: "container",
+        } as never;
+      });
+
+    const currentStepKeyRef = { current: "harness-downloads" as const };
+    const setRoutePlan = vi.fn();
+    const setRoutePlanningBusy = vi.fn();
+    const invalidateRoutePlan = vi.fn();
+    const connectDaemonForImport = vi.fn(async (locationOverride?: "local" | "remote") => {
+      callTrace.push(`connect-${locationOverride ?? "default"}`);
+    });
+    const effectiveTarget = deriveWorkspaceSetupEffectiveTarget("local", {
+      remoteHostInput: "",
+      remotePortInput: "4399",
+      remoteDataDirInput: "",
+    });
+    if (!effectiveTarget) {
+      throw new Error("Expected a local workspace setup target.");
+    }
+
+    let latest: ReturnType<typeof useWorkspaceSetupProvisioning> | null = null;
+
+    const Harness = () => {
+      latest = useWorkspaceSetupProvisioning({
+        currentStepKeyRef,
+        selections: {
+          location: "local",
+          container: "sandbox",
+        },
+        routePlan: {
+          targetKey: "local-route",
+          containerSelection: "sandbox",
+          includeHarnessDownloads: true,
+          includeAuthImport: false,
+          includeTitling: false,
+        },
+        setRoutePlan,
+        setRoutePlanningBusy,
+        invalidateRoutePlan,
+        desktopApp: true,
+        effectiveTarget,
+        remoteStatus: "connected",
+        remoteStatusRef: { current: "connected" },
+        connectDaemonForImport,
+      });
+      return null;
+    };
+
+    render(createElement(Harness));
+
+    await act(async () => {
+      await latest!.ensureRoutePlanForSelection("sandbox");
+    });
+
+    await act(async () => {
+      latest!.setHarnessInstallSelected({ codex: true });
+    });
+
+    callTrace.length = 0;
+    await act(async () => {
+      await latest!.advanceFromHarnessDownloadsStep();
+    });
+
+    expect(desktopEnsureLocalLinuxSandboxReady).toHaveBeenCalledWith({
+      admin_password_once: null,
+    });
+    expect(installProvider).toHaveBeenCalledWith("codex", "container");
+    expect(callTrace).toEqual([
+      "ensure-sandbox",
+      "connect-local",
+      "install-provider",
+    ]);
+  });
+
+  it("does not start selected container harness installs when local sandbox preparation fails", async () => {
+    vi.mocked(listProviderAuthImportCandidates)
+      .mockResolvedValue({ candidates: [] } as never);
+    vi.mocked(listProviders)
+      .mockResolvedValue([
+        {
+          provider_id: "codex",
+          installed: false,
+          health: "error",
+          diagnostics: [],
+          usability: blockedInstallUsability,
+          details: {
+            install_supported: "true",
+            install_target: "container",
+          },
+        },
+      ] as never);
+    vi.mocked(getSettings)
+      .mockResolvedValue(configuredTitlingSettings as never);
+    vi.mocked(desktopEnsureLocalLinuxSandboxReady)
+      .mockRejectedValueOnce(new Error("sandbox activation failed"));
+    vi.mocked(installProvider)
+      .mockResolvedValue({
+        install_id: "install-codex",
+        provider_id: "codex",
+        target: "container",
+      } as never);
+
+    const currentStepKeyRef = { current: "harness-downloads" as const };
+    const setRoutePlan = vi.fn();
+    const setRoutePlanningBusy = vi.fn();
+    const invalidateRoutePlan = vi.fn();
+    const connectDaemonForImport = vi.fn(async () => {});
+    const effectiveTarget = deriveWorkspaceSetupEffectiveTarget("local", {
+      remoteHostInput: "",
+      remotePortInput: "4399",
+      remoteDataDirInput: "",
+    });
+    if (!effectiveTarget) {
+      throw new Error("Expected a local workspace setup target.");
+    }
+
+    let latest: ReturnType<typeof useWorkspaceSetupProvisioning> | null = null;
+
+    const Harness = () => {
+      latest = useWorkspaceSetupProvisioning({
+        currentStepKeyRef,
+        selections: {
+          location: "local",
+          container: "sandbox",
+        },
+        routePlan: {
+          targetKey: "local-route",
+          containerSelection: "sandbox",
+          includeHarnessDownloads: true,
+          includeAuthImport: false,
+          includeTitling: false,
+        },
+        setRoutePlan,
+        setRoutePlanningBusy,
+        invalidateRoutePlan,
+        desktopApp: true,
+        effectiveTarget,
+        remoteStatus: "connected",
+        remoteStatusRef: { current: "connected" },
+        connectDaemonForImport,
+      });
+      return null;
+    };
+
+    render(createElement(Harness));
+
+    await act(async () => {
+      await latest!.ensureRoutePlanForSelection("sandbox");
+    });
+
+    await act(async () => {
+      latest!.setHarnessInstallSelected({ codex: true });
+    });
+
+    let nextPlan: WizardRoutePlan | null = null;
+    await act(async () => {
+      nextPlan = await latest!.advanceFromHarnessDownloadsStep();
+    });
+
+    expect(nextPlan).toBeNull();
+    expect(installProvider).not.toHaveBeenCalled();
+    expect(latest!.harnessInstallError).toContain(
+      "Could not prepare sandbox for selected downloads: sandbox activation failed",
     );
   });
 

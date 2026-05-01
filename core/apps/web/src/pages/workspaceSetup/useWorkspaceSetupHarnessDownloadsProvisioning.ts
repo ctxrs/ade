@@ -24,6 +24,7 @@ import {
   buildHarnessCatalogEntryMap,
   findHarnessCatalogEntry,
 } from "../../utils/harnessCatalog";
+import { desktopEnsureLocalLinuxSandboxReady } from "../../utils/desktop";
 import {
   computeInstallPct,
   parseInstallTarget,
@@ -389,7 +390,24 @@ export function useWorkspaceSetupHarnessDownloadsProvisioning({
     setHarnessInstallError(null);
     let shouldAdvance = false;
     try {
-      await connectDaemonForImport();
+      if (
+        desktopApp
+        && selections.location === "local"
+        && selectedHarnessInstallTarget === "container"
+        && startableRows.length > 0
+      ) {
+        try {
+          await desktopEnsureLocalLinuxSandboxReady({ admin_password_once: null });
+        } catch (error) {
+          setHarnessInstallError(
+            `Could not prepare sandbox for selected downloads: ${messageFromError(error)}`,
+          );
+          return null;
+        }
+        await connectDaemonForImport("local");
+      } else {
+        await connectDaemonForImport();
+      }
       const startResults = await Promise.all(
         startableRows.map(async (row) => {
           try {
