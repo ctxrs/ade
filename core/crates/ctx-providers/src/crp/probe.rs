@@ -489,15 +489,14 @@ mod tests {
     #[tokio::test]
     async fn probe_crp_models_reports_stderr_tail_when_runtime_closes_early() {
         let tmp = tempfile::tempdir().expect("tempdir");
-        let script = write_probe_script(
-            &tmp,
-            "read _\necho 'codex auth import unreadable' >&2\nexit 23",
-        );
 
         let err = probe_crp_models(CrpModelsProbeRequest {
             provider_id: "codex".to_string(),
-            command: script.to_string_lossy().to_string(),
-            args: Vec::new(),
+            command: "/bin/sh".to_string(),
+            args: vec![
+                "-c".to_string(),
+                "read _\necho 'codex auth import unreadable' >&2\nexit 23".to_string(),
+            ],
             workdir: tmp.path().to_path_buf(),
             env: HashMap::new(),
             host_timeout: Duration::from_secs(10),
