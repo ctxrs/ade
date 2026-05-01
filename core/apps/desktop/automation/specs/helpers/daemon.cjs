@@ -20,6 +20,14 @@ const REMOTE_FIXTURE_PORT = Number.parseInt(
 let cachedConnection = null;
 const waitMs = (ms) => new Promise((resolve) => setTimeout(resolve, Math.max(0, Number(ms) || 0)));
 
+const resolveDaemonAuthPath = () => {
+  const explicit = readString(process.env.CTX_AUTOMATION_DAEMON_AUTH_PATH);
+  if (explicit) return explicit;
+  const shippedDataDir = readString(process.env.CTX_AUTOMATION_SHIPPED_APP_DAEMON_DATA_DIR);
+  if (shippedDataDir) return path.join(shippedDataDir, "daemon_auth.json");
+  return path.join(os.homedir(), ".ctx", "daemon_auth.json");
+};
+
 const shouldRefreshLocalDesktopConnection = (info) => {
   if (!info || typeof info !== "object") return false;
   return String(info.kind || "").trim().toLowerCase() === "local";
@@ -273,6 +281,140 @@ const checkDaemonHealth = async () => {
   };
 };
 
+const readString = (value) => (typeof value === "string" ? value.trim() : "");
+
+const asRecord = (value) => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return value;
+};
+
+const expectedDaemonIdentityFromEnv = ({ env = process.env } = {}) => ({
+  version: readString(env.CTX_AUTOMATION_EXPECT_DAEMON_VERSION),
+  buildId: readString(env.CTX_AUTOMATION_EXPECT_DAEMON_BUILD_ID),
+  compatibilityToken: readString(env.CTX_AUTOMATION_EXPECT_DAEMON_COMPATIBILITY_TOKEN),
+});
+
+const daemonIdentityFromHealthPayload = (payload) => {
+  const body = asRecord(payload);
+  const compatibility = asRecord(body.compatibility);
+  return {
+    version: readString(body.daemon_version || body.version),
+    buildId: readString(compatibility.desktop_build_id),
+    compatibilityToken: readString(compatibility.protocol_compatibility_token),
+    pid: body.pid ?? null,
+    dataRoot: readString(body.data_root),
+    daemonUrl: readString(body.daemon_url),
+  };
+};
+
+const daemonHealthWithRawAuth = async () => {
+  const authPath = resolveDaemonAuthPath();
+  let parsed;
+  try {
+    parsed = JSON.parse(fs.readFileSync(authPath, "utf8"));
+  } catch (error) {
+    throw new Error(`failed to read daemon auth for identity proof at ${authPath}: ${String(error)}`);
+  }
+  const baseUrl = readString(parsed.daemon_url || parsed.base_url);
+  const token = readString(parsed.token);
+  if (!baseUrl || !token) {
+    throw new Error(`daemon auth for identity proof is missing daemon_url/token at ${authPath}`);
+  }
+  if (typeof fetch !== "function") {
+    throw new Error("global fetch is not available in this Node runtime");
+  }
+  const controller = new AbortController();
+  const timeout = setTimeout(() => {
+    controller.abort(new Error("raw-auth daemon health request timeout"));
+  }, DAEMON_HTTP_TIMEOUT_MS);
+  try {
+    const response = await fetch(new URL("/api/health", baseUrl).toString(), {
+      method: "GET",
+      headers: {
+        authorization: `Bearer ${token}`,
+      },
+      signal: controller.signal,
+    });
+    const raw = await response.text();
+    let payload = {};
+    if (raw.trim()) {
+      try {
+        payload = JSON.parse(raw);
+      } catch {
+        payload = { raw };
+      }
+    }
+    return {
+      status: response.status,
+      payload,
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
+};
+
+const compareDaemonIdentity = (expected, actual) => {
+  const mismatches = [];
+  for (const [field, label] of [
+    ["version", "daemon version"],
+    ["buildId", "daemon build id"],
+    ["compatibilityToken", "daemon compatibility token"],
+  ]) {
+    if (!expected[field]) continue;
+    if (actual[field] !== expected[field]) {
+      mismatches.push({
+        field,
+        label,
+        expected: expected[field],
+        actual: actual[field] || "",
+      });
+    }
+  }
+  return mismatches;
+};
+
+const assertExpectedDaemonIdentity = async ({
+  expected = expectedDaemonIdentityFromEnv(),
+  label = "daemon_identity",
+} = {}) => {
+  const normalizedExpected = {
+    version: readString(expected.version),
+    buildId: readString(expected.buildId),
+    compatibilityToken: readString(expected.compatibilityToken),
+  };
+  const health = await daemonJson("GET", "/api/health");
+  if (Number(health.status || 0) !== 200) {
+    throw new Error(`${label}: expected /api/health 200 before product proof, got ${JSON.stringify(health)}`);
+  }
+  let actual = daemonIdentityFromHealthPayload(health.payload);
+  let rawHealth = null;
+  if (normalizedExpected.compatibilityToken && !actual.compatibilityToken) {
+    rawHealth = await daemonHealthWithRawAuth();
+    if (Number(rawHealth.status || 0) !== 200) {
+      throw new Error(`${label}: expected raw-auth /api/health 200 before product proof, got status=${rawHealth.status}`);
+    }
+    actual = daemonIdentityFromHealthPayload(rawHealth.payload);
+  }
+  const expectedAny = Boolean(
+    normalizedExpected.version
+    || normalizedExpected.buildId
+    || normalizedExpected.compatibilityToken,
+  );
+  const mismatches = expectedAny ? compareDaemonIdentity(normalizedExpected, actual) : [];
+  const result = {
+    label,
+    skipped: !expectedAny,
+    expected: normalizedExpected,
+    actual,
+    raw_auth_health_used: Boolean(rawHealth),
+    mismatches,
+  };
+  if (mismatches.length > 0) {
+    throw new Error(`${label}: daemon identity mismatch before product proof: ${JSON.stringify(result)}`);
+  }
+  return result;
+};
+
 const sampleDaemonHealth = async ({ durationMs, intervalMs = 1000 }) => {
   const started = Date.now();
   const samples = [];
@@ -296,5 +438,13 @@ module.exports = {
   getDesktopConnection,
   checkDaemonHealth,
   sampleDaemonHealth,
+  expectedDaemonIdentityFromEnv,
+  daemonIdentityFromHealthPayload,
+  daemonHealthWithRawAuth,
+  compareDaemonIdentity,
+  assertExpectedDaemonIdentity,
   shouldRefreshLocalDesktopConnection,
 };
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");

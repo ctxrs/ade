@@ -28,6 +28,7 @@ EXTRACT_DIR="${ARTIFACT_DIR}/appimage-extract"
 WDIO_CONNECTION_RETRY_TIMEOUT_MS="${CTX_UPDATER_LINUX_PROOF_WDIO_CONNECTION_RETRY_TIMEOUT_MS:-300000}"
 home_dir=""
 workspace_home_dir=""
+staged_release_version=""
 
 mkdir -p "${ARTIFACT_DIR}"
 
@@ -305,6 +306,48 @@ collect_clean_workspace_diagnostics() {
       "${PROVIDER_DIAGNOSTICS_DIR}/agent_servers.json" 2>/dev/null || true
   fi
 
+  SHIPPED_APP_PATH="${app_path:-}" \
+  SHIPPED_APP_AUTOMATION_PATH="${updated_automation_app_path:-}" \
+  SHIPPED_APP_DIR="${updated_automation_app_dir:-}" \
+  SHIPPED_BUNDLE_DIR="${bundle_dir:-}" \
+  EXPECTED_DAEMON_VERSION="${expected_daemon_version:-}" \
+  EXPECTED_DAEMON_BUILD_ID="${expected_daemon_build_id:-}" \
+  EXPECTED_DAEMON_COMPATIBILITY_TOKEN="${expected_daemon_compatibility_token:-}" \
+  RELEASE_VERSION_VALUE="${RELEASE_VERSION:-}" \
+  RELEASE_SOURCE_COMMIT_VALUE="${RELEASE_SOURCE_COMMIT:-}" \
+  RELEASE_CHANNEL_VALUE="${RELEASE_CHANNEL:-}" \
+  TARGET_CHANNEL_VALUE="${TARGET_CHANNEL:-}" \
+  OUTPUT_DIR="${PROVIDER_DIAGNOSTICS_DIR}" \
+  node <<'NODE' || true
+const fs = require("node:fs");
+const path = require("node:path");
+
+const outputDir = process.env.OUTPUT_DIR;
+if (!outputDir) process.exit(0);
+fs.mkdirSync(outputDir, { recursive: true });
+fs.writeFileSync(
+  path.join(outputDir, "shipped-app.summary.json"),
+  `${JSON.stringify({
+    shipped_app_path: process.env.SHIPPED_APP_PATH || "",
+    automation_app_path: process.env.SHIPPED_APP_AUTOMATION_PATH || "",
+    automation_app_dir: process.env.SHIPPED_APP_DIR || "",
+    bundle_dir: process.env.SHIPPED_BUNDLE_DIR || "",
+    expected_daemon: {
+      version: process.env.EXPECTED_DAEMON_VERSION || "",
+      build_id: process.env.EXPECTED_DAEMON_BUILD_ID || "",
+      compatibility_token: process.env.EXPECTED_DAEMON_COMPATIBILITY_TOKEN || "",
+    },
+    release: {
+      version: process.env.RELEASE_VERSION_VALUE || "",
+      source_commit: process.env.RELEASE_SOURCE_COMMIT_VALUE || "",
+      channel: process.env.RELEASE_CHANNEL_VALUE || "",
+      target_channel: process.env.TARGET_CHANNEL_VALUE || "",
+    },
+  }, null, 2)}\n`,
+  "utf8",
+);
+NODE
+
   AUTH_FILE="${data_dir}/daemon_auth.json" \
   OUTPUT_DIR="${PROVIDER_DIAGNOSTICS_DIR}" \
   node <<'NODE' || true
@@ -368,6 +411,8 @@ const requestJson = (pathname) => new Promise((resolve) => {
 
 (async () => {
   const endpoints = [
+    ["daemon-health.json", "/api/health"],
+    ["daemon-diagnostics.json", "/api/diagnostics"],
     ["providers.container.json", "/api/providers?target=container"],
     ["provider-codex.container.json", "/api/providers/codex?target=container"],
     ["providers.host.json", "/api/providers?target=host"],
@@ -468,6 +513,13 @@ if (process.env.EXPECTED_CHANNEL && metadata.channel !== process.env.EXPECTED_CH
   fail(`staged Linux proof channel mismatch: expected ${process.env.EXPECTED_CHANNEL}, got ${metadata.channel || "<missing>"}`);
 }
 NODE
+  staged_release_version="$(STAGE_EXTRACT_DIR="${stage_extract_dir}" node <<'NODE'
+const fs = require("node:fs");
+const path = require("node:path");
+const metadata = JSON.parse(fs.readFileSync(path.join(process.env.STAGE_EXTRACT_DIR, "metadata.json"), "utf8"));
+process.stdout.write(String(metadata.version || ""));
+NODE
+)"
 
   app_path="$(find "${stage_extract_dir}/bundle" -type f -name '*.AppImage' -print -quit)"
   if [[ -z "${app_path}" ]]; then
@@ -738,6 +790,15 @@ if [[ "${RUN_CLEAN_WORKSPACE_PHASE}" == "1" ]]; then
   echo "[updater-linux-proof] proving updated app still launches a real local workspace flow" >&2
   stop_proof_daemons
   stop_proof_daemons "${workspace_home_dir}"
+  expected_daemon_version="${RELEASE_VERSION:-${after_version:-${staged_release_version:-}}}"
+  expected_daemon_build_id=""
+  if [[ -n "${RELEASE_SOURCE_COMMIT:-}" ]]; then
+    expected_daemon_build_id="${RELEASE_SOURCE_COMMIT:0:12}"
+  fi
+  expected_daemon_compatibility_token="${CTX_COMPATIBILITY_TOKEN:-}"
+  if [[ -z "${expected_daemon_compatibility_token}" && -n "${RELEASE_SOURCE_COMMIT:-}" ]]; then
+    expected_daemon_compatibility_token="artifact-${RELEASE_SOURCE_COMMIT}"
+  fi
   set +e
   HOME="${workspace_home_dir}" \
 XDG_DATA_HOME="${workspace_home_dir}/.local/share" \
@@ -755,6 +816,9 @@ CTX_AUTOMATION_SHIPPED_APP_BUNDLES_DIR="${bundle_dir}" \
 CTX_AUTOMATION_SKIP_APP_BUILD=1 \
 CTX_AUTOMATION_SKIP_DESKTOP_PREP_RELEASE=1 \
 CTX_AUTOMATION_SCENARIOS="${CTX_AUTOMATION_SCENARIOS:-local-codex-smoke}" \
+CTX_AUTOMATION_EXPECT_DAEMON_VERSION="${expected_daemon_version}" \
+CTX_AUTOMATION_EXPECT_DAEMON_BUILD_ID="${expected_daemon_build_id}" \
+CTX_AUTOMATION_EXPECT_DAEMON_COMPATIBILITY_TOKEN="${expected_daemon_compatibility_token}" \
 CTX_AUTOMATION_WDIO_LOG_LEVEL="${CTX_AUTOMATION_WDIO_LOG_LEVEL:-warn}" \
 CTX_AUTOMATION_CONNECTION_RETRY_TIMEOUT_MS="${CTX_AUTOMATION_CONNECTION_RETRY_TIMEOUT_MS:-${WDIO_CONNECTION_RETRY_TIMEOUT_MS}}" \
 CTX_AUTOMATION_KEEP_TMPDIR=1 \

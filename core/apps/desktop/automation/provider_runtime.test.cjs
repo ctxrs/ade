@@ -4,14 +4,17 @@ const assert = require("node:assert/strict");
 const HELPER_PATH = require.resolve("./specs/helpers/provider_runtime.cjs");
 const DAEMON_HELPER_PATH = require.resolve("./specs/helpers/daemon.cjs");
 
-const loadHelper = (daemonJson) => {
+const loadHelper = (daemonHelper) => {
   delete require.cache[HELPER_PATH];
   delete require.cache[DAEMON_HELPER_PATH];
+  const helperExports = typeof daemonHelper === "function"
+    ? { daemonJson: daemonHelper }
+    : daemonHelper;
   require.cache[DAEMON_HELPER_PATH] = {
     id: DAEMON_HELPER_PATH,
     filename: DAEMON_HELPER_PATH,
     loaded: true,
-    exports: { daemonJson },
+    exports: helperExports,
   };
   return require(HELPER_PATH);
 };
@@ -143,4 +146,236 @@ test("ensureCodexOpenRouterWorkspaceReady checks install status against the requ
     calls.some((entry) => entry.requestPath.includes("/api/providers/codex/install?target=")),
     false,
   );
+});
+
+test("waitForProviderInstallCompletion keeps waiting while dependencies are pending", async () => {
+  const calls = [];
+  global.browser = { pause: async () => {} };
+  const statuses = [
+    {
+      provider_id: "codex",
+      installed: true,
+      health: "ok",
+      diagnostics: ["provider is not ready until required dependencies are installed: codex-cli"],
+      details: {
+        install_supported: "true",
+        ready_for_use: "false",
+        required_dependency_ids: "codex-cli",
+        pending_dependency_ids: "codex-cli",
+      },
+    },
+    {
+      provider_id: "codex",
+      installed: true,
+      detected_path: "/tmp/ctx/codex-crp",
+      health: "ok",
+      diagnostics: [],
+      details: {
+        install_supported: "true",
+        ready_for_use: "true",
+      },
+    },
+  ];
+  const { waitForProviderInstallCompletion } = loadHelper({
+    daemonJson: async (method, requestPath) => {
+      calls.push({ method, requestPath });
+      if (method === "GET" && requestPath === "/api/health") {
+        return {
+          status: 200,
+          payload: {
+            daemon_version: "0.62.26",
+            compatibility: { desktop_build_id: "build-a" },
+          },
+        };
+      }
+      if (method === "GET" && requestPath === "/api/providers/codex?target=container") {
+        return { status: 200, payload: statuses.shift() || statuses.at(-1) };
+      }
+      throw new Error(`unexpected daemonJson call: ${method} ${requestPath}`);
+    },
+    getDesktopConnection: async () => ({
+      kind: "local",
+      base_url: "http://127.0.0.1:47001",
+      browser_query_secret: "browser-secret",
+    }),
+  });
+
+  const result = await waitForProviderInstallCompletion("codex", "container", {
+    timeoutMs: 1000,
+    pollMs: 1,
+    settleMs: 0,
+  });
+
+  assert.equal(result.installed, true);
+  assert.ok(
+    calls.filter((entry) => entry.requestPath === "/api/providers/codex?target=container").length >= 2,
+    "pending dependencies should keep the poll loop alive after settleMs",
+  );
+});
+
+test("waitForProviderInstallCompletion fails fast when install is unsupported", async () => {
+  global.browser = { pause: async () => {} };
+  const { waitForProviderInstallCompletion } = loadHelper({
+    daemonJson: async (method, requestPath) => {
+      if (method === "GET" && requestPath === "/api/health") {
+        return {
+          status: 200,
+          payload: {
+            daemon_version: "0.62.26",
+            compatibility: { desktop_build_id: "build-a" },
+          },
+        };
+      }
+      if (method === "GET" && requestPath === "/api/providers/codex?target=container") {
+        return {
+          status: 200,
+          payload: {
+            provider_id: "codex",
+            installed: false,
+            health: "missing",
+            diagnostics: ["no managed install metadata"],
+            details: {
+              install_supported: "false",
+            },
+          },
+        };
+      }
+      throw new Error(`unexpected daemonJson call: ${method} ${requestPath}`);
+    },
+    getDesktopConnection: async () => ({
+      kind: "local",
+      base_url: "http://127.0.0.1:47001",
+      browser_query_secret: "browser-secret",
+    }),
+  });
+
+  await assert.rejects(
+    () => waitForProviderInstallCompletion("codex", "container", {
+      timeoutMs: 1000,
+      pollMs: 1,
+      settleMs: 0,
+    }),
+    /install is unsupported.*install_supported/,
+  );
+});
+
+test("waitForProviderInstallCompletion reports daemon changes during install polling", async () => {
+  global.browser = { pause: async () => {} };
+  let healthIndex = 0;
+  const healthPayloads = [
+    { daemon_version: "0.62.26", pid: 101, compatibility: { desktop_build_id: "build-a" } },
+    { daemon_version: "0.62.26", pid: 202, compatibility: { desktop_build_id: "build-a" } },
+  ];
+  const { waitForProviderInstallCompletion } = loadHelper({
+    daemonJson: async (method, requestPath) => {
+      if (method === "GET" && requestPath === "/api/health") {
+        const payload = healthPayloads[Math.min(healthIndex, healthPayloads.length - 1)];
+        healthIndex += 1;
+        return { status: 200, payload };
+      }
+      if (method === "GET" && requestPath === "/api/providers/codex?target=container") {
+        return {
+          status: 200,
+          payload: {
+            provider_id: "codex",
+            installed: false,
+            health: "missing",
+            diagnostics: ["provider install still running"],
+            details: {
+              install_supported: "true",
+              install_running: "true",
+              install_id: "install-1",
+            },
+          },
+        };
+      }
+      if (method === "GET" && requestPath === "/api/providers/install/install-1") {
+        return { status: 200, payload: { state: "running" } };
+      }
+      throw new Error(`unexpected daemonJson call: ${method} ${requestPath}`);
+    },
+    getDesktopConnection: async () => ({
+      kind: "local",
+      base_url: "http://127.0.0.1:47001",
+      browser_query_secret: "browser-secret",
+    }),
+  });
+
+  await assert.rejects(
+    () => waitForProviderInstallCompletion("codex", "container", {
+      timeoutMs: 1000,
+      pollMs: 1,
+      settleMs: 0,
+    }),
+    /daemon identity changed while waiting.*daemon_change/,
+  );
+});
+
+test("waitForProviderInstallCompletion ignores SSH tunnel URL churn when daemon identity is stable", async () => {
+  global.browser = { pause: async () => {} };
+  const statuses = [
+    {
+      provider_id: "codex",
+      installed: false,
+      health: "missing",
+      diagnostics: ["provider install still running"],
+      details: {
+        install_supported: "true",
+        install_running: "true",
+        install_id: "install-1",
+      },
+    },
+    {
+      provider_id: "codex",
+      installed: true,
+      detected_path: "/tmp/ctx/codex-crp",
+      health: "ok",
+      diagnostics: [],
+      details: {
+        install_supported: "true",
+        ready_for_use: "true",
+      },
+    },
+  ];
+  const tunnelUrls = [
+    "http://127.0.0.1:47001",
+    "http://127.0.0.1:47002",
+    "http://127.0.0.1:47003",
+  ];
+  const { waitForProviderInstallCompletion } = loadHelper({
+    daemonJson: async (method, requestPath) => {
+      if (method === "GET" && requestPath === "/api/health") {
+        return {
+          status: 200,
+          payload: {
+            daemon_version: "0.62.26",
+            pid: 101,
+            daemon_url: "http://127.0.0.1:64000",
+            data_root: "/home/example-user/.ctx",
+            compatibility: { desktop_build_id: "build-a" },
+          },
+        };
+      }
+      if (method === "GET" && requestPath === "/api/providers/codex?target=container") {
+        return { status: 200, payload: statuses.shift() || statuses.at(-1) };
+      }
+      if (method === "GET" && requestPath === "/api/providers/install/install-1") {
+        return { status: 200, payload: { state: "running" } };
+      }
+      throw new Error(`unexpected daemonJson call: ${method} ${requestPath}`);
+    },
+    getDesktopConnection: async () => ({
+      kind: "ssh",
+      base_url: tunnelUrls.shift() || "http://127.0.0.1:47004",
+      browser_query_secret: "browser-secret",
+    }),
+  });
+
+  const result = await waitForProviderInstallCompletion("codex", "container", {
+    timeoutMs: 1000,
+    pollMs: 1,
+    settleMs: 0,
+  });
+
+  assert.equal(result.installed, true);
 });

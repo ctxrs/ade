@@ -1,9 +1,19 @@
 const fs = require("node:fs");
 const path = require("node:path");
 
-const { daemonJson } = require("./daemon.cjs");
+const {
+  daemonJson,
+  getDesktopConnection = async () => null,
+  safeDaemonJson = async (method, requestPath, body) => {
+    try {
+      return await daemonJson(method, requestPath, body);
+    } catch (error) {
+      return { error: String(error) };
+    }
+  },
+} = require("./daemon.cjs");
 const { providerStatusPath } = require("../../../../../test-support/provider_status_path.cjs");
-const { stringMapFlag } = require("../../../../../scripts/lib/boolish.cjs");
+const { parseBoolish, stringMapFlag } = require("../../../../../scripts/lib/boolish.cjs");
 
 const PROVIDER_MATRIX_PATH = path.resolve(
   __dirname,
@@ -49,6 +59,116 @@ const readStringMap = (value) => {
   return out;
 };
 
+const splitIdList = (value) =>
+  readString(value)
+    .split(/[,\s]+/)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+
+const providerInstallProgressSnapshot = (status) => {
+  const details = readStringMap(status?.details);
+  return {
+    installed: status?.installed === true,
+    health: firstText(status?.health, "unknown"),
+    diagnostics: asArray(status?.diagnostics).map((entry) => readString(entry)).filter(Boolean),
+    details,
+    installRunning: stringMapFlag(details, "install_running"),
+    installId: readString(details.install_id),
+    installSupported: parseBoolish(details.install_supported),
+    detectedPath: readString(status?.detected_path),
+    requiredDependencyIds: splitIdList(details.required_dependency_ids),
+    pendingDependencyIds: splitIdList(details.pending_dependency_ids),
+    readyForUse: parseBoolish(details.ready_for_use),
+  };
+};
+
+const providerInstallHasProgress = (snapshot) =>
+  snapshot.installRunning
+  || Boolean(snapshot.installId)
+  || snapshot.pendingDependencyIds.length > 0
+  || (snapshot.installed && snapshot.readyForUse === false);
+
+const providerInstallComplete = (snapshot) =>
+  snapshot.installed
+  && !snapshot.installRunning
+  && snapshot.pendingDependencyIds.length === 0
+  && snapshot.readyForUse !== false;
+
+const providerInstallDiagnosticPayload = (providerId, target, snapshot, extra = {}) => ({
+  provider_id: providerId,
+  target,
+  installed: snapshot.installed,
+  health: snapshot.health,
+  diagnostics: snapshot.diagnostics,
+  detected_path: snapshot.detectedPath,
+  install_running: snapshot.installRunning,
+  install_id: snapshot.installId,
+  install_supported: snapshot.installSupported,
+  ready_for_use: snapshot.readyForUse,
+  required_dependency_ids: snapshot.requiredDependencyIds,
+  pending_dependency_ids: snapshot.pendingDependencyIds,
+  details: snapshot.details,
+  ...extra,
+});
+
+const providerInstallDiagnosticDetail = (providerId, target, snapshot, extra = {}) =>
+  JSON.stringify(providerInstallDiagnosticPayload(providerId, target, snapshot, extra));
+
+const pause = async (ms) => {
+  if (globalThis.browser && typeof globalThis.browser.pause === "function") {
+    await globalThis.browser.pause(ms);
+    return;
+  }
+  await new Promise((resolve) => setTimeout(resolve, Math.max(0, Number(ms) || 0)));
+};
+
+const daemonObservationFromHealth = (health) => {
+  const payload = asRecord(health?.payload);
+  const compatibility = asRecord(payload.compatibility);
+  return {
+    status: health?.status ?? null,
+    error: readString(health?.error),
+    pid: payload.pid ?? null,
+    dataRoot: readString(payload.data_root),
+    daemonUrl: readString(payload.daemon_url),
+    version: firstText(payload.daemon_version, payload.version),
+    buildId: readString(compatibility.desktop_build_id),
+  };
+};
+
+const readDaemonInstallObservation = async () => {
+  let connection = null;
+  try {
+    connection = await getDesktopConnection();
+  } catch (error) {
+    connection = { error: String(error) };
+  }
+  const health = await safeDaemonJson("GET", "/api/health");
+  const healthObservation = daemonObservationFromHealth(health);
+  return {
+    connection_kind: readString(connection?.kind),
+    base_url: readString(connection?.base_url),
+    connection_error: readString(connection?.error),
+    ...healthObservation,
+  };
+};
+
+const daemonInstallObservationChange = (before, after) => {
+  if (!before || !after) return null;
+  for (const field of ["pid", "dataRoot", "daemonUrl", "version", "buildId"]) {
+    if (before[field] === null || after[field] === null) continue;
+    if (!before[field] || !after[field]) continue;
+    if (before[field] !== after[field]) {
+      return {
+        field,
+        before: before[field],
+        after: after[field],
+      };
+    }
+  }
+  return null;
+};
+
 const parseProviderIdsCsv = (value) =>
   String(value || "")
     .split(",")
@@ -87,6 +207,8 @@ const getProviderStatus = async (providerId, target = "host") => {
   const row = asRecord(response.payload);
   return {
     installed: row.installed === true,
+    detected_path: firstText(row.detected_path),
+    version: firstText(row.version),
     health: firstText(row.health, "unknown"),
     diagnostics: asArray(row.diagnostics).map((entry) => readString(entry)).filter(Boolean),
     details: readStringMap(row.details),
@@ -124,9 +246,27 @@ const installProviderAndWait = async (
       );
       throw new Error(`provider install ${state}: ${detail}`);
     }
-    await browser.pause(pollMs);
+    await pause(pollMs);
   }
   throw new Error(`provider install timed out for ${providerId} (${installId})`);
+};
+
+const pollInstallStatusIfPresent = async (installId) => {
+  if (!installId) return null;
+  const poll = await daemonJson("GET", `/api/providers/install/${installId}`);
+  if (poll.status !== 200) {
+    return {
+      status: poll.status,
+      payload: poll.payload,
+      state: "",
+    };
+  }
+  const payload = asRecord(poll.payload);
+  return {
+    status: poll.status,
+    payload,
+    state: firstText(payload.state).toLowerCase(),
+  };
 };
 
 const waitForProviderInstallCompletion = async (
@@ -136,18 +276,60 @@ const waitForProviderInstallCompletion = async (
 ) => {
   const startedAt = Date.now();
   let lastStatus = null;
+  const initialDaemonObservation = await readDaemonInstallObservation();
   while (Date.now() - startedAt < timeoutMs) {
     lastStatus = await getProviderStatus(providerId, target);
-    if (lastStatus.installed) return lastStatus;
-    const installRunning = stringMapFlag(lastStatus.details, "install_running");
-    if (!installRunning && Date.now() - startedAt >= settleMs) {
-      const detail = lastStatus.diagnostics[0]
-        || `health=${lastStatus.health || "unknown"} details=${JSON.stringify(lastStatus.details)}`;
-      throw new Error(`provider '${providerId}' did not finish installing for target=${target}: ${detail}`);
+    const snapshot = providerInstallProgressSnapshot(lastStatus);
+    if (providerInstallComplete(snapshot)) return lastStatus;
+    if (snapshot.installSupported === false) {
+      throw new Error(
+        `provider '${providerId}' install is unsupported for target=${target}: ${
+          providerInstallDiagnosticDetail(providerId, target, snapshot)
+        }`,
+      );
     }
-    await browser.pause(pollMs);
+    const installInfo = await pollInstallStatusIfPresent(snapshot.installId);
+    if (installInfo && (installInfo.state === "failed" || installInfo.state === "cancelled")) {
+      throw new Error(
+        `provider '${providerId}' install ${installInfo.state} for target=${target}: ${
+          providerInstallDiagnosticDetail(providerId, target, snapshot, { install_info: installInfo })
+        }`,
+      );
+    }
+    const daemonObservation = await readDaemonInstallObservation();
+    const daemonChange = daemonInstallObservationChange(initialDaemonObservation, daemonObservation);
+    if (daemonChange) {
+      throw new Error(
+        `daemon identity changed while waiting for provider '${providerId}' install target=${target}: ${
+          providerInstallDiagnosticDetail(providerId, target, snapshot, {
+            daemon_initial: initialDaemonObservation,
+            daemon_current: daemonObservation,
+            daemon_change: daemonChange,
+          })
+        }`,
+      );
+    }
+    if (!providerInstallHasProgress(snapshot) && Date.now() - startedAt >= settleMs) {
+      throw new Error(
+        `provider '${providerId}' did not show install progress for target=${target}: ${
+          providerInstallDiagnosticDetail(providerId, target, snapshot, {
+            daemon_initial: initialDaemonObservation,
+            daemon_current: daemonObservation,
+          })
+        }`,
+      );
+    }
+    await pause(pollMs);
   }
-  throw new Error(`provider '${providerId}' install did not finish for target=${target}: ${JSON.stringify(lastStatus)}`);
+  const snapshot = providerInstallProgressSnapshot(lastStatus);
+  throw new Error(
+    `provider '${providerId}' install did not finish for target=${target}: ${
+      providerInstallDiagnosticDetail(providerId, target, snapshot, {
+        daemon_initial: initialDaemonObservation,
+        daemon_current: await readDaemonInstallObservation(),
+      })
+    }`,
+  );
 };
 
 const installManagedProvidersAndAssertInstalled = async (
@@ -163,14 +345,15 @@ const installManagedProvidersAndAssertInstalled = async (
   const results = [];
   for (const providerId of providerIds) {
     const before = await getProviderStatus(providerId, target);
-    const installRunningBefore = stringMapFlag(before.details, "install_running");
-    if (!before.installed) {
+    const beforeSnapshot = providerInstallProgressSnapshot(before);
+    if (!providerInstallComplete(beforeSnapshot) && !before.installed && !beforeSnapshot.installRunning) {
       await installProviderAndWait(providerId, target, { timeoutMs, pollMs });
-    } else if (installRunningBefore) {
+    }
+    if (!providerInstallComplete(beforeSnapshot)) {
       await waitForProviderInstallCompletion(providerId, target, { timeoutMs, pollMs });
     }
     const after = await getProviderStatus(providerId, target);
-    const installRunningAfter = stringMapFlag(after.details, "install_running");
+    const afterSnapshot = providerInstallProgressSnapshot(after);
     const result = {
       provider_id: providerId,
       target,
@@ -185,8 +368,12 @@ const installManagedProvidersAndAssertInstalled = async (
     if (!after.installed) {
       throw new Error(`${target}: managed provider '${providerId}' is not installed after install flow`);
     }
-    if (installRunningAfter) {
-      throw new Error(`${target}: managed provider '${providerId}' still reports install_running after install flow`);
+    if (!providerInstallComplete(afterSnapshot)) {
+      throw new Error(
+        `${target}: managed provider '${providerId}' is not ready after install flow: ${
+          providerInstallDiagnosticDetail(providerId, target, afterSnapshot)
+        }`,
+      );
     }
   }
   recorder?.recordAssertion?.(
@@ -390,6 +577,10 @@ module.exports = {
   readString,
   firstText,
   normalizeErrorMessage,
+  providerInstallProgressSnapshot,
+  providerInstallHasProgress,
+  providerInstallDiagnosticPayload,
+  daemonInstallObservationChange,
   getProviderStatus,
   installProviderAndWait,
   waitForProviderInstallCompletion,

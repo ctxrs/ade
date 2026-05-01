@@ -77,11 +77,27 @@ test("Linux updater proof exposes explicit phases for split release proof jobs",
 
 test("Linux clean workspace proof uploads provider diagnostics when the wizard fails", () => {
   assert.match(scriptText, /collect_clean_workspace_diagnostics\(\) \{/);
+  assert.match(scriptText, /shipped-app\.summary\.json/);
+  assert.match(scriptText, /daemon-health\.json/);
+  assert.match(scriptText, /daemon-diagnostics\.json/);
   assert.match(scriptText, /provider-codex\.container\.json/);
   assert.match(scriptText, /providers\.container\.json/);
   assert.match(scriptText, /daemon_auth\.summary\.json/);
   assert.match(scriptText, /agent_servers\.json/);
   assert.match(scriptText, /collect_clean_workspace_diagnostics\s+write_report "failed" "\$\{failure_reason\}"/);
+});
+
+test("Linux clean workspace proof passes expected daemon identity into automation", () => {
+  assert.match(scriptText, /staged_release_version=""/);
+  assert.match(scriptText, /metadata\.version \|\| ""/);
+  assert.match(scriptText, /expected_daemon_version="\$\{RELEASE_VERSION:-\$\{after_version:-\$\{staged_release_version:-\}\}\}"/);
+  assert.match(scriptText, /expected_daemon_build_id="\$\{RELEASE_SOURCE_COMMIT:0:12\}"/);
+  assert.match(scriptText, /expected_daemon_compatibility_token="artifact-\$\{RELEASE_SOURCE_COMMIT\}"/);
+  assert.match(scriptText, /CTX_AUTOMATION_EXPECT_DAEMON_VERSION="\$\{expected_daemon_version\}"/);
+  assert.match(scriptText, /CTX_AUTOMATION_EXPECT_DAEMON_BUILD_ID="\$\{expected_daemon_build_id\}"/);
+  assert.match(scriptText, /CTX_AUTOMATION_EXPECT_DAEMON_COMPATIBILITY_TOKEN="\$\{expected_daemon_compatibility_token\}"/);
+  const wizardSpec = read("core/apps/desktop/automation/specs/workspace-wizard.spec.cjs");
+  assert.match(wizardSpec, /assertExpectedDaemonIdentity\(\{ label: "release_clean_workspace_codex_sandbox" \}\)/);
 });
 
 test("release Codex sandbox workspace smoke requires selected install progress proof", () => {

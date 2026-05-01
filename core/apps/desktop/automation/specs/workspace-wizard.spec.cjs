@@ -10,7 +10,12 @@ const {
   setInputTestId,
   getConnectionInfo,
 } = require("./helpers/tauri.cjs");
-const { daemonJson, daemonJsonOnce, safeDaemonJson } = require("./helpers/daemon.cjs");
+const {
+  assertExpectedDaemonIdentity,
+  daemonJson,
+  daemonJsonOnce,
+  safeDaemonJson,
+} = require("./helpers/daemon.cjs");
 const {
   assertWorkbenchUsable,
   runCodexFirstTurnApiSmoke,
@@ -2186,6 +2191,7 @@ describe("launcher workspace wizard (e2e)", () => {
     });
 
     await assertConnectedLocalAndListening();
+    await assertExpectedDaemonIdentity({ label: "release_clean_workspace_codex_sandbox" });
     await waitForProviderInstallCompletion("codex", "container", { timeoutMs: 10 * 60_000, pollMs: 2_000 });
     const provider = await ensureCodexOpenRouterWorkspaceReady(id, {
       installTarget: "container",
