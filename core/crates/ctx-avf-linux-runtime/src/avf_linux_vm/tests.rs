@@ -147,6 +147,8 @@ def write_state(data_root: str, state: str, transition: Optional[str] = None):
         "simulated": True,
         "notes": ["test helper"],
     }
+    if state == "running" and transition is None:
+        transition = "ready"
     if transition is not None:
         payload["transition_status"] = transition
     state_path(data_root).write_text(json.dumps(payload), encoding="utf-8")

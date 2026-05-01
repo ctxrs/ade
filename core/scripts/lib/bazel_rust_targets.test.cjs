@@ -109,6 +109,7 @@ test("Bazel test target mapping expands per-crate tests deterministically", () =
       "//core/crates/ctx-avf-linux-guest-agent:unit_tests",
       "//core/crates/ctx-avf-linux-runtime:helper_path_test_support",
       "//core/crates/ctx-avf-linux-runtime:unit_tests",
+      "//core/crates/ctx-avf-linux-runtime:unit_tests_avf_linux_vm",
       "//core/crates/ctx-client:unit_tests",
       "//core/crates/ctx-core:unit_tests",
       "//core/crates/ctx-core:workspace_payload_corpus",

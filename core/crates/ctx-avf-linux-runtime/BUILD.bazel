@@ -2,6 +2,12 @@ load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
 
 package(default_visibility = ["//visibility:public"])
 
+CTX_AVF_LINUX_RUNTIME_TEST_DEPS = [
+    "@crates//:flate2",
+    "@crates//:tar",
+    "@crates//:tempfile",
+]
+
 rust_library(
     name = "lib",
     crate_name = "ctx_avf_linux_runtime",
@@ -58,11 +64,21 @@ rust_library(
 rust_test(
     name = "unit_tests",
     crate = ":lib_test_support",
-    deps = [
-        "@crates//:flate2",
-        "@crates//:tar",
-        "@crates//:tempfile",
+    args = [
+        "--skip=avf_linux_vm::tests::",
     ],
+    deps = CTX_AVF_LINUX_RUNTIME_TEST_DEPS,
+)
+
+rust_test(
+    name = "unit_tests_avf_linux_vm",
+    crate = ":lib_test_support",
+    args = [
+        "avf_linux_vm::tests::",
+        "--test-threads=1",
+    ],
+    deps = CTX_AVF_LINUX_RUNTIME_TEST_DEPS,
+    timeout = "long",
 )
 
 rust_test(

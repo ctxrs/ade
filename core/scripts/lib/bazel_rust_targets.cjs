@@ -15,6 +15,7 @@ const BAZEL_TEST_TARGETS_BY_CRATE = Object.freeze({
   "ctx-avf-linux-runtime": [
     "//core/crates/ctx-avf-linux-runtime:helper_path_test_support",
     "//core/crates/ctx-avf-linux-runtime:unit_tests",
+    "//core/crates/ctx-avf-linux-runtime:unit_tests_avf_linux_vm",
   ],
   "ctx-core": [
     "//core/crates/ctx-core:unit_tests",
