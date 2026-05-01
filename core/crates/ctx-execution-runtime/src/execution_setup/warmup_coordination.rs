@@ -579,6 +579,5 @@ fn runtime_task_keys(
     }
 }
 
-#[derive(Debug, Clone)]
 #[cfg(test)]
 mod tests;

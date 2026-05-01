@@ -37,6 +37,7 @@ CTX_MCP_TEST_RUSTC_ENV = {
 CTX_MCP_TEST_DEPS = [
     "@crates//:axum",
     "@crates//:serde_json",
+    "@crates//:tempfile",
     "@crates//:tokio",
     "@crates//:tower",
 ]
@@ -66,7 +67,6 @@ rust_test(
         "//core/crates/ctx-providers:lib",
         "//core/crates/ctx-store:lib",
         "@crates//:reqwest",
-        "@crates//:tempfile",
         "@crates//:uuid",
     ],
 )
