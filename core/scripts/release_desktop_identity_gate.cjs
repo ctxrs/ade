@@ -80,7 +80,17 @@ function targetTripleForPlatform(platform) {
   }
 }
 
+function canExecuteMacosX64OnArm64({
+  spawnSyncImpl = childProcess.spawnSync,
+} = {}) {
+  const result = spawnSyncImpl("arch", ["-x86_64", "/usr/bin/true"], {
+    stdio: "ignore",
+  });
+  return result.status === 0;
+}
+
 function shouldUseStaticOnlyValidation({
+  canExecuteMacosX64OnArm64Impl = canExecuteMacosX64OnArm64,
   platform,
   hostPlatform = process.platform,
   hostArch = process.arch,
@@ -90,7 +100,11 @@ function shouldUseStaticOnlyValidation({
   }
   return (
     (platform === "macos-arm64" && hostArch === "x64")
-    || (platform === "macos-x64" && hostArch === "arm64")
+    || (
+      platform === "macos-x64"
+      && hostArch === "arm64"
+      && !canExecuteMacosX64OnArm64Impl()
+    )
   );
 }
 
@@ -462,5 +476,6 @@ if (require.main === module) {
 }
 
 module.exports = {
+  canExecuteMacosX64OnArm64,
   shouldUseStaticOnlyValidation,
 };
