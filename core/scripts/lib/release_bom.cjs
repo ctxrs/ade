@@ -3,8 +3,19 @@
 const fs = require("node:fs");
 const path = require("node:path");
 
+const PUBLIC_ARTIFACT_ORIGIN = "https://api.ctx.rs";
+
 function trimValue(value) {
   return String(value || "").trim();
+}
+
+function buildPublicStorageUrl({ storageBucket, objectPath } = {}) {
+  const normalizedBucket = trimValue(storageBucket);
+  const normalizedObjectPath = trimValue(objectPath).replace(/^\/+/, "");
+  if (!normalizedBucket || !normalizedObjectPath) {
+    throw new Error("storageBucket and objectPath are required");
+  }
+  return `${PUBLIC_ARTIFACT_ORIGIN}/storage/v1/object/public/${normalizedBucket}/${normalizedObjectPath}`;
 }
 
 function normalizeObject(value) {
@@ -22,33 +33,35 @@ function normalizeObject(value) {
 }
 
 function buildResolvedProviderManifestPublicUrl({
-  supabaseUrl,
   storageBucket,
   channel,
   sourceCommit,
 } = {}) {
-  const normalizedUrl = trimValue(supabaseUrl).replace(/\/+$/, "");
   const normalizedBucket = trimValue(storageBucket);
   const normalizedChannel = trimValue(channel);
   const normalizedCommit = trimValue(sourceCommit);
-  if (!normalizedUrl || !normalizedBucket || !normalizedChannel || !normalizedCommit) {
-    throw new Error("supabaseUrl, storageBucket, channel, and sourceCommit are required");
+  if (!normalizedBucket || !normalizedChannel || !normalizedCommit) {
+    throw new Error("storageBucket, channel, and sourceCommit are required");
   }
-  return `${normalizedUrl}/storage/v1/object/public/${normalizedBucket}/providers/${normalizedChannel}/commits/${normalizedCommit}.json`;
+  return buildPublicStorageUrl({
+    storageBucket: normalizedBucket,
+    objectPath: `providers/${normalizedChannel}/commits/${normalizedCommit}.json`,
+  });
 }
 
 function buildResolvedProviderManifestDigestUrl({
-  supabaseUrl,
   storageBucket,
   digestSha256,
 } = {}) {
-  const normalizedUrl = trimValue(supabaseUrl).replace(/\/+$/, "");
   const normalizedBucket = trimValue(storageBucket);
   const normalizedDigest = trimValue(digestSha256);
-  if (!normalizedUrl || !normalizedBucket || !normalizedDigest) {
-    throw new Error("supabaseUrl, storageBucket, and digestSha256 are required");
+  if (!normalizedBucket || !normalizedDigest) {
+    throw new Error("storageBucket and digestSha256 are required");
   }
-  return `${normalizedUrl}/storage/v1/object/public/${normalizedBucket}/providers/manifests/sha256/${normalizedDigest}.json`;
+  return buildPublicStorageUrl({
+    storageBucket: normalizedBucket,
+    objectPath: `providers/manifests/sha256/${normalizedDigest}.json`,
+  });
 }
 
 function buildReleaseBom({
@@ -99,7 +112,9 @@ function writeReleaseBom(filePath, payload) {
 
 module.exports = {
   buildReleaseBom,
+  buildPublicStorageUrl,
   buildResolvedProviderManifestDigestUrl,
   buildResolvedProviderManifestPublicUrl,
+  PUBLIC_ARTIFACT_ORIGIN,
   writeReleaseBom,
 };

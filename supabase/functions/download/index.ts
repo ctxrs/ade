@@ -5,6 +5,7 @@ import { sha256Hex } from "../_shared/hash.ts";
 import { capturePostHogEvent } from "../_shared/posthog.ts";
 
 const DOWNLOAD_ID_PATTERN = /^[A-Za-z0-9._:-]{1,64}$/;
+const DEFAULT_PUBLIC_ARTIFACT_ORIGIN = "https://api.ctx.rs";
 
 function firstIp(xff: string | null): string | null {
   if (!xff) return null;
@@ -25,7 +26,7 @@ serve(async (req) => {
     return new Response("ok", { headers: corsHeaders(origin) });
   }
 
-  const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
+  const publicArtifactOrigin = (Deno.env.get("SUPABASE_PUBLIC_URL") ?? DEFAULT_PUBLIC_ARTIFACT_ORIGIN).replace(/\/$/, "");
   const bucket = Deno.env.get("SUPABASE_STORAGE_BUCKET") ?? "releases";
   const ipSalt = Deno.env.get("IP_HASH_SALT") ?? "local-dev";
 
@@ -45,10 +46,9 @@ serve(async (req) => {
 
   const urlPath = `/download/${channel}/${version}/${filename}`;
   const objectPath = `artifacts/${channel}/${version}/${filename}`;
-  const baseUrl = supabaseUrl.endsWith("/") ? supabaseUrl.slice(0, -1) : supabaseUrl;
   const requestedDownloadId = normalizeDownloadId(url.searchParams.get("ctx_download_id"));
   const downloadId = requestedDownloadId ?? crypto.randomUUID();
-  const redirectTo = `${baseUrl}/storage/v1/object/public/${bucket}/${objectPath}`;
+  const redirectTo = `${publicArtifactOrigin}/storage/v1/object/public/${bucket}/${objectPath}`;
   const platform = url.searchParams.get("platform");
   const artifact = url.searchParams.get("artifact") ?? filename;
   const ip = firstIp(req.headers.get("x-forwarded-for"));

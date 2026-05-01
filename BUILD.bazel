@@ -58,3 +58,14 @@ filegroup(
     ),
     visibility = ["//visibility:public"],
 )
+
+filegroup(
+    name = "supabase_function_sources",
+    srcs = glob(
+        [
+            "supabase/functions/**",
+        ],
+        allow_empty = True,
+    ),
+    visibility = ["//visibility:public"],
+)

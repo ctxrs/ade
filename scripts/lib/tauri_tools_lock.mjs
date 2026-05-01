@@ -11,6 +11,7 @@ export const DEFAULT_LOCK_PATH = path.join(
 
 export const SUPPORTED_PLATFORMS = new Set(["linux-x64", "linux-arm64"]);
 export const DEFAULT_SUPABASE_STORAGE_BUCKET = "releases";
+export const DEFAULT_SUPABASE_PUBLIC_URL = "https://api.ctx.rs";
 
 export const normalizePlatform = (value) => {
   const platform = String(value || "").trim();
@@ -69,8 +70,7 @@ export const resolveSupabaseStorageBucket = () =>
 export const resolveMirrorBaseUrl = () => {
   const explicit = String(process.env.TAURI_TOOLS_MIRROR_BASE_URL || "").trim().replace(/\/+$/, "");
   if (explicit) return explicit;
-  const supabaseUrl = String(process.env.SUPABASE_URL || "").trim().replace(/\/+$/, "");
-  if (!supabaseUrl) return "";
+  const supabaseUrl = String(process.env.SUPABASE_PUBLIC_URL || DEFAULT_SUPABASE_PUBLIC_URL).trim().replace(/\/+$/, "");
   const bucket = resolveSupabaseStorageBucket();
   return `${supabaseUrl}/storage/v1/object/public/${bucket}/tauri-tools`;
 };

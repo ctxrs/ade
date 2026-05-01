@@ -52,7 +52,7 @@ if [ -z "$SERVICE_ROLE_KEY" ] || [ "$SERVICE_ROLE_KEY" = "null" ]; then
   exit 1
 fi
 
-SUPABASE_URL="https://${PROJECT_REF}.supabase.co"
+SUPABASE_URL="${SUPABASE_URL:-https://api.ctx.rs}"
 EMAIL="mobile-e2e-$(date +%s)-${RANDOM}@example.com"
 PASSWORD="$(openssl rand -hex 12)"
 

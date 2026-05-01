@@ -12,6 +12,7 @@ type ProviderMatrixEvent = {
   ip_hash?: string | null;
   country?: string | null;
 };
+const DEFAULT_PUBLIC_ARTIFACT_ORIGIN = "https://api.ctx.rs";
 
 function firstIp(xff: string | null): string | null {
   if (!xff) return null;
@@ -26,6 +27,7 @@ serve(async (req) => {
   }
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
+  const publicArtifactOrigin = (Deno.env.get("SUPABASE_PUBLIC_URL") ?? DEFAULT_PUBLIC_ARTIFACT_ORIGIN).replace(/\/$/, "");
   const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
   const bucket = Deno.env.get("SUPABASE_STORAGE_BUCKET") ?? "releases";
   const ipSalt = Deno.env.get("IP_HASH_SALT") ?? "local-dev";
@@ -46,8 +48,7 @@ serve(async (req) => {
   }
 
   const objectPath = `providers/${channel}/${tail}`;
-  const baseUrl = supabaseUrl.endsWith("/") ? supabaseUrl.slice(0, -1) : supabaseUrl;
-  const storageUrl = `${baseUrl}/storage/v1/object/public/${bucket}/${objectPath}`;
+  const storageUrl = `${publicArtifactOrigin}/storage/v1/object/public/${bucket}/${objectPath}`;
 
   let result = "served";
   let body: string | null = null;

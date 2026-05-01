@@ -36,6 +36,7 @@ PROVIDER_AUTH_CONTRACT_DATA = COMMON_CORE_DATA + [
 
 DESKTOP_PARITY_CONTRACT_DATA = COMMON_CORE_DATA + [
     "//:repo_script_sources",
+    "//:supabase_function_sources",
     "//core:desktop_automation_files",
     "//core:desktop_bundle_files",
     "//core:desktop_release_metadata_files",
@@ -99,6 +100,7 @@ sh_binary(
     args = [
         "core",
         "--test",
+        "scripts/product_artifact_url_contract.test.cjs",
         "scripts/provider_matrix_archive_gap_report.test.cjs",
         "scripts/provider_matrix_required_targets_gate.test.cjs",
         "scripts/provider_release_bump.test.cjs",
