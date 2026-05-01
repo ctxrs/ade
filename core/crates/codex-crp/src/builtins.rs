@@ -6,6 +6,8 @@ use serde_json::{Map, Value};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
+const OPENROUTER_STREAM_IDLE_TIMEOUT_MS: i64 = 120_000;
+
 #[path = "builtins/commands.rs"]
 mod commands;
 #[path = "builtins/prompts.rs"]
@@ -89,6 +91,12 @@ pub fn build_app_server_config_overrides(config: &CrpSessionConfig) -> Option<Va
                 format!("model_providers.{model_provider}.wire_api"),
                 Value::String("responses".to_string()),
             );
+            if model_provider == "openrouter" {
+                out.insert(
+                    "stream_idle_timeout_ms".to_string(),
+                    Value::from(OPENROUTER_STREAM_IDLE_TIMEOUT_MS),
+                );
+            }
         }
     }
     if let Some(mcp_servers) = &config.mcp_servers {
@@ -379,7 +387,8 @@ mod tests {
                 "model_providers.openrouter.name": "openrouter",
                 "model_providers.openrouter.base_url": "https://openrouter.ai/api/v1",
                 "model_providers.openrouter.env_key": "OPENAI_API_KEY",
-                "model_providers.openrouter.wire_api": "responses"
+                "model_providers.openrouter.wire_api": "responses",
+                "stream_idle_timeout_ms": 120000
             }))
         );
     }

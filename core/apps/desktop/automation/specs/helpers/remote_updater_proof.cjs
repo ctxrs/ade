@@ -465,10 +465,10 @@ const remoteProviderInstallAndConfigure = ({
   }
   const baseUrl = trimText(process.env.OPENROUTER_BASE_URL) || "https://openrouter.ai/api/v1";
   const modelOverride = trimText(process.env.CTX_E2E_OPENROUTER_MODEL_OVERRIDE) || (providerId === "qwen"
-    ? "openai/gpt-4.1-nano"
+    ? "google/gemini-2.5-flash"
     : providerId === "pi"
       ? "google/gemini-3-flash-preview"
-      : "openai/gpt-4.1-nano");
+      : "google/gemini-2.5-flash");
 
   const startInstall = remoteHttpJson("POST", `/api/providers/${providerId}/install?target=${installTarget}`, {}, { token });
   if (startInstall.status !== 200) {
