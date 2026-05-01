@@ -7,6 +7,7 @@ const desktopPkgJsonPath = path.join(coreRoot, "apps", "desktop", "package.json"
 const tauriConfPath = path.join(coreRoot, "apps", "desktop", "src-tauri", "tauri.conf.json");
 const tauriCargoTomlPath = path.join(coreRoot, "apps", "desktop", "src-tauri", "Cargo.toml");
 const daemonCargoTomlPath = path.join(coreRoot, "crates", "ctx-http", "Cargo.toml");
+const daemonBazelBuildPath = path.join(coreRoot, "crates", "ctx-http", "BUILD.bazel");
 
 const readJson = (p) => JSON.parse(fs.readFileSync(p, "utf8"));
 
@@ -36,12 +37,22 @@ const readCargoVersion = (p) => {
   throw new Error(`failed to find Cargo.toml version in ${p}`);
 };
 
+const readBazelCargoPkgVersion = (p) => {
+  const text = fs.readFileSync(p, "utf8");
+  const match = text.match(/"CARGO_PKG_VERSION"\s*:\s*"([^"]+)"/);
+  if (!match) {
+    throw new Error(`failed to find CARGO_PKG_VERSION in ${p}`);
+  }
+  return match[1];
+};
+
 const main = () => {
   const desktopVersion = readJson(desktopPkgJsonPath).version;
   const tauriConf = readJson(tauriConfPath);
   const tauriVersion = tauriConf.package?.version ?? tauriConf.version;
   const cargoVersion = readCargoVersion(tauriCargoTomlPath);
   const daemonCargoVersion = readCargoVersion(daemonCargoTomlPath);
+  const daemonBazelVersion = readBazelCargoPkgVersion(daemonBazelBuildPath);
 
   const problems = [];
   if (!desktopVersion) {
@@ -63,6 +74,11 @@ const main = () => {
   if (desktopVersion !== daemonCargoVersion) {
     problems.push(
       `version mismatch: apps/desktop/package.json=${desktopVersion} crates/ctx-http/Cargo.toml=${daemonCargoVersion}`,
+    );
+  }
+  if (desktopVersion !== daemonBazelVersion) {
+    problems.push(
+      `version mismatch: apps/desktop/package.json=${desktopVersion} crates/ctx-http/BUILD.bazel CARGO_PKG_VERSION=${daemonBazelVersion}`,
     );
   }
 

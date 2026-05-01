@@ -72,6 +72,24 @@ pub fn build_app_server_config_overrides(config: &CrpSessionConfig) -> Option<Va
             "openai_base_url".to_string(),
             Value::String(base_url.clone()),
         );
+        if let Some(model_provider) = endpoint_model_provider(config.model_provider.as_deref()) {
+            out.insert(
+                format!("model_providers.{model_provider}.name"),
+                Value::String(model_provider.to_string()),
+            );
+            out.insert(
+                format!("model_providers.{model_provider}.base_url"),
+                Value::String(base_url.clone()),
+            );
+            out.insert(
+                format!("model_providers.{model_provider}.env_key"),
+                Value::String("OPENAI_API_KEY".to_string()),
+            );
+            out.insert(
+                format!("model_providers.{model_provider}.wire_api"),
+                Value::String("responses".to_string()),
+            );
+        }
     }
     if let Some(mcp_servers) = &config.mcp_servers {
         for (name, server) in mcp_servers {
@@ -81,6 +99,17 @@ pub fn build_app_server_config_overrides(config: &CrpSessionConfig) -> Option<Va
         }
     }
     (!out.is_empty()).then_some(Value::Object(out))
+}
+
+fn endpoint_model_provider(model_provider: Option<&str>) -> Option<&str> {
+    let provider = model_provider
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+    if provider == "openai" {
+        None
+    } else {
+        Some(provider)
+    }
 }
 
 pub fn parse_cli_config_overrides(raw_entries: &[String]) -> Result<Option<Value>> {
@@ -331,6 +360,42 @@ mod tests {
             build_app_server_config_overrides(&config),
             Some(serde_json::json!({
                 "openai_base_url": "https://openrouter.ai/api/v1"
+            }))
+        );
+    }
+
+    #[test]
+    fn build_app_server_config_overrides_defines_endpoint_model_provider() {
+        let config = CrpSessionConfig {
+            model_provider: Some("openrouter".to_string()),
+            openai_base_url: Some("https://openrouter.ai/api/v1".to_string()),
+            ..CrpSessionConfig::default()
+        };
+
+        assert_eq!(
+            build_app_server_config_overrides(&config),
+            Some(serde_json::json!({
+                "openai_base_url": "https://openrouter.ai/api/v1",
+                "model_providers.openrouter.name": "openrouter",
+                "model_providers.openrouter.base_url": "https://openrouter.ai/api/v1",
+                "model_providers.openrouter.env_key": "OPENAI_API_KEY",
+                "model_providers.openrouter.wire_api": "responses"
+            }))
+        );
+    }
+
+    #[test]
+    fn build_app_server_config_overrides_does_not_redefine_openai_provider() {
+        let config = CrpSessionConfig {
+            model_provider: Some("openai".to_string()),
+            openai_base_url: Some("https://api.openai.com/v1".to_string()),
+            ..CrpSessionConfig::default()
+        };
+
+        assert_eq!(
+            build_app_server_config_overrides(&config),
+            Some(serde_json::json!({
+                "openai_base_url": "https://api.openai.com/v1"
             }))
         );
     }

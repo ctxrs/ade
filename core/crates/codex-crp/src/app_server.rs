@@ -9,7 +9,7 @@ use std::process::Stdio;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::sync::{Mutex as StdMutex, OnceLock};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter};
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWriteExt, BufReader, BufWriter};
 use tokio::process::{Child, ChildStdin, Command};
 use tokio::sync::{mpsc, oneshot, Mutex};
 
@@ -54,7 +54,17 @@ fn maybe_dump_app_server_message(direction: &str, value: &Value) {
         return;
     };
     let writer = APP_SERVER_EVENT_DUMP.get_or_init(|| {
-        let file = OpenOptions::new().create(true).append(true).open(path).ok();
+        let file = match OpenOptions::new().create(true).append(true).open(&path) {
+            Ok(file) => Some(file),
+            Err(err) => {
+                tracing::warn!(
+                    path = %path,
+                    error = %err,
+                    "failed to open CODEX_CRP_DUMP_CODEX_EVENTS_PATH; disabling app-server event dumps"
+                );
+                None
+            }
+        };
         StdMutex::new(file.map(std::io::BufWriter::new))
     });
 
@@ -168,13 +178,18 @@ impl AppServerClient {
                 method: method.to_string(),
             },
         );
-        self.send_json(&json!({
+        if let Err(err) = self
+            .send_json(&json!({
             "jsonrpc": "2.0",
             "id": id,
             "method": method,
             "params": params,
-        }))
-        .await?;
+            }))
+            .await
+        {
+            self.pending.lock().await.remove(&id);
+            return Err(err);
+        }
         let result = rx
             .await
             .map_err(|_| anyhow!("app-server response channel closed for {method}"))??;
@@ -222,13 +237,43 @@ impl AppServerClient {
     }
 }
 
+impl Drop for AppServerClient {
+    fn drop(&mut self) {
+        let _ = self.child.start_kill();
+    }
+}
+
 async fn stdout_reader_task(
     stdout: tokio::process::ChildStdout,
     inbound_tx: mpsc::UnboundedSender<AppServerInbound>,
     pending: Arc<Mutex<HashMap<i64, PendingResponse>>>,
 ) {
+    stdout_reader_loop(stdout, inbound_tx, pending).await;
+}
+
+async fn stdout_reader_loop(
+    stdout: impl AsyncRead + Unpin,
+    inbound_tx: mpsc::UnboundedSender<AppServerInbound>,
+    pending: Arc<Mutex<HashMap<i64, PendingResponse>>>,
+) {
     let mut lines = BufReader::new(stdout).lines();
-    while let Ok(Some(line)) = lines.next_line().await {
+    loop {
+        let line = match lines.next_line().await {
+            Ok(Some(line)) => line,
+            Ok(None) => {
+                fail_pending_responses(&pending, "codex app-server stdout closed before response")
+                    .await;
+                break;
+            }
+            Err(err) => {
+                fail_pending_responses(
+                    &pending,
+                    format!("failed to read codex app-server stdout before response: {err}"),
+                )
+                .await;
+                break;
+            }
+        };
         let parsed: Value = match serde_json::from_str(&line) {
             Ok(value) => value,
             Err(err) => {
@@ -290,6 +335,19 @@ async fn stdout_reader_task(
     }
 }
 
+async fn fail_pending_responses(
+    pending: &Arc<Mutex<HashMap<i64, PendingResponse>>>,
+    reason: impl Into<String>,
+) {
+    let reason = reason.into();
+    let mut pending = pending.lock().await;
+    for (_id, pending_entry) in pending.drain() {
+        let _ = pending_entry
+            .respond_to
+            .send(Err(anyhow!("{}: {reason}", pending_entry.method)));
+    }
+}
+
 async fn stderr_reader_task(stderr: tokio::process::ChildStderr) {
     let mut lines = BufReader::new(stderr).lines();
     while let Ok(Some(line)) = lines.next_line().await {
@@ -329,8 +387,11 @@ impl AppServerClient {
 
 #[cfg(test)]
 mod tests {
-    use super::{response_id_from_value, AppServerRequestId};
+    use super::{response_id_from_value, stdout_reader_loop, AppServerRequestId, PendingResponse};
     use serde_json::json;
+    use std::collections::HashMap;
+    use std::sync::Arc;
+    use tokio::sync::{mpsc, oneshot, Mutex};
 
     #[test]
     fn inbound_request_id_preserves_original_type() {
@@ -358,5 +419,32 @@ mod tests {
         assert_eq!(response_id_from_value(&json!(12)), Some(12));
         assert_eq!(response_id_from_value(&json!("12")), Some(12));
         assert_eq!(response_id_from_value(&json!("req-12")), None);
+    }
+
+    #[tokio::test]
+    async fn pending_request_fails_when_app_server_stdout_closes() {
+        let pending = Arc::new(Mutex::new(HashMap::new()));
+        let (respond_to, response) = oneshot::channel();
+        pending.lock().await.insert(
+            7,
+            PendingResponse {
+                respond_to,
+                method: "thread/start".to_string(),
+            },
+        );
+        let (inbound_tx, _inbound_rx) = mpsc::unbounded_channel();
+
+        stdout_reader_loop(tokio::io::empty(), inbound_tx, Arc::clone(&pending)).await;
+
+        let err = response
+            .await
+            .expect("pending response should be completed")
+            .expect_err("stdout close should fail request");
+        assert!(
+            err.to_string()
+                .contains("thread/start: codex app-server stdout closed before response"),
+            "unexpected error: {err}"
+        );
+        assert!(pending.lock().await.is_empty());
     }
 }

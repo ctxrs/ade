@@ -41,14 +41,32 @@ pub(super) fn apply_crp_launch_policy_env_for_control_mode(
 }
 
 const DEFAULT_TURN_START_DEADLINE: Duration = Duration::from_secs(60);
+const CONTAINER_TURN_START_DEADLINE: Duration = Duration::from_secs(135);
 
-pub(super) fn turn_start_deadline() -> Duration {
-    std::env::var("CTX_TURN_START_DEADLINE_MS")
-        .ok()
+pub(super) fn turn_start_deadline(
+    provider_env: &std::collections::HashMap<String, String>,
+) -> Duration {
+    turn_start_deadline_with_override(
+        provider_env,
+        std::env::var("CTX_TURN_START_DEADLINE_MS").ok().as_deref(),
+    )
+}
+
+fn turn_start_deadline_with_override(
+    provider_env: &std::collections::HashMap<String, String>,
+    configured: Option<&str>,
+) -> Duration {
+    configured
         .and_then(|value| value.trim().parse::<u64>().ok())
         .filter(|value| *value > 0)
         .map(Duration::from_millis)
-        .unwrap_or(DEFAULT_TURN_START_DEADLINE)
+        .unwrap_or_else(|| {
+            if provider_env.contains_key("CTX_HARNESS_CONTAINER_ID") {
+                CONTAINER_TURN_START_DEADLINE
+            } else {
+                DEFAULT_TURN_START_DEADLINE
+            }
+        })
 }
 
 pub(super) async fn record_queue_wait_metric(
@@ -84,4 +102,35 @@ pub(super) async fn record_queue_wait_metric(
         .perf_telemetry
         .record_metric(queue_metric, perf_run_id, None, None)
         .await;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn turn_start_deadline_uses_longer_container_budget() {
+        let env = HashMap::from([(
+            "CTX_HARNESS_CONTAINER_ID".to_string(),
+            "ctx-harness-test".to_string(),
+        )]);
+
+        assert_eq!(
+            turn_start_deadline_with_override(&env, None),
+            CONTAINER_TURN_START_DEADLINE
+        );
+    }
+
+    #[test]
+    fn turn_start_deadline_env_override_still_wins() {
+        let env = HashMap::from([(
+            "CTX_HARNESS_CONTAINER_ID".to_string(),
+            "ctx-harness-test".to_string(),
+        )]);
+
+        assert_eq!(
+            turn_start_deadline_with_override(&env, Some("2500")),
+            Duration::from_millis(2500)
+        );
+    }
 }

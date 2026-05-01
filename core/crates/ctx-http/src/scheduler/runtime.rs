@@ -429,6 +429,7 @@ pub(crate) async fn start_turn(
 
     let run_started_at = Instant::now();
     let spawn_started_at = Instant::now();
+    let start_deadline_duration = turn_start_deadline(&provider_env);
     let provider_run_hooks = build_provider_run_hooks(
         state,
         &store,
@@ -527,7 +528,7 @@ pub(crate) async fn start_turn(
         event_tx,
         events_done: Some(events_done_rx),
         start_progress: start_progress_rx,
-        start_deadline: TokioInstant::now() + turn_start_deadline(),
+        start_deadline: TokioInstant::now() + start_deadline_duration,
         mcp_token,
     })
 }
