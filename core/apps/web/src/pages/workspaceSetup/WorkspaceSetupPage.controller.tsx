@@ -172,8 +172,11 @@ export function WorkspaceSetupPageController() {
           : workflow.create.localAdminPasswordInput
       }
       setLocalAdminPasswordInput={(value) => {
+        if (workflow.provisioning.localAdminPasswordPromptVisible) {
+          workflow.provisioning.setLocalAdminPasswordInput(value);
+          return;
+        }
         workflow.create.setLocalAdminPasswordInput(value);
-        workflow.provisioning.setLocalAdminPasswordInput(value);
       }}
       remotePasswordPromptVisible={workflow.remote.remotePasswordPromptVisible}
       remotePasswordPromptMode={workflow.remote.remotePasswordPromptMode}

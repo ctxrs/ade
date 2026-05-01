@@ -581,6 +581,103 @@ describe("WorkspaceSetupPage", () => {
     });
   }, 15000);
 
+  it("keeps the harness-download admin password scoped to the harness retry", async () => {
+    vi.mocked(isDesktopApp).mockReturnValue(true);
+    vi.mocked(getSettings).mockResolvedValue(configuredTitlingSettingsFixture() as never);
+    vi.mocked(listProviders).mockResolvedValue([
+      providerStatusFixture({
+        provider_id: "codex",
+        installed: false,
+        health: "error",
+        details: { install_supported: "true" },
+      }),
+    ] as never);
+    vi.mocked(desktopEnsureLocalLinuxSandboxReady)
+      .mockRejectedValueOnce(
+        new Error(
+          "CTX_LOCAL_ADMIN_PASSWORD_REQUIRED: Local admin password required to prepare sandbox on this machine.",
+        ) as never,
+      )
+      .mockResolvedValue({ ready: true } as never);
+    vi.mocked(installProvider).mockResolvedValue({
+      provider_id: "codex",
+      install_id: "install_codex",
+    } as never);
+    vi.mocked(getInstall).mockResolvedValue({
+      install_id: "install_codex",
+      provider_id: "codex",
+      state: "running",
+      started_at: "2026-02-28T00:00:00Z",
+      finished_at: undefined,
+      error: undefined,
+      last_event: undefined,
+      target: "container",
+      error_code: undefined,
+    } as never);
+
+    renderPage();
+    await screen.findByTestId("workspace-setup");
+    await selectLocalAndContinue();
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("container");
+    });
+    fireEvent.click(screen.getByTestId("wizard-option-container-sandbox"));
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("harness-downloads");
+    });
+
+    fireEvent.click(screen.getByTestId("wizard-next"));
+    await screen.findByTestId("wizard-local-admin-password-once");
+    expect(installProvider).not.toHaveBeenCalled();
+    expect(desktopEnsureLocalLinuxSandboxReady).toHaveBeenNthCalledWith(1, {
+      admin_password_once: null,
+    });
+
+    fireEvent.change(screen.getByTestId("wizard-local-admin-password-once"), {
+      target: { value: "local-admin" },
+    });
+    fireEvent.click(screen.getByTestId("wizard-next"));
+
+    await waitFor(() => {
+      expect(installProvider).toHaveBeenCalledWith("codex", "container");
+      expect(wizardStepKey()).toBe("source");
+    });
+    expect(desktopEnsureLocalLinuxSandboxReady).toHaveBeenNthCalledWith(2, {
+      admin_password_once: "local-admin",
+    });
+
+    fireEvent.click(screen.getByTestId("wizard-option-source-new"));
+    fireEvent.change(screen.getByTestId("wizard-workspace-name"), {
+      target: { value: "harness-admin-password-scope" },
+    });
+    fireEvent.click(screen.getByTestId("wizard-next"));
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("network");
+    });
+    fireEvent.click(screen.getByTestId("wizard-option-network-full"));
+    await waitFor(() => {
+      expect(["setup", "merge-queue"]).toContain(wizardStepKey());
+    });
+    if (wizardStepKey() === "setup") {
+      fireEvent.click(screen.getByTestId("wizard-next"));
+      await waitFor(() => {
+        expect(wizardStepKey()).toBe("merge-queue");
+      });
+    }
+    fireEvent.click(screen.getByTestId("wizard-merge-skip"));
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("confirm");
+    });
+
+    fireEvent.click(screen.getByTestId("wizard-create"));
+
+    await waitFor(() => {
+      expect(desktopEnsureLocalLinuxSandboxReady).toHaveBeenNthCalledWith(3, {
+        admin_password_once: null,
+      });
+    });
+  }, 20000);
+
   it("continues past harness step when a selected download fails to start", async () => {
     vi.mocked(isDesktopApp).mockReturnValue(true);
     vi.mocked(getSettings).mockResolvedValue(configuredTitlingSettingsFixture() as never);
