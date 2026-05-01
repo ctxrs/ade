@@ -119,6 +119,39 @@ function resolveCrates(graph, args) {
   return filterGateManagedCrateNames(expandReverseDependencies(graph, resolved));
 }
 
+function rustRemoteCacheState(env) {
+  const turboCacheMode = String(env.TURBO_CACHE_MODE || "local:rw").trim();
+  const turboRemote = turboCacheMode.split(",").some((part) => part.trim().startsWith("remote:"));
+  const sccacheState = String(env.CTX_RUST_CACHE_SCCACHE || "unconfigured").trim();
+  const sccacheRemote = sccacheState === "enabled" && Boolean(String(env.SCCACHE_BUCKET || "").trim());
+  return {
+    sccache_remote: sccacheRemote,
+    sccache_state: sccacheState,
+    turbo_cache_mode: turboCacheMode,
+    turbo_remote: turboRemote,
+  };
+}
+
+function logRustRemoteCacheState(env, { runClippy }) {
+  if (!runClippy) {
+    return;
+  }
+  const state = rustRemoteCacheState(env);
+  const status = state.turbo_remote || state.sccache_remote ? "active" : "inactive";
+  console.error(
+    "[ctx-cache] rust clippy remote cache %s: turbo=%s sccache=%s sccache_bucket=%s",
+    status,
+    state.turbo_cache_mode,
+    state.sccache_state,
+    state.sccache_remote ? "configured" : "missing",
+  );
+  if (status === "inactive") {
+    console.error(
+      "[ctx-cache] rust clippy remote cache inactive; configure TURBO_API/TURBO_TEAM/TURBO_TOKEN and CTX_SCCACHE_R2_* on Buildkite agents.",
+    );
+  }
+}
+
 function runTaskPhase({ coreRoot, env, crateNames, taskKind, turboConcurrency = null }) {
   if (crateNames.length === 0) {
     return;
@@ -211,6 +244,7 @@ function main() {
     mode: args.mode,
     mkdir: true,
   });
+  logRustRemoteCacheState(env, { runClippy: args.runClippy });
   const { bazelTestCrates, cargoTestCrates, nextestCrates } = partitionCratesForTestStrategy(
     crateNames,
     args.testStrategy,
@@ -284,4 +318,5 @@ module.exports = {
   buildBazelTargetBatches,
   parseArgs,
   resolveCrates,
+  rustRemoteCacheState,
 };

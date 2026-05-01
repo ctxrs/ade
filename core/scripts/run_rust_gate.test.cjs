@@ -9,6 +9,7 @@ const {
   buildBazelTargetBatches,
   parseArgs,
   resolveCrates,
+  rustRemoteCacheState,
 } = require("./run_rust_gate.cjs");
 
 test("parseArgs accepts --agent-gate without additional selection flags", () => {
@@ -23,6 +24,25 @@ test("parseArgs accepts --agent-gate without additional selection flags", () => 
     runClippy: false,
     skipTests: false,
     testStrategy: "mixed",
+  });
+});
+
+test("rustRemoteCacheState reports Turbo and sccache remote cache inputs", () => {
+  assert.deepEqual(rustRemoteCacheState({}), {
+    sccache_remote: false,
+    sccache_state: "unconfigured",
+    turbo_cache_mode: "local:rw",
+    turbo_remote: false,
+  });
+  assert.deepEqual(rustRemoteCacheState({
+    CTX_RUST_CACHE_SCCACHE: "enabled",
+    SCCACHE_BUCKET: "ctx-sdlc-cache",
+    TURBO_CACHE_MODE: "local:rw,remote:rw",
+  }), {
+    sccache_remote: true,
+    sccache_state: "enabled",
+    turbo_cache_mode: "local:rw,remote:rw",
+    turbo_remote: true,
   });
 });
 
