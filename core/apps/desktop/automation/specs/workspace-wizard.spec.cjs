@@ -940,7 +940,13 @@ const readWizardHarnessDownloadsState = async () => {
 
 const rowNeedsHarnessInstall = (row) => !String(row?.statusText || "").trim().startsWith("Installed");
 
-const pickHarnessProvidersForNonBlockingInstallProof = async (providerIds, timeoutMs = 10_000) => {
+const pickHarnessProvidersForNonBlockingInstallProof = async (
+  providerIds,
+  {
+    requireExactProviderIds = false,
+    timeoutMs = 10_000,
+  } = {},
+) => {
   const preferred = Array.from(new Set((providerIds || []).map((value) => String(value || "").trim()).filter(Boolean)));
   const started = Date.now();
   let lastHarnessState = null;
@@ -967,13 +973,15 @@ const pickHarnessProvidersForNonBlockingInstallProof = async (providerIds, timeo
       }
     }
 
-    const fallback = installableRows.find((row) => !preferred.includes(row.providerId));
-    if (fallback) {
-      return {
-        providerIds: [fallback.providerId],
-        requestedProviderIds: preferred,
-        harnessState,
-      };
+    if (!requireExactProviderIds) {
+      const fallback = installableRows.find((row) => !preferred.includes(row.providerId));
+      if (fallback) {
+        return {
+          providerIds: [fallback.providerId],
+          requestedProviderIds: preferred,
+          harnessState,
+        };
+      }
     }
     await browser.pause(150);
   }
@@ -1141,6 +1149,7 @@ const ensureReadyForSourceSelection = async (
     downloadHarnesses = false,
     selectedHarnessProviderIds = null,
     requireSelectedHarnessInstallsNonBlocking = false,
+    requireExactSelectedHarnessInstallProof = false,
     forbidLocationRegression = false,
     locationProgress = { leftLocation: false },
   },
@@ -1213,6 +1222,7 @@ const ensureReadyForSourceSelection = async (
         if (requireSelectedHarnessInstallsNonBlocking) {
           const installProofSelection = await pickHarnessProvidersForNonBlockingInstallProof(
             effectiveSelectedHarnessProviderIds,
+            { requireExactProviderIds: requireExactSelectedHarnessInstallProof },
           );
           effectiveSelectedHarnessProviderIds = installProofSelection.providerIds;
         }
@@ -1339,6 +1349,7 @@ const selectSourceOptionWithRetry = async (
     downloadHarnesses = false,
     selectedHarnessProviderIds = null,
     requireSelectedHarnessInstallsNonBlocking = false,
+    requireExactSelectedHarnessInstallProof = false,
     forbidLocationRegression = false,
   },
   attempts = 6,
@@ -1370,6 +1381,7 @@ const selectSourceOptionWithRetry = async (
       downloadHarnesses,
       selectedHarnessProviderIds,
       requireSelectedHarnessInstallsNonBlocking,
+      requireExactSelectedHarnessInstallProof,
       forbidLocationRegression,
       locationProgress,
     });
@@ -1696,6 +1708,7 @@ const runWizardScenario = async (scenario) => {
       ? scenario.selectedHarnessProviderIds
       : null,
     requireSelectedHarnessInstallsNonBlocking: Boolean(scenario.requireSelectedHarnessInstallsNonBlocking),
+    requireExactSelectedHarnessInstallProof: Boolean(scenario.requireExactSelectedHarnessInstallProof),
     forbidLocationRegression: true,
   });
 
@@ -2165,6 +2178,8 @@ describe("launcher workspace wizard (e2e)", () => {
       network: "providers",
       downloadHarnesses: true,
       selectedHarnessProviderIds: ["codex"],
+      requireSelectedHarnessInstallsNonBlocking: true,
+      requireExactSelectedHarnessInstallProof: true,
       source: { kind: "new", destPath: dest, workspaceName: "codex-sandbox-smoke" },
       setupHook: "",
       mergeQueue: { kind: "skip" },

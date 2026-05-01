@@ -2050,8 +2050,8 @@ function buildStaticEntries() {
         ...RELEASE_RELEVANT_GLOBS,
       ],
       dependencyCrates: [],
-      notes: "Buildkite-owned post-publish Linux host/sandbox harness-install matrix against the published app bundle.",
-      exception: "Intentional artifact-tail proof on a real Linux host; provider/runtime installability is release evidence and must fail independently from updater and workspace proof.",
+      notes: "Buildkite-owned pre-publish Linux host/sandbox harness-install matrix against the staged AppImage bundle.",
+      exception: "Intentional staged-artifact proof on a real Linux host; provider/runtime installability is release evidence and must block publish independently from updater and workspace proof.",
     },
     {
       id: "updates-release.release-proof-linux-clean-workspace",
@@ -2075,8 +2075,8 @@ function buildStaticEntries() {
         ...RELEASE_RELEVANT_GLOBS,
       ],
       dependencyCrates: [],
-      notes: "Buildkite-owned post-publish clean Linux workspace proof against the published app bundle.",
-      exception: "Intentional artifact-tail proof on a real Linux host; workspace launch truth depends on shipped app, local daemon state, and real provider credentials.",
+      notes: "Buildkite-owned pre-publish clean Linux workspace proof against the staged AppImage bundle.",
+      exception: "Intentional staged-artifact proof on a real Linux host; workspace launch truth depends on shipped app, local daemon state, and real provider credentials.",
     },
     {
       id: "updates-release.release-proof-remote-updater",

@@ -9,6 +9,7 @@ BOOTSTRAP_CHANNEL="${CTX_UPDATER_LINUX_PROOF_BOOTSTRAP_CHANNEL:-stable}"
 TARGET_CHANNEL="${CTX_UPDATER_LINUX_PROOF_TARGET_CHANNEL:-${RELEASE_STORAGE_CHANNEL:-${RELEASE_CHANNEL:-e2e}}}"
 REQUIRE_VERSION_CHANGE="${CTX_UPDATER_LINUX_PROOF_REQUIRE_VERSION_CHANGE:-1}"
 PHASES_RAW="${CTX_UPDATER_LINUX_PROOF_PHASES:-all}"
+STAGE_ARCHIVE="${CTX_UPDATER_LINUX_PROOF_STAGE_ARCHIVE:-}"
 REPORT_PATH="${ARTIFACT_DIR}/summary.json"
 INSTALL_SCRIPT="${ARTIFACT_DIR}/install.sh"
 INSTALL_DOWNLOAD_LOG="${ARTIFACT_DIR}/install-download.log"
@@ -21,6 +22,8 @@ RUNTIME_INSTALL_LOG="${ARTIFACT_DIR}/runtime-install.log"
 WIZARD_LOG="${ARTIFACT_DIR}/workspace-wizard.log"
 APPIMAGE_AUTOMATION_TARGETS_LOG="${ARTIFACT_DIR}/appimage-automation-targets.log"
 DAEMON_CLEANUP_LOG="${ARTIFACT_DIR}/daemon-cleanup.log"
+PROVIDER_DIAGNOSTICS_DIR="${ARTIFACT_DIR}/provider-diagnostics"
+DAEMON_LOGS_DIR="${ARTIFACT_DIR}/daemon-logs"
 EXTRACT_DIR="${ARTIFACT_DIR}/appimage-extract"
 WDIO_CONNECTION_RETRY_TIMEOUT_MS="${CTX_UPDATER_LINUX_PROOF_WDIO_CONNECTION_RETRY_TIMEOUT_MS:-300000}"
 home_dir=""
@@ -75,6 +78,10 @@ if [[ "${RUN_UPDATER_PHASE}" == "0" && "${RUN_PROVIDER_MATRIX_PHASE}" == "0" && 
   echo "error: CTX_UPDATER_LINUX_PROOF_PHASES selected no phases: ${PHASES_RAW}" >&2
   exit 2
 fi
+if [[ -n "${STAGE_ARCHIVE}" && "${RUN_UPDATER_PHASE}" == "1" ]]; then
+  echo "error: CTX_UPDATER_LINUX_PROOF_STAGE_ARCHIVE cannot be used with updater-smoke phase" >&2
+  exit 2
+fi
 
 upload_artifacts_on_buildkite() {
   if [[ -z "${BUILDKITE:-}" ]] || ! command -v buildkite-agent >/dev/null 2>&1; then
@@ -84,6 +91,9 @@ upload_artifacts_on_buildkite() {
   buildkite-agent artifact upload "${ARTIFACT_DIR}/*.log" >/dev/null 2>&1 || true
   buildkite-agent artifact upload "${ARTIFACT_DIR}/harness-install-matrix/**/*.json" >/dev/null 2>&1 || true
   buildkite-agent artifact upload "${ARTIFACT_DIR}/harness-install-matrix/**/*.log" >/dev/null 2>&1 || true
+  buildkite-agent artifact upload "${PROVIDER_DIAGNOSTICS_DIR}/**/*.json" >/dev/null 2>&1 || true
+  buildkite-agent artifact upload "${DAEMON_LOGS_DIR}/**/*.log" >/dev/null 2>&1 || true
+  buildkite-agent artifact upload "${DAEMON_LOGS_DIR}/**/*.jsonl" >/dev/null 2>&1 || true
   buildkite-agent artifact upload "${ARTIFACT_DIR}/volatile/artifacts/ctx-desktop-e2e/**/*.log" >/dev/null 2>&1 || true
   buildkite-agent artifact upload "${ARTIFACT_DIR}/volatile/artifacts/ctx-desktop-e2e/**/*.png" >/dev/null 2>&1 || true
 }
@@ -221,6 +231,8 @@ write_report() {
   REPORT_APPIMAGE_AUTOMATION_TARGETS_LOG="${APPIMAGE_AUTOMATION_TARGETS_LOG}" \
   REPORT_RUNTIME_INSTALL_LOG="${RUNTIME_INSTALL_LOG}" \
   REPORT_WIZARD_LOG="${WIZARD_LOG}" \
+  REPORT_PROVIDER_DIAGNOSTICS_DIR="${PROVIDER_DIAGNOSTICS_DIR}" \
+  REPORT_DAEMON_LOGS_DIR="${DAEMON_LOGS_DIR}" \
   REPORT_ARTIFACT_DIR="${ARTIFACT_DIR}" \
   REPORT_BEFORE_VERSION="${before_version:-}" \
   REPORT_AFTER_VERSION="${after_version:-}" \
@@ -258,6 +270,8 @@ const payload = {
     appimage_automation_targets: process.env.REPORT_APPIMAGE_AUTOMATION_TARGETS_LOG || "",
     runtime_install: process.env.REPORT_RUNTIME_INSTALL_LOG || "",
     workspace_wizard: process.env.REPORT_WIZARD_LOG || "",
+    provider_diagnostics_dir: process.env.REPORT_PROVIDER_DIAGNOSTICS_DIR || "",
+    daemon_logs_dir: process.env.REPORT_DAEMON_LOGS_DIR || "",
   },
   reports: {
     updater: readJson(process.env.REPORT_UPDATER_REPORT || ""),
@@ -277,6 +291,93 @@ matches_log() {
     return
   fi
   grep -Eqi "${pattern}" "${WIZARD_LOG}"
+}
+
+collect_clean_workspace_diagnostics() {
+  local data_dir="${workspace_home_dir}/.ctx"
+  mkdir -p "${PROVIDER_DIAGNOSTICS_DIR}" "${DAEMON_LOGS_DIR}"
+
+  if [[ -d "${data_dir}/logs" ]]; then
+    cp -R "${data_dir}/logs"/. "${DAEMON_LOGS_DIR}/" 2>/dev/null || true
+  fi
+  if [[ -f "${data_dir}/providers/agent-servers/agent_servers.json" ]]; then
+    cp -f "${data_dir}/providers/agent-servers/agent_servers.json" \
+      "${PROVIDER_DIAGNOSTICS_DIR}/agent_servers.json" 2>/dev/null || true
+  fi
+
+  AUTH_FILE="${data_dir}/daemon_auth.json" \
+  OUTPUT_DIR="${PROVIDER_DIAGNOSTICS_DIR}" \
+  node <<'NODE' || true
+const fs = require("node:fs");
+const http = require("node:http");
+const path = require("node:path");
+
+const authFile = process.env.AUTH_FILE;
+const outputDir = process.env.OUTPUT_DIR;
+const writeJson = (name, value) => {
+  fs.mkdirSync(outputDir, { recursive: true });
+  fs.writeFileSync(path.join(outputDir, name), `${JSON.stringify(value, null, 2)}\n`, "utf8");
+};
+
+if (!authFile || !outputDir || !fs.existsSync(authFile)) {
+  writeJson("daemon_auth.summary.json", { present: false });
+  process.exit(0);
+}
+
+const auth = JSON.parse(fs.readFileSync(authFile, "utf8"));
+const daemonUrl = typeof auth.daemon_url === "string" ? auth.daemon_url : "";
+const token = typeof auth.token === "string" ? auth.token : "";
+writeJson("daemon_auth.summary.json", {
+  present: true,
+  daemon_url: daemonUrl,
+  has_token: token.length > 0,
+});
+if (!daemonUrl || !token) process.exit(0);
+
+const requestJson = (pathname) => new Promise((resolve) => {
+  const url = new URL(pathname, daemonUrl);
+  const req = http.request(url, {
+    method: "GET",
+    headers: {
+      authorization: `Bearer ${token}`,
+      accept: "application/json",
+    },
+    timeout: 5000,
+  }, (res) => {
+    const chunks = [];
+    res.on("data", (chunk) => chunks.push(chunk));
+    res.on("end", () => {
+      const body = Buffer.concat(chunks).toString("utf8");
+      let parsed = null;
+      try {
+        parsed = body ? JSON.parse(body) : null;
+      } catch {
+        parsed = { raw: body.slice(0, 4000) };
+      }
+      resolve({ status: res.statusCode, body: parsed });
+    });
+  });
+  req.on("timeout", () => {
+    req.destroy(new Error("request timed out"));
+  });
+  req.on("error", (error) => {
+    resolve({ error: error.message });
+  });
+  req.end();
+});
+
+(async () => {
+  const endpoints = [
+    ["providers.container.json", "/api/providers?target=container"],
+    ["provider-codex.container.json", "/api/providers/codex?target=container"],
+    ["providers.host.json", "/api/providers?target=host"],
+    ["provider-codex.host.json", "/api/providers/codex?target=host"],
+  ];
+  for (const [filename, endpoint] of endpoints) {
+    writeJson(filename, await requestJson(endpoint));
+  }
+})();
+NODE
 }
 
 prepare_webkit_runtime() {
@@ -321,6 +422,68 @@ extract_appimage_for_automation() {
   AUTOMATION_APP_DIR="${app_dir}"
   AUTOMATION_APP_PATH="${candidate}"
   printf '%s\n' "${label}: appimage=${app_path} appdir=${AUTOMATION_APP_DIR} automation_app=${AUTOMATION_APP_PATH}" >>"${APPIMAGE_AUTOMATION_TARGETS_LOG}"
+}
+
+prepare_staged_appimage_for_proof() {
+  local archive_path="$1"
+  local stage_extract_dir="${EXTRACT_DIR}/stage-archive"
+  if [[ ! -f "${archive_path}" ]]; then
+    write_report "failed" "stage_archive_missing"
+    echo "error: missing staged release archive: ${archive_path}" >&2
+    exit 1
+  fi
+
+  rm -rf "${stage_extract_dir}"
+  mkdir -p "${stage_extract_dir}"
+  tar -xzf "${archive_path}" -C "${stage_extract_dir}"
+
+  STAGE_EXTRACT_DIR="${stage_extract_dir}" \
+  EXPECTED_SOURCE_COMMIT="${RELEASE_SOURCE_COMMIT:-}" \
+  EXPECTED_VERSION="${RELEASE_VERSION:-}" \
+  EXPECTED_CHANNEL="${RELEASE_CHANNEL:-${TARGET_CHANNEL:-}}" \
+  node <<'NODE'
+const fs = require("node:fs");
+const path = require("node:path");
+
+const metadataPath = path.join(process.env.STAGE_EXTRACT_DIR, "metadata.json");
+const metadata = JSON.parse(fs.readFileSync(metadataPath, "utf8"));
+const fail = (message) => {
+  console.error(`error: ${message}`);
+  process.exit(1);
+};
+
+if (metadata.platform !== "linux-x64") {
+  fail(`staged Linux proof requires linux-x64 archive, got ${metadata.platform || "<missing>"}`);
+}
+if (metadata.finalize_state !== "complete" && metadata.finalize_state !== "pending") {
+  fail(`staged Linux proof got invalid finalize_state ${metadata.finalize_state || "<missing>"}`);
+}
+if (process.env.EXPECTED_SOURCE_COMMIT && metadata.source_commit !== process.env.EXPECTED_SOURCE_COMMIT) {
+  fail("staged Linux proof source_commit mismatch");
+}
+if (process.env.EXPECTED_VERSION && metadata.version !== process.env.EXPECTED_VERSION) {
+  fail(`staged Linux proof version mismatch: expected ${process.env.EXPECTED_VERSION}, got ${metadata.version || "<missing>"}`);
+}
+if (process.env.EXPECTED_CHANNEL && metadata.channel !== process.env.EXPECTED_CHANNEL) {
+  fail(`staged Linux proof channel mismatch: expected ${process.env.EXPECTED_CHANNEL}, got ${metadata.channel || "<missing>"}`);
+}
+NODE
+
+  app_path="$(find "${stage_extract_dir}/bundle" -type f -name '*.AppImage' -print -quit)"
+  if [[ -z "${app_path}" ]]; then
+    write_report "failed" "stage_archive_appimage_missing"
+    echo "error: staged release archive is missing a Linux AppImage" >&2
+    exit 1
+  fi
+  chmod +x "${app_path}"
+  if ! extract_appimage_for_automation "${app_path}" "staged"; then
+    write_report "failed" "staged_appimage_automation_extract_failed"
+    exit 1
+  fi
+  bootstrap_automation_app_dir="${AUTOMATION_APP_DIR}"
+  bootstrap_automation_app_path="${AUTOMATION_APP_PATH}"
+  updated_automation_app_dir="${bootstrap_automation_app_dir}"
+  updated_automation_app_path="${bootstrap_automation_app_path}"
 }
 
 if [[ "$(uname -s)" != "Linux" ]]; then
@@ -369,34 +532,6 @@ printf '%s\n' 'updater linux proof' >"${repo_dir}/README.md"
 git -C "${repo_dir}" add README.md >/dev/null 2>&1
 git -C "${repo_dir}" commit -m init >/dev/null 2>&1
 
-echo "[updater-linux-proof] installing bootstrap app from ${INSTALL_URL} channel=${BOOTSTRAP_CHANNEL}" >&2
-if ! curl \
-  -fsSL \
-  --retry 3 \
-  --retry-delay 2 \
-  --connect-timeout 20 \
-  --max-time "${CTX_UPDATER_LINUX_PROOF_INSTALL_DOWNLOAD_TIMEOUT_SECS:-180}" \
-  "${INSTALL_URL}" \
-  -o "${INSTALL_SCRIPT}" >"${INSTALL_DOWNLOAD_LOG}" 2>&1; then
-  write_report "infra_unavailable" "installer_download_failed"
-  tail -n 200 "${INSTALL_DOWNLOAD_LOG}" >&2 || true
-  exit 1
-fi
-
-HOME="${home_dir}" \
-XDG_DATA_HOME="${home_dir}/.local/share" \
-XDG_CONFIG_HOME="${home_dir}/.config" \
-XDG_CACHE_HOME="${home_dir}/.cache" \
-PATH="${home_dir}/.local/bin:${PATH}" \
-CTX_CHANNEL="${BOOTSTRAP_CHANNEL}" \
-CTX_INSTALL_NO_OPEN=1 \
-timeout "${CTX_UPDATER_LINUX_PROOF_INSTALL_TIMEOUT_SECS:-900}" sh "${INSTALL_SCRIPT}" >"${INSTALL_STDOUT}" 2>"${INSTALL_STDERR}" || {
-  status=$?
-  write_report "failed" "installer_failed"
-  tail -n 200 "${INSTALL_STDERR}" >&2 || true
-  exit "${status}"
-}
-
 if [[ "${RUN_UPDATER_PHASE}" == "1" || "${RUN_CLEAN_WORKSPACE_PHASE}" == "1" ]]; then
   echo "[updater-linux-proof] preparing linux WebKit webdriver runtime" >&2
   if ! prepare_webkit_runtime >"${WEBKIT_PREP_LOG}" 2>&1; then
@@ -406,25 +541,58 @@ if [[ "${RUN_UPDATER_PHASE}" == "1" || "${RUN_CLEAN_WORKSPACE_PHASE}" == "1" ]];
   fi
 fi
 
-app_path="${home_dir}/.local/share/ctx/ctx.AppImage"
-launcher_path="${home_dir}/.local/bin/ctx-desktop"
-for required in "${app_path}" "${launcher_path}"; do
-  if [[ ! -e "${required}" ]]; then
-    write_report "failed" "installer_missing_expected_artifact"
-    echo "error: install flow did not create expected artifact: ${required}" >&2
+if [[ -n "${STAGE_ARCHIVE}" ]]; then
+  echo "[updater-linux-proof] using staged release archive ${STAGE_ARCHIVE}" >&2
+  prepare_staged_appimage_for_proof "${STAGE_ARCHIVE}"
+else
+  echo "[updater-linux-proof] installing bootstrap app from ${INSTALL_URL} channel=${BOOTSTRAP_CHANNEL}" >&2
+  if ! curl \
+    -fsSL \
+    --retry 3 \
+    --retry-delay 2 \
+    --connect-timeout 20 \
+    --max-time "${CTX_UPDATER_LINUX_PROOF_INSTALL_DOWNLOAD_TIMEOUT_SECS:-180}" \
+    "${INSTALL_URL}" \
+    -o "${INSTALL_SCRIPT}" >"${INSTALL_DOWNLOAD_LOG}" 2>&1; then
+    write_report "infra_unavailable" "installer_download_failed"
+    tail -n 200 "${INSTALL_DOWNLOAD_LOG}" >&2 || true
     exit 1
   fi
-done
-chmod +x "${app_path}"
-if ! extract_appimage_for_automation "${app_path}" "bootstrap"; then
-  write_report "failed" "bootstrap_appimage_automation_extract_failed"
-  exit 1
-fi
-bootstrap_automation_app_dir="${AUTOMATION_APP_DIR}"
-bootstrap_automation_app_path="${AUTOMATION_APP_PATH}"
 
-updated_automation_app_dir="${bootstrap_automation_app_dir}"
-updated_automation_app_path="${bootstrap_automation_app_path}"
+  HOME="${home_dir}" \
+  XDG_DATA_HOME="${home_dir}/.local/share" \
+  XDG_CONFIG_HOME="${home_dir}/.config" \
+  XDG_CACHE_HOME="${home_dir}/.cache" \
+  PATH="${home_dir}/.local/bin:${PATH}" \
+  CTX_CHANNEL="${BOOTSTRAP_CHANNEL}" \
+  CTX_INSTALL_NO_OPEN=1 \
+  timeout "${CTX_UPDATER_LINUX_PROOF_INSTALL_TIMEOUT_SECS:-900}" sh "${INSTALL_SCRIPT}" >"${INSTALL_STDOUT}" 2>"${INSTALL_STDERR}" || {
+    status=$?
+    write_report "failed" "installer_failed"
+    tail -n 200 "${INSTALL_STDERR}" >&2 || true
+    exit "${status}"
+  }
+
+  app_path="${home_dir}/.local/share/ctx/ctx.AppImage"
+  launcher_path="${home_dir}/.local/bin/ctx-desktop"
+  for required in "${app_path}" "${launcher_path}"; do
+    if [[ ! -e "${required}" ]]; then
+      write_report "failed" "installer_missing_expected_artifact"
+      echo "error: install flow did not create expected artifact: ${required}" >&2
+      exit 1
+    fi
+  done
+  chmod +x "${app_path}"
+  if ! extract_appimage_for_automation "${app_path}" "bootstrap"; then
+    write_report "failed" "bootstrap_appimage_automation_extract_failed"
+    exit 1
+  fi
+  bootstrap_automation_app_dir="${AUTOMATION_APP_DIR}"
+  bootstrap_automation_app_path="${AUTOMATION_APP_PATH}"
+
+  updated_automation_app_dir="${bootstrap_automation_app_dir}"
+  updated_automation_app_path="${bootstrap_automation_app_path}"
+fi
 
 if [[ "${RUN_UPDATER_PHASE}" == "1" ]]; then
   echo "[updater-linux-proof] proving auto/manual update path to channel=${TARGET_CHANNEL}" >&2
@@ -603,6 +771,7 @@ TAURI_TEST_BACKEND_PORT="${wizard_backend_port}" \
     if [[ -f "${WIZARD_LOG}" ]] && matches_log "local sandbox runtime is unavailable|install nerdctl|CTX_HARNESS_SANDBOX_CLI_PATH"; then
       failure_reason="runtime_bootstrap_missing"
     fi
+    collect_clean_workspace_diagnostics
     write_report "failed" "${failure_reason}"
     tail -n 200 "${WIZARD_LOG}" >&2 || true
     exit "${wizard_status}"

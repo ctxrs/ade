@@ -555,7 +555,7 @@ const PROFILES = [
   {
     id: "canary-proof",
     title: "Canary Proof",
-    purpose: "Publish staged artifacts into an isolated release channel and verify the published result without rebuilding.",
+    purpose: "Prove staged product artifacts before publish, then publish into an isolated release channel and verify public distribution wiring without rebuilding.",
     selector: {
       excludeEntryIds: [
         "updates-release.stable-promotion",
@@ -582,11 +582,11 @@ const PROFILES = [
       "pnpm -C core testing:profile:run --profile canary-proof",
     ],
     pipelines: ["ctx-release"],
-    remoteStrategy: "Consume the exact staged artifacts; keep publish and latest-manifest verification thin, then fan out updater smoke, Linux provider matrix, Linux clean workspace, remote updater, and macOS provider matrix proof as separate jobs.",
-    currentExecution: "The checked-in ctx-release graph runs release-finalize first, then runs the proof wrappers as independent Buildkite steps so all failures surface in one run.",
+    remoteStrategy: "Consume the exact staged artifacts; run Linux provider matrix, Linux clean workspace, and macOS provider matrix before publish, then keep publish and latest-manifest verification thin with updater smoke and remote updater as post-publish public wiring proofs.",
+    currentExecution: "The checked-in ctx-release graph runs staged product/runtime proof before release-finalize, then runs public wiring proof wrappers as independent Buildkite steps so all failures surface in one run.",
     expansionRules: [
       "Canary should never rebuild what releasetest already proved.",
-      "Post-publish proof lanes must remain separate failure domains; do not collapse them back into one serial shell script.",
+      "Pre-publish staged proof and post-publish public wiring lanes must remain separate failure domains; do not collapse them back into one serial shell script.",
     ],
   },
   {

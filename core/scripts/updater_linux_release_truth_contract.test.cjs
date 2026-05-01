@@ -49,6 +49,17 @@ test("Linux updater proof runs the release harness install matrix against update
   assert.doesNotMatch(scriptText, /CTX_UPDATER_RUNTIME_PROVIDER/);
 });
 
+test("Linux staged release proofs consume private stage archives before publish", () => {
+  assert.match(scriptText, /STAGE_ARCHIVE="\$\{CTX_UPDATER_LINUX_PROOF_STAGE_ARCHIVE:-\}"/);
+  assert.match(scriptText, /prepare_staged_appimage_for_proof\(\) \{/);
+  assert.match(scriptText, /CTX_UPDATER_LINUX_PROOF_STAGE_ARCHIVE cannot be used with updater-smoke phase/);
+  assert.match(scriptText, /staged Linux proof requires linux-x64 archive/);
+  assert.match(scriptText, /EXPECTED_CHANNEL="\$\{RELEASE_CHANNEL:-\$\{TARGET_CHANNEL:-\}\}"/);
+  assert.doesNotMatch(scriptText, /EXPECTED_CHANNEL="\$\{TARGET_CHANNEL:-\}"/);
+  assert.match(scriptText, /find "\$\{stage_extract_dir\}\/bundle" -type f -name '\*\.AppImage'/);
+
+});
+
 test("Linux updater proof exposes explicit phases for split release proof jobs", () => {
   assert.match(scriptText, /PHASES_RAW="\$\{CTX_UPDATER_LINUX_PROOF_PHASES:-all\}"/);
   assert.match(scriptText, /phase_requested\(\) \{/);
@@ -64,3 +75,19 @@ test("Linux updater proof exposes explicit phases for split release proof jobs",
   assert.match(scriptText, /target_channel_not_installed/);
 });
 
+test("Linux clean workspace proof uploads provider diagnostics when the wizard fails", () => {
+  assert.match(scriptText, /collect_clean_workspace_diagnostics\(\) \{/);
+  assert.match(scriptText, /provider-codex\.container\.json/);
+  assert.match(scriptText, /providers\.container\.json/);
+  assert.match(scriptText, /daemon_auth\.summary\.json/);
+  assert.match(scriptText, /agent_servers\.json/);
+  assert.match(scriptText, /collect_clean_workspace_diagnostics\s+write_report "failed" "\$\{failure_reason\}"/);
+});
+
+test("release Codex sandbox workspace smoke requires selected install progress proof", () => {
+  const wizardSpec = read("core/apps/desktop/automation/specs/workspace-wizard.spec.cjs");
+  assert.match(
+    wizardSpec,
+    /local sandbox can start Codex and respond[\s\S]*selectedHarnessProviderIds: \["codex"\],[\s\S]*requireSelectedHarnessInstallsNonBlocking: true,[\s\S]*requireExactSelectedHarnessInstallProof: true/,
+  );
+});
