@@ -18,7 +18,7 @@ mod types;
 
 pub use self::types::*;
 
-const CODEX_APP_SERVER_ARGS: [&str; 5] = ["-s", "danger-full-access", "-a", "never", "app-server"];
+const CODEX_APP_SERVER_BASE_ARGS: [&str; 4] = ["-s", "danger-full-access", "-a", "never"];
 const CODEX_RAW_EVENT_DUMP_ENV: &str = "CODEX_CRP_DUMP_CODEX_EVENTS_PATH";
 const AMBIENT_PROVIDER_SESSION_ENV_DENYLIST: &[&str] = &[
     "CTX_PROVIDER_SESSION_REF",
@@ -53,20 +53,8 @@ fn maybe_dump_app_server_message(direction: &str, value: &Value) {
     let Ok(path) = std::env::var(CODEX_RAW_EVENT_DUMP_ENV) else {
         return;
     };
-    let writer = APP_SERVER_EVENT_DUMP.get_or_init(|| {
-        let file = match OpenOptions::new().create(true).append(true).open(&path) {
-            Ok(file) => Some(file),
-            Err(err) => {
-                tracing::warn!(
-                    path = %path,
-                    error = %err,
-                    "failed to open CODEX_CRP_DUMP_CODEX_EVENTS_PATH; disabling app-server event dumps"
-                );
-                None
-            }
-        };
-        StdMutex::new(file.map(std::io::BufWriter::new))
-    });
+    let writer = APP_SERVER_EVENT_DUMP
+        .get_or_init(|| StdMutex::new(open_dump_writer(&path, CODEX_RAW_EVENT_DUMP_ENV)));
 
     let Ok(mut writer) = writer.lock() else {
         return;
@@ -85,8 +73,46 @@ fn maybe_dump_app_server_message(direction: &str, value: &Value) {
     }
 }
 
+fn open_dump_writer(path: &str, env_name: &str) -> Option<std::io::BufWriter<std::fs::File>> {
+    if let Some(parent) = Path::new(path).parent() {
+        if let Err(err) = std::fs::create_dir_all(parent) {
+            tracing::warn!(
+                path = %path,
+                parent = %parent.display(),
+                error = %err,
+                "failed to create {env_name} parent; disabling app-server event dumps"
+            );
+            return None;
+        }
+    }
+    match OpenOptions::new().create(true).append(true).open(path) {
+        Ok(file) => Some(std::io::BufWriter::new(file)),
+        Err(err) => {
+            tracing::warn!(
+                path = %path,
+                error = %err,
+                "failed to open {env_name}; disabling app-server event dumps"
+            );
+            None
+        }
+    }
+}
+
+pub fn build_codex_app_server_args(config_overrides: &[String]) -> Vec<String> {
+    let mut args: Vec<String> = CODEX_APP_SERVER_BASE_ARGS
+        .iter()
+        .map(|arg| (*arg).to_string())
+        .collect();
+    args.push("app-server".to_string());
+    for entry in config_overrides {
+        args.push("-c".to_string());
+        args.push(entry.clone());
+    }
+    args
+}
+
 impl AppServerClient {
-    pub async fn start(workdir: &Path) -> Result<Self> {
+    pub async fn start(workdir: &Path, config_overrides: &[String]) -> Result<Self> {
         let codex_bin = std::env::var("CTX_CODEX_BIN_PATH")
             .ok()
             .map(|value| value.trim().to_string())
@@ -100,7 +126,7 @@ impl AppServerClient {
 
         let mut command = Command::new(&codex_bin);
         command
-            .args(CODEX_APP_SERVER_ARGS)
+            .args(build_codex_app_server_args(config_overrides))
             .current_dir(workdir)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -387,7 +413,10 @@ impl AppServerClient {
 
 #[cfg(test)]
 mod tests {
-    use super::{response_id_from_value, stdout_reader_loop, AppServerRequestId, PendingResponse};
+    use super::{
+        build_codex_app_server_args, open_dump_writer, response_id_from_value, stdout_reader_loop,
+        AppServerRequestId, PendingResponse, CODEX_RAW_EVENT_DUMP_ENV,
+    };
     use serde_json::json;
     use std::collections::HashMap;
     use std::sync::Arc;
@@ -419,6 +448,35 @@ mod tests {
         assert_eq!(response_id_from_value(&json!(12)), Some(12));
         assert_eq!(response_id_from_value(&json!("12")), Some(12));
         assert_eq!(response_id_from_value(&json!("req-12")), None);
+    }
+
+    #[test]
+    fn app_server_args_append_launch_config_to_subcommand() {
+        assert_eq!(
+            build_codex_app_server_args(&["stream_idle_timeout_ms=120000".to_string()]),
+            vec![
+                "-s",
+                "danger-full-access",
+                "-a",
+                "never",
+                "app-server",
+                "-c",
+                "stream_idle_timeout_ms=120000"
+            ]
+        );
+    }
+
+    #[test]
+    fn app_server_dump_writer_creates_parent_dirs() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let path = tempdir.path().join("nested").join("codex-events.jsonl");
+        let writer = open_dump_writer(
+            path.to_str().expect("test path should be utf-8"),
+            CODEX_RAW_EVENT_DUMP_ENV,
+        )
+        .expect("writer should open");
+        drop(writer);
+        assert!(path.exists());
     }
 
     #[tokio::test]

@@ -2,6 +2,7 @@ use super::RuntimeCommand;
 use crate::protocol::{CrpChannel, CrpCommandEnvelope, CrpEvent, CrpEventEnvelope, CRP_VERSION};
 use anyhow::Result;
 use std::io::Write as _;
+use std::path::Path;
 use std::sync::{Mutex, OnceLock};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter};
 use tokio::sync::mpsc;
@@ -148,23 +149,9 @@ fn maybe_dump_crp_event(envelope: &CrpEventEnvelope) {
         return;
     };
 
-    let Some(writer) = CRP_EVENT_DUMP.get_or_init(|| {
-        match std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&path)
-        {
-            Ok(file) => Some(Mutex::new(std::io::BufWriter::new(file))),
-            Err(err) => {
-                warn!(
-                    path = %path,
-                    error = %err,
-                    "failed to open CODEX_CRP_DUMP_CRP_EVENTS_PATH; disabling CRP event dumps"
-                );
-                None
-            }
-        }
-    }) else {
+    let Some(writer) =
+        CRP_EVENT_DUMP.get_or_init(|| open_dump_writer(&path, CRP_EVENT_DUMP_ENV).map(Mutex::new))
+    else {
         return;
     };
 
@@ -174,5 +161,52 @@ fn maybe_dump_crp_event(envelope: &CrpEventEnvelope) {
     if serde_json::to_writer(&mut *writer, envelope).is_ok() {
         let _ = writer.write_all(b"\n");
         let _ = writer.flush();
+    }
+}
+
+fn open_dump_writer(path: &str, env_name: &str) -> Option<std::io::BufWriter<std::fs::File>> {
+    if let Some(parent) = Path::new(path).parent() {
+        if let Err(err) = std::fs::create_dir_all(parent) {
+            warn!(
+                path = %path,
+                parent = %parent.display(),
+                error = %err,
+                "failed to create {env_name} parent; disabling CRP event dumps"
+            );
+            return None;
+        }
+    }
+    match std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+    {
+        Ok(file) => Some(std::io::BufWriter::new(file)),
+        Err(err) => {
+            warn!(
+                path = %path,
+                error = %err,
+                "failed to open {env_name}; disabling CRP event dumps"
+            );
+            None
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{open_dump_writer, CRP_EVENT_DUMP_ENV};
+
+    #[test]
+    fn crp_dump_writer_creates_parent_dirs() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let path = tempdir.path().join("nested").join("crp-events.jsonl");
+        let writer = open_dump_writer(
+            path.to_str().expect("test path should be utf-8"),
+            CRP_EVENT_DUMP_ENV,
+        )
+        .expect("writer should open");
+        drop(writer);
+        assert!(path.exists());
     }
 }

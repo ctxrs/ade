@@ -109,6 +109,15 @@ pub fn build_app_server_config_overrides(config: &CrpSessionConfig) -> Option<Va
     (!out.is_empty()).then_some(Value::Object(out))
 }
 
+pub fn build_app_server_launch_config_overrides(config: &CrpSessionConfig) -> Vec<String> {
+    if endpoint_model_provider(config.model_provider.as_deref()) == Some("openrouter") {
+        return vec![format!(
+            "stream_idle_timeout_ms={OPENROUTER_STREAM_IDLE_TIMEOUT_MS}"
+        )];
+    }
+    Vec::new()
+}
+
 fn endpoint_model_provider(model_provider: Option<&str>) -> Option<&str> {
     let provider = model_provider
         .map(str::trim)
@@ -391,6 +400,31 @@ mod tests {
                 "stream_idle_timeout_ms": 120000
             }))
         );
+    }
+
+    #[test]
+    fn build_app_server_launch_config_overrides_sets_openrouter_timeout() {
+        let config = CrpSessionConfig {
+            model_provider: Some("openrouter".to_string()),
+            openai_base_url: Some("https://openrouter.ai/api/v1".to_string()),
+            ..CrpSessionConfig::default()
+        };
+
+        assert_eq!(
+            build_app_server_launch_config_overrides(&config),
+            vec!["stream_idle_timeout_ms=120000"]
+        );
+    }
+
+    #[test]
+    fn build_app_server_launch_config_overrides_ignores_openai_provider() {
+        let config = CrpSessionConfig {
+            model_provider: Some("openai".to_string()),
+            openai_base_url: Some("https://api.openai.com/v1".to_string()),
+            ..CrpSessionConfig::default()
+        };
+
+        assert!(build_app_server_launch_config_overrides(&config).is_empty());
     }
 
     #[test]

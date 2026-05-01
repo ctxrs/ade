@@ -149,6 +149,7 @@ async fn open_session_fails_closed_on_resume_error_and_scrubs_ambient_session_en
         &script_path,
         format!(
             r#"#!/bin/sh
+printf 'ARGS=%s\n' "$*" >> "{}"
 printf 'CODEX_THREAD_ID=%s\n' "${{CODEX_THREAD_ID-}}" >> "{}"
 printf 'CTX_PROVIDER_SESSION_REF=%s\n' "${{CTX_PROVIDER_SESSION_REF-}}" >> "{}"
 while IFS= read -r line; do
@@ -164,6 +165,7 @@ while IFS= read -r line; do
   fi
 done
 "#,
+            log_path.display(),
             log_path.display(),
             log_path.display(),
             log_path.display(),
@@ -185,6 +187,8 @@ done
     let err = match open_session(
         crate::protocol::CrpSessionConfig {
             cwd: Some(workdir.clone()),
+            model_provider: Some("openrouter".to_string()),
+            openai_base_url: Some("https://openrouter.ai/api/v1".to_string()),
             ..Default::default()
         },
         Some("expected-provider-ref".to_string()),
@@ -203,6 +207,12 @@ done
     );
 
     let log = fs::read_to_string(&log_path).expect("read fake codex log");
+    assert!(
+        log.contains(
+            "ARGS=-s danger-full-access -a never app-server -c stream_idle_timeout_ms=120000"
+        ),
+        "openrouter app-server launch must include idle timeout config: {log}"
+    );
     assert!(log.contains("resume"));
     assert!(
         !log.contains("start"),

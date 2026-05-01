@@ -1,9 +1,10 @@
 use super::{AppServerSessionState, TurnAliasState, TurnTracker};
 use crate::app_server::{AppServerClient, ModelListResponse, ThreadStartLikeResponse};
 use crate::builtins::{
-    build_app_server_config_overrides, build_current_model_id, build_model_infos,
-    build_session_command_infos, command_names, merge_config_overrides,
-    normalize_ctx_system_prompt_append, resolve_codex_home, split_model_and_effort,
+    build_app_server_config_overrides, build_app_server_launch_config_overrides,
+    build_current_model_id, build_model_infos, build_session_command_infos, command_names,
+    merge_config_overrides, normalize_ctx_system_prompt_append, resolve_codex_home,
+    split_model_and_effort,
 };
 use crate::protocol::{CrpModelInfo, CrpSessionConfig};
 use crate::RuntimeOptions;
@@ -27,7 +28,8 @@ pub(super) async fn open_session(
         .clone()
         .or_else(|| session_config.cwd.clone())
         .unwrap_or(std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
-    let mut client = AppServerClient::start(&workdir).await?;
+    let launch_config_overrides = build_app_server_launch_config_overrides(&session_config);
+    let mut client = AppServerClient::start(&workdir, &launch_config_overrides).await?;
     let developer_instructions =
         normalize_ctx_system_prompt_append(std::env::var("CTX_SYSTEM_PROMPT_APPEND").ok());
     let open_config_overrides = session_open_config_overrides(&session_config, options);
@@ -108,7 +110,8 @@ pub(super) async fn probe_models(
         .clone()
         .or_else(|| config.cwd.clone())
         .unwrap_or(std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
-    let mut client = AppServerClient::start(&workdir).await?;
+    let launch_config_overrides = build_app_server_launch_config_overrides(&config);
+    let mut client = AppServerClient::start(&workdir, &launch_config_overrides).await?;
     let response = client
         .request::<ModelListResponse>("model/list", json!({ "includeHidden": false }))
         .await?;
