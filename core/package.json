@@ -28,6 +28,7 @@
     "buildkite:mac-nightly": "node scripts/trigger_buildkite_mac_nightly.cjs",
     "buildkite:mac-provider-auth": "node scripts/trigger_buildkite_mac_provider_auth.cjs",
     "release:buildkite": "node scripts/run_buildkite_release_controller.cjs",
+    "release:buildkite:rehearsal": "node scripts/run_buildkite_release_rehearsal.cjs",
     "release:buildkite:provider-deps:verify": "BUILD_BUDDY_RELEASE_COMMIT=${BUILD_BUDDY_RELEASE_COMMIT:?set BUILD_BUDDY_RELEASE_COMMIT} node scripts/trigger_buildkite_provider_deps.cjs --commit \"$BUILD_BUDDY_RELEASE_COMMIT\" --no-publish",
     "release:buildkite:provider-deps:publish": "BUILD_BUDDY_RELEASE_COMMIT=${BUILD_BUDDY_RELEASE_COMMIT:?set BUILD_BUDDY_RELEASE_COMMIT} node scripts/trigger_buildkite_provider_deps.cjs --commit \"$BUILD_BUDDY_RELEASE_COMMIT\" --publish",
     "release:buildkite:codex-crp:verify": "BUILD_BUDDY_RELEASE_COMMIT=${BUILD_BUDDY_RELEASE_COMMIT:?set BUILD_BUDDY_RELEASE_COMMIT} node scripts/trigger_buildkite_provider_deps.cjs --commit \"$BUILD_BUDDY_RELEASE_COMMIT\" --provider codex --no-publish",
