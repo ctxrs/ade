@@ -81,7 +81,7 @@ mod tests {
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move {
             let app = axum::Router::new().route(
-                &format!("/api/terminals/{}/stream_token", terminal_id.0),
+                &format!("/base/api/terminals/{}/stream_token", terminal_id.0),
                 axum::routing::post(move || {
                     let stream_path = stream_path.clone();
                     async move {
