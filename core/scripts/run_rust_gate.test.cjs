@@ -4,6 +4,7 @@ const test = require("node:test");
 const { AGENT_GATE_CRATES, ISOLATED_CARGO_TEST_CRATES } = require("./lib/rust_gate_plan.cjs");
 const { MANUAL_ONLY_RUST_CRATES } = require("./lib/rust_workspace_graph.cjs");
 const {
+  applyClippySccachePolicy,
   applyBazelTestEnv,
   applyDefaultRustGateEnv,
   buildBazelTargetBatches,
@@ -43,6 +44,34 @@ test("rustRemoteCacheState reports Turbo and sccache remote cache inputs", () =>
     sccache_state: "enabled",
     turbo_cache_mode: "local:rw,remote:rw",
     turbo_remote: true,
+  });
+});
+
+test("applyClippySccachePolicy disables sccache for Buildkite clippy by default", () => {
+  assert.deepEqual(applyClippySccachePolicy({
+    BUILDKITE: "true",
+    RUSTC_WRAPPER: "/usr/bin/sccache",
+  }, { runClippy: true }), {
+    BUILDKITE: "true",
+    CTX_DISABLE_SCCACHE: "1",
+    CTX_RUST_CLIPPY_SCCACHE_POLICY: "disabled-buildkite-clippy",
+    RUSTC_WRAPPER: "/usr/bin/sccache",
+  });
+  assert.deepEqual(applyClippySccachePolicy({
+    BUILDKITE: "true",
+    CTX_RUST_CLIPPY_ENABLE_SCCACHE: "1",
+    RUSTC_WRAPPER: "/usr/bin/sccache",
+  }, { runClippy: true }), {
+    BUILDKITE: "true",
+    CTX_RUST_CLIPPY_ENABLE_SCCACHE: "1",
+    RUSTC_WRAPPER: "/usr/bin/sccache",
+  });
+  assert.deepEqual(applyClippySccachePolicy({
+    BUILDKITE: "true",
+    RUSTC_WRAPPER: "/usr/bin/sccache",
+  }, { runClippy: false }), {
+    BUILDKITE: "true",
+    RUSTC_WRAPPER: "/usr/bin/sccache",
   });
 });
 

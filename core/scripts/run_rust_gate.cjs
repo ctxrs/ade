@@ -22,6 +22,10 @@ const {
 const { HOST_HEAVY_BUDGET_KEY, withHostJobBudget } = require("./lib/host_job_budget.cjs");
 const { runTurbo } = require("./lib/turbo_runner.cjs");
 
+function enabledFlag(value) {
+  return ["1", "true", "yes", "on"].includes(String(value || "").trim().toLowerCase());
+}
+
 function parseArgs(argv) {
   const args = {
     agentGate: false,
@@ -117,6 +121,20 @@ function resolveCrates(graph, args) {
     return filterGateManagedCrateNames(resolved);
   }
   return filterGateManagedCrateNames(expandReverseDependencies(graph, resolved));
+}
+
+function applyClippySccachePolicy(env, { runClippy }) {
+  const resolvedEnv = { ...env };
+  if (
+    runClippy
+    && enabledFlag(resolvedEnv.BUILDKITE)
+    && !enabledFlag(resolvedEnv.CTX_RUST_CLIPPY_ENABLE_SCCACHE)
+    && !enabledFlag(resolvedEnv.CTX_DISABLE_SCCACHE)
+  ) {
+    resolvedEnv.CTX_DISABLE_SCCACHE = "1";
+    resolvedEnv.CTX_RUST_CLIPPY_SCCACHE_POLICY = "disabled-buildkite-clippy";
+  }
+  return resolvedEnv;
 }
 
 function rustRemoteCacheState(env) {
@@ -240,7 +258,7 @@ function main() {
 
   const { env } = buildCtxCacheEnv({
     cwd: coreRoot,
-    env: process.env,
+    env: applyClippySccachePolicy(process.env, { runClippy: args.runClippy }),
     mode: args.mode,
     mkdir: true,
   });
@@ -313,6 +331,7 @@ if (require.main === module) {
 }
 
 module.exports = {
+  applyClippySccachePolicy,
   applyBazelTestEnv,
   applyDefaultRustGateEnv,
   buildBazelTargetBatches,
