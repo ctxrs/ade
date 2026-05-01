@@ -141,8 +141,8 @@ const PROFILES = [
       "pnpm -C core testing:profile:run --profile mac-preview",
     ],
     pipelines: ["ctx-mac-preview"],
-    remoteStrategy: "Path-gate on Linux before building and validating the signed arm64 app on macOS.",
-    currentExecution: "The pipeline uploads the Mac build step after a touched-files gate and produces a signed .app artifact.",
+    remoteStrategy: "Path-gate on Linux before building and packaging signed macOS preview artifacts on x86_64; native Apple Silicon runtime checks are separate.",
+    currentExecution: "The pipeline uploads onto the x64 GUI queue after a touched-files gate and stops at a signed .app artifact boundary; native Apple Silicon runtime proof lives in separate arm64 lanes.",
     expansionRules: [
       "Do not add DMG creation or notarization to this profile; preview manifest publishing is limited to the macos-arm64 updater entry required for remote-bootstrap freshness.",
     ],
