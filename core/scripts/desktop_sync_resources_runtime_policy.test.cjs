@@ -72,6 +72,46 @@ test("desktop sync resources reads the default container image from the sandbox 
   );
 });
 
+test("host linux ctx-mcp runtime bundling stages a prepared executable without containers", () => {
+  const bundleDir = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-host-ctx-mcp-bundle-"));
+  const sourceDir = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-host-ctx-mcp-bin-"));
+  try {
+    fs.writeFileSync(
+      path.join(bundleDir, "manifest.json"),
+      JSON.stringify({ version: 1, providers: [], runtimes: [], images: [], daemons: [] }, null, 2),
+      "utf8",
+    );
+    const sourcePath = path.join(sourceDir, "ctx-mcp");
+    fs.writeFileSync(sourcePath, "#!/bin/sh\nexit 0\n", "utf8");
+    fs.chmodSync(sourcePath, 0o755);
+
+    __desktopSyncResourcesTestHooks.bundleHostLinuxCtxMcpRuntime(bundleDir, {
+      arch: "x86_64",
+      hostOs: "linux",
+      runtimeVersion: "9.8.7",
+      sourcePath,
+    });
+
+    const runtimeRel = "runtimes/ctx-mcp/linux/x86_64/9.8.7";
+    const runtimePath = path.join(bundleDir, runtimeRel, "ctx-mcp");
+    fs.accessSync(runtimePath, fs.constants.X_OK);
+    const manifest = JSON.parse(fs.readFileSync(path.join(bundleDir, "manifest.json"), "utf8"));
+    assert.deepEqual(manifest.runtimes, [{
+      id: "ctx-mcp",
+      version: "9.8.7",
+      os: "linux",
+      arch: "x86_64",
+      sha256: manifest.runtimes[0].sha256,
+      root: runtimeRel,
+      bin: "ctx-mcp",
+    }]);
+    assert.match(manifest.runtimes[0].sha256, /^[0-9a-f]{64}$/);
+  } finally {
+    fs.rmSync(bundleDir, { recursive: true, force: true });
+    fs.rmSync(sourceDir, { recursive: true, force: true });
+  }
+});
+
 test("stageAvfLinuxGuestRuntime leaves the bundle untouched when no guest artifact is present", () => {
   const bundleDir = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-bundle-"));
   const staged = stageAvfLinuxGuestRuntime(bundleDir);

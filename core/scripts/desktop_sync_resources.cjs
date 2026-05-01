@@ -13,6 +13,7 @@ const args = process.argv.slice(2);
 const profileIdx = args.indexOf("--profile");
 const profile = profileIdx !== -1 ? args[profileIdx + 1] : "debug";
 const bundleLinuxCtxMcpRuntimeOnly = args.includes("--bundle-linux-ctx-mcp-runtime-only");
+const bundleHostLinuxCtxMcpRuntimeOnly = args.includes("--bundle-host-linux-ctx-mcp-runtime-only");
 const syncBundlesEnabled = resolveBoolishFlag(process.env.CTX_DESKTOP_SYNC_BUNDLES, true, "CTX_DESKTOP_SYNC_BUNDLES");
 const allowManagedAvfRuntimeMissingLocalPayload = resolveBoolishFlag(
   process.env.CTX_DESKTOP_ALLOW_MANAGED_AVF_RUNTIME_MISSING_LOCAL_PAYLOAD,
@@ -1015,6 +1016,50 @@ const bundleLinuxCtxMcpRuntime = (bundleDir) => {
   ]);
 };
 
+const bundleHostLinuxCtxMcpRuntime = (
+  bundleDir,
+  {
+    arch = hostManifestArch,
+    hostOs = hostManifestOs,
+    runtimeVersion = readCargoPackageVersion(ctxMcpCargoTomlPath),
+    sourcePath = path.join(destBinDir, "ctx-mcp"),
+  } = {},
+) => {
+  if (hostOs !== "linux") {
+    throw new Error(`host linux ctx-mcp runtime bundling requires a Linux host, got ${hostOs}`);
+  }
+  const target = linuxBundleTargetForArch(arch);
+  if (!fs.existsSync(sourcePath)) {
+    throw new Error(`missing prepared host ctx-mcp runtime: ${sourcePath}`);
+  }
+  ensureExecutable(sourcePath);
+
+  const runtimeRootRel = path.posix.join(
+    "runtimes",
+    CTX_MCP_RUNTIME_ID,
+    "linux",
+    target.arch,
+    runtimeVersion,
+  );
+  const outDir = path.join(bundleDir, runtimeRootRel);
+  const outPath = path.join(outDir, "ctx-mcp");
+  fs.mkdirSync(outDir, { recursive: true });
+  fs.copyFileSync(sourcePath, outPath);
+  ensureExecutable(outPath);
+
+  upsertManifestRuntimes(bundleDir, [
+    {
+      id: CTX_MCP_RUNTIME_ID,
+      version: runtimeVersion,
+      os: "linux",
+      arch: target.arch,
+      sha256: sha256File(outPath),
+      root: runtimeRootRel,
+      bin: "ctx-mcp",
+    },
+  ]);
+};
+
 const resetBundleDir = (bundleDir = destBundleDir) => {
   fs.mkdirSync(bundleDir, { recursive: true });
   // Keep lightweight repo-tracked resources that are used at runtime (and ignore rules).
@@ -1538,8 +1583,12 @@ const main = () => {
     throw new Error(`missing desktop tauri project dir: ${desktopTauriRoot}`);
   }
 
-  if (bundleLinuxCtxMcpRuntimeOnly) {
-    bundleLinuxCtxMcpRuntime(destBundleDir);
+  if (bundleLinuxCtxMcpRuntimeOnly || bundleHostLinuxCtxMcpRuntimeOnly) {
+    if (bundleHostLinuxCtxMcpRuntimeOnly) {
+      bundleHostLinuxCtxMcpRuntime(destBundleDir);
+    } else {
+      bundleLinuxCtxMcpRuntime(destBundleDir);
+    }
     const effectiveManifestPath = writeEffectiveBundleManifest(destBundleDir);
     const artifactIdentity = writeArtifactIdentity(destBundleDir);
     const bundledProviderManifestPath = writeBundledProviderManifest(destBundleDir, process.env);
@@ -1548,6 +1597,7 @@ const main = () => {
       effectiveManifestPath,
       artifactIdentity,
       bundledProviderManifestPath,
+      source: bundleHostLinuxCtxMcpRuntimeOnly ? "host" : "container",
     });
     return;
   }
@@ -1585,6 +1635,7 @@ if (require.main === module) {
   module.exports = {
     __desktopSyncResourcesTestHooks: {
       assertRuntimeTargetsAvailable,
+      bundleHostLinuxCtxMcpRuntime,
       bundleTargetFromRustTriple,
       buildLinuxCtxMcpContainerArgs,
       buildRemoteDaemonContainerArgs,
