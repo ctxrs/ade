@@ -85,7 +85,13 @@ function shouldUseStaticOnlyValidation({
   hostPlatform = process.platform,
   hostArch = process.arch,
 } = {}) {
-  return platform === "macos-arm64" && hostPlatform === "darwin" && hostArch === "x64";
+  if (hostPlatform !== "darwin") {
+    return false;
+  }
+  return (
+    (platform === "macos-arm64" && hostArch === "x64")
+    || (platform === "macos-x64" && hostArch === "arm64")
+  );
 }
 
 function resourcePaths(appPath, platform) {
