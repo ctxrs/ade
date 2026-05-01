@@ -407,7 +407,7 @@ mod tests {
         server.next_request();
         server.finish();
 
-        assert_eq!(health.auth_required, true);
+        assert!(health.auth_required);
         assert_eq!(health.pid, None);
         assert_eq!(health.data_root, None);
         assert_eq!(health.daemon_url, None);
