@@ -178,9 +178,29 @@ test("ctx-http checkin fanout exposes split unit suite targets without changing 
     ),
     true,
   );
-  assert.deepEqual(getCtxHttpSuiteCheckinFanoutTargets("workspace-stream"), [
-    `${CTX_HTTP_BAZEL_PACKAGE}:workspace-stream`,
+  const workspaceStreamFanout = getCtxHttpSuiteCheckinFanoutTargets("workspace-stream");
+  assert.equal(workspaceStreamFanout.includes(`${CTX_HTTP_BAZEL_PACKAGE}:workspace-stream`), false);
+  assert.equal(workspaceStreamFanout.includes(`${CTX_HTTP_BAZEL_PACKAGE}:cache_rehydration`), true);
+  assert.equal(
+    workspaceStreamFanout.includes(
+      `${CTX_HTTP_BAZEL_PACKAGE}:workspace_active_snapshot_http_workspace_stream_repeat_subscribe_preserves_ready_worktree_vcs_state`,
+    ),
+    true,
+  );
+  assert.deepEqual(getCtxHttpSuiteCheckinFanoutTargets("scheduler-runtime"), [
+    `${CTX_HTTP_BAZEL_PACKAGE}:assistant_chunk_stream_only`,
+    `${CTX_HTTP_BAZEL_PACKAGE}:assistant_message_persistence_faults`,
+    `${CTX_HTTP_BAZEL_PACKAGE}:noisy_output_backpressure`,
+    `${CTX_HTTP_BAZEL_PACKAGE}:turn_lifecycle_events`,
+    `${CTX_HTTP_BAZEL_PACKAGE}:turn_terminal_reconciliation`,
+    `${CTX_HTTP_BAZEL_PACKAGE}:unit_tests_scheduler`,
   ]);
+  assert.equal(
+    getCtxHttpSuiteCheckinFanoutTargets("provider-runtime-simulated").includes(
+      `${CTX_HTTP_BAZEL_PACKAGE}:provider_scenarios_offline_crp_fixtures`,
+    ),
+    true,
+  );
 });
 
 test("ctx-http suite command builder accepts explicit multi-suite selections", () => {

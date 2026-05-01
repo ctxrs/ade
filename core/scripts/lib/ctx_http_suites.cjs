@@ -372,6 +372,15 @@ const CTX_HTTP_SUITES = [
     ],
     name: "provider-runtime-simulated",
     description: "provider runtime, model selection, and offline simulated scenarios",
+    directTargets: [
+      "provider_probe_runtime_env",
+      "provider_worker_reaping_offline",
+      "provider_scenarios_offline_crp_fixtures",
+      "provider_scenarios_offline_interleaved_assistant_tools_do_not_fragment_messages",
+      "provider_scenarios_offline_crp_fixtures_persist_context_window_metrics",
+      "session_model_api",
+      "workspace_provider_model_preferences_http",
+    ],
     sourceGlobs: [
       "crates/ctx-http/src/api/provider_catalog.rs",
       "crates/ctx-http/src/api/provider_launch.rs",
@@ -499,6 +508,14 @@ const CTX_HTTP_SUITES = [
     ],
     name: "scheduler-runtime",
     description: "scheduler runtime, turn lifecycle, and stream backpressure flows",
+    directTargets: [
+      "assistant_chunk_stream_only",
+      "assistant_message_persistence_faults",
+      "noisy_output_backpressure",
+      "turn_lifecycle_events",
+      "turn_terminal_reconciliation",
+      "unit_tests_scheduler",
+    ],
     sourceGlobs: [
       "crates/ctx-http/src/api/execution.rs",
       "crates/ctx-http/src/api/sessions/control.rs",
@@ -531,6 +548,13 @@ const CTX_HTTP_SUITES = [
     ],
     name: "turns-terminal",
     description: "turn lifecycle, terminal, streaming, and message durability flows",
+    directTargets: [
+      "demo_seed_transcript_http",
+      "message_idempotency_post_message_idempotent_same_payload",
+      "message_idempotency_post_message_idempotent_conflict_on_change",
+      "terminal_workspace_stream_separation",
+      "terminal_ws_reconnect",
+    ],
     sourceGlobs: [
       "crates/ctx-http/src/api/execution.rs",
       "crates/ctx-http/src/api/sessions/control.rs",
@@ -604,6 +628,12 @@ const CTX_HTTP_SUITES = [
     ],
     name: "subagents-control",
     description: "subagent orchestration, MCP/oracle, and title-path control flows",
+    directTargets: [
+      "subagent_mcp_http",
+      "subagent_mcp_http_archive_agent_reclaims_dedicated_child_worktree",
+      "system_prompt_append_http",
+      "title_generation_local",
+    ],
     sourceGlobs: [
       "crates/ctx-http/src/api/mobile_access.rs",
       "crates/ctx-http/src/api/mobile_access/**",
@@ -953,6 +983,9 @@ function getCtxHttpSuiteCheckinFanoutTargets(suiteName) {
   }
   const targetNames = CTX_HTTP_CHECKIN_FANOUT_TARGETS_BY_SUITE[suite.name];
   if (!targetNames) {
+    if (suite.type === "integration" && (suite.directTargets || suite.testFiles).length > 0) {
+      return (suite.directTargets || suite.testFiles).map((targetName) => `${CTX_HTTP_BAZEL_PACKAGE}:${targetName}`);
+    }
     return [getCtxHttpSuiteTarget(suite.name)];
   }
   return targetNames.map((targetName) => `${CTX_HTTP_BAZEL_PACKAGE}:${targetName}`);
