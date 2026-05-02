@@ -18,6 +18,7 @@ const {
 } = require("./helpers/daemon.cjs");
 const {
   assertWorkbenchUsable,
+  clickOption,
   runCodexFirstTurnApiSmoke,
 } = require("./helpers/workspace_wizard_flow.cjs");
 const {
@@ -371,41 +372,6 @@ const waitForSourceExitOrWorkspaceRoute = async (timeoutMs = 30000) => {
   throw new Error(
     `expected source transition to next step or workspace route; last_step='${lastStep || "unknown"}' last_path='${lastPath || "<none>"}'`,
   );
-};
-
-const clickOption = async (stepKey, optionId) => {
-  const id = `wizard-option-${stepKey}-${optionId}`;
-  try {
-    await clickTestId(id);
-  } catch (error) {
-    if (stepKey !== "source") throw error;
-    const state = await browser.execute(() => {
-      const root = document.querySelector('[data-testid="workspace-setup"]');
-      const step = root ? root.getAttribute("data-step-key") : null;
-      const optionTestIds = Array.from(document.querySelectorAll('[data-testid^="wizard-option-"]'))
-        .map((el) => String(el.getAttribute("data-testid") || ""))
-        .filter(Boolean);
-      return {
-        step,
-        optionTestIds,
-        hasSourcePath: Boolean(document.querySelector('[data-testid="wizard-source-path"]')),
-        hasRepoUrl: Boolean(document.querySelector('[data-testid="wizard-repo-url"]')),
-        hasWorkspaceName: Boolean(document.querySelector('[data-testid="wizard-workspace-name"]')),
-      };
-    });
-    const sourceAlreadySelected =
-      state.step === "source"
-      && (
-        (optionId === "import" && state.hasSourcePath)
-        || (optionId === "clone" && state.hasRepoUrl)
-        || (optionId === "new" && state.hasWorkspaceName)
-      );
-    if (sourceAlreadySelected) return;
-    const errText = error instanceof Error ? error.message : String(error);
-    throw new Error(
-      `${errText}; source-step diag=${JSON.stringify(state)}`,
-    );
-  }
 };
 
 const ensureContainerOptionVisible = async (optionId, timeoutMs = 15000) => {

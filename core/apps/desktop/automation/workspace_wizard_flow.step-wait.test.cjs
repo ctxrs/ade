@@ -61,3 +61,24 @@ test("waitForAnyStep tolerates a transient missing wizard root during remote ste
   const step = await waitForAnyStep(["container", "source", "harness-downloads"], 1000);
   assert.equal(step, "source");
 });
+
+test("clickOption succeeds when the wizard advances before the target option is observed", async () => {
+  const { clickOption } = loadHelper();
+
+  global.browser = {
+    execute: async () => ({
+      step: "container",
+      done: true,
+      reason: "step_changed",
+      optionPresent: false,
+      selectedOptionId: "",
+      hasSourcePath: false,
+      hasRepoUrl: false,
+      hasWorkspaceName: false,
+      optionTestIds: [],
+    }),
+    pause: async () => {},
+  };
+
+  await assert.doesNotReject(() => clickOption("location", "local"));
+});
