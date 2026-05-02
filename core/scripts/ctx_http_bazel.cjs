@@ -353,12 +353,13 @@ function buildDesktopSyncEnv({
   avfLinuxHelperBinPath = "",
   desktopWebDist = "",
   profile,
+  syncBundles = String(env.CTX_DESKTOP_SYNC_BUNDLES || "").trim() || "0",
 } = {}) {
   return {
     ...env,
     CTX_DESKTOP_CTX_BIN: ctxBinPath,
     CTX_DESKTOP_CTX_MCP_BIN: ctxMcpBinPath,
-    CTX_DESKTOP_SYNC_BUNDLES: "0",
+    CTX_DESKTOP_SYNC_BUNDLES: String(syncBundles || "").trim() || "0",
     CTX_DESKTOP_SYNC_PROFILE: profile,
     ...(String(avfLinuxHelperBinPath || "").trim()
       ? { CTX_DESKTOP_AVF_LINUX_HELPER_BIN: String(avfLinuxHelperBinPath).trim() }
@@ -404,6 +405,7 @@ function syncDesktopResources({
   ctxBinPath,
   ctxMcpBinPath,
   avfLinuxHelperBinPath = "",
+  syncBundles = String(env.CTX_DESKTOP_SYNC_BUNDLES || "").trim() || "0",
   runCheckedImpl = runChecked,
   withHostJobBudgetImpl = withHostJobBudget,
 }) {
@@ -416,6 +418,7 @@ function syncDesktopResources({
     avfLinuxHelperBinPath,
     desktopWebDist,
     profile,
+    syncBundles,
   });
   withHostJobBudgetImpl({
     budgetKey: HOST_HEAVY_BUDGET_KEY,
@@ -449,6 +452,7 @@ function prepareDesktopSidecars({ env = process.env, profile = DEFAULT_PROFILE }
     ctxBinPath,
     ctxMcpBinPath,
     avfLinuxHelperBinPath,
+    syncBundles: String(env.CTX_DESKTOP_SYNC_BUNDLES || "").trim() || "0",
   });
   return {
     ctxBinPath,

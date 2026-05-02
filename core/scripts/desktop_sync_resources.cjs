@@ -978,7 +978,7 @@ const bundleLinuxCtxMcpRuntime = (bundleDir) => {
   const cargoHome = ensureContainerCacheDir(path.join(cacheRoot, "cargo-home"));
   const rustupHome = ensureContainerCacheDir(path.join(cacheRoot, "rustup-home"));
 
-  const target = linuxBundleTargetForArch(hostManifestArch);
+  const target = linuxBundleTargetForArch(resolveLinuxCtxMcpRuntimeArch({ env: process.env }));
   const targetCache = ensureContainerCacheDir(path.join(cacheRoot, "target", target.rustTarget));
 
   const [spawnCmd, args] = buildLinuxCtxMcpContainerArgs({
@@ -1455,6 +1455,18 @@ function resolvePrimaryBundleTargetEnv({ env = process.env } = {}) {
   return resolved;
 }
 
+function resolveLinuxCtxMcpRuntimeArch({ env = process.env, fallbackArch = hostManifestArch } = {}) {
+  const explicitArch = String(env.CTX_BUNDLE_ARCH || "").trim();
+  if (explicitArch) {
+    return explicitArch;
+  }
+  const target = bundleTargetFromRustTriple(resolveHostTarget({ env }));
+  if (target?.arch) {
+    return target.arch;
+  }
+  return fallbackArch;
+}
+
 const copySidecarBinary = ({
   sourceDir,
   sourcePath = "",
@@ -1643,6 +1655,7 @@ if (require.main === module) {
       filterManagedAvfLocalPayloadErrors,
       readDefaultContainerImage,
       resetBundleDir,
+      resolveLinuxCtxMcpRuntimeArch,
       resolveHostTarget,
       resolvePrimaryBundleTargetEnv,
       resolveBundleCacheRoot,

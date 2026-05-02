@@ -65,6 +65,23 @@ test("desktop sync resources maps explicit Rust target triples to bundle os/arch
   );
 });
 
+test("linux ctx-mcp runtime bundling follows the target app arch instead of the build host arch", () => {
+  assert.equal(
+    __desktopSyncResourcesTestHooks.resolveLinuxCtxMcpRuntimeArch({
+      env: { CARGO_BUILD_TARGET: "aarch64-apple-darwin" },
+      fallbackArch: "x86_64",
+    }),
+    "aarch64",
+  );
+  assert.equal(
+    __desktopSyncResourcesTestHooks.resolveLinuxCtxMcpRuntimeArch({
+      env: { CARGO_BUILD_TARGET: "x86_64-apple-darwin" },
+      fallbackArch: "aarch64",
+    }),
+    "x86_64",
+  );
+});
+
 test("desktop sync resources reads the default container image from the sandbox container runtime crate", () => {
   assert.equal(
     __desktopSyncResourcesTestHooks.readDefaultContainerImage(),

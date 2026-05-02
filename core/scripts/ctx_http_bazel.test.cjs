@@ -67,6 +67,19 @@ test("ctx_http_bazel sync env always injects Bazel-built sidecar paths", () => {
     CTX_DESKTOP_SYNC_PROFILE: "release",
     CTX_DESKTOP_WEB_DIST: "/tmp/web-dist",
   });
+  assert.deepEqual(buildDesktopSyncEnv({
+    env: { BASE: "1" },
+    ctxBinPath: "/tmp/bazel-bin/ctx",
+    ctxMcpBinPath: "/tmp/bazel-bin/ctx-mcp",
+    profile: "release",
+    syncBundles: "1",
+  }), {
+    BASE: "1",
+    CTX_DESKTOP_CTX_BIN: "/tmp/bazel-bin/ctx",
+    CTX_DESKTOP_CTX_MCP_BIN: "/tmp/bazel-bin/ctx-mcp",
+    CTX_DESKTOP_SYNC_BUNDLES: "1",
+    CTX_DESKTOP_SYNC_PROFILE: "release",
+  });
   assert.deepEqual(Object.keys(TARGET_SPECS), [
     "darwin-aarch64",
     "darwin-x86_64",
@@ -276,6 +289,7 @@ test("ctx_http_bazel budgets desktop resource sync under host-heavy", () => {
     profile: "release",
     ctxBinPath: "/tmp/bazel-bin/ctx",
     ctxMcpBinPath: "/tmp/bazel-bin/ctx-mcp",
+    syncBundles: "1",
     runCheckedImpl: (...args) => {
       runCalls.push(args);
       return { status: 0 };
@@ -289,4 +303,5 @@ test("ctx_http_bazel budgets desktop resource sync under host-heavy", () => {
   assert.equal(budgetCalls.length, 1);
   assert.equal(budgetCalls[0].budgetKey, HOST_HEAVY_BUDGET_KEY);
   assert.equal(runCalls.length, 1);
+  assert.equal(runCalls[0][2].env.CTX_DESKTOP_SYNC_BUNDLES, "1");
 });
