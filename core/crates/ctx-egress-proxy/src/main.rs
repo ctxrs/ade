@@ -145,7 +145,7 @@ async fn main() -> Result<()> {
         let config = config.clone();
         tokio::spawn(async move {
             if let Err(err) = handle_stream(stream, config).await {
-                tracing::debug!(client = %addr, "transparent proxy error: {err:#}");
+                tracing::warn!(client = %addr, "transparent proxy error: {err:#}");
             }
         });
     }

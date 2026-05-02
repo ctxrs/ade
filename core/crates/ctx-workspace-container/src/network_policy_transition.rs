@@ -168,6 +168,7 @@ async fn transition_to_restricted_network(
         name,
         &PathBuf::from(proxy_bin),
         &config_path,
+        &config_path.with_file_name("ctx-egress-proxy.log"),
     )
     .await?;
     let egress_guard = configure_transparent_egress_guard(
@@ -258,32 +259,13 @@ async fn start_transparent_proxy(
     name: &str,
     bin_path: &Path,
     config_path: &Path,
+    log_path: &Path,
 ) -> Result<()> {
     let bin = bin_path.to_string_lossy();
     let config = config_path.to_string_lossy();
+    let log = log_path.to_string_lossy();
     let pid_file = transparent_proxy_pid_file();
-    let script = format!(
-        r#"
-set -e
-pid_file="{pid_file}"
-if [ -f "$pid_file" ]; then
-  old_pid="$(cat "$pid_file" 2>/dev/null || true)"
-  if [ -n "$old_pid" ]; then
-    kill "$old_pid" || true
-  fi
-  rm -f "$pid_file"
-fi
-if command -v nohup >/dev/null 2>&1; then
-  nohup '{bin}' --config '{config}' >/tmp/ctx-egress-proxy.log 2>&1 &
-elif command -v setsid >/dev/null 2>&1; then
-  setsid '{bin}' --config '{config}' >/tmp/ctx-egress-proxy.log 2>&1 &
-else
-  '{bin}' --config '{config}' >/tmp/ctx-egress-proxy.log 2>&1 &
-fi
-echo $! > "$pid_file"
-exit 0
-"#
-    );
+    let script = transparent_proxy_start_script(&bin, &config, &log, &pid_file);
     let mut cmd = sandbox_container_command(data_root, mode)?;
     cmd.arg("exec")
         .arg("--user")
@@ -301,6 +283,32 @@ exit 0
             output.status
         );
     }
+}
+
+fn transparent_proxy_start_script(bin: &str, config: &str, log: &str, pid_file: &str) -> String {
+    format!(
+        r#"
+set -e
+pid_file="{pid_file}"
+if [ -f "$pid_file" ]; then
+  old_pid="$(cat "$pid_file" 2>/dev/null || true)"
+  if [ -n "$old_pid" ]; then
+    kill "$old_pid" || true
+  fi
+  rm -f "$pid_file"
+fi
+mkdir -p "$(dirname '{log}')"
+if command -v nohup >/dev/null 2>&1; then
+  nohup '{bin}' --config '{config}' >'{log}' 2>&1 &
+elif command -v setsid >/dev/null 2>&1; then
+  setsid '{bin}' --config '{config}' >'{log}' 2>&1 &
+else
+  '{bin}' --config '{config}' >'{log}' 2>&1 &
+fi
+echo $! > "$pid_file"
+exit 0
+"#
+    )
 }
 
 async fn stop_transparent_proxy(
@@ -488,6 +496,22 @@ mod tests {
         let (mode, allowlist) = transparent_proxy_policy(&settings);
         assert_eq!(mode, ContainerNetworkMode::Allowlist);
         assert_eq!(allowlist, settings.allowlist);
+    }
+
+    #[test]
+    fn transparent_proxy_start_script_writes_log_next_to_config() {
+        let script = transparent_proxy_start_script(
+            "/usr/local/bin/ctx-egress-proxy",
+            "/data/egress-proxy.json",
+            "/data/ctx-egress-proxy.log",
+            "/tmp/ctx-egress-proxy.pid",
+        );
+
+        assert!(script.contains("mkdir -p \"$(dirname '/data/ctx-egress-proxy.log')\""));
+        assert!(script.contains(
+            "nohup '/usr/local/bin/ctx-egress-proxy' --config '/data/egress-proxy.json' >'/data/ctx-egress-proxy.log' 2>&1 &"
+        ));
+        assert!(!script.contains(">/tmp/ctx-egress-proxy.log"));
     }
 
     #[test]

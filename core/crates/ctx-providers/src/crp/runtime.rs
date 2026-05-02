@@ -269,12 +269,12 @@ fn prepare_crp_spawn_env(env: &HashMap<String, String>, provider_id: &str) -> Pr
         return prepared;
     }
 
-    let codex_dump_path = diagnostic_path_for_child(&prepared.env, &paths.codex_events)
-        .to_string_lossy()
-        .to_string();
-    let crp_dump_path = diagnostic_path_for_child(&prepared.env, &paths.crp_events)
-        .to_string_lossy()
-        .to_string();
+    if let Some(parent) = paths.codex_events.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+
+    let codex_dump_path = paths.codex_events.to_string_lossy().to_string();
+    let crp_dump_path = paths.crp_events.to_string_lossy().to_string();
     prepared
         .env
         .entry(CODEX_CRP_DUMP_CODEX_EVENTS_ENV.to_string())
@@ -288,25 +288,19 @@ fn prepare_crp_spawn_env(env: &HashMap<String, String>, provider_id: &str) -> Pr
     prepared
 }
 
-fn diagnostic_path_for_child(_env: &HashMap<String, String>, host_path: &Path) -> PathBuf {
-    // CRP child processes run either on the host or inside the harness
-    // container. The shared-VM harness container bind-mounts the daemon data
-    // root at its original host path, so /mnt/ctx-host is not a child-visible
-    // path for these diagnostics.
-    host_path.to_path_buf()
-}
-
 fn crp_log_paths(env: &HashMap<String, String>, provider_id: &str) -> Option<CrpLogPaths> {
-    let data_root = crate::env::data_root_for_host(env)?;
+    let host_data_root = crate::env::data_root_for_host(env)?;
+    let child_data_root = crate::env::data_root_for_child(env)?;
     let timestamp = Utc::now().format("%Y-%m-%dT%H-%M-%SZ");
     let suffix = Uuid::new_v4().simple().to_string();
     let base = format!("crp-{provider_id}-{timestamp}-{suffix}");
-    let dir = Path::new(&data_root).join("logs").join("providers");
+    let host_dir = Path::new(&host_data_root).join("logs").join("providers");
+    let child_dir = Path::new(&child_data_root).join("logs").join("providers");
     Some(CrpLogPaths {
-        codex_events: dir.join(format!("{base}.codex-events.jsonl")),
-        crp_events: dir.join(format!("{base}.crp-events.jsonl")),
-        raw_stdout: dir.join(format!("{base}.stdout.log")),
-        stderr: dir.join(format!("{base}.stderr.log")),
+        codex_events: child_dir.join(format!("{base}.codex-events.jsonl")),
+        crp_events: child_dir.join(format!("{base}.crp-events.jsonl")),
+        raw_stdout: host_dir.join(format!("{base}.stdout.log")),
+        stderr: host_dir.join(format!("{base}.stderr.log")),
     })
 }
 

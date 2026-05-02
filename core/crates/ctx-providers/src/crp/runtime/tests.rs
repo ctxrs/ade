@@ -29,6 +29,11 @@ fn container_exec_outer_process_env_skips_provider_home_and_xdg_keys() {
 fn prepare_crp_spawn_env_projects_dump_paths_into_shared_vm_container_exec_env() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let data_root = tmp.path().join("data-root");
+    let container_data_root = data_root
+        .join("containers")
+        .join("workspaces")
+        .join("workspace-1")
+        .join("data");
     let host_worktree_root = data_root.join("worktrees/ws/wt");
     fs::create_dir_all(&host_worktree_root).expect("mkdir host worktree");
 
@@ -36,6 +41,10 @@ fn prepare_crp_spawn_env_projects_dump_paths_into_shared_vm_container_exec_env()
     env.insert(
         "CTX_DATA_ROOT_HOST".to_string(),
         data_root.to_string_lossy().to_string(),
+    );
+    env.insert(
+        "CTX_DATA_ROOT".to_string(),
+        container_data_root.to_string_lossy().to_string(),
     );
     env.insert(
         "CTX_HARNESS_RUNTIME_KIND".to_string(),
@@ -80,16 +89,25 @@ fn prepare_crp_spawn_env_projects_dump_paths_into_shared_vm_container_exec_env()
     assert!(
         codex_dump.starts_with(&format!(
             "{}/logs/providers/crp-codex-",
-            data_root.display()
+            container_data_root.display()
         )),
         "shared VM container child must receive container-visible dump path, got {codex_dump}"
     );
     assert!(
         crp_dump.starts_with(&format!(
             "{}/logs/providers/crp-codex-",
-            data_root.display()
+            container_data_root.display()
         )),
         "shared VM container child must receive container-visible dump path, got {crp_dump}"
+    );
+    let raw_stdout = prepared
+        .raw_stdout_log_path
+        .as_ref()
+        .expect("raw stdout log path");
+    assert!(
+        raw_stdout.starts_with(data_root.join("logs").join("providers")),
+        "parent stdout pump should keep host-side log path, got {}",
+        raw_stdout.display()
     );
     assert!(
         prepared.raw_stdout_log_path.is_some(),

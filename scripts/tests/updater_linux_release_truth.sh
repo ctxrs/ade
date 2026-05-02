@@ -94,6 +94,7 @@ upload_artifacts_on_buildkite() {
   buildkite-agent artifact upload "${ARTIFACT_DIR}/harness-install-matrix/**/*.log" >/dev/null 2>&1 || true
   buildkite-agent artifact upload "${PROVIDER_DIAGNOSTICS_DIR}/**/*.json" >/dev/null 2>&1 || true
   buildkite-agent artifact upload "${DAEMON_LOGS_DIR}/**/*.log" >/dev/null 2>&1 || true
+  buildkite-agent artifact upload "${DAEMON_LOGS_DIR}/**/*.json" >/dev/null 2>&1 || true
   buildkite-agent artifact upload "${DAEMON_LOGS_DIR}/**/*.jsonl" >/dev/null 2>&1 || true
   buildkite-agent artifact upload "${ARTIFACT_DIR}/volatile/artifacts/ctx-desktop-e2e/**/*.log" >/dev/null 2>&1 || true
   buildkite-agent artifact upload "${ARTIFACT_DIR}/volatile/artifacts/ctx-desktop-e2e/**/*.png" >/dev/null 2>&1 || true
@@ -304,6 +305,13 @@ collect_clean_workspace_diagnostics() {
   if [[ -f "${data_dir}/providers/agent-servers/agent_servers.json" ]]; then
     cp -f "${data_dir}/providers/agent-servers/agent_servers.json" \
       "${PROVIDER_DIAGNOSTICS_DIR}/agent_servers.json" 2>/dev/null || true
+  fi
+  if [[ -d "${data_dir}/containers" ]]; then
+    while IFS= read -r log_dir; do
+      rel="${log_dir#"${data_dir}/"}"
+      mkdir -p "${DAEMON_LOGS_DIR}/${rel}" 2>/dev/null || true
+      cp -R "${log_dir}"/. "${DAEMON_LOGS_DIR}/${rel}/" 2>/dev/null || true
+    done < <(find "${data_dir}/containers" -type d -path "*/data/logs*" -print 2>/dev/null || true)
   fi
 
   SHIPPED_APP_PATH="${app_path:-}" \
