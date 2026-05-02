@@ -17,9 +17,6 @@ use tokio::time::{timeout, Duration};
 const DEFAULT_LISTEN: &str = "127.0.0.1:15001";
 const DEFAULT_MAX_PEEK_BYTES: usize = 16 * 1024;
 const READ_TIMEOUT: Duration = Duration::from_secs(5);
-#[cfg(any(target_os = "linux", test))]
-const EGRESS_PROXY_BYPASS_MARK: u32 = 0x4354_5801;
-
 // Keep this list in sync with ctx's policy allowlist.
 const LLM_ALLOWLIST: &[&str] = &[
     "api.anthropic.com",
@@ -52,6 +49,7 @@ struct FileConfig {
     mode: Option<ProxyMode>,
     allowlist: Option<Vec<String>>,
     max_peek_bytes: Option<usize>,
+    bypass_uid: Option<u32>,
 }
 
 #[derive(Debug, Parser)]
@@ -67,6 +65,8 @@ struct Args {
     allowlist: Vec<String>,
     #[arg(long)]
     max_peek_bytes: Option<usize>,
+    #[arg(long)]
+    bypass_uid: Option<u32>,
 }
 
 #[derive(Debug, Clone)]
@@ -75,6 +75,7 @@ struct ProxyConfig {
     mode: ProxyMode,
     allowlist: Vec<String>,
     max_peek_bytes: usize,
+    bypass_uid: u32,
 }
 
 impl ProxyConfig {
@@ -83,6 +84,7 @@ impl ProxyConfig {
         let mut mode = ProxyMode::LlmOnly;
         let mut allowlist: Vec<String> = Vec::new();
         let mut max_peek_bytes = DEFAULT_MAX_PEEK_BYTES;
+        let mut bypass_uid = None;
 
         if let Some(cfg) = file_config {
             if let Some(value) = cfg.listen {
@@ -96,6 +98,9 @@ impl ProxyConfig {
             }
             if let Some(value) = cfg.max_peek_bytes {
                 max_peek_bytes = value;
+            }
+            if let Some(value) = cfg.bypass_uid {
+                bypass_uid = Some(value);
             }
         }
 
@@ -111,12 +116,22 @@ impl ProxyConfig {
         if let Some(value) = args.max_peek_bytes {
             max_peek_bytes = value;
         }
+        if let Some(value) = args.bypass_uid {
+            bypass_uid = Some(value);
+        }
+        let Some(bypass_uid) = bypass_uid else {
+            anyhow::bail!("bypass_uid is required");
+        };
+        if bypass_uid == 0 {
+            anyhow::bail!("bypass_uid must be non-zero");
+        }
 
         Ok(Self {
             listen,
             mode,
             allowlist,
             max_peek_bytes,
+            bypass_uid,
         })
     }
 }
@@ -138,6 +153,11 @@ async fn main() -> Result<()> {
     let listener = TcpListener::bind(&config.listen)
         .await
         .with_context(|| format!("binding transparent proxy at {}", config.listen))?;
+    drop_to_bypass_uid(config.bypass_uid)?;
+    tracing::info!(
+        bypass_uid = config.bypass_uid,
+        "transparent proxy running with owner bypass uid"
+    );
     tracing::info!(listen = %config.listen, mode = ?config.mode, "transparent proxy listening");
 
     loop {
@@ -181,34 +201,34 @@ async fn connect_upstream(addr: SocketAddr) -> Result<TcpStream> {
         SocketAddr::V6(_) => TcpSocket::new_v6(),
     }
     .context("creating upstream socket")?;
-    configure_upstream_socket(&socket)?;
     socket
         .connect(addr)
         .await
-        .context("connecting marked socket")
+        .context("connecting upstream socket")
 }
 
 #[cfg(target_os = "linux")]
-fn configure_upstream_socket(socket: &TcpSocket) -> Result<()> {
-    let mark = EGRESS_PROXY_BYPASS_MARK as libc::c_int;
-    let ret = unsafe {
-        libc::setsockopt(
-            socket.as_raw_fd(),
-            libc::SOL_SOCKET,
-            libc::SO_MARK,
-            &mark as *const _ as *const _,
-            std::mem::size_of_val(&mark) as libc::socklen_t,
-        )
-    };
-    if ret != 0 {
-        return Err(io::Error::last_os_error()).context("setsockopt(SO_MARK)");
+fn drop_to_bypass_uid(uid: u32) -> Result<()> {
+    let gid = uid as libc::gid_t;
+    let uid = uid as libc::uid_t;
+    let clear_groups = unsafe { libc::setgroups(0, std::ptr::null::<libc::gid_t>()) };
+    if clear_groups != 0 {
+        return Err(io::Error::last_os_error()).context("setgroups");
+    }
+    let set_gid = unsafe { libc::setgid(gid) };
+    if set_gid != 0 {
+        return Err(io::Error::last_os_error()).context("setgid");
+    }
+    let set_uid = unsafe { libc::setuid(uid) };
+    if set_uid != 0 {
+        return Err(io::Error::last_os_error()).context("setuid");
     }
     Ok(())
 }
 
 #[cfg(not(target_os = "linux"))]
-fn configure_upstream_socket(_socket: &TcpSocket) -> Result<()> {
-    Ok(())
+fn drop_to_bypass_uid(_uid: u32) -> Result<()> {
+    anyhow::bail!("bypass_uid is only supported on linux")
 }
 
 fn sniff_host(buf: &[u8]) -> Option<String> {
@@ -424,9 +444,49 @@ fn original_dst(_stream: &TcpStream) -> Result<SocketAddr> {
 mod tests {
     use super::*;
 
+    fn empty_args() -> Args {
+        Args {
+            config: None,
+            listen: None,
+            mode: None,
+            allowlist: Vec::new(),
+            max_peek_bytes: None,
+            bypass_uid: None,
+        }
+    }
+
     #[test]
     fn llm_only_allows_openrouter_root_host() {
         assert!(allowed_host("openrouter.ai", ProxyMode::LlmOnly, &[]));
+    }
+
+    #[test]
+    fn proxy_config_accepts_dedicated_bypass_uid() {
+        let cfg = FileConfig {
+            listen: None,
+            mode: None,
+            allowlist: None,
+            max_peek_bytes: None,
+            bypass_uid: Some(43_558),
+        };
+        let config = ProxyConfig::from_args(empty_args(), Some(cfg)).unwrap();
+        assert_eq!(config.bypass_uid, 43_558);
+    }
+
+    #[test]
+    fn proxy_config_requires_bypass_uid() {
+        let err = ProxyConfig::from_args(empty_args(), None).unwrap_err();
+        assert!(err.to_string().contains("bypass_uid is required"));
+    }
+
+    #[test]
+    fn proxy_config_rejects_root_bypass_uid() {
+        let args = Args {
+            bypass_uid: Some(0),
+            ..empty_args()
+        };
+        let err = ProxyConfig::from_args(args, None).unwrap_err();
+        assert!(err.to_string().contains("bypass_uid must be non-zero"));
     }
 
     #[test]
@@ -442,10 +502,5 @@ mod tests {
     #[test]
     fn llm_only_blocks_unlisted_hosts() {
         assert!(!allowed_host("example.com", ProxyMode::LlmOnly, &[]));
-    }
-
-    #[test]
-    fn egress_proxy_bypass_mark_matches_container_policy_contract() {
-        assert_eq!(EGRESS_PROXY_BYPASS_MARK, 0x4354_5801);
     }
 }

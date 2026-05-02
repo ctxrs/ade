@@ -845,7 +845,8 @@ if [[ "$real_exec_mode" != "skip" ]]; then
           daemon_probe_status="passed"
           daemon_probe_reason="guest reached ctx daemon over the AVF gateway address"
 
-          proxy_config_json='{"listen":"127.0.0.1:8787","mode":"allowlist","allowlist":[],"max_peek_bytes":16384}'
+          proxy_bypass_uid=43558
+          proxy_config_json="{\"listen\":\"127.0.0.1:8787\",\"mode\":\"allowlist\",\"allowlist\":[],\"max_peek_bytes\":16384,\"bypass_uid\":${proxy_bypass_uid}}"
           read -r -d '' restricted_setup_script <<EOF || true
 set -e
 command -v iptables >/dev/null 2>&1
@@ -883,8 +884,8 @@ iptables -A OUTPUT -o lo -j ACCEPT
 iptables -A OUTPUT -p udp --dport 53 -j ACCEPT
 iptables -A OUTPUT -p tcp --dport 53 -j ACCEPT
 iptables -A OUTPUT -d "\$daemon_ip" -p tcp --dport ${ctx_daemon_port} -j ACCEPT
-iptables -A OUTPUT -m owner --uid-owner 0 -j ACCEPT
-iptables -t nat -A OUTPUT -m owner --uid-owner 0 -j RETURN
+iptables -A OUTPUT -m owner --uid-owner ${proxy_bypass_uid} -j ACCEPT
+iptables -t nat -A OUTPUT -m owner --uid-owner ${proxy_bypass_uid} -j RETURN
 iptables -t nat -A OUTPUT -p tcp --dport 80 -j REDIRECT --to-ports 8787
 iptables -t nat -A OUTPUT -p tcp --dport 443 -j REDIRECT --to-ports 8787
 EOF

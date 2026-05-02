@@ -45,7 +45,8 @@ test("avf smoke drives daemon harness_container ensure with the same shared data
   assert.match(text, /\/api\/worktrees\/\$\{taskResp\.json\.primary_worktree_id\}/);
   assert.match(text, /\/api\/workspaces\/\$\{report\.workspace\.id\}\/terminals/);
   assert.match(text, /authorization: `Bearer \$\{authToken\}`/);
-  assert.match(text, /wsPath\.searchParams\.set\("token", authToken\)/);
+  assert.match(text, /\/api\/terminals\/\$\{terminalId\}\/stream_token/);
+  assert.match(text, /new URL\(streamResp\.json\.stream_path, baseUrl\)/);
   assert.match(text, /workspaceResp\.json\.id !== requestedWorkspaceId\.trim\(\)/);
   assert.match(text, /task_id: taskResp\.json\.id/);
   assert.match(text, /worktree_id: taskResp\.json\.primary_worktree_id/);
@@ -64,6 +65,14 @@ test("avf smoke drives daemon harness_container ensure with the same shared data
   assert.match(text, /avf_guest_gateway_required: guestGatewayRequired === "1"/);
   assert.match(text, /daemon_harness_container: maybeJson\(daemonSmokePath\)/);
   assert.match(text, /harness_container: \{\s*status: harnessContainerStatus,\s*reason: harnessContainerReason,/s);
+});
+
+test("avf restricted egress smoke uses dedicated proxy uid instead of uid 0 bypass", () => {
+  assert.match(text, /proxy_bypass_uid=43558/);
+  assert.match(text, /\\"bypass_uid\\":\$\{proxy_bypass_uid\}/);
+  assert.match(text, /iptables -A OUTPUT -m owner --uid-owner \$\{proxy_bypass_uid\} -j ACCEPT/);
+  assert.match(text, /iptables -t nat -A OUTPUT -m owner --uid-owner \$\{proxy_bypass_uid\} -j RETURN/);
+  assert.doesNotMatch(text, /--uid-owner 0/);
 });
 
 test("avf smoke clears stale artifacts and uses structured restore outcomes", () => {

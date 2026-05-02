@@ -21,7 +21,7 @@ const EGRESS_PROXY_BINARY: &str = "ctx-egress-proxy";
 const EGRESS_PROXY_CONFIG_NAME: &str = "egress-proxy.json";
 const EGRESS_PROXY_CONTAINER_PATH: &str = "/usr/local/bin/ctx-egress-proxy";
 const TRANSPARENT_PROXY_PORT: u16 = 15001;
-const EGRESS_PROXY_BYPASS_MARK: u32 = 0x4354_5801;
+const EGRESS_PROXY_BYPASS_UID: u32 = 43_558;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AppliedContainerNetworkPolicy {
@@ -34,6 +34,7 @@ struct TransparentProxyConfig {
     mode: ContainerNetworkMode,
     allowlist: Vec<String>,
     max_peek_bytes: usize,
+    bypass_uid: u32,
 }
 
 pub async fn apply_container_network_policy(
@@ -158,6 +159,7 @@ async fn transition_to_restricted_network(
         mode: proxy_mode,
         allowlist: proxy_allowlist,
         max_peek_bytes: 16 * 1024,
+        bypass_uid: EGRESS_PROXY_BYPASS_UID,
     };
     let config_path =
         write_transparent_proxy_config(&container_data_root(data_root, workspace_id), proxy_config)
@@ -417,13 +419,13 @@ iptables -A OUTPUT -o lo -j ACCEPT
 iptables -A OUTPUT -p udp --dport 53 -j ACCEPT
 iptables -A OUTPUT -p tcp --dport 53 -j ACCEPT
 iptables -A OUTPUT -d "$daemon_ip" -p tcp --dport {daemon_port} -j ACCEPT
-iptables -A OUTPUT -m mark --mark {bypass_mark:#x} -j ACCEPT
-iptables -t nat -A OUTPUT -m mark --mark {bypass_mark:#x} -j RETURN
+iptables -A OUTPUT -m owner --uid-owner {bypass_uid} -j ACCEPT
+iptables -t nat -A OUTPUT -m owner --uid-owner {bypass_uid} -j RETURN
 iptables -t nat -A OUTPUT -p tcp --dport 80 -j REDIRECT --to-ports {proxy_port}
 iptables -t nat -A OUTPUT -p tcp --dport 443 -j REDIRECT --to-ports {proxy_port}
 exit 0
 "#,
-        bypass_mark = EGRESS_PROXY_BYPASS_MARK,
+        bypass_uid = EGRESS_PROXY_BYPASS_UID,
     )
 }
 
@@ -523,24 +525,23 @@ mod tests {
         );
 
         assert!(!script.contains("--uid-owner 0"));
-        assert!(!script.contains("-m owner"));
-        assert!(!script.contains("uid-owner"));
+        assert!(!script.contains("--uid-owner root"));
     }
 
     #[test]
-    fn restricted_egress_guard_uses_proxy_mark_bypass_and_redirects() {
+    fn restricted_egress_guard_uses_dedicated_proxy_uid_bypass_and_redirects() {
         let script = transparent_egress_guard_script(
             TRANSPARENT_PROXY_PORT,
             "host.containers.internal",
             4310,
         );
-        let mark = format!("{EGRESS_PROXY_BYPASS_MARK:#x}");
+        assert_ne!(EGRESS_PROXY_BYPASS_UID, 0);
 
         assert!(script.contains(&format!(
-            "iptables -A OUTPUT -m mark --mark {mark} -j ACCEPT"
+            "iptables -A OUTPUT -m owner --uid-owner {EGRESS_PROXY_BYPASS_UID} -j ACCEPT"
         )));
         assert!(script.contains(&format!(
-            "iptables -t nat -A OUTPUT -m mark --mark {mark} -j RETURN"
+            "iptables -t nat -A OUTPUT -m owner --uid-owner {EGRESS_PROXY_BYPASS_UID} -j RETURN"
         )));
         assert!(script.contains(&format!(
             "iptables -t nat -A OUTPUT -p tcp --dport 80 -j REDIRECT --to-ports {TRANSPARENT_PROXY_PORT}"

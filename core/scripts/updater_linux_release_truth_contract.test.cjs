@@ -84,6 +84,7 @@ test("Linux clean workspace proof uploads provider diagnostics when the wizard f
   assert.match(scriptText, /providers\.container\.json/);
   assert.match(scriptText, /daemon_auth\.summary\.json/);
   assert.match(scriptText, /agent_servers\.json/);
+  assert.match(scriptText, /ctx-egress-proxy\.log/);
   assert.match(scriptText, /collect_clean_workspace_diagnostics\s+write_report "failed" "\$\{failure_reason\}"/);
 });
 

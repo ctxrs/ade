@@ -102,4 +102,12 @@ if ! grep -q 'ok: allowlist enforcement works' "$tmp/smoke.log"; then
   exit 1
 fi
 
+if grep -q -- '--uid-owner 0' scripts/smoke_ctx_harness_egress_guard.sh; then
+  echo "error: smoke script must not grant uid 0 egress bypass" >&2
+  exit 1
+fi
+grep -q 'PROXY_BYPASS_UID="${PROXY_BYPASS_UID:-43558}"' scripts/smoke_ctx_harness_egress_guard.sh
+grep -q '"bypass_uid": $PROXY_BYPASS_UID' scripts/smoke_ctx_harness_egress_guard.sh
+grep -Eq -- '--uid-owner .*\$PROXY_BYPASS_UID' scripts/smoke_ctx_harness_egress_guard.sh
+
 echo "ok: harness egress smoke survives nested sh -lc quoting"

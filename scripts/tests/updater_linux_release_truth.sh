@@ -312,6 +312,11 @@ collect_clean_workspace_diagnostics() {
       mkdir -p "${DAEMON_LOGS_DIR}/${rel}" 2>/dev/null || true
       cp -R "${log_dir}"/. "${DAEMON_LOGS_DIR}/${rel}/" 2>/dev/null || true
     done < <(find "${data_dir}/containers" -type d -path "*/data/logs*" -print 2>/dev/null || true)
+    while IFS= read -r log_file; do
+      rel="${log_file#"${data_dir}/"}"
+      mkdir -p "${DAEMON_LOGS_DIR}/$(dirname "${rel}")" 2>/dev/null || true
+      cp -f "${log_file}" "${DAEMON_LOGS_DIR}/${rel}" 2>/dev/null || true
+    done < <(find "${data_dir}/containers" -type f -path "*/data/ctx-egress-proxy.log" -print 2>/dev/null || true)
   fi
 
   SHIPPED_APP_PATH="${app_path:-}" \

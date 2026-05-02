@@ -9,13 +9,15 @@ set -euo pipefail
 # - iptables OUTPUT redirect + proxy allowlist actually blocks/permits traffic for non-root
 #
 # Notes:
-# - We intentionally run curl as a non-root uid because the daemon config allows uid 0 egress.
+# - The proxy runs under a dedicated non-root bypass uid. Test traffic runs as a
+#   separate non-root uid so it still exercises redirect + allowlist enforcement.
 
 RUNTIME="${CONTAINER_RUNTIME:-nerdctl}"
 IMAGE="${CTX_HARNESS_IMAGE:-ghcr.io/ctxrs/ctx-harness:ubuntu-24.04}"
 
 ALLOW_HOST="${ALLOW_HOST:-example.com}"
 BLOCK_HOST="${BLOCK_HOST:-google.com}"
+PROXY_BYPASS_UID="${PROXY_BYPASS_UID:-43558}"
 
 NAME="ctx-harness-egress-smoke-$$"
 CFG_LOCAL="/tmp/${NAME}.egress-proxy.json"
@@ -44,7 +46,8 @@ cat >"$CFG_LOCAL" <<EOF
 {
   "listen": "127.0.0.1:15001",
   "mode": "allowlist",
-  "allowlist": ["$ALLOW_HOST"]
+  "allowlist": ["$ALLOW_HOST"],
+  "bypass_uid": $PROXY_BYPASS_UID
 }
 EOF
 
@@ -72,9 +75,9 @@ EOF
   iptables -A OUTPUT -p udp --dport 53 -j ACCEPT
   iptables -A OUTPUT -p tcp --dport 53 -j ACCEPT
   iptables -A OUTPUT -d "$daemon_ip" -p tcp --dport 9 -j ACCEPT
-  iptables -A OUTPUT -m owner --uid-owner 0 -j ACCEPT
+  iptables -A OUTPUT -m owner --uid-owner '"$PROXY_BYPASS_UID"' -j ACCEPT
 
-  iptables -t nat -A OUTPUT -m owner --uid-owner 0 -j RETURN
+  iptables -t nat -A OUTPUT -m owner --uid-owner '"$PROXY_BYPASS_UID"' -j RETURN
   iptables -t nat -A OUTPUT -p tcp --dport 80 -j REDIRECT --to-ports 15001
   iptables -t nat -A OUTPUT -p tcp --dport 443 -j REDIRECT --to-ports 15001
 '
