@@ -7,6 +7,8 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 const OPENROUTER_STREAM_IDLE_TIMEOUT_MS: i64 = 120_000;
+const OPENROUTER_REQUEST_MAX_RETRIES: i64 = 4;
+const OPENROUTER_STREAM_MAX_RETRIES: i64 = 10;
 
 #[path = "builtins/commands.rs"]
 mod commands;
@@ -96,6 +98,14 @@ pub fn build_app_server_config_overrides(config: &CrpSessionConfig) -> Option<Va
                     "stream_idle_timeout_ms".to_string(),
                     Value::from(OPENROUTER_STREAM_IDLE_TIMEOUT_MS),
                 );
+                out.insert(
+                    "model_providers.openrouter.request_max_retries".to_string(),
+                    Value::from(OPENROUTER_REQUEST_MAX_RETRIES),
+                );
+                out.insert(
+                    "model_providers.openrouter.stream_max_retries".to_string(),
+                    Value::from(OPENROUTER_STREAM_MAX_RETRIES),
+                );
             }
         }
     }
@@ -111,9 +121,15 @@ pub fn build_app_server_config_overrides(config: &CrpSessionConfig) -> Option<Va
 
 pub fn build_app_server_launch_config_overrides(config: &CrpSessionConfig) -> Vec<String> {
     if endpoint_model_provider(config.model_provider.as_deref()) == Some("openrouter") {
-        return vec![format!(
-            "stream_idle_timeout_ms={OPENROUTER_STREAM_IDLE_TIMEOUT_MS}"
-        )];
+        return vec![
+            format!("stream_idle_timeout_ms={OPENROUTER_STREAM_IDLE_TIMEOUT_MS}"),
+            format!(
+                "model_providers.openrouter.request_max_retries={OPENROUTER_REQUEST_MAX_RETRIES}"
+            ),
+            format!(
+                "model_providers.openrouter.stream_max_retries={OPENROUTER_STREAM_MAX_RETRIES}"
+            ),
+        ];
     }
     Vec::new()
 }
@@ -397,13 +413,15 @@ mod tests {
                 "model_providers.openrouter.base_url": "https://openrouter.ai/api/v1",
                 "model_providers.openrouter.env_key": "OPENAI_API_KEY",
                 "model_providers.openrouter.wire_api": "responses",
+                "model_providers.openrouter.request_max_retries": 4,
+                "model_providers.openrouter.stream_max_retries": 10,
                 "stream_idle_timeout_ms": 120000
             }))
         );
     }
 
     #[test]
-    fn build_app_server_launch_config_overrides_sets_openrouter_timeout() {
+    fn build_app_server_launch_config_overrides_sets_openrouter_transport_tuning() {
         let config = CrpSessionConfig {
             model_provider: Some("openrouter".to_string()),
             openai_base_url: Some("https://openrouter.ai/api/v1".to_string()),
@@ -412,7 +430,11 @@ mod tests {
 
         assert_eq!(
             build_app_server_launch_config_overrides(&config),
-            vec!["stream_idle_timeout_ms=120000"]
+            vec![
+                "stream_idle_timeout_ms=120000",
+                "model_providers.openrouter.request_max_retries=4",
+                "model_providers.openrouter.stream_max_retries=10",
+            ]
         );
     }
 

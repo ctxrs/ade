@@ -104,7 +104,7 @@ if ! [[ "$timeout_seconds" =~ ^[0-9]+$ ]] || [[ "$timeout_seconds" -le 0 ]]; the
 fi
 
 if [[ -z "$bind_addr" ]]; then
-  bind_addr="127.0.0.1:$((43000 + RANDOM % 1000))"
+  bind_addr="127.0.0.1:0"
 fi
 
 if [[ ! -x "$daemon_bin" ]]; then
@@ -160,10 +160,37 @@ CTX_DEV_MODE=1 \
 "$daemon_bin" serve --bind "$bind_addr" --data-dir "$data_dir" >"$log_path" 2>&1 &
 daemon_pid="$!"
 
-health_url="http://$bind_addr/api/health"
+auth_path="$data_dir/daemon_auth.json"
+daemon_url=""
+for _ in {1..80}; do
+  if [[ -f "$auth_path" ]]; then
+    daemon_url="$(jq -r '.daemon_url // empty' "$auth_path")"
+    if [[ -n "$daemon_url" ]]; then
+      break
+    fi
+  fi
+  if ! kill -0 "$daemon_pid" >/dev/null 2>&1; then
+    echo "error: daemon exited before writing auth file; logs:" >&2
+    cat "$log_path" >&2 || true
+    exit 1
+  fi
+  sleep 0.25
+done
+if [[ -z "$daemon_url" ]]; then
+  echo "error: daemon did not write daemon_url to auth file: $auth_path; logs:" >&2
+  cat "$log_path" >&2 || true
+  exit 1
+fi
+
+health_url="$daemon_url/api/health"
 for _ in {1..80}; do
   if curl -fsS "$health_url" >/dev/null 2>&1; then
     break
+  fi
+  if ! kill -0 "$daemon_pid" >/dev/null 2>&1; then
+    echo "error: daemon exited before becoming healthy; logs:" >&2
+    cat "$log_path" >&2 || true
+    exit 1
   fi
   sleep 0.25
 done
@@ -173,7 +200,6 @@ if ! curl -fsS "$health_url" >/dev/null 2>&1; then
   exit 1
 fi
 
-auth_path="$data_dir/daemon_auth.json"
 if [[ ! -f "$auth_path" ]]; then
   echo "error: missing daemon auth file: $auth_path" >&2
   cat "$log_path" >&2 || true
@@ -187,7 +213,7 @@ if [[ -z "$auth_token" ]]; then
 fi
 auth_header=( -H "Authorization: Bearer $auth_token" )
 
-providers_url="http://$bind_addr/api/providers?target=$install_target"
+providers_url="$daemon_url/api/providers?target=$install_target"
 providers_json="$(curl -fsS "${auth_header[@]}" "$providers_url")"
 
 provider_ids=()
@@ -216,7 +242,7 @@ for current_provider_id in "${provider_ids[@]}"; do
     exit 1
   fi
 
-  start_url="http://$bind_addr/api/providers/$current_provider_id/install?target=$install_target"
+  start_url="$daemon_url/api/providers/$current_provider_id/install?target=$install_target"
   start_json="$(curl -fsS "${auth_header[@]}" -X POST "$start_url")"
   install_id="$(jq -r '.install_id // empty' <<<"$start_json")"
   if [[ -z "$install_id" || "$install_id" == "null" ]]; then
@@ -224,7 +250,7 @@ for current_provider_id in "${provider_ids[@]}"; do
     exit 1
   fi
 
-  info_url="http://$bind_addr/api/providers/install/$install_id"
+  info_url="$daemon_url/api/providers/install/$install_id"
   state=""
   error_code=""
   info_json="{}"
@@ -252,7 +278,7 @@ for current_provider_id in "${provider_ids[@]}"; do
       exit 1
     fi
 
-    provider_status_url="http://$bind_addr/api/providers/$current_provider_id?target=$install_target"
+    provider_status_url="$daemon_url/api/providers/$current_provider_id?target=$install_target"
     provider_status_json="$(curl -fsS "${auth_header[@]}" "$provider_status_url")"
     returned_provider_id="$(jq -r '.provider_id // ""' <<<"$provider_status_json")"
     if [[ "$returned_provider_id" != "$current_provider_id" ]]; then
@@ -279,7 +305,7 @@ for current_provider_id in "${provider_ids[@]}"; do
       exit 1
     fi
   else
-    cancel_url="http://$bind_addr/api/providers/install/$install_id/cancel"
+    cancel_url="$daemon_url/api/providers/install/$install_id/cancel"
     curl -fsS "${auth_header[@]}" -X POST "$cancel_url" >/dev/null
 
     for _ in {1..30}; do
