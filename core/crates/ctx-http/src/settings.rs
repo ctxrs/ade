@@ -15,6 +15,11 @@ pub(crate) use update::UpdateSettingsReq;
 
 const SETTINGS_SCHEMA_VERSION: i64 = 1;
 const RUNTIME_SETTINGS_SECRET_VERSION: u32 = 1;
+const REMOVED_CLOUD_WORKER_SETTINGS_FIELD: &str = "cloud_workers";
+const REMOVED_CLOUD_WORKER_SECRET_FIELDS: [&str; 2] = [
+    "aws_cloud_workers_access_key_id",
+    "aws_cloud_workers_secret_access_key",
+];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct RuntimeSettingsSecretEnvelope {
@@ -24,8 +29,11 @@ struct RuntimeSettingsSecretEnvelope {
     dictation_livekit_api_secret: Option<String>,
     title_generation_remote_api_key: String,
     oracle_api_key: String,
-    aws_cloud_workers_access_key_id: String,
-    aws_cloud_workers_secret_access_key: String,
+}
+
+struct LoadedRuntimeSettingsSecretEnvelope {
+    envelope: RuntimeSettingsSecretEnvelope,
+    removed_cloud_worker_secrets_present: bool,
 }
 
 pub(crate) fn to_public(settings: &Settings) -> PublicSettings {
@@ -65,18 +73,6 @@ fn runtime_settings_secrets_from_settings(settings: &Settings) -> RuntimeSetting
             .as_ref()
             .map(|oracle| oracle.api_key.clone())
             .unwrap_or_default(),
-        aws_cloud_workers_access_key_id: settings
-            .cloud_workers
-            .as_ref()
-            .and_then(|cloud_workers| cloud_workers.aws.as_ref())
-            .map(|aws| aws.access_key_id.clone())
-            .unwrap_or_default(),
-        aws_cloud_workers_secret_access_key: settings
-            .cloud_workers
-            .as_ref()
-            .and_then(|cloud_workers| cloud_workers.aws.as_ref())
-            .map(|aws| aws.secret_access_key.clone())
-            .unwrap_or_default(),
     }
 }
 
@@ -98,14 +94,6 @@ fn apply_runtime_settings_secrets(
     if let Some(oracle) = settings.oracle.as_mut() {
         oracle.api_key = secrets.oracle_api_key.clone();
     }
-    if let Some(aws) = settings
-        .cloud_workers
-        .as_mut()
-        .and_then(|cloud_workers| cloud_workers.aws.as_mut())
-    {
-        aws.access_key_id = secrets.aws_cloud_workers_access_key_id.clone();
-        aws.secret_access_key = secrets.aws_cloud_workers_secret_access_key.clone();
-    }
 }
 
 fn strip_runtime_settings_secrets(settings: &mut Settings) {
@@ -122,14 +110,6 @@ fn strip_runtime_settings_secrets(settings: &mut Settings) {
     }
     if let Some(oracle) = settings.oracle.as_mut() {
         oracle.api_key.clear();
-    }
-    if let Some(aws) = settings
-        .cloud_workers
-        .as_mut()
-        .and_then(|cloud_workers| cloud_workers.aws.as_mut())
-    {
-        aws.access_key_id.clear();
-        aws.secret_access_key.clear();
     }
 }
 
@@ -153,19 +133,12 @@ fn settings_contain_runtime_secrets(settings: &Settings) -> bool {
             .oracle
             .as_ref()
             .is_some_and(|oracle| !oracle.api_key.trim().is_empty())
-        || settings
-            .cloud_workers
-            .as_ref()
-            .and_then(|cloud_workers| cloud_workers.aws.as_ref())
-            .is_some_and(|aws| {
-                !aws.access_key_id.trim().is_empty() || !aws.secret_access_key.trim().is_empty()
-            })
 }
 
 async fn load_runtime_settings_secret_envelope(
     store: &Store,
     secret_ref: &str,
-) -> anyhow::Result<RuntimeSettingsSecretEnvelope> {
+) -> anyhow::Result<LoadedRuntimeSettingsSecretEnvelope> {
     let payload = store
         .read_runtime_settings_secrets_if_present(secret_ref)
         .await?
@@ -174,6 +147,8 @@ async fn load_runtime_settings_secret_envelope(
                 "runtime settings secrets are missing for settings document (secret_ref={secret_ref})"
             )
         })?;
+    let removed_cloud_worker_secrets_present =
+        runtime_settings_secret_payload_contains_removed_cloud_worker_secrets(&payload);
     let envelope = serde_json::from_str::<RuntimeSettingsSecretEnvelope>(&payload)
         .context("parsing runtime settings secret envelope")?;
     if envelope.version != RUNTIME_SETTINGS_SECRET_VERSION {
@@ -182,7 +157,32 @@ async fn load_runtime_settings_secret_envelope(
             envelope.version
         );
     }
-    Ok(envelope)
+    Ok(LoadedRuntimeSettingsSecretEnvelope {
+        envelope,
+        removed_cloud_worker_secrets_present,
+    })
+}
+
+fn runtime_settings_json_contains_removed_cloud_worker_settings(settings_json: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(settings_json)
+        .ok()
+        .and_then(|value| {
+            value
+                .as_object()
+                .map(|object| object.contains_key(REMOVED_CLOUD_WORKER_SETTINGS_FIELD))
+        })
+        .unwrap_or(false)
+}
+
+fn runtime_settings_secret_payload_contains_removed_cloud_worker_secrets(payload: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(payload)
+        .ok()
+        .and_then(|value| value.as_object().cloned())
+        .is_some_and(|object| {
+            REMOVED_CLOUD_WORKER_SECRET_FIELDS
+                .iter()
+                .any(|field| object.contains_key(*field))
+        })
 }
 
 pub async fn load_settings(store: &Store) -> anyhow::Result<Settings> {
@@ -193,17 +193,23 @@ pub async fn load_settings(store: &Store) -> anyhow::Result<Settings> {
             let mut settings = serde_json::from_str::<Settings>(&doc.settings_json)
                 .context("parsing runtime settings document")?;
             let legacy_secrets_present = settings_contain_runtime_secrets(&settings);
+            let removed_cloud_worker_settings_present =
+                runtime_settings_json_contains_removed_cloud_worker_settings(&doc.settings_json);
             match doc.secret_ref.as_deref() {
                 Some(secret_ref) => {
-                    let secrets = load_runtime_settings_secret_envelope(store, secret_ref).await?;
-                    apply_runtime_settings_secrets(&mut settings, &secrets);
-                    if legacy_secrets_present {
+                    let loaded_secrets =
+                        load_runtime_settings_secret_envelope(store, secret_ref).await?;
+                    apply_runtime_settings_secrets(&mut settings, &loaded_secrets.envelope);
+                    if legacy_secrets_present
+                        || removed_cloud_worker_settings_present
+                        || loaded_secrets.removed_cloud_worker_secrets_present
+                    {
                         save_settings(store, &settings).await?;
                         store.checkpoint_wal_truncate().await?;
                     }
                 }
                 None => {
-                    if legacy_secrets_present {
+                    if legacy_secrets_present || removed_cloud_worker_settings_present {
                         save_settings(store, &settings).await?;
                         store.checkpoint_wal_truncate().await?;
                     }

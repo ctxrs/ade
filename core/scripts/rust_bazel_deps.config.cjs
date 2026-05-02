@@ -14,7 +14,6 @@ const GENERATED_DEP_CONSUMER_CRATES = Object.freeze([
   "ctx-sandbox-contract",
   "ctx-session-tools",
   "ctx-storage-admission",
-  "ctx-worker-protocol",
   "ctx-workspace-active-snapshot",
 ]);
 
@@ -26,10 +25,6 @@ const MANUAL_CRATES = Object.freeze({
   "ctx-load-test": Object.freeze({
     owner: "build-graph",
     rationale: "Workspace package lives under core/tools and is outside the first generated core/crates rollout.",
-  }),
-  "ctx-worker-gateway": Object.freeze({
-    owner: "build-graph",
-    rationale: "Workspace member is manual-only and currently has no Bazel BUILD file.",
   }),
 });
 

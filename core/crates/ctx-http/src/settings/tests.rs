@@ -276,17 +276,6 @@ async fn save_settings_persists_runtime_secrets_outside_sqlite() {
             api_key: "oracle-key".to_string(),
             ..OracleSettings::default()
         }),
-        cloud_workers: Some(CloudWorkersSettings {
-            aws: Some(AwsCloudWorkersSettings {
-                access_key_id: "aws-access-key".to_string(),
-                secret_access_key: "aws-secret-key".to_string(),
-                region: "us-east-1".to_string(),
-                gateway_instance_type: "t3.small".to_string(),
-                worker_instance_type: "t3.small".to_string(),
-                ..AwsCloudWorkersSettings::default()
-            }),
-            ..CloudWorkersSettings::default()
-        }),
         ..Settings::default()
     };
 
@@ -305,15 +294,11 @@ async fn save_settings_persists_runtime_secrets_outside_sqlite() {
     assert!(!settings_json.contains("lk-secret"));
     assert!(!settings_json.contains("title-key"));
     assert!(!settings_json.contains("oracle-key"));
-    assert!(!settings_json.contains("aws-access-key"));
-    assert!(!settings_json.contains("aws-secret-key"));
     assert!(secret_path.exists());
     assert_secret_absent_from_sqlite_artifacts(&db_path, "lk-key").await;
     assert_secret_absent_from_sqlite_artifacts(&db_path, "lk-secret").await;
     assert_secret_absent_from_sqlite_artifacts(&db_path, "title-key").await;
     assert_secret_absent_from_sqlite_artifacts(&db_path, "oracle-key").await;
-    assert_secret_absent_from_sqlite_artifacts(&db_path, "aws-access-key").await;
-    assert_secret_absent_from_sqlite_artifacts(&db_path, "aws-secret-key").await;
 
     let loaded = load_settings(&store).await.unwrap();
     let livekit = loaded
@@ -328,13 +313,6 @@ async fn save_settings_persists_runtime_secrets_outside_sqlite() {
         "title-key"
     );
     assert_eq!(loaded.oracle.as_ref().unwrap().api_key, "oracle-key");
-    let aws = loaded
-        .cloud_workers
-        .as_ref()
-        .and_then(|cloud_workers| cloud_workers.aws.as_ref())
-        .unwrap();
-    assert_eq!(aws.access_key_id, "aws-access-key");
-    assert_eq!(aws.secret_access_key, "aws-secret-key");
 }
 
 #[tokio::test]
@@ -368,17 +346,6 @@ async fn load_settings_migrates_legacy_runtime_setting_secrets() {
             api_key: "oracle-key".to_string(),
             ..OracleSettings::default()
         }),
-        cloud_workers: Some(CloudWorkersSettings {
-            aws: Some(AwsCloudWorkersSettings {
-                access_key_id: "aws-access-key".to_string(),
-                secret_access_key: "aws-secret-key".to_string(),
-                region: "us-east-1".to_string(),
-                gateway_instance_type: "t3.small".to_string(),
-                worker_instance_type: "t3.small".to_string(),
-                ..AwsCloudWorkersSettings::default()
-            }),
-            ..CloudWorkersSettings::default()
-        }),
         ..Settings::default()
     };
     let legacy_json = serde_json::to_string_pretty(&legacy).unwrap();
@@ -403,13 +370,6 @@ async fn load_settings_migrates_legacy_runtime_setting_secrets() {
         "title-key"
     );
     assert_eq!(loaded.oracle.as_ref().unwrap().api_key, "oracle-key");
-    let aws = loaded
-        .cloud_workers
-        .as_ref()
-        .and_then(|cloud_workers| cloud_workers.aws.as_ref())
-        .unwrap();
-    assert_eq!(aws.access_key_id, "aws-access-key");
-    assert_eq!(aws.secret_access_key, "aws-secret-key");
 
     let doc = store
         .get_runtime_settings_document()
@@ -424,15 +384,138 @@ async fn load_settings_migrates_legacy_runtime_setting_secrets() {
     assert!(!settings_json.contains("lk-secret"));
     assert!(!settings_json.contains("title-key"));
     assert!(!settings_json.contains("oracle-key"));
-    assert!(!settings_json.contains("aws-access-key"));
-    assert!(!settings_json.contains("aws-secret-key"));
     assert!(secret_path.exists());
     assert_secret_absent_from_sqlite_artifacts(&db_path, "lk-key").await;
     assert_secret_absent_from_sqlite_artifacts(&db_path, "lk-secret").await;
     assert_secret_absent_from_sqlite_artifacts(&db_path, "title-key").await;
     assert_secret_absent_from_sqlite_artifacts(&db_path, "oracle-key").await;
+}
+
+#[tokio::test]
+async fn load_settings_removes_legacy_cloud_worker_settings_and_secrets() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("db.sqlite");
+    let store = Store::open(&db_path).await.unwrap();
+    let legacy_settings_json = serde_json::to_string_pretty(&json!({
+        "cloud_workers": {
+            "gateway": {
+                "provider": "aws",
+                "gateway_url": "https://worker-gateway.example"
+            },
+            "aws": {
+                "access_key_id": "aws-access-key",
+                "secret_access_key": "aws-secret-key",
+                "region": "us-east-1"
+            }
+        }
+    }))
+    .unwrap();
+    let legacy_secret_json = serde_json::to_string_pretty(&json!({
+        "version": RUNTIME_SETTINGS_SECRET_VERSION,
+        "dictation_livekit_api_key": "",
+        "dictation_livekit_api_secret": null,
+        "title_generation_remote_api_key": "",
+        "oracle_api_key": "",
+        "aws_cloud_workers_access_key_id": "aws-access-key",
+        "aws_cloud_workers_secret_access_key": "aws-secret-key"
+    }))
+    .unwrap();
+    let doc = store
+        .upsert_runtime_settings_document_with_secrets(
+            1,
+            &legacy_settings_json,
+            &legacy_secret_json,
+        )
+        .await
+        .unwrap();
+    let secret_ref = doc.secret_ref.expect("runtime settings secret_ref");
+    let secret_path = runtime_settings_secret_sidecar_path(dir.path(), "db.sqlite", &secret_ref);
+    assert!(secret_path.exists());
+
+    let loaded = load_settings(&store).await.unwrap();
+    let loaded_json = serde_json::to_string(&loaded).unwrap();
+    assert!(!loaded_json.contains("cloud_workers"));
+
+    let doc = store
+        .get_runtime_settings_document()
+        .await
+        .unwrap()
+        .expect("runtime settings document");
+    assert!(doc.secret_ref.is_none());
+    assert!(!doc.settings_json.contains("cloud_workers"));
+    assert!(!doc.settings_json.contains("aws-access-key"));
+    assert!(!doc.settings_json.contains("aws-secret-key"));
+    assert!(!secret_path.exists());
     assert_secret_absent_from_sqlite_artifacts(&db_path, "aws-access-key").await;
     assert_secret_absent_from_sqlite_artifacts(&db_path, "aws-secret-key").await;
+}
+
+#[tokio::test]
+async fn load_settings_removes_empty_legacy_cloud_worker_secret_fields() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("db.sqlite");
+    let store = Store::open(&db_path).await.unwrap();
+    let settings = Settings {
+        dictation: Some(DictationSettings {
+            enabled: true,
+            provider: DictationProvider::LiveKitInference,
+            livekit: Some(LiveKitDictationSettings {
+                base_url: "https://livekit.example".to_string(),
+                api_key: String::new(),
+                api_secret: None,
+                model: "auto".to_string(),
+                language: "en".to_string(),
+            }),
+        }),
+        ..Settings::default()
+    };
+    let settings_json = serde_json::to_string_pretty(&settings).unwrap();
+    let legacy_secret_json = serde_json::to_string_pretty(&json!({
+        "version": RUNTIME_SETTINGS_SECRET_VERSION,
+        "dictation_livekit_api_key": "lk-key",
+        "dictation_livekit_api_secret": "lk-secret",
+        "title_generation_remote_api_key": "",
+        "oracle_api_key": "",
+        "aws_cloud_workers_access_key_id": "",
+        "aws_cloud_workers_secret_access_key": ""
+    }))
+    .unwrap();
+    let original_doc = store
+        .upsert_runtime_settings_document_with_secrets(1, &settings_json, &legacy_secret_json)
+        .await
+        .unwrap();
+    let original_secret_ref = original_doc
+        .secret_ref
+        .expect("runtime settings secret_ref");
+    let original_secret_path =
+        runtime_settings_secret_sidecar_path(dir.path(), "db.sqlite", &original_secret_ref);
+    assert!(original_secret_path.exists());
+
+    let loaded = load_settings(&store).await.unwrap();
+    let livekit = loaded
+        .dictation
+        .as_ref()
+        .and_then(|dictation| dictation.livekit.as_ref())
+        .unwrap();
+    assert_eq!(livekit.api_key, "lk-key");
+    assert_eq!(livekit.api_secret.as_deref(), Some("lk-secret"));
+
+    let doc = store
+        .get_runtime_settings_document()
+        .await
+        .unwrap()
+        .expect("runtime settings document");
+    let secret_ref = doc.secret_ref.expect("runtime settings secret_ref");
+    let secret_path = runtime_settings_secret_sidecar_path(dir.path(), "db.sqlite", &secret_ref);
+    let secret_payload = tokio::fs::read_to_string(&secret_path).await.unwrap();
+    assert!(secret_payload.contains("lk-key"));
+    assert!(secret_payload.contains("lk-secret"));
+    assert!(!secret_payload.contains("aws_cloud_workers_access_key_id"));
+    assert!(!secret_payload.contains("aws_cloud_workers_secret_access_key"));
+    assert!(!doc.settings_json.contains("lk-key"));
+    assert!(!doc.settings_json.contains("lk-secret"));
+    assert_secret_absent_from_sqlite_artifacts(&db_path, "lk-key").await;
+    assert_secret_absent_from_sqlite_artifacts(&db_path, "lk-secret").await;
 }
 
 #[tokio::test]
@@ -490,17 +573,6 @@ async fn save_settings_without_runtime_secrets_clears_secret_ref_and_sidecar() {
                 language: "en".to_string(),
             }),
         }),
-        cloud_workers: Some(CloudWorkersSettings {
-            aws: Some(AwsCloudWorkersSettings {
-                access_key_id: "aws-access-key".to_string(),
-                secret_access_key: "aws-secret-key".to_string(),
-                region: "us-east-1".to_string(),
-                gateway_instance_type: "t3.small".to_string(),
-                worker_instance_type: "t3.small".to_string(),
-                ..AwsCloudWorkersSettings::default()
-            }),
-            ..CloudWorkersSettings::default()
-        }),
         ..Settings::default()
     };
     save_settings(&store, &secret_settings).await.unwrap();
@@ -531,13 +603,6 @@ async fn save_settings_without_runtime_secrets_clears_secret_ref_and_sidecar() {
         .and_then(|dictation| dictation.livekit.as_ref());
     assert!(livekit
         .is_none_or(|livekit| { livekit.api_key.is_empty() && livekit.api_secret.is_none() }));
-    let aws = loaded
-        .cloud_workers
-        .as_ref()
-        .and_then(|cloud_workers| cloud_workers.aws.as_ref());
-    assert!(
-        aws.is_none_or(|aws| { aws.access_key_id.is_empty() && aws.secret_access_key.is_empty() })
-    );
 }
 
 #[test]

@@ -157,7 +157,8 @@ echo "ok: postgres 127.0.0.1:${PG_PORT}"
   CTX_TUNNEL_RELAY_INTERNAL_BASE_URL="http://127.0.0.1:${RELAY_PORT}" \
   CTX_TUNNEL_RELAY_MAX_ACTIVE_TUNNELS=100 \
   CTX_TUNNEL_MASTER_SECRET="$MASTER_SECRET" \
-  cargo run -p ctx-tunnel-relay -- --listen "127.0.0.1:${RELAY_PORT}"
+  node "$CORE_DIR/scripts/run_with_ctx_cache_env.cjs" --mode workspace --cwd "$CORE_DIR" -- \
+    cargo run -p ctx-tunnel-relay -- --listen "127.0.0.1:${RELAY_PORT}"
 ) >"$TMP_ROOT/relay.log" 2>&1 &
 PIDS+=("$!")
 
@@ -172,7 +173,8 @@ wait_for_http "relay" "http://127.0.0.1:${RELAY_PORT}/health"
   MOBILE_TUNNEL_PUBLIC_BASE_URL="http://127.0.0.1:${ROUTER_PORT}" \
   MOBILE_TUNNEL_RELAY_REGION="us" \
   CTX_TUNNEL_MASTER_SECRET="$MASTER_SECRET" \
-  cargo run -p ctx-tunnel-control-plane -- --listen "127.0.0.1:${CONTROL_PORT}"
+  node "$CORE_DIR/scripts/run_with_ctx_cache_env.cjs" --mode workspace --cwd "$CORE_DIR" -- \
+    cargo run -p ctx-tunnel-control-plane -- --listen "127.0.0.1:${CONTROL_PORT}"
 ) >"$TMP_ROOT/control-plane.log" 2>&1 &
 PIDS+=("$!")
 
@@ -181,7 +183,8 @@ wait_for_http "control-plane" "http://127.0.0.1:${CONTROL_PORT}/health"
 (
   cd "$CORE_DIR"
   MOBILE_TUNNEL_DATABASE_URL="$DATABASE_URL" \
-  cargo run -p ctx-tunnel-router -- --listen "127.0.0.1:${ROUTER_PORT}"
+  node "$CORE_DIR/scripts/run_with_ctx_cache_env.cjs" --mode workspace --cwd "$CORE_DIR" -- \
+    cargo run -p ctx-tunnel-router -- --listen "127.0.0.1:${ROUTER_PORT}"
 ) >"$TMP_ROOT/router.log" 2>&1 &
 PIDS+=("$!")
 
@@ -192,5 +195,6 @@ wait_for_http "router" "http://127.0.0.1:${ROUTER_PORT}/health"
   CTX_TUNNEL_CONTROL_PLANE_URL="http://127.0.0.1:${CONTROL_PORT}" \
   CTX_MOBILE_TUNNEL_ALLOW_INSECURE_LOOPBACK=1 \
   CTX_SUPABASE_ACCESS_TOKEN="local-token" \
-  cargo run -p ctx-http --bin mobile_e2e
+  node "$CORE_DIR/scripts/run_with_ctx_cache_env.cjs" --mode workspace --cwd "$CORE_DIR" -- \
+    cargo run -p ctx-http --bin mobile_e2e
 )

@@ -67,9 +67,7 @@ const GENERATED_TURBO_TASK_PREFIXES = [
   "rust:ctx-http:test:",
 ];
 
-// These crates remain in the Cargo workspace for manual/local use, but the
-// default CI/release gate surface should not auto-generate tasks for them.
-const MANUAL_ONLY_RUST_CRATES = new Set(["ctx-worker-gateway"]);
+const MANUAL_ONLY_RUST_CRATES = new Set();
 
 function runCargoMetadata(coreRoot) {
   const output = childProcess.execFileSync(

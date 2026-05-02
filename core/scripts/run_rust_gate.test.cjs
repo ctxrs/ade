@@ -2,7 +2,6 @@ const assert = require("node:assert/strict");
 const test = require("node:test");
 
 const { AGENT_GATE_CRATES, ISOLATED_CARGO_TEST_CRATES } = require("./lib/rust_gate_plan.cjs");
-const { MANUAL_ONLY_RUST_CRATES } = require("./lib/rust_workspace_graph.cjs");
 const {
   applyClippySccachePolicy,
   applyBazelTestEnv,
@@ -237,50 +236,6 @@ test("resolveCrates runs the full workspace graph for root-level Rust inputs", (
       includeReverseDeps: true,
     }),
     ["ctx-core", "ctx-http"],
-  );
-});
-
-test("resolveCrates excludes manual-only crates from default CI selection", () => {
-  assert.equal(MANUAL_ONLY_RUST_CRATES.has("ctx-worker-gateway"), true);
-
-  const crates = [
-    {
-      crateName: "ctx-core",
-      relDir: "crates/ctx-core",
-      deps: [],
-      reverseDeps: [],
-    },
-    {
-      crateName: "ctx-worker-gateway",
-      relDir: "crates/ctx-worker-gateway",
-      deps: [],
-      reverseDeps: [],
-    },
-  ];
-  const graph = {
-    crates,
-    cratesByName: new Map(crates.map((crate) => [crate.crateName, crate])),
-  };
-
-  assert.deepEqual(
-    resolveCrates(graph, {
-      agentGate: false,
-      all: true,
-      changedFiles: [],
-      crates: [],
-      includeReverseDeps: false,
-    }),
-    ["ctx-core"],
-  );
-  assert.deepEqual(
-    resolveCrates(graph, {
-      agentGate: false,
-      all: false,
-      changedFiles: ["core/crates/ctx-worker-gateway/src/main.rs"],
-      crates: [],
-      includeReverseDeps: false,
-    }),
-    [],
   );
 });
 

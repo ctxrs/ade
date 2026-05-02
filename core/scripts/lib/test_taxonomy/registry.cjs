@@ -171,8 +171,6 @@ const RUST_FAMILY_BY_CRATE = {
   "ctx-tunnel-relay": "subagents-orchestration",
   "ctx-tunnel-router": "subagents-orchestration",
   "ctx-tunnel-store": "subagents-orchestration",
-  "ctx-worker-protocol": "subagents-orchestration",
-  "ctx-worker-shim": "subagents-orchestration",
   "ctx-workspace-active-snapshot": "workspace-stream",
   "ctx-workspace-config": "settings-config",
   "ctx-workspace-container": "workspace-stream",

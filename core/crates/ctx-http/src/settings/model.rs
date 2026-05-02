@@ -33,8 +33,6 @@ pub struct Settings {
     #[serde(default)]
     pub sandboxing: Option<SandboxingSettings>,
     #[serde(default)]
-    pub cloud_workers: Option<CloudWorkersSettings>,
-    #[serde(default)]
     pub storage: Option<StorageSettings>,
     #[serde(default)]
     pub execution: Option<ExecutionSettings>,
@@ -337,124 +335,6 @@ pub struct ProviderRestartSettings {
     pub interval_ms: Option<u64>,
     #[serde(default)]
     pub grace_period_ms: Option<u64>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct CloudWorkersSettings {
-    #[serde(default)]
-    pub gateway: Option<CloudGatewaySettings>,
-    #[serde(default)]
-    pub aws: Option<AwsCloudWorkersSettings>,
-    #[serde(default)]
-    pub gcp: Option<GcpCloudWorkersSettings>,
-    #[serde(default)]
-    pub azure: Option<AzureCloudWorkersSettings>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct CloudGatewaySettings {
-    pub provider: String,
-    pub gateway_url: String,
-    #[serde(default)]
-    pub instance_id: Option<String>,
-    #[serde(default)]
-    pub region: Option<String>,
-    #[serde(default)]
-    pub public_ip: Option<String>,
-    #[serde(default)]
-    pub gateway_ca_pem: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct AwsCloudWorkersSettings {
-    #[serde(default)]
-    pub access_key_id: String,
-    #[serde(default)]
-    pub secret_access_key: String,
-    #[serde(default)]
-    pub region: String,
-    #[serde(default)]
-    pub gateway_instance_type: String,
-    #[serde(default)]
-    pub worker_instance_type: String,
-    #[serde(default)]
-    pub subnet_id: Option<String>,
-    #[serde(default)]
-    pub security_group_id: Option<String>,
-    #[serde(default)]
-    pub ssh_key_name: Option<String>,
-    #[serde(default)]
-    pub worker_ami_id: Option<String>,
-    #[serde(default)]
-    pub gateway_ami_id: Option<String>,
-    #[serde(default)]
-    pub ssh_user: Option<String>,
-    #[serde(default)]
-    pub artifact_bucket: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct GcpCloudWorkersSettings {
-    #[serde(default)]
-    pub project_id: String,
-    #[serde(default)]
-    pub zone: String,
-    #[serde(default)]
-    pub machine_type: String,
-    #[serde(default)]
-    pub image: String,
-    #[serde(default)]
-    pub network: Option<String>,
-    #[serde(default)]
-    pub subnetwork: Option<String>,
-    #[serde(default)]
-    pub service_account: Option<String>,
-    #[serde(default)]
-    pub scopes: Option<Vec<String>>,
-    #[serde(default)]
-    pub disk_size_gb: Option<i64>,
-    #[serde(default)]
-    pub disk_type: Option<String>,
-    #[serde(default)]
-    pub ssh_user: Option<String>,
-    #[serde(default)]
-    pub delete_disk_on_pause: Option<bool>,
-    #[serde(default)]
-    pub artifact_bucket: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct AzureCloudWorkersSettings {
-    #[serde(default)]
-    pub subscription_id: String,
-    #[serde(default)]
-    pub resource_group: String,
-    #[serde(default)]
-    pub location: String,
-    #[serde(default)]
-    pub vm_size: String,
-    #[serde(default)]
-    pub image: String,
-    #[serde(default)]
-    pub vnet: String,
-    #[serde(default)]
-    pub subnet: String,
-    #[serde(default)]
-    pub admin_username: String,
-    #[serde(default)]
-    pub ssh_public_key: String,
-    #[serde(default)]
-    pub disk_size_gb: i32,
-    #[serde(default)]
-    pub disk_sku: String,
-    #[serde(default)]
-    pub delete_disk_on_pause: bool,
-    #[serde(default)]
-    pub use_public_ip: bool,
-    #[serde(default)]
-    pub artifact_storage_account: Option<String>,
-    #[serde(default)]
-    pub artifact_container: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

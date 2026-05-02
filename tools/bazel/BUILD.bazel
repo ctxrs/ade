@@ -8,7 +8,6 @@ exports_files([
     "provider_managed_install_archive.sh",
     "provider_claude_crp_archive.sh",
     "provider_node_archive.sh",
-    "patches/azure_core-0.21.0-rules-rust-paste.patch",
     "release_bundle_contracts.sh",
     "rust_deps.generated.bzl",
     "run_node_task.sh",

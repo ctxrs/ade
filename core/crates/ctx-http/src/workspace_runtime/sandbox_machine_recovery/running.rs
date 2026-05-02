@@ -28,8 +28,6 @@ pub(in crate::workspace_runtime) async fn ensure_sandbox_machine_running_with_ob
         );
         return Ok(());
     }
-    seed_shared_sandbox_machine_cache_best_effort(data_root, observer).await;
-
     let mut last_err = {
         let mut cmd = sandbox_container_command(data_root)?;
         cmd.arg("info");
@@ -48,6 +46,8 @@ pub(in crate::workspace_runtime) async fn ensure_sandbox_machine_running_with_ob
             Err(err) => err.to_string(),
         }
     };
+
+    seed_shared_sandbox_machine_cache_best_effort(data_root, observer).await;
 
     observe_phase(
         observer,

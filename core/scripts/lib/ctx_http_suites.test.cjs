@@ -31,7 +31,7 @@ test("ctx-http suite assignments cover every integration test exactly once", () 
 
   assert.deepEqual(validation, {
     duplicates: [],
-    manualOnly: ["attachments_demo_react", "cloud_gateway_azure_e2e", "cloud_gateway_gcp_e2e"],
+    manualOnly: ["attachments_demo_react"],
     missing: [],
     unknown: [],
   });
@@ -226,8 +226,6 @@ test("ctx-http integration suites declare source ownership and dependency crates
   assert.equal(CTX_HTTP_SHARED_SOURCE_GLOBS.includes("crates/ctx-http/src/daemon/**"), true);
   assert.deepEqual([...MANUAL_ONLY_CTX_HTTP_TEST_FILES].sort(), [
     "attachments_demo_react",
-    "cloud_gateway_azure_e2e",
-    "cloud_gateway_gcp_e2e",
   ]);
 
   for (const suite of CTX_HTTP_SUITES) {

@@ -3,7 +3,6 @@ const path = require("node:path");
 const test = require("node:test");
 
 const {
-  MANUAL_ONLY_RUST_CRATES,
   buildGeneratedPackageScripts,
   buildGeneratedTurboTasks,
   buildWorkspaceGraph,
@@ -66,9 +65,6 @@ test("generated package scripts include per-crate and ctx-http suite tasks", () 
   assert.equal(typeof scripts["rust:crate:test:ctx-http"], "string");
   assert.equal(typeof scripts["rust:crate:nextest:ctx-http"], "string");
   assert.equal(typeof scripts["rust:ctx-http:test:workspace-stream"], "string");
-  assert.equal(scripts["rust:crate:clippy:ctx-worker-gateway"], undefined);
-  assert.equal(scripts["rust:crate:test:ctx-worker-gateway"], undefined);
-  assert.equal(scripts["rust:crate:nextest:ctx-worker-gateway"], undefined);
 });
 
 test("generated turbo tasks include dependency-closure inputs", () => {
@@ -141,15 +137,6 @@ test("generated turbo tasks include extracted dependency crates for affected ctx
     sandboxRuntimeContainerTask.inputs.includes("crates/ctx-workspace-runtime/**"),
     true,
   );
-  assert.equal(
-    sandboxRuntimeContainerTask.inputs.includes("crates/ctx-http/tests/cloud_gateway_azure_e2e.rs"),
-    false,
-  );
-  assert.equal(
-    sandboxRuntimeContainerTask.inputs.includes("crates/ctx-http/tests/cloud_gateway_gcp_e2e.rs"),
-    false,
-  );
-
   const providerAuthTask = tasks["rust:ctx-http:test:provider-auth"];
   assert.equal(
     providerAuthTask.inputs.includes("crates/ctx-provider-install/**"),
@@ -163,21 +150,9 @@ test("ctx-http test expansion returns explicit suite task names", () => {
     ["test"],
   );
 
-  assert.equal(taskNames.includes(getCtxHttpSuiteTaskName("base")), true);
   assert.equal(taskNames.includes(getCtxHttpSuiteTaskName("workspace-stream")), true);
   assert.equal(taskNames.includes(getCtxHttpSuiteTaskName("provider-runtime-simulated")), true);
   assert.equal(taskNames.includes(getCtxHttpSuiteTaskName("provider-runtime-live")), true);
   assert.equal(taskNames.includes(getCtxHttpSuiteTaskName("sandbox-runtime-simulated")), true);
   assert.equal(taskNames.includes(getCtxHttpSuiteTaskName("sandbox-runtime-container-e2e")), true);
-});
-
-test("manual-only Rust crates stay out of generated CI task surfaces", () => {
-  assert.equal(MANUAL_ONLY_RUST_CRATES.has("ctx-worker-gateway"), true);
-
-  const graph = buildWorkspaceGraph(coreRoot);
-  const tasks = buildGeneratedTurboTasks(graph);
-
-  assert.equal(tasks["rust:crate:clippy:ctx-worker-gateway"], undefined);
-  assert.equal(tasks["rust:crate:test:ctx-worker-gateway"], undefined);
-  assert.equal(tasks["rust:crate:nextest:ctx-worker-gateway"], undefined);
 });

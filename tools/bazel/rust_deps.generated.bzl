@@ -217,17 +217,6 @@ RUST_BAZEL_DEPS = {
         dev_proc_macro_deps = [],
         proc_macro_deps = [],
     ),
-    "ctx-worker-protocol": struct(
-        build_deps = [],
-        deps = [
-            "@crates//:chrono",
-            "@crates//:serde",
-            "@crates//:uuid",
-        ],
-        dev_deps = [],
-        dev_proc_macro_deps = [],
-        proc_macro_deps = [],
-    ),
     "ctx-workspace-active-snapshot": struct(
         build_deps = [],
         deps = [

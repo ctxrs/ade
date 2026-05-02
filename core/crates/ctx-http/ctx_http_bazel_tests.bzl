@@ -124,19 +124,9 @@ CTX_HTTP_SUITE_TESTS = {
 
 CTX_HTTP_MANUAL_ONLY_TESTS = [
     "attachments_demo_react",
-    "cloud_gateway_azure_e2e",
-    "cloud_gateway_gcp_e2e",
 ]
 
-CTX_HTTP_INTEGRATION_SOURCE_DEPS = {
-    "cloud_gateway_azure_e2e": [
-        "@crates//:azure_core",
-        "@crates//:azure_identity",
-    ],
-    "cloud_gateway_gcp_e2e": [
-        "@crates//:gcp_auth",
-    ],
-}
+CTX_HTTP_INTEGRATION_SOURCE_DEPS = {}
 
 CTX_HTTP_SUITE_EXTRA_TARGETS = {
     "scheduler-runtime": [

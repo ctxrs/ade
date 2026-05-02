@@ -27,20 +27,12 @@ CTX_HTTP_TEST_CORPUS_DATA = glob(["tests/corpus/**"])
 CTX_HTTP_TEST_FIXTURE_DATA = glob(["tests/fixtures/**"])
 CTX_HTTP_INTEGRATION_TEST_DATA = CTX_HTTP_COMPILE_DATA + CTX_HTTP_TEST_CORPUS_DATA + CTX_HTTP_TEST_FIXTURE_DATA
 CTX_HTTP_INTEGRATION_BINARY_DATA = {
-    "cloud_gateway_azure_e2e": [":ctx"],
-    "cloud_gateway_gcp_e2e": [":ctx"],
     "noisy_output_backpressure": ["//core/crates/ctx-mcp:ctx-mcp"],
     "provider_scenarios_offline": ["//core/crates/ctx-mcp:ctx-mcp"],
     "session_model_api": ["//core/crates/ctx-mcp:ctx-mcp"],
     "title_generation_local": [":llama_server_mock"],
 }
 CTX_HTTP_INTEGRATION_BINARY_RUSTC_ENV = {
-    "cloud_gateway_azure_e2e": {
-        "CARGO_BIN_EXE_ctx": "$(rootpath :ctx)",
-    },
-    "cloud_gateway_gcp_e2e": {
-        "CARGO_BIN_EXE_ctx": "$(rootpath :ctx)",
-    },
     "noisy_output_backpressure": {
         "CARGO_BIN_EXE_ctx-mcp": "$(rootpath //core/crates/ctx-mcp:ctx-mcp)",
     },
@@ -289,7 +281,6 @@ CTX_HTTP_SHARED_INTERNAL_DEPS = [
     "//core/crates/ctx-storage-admission:lib",
     "//core/crates/ctx-store:lib",
     "//core/crates/ctx-transport-runtime:lib",
-    "//core/crates/ctx-worker-protocol:lib",
     "//core/crates/ctx-workspace-active-snapshot:lib",
     "//core/crates/ctx-workspace-config:lib",
     "//core/crates/ctx-workspace-container:lib",
@@ -322,7 +313,6 @@ CTX_HTTP_SHARED_INTERNAL_TEST_SUPPORT_DEPS = [
     "//core/crates/ctx-storage-admission:lib",
     "//core/crates/ctx-store:lib",
     "//core/crates/ctx-transport-runtime:lib",
-    "//core/crates/ctx-worker-protocol:lib",
     "//core/crates/ctx-workspace-active-snapshot:lib",
     "//core/crates/ctx-workspace-config:lib",
     "//core/crates/ctx-workspace-container:lib_test_support",
@@ -421,7 +411,6 @@ CTX_HTTP_DIRECT_TEST_DEPS = [
     "//core/crates/ctx-providers:lib",
     "//core/crates/ctx-store:lib",
     "//core/crates/ctx-transport-runtime:lib",
-    "//core/crates/ctx-worker-protocol:lib",
     "//core/crates/ctx-workspace-container:lib_test_support",
     "//core/crates/ctx-workspace-config:lib",
     "//core/crates/ctx-workspace-runtime:lib_test_support",

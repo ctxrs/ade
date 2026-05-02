@@ -17,6 +17,15 @@ const pathAllowlist = new Map([
     },
   ],
   [
+    "scripts/deploy_ctx_tunnel_hetzner.sh",
+    {
+      owner: "mobile-tunnel",
+      category: "remote-release-build",
+      rationale:
+        "Deploys git archive HEAD on a remote host and pins remote Cargo output to REMOTE_SRC/core/target; this path is outside local workspace cache management.",
+    },
+  ],
+  [
     "scripts/ensure_bundled_harnesses.sh",
     {
       owner: "provider-artifacts",
@@ -73,6 +82,13 @@ const allowedCargoLinePatterns = new Map([
       /cargo build --manifest-path \/work\/Cargo\.toml -p codex-crp --release --target '\$rust_target'/,
       /cargo zigbuild --manifest-path "\$WORKSPACE_DIR\/Cargo\.toml" -p codex-crp --release --target "\$rust_target"/,
       /cargo build --manifest-path "\$WORKSPACE_DIR\/Cargo\.toml" -p codex-crp --release --target "\$rust_target"/,
+    ],
+  ],
+  [
+    "scripts/deploy_ctx_tunnel_hetzner.sh",
+    [
+      /CARGO_TARGET_DIR='\$REMOTE_SRC\/core\/target' cargo build --release --locked -p ctx-tunnel-control-plane -p ctx-tunnel-router -p ctx-tunnel-relay/,
+      /CARGO_TARGET_DIR='\$REMOTE_SRC\/core\/target' cargo build --release --locked -p ctx-tunnel-store --bin ctx-tunnel-cleanup/,
     ],
   ],
   [
@@ -314,8 +330,6 @@ test("codex crp rust helpers export wrapper-managed cache env", () => {
 test("cloud, mobile, and coverage automation route rust work through ctx cache wrappers", () => {
   const cases = [
     "scripts/run_mobile_e2e.sh",
-    "scripts/cloud_gateway_e2e_azure.sh",
-    "scripts/cloud_gateway_e2e_gcp.sh",
     "core/scripts/run-daemon-coverage.sh",
   ];
 
@@ -325,8 +339,6 @@ test("cloud, mobile, and coverage automation route rust work through ctx cache w
     assert.match(text, /--mode workspace/, `${relativePath} should use the workspace cache mode`);
   }
   for (const relativePath of [
-    "scripts/cloud_gateway_e2e_azure.sh",
-    "scripts/cloud_gateway_e2e_gcp.sh",
   ]) {
     const text = read(relativePath);
     assert.match(text, /print_ctx_cache_env\.cjs/, `${relativePath} should derive the volatile cache layout`);
@@ -362,6 +374,11 @@ test("automation cargo invocations are wrapper-managed or explicitly isolated", 
       path: "scripts/codex_crp_stage_release_archives.sh",
       pattern: /cargo (zigbuild|build)|cargo \+stable build/,
       rationale: "release archive staging pins CARGO_TARGET_DIR to stage/container target roots",
+    },
+    {
+      path: "scripts/deploy_ctx_tunnel_hetzner.sh",
+      pattern: /CARGO_TARGET_DIR='\$REMOTE_SRC\/core\/target' cargo build --release --locked/,
+      rationale: "remote tunnel deploy builds git archive HEAD into a remote target directory outside local cache management",
     },
     {
       path: "scripts/ensure_bundled_harnesses.sh",

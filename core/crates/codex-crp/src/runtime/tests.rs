@@ -12,7 +12,14 @@ use std::collections::HashMap;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
-use tokio::sync::mpsc;
+use std::sync::OnceLock;
+use tokio::sync::{mpsc, Mutex};
+
+static CODEX_BIN_ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+fn codex_bin_env_lock() -> &'static Mutex<()> {
+    CODEX_BIN_ENV_LOCK.get_or_init(|| Mutex::new(()))
+}
 
 #[derive(Debug, serde::Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -141,6 +148,7 @@ fn assert_snapshot(input: &str, expected: &str) {
 
 #[tokio::test]
 async fn open_session_fails_closed_on_resume_error_and_scrubs_ambient_session_env() {
+    let _env_lock = codex_bin_env_lock().lock().await;
     let tempdir = tempfile::tempdir().expect("tempdir");
     let workdir = tempdir.path().to_path_buf();
     let script_path = workdir.join("fake-codex.sh");
@@ -447,6 +455,7 @@ async fn session_authenticate_emits_explicit_unsupported_notice() {
 
 #[tokio::test]
 async fn open_session_defers_mcp_overrides_until_turn_start() {
+    let _env_lock = codex_bin_env_lock().lock().await;
     let tempdir = tempfile::tempdir().expect("tempdir");
     let workdir = tempdir.path().to_path_buf();
     let script_path = workdir.join("fake-codex.py");

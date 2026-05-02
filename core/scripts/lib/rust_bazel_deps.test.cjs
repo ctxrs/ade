@@ -317,7 +317,6 @@ test("real workspace model covers migrated crates and skips manual crates", () =
     "@crates//:uuid",
   ]);
   assert.equal(model.entries["ctx-http"], undefined);
-  assert.equal(model.entries["ctx-worker-gateway"], undefined);
   assert.equal(model.entries["ctx-load-test"], undefined);
   assert.ok(model.entries["ctx-runtime-assets"].deps.includes("//core/crates/ctx-harness-setup:lib"));
 });

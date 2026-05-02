@@ -469,7 +469,7 @@ async fn ensure_sandbox_machine_running_uses_info_fast_path_before_recovery_sett
     std::fs::write(
         &sandbox_cli_path,
         format!(
-            "#!/bin/sh\nLOG=\"{log}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"info\" ]; then\n  printf '{{}}\\n'\n  exit 0\nfi\necho \"unexpected sandbox CLI invocation: $*\" >&2\nexit 1\n",
+            "#!/bin/sh\nLOG=\"{log}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nfor arg in \"$@\"; do\n  if [ \"$arg\" = \"info\" ]; then\n    printf '{{}}\\n'\n    exit 0\n  fi\ndone\necho \"unexpected sandbox CLI invocation: $*\" >&2\nexit 1\n",
             log = log_path.display(),
         ),
     )

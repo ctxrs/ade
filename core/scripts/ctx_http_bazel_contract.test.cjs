@@ -327,7 +327,6 @@ test("ctx-http BUILD exposes Bazel-native base test targets", () => {
   assert.match(ctxHttpBuild, /"noisy_output_backpressure": \["\/\/core\/crates\/ctx-mcp:ctx-mcp"\]/);
   assert.match(ctxHttpBuild, /"session_model_api": \["\/\/core\/crates\/ctx-mcp:ctx-mcp"\]/);
   assert.match(ctxHttpBuild, /"title_generation_local": \[":llama_server_mock"\]/);
-  assert.match(ctxHttpBuild, /"cloud_gateway_azure_e2e": \[":ctx"\]/);
   assert.match(ctxHttpBuild, /"CARGO_BIN_EXE_ctx-mcp": "\$\(rootpath \/\/core\/crates\/ctx-mcp:ctx-mcp\)"/);
   assert.match(ctxHttpBuild, /"CARGO_BIN_EXE_llama_server_mock": "\$\(rootpath :llama_server_mock\)"/);
   assert.match(ctxHttpBuild, /declare_ctx_http_integration_tests/);
