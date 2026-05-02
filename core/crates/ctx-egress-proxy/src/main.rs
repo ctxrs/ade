@@ -242,8 +242,8 @@ fn drop_to_bypass_uid(_uid: u32) -> Result<()> {
 
 #[cfg(target_os = "linux")]
 fn effective_identity() -> (u32, u32) {
-    let uid = unsafe { libc::geteuid() } as u32;
-    let gid = unsafe { libc::getegid() } as u32;
+    let uid = unsafe { libc::geteuid() };
+    let gid = unsafe { libc::getegid() };
     (uid, gid)
 }
 
