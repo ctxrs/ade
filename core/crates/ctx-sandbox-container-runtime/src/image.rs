@@ -65,6 +65,25 @@ pub fn bundled_default_container_image_tar() -> Option<PathBuf> {
     bundled_assets::bundled_ctx_harness_image_tar(DEFAULT_CONTAINER_IMAGE)
 }
 
+pub async fn default_container_image_fingerprint(image: &str) -> Result<Option<String>> {
+    if image.trim() != DEFAULT_CONTAINER_IMAGE {
+        return Ok(None);
+    }
+    if let Some(tar_path) = bundled_default_container_image_tar() {
+        let digest = sha256_hex_file(&tar_path).await?;
+        return Ok(Some(format!("sha256:{digest}")));
+    }
+    let Some(source) = bundled_assets::managed_ctx_harness_image_source(DEFAULT_CONTAINER_IMAGE)
+    else {
+        return Ok(None);
+    };
+    let digest = source.sha256.trim().to_ascii_lowercase();
+    if digest.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(format!("sha256:{digest}")))
+}
+
 pub async fn prefetch_container_startup_artifacts_with_observer(
     data_root: &Path,
     mode: &SandboxCommandMode,

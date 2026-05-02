@@ -1,5 +1,3 @@
-use anyhow::Context;
-
 use super::launch_state::{LaunchJob, LaunchJobInner, StartupPrewarmMetadata};
 use super::*;
 
@@ -260,24 +258,7 @@ pub(super) async fn write_prewarm_metadata(
 }
 
 pub(super) async fn bundled_image_fingerprint(image: &str) -> Result<Option<String>> {
-    if !ctx_sandbox_container_runtime::is_default_container_image(image) {
-        return Ok(None);
-    }
-    let Some(tar_path) = ctx_sandbox_container_runtime::bundled_default_container_image_tar()
-    else {
-        return Ok(None);
-    };
-    let metadata = tokio::fs::metadata(&tar_path)
-        .await
-        .with_context(|| format!("stat {}", tar_path.display()))?;
-    let len = metadata.len();
-    let modified = metadata
-        .modified()
-        .ok()
-        .and_then(|value| value.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|value| value.as_secs())
-        .unwrap_or(0);
-    Ok(Some(format!("{len}:{modified}")))
+    ctx_sandbox_container_runtime::default_container_image_fingerprint(image).await
 }
 
 pub(super) fn needs_prewarm(

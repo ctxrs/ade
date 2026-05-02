@@ -123,7 +123,39 @@ impl ExecutionSetupCoordinator {
             return;
         }
 
-        match self.startup_prewarm_runtime(&exec).await {
+        let stale_default_image_reloaded = match self
+            .force_reload_stale_default_container_image_if_needed(&exec.container, &gate, None)
+            .await
+        {
+            Ok(reloaded) => reloaded,
+            Err(err) => {
+                let message = format_error_chain(&err);
+                let snapshot = StartupPrewarmSnapshot {
+                    state: StartupPrewarmState::Error,
+                    target_image: target.clone(),
+                    needs_prewarm: true,
+                    machine_ready: gate.machine_ready,
+                    image_present: gate.image_present,
+                    image_ref_changed: gate.image_ref_changed,
+                    bundled_image_digest_changed: gate.bundled_image_digest_changed,
+                    last_attempt_at: Some(attempted_at),
+                    last_success_at: None,
+                    error: Some(message.clone()),
+                };
+                self.set_startup_snapshot(snapshot).await;
+                let mut event = OpsEvent::new("warn", "execution.startup_prewarm_error");
+                event.meta = Some(json!({ "image": target, "error": message }));
+                self.ops_events.emit(event);
+                return;
+            }
+        };
+        let prewarm_result = if stale_default_image_reloaded {
+            Ok(())
+        } else {
+            self.startup_prewarm_runtime(&exec).await
+        };
+
+        match prewarm_result {
             Ok(()) => {
                 let (machine_ready, image_present) =
                     match self.startup_runtime_state(&exec.container).await {
@@ -174,7 +206,11 @@ impl ExecutionSetupCoordinator {
                     return;
                 }
 
-                if gate.machine_ready && gate.image_present && gate.bundled_image_digest_changed {
+                if gate.machine_ready
+                    && gate.image_present
+                    && gate.bundled_image_digest_changed
+                    && !stale_default_image_reloaded
+                {
                     let message =
                         "startup prewarm downloaded updated local sandbox artifacts, but the loaded harness image is still stale and will be refreshed on the next workspace launch"
                             .to_string();
@@ -324,10 +360,10 @@ impl ExecutionSetupCoordinator {
             .as_ref()
             .map(|meta| meta.image_ref != target)
             .unwrap_or(false);
-        let bundled_image_digest_changed = metadata
-            .as_ref()
-            .map(|meta| meta.bundled_image_fingerprint != bundled_image_fingerprint)
-            .unwrap_or(false);
+        let bundled_image_digest_changed = match metadata.as_ref() {
+            Some(meta) => meta.bundled_image_fingerprint != bundled_image_fingerprint,
+            None => image_present && bundled_image_fingerprint.is_some(),
+        };
 
         let needs_prewarm = needs_prewarm(
             machine_ready,
@@ -377,6 +413,34 @@ impl ExecutionSetupCoordinator {
         let _artifact_warmup = self.harness.begin_prewarm_artifact_activity();
         let scope = RuntimePrewarmScope::Runtime;
         self.prewarm.ensure_scope(exec, scope, None).await
+    }
+
+    pub(super) async fn force_reload_stale_default_container_image_if_needed(
+        &self,
+        settings: &crate::settings::ContainerExecutionSettings,
+        gate: &PrewarmGate,
+        observer: Option<&dyn HarnessSetupObserver>,
+    ) -> Result<bool> {
+        if !gate.machine_ready || !gate.image_present || !gate.bundled_image_digest_changed {
+            return Ok(false);
+        }
+        if !matches!(
+            settings.runtime,
+            crate::settings::ContainerRuntimeKind::NativeContainer
+        ) {
+            return Ok(false);
+        }
+        let target = ctx_harness_runtime::runtime_prewarm_target(settings);
+        if !ctx_sandbox_container_runtime::is_default_container_image(&target) {
+            return Ok(false);
+        }
+        ctx_sandbox_container_runtime::force_reload_default_container_image(
+            &self.data_root,
+            &ctx_sandbox_container_runtime::SandboxCommandMode::NativeContainer,
+            observer,
+        )
+        .await?;
+        Ok(true)
     }
 
     async fn configured_startup_target(&self, _exec: &ExecutionSettings) -> Result<String> {

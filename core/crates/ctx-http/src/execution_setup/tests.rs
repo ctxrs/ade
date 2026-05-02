@@ -174,15 +174,10 @@ async fn wait_for_startup_prewarm_terminal(
 }
 
 fn bundle_tar_fingerprint(tar_path: &Path) -> String {
-    let metadata = std::fs::metadata(tar_path).expect("stat bundled image tar");
-    let len = metadata.len();
-    let modified = metadata
-        .modified()
-        .ok()
-        .and_then(|value| value.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|value| value.as_secs())
-        .unwrap_or(0);
-    format!("{len}:{modified}")
+    use sha2::Digest;
+
+    let bytes = std::fs::read(tar_path).expect("read bundled image tar");
+    format!("sha256:{}", hex::encode(sha2::Sha256::digest(bytes)))
 }
 
 fn write_startup_prewarm_sandbox_cli_shim(dir: &Path) -> PathBuf {
@@ -1190,6 +1185,89 @@ async fn startup_prewarm_backfills_metadata_when_runtime_is_already_ready() {
     );
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn startup_prewarm_reloads_ready_default_image_when_metadata_is_missing() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let _process_env = process_env_test_lock().lock().await;
+    let _serial = env_var_test_lock().lock().await;
+    let data_dir = tempfile::tempdir().expect("tempdir");
+    let bundle_dir = data_dir.path().join("bundle");
+    let bundle_images_dir = bundle_dir.join("images");
+    std::fs::create_dir_all(&bundle_images_dir).expect("create bundle images dir");
+    let tar_path = bundle_images_dir.join("ctx-harness.tar");
+    std::fs::write(&tar_path, b"fresh bundled image tar").expect("write bundled image tar");
+    let default_image = crate::workspace_runtime::default_container_image();
+    let manifest = serde_json::json!({
+        "version": 1,
+        "providers": [],
+        "runtimes": [],
+        "images": [{
+            "id": "ctx-harness",
+            "version": "test",
+            "os": "linux",
+            "arch": std::env::consts::ARCH,
+            "sha256": "test-sha",
+            "tar": "images/ctx-harness.tar",
+            "image": default_image,
+        }],
+    });
+    std::fs::write(
+        bundle_dir.join("manifest.json"),
+        serde_json::to_vec_pretty(&manifest).expect("serialize manifest"),
+    )
+    .expect("write bundle manifest");
+    let expected_fingerprint = bundle_tar_fingerprint(&tar_path);
+    let _bundle_dir = EnvVarGuard::set("CTX_BUNDLE_DIR", &bundle_dir.to_string_lossy());
+
+    let log_path = data_dir.path().join("sandbox-cli-invocations.log");
+    let sandbox_cli_path = data_dir.path().join("sandbox-cli.sh");
+    std::fs::write(
+        &sandbox_cli_path,
+        format!(
+            "#!/bin/sh\nLOG=\"{log}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"info\" ]; then\n  printf '{{}}\\n'\n  exit 0\nfi\nif [ \"$1\" = \"image\" ] && [ \"$2\" = \"inspect\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"load\" ] && [ \"$2\" = \"-i\" ]; then\n  exit 0\nfi\necho \"unexpected sandbox CLI invocation: $*\" >&2\nexit 1\n",
+            log = log_path.display(),
+        ),
+    )
+    .expect("write sandbox CLI shim");
+    std::fs::set_permissions(&sandbox_cli_path, std::fs::Permissions::from_mode(0o755))
+        .expect("chmod sandbox CLI shim");
+    let _sandbox_cli = EnvVarGuard::set(
+        "CTX_HARNESS_SANDBOX_CLI_PATH",
+        &sandbox_cli_path.to_string_lossy(),
+    );
+    let _sandbox_cli_available = EnvVarGuard::set("CTX_TEST_SANDBOX_CLI_AVAILABLE", "1");
+    save_test_execution_settings(data_dir.path(), sandbox_execution_settings()).await;
+
+    let ops = Arc::new(RecordingStartupWarmupOperations::default());
+    let coordinator = test_coordinator_with_operations(data_dir.path().to_path_buf(), ops.clone());
+    run_startup_prewarm_with_timeout(&coordinator).await;
+
+    let snapshot = coordinator.startup_status().await;
+    assert_eq!(snapshot.state, StartupPrewarmState::Ready);
+    assert!(!snapshot.needs_prewarm);
+    assert!(snapshot.machine_ready);
+    assert!(snapshot.image_present);
+    assert!(!snapshot.bundled_image_digest_changed);
+    assert_eq!(ops.runtime_runs.load(Ordering::SeqCst), 0);
+
+    let metadata = read_prewarm_metadata(data_dir.path())
+        .await
+        .expect("read prewarm metadata")
+        .expect("expected prewarm metadata");
+    assert_eq!(metadata.image_ref, default_image);
+    assert_eq!(
+        metadata.bundled_image_fingerprint.as_deref(),
+        Some(expected_fingerprint.as_str())
+    );
+    let log = std::fs::read_to_string(&log_path).expect("read sandbox CLI invocation log");
+    assert!(
+        log.contains("load -i "),
+        "expected startup prewarm to force-reload the ready tagged image:\n{log}"
+    );
+}
+
 #[tokio::test]
 async fn startup_prewarm_preserves_existing_ready_timestamp_when_reusing_ready_runtime() {
     let _serial = env_var_test_lock().lock().await;
@@ -1322,7 +1400,7 @@ async fn startup_prewarm_keeps_existing_metadata_when_machine_stays_down() {
 
 #[cfg(unix)]
 #[tokio::test]
-async fn startup_prewarm_does_not_record_success_for_stale_loaded_default_image() {
+async fn startup_prewarm_reloads_stale_loaded_default_image() {
     use std::os::unix::fs::PermissionsExt;
 
     let _process_env = process_env_test_lock().lock().await;
@@ -1355,10 +1433,14 @@ async fn startup_prewarm_does_not_record_success_for_stale_loaded_default_image(
     .expect("write bundle manifest");
     let _bundle_dir = EnvVarGuard::set("CTX_BUNDLE_DIR", &bundle_dir.to_string_lossy());
 
+    let log_path = data_dir.path().join("sandbox-cli-invocations.log");
     let sandbox_cli_path = data_dir.path().join("sandbox-cli.sh");
     std::fs::write(
         &sandbox_cli_path,
-        "#!/bin/sh\nif [ \"$1\" = \"info\" ]; then\n  printf '{}\\n'\n  exit 0\nfi\nif [ \"$1\" = \"image\" ] && [ \"$2\" = \"inspect\" ]; then\n  exit 0\nfi\necho \"unexpected sandbox CLI invocation: $*\" >&2\nexit 1\n",
+        format!(
+            "#!/bin/sh\nLOG=\"{log}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"info\" ]; then\n  printf '{{}}\\n'\n  exit 0\nfi\nif [ \"$1\" = \"image\" ] && [ \"$2\" = \"inspect\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"load\" ] && [ \"$2\" = \"-i\" ]; then\n  exit 0\nfi\necho \"unexpected sandbox CLI invocation: $*\" >&2\nexit 1\n",
+            log = log_path.display(),
+        ),
     )
     .expect("write sandbox CLI shim");
     std::fs::set_permissions(&sandbox_cli_path, std::fs::Permissions::from_mode(0o755))
@@ -1392,29 +1474,28 @@ async fn startup_prewarm_does_not_record_success_for_stale_loaded_default_image(
     run_startup_prewarm_from_store(&coordinator).await;
 
     let snapshot = coordinator.startup_status().await;
-    assert_eq!(snapshot.state, StartupPrewarmState::Skipped);
-    assert!(snapshot.needs_prewarm);
+    assert_eq!(snapshot.state, StartupPrewarmState::Ready);
+    assert!(!snapshot.needs_prewarm);
     assert!(snapshot.machine_ready);
     assert!(snapshot.image_present);
-    assert!(snapshot.bundled_image_digest_changed);
-    assert!(snapshot.last_success_at.is_none());
-    assert!(snapshot
-        .error
-        .as_deref()
-        .unwrap_or_default()
-        .contains("loaded harness image is still stale"));
-    assert_eq!(ops.runtime_runs.load(Ordering::SeqCst), 1);
-    assert_eq!(
-        *ops.steps.lock().unwrap_or_else(|err| err.into_inner()),
-        vec!["runtime"]
-    );
+    assert!(!snapshot.bundled_image_digest_changed);
+    assert!(snapshot.last_success_at.is_some());
+    assert_eq!(ops.runtime_runs.load(Ordering::SeqCst), 0);
 
     let metadata = read_prewarm_metadata(data_dir.path())
         .await
         .expect("read prewarm metadata")
-        .expect("expected stale metadata to remain");
-    assert_eq!(metadata.bundled_image_fingerprint, Some(stale_fingerprint));
-    assert_eq!(metadata.ready_at, "2026-03-19T00:00:00Z");
+        .expect("expected refreshed metadata");
+    assert_eq!(
+        metadata.bundled_image_fingerprint.as_deref(),
+        Some(current_fingerprint.as_str())
+    );
+    assert_ne!(metadata.ready_at, "2026-03-19T00:00:00Z");
+    let log = std::fs::read_to_string(&log_path).expect("read sandbox CLI invocation log");
+    assert!(
+        log.contains("load -i "),
+        "expected startup prewarm to force-reload the stale tagged image:\n{log}"
+    );
 }
 
 #[cfg(unix)]

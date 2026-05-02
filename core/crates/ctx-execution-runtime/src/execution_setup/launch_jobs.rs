@@ -222,6 +222,13 @@ impl ExecutionSetupCoordinator {
                     ) {
                         return Err(anyhow::anyhow!("local sandbox runtime unavailable"));
                     }
+                    let gate = self.compute_prewarm_gate(&settings.container).await?;
+                    self.force_reload_stale_default_container_image_if_needed(
+                        &settings.container,
+                        &gate,
+                        Some(&observer),
+                    )
+                    .await?;
                     let _artifact_warmup = self.harness.begin_prewarm_artifact_activity();
                     self.prewarm
                         .ensure_runtime(&settings, true, Some(&observer))
@@ -240,6 +247,13 @@ impl ExecutionSetupCoordinator {
                     ) {
                         return Err(anyhow::anyhow!("local sandbox runtime unavailable"));
                     }
+                    let gate = self.compute_prewarm_gate(&settings.container).await?;
+                    self.force_reload_stale_default_container_image_if_needed(
+                        &settings.container,
+                        &gate,
+                        Some(&observer),
+                    )
+                    .await?;
                     let _artifact_warmup = self.harness.begin_prewarm_artifact_activity();
                     self.prewarm
                         .ensure_runtime(&settings, false, Some(&observer))

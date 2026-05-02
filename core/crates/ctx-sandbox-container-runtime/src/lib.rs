@@ -14,7 +14,7 @@ pub use ctx_harness_setup::{
 };
 pub use image::{
     bundled_default_container_image_tar, container_image_present, container_image_status,
-    default_container_image, ensure_container_image_available,
+    default_container_image, default_container_image_fingerprint, ensure_container_image_available,
     ensure_managed_default_container_image_tar_with_source, force_reload_default_container_image,
     is_default_container_image, managed_default_image_install_lock, prefetch_container_image,
     prefetch_container_image_with_observer, prefetch_container_startup_artifacts_with_observer,
