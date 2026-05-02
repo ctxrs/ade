@@ -3,13 +3,12 @@ const test = require("node:test");
 
 const { AGENT_GATE_CRATES, ISOLATED_CARGO_TEST_CRATES } = require("./lib/rust_gate_plan.cjs");
 const {
-  applyClippySccachePolicy,
   applyBazelTestEnv,
   applyDefaultRustGateEnv,
+  buildBazelClippyTargetBatches,
   buildBazelTargetBatches,
   parseArgs,
   resolveCrates,
-  rustRemoteCacheState,
 } = require("./run_rust_gate.cjs");
 
 test("parseArgs accepts --agent-gate without additional selection flags", () => {
@@ -24,53 +23,6 @@ test("parseArgs accepts --agent-gate without additional selection flags", () => 
     runClippy: false,
     skipTests: false,
     testStrategy: "mixed",
-  });
-});
-
-test("rustRemoteCacheState reports Turbo and sccache remote cache inputs", () => {
-  assert.deepEqual(rustRemoteCacheState({}), {
-    sccache_remote: false,
-    sccache_state: "unconfigured",
-    turbo_cache_mode: "local:rw",
-    turbo_remote: false,
-  });
-  assert.deepEqual(rustRemoteCacheState({
-    CTX_RUST_CACHE_SCCACHE: "enabled",
-    SCCACHE_BUCKET: "ctx-sdlc-cache",
-    TURBO_CACHE_MODE: "local:rw,remote:rw",
-  }), {
-    sccache_remote: true,
-    sccache_state: "enabled",
-    turbo_cache_mode: "local:rw,remote:rw",
-    turbo_remote: true,
-  });
-});
-
-test("applyClippySccachePolicy disables sccache for Buildkite clippy by default", () => {
-  assert.deepEqual(applyClippySccachePolicy({
-    BUILDKITE: "true",
-    RUSTC_WRAPPER: "/usr/bin/sccache",
-  }, { runClippy: true }), {
-    BUILDKITE: "true",
-    CTX_DISABLE_SCCACHE: "1",
-    CTX_RUST_CLIPPY_SCCACHE_POLICY: "disabled-buildkite-clippy",
-    RUSTC_WRAPPER: "/usr/bin/sccache",
-  });
-  assert.deepEqual(applyClippySccachePolicy({
-    BUILDKITE: "true",
-    CTX_RUST_CLIPPY_ENABLE_SCCACHE: "1",
-    RUSTC_WRAPPER: "/usr/bin/sccache",
-  }, { runClippy: true }), {
-    BUILDKITE: "true",
-    CTX_RUST_CLIPPY_ENABLE_SCCACHE: "1",
-    RUSTC_WRAPPER: "/usr/bin/sccache",
-  });
-  assert.deepEqual(applyClippySccachePolicy({
-    BUILDKITE: "true",
-    RUSTC_WRAPPER: "/usr/bin/sccache",
-  }, { runClippy: false }), {
-    BUILDKITE: "true",
-    RUSTC_WRAPPER: "/usr/bin/sccache",
   });
 });
 
@@ -312,4 +264,12 @@ test("buildBazelTargetBatches isolates flattened ctx-http targets into sequentia
   ]) {
     assert.equal(targets.includes(expectedTarget), true, `${expectedTarget} should be isolated`);
   }
+});
+
+test("buildBazelClippyTargetBatches maps Rust crates to explicit Bazel clippy targets", () => {
+  assert.deepEqual(buildBazelClippyTargetBatches(["ctx-http", "ctx-core"]), [[
+    "//core/crates/ctx-core:lib",
+    "//core/crates/ctx-http:ctx",
+    "//core/crates/ctx-http:lib",
+  ]]);
 });

@@ -17,7 +17,6 @@ const BAZEL_VERSION_FILE = ".bazelversion";
 const WEB_DIST_SYNC_TARGET = "//core/apps/web:dist_sync";
 const IGNORED_DIR_NAMES = new Set([
   ".git",
-  ".turbo",
   "coverage",
   "dist",
   "node_modules",

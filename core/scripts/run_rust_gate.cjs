@@ -4,7 +4,10 @@ const childProcess = require("node:child_process");
 const path = require("node:path");
 
 const { buildCtxCacheEnv } = require("./lib/cache_roots.cjs");
-const { getBazelTestTargetsForCrates } = require("./lib/bazel_rust_targets.cjs");
+const {
+  getBazelClippyTargetsForCrates,
+  getBazelTestTargetsForCrates,
+} = require("./lib/bazel_rust_targets.cjs");
 const {
   AGENT_GATE_CRATES,
   FORCE_REVERSE_DEP_CRATES,
@@ -16,15 +19,10 @@ const {
   collectChangedCrates,
   expandReverseDependencies,
   filterGateManagedCrateNames,
-  getTurboTaskNamesForCrates,
+  getPackageTaskCommandsForCrates,
   isRustWorkspaceLevelInput,
 } = require("./lib/rust_workspace_graph.cjs");
 const { HOST_HEAVY_BUDGET_KEY, withHostJobBudget } = require("./lib/host_job_budget.cjs");
-const { runTurbo } = require("./lib/turbo_runner.cjs");
-
-function enabledFlag(value) {
-  return ["1", "true", "yes", "on"].includes(String(value || "").trim().toLowerCase());
-}
 
 function parseArgs(argv) {
   const args = {
@@ -123,63 +121,25 @@ function resolveCrates(graph, args) {
   return filterGateManagedCrateNames(expandReverseDependencies(graph, resolved));
 }
 
-function applyClippySccachePolicy(env, { runClippy }) {
-  const resolvedEnv = { ...env };
-  if (
-    runClippy
-    && enabledFlag(resolvedEnv.BUILDKITE)
-    && !enabledFlag(resolvedEnv.CTX_RUST_CLIPPY_ENABLE_SCCACHE)
-    && !enabledFlag(resolvedEnv.CTX_DISABLE_SCCACHE)
-  ) {
-    resolvedEnv.CTX_DISABLE_SCCACHE = "1";
-    resolvedEnv.CTX_RUST_CLIPPY_SCCACHE_POLICY = "disabled-buildkite-clippy";
-  }
-  return resolvedEnv;
-}
-
-function rustRemoteCacheState(env) {
-  const turboCacheMode = String(env.TURBO_CACHE_MODE || "local:rw").trim();
-  const turboRemote = turboCacheMode.split(",").some((part) => part.trim().startsWith("remote:"));
-  const sccacheState = String(env.CTX_RUST_CACHE_SCCACHE || "unconfigured").trim();
-  const sccacheRemote = sccacheState === "enabled" && Boolean(String(env.SCCACHE_BUCKET || "").trim());
-  return {
-    sccache_remote: sccacheRemote,
-    sccache_state: sccacheState,
-    turbo_cache_mode: turboCacheMode,
-    turbo_remote: turboRemote,
-  };
-}
-
-function logRustRemoteCacheState(env, { runClippy }) {
-  if (!runClippy) {
-    return;
-  }
-  const state = rustRemoteCacheState(env);
-  const status = state.turbo_remote || state.sccache_remote ? "active" : "inactive";
-  console.error(
-    "[ctx-cache] rust clippy remote cache %s: turbo=%s sccache=%s sccache_bucket=%s",
-    status,
-    state.turbo_cache_mode,
-    state.sccache_state,
-    state.sccache_remote ? "configured" : "missing",
-  );
-  if (status === "inactive") {
-    console.error(
-      "[ctx-cache] rust clippy remote cache inactive; configure TURBO_API/TURBO_TEAM/TURBO_TOKEN and CTX_SCCACHE_R2_* on Buildkite agents.",
-    );
-  }
-}
-
-function runTaskPhase({ coreRoot, env, crateNames, taskKind, turboConcurrency = null }) {
+function runPackageTaskPhase({ coreRoot, env, graph, crateNames, taskKind }) {
   if (crateNames.length === 0) {
     return;
   }
-  runTurbo({
-    coreRoot,
-    env,
-    taskNames: getTurboTaskNamesForCrates(crateNames, [taskKind]),
-    concurrencyOverride: turboConcurrency,
-  });
+  const tasks = getPackageTaskCommandsForCrates(graph, crateNames, [taskKind]);
+  for (const task of tasks) {
+    console.error("[rust-gate] running %s: %s", task.name, task.command);
+    const result = childProcess.spawnSync("bash", ["-lc", task.command], {
+      cwd: coreRoot,
+      env,
+      stdio: "inherit",
+    });
+    if (result.error) {
+      throw result.error;
+    }
+    if (result.status !== 0) {
+      process.exit(result.status ?? 1);
+    }
+  }
 }
 
 function runBazelPhase({ coreRoot, env, crateNames }) {
@@ -226,6 +186,35 @@ function buildBazelTargetBatches(crateNames) {
   return batches;
 }
 
+function buildBazelClippyTargetBatches(crateNames) {
+  const targets = getBazelClippyTargetsForCrates(crateNames);
+  return targets.length > 0 ? [targets] : [];
+}
+
+function runBazelClippyPhase({ coreRoot, env, crateNames }) {
+  if (crateNames.length === 0) {
+    return;
+  }
+  const targetBatches = buildBazelClippyTargetBatches(crateNames);
+  for (const targets of targetBatches) {
+    const result = childProcess.spawnSync(
+      "node",
+      ["scripts/run_bazel_pilot.cjs", "build", "--rust-clippy", ...targets],
+      {
+        cwd: coreRoot,
+        env,
+        stdio: "inherit",
+      },
+    );
+    if (result.error) {
+      throw result.error;
+    }
+    if (result.status !== 0) {
+      process.exit(result.status ?? 1);
+    }
+  }
+}
+
 function applyDefaultRustGateEnv(env, { cargoTestCrates, nextestCrates }) {
   if (!String(env.CARGO_INCREMENTAL ?? "").trim()) {
     env.CARGO_INCREMENTAL = "0";
@@ -258,11 +247,10 @@ function main() {
 
   const { env } = buildCtxCacheEnv({
     cwd: coreRoot,
-    env: applyClippySccachePolicy(process.env, { runClippy: args.runClippy }),
+    env: process.env,
     mode: args.mode,
     mkdir: true,
   });
-  logRustRemoteCacheState(env, { runClippy: args.runClippy });
   const { bazelTestCrates, cargoTestCrates, nextestCrates } = partitionCratesForTestStrategy(
     crateNames,
     args.testStrategy,
@@ -282,11 +270,10 @@ function main() {
     env,
   }, () => {
     if (args.runClippy) {
-      runTaskPhase({
+      runBazelClippyPhase({
         coreRoot,
         env,
         crateNames,
-        taskKind: "clippy",
       });
     }
     if (!args.skipTests) {
@@ -295,9 +282,10 @@ function main() {
         env,
         crateNames: bazelTestCrates,
       });
-      runTaskPhase({
+      runPackageTaskPhase({
         coreRoot,
         env,
+        graph,
         crateNames: nextestCrates,
         taskKind: "nextest",
       });
@@ -307,19 +295,20 @@ function main() {
       const isolatedCargoTestCrates = cargoTestCrates.filter((crateName) =>
         ISOLATED_CARGO_TEST_CRATES.has(crateName),
       );
-      runTaskPhase({
+      runPackageTaskPhase({
         coreRoot,
         env,
+        graph,
         crateNames: parallelCargoTestCrates,
         taskKind: "test",
       });
       for (const crateName of isolatedCargoTestCrates) {
-        runTaskPhase({
+        runPackageTaskPhase({
           coreRoot,
           env,
+          graph,
           crateNames: [crateName],
           taskKind: "test",
-          turboConcurrency: 1,
         });
       }
     }
@@ -331,11 +320,12 @@ if (require.main === module) {
 }
 
 module.exports = {
-  applyClippySccachePolicy,
   applyBazelTestEnv,
   applyDefaultRustGateEnv,
+  buildBazelClippyTargetBatches,
   buildBazelTargetBatches,
   parseArgs,
+  runBazelClippyPhase,
+  runPackageTaskPhase,
   resolveCrates,
-  rustRemoteCacheState,
 };

@@ -655,11 +655,11 @@ function buildRustEntries() {
   const rustGateCrates = crates.map((crate) => crate.crateName);
   const entries = [
     {
-      id: "build-graph.rust-turbo-check",
-      title: "Rust turbo check",
+      id: "build-graph.rust-package-scripts-check",
+      title: "Rust package scripts check",
       family: "build-graph",
       entrypointType: "core-package-script",
-      entrypoint: "rust:turbo:check",
+      entrypoint: "rust:package-scripts:check",
       surface: "compile",
       oracle: "compiler",
       world: "hermetic",
@@ -670,7 +670,7 @@ function buildRustEntries() {
       owner: "rust-workspace",
       sourceGlobs: RUST_ROOT_SOURCE_GLOBS,
       dependencyCrates: rustGateCrates,
-      notes: "Shared Rust compile/task preflight for non-ctx-http workspace crates.",
+      notes: "Generated Rust package-script freshness preflight for non-ctx-http workspace crates.",
       exception: "Intentional host-local Rust workspace preflight until a measured wall-clock bottleneck justifies deeper Bazel decomposition.",
     },
     {

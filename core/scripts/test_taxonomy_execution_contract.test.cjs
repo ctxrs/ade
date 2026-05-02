@@ -29,7 +29,7 @@ test("agent-default fans out ctx-http shared changes into suite-level commands",
   });
 
   assert.ok(!plan.selectedEntries.some((entry) =>
-    entry.id === "build-graph.rust-turbo-check" || entry.entrypointType === "rust-crate-gate",
+    entry.id === "build-graph.rust-package-scripts-check" || entry.entrypointType === "rust-crate-gate",
   ));
 
   assert.deepEqual(plan.commands, [
@@ -44,11 +44,11 @@ test("agent-default keeps non-ctx-http Rust crate changes on the taxonomy-backed
     touchedOnly: true,
   });
 
-  assert.ok(plan.selectedEntries.some((entry) => entry.id === "build-graph.rust-turbo-check"));
+  assert.ok(plan.selectedEntries.some((entry) => entry.id === "build-graph.rust-package-scripts-check"));
   assert.ok(plan.selectedEntries.some((entry) => entry.id === "provider-auth.rust-gate.ctx-provider-accounts"));
 
   assert.deepEqual(plan.commands, [
-    "pnpm rust:turbo:check",
+    "pnpm rust:package-scripts:check",
     "pnpm exec node scripts/run_rust_gate.cjs --mode workspace --include-reverse-deps --clippy --test-strategy mixed --changed-file core/crates/ctx-provider-accounts/src/lib.rs",
   ]);
 });
@@ -61,7 +61,7 @@ test("agent-default affected selection expands a Rust leaf into downstream depen
   });
 
   assert.deepEqual(plan.commands, [
-    "pnpm rust:turbo:check",
+    "pnpm rust:package-scripts:check",
     "node scripts/ctx_http_suite_task.cjs --suite provider-auth --suite provider-runtime-simulated",
     "pnpm exec node scripts/run_rust_gate.cjs --mode workspace --include-reverse-deps --clippy --test-strategy mixed --crate ctx-provider-accounts",
   ]);
@@ -74,13 +74,13 @@ test("agent-default workspace-level Rust inputs select the taxonomy-backed Rust 
     touchedOnly: true,
   });
 
-  assert.ok(plan.selectedEntries.some((entry) => entry.id === "build-graph.rust-turbo-check"));
+  assert.ok(plan.selectedEntries.some((entry) => entry.id === "build-graph.rust-package-scripts-check"));
   assert.ok(plan.selectedEntries.some((entry) => entry.id === "provider-auth.rust-gate.ctx-provider-accounts"));
   assert.ok(plan.selectedEntries.some((entry) => entry.id === "repo-vcs.rust-gate.ctx-merge-queue"));
 
   assert.deepEqual(plan.commands, [
     "pnpm rust:bazel-deps:check",
-    "pnpm rust:turbo:check",
+    "pnpm rust:package-scripts:check",
     "pnpm exec node scripts/run_rust_gate.cjs --mode workspace --include-reverse-deps --clippy --test-strategy mixed --changed-file core/Cargo.lock",
   ]);
 });
@@ -94,7 +94,7 @@ test("agent-default root Bazel graph inputs select generated deps and Rust gate 
 
   assert.deepEqual(plan.commands, [
     "pnpm rust:bazel-deps:check",
-    "pnpm rust:turbo:check",
+    "pnpm rust:package-scripts:check",
     "pnpm exec node scripts/run_rust_gate.cjs --mode workspace --include-reverse-deps --clippy --test-strategy mixed --changed-file MODULE.bazel",
   ]);
 });
@@ -557,7 +557,7 @@ test("checkin promotion gate includes broad stable cacheable basics", () => {
     "repo-contracts.source-file-size",
     "repo-contracts.testing-taxonomy-check",
     "build-graph.rust-bazel-deps-check",
-    "build-graph.rust-turbo-check",
+    "build-graph.rust-package-scripts-check",
     "ctx-http.unit-tests-api",
     "ctx-http.unit-tests-lib",
     "provider-runtime.rust-gate.ctx-crp-protocol",
@@ -574,7 +574,7 @@ test("checkin promotion gate includes broad stable cacheable basics", () => {
   assert.ok(plan.commands.includes("pnpm source:file-size:report"));
   assert.ok(plan.commands.includes("pnpm testing:taxonomy:check"));
   assert.ok(plan.commands.includes("pnpm rust:bazel-deps:check"));
-  assert.ok(plan.commands.includes("pnpm rust:turbo:check"));
+  assert.ok(plan.commands.includes("pnpm rust:package-scripts:check"));
   const ctxHttpCommands = plan.commands.filter((command) => command.startsWith("node scripts/ctx_http_suite_task.cjs "));
   assert.equal(ctxHttpCommands.length, 1);
   assert.equal(ctxHttpCommands[0].includes("--suite attachments-routing"), true);

@@ -8,6 +8,13 @@ const DEFAULT_EXTERNAL_CACHE_ROOT = "/Volumes/ctx-cache";
 const DEFAULT_INTERNAL_VOLATILE_ROOT = path.join(os.homedir(), ".ctx", "volatile");
 const DEFAULT_REPO_CACHE_SLUG = "ctx-monorepo";
 const CACHE_ROOT_MARKER_FILE = ".ctx-volatile-root.json";
+const LEGACY_TURBO_ENV_KEYS = Object.freeze([
+  "CTX_CACHE_ENV_MANAGED_TURBO_CACHE_DIR",
+  "TURBO_CACHE_DIR",
+  "TURBO_TEAM",
+  "TURBO_TOKEN",
+  "TURBO_API",
+]);
 
 function trimValue(value) {
   return String(value ?? "").trim();
@@ -88,6 +95,13 @@ function setDefaultEnvValueIfPresent(targetEnv, key, value) {
   if (normalized) {
     setDefaultEnvValue(targetEnv, key, normalized);
   }
+}
+
+function removeLegacyTurboEnv(targetEnv) {
+  for (const key of LEGACY_TURBO_ENV_KEYS) {
+    delete targetEnv[key];
+  }
+  return targetEnv;
 }
 
 function setDerivedPathEnvValue(targetEnv, key, value, { cwd, explicitVolatileRoot }) {
@@ -265,10 +279,6 @@ function resolveCtxCacheLayout({ cwd = process.cwd(), env = process.env } = {}) 
   const cacheDir = sanitizeExplicitSubdir(env.CTX_VOLATILE_CACHE_DIR, ["cache"]);
   const cargoHome = sanitizeExplicitPath(env.CARGO_HOME, path.join(cacheDir, "cargo-home"));
   const sccacheDir = sanitizeExplicitPath(env.SCCACHE_DIR, path.join(cacheDir, "sccache"));
-  const turboCacheDir = sanitizeExplicitPath(
-    env.TURBO_CACHE_DIR,
-    path.join(cacheDir, "turbo", DEFAULT_REPO_CACHE_SLUG),
-  );
   const bazelDiskCacheDir = sanitizeExplicitPath(
     env.CTX_BAZEL_DISK_CACHE_DIR,
     path.join(cacheDir, "bazel-disk", DEFAULT_REPO_CACHE_SLUG),
@@ -311,7 +321,6 @@ function resolveCtxCacheLayout({ cwd = process.cwd(), env = process.env } = {}) 
     cacheDir,
     cargoHome,
     sccacheDir,
-    turboCacheDir,
     bazelDiskCacheDir,
     bazelRepositoryCacheDir,
     bazelOutputUserRoot,
@@ -343,7 +352,6 @@ function ensureCacheLayout(layout, { includeTargets = true } = {}) {
     layout.cacheDir,
     layout.cargoHome,
     layout.sccacheDir,
-    layout.turboCacheDir,
     layout.bazelDiskCacheDir,
     layout.bazelRepositoryCacheDir,
     layout.bazelOutputUserRoot,
@@ -394,7 +402,7 @@ function buildCtxCacheEnv({
   mode = "workspace",
   mkdir = false,
 } = {}) {
-  const baseEnv = { ...env };
+  const baseEnv = removeLegacyTurboEnv({ ...env });
   if (
     !trimValue(baseEnv.CTX_CACHE_SCOPE_KEY)
     && !trimValue(baseEnv.CTX_SESSION_ID)
@@ -435,10 +443,6 @@ function buildCtxCacheEnv({
       explicitVolatileRoot,
     });
     setDerivedPathEnvValue(resolvedEnv, "SCCACHE_DIR", layout.sccacheDir, {
-      cwd,
-      explicitVolatileRoot,
-    });
-    setDerivedPathEnvValue(resolvedEnv, "TURBO_CACHE_DIR", layout.turboCacheDir, {
       cwd,
       explicitVolatileRoot,
     });
@@ -500,13 +504,6 @@ function buildCtxCacheEnv({
         cwd,
         explicitVolatileRoot,
       });
-    }
-
-    const turboApi = trimValue(baseEnv.TURBO_API);
-    const turboToken = trimValue(baseEnv.TURBO_TOKEN);
-    const turboTeam = trimValue(baseEnv.TURBO_TEAM);
-    if (!trimValue(resolvedEnv.TURBO_CACHE_MODE) && turboApi && turboToken && turboTeam) {
-      resolvedEnv.TURBO_CACHE_MODE = "local:rw,remote:rw";
     }
 
     const remoteSccacheBucket =
@@ -622,7 +619,7 @@ function buildCtxCacheEnv({
     }
 
     return {
-      env: resolvedEnv,
+      env: removeLegacyTurboEnv(resolvedEnv),
       layout,
       cargoTargetDir: resolvedEnv.CARGO_TARGET_DIR,
     };
@@ -679,10 +676,12 @@ module.exports = {
   DEFAULT_EXTERNAL_CACHE_ROOT,
   DEFAULT_INTERNAL_VOLATILE_ROOT,
   DEFAULT_REPO_CACHE_SLUG,
+  LEGACY_TURBO_ENV_KEYS,
   buildCtxCacheEnv,
   ensureCacheLayout,
   formatShellExports,
   isWritablePath,
+  removeLegacyTurboEnv,
   resolveAvailableSccachePath,
   resolveConfiguredPath,
   resolveCtxCacheLayout,

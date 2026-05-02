@@ -215,10 +215,7 @@ async fn proxy_http_message(
             builder = builder.header(key, val);
         }
     }
-    let body = match resp.bytes().await {
-        Ok(bytes) => bytes,
-        Err(_) => Bytes::new(),
-    };
+    let body = resp.bytes().await.unwrap_or_default();
     builder
         .body(Body::from(body))
         .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())

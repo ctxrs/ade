@@ -196,14 +196,11 @@ pub(crate) async fn ensure_mount(target: &Path, source: &Path, mode: AttachmentM
                     .await??;
                 tokio::fs::remove_dir_all(target).await?;
             }
-        } else {
-            if mode == AttachmentMode::Rw {
-                let target = target.to_path_buf();
-                let target_for_clear = target.clone();
-                tokio::task::spawn_blocking(move || clear_read_only_mode(&target_for_clear))
-                    .await??;
-                tokio::fs::remove_file(target).await?;
-            }
+        } else if mode == AttachmentMode::Rw {
+            let target = target.to_path_buf();
+            let target_for_clear = target.clone();
+            tokio::task::spawn_blocking(move || clear_read_only_mode(&target_for_clear)).await??;
+            tokio::fs::remove_file(target).await?;
         }
         if meta.file_type().is_symlink() && mode == AttachmentMode::Rw {
             tokio::fs::remove_file(target).await?;

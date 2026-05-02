@@ -131,6 +131,12 @@ const BAZEL_BUILD_TARGETS_BY_CRATE = Object.freeze({
   "ctx-workspace-runtime": ["//core/crates/ctx-workspace-runtime:lib"],
 });
 
+function getBazelClippyTargetsForCrates(crateNames) {
+  // Keep clippy on explicit labels so Linux RBE partitioning can keep known-safe
+  // targets remote. Package-wide :all labels do not match the remote-safe allowlist.
+  return getBazelBuildTargetsForCrates(crateNames);
+}
+
 const LINUX_RBE_UNSAFE_BAZEL_TEST_TARGETS = Object.freeze(
   new Set([
     // This target pulls a Darwin-hosted Rust toolchain helper, which cannot execute on the
@@ -216,6 +222,7 @@ module.exports = {
   BAZEL_TEST_TARGETS_BY_CRATE,
   buildLinuxRbeSafeBazelTestTargets,
   getBazelBuildTargetsForCrates,
+  getBazelClippyTargetsForCrates,
   getBazelCoveredCrates,
   getLinuxRbeSafeBazelTargets,
   getBazelTestTargetsForCrates,

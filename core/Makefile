@@ -77,7 +77,6 @@ DEV_MALLOC_CONF_ENV := $(if $(CTX_DAEMON_MALLOC_CONF),MALLOC_CONF=$(CTX_DAEMON_M
 DEV_MALLOC_CONF_SETENV := $(if $(CTX_DAEMON_MALLOC_CONF),--setenv MALLOC_CONF=$(CTX_DAEMON_MALLOC_CONF))
 DEV_DAEMON_FEATURES := $(if $(CTX_DAEMON_FEATURES),--features $(CTX_DAEMON_FEATURES))
 LOCAL_CODEX_CRP_ENABLED = $(if $(filter 1 true TRUE yes YES on ON,$(CTX_INSTALL_LOCAL_CODEX_CRP)),1,0)
-DEV_CRP_TURBO_TASKS = crp:claude $(if $(filter 1,$(LOCAL_CODEX_CRP_ENABLED)),crp:codex,)
 
 ifeq ($(SUPABASE_PROD),1)
   SUPABASE_LOCAL := 0
@@ -100,7 +99,8 @@ ifeq ($(SUPABASE_FUNCTIONS),1)
 endif
 
 dev: dev-preflight supabase-local supabase-functions
-	@CTX_CRP_PROFILE="$(CTX_CRP_PROFILE)" pnpm turbo run $(DEV_CRP_TURBO_TASKS) --filter=ctx-monorepo --cache-dir=$${TURBO_CACHE_DIR:-$$HOME/.cache/turbo/ctx-monorepo} --output-logs=new-only --log-order=grouped --concurrency=1 --ui=stream --cache=local:r,remote:r
+	@CTX_CRP_PROFILE="$(CTX_CRP_PROFILE)" pnpm crp:claude
+	@if [ "$(LOCAL_CODEX_CRP_ENABLED)" = "1" ]; then CTX_CRP_PROFILE="$(CTX_CRP_PROFILE)" pnpm crp:codex; fi
 	@CTX_DATA_DIR=$(CTX_DAEMON_DATA_DIR) CTX_CRP_PROFILE="$(CTX_CRP_PROFILE)" CTX_INSTALL_LOCAL_CODEX_CRP="$(CTX_INSTALL_LOCAL_CODEX_CRP)" ../scripts/dev_install_crp_harnesses.sh
 	@$(CTX_CACHE_EXPORT_CMD); \
 	$(CTX_CACHE_RUN) cargo build -p ctx-mcp

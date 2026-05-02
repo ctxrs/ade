@@ -7,6 +7,7 @@ const test = require("node:test");
 const {
   DEFAULT_BUILD_TARGETS,
   DEFAULT_TEST_TARGETS,
+  RUST_CLIPPY_BAZEL_ARGS,
   bazeliskBinaryPath,
   commandExists,
   buildBuildBuddyAuthArgs,
@@ -20,6 +21,8 @@ const {
   parseBazelTestTimeoutSeconds,
   parsePositiveIntegerEnv,
   parseRemoteExecutionMode,
+  resolveLocalTestJobs,
+  resolveRemoteExecutionMode,
   resolvePhaseBudgetKey,
   resolveBazeliskCommand,
   runBazelPilotInvocationPhases,
@@ -32,6 +35,11 @@ const PARENT_BAZEL_ENV_KEYS = [
   "CTX_BAZEL_REMOTE_EXECUTION",
   "CTX_BAZEL_REPOSITORY_CACHE_DIR",
   "CTX_CACHE_SCOPE_KEY",
+  "CTX_CACHE_ENV_MANAGED_TURBO_CACHE_DIR",
+  "TURBO_API",
+  "TURBO_CACHE_DIR",
+  "TURBO_TEAM",
+  "TURBO_TOKEN",
 ];
 
 for (const key of PARENT_BAZEL_ENV_KEYS) {
@@ -41,6 +49,7 @@ for (const key of PARENT_BAZEL_ENV_KEYS) {
 test("bazel pilot defaults to the expanded Rust slice test targets", () => {
   assert.deepEqual(parseArgs([]), {
     command: "test",
+    rustClippy: false,
     targets: DEFAULT_TEST_TARGETS,
   });
 });
@@ -48,6 +57,7 @@ test("bazel pilot defaults to the expanded Rust slice test targets", () => {
 test("bazel pilot build defaults to the expanded Rust slice library targets", () => {
   assert.deepEqual(parseArgs(["build"]), {
     command: "build",
+    rustClippy: false,
     targets: DEFAULT_BUILD_TARGETS,
   });
 });
@@ -65,6 +75,18 @@ test("bazel pilot run separates Bazel targets from post-run args", () => {
     targets: ["//core/apps/web:lint"],
     runArgs: ["--fix"],
   });
+});
+
+test("bazel pilot parses rust clippy build mode", () => {
+  assert.deepEqual(parseArgs(["build", "--rust-clippy", "//core/crates/ctx-core:lib"]), {
+    command: "build",
+    rustClippy: true,
+    targets: ["//core/crates/ctx-core:lib"],
+  });
+  assert.throws(
+    () => parseArgs(["test", "--rust-clippy", "//core/crates/ctx-core:unit_tests"]),
+    /--rust-clippy is only supported/,
+  );
 });
 
 test("bazel pilot invocation stays on the volatile cache layout", () => {
@@ -105,6 +127,48 @@ test("bazel pilot invocation stays on the volatile cache layout", () => {
   assert.equal(invocation.phases[0].commandArgs.some((entry) => entry.startsWith("--invocation_id=")), false);
 });
 
+test("bazel pilot rust clippy mode forwards rules_rust aspect args", () => {
+  const invocation = buildBazelPilotInvocation({
+    argv: ["build", "--rust-clippy", "//core/crates/ctx-core:lib"],
+    env: {
+      ...process.env,
+      CTX_BAZEL_REMOTE_EXECUTION: "off",
+      CTX_VOLATILE_ROOT: "/tmp/ctx-bazel-pilot-clippy",
+      CTX_SESSION_ID: "bazel-clippy-session",
+    },
+  });
+
+  assert.equal(invocation.rustClippy, true);
+  for (const arg of RUST_CLIPPY_BAZEL_ARGS) {
+    assert.equal(invocation.commandArgs.includes(arg), true);
+    assert.equal(invocation.phases[0].commandArgs.includes(arg), true);
+  }
+  assert.deepEqual(invocation.targets, ["//core/crates/ctx-core:lib"]);
+});
+
+test("bazel pilot scrubs retired Turbo env before spawning Bazel", () => {
+  const invocation = buildBazelPilotInvocation({
+    argv: ["test", "//core/packages/session-supervisor-core:unit_tests"],
+    env: {
+      ...process.env,
+      CTX_BAZEL_REMOTE_EXECUTION: "off",
+      CTX_VOLATILE_ROOT: "/tmp/ctx-bazel-pilot-no-turbo",
+      CTX_SESSION_ID: "bazel-no-turbo-session",
+      CTX_CACHE_ENV_MANAGED_TURBO_CACHE_DIR: "1",
+      TURBO_API: "https://example.invalid",
+      TURBO_CACHE_DIR: "/tmp/legacy-turbo",
+      TURBO_TEAM: "legacy-team",
+      TURBO_TOKEN: "legacy-token",
+    },
+  });
+
+  assert.equal(invocation.env.CTX_CACHE_ENV_MANAGED_TURBO_CACHE_DIR, undefined);
+  assert.equal(invocation.env.TURBO_API, undefined);
+  assert.equal(invocation.env.TURBO_CACHE_DIR, undefined);
+  assert.equal(invocation.env.TURBO_TEAM, undefined);
+  assert.equal(invocation.env.TURBO_TOKEN, undefined);
+});
+
 test("bazel pilot batch mode defaults on darwin and can be overridden explicitly", () => {
   assert.equal(parseBatchMode(undefined, { platform: "darwin" }), true);
   assert.equal(parseBatchMode(undefined, { platform: "linux" }), false);
@@ -117,6 +181,8 @@ test("bazel pilot remote execution mode parsing supports cache, off, all, linux,
     process.platform === "darwin" ? "cache" : process.platform === "linux" ? "linux" : "off";
   assert.equal(parseRemoteExecutionMode(undefined), defaultMode);
   assert.equal(parseRemoteExecutionMode(""), defaultMode);
+  assert.equal(parseRemoteExecutionMode("", { platform: "darwin" }), "cache");
+  assert.equal(parseRemoteExecutionMode("", { platform: "linux" }), "linux");
   assert.equal(parseRemoteExecutionMode("cache"), "cache");
   assert.equal(parseRemoteExecutionMode("off"), "off");
   assert.equal(parseRemoteExecutionMode("false"), "off");
@@ -125,6 +191,35 @@ test("bazel pilot remote execution mode parsing supports cache, off, all, linux,
   assert.equal(parseRemoteExecutionMode("linux"), "linux");
   assert.equal(parseRemoteExecutionMode("darwin"), "darwin");
   assert.equal(parseRemoteExecutionMode("macos"), "darwin");
+});
+
+test("bazel pilot disables BuildBuddy by default for oversized Darwin web tests", () => {
+  assert.equal(resolveRemoteExecutionMode({
+    command: "test",
+    platform: "darwin",
+    targets: ["//core/apps/web:unit_tests_non_pretext"],
+  }), "off");
+  assert.equal(resolveRemoteExecutionMode({
+    command: "test",
+    platform: "darwin",
+    targets: ["//core/apps/web/e2e:premerge_required"],
+  }), "off");
+  assert.equal(resolveRemoteExecutionMode({
+    command: "test",
+    platform: "darwin",
+    targets: ["//core/packages/session-supervisor-core:unit_tests"],
+  }), "cache");
+  assert.equal(resolveRemoteExecutionMode({
+    command: "test",
+    env: { CTX_BAZEL_REMOTE_EXECUTION: "cache" },
+    platform: "darwin",
+    targets: ["//core/apps/web:unit_tests_non_pretext"],
+  }), "cache");
+  assert.equal(resolveRemoteExecutionMode({
+    command: "test",
+    platform: "linux",
+    targets: ["//core/apps/web:unit_tests_non_pretext"],
+  }), "linux");
 });
 
 test("bazel pilot auth args stay empty without a BuildBuddy API key", () => {
@@ -186,6 +281,51 @@ test("bazel pilot forwards local test job caps for test invocations", () => {
 
   assert.equal(invocation.commandArgs.includes("--local_test_jobs=3"), true);
   assert.equal(invocation.phases[0].commandArgs.includes("--local_test_jobs=3"), true);
+});
+
+test("bazel pilot serializes the oversized web non-pretext target on Darwin by default", () => {
+  const invocation = buildBazelPilotInvocation({
+    argv: ["test", "//core/apps/web:unit_tests_non_pretext"],
+    platform: "darwin",
+    env: {
+      ...process.env,
+      CTX_VOLATILE_ROOT: "/tmp/ctx-bazel-pilot-darwin-web-non-pretext",
+      CTX_SESSION_ID: "bazel-darwin-web-non-pretext-session",
+    },
+  });
+
+  assert.equal(resolveLocalTestJobs({
+    command: "test",
+    platform: "darwin",
+    targets: ["//core/apps/web:unit_tests_non_pretext"],
+  }), 1);
+  assert.equal(invocation.remoteExecutionMode, "off");
+  assert.equal(invocation.commandArgs.includes("--local_test_jobs=1"), true);
+  assert.equal(invocation.phases[0].commandArgs.includes("--local_test_jobs=1"), true);
+});
+
+test("bazel pilot keeps Linux web non-pretext target parallel unless explicitly capped", () => {
+  const invocation = buildBazelPilotInvocation({
+    argv: ["test", "//core/apps/web:unit_tests_non_pretext"],
+    platform: "linux",
+    env: {
+      ...process.env,
+      CTX_BAZEL_REMOTE_EXECUTION: "off",
+      CTX_VOLATILE_ROOT: "/tmp/ctx-bazel-pilot-linux-web-non-pretext",
+      CTX_SESSION_ID: "bazel-linux-web-non-pretext-session",
+    },
+  });
+
+  assert.equal(resolveLocalTestJobs({
+    command: "test",
+    platform: "linux",
+    targets: ["//core/apps/web:unit_tests_non_pretext"],
+  }), null);
+  assert.equal(invocation.commandArgs.some((entry) => entry.startsWith("--local_test_jobs=")), false);
+  assert.equal(
+    invocation.phases[0].commandArgs.some((entry) => entry.startsWith("--local_test_jobs=")),
+    false,
+  );
 });
 
 test("bazel pilot applies a bounded Bazel test timeout for verification parent runs", () => {

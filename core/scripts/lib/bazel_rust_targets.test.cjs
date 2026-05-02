@@ -5,6 +5,7 @@ const { getCtxHttpSuiteTargets } = require("./ctx_http_suites.cjs");
 const {
   buildLinuxRbeSafeBazelTestTargets,
   getBazelBuildTargetsForCrates,
+  getBazelClippyTargetsForCrates,
   getBazelCoveredCrates,
   getBazelTestTargetsForCrates,
   partitionBazelTargetsForLinuxRbe,
@@ -231,6 +232,42 @@ test("Bazel build target mapping expands per-crate libraries deterministically",
       "//core/tools/load-test:ctx-load-test",
     ],
   );
+});
+
+test("Bazel clippy target mapping expands crates to explicit build targets", () => {
+  assert.deepEqual(
+    getBazelClippyTargetsForCrates([
+      "ctx-core",
+      "ctx-http",
+      "ctx-load-test",
+      "ctx-core",
+    ]),
+    [
+      "//core/crates/ctx-core:lib",
+      "//core/crates/ctx-http:ctx",
+      "//core/crates/ctx-http:lib",
+      "//core/tools/load-test:ctx-load-test",
+    ],
+  );
+});
+
+test("Bazel clippy target mapping stays eligible for Linux RBE partitioning", () => {
+  const { remoteTargets, localTargets } = partitionBazelTargetsForLinuxRbe(
+    "build",
+    getBazelClippyTargetsForCrates(["ctx-core"]),
+  );
+  assert.deepEqual(remoteTargets, ["//core/crates/ctx-core:lib"]);
+  assert.deepEqual(localTargets, []);
+});
+
+test("all Bazel-covered Rust crates have clippy build targets", () => {
+  for (const crateName of getBazelCoveredCrates()) {
+    assert.notDeepEqual(
+      getBazelClippyTargetsForCrates([crateName]),
+      [],
+      `${crateName} should map to at least one clippy package target`,
+    );
+  }
 });
 
 test("linux RBE keeps Darwin-incompatible guest-agent tests local", () => {

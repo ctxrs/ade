@@ -99,7 +99,7 @@ const PROFILES = [
         "repo-contracts.source-file-size",
         "repo-contracts.testing-taxonomy-check",
         "build-graph.rust-bazel-deps-check",
-        "build-graph.rust-turbo-check",
+        "build-graph.rust-package-scripts-check",
         "web-workbench.web-premerge-required",
       ],
       includeSurfaces: ["compile", "contract", "unit", "integration", "system"],

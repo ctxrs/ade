@@ -15,7 +15,7 @@
     }
   },
   "scripts": {
-    "typecheck": "tsc --noEmit --incremental --tsBuildInfoFile .turbo/tsbuildinfo/session-thread-layout.tsbuildinfo"
+    "typecheck": "tsc --noEmit --incremental --tsBuildInfoFile node_modules/.cache/tsbuildinfo/session-thread-layout.tsbuildinfo"
   },
   "dependencies": {
     "@chenglou/pretext": "^0.0.4",

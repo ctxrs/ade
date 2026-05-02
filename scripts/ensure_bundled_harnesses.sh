@@ -720,7 +720,6 @@ ignored = {
     "node_modules",
     "target",
     ".next",
-    ".turbo",
     "coverage",
 }
 

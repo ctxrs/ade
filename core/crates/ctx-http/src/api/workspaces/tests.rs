@@ -80,7 +80,7 @@ async fn get_worktree_returns_live_root_for_bound_sandbox_worktree() {
         .await
         .expect("upsert worktree index");
 
-    let Json(response) = get_worktree(State(state), Path(worktree.id.0.to_string()))
+    let Json(response) = get_worktree(State(state.clone()), Path(worktree.id.0.to_string()))
         .await
         .expect("get worktree");
 
@@ -90,4 +90,5 @@ async fn get_worktree_returns_live_root_for_bound_sandbox_worktree() {
     );
     assert_eq!(response.id, worktree.id);
     assert_eq!(response.workspace_id, worktree.workspace_id);
+    let _ = state.core.shutdown_tx.send(());
 }

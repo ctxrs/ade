@@ -19,7 +19,7 @@
     }
   },
   "scripts": {
-    "typecheck": "tsc --noEmit --incremental --tsBuildInfoFile .turbo/tsbuildinfo/ctx-design.tsbuildinfo"
+    "typecheck": "tsc --noEmit --incremental --tsBuildInfoFile node_modules/.cache/tsbuildinfo/ctx-design.tsbuildinfo"
   },
   "devDependencies": {
     "@types/react": "~19.1.0",

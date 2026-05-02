@@ -18,7 +18,6 @@ const EXCLUDED_PARTS = new Set([
   "build",
   ".next",
   "coverage",
-  ".turbo",
   ".cache",
 ]);
 const TEST_PATH_SEGMENTS = new Set(["tests", "__tests__", "e2e", "automation"]);

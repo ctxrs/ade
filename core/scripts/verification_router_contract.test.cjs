@@ -17,7 +17,7 @@ test("verify:touched adds source invariants to the targeted Rust gate plan", () 
 
   assert.deepEqual(plan.commands, [
     "pnpm source:file-size:report",
-    "pnpm rust:turbo:check",
+    "pnpm rust:package-scripts:check",
     "pnpm exec node scripts/run_rust_gate.cjs --mode workspace --include-reverse-deps --clippy --test-strategy mixed --changed-file core/crates/ctx-provider-accounts/src/lib.rs",
   ]);
 });
@@ -31,7 +31,7 @@ test("verify:affected broadens the canonical Rust leaf beyond verify:touched", (
 
   assert.deepEqual(plan.commands, [
     "pnpm source:file-size:report",
-    "pnpm rust:turbo:check",
+    "pnpm rust:package-scripts:check",
     "node scripts/ctx_http_suite_task.cjs --suite provider-auth",
     "node scripts/ctx_http_suite_task.cjs --suite provider-runtime-simulated",
     "pnpm exec node scripts/run_rust_gate.cjs --mode workspace --include-reverse-deps --clippy --test-strategy mixed --crate ctx-provider-accounts",
@@ -46,7 +46,7 @@ test("verify:touched routes root Bazel graph changes through Rust build graph ch
   });
 
   assert.equal(plan.commands[0], "pnpm rust:bazel-deps:check");
-  assert.equal(plan.commands[1], "pnpm rust:turbo:check");
+  assert.equal(plan.commands[1], "pnpm rust:package-scripts:check");
   assert.equal(
     plan.commands[2],
     "pnpm exec node scripts/run_rust_gate.cjs --mode workspace --include-reverse-deps --clippy --test-strategy mixed --changed-file MODULE.bazel",
@@ -61,7 +61,7 @@ test("verify:affected routes root Bazel graph changes through generated deps and
   });
 
   assert.equal(plan.commands[0], "pnpm rust:bazel-deps:check");
-  assert.equal(plan.commands[1], "pnpm rust:turbo:check");
+  assert.equal(plan.commands[1], "pnpm rust:package-scripts:check");
   assert.match(
     plan.commands[2],
     /^pnpm exec node scripts\/run_rust_gate\.cjs --mode workspace --include-reverse-deps --clippy --test-strategy mixed --crate /u,
@@ -358,7 +358,7 @@ test("verify:affected routes ctx-http suite runner edits through tooling coverag
 
   assert.equal(plan.commands[0], "node --test scripts/verification_git_changes.test.cjs scripts/verification_router_contract.test.cjs scripts/verification_run_store.test.cjs scripts/sdlc_verify_metrics_report.test.cjs scripts/run_bazel_pilot.test.cjs scripts/ctx_http_suite_task.test.cjs scripts/lib/ctx_http_suites.test.cjs scripts/ctx_http_bazel_contract.test.cjs scripts/testing_tiers_contract.test.cjs scripts/test_taxonomy_execution_contract.test.cjs scripts/managed_runtime_mirror.test.cjs scripts/affected_tests_contract.test.cjs");
   assert.equal(plan.commands[1], "pnpm rust:bazel-deps:check");
-  assert.equal(plan.commands[2], "pnpm rust:turbo:check");
+  assert.equal(plan.commands[2], "pnpm rust:package-scripts:check");
   assert.deepEqual(plan.commands.slice(3, 23), [
     "node scripts/ctx_http_suite_task.cjs --suite attachments-routing",
     "node scripts/ctx_http_suite_task.cjs --suite bin-tests",

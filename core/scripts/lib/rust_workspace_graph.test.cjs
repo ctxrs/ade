@@ -3,13 +3,14 @@ const path = require("node:path");
 const test = require("node:test");
 
 const {
+  MANUAL_ONLY_RUST_CRATES,
   buildGeneratedPackageScripts,
-  buildGeneratedTurboTasks,
   buildWorkspaceGraph,
   collectChangedCrates,
   expandReverseDependencies,
   getCtxHttpSuiteTaskName,
-  getTurboTaskNamesForCrates,
+  getPackageScriptNamesForCrates,
+  getPackageTaskCommandsForCrates,
 } = require("./rust_workspace_graph.cjs");
 
 const coreRoot = path.resolve(__dirname, "../..");
@@ -61,98 +62,53 @@ test("generated package scripts include per-crate and ctx-http suite tasks", () 
   const graph = buildWorkspaceGraph(coreRoot);
   const scripts = buildGeneratedPackageScripts(graph);
 
+  assert.equal(scripts["rust:package-scripts:sync"], "node scripts/sync_rust_package_scripts.cjs");
+  assert.equal(scripts["rust:package-scripts:check"], "node scripts/sync_rust_package_scripts.cjs --check");
   assert.equal(typeof scripts["rust:crate:clippy:ctx-http"], "string");
-  assert.equal(typeof scripts["rust:crate:test:ctx-http"], "string");
+  assert.equal(scripts["rust:crate:test:ctx-http"], "node scripts/ctx_http_suite_task.cjs --suite all");
   assert.equal(typeof scripts["rust:crate:nextest:ctx-http"], "string");
   assert.equal(typeof scripts["rust:ctx-http:test:workspace-stream"], "string");
 });
 
-test("generated turbo tasks include dependency-closure inputs", () => {
-  const graph = buildWorkspaceGraph(coreRoot);
-  const tasks = buildGeneratedTurboTasks(graph);
-  const ctxHttpProviderAuthSuiteTask = tasks["rust:ctx-http:test:provider-auth"];
-
-  assert.equal(ctxHttpProviderAuthSuiteTask.inputs.includes("crates/ctx-provider-auth-import/**"), true);
-  assert.equal(ctxHttpProviderAuthSuiteTask.inputs.includes("crates/ctx-http/src/api/providers/imports.rs"), true);
-  assert.equal(
-    ctxHttpProviderAuthSuiteTask.inputs.includes("crates/ctx-http/src/workspace_runtime/**"),
-    false,
-  );
-  assert.equal(ctxHttpProviderAuthSuiteTask.inputs.includes("crates/ctx-http/src/api/buffers_api.rs"), false);
-  assert.equal(ctxHttpProviderAuthSuiteTask.inputs.includes("scripts/ctx_http_suite_task.cjs"), true);
-
-  const ctxHttpWorkspaceStreamSuiteTask = tasks["rust:ctx-http:test:workspace-stream"];
-  assert.equal(
-    ctxHttpWorkspaceStreamSuiteTask.inputs.includes(
-      "crates/ctx-workspace-active-snapshot/**",
-    ),
-    true,
-  );
-  assert.equal(
-    ctxHttpWorkspaceStreamSuiteTask.inputs.includes(
-      "crates/ctx-http/src/workspace_active_snapshot/**",
-    ),
-    false,
-  );
-});
-
-test("generated turbo tasks include extracted dependency crates for affected ctx-http suites", () => {
-  const graph = buildWorkspaceGraph(coreRoot);
-  const tasks = buildGeneratedTurboTasks(graph);
-
-  const providerRuntimeSimulatedTask = tasks["rust:ctx-http:test:provider-runtime-simulated"];
-  assert.equal(
-    providerRuntimeSimulatedTask.inputs.includes("crates/ctx-execution-runtime/**"),
-    true,
-  );
-  assert.equal(
-    providerRuntimeSimulatedTask.inputs.includes("crates/ctx-workspace-runtime/**"),
-    true,
-  );
-  const providerRuntimeLiveTask = tasks["rust:ctx-http:test:provider-runtime-live"];
-  assert.equal(
-    providerRuntimeLiveTask.inputs.includes("crates/ctx-execution-runtime/**"),
-    true,
-  );
-  assert.equal(
-    providerRuntimeLiveTask.inputs.includes("crates/ctx-workspace-runtime/**"),
-    true,
-  );
-
-  const sandboxRuntimeSimulatedTask = tasks["rust:ctx-http:test:sandbox-runtime-simulated"];
-  assert.equal(
-    sandboxRuntimeSimulatedTask.inputs.includes("crates/ctx-execution-runtime/**"),
-    true,
-  );
-  assert.equal(
-    sandboxRuntimeSimulatedTask.inputs.includes("crates/ctx-workspace-runtime/**"),
-    true,
-  );
-  const sandboxRuntimeContainerTask = tasks["rust:ctx-http:test:sandbox-runtime-container-e2e"];
-  assert.equal(
-    sandboxRuntimeContainerTask.inputs.includes("crates/ctx-execution-runtime/**"),
-    true,
-  );
-  assert.equal(
-    sandboxRuntimeContainerTask.inputs.includes("crates/ctx-workspace-runtime/**"),
-    true,
-  );
-  const providerAuthTask = tasks["rust:ctx-http:test:provider-auth"];
-  assert.equal(
-    providerAuthTask.inputs.includes("crates/ctx-provider-install/**"),
-    true,
-  );
-});
-
 test("ctx-http test expansion returns explicit suite task names", () => {
-  const taskNames = getTurboTaskNamesForCrates(
+  const taskNames = getPackageScriptNamesForCrates(
     ["ctx-http"],
     ["test"],
   );
 
+  assert.equal(taskNames.includes(getCtxHttpSuiteTaskName("bin-tests")), true);
   assert.equal(taskNames.includes(getCtxHttpSuiteTaskName("workspace-stream")), true);
   assert.equal(taskNames.includes(getCtxHttpSuiteTaskName("provider-runtime-simulated")), true);
   assert.equal(taskNames.includes(getCtxHttpSuiteTaskName("provider-runtime-live")), true);
   assert.equal(taskNames.includes(getCtxHttpSuiteTaskName("sandbox-runtime-simulated")), true);
-  assert.equal(taskNames.includes(getCtxHttpSuiteTaskName("sandbox-runtime-container-e2e")), true);
+  assert.equal(taskNames.includes(getCtxHttpSuiteTaskName("subagents-control")), true);
+});
+
+test("package task command lookup preserves generated command special cases", () => {
+  const graph = buildWorkspaceGraph(coreRoot);
+  const commands = getPackageTaskCommandsForCrates(graph, ["ctx-core", "ctx-http"], ["test"]);
+
+  assert.equal(
+    commands.some((task) => task.command === "node scripts/rust_crate_task.cjs --crate ctx-core --task test"),
+    true,
+  );
+  assert.equal(
+    commands.some((task) => task.command === "node scripts/ctx_http_suite_task.cjs --suite bin-tests"),
+    true,
+  );
+  assert.equal(
+    commands.some((task) => task.command === "node scripts/ctx_http_suite_task.cjs --suite workspace-stream"),
+    true,
+  );
+});
+
+test("manual-only Rust crates stay out of generated CI task surfaces", () => {
+  assert.equal(MANUAL_ONLY_RUST_CRATES.has("ctx-worker-gateway"), true);
+
+  const graph = buildWorkspaceGraph(coreRoot);
+  const scripts = buildGeneratedPackageScripts(graph);
+
+  assert.equal(scripts["rust:crate:clippy:ctx-worker-gateway"], undefined);
+  assert.equal(scripts["rust:crate:test:ctx-worker-gateway"], undefined);
+  assert.equal(scripts["rust:crate:nextest:ctx-worker-gateway"], undefined);
 });

@@ -35,13 +35,12 @@ copy_project_tree() {
       --exclude ".git/" \
       --exclude "node_modules/" \
       --exclude "dist/" \
-      --exclude ".turbo/" \
       "$src_dir/" "$dest_dir/"
     return
   fi
   (
     cd "$src_dir"
-    tar --exclude ".git" --exclude "node_modules" --exclude "dist" --exclude ".turbo" -cf - .
+    tar --exclude ".git" --exclude "node_modules" --exclude "dist" -cf - .
   ) | (
     cd "$dest_dir"
     tar -xf -

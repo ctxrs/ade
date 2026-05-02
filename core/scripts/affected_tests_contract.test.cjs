@@ -47,7 +47,7 @@ test("leaf Rust crate changes broaden to the affected dependency-truthful Rust f
   const commands = runScenario(["core/crates/ctx-provider-accounts/src/lib.rs"]);
 
   assert.deepEqual(commands, [
-    "bash -lc pnpm rust:turbo:check",
+    "bash -lc pnpm rust:package-scripts:check",
     "bash -lc node scripts/ctx_http_suite_task.cjs --suite provider-auth --suite provider-runtime-simulated",
     "bash -lc pnpm exec node scripts/run_rust_gate.cjs --mode workspace --include-reverse-deps --clippy --test-strategy mixed --crate ctx-provider-accounts",
   ]);
@@ -65,7 +65,7 @@ test("ctx-providers changes expand into affected dependency-truthful Rust and su
   const commands = runScenario(["core/crates/ctx-providers/src/lib.rs"]);
 
   assert.deepEqual(commands, [
-    "bash -lc pnpm rust:turbo:check",
+    "bash -lc pnpm rust:package-scripts:check",
     "bash -lc node scripts/ctx_http_suite_task.cjs --suite provider-auth --suite provider-runtime-simulated --suite sandbox-runtime-simulated",
     "bash -lc pnpm exec node scripts/run_rust_gate.cjs --mode workspace --include-reverse-deps --clippy --test-strategy mixed --crate ctx-providers",
   ]);
@@ -163,7 +163,7 @@ test("root-level Rust config changes expand to the affected workspace Rust gate 
   const commands = runScenario(["core/Cargo.lock"]);
 
   assert.equal(commands[0], "bash -lc pnpm rust:bazel-deps:check");
-  assert.equal(commands[1], "bash -lc pnpm rust:turbo:check");
+  assert.equal(commands[1], "bash -lc pnpm rust:package-scripts:check");
   assert.equal(commands.length, 3);
   assert.match(commands[2], /^bash -lc pnpm exec node scripts\/run_rust_gate\.cjs --mode workspace --include-reverse-deps --clippy --test-strategy mixed /u);
   assert.match(commands[2], /--crate ctx-core/u);
@@ -175,7 +175,7 @@ test("root-level Rust toolchain changes expand to the affected workspace Rust ga
   const commands = runScenario(["core/rust-toolchain.toml"]);
 
   assert.equal(commands[0], "bash -lc pnpm rust:bazel-deps:check");
-  assert.equal(commands[1], "bash -lc pnpm rust:turbo:check");
+  assert.equal(commands[1], "bash -lc pnpm rust:package-scripts:check");
   assert.equal(commands.length, 3);
   assert.match(commands[2], /^bash -lc pnpm exec node scripts\/run_rust_gate\.cjs --mode workspace --include-reverse-deps --clippy --test-strategy mixed /u);
   assert.match(commands[2], /--crate ctx-core/u);
@@ -190,7 +190,7 @@ test("combined root-level Rust and crate changes expand to the affected workspac
   ]);
 
   assert.equal(commands[0], "bash -lc pnpm rust:bazel-deps:check");
-  assert.equal(commands[1], "bash -lc pnpm rust:turbo:check");
+  assert.equal(commands[1], "bash -lc pnpm rust:package-scripts:check");
   assert.equal(commands[2], "bash -lc node scripts/ctx_http_suite_task.cjs --suite provider-auth --suite provider-runtime-simulated");
   assert.equal(commands.length, 4);
   assert.match(commands[3], /^bash -lc pnpm exec node scripts\/run_rust_gate\.cjs --mode workspace --include-reverse-deps --clippy --test-strategy mixed /u);

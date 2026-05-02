@@ -15,7 +15,7 @@
     }
   },
   "scripts": {
-    "typecheck": "tsc --noEmit --incremental --tsBuildInfoFile .turbo/tsbuildinfo/pretext-virtualizer-interface.tsbuildinfo"
+    "typecheck": "tsc --noEmit --incremental --tsBuildInfoFile node_modules/.cache/tsbuildinfo/pretext-virtualizer-interface.tsbuildinfo"
   },
   "dependencies": {
     "@pretext-virtualizer/core": "workspace:*"

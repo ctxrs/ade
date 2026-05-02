@@ -296,8 +296,8 @@
     "sdlc:host-budget:benchmark": "node scripts/sdlc_host_budget_benchmark.cjs",
     "sdlc:verify-metrics:report": "node scripts/sdlc_verify_metrics_report.cjs",
     "sdlc:verify-metrics:report:json": "node scripts/sdlc_verify_metrics_report.cjs --json",
-    "rust:turbo:sync": "node scripts/sync_rust_turbo_tasks.cjs",
-    "rust:turbo:check": "node scripts/sync_rust_turbo_tasks.cjs --check",
+    "rust:package-scripts:sync": "node scripts/sync_rust_package_scripts.cjs",
+    "rust:package-scripts:check": "node scripts/sync_rust_package_scripts.cjs --check",
     "rust:crate:clippy:codex-crp": "node scripts/rust_crate_task.cjs --crate codex-crp --task clippy",
     "rust:crate:test:codex-crp": "node scripts/rust_crate_task.cjs --crate codex-crp --task test",
     "rust:crate:nextest:codex-crp": "node scripts/rust_crate_task.cjs --crate codex-crp --task nextest",
@@ -473,10 +473,9 @@
   "devDependencies": {
     "@bazel/bazelisk": "1.28.1",
     "@supabase/supabase-js": "2.49.1",
-    "playwright-core": "^1.57.0",
     "pixelmatch": "^7.1.0",
+    "playwright-core": "^1.57.0",
     "pngjs": "^7.0.0",
-    "turbo": "^2.3.0",
     "typescript": "^5.6.3",
     "ws": "^8.16.0"
   },

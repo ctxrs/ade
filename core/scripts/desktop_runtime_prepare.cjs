@@ -30,7 +30,6 @@ const PREP_STATE_VERSION = 3;
 const PREP_FINGERPRINT_VERSION = 1;
 const DEFAULT_IGNORED_DIR_NAMES = new Set([
   ".git",
-  ".turbo",
   "coverage",
   "dist",
   "node_modules",

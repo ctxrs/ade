@@ -15,8 +15,7 @@ Checklist:
 Invented verification:
 - \`node --test fixtures/gallery/layout/panel-spacing-contract.test.cjs fixtures/gallery/layout/wrapped-caption-measurement.test.cjs fixtures/gallery/layout/inline-label-continuation.test.cjs fixtures/gallery/layout/table-column-alignment.test.cjs fixtures/gallery/layout/picture-frame-overlap.test.cjs fixtures/gallery/layout/folded-note-expansion.test.cjs fixtures/gallery/layout/trailing-status-placement.test.cjs\`
 - Result: \`26\` sample cards, \`0\` missing
-- \`node inspect\` in \`gallery-sample-room\`
-- Result: \`11\` picture cards, \`0\` missing`;
+- The miniature gallery display is ready for another viewing`;
 
 type OverlapMetrics = {
   overlapPx: number;

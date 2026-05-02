@@ -228,10 +228,11 @@ async fn create_task_rejects_before_disk_isolated_copy_when_host_reserve_is_unre
     )
     .await;
 
+    let log = std::fs::read_to_string(&log_path).unwrap_or_default();
     assert_eq!(
         status,
         StatusCode::INSUFFICIENT_STORAGE,
-        "unexpected task creation response: {body:#?}"
+        "unexpected task creation response: {body:#?}\nsandbox log:\n{log}"
     );
     let error = body
         .get("error")
@@ -242,7 +243,6 @@ async fn create_task_rejects_before_disk_isolated_copy_when_host_reserve_is_unre
         "expected default session failure after storage admission rejection, got: {body:#?}"
     );
 
-    let log = std::fs::read_to_string(&log_path).unwrap_or_default();
     assert!(
         log.contains(&format!("volume inspect ctx-ws-{}", workspace.id.0)),
         "expected workspace volume preflight in sandbox log:\n{log}"

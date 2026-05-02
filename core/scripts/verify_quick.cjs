@@ -4,7 +4,6 @@ const childProcess = require("node:child_process");
 const path = require("node:path");
 
 const { buildCtxCacheEnv } = require("./lib/cache_roots.cjs");
-const { runTurbo } = require("./lib/turbo_runner.cjs");
 
 const coreRoot = path.resolve(__dirname, "..");
 
@@ -97,7 +96,7 @@ function main() {
   run("pnpm", ["bazel:web:lint"], env);
   run("pnpm", ["rust:fmt"], env);
   run("pnpm", ["rust:panic-traps"], env);
-  run("pnpm", ["rust:turbo:check"], env);
+  run("pnpm", ["rust:package-scripts:check"], env);
   run(
     "node",
     [
@@ -111,15 +110,8 @@ function main() {
     ],
     env,
   );
-  runTurbo({
-    coreRoot,
-    env,
-    taskNames: [
-      "supabase:migrations:check",
-      "supabase:functions:check",
-    ],
-    extraArgs: ["--filter=ctx-monorepo", "--filter=ctx-web"],
-  });
+  run("pnpm", ["supabase:migrations:check"], env);
+  run("pnpm", ["supabase:functions:check"], env);
   run("pnpm", ["bazel:web:typecheck"], env);
 }
 

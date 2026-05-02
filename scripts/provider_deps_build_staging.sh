@@ -418,15 +418,16 @@ copy_node_project_to_workspace() {
   if command -v rsync >/dev/null 2>&1; then
     rsync -a --delete \
       --exclude ".git/" \
+      --exclude ".turbo/" \
+      --exclude ".turbo-cache/" \
       --exclude "node_modules/" \
       --exclude "dist/" \
-      --exclude ".turbo/" \
       "$src_dir/" "$dest_dir/"
     return
   fi
   (
     cd "$src_dir"
-    tar --exclude ".git" --exclude "node_modules" --exclude "dist" --exclude ".turbo" -cf - .
+    tar --exclude ".git" --exclude ".turbo" --exclude ".turbo-cache" --exclude "node_modules" --exclude "dist" -cf - .
   ) | (
     cd "$dest_dir"
     tar -xf -

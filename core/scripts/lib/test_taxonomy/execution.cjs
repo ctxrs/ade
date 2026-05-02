@@ -134,7 +134,7 @@ function entryMatchesChangedFiles(entry, changedFilesOrContext, { selectionMode 
     return true;
   }
   const supportsCrateMatching = selectionMode === "touched"
-    ? entry.entrypointType === "rust-crate-gate" || entry.id === "build-graph.rust-turbo-check"
+    ? entry.entrypointType === "rust-crate-gate" || entry.id === "build-graph.rust-package-scripts-check"
     : true;
   if (
     supportsCrateMatching

@@ -7,6 +7,7 @@ const test = require("node:test");
 const {
   buildCtxCacheEnv,
   formatShellExports,
+  LEGACY_TURBO_ENV_KEYS,
   resolveCtxCacheLayout,
   resolveRepoScopeKey,
   resolveSccacheServerUds,
@@ -101,7 +102,6 @@ test("buildCtxCacheEnv sets shared cache defaults and keeps verify quick on the 
   assert.equal(env.CTX_RUST_CACHE_VERIFY_TARGET_DIR, env.CTX_VERIFY_CARGO_TARGET_DIR);
   assert.equal(env.CTX_RUST_CACHE_VOLATILE_ROOT_MODE, "explicit");
   assert.equal(env.CTX_RUST_CACHE_SCCACHE, "unconfigured");
-  assert.equal(env.TURBO_CACHE_DIR, path.join(volatileRoot, "cache", "turbo", "ctx-monorepo"));
   assert.equal(env.CTX_BAZEL_DISK_CACHE_DIR, path.join(volatileRoot, "cache", "bazel-disk", "ctx-monorepo"));
   assert.equal(
     env.CTX_BAZEL_REPOSITORY_CACHE_DIR,
@@ -123,6 +123,26 @@ test("buildCtxCacheEnv sets shared cache defaults and keeps verify quick on the 
   assert.equal(layout.volatileRootMode, "explicit");
   assert.equal(env.RUSTC_WRAPPER, undefined);
   assert.equal(env.SCCACHE_PATH, undefined);
+});
+
+test("buildCtxCacheEnv scrubs retired Turbo cache environment", () => {
+  const cwd = path.resolve(__dirname, "..", "..");
+  const { env } = buildCtxCacheEnv({
+    cwd,
+    env: {
+      CTX_VOLATILE_ROOT: path.join(os.tmpdir(), "ctx-cache-roots-no-turbo"),
+      CTX_SESSION_ID: "no-turbo-session",
+      CTX_CACHE_ENV_MANAGED_TURBO_CACHE_DIR: "1",
+      TURBO_API: "https://example.invalid",
+      TURBO_CACHE_DIR: "/tmp/old-turbo-cache",
+      TURBO_TEAM: "legacy-team",
+      TURBO_TOKEN: "legacy-token",
+    },
+  });
+
+  for (const key of LEGACY_TURBO_ENV_KEYS) {
+    assert.equal(env[key], undefined);
+  }
 });
 
 test("buildCtxCacheEnv derives a per-shell session scope when none is provided", () => {
@@ -392,22 +412,6 @@ test("buildCtxCacheEnv falls back to the internal volatile root when preferred e
   assert.equal(env.CTX_VOLATILE_ROOT, internalRoot);
   assert.equal(env.CTX_VOLATILE_ROOT_MODE, "internal-fallback");
   assert.equal(fs.existsSync(path.join(internalRoot, ".ctx-volatile-root.json")), true);
-});
-
-test("buildCtxCacheEnv derives remote turbo cache mode when the endpoint and credentials are present", () => {
-  const cwd = path.resolve(__dirname, "..", "..");
-  const volatileRoot = path.join(os.tmpdir(), "ctx-cache-roots-turbo-remote");
-  const { env } = buildCtxCacheEnv({
-    cwd,
-    env: {
-      CTX_VOLATILE_ROOT: volatileRoot,
-      TURBO_API: "https://ctx-turbo-cache.example.workers.dev",
-      TURBO_TOKEN: "turbo-token",
-      TURBO_TEAM: "turbo-team",
-    },
-  });
-
-  assert.equal(env.TURBO_CACHE_MODE, "local:rw,remote:rw");
 });
 
 test("buildCtxCacheEnv does not apply sccache env when RUSTC_WRAPPER is a non-sccache binary", () => {

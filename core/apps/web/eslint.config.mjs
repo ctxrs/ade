@@ -8,7 +8,7 @@ const webFiles = ["src/**/*.{ts,tsx}"];
 
 export default tseslint.config(
   {
-    ignores: ["coverage/**", "dist/**", "node_modules/**", "public/**", ".turbo/**"],
+    ignores: ["coverage/**", "dist/**", "node_modules/**", "public/**"],
     linterOptions: {
       reportUnusedDisableDirectives: "off",
     },

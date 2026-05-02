@@ -13,7 +13,7 @@ const {
   DEFAULT_BUILDBUDDY_API_BASE_URL,
   buildInvocationUrl,
 } = require("./lib/buildbuddy_client.cjs");
-const { resolveCtxCacheLayout } = require("./lib/cache_roots.cjs");
+const { removeLegacyTurboEnv, resolveCtxCacheLayout } = require("./lib/cache_roots.cjs");
 const {
   getBazelBuildTargetsForCrates,
   getBazelCoveredCrates,
@@ -32,6 +32,17 @@ const DEFAULT_TEST_TARGETS = getBazelTestTargetsForCrates(getBazelCoveredCrates(
 const DEFAULT_BUILD_TARGETS = getBazelBuildTargetsForCrates(getBazelCoveredCrates());
 const BAZELISK_SHIM = process.platform === "win32" ? "bazelisk.cmd" : "bazelisk";
 const BAZELISK_PACKAGE_DIR_PREFIX = "@bazel+bazelisk@";
+const DARWIN_SERIAL_TEST_TARGETS = new Set([
+  "//core/apps/web:unit_tests_non_pretext",
+]);
+const DARWIN_LOCAL_ONLY_TEST_TARGETS = new Set([
+  "//core/apps/web/e2e:premerge_required",
+  "//core/apps/web:unit_tests_non_pretext",
+]);
+const RUST_CLIPPY_BAZEL_ARGS = Object.freeze([
+  "--aspects=@rules_rust//rust:defs.bzl%rust_clippy_aspect",
+  "--output_groups=+clippy_checks",
+]);
 
 function parseBatchMode(value, { platform = process.platform } = {}) {
   if (value == null || String(value).trim() === "") {
@@ -106,13 +117,13 @@ function resolvePnpmBazeliskScript({
   return scriptPath;
 }
 
-function parseRemoteExecutionMode(value) {
+function parseRemoteExecutionMode(value, { platform = process.platform } = {}) {
   const normalized = String(value ?? "").trim().toLowerCase();
   if (!normalized) {
-    if (process.platform === "darwin") {
+    if (platform === "darwin") {
       return "cache";
     }
-    if (process.platform === "linux") {
+    if (platform === "linux") {
       return "linux";
     }
     return "off";
@@ -176,6 +187,46 @@ function parseBazelTestTimeoutSeconds(env = process.env) {
   return String(env?.CTX_VERIFY_PARENT_ENTRYPOINT || "").trim() ? 1200 : null;
 }
 
+function resolveLocalTestJobs({
+  command,
+  env = process.env,
+  platform = process.platform,
+  targets = [],
+} = {}) {
+  const explicitJobs = parsePositiveIntegerEnv(env.CTX_BAZEL_LOCAL_TEST_JOBS);
+  if (explicitJobs !== null) {
+    return explicitJobs;
+  }
+  if (
+    command === "test"
+    && platform === "darwin"
+    && targets.some((target) => DARWIN_SERIAL_TEST_TARGETS.has(target))
+  ) {
+    return 1;
+  }
+  return null;
+}
+
+function resolveRemoteExecutionMode({
+  command,
+  env = process.env,
+  platform = process.platform,
+  targets = [],
+} = {}) {
+  const explicitMode = String(env.CTX_BAZEL_REMOTE_EXECUTION ?? "").trim();
+  if (explicitMode) {
+    return parseRemoteExecutionMode(explicitMode, { platform });
+  }
+  if (
+    command === "test"
+    && platform === "darwin"
+    && targets.some((target) => DARWIN_LOCAL_ONLY_TEST_TARGETS.has(target))
+  ) {
+    return "off";
+  }
+  return parseRemoteExecutionMode(explicitMode, { platform });
+}
+
 function parseArgs(argv) {
   const [command = "test", ...rawArgs] = argv;
   if (!["build", "run", "test"].includes(command)) {
@@ -189,16 +240,29 @@ function parseArgs(argv) {
       ? { command, targets, runArgs }
       : { command, targets };
   }
+  let rustClippy = false;
+  const targets = [];
+  for (const arg of rawArgs) {
+    if (arg === "--rust-clippy") {
+      if (command !== "build") {
+        throw new Error("--rust-clippy is only supported for Bazel build invocations");
+      }
+      rustClippy = true;
+      continue;
+    }
+    targets.push(arg);
+  }
   return {
     command,
+    rustClippy,
     targets:
-      rawArgs.length > 0
-        ? rawArgs
+      targets.length > 0
+        ? targets
         : command === "build"
           ? DEFAULT_BUILD_TARGETS
           : command === "run"
             ? []
-          : DEFAULT_TEST_TARGETS,
+            : DEFAULT_TEST_TARGETS,
   };
 }
 
@@ -213,12 +277,14 @@ function buildPhaseCommandArgs({
   extraConfigArgs = [],
   bazelJobs = null,
   bazelTestTimeoutSeconds = null,
+  rustClippy = false,
 }) {
   const commandArgs = [
     command,
     `--disk_cache=${layout.bazelDiskCacheDir}`,
     `--repository_cache=${layout.bazelRepositoryCacheDir}`,
     ...extraConfigArgs,
+    ...(rustClippy ? RUST_CLIPPY_BAZEL_ARGS : []),
   ];
   if (bazelJobs != null) {
     commandArgs.push(`--jobs=${bazelJobs}`);
@@ -347,6 +413,7 @@ function buildInvocationPhases({
   command,
   layout,
   remoteExecutionMode,
+  rustClippy = false,
   targets,
   env,
 }) {
@@ -362,12 +429,13 @@ function buildInvocationPhases({
         commandArgs: buildPhaseCommandArgs({
           command,
           layout,
-          extraConfigArgs: buildBuddyConfigArgs,
-          bazelJobs,
-          bazelTestTimeoutSeconds,
-        }),
-        targets,
-      },
+        extraConfigArgs: buildBuddyConfigArgs,
+        bazelJobs,
+        bazelTestTimeoutSeconds,
+        rustClippy,
+      }),
+      targets,
+    },
     ];
   }
   if (remoteExecutionMode === "all") {
@@ -377,12 +445,13 @@ function buildInvocationPhases({
         commandArgs: buildPhaseCommandArgs({
           command,
           layout,
-          extraConfigArgs: [...buildBuddyConfigArgs, "--config=buildbuddy-rbe"],
-          bazelJobs,
-          bazelTestTimeoutSeconds,
-        }),
-        targets,
-      },
+        extraConfigArgs: [...buildBuddyConfigArgs, "--config=buildbuddy-rbe"],
+        bazelJobs,
+        bazelTestTimeoutSeconds,
+        rustClippy,
+      }),
+      targets,
+    },
     ];
   }
   if (remoteExecutionMode === "darwin") {
@@ -392,12 +461,13 @@ function buildInvocationPhases({
         commandArgs: buildPhaseCommandArgs({
           command,
           layout,
-          extraConfigArgs: [...buildBuddyConfigArgs, "--config=buildbuddy-darwin-rbe"],
-          bazelJobs,
-          bazelTestTimeoutSeconds,
-        }),
-        targets,
-      },
+        extraConfigArgs: [...buildBuddyConfigArgs, "--config=buildbuddy-darwin-rbe"],
+        bazelJobs,
+        bazelTestTimeoutSeconds,
+        rustClippy,
+      }),
+      targets,
+    },
     ];
   }
   const { remoteTargets, localTargets } = partitionBazelTargetsForLinuxRbe(command, targets);
@@ -411,6 +481,7 @@ function buildInvocationPhases({
         extraConfigArgs: [...buildBuddyConfigArgs, "--config=buildbuddy-linux-rbe"],
         bazelJobs,
         bazelTestTimeoutSeconds,
+        rustClippy,
       }),
       targets: remoteTargets,
     });
@@ -424,6 +495,7 @@ function buildInvocationPhases({
         extraConfigArgs: buildBuddyConfigArgs,
         bazelJobs,
         bazelTestTimeoutSeconds,
+        rustClippy,
       }),
       targets: localTargets,
     });
@@ -450,25 +522,32 @@ function buildBazelPilotInvocation({
   argv,
   buildBuddyApiKeyResolver = resolveBuildBuddyApiKey,
   env = process.env,
+  platform = process.platform,
 } = {}) {
+  const sanitizedEnv = removeLegacyTurboEnv({ ...env });
   const parsed = parseArgs(argv || []);
-  const { command, targets } = parsed;
+  const { command, rustClippy = false, targets } = parsed;
   const coreRoot = path.resolve(__dirname, "..");
   const repoRoot = path.resolve(coreRoot, "..");
-  const layout = resolveCtxCacheLayout({ cwd: coreRoot, env });
+  const layout = resolveCtxCacheLayout({ cwd: coreRoot, env: sanitizedEnv });
   const startupArgs = [];
-  if (parseBatchMode(env.CTX_BAZEL_BATCH)) {
+  if (parseBatchMode(sanitizedEnv.CTX_BAZEL_BATCH, { platform })) {
     startupArgs.push("--batch");
   }
   startupArgs.push(`--output_user_root=${layout.bazelOutputUserRoot}`);
-  const remoteExecutionMode = parseRemoteExecutionMode(env.CTX_BAZEL_REMOTE_EXECUTION);
+  const remoteExecutionMode = resolveRemoteExecutionMode({
+    command,
+    env: sanitizedEnv,
+    platform,
+    targets,
+  });
   const resolvedEnv = resolveBuildBuddyEnv({
     buildBuddyApiKeyResolver,
-    env,
+    env: sanitizedEnv,
     remoteExecutionMode,
   });
   let telemetry = null;
-  if (!telemetryDisabled(env)) {
+  if (!telemetryDisabled(sanitizedEnv)) {
     try {
       telemetry = createRunArtifacts({
         cwd: coreRoot,
@@ -483,8 +562,13 @@ function buildBazelPilotInvocation({
       telemetry = null;
     }
   }
-  const localTestJobs = parsePositiveIntegerEnv(env.CTX_BAZEL_LOCAL_TEST_JOBS);
-  const bazelTestTimeoutSeconds = parseBazelTestTimeoutSeconds(env);
+  const localTestJobs = resolveLocalTestJobs({
+    command,
+    env: sanitizedEnv,
+    platform,
+    targets,
+  });
+  const bazelTestTimeoutSeconds = parseBazelTestTimeoutSeconds(sanitizedEnv);
   const buildBuddyAuthArgs = buildBuildBuddyAuthArgs(resolvedEnv);
   const buildBuddyEnabled = remoteExecutionMode !== "off";
   const buildBuddyApiBaseUrl = resolveBuildBuddyApiBaseUrl(resolvedEnv);
@@ -493,8 +577,9 @@ function buildBazelPilotInvocation({
     command,
     layout,
     remoteExecutionMode,
+    rustClippy,
     targets,
-    env,
+    env: sanitizedEnv,
   }).map((phase) => {
     const buildBuddy = createBuildBuddyPhaseMetadata({
       enabled: buildBuddyEnabled,
@@ -528,12 +613,13 @@ function buildBazelPilotInvocation({
     remoteExecutionMode,
     repoRoot,
     runArgs: parsed.runArgs || [],
+    rustClippy,
     startupArgs,
     telemetry,
     targets: phaseTargets,
     env: {
       ...resolvedEnv,
-      BUILD_WORKSPACE_DIRECTORY: String(env.BUILD_WORKSPACE_DIRECTORY || repoRoot),
+      BUILD_WORKSPACE_DIRECTORY: String(sanitizedEnv.BUILD_WORKSPACE_DIRECTORY || repoRoot),
       TMPDIR: layout.tmpDir,
     },
   };
@@ -653,6 +739,7 @@ function buildBazelPilotSummary(invocation, phaseResults, exitCode) {
     exitCode,
     kind: "bazel",
     bazelTestTimeoutSeconds: invocation.bazelTestTimeoutSeconds ?? null,
+    rustClippy: Boolean(invocation.rustClippy),
     localPhaseCount: localPhases.length,
     localTargetCount: summarizeTargets("local"),
     localSpill: ["all", "linux", "darwin"].includes(String(invocation.remoteExecutionMode || "")) && localPhases.length > 0,
@@ -895,6 +982,7 @@ if (require.main === module) {
 module.exports = {
   DEFAULT_BUILD_TARGETS,
   DEFAULT_TEST_TARGETS,
+  RUST_CLIPPY_BAZEL_ARGS,
   bazeliskBinaryPath,
   commandExists,
   buildBazelPilotSpawn,
@@ -909,6 +997,8 @@ module.exports = {
   parsePositiveIntegerEnv,
   parseBatchMode,
   parseRemoteExecutionMode,
+  resolveLocalTestJobs,
+  resolveRemoteExecutionMode,
   resolvePhaseBudgetKey,
   resolveBuildBuddyApiBaseUrl,
   resolveBazeliskCommand,

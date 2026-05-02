@@ -16,21 +16,18 @@ const ROOT_RUST_INPUTS = [
   "Cargo.lock",
   "rust-toolchain.toml",
   "rustfmt.toml",
-  "clippy.toml",
   ".cargo/config.toml",
   "scripts/lib/bazel_rust_targets.cjs",
   "scripts/lib/cache_roots.cjs",
   "scripts/lib/ctx_http_suites.cjs",
-  "scripts/lib/turbo_runner.cjs",
   "scripts/lib/rust_workspace_graph.cjs",
   "scripts/lib/rust_gate_plan.cjs",
   "scripts/ctx_http_suite_task.cjs",
   "scripts/rust_bazel_deps.config.cjs",
   "scripts/rust_crate_task.cjs",
   "scripts/run_rust_gate.cjs",
-  "scripts/run_rust_turbo.cjs",
   "scripts/sync_rust_bazel_deps.cjs",
-  "scripts/sync_rust_turbo_tasks.cjs",
+  "scripts/sync_rust_package_scripts.cjs",
 ];
 
 const REPO_RUST_BUILD_GRAPH_INPUTS = [
@@ -56,18 +53,13 @@ const GENERATED_PACKAGE_SCRIPT_PREFIXES = [
 ];
 
 const GENERATED_PACKAGE_SCRIPT_NAMES = new Set([
-  "rust:turbo:sync",
-  "rust:turbo:check",
+  "rust:package-scripts:sync",
+  "rust:package-scripts:check",
 ]);
 
-const GENERATED_TURBO_TASK_PREFIXES = [
-  "rust:crate:clippy:",
-  "rust:crate:test:",
-  "rust:crate:nextest:",
-  "rust:ctx-http:test:",
-];
-
-const MANUAL_ONLY_RUST_CRATES = new Set();
+// These crates remain in the Cargo workspace for manual/local use, but the
+// default CI/release gate surface should not auto-generate tasks for them.
+const MANUAL_ONLY_RUST_CRATES = new Set(["ctx-worker-gateway"]);
 
 function runCargoMetadata(coreRoot) {
   const output = childProcess.execFileSync(
@@ -257,15 +249,15 @@ function getInputGlobsForCrates(graph, crateNames) {
   return [...new Set([...ROOT_RUST_INPUTS, ...globs])];
 }
 
-function getTurboClippyTaskName(crateName) {
+function getRustCrateClippyScriptName(crateName) {
   return `rust:crate:clippy:${crateName}`;
 }
 
-function getTurboTestTaskName(crateName) {
+function getRustCrateTestScriptName(crateName) {
   return `rust:crate:test:${crateName}`;
 }
 
-function getTurboNextestTaskName(crateName) {
+function getRustCrateNextestScriptName(crateName) {
   return `rust:crate:nextest:${crateName}`;
 }
 
@@ -303,20 +295,20 @@ function getCtxHttpSuiteInputGlobs(graph, suiteName) {
 
 function buildGeneratedPackageScripts(graph) {
   const scripts = {
-    "rust:turbo:sync": "node scripts/sync_rust_turbo_tasks.cjs",
-    "rust:turbo:check": "node scripts/sync_rust_turbo_tasks.cjs --check",
+    "rust:package-scripts:sync": "node scripts/sync_rust_package_scripts.cjs",
+    "rust:package-scripts:check": "node scripts/sync_rust_package_scripts.cjs --check",
   };
   for (const crate of getGateManagedCrates(graph)) {
-    scripts[getTurboClippyTaskName(crate.crateName)] =
+    scripts[getRustCrateClippyScriptName(crate.crateName)] =
       `node scripts/rust_crate_task.cjs --crate ${crate.crateName} --task clippy`;
     if (crate.crateName === "ctx-http") {
-      scripts[getTurboTestTaskName(crate.crateName)] =
+      scripts[getRustCrateTestScriptName(crate.crateName)] =
         "node scripts/ctx_http_suite_task.cjs --suite all";
     } else {
-      scripts[getTurboTestTaskName(crate.crateName)] =
+      scripts[getRustCrateTestScriptName(crate.crateName)] =
         `node scripts/rust_crate_task.cjs --crate ${crate.crateName} --task test`;
     }
-    scripts[getTurboNextestTaskName(crate.crateName)] =
+    scripts[getRustCrateNextestScriptName(crate.crateName)] =
       `node scripts/rust_crate_task.cjs --crate ${crate.crateName} --task nextest`;
   }
   for (const suiteName of getCtxHttpSuiteNames({ includeAll: true })) {
@@ -326,66 +318,52 @@ function buildGeneratedPackageScripts(graph) {
   return scripts;
 }
 
-function buildGeneratedTurboTasks(graph) {
-  const tasks = {};
-  for (const crate of getGateManagedCrates(graph)) {
-    const inputs = getClosureInputGlobs(graph, crate.crateName);
-    tasks[getTurboClippyTaskName(crate.crateName)] = {
-      inputs,
-      outputs: [],
-    };
-    tasks[getTurboTestTaskName(crate.crateName)] = {
-      inputs,
-      outputs: [],
-    };
-    tasks[getTurboNextestTaskName(crate.crateName)] = {
-      inputs,
-      outputs: [],
-    };
-  }
-  for (const suiteName of getCtxHttpSuiteNames({ includeAll: true })) {
-    tasks[getCtxHttpSuiteTaskName(suiteName)] = {
-      inputs: getCtxHttpSuiteInputGlobs(graph, suiteName),
-      outputs: [],
-    };
-  }
-  return tasks;
-}
-
-function getTurboTaskNamesForCrates(crateNames, taskKinds) {
-  const taskNames = [];
+function getPackageScriptNamesForCrates(crateNames, taskKinds) {
+  const scriptNames = [];
   for (const crateName of [...crateNames].sort()) {
     for (const taskKind of taskKinds) {
       if (taskKind === "clippy") {
-        taskNames.push(getTurboClippyTaskName(crateName));
+        scriptNames.push(getRustCrateClippyScriptName(crateName));
       } else if (taskKind === "test") {
         if (crateName === "ctx-http") {
           const suiteTaskNames = getCtxHttpSuiteNamesForAllTarget()
             .map((suiteName) => getCtxHttpSuiteTaskName(suiteName));
-          taskNames.push(...suiteTaskNames);
+          scriptNames.push(...suiteTaskNames);
         } else {
-          taskNames.push(getTurboTestTaskName(crateName));
+          scriptNames.push(getRustCrateTestScriptName(crateName));
         }
       } else if (taskKind === "nextest") {
-        taskNames.push(getTurboNextestTaskName(crateName));
+        scriptNames.push(getRustCrateNextestScriptName(crateName));
       } else {
         throw new Error(`unknown Rust task kind: ${taskKind}`);
       }
     }
   }
-  return taskNames;
+  return scriptNames;
+}
+
+function getPackageTaskCommandsForCrates(graph, crateNames, taskKinds) {
+  const scripts = buildGeneratedPackageScripts(graph);
+  return getPackageScriptNamesForCrates(crateNames, taskKinds).map((scriptName) => {
+    const command = scripts[scriptName];
+    if (!command) {
+      throw new Error(`missing generated package script: ${scriptName}`);
+    }
+    return {
+      command,
+      name: scriptName,
+    };
+  });
 }
 
 module.exports = {
   GENERATED_PACKAGE_SCRIPT_NAMES,
   GENERATED_PACKAGE_SCRIPT_PREFIXES,
-  GENERATED_TURBO_TASK_PREFIXES,
   MANUAL_ONLY_RUST_CRATES,
   REPO_RUST_BUILD_GRAPH_INPUT_PREFIXES,
   REPO_RUST_BUILD_GRAPH_INPUTS,
   ROOT_RUST_INPUTS,
   buildGeneratedPackageScripts,
-  buildGeneratedTurboTasks,
   buildWorkspaceGraph,
   collectChangedCrates,
   expandDependencies,
@@ -395,10 +373,11 @@ module.exports = {
   getClosureInputGlobs,
   getCrateByChangedPath,
   getGateManagedCrates,
-  getTurboClippyTaskName,
-  getTurboNextestTaskName,
-  getTurboTaskNamesForCrates,
-  getTurboTestTaskName,
+  getPackageScriptNamesForCrates,
+  getPackageTaskCommandsForCrates,
+  getRustCrateClippyScriptName,
+  getRustCrateNextestScriptName,
+  getRustCrateTestScriptName,
   isRustWorkspaceLevelInput,
   normalizePathForMatch,
   runCargoMetadata,

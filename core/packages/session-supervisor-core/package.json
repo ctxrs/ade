@@ -15,7 +15,7 @@
     }
   },
   "scripts": {
-    "typecheck": "tsc --noEmit --incremental --tsBuildInfoFile .turbo/tsbuildinfo/session-supervisor-core.tsbuildinfo"
+    "typecheck": "tsc --noEmit --incremental --tsBuildInfoFile node_modules/.cache/tsbuildinfo/session-supervisor-core.tsbuildinfo"
   },
   "devDependencies": {
     "typescript": "^5.6.3",
