@@ -4,6 +4,9 @@ const { spawnSync } = require("child_process");
 
 const { waitForTauri } = require("./helpers/tauri.cjs");
 const {
+  resolveNotificationPermissionAction,
+} = require("../notification_permission_policy.cjs");
+const {
   tauriInvoke,
   waitForDesktopAppReady,
 } = require("./helpers/container_lifecycle.cjs");
@@ -62,18 +65,25 @@ const requireSignedAppPath = () => {
   }
 };
 
-const requireNotificationPermission = async () => {
+const formatPermissionSetupMessage = (permission) =>
+  `${permissionSetupMessage} Current permission: ${String(permission)}`;
+
+const resolveNotificationPermissionForSmoke = async () => {
   let permission = await requireTauriValue("desktop_get_notification_permission");
-  if (permission === "granted") {
-    return;
+  const decision = resolveNotificationPermissionAction({
+    permission,
+    ci: isCi(),
+  });
+  if (decision.action === "proceed") {
+    return String(permission);
   }
-  if (permission === "default" && !isCi()) {
+  if (decision.action === "request") {
     permission = await requireTauriValue("desktop_request_notification_permission");
     if (permission === "granted") {
-      return;
+      return String(permission);
     }
   }
-  throw new Error(`${permissionSetupMessage} Current permission: ${String(permission)}`);
+  throw new Error(formatPermissionSetupMessage(permission));
 };
 
 const summarizeDeliveredSnapshot = (snapshot, { deepLink, title }) => {
@@ -100,7 +110,12 @@ const summarizeAutomationSnapshot = (snapshot, { expectedTaskId }) => {
   };
 };
 
-const waitForDeliveredNotification = async ({ deepLink, title, timeoutMs = 30000 }) => {
+const waitForDeliveredNotification = async ({
+  deepLink,
+  title,
+  timeoutMs = 30000,
+  permission = "",
+}) => {
   let lastSnapshot = null;
   let matched = null;
   try {
@@ -116,7 +131,14 @@ const waitForDeliveredNotification = async ({ deepLink, title, timeoutMs = 30000
     });
   } catch (error) {
     const summary = summarizeDeliveredSnapshot(lastSnapshot, { deepLink, title });
-    throw new Error(`delivered notification did not appear; lastSummary=${JSON.stringify(summary)}`, { cause: error });
+    const normalizedPermission = String(permission || "").trim().toLowerCase();
+    const permissionPrefix = normalizedPermission === "default"
+      ? `${formatPermissionSetupMessage(normalizedPermission)} `
+      : "";
+    throw new Error(
+      `${permissionPrefix}delivered notification did not appear; lastSummary=${JSON.stringify(summary)}`,
+      { cause: error },
+    );
   }
   return matched;
 };
@@ -135,7 +157,7 @@ describe("signed macOS notification smoke", () => {
     await browser.url("tauri://localhost");
     await waitForTauri();
     await waitForDesktopAppReady();
-    await requireNotificationPermission();
+    const permission = await resolveNotificationPermissionForSmoke();
     await requireTauriValue("desktop_clear_notification_automation_snapshot");
 
     const nonce = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -159,7 +181,7 @@ describe("signed macOS notification smoke", () => {
       throw new Error(`notification automation snapshot missing expected deep link; summary=${JSON.stringify(summary)}`);
     }
 
-    const delivered = await waitForDeliveredNotification({ deepLink, title });
+    const delivered = await waitForDeliveredNotification({ deepLink, title, permission });
     await requireTauriValue("desktop_clear_delivered_notification_automation_snapshot", {
       req: {
         identifiers: [delivered.identifier],
