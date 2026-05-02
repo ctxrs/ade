@@ -136,26 +136,35 @@ impl ProxyConfig {
     }
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
     let args = Args::parse();
     let file_config = match args.config.as_deref() {
         Some(path) => {
-            let raw = tokio::fs::read_to_string(path)
-                .await
-                .with_context(|| format!("reading config {path}"))?;
+            let raw =
+                std::fs::read_to_string(path).with_context(|| format!("reading config {path}"))?;
             Some(serde_json::from_str::<FileConfig>(&raw).context("parsing config")?)
         }
         None => None,
     };
-    tracing_subscriber::fmt::init();
     let config = ProxyConfig::from_args(args, file_config)?;
+    drop_to_bypass_uid(config.bypass_uid)?;
+    tracing_subscriber::fmt::init();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .context("building transparent proxy runtime")?;
+    runtime.block_on(run_proxy(config))
+}
+
+async fn run_proxy(config: ProxyConfig) -> Result<()> {
     let listener = TcpListener::bind(&config.listen)
         .await
         .with_context(|| format!("binding transparent proxy at {}", config.listen))?;
-    drop_to_bypass_uid(config.bypass_uid)?;
+    let (effective_uid, effective_gid) = effective_identity();
     tracing::info!(
         bypass_uid = config.bypass_uid,
+        effective_uid,
+        effective_gid,
         "transparent proxy running with owner bypass uid"
     );
     tracing::info!(listen = %config.listen, mode = ?config.mode, "transparent proxy listening");
@@ -229,6 +238,18 @@ fn drop_to_bypass_uid(uid: u32) -> Result<()> {
 #[cfg(not(target_os = "linux"))]
 fn drop_to_bypass_uid(_uid: u32) -> Result<()> {
     anyhow::bail!("bypass_uid is only supported on linux")
+}
+
+#[cfg(target_os = "linux")]
+fn effective_identity() -> (u32, u32) {
+    let uid = unsafe { libc::geteuid() } as u32;
+    let gid = unsafe { libc::getegid() } as u32;
+    (uid, gid)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn effective_identity() -> (u32, u32) {
+    (0, 0)
 }
 
 fn sniff_host(buf: &[u8]) -> Option<String> {

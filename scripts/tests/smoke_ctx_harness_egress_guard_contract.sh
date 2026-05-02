@@ -64,6 +64,9 @@ case "$cmd" in
         if [[ "$script" == *'ctx-egress-proxy --config /tmp/ctx-egress-proxy.json'* ]]; then
           exit 0
         fi
+        if [[ "$script" == *'/proc/$pid/status'* || "$script" == *'Too many open files'* ]]; then
+          exit 0
+        fi
 
         prelude=$'iptables(){ :; }\ngetent(){ printf "127.0.0.1 localhost\\n"; }\n'
         bash -lc "$prelude$script"
@@ -108,6 +111,9 @@ if grep -q -- '--uid-owner 0' scripts/smoke_ctx_harness_egress_guard.sh; then
 fi
 grep -q 'PROXY_BYPASS_UID="${PROXY_BYPASS_UID:-43558}"' scripts/smoke_ctx_harness_egress_guard.sh
 grep -q '"bypass_uid": $PROXY_BYPASS_UID' scripts/smoke_ctx_harness_egress_guard.sh
+grep -q 'RUST_LOG=info nohup /usr/local/bin/ctx-egress-proxy' scripts/smoke_ctx_harness_egress_guard.sh
+grep -q 'Too many open files' scripts/smoke_ctx_harness_egress_guard.sh
+grep -Fq 'daemon_ip="127.0.0.1"' scripts/smoke_ctx_harness_egress_guard.sh
 grep -Eq -- '--uid-owner .*\$PROXY_BYPASS_UID' scripts/smoke_ctx_harness_egress_guard.sh
 
 echo "ok: harness egress smoke survives nested sh -lc quoting"

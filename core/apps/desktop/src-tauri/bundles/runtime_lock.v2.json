@@ -1299,8 +1299,8 @@
         },
         {
           "source_type": "ci",
-          "uri": "https://api.ctx.rs/storage/v1/object/public/releases/images/ctx-harness/ubuntu-24.04/linux/aarch64/sha256-86b2b1286b9d35c58e71e94d588fafa230dbb3b5515f53ef4e9d4bbbe37012a8/ctx-harness-linux-aarch64.tar",
-          "sha256": "86b2b1286b9d35c58e71e94d588fafa230dbb3b5515f53ef4e9d4bbbe37012a8"
+          "uri": "https://api.ctx.rs/storage/v1/object/public/releases/images/ctx-harness/ubuntu-24.04/linux/aarch64/sha256-4eecb0d8cc9ea1d908a1e70dac11697eaaff0f7cb85e740962e672bc5c415643/ctx-harness-linux-aarch64.tar",
+          "sha256": "4eecb0d8cc9ea1d908a1e70dac11697eaaff0f7cb85e740962e672bc5c415643"
         }
       ]
     },
@@ -1318,8 +1318,8 @@
         },
         {
           "source_type": "ci",
-          "uri": "https://api.ctx.rs/storage/v1/object/public/releases/images/ctx-harness/ubuntu-24.04/linux/x86_64/sha256-84b55dd5e6e0974dfb57023746169d75d4ff8d25be763b0693291fc51670d6f5/ctx-harness-linux-x86_64.tar",
-          "sha256": "84b55dd5e6e0974dfb57023746169d75d4ff8d25be763b0693291fc51670d6f5"
+          "uri": "https://api.ctx.rs/storage/v1/object/public/releases/images/ctx-harness/ubuntu-24.04/linux/x86_64/sha256-349d8760a9b307c80e1414be2e1d58360c04b05792a5f7e37abbac277a9fc064/ctx-harness-linux-x86_64.tar",
+          "sha256": "349d8760a9b307c80e1414be2e1d58360c04b05792a5f7e37abbac277a9fc064"
         }
       ]
     }

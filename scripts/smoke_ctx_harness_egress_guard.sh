@@ -56,15 +56,33 @@ EOF
 # Start the proxy.
 "$RUNTIME" exec --user 0 "$NAME" sh -lc '
   set -e
-  nohup /usr/local/bin/ctx-egress-proxy --config /tmp/ctx-egress-proxy.json >/tmp/ctx-egress-proxy.log 2>&1 &
+  RUST_LOG=info nohup /usr/local/bin/ctx-egress-proxy --config /tmp/ctx-egress-proxy.json >/tmp/ctx-egress-proxy.log 2>&1 &
   echo $! >/tmp/ctx-egress-proxy.pid
+'
+
+"$RUNTIME" exec --user 0 "$NAME" sh -lc '
+  set -e
+  pid="$(cat /tmp/ctx-egress-proxy.pid)"
+  for _ in $(seq 1 50); do
+    if ! kill -0 "$pid" 2>/dev/null; then
+      cat /tmp/ctx-egress-proxy.log >&2 || true
+      exit 1
+    fi
+    uid="$(awk "/^Uid:/{print \$2}" "/proc/$pid/status" 2>/dev/null || true)"
+    if [ "$uid" = "'"$PROXY_BYPASS_UID"'" ]; then
+      exit 0
+    fi
+    sleep 0.1
+  done
+  cat "/proc/$pid/status" >&2 || true
+  cat /tmp/ctx-egress-proxy.log >&2 || true
+  exit 1
 '
 
 # Configure iptables the same way ctx does (with a harmless daemon allow rule).
 "$RUNTIME" exec --user 0 "$NAME" sh -lc '
   set -e
-  daemon_ip="$(getent hosts localhost | awk "{print \$1}" | head -n1)"
-  test -n "$daemon_ip"
+  daemon_ip="127.0.0.1"
 
   iptables -t nat -F OUTPUT || true
   iptables -F OUTPUT || true
@@ -84,6 +102,16 @@ EOF
 
 # Allowed host should work for non-root.
 "$RUNTIME" exec --user 1000:1000 "$NAME" sh -lc "curl -fsSIL --max-time 15 https://$ALLOW_HOST >/dev/null"
+
+"$RUNTIME" exec --user 0 "$NAME" sh -lc '
+  set -e
+  pid="$(cat /tmp/ctx-egress-proxy.pid)"
+  kill -0 "$pid"
+  if grep -q "Too many open files" /tmp/ctx-egress-proxy.log 2>/dev/null; then
+    cat /tmp/ctx-egress-proxy.log >&2 || true
+    exit 1
+  fi
+'
 
 # Blocked host must fail for non-root.
 set +e

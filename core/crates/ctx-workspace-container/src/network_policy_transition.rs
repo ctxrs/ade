@@ -93,16 +93,16 @@ fn shell_single_quote(value: &str) -> String {
 }
 
 fn daemon_ip_resolution_script(daemon_host: &str) -> String {
-    if daemon_host.parse::<IpAddr>().is_ok() {
-        format!("daemon_ip={}", shell_single_quote(daemon_host))
-    } else {
-        format!(
-            r#"daemon_ip="$(getent hosts {daemon_host} | awk '{{print $1}}' | head -n1 || true)"
+    match daemon_host.parse::<IpAddr>() {
+        Ok(IpAddr::V4(_)) => format!("daemon_ip={}", shell_single_quote(daemon_host)),
+        Ok(IpAddr::V6(_)) => "exit 44".to_string(),
+        Err(_) => format!(
+            r#"daemon_ip="$(getent hosts {daemon_host} | awk '$1 ~ /^[0-9.]+$/ {{ print $1; exit }}' || true)"
 if [ -z "$daemon_ip" ]; then
   exit 44
 fi"#,
             daemon_host = shell_single_quote(daemon_host),
-        )
+        ),
     }
 }
 
@@ -475,7 +475,14 @@ mod tests {
     fn daemon_ip_resolution_uses_getent_for_hostnames() {
         let script = daemon_ip_resolution_script("host.containers.internal");
         assert!(script.contains("getent hosts 'host.containers.internal'"));
+        assert!(script.contains(r#"$1 ~ /^[0-9.]+$/ { print $1; exit }"#));
         assert!(script.contains("exit 44"));
+    }
+
+    #[test]
+    fn daemon_ip_resolution_rejects_ipv6_literals() {
+        let script = daemon_ip_resolution_script("::1");
+        assert_eq!(script, "exit 44");
     }
 
     #[test]
