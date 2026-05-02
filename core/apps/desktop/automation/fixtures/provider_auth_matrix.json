@@ -316,7 +316,7 @@
       "auth_mode": "auth_import",
       "daemon_location": "local",
       "execution_environment": "host",
-      "support": "deferred",
+      "support": "supported",
       "lane": "nightly",
       "required_assertions": [
         "auth_import_success",
@@ -326,11 +326,15 @@
         "file_edit_success"
       ],
       "owner": "provider-codex",
-      "prerequisites": [],
+      "prerequisites": [
+        "CTX_E2E_AUTH_IMPORT_CODEX_AUTH_JSON_B64"
+      ],
       "runner": {
-        "kind": "none"
+        "kind": "desktop_wdio",
+        "spec": "automation/specs/provider-auth-import-matrix-cell.spec.cjs",
+        "scenarios": "provider-auth-import"
       },
-      "skip_reason": "coverage_not_implemented_yet"
+      "skip_reason": null
     },
     {
       "id": "codex.auth_import.local.sandbox",
