@@ -843,6 +843,10 @@ impl ProviderAdapter for RestartTrackingAdapter {
         self.restart_calls.fetch_add(1, Ordering::SeqCst);
         Ok(())
     }
+
+    fn supports_restart_mode(&self, _mode: ProviderRestartMode) -> bool {
+        true
+    }
 }
 
 #[derive(Default)]
@@ -888,6 +892,48 @@ impl ProviderAdapter for RestartFailingAdapter {
     async fn restart(&self, _reason: &str, _mode: ProviderRestartMode) -> anyhow::Result<()> {
         self.restart_calls.fetch_add(1, Ordering::SeqCst);
         anyhow::bail!("restart failed")
+    }
+
+    fn supports_restart_mode(&self, _mode: ProviderRestartMode) -> bool {
+        true
+    }
+}
+
+struct UnsupportedRestartAdapter;
+
+#[async_trait::async_trait]
+impl ProviderAdapter for UnsupportedRestartAdapter {
+    async fn inspect(&self) -> anyhow::Result<ProviderStatus> {
+        Ok(ProviderStatus {
+            provider_id: "codex".to_string(),
+            installed: true,
+            detected_path: None,
+            version: Some("test".to_string()),
+            capabilities: None,
+            health: ProviderHealth::Ok,
+            diagnostics: Vec::new(),
+            details: HashMap::new(),
+            usability: ctx_providers::adapters::ProviderUsability::default(),
+        })
+    }
+
+    async fn run(
+        &self,
+        _input: TurnInput,
+        _workdir: PathBuf,
+        _env: HashMap<String, String>,
+        _event_sink: tokio::sync::mpsc::Sender<ctx_providers::events::NormalizedEvent>,
+        _hooks: ctx_providers::adapters::ProviderRunHooks,
+    ) -> anyhow::Result<RunHandle> {
+        anyhow::bail!("run not used in this test")
+    }
+
+    async fn cancel(&self, _handle: &mut RunHandle) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    async fn list_processes(&self) -> Vec<ProviderProcessInfo> {
+        Vec::new()
     }
 }
 
@@ -989,6 +1035,37 @@ async fn restart_provider_for_auth_change_returns_error_when_adapter_restart_fai
     drop(options_cache);
 
     assert_eq!(adapter.restart_calls.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn restart_provider_for_auth_change_skips_adapters_without_drain_restart() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let stores = StoreManager::open(temp.path()).await.expect("open stores");
+    let state = Arc::new(AppState::new(
+        temp.path().to_path_buf(),
+        stores,
+        HashMap::from([(
+            "codex".to_string(),
+            Arc::new(UnsupportedRestartAdapter) as Arc<dyn ProviderAdapter>,
+        )]),
+        "http://127.0.0.1:4310".to_string(),
+        None,
+    ));
+
+    state.providers.options_cache.lock().await.insert(
+        "ws-a/host/codex".to_string(),
+        crate::daemon::CachedProviderOptions {
+            cached_at: std::time::Instant::now(),
+            value: serde_json::json!({ "provider_id": "codex", "probe_ok": false }),
+        },
+    );
+
+    restart_provider_for_auth_change(&state, "codex", "test auth updated")
+        .await
+        .expect("unsupported restart should be skipped");
+
+    let options_cache = state.providers.options_cache.lock().await;
+    assert!(!options_cache.contains_key("ws-a/host/codex"));
 }
 
 #[tokio::test]

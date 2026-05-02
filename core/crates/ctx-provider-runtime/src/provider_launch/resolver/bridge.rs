@@ -242,6 +242,10 @@ impl ProviderAdapter for OpenHandsRuntimeContractAdapter {
         self.inner.restart(reason, mode).await
     }
 
+    fn supports_restart_mode(&self, mode: ProviderRestartMode) -> bool {
+        self.inner.supports_restart_mode(mode)
+    }
+
     async fn reap_idle_sessions(
         &self,
         config: ProviderSessionSweepConfig,

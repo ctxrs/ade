@@ -355,6 +355,11 @@ pub trait ProviderAdapter: Send + Sync {
         anyhow::bail!("provider does not support {} restart", mode.as_str());
     }
 
+    /// Whether this adapter can honor a restart request for the given mode.
+    fn supports_restart_mode(&self, _mode: ProviderRestartMode) -> bool {
+        false
+    }
+
     /// Whether this adapter has an in-memory live provider session for the given key.
     async fn has_live_session(&self, _session_key: &str) -> bool {
         false

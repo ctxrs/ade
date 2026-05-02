@@ -257,6 +257,10 @@ impl ProviderAdapter for Tier1CrpAdapter {
         Ok(())
     }
 
+    fn supports_restart_mode(&self, _mode: ProviderRestartMode) -> bool {
+        true
+    }
+
     async fn has_live_session(&self, session_key: &str) -> bool {
         self.pool.has_session(session_key).await
     }

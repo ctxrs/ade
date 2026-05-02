@@ -78,6 +78,10 @@ impl ProviderAdapter for RestartFailingAdapter {
     async fn restart(&self, _reason: &str, _mode: ProviderRestartMode) -> anyhow::Result<()> {
         anyhow::bail!("restart failed")
     }
+
+    fn supports_restart_mode(&self, _mode: ProviderRestartMode) -> bool {
+        true
+    }
 }
 
 #[tokio::test]

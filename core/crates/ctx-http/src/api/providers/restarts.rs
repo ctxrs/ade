@@ -31,6 +31,10 @@ pub(super) async fn restart_provider_for_auth_change(
     adapters.extend(target_adapters);
     let mut failures = Vec::new();
     for (id, adapter) in adapters {
+        if !adapter.supports_restart_mode(ProviderRestartMode::Drain) {
+            tracing::info!("skipping drain-restart for {id} after auth change: adapter does not support drain restart");
+            continue;
+        }
         if let Err(err) = adapter.restart(reason, ProviderRestartMode::Drain).await {
             tracing::warn!("failed to drain-restart {id} after auth change: {err}");
             failures.push(format!("{id}: {err:#}"));
