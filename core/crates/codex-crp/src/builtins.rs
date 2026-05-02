@@ -121,15 +121,9 @@ pub fn build_app_server_config_overrides(config: &CrpSessionConfig) -> Option<Va
 
 pub fn build_app_server_launch_config_overrides(config: &CrpSessionConfig) -> Vec<String> {
     if endpoint_model_provider(config.model_provider.as_deref()) == Some("openrouter") {
-        return vec![
-            format!("stream_idle_timeout_ms={OPENROUTER_STREAM_IDLE_TIMEOUT_MS}"),
-            format!(
-                "model_providers.openrouter.request_max_retries={OPENROUTER_REQUEST_MAX_RETRIES}"
-            ),
-            format!(
-                "model_providers.openrouter.stream_max_retries={OPENROUTER_STREAM_MAX_RETRIES}"
-            ),
-        ];
+        return vec![format!(
+            "stream_idle_timeout_ms={OPENROUTER_STREAM_IDLE_TIMEOUT_MS}"
+        )];
     }
     Vec::new()
 }
@@ -421,7 +415,7 @@ mod tests {
     }
 
     #[test]
-    fn build_app_server_launch_config_overrides_sets_openrouter_transport_tuning() {
+    fn build_app_server_launch_config_overrides_sets_openrouter_startup_timeout() {
         let config = CrpSessionConfig {
             model_provider: Some("openrouter".to_string()),
             openai_base_url: Some("https://openrouter.ai/api/v1".to_string()),
@@ -430,11 +424,13 @@ mod tests {
 
         assert_eq!(
             build_app_server_launch_config_overrides(&config),
-            vec![
-                "stream_idle_timeout_ms=120000",
-                "model_providers.openrouter.request_max_retries=4",
-                "model_providers.openrouter.stream_max_retries=10",
-            ]
+            vec!["stream_idle_timeout_ms=120000"]
+        );
+        assert!(
+            build_app_server_launch_config_overrides(&config)
+                .iter()
+                .all(|entry| !entry.starts_with("model_providers.")),
+            "launch config must not create partial provider tables before session.opened"
         );
     }
 

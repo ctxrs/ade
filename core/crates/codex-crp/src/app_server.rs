@@ -453,11 +453,7 @@ mod tests {
     #[test]
     fn app_server_args_append_launch_config_to_subcommand() {
         assert_eq!(
-            build_codex_app_server_args(&[
-                "stream_idle_timeout_ms=120000".to_string(),
-                "model_providers.openrouter.request_max_retries=4".to_string(),
-                "model_providers.openrouter.stream_max_retries=10".to_string(),
-            ]),
+            build_codex_app_server_args(&["stream_idle_timeout_ms=120000".to_string()]),
             vec![
                 "-s",
                 "danger-full-access",
@@ -466,10 +462,6 @@ mod tests {
                 "app-server",
                 "-c",
                 "stream_idle_timeout_ms=120000",
-                "-c",
-                "model_providers.openrouter.request_max_retries=4",
-                "-c",
-                "model_providers.openrouter.stream_max_retries=10",
             ]
         );
     }
