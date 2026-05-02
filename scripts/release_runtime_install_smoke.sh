@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
 usage() {
   cat <<'USAGE'
 Usage:
@@ -128,6 +130,22 @@ fi
 if [[ ! -d "$bundle_dir" ]]; then
   echo "error: missing bundles dir: $bundle_dir" >&2
   exit 1
+fi
+
+static_only="${CTX_RELEASE_RUNTIME_INSTALL_STATIC_ONLY:-0}"
+static_platform="${CTX_RELEASE_RUNTIME_INSTALL_PLATFORM:-}"
+if [[ "$static_only" == "1" ]]; then
+  if [[ -z "$app_path" ]]; then
+    echo "error: static-only runtime install validation requires --app" >&2
+    exit 1
+  fi
+  if [[ -z "$static_platform" ]]; then
+    echo "error: CTX_RELEASE_RUNTIME_INSTALL_PLATFORM is required when CTX_RELEASE_RUNTIME_INSTALL_STATIC_ONLY=1" >&2
+    exit 1
+  fi
+  echo "smoke: using static-only desktop identity validation for $static_platform"
+  node "$ROOT_DIR/core/scripts/release_desktop_identity_gate.cjs" --app "$app_path" --platform "$static_platform"
+  exit 0
 fi
 
 if ! command -v jq >/dev/null 2>&1; then
