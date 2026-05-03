@@ -86,9 +86,12 @@ async fn session_state_exposes_artifact_metadata_and_session_scoped_downloads() 
         session_state["artifacts"][0]["id"].as_str(),
         Some(artifact_id)
     );
+    let state_artifact_path = session_state["artifacts"][0]["absolute_path"]
+        .as_str()
+        .expect("artifact absolute path");
     assert_eq!(
-        session_state["artifacts"][0]["absolute_path"].as_str(),
-        Some(artifact_path.to_string_lossy().as_ref())
+        std::fs::canonicalize(state_artifact_path).unwrap(),
+        std::fs::canonicalize(&artifact_path).unwrap()
     );
 
     let req = Request::builder()

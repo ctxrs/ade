@@ -1,5 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const childProcess = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
 
@@ -48,6 +49,16 @@ function extractTestSuiteLabels(suiteName) {
   return [...match[1].matchAll(/"([^"]+)"/g)].map((entry) => entry[1]);
 }
 
+function runUnitWrapperScript(args) {
+  return childProcess.spawnSync("bash", [
+    path.join(coreRoot, "crates", "ctx-http", "tests", "run_unit_test_harness.sh"),
+    ...args,
+  ], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+}
+
 function assertNoDuplicates(name, values) {
   const duplicates = values.filter((value, index) => values.indexOf(value) !== index);
   assert.deepEqual([...new Set(duplicates)].sort(), [], `${name} must not contain duplicate labels`);
@@ -56,6 +67,12 @@ function assertNoDuplicates(name, values) {
 test("ctx-http BUILD exposes Bazel-native base test targets", () => {
   assert.match(ctxHttpBuild, /rust_doc_test/);
   assert.match(ctxHttpBuild, /name = "lib_test_support"/);
+  assert.doesNotMatch(ctxHttpBuild, /load\("@rules_rust\/\/rust:defs\.bzl"[^)]*"rust_test"/);
+  assert.match(ctxHttpBuild, /rust_test = declare_ctx_http_filtered_unit_test/);
+  assert.match(ctxHttpBuild, /declare_ctx_http_unit_test_harness\(/);
+  assert.match(ctxHttpBazelTests, /CTX_HTTP_UNIT_TEST_HARNESS_NAME = "ctx_http_unit_test_harness"/);
+  assert.match(ctxHttpBazelTests, /tags = \["manual"\]/);
+  assert.match(ctxHttpBazelTests, /args = \["--list"\]/);
   assert.match(ctxHttpBuild, /name = "unit_tests"/);
   assert.match(ctxHttpBuild, /name = "unit_tests_api"/);
   assert.match(ctxHttpBuild, /name = "unit_tests_daemon"/);
@@ -84,6 +101,14 @@ test("ctx-http BUILD exposes Bazel-native base test targets", () => {
   );
   assert.match(ctxHttpBuild, /name = "unit_tests_installer"/);
   assert.match(ctxHttpBuild, /name = "unit_tests_lib"/);
+  assert.match(
+    ctxHttpBazelTests,
+    /sh_test\([\s\S]*name = name[\s\S]*"\$\(rootpath :\{\}\)"[\s\S]*CTX_HTTP_UNIT_TEST_HARNESS_NAME[\s\S]*data = \[":\{\}"\.format\(CTX_HTTP_UNIT_TEST_HARNESS_NAME\)\]/,
+  );
+  assert.match(
+    ctxHttpBuild,
+    /rust_test\([\s\S]*name = "unit_tests_execution_setup_runtime_launch_ready_promotion"[\s\S]*args = CTX_HTTP_EXECUTION_SETUP_RUNTIME_LAUNCH_READY_PROMOTION_TEST_ARGS[\s\S]*tags = CTX_HTTP_TIMING_SENSITIVE_EXACT_TEST_TAGS/,
+  );
   assert.match(ctxHttpBuild, /name = "unit_tests_lib_execution_launch_startup_prewarm_kind_supported"/);
   assert.match(ctxHttpBuild, /name = "unit_tests_merge_queue"/);
   assert.match(ctxHttpBuild, /name = "unit_tests_merge_queue_enabled_workspace_resume_after_open"/);
@@ -352,11 +377,42 @@ test("ctx-http unit-family suites cover every unit test target exactly once", ()
     .sort();
 
   assertNoDuplicates("ctx-http unit-family suite targets", familyTargets);
+  assert.equal(familyTargets.includes(":ctx_http_unit_test_harness"), false);
   assert.deepEqual(familyTargets, declaredUnitTargets);
   assert.deepEqual(
     extractTestSuiteLabels("unit_tests").sort(),
     unitFamilySuites.map((suiteName) => `:${suiteName}`).sort(),
   );
+});
+
+test("ctx-http shared unit harness is excluded from public suite routing", () => {
+  assert.equal(extractTestSuiteLabels("unit_tests").includes(":ctx_http_unit_test_harness"), false);
+  assert.equal(extractTestSuiteLabels("base").includes(":ctx_http_unit_test_harness"), false);
+  assert.equal(getCtxHttpSuiteTargets("all").includes("//core/crates/ctx-http:ctx_http_unit_test_harness"), false);
+});
+
+test("ctx-http unit harness wrapper fails clearly for invalid invocation", () => {
+  const noArgs = runUnitWrapperScript([]);
+  assert.equal(noArgs.status, 2);
+  assert.match(noArgs.stderr, /usage: run_unit_test_harness\.sh <harness-runfile>/);
+
+  const missingHarness = runUnitWrapperScript(["missing/harness"]);
+  assert.equal(missingHarness.status, 1);
+  assert.match(missingHarness.stderr, /failed to locate executable ctx-http unit test harness: missing\/harness/);
+
+  const unsupportedFilter = childProcess.spawnSync("bash", [
+    path.join(coreRoot, "crates", "ctx-http", "tests", "run_unit_test_harness.sh"),
+    "missing/harness",
+  ], {
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      TESTBRIDGE_TEST_ONLY: "lib_tests::provider_routes::",
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  assert.equal(unsupportedFilter.status, 2);
+  assert.match(unsupportedFilter.stderr, /Bazel --test_filter is not supported/);
 });
 
 test("ctx-http Bazel dependency buckets do not duplicate labels", () => {

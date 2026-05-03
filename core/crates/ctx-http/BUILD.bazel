@@ -1,9 +1,11 @@
-load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_doc_test", "rust_library", "rust_test")
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_doc_test", "rust_library")
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
 load(
     ":ctx_http_bazel_tests.bzl",
+    "declare_ctx_http_filtered_unit_test",
     "declare_ctx_http_integration_tests",
     "declare_ctx_http_rust_unit_test",
+    "declare_ctx_http_unit_test_harness",
 )
 
 package(default_visibility = ["//visibility:public"])
@@ -509,6 +511,17 @@ rust_binary(
         "@crates//:serde_json",
         "@crates//:tokio",
     ],
+)
+
+# Existing exact unit shards below keep the rust_test-shaped call syntax, but
+# route through filtered sh_test wrappers so the Rust harness compiles once.
+rust_test = declare_ctx_http_filtered_unit_test
+
+declare_ctx_http_unit_test_harness(
+    compile_data = CTX_HTTP_COMPILE_DATA,
+    data = CTX_HTTP_COMPILE_DATA,
+    deps = CTX_HTTP_DIRECT_TEST_DEPS,
+    proc_macro_deps = CTX_HTTP_TEST_PROC_MACRO_DEPS,
 )
 
 declare_ctx_http_rust_unit_test(

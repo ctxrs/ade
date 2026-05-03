@@ -1,4 +1,5 @@
 load("@rules_rust//rust:defs.bzl", "rust_test")
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
 
 CTX_HTTP_SUITE_ORDER = [
     "workspace-stream",
@@ -303,6 +304,8 @@ CTX_HTTP_CUSTOM_INTEGRATION_TARGETS = {
 }
 
 CTX_HTTP_BAZEL_MANUAL_ONLY_TARGET = "manual-only"
+CTX_HTTP_UNIT_TEST_HARNESS_NAME = "ctx_http_unit_test_harness"
+CTX_HTTP_UNIT_TEST_WRAPPER = "tests/run_unit_test_harness.sh"
 
 def _as_label(name):
     return ":" + name
@@ -340,20 +343,42 @@ def _declare_ctx_http_test(name, source_name, binary_data, binary_rustc_env, com
         **kwargs
     )
 
-def declare_ctx_http_rust_unit_test(name, args, compile_data, data, deps, proc_macro_deps, timeout = None, tags = None):
+def declare_ctx_http_unit_test_harness(compile_data, data, deps, proc_macro_deps):
+    rust_test(
+        name = CTX_HTTP_UNIT_TEST_HARNESS_NAME,
+        crate = ":lib_test_support",
+        args = ["--list"],
+        compile_data = compile_data,
+        data = data,
+        deps = deps,
+        proc_macro_deps = proc_macro_deps,
+        tags = ["manual"],
+        timeout = "long",
+    )
+
+def declare_ctx_http_filtered_unit_test(name, args, compile_data = None, data = None, deps = None, proc_macro_deps = None, timeout = None, tags = None, crate = None):
     kwargs = {}
     kwargs["timeout"] = timeout if timeout != None else "long"
     if tags != None:
         kwargs["tags"] = tags
-    rust_test(
+    sh_test(
         name = name,
-        crate = ":lib_test_support",
+        srcs = [CTX_HTTP_UNIT_TEST_WRAPPER],
+        args = ["$(rootpath :{})".format(CTX_HTTP_UNIT_TEST_HARNESS_NAME)] + args,
+        data = [":{}".format(CTX_HTTP_UNIT_TEST_HARNESS_NAME)] + (data if data != None else []),
+        **kwargs
+    )
+
+def declare_ctx_http_rust_unit_test(name, args, compile_data, data, deps, proc_macro_deps, timeout = None, tags = None):
+    declare_ctx_http_filtered_unit_test(
+        name = name,
         args = args,
         compile_data = compile_data,
         data = data,
         deps = deps,
         proc_macro_deps = proc_macro_deps,
-        **kwargs
+        timeout = timeout,
+        tags = tags,
     )
 
 def declare_ctx_http_integration_tests(binary_data, binary_rustc_env, common_srcs, compile_data, data, deps, proc_macro_deps, rustc_env, test_args):
