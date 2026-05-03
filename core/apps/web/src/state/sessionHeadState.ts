@@ -13,8 +13,8 @@ const HEAD_EVENT_BUFFER_LIMIT = 800;
 const ACTIVE_HEAD_TURN_LIMIT = 5;
 const ACTIVE_HEAD_MESSAGE_LIMIT = 200;
 const ACTIVE_HEAD_EVENT_LIMIT = 0;
-const ACTIVE_HEAD_BYTE_LIMIT = 1_500_000;
-const ACTIVE_HEAD_TOOL_SUMMARY_LIMIT = 200;
+const ACTIVE_HEAD_BYTE_LIMIT = 256_000;
+const ACTIVE_HEAD_TOOL_SUMMARY_LIMIT = 96;
 
 export const emptySessionHeadWindow = (): SessionHeadWindow => ({
   turn_limit: 0,
@@ -72,6 +72,13 @@ const compareToolSummaryOrder = (
   a: SessionTurnToolSummary,
   b: SessionTurnToolSummary,
 ): number => {
+  const aOrderSeq = Number(a.order_seq ?? Number.NaN);
+  const bOrderSeq = Number(b.order_seq ?? Number.NaN);
+  if (Number.isFinite(aOrderSeq) && Number.isFinite(bOrderSeq) && aOrderSeq !== bOrderSeq) {
+    return aOrderSeq - bOrderSeq;
+  }
+  if (Number.isFinite(aOrderSeq) && !Number.isFinite(bOrderSeq)) return -1;
+  if (!Number.isFinite(aOrderSeq) && Number.isFinite(bOrderSeq)) return 1;
   const updatedAtOrder = String(a.updated_at ?? "").localeCompare(String(b.updated_at ?? ""));
   if (updatedAtOrder !== 0) return updatedAtOrder;
   const createdAtOrder = String(a.created_at ?? "").localeCompare(String(b.created_at ?? ""));
@@ -213,9 +220,11 @@ export const compactActiveSessionHeadSnapshot = (head: SessionHeadSnapshot): Ses
   }
   bytes = estimateHeadWindowBytes({ turns, toolSummaries, events, messages });
 
-  const droppedTranscript =
+  const droppedTurnOrMessageRows =
     (sanitized.turns?.length ?? 0) > turns.length ||
-    (sanitized.messages?.length ?? 0) > messages.length ||
+    (sanitized.messages?.length ?? 0) > messages.length;
+  const droppedRows =
+    droppedTurnOrMessageRows ||
     (sanitized.tool_summaries?.length ?? 0) > toolSummaries.length ||
     (sanitized.events?.length ?? 0) > events.length;
 
@@ -225,7 +234,7 @@ export const compactActiveSessionHeadSnapshot = (head: SessionHeadSnapshot): Ses
     tool_summaries: toolSummaries,
     messages,
     events,
-    has_more_turns: hasMoreTurns || droppedTranscript,
+    has_more_turns: hasMoreTurns || droppedTurnOrMessageRows,
     head_window: {
       turn_limit: turnLimit,
       message_limit: messageLimit,
@@ -235,7 +244,7 @@ export const compactActiveSessionHeadSnapshot = (head: SessionHeadSnapshot): Ses
       message_count: messages.length,
       event_count: events.length,
       bytes,
-      truncated: truncated || droppedTranscript,
+      truncated: truncated || droppedRows,
     },
   };
 };

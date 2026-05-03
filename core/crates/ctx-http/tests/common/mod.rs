@@ -1,6 +1,8 @@
 #![allow(dead_code)]
 
 use std::collections::HashMap;
+use std::fs::File;
+use std::fs::OpenOptions;
 use std::hash::{Hash, Hasher};
 use std::path::Path;
 use std::path::PathBuf;
@@ -20,10 +22,11 @@ use ctx_provider_install::install_state::InstallTarget;
 use ctx_providers::adapters::ProviderAdapter;
 use ctx_providers::fake::FakeProviderAdapter;
 use ctx_store::StoreManager;
+use fs2::FileExt;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use tokio::process::Command;
-use tokio::sync::{OwnedSemaphorePermit, Semaphore};
+use tokio::sync::{OwnedSemaphorePermit, Semaphore, SemaphorePermit};
 use tokio::task::JoinHandle;
 use tower::ServiceExt;
 
@@ -46,6 +49,46 @@ fn vcs_command_gate() -> &'static Semaphore {
     // Keep helper subprocess fan-out below local ulimit pressure during
     // concurrent integration test startup.
     GATE.get_or_init(|| Semaphore::new(2))
+}
+
+struct VcsFileLock {
+    file: File,
+}
+
+impl Drop for VcsFileLock {
+    fn drop(&mut self) {
+        let _ = self.file.unlock();
+    }
+}
+
+async fn acquire_vcs_file_lock(lock_name: &'static str) -> VcsFileLock {
+    let lock_path = PathBuf::from(format!("/tmp/ctx-http-test-{lock_name}.lock"));
+    tokio::task::spawn_blocking(move || {
+        let file = OpenOptions::new()
+            .create(true)
+            .read(true)
+            .truncate(false)
+            .write(true)
+            .open(&lock_path)
+            .unwrap_or_else(|err| panic!("open vcs {lock_name} lock {lock_path:?}: {err}"));
+        file.lock_exclusive()
+            .unwrap_or_else(|err| panic!("acquire vcs {lock_name} lock {lock_path:?}: {err}"));
+        VcsFileLock { file }
+    })
+    .await
+    .unwrap_or_else(|err| panic!("join vcs {lock_name} lock acquisition: {err}"))
+}
+
+struct VcsCommandPermit {
+    _local: SemaphorePermit<'static>,
+    _global: VcsFileLock,
+}
+
+async fn acquire_vcs_command_permit() -> VcsCommandPermit {
+    VcsCommandPermit {
+        _local: vcs_command_gate().acquire().await.unwrap(),
+        _global: acquire_vcs_file_lock("command").await,
+    }
 }
 
 fn resolve_test_path(raw_path: &Path, kind: &str) -> PathBuf {
@@ -593,7 +636,7 @@ pub fn fixed_utc(offset_seconds: i64) -> chrono::DateTime<chrono::Utc> {
 }
 
 pub async fn run_git(root: &Path, args: &[&str]) {
-    let _permit = vcs_command_gate().acquire().await.unwrap();
+    let _permit = acquire_vcs_command_permit().await;
     let output = tokio::time::timeout(TEST_VCS_COMMAND_TIMEOUT, git_command(root, args).output())
         .await
         .unwrap_or_else(|_| panic!("git {args:?} timed out after {TEST_VCS_COMMAND_TIMEOUT:?}"))
@@ -607,7 +650,7 @@ pub async fn run_git(root: &Path, args: &[&str]) {
 }
 
 pub async fn run_git_output(root: &Path, args: &[&str]) -> String {
-    let _permit = vcs_command_gate().acquire().await.unwrap();
+    let _permit = acquire_vcs_command_permit().await;
     let output = tokio::time::timeout(TEST_VCS_COMMAND_TIMEOUT, git_command(root, args).output())
         .await
         .unwrap_or_else(|_| panic!("git {args:?} timed out after {TEST_VCS_COMMAND_TIMEOUT:?}"))

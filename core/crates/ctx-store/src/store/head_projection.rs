@@ -6,6 +6,7 @@ use super::*;
 pub(crate) struct SessionHeadLimits {
     pub turn_limit: usize,
     pub message_limit: usize,
+    pub tool_summary_limit: usize,
     pub event_limit: usize,
     pub byte_limit: usize,
 }

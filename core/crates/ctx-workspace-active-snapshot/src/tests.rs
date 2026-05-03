@@ -1,5 +1,5 @@
 mod compact_head_tests {
-    use super::super::trim::ACTIVE_HEAD_TURN_LIMIT;
+    use super::super::trim::{ACTIVE_HEAD_TOOL_SUMMARY_LIMIT, ACTIVE_HEAD_TURN_LIMIT};
     use super::super::*;
     use chrono::{TimeZone, Utc};
     use ctx_core::ids::{MessageId, TurnId};
@@ -113,6 +113,105 @@ mod compact_head_tests {
             .tool_summaries
             .iter()
             .all(|t| kept.contains(&t.turn_id)));
+    }
+
+    #[test]
+    fn compact_active_head_caps_latest_turn_tool_summaries() {
+        let session = SessionMetadata {
+            id: SessionId::new(),
+            task_id: TaskId::new(),
+            workspace_id: WorkspaceId::new(),
+            worktree_id: WorktreeId::new(),
+            execution_environment: ctx_core::models::ExecutionEnvironment::Host,
+            parent_session_id: None,
+            relationship: None,
+            provider_id: "p".to_string(),
+            model_id: "m".to_string(),
+            reasoning_effort: None,
+            title: "t".to_string(),
+            agent_role: "assistant".to_string(),
+            status: ctx_core::models::SessionStatus::Active,
+            provider_session_ref: None,
+            created_at: Utc.timestamp_opt(0, 0).unwrap(),
+            updated_at: Utc.timestamp_opt(0, 0).unwrap(),
+        };
+        let session_id = session.id;
+        let turn_id = TurnId::new();
+        let mut head = SessionHeadSnapshot {
+            session,
+            turns: vec![SessionTurn {
+                turn_id,
+                session_id,
+                run_id: None,
+                user_message_id: None,
+                status: ctx_core::models::SessionTurnStatus::Running,
+                start_seq: Some(1),
+                end_seq: None,
+                started_at: Utc.timestamp_opt(0, 0).unwrap(),
+                updated_at: Utc.timestamp_opt(0, 0).unwrap(),
+                assistant_partial: None,
+                thought_partial: None,
+                metrics_json: None,
+                tool_total: 335,
+                tool_pending: 0,
+                tool_running: 0,
+                tool_completed: 335,
+                tool_failed: 0,
+            }],
+            tool_summaries: Vec::new(),
+            events: Vec::new(),
+            messages: Vec::new(),
+            last_event_seq: 335,
+            projection_rev: 335,
+            state_rev: 0,
+            activity: SessionActivityState::default(),
+            has_more_turns: false,
+            history_cursor: None,
+            has_more_history: false,
+            summary_checkpoint: None,
+            head_window: ctx_core::models::SessionHeadWindow::default(),
+        };
+
+        for i in 0_i64..335 {
+            head.tool_summaries.push(SessionTurnToolSummary {
+                session_id: head.session.id,
+                tool_call_id: format!("tool{i:03}"),
+                turn_id,
+                tool_kind: Some("shell".to_string()),
+                provider_tool_name: Some("Bash".to_string()),
+                title: Some("x".to_string()),
+                subtitle: Some("pwd".to_string()),
+                status: Some("completed".to_string()),
+                input_preview: None,
+                output_preview: None,
+                order_seq: i,
+                first_event_seq: Some(i),
+                input_truncated: None,
+                input_original_bytes: None,
+                output_truncated: None,
+                output_original_bytes: None,
+                created_at: Utc.timestamp_opt(i, 0).unwrap(),
+                updated_at: Utc.timestamp_opt(i, 0).unwrap(),
+            });
+        }
+
+        let compact = compact_active_head_snapshot(&head);
+        assert_eq!(compact.tool_summaries.len(), ACTIVE_HEAD_TOOL_SUMMARY_LIMIT);
+        assert_eq!(
+            compact
+                .tool_summaries
+                .first()
+                .map(|tool| tool.tool_call_id.as_str()),
+            Some("tool239")
+        );
+        assert_eq!(
+            compact
+                .tool_summaries
+                .last()
+                .map(|tool| tool.tool_call_id.as_str()),
+            Some("tool334")
+        );
+        assert!(compact.head_window.truncated);
     }
 }
 

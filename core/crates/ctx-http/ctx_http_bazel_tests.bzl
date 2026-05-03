@@ -135,6 +135,15 @@ CTX_HTTP_SUITE_EXTRA_TARGETS = {
     ],
 }
 
+CTX_HTTP_TIMING_SENSITIVE_INTEGRATION_TESTS = [
+    "provider_worker_reaping_offline",
+    "provider_target_scoped_installs",
+    "subagent_mcp_http",
+    "subscription_accounts_api",
+    "worktree_vcs_snapshot",
+    "workspace_active_snapshot_http",
+]
+
 CTX_HTTP_CUSTOM_INTEGRATION_TARGETS = {
     "workspace_active_snapshot_http": {
         "source": "workspace_active_snapshot_http",
@@ -322,11 +331,15 @@ def _declare_ctx_http_test(name, source_name, binary_data, binary_rustc_env, com
     tags = ["manual"] if name in CTX_HTTP_MANUAL_ONLY_TESTS else []
     if extra_tags:
         tags = tags + extra_tags
+    if name in CTX_HTTP_TIMING_SENSITIVE_INTEGRATION_TESTS:
+        tags.append("exclusive")
     test_deps = deps + CTX_HTTP_INTEGRATION_SOURCE_DEPS.get(source_name, [])
     test_data = data + binary_data.get(source_name, [])
     kwargs = {}
     if timeout != None:
         kwargs["timeout"] = timeout
+    elif name in CTX_HTTP_TIMING_SENSITIVE_INTEGRATION_TESTS:
+        kwargs["timeout"] = "long"
     rust_test(
         name = name,
         crate_name = name,

@@ -242,6 +242,7 @@ impl Store {
             limits.turn_limit,
             limits.message_limit,
             limits.event_limit,
+            limits.tool_summary_limit,
             limits.byte_limit,
         );
 

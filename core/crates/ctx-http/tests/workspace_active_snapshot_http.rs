@@ -2551,7 +2551,6 @@ async fn workspace_stream_repeat_subscribe_rescans_fresh_unavailable_worktree_vc
         .await
         .unwrap()
         .expect("missing worktree");
-
     let mut next = HashSet::new();
     next.insert(worktree.id);
     state

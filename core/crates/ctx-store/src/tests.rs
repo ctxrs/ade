@@ -2283,6 +2283,104 @@ async fn session_heads_preserve_latest_turn_when_it_exceeds_message_limit() {
 }
 
 #[tokio::test]
+async fn session_heads_bound_latest_turn_tool_summaries() {
+    const EXPECTED_TOOL_SUMMARY_LIMIT: usize = 96;
+    const EXPECTED_HEAD_BYTE_LIMIT: i64 = 256_000;
+
+    let fixture = setup_session_fixture().await;
+    let run_id = RunId::new();
+    let turn_id = TurnId::new();
+    let mut turn = make_turn(fixture.session_id, run_id, turn_id);
+    turn.start_seq = Some(1);
+    turn.tool_total = 335;
+    turn.tool_completed = 335;
+    fixture.store.insert_session_turn(turn).await.unwrap();
+    fixture
+        .store
+        .insert_message(make_assistant_message(
+            fixture.session_id,
+            fixture.task_id,
+            run_id,
+            turn_id,
+            "latest assistant content",
+        ))
+        .await
+        .unwrap();
+
+    let total_tools = 335;
+    let now = Utc::now();
+    for index in 0..total_tools {
+        fixture
+            .store
+            .upsert_session_turn_tool(SessionTurnTool {
+                session_id: fixture.session_id,
+                tool_call_id: format!("tool-{index:03}"),
+                turn_id,
+                tool_kind: Some("execute".to_string()),
+                provider_tool_name: Some("Bash".to_string()),
+                title: Some(format!("Bash {index}")),
+                subtitle: Some(format!("command {index}")),
+                status: Some("completed".to_string()),
+                input_json: Some(serde_json::json!({ "cmd": format!("echo {index}") })),
+                output_text: Some(format!("output {index}")),
+                order_seq: index as i64,
+                first_event_seq: Some(index as i64),
+                input_truncated: Some(false),
+                input_original_bytes: None,
+                output_truncated: Some(false),
+                output_original_bytes: None,
+                created_at: now,
+                updated_at: now,
+            })
+            .await
+            .unwrap();
+    }
+
+    let head = fixture
+        .store
+        .get_session_head_snapshot(fixture.session_id, 10, true)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(head.turns.len(), 1);
+    assert_eq!(head.messages.len(), 1);
+    assert_eq!(head.messages[0].content, "latest assistant content");
+    assert_eq!(head.tool_summaries.len(), EXPECTED_TOOL_SUMMARY_LIMIT);
+    assert_eq!(
+        head.tool_summaries
+            .first()
+            .map(|tool| tool.tool_call_id.as_str()),
+        Some("tool-239")
+    );
+    assert_eq!(
+        head.tool_summaries
+            .last()
+            .map(|tool| tool.tool_call_id.as_str()),
+        Some("tool-334")
+    );
+    assert!(head.head_window.truncated);
+    assert!(head.head_window.bytes <= EXPECTED_HEAD_BYTE_LIMIT);
+
+    let active_head = fixture
+        .store
+        .get_active_snapshot_head(fixture.session_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        active_head.tool_summaries.len(),
+        EXPECTED_TOOL_SUMMARY_LIMIT
+    );
+    assert_eq!(
+        active_head
+            .tool_summaries
+            .last()
+            .map(|tool| tool.tool_call_id.as_str()),
+        Some("tool-334")
+    );
+}
+
+#[tokio::test]
 async fn active_session_head_snapshot_uses_requested_limit_for_large_unmaterialized_heads() {
     let fixture = setup_session_fixture().await;
     let total_turns = 240_i64;

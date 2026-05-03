@@ -262,7 +262,7 @@ describe("sessionHeadState", () => {
     expect(compacted.head_window?.turn_limit).toBe(5);
     expect(compacted.head_window?.message_limit).toBe(200);
     expect(compacted.head_window?.event_limit).toBe(0);
-    expect(compacted.head_window?.byte_limit).toBe(1_500_000);
+    expect(compacted.head_window?.byte_limit).toBe(256_000);
     expect(compacted.head_window?.truncated).toBe(true);
   });
 
@@ -501,6 +501,85 @@ describe("sessionHeadState", () => {
     expect(compacted.messages[0]?.id).toBe("message-61");
     expect(compacted.messages.at(-1)?.id).toBe("message-260");
     expect(compacted.head_window?.truncated).toBe(true);
+  });
+
+  it("caps tool summaries in active bootstrap heads", () => {
+    const head: SessionHeadSnapshot = {
+      session: {
+        id: "session-tool-cap",
+        task_id: "task-1",
+        workspace_id: "ws-1",
+        worktree_id: "wt-1",
+        provider_id: "codex",
+        model_id: "gpt-5",
+        title: "Tool cap",
+        agent_role: "implementer",
+        status: "active",
+        created_at: "2026-03-09T00:00:00.000Z",
+        updated_at: "2026-03-09T00:00:00.000Z",
+      },
+      turns: [
+        {
+          turn_id: "turn-1",
+          session_id: "session-tool-cap",
+          run_id: null,
+          user_message_id: "user-1",
+          status: "running",
+          start_seq: 1,
+          end_seq: null,
+          started_at: "2026-03-09T00:00:00.000Z",
+          updated_at: "2026-03-09T00:00:00.000Z",
+          assistant_partial: null,
+          thought_partial: null,
+          metrics_json: null,
+          tool_total: 335,
+          tool_pending: 0,
+          tool_running: 0,
+          tool_completed: 335,
+          tool_failed: 0,
+        },
+      ],
+      tool_summaries: Array.from({ length: 335 }, (_, index) => ({
+        session_id: "session-tool-cap",
+        tool_call_id: `tool-${String(index).padStart(3, "0")}`,
+        turn_id: "turn-1",
+        status: "completed",
+        order_seq: index,
+        created_at: `2026-03-09T00:00:${String(index % 60).padStart(2, "0")}.000Z`,
+        updated_at: `2026-03-09T00:00:${String(index % 60).padStart(2, "0")}.000Z`,
+      })),
+      messages: [
+        {
+          id: "message-latest",
+          session_id: "session-tool-cap",
+          task_id: "task-1",
+          turn_id: "turn-1",
+          order_seq: 336,
+          role: "assistant",
+          content: "latest assistant content",
+          delivery: "immediate",
+          created_at: "2026-03-09T00:01:00.000Z",
+        },
+      ],
+      events: [],
+      last_event_seq: 335,
+      projection_rev: 335,
+      state_rev: 335,
+      activity: { is_working: true, last_turn_status: "running" },
+      has_more_turns: false,
+      has_more_history: false,
+      history_cursor: null,
+    };
+
+    const compacted = compactActiveSessionHeadSnapshot(head);
+
+    expect(compacted.messages.map((message) => message.content)).toEqual(["latest assistant content"]);
+    expect(compacted.tool_summaries).toHaveLength(96);
+    expect(compacted.tool_summaries?.[0]?.tool_call_id).toBe("tool-239");
+    expect(compacted.tool_summaries?.at(-1)?.tool_call_id).toBe("tool-334");
+    expect(compacted.has_more_turns).toBe(false);
+    expect(compacted.head_window?.truncated).toBe(true);
+    expect(compacted.head_window?.bytes).toBeLessThanOrEqual(256_000);
   });
 
   it("shares message and turn merge ordering across snapshot consumers", () => {

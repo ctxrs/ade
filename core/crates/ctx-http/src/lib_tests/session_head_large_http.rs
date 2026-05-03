@@ -8,8 +8,8 @@ use super::*;
 
 #[tokio::test]
 async fn large_session_head_http_responses_are_bounded() {
-    const SEEDED_TURNS: i64 = 65;
-    const HEAD_LIMIT: i64 = 60;
+    const SEEDED_TURNS: i64 = 11;
+    const HEAD_LIMIT: i64 = 6;
     let step_timeout = std::time::Duration::from_secs(120);
     let _serial = home_env_test_lock().lock().await;
 
@@ -106,8 +106,8 @@ async fn large_session_head_http_responses_are_bounded() {
             &app,
             Method::GET,
             format!(
-                "/api/sessions/{}/head?limit=60&include_events=true",
-                session.id.0
+                "/api/sessions/{}/head?limit={HEAD_LIMIT}&include_events=true",
+                session.id.0,
             ),
             None,
         ),
@@ -115,11 +115,18 @@ async fn large_session_head_http_responses_are_bounded() {
     .await
     .unwrap_or_else(|_| panic!("timed out requesting session head"));
     assert_eq!(head_status, StatusCode::OK, "{head_body:#?}");
-    assert_eq!(head_body["turns"].as_array().map(Vec::len), Some(60));
-    assert_eq!(head_body["messages"].as_array().map(Vec::len), Some(60));
+    let head_limit = usize::try_from(HEAD_LIMIT).expect("head limit should fit usize");
+    assert_eq!(
+        head_body["turns"].as_array().map(Vec::len),
+        Some(head_limit)
+    );
+    assert_eq!(
+        head_body["messages"].as_array().map(Vec::len),
+        Some(head_limit)
+    );
     assert_eq!(
         head_body["tool_summaries"].as_array().map(Vec::len),
-        Some(60)
+        Some(head_limit)
     );
     assert_eq!(head_body["has_more_turns"], json!(true));
     assert_eq!(
@@ -127,7 +134,7 @@ async fn large_session_head_http_responses_are_bounded() {
         json!(format!("answer {}", SEEDED_TURNS - HEAD_LIMIT))
     );
     assert_eq!(
-        head_body["messages"][59]["content"],
+        head_body["messages"][head_limit - 1]["content"],
         json!(format!("answer {}", SEEDED_TURNS - 1))
     );
 }

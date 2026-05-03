@@ -85,6 +85,7 @@ rust_test(
     name = "sqlite_hardening",
     crate_name = "sqlite_hardening",
     crate_root = "tests/sqlite_hardening.rs",
+    args = ["--test-threads=1"],
     compile_data = MIGRATIONS,
     data = MIGRATIONS,
     edition = "2021",

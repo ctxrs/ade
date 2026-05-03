@@ -10,8 +10,8 @@ use ctx_core::models::{
 pub(super) const ACTIVE_HEAD_TURN_LIMIT: usize = 5;
 pub(super) const ACTIVE_HEAD_MESSAGE_LIMIT: usize = 200;
 pub(super) const ACTIVE_HEAD_EVENT_LIMIT: usize = 200;
-pub(super) const ACTIVE_HEAD_BYTE_LIMIT: usize = 1_500_000;
-pub(super) const ACTIVE_HEAD_TOOL_SUMMARY_LIMIT: usize = 200;
+pub(super) const ACTIVE_HEAD_BYTE_LIMIT: usize = 256_000;
+pub(super) const ACTIVE_HEAD_TOOL_SUMMARY_LIMIT: usize = 96;
 
 #[derive(Serialize)]
 struct SessionHeadWindowPayload<'a> {
@@ -186,6 +186,23 @@ pub(super) fn retain_tool_summaries_for_turns(
     tool_summaries.retain(|tool| allowed.contains(&tool.turn_id));
 }
 
+fn compare_tool_summary_order(a: &SessionTurnToolSummary, b: &SessionTurnToolSummary) -> Ordering {
+    a.order_seq
+        .cmp(&b.order_seq)
+        .then_with(|| a.created_at.cmp(&b.created_at))
+        .then_with(|| a.tool_call_id.cmp(&b.tool_call_id))
+}
+
+fn trim_tool_summaries_for_limit(tool_summaries: &mut Vec<SessionTurnToolSummary>) -> bool {
+    if tool_summaries.len() <= ACTIVE_HEAD_TOOL_SUMMARY_LIMIT {
+        return false;
+    }
+    tool_summaries.sort_by(compare_tool_summary_order);
+    let drop = tool_summaries.len() - ACTIVE_HEAD_TOOL_SUMMARY_LIMIT;
+    tool_summaries.drain(0..drop);
+    true
+}
+
 pub(super) fn compact_active_head_snapshot(head: &SessionHeadSnapshot) -> SessionHeadSnapshot {
     let mut out = head.clone();
 
@@ -202,7 +219,7 @@ pub(super) fn compact_active_head_snapshot(head: &SessionHeadSnapshot) -> Sessio
         out.events.clear();
 
         if out.tool_summaries.len() > ACTIVE_HEAD_TOOL_SUMMARY_LIMIT {
-            out.tool_summaries.sort_by_key(|summary| summary.updated_at);
+            out.tool_summaries.sort_by(compare_tool_summary_order);
             out.tool_summaries = out
                 .tool_summaries
                 .split_off(out.tool_summaries.len() - ACTIVE_HEAD_TOOL_SUMMARY_LIMIT);
@@ -280,6 +297,9 @@ pub(super) fn trim_head_window(head: &mut SessionHeadSnapshot) {
     }
     retain_messages_for_turns(&mut head.messages, &head.turns);
     retain_tool_summaries_for_turns(&mut head.tool_summaries, &head.turns);
+    if trim_tool_summaries_for_limit(&mut head.tool_summaries) {
+        truncated = true;
+    }
 
     while head.messages.len() > message_limit && !head.turns.is_empty() {
         head.turns.remove(0);
@@ -287,6 +307,9 @@ pub(super) fn trim_head_window(head: &mut SessionHeadSnapshot) {
         head.has_more_turns = true;
         retain_messages_for_turns(&mut head.messages, &head.turns);
         retain_tool_summaries_for_turns(&mut head.tool_summaries, &head.turns);
+        if trim_tool_summaries_for_limit(&mut head.tool_summaries) {
+            truncated = true;
+        }
     }
 
     if head.events.len() > event_limit {
@@ -311,6 +334,9 @@ pub(super) fn trim_head_window(head: &mut SessionHeadSnapshot) {
             head.has_more_turns = true;
             retain_messages_for_turns(&mut head.messages, &head.turns);
             retain_tool_summaries_for_turns(&mut head.tool_summaries, &head.turns);
+            if trim_tool_summaries_for_limit(&mut head.tool_summaries) {
+                truncated = true;
+            }
             continue;
         }
         if !head.events.is_empty() {
