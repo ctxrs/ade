@@ -422,6 +422,56 @@ test("bazel pilot marks only local phases as host-budgeted work", () => {
   assert.equal(resolvePhaseBudgetKey(invocation.phases[1]), HOST_HEAVY_BUDGET_KEY);
 });
 
+test("bazel pilot keeps ordinary binary builds local in Linux partition mode", () => {
+  const invocation = buildBazelPilotInvocation({
+    argv: [
+      "build",
+      "//core/crates/ctx-core:lib",
+      "//core/crates/ctx-http:ctx",
+    ],
+    env: {
+      ...process.env,
+      CTX_VOLATILE_ROOT: "/tmp/ctx-bazel-pilot-ordinary-build-partition",
+      CTX_SESSION_ID: "bazel-ordinary-build-partition-session",
+      CTX_BAZEL_REMOTE_EXECUTION: "linux",
+      BUILD_BUDDY_API_KEY: "buildbuddy-linux-key",
+    },
+  });
+
+  assert.deepEqual(invocation.phases.map((phase) => phase.name), ["linux-rbe", "local"]);
+  assert.deepEqual(invocation.phases[0].targets, ["//core/crates/ctx-core:lib"]);
+  assert.deepEqual(invocation.phases[1].targets, ["//core/crates/ctx-http:ctx"]);
+});
+
+test("bazel pilot keeps clippy binary builds remote in Linux partition mode", () => {
+  const invocation = buildBazelPilotInvocation({
+    argv: [
+      "build",
+      "--rust-clippy",
+      "//core/crates/ctx-core:lib",
+      "//core/crates/ctx-http:ctx",
+    ],
+    env: {
+      ...process.env,
+      CTX_VOLATILE_ROOT: "/tmp/ctx-bazel-pilot-clippy-build-partition",
+      CTX_SESSION_ID: "bazel-clippy-build-partition-session",
+      CTX_BAZEL_REMOTE_EXECUTION: "linux",
+      BUILD_BUDDY_API_KEY: "buildbuddy-linux-key",
+    },
+  });
+
+  assert.equal(invocation.rustClippy, true);
+  assert.deepEqual(invocation.phases.map((phase) => phase.name), ["linux-rbe"]);
+  assert.deepEqual(invocation.phases[0].targets, [
+    "//core/crates/ctx-core:lib",
+    "//core/crates/ctx-http:ctx",
+  ]);
+  assert.equal(invocation.phases[0].commandArgs.includes("--config=buildbuddy-linux-rbe"), true);
+  for (const arg of RUST_CLIPPY_BAZEL_ARGS) {
+    assert.equal(invocation.phases[0].commandArgs.includes(arg), true);
+  }
+});
+
 test("bazel pilot invocation runner applies the host-heavy budget to local phases", () => {
   const invocation = buildBazelPilotInvocation({
     argv: ["test", "//core/crates/ctx-http:provider-auth"],

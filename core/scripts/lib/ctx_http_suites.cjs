@@ -62,6 +62,9 @@ const CTX_HTTP_CHECKIN_FANOUT_TARGETS_BY_SUITE = Object.freeze({
     "unit_tests_lib_workspace_active_routes",
     "unit_tests_lib_execution_launch_startup_prewarm_kind_supported",
   ],
+  "unit-tests-lib-session-head-large": [
+    "unit_tests_lib_session_head_large",
+  ],
   "unit-tests-workspace-runtime": [
     "unit_tests_workspace_runtime",
     "unit_tests_workspace_runtime_reclaim_idle_runtime_with_parked_containers",
@@ -924,7 +927,7 @@ function normalizeCtxHttpSuiteSelection(suiteSelection) {
 }
 
 function buildCtxHttpSuiteCommands(suiteName) {
-  const targets = getCtxHttpSuiteTargets(suiteName);
+  const targets = getCtxHttpSuiteExecutionTargets(suiteName);
   if (targets.length === 0) {
     return [];
   }
@@ -969,6 +972,13 @@ function getCtxHttpSuiteCheckinFanoutTargets(suiteName) {
   if (!suite) {
     throw new Error(`unknown ctx-http suite: ${suiteName}`);
   }
+  if (suite.name === "base") {
+    return dedupePreservingOrder(
+      CTX_HTTP_BASE_CHILD_SUITE_NAMES.flatMap((childSuiteName) =>
+        getCtxHttpSuiteCheckinFanoutTargets(childSuiteName)
+      ),
+    );
+  }
   const targetNames = CTX_HTTP_CHECKIN_FANOUT_TARGETS_BY_SUITE[suite.name];
   if (!targetNames) {
     if (suite.type === "integration" && (suite.directTargets || suite.testFiles).length > 0) {
@@ -977,6 +987,27 @@ function getCtxHttpSuiteCheckinFanoutTargets(suiteName) {
     return [getCtxHttpSuiteTarget(suite.name)];
   }
   return targetNames.map((targetName) => `${CTX_HTTP_BAZEL_PACKAGE}:${targetName}`);
+}
+
+function dedupePreservingOrder(values) {
+  return [...new Set(values)];
+}
+
+function getCtxHttpSuiteExecutionTargets(suiteSelection) {
+  const suiteNames = normalizeCtxHttpSuiteSelection(suiteSelection);
+  const expandedSuiteNames = suiteNames.length === 1 && suiteNames[0] === "all"
+    ? getCtxHttpSuiteNamesForAllTarget()
+    : suiteNames;
+  return dedupePreservingOrder(
+    expandedSuiteNames.flatMap((suiteName) => getCtxHttpSuiteCheckinFanoutTargets(suiteName)),
+  );
+}
+
+function getAllCtxHttpSuiteCheckinFanoutTargets() {
+  return dedupePreservingOrder(
+    getCtxHttpSuiteNamesForAllTarget()
+      .flatMap((suiteName) => getCtxHttpSuiteCheckinFanoutTargets(suiteName)),
+  ).sort();
 }
 
 function buildCtxHttpSuiteTaskArgs(suiteName) {
@@ -999,9 +1030,11 @@ module.exports = {
   buildCtxHttpSuiteCommands,
   buildCtxHttpSuiteTaskArgs,
   expandCtxHttpSuiteForPlanner,
+  getAllCtxHttpSuiteCheckinFanoutTargets,
   getCtxHttpSuiteTarget,
   getCtxHttpSuiteTargets,
   getCtxHttpSuiteCheckinFanoutTargets,
+  getCtxHttpSuiteExecutionTargets,
   getCtxHttpSuiteByName,
   getCtxHttpSuiteConcurrencyClass,
   getCtxHttpSuiteNames,

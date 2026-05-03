@@ -470,7 +470,9 @@ function buildInvocationPhases({
     },
     ];
   }
-  const { remoteTargets, localTargets } = partitionBazelTargetsForLinuxRbe(command, targets);
+  const { remoteTargets, localTargets } = partitionBazelTargetsForLinuxRbe(command, targets, {
+    rustClippy,
+  });
   const phases = [];
   if (remoteTargets.length > 0) {
     phases.push({
@@ -753,6 +755,7 @@ function buildBazelPilotSummary(invocation, phaseResults, exitCode) {
       name: phase.name,
       queueTimeMs: Number(phase.queueTimeMs || 0),
       status: Number(phase.status || 0),
+      targets: Array.isArray(phase.targets) ? [...phase.targets] : [],
       targetCount: Array.isArray(phase.targets) ? phase.targets.length : 0,
     })),
     remoteExecutionMode: invocation.remoteExecutionMode,

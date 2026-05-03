@@ -17,6 +17,7 @@ const {
   buildCtxHttpSuiteTaskArgs,
   getCtxHttpSuiteCheckinFanoutTargets,
   getCtxHttpSuiteConcurrencyClass,
+  getCtxHttpSuiteExecutionTargets,
   getCtxHttpSuiteNames,
   getCtxHttpSuiteTargets,
   getCtxHttpSuiteTaskName,
@@ -58,24 +59,41 @@ test("ctx-http suite names include the meta all task and stable suite task names
 });
 
 test("ctx-http suite command builder expands base and meta suites predictably", () => {
+  const baseExecutionTargets = getCtxHttpSuiteExecutionTargets("base");
   assert.deepEqual(buildCtxHttpSuiteCommands("base"), [
     {
-      args: ["scripts/run_bazel_pilot.cjs", "test", "//core/crates/ctx-http:base"],
+      args: ["scripts/run_bazel_pilot.cjs", "test", ...baseExecutionTargets],
       command: "node",
     },
   ]);
+  assert.equal(baseExecutionTargets.includes(`${CTX_HTTP_BAZEL_PACKAGE}:unit_tests_api`), true);
+  assert.equal(baseExecutionTargets.includes(`${CTX_HTTP_BAZEL_PACKAGE}:unit-tests-api`), false);
+  assert.equal(baseExecutionTargets.includes(`${CTX_HTTP_BAZEL_PACKAGE}:unit_tests_lib_session_head_large`), true);
+  assert.equal(baseExecutionTargets.includes(`${CTX_HTTP_BAZEL_PACKAGE}:unit-tests-lib-session-head-large`), false);
+  assert.equal(baseExecutionTargets.includes(`${CTX_HTTP_BAZEL_PACKAGE}:base`), false);
 
   const allCommands = buildCtxHttpSuiteCommands("all");
   assert.deepEqual(
     allCommands,
     [
       {
-        args: ["scripts/run_bazel_pilot.cjs", "test", ...getCtxHttpSuiteTargets("all")],
+        args: ["scripts/run_bazel_pilot.cjs", "test", ...getCtxHttpSuiteExecutionTargets("all")],
         command: "node",
       },
     ],
   );
   assert.equal(new Set(getCtxHttpSuiteTargets("all")).size, getCtxHttpSuiteTargets("all").length);
+  assert.equal(new Set(getCtxHttpSuiteExecutionTargets("all")).size, getCtxHttpSuiteExecutionTargets("all").length);
+  assert.equal(getCtxHttpSuiteExecutionTargets("all").includes(`${CTX_HTTP_BAZEL_PACKAGE}:unit_tests_api`), true);
+  assert.equal(getCtxHttpSuiteExecutionTargets("all").includes(`${CTX_HTTP_BAZEL_PACKAGE}:unit-tests-api`), false);
+  assert.equal(
+    getCtxHttpSuiteExecutionTargets("all").includes(`${CTX_HTTP_BAZEL_PACKAGE}:unit_tests_lib_session_head_large`),
+    true,
+  );
+  assert.equal(
+    getCtxHttpSuiteExecutionTargets("all").includes(`${CTX_HTTP_BAZEL_PACKAGE}:unit-tests-lib-session-head-large`),
+    false,
+  );
   assert.equal(getCtxHttpSuiteTargets("all").includes(`${CTX_HTTP_BAZEL_PACKAGE}:unit-tests-api`), true);
   assert.equal(getCtxHttpSuiteTargets("all").includes(`${CTX_HTTP_BAZEL_PACKAGE}:bin_tests`), true);
   assert.equal(getCtxHttpSuiteTargets("all").includes(`${CTX_HTTP_BAZEL_PACKAGE}:doc_tests`), true);
@@ -204,12 +222,15 @@ test("ctx-http checkin fanout exposes split unit suite targets without changing 
 });
 
 test("ctx-http suite command builder accepts explicit multi-suite selections", () => {
+  const multiExecutionTargets = getCtxHttpSuiteExecutionTargets(["base", "provider-auth"]);
   assert.deepEqual(buildCtxHttpSuiteCommands(["base", "provider-auth"]), [
     {
-      args: ["scripts/run_bazel_pilot.cjs", "test", "//core/crates/ctx-http:base", "//core/crates/ctx-http:provider-auth"],
+      args: ["scripts/run_bazel_pilot.cjs", "test", ...multiExecutionTargets],
       command: "node",
     },
   ]);
+  assert.equal(multiExecutionTargets.includes(`${CTX_HTTP_BAZEL_PACKAGE}:base`), false);
+  assert.equal(multiExecutionTargets.includes(`${CTX_HTTP_BAZEL_PACKAGE}:unit_tests_api`), true);
   assert.deepEqual(buildCtxHttpSuiteTaskArgs(["base", "provider-auth"]), [
     "--suite",
     "base",

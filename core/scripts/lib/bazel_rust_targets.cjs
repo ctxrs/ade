@@ -1,5 +1,11 @@
-const { getCtxHttpSuiteTargets } = require("./ctx_http_suites.cjs");
-const { WEB_SMOKE_BAZEL_TARGETS } = require("./web_smoke_bazel_targets.cjs");
+const {
+  getAllCtxHttpSuiteCheckinFanoutTargets,
+  getCtxHttpSuiteTargets,
+} = require("./ctx_http_suites.cjs");
+const {
+  WEB_LINUX_RBE_SAFE_BAZEL_TEST_TARGETS,
+  WEB_SMOKE_BAZEL_TARGETS,
+} = require("./web_smoke_bazel_targets.cjs");
 
 function sortUnique(values) {
   return [...new Set(values)].filter(Boolean).sort();
@@ -142,6 +148,11 @@ const LINUX_RBE_UNSAFE_BAZEL_TEST_TARGETS = Object.freeze(
     // This target pulls a Darwin-hosted Rust toolchain helper, which cannot execute on the
     // Linux BuildBuddy workers used by the linux-rbe pool.
     "//core/crates/ctx-avf-linux-guest-agent:unit_tests",
+    // Suite aliases hide their concrete children from the Linux RBE partitioner.
+    // Route the flattened ctx-http children instead so only known unsafe leaves spill local.
+    ...getCtxHttpSuiteTargets("all").filter(
+      (target) => !getAllCtxHttpSuiteCheckinFanoutTargets().includes(target),
+    ),
   ]),
 );
 
@@ -151,6 +162,8 @@ function buildLinuxRbeSafeBazelTestTargets({
   const unsafeTargetSet = unsafeTargets instanceof Set ? unsafeTargets : new Set(unsafeTargets || []);
   return sortUnique([
     ...flattenTargetMapping(BAZEL_TEST_TARGETS_BY_CRATE),
+    ...getAllCtxHttpSuiteCheckinFanoutTargets(),
+    ...WEB_LINUX_RBE_SAFE_BAZEL_TEST_TARGETS,
     ...WEB_SMOKE_BAZEL_TARGETS,
   ]).filter((target) => !unsafeTargetSet.has(target));
 }
@@ -164,6 +177,10 @@ const LINUX_RBE_SAFE_BAZEL_TEST_TARGETS = Object.freeze(
 // decide the Linux output is what the caller wants.
 const LINUX_RBE_SAFE_BAZEL_BUILD_TARGETS = Object.freeze(
   flattenTargetMapping(BAZEL_BUILD_TARGETS_BY_CRATE).filter((target) => target.endsWith(":lib")),
+);
+
+const LINUX_RBE_SAFE_BAZEL_CLIPPY_TARGETS = Object.freeze(
+  flattenTargetMapping(BAZEL_BUILD_TARGETS_BY_CRATE),
 );
 
 function getBazelCoveredCrates() {
@@ -190,18 +207,21 @@ function getBazelBuildTargetsForCrates(crateNames) {
   return getBazelTargetsForCrates(BAZEL_BUILD_TARGETS_BY_CRATE, crateNames);
 }
 
-function getLinuxRbeSafeBazelTargets(command) {
+function getLinuxRbeSafeBazelTargets(command, { rustClippy = false } = {}) {
   if (command === "test") {
     return LINUX_RBE_SAFE_BAZEL_TEST_TARGETS;
   }
   if (command === "build") {
+    if (rustClippy) {
+      return LINUX_RBE_SAFE_BAZEL_CLIPPY_TARGETS;
+    }
     return LINUX_RBE_SAFE_BAZEL_BUILD_TARGETS;
   }
   return [];
 }
 
-function partitionBazelTargetsForLinuxRbe(command, targets) {
-  const safeTargets = new Set(getLinuxRbeSafeBazelTargets(command));
+function partitionBazelTargetsForLinuxRbe(command, targets, options = {}) {
+  const safeTargets = new Set(getLinuxRbeSafeBazelTargets(command, options));
   const remoteTargets = [];
   const localTargets = [];
   for (const target of sortUnique(targets)) {
@@ -227,6 +247,8 @@ module.exports = {
   getLinuxRbeSafeBazelTargets,
   getBazelTestTargetsForCrates,
   LINUX_RBE_SAFE_BAZEL_BUILD_TARGETS,
+  LINUX_RBE_SAFE_BAZEL_CLIPPY_TARGETS,
   LINUX_RBE_SAFE_BAZEL_TEST_TARGETS,
+  LINUX_RBE_UNSAFE_BAZEL_TEST_TARGETS,
   partitionBazelTargetsForLinuxRbe,
 };

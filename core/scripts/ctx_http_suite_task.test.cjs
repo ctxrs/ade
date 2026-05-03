@@ -3,6 +3,7 @@ const path = require("node:path");
 const test = require("node:test");
 const { spawnSync } = require("node:child_process");
 const { buildTaskPlan } = require("./ctx_http_suite_task.cjs");
+const { getCtxHttpSuiteExecutionTargets } = require("./lib/ctx_http_suites.cjs");
 
 const repoRoot = path.resolve(__dirname, "..", "..");
 const scriptPath = path.join(__dirname, "ctx_http_suite_task.cjs");
@@ -26,7 +27,10 @@ test("ctx-http suite task lists one batched Bazel command for multi-suite batche
   assert.equal(result.status, 0);
   assert.equal(
     result.stdout.trim(),
-    "node scripts/run_bazel_pilot.cjs test //core/crates/ctx-http:base //core/crates/ctx-http:provider-auth",
+    [
+      "node scripts/run_bazel_pilot.cjs test",
+      ...getCtxHttpSuiteExecutionTargets(["base", "provider-auth"]),
+    ].join(" "),
   );
 });
 
@@ -52,7 +56,8 @@ test("ctx-http suite task lists the all meta-suite as one batched Bazel command"
   const stdoutLines = result.stdout.trim().split("\n");
   assert.equal(stdoutLines.length, 1);
   assert.equal(stdoutLines[0].includes("//core/crates/ctx-http:base"), false);
-  assert.equal(stdoutLines[0].includes("//core/crates/ctx-http:unit-tests-api"), true);
+  assert.equal(stdoutLines[0].includes("//core/crates/ctx-http:unit-tests-api"), false);
+  assert.equal(stdoutLines[0].includes("//core/crates/ctx-http:unit_tests_api"), true);
   assert.equal(stdoutLines[0].includes("//core/crates/ctx-http:bin_tests"), true);
   assert.equal(stdoutLines[0].includes("//core/crates/ctx-http:doc_tests"), true);
   assert.equal(
@@ -75,7 +80,7 @@ test("ctx-http suite task caps per-suite Bazel fanout without serializing Buildk
   assert.equal(plan.isBatchSelection, true);
   assert.deepEqual(plan.commands, [
     {
-      args: ["scripts/run_bazel_pilot.cjs", "test", "//core/crates/ctx-http:base", "//core/crates/ctx-http:provider-auth"],
+      args: ["scripts/run_bazel_pilot.cjs", "test", ...getCtxHttpSuiteExecutionTargets(["base", "provider-auth"])],
       command: "node",
     },
   ]);
@@ -98,7 +103,7 @@ test("ctx-http suite task preserves explicit Bazel job caps", () => {
 
   assert.deepEqual(plan.commands, [
     {
-      args: ["scripts/run_bazel_pilot.cjs", "test", "//core/crates/ctx-http:base"],
+      args: ["scripts/run_bazel_pilot.cjs", "test", ...getCtxHttpSuiteExecutionTargets("base")],
       command: "node",
     },
   ]);

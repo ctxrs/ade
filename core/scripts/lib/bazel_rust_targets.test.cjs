@@ -1,6 +1,13 @@
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
 const test = require("node:test");
-const { getCtxHttpSuiteTargets } = require("./ctx_http_suites.cjs");
+const {
+  getAllCtxHttpSuiteCheckinFanoutTargets,
+  getCtxHttpSuiteTargets,
+} = require("./ctx_http_suites.cjs");
+const { buildCheckinBuildkiteExecutionPlan } = require("./test_taxonomy/execution.cjs");
+const { WEB_LINUX_RBE_SAFE_BAZEL_TEST_TARGETS } = require("./web_smoke_bazel_targets.cjs");
 
 const {
   buildLinuxRbeSafeBazelTestTargets,
@@ -8,8 +15,12 @@ const {
   getBazelClippyTargetsForCrates,
   getBazelCoveredCrates,
   getBazelTestTargetsForCrates,
+  LINUX_RBE_SAFE_BAZEL_CLIPPY_TARGETS,
+  LINUX_RBE_UNSAFE_BAZEL_TEST_TARGETS,
   partitionBazelTargetsForLinuxRbe,
 } = require("./bazel_rust_targets.cjs");
+
+const repoRoot = path.resolve(__dirname, "..", "..", "..");
 
 function sortUnique(values) {
   return [...new Set(values)].sort();
@@ -254,10 +265,98 @@ test("Bazel clippy target mapping expands crates to explicit build targets", () 
 test("Bazel clippy target mapping stays eligible for Linux RBE partitioning", () => {
   const { remoteTargets, localTargets } = partitionBazelTargetsForLinuxRbe(
     "build",
-    getBazelClippyTargetsForCrates(["ctx-core"]),
+    getBazelClippyTargetsForCrates(["ctx-core", "ctx-http"]),
+    { rustClippy: true },
+  );
+  assert.deepEqual(remoteTargets, [
+    "//core/crates/ctx-core:lib",
+    "//core/crates/ctx-http:ctx",
+    "//core/crates/ctx-http:lib",
+  ]);
+  assert.deepEqual(localTargets, []);
+});
+
+test("ordinary Linux RBE build partitioning remains conservative for binary outputs", () => {
+  const { remoteTargets, localTargets } = partitionBazelTargetsForLinuxRbe(
+    "build",
+    ["//core/crates/ctx-core:lib", "//core/crates/ctx-http:ctx"],
   );
   assert.deepEqual(remoteTargets, ["//core/crates/ctx-core:lib"]);
+  assert.deepEqual(localTargets, ["//core/crates/ctx-http:ctx"]);
+});
+
+test("clippy Linux RBE partitioning covers explicit build targets including binaries", () => {
+  assert.equal(LINUX_RBE_SAFE_BAZEL_CLIPPY_TARGETS.includes("//core/crates/ctx-http:ctx"), true);
+  const { remoteTargets, localTargets } = partitionBazelTargetsForLinuxRbe(
+    "build",
+    ["//core/crates/ctx-core:lib", "//core/crates/ctx-http:ctx"],
+    { rustClippy: true },
+  );
+  assert.deepEqual(remoteTargets, ["//core/crates/ctx-core:lib", "//core/crates/ctx-http:ctx"]);
   assert.deepEqual(localTargets, []);
+});
+
+test("flattened ctx-http checkin fanout targets are Linux RBE safe", () => {
+  const fanoutTargets = getAllCtxHttpSuiteCheckinFanoutTargets();
+  assert.ok(fanoutTargets.length > getCtxHttpSuiteTargets("all").length);
+  const { localTargets } = partitionBazelTargetsForLinuxRbe("test", fanoutTargets);
+  assert.deepEqual(localTargets, []);
+  assert.equal(
+    LINUX_RBE_UNSAFE_BAZEL_TEST_TARGETS.has("//core/crates/ctx-http:unit-tests-provider-and-settings"),
+    true,
+  );
+});
+
+test("checkin direct Bazel test commands do not spill local under Linux RBE", () => {
+  const plan = buildCheckinBuildkiteExecutionPlan({ profileId: "checkin" });
+  const directBazelCommands = plan.commands.filter((command) =>
+    command.startsWith("node scripts/run_bazel_pilot.cjs test ")
+  );
+  assert.ok(directBazelCommands.length > 100);
+
+  const spilledTargets = [];
+  for (const command of directBazelCommands) {
+    const targets = command
+      .replace("node scripts/run_bazel_pilot.cjs test ", "")
+      .trim()
+      .split(/\s+/u)
+      .filter(Boolean);
+    const { localTargets } = partitionBazelTargetsForLinuxRbe("test", targets);
+    spilledTargets.push(...localTargets);
+  }
+
+  assert.deepEqual(spilledTargets, []);
+});
+
+test("web checkin lint typecheck and unit Bazel targets are Linux RBE safe", () => {
+  const packageJson = JSON.parse(fs.readFileSync(path.join(repoRoot, "core", "package.json"), "utf8"));
+  const plan = buildCheckinBuildkiteExecutionPlan({ profileId: "checkin" });
+  const webCheckinScripts = plan.commands
+    .filter((command) => command.startsWith("pnpm bazel:web:") && !command.startsWith("pnpm bazel:web:e2e:"))
+    .map((command) => command.replace(/^pnpm /u, ""));
+  assert.ok(webCheckinScripts.length > 5);
+
+  const targets = [];
+  for (const scriptName of webCheckinScripts) {
+    const script = String(packageJson.scripts[scriptName] || "");
+    for (const match of script.matchAll(/node scripts\/run_bazel_pilot\.cjs test ([^&]+)/gu)) {
+      targets.push(...match[1].trim().split(/\s+/u).filter(Boolean));
+    }
+  }
+
+  assert.ok(targets.includes("//core/apps/web:typecheck"));
+  assert.equal(WEB_LINUX_RBE_SAFE_BAZEL_TEST_TARGETS.includes("//core/apps/web/e2e:premerge_required"), false);
+  const { localTargets } = partitionBazelTargetsForLinuxRbe("test", targets);
+  assert.deepEqual(localTargets, []);
+});
+
+test("browser web e2e remains outside the first Linux RBE safe expansion", () => {
+  const { remoteTargets, localTargets } = partitionBazelTargetsForLinuxRbe(
+    "test",
+    ["//core/apps/web/e2e:premerge_required"],
+  );
+  assert.deepEqual(remoteTargets, []);
+  assert.deepEqual(localTargets, ["//core/apps/web/e2e:premerge_required"]);
 });
 
 test("all Bazel-covered Rust crates have clippy build targets", () => {
