@@ -231,6 +231,9 @@ test("ctx-http suite command builder accepts explicit multi-suite selections", (
   ]);
   assert.equal(multiExecutionTargets.includes(`${CTX_HTTP_BAZEL_PACKAGE}:base`), false);
   assert.equal(multiExecutionTargets.includes(`${CTX_HTTP_BAZEL_PACKAGE}:unit_tests_api`), true);
+  assert.equal(multiExecutionTargets.includes(`${CTX_HTTP_BAZEL_PACKAGE}:unit-tests-api`), false);
+  assert.equal(multiExecutionTargets.includes(`${CTX_HTTP_BAZEL_PACKAGE}:provider-auth`), false);
+  assert.equal(multiExecutionTargets.includes(`${CTX_HTTP_BAZEL_PACKAGE}:codex_login_callback_api`), true);
   assert.deepEqual(buildCtxHttpSuiteTaskArgs(["base", "provider-auth"]), [
     "--suite",
     "base",
