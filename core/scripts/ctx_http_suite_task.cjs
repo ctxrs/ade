@@ -11,6 +11,18 @@ const {
 
 const DEFAULT_CTX_HTTP_LOCAL_TEST_JOBS = "1";
 const DEFAULT_CTX_HTTP_BAZEL_JOBS = "2";
+const CTX_HTTP_SINGLE_ACTION_BAZEL_JOB_SUITES = new Set([
+  "all",
+  "base",
+  "unit-tests-api",
+  "unit-tests-daemon-and-scheduler",
+  "unit-tests-execution-setup",
+  "unit-tests-lib",
+  "unit-tests-lib-session-head-large",
+  "unit-tests-merge-queue",
+  "unit-tests-provider-and-settings",
+  "unit-tests-workspace-runtime",
+]);
 
 function parseArgs(argv) {
   const args = {
@@ -52,6 +64,12 @@ function run(command, args, options) {
   }
 }
 
+function defaultBazelJobsForSuites(suites) {
+  return suites.some((suite) => CTX_HTTP_SINGLE_ACTION_BAZEL_JOB_SUITES.has(suite))
+    ? "1"
+    : DEFAULT_CTX_HTTP_BAZEL_JOBS;
+}
+
 function buildTaskPlan({
   argv,
   cwd,
@@ -82,7 +100,7 @@ function buildTaskPlan({
     env.CTX_BAZEL_LOCAL_TEST_JOBS = DEFAULT_CTX_HTTP_LOCAL_TEST_JOBS;
   }
   if (!String(env.CTX_BAZEL_JOBS ?? "").trim()) {
-    env.CTX_BAZEL_JOBS = DEFAULT_CTX_HTTP_BAZEL_JOBS;
+    env.CTX_BAZEL_JOBS = defaultBazelJobsForSuites(args.suites);
   }
   return {
     args,
@@ -124,5 +142,6 @@ if (require.main === module) {
 
 module.exports = {
   buildTaskPlan,
+  defaultBazelJobsForSuites,
   parseArgs,
 };

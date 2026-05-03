@@ -67,7 +67,7 @@ test("ctx-http suite task lists the all meta-suite as one batched Bazel command"
   assert.equal(stdoutLines[0].includes("//core/crates/ctx-http:workspace-stream"), false);
 });
 
-test("ctx-http suite task caps per-suite Bazel fanout without serializing Buildkite", () => {
+test("ctx-http suite task serializes heavy unit-suite Bazel actions without serializing Buildkite", () => {
   const plan = buildTaskPlan({
     argv: ["--suite", "base", "--suite", "provider-auth"],
     cwd: repoRoot,
@@ -84,6 +84,22 @@ test("ctx-http suite task caps per-suite Bazel fanout without serializing Buildk
       command: "node",
     },
   ]);
+  assert.equal(plan.env.CTX_BAZEL_JOBS, "1");
+  assert.equal(plan.env.CTX_BAZEL_LOCAL_TEST_JOBS, "1");
+  assert.equal(plan.env.RUST_TEST_THREADS, "1");
+});
+
+test("ctx-http suite task keeps small integration suites at two Bazel jobs", () => {
+  const plan = buildTaskPlan({
+    argv: ["--suite", "attachments-routing"],
+    cwd: repoRoot,
+    env: {
+      PATH: process.env.PATH ?? "",
+    },
+    mkdir: false,
+  });
+
+  assert.equal(plan.isBatchSelection, false);
   assert.equal(plan.env.CTX_BAZEL_JOBS, "2");
   assert.equal(plan.env.CTX_BAZEL_LOCAL_TEST_JOBS, "1");
   assert.equal(plan.env.RUST_TEST_THREADS, "1");
