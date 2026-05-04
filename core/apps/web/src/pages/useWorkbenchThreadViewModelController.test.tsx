@@ -22,6 +22,10 @@ const isToolItem = (
   item: ControllerResult["listItems"][number],
 ): item is Extract<ControllerResult["listItems"][number], { kind: "tool" }> => item.kind === "tool";
 
+const isAssistantItem = (
+  item: ControllerResult["listItems"][number],
+): item is Extract<ControllerResult["listItems"][number], { kind: "assistant" }> => item.kind === "assistant";
+
 const isTurnStatusItem = (
   item: ControllerResult["listItems"][number],
 ): item is Extract<ControllerResult["listItems"][number], { kind: "turn_status" }> => item.kind === "turn_status";
@@ -215,6 +219,58 @@ describe("useWorkbenchThreadViewModelController", () => {
       const tool = latestResult?.listItems.find(isToolItem);
       expect(tool?.title).toBe("pnpm test");
     });
+  });
+
+  it("prefers structural reconcile when head repair changes messages and tool summaries together", async () => {
+    const { rerender } = renderController({
+      toolsByTurnId: {},
+      toolSummariesReady: false,
+    });
+
+    await waitFor(() => {
+      expect(latestResult?.listItems.filter(isAssistantItem)).toHaveLength(0);
+    });
+
+    const repairedMessages = [
+      ...messages,
+      {
+        id: "message-2",
+        session_id: "session-1",
+        task_id: "task-1",
+        turn_id: "turn-1",
+        turn_sequence: 3,
+        role: "assistant",
+        content: "Recovered final content",
+        attachments: [],
+        delivery: "immediate",
+        created_at: "2025-12-15T00:00:01.000Z",
+        order_seq: 3,
+      },
+    ] as unknown as Message[];
+
+    rerender(
+      <Harness
+        sessionId="session-1"
+        turnsStamp={buildTurnsStamp(turns)}
+        messagesStamp={buildMessagesStamp(repairedMessages, 1)}
+        eventsStamp="0:1"
+        verbosity="default"
+        turns={turns}
+        messages={repairedMessages}
+        events={events}
+        toolsByTurnId={toolsByTurnId}
+        toolSummariesReady
+        askUserQuestionAnswers={new Map<string, AskUserQuestionAnswerState>()}
+        enableDebugEvents={false}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(latestResult?.listItems.filter(isAssistantItem).map((item) => item.content)).toContain(
+        "Recovered final content",
+      );
+    });
+    expect(latestResult?.lastOp.kind).toBe("reconcile");
   });
 
   it("ignores outer tool-map churn when per-turn tool arrays are unchanged", async () => {

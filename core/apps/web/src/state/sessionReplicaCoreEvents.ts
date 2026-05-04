@@ -24,15 +24,11 @@ import {
   reconcileActivityInterruptedFromTurns,
   reconcileLatestTurnInterruptedFromActivity,
 } from "./sessionSupervisor/cachePolicy";
-import {
-  noteFinalDeltaReceived,
-  noteGapRecoveryStarted,
-  noteProjectionOrSeqRegression,
-} from "./foregroundFreshnessTelemetry";
 import type {
   SessionReplicaAppendMode,
   SessionReplicaConfig,
   SessionReplicaData,
+  SessionReplicaFreshnessEvent,
 } from "./sessionReplicaProtocol";
 import {
   buildCanonicalReplicaPatch,
@@ -116,6 +112,7 @@ export type SessionReplicaEventHost = {
   emitEvictPatch(sessionId: string, data: { eventsBeforeSeq?: number }): void;
   hydrateSessionHead(sessionId: string, opts?: SessionReplicaHydrateOptions): Promise<void>;
   persistHead(entry: SessionReplicaEntry): Promise<void>;
+  emitFreshnessEvent(event: SessionReplicaFreshnessEvent): void;
 };
 
 export const handleSessionReplicaWorkspaceEvent = (
@@ -128,7 +125,8 @@ export const handleSessionReplicaWorkspaceEvent = (
     if (!delta) return;
     const turnId = resolveFinalReplicaDeltaTurnId(delta);
     if (turnId) {
-      noteFinalDeltaReceived({
+      host.emitFreshnessEvent({
+        type: "final_delta_received",
         sessionId: normalizeReplicaId(delta.session_id),
         turnId,
         emittedAtMs:
@@ -164,16 +162,25 @@ export const handleSessionReplicaWorkspaceEvent = (
       ? (evt as { after_seq?: number }).after_seq
       : undefined;
   if (!sessionId) return;
-  noteGapRecoveryStarted(
+  host.emitFreshnessEvent({
+    type: "gap_recovery_started",
     sessionId,
-    typeof (evt as { reason?: unknown }).reason === "string"
-      ? String((evt as { reason?: unknown }).reason)
-      : null,
-  );
+    reason:
+      typeof (evt as { reason?: unknown }).reason === "string"
+        ? String((evt as { reason?: unknown }).reason)
+        : null,
+  });
   const previousEntry = host.entries.get(sessionId);
+  const previousLastEventSeq =
+    typeof previousEntry?.lastEventSeq === "number" ? previousEntry.lastEventSeq : null;
+  const gapAfterSeq = typeof afterSeq === "number" ? afterSeq : null;
+  const requiredSeqCandidates = [previousLastEventSeq, gapAfterSeq].filter(
+    (value): value is number => typeof value === "number" && Number.isFinite(value),
+  );
+  const requiredLastEventSeq =
+    requiredSeqCandidates.length > 0 ? Math.max(...requiredSeqCandidates) : null;
   host.gapRepairBaselineBySessionId.set(sessionId, {
-    lastEventSeq:
-      typeof previousEntry?.lastEventSeq === "number" ? previousEntry.lastEventSeq : null,
+    lastEventSeq: requiredLastEventSeq,
   });
 
   if (typeof window !== "undefined" && SHOULD_EMIT_REPLICA_DEV_DIAGNOSTICS) {
@@ -292,23 +299,33 @@ const applySessionReplicaHeadDelta = (
     return;
   }
 
-  entry.freshness = "authoritative";
+  const previousFreshness = entry.freshness;
+  if (previousFreshness !== "recovering") {
+    entry.freshness = "authoritative";
+  }
   const incomingSeq = typeof delta.last_event_seq === "number" ? delta.last_event_seq : -1;
   const existingSeq = typeof entry.lastEventSeq === "number" ? entry.lastEventSeq : -1;
   if (incomingSeq >= 0 && existingSeq >= 0 && incomingSeq < existingSeq) {
-    noteProjectionOrSeqRegression(sessionId, "last_event_seq", incomingSeq, existingSeq);
+    host.emitFreshnessEvent({
+      type: "projection_or_seq_regression",
+      sessionId,
+      dimension: "last_event_seq",
+      incoming: incomingSeq,
+      existing: existingSeq,
+    });
   }
   if (typeof delta.projection_rev === "number") {
     if (
       typeof entry.projectionRev === "number" &&
       delta.projection_rev < entry.projectionRev
     ) {
-      noteProjectionOrSeqRegression(
+      host.emitFreshnessEvent({
+        type: "projection_or_seq_regression",
         sessionId,
-        "projection_rev",
-        delta.projection_rev,
-        entry.projectionRev,
-      );
+        dimension: "projection_rev",
+        incoming: delta.projection_rev,
+        existing: entry.projectionRev,
+      });
     }
     entry.projectionRev =
       typeof entry.projectionRev === "number"

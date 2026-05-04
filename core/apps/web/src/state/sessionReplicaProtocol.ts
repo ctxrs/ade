@@ -112,7 +112,36 @@ export type SessionReplicaPatch =
   | { op: "replace"; sessionId: string; data: SessionReplicaData }
   | { op: "evict"; sessionId: string; data: { eventsBeforeSeq?: number } };
 
-export type SessionReplicaWorkerMessage = {
-  type: "patches";
-  patches: SessionReplicaPatch[];
-};
+export type SessionReplicaFreshnessEvent =
+  | {
+      type: "final_delta_received";
+      sessionId: string;
+      turnId: string | null;
+      emittedAtMs: number | null;
+      lastEventSeq: number | null;
+    }
+  | { type: "gap_recovery_started"; sessionId: string; reason: string | null }
+  | { type: "gap_recovery_finished"; sessionId: string }
+  | {
+      type: "gap_repair_mismatch";
+      sessionId: string;
+      baselineLastEventSeq: number | null;
+      repairedLastEventSeq: number | null;
+    }
+  | {
+      type: "projection_or_seq_regression";
+      sessionId: string;
+      dimension: "last_event_seq" | "projection_rev";
+      incoming: number;
+      existing: number;
+    };
+
+export type SessionReplicaWorkerMessage =
+  | {
+      type: "patches";
+      patches: SessionReplicaPatch[];
+    }
+  | {
+      type: "freshness_event";
+      event: SessionReplicaFreshnessEvent;
+    };

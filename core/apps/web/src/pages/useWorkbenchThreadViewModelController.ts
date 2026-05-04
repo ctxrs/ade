@@ -432,12 +432,30 @@ export function useWorkbenchThreadViewModelController(
     const toolSummariesReadyChanged = lastToolSummariesReadyRef.current !== toolSummariesReady;
     const dirtyToolTurnIds = collectChangedToolTurnIds(lastToolsByTurnIdRef.current, toolsByTurnId);
     const toolSummariesChanged = toolSummariesReadyChanged || dirtyToolTurnIds.size > 0;
-    if (verbosityChanged || askUserQuestionAnswersChanged || toolSummariesChanged) {
-      if (verbosityChanged || askUserQuestionAnswersChanged) {
-        syncInvalidationRefs();
-        fullRebuild.current("reconcile");
+    const turnsStructural = turnsStamp !== lastTurnsStampRef.current || turns.length !== state.turnsLen;
+    const messagesStructural =
+      messagesStamp !== lastMessagesStampRef.current || messages.length !== state.messagesLen;
+    const eventsStampChanged = eventsStamp !== lastEventsStampRef.current;
+    const assistantStreamingStampChanged =
+      assistantStreamingStamp !== lastAssistantStreamingStampRef.current;
+    if (verbosityChanged || askUserQuestionAnswersChanged) {
+      syncInvalidationRefs();
+      fullRebuild.current("reconcile");
+      return;
+    }
+
+    // If turns/messages changed in a non-append-only way, do a full rebuild.
+    // These are structural changes and should be rare compared to streaming events.
+    if (turnsStructural || messagesStructural) {
+      if (tryPrependHistory()) {
         return;
       }
+      syncInvalidationRefs();
+      fullRebuild.current("reconcile");
+      return;
+    }
+
+    if (toolSummariesChanged) {
       const localizedToolTurnIds = toolSummariesReadyChanged
         ? new Set([
             ...Object.keys(lastToolsByTurnIdRef.current),
@@ -451,23 +469,6 @@ export function useWorkbenchThreadViewModelController(
       }
       syncInvalidationRefs();
       fullRebuild.current("hydrate_tools");
-      return;
-    }
-
-    // If turns/messages changed in a non-append-only way, do a full rebuild.
-    // These are structural changes and should be rare compared to streaming events.
-    const turnsStructural = turnsStamp !== lastTurnsStampRef.current || turns.length !== state.turnsLen;
-    const messagesStructural =
-      messagesStamp !== lastMessagesStampRef.current || messages.length !== state.messagesLen;
-    const eventsStampChanged = eventsStamp !== lastEventsStampRef.current;
-    const assistantStreamingStampChanged =
-      assistantStreamingStamp !== lastAssistantStreamingStampRef.current;
-    if (turnsStructural || messagesStructural) {
-      if (tryPrependHistory()) {
-        return;
-      }
-      syncInvalidationRefs();
-      fullRebuild.current("reconcile");
       return;
     }
 

@@ -33,6 +33,10 @@ const core = new SessionReplicaCore({
     const message: SessionReplicaWorkerMessage = { type: "patches", patches };
     self.postMessage(message);
   },
+  emitFreshness: (event) => {
+    const message: SessionReplicaWorkerMessage = { type: "freshness_event", event };
+    self.postMessage(message);
+  },
 });
 
 self.onmessage = (event: MessageEvent<SessionReplicaCommand>) => {

@@ -10,6 +10,7 @@ import {
 } from "../../api/client";
 import { pairManagedMobileQrPayload } from "../../api/mobileSecureClient";
 import { useDaemonConnection } from "../../api/useDaemonConnection";
+import { TextInput, Textarea } from "../../components/ui/text-input";
 import { errorMessage } from "../../utils/errorMessage";
 import { MobileShellChrome } from "./MobileShellChrome";
 import { canUseQrCameraScanner, MobileQrScanner } from "./MobileQrScanner";
@@ -169,7 +170,7 @@ export function MobileConnectPage() {
 
         <label className="mobile-shell-field">
           <span>QR payload</span>
-          <textarea
+          <Textarea
             autoCapitalize="none"
             autoCorrect="off"
             spellCheck={false}
@@ -208,7 +209,7 @@ export function MobileConnectPage() {
 
         <label className="mobile-shell-field">
           <span>Daemon URL</span>
-          <input
+          <TextInput
             type="url"
             autoCapitalize="none"
             autoCorrect="off"
@@ -221,7 +222,7 @@ export function MobileConnectPage() {
 
         <label className="mobile-shell-field">
           <span>Bearer token</span>
-          <input
+          <TextInput
             type="password"
             autoCapitalize="none"
             autoCorrect="off"

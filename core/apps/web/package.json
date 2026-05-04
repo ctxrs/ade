@@ -12,6 +12,8 @@
     "loadtest:replay": "node ./scripts/replay-loadtest.mjs",
     "loadtest:replay:profiles": "node ./scripts/replay-loadtest-profiles.mjs",
     "loadtest:replay:compare": "node ./scripts/replay-loadtest-compare.mjs",
+    "loadtest:foreground-large-head:fixture": "node ./scripts/generate-foreground-large-head-fixture.mjs",
+    "loadtest:foreground-large-head:sla": "node ./scripts/run-foreground-large-head-sla-proof.mjs",
     "loadtest:workbench-switch:fixture": "node ./scripts/generate-workbench-switch-fixture.mjs",
     "loadtest:workbench-switch:matrix": "node ./scripts/workbench-switch-replay-matrix.mjs",
     "wal:attach": "node ./scripts/wal-attach.mjs",

@@ -13,12 +13,12 @@ import {
   reconcileActivityInterruptedFromTurns,
   reconcileLatestTurnInterruptedFromActivity,
 } from "./sessionSupervisor/cachePolicy";
-import { noteGapRepairMismatch, noteGapRecoveryFinished } from "./foregroundFreshnessTelemetry";
 import type {
   SessionReplicaAppendMode,
   SessionReplicaCommand,
   SessionReplicaConfig,
   SessionReplicaData,
+  SessionReplicaFreshnessEvent,
   SessionReplicaHeadSeedMode,
   SessionReplicaPatch,
 } from "./sessionReplicaProtocol";
@@ -48,7 +48,11 @@ export class SessionReplicaCore {
   private gapRepairBaselineBySessionId = new Map<string, { lastEventSeq: number | null }>();
 
   constructor(
-    private deps: { api: SessionReplicaApi; emit: (patches: SessionReplicaPatch[]) => void },
+    private deps: {
+      api: SessionReplicaApi;
+      emit: (patches: SessionReplicaPatch[]) => void;
+      emitFreshness?: (event: SessionReplicaFreshnessEvent) => void;
+    },
   ) {}
 
   handleCommand = (cmd: SessionReplicaCommand) => {
@@ -229,20 +233,32 @@ export class SessionReplicaCore {
       }
     }
     if (opts?.freshness) {
-      entry.freshness = opts.freshness;
+      let nextFreshness = opts.freshness;
       if (previousFreshness === "recovering" && opts.freshness !== "recovering") {
         const baseline = this.gapRepairBaselineBySessionId.get(entry.sessionId);
-        if (
+        const repairedLastEventSeq = incomingSeq >= 0 ? incomingSeq : null;
+        const authoritativeRepair = opts.freshness === "authoritative";
+        const repairMissedBaseline =
           baseline &&
           typeof baseline.lastEventSeq === "number" &&
-          typeof entry.lastEventSeq === "number" &&
-          entry.lastEventSeq < baseline.lastEventSeq
-        ) {
-          noteGapRepairMismatch(entry.sessionId, baseline.lastEventSeq, entry.lastEventSeq);
+          (typeof repairedLastEventSeq !== "number" ||
+            repairedLastEventSeq < baseline.lastEventSeq);
+        if (!authoritativeRepair) {
+          nextFreshness = "recovering";
+        } else if (repairMissedBaseline) {
+          this.emitFreshnessEvent({
+            type: "gap_repair_mismatch",
+            sessionId: entry.sessionId,
+            baselineLastEventSeq: baseline?.lastEventSeq ?? null,
+            repairedLastEventSeq,
+          });
+          nextFreshness = "recovering";
+        } else {
+          this.gapRepairBaselineBySessionId.delete(entry.sessionId);
+          this.emitFreshnessEvent({ type: "gap_recovery_finished", sessionId: entry.sessionId });
         }
-        this.gapRepairBaselineBySessionId.delete(entry.sessionId);
-        noteGapRecoveryFinished(entry.sessionId);
       }
+      entry.freshness = nextFreshness;
     }
     if (data.summaryCheckpoint !== undefined && !incomingIsOlder) {
       entry.summaryCheckpoint = data.summaryCheckpoint ?? null;
@@ -499,9 +515,14 @@ export class SessionReplicaCore {
         emitEvictPatch: (sessionId, data) => this.emitPatch("evict", sessionId, data),
         hydrateSessionHead: (sessionId, opts) => this.hydrateSessionHead(sessionId, opts),
         persistHead: (entry) => this.persistHead(entry),
+        emitFreshnessEvent: (event) => this.emitFreshnessEvent(event),
       },
       evt,
     );
+  }
+
+  private emitFreshnessEvent(event: SessionReplicaFreshnessEvent): void {
+    this.deps.emitFreshness?.(event);
   }
 
   private async persistHead(entry: SessionReplicaEntry): Promise<void> {

@@ -10,9 +10,17 @@ import { SessionReplicaCore } from "./sessionReplicaCore";
 import type {
   SessionReplicaCommand,
   SessionReplicaConfig,
+  SessionReplicaFreshnessEvent,
   SessionReplicaPatch,
   SessionReplicaWorkerMessage,
 } from "./sessionReplicaProtocol";
+import {
+  noteFinalDeltaReceived,
+  noteGapRecoveryFinished,
+  noteGapRecoveryStarted,
+  noteGapRepairMismatch,
+  noteProjectionOrSeqRegression,
+} from "./foregroundFreshnessTelemetry";
 
 const shouldUseWorker = (): boolean => {
   if (typeof Worker === "undefined") return false;
@@ -36,8 +44,13 @@ export class SessionReplicaBridge {
       this.worker = new Worker(new URL("../workers/sessionReplica.worker.ts", import.meta.url), { type: "module" });
       this.worker.onmessage = (event: MessageEvent<SessionReplicaWorkerMessage>) => {
         const msg = event.data;
-        if (msg?.type !== "patches") return;
-        this.onPatches(msg.patches);
+        if (msg?.type === "patches") {
+          this.onPatches(msg.patches);
+          return;
+        }
+        if (msg?.type === "freshness_event") {
+          handleSessionReplicaFreshnessEvent(msg.event);
+        }
       };
     } else {
       this.core = new SessionReplicaCore({
@@ -47,6 +60,7 @@ export class SessionReplicaBridge {
           getSessionState,
         },
         emit: this.onPatches,
+        emitFreshness: handleSessionReplicaFreshnessEvent,
       });
     }
 
@@ -88,3 +102,37 @@ export class SessionReplicaBridge {
     this.core = null;
   }
 }
+
+export const handleSessionReplicaFreshnessEvent = (event: SessionReplicaFreshnessEvent): void => {
+  switch (event.type) {
+    case "final_delta_received":
+      noteFinalDeltaReceived({
+        sessionId: event.sessionId,
+        turnId: event.turnId,
+        emittedAtMs: event.emittedAtMs,
+        lastEventSeq: event.lastEventSeq,
+      });
+      return;
+    case "gap_recovery_started":
+      noteGapRecoveryStarted(event.sessionId, event.reason);
+      return;
+    case "gap_recovery_finished":
+      noteGapRecoveryFinished(event.sessionId);
+      return;
+    case "gap_repair_mismatch":
+      noteGapRepairMismatch(
+        event.sessionId,
+        event.baselineLastEventSeq,
+        event.repairedLastEventSeq,
+      );
+      return;
+    case "projection_or_seq_regression":
+      noteProjectionOrSeqRegression(
+        event.sessionId,
+        event.dimension,
+        event.incoming,
+        event.existing,
+      );
+      return;
+  }
+};

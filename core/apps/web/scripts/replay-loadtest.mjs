@@ -50,6 +50,8 @@ let resetSessionHeadToRunningId = null;
 let waitTimeoutMs = null;
 let skipWaitForSynth = false;
 let trackForegroundFinal = true;
+let sessionHeadBaseDelayMs = 0;
+let sessionHeadBandwidthKibps = 0;
 
 for (let i = 0; i < args.length; i++) {
   const arg = args[i];
@@ -249,6 +251,16 @@ for (let i = 0; i < args.length; i++) {
     trackForegroundFinal = false;
     continue;
   }
+  if (arg === "--session-head-base-delay-ms") {
+    sessionHeadBaseDelayMs = Number(args[i + 1]);
+    i += 1;
+    continue;
+  }
+  if (arg === "--session-head-bandwidth-kibps") {
+    sessionHeadBandwidthKibps = Number(args[i + 1]);
+    i += 1;
+    continue;
+  }
   if (arg === "--help" || arg === "-h") {
     console.log(
       "Usage: node ./scripts/replay-loadtest.mjs [--fixture path] [--out path] [--base-url url] " +
@@ -267,7 +279,8 @@ for (let i = 0; i < args.length; i++) {
         "[--synthesize-task-start-delay-ms ms] [--synthesize-task-ids id1,id2] " +
         "[--synthesize-foreground-terminal-delay-ms ms] [--synthesize-foreground-terminal-session-id id] " +
         "[--reset-session-head-to-running id] " +
-        "[--wait-timeout-ms ms] [--no-wait-for-synth] [--no-track-foreground-final]\n",
+        "[--wait-timeout-ms ms] [--no-wait-for-synth] [--no-track-foreground-final] " +
+        "[--session-head-base-delay-ms ms] [--session-head-bandwidth-kibps kibps]\n",
     );
     process.exit(0);
   }
@@ -279,6 +292,22 @@ const percentile = (values, pct) => {
   const rank = Math.ceil(pct * sorted.length) - 1;
   const idx = Math.min(sorted.length - 1, Math.max(0, rank));
   return sorted[idx];
+};
+
+const sleep = (ms) =>
+  new Promise((resolve) => {
+    setTimeout(resolve, Math.max(0, ms));
+  });
+
+const waitForLocalCondition = async (predicate, timeoutMs) => {
+  const timeout = Number.isFinite(timeoutMs) ? Math.max(0, timeoutMs) : 30000;
+  const deadline = Date.now() + timeout;
+  while (Date.now() <= deadline) {
+    const value = predicate();
+    if (value) return value;
+    await sleep(25);
+  }
+  throw new Error(`Timed out after ${timeout}ms waiting for local condition.`);
 };
 
 const summarizeValues = (values) => ({
@@ -301,6 +330,10 @@ if (!workspaceId) {
 }
 
 let streamEvents = Array.isArray(fixture.stream) ? fixture.stream : [];
+const unwrapReplayEvent = (event) =>
+  event?.type === "event" && event?.event && typeof event.event === "object"
+    ? event.event
+    : event;
 const snapshotBySession = fixture.session_snapshots || {};
 const activeHeads = Array.isArray(fixture.active_heads?.heads)
   ? fixture.active_heads.heads
@@ -315,7 +348,14 @@ const activeHeadsBatch = {
   snapshot_rev: fixture.active_snapshot?.snapshot_rev ?? 0,
   heads: activeHeads,
 };
+const initialHeadBySessionId = new Map(
+  activeHeads
+    .map((head) => [String(head?.session?.id ?? ""), head])
+    .filter(([sessionId]) => sessionId.length > 0),
+);
 const clientTelemetryEvents = [];
+const sessionHeadResponseSamples = [];
+const deliveredSessionGapCountBySessionId = new Map();
 const normalizedProviders = (fixture.providers ?? []).map((provider) => ({
   details: {},
   usability: {
@@ -363,7 +403,7 @@ const providersBootstrap = {
   auggie_accounts: { active_account_id: null, accounts: [] },
 };
 const hasSnapshotEvent = streamEvents.some((item) => {
-  const event = item?.event;
+  const event = unwrapReplayEvent(item?.event);
   return Boolean(
     event?.type === "snapshot" || event?.snapshot || event?.active_snapshot || event?.activeSnapshot,
   );
@@ -382,12 +422,13 @@ if (!hasSnapshotEvent && fixture.active_snapshot) {
   ];
 }
 
-const baseDeltaEvent = streamEvents.find((item) => item?.event?.type === "session_head_delta")?.event ?? null;
-const baseDelta = baseDeltaEvent?.delta ?? {};
+const baseDeltaEvent = streamEvents.find((item) => unwrapReplayEvent(item?.event)?.type === "session_head_delta")?.event ?? null;
+const baseUnwrappedDeltaEvent = unwrapReplayEvent(baseDeltaEvent);
+const baseDelta = baseUnwrappedDeltaEvent?.delta ?? {};
 const baseTurn = baseDelta?.turn ?? null;
 const baseMessage = baseDelta?.message ?? null;
 const baseSnapshotRev =
-  baseDeltaEvent?.snapshot_rev ??
+  baseUnwrappedDeltaEvent?.snapshot_rev ??
   fixture.active_snapshot?.snapshot_rev ??
   0;
 const baseDelayMs = streamEvents.reduce((acc, item) => Math.max(acc, Number(item?.delay_ms ?? 0)), 0);
@@ -486,6 +527,53 @@ const registerForegroundFinalMarker = ({ sessionId, taskId, turnId, content, del
   };
 };
 
+const sessionHeadContainsTrackedFinal = (head, target) => {
+  if (!head || !target || typeof target.content !== "string") return false;
+  const messages = Array.isArray(head.messages) ? head.messages : [];
+  return messages.some(
+    (message) =>
+      message &&
+      typeof message === "object" &&
+      message.role === "assistant" &&
+      message.turn_id === target.turnId &&
+      message.content === target.content,
+  );
+};
+
+const registerForegroundHeadFinalTarget = () => {
+  const content =
+    typeof fixture.foreground_large_head?.final_content === "string"
+      ? fixture.foreground_large_head.final_content
+      : "";
+  if (!content) return;
+  const sessionId = getForegroundSessionId();
+  if (!sessionId) return;
+  const head = snapshotBySession?.[sessionId]?.head;
+  const messages = Array.isArray(head?.messages) ? head.messages : [];
+  const message = [...messages]
+    .reverse()
+    .find(
+      (candidate) =>
+        candidate &&
+        typeof candidate === "object" &&
+        candidate.role === "assistant" &&
+        candidate.content === content &&
+        typeof candidate.turn_id === "string",
+    );
+  if (!message) return;
+  const meta = getSessionMeta(sessionId);
+  trackedForegroundFinal = {
+    markerId: `foreground-head-final:${sessionId}:${message.turn_id}:${head?.last_event_seq ?? "na"}`,
+    source: "session_head",
+    sessionId,
+    taskId: message.task_id ?? meta.taskId ?? "",
+    turnId: message.turn_id,
+    content,
+    lastSeq: head?.last_event_seq ?? null,
+    responseAtMs: null,
+  };
+};
+
 const overwriteObject = (target, next) => {
   if (!target || !next || typeof target !== "object" || typeof next !== "object") return;
   for (const key of Object.keys(target)) {
@@ -514,11 +602,15 @@ if (resetSessionHeadToRunningId) {
     overwriteObject(activeHead, runningHead);
   }
   streamEvents = streamEvents.filter((item) => {
-    const event = item?.event;
+    const event = unwrapReplayEvent(item?.event);
     const delta = event?.delta;
     if (event?.type !== "session_head_delta") return true;
     return delta?.session_id !== sessionId;
   });
+}
+
+if (trackForegroundFinal && !trackedForegroundFinal) {
+  registerForegroundHeadFinalTarget();
 }
 
 let waitForTargets = [];
@@ -777,10 +869,11 @@ if (trackForegroundFinal && !trackedForegroundFinal) {
       .sort((a, b) => Number(a?.delay_ms ?? 0) - Number(b?.delay_ms ?? 0))
       .reverse()
       .find((item) => {
-        const delta = item?.event?.delta;
+        const event = unwrapReplayEvent(item?.event);
+        const delta = event?.delta;
         const message = delta?.message;
         return (
-          item?.event?.type === "session_head_delta" &&
+          event?.type === "session_head_delta" &&
           delta?.session_id === foregroundSessionId &&
           typeof message?.content === "string" &&
           message.content.length > 0 &&
@@ -788,7 +881,8 @@ if (trackForegroundFinal && !trackedForegroundFinal) {
         );
       });
     if (fallbackFinal) {
-      const delta = fallbackFinal.event.delta;
+      const event = unwrapReplayEvent(fallbackFinal.event);
+      const delta = event.delta;
       registerForegroundFinalMarker({
         sessionId: delta.session_id,
         taskId: delta.message.task_id ?? getSessionMeta(delta.session_id)?.taskId ?? "",
@@ -809,6 +903,73 @@ const respondJson = async (route, body, status = 200) => {
   });
 };
 
+const proofForegroundSessionId = getForegroundSessionId();
+const foregroundSessionGapEvents = proofForegroundSessionId
+  ? streamEvents.filter((item) => {
+      const event = unwrapReplayEvent(item?.event);
+      return event?.type === "session_gap" && event?.session_id === proofForegroundSessionId;
+    })
+  : [];
+const expectedForegroundSessionGapCount = foregroundSessionGapEvents.length;
+
+const countClientTelemetryMetric = (name, labels = {}) =>
+  clientTelemetryEvents.filter((event) => {
+    if (event?.name !== name) return false;
+    const eventLabels = event?.labels ?? {};
+    return Object.entries(labels).every(([key, value]) => eventLabels?.[key] === value);
+  }).length;
+
+const resolveSessionHeadResponseBody = (sessionId) => {
+  const snapshot = snapshotBySession[sessionId];
+  const deliveredGapCount = deliveredSessionGapCountBySessionId.get(sessionId) ?? 0;
+  if (
+    sessionId === proofForegroundSessionId &&
+    expectedForegroundSessionGapCount > 0 &&
+    deliveredGapCount === 0
+  ) {
+    return initialHeadBySessionId.get(sessionId) ?? snapshot?.head;
+  }
+  return snapshot?.head;
+};
+
+const respondSessionHeadJson = async (route, sessionId, body) => {
+  const startedAt = Date.now();
+  const payload = JSON.stringify(body ?? null);
+  const bytes = Buffer.byteLength(payload);
+  const baseDelay = Number.isFinite(sessionHeadBaseDelayMs) && sessionHeadBaseDelayMs > 0
+    ? sessionHeadBaseDelayMs
+    : 0;
+  const transferDelay =
+    Number.isFinite(sessionHeadBandwidthKibps) && sessionHeadBandwidthKibps > 0
+      ? (bytes / (sessionHeadBandwidthKibps * 1024)) * 1000
+      : 0;
+  const simulatedDelayMs = baseDelay + transferDelay;
+  if (simulatedDelayMs > 0) {
+    await sleep(simulatedDelayMs);
+  }
+  await route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: payload,
+  });
+  const fulfilledAtMs = Date.now();
+  if (
+    trackedForegroundFinal?.source === "session_head" &&
+    trackedForegroundFinal.sessionId === sessionId &&
+    !Number.isFinite(trackedForegroundFinal.responseAtMs) &&
+    sessionHeadContainsTrackedFinal(body, trackedForegroundFinal)
+  ) {
+    trackedForegroundFinal.responseAtMs = fulfilledAtMs;
+  }
+  sessionHeadResponseSamples.push({
+    session_id: sessionId,
+    bytes,
+    simulated_delay_ms: simulatedDelayMs,
+    route_ms: fulfilledAtMs - startedAt,
+    fulfilled_at_ms: fulfilledAtMs,
+  });
+};
+
 const buildWorkerAppend = (events) => {
   const payload = JSON.stringify(events ?? []);
   const safePayload = JSON.stringify(payload).replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
@@ -817,6 +978,20 @@ const buildWorkerAppend = (events) => {
   const __CTX_LOAD_TEST_EVENTS__ = JSON.parse(${safePayload});
   self.__CTX_LOAD_TEST__ = true;
   self.__CTX_LOAD_TEST_EVENTS__ = __CTX_LOAD_TEST_EVENTS__;
+  const nowMs = () => (self.performance?.timeOrigin ?? Date.now()) + (self.performance?.now?.() ?? 0);
+  const noteSessionGapDelivered = async (event) => {
+    const sessionId = String(event?.session_id ?? "");
+    if (!sessionId || typeof self.fetch !== "function") return;
+    try {
+      await self.fetch("/api/loadtest/session_gap_delivered", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ session_id: sessionId }),
+      });
+    } catch {
+      // The replay still emits the gap; the server-side marker only gates fixture /head responses.
+    }
+  };
 
   const OriginalWebSocket = self.WebSocket;
   const matchesReplay = (url) => {
@@ -931,9 +1106,25 @@ const buildWorkerAppend = (events) => {
       const events = self.__CTX_LOAD_TEST_EVENTS__ || [];
       for (const item of events) {
         const delay = Math.max(0, Number(item?.delay_ms ?? 0));
-        const timer = self.setTimeout(() => {
+        const timer = self.setTimeout(async () => {
           if (this._closed || this.readyState !== ReplayWebSocket.OPEN) return;
-          this._emit("message", JSON.stringify(item.event));
+          const payload = item?.event && typeof item.event === "object"
+            ? JSON.parse(JSON.stringify(item.event))
+            : item.event;
+          const event = payload?.type === "event" && payload?.event && typeof payload.event === "object"
+            ? payload.event
+            : payload;
+          if (
+            event?.type === "session_head_delta" &&
+            event?.delta &&
+            typeof event.delta.emitted_at_ms !== "number"
+          ) {
+            event.delta.emitted_at_ms = nowMs();
+          }
+          if (event?.type === "session_gap") {
+            await noteSessionGapDelivered(event);
+          }
+          this._emit("message", JSON.stringify(payload));
         }, delay);
         this._timers.push(timer);
       }
@@ -972,6 +1163,19 @@ await page.addInitScript(({ events, markerPlans }) => {
     markerEvents: [],
   };
   const nowMs = () => (performance.timeOrigin ?? Date.now()) + performance.now();
+  const noteSessionGapDelivered = async (event) => {
+    const sessionId = String(event?.session_id ?? "");
+    if (!sessionId || typeof fetch !== "function") return;
+    try {
+      await fetch("/api/loadtest/session_gap_delivered", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ session_id: sessionId }),
+      });
+    } catch {
+      // The replay still emits the gap; the server-side marker only gates fixture /head responses.
+    }
+  };
   for (const marker of window.__ctxLoadTestReplay.markerPlans) {
     const delay = Math.max(0, Number(marker?.delay_ms ?? 0));
     window.setTimeout(() => {
@@ -1094,9 +1298,25 @@ await page.addInitScript(({ events, markerPlans }) => {
       const events = window.__CTX_LOAD_TEST_EVENTS__ || [];
       for (const item of events) {
         const delay = Math.max(0, Number(item?.delay_ms ?? 0));
-        const timer = window.setTimeout(() => {
+        const timer = window.setTimeout(async () => {
           if (this._closed || this.readyState !== ReplayWebSocket.OPEN) return;
-          this._emit("message", JSON.stringify(item.event));
+          const payload = item?.event && typeof item.event === "object"
+            ? JSON.parse(JSON.stringify(item.event))
+            : item.event;
+          const event = payload?.type === "event" && payload?.event && typeof payload.event === "object"
+            ? payload.event
+            : payload;
+          if (
+            event?.type === "session_head_delta" &&
+            event?.delta &&
+            typeof event.delta.emitted_at_ms !== "number"
+          ) {
+            event.delta.emitted_at_ms = nowMs();
+          }
+          if (event?.type === "session_gap") {
+            await noteSessionGapDelivered(event);
+          }
+          this._emit("message", JSON.stringify(payload));
         }, delay);
         this._timers.push(timer);
       }
@@ -1171,6 +1391,23 @@ await page.route("**/api/**", async (route) => {
     return;
   }
 
+  if (pathname === "/api/loadtest/session_gap_delivered") {
+    try {
+      const body = route.request().postDataJSON?.() ?? JSON.parse(route.request().postData() || "{}");
+      const sessionId = String(body?.session_id ?? "");
+      if (sessionId) {
+        deliveredSessionGapCountBySessionId.set(
+          sessionId,
+          (deliveredSessionGapCountBySessionId.get(sessionId) ?? 0) + 1,
+        );
+      }
+    } catch {
+      // Ignore malformed load-test markers; the replay harness will fail its counters if repair never runs.
+    }
+    await route.fulfill({ status: 204, body: "" });
+    return;
+  }
+
   if (pathname === "/api/workspaces") {
     await respondJson(route, fixture.workspace ? [fixture.workspace] : []);
     return;
@@ -1227,8 +1464,7 @@ await page.route("**/api/**", async (route) => {
     const tail = sessionMatch[2] || "";
 
     if (tail === "head") {
-      const snapshot = snapshotBySession[sessionId];
-      await respondJson(route, snapshot?.head ?? {
+      await respondSessionHeadJson(route, sessionId, resolveSessionHeadResponseBody(sessionId) ?? {
         session: {},
         turns: [],
         messages: [],
@@ -1433,23 +1669,49 @@ try {
   let replayFinalToStateMs = [];
   let replayFinalToDomMs = [];
   if (trackedForegroundFinal) {
-    const markerHandle = await page.waitForFunction(
-      ({ markerId }) => {
-        const entries = window.__ctxLoadTestReplay?.markerEvents ?? [];
-        return entries.find((entry) => entry?.marker_id === markerId) ?? null;
-      },
-      { markerId: trackedForegroundFinal.markerId },
-      { timeout: Number.isFinite(waitTimeoutMs) ? waitTimeoutMs : 30000 },
-    );
-    const marker = await markerHandle.jsonValue();
+    let marker;
+    if (trackedForegroundFinal.source === "session_head") {
+      const firedAtMs = await waitForLocalCondition(
+        () =>
+          Number.isFinite(trackedForegroundFinal.responseAtMs)
+            ? trackedForegroundFinal.responseAtMs
+            : null,
+        Number.isFinite(waitTimeoutMs) ? waitTimeoutMs : 30000,
+      );
+      marker = {
+        marker_id: trackedForegroundFinal.markerId,
+        fired_at_ms: firedAtMs,
+      };
+    } else {
+      const markerHandle = await page.waitForFunction(
+        ({ markerId }) => {
+          const entries = window.__ctxLoadTestReplay?.markerEvents ?? [];
+          return entries.find((entry) => entry?.marker_id === markerId) ?? null;
+        },
+        { markerId: trackedForegroundFinal.markerId },
+        { timeout: Number.isFinite(waitTimeoutMs) ? waitTimeoutMs : 30000 },
+      );
+      marker = await markerHandle.jsonValue();
+    }
     let stateHandle;
     try {
       stateHandle = await page.waitForFunction(
         ({ sessionId, turnId, content }) => {
+          const visibleEntry = window.__ctxE2E?.getVisibleSessionEntryDebug?.() ?? null;
+          const visibleEntryMessages = visibleEntry?.sessionId === sessionId && Array.isArray(visibleEntry?.messageContents)
+            ? visibleEntry.messageContents
+            : [];
+          const visibleThread = window.__ctxE2E?.getVisibleSessionThreadDebug?.() ?? null;
+          const visibleThreadMessages = visibleThread?.sessionId === sessionId && Array.isArray(visibleThread?.assistantContents)
+            ? visibleThread.assistantContents
+            : [];
           const getMessages = window.__ctxE2E?.getSessionHeadMessages;
-          if (typeof getMessages !== "function") return null;
-          const messages = getMessages(sessionId);
-          if (!Array.isArray(messages)) return null;
+          const headMessages = typeof getMessages === "function" ? getMessages(sessionId) : [];
+          const messages = [
+            ...visibleEntryMessages,
+            ...visibleThreadMessages,
+            ...(Array.isArray(headMessages) ? headMessages : []),
+          ];
           const found = messages.some(
             (message) =>
               message === content ||
@@ -1560,6 +1822,44 @@ try {
     }
     if (Number.isFinite(marker?.fired_at_ms) && Number.isFinite(domAtMs)) {
       replayFinalToDomMs = [domAtMs - marker.fired_at_ms];
+    }
+  }
+
+  if (expectedForegroundSessionGapCount > 0) {
+    const telemetryWaitTimeoutMs = Number.isFinite(waitTimeoutMs)
+      ? waitTimeoutMs
+      : Math.max(
+          30000,
+          foregroundSessionGapEvents.reduce(
+            (max, item) => Math.max(max, Number(item?.delay_ms ?? 0)),
+            0,
+          ) + 10000,
+        );
+    try {
+      await waitForLocalCondition(() => {
+        const foregroundHeadResponses = sessionHeadResponseSamples.filter(
+          (entry) => entry?.session_id === proofForegroundSessionId,
+        ).length;
+        const rehydrateCount = countClientTelemetryMetric("workbench.foreground_rehydrate_count");
+        return (
+          foregroundHeadResponses >= expectedForegroundSessionGapCount &&
+          rehydrateCount >= expectedForegroundSessionGapCount
+        );
+      }, telemetryWaitTimeoutMs);
+      await sleep(1250);
+    } catch {
+      console.warn(
+        "foreground gap telemetry wait timed out:",
+        JSON.stringify({
+          session_id: proofForegroundSessionId,
+          expected_gaps: expectedForegroundSessionGapCount,
+          head_responses: sessionHeadResponseSamples.filter(
+            (entry) => entry?.session_id === proofForegroundSessionId,
+          ).length,
+          rehydrates: countClientTelemetryMetric("workbench.foreground_rehydrate_count"),
+          recoveries: countClientTelemetryMetric("workbench.foreground_gap_recovery_ms"),
+        }),
+      );
     }
   }
 
@@ -1685,6 +1985,24 @@ try {
     foreground_queue_age_ms: summarizeClientMetric("workbench.foreground_queue_age_ms"),
     workspace_backlog_age_ms: summarizeClientMetric("workbench.workspace_backlog_age_ms"),
     foreground_gap_recovery_ms: summarizeClientMetric("workbench.foreground_gap_recovery_ms"),
+    session_head_response_bytes: summarizeValues(
+      sessionHeadResponseSamples
+        .map((entry) => entry.bytes)
+        .filter(Number.isFinite),
+    ),
+    session_head_route_ms: summarizeValues(
+      sessionHeadResponseSamples
+        .map((entry) => entry.route_ms)
+        .filter(Number.isFinite),
+    ),
+    session_head_simulated_delay_ms: summarizeValues(
+      sessionHeadResponseSamples
+        .map((entry) => entry.simulated_delay_ms)
+        .filter(Number.isFinite),
+    ),
+    foreground_gap_recovery_timeout_count: countClientCounterMetric(
+      "workbench.foreground_gap_recovery_timeout_count",
+    ),
     stale_pending_after_terminal_assistant_message: countClientCounterMetric(
       "workbench.thread.contract_violation_count",
       { reason: "stale_pending_after_terminal_assistant_message" },
@@ -1777,6 +2095,12 @@ try {
     `final ws->dom: count=${summary.final_ws_to_dom_ms.count} ` +
       `p95=${summary.final_ws_to_dom_ms.p95 ?? "n/a"} ` +
       `max=${summary.final_ws_to_dom_ms.max ?? "n/a"}`,
+  );
+  console.log(
+    `session head responses: count=${summary.session_head_response_bytes.count} ` +
+      `bytes_p95=${summary.session_head_response_bytes.p95 ?? "n/a"} ` +
+      `route_p95=${summary.session_head_route_ms.p95 ?? "n/a"} ` +
+      `simulated_delay_p95=${summary.session_head_simulated_delay_ms.p95 ?? "n/a"}`,
   );
   console.log(
     `interrupt click->pending: count=${summary.interrupt_click_to_pending_ms.count} ` +
@@ -1887,6 +2211,7 @@ try {
     pretext_perf: pretextPerf,
     replay_markers: replayMarkerPlans,
     tracked_foreground_final: trackedForegroundFinal,
+    session_head_responses: sessionHeadResponseSamples,
     client_telemetry: clientTelemetryEvents,
     summary,
   };
