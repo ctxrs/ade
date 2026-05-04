@@ -4,7 +4,6 @@ const path = require("node:path");
 const test = require("node:test");
 const {
   getAllCtxHttpSuiteCheckinFanoutTargets,
-  getCtxHttpSuiteExecutionTargets,
   getCtxHttpSuiteTargets,
 } = require("./ctx_http_suites.cjs");
 const { buildCheckinBuildkiteExecutionPlan } = require("./test_taxonomy/execution.cjs");
@@ -308,43 +307,44 @@ test("flattened ctx-http checkin fanout targets are Linux RBE safe", () => {
   );
 });
 
-test("checkin keeps ctx-http at suite-command granularity for Buildkite", () => {
+test("checkin fans out ctx-http child targets for Buildkite", () => {
   const plan = buildCheckinBuildkiteExecutionPlan({ profileId: "checkin" });
-  const directBazelCommands = plan.commands.filter((command) =>
-    command.startsWith("node scripts/run_bazel_pilot.cjs test ")
-  );
+  const allFanoutTargets = getAllCtxHttpSuiteCheckinFanoutTargets();
+  const directBazelTargets = plan.commands
+    .filter((command) =>
+      command.startsWith("node scripts/run_bazel_pilot.cjs test //core/crates/ctx-http:")
+    )
+    .map((command) => command.replace("node scripts/run_bazel_pilot.cjs test ", ""));
   const ctxHttpSuiteCommands = plan.commands.filter((command) =>
     command.startsWith("node scripts/ctx_http_suite_task.cjs --suite ")
   );
 
-  assert.equal(directBazelCommands.length, 0);
-  assert.ok(ctxHttpSuiteCommands.length > 10);
-  assert.equal(
-    ctxHttpSuiteCommands.some((command) => command.includes("//core/crates/ctx-http:unit_tests_api")),
-    false,
-  );
-  assert.equal(
-    ctxHttpSuiteCommands.includes("node scripts/ctx_http_suite_task.cjs --suite unit-tests-api"),
-    true,
-  );
+  assert.ok(directBazelTargets.length > getCtxHttpSuiteTargets("all").length);
+  for (const target of directBazelTargets) {
+    assert.ok(allFanoutTargets.includes(target), `${target} should be a known ctx-http fanout target`);
+  }
+  assert.equal(ctxHttpSuiteCommands.length, 0);
+  assert.ok(directBazelTargets.includes("//core/crates/ctx-http:unit_tests_api"));
+  assert.ok(directBazelTargets.includes("//core/crates/ctx-http:bin_tests_root_help"));
 });
 
-test("checkin ctx-http suite wrappers expand to Linux RBE-safe Bazel labels", () => {
+test("checkin ctx-http fanout targets are Linux RBE-safe Bazel labels", () => {
   const plan = buildCheckinBuildkiteExecutionPlan({ profileId: "checkin" });
-  const ctxHttpSuiteCommands = plan.commands.filter((command) =>
-    command.startsWith("node scripts/ctx_http_suite_task.cjs --suite ")
-  );
-  assert.ok(ctxHttpSuiteCommands.length > 10);
-
-  const spilledTargets = [];
-  for (const command of ctxHttpSuiteCommands) {
-    const suites = [...command.matchAll(/--suite\s+([^\s]+)/gu)].map((match) => match[1]);
-    const targets = getCtxHttpSuiteExecutionTargets(suites);
-    const { localTargets } = partitionBazelTargetsForLinuxRbe("test", targets);
-    spilledTargets.push(...localTargets);
+  const ctxHttpFanoutTargets = plan.commands
+    .filter((command) =>
+      command.startsWith("node scripts/run_bazel_pilot.cjs test //core/crates/ctx-http:")
+    )
+    .map((command) => command.replace("node scripts/run_bazel_pilot.cjs test ", ""));
+  assert.ok(ctxHttpFanoutTargets.length > getCtxHttpSuiteTargets("all").length);
+  for (const target of ctxHttpFanoutTargets) {
+    assert.ok(
+      getAllCtxHttpSuiteCheckinFanoutTargets().includes(target),
+      `${target} should be a known ctx-http fanout target`,
+    );
   }
 
-  assert.deepEqual(spilledTargets, []);
+  const { localTargets } = partitionBazelTargetsForLinuxRbe("test", ctxHttpFanoutTargets);
+  assert.deepEqual(localTargets, []);
 });
 
 test("web checkin lint typecheck and unit Bazel targets are Linux RBE safe", () => {

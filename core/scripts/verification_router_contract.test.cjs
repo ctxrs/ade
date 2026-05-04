@@ -248,6 +248,33 @@ test("verify:affected keeps direct ctx-http suite test edits on suite truth", ()
   ]);
 });
 
+test("verify:affected routes ctx-http bin smoke edits to bin-tests only", () => {
+  const plan = buildVerificationPlan({
+    intent: "affected",
+    base: "origin/main",
+    changedFiles: ["core/crates/ctx-http/tests/bin_smoke.sh"],
+  });
+
+  assert.deepEqual(plan.commands, [
+    "node scripts/ctx_http_suite_task.cjs --suite bin-tests",
+  ]);
+  assert.deepEqual(plan.taxonomyEntries, ["ctx-http.bin-tests"]);
+});
+
+test("verify:affected routes ctx-http binary source edits to bin-tests without base", () => {
+  const plan = buildVerificationPlan({
+    intent: "affected",
+    base: "origin/main",
+    changedFiles: ["core/crates/ctx-http/src/bin/llama_server_mock.rs"],
+  });
+
+  assert.deepEqual(plan.commands, [
+    "pnpm source:file-size:report",
+    "node scripts/ctx_http_suite_task.cjs --suite bin-tests",
+  ]);
+  assert.equal(plan.commands.some((command) => command.includes("--suite base")), false);
+});
+
 test("verify:affected expands ctx-http base children for unmatched ctx-http source edits", () => {
   const plan = buildVerificationPlan({
     intent: "affected",

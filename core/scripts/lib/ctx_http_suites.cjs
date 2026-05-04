@@ -97,6 +97,12 @@ const CTX_HTTP_CHECKIN_FANOUT_TARGETS_BY_SUITE = Object.freeze({
     "unit_tests_merge_queue",
     "unit_tests_merge_queue_enabled_workspace_resume_after_open",
   ],
+  "bin-tests": [
+    "bin_tests_root_help",
+    "bin_tests_serve_help",
+    "bin_tests_init_help",
+    "bin_tests_self_update_help",
+  ],
 });
 const CTX_HTTP_SHARED_SOURCE_GLOBS = [
   "crates/ctx-http/src/api/auth.rs",

@@ -44,7 +44,7 @@ const CHECKIN_RUST_GATE_CRATE_WEIGHTS = Object.freeze({
 });
 const CHECKIN_BUILDKITE_EXECUTION_OPTIONS = Object.freeze({
   coalesceCtxHttpSuites: false,
-  fanoutCtxHttpSuiteTargets: false,
+  fanoutCtxHttpSuiteTargets: true,
   rustGateChunkSize: CHECKIN_BUILDKITE_RUST_GATE_CHUNK_SIZE,
 });
 

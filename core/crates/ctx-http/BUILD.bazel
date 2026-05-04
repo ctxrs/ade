@@ -1194,11 +1194,45 @@ test_suite(
 )
 
 sh_test(
-    name = "bin_tests",
+    name = "bin_tests_root_help",
     srcs = ["tests/bin_smoke.sh"],
-    args = ["$(location :ctx)"],
+    args = ["$(location :ctx)", "root-help"],
     data = [":ctx"],
     timeout = "long",
+)
+
+sh_test(
+    name = "bin_tests_serve_help",
+    srcs = ["tests/bin_smoke.sh"],
+    args = ["$(location :ctx)", "serve-help"],
+    data = [":ctx"],
+    timeout = "long",
+)
+
+sh_test(
+    name = "bin_tests_init_help",
+    srcs = ["tests/bin_smoke.sh"],
+    args = ["$(location :ctx)", "init-help"],
+    data = [":ctx"],
+    timeout = "long",
+)
+
+sh_test(
+    name = "bin_tests_self_update_help",
+    srcs = ["tests/bin_smoke.sh"],
+    args = ["$(location :ctx)", "self-update-help"],
+    data = [":ctx"],
+    timeout = "long",
+)
+
+test_suite(
+    name = "bin_tests",
+    tests = [
+        ":bin_tests_init_help",
+        ":bin_tests_root_help",
+        ":bin_tests_self_update_help",
+        ":bin_tests_serve_help",
+    ],
 )
 
 rust_doc_test(

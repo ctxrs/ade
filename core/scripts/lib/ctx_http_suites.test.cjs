@@ -70,6 +70,11 @@ test("ctx-http suite command builder expands base and meta suites predictably", 
   assert.equal(baseExecutionTargets.includes(`${CTX_HTTP_BAZEL_PACKAGE}:unit-tests-api`), false);
   assert.equal(baseExecutionTargets.includes(`${CTX_HTTP_BAZEL_PACKAGE}:unit_tests_lib_session_head_large`), true);
   assert.equal(baseExecutionTargets.includes(`${CTX_HTTP_BAZEL_PACKAGE}:unit-tests-lib-session-head-large`), false);
+  assert.equal(baseExecutionTargets.includes(`${CTX_HTTP_BAZEL_PACKAGE}:bin_tests`), false);
+  assert.equal(baseExecutionTargets.includes(`${CTX_HTTP_BAZEL_PACKAGE}:bin_tests_root_help`), true);
+  assert.equal(baseExecutionTargets.includes(`${CTX_HTTP_BAZEL_PACKAGE}:bin_tests_serve_help`), true);
+  assert.equal(baseExecutionTargets.includes(`${CTX_HTTP_BAZEL_PACKAGE}:bin_tests_init_help`), true);
+  assert.equal(baseExecutionTargets.includes(`${CTX_HTTP_BAZEL_PACKAGE}:bin_tests_self_update_help`), true);
   assert.equal(baseExecutionTargets.includes(`${CTX_HTTP_BAZEL_PACKAGE}:base`), false);
 
   const allCommands = buildCtxHttpSuiteCommands("all");
@@ -96,6 +101,8 @@ test("ctx-http suite command builder expands base and meta suites predictably", 
   );
   assert.equal(getCtxHttpSuiteTargets("all").includes(`${CTX_HTTP_BAZEL_PACKAGE}:unit-tests-api`), true);
   assert.equal(getCtxHttpSuiteTargets("all").includes(`${CTX_HTTP_BAZEL_PACKAGE}:bin_tests`), true);
+  assert.equal(getCtxHttpSuiteExecutionTargets("all").includes(`${CTX_HTTP_BAZEL_PACKAGE}:bin_tests`), false);
+  assert.equal(getCtxHttpSuiteExecutionTargets("all").includes(`${CTX_HTTP_BAZEL_PACKAGE}:bin_tests_root_help`), true);
   assert.equal(getCtxHttpSuiteTargets("all").includes(`${CTX_HTTP_BAZEL_PACKAGE}:doc_tests`), true);
   assert.equal(getCtxHttpSuiteTargets("all").includes(`${CTX_HTTP_BAZEL_PACKAGE}:base`), false);
   assert.equal(getCtxHttpSuiteTargets("all").includes(`${CTX_HTTP_BAZEL_PACKAGE}:attachments-routing`), false);

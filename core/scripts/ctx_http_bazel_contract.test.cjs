@@ -290,6 +290,14 @@ test("ctx-http BUILD exposes Bazel-native base test targets", () => {
     /--exact",\s*"merge_queue::tests::enabled_workspace_queued_rows_resume_only_after_open/,
   );
   assert.match(ctxHttpBuild, /name = "bin_tests"/);
+  assert.match(ctxHttpBuild, /name = "bin_tests_root_help"/);
+  assert.match(ctxHttpBuild, /args = \["\$\(location :ctx\)", "root-help"\]/);
+  assert.match(ctxHttpBuild, /name = "bin_tests_serve_help"/);
+  assert.match(ctxHttpBuild, /args = \["\$\(location :ctx\)", "serve-help"\]/);
+  assert.match(ctxHttpBuild, /name = "bin_tests_init_help"/);
+  assert.match(ctxHttpBuild, /args = \["\$\(location :ctx\)", "init-help"\]/);
+  assert.match(ctxHttpBuild, /name = "bin_tests_self_update_help"/);
+  assert.match(ctxHttpBuild, /args = \["\$\(location :ctx\)", "self-update-help"\]/);
   assert.match(ctxHttpBuild, /name = "doc_tests"/);
   assert.match(ctxHttpBuild, /name = "base"/);
   assert.match(ctxHttpBuild, /name = "unit-tests-api"/);
