@@ -282,6 +282,36 @@ function deriveCacheHitShape(cacheStats) {
   return "";
 }
 
+function hasBuildBuddyCacheEvidence(summary) {
+  return Boolean(
+    summary?.buildBuddyEnabled
+    || String(summary?.remoteInvocationUrl || "").trim()
+    || (Array.isArray(summary?.buildBuddyInvocations) && summary.buildBuddyInvocations.length > 0),
+  );
+}
+
+function inferCacheHitShape(summary) {
+  const explicitShape = normalizeCacheHitShapeValue(summary?.cacheHitShape);
+  if (explicitShape) {
+    return explicitShape;
+  }
+  const derivedShape = deriveCacheHitShape(summary?.cacheStats);
+  if (derivedShape) {
+    return derivedShape;
+  }
+  const remoteExecutionMode = String(summary?.remoteExecutionMode || "").trim();
+  if (hasBuildBuddyCacheEvidence(summary)) {
+    return "buildbuddy-cache-unreported";
+  }
+  if (remoteExecutionMode === "off") {
+    return "local-cache-only";
+  }
+  if (remoteExecutionMode) {
+    return "cache-evidence-unavailable";
+  }
+  return "cache-evidence-unavailable";
+}
+
 function deriveBazelMetrics(summary) {
   const phases = Array.isArray(summary.phases) ? summary.phases : [];
   const localPhases = phases.filter((phase) => phase?.name === "local");
@@ -313,9 +343,7 @@ function deriveBazelMetrics(summary) {
     durationMs,
     queueTimeMs,
     remoteActionTimeMs,
-    cacheHitShape:
-      normalizeCacheHitShapeValue(summary.cacheHitShape)
-      || deriveCacheHitShape(summary.cacheStats),
+    cacheHitShape: inferCacheHitShape(summary),
     runnerLocalOverheadMs: explicitRunnerLocalOverheadMs !== undefined
       ? explicitRunnerLocalOverheadMs
       : remoteActionTimeMs !== undefined
@@ -593,6 +621,7 @@ module.exports = {
   createRunArtifacts,
   createRunId,
   deriveBazelMetrics,
+  inferCacheHitShape,
   deriveRouterMetrics,
   finalizeRunArtifacts,
   getStaleLockObservation,

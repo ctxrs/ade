@@ -5,6 +5,7 @@ const test = require("node:test");
 const {
   CTX_HTTP_BAZEL_PACKAGE,
   CTX_HTTP_BASE_CHILD_SUITE_NAMES,
+  CTX_HTTP_CHECKIN_FANOUT_TARGET_BATCHES_BY_SUITE,
   CTX_HTTP_CHECKIN_FANOUT_TARGETS_BY_SUITE,
   CTX_HTTP_MANUAL_ONLY_BAZEL_TARGETS,
   CTX_HTTP_SAFE_CONCURRENT_SUITES,
@@ -15,6 +16,7 @@ const {
   MANUAL_ONLY_CTX_HTTP_TEST_FILES,
   buildCtxHttpSuiteCommands,
   buildCtxHttpSuiteTaskArgs,
+  getCtxHttpSuiteCheckinFanoutTargetBatches,
   getCtxHttpSuiteCheckinFanoutTargets,
   getCtxHttpSuiteConcurrencyClass,
   getCtxHttpSuiteExecutionTargets,
@@ -200,6 +202,28 @@ test("ctx-http checkin fanout exposes split unit suite targets without changing 
   assert.equal(
     CTX_HTTP_CHECKIN_FANOUT_TARGETS_BY_SUITE["unit-tests-execution-setup"].includes(
       "unit_tests_execution_setup_successful_workspace_launch_writes_missing_prewarm_metadata",
+    ),
+    true,
+  );
+  assert.deepEqual(CTX_HTTP_CHECKIN_FANOUT_TARGET_BATCHES_BY_SUITE["bin-tests"], [
+    [
+      "bin_tests_root_help",
+      "bin_tests_serve_help",
+      "bin_tests_init_help",
+      "bin_tests_self_update_help",
+    ],
+  ]);
+  assert.deepEqual(getCtxHttpSuiteCheckinFanoutTargetBatches("bin-tests"), [
+    [
+      `${CTX_HTTP_BAZEL_PACKAGE}:bin_tests_root_help`,
+      `${CTX_HTTP_BAZEL_PACKAGE}:bin_tests_serve_help`,
+      `${CTX_HTTP_BAZEL_PACKAGE}:bin_tests_init_help`,
+      `${CTX_HTTP_BAZEL_PACKAGE}:bin_tests_self_update_help`,
+    ],
+  ]);
+  assert.equal(
+    getCtxHttpSuiteCheckinFanoutTargetBatches("base").some((batch) =>
+      batch.length === 4 && batch.every((target) => target.includes(":bin_tests_"))
     ),
     true,
   );

@@ -526,6 +526,7 @@ test("bazel pilot runner writes telemetry summaries and redacts BuildBuddy heade
   assert.equal(summary.success, true);
   assert.equal(summary.remoteExecutionMode, "all");
   assert.equal(summary.buildBuddyEnabled, true);
+  assert.equal(summary.cacheHitShape, "buildbuddy-cache-unreported");
   assert.equal(summary.parentEntrypoint, "verify:affected");
   assert.equal(summary.parentRunId, "router-run-1");
   assert.equal(summary.runId, invocation.telemetry.runId);
@@ -579,6 +580,7 @@ test("bazel pilot emits a machine-readable phase summary with local spill accoun
   assert.equal(summary.remoteTargetCount, 1);
   assert.equal(summary.localTargetCount, 1);
   assert.equal(summary.localSpill, true);
+  assert.equal(summary.cacheHitShape, "buildbuddy-cache-unreported");
   assert.equal(typeof summary.queueTimeMs, "number");
   assert.equal(typeof summary.remoteActionTimeMs, "number");
   assert.equal(typeof summary.runnerLocalOverheadMs, "number");
@@ -665,6 +667,7 @@ test("bazel pilot summary formatter is stable for parser consumption", () => {
   assert.equal(parsed.remoteActionTimeMs, 1000);
   assert.equal(parsed.runnerLocalOverheadMs, 200);
   assert.equal(parsed.localSpill, false);
+  assert.equal(parsed.cacheHitShape, "cache-evidence-unavailable");
 });
 
 test("bazel pilot reports local spill for linux remote mode with local-only execution", () => {
@@ -687,6 +690,7 @@ test("bazel pilot reports local spill for linux remote mode with local-only exec
   assert.equal(summary.localPhaseCount, 1);
   assert.equal(summary.remotePhaseCount, 0);
   assert.equal(summary.localSpill, true);
+  assert.equal(summary.cacheHitShape, "cache-evidence-unavailable");
 });
 
 test("bazel pilot does not record dead BuildBuddy links when Bazel never starts", () => {

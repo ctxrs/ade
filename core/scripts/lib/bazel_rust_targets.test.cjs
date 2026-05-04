@@ -310,11 +310,12 @@ test("flattened ctx-http checkin fanout targets are Linux RBE safe", () => {
 test("checkin fans out ctx-http child targets for Buildkite", () => {
   const plan = buildCheckinBuildkiteExecutionPlan({ profileId: "checkin" });
   const allFanoutTargets = getAllCtxHttpSuiteCheckinFanoutTargets();
-  const directBazelTargets = plan.commands
+  const directBazelCommands = plan.commands
     .filter((command) =>
       command.startsWith("node scripts/run_bazel_pilot.cjs test //core/crates/ctx-http:")
-    )
-    .map((command) => command.replace("node scripts/run_bazel_pilot.cjs test ", ""));
+    );
+  const directBazelTargets = directBazelCommands
+    .flatMap((command) => command.replace("node scripts/run_bazel_pilot.cjs test ", "").split(" "));
   const ctxHttpSuiteCommands = plan.commands.filter((command) =>
     command.startsWith("node scripts/ctx_http_suite_task.cjs --suite ")
   );
@@ -326,6 +327,10 @@ test("checkin fans out ctx-http child targets for Buildkite", () => {
   assert.equal(ctxHttpSuiteCommands.length, 0);
   assert.ok(directBazelTargets.includes("//core/crates/ctx-http:unit_tests_api"));
   assert.ok(directBazelTargets.includes("//core/crates/ctx-http:bin_tests_root_help"));
+  assert.ok(directBazelCommands.some((command) =>
+    command.includes("//core/crates/ctx-http:bin_tests_root_help")
+    && command.includes("//core/crates/ctx-http:bin_tests_self_update_help")
+  ));
 });
 
 test("checkin ctx-http fanout targets are Linux RBE-safe Bazel labels", () => {
@@ -334,7 +339,7 @@ test("checkin ctx-http fanout targets are Linux RBE-safe Bazel labels", () => {
     .filter((command) =>
       command.startsWith("node scripts/run_bazel_pilot.cjs test //core/crates/ctx-http:")
     )
-    .map((command) => command.replace("node scripts/run_bazel_pilot.cjs test ", ""));
+    .flatMap((command) => command.replace("node scripts/run_bazel_pilot.cjs test ", "").split(" "));
   assert.ok(ctxHttpFanoutTargets.length > getCtxHttpSuiteTargets("all").length);
   for (const target of ctxHttpFanoutTargets) {
     assert.ok(

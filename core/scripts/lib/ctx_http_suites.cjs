@@ -104,6 +104,16 @@ const CTX_HTTP_CHECKIN_FANOUT_TARGETS_BY_SUITE = Object.freeze({
     "bin_tests_self_update_help",
   ],
 });
+const CTX_HTTP_CHECKIN_FANOUT_TARGET_BATCHES_BY_SUITE = Object.freeze({
+  "bin-tests": [
+    [
+      "bin_tests_root_help",
+      "bin_tests_serve_help",
+      "bin_tests_init_help",
+      "bin_tests_self_update_help",
+    ],
+  ],
+});
 const CTX_HTTP_SHARED_SOURCE_GLOBS = [
   "crates/ctx-http/src/api/auth.rs",
   "crates/ctx-http/src/api/errors.rs",
@@ -974,29 +984,60 @@ function getCtxHttpSuiteTargets(suiteName) {
 }
 
 function getCtxHttpSuiteCheckinFanoutTargets(suiteName) {
+  return getCtxHttpSuiteCheckinFanoutTargetBatches(suiteName).flat();
+}
+
+function getCtxHttpSuiteCheckinFanoutTargetBatches(suiteName) {
   const suite = getCtxHttpSuiteByName(suiteName);
   if (!suite) {
     throw new Error(`unknown ctx-http suite: ${suiteName}`);
   }
   if (suite.name === "base") {
-    return dedupePreservingOrder(
+    return dedupeTargetBatchesPreservingOrder(
       CTX_HTTP_BASE_CHILD_SUITE_NAMES.flatMap((childSuiteName) =>
-        getCtxHttpSuiteCheckinFanoutTargets(childSuiteName)
+        getCtxHttpSuiteCheckinFanoutTargetBatches(childSuiteName)
       ),
     );
   }
   const targetNames = CTX_HTTP_CHECKIN_FANOUT_TARGETS_BY_SUITE[suite.name];
   if (!targetNames) {
     if (suite.type === "integration" && (suite.directTargets || suite.testFiles).length > 0) {
-      return (suite.directTargets || suite.testFiles).map((targetName) => `${CTX_HTTP_BAZEL_PACKAGE}:${targetName}`);
+      return (suite.directTargets || suite.testFiles)
+        .map((targetName) => [`${CTX_HTTP_BAZEL_PACKAGE}:${targetName}`]);
     }
-    return [getCtxHttpSuiteTarget(suite.name)];
+    return [[getCtxHttpSuiteTarget(suite.name)]];
   }
-  return targetNames.map((targetName) => `${CTX_HTTP_BAZEL_PACKAGE}:${targetName}`);
+  const configuredBatches = CTX_HTTP_CHECKIN_FANOUT_TARGET_BATCHES_BY_SUITE[suite.name] || [];
+  const batchedTargetNames = new Set(configuredBatches.flat());
+  return [
+    ...configuredBatches.map((batch) => batch.map((targetName) => `${CTX_HTTP_BAZEL_PACKAGE}:${targetName}`)),
+    ...targetNames
+      .filter((targetName) => !batchedTargetNames.has(targetName))
+      .map((targetName) => [`${CTX_HTTP_BAZEL_PACKAGE}:${targetName}`]),
+  ];
 }
 
 function dedupePreservingOrder(values) {
   return [...new Set(values)];
+}
+
+function dedupeTargetBatchesPreservingOrder(batches) {
+  const seen = new Set();
+  const dedupedBatches = [];
+  for (const batch of batches) {
+    const dedupedBatch = [];
+    for (const target of batch) {
+      if (seen.has(target)) {
+        continue;
+      }
+      seen.add(target);
+      dedupedBatch.push(target);
+    }
+    if (dedupedBatch.length > 0) {
+      dedupedBatches.push(dedupedBatch);
+    }
+  }
+  return dedupedBatches;
 }
 
 function getCtxHttpSuiteExecutionTargets(suiteSelection) {
@@ -1024,6 +1065,7 @@ function buildCtxHttpSuiteTaskArgs(suiteName) {
 module.exports = {
   CTX_HTTP_BAZEL_PACKAGE,
   CTX_HTTP_BASE_CHILD_SUITE_NAMES,
+  CTX_HTTP_CHECKIN_FANOUT_TARGET_BATCHES_BY_SUITE,
   CTX_HTTP_CHECKIN_FANOUT_TARGETS_BY_SUITE,
   CTX_HTTP_MANUAL_ONLY_BAZEL_TARGETS,
   CTX_HTTP_SAFE_CONCURRENT_SUITES,
@@ -1040,6 +1082,7 @@ module.exports = {
   getCtxHttpSuiteTarget,
   getCtxHttpSuiteTargets,
   getCtxHttpSuiteCheckinFanoutTargets,
+  getCtxHttpSuiteCheckinFanoutTargetBatches,
   getCtxHttpSuiteExecutionTargets,
   getCtxHttpSuiteByName,
   getCtxHttpSuiteConcurrencyClass,

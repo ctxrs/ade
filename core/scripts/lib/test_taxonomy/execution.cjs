@@ -6,7 +6,7 @@ const { getProfiles, profileMatchesEntry } = require("./profiles.cjs");
 const {
   buildCtxHttpSuiteTaskArgs,
   expandCtxHttpSuiteForPlanner,
-  getCtxHttpSuiteCheckinFanoutTargets,
+  getCtxHttpSuiteCheckinFanoutTargetBatches,
 } = require("../ctx_http_suites.cjs");
 const {
   resolveMergeBaseFiles,
@@ -201,8 +201,8 @@ function buildCommandForEntry(entry) {
 
 function buildCtxHttpSuiteFanoutCommands(suiteName) {
   return expandCtxHttpSuiteForPlanner(suiteName)
-    .flatMap((entry) => getCtxHttpSuiteCheckinFanoutTargets(entry))
-    .map((target) => shellJoin("node", ["scripts/run_bazel_pilot.cjs", "test", target]));
+    .flatMap((entry) => getCtxHttpSuiteCheckinFanoutTargetBatches(entry))
+    .map((targets) => shellJoin("node", ["scripts/run_bazel_pilot.cjs", "test", ...targets]));
 }
 
 function buildRustGateCommandForCrates(crateNames, {
