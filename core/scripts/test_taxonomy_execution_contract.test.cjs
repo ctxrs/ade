@@ -622,9 +622,8 @@ test("Buildkite checkin plan splits ctx-http suites and Rust crate gates without
     ctxHttpCommands.some((command) => command.includes("//core/crates/ctx-http:scheduler-runtime")),
     false,
   );
-  assert.ok(ctxHttpCommands.includes(
-    "node scripts/run_bazel_pilot.cjs test //core/crates/ctx-http:session_model_api",
-  ));
+  assert.equal(ctxHttpCommands.length, 53);
+  assert.ok(ctxHttpCommands.some((command) => command.includes("//core/crates/ctx-http:session_model_api")));
   assert.ok(ctxHttpCommands.includes(
     "node scripts/run_bazel_pilot.cjs test //core/crates/ctx-http:unit_tests_scheduler",
   ));

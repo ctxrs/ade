@@ -113,6 +113,209 @@ const CTX_HTTP_CHECKIN_FANOUT_TARGET_BATCHES_BY_SUITE = Object.freeze({
       "bin_tests_self_update_help",
     ],
   ],
+  "unit-tests-api": [
+    [
+      "unit_tests_api_cleanup_lifecycle",
+      "unit_tests_api_task_lifecycle",
+    ],
+    [
+      "unit_tests_api_storage_admission",
+      "unit_tests_api_workspaces",
+    ],
+  ],
+  "unit-tests-execution-setup": [
+    [
+      "unit_tests_execution_setup_concurrent_launch_start_is_deduplicated",
+      "unit_tests_execution_setup_startup_prewarm_runtime_warmup",
+      "unit_tests_execution_setup_refresh_clears_stale_prewarm_metadata",
+    ],
+    [
+      "unit_tests_execution_setup_reuses_active_runtime_prewarm",
+      "unit_tests_execution_setup_startup_prewarm_runtime_probe_reuse",
+      "unit_tests_execution_setup_runtime_launch_ready_promotion",
+    ],
+    [
+      "unit_tests_execution_setup_runtime_launch_ready_scope_starts_shared_vm",
+      "unit_tests_execution_setup_builder_prewarm_shared_all_job",
+    ],
+    [
+      "unit_tests_execution_setup_workspace_launch_not_blocked_by_background_runtime_prewarm",
+      "unit_tests_execution_setup_successful_workspace_launch_writes_missing_prewarm_metadata",
+      "unit_tests_workspace_launch_reuses_startup_prewarm",
+    ],
+  ],
+  "unit-tests-lib": [
+    [
+      "unit_tests_lib_provider_routes",
+      "unit_tests_lib_session_artifacts",
+      "unit_tests_lib_telemetry_export",
+    ],
+    [
+      "unit_tests_lib_update_boundaries",
+      "unit_tests_lib_web_session_routes",
+      "unit_tests_lib_workspace_active_routes",
+    ],
+  ],
+  "unit-tests-workspace-runtime": [
+    [
+      "unit_tests_workspace_runtime_reclaim_idle_runtime_with_parked_containers",
+      "unit_tests_workspace_runtime_reuses_running_container",
+      "unit_tests_workspace_runtime_prepare_starts_cached_container",
+    ],
+    [
+      "unit_tests_workspace_runtime_reclaim_idle_machine",
+      "unit_tests_workspace_runtime_reclaim_idle_runtime_with_containers",
+      "unit_tests_workspace_runtime_reclaim_ctx_harness_container",
+    ],
+    [
+      "unit_tests_workspace_runtime_container_status_avf",
+      "unit_tests_workspace_runtime_starts_avf_workspace_vm",
+      "unit_tests_workspace_runtime_keeps_avf_workspace_container_ready",
+    ],
+    [
+      "unit_tests_workspace_runtime_unknown_machine_state_engine_unreachable",
+      "unit_tests_workspace_runtime_running_unreachable_machine_reconfiguration",
+      "unit_tests_workspace_runtime_recreates_machine_for_memory_profile_change",
+    ],
+  ],
+  "unit-tests-daemon-and-scheduler": [
+    [
+      "unit_tests_daemon",
+      "unit_tests_mcp_command",
+    ],
+    [
+      "unit_tests_daemon_golden_path_with_fake_provider",
+      "unit_tests_daemon_http_and_ws_streaming",
+    ],
+  ],
+  "unit-tests-provider-and-settings": [
+    [
+      "unit_tests_installer",
+      "unit_tests_provider_launch",
+      "unit_tests_provider_matrix",
+      "unit_tests_settings",
+    ],
+  ],
+  "unit-tests-merge-queue": [
+    [
+      "unit_tests_merge_queue",
+      "unit_tests_merge_queue_enabled_workspace_resume_after_open",
+    ],
+  ],
+  "workspace-stream": [
+    [
+      "cache_rehydration",
+      "hot_endpoints_no_db",
+      "replay_properties",
+    ],
+    [
+      "fault_matrix",
+      "task_default_session_http",
+    ],
+    [
+      "workspace_active_snapshot_http",
+      "workspace_active_snapshot_http_workspace_stream_repeat_subscribe_preserves_ready_worktree_vcs_state",
+      "workspace_active_snapshot_http_workspace_stream_repeat_subscribe_rescans_fresh_unavailable_worktree_vcs",
+    ],
+    [
+      "workspace_active_snapshot_http_workspace_stream_subscribe_does_not_reemit_when_worktree_vcs_is_already_computing",
+      "workspace_active_snapshot_http_worktree_vcs_summary_refresh_reloads_live_inventory_before_ready_publish",
+    ],
+    [
+      "workspace_stream_context_window_metrics",
+      "workspace_stream_no_gaps_under_activity",
+    ],
+  ],
+  "provider-auth": [
+    [
+      "acp_target_scoped_status",
+      "codex_host_import_api",
+      "codex_login_callback_api",
+    ],
+    [
+      "install_start_contract",
+      "provider_current_ctx_version_regressions",
+      "provider_target_scoped_installs",
+      "subscription_accounts_api",
+    ],
+  ],
+  "provider-runtime-simulated": [
+    [
+      "provider_probe_runtime_env",
+      "provider_worker_reaping_offline",
+    ],
+    [
+      "provider_scenarios_offline_crp_fixtures",
+      "provider_scenarios_offline_interleaved_assistant_tools_do_not_fragment_messages",
+      "provider_scenarios_offline_crp_fixtures_persist_context_window_metrics",
+    ],
+    [
+      "session_model_api",
+      "workspace_provider_model_preferences_http",
+    ],
+  ],
+  "repo-vcs": [
+    [
+      "jj_merge_queue_basics",
+      "merge_queue_isolation",
+    ],
+    [
+      "repo_clone_branch_and_safety",
+      "repo_init_initial_commit",
+      "repo_validate_destination",
+    ],
+    [
+      "session_diff_unavailable",
+      "workspace_merge_queue_config_http",
+      "worktree_archive_http",
+      "worktree_vcs_snapshot",
+    ],
+  ],
+  "scheduler-runtime": [
+    [
+      "assistant_chunk_stream_only",
+      "assistant_message_persistence_faults",
+      "noisy_output_backpressure",
+    ],
+    [
+      "turn_lifecycle_events",
+      "turn_terminal_reconciliation",
+    ],
+  ],
+  "turns-terminal": [
+    [
+      "demo_seed_transcript_http",
+      "message_idempotency_post_message_idempotent_same_payload",
+      "message_idempotency_post_message_idempotent_conflict_on_change",
+    ],
+    [
+      "terminal_workspace_stream_separation",
+      "terminal_ws_reconnect",
+    ],
+  ],
+  "subagents-control": [
+    [
+      "subagent_mcp_http_archive_agent_reclaims_dedicated_child_worktree",
+      "system_prompt_append_http",
+      "title_generation_local",
+    ],
+  ],
+  "updates-release": [
+    [
+      "openai_responses_sse_stub",
+      "release_manifest_corpus",
+    ],
+    [
+      "updates_appimage_apply_safety",
+      "updates_failure_safety_checksum_mismatch",
+    ],
+    [
+      "updates_failure_safety_interrupted_transfer",
+      "updates_failure_safety_manifest_parse",
+      "updates_failure_safety_manifest_signature",
+      "updates_failure_safety_missing_artifact",
+    ],
+  ],
 });
 const CTX_HTTP_SHARED_SOURCE_GLOBS = [
   "crates/ctx-http/src/api/auth.rs",
@@ -999,22 +1202,55 @@ function getCtxHttpSuiteCheckinFanoutTargetBatches(suiteName) {
       ),
     );
   }
-  const targetNames = CTX_HTTP_CHECKIN_FANOUT_TARGETS_BY_SUITE[suite.name];
+  const targetNames = CTX_HTTP_CHECKIN_FANOUT_TARGETS_BY_SUITE[suite.name]
+    || (suite.type === "integration" && (suite.directTargets || suite.testFiles).length > 0
+      ? (suite.directTargets || suite.testFiles)
+      : null);
   if (!targetNames) {
-    if (suite.type === "integration" && (suite.directTargets || suite.testFiles).length > 0) {
-      return (suite.directTargets || suite.testFiles)
-        .map((targetName) => [`${CTX_HTTP_BAZEL_PACKAGE}:${targetName}`]);
-    }
     return [[getCtxHttpSuiteTarget(suite.name)]];
   }
   const configuredBatches = CTX_HTTP_CHECKIN_FANOUT_TARGET_BATCHES_BY_SUITE[suite.name] || [];
-  const batchedTargetNames = new Set(configuredBatches.flat());
-  return [
-    ...configuredBatches.map((batch) => batch.map((targetName) => `${CTX_HTTP_BAZEL_PACKAGE}:${targetName}`)),
-    ...targetNames
-      .filter((targetName) => !batchedTargetNames.has(targetName))
-      .map((targetName) => [`${CTX_HTTP_BAZEL_PACKAGE}:${targetName}`]),
-  ];
+  const declaredTargetNames = new Set(targetNames);
+  const configuredBatchByFirstTarget = new Map();
+  const configuredBatchedTargetNames = new Set();
+  for (const batch of configuredBatches) {
+    const firstTargetName = batch[0];
+    if (!firstTargetName) {
+      throw new Error(`empty ctx-http checkin target batch for suite ${suite.name}`);
+    }
+    if (configuredBatchByFirstTarget.has(firstTargetName)) {
+      throw new Error(`duplicate ctx-http checkin target batch starts with ${firstTargetName} for suite ${suite.name}`);
+    }
+    for (const targetName of batch) {
+      if (!declaredTargetNames.has(targetName)) {
+        throw new Error(`ctx-http checkin target batch for suite ${suite.name} references unknown target ${targetName}`);
+      }
+      if (configuredBatchedTargetNames.has(targetName)) {
+        throw new Error(`ctx-http checkin target batch for suite ${suite.name} repeats target ${targetName}`);
+      }
+      configuredBatchedTargetNames.add(targetName);
+    }
+    configuredBatchByFirstTarget.set(firstTargetName, batch);
+  }
+
+  const consumedTargetNames = new Set();
+  const batches = [];
+  for (const targetName of targetNames) {
+    if (consumedTargetNames.has(targetName)) {
+      continue;
+    }
+    const configuredBatch = configuredBatchByFirstTarget.get(targetName);
+    if (configuredBatch) {
+      batches.push(configuredBatch.map((entry) => `${CTX_HTTP_BAZEL_PACKAGE}:${entry}`));
+      for (const entry of configuredBatch) {
+        consumedTargetNames.add(entry);
+      }
+      continue;
+    }
+    batches.push([`${CTX_HTTP_BAZEL_PACKAGE}:${targetName}`]);
+    consumedTargetNames.add(targetName);
+  }
+  return batches;
 }
 
 function dedupePreservingOrder(values) {

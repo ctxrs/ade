@@ -29,6 +29,21 @@ const {
 const coreRoot = path.resolve(__dirname, "../..");
 const canonicalSuiteNames = CTX_HTTP_SUITES.map((suite) => suite.name);
 
+function targetNameFromLabel(target) {
+  return String(target).split(":").at(-1);
+}
+
+function declaredCheckinFanoutTargetNames(suiteName) {
+  if (CTX_HTTP_CHECKIN_FANOUT_TARGETS_BY_SUITE[suiteName]) {
+    return CTX_HTTP_CHECKIN_FANOUT_TARGETS_BY_SUITE[suiteName];
+  }
+  const suite = CTX_HTTP_SUITES.find((candidate) => candidate.name === suiteName);
+  if (suite?.type === "integration" && (suite.directTargets || suite.testFiles).length > 0) {
+    return suite.directTargets || suite.testFiles;
+  }
+  return getCtxHttpSuiteTargets(suiteName).map(targetNameFromLabel);
+}
+
 test("ctx-http suite assignments cover every integration test exactly once", () => {
   const validation = validateCtxHttpSuites(coreRoot);
 
@@ -227,6 +242,39 @@ test("ctx-http checkin fanout exposes split unit suite targets without changing 
     ),
     true,
   );
+  assert.deepEqual(getCtxHttpSuiteCheckinFanoutTargetBatches("provider-auth"), [
+    [
+      `${CTX_HTTP_BAZEL_PACKAGE}:acp_target_scoped_status`,
+      `${CTX_HTTP_BAZEL_PACKAGE}:codex_host_import_api`,
+      `${CTX_HTTP_BAZEL_PACKAGE}:codex_login_callback_api`,
+    ],
+    [
+      `${CTX_HTTP_BAZEL_PACKAGE}:install_start_contract`,
+      `${CTX_HTTP_BAZEL_PACKAGE}:provider_current_ctx_version_regressions`,
+      `${CTX_HTTP_BAZEL_PACKAGE}:provider_target_scoped_installs`,
+      `${CTX_HTTP_BAZEL_PACKAGE}:subscription_accounts_api`,
+    ],
+  ]);
+  assert.equal(getCtxHttpSuiteCheckinFanoutTargetBatches("base").length, 26);
+  assert.equal(getCtxHttpSuiteCheckinFanoutTargets("base").length, 56);
+  assert.equal(
+    new Set(getCtxHttpSuiteCheckinFanoutTargets("base")).size,
+    getCtxHttpSuiteCheckinFanoutTargets("base").length,
+  );
+  for (const [suiteName, configuredBatches] of Object.entries(CTX_HTTP_CHECKIN_FANOUT_TARGET_BATCHES_BY_SUITE)) {
+    const declaredTargetNames = new Set(declaredCheckinFanoutTargetNames(suiteName));
+    for (const configuredBatch of configuredBatches) {
+      assert.ok(configuredBatch.length > 1, `${suiteName} should not configure singleton batches`);
+      assert.ok(configuredBatch.length <= 4, `${suiteName} batches should stay bounded`);
+      for (const targetName of configuredBatch) {
+        assert.equal(
+          declaredTargetNames.has(targetName),
+          true,
+          `${suiteName} batch references undeclared target ${targetName}`,
+        );
+      }
+    }
+  }
   const workspaceStreamFanout = getCtxHttpSuiteCheckinFanoutTargets("workspace-stream");
   assert.equal(workspaceStreamFanout.includes(`${CTX_HTTP_BAZEL_PACKAGE}:workspace-stream`), false);
   assert.equal(workspaceStreamFanout.includes(`${CTX_HTTP_BAZEL_PACKAGE}:cache_rehydration`), true);
