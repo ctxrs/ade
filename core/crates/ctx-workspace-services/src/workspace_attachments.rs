@@ -1,8 +1,4 @@
-use std::ffi::OsString;
-use std::path::{Component, Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
-
-use anyhow::{Context, Result};
+use anyhow::Result;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use ctx_core::ids::{WorkspaceAttachmentId, WorkspaceId};
@@ -11,11 +7,20 @@ use ctx_core::models::{
     WorkspaceAttachmentKind, WorkspaceAttachmentStatus,
 };
 use serde::{Deserialize, Serialize};
-use tokio::process::Command;
 
 mod doc_mirror;
+mod materialized_install;
+mod materialized_paths;
+mod reference_repo;
+
 use doc_mirror::{
     materialize_doc_mirror, validate_doc_mirror_source, validate_doc_mirror_source_value,
+};
+
+pub use materialized_paths::{
+    materialized_path_for_attachment, materialized_root_for_attachment,
+    remove_materialized_root_if_exists, revision_key, sanitize_attachment_subpath,
+    sanitize_mount_relpath, validate_materialized_path,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -37,7 +42,7 @@ pub struct AttachmentConfig {
 
 #[derive(Debug, Clone)]
 pub struct MaterializationResult {
-    pub path: PathBuf,
+    pub path: std::path::PathBuf,
     pub materialized_id: String,
 }
 
@@ -55,7 +60,7 @@ pub struct WorkspaceAttachmentSyncResult {
 
 #[async_trait]
 pub trait WorkspaceAttachmentsHost: Send + Sync + 'static {
-    fn data_root(&self) -> &Path;
+    fn data_root(&self) -> &std::path::Path;
 
     async fn list_workspace_attachments(
         &self,
@@ -256,91 +261,19 @@ where
 }
 
 pub async fn materialize_attachment(
-    data_root: &Path,
+    data_root: &std::path::Path,
     workspace: &Workspace,
     attachment: &WorkspaceAttachment,
     refresh: bool,
 ) -> Result<MaterializationResult> {
     match attachment.kind {
         WorkspaceAttachmentKind::ReferenceRepo => {
-            materialize_reference_repo(data_root, attachment, refresh).await
+            reference_repo::materialize_reference_repo(data_root, attachment, refresh).await
         }
         WorkspaceAttachmentKind::DocMirror => {
             materialize_doc_mirror(data_root, workspace, attachment, refresh).await
         }
     }
-}
-
-pub fn materialized_root_for_attachment(
-    data_root: &Path,
-    attachment: &WorkspaceAttachment,
-) -> PathBuf {
-    match attachment.kind {
-        WorkspaceAttachmentKind::ReferenceRepo => attachment_store_root(data_root)
-            .join("reference-repos")
-            .join("checkouts")
-            .join(attachment.id.0.to_string()),
-        WorkspaceAttachmentKind::DocMirror => attachment_store_root(data_root)
-            .join("doc-mirrors")
-            .join(attachment.id.0.to_string()),
-    }
-}
-
-pub fn materialized_path_for_attachment(
-    data_root: &Path,
-    attachment: &WorkspaceAttachment,
-) -> PathBuf {
-    let revision = revision_key(attachment);
-    materialized_root_for_attachment(data_root, attachment).join(revision)
-}
-
-pub fn sanitize_mount_relpath(value: &str) -> Result<PathBuf> {
-    let value = value.trim();
-    if value.is_empty() {
-        anyhow::bail!("mount_relpath must not be empty");
-    }
-    if value.contains('\\') {
-        anyhow::bail!("mount_relpath must use '/' separators: {value}");
-    }
-    for segment in value.split('/') {
-        if segment.is_empty() || segment == "." || segment == ".." {
-            anyhow::bail!("mount_relpath contains unsupported component: {value}");
-        }
-    }
-    let path = PathBuf::from(value);
-    if path.is_absolute() {
-        anyhow::bail!("mount_relpath must be relative: {value}");
-    }
-    for part in path.components() {
-        if !matches!(part, Component::Normal(_)) {
-            anyhow::bail!("mount_relpath contains unsupported component: {value}");
-        }
-    }
-    Ok(path)
-}
-
-pub fn sanitize_attachment_subpath(value: &str) -> Result<PathBuf> {
-    if value.trim().is_empty() {
-        anyhow::bail!("subpath must not be empty");
-    }
-    let path = PathBuf::from(value);
-    if path.is_absolute() {
-        anyhow::bail!("subpath must be relative: {value}");
-    }
-    for part in path.components() {
-        if matches!(
-            part,
-            std::path::Component::ParentDir | std::path::Component::Prefix(_)
-        ) {
-            anyhow::bail!("subpath must not escape the attachment root: {value}");
-        }
-    }
-    Ok(path)
-}
-
-pub fn revision_key(attachment: &WorkspaceAttachment) -> String {
-    let base = attachment.revision.as_deref().unwrap_or("default");
-    sanitize_name(base)
 }
 
 fn normalize_attachment_config(
@@ -353,8 +286,11 @@ fn normalize_attachment_config(
     if source.is_empty() {
         anyhow::bail!("source must not be empty");
     }
+
     match &cfg.kind {
-        WorkspaceAttachmentKind::ReferenceRepo => validate_reference_repo_source(&source)?,
+        WorkspaceAttachmentKind::ReferenceRepo => {
+            reference_repo::validate_reference_repo_source(&source)?
+        }
         WorkspaceAttachmentKind::DocMirror => {
             validate_doc_mirror_source_value(&source)?;
             if cfg.mode == Some(AttachmentMode::Rw) {
@@ -362,6 +298,7 @@ fn normalize_attachment_config(
             }
         }
     }
+
     let now = Utc::now();
     let (id, created_at, status, last_sync_at, error_message) = match existing {
         Some(existing) => (
@@ -383,7 +320,7 @@ fn normalize_attachment_config(
     let mount_relpath = cfg
         .mount_relpath
         .clone()
-        .unwrap_or_else(|| default_mount_relpath(&cfg.kind, &name));
+        .unwrap_or_else(|| materialized_paths::default_mount_relpath(&cfg.kind, &name));
     let mount_relpath = sanitize_mount_relpath(&mount_relpath)?
         .to_string_lossy()
         .to_string();
@@ -415,542 +352,6 @@ fn normalize_attachment_config(
         created_at,
         updated_at: now,
     })
-}
-
-async fn materialize_reference_repo(
-    data_root: &Path,
-    attachment: &WorkspaceAttachment,
-    refresh: bool,
-) -> Result<MaterializationResult> {
-    let revision = revision_key(attachment);
-    let dest = materialized_path_for_attachment(data_root, attachment);
-    let should_update = refresh || !dest.exists();
-    if should_update {
-        let temp = unique_materialized_temp_path(&dest)?;
-        ensure_materialized_parent(data_root, &dest).await?;
-        if let Err(err) =
-            clone_reference_repo(&attachment.source, attachment.revision.as_deref(), &temp).await
-        {
-            cleanup_materialized_temp(data_root, &temp).await;
-            return Err(err);
-        }
-        install_materialized_temp(data_root, &temp, &dest).await?;
-    } else {
-        validate_materialized_path(data_root, attachment).await?;
-    }
-    Ok(MaterializationResult {
-        path: dest,
-        materialized_id: revision,
-    })
-}
-
-async fn clone_reference_repo(source: &str, revision: Option<&str>, dest: &Path) -> Result<()> {
-    let mut cmd = Command::new("git");
-    cmd.arg("clone")
-        .arg("--depth")
-        .arg("1")
-        .arg("--no-tags")
-        .kill_on_drop(true);
-    if let Some(rev) = revision {
-        if !looks_like_sha(rev) {
-            cmd.arg("--branch").arg(rev);
-        }
-    }
-    cmd.arg(source).arg(dest);
-    let output = cmd.output().await.context("running git clone")?;
-    if !output.status.success() {
-        anyhow::bail!(
-            "git clone failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
-
-    if let Some(rev) = revision {
-        if looks_like_sha(rev) {
-            let mut fetch_cmd = Command::new("git");
-            fetch_cmd
-                .arg("-C")
-                .arg(dest)
-                .arg("fetch")
-                .arg("--depth")
-                .arg("1")
-                .arg("origin")
-                .arg(rev)
-                .kill_on_drop(true);
-            let fetch = fetch_cmd.output().await.context("running git fetch")?;
-            if !fetch.status.success() {
-                anyhow::bail!(
-                    "git fetch failed: {}",
-                    String::from_utf8_lossy(&fetch.stderr)
-                );
-            }
-            let mut checkout_cmd = Command::new("git");
-            checkout_cmd
-                .arg("-C")
-                .arg(dest)
-                .arg("checkout")
-                .arg(rev)
-                .kill_on_drop(true);
-            let checkout = checkout_cmd
-                .output()
-                .await
-                .context("running git checkout")?;
-            if !checkout.status.success() {
-                anyhow::bail!(
-                    "git checkout failed: {}",
-                    String::from_utf8_lossy(&checkout.stderr)
-                );
-            }
-        }
-    }
-    Ok(())
-}
-
-fn attachment_store_root(data_root: &Path) -> PathBuf {
-    data_root.join("attachments")
-}
-
-pub async fn remove_materialized_root_if_exists(
-    data_root: &Path,
-    attachment: &WorkspaceAttachment,
-) -> Result<()> {
-    let root = materialized_root_for_attachment(data_root, attachment);
-    remove_materialized_path_if_exists(data_root, &root).await
-}
-
-pub async fn validate_materialized_path(
-    data_root: &Path,
-    attachment: &WorkspaceAttachment,
-) -> Result<()> {
-    let path = materialized_path_for_attachment(data_root, attachment);
-    let data_root = data_root.to_path_buf();
-    tokio::task::spawn_blocking(move || validate_materialized_path_sync(&data_root, &path))
-        .await
-        .context("joining attachment materialization validation task")?
-}
-
-pub(crate) async fn ensure_materialized_revision_parent(
-    data_root: &Path,
-    attachment: &WorkspaceAttachment,
-) -> Result<()> {
-    let dest = materialized_path_for_attachment(data_root, attachment);
-    ensure_materialized_parent(data_root, &dest).await
-}
-
-pub(super) async fn remove_materialized_path_if_exists(
-    data_root: &Path,
-    path: &Path,
-) -> Result<()> {
-    let data_root = data_root.to_path_buf();
-    let path = path.to_path_buf();
-    tokio::task::spawn_blocking(move || remove_materialized_path_if_exists_sync(&data_root, &path))
-        .await
-        .context("joining attachment materialization cleanup task")?
-}
-
-pub(super) fn unique_materialized_temp_path(dest: &Path) -> Result<PathBuf> {
-    unique_materialized_sibling_path(dest, "materialize-tmp")
-}
-
-fn unique_materialized_backup_path(dest: &Path) -> Result<PathBuf> {
-    unique_materialized_sibling_path(dest, "materialize-old")
-}
-
-fn unique_materialized_sibling_path(dest: &Path, label: &str) -> Result<PathBuf> {
-    let parent = dest
-        .parent()
-        .ok_or_else(|| anyhow::anyhow!("attachment materialization path missing parent"))?;
-    let file_name = dest
-        .file_name()
-        .ok_or_else(|| anyhow::anyhow!("attachment materialization path missing file name"))?;
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_nanos())
-        .unwrap_or(0);
-    for attempt in 0..100 {
-        let mut temp_name = OsString::from(".");
-        temp_name.push(file_name);
-        temp_name.push(format!(
-            ".{label}.{}.{}.{}",
-            std::process::id(),
-            nanos,
-            attempt
-        ));
-        let candidate = parent.join(temp_name);
-        match std::fs::symlink_metadata(&candidate) {
-            Ok(_) => continue,
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(candidate),
-            Err(err) => {
-                return Err(err).with_context(|| {
-                    format!(
-                        "checking attachment materialization temp {}",
-                        candidate.display()
-                    )
-                });
-            }
-        }
-    }
-    anyhow::bail!(
-        "unable to allocate sibling attachment materialization path for {}",
-        dest.display()
-    );
-}
-
-pub(super) async fn install_materialized_temp(
-    data_root: &Path,
-    temp: &Path,
-    dest: &Path,
-) -> Result<()> {
-    let backup = match materialized_path_exists_for_replace(data_root, dest).await {
-        Ok(true) => Some(unique_materialized_backup_path(dest)?),
-        Ok(false) => None,
-        Err(err) => {
-            cleanup_materialized_temp(data_root, temp).await;
-            return Err(err);
-        }
-    };
-
-    if let Some(backup) = backup.as_ref() {
-        if let Err(err) = tokio::fs::rename(dest, backup).await.with_context(|| {
-            format!(
-                "staging previous attachment materialization {}",
-                dest.display()
-            )
-        }) {
-            cleanup_materialized_temp(data_root, temp).await;
-            return Err(err);
-        }
-    }
-
-    if let Err(err) = tokio::fs::rename(temp, dest)
-        .await
-        .with_context(|| format!("installing attachment materialization {}", dest.display()))
-    {
-        cleanup_materialized_temp(data_root, temp).await;
-        if let Some(backup) = backup.as_ref() {
-            if let Err(restore_err) = tokio::fs::rename(backup, dest).await.with_context(|| {
-                format!(
-                    "restoring previous attachment materialization {}",
-                    dest.display()
-                )
-            }) {
-                return Err(err).context(format!(
-                    "failed to restore previous attachment materialization after install failure: {restore_err:#}"
-                ));
-            }
-        }
-        return Err(err);
-    }
-
-    if let Some(backup) = backup.as_ref() {
-        remove_materialized_path_if_exists(data_root, backup).await?;
-    }
-    Ok(())
-}
-
-pub(super) async fn cleanup_materialized_temp(data_root: &Path, temp: &Path) {
-    let _ = remove_materialized_path_if_exists(data_root, temp).await;
-}
-
-async fn ensure_materialized_parent(data_root: &Path, path: &Path) -> Result<()> {
-    let parent = path
-        .parent()
-        .ok_or_else(|| anyhow::anyhow!("attachment materialization path missing parent"))?
-        .to_path_buf();
-    let data_root = data_root.to_path_buf();
-    tokio::task::spawn_blocking(move || ensure_materialized_dir_chain_sync(&data_root, &parent))
-        .await
-        .context("joining attachment materialization parent task")?
-}
-
-fn remove_materialized_path_if_exists_sync(data_root: &Path, path: &Path) -> Result<()> {
-    validate_materialized_child_path(data_root, path)?;
-    if let Some(parent) = path.parent() {
-        ensure_materialized_existing_chain_sync(data_root, parent)?;
-    }
-    match std::fs::symlink_metadata(path) {
-        Ok(meta) => {
-            if meta.file_type().is_symlink() {
-                anyhow::bail!(
-                    "attachment materialization path must not be a symlink: {}",
-                    path.display()
-                );
-            }
-            if !meta.is_dir() {
-                anyhow::bail!(
-                    "attachment materialization path must be a directory: {}",
-                    path.display()
-                );
-            }
-            std::fs::remove_dir_all(path)
-                .with_context(|| format!("removing attachment materialization {}", path.display()))
-        }
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(err) => Err(err)
-            .with_context(|| format!("reading attachment materialization {}", path.display())),
-    }
-}
-
-fn validate_materialized_path_sync(data_root: &Path, path: &Path) -> Result<()> {
-    validate_materialized_child_path(data_root, path)?;
-    if let Some(parent) = path.parent() {
-        ensure_materialized_existing_chain_sync(data_root, parent)?;
-    }
-    let meta = std::fs::symlink_metadata(path)
-        .with_context(|| format!("reading attachment materialization {}", path.display()))?;
-    if meta.file_type().is_symlink() {
-        anyhow::bail!(
-            "attachment materialization path must not be a symlink: {}",
-            path.display()
-        );
-    }
-    if !meta.is_dir() {
-        anyhow::bail!(
-            "attachment materialization path must be a directory: {}",
-            path.display()
-        );
-    }
-    Ok(())
-}
-
-async fn materialized_path_exists_for_replace(data_root: &Path, path: &Path) -> Result<bool> {
-    let data_root = data_root.to_path_buf();
-    let path = path.to_path_buf();
-    tokio::task::spawn_blocking(move || {
-        validate_materialized_child_path(&data_root, &path)?;
-        if let Some(parent) = path.parent() {
-            ensure_materialized_existing_chain_sync(&data_root, parent)?;
-        }
-        match std::fs::symlink_metadata(&path) {
-            Ok(meta) => {
-                if meta.file_type().is_symlink() {
-                    anyhow::bail!(
-                        "attachment materialization path must not be a symlink: {}",
-                        path.display()
-                    );
-                }
-                if !meta.is_dir() {
-                    anyhow::bail!(
-                        "attachment materialization path must be a directory: {}",
-                        path.display()
-                    );
-                }
-                Ok(true)
-            }
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(false),
-            Err(err) => Err(err)
-                .with_context(|| format!("reading attachment materialization {}", path.display())),
-        }
-    })
-    .await
-    .context("joining attachment materialization replacement validation task")?
-}
-
-fn ensure_materialized_dir_chain_sync(data_root: &Path, path: &Path) -> Result<()> {
-    validate_materialized_child_path(data_root, path)?;
-    let rel = path.strip_prefix(data_root).with_context(|| {
-        format!(
-            "attachment materialization path {} is outside data root {}",
-            path.display(),
-            data_root.display()
-        )
-    })?;
-    let mut current = data_root.to_path_buf();
-    for component in rel.components() {
-        let Component::Normal(segment) = component else {
-            anyhow::bail!(
-                "attachment materialization path contains unsupported component: {}",
-                path.display()
-            );
-        };
-        current.push(segment);
-        match std::fs::symlink_metadata(&current) {
-            Ok(meta) => {
-                if meta.file_type().is_symlink() {
-                    anyhow::bail!(
-                        "attachment materialization parent must not be a symlink: {}",
-                        current.display()
-                    );
-                }
-                if !meta.is_dir() {
-                    anyhow::bail!(
-                        "attachment materialization parent must be a directory: {}",
-                        current.display()
-                    );
-                }
-            }
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-                std::fs::create_dir(&current).with_context(|| {
-                    format!(
-                        "creating attachment materialization parent {}",
-                        current.display()
-                    )
-                })?;
-                let meta = std::fs::symlink_metadata(&current).with_context(|| {
-                    format!(
-                        "verifying attachment materialization parent {}",
-                        current.display()
-                    )
-                })?;
-                if meta.file_type().is_symlink() || !meta.is_dir() {
-                    anyhow::bail!(
-                        "attachment materialization parent was not created as a directory: {}",
-                        current.display()
-                    );
-                }
-            }
-            Err(err) => {
-                return Err(err).with_context(|| {
-                    format!(
-                        "reading attachment materialization parent {}",
-                        current.display()
-                    )
-                });
-            }
-        }
-    }
-    Ok(())
-}
-
-fn ensure_materialized_existing_chain_sync(data_root: &Path, path: &Path) -> Result<()> {
-    validate_materialized_child_path(data_root, path)?;
-    let rel = path.strip_prefix(data_root).with_context(|| {
-        format!(
-            "attachment materialization path {} is outside data root {}",
-            path.display(),
-            data_root.display()
-        )
-    })?;
-    let mut current = data_root.to_path_buf();
-    for component in rel.components() {
-        let Component::Normal(segment) = component else {
-            anyhow::bail!(
-                "attachment materialization path contains unsupported component: {}",
-                path.display()
-            );
-        };
-        current.push(segment);
-        match std::fs::symlink_metadata(&current) {
-            Ok(meta) => {
-                if meta.file_type().is_symlink() {
-                    anyhow::bail!(
-                        "attachment materialization parent must not be a symlink: {}",
-                        current.display()
-                    );
-                }
-                if !meta.is_dir() {
-                    anyhow::bail!(
-                        "attachment materialization parent must be a directory: {}",
-                        current.display()
-                    );
-                }
-            }
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-            Err(err) => {
-                return Err(err).with_context(|| {
-                    format!(
-                        "reading attachment materialization parent {}",
-                        current.display()
-                    )
-                });
-            }
-        }
-    }
-    Ok(())
-}
-
-fn validate_materialized_child_path(data_root: &Path, path: &Path) -> Result<()> {
-    let store_root = attachment_store_root(data_root);
-    if !path.starts_with(&store_root) {
-        anyhow::bail!(
-            "attachment materialization path {} is outside attachment store {}",
-            path.display(),
-            store_root.display()
-        );
-    }
-    let rel = path.strip_prefix(data_root).with_context(|| {
-        format!(
-            "attachment materialization path {} is outside data root {}",
-            path.display(),
-            data_root.display()
-        )
-    })?;
-    for component in rel.components() {
-        if !matches!(component, Component::Normal(_)) {
-            anyhow::bail!(
-                "attachment materialization path contains unsupported component: {}",
-                path.display()
-            );
-        }
-    }
-    Ok(())
-}
-
-fn default_mount_relpath(kind: &WorkspaceAttachmentKind, name: &str) -> String {
-    let safe_name = sanitize_name(name);
-    match kind {
-        WorkspaceAttachmentKind::ReferenceRepo => format!(".ctx/attachments/refs/{safe_name}"),
-        WorkspaceAttachmentKind::DocMirror => format!(".ctx/attachments/docs/{safe_name}"),
-    }
-}
-
-fn sanitize_name(name: &str) -> String {
-    let mut out = String::new();
-    let mut last_dash = false;
-    for ch in name.chars() {
-        if ch.is_ascii_alphanumeric() {
-            out.push(ch.to_ascii_lowercase());
-            last_dash = false;
-        } else if !last_dash {
-            out.push('-');
-            last_dash = true;
-        }
-    }
-    let trimmed = out.trim_matches('-');
-    if trimmed.is_empty() {
-        "attachment".to_string()
-    } else {
-        trimmed.to_string()
-    }
-}
-
-fn looks_like_sha(value: &str) -> bool {
-    let len = value.len();
-    if !(7..=40).contains(&len) {
-        return false;
-    }
-    value.chars().all(|c| c.is_ascii_hexdigit())
-}
-
-fn looks_like_remote_repo_source(source: &str) -> bool {
-    if source.contains("://") {
-        return true;
-    }
-    let Some((user_host, path)) = source.split_once(':') else {
-        return false;
-    };
-    if path.is_empty() {
-        return false;
-    }
-    if user_host.contains('/') || user_host.contains('\\') {
-        return false;
-    }
-    if user_host == "." || user_host == ".." {
-        return false;
-    }
-    if user_host.len() == 1 && user_host.chars().all(|ch| ch.is_ascii_alphabetic()) {
-        return false;
-    }
-    true
-}
-
-fn validate_reference_repo_source(source: &str) -> Result<()> {
-    if looks_like_remote_repo_source(source) || Path::new(source).is_absolute() {
-        return Ok(());
-    }
-    anyhow::bail!(
-        "reference_repo local source must be an absolute path or repository URL: {source}"
-    );
 }
 
 #[cfg(test)]

@@ -1,5 +1,5 @@
 use super::diff_paths::{build_diff_path_states, count_diff_paths};
-use super::{build_large_change_set_touched_files, WORKTREE_VCS_REVIEWABLE_FILE_LIMIT};
+use super::snapshot::{build_large_change_set_touched_files, WORKTREE_VCS_REVIEWABLE_FILE_LIMIT};
 use anyhow::Result;
 
 #[test]

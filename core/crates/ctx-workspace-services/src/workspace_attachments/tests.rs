@@ -1,9 +1,11 @@
+use super::materialized_install::{install_materialized_temp, unique_materialized_temp_path};
+use super::materialized_paths::{default_mount_relpath, ensure_materialized_revision_parent};
+use super::reference_repo::materialize_reference_repo;
 use super::{
-    default_mount_relpath, ensure_materialized_revision_parent, install_materialized_temp,
-    materialize_reference_repo, materialized_path_for_attachment, materialized_root_for_attachment,
+    materialized_path_for_attachment, materialized_root_for_attachment,
     normalize_attachment_config, remove_materialized_root_if_exists, revision_key,
-    sanitize_attachment_subpath, sanitize_mount_relpath, unique_materialized_temp_path,
-    validate_materialized_path, AttachmentConfig,
+    sanitize_attachment_subpath, sanitize_mount_relpath, validate_materialized_path,
+    AttachmentConfig,
 };
 use ctx_core::ids::WorkspaceId;
 use ctx_core::models::{

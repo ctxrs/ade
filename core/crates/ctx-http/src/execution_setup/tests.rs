@@ -368,6 +368,14 @@ async fn install_test_managed_harness_image_source(
     (guard, server)
 }
 
+fn install_test_managed_harness_image_source_without_fingerprint(
+) -> TestManagedCtxHarnessImageSourceGuard {
+    override_managed_ctx_harness_image_source_for_test(ManagedArtifactSource {
+        uri: "http://127.0.0.1:9/unused-ctx-harness.tar".to_string(),
+        sha256: String::new(),
+    })
+}
+
 #[cfg(windows)]
 #[expect(
     dead_code,
@@ -1146,8 +1154,10 @@ async fn spawned_startup_prewarm_respects_sandbox_cli_env_test_lock() {
 
 #[tokio::test]
 async fn startup_prewarm_backfills_metadata_when_runtime_is_already_ready() {
+    let _process_env = process_env_test_lock().lock().await;
     let _serial = env_var_test_lock().lock().await;
     let data_dir = tempfile::tempdir().expect("tempdir");
+    let _image_source = install_test_managed_harness_image_source_without_fingerprint();
     let sandbox_cli_path = write_ready_runtime_sandbox_cli_shim(data_dir.path());
     let _sandbox_cli = EnvVarGuard::set("CTX_TEST_SANDBOX_CLI_AVAILABLE", "1");
     let _sandbox_cli_path = EnvVarGuard::set(
@@ -1161,7 +1171,7 @@ async fn startup_prewarm_backfills_metadata_when_runtime_is_already_ready() {
     run_startup_prewarm_with_timeout(&coordinator).await;
 
     let snapshot = coordinator.startup_status().await;
-    assert_eq!(snapshot.state, StartupPrewarmState::Ready);
+    assert_eq!(snapshot.state, StartupPrewarmState::Ready, "{snapshot:#?}");
     assert!(
         !snapshot.needs_prewarm,
         "expected already-ready runtime to report no startup prewarm gap: {snapshot:#?}"
@@ -1245,7 +1255,7 @@ async fn startup_prewarm_reloads_ready_default_image_when_metadata_is_missing() 
     run_startup_prewarm_with_timeout(&coordinator).await;
 
     let snapshot = coordinator.startup_status().await;
-    assert_eq!(snapshot.state, StartupPrewarmState::Ready);
+    assert_eq!(snapshot.state, StartupPrewarmState::Ready, "{snapshot:#?}");
     assert!(!snapshot.needs_prewarm);
     assert!(snapshot.machine_ready);
     assert!(snapshot.image_present);
@@ -1270,8 +1280,10 @@ async fn startup_prewarm_reloads_ready_default_image_when_metadata_is_missing() 
 
 #[tokio::test]
 async fn startup_prewarm_preserves_existing_ready_timestamp_when_reusing_ready_runtime() {
+    let _process_env = process_env_test_lock().lock().await;
     let _serial = env_var_test_lock().lock().await;
     let data_dir = tempfile::tempdir().expect("tempdir");
+    let _image_source = install_test_managed_harness_image_source_without_fingerprint();
     let sandbox_cli_path = write_ready_runtime_sandbox_cli_shim(data_dir.path());
     let _sandbox_cli = EnvVarGuard::set("CTX_TEST_SANDBOX_CLI_AVAILABLE", "1");
     let _sandbox_cli_path = EnvVarGuard::set(
@@ -1295,7 +1307,7 @@ async fn startup_prewarm_preserves_existing_ready_timestamp_when_reusing_ready_r
     run_startup_prewarm_with_timeout(&coordinator).await;
 
     let snapshot = coordinator.startup_status().await;
-    assert_eq!(snapshot.state, StartupPrewarmState::Ready);
+    assert_eq!(snapshot.state, StartupPrewarmState::Ready, "{snapshot:#?}");
     assert!(
         !snapshot.needs_prewarm,
         "expected reused ready runtime to preserve a no-gap startup snapshot: {snapshot:#?}"
@@ -1315,8 +1327,10 @@ async fn startup_prewarm_preserves_existing_ready_timestamp_when_reusing_ready_r
 
 #[tokio::test]
 async fn startup_prewarm_reuses_initial_runtime_probe_for_gate_checks() {
+    let _process_env = process_env_test_lock().lock().await;
     let _serial = env_var_test_lock().lock().await;
     let data_dir = tempfile::tempdir().expect("tempdir");
+    let _image_source = install_test_managed_harness_image_source_without_fingerprint();
     let (sandbox_cli_path, log_path) =
         write_logging_ready_runtime_sandbox_cli_shim(data_dir.path());
     let _sandbox_cli = EnvVarGuard::set("CTX_TEST_SANDBOX_CLI_AVAILABLE", "1");

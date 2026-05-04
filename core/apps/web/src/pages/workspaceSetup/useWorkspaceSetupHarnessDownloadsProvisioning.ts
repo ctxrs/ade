@@ -7,7 +7,6 @@ import {
 } from "react";
 import type {
   InstallTarget,
-  ProviderStatus,
 } from "../../api/client";
 import {
   cancelInstall,
@@ -19,21 +18,13 @@ import { createHostOwnerScope } from "../../state/scopeIdentity";
 import {
   upsertProviderInstallProgressForScope,
 } from "../../state/providerInstallProgressStore";
-import { providerDetailFlag } from "../../utils/boolish";
 import {
   buildHarnessCatalogEntryMap,
-  findHarnessCatalogEntry,
 } from "../../utils/harnessCatalog";
 import { desktopEnsureLocalLinuxSandboxReady } from "../../utils/desktop";
 import {
   computeInstallPct,
-  parseInstallTarget,
-  providerInstallSizeBytes,
 } from "../../utils/providerInstallUi";
-import {
-  isReadyVisibleHarnessProviderStatus,
-  isVisibleHarnessProviderStatus,
-} from "../../utils/providerInventory";
 import type { WizardRoutePlan, WizardStepKey } from "./wizardFlow";
 import type { WizardSelections } from "./wizardFlowReducer";
 import {
@@ -47,8 +38,14 @@ import {
   type WorkspaceSetupEffectiveTarget,
 } from "./workflowTypes";
 import {
+  buildRunningHarnessInstallRowPatch,
+  deriveHarnessInstallSelectedState,
+  getRunningHarnessInstallProviderRows,
+  mapHarnessInstallCandidate,
+} from "./workspaceSetupHarnessInstallCandidates";
+import { deriveHarnessInstallSummary } from "./workspaceSetupHarnessInstallSummary";
+import {
   messageFromError,
-  resolveHarnessInstallCandidateStatus,
   type HarnessInstallProviderRow,
   type HarnessInstallRowState,
   type RemoteStatus,
@@ -133,29 +130,6 @@ export function useWorkspaceSetupHarnessDownloadsProvisioning({
     setLocalAdminPasswordPromptVisible(false);
     setLocalAdminPasswordInput("");
   }, [clearHarnessInstallObserver]);
-
-  const mapHarnessInstallCandidate = useCallback((
-    provider: ProviderStatus,
-    fallbackInstallTarget: InstallTarget = selectedHarnessInstallTarget,
-  ): HarnessInstallProviderRow | null => {
-    if (!isVisibleHarnessProviderStatus(provider)) return null;
-    const installSupported = providerDetailFlag(provider.details, "install_supported");
-    if (!installSupported) return null;
-    const harness = findHarnessCatalogEntry(provider.provider_id);
-    const installTarget = parseInstallTarget(provider.details?.install_target) ?? fallbackInstallTarget;
-    return {
-      providerId: provider.provider_id,
-      label: harness?.label ?? provider.provider_id,
-      installed: isReadyVisibleHarnessProviderStatus(provider),
-      healthy: isReadyVisibleHarnessProviderStatus(provider),
-      installSupported,
-      installRunning: providerDetailFlag(provider.details, "install_running"),
-      blocked: provider.usability.usable === false && provider.usability.status === "blocked",
-      installId: provider.details?.install_id,
-      installTarget,
-      installSizeBytes: providerInstallSizeBytes(provider),
-    };
-  }, [selectedHarnessInstallTarget]);
 
   const attachHarnessInstall = useCallback(async (providerId: string, installId: string) => {
     if (!providerId || !installId) return;
@@ -274,44 +248,22 @@ export function useWorkspaceSetupHarnessDownloadsProvisioning({
         return;
       }
       const rows = providers
-        .map((provider) => mapHarnessInstallCandidate(provider, installTarget))
+        .map((provider) => mapHarnessInstallCandidate(provider, harnessByProviderId, installTarget))
         .filter((row): row is HarnessInstallProviderRow => row !== null)
         .sort((a, b) => a.label.localeCompare(b.label));
       setHarnessInstallCandidates(rows);
       setHarnessInstallSelected((prev) =>
-        Object.fromEntries(
-          rows.map((row) => {
-            if (row.installed && row.healthy) {
-              return [row.providerId, false];
-            }
-            if (Object.prototype.hasOwnProperty.call(prev, row.providerId)) {
-              return [row.providerId, Boolean(prev[row.providerId])];
-            }
-            return [row.providerId, row.installSupported];
-          }),
-        ),
+        deriveHarnessInstallSelectedState(rows, prev),
       );
-      const runningRows = rows.filter((row) => row.installRunning && row.installId);
+      const runningRows = getRunningHarnessInstallProviderRows(rows);
       if (runningRows.length > 0) {
         setHarnessInstallRows((prev) => ({
           ...prev,
-          ...Object.fromEntries(
-            runningRows.map((row) => [
-              row.providerId,
-              {
-                installId: row.installId!,
-                state: "running" as const,
-                pct: prev[row.providerId]?.pct ?? null,
-                target: row.installTarget,
-                errorCode: undefined,
-                error: undefined,
-              },
-            ]),
-          ),
+          ...buildRunningHarnessInstallRowPatch(runningRows, prev),
         }));
       }
       for (const row of runningRows) {
-        await attachHarnessInstall(row.providerId, row.installId!);
+        await attachHarnessInstall(row.providerId, row.installId);
       }
       commitProvisioningMachineState((current) => completeWorkspaceSetupHarnessCandidatesRefresh(current, {
         scope: request.scope,
@@ -343,8 +295,8 @@ export function useWorkspaceSetupHarnessDownloadsProvisioning({
     completeHarnessRefreshWithEmptyCandidates,
     connectDaemonForSpeculativeRefresh,
     desktopApp,
+    harnessByProviderId,
     isCurrentProvisioningRequest,
-    mapHarnessInstallCandidate,
     parsedRemoteHost,
     remoteStatusRef,
     shouldCompleteSpeculativeRefreshAsEmpty,
@@ -358,24 +310,21 @@ export function useWorkspaceSetupHarnessDownloadsProvisioning({
     if (options?.clearSelections) {
       setHarnessInstallSelected({});
     }
-    const selectedRows = harnessInstallCandidates
-      .filter((row) => selectionSnapshot[row.providerId])
-      .filter((row) => row.installSupported)
-      .map((row) => ({
-        row,
-        installUi: harnessInstallRows[row.providerId],
-        status: resolveHarnessInstallCandidateStatus(row, harnessInstallRows[row.providerId]),
-      }));
-    const startableRows = selectedRows
-      .filter(({ status }) => status === "ready_to_start")
-      .map(({ row }) => row);
-    const blockingRows = selectedRows.filter(
-      ({ status }) => status === "failed" || status === "cancelled",
+    const harnessInstallSummary = deriveHarnessInstallSummary(
+      harnessInstallCandidates,
+      selectionSnapshot,
+      harnessInstallRows,
     );
-    const runningRows = selectedRows.filter(({ status }) => status === "running");
+    const selectedRows = harnessInstallSummary.selectedStatuses;
+    const startableRows = harnessInstallSummary.startableRows;
+    const blockingRows = harnessInstallSummary.blockingStatuses;
+    const runningRows = harnessInstallSummary.runningStatuses;
     const currentRoutePlan = getCurrentRoutePlan();
 
-    if (selectedRows.length === 0 || selectedRows.every(({ status }) => status === "installed" || status === "succeeded")) {
+    if (
+      selectedRows.length === 0
+      || selectedRows.every(({ status }) => status === "installed" || status === "succeeded")
+    ) {
       setHarnessInstallError(null);
       if (currentStepKeyRef.current !== "harness-downloads") return null;
       return currentRoutePlan;
@@ -537,46 +486,11 @@ export function useWorkspaceSetupHarnessDownloadsProvisioning({
     desktopApp,
   ]);
 
-  const harnessCandidateStatuses = harnessInstallCandidates.map((candidate) => {
-    const installUi = harnessInstallRows[candidate.providerId];
-    return {
-      candidate,
-      installUi,
-      status: resolveHarnessInstallCandidateStatus(candidate, installUi),
-    };
-  });
-  const harnessMissingCount = harnessCandidateStatuses.filter(
-    ({ candidate, status }) => candidate.installSupported && status !== "installed" && status !== "succeeded",
-  ).length;
-  const selectedHarnessStatuses = harnessCandidateStatuses.filter(
-    ({ candidate }) => harnessInstallSelected[candidate.providerId] && candidate.installSupported,
+  const harnessInstallSummary = deriveHarnessInstallSummary(
+    harnessInstallCandidates,
+    harnessInstallSelected,
+    harnessInstallRows,
   );
-  const selectedHarnessReadyToStartCount = selectedHarnessStatuses.filter(
-    ({ status }) => status === "ready_to_start",
-  ).length;
-  const selectedHarnessRunningCount = selectedHarnessStatuses.filter(
-    ({ status }) => status === "running",
-  ).length;
-  const selectedHarnessBlockedCount = selectedHarnessStatuses.filter(
-    ({ status }) => status === "failed" || status === "cancelled",
-  ).length;
-  const selectedHarnessFailedCount = selectedHarnessStatuses.filter(
-    ({ status }) => status === "failed",
-  ).length;
-  const selectedHarnessCompletedCount = selectedHarnessStatuses.filter(
-    ({ status }) => status === "installed" || status === "succeeded",
-  ).length;
-  const harnessSummaryValue = harnessMissingCount === 0
-    ? "All detectable harnesses are ready"
-    : selectedHarnessRunningCount > 0
-      ? `${selectedHarnessRunningCount} selected download${selectedHarnessRunningCount === 1 ? "" : "s"} in progress`
-      : selectedHarnessBlockedCount > 0
-        ? `${selectedHarnessBlockedCount} selected download${selectedHarnessBlockedCount === 1 ? "" : "s"} failed or were canceled`
-        : selectedHarnessReadyToStartCount > 0
-          ? `${selectedHarnessReadyToStartCount} selected for download`
-          : selectedHarnessCompletedCount > 0
-            ? `${selectedHarnessCompletedCount} selected download${selectedHarnessCompletedCount === 1 ? "" : "s"} ready`
-            : "Skipped for now";
 
   useWorkspaceSetupHarnessInstallProgress({
     providerProgressOwnerScope,
@@ -603,11 +517,11 @@ export function useWorkspaceSetupHarnessDownloadsProvisioning({
     advanceFromHarnessDownloadsStep,
     selectedHarnessInstallTarget,
     harnessByProviderId,
-    selectedHarnessReadyToStartCount,
-    selectedHarnessRunningCount,
-    selectedHarnessBlockedCount,
-    selectedHarnessFailedCount,
-    harnessSummaryValue,
+    selectedHarnessReadyToStartCount: harnessInstallSummary.selectedHarnessReadyToStartCount,
+    selectedHarnessRunningCount: harnessInstallSummary.selectedHarnessRunningCount,
+    selectedHarnessBlockedCount: harnessInstallSummary.selectedHarnessBlockedCount,
+    selectedHarnessFailedCount: harnessInstallSummary.selectedHarnessFailedCount,
+    harnessSummaryValue: harnessInstallSummary.harnessSummaryValue,
     resetHarnessDownloadsProvisioningState,
     scanHarnessInstallCandidatesForRequest,
   };

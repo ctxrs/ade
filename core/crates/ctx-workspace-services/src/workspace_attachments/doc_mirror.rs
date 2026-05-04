@@ -1,7 +1,10 @@
 use super::*;
+use anyhow::Context;
 use std::io::Write;
+use std::path::{Path, PathBuf};
 
 use tempfile::NamedTempFile;
+use tokio::process::Command;
 use toml::Value as TomlValue;
 
 pub(super) async fn materialize_doc_mirror(
@@ -14,14 +17,15 @@ pub(super) async fn materialize_doc_mirror(
     let dest = materialized_path_for_attachment(data_root, attachment);
     let should_update = refresh || !dest.exists();
     if should_update {
-        let temp = super::unique_materialized_temp_path(&dest)?;
-        super::ensure_materialized_revision_parent(data_root, attachment).await?;
+        let temp = super::materialized_install::unique_materialized_temp_path(&dest)?;
+        super::materialized_paths::ensure_materialized_revision_parent(data_root, attachment)
+            .await?;
         tokio::fs::create_dir(&temp).await?;
         if let Err(err) = run_doc_mirror_cli(workspace, attachment, &temp).await {
-            super::cleanup_materialized_temp(data_root, &temp).await;
+            super::materialized_install::cleanup_materialized_temp(data_root, &temp).await;
             return Err(err);
         }
-        super::install_materialized_temp(data_root, &temp, &dest).await?;
+        super::materialized_install::install_materialized_temp(data_root, &temp, &dest).await?;
     } else {
         super::validate_materialized_path(data_root, attachment).await?;
     }
