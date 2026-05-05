@@ -521,6 +521,7 @@ const ensureCodexOpenRouterWorkspaceReady = async (
     providerId = "codex",
     endpointName = "",
     timeoutMs = 90_000,
+    installTimeoutMs = 10 * 60_000,
     pollMs = 3_000,
     allowInstall = true,
   } = {},
@@ -531,11 +532,22 @@ const ensureCodexOpenRouterWorkspaceReady = async (
   }
 
   const status = await getProviderStatus(providerId, installTarget);
-  if (!status.installed) {
+  const snapshot = providerInstallProgressSnapshot(status);
+  if (!providerInstallComplete(snapshot)) {
     if (!allowInstall) {
-      throw new Error(`provider '${providerId}' is not installed for target=${installTarget}`);
+      throw new Error(
+        `provider '${providerId}' is not ready for target=${installTarget}: ${
+          providerInstallDiagnosticDetail(providerId, installTarget, snapshot)
+        }`,
+      );
     }
-    await installProviderAndWait(providerId, installTarget);
+    if (!snapshot.installed && !snapshot.installRunning) {
+      await installProviderAndWait(providerId, installTarget, { timeoutMs: installTimeoutMs, pollMs });
+    }
+    await waitForProviderInstallCompletion(providerId, installTarget, {
+      timeoutMs: installTimeoutMs,
+      pollMs,
+    });
   }
 
   const endpointId = await configureOpenRouterEndpoint({

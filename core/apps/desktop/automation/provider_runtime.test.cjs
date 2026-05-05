@@ -148,6 +148,114 @@ test("ensureCodexOpenRouterWorkspaceReady checks install status against the requ
   );
 });
 
+test("ensureCodexOpenRouterWorkspaceReady waits for target readiness before workspace verify", async () => {
+  process.env.OPENROUTER_API_KEY = "openrouter-key";
+  global.browser = { pause: async () => {} };
+  const calls = [];
+  const statuses = [
+    {
+      provider_id: "codex",
+      installed: true,
+      health: "ok",
+      diagnostics: ["provider is not ready until required dependencies are installed: codex-cli"],
+      details: {
+        install_supported: "true",
+        ready_for_use: "false",
+        required_dependency_ids: "codex-cli",
+        pending_dependency_ids: "codex-cli",
+      },
+    },
+    {
+      provider_id: "codex",
+      installed: true,
+      detected_path: "/tmp/ctx/codex-crp",
+      health: "ok",
+      diagnostics: [],
+      details: {
+        install_supported: "true",
+        ready_for_use: "true",
+      },
+    },
+  ];
+
+  const { ensureCodexOpenRouterWorkspaceReady } = loadHelper({
+    daemonJson: async (method, requestPath, body) => {
+      calls.push({ method, requestPath, body });
+      if (method === "GET" && requestPath === "/api/health") {
+        return {
+          status: 200,
+          payload: {
+            daemon_version: "0.62.59",
+            pid: 101,
+            daemon_url: "http://127.0.0.1:64000",
+            data_root: "/home/example-user/.ctx",
+            compatibility: { desktop_build_id: "build-a" },
+          },
+        };
+      }
+      if (method === "GET" && requestPath === "/api/providers/codex?target=container") {
+        return { status: 200, payload: statuses.shift() || statuses.at(-1) };
+      }
+      if (method === "POST" && requestPath === "/api/providers/codex/harness_config/endpoints") {
+        return {
+          status: 200,
+          payload: {
+            selected_endpoint_id: "endpoint-1",
+            endpoints: [
+              {
+                id: "endpoint-1",
+                name: "codex-openrouter-desktop-smoke",
+              },
+            ],
+          },
+        };
+      }
+      if (method === "POST" && requestPath === "/api/providers/codex/harness_config/select") {
+        return { status: 200, payload: { ok: true } };
+      }
+      if (method === "POST" && requestPath === "/api/workspaces/ws-1/providers/codex/verify") {
+        return { status: 200, payload: { status: "ok" } };
+      }
+      if (method === "GET" && requestPath === "/api/workspaces/ws-1/providers/codex/options") {
+        return {
+          status: 200,
+          payload: {
+            models: {
+              current_model_id: "google/gemini-2.5-flash",
+            },
+          },
+        };
+      }
+      throw new Error(`unexpected daemonJson call: ${method} ${requestPath}`);
+    },
+    getDesktopConnection: async () => ({
+      kind: "ssh",
+      base_url: "http://127.0.0.1:47001",
+      browser_query_secret: "browser-secret",
+    }),
+  });
+
+  await ensureCodexOpenRouterWorkspaceReady("ws-1", {
+    installTarget: "container",
+    timeoutMs: 1000,
+    pollMs: 1,
+  });
+
+  const providerStatusCalls = calls
+    .map((entry, index) => ({ ...entry, index }))
+    .filter((entry) => entry.requestPath === "/api/providers/codex?target=container");
+  const verifyCallIndex = calls.findIndex(
+    (entry) => entry.requestPath === "/api/workspaces/ws-1/providers/codex/verify",
+  );
+
+  assert.equal(providerStatusCalls.length, 2);
+  assert.ok(verifyCallIndex > providerStatusCalls.at(-1).index);
+  assert.equal(
+    calls.some((entry) => entry.requestPath.includes("/api/providers/codex/install?target=")),
+    false,
+  );
+});
+
 test("waitForProviderInstallCompletion keeps waiting while dependencies are pending", async () => {
   const calls = [];
   global.browser = { pause: async () => {} };
