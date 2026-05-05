@@ -44,6 +44,9 @@ test("supported web validation targets do not use the non-hermetic workspace wra
 test("browser e2e targets route through the dedicated Bazel runtime instead of workspace wrappers", () => {
   assert.doesNotMatch(buildFile, /name = "e2e_(premerge|release|cross_platform|visual|soak|load)"/u);
   assert.match(e2eMacroFile, /srcs = \["\/\/core\/apps\/web:scripts\/run-e2e-bazel-runtime\.sh"\]/u);
+  assert.match(e2eMacroFile, /--playwright-browsers-dir/u);
+  assert.match(e2eMacroFile, /\/\/core\/apps\/web:playwright_browsers_ubuntu22_04_x64/u);
+  assert.match(e2eMacroFile, /\/\/core\/apps\/web:playwright_browsers_mac15_arm64/u);
   assert.match(e2eMacroFile, /tags = \[\s*"local",\s*"no-remote",\s*\]/u);
   for (const targetName of ["premerge_required", "release_required", "cross_platform", "visual", "soak", "load"]) {
     assert.match(e2eBuildFile, new RegExp(`name = "${targetName}"`));

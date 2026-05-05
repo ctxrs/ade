@@ -15,6 +15,7 @@ import {
   pathsReferToSameFile,
   resolveExistingPath,
   resolveLocalNodeBin,
+  resolvePlaywrightBrowsersPath,
   resolveRepoRoot,
 } from "./run-e2e-bazel-runtime.mjs";
 
@@ -33,6 +34,8 @@ describe("run-e2e-bazel-runtime", () => {
       "workbench-lite",
       "--ctx-http-bin",
       "ctx",
+      "--playwright-browsers-dir",
+      "playwright-browsers-ubuntu22.04-x64",
       "--spec",
       "e2e/workbench-index.spec.ts",
       "--",
@@ -42,6 +45,7 @@ describe("run-e2e-bazel-runtime", () => {
       ctxHttpBin: "ctx",
       ctxMcpBin: "",
       forwardedArgs: ["--list"],
+      playwrightBrowsersDir: "playwright-browsers-ubuntu22.04-x64",
       runtimeProfile: "workbench-lite",
       specs: ["e2e/workbench-index.spec.ts"],
       suite: "",
@@ -83,6 +87,7 @@ describe("run-e2e-bazel-runtime", () => {
     assert.equal(env.CTX_E2E_CTX_MCP_BIN, undefined);
     assert.equal(env.CTX_MCP_COMMAND, undefined);
     assert.equal(env.CTX_MCP_DISABLED, undefined);
+    assert.equal(env.PLAYWRIGHT_BROWSERS_PATH, undefined);
   });
 
   it("requires ctx-mcp only for the agent-full runtime profile", () => {
@@ -95,6 +100,36 @@ describe("run-e2e-bazel-runtime", () => {
       webDistDir: "/tmp/dist",
     });
     assert.equal(env.CTX_E2E_CTX_MCP_BIN, "/tmp/ctx-mcp");
+  });
+
+  it("uses Bazel-owned Playwright browsers instead of ambient cache state", () => {
+    const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-web-e2e-browsers-"));
+    const hostRoot = path.join(runtimeRoot, "ubuntu22.04-x64");
+    fs.mkdirSync(path.join(hostRoot, "webkit-2227"), { recursive: true });
+    const env = buildPlaywrightEnv({
+      ctxHttpBin: "/tmp/ctx",
+      env: {
+        PLAYWRIGHT_BROWSERS_PATH: "/tmp/ambient-playwright-cache",
+      },
+      playwrightBrowsersPath: resolvePlaywrightBrowsersPath(runtimeRoot, {
+        arch: "x64",
+        platform: "linux",
+      }),
+      runtimeProfile: "workbench-lite",
+      tempRoot: "/tmp",
+      webDistDir: "/tmp/dist",
+    });
+
+    assert.equal(env.PLAYWRIGHT_BROWSERS_PATH, hostRoot);
+  });
+
+  it("rejects unsupported Bazel Playwright browser host platforms", () => {
+    const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-web-e2e-browsers-"));
+
+    assert.throws(() => resolvePlaywrightBrowsersPath(runtimeRoot, {
+      arch: "arm64",
+      platform: "linux",
+    }), /unsupported Bazel Playwright browser host platform/u);
   });
 
   it("keeps package shims runnable under Bazel's sanitized PATH", () => {

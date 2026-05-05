@@ -46,6 +46,7 @@ export const parseArgs = (argv) => {
     ctxHttpBin: "",
     ctxMcpBin: "",
     forwardedArgs: [],
+    playwrightBrowsersDir: "",
     runtimeProfile: "",
     specs: [],
     suite: "",
@@ -66,6 +67,9 @@ export const parseArgs = (argv) => {
         break;
       case "--ctx-mcp-bin":
         parsed.ctxMcpBin = String(args.shift() || "").trim();
+        break;
+      case "--playwright-browsers-dir":
+        parsed.playwrightBrowsersDir = String(args.shift() || "").trim();
         break;
       case "--runtime-profile":
         parsed.runtimeProfile = String(args.shift() || "").trim();
@@ -414,10 +418,34 @@ const buildWebDist = ({ env, runtimeProfile, tempRoot, viteBin, webRoot }) => {
   return distDir;
 };
 
+const playwrightHostPlatform = ({ platform = process.platform, arch = process.arch } = {}) => {
+  if (platform === "darwin" && arch === "arm64") return "mac15-arm64";
+  if (platform === "linux" && arch === "x64") return "ubuntu22.04-x64";
+  throw new Error(`unsupported Bazel Playwright browser host platform: ${platform}/${arch}`);
+};
+
+export const resolvePlaywrightBrowsersPath = (
+  configured,
+  { platform = process.platform, arch = process.arch } = {},
+) => {
+  const raw = String(configured || "").trim();
+  if (!raw) {
+    throw new Error("missing Playwright browser runtime path");
+  }
+  const root = path.resolve(raw);
+  if (!fs.existsSync(root)) {
+    throw new Error(`declared Playwright browser runtime does not exist: ${configured}`);
+  }
+  const hostRoot = path.join(root, playwrightHostPlatform({ platform, arch }));
+  if (fs.existsSync(hostRoot)) return hostRoot;
+  return root;
+};
+
 export const buildPlaywrightEnv = ({
   ctxHttpBin,
   ctxMcpBin = "",
   env = process.env,
+  playwrightBrowsersPath = "",
   runtimeProfile,
   tempRoot,
   webDistDir,
@@ -439,6 +467,11 @@ export const buildPlaywrightEnv = ({
     TEMP: e2eTmpDir,
     TMPDIR: e2eTmpDir,
   };
+  if (playwrightBrowsersPath) {
+    nextEnv.PLAYWRIGHT_BROWSERS_PATH = playwrightBrowsersPath;
+  } else if (env.PLAYWRIGHT_BROWSERS_PATH) {
+    nextEnv.PLAYWRIGHT_BROWSERS_PATH = env.PLAYWRIGHT_BROWSERS_PATH;
+  }
   delete nextEnv.CTX_MCP_DISABLED;
   if (runtimeProfile === "agent-full") {
     nextEnv.CTX_E2E_CTX_MCP_BIN = ctxMcpBin;
@@ -473,6 +506,11 @@ export const runBazelRuntimeE2E = (argv, env = process.env) => {
   const ctxMcpBin = options.ctxMcpBin
     ? resolveExistingPath(options.ctxMcpBin, { env, repoRoot: sourceRepoRoot })
     : "";
+  const playwrightBrowsersPath = options.playwrightBrowsersDir
+    ? resolvePlaywrightBrowsersPath(
+      resolveExistingPath(options.playwrightBrowsersDir, { env, repoRoot: sourceRepoRoot }),
+    )
+    : "";
   const specs = resolveSpecs(webRoot, options);
   const viteBin = resolveLocalNodeBin(webRoot, "vite");
   const playwrightBin = resolveLocalNodeBin(webRoot, "playwright");
@@ -493,6 +531,7 @@ export const runBazelRuntimeE2E = (argv, env = process.env) => {
     ctxHttpBin,
     ctxMcpBin,
     env,
+    playwrightBrowsersPath,
     runtimeProfile: options.runtimeProfile,
     tempRoot,
     webDistDir,
