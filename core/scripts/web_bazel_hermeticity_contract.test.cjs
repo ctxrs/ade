@@ -12,6 +12,14 @@ const playwrightRuntimeLock = fs.readFileSync(
 const buildFile = fs.readFileSync(path.join(repoRoot, "core", "apps", "web", "BUILD.bazel"), "utf8");
 const e2eBuildFile = fs.readFileSync(path.join(repoRoot, "core", "apps", "web", "e2e", "BUILD.bazel"), "utf8");
 const e2eMacroFile = fs.readFileSync(path.join(repoRoot, "core", "apps", "web", "e2e", "web_e2e_test.bzl"), "utf8");
+const premergeRequiredSuite = fs.readFileSync(
+  path.join(repoRoot, "core", "apps", "web", "e2e", "suites", "premerge_required.txt"),
+  "utf8",
+);
+const quarantinedSuite = fs.readFileSync(
+  path.join(repoRoot, "core", "apps", "web", "e2e", "suites", "quarantine.txt"),
+  "utf8",
+);
 const coreBuildFile = fs.readFileSync(path.join(repoRoot, "core", "BUILD.bazel"), "utf8");
 const verifyAgentRemote = fs.readFileSync(path.join(repoRoot, "core", "scripts", "verify_agent_remote.cjs"), "utf8");
 const { WEB_SMOKE_BAZEL_TARGETS } = require("./lib/web_smoke_bazel_targets.cjs");
@@ -95,6 +103,21 @@ test("playwright runtime script tests use a dedicated node:test runner instead o
   );
   assert.doesNotMatch(block, /vitest/u);
   assert.doesNotMatch(block, /HERMETIC_WEB_CHECK_DATA/u);
+});
+
+test("Linux web premerge keeps unstable E2E specs out of the required suite", () => {
+  const quarantinedSpecs = [
+    "e2e/desktop-webview-recovery-ui.spec.ts",
+    "e2e/runtime-harness-installs.spec.ts",
+    "e2e/second-message.spec.ts",
+    "e2e/workbench-context-window-meter.spec.ts",
+    "e2e/workbench-first-message-header.spec.ts",
+    "e2e/workbench-inline-code-overlap-webkit.spec.ts",
+  ];
+  for (const spec of quarantinedSpecs) {
+    assert.doesNotMatch(premergeRequiredSuite, new RegExp(`^${spec.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")}$`, "mu"));
+    assert.match(quarantinedSuite, new RegExp(`^${spec.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")}\\s+#`, "mu"));
+  }
 });
 
 test("verify:agent-remote web profiles run Bazel web targets without dependency hydration", () => {
