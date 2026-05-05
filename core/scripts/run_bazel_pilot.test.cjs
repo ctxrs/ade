@@ -21,6 +21,7 @@ const {
   parseBazelTestTimeoutSeconds,
   parsePositiveIntegerEnv,
   parseRemoteExecutionMode,
+  readBazelBuildEventMetrics,
   resolveLocalTestJobs,
   resolveRemoteExecutionMode,
   resolvePhaseBudgetKey,
@@ -123,8 +124,37 @@ test("bazel pilot invocation stays on the volatile cache layout", () => {
   assert.equal(invocation.phases.length, 1);
   assert.equal(invocation.phases[0].name, "local");
   assert.equal(invocation.phases[0].commandArgs.some((entry) => entry.startsWith("--profile=")), false);
-  assert.equal(invocation.phases[0].commandArgs.some((entry) => entry.startsWith("--build_event_json_file=")), false);
+  assert.equal(invocation.phases[0].commandArgs.some((entry) => entry.startsWith("--build_event_json_file=")), true);
   assert.equal(invocation.phases[0].commandArgs.some((entry) => entry.startsWith("--invocation_id=")), false);
+});
+
+test("bazel pilot reads action cache stats from Bazel BEP JSON", () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-bazel-bep-"));
+  const bepPath = path.join(tempDir, "bep.jsonl");
+  fs.writeFileSync(bepPath, [
+    JSON.stringify({
+      id: { buildMetrics: {} },
+      buildMetrics: {
+        actionSummary: {
+          actionCacheHits: "4",
+          actionsCreated: "5",
+          actionsExecuted: "1",
+        },
+      },
+    }),
+    JSON.stringify({
+      id: { progress: {} },
+      progress: { stdout: "ignored" },
+    }),
+    "",
+  ].join("\n"));
+
+  assert.deepEqual(readBazelBuildEventMetrics(bepPath), {
+    actionCacheHits: 4,
+    actionCacheMisses: 1,
+    actionsCreated: 5,
+    actionsExecuted: 1,
+  });
 });
 
 test("bazel pilot rust clippy mode forwards rules_rust aspect args", () => {
@@ -543,6 +573,48 @@ test("bazel pilot runner writes telemetry summaries and redacts BuildBuddy heade
   assert.equal(typeof summary.remoteActionTimeMs, "number");
   assert.equal(typeof summary.runnerLocalOverheadMs, "number");
   assert.equal(fs.existsSync(invocation.telemetry.hostSamplesPath), true);
+});
+
+test("bazel pilot runner attaches BEP cache stats to telemetry summaries", () => {
+  const volatileRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-bazel-pilot-bep-"));
+  const invocation = buildBazelPilotInvocation({
+    argv: ["test", "//core/crates/ctx-http:provider-auth"],
+    env: {
+      ...process.env,
+      CTX_VOLATILE_ROOT: volatileRoot,
+      CTX_SESSION_ID: "bazel-bep-session",
+      CTX_BAZEL_REMOTE_EXECUTION: "1",
+      BUILD_BUDDY_API_KEY: "buildbuddy-cache-key",
+    },
+  });
+
+  runBazelPilotInvocationPhases(invocation, {
+    spawnSyncImpl: (_command, args) => {
+      const bepArg = args.find((entry) => String(entry).startsWith("--build_event_json_file="));
+      const bepPath = String(bepArg).slice("--build_event_json_file=".length);
+      fs.writeFileSync(bepPath, `${JSON.stringify({
+        buildMetrics: {
+          actionSummary: {
+            actionCacheHits: "7",
+            actionsCreated: "10",
+            actionsExecuted: "3",
+          },
+        },
+      })}\n`);
+      return { status: 0 };
+    },
+    withHostJobBudgetImpl: (_options, fn) => fn(),
+  });
+
+  const summary = JSON.parse(fs.readFileSync(invocation.telemetry.summaryPath, "utf8"));
+  assert.deepEqual(summary.cacheStats, {
+    actionCacheHits: 7,
+    actionCacheMisses: 3,
+    actionsCreated: 10,
+    actionsExecuted: 3,
+  });
+  assert.equal(summary.cacheHitShape, "action-cache-mixed");
+  assert.deepEqual(summary.phases[0].cacheStats, summary.cacheStats);
 });
 
 test("bazel pilot emits a machine-readable phase summary with local spill accounting", () => {
@@ -1164,7 +1236,10 @@ test("bazel pilot uses the resolved Bazelisk command in the spawn contract", () 
     bazeliskBinaryPath({ repoRoot: path.resolve(__dirname, "..", "..") }),
   );
   assert.deepEqual(
-    spawn.args.filter((entry) => !entry.startsWith("--invocation_id=")),
+    spawn.args.filter((entry) => (
+      !entry.startsWith("--invocation_id=")
+      && !entry.startsWith("--build_event_json_file=")
+    )),
     [
       ...(process.platform === "darwin" ? ["--batch"] : []),
       "--output_user_root=/tmp/ctx-bazel-pilot-binary/targets/bazel/bazel-binary-session",

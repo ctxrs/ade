@@ -5,8 +5,15 @@ const {
   MERGE_READY_COMMAND,
   buildOverlayCommands,
   buildVerificationPlan,
+  parseArgs,
   runVerificationPlan,
 } = require("./run_verification_router.cjs");
+
+test("router parser leaves the base unset so the intent resolver can choose the default", () => {
+  assert.equal(parseArgs(["affected"]).base, "");
+  assert.equal(parseArgs(["merge-ready"]).base, "");
+  assert.equal(parseArgs(["affected", "--base", "origin/main"]).base, "origin/main");
+});
 
 test("verify:touched adds source invariants to the targeted Rust gate plan", () => {
   const plan = buildVerificationPlan({

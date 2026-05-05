@@ -11,7 +11,8 @@ const {
   normalizeRepoRelativePath,
 } = require("./lib/test_taxonomy/execution.cjs");
 const {
-  DEFAULT_BASE_REF,
+  DEFAULT_AGENT_BASE_REF,
+  DEFAULT_PROMOTION_BASE_REF,
   resolveIntentChangeSet,
 } = require("./lib/verification_git_changes.cjs");
 const { appendHostSample } = require("./lib/verification_host_sampler.cjs");
@@ -44,7 +45,7 @@ const VERIFICATION_TOOLING_COMMAND = [
 function parseArgs(argv) {
   const [intent = "", ...rest] = argv;
   const args = {
-    base: DEFAULT_BASE_REF,
+    base: "",
     changedFiles: [],
     dryRun: false,
     intent,
@@ -82,7 +83,7 @@ function usage(exitCode = 0) {
     "usage: run_verification_router.cjs <touched|affected|broader|merge-ready> [options]",
     "",
     "options:",
-    "  --base <git-ref>           base ref for affected/broader/merge-ready (default: origin/main)",
+    `  --base <git-ref>           base ref override (default: ${DEFAULT_AGENT_BASE_REF} for affected/broader, ${DEFAULT_PROMOTION_BASE_REF} for merge-ready)`,
     "  --changed-file <path>      explicit repo-relative changed file; may be repeated",
     "  --dry-run                  print the selected command plan without executing",
     "  --json                     print plan JSON instead of shell lines",

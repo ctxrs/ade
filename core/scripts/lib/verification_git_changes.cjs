@@ -3,7 +3,9 @@ const path = require("node:path");
 
 const coreRoot = path.resolve(__dirname, "..", "..");
 const repoRoot = path.resolve(coreRoot, "..");
-const DEFAULT_BASE_REF = "origin/main";
+const DEFAULT_AGENT_BASE_REF = "origin/dev";
+const DEFAULT_PROMOTION_BASE_REF = "origin/main";
+const DEFAULT_BASE_REF = DEFAULT_PROMOTION_BASE_REF;
 
 function normalizeRepoRelativePath(value) {
   return String(value || "")
@@ -19,6 +21,14 @@ function uniqueNormalizedPaths(entries) {
 
 function formatGitError(args, error) {
   const stderr = String(error?.stderr || "").trim();
+  if (args[0] === "merge-base" && args.length >= 3) {
+    const baseRef = args[2];
+    const details = stderr || String(error?.message || error);
+    return [
+      `git ${args.join(" ")} failed: ${details}`,
+      `Unable to resolve verification base ref '${baseRef}'. Fetch that ref or pass --base explicitly.`,
+    ].join("\n");
+  }
   if (stderr) {
     return `git ${args.join(" ")} failed: ${stderr}`;
   }
@@ -101,12 +111,35 @@ function enforceCleanWorkingTree({ cwd = repoRoot } = {}) {
   return changedFiles;
 }
 
+function defaultBaseRefForIntent(intent, env = process.env) {
+  const agentBaseRef = String(env.CTX_VERIFY_AGENT_BASE_REF || "").trim();
+  const promotionBaseRef = String(env.CTX_VERIFY_PROMOTION_BASE_REF || "").trim();
+  switch (intent) {
+    case "affected":
+    case "broader":
+      return agentBaseRef || DEFAULT_AGENT_BASE_REF;
+    case "merge-ready":
+      return promotionBaseRef || DEFAULT_PROMOTION_BASE_REF;
+    case "touched":
+      return "";
+    default:
+      throw new Error(`unsupported verification intent: ${intent}`);
+  }
+}
+
+function resolveBaseRefForIntent(intent, baseRef, env = process.env) {
+  return String(baseRef || "").trim() || defaultBaseRefForIntent(intent, env);
+}
+
 function resolveIntentChangeSet({
   cwd = repoRoot,
   intent,
-  baseRef = DEFAULT_BASE_REF,
+  baseRef = "",
   changedFiles = [],
+  env = process.env,
 } = {}) {
+  const resolvedBaseRef = resolveBaseRefForIntent(intent, baseRef, env);
+
   if (intent === "merge-ready") {
     enforceCleanWorkingTree({ cwd });
   }
@@ -114,7 +147,7 @@ function resolveIntentChangeSet({
   const explicitChangedFiles = uniqueNormalizedPaths(changedFiles);
   if (explicitChangedFiles.length > 0) {
     return {
-      baseRef: String(baseRef || "").trim() || DEFAULT_BASE_REF,
+      baseRef: resolvedBaseRef,
       changedFiles: explicitChangedFiles,
       mergeBase: "",
       sources: {
@@ -124,9 +157,9 @@ function resolveIntentChangeSet({
   }
 
   if (intent === "merge-ready") {
-    const { changedFiles: branchFiles, mergeBase } = resolveMergeBaseFiles(baseRef, { cwd });
+    const { changedFiles: branchFiles, mergeBase } = resolveMergeBaseFiles(resolvedBaseRef, { cwd });
     return {
-      baseRef: String(baseRef || "").trim() || DEFAULT_BASE_REF,
+      baseRef: resolvedBaseRef,
       changedFiles: branchFiles,
       mergeBase,
       sources: {
@@ -144,7 +177,7 @@ function resolveIntentChangeSet({
 
   if (intent === "touched") {
     return {
-      baseRef: String(baseRef || "").trim() || DEFAULT_BASE_REF,
+      baseRef: resolvedBaseRef,
       changedFiles: uniqueNormalizedPaths([...dirtyFiles, ...stagedFiles, ...untrackedFiles]),
       mergeBase: "",
       sources: {
@@ -156,9 +189,9 @@ function resolveIntentChangeSet({
   }
 
   if (intent === "affected" || intent === "broader") {
-    const { changedFiles: branchFiles, mergeBase } = resolveMergeBaseFiles(baseRef, { cwd });
+    const { changedFiles: branchFiles, mergeBase } = resolveMergeBaseFiles(resolvedBaseRef, { cwd });
     return {
-      baseRef: String(baseRef || "").trim() || DEFAULT_BASE_REF,
+      baseRef: resolvedBaseRef,
       changedFiles: uniqueNormalizedPaths([
         ...branchFiles,
         ...dirtyFiles,
@@ -179,10 +212,14 @@ function resolveIntentChangeSet({
 }
 
 module.exports = {
+  DEFAULT_AGENT_BASE_REF,
   DEFAULT_BASE_REF,
+  DEFAULT_PROMOTION_BASE_REF,
+  defaultBaseRefForIntent,
   enforceCleanWorkingTree,
   execGitLines,
   execGitValue,
+  resolveBaseRefForIntent,
   resolveDirtyFiles,
   resolveIntentChangeSet,
   resolveMergeBase,

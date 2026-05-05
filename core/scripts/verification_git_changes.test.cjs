@@ -6,6 +6,8 @@ const path = require("node:path");
 const test = require("node:test");
 
 const {
+  DEFAULT_AGENT_BASE_REF,
+  DEFAULT_PROMOTION_BASE_REF,
   enforceCleanWorkingTree,
   resolveMergeBaseFiles,
   resolveIntentChangeSet,
@@ -34,6 +36,30 @@ function createTempRepo() {
   runGit(repoRoot, ["commit", "-m", "initial"]);
   runGit(repoRoot, ["branch", "-M", "main"]);
   runGit(repoRoot, ["checkout", "-b", "feature"]);
+  return repoRoot;
+}
+
+function createDevFeatureRepo() {
+  const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), "verification-git-bases-"));
+  runGit(repoRoot, ["init"]);
+  runGit(repoRoot, ["config", "user.email", "ctx@example.com"]);
+  runGit(repoRoot, ["config", "user.name", "ctx"]);
+  writeFile(repoRoot, "README.md", "initial\n");
+  runGit(repoRoot, ["add", "README.md"]);
+  runGit(repoRoot, ["commit", "-m", "initial"]);
+  runGit(repoRoot, ["branch", "-M", "main"]);
+  runGit(repoRoot, ["branch", DEFAULT_PROMOTION_BASE_REF, "main"]);
+
+  runGit(repoRoot, ["checkout", "-b", "dev"]);
+  writeFile(repoRoot, "dev.txt", "dev\n");
+  runGit(repoRoot, ["add", "dev.txt"]);
+  runGit(repoRoot, ["commit", "-m", "dev commit"]);
+  runGit(repoRoot, ["branch", DEFAULT_AGENT_BASE_REF, "dev"]);
+
+  runGit(repoRoot, ["checkout", "-b", "feature"]);
+  writeFile(repoRoot, "feature.txt", "feature\n");
+  runGit(repoRoot, ["add", "feature.txt"]);
+  runGit(repoRoot, ["commit", "-m", "feature commit"]);
   return repoRoot;
 }
 
@@ -74,6 +100,54 @@ test("touched and affected change sets keep their diff semantics separate", () =
     "untracked.txt",
   ]);
   assert.ok(affected.mergeBase.length > 0);
+});
+
+test("affected defaults to origin/dev while merge-ready defaults to origin/main", () => {
+  const repoRoot = createDevFeatureRepo();
+
+  const affected = resolveIntentChangeSet({
+    cwd: repoRoot,
+    intent: "affected",
+    env: {},
+  });
+  const mergeReady = resolveIntentChangeSet({
+    cwd: repoRoot,
+    intent: "merge-ready",
+    env: {},
+  });
+
+  assert.equal(affected.baseRef, DEFAULT_AGENT_BASE_REF);
+  assert.deepEqual(affected.changedFiles, ["feature.txt"]);
+  assert.ok(affected.mergeBase.length > 0);
+
+  assert.equal(mergeReady.baseRef, DEFAULT_PROMOTION_BASE_REF);
+  assert.deepEqual([...mergeReady.changedFiles].sort(), ["dev.txt", "feature.txt"]);
+  assert.ok(mergeReady.mergeBase.length > 0);
+});
+
+test("explicit base still overrides the agent default", () => {
+  const repoRoot = createDevFeatureRepo();
+
+  const affected = resolveIntentChangeSet({
+    cwd: repoRoot,
+    intent: "affected",
+    baseRef: DEFAULT_PROMOTION_BASE_REF,
+    env: {},
+  });
+
+  assert.equal(affected.baseRef, DEFAULT_PROMOTION_BASE_REF);
+  assert.deepEqual([...affected.changedFiles].sort(), ["dev.txt", "feature.txt"]);
+  assert.ok(affected.mergeBase.length > 0);
+});
+
+test("missing default agent base fails with actionable guidance", () => {
+  const repoRoot = createTempRepo();
+
+  assert.throws(() => resolveIntentChangeSet({
+    cwd: repoRoot,
+    intent: "affected",
+    env: {},
+  }), /Fetch that ref or pass --base explicitly/u);
 });
 
 test("merge-ready enforces a clean worktree and then resolves committed branch changes", () => {

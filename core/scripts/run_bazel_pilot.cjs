@@ -582,17 +582,23 @@ function buildBazelPilotInvocation({
     rustClippy,
     targets,
     env: sanitizedEnv,
-  }).map((phase) => {
+  }).map((phase, phaseIndex) => {
     const buildBuddy = createBuildBuddyPhaseMetadata({
       enabled: buildBuddyEnabled,
       apiBaseUrl: buildBuddyApiBaseUrl,
     });
+    const bepJsonPath = path.join(
+      telemetry?.runDir || layout.tmpDir,
+      `bazel-bep-${String(phaseIndex + 1).padStart(2, "0")}-${phase.name}.jsonl`,
+    );
     return {
       ...phase,
+      bepJsonPath,
       budgetKey: resolvePhaseBudgetKey(phase),
       buildBuddy,
       commandArgs: [
         ...phase.commandArgs,
+        `--build_event_json_file=${bepJsonPath}`,
         ...(command === "test" && localTestJobs !== null
           ? [`--local_test_jobs=${localTestJobs}`]
           : []),
@@ -683,6 +689,119 @@ function buildSpawnForPhase(invocation, phase) {
   };
 }
 
+const BEP_CACHE_STAT_KEYS = Object.freeze({
+  actionCacheHits: "actionCacheHits",
+  actionCacheMisses: "actionCacheMisses",
+  action_cache_hits: "actionCacheHits",
+  action_cache_misses: "actionCacheMisses",
+  actionsCacheHits: "actionCacheHits",
+  actionsCacheMisses: "actionCacheMisses",
+  actionsCreated: "actionsCreated",
+  actionsExecuted: "actionsExecuted",
+  actions_created: "actionsCreated",
+  actions_executed: "actionsExecuted",
+  casCacheHits: "casCacheHits",
+  casCacheMisses: "casCacheMisses",
+  cas_cache_hits: "casCacheHits",
+  cas_cache_misses: "casCacheMisses",
+  remoteCacheHits: "actionCacheHits",
+});
+
+function toBepNumber(value) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  const normalized = String(value ?? "").trim();
+  if (!/^\d+$/u.test(normalized)) {
+    return null;
+  }
+  return Number.parseInt(normalized, 10);
+}
+
+function collectBepCacheStats(value, stats, depth = 0) {
+  if (value == null || depth > 20) {
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      collectBepCacheStats(entry, stats, depth + 1);
+    }
+    return;
+  }
+  if (typeof value !== "object") {
+    return;
+  }
+  for (const [key, entry] of Object.entries(value)) {
+    const mappedKey = BEP_CACHE_STAT_KEYS[key];
+    const numericValue = toBepNumber(entry);
+    if (mappedKey && numericValue != null) {
+      stats[mappedKey] = (stats[mappedKey] || 0) + numericValue;
+    }
+    if (entry && typeof entry === "object") {
+      collectBepCacheStats(entry, stats, depth + 1);
+    }
+  }
+}
+
+function normalizeBepCacheStats(stats) {
+  const normalized = {};
+  for (const key of [
+    "actionCacheHits",
+    "actionCacheMisses",
+    "actionsCreated",
+    "actionsExecuted",
+    "casCacheHits",
+    "casCacheMisses",
+  ]) {
+    if (Number(stats[key] || 0) > 0) {
+      normalized[key] = Number(stats[key]);
+    }
+  }
+  if (!Object.hasOwn(normalized, "actionCacheMisses") && Number(normalized.actionsExecuted || 0) > 0) {
+    normalized.actionCacheMisses = Number(normalized.actionsExecuted);
+  }
+  return Object.keys(normalized).length > 0 ? normalized : null;
+}
+
+function readBazelBuildEventMetrics(bepJsonPath, {
+  existsSyncImpl = fs.existsSync,
+  readFileSyncImpl = fs.readFileSync,
+} = {}) {
+  const normalizedPath = String(bepJsonPath || "").trim();
+  if (!normalizedPath || !existsSyncImpl(normalizedPath)) {
+    return null;
+  }
+  const stats = {};
+  for (const line of String(readFileSyncImpl(normalizedPath, "utf8") || "").split(/\r?\n/u)) {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      continue;
+    }
+    try {
+      collectBepCacheStats(JSON.parse(trimmed), stats);
+    } catch {
+      // Bazel BEP JSON is newline-delimited. Ignore malformed partial lines from interrupted runs.
+    }
+  }
+  return normalizeBepCacheStats(stats);
+}
+
+function mergeCacheStats(entries) {
+  const stats = {};
+  for (const entry of entries) {
+    if (!entry || typeof entry !== "object") {
+      continue;
+    }
+    for (const [key, value] of Object.entries(entry)) {
+      const numericValue = toBepNumber(value);
+      if (numericValue != null) {
+        stats[key] = (stats[key] || 0) + numericValue;
+      }
+    }
+  }
+  return Object.keys(stats).length > 0 ? stats : null;
+}
+
 function buildBazelPilotSpawns({ argv, env = process.env } = {}) {
   const invocation = buildBazelPilotInvocation({ argv, env });
   return invocation.phases.map((phase) => buildSpawnForPhase(invocation, phase));
@@ -727,6 +846,7 @@ function buildBazelPilotSummary(invocation, phaseResults, exitCode) {
     .reduce((total, phase) => total + (Array.isArray(phase.targets) ? phase.targets.length : 0), 0);
   const localPhases = phaseResults.filter((phase) => phase.name === "local");
   const remotePhases = phaseResults.filter((phase) => phase.name !== "local");
+  const cacheStats = mergeCacheStats(phaseResults.map((phase) => phase.cacheStats));
   const summary = {
     buildBuddyInvocations: phaseResults
       .filter((phase) => String(phase.buildBuddyInvocationId || "").trim())
@@ -736,6 +856,7 @@ function buildBazelPilotSummary(invocation, phaseResults, exitCode) {
         invocationUrl: phase.buildBuddyInvocationUrl,
       })),
     command: invocation.command,
+    cacheStats,
     durationMs: phaseResults.reduce((total, phase) => total + Number(phase.durationMs || 0), 0),
     entrypoint: "run_bazel_pilot",
     exitCode,
@@ -751,6 +872,7 @@ function buildBazelPilotSummary(invocation, phaseResults, exitCode) {
     phases: phaseResults.map((phase) => ({
       buildBuddyInvocationId: String(phase.buildBuddyInvocationId || ""),
       buildBuddyInvocationUrl: String(phase.buildBuddyInvocationUrl || ""),
+      cacheStats: phase.cacheStats || null,
       durationMs: Number(phase.durationMs || 0),
       name: phase.name,
       queueTimeMs: Number(phase.queueTimeMs || 0),
@@ -781,6 +903,7 @@ function runBazelPilotInvocationPhases(invocation, {
   exitImpl = process.exit,
   emitSummaryImpl = (line) => process.stderr.write(`${line}\n`),
   logErrorImpl = console.error,
+  readBazelBuildEventMetricsImpl = readBazelBuildEventMetrics,
   spawnSyncImpl = childProcess.spawnSync,
   withHostJobBudgetImpl = withHostJobBudget,
 } = {}) {
@@ -801,6 +924,7 @@ function runBazelPilotInvocationPhases(invocation, {
         bazelTestTimeoutSeconds: invocation.bazelTestTimeoutSeconds ?? null,
         buildBuddyApiBaseUrl: invocation.buildBuddyApiBaseUrl,
         buildBuddyEnabled: invocation.buildBuddyEnabled,
+        cacheStats: mergeCacheStats(phaseResults.map((phase) => phase.cacheStats)),
         buildBuddyInvocations: phaseResults
           .filter((phase) => String(phase.buildBuddyInvocationId || "").trim())
           .map((phase) => ({
@@ -846,6 +970,10 @@ function runBazelPilotInvocationPhases(invocation, {
           signal: result.signal || "",
           status: typeof result.status === "number" ? result.status : result.error ? 1 : 0,
         };
+        const cacheStats = readBazelBuildEventMetricsImpl(phase.bepJsonPath);
+        if (cacheStats) {
+          phaseResult.cacheStats = cacheStats;
+        }
         if (result.error) {
           phaseResult.error = String(result.error.message || result.error);
           phaseResults.push(phaseResult);
@@ -1000,6 +1128,7 @@ module.exports = {
   parsePositiveIntegerEnv,
   parseBatchMode,
   parseRemoteExecutionMode,
+  readBazelBuildEventMetrics,
   resolveLocalTestJobs,
   resolveRemoteExecutionMode,
   resolvePhaseBudgetKey,
