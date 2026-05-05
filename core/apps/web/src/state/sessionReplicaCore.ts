@@ -204,7 +204,7 @@ export class SessionReplicaCore {
           shouldPreserveExistingTranscriptWindow(entry, {
             turns,
             messages,
-            head_window: data.headWindow ?? null,
+            head_window: data.headWindow ?? undefined,
           })));
     let toolSummaries = data.toolSummaries ?? entry.toolSummaries;
     if (incomingIsOlder || (!authoritative && existingSeq > incomingSeq) || incomingIsNarrower) {

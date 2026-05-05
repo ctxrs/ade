@@ -62,7 +62,7 @@ export const repairReplaceShouldPreserveEntryTranscript = (
   return shouldPreserveExistingTranscriptWindow(entry, {
     turns: Array.isArray(data.turns) ? data.turns : [],
     messages: Array.isArray(data.messages) ? data.messages : [],
-    head_window: data.headWindow ?? null,
+    head_window: data.headWindow ?? undefined,
   });
 };
 
