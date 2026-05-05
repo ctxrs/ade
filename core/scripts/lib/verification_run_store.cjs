@@ -237,6 +237,17 @@ function normalizeCacheHitShapeValue(value) {
   return normalized;
 }
 
+function normalizeCacheStatsStatusValue(value) {
+  return String(value || "").trim();
+}
+
+function hasPositiveCacheStat(cacheStats, keys) {
+  if (!cacheStats || typeof cacheStats !== "object") {
+    return false;
+  }
+  return keys.some((key) => Number(cacheStats[key] || 0) > 0);
+}
+
 function deriveCacheHitShape(cacheStats) {
   if (!cacheStats || typeof cacheStats !== "object") {
     return "";
@@ -288,6 +299,48 @@ function hasBuildBuddyCacheEvidence(summary) {
     || String(summary?.remoteInvocationUrl || "").trim()
     || (Array.isArray(summary?.buildBuddyInvocations) && summary.buildBuddyInvocations.length > 0),
   );
+}
+
+function deriveCacheStatsStatus(summary) {
+  const explicitStatus = normalizeCacheStatsStatusValue(summary?.cacheStatsStatus);
+  if (explicitStatus) {
+    return explicitStatus;
+  }
+  const cacheStats = summary?.cacheStats;
+  if (cacheStats && typeof cacheStats === "object") {
+    if (hasPositiveCacheStat(cacheStats, [
+      "actionCacheHits",
+      "actionCacheMisses",
+      "action_cache_hits",
+      "action_cache_misses",
+      "actionsCreated",
+      "actionsExecuted",
+      "actions_created",
+      "actions_executed",
+    ])) {
+      return "action-cache-stats-reported";
+    }
+    if (hasPositiveCacheStat(cacheStats, [
+      "casCacheHits",
+      "casCacheMisses",
+      "cas_cache_hits",
+      "cas_cache_misses",
+    ])) {
+      return "cas-cache-stats-reported";
+    }
+    return "cache-stats-empty";
+  }
+  const remoteExecutionMode = String(summary?.remoteExecutionMode || "").trim();
+  if (hasBuildBuddyCacheEvidence(summary)) {
+    return "buildbuddy-invocation-without-cache-stats";
+  }
+  if (remoteExecutionMode === "off") {
+    return "local-cache-only";
+  }
+  if (remoteExecutionMode) {
+    return "remote-cache-stats-unavailable";
+  }
+  return "cache-stats-unavailable";
 }
 
 function inferCacheHitShape(summary) {
@@ -344,6 +397,7 @@ function deriveBazelMetrics(summary) {
     queueTimeMs,
     remoteActionTimeMs,
     cacheHitShape: inferCacheHitShape(summary),
+    cacheStatsStatus: deriveCacheStatsStatus(summary),
     runnerLocalOverheadMs: explicitRunnerLocalOverheadMs !== undefined
       ? explicitRunnerLocalOverheadMs
       : remoteActionTimeMs !== undefined
@@ -368,6 +422,21 @@ function combineCacheHitShapes(entries) {
   }
   if (uniqueShapes.length === 1) {
     return uniqueShapes[0];
+  }
+  return "mixed";
+}
+
+function combineCacheStatsStatuses(entries) {
+  const uniqueStatuses = [...new Set(
+    entries
+      .map((entry) => normalizeCacheStatsStatusValue(entry?.cacheStatsStatus))
+      .filter(Boolean),
+  )];
+  if (uniqueStatuses.length === 0) {
+    return "";
+  }
+  if (uniqueStatuses.length === 1) {
+    return uniqueStatuses[0];
   }
   return "mixed";
 }
@@ -426,6 +495,9 @@ function deriveRouterMetrics(summary) {
     cacheHitShape:
       normalizeCacheHitShapeValue(summary.cacheHitShape)
       || combineCacheHitShapes(childBazelRuns),
+    cacheStatsStatus:
+      normalizeCacheStatsStatusValue(summary.cacheStatsStatus)
+      || combineCacheStatsStatuses(childBazelRuns),
     runnerLocalOverheadMs,
     localSpill,
   };

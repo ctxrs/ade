@@ -557,6 +557,7 @@ test("bazel pilot runner writes telemetry summaries and redacts BuildBuddy heade
   assert.equal(summary.remoteExecutionMode, "all");
   assert.equal(summary.buildBuddyEnabled, true);
   assert.equal(summary.cacheHitShape, "buildbuddy-cache-unreported");
+  assert.equal(summary.cacheStatsStatus, "buildbuddy-invocation-without-cache-stats");
   assert.equal(summary.parentEntrypoint, "verify:affected");
   assert.equal(summary.parentRunId, "router-run-1");
   assert.equal(summary.runId, invocation.telemetry.runId);
@@ -614,6 +615,7 @@ test("bazel pilot runner attaches BEP cache stats to telemetry summaries", () =>
     actionsExecuted: 3,
   });
   assert.equal(summary.cacheHitShape, "action-cache-mixed");
+  assert.equal(summary.cacheStatsStatus, "action-cache-stats-reported");
   assert.deepEqual(summary.phases[0].cacheStats, summary.cacheStats);
 });
 
@@ -653,6 +655,7 @@ test("bazel pilot emits a machine-readable phase summary with local spill accoun
   assert.equal(summary.localTargetCount, 1);
   assert.equal(summary.localSpill, true);
   assert.equal(summary.cacheHitShape, "buildbuddy-cache-unreported");
+  assert.equal(summary.cacheStatsStatus, "buildbuddy-invocation-without-cache-stats");
   assert.equal(typeof summary.queueTimeMs, "number");
   assert.equal(typeof summary.remoteActionTimeMs, "number");
   assert.equal(typeof summary.runnerLocalOverheadMs, "number");
@@ -740,6 +743,7 @@ test("bazel pilot summary formatter is stable for parser consumption", () => {
   assert.equal(parsed.runnerLocalOverheadMs, 200);
   assert.equal(parsed.localSpill, false);
   assert.equal(parsed.cacheHitShape, "cache-evidence-unavailable");
+  assert.equal(parsed.cacheStatsStatus, "remote-cache-stats-unavailable");
 });
 
 test("bazel pilot reports local spill for linux remote mode with local-only execution", () => {
@@ -763,6 +767,7 @@ test("bazel pilot reports local spill for linux remote mode with local-only exec
   assert.equal(summary.remotePhaseCount, 0);
   assert.equal(summary.localSpill, true);
   assert.equal(summary.cacheHitShape, "cache-evidence-unavailable");
+  assert.equal(summary.cacheStatsStatus, "remote-cache-stats-unavailable");
 });
 
 test("bazel pilot does not record dead BuildBuddy links when Bazel never starts", () => {

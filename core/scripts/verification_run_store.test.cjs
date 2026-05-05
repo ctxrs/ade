@@ -27,6 +27,7 @@ test("run store finalization writes summaries and prunes by retention count", ()
   const layout = tempLayout();
   const env = {
     ...process.env,
+    CTX_VERIFICATION_RUN_MAX_AGE_DAYS: "3650",
     CTX_VERIFICATION_RUN_MAX_COUNT: "1",
   };
 
