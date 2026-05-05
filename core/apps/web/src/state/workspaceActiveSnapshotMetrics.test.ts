@@ -48,7 +48,9 @@ vi.mock("./diagnosticsChannel", () => ({
 }));
 
 vi.mock("./foregroundFreshnessTelemetry", () => ({
+  noteClientReceiveLag: vi.fn(),
   noteQueueAgeSample: vi.fn(),
+  noteWorkspaceStreamEventObserved: vi.fn(),
   noteWorkspaceStreamReset: vi.fn(),
 }));
 

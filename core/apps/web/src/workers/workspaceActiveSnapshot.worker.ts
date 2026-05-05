@@ -121,6 +121,13 @@ const ensureStore = (cmd: Extract<WorkspaceActiveSnapshotCommand, { type: "init"
       const message: WorkspaceActiveSnapshotWorkerMessage = { type: "patch", patch };
       self.postMessage(message);
     },
+    onStreamTelemetry: (telemetry) => {
+      const message: WorkspaceActiveSnapshotWorkerMessage = {
+        type: "stream_event_telemetry",
+        telemetry,
+      };
+      self.postMessage(message);
+    },
   });
   store.init();
   if (pendingSeed) {

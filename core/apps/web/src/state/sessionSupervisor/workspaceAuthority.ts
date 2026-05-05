@@ -3,6 +3,7 @@ import type { WorkspaceActiveSnapshotState } from "../workspaceActiveSnapshotSto
 import { collectWorkspaceActivePrimarySessionIds } from "../workspaceActiveSnapshot/projection";
 import type { SessionReplicaCommand, SessionReplicaHeadSeedMode } from "../sessionReplicaProtocol";
 import { isPartialSessionHead } from "../sessionHeadRepair";
+import { readWorkspaceEventReceivedAt } from "../workspaceEventTelemetry";
 import { classifyActiveSnapshotSeedMode } from "./activeSnapshotSeed";
 import type { ConnectionStatus, InternalEntry } from "./entryState";
 import { sameIdList } from "./cachePolicy";
@@ -190,7 +191,11 @@ export const ingestWorkspaceEvent = (
   if (subscriptionCursorsChanged) {
     host.emitSubscribedSessions();
   }
-  host.replicaDispatch({ type: "workspace_event", event: evt });
+  host.replicaDispatch({
+    type: "workspace_event",
+    event: evt,
+    receivedAtMs: readWorkspaceEventReceivedAt(evt),
+  });
 };
 
 export const syncActiveSnapshot = (

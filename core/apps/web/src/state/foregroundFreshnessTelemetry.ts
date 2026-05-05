@@ -28,6 +28,9 @@ const INTERRUPT_TO_PENDING_SLA_MS = 50;
 const GAP_RECOVERY_SLA_MS = 1000;
 const FOREGROUND_QUEUE_AGE_SLA_MS = 75;
 const WORKSPACE_QUEUE_AGE_SLA_MS = 250;
+const FOREGROUND_CLIENT_RECEIVE_LAG_SLA_MS = 500;
+const WORKSPACE_CLIENT_RECEIVE_LAG_SLA_MS = 1000;
+const SESSION_REPLICA_APPLY_LAG_SLA_MS = 100;
 const RENDERER_START_TIMEOUT_MS = 1000;
 const FIRST_PAINT_TIMEOUT_MS = 500;
 
@@ -302,6 +305,90 @@ export const noteFinalDeltaReceived = (args: {
       typeof args.lastEventSeq === "number" && Number.isFinite(args.lastEventSeq)
         ? args.lastEventSeq
         : null,
+  });
+};
+
+export const noteClientReceiveLag = (
+  lane: QueueLane,
+  lagMs: number,
+  context?: Record<string, unknown>,
+): void => {
+  const source = typeof context?.source === "string" && context.source.trim() ? context.source : "unknown";
+  recordLatencyMetric({
+    metric: "workbench.client_receive_lag_ms",
+    valueMs: lagMs,
+    thresholdMs:
+      lane === "foreground" ? FOREGROUND_CLIENT_RECEIVE_LAG_SLA_MS : WORKSPACE_CLIENT_RECEIVE_LAG_SLA_MS,
+    surface: lane === "foreground" ? "foreground_backlog" : "workspace_backlog",
+    labels: { lane, source },
+    diagnosticCode: `client_receive_lag.${lane}.sla_missed`,
+    message: `${lane} stream event missed the daemon-to-browser receive budget.`,
+    context: {
+      lane,
+      ...(context ?? {}),
+    },
+  });
+};
+
+export const noteWorkspaceStreamEventObserved = (
+  lane: QueueLane,
+  eventType: string,
+): void => {
+  const normalizedEventType = String(eventType).trim() || "unknown";
+  recordClientCounterMetric("workbench.workspace_stream_event_count", {
+    lane,
+    event_type: normalizedEventType,
+  });
+};
+
+export const noteSessionReplicaApplyLag = (
+  lagMs: number,
+  context?: Record<string, unknown>,
+): void => {
+  const op =
+    typeof context?.op === "string" && context.op.trim()
+      ? context.op
+      : typeof context?.event_type === "string" && context.event_type.trim()
+        ? context.event_type
+        : "unknown";
+  recordLatencyMetric({
+    metric: "workbench.session_replica_apply_lag_ms",
+    valueMs: lagMs,
+    thresholdMs: SESSION_REPLICA_APPLY_LAG_SLA_MS,
+    surface: "foreground_backlog",
+    labels: {
+      op,
+    },
+    diagnosticCode: "session_replica.apply_lag_sla_missed",
+    message: "Session replica patches missed the apply freshness budget.",
+    context,
+  });
+};
+
+export const noteSessionReplicaApplyDuration = (
+  durationMs: number,
+  context?: Record<string, unknown>,
+): void => {
+  const patchCount =
+    typeof context?.patch_count === "number" && Number.isFinite(context.patch_count)
+      ? String(context.patch_count)
+      : "unknown";
+  const op =
+    typeof context?.op === "string" && context.op.trim()
+      ? context.op
+      : "mixed";
+  recordLatencyMetric({
+    metric: "workbench.session_replica_apply_duration_ms",
+    valueMs: durationMs,
+    thresholdMs: SESSION_REPLICA_APPLY_LAG_SLA_MS,
+    surface: "foreground_backlog",
+    labels: {
+      patch_count: patchCount,
+      op,
+    },
+    diagnosticCode: "session_replica.apply_duration_sla_missed",
+    message: "Session replica patches missed the apply duration budget.",
+    context,
   });
 };
 

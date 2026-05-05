@@ -18,6 +18,7 @@ import { emitUiDiagnostic, normalizeDiagnosticErrorMessage } from "./diagnostics
 import type {
   WorkspaceActiveSnapshotCommand,
   WorkspaceActiveSnapshotPatch,
+  WorkspaceActiveSnapshotStreamTelemetry,
 } from "./workspaceActiveSnapshotProtocol";
 import type { SessionSubscriptionCursor } from "./sessionSubscription";
 import { WorkspaceActiveSnapshotStoreState } from "./workspaceActiveSnapshot/storeState";
@@ -81,6 +82,7 @@ type WorkspaceActiveSnapshotStoreOptions = {
   e2eEnabled?: boolean;
   onPersistRequested?: () => void;
   onPatch?: (patch: WorkspaceActiveSnapshotPatch) => void;
+  onStreamTelemetry?: (telemetry: WorkspaceActiveSnapshotStreamTelemetry) => void;
   patchFlushMs?: number;
   authToken?: string | null;
   wsBaseUrl?: string | null;
@@ -106,6 +108,7 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
   e2eDropStreamMessages = false;
   private persistNotifier: (() => void) | null = null;
   workerPatchEmitter: ((patch: WorkspaceActiveSnapshotPatch) => void) | null = null;
+  streamTelemetryEmitter: ((telemetry: WorkspaceActiveSnapshotStreamTelemetry) => void) | null = null;
   private workerPatchTimer: ReturnType<typeof globalThis.setTimeout> | null = null;
   workerPatchPendingEvents: WorkspaceActiveSnapshotEvent[] = [];
   private workerPatchPendingPersist = false;
@@ -146,6 +149,7 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
     this.e2eEnabled = opts?.e2eEnabled ?? false;
     this.persistNotifier = opts?.onPersistRequested ?? null;
     this.workerPatchEmitter = opts?.onPatch ?? null;
+    this.streamTelemetryEmitter = opts?.onStreamTelemetry ?? null;
     this.workerPatchFlushMs = opts?.patchFlushMs ?? WORKSPACE_PATCH_FLUSH_MS;
     this.authTokenOverride = opts?.authToken ?? null;
     this.wsBaseUrlOverride = opts?.wsBaseUrl ?? null;

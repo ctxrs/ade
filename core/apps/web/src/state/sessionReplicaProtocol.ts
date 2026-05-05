@@ -66,7 +66,7 @@ export type SessionReplicaCommand =
   | { type: "refresh_session"; sessionId: string }
   | { type: "hydrate_session_head"; sessionId: string; force?: boolean; silent?: boolean }
   | { type: "seed_head"; sessionId: string; head: SessionHeadSnapshot; mode: SessionReplicaHeadSeedMode }
-  | { type: "workspace_event"; event: WorkspaceActiveSnapshotEvent }
+  | { type: "workspace_event"; event: WorkspaceActiveSnapshotEvent; receivedAtMs?: number | null }
   | { type: "set_session"; session: Session };
 
 export type SessionReplicaData = {
@@ -119,6 +119,14 @@ export type SessionReplicaFreshnessEvent =
       turnId: string | null;
       emittedAtMs: number | null;
       lastEventSeq: number | null;
+    }
+  | {
+      type: "replica_delta_applied";
+      sessionId: string;
+      emittedAtMs: number | null;
+      receivedAtMs: number | null;
+      lastEventSeq: number | null;
+      eventType: string;
     }
   | { type: "gap_recovery_started"; sessionId: string; reason: string | null }
   | { type: "gap_recovery_finished"; sessionId: string }

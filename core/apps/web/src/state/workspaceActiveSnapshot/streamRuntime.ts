@@ -21,8 +21,17 @@ import {
   emitUiDiagnostic,
   normalizeDiagnosticErrorMessage,
 } from "../diagnosticsChannel";
-import { noteQueueAgeSample, noteWorkspaceStreamReset } from "../foregroundFreshnessTelemetry";
-import type { WorkspaceActiveSnapshotPatch } from "../workspaceActiveSnapshotProtocol";
+import {
+  noteClientReceiveLag,
+  noteQueueAgeSample,
+  noteWorkspaceStreamEventObserved,
+  noteWorkspaceStreamReset,
+} from "../foregroundFreshnessTelemetry";
+import { markWorkspaceEventReceivedAt } from "../workspaceEventTelemetry";
+import type {
+  WorkspaceActiveSnapshotPatch,
+  WorkspaceActiveSnapshotStreamTelemetry,
+} from "../workspaceActiveSnapshotProtocol";
 import type { WorkspaceActiveSnapshotState } from "./storeTypes";
 import { WorkspaceActiveSnapshotStoreState } from "./storeState";
 import { parseWsJson } from "../../utils/wsJson";
@@ -41,6 +50,65 @@ const nowMs = (): number => {
   return Date.now();
 };
 
+const emittedAtMsForWorkspaceEvent = (
+  evt: WorkspaceActiveSnapshotEvent,
+): number | null => {
+  switch (evt.type) {
+    case "session_head_delta":
+      return typeof evt.delta.emitted_at_ms === "number" && Number.isFinite(evt.delta.emitted_at_ms)
+        ? evt.delta.emitted_at_ms
+        : null;
+    case "session_summary_delta":
+      return typeof evt.delta.emitted_at_ms === "number" && Number.isFinite(evt.delta.emitted_at_ms)
+        ? evt.delta.emitted_at_ms
+        : null;
+    case "worktree_vcs_snapshot":
+      return typeof evt.snapshot.emitted_at_ms === "number" && Number.isFinite(evt.snapshot.emitted_at_ms)
+        ? evt.snapshot.emitted_at_ms
+        : null;
+    default:
+      return null;
+  }
+};
+
+const noteWorkspaceEventClientReceiveLag = (
+  host: WorkspaceActiveSnapshotStreamHost,
+  evt: WorkspaceActiveSnapshotEvent,
+  receivedAtMs: number,
+  source: "heads_batch" | "stream_event",
+): void => {
+  const emittedAtMs = emittedAtMsForWorkspaceEvent(evt);
+  const lane = host.isForegroundSessionEvent(evt) ? "foreground" : "workspace";
+  const sessionId =
+    evt.type === "session_head_delta"
+      ? idToString(evt.delta.session_id)
+      : evt.type === "session_summary_delta"
+        ? idToString(evt.delta.session_id)
+        : evt.type === "session_summary"
+          ? idToString(evt.summary.session.id)
+          : evt.type === "session_gap"
+            ? idToString(evt.session_id)
+            : null;
+  host.streamTelemetryEmitter?.({
+    lane,
+    eventType: evt.type,
+    sessionId,
+    emittedAtMs,
+    receivedAtMs,
+  });
+  noteWorkspaceStreamEventObserved(lane, evt.type);
+  if (typeof emittedAtMs !== "number") return;
+  noteClientReceiveLag(
+    lane,
+    receivedAtMs - emittedAtMs,
+    {
+      source,
+      event_type: evt.type,
+      workspace_id: host.workspaceId,
+    },
+  );
+};
+
 export type WorkspaceActiveSnapshotStreamHost = {
   workspaceId: string;
   destroyed: boolean;
@@ -57,6 +125,7 @@ export type WorkspaceActiveSnapshotStreamHost = {
   lastStreamSeq: number;
   allowSnapshotReset: boolean;
   workerPatchEmitter: ((patch: WorkspaceActiveSnapshotPatch) => void) | null;
+  streamTelemetryEmitter: ((telemetry: WorkspaceActiveSnapshotStreamTelemetry) => void) | null;
   workerPatchOldestEventReceivedAtMs: number | null;
   workerPatchOldestForegroundEventReceivedAtMs: number | null;
   streamQueue: Promise<void>;
@@ -373,12 +442,15 @@ export const handleStreamMessage = async (
       if (host.state.applySessionHeadDelta(delta)) {
         changed = true;
       }
-      host.notifyEventListeners({
+      const evt: WorkspaceActiveSnapshotEvent = {
         type: "session_head_delta",
         workspace_id: host.workspaceId,
         snapshot_rev: batchRev,
         delta,
-      });
+      };
+      markWorkspaceEventReceivedAt(evt, payload.receivedAtMs);
+      noteWorkspaceEventClientReceiveLag(host, evt, payload.receivedAtMs, "heads_batch");
+      host.notifyEventListeners(evt);
     }
     if (changed) {
       host.schedulePersistCache();
@@ -386,6 +458,8 @@ export const handleStreamMessage = async (
     return;
   }
   const evt = normalized as WorkspaceActiveSnapshotEvent;
+  markWorkspaceEventReceivedAt(evt, payload.receivedAtMs);
+  noteWorkspaceEventClientReceiveLag(host, evt, payload.receivedAtMs, "stream_event");
   const queueAgeMs = Math.max(0, nowMs() - payload.receivedAtMs);
   const foregroundEvent = host.isForegroundSessionEvent(evt);
   if (host.workerPatchEmitter) {

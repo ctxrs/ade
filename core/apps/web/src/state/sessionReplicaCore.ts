@@ -97,7 +97,7 @@ export class SessionReplicaCore {
         this.seedHead(cmd.sessionId, cmd.head, cmd.mode);
         return;
       case "workspace_event":
-        this.handleWorkspaceEvent(cmd.event);
+        this.handleWorkspaceEvent(cmd.event, cmd.receivedAtMs);
         return;
       case "set_session":
         this.setSession(cmd.session);
@@ -506,7 +506,10 @@ export class SessionReplicaCore {
     entry.hydrated = true;
   }
 
-  private handleWorkspaceEvent(evt: WorkspaceActiveSnapshotEvent): void {
+  private handleWorkspaceEvent(
+    evt: WorkspaceActiveSnapshotEvent,
+    receivedAtMs?: number | null,
+  ): void {
     handleSessionReplicaWorkspaceEvent(
       {
         entries: this.entries,
@@ -522,6 +525,7 @@ export class SessionReplicaCore {
         emitFreshnessEvent: (event) => this.emitFreshnessEvent(event),
       },
       evt,
+      receivedAtMs,
     );
   }
 

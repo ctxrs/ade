@@ -39,6 +39,7 @@ vi.mock("../utils/analytics", () => ({
 }));
 
 import {
+  noteClientReceiveLag,
   noteGapRecoveryFinished,
   noteGapRecoveryStarted,
   noteGapRepairMismatch,
@@ -52,6 +53,9 @@ import {
   noteProjectionOrSeqRegression,
   noteSessionSwitchFirstPaint,
   noteSessionSwitchStarted,
+  noteSessionReplicaApplyDuration,
+  noteSessionReplicaApplyLag,
+  noteWorkspaceStreamEventObserved,
   noteSwitchStaleVisible,
   resetForegroundFreshnessTelemetryForTests,
 } from "./foregroundFreshnessTelemetry";
@@ -146,6 +150,54 @@ describe("foregroundFreshnessTelemetry", () => {
       { source: "thread_header" },
     );
     expect(diagnosticMocks.emitUiDiagnostic).not.toHaveBeenCalled();
+  });
+
+  it("records client receive lag with lane and source labels", () => {
+    noteClientReceiveLag("foreground", 125, {
+      source: "stream_event",
+      event_type: "session_head_delta",
+    });
+
+    expect(clientMocks.recordClientHistogramMetric).toHaveBeenCalledWith(
+      "workbench.client_receive_lag_ms",
+      "ms",
+      125,
+      { lane: "foreground", source: "stream_event" },
+    );
+    expect(diagnosticMocks.emitUiDiagnostic).not.toHaveBeenCalled();
+  });
+
+  it("records replica apply lag separately from apply duration", () => {
+    noteSessionReplicaApplyLag(80, {
+      source: "received_at",
+      event_type: "session_head_delta",
+    });
+    noteSessionReplicaApplyDuration(12, {
+      patch_count: 2,
+      op: "append",
+    });
+
+    expect(clientMocks.recordClientHistogramMetric).toHaveBeenCalledWith(
+      "workbench.session_replica_apply_lag_ms",
+      "ms",
+      80,
+      { op: "session_head_delta" },
+    );
+    expect(clientMocks.recordClientHistogramMetric).toHaveBeenCalledWith(
+      "workbench.session_replica_apply_duration_ms",
+      "ms",
+      12,
+      { patch_count: "2", op: "append" },
+    );
+  });
+
+  it("records workspace stream event counts by lane and event type", () => {
+    noteWorkspaceStreamEventObserved("foreground", "session_head_delta");
+
+    expect(clientMocks.recordClientCounterMetric).toHaveBeenCalledWith(
+      "workbench.workspace_stream_event_count",
+      { lane: "foreground", event_type: "session_head_delta" },
+    );
   });
 
   it("records gap recovery timeout once the recovery budget is exceeded", () => {

@@ -11,8 +11,13 @@ import { isDesktopApp } from "../../utils/desktop";
 import type {
   WorkspaceActiveSnapshotCommand,
   WorkspaceActiveSnapshotPatch,
+  WorkspaceActiveSnapshotStreamTelemetry,
   WorkspaceActiveSnapshotWorkerMessage,
 } from "../workspaceActiveSnapshotProtocol";
+import {
+  noteClientReceiveLag,
+  noteWorkspaceStreamEventObserved,
+} from "../foregroundFreshnessTelemetry";
 import type { SessionSubscriptionCursor } from "../sessionSubscription";
 import {
   loadWorkspaceActiveSnapshotV1,
@@ -33,6 +38,36 @@ import {
   scheduleWorkerPatchFlush,
 } from "./workerPatchQueue";
 
+type WorkspaceStreamTelemetrySample = {
+  lane: "foreground" | "workspace";
+  eventType: string;
+  sessionId: string | null;
+  emittedAtMs: number | null;
+  receivedAtMs: number;
+};
+
+type WindowWithWorkspaceStreamTelemetry = Window & {
+  __ctxWorkspaceStreamTelemetrySamples?: WorkspaceStreamTelemetrySample[];
+};
+
+const recordWorkspaceStreamTelemetryForE2E = (
+  host: WorkspaceActiveSnapshotWorkerHost,
+  telemetry: WorkspaceActiveSnapshotStreamTelemetry,
+): void => {
+  if (!host.e2eEnabled || typeof window === "undefined") return;
+  const win = window as WindowWithWorkspaceStreamTelemetry;
+  const samples = win.__ctxWorkspaceStreamTelemetrySamples ?? [];
+  if (samples.length >= 20_000) samples.shift();
+  samples.push({
+    lane: telemetry.lane,
+    eventType: telemetry.eventType,
+    sessionId: telemetry.sessionId,
+    emittedAtMs: telemetry.emittedAtMs,
+    receivedAtMs: telemetry.receivedAtMs,
+  });
+  win.__ctxWorkspaceStreamTelemetrySamples = samples;
+};
+
 export type WorkspaceActiveSnapshotWorkerHost = {
   workspaceId: string;
   destroyed: boolean;
@@ -49,6 +84,7 @@ export type WorkspaceActiveSnapshotWorkerHost = {
   useWorker: boolean;
   canonicalStreamUrl: string | null;
   workerPatchEmitter: ((patch: WorkspaceActiveSnapshotPatch) => void) | null;
+  streamTelemetryEmitter: ((telemetry: WorkspaceActiveSnapshotStreamTelemetry) => void) | null;
   workerPatchTimer: ReturnType<typeof globalThis.setTimeout> | null;
   workerPatchPendingEvents: WorkspaceActiveSnapshotEvent[];
   workerPatchPendingPersist: boolean;
@@ -111,6 +147,23 @@ export const startWorker = async (host: WorkspaceActiveSnapshotWorkerHost): Prom
       if (!msg) return;
       if (msg.type === "patch") {
         applyWorkerPatch(host, msg.patch);
+        return;
+      }
+      if (msg.type === "stream_event_telemetry") {
+        recordWorkspaceStreamTelemetryForE2E(host, msg.telemetry);
+        noteWorkspaceStreamEventObserved(msg.telemetry.lane, msg.telemetry.eventType);
+        if (typeof msg.telemetry.emittedAtMs === "number") {
+          noteClientReceiveLag(
+            msg.telemetry.lane,
+            msg.telemetry.receivedAtMs - msg.telemetry.emittedAtMs,
+            {
+              source: "workspace_worker",
+              event_type: msg.telemetry.eventType,
+              workspace_id: host.workspaceId,
+              session_id: msg.telemetry.sessionId,
+            },
+          );
+        }
         return;
       }
       if (msg.type === "heartbeat_ping") {

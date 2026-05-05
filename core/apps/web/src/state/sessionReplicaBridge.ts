@@ -20,6 +20,8 @@ import {
   noteGapRecoveryStarted,
   noteGapRepairMismatch,
   noteProjectionOrSeqRegression,
+  noteSessionReplicaApplyDuration,
+  noteSessionReplicaApplyLag,
 } from "./foregroundFreshnessTelemetry";
 
 const shouldUseWorker = (): boolean => {
@@ -29,6 +31,19 @@ const shouldUseWorker = (): boolean => {
     typeof import.meta !== "undefined" ? (import.meta as { env?: { MODE?: string } }).env : undefined;
   if (metaEnv?.MODE === "test") return false;
   return true;
+};
+
+const nowMs = (): number => {
+  if (typeof performance !== "undefined" && typeof performance.now === "function") {
+    return (performance.timeOrigin ?? Date.now()) + performance.now();
+  }
+  return Date.now();
+};
+
+const patchOpLabel = (patches: readonly SessionReplicaPatch[]): string => {
+  const first = patches[0]?.op;
+  if (!first) return "none";
+  return patches.every((patch) => patch.op === first) ? first : "mixed";
 };
 
 export class SessionReplicaBridge {
@@ -45,7 +60,7 @@ export class SessionReplicaBridge {
       this.worker.onmessage = (event: MessageEvent<SessionReplicaWorkerMessage>) => {
         const msg = event.data;
         if (msg?.type === "patches") {
-          this.onPatches(msg.patches);
+          this.applyPatches(msg.patches);
           return;
         }
         if (msg?.type === "freshness_event") {
@@ -59,7 +74,7 @@ export class SessionReplicaBridge {
           getSessionSnapshot,
           getSessionState,
         },
-        emit: this.onPatches,
+        emit: (patches) => this.applyPatches(patches),
         emitFreshness: handleSessionReplicaFreshnessEvent,
       });
     }
@@ -101,6 +116,15 @@ export class SessionReplicaBridge {
     }
     this.core = null;
   }
+
+  private applyPatches(patches: SessionReplicaPatch[]): void {
+    const startedAtMs = nowMs();
+    this.onPatches(patches);
+    noteSessionReplicaApplyDuration(Math.max(0, nowMs() - startedAtMs), {
+      patch_count: patches.length,
+      op: patchOpLabel(patches),
+    });
+  }
 }
 
 export const handleSessionReplicaFreshnessEvent = (event: SessionReplicaFreshnessEvent): void => {
@@ -113,6 +137,26 @@ export const handleSessionReplicaFreshnessEvent = (event: SessionReplicaFreshnes
         lastEventSeq: event.lastEventSeq,
       });
       return;
+    case "replica_delta_applied": {
+      const appliedAtMs = nowMs();
+      if (typeof event.emittedAtMs === "number") {
+        noteSessionReplicaApplyLag(Math.max(0, appliedAtMs - event.emittedAtMs), {
+          source: "emitted_at",
+          session_id: event.sessionId,
+          last_event_seq: event.lastEventSeq,
+          event_type: event.eventType,
+        });
+      }
+      if (typeof event.receivedAtMs === "number") {
+        noteSessionReplicaApplyLag(Math.max(0, appliedAtMs - event.receivedAtMs), {
+          source: "received_at",
+          session_id: event.sessionId,
+          last_event_seq: event.lastEventSeq,
+          event_type: event.eventType,
+        });
+      }
+      return;
+    }
     case "gap_recovery_started":
       noteGapRecoveryStarted(event.sessionId, event.reason);
       return;

@@ -10,6 +10,8 @@ const getDaemonClientConfigMock = vi.hoisted(() => vi.fn(() => ({
 const subscribeDaemonConfigMock = vi.hoisted(() => vi.fn(() => () => {}));
 const noteGapRecoveryStartedMock = vi.hoisted(() => vi.fn());
 const noteFinalDeltaReceivedMock = vi.hoisted(() => vi.fn());
+const noteSessionReplicaApplyLagMock = vi.hoisted(() => vi.fn());
+const noteSessionReplicaApplyDurationMock = vi.hoisted(() => vi.fn());
 
 vi.mock("../utils/desktop", () => ({
   isDesktopApp: () => false,
@@ -29,6 +31,8 @@ vi.mock("./foregroundFreshnessTelemetry", () => ({
   noteGapRecoveryStarted: noteGapRecoveryStartedMock,
   noteGapRepairMismatch: vi.fn(),
   noteProjectionOrSeqRegression: vi.fn(),
+  noteSessionReplicaApplyDuration: noteSessionReplicaApplyDurationMock,
+  noteSessionReplicaApplyLag: noteSessionReplicaApplyLagMock,
 }));
 
 describe("SessionReplicaBridge", () => {
@@ -56,6 +60,32 @@ describe("SessionReplicaBridge", () => {
       turnId: "turn-1",
       emittedAtMs: 12,
       lastEventSeq: 3,
+    });
+  });
+
+  it("records replica apply age telemetry from freshness events", () => {
+    vi.spyOn(performance, "now").mockReturnValue(100);
+
+    handleSessionReplicaFreshnessEvent({
+      type: "replica_delta_applied",
+      sessionId: "session-1",
+      emittedAtMs: (performance.timeOrigin ?? 0) + 40,
+      receivedAtMs: (performance.timeOrigin ?? 0) + 70,
+      lastEventSeq: 3,
+      eventType: "session_head_delta",
+    });
+
+    expect(noteSessionReplicaApplyLagMock).toHaveBeenCalledWith(60, {
+      source: "emitted_at",
+      session_id: "session-1",
+      last_event_seq: 3,
+      event_type: "session_head_delta",
+    });
+    expect(noteSessionReplicaApplyLagMock).toHaveBeenCalledWith(30, {
+      source: "received_at",
+      session_id: "session-1",
+      last_event_seq: 3,
+      event_type: "session_head_delta",
     });
   });
 });

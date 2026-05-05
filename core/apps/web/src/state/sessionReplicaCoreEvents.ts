@@ -206,9 +206,15 @@ export type SessionReplicaEventHost = {
   emitFreshnessEvent(event: SessionReplicaFreshnessEvent): void;
 };
 
+const emittedAtMsForDelta = (delta: SessionHeadDelta): number | null =>
+  typeof delta.emitted_at_ms === "number" && Number.isFinite(delta.emitted_at_ms)
+    ? delta.emitted_at_ms
+    : null;
+
 export const handleSessionReplicaWorkspaceEvent = (
   host: SessionReplicaEventHost,
   evt: WorkspaceActiveSnapshotEvent,
+  receivedAtMs?: number | null,
 ): void => {
   const evtType = (evt as { type?: string }).type;
   if (evtType === "session_head_delta" || evtType === "session_delta") {
@@ -220,14 +226,22 @@ export const handleSessionReplicaWorkspaceEvent = (
         type: "final_delta_received",
         sessionId: normalizeReplicaId(delta.session_id),
         turnId,
-        emittedAtMs:
-          typeof delta.emitted_at_ms === "number" && Number.isFinite(delta.emitted_at_ms)
-            ? delta.emitted_at_ms
-            : null,
+        emittedAtMs: emittedAtMsForDelta(delta),
         lastEventSeq: delta.last_event_seq,
       });
     }
     applySessionReplicaHeadDelta(host, delta);
+    host.emitFreshnessEvent({
+      type: "replica_delta_applied",
+      sessionId: normalizeReplicaId(delta.session_id),
+      emittedAtMs: emittedAtMsForDelta(delta),
+      receivedAtMs:
+        typeof receivedAtMs === "number" && Number.isFinite(receivedAtMs)
+          ? receivedAtMs
+          : null,
+      lastEventSeq: delta.last_event_seq,
+      eventType: evtType,
+    });
     return;
   }
 

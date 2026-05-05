@@ -68,6 +68,17 @@ pub(in crate::api) async fn health(
     )))
 }
 
+#[derive(Debug, Serialize)]
+pub(in crate::api) struct DevClockResp {
+    pub daemon_unix_ms: i64,
+}
+
+pub(in crate::api) async fn dev_clock() -> Json<DevClockResp> {
+    Json(DevClockResp {
+        daemon_unix_ms: chrono::Utc::now().timestamp_millis(),
+    })
+}
+
 pub(in crate::api) const TITLE_GENERATION_LOCAL_INSTALL_KEY: &str = "title_generation_local";
 
 #[derive(Debug, Serialize)]

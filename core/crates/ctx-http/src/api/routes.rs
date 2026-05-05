@@ -86,6 +86,7 @@ fn core_routes() -> axum::Router<Arc<AppState>> {
             get(list_merge_queue_entries).post(submit_merge_queue_entry),
         )
         .route("/api/dev/providers/restart", post(dev_restart_providers))
+        .route("/api/dev/clock", get(dev_clock))
         .route(
             "/api/dev/sessions/:id/seed_transcript",
             post(dev_seed_session_transcript),

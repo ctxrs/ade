@@ -85,10 +85,22 @@ export type WorkspaceActiveSnapshotPatch = {
   oldestForegroundEventReceivedAtMs?: number | null;
 };
 
+export type WorkspaceActiveSnapshotStreamTelemetry = {
+  lane: "foreground" | "workspace";
+  eventType: string;
+  sessionId: string | null;
+  emittedAtMs: number | null;
+  receivedAtMs: number;
+};
+
 export type WorkspaceActiveSnapshotWorkerMessage =
   | {
       type: "patch";
       patch: WorkspaceActiveSnapshotPatch;
+    }
+  | {
+      type: "stream_event_telemetry";
+      telemetry: WorkspaceActiveSnapshotStreamTelemetry;
     }
   | {
       type: "heartbeat_ping";

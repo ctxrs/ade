@@ -4,6 +4,7 @@ e2e/workbench-foreground-freshness-pressure.spec.ts
 e2e/workbench-instant-switch.spec.ts
 e2e/workbench-no-extra-requests.spec.ts
 e2e/workbench-pretext-perf-diagnostics.spec.ts
+e2e/workbench-remote-daemon-stream-load.spec.ts
 e2e/workbench-spinner-replay.spec.ts
 e2e/workbench-stream-delta-throughput.spec.ts
 e2e/workbench-stream-delta-replay-throughput.spec.ts
