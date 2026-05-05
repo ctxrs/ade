@@ -79,36 +79,17 @@ const readWorkspaceSessionHeads = (
   return collectSessionHeadsForSupervisor(snapshot, store, bootstrapHeads, sessionIds);
 };
 
-const snapshotHasSessionSummary = (
-  snapshot: WorkspaceActiveSnapshotState,
-  sessionId: string,
-): boolean => {
-  const normalizedSessionId = idToString(sessionId);
-  if (!normalizedSessionId) return false;
-  for (const taskId of snapshot.activeIds) {
-    const item = snapshot.tasksById[taskId];
-    if (!item) continue;
-    if (item.sessions.some((summary) => idToString(summary.session.id) === normalizedSessionId)) {
-      return true;
-    }
-  }
-  return false;
-};
-
 export const deriveRetainedPrefetchSessionIds = ({
   snapshot,
   foregroundSessionIds,
-  taskArchived,
 }: {
   snapshot: WorkspaceActiveSnapshotState;
   foregroundSessionIds: readonly string[];
   taskArchived: boolean;
 }): string[] => {
-  const liveForegroundSessionIds = foregroundSessionIds.filter((sessionId) => {
-    const normalizedSessionId = idToString(sessionId);
-    if (!normalizedSessionId) return false;
-    return taskArchived || snapshotHasSessionSummary(snapshot, normalizedSessionId);
-  });
+  const liveForegroundSessionIds = foregroundSessionIds
+    .map((sessionId) => idToString(sessionId))
+    .filter((sessionId) => sessionId.length > 0);
   const warmSessionIds = deriveWarmSessionIds({
     activeTaskSessionIds: liveForegroundSessionIds,
     tasksById: snapshot.tasksById,
@@ -212,7 +193,11 @@ export function useWorkbenchSessionBridge({
     [computeRetainedPrefetchSessionIds, sessionHeadBootstrapCache, workspaceSnapshotStore],
   );
   const primeAuthoritativeHeadsForSessions = useCallback(
-    async (sessionIdsToPrime: readonly string[], generation?: number) => {
+    async (
+      sessionIdsToPrime: readonly string[],
+      generation?: number,
+      opts?: { force?: boolean },
+    ) => {
       const shouldContinue = () => generation === undefined || prefetchGenerationRef.current === generation;
       if (sessionIdsToPrime.length === 0 || !shouldContinue()) return;
       await primeAuthoritativeSessionHeads(
@@ -224,8 +209,11 @@ export function useWorkbenchSessionBridge({
           shouldContinue,
           getSnapshot: () => workspaceSnapshotStore.getSnapshot(),
           shouldRetainSessionId: (sessionId) => isPrefetchSessionRetained(sessionId),
+          force: opts?.force,
           onHead: (sessionId, head) => {
-            if (!shouldContinue() || !isPrefetchSessionRetained(sessionId)) return;
+            const retain = isPrefetchSessionRetained(sessionId);
+            const continueGeneration = shouldContinue();
+            if (!continueGeneration || !retain) return;
             supervisor.upsertWorkspaceSessionHead(sessionId, head);
           },
         },
@@ -250,6 +238,9 @@ export function useWorkbenchSessionBridge({
       );
       supervisor.setWorkspaceSnapshotState(snapshot);
       lifecycleCoordinator.setWorkspaceSnapshotState(snapshot);
+      if (snapshot.initialized && sessionIds.length > 0) {
+        void primeAuthoritativeHeadsForSessions(sessionIds);
+      }
     };
     const handleWorkspaceEvent = (evt: WorkspaceActiveSnapshotEvent) => {
       const { snapshot, sessionIds, sessionIdSet } = refreshRetainedPrefetchTargets();
@@ -527,6 +518,15 @@ export function useWorkbenchSessionBridge({
   useEffect(() => {
     supervisor.setWarmSessionIds(warmSessionIds);
   }, [supervisor, warmSessionIds]);
+
+  useEffect(() => {
+    if (!workspaceSnapshot.initialized || foregroundSessionIds.length === 0) return;
+    void primeAuthoritativeHeadsForSessions(foregroundSessionIds, undefined, { force: true });
+  }, [
+    foregroundSessionIds,
+    primeAuthoritativeHeadsForSessions,
+    workspaceSnapshot.initialized,
+  ]);
 
   useEffect(() => {
     workspaceSnapshotStore.setForegroundSessionId?.(activeSessionId ?? primarySessionId ?? null);

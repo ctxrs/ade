@@ -142,7 +142,9 @@ function initRepo(): string {
 async function apiPost<T>(request: APIRequestContext, url: string, data: unknown): Promise<T> {
   const resp = await request.post(url, { data });
   if (!resp.ok()) {
-    throw new Error(`seed request failed: ${url} (${resp.status()})`);
+    const body = await resp.text().catch(() => "");
+    const suffix = body.trim() ? `: ${body.trim()}` : "";
+    throw new Error(`seed request failed: ${url} (${resp.status()})${suffix}`);
   }
   return (await resp.json()) as T;
 }
@@ -153,6 +155,48 @@ async function apiGet<T>(request: APIRequestContext, url: string): Promise<T> {
     throw new Error(`seed request failed: ${url} (${resp.status()})`);
   }
   return (await resp.json()) as T;
+}
+
+export async function waitForMessageTurnCompletion(
+  request: APIRequestContext,
+  sessionId: string,
+  messageId: string,
+  opts?: { timeoutMs?: number },
+): Promise<void> {
+  const timeoutMs = opts?.timeoutMs ?? 15_000;
+  const start = Date.now();
+  while (true) {
+    const head = await apiGet<{
+      turns: Array<{ status: string; tool_total?: number | null; user_message_id?: string | null }>;
+      tool_summaries?: unknown[];
+    }>(request, `/api/sessions/${sessionId}/head`);
+    const turns = Array.isArray(head?.turns) ? head.turns : [];
+    const turn = turns.find((entry) => entry.user_message_id === messageId);
+    if (turn && (turn.status === "completed" || turn.status === "done")) {
+      return;
+    }
+    if (Date.now() - start > timeoutMs) {
+      throw new Error(`turn completion timeout for session ${sessionId} message ${messageId}`);
+    }
+    await sleep(50);
+  }
+}
+
+export async function postImmediateMessageAndWaitForCompletion(
+  request: APIRequestContext,
+  sessionId: string,
+  content: string,
+  opts?: { timeoutMs?: number },
+): Promise<{ id: string }> {
+  const savedMessage = await apiPost<{ id: string }>(request, `/api/sessions/${sessionId}/messages`, {
+    content,
+    delivery: "immediate",
+  });
+  if (!savedMessage.id) {
+    throw new Error(`seeded message for session ${sessionId} did not include an id`);
+  }
+  await waitForMessageTurnCompletion(request, sessionId, savedMessage.id, opts);
+  return savedMessage;
 }
 
 export async function seedDummyWorkspace(
@@ -289,28 +333,9 @@ export async function seedDummyWorkspace(
           throw new Error(`seeded message for session ${sessionId} did not include an id`);
         }
         if (awaitTurnCompletion) {
-          const start = Date.now();
-          while (true) {
-            const head = await apiGet<{
-              turns: Array<{ status: string; tool_total?: number | null; user_message_id?: string | null }>;
-              tool_summaries?: unknown[];
-            }>(request, `/api/sessions/${sessionId}/head`);
-            const turns = Array.isArray(head?.turns) ? head.turns : [];
-            const turn = turns.find((entry) => entry.user_message_id === savedMessage.id);
-            if (!turn) {
-              if (Date.now() - start > completionTimeoutMs) {
-                throw new Error(`turn completion timeout for session ${sessionId} message ${savedMessage.id}`);
-              }
-              await sleep(50);
-              continue;
-            }
-            const done = turn.status === "completed" || turn.status === "done";
-            if (done) break;
-            if (Date.now() - start > completionTimeoutMs) {
-              throw new Error(`turn completion timeout for session ${sessionId} message ${savedMessage.id}`);
-            }
-            await sleep(50);
-          }
+          await waitForMessageTurnCompletion(request, sessionId, savedMessage.id, {
+            timeoutMs: completionTimeoutMs,
+          });
         }
         if (throttle > 0) {
           await sleep(throttle);

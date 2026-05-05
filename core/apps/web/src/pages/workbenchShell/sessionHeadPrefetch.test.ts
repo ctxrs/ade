@@ -25,9 +25,17 @@ vi.mock("../../api/clientSessions", () => ({
 
 const now = "2026-03-18T00:00:00.000Z";
 
-const makeHead = (sessionId: string, opts?: { turnCount?: number; lastEventSeq?: number }): SessionHeadSnapshot => {
+const makeHead = (
+  sessionId: string,
+  opts?: {
+    turnCount?: number;
+    lastEventSeq?: number;
+    turnStatus?: "queued" | "starting" | "running" | "completed" | "interrupted" | "failed";
+  },
+): SessionHeadSnapshot => {
   const turnCount = opts?.turnCount ?? 1;
   const lastEventSeq = opts?.lastEventSeq ?? turnCount;
+  const turnStatus = opts?.turnStatus ?? "completed";
   return {
     session: {
       id: sessionId,
@@ -47,7 +55,7 @@ const makeHead = (sessionId: string, opts?: { turnCount?: number; lastEventSeq?:
       session_id: sessionId,
       run_id: null,
       user_message_id: `msg-${index + 1}`,
-      status: "completed",
+      status: turnStatus,
       start_seq: index + 1,
       end_seq: index + 2,
       started_at: now,
@@ -82,7 +90,12 @@ const makeHead = (sessionId: string, opts?: { turnCount?: number; lastEventSeq?:
 
 const makeSnapshot = (
   sessionId: string,
-  opts?: { lastEventSeq?: number; projectionRev?: number; stateRev?: number },
+  opts?: {
+    lastEventSeq?: number;
+    projectionRev?: number;
+    stateRev?: number;
+    activity?: SessionSnapshotSummary["activity"];
+  },
 ): WorkspaceActiveSnapshotState => ({
   workspaceId: "workspace-1",
   initialized: true,
@@ -112,7 +125,7 @@ const makeSnapshot = (
           last_event_seq: opts?.lastEventSeq ?? 1,
           projection_rev: opts?.projectionRev,
           state_rev: opts?.stateRev,
-          activity: { is_working: false, last_turn_status: null },
+          activity: opts?.activity ?? { is_working: false, last_turn_status: null },
           unread: false,
         },
       ],
@@ -575,7 +588,7 @@ describe("sessionHeadPrefetch", () => {
     expect(bootstrapCache.get(sessionId)).toBeUndefined();
   });
 
-  it("publishes the compacted authoritative head to downstream consumers", async () => {
+  it("caches compacted heads but publishes the fetched authoritative head to downstream consumers", async () => {
     const sessionId = "session-1";
     const snapshot = makeSnapshot(sessionId, { lastEventSeq: 8 });
     getSessionHeadMock.mockResolvedValue(makeHead(sessionId, { turnCount: 8, lastEventSeq: 8 }));
@@ -593,8 +606,56 @@ describe("sessionHeadPrefetch", () => {
     expect(changed).toBe(true);
     expect(bootstrapCache.get(sessionId)?.turns).toHaveLength(5);
     const publishedHead = onHead.mock.calls[0]?.[1] as SessionHeadSnapshot | undefined;
-    expect(publishedHead?.turns).toHaveLength(5);
-    expect(publishedHead?.messages).toHaveLength(5);
+    expect(publishedHead?.turns).toHaveLength(8);
+    expect(publishedHead?.messages).toHaveLength(8);
+  });
+
+  it("publishes fetched authoritative heads even when the bootstrap cache is already current", async () => {
+    const sessionId = "session-1";
+    const snapshot = makeSnapshot(sessionId, { lastEventSeq: 8 });
+    const authoritativeHead = makeHead(sessionId, { turnCount: 3, lastEventSeq: 8 });
+    getSessionHeadMock.mockResolvedValue(authoritativeHead);
+    const bootstrapCache = new SessionHeadBootstrapCache();
+    bootstrapCache.upsert(authoritativeHead);
+    const onHead = vi.fn();
+    const store = {
+      getSessionHeadSnapshot: vi.fn(() => null),
+      getSessionHeadsSnapshot: vi.fn(() => ({})),
+    };
+
+    const changed = await primeAuthoritativeSessionHeads(snapshot, store, bootstrapCache, [sessionId], {
+      force: true,
+      onHead,
+    });
+
+    expect(changed).toBe(true);
+    expect(getSessionHeadMock).toHaveBeenCalledTimes(1);
+    expect(onHead).toHaveBeenCalledWith(
+      sessionId,
+      expect.objectContaining({ last_event_seq: 8 }),
+    );
+  });
+
+  it("prefetches an authoritative head when the direct head cursor matches but activity is stale", async () => {
+    const sessionId = "session-1";
+    const snapshot = makeSnapshot(sessionId, { lastEventSeq: 8 });
+    const directHead = {
+      ...makeHead(sessionId, { turnCount: 1, lastEventSeq: 8, turnStatus: "running" }),
+      activity: { is_working: true, last_turn_status: "running" },
+    } satisfies SessionHeadSnapshot;
+    const authoritativeHead = makeHead(sessionId, { turnCount: 1, lastEventSeq: 8 });
+    getSessionHeadMock.mockResolvedValue(authoritativeHead);
+    const bootstrapCache = new SessionHeadBootstrapCache();
+    const store = {
+      getSessionHeadSnapshot: vi.fn(() => directHead),
+      getSessionHeadsSnapshot: vi.fn(() => ({ [sessionId]: directHead })),
+    };
+
+    const changed = await primeAuthoritativeSessionHeads(snapshot, store, bootstrapCache, [sessionId]);
+
+    expect(changed).toBe(true);
+    expect(getSessionHeadMock).toHaveBeenCalledTimes(1);
+    expect(bootstrapCache.get(sessionId)?.last_event_seq).toBe(8);
   });
 
   it("does not prefetch an authoritative head when the direct head already satisfies the summary", async () => {
@@ -611,6 +672,58 @@ describe("sessionHeadPrefetch", () => {
 
     expect(changed).toBe(false);
     expect(getSessionHeadMock).not.toHaveBeenCalled();
+  });
+
+  it("force-prefetches an authoritative head even when the direct head satisfies the summary", async () => {
+    const sessionId = "session-1";
+    const snapshot = makeSnapshot(sessionId, { lastEventSeq: 2 });
+    const directHead = makeHead(sessionId, { turnCount: 1, lastEventSeq: 2 });
+    const authoritativeHead = makeHead(sessionId, { turnCount: 2, lastEventSeq: 3 });
+    getSessionHeadMock.mockResolvedValue(authoritativeHead);
+    const bootstrapCache = new SessionHeadBootstrapCache();
+    const store = {
+      getSessionHeadSnapshot: vi.fn(() => directHead),
+      getSessionHeadsSnapshot: vi.fn(() => ({ [sessionId]: directHead })),
+    };
+
+    const changed = await primeAuthoritativeSessionHeads(snapshot, store, bootstrapCache, [sessionId], {
+      force: true,
+    });
+
+    expect(changed).toBe(true);
+    expect(getSessionHeadMock).toHaveBeenCalledTimes(1);
+    expect(bootstrapCache.get(sessionId)?.last_event_seq).toBe(3);
+  });
+
+  it("accepts a newer authoritative head when activity has advanced past a running summary", async () => {
+    const sessionId = "session-1";
+    const snapshot = makeSnapshot(sessionId, {
+      lastEventSeq: 3,
+      activity: { is_working: true, last_turn_status: "running" },
+    });
+    const directHead = {
+      ...makeHead(sessionId, { turnCount: 1, lastEventSeq: 3, turnStatus: "running" }),
+      activity: { is_working: true, last_turn_status: "running" },
+    } satisfies SessionHeadSnapshot;
+    const authoritativeHead = {
+      ...makeHead(sessionId, { turnCount: 2, lastEventSeq: 8, turnStatus: "completed" }),
+      activity: { is_working: false, last_turn_status: "completed" },
+    } satisfies SessionHeadSnapshot;
+    getSessionHeadMock.mockResolvedValue(authoritativeHead);
+    const bootstrapCache = new SessionHeadBootstrapCache();
+    const store = {
+      getSessionHeadSnapshot: vi.fn(() => directHead),
+      getSessionHeadsSnapshot: vi.fn(() => ({ [sessionId]: directHead })),
+    };
+
+    const changed = await primeAuthoritativeSessionHeads(snapshot, store, bootstrapCache, [sessionId], {
+      force: true,
+    });
+
+    expect(changed).toBe(true);
+    expect(getSessionHeadMock).toHaveBeenCalledTimes(1);
+    expect(bootstrapCache.get(sessionId)?.last_event_seq).toBe(8);
+    expect(bootstrapCache.get(sessionId)?.activity?.last_turn_status).toBe("completed");
   });
 
   it("plans foreground targets before bounded warm targets", () => {

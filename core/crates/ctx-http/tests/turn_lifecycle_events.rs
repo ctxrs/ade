@@ -11,6 +11,12 @@ mod common;
 
 const LIFECYCLE_EVENT_TIMEOUT: Duration = Duration::from_secs(120);
 const STORAGE_GUARD_EMERGENCY_FREE_BYTES: u64 = 1024 * 1024 * 1024;
+const QUEUED_MESSAGES_ENABLED_ENV: &str = "CTX_QUEUED_MESSAGES_ENABLED";
+
+fn enable_queued_messages_for_test_binary() {
+    static ENABLE: std::sync::Once = std::sync::Once::new();
+    ENABLE.call_once(|| std::env::set_var(QUEUED_MESSAGES_ENABLED_ENV, "1"));
+}
 
 fn storage_guard_would_trip(repo_path: &Path, data_root: &Path) -> bool {
     [
@@ -27,6 +33,7 @@ fn storage_guard_would_trip(repo_path: &Path, data_root: &Path) -> bool {
 
 #[tokio::test]
 async fn queued_message_emits_lifecycle_events_in_order_with_interrupt() {
+    enable_queued_messages_for_test_binary();
     let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
     let data_dir = tempfile::tempdir().unwrap();
     if storage_guard_would_trip(repo.path(), data_dir.path()) {
@@ -168,6 +175,7 @@ async fn queued_message_emits_lifecycle_events_in_order_with_interrupt() {
 
 #[tokio::test]
 async fn cancel_promotes_next_queued_turn_after_interrupted_finish() {
+    enable_queued_messages_for_test_binary();
     let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
     let data_dir = tempfile::tempdir().unwrap();
     if storage_guard_would_trip(repo.path(), data_dir.path()) {
@@ -286,6 +294,7 @@ async fn cancel_promotes_next_queued_turn_after_interrupted_finish() {
 
 #[tokio::test]
 async fn cancel_promotes_queued_turns_in_fifo_order_across_multiple_cancels() {
+    enable_queued_messages_for_test_binary();
     let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
     let data_dir = tempfile::tempdir().unwrap();
     if storage_guard_would_trip(repo.path(), data_dir.path()) {

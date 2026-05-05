@@ -32,6 +32,13 @@ export const isBoundedSessionHead = (
     head.head_window?.byte_limit,
   ].some((limit) => typeof limit === "number" && limit > 0);
 
+export const isPartialSessionHead = (
+  head: Pick<SessionHead | SessionHeadSnapshot, "head_window"> &
+    Partial<Pick<SessionHead | SessionHeadSnapshot, "has_more_turns" | "has_more_history">>,
+): boolean =>
+  Boolean(head.head_window?.truncated) ||
+  Boolean(head.has_more_turns);
+
 const coversTurns = (
   entry: TranscriptCoverageEntry,
   head: Pick<SessionHead | SessionHeadSnapshot, "turns">,

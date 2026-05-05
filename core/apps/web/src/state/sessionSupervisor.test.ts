@@ -2588,7 +2588,7 @@ describe("SessionSupervisor", () => {
     expect(sup.getSnapshot().sessions[sessionId]?.turns).toHaveLength(2);
   });
 
-  it("does not repair an already-open active transcript from workspace session heads", async () => {
+  it("repair-replaces an already-open stale active transcript from workspace session heads", async () => {
     const { SessionSupervisor } = await import("./sessionSupervisor");
 
     const sessionId = "session-open-stale-repair";
@@ -2677,8 +2677,10 @@ describe("SessionSupervisor", () => {
 
     const entry = sup.getSnapshot().sessions[sessionId];
     expect(entry?.freshness).toBe("replica");
-    expect(entry?.messages.map((message) => message.id)).toEqual([staleMessage.id]);
-    expect(entry?.turns.map((turn) => turn.turn_id)).toEqual(["turn-stale"]);
+    expect(entry?.messages.map((message) => message.id)).toEqual(["m-fresh-1", "m-fresh-2"]);
+    expect(entry?.turns.map((turn) => turn.turn_id)).toEqual(["turn-fresh-1", "turn-fresh-2"]);
+    expect(entry?.lastEventSeq).toBe(20);
+    expect(entry?.projectionRev).toBe(7);
   });
 
   it("repairs a newly promoted active session from a fresher workspace head", async () => {

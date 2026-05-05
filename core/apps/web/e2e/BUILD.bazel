@@ -34,6 +34,13 @@ web_e2e_test(
 )
 
 web_e2e_test(
+    name = "golden",
+    config = "playwright.premerge.config.ts",
+    runtime_profile = "agent-full",
+    specs = ["e2e/golden.spec.ts"],
+)
+
+web_e2e_test(
     name = "pretext_wrap_rules",
     config = "playwright.pretext-parity.config.ts",
     runtime_profile = "agent-full",

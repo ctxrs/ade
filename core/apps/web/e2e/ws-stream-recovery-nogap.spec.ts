@@ -1,5 +1,8 @@
 import { test, expect } from "./fixtures";
-import { seedDummyWorkspace } from "./utils/seedDummyWorkspace";
+import {
+  postImmediateMessageAndWaitForCompletion,
+  seedDummyWorkspace,
+} from "./utils/seedDummyWorkspace";
 
 type E2EWindow = Window & {
   __ctxE2E?: {
@@ -22,6 +25,7 @@ test("ws: recovery keeps all streamed messages across tasks", async ({ page, req
     turnsPerSession: 2,
     throttleMs: 2,
     includeToolSummaries: false,
+    seedTranscriptDirect: true,
   });
 
   await page.goto(`/workspaces/${seed.workspaceId}?ctxE2E=1`, { waitUntil: "domcontentloaded" });
@@ -54,13 +58,7 @@ test("ws: recovery keeps all streamed messages across tasks", async ({ page, req
     const sessionId = sessionIds[sessionIndex];
     for (let messageIndex = 0; messageIndex < perSession; messageIndex += 1) {
       const marker = `gap-${sessionIndex + 1}-${messageIndex + 1}`;
-      const response = await request.post(`/api/sessions/${sessionId}/messages`, {
-        data: {
-          content: marker,
-          delivery: "immediate",
-        },
-      });
-      expect(response.ok()).toBe(true);
+      await postImmediateMessageAndWaitForCompletion(request, sessionId, marker);
     }
   }
 

@@ -31,6 +31,7 @@ type PrefetchControlOptions = {
   shouldContinue?: () => boolean;
   getSnapshot?: () => WorkspaceActiveSnapshotState;
   shouldRetainSessionId?: (sessionId: string) => boolean;
+  force?: boolean;
 };
 
 export type SessionHeadPrefetchTargetPlan = {
@@ -293,11 +294,11 @@ export const primeAuthoritativeSessionHeads = async (
         if (opts?.shouldRetainSessionId && !opts.shouldRetainSessionId(sessionId)) return;
         const summary = findSessionSummary(snapshot, sessionId);
         const directHead = batchHeads[sessionId] ?? store.getSessionHeadSnapshot(sessionId);
-        if (isSessionHeadCompatibleWithSummary(summary, directHead)) {
+        if (!opts?.force && isSessionHeadCompatibleWithSummary(summary, directHead)) {
           return;
         }
         const bootstrapHead = bootstrapCache.get(sessionId);
-        if (isSessionHeadCompatibleWithSummary(summary, bootstrapHead)) {
+        if (!opts?.force && isSessionHeadCompatibleWithSummary(summary, bootstrapHead)) {
           return;
         }
         const versionKey = buildPrefetchVersionKey(summary, sessionId);
@@ -318,11 +319,9 @@ export const primeAuthoritativeSessionHeads = async (
           if (!fetchSucceeded) return;
           const didChange = bootstrapCache.upsert(head);
           if (didChange) {
-            const cachedHead = bootstrapCache.get(sessionId);
-            if (!cachedHead) return;
             changed = true;
-            opts?.onHead?.(sessionId, cachedHead);
           }
+          opts?.onHead?.(sessionId, head);
           return;
         } finally {
           lease.finish(fetchSucceeded);

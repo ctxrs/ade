@@ -3,6 +3,7 @@ import type {
   SessionHeadSnapshot,
   SessionSnapshotSummary,
   SessionSummary,
+  SessionTurnStatus,
   Task,
   WorkspaceActiveSnapshotSessionSummaryDelta,
 } from "@ctx/types";
@@ -18,6 +19,34 @@ type SessionSummaryVersion = {
 
 const readVersionNumber = (value: number | null | undefined): number | null =>
   typeof value === "number" && Number.isFinite(value) ? value : null;
+
+const WORKING_TURN_STATUSES = new Set<SessionTurnStatus>(["queued", "starting", "running"]);
+
+const isWorkingTurnStatus = (status: SessionTurnStatus | null | undefined): boolean =>
+  status ? WORKING_TURN_STATUSES.has(status) : false;
+
+const isSessionHeadActivityCompatible = (
+  summary: SessionSnapshotSummary,
+  head: SessionHeadSnapshot,
+): boolean => {
+  const summaryActivity = summary.activity ?? null;
+  if (!summaryActivity) return true;
+  const latestHeadTurnStatus = (head.turns ?? []).at(-1)?.status ?? null;
+  const headActivity = head.activity ?? null;
+  const headStatus = headActivity?.last_turn_status ?? latestHeadTurnStatus;
+  const headWorking =
+    typeof headActivity?.is_working === "boolean"
+      ? headActivity.is_working
+      : isWorkingTurnStatus(latestHeadTurnStatus);
+  if (!summaryActivity.is_working && headWorking) {
+    return false;
+  }
+  const summaryStatus = summaryActivity.last_turn_status ?? null;
+  if (summaryStatus && headStatus && summaryStatus !== headStatus) {
+    return false;
+  }
+  return true;
+};
 
 const hasSessionSummaryVersion = (value: SessionSummaryVersion): boolean =>
   value.lastEventSeq !== null || value.projectionRev !== null || value.stateRev !== null;
@@ -242,6 +271,8 @@ export function isSessionHeadCompatibleWithSummary(
     typeof summary.projection_rev === "number" ? summary.projection_rev : null;
   const headProjectionRev =
     typeof head.projection_rev === "number" ? head.projection_rev : null;
+  const summaryStateRev = typeof summary.state_rev === "number" ? summary.state_rev : null;
+  const headStateRev = typeof head.state_rev === "number" ? head.state_rev : null;
   if (
     summaryProjectionRev !== null &&
     headProjectionRev !== null &&
@@ -256,6 +287,23 @@ export function isSessionHeadCompatibleWithSummary(
     summaryLastEventSeq !== null &&
     (headLastEventSeq === null || headLastEventSeq < summaryLastEventSeq)
   ) {
+    return false;
+  }
+
+  const headIsNewerThanSummary =
+    compareSessionSummaryVersion(
+      {
+        lastEventSeq: headLastEventSeq,
+        projectionRev: headProjectionRev,
+        stateRev: headStateRev,
+      },
+      {
+        lastEventSeq: summaryLastEventSeq,
+        projectionRev: summaryProjectionRev,
+        stateRev: summaryStateRev,
+      },
+    ) > 0;
+  if (!headIsNewerThanSummary && !isSessionHeadActivityCompatible(summary, head)) {
     return false;
   }
 

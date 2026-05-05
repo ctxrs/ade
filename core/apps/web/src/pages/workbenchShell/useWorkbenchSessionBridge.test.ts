@@ -66,7 +66,7 @@ const makeSnapshot = (sessionIds: readonly string[]): WorkspaceActiveSnapshotSta
 });
 
 describe("deriveRetainedPrefetchSessionIds", () => {
-  it("drops a non-archived foreground session once it disappears from the snapshot", () => {
+  it("retains a foreground session before the snapshot includes its summary", () => {
     const snapshot = makeSnapshot(["session-2"]);
 
     const retainedSessionIds = deriveRetainedPrefetchSessionIds({
@@ -75,11 +75,11 @@ describe("deriveRetainedPrefetchSessionIds", () => {
       taskArchived: false,
     });
 
-    expect(retainedSessionIds).not.toContain("session-1");
+    expect(retainedSessionIds[0]).toBe("session-1");
     expect(retainedSessionIds).toContain("session-2");
   });
 
-  it("keeps an archived foreground session even when it is off-snapshot", () => {
+  it("keeps an archived foreground session before the snapshot includes its summary", () => {
     const snapshot = makeSnapshot(["session-2"]);
 
     const retainedSessionIds = deriveRetainedPrefetchSessionIds({

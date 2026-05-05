@@ -24,6 +24,16 @@ import {
   useWorkbenchTaskActivity,
 } from "./useWorkbenchTaskActivity";
 
+const getSessionHeadMock = vi.hoisted(() => vi.fn());
+
+vi.mock("../../api/clientSessions", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../api/clientSessions")>();
+  return {
+    ...actual,
+    getSessionHead: (...args: unknown[]) => getSessionHeadMock(...args),
+  };
+});
+
 const now = "2026-03-09T00:00:00.000Z";
 
 const makeSession = (
@@ -237,6 +247,8 @@ function renderHarness(props: HarnessProps) {
 
 beforeEach(() => {
   window.localStorage.clear();
+  getSessionHeadMock.mockReset();
+  getSessionHeadMock.mockResolvedValue(null);
   setDocumentForeground({ focused: true, visibility: "visible" });
 });
 
@@ -1408,6 +1420,168 @@ describe("useWorkbenchTaskActivity", () => {
     } finally {
       window.removeEventListener(WORKBENCH_TASK_IDLE_EVENT, onIdle as EventListener);
     }
+  });
+
+  it("hydrates retained foreground heads before the workspace snapshot gains the session summary", async () => {
+    const activeSession = makeSession("session-1", "task-1", "active");
+    const taskSummary = makeTaskSummary({
+      taskId: "task-1",
+      primarySessionId: "session-1",
+      sessions: [
+        makeSessionSummary(activeSession, {
+          last_event_seq: 8,
+          state_rev: 8,
+          last_message_preview: "done",
+          activity: { is_working: false, last_turn_status: "completed" },
+        }),
+      ],
+    });
+    const initialSnapshot = makeWorkspaceSnapshot({}, []);
+    let currentSnapshot = initialSnapshot;
+    let storeListener: (() => void) | null = null;
+    const authoritativeHead: SessionHeadSnapshot = {
+      session: activeSession,
+      turns: [],
+      events: [],
+      messages: [
+        {
+          id: "assistant-1",
+          session_id: "session-1",
+          task_id: "task-1",
+          role: "assistant",
+          content: "done",
+          delivery: "immediate",
+          created_at: now,
+          updated_at: now,
+        },
+      ],
+      last_event_seq: 8,
+      state_rev: 8,
+      has_more_turns: false,
+      has_more_history: false,
+      history_cursor: null,
+    };
+    getSessionHeadMock.mockResolvedValue(authoritativeHead);
+    const supervisor = makeSupervisor();
+    const workspaceSnapshotStore = {
+      subscribe: vi.fn((listener: () => void) => {
+        storeListener = listener;
+        return () => {};
+      }),
+      subscribeEvents: vi.fn(() => () => {}),
+      getSnapshot: vi.fn(() => currentSnapshot),
+      getSessionHeadSnapshot: vi.fn(() => null),
+      getSessionHeadsSnapshot: vi.fn(() => ({})),
+      setSubscribedSessions: vi.fn(),
+      setForegroundSessionId: vi.fn(),
+    };
+
+    renderHarness({
+      activeTaskId: "task-1",
+      activeSessionIdFromTab: null,
+      activeTaskSummary: taskSummary,
+      tasksById: { "task-1": taskSummary },
+      workspaceSnapshot: initialSnapshot,
+      sessionSnap: makeSessionSnapshot({
+        "session-1": makeSessionEntry({ session: activeSession }),
+      }),
+      optimisticTasks: [] satisfies OptimisticTaskSummary[],
+      optimisticTasksById: {},
+      supervisor,
+      workbenchStore: makeWorkbenchStore("task-1"),
+      workspaceSnapshotStore,
+      markTaskRead: vi.fn(async () => {}),
+    });
+
+    await waitFor(() => {
+      expect(storeListener).toBeTypeOf("function");
+    });
+    await waitFor(() => {
+      expect(getSessionHeadMock).toHaveBeenCalledWith("session-1", expect.any(Number), true);
+      expect(supervisor.upsertWorkspaceSessionHead).toHaveBeenCalledWith(
+        "session-1",
+        expect.objectContaining({
+          session: expect.objectContaining({ id: "session-1" }),
+          last_event_seq: 8,
+          state_rev: 8,
+        }),
+      );
+    });
+  });
+
+  it("force-hydrates foreground heads even when the retained store head is version-compatible", async () => {
+    const activeSession = makeSession("session-1", "task-1", "active");
+    const taskSummary = makeTaskSummary({
+      taskId: "task-1",
+      primarySessionId: "session-1",
+      sessions: [
+        makeSessionSummary(activeSession, {
+          last_event_seq: 4,
+          state_rev: 4,
+          last_message_preview: "done",
+          activity: { is_working: false, last_turn_status: "completed" },
+        }),
+      ],
+    });
+    const snapshot = makeWorkspaceSnapshot({ "task-1": taskSummary }, ["task-1"]);
+    const directHead: SessionHeadSnapshot = {
+      session: activeSession,
+      turns: [],
+      events: [],
+      messages: [],
+      last_event_seq: 4,
+      state_rev: 4,
+      has_more_turns: false,
+      has_more_history: false,
+      history_cursor: null,
+    };
+    const authoritativeHead: SessionHeadSnapshot = {
+      ...directHead,
+      messages: [
+        {
+          id: "assistant-1",
+          session_id: "session-1",
+          task_id: "task-1",
+          role: "assistant",
+          content: "done",
+          delivery: "immediate",
+          created_at: now,
+          updated_at: now,
+        },
+      ],
+    };
+    getSessionHeadMock.mockResolvedValue(authoritativeHead);
+    const supervisor = makeSupervisor();
+    const workspaceSnapshotStore = {
+      subscribe: vi.fn(() => () => {}),
+      subscribeEvents: vi.fn(() => () => {}),
+      getSnapshot: vi.fn(() => snapshot),
+      getSessionHeadSnapshot: vi.fn(() => directHead),
+      getSessionHeadsSnapshot: vi.fn(() => ({ "session-1": directHead })),
+      setSubscribedSessions: vi.fn(),
+      setForegroundSessionId: vi.fn(),
+    };
+
+    renderHarness({
+      activeTaskId: "task-1",
+      activeSessionIdFromTab: null,
+      activeTaskSummary: taskSummary,
+      tasksById: { "task-1": taskSummary },
+      workspaceSnapshot: snapshot,
+      sessionSnap: makeSessionSnapshot({
+        "session-1": makeSessionEntry({ session: activeSession }),
+      }),
+      optimisticTasks: [] satisfies OptimisticTaskSummary[],
+      optimisticTasksById: {},
+      supervisor,
+      workbenchStore: makeWorkbenchStore("task-1"),
+      workspaceSnapshotStore,
+      markTaskRead: vi.fn(async () => {}),
+    });
+
+    await waitFor(() => {
+      expect(getSessionHeadMock).toHaveBeenCalledWith("session-1", expect.any(Number), true);
+    });
   });
 
   it("falls back to single-head workspace snapshots when the batch getter is unavailable", async () => {

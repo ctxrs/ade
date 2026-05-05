@@ -160,6 +160,14 @@ async fn should_drop_post_terminal_event(
     }
 }
 
+fn should_process_post_terminal_assistant_complete(
+    event_type: &SessionEventType,
+    terminal_status: Option<&SessionTurnStatus>,
+) -> bool {
+    matches!(event_type, SessionEventType::AssistantComplete)
+        && matches!(terminal_status, Some(SessionTurnStatus::Completed))
+}
+
 pub(super) fn spawn_turn_event_loop(ctx: TurnEventLoop) {
     tokio::spawn(async move {
         run_turn_event_loop(ctx).await;
@@ -268,9 +276,19 @@ async fn run_turn_event_loop(mut ctx: TurnEventLoop) {
             }
         }
 
-        if runtime.terminal_status.is_some()
-            || (should_check_store_terminal_status(&event_type)
-                && should_drop_post_terminal_event(&ctx, &mut runtime).await)
+        let allow_post_terminal_assistant_complete =
+            should_process_post_terminal_assistant_complete(
+                &event_type,
+                runtime.terminal_status.as_ref(),
+            );
+        let dropped_by_store_terminal_status = should_check_store_terminal_status(&event_type)
+            && should_drop_post_terminal_event(&ctx, &mut runtime).await
+            && !should_process_post_terminal_assistant_complete(
+                &event_type,
+                runtime.terminal_status.as_ref(),
+            );
+        if (runtime.terminal_status.is_some() && !allow_post_terminal_assistant_complete)
+            || dropped_by_store_terminal_status
         {
             tracing::debug!(
                 session_id = %ctx.session_id.0,
