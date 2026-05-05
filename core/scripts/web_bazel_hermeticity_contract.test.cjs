@@ -5,6 +5,10 @@ const test = require("node:test");
 
 const repoRoot = path.resolve(__dirname, "..", "..");
 const moduleFile = fs.readFileSync(path.join(repoRoot, "MODULE.bazel"), "utf8");
+const playwrightRuntimeLock = fs.readFileSync(
+  path.join(repoRoot, "tools", "bazel", "playwright_browser_runtime_lock.generated.bzl"),
+  "utf8",
+);
 const buildFile = fs.readFileSync(path.join(repoRoot, "core", "apps", "web", "BUILD.bazel"), "utf8");
 const e2eBuildFile = fs.readFileSync(path.join(repoRoot, "core", "apps", "web", "e2e", "BUILD.bazel"), "utf8");
 const e2eMacroFile = fs.readFileSync(path.join(repoRoot, "core", "apps", "web", "e2e", "web_e2e_test.bzl"), "utf8");
@@ -44,11 +48,12 @@ test("supported web validation targets do not use the non-hermetic workspace wra
 test("browser e2e targets route through the dedicated Bazel runtime instead of workspace wrappers", () => {
   assert.doesNotMatch(buildFile, /name = "e2e_(premerge|release|cross_platform|visual|soak|load)"/u);
   assert.match(e2eMacroFile, /srcs = \["\/\/core\/apps\/web:scripts\/run-e2e-bazel-runtime\.sh"\]/u);
-  assert.match(e2eMacroFile, /--playwright-browsers-dir/u);
-  assert.match(e2eMacroFile, /\/\/core\/apps\/web:playwright_browsers_ubuntu24_04_x64/u);
-  assert.match(e2eMacroFile, /\/\/core\/apps\/web:playwright_browsers_mac15_arm64/u);
-  assert.match(e2eMacroFile, /"CTX_E2E_BROWSER": "chromium"/u);
-  assert.match(e2eMacroFile, /env = playwright_browser_env/u);
+  assert.match(e2eMacroFile, /--playwright-runtime-manifest/u);
+  assert.match(e2eMacroFile, /@playwright_browser_runtime_ubuntu24_04_x64\/\/:runtime_manifest\.json/u);
+  assert.match(e2eMacroFile, /@playwright_browser_runtime_ubuntu24_04_x64\/\/:runtime_trees/u);
+  assert.match(e2eMacroFile, /@playwright_browser_runtime_mac15_arm64\/\/:runtime_manifest\.json/u);
+  assert.match(e2eMacroFile, /@playwright_browser_runtime_mac15_arm64\/\/:runtime_trees/u);
+  assert.doesNotMatch(e2eMacroFile, /CTX_E2E_BROWSER/u);
   assert.match(e2eMacroFile, /tags = \[\s*"local",\s*"no-remote",\s*\]/u);
   for (const targetName of ["premerge_required", "release_required", "cross_platform", "visual", "soak", "load"]) {
     assert.match(e2eBuildFile, new RegExp(`name = "${targetName}"`));
@@ -67,28 +72,17 @@ test("rust crate universe is pinned to the checked-in Cargo lock for browser e2e
 });
 
 test("playwright browser runtimes are Bazel-owned inputs instead of ambient cache state", () => {
-  for (const [targetName, repoName] of [
-    ["playwright_browsers_mac15_arm64", "playwright_browser_runtime_mac15_arm64"],
-    ["playwright_browsers_ubuntu24_04_x64", "playwright_browser_runtime_ubuntu24_04_x64"],
-  ]) {
-    const block = targetBlock(targetName);
-    assert.ok(
-      block.includes(`@${repoName}//:runtime_manifest.json`),
-      `${targetName} should consume the Bazel-provided runtime manifest`,
-    );
-    assert.ok(
-      block.includes(`@${repoName}//:runtime_trees`),
-      `${targetName} should consume the Bazel-provided extracted runtime trees`,
-    );
-    assert.doesNotMatch(block, /run_workspace_task\.sh/u);
-    assert.doesNotMatch(block, /pnpm/u);
-    assert.match(block, /"ffmpeg"/u, `${targetName} should include Playwright ffmpeg for video capture`);
-    assert.match(
-      block,
-      /"chromium-headless-shell"/u,
-      `${targetName} should include Playwright's Chromium headless-shell package`,
-    );
-  }
+  assert.match(moduleFile, /playwright_browser_runtime_ubuntu24_04_x64/u);
+  assert.match(moduleFile, /playwright_browser_runtime_mac15_arm64/u);
+  assert.match(playwrightRuntimeLock, /"ffmpeg"/u);
+  assert.match(playwrightRuntimeLock, /"chromium-headless-shell"/u);
+  assert.match(e2eMacroFile, /@playwright_browser_runtime_ubuntu24_04_x64\/\/:runtime_manifest\.json/u);
+  assert.match(e2eMacroFile, /@playwright_browser_runtime_ubuntu24_04_x64\/\/:runtime_trees/u);
+  assert.match(e2eMacroFile, /@playwright_browser_runtime_mac15_arm64\/\/:runtime_manifest\.json/u);
+  assert.match(e2eMacroFile, /@playwright_browser_runtime_mac15_arm64\/\/:runtime_trees/u);
+  assert.doesNotMatch(e2eMacroFile, /PLAYWRIGHT_BROWSERS_PATH=.*ms-playwright/u);
+  assert.doesNotMatch(e2eMacroFile, /run_workspace_task\.sh/u);
+  assert.doesNotMatch(e2eMacroFile, /pnpm/u);
 });
 
 test("playwright runtime script tests use a dedicated node:test runner instead of app Vitest wiring", () => {

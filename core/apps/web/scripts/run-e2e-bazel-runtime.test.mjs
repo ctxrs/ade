@@ -16,6 +16,7 @@ import {
   resolveExistingPath,
   resolveLocalNodeBin,
   resolvePlaywrightBrowsersPath,
+  resolvePlaywrightBrowsersPathFromManifest,
   resolveRepoRoot,
 } from "./run-e2e-bazel-runtime.mjs";
 
@@ -46,6 +47,7 @@ describe("run-e2e-bazel-runtime", () => {
       ctxMcpBin: "",
       forwardedArgs: ["--list"],
       playwrightBrowsersDir: "playwright-browsers-ubuntu24.04-x64",
+      playwrightRuntimeManifest: "",
       runtimeProfile: "workbench-lite",
       specs: ["e2e/workbench-index.spec.ts"],
       suite: "",
@@ -68,6 +70,20 @@ describe("run-e2e-bazel-runtime", () => {
       "--spec",
       "e2e/workbench-index.spec.ts",
     ]), /requires --ctx-mcp-bin/u);
+    assert.throws(() => parseArgs([
+      "--config",
+      "playwright.premerge.config.ts",
+      "--runtime-profile",
+      "workbench-lite",
+      "--ctx-http-bin",
+      "ctx",
+      "--playwright-browsers-dir",
+      "playwright-browsers-ubuntu24.04-x64",
+      "--playwright-runtime-manifest",
+      "runtime_manifest.json",
+      "--spec",
+      "e2e/workbench-index.spec.ts",
+    ]), /not both/u);
   });
 
   it("does not expose the MCP-disabled flag as a test-author input", () => {
@@ -130,6 +146,41 @@ describe("run-e2e-bazel-runtime", () => {
       arch: "arm64",
       platform: "linux",
     }), /unsupported Bazel Playwright browser host platform/u);
+  });
+
+  it("resolves Bazel Playwright browsers directly from the locked runtime manifest", () => {
+    const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-web-e2e-runtime-manifest-"));
+    const hostRoot = path.join(runtimeRoot, "runtime_trees", "ubuntu24.04-x64");
+    fs.mkdirSync(path.join(hostRoot, "webkit-2227", "minibrowser-wpe", "lib"), { recursive: true });
+    fs.writeFileSync(path.join(hostRoot, "webkit-2227", "pw_run.sh"), "#!/bin/sh\n");
+    fs.writeFileSync(path.join(hostRoot, "webkit-2227", "minibrowser-wpe", "lib", "libWPEBackend-fdo-1.0.so.1.9.5"), "");
+    fs.symlinkSync(
+      "libWPEBackend-fdo-1.0.so.1.9.5",
+      path.join(hostRoot, "webkit-2227", "minibrowser-wpe", "lib", "libWPEBackend-fdo-1.0.so.1"),
+    );
+    const manifestPath = path.join(runtimeRoot, "runtime_manifest.json");
+    fs.writeFileSync(manifestPath, JSON.stringify({
+      platforms: {
+        "ubuntu24.04-x64": {
+          webkit: {
+            directory: "webkit-2227",
+            path: "runtime_trees/ubuntu24.04-x64/webkit-2227",
+          },
+        },
+      },
+    }));
+
+    const resolved = resolvePlaywrightBrowsersPathFromManifest(manifestPath, {
+      arch: "x64",
+      platform: "linux",
+    });
+
+    assert.equal(resolved, hostRoot);
+    assert.equal(
+      fs.lstatSync(path.join(resolved, "webkit-2227", "minibrowser-wpe", "lib", "libWPEBackend-fdo-1.0.so.1"))
+        .isSymbolicLink(),
+      true,
+    );
   });
 
   it("keeps package shims runnable under Bazel's sanitized PATH", () => {

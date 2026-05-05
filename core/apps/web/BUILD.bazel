@@ -3,7 +3,7 @@ load("@npm//core/apps/web:eslint/package_json.bzl", eslint_bin = "bin")
 load("@npm//core/apps/web:typescript/package_json.bzl", tsc_bin = "bin")
 load("@npm//core/apps/web:vite/package_json.bzl", vite_bin = "bin")
 load("@npm//core/apps/web:vitest/package_json.bzl", vitest_bin = "bin")
-load("@aspect_rules_js//js:defs.bzl", "js_binary", "js_run_binary", "js_test")
+load("@aspect_rules_js//js:defs.bzl", "js_run_binary", "js_test")
 load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
 
 package(default_visibility = ["//visibility:public"])
@@ -259,8 +259,6 @@ ANY_ENFORCE_DATA = WEB_SOURCES + [
 PLAYWRIGHT_RUNTIME_SCRIPT_TEST_DATA = [
     "scripts/generate-playwright-browser-lock.mjs",
     "scripts/generate-playwright-browser-lock.test.mjs",
-    "scripts/materialize-playwright-browsers.mjs",
-    "scripts/materialize-playwright-browsers.test.mjs",
     "scripts/run-e2e-bazel-runtime.mjs",
     "scripts/run-e2e-bazel-runtime.test.mjs",
     "scripts/run-node-test-suite.mjs",
@@ -587,67 +585,6 @@ filegroup(
     srcs = COMMON_DATA,
 )
 
-js_binary(
-    name = "materialize_playwright_browsers_bin",
-    entry_point = "scripts/materialize-playwright-browsers.mjs",
-)
-
-js_run_binary(
-    name = "playwright_browsers_mac15_arm64",
-    tool = ":materialize_playwright_browsers_bin",
-    args = [
-        "--out-dir",
-        "playwright-browsers-mac15-arm64",
-        "--runtime-manifest",
-        "$(execpath @playwright_browser_runtime_mac15_arm64//:runtime_manifest.json)",
-        "--browser",
-        "firefox",
-        "--browser",
-        "webkit",
-        "--browser",
-        "chromium",
-        "--browser",
-        "chromium-headless-shell",
-        "--browser",
-        "ffmpeg",
-    ],
-    out_dirs = ["playwright-browsers-mac15-arm64"],
-    srcs = [
-        "@playwright_browser_runtime_mac15_arm64//:runtime_trees",
-        "@playwright_browser_runtime_mac15_arm64//:runtime_manifest.json",
-    ],
-    copy_srcs_to_bin = False,
-    chdir = package_name(),
-)
-
-js_run_binary(
-    name = "playwright_browsers_ubuntu24_04_x64",
-    tool = ":materialize_playwright_browsers_bin",
-    args = [
-        "--out-dir",
-        "playwright-browsers-ubuntu24.04-x64",
-        "--runtime-manifest",
-        "$(execpath @playwright_browser_runtime_ubuntu24_04_x64//:runtime_manifest.json)",
-        "--browser",
-        "firefox",
-        "--browser",
-        "webkit",
-        "--browser",
-        "chromium",
-        "--browser",
-        "chromium-headless-shell",
-        "--browser",
-        "ffmpeg",
-    ],
-    out_dirs = ["playwright-browsers-ubuntu24.04-x64"],
-    srcs = [
-        "@playwright_browser_runtime_ubuntu24_04_x64//:runtime_trees",
-        "@playwright_browser_runtime_ubuntu24_04_x64//:runtime_manifest.json",
-    ],
-    copy_srcs_to_bin = False,
-    chdir = package_name(),
-)
-
 vite_bin.vite_binary(
     name = "vite_bin",
     data = HERMETIC_WEB_CHECK_DATA,
@@ -700,7 +637,6 @@ js_test(
     name = "playwright_runtime_script_tests",
     args = [
         "scripts/generate-playwright-browser-lock.test.mjs",
-        "scripts/materialize-playwright-browsers.test.mjs",
         "scripts/run-e2e-bazel-runtime.test.mjs",
     ],
     entry_point = "scripts/run-node-test-suite.mjs",

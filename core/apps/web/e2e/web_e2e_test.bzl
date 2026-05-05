@@ -12,12 +12,12 @@ def web_e2e_test(name, config, runtime_profile, suite = "", specs = None, timeou
     ]
     playwright_browser_args = select({
         "@platforms//os:linux": [
-            "--playwright-browsers-dir",
-            "$(location //core/apps/web:playwright_browsers_ubuntu24_04_x64)",
+            "--playwright-runtime-manifest",
+            "$(location @playwright_browser_runtime_ubuntu24_04_x64//:runtime_manifest.json)",
         ],
         "@platforms//os:macos": [
-            "--playwright-browsers-dir",
-            "$(location //core/apps/web:playwright_browsers_mac15_arm64)",
+            "--playwright-runtime-manifest",
+            "$(location @playwright_browser_runtime_mac15_arm64//:runtime_manifest.json)",
         ],
         "//conditions:default": [],
     })
@@ -27,13 +27,15 @@ def web_e2e_test(name, config, runtime_profile, suite = "", specs = None, timeou
         "//core/crates/ctx-http:ctx",
     ]
     playwright_browser_data = select({
-        "@platforms//os:linux": ["//core/apps/web:playwright_browsers_ubuntu24_04_x64"],
-        "@platforms//os:macos": ["//core/apps/web:playwright_browsers_mac15_arm64"],
+        "@platforms//os:linux": [
+            "@playwright_browser_runtime_ubuntu24_04_x64//:runtime_manifest.json",
+            "@playwright_browser_runtime_ubuntu24_04_x64//:runtime_trees",
+        ],
+        "@platforms//os:macos": [
+            "@playwright_browser_runtime_mac15_arm64//:runtime_manifest.json",
+            "@playwright_browser_runtime_mac15_arm64//:runtime_trees",
+        ],
         "//conditions:default": [],
-    })
-    playwright_browser_env = select({
-        "@platforms//os:linux": {"CTX_E2E_BROWSER": "chromium"},
-        "//conditions:default": {},
     })
     if runtime_profile == "agent-full":
         args.extend([
@@ -50,7 +52,6 @@ def web_e2e_test(name, config, runtime_profile, suite = "", specs = None, timeou
         srcs = ["//core/apps/web:scripts/run-e2e-bazel-runtime.sh"],
         args = args + playwright_browser_args,
         data = data + playwright_browser_data,
-        env = playwright_browser_env,
         tags = [
             "local",
             "no-remote",

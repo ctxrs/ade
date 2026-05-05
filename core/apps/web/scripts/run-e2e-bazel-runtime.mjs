@@ -24,7 +24,8 @@ const usage = () => [
   "  --config <playwright.config.ts> \\",
   "  --runtime-profile <workbench-lite|agent-full|web-artifact> \\",
   "  --ctx-http-bin <path> \\",
-  "  (--suite <suite>|--spec <e2e/spec.ts>) [--ctx-mcp-bin <path>] [-- <playwright args...>]",
+  "  (--suite <suite>|--spec <e2e/spec.ts>) [--ctx-mcp-bin <path>] \\",
+  "  [--playwright-browsers-dir <path>|--playwright-runtime-manifest <path>] [-- <playwright args...>]",
 ].join("\n");
 
 export const normalizeSpec = (value) => {
@@ -47,6 +48,7 @@ export const parseArgs = (argv) => {
     ctxMcpBin: "",
     forwardedArgs: [],
     playwrightBrowsersDir: "",
+    playwrightRuntimeManifest: "",
     runtimeProfile: "",
     specs: [],
     suite: "",
@@ -70,6 +72,9 @@ export const parseArgs = (argv) => {
         break;
       case "--playwright-browsers-dir":
         parsed.playwrightBrowsersDir = String(args.shift() || "").trim();
+        break;
+      case "--playwright-runtime-manifest":
+        parsed.playwrightRuntimeManifest = String(args.shift() || "").trim();
         break;
       case "--runtime-profile":
         parsed.runtimeProfile = String(args.shift() || "").trim();
@@ -95,6 +100,9 @@ export const parseArgs = (argv) => {
   }
   if (!parsed.ctxHttpBin) {
     throw new Error("missing --ctx-http-bin");
+  }
+  if (parsed.playwrightBrowsersDir && parsed.playwrightRuntimeManifest) {
+    throw new Error("use --playwright-browsers-dir or --playwright-runtime-manifest, not both");
   }
   if (parsed.runtimeProfile === "agent-full" && !parsed.ctxMcpBin) {
     throw new Error("agent-full web E2E runtime requires --ctx-mcp-bin");
@@ -441,6 +449,55 @@ export const resolvePlaywrightBrowsersPath = (
   return root;
 };
 
+export const resolvePlaywrightBrowsersPathFromManifest = (
+  configured,
+  { platform = process.platform, arch = process.arch } = {},
+) => {
+  const raw = String(configured || "").trim();
+  if (!raw) {
+    throw new Error("missing Playwright browser runtime manifest path");
+  }
+  const manifestPath = path.resolve(raw);
+  if (!fs.existsSync(manifestPath)) {
+    throw new Error(`declared Playwright browser runtime manifest does not exist: ${configured}`);
+  }
+  const manifest = readJsonFile(manifestPath);
+  const hostPlatform = playwrightHostPlatform({ platform, arch });
+  const platformEntries = manifest?.platforms?.[hostPlatform];
+  if (!platformEntries || typeof platformEntries !== "object" || Array.isArray(platformEntries)) {
+    throw new Error(`Playwright runtime manifest does not include host platform: ${hostPlatform}`);
+  }
+  const manifestDir = path.dirname(manifestPath);
+  let hostRoot = "";
+  for (const [browserName, entry] of Object.entries(platformEntries)) {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      throw new Error(`invalid Playwright runtime manifest entry for ${browserName} on ${hostPlatform}`);
+    }
+    const directory = String(entry.directory || "").trim();
+    const runtimePath = String(entry.path || "").trim();
+    if (!directory || !runtimePath) {
+      throw new Error(`invalid Playwright runtime manifest entry for ${browserName} on ${hostPlatform}`);
+    }
+    const browserRoot = path.resolve(manifestDir, runtimePath);
+    if (!fs.existsSync(browserRoot) || !fs.statSync(browserRoot).isDirectory()) {
+      throw new Error(`missing Playwright runtime tree for ${browserName} on ${hostPlatform}: ${browserRoot}`);
+    }
+    if (path.basename(browserRoot) !== directory) {
+      throw new Error(`Playwright runtime manifest directory mismatch for ${browserName} on ${hostPlatform}`);
+    }
+    const candidateHostRoot = path.dirname(browserRoot);
+    if (!hostRoot) {
+      hostRoot = candidateHostRoot;
+    } else if (hostRoot !== candidateHostRoot) {
+      throw new Error(`Playwright runtime manifest has inconsistent roots for ${hostPlatform}`);
+    }
+  }
+  if (!hostRoot) {
+    throw new Error(`Playwright runtime manifest has no browser entries for ${hostPlatform}`);
+  }
+  return hostRoot;
+};
+
 export const buildPlaywrightEnv = ({
   ctxHttpBin,
   ctxMcpBin = "",
@@ -510,6 +567,10 @@ export const runBazelRuntimeE2E = (argv, env = process.env) => {
     ? resolvePlaywrightBrowsersPath(
       resolveExistingPath(options.playwrightBrowsersDir, { env, repoRoot: sourceRepoRoot }),
     )
+    : options.playwrightRuntimeManifest
+      ? resolvePlaywrightBrowsersPathFromManifest(
+        resolveExistingPath(options.playwrightRuntimeManifest, { env, repoRoot: sourceRepoRoot }),
+      )
     : "";
   const specs = resolveSpecs(webRoot, options);
   const viteBin = resolveLocalNodeBin(webRoot, "vite");
