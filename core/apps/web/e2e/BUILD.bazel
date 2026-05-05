@@ -68,6 +68,7 @@ web_e2e_test(
 web_e2e_test(
     name = "premerge_required",
     config = "playwright.premerge.config.ts",
+    linux_browser = "chromium",
     runtime_profile = "agent-full",
     suite = "premerge_required",
     timeout = "eternal",

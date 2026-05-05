@@ -53,12 +53,14 @@ test("browser e2e targets route through the dedicated Bazel runtime instead of w
   assert.match(e2eMacroFile, /@playwright_browser_runtime_ubuntu24_04_x64\/\/:runtime_trees/u);
   assert.match(e2eMacroFile, /@playwright_browser_runtime_mac15_arm64\/\/:runtime_manifest\.json/u);
   assert.match(e2eMacroFile, /@playwright_browser_runtime_mac15_arm64\/\/:runtime_trees/u);
-  assert.doesNotMatch(e2eMacroFile, /CTX_E2E_BROWSER/u);
+  assert.match(e2eMacroFile, /linux_browser = ""/u);
+  assert.match(e2eMacroFile, /"CTX_E2E_BROWSER": linux_browser/u);
   assert.match(e2eMacroFile, /tags = \[\s*"local",\s*"no-remote",\s*\]/u);
   for (const targetName of ["premerge_required", "release_required", "cross_platform", "visual", "soak", "load"]) {
     assert.match(e2eBuildFile, new RegExp(`name = "${targetName}"`));
   }
   assert.doesNotMatch(e2eBuildFile, /run_workspace_task\.sh/u);
+  assert.match(e2eBuildFile, /name = "premerge_required"[\s\S]*?linux_browser = "chromium"/u);
 });
 
 test("rust crate universe is pinned to the checked-in Cargo lock for browser e2e analysis", () => {
