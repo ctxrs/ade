@@ -83,10 +83,12 @@ test("remote daemon container build command creates /out before install", () => 
       buildId: "deadbeef",
       compatibilityToken: "artifact-deadbeef",
     },
+    hostOs: "linux",
   });
 
   assert.equal(spawnCmd, "docker");
   assert.match(args.join(" "), /mkdir -p \/out;/);
+  assert.match(args.join(" "), new RegExp(`--user ${process.getuid()}:${process.getgid()}`));
   assert.match(args.join(" "), /rustup toolchain install stable --profile minimal --no-self-update/);
   assert.match(args.join(" "), /rustup target add --toolchain stable x86_64-unknown-linux-gnu/);
   assert.match(args.join(" "), /cargo \+stable build --manifest-path \/src\/Cargo\.toml -p ctx-http --release --target x86_64-unknown-linux-gnu/);
@@ -126,10 +128,12 @@ test("linux ctx-mcp container build command stages runtime into bundle tree", ()
       buildId: "deadbeef",
       compatibilityToken: "artifact-deadbeef",
     },
+    hostOs: "linux",
   });
 
   assert.equal(spawnCmd, "docker");
   assert.match(args.join(" "), /mkdir -p \/out;/);
+  assert.match(args.join(" "), new RegExp(`--user ${process.getuid()}:${process.getgid()}`));
   assert.match(args.join(" "), /-p ctx-mcp/);
   assert.match(args.join(" "), /rustup toolchain install stable --profile minimal --no-self-update/);
   assert.match(args.join(" "), /rustup target add --toolchain stable aarch64-unknown-linux-gnu/);
@@ -202,13 +206,27 @@ test("container cache dirs on macOS are made world-writable for docker bind moun
   fs.rmSync(tempRoot, { recursive: true, force: true });
 });
 
+test("linux container builds run as the host uid and gid", () => {
+  assert.deepEqual(
+    __desktopSyncResourcesTestHooks.containerHostUserArgs("linux"),
+    ["--user", `${process.getuid()}:${process.getgid()}`],
+  );
+});
+
+test("macOS container builds keep default docker user mapping", () => {
+  assert.deepEqual(
+    __desktopSyncResourcesTestHooks.containerHostUserArgs("macos"),
+    [],
+  );
+});
+
 test("remote daemon output mount dirs on macOS are made world-writable for docker bind mounts", () => {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "desktop-sync-test-"));
   const daemonsDir = path.join(tempRoot, "daemons");
   fs.mkdirSync(daemonsDir, { recursive: true });
   fs.chmodSync(daemonsDir, 0o755);
 
-  __desktopSyncResourcesTestHooks.buildRemoteDaemonContainerArgs({
+  const [, args] = __desktopSyncResourcesTestHooks.buildRemoteDaemonContainerArgs({
     runtime: "docker",
     builderImage: "rust:test",
     coreDir: "/src-host",
@@ -226,6 +244,7 @@ test("remote daemon output mount dirs on macOS are made world-writable for docke
 
   const mode = fs.statSync(daemonsDir).mode & 0o777;
   assert.equal(mode, 0o777);
+  assert.doesNotMatch(args.join(" "), /--user /);
 
   fs.rmSync(tempRoot, { recursive: true, force: true });
 });
@@ -239,7 +258,7 @@ test("linux ctx-mcp output mount dirs on macOS are made world-writable for docke
   fs.mkdirSync(runtimeBundleDir, { recursive: true });
   fs.chmodSync(runtimeBundleDir, 0o755);
 
-  __desktopSyncResourcesTestHooks.buildLinuxCtxMcpContainerArgs({
+  const [, args] = __desktopSyncResourcesTestHooks.buildLinuxCtxMcpContainerArgs({
     runtime: "docker",
     builderImage: "rust:test",
     coreDir: "/src-host",
@@ -260,6 +279,7 @@ test("linux ctx-mcp output mount dirs on macOS are made world-writable for docke
   assert.equal(rootMode, 0o777);
   const nestedMode = fs.statSync(runtimeBundleDir).mode & 0o777;
   assert.equal(nestedMode, 0o777);
+  assert.doesNotMatch(args.join(" "), /--user /);
 
   fs.rmSync(tempRoot, { recursive: true, force: true });
 });

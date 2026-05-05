@@ -131,6 +131,16 @@ const ensureContainerCacheDir = (dir, hostOs = hostManifestOs) => {
   return dir;
 };
 
+const containerHostUserArgs = (hostOs = hostManifestOs) => {
+  if (hostOs === "macos") {
+    return [];
+  }
+  if (typeof process.getuid !== "function" || typeof process.getgid !== "function") {
+    throw new Error("containerized Linux bundle builds require host uid/gid support");
+  }
+  return ["--user", `${process.getuid()}:${process.getgid()}`];
+};
+
 const parseAvfLinuxGuestRuntimeVersion = (raw) => {
   const text = String(raw || "");
   if (!text.trim()) return "";
@@ -776,6 +786,7 @@ const buildRemoteDaemonContainerArgs = ({
       "--rm",
       "--platform",
       target.platform,
+      ...containerHostUserArgs(hostOs),
       "-v",
       `${coreDir}:/src`,
       "-v",
@@ -874,6 +885,7 @@ const buildLinuxCtxMcpContainerArgs = ({
       "--rm",
       "--platform",
       target.platform,
+      ...containerHostUserArgs(hostOs),
       "-v",
       `${coreDir}:/src`,
       "-v",
@@ -1678,6 +1690,7 @@ if (require.main === module) {
       writeArtifactIdentity,
       ensureCargoBinOnPath,
       ensureContainerCacheDir,
+      containerHostUserArgs,
     },
     copySidecarBinary,
     parseAvfLinuxGuestRuntimeVersion,
