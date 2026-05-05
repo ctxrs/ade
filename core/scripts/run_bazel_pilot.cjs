@@ -753,12 +753,22 @@ function normalizeBepCacheStats(stats) {
     "casCacheHits",
     "casCacheMisses",
   ]) {
-    if (Number(stats[key] || 0) > 0) {
-      normalized[key] = Number(stats[key]);
+    if (Object.hasOwn(stats, key)) {
+      normalized[key] = Number(stats[key] || 0);
     }
   }
   if (!Object.hasOwn(normalized, "actionCacheMisses") && Number(normalized.actionsExecuted || 0) > 0) {
     normalized.actionCacheMisses = Number(normalized.actionsExecuted);
+  }
+  if (
+    !Object.hasOwn(normalized, "actionCacheHits")
+    && Object.hasOwn(normalized, "actionsCreated")
+    && Object.hasOwn(normalized, "actionsExecuted")
+  ) {
+    normalized.actionCacheHits = Math.max(
+      0,
+      Number(normalized.actionsCreated || 0) - Number(normalized.actionsExecuted || 0),
+    );
   }
   return Object.keys(normalized).length > 0 ? normalized : null;
 }

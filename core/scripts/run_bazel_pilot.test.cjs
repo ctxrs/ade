@@ -157,6 +157,27 @@ test("bazel pilot reads action cache stats from Bazel BEP JSON", () => {
   });
 });
 
+test("bazel pilot infers action cache hits from created and executed BEP action counts", () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-bazel-bep-infer-hits-"));
+  const bepPath = path.join(tempDir, "bep.jsonl");
+  fs.writeFileSync(bepPath, `${JSON.stringify({
+    id: { buildMetrics: {} },
+    buildMetrics: {
+      actionSummary: {
+        actionsCreated: "16",
+        actionsExecuted: "4",
+      },
+    },
+  })}\n`);
+
+  assert.deepEqual(readBazelBuildEventMetrics(bepPath), {
+    actionCacheHits: 12,
+    actionCacheMisses: 4,
+    actionsCreated: 16,
+    actionsExecuted: 4,
+  });
+});
+
 test("bazel pilot rust clippy mode forwards rules_rust aspect args", () => {
   const invocation = buildBazelPilotInvocation({
     argv: ["build", "--rust-clippy", "//core/crates/ctx-core:lib"],
@@ -617,6 +638,59 @@ test("bazel pilot runner attaches BEP cache stats to telemetry summaries", () =>
   assert.equal(summary.cacheHitShape, "action-cache-mixed");
   assert.equal(summary.cacheStatsStatus, "action-cache-stats-reported");
   assert.deepEqual(summary.phases[0].cacheStats, summary.cacheStats);
+});
+
+test("bazel pilot runner preserves zero-valued BEP cache stats", () => {
+  const volatileRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-bazel-pilot-zero-bep-"));
+  const invocation = buildBazelPilotInvocation({
+    argv: ["test", "//core/crates/ctx-http:provider-auth"],
+    env: {
+      ...process.env,
+      CTX_VOLATILE_ROOT: volatileRoot,
+      CTX_SESSION_ID: "bazel-zero-bep-session",
+      CTX_BAZEL_REMOTE_EXECUTION: "1",
+      BUILD_BUDDY_API_KEY: "buildbuddy-cache-key",
+    },
+  });
+
+  runBazelPilotInvocationPhases(invocation, {
+    spawnSyncImpl: (_command, args) => {
+      const bepArg = args.find((entry) => String(entry).startsWith("--build_event_json_file="));
+      const bepPath = String(bepArg).slice("--build_event_json_file=".length);
+      fs.writeFileSync(bepPath, `${JSON.stringify({
+        buildMetrics: {
+          actionSummary: {
+            actionCacheHits: "0",
+            actionCacheMisses: "0",
+            actionsCreated: "0",
+            actionsExecuted: "0",
+          },
+        },
+      })}\n`);
+      return { status: 0 };
+    },
+    withHostJobBudgetImpl: (_options, fn) => fn(),
+  });
+
+  const summary = JSON.parse(fs.readFileSync(invocation.telemetry.summaryPath, "utf8"));
+  assert.deepEqual(summary.cacheStats, {
+    actionCacheHits: 0,
+    actionCacheMisses: 0,
+    actionsCreated: 0,
+    actionsExecuted: 0,
+  });
+  assert.equal(summary.cacheStatsStatus, "cache-stats-empty");
+  assert.deepEqual(summary.phases[0].cacheStats, summary.cacheStats);
+});
+
+test("bazel pilot ignores BEP files without cache-stat keys", () => {
+  const bepJsonPath = path.join(os.tmpdir(), `ctx-bazel-pilot-no-cache-${process.pid}.json`);
+  fs.writeFileSync(bepJsonPath, `${JSON.stringify({ id: { started: {} }, started: {} })}\n`);
+  try {
+    assert.equal(readBazelBuildEventMetrics(bepJsonPath), null);
+  } finally {
+    fs.rmSync(bepJsonPath, { force: true });
+  }
 });
 
 test("bazel pilot emits a machine-readable phase summary with local spill accounting", () => {
