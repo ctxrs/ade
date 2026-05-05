@@ -34,9 +34,16 @@ fn multipart_body(
 }
 
 const MAX_MESSAGE_IMAGE_ATTACHMENT_BYTES: usize = 25 * 1024 * 1024;
+const QUEUED_MESSAGES_ENABLED_ENV: &str = "CTX_QUEUED_MESSAGES_ENABLED";
+
+fn enable_queued_messages_for_test_binary() {
+    static ENABLE: std::sync::Once = std::sync::Once::new();
+    ENABLE.call_once(|| std::env::set_var(QUEUED_MESSAGES_ENABLED_ENV, "1"));
+}
 
 #[tokio::test]
 async fn image_attachments_use_blobs_and_never_persist_base64() {
+    enable_queued_messages_for_test_binary();
     // Tiny 1x1 PNG.
     const PNG_BASE64: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMB/6Vn3b0AAAAASUVORK5CYII=";
     let png_bytes = base64::engine::general_purpose::STANDARD
@@ -128,6 +135,7 @@ async fn image_attachments_use_blobs_and_never_persist_base64() {
 
 #[tokio::test]
 async fn image_ref_attachments_use_stored_blob_mime_type() {
+    enable_queued_messages_for_test_binary();
     // Tiny 1x1 PNG.
     const PNG_BASE64: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMB/6Vn3b0AAAAASUVORK5CYII=";
     let png_bytes = base64::engine::general_purpose::STANDARD
