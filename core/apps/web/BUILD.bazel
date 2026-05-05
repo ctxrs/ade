@@ -606,6 +606,8 @@ js_run_binary(
         "webkit",
         "--browser",
         "chromium",
+        "--browser",
+        "ffmpeg",
     ],
     out_dirs = ["playwright-browsers-mac15-arm64"],
     srcs = [
@@ -630,6 +632,8 @@ js_run_binary(
         "webkit",
         "--browser",
         "chromium",
+        "--browser",
+        "ffmpeg",
     ],
     out_dirs = ["playwright-browsers-ubuntu24.04-x64"],
     srcs = [

@@ -80,6 +80,7 @@ test("playwright browser runtimes are Bazel-owned inputs instead of ambient cach
     );
     assert.doesNotMatch(block, /run_workspace_task\.sh/u);
     assert.doesNotMatch(block, /pnpm/u);
+    assert.match(block, /"ffmpeg"/u, `${targetName} should include Playwright ffmpeg for video capture`);
   }
 });
 

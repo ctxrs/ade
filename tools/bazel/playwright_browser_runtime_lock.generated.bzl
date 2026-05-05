@@ -9,6 +9,11 @@ PLAYWRIGHT_BROWSER_RUNTIME_LOCK = {
             "sha256": "01046b12151b2846b6d34ff619336b6338ca254c47aacc903602dd96afc939b3",
             "url": "https://cdn.playwright.dev/dbazure/download/playwright/builds/chromium/1200/chromium-mac-arm64.zip",
         },
+        "ffmpeg": {
+            "directory_name": "ffmpeg-1011",
+            "sha256": "7d77eb0d44b59acc4065faa2476c0df1a242cc904c346f820626818c953c5277",
+            "url": "https://cdn.playwright.dev/dbazure/download/playwright/builds/ffmpeg/1011/ffmpeg-mac-arm64.zip",
+        },
         "firefox": {
             "directory_name": "firefox-1497",
             "sha256": "fed31d85a35d117f28a67416b76e190e41e7e2ada66309266d89b9cb0d6d03ee",
@@ -25,6 +30,11 @@ PLAYWRIGHT_BROWSER_RUNTIME_LOCK = {
             "directory_name": "chromium-1200",
             "sha256": "ab56b2a7955c2961f74348e2349f1e907489283da23dba37c730b624e4d670bb",
             "url": "https://cdn.playwright.dev/dbazure/download/playwright/builds/chromium/1200/chromium-linux.zip",
+        },
+        "ffmpeg": {
+            "directory_name": "ffmpeg-1011",
+            "sha256": "ebc74fc5b94830176a3c2914ae96bd8bc7f6a91f4f33890230f84a172ee61ccc",
+            "url": "https://cdn.playwright.dev/dbazure/download/playwright/builds/ffmpeg/1011/ffmpeg-linux.zip",
         },
         "firefox": {
             "directory_name": "firefox-1497",
