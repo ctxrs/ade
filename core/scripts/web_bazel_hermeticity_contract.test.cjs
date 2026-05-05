@@ -47,6 +47,8 @@ test("browser e2e targets route through the dedicated Bazel runtime instead of w
   assert.match(e2eMacroFile, /--playwright-browsers-dir/u);
   assert.match(e2eMacroFile, /\/\/core\/apps\/web:playwright_browsers_ubuntu24_04_x64/u);
   assert.match(e2eMacroFile, /\/\/core\/apps\/web:playwright_browsers_mac15_arm64/u);
+  assert.match(e2eMacroFile, /"CTX_E2E_BROWSER": "chromium"/u);
+  assert.match(e2eMacroFile, /env = playwright_browser_env/u);
   assert.match(e2eMacroFile, /tags = \[\s*"local",\s*"no-remote",\s*\]/u);
   for (const targetName of ["premerge_required", "release_required", "cross_platform", "visual", "soak", "load"]) {
     assert.match(e2eBuildFile, new RegExp(`name = "${targetName}"`));

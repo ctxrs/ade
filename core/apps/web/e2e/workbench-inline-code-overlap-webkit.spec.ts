@@ -3,6 +3,11 @@ import type { Page, TestInfo } from "playwright/test";
 import { test, expect } from "./fixtures";
 import { seedDummyWorkspace } from "./utils/seedDummyWorkspace";
 
+test.skip(
+  process.platform === "linux" && process.env.CTX_E2E_BROWSER === "chromium",
+  "WebKit-only layout regression is excluded from the Linux Chromium promotion lane.",
+);
+
 const REAL_TRANSCRIPT_MESSAGE = `A synthetic exhibition update describes both \`gallery/left\` and \`gallery/right\`. The final display label is \`scene-04c\`, with the first arrangement in \`scene-02a\` and a small follow-up frame adjustment in \`scene-04c\`.
 
 Checklist:

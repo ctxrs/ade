@@ -31,6 +31,10 @@ def web_e2e_test(name, config, runtime_profile, suite = "", specs = None, timeou
         "@platforms//os:macos": ["//core/apps/web:playwright_browsers_mac15_arm64"],
         "//conditions:default": [],
     })
+    playwright_browser_env = select({
+        "@platforms//os:linux": {"CTX_E2E_BROWSER": "chromium"},
+        "//conditions:default": {},
+    })
     if runtime_profile == "agent-full":
         args.extend([
             "--ctx-mcp-bin",
@@ -46,6 +50,7 @@ def web_e2e_test(name, config, runtime_profile, suite = "", specs = None, timeou
         srcs = ["//core/apps/web:scripts/run-e2e-bazel-runtime.sh"],
         args = args + playwright_browser_args,
         data = data + playwright_browser_data,
+        env = playwright_browser_env,
         tags = [
             "local",
             "no-remote",
