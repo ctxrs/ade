@@ -141,6 +141,78 @@ const containerHostUserArgs = (hostOs = hostManifestOs) => {
   return ["--user", `${process.getuid()}:${process.getgid()}`];
 };
 
+const buildContainerWritableMountPrepareArgs = ({
+  runtime,
+  builderImage,
+  dirs,
+  hostOs = hostManifestOs,
+  uid = typeof process.getuid === "function" ? process.getuid() : null,
+  gid = typeof process.getgid === "function" ? process.getgid() : null,
+}) => {
+  if (hostOs !== "linux") {
+    return null;
+  }
+  if (!Number.isInteger(uid) || !Number.isInteger(gid)) {
+    throw new Error("containerized Linux bundle cache preparation requires host uid/gid support");
+  }
+  const normalizedDirs = [...new Set(dirs.map((dir) => String(dir || "").trim()).filter(Boolean))];
+  if (normalizedDirs.length === 0) {
+    throw new Error("containerized Linux bundle cache preparation requires at least one mount dir");
+  }
+  const mountArgs = normalizedDirs.flatMap((dir, index) => [
+    "-v",
+    `${dir}:/mnt/ctx-cache-${index}`,
+  ]);
+  const mountPaths = normalizedDirs.map((_, index) => `/mnt/ctx-cache-${index}`).join(" ");
+  const buildCmd =
+    "set -euo pipefail; " +
+    `for dir in ${mountPaths}; do ` +
+    "mkdir -p \"$dir\"; " +
+    `chown -R ${uid}:${gid} "$dir"; ` +
+    "chmod -R u+rwX,g+rwX \"$dir\"; " +
+    "done";
+  return [
+    runtime,
+    [
+      "run",
+      "--rm",
+      ...mountArgs,
+      builderImage,
+      "bash",
+      "-lc",
+      buildCmd,
+    ],
+  ];
+};
+
+const prepareContainerWritableMounts = ({
+  runtime,
+  builderImage,
+  dirs,
+  hostOs = hostManifestOs,
+}) => {
+  const normalizedDirs = [...new Set(dirs.map((dir) => String(dir || "").trim()).filter(Boolean))];
+  for (const dir of normalizedDirs) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+  const prepareArgs = buildContainerWritableMountPrepareArgs({
+    runtime,
+    builderImage,
+    dirs: normalizedDirs,
+    hostOs,
+  });
+  if (!prepareArgs) {
+    return;
+  }
+  const [spawnCmd, args] = prepareArgs;
+  const res = childProcess.spawnSync(spawnCmd, args, { stdio: "inherit" });
+  if (res.status !== 0) {
+    throw new Error(
+      `failed to prepare writable Linux container bundle mounts using ${runtime} (${res.status ?? "unknown"})`,
+    );
+  }
+};
+
 const parseAvfLinuxGuestRuntimeVersion = (raw) => {
   const text = String(raw || "");
   if (!text.trim()) return "";
@@ -964,6 +1036,11 @@ const bundleRemoteDaemons = (bundleDir) => {
       target,
       identity,
     });
+    prepareContainerWritableMounts({
+      runtime,
+      builderImage,
+      dirs: [daemonsDir, targetCache, cargoHome, rustupHome],
+    });
     const res = childProcess.spawnSync(spawnCmd, args, { stdio: "inherit" });
     if (res.status !== 0) {
       throw new Error(
@@ -1014,6 +1091,11 @@ const bundleLinuxCtxMcpRuntime = (bundleDir) => {
     target,
     runtimeVersion,
     identity,
+  });
+  prepareContainerWritableMounts({
+    runtime,
+    builderImage,
+    dirs: [runtimesDir, targetCache, cargoHome, rustupHome],
   });
   const res = childProcess.spawnSync(spawnCmd, args, { stdio: "inherit" });
   if (res.status !== 0) {
@@ -1684,6 +1766,7 @@ if (require.main === module) {
       resolveArtifactIdentityMode,
       resolveLinuxAppendBundleRequests,
       shouldBundleLinuxCtxMcpRuntime,
+      buildContainerWritableMountPrepareArgs,
       writeBundledProviderManifest,
       writePlaceholderBundleManifest,
       writeEffectiveBundleManifest,

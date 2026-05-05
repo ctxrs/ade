@@ -213,6 +213,38 @@ test("linux container builds run as the host uid and gid", () => {
   );
 });
 
+test("linux container bundle cache preparation normalizes bind mount ownership", () => {
+  const [spawnCmd, args] = __desktopSyncResourcesTestHooks.buildContainerWritableMountPrepareArgs({
+    runtime: "docker",
+    builderImage: "rust:test",
+    dirs: ["/target-host", "/cargo-home-host", "/target-host"],
+    hostOs: "linux",
+    uid: 1234,
+    gid: 5678,
+  });
+
+  assert.equal(spawnCmd, "docker");
+  assert.deepEqual(args.slice(0, 2), ["run", "--rm"]);
+  assert.doesNotMatch(args.join(" "), /--user /);
+  assert.match(args.join(" "), /-v \/target-host:\/mnt\/ctx-cache-0/);
+  assert.match(args.join(" "), /-v \/cargo-home-host:\/mnt\/ctx-cache-1/);
+  assert.doesNotMatch(args.join(" "), /ctx-cache-2/);
+  assert.match(args.join(" "), /chown -R 1234:5678 "\$dir"/);
+  assert.match(args.join(" "), /chmod -R u\+rwX,g\+rwX "\$dir"/);
+});
+
+test("macOS container bundle cache preparation is not needed", () => {
+  assert.equal(
+    __desktopSyncResourcesTestHooks.buildContainerWritableMountPrepareArgs({
+      runtime: "docker",
+      builderImage: "rust:test",
+      dirs: ["/target-host"],
+      hostOs: "macos",
+    }),
+    null,
+  );
+});
+
 test("macOS container builds keep default docker user mapping", () => {
   assert.deepEqual(
     __desktopSyncResourcesTestHooks.containerHostUserArgs("macos"),
