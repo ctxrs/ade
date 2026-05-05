@@ -33,7 +33,7 @@ const harnessInstallMatrix = JSON.parse(fs.readFileSync(harnessInstallMatrixPath
 const webRoot = path.join(coreRoot, "apps", "web");
 const webE2ERoot = path.join(webRoot, "e2e");
 const webSuiteRoot = path.join(webE2ERoot, "suites");
-const webSuites = ["premerge_required", "release_required", "cross_platform", "visual", "soak", "load"];
+const webSuites = ["premerge_required", "quarantine", "release_required", "cross_platform", "visual", "soak", "load"];
 const RELEASE_RELEVANT_GLOBS = [
   ".buildkite/pipelines/release.yml",
   "core/apps/desktop/**",
@@ -188,8 +188,8 @@ function relativeToRepo(absPath) {
 }
 
 function normalizeManifestSpec(line) {
-  const cleaned = String(line || "").trim();
-  if (!cleaned || cleaned.startsWith("#")) {
+  const cleaned = String(line || "").split("#", 1)[0].trim();
+  if (!cleaned) {
     return null;
   }
   return cleaned.startsWith("e2e/") ? cleaned : `e2e/${cleaned}`;
@@ -390,6 +390,12 @@ function buildWebE2EEntries() {
     premerge_required: {
       cost: "fast",
       stability: "stable",
+      world: "simulated",
+      execution: "bazel-addressable",
+    },
+    quarantine: {
+      cost: "medium",
+      stability: "quarantined",
       world: "simulated",
       execution: "bazel-addressable",
     },

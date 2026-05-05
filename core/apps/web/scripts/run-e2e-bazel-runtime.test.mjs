@@ -10,6 +10,7 @@ import {
   envWithCurrentNodeOnPath,
   materializeBazelWebRepo,
   normalizeSpec,
+  normalizeSuiteManifestLine,
   parseArgs,
   prepareRuntimeRepoRoot,
   pathsReferToSameFile,
@@ -25,6 +26,15 @@ describe("run-e2e-bazel-runtime", () => {
     assert.equal(normalizeSpec("workbench-index.spec.ts"), "e2e/workbench-index.spec.ts");
     assert.equal(normalizeSpec("e2e/workbench-index.spec.ts"), "e2e/workbench-index.spec.ts");
     assert.throws(() => normalizeSpec("../outside.spec.ts"), /invalid E2E spec path/u);
+  });
+
+  it("normalizes suite manifest lines with inline quarantine reasons", () => {
+    assert.equal(
+      normalizeSuiteManifestLine("e2e/workbench-index.spec.ts  # quarantined until stable"),
+      "e2e/workbench-index.spec.ts",
+    );
+    assert.equal(normalizeSuiteManifestLine("# comment only"), null);
+    assert.equal(normalizeSuiteManifestLine(""), null);
   });
 
   it("parses strict Bazel runtime inputs", () => {

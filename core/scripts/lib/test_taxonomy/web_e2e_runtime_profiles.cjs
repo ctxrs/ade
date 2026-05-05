@@ -2,6 +2,7 @@ const path = require("node:path");
 
 const SUITE_LABELS = {
   premerge_required: "//core/apps/web/e2e:premerge_required",
+  quarantine: "//core/apps/web/e2e:quarantine",
   release_required: "//core/apps/web/e2e:release_required",
   cross_platform: "//core/apps/web/e2e:cross_platform",
   visual: "//core/apps/web/e2e:visual",
@@ -11,6 +12,7 @@ const SUITE_LABELS = {
 
 const SUITE_RUNTIME_PROFILES = {
   premerge_required: "agent-full",
+  quarantine: "agent-full",
   release_required: "web-artifact",
   cross_platform: "agent-full",
   visual: "agent-full",

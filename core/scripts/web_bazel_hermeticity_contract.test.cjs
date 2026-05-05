@@ -64,7 +64,7 @@ test("browser e2e targets route through the dedicated Bazel runtime instead of w
   assert.match(e2eMacroFile, /linux_browser = ""/u);
   assert.match(e2eMacroFile, /"CTX_E2E_BROWSER": linux_browser/u);
   assert.match(e2eMacroFile, /tags = \[\s*"local",\s*"no-remote",\s*\]/u);
-  for (const targetName of ["premerge_required", "release_required", "cross_platform", "visual", "soak", "load"]) {
+  for (const targetName of ["premerge_required", "quarantine", "release_required", "cross_platform", "visual", "soak", "load"]) {
     assert.match(e2eBuildFile, new RegExp(`name = "${targetName}"`));
   }
   assert.doesNotMatch(e2eBuildFile, /run_workspace_task\.sh/u);

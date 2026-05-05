@@ -12,6 +12,7 @@ const __dirname = path.dirname(__filename);
 const supportedRuntimeProfiles = new Set(["workbench-lite", "agent-full", "web-artifact"]);
 const suiteConfig = {
   premerge_required: "playwright.premerge.config.ts",
+  quarantine: "playwright.premerge.config.ts",
   release_required: "playwright.release.config.ts",
   cross_platform: "playwright.cross-platform.config.ts",
   visual: "playwright.visual.config.ts",
@@ -39,6 +40,11 @@ export const normalizeSpec = (value) => {
     throw new Error(`invalid E2E spec path: ${value}`);
   }
   return normalized;
+};
+
+export const normalizeSuiteManifestLine = (line) => {
+  const raw = String(line || "").split("#", 1)[0].trim();
+  return raw ? normalizeSpec(raw) : null;
 };
 
 export const parseArgs = (argv) => {
@@ -254,9 +260,8 @@ const readSuiteSpecs = (webRoot, suite) => {
   const specs = fs
     .readFileSync(manifestPath, "utf8")
     .split(/\r?\n/u)
-    .map((line) => line.trim())
-    .filter((line) => line && !line.startsWith("#"))
-    .map(normalizeSpec);
+    .map(normalizeSuiteManifestLine)
+    .filter(Boolean);
   if (specs.length === 0) {
     throw new Error(`E2E suite is empty: ${suite}`);
   }

@@ -75,6 +75,14 @@ web_e2e_test(
 )
 
 web_e2e_test(
+    name = "quarantine",
+    config = "playwright.premerge.config.ts",
+    runtime_profile = "agent-full",
+    suite = "quarantine",
+    timeout = "eternal",
+)
+
+web_e2e_test(
     name = "release_required",
     config = "playwright.release.config.ts",
     runtime_profile = "web-artifact",
