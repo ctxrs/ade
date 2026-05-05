@@ -13,8 +13,15 @@ use ctx_transport_runtime::TerminalServerMessage;
 
 mod common;
 
+const QUEUED_MESSAGES_ENABLED_ENV: &str = "CTX_QUEUED_MESSAGES_ENABLED";
+
 type WsStream =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+
+fn enable_queued_messages_for_test_binary() {
+    static ENABLE: std::sync::Once = std::sync::Once::new();
+    ENABLE.call_once(|| std::env::set_var(QUEUED_MESSAGES_ENABLED_ENV, "1"));
+}
 
 async fn mint_terminal_stream_path(
     client: &reqwest::Client,
@@ -174,6 +181,8 @@ async fn assert_workspace_stream_no_gap(
 
 #[tokio::test]
 async fn terminal_disconnect_and_reconnect_do_not_poison_workspace_control_plane() {
+    enable_queued_messages_for_test_binary();
+
     let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
     let data_dir = tempfile::tempdir().unwrap();
     let stores = common::setup_store(data_dir.path()).await;

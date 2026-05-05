@@ -132,13 +132,6 @@ pub(crate) async fn post_message(
         ));
     }
 
-    let requested_delivery = req.delivery.clone();
-    let delivery = resolve_message_delivery(
-        requested_delivery.clone(),
-        state.is_running(session_id).await,
-        queued_messages_enabled(),
-    )?;
-
     let (message_id, turn_id, client_ids) = match (
         req.id.as_deref().map(str::trim).filter(|v| !v.is_empty()),
         req.turn_id
@@ -168,6 +161,7 @@ pub(crate) async fn post_message(
 
     let attachments = normalize_message_attachments(&state, req.attachments).await?;
     let content = req.content;
+    let requested_delivery = req.delivery.clone();
 
     if client_ids {
         if let Some(existing) = store
@@ -207,6 +201,12 @@ pub(crate) async fn post_message(
             ));
         }
     }
+
+    let delivery = resolve_message_delivery(
+        requested_delivery.clone(),
+        state.is_running(session_id).await,
+        queued_messages_enabled(),
+    )?;
 
     let run_id = RunId::new();
     let order_seq_state = state.sessions.get_order_seq_state(&store, session_id).await;

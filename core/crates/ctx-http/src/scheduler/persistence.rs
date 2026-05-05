@@ -7,10 +7,10 @@ use ctx_core::models::{Message, MessageDelivery, MessageRole, SessionEvent, Sess
 
 use crate::daemon::AppState;
 
-const STORE_WRITE_RETRY_LIMIT: usize = 3;
-const STORE_WRITE_RETRY_BASE_MS: u64 = 40;
+pub(crate) const STORE_WRITE_RETRY_LIMIT: usize = 3;
+pub(crate) const STORE_WRITE_RETRY_BASE_MS: u64 = 40;
 
-fn is_transient_store_error(err: &anyhow::Error) -> bool {
+pub(crate) fn is_transient_store_error(err: &anyhow::Error) -> bool {
     let msg = err.to_string().to_lowercase();
     msg.contains("database is locked")
         || msg.contains("sqlite_busy")

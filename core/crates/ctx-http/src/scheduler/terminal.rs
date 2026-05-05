@@ -1,13 +1,18 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::Result;
 use serde_json::{json, Value};
 
 use ctx_core::ids::{MessageId, RunId, SessionId, TurnId};
-use ctx_core::models::{RunStatus, SessionEventType};
+use ctx_core::models::{RunStatus, SessionEvent, SessionEventType};
 use ctx_providers::adapters::{ProviderTurnOutcome, ProviderTurnStatus};
 
 use crate::daemon::AppState;
+
+use super::persistence::{
+    is_transient_store_error, STORE_WRITE_RETRY_BASE_MS, STORE_WRITE_RETRY_LIMIT,
+};
 
 async fn publish_persisted_events(
     state: &Arc<AppState>,
@@ -39,6 +44,32 @@ async fn cleanup_turn_stream_state(
     }
 }
 
+async fn persist_turn_terminal_events_with_retry(
+    store: &ctx_store::Store,
+    session_id: SessionId,
+    run_id: Option<RunId>,
+    turn_id: TurnId,
+    events: &[(SessionEventType, Value)],
+) -> Result<Vec<SessionEvent>> {
+    let mut attempt = 0usize;
+    loop {
+        match store
+            .persist_turn_terminal_events(session_id, run_id, turn_id, events.to_vec())
+            .await
+        {
+            Ok(persisted) => return Ok(persisted),
+            Err(err) => {
+                if !is_transient_store_error(&err) || attempt >= STORE_WRITE_RETRY_LIMIT {
+                    return Err(err);
+                }
+                attempt += 1;
+                let backoff_ms = STORE_WRITE_RETRY_BASE_MS.saturating_mul(attempt as u64);
+                tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
+            }
+        }
+    }
+}
+
 async fn persist_terminal_events(
     state: &Arc<AppState>,
     session_id: SessionId,
@@ -50,9 +81,9 @@ async fn persist_terminal_events(
 ) -> Result<()> {
     let store = state.store_for_session(session_id).await?;
     cleanup_turn_stream_state(&store, session_id, turn_id, cleanup_types).await;
-    let persisted = store
-        .persist_turn_terminal_events(session_id, run_id, turn_id, events)
-        .await?;
+    let persisted =
+        persist_turn_terminal_events_with_retry(&store, session_id, run_id, turn_id, &events)
+            .await?;
     super::policy_admission::update_run_terminal_status(&store, run_id, run_status).await;
     publish_persisted_events(state, persisted).await;
     Ok(())
