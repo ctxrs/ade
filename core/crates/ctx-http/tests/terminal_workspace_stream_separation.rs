@@ -132,6 +132,20 @@ async fn wait_for_session_done_events_in_store(
     panic!("timed out waiting for {expected_done_events} done events in store");
 }
 
+async fn wait_for_session_idle_in_memory(
+    state: &std::sync::Arc<AppState>,
+    session_id: ctx_core::ids::SessionId,
+) {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+    while tokio::time::Instant::now() < deadline {
+        if !state.is_running(session_id).await {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    panic!("timed out waiting for session running flag to clear");
+}
+
 async fn assert_workspace_stream_no_gap(
     socket: &mut WsStream,
     session: &Session,
@@ -275,6 +289,7 @@ async fn terminal_disconnect_and_reconnect_do_not_poison_workspace_control_plane
     let state_clone = state.clone();
     let send_messages = tokio::spawn(async move {
         for index in 0..message_count {
+            wait_for_session_idle_in_memory(&state_clone, session_id).await;
             let response = client_clone
                 .post(format!(
                     "{base_clone}/api/sessions/{}/messages",
@@ -297,6 +312,7 @@ async fn terminal_disconnect_and_reconnect_do_not_poison_workspace_control_plane
                 "message post failed with status {status}: {body}"
             );
             wait_for_session_done_events_in_store(&state_clone, session_id, index + 1).await;
+            wait_for_session_idle_in_memory(&state_clone, session_id).await;
         }
     });
 
