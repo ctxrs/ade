@@ -141,7 +141,7 @@ type TestInternalEntry = {
   turnsHydrated: boolean;
   turns: SessionTurn[];
   turnsRev: number;
-  freshness?: "bootstrap" | "authoritative" | "recovering";
+  freshness?: "bootstrap" | "authoritative" | "recovering" | "replica";
   messages: Message[];
   messagesRev: number;
   events: SessionEvent[];
@@ -150,6 +150,7 @@ type TestInternalEntry = {
   hasMoreTurns: boolean;
   historyExtended: boolean;
   lastEventSeq?: number;
+  projectionRev?: number;
   oldestTurnSeq?: number;
   stateRev?: number;
   loadState: "pending_hydration" | "live" | "recovering" | "fatal";
@@ -1774,7 +1775,9 @@ describe("SessionSupervisor", () => {
       created_at: new Date(1).toISOString(),
     };
 
-    entry.freshness = "authoritative";
+    entry.freshness = "replica";
+    entry.lastEventSeq = 100;
+    entry.projectionRev = 100;
     entry.turns = [initialTurn];
     entry.messages = [initialMessage];
     entry.events = [initialEvent];
@@ -1785,6 +1788,7 @@ describe("SessionSupervisor", () => {
         op: "replace",
         sessionId,
         data: {
+          replaceMode: "authoritative_replace",
           freshness: "authoritative",
           turns: [
             mkTurn({
@@ -1811,13 +1815,14 @@ describe("SessionSupervisor", () => {
               created_at: new Date(2).toISOString(),
             } as SessionEvent,
           ],
+          projectionRev: 99,
           lastEventSeq: 99,
           hasMoreTurns: false,
         },
       },
     ]);
 
-    const replaced = sup.getSnapshot().sessions[sessionId];
+    const replaced = internals.entries.get(sessionId);
     expect(replaced?.freshness).toBe("replica");
     expect(replaced?.turns).toHaveLength(1);
     expect(replaced?.turns[0]?.turn_id).toBe("turn-initial");
@@ -1825,6 +1830,8 @@ describe("SessionSupervisor", () => {
     expect(replaced?.messages[0]).toEqual(initialMessage);
     expect(replaced?.events).toHaveLength(1);
     expect(replaced?.events[0]).toEqual(initialEvent);
+    expect(replaced?.lastEventSeq).toBe(100);
+    expect(replaced?.projectionRev).toBe(100);
   });
 
   it("keeps an interrupted turn interrupted across bootstrap replace replay", async () => {
@@ -2530,6 +2537,17 @@ describe("SessionSupervisor", () => {
       has_more_turns: false,
       has_more_history: false,
       history_cursor: null,
+      head_window: {
+        turn_limit: 60,
+        message_limit: 200,
+        event_limit: 200,
+        byte_limit: 256_000,
+        turn_count: 1,
+        message_count: 1,
+        event_count: 0,
+        bytes: 256,
+        truncated: true,
+      },
     };
     const fullHead: SessionHeadSnapshot = {
       ...compactHead,
@@ -2550,6 +2568,17 @@ describe("SessionSupervisor", () => {
         },
         ...compactHead.messages,
       ],
+      head_window: {
+        turn_limit: 60,
+        message_limit: 200,
+        event_limit: 200,
+        byte_limit: 256_000,
+        turn_count: 2,
+        message_count: 2,
+        event_count: 0,
+        bytes: 512,
+        truncated: false,
+      },
     };
     const activeState: WorkspaceActiveSnapshotState = {
       ...mkWorkspaceSnapshotState(),
@@ -2638,6 +2667,17 @@ describe("SessionSupervisor", () => {
       last_event_seq: 20,
       projection_rev: 7,
       state_rev: 7,
+      head_window: {
+        turn_limit: 60,
+        message_limit: 200,
+        event_limit: 200,
+        byte_limit: 256_000,
+        turn_count: 2,
+        message_count: 2,
+        event_count: 0,
+        bytes: 512,
+        truncated: false,
+      },
       has_more_turns: false,
       has_more_history: false,
       history_cursor: null,
@@ -2674,6 +2714,11 @@ describe("SessionSupervisor", () => {
     });
 
     sup.setWorkspaceSessionHeads({ [sessionId]: currentHead });
+
+    await waitForCondition(() => {
+      const entry = sup.getSnapshot().sessions[sessionId];
+      return entry?.messages.map((message) => message.id).join(",") === "m-fresh-1,m-fresh-2";
+    });
 
     const entry = sup.getSnapshot().sessions[sessionId];
     expect(entry?.freshness).toBe("replica");

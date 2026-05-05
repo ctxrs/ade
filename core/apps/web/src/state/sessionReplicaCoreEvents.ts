@@ -239,6 +239,45 @@ const applySessionReplicaHeadDelta = (
   if (streamOnlyCandidate && !existingEntry) return;
 
   const entry = existingEntry ?? host.ensureEntry(sessionId);
+  const incomingSeq =
+    typeof delta.last_event_seq === "number"
+      ? delta.last_event_seq
+      : typeof rawEvent?.seq === "number"
+        ? rawEvent.seq
+        : null;
+  const existingSeq = typeof entry.lastEventSeq === "number" ? entry.lastEventSeq : null;
+  const incomingProjectionRev =
+    typeof delta.projection_rev === "number" ? delta.projection_rev : null;
+  const existingProjectionRev =
+    typeof entry.projectionRev === "number" ? entry.projectionRev : null;
+  let staleDelta = false;
+  if (incomingSeq !== null && existingSeq !== null && incomingSeq < existingSeq) {
+    host.emitFreshnessEvent({
+      type: "projection_or_seq_regression",
+      sessionId,
+      dimension: "last_event_seq",
+      incoming: incomingSeq,
+      existing: existingSeq,
+    });
+    staleDelta = true;
+  }
+  if (
+    incomingProjectionRev !== null &&
+    existingProjectionRev !== null &&
+    incomingProjectionRev < existingProjectionRev &&
+    (incomingSeq === null || existingSeq === null || incomingSeq < existingSeq)
+  ) {
+    host.emitFreshnessEvent({
+      type: "projection_or_seq_regression",
+      sessionId,
+      dimension: "projection_rev",
+      incoming: incomingProjectionRev,
+      existing: existingProjectionRev,
+    });
+    staleDelta = true;
+  }
+  if (staleDelta) return;
+
   const previousSession = entry.session;
   const previousActivity = entry.activity;
   const previousTurns = entry.turns.slice();
@@ -303,36 +342,13 @@ const applySessionReplicaHeadDelta = (
   if (previousFreshness !== "recovering") {
     entry.freshness = "authoritative";
   }
-  const incomingSeq = typeof delta.last_event_seq === "number" ? delta.last_event_seq : -1;
-  const existingSeq = typeof entry.lastEventSeq === "number" ? entry.lastEventSeq : -1;
-  if (incomingSeq >= 0 && existingSeq >= 0 && incomingSeq < existingSeq) {
-    host.emitFreshnessEvent({
-      type: "projection_or_seq_regression",
-      sessionId,
-      dimension: "last_event_seq",
-      incoming: incomingSeq,
-      existing: existingSeq,
-    });
-  }
   if (typeof delta.projection_rev === "number") {
-    if (
-      typeof entry.projectionRev === "number" &&
-      delta.projection_rev < entry.projectionRev
-    ) {
-      host.emitFreshnessEvent({
-        type: "projection_or_seq_regression",
-        sessionId,
-        dimension: "projection_rev",
-        incoming: delta.projection_rev,
-        existing: entry.projectionRev,
-      });
-    }
     entry.projectionRev =
       typeof entry.projectionRev === "number"
         ? Math.max(entry.projectionRev, delta.projection_rev)
         : delta.projection_rev;
   }
-  entry.lastEventSeq = Math.max(existingSeq, incomingSeq);
+  entry.lastEventSeq = Math.max(existingSeq ?? -1, incomingSeq ?? -1);
   if (typeof delta.state_rev === "number") {
     entry.stateRev =
       typeof entry.stateRev === "number" ? Math.max(entry.stateRev, delta.state_rev) : delta.state_rev;

@@ -2430,6 +2430,108 @@ describe("SessionReplicaCore", () => {
     expect(latest.data.turns?.[0]?.tool_completed).toBe(1);
   });
 
+  it("drops stale live deltas before they can regress a completed head", () => {
+    const sessionId = "session-stale-live-delta";
+    const patches: SessionReplicaPatch[] = [];
+    const freshnessEvents: SessionReplicaFreshnessEvent[] = [];
+    const core = new SessionReplicaCore({
+      api: { getSessionHead: vi.fn() },
+      emit: (next) => patches.push(...next),
+      emitFreshness: (event) => freshnessEvents.push(event),
+    });
+    const createdAt = new Date().toISOString();
+
+    core.handleCommand({ type: "init", config: { eventBufferLimit: 100, headLimit: 50 } });
+    core.handleCommand({
+      type: "seed_head",
+      sessionId,
+      head: {
+        session: mkSession(sessionId),
+        turns: [{
+          turn_id: "turn-1",
+          session_id: sessionId,
+          run_id: "run-1",
+          user_message_id: "message-1",
+          status: "completed",
+          start_seq: 1,
+          end_seq: 8,
+          started_at: createdAt,
+          updated_at: createdAt,
+          assistant_partial: null,
+          thought_partial: "",
+          metrics_json: null,
+          tool_total: 1,
+          tool_pending: 0,
+          tool_running: 0,
+          tool_completed: 1,
+          tool_failed: 0,
+        }],
+        events: [],
+        messages: [],
+        last_event_seq: 8,
+        projection_rev: 8,
+        state_rev: 8,
+        has_more_turns: false,
+        has_more_history: false,
+        history_cursor: null,
+      },
+      mode: "repair_replace",
+    });
+    patches.length = 0;
+
+    core.handleCommand({
+      type: "workspace_event",
+      event: {
+        type: "session_head_delta",
+        workspace_id: "ws-1",
+        snapshot_rev: 3,
+        delta: {
+          session_id: sessionId,
+          last_event_seq: 3,
+          projection_rev: 3,
+          state_rev: 3,
+          turn: {
+            turn_id: "turn-1",
+            session_id: sessionId,
+            run_id: "run-1",
+            user_message_id: "message-1",
+            status: "running",
+            start_seq: 1,
+            end_seq: null,
+            started_at: createdAt,
+            updated_at: createdAt,
+            assistant_partial: null,
+            thought_partial: "",
+            metrics_json: null,
+            tool_total: 1,
+            tool_pending: 1,
+            tool_running: 1,
+            tool_completed: 0,
+            tool_failed: 0,
+          },
+        },
+      },
+    });
+
+    expect(patches).toEqual([]);
+    expect(freshnessEvents).toEqual(expect.arrayContaining([
+      {
+        type: "projection_or_seq_regression",
+        sessionId,
+        dimension: "last_event_seq",
+        incoming: 3,
+        existing: 8,
+      },
+      {
+        type: "projection_or_seq_regression",
+        sessionId,
+        dimension: "projection_rev",
+        incoming: 3,
+        existing: 8,
+      },
+    ]));
+  });
+
   it("emits live message removals as stream delta tombstones", () => {
     const sessionId = "session-live-message-removal";
     const patches: SessionReplicaPatch[] = [];

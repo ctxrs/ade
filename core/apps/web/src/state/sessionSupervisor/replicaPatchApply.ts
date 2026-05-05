@@ -7,6 +7,7 @@ import { trackSessionEventVolumeBurst, trackUnknownEventBurst } from "../../util
 import {
   hasSessionReplicaRecoveryData,
   resolveReplicaReadyLoadState,
+  shouldReplayReplicaReplace,
 } from "./authorityPolicy";
 import type { InternalEntry } from "./entryState";
 import type { SessionReplicaPatch } from "../sessionReplicaProtocol";
@@ -124,6 +125,27 @@ const isOverlayOnlyStreamPatch = (patch: SessionReplicaPatch): boolean => {
   );
 };
 
+const hasDurableSeq = (value: number | undefined): value is number =>
+  typeof value === "number" && value >= 0;
+
+const isStaleStreamPatch = (entry: InternalEntry, patch: SessionReplicaPatch): boolean => {
+  if (patch.op !== "append" || patch.data.appendMode !== "stream_delta") return false;
+  const incomingSeq = hasDurableSeq(patch.data.lastEventSeq) ? patch.data.lastEventSeq : undefined;
+  const existingSeq = hasDurableSeq(entry.lastEventSeq) ? entry.lastEventSeq : undefined;
+  if (incomingSeq !== undefined && existingSeq !== undefined && incomingSeq < existingSeq) {
+    return true;
+  }
+
+  const incomingProjectionRev = hasDurableSeq(patch.data.projectionRev) ? patch.data.projectionRev : undefined;
+  const existingProjectionRev = hasDurableSeq(entry.projectionRev) ? entry.projectionRev : undefined;
+  return (
+    incomingProjectionRev !== undefined &&
+    existingProjectionRev !== undefined &&
+    incomingProjectionRev < existingProjectionRev &&
+    (incomingSeq === undefined || existingSeq === undefined)
+  );
+};
+
 export const applyReplicaPatches = (
   host: SessionSupervisorReplicaPatchHost,
   patches: SessionReplicaPatch[],
@@ -141,6 +163,8 @@ export const applyReplicaPatches = (
     if (!existingEntry && isOverlayOnlyStreamPatch(patch)) continue;
     const entry = existingEntry ?? host.ensureEntry(sessionId);
     const priorHistoryExtended = entry.historyExtended;
+
+    if (isStaleStreamPatch(entry, patch)) continue;
 
     if (patch.op === "evict") {
       const beforeSeq = patch.data.eventsBeforeSeq;
@@ -160,6 +184,13 @@ export const applyReplicaPatches = (
       patch.data.freshness === undefined ? undefined : patch.data.freshness === "authoritative"
         ? "replica"
         : patch.data.freshness;
+    if (patch.op === "replace" && !shouldReplayReplicaReplace({
+      entry,
+      patch,
+      normalizedFreshness,
+    })) {
+      continue;
+    }
 
     let entryChanged = applyCanonicalTranscriptPatch(host, entry, patch, normalizedFreshness);
 

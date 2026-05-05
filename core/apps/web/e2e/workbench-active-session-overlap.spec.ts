@@ -4,6 +4,7 @@ import { seedDummyWorkspace } from "./utils/seedDummyWorkspace";
 import {
   assertNoVisibleRowOverlap,
   failWithThreadDiagnostics,
+  readStreamingEvidence,
   requireThreadOverflow,
   requireVisibleSession,
   waitForStreamingObserved,
@@ -14,6 +15,8 @@ const longBody = Array.from({ length: 160 }, (_, index) => `overlap fixture line
 type SessionHeadResponse = {
   turns?: Array<{ status?: unknown; user_message_id?: unknown }>;
 };
+
+const terminalTurnStatuses = new Set(["completed", "done", "failed", "interrupted"]);
 
 const buildSlowPrompt = (marker: string, index: number) => {
   const toolCalls = Array.from({ length: 4 }, (_, toolIndex) => ({
@@ -59,6 +62,7 @@ async function monitorNoOverlapUntilCompleted(
   let samples = 0;
   let lastHeadError = "";
   let lastTurnStatus = "";
+  let lastVisibleStatuses: string[] = [];
   while (Date.now() < deadline) {
     samples += 1;
     await assertNoVisibleRowOverlap(page, {
@@ -76,14 +80,24 @@ async function monitorNoOverlapUntilCompleted(
       } else {
         const payload = (await response.json()) as SessionHeadResponse;
         const turns = Array.isArray(payload.turns) ? payload.turns : [];
-        const turn = turns.find((entry) => entry.user_message_id === userMessageId);
-        lastTurnStatus = typeof turn?.status === "string" ? turn.status : "";
-        if (lastTurnStatus === "completed" || lastTurnStatus === "done") {
+        const matchingTurnStatuses = turns
+          .filter((entry) => entry.user_message_id === userMessageId)
+          .map((entry) => typeof entry.status === "string" ? entry.status : "")
+          .filter(Boolean);
+        lastTurnStatus = matchingTurnStatuses.join(",");
+        if (matchingTurnStatuses.some((status) => terminalTurnStatuses.has(status))) {
           return;
         }
       }
     } catch (error) {
       lastHeadError = error instanceof Error ? error.message : String(error);
+    }
+
+    const evidence = await readStreamingEvidence(page, sessionId);
+    lastVisibleStatuses = evidence?.statusTexts ?? [];
+    const latestVisibleStatus = lastVisibleStatuses.at(-1)?.toLowerCase() ?? "";
+    if (terminalTurnStatuses.has(latestVisibleStatus)) {
+      return;
     }
 
     await page.waitForTimeout(250);
@@ -96,6 +110,7 @@ async function monitorNoOverlapUntilCompleted(
     extra: {
       lastHeadError,
       lastTurnStatus,
+      lastVisibleStatuses,
       userMessageId,
     },
     testInfo,

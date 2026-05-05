@@ -249,6 +249,228 @@ describe("replicaPatchApply", () => {
     expect(entry.turns[0]?.tool_completed).toBe(1);
   });
 
+  it("ignores stale stream delta patches that would regress an authoritative entry", () => {
+    const entry = createInternalEntry("session-1", { transientSeqStart: 1, warmTtlMs: 60_000 });
+    entry.freshness = "replica";
+    entry.lastEventSeq = 8;
+    entry.projectionRev = 8;
+    entry.turnsHydrated = true;
+    entry.turns = [{
+      turn_id: "turn-1",
+      session_id: "session-1",
+      run_id: "run-1",
+      user_message_id: "message-1",
+      status: "completed",
+      start_seq: 1,
+      end_seq: 8,
+      started_at: "2026-04-29T00:00:00.000Z",
+      updated_at: "2026-04-29T00:00:08.000Z",
+      assistant_partial: null,
+      thought_partial: null,
+      metrics_json: null,
+      tool_total: 1,
+      tool_pending: 0,
+      tool_running: 0,
+      tool_completed: 1,
+      tool_failed: 0,
+    }];
+    entry.turnsRev = 4;
+
+    const host = createReplicaHost(entry);
+    const result = applyReplicaPatches(host, [{
+      sessionId: "session-1",
+      op: "append",
+      data: {
+        appendMode: "stream_delta",
+        freshness: "authoritative",
+        lastEventSeq: 3,
+        projectionRev: 3,
+        turns: [{
+          ...entry.turns[0]!,
+          status: "running",
+          end_seq: null,
+          updated_at: "2026-04-29T00:00:03.000Z",
+          tool_pending: 1,
+          tool_running: 1,
+          tool_completed: 0,
+        }],
+      },
+    }]);
+
+    expect(result).toEqual({ changed: false, subscriptionCursorsChanged: false });
+    expect(entry.lastEventSeq).toBe(8);
+    expect(entry.projectionRev).toBe(8);
+    expect(entry.turnsRev).toBe(4);
+    expect(entry.turns[0]?.status).toBe("completed");
+    expect(entry.turns[0]?.tool_pending).toBe(0);
+    expect(entry.turns[0]?.tool_running).toBe(0);
+    expect(entry.turns[0]?.tool_completed).toBe(1);
+  });
+
+  it("applies equal-version authoritative replacements when they repair stale live transcript state", () => {
+    const entry = createInternalEntry("session-1", { transientSeqStart: 1, warmTtlMs: 60_000 });
+    entry.freshness = "replica";
+    entry.lastEventSeq = 8;
+    entry.projectionRev = 8;
+    entry.turnsHydrated = true;
+    entry.activity = { is_working: true, last_turn_status: "running" };
+    entry.turns = [{
+      turn_id: "turn-1",
+      session_id: "session-1",
+      run_id: "run-1",
+      user_message_id: "message-1",
+      status: "running",
+      start_seq: 1,
+      end_seq: null,
+      started_at: "2026-04-29T00:00:00.000Z",
+      updated_at: "2026-04-29T00:00:03.000Z",
+      assistant_partial: null,
+      thought_partial: null,
+      metrics_json: null,
+      tool_total: 1,
+      tool_pending: 1,
+      tool_running: 1,
+      tool_completed: 0,
+      tool_failed: 0,
+    }];
+    entry.messages = [{
+      id: "message-1",
+      session_id: "session-1",
+      task_id: "task-1",
+      turn_id: "turn-1",
+      role: "user",
+      content: "hello",
+      delivery: "immediate",
+      created_at: "2026-04-29T00:00:00.000Z",
+    }];
+
+    const host = createReplicaHost(entry);
+    const result = applyReplicaPatches(host, [{
+      sessionId: "session-1",
+      op: "replace",
+      data: {
+        replaceMode: "authoritative_replace",
+        freshness: "authoritative",
+        lastEventSeq: 8,
+        projectionRev: 8,
+        activity: { is_working: false, last_turn_status: "completed" },
+        turns: [{
+          ...entry.turns[0]!,
+          status: "completed",
+          end_seq: 8,
+          updated_at: "2026-04-29T00:00:08.000Z",
+          tool_pending: 0,
+          tool_running: 0,
+          tool_completed: 1,
+        }],
+        messages: [
+          ...entry.messages,
+          {
+            id: "message-2",
+            session_id: "session-1",
+            task_id: "task-1",
+            turn_id: "turn-1",
+            role: "assistant",
+            content: "done: hello",
+            delivery: "immediate",
+            created_at: "2026-04-29T00:00:08.000Z",
+          },
+        ],
+        events: [{
+          seq: 8,
+          id: "event-turn-finished",
+          session_id: "session-1",
+          run_id: "run-1",
+          turn_id: "turn-1",
+          event_type: "turn_finished",
+          payload_json: { status: "completed" },
+          created_at: "2026-04-29T00:00:08.000Z",
+        }],
+      },
+    }]);
+
+    expect(result.changed).toBe(true);
+    expect(entry.lastEventSeq).toBe(8);
+    expect(entry.projectionRev).toBe(8);
+    expect(entry.activity?.is_working).toBe(false);
+    expect(entry.turns[0]?.status).toBe("completed");
+    expect(entry.turns[0]?.tool_pending).toBe(0);
+    expect(entry.turns[0]?.tool_running).toBe(0);
+    expect(entry.turns[0]?.tool_completed).toBe(1);
+    expect(entry.messages.map((message) => message.content)).toEqual(["hello", "done: hello"]);
+  });
+
+  it("applies equal-seq authoritative repairs with older projection cursors without regressing cursors", () => {
+    const entry = createInternalEntry("session-1", { transientSeqStart: 1, warmTtlMs: 60_000 });
+    entry.freshness = "replica";
+    entry.lastEventSeq = 8;
+    entry.projectionRev = 9;
+    entry.turnsHydrated = true;
+    entry.loading = true;
+    entry.activity = { is_working: true, last_turn_status: "running" };
+    entry.turns = [{
+      turn_id: "turn-1",
+      session_id: "session-1",
+      run_id: "run-1",
+      user_message_id: "message-1",
+      status: "running",
+      start_seq: 1,
+      end_seq: null,
+      started_at: "2026-04-29T00:00:00.000Z",
+      updated_at: "2026-04-29T00:00:03.000Z",
+      assistant_partial: null,
+      thought_partial: null,
+      metrics_json: null,
+      tool_total: 0,
+      tool_pending: 0,
+      tool_running: 0,
+      tool_completed: 0,
+      tool_failed: 0,
+    }];
+    entry.messages = [{
+      id: "message-1",
+      session_id: "session-1",
+      task_id: "task-1",
+      turn_id: "turn-1",
+      role: "user",
+      content: "hello",
+      delivery: "immediate",
+      created_at: "2026-04-29T00:00:00.000Z",
+    }];
+
+    const host = createReplicaHost(entry);
+    const result = applyReplicaPatches(host, [{
+      sessionId: "session-1",
+      op: "replace",
+      data: {
+        replaceMode: "authoritative_replace",
+        freshness: "authoritative",
+        lastEventSeq: 8,
+        projectionRev: 7,
+        loading: false,
+        activity: { is_working: false, last_turn_status: "completed" },
+        turns: [{ ...entry.turns[0]!, status: "completed", end_seq: 8 }],
+        messages: [{
+          id: "message-2",
+          session_id: "session-1",
+          task_id: "task-1",
+          turn_id: "turn-1",
+          role: "assistant",
+          content: "done: hello",
+          delivery: "immediate",
+          created_at: "2026-04-29T00:00:08.000Z",
+        }],
+      },
+    }]);
+
+    expect(result.changed).toBe(true);
+    expect(entry.lastEventSeq).toBe(8);
+    expect(entry.projectionRev).toBe(9);
+    expect(entry.loading).toBe(false);
+    expect(entry.messages.map((message) => message.content)).toEqual(["hello", "done: hello"]);
+    expect(entry.activity?.is_working).toBe(false);
+  });
+
   it("applies live stream delta message removals without a full message window", () => {
     const entry = createInternalEntry("session-1", { transientSeqStart: 1, warmTtlMs: 60_000 });
     entry.messages = [{

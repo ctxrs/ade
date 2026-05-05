@@ -73,6 +73,9 @@ export const applyCanonicalTranscriptPatch = (
     patch,
     normalizedFreshness,
   });
+  if (!shouldApplyReplace) {
+    return false;
+  }
   const preserveCoveredHistoryOnReplace =
     patch.op === "replace" &&
     repairReplaceShouldPreserveEntryTranscript(entry, data) &&
@@ -95,9 +98,7 @@ export const applyCanonicalTranscriptPatch = (
     changed = true;
   }
 
-  const shouldCopyCanonicalTranscript = patch.op !== "replace" || shouldApplyReplace;
-
-  if (shouldCopyCanonicalTranscript && !preserveCoveredHistoryOnReplace) {
+  if (!preserveCoveredHistoryOnReplace) {
     let nextTurns = entry.turns;
     if (Array.isArray(data.turns)) {
       nextTurns = preserveMonotonicTurns(
@@ -163,7 +164,7 @@ export const applyCanonicalTranscriptPatch = (
           resetByTurn: patch.op === "replace" && !mergeAppendStreamDelta,
         }) || changed;
     }
-  } else if (shouldCopyCanonicalTranscript && preserveCoveredHistoryOnReplace) {
+  } else {
     let nextTurns = entry.turns;
     if (Array.isArray(data.turns)) {
       nextTurns = preserveMonotonicTurns(entry.turns, mergeSessionTurns(entry.turns, data.turns));
@@ -258,8 +259,12 @@ export const applyCanonicalTranscriptPatch = (
     }
   }
   if (data.projectionRev !== undefined) {
-    if (entry.projectionRev !== data.projectionRev) {
-      entry.projectionRev = data.projectionRev;
+    const nextProjectionRev =
+      typeof entry.projectionRev === "number"
+        ? Math.max(entry.projectionRev, data.projectionRev)
+        : data.projectionRev;
+    if (entry.projectionRev !== nextProjectionRev) {
+      entry.projectionRev = nextProjectionRev;
       changed = true;
     }
   }
@@ -285,8 +290,12 @@ export const applyCanonicalTranscriptPatch = (
     }
   }
   if (data.lastEventSeq !== undefined) {
-    if (entry.lastEventSeq !== data.lastEventSeq) {
-      entry.lastEventSeq = data.lastEventSeq;
+    const nextLastEventSeq =
+      typeof entry.lastEventSeq === "number"
+        ? Math.max(entry.lastEventSeq, data.lastEventSeq)
+        : data.lastEventSeq;
+    if (entry.lastEventSeq !== nextLastEventSeq) {
+      entry.lastEventSeq = nextLastEventSeq;
       changed = true;
     }
   }
