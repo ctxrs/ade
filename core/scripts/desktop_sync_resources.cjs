@@ -2,7 +2,10 @@ const fs = require("fs");
 const path = require("path");
 const childProcess = require("child_process");
 const crypto = require("crypto");
-const { shouldBundleRemoteDaemons } = require("./desktop_sync_resources_remote_daemon_policy.cjs");
+const {
+  resolveRemoteDaemonBundleTargetArches,
+  shouldBundleRemoteDaemons,
+} = require("./desktop_sync_resources_remote_daemon_policy.cjs");
 const { resolveBuildMode, resolveDesktopBuildIdentity } = require("./lib/desktop_build_identity.cjs");
 const { parseBoolish, resolveBoolishFlag } = require("./lib/boolish.cjs");
 const { resolveCargoTargetDir } = require("./lib/cargo_target_dir.cjs");
@@ -912,20 +915,27 @@ const bundleRemoteDaemons = (bundleDir) => {
   const cargoHome = ensureContainerCacheDir(path.join(cacheRoot, "cargo-home"));
   const rustupHome = ensureContainerCacheDir(path.join(cacheRoot, "rustup-home"));
 
-  const targets = [
-    {
+  const targetByArch = new Map([
+    ["x86_64", {
       arch: "x86_64",
       platform: "linux/amd64",
       rustTarget: "x86_64-unknown-linux-gnu",
       fileName: "ctx-daemon-linux-x86_64",
-    },
-    {
+    }],
+    ["aarch64", {
       arch: "aarch64",
       platform: "linux/arm64",
       rustTarget: "aarch64-unknown-linux-gnu",
       fileName: "ctx-daemon-linux-aarch64",
-    },
-  ];
+    }],
+  ]);
+  const targets = resolveRemoteDaemonBundleTargetArches(process.env).map((arch) => {
+    const target = targetByArch.get(arch);
+    if (!target) {
+      throw new Error(`unsupported bundled remote daemon arch: ${arch}`);
+    }
+    return target;
+  });
 
   const daemonEntries = [];
   for (const target of targets) {

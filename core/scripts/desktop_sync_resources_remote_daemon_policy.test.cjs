@@ -5,6 +5,7 @@ const os = require("node:os");
 const path = require("node:path");
 
 const {
+  resolveRemoteDaemonBundleTargetArches,
   shouldBundleRemoteDaemons,
 } = require("./desktop_sync_resources_remote_daemon_policy.cjs");
 const {
@@ -31,6 +32,33 @@ test("remote daemon bundling rejects invalid values", () => {
   assert.throws(
     () => shouldBundleRemoteDaemons({ CTX_BUNDLE_REMOTE_DAEMONS: "random" }),
     /Invalid CTX_BUNDLE_REMOTE_DAEMONS/,
+  );
+});
+
+test("remote daemon bundle target arches default to release-complete coverage", () => {
+  assert.deepEqual(resolveRemoteDaemonBundleTargetArches({}), ["x86_64", "aarch64"]);
+});
+
+test("remote daemon bundle target arches accept remote workspace arch aliases", () => {
+  assert.deepEqual(
+    resolveRemoteDaemonBundleTargetArches({
+      CTX_BUNDLE_REMOTE_DAEMON_ARCHES: "linux-x64,linux-arm64",
+    }),
+    ["x86_64", "aarch64"],
+  );
+});
+
+test("remote daemon bundle target arches can scope source-app acceptance to x64", () => {
+  assert.deepEqual(
+    resolveRemoteDaemonBundleTargetArches({ CTX_BUNDLE_REMOTE_DAEMON_ARCHES: "linux-x64" }),
+    ["x86_64"],
+  );
+});
+
+test("remote daemon bundle target arches reject unsupported values", () => {
+  assert.throws(
+    () => resolveRemoteDaemonBundleTargetArches({ CTX_BUNDLE_REMOTE_DAEMON_ARCHES: "sparc" }),
+    /Invalid CTX_BUNDLE_REMOTE_DAEMON_ARCHES entry/,
   );
 });
 
