@@ -850,9 +850,9 @@ async fn include_events_false_subagent_heads_fall_back_to_store_after_cold_delta
             session_id: subagent.id,
             run_id: Some(run_id),
             user_message_id: None,
-            status: SessionTurnStatus::Completed,
+            status: SessionTurnStatus::Running,
             start_seq: Some(1),
-            end_seq: Some(1),
+            end_seq: None,
             started_at: now,
             updated_at: now,
             assistant_partial: None,
@@ -873,6 +873,17 @@ async fn include_events_false_subagent_heads_fall_back_to_store_after_cold_delta
             Some(turn_id),
             SessionEventType::Notice,
             serde_json::json!({"msg":"subagent durable history"}),
+        )
+        .await
+        .unwrap();
+    store
+        .update_session_turn_status(
+            subagent.id,
+            turn_id,
+            SessionTurnStatus::Completed,
+            Some(event.seq),
+            None,
+            chrono::Utc::now(),
         )
         .await
         .unwrap();
@@ -1012,9 +1023,9 @@ async fn unarchive_repopulates_active_heads_for_hydrated_workspace() {
             session_id: session.id,
             run_id: Some(run_id),
             user_message_id: None,
-            status: SessionTurnStatus::Completed,
+            status: SessionTurnStatus::Running,
             start_seq: Some(1),
-            end_seq: Some(1),
+            end_seq: None,
             started_at: now,
             updated_at: now,
             assistant_partial: None,
@@ -1028,13 +1039,24 @@ async fn unarchive_repopulates_active_heads_for_hydrated_workspace() {
         })
         .await
         .unwrap();
-    store
+    let event = store
         .append_session_event(
             session.id,
             Some(run_id),
             Some(turn_id),
             SessionEventType::Notice,
             serde_json::json!({"note": "seed"}),
+        )
+        .await
+        .unwrap();
+    store
+        .update_session_turn_status(
+            session.id,
+            turn_id,
+            SessionTurnStatus::Completed,
+            Some(event.seq),
+            None,
+            chrono::Utc::now(),
         )
         .await
         .unwrap();
@@ -1182,9 +1204,9 @@ async fn unarchive_replaces_stale_session_head_cache_before_workspace_hydration(
             session_id: session.id,
             run_id: Some(run_id),
             user_message_id: None,
-            status: SessionTurnStatus::Completed,
+            status: SessionTurnStatus::Running,
             start_seq: Some(1),
-            end_seq: Some(1),
+            end_seq: None,
             started_at: now,
             updated_at: now,
             assistant_partial: None,
@@ -1198,13 +1220,24 @@ async fn unarchive_replaces_stale_session_head_cache_before_workspace_hydration(
         })
         .await
         .unwrap();
-    store
+    let event = store
         .append_session_event(
             session.id,
             Some(run_id),
             Some(turn_id),
             SessionEventType::Notice,
             serde_json::json!({"note": "seed"}),
+        )
+        .await
+        .unwrap();
+    store
+        .update_session_turn_status(
+            session.id,
+            turn_id,
+            SessionTurnStatus::Completed,
+            Some(event.seq),
+            None,
+            chrono::Utc::now(),
         )
         .await
         .unwrap();
@@ -1339,9 +1372,9 @@ async fn include_events_false_primary_heads_fall_back_to_store_after_cold_delta(
             session_id: primary.id,
             run_id: Some(run_id),
             user_message_id: None,
-            status: SessionTurnStatus::Completed,
+            status: SessionTurnStatus::Running,
             start_seq: Some(1),
-            end_seq: Some(1),
+            end_seq: None,
             started_at: now,
             updated_at: now,
             assistant_partial: None,
@@ -1362,6 +1395,17 @@ async fn include_events_false_primary_heads_fall_back_to_store_after_cold_delta(
             Some(turn_id),
             SessionEventType::Notice,
             serde_json::json!({"msg":"primary durable history"}),
+        )
+        .await
+        .unwrap();
+    store
+        .update_session_turn_status(
+            primary.id,
+            turn_id,
+            SessionTurnStatus::Completed,
+            Some(event.seq),
+            None,
+            chrono::Utc::now(),
         )
         .await
         .unwrap();
