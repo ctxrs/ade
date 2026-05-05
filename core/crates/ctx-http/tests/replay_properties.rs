@@ -191,9 +191,9 @@ async fn seed_active_projection_case(
         session_id: harness.session.id,
         run_id: None,
         user_message_id: Some(harness.user_message_id),
-        status: SessionTurnStatus::Completed,
+        status: SessionTurnStatus::Running,
         start_seq: Some(1),
-        end_seq: Some(fixture.expected.head_last_event_seq),
+        end_seq: None,
         started_at,
         updated_at,
         assistant_partial: None,
@@ -300,6 +300,17 @@ async fn seed_active_projection_case(
         seqs.push(event.seq);
         harness.state.publish_event(event).await;
     }
+    store
+        .update_session_turn_status(
+            harness.session.id,
+            harness.turn_id,
+            SessionTurnStatus::Completed,
+            seqs.last().copied(),
+            None,
+            updated_at,
+        )
+        .await
+        .unwrap();
 
     let partial = store
         .append_session_event(
@@ -368,9 +379,9 @@ async fn seed_gap_case(harness: &ProjectionHarness, fixture: &SessionGapSeedRehy
             session_id: harness.session.id,
             run_id: None,
             user_message_id: Some(harness.user_message_id),
-            status: SessionTurnStatus::Completed,
+            status: SessionTurnStatus::Running,
             start_seq: Some(1),
-            end_seq: Some(fixture.expected.head_last_event_seq),
+            end_seq: None,
             started_at,
             updated_at,
             assistant_partial: None,
@@ -473,6 +484,17 @@ async fn seed_gap_case(harness: &ProjectionHarness, fixture: &SessionGapSeedRehy
         .await
         .unwrap();
     harness.state.publish_event(assistant_complete).await;
+    store
+        .update_session_turn_status(
+            harness.session.id,
+            harness.turn_id,
+            SessionTurnStatus::Completed,
+            Some(assistant_complete.seq),
+            None,
+            updated_at,
+        )
+        .await
+        .unwrap();
 
     harness
         .state

@@ -730,9 +730,9 @@ async fn workspace_active_heads_batch_strips_partials() {
             session_id: session.id,
             run_id: None,
             user_message_id: None,
-            status: SessionTurnStatus::Completed,
+            status: SessionTurnStatus::Running,
             start_seq: Some(1),
-            end_seq: Some(2),
+            end_seq: None,
             started_at: now,
             updated_at: now,
             assistant_partial: Some("partial".to_string()),
@@ -746,7 +746,7 @@ async fn workspace_active_heads_batch_strips_partials() {
         })
         .await
         .unwrap();
-    store
+    let notice_event = store
         .append_session_event(
             session.id,
             None,
@@ -767,6 +767,17 @@ async fn workspace_active_heads_batch_strips_partials() {
             Some(turn_id),
             SessionEventType::Notice,
             json!({ "kind": "test_checkpoint", "message": "stable" }),
+        )
+        .await
+        .unwrap();
+    store
+        .update_session_turn_status(
+            session.id,
+            turn_id,
+            SessionTurnStatus::Completed,
+            Some(notice_event.seq),
+            None,
+            Utc::now(),
         )
         .await
         .unwrap();
