@@ -21,6 +21,7 @@ import {
 } from "./sessionReplicaTranscript";
 import { isBoundedSessionHead, shouldRepairSessionHeadReplace } from "./sessionHeadRepair";
 import {
+  isTerminalTurnStatus,
   reconcileActivityInterruptedFromTurns,
   reconcileLatestTurnInterruptedFromActivity,
 } from "./sessionSupervisor/cachePolicy";
@@ -92,6 +93,96 @@ const changedToolSummariesById = (
   next: readonly SessionTurnToolSummary[],
 ): SessionTurnToolSummary[] =>
   changedItemsById(previous, next, (summary) => String(summary.tool_call_id ?? "").trim());
+
+const TERMINAL_VISIBLE_EVENT_TYPES = new Set([
+  "assistant_complete",
+  "assistant_message_inserted",
+  "done",
+  "error",
+  "turn_finished",
+  "turn_interrupted",
+]);
+
+const findReplicaTurn = (
+  turns: readonly SessionTurn[],
+  turnId: string,
+): SessionTurn | null => turns.find((turn) => idToString(turn.turn_id) === turnId) ?? null;
+
+const hasReplicaEventSeq = (
+  events: readonly SessionEvent[],
+  seq: number | null,
+): boolean => seq !== null && events.some((event) => event.seq === seq);
+
+const hasReplicaMessage = (
+  messages: readonly Message[],
+  messageId: string,
+): boolean => Boolean(messageId) && messages.some((message) => idToString(message.id) === messageId);
+
+const hasReplicaToolSummary = (
+  summaries: readonly SessionTurnToolSummary[],
+  toolCallId: string,
+): boolean =>
+  Boolean(toolCallId) &&
+  summaries.some((summary) => String(summary.tool_call_id ?? "").trim() === toolCallId);
+
+const readEventPayloadString = (
+  payload: SessionEvent["payload_json"],
+  keys: readonly string[],
+): string => {
+  if (!payload) return "";
+  for (const key of keys) {
+    const value = payload[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return "";
+};
+
+const staleDeltaHasVisibleForwardProgress = (
+  entry: SessionReplicaEntry,
+  delta: SessionHeadDelta,
+  event: SessionEvent | null,
+  toolSummaries: readonly SessionTurnToolSummary[],
+): boolean => {
+  const messageId = normalizeReplicaId(delta.message?.id ?? "");
+  if (messageId && !hasReplicaMessage(entry.messages, messageId)) return true;
+
+  const deltaTurnId = normalizeReplicaId(delta.turn?.turn_id ?? "");
+  if (delta.turn && deltaTurnId && isTerminalTurnStatus(delta.turn.status)) {
+    const existingTurn = findReplicaTurn(entry.turns, deltaTurnId);
+    if (!existingTurn || !isTerminalTurnStatus(existingTurn.status)) return true;
+  }
+
+  const eventType = String(event?.event_type ?? "");
+  const eventSeq = typeof event?.seq === "number" ? event.seq : null;
+  if (event && TERMINAL_VISIBLE_EVENT_TYPES.has(eventType) && !hasReplicaEventSeq(entry.events, eventSeq)) {
+    const eventTurnId = normalizeReplicaId(event.turn_id ?? "");
+    const existingTurn = eventTurnId ? findReplicaTurn(entry.turns, eventTurnId) : null;
+    if (eventType === "assistant_message_inserted") {
+      const eventMessageId = normalizeReplicaId(
+        readEventPayloadString(event.payload_json, ["message_id", "messageId"]),
+      );
+      if (eventMessageId && !hasReplicaMessage(entry.messages, eventMessageId)) return true;
+    } else if (eventType === "assistant_complete") {
+      if (
+        eventTurnId &&
+        (!existingTurn ||
+          !isTerminalTurnStatus(existingTurn.status) ||
+          Boolean(entry.assistantStreamingByTurnId[eventTurnId]))
+      ) {
+        return true;
+      }
+    } else if (!existingTurn || !isTerminalTurnStatus(existingTurn.status)) {
+      return true;
+    }
+  }
+
+  return toolSummaries.some((summary) => {
+    const toolCallId = String(summary.tool_call_id ?? "").trim();
+    if (!toolCallId || hasReplicaToolSummary(entry.toolSummaries, toolCallId)) return false;
+    const turn = findReplicaTurn(entry.turns, normalizeReplicaId(summary.turn_id ?? ""));
+    return Boolean(turn && !isTerminalTurnStatus(turn.status));
+  });
+};
 
 export type SessionReplicaEventHost = {
   entries: Map<string, SessionReplicaEntry>;
@@ -276,7 +367,9 @@ const applySessionReplicaHeadDelta = (
     });
     staleDelta = true;
   }
-  if (staleDelta) return;
+  if (staleDelta && !staleDeltaHasVisibleForwardProgress(entry, delta, rawEvent, toolSummaries)) {
+    return;
+  }
 
   const previousSession = entry.session;
   const previousActivity = entry.activity;

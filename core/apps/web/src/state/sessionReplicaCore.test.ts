@@ -2430,6 +2430,261 @@ describe("SessionReplicaCore", () => {
     expect(latest.data.turns?.[0]?.tool_completed).toBe(1);
   });
 
+  it("renders missing terminal live state even when a repair head advanced the cursor", () => {
+    const sessionId = "session-stale-terminal-delta";
+    const patches: SessionReplicaPatch[] = [];
+    const freshnessEvents: SessionReplicaFreshnessEvent[] = [];
+    const core = new SessionReplicaCore({
+      api: { getSessionHead: vi.fn() },
+      emit: (next) => patches.push(...next),
+      emitFreshness: (event) => freshnessEvents.push(event),
+    });
+    const createdAt = new Date().toISOString();
+
+    core.handleCommand({ type: "init", config: { eventBufferLimit: 100, headLimit: 50 } });
+    core.handleCommand({
+      type: "seed_head",
+      sessionId,
+      head: {
+        session: mkSession(sessionId),
+        turns: [],
+        events: [],
+        messages: [],
+        last_event_seq: 10,
+        projection_rev: 10,
+        state_rev: 10,
+        has_more_turns: false,
+        has_more_history: false,
+        history_cursor: null,
+      },
+      mode: "repair_replace",
+    });
+    patches.length = 0;
+
+    core.handleCommand({
+      type: "workspace_event",
+      event: {
+        type: "session_head_delta",
+        workspace_id: "ws-1",
+        snapshot_rev: 11,
+        delta: {
+          session_id: sessionId,
+          last_event_seq: 8,
+          projection_rev: 8,
+          state_rev: 8,
+          turn: {
+            turn_id: "turn-live",
+            session_id: sessionId,
+            run_id: "run-live",
+            user_message_id: "message-user",
+            status: "interrupted",
+            start_seq: 6,
+            end_seq: 8,
+            started_at: createdAt,
+            updated_at: createdAt,
+            assistant_partial: null,
+            thought_partial: "",
+            metrics_json: null,
+            tool_total: 0,
+            tool_pending: 0,
+            tool_running: 0,
+            tool_completed: 0,
+            tool_failed: 0,
+          },
+          event: {
+            seq: 8,
+            id: "event-assistant-message-8",
+            session_id: sessionId,
+            run_id: "run-live",
+            turn_id: "turn-live",
+            event_type: "assistant_message_inserted",
+            payload_json: {
+              message_id: "message-live",
+              content: "interrupted visibly",
+            },
+            transient: false,
+            created_at: createdAt,
+          },
+        },
+      },
+    });
+
+    const latest = [...patches].reverse().find(
+      (patch) =>
+        patch.sessionId === sessionId &&
+        patch.op === "append" &&
+        patch.data.appendMode === "stream_delta",
+    );
+    if (!latest || latest.op === "evict") {
+      throw new Error("expected visible stream delta patch");
+    }
+    expect(latest.data.lastEventSeq).toBe(10);
+    expect(latest.data.turns?.[0]?.status).toBe("interrupted");
+    expect(latest.data.messages?.[0]?.content).toBe("interrupted visibly");
+    expect(freshnessEvents).toEqual(expect.arrayContaining([
+      {
+        type: "projection_or_seq_regression",
+        sessionId,
+        dimension: "last_event_seq",
+        incoming: 8,
+        existing: 10,
+      },
+    ]));
+  });
+
+  it("keeps foreground transcript updates moving through a ctx-ui sized stale repair backlog", () => {
+    const sessionId = "session-stale-backlog-foreground";
+    const patches: SessionReplicaPatch[] = [];
+    const core = new SessionReplicaCore({
+      api: { getSessionHead: vi.fn() },
+      emit: (next) => patches.push(...next),
+    });
+    const createdAt = new Date().toISOString();
+    const repairCursor = 60_000;
+    const backlogDeltas = 12_000;
+    const visibleEvery = 400;
+
+    core.handleCommand({ type: "init", config: { eventBufferLimit: 200, headLimit: 50 } });
+    core.handleCommand({
+      type: "seed_head",
+      sessionId,
+      head: {
+        session: mkSession(sessionId),
+        turns: [],
+        events: [],
+        messages: [],
+        last_event_seq: repairCursor,
+        projection_rev: repairCursor,
+        state_rev: repairCursor,
+        has_more_turns: false,
+        has_more_history: false,
+        history_cursor: null,
+      },
+      mode: "repair_replace",
+    });
+    patches.length = 0;
+
+    for (let seq = 1; seq <= backlogDeltas; seq += 1) {
+      const isVisibleProgress = seq % visibleEvery === 0;
+      const turnId = isVisibleProgress ? `turn-visible-${seq}` : `turn-noise-${seq}`;
+      core.handleCommand({
+        type: "workspace_event",
+        event: {
+          type: "session_head_delta",
+          workspace_id: "ws-1",
+          snapshot_rev: seq + 1,
+          delta: {
+            session_id: sessionId,
+            last_event_seq: seq,
+            projection_rev: seq,
+            state_rev: seq,
+            turn: {
+              turn_id: turnId,
+              session_id: sessionId,
+              run_id: `run-${seq}`,
+              user_message_id: `message-user-${seq}`,
+              status: isVisibleProgress ? "completed" : "running",
+              start_seq: seq,
+              end_seq: isVisibleProgress ? seq : null,
+              started_at: createdAt,
+              updated_at: createdAt,
+              assistant_partial: null,
+              thought_partial: "",
+              metrics_json: null,
+              tool_total: 0,
+              tool_pending: isVisibleProgress ? 0 : 1,
+              tool_running: isVisibleProgress ? 0 : 1,
+              tool_completed: 0,
+              tool_failed: 0,
+            },
+            event: isVisibleProgress
+              ? {
+                  seq,
+                  id: `event-visible-${seq}`,
+                  session_id: sessionId,
+                  run_id: `run-${seq}`,
+                  turn_id: turnId,
+                  event_type: "assistant_message_inserted",
+                  payload_json: {
+                    message_id: `message-visible-${seq}`,
+                    content: `visible progress ${seq}`,
+                  },
+                  transient: false,
+                  created_at: createdAt,
+                }
+              : undefined,
+          },
+        },
+      });
+    }
+
+    core.handleCommand({
+      type: "workspace_event",
+      event: {
+        type: "session_head_delta",
+        workspace_id: "ws-1",
+        snapshot_rev: backlogDeltas + 2,
+        delta: {
+          session_id: sessionId,
+          last_event_seq: backlogDeltas + 1,
+          projection_rev: backlogDeltas + 1,
+          state_rev: backlogDeltas + 1,
+          turn: {
+            turn_id: "turn-interrupted-final",
+            session_id: sessionId,
+            run_id: "run-interrupted-final",
+            user_message_id: "message-user-final",
+            status: "interrupted",
+            start_seq: backlogDeltas,
+            end_seq: backlogDeltas + 1,
+            started_at: createdAt,
+            updated_at: createdAt,
+            assistant_partial: null,
+            thought_partial: "",
+            metrics_json: null,
+            tool_total: 0,
+            tool_pending: 0,
+            tool_running: 0,
+            tool_completed: 0,
+            tool_failed: 0,
+          },
+          event: {
+            seq: backlogDeltas + 1,
+            id: "event-interrupted-final",
+            session_id: sessionId,
+            run_id: "run-interrupted-final",
+            turn_id: "turn-interrupted-final",
+            event_type: "assistant_message_inserted",
+            payload_json: {
+              message_id: "message-interrupted-final",
+              content: "stop became visible",
+            },
+            transient: false,
+            created_at: createdAt,
+          },
+        },
+      },
+    });
+
+    const visiblePatches = patches.filter(
+      (patch) =>
+        patch.sessionId === sessionId &&
+        patch.op === "append" &&
+        patch.data.appendMode === "stream_delta" &&
+        (patch.data.messages?.length ?? 0) > 0,
+    );
+    expect(visiblePatches).toHaveLength(backlogDeltas / visibleEvery + 1);
+    const firstVisible = visiblePatches[0];
+    const lastVisible = visiblePatches[visiblePatches.length - 1];
+    if (!firstVisible || firstVisible.op === "evict" || !lastVisible || lastVisible.op === "evict") {
+      throw new Error("expected visible stream delta patches");
+    }
+    expect(firstVisible.data.messages?.[0]?.content).toBe(`visible progress ${visibleEvery}`);
+    expect(lastVisible.data.messages?.[0]?.content).toBe("stop became visible");
+    expect(lastVisible.data.turns?.[0]?.status).toBe("interrupted");
+    expect(lastVisible.data.lastEventSeq).toBe(repairCursor);
+  });
+
   it("drops stale live deltas before they can regress a completed head", () => {
     const sessionId = "session-stale-live-delta";
     const patches: SessionReplicaPatch[] = [];

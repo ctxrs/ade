@@ -497,6 +497,54 @@ describe("sessionHeadPrefetch", () => {
     expect(bootstrapCache.get(sessionId)).toBeUndefined();
   });
 
+  it("coalesces ctx-ui sized summary churn behind the in-flight authoritative session head", async () => {
+    const sessionId = "session-1";
+    const summaryVersionCount = 512;
+    const latestSnapshot = makeSnapshot(sessionId, { lastEventSeq: summaryVersionCount });
+    const authoritativeHead = makeHead(sessionId, {
+      turnCount: 3,
+      lastEventSeq: summaryVersionCount,
+    });
+
+    let resolveFetch: ((value: SessionHeadSnapshot) => void) | null = null;
+    getSessionHeadMock.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveFetch = resolve as (value: SessionHeadSnapshot) => void;
+        }),
+    );
+    const bootstrapCache = new SessionHeadBootstrapCache();
+    const store = {
+      getSessionHeadSnapshot: vi.fn(() => null),
+      getSessionHeadsSnapshot: vi.fn(() => ({})),
+    };
+
+    const pending = Array.from({ length: summaryVersionCount }, (_, index) =>
+      primeAuthoritativeSessionHeads(
+        makeSnapshot(sessionId, { lastEventSeq: index + 1 }),
+        store,
+        bootstrapCache,
+        [sessionId],
+        { getSnapshot: () => latestSnapshot },
+      ));
+    await vi.waitFor(() => {
+      expect(getSessionHeadMock).toHaveBeenCalledTimes(1);
+    });
+    await Promise.resolve();
+
+    expect(getSessionHeadMock).toHaveBeenCalledTimes(1);
+    if (!resolveFetch) {
+      throw new Error("Expected authoritative resolver");
+    }
+    const finishFetch = resolveFetch as (value: SessionHeadSnapshot) => void;
+    finishFetch(authoritativeHead);
+
+    const results = await Promise.all(pending);
+    expect(results.filter(Boolean)).toHaveLength(1);
+    expect(getSessionHeadMock).toHaveBeenCalledTimes(1);
+    expect(bootstrapCache.get(sessionId)?.last_event_seq).toBe(summaryVersionCount);
+  });
+
   it("retries same-version authoritative prefetch when a newer generation overlaps an older canceled load", async () => {
     const sessionId = "session-1";
     const snapshot = makeSnapshot(sessionId, { lastEventSeq: 5 });

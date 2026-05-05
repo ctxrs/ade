@@ -13,7 +13,6 @@ type PersistedPrefetchEntry = {
 };
 
 type AuthoritativePrefetchEntry = {
-  key: string;
   sessionId: string;
   versionKey: string;
   token: symbol;
@@ -90,9 +89,9 @@ export class SessionHeadBootstrapCache {
         this.finishPersistedPrefetch(sessionId, null, false);
       }
     }
-    for (const [key, entry] of this.authoritativePrefetchInFlight.entries()) {
+    for (const [sessionId, entry] of this.authoritativePrefetchInFlight.entries()) {
       if (!allowed.has(entry.sessionId)) {
-        this.authoritativePrefetchInFlight.delete(key);
+        this.authoritativePrefetchInFlight.delete(sessionId);
         entry.resolve();
       }
     }
@@ -101,10 +100,6 @@ export class SessionHeadBootstrapCache {
         this.authoritativePrefetchVersions.delete(sessionId);
       }
     }
-  }
-
-  private buildAuthoritativePrefetchKey(sessionId: string, versionKey: string): string {
-    return `${sessionId}\u001f${versionKey}`;
   }
 
   beginPersistedPrefetch(sessionId: string | null | undefined): PersistedPrefetchLease {
@@ -163,25 +158,23 @@ export class SessionHeadBootstrapCache {
     if (this.authoritativePrefetchVersions.get(id) === normalizedVersionKey) {
       return { state: "skip" };
     }
-    const key = this.buildAuthoritativePrefetchKey(id, normalizedVersionKey);
-    const inFlight = this.authoritativePrefetchInFlight.get(key);
+    const inFlight = this.authoritativePrefetchInFlight.get(id);
     if (inFlight) {
       return { state: "wait", promise: inFlight.promise };
     }
-    const token = Symbol(key);
+    const token = Symbol(id);
     let resolve = () => {};
     const promise = new Promise<void>((resolver) => {
       resolve = resolver;
     });
     const entry: AuthoritativePrefetchEntry = {
-      key,
       sessionId: id,
       versionKey: normalizedVersionKey,
       token,
       promise,
       resolve,
     };
-    this.authoritativePrefetchInFlight.set(key, entry);
+    this.authoritativePrefetchInFlight.set(id, entry);
     return {
       state: "start",
       finish: (success: boolean) => {
@@ -194,9 +187,9 @@ export class SessionHeadBootstrapCache {
     entry: AuthoritativePrefetchEntry,
     success: boolean,
   ): void {
-    const current = this.authoritativePrefetchInFlight.get(entry.key);
+    const current = this.authoritativePrefetchInFlight.get(entry.sessionId);
     if (current?.token === entry.token) {
-      this.authoritativePrefetchInFlight.delete(entry.key);
+      this.authoritativePrefetchInFlight.delete(entry.sessionId);
       if (success) {
         this.authoritativePrefetchVersions.set(entry.sessionId, entry.versionKey);
       }
