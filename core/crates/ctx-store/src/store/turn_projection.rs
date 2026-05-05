@@ -53,10 +53,8 @@ fn summarize_tool_counts<'a>(
 }
 
 fn is_tool_before_terminal(tool: &SessionTurnTool, terminal_seq: Option<i64>) -> bool {
-    terminal_seq.map_or(true, |seq| {
-        tool.first_event_seq
-            .map_or(true, |tool_seq| tool_seq <= seq)
-    })
+    terminal_seq
+        .is_none_or(|seq| tool.first_event_seq.is_none_or(|tool_seq| tool_seq <= seq))
 }
 
 fn decode_session_event_row(row: SqliteRow) -> Result<SessionEvent> {
