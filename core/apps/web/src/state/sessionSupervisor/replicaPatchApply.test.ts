@@ -4,6 +4,7 @@ import { applyToolSummaries } from "./headProjection";
 import { createInternalEntry } from "./entryState";
 import type { SessionSupervisorReplicaPatchHost } from "./replicaPatchApply";
 import type { SessionSupervisorHeadProjectionHost } from "./headProjection";
+import type { Message, SessionTurn } from "../../api/client";
 
 function createReplicaHost(entry: ReturnType<typeof createInternalEntry>): SessionSupervisorReplicaPatchHost {
   return {
@@ -463,5 +464,97 @@ describe("replicaPatchApply", () => {
       "message-local-user",
       "message-assistant",
     ]);
+  });
+
+  it("preserves terminal transcript history when a compact repair replace is disjoint", () => {
+    const entry = createInternalEntry("session-1", { transientSeqStart: 1, warmTtlMs: 60_000 });
+    const oldTurn: SessionTurn = {
+      turn_id: "turn-old",
+      session_id: "session-1",
+      run_id: null,
+      user_message_id: "message-old",
+      status: "completed",
+      start_seq: 1,
+      end_seq: 2,
+      started_at: "2026-04-14T00:00:00.000Z",
+      updated_at: "2026-04-14T00:00:01.000Z",
+      assistant_partial: null,
+      thought_partial: null,
+      metrics_json: null,
+      tool_total: 0,
+      tool_pending: 0,
+      tool_running: 0,
+      tool_completed: 0,
+      tool_failed: 0,
+    };
+    const oldMessage: Message = {
+      id: "message-old",
+      session_id: "session-1",
+      task_id: "task-1",
+      turn_id: "turn-old",
+      role: "assistant",
+      content: "older visible transcript",
+      delivery: "immediate",
+      created_at: "2026-04-14T00:00:01.000Z",
+    };
+    const newTurn: SessionTurn = {
+      ...oldTurn,
+      turn_id: "turn-new",
+      user_message_id: "message-new",
+      start_seq: 20,
+      end_seq: 21,
+      started_at: "2026-04-14T00:00:20.000Z",
+      updated_at: "2026-04-14T00:00:21.000Z",
+    };
+    const newMessage: Message = {
+      ...oldMessage,
+      id: "message-new",
+      turn_id: "turn-new",
+      role: "user",
+      content: "new compact head message",
+      created_at: "2026-04-14T00:00:20.000Z",
+    };
+    entry.turnsHydrated = true;
+    entry.turns = [oldTurn];
+    entry.messages = [oldMessage];
+    entry.events = [];
+
+    const resetEntryProjectionForReplace = vi.fn();
+    const host = {
+      ...createReplicaHost(entry),
+      resetEntryProjectionForReplace,
+    };
+
+    const result = applyReplicaPatches(host, [{
+      sessionId: "session-1",
+      op: "replace",
+      data: {
+        replaceMode: "repair_replace",
+        freshness: "authoritative",
+        turns: [newTurn],
+        messages: [newMessage],
+        events: [],
+        turnsHydrated: true,
+        loading: false,
+        lastEventSeq: 21,
+        projectionRev: 21,
+        headWindow: {
+          turn_limit: 1,
+          message_limit: 1,
+          event_limit: 40,
+          byte_limit: 4096,
+          turn_count: 1,
+          message_count: 1,
+          event_count: 0,
+          bytes: 512,
+          truncated: true,
+        },
+      },
+    }]);
+
+    expect(result.changed).toBe(true);
+    expect(resetEntryProjectionForReplace).not.toHaveBeenCalled();
+    expect(entry.messages.map((message) => message.id)).toEqual(["message-old", "message-new"]);
+    expect(entry.turns.map((turn) => turn.turn_id)).toEqual(["turn-old", "turn-new"]);
   });
 });

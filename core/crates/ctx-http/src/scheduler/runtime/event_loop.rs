@@ -112,6 +112,54 @@ impl EventLoopRuntimeState {
     }
 }
 
+fn is_terminal_turn_status(status: &SessionTurnStatus) -> bool {
+    matches!(
+        status,
+        SessionTurnStatus::Completed | SessionTurnStatus::Failed | SessionTurnStatus::Interrupted
+    )
+}
+
+fn should_check_store_terminal_status(event_type: &SessionEventType) -> bool {
+    !matches!(
+        event_type,
+        SessionEventType::AssistantChunk
+            | SessionEventType::ThoughtChunk
+            | SessionEventType::ContextWindowUpdate
+            | SessionEventType::ToolCallUpdate
+    )
+}
+
+async fn should_drop_post_terminal_event(
+    ctx: &TurnEventLoop,
+    runtime: &mut EventLoopRuntimeState,
+) -> bool {
+    if runtime.terminal_status.is_some() {
+        return true;
+    }
+
+    match ctx
+        .store
+        .get_session_turn(ctx.session_id, ctx.turn_id)
+        .await
+    {
+        Ok(Some(turn)) if is_terminal_turn_status(&turn.status) => {
+            runtime.terminal_status = Some(turn.status);
+            runtime.promote_terminal(&ctx.start_progress_tx);
+            true
+        }
+        Ok(_) => false,
+        Err(err) => {
+            tracing::warn!(
+                session_id = %ctx.session_id.0,
+                run_id = %ctx.run_id.0,
+                turn_id = %ctx.turn_id.0,
+                "failed to check turn terminal status before appending provider event: {err:#}"
+            );
+            false
+        }
+    }
+}
+
 pub(super) fn spawn_turn_event_loop(ctx: TurnEventLoop) {
     tokio::spawn(async move {
         run_turn_event_loop(ctx).await;
@@ -218,6 +266,20 @@ async fn run_turn_event_loop(mut ctx: TurnEventLoop) {
                 }
                 obj.entry("status").or_insert(json!("completed"));
             }
+        }
+
+        if runtime.terminal_status.is_some()
+            || (should_check_store_terminal_status(&event_type)
+                && should_drop_post_terminal_event(&ctx, &mut runtime).await)
+        {
+            tracing::debug!(
+                session_id = %ctx.session_id.0,
+                run_id = %ctx.run_id.0,
+                turn_id = %ctx.turn_id.0,
+                event_type = ?event_type,
+                "dropping provider event after turn terminalization"
+            );
+            continue;
         }
 
         let normalized_tool_event = if matches!(

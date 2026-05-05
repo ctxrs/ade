@@ -110,4 +110,21 @@ describe("sessionReplicaTranscript", () => {
     applyReplicaTranscriptEvent(entry, mkEvent(3, "turn_interrupted", { reason: "user_interrupt" }));
     expect(entry.turns[0]?.status).toBe("interrupted");
   });
+
+  it("clears running tool counters when a lifecycle event terminalizes the turn", () => {
+    const entry = mkEntry();
+    entry.turns[0] = {
+      ...entry.turns[0]!,
+      tool_total: 1,
+      tool_pending: 0,
+      tool_running: 1,
+    };
+
+    applyReplicaTranscriptEvent(entry, mkEvent(2, "turn_finished", { status: "failed" }));
+
+    expect(entry.turns[0]?.status).toBe("failed");
+    expect(entry.turns[0]?.tool_total).toBe(1);
+    expect(entry.turns[0]?.tool_pending).toBe(0);
+    expect(entry.turns[0]?.tool_running).toBe(0);
+  });
 });

@@ -62,7 +62,7 @@ const hasOmittedNonTerminalTurns = (
   return entry.turns.some((turn) => {
     const turnId = normalizeId(turn.turn_id);
     if (!turnId || headTurnIds.has(turnId)) return false;
-    return turn.status === "starting" || turn.status === "running";
+    return turn.status === "queued" || turn.status === "starting" || turn.status === "running";
   });
 };
 
@@ -90,10 +90,14 @@ const hasMessageOverlap = (
 
 export function shouldPreserveExistingTranscriptWindow(
   entry: TranscriptCoverageEntry,
-  head: Pick<SessionHead | SessionHeadSnapshot, "turns" | "messages">,
+  head: Pick<SessionHead | SessionHeadSnapshot, "turns" | "messages"> &
+    Partial<Pick<SessionHead | SessionHeadSnapshot, "head_window">>,
 ): boolean {
   const overlapsTranscript = hasTurnOverlap(entry, head) || hasMessageOverlap(entry, head);
-  if (!overlapsTranscript) return false;
+  if (!overlapsTranscript) {
+    const hasExistingTranscript = entry.turns.length > 0 || entry.messages.length > 0;
+    return hasExistingTranscript && isBoundedSessionHead(head) && !hasOmittedNonTerminalTurns(entry, head);
+  }
   return !coversTurns(entry, head) || !coversMessages(entry, head);
 }
 

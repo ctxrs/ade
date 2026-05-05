@@ -1234,6 +1234,114 @@ describe("SessionReplicaCore", () => {
     expect(lastPatch.data.turns?.map((turn) => turn.turn_id)).toEqual(["turn-1", "turn-2", "turn-3"]);
   });
 
+  it("preserves history when a bounded session_head_seed window has no overlap", async () => {
+    const sessionId = "session-seed-disjoint-history";
+    const patches: SessionReplicaPatch[] = [];
+    const core = new SessionReplicaCore({
+      api: { getSessionHead: vi.fn() },
+      emit: (next) => patches.push(...next),
+    });
+    core.handleCommand({ type: "init", config: { eventBufferLimit: 100, headLimit: 50 } });
+
+    const oldHead = mkHead(sessionId, "older");
+    oldHead.messages[0] = {
+      ...oldHead.messages[0]!,
+      id: "m-old",
+      turn_id: "turn-old",
+      created_at: "2026-03-09T00:00:01.000Z",
+    };
+    oldHead.turns = [
+      {
+        turn_id: "turn-old",
+        session_id: sessionId,
+        status: "completed",
+        start_seq: 1,
+        started_at: "2026-03-09T00:00:01.000Z",
+        updated_at: "2026-03-09T00:00:01.000Z",
+        tool_total: 0,
+        tool_pending: 0,
+        tool_running: 0,
+        tool_completed: 0,
+        tool_failed: 0,
+      },
+    ];
+    oldHead.last_event_seq = 10;
+    oldHead.projection_rev = 10;
+    core.handleCommand({ type: "seed_head", sessionId, head: oldHead, mode: "repair_replace" });
+
+    const compactHead: SessionHeadSnapshot = {
+      ...mkHead(sessionId, "latest"),
+      turns: [
+        {
+          turn_id: "turn-new",
+          session_id: sessionId,
+          status: "completed",
+          start_seq: 20,
+          started_at: "2026-03-09T00:00:20.000Z",
+          updated_at: "2026-03-09T00:00:20.000Z",
+          tool_total: 0,
+          tool_pending: 0,
+          tool_running: 0,
+          tool_completed: 0,
+          tool_failed: 0,
+        },
+      ],
+      messages: [
+        {
+          id: "m-new",
+          session_id: sessionId,
+          task_id: "task-1",
+          turn_id: "turn-new",
+          role: "user",
+          content: "latest",
+          delivery: "immediate",
+          created_at: "2026-03-09T00:00:20.000Z",
+        },
+      ],
+      last_event_seq: 21,
+      projection_rev: 21,
+      head_window: {
+        turn_limit: 1,
+        message_limit: 1,
+        event_limit: 40,
+        byte_limit: 4096,
+        turn_count: 1,
+        message_count: 1,
+        event_count: 0,
+        bytes: 512,
+        truncated: true,
+      },
+    };
+    core.handleCommand({
+      type: "workspace_event",
+      event: {
+        type: "session_head_seed",
+        workspace_id: "ws-1",
+        snapshot_rev: 2,
+        head: compactHead,
+      },
+    });
+
+    await waitForCondition(() =>
+      patches.some(
+        (patch) =>
+          patch.sessionId === sessionId &&
+          patch.op === "replace" &&
+          patch.data.lastEventSeq === 21,
+      ),
+    );
+
+    const lastPatch = [...patches]
+      .reverse()
+      .find((patch) => patch.sessionId === sessionId && patch.op === "replace");
+    if (!lastPatch || lastPatch.op === "evict") {
+      throw new Error("expected replace patch");
+    }
+    expect(lastPatch.data.replaceMode).toBe("repair_replace");
+    expect(lastPatch.data.messages?.map((message) => message.id)).toEqual(["m-old", "m-new"]);
+    expect(lastPatch.data.turns?.map((turn) => turn.turn_id)).toEqual(["turn-old", "turn-new"]);
+  });
+
   it("preserves newer streamed state when an older /head hydrate resolves later", async () => {
     const sessionId = "session-stale-head";
     let resolveHead: (value: SessionHeadSnapshot | null) => void = () => {

@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { Message, Session, SessionEvent, SessionHeadSnapshot, SessionTurn } from "../api/client";
-import { shouldRepairSessionHeadReplace } from "./sessionHeadRepair";
+import {
+  shouldPreserveExistingTranscriptWindow,
+  shouldRepairSessionHeadReplace,
+} from "./sessionHeadRepair";
 
 const mkSession = (sessionId: string): Session => ({
   id: sessionId,
@@ -164,6 +167,47 @@ describe("sessionHeadRepair", () => {
           loadState: "live",
           lastEventSeq: 4,
           projectionRev: 7,
+          activity: { is_working: false, last_turn_status: "completed" },
+        },
+        head,
+      ),
+    ).toBe(true);
+  });
+
+  it("preserves existing transcript when a bounded head window is disjoint", () => {
+    const sessionId = "session-disjoint-bounded-head";
+    const previousTurn = mkTurn({ sessionId, turnId: "turn-old", status: "completed", startSeq: 1 });
+    const previousMessage = mkMessage({
+      sessionId,
+      turnId: "turn-old",
+      id: "m-old",
+      role: "assistant",
+    });
+    const incomingTurn = mkTurn({ sessionId, turnId: "turn-new", status: "completed", startSeq: 9 });
+    const incomingMessage = mkMessage({
+      sessionId,
+      turnId: "turn-new",
+      id: "m-new",
+      role: "user",
+    });
+    const head = mkBoundedHead({
+      sessionId,
+      turns: [incomingTurn],
+      messages: [incomingMessage],
+      lastEventSeq: 12,
+      projectionRev: 12,
+    });
+
+    expect(
+      shouldPreserveExistingTranscriptWindow(
+        {
+          turnsHydrated: true,
+          turns: [previousTurn],
+          messages: [previousMessage],
+          freshness: "replica",
+          loadState: "live",
+          lastEventSeq: 8,
+          projectionRev: 8,
           activity: { is_working: false, last_turn_status: "completed" },
         },
         head,

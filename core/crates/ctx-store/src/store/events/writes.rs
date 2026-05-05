@@ -1,4 +1,26 @@
 impl Store {
+    async fn ensure_turn_accepts_durable_event(
+        &self,
+        session_id: SessionId,
+        turn_id: TurnId,
+        event_type: &SessionEventType,
+    ) -> Result<()> {
+        let Some(turn) = self.get_session_turn(session_id, turn_id).await? else {
+            return Ok(());
+        };
+        if matches!(
+            turn.status,
+            SessionTurnStatus::Completed
+                | SessionTurnStatus::Failed
+                | SessionTurnStatus::Interrupted
+        ) {
+            anyhow::bail!(
+                "refusing to append durable {event_type:?} event after turn terminalization"
+            );
+        }
+        Ok(())
+    }
+
     pub(super) async fn upsert_event_log_checkpoint(
         &self,
         checkpoint_seq: i64,
@@ -64,6 +86,10 @@ impl Store {
             event.seq = next_stream_only_event_seq();
             event.transient = true;
             return Ok(event);
+        }
+        if let Some(turn_id) = event.turn_id {
+            self.ensure_turn_accepts_durable_event(session_id, turn_id, &event.event_type)
+                .await?;
         }
         event.seq = self.event_log.next_seq();
         if let Err(err) = self.event_log.enqueue(event.clone()).await {

@@ -16,7 +16,7 @@ import {
 } from "../api/client";
 import { compareSessionTurnOrder, mergeSessionMessages } from "./sessionHeadState";
 import { asRecord, messageFromEvent, readPayloadObject } from "./sessionSupervisor/eventHydration";
-import { appendFragment, mergeTurn } from "./sessionSupervisor/cachePolicy";
+import { appendFragment, isTerminalTurnStatus, mergeTurn } from "./sessionSupervisor/cachePolicy";
 import { readPayloadString } from "./sessionSupervisor/eventNormalization";
 import { resolveTurnStatusFromLifecycleEvent } from "./sessionSupervisor/turnLifecycleProjection";
 import {
@@ -286,6 +286,10 @@ const applyEventToTurns = (
       const nextStatus = resolveTurnStatusFromLifecycleEvent(turn.status, event);
       if (nextStatus) {
         turn.status = nextStatus;
+        if (isTerminalTurnStatus(nextStatus)) {
+          turn.tool_pending = 0;
+          turn.tool_running = 0;
+        }
       }
       const contextWindow = readPayloadObject(event.payload_json, "context_window");
       if (contextWindow) {

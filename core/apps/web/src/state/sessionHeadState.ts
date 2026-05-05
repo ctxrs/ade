@@ -7,7 +7,13 @@ import {
   type SessionTurn,
   type SessionTurnToolSummary,
 } from "../api/client";
-import { isPartialEvent, mergeTurn, stripPartialEvents, stripTurnPartials } from "./sessionSupervisor/cachePolicy";
+import {
+  isPartialEvent,
+  mergeTurn,
+  normalizeTerminalTurnLiveCounts,
+  stripPartialEvents,
+  stripTurnPartials,
+} from "./sessionSupervisor/cachePolicy";
 
 const HEAD_EVENT_BUFFER_LIMIT = 800;
 const ACTIVE_HEAD_TURN_LIMIT = 5;
@@ -271,7 +277,7 @@ export const mergeSessionTurns = (prev: SessionTurn[], incoming: SessionTurn[]):
     const id = idToString(turn.turn_id);
     if (!id) continue;
     const existing = byId.get(id);
-    byId.set(id, existing ? mergeTurn(existing, turn) : turn);
+    byId.set(id, existing ? mergeTurn(existing, turn) : normalizeTerminalTurnLiveCounts(turn));
   }
   return Array.from(byId.values()).sort(compareSessionTurnOrder);
 };

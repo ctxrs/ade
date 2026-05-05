@@ -658,6 +658,85 @@ describe("sessionHeadState", () => {
     expect(mergedMessages.map((message) => message.id)).toEqual(["message-1", "message-2"]);
   });
 
+  it("lets terminal turn projections clear stale running tool counts", () => {
+    const mergedTurns = mergeSessionTurns(
+      [
+        {
+          turn_id: "turn-1",
+          session_id: "session-1",
+          run_id: null,
+          user_message_id: "user-1",
+          status: "running",
+          start_seq: 1,
+          end_seq: null,
+          started_at: "2026-03-09T00:00:00.000Z",
+          updated_at: "2026-03-09T00:00:00.000Z",
+          assistant_partial: null,
+          thought_partial: "",
+          metrics_json: null,
+          tool_total: 1,
+          tool_pending: 0,
+          tool_running: 1,
+          tool_completed: 0,
+          tool_failed: 0,
+        },
+      ],
+      [
+        {
+          turn_id: "turn-1",
+          session_id: "session-1",
+          run_id: null,
+          user_message_id: "user-1",
+          status: "failed",
+          start_seq: 1,
+          end_seq: 4,
+          started_at: "2026-03-09T00:00:00.000Z",
+          updated_at: "2026-03-09T00:00:02.000Z",
+          assistant_partial: null,
+          thought_partial: "",
+          metrics_json: null,
+          tool_total: 1,
+          tool_pending: 0,
+          tool_running: 0,
+          tool_completed: 0,
+          tool_failed: 1,
+        },
+      ],
+    );
+
+    expect(mergedTurns[0]?.status).toBe("failed");
+    expect(mergedTurns[0]?.tool_pending).toBe(0);
+    expect(mergedTurns[0]?.tool_running).toBe(0);
+    expect(mergedTurns[0]?.tool_failed).toBe(1);
+  });
+
+  it("normalizes stale live tool counts on new terminal turns", () => {
+    const mergedTurns = mergeSessionTurns([], [
+      {
+        turn_id: "turn-1",
+        session_id: "session-1",
+        run_id: null,
+        user_message_id: "user-1",
+        status: "failed",
+        start_seq: 1,
+        end_seq: 4,
+        started_at: "2026-03-09T00:00:00.000Z",
+        updated_at: "2026-03-09T00:00:02.000Z",
+        assistant_partial: null,
+        thought_partial: "",
+        metrics_json: null,
+        tool_total: 1,
+        tool_pending: 0,
+        tool_running: 1,
+        tool_completed: 0,
+        tool_failed: 1,
+      },
+    ]);
+
+    expect(mergedTurns[0]?.status).toBe("failed");
+    expect(mergedTurns[0]?.tool_running).toBe(0);
+  });
+
   it("orders messages by order_seq before created_at when both are present", () => {
     const mergedMessages = mergeSessionMessages(
       [

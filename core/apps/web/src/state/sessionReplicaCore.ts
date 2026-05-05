@@ -201,7 +201,11 @@ export class SessionReplicaCore {
         messages.length < entry.messages.length ||
         events.length < entry.events.length ||
         (preservingRepairReplace &&
-          shouldPreserveExistingTranscriptWindow(entry, { turns, messages })));
+          shouldPreserveExistingTranscriptWindow(entry, {
+            turns,
+            messages,
+            head_window: data.headWindow ?? null,
+          })));
     let toolSummaries = data.toolSummaries ?? entry.toolSummaries;
     if (incomingIsOlder || (!authoritative && existingSeq > incomingSeq) || incomingIsNarrower) {
       turns = mergeReplicaTurns(turns, entry.turns);

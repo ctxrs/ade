@@ -351,6 +351,209 @@ async fn terminal_projection_without_turn_finished_persists_missing_turn_finishe
 }
 
 #[tokio::test]
+async fn turn_projection_repair_ignores_tool_rows_after_terminal_seq() {
+    let (_dir, store) = setup_store().await;
+    let (session, turn_id) = create_session_with_turn(&store, None).await;
+
+    let before_event = store
+        .append_session_event(
+            session.id,
+            None,
+            Some(turn_id),
+            SessionEventType::Notice,
+            json!({"kind": "before-terminal-tool-anchor"}),
+        )
+        .await
+        .unwrap();
+    let before_updated_at = before_event.created_at;
+    store
+        .upsert_session_turn_tool(SessionTurnTool {
+            session_id: session.id,
+            tool_call_id: "before-terminal-tool".to_string(),
+            turn_id,
+            tool_kind: Some("execute".to_string()),
+            provider_tool_name: Some("Bash".to_string()),
+            title: Some("Bash".to_string()),
+            subtitle: None,
+            status: Some("completed".to_string()),
+            input_json: Some(json!({"cmd": "pwd"})),
+            output_text: Some("/tmp/ws".to_string()),
+            order_seq: 1,
+            first_event_seq: Some(before_event.seq),
+            input_truncated: Some(false),
+            input_original_bytes: None,
+            output_truncated: Some(false),
+            output_original_bytes: None,
+            created_at: before_updated_at,
+            updated_at: before_updated_at,
+        })
+        .await
+        .unwrap();
+    store
+        .update_session_turn_tool_counts(
+            session.id,
+            turn_id,
+            SessionTurnToolCountDeltas {
+                total: 1,
+                pending: 0,
+                running: 0,
+                completed: 1,
+                failed: 0,
+            },
+            before_updated_at,
+        )
+        .await
+        .unwrap();
+
+    let persisted = store
+        .persist_turn_terminal_events(
+            session.id,
+            None,
+            turn_id,
+            vec![(
+                SessionEventType::TurnFinished,
+                json!({"status": "failed", "message": "usage limit"}),
+            )],
+        )
+        .await
+        .unwrap();
+    let finished = persisted
+        .into_iter()
+        .next()
+        .expect("turn_finished event persisted");
+
+    let post_updated_at = finished.created_at + chrono::Duration::seconds(10);
+    let post_event = SessionEvent {
+        seq: finished.seq + 1,
+        id: SessionEventId::new(),
+        session_id: session.id,
+        run_id: None,
+        turn_id: Some(turn_id),
+        event_type: SessionEventType::Notice,
+        payload_json: json!({"kind": "post-terminal-tool-anchor"}),
+        transient: false,
+        created_at: post_updated_at,
+    };
+    store
+        .persist_session_events_batch(std::slice::from_ref(&post_event))
+        .await
+        .unwrap();
+    store
+        .upsert_session_turn_tool(SessionTurnTool {
+            session_id: session.id,
+            tool_call_id: "post-terminal-tool".to_string(),
+            turn_id,
+            tool_kind: Some("execute".to_string()),
+            provider_tool_name: Some("Bash".to_string()),
+            title: Some("Bash".to_string()),
+            subtitle: None,
+            status: Some("in_progress".to_string()),
+            input_json: Some(json!({"cmd": "sleep 60"})),
+            output_text: None,
+            order_seq: 2,
+            first_event_seq: Some(post_event.seq),
+            input_truncated: Some(false),
+            input_original_bytes: None,
+            output_truncated: None,
+            output_original_bytes: None,
+            created_at: post_updated_at,
+            updated_at: post_updated_at,
+        })
+        .await
+        .unwrap();
+    store
+        .update_session_turn_tool_counts(
+            session.id,
+            turn_id,
+            SessionTurnToolCountDeltas {
+                total: 1,
+                pending: 0,
+                running: 1,
+                completed: 0,
+                failed: 0,
+            },
+            post_updated_at,
+        )
+        .await
+        .unwrap();
+
+    let corrupted = store
+        .get_session_turn(session.id, turn_id)
+        .await
+        .unwrap()
+        .expect("turn exists");
+    assert_eq!(corrupted.tool_total, 2);
+    assert_eq!(corrupted.tool_running, 1);
+
+    store
+        .repair_session_turn_projection_from_events(session.id, turn_id)
+        .await
+        .unwrap();
+
+    let repaired = store
+        .get_session_turn(session.id, turn_id)
+        .await
+        .unwrap()
+        .expect("turn exists");
+    assert_eq!(repaired.status, SessionTurnStatus::Failed);
+    assert_eq!(repaired.end_seq, Some(finished.seq));
+    assert_eq!(repaired.tool_total, 1);
+    assert_eq!(repaired.tool_pending, 0);
+    assert_eq!(repaired.tool_running, 0);
+    assert_eq!(repaired.tool_completed, 1);
+    assert_eq!(repaired.tool_failed, 0);
+    assert!(
+        repaired.updated_at < post_updated_at,
+        "post-terminal tool timestamps must not keep terminal turns fresh"
+    );
+}
+
+#[tokio::test]
+async fn append_session_event_rejects_durable_events_after_terminal_turn() {
+    let (_dir, store) = setup_store().await;
+    let (session, turn_id) = create_session_with_turn(&store, None).await;
+
+    store
+        .persist_turn_terminal_events(
+            session.id,
+            None,
+            turn_id,
+            vec![(
+                SessionEventType::TurnFinished,
+                json!({"status": "failed", "message": "terminal"}),
+            )],
+        )
+        .await
+        .unwrap();
+
+    let err = store
+        .append_session_event(
+            session.id,
+            None,
+            Some(turn_id),
+            SessionEventType::ToolCall,
+            json!({
+                "tool_call_id": "late-tool",
+                "status": "running",
+            }),
+        )
+        .await
+        .expect_err("durable post-terminal events must be rejected");
+    assert!(
+        err.to_string().contains("after turn terminalization"),
+        "unexpected error: {err:#}"
+    );
+
+    let events = store
+        .list_session_events_for_turn(session.id, turn_id, false)
+        .await
+        .unwrap();
+    assert!(events
+        .iter()
+        .all(|event| !matches!(event.event_type, SessionEventType::ToolCall)));
+}
+
+#[tokio::test]
 async fn get_terminal_event_for_run_flushes_buffered_events_before_reading() {
     let (_dir, store) = setup_store().await;
     let (session, turn_id) = create_session_with_turn(&store, None).await;

@@ -34,7 +34,9 @@ fn is_non_terminal_status(status: &SessionTurnStatus) -> bool {
     )
 }
 
-fn summarize_tool_counts(tools: &[SessionTurnTool]) -> TurnToolCounts {
+fn summarize_tool_counts<'a>(
+    tools: impl IntoIterator<Item = &'a SessionTurnTool>,
+) -> TurnToolCounts {
     let mut counts = TurnToolCounts::default();
     for tool in tools {
         counts.total += 1;
@@ -48,6 +50,13 @@ fn summarize_tool_counts(tools: &[SessionTurnTool]) -> TurnToolCounts {
         }
     }
     counts
+}
+
+fn is_tool_before_terminal(tool: &SessionTurnTool, terminal_seq: Option<i64>) -> bool {
+    terminal_seq.map_or(true, |seq| {
+        tool.first_event_seq
+            .map_or(true, |tool_seq| tool_seq <= seq)
+    })
 }
 
 fn decode_session_event_row(row: SqliteRow) -> Result<SessionEvent> {
@@ -83,9 +92,15 @@ fn build_repaired_turn_projection(
     terminal: &TurnTerminalState,
     tools: &[SessionTurnTool],
 ) -> RepairedTurnProjection {
-    let tool_counts = summarize_tool_counts(tools);
+    let terminal_seq = terminal.end_seq.or(turn.end_seq);
+    let relevant_tools = || {
+        tools
+            .iter()
+            .filter(move |tool| is_tool_before_terminal(tool, terminal_seq))
+    };
+    let tool_counts = summarize_tool_counts(relevant_tools());
     let updated_at = std::iter::once(terminal.updated_at)
-        .chain(tools.iter().map(|tool| tool.updated_at))
+        .chain(relevant_tools().map(|tool| tool.updated_at))
         .max()
         .unwrap_or(turn.updated_at);
     RepairedTurnProjection {

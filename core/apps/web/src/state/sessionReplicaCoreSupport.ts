@@ -14,7 +14,12 @@ import type {
   SessionTurnToolSummary,
 } from "@ctx/types";
 import type { AssistantStreamingState } from "./assistantStreaming";
-import { mergeTurnStatus } from "./sessionSupervisor/cachePolicy";
+import {
+  isTerminalTurnStatus,
+  mergeTurnCount,
+  mergeTurnStatus,
+  normalizeTerminalTurnLiveCounts,
+} from "./sessionSupervisor/cachePolicy";
 import type {
   SessionReplicaCanonicalAppendMode,
   SessionReplicaData,
@@ -146,24 +151,30 @@ const mergePartial = (previous: string, next: string): string => {
   return next.length >= previous.length ? next : previous;
 };
 
-const mergeReplicaTurn = (previous: SessionTurn, next: SessionTurn): SessionTurn => ({
-  ...previous,
-  ...next,
-  status: mergeTurnStatus(previous.status, next.status),
-  assistant_partial: null,
-  thought_partial: mergePartial(previous.thought_partial ?? "", next.thought_partial ?? ""),
-  end_seq: next.end_seq ?? previous.end_seq,
-  updated_at:
-    String(next.updated_at ?? "").localeCompare(String(previous.updated_at ?? "")) >= 0
-      ? next.updated_at
-      : previous.updated_at,
-  tool_total: Math.max(previous.tool_total ?? 0, next.tool_total ?? 0),
-  tool_pending: Math.max(previous.tool_pending ?? 0, next.tool_pending ?? 0),
-  tool_running: Math.max(previous.tool_running ?? 0, next.tool_running ?? 0),
-  tool_completed: Math.max(previous.tool_completed ?? 0, next.tool_completed ?? 0),
-  tool_failed: Math.max(previous.tool_failed ?? 0, next.tool_failed ?? 0),
-  metrics_json: next.metrics_json ?? previous.metrics_json,
-});
+const mergeReplicaTurn = (previous: SessionTurn, next: SessionTurn): SessionTurn => {
+  const status = mergeTurnStatus(previous.status, next.status);
+  const useNextToolCounts = !isTerminalTurnStatus(status) || isTerminalTurnStatus(next.status);
+  const countBase = useNextToolCounts ? previous : next;
+  const countIncoming = useNextToolCounts ? next : previous;
+  return normalizeTerminalTurnLiveCounts({
+    ...previous,
+    ...next,
+    status,
+    assistant_partial: null,
+    thought_partial: mergePartial(previous.thought_partial ?? "", next.thought_partial ?? ""),
+    end_seq: next.end_seq ?? previous.end_seq,
+    updated_at:
+      String(next.updated_at ?? "").localeCompare(String(previous.updated_at ?? "")) >= 0
+        ? next.updated_at
+        : previous.updated_at,
+    tool_total: mergeTurnCount(countBase.tool_total, countIncoming.tool_total),
+    tool_pending: mergeTurnCount(countBase.tool_pending, countIncoming.tool_pending),
+    tool_running: mergeTurnCount(countBase.tool_running, countIncoming.tool_running),
+    tool_completed: mergeTurnCount(countBase.tool_completed, countIncoming.tool_completed),
+    tool_failed: mergeTurnCount(countBase.tool_failed, countIncoming.tool_failed),
+    metrics_json: next.metrics_json ?? previous.metrics_json,
+  });
+};
 
 const compareTurnOrder = (left: SessionTurn, right: SessionTurn): number => {
   const leftSeq = Number(left.start_seq ?? Number.NaN);
@@ -184,7 +195,7 @@ export const mergeReplicaTurns = (base: SessionTurn[], incoming: SessionTurn[]):
   for (const turn of incoming) {
     const id = normalizeReplicaId(turn.turn_id);
     if (!id) continue;
-    byId.set(id, byId.has(id) ? mergeReplicaTurn(byId.get(id)!, turn) : turn);
+    byId.set(id, byId.has(id) ? mergeReplicaTurn(byId.get(id)!, turn) : normalizeTerminalTurnLiveCounts(turn));
   }
   return Array.from(byId.values()).sort(compareTurnOrder);
 };

@@ -10,10 +10,31 @@ const mergePartial = (p: string, n: string): string => {
   return n.length >= p.length ? n : p;
 };
 
+export const isTerminalTurnStatus = (status: SessionTurn["status"] | null | undefined): boolean =>
+  status === "completed" || status === "failed" || status === "interrupted";
+
+export const mergeTurnCount = (
+  previous: number | null | undefined,
+  next: number | null | undefined,
+): number => {
+  if (typeof next === "number" && Number.isFinite(next)) return next;
+  if (typeof previous === "number" && Number.isFinite(previous)) return previous;
+  return 0;
+};
+
+export const normalizeTerminalTurnLiveCounts = (turn: SessionTurn): SessionTurn => {
+  if (!isTerminalTurnStatus(turn.status)) return turn;
+  if ((turn.tool_pending ?? 0) === 0 && (turn.tool_running ?? 0) === 0) return turn;
+  return { ...turn, tool_pending: 0, tool_running: 0 };
+};
+
 export const mergeTurn = (prev: SessionTurn, next: SessionTurn): SessionTurn => {
   const thought_partial = mergePartial(prev.thought_partial ?? "", next.thought_partial ?? "");
   const status = mergeTurnStatus(prev.status, next.status);
-  return {
+  const useNextToolCounts = !isTerminalTurnStatus(status) || isTerminalTurnStatus(next.status);
+  const countBase = useNextToolCounts ? prev : next;
+  const countIncoming = useNextToolCounts ? next : prev;
+  return normalizeTerminalTurnLiveCounts({
     ...prev,
     ...next,
     status,
@@ -24,12 +45,12 @@ export const mergeTurn = (prev: SessionTurn, next: SessionTurn): SessionTurn => 
       String(next.updated_at ?? "").localeCompare(String(prev.updated_at ?? "")) >= 0
         ? next.updated_at
         : prev.updated_at,
-    tool_total: Math.max(prev.tool_total ?? 0, next.tool_total ?? 0),
-    tool_pending: Math.max(prev.tool_pending ?? 0, next.tool_pending ?? 0),
-    tool_running: Math.max(prev.tool_running ?? 0, next.tool_running ?? 0),
-    tool_completed: Math.max(prev.tool_completed ?? 0, next.tool_completed ?? 0),
-    tool_failed: Math.max(prev.tool_failed ?? 0, next.tool_failed ?? 0),
-  };
+    tool_total: mergeTurnCount(countBase.tool_total, countIncoming.tool_total),
+    tool_pending: mergeTurnCount(countBase.tool_pending, countIncoming.tool_pending),
+    tool_running: mergeTurnCount(countBase.tool_running, countIncoming.tool_running),
+    tool_completed: mergeTurnCount(countBase.tool_completed, countIncoming.tool_completed),
+    tool_failed: mergeTurnCount(countBase.tool_failed, countIncoming.tool_failed),
+  });
 };
 
 const TURN_STATUS_PRIORITY: Record<NonNullable<SessionTurn["status"]>, number> = {

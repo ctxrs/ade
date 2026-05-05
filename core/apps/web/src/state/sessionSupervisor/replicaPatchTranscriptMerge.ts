@@ -8,7 +8,12 @@ import {
   compareSessionTurnOrder,
   mergeSessionMessages,
 } from "../sessionHeadState";
-import { mergeTurnStatus } from "./cachePolicy";
+import {
+  isTerminalTurnStatus,
+  mergeTurnCount,
+  mergeTurnStatus,
+  normalizeTerminalTurnLiveCounts,
+} from "./cachePolicy";
 import type { InternalEntry } from "./entryState";
 import type { SessionReplicaPatch } from "../sessionReplicaProtocol";
 import { shouldPreserveExistingTranscriptWindow } from "../sessionHeadRepair";
@@ -51,12 +56,13 @@ const repairReplaceIsCoveredByEntry = (
 
 export const repairReplaceShouldPreserveEntryTranscript = (
   entry: Pick<InternalEntry, "turns" | "messages">,
-  data: Pick<Exclude<SessionReplicaPatch, { op: "evict" }>["data"], "turns" | "messages">,
+  data: Pick<Exclude<SessionReplicaPatch, { op: "evict" }>["data"], "turns" | "messages" | "headWindow">,
 ): boolean => {
   if (repairReplaceIsCoveredByEntry(entry, data)) return true;
   return shouldPreserveExistingTranscriptWindow(entry, {
     turns: Array.isArray(data.turns) ? data.turns : [],
     messages: Array.isArray(data.messages) ? data.messages : [],
+    head_window: data.headWindow ?? null,
   });
 };
 
@@ -253,21 +259,29 @@ export const preserveMonotonicTurns = (
     const turnId = idToString(turn.turn_id);
     if (!turnId) return turn;
     const previous = previousById.get(turnId);
-    if (!previous) return turn;
+    if (!previous) return normalizeTerminalTurnLiveCounts(turn);
     const nextStatus = mergeTurnStatus(previous.status, turn.status);
-    const nextTurn: SessionTurn = {
+    const useAuthoritativeToolCounts =
+      isTerminalTurnStatus(nextStatus) && isTerminalTurnStatus(turn.status);
+    const nextTurn: SessionTurn = normalizeTerminalTurnLiveCounts({
       ...turn,
       status: nextStatus,
       end_seq: turn.end_seq ?? previous.end_seq,
-      tool_total: Math.max(previous.tool_total ?? 0, turn.tool_total ?? 0),
+      tool_total: useAuthoritativeToolCounts
+        ? mergeTurnCount(previous.tool_total, turn.tool_total)
+        : Math.max(previous.tool_total ?? 0, turn.tool_total ?? 0),
       // `tool_pending`/`tool_running` are live counters, not cumulative totals.
       // Authoritative replace/repair patches must be able to clear them.
       tool_pending: turn.tool_pending,
       tool_running: turn.tool_running,
-      tool_completed: Math.max(previous.tool_completed ?? 0, turn.tool_completed ?? 0),
-      tool_failed: Math.max(previous.tool_failed ?? 0, turn.tool_failed ?? 0),
+      tool_completed: useAuthoritativeToolCounts
+        ? mergeTurnCount(previous.tool_completed, turn.tool_completed)
+        : Math.max(previous.tool_completed ?? 0, turn.tool_completed ?? 0),
+      tool_failed: useAuthoritativeToolCounts
+        ? mergeTurnCount(previous.tool_failed, turn.tool_failed)
+        : Math.max(previous.tool_failed ?? 0, turn.tool_failed ?? 0),
       metrics_json: turn.metrics_json ?? previous.metrics_json,
-    };
+    });
     changed =
       changed ||
       nextTurn.status !== turn.status ||
