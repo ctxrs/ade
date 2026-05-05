@@ -12,7 +12,7 @@ const repoRoot = path.resolve(__dirname, "../../../..");
 
 export const defaultHostPlatforms = Object.freeze([
   "mac15-arm64",
-  "ubuntu22.04-x64",
+  "ubuntu24.04-x64",
 ]);
 
 export const defaultOutputPath = path.join(

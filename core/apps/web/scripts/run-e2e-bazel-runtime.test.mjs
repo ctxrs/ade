@@ -35,7 +35,7 @@ describe("run-e2e-bazel-runtime", () => {
       "--ctx-http-bin",
       "ctx",
       "--playwright-browsers-dir",
-      "playwright-browsers-ubuntu22.04-x64",
+      "playwright-browsers-ubuntu24.04-x64",
       "--spec",
       "e2e/workbench-index.spec.ts",
       "--",
@@ -45,7 +45,7 @@ describe("run-e2e-bazel-runtime", () => {
       ctxHttpBin: "ctx",
       ctxMcpBin: "",
       forwardedArgs: ["--list"],
-      playwrightBrowsersDir: "playwright-browsers-ubuntu22.04-x64",
+      playwrightBrowsersDir: "playwright-browsers-ubuntu24.04-x64",
       runtimeProfile: "workbench-lite",
       specs: ["e2e/workbench-index.spec.ts"],
       suite: "",
@@ -104,7 +104,7 @@ describe("run-e2e-bazel-runtime", () => {
 
   it("uses Bazel-owned Playwright browsers instead of ambient cache state", () => {
     const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-web-e2e-browsers-"));
-    const hostRoot = path.join(runtimeRoot, "ubuntu22.04-x64");
+    const hostRoot = path.join(runtimeRoot, "ubuntu24.04-x64");
     fs.mkdirSync(path.join(hostRoot, "webkit-2227"), { recursive: true });
     const env = buildPlaywrightEnv({
       ctxHttpBin: "/tmp/ctx",

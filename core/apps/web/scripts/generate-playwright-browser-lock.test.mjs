@@ -21,11 +21,11 @@ test("generate-playwright-browser-lock parses repeated host platforms and explic
     "--host-platform",
     "mac15-arm64",
     "--host-platform",
-    "ubuntu22.04-x64",
+    "ubuntu24.04-x64",
     "--output",
     "tmp/playwright-lock.bzl",
   ]), {
-    hostPlatforms: ["mac15-arm64", "ubuntu22.04-x64"],
+    hostPlatforms: ["mac15-arm64", "ubuntu24.04-x64"],
     outputPath: path.resolve("tmp/playwright-lock.bzl"),
   });
 });

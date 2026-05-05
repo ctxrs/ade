@@ -617,13 +617,13 @@ js_run_binary(
 )
 
 js_run_binary(
-    name = "playwright_browsers_ubuntu22_04_x64",
+    name = "playwright_browsers_ubuntu24_04_x64",
     tool = ":materialize_playwright_browsers_bin",
     args = [
         "--out-dir",
-        "playwright-browsers-ubuntu22.04-x64",
+        "playwright-browsers-ubuntu24.04-x64",
         "--runtime-manifest",
-        "$(execpath @playwright_browser_runtime_ubuntu22_04_x64//:runtime_manifest.json)",
+        "$(execpath @playwright_browser_runtime_ubuntu24_04_x64//:runtime_manifest.json)",
         "--browser",
         "firefox",
         "--browser",
@@ -631,10 +631,10 @@ js_run_binary(
         "--browser",
         "chromium",
     ],
-    out_dirs = ["playwright-browsers-ubuntu22.04-x64"],
+    out_dirs = ["playwright-browsers-ubuntu24.04-x64"],
     srcs = [
-        "@playwright_browser_runtime_ubuntu22_04_x64//:runtime_trees",
-        "@playwright_browser_runtime_ubuntu22_04_x64//:runtime_manifest.json",
+        "@playwright_browser_runtime_ubuntu24_04_x64//:runtime_trees",
+        "@playwright_browser_runtime_ubuntu24_04_x64//:runtime_manifest.json",
     ],
     copy_srcs_to_bin = False,
     chdir = package_name(),

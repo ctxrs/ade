@@ -13,7 +13,7 @@ def web_e2e_test(name, config, runtime_profile, suite = "", specs = None, timeou
     playwright_browser_args = select({
         "@platforms//os:linux": [
             "--playwright-browsers-dir",
-            "$(location //core/apps/web:playwright_browsers_ubuntu22_04_x64)",
+            "$(location //core/apps/web:playwright_browsers_ubuntu24_04_x64)",
         ],
         "@platforms//os:macos": [
             "--playwright-browsers-dir",
@@ -27,7 +27,7 @@ def web_e2e_test(name, config, runtime_profile, suite = "", specs = None, timeou
         "//core/crates/ctx-http:ctx",
     ]
     playwright_browser_data = select({
-        "@platforms//os:linux": ["//core/apps/web:playwright_browsers_ubuntu22_04_x64"],
+        "@platforms//os:linux": ["//core/apps/web:playwright_browsers_ubuntu24_04_x64"],
         "@platforms//os:macos": ["//core/apps/web:playwright_browsers_mac15_arm64"],
         "//conditions:default": [],
     })

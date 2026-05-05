@@ -420,7 +420,7 @@ const buildWebDist = ({ env, runtimeProfile, tempRoot, viteBin, webRoot }) => {
 
 const playwrightHostPlatform = ({ platform = process.platform, arch = process.arch } = {}) => {
   if (platform === "darwin" && arch === "arm64") return "mac15-arm64";
-  if (platform === "linux" && arch === "x64") return "ubuntu22.04-x64";
+  if (platform === "linux" && arch === "x64") return "ubuntu24.04-x64";
   throw new Error(`unsupported Bazel Playwright browser host platform: ${platform}/${arch}`);
 };
 

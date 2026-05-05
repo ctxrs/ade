@@ -99,9 +99,9 @@ test("materialize-playwright-browsers materializes the requested browsers for ev
   writeFile(runtimeRepoDir, "runtime_trees/mac15-arm64/webkit-2227/MiniBrowser", "", 0o755);
   writeSymlink(runtimeRepoDir, "runtime_trees/mac15-arm64/webkit-2227/CurrentMiniBrowser", "MiniBrowser");
   writeFile(runtimeRepoDir, "runtime_trees/mac15-arm64/chromium-1200/chrome", "", 0o755);
-  writeFile(runtimeRepoDir, "runtime_trees/ubuntu22.04-x64/firefox-1497/firefox-bin", "", 0o755);
-  writeFile(runtimeRepoDir, "runtime_trees/ubuntu22.04-x64/webkit-2227/MiniBrowser", "", 0o755);
-  writeFile(runtimeRepoDir, "runtime_trees/ubuntu22.04-x64/chromium-1200/chrome", "", 0o755);
+  writeFile(runtimeRepoDir, "runtime_trees/ubuntu24.04-x64/firefox-1497/firefox-bin", "", 0o755);
+  writeFile(runtimeRepoDir, "runtime_trees/ubuntu24.04-x64/webkit-2227/MiniBrowser", "", 0o755);
+  writeFile(runtimeRepoDir, "runtime_trees/ubuntu24.04-x64/chromium-1200/chrome", "", 0o755);
   fs.writeFileSync(manifestPath, JSON.stringify({
     platforms: {
       "mac15-arm64": {
@@ -109,10 +109,10 @@ test("materialize-playwright-browsers materializes the requested browsers for ev
         firefox: { directory: "firefox-1497", path: "runtime_trees/mac15-arm64/firefox-1497" },
         webkit: { directory: "webkit-2227", path: "runtime_trees/mac15-arm64/webkit-2227" },
       },
-      "ubuntu22.04-x64": {
-        chromium: { directory: "chromium-1200", path: "runtime_trees/ubuntu22.04-x64/chromium-1200" },
-        firefox: { directory: "firefox-1497", path: "runtime_trees/ubuntu22.04-x64/firefox-1497" },
-        webkit: { directory: "webkit-2227", path: "runtime_trees/ubuntu22.04-x64/webkit-2227" },
+      "ubuntu24.04-x64": {
+        chromium: { directory: "chromium-1200", path: "runtime_trees/ubuntu24.04-x64/chromium-1200" },
+        firefox: { directory: "firefox-1497", path: "runtime_trees/ubuntu24.04-x64/firefox-1497" },
+        webkit: { directory: "webkit-2227", path: "runtime_trees/ubuntu24.04-x64/webkit-2227" },
       },
     },
   }));
@@ -139,7 +139,7 @@ test("materialize-playwright-browsers materializes the requested browsers for ev
     false,
   );
   assert.equal(fs.existsSync(path.join(outDir, "mac15-arm64", "chromium-1200", "chrome")), true);
-  assert.equal(fs.existsSync(path.join(outDir, "ubuntu22.04-x64", "chromium-1200", "INSTALLATION_COMPLETE")), true);
+  assert.equal(fs.existsSync(path.join(outDir, "ubuntu24.04-x64", "chromium-1200", "INSTALLATION_COMPLETE")), true);
 });
 
 test("materialize-playwright-browsers resolves the runtime manifest from Bazel runfiles", () => {
