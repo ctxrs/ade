@@ -746,7 +746,7 @@ async fn workspace_active_heads_batch_strips_partials() {
         })
         .await
         .unwrap();
-    let notice_event = store
+    store
         .append_session_event(
             session.id,
             None,
@@ -760,7 +760,7 @@ async fn workspace_active_heads_batch_strips_partials() {
         )
         .await
         .unwrap();
-    store
+    let checkpoint_event = store
         .append_session_event(
             session.id,
             None,
@@ -775,7 +775,7 @@ async fn workspace_active_heads_batch_strips_partials() {
             session.id,
             turn_id,
             SessionTurnStatus::Completed,
-            Some(notice_event.seq),
+            Some(checkpoint_event.seq),
             None,
             Utc::now(),
         )
