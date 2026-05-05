@@ -31,6 +31,7 @@ const restoreEnv = () => {
   delete process.env.CTX_WEB_DIST;
   delete process.env.CTX_E2E_BUNDLE_DIR;
   delete process.env.CTX_E2E_ALLOW_CONFIGURED_BUNDLE_DIR;
+  delete process.env.CTX_E2E_RUNTIME_SOURCE;
   delete process.env.CTX_E2E_BROWSER;
   delete process.env.CTX_E2E_REUSE_SERVER;
   delete process.env.CTX_E2E_FORCE_REUSE_SERVER;
@@ -220,6 +221,18 @@ describe("createCtxPlaywrightConfig", () => {
       expect(webServer?.env?.CTX_BUNDLE_DIR).toBe("");
       expect(webServer?.env?.CTX_BUNDLE_MANIFEST).toBeUndefined();
     }
+  });
+
+  it("does not auto-select checked-in placeholder bundles for Bazel runfiles", async () => {
+    restoreEnv();
+    process.env.CTX_E2E_RUNTIME_SOURCE = "bazel-runfiles";
+
+    const config = await createCtxPlaywrightConfig("premerge_required");
+    const webServer = Array.isArray(config.webServer) ? config.webServer[0] : config.webServer;
+
+    expect(webServer?.env?.CTX_BUNDLE_DIR).toBeUndefined();
+    expect(webServer?.env?.CTX_BUNDLE_MANIFEST).toBeUndefined();
+    expect(webServer?.env?.CTX_E2E_BUNDLED_ONLY).toBeUndefined();
   });
 
   it("uses CTX_E2E_BUNDLE_DIR instead of ambient CTX_BUNDLE_DIR", async () => {

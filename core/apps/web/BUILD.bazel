@@ -261,6 +261,8 @@ PLAYWRIGHT_RUNTIME_SCRIPT_TEST_DATA = [
     "scripts/generate-playwright-browser-lock.test.mjs",
     "scripts/materialize-playwright-browsers.mjs",
     "scripts/materialize-playwright-browsers.test.mjs",
+    "scripts/run-e2e-bazel-runtime.mjs",
+    "scripts/run-e2e-bazel-runtime.test.mjs",
     "scripts/run-node-test-suite.mjs",
 ]
 
@@ -691,6 +693,7 @@ js_test(
     args = [
         "scripts/generate-playwright-browser-lock.test.mjs",
         "scripts/materialize-playwright-browsers.test.mjs",
+        "scripts/run-e2e-bazel-runtime.test.mjs",
     ],
     entry_point = "scripts/run-node-test-suite.mjs",
     data = PLAYWRIGHT_RUNTIME_SCRIPT_TEST_DATA,

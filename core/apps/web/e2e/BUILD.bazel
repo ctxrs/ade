@@ -27,6 +27,13 @@ web_e2e_test(
 )
 
 web_e2e_test(
+    name = "workbench_worktree_path",
+    config = "playwright.premerge.config.ts",
+    runtime_profile = "agent-full",
+    specs = ["e2e/workbench-worktree-path.spec.ts"],
+)
+
+web_e2e_test(
     name = "pretext_wrap_rules",
     config = "playwright.pretext-parity.config.ts",
     runtime_profile = "agent-full",

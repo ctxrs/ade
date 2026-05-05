@@ -14,7 +14,7 @@ import { composeModelId, parseModelId } from "../../utils/modelEffort";
 import { hasSessionActiveTurn } from "../../utils/sessionActivity";
 import type { OptimisticTaskSummary } from "./WorkbenchPage.types";
 import {
-  formatWorktreeLabel,
+  formatWorktreeChipLabel,
   isOptimisticTask,
   parseMs,
 } from "./WorkbenchPage.utils";
@@ -378,13 +378,11 @@ export function useWorkbenchActiveTaskController({
     const worktreeRoot = String(activeWorktree?.root_path ?? "");
     const executionEnvironment = String(session?.execution_environment ?? "").trim();
     const worktreePath = worktreeRoot;
-    const worktreeLabel = worktreePath
-      ? formatWorktreeLabel(worktreePath)
-      : executionEnvironment === "sandbox"
-        ? "Sandbox worktree"
-        : executionEnvironment === "host"
-          ? "Session worktree"
-          : "";
+    const worktreeLabel = formatWorktreeChipLabel({
+      worktreePath,
+      worktreeId: activeWorktreeId,
+      executionEnvironment,
+    });
 
     return {
       worktreeLabel,
@@ -393,7 +391,7 @@ export function useWorkbenchActiveTaskController({
       canOpenTerminal: Boolean(worktreePath),
       copyPath: worktreePath,
     };
-  }, [activeEntry, activeWorktree?.root_path]);
+  }, [activeEntry, activeWorktree?.root_path, activeWorktreeId]);
 
   const singleSessionHeader = useMemo(() => {
     const session = activeEntry?.session ?? null;

@@ -127,16 +127,27 @@ const findRepoRootFrom = (startDir) => {
 };
 
 export const resolveRepoRoot = (env = process.env, cwd = process.cwd()) => {
-  const candidates = [
-    env.BUILD_WORKSPACE_DIRECTORY,
-    env.CTX_REAL_WORKSPACE_ROOT,
-    env.INIT_CWD,
-    cwd,
-    path.resolve(__dirname, "../../../.."),
+  const moduleCandidate = path.resolve(__dirname, "../../../..");
+  const moduleCandidateIsRunfiles = moduleCandidate.includes(".runfiles");
+  const runfileCandidates = [
     env.TEST_SRCDIR && env.TEST_WORKSPACE ? path.join(env.TEST_SRCDIR, env.TEST_WORKSPACE) : "",
     env.RUNFILES_DIR && env.TEST_WORKSPACE ? path.join(env.RUNFILES_DIR, env.TEST_WORKSPACE) : "",
     env.RUNFILES_DIR ? path.join(env.RUNFILES_DIR, "_main") : "",
   ];
+  const checkoutCandidates = [
+    env.BUILD_WORKSPACE_DIRECTORY,
+    env.CTX_REAL_WORKSPACE_ROOT,
+    env.INIT_CWD,
+    cwd,
+    moduleCandidate,
+  ];
+  const hasBazelRunfiles = Boolean(env.TEST_SRCDIR || env.RUNFILES_DIR);
+  let candidates = [...checkoutCandidates, ...runfileCandidates];
+  if (hasBazelRunfiles) {
+    candidates = [...runfileCandidates, moduleCandidate, ...checkoutCandidates];
+  } else if (moduleCandidateIsRunfiles) {
+    candidates = [moduleCandidate, ...checkoutCandidates, ...runfileCandidates];
+  }
   for (const candidate of candidates) {
     const normalized = normalizeRepoRootCandidate(candidate);
     if (normalized) return normalized;
@@ -150,6 +161,38 @@ export const resolveRepoRoot = (env = process.env, cwd = process.cwd()) => {
 
 const binName = (tool) => (process.platform === "win32" ? `${tool}.cmd` : tool);
 
+const readJsonFile = (file) => JSON.parse(fs.readFileSync(file, "utf8"));
+
+const packagePathParts = (packageName) => packageName.split("/").filter(Boolean);
+
+const packageBinPath = (pkg, packageName, tool) => {
+  const bin = pkg?.bin;
+  if (typeof bin === "string") return bin;
+  if (!bin || typeof bin !== "object" || Array.isArray(bin)) return "";
+  const packageBaseName = packagePathParts(packageName).at(-1) || packageName;
+  const candidate = bin[tool] ?? bin[packageBaseName];
+  return typeof candidate === "string" ? candidate : "";
+};
+
+const resolveNodePackageBin = (packageRoot, packageName, tool) => {
+  let current = path.resolve(packageRoot);
+  while (true) {
+    const packageDir = path.join(current, "node_modules", ...packagePathParts(packageName));
+    const packageJsonPath = path.join(packageDir, "package.json");
+    if (fs.existsSync(packageJsonPath)) {
+      const binPath = packageBinPath(readJsonFile(packageJsonPath), packageName, tool);
+      if (binPath) {
+        const candidate = path.join(packageDir, binPath);
+        if (fs.existsSync(candidate)) return candidate;
+      }
+    }
+    const parent = path.dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+  return "";
+};
+
 export const resolveLocalNodeBin = (packageRoot, tool) => {
   const expected = binName(tool);
   let current = path.resolve(packageRoot);
@@ -160,6 +203,8 @@ export const resolveLocalNodeBin = (packageRoot, tool) => {
     if (parent === current) break;
     current = parent;
   }
+  const packageBin = resolveNodePackageBin(packageRoot, tool, tool);
+  if (packageBin) return packageBin;
   const expectedPath = path.join(path.resolve(packageRoot), "node_modules", ".bin", expected);
   throw new Error(
     `Missing local ${tool} binary at ${expectedPath}. Run pnpm install in core before running Bazel web E2E.`,
@@ -227,6 +272,114 @@ const ensureTempRoot = (env) => {
   return root;
 };
 
+const materializedTreeExcludes = new Set([
+  ".git",
+  "dist",
+  "node_modules",
+  "playwright-report",
+  "test-results",
+]);
+
+const isBazelRunfilesPath = (candidate) => path.resolve(candidate).includes(".runfiles");
+
+const treeCopyFilter = (sourceRoot) => (sourcePath) => {
+  const relative = path.relative(sourceRoot, sourcePath);
+  if (!relative) return true;
+  const parts = relative.split(path.sep);
+  return !parts.some((part) => materializedTreeExcludes.has(part));
+};
+
+const copyTreeIfExists = (sourcePath, targetPath) => {
+  if (!fs.existsSync(sourcePath)) return;
+  fs.cpSync(sourcePath, targetPath, {
+    dereference: true,
+    filter: treeCopyFilter(sourcePath),
+    force: true,
+    recursive: true,
+  });
+};
+
+const copyFileIfExists = (sourcePath, targetPath) => {
+  if (!fs.existsSync(sourcePath)) return;
+  fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+  fs.copyFileSync(sourcePath, targetPath);
+};
+
+const symlinkDirectoryIfExists = (sourcePath, targetPath) => {
+  if (!fs.existsSync(sourcePath)) return;
+  fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+  fs.symlinkSync(
+    path.resolve(sourcePath),
+    targetPath,
+    process.platform === "win32" ? "junction" : "dir",
+  );
+};
+
+export const materializeBazelWebRepo = ({ repoRoot, runtimeProfile, tempRoot }) => {
+  const sourceCoreRoot = path.join(repoRoot, "core");
+  const materializedRepoRoot = path.join(
+    tempRoot,
+    `ctx-web-e2e-runfiles-repo-${runtimeProfile}-${process.pid}`,
+  );
+  const materializedCoreRoot = path.join(materializedRepoRoot, "core");
+  fs.rmSync(materializedRepoRoot, { recursive: true, force: true });
+  fs.mkdirSync(materializedCoreRoot, { recursive: true });
+
+  for (const fileName of ["package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml"]) {
+    copyFileIfExists(
+      path.join(sourceCoreRoot, fileName),
+      path.join(materializedCoreRoot, fileName),
+    );
+  }
+
+  copyTreeIfExists(
+    path.join(sourceCoreRoot, "apps", "web"),
+    path.join(materializedCoreRoot, "apps", "web"),
+  );
+  copyTreeIfExists(
+    path.join(sourceCoreRoot, "apps", "desktop", "src-tauri", "bundles"),
+    path.join(materializedCoreRoot, "apps", "desktop", "src-tauri", "bundles"),
+  );
+  copyTreeIfExists(
+    path.join(sourceCoreRoot, "packages"),
+    path.join(materializedCoreRoot, "packages"),
+  );
+  copyTreeIfExists(
+    path.join(sourceCoreRoot, "scripts"),
+    path.join(materializedCoreRoot, "scripts"),
+  );
+
+  symlinkDirectoryIfExists(
+    path.join(sourceCoreRoot, "node_modules"),
+    path.join(materializedCoreRoot, "node_modules"),
+  );
+  symlinkDirectoryIfExists(
+    path.join(sourceCoreRoot, "apps", "web", "node_modules"),
+    path.join(materializedCoreRoot, "apps", "web", "node_modules"),
+  );
+
+  return materializedRepoRoot;
+};
+
+export const prepareRuntimeRepoRoot = ({ env = process.env, repoRoot, runtimeProfile, tempRoot }) => {
+  if (!isBazelRunfilesPath(repoRoot) && !env.TEST_SRCDIR && !env.RUNFILES_DIR) {
+    return repoRoot;
+  }
+  return materializeBazelWebRepo({ repoRoot, runtimeProfile, tempRoot });
+};
+
+export const envWithCurrentNodeOnPath = (env = process.env) => {
+  const nodeDir = path.dirname(process.execPath);
+  const currentPath = String(env.PATH || "");
+  const entries = currentPath.split(path.delimiter).filter(Boolean);
+  return {
+    ...env,
+    PATH: entries.includes(nodeDir)
+      ? currentPath
+      : [nodeDir, ...entries].join(path.delimiter),
+  };
+};
+
 const run = (command, args, options) => {
   const result = spawnSync(command, args, { ...options, stdio: "inherit" });
   if (result.error) {
@@ -234,6 +387,20 @@ const run = (command, args, options) => {
   }
   if (result.status !== 0) {
     process.exit(result.status ?? 1);
+  }
+};
+
+export const pathsReferToSameFile = (left, right, realpathSync = fs.realpathSync) => {
+  const rawLeft = String(left || "").trim();
+  const rawRight = String(right || "").trim();
+  if (!rawLeft || !rawRight) return false;
+  const resolvedLeft = path.resolve(rawLeft);
+  const resolvedRight = path.resolve(rawRight);
+  if (resolvedLeft === resolvedRight) return true;
+  try {
+    return realpathSync(resolvedLeft) === realpathSync(resolvedRight);
+  } catch {
+    return false;
   }
 };
 
@@ -258,7 +425,7 @@ export const buildPlaywrightEnv = ({
   const e2eTmpDir = path.join(tempRoot, `ctx-e2e-${runtimeProfile}-tmp-${process.pid}`);
   const e2eDataDir = path.join(e2eTmpDir, `ctx-e2e-${runtimeProfile}-data-${process.pid}`);
   const nextEnv = {
-    ...env,
+    ...envWithCurrentNodeOnPath(env),
     CI: env.CI ?? "1",
     CTX_E2E_CTX_HTTP_BIN: ctxHttpBin,
     CTX_E2E_DATA_DIR: e2eDataDir,
@@ -292,19 +459,25 @@ export const buildPlaywrightArgs = ({ config, forwardedArgs = [], specs }) => [
 
 export const runBazelRuntimeE2E = (argv, env = process.env) => {
   const options = parseArgs(argv);
-  const repoRoot = resolveRepoRoot(env);
+  const sourceRepoRoot = resolveRepoRoot(env);
+  const tempRoot = ensureTempRoot(env);
+  const repoRoot = prepareRuntimeRepoRoot({
+    env,
+    repoRoot: sourceRepoRoot,
+    runtimeProfile: options.runtimeProfile,
+    tempRoot,
+  });
   const coreRoot = path.join(repoRoot, "core");
   const webRoot = path.join(coreRoot, "apps", "web");
-  const tempRoot = ensureTempRoot(env);
-  const ctxHttpBin = resolveExistingPath(options.ctxHttpBin, { env, repoRoot });
+  const ctxHttpBin = resolveExistingPath(options.ctxHttpBin, { env, repoRoot: sourceRepoRoot });
   const ctxMcpBin = options.ctxMcpBin
-    ? resolveExistingPath(options.ctxMcpBin, { env, repoRoot })
+    ? resolveExistingPath(options.ctxMcpBin, { env, repoRoot: sourceRepoRoot })
     : "";
   const specs = resolveSpecs(webRoot, options);
   const viteBin = resolveLocalNodeBin(webRoot, "vite");
   const playwrightBin = resolveLocalNodeBin(webRoot, "playwright");
   const buildEnv = {
-    ...env,
+    ...envWithCurrentNodeOnPath(env),
     TMP: tempRoot,
     TEMP: tempRoot,
     TMPDIR: tempRoot,
@@ -335,7 +508,7 @@ export const runBazelRuntimeE2E = (argv, env = process.env) => {
   });
 };
 
-if (process.argv[1] && path.resolve(process.argv[1]) === __filename) {
+if (process.argv[1] && pathsReferToSameFile(process.argv[1], __filename)) {
   try {
     runBazelRuntimeE2E(process.argv.slice(2));
   } catch (error) {

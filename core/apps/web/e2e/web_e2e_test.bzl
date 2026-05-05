@@ -12,6 +12,7 @@ def web_e2e_test(name, config, runtime_profile, suite = "", specs = None, timeou
     ]
     data = [
         "//core/apps/web:e2e_runtime_data",
+        "//core/apps/web:node_modules",
         "//core/crates/ctx-http:ctx",
     ]
     if runtime_profile == "agent-full":

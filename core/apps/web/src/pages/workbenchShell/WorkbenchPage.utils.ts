@@ -208,6 +208,25 @@ export function formatWorktreeLabel(raw: string): string {
   return `${base.slice(0, 16)}...`;
 }
 
+export function formatWorktreeChipLabel({
+  worktreePath,
+  worktreeId,
+  executionEnvironment,
+}: {
+  worktreePath?: string | null;
+  worktreeId?: string | null;
+  executionEnvironment?: string | null;
+}): string {
+  const pathLabel = formatWorktreeLabel(worktreePath ?? "");
+  if (pathLabel) return pathLabel;
+  const idLabel = formatWorktreeLabel(worktreeId ?? "");
+  if (idLabel) return idLabel;
+  const env = String(executionEnvironment ?? "").trim();
+  if (env === "sandbox") return "Sandbox worktree";
+  if (env === "host") return "Session worktree";
+  return "";
+}
+
 export function lastAssistantMessageMs(messages: { role: string; created_at: string }[]): number | null {
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i];

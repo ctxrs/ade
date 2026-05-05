@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ProviderOptions } from "../../api/client";
-import { modelIdsFromOptions } from "./WorkbenchPage.utils";
+import { formatWorktreeChipLabel, modelIdsFromOptions } from "./WorkbenchPage.utils";
 
 const baseOptions = (providerId: string): ProviderOptions => ({
   provider_id: providerId,
@@ -143,5 +143,27 @@ describe("modelIdsFromOptions", () => {
       "openai/gpt-5.4/xhigh",
       "openai/gpt-5.4/medium",
     ]);
+  });
+});
+
+describe("formatWorktreeChipLabel", () => {
+  it("falls back to the worktree id before host environment copy", () => {
+    expect(
+      formatWorktreeChipLabel({
+        worktreePath: "",
+        worktreeId: "42fe9bb2-6457-4ab5-9ac4-41a0101243ed",
+        executionEnvironment: "host",
+      }),
+    ).toBe("42fe9bb2");
+  });
+
+  it("prefers the worktree path label when the root path is known", () => {
+    expect(
+      formatWorktreeChipLabel({
+        worktreePath: "/Users/example-user/.ctx/worktrees/ws-1/00000000-0000-4000-8000-000000000001",
+        worktreeId: "42fe9bb2-6457-4ab5-9ac4-41a0101243ed",
+        executionEnvironment: "host",
+      }),
+    ).toBe("c445f56d");
   });
 });

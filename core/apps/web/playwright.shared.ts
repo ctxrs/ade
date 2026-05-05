@@ -220,12 +220,14 @@ export async function createCtxPlaywrightConfig(
   const defaultBundleDir = path.resolve(__dirname, "../desktop/src-tauri/bundles");
   const bundleManifestPath = path.join(defaultBundleDir, "manifest.json");
   const allowConfiguredBundleDir = parseBool(process.env.CTX_E2E_ALLOW_CONFIGURED_BUNDLE_DIR);
+  const allowDefaultBundleDir =
+    String(process.env.CTX_E2E_RUNTIME_SOURCE ?? "").trim() !== "bazel-runfiles";
   const resolvedBundleDir =
     (process.env.CTX_E2E_BUNDLE_DIR
       ?? (allowConfiguredBundleDir ? process.env.CTX_BUNDLE_DIR : "")
       ?? "")
       .trim()
-    || (fs.existsSync(bundleManifestPath) ? defaultBundleDir : "");
+    || (allowDefaultBundleDir && fs.existsSync(bundleManifestPath) ? defaultBundleDir : "");
   if (resolvedBundleDir) {
     process.env.CTX_E2E_BUNDLED_ONLY ??= "1";
   } else {
