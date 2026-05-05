@@ -28,7 +28,6 @@ const userMessage: Message = {
   content: "hello",
   delivery: "immediate",
   created_at: now,
-  updated_at: now,
 };
 
 const assistantMessage: Message = {
@@ -40,7 +39,6 @@ const assistantMessage: Message = {
   content: "done: hello",
   delivery: "immediate",
   created_at: now,
-  updated_at: now,
 };
 
 const runningTurn: SessionTurn = {

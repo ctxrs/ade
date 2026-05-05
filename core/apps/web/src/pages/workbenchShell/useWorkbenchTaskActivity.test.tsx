@@ -1452,7 +1452,6 @@ describe("useWorkbenchTaskActivity", () => {
           content: "done",
           delivery: "immediate",
           created_at: now,
-          updated_at: now,
         },
       ],
       last_event_seq: 8,
@@ -1546,7 +1545,6 @@ describe("useWorkbenchTaskActivity", () => {
           content: "done",
           delivery: "immediate",
           created_at: now,
-          updated_at: now,
         },
       ],
     };

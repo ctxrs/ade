@@ -34,7 +34,7 @@ export const isBoundedSessionHead = (
 
 export const isPartialSessionHead = (
   head: Pick<SessionHead | SessionHeadSnapshot, "head_window"> &
-    Partial<Pick<SessionHead | SessionHeadSnapshot, "has_more_turns" | "has_more_history">>,
+    Partial<Pick<SessionHead | SessionHeadSnapshot, "has_more_turns">>,
 ): boolean =>
   Boolean(head.head_window?.truncated) ||
   Boolean(head.has_more_turns);
