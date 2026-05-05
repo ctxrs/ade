@@ -9,6 +9,11 @@ PLAYWRIGHT_BROWSER_RUNTIME_LOCK = {
             "sha256": "01046b12151b2846b6d34ff619336b6338ca254c47aacc903602dd96afc939b3",
             "url": "https://cdn.playwright.dev/dbazure/download/playwright/builds/chromium/1200/chromium-mac-arm64.zip",
         },
+        "chromium-headless-shell": {
+            "directory_name": "chromium_headless_shell-1200",
+            "sha256": "e1620402b69716fa17e38e394c34121ac64c054251803cb13dde58458136e03c",
+            "url": "https://cdn.playwright.dev/dbazure/download/playwright/builds/chromium/1200/chromium-headless-shell-mac-arm64.zip",
+        },
         "ffmpeg": {
             "directory_name": "ffmpeg-1011",
             "sha256": "7d77eb0d44b59acc4065faa2476c0df1a242cc904c346f820626818c953c5277",
@@ -30,6 +35,11 @@ PLAYWRIGHT_BROWSER_RUNTIME_LOCK = {
             "directory_name": "chromium-1200",
             "sha256": "ab56b2a7955c2961f74348e2349f1e907489283da23dba37c730b624e4d670bb",
             "url": "https://cdn.playwright.dev/dbazure/download/playwright/builds/chromium/1200/chromium-linux.zip",
+        },
+        "chromium-headless-shell": {
+            "directory_name": "chromium_headless_shell-1200",
+            "sha256": "a9a525cb3832d59a810f78f8ba6c5ed3592a6a488984627f5d827c2a365c8a5a",
+            "url": "https://cdn.playwright.dev/dbazure/download/playwright/builds/chromium/1200/chromium-headless-shell-linux.zip",
         },
         "ffmpeg": {
             "directory_name": "ffmpeg-1011",

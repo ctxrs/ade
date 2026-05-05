@@ -21,7 +21,7 @@ export const defaultOutputPath = path.join(
   "bazel",
   "playwright_browser_runtime_lock.generated.bzl",
 );
-const supportedBrowsers = Object.freeze(["chromium", "ffmpeg", "firefox", "webkit"]);
+const supportedBrowsers = Object.freeze(["chromium", "chromium-headless-shell", "ffmpeg", "firefox", "webkit"]);
 
 export const usage = () => [
   "usage: node core/apps/web/scripts/generate-playwright-browser-lock.mjs \\",

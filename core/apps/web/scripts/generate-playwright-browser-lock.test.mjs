@@ -50,6 +50,11 @@ test("generate-playwright-browser-lock formats a stable generated bzl lock file"
           sha256: "abc123",
           url: "https://example.invalid/chromium.zip",
         },
+        "chromium-headless-shell": {
+          directoryName: "chromium_headless_shell-1200",
+          sha256: "def456",
+          url: "https://example.invalid/chromium-headless-shell.zip",
+        },
       },
     },
   });
@@ -58,5 +63,7 @@ test("generate-playwright-browser-lock formats a stable generated bzl lock file"
   assert.match(rendered, /"mac15-arm64"/u);
   assert.match(rendered, /"chromium"/u);
   assert.match(rendered, /"directory_name": "chromium-1200"/u);
+  assert.match(rendered, /"chromium-headless-shell"/u);
+  assert.match(rendered, /"directory_name": "chromium_headless_shell-1200"/u);
   assert.match(rendered, /"sha256": "abc123"/u);
 });

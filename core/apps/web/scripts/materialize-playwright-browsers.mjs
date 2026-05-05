@@ -10,10 +10,10 @@ const usage = () => [
   "usage: node apps/web/scripts/materialize-playwright-browsers.mjs \\",
   "  --out-dir <path> \\",
   "  --runtime-manifest <path> \\",
-  "  --browser <webkit|chromium|firefox|ffmpeg> [--browser <...>]",
+  "  --browser <webkit|chromium|chromium-headless-shell|firefox|ffmpeg> [--browser <...>]",
 ].join("\n");
 
-const supportedBrowsers = new Set(["chromium", "ffmpeg", "firefox", "webkit"]);
+const supportedBrowsers = new Set(["chromium", "chromium-headless-shell", "ffmpeg", "firefox", "webkit"]);
 const runfilesManifestCache = new Map();
 
 const hasBazelRunfilesEnv = (env = process.env) => [
