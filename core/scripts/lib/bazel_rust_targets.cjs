@@ -183,6 +183,15 @@ const LINUX_RBE_SAFE_BAZEL_CLIPPY_TARGETS = Object.freeze(
   flattenTargetMapping(BAZEL_BUILD_TARGETS_BY_CRATE),
 );
 
+const LINUX_RBE_SAFE_BAZEL_BUILD_TARGETS_WITH_TEST_BINARIES = Object.freeze(sortUnique([
+  ...LINUX_RBE_SAFE_BAZEL_BUILD_TARGETS,
+  // `bazel build` of test targets only compiles the test binary. Targets that
+  // are already safe to execute on Linux RBE are also safe to compile there.
+  // Keep this promotion narrow: today only the ctx-http checkin warmup needs
+  // test-binary builds before target-granular fanout runs the tests.
+  ...getAllCtxHttpSuiteCheckinFanoutTargets(),
+]));
+
 function getBazelCoveredCrates() {
   return Object.keys(BAZEL_TEST_TARGETS_BY_CRATE).sort();
 }
@@ -215,7 +224,7 @@ function getLinuxRbeSafeBazelTargets(command, { rustClippy = false } = {}) {
     if (rustClippy) {
       return LINUX_RBE_SAFE_BAZEL_CLIPPY_TARGETS;
     }
-    return LINUX_RBE_SAFE_BAZEL_BUILD_TARGETS;
+    return LINUX_RBE_SAFE_BAZEL_BUILD_TARGETS_WITH_TEST_BINARIES;
   }
   return [];
 }
@@ -247,6 +256,7 @@ module.exports = {
   getLinuxRbeSafeBazelTargets,
   getBazelTestTargetsForCrates,
   LINUX_RBE_SAFE_BAZEL_BUILD_TARGETS,
+  LINUX_RBE_SAFE_BAZEL_BUILD_TARGETS_WITH_TEST_BINARIES,
   LINUX_RBE_SAFE_BAZEL_CLIPPY_TARGETS,
   LINUX_RBE_SAFE_BAZEL_TEST_TARGETS,
   LINUX_RBE_UNSAFE_BAZEL_TEST_TARGETS,

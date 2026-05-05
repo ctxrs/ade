@@ -352,6 +352,20 @@ test("checkin ctx-http fanout targets are Linux RBE-safe Bazel labels", () => {
   assert.deepEqual(localTargets, []);
 });
 
+test("checkin ctx-http fanout targets can be compiled by Linux RBE warmup builds", () => {
+  const plan = buildCheckinBuildkiteExecutionPlan({ profileId: "checkin" });
+  const ctxHttpFanoutTargets = plan.commands
+    .filter((command) =>
+      command.startsWith("node scripts/run_bazel_pilot.cjs test //core/crates/ctx-http:")
+    )
+    .flatMap((command) => command.replace("node scripts/run_bazel_pilot.cjs test ", "").split(" "));
+  const { localTargets, remoteTargets } = partitionBazelTargetsForLinuxRbe("build", ctxHttpFanoutTargets);
+
+  assert.ok(ctxHttpFanoutTargets.length > getCtxHttpSuiteTargets("all").length);
+  assert.deepEqual(localTargets, []);
+  assert.deepEqual(remoteTargets, sortUnique(ctxHttpFanoutTargets));
+});
+
 test("web checkin lint typecheck and unit Bazel targets are Linux RBE safe", () => {
   const packageJson = JSON.parse(fs.readFileSync(path.join(repoRoot, "core", "package.json"), "utf8"));
   const plan = buildCheckinBuildkiteExecutionPlan({ profileId: "checkin" });
