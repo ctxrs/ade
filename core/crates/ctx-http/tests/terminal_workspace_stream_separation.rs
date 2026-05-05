@@ -262,12 +262,18 @@ async fn terminal_disconnect_and_reconnect_do_not_poison_workspace_control_plane
     let message_count = 4usize;
     let client_clone = client.clone();
     let base_clone = base.to_string();
-    let session_id = session.id.0;
+    let session_id = session.id;
+    let state_clone = state.clone();
     let send_messages = tokio::spawn(async move {
         for index in 0..message_count {
             let response = client_clone
-                .post(format!("{base_clone}/api/sessions/{session_id}/messages"))
-                .json(&json!({"content": format!("terminal separation turn {index} emit-thought")}))
+                .post(format!(
+                    "{base_clone}/api/sessions/{}/messages",
+                    session_id.0
+                ))
+                .json(&json!({
+                    "content": format!("terminal separation turn {index} emit-thought")
+                }))
                 .send()
                 .await
                 .unwrap();
@@ -281,6 +287,7 @@ async fn terminal_disconnect_and_reconnect_do_not_poison_workspace_control_plane
                 status.is_success(),
                 "message post failed with status {status}: {body}"
             );
+            wait_for_session_done_events_in_store(&state_clone, session_id, index + 1).await;
         }
     });
 
