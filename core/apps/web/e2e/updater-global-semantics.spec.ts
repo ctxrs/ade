@@ -614,8 +614,8 @@ test("restart-required state converges across windows and idle scheduling stays 
 
   await expect(page.getByTestId("update-available-snackbar")).toBeVisible({ timeout: 20_000 });
   await expect(page2.getByTestId("update-available-snackbar")).toBeVisible({ timeout: 20_000 });
-  await expect(page.getByText(/Update available:\s*0\.5\.1\./)).toBeVisible({ timeout: 20_000 });
-  await expect(page2.getByText(/Update available:\s*0\.5\.1\./)).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByText(/Ready to relaunch:\s*0\.5\.1\./)).toBeVisible({ timeout: 20_000 });
+  await expect(page2.getByText(/Ready to relaunch:\s*0\.5\.1\./)).toBeVisible({ timeout: 20_000 });
 
   await dispatchIdleEvent(page, false);
   await dispatchIdleEvent(page2, false);

@@ -434,7 +434,7 @@ test("desktop updater remains silent while staging", async ({ page }) => {
   await expect.poll(async () => desktopCommandCallCount(page, "desktop_restart_app")).toBe(0);
 });
 
-test("desktop Update Now requests restart in restart-required state", async ({ page }) => {
+test("desktop Relaunch requests restart in restart-required state", async ({ page }) => {
   await page.addInitScript((autoApplyKey: string, snoozeKey: string, idleKey: string, restartKey: string) => {
     localStorage.removeItem("ctx_update_check_v1");
     localStorage.removeItem(snoozeKey);
@@ -468,10 +468,10 @@ test("desktop Update Now requests restart in restart-required state", async ({ p
 
   await createWorkspaceAndOpenWorkbench(page, `ws-desktop-apply-now-${Date.now()}`);
   await expect(page.getByTestId("update-available-snackbar")).toBeVisible({ timeout: 20_000 });
-  await page.getByRole("button", { name: "Update Now" }).dispatchEvent("click");
+  await page.getByRole("button", { name: "Relaunch" }).dispatchEvent("click");
   await expect.poll(async () => desktopCommandCallCount(page, "desktop_restart_app")).toBe(1);
   await expect.poll(async () => desktopCommandCallCount(page, "desktop_apply_app_update")).toBe(0);
-  await expect(page.getByRole("button", { name: "Update Now" })).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByRole("button", { name: "Relaunch" })).toBeVisible({ timeout: 20_000 });
 });
 
 test("desktop Help menu requests restart when update is ready", async ({ page }) => {
@@ -558,7 +558,7 @@ test("desktop Update on Next Idle schedules restart when restart is ready", asyn
   await page.getByRole("button", { name: "Update on Next Idle" }).dispatchEvent("click");
   await expect.poll(async () => desktopCommandCallCount(page, "desktop_restart_app")).toBe(1);
   await expect.poll(async () => desktopCommandCallCount(page, "desktop_apply_app_update")).toBe(0);
-  await expect(page.getByRole("button", { name: "Update Now" })).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByRole("button", { name: "Relaunch" })).toBeVisible({ timeout: 20_000 });
 });
 
 test("desktop auto-applies when a staged update is ready", async ({ page }) => {
@@ -595,5 +595,5 @@ test("desktop auto-applies when a staged update is ready", async ({ page }) => {
 
   await createWorkspaceAndOpenWorkbench(page, `ws-desktop-auto-${Date.now()}`);
   await expect.poll(async () => desktopCommandCallCount(page, "desktop_apply_app_update")).toBe(1);
-  await expect(page.getByRole("button", { name: "Update Now" })).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByRole("button", { name: "Relaunch" })).toBeVisible({ timeout: 20_000 });
 });

@@ -19,6 +19,32 @@ type HarnessState = {
 };
 
 const installDesktopHarness = async (page: Page, config: HarnessConfig) => {
+  await page.route("**/api/health", async (route) => {
+    const parsed = new URL(route.request().url());
+    const port = parsed.port
+      ? Number(parsed.port)
+      : parsed.protocol === "https:"
+        ? 443
+        : 80;
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        version: config.daemonVersion,
+        daemon_version: config.daemonVersion,
+        pid: 1,
+        data_root: "/tmp",
+        daemon_url: parsed.origin,
+        auth_required: false,
+        compatibility: {
+          desktop_exact_version: config.daemonVersion,
+          mobile_api_min: 1,
+          mobile_api_max: 1,
+        },
+        port,
+      }),
+    });
+  });
   await page.addInitScript((initial: HarnessConfig) => {
     type TauriInvoke = (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
     type TauriInternals = {
@@ -86,7 +112,7 @@ const installDesktopHarness = async (page: Page, config: HarnessConfig) => {
           return {
             kind: "ssh",
             base_url: target.base_url,
-            token: state.config.authToken,
+            browser_query_secret: state.config.authToken,
             host: "example.test",
             user: "devbox",
             remote_port: target.port,
@@ -96,7 +122,7 @@ const installDesktopHarness = async (page: Page, config: HarnessConfig) => {
         return {
           kind: "local",
           base_url: target.base_url,
-          token: state.config.authToken,
+          browser_query_secret: state.config.authToken,
         };
       }
       if (name === "desktop_restart_local_daemon") {
@@ -257,7 +283,7 @@ test("remote mismatch updates immediately when no active tasks are detected", as
     connectionKind: "ssh",
     desktopVersion: "2.0.0",
     daemonVersion: "1.0.0",
-    confirmResult: false,
+    confirmResult: true,
   });
 
   await page.goto("/workspaces", { waitUntil: "domcontentloaded" });
@@ -266,7 +292,7 @@ test("remote mismatch updates immediately when no active tasks are detected", as
   await expect(page.getByText(/remote daemon is older than this desktop app/i)).toBeVisible();
 
   const initialCalls = await commandCallCount(page, "desktop_update_remote_daemon");
-  await page.getByRole("button", { name: "Update remote daemon" }).click();
+  await page.getByRole("button", { name: "Restart now" }).click();
   await expect
     .poll(async () => commandCallCount(page, "desktop_update_remote_daemon"))
     .toBeGreaterThanOrEqual(initialCalls + 1);
