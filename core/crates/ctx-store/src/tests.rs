@@ -2391,8 +2391,8 @@ async fn active_session_head_snapshot_uses_requested_limit_for_large_unmateriali
         let turn_id = TurnId::new();
         let mut turn = make_turn(fixture.session_id, run_id, turn_id);
         turn.start_seq = Some(index + 1);
-        turn.end_seq = Some(index + 1);
-        turn.status = SessionTurnStatus::Completed;
+        turn.end_seq = None;
+        turn.status = SessionTurnStatus::Running;
         turn.tool_total = 1;
         turn.tool_completed = 1;
         fixture.store.insert_session_turn(turn).await.unwrap();
@@ -2445,6 +2445,18 @@ async fn active_session_head_snapshot_uses_requested_limit_for_large_unmateriali
                 created_at: now,
                 updated_at: now,
             })
+            .await
+            .unwrap();
+        fixture
+            .store
+            .update_session_turn_status(
+                fixture.session_id,
+                turn_id,
+                SessionTurnStatus::Completed,
+                Some(notice.seq),
+                None,
+                now,
+            )
             .await
             .unwrap();
     }
