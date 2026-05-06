@@ -38,6 +38,7 @@ const AGENT_GATE_CRATES = [
   "ctx-storage-admission",
   "ctx-update-service",
   "ctx-worktree-data-plane",
+  "ctx-workspace-attachments",
   "ctx-workspace-container",
   "ctx-workspace-active-snapshot",
   "ctx-workspace-config",

@@ -1,4 +1,4 @@
-use crate::attachments::validate_mount_path_in_worktree;
+use crate::validate_mount_path_in_worktree;
 
 use super::avf::{avf_import_dir_script, avf_import_file_script, avf_remove_mount_path_script};
 use super::native::{

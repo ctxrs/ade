@@ -5,7 +5,7 @@ pub(super) async fn create_and_sync_workspace_attachment(
     ctx: &WorkspaceRequestContext,
     req: CreateWorkspaceAttachmentReq,
 ) -> WorkspaceApiResult<Vec<WorkspaceAttachment>> {
-    let cfg = attachments::AttachmentConfig {
+    let cfg = AttachmentConfig {
         kind: req.kind,
         name: req.name,
         source: req.source,

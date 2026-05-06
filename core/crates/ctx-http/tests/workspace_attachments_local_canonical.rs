@@ -5,10 +5,10 @@ use ctx_core::models::{
     AttachmentMode, AttachmentUpdatePolicy, WorkspaceAttachment, WorkspaceAttachmentKind,
     WorkspaceAttachmentStatus,
 };
-use ctx_http::attachments;
 use ctx_http::settings::{
     ContainerExecutionSettings, ContainerRuntimeKind, ExecutionMode, ExecutionSettings, Settings,
 };
+use ctx_workspace_services::workspace_attachments::{self, AttachmentConfig};
 use serde_json::json;
 
 #[tokio::test]
@@ -128,10 +128,10 @@ async fn workspace_attachments_sync_heals_stale_pending_when_materialized_exists
     let app = common::router(state.clone());
 
     let workspace = common::create_workspace(&app, repo.path(), "ws").await;
-    let attachment = attachments::upsert_workspace_attachment(
+    let attachment = workspace_attachments::upsert_workspace_attachment(
         state.as_ref(),
         workspace.id,
-        attachments::AttachmentConfig {
+        AttachmentConfig {
             kind: WorkspaceAttachmentKind::ReferenceRepo,
             name: "ref-fixture".to_string(),
             source: repo.path().to_string_lossy().to_string(),

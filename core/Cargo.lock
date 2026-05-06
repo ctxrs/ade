@@ -1033,6 +1033,7 @@ dependencies = [
  "ctx-transport-runtime",
  "ctx-update-service",
  "ctx-workspace-active-snapshot",
+ "ctx-workspace-attachments",
  "ctx-workspace-config",
  "ctx-workspace-container",
  "ctx-workspace-runtime",
@@ -1678,6 +1679,27 @@ dependencies = [
  "serde_json",
  "tokio",
  "uuid",
+]
+
+[[package]]
+name = "ctx-workspace-attachments"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "ctx-avf-linux-runtime",
+ "ctx-core",
+ "ctx-execution-runtime",
+ "ctx-harness-runtime",
+ "ctx-sandbox-contract",
+ "ctx-store",
+ "ctx-workspace-container",
+ "ctx-workspace-services",
+ "ctx-worktree-data-plane",
+ "tempfile",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

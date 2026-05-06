@@ -6,15 +6,13 @@ use anyhow::{Context, Result};
 use ctx_core::models::{AttachmentMode, WorkspaceAttachment};
 use ctx_workspace_services::workspace_attachments;
 
-use crate::daemon::AppState;
-
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 enum SymlinkCopyMode {
     Preserve,
     Reject,
 }
 
-pub(crate) async fn remove_mount_path(target: &Path) -> Result<()> {
+pub async fn remove_mount_path(target: &Path) -> Result<()> {
     if let Ok(meta) = tokio::fs::symlink_metadata(target).await {
         if meta.file_type().is_symlink() || meta.is_file() {
             let target = target.to_path_buf();
@@ -31,19 +29,16 @@ pub(crate) async fn remove_mount_path(target: &Path) -> Result<()> {
     Ok(())
 }
 
-pub(crate) async fn remove_mount_path_in_worktree(
-    worktree_root: &Path,
-    target: &Path,
-) -> Result<()> {
+pub async fn remove_mount_path_in_worktree(worktree_root: &Path, target: &Path) -> Result<()> {
     validate_mount_parent_chain(worktree_root, target, true)?;
     remove_mount_path(target).await
 }
 
-pub(crate) fn validate_mount_path_in_worktree(worktree_root: &Path, target: &Path) -> Result<()> {
+pub fn validate_mount_path_in_worktree(worktree_root: &Path, target: &Path) -> Result<()> {
     validate_mount_parent_chain(worktree_root, target, true)
 }
 
-pub(crate) async fn ensure_mount_in_worktree(
+pub async fn ensure_mount_in_worktree(
     worktree_root: &Path,
     mount_relpath: &Path,
     source: &Path,
@@ -573,18 +568,18 @@ fn copy_symlink(source: &Path, target: &Path) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn materialized_path_for_attachment(
-    state: &AppState,
+pub fn materialized_path_for_attachment(
+    data_root: &Path,
     attachment: &WorkspaceAttachment,
 ) -> PathBuf {
-    workspace_attachments::materialized_path_for_attachment(&state.core.data_root, attachment)
+    workspace_attachments::materialized_path_for_attachment(data_root, attachment)
 }
 
-pub(crate) fn sanitize_mount_relpath(value: &str) -> Result<PathBuf> {
+pub fn sanitize_mount_relpath(value: &str) -> Result<PathBuf> {
     workspace_attachments::sanitize_mount_relpath(value)
 }
 
-pub(crate) fn revision_key(attachment: &WorkspaceAttachment) -> String {
+pub fn revision_key(attachment: &WorkspaceAttachment) -> String {
     workspace_attachments::revision_key(attachment)
 }
 

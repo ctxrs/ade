@@ -19,7 +19,7 @@ fn avf_guest_rel_path(worktree_root: &Path, target: &Path) -> Result<String> {
 }
 
 async fn avf_run_capture(
-    state: &AppState,
+    data_root: &Path,
     workspace_id: WorkspaceId,
     worktree_id: WorktreeId,
     worktree_root: &Path,
@@ -27,7 +27,7 @@ async fn avf_run_capture(
     args: &[String],
 ) -> Result<std::process::Output> {
     ctx_avf_linux_runtime::run_guest_exec_capture(
-        &state.core.data_root,
+        data_root,
         workspace_id,
         worktree_id,
         worktree_root,
@@ -42,7 +42,7 @@ async fn avf_run_capture(
 }
 
 pub(super) async fn avf_run_success(
-    state: &AppState,
+    data_root: &Path,
     workspace_id: WorkspaceId,
     worktree_id: WorktreeId,
     worktree_root: &Path,
@@ -50,7 +50,7 @@ pub(super) async fn avf_run_success(
     args: &[String],
 ) -> Result<()> {
     let out = avf_run_capture(
-        state,
+        data_root,
         workspace_id,
         worktree_id,
         worktree_root,
@@ -223,7 +223,7 @@ trap - EXIT
 }
 
 pub(super) async fn avf_remove_mount_path_in_worktree(
-    state: &AppState,
+    data_root: &Path,
     workspace_id: WorkspaceId,
     worktree_id: WorktreeId,
     worktree_root: &Path,
@@ -231,7 +231,7 @@ pub(super) async fn avf_remove_mount_path_in_worktree(
 ) -> Result<()> {
     let guest_target = avf_guest_target_arg(worktree_root, target)?;
     avf_run_success(
-        state,
+        data_root,
         workspace_id,
         worktree_id,
         worktree_root,
@@ -248,7 +248,7 @@ pub(super) async fn avf_remove_mount_path_in_worktree(
 }
 
 async fn import_dir_to_avf_worktree(
-    state: &AppState,
+    data_root: &Path,
     workspace_id: WorkspaceId,
     worktree_id: WorktreeId,
     worktree_root: &Path,
@@ -270,7 +270,7 @@ async fn import_dir_to_avf_worktree(
     let mut tar_out = tar_child.stdout.take().context("taking tar stdout")?;
 
     let mut guest_cmd = ctx_avf_linux_runtime::build_guest_exec_command(
-        &state.core.data_root,
+        data_root,
         workspace_id,
         worktree_id,
         worktree_root,
@@ -319,7 +319,7 @@ async fn import_dir_to_avf_worktree(
 }
 
 async fn import_file_to_avf_worktree(
-    state: &AppState,
+    data_root: &Path,
     workspace_id: WorkspaceId,
     worktree_id: WorktreeId,
     worktree_root: &Path,
@@ -333,7 +333,7 @@ async fn import_file_to_avf_worktree(
         AttachmentMode::Rw => "rw",
     };
     let mut guest_cmd = ctx_avf_linux_runtime::build_guest_exec_command(
-        &state.core.data_root,
+        data_root,
         workspace_id,
         worktree_id,
         worktree_root,
@@ -377,7 +377,7 @@ async fn import_file_to_avf_worktree(
 }
 
 pub(super) async fn avf_copy_source_to_mount(
-    state: &AppState,
+    data_root: &Path,
     workspace_id: WorkspaceId,
     worktree_id: WorktreeId,
     worktree_root: &Path,
@@ -394,7 +394,7 @@ pub(super) async fn avf_copy_source_to_mount(
         .with_context(|| format!("stat attachment source {}", source.display()))?;
     if metadata.is_dir() {
         import_dir_to_avf_worktree(
-            state,
+            data_root,
             workspace_id,
             worktree_id,
             worktree_root,
@@ -405,7 +405,7 @@ pub(super) async fn avf_copy_source_to_mount(
         .await?;
     } else {
         import_file_to_avf_worktree(
-            state,
+            data_root,
             workspace_id,
             worktree_id,
             worktree_root,

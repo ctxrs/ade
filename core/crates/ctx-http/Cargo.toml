@@ -43,6 +43,7 @@ ctx-storage-admission = { path = "../ctx-storage-admission" }
 ctx-settings-model = { path = "../ctx-settings-model" }
 ctx-settings-service = { path = "../ctx-settings-service" }
 ctx-worktree-data-plane = { path = "../ctx-worktree-data-plane" }
+ctx-workspace-attachments = { path = "../ctx-workspace-attachments" }
 ctx-workspace-runtime = { path = "../ctx-workspace-runtime" }
 ctx-workspace-config = { path = "../ctx-workspace-config" }
 ctx-workspace-container = { path = "../ctx-workspace-container" }

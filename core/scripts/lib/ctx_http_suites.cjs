@@ -768,6 +768,7 @@ const CTX_HTTP_SUITES = [
       "ctx-managed-installs",
       "ctx-store",
       "ctx-transport-runtime",
+      "ctx-workspace-attachments",
       "ctx-workspace-services",
     ],
     name: "attachments-routing",
@@ -781,11 +782,10 @@ const CTX_HTTP_SUITES = [
     sourceGlobs: [
       "crates/ctx-http/src/api/artifacts.rs",
       "crates/ctx-http/src/api/demo.rs",
-      "crates/ctx-http/src/attachments.rs",
-      "crates/ctx-http/src/attachments/**",
       "crates/ctx-http/src/daemon/workspaces/attachments.rs",
       "crates/ctx-http/src/storage_guard.rs",
       "crates/ctx-http/src/worktree_data_plane.rs",
+      "crates/ctx-workspace-attachments/src/**",
     ],
     testFiles: [
       "global_id_routing_http",

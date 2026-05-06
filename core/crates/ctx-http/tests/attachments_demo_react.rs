@@ -6,9 +6,9 @@ use tokio::process::Command;
 use ctx_core::ids::WorktreeId;
 use ctx_core::models::{VcsKind, WorkspaceAttachmentKind, Worktree};
 use ctx_fs::git::rev_parse_head;
-use ctx_http::attachments;
 use ctx_http::daemon::AppState;
 use ctx_store::StoreManager;
+use ctx_workspace_services::workspace_attachments::{self, AttachmentConfig};
 
 async fn run_git(root: &Path, args: &[&str]) {
     let output = Command::new("git")
@@ -119,10 +119,10 @@ async fn attachments_demo_react_smoketest() {
         None,
     ));
 
-    attachments::upsert_workspace_attachment(
+    workspace_attachments::upsert_workspace_attachment(
         state.as_ref(),
         ws.id,
-        attachments::AttachmentConfig {
+        AttachmentConfig {
             kind: WorkspaceAttachmentKind::ReferenceRepo,
             name: "react".to_string(),
             source: ws_root.to_string_lossy().to_string(),
@@ -135,10 +135,10 @@ async fn attachments_demo_react_smoketest() {
     )
     .await
     .unwrap();
-    attachments::upsert_workspace_attachment(
+    workspace_attachments::upsert_workspace_attachment(
         state.as_ref(),
         ws.id,
-        attachments::AttachmentConfig {
+        AttachmentConfig {
             kind: WorkspaceAttachmentKind::DocMirror,
             name: "react-docs".to_string(),
             source: ".ctx/scripts/fetch-react-docs.sh".to_string(),
@@ -152,13 +152,41 @@ async fn attachments_demo_react_smoketest() {
     .await
     .unwrap();
 
-    attachments::sync_workspace_attachments(std::sync::Arc::clone(&state), &ws, false)
+    let sync = workspace_attachments::sync_workspace_attachments(state.as_ref(), &ws, false)
         .await
         .unwrap();
-    let mounts =
-        attachments::ensure_worktree_attachment_mounts(state.as_ref(), &ws, &worktree, true)
+    for plan in sync.plans {
+        workspace_attachments::run_attachment_materialization(
+            state.as_ref(),
+            &ws,
+            plan.id,
+            plan.refresh,
+        )
+        .await
+        .unwrap();
+    }
+    let store = state.store_for_workspace(ws.id).await.unwrap();
+    let attachments = store.list_workspace_attachments(ws.id).await.unwrap();
+    let worktree_root = PathBuf::from(&worktree.root_path);
+    ctx_workspace_attachments::ensure_git_exclude(state.as_ref(), &ws, worktree.id, &worktree_root)
+        .await
+        .unwrap();
+    let mut mounts = Vec::new();
+    for attachment in &attachments {
+        mounts.push(
+            ctx_workspace_attachments::ensure_attachment_mount(
+                state.as_ref(),
+                &ws,
+                worktree.id,
+                &worktree_root,
+                attachment,
+                true,
+                false,
+            )
             .await
-            .unwrap();
+            .unwrap(),
+        );
+    }
 
     assert!(!mounts.is_empty());
     assert!(ws_root.join(".ctx/attachments/refs/react").exists());

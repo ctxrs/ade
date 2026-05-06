@@ -21,6 +21,7 @@ const GENERATED_DEP_CONSUMER_CRATES = Object.freeze([
   "ctx-update-service",
   "ctx-settings-model",
   "ctx-settings-service",
+  "ctx-workspace-attachments",
   "ctx-workspace-active-snapshot",
 ]);
 

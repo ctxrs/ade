@@ -4,11 +4,11 @@ use std::process::Stdio;
 use tokio::process::Command;
 
 pub(super) async fn container_path_exists(
-    state: &AppState,
+    data_root: &Path,
     container_id: &str,
     path: &Path,
 ) -> Result<bool> {
-    let mut cmd = sandbox_container_command(&state.core.data_root)?;
+    let mut cmd = sandbox_container_command(data_root)?;
     cmd.arg("exec")
         .arg("--interactive")
         .arg(container_id)
@@ -21,11 +21,11 @@ pub(super) async fn container_path_exists(
 }
 
 pub(super) async fn container_rm_rf(
-    state: &AppState,
+    data_root: &Path,
     container_id: &str,
     path: &Path,
 ) -> Result<()> {
-    let mut cmd = sandbox_container_command(&state.core.data_root)?;
+    let mut cmd = sandbox_container_command(data_root)?;
     cmd.arg("exec")
         .arg("--interactive")
         .arg(container_id)
@@ -192,12 +192,12 @@ pub(super) fn container_remove_mount_path_script() -> String {
 }
 
 pub(super) async fn container_remove_mount_path_in_worktree(
-    state: &AppState,
+    data_root: &Path,
     container_id: &str,
     worktree_root: &Path,
     target: &Path,
 ) -> Result<()> {
-    let mut cmd = sandbox_container_command(&state.core.data_root)?;
+    let mut cmd = sandbox_container_command(data_root)?;
     cmd.arg("exec")
         .arg("--interactive")
         .arg(container_id)
@@ -223,7 +223,7 @@ pub(super) async fn container_remove_mount_path_in_worktree(
 }
 
 async fn import_dir_to_container(
-    state: &AppState,
+    data_root: &Path,
     container_id: &str,
     src: &Path,
     dest: &Path,
@@ -237,7 +237,7 @@ async fn import_dir_to_container(
     let mut tar_child = tar_cmd.spawn().context("spawning tar")?;
     let mut tar_out = tar_child.stdout.take().context("taking tar stdout")?;
 
-    let mut pod_cmd = sandbox_container_command(&state.core.data_root)?;
+    let mut pod_cmd = sandbox_container_command(data_root)?;
     pod_cmd
         .arg("exec")
         .arg("--interactive")
@@ -281,7 +281,7 @@ async fn import_dir_to_container(
 }
 
 pub(super) async fn ensure_attachment_imported_to_container(
-    state: &AppState,
+    data_root: &Path,
     container_id: &str,
     attachment: &WorkspaceAttachment,
     src_dir: &Path,
@@ -291,7 +291,7 @@ pub(super) async fn ensure_attachment_imported_to_container(
     let exists = if refresh {
         false
     } else {
-        container_path_exists(state, container_id, &dest)
+        container_path_exists(data_root, container_id, &dest)
             .await
             .unwrap_or(false)
     };
@@ -299,12 +299,12 @@ pub(super) async fn ensure_attachment_imported_to_container(
         return Ok(dest);
     }
     // Reset and re-import.
-    import_dir_to_container(state, container_id, src_dir, &dest).await?;
+    import_dir_to_container(data_root, container_id, src_dir, &dest).await?;
     Ok(dest)
 }
 
 pub(super) async fn container_ensure_mount(
-    state: &AppState,
+    data_root: &Path,
     container_id: &str,
     worktree_root: &Path,
     target: &Path,
@@ -315,7 +315,7 @@ pub(super) async fn container_ensure_mount(
         AttachmentMode::Ro => "ro",
         AttachmentMode::Rw => "rw",
     };
-    let mut cmd = sandbox_container_command(&state.core.data_root)?;
+    let mut cmd = sandbox_container_command(data_root)?;
     cmd.arg("exec")
         .arg("--interactive")
         .arg(container_id)

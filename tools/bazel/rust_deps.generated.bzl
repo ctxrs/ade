@@ -368,4 +368,29 @@ RUST_BAZEL_DEPS = {
         dev_proc_macro_deps = [],
         proc_macro_deps = [],
     ),
+    "ctx-workspace-attachments": struct(
+        build_deps = [],
+        deps = [
+            "//core/crates/ctx-avf-linux-runtime:lib",
+            "//core/crates/ctx-core:lib",
+            "//core/crates/ctx-execution-runtime:lib",
+            "//core/crates/ctx-harness-runtime:lib",
+            "//core/crates/ctx-sandbox-contract:lib",
+            "//core/crates/ctx-store:lib",
+            "//core/crates/ctx-workspace-container:lib",
+            "//core/crates/ctx-workspace-services:lib",
+            "//core/crates/ctx-worktree-data-plane:lib",
+            "@crates//:anyhow",
+            "@crates//:chrono",
+            "@crates//:tokio",
+            "@crates//:tracing",
+        ],
+        dev_deps = [
+            "@crates//:tempfile",
+        ],
+        dev_proc_macro_deps = [],
+        proc_macro_deps = [
+            "@crates//:async-trait",
+        ],
+    ),
 }

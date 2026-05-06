@@ -376,6 +376,10 @@ test("ctx-http extracted owner crates route to behavior-owning suites", () => {
     suiteByName.get("attachments-routing").dependencyCrates.includes("ctx-mcp-command"),
     false,
   );
+  assert.equal(
+    suiteByName.get("attachments-routing").dependencyCrates.includes("ctx-workspace-attachments"),
+    true,
+  );
 });
 
 test("ctx-http suite concurrency metadata classifies every concrete suite", () => {

@@ -1,10 +1,14 @@
 use super::*;
-use crate::execution_effective;
-use crate::settings::{ContainerRuntimeKind, ExecutionMode};
-use crate::worktree_data_plane::resolve_worktree_data_plane;
 use chrono::Utc;
 use ctx_core::models::{AttachmentMode, AttachmentUpdatePolicy, WorktreeAttachmentStatus};
+use ctx_execution_runtime::{ContainerRuntimeKind, ExecutionMode};
+use ctx_harness_runtime::sandbox_container_command;
+use ctx_sandbox_contract::CTX_CONTAINER_WORKSPACE_ROOT;
+use ctx_workspace_container::workspace_container_name;
+use ctx_workspace_services::workspace_attachments::{self, MaterializationResult};
 use ctx_worktree_data_plane::apply_data_plane_to_execution_settings;
+
+const CONTAINER_ATTACHMENTS_SUBDIR: &str = "attachments";
 
 mod avf;
 mod native;
@@ -52,39 +56,36 @@ enum AttachmentRuntime {
     },
 }
 
-async fn ensure_workspace_container_for_attachments(
-    state: &AppState,
+async fn ensure_workspace_container_for_attachments<H>(
+    host: &H,
     workspace: &Workspace,
     worktree: &Worktree,
-) -> Result<ContainerRuntimeKind> {
-    let effective = execution_effective::effective_execution_settings(state, workspace.id).await?;
-    let data_plane = resolve_worktree_data_plane(state, worktree).await?;
+) -> Result<ContainerRuntimeKind>
+where
+    H: WorkspaceAttachmentMountHost,
+{
+    let effective = host.effective_execution_settings(workspace.id).await?;
+    let data_plane = host.resolve_worktree_data_plane(worktree).await?;
     let effective = apply_data_plane_to_execution_settings(&effective, &data_plane)?;
-    state
-        .execution
-        .harness
-        .ensure_workspace_container_for_worktree(
-            workspace,
-            worktree,
-            &effective,
-            &state.core.daemon_url,
-        )
+    host.ensure_workspace_container_for_worktree(workspace, worktree, &effective)
         .await?;
     Ok(effective.container.runtime)
 }
 
-async fn attachment_runtime_for_worktree(
-    state: &AppState,
+async fn attachment_runtime_for_worktree<H>(
+    host: &H,
     workspace: &Workspace,
     worktree_id: WorktreeId,
     worktree_root: &Path,
-) -> Result<AttachmentRuntime> {
-    let worktree = state
-        .global_store()
+) -> Result<AttachmentRuntime>
+where
+    H: WorkspaceAttachmentMountHost,
+{
+    let worktree = host
         .get_worktree(worktree_id)
         .await?
         .ok_or_else(|| anyhow::anyhow!("worktree not found for attachment mount"))?;
-    let runtime = ensure_workspace_container_for_attachments(state, workspace, &worktree).await?;
+    let runtime = ensure_workspace_container_for_attachments(host, workspace, &worktree).await?;
     Ok(match runtime {
         ContainerRuntimeKind::NativeContainer => AttachmentRuntime::NativeContainer {
             container_id: workspace_container_name(workspace.id),
@@ -110,14 +111,17 @@ fn container_attachment_root(attachment: &WorkspaceAttachment) -> PathBuf {
         .join(attachment.id.0.to_string())
 }
 
-pub(super) async fn container_ensure_git_exclude(
-    state: &AppState,
+pub(super) async fn container_ensure_git_exclude<H>(
+    host: &H,
     workspace: &Workspace,
     worktree_id: WorktreeId,
     worktree_root: &Path,
-) -> Result<()> {
+) -> Result<()>
+where
+    H: WorkspaceAttachmentMountHost,
+{
     let runtime =
-        attachment_runtime_for_worktree(state, workspace, worktree_id, worktree_root).await?;
+        attachment_runtime_for_worktree(host, workspace, worktree_id, worktree_root).await?;
     let script = r#"
 set -e
 gitdir="$(git rev-parse --git-dir)"
@@ -132,7 +136,7 @@ done
 "#;
     match runtime {
         AttachmentRuntime::NativeContainer { container_id } => {
-            let mut cmd = sandbox_container_command(&state.core.data_root)?;
+            let mut cmd = sandbox_container_command(host.data_root())?;
             cmd.arg("exec")
                 .arg("--interactive")
                 .arg("--workdir")
@@ -158,7 +162,7 @@ done
             worktree_root,
         } => {
             avf_run_success(
-                state,
+                host.data_root(),
                 workspace_id,
                 worktree_id,
                 &worktree_root,
@@ -170,31 +174,34 @@ done
     }
 }
 
-async fn container_remove_mount_path(
-    state: &AppState,
+async fn container_remove_mount_path<H>(
+    host: &H,
     workspace_id: WorkspaceId,
     worktree_id: WorktreeId,
     target: &Path,
-) -> Result<()> {
-    let effective = execution_effective::effective_execution_settings(state, workspace_id).await?;
-    let store = state.store_for_workspace(workspace_id).await?;
+) -> Result<()>
+where
+    H: WorkspaceAttachmentMountHost,
+{
+    let effective = host.effective_execution_settings(workspace_id).await?;
+    let store = host.workspace_store(workspace_id).await?;
     let Some(worktree) = store.get_worktree(worktree_id).await? else {
         return Ok(());
     };
-    let data_plane = resolve_worktree_data_plane(state, &worktree).await?;
+    let data_plane = host.resolve_worktree_data_plane(&worktree).await?;
     let effective = apply_data_plane_to_execution_settings(&effective, &data_plane)?;
     match effective.container.runtime {
         ContainerRuntimeKind::NativeContainer => {
             let container_id = workspace_container_name(workspace_id);
             // Best-effort: if the container doesn't exist, skip.
-            let mut exists = sandbox_container_command(&state.core.data_root)?;
+            let mut exists = sandbox_container_command(host.data_root())?;
             exists.arg("container").arg("inspect").arg(&container_id);
             let out = exists.output().await.context("container inspect")?;
             if !out.status.success() {
                 return Ok(());
             }
             container_remove_mount_path_in_worktree(
-                state,
+                host.data_root(),
                 &container_id,
                 &data_plane.live_worktree_root,
                 target,
@@ -205,7 +212,7 @@ async fn container_remove_mount_path(
         ContainerRuntimeKind::SharedVmContainer => {
             let worktree_root = data_plane.live_worktree_root;
             avf_remove_mount_path_in_worktree(
-                state,
+                host.data_root(),
                 workspace_id,
                 worktree_id,
                 &worktree_root,
@@ -217,12 +224,15 @@ async fn container_remove_mount_path(
     }
 }
 
-async fn container_remove_attachment_data_if_present(
-    state: &AppState,
+async fn container_remove_attachment_data_if_present<H>(
+    host: &H,
     workspace_id: WorkspaceId,
     attachment: &WorkspaceAttachment,
-) -> Result<()> {
-    let effective = execution_effective::effective_execution_settings(state, workspace_id).await?;
+) -> Result<()>
+where
+    H: WorkspaceAttachmentMountHost,
+{
+    let effective = host.effective_execution_settings(workspace_id).await?;
     if matches!(effective.mode, ExecutionMode::Host) {
         return Ok(());
     }
@@ -233,35 +243,37 @@ async fn container_remove_attachment_data_if_present(
         return Ok(());
     }
     let container_id = workspace_container_name(workspace_id);
-    let mut exists = sandbox_container_command(&state.core.data_root)?;
+    let mut exists = sandbox_container_command(host.data_root())?;
     exists.arg("container").arg("inspect").arg(&container_id);
     let out = exists.output().await.context("container inspect")?;
     if !out.status.success() {
         return Ok(());
     }
     let root = container_attachment_root(attachment);
-    container_rm_rf(state, &container_id, &root).await
+    container_rm_rf(host.data_root(), &container_id, &root).await
 }
 
-pub(crate) async fn ensure_attachment_mount(
-    state: &AppState,
+pub async fn ensure_attachment_mount<H>(
+    host: &H,
     workspace: &Workspace,
     worktree_id: WorktreeId,
     worktree_root: &Path,
     attachment: &WorkspaceAttachment,
     refresh: bool,
     materialize: bool,
-) -> Result<WorktreeAttachmentMount> {
+) -> Result<WorktreeAttachmentMount>
+where
+    H: WorkspaceAttachmentMountHost,
+{
     let materialized = if materialize {
         let should_refresh = refresh || attachment.update_policy != AttachmentUpdatePolicy::Manual;
-        materialize_attachment(state, workspace, attachment, should_refresh).await?
+        materialize_attachment(host.data_root(), workspace, attachment, should_refresh).await?
     } else {
-        let path = materialized_path_for_attachment(state, attachment);
+        let path = materialized_path_for_attachment(host.data_root(), attachment);
         if !path.exists() {
             anyhow::bail!("attachment materialization not found at {}", path.display());
         }
-        workspace_attachments::validate_materialized_path(&state.core.data_root, attachment)
-            .await?;
+        workspace_attachments::validate_materialized_path(host.data_root(), attachment).await?;
         MaterializationResult {
             path,
             materialized_id: revision_key(attachment),
@@ -271,19 +283,15 @@ pub(crate) async fn ensure_attachment_mount(
     let mount_abs = worktree_root.join(&mount_rel);
     validate_mount_path_in_worktree(worktree_root, &mount_abs)?;
     let symlink_policy = symlink_policy_for_mode(&attachment.mode);
-    let worktree = state
-        .global_store()
+    let worktree = host
         .get_worktree(worktree_id)
         .await?
         .ok_or_else(|| anyhow::anyhow!("worktree not found for attachment mount"))?;
-    let data_plane = resolve_worktree_data_plane(state, &worktree).await?;
-    let container_mode = matches!(
-        data_plane.execution_mode,
-        crate::settings::ExecutionMode::Sandbox
-    );
+    let data_plane = host.resolve_worktree_data_plane(&worktree).await?;
+    let container_mode = matches!(data_plane.execution_mode, ExecutionMode::Sandbox);
     if container_mode {
         let runtime =
-            attachment_runtime_for_worktree(state, workspace, worktree_id, worktree_root).await?;
+            attachment_runtime_for_worktree(host, workspace, worktree_id, worktree_root).await?;
         match runtime {
             AttachmentRuntime::NativeContainer { container_id } => {
                 let host_source_path = resolve_attachment_source_path(
@@ -298,7 +306,7 @@ pub(crate) async fn ensure_attachment_mount(
                 let should_refresh =
                     refresh || attachment.update_policy != AttachmentUpdatePolicy::Manual;
                 let imported = ensure_attachment_imported_to_container(
-                    state,
+                    host.data_root(),
                     &container_id,
                     attachment,
                     &materialized.path,
@@ -311,7 +319,7 @@ pub(crate) async fn ensure_attachment_mount(
                     &imported,
                 )?;
                 container_ensure_mount(
-                    state,
+                    host.data_root(),
                     &container_id,
                     worktree_root,
                     &mount_abs,
@@ -332,7 +340,7 @@ pub(crate) async fn ensure_attachment_mount(
                 )
                 .await?;
                 avf_copy_source_to_mount(
-                    state,
+                    host.data_root(),
                     workspace_id,
                     worktree_id,
                     &worktree_root,
@@ -372,32 +380,29 @@ pub(crate) async fn ensure_attachment_mount(
         created_at: now,
         updated_at: now,
     };
-    let store = state
-        .store_for_workspace(workspace.id)
+    let store = host
+        .workspace_store(workspace.id)
         .await
         .context("load workspace store for attachment mount update")?;
     store.upsert_worktree_attachment_mount(&mount).await?;
     Ok(mount)
 }
 
-pub(crate) async fn cleanup_removed_attachment(
-    state: &AppState,
-    attachment: &WorkspaceAttachment,
-) -> Result<()> {
-    let store = state.store_for_workspace(attachment.workspace_id).await?;
+pub async fn cleanup_removed_attachment<H>(host: &H, attachment: &WorkspaceAttachment) -> Result<()>
+where
+    H: WorkspaceAttachmentMountHost,
+{
+    let store = host.workspace_store(attachment.workspace_id).await?;
     let mounts = store
         .list_worktree_attachment_mounts_for_attachment(attachment.id)
         .await?;
     for mount in mounts {
         let path = PathBuf::from(&mount.mount_abs_path);
-        let worktree = state.global_store().get_worktree(mount.worktree_id).await?;
+        let worktree = host.get_worktree(mount.worktree_id).await?;
         let container_mode = match &worktree {
             Some(worktree) => {
-                let data_plane = resolve_worktree_data_plane(state, worktree).await?;
-                matches!(
-                    data_plane.execution_mode,
-                    crate::settings::ExecutionMode::Sandbox
-                )
+                let data_plane = host.resolve_worktree_data_plane(worktree).await?;
+                matches!(data_plane.execution_mode, ExecutionMode::Sandbox)
             }
             None => store
                 .get_sandbox_binding(mount.worktree_id)
@@ -410,9 +415,9 @@ pub(crate) async fn cleanup_removed_attachment(
                     "cannot safely remove sandbox attachment mount without worktree metadata"
                 );
             };
-            let data_plane = resolve_worktree_data_plane(state, worktree).await?;
+            let data_plane = host.resolve_worktree_data_plane(worktree).await?;
             validate_mount_path_in_worktree(&data_plane.live_worktree_root, &path)?;
-            container_remove_mount_path(state, attachment.workspace_id, mount.worktree_id, &path)
+            container_remove_mount_path(host, attachment.workspace_id, mount.worktree_id, &path)
                 .await?;
         } else {
             let Some(worktree) = worktree.as_ref() else {
@@ -420,16 +425,15 @@ pub(crate) async fn cleanup_removed_attachment(
                     "cannot safely remove host attachment mount without worktree metadata"
                 );
             };
-            let data_plane = resolve_worktree_data_plane(state, worktree).await?;
+            let data_plane = host.resolve_worktree_data_plane(worktree).await?;
             remove_mount_path_in_worktree(&data_plane.live_worktree_root, &path).await?;
         }
     }
-    container_remove_attachment_data_if_present(state, attachment.workspace_id, attachment).await?;
+    container_remove_attachment_data_if_present(host, attachment.workspace_id, attachment).await?;
     store
         .delete_worktree_attachment_mounts_for_attachment(attachment.id)
         .await?;
-    workspace_attachments::remove_materialized_root_if_exists(&state.core.data_root, attachment)
-        .await?;
+    workspace_attachments::remove_materialized_root_if_exists(host.data_root(), attachment).await?;
     Ok(())
 }
 

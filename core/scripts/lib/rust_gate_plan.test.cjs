@@ -49,6 +49,7 @@ test("agent gate crate list keeps the expected ctx-http-centered fast gate", () 
     "ctx-storage-admission",
     "ctx-update-service",
     "ctx-worktree-data-plane",
+    "ctx-workspace-attachments",
     "ctx-workspace-container",
     "ctx-workspace-active-snapshot",
     "ctx-workspace-config",
