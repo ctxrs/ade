@@ -22,7 +22,7 @@ use super::diff_paths::{load_diff_file_count, load_diff_touched_entries};
 use super::snapshot::{
     build_worktree_vcs_snapshot_from_parts, publish_no_repo_snapshot, publish_unavailable_snapshot,
 };
-use super::source::HttpWorktreeVcsStatusSource;
+use super::source::HttpWorktreeVcsSource;
 use super::worktree_has_vcs_repo;
 
 pub async fn load_git_status_snapshot(
@@ -31,7 +31,7 @@ pub async fn load_git_status_snapshot(
     include_untracked_files: bool,
     include_entries: bool,
 ) -> Result<GitStatusSnapshot> {
-    let source = HttpWorktreeVcsStatusSource::new(state, worktree);
+    let source = HttpWorktreeVcsSource::new(state, worktree);
     load_git_status_snapshot_from_source(&source, include_untracked_files, include_entries).await
 }
 

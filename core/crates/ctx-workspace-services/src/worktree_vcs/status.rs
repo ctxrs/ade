@@ -1,6 +1,6 @@
 use anyhow::Result;
 
-use super::{GitStatusEntry, GitStatusSnapshot};
+use super::{GitStatusEntry, GitStatusSnapshot, WorktreeVcsCommitLookup};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct WorktreeVcsStructuredStatus {
@@ -30,6 +30,11 @@ pub trait WorktreeVcsStatusSource: Send + Sync {
     ) -> Result<WorktreeVcsStructuredStatus>;
 }
 
+#[async_trait::async_trait]
+pub trait WorktreeVcsCommitLookupSource: Send + Sync {
+    async fn resolve_commit(&self, reference: &str) -> Result<String>;
+}
+
 pub async fn worktree_has_vcs_repo_from_source(
     source: &impl WorktreeVcsStatusSource,
 ) -> Result<bool> {
@@ -48,6 +53,20 @@ pub async fn load_git_status_snapshot_from_source(
         structured,
         include_entries,
     ))
+}
+
+pub async fn resolve_worktree_vcs_commit_lookup_from_source(
+    source: &impl WorktreeVcsCommitLookupSource,
+    lookup: &WorktreeVcsCommitLookup,
+) -> Result<Option<String>> {
+    match lookup {
+        WorktreeVcsCommitLookup::Resolved(commit) => Ok(Some(commit.clone())),
+        WorktreeVcsCommitLookup::Missing => Ok(None),
+        WorktreeVcsCommitLookup::Head => Ok(Some(source.resolve_commit("HEAD").await?)),
+        WorktreeVcsCommitLookup::TargetBranch(target_branch) => {
+            Ok(Some(source.resolve_commit(target_branch).await?))
+        }
+    }
 }
 
 pub fn git_status_snapshot_from_structured(
@@ -122,5 +141,54 @@ mod tests {
 
         assert!(snapshot.entries.is_empty());
         assert_eq!(snapshot.entries_total_count, 1);
+    }
+
+    struct FakeCommitLookupSource;
+
+    #[async_trait::async_trait]
+    impl WorktreeVcsCommitLookupSource for FakeCommitLookupSource {
+        async fn resolve_commit(&self, reference: &str) -> Result<String> {
+            Ok(format!("resolved-{reference}"))
+        }
+    }
+
+    #[tokio::test]
+    async fn commit_lookup_source_resolves_only_live_requests() {
+        let source = FakeCommitLookupSource;
+
+        assert_eq!(
+            resolve_worktree_vcs_commit_lookup_from_source(
+                &source,
+                &WorktreeVcsCommitLookup::Resolved("known".to_string())
+            )
+            .await
+            .unwrap()
+            .as_deref(),
+            Some("known")
+        );
+        assert_eq!(
+            resolve_worktree_vcs_commit_lookup_from_source(&source, &WorktreeVcsCommitLookup::Head)
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("resolved-HEAD")
+        );
+        assert_eq!(
+            resolve_worktree_vcs_commit_lookup_from_source(
+                &source,
+                &WorktreeVcsCommitLookup::TargetBranch("main".to_string())
+            )
+            .await
+            .unwrap()
+            .as_deref(),
+            Some("resolved-main")
+        );
+        assert!(resolve_worktree_vcs_commit_lookup_from_source(
+            &source,
+            &WorktreeVcsCommitLookup::Missing
+        )
+        .await
+        .unwrap()
+        .is_none());
     }
 }

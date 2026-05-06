@@ -32,7 +32,7 @@ pub(crate) async fn worktree_has_vcs_repo(
     state: &Arc<AppState>,
     worktree: &Worktree,
 ) -> Result<bool> {
-    let source = source::HttpWorktreeVcsStatusSource::new(state, worktree);
+    let source = source::HttpWorktreeVcsSource::new(state, worktree);
     worktree_has_vcs_repo_from_source(&source).await
 }
 

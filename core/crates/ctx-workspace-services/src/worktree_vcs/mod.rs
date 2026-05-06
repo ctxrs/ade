@@ -38,7 +38,8 @@ pub use snapshot::{
 };
 pub use status::{
     git_status_snapshot_from_structured, load_git_status_snapshot_from_source,
-    worktree_has_vcs_repo_from_source, WorktreeVcsStatusSource, WorktreeVcsStructuredStatus,
+    resolve_worktree_vcs_commit_lookup_from_source, worktree_has_vcs_repo_from_source,
+    WorktreeVcsCommitLookupSource, WorktreeVcsStatusSource, WorktreeVcsStructuredStatus,
 };
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]

@@ -4,8 +4,8 @@ use anyhow::Result;
 use ctx_core::models::Worktree;
 use ctx_fs::vcs::{self, VcsStructuredStatus};
 use ctx_workspace_services::worktree_vcs::{
-    is_no_vcs_repo_error, GitStatusEntry, WorktreeVcsGitCommand, WorktreeVcsStatusSource,
-    WorktreeVcsStructuredStatus,
+    is_no_vcs_repo_error, GitStatusEntry, WorktreeVcsCommitLookupSource, WorktreeVcsGitCommand,
+    WorktreeVcsStatusSource, WorktreeVcsStructuredStatus,
 };
 
 use crate::daemon::AppState;
@@ -15,19 +15,19 @@ use crate::worktree_data_plane::resolve_worktree_data_plane;
 use super::sandbox::{container_git_status_structured, container_git_stdout};
 use super::vcs_driver_for_worktree;
 
-pub(super) struct HttpWorktreeVcsStatusSource<'a> {
+pub(super) struct HttpWorktreeVcsSource<'a> {
     state: &'a Arc<AppState>,
     worktree: &'a Worktree,
 }
 
-impl<'a> HttpWorktreeVcsStatusSource<'a> {
+impl<'a> HttpWorktreeVcsSource<'a> {
     pub(super) fn new(state: &'a Arc<AppState>, worktree: &'a Worktree) -> Self {
         Self { state, worktree }
     }
 }
 
 #[async_trait::async_trait]
-impl WorktreeVcsStatusSource for HttpWorktreeVcsStatusSource<'_> {
+impl WorktreeVcsStatusSource for HttpWorktreeVcsSource<'_> {
     async fn has_vcs_repo(&self) -> Result<bool> {
         let data_plane = resolve_worktree_data_plane(self.state, self.worktree).await?;
         if matches!(data_plane.execution_mode, ExecutionMode::Sandbox) {
@@ -78,6 +78,33 @@ impl WorktreeVcsStatusSource for HttpWorktreeVcsStatusSource<'_> {
                 .await?
         };
         Ok(worktree_vcs_structured_status_from_vcs(structured))
+    }
+}
+
+#[async_trait::async_trait]
+impl WorktreeVcsCommitLookupSource for HttpWorktreeVcsSource<'_> {
+    async fn resolve_commit(&self, reference: &str) -> Result<String> {
+        let data_plane = resolve_worktree_data_plane(self.state, self.worktree).await?;
+        let root = data_plane.live_worktree_root.as_path();
+        if matches!(data_plane.execution_mode, ExecutionMode::Sandbox) {
+            let bytes = container_git_stdout(
+                self.state,
+                self.worktree,
+                WorktreeVcsGitCommand::RevParse {
+                    reference: reference.to_string(),
+                },
+            )
+            .await?;
+            return Ok(ctx_workspace_services::worktree_vcs::parse_git_single_ref(
+                &bytes,
+            ));
+        }
+        let driver = vcs::driver_for_path(root).await?;
+        if reference == "HEAD" {
+            driver.rev_parse_head(root).await
+        } else {
+            driver.rev_parse_ref(root, reference).await
+        }
     }
 }
 
