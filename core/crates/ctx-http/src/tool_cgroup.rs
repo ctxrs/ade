@@ -1,9 +1,9 @@
 #[cfg(target_os = "linux")]
 use anyhow::Context;
 use anyhow::Result;
+use ctx_resource_utilization::SystemSnapshot;
 
 use crate::daemon::AppState;
-use crate::resource_utilization::SystemSnapshot;
 use crate::settings::{
     PublicToolLimitsLimits, PublicToolLimitsSettings, ResourceGovernanceMode, Settings,
     ToolLimitsSettings,

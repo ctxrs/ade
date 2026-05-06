@@ -15,11 +15,11 @@ use std::time::Duration;
 use anyhow::{anyhow, Context, Result};
 #[cfg(test)]
 use ctx_core::models::{Workspace, Worktree};
+#[cfg(all(test, any(target_os = "macos", target_os = "windows")))]
+use ctx_resource_utilization::SystemSnapshot;
 #[cfg(test)]
 use sysinfo::System;
 
-#[cfg(all(test, any(target_os = "macos", target_os = "windows")))]
-use crate::resource_utilization::SystemSnapshot;
 #[cfg(all(test, any(target_os = "macos", target_os = "windows")))]
 use crate::settings::normalize_container_machine_idle_shutdown_seconds;
 #[cfg(test)]

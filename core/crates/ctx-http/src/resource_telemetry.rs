@@ -10,13 +10,13 @@ use tokio::time::MissedTickBehavior;
 
 use ctx_avf_linux_runtime::SubstrateLifecycleRecord;
 use ctx_providers::adapters::ProviderProcessInfo;
+use ctx_resource_utilization::{
+    ProviderMemoryRollup, ResourceProcess, ResourceProcesses, SystemSnapshot,
+};
 
 use crate::daemon::AppState;
 use crate::logs;
 use crate::perf_telemetry::{PerfMetric, PerfMetricKind, PerfTelemetry};
-use crate::resource_utilization::{
-    ProviderMemoryRollup, ResourceProcess, ResourceProcesses, SystemSnapshot,
-};
 
 const RESOURCE_LOG_PREFIX: &str = "resource-util-";
 const RESOURCE_LOG_SUFFIX: &str = ".jsonl";

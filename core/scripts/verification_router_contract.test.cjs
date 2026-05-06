@@ -268,6 +268,44 @@ test("verify:affected routes ctx-http bin smoke edits to bin-tests only", () => 
   assert.deepEqual(plan.taxonomyEntries, ["ctx-http.bin-tests"]);
 });
 
+test("verify:affected routes storage-admission contracts to ctx-http storage API coverage", () => {
+  const plan = buildVerificationPlan({
+    intent: "affected",
+    base: "origin/main",
+    changedFiles: ["core/crates/ctx-storage-admission/src/lib.rs"],
+  });
+
+  assert.equal(
+    plan.commands.includes("node scripts/ctx_http_suite_task.cjs --suite unit-tests-api"),
+    true,
+  );
+  assert.equal(
+    plan.commands.includes("node scripts/ctx_http_suite_task.cjs --suite scheduler-runtime"),
+    true,
+  );
+});
+
+test("verify:affected routes MCP command contracts to subagent and scheduler coverage", () => {
+  const plan = buildVerificationPlan({
+    intent: "affected",
+    base: "origin/main",
+    changedFiles: ["core/crates/ctx-mcp-command/src/lib.rs"],
+  });
+
+  assert.equal(
+    plan.commands.includes("node scripts/ctx_http_suite_task.cjs --suite subagents-control"),
+    true,
+  );
+  assert.equal(
+    plan.commands.includes("node scripts/ctx_http_suite_task.cjs --suite scheduler-runtime"),
+    true,
+  );
+  assert.equal(
+    plan.commands.includes("node scripts/ctx_http_suite_task.cjs --suite attachments-routing"),
+    false,
+  );
+});
+
 test("verify:affected routes ctx-http binary source edits to bin-tests without base", () => {
   const plan = buildVerificationPlan({
     intent: "affected",

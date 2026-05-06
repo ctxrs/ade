@@ -9,6 +9,7 @@ use futures::StreamExt;
 
 use ctx_core::ids::*;
 use ctx_core::models::*;
+use ctx_transport_runtime::mobile_e2ee;
 
 use crate::daemon::AppState;
 
@@ -62,13 +63,13 @@ async fn require_mobile_secure_stream_access(
     {
         return Err(StatusCode::UNAUTHORIZED);
     }
-    let key = crate::mobile_e2ee::derive_key(
+    let key = mobile_e2ee::derive_key(
         device_id,
         device.public_key.as_deref().unwrap_or_default(),
         &cfg.daemon_private_key,
     )
     .map_err(|_| StatusCode::UNAUTHORIZED)?;
-    let expected_token = crate::mobile_e2ee::derive_stream_token(&key, &workspace_id.0.to_string());
+    let expected_token = mobile_e2ee::derive_stream_token(&key, &workspace_id.0.to_string());
     if provided_token != expected_token {
         return Err(StatusCode::UNAUTHORIZED);
     }
@@ -148,8 +149,7 @@ async fn handle_mobile_secure_ws(
         .public_key
         .as_ref()
         .ok_or_else(|| anyhow::anyhow!("device missing public key"))?;
-    let key =
-        crate::mobile_e2ee::derive_key(&device_id, device_public_key, &cfg.daemon_private_key)?;
+    let key = mobile_e2ee::derive_key(&device_id, device_public_key, &cfg.daemon_private_key)?;
 
     let labels = workspace_stream::WorkspaceStreamLabels {
         ready_queue_label: "ready_secure",
@@ -335,7 +335,7 @@ async fn handle_mobile_secure_ws(
                                 Ok(v) => v,
                                 Err(_) => continue,
                             };
-                            let payload = crate::mobile_e2ee::decrypt(
+                            let payload = mobile_e2ee::decrypt(
                                 &key,
                                 &device_id,
                                 frame.seq,

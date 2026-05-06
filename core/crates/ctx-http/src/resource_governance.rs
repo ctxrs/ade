@@ -2,13 +2,13 @@
 use anyhow::Context;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
+use ctx_resource_utilization::SystemSnapshot;
 #[cfg(target_os = "linux")]
 use tokio::process::Command;
 #[cfg(target_os = "linux")]
 use tokio::time::timeout;
 
 use crate::daemon::AppState;
-use crate::resource_utilization::SystemSnapshot;
 use crate::settings::{
     PublicResourceGovernanceLimits, PublicResourceGovernanceSettings,
     PublicResourceGovernanceStatus, ResourceGovernanceMode, ResourceGovernanceSettings,

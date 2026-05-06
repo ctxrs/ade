@@ -207,13 +207,17 @@ function expandReverseDependencies(graph, crateNames) {
 
 function getCrateByChangedPath(graph, changedPath) {
   const normalized = normalizePathForMatch(changedPath);
+  let bestMatch = null;
   for (const crate of graph.crates) {
     const prefix = normalizePathForMatch(`core/${crate.relDir}/`);
-    if (normalized.startsWith(prefix)) {
-      return crate.crateName;
+    if (normalized.startsWith(prefix) && (!bestMatch || prefix.length > bestMatch.prefix.length)) {
+      bestMatch = {
+        crateName: crate.crateName,
+        prefix,
+      };
     }
   }
-  return null;
+  return bestMatch ? bestMatch.crateName : null;
 }
 
 function collectChangedCrates(graph, changedPaths) {

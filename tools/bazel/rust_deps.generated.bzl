@@ -320,6 +320,7 @@ RUST_BAZEL_DEPS = {
     "ctx-storage-admission": struct(
         build_deps = [],
         deps = [
+            "@crates//:chrono",
             "@crates//:serde",
         ],
         dev_deps = [],

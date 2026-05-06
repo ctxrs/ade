@@ -6,80 +6,33 @@ use std::time::Duration;
 use anyhow::{anyhow, Context, Result};
 use chrono::Utc;
 use fs2::FileExt;
-use serde::Serialize;
 use serde_json::json;
 use tokio::sync::Mutex;
 
 use ctx_core::ids::SessionId;
-use ctx_storage_admission::StorageAdmissionPathStatus;
+use ctx_resource_utilization::{disk_for_path, DiskSnapshot};
 #[cfg(test)]
 use ctx_storage_admission::{
     check_storage_admission, StorageAdmissionOperation, StorageAdmissionSample,
 };
+pub use ctx_storage_admission::{
+    is_storage_exhaustion_error, storage_emergency_message, storage_exhaustion_message,
+    StorageGuardLevel, StorageGuardPathStatus, StorageGuardStatus,
+};
 
 use crate::daemon::AppState;
 use crate::ops_events::OpsEvent;
-use crate::resource_utilization::{disk_for_path, DiskSnapshot};
 use crate::scheduler::SchedulerCommand;
 
-const GIB: u64 = 1024 * 1024 * 1024;
-const MIB: u64 = 1024 * 1024;
-const WARNING_FREE_BYTES: u64 = 2 * GIB;
-const EMERGENCY_FREE_BYTES: u64 = GIB;
-const RESERVE_BYTES: u64 = 512 * MIB;
+#[cfg(test)]
+const GIB: u64 = ctx_storage_admission::STORAGE_BYTES_GIB;
+#[cfg(test)]
+const MIB: u64 = ctx_storage_admission::STORAGE_BYTES_MIB;
+const WARNING_FREE_BYTES: u64 = ctx_storage_admission::STORAGE_GUARD_WARNING_FREE_BYTES;
+const EMERGENCY_FREE_BYTES: u64 = ctx_storage_admission::STORAGE_GUARD_EMERGENCY_FREE_BYTES;
+const RESERVE_BYTES: u64 = ctx_storage_admission::STORAGE_GUARD_RESERVE_BYTES;
 const MONITOR_INTERVAL: Duration = Duration::from_secs(2);
 const RESERVE_FILE_NAME: &str = ".storage-guard.reserve";
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum StorageGuardLevel {
-    #[default]
-    Normal,
-    Warning,
-    Emergency,
-}
-
-pub type StorageGuardPathStatus = StorageAdmissionPathStatus;
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-pub struct StorageGuardStatus {
-    pub level: StorageGuardLevel,
-    pub warning_threshold_bytes: u64,
-    pub emergency_threshold_bytes: u64,
-    pub reserve_bytes: u64,
-    pub reserve_file_active: bool,
-    pub active: Option<StorageGuardPathStatus>,
-    pub updated_at: String,
-}
-
-impl Default for StorageGuardStatus {
-    fn default() -> Self {
-        Self {
-            level: StorageGuardLevel::Normal,
-            warning_threshold_bytes: WARNING_FREE_BYTES,
-            emergency_threshold_bytes: EMERGENCY_FREE_BYTES,
-            reserve_bytes: RESERVE_BYTES,
-            reserve_file_active: false,
-            active: None,
-            updated_at: Utc::now().to_rfc3339(),
-        }
-    }
-}
-
-impl StorageGuardStatus {
-    pub fn is_emergency(&self) -> bool {
-        self.level == StorageGuardLevel::Emergency
-    }
-
-    fn same_meaningful_state(&self, other: &Self) -> bool {
-        self.level == other.level
-            && self.warning_threshold_bytes == other.warning_threshold_bytes
-            && self.emergency_threshold_bytes == other.emergency_threshold_bytes
-            && self.reserve_bytes == other.reserve_bytes
-            && self.reserve_file_active == other.reserve_file_active
-            && self.active == other.active
-    }
-}
 
 #[derive(Default)]
 struct StorageGuardController {
@@ -157,41 +110,6 @@ pub async fn preflight_turn_start(state: &Arc<AppState>, workdir: &Path) -> Resu
         anyhow::bail!(storage_emergency_message(snapshot.active.as_ref()));
     }
     Ok(())
-}
-
-pub fn storage_exhaustion_message(active: Option<&StorageGuardPathStatus>) -> String {
-    match active {
-        Some(path) => format!(
-            "Storage exhausted while saving assistant output on {}. Free space, then retry the session.",
-            format_path_label(path)
-        ),
-        None => {
-            "Storage exhausted while saving assistant output. Free space, then retry the session."
-                .to_string()
-        }
-    }
-}
-
-pub fn storage_emergency_message(active: Option<&StorageGuardPathStatus>) -> String {
-    match active {
-        Some(path) => format!(
-            "Storage is critically low on {}. CTX stopped agent runs to protect local data. Free space, then retry the session.",
-            format_path_label(path)
-        ),
-        None => {
-            "Storage is critically low. CTX stopped agent runs to protect local data. Free space, then retry the session."
-                .to_string()
-        }
-    }
-}
-
-pub fn is_storage_exhaustion_error(message: &str) -> bool {
-    let normalized = message.to_ascii_lowercase();
-    normalized.contains("database or disk is full")
-        || normalized.contains("no space left on device")
-        || normalized.contains("sqlite_full")
-        || normalized.contains("os error 28")
-        || normalized.contains("insufficient storage capacity")
 }
 
 pub async fn evaluate_storage_guard(
@@ -521,13 +439,6 @@ async fn release_reserve_file_async(path: PathBuf) -> Result<()> {
     tokio::task::spawn_blocking(move || release_reserve_file(&path))
         .await
         .map_err(|error| anyhow!("storage reserve release task failed: {error}"))?
-}
-
-fn format_path_label(path: &StorageGuardPathStatus) -> String {
-    if path.mount_point == path.path {
-        return path.label.clone();
-    }
-    format!("{} ({})", path.label, path.mount_point)
 }
 
 impl AppState {

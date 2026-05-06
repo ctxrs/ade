@@ -249,7 +249,7 @@ test("ctx-http checkin fanout exposes split unit suite targets without changing 
     ],
   ]);
   assert.equal(getCtxHttpSuiteCheckinFanoutTargetBatches("base").length, 22);
-  assert.equal(getCtxHttpSuiteCheckinFanoutTargets("base").length, 45);
+  assert.equal(getCtxHttpSuiteCheckinFanoutTargets("base").length, 44);
   assert.equal(
     getCtxHttpSuiteCheckinFanoutTargets("base").includes("//core/crates/ctx-settings-model:unit_tests"),
     true,
@@ -339,6 +339,31 @@ test("ctx-http integration suites declare source ownership and dependency crates
       assert.equal(suite.sourceGlobs.length > 0, true, `${suite.name} should own source globs`);
     }
   }
+});
+
+test("ctx-http extracted owner crates route to behavior-owning suites", () => {
+  const suiteByName = new Map(CTX_HTTP_SUITES.map((suite) => [suite.name, suite]));
+
+  assert.equal(
+    suiteByName.get("unit-tests-api").dependencyCrates.includes("ctx-storage-admission"),
+    true,
+  );
+  assert.equal(
+    suiteByName.get("scheduler-runtime").dependencyCrates.includes("ctx-storage-admission"),
+    true,
+  );
+  assert.equal(
+    suiteByName.get("scheduler-runtime").dependencyCrates.includes("ctx-mcp-command"),
+    true,
+  );
+  assert.equal(
+    suiteByName.get("subagents-control").dependencyCrates.includes("ctx-mcp-command"),
+    true,
+  );
+  assert.equal(
+    suiteByName.get("attachments-routing").dependencyCrates.includes("ctx-mcp-command"),
+    false,
+  );
 });
 
 test("ctx-http suite concurrency metadata classifies every concrete suite", () => {

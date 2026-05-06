@@ -229,7 +229,7 @@ async fn prepare_session_auth_runtime(
             "failed to resolve codex-cli runtime path: {error:#}"
         ))
     })?;
-    crate::mcp_command::configure_runtime_mcp_command(
+    ctx_mcp_command::configure_runtime_mcp_command(
         &session.provider_id,
         &mut provider_env,
         &state.core.data_root,

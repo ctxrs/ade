@@ -461,7 +461,7 @@ pub async fn serve(bind: Vec<String>, data_dir: Option<String>) -> Result<()> {
                 return;
             }
 
-            let start_cfg = crate::mobile_tunnel::StartMobileTunnelConfig {
+            let start_cfg = ctx_transport_runtime::mobile_tunnel::StartMobileTunnelConfig {
                 relay_base_url: cfg.relay_base_url,
                 tunnel_id: cfg.tunnel_id,
                 tunnel_secret: cfg.tunnel_secret,

@@ -67,7 +67,6 @@ const CTX_HTTP_CHECKIN_FANOUT_TARGETS_BY_SUITE = Object.freeze({
   ],
   "unit-tests-daemon-and-scheduler": [
     "unit_tests_daemon",
-    "unit_tests_mcp_command",
     "unit_tests_scheduler",
     "unit_tests_daemon_golden_path_with_fake_provider",
     "unit_tests_daemon_http_and_ws_streaming",
@@ -144,10 +143,6 @@ const CTX_HTTP_CHECKIN_FANOUT_TARGET_BATCHES_BY_SUITE = Object.freeze({
     ],
   ],
   "unit-tests-daemon-and-scheduler": [
-    [
-      "unit_tests_daemon",
-      "unit_tests_mcp_command",
-    ],
     [
       "unit_tests_daemon_golden_path_with_fake_provider",
       "unit_tests_daemon_http_and_ws_streaming",
@@ -303,6 +298,7 @@ const CTX_HTTP_SHARED_SOURCE_GLOBS = [
 
 const CTX_HTTP_UNIT_SUITES = [
   {
+    dependencyCrates: ["ctx-storage-admission"],
     family: "workspace-stream",
     name: "unit-tests-api",
     description: "ctx-http API unit test family",
@@ -348,11 +344,10 @@ const CTX_HTTP_UNIT_SUITES = [
   {
     family: "turns-terminal",
     name: "unit-tests-daemon-and-scheduler",
-    description: "ctx-http daemon, scheduler, and MCP command unit family",
+    description: "ctx-http daemon and scheduler unit family",
     sourceGlobs: [
       "crates/ctx-http/src/daemon.rs",
       "crates/ctx-http/src/daemon/**",
-      "crates/ctx-http/src/mcp_command.rs",
       "crates/ctx-http/src/scheduler.rs",
       "crates/ctx-http/src/scheduler/**",
     ],
@@ -680,6 +675,8 @@ const CTX_HTTP_SUITES = [
       "ctx-core",
       "ctx-events",
       "ctx-store",
+      "ctx-mcp-command",
+      "ctx-storage-admission",
       "ctx-transport-runtime",
     ],
     name: "scheduler-runtime",
@@ -795,6 +792,7 @@ const CTX_HTTP_SUITES = [
       "ctx-core",
       "ctx-events",
       "ctx-managed-installs",
+      "ctx-mcp-command",
       "ctx-store",
       "ctx-transport-runtime",
       "ctx-workspace-services",
@@ -813,7 +811,6 @@ const CTX_HTTP_SUITES = [
       "crates/ctx-http/src/api/sessions/subagents.rs",
       "crates/ctx-http/src/api/sessions/subagents/**",
       "crates/ctx-http/src/daemon/sessions/subagents.rs",
-      "crates/ctx-http/src/mcp_command.rs",
       "crates/ctx-http/src/oracle.rs",
       "crates/ctx-http/src/title_generation.rs",
       "crates/ctx-http/src/title_generation_local.rs",
@@ -881,6 +878,7 @@ const CTX_HTTP_SUITES = [
       "ctx-events",
       "ctx-fs",
       "ctx-providers",
+      "ctx-resource-utilization",
       "ctx-store",
       "ctx-workspace-runtime",
     ],
@@ -898,9 +896,9 @@ const CTX_HTTP_SUITES = [
       "crates/ctx-http/src/network_allowlist.rs",
       "crates/ctx-http/src/resource_governance.rs",
       "crates/ctx-http/src/resource_telemetry.rs",
-      "crates/ctx-http/src/resource_utilization.rs",
       "crates/ctx-http/src/tool_cgroup.rs",
       "crates/ctx-http/src/workspace_runtime/**",
+      "crates/ctx-resource-utilization/src/**",
     ],
     testFiles: [
       "workspace_runtime_crash_recovery",
@@ -914,6 +912,7 @@ const CTX_HTTP_SUITES = [
       "ctx-events",
       "ctx-fs",
       "ctx-providers",
+      "ctx-resource-utilization",
       "ctx-store",
       "ctx-workspace-runtime",
     ],
@@ -953,8 +952,8 @@ const CTX_HTTP_SUITES = [
       "crates/ctx-http/src/execution_effective.rs",
       "crates/ctx-http/src/resource_governance.rs",
       "crates/ctx-http/src/resource_telemetry.rs",
-      "crates/ctx-http/src/resource_utilization.rs",
       "crates/ctx-http/src/tool_cgroup.rs",
+      "crates/ctx-resource-utilization/src/**",
     ],
     testFiles: [
       "resource_governance_systemd_e2e",
@@ -968,6 +967,7 @@ const CTX_HTTP_SUITES = [
       "ctx-events",
       "ctx-fs",
       "ctx-providers",
+      "ctx-resource-utilization",
       "ctx-store",
       "ctx-workspace-runtime",
     ],
@@ -975,8 +975,8 @@ const CTX_HTTP_SUITES = [
     description: "sandbox/runtime memory pressure and leak detection flows",
     sourceGlobs: [
       "crates/ctx-http/src/resource_telemetry.rs",
-      "crates/ctx-http/src/resource_utilization.rs",
       "crates/ctx-http/src/workspace_runtime/**",
+      "crates/ctx-resource-utilization/src/**",
     ],
     testFiles: [
       "memory_leak_e2e",

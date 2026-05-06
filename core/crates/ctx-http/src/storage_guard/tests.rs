@@ -87,18 +87,6 @@ fn storage_assessment_prefers_lowest_free_mount() {
 }
 
 #[test]
-fn storage_exhaustion_detection_matches_expected_errors() {
-    assert!(is_storage_exhaustion_error("database or disk is full"));
-    assert!(is_storage_exhaustion_error(
-        "No space left on device (os error 28)"
-    ));
-    assert!(is_storage_exhaustion_error(
-        "Insufficient storage capacity for creating an isolated task worktree"
-    ));
-    assert!(!is_storage_exhaustion_error("permission denied"));
-}
-
-#[test]
 fn storage_admission_denies_when_required_bytes_exceed_capacity() {
     let err = check_storage_admission(
         StorageAdmissionOperation::DiskIsolatedWorktreeMaterialization,
@@ -136,31 +124,6 @@ fn storage_admission_does_not_count_reserve_bytes_before_release() {
     .expect_err("inactive reserve bytes must not satisfy admission");
     assert!(err.to_string().contains("isolated workspace copy"));
     assert!(err.to_string().contains("CTX data root"));
-}
-
-#[test]
-fn storage_guard_transitions_ignore_updated_at_only_changes() {
-    let base = StorageGuardStatus {
-        level: StorageGuardLevel::Warning,
-        warning_threshold_bytes: WARNING_FREE_BYTES,
-        emergency_threshold_bytes: EMERGENCY_FREE_BYTES,
-        reserve_bytes: RESERVE_BYTES,
-        reserve_file_active: true,
-        active: Some(StorageGuardPathStatus {
-            label: "CTX data root".to_string(),
-            path: "/ctx-data".to_string(),
-            mount_point: "/".to_string(),
-            free_bytes: WARNING_FREE_BYTES,
-            total_bytes: 10 * GIB,
-        }),
-        updated_at: "2026-04-11T20:10:00Z".to_string(),
-    };
-    let later = StorageGuardStatus {
-        updated_at: "2026-04-11T20:10:02Z".to_string(),
-        ..base.clone()
-    };
-
-    assert!(base.same_meaningful_state(&later));
 }
 
 #[tokio::test]

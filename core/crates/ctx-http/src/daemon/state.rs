@@ -9,14 +9,12 @@ use tokio::sync::{broadcast, mpsc, watch, Mutex, Notify, Semaphore};
 use tokio::task::JoinHandle;
 
 use crate::git_status::GitStatusSnapshot;
-use crate::mobile_tunnel::MobileTunnelManager;
 use crate::ops_events::{OpsEvent, OpsEvents};
 use crate::perf_telemetry::{PerfMetric, PerfMetricKind, PerfTelemetry};
 use crate::provider_guard;
 use crate::provider_restart;
 use crate::provider_usage;
 use crate::resource_governance::ResourceGovernanceRuntime;
-use crate::resource_utilization::ResourceSampler;
 use crate::runtime_adapters::{
     CtxExecutionHarness, CtxRuntimeEventSink, CtxRuntimeMetricsSink, DefaultWarmupOperations,
 };
@@ -37,8 +35,10 @@ use ctx_provider_install::install_state::{
 };
 use ctx_providers::adapters::{ProviderAdapter, ProviderStatus};
 use ctx_providers::ask_user_question::AskUserQuestionBroker;
+use ctx_resource_utilization::ResourceSampler;
 use ctx_session_tools::order_seq::OrderSeqState;
 use ctx_store::{Store, StoreManager};
+use ctx_transport_runtime::mobile_tunnel::MobileTunnelManager;
 use ctx_workspace_active_snapshot::WorkspaceActiveSnapshotHub;
 use ctx_workspace_runtime::HarnessRuntimeManager;
 

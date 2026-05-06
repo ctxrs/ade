@@ -1,4 +1,5 @@
 use super::*;
+use ctx_transport_runtime::mobile_e2ee;
 
 pub(in crate::api) async fn pair_mobile_device(
     State(state): State<Arc<AppState>>,
@@ -72,16 +73,15 @@ pub(in crate::api) async fn pair_mobile_device(
         )
     })?;
 
-    let key =
-        crate::mobile_e2ee::derive_key(&device_id, &device_public_key, &cfg.daemon_private_key)
-            .map_err(|_| {
-                (
-                    StatusCode::BAD_REQUEST,
-                    Json(ApiErrorResp {
-                        error: "failed to derive pairing key".into(),
-                    }),
-                )
-            })?;
+    let key = mobile_e2ee::derive_key(&device_id, &device_public_key, &cfg.daemon_private_key)
+        .map_err(|_| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: "failed to derive pairing key".into(),
+                }),
+            )
+        })?;
     if req.seq != 0 {
         return Err((
             StatusCode::BAD_REQUEST,
@@ -90,7 +90,7 @@ pub(in crate::api) async fn pair_mobile_device(
             }),
         ));
     }
-    let decrypted = crate::mobile_e2ee::decrypt_pairing_request(
+    let decrypted = mobile_e2ee::decrypt_pairing_request(
         &key,
         &device_id,
         &device_public_key,
@@ -183,7 +183,7 @@ pub(in crate::api) async fn pair_mobile_device(
             }),
         )
     })?;
-    let envelope = crate::mobile_e2ee::encrypt(&key, &device_id, 0, &plaintext).map_err(|_| {
+    let envelope = mobile_e2ee::encrypt(&key, &device_id, 0, &plaintext).map_err(|_| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ApiErrorResp {
@@ -280,27 +280,27 @@ pub(in crate::api) async fn handle_mobile_secure(
             }),
         ));
     };
-    let key =
-        crate::mobile_e2ee::derive_key(&req.device_id, device_public_key, &cfg.daemon_private_key)
-            .map_err(|_| {
-                (
-                    StatusCode::BAD_REQUEST,
-                    Json(ApiErrorResp {
-                        error: "failed to derive device key".into(),
-                    }),
-                )
-            })?;
+    let key = mobile_e2ee::derive_key(&req.device_id, device_public_key, &cfg.daemon_private_key)
+        .map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "failed to derive device key".into(),
+            }),
+        )
+    })?;
 
     let plaintext =
-        crate::mobile_e2ee::decrypt(&key, &req.device_id, req.seq, &req.nonce, &req.ciphertext)
-            .map_err(|_| {
+        mobile_e2ee::decrypt(&key, &req.device_id, req.seq, &req.nonce, &req.ciphertext).map_err(
+            |_| {
                 (
                     StatusCode::BAD_REQUEST,
                     Json(ApiErrorResp {
                         error: "failed to decrypt request".into(),
                     }),
                 )
-            })?;
+            },
+        )?;
 
     let payload: SecureRequestPayload = serde_json::from_slice(&plaintext).map_err(|_| {
         (
@@ -384,8 +384,8 @@ pub(in crate::api) async fn handle_mobile_secure(
             }),
         )
     })?;
-    let envelope = crate::mobile_e2ee::encrypt(&key, &req.device_id, req.seq, &response_bytes)
-        .map_err(|_| {
+    let envelope =
+        mobile_e2ee::encrypt(&key, &req.device_id, req.seq, &response_bytes).map_err(|_| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ApiErrorResp {

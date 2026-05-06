@@ -111,7 +111,8 @@ async fn enable_mobile_access_backfills_empty_managed_profile_scopes() {
         )
         .await
         .unwrap();
-    let (daemon_public_key, daemon_private_key) = crate::mobile_e2ee::generate_keypair();
+    let (daemon_public_key, daemon_private_key) =
+        ctx_transport_runtime::mobile_e2ee::generate_keypair();
     state
         .global_store()
         .upsert_mobile_access_config(ctx_store::store::MobileAccessConfig {

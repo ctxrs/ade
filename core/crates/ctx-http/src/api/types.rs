@@ -1,6 +1,7 @@
 use super::*;
 use crate::api::shared::store_for_existing_workspace_status;
 use ctx_linux_sandbox_runtime::linux_sandbox_runtime_status;
+use ctx_resource_utilization as resource_utilization;
 
 #[derive(Debug, Deserialize)]
 pub(in crate::api) struct MergeQueueSubmitReq {

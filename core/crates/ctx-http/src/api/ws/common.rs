@@ -32,7 +32,7 @@ fn accept_session_cursor(cursor: &mut SessionCursor, incoming: SessionReplayCurs
 
 pub(super) async fn send_secure_ws<S>(
     sink: &mut S,
-    key: &crate::mobile_e2ee::E2eeKey,
+    key: &ctx_transport_runtime::mobile_e2ee::E2eeKey,
     device_id: &str,
     seq: i64,
     payload: &WorkspaceActiveSnapshotStreamMessage,
@@ -42,7 +42,7 @@ where
     S::Error: std::error::Error + Send + Sync + 'static,
 {
     let plaintext = serde_json::to_vec(payload)?;
-    let envelope = crate::mobile_e2ee::encrypt(key, device_id, seq, &plaintext)?;
+    let envelope = ctx_transport_runtime::mobile_e2ee::encrypt(key, device_id, seq, &plaintext)?;
     let frame = SecureEnvelope {
         device_id: envelope.device_id,
         seq: envelope.seq,

@@ -1,4 +1,5 @@
 use super::*;
+use ctx_transport_runtime::{mobile_e2ee, mobile_tunnel};
 
 pub(in crate::api) async fn get_mobile_access_status(
     State(state): State<Arc<AppState>>,
@@ -192,7 +193,7 @@ pub(in crate::api) async fn enable_mobile_access(
             )
         }
         None => {
-            let (public_key, private_key) = crate::mobile_e2ee::generate_keypair();
+            let (public_key, private_key) = mobile_e2ee::generate_keypair();
             let token = generate_mobile_api_token();
             let token_hash = hash_api_token(&token);
             let token_prefix: String = token.chars().take(8).collect();
@@ -264,7 +265,7 @@ pub(in crate::api) async fn enable_mobile_access(
             )
         })?;
 
-    let tunnel_cfg = crate::mobile_tunnel::StartMobileTunnelConfig {
+    let tunnel_cfg = mobile_tunnel::StartMobileTunnelConfig {
         relay_base_url: payload.relay_base_url.clone(),
         tunnel_id: payload.tunnel_id.clone(),
         tunnel_secret: payload.tunnel_secret.clone(),
@@ -281,7 +282,7 @@ pub(in crate::api) async fn enable_mobile_access(
         public_base_url: Some(public_url.as_str().trim_end_matches('/').to_string()),
         relay_base_url: Some(payload.relay_base_url.clone()),
         daemon_public_key: Some(daemon_public_key.clone()),
-        tunnel_state: crate::mobile_tunnel::MobileTunnelState::Running,
+        tunnel_state: mobile_tunnel::MobileTunnelState::Running,
         last_error: None,
     };
 
@@ -292,7 +293,7 @@ pub(in crate::api) async fn enable_mobile_access(
         "base_url": public_url.as_str().trim_end_matches('/'),
         "pairing_token": pairing_token,
         "daemon_public_key": daemon_public_key,
-        "pairing_request_encryption": crate::mobile_e2ee::PAIRING_REQUEST_ENCRYPTION,
+        "pairing_request_encryption": mobile_e2ee::PAIRING_REQUEST_ENCRYPTION,
     });
 
     Ok(Json(EnableMobileAccessResp {

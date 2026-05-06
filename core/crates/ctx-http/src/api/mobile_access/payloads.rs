@@ -12,7 +12,7 @@ pub(in crate::api) struct MobileAccessStatus {
     pub(in crate::api) public_base_url: Option<String>,
     pub(in crate::api) relay_base_url: Option<String>,
     pub(in crate::api) daemon_public_key: Option<String>,
-    pub(in crate::api) tunnel_state: crate::mobile_tunnel::MobileTunnelState,
+    pub(in crate::api) tunnel_state: ctx_transport_runtime::mobile_tunnel::MobileTunnelState,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(in crate::api) last_error: Option<String>,
 }
