@@ -213,6 +213,101 @@ const prepareContainerWritableMounts = ({
   }
 };
 
+const containerHostUserEnvArgs = (hostOs = hostManifestOs) => {
+  if (hostOs !== "linux") {
+    return [];
+  }
+  if (typeof process.getuid !== "function" || typeof process.getgid !== "function") {
+    throw new Error("containerized Linux bundle builds require host uid/gid support");
+  }
+  return [
+    "-e",
+    `CTX_CONTAINER_HOST_UID=${process.getuid()}`,
+    "-e",
+    `CTX_CONTAINER_HOST_GID=${process.getgid()}`,
+  ];
+};
+
+const shellQuote = (value) => `'${String(value).replaceAll("'", "'\\''")}'`;
+
+const containerCrossToolchainForTarget = ({
+  target,
+  hostArch = hostManifestArch,
+} = {}) => {
+  if (
+    target?.rustTarget === "aarch64-unknown-linux-gnu"
+    && hostArch !== "aarch64"
+  ) {
+    return {
+      buildPlatform: "linux/amd64",
+      aptPackages: [
+        "gcc-aarch64-linux-gnu",
+        "g++-aarch64-linux-gnu",
+        "pkg-config",
+        "cmake",
+        "perl",
+        "make",
+      ],
+      env: [
+        ["CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER", "aarch64-linux-gnu-gcc"],
+        ["CC_aarch64_unknown_linux_gnu", "aarch64-linux-gnu-gcc"],
+        ["CXX_aarch64_unknown_linux_gnu", "aarch64-linux-gnu-g++"],
+        ["AR_aarch64_unknown_linux_gnu", "aarch64-linux-gnu-ar"],
+      ],
+    };
+  }
+
+  return null;
+};
+
+const containerBuildPlatformForTarget = ({ target, crossToolchain = null }) => {
+  return crossToolchain?.buildPlatform || target.platform;
+};
+
+const containerCrossToolchainSetupCommand = (crossToolchain) => {
+  if (!crossToolchain) {
+    return "";
+  }
+  return [
+    "apt-get update >/dev/null",
+    `DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ${crossToolchain.aptPackages.join(" ")} >/dev/null`,
+  ].join("; ") + "; ";
+};
+
+const containerCrossToolchainEnvCommand = (crossToolchain) => {
+  if (!crossToolchain) {
+    return "";
+  }
+  return crossToolchain.env
+    .map(([name, value]) => `export ${name}=${shellQuote(value)}`)
+    .join("; ") + "; ";
+};
+
+const containerLinuxHostUserSetupCommand = (hostOs, needsRootSetup) => {
+  if (!needsRootSetup || hostOs !== "linux") {
+    return "";
+  }
+  return 'CTX_CONTAINER_HOST_USER=""; '
+    + 'if [ "${CTX_CONTAINER_HOST_UID:-0}" != "0" ]; then '
+    + 'CTX_CONTAINER_GROUP_NAME="ctxbuild${CTX_CONTAINER_HOST_GID}"; '
+    + 'if ! getent group "$CTX_CONTAINER_HOST_GID" >/dev/null; then groupadd -g "$CTX_CONTAINER_HOST_GID" "$CTX_CONTAINER_GROUP_NAME"; fi; '
+    + 'CTX_CONTAINER_GROUP_NAME="$(getent group "$CTX_CONTAINER_HOST_GID" | cut -d: -f1)"; '
+    + 'if getent passwd "$CTX_CONTAINER_HOST_UID" >/dev/null; then CTX_CONTAINER_HOST_USER="$(getent passwd "$CTX_CONTAINER_HOST_UID" | cut -d: -f1)"; else useradd -m -u "$CTX_CONTAINER_HOST_UID" -g "$CTX_CONTAINER_GROUP_NAME" "ctxbuild${CTX_CONTAINER_HOST_UID}"; CTX_CONTAINER_HOST_USER="ctxbuild${CTX_CONTAINER_HOST_UID}"; fi; '
+    + "fi; ";
+};
+
+const containerRunBuildCommand = ({ buildInnerCommand, runAsHostUser = false }) => {
+  if (!runAsHostUser) {
+    return buildInnerCommand;
+  }
+  const hostUserBuildCommand = `set -euo pipefail; ${buildInnerCommand}`;
+  return 'if [ -n "$CTX_CONTAINER_HOST_USER" ]; then '
+    + `su -s /bin/bash "$CTX_CONTAINER_HOST_USER" -c ${shellQuote(hostUserBuildCommand)}; `
+    + "else "
+    + buildInnerCommand
+    + "; fi";
+};
+
 const parseAvfLinuxGuestRuntimeVersion = (raw) => {
   const text = String(raw || "");
   if (!text.trim()) return "";
@@ -839,26 +934,36 @@ const buildRemoteDaemonContainerArgs = ({
   target,
   identity = {},
   hostOs = hostManifestOs,
+  hostArch = hostManifestArch,
 }) => {
   const preparedDaemonsDir = ensureContainerCacheDir(daemonsDir, hostOs);
-  const buildCmd =
-    "set -euo pipefail; " +
+  const crossToolchain = containerCrossToolchainForTarget({ target, hostArch });
+  const buildInnerCommand =
     "export CARGO_HOME=\"/cargo-home\"; " +
     "export RUSTUP_HOME=\"/rustup-home\"; " +
     "export PATH=\"$CARGO_HOME/bin:/usr/local/cargo/bin:$PATH\"; " +
-    "mkdir -p /out; " +
     "rustup toolchain install stable --profile minimal --no-self-update >/dev/null 2>&1 || true; " +
     `rustup target add --toolchain stable ${target.rustTarget} >/dev/null 2>&1 || true; ` +
-    `cargo +stable build --manifest-path /src/Cargo.toml -p ctx-http --release --target ${target.rustTarget}; ` +
+    containerCrossToolchainEnvCommand(crossToolchain) +
+    `cargo +stable build --manifest-path /src/Cargo.toml -p ctx-http --bin ctx --release --target ${target.rustTarget}; ` +
     `install -Dm0755 /target/${target.rustTarget}/release/ctx /out/${target.fileName}`;
+  const buildCmd =
+    "set -euo pipefail; " +
+    "mkdir -p /out; " +
+    containerCrossToolchainSetupCommand(crossToolchain) +
+    containerLinuxHostUserSetupCommand(hostOs, Boolean(crossToolchain)) +
+    containerRunBuildCommand({
+      buildInnerCommand,
+      runAsHostUser: Boolean(crossToolchain) && hostOs === "linux",
+    });
   return [
     runtime,
     [
       "run",
       "--rm",
       "--platform",
-      target.platform,
-      ...containerHostUserArgs(hostOs),
+      containerBuildPlatformForTarget({ target, crossToolchain }),
+      ...(crossToolchain ? containerHostUserEnvArgs(hostOs) : containerHostUserArgs(hostOs)),
       "-v",
       `${coreDir}:/src`,
       "-v",
@@ -929,6 +1034,7 @@ const buildLinuxCtxMcpContainerArgs = ({
   runtimeVersion,
   identity = {},
   hostOs = hostManifestOs,
+  hostArch = hostManifestArch,
 }) => {
   const preparedRuntimesDir = ensureContainerCacheDir(runtimesDir, hostOs);
   ensureContainerCacheDir(path.join(preparedRuntimesDir, "runtimes"), hostOs);
@@ -939,25 +1045,34 @@ const buildLinuxCtxMcpContainerArgs = ({
     target.arch,
     runtimeVersion,
   );
-  const buildCmd =
-    "set -euo pipefail; " +
+  const crossToolchain = containerCrossToolchainForTarget({ target, hostArch });
+  const buildInnerCommand =
     "export CARGO_HOME=\"/cargo-home\"; " +
     "export RUSTUP_HOME=\"/rustup-home\"; " +
     "export PATH=\"$CARGO_HOME/bin:/usr/local/cargo/bin:$PATH\"; " +
-    "mkdir -p /out; " +
     "rustup toolchain install stable --profile minimal --no-self-update >/dev/null 2>&1 || true; " +
     `rustup target add --toolchain stable ${target.rustTarget} >/dev/null 2>&1 || true; ` +
-    `cargo +stable build --manifest-path /src/Cargo.toml -p ctx-mcp --release --target ${target.rustTarget}; ` +
+    containerCrossToolchainEnvCommand(crossToolchain) +
+    `cargo +stable build --manifest-path /src/Cargo.toml -p ctx-mcp --bin ctx-mcp --release --target ${target.rustTarget}; ` +
     `install -Dm0755 /target/${target.rustTarget}/release/ctx-mcp /out/${runtimeRootRel}/ctx-mcp; ` +
     `chmod -R 0777 /out/runtimes/${CTX_MCP_RUNTIME_ID}`;
+  const buildCmd =
+    "set -euo pipefail; " +
+    "mkdir -p /out; " +
+    containerCrossToolchainSetupCommand(crossToolchain) +
+    containerLinuxHostUserSetupCommand(hostOs, Boolean(crossToolchain)) +
+    containerRunBuildCommand({
+      buildInnerCommand,
+      runAsHostUser: Boolean(crossToolchain) && hostOs === "linux",
+    });
   return [
     runtime,
     [
       "run",
       "--rm",
       "--platform",
-      target.platform,
-      ...containerHostUserArgs(hostOs),
+      containerBuildPlatformForTarget({ target, crossToolchain }),
+      ...(crossToolchain ? containerHostUserEnvArgs(hostOs) : containerHostUserArgs(hostOs)),
       "-v",
       `${coreDir}:/src`,
       "-v",
@@ -1774,6 +1889,9 @@ if (require.main === module) {
       ensureCargoBinOnPath,
       ensureContainerCacheDir,
       containerHostUserArgs,
+      containerHostUserEnvArgs,
+      containerCrossToolchainForTarget,
+      containerBuildPlatformForTarget,
     },
     copySidecarBinary,
     parseAvfLinuxGuestRuntimeVersion,

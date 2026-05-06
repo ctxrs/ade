@@ -51,16 +51,21 @@ const TEST_PATH_SEGMENTS = new Set(["tests", "test", "test_support", "lib_tests"
 const TEST_FILE_PATTERNS = [
   /_tests?\.rs$/u,
   /^(test|tests)\.rs$/u,
+  /^(test|tests)_mod\.rs$/u,
   /test[_-]support\.rs$/u,
   /test[_-]server\.rs$/u,
 ];
+
+function isTestPathSegment(part) {
+  return TEST_PATH_SEGMENTS.has(part) || /_tests?$/u.test(part);
+}
 
 function isProductionRustFile(relPath) {
   if (!relPath.endsWith(".rs")) return false;
   if (!PRODUCTION_ROOT_PATTERNS.some((re) => re.test(relPath))) return false;
 
   const parts = relPath.split("/");
-  if (parts.some((part) => TEST_PATH_SEGMENTS.has(part))) return false;
+  if (parts.some(isTestPathSegment)) return false;
   const basename = parts[parts.length - 1];
   if (TEST_FILE_PATTERNS.some((re) => re.test(basename))) return false;
 

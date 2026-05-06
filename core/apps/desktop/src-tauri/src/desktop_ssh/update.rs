@@ -17,6 +17,8 @@ const REMOTE_UPDATE_HEALTH_DELAY_MS: u64 = 500;
 const REMOTE_PENDING_UPDATE_RETRY_MS: u64 = 5_000;
 
 type RemoteUpdateKeySet = std::sync::Mutex<std::collections::HashSet<String>>;
+type RemoteUpdateKeySetGuard =
+    std::sync::MutexGuard<'static, std::collections::HashSet<String>>;
 
 fn load_identity_channel_if_needed(
     app: &tauri::AppHandle,
@@ -46,6 +48,13 @@ fn inflight_remote_updates() -> &'static RemoteUpdateKeySet {
     UPDATES.get_or_init(|| std::sync::Mutex::new(std::collections::HashSet::new()))
 }
 
+fn remote_update_key_set_guard(set: &'static RemoteUpdateKeySet) -> RemoteUpdateKeySetGuard {
+    match set.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    }
+}
+
 pub(super) fn remote_update_target_key(
     host: &str,
     user: Option<&str>,
@@ -71,16 +80,12 @@ pub(super) fn remote_update_target_key_for_target(target: &SshConnectionTarget) 
 }
 
 fn mark_pending_remote_update_worker(target_key: &str) -> bool {
-    let mut guard = pending_remote_update_workers()
-        .lock()
-        .expect("pending remote update worker lock poisoned");
+    let mut guard = remote_update_key_set_guard(pending_remote_update_workers());
     guard.insert(target_key.to_string())
 }
 
 fn clear_pending_remote_update_worker(target_key: &str) {
-    let mut guard = pending_remote_update_workers()
-        .lock()
-        .expect("pending remote update worker lock poisoned");
+    let mut guard = remote_update_key_set_guard(pending_remote_update_workers());
     guard.remove(target_key);
 }
 
@@ -90,17 +95,13 @@ struct RemoteUpdateSingleflightGuard {
 
 impl Drop for RemoteUpdateSingleflightGuard {
     fn drop(&mut self) {
-        let mut guard = inflight_remote_updates()
-            .lock()
-            .expect("remote update singleflight lock poisoned");
+        let mut guard = remote_update_key_set_guard(inflight_remote_updates());
         guard.remove(&self.target_key);
     }
 }
 
 fn acquire_remote_update_singleflight(target_key: &str) -> Option<RemoteUpdateSingleflightGuard> {
-    let mut guard = inflight_remote_updates()
-        .lock()
-        .expect("remote update singleflight lock poisoned");
+    let mut guard = remote_update_key_set_guard(inflight_remote_updates());
     if !guard.insert(target_key.to_string()) {
         return None;
     }

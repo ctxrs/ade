@@ -84,14 +84,16 @@ test("remote daemon container build command creates /out before install", () => 
       compatibilityToken: "artifact-deadbeef",
     },
     hostOs: "linux",
+    hostArch: "x86_64",
   });
 
   assert.equal(spawnCmd, "docker");
+  assert.match(args.join(" "), /--platform linux\/amd64/);
   assert.match(args.join(" "), /mkdir -p \/out;/);
   assert.match(args.join(" "), new RegExp(`--user ${process.getuid()}:${process.getgid()}`));
   assert.match(args.join(" "), /rustup toolchain install stable --profile minimal --no-self-update/);
   assert.match(args.join(" "), /rustup target add --toolchain stable x86_64-unknown-linux-gnu/);
-  assert.match(args.join(" "), /cargo \+stable build --manifest-path \/src\/Cargo\.toml -p ctx-http --release --target x86_64-unknown-linux-gnu/);
+  assert.match(args.join(" "), /cargo \+stable build --manifest-path \/src\/Cargo\.toml -p ctx-http --bin ctx --release --target x86_64-unknown-linux-gnu/);
   assert.match(args.join(" "), /-v \/cargo-home-host:\/cargo-home/);
   assert.match(args.join(" "), /-v \/rustup-home-host:\/rustup-home/);
   assert.match(args.join(" "), /-e CARGO_HOME=\/cargo-home/);
@@ -102,6 +104,49 @@ test("remote daemon container build command creates /out before install", () => 
   assert.match(args.join(" "), /install -Dm0755 .* \/out\/ctx-daemon-linux-x86_64/);
   assert.doesNotMatch(args.join(" "), /\/usr\/local\/cargo\/registry/);
   assert.doesNotMatch(args.join(" "), /\/usr\/local\/cargo\/git/);
+
+  fs.rmSync(tempRoot, { recursive: true, force: true });
+});
+
+test("aarch64 remote daemon builds cross-compile from amd64 instead of using qemu", () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "desktop-sync-test-"));
+  const daemonsDir = path.join(tempRoot, "daemons");
+  const [spawnCmd, args] = __desktopSyncResourcesTestHooks.buildRemoteDaemonContainerArgs({
+    runtime: "docker",
+    builderImage: "rust:test",
+    coreDir: "/src-host",
+    daemonsDir,
+    targetCache: "/target-host",
+    cargoHome: "/cargo-home-host",
+    rustupHome: "/rustup-home-host",
+    target: {
+      arch: "aarch64",
+      platform: "linux/arm64",
+      rustTarget: "aarch64-unknown-linux-gnu",
+      fileName: "ctx-daemon-linux-aarch64",
+    },
+    hostOs: "linux",
+    hostArch: "x86_64",
+  });
+  const commandText = args.join(" ");
+
+  assert.equal(spawnCmd, "docker");
+  assert.match(commandText, /--platform linux\/amd64/);
+  assert.doesNotMatch(commandText, /--platform linux\/arm64/);
+  assert.doesNotMatch(commandText, /--user /);
+  assert.match(commandText, /-e CTX_CONTAINER_HOST_UID=\d+/);
+  assert.match(commandText, /-e CTX_CONTAINER_HOST_GID=\d+/);
+  assert.doesNotMatch(commandText, /then;/);
+  assert.match(commandText, /; else /);
+  assert.match(commandText, /su -s \/bin\/bash "\$CTX_CONTAINER_HOST_USER" -c 'set -euo pipefail;/);
+  assert.match(commandText, /apt-get install -y --no-install-recommends .*gcc-aarch64-linux-gnu/);
+  assert.match(commandText, /CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER='aarch64-linux-gnu-gcc'/);
+  assert.match(commandText, /CC_aarch64_unknown_linux_gnu='aarch64-linux-gnu-gcc'/);
+  assert.match(commandText, /CXX_aarch64_unknown_linux_gnu='aarch64-linux-gnu-g\+\+'/);
+  assert.match(commandText, /AR_aarch64_unknown_linux_gnu='aarch64-linux-gnu-ar'/);
+  assert.match(commandText, /rustup target add --toolchain stable aarch64-unknown-linux-gnu/);
+  assert.match(commandText, /cargo \+stable build --manifest-path \/src\/Cargo\.toml -p ctx-http --bin ctx --release --target aarch64-unknown-linux-gnu/);
+  assert.match(commandText, /install -Dm0755 .* \/out\/ctx-daemon-linux-aarch64/);
 
   fs.rmSync(tempRoot, { recursive: true, force: true });
 });
@@ -129,15 +174,17 @@ test("linux ctx-mcp container build command stages runtime into bundle tree", ()
       compatibilityToken: "artifact-deadbeef",
     },
     hostOs: "linux",
+    hostArch: "aarch64",
   });
 
   assert.equal(spawnCmd, "docker");
+  assert.match(args.join(" "), /--platform linux\/arm64/);
   assert.match(args.join(" "), /mkdir -p \/out;/);
   assert.match(args.join(" "), new RegExp(`--user ${process.getuid()}:${process.getgid()}`));
   assert.match(args.join(" "), /-p ctx-mcp/);
   assert.match(args.join(" "), /rustup toolchain install stable --profile minimal --no-self-update/);
   assert.match(args.join(" "), /rustup target add --toolchain stable aarch64-unknown-linux-gnu/);
-  assert.match(args.join(" "), /cargo \+stable build --manifest-path \/src\/Cargo\.toml -p ctx-mcp --release --target aarch64-unknown-linux-gnu/);
+  assert.match(args.join(" "), /cargo \+stable build --manifest-path \/src\/Cargo\.toml -p ctx-mcp --bin ctx-mcp --release --target aarch64-unknown-linux-gnu/);
   assert.match(args.join(" "), /-v \/cargo-home-host:\/cargo-home/);
   assert.match(args.join(" "), /-v \/rustup-home-host:\/rustup-home/);
   assert.match(args.join(" "), /-e CARGO_HOME=\/cargo-home/);
@@ -152,6 +199,45 @@ test("linux ctx-mcp container build command stages runtime into bundle tree", ()
   assert.match(args.join(" "), /chmod -R 0777 \/out\/runtimes\/ctx-mcp/);
   assert.doesNotMatch(args.join(" "), /\/usr\/local\/cargo\/registry/);
   assert.doesNotMatch(args.join(" "), /\/usr\/local\/cargo\/git/);
+
+  fs.rmSync(tempRoot, { recursive: true, force: true });
+});
+
+test("aarch64 linux ctx-mcp builds cross-compile from amd64 instead of using qemu", () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "desktop-sync-test-"));
+  const runtimesDir = path.join(tempRoot, "bundle");
+  const [spawnCmd, args] = __desktopSyncResourcesTestHooks.buildLinuxCtxMcpContainerArgs({
+    runtime: "docker",
+    builderImage: "rust:test",
+    coreDir: "/src-host",
+    runtimesDir,
+    targetCache: "/target-host",
+    cargoHome: "/cargo-home-host",
+    rustupHome: "/rustup-home-host",
+    target: {
+      arch: "aarch64",
+      platform: "linux/arm64",
+      rustTarget: "aarch64-unknown-linux-gnu",
+    },
+    runtimeVersion: "0.1.0",
+    hostOs: "linux",
+    hostArch: "x86_64",
+  });
+  const commandText = args.join(" ");
+
+  assert.equal(spawnCmd, "docker");
+  assert.match(commandText, /--platform linux\/amd64/);
+  assert.doesNotMatch(commandText, /--platform linux\/arm64/);
+  assert.doesNotMatch(commandText, /--user /);
+  assert.doesNotMatch(commandText, /then;/);
+  assert.match(commandText, /; else /);
+  assert.match(commandText, /su -s \/bin\/bash "\$CTX_CONTAINER_HOST_USER" -c 'set -euo pipefail;/);
+  assert.match(commandText, /apt-get install -y --no-install-recommends .*gcc-aarch64-linux-gnu/);
+  assert.match(commandText, /cargo \+stable build --manifest-path \/src\/Cargo\.toml -p ctx-mcp --bin ctx-mcp --release --target aarch64-unknown-linux-gnu/);
+  assert.match(
+    commandText,
+    /install -Dm0755 .* \/out\/runtimes\/ctx-mcp\/linux\/aarch64\/0\.1\.0\/ctx-mcp/,
+  );
 
   fs.rmSync(tempRoot, { recursive: true, force: true });
 });

@@ -220,10 +220,10 @@ test("ctx-http BUILD exposes Bazel-native base test targets", () => {
     ctxHttpBuild,
     /--exact",\s*"lib_tests::daemon_smoke::daemon_golden_path_with_fake_provider/,
   );
-  assert.match(ctxHttpBuild, /--skip=lib_tests::daemon_smoke::daemon_http_and_ws_streaming/);
+  assert.match(ctxHttpBuild, /--skip=lib_tests::daemon_smoke::streaming::daemon_http_and_ws_streaming/);
   assert.match(
     ctxHttpBuild,
-    /--exact",\s*"lib_tests::daemon_smoke::daemon_http_and_ws_streaming/,
+    /--exact",\s*"lib_tests::daemon_smoke::streaming::daemon_http_and_ws_streaming/,
   );
   assert.match(
     ctxHttpBuild,

@@ -778,7 +778,7 @@ const PROFILES = [
     ],
     pipelines: ["ctx-nightly"],
     remoteStrategy: "Keep host-budget evidence on Linux and outside the main landing loop; the value is drift detection, not build graph reuse.",
-    currentExecution: "Runs the checked-in main-band benchmark wrapper as a separate advisory nightly failure domain.",
+    currentExecution: "Runs the checked-in bounded main-band benchmark wrapper as a separate advisory nightly failure domain.",
     expansionRules: [
       "Benchmark drift evidence is advisory.",
     ],

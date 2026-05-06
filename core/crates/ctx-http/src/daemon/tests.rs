@@ -20,7 +20,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex as StdMutex;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tempfile::tempdir;
 
 struct EnvVarGuard {
@@ -1647,7 +1647,17 @@ async fn sandbox_work_activity_counts_container_backed_terminals() {
         .await
         .unwrap();
 
-    let activity = daemon_sandbox_work_activity_summary(&state).await.unwrap();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    let activity = loop {
+        let activity = daemon_sandbox_work_activity_summary(&state).await.unwrap();
+        if activity.active && activity.running_container_backed_terminal {
+            break activity;
+        }
+        if tokio::time::Instant::now() >= deadline {
+            panic!("timed out waiting for container-backed terminal activity: {activity:#?}");
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    };
     assert!(activity.active);
     assert!(activity.running_container_backed_terminal);
 

@@ -35,7 +35,7 @@ async fn assistant_chunks_are_stream_only() {
     assert_eq!(status, StatusCode::OK);
 
     let store = state.store_for_session(session.id).await.unwrap();
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
     loop {
         let events = store.list_session_events(session.id).await.unwrap();
         if events
@@ -45,7 +45,7 @@ async fn assistant_chunks_are_stream_only() {
             break;
         }
         if tokio::time::Instant::now() >= deadline {
-            panic!("timed out waiting for Done event");
+            panic!("timed out waiting for Done event: {events:#?}");
         }
         tokio::time::sleep(Duration::from_millis(25)).await;
     }

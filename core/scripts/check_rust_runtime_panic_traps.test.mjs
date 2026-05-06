@@ -10,7 +10,11 @@ test("panic-trap production file filter excludes test-only source trees", () => 
   assert.equal(isProductionRustFile("crates/ctx-http/src/lib.rs"), true);
   assert.equal(isProductionRustFile("crates/ctx-http/src/lib_tests/session_artifacts.rs"), false);
   assert.equal(isProductionRustFile("crates/ctx-http/src/api/ws/tests/http.rs"), false);
+  assert.equal(isProductionRustFile("crates/ctx-http/src/api/tasks/lifecycle_tests/delete.rs"), false);
   assert.equal(isProductionRustFile("crates/ctx-providers/src/crp/normalize/tests/mod.rs"), false);
+  assert.equal(isProductionRustFile("crates/ctx-store/src/manager/leases/tests_mod.rs"), false);
+  assert.equal(isProductionRustFile("apps/desktop/src-tauri/src/desktop_connection/connection_manager_tests/http.rs"), false);
+  assert.equal(isProductionRustFile("apps/desktop/src-tauri/src/desktop_ssh/update.rs"), true);
   assert.equal(isProductionRustFile("crates/ctx-http/tests/external.rs"), false);
 });
 

@@ -2201,7 +2201,7 @@ function buildStaticEntries() {
         "core/scripts/sdlc_host_budget_benchmark.cjs",
       ],
       dependencyCrates: [],
-      notes: "Advisory nightly benchmark evidence for host-budget drift on the checked-in main-band preset.",
+      notes: "Advisory nightly benchmark evidence for host-budget drift on the checked-in bounded main-band preset.",
       exception: "Intentional script-local nightly operator benchmark; it measures host-budget drift and emits evidence, not product behavior inside the Bazel graph.",
     },
     {
