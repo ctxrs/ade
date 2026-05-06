@@ -1,10 +1,19 @@
+mod cache;
 mod diff_paths;
+mod resolution;
 mod runtime;
 mod snapshot;
 
 use serde::Serialize;
 
+pub use cache::{
+    hydrated_worktree_vcs_snapshot_cache_entry, pending_worktree_vcs_snapshot_cache_entry,
+    publish_worktree_vcs_snapshot_cache_entry, published_worktree_vcs_snapshot_cache_entry,
+    WorktreeVcsSnapshotCacheEntry, WorktreeVcsSnapshotPublishPolicy, WORKTREE_VCS_DEBOUNCE_MS,
+    WORKTREE_VCS_MAX_INTERVAL_MS,
+};
 pub use diff_paths::{build_diff_path_states, count_diff_paths};
+pub use resolution::{is_no_vcs_repo_error, WorktreeDiffBaseResolution};
 pub use runtime::{
     claim_next_worktree_vcs_job, finish_worktree_vcs_job, finish_worktree_vcs_refresh,
     mark_worktree_vcs_runtime_dirty, queue_worktree_vcs_refresh, worktree_vcs_enabled_from_env,

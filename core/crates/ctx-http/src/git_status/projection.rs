@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use anyhow::Result;
 use ctx_core::models::{
@@ -8,9 +8,11 @@ use ctx_core::models::{
 };
 use ctx_workspace_services::worktree_vcs::{
     build_git_status_entries, build_git_status_summary, build_large_change_set_touched_files,
-    build_touched_files, finish_worktree_vcs_refresh, now_epoch_ms, snapshot_fingerprint,
+    build_touched_files, finish_worktree_vcs_refresh, is_no_vcs_repo_error,
+    pending_worktree_vcs_snapshot_cache_entry, publish_worktree_vcs_snapshot_cache_entry,
     snapshot_for_durable_cache, summary_from_file_count, summary_has_counts, GitStatusEntry,
-    GitStatusSnapshot, WORKTREE_VCS_REVIEWABLE_FILE_LIMIT, WORKTREE_VCS_SNAPSHOT_SCHEMA_VERSION,
+    GitStatusSnapshot, WorktreeDiffBaseResolution, WorktreeVcsSnapshotPublishPolicy,
+    WORKTREE_VCS_REVIEWABLE_FILE_LIMIT,
 };
 
 use crate::api::sessions::{resolve_diff_base_with_meta, SessionDiffQuery};
@@ -23,10 +25,7 @@ use super::sandbox::container_git_status_structured;
 use super::snapshot::{
     build_worktree_vcs_snapshot_from_parts, publish_no_repo_snapshot, publish_unavailable_snapshot,
 };
-use super::{
-    vcs_driver_for_worktree, worktree_has_vcs_repo, GIT_STATUS_DEBOUNCE_MS,
-    GIT_STATUS_MAX_INTERVAL_MS,
-};
+use super::{vcs_driver_for_worktree, worktree_has_vcs_repo};
 
 pub async fn load_git_status_snapshot(
     state: &Arc<AppState>,
@@ -115,65 +114,33 @@ pub(super) async fn publish_worktree_vcs_snapshot(
 
 pub(super) async fn upsert_worktree_vcs_snapshot(
     state: &Arc<AppState>,
-    mut snapshot: WorktreeVcsSnapshot,
+    snapshot: WorktreeVcsSnapshot,
     force_emit: bool,
     summary_at: Option<Instant>,
 ) -> Option<WorktreeVcsSnapshot> {
     let now = Instant::now();
-    let fingerprint = snapshot_fingerprint(&snapshot);
+    let policy = WorktreeVcsSnapshotPublishPolicy::default();
     let active = state.workspaces.worktree_vcs_active.lock().await;
     if active.get(&snapshot.worktree_id).copied().unwrap_or(0) == 0 {
         return None;
     }
     let mut cache = state.workspaces.worktree_vcs_snapshots.lock().await;
     let entry = cache.entry(snapshot.worktree_id).or_insert_with(|| {
-        crate::daemon::TimedEntry::new(crate::daemon::WorktreeVcsSnapshotCacheEntry {
-            snapshot: snapshot.clone(),
-            fingerprint: String::new(),
-            emitted_at: now - Duration::from_millis(GIT_STATUS_MAX_INTERVAL_MS + 1),
-            last_change_at: now - Duration::from_millis(GIT_STATUS_MAX_INTERVAL_MS + 1),
-            last_summary_at: None,
-        })
+        crate::daemon::TimedEntry::new(pending_worktree_vcs_snapshot_cache_entry(
+            snapshot.clone(),
+            now,
+            policy,
+        ))
     });
     entry.touch_at(now);
-    let is_first = entry.value.fingerprint.is_empty();
-    if entry.value.fingerprint == fingerprint && !force_emit {
-        return None;
-    }
-    let since_change = now.duration_since(entry.value.last_change_at);
-    let since_emit = now.duration_since(entry.value.emitted_at);
-    let previous_snapshot = &entry.value.snapshot;
-    let must_publish_state_transition = previous_snapshot.available != snapshot.available
-        || previous_snapshot.unavailable_reason != snapshot.unavailable_reason
-        || previous_snapshot.compute_state != snapshot.compute_state
-        || previous_snapshot.freshness != snapshot.freshness
-        || previous_snapshot.touched_files_state != snapshot.touched_files_state
-        || (matches!(
-            snapshot.touched_files_state,
-            WorktreeVcsTouchedFilesState::Ready
-        ) && previous_snapshot.touched_files != snapshot.touched_files);
-    if !force_emit
-        && !is_first
-        && !must_publish_state_transition
-        && since_emit < Duration::from_millis(GIT_STATUS_MAX_INTERVAL_MS)
-        && since_change < Duration::from_millis(GIT_STATUS_DEBOUNCE_MS)
-    {
-        return None;
-    }
-    let next_rev = entry.value.snapshot.rev.saturating_add(1);
-    snapshot.rev = next_rev;
-    snapshot.emitted_at_ms = now_epoch_ms();
-    if snapshot.schema_version == 0 {
-        snapshot.schema_version = WORKTREE_VCS_SNAPSHOT_SCHEMA_VERSION;
-    }
-    entry.value.snapshot = snapshot.clone();
-    entry.value.fingerprint = fingerprint;
-    entry.value.emitted_at = now;
-    entry.value.last_change_at = now;
-    if let Some(summary_at) = summary_at {
-        entry.value.last_summary_at = Some(summary_at);
-    }
-    Some(snapshot)
+    publish_worktree_vcs_snapshot_cache_entry(
+        &mut entry.value,
+        snapshot,
+        now,
+        force_emit,
+        summary_at,
+        policy,
+    )
 }
 
 pub(super) async fn refresh_worktree_vcs_projection(
@@ -218,7 +185,7 @@ pub(super) async fn refresh_worktree_vcs_projection(
         return publish_no_repo_snapshot(
             state,
             worktree,
-            crate::api::sessions::WorktreeDiffBaseResolution {
+            WorktreeDiffBaseResolution {
                 base_commit_sha: worktree.base_commit_sha.clone(),
                 head_commit_sha: None,
                 target_branch_commit_sha: None,
@@ -262,7 +229,7 @@ pub(super) async fn refresh_worktree_vcs_projection(
                     true,
                     None,
                 ),
-                Err(err) if crate::api::sessions::is_no_vcs_repo_error(&err) => (
+                Err(err) if is_no_vcs_repo_error(&err) => (
                     WorktreeVcsSummary::default(),
                     WorktreeVcsComputeState::Ready,
                     None,
@@ -306,7 +273,7 @@ pub(super) async fn refresh_worktree_vcs_projection(
     .await
     {
         Ok(snapshot) => snapshot,
-        Err(err) if crate::api::sessions::is_no_vcs_repo_error(&err) => {
+        Err(err) if is_no_vcs_repo_error(&err) => {
             return publish_no_repo_snapshot(state, worktree, resolution, force_emit).await;
         }
         Err(err) => return Err(err),
@@ -333,7 +300,7 @@ pub(super) async fn refresh_worktree_vcs_projection(
                 build_touched_files(&entries),
                 WorktreeVcsTouchedFilesState::Ready,
             ),
-            Err(err) if crate::api::sessions::is_no_vcs_repo_error(&err) => {
+            Err(err) if is_no_vcs_repo_error(&err) => {
                 return publish_no_repo_snapshot(state, worktree, resolution, force_emit).await;
             }
             Err(err) => {

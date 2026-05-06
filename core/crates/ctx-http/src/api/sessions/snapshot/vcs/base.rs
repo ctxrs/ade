@@ -1,26 +1,8 @@
 use super::*;
 use ctx_workspace_config as workspace_config;
-
-pub(crate) fn is_no_vcs_repo_error(err: &anyhow::Error) -> bool {
-    let lower = err.to_string().to_lowercase();
-    lower.contains("no vcs repo found")
-        || lower.contains("not a git repository")
-        || lower.contains("is not a git repo")
-        || lower.contains("not inside a jj repo")
-}
-
-#[derive(Clone)]
-pub(crate) struct WorktreeDiffBaseResolution {
-    pub base_commit_sha: String,
-    pub head_commit_sha: Option<String>,
-    pub target_branch: Option<String>,
-    pub target_branch_commit_sha: Option<String>,
-    pub target_source: Option<WorktreeVcsTargetSource>,
-    pub kind: WorktreeVcsBaseResolutionKind,
-    pub error: Option<String>,
-    pub unavailable_reason: Option<DiffUnavailableReason>,
-    pub explicit_target: bool,
-}
+pub(crate) use ctx_workspace_services::worktree_vcs::{
+    is_no_vcs_repo_error, WorktreeDiffBaseResolution,
+};
 
 async fn resolve_worktree_ref_commits(
     state: &Arc<AppState>,

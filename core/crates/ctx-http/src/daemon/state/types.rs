@@ -172,14 +172,6 @@ pub struct GitStatusSnapshotCacheEntry {
     pub last_change_at: Instant,
 }
 
-pub struct WorktreeVcsSnapshotCacheEntry {
-    pub snapshot: WorktreeVcsSnapshot,
-    pub fingerprint: String,
-    pub emitted_at: Instant,
-    pub last_change_at: Instant,
-    pub last_summary_at: Option<Instant>,
-}
-
 #[derive(Clone, Debug)]
 pub struct WorkspaceActiveSnapshotCacheEntry {
     pub snapshot: WorkspaceActiveSnapshot,

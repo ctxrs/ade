@@ -71,9 +71,7 @@ pub(super) use snapshot::{
     get_session_git_status, get_session_head, get_session_history, get_session_snapshot,
     get_session_state, list_session_turn_tools,
 };
-pub(crate) use snapshot::{
-    is_no_vcs_repo_error, resolve_diff_base_with_meta, SessionDiffQuery, WorktreeDiffBaseResolution,
-};
+pub(crate) use snapshot::{resolve_diff_base_with_meta, SessionDiffQuery};
 mod titles_and_modes;
 #[cfg(test)]
 use crate::title_generation;

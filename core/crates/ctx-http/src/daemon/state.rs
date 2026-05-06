@@ -24,7 +24,6 @@ use crate::web_sessions::WebSessionManager;
 use ctx_core::ids::{SessionId, TaskId, WorkspaceAttachmentId, WorkspaceId, WorktreeId};
 use ctx_core::models::{
     Session, SessionEvent, SessionHeadSnapshot, WorkspaceActiveHeadBatch, WorkspaceActiveSnapshot,
-    WorktreeVcsSnapshot,
 };
 use ctx_execution_runtime::ExecutionSetupCoordinator;
 use ctx_provider_accounts as provider_accounts;
@@ -46,6 +45,7 @@ mod installs;
 mod metrics;
 mod types;
 
+pub use ctx_workspace_services::worktree_vcs::WorktreeVcsSnapshotCacheEntry;
 pub(crate) use ctx_workspace_services::worktree_vcs::{
     worktree_vcs_enabled_from_env, worktree_vcs_scheduler_concurrency_from_env,
     WorktreeVcsDirtyBits,
@@ -69,7 +69,6 @@ pub use types::{
     GitStatusSnapshotCacheEntry, ProviderRuntime, SessionHeadCacheKey, SessionPinState,
     SessionRuntime, StoreLookup, TelemetryRuntime, TimedEntry, TransportRuntime, UpdateDrainState,
     WorkspaceActiveHeadCacheEntry, WorkspaceActiveSnapshotCacheEntry, WorkspaceRuntime,
-    WorktreeVcsSnapshotCacheEntry,
 };
 
 impl AppState {

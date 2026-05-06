@@ -10,6 +10,9 @@ use ctx_core::models::{
     Task, WorkspaceActiveHeadBatch, WorkspaceActiveSnapshot, Worktree, WorktreeVcsComputeState,
     WorktreeVcsFreshness, WorktreeVcsSnapshot,
 };
+use ctx_workspace_services::worktree_vcs::{
+    hydrated_worktree_vcs_snapshot_cache_entry, published_worktree_vcs_snapshot_cache_entry,
+};
 
 use crate::daemon::state::{
     AppState, TimedEntry, WorkspaceActiveHeadCacheEntry, WorkspaceActiveSnapshotCacheEntry,
@@ -102,17 +105,10 @@ impl WorkspaceRuntime {
         }
         let worktree_id = snapshot.worktree_id;
         let now = std::time::Instant::now();
-        let fingerprint = serde_json::to_string(&snapshot).unwrap_or_default();
         let mut cache = self.worktree_vcs_snapshots.lock().await;
         cache.insert(
             worktree_id,
-            TimedEntry::new(crate::daemon::WorktreeVcsSnapshotCacheEntry {
-                snapshot,
-                fingerprint,
-                emitted_at: now,
-                last_change_at: now,
-                last_summary_at: Some(now),
-            }),
+            TimedEntry::new(published_worktree_vcs_snapshot_cache_entry(snapshot, now)),
         );
     }
 
@@ -125,13 +121,10 @@ impl WorkspaceRuntime {
         let mut cache = self.worktree_vcs_snapshots.lock().await;
         for snapshot in snapshots {
             cache.entry(snapshot.worktree_id).or_insert_with(|| {
-                crate::daemon::TimedEntry::new(crate::daemon::WorktreeVcsSnapshotCacheEntry {
-                    fingerprint: serde_json::to_string(&snapshot).unwrap_or_default(),
+                crate::daemon::TimedEntry::new(hydrated_worktree_vcs_snapshot_cache_entry(
                     snapshot,
-                    emitted_at: seed_instant,
-                    last_change_at: seed_instant,
-                    last_summary_at: None,
-                })
+                    seed_instant,
+                ))
             });
         }
     }

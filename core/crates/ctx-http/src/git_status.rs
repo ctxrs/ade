@@ -16,16 +16,14 @@ mod snapshot;
 #[path = "git_status_watch.rs"]
 mod watch;
 use ctx_workspace_services::worktree_vcs::{
-    derive_worktree_vcs_freshness, mark_worktree_vcs_runtime_dirty, queue_worktree_vcs_refresh,
+    derive_worktree_vcs_freshness, is_no_vcs_repo_error, mark_worktree_vcs_runtime_dirty,
+    queue_worktree_vcs_refresh,
 };
 pub use ctx_workspace_services::worktree_vcs::{GitStatusEntry, GitStatusSnapshot};
 pub use projection::load_git_status_snapshot;
 use projection::{publish_transient_worktree_vcs_snapshot, refresh_worktree_vcs_projection};
 pub(crate) use sandbox::{worktree_merge_base, worktree_rev_parse_head, worktree_rev_parse_refs};
 use scheduler::ensure_worktree_vcs_scheduler_started;
-
-const GIT_STATUS_DEBOUNCE_MS: u64 = 500;
-const GIT_STATUS_MAX_INTERVAL_MS: u64 = 2000;
 
 fn vcs_driver_for_worktree(worktree: &Worktree) -> Arc<dyn VcsDriver> {
     vcs::driver_for_kind(worktree.vcs_kind.clone())
@@ -45,7 +43,7 @@ pub(crate) async fn worktree_has_vcs_repo(
         .await
         {
             Ok(_) => Ok(true),
-            Err(err) if crate::api::sessions::is_no_vcs_repo_error(&err) => Ok(false),
+            Err(err) if is_no_vcs_repo_error(&err) => Ok(false),
             Err(err) => Err(err),
         };
     }
@@ -53,12 +51,12 @@ pub(crate) async fn worktree_has_vcs_repo(
     let root = data_plane.live_worktree_root.as_path();
     let driver = match vcs::driver_for_path(root).await {
         Ok(driver) => driver,
-        Err(err) if crate::api::sessions::is_no_vcs_repo_error(&err) => return Ok(false),
+        Err(err) if is_no_vcs_repo_error(&err) => return Ok(false),
         Err(err) => return Err(err),
     };
     match driver.assert_repo(root).await {
         Ok(()) => Ok(true),
-        Err(err) if crate::api::sessions::is_no_vcs_repo_error(&err) => Ok(false),
+        Err(err) if is_no_vcs_repo_error(&err) => Ok(false),
         Err(err) => Err(err),
     }
 }

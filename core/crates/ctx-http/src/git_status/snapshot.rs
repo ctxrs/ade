@@ -7,7 +7,8 @@ use ctx_core::models::{
 };
 use ctx_fs::vcs;
 use ctx_workspace_services::worktree_vcs::{
-    build_worktree_vcs_snapshot, WorktreeVcsSnapshotBuildParts, WorktreeVcsSnapshotCommitInfo,
+    build_worktree_vcs_snapshot, WorktreeDiffBaseResolution, WorktreeVcsSnapshotBuildParts,
+    WorktreeVcsSnapshotCommitInfo,
 };
 
 use crate::api::sessions::{resolve_diff_base_with_meta, SessionDiffQuery};
@@ -27,7 +28,7 @@ pub(super) async fn build_worktree_vcs_snapshot_from_parts(
     touched_files_state: WorktreeVcsTouchedFilesState,
     summary: WorktreeVcsSummary,
     compute_state: WorktreeVcsComputeState,
-    resolution: Option<crate::api::sessions::WorktreeDiffBaseResolution>,
+    resolution: Option<WorktreeDiffBaseResolution>,
     available: bool,
     unavailable_reason: Option<ctx_core::models::DiffUnavailableReason>,
 ) -> Result<WorktreeVcsSnapshot> {
@@ -123,7 +124,7 @@ pub(super) async fn build_worktree_vcs_snapshot_from_parts(
 pub(super) async fn publish_no_repo_snapshot(
     state: &Arc<AppState>,
     worktree: &Worktree,
-    resolution: crate::api::sessions::WorktreeDiffBaseResolution,
+    resolution: WorktreeDiffBaseResolution,
     force_emit: bool,
 ) -> Result<()> {
     publish_unavailable_snapshot(
@@ -139,7 +140,7 @@ pub(super) async fn publish_no_repo_snapshot(
 pub(super) async fn publish_unavailable_snapshot(
     state: &Arc<AppState>,
     worktree: &Worktree,
-    resolution: crate::api::sessions::WorktreeDiffBaseResolution,
+    resolution: WorktreeDiffBaseResolution,
     force_emit: bool,
     reason: ctx_core::models::DiffUnavailableReason,
 ) -> Result<()> {
