@@ -1,4 +1,5 @@
 use anyhow::Result;
+use ctx_core::models::SessionGitStatusSummary;
 
 use super::{GitStatusEntry, GitStatusSnapshot, WorktreeVcsCommitLookup};
 
@@ -94,6 +95,22 @@ pub fn git_status_snapshot_from_structured(
     }
 }
 
+pub fn session_git_status_summary_from_snapshot(
+    snapshot: &GitStatusSnapshot,
+) -> SessionGitStatusSummary {
+    SessionGitStatusSummary {
+        summary_line: snapshot.summary_line.clone(),
+        branch: snapshot.branch.clone(),
+        upstream: snapshot.upstream.clone(),
+        ahead: snapshot.ahead,
+        behind: snapshot.behind,
+        detached: snapshot.detached,
+        staged: snapshot.staged,
+        unstaged: snapshot.unstaged,
+        untracked: snapshot.untracked,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -141,6 +158,22 @@ mod tests {
 
         assert!(snapshot.entries.is_empty());
         assert_eq!(snapshot.entries_total_count, 1);
+    }
+
+    #[test]
+    fn session_git_status_summary_projection_preserves_route_persisted_fields() {
+        let snapshot = git_status_snapshot_from_structured(structured_status(), true);
+        let summary = session_git_status_summary_from_snapshot(&snapshot);
+
+        assert_eq!(summary.summary_line, "## main...origin/main [ahead 1]");
+        assert_eq!(summary.branch.as_deref(), Some("main"));
+        assert_eq!(summary.upstream.as_deref(), Some("origin/main"));
+        assert_eq!(summary.ahead, 1);
+        assert_eq!(summary.behind, 0);
+        assert!(!summary.detached);
+        assert_eq!(summary.staged, 1);
+        assert_eq!(summary.unstaged, 2);
+        assert_eq!(summary.untracked, 3);
     }
 
     struct FakeCommitLookupSource;

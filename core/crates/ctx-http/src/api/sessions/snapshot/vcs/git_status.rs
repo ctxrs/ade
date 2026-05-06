@@ -1,6 +1,7 @@
 use super::context::load_session_vcs_context;
 use super::*;
 use crate::git_status::load_git_status_snapshot;
+use ctx_workspace_services::worktree_vcs::session_git_status_summary_from_snapshot;
 
 pub(crate) async fn get_session_git_status(
     State(state): State<Arc<AppState>>,
@@ -25,6 +26,7 @@ pub(crate) async fn get_session_git_status(
                 }),
             )
         })?;
+    let summary = session_git_status_summary_from_snapshot(&snapshot);
     let resp = SessionGitStatusResponse {
         raw: snapshot.raw,
         summary_line: snapshot.summary_line,
@@ -39,17 +41,6 @@ pub(crate) async fn get_session_git_status(
         entries: snapshot.entries,
         entries_truncated: snapshot.entries_truncated,
         entries_total_count: snapshot.entries_total_count,
-    };
-    let summary = SessionGitStatusSummary {
-        summary_line: resp.summary_line.clone(),
-        branch: resp.branch.clone(),
-        upstream: resp.upstream.clone(),
-        ahead: resp.ahead,
-        behind: resp.behind,
-        detached: resp.detached,
-        staged: resp.staged,
-        unstaged: resp.unstaged,
-        untracked: resp.untracked,
     };
     if let Err(err) = store
         .upsert_session_git_status_summary(ctx.session.id, ctx.worktree.id, &summary)

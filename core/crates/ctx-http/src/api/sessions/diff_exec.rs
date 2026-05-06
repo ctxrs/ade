@@ -1,6 +1,10 @@
 use super::*;
 use crate::settings::ExecutionMode;
 use crate::worktree_data_plane::resolve_worktree_data_plane;
+use ctx_workspace_services::worktree_vcs::{
+    parse_worktree_vcs_diff_summary_counts, WORKTREE_VCS_CONTAINER_DIFF_SCRIPT,
+    WORKTREE_VCS_CONTAINER_DIFF_SUMMARY_SCRIPT,
+};
 use ctx_worktree_data_plane::apply_data_plane_to_execution_settings;
 
 enum SandboxExecTarget {
@@ -99,33 +103,16 @@ async fn container_diff_worktree(
     worktree: &Worktree,
     base_commit_sha: &str,
 ) -> anyhow::Result<String> {
-    // Match host behavior by including untracked files, with the same large-file omission rule.
-    let script = r#"
-set -euo pipefail
-base="$1"
-git diff "$base"
-max_bytes=$((512 * 1024))
-while IFS= read -r f; do
-  [ -z "$f" ] && continue
-  size="$(stat -c %s -- "$f" 2>/dev/null || echo 0)"
-  case "$size" in
-    ''|*[!0-9]*) size=0 ;;
-  esac
-  if [ "$size" -gt "$max_bytes" ]; then
-    printf '\n# untracked: %s (%s bytes; omitted)\n' "$f" "$size"
-    continue
-  fi
-  patch="$(git diff --no-index -- /dev/null "$f" || true)"
-  if [ -n "$patch" ]; then
-    printf '\n%s\n' "$patch"
-  fi
-done < <(git ls-files --others --exclude-standard)
-"#;
     let bytes = container_exec_stdout(
         state,
         worktree,
         "bash",
-        &["-lc", script, "--", base_commit_sha],
+        &[
+            "-lc",
+            WORKTREE_VCS_CONTAINER_DIFF_SCRIPT,
+            "--",
+            base_commit_sha,
+        ],
     )
     .await?;
     Ok(String::from_utf8_lossy(&bytes).to_string())
@@ -136,57 +123,24 @@ async fn container_diff_worktree_summary(
     worktree: &Worktree,
     base_commit_sha: &str,
 ) -> anyhow::Result<(i64, i64, i64)> {
-    // Match host behavior by including untracked files and best-effort line counts for small files.
-    let script = r#"
-set -euo pipefail
-base="$1"
-file_count=0
-additions=0
-deletions=0
-while IFS=$'\t' read -r add del path; do
-  [ -z "$path" ] && continue
-  file_count=$((file_count+1))
-  if [ "$add" != "-" ]; then
-    additions=$((additions+add))
-  fi
-  if [ "$del" != "-" ]; then
-    deletions=$((deletions+del))
-  fi
-done < <(git diff --numstat "$base")
-
-max_bytes=$((512 * 1024))
-while IFS= read -r f; do
-  [ -z "$f" ] && continue
-  file_count=$((file_count+1))
-  size="$(stat -c %s -- "$f" 2>/dev/null || echo 0)"
-  case "$size" in
-    ''|*[!0-9]*) size=0 ;;
-  esac
-  if [ "$size" -gt "$max_bytes" ]; then
-    continue
-  fi
-  lines="$(awk 'END{print NR}' -- "$f" 2>/dev/null || echo 0)"
-  case "$lines" in
-    ''|*[!0-9]*) lines=0 ;;
-  esac
-  additions=$((additions+lines))
-done < <(git ls-files --others --exclude-standard)
-
-printf '%s %s %s\n' "$file_count" "$additions" "$deletions"
-"#;
     let bytes = container_exec_stdout(
         state,
         worktree,
         "bash",
-        &["-lc", script, "--", base_commit_sha],
+        &[
+            "-lc",
+            WORKTREE_VCS_CONTAINER_DIFF_SUMMARY_SCRIPT,
+            "--",
+            base_commit_sha,
+        ],
     )
     .await?;
-    let output = String::from_utf8_lossy(&bytes);
-    let mut parts = output.split_whitespace();
-    let file_count = parts.next().unwrap_or("0").parse::<i64>().unwrap_or(0);
-    let additions = parts.next().unwrap_or("0").parse::<i64>().unwrap_or(0);
-    let deletions = parts.next().unwrap_or("0").parse::<i64>().unwrap_or(0);
-    Ok((file_count, additions, deletions))
+    let counts = parse_worktree_vcs_diff_summary_counts(&bytes)?;
+    Ok((
+        counts.file_count,
+        counts.line_additions,
+        counts.line_deletions,
+    ))
 }
 
 pub(crate) async fn diff_worktree_for_session(

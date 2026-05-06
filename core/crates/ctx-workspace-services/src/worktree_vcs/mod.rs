@@ -1,4 +1,5 @@
 mod cache;
+mod diff_output;
 mod diff_paths;
 mod git_commands;
 mod resolution;
@@ -13,6 +14,10 @@ pub use cache::{
     publish_worktree_vcs_snapshot_cache_entry, published_worktree_vcs_snapshot_cache_entry,
     WorktreeVcsSnapshotCacheEntry, WorktreeVcsSnapshotPublishPolicy, WORKTREE_VCS_DEBOUNCE_MS,
     WORKTREE_VCS_MAX_INTERVAL_MS,
+};
+pub use diff_output::{
+    parse_worktree_vcs_diff_summary_counts, WorktreeVcsDiffSummaryCounts,
+    WORKTREE_VCS_CONTAINER_DIFF_SCRIPT, WORKTREE_VCS_CONTAINER_DIFF_SUMMARY_SCRIPT,
 };
 pub use diff_paths::{
     build_diff_path_states, count_diff_paths, load_diff_file_count_from_source,
@@ -41,8 +46,9 @@ pub use snapshot::{
 };
 pub use status::{
     git_status_snapshot_from_structured, load_git_status_snapshot_from_source,
-    resolve_worktree_vcs_commit_lookup_from_source, worktree_has_vcs_repo_from_source,
-    WorktreeVcsCommitLookupSource, WorktreeVcsStatusSource, WorktreeVcsStructuredStatus,
+    resolve_worktree_vcs_commit_lookup_from_source, session_git_status_summary_from_snapshot,
+    worktree_has_vcs_repo_from_source, WorktreeVcsCommitLookupSource, WorktreeVcsStatusSource,
+    WorktreeVcsStructuredStatus,
 };
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
