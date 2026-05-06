@@ -180,6 +180,45 @@ pub fn worktree_vcs_touched_files_reuse(
     }
 }
 
+pub fn worktree_vcs_refresh_transient_snapshot(
+    mut snapshot: WorktreeVcsSnapshot,
+    refresh_summary: bool,
+    refresh_touched_files: bool,
+) -> WorktreeVcsSnapshot {
+    if refresh_summary {
+        snapshot.compute_state = WorktreeVcsComputeState::Computing;
+        snapshot.freshness = super::derive_worktree_vcs_freshness(
+            &WorktreeVcsComputeState::Computing,
+            &snapshot.summary,
+        );
+    }
+    if refresh_touched_files {
+        snapshot.touched_files_state = match snapshot.touched_files_state {
+            WorktreeVcsTouchedFilesState::Ready => WorktreeVcsTouchedFilesState::Stale,
+            WorktreeVcsTouchedFilesState::Stale => WorktreeVcsTouchedFilesState::Stale,
+            _ => WorktreeVcsTouchedFilesState::Loading,
+        };
+    }
+    snapshot
+}
+
+pub fn worktree_vcs_dirty_transient_snapshot(
+    mut snapshot: WorktreeVcsSnapshot,
+) -> WorktreeVcsSnapshot {
+    snapshot.compute_state = WorktreeVcsComputeState::Computing;
+    snapshot.freshness = super::derive_worktree_vcs_freshness(
+        &WorktreeVcsComputeState::Computing,
+        &snapshot.summary,
+    );
+    if matches!(
+        snapshot.touched_files_state,
+        WorktreeVcsTouchedFilesState::Ready
+    ) {
+        snapshot.touched_files_state = WorktreeVcsTouchedFilesState::Stale;
+    }
+    snapshot
+}
+
 #[cfg(test)]
 mod tests {
     use ctx_core::ids::WorktreeId;
@@ -365,6 +404,79 @@ mod tests {
         assert_eq!(
             cache.unavailable_reason,
             Some(DiffUnavailableReason::NoRepo)
+        );
+    }
+
+    fn ready_snapshot() -> WorktreeVcsSnapshot {
+        WorktreeVcsSnapshot {
+            worktree_id: WorktreeId::new(),
+            rev: 7,
+            emitted_at_ms: 42,
+            base_commit_sha: "base".to_string(),
+            head_commit_sha: "head".to_string(),
+            target_branch: None,
+            target_branch_commit_sha: None,
+            base_resolution: WorktreeVcsBaseResolution::default(),
+            compute_state: WorktreeVcsComputeState::Ready,
+            summary: WorktreeVcsSummary {
+                file_count: Some(2),
+                ..Default::default()
+            },
+            git_status: WorktreeVcsGitStatusSummary::default(),
+            touched_files: WorktreeVcsTouchedFiles::default(),
+            touched_files_state: WorktreeVcsTouchedFilesState::Ready,
+            freshness: WorktreeVcsFreshness::Fresh,
+            available: true,
+            unavailable_reason: None,
+            schema_version: 2,
+        }
+    }
+
+    #[test]
+    fn refresh_transient_snapshot_marks_requested_summary_and_touched_files() {
+        let snapshot = worktree_vcs_refresh_transient_snapshot(ready_snapshot(), true, true);
+
+        assert_eq!(snapshot.compute_state, WorktreeVcsComputeState::Computing);
+        assert_eq!(snapshot.freshness, WorktreeVcsFreshness::Stale);
+        assert_eq!(
+            snapshot.touched_files_state,
+            WorktreeVcsTouchedFilesState::Stale
+        );
+    }
+
+    #[test]
+    fn refresh_transient_snapshot_marks_uncached_touched_files_loading() {
+        let mut initial = ready_snapshot();
+        initial.summary = WorktreeVcsSummary::default();
+        initial.touched_files_state = WorktreeVcsTouchedFilesState::NotLoaded;
+
+        let snapshot = worktree_vcs_refresh_transient_snapshot(initial, true, true);
+
+        assert_eq!(snapshot.compute_state, WorktreeVcsComputeState::Computing);
+        assert_eq!(snapshot.freshness, WorktreeVcsFreshness::Refreshing);
+        assert_eq!(
+            snapshot.touched_files_state,
+            WorktreeVcsTouchedFilesState::Loading
+        );
+    }
+
+    #[test]
+    fn dirty_transient_snapshot_only_stales_ready_touched_files() {
+        let ready = worktree_vcs_dirty_transient_snapshot(ready_snapshot());
+
+        assert_eq!(ready.compute_state, WorktreeVcsComputeState::Computing);
+        assert_eq!(ready.freshness, WorktreeVcsFreshness::Stale);
+        assert_eq!(
+            ready.touched_files_state,
+            WorktreeVcsTouchedFilesState::Stale
+        );
+
+        let mut not_loaded = ready_snapshot();
+        not_loaded.touched_files_state = WorktreeVcsTouchedFilesState::NotLoaded;
+        let not_loaded = worktree_vcs_dirty_transient_snapshot(not_loaded);
+        assert_eq!(
+            not_loaded.touched_files_state,
+            WorktreeVcsTouchedFilesState::NotLoaded
         );
     }
 }

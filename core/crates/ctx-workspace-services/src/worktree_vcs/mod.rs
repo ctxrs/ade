@@ -31,7 +31,8 @@ pub use git_commands::{
 };
 pub use projection::{
     plan_worktree_vcs_summary_refresh, plan_worktree_vcs_touched_files_refresh,
-    worktree_vcs_projection_cache_state, worktree_vcs_summary_refresh_error_fallback,
+    worktree_vcs_dirty_transient_snapshot, worktree_vcs_projection_cache_state,
+    worktree_vcs_refresh_transient_snapshot, worktree_vcs_summary_refresh_error_fallback,
     worktree_vcs_summary_refresh_from_file_count, worktree_vcs_summary_refresh_no_repo,
     worktree_vcs_touched_files_error_fallback, worktree_vcs_touched_files_from_entries,
     worktree_vcs_touched_files_large_change_set, worktree_vcs_touched_files_reuse,

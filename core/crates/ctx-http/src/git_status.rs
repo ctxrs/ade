@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 
-use ctx_core::models::{Worktree, WorktreeVcsComputeState, WorktreeVcsTouchedFilesState};
+use ctx_core::models::Worktree;
 use ctx_fs::vcs::{self, VcsDriver};
 
 use crate::daemon::AppState;
@@ -15,8 +15,8 @@ mod source;
 #[path = "git_status_watch.rs"]
 mod watch;
 use ctx_workspace_services::worktree_vcs::{
-    derive_worktree_vcs_freshness, mark_worktree_vcs_runtime_dirty, queue_worktree_vcs_refresh,
-    worktree_has_vcs_repo_from_source,
+    mark_worktree_vcs_runtime_dirty, queue_worktree_vcs_refresh, worktree_has_vcs_repo_from_source,
+    worktree_vcs_dirty_transient_snapshot, worktree_vcs_refresh_transient_snapshot,
 };
 pub use ctx_workspace_services::worktree_vcs::{GitStatusEntry, GitStatusSnapshot};
 pub use projection::load_git_status_snapshot;
@@ -76,21 +76,9 @@ async fn request_worktree_vcs_refresh_inner(
     }
 
     if publish_transient {
-        if let Some(mut snapshot) = state.get_worktree_vcs_snapshot(worktree.id).await {
-            if summary {
-                snapshot.compute_state = WorktreeVcsComputeState::Computing;
-                snapshot.freshness = derive_worktree_vcs_freshness(
-                    &WorktreeVcsComputeState::Computing,
-                    &snapshot.summary,
-                );
-            }
-            if touched_files {
-                snapshot.touched_files_state = match snapshot.touched_files_state {
-                    WorktreeVcsTouchedFilesState::Ready => WorktreeVcsTouchedFilesState::Stale,
-                    WorktreeVcsTouchedFilesState::Stale => WorktreeVcsTouchedFilesState::Stale,
-                    _ => WorktreeVcsTouchedFilesState::Loading,
-                };
-            }
+        if let Some(snapshot) = state.get_worktree_vcs_snapshot(worktree.id).await {
+            let snapshot =
+                worktree_vcs_refresh_transient_snapshot(snapshot, summary, touched_files);
             publish_transient_worktree_vcs_snapshot(state, worktree, snapshot).await;
         }
     }
@@ -118,16 +106,8 @@ pub async fn mark_worktree_vcs_dirty(
         mark_worktree_vcs_runtime_dirty(entry, dirty_bits, candidate_paths, pane_open);
     }
 
-    if let Some(mut snapshot) = state.get_worktree_vcs_snapshot(worktree.id).await {
-        snapshot.compute_state = WorktreeVcsComputeState::Computing;
-        snapshot.freshness =
-            derive_worktree_vcs_freshness(&WorktreeVcsComputeState::Computing, &snapshot.summary);
-        if matches!(
-            snapshot.touched_files_state,
-            WorktreeVcsTouchedFilesState::Ready
-        ) {
-            snapshot.touched_files_state = WorktreeVcsTouchedFilesState::Stale;
-        }
+    if let Some(snapshot) = state.get_worktree_vcs_snapshot(worktree.id).await {
+        let snapshot = worktree_vcs_dirty_transient_snapshot(snapshot);
         publish_transient_worktree_vcs_snapshot(state, worktree, snapshot).await;
     }
 
