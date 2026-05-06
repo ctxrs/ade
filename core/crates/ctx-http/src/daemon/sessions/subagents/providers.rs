@@ -5,8 +5,8 @@ use crate::api::providers::provider_status_for_target;
 use crate::api::sessions::{load_provider_model_catalog_for_execution_environment, ModelCatalog};
 use crate::daemon::AppState;
 use crate::execution_effective;
-use crate::provider_matrix::ProviderMatrixEntryKind;
 use ctx_core::models::{ExecutionEnvironment, Workspace};
+use ctx_provider_matrix::ProviderMatrixEntryKind;
 
 use super::errors::{
     api_error, internal_api_error, internal_request_or_policy_error, ApiResult, SubagentErrorKind,
@@ -28,7 +28,7 @@ pub(super) async fn load_requested_model_catalogs(
     let managed = crate::daemon::load_managed_agent_server_config_or_err(&state.core.data_root)
         .await
         .map_err(internal_api_error)?;
-    let matrix = crate::provider_matrix::load_matrix_cached(
+    let matrix = ctx_provider_matrix::load_matrix_cached(
         &state.core.data_root,
         &state.providers.matrix_cache,
     )

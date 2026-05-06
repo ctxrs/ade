@@ -13,7 +13,8 @@ mod tests;
 pub use cache::{
     builtin_matrix, invalidate_matrix_cache, load_bundled_matrix_from_env, load_cached_matrix,
     load_explicit_matrix_from_env, load_matrix, load_matrix_cached, matrix_cache_path,
-    replace_matrix_cache, save_cached_matrix,
+    refresh_matrix_from_local_sources, replace_matrix_cache, save_cached_matrix,
+    MatrixRefreshOutcome, MatrixRefreshSource,
 };
 pub use query::{
     extract_version, get_entry, is_managed_supported_for_context, is_user_facing_harness_id,

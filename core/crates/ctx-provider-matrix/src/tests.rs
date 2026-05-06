@@ -1,5 +1,74 @@
 use super::*;
 use tempfile::tempdir;
+use tokio::sync::Mutex;
+
+static ENV_LOCK: Mutex<()> = Mutex::const_new(());
+
+struct EnvGuard {
+    key: &'static str,
+    previous: Option<String>,
+}
+
+impl EnvGuard {
+    fn set(key: &'static str, value: &str) -> Self {
+        let previous = std::env::var(key).ok();
+        unsafe {
+            std::env::set_var(key, value);
+        }
+        Self { key, previous }
+    }
+
+    fn remove(key: &'static str) -> Self {
+        let previous = std::env::var(key).ok();
+        unsafe {
+            std::env::remove_var(key);
+        }
+        Self { key, previous }
+    }
+}
+
+impl Drop for EnvGuard {
+    fn drop(&mut self) {
+        match self.previous.take() {
+            Some(value) => unsafe {
+                std::env::set_var(self.key, value);
+            },
+            None => unsafe {
+                std::env::remove_var(self.key);
+            },
+        }
+    }
+}
+
+fn clear_provider_matrix_env() -> Vec<EnvGuard> {
+    vec![
+        EnvGuard::remove("CTX_PROVIDER_MATRIX_BASE_URL"),
+        EnvGuard::remove("CTX_PROVIDER_MATRIX_CHANNEL"),
+        EnvGuard::remove("CTX_DOWNLOAD_BASE_URL"),
+        EnvGuard::remove("CTX_DESKTOP_CHANNEL"),
+        EnvGuard::remove("CTX_BUNDLE_MATRIX_JSON"),
+        EnvGuard::remove("CTX_BUNDLE_DIR"),
+    ]
+}
+
+fn test_matrix(provider_id: &str) -> ProviderMatrix {
+    ProviderMatrix {
+        version: MATRIX_SCHEMA_VERSION,
+        generated_at: Some("2026-04-22T00:00:00Z".to_string()),
+        providers: vec![ProviderMatrixEntry {
+            id: provider_id.to_string(),
+            kind: ProviderMatrixEntryKind::Harness,
+            display_name: Some(provider_id.to_string()),
+            tier: None,
+            command: None,
+            managed_install: None,
+            provider_dependencies: Vec::new(),
+            dependencies: Vec::new(),
+            version_probe: None,
+            releases: Vec::new(),
+        }],
+    }
+}
 
 #[test]
 fn parse_version_loose_accepts_two_part_versions() {
@@ -72,6 +141,8 @@ fn version_matches_suffix_release() {
 
 #[tokio::test]
 async fn load_matrix_ignores_disk_cache_when_no_local_override_exists() {
+    let _env_lock = ENV_LOCK.lock().await;
+    let _env = clear_provider_matrix_env();
     let dir = tempdir().expect("tempdir");
     let data_root = dir.path();
 
@@ -95,29 +166,7 @@ async fn load_matrix_ignores_disk_cache_when_no_local_override_exists() {
         .await
         .expect("save cached matrix");
 
-    let previous_bundle_dir = std::env::var("CTX_BUNDLE_DIR").ok();
-    let previous_bundle_matrix = std::env::var("CTX_BUNDLE_MATRIX_JSON").ok();
-    unsafe {
-        std::env::remove_var("CTX_BUNDLE_DIR");
-        std::env::remove_var("CTX_BUNDLE_MATRIX_JSON");
-    }
     let loaded = load_matrix(data_root).await;
-    match previous_bundle_dir {
-        Some(value) => unsafe {
-            std::env::set_var("CTX_BUNDLE_DIR", value);
-        },
-        None => unsafe {
-            std::env::remove_var("CTX_BUNDLE_DIR");
-        },
-    }
-    match previous_bundle_matrix {
-        Some(value) => unsafe {
-            std::env::set_var("CTX_BUNDLE_MATRIX_JSON", value);
-        },
-        None => unsafe {
-            std::env::remove_var("CTX_BUNDLE_MATRIX_JSON");
-        },
-    }
     let builtin = builtin_matrix();
     assert_eq!(loaded.version, builtin.version);
     assert_eq!(loaded.providers.len(), builtin.providers.len());
@@ -125,6 +174,8 @@ async fn load_matrix_ignores_disk_cache_when_no_local_override_exists() {
 
 #[tokio::test]
 async fn load_matrix_returns_builtin_when_cache_missing() {
+    let _env_lock = ENV_LOCK.lock().await;
+    let _env = clear_provider_matrix_env();
     let dir = tempdir().expect("tempdir");
     let loaded = load_matrix(dir.path()).await;
     let builtin = builtin_matrix();
@@ -134,6 +185,8 @@ async fn load_matrix_returns_builtin_when_cache_missing() {
 
 #[tokio::test]
 async fn load_matrix_prefers_bundled_matrix_over_disk_cache() {
+    let _env_lock = ENV_LOCK.lock().await;
+    let _env = clear_provider_matrix_env();
     let dir = tempdir().expect("tempdir");
     let bundle_dir = tempdir().expect("bundle tempdir");
     let bundle_matrix = ProviderMatrix {
@@ -177,22 +230,177 @@ async fn load_matrix_prefers_bundled_matrix_over_disk_cache() {
     )
     .expect("write bundle matrix");
 
-    let previous_bundle_dir = std::env::var("CTX_BUNDLE_DIR").ok();
-    unsafe {
-        std::env::set_var("CTX_BUNDLE_DIR", bundle_dir.path());
-    }
+    let bundle_dir_string = bundle_dir.path().to_string_lossy().to_string();
+    let _bundle = EnvGuard::set("CTX_BUNDLE_DIR", &bundle_dir_string);
     let loaded = load_matrix(dir.path()).await;
-    match previous_bundle_dir {
-        Some(value) => unsafe {
-            std::env::set_var("CTX_BUNDLE_DIR", value);
-        },
-        None => unsafe {
-            std::env::remove_var("CTX_BUNDLE_DIR");
-        },
-    }
 
     assert_eq!(loaded.providers.len(), 1);
     assert_eq!(loaded.providers[0].id, "bundled-provider");
+}
+
+#[tokio::test]
+async fn refresh_matrix_uses_bundled_matrix_without_remote_fetch() {
+    let _env_lock = ENV_LOCK.lock().await;
+    let _env = clear_provider_matrix_env();
+    let dir = tempdir().expect("tempdir");
+    let bundle_dir = dir.path().join("bundle");
+    std::fs::create_dir_all(&bundle_dir).expect("bundle dir");
+    std::fs::write(
+        bundle_dir.join("provider_matrix.json"),
+        serde_json::to_vec(&test_matrix("bundle-provider")).expect("serialize matrix"),
+    )
+    .expect("write bundle matrix");
+    let bundle_dir_string = bundle_dir.to_string_lossy().to_string();
+    let _bundle = EnvGuard::set("CTX_BUNDLE_DIR", &bundle_dir_string);
+    let cache = tokio::sync::Mutex::new(ProviderMatrixCache::default());
+
+    let outcome = refresh_matrix_from_local_sources(dir.path(), &cache).await;
+
+    assert_eq!(outcome.source, MatrixRefreshSource::Bundled);
+    assert!(!outcome.degraded);
+    assert!(outcome.last_error.is_none());
+    assert_eq!(outcome.matrix.providers[0].id, "bundle-provider");
+}
+
+#[tokio::test]
+async fn refresh_matrix_ignores_disk_cache_when_bundle_is_unavailable() {
+    let _env_lock = ENV_LOCK.lock().await;
+    let _env = clear_provider_matrix_env();
+    let dir = tempdir().expect("tempdir");
+    save_cached_matrix(dir.path(), &test_matrix("cached-provider"))
+        .await
+        .expect("save cached matrix");
+    let cache = tokio::sync::Mutex::new(ProviderMatrixCache::default());
+
+    let outcome = refresh_matrix_from_local_sources(dir.path(), &cache).await;
+
+    assert_eq!(outcome.source, MatrixRefreshSource::Builtin);
+    assert!(outcome.degraded);
+    assert!(outcome.last_error.is_some());
+    assert_eq!(
+        outcome.matrix.providers.len(),
+        builtin_matrix().providers.len()
+    );
+}
+
+#[tokio::test]
+async fn refresh_matrix_uses_builtin_as_visible_degraded_fallback_without_bundle() {
+    let _env_lock = ENV_LOCK.lock().await;
+    let _env = clear_provider_matrix_env();
+    let dir = tempdir().expect("tempdir");
+    let cache = tokio::sync::Mutex::new(ProviderMatrixCache::default());
+
+    let outcome = refresh_matrix_from_local_sources(dir.path(), &cache).await;
+
+    assert_eq!(outcome.source, MatrixRefreshSource::Builtin);
+    assert!(outcome.degraded);
+    assert!(outcome.last_error.is_some());
+    assert_eq!(
+        outcome.matrix.providers.len(),
+        builtin_matrix().providers.len()
+    );
+}
+
+#[tokio::test]
+async fn refresh_matrix_explicit_bundle_matrix_suppresses_bundle() {
+    let _env_lock = ENV_LOCK.lock().await;
+    let _env = clear_provider_matrix_env();
+    let dir = tempdir().expect("tempdir");
+    let bundle_dir = dir.path().join("bundle");
+    std::fs::create_dir_all(&bundle_dir).expect("bundle dir");
+    std::fs::write(
+        bundle_dir.join("provider_matrix.json"),
+        serde_json::to_vec(&test_matrix("bundle-provider")).expect("serialize matrix"),
+    )
+    .expect("write bundle matrix");
+    let bundle_dir_string = bundle_dir.to_string_lossy().to_string();
+    let _bundle = EnvGuard::set("CTX_BUNDLE_DIR", &bundle_dir_string);
+    let explicit_path = dir.path().join("explicit-provider-matrix.json");
+    std::fs::write(
+        &explicit_path,
+        serde_json::to_vec(&test_matrix("explicit-provider")).expect("serialize matrix"),
+    )
+    .expect("write explicit matrix");
+    let explicit_path_string = explicit_path.to_string_lossy().to_string();
+    let _explicit = EnvGuard::set("CTX_BUNDLE_MATRIX_JSON", &explicit_path_string);
+    let cache = tokio::sync::Mutex::new(ProviderMatrixCache::default());
+
+    let outcome = refresh_matrix_from_local_sources(dir.path(), &cache).await;
+
+    assert_eq!(outcome.source, MatrixRefreshSource::Explicit);
+    assert!(!outcome.degraded);
+    assert_eq!(outcome.matrix.providers[0].id, "explicit-provider");
+}
+
+#[tokio::test]
+async fn refresh_matrix_ignores_disk_cache_when_bundle_dir_exists() {
+    let _env_lock = ENV_LOCK.lock().await;
+    let _env = clear_provider_matrix_env();
+    let dir = tempdir().expect("tempdir");
+    let bundle_dir = dir.path().join("bundle");
+    std::fs::create_dir_all(&bundle_dir).expect("bundle dir");
+    std::fs::write(
+        bundle_dir.join("provider_matrix.json"),
+        serde_json::to_vec(&test_matrix("bundle-provider")).expect("serialize matrix"),
+    )
+    .expect("write bundle matrix");
+    let bundle_dir_string = bundle_dir.to_string_lossy().to_string();
+    let _bundle = EnvGuard::set("CTX_BUNDLE_DIR", &bundle_dir_string);
+    save_cached_matrix(dir.path(), &test_matrix("cached-provider"))
+        .await
+        .expect("save cached matrix");
+    let cache = tokio::sync::Mutex::new(ProviderMatrixCache::default());
+
+    let outcome = refresh_matrix_from_local_sources(dir.path(), &cache).await;
+
+    assert_eq!(outcome.source, MatrixRefreshSource::Bundled);
+    assert!(!outcome.degraded);
+    assert_eq!(outcome.matrix.providers[0].id, "bundle-provider");
+}
+
+#[tokio::test]
+async fn refresh_matrix_invalid_explicit_override_reports_degraded_bundled_fallback() {
+    let _env_lock = ENV_LOCK.lock().await;
+    let _env = clear_provider_matrix_env();
+    let dir = tempdir().expect("tempdir");
+    let bundle_dir = dir.path().join("bundle");
+    std::fs::create_dir_all(&bundle_dir).expect("bundle dir");
+    std::fs::write(
+        bundle_dir.join("provider_matrix.json"),
+        serde_json::to_vec(&test_matrix("bundle-provider")).expect("serialize matrix"),
+    )
+    .expect("write bundle matrix");
+    let bundle_dir_string = bundle_dir.to_string_lossy().to_string();
+    let _bundle = EnvGuard::set("CTX_BUNDLE_DIR", &bundle_dir_string);
+    let explicit_path = dir.path().join("missing-provider-matrix.json");
+    let explicit_path_string = explicit_path.to_string_lossy().to_string();
+    let _explicit = EnvGuard::set("CTX_BUNDLE_MATRIX_JSON", &explicit_path_string);
+    let cache = tokio::sync::Mutex::new(ProviderMatrixCache::default());
+
+    let outcome = refresh_matrix_from_local_sources(dir.path(), &cache).await;
+
+    assert_eq!(outcome.source, MatrixRefreshSource::Bundled);
+    assert!(outcome.degraded);
+    assert!(outcome.last_error.is_some());
+    assert_eq!(outcome.matrix.providers[0].id, "bundle-provider");
+}
+
+#[tokio::test]
+async fn refresh_matrix_invalid_explicit_override_reports_degraded_builtin_fallback_without_bundle()
+{
+    let _env_lock = ENV_LOCK.lock().await;
+    let _env = clear_provider_matrix_env();
+    let dir = tempdir().expect("tempdir");
+    let explicit_path = dir.path().join("missing-provider-matrix.json");
+    let explicit_path_string = explicit_path.to_string_lossy().to_string();
+    let _explicit = EnvGuard::set("CTX_BUNDLE_MATRIX_JSON", &explicit_path_string);
+    let cache = tokio::sync::Mutex::new(ProviderMatrixCache::default());
+
+    let outcome = refresh_matrix_from_local_sources(dir.path(), &cache).await;
+
+    assert_eq!(outcome.source, MatrixRefreshSource::Builtin);
+    assert!(outcome.degraded);
+    assert!(outcome.last_error.is_some());
 }
 
 #[test]
@@ -436,6 +644,19 @@ fn builtin_matrix_tracks_target_specific_codex_cli_archive_binaries() {
         }
         other => panic!("expected codex-cli archive managed install, got {other:?}"),
     }
+}
+
+#[test]
+fn builtin_matrix_keeps_codex_provider_id_distinct_from_adapter_artifact() {
+    let matrix = builtin_matrix();
+    assert!(
+        get_entry(&matrix, "codex-crp").is_none(),
+        "codex-crp is an adapter artifact name, not a provider id"
+    );
+
+    let codex = get_entry(&matrix, "codex").expect("codex entry");
+    let command = codex.command.as_ref().expect("codex command");
+    assert_eq!(command.command, "codex-crp");
 }
 
 #[test]

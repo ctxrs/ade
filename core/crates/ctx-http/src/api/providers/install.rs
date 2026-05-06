@@ -3,8 +3,8 @@ use super::*;
 pub(crate) async fn refresh_provider_matrix(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<MatrixRefreshResponse>, (StatusCode, Json<ApiErrorResp>)> {
-    crate::provider_matrix::invalidate_matrix_cache(&state.providers.matrix_cache).await;
-    let outcome = crate::provider_matrix::refresh_matrix_from_local_sources(
+    ctx_provider_matrix::invalidate_matrix_cache(&state.providers.matrix_cache).await;
+    let outcome = ctx_provider_matrix::refresh_matrix_from_local_sources(
         &state.core.data_root,
         &state.providers.matrix_cache,
     )

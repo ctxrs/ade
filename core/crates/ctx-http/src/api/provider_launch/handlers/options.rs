@@ -16,7 +16,7 @@ pub(in crate::api) async fn get_provider_options(
         .map_err(|error| workspace_execution_settings_error_json(&error))?;
     let (managed, managed_config_error) =
         load_managed_agent_server_config_with_error(&state.core.data_root).await;
-    let matrix = crate::provider_matrix::load_matrix_cached(
+    let matrix = ctx_provider_matrix::load_matrix_cached(
         &state.core.data_root,
         &state.providers.matrix_cache,
     )
@@ -24,7 +24,7 @@ pub(in crate::api) async fn get_provider_options(
     let known = {
         let map = state.providers.statuses.lock().await;
         map.contains_key(&provider_id)
-            || crate::provider_matrix::get_entry(&matrix, &provider_id).is_some()
+            || ctx_provider_matrix::get_entry(&matrix, &provider_id).is_some()
     };
     let (source_config, source_config_error) =
         load_provider_source_config_with_error(&state.core.data_root, &provider_id).await;

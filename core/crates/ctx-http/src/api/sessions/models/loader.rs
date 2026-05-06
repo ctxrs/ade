@@ -14,7 +14,7 @@ async fn load_pinned_subscription_model_catalog(
     if let Some(config_error) = config_error {
         return Err(config_error);
     }
-    let matrix = crate::provider_matrix::load_matrix_cached(
+    let matrix = ctx_provider_matrix::load_matrix_cached(
         &state.core.data_root,
         &state.providers.matrix_cache,
     )

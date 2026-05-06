@@ -667,15 +667,6 @@ declare_ctx_http_rust_unit_test(
 )
 
 declare_ctx_http_rust_unit_test(
-    name = "unit_tests_provider_matrix",
-    args = CTX_HTTP_TEST_ARGS + ["provider_matrix::"],
-    compile_data = CTX_HTTP_COMPILE_DATA,
-    data = CTX_HTTP_COMPILE_DATA,
-    deps = CTX_HTTP_DIRECT_TEST_DEPS,
-    proc_macro_deps = CTX_HTTP_TEST_PROC_MACRO_DEPS,
-)
-
-declare_ctx_http_rust_unit_test(
     name = "unit_tests_scheduler",
     args = CTX_HTTP_TEST_ARGS + ["scheduler::"],
     compile_data = CTX_HTTP_COMPILE_DATA,
@@ -941,7 +932,8 @@ test_suite(
     tests = [
         ":unit_tests_installer",
         ":unit_tests_provider_launch",
-        ":unit_tests_provider_matrix",
+        "//core/crates/ctx-managed-installs:unit_tests",
+        "//core/crates/ctx-provider-matrix:unit_tests",
         "//core/crates/ctx-settings-model:unit_tests",
         "//core/crates/ctx-settings-service:unit_tests",
     ],

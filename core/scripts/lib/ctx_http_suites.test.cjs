@@ -249,7 +249,11 @@ test("ctx-http checkin fanout exposes split unit suite targets without changing 
     ],
   ]);
   assert.equal(getCtxHttpSuiteCheckinFanoutTargetBatches("base").length, 22);
-  assert.equal(getCtxHttpSuiteCheckinFanoutTargets("base").length, 44);
+  assert.equal(getCtxHttpSuiteCheckinFanoutTargets("base").length, 45);
+  assert.equal(
+    getCtxHttpSuiteCheckinFanoutTargets("base").includes("//core/crates/ctx-managed-installs:unit_tests"),
+    true,
+  );
   assert.equal(
     getCtxHttpSuiteCheckinFanoutTargets("base").includes("//core/crates/ctx-settings-model:unit_tests"),
     true,
@@ -346,6 +350,14 @@ test("ctx-http extracted owner crates route to behavior-owning suites", () => {
 
   assert.equal(
     suiteByName.get("unit-tests-api").dependencyCrates.includes("ctx-storage-admission"),
+    true,
+  );
+  assert.equal(
+    suiteByName.get("unit-tests-provider-and-settings").dependencyCrates.includes("ctx-managed-installs"),
+    true,
+  );
+  assert.equal(
+    suiteByName.get("unit-tests-provider-and-settings").dependencyCrates.includes("ctx-provider-matrix"),
     true,
   );
   assert.equal(

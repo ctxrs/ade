@@ -91,7 +91,7 @@ pub(crate) async fn providers_statuses_response(
             &state.core.data_root,
         )
         .await;
-    let matrix = crate::provider_matrix::load_matrix_cached(
+    let matrix = ctx_provider_matrix::load_matrix_cached(
         &state.core.data_root,
         &state.providers.matrix_cache,
     )
@@ -101,7 +101,7 @@ pub(crate) async fn providers_statuses_response(
     {
         let map = state.providers.statuses.lock().await;
         for provider_id in map.keys() {
-            if !crate::provider_matrix::is_user_facing_harness_id(&matrix, provider_id) {
+            if !ctx_provider_matrix::is_user_facing_harness_id(&matrix, provider_id) {
                 continue;
             }
             if seen.insert(provider_id.clone()) {
@@ -111,7 +111,7 @@ pub(crate) async fn providers_statuses_response(
     }
     if include_matrix_providers {
         for entry in &matrix.providers {
-            if entry.kind != crate::provider_matrix::ProviderMatrixEntryKind::Harness {
+            if entry.kind != ctx_provider_matrix::ProviderMatrixEntryKind::Harness {
                 continue;
             }
             if seen.insert(entry.id.clone()) {
@@ -224,14 +224,14 @@ pub(crate) async fn get_provider(
             &state.core.data_root,
         )
         .await;
-    let matrix = crate::provider_matrix::load_matrix_cached(
+    let matrix = ctx_provider_matrix::load_matrix_cached(
         &state.core.data_root,
         &state.providers.matrix_cache,
     )
     .await;
     let known = {
         let map = state.providers.statuses.lock().await;
-        map.contains_key(&id) || crate::provider_matrix::get_entry(&matrix, &id).is_some()
+        map.contains_key(&id) || ctx_provider_matrix::get_entry(&matrix, &id).is_some()
     };
     if !known {
         return Err((

@@ -188,7 +188,7 @@ impl AppState {
                 adapters: Mutex::new(providers),
                 target_adapters: Mutex::new(HashMap::new()),
                 statuses: Mutex::new(HashMap::new()),
-                matrix_cache: Mutex::new(crate::provider_matrix::ProviderMatrixCache::default()),
+                matrix_cache: Mutex::new(ctx_provider_matrix::ProviderMatrixCache::default()),
                 options_cache: Mutex::new(HashMap::new()),
                 verify_cache: Mutex::new(HashMap::new()),
                 guard: Mutex::new(provider_guard::ProviderGuardRuntime::default()),

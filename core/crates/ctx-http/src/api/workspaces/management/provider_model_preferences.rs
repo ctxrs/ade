@@ -26,12 +26,12 @@ async fn require_known_provider(
             }),
         ));
     }
-    let matrix = crate::provider_matrix::load_matrix_cached(
+    let matrix = ctx_provider_matrix::load_matrix_cached(
         &state.core.data_root,
         &state.providers.matrix_cache,
     )
     .await;
-    let known = crate::provider_matrix::get_entry(&matrix, provider_id).is_some()
+    let known = ctx_provider_matrix::get_entry(&matrix, provider_id).is_some()
         || state
             .providers
             .statuses

@@ -86,7 +86,8 @@ test("ctx-http BUILD exposes Bazel-native base test targets", () => {
   assert.match(ctxHttpBuild, /name = "unit_tests_merge_queue"/);
   assert.match(ctxHttpBuild, /name = "unit_tests_merge_queue_enabled_workspace_resume_after_open"/);
   assert.match(ctxHttpBuild, /name = "unit_tests_provider_launch"/);
-  assert.match(ctxHttpBuild, /name = "unit_tests_provider_matrix"/);
+  assert.match(ctxHttpBuild, /"\/\/core\/crates\/ctx-managed-installs:unit_tests"/);
+  assert.match(ctxHttpBuild, /"\/\/core\/crates\/ctx-provider-matrix:unit_tests"/);
   assert.match(ctxHttpBuild, /name = "unit_tests_scheduler"/);
   assert.match(ctxHttpBuild, /"\/\/core\/crates\/ctx-settings-model:unit_tests"/);
   assert.match(ctxHttpBuild, /"\/\/core\/crates\/ctx-settings-service:unit_tests"/);

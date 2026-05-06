@@ -73,6 +73,100 @@ pub async fn load_matrix(_data_root: &Path) -> ProviderMatrix {
     builtin_matrix()
 }
 
+#[derive(Debug, Clone)]
+pub struct MatrixRefreshOutcome {
+    pub matrix: ProviderMatrix,
+    pub source: MatrixRefreshSource,
+    pub degraded: bool,
+    pub last_error: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MatrixRefreshSource {
+    Bundled,
+    Builtin,
+    Explicit,
+}
+
+impl MatrixRefreshSource {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Bundled => "bundled",
+            Self::Builtin => "builtin",
+            Self::Explicit => "explicit",
+        }
+    }
+}
+
+fn explicit_provider_matrix_override_enabled() -> bool {
+    std::env::var("CTX_BUNDLE_MATRIX_JSON")
+        .ok()
+        .map(|value| !value.trim().is_empty())
+        .unwrap_or(false)
+}
+
+pub async fn refresh_matrix_from_local_sources(
+    _data_root: &Path,
+    cache: &tokio::sync::Mutex<ProviderMatrixCache>,
+) -> MatrixRefreshOutcome {
+    if explicit_provider_matrix_override_enabled() {
+        return match load_explicit_matrix_from_env() {
+            Ok(Some(matrix)) => {
+                replace_matrix_cache(cache, matrix.clone()).await;
+                MatrixRefreshOutcome {
+                    matrix,
+                    source: MatrixRefreshSource::Explicit,
+                    degraded: false,
+                    last_error: None,
+                }
+            }
+            Ok(None) => {
+                fallback_matrix_outcome(cache, "explicit provider matrix override is empty").await
+            }
+            Err(err) => fallback_matrix_outcome(cache, err.to_string()).await,
+        };
+    }
+
+    if let Some(matrix) = load_bundled_matrix_from_env() {
+        replace_matrix_cache(cache, matrix.clone()).await;
+        return MatrixRefreshOutcome {
+            matrix,
+            source: MatrixRefreshSource::Bundled,
+            degraded: false,
+            last_error: None,
+        };
+    }
+
+    fallback_matrix_outcome(
+        cache,
+        "bundled provider matrix is unavailable; using built-in provider matrix",
+    )
+    .await
+}
+
+async fn fallback_matrix_outcome(
+    cache: &tokio::sync::Mutex<ProviderMatrixCache>,
+    last_error: impl Into<String>,
+) -> MatrixRefreshOutcome {
+    if let Some(matrix) = load_bundled_matrix_from_env() {
+        replace_matrix_cache(cache, matrix.clone()).await;
+        return MatrixRefreshOutcome {
+            matrix,
+            source: MatrixRefreshSource::Bundled,
+            degraded: true,
+            last_error: Some(last_error.into()),
+        };
+    }
+    let matrix = builtin_matrix();
+    replace_matrix_cache(cache, matrix.clone()).await;
+    MatrixRefreshOutcome {
+        matrix,
+        source: MatrixRefreshSource::Builtin,
+        degraded: true,
+        last_error: Some(last_error.into()),
+    }
+}
+
 pub async fn load_matrix_cached(
     data_root: &Path,
     cache: &tokio::sync::Mutex<ProviderMatrixCache>,
