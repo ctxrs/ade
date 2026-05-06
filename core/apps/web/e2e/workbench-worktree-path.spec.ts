@@ -36,7 +36,11 @@ const captureProofScreenshot = async (page: Page, fileName: string): Promise<voi
   }
 };
 
-test("workbench: worktree slug is visible for the active session", async ({ page, request }) => {
+const readClipboardText = async (page: Page): Promise<string> =>
+  page.evaluate(() => navigator.clipboard.readText());
+
+test("workbench: worktree slug is visible and copyable for the active session", async ({ page, request }) => {
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
   const seed = await seedDummyWorkspace(request, {
     tasks: 1,
     sessionsPerTask: 1,
@@ -71,6 +75,17 @@ test("workbench: worktree slug is visible for the active session", async ({ page
   const worktreeChip = page.getByRole("button", { name: "Copy worktree location" }).first();
   await expect(worktreeChip).toBeVisible({ timeout: 20000 });
   await expect(worktreeChip).toContainText(worktreeSlugFromPath(worktreePath));
+  await expect(worktreeChip).toBeEnabled();
+
+  await worktreeChip.click();
+  await expect.poll(() => readClipboardText(page)).toBe(worktreePath);
+
+  await page.evaluate(() => navigator.clipboard.writeText(""));
+  await page.getByRole("button", { name: "Conversation options" }).click();
+  const copyWorktreeMenuItem = page.getByRole("menuitem", { name: "Copy Worktree Location" });
+  await expect(copyWorktreeMenuItem).toBeEnabled();
+  await copyWorktreeMenuItem.click();
+  await expect.poll(() => readClipboardText(page)).toBe(worktreePath);
 });
 
 test("workbench: worktree id is visible when worktree detail is unavailable", async ({ page, request }) => {

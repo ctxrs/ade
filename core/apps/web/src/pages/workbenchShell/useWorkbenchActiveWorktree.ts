@@ -51,10 +51,10 @@ export function useWorkbenchActiveWorktree({
         };
         worktreeCacheRef.current.set(activeWorktreeId, derived);
         setActiveWorktree(derived);
+        return;
       } else {
         setActiveWorktree(null);
       }
-      return;
     }
 
     let cancelled = false;
