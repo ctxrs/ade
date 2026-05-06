@@ -19,6 +19,20 @@ pub struct ManagedDaemonAutoUpdateStatus {
     pub last_error: Option<String>,
 }
 
+#[derive(Debug, Clone)]
+pub struct ManagedDaemonAutoUpdateConfig {
+    pub data_root: PathBuf,
+    pub bind: Vec<String>,
+    pub current_version: String,
+}
+
+#[async_trait::async_trait]
+pub trait ManagedDaemonAutoUpdateHooks: Send + Sync {
+    async fn acquire_update_drain(&self, reason: &str, owner: &str) -> bool;
+    async fn release_update_drain(&self);
+    async fn daemon_is_idle(&self) -> Result<bool>;
+}
+
 impl ManagedDaemonAutoUpdateStatus {
     const SCHEMA_VERSION: u32 = 1;
 }
@@ -56,6 +70,10 @@ pub(super) fn managed_daemon_auto_update_source_from_env() -> Option<ManagedDaem
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())?;
     Some(ManagedDaemonAutoUpdateSource { channel, base_url })
+}
+
+pub fn managed_daemon_auto_update_configured_from_env() -> bool {
+    managed_daemon_auto_update_source_from_env().is_some()
 }
 
 fn managed_daemon_auto_update_interval() -> std::time::Duration {
@@ -423,29 +441,25 @@ async fn restore_current_exe_backup(current_exe: &Path, backup: &Path) -> Result
     Ok(())
 }
 
-pub fn spawn_managed_daemon_auto_update(state: Arc<AppState>, bind: Vec<String>) {
+pub fn spawn_managed_daemon_auto_update(
+    config: ManagedDaemonAutoUpdateConfig,
+    hooks: Arc<dyn ManagedDaemonAutoUpdateHooks>,
+) {
     let Some(source) = managed_daemon_auto_update_source_from_env() else {
         return;
     };
     tokio::spawn(async move {
         let interval = managed_daemon_auto_update_interval();
-        write_managed_daemon_auto_update_status(&state.core.data_root, &source, "waiting", None)
-            .await;
+        write_managed_daemon_auto_update_status(&config.data_root, &source, "waiting", None).await;
         loop {
             tokio::time::sleep(interval).await;
-            write_managed_daemon_auto_update_status(
-                &state.core.data_root,
-                &source,
-                "checking",
-                None,
-            )
-            .await;
+            write_managed_daemon_auto_update_status(&config.data_root, &source, "checking", None)
+                .await;
             if let Err(err) =
-                try_managed_daemon_auto_update(Arc::clone(&state), bind.clone(), source.clone())
-                    .await
+                try_managed_daemon_auto_update(&config, Arc::clone(&hooks), source.clone()).await
             {
                 write_managed_daemon_auto_update_status(
-                    &state.core.data_root,
+                    &config.data_root,
                     &source,
                     "failed",
                     Some(err.to_string()),
@@ -453,52 +467,40 @@ pub fn spawn_managed_daemon_auto_update(state: Arc<AppState>, bind: Vec<String>)
                 .await;
                 tracing::warn!(err = %err, "managed daemon auto-update attempt failed");
             } else {
-                write_managed_daemon_auto_update_status(
-                    &state.core.data_root,
-                    &source,
-                    "idle",
-                    None,
-                )
-                .await;
+                write_managed_daemon_auto_update_status(&config.data_root, &source, "idle", None)
+                    .await;
             }
         }
     });
 }
 
 async fn try_managed_daemon_auto_update(
-    state: Arc<AppState>,
-    bind: Vec<String>,
+    config: &ManagedDaemonAutoUpdateConfig,
+    hooks: Arc<dyn ManagedDaemonAutoUpdateHooks>,
     source: ManagedDaemonAutoUpdateSource,
 ) -> Result<()> {
     let Some(platform) = platform_key() else {
         return Ok(());
     };
-    let current_version = crate::build_identity::current_build_identity()
-        .context("loading daemon build identity for auto-update")?
-        .exact_version
-        .clone();
     let manifest = fetch_latest_manifest(&source.base_url, &source.channel).await?;
     if !platform_supported(&manifest, Some(platform))
-        || !is_update_available(&current_version, &manifest.latest_version, true)
+        || !is_update_available(&config.current_version, &manifest.latest_version, true)
     {
         return Ok(());
     }
     let bundle_dir = managed_daemon_bundle_dir_from_env()?;
     let bundle_candidate =
-        stage_managed_daemon_bundle_update(&state.core.data_root, &manifest, platform, &source)
-            .await?;
+        stage_managed_daemon_bundle_update(&config.data_root, &manifest, platform, &source).await?;
     let daemon_candidate =
-        download_daemon_update_candidate(&state.core.data_root, &manifest, platform, &source)
-            .await?;
-    let Some(_drain) = state
+        download_daemon_update_candidate(&config.data_root, &manifest, platform, &source).await?;
+    if !hooks
         .acquire_update_drain("managed_daemon_auto_update", "daemon_worker")
         .await
-    else {
+    {
         return Ok(());
-    };
-    let activity = crate::daemon::daemon_turn_activity_summary(&state).await?;
-    if !activity.idle {
-        let _ = state.release_update_drain().await;
+    }
+    if !hooks.daemon_is_idle().await? {
+        hooks.release_update_drain().await;
         return Ok(());
     }
     let activation =
@@ -514,16 +516,16 @@ async fn try_managed_daemon_auto_update(
         Ok(backup) => backup,
         Err(err) => {
             let _ = restore_managed_daemon_bundle(&activation);
-            let _ = state.release_update_drain().await;
+            hooks.release_update_drain().await;
             return Err(err);
         }
     };
-    if let Err(err) = spawn_replacement_daemon(&state.core.data_root, &bind, &source)
+    if let Err(err) = spawn_replacement_daemon(&config.data_root, &config.bind, &source)
         .context("spawning replacement daemon after managed auto-update")
     {
         let _ = restore_current_exe_backup(&current_exe, &binary_backup).await;
         let _ = restore_managed_daemon_bundle(&activation);
-        let _ = state.release_update_drain().await;
+        hooks.release_update_drain().await;
         return Err(err);
     }
     if let Err(err) = cleanup_managed_daemon_bundle_backup(&activation) {

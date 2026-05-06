@@ -24,10 +24,10 @@ async fn write_verified_candidate_meta(
     target_version: &str,
     payload: &[u8],
 ) {
-    let base_url = ctx_http::updates::default_download_base_url();
+    let base_url = ctx_update_service::default_download_base_url();
     let artifact_url_path = "/download/stable/9.9.9/ctx.AppImage";
-    let meta = ctx_http::updates::VerifiedAppImageCandidateMeta {
-        schema_version: ctx_http::updates::VerifiedAppImageCandidateMeta::SCHEMA_VERSION,
+    let meta = ctx_update_service::VerifiedAppImageCandidateMeta {
+        schema_version: ctx_update_service::VerifiedAppImageCandidateMeta::SCHEMA_VERSION,
         candidate_path: candidate_path.to_path_buf(),
         target_path: target_path.to_path_buf(),
         channel: "stable".to_string(),
@@ -42,7 +42,7 @@ async fn write_verified_candidate_meta(
         size_bytes: payload.len() as u64,
         verified_at_ms: 1,
     };
-    let meta_path = ctx_http::updates::appimage_candidate_meta_path(data_root);
+    let meta_path = ctx_update_service::appimage_candidate_meta_path(data_root);
     tokio::fs::create_dir_all(meta_path.parent().unwrap())
         .await
         .unwrap();
@@ -61,7 +61,7 @@ async fn appimage_apply_requires_verified_candidate_metadata() {
         .unwrap();
     let target_path_string = target_path.to_string_lossy().to_string();
     let _appimage = EnvGuard::set("CTX_APPIMAGE_PATH", &target_path_string);
-    let candidate = ctx_http::updates::appimage_candidate_path(data_dir.path());
+    let candidate = ctx_update_service::appimage_candidate_path(data_dir.path());
     tokio::fs::create_dir_all(candidate.parent().unwrap())
         .await
         .unwrap();
@@ -150,7 +150,7 @@ async fn appimage_apply_rejects_symlink_candidate_inside_updates_dir() {
     let payload = b"verified-appimage";
     let outside = data_dir.path().join("outside-real-file");
     tokio::fs::write(&outside, payload).await.unwrap();
-    let candidate = ctx_http::updates::appimage_candidate_path(data_dir.path());
+    let candidate = ctx_update_service::appimage_candidate_path(data_dir.path());
     tokio::fs::create_dir_all(candidate.parent().unwrap())
         .await
         .unwrap();
@@ -194,7 +194,7 @@ async fn appimage_apply_rejects_stale_or_downgrade_candidate() {
     let target_path_string = target_path.to_string_lossy().to_string();
     let _appimage = EnvGuard::set("CTX_APPIMAGE_PATH", &target_path_string);
     let payload = b"verified-appimage";
-    let candidate = ctx_http::updates::appimage_candidate_path(data_dir.path());
+    let candidate = ctx_update_service::appimage_candidate_path(data_dir.path());
     tokio::fs::create_dir_all(candidate.parent().unwrap())
         .await
         .unwrap();
@@ -238,7 +238,7 @@ async fn appimage_apply_rejects_malformed_candidate_version() {
     let target_path_string = target_path.to_string_lossy().to_string();
     let _appimage = EnvGuard::set("CTX_APPIMAGE_PATH", &target_path_string);
     let payload = b"verified-appimage";
-    let candidate = ctx_http::updates::appimage_candidate_path(data_dir.path());
+    let candidate = ctx_update_service::appimage_candidate_path(data_dir.path());
     tokio::fs::create_dir_all(candidate.parent().unwrap())
         .await
         .unwrap();
@@ -356,7 +356,7 @@ async fn appimage_apply_rejects_tampered_verified_candidate() {
     .await;
     assert_eq!(download_status, StatusCode::OK);
 
-    let candidate = ctx_http::updates::appimage_candidate_path(data_dir.path());
+    let candidate = ctx_update_service::appimage_candidate_path(data_dir.path());
     tokio::fs::write(&candidate, b"tampered-appimage")
         .await
         .unwrap();
@@ -453,7 +453,7 @@ async fn appimage_failed_redownload_invalidates_existing_verified_candidate() {
     let target_path_string = target_path.to_string_lossy().to_string();
     let _appimage = EnvGuard::set("CTX_APPIMAGE_PATH", &target_path_string);
     let stale_payload = b"previous-verified-appimage";
-    let candidate = ctx_http::updates::appimage_candidate_path(data_dir.path());
+    let candidate = ctx_update_service::appimage_candidate_path(data_dir.path());
     tokio::fs::create_dir_all(candidate.parent().unwrap())
         .await
         .unwrap();
@@ -589,6 +589,6 @@ async fn appimage_apply_replaces_target_and_clears_candidate() {
     .await;
     assert_eq!(apply_status, StatusCode::OK);
     assert_eq!(tokio::fs::read(&target_path).await.unwrap(), payload);
-    assert!(!ctx_http::updates::appimage_candidate_path(data_dir.path()).exists());
-    assert!(!ctx_http::updates::appimage_candidate_meta_path(data_dir.path()).exists());
+    assert!(!ctx_update_service::appimage_candidate_path(data_dir.path()).exists());
+    assert!(!ctx_update_service::appimage_candidate_meta_path(data_dir.path()).exists());
 }

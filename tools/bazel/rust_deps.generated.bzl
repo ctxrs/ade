@@ -327,6 +327,32 @@ RUST_BAZEL_DEPS = {
         dev_proc_macro_deps = [],
         proc_macro_deps = [],
     ),
+    "ctx-update-service": struct(
+        build_deps = [],
+        deps = [
+            "@crates//:anyhow",
+            "@crates//:atty",
+            "@crates//:base64",
+            "@crates//:hex",
+            "@crates//:minisign-verify",
+            "@crates//:reqwest",
+            "@crates//:semver",
+            "@crates//:serde",
+            "@crates//:serde_json",
+            "@crates//:sha2",
+            "@crates//:tokio",
+            "@crates//:tracing",
+            "@crates//:url",
+            "@crates//:urlencoding",
+        ],
+        dev_deps = [
+            "@crates//:tempfile",
+        ],
+        dev_proc_macro_deps = [],
+        proc_macro_deps = [
+            "@crates//:async-trait",
+        ],
+    ),
     "ctx-workspace-active-snapshot": struct(
         build_deps = [],
         deps = [

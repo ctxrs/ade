@@ -7,7 +7,7 @@ use url::Url;
 
 const RELEASE_MANIFEST_PUBKEY_OVERRIDE_ENV: &str = "CTX_RELEASE_MANIFEST_PUBKEY";
 const EMBEDDED_RELEASE_MANIFEST_PUBKEY: &str =
-    include_str!("../../../../apps/desktop/src-tauri/config/updater_pubkey.txt");
+    include_str!("../../../apps/desktop/src-tauri/config/updater_pubkey.txt");
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ReleaseArtifact {

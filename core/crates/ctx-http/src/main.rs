@@ -403,8 +403,16 @@ async fn main() -> Result<()> {
             yes,
             check,
         } => {
-            let base_url = base_url.unwrap_or_else(ctx_http::updates::default_download_base_url);
-            ctx_http::updates::self_update_daemon(&channel, &base_url, yes, check).await?;
+            let base_url = base_url.unwrap_or_else(ctx_update_service::default_download_base_url);
+            let current_version = ctx_http::current_build_exact_version()?;
+            ctx_update_service::self_update_daemon(
+                &channel,
+                &base_url,
+                &current_version,
+                yes,
+                check,
+            )
+            .await?;
         }
     }
     Ok(())

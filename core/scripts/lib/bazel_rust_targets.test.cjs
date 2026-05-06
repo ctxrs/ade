@@ -76,6 +76,7 @@ test("Bazel-covered crates stay on the intended explicit Rust slice", () => {
     "ctx-tunnel-relay",
     "ctx-tunnel-router",
     "ctx-tunnel-store",
+    "ctx-update-service",
     "ctx-workspace-active-snapshot",
     "ctx-workspace-config",
     "ctx-workspace-container",

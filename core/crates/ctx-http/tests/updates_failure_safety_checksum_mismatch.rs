@@ -104,12 +104,12 @@ async fn download_update_rejects_checksum_mismatch_without_bricking_api() {
         "unexpected error payload: {body}"
     );
 
-    let downloaded_path = ctx_http::updates::appimage_candidate_path(data_dir.path());
+    let downloaded_path = ctx_update_service::appimage_candidate_path(data_dir.path());
     assert!(
         !downloaded_path.exists(),
         "checksum mismatch must not leave an applyable candidate"
     );
-    let meta_path = ctx_http::updates::appimage_candidate_meta_path(data_dir.path());
+    let meta_path = ctx_update_service::appimage_candidate_meta_path(data_dir.path());
     assert!(
         !meta_path.exists(),
         "checksum mismatch must not leave verified candidate metadata"

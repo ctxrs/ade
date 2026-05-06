@@ -8,8 +8,6 @@ use anyhow::{Context, Result};
 use semver::Version;
 use serde::{Deserialize, Serialize};
 
-use crate::daemon::AppState;
-
 mod appimage;
 mod fs_ops;
 mod managed_daemon;
@@ -26,7 +24,8 @@ pub use fs_ops::{
     atomic_replace_exe, atomic_replace_exe_with_backup, download_to_path, sha256_hex_file,
 };
 pub use managed_daemon::{
-    managed_daemon_auto_update_status_snapshot, spawn_managed_daemon_auto_update,
+    managed_daemon_auto_update_configured_from_env, managed_daemon_auto_update_status_snapshot,
+    spawn_managed_daemon_auto_update, ManagedDaemonAutoUpdateConfig, ManagedDaemonAutoUpdateHooks,
     ManagedDaemonAutoUpdateStatus,
 };
 pub use manifest::{

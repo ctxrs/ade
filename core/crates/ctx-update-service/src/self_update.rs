@@ -3,6 +3,7 @@ use super::*;
 pub async fn self_update_daemon(
     channel: &str,
     base_url: &str,
+    current_version: &str,
     yes: bool,
     check_only: bool,
 ) -> Result<()> {
@@ -15,12 +16,8 @@ pub async fn self_update_daemon(
         );
     };
 
-    let current_version = normalize_version_str(
-        &crate::build_identity::current_build_identity()
-            .context("loading build identity")?
-            .exact_version,
-    )
-    .context("parsing current version")?;
+    let current_version =
+        normalize_version_str(current_version).context("parsing current version")?;
 
     let manifest = fetch_latest_manifest(base_url, &channel).await?;
     let latest_version = normalize_version_str(&manifest.latest_version)

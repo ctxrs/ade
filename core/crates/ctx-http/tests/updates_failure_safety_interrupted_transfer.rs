@@ -113,14 +113,14 @@ async fn download_update_handles_interrupted_transfer_and_api_stays_healthy() {
         "unexpected error payload: {body}"
     );
 
-    let downloaded_path = ctx_http::updates::appimage_candidate_path(data_dir.path());
+    let downloaded_path = ctx_update_service::appimage_candidate_path(data_dir.path());
     assert!(
         !downloaded_path.exists(),
         "interrupted transfer should not leave an applyable candidate at {}",
         downloaded_path.display()
     );
     assert!(
-        !ctx_http::updates::appimage_candidate_meta_path(data_dir.path()).exists(),
+        !ctx_update_service::appimage_candidate_meta_path(data_dir.path()).exists(),
         "interrupted transfer should not leave verified candidate metadata"
     );
 

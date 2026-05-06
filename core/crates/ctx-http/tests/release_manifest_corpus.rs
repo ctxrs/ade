@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 mod common;
 
-use ctx_http::updates::ReleaseManifest;
+use ctx_update_service::ReleaseManifest;
 
 fn corpus_dir() -> PathBuf {
     common::resolve_manifest_dir().join("tests/corpus/release_manifests")

@@ -38,7 +38,6 @@ mod terminals;
 pub mod title_generation;
 mod title_generation_local;
 mod tool_cgroup;
-pub mod updates;
 mod vcs_hooks;
 mod web_session_launch;
 mod web_sessions;
@@ -67,3 +66,9 @@ pub mod fault_injection {
 // that spans async calls so process-global state cannot interleave across test cases.
 #[allow(clippy::await_holding_lock)]
 mod lib_tests;
+
+pub fn current_build_exact_version() -> anyhow::Result<String> {
+    Ok(build_identity::current_build_identity()?
+        .exact_version
+        .clone())
+}

@@ -856,6 +856,7 @@ const CTX_HTTP_SUITES = [
       "ctx-managed-installs",
       "ctx-store",
       "ctx-transport-runtime",
+      "ctx-update-service",
       "ctx-workspace-services",
     ],
     name: "updates-release",
@@ -864,7 +865,7 @@ const CTX_HTTP_SUITES = [
       "crates/ctx-http/src/api/updates.rs",
       "crates/ctx-http/src/bundled_assets.rs",
       "crates/ctx-http/src/bundled_assets/**",
-      "crates/ctx-http/src/updates.rs",
+      "crates/ctx-update-service/src/**",
     ],
     testFiles: [
       "openai_responses_sse_stub",

@@ -29,6 +29,7 @@ members = [
   "crates/ctx-sandbox-materialization",
   "crates/ctx-session-tools",
   "crates/ctx-storage-admission",
+  "crates/ctx-update-service",
   "crates/ctx-observability",
   "crates/ctx-org-policy",
   "crates/ctx-settings-model",

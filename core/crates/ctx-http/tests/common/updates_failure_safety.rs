@@ -39,7 +39,7 @@ impl Drop for EnvGuard {
 }
 
 pub fn current_platform_key() -> Option<&'static str> {
-    ctx_http::updates::platform_key()
+    ctx_update_service::platform_key()
 }
 
 pub struct SignedReleaseManifest {

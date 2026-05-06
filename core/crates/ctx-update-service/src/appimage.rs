@@ -136,6 +136,7 @@ pub async fn validate_verified_appimage_candidate(
     expected_channel: &str,
     expected_platform: &str,
     expected_base_url: &str,
+    current_version: &str,
 ) -> Result<(PathBuf, VerifiedAppImageCandidateMeta)> {
     let updates = updates_dir(data_root);
     let meta = read_verified_appimage_candidate_meta(data_root).await?;
@@ -165,11 +166,7 @@ pub async fn validate_verified_appimage_candidate(
     if !is_sha256_hex(&meta.sha256) {
         anyhow::bail!("downloaded AppImage metadata has invalid sha256");
     }
-    let current_version = crate::build_identity::current_build_identity()
-        .context("loading build identity")?
-        .exact_version
-        .clone();
-    let current = normalize_version_str(&current_version).with_context(|| {
+    let current = normalize_version_str(current_version).with_context(|| {
         format!("running AppImage version is not semver-compatible: {current_version}")
     })?;
     let target = normalize_version_str(&meta.target_version).with_context(|| {

@@ -18,6 +18,7 @@ const GENERATED_DEP_CONSUMER_CRATES = Object.freeze([
   "ctx-sandbox-contract",
   "ctx-session-tools",
   "ctx-storage-admission",
+  "ctx-update-service",
   "ctx-settings-model",
   "ctx-settings-service",
   "ctx-workspace-active-snapshot",

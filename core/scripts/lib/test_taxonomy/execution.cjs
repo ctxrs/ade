@@ -38,6 +38,7 @@ const CHECKIN_RUST_GATE_CRATE_WEIGHTS = Object.freeze({
   "ctx-provider-runtime": 2,
   "ctx-providers": 3,
   "ctx-store": 4,
+  "ctx-update-service": 2,
   "ctx-workspace-active-snapshot": 2,
   "ctx-workspace-container": 2,
   "ctx-workspace-runtime": 3,

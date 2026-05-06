@@ -32,7 +32,7 @@ pub(super) async fn check_updates(
     axum::extract::Query(q): axum::extract::Query<UpdateCheckQuery>,
 ) -> Result<Json<UpdateCheckResp>, (StatusCode, Json<ApiErrorResp>)> {
     let channel =
-        crate::updates::normalize_release_channel(q.channel.as_deref().unwrap_or("stable"))
+        ctx_update_service::normalize_release_channel(q.channel.as_deref().unwrap_or("stable"))
             .map_err(|err| {
                 (
                     StatusCode::BAD_REQUEST,
@@ -41,8 +41,8 @@ pub(super) async fn check_updates(
                     }),
                 )
             })?;
-    let base_url = crate::updates::default_download_base_url();
-    let platform = crate::updates::platform_key().map(|s| s.to_string());
+    let base_url = ctx_update_service::default_download_base_url();
+    let platform = ctx_update_service::platform_key().map(|s| s.to_string());
     let current_version = crate::build_identity::current_build_identity()
         .map(|identity| identity.exact_version.clone())
         .map_err(|err| {
@@ -61,29 +61,35 @@ pub(super) async fn check_updates(
         ]
     });
 
-    let manifest =
-        crate::updates::fetch_latest_manifest_with_params(&base_url, &channel, query.as_deref())
-            .await
-            .map_err(|e| {
-                (
-                    StatusCode::BAD_GATEWAY,
-                    Json(ApiErrorResp {
-                        error: logs::redact_sensitive(&e.to_string()),
-                    }),
-                )
-            })?;
+    let manifest = ctx_update_service::fetch_latest_manifest_with_params(
+        &base_url,
+        &channel,
+        query.as_deref(),
+    )
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::BAD_GATEWAY,
+            Json(ApiErrorResp {
+                error: logs::redact_sensitive(&e.to_string()),
+            }),
+        )
+    })?;
 
     let latest_version = manifest.latest_version.clone();
     let min_supported_version = manifest.min_supported_version.clone();
-    let platform_supported = crate::updates::platform_supported(&manifest, platform.as_deref());
+    let platform_supported = ctx_update_service::platform_supported(&manifest, platform.as_deref());
     let (in_place_update_supported, in_place_update_reason) =
-        crate::updates::in_place_update_capability(
+        ctx_update_service::in_place_update_capability(
             &manifest,
             platform.as_deref(),
             platform_supported,
         );
-    let update_available =
-        crate::updates::is_update_available(&current_version, &latest_version, platform_supported);
+    let update_available = ctx_update_service::is_update_available(
+        &current_version,
+        &latest_version,
+        platform_supported,
+    );
 
     Ok(Json(UpdateCheckResp {
         channel,
@@ -104,7 +110,7 @@ pub(super) async fn check_updates(
 pub(super) struct UpdateActivityResp {
     activity: crate::daemon::DaemonTurnActivitySummary,
     #[serde(skip_serializing_if = "Option::is_none")]
-    managed_daemon_auto_update: Option<crate::updates::ManagedDaemonAutoUpdateStatus>,
+    managed_daemon_auto_update: Option<ctx_update_service::ManagedDaemonAutoUpdateStatus>,
 }
 
 pub(super) async fn update_activity(
@@ -121,7 +127,7 @@ pub(super) async fn update_activity(
             )
         })?;
     let managed_daemon_auto_update =
-        crate::updates::managed_daemon_auto_update_status_snapshot(&state.core.data_root).await;
+        ctx_update_service::managed_daemon_auto_update_status_snapshot(&state.core.data_root).await;
     Ok(Json(UpdateActivityResp {
         activity,
         managed_daemon_auto_update,
@@ -357,17 +363,17 @@ pub(super) async fn download_appimage_update(
     Json(req): Json<DownloadAppImageReq>,
 ) -> Result<Json<DownloadAppImageResp>, (StatusCode, Json<ApiErrorResp>)> {
     let channel =
-        crate::updates::normalize_release_channel(req.channel.as_deref().unwrap_or("stable"))
+        ctx_update_service::normalize_release_channel(req.channel.as_deref().unwrap_or("stable"))
             .map_err(|err| {
-                (
-                    StatusCode::BAD_REQUEST,
-                    Json(ApiErrorResp {
-                        error: err.to_string(),
-                    }),
-                )
-            })?;
-    let base_url = crate::updates::default_download_base_url();
-    let platform = crate::updates::platform_key().ok_or_else(|| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: err.to_string(),
+                }),
+            )
+        })?;
+    let base_url = ctx_update_service::default_download_base_url();
+    let platform = ctx_update_service::platform_key().ok_or_else(|| {
         (
             StatusCode::BAD_REQUEST,
             Json(ApiErrorResp {
@@ -376,7 +382,7 @@ pub(super) async fn download_appimage_update(
         )
     })?;
 
-    let manifest = crate::updates::fetch_latest_manifest(&base_url, &channel)
+    let manifest = ctx_update_service::fetch_latest_manifest(&base_url, &channel)
         .await
         .map_err(|e| {
             (
@@ -403,7 +409,7 @@ pub(super) async fn download_appimage_update(
         )
     })?;
 
-    let target_path = crate::updates::appimage_path_env().ok_or_else(|| {
+    let target_path = ctx_update_service::appimage_path_env().ok_or_else(|| {
         (
             StatusCode::BAD_REQUEST,
             Json(ApiErrorResp {
@@ -421,19 +427,18 @@ pub(super) async fn download_appimage_update(
                 }),
             )
         })?;
-    let url = crate::updates::resolve_release_artifact_url(&base_url, &appimage.url_path).map_err(
-        |e| {
+    let url = ctx_update_service::resolve_release_artifact_url(&base_url, &appimage.url_path)
+        .map_err(|e| {
             (
                 StatusCode::BAD_GATEWAY,
                 Json(ApiErrorResp {
                     error: logs::redact_sensitive(&e.to_string()),
                 }),
             )
-        },
-    )?;
-    let manifest_url = crate::updates::release_manifest_url(&base_url, &channel);
-    let meta = crate::updates::download_verified_appimage_candidate(
-        crate::updates::AppImageCandidateRequest {
+        })?;
+    let manifest_url = ctx_update_service::release_manifest_url(&base_url, &channel);
+    let meta = ctx_update_service::download_verified_appimage_candidate(
+        ctx_update_service::AppImageCandidateRequest {
             data_root: &state.core.data_root,
             target_path: &target_path,
             channel: &channel,
@@ -469,7 +474,7 @@ pub(super) async fn download_appimage_update(
 
     Ok(Json(DownloadAppImageResp {
         downloaded_path: meta.candidate_path.to_string_lossy().to_string(),
-        can_apply_in_place: crate::updates::appimage_path_env().is_some(),
+        can_apply_in_place: ctx_update_service::appimage_path_env().is_some(),
     }))
 }
 
@@ -501,17 +506,17 @@ pub(super) async fn apply_appimage_update(
     }
 
     let channel =
-        crate::updates::normalize_release_channel(req.channel.as_deref().unwrap_or("stable"))
+        ctx_update_service::normalize_release_channel(req.channel.as_deref().unwrap_or("stable"))
             .map_err(|err| {
-                (
-                    StatusCode::BAD_REQUEST,
-                    Json(ApiErrorResp {
-                        error: err.to_string(),
-                    }),
-                )
-            })?;
-    let base_url = crate::updates::default_download_base_url();
-    let platform = crate::updates::platform_key().ok_or_else(|| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: err.to_string(),
+                }),
+            )
+        })?;
+    let base_url = ctx_update_service::default_download_base_url();
+    let platform = ctx_update_service::platform_key().ok_or_else(|| {
         (
             StatusCode::BAD_REQUEST,
             Json(ApiErrorResp {
@@ -519,7 +524,7 @@ pub(super) async fn apply_appimage_update(
             }),
         )
     })?;
-    let Some(target) = crate::updates::appimage_path_env() else {
+    let Some(target) = ctx_update_service::appimage_path_env() else {
         return Err((
             StatusCode::BAD_REQUEST,
             Json(ApiErrorResp {
@@ -527,12 +532,23 @@ pub(super) async fn apply_appimage_update(
             }),
         ));
     };
-    let (downloaded, _meta) = crate::updates::validate_verified_appimage_candidate(
+    let current_version = crate::build_identity::current_build_identity()
+        .map(|identity| identity.exact_version.clone())
+        .map_err(|err| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&err.to_string()),
+                }),
+            )
+        })?;
+    let (downloaded, _meta) = ctx_update_service::validate_verified_appimage_candidate(
         &state.core.data_root,
         &target,
         &channel,
         platform,
         &base_url,
+        &current_version,
     )
     .await
     .map_err(|e| {
@@ -544,7 +560,7 @@ pub(super) async fn apply_appimage_update(
         )
     })?;
 
-    crate::updates::atomic_replace_file(&target, &downloaded)
+    ctx_update_service::atomic_replace_file(&target, &downloaded)
         .await
         .map_err(|e| {
             (
@@ -554,7 +570,7 @@ pub(super) async fn apply_appimage_update(
                 }),
             )
         })?;
-    crate::updates::clear_appimage_candidate(&state.core.data_root).await;
+    ctx_update_service::clear_appimage_candidate(&state.core.data_root).await;
 
     Ok(Json(ApplyAppImageResp {
         applied: true,

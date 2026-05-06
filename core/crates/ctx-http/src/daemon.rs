@@ -37,6 +37,7 @@ use ctx_provider_install::install_state::InstallTarget;
 mod activity;
 mod auth;
 mod lifecycle;
+mod managed_auto_update;
 mod mcp_auth;
 mod provider_adapters;
 mod provider_bootstrap;
@@ -437,7 +438,7 @@ pub async fn serve(bind: Vec<String>, data_dir: Option<String>) -> Result<()> {
     provider_child_reclassifier::spawn_provider_child_reclassifier(state.clone());
     crate::merge_queue::spawn_merge_queue_runner(state.clone());
     provider_usage::spawn_provider_usage_poller(state.clone());
-    crate::updates::spawn_managed_daemon_auto_update(state.clone(), requested_binds.clone());
+    managed_auto_update::spawn_managed_daemon_auto_update(state.clone(), requested_binds.clone());
     lifecycle::spawn_process_shutdown_listener(state.clone());
 
     // Reconnect managed mobile access tunnel on daemon start when enabled.
